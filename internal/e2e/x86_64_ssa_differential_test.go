@@ -38,6 +38,13 @@ import (
 // Exit code AND stdout, because either alone misses a real class: a wrong answer
 // that still exits 0, and a crash that prints nothing.
 const (
+	// x86SSADiffKnownFile lists the corpus programs whose SSA-compiled
+	// behaviour is KNOWN to disagree with the flat backend today, one
+	// `<path> <reason>` row each, exact in BOTH directions as the arm64
+	// leg's file is: a listed program that starts AGREEING fails too, so a
+	// row cannot outlive the gap it names.
+	x86SSADiffKnownFile = "x86-ssa-diff-known-divergences.txt"
+
 	// x86SSADiffMinCorpus is the floor on the corpus WALK. A walk that selects
 	// nothing passes with no sub-tests at all, which reads exactly like a clean
 	// run (docs/TEST-GATES.md, practical rule 10).
@@ -48,19 +55,17 @@ const (
 	// regression that widened the SSA bail set would otherwise turn the lane
 	// green by comparing almost nothing.
 	//
-	// 317 as measured 2026-09-16, once `write`, `read_dir`,
-	// `__method_Reader_read_line` and `__fern_heap_bump_bytes` had emitters:
-	// 194 came from #8570's `remove_dir_all` slice, 215 from the four float
-	// reinterprets, the last refusal that was not a missing runtime helper,
-	// 219 from the string builder, 223 from `args`, `env` and `stat`, 253
-	// from `__memcpy` and the f64 math family, 282 from the file, clock and
-	// random helpers, 301 from the Map family — every program still refused
-	// names one or more helpers with no emitter. RAISE IT with each helper
-	// slice — that is the point of the number.
-	//
-	// The 11 still refused want the socket family (6, always together) and
-	// five singletons (docs/SSA-CUTOVER-PLAN.md).
-	x86SSADiffMinCompared = 317
+	// 327 as measured 2026-09-16, once the socket family and the last
+	// singletons had emitters, which left NO program refused: 194 came from
+	// #8570's `remove_dir_all` slice, 215 from the four float reinterprets,
+	// the last refusal that was not a missing runtime helper, 219 from the
+	// string builder, 223 from `args`, `env` and `stat`, 253 from `__memcpy`
+	// and the f64 math family, 282 from the file, clock and random helpers,
+	// 301 from the Map family, 317 from `write`, `read_dir`, `read_line` and
+	// the heap probe. The 348-program corpus is 20 the flat backend cannot
+	// build, 327 compared, and one known divergence (x86SSADiffKnownFile).
+	// A new refusal is now a regression, not a coverage gap.
+	x86SSADiffMinCompared = 327
 )
 
 func TestX86_64SSABackendDifferential(t *testing.T) {
@@ -69,14 +74,24 @@ func TestX86_64SSABackendDifferential(t *testing.T) {
 	}
 	fern := buildFernCLI(t)
 	corpus := arm64SSADiffCorpus(t) // the same walk; the corpus is not per-target
+	known := loadKnownDivergences(t, x86SSADiffKnownFile)
 	unstable := loadKnownDivergences(t, ssaDiffUnstableFile)
-	ssaDiffCheckListedPaths(t, corpus, map[string]map[string]string{ssaDiffUnstableFile: unstable})
+	ssaDiffCheckListedPaths(t, corpus, map[string]map[string]string{x86SSADiffKnownFile: known, ssaDiffUnstableFile: unstable})
 
 	var baselineRejected, refused, agreed, diverged, timedOut, tooSlow int64
 	for _, rel := range corpus {
 		rel := rel
+		reason, isKnown := known[rel]
 		t.Run(rel, func(t *testing.T) {
 			t.Parallel()
+			// A known row is a claim about the ANSWER this program produces,
+			// so anything that stops it producing one makes the row
+			// unverifiable.
+			stale := func(what string, detail string) {
+				t.Errorf("%s is listed in testdata/%s (%s) but it %s, so the row cannot be "+
+					"verified — re-check it and either update the reason or delete it:\n%s",
+					rel, x86SSADiffKnownFile, reason, what, detail)
+			}
 			dir := t.TempDir()
 			src := langSrcAbs(t, rel)
 
@@ -84,6 +99,9 @@ func TestX86_64SSABackendDifferential(t *testing.T) {
 			if out, err := exec.Command(fern, "-target", "x86-64-linux", "-o", baseBin, src).CombinedOutput(); err != nil {
 				atomic.AddInt64(&baselineRejected, 1)
 				t.Logf("baseline-rejected: %v\n%s", err, firstLines(string(out), 3))
+				if isKnown {
+					stale("no longer BUILDS on the flat backend", firstLines(string(out), 3))
+				}
 				return
 			}
 
@@ -103,6 +121,9 @@ func TestX86_64SSABackendDifferential(t *testing.T) {
 				}
 				atomic.AddInt64(&refused, 1)
 				t.Logf("ssa-refused: %s", firstLines(string(out), 2))
+				if isKnown {
+					stale("no longer COMPILES under -backend ssa", firstLines(string(out), 3))
+				}
 				return
 			}
 
@@ -117,6 +138,10 @@ func TestX86_64SSABackendDifferential(t *testing.T) {
 				if base.timedOut {
 					late, other = "flat", ssa
 				}
+				if isKnown {
+					stale("did not FINISH under one backend", ssaDiffDetail(base, ssa))
+					return
+				}
 				t.Errorf("the %s build did not finish within %s on %s, while the other exited %d.\n"+
 					"This is a TIMEOUT, not a disagreement — neither build has been shown to give\n"+
 					"the wrong answer. Time the two directly before reading it as a hang.\n%s",
@@ -126,6 +151,10 @@ func TestX86_64SSABackendDifferential(t *testing.T) {
 			_, stdoutUnstable := unstable[rel]
 			if d := ssaDiffCompare(base, ssa, stdoutUnstable); d != "" {
 				atomic.AddInt64(&diverged, 1)
+				if isKnown {
+					t.Logf("known divergence (%s): %s", reason, d)
+					return
+				}
 				t.Errorf("`-backend ssa` DISAGREES with the shipping x86-64 backend on %s.\n%s\n"+
 					"docs/SSA-DECISION.md holds the SSA backends to identical behaviour across "+
 					"their covered subset, and this program is inside the subset because it compiled.\n"+
@@ -135,6 +164,10 @@ func TestX86_64SSABackendDifferential(t *testing.T) {
 				return
 			}
 			atomic.AddInt64(&agreed, 1)
+			if isKnown {
+				t.Errorf("%s is listed in testdata/%s (%s) but it AGREES now — delete the entry",
+					rel, x86SSADiffKnownFile, reason)
+			}
 			// Same answer, wildly different cost (#8069). Re-measured once
 			// before it is reported: the corpus runs in parallel on a shared
 			// machine, and one slow sample is not a finding.

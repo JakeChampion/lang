@@ -1,0 +1,19 @@
+# Corpus programs where `-target x86-64-linux -backend ssa` behaves DIFFERENTLY
+# from the shipping flat-IR x86-64 backend. Read by
+# internal/e2e/x86_64_ssa_differential_test.go; format is `<path>  <reason>`.
+#
+# Exact in BOTH directions. A listed program that starts AGREEING fails the
+# test, and so does one that stops compiling under either backend — a row is a
+# claim about an answer, and a program that no longer produces one cannot
+# support it. Delete the row; do not let it sit here unverified.
+#
+# These are bugs in the proving ground, not sanctioned behaviour.
+# docs/SSA-DECISION.md holds the native SSA backends to "byte-identical-in-
+# behaviour to the flat-IR backends ... across their covered subset", and every
+# program listed here is inside that subset: it compiled clean and then behaved
+# differently. A program the SSA backend REFUSES does not belong here — that is
+# the documented coverage endpoint and the test counts it separately. Adding a
+# row is admitting a wrong answer, so it needs a reason a reader can act on and
+# an issue behind it, not just a path.
+
+examples/ownership/borrowed_forward_lifetime.fern  prints __heap_bump_bytes growth across a churn loop, which the flat backend's freelist absorbs (0) and this backend's bump heap with no reclamation does not (576); the freelist port (#9423) is the fix, not this row
