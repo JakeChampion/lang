@@ -1,29 +1,39 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
-	"syscall"
 	"testing"
 )
 
-// A second `-o` to the same path must give the binary a new inode. macOS
-// caches the code-signature verdict of an executable by inode, so a binary
-// rewritten through its existing inode is killed at exec with "Code Signature
-// Invalid" while a byte-identical copy at a fresh path runs. The test is the
-// inode, which every unix host can check, rather than the exec, which only a
-// Mac can.
-func TestWriteExecutableReplacesInode(t *testing.T) {
+// A second `-o` to the same path must replace the executable, not rewrite it
+// through its inode. macOS caches the code-signature verdict of an executable
+// by inode, so a binary rewritten in place is killed at exec with "Code
+// Signature Invalid" while a byte-identical copy at a fresh path runs. The
+// portable observation is a handle held open across the second write: a
+// replaced file leaves the handle on the old, unlinked inode with the old
+// bytes, an in-place rewrite shows it the new ones. (The inode NUMBER is not
+// the test: ext4 hands a fresh file the number it just freed.)
+func TestWriteExecutableReplacesFile(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "prog")
 	if err := writeExecutable(p, []byte("one")); err != nil {
 		t.Fatal(err)
 	}
-	first := inodeOf(t, p)
+	held, err := os.Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Close()
 	if err := writeExecutable(p, []byte("two")); err != nil {
 		t.Fatal(err)
 	}
-	if again := inodeOf(t, p); again == first {
-		t.Fatalf("second write kept inode %d; the executable must be replaced, not overwritten in place", again)
+	old, err := io.ReadAll(held)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(old) != "one" {
+		t.Fatalf("the open handle reads %q after the second write; the executable was rewritten in place, not replaced", old)
 	}
 	fi, err := os.Stat(p)
 	if err != nil {
@@ -39,17 +49,4 @@ func TestWriteExecutableReplacesInode(t *testing.T) {
 	if string(got) != "two" {
 		t.Fatalf("content %q, want the second write", got)
 	}
-}
-
-func inodeOf(t *testing.T, p string) uint64 {
-	t.Helper()
-	fi, err := os.Stat(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	st, ok := fi.Sys().(*syscall.Stat_t)
-	if !ok {
-		t.Skip("no inode on this host")
-	}
-	return uint64(st.Ino)
 }

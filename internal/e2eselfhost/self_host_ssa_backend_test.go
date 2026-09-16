@@ -1,7 +1,9 @@
 package e2eselfhost
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -330,9 +331,11 @@ func TestSelfHostSSABackendRefusesOtherTargets(t *testing.T) {
 // A second `-o` to the same path replaces the executable rather than
 // rewriting it in place. macOS caches the code-signature verdict of an
 // executable by inode, so an in-place rewrite is killed at exec with "Code
-// Signature Invalid" while a byte-identical copy at a fresh path runs; the
-// inode is the assertion every unix host can make, and Apple Silicon also runs
-// the second program.
+// Signature Invalid" while a byte-identical copy at a fresh path runs. The
+// portable observation is a handle held open across the second compile: a
+// replaced file leaves it reading the first program, an in-place rewrite
+// shows it the second. Apple Silicon also runs the second program, which is
+// the exec the cache would have killed.
 func TestSelfHostOutputReplacesExecutable(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
@@ -346,28 +349,27 @@ func TestSelfHostOutputReplacesExecutable(t *testing.T) {
 	}
 	out := filepath.Join(dir, "prog")
 	h.compileWith(t, first, out)
-	before := inodeOfBinary(t, out)
+	firstBytes, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, exit := h.runProduced(t, out); exit != 20 {
 		t.Fatalf("first program exit %d, want 20", exit)
 	}
+	held, err := os.Open(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Close()
 	h.compileWith(t, second, out)
-	if after := inodeOfBinary(t, out); after == before {
-		t.Fatalf("the second compile kept inode %d; an executable must be replaced, not overwritten", after)
+	stillFirst, err := io.ReadAll(held)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(stillFirst, firstBytes) {
+		t.Fatalf("the handle opened before the second compile no longer reads the first program; the executable was rewritten in place, not replaced")
 	}
 	if _, exit := h.runProduced(t, out); exit != 55 {
 		t.Fatalf("second program exit %d, want 55", exit)
 	}
-}
-
-func inodeOfBinary(t *testing.T, p string) uint64 {
-	t.Helper()
-	fi, err := os.Stat(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	st, ok := fi.Sys().(*syscall.Stat_t)
-	if !ok {
-		t.Skip("no inode on this host")
-	}
-	return uint64(st.Ino)
 }

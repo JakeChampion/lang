@@ -143,3 +143,23 @@ path needs `build_func` any more. In order:
    at or under flat's, compile time within a stated multiple, the corpus
    lane clean on both targets. Native's flat retirement waits on this
    (#4112, the 2026-09-16 comment).
+
+## The target
+
+The backend exists to beat the stack machine on all three of these at once,
+measured on the compiler building itself and on `examples/bench`:
+
+- **Faster output.** Native's SSA build is at or under flat on every bench
+  program; the self-host's must be too, and the compiler it builds must run
+  the whole tree faster than the flat-built one. Today: parity.
+- **Smaller output.** Native's SSA text is 45% of flat's over the corpus.
+  The self-host's SSA text is a few percent larger today; the plan is the
+  three emitter items above, then coverage, since a function the stack
+  machine still emits pays the stack machine's size.
+- **Faster compile.** The lift, prune and allocation must cost less than the
+  emitted text they save the assembler: the self-host assembles its own
+  output, so fewer lines is less to parse. Today the SSA self-build is 1.7x
+  the flat one; 1.5x is native's flip condition and the ceiling here, with
+  parity the aim.
+
+An entry in `docs/ssa-log/` carries each step's numbers against these three.
