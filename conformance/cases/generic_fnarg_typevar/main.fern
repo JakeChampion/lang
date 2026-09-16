@@ -20,6 +20,14 @@
 //   annotated    — `var ys: i32[] = iter.filter(...)`, the workaround that
 //                  lowered before this change; it must keep working.
 //   strings      — a non-i32 element, so the fix is not i32-shaped.
+//   floats       — an f64 element, where an unresolved element type is not
+//                  merely a refusal: the annotate pass has no tag for it, the
+//                  backends fall back to an untyped 4-byte read, and every
+//                  element comes back 0 while the length is right (#9485). A
+//                  `string` element cannot catch that — it is pointer-width
+//                  either way. On wasm the residual `T` also reached the
+//                  funcref type a call_indirect dispatches through, so this
+//                  position needed #9488 as well as #9485.
 //
 // Sentinels are 251-253, above the `% 113` the success path returns.
 import "core/iter" as iter;
@@ -60,11 +68,19 @@ function strings(i: i32): i32 {
     return asc[0].len();
 }
 
+// An f64 element: the width an untyped read gets wrong, on every backend.
+function floats(i: i32): i32 {
+    var xs: f64[] = [5.5, 2.25, 8.5, 1.75, 4.5];
+    var big = iter.filter(iter.of(xs), (x: f64): boolean => { return x > 3.0; });
+    if (big.len() != 3) { return 253; }
+    return (big[0] as i32) + (big[1] as i32) + (big[2] as i32);
+}
+
 function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 50) {
-        acc = acc + filter_chain(i) + map_chain(i) + annotated(i) + strings(i);
+        acc = acc + filter_chain(i) + map_chain(i) + annotated(i) + strings(i) + floats(i);
         i = i + 1;
     }
     if (__rc_underflow_count() != 0) { return 251; }

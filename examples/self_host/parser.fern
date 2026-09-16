@@ -7524,6 +7524,10 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
     //       call site would fail to resolve. `of[T](xs: T[]): ArrayIter[T]`
     //       satisfies both; `find` / `nth` / `count` satisfy neither and stay
     //       erased (as before).
+    // The DECLARED bounds, before this loop appends promoted vars to the same
+    // list: a declaration carrying one is cloned whatever happens here, which
+    // is what clause (c-fn) below keys on.
+    var declared_bound: boolean = bounded_tps.len() > 0;
     var ui: i32 = 0;
     while (ui < unbounded_tps.len()) {
         var un: string = unbounded_tps[ui];
@@ -7661,6 +7665,26 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
         // silent miscompile survives one variable further out.
         if (has_bare_scalar_param(params, un) && !ret_mentions_any(ret_type, unbounded_tps)
             && all_bare_scalar_bound(params, unbounded_tps)) { promote = true; }
+        // (c-fn) the FN-PARAM sibling of (c) and (c-arr). `filter[T, I:
+        // Iterator[T]](it: I, keep: (T) => boolean): T[]` reaches T in no
+        // parameter type of its own — `it: I` binds I, and T lives inside
+        // `keep`'s ARGUMENT, which token_at_paren_depth0 deliberately does not
+        // reach. The DECLARED bound on I makes the clone happen regardless, so
+        // T survives erased in it: the malformed stranded-sibling clone clause
+        // (c) guards against, arrived at from the other direction. The residual
+        // T then reads as pointer-shaped, and on wasm32 the funcref type a
+        // call_indirect dispatches through says i32 while the call pushes an
+        // f64 — a module wasmtime rejects (#9488).
+        //
+        // Keyed on a DECLARED bound rather than `all_tp_count == 1`: that bound
+        // is what makes the clone happen, and a declared-bounded sibling is
+        // substituted either way, so it is never the sibling this strands. The
+        // erased ones must ALL be reachable through a fn param, so promoting
+        // the set leaves nothing behind — the same argument clause (c′) makes.
+        // `map[T, U, I: Iterator[T]]` needs exactly that: T from the lambda's
+        // argument, U from its result. The bindings come from infer_inst's two
+        // fn-param clauses, which are what make a promoted var resolvable.
+        if (declared_bound && all_fn_param_bound(params, unbounded_tps)) { promote = true; }
         if (promote) { bounded_tps = bounded_tps.append(un); bound_names = bound_names.append(""); }
         ui = ui + 1;
     }
@@ -9192,6 +9216,22 @@ function infer_inst(fd: FuncDecl, args: ast.Expr[], env: MEnv, funcs: MFns): str
                     binds = bind_unify(fd.params[i].fn_ret, lr, fd.type_params, binds);
                 }
             }
+            // The fn-param's ARGUMENT positions, the sibling of the return
+            // clause above: `filter[T, I: Iterator[T]]` reaches T only through
+            // `keep: (T) => boolean`, so without this the promoted T never
+            // binds and the call stays a template. full_ret_binds has carried
+            // the same clause since #7765; this is the instantiation half.
+            if (fd.params[i].type_name == "fn") {
+                var fpts: string[] = split_top_commas(fd.params[i].fn_param_types);
+                var lpts: string[] = lambda_param_types_of(args[i], env, funcs);
+                var q: i32 = 0;
+                while (q < fpts.len()) {
+                    if (q < lpts.len() && lpts[q].len() > 0 && tp_index(fpts[q], fd.type_params) >= 0) {
+                        binds = bind_unify(fpts[q], lpts[q], fd.type_params, binds);
+                    }
+                    q = q + 1;
+                }
+            }
         }
         i = i + 1;
     }
@@ -9243,6 +9283,22 @@ function infer_inst_ret(fd: FuncDecl, args: ast.Expr[], expected_ret: string, en
                 var lr: string = lambda_ret_of(args[i], env, funcs);
                 if (lr.len() > 0) {
                     binds = bind_unify(fd.params[i].fn_ret, lr, fd.type_params, binds);
+                }
+            }
+            // The fn-param's ARGUMENT positions, the sibling of the return
+            // clause above: `filter[T, I: Iterator[T]]` reaches T only through
+            // `keep: (T) => boolean`, so without this the promoted T never
+            // binds and the call stays a template. full_ret_binds has carried
+            // the same clause since #7765; this is the instantiation half.
+            if (fd.params[i].type_name == "fn") {
+                var fpts: string[] = split_top_commas(fd.params[i].fn_param_types);
+                var lpts: string[] = lambda_param_types_of(args[i], env, funcs);
+                var q: i32 = 0;
+                while (q < fpts.len()) {
+                    if (q < lpts.len() && lpts[q].len() > 0 && tp_index(fpts[q], fd.type_params) >= 0) {
+                        binds = bind_unify(fpts[q], lpts[q], fd.type_params, binds);
+                    }
+                    q = q + 1;
                 }
             }
         }
@@ -18198,6 +18254,52 @@ function body_binds_bare_var(stmts: ast.Stmt[], params: ast.ParamDecl[], tps: st
             },
             _ => {}
         }
+    }
+    return false;
+}
+
+// has_fn_param_arg_var reports whether some fn-typed param declares `name` in an
+// ARGUMENT position — the `T` of `keep: (T) => boolean`. parse_decl_type
+// coarsens such a param to the flat "fn" tag and keeps the real spelling in the
+// sidecars, which is why token_at_paren_depth0 cannot see it: it scans
+// `type_name`, and there the position does not exist.
+// all_fn_param_bound reports whether EVERY var in `tps` is reachable through
+// some fn-typed param — in an argument position or as its declared result. It
+// is the no-stranded-sibling test for clause (c-fn): promoting a set this holds
+// of leaves nothing erased behind, the same argument clause (c′) makes for the
+// two-var Result shape.
+function all_fn_param_bound(params: ast.ParamDecl[], tps: string[]): boolean {
+    var i: i32 = 0;
+    while (i < tps.len()) {
+        if (!has_fn_param_arg_var(params, tps[i]) && !has_fn_param_ret_var(params, tps[i])) { return false; }
+        i = i + 1;
+    }
+    return tps.len() > 0;
+}
+
+// has_fn_param_ret_var is the result-position sibling of has_fn_param_arg_var:
+// the `U` of `f: (T) => U`, which parse_decl_type keeps in the fn_ret sidecar.
+// EXACT, not mentioning: `f: (T) => U[]` (flat_map's shape) binds U fine, but
+// its clone is invalid on wasm for a further reason of its own (#9496), so
+// admitting it here trades one invalid module for a differently invalid one.
+function has_fn_param_ret_var(params: ast.ParamDecl[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < params.len()) {
+        if ((params[i].type_name == "fn" || params[i].type_name == "fn[]") && params[i].fn_ret == name) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+function has_fn_param_arg_var(params: ast.ParamDecl[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < params.len()) {
+        if ((params[i].type_name == "fn" || params[i].type_name == "fn[]") && params[i].fn_param_types.len() > 0) {
+            for seg in split_top_commas(params[i].fn_param_types) {
+                if (token_at_paren_depth0(strip_ws(seg), name)) { return true; }
+            }
+        }
+        i = i + 1;
     }
     return false;
 }
