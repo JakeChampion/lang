@@ -76,6 +76,11 @@ type Inst struct {
 	K    ssa.OpKind // BinOp / SetCmp operation
 	W    int8       // result width for MovImm/BinOp/UnNeg/Call (0/32 => i32, 64 => i64)
 
+	// SrcImm (BinOp/SetCmp): the right operand is Imm rather than reg[Src].
+	// The constant that would have been materialised has every use in this
+	// position, so no register ever holds it.
+	SrcImm bool
+
 	Bytes  int8 // MemLoad/MemStore access width in bytes (1/2/8)
 	Signed bool // MemLoad: sign-extend a sub-word value
 
@@ -196,6 +201,7 @@ func EmitWithCalleeSaved(f *ssa.Func, numAlloc int, calleeSaved []bool) (*Progra
 		alloc:    alloc,
 		uses:     ssa.BuildUses(f),
 		numAlloc: numAlloc,
+		folded:   foldableConsts(f),
 		s0:       numAlloc, s1: numAlloc + 1, s2: numAlloc + 2, s3: numAlloc + 3,
 		idx:        map[*ssa.Block]int{},
 		phiTempCap: maxPhiCount(f),
@@ -268,9 +274,12 @@ func EmitModule(funcs map[string]*ssa.Func, numAlloc int) (map[string]*Program, 
 }
 
 type emitter struct {
-	f              *ssa.Func
-	alloc          *ssa.Allocation
-	uses           *ssa.Uses
+	f     *ssa.Func
+	alloc *ssa.Allocation
+	uses  *ssa.Uses
+	// folded: OpConstInt results every reader takes as an immediate right
+	// operand (foldableConsts), so no MovImm is emitted for them.
+	folded         map[int32]int64
 	numAlloc       int
 	s0, s1, s2, s3 int
 
@@ -621,9 +630,71 @@ func (e *emitter) callResultDst(result ssa.Value, staging int) int {
 	return staging
 }
 
+// immediateRight reports the constant an op's right operand folds into, when
+// foldableConsts admitted it.
+func (e *emitter) immediateRight(op *ssa.Op) (int64, bool) {
+	if len(op.Args) != 2 {
+		return 0, false
+	}
+	imm, ok := e.folded[op.Args[1].ID]
+	return imm, ok
+}
+
+// foldableConsts finds the integer constants that can be an x86 immediate at
+// every site that reads them: an i32-range value whose readers are all the
+// right operand of a comparison or of a direct-form binary op. Those readers
+// render `cmp r, imm` / `add r, imm` and the constant needs no register.
+// Anything else — a phi, a call argument, a store, a terminator, the LEFT
+// operand — keeps the materialising MovImm, so a partially foldable constant
+// is not folded at all.
+func foldableConsts(f *ssa.Func) map[int32]int64 {
+	uses := ssa.BuildUses(f)
+	out := map[int32]int64{}
+	for _, b := range f.Blocks {
+		for _, op := range b.Ops {
+			if op.Kind != ssa.OpConstInt || !op.Result.IsValid() {
+				continue
+			}
+			if op.Imm < -(1<<31) || op.Imm >= (1<<31) {
+				continue
+			}
+			sites := uses.Of(op.Result)
+			if len(sites) == 0 {
+				continue
+			}
+			ok := true
+			for _, u := range sites {
+				if u.Op == nil || u.Index != 1 || !immediateRightKind(u.Op.Kind) {
+					ok = false
+					break
+				}
+			}
+			if ok {
+				out[op.Result.ID] = op.Imm
+			}
+		}
+	}
+	return out
+}
+
+// immediateRightKind is the set of ops whose right operand may be an imm32:
+// the comparisons and the binary ops binMnemonic renders in two-operand form.
+func immediateRightKind(k ssa.OpKind) bool {
+	switch k {
+	case ssa.OpEq, ssa.OpNe, ssa.OpLt, ssa.OpLtU, ssa.OpLe, ssa.OpLeU,
+		ssa.OpGt, ssa.OpGtU, ssa.OpGe, ssa.OpGeU,
+		ssa.OpAdd, ssa.OpSub, ssa.OpAnd, ssa.OpOr, ssa.OpXor:
+		return true
+	}
+	return false
+}
+
 func (e *emitter) emitOp(op *ssa.Op) error {
 	switch op.Kind {
 	case ssa.OpConstInt, ssa.OpConstBool:
+		if _, ok := e.folded[op.Result.ID]; ok {
+			return nil // every reader takes it as an immediate
+		}
 		dst := e.coalesceDst(op.Result, -1)
 		e.push(Inst{Op: MovImm, Dst: dst, Imm: op.Imm, W: op.Width})
 		if dst == e.s2 {
@@ -634,6 +705,19 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 	case ssa.OpAdd, ssa.OpSub, ssa.OpMul, ssa.OpAnd, ssa.OpOr, ssa.OpXor,
 		ssa.OpShl, ssa.OpShr, ssa.OpShrU, ssa.OpRotr,
 		ssa.OpDiv, ssa.OpDivU, ssa.OpRem, ssa.OpRemU:
+		if imm, ok := e.immediateRight(op); ok {
+			ra, err := e.materialize(op.Args[0], e.s0)
+			if err != nil {
+				return err
+			}
+			dst := e.coalesceDst(op.Result, -1)
+			e.movReg(dst, ra)
+			e.push(Inst{Op: BinOp, Dst: dst, Imm: imm, SrcImm: true, K: op.Kind, W: op.Width})
+			if dst == e.s2 {
+				e.place(op.Result, e.s2)
+			}
+			return nil
+		}
 		ra, rb, err := e.binOperands(op)
 		if err != nil {
 			return err
@@ -655,6 +739,19 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 
 	case ssa.OpEq, ssa.OpNe, ssa.OpLt, ssa.OpLtU, ssa.OpLe, ssa.OpLeU,
 		ssa.OpGt, ssa.OpGtU, ssa.OpGe, ssa.OpGeU:
+		if imm, ok := e.immediateRight(op); ok {
+			ra, err := e.materialize(op.Args[0], e.s0)
+			if err != nil {
+				return err
+			}
+			dst := e.coalesceDst(op.Result, -1)
+			e.movReg(dst, ra)
+			e.push(Inst{Op: SetCmp, Dst: dst, Imm: imm, SrcImm: true, K: op.Kind})
+			if dst == e.s2 {
+				e.place(op.Result, e.s2)
+			}
+			return nil
+		}
 		ra, rb, err := e.binOperands(op)
 		if err != nil {
 			return err
