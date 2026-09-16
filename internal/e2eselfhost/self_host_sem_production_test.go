@@ -559,4 +559,30 @@ function main(): i32 {
     return total;
 }
 `},
+	// A generic the parser's monomorphiser CLONES rather than one this boundary
+	// instantiates: `first` and `append_all` bind T through a container, which
+	// promotes them to bounded templates, so the module the CLI lowers holds
+	// `first__i32`, `append_all__string` and `fold__i32` with no template
+	// left. Each clone is concrete, and every one of the five bodies produces;
+	// a clone that still read as a template refused every caller of it as
+	// "uninstantiated generic", and the fold's callback slot kept an `own T`
+	// nothing substituted.
+	{name: "generic-clones", atLeast: 6, src: `
+function first[T](xs: T[]): T { return xs[0]; }
+function append_all[T](into: T[], more: T[]): T[] {
+    var out: T[] = into;
+    for m in more { out = out.append(m); }
+    return out;
+}
+function fold[T](xs: i32[], own acc: T, visit: (i32, own T) => T): T {
+    for x in xs { acc = visit(x, acc); }
+    return acc;
+}
+function add(x: i32, own acc: i32): i32 { return acc + x; }
+function total(xs: i32[]): i32 { return fold(xs, 0, add); }
+function main(): i32 {
+    var names: string[] = append_all(["ab" + ""], ["cde" + "", "f" + ""]);
+    return first([40]) + total([1, 2, 3]) + names.len() + names[2].len();
+}
+`},
 }

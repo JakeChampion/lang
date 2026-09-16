@@ -28,6 +28,8 @@
 //     concluded, not what its declaration says — so such a body keeps the AST
 //     lowering instead, and so does anything that called it. `prune` is that
 //     fixpoint.
+import "./ast";
+import "./astwalk";
 import "./ircore";
 import "./irlower";
 import "./parser";
@@ -307,12 +309,83 @@ function ast_built_value(r: Rows, i: i32): string {
     return "is a function value " + creator + " builds, which the AST lowering defines";
 }
 
+// The names a body calls directly, as written: a bare callee, or a method's
+// field name with a leading dot, which `rows_of_name` matches against every
+// receiver-qualified spelling that ends in it.
+function called_name(e: ast.Expr, own acc: string[]): string[] {
+    if let ast.ExprCall(c) = e {
+        if let ast.ExprIdent(id) = c.callee {
+            if (parser.mkclo_body(id.name).len() == 0) { return acc.append(id.name); }
+        }
+        if let ast.ExprFieldAccess(fa) = c.callee { return acc.append("." + fa.field); }
+    }
+    return acc;
+}
+
+function direct_callees(mod: parser.Module, built: semsource.Built, i: i32): string[] {
+    var out: string[] = [];
+    if (i < mod.funcs.len()) {
+        for st in mod.funcs[i].body { out = astwalk.fold_stmt(st, out, called_name); }
+        return out;
+    }
+    for c in built.instances[i - mod.funcs.len()].func.calls { out = out.append(c.name); }
+    return out;
+}
+
+// The rows a called name may reach: the declaration or instance of that name,
+// or every method whose receiver-qualified spelling ends in the dotted field.
+function rows_of_name(r: Rows, name: string): i32[] {
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < r.n1.len()) {
+        if (r.n1[i] == name || r.n2[i] == name) { out = out.append(i); }
+        else if (name.len() > 0 && name[0] == b'.' && r.n2[i].len() > name.len()
+            && slice_unchecked(r.n2[i], r.n2[i].len() - name.len(), r.n2[i].len()) == name) { out = out.append(i); }
+        i = i + 1;
+    }
+    return out;
+}
+
+// Every body an AST-lowered hoisted body reaches by direct call, through any
+// AST-lowered body on the way, keeps the AST lowering. A hoisted body is
+// called through its box, and the AST lowering's ownership analysis cannot
+// see through an indirect call: the AST caller of the box takes nothing
+// below it to consume an `own` reference it lent, and releases it after, so
+// a produced consumer anywhere in that cone frees it first.
+function ast_indirect_cone(r: Rows, mod: parser.Module, built: semsource.Built): Rows {
+    var pending: i32[] = [];
+    var i: i32 = 0;
+    while (i < r.body.len()) {
+        if (!r.keep[i] && hoisted(r.n1[i])) { pending = pending.append(i); }
+        i = i + 1;
+    }
+    var seen: i32[] = [];
+    var at: i32 = 0;
+    while (at < pending.len()) {
+        var row: i32 = pending[at];
+        at = at + 1;
+        if (util.index_of_i32(seen, row) >= 0) { continue; }
+        seen = seen.append(row);
+        for name in direct_callees(mod, built, row) {
+            for callee in rows_of_name(r, name) {
+                if (r.keep[callee]) {
+                    report(r.n1[callee], "is reached by a direct call from " + r.n1[row] + ", which the AST lowering calls through a box");
+                    r = Rows { ...r, keep: r.keep.with(callee, false) };
+                }
+                pending = pending.append(callee);
+            }
+        }
+    }
+    return r;
+}
+
 // prune turns off every produced body that calls one this boundary is not
 // emitting, to a fixpoint: dropping a body takes its symbol out of the live
 // set, so the next round reaches whatever called it, and may make it a
 // function value the AST lowering builds, so the next round reaches whatever
-// calls a value of its type. A round that turns nothing off is the fixpoint,
-// and `keep` only ever shrinks, so there is one.
+// calls a value of its type, and whatever an AST-lowered hoisted body reaches.
+// A round that turns nothing off is the fixpoint, and `keep` only ever
+// shrinks, so there is one.
 function prune(r: Rows, mod: parser.Module, built: semsource.Built): Rows {
     var changed: boolean = true;
     while (changed) {
@@ -334,8 +407,17 @@ function prune(r: Rows, mod: parser.Module, built: semsource.Built): Rows {
             }
             i = i + 1;
         }
+        var before: i32 = kept_count(r);
+        r = ast_indirect_cone(r, mod, built);
+        if (kept_count(r) != before) { changed = true; }
     }
     return r;
+}
+
+function kept_count(r: Rows): i32 {
+    var n: i32 = 0;
+    for k in r.keep { if (k) { n = n + 1; } }
+    return n;
 }
 
 // The symbol a call to declaration `i` names: the receiver-qualified spelling

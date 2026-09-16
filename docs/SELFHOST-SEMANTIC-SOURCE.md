@@ -1238,7 +1238,10 @@ not obvious:
   an AST-lowered caller built and handed down, which no operand names, so the
   fixpoint also turns off a produced body that calls a value of a type an
   AST-lowered hoisted body (`$wrap`, `$clo`, `$iife`) has — by type rather
-  than by flow, the safe direction (#9414,
+  than by flow, the safe direction — and, in the other direction, a produced
+  hoisted body whose creator is AST-lowered together with everything it
+  reaches by direct call: the AST caller of a box cannot see through the
+  call, so nothing below it may consume what that caller lent (#9414,
   `rc-log/2026-09-16-a-function-value-the-ast-lowering-builds-is-not-called-by-a-produced-body.md`).
 
 The whole-module refusal that preceded the fixpoint was worth measuring: over
@@ -1683,17 +1686,70 @@ would not:
 
 ### The leaves that are left, by measured size
 
-| leaf | functions refused |
-|---|---|
-| `value-returning body falls through` | 44 |
-| `unsupported map shape` | 37 |
-| `call target was refused: uninstantiated generic` | 33 |
-| `unsupported value block` | 30 |
-| `unsupported destructuring declaration` | 25 |
-| `unbound name is not a semantic value` | 19 |
-| `operator contract` | 17 |
-| `unsupported call target` | 16 |
-| `unsupported match guard` | 13 |
+On the compiler compiling itself there are none: **8,307 of 8,307
+declarations produce** (2026-09-16, `FERN_SEM_IR=1 FERN_SEM_IR_REPORT=1
+bin/fern-selfhost -target x86-64-linux -o … examples/self_host/fern.fern`),
+and the report is the tally line alone. The compiler that comes out compiles
+`lexer.fern`, `parser.fern`, `checker.fern` and the whole tree **byte-identically
+to the AST build**, on x86-64, arm64 and wasm. The table this section held —
+44 `value-returning body falls through`, 37 `unsupported map shape`, 33
+`uninstantiated generic`, and six smaller rows — was one leaf wearing nine
+names.
+
+The leaf was in the PARSER, not here. `parser.monomorphize_module` clones a
+generic whose variable is bindable from its parameters (`first[T](xs: T[])`,
+`append_all[T](into: T[], more: T[])`, every `astwalk` fold) into
+`first__i32` with `type_params` emptied — and `type_param_count` copied from
+the template. `generic_decl` reads either field, so every clone was a
+template with nothing to bind: refused as `uninstantiated generic` without a
+report line (a template's refusal is silent by design), and every caller of
+one, transitively, as `call target was refused`. That is what kept the
+`astwalk` folds and every callback through them on the AST side, and it is
+the whole of #9414: `ident_of` was AST-lowered because `fold_expr_pruned__…`
+read as a template. Underneath it a second bug in the same pass:
+`subst_ty` did not look behind a function type's `own T` slot, so a fold's
+callback parameter still spelled `own T` in the clone, which the clone-as-
+template reading had been hiding. Both are one field and one branch
+(`clone_bg`, `subst_ty`); the production suite's `generic-clones` program
+holds the three shapes and fails at 0 of 3 without the first fix and 1 of 5
+without the second.
+
+Measured on the 4-core x86-64 container, all three compilers built from the
+same sources by `bin/fern-selfhost`:
+
+| compiler | built by | build | on `checker.fern` | on `fern.fern` |
+|---|---|---|---|---|
+| native-built (`bin/fern-selfhost`) | Go | — | 4.0 s, 398 MB | 47.4 s, 4,867 MB |
+| AST-lowered stage 2 | self-host, `FERN_SEM_IR` unset | 59 s, 5,489 MB | 5.0 s, 903 MB | 66.1 s, 9,973 MB |
+| semantically lowered stage 2 | self-host, `FERN_SEM_IR=1` | 9m26s, 8,396 MB | 7.1 s, 122 MB | 60.6 s, 830 MB |
+
+The produced compiler's output is identical to both others' on every input in
+the table. The 6,865 MB #9365 measured on `lexer.fern` is gone with the
+mixing: that figure was a mixed module, and no body is mixed now. Read the
+last two rows together: the compiler this path builds runs the whole tree in
+**a twelfth of the memory** the AST-lowered one does, at the same speed. That
+is the goal-2 gap (`make distcheck` OOM-killed at 13.9 GB, `docs/BOOTSTRAP.md`)
+closed from the other side — not by porting the AST lowering's ownership
+analysis, but by the lowering that replaces it.
+
+What the substitution still costs is the BUILD: the semantic self-build runs
+9.5 minutes at 8.4 GB where the AST self-build runs 59 s at 5.5 GB. That is
+`semsource` + `ssaunits` + `ssarc` running once per declaration on top of the
+AST lowering that still runs for the eligibility verdict.
+
+**The fixpoint is not reached, and the reason is memory in the produced code
+of those same modules.** The produced compiler rebuilding itself through the
+semantic path prints the same tally and then exhausts the 16 GiB arena
+(exit 125) 19 minutes in, at 13.5 GB RSS, where the native-built compiler
+does the identical job in 8.4 GB. The two runs execute the same algorithm on
+the same input; what differs is the memory management of the compiler
+running it, so the excess is the produced lowering's own on `semsource`,
+`ssaunits`, `ssarc`, `semlower` and their neighbours — the modules a build
+with `FERN_SEM_IR` unset never executes, which is why the whole-tree run
+above is twelve times leaner and this one is not. A `FERN_LEAKCHECK`
+build of the produced compiler on a mid-sized input with the flag on is the
+instrument. `TestSelfHostSemanticWholeCompilerX86_64` pins the tally and the
+byte-identity; the fixpoint joins it when it holds.
 
 Read these the way this file reads every leaf: probe the refused functions by
 name before building, because the histogram has repeatedly ranked the work
