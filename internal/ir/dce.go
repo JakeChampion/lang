@@ -13,7 +13,8 @@
 // exits this scope" terminator and the next control-flow merge.
 //
 // Terminators:
-//   - OpReturn / OpReturnVoid       — exit the function entirely
+//   - OpReturn / OpReturnVoid /
+//     OpReturnPair                  — exit the function entirely
 //   - OpBr                          — unconditional branch (forward
 //                                     for blocks/ifs, backward for
 //                                     loops); subsequent ops in the
@@ -103,13 +104,13 @@ func dceOnce(ops []Op) []Op {
 }
 
 // isTerminator reports whether op unconditionally exits its enclosing
-// scope. OpReturn / OpReturnVoid leave the function; OpBr leaves the
+// scope. The three returns leave the function; OpBr leaves the
 // scope at the supplied depth (and any inner scopes along the way).
 // OpBrIf doesn't qualify because the branch is conditional — control
 // can fall through.
 func isTerminator(k OpKind) bool {
 	switch k {
-	case OpReturn, OpReturnVoid, OpBr:
+	case OpReturn, OpReturnVoid, OpReturnPair, OpBr:
 		return true
 	}
 	return false

@@ -102,9 +102,9 @@ backend.** The cutover is much closer than the shelve doc reads.
 | `wasmssa` | yes | no | **single user function only** — measured below |
 | `x86_64ssa` | **yes, since 2026-09-01** | **yes, since 2026-09-02** | 328/348 compared, 0 refused, 0 divergences — the 20 others are programs the flat backend cannot build either |
 
-The spread is much wider than "arm64 is ahead". One backend is corpus-complete,
-one compares three fifths of the corpus and agrees on all of it, and one cannot
-compile a program with two functions in it.
+The spread is much wider than "arm64 is ahead". Two backends are
+corpus-complete and agree on every program compared, and one cannot compile a
+program with two functions in it.
 
 Two concrete blockers, and only two:
 

@@ -2281,6 +2281,7 @@ var heapUsingHelpers = map[string]bool{
 	"poll":                       true,
 	"hostname":                   true,
 	"create_dir_all":             true,
+	"__fern_heap_bump_bytes":     true,
 }
 
 // runtimeHelperDeps records the helper→helper call edges (a helper that tail-
@@ -2940,7 +2941,9 @@ func emitArrPushGrowHelper(w func(string, ...any)) {
 	w("\tadd r11, r10") // allocSize = headerBytes + newCap*stride
 	w("\tcmp r11, 2147483647")
 	w("\tja .Lssa_apg_sizebad")
+	w("\tsub rsp, 8")             // entered 8 past alignment; the trampoline is called at 16
 	ssaBumpAlloc(w, "rax", "r11") // base; every other register survives
+	w("\tadd rsp, 8")
 	w("\tmov r11, rax")
 	w("\tadd r11, r10")               // new_data = base + headerBytes
 	w("\tmov [r11 - 12], r9d")        // cap = newCap
@@ -3052,7 +3055,9 @@ func emitArrCowInplaceHelper(w func(string, ...any)) {
 	w("\tmov r11d, r9d")
 	w("\timul r11d, esi")
 	w("\tadd r11d, r10d")         // allocSize = headerBytes + cap*stride
+	w("\tsub rsp, 8")             // entered 8 past alignment; the trampoline is called at 16
 	ssaBumpAlloc(w, "rax", "r11") // base; every other register survives
+	w("\tadd rsp, 8")
 	w("\tmov r11, rax")
 	w("\tadd r11, r10")               // new_data = base + headerBytes
 	w("\tmov [r11 - 12], r9d")        // cap
