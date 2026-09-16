@@ -37,6 +37,12 @@ func rspDeltaAtCalls(t *testing.T, asm, label string) []int {
 		if strings.HasSuffix(ln, ":") && !strings.HasPrefix(ln, ".L") {
 			break
 		}
+		// Call-frame directives describe the frame, they do not build it: they
+		// assemble to no bytes, so they move nothing and must not be read as
+		// the instruction that ends the prologue.
+		if strings.HasPrefix(ln, ".cfi_") {
+			continue
+		}
 		// The prologue shifts rsp by a multiple of 16 as a whole — the spill
 		// reservation is sized so it and the callee-saved pushes below it come
 		// to one aligned step — so none of its parts count towards the body's

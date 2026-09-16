@@ -363,8 +363,29 @@ func emitFuncBody(w func(string, ...any), name string, p *Program, numAlloc int,
 	saved := calleeSavedIn(body.String(), p.NumRegFile)
 
 	w("%s:", label)
+	// Call-frame information, so a profiler or debugger can walk out of this
+	// frame. The assembler turns these into .eh_frame (internal/native/cfi);
+	// without them the image carries no unwind data at all, which is what the
+	// stack-machine emitter has always provided and this one did not.
+	//
+	// Everything is expressed against rbp: once it is the CFA register the
+	// rule holds for the whole body, so neither the spill reservation nor the
+	// callee-saved pushes below need to touch it.
+	//
+	// The rules are the ones the stack-machine emitter emits, and no more.
+	// Describing where each callee-saved register went would let a debugger
+	// recover the caller's copies, but that emitter does not do it either, and
+	// here it is far from free: this backend returns from every block that
+	// ends in one, 3.5 times per function across the self-host driver, where
+	// that emitter jumps to a single epilogue. Per-register rules at each of
+	// those cost 772 KB of .eh_frame on the driver, a 9% binary, for
+	// information the other backend never provided.
+	w("\t.cfi_startproc")
 	w("\tpush rbp")
+	w("\t.cfi_def_cfa_offset 16")
+	w("\t.cfi_offset rbp, -16")
 	w("\tmov rbp, rsp")
+	w("\t.cfi_def_cfa_register rbp")
 	// The spill area is reserved first so a slot's [rbp - 8*(n+1)] never lands on
 	// a pushed register, and the reservation absorbs whatever padding the pushes
 	// need: the two together shift rsp by a multiple of 16, which is the
@@ -381,6 +402,7 @@ func emitFuncBody(w func(string, ...any), name string, p *Program, numAlloc int,
 	}
 
 	writeBody(w, body.String(), saved)
+	w("\t.cfi_endproc")
 	return nil
 }
 
@@ -390,6 +412,12 @@ func emitFuncBody(w func(string, ...any), name string, p *Program, numAlloc int,
 func writeBody(w func(string, ...any), body string, saved []int) {
 	for i, piece := range strings.Split(body, restoreMarker+"\n") {
 		if i > 0 {
+			// A teardown's CFI rules describe the epilogue only. Blocks are
+			// emitted in layout order, so more body can follow a return, and a
+			// rule left in effect would describe those instructions wrongly:
+			// remember the frame's state here and restore it after, which is
+			// what a single-epilogue emitter gets for free.
+			w("\t.cfi_remember_state")
 			for j := len(saved) - 1; j >= 0; j-- {
 				w("\tpop %s", reg(saved[j]))
 			}
@@ -533,7 +561,9 @@ func emitFuncBlocks(w func(string, ...any), label string, p *Program, numAlloc, 
 			restore()
 			w("\tmov rsp, rbp")
 			w("\tpop rbp")
+			w("\t.cfi_def_cfa rsp, 8")
 			w("\tret")
+			w("\t.cfi_restore_state")
 		case TRetPair:
 			// System V pair return: tag in rax, payload in rdx. The two moves are
 			// a parallel copy (a home may already be rax/rdx), so resolve them
@@ -544,7 +574,9 @@ func emitFuncBlocks(w func(string, ...any), label string, p *Program, numAlloc, 
 			restore()
 			w("\tmov rsp, rbp")
 			w("\tpop rbp")
+			w("\t.cfi_def_cfa rsp, 8")
 			w("\tret")
+			w("\t.cfi_restore_state")
 		case TJmp:
 			// A block that ends where its successor begins falls through.
 			if blk.Term.Target != next {
