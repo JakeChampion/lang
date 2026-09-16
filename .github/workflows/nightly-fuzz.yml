@@ -268,6 +268,32 @@ jobs:
           gotestsum --format pkgname-and-test-fails -- -timeout=43m \
             -run '^TestDifferential_SelfHostSemanticArm64$' ./internal/e2e/
 
+  # The moving window through the wasm emitter, one job per lowering. Needs
+  # neither a cross toolchain nor qemu, so it shards by lowering rather than by
+  # seed range.
+  differential-selfhost-wasm:
+    needs: window
+    name: nightly-differential-selfhost-wasm-${{ matrix.lowering }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { lowering: ast, selector: TestDifferential_SelfHostWasm }
+          - { lowering: semantic, selector: TestDifferential_SelfHostSemanticWasm }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+      - name: go test (self-host wasm ${{ matrix.lowering }}, seeds ${{ needs.window.outputs.base }}+)
+        env:
+          FERN_SELFHOST_DIFF: "1"
+          DIFF_ORACLE_SEED_BASE: "${{ needs.window.outputs.base }}"
+          SELFHOST_DIFF_SEEDS: "${{ env.SEED_WINDOW }}"
+        run: |
+          gotestsum --format pkgname-and-test-fails -- -timeout=43m \
+            -run "^${{ matrix.selector }}$" ./internal/e2e/
+
   fuzz:
     if: github.repository == 'JakeChampion/lang'
     strategy:
@@ -418,7 +444,7 @@ jobs:
   # land on one long-lived issue rather than a fresh one per night, so a
   # week of the same break is a thread and not eight duplicates.
   report:
-    needs: [window, differential, differential-selfhost, differential-selfhost-arm64, differential-selfhost-semantic-arm64, fuzz, fuzz-selfhost-coverage]
+    needs: [window, differential, differential-selfhost, differential-selfhost-arm64, differential-selfhost-semantic-arm64, differential-selfhost-wasm, fuzz, fuzz-selfhost-coverage]
     if: failure() && github.event_name == 'schedule'
     runs-on: ubuntu-latest
     steps:
