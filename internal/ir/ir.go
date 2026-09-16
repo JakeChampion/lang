@@ -5538,6 +5538,9 @@ type builder struct {
 	defers     []*ast.Defer
 	deferSlots []int32
 	deferIdx   map[*ast.Defer]int
+	// deferReads memoises deferReadLocals: the names the defer actions
+	// read, which are barred from a precise drop.
+	deferReads map[string]bool
 	// ptrW is the target's heap-pointer width in bytes — 4 on
 	// wasm32, 8 on arm64. Sizes enum payload slots, struct
 	// field offsets, array element strides, and closure
