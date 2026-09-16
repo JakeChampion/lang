@@ -1793,6 +1793,18 @@ compiler's at 1.77, 3.09, 3.66, 5.75 and 7.21 GB at the same points. The
 registry rewrite is the next lead in both. `TestSelfHostSemanticWholeCompilerX86_64`
 pins the tally, the byte-identity and the fixpoint.
 
+**The binary fixpoint holds too.** The produced compiler compiling the
+whole tree to an ELF binary (`-o`, its own assembler and linker in
+process) reproduces itself byte for byte. Three sites in the assembler
+stood in the way, each a buffer lent where the lowering needed it owned:
+the code buffer projected out of `X86Asm` and lent to the byte emitters,
+the label tables written through `with` on a field with no in-place path,
+and the .eh_frame renderer's buffer appended to through a borrowed
+parameter more than once. With the first two fixed the self-rebuild took
+6m15s at 11.9 GB peak RSS; `rc-log/2026-09-16-a-record-lent-on-through-a-wrapper-grows-under-its-own-count.md`
+has each site's measurement; with all three fixed it takes 4m47s at
+6.06 GB.
+
 
 Read these the way this file reads every leaf: probe the refused functions by
 name before building, because the histogram has repeatedly ranked the work
