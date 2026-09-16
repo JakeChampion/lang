@@ -109,5 +109,5 @@
 # trade is one whole-buffer copy for a later small one, which is why
 # `Scope.bind`'s mean copy fell from 92 to 77 bytes while it crossed more often.
 
-x86_64/checker.cliff_bytes	177799608
-x86_64/checker.cliff_count	403754
+x86_64/checker.cliff_bytes	207430012
+x86_64/checker.cliff_count	621366

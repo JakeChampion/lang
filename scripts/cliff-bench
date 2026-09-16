@@ -77,8 +77,8 @@ fi
 # The line is `fern: arr_push_shared_count=N arr_push_shared_bytes=N`. A missing
 # line means the diagnostic was compiled out, so the gate fails loudly rather
 # than report a green zero.
-count="$(sed -n 's/.*arr_push_shared_count=\([0-9]*\).*/\1/p' "$work/cliff" | head -1)"
-bytes="$(sed -n 's/.*arr_push_shared_bytes=\([0-9]*\).*/\1/p' "$work/cliff" | head -1)"
+count="$(sed -n 's/^fern: .*arr_push_shared_count=\([0-9]*\).*/\1/p' "$work/cliff" | head -1)"
+bytes="$(sed -n 's/^fern: .*arr_push_shared_bytes=\([0-9]*\).*/\1/p' "$work/cliff" | head -1)"
 if [ -z "$count" ] || [ -z "$bytes" ]; then
   echo "cliff-bench: no cliff report from the self-host compiler on $SUBJECT" >&2
   sed -n '1,20p' "$work/cliff" >&2
