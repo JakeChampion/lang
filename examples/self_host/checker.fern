@@ -11043,6 +11043,20 @@ function ow_is_own_func(ofuncs: OwnFunc[], name: string): boolean {
   return false;
 }
 
+// ow_variant_known reports whether `name` is a declared VARIANT, optionally of
+// one named enum. A payload-less variant is spelled as a bare name rather than
+// a call, so it reaches the ownership predicate as an identifier (or, spelled
+// `Span.Empty`, as a field access) and not through the call arm that already
+// admits `Wide(1.5, "ab")` (#9517).
+function ow_variant_known(structs: parser.StructDecl[], name: string, owner: string): boolean {
+  for sd in structs {
+    if (sd.name == name && sd.enum_owner != "" && (owner == "" || sd.enum_owner == owner)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // ow_struct_known reports whether `name` is a declared struct/variant — a
 // call to one is a fresh (owned) construction.
 function ow_struct_known(structs: parser.StructDecl[], name: string): boolean {
@@ -11091,9 +11105,15 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
       if (ctx.admit.len() > 0 && ctx.admit == id.name) {
         return true;
       }
+      if (ow_variant_known(ctx.structs, id.name, "")) {
+        return true;
+      }
       return ow_is_owned(ctx, id.name);
     },
     ast.ExprFieldAccess(fa) => {
+      if (ow_variant_known(ctx.structs, fa.field, ow_ident_name(fa.obj))) {
+        return true;
+      }
       return util.has_str(ctx.admit_fields, ow_ident_name(fa.obj) + "." + fa.field);
     },
     ast.ExprCall(c) => {

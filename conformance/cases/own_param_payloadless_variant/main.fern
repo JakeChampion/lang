@@ -1,0 +1,41 @@
+// A variant constructor is a fresh value, so it may be transferred into an
+// `own` parameter. A payload-less variant is spelled as a bare name rather
+// than a call, and both compilers' ownership guards admitted only the call
+// shape — so `eat(Wide(...))` compiled and `eat(Empty)` was E051 (#9517).
+// Both spellings of the bare form are covered: `Empty` and `Span.Empty`.
+enum Span { Empty, Wide(i32[]) }
+
+@noinline function eat(own sp: Span): i32 {
+    match (sp) {
+        Wide(xs) => { return xs.len(); },
+        Empty => { return 0; }
+    }
+}
+
+// A plain local of enum type is still a borrow, and stays refused; this case
+// pins the admission, not its absence, so the local is read rather than
+// transferred.
+//
+// The census row for this fixture is 5, not 0: one per `Wide(payload)` handed
+// to `eat`, which is the enum-payload retention every enum fixture here
+// records (`enum_payload_aliases_container` pins 35). `Empty` allocates
+// nothing, so the admission this case exists for contributes none of it.
+@noinline function borrowed_len(sp: Span): i32 {
+    match (sp) {
+        Wide(xs) => { return xs.len(); },
+        Empty => { return 0; }
+    }
+}
+
+function main(): i32 {
+    var total: i32 = 0;
+    total = total + eat(Empty);                  // 0
+    total = total + eat(Span.Empty);             // 0
+    total = total + eat(Wide([1, 2, 3]));        // 3
+    var held: Span = Wide([4, 5]);
+    total = total + borrowed_len(held);          // 2
+    total = total + borrowed_len(held);          // 2 — still readable
+    var i: i32 = 0;
+    while (i < 4) { total = total + eat(Empty) + eat(Wide([7])); i = i + 1; }
+    return total;
+}
