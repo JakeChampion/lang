@@ -1,7 +1,7 @@
 # The self-host SSA backend: `-backend ssa`
 
 Status: landed 2026-09-16 for arm64 (`arm64-linux`, `arm64-darwin`,
-`arm64-android`), opt-in. Owner: compiler / self-host. This is the self-host
+`arm64-android`) and x86-64 (`x86-64-linux`), opt-in. Owner: compiler / self-host. This is the self-host
 half of #4112, the register-allocating SSA backend track; the native half is
 `internal/codegen/arm64ssa` and `x86_64ssa` behind the same flag spelling. The
 measurements are in `docs/ssa-log/` (the entries whose names carry
@@ -13,8 +13,8 @@ The self-hosted compiler lowers every function to the stack IR (`irlower`,
 or the semantic lowering's `ssarc` when `FERN_SEM_IR` produces the module)
 and the flat backends instruction-select that stream onto a machine stack:
 every value is pushed, every operand popped. `-backend ssa` puts a second
-emitter beside the flat one inside `asm_arm64_ir.fern`. For each lowered
-function it:
+emitter beside the flat one inside each native backend, `asm_arm64_ir.fern`
+and `asm_ir.fern`. For each lowered function it:
 
 1. lifts the ops to SSA with `ssa_lift.lift_from_ir_prod`, which admits the
    integer spine (constants, locals, the integer operators, `not`, the width
@@ -22,12 +22,15 @@ function it:
    anything else, naming the op;
 2. drops what nothing reads (`ssa.prune_dead`), which is most of the zeros
    the lift gives declared locals and most of the loop-header phis;
-3. allocates registers with `ssa.regalloc_linear` over x9 to x15;
+3. allocates registers with `ssa.regalloc_linear` over the caller-saved
+   temporaries (x9 to x15 on arm64; rsi, rdi and r8 to r11 on x86-64);
 4. emits the function on the stack machine's own conventions: the same
-   `stp x29, x30` frame record, parameters read from the caller's 16-byte
-   slots at `[x29, #16 + 16*i]`, the result in x0, calls made by pushing the
+   frame record, parameters read from the caller's slots (`[x29, #16 + 16*i]`,
+   `16 + 8*i(%rbp)`), the result in x0 or %rax, calls made by pushing the
    arguments the way the stack machine leaves them and calling the same
-   `__fn_*` and runtime symbols.
+   `__fn_*` and runtime symbols. Each op is selected from the flat backend's
+   own table (`ir_bin_asm`, `ir_div_guarded`), so the two emitters cannot
+   disagree about an operator.
 
 A function the lift or the emitter declines is emitted by the stack machine
 as before. Nothing about the module changes for it. `FERN_SSA_REPORT=1`
@@ -107,16 +110,16 @@ The order to take that in:
 ## Gates
 
 - `internal/e2eselfhost/self_host_ssa_backend_test.go` builds the CLI for
-  the host, compiles each of its programs both ways for an arm64 target the
-  host runs, runs both and compares stdout and exit status. A program the
+  the host, compiles each of its programs both ways for every target the
+  host can run output for (its own ISA natively, the other through its qemu
+  user emulator when present), runs both and compares stdout and exit status. A program the
   lift admits whole must report no declined function; the mixed program pins
   the functions that must go through the backend. It also pins the refusal
   for other targets and that a second `-o` to one path replaces the
   executable.
 - The whole examples corpus, built both ways and run, is the measurement
-  in the ssa-log entry; `.github` has no lane for it yet. That lane, shaped
-  like `internal/e2e/arm64_ssa_differential_test.go`, comes with the x86-64
-  emitter.
+  in the ssa-log entries; `.github` has no lane for it yet. That lane is
+  shaped like `internal/e2e/arm64_ssa_differential_test.go`.
 - `scripts/selfhost-emit-hashes` does not reach this backend; a purity sweep
   of it needs `-backend ssa` added to that script's SSA mode.
 
@@ -128,18 +131,16 @@ its lift-fed drivers could only obtain from `build_func`. This backend
 takes its helpers from the production runtime, so nothing on the retained
 path needs `build_func` any more. In order:
 
-1. The x86-64 emitter in `asm_ir.fern`, the same design, so both native
-   targets have the backend and the corpus lane can compare both.
-2. Coverage by the histogram above, each op lifted to the flat backend's
+1. Coverage by the histogram above, each op lifted to the flat backend's
    layout and emitted with the flat arm's instructions.
-3. Retire `ssa.build_func` with `-ssa`, `-ssa-scan`, `try_ssa`,
+2. Retire `ssa.build_func` with `-ssa`, `-ssa-scan`, `try_ssa`,
    `ssa_wasm.fern`, the `__fern_ssa_*` runtime in `ssa_x86.fern` and
    `ssa_arm64.fern`, the lift's `build_func`-layout arms, and the drivers
    and Go tests that exist only for them. `ssa.fern` keeps its data model,
    optimiser and allocator; `ssa_lift.fern` keeps the production lift.
-4. The allocator and emitter work above, measured against the flat backend
+3. The allocator and emitter work above, measured against the flat backend
    on `examples/bench` and on the compiler building itself.
-5. The default flip, on the conditions native's flip is held to: the binary
+4. The default flip, on the conditions native's flip is held to: the binary
    at or under flat's, compile time within a stated multiple, the corpus
    lane clean on both targets. Native's flat retirement waits on this
    (#4112, the 2026-09-16 comment).

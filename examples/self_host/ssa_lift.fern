@@ -355,11 +355,13 @@ function lift_int_narrow_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], cu
 }
 
 // lift_const_text_prod lifts a literal carried as source text to the text
-// constant (kind 3), which the emitter materialises the way the stack machine
-// does: one MOVZ when the text is a small decimal, the literal pool otherwise.
-function lift_const_text_prod(op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SInst[]): LiftVals {
+// constant (kind 3), `imm` 64 for an i64 literal, which each emitter
+// materialises the way its stack machine does.
+function lift_const_text_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SInst[]): LiftVals {
+    var width: i32 = 0;
+    if (k == "const_i64") { width = 64; }
     var v: i32 = nvals; nvals = nvals + 1;
-    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 3, result: v, args: [], imm: 0, str: op.str });
+    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 3, result: v, args: [], imm: width, str: op.str });
     stack = stack.append(v);
     return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: true };
 }
@@ -434,7 +436,7 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[], struct
         if (prod && !prod_kind(k)) {
             ok = false;
         } else if (prod && (k == "const_i32_text" || k == "const_i64")) {
-            var lv: LiftVals = lift_const_text_prod(op, nvals, stack, cur_insts);
+            var lv: LiftVals = lift_const_text_prod(k, op, nvals, stack, cur_insts);
             nvals = lv.nvals; stack = lv.stack; cur_insts = lv.insts;
         } else if (prod && (k == "int_extend" || k == "int_wrap" || k == "int_cast" || k == "u32_wrap")) {
             var lv: LiftVals = lift_int_narrow_prod(k, op, nvals, stack, cur_insts, ok);

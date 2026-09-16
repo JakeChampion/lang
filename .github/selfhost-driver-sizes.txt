@@ -323,6 +323,10 @@
 # linkage cost, prior removal of unnecessary linkage from partial drivers,
 # and remaining source growth are recorded in
 # docs/SELFHOST-SEMANTIC-PRODUCTION-SIZE.md. Only the CLI row is refreshed.
+# 2026-09-16 — asm_run alone, 7684164 -> 8112056 (+5.6%): the x86-64 backend
+# gained the SSA emitter of #9494. The three drivers that link both native
+# backends were refreshed with #9484 and move 0.2% here; the rest are inside
+# the band. Number pasted from driver-sizes' own report.
 # 2026-09-16 — the three drivers that link asm_arm64_ir grew 5.2-5.7%
 # (asm_load_run, asm_modload_run, asm_ir_run) and are refreshed; the other
 # twelve moved +1.3-3.5% and keep their rows. The arm64 backend gained the SSA
@@ -334,7 +338,7 @@ fern.fern 12881996
 asm_load_run.fern 9202840
 asm_modload_run.fern 8816360
 asm_ir_run.fern 8581096
-asm_run.fern 7684164
+asm_run.fern 8112056
 wasm_ir_run.fern 7735236
 wasm_run.fern 7710316
 wasm_runio_run.fern 7676628
