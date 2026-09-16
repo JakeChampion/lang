@@ -46,7 +46,10 @@ the report's histogram is the coverage checklist. `FERN_SSA_ONLY` and
 `FERN_SSA_SKIP` are comma-separated name prefixes: ONLY admits the functions
 one of them matches, SKIP excludes them, and a declined function keeps the
 stack machine, so a wrong answer or a slow compile on a whole program is
-walked in on by halving the emitted set.
+walked in on by halving the emitted set. Under the report a function whose
+lift or emit took over 200 ms prints both times with its op and slot counts.
+`-backend flat` names the stack machine, as on native, so a comparison can
+ask for the baseline by name; it is byte-identical to omitting the flag.
 
 ## Why per function, and why the stack ABI
 
