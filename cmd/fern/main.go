@@ -1385,6 +1385,20 @@ func runCheck(srcPath, target string) error {
 // run drives the full pipeline. The returned int is the exit code that
 // the fern process itself should exit with: 0 in compile-only mode, or
 // the program's own exit code under --run.
+// ssaUnservedFlag reports the flag a -backend ssa build cannot serve, so the
+// build stops instead of quietly producing something other than what was
+// asked for. Each entry is a feature the default emitter has and this one does
+// not yet: they are gaps to close, not decisions.
+func ssaUnservedFlag(backend string, shared bool) error {
+	switch {
+	case shared:
+		return fmt.Errorf("-backend %s: -shared has no shared-object output on this backend — it would link an ordinary executable; build without -backend %s, or drop -shared", backend, backend)
+	case emitDebugSyms:
+		return fmt.Errorf("-backend %s: -g has no line table on this backend — it emits .debug_info without .debug_line, so a debugger cannot map an address to a source line; build without -backend %s, or drop -g", backend, backend)
+	}
+	return nil
+}
+
 func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool, qemu string, componentWrap, componentWrapCli, asyncExport bool, asyncProviders []string, shared bool, export string, optimize bool, progArgs []string) (int, error) {
 	e, err := loadEntry(srcPath)
 	if err != nil {
@@ -1482,6 +1496,19 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 
 	if d := platforms.ForTarget(target); d != nil && d.NoBackend {
 		return 1, fmt.Errorf("-target %s: no backend emits for this target yet — `fern -check -target %s` type-checks against its capability set, but there is nothing to compile to (#6506)", target, target)
+	}
+
+	// The SSA backends link their own output and return before the flag
+	// handling further down, so a flag served only down there does not reach
+	// them. Saying so is the whole of this check: -cover already refuses
+	// inside the lowering, and these two used to pass silently — -shared
+	// produced an ordinary executable rather than a shared object, and -g
+	// produced DWARF with no .debug_line, so a debugger had symbol names and
+	// no way to map an address to a source line.
+	if backend == "ssa" || backend == "typed-ssa" {
+		if err := ssaUnservedFlag(backend, shared); err != nil {
+			return 1, err
+		}
 	}
 
 	if (backend == "ssa" || backend == "typed-ssa") && target == "arm64-linux" {
