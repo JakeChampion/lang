@@ -97,7 +97,9 @@ func emitReaderReadLineHelper(w func(string, ...any)) {
 // getdents64 order as the flat backend lists them. Two passes over a 4 KiB
 // scratch block: the first counts the kept entries to size the container, an
 // lseek rewinds, and the second allocates a string per name. Each pass drains
-// getdents64 until it returns 0, so a directory of any size is listed.
+// getdents64 until it returns 0, so a directory of any size is listed. The
+// second pass sees the directory as it is then: an entry that appeared since
+// the first is dropped, and the length is the count the second pass reached.
 //
 // rbx = path, r12 = pathz then the container's data, r13 = fd, r14 = the
 // scratch block, r15 = count; the frame carries the chunk offset, the chunk
@@ -197,6 +199,12 @@ func emitReadDirHelper(w func(string, ...any)) {
 	w(".Lssa_rd_g2:")
 	getdents(".Lssa_rd_c2", ".Lssa_rd_g2d", ".Lssa_rd_err_close")
 	dotSkip(".Lssa_rd_c2keep", ".Lssa_rd_c2skip")
+	// The directory can gain entries between the passes; the container was
+	// sized by the first, so the extras are dropped rather than written
+	// past it.
+	w("\tmov rcx, %s", fill)
+	w("\tcmp rcx, r15")
+	w("\tjae .Lssa_rd_c2skip")
 	w("\tmov %s, r10", name)
 	w("\txor ecx, ecx")
 	w(".Lssa_rd_len:")
@@ -223,6 +231,8 @@ func emitReadDirHelper(w func(string, ...any)) {
 	w(".Lssa_rd_c2skip:")
 	advance(".Lssa_rd_c2", ".Lssa_rd_g2")
 	w(".Lssa_rd_g2d:")
+	w("\tmov rcx, %s", fill)
+	w("\tmov %s, ecx", memRef("r12", -4)) // len = filled: entries can also go away between the passes
 	w("\tmov edi, r13d")
 	w("\tmov eax, 3") // close
 	w("\tsyscall")
