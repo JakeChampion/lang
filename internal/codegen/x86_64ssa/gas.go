@@ -2137,6 +2137,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__str_eq":                      emitStrEqHelper,
 	"__str_ord":                     emitStrOrdHelper,
 	"__str_concat":                  emitStrConcatHelper,
+	"__fern_str_append":             emitStrAppendHelper,
 	"__fern_str_dec":                emitStrDecHelper,
 	"__fern_drop_arr_str":           emitDropArrElemHelper("__fern_drop_arr_str", "__fern_str_dec", "dropstr"),
 	"__fern_drop_arr_ptr":           emitDropArrElemHelper("__fern_drop_arr_ptr", "__fern_rc_dec", "dropptr"),
@@ -2268,6 +2269,7 @@ var runtimeHelperDeps = map[string][]string{
 	"__fern_box_free":               {"__free"},
 	"__fern_arr_dec":                {"__free"},
 	"__alloc_reuse":                 {"__free", "__alloc"},
+	"__fern_str_append":             {"__str_concat"},
 	"__alloc_u8":                    {"__alloc"},
 	"__fern_map_hash_seed":          {"random_i32"},
 	"remove_dir_all":                {"__fern_io_error"},
@@ -2710,6 +2712,8 @@ func emitBcopyCall(w func(string, ...any), dst, src, n string) {
 var bcopyUsingHelpers = map[string]bool{
 	"string_from_bytes_unchecked": true,
 	"__str_slice":                 true,
+	"__str_concat":                true,
+	"__fern_str_append":           true,
 	"__fern_arr_push_grow":        true,
 	"__fern_arr_cow_inplace":      true,
 	"__fern_buf_reserve":          true,
@@ -2795,7 +2799,7 @@ func emitAllocU8Helper(w func(string, ...any)) {
 //
 // Strings here are single-word and rc-headered (rc=1@base+0, len@base+4,
 // data@base+8, the layout ConstStr and __str_concat already use) with no
-// small-string inline form, so this is a bump allocation and a copy. The native
+// small-string inline form, so this is an allocation and a copy. The native
 // twin spends most of its body deciding whether the result fits in seven inline
 // bytes and packing it if so; none of that survives the representation change.
 // rdi=bs (the u8[] data pointer, its length at [bs-4]), returns rax=data.
@@ -2803,28 +2807,24 @@ func emitStringFromBytesHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("string_from_bytes_unchecked"))
 	w("\tmov esi, %s", memRef("rdi", -4)) // len (a 32-bit write zero-extends)
-	w("\tmov r8, [rip + %s]", heapPtrSym)
-	w("\tadd r8, 7")
-	w("\tand r8, -8")            // base, 8-aligned
+	w("\tlea r11, [rsi + 8]")             // header + len
+	w("\tsub rsp, 8")                     // entered 8 past alignment; the trampoline is called at 16
+	ssaBumpAlloc(w, "r8", "r11")
+	w("\tadd rsp, 8")
 	w("\tmov dword ptr [r8], 1") // rc = 1
 	w("\tmov [r8 + 4], esi")     // len
-	w("\tlea r9, [r8 + 8]")
-	w("\tadd r9, rsi")
-	w("\tmov [rip + %s], r9", heapPtrSym)
-	w("\t%s", heapGuardCall)
-	w("\tlea r10, [r8 + 8]") // data
+	w("\tlea r10, [r8 + 8]")     // data
 	emitBcopyCall(w, "r10", "rdi", "rsi")
 	w("\tmov rax, r10")
 	w("\tret")
 }
 
-// emitAliasHelper writes `<name>:` as a jump to another helper. The bump heap
-// never reclaims, so the _ptr / _str / _move_ptr / _move_str variants, which
-// natively differ only by an element-retain or element-release walk, have
-// nothing to do that the plain helper does not. That holds only while nothing
-// is freed: a raw copy leaves the grown buffer sharing its element references
-// with the old one under a single count, so arm64ssa, whose heap reclaims,
-// gives each spelling its own body.
+// emitAliasHelper writes `<name>:` as a jump to another helper, for a
+// spelling that natively differs from its target only by an element-retain
+// walk over STRING elements. Strings are never freed here (__fern_str_dec
+// leaks at rc == 1), so a copy that shares its string elements with the
+// original under a single count loses nothing; the pointer-element spellings,
+// whose elements are reclaimed, have their own bodies.
 func emitAliasHelper(name, target string) func(w func(string, ...any)) {
 	return func(w func(string, ...any)) {
 		w("")
@@ -2855,18 +2855,15 @@ func emitStrSliceHelper(w func(string, ...any)) {
 	w("\tjg .Lssa_strslice_trap")
 	w("\tmov r9d, edx")
 	w("\tsub r9d, esi") // new_len = high - low
-	// Bump-allocate new_len+8: rc=1@base, len@base+4, data@base+8.
-	w("\tmov r10, [rip + %s]", heapPtrSym)
-	w("\tadd r10, 7")
-	w("\tand r10, -8")
+	// A new_len+8 block: rc=1@base, len@base+4, data@base+8.
+	w("\tlea r11, [r9 + 8]")
+	w("\tsub rsp, 8") // entered 8 past alignment; the trampoline is called at 16
+	ssaBumpAlloc(w, "r10", "r11")
+	w("\tadd rsp, 8")
 	w("\tmov dword ptr [r10], 1") // rc = 1
 	w("\tmov [r10 + 4], r9d")     // len
 	w("\tlea r11, [r10 + 8]")     // data
-	w("\tmov rax, r11")
-	w("\tadd rax, r9")
-	w("\tmov [rip + %s], rax", heapPtrSym)
-	w("\t%s", heapGuardCall)
-	w("\tlea rax, [rdi + rsi]") // src = base + low
+	w("\tlea rax, [rdi + rsi]")   // src = base + low
 	emitBcopyCall(w, "r11", "rax", "r9")
 	w("\tmov rax, r11")
 	w("\tret")
@@ -3604,13 +3601,13 @@ func emitCountByteHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
-// emitStrConcatHelper writes __str_concat(a, b) -> new data pointer: allocate a
-// fresh length-prefixed string holding a's bytes followed by b's and return its
-// data pointer. Inline-bump-allocates the rc-headed block (rc=1 at base+0, total
-// length at base+4, data at base+8 — the same header ConstStr / heap strings
-// use) and byte-copies each operand, so it needs no calls (no __fern_memcpy /
-// callee-saves). The IR lowers `a + b` on strings (OpStrConcat) to a call here.
-// Lengths live at [ptr-4]. Leaf.
+// emitStrConcatHelper writes __str_concat(a, b) -> new data pointer: a fresh
+// length-prefixed string holding a's bytes followed by b's (rc=1 at base+0,
+// total length at base+4, data at base+8 — the header ConstStr and every heap
+// string use). The block comes from __alloc at total+8 bytes, so its extent is
+// that request's size class, which is what lets __fern_str_append grow it in
+// place later. The IR lowers `a + b` on strings (OpStrConcat) to a call here.
+// Lengths live at [ptr-4]. rdi=a, rsi=b; returns rax=data.
 func emitStrConcatHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__str_concat"))
@@ -3622,42 +3619,67 @@ func emitStrConcatHelper(w func(string, ...any)) {
 	w("\tlea r8, [rcx + rdx]")
 	w("\tcmp r8, 2147483647")
 	w("\tja .Lssa_strcat_len_overflow")
-	// Bump-allocate total+8 bytes: base = align8(cursor); rc=1 at base+0, len at
-	// base+4; cursor advances past header+total; data = base+8.
-	w("\tmov r9, [rip + %s]", heapPtrSym)
-	w("\tadd r9, 7")
-	w("\tand r9, -8")
-	w("\tmov dword ptr [r9], 1") // rc = 1
-	w("\tmov [r9 + 4], r8d")     // len = total
-	w("\tmov r10, r9")
-	w("\tadd r10, 8")
-	w("\tadd r10, r8")
-	w("\tmov [rip + %s], r10", heapPtrSym)
-	w("\t%s", heapGuardCall)
-	w("\tlea rax, [r9 + 8]") // data (return value)
-	// Copy a's la bytes: [rax + i] = [rdi + i].
-	w("\txor r10, r10")
-	w(".Lssa_strcat_a:")
-	w("\tcmp r10d, ecx")
-	w("\tjae .Lssa_strcat_b")
-	w("\tmovzx r11d, byte ptr [rdi + r10]")
-	w("\tmov byte ptr [rax + r10], r11b")
-	w("\tadd r10, 1")
-	w("\tjmp .Lssa_strcat_a")
-	// Copy b's lb bytes after a: dest base = data + la.
-	w(".Lssa_strcat_b:")
-	w("\tlea r9, [rax + rcx]")
-	w("\txor r10, r10")
-	w(".Lssa_strcat_bl:")
-	w("\tcmp r10d, edx")
-	w("\tjae .Lssa_strcat_done")
-	w("\tmovzx r11d, byte ptr [rsi + r10]")
-	w("\tmov byte ptr [r9 + r10], r11b")
-	w("\tadd r10, 1")
-	w("\tjmp .Lssa_strcat_bl")
-	w(".Lssa_strcat_done:")
+	w("\tlea r11, [r8 + 8]") // header + total
+	w("\tsub rsp, 8")        // entered 8 past alignment; the trampoline is called at 16
+	ssaBumpAlloc(w, "r9", "r11")
+	w("\tadd rsp, 8")
+	w("\tmov dword ptr [r9], 1")          // rc = 1
+	w("\tmov [r9 + 4], r8d")              // len = total
+	w("\tlea rax, [r9 + 8]")              // data (return value)
+	w("\tmov r9, rsi")                    // b, before the copy clobbers the argument registers
+	w("\tmov r10, rdx")                   // lb
+	emitBcopyCall(w, "rax", "rdi", "rcx") // a's la bytes at data
+	w("\tlea rdi, [rax + r8]")
+	w("\tsub rdi, r10")                  // data + la
+	emitBcopyCall(w, "rdi", "r9", "r10") // b's lb bytes after them
 	w("\tret")
 	emitLenOverflowAbort(w, ".Lssa_strcat_len_overflow", "__ssa_msg_alloc_size_str", msgAllocSizeOutOfRange)
+}
+
+// emitStrAppendHelper writes __fern_str_append(a, b) -> data, the string
+// self-append the IR emits for `s = s + piece` (#5637): it CONSUMES a, and the
+// assignment that follows skips its release. When a is a uniquely held heap
+// string and the grown length still fits the block, b's bytes are copied into
+// the slack past a's data, the length is restamped and the same pointer comes
+// back — no allocation, no re-copy of the accumulated prefix. Anything else
+// (a literal or other static sentinel, a shared buffer, a block the growth
+// would overflow) is a plain __str_concat, with the consumed a left behind as
+// __fern_str_dec would leave it.
+//
+// The fit test is the block's size class: every heap string is an __alloc of
+// at least la+8 bytes (the header plus its length; the string builder's
+// buffers request more), and __alloc hands out the class's whole rounded
+// extent, so the class of la+8 is capacity the string owns whatever produced
+// it. Reader.read_chunk, the one producer that bumps the cursor itself,
+// rounds its block to the same class. Strings are never freed, so growing
+// one changes nothing a later release reads. rdi=a, rsi=b; returns rax=data.
+func emitStrAppendHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_str_append"))
+	w("\tcmp rdi, 0x10000")
+	w("\tjb .Lssa_strapp_copy")
+	w("\tmov eax, %s", memRef("rdi", -8)) // rc; a static sentinel has its top bit set
+	w("\tcmp eax, 1")
+	w("\tjne .Lssa_strapp_copy")
+	w("\tmov r9d, %s", memRef("rdi", -4))  // la
+	w("\tmov r10d, %s", memRef("rsi", -4)) // lb
+	w("\tlea rdx, [r9 + r10]")             // total, in 64 bits
+	w("\tcmp rdx, 2147483647")
+	w("\tja .Lssa_strapp_copy")                                       // __str_concat aborts on it
+	w("\tlea r11, [r9 + 8]")                                          // the request the block was at least allocated at
+	emitFreelistClass(w, "strapp", "r11", "rax", ".Lssa_strapp_copy") // r11 = the class's extent
+	w("\tlea rax, [rdx + 23]")
+	w("\tand rax, -16") // the grown request, 16-rounded
+	w("\tcmp rax, r11")
+	w("\tja .Lssa_strapp_copy")
+	w("\tmov %s, edx", memRef("rdi", -4)) // len = total
+	w("\tmov rax, rdi")
+	w("\tlea rdi, [rdi + r9]") // dst = a + la
+	w("\tmov rdx, r10")        // lb; rsi = b already
+	w("\tcall %s", bcopySym)
+	w("\tret")
+	w(".Lssa_strapp_copy:")
+	w("\tjmp %s", fnLabel("__str_concat"))
 }
 
 // emitStrDecHelper writes __fern_str_dec(ptr): the scope-exit drop for a

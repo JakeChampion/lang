@@ -7,34 +7,15 @@ import (
 	"github.com/jakechampion/lang/internal/ir"
 )
 
-// ssaHelperName maps a runtime-helper name the legacy IR emits onto the
-// equivalent this backend family actually provides.
-//
-// Only __fern_str_append needs it (#5637): it grows a uniquely-held
-// accumulator in place, consuming its left operand, and the IR suppresses the
-// release that would otherwise pair with it. The SSA backends bump-allocate
-// and never reclaim, so __str_concat satisfies the same contract — identical
-// result bytes, with the consumed operand simply left behind.
-func ssaHelperName(name string) string {
-	if name == "__fern_str_append" {
-		return "__str_concat"
-	}
-	return name
-}
-
-// liftStrAppendRange expands `__fern_str_append_range(a, s, lo, hi)` back
-// into the pair it fuses — `__str_concat(a, __str_slice(s, lo, hi))` — and
-// pushes the result.
-//
-// Same reasoning as ssaHelperName above: these backends bump-allocate and
-// never reclaim, so the unfused pair satisfies the same contract with the
-// consumed operand and the intermediate slice simply left behind. The fusion
-// only pays where a buffer can be grown in place, which is the reclaiming
-// runtime's property, not this one's.
+// liftStrAppendRange expands `__fern_str_append_range(a, s, lo, hi)` into
+// the pair it fuses — `__fern_str_append(a, __str_slice(s, lo, hi))` — and
+// pushes the result. The fusion saves one copy where the accumulator grows
+// in place; the unfused pair keeps the growth and pays the slice, which is
+// the trade the SSA backends make rather than carry a fourth string helper.
 func (l *lifter) liftStrAppendRange(args []Value) {
 	w := l.strWords()
 	slice := l.callStringHelper("__str_slice", args[w:])
-	l.stack = append(l.stack, l.callStringHelper("__str_concat", append(append([]Value(nil), args[:w]...), slice...))...)
+	l.stack = append(l.stack, l.callStringHelper("__fern_str_append", append(append([]Value(nil), args[:w]...), slice...))...)
 }
 
 // callStringHelper emits a call to a runtime helper returning one string,
@@ -983,7 +964,7 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		if shaped && results == 2 {
 			// A callee returning a two-word value leaves a pair.
 			a, b := l.out.AddCallPair(l.cur, args...)
-			l.cur.Ops[len(l.cur.Ops)-1].Str = ssaHelperName(op.Str)
+			l.cur.Ops[len(l.cur.Ops)-1].Str = op.Str
 			l.stack = append(l.stack, a, b)
 			break
 		}
@@ -1001,12 +982,12 @@ func (l *lifter) handle(i int, op ir.Op) error {
 			// is why it survived until the two stack models were
 			// compared per op.
 			o := l.out.AddOpNoResult(l.cur, OpCall, args...)
-			o.Str = ssaHelperName(op.Str)
+			o.Str = op.Str
 			break
 		}
 		result := l.out.AddOp(l.cur, OpCall, args...)
 		o := l.cur.Ops[len(l.cur.Ops)-1]
-		o.Str = ssaHelperName(op.Str)
+		o.Str = op.Str
 		switch op.Kind {
 		case ir.OpRcInc, ir.OpRcDec:
 			// Each dedicated rc kind names ONE helper, and both hand

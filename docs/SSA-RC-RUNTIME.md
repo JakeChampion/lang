@@ -142,6 +142,20 @@ its token with sizes that include the rc header, and the element-retaining
 `__fern_arr_push_grow_*` spellings have their own bodies rather than aliasing
 the plain grow, for the reason given above.
 
+Its string producers all allocate through `__alloc` too (`__str_concat`,
+`__str_slice`, `string_from_bytes_unchecked` and the rest; `Reader.read_chunk`
+still bumps the cursor itself so it can rewind, but rounds the block to the
+same class), which is what makes `__fern_str_append` real on this backend:
+every heap string is an `__alloc` of at least `len + 8` bytes, so the size
+class of `len + 8` is capacity the string owns whatever produced it, and a
+uniquely held accumulator whose grown length still fits that class takes the
+piece in place. The lift hands `__fern_str_append` through unchanged; arm64ssa
+branches it to `__str_concat`, since a heap that never frees a string gains
+nothing from growing one. On x86-64 `examples/bench/string_build.fern` went
+from 178 ms to 71 ms against the flat backend's 17 ms; the rest of that gap is
+the leak — every copy lands in fresh memory where the flat backend's freelist
+hands the same few blocks back.
+
 ### Helper port order (leaf-first)
 
 1. **Allocator rc-header** + **`__fern_rc_is_unique`** (a leaf: guards +
