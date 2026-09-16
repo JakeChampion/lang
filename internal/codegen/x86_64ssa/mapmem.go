@@ -55,6 +55,9 @@ func emitHelperBss(w func(string, ...any), helpers []string, countsUnderflow boo
 		w("%s:", mapSeedSym)
 		w("\t.quad 0")
 	}
+	if usesStrbuf(helpers) {
+		emitStrbufBss(w)
+	}
 	if referencesHelper(helpers, "__method_Reader_read_line") {
 		w(".section .bss")
 		w(".align 8")
