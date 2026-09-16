@@ -48,18 +48,18 @@ const (
 	// regression that widened the SSA bail set would otherwise turn the lane
 	// green by comparing almost nothing.
 	//
-	// 253 as measured 2026-09-16, once `__memcpy` and the f64 math family
+	// 282 as measured 2026-09-16, once the file, clock and random helpers
 	// had emitters: 194 came from #8570's `remove_dir_all` slice, 215 from
 	// the four float reinterprets, the last refusal that was not a missing
 	// runtime helper, 219 from the string builder, 223 from `args`, `env`
-	// and `stat` — every program still refused names one or more helpers
-	// with no emitter. RAISE IT with each helper slice — that is the point
-	// of the number.
+	// and `stat`, 253 from `__memcpy` and the f64 math family — every
+	// program still refused names one or more helpers with no emitter.
+	// RAISE IT with each helper slice — that is the point of the number.
 	//
-	// The 75 still refused want the file helpers (`read_file`, `write_file`,
-	// `temp_dir`), the Map method family with the memory trio, and the
-	// clock and socket helpers, in groups (docs/SSA-CUTOVER-PLAN.md).
-	x86SSADiffMinCompared = 253
+	// The 46 still refused want the Map method family with the memory trio
+	// (24, always together) and the socket family, in groups
+	// (docs/SSA-CUTOVER-PLAN.md).
+	x86SSADiffMinCompared = 282
 )
 
 func TestX86_64SSABackendDifferential(t *testing.T) {
@@ -68,6 +68,8 @@ func TestX86_64SSABackendDifferential(t *testing.T) {
 	}
 	fern := buildFernCLI(t)
 	corpus := arm64SSADiffCorpus(t) // the same walk; the corpus is not per-target
+	unstable := loadKnownDivergences(t, ssaDiffUnstableFile)
+	ssaDiffCheckListedPaths(t, corpus, map[string]map[string]string{ssaDiffUnstableFile: unstable})
 
 	var baselineRejected, refused, agreed, diverged, timedOut, tooSlow int64
 	for _, rel := range corpus {
@@ -120,12 +122,15 @@ func TestX86_64SSABackendDifferential(t *testing.T) {
 					late, ssaDiffRunTimeout, rel, other.exit, ssaDiffDetail(base, ssa))
 				return
 			}
-			if d := ssaDiffCompare(base, ssa, false); d != "" {
+			_, stdoutUnstable := unstable[rel]
+			if d := ssaDiffCompare(base, ssa, stdoutUnstable); d != "" {
 				atomic.AddInt64(&diverged, 1)
 				t.Errorf("`-backend ssa` DISAGREES with the shipping x86-64 backend on %s.\n%s\n"+
 					"docs/SSA-DECISION.md holds the SSA backends to identical behaviour across "+
-					"their covered subset, and this program is inside the subset because it compiled.",
-					rel, d)
+					"their covered subset, and this program is inside the subset because it compiled.\n"+
+					"If the difference is not the compiler's — a per-run temp path, a measured "+
+					"elapsed time — the program belongs in testdata/%s instead.",
+					rel, d, ssaDiffUnstableFile)
 				return
 			}
 			atomic.AddInt64(&agreed, 1)

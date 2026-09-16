@@ -224,22 +224,7 @@ func emitOpenHandleHelper(name, lbl string, flags, mode int) func(w func(string,
 		w("\tpush r13")
 		// Three pushes past the return address leave rsp 16-aligned.
 		w("\tmov rbx, rdi") // path
-		w("\tmov r13d, %s", memRef("rbx", -4))
-		w("\tmov r12, r13")
-		w("\tadd r12, 1") // + NUL
-		ssaBumpAlloc(w, "rax", "r12")
-		w("\tmov r12, rax") // pathz
-		w("\txor ecx, ecx")
-		w(".Lssa_%s_cp:", lbl)
-		w("\tcmp ecx, r13d")
-		w("\tjae .Lssa_%s_cpd", lbl)
-		w("\tmov al, [rbx + rcx]")
-		w("\tmov [r12 + rcx], al")
-		w("\tadd ecx, 1")
-		w("\tjmp .Lssa_%s_cp", lbl)
-		w(".Lssa_%s_cpd:", lbl)
-		w("\tmov rax, r13")
-		w("\tmov byte ptr [r12 + rax], 0")
+		ssaPathz(w, lbl)
 		// openat(AT_FDCWD, pathz, flags, mode)
 		w("\tmov edi, -100")
 		w("\tmov rsi, r12")

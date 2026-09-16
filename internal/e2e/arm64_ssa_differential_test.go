@@ -65,15 +65,16 @@ const (
 	// is mostly a single defect whose fix should empty it in one go.
 	arm64SSADiffKnownFile = "arm64-ssa-diff-known-divergences.txt"
 
-	// arm64SSADiffUnstableFile lists corpus programs whose STDOUT is not a
+	// ssaDiffUnstableFile lists corpus programs whose STDOUT is not a
 	// function of the compiler — a per-run temp path, a measured elapsed
 	// time, or output that only stops when the harness kills the process.
 	// Those are compared on exit status alone rather than dropped, so they
 	// still count toward the floor and a crash under one backend is still
 	// caught. A row here is not an allowlist for a wrong answer; a program
 	// whose stdout genuinely differs between backends belongs in the
-	// known-divergences file.
-	arm64SSADiffUnstableFile = "arm64-ssa-diff-stdout-unstable.txt"
+	// known-divergences file. The property is the program's, so the x86-64
+	// leg reads the same list.
+	ssaDiffUnstableFile = "ssa-diff-stdout-unstable.txt"
 
 	// arm64SSADiffMinCorpus is the floor on the corpus WALK. A walk that
 	// selects nothing passes with no sub-tests at all, which reads exactly
@@ -138,8 +139,8 @@ func TestArm64SSABackendDifferential(t *testing.T) {
 	fern := buildFernCLI(t)
 	corpus := arm64SSADiffCorpus(t)
 	known := loadKnownDivergences(t, arm64SSADiffKnownFile)
-	unstable := loadKnownDivergences(t, arm64SSADiffUnstableFile)
-	arm64SSADiffCheckListedPaths(t, corpus, known, unstable)
+	unstable := loadKnownDivergences(t, ssaDiffUnstableFile)
+	ssaDiffCheckListedPaths(t, corpus, map[string]map[string]string{arm64SSADiffKnownFile: known, ssaDiffUnstableFile: unstable})
 
 	var baselineRejected, refused, agreed, diverged, timedOut, tooSlow int64
 	for _, rel := range corpus {
@@ -234,7 +235,7 @@ func TestArm64SSABackendDifferential(t *testing.T) {
 					"behaves differently, so it is a bug in the proving ground.\n"+
 					"If the difference is not the compiler's — a per-run temp path, a measured "+
 					"elapsed time — the program belongs in testdata/%s instead.",
-					rel, d, arm64SSADiffUnstableFile)
+					rel, d, ssaDiffUnstableFile)
 				return
 			}
 			atomic.AddInt64(&agreed, 1)
@@ -419,21 +420,20 @@ func arm64SSADiffCorpus(t *testing.T) []string {
 	return out
 }
 
-// arm64SSADiffCheckListedPaths fails on a row naming a program the corpus does
+// ssaDiffCheckListedPaths fails on a row naming a program the corpus does
 // not contain. Without it a rename leaves a row that can never fire again, and
 // the file reads as if it still covered something.
-func arm64SSADiffCheckListedPaths(t *testing.T, corpus []string, lists ...map[string]string) {
+func ssaDiffCheckListedPaths(t *testing.T, corpus []string, lists map[string]map[string]string) {
 	t.Helper()
 	in := make(map[string]bool, len(corpus))
 	for _, rel := range corpus {
 		in[rel] = true
 	}
-	names := []string{arm64SSADiffKnownFile, arm64SSADiffUnstableFile}
-	for i, list := range lists {
+	for name, list := range lists {
 		for rel := range list {
 			if !in[rel] {
 				t.Errorf("testdata/%s lists %q, which is not in the corpus — delete the row or fix "+
-					"the path", names[i], rel)
+					"the path", name, rel)
 			}
 		}
 	}
