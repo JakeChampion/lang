@@ -356,8 +356,7 @@ func emitFuncBody(w func(string, ...any), name string, p *Program, numAlloc int,
 	bodyW := func(format string, args ...any) {
 		fmt.Fprintf(&body, format+"\n", args...)
 	}
-	mark := func() { body.WriteString(restoreMarker + "\n") }
-	if err := emitFuncBlocks(bodyW, label, p, numAlloc, scratch, strLabels, sentLabels, fnIndex, mark); err != nil {
+	if err := emitFuncBlocks(bodyW, label, p, numAlloc, scratch, strLabels, sentLabels, fnIndex); err != nil {
 		return err
 	}
 	saved := calleeSavedIn(body.String(), p.NumRegFile)
@@ -374,12 +373,7 @@ func emitFuncBody(w func(string, ...any), name string, p *Program, numAlloc int,
 	//
 	// The rules are the ones the stack-machine emitter emits, and no more.
 	// Describing where each callee-saved register went would let a debugger
-	// recover the caller's copies, but that emitter does not do it either, and
-	// here it is far from free: this backend returns from every block that
-	// ends in one, 3.5 times per function across the self-host driver, where
-	// that emitter jumps to a single epilogue. Per-register rules at each of
-	// those cost 772 KB of .eh_frame on the driver, a 9% binary, for
-	// information the other backend never provided.
+	// recover the caller's copies, but that emitter does not do it either.
 	w("\t.cfi_startproc")
 	w("\tpush rbp")
 	w("\t.cfi_def_cfa_offset 16")
@@ -401,43 +395,52 @@ func emitFuncBody(w func(string, ...any), name string, p *Program, numAlloc int,
 		w("\t%s", line)
 	}
 
-	writeBody(w, body.String(), saved)
+	copyLines(w, body.String())
+	// One epilogue per function, which every return reaches by falling into it
+	// or branching to it. A teardown at each return site needs its own CFI
+	// bracket, because blocks are emitted in layout order and more body can
+	// follow a return; one at the end needs none, and it is the whole of the
+	// difference between 17,766 teardowns and 5,087 across the self-host
+	// driver.
+	if FuncReturns(p) {
+		w(".L_%s_epi:", label)
+		for j := len(saved) - 1; j >= 0; j-- {
+			w("\tpop %s", reg(saved[j]))
+		}
+		w("\tmov rsp, rbp")
+		w("\tpop rbp")
+		w("\t.cfi_def_cfa rsp, 8")
+		w("\tret")
+	}
 	w("\t.cfi_endproc")
 	return nil
 }
 
-// writeBody copies the emitted body to w a line at a time, so w's per-line
-// filtering still applies, with each restore marker replaced by the pops of
-// `saved` in reverse push order.
-func writeBody(w func(string, ...any), body string, saved []int) {
-	for i, piece := range strings.Split(body, restoreMarker+"\n") {
-		if i > 0 {
-			// A teardown's CFI rules describe the epilogue only. Blocks are
-			// emitted in layout order, so more body can follow a return, and a
-			// rule left in effect would describe those instructions wrongly:
-			// remember the frame's state here and restore it after, which is
-			// what a single-epilogue emitter gets for free.
-			w("\t.cfi_remember_state")
-			for j := len(saved) - 1; j >= 0; j-- {
-				w("\tpop %s", reg(saved[j]))
-			}
+// FuncReturns reports whether any block ends in a return, so a function that
+// cannot fall out of itself gets no epilogue to jump to. Exported because the
+// arm64 emitter renders the same Program and asks the same question.
+func FuncReturns(p *Program) bool {
+	for _, blk := range p.Blocks {
+		if blk.Term.Kind == TRet || blk.Term.Kind == TRetPair {
+			return true
 		}
-		for piece != "" {
-			line, rest, _ := strings.Cut(piece, "\n")
-			w("%s", line)
-			piece = rest
-		}
+	}
+	return false
+}
+
+// copyLines hands the emitted body to w one line at a time. A multi-line
+// string emitted as a unit would otherwise reach w whole, and w's per-line
+// filtering — the self-move drop — would never see the lines inside it.
+func copyLines(w func(string, ...any), body string) {
+	for body != "" {
+		line, rest, _ := strings.Cut(body, "\n")
+		w("%s", line)
+		body = rest
 	}
 }
 
-// restoreMarker is the line emitFuncBlocks writes where a return's callee-saved
-// pops go. It is replaced before the text leaves emitFuncBody, and the leading
-// NUL keeps it from colliding with any assembly line.
-const restoreMarker = "\x00restore"
-
-// emitFuncBlocks writes every block body and terminator. `restore` emits the
-// callee-saved reloads that precede each return.
-func emitFuncBlocks(w func(string, ...any), label string, p *Program, numAlloc, scratch int, strLabels map[string]string, sentLabels map[int64]string, fnIndex map[string]int, restore func()) error {
+// emitFuncBlocks writes every block body and terminator.
+func emitFuncBlocks(w func(string, ...any), label string, p *Program, numAlloc, scratch int, strLabels map[string]string, sentLabels map[int64]string, fnIndex map[string]int) error {
 	order := LayoutOrder(p)
 	// nextInLayout[bi] is the block physically following bi in the emitted
 	// order, or -1 for the last one: a branch to it needs no instruction.
@@ -558,25 +561,20 @@ func emitFuncBlocks(w func(string, ...any), label string, p *Program, numAlloc, 
 		switch blk.Term.Kind {
 		case TRet:
 			w("\tmov rax, %s", reg(blk.Term.RetReg))
-			restore()
-			w("\tmov rsp, rbp")
-			w("\tpop rbp")
-			w("\t.cfi_def_cfa rsp, 8")
-			w("\tret")
-			w("\t.cfi_restore_state")
+			// The epilogue follows the last block, so a return there falls
+			// into it.
+			if next >= 0 {
+				w("\tjmp .L_%s_epi", label)
+			}
 		case TRetPair:
-			// System V pair return: tag in rax, payload in rdx. The two moves are
-			// a parallel copy (a home may already be rax/rdx), so resolve them
-			// before the callee-saved restore (which never touches rax/rdx).
+			// System V pair return: tag in rax, payload in rdx. The two moves
+			// are a parallel copy, since a home may already be rax or rdx.
 			for _, l := range pairRetMoves(blk.Term.RetReg, blk.Term.RetReg2) {
 				w("\t%s", l)
 			}
-			restore()
-			w("\tmov rsp, rbp")
-			w("\tpop rbp")
-			w("\t.cfi_def_cfa rsp, 8")
-			w("\tret")
-			w("\t.cfi_restore_state")
+			if next >= 0 {
+				w("\tjmp .L_%s_epi", label)
+			}
 		case TJmp:
 			// A block that ends where its successor begins falls through.
 			if blk.Term.Target != next {
