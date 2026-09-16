@@ -1196,11 +1196,13 @@ feeds `caller_sigs` to the remaining AST callers is below.
 ## The production consumer
 
 `examples/self_host/semlower.fern` is where a whole-program emit path asks for
-this pipeline instead of a test driver. `FERN_SEM_IR=1` selects it;
-`FERN_SEM_IR_REPORT=1` prints a line per refusal and a per-module tally.
-Unset, a backend receives what it received before, op for op — the substitution
-is the only thing the flag adds, and the AST lowering still runs and still
-gives the module its eligibility verdict.
+this pipeline instead of a test driver. It is the default; `FERN_SEM_IR=` (the
+empty value) turns it off, and `FERN_SEM_IR_REPORT=1` prints a line per
+refusal and a per-module tally. Off, a backend receives what it received
+before, op for op — the substitution is the only thing the path adds. On, a
+module is produced whole or not at all, and `ircore.lower_gated` reads the
+produced bodies in place of lowering them, so the AST lowering's verdict is
+asked only of a module that fell back to it.
 
 All three whole-program paths take one: `asm_ir`, `asm_arm64_ir` and `wasm_ir`
 each gained a `_sub` sibling of their gated entry that threads an `ircore.Sub`
