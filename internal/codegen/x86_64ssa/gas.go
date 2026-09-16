@@ -230,6 +230,9 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 	if usesBfill(helpers) {
 		emitBfill(w)
 	}
+	if usesMismatch(helpers) {
+		emitMismatch(w)
+	}
 	if heap {
 		emitHeapGuard(w)
 	}
@@ -2643,8 +2646,8 @@ func emitArrIdxHelperNChecked(name string, shift int, checked bool) func(w func(
 
 // emitStrEqHelper writes __str_eq(a, b) -> i32: 1 if the two single-word strings
 // are byte-equal, else 0. Fast paths on pointer identity and length mismatch
-// (length at [ptr-4]), then compares bytes. The IR lowers `a == b` on strings
-// (OpStrEq) to a call here. Leaf.
+// (length at [ptr-4]), then asks __ssa_mismatch where the bytes first differ.
+// The IR lowers `a == b` on strings (OpStrEq) to a call here.
 func emitStrEqHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__str_eq"))
@@ -2654,16 +2657,9 @@ func emitStrEqHelper(w func(string, ...any)) {
 	w("\tmov edx, %s", memRef("rsi", -4)) // len b
 	w("\tcmp ecx, edx")
 	w("\tjne .Lssa_streq_neq") // different lengths
-	w("\txor r8d, r8d")        // i = 0
-	w(".Lssa_streq_loop:")
-	w("\tcmp r8d, ecx")
-	w("\tjae .Lssa_streq_eq") // all bytes matched
-	w("\tmovzx r9d, byte ptr [rdi + r8]")
-	w("\tmovzx r10d, byte ptr [rsi + r8]")
-	w("\tcmp r9d, r10d")
-	w("\tjne .Lssa_streq_neq")
-	w("\tadd r8, 1")
-	w("\tjmp .Lssa_streq_loop")
+	w("\tcall %s", mismatchSym)
+	w("\tcmp rax, rdx")
+	w("\tjne .Lssa_streq_neq") // a byte differs before the end
 	w(".Lssa_streq_eq:")
 	w("\tmov eax, 1")
 	w("\tret")
@@ -2676,37 +2672,133 @@ func emitStrEqHelper(w func(string, ...any)) {
 // behind `<` / `<=` / `>` / `>=` on strings — the first differing byte's
 // difference, or the length difference when one is a prefix of the other.
 // Unlike __str_eq it cannot bail on a length mismatch: ordering is decided by
-// the FIRST difference. Lengths live at [ptr-4]. Leaf.
+// the FIRST difference, which __ssa_mismatch finds over the shorter length.
+// Lengths live at [ptr-4].
 func emitStrOrdHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__str_ord"))
-	w("\tmov ecx, %s", memRef("rdi", -4)) // la
-	w("\tmov edx, %s", memRef("rsi", -4)) // lb
-	w("\tmov r8d, ecx")                   // n = min(la, lb)
-	w("\tcmp edx, r8d")
+	w("\tmov r10d, %s", memRef("rdi", -4)) // la
+	w("\tmov r11d, %s", memRef("rsi", -4)) // lb
+	w("\tmov edx, r10d")                   // n = min(la, lb)
+	w("\tcmp r11d, edx")
 	w("\tjae .Lssa_strord_n")
-	w("\tmov r8d, edx")
+	w("\tmov edx, r11d")
 	w(".Lssa_strord_n:")
-	w("\txor r9d, r9d") // i = 0
-	w(".Lssa_strord_loop:")
-	w("\tcmp r9d, r8d")
+	w("\tcall %s", mismatchSym)
+	w("\tcmp rax, rdx")
 	w("\tjae .Lssa_strord_len")
-	w("\tmovzx r10d, byte ptr [rdi + r9]")
-	w("\tmovzx r11d, byte ptr [rsi + r9]")
-	w("\tcmp r10d, r11d")
-	w("\tjne .Lssa_strord_diff")
-	w("\tadd r9, 1")
-	w("\tjmp .Lssa_strord_loop")
-	w(".Lssa_strord_diff:")
+	w("\tmovzx ecx, byte ptr [rdi + rax]")
+	w("\tmovzx r8d, byte ptr [rsi + rax]")
+	w("\tmov eax, ecx")
+	w("\tsub eax, r8d")
+	w("\tmovsx rax, eax")
+	w("\tret")
+	w(".Lssa_strord_len:")
 	w("\tmov eax, r10d")
 	w("\tsub eax, r11d")
 	w("\tmovsx rax, eax")
 	w("\tret")
-	w(".Lssa_strord_len:")
-	w("\tmov eax, ecx")
-	w("\tsub eax, edx")
-	w("\tmovsx rax, eax")
+}
+
+// mismatchSym names the shared first-difference scan __str_eq and __str_ord
+// route through: __ssa_mismatch(rdi=a, rsi=b, rdx=n) -> rax = the index of
+// the first byte at which the two n-byte ranges differ, or n when they are
+// equal. Internal like __ssa_bcopy, so a bare symbol.
+const mismatchSym = "__ssa_mismatch"
+
+// emitMismatch writes __ssa_mismatch: 32 bytes an iteration with AVX2 while
+// 32 remain, 16 with SSE2 while 16 remain, 8 with a general register while 8
+// remain, then bytes, mirroring the flat backend's __fern_mismatch. A hit's
+// index comes from the first clear bit of the compare mask (or the first set
+// bit of the xor for the word step). It clobbers rax, rcx, r8 and r9 and
+// the two vector registers, and leaves rdi, rsi and rdx as they came, so a
+// caller keeps its operands across the call. Leaf.
+func emitMismatch(w func(string, ...any)) {
+	w("")
+	w("%s:", mismatchSym)
+	w("\txor ecx, ecx") // cursor
+	w(".Lssa_mm_avx:")
+	w("\tmov rax, rdx")
+	w("\tsub rax, rcx")
+	w("\tcmp rax, 32")
+	w("\tjl .Lssa_mm_avx_done")
+	w("\tvmovdqu ymm0, [rdi + rcx]")
+	w("\tvmovdqu ymm1, [rsi + rcx]")
+	w("\tvpcmpeqb ymm0, ymm0, ymm1")
+	w("\tvpmovmskb eax, ymm0")
+	w("\tcmp eax, -1")
+	w("\tjne .Lssa_mm_hit32")
+	w("\tadd rcx, 32")
+	w("\tjmp .Lssa_mm_avx")
+	w(".Lssa_mm_hit32:")
+	w("\tvzeroupper")
+	w("\tnot eax")
+	w("\tbsf eax, eax") // the first lane that differs
+	w("\tadd rax, rcx")
 	w("\tret")
+	w(".Lssa_mm_avx_done:")
+	w("\tvzeroupper")
+	w(".Lssa_mm_vec:")
+	w("\tmov rax, rdx")
+	w("\tsub rax, rcx")
+	w("\tcmp rax, 16")
+	w("\tjl .Lssa_mm_word")
+	w("\tmovdqu xmm0, [rdi + rcx]")
+	w("\tmovdqu xmm1, [rsi + rcx]")
+	w("\tpcmpeqb xmm0, xmm1")
+	w("\tpmovmskb eax, xmm0")
+	w("\tcmp eax, 65535")
+	w("\tjne .Lssa_mm_hit16")
+	w("\tadd rcx, 16")
+	w("\tjmp .Lssa_mm_vec")
+	w(".Lssa_mm_hit16:")
+	w("\tnot eax") // the top half sets too, above every lane the branch guarantees below
+	w("\tbsf eax, eax")
+	w("\tadd rax, rcx")
+	w("\tret")
+	w(".Lssa_mm_word:")
+	w("\tmov rax, rdx")
+	w("\tsub rax, rcx")
+	w("\tcmp rax, 8")
+	w("\tjl .Lssa_mm_tail")
+	w("\tmov r8, [rdi + rcx]")
+	w("\tmov r9, [rsi + rcx]")
+	w("\tcmp r8, r9")
+	w("\tjne .Lssa_mm_hit8")
+	w("\tadd rcx, 8")
+	w("\tjmp .Lssa_mm_word")
+	w(".Lssa_mm_hit8:")
+	w("\txor r8, r9")
+	w("\tbsf r8, r8") // the first differing bit, little-endian: its byte is the first differing byte
+	w("\tshr r8, 3")
+	w("\tlea rax, [rcx + r8]")
+	w("\tret")
+	w(".Lssa_mm_tail:")
+	w("\tcmp rcx, rdx")
+	w("\tjae .Lssa_mm_eq")
+	w("\tmovzx r8d, byte ptr [rdi + rcx]")
+	w("\tmovzx r9d, byte ptr [rsi + rcx]")
+	w("\tcmp r8d, r9d")
+	w("\tjne .Lssa_mm_hitb")
+	w("\tadd rcx, 1")
+	w("\tjmp .Lssa_mm_tail")
+	w(".Lssa_mm_hitb:")
+	w("\tmov rax, rcx")
+	w("\tret")
+	w(".Lssa_mm_eq:")
+	w("\tmov rax, rdx")
+	w("\tret")
+}
+
+// usesMismatch reports whether the module needs __ssa_mismatch: the two
+// string comparisons call it.
+func usesMismatch(helpers []string) bool {
+	for _, h := range helpers {
+		if h == "__str_eq" || h == "__str_ord" {
+			return true
+		}
+	}
+	return false
 }
 
 // bcopySym names the shared forward byte copy every allocating helper routes
