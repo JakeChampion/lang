@@ -9,19 +9,19 @@ import (
 )
 
 // A 32-bit call result is sign-extended as it is taken out of eax, in the
-// one instruction the move already cost, both when the result goes
-// straight to its home and when a value live across the call makes the
-// capture go through a scratch register first. Nothing re-extends the
-// result afterwards, and the value survives a negative return.
+// one instruction the move already cost, and nothing re-extends it
+// afterwards; the value survives a negative return. The result goes
+// straight to its home in every module here: the allocator never homes a
+// result in a register a value live across the same call holds, so the
+// capture never needs the scratch register.
 func TestCallResultIsSignExtendedOnCapture(t *testing.T) {
 	neg := ssa.NewFunc("neg")
 	nx := neg.AddParam()
 	ne := neg.NewBlock()
 	neg.SetRet(ne, neg.AddOp(ne, ssa.OpSub, constOp(neg, ne, 0), nx))
 
-	// direct: nothing is live across the call, so the result is captured
-	// into its home; across: x is read after both calls, so the second
-	// call's result is staged through the scratch register.
+	// x is read after both calls, so it is live across them while the two
+	// results take registers of their own.
 	main := ssa.NewFunc("main")
 	x := main.AddParam()
 	me := main.NewBlock()
@@ -65,6 +65,62 @@ func TestCallResultIsSignExtendedOnCapture(t *testing.T) {
 	}
 	for _, nAlloc := range []int{1, 2, 8} {
 		runModuleMatchesEval(t, funcs, "main", nAlloc, []int64{7}) // -7 + 7 + 7
+	}
+}
+
+// The closure dispatch renders its own call and capture, so a 32-bit result
+// through a closure is checked the same way: a movsxd from eax on the line
+// after the indirect call, nothing re-extending it, and the evaluator's
+// answer for a negative return.
+func TestIndirectCallResultIsSignExtendedOnCapture(t *testing.T) {
+	neg := ssa.NewFunc("neg")
+	nx := neg.AddParam()
+	neg.AddParam() // the env pointer a closure call appends
+	ne := neg.NewBlock()
+	neg.SetRet(ne, neg.AddOp(ne, ssa.OpSub, constOp(neg, ne, 0), nx))
+
+	apply := ssa.NewFunc("apply")
+	x := apply.AddParam()
+	ae := apply.NewBlock()
+	c := makeClosureOp(apply, ae, "neg")
+	r := callIndirectOp(apply, ae, c, x)
+	ae.Ops[len(ae.Ops)-1].Width = 32
+	apply.SetRet(ae, apply.AddOp(ae, ssa.OpAdd, r, x))
+	funcs := map[string]*ssa.Func{"neg": neg, "apply": apply}
+
+	asm, err := EmitAsmModule(funcs, "apply", 8, nil)
+	if err != nil {
+		t.Fatalf("EmitAsmModule: %v", err)
+	}
+	body := funcText(t, asm, fnLabel("apply"))
+	body = body[strings.Index(body, ".L"):]
+	lines := strings.Split(body, "\n")
+	captures := 0
+	for i, ln := range lines {
+		if strings.TrimSpace(ln) != "call rax" || i+1 >= len(lines) {
+			continue
+		}
+		next := strings.TrimSpace(lines[i+1])
+		if regexp.MustCompile(`^movsxd \w+, eax$`).MatchString(next) {
+			captures++
+		} else {
+			t.Errorf("the closure call's 32-bit result is taken out of rax with %q; want a movsxd from eax:\n%s", next, body)
+		}
+	}
+	if captures != 1 {
+		t.Errorf("apply captures %d closure results; want 1:\n%s", captures, body)
+	}
+	self := regexp.MustCompile(`movsxd (\w+), (\w+)d\n`)
+	for _, m := range self.FindAllStringSubmatch(body, -1) {
+		if reg32n(regIndex(t, m[1])) == m[2] {
+			t.Errorf("the closure result is re-extended in place after being moved:\n%s", body)
+			break
+		}
+	}
+	// The table is the module's sorted function order, which is how the
+	// real assembly numbers closure targets.
+	for _, nAlloc := range []int{1, 2, 8} {
+		runModuleTableMatchesEval(t, funcs, []string{"apply", "neg"}, "apply", nAlloc, []int64{7}) // -7 + 7
 	}
 }
 
