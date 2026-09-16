@@ -25,10 +25,24 @@ in five allocations and four copies.
 ## Change
 
 `Tokenize` reserves one token per 7 source bytes, just past the corpus average,
-so a typical file needs no growth at all. Dense code — no comments, no long
-string literals — reaches one token per 2.5 bytes and still grows once, which
-is the intended trade: the reserve tracks the average rather than the worst
-case, so no file pays for the outlier.
+plus a floor of 16 for files too short for the division to reserve anything.
+
+The statistic that matters here is the byte-weighted mean, because what the
+reserve buys is measured over the whole corpus rather than per file: at 7.46
+bytes per token by volume, the reserve covers 106% of the corpus's tokens, so
+nearly all the growth goes away in aggregate. It is not a per-file bound. The
+distribution over the 120 sources is wider than the mean suggests:
+
+| Statistic | Bytes per token |
+|---|---|
+| mean (byte-weighted) | 7.46 |
+| median | 6.63 |
+| p25 / p75 | 5.61 / 8.99 |
+| min / max | 3.51 / 27.20 |
+
+So 68 of the 120 files, 57%, sit under the divisor and still grow once. Sizing
+for them instead would over-reserve on every long file, which is the trade
+taken deliberately: the aggregate is what the collector sees.
 
 `emitBlock` reserves `len(b.Ops)*3/2 + 4` instructions, the measured 1.38 per op
 rounded up with room for the terminator and any edge moves.

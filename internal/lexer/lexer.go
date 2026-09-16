@@ -264,10 +264,11 @@ func hexVal(r rune) int {
 // / hover-doc consumers walk the comment list explicitly.
 func Tokenize(src string) ([]Token, []ast.Comment, error) {
 	l := &lexer{src: src, line: 1, col: 1}
-	// One token per 7 source bytes: the repository's own Fern sources average
-	// 7.46 bytes per token, so the reserve covers a typical file outright
-	// instead of walking up from nothing. Code with no comments or long string
-	// literals is denser and still grows, once.
+	// One token per 7 source bytes, plus a floor for files too short for the
+	// division to reserve anything. The repository's own Fern sources average
+	// 7.46 bytes per token by volume, so the reserve covers 106% of the
+	// corpus's tokens and nearly all the growth goes away in aggregate. It is
+	// not a bound per file: the median file is denser, at 6.63, and grows once.
 	out := make([]Token, 0, len(src)/7+16)
 	for {
 		tok, err := l.next()
