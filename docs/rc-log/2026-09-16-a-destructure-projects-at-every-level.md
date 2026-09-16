@@ -30,6 +30,14 @@ Corpus, whole modules produced: 378 → 382 (the remaining destructuring
 sites refuse for other reasons: a void call in expression position, a
 loop binding).
 
+## The `for` header
+
+A `for (k, w) in xs` header takes the same pattern, and `iterate_array`
+refused it as an "unsupported loop binding" (7 sites). The element is now
+destructured by the same projection walk, in the body's checker scope,
+before the body is produced. A Map iterand still refuses: there is no
+entry projection to walk.
+
 ## Pinned
 
 `TestSelfHostSemanticSourceRC` runs `struct_unpack` (a struct pattern
@@ -38,4 +46,6 @@ pattern whose fields hold a string and an array) and `nested_unpack` (a
 nested position holding a fresh string and an array) on arm64, x86-64,
 the sanitiser and wasm under the leak check. The print golden carries
 `nested_destructure`, which had pinned the refusal, and
-`struct_destructure`.
+`struct_destructure`. `for_pairs` runs a flat and a nested header over
+arrays of tuples holding fresh strings; the print golden carries
+`for_pair`.
