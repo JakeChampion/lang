@@ -526,6 +526,17 @@ pub function substitution(mod: parser.Module, structs: irlower.StructTab, base: 
     }
     if (seeds.len() > 0) { sigs = irlower.regrow_sigs(sigs, mod.funcs, structs, seeds); }
     if (consumed.len() > 0) { sigs = irlower.consume_sigs(sigs, mod.funcs, consumed); }
+    // Production is all or nothing: a module with a refused declaration keeps
+    // the AST lowering whole, since a produced body beside an AST-lowered one
+    // is two memory conventions on one module, sound only where the contracts
+    // `prune` reads cover every crossing. The bisect knobs keep the mixed
+    // module, which is what they exist to halve.
+    if (n < mod.funcs.len() && sem_ir_only() == "" && sem_ir_skip() == "") {
+        report("module", "produced 0 of " + util.i32_to_string(mod.funcs.len()) + " declarations and 0 of "
+            + util.i32_to_string(built.instances.len()) + " instances: "
+            + util.i32_to_string(mod.funcs.len() - n) + " refused, the AST lowering stands");
+        return ircore.no_sub();
+    }
     report("module", "produced " + util.i32_to_string(n) + " of "
         + util.i32_to_string(mod.funcs.len()) + " declarations and "
         + util.i32_to_string(instances.len()) + " of "

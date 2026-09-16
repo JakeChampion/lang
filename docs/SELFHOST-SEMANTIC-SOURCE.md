@@ -1745,6 +1745,24 @@ lowering, with the output byte-identical. What remains is `semsource` +
 `ssaunits` + `ssarc` running once per declaration on top of the AST lowering
 that still runs for the eligibility verdict.
 
+**Production is all or nothing.** A module with a refused declaration keeps
+the AST lowering whole: `semlower.substitution` reports the refusals and the
+tally as `produced 0 of N declarations … K refused, the AST lowering stands`
+and hands the emit `no_sub()`. A produced body beside an AST-lowered one is
+two memory conventions on one module — every crash this path has had was a
+mixed module — and the contracts `prune` reads cover the crossings it can
+see, not every data structure that crosses. The bisect knobs
+(`FERN_SEM_IR_ONLY` / `FERN_SEM_IR_SKIP`) keep the mixed module, which is
+what they exist to halve, and the production suite's skip legs run under
+them. The other half of the same decision: a declaration the substitution
+produced is not lowered by the AST lowering at all (`ircore.lower_gated`
+takes the substitution and reads the produced body in its place), so the
+AST lowering's verdict is not asked for it, and a module the semantic
+lowering produces whole compiles where the AST lowering would have refused
+it — a `match` on a bare `Some(x)`, an empty array literal as a match arm's
+value — and the semantic self-build no longer pays for two lowerings of
+every declaration.
+
 **The fixpoint is not reached, and the reason is memory in the produced code
 of those same modules.** The produced compiler rebuilding itself through the
 semantic path prints the same tally and then exhausts the 16 GiB arena
