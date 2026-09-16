@@ -80,7 +80,7 @@ func runProg(m map[string]*Program, table []string, p *Program, h *modelHeap, ar
 			case MovReg:
 				regs[in.Dst] = regs[in.Src]
 			case BinOp:
-				r, err := binInt(in.K, regs[in.Dst], regs[in.Src], in.W)
+				r, err := binInt(in.K, regs[in.Dst], rightOperand(in, regs), in.W)
 				if err != nil {
 					return 0, 0, err
 				}
@@ -90,7 +90,7 @@ func runProg(m map[string]*Program, table []string, p *Program, h *modelHeap, ar
 			case UnOp:
 				regs[in.Dst] = maskW(in.W, unInt(in.K, regs[in.Dst], in.W))
 			case SetCmp:
-				regs[in.Dst] = cmpInt(in.K, regs[in.Dst], regs[in.Src])
+				regs[in.Dst] = cmpInt(in.K, regs[in.Dst], rightOperand(in, regs))
 			case LoadSlot:
 				regs[in.Dst] = slots[in.Imm]
 			case StoreSlot:
@@ -566,4 +566,13 @@ func cmpInt(k ssa.OpKind, a, b int64) int64 {
 	default:
 		return 0
 	}
+}
+
+// rightOperand is a BinOp's or SetCmp's right operand: the immediate when the
+// instruction carries one, else the source register.
+func rightOperand(in Inst, regs []int64) int64 {
+	if in.SrcImm {
+		return in.Imm
+	}
+	return regs[in.Src]
 }

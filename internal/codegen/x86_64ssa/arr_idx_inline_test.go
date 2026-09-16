@@ -129,15 +129,17 @@ func TestSliceIndexIsInlinedNotCalled(t *testing.T) {
 	if strings.Contains(asm, "call fn___slice_idx") {
 		t.Error("slice index still emitted as a call")
 	}
-	// A 32-bit LOAD from +8, inside main. Both halves of that are needed: the
-	// module at large contains the helper's identical read (see idxFuncBody),
-	// and main itself contains sliceView's `mov [reg + 8], reg` STORE building
-	// the header. Requiring a 32-bit destination separates the inline's length
-	// read from the store and from its own 64-bit data-pointer load at +0.
+	// A 32-bit compare against +8, inside main. Both halves of that are
+	// needed: the module at large contains the helper's identical read (see
+	// idxFuncBody), and main itself contains sliceView's `mov [reg + 8], reg`
+	// STORE building the header. The compare reads the length where it lies
+	// rather than loading it into a register first, and its 32-bit left
+	// operand separates it from the store and from the inline's own 64-bit
+	// data-pointer load at +0.
 	body := idxFuncBody(t, asm, "main")
-	lenLoad := regexp.MustCompile(`(?m)^\s*mov (e[a-z]{2}|r\d+d), \[[a-z0-9]+ \+ 8\]\s*$`)
-	if !lenLoad.MatchString(body) {
-		t.Errorf("inlined slice index never loads the length field at +8\n%s", body)
+	lenCmp := regexp.MustCompile(`(?m)^\s*cmp (e[a-z]{2}|r\d+d), dword ptr \[[a-z0-9]+ \+ 8\]\s*$`)
+	if !lenCmp.MatchString(body) {
+		t.Errorf("inlined slice index does not compare against the length field at +8\n%s", body)
 	}
 	if !strings.Contains(body, "134") {
 		t.Error("inlined slice index dropped the out-of-range trap")
