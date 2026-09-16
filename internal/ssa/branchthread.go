@@ -16,7 +16,7 @@ func ThreadPhiBranches(f *Func) {
 		return
 	}
 	uses := collectUses(f)
-	booleans := make(map[int32]bool)
+	booleans := newIDTable[bool](f)
 	for _, b := range f.Blocks {
 		for _, op := range b.Ops {
 			// Only bypass values known to be 0 or 1. This does not rely on
@@ -24,7 +24,7 @@ func ThreadPhiBranches(f *Func) {
 			// the backend's width-resolution pass has run.
 			if op.Result.IsValid() && (IsComparison(op.Kind) ||
 				(isIntConst(op.Kind) && (op.Imm == 0 || op.Imm == 1))) {
-				booleans[op.Result.ID] = true
+				booleans.set(op.Result, true)
 			}
 		}
 	}
@@ -33,7 +33,7 @@ func ThreadPhiBranches(f *Func) {
 			continue
 		}
 		phi := b.Ops[0]
-		if phi.Kind != OpPhi || phi.Result != b.Term.Cond || uses[phi.Result.ID] != 1 || len(phi.Args) != len(b.Preds) || !threadPhiUniquePreds(b) {
+		if phi.Kind != OpPhi || phi.Result != b.Term.Cond || uses.get(phi.Result) != 1 || len(phi.Args) != len(b.Preds) || !threadPhiUniquePreds(b) {
 			continue
 		}
 		yes, no := b.Term.True, b.Term.False
@@ -52,7 +52,7 @@ func ThreadPhiBranches(f *Func) {
 				continue
 			}
 			incoming := phi.Args[i]
-			if !incoming.IsValid() || !booleans[incoming.ID] {
+			if !booleans.get(incoming) {
 				continue
 			}
 			// The incoming value loses one phi use and gains one branch use,
@@ -66,9 +66,7 @@ func ThreadPhiBranches(f *Func) {
 					if op.Kind == OpPhi {
 						arg := op.Args[edge.slot]
 						op.Args = append(op.Args, arg)
-						if arg.IsValid() {
-							uses[arg.ID]++
-						}
+						uses.set(arg, uses.get(arg)+1)
 					}
 				}
 				edge.target.Preds = append(edge.target.Preds, p)

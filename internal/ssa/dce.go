@@ -49,7 +49,7 @@ func DCE(f *Func) {
 	}
 }
 
-func isDeadOp(op *Op, uses map[int32]int) bool {
+func isDeadOp(op *Op, uses idTable[int32]) bool {
 	if op == nil {
 		return false
 	}
@@ -70,20 +70,17 @@ func isDeadOp(op *Op, uses map[int32]int) bool {
 		// the same reason).
 		return false
 	}
-	return uses[op.Result.ID] == 0
+	return uses.get(op.Result) == 0
 }
 
 // collectUses tallies how many times each Value is referenced
 // across the whole function (in Op.Args + terminator
 // Cond/Value). A Value with count == 0 has no consumers and
 // — if its def is pure — is safe to delete.
-func collectUses(f *Func) map[int32]int {
-	uses := map[int32]int{}
+func collectUses(f *Func) idTable[int32] {
+	uses := newIDTable[int32](f)
 	bump := func(v Value) {
-		if !v.IsValid() {
-			return
-		}
-		uses[v.ID]++
+		uses.set(v, uses.get(v)+1)
 	}
 	for _, b := range f.Blocks {
 		for _, op := range b.Ops {

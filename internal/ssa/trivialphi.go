@@ -71,11 +71,11 @@ func TrivialPhisWithAliases(f *Func, aliases ValueAliases) {
 	if f == nil {
 		return
 	}
-	defs := map[int32]*Op{}
+	defs := newIDTable[*Op](f)
 	for _, b := range f.Blocks {
 		for _, op := range b.Ops {
 			if op.Result.IsValid() {
-				defs[op.Result.ID] = op
+				defs.set(op.Result, op)
 			}
 		}
 	}
@@ -205,7 +205,7 @@ func reorderPhisFirst(b *Block, consts []*Op) {
 // Distinct from trivialPhiTarget: this handles the case where
 // the args are different SSA Values but represent the same
 // compile-time constant.
-func constArgsModel(op *Op, defs map[int32]*Op) (*Op, bool) {
+func constArgsModel(op *Op, defs idTable[*Op]) (*Op, bool) {
 	var first Value
 	var firstDef *Op
 	for _, a := range op.Args {
@@ -215,8 +215,8 @@ func constArgsModel(op *Op, defs map[int32]*Op) (*Op, bool) {
 		if a == op.Result {
 			continue
 		}
-		def, ok := defs[a.ID]
-		if !ok || !IsConst(def.Kind) {
+		def := defs.get(a)
+		if def == nil || !IsConst(def.Kind) {
 			return nil, false
 		}
 		if !first.IsValid() {
