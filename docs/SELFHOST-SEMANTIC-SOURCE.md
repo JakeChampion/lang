@@ -489,12 +489,16 @@ Unsupported constructs refuse the whole function with a reason.
   use moves: `m = m.insert(k, v)` leaves the receiver dead at the insert.
 
   The vocabulary is `map_new(cap)`, `insert` (spelled `set` too, as the AST
-  lowering admits both), `has` and `get_or`. An insert takes the receiver's
+  lowering admits both), `has`, `get_or`, `get` and `len`. An insert takes the receiver's
   unit and the KEY's, which the key column owns until the map is released;
   `kconsume` tells the runtime to hold that unit rather than retain it and to
   release the key an overwrite supersedes, and `owncols` makes the map the sole
   owner of both column buffers so a grow frees the one it replaced. A lookup
-  borrows both operands and answers a scalar the map goes on owning. The rest
+  borrows both operands and answers a scalar the map goes on owning. A `get`
+  answers an `Option` of the value in a box of the frame's own, released as
+  any Option is; the runtime copies the column's entry into it without a
+  retain, so a get over a COUNTED value column is refused ("map get of a
+  counted value column") until the payload is retained on a hit. The rest
   of the map surface — `op_map_delete`, `op_map_keys` / `op_map_values` and the
   `op_map_iter` cluster — is not ADMITTED here. Those ops exist and every
   backend lowers them; what this boundary lacks is a contract stating what each

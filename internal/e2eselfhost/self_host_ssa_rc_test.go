@@ -1065,6 +1065,27 @@ function main(): i32 {
         if (o.str == "__fern_str_free") { sawEndFree = true; }
     }
     if (!sawExit || !sawEndFree) { return 183; }
+    // A get answers an Option of a narrow value column in a fresh box of its
+    // own, handed to the frame: the map and the key are borrowed by it, and
+    // the owned map is still freed on the way out.
+    var optI32Ty: typeinfo.Type = typeinfo.TypeUnion { name: "Option", args: [i32ty] };
+    var getGraph = ssa.SFunc { name: "map_get", nparams: 2, nvals: 3, entry: 7, takes_env: false,
+        blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1),
+            ssa.SInst { kind_tag: ssasem.map_get(), result: 2, args: [0, 1], imm: 0, str: "" }], term: ret(2) }] };
+    var optEnum = semrecords.Enum { ty: optI32Ty, variants: [semrecords.Variant { name: "Some", fields: [semrecords.Field { name: "__ev", ty: i32ty }] },
+        semrecords.Variant { name: "None", fields: [] }], layout: semrecords.layout_option() };
+    var getMap = ssasem.Func { graph: getGraph, values: [intMapTy, i32ty, optI32Ty], params: [intMapTy, i32ty], result: optI32Ty, records: [], enums: [optEnum], calls: [] };
+    var getPlan = ssaunits.plan(getMap, [3, 1]);
+    if (!getPlan.ok) { eprint(getPlan.why); return 184; }
+    var getLowered = ssarc.lower(getMap, [3, 1], getPlan, irlower.struct_tab_empty(), []);
+    if (!getLowered.ok) { eprint(getLowered.why); return 185; }
+    var sawGet: boolean = false;
+    var sawGetFree: boolean = false;
+    for o in getLowered.ops {
+        if (o.kind_tag == 127) { sawGet = true; }
+        if (o.str == "__fern_map_free") { sawGetFree = true; }
+    }
+    if (!sawGet || !sawGetFree) { return 186; }
     // A map and a boolean spell different drop helpers: without a key of its
     // own a map would key as the fall-through leaf does.
     if (ssasem.type_key(mapTy) == ssasem.type_key(typeinfo.TypeBool { tag: 0 })) { return 144; }
