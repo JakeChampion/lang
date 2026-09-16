@@ -379,6 +379,8 @@ func TestSelfHostSSABackendAgreesWithStackMachine(t *testing.T) {
 
 // The backend exists for the two native ISAs; another target is refused with
 // the targets it is available for, as native's `-backend ssa` refuses wasm.
+// `-backend flat` names the stack machine, as it does on native, and a name
+// nothing implements is an error rather than a fall-through.
 func TestSelfHostSSABackendRefusesOtherTargets(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
@@ -393,12 +395,26 @@ func TestSelfHostSSABackendRefusesOtherTargets(t *testing.T) {
 	if !strings.Contains(string(out), "-backend ssa is not available for -target wasm32-wasi") {
 		t.Errorf("refusal does not name the target: %s", out)
 	}
-	out, err = exec.Command(h.cli, "-target", h.targets[0].target, "-backend", "flat", "-o", filepath.Join(dir, "p"), src, h.stdlib).CombinedOutput()
+	out, err = exec.Command(h.cli, "-target", h.targets[0].target, "-backend", "nope", "-o", filepath.Join(dir, "p"), src, h.stdlib).CombinedOutput()
 	if err == nil {
-		t.Fatalf("-backend flat was accepted")
+		t.Fatalf("-backend nope was accepted")
 	}
-	if !strings.Contains(string(out), "unknown -backend: flat") {
+	if !strings.Contains(string(out), "unknown -backend: nope") {
 		t.Errorf("unknown backend not reported: %s", out)
+	}
+	tg := h.targets[0]
+	h.compileWith(t, tg, src, filepath.Join(dir, "dflt"))
+	h.compileWith(t, tg, src, filepath.Join(dir, "flat"), "-backend", "flat")
+	dflt, err := os.ReadFile(filepath.Join(dir, "dflt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	flat, err := os.ReadFile(filepath.Join(dir, "flat"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(dflt, flat) {
+		t.Errorf("-backend flat and the default emitter produced different executables")
 	}
 }
 
