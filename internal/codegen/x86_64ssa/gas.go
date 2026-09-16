@@ -299,9 +299,11 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		w("\t.quad 0")
 		w("%s:", heapEndSym)
 		w("\t.quad 0")
+		w("%s:", heapBaseSym)
+		w("\t.quad 0")
 	}
 	emitProcBss(w, withArgs, withEnv)
-	emitMapSeedBss(w, helpers)
+	emitHelperBss(w, helpers)
 	w(".section .note.GNU-stack,\"\",@progbits")
 	asm := b.String()
 	if err := checkNoDanglingCalls(asm); err != nil {
@@ -1441,6 +1443,7 @@ func fConvSeq(in Inst, scratch int) (string, error) {
 const (
 	heapPtrSym   = "__ssa_heap_ptr"
 	heapEndSym   = "__ssa_heap_end"
+	heapBaseSym  = "__ssa_heap_base"
 	heapGuardSym = "__ssa_heap_guard"
 	heapOOMLabel = ".Lssa_heap_oom"
 	heapOOMMsg   = "__ssa_msg_oom"
@@ -1478,6 +1481,7 @@ func emitHeapReserve(w func(string, ...any)) {
 	w("\tcmp rax, 0")
 	w("\tjl %s", heapOOMLabel)
 	w("\tmov [rip + %s], rax", heapPtrSym)
+	w("\tmov [rip + %s], rax", heapBaseSym)
 	w("\tmov rcx, rax")
 	w("\tmovabs rdx, %d", heapBytes-heapSlackBytes)
 	w("\tadd rcx, rdx")
@@ -2147,6 +2151,10 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__alloc":                       emitAllocHelper,
 	"__free":                        emitFreeHelper,
 	"__memset":                      emitMemsetHelper,
+	"write":                         emitWriteHelper,
+	"__fern_heap_bump_bytes":        emitHeapBumpBytesHelper,
+	"__method_Reader_read_line":     emitReaderReadLineHelper,
+	"read_dir":                      emitReadDirHelper,
 	"buf_new":                       emitBufNewHelper,
 	"__fern_buf_reserve":            emitBufReserveHelper,
 	"buf_push":                      emitBufPushHelper,
@@ -2223,6 +2231,8 @@ var heapUsingHelpers = map[string]bool{
 	"temp_dir":                   true,
 	"random_bytes":               true,
 	"__alloc":                    true,
+	"__method_Reader_read_line":  true,
+	"read_dir":                   true,
 }
 
 // runtimeHelperDeps records the helper→helper call edges (a helper that tail-
@@ -2255,6 +2265,7 @@ var runtimeHelperDeps = map[string][]string{
 	"remove_file":                   {"__fern_io_error"},
 	"temp_dir":                      {"__fern_io_error"},
 	"random_bytes":                  {"__alloc_u8"},
+	"read_dir":                      {"__fern_io_error"},
 	"__fern_buf_reserve":            {"__fern_box_free"},
 	"buf_push":                      {"__fern_buf_reserve"},
 	"buf_push_range":                {"__fern_buf_reserve"},
@@ -2674,6 +2685,8 @@ var bcopyUsingHelpers = map[string]bool{
 	"read_file":                   true,
 	"read_file_bytes":             true,
 	"temp_dir":                    true,
+	"__method_Reader_read_line":   true,
+	"read_dir":                    true,
 }
 
 // usesBcopy reports whether any referenced helper calls __ssa_bcopy.
