@@ -13443,7 +13443,7 @@ function dl_iter_cleanup(actions: ast.Stmt[], flags: i32[], start: i32, end: i32
         var name: string = "__dfa" + dl_itoa(i);
         var body1: ast.Stmt[] = [];
         if (flags[i] == 0) { body1 = body1.append(actions[i]); }
-        body1 = body1.append(s_assign(name, e_number("0", "", false)));
+        body1 = body1.append(s_assign(name, e_bool(false)));
         var noelse: ast.Stmt[] = [];
         out = out.append(s_if(e_ident(name), body1, noelse));
         i = i - 1;
@@ -13455,16 +13455,16 @@ function dl_iter_cleanup(actions: ast.Stmt[], flags: i32[], start: i32, end: i32
 // how far into the action list the walk has passed an arming write.
 struct DeferEdges { stmts: ast.Stmt[], armed: i32 }
 
-// dl_arm_index returns the action index an assignment ARMS (`__dfa<i> = 1`),
-// or -1 for anything else — including dl_iter_cleanup's own `__dfa<i> = 0`.
+// dl_arm_index returns the action index an assignment ARMS (`__dfa<i> = true`),
+// or -1 for anything else — including dl_iter_cleanup's own `__dfa<i> = false`.
 // Indices below `from` have already been passed, so the scan starts there.
 function dl_arm_index(a: ast.StmtAssign, from: i32, end: i32): i32 {
-    var one: boolean = false;
+    var armed: boolean = false;
     match (a.value) {
-        ast.ExprNumber(n) => { one = n.text == "1"; },
+        ast.ExprBool(b) => { armed = b.value; },
         _ => {},
     }
-    if (!one) { return 0 - 1; }
+    if (!armed) { return 0 - 1; }
     var i: i32 = from;
     while (i < end) {
         if (a.target == "__dfa" + dl_itoa(i)) { return i; }
@@ -13696,7 +13696,7 @@ function dl_collect_expr(e: ast.Expr, actions: ast.Stmt[], flags: i32[]): DeferE
 function dl_collect_stmt(st: ast.Stmt, actions: ast.Stmt[], flags: i32[]): DeferAcc {
     match (st) {
         ast.StmtDefer(d) => {
-            var setflag: ast.Stmt = s_assign("__dfa" + dl_itoa(actions.len()), e_number("1", "", false));
+            var setflag: ast.Stmt = s_assign("__dfa" + dl_itoa(actions.len()), e_bool(true));
             var one: ast.Stmt[] = [setflag];
             return DeferAcc { stmts: one, actions: actions.append(d.action), flags: flags.append(d.on_error) };
         },
@@ -14253,11 +14253,12 @@ function lower_defers_body(body0: ast.Stmt[]): ast.Stmt[] {
     var cleanup_err: ast.Stmt[] = dl_cleanup_kind(cr.actions, cr.flags, 1);
     var expanded: ast.Stmt[] = dl_expand_returns(cr.stmts, cleanup, cleanup_err);
     var body: ast.Stmt[] = [];
-    // Shared return temp + per-defer flags, all i32, initialised to 0.
+    // Shared return temp, an i32 initialised to 0, and a boolean flag per
+    // defer, since a condition is a boolean and nothing else.
     body = body.append(s_var("__defret", "", e_number("0", "", false)));
     var i: i32 = 0;
     while (i < cr.actions.len()) {
-        body = body.append(s_var("__dfa" + dl_itoa(i), "", e_number("0", "", false)));
+        body = body.append(s_var("__dfa" + dl_itoa(i), "boolean", e_bool(false)));
         i = i + 1;
     }
     // `?`-edge cleanup markers (#4334): the try operator is lowered long after
@@ -14266,11 +14267,11 @@ function lower_defers_body(body0: ast.Stmt[]): ast.Stmt[] {
     // lists in the body behind never-true guards; lower_try recognises the
     // guard idents and replays the guarded statements at the `?` failure edge
     // (plain defers first, then errdefers — native's TryOp order). The guards
-    // are ordinary always-0 flags, so on any consumer that does NOT know the
-    // markers these blocks are dead code and the lowering is behaviourally
+    // are ordinary always-false flags, so on any consumer that does NOT know
+    // the markers these blocks are dead code and the lowering is behaviourally
     // unchanged.
-    body = body.append(s_var("__dfa_tryall", "", e_number("0", "", false)));
-    body = body.append(s_var("__dfa_tryerr", "", e_number("0", "", false)));
+    body = body.append(s_var("__dfa_tryall", "boolean", e_bool(false)));
+    body = body.append(s_var("__dfa_tryerr", "boolean", e_bool(false)));
     var k: i32 = 0;
     while (k < expanded.len()) { body = body.append(expanded[k]); k = k + 1; }
     // Falloff cleanup (a function that returns on every path leaves this
