@@ -1,10 +1,12 @@
 # Corpus programs whose STDOUT is not a function of the compiler, so the
-# arm64 flat-vs-ssa differential compares their exit status only. Read by
-# internal/e2e/arm64_ssa_differential_test.go; format is `<path>  <reason>`.
+# flat-vs-ssa differentials compare their exit status only. Read by both
+# internal/e2e/arm64_ssa_differential_test.go and
+# internal/e2e/x86_64_ssa_differential_test.go, since the property is the
+# program's, not the target's; format is `<path>  <reason>`.
 #
 # This is NOT an allowlist for a wrong answer. A program that prints something
-# different under the two backends belongs in
-# arm64-ssa-diff-known-divergences.txt; a program that prints something
+# different under the two backends belongs in that leg's known-divergences
+# file; a program that prints something
 # different on two runs of the SAME binary belongs here, because comparing it
 # would report a flake as a compiler bug. Rows still run under both backends,
 # still count toward the leg's floor, and a crash or a wrong exit code under
@@ -21,6 +23,6 @@ examples/cli/yes.fern  writes its line forever, so stdout is however much the ha
 examples/wasm/echo_handler.fern  an HTTP server: it listens until it is killed
 examples/wasm/native_http_handler.fern  an HTTP server: it listens until it is killed
 examples/wasm/url_router.fern  an HTTP server: it listens until it is killed
-examples/tests/batch8_test.fern  prints the path of a per-run temp directory; the unique suffix is a monotonic-clock reading on the flat backend and 8 random hex digits on arm64ssa, and neither repeats
+examples/tests/batch8_test.fern  prints the path of a per-run temp directory; the unique suffix is a clock reading or a random draw, and neither repeats
 examples/tests/bench_test.fern  prints measured elapsed times
 examples/tests/rel_tol_and_ms_bench_test.fern  prints measured elapsed times

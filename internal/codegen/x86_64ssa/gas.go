@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	nativex86_64 "github.com/jakechampion/lang/internal/codegen/x86_64"
+	"github.com/jakechampion/lang/internal/fernrt"
+	"github.com/jakechampion/lang/internal/ir"
 	"github.com/jakechampion/lang/internal/ssa"
 )
 
@@ -109,6 +111,22 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		progs[name] = p
 	}
 
+	// A helper written in Fern (internal/fernrt) is lifted and emitted as a
+	// function of this module, under the label its callers already use. Its
+	// own calls may reach further helpers, so the scan repeats until nothing
+	// new is reached.
+	for _, fern := referencedRuntimeHelpers(progs); len(fern) > 0; _, fern = referencedRuntimeHelpers(progs) {
+		for _, name := range fern {
+			p, err := liftFernHelper(name, numAlloc)
+			if err != nil {
+				return "", err
+			}
+			progs[name] = p
+			names = append(names, name)
+		}
+		sort.Strings(names)
+	}
+
 	ep := progs[entry]
 	if len(entryArgs) != 0 && len(entryArgs) != len(ep.ParamLocs) {
 		return "", fmt.Errorf("x86_64ssa: got %d entry args, entry %q has %d params", len(entryArgs), entry, len(ep.ParamLocs))
@@ -128,7 +146,7 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 	// Some of them allocate (e.g. __str_concat bumps the heap cursor), so the
 	// heap section must exist whenever one is present, even if no direct heap op
 	// (MemAlloc / MakeClosure / …) does.
-	helpers := referencedRuntimeHelpers(progs)
+	helpers, _ := referencedRuntimeHelpers(progs)
 	heap := usesHeap(progs)
 	for _, h := range helpers {
 		if heapUsingHelpers[h] {
@@ -2138,6 +2156,16 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"env":                           emitEnvHelper,
 	"stat":                          emitStatHelper,
 	"__memcpy":                      emitMemcpyHelper,
+	"read_file":                     emitReadFileHelper("read_file", "rf", false),
+	"read_file_bytes":               emitReadFileHelper("read_file_bytes", "rfb", true),
+	"write_file":                    emitWriteFileHelper,
+	"remove_file":                   emitRemoveFileHelper,
+	"temp_dir":                      emitTempDirHelper,
+	"monotonic_ns":                  emitClockHelper("monotonic_ns", 1, 1_000_000_000, 1),
+	"now_unix_ms":                   emitClockHelper("now_unix_ms", 0, 1_000, 1_000_000),
+	"sleep_ms":                      emitSleepMsHelper,
+	"random_bytes":                  emitRandomBytesHelper,
+	"random_i32":                    emitRandomI32Helper,
 	"__abs_f64":                     emitAbsF64Helper,
 	"__sqrt_f64":                    emitF64UnaryHelper("__sqrt_f64", "sqrtsd xmm0, xmm0"),
 	"__floor_f64":                   emitF64UnaryHelper("__floor_f64", "roundsd xmm0, xmm0, 1"),
@@ -2179,6 +2207,12 @@ var heapUsingHelpers = map[string]bool{
 	"args":                       true,
 	"env":                        true,
 	"stat":                       true,
+	"read_file":                  true,
+	"read_file_bytes":            true,
+	"write_file":                 true,
+	"remove_file":                true,
+	"temp_dir":                   true,
+	"random_bytes":               true,
 }
 
 // runtimeHelperDeps records the helper→helper call edges (a helper that tail-
@@ -2202,6 +2236,12 @@ var runtimeHelperDeps = map[string][]string{
 	"open_reader":                   {"__fern_io_error"},
 	"stat":                          {"__fern_io_error"},
 	"open_writer":                   {"__fern_io_error"},
+	"read_file":                     {"__fern_io_error", "__fern_utf8_valid"},
+	"read_file_bytes":               {"__fern_io_error", "__alloc_u8"},
+	"write_file":                    {"__fern_io_error"},
+	"remove_file":                   {"__fern_io_error"},
+	"temp_dir":                      {"__fern_io_error"},
+	"random_bytes":                  {"__alloc_u8"},
 	"__fern_buf_reserve":            {"__fern_box_free"},
 	"buf_push":                      {"__fern_buf_reserve"},
 	"buf_push_range":                {"__fern_buf_reserve"},
@@ -2229,14 +2269,26 @@ func emitRuntimeHelpers(w func(string, ...any), helpers []string) {
 	}
 }
 
-// referencedRuntimeHelpers returns, sorted, the runtime-helper names to append to
-// .text: every helper any emitted program calls, plus the transitive closure of
-// their helper→helper dependencies (runtimeHelperDeps).
-func referencedRuntimeHelpers(progs map[string]*Program) []string {
+// referencedRuntimeHelpers returns, sorted, the hand-written runtime-helper
+// names to append to .text — every helper any emitted program calls, plus the
+// transitive closure of their helper→helper dependencies (runtimeHelperDeps)
+// — and separately the helpers written in Fern (internal/fernrt) reached the
+// same way that progs does not yet hold.
+func referencedRuntimeHelpers(progs map[string]*Program) (asm, fern []string) {
 	seen := map[string]bool{}
+	fernSeen := map[string]bool{}
 	var add func(name string)
 	add = func(name string) {
-		if seen[name] || runtimeHelperEmitters[name] == nil {
+		if seen[name] || fernSeen[name] {
+			return
+		}
+		if fernrt.Has(name) {
+			if progs[name] == nil {
+				fernSeen[name] = true
+			}
+			return
+		}
+		if runtimeHelperEmitters[name] == nil {
 			return
 		}
 		seen[name] = true
@@ -2253,12 +2305,42 @@ func referencedRuntimeHelpers(progs map[string]*Program) []string {
 			}
 		}
 	}
-	out := make([]string, 0, len(seen))
 	for n := range seen {
-		out = append(out, n)
+		asm = append(asm, n)
 	}
-	sort.Strings(out)
-	return out
+	sort.Strings(asm)
+	for n := range fernSeen {
+		fern = append(fern, n)
+	}
+	sort.Strings(fern)
+	return asm, fern
+}
+
+// liftFernHelper lowers one internal/fernrt helper through the same lift,
+// optimise and emit steps as a program function, so it lands in the module
+// under fnLabel(name).
+func liftFernHelper(name string, numAlloc int) (*Program, error) {
+	_, irFn, err := fernrt.Func(name, 8)
+	if err != nil {
+		return nil, err
+	}
+	f, err := ssa.LiftFromIRWith(irFn, ir.NewCallShapes(&ir.Program{Funcs: []*ir.Func{irFn}}))
+	if err != nil {
+		return nil, fmt.Errorf("x86_64ssa: lift %q: %w", name, err)
+	}
+	ssa.Optimize(f)
+	if err := ssa.Verify(f); err != nil {
+		return nil, fmt.Errorf("x86_64ssa: verify %q: %w", name, err)
+	}
+	ssa.ResolveWidths(map[string]*ssa.Func{name: f})
+	p, err := Emit(f, numAlloc)
+	if err != nil {
+		return nil, fmt.Errorf("x86_64ssa: emit %q: %w", name, err)
+	}
+	if p.NumRegFile > len(gpRegs) {
+		return nil, fmt.Errorf("x86_64ssa: %q needs %d registers but only %d are available", name, p.NumRegFile, len(gpRegs))
+	}
+	return p, nil
 }
 
 // emitRcIsUniqueHelper writes __fern_rc_is_unique(data) -> i32: 1 iff data is a
@@ -2576,6 +2658,9 @@ var bcopyUsingHelpers = map[string]bool{
 	"buf_push":                    true,
 	"buf_push_range":              true,
 	"__memcpy":                    true,
+	"read_file":                   true,
+	"read_file_bytes":             true,
+	"temp_dir":                    true,
 }
 
 // usesBcopy reports whether any referenced helper calls __ssa_bcopy.
