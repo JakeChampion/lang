@@ -318,10 +318,13 @@ function arm64_elf_binary_pie(asm: string): string {
 // length, which is exactly this layout. W^X would need the assembler to
 // resolve against a page-aligned data vaddr, as arm64_gas_link does.
 function x86_elf_binary(asm: string, emit_syms: boolean): string {
+    util.arr_push_cliff_report("x86:emitted", 0);
     var a: x86_native.X86Asm = x86_native.x86_gas_assemble(asm);
+    util.arr_push_cliff_report("x86:assembled", 0);
     // Absolute `.quad <label>` pointers need the load address, which the ELF
     // container picks — the analogue of arm64_gas_link's data-vaddr argument.
     a = x86_native.x86_resolve_data(a, elf.elf_text_vaddr_x86());
+    util.arr_push_cliff_report("x86:resolved", 0);
     // Anything unencodable means bytes were dropped, so every offset past
     // the first is wrong — refuse rather than write it (SH-005, #6045).
     if (a.unknown.len() > 0) {
@@ -344,7 +347,9 @@ function x86_elf_binary(asm: string, emit_syms: boolean): string {
     var ev: i64 = (elf.elf_eh_frame_vaddr_x86(a.code.len(), hdr_len)) as i64;
     var eh: i32[] = x86_native.x86_eh_frame(a, tv, ev);
     var hdr: i32[] = x86_native.x86_eh_frame_hdr(a, tv, ev, hv);
+    util.arr_push_cliff_report("x86:unwind", 0);
     var bin: i32[] = elf.elf_program_x86(a.code, hdr, eh, a.rodata, a.bss_size, eoff);
+    util.arr_push_cliff_report("x86:image", 0);
     if (emit_syms) {
         // `-g`: a static .symtab so nm / a debugger / a profiler can map an
         // address back to a function. Only .text labels (section 0) become
