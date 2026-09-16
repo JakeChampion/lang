@@ -345,6 +345,18 @@ Unsupported constructs refuse the whole function with a reason.
   Slicing an ARRAY is refused: it answers a bare view rather than an `Option`,
   and the second reference to the source's buffer that it hands back is a kind
   this vocabulary does not have.
+- The try operator, `e?`, which is control flow rather than an operator and so
+  never reaches `ssasem.unary_result`. The operand's tag is tested against the
+  success variant; the success edge unwraps the payload and the expression
+  continues with it, and the failure edge rebuilds the failure at this body's
+  own result type and RETURNS. Nothing joins, so there is no phi: the value is
+  the success payload and the block left open is the success edge. Success is
+  the first variant declared and failure the second (`docs/TRY.md`), and native
+  has enforced both that shape and the `@try` opt-in (E078) before this runs. A
+  failure carrying a payload moves it out of the operand with a `variant_get`
+  and into the `variant_new` that builds the outgoing one; a failure carrying
+  more than one, or one whose payload type differs from the body's own failure
+  variant, is refused.
 - Indexing a string, as one byte handed back in a u8 — the type the checker
   gives the expression, so a binding or an operator over it needs no
   reconciliation. The receiver is read the way a length's is and the result
