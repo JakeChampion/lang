@@ -250,10 +250,26 @@ instruction selection and block layout, and it leaves the function at 362
 instructions against the flat backend's 434 rather than the several-fold
 reduction the issue's arithmetic assumed.
 
+**Later the same day, the four shapes closed** (fallthrough to the block
+laid out next, the constant as the compare's or binary op's immediate, the
+bounds check comparing against the length in memory, no fixup after a
+zero-extending byte load): `sort` 2.61 s against the flat backend's 2.75 s,
+`sort -n` 6.81 s against 7.78 s, outputs byte-identical, 4.19e9 instructions
+on the 200k-line `sort -n` against the flat build's 5.07e9, and 61,287 static
+instructions against the flat backend's 61,899. `magcompare` is 314
+instructions. What it still pays: a `jmp` where neither arm is the next
+block (layout, not selection), a `movsxd` after each i32 add (the width
+contract), a copy from the scratch a load lands in to the value's home, and
+two spilled parameters reloaded from the frame every iteration. That is the
+next slice, and arm64's emitter has the first two of the four already
+(0 jumps to the next label, 4 constants moved before a compare, on the same
+program) but reloads the length 401 times.
+
 **So the two tracks have one blocker.** Coverage was what kept x86-64's
 claim unmeasurable; measured, the x86-64 emitter is blocked on the same
 thing as arm64's phase 4: loop-body code quality, now with a profiled real
-program on each ISA. The coverage that remains (`wc`, `cat`, `head` and
+program on each ISA, and the first four items of it are worth 13% of the
+instructions and the crossover from slower than flat to faster. The coverage that remains (`wc`, `cat`, `head` and
 `tail` want the Reader/Writer `stat`, Reader `seek` and `sleep_ms`; the
 corpus wants `__memcpy`, `__alloc` and the Map family) still widens the
 differential, but it is not what makes `sort` faster.
