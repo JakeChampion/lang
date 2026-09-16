@@ -336,10 +336,11 @@ function prod_mem_kind(k: string): boolean {
 // Fern-compiled helper on the stack ABI with the arguments in order;
 // rt_call (50) a routine on the register ABI.
 function prod_call_argc(k: string): i32 {
-    if (k == "str_concat" || k == "str_eq" || k == "str_cmp") { return 2; }
+    var two: string[] = ["str_concat", "str_eq", "str_cmp", "arr_push", "arr_push_owned", "arr_push_i64", "arr_push_f64"];
+    for x in two { if (x == k) { return 2; } }
+    var one: string[] = ["str_from_bytes", "alloc", "alloc_u8"];
+    for y in one { if (y == k) { return 1; } }
     if (k == "arr_slice") { return 3; }
-    if (k == "str_from_bytes" || k == "alloc" || k == "alloc_u8") { return 1; }
-    if (k == "arr_push" || k == "arr_push_owned" || k == "arr_push_i64" || k == "arr_push_f64") { return 2; }
     return 0;
 }
 function prod_call_kind(k: string): i32 {

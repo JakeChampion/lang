@@ -5133,6 +5133,9 @@ function ssa_max_phis(f: ssa.SFunc): i32 {
     return most;
 }
 
+// ssa_block_at is the position of block `id` in f.blocks, or -1. A linear
+// search per edge; on a function with thousands of blocks an index built
+// once would replace it.
 function ssa_block_at(f: ssa.SFunc, id: i32): i32 {
     var i: i32 = 0;
     while (i < f.blocks.len()) { if (f.blocks[i].id == id) { return i; } i = i + 1; }

@@ -2585,25 +2585,39 @@ function spans_call(calls: i32[], lo: i32, hi: i32): boolean {
     }
     return false;
 }
-// order_by_lo returns value ids 0..n-1 sorted ascending by lo (insertion).
+// order_by_lo returns value ids 0..n-1 sorted ascending by lo, ids ascending
+// within one lo. A counting sort over the positions: the insertion sort this
+// replaces rebuilt the output array once per value, which on a function with
+// tens of thousands of values was a quadratic number of allocations the arena
+// never returns.
 function order_by_lo(n: i32, lo: i32[]): i32[] {
-    var out: i32[] = [];
+    var maxp: i32 = 0;
     var v: i32 = 0;
+    while (v < n) { if (lo[v] < 2000000000 && lo[v] > maxp) { maxp = lo[v]; } v = v + 1; }
+    // Bucket maxp + 1 holds the values never referenced (lo left at the sentinel).
+    var starts: i32[] = zeros(maxp + 3);
+    v = 0;
     while (v < n) {
-        // insert v into out keeping lo ascending.
-        var ins: i32[] = [];
-        var placed: boolean = false;
-        var j: i32 = 0;
-        while (j < out.len()) {
-            if (!placed && lo[v] < lo[out[j]]) { ins = ins.append(v); placed = true; }
-            ins = ins.append(out[j]);
-            j = j + 1;
-        }
-        if (!placed) { ins = ins.append(v); }
-        out = ins;
+        var b: i32 = order_bucket(lo[v], maxp);
+        starts = env_put(starts, b + 1, starts[b + 1] + 1);
+        v = v + 1;
+    }
+    var b2: i32 = 1;
+    while (b2 < starts.len()) { starts = env_put(starts, b2, starts[b2] + starts[b2 - 1]); b2 = b2 + 1; }
+    var out: i32[] = zeros(n);
+    v = 0;
+    while (v < n) {
+        var bk: i32 = order_bucket(lo[v], maxp);
+        out = env_put(out, starts[bk], v);
+        starts = env_put(starts, bk, starts[bk] + 1);
         v = v + 1;
     }
     return out;
+}
+
+function order_bucket(lo: i32, maxp: i32): i32 {
+    if (lo >= 2000000000) { return maxp + 1; }
+    return lo;
 }
 
 function extend_backedge_phi_intervals(f: SFunc, def_pos: i32[], total_pos: i32, hi: i32[]): i32[] {
