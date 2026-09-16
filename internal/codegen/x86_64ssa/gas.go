@@ -3975,6 +3975,7 @@ func emitBufNewHelper(w func(string, ...any)) {
 	w("\tjae .Lssa_bufnew_cap")
 	w("\tmov edi, 16")
 	w(".Lssa_bufnew_cap:")
+	w("\tsub rsp, 8")                  // entered 8 past alignment; the trampoline is called at 16
 	ssaBumpAlloc(w, "rax", "40")       // rc header + the four words
 	w("\tmov dword ptr [rax], 1")      // rc = 1
 	w("\tmov dword ptr [rax + 4], 32") // payload size
@@ -3985,6 +3986,7 @@ func emitBufNewHelper(w func(string, ...any)) {
 	w("\tmov qword ptr [rax + 8], 0")
 	w("\tmov [rax + 16], rdi")
 	w("\tmov [rax + 24], rdi")
+	w("\tadd rsp, 8")
 	w("\tret")
 }
 
@@ -4221,10 +4223,12 @@ func emitBufTakeHelper(w func(string, ...any)) {
 	w("\tmov rax, rdx")
 	w("\tret")
 	w(".Lssa_buftake_empty:")
+	w("\tsub rsp, 8") // entered 8 past alignment; the trampoline is called at 16
 	w("\tmov esi, 1") // the NUL
 	emitBufStrBlock(w, "rsi", "esi", "rax")
 	w("\tmov dword ptr [rax - 4], 0") // len
 	w("\tmov byte ptr [rax], 0")
+	w("\tadd rsp, 8")
 	w("\tret")
 }
 
@@ -4417,6 +4421,7 @@ func emitDropArrElemBody(w func(string, ...any), name, elemDrop, lbl string) {
 func emitIoErrorHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__fern_io_error"))
+	w("\tsub rsp, 8") // entered 8 past alignment; the trampoline is called at 16
 	w("\tcmp edi, 2") // ENOENT
 	w("\tje .Lssa_ioe_nf")
 	w("\tcmp edi, 13") // EACCES
@@ -4492,12 +4497,14 @@ func emitIoErrorHelper(w func(string, ...any)) {
 	w("\tmov dword ptr [rax], 6") // tag = 6 (Other)
 	w("\tmov [rax + 8], rsi")
 	w("\tmov [rax + 16], r9")
+	w("\tadd rsp, 8")
 	w("\tret")
 	w(".Lssa_ioe_intr:")
 	ssaBumpAlloc(w, "rax", "16") // 8 header + 8 (tag only)
 	w("\tmov dword ptr [rax], 1")
 	w("\tadd rax, 8")
 	w("\tmov dword ptr [rax], 4") // tag = 4 (Interrupted)
+	w("\tadd rsp, 8")
 	w("\tret")
 	w(".Lssa_ioe_nf:")
 	w("\tmov r9d, 0")
@@ -4516,6 +4523,7 @@ func emitIoErrorHelper(w func(string, ...any)) {
 	w("\tadd rax, 8")
 	w("\tmov [rax], r9d") // tag
 	w("\tmov [rax + 8], rsi")
+	w("\tadd rsp, 8")
 	w("\tret")
 	// The strerror literals, each with the immortal rc header a .rodata string
 	// literal carries (see the .rodata block in emitProgram).
