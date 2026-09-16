@@ -240,6 +240,34 @@ jobs:
           gotestsum --format pkgname-and-test-fails -- -timeout=43m \
             -run '^TestDifferential_SelfHostArm64$' ./internal/e2e/
 
+  # The same window through the arm64 backend with the SEMANTIC lowering, the
+  # sibling of differential-selfhost-semantic above. Its own job rather than a
+  # leg of differential-selfhost-arm64 for the reason that job gives for being
+  # separate at all: the two are independently useful, and a 43-minute budget
+  # is per test rather than per runner.
+  differential-selfhost-semantic-arm64:
+    needs: window
+    name: nightly-differential-selfhost-semantic-arm64-shard${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+      - name: aarch64 cross toolchain + qemu
+        uses: ./.github/actions/apt-cross-toolchain
+      - name: go test (self-host arm64 semantic, seeds ${{ needs.window.outputs.base }}+, shard ${{ matrix.shard }}/2)
+        env:
+          FERN_SELFHOST_DIFF: "1"
+          DIFF_ORACLE_SEED_BASE: "${{ needs.window.outputs.base }}"
+          DIFF_ORACLE_SHARD: "${{ matrix.shard }}/2"
+        run: |
+          gotestsum --format pkgname-and-test-fails -- -timeout=43m \
+            -run '^TestDifferential_SelfHostSemanticArm64$' ./internal/e2e/
+
   fuzz:
     if: github.repository == 'JakeChampion/lang'
     strategy:
@@ -390,7 +418,7 @@ jobs:
   # land on one long-lived issue rather than a fresh one per night, so a
   # week of the same break is a thread and not eight duplicates.
   report:
-    needs: [window, differential, differential-selfhost, differential-selfhost-arm64, fuzz, fuzz-selfhost-coverage]
+    needs: [window, differential, differential-selfhost, differential-selfhost-arm64, differential-selfhost-semantic-arm64, fuzz, fuzz-selfhost-coverage]
     if: failure() && github.event_name == 'schedule'
     runs-on: ubuntu-latest
     steps:
