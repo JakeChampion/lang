@@ -316,6 +316,14 @@ Unsupported constructs refuse the whole function with a reason.
   arm a schema.
 - The builtins whose result owns nothing: `args` (a fresh `string[]` of the
   caller's own), `putchar`, `f32_from_bits` and `__rc_underflow_count`.
+- The host itself: the three clocks (`monotonic_ns`, `now_ns`, `now_unix_ms`),
+  the kernel's randomness (`random_bytes`, `random_i32`) and the two sleeps
+  (`sleep_ms`, `sleep_ns`). None is handed a reference, so none borrows; the
+  clocks and `random_i32` own nothing, `random_bytes` hands back a fresh buffer
+  this frame owns, and the sleeps answer nothing. A contract is half the work
+  for any of these: each is also an op of its own in the physical lowering, the
+  same one the AST lowering emits, because a name with a contract and no op
+  reaches the backends as a direct call to a symbol no runtime defines.
 - The array and string builtins `.len()`, `.append()` and `.with()`, and
   `slice_unchecked` on a string. Both array builtins take ONE unit of the
   receiver and hand one back, and both reach the same count test: the
