@@ -26,6 +26,8 @@ import "./irlower";
 import "./irverify";
 import "./irverifygate";
 import "./ircore";
+import "./ssa";
+import "./ssa_lift";
 
 // (The hand-written emit_ir_str_search was removed in #2649: the
 // __fern_str_starts_with / _ends_with / _index_of predicates are now Fern
@@ -5054,6 +5056,307 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     return s;
 }
 
+// ---- The SSA backend: one function at a time, on the stack ABI -----------
+//
+// `-backend ssa` (docs/SELFHOST-SSA-BACKEND.md), the x86-64 twin of the emitter
+// in asm_arm64_ir.fern. A function whose lowered ops ssa_lift.lift_from_ir_prod
+// admits is emitted from SSA form, its values in the linear-scan allocator's
+// registers or in frame slots, instead of through the operand stack. Every
+// other function takes the stack-machine emit below. Both share the rbp frame,
+// the caller-stack argument convention (param i at 16 + 8*i(%rbp), result in
+// %rax) and every runtime symbol, so one module mixes the two.
+//
+// Registers: %rsi, %rdi, %r8, %r9, %r10 and %r11 are allocatable. They are
+// caller-saved, and the allocator spills a value that is live across a call,
+// so nothing is saved around one. %rax, %rcx and %rdx are the scratch the
+// instruction table (ir_bin_asm, ir_div_guarded) already uses. A spilled value
+// v lives at -8*(v+1)(%rbp); the slots after the values stage the moves of an
+// edge with several phis, so every source is read before any result is written.
+
+function ssa_reg(k: i32): string {
+    if (k == 0) { return "%rsi"; }
+    if (k == 1) { return "%rdi"; }
+    if (k == 2) { return "%r8"; }
+    if (k == 3) { return "%r9"; }
+    if (k == 4) { return "%r10"; }
+    return "%r11";
+}
+function ssa_nregs(): i32 { return 6; }
+function ssa_slot(v: i32): string { return util.i32_to_string(0 - 8 * (v + 1)) + "(%rbp)"; }
+
+// ssa_load puts value v in `reg`; ssa_store writes `reg` to value v's home.
+function ssa_load(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): asmcore.EmitState {
+    if (reg_of[v] < 0) { return s.write("    movq " + ssa_slot(v) + ", " + reg + "\n"); }
+    var home: string = ssa_reg(reg_of[v]);
+    if (home == reg) { return s; }
+    return s.write("    movq " + home + ", " + reg + "\n");
+}
+function ssa_store(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): asmcore.EmitState {
+    if (reg_of[v] < 0) { return s.write("    movq " + reg + ", " + ssa_slot(v) + "\n"); }
+    var home: string = ssa_reg(reg_of[v]);
+    if (home == reg) { return s; }
+    return s.write("    movq " + reg + ", " + home + "\n");
+}
+
+// ssa_unary_known is the unary vocabulary lift_from_ir_prod produces.
+function ssa_unary_known(what: string): boolean {
+    if (what == "!" || what == "int_extend" || what == "int_wrap" || what == "u32_wrap") { return true; }
+    return util.str_has_prefix(what, "int_cast:");
+}
+
+function ssa_inst_known(ins: ssa.SInst): boolean {
+    var k: i32 = ins.kind_tag;
+    if (k == 10) { return ssa_unary_known(ins.str); }
+    return k == 1 || k == 3 || k == 6 || k == 7 || k == 8 || k == 9 || k == 11;
+}
+
+// ssa_unsupported names the first instruction this emitter has no selection
+// for, "" when it can emit the whole function.
+function ssa_unsupported(f: ssa.SFunc): string {
+    for blk in f.blocks {
+        for ins in blk.insts {
+            if (!ssa_inst_known(ins)) { return "ssa " + ssa.kind_name(ins.kind_tag) + " " + ins.str; }
+        }
+        if (blk.term.kind_tag > 3) { return "ssa terminator " + ssa.term_name(blk.term.kind_tag); }
+    }
+    return "";
+}
+
+function ssa_max_phis(f: ssa.SFunc): i32 {
+    var most: i32 = 0;
+    for blk in f.blocks {
+        var n: i32 = 0;
+        for ins in blk.insts { if (ins.kind_tag == 8) { n = n + 1; } }
+        if (n > most) { most = n; }
+    }
+    return most;
+}
+
+function ssa_block_at(f: ssa.SFunc, id: i32): i32 {
+    var i: i32 = 0;
+    while (i < f.blocks.len()) { if (f.blocks[i].id == id) { return i; } i = i + 1; }
+    return 0 - 1;
+}
+
+function ssa_has_phis(f: ssa.SFunc, id: i32): boolean {
+    var ti: i32 = ssa_block_at(f, id);
+    if (ti < 0) { return false; }
+    for ins in f.blocks[ti].insts { if (ins.kind_tag == 8) { return true; } }
+    return false;
+}
+
+// ssa_const_rax materialises an integer constant in %rax the way the stack
+// machine does: the zeroing xor, the narrow movl for a non-negative value the
+// slot's sign extension agrees with, the 64-bit form otherwise.
+function ssa_const_rax(imm: i32, s: asmcore.EmitState): asmcore.EmitState {
+    if (imm == 0) { return s.write("    xorl %eax, %eax\n"); }
+    if (imm > 0) { return s.write("    movl $" + util.i32_to_string(imm) + ", %eax\n"); }
+    return s.write("    movq $" + util.i32_to_string(imm) + ", %rax\n");
+}
+
+// ssa_const_text_rax is emit_const_text_push without the push: an i64 literal
+// (imm 64) keeps movabsq for the wide form, an i32 one the imm32 movq.
+function ssa_const_text_rax(text: string, wide64: boolean, s: asmcore.EmitState): asmcore.EmitState {
+    var wide: string = "movq";
+    if (wide64) { wide = "movabsq"; }
+    if (!const_text_u32(text)) { return s.write("    " + wide + " $" + text + ", %rax\n"); }
+    if (util.lit_to_i64(text) == 0i64) { return s.write("    xorl %eax, %eax\n"); }
+    return s.write("    movl $" + text + ", %eax\n");
+}
+
+// ssa_unary_asm is the stack machine's selection for the width ops and `not`,
+// on %rax. A cast to a type none of the arms name moves nothing there either.
+function ssa_unary_asm(what: string, unsigned: boolean): string {
+    if (what == "!") { return "    testq %rax, %rax\n    setz %al\n    movzbq %al, %rax\n"; }
+    if (what == "u32_wrap" || what == "int_cast:u32") { return "    movl %eax, %eax\n"; }
+    if (what == "int_cast:u8") { return "    andq $255, %rax\n"; }
+    if (what == "int_cast:i32") { return "    movslq %eax, %rax\n"; }
+    if (what == "int_extend" || what == "int_wrap") {
+        if (unsigned) { return "    movl %eax, %eax\n"; }
+        return "    movslq %eax, %rax\n";
+    }
+    return "";
+}
+
+// ssa_binary is one binary op with the operands in %rax and %rcx: the guarded
+// division for the four div/rem kinds (a per-op-unique label base, as the
+// stack machine's), ir_bin_asm for the rest.
+function ssa_binary(ins: ssa.SInst, lp: string, s: asmcore.EmitState): asmcore.EmitState {
+    var tag: i32 = ir.kind_id(ins.str);
+    if (tag == 24 || tag == 25 || tag == 26 || tag == 27) {
+        return s.write(ir_div_guarded(tag, ins.imm, lp + "d" + util.i32_to_string(ins.result)));
+    }
+    return s.write(ir_bin_asm(tag, ins.imm));
+}
+
+// ssa_call emits one call as the stack machine leaves it: the arguments pushed
+// in IR order for a runtime helper and reversed for a user function (arg0 on
+// top), the callee, the caller-side pop, and %rax stored.
+function ssa_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+    var argc: i32 = ins.args.len();
+    var helper: boolean = ircore.is_fern_helper(ins.str);
+    if (helper) { s = helper_call_needs(ins.str, s); }
+    else if (ircore.is_c_call(ins.str)) { s = s.need("ccall:" + ins.str); }
+    var i: i32 = 0;
+    while (i < argc) {
+        var a: i32 = i;
+        if (!helper) { a = argc - 1 - i; }
+        s = ssa_load(reg_of, ins.args[a], "%rax", s);
+        s = s.write("    pushq %rax\n");
+        i = i + 1;
+    }
+    if (helper) { s = s.write("    call " + ircore.ir_helper_symbol(ins.str) + "\n"); }
+    else { s = s.write("    call __fn_" + asmcore.sanitize_label(ins.str) + "\n"); }
+    if (argc > 0) { s = s.write("    addq $" + util.i32_to_string(argc * 8) + ", %rsp\n"); }
+    return ssa_store(reg_of, ins.result, "%rax", s);
+}
+
+function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
+    var k: i32 = ins.kind_tag;
+    if (k == 11) { return ssa_call(ins, reg_of, s); }
+    if (k == 1) { s = ssa_const_rax(ins.imm, s); }
+    else if (k == 3) { s = ssa_const_text_rax(ins.str, ins.imm == 64, s); }
+    else if (k == 7) { s = ssa_load(reg_of, ins.args[0], "%rax", s); }
+    else if (k == 9) {
+        s = ssa_load(reg_of, ins.args[0], "%rax", s);
+        s = ssa_load(reg_of, ins.args[1], "%rcx", s);
+        s = ssa_binary(ins, lp, s);
+    } else {
+        s = ssa_load(reg_of, ins.args[0], "%rax", s);
+        s = s.write(ssa_unary_asm(ins.str, ins.imm == 1));
+    }
+    return ssa_store(reg_of, ins.result, "%rax", s);
+}
+
+// ssa_phi_moves emits the copies of the edge from block `pred` into block
+// `succ`: each of succ's phis takes its operand for pred. With more than one
+// phi the sources are staged in the frame first, so two phis that swap a pair
+// of values read both before writing either.
+function ssa_phi_moves(f: ssa.SFunc, reg_of: i32[], pred: i32, succ: i32, s: asmcore.EmitState): asmcore.EmitState {
+    var ti: i32 = ssa_block_at(f, succ);
+    if (ti < 0) { return s; }
+    var tb: ssa.SBlock = f.blocks[ti];
+    var sl: i32 = ssa.pred_slot(tb, pred);
+    var srcs: i32[] = [];
+    var dsts: i32[] = [];
+    for ins in tb.insts {
+        if (ins.kind_tag == 8) { srcs = srcs.append(ins.args[sl]); dsts = dsts.append(ins.result); }
+    }
+    if (srcs.len() == 1) {
+        s = ssa_load(reg_of, srcs[0], "%rax", s);
+        return ssa_store(reg_of, dsts[0], "%rax", s);
+    }
+    var k: i32 = 0;
+    while (k < srcs.len()) {
+        s = ssa_load(reg_of, srcs[k], "%rax", s);
+        s = s.write("    movq %rax, " + ssa_slot(f.nvals + k) + "\n");
+        k = k + 1;
+    }
+    k = 0;
+    while (k < srcs.len()) {
+        s = s.write("    movq " + ssa_slot(f.nvals + k) + ", %rax\n");
+        s = ssa_store(reg_of, dsts[k], "%rax", s);
+        k = k + 1;
+    }
+    return s;
+}
+
+function ssa_epilogue(): string {
+    return "    .cfi_remember_state\n    leave\n    .cfi_def_cfa %rsp, 8\n    ret\n    .cfi_restore_state\n";
+}
+
+// ssa_brif branches on a value. An edge whose target has phis lands on a stub
+// carrying that edge's moves, since the moves of the two edges differ.
+function ssa_brif(f: ssa.SFunc, blk: ssa.SBlock, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
+    var t: ssa.STerm = blk.term;
+    s = ssa_load(reg_of, t.cond, "%rax", s);
+    if (t.t == t.f) {
+        s = ssa_phi_moves(f, reg_of, blk.id, t.t, s);
+        return s.write("    jmp " + lp + util.i32_to_string(t.t) + "\n");
+    }
+    var fl: string = lp + util.i32_to_string(t.f);
+    var stub: boolean = ssa_has_phis(f, t.f);
+    if (stub) { fl = lp + "e" + util.i32_to_string(blk.id) + "_" + util.i32_to_string(t.f); }
+    s = s.write("    testq %rax, %rax\n    jz " + fl + "\n");
+    s = ssa_phi_moves(f, reg_of, blk.id, t.t, s);
+    s = s.write("    jmp " + lp + util.i32_to_string(t.t) + "\n");
+    if (stub) {
+        s = s.write(fl + ":\n");
+        s = ssa_phi_moves(f, reg_of, blk.id, t.f, s);
+        s = s.write("    jmp " + lp + util.i32_to_string(t.f) + "\n");
+    }
+    return s;
+}
+
+function ssa_term(f: ssa.SFunc, blk: ssa.SBlock, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
+    var t: ssa.STerm = blk.term;
+    if (t.kind_tag == 1) {
+        s = ssa_load(reg_of, t.value, "%rax", s);
+        return s.write(ssa_epilogue());
+    }
+    if (t.kind_tag == 2) {
+        s = ssa_phi_moves(f, reg_of, blk.id, t.target, s);
+        return s.write("    jmp " + lp + util.i32_to_string(t.target) + "\n");
+    }
+    if (t.kind_tag == 3) { return ssa_brif(f, blk, reg_of, lp, s); }
+    // A block the lift left unterminated is one nothing reaches; the stack
+    // machine's fallback return keeps the text well formed here too.
+    return s.write("    xorl %eax, %eax\n" + ssa_epilogue());
+}
+
+// ssa_load_params moves each parameter from the caller's slot to its home;
+// value p is parameter p.
+function ssa_load_params(f: ssa.SFunc, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+    var p: i32 = 0;
+    while (p < f.nparams) {
+        s = s.write("    movq " + util.i32_to_string(16 + p * 8) + "(%rbp), %rax\n");
+        s = ssa_store(reg_of, p, "%rax", s);
+        p = p + 1;
+    }
+    return s;
+}
+
+// emit_ssa_function_x86 emits one lifted function: the stack machine's frame,
+// the parameters loaded from the caller's slots into their homes, and each
+// block behind its label. prune_dead first takes out the zeros the lift gives
+// every declared local and the loop phis nothing reads.
+function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, s: asmcore.EmitState): asmcore.EmitState {
+    var f: ssa.SFunc = ssa.prune_dead(lifted);
+    var reg_of: i32[] = ssa.regalloc_linear(f, ssa_nregs());
+    var lp: string = ".Lssa_" + asmcore.sanitize_label(label_name) + "_";
+    s = s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n");
+    s = s.write("    .cfi_startproc\n    pushq %rbp\n    .cfi_def_cfa_offset 16\n    .cfi_offset %rbp, -16\n    movq %rsp, %rbp\n    .cfi_def_cfa_register %rbp\n");
+    var frame: i32 = (f.nvals + ssa_max_phis(f)) * 8;
+    if (frame % 16 != 0) { frame = frame + 8; }
+    if (frame > 0) { s = s.write("    subq $" + util.i32_to_string(frame) + ", %rsp\n"); }
+    s = ssa_load_params(f, reg_of, s);
+    for blk in f.blocks {
+        s = s.write(lp + util.i32_to_string(blk.id) + ":\n");
+        for ins in blk.insts {
+            if (ins.kind_tag != 6 && ins.kind_tag != 8) { s = ssa_inst(ins, reg_of, lp, s); }
+        }
+        s = ssa_term(f, blk, reg_of, lp, s);
+    }
+    return s.write("    .cfi_endproc\n");
+}
+
+// ssa_try_function is the SSA backend's answer for one lowered function: the
+// emit state after emitting it, or the state unchanged with `why` naming what
+// kept it on the stack machine (the IR op kind the lift bailed on).
+struct SsaTry { state: asmcore.EmitState, emitted: boolean, why: string }
+
+function ssa_try_function(r: irlower.LowerResult, label_name: string, s: asmcore.EmitState): SsaTry {
+    var lifted: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(label_name, r.n_params, r.n_locals, r.ops);
+    var why: string = lifted.bail;
+    if (lifted.ok) { why = ssa_unsupported(lifted.func); }
+    if (why != "") {
+        if (ircore.ssa_report_on()) { eprint("FERN_SSA: " + label_name + ": " + why + "\n"); }
+        return SsaTry { state: asmcore.EmitState { ...s, ssa_declined: s.ssa_declined + 1 }, emitted: false, why: why };
+    }
+    s = asmcore.EmitState { ...s, ssa_emitted: s.ssa_emitted + 1 };
+    return SsaTry { state: emit_ssa_function_x86(lifted.func, label_name, s), emitted: true, why: "" };
+}
+
 // emit_function_via_ir emits one IR-eligible function via the stack IR,
 // writing through the global strbuf (same as asm.fern's emitters).
 // arr_ret_fns drives move-on-return / move-from-call for array values.
@@ -5123,6 +5426,11 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
     }
 
     irverifygate.verify_or_refuse(label_name, r.ops, r.n_params, r.n_locals, vsigs);
+    if (s.ssa_backend) {
+        var st: SsaTry = ssa_try_function(r, label_name, s);
+        s = st.state;
+        if (st.emitted) { return s; }
+    }
     s = s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n");
     // Unwind rules for the frame this prologue builds (#7901): the CFA starts
     // at rsp+8 (the CIE's rule), moves to rsp+16 once rbp is pushed, and is
@@ -6741,66 +7049,63 @@ function emit_ir_op_tuple_make(o: ir.Op, s: asmcore.EmitState): asmcore.EmitStat
     return s;
 }
 
-function emit_ir_op_call_direct_helper(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
-    // Runtime RC helper — asm.fern's stack-arg ABI + symbols (drop-in):
-    // the arg(s) are already on the operand stack (the helper reads
-    // 8(%rsp)); call, caller-clean the args, push the result. The
-    // helpers return the ptr (rc_inc / arr_dec) or the count
-    // (underflow_count) in %rax.
-    // __fern_i32_to_string allocates its result box, so it needs the
-    // heap runtime + its own body (gated on this need in emit_ir_runtime).
-    if (o.str == "__fern_i32_to_string") { s = s.need("heap"); s = s.need("i32_to_string"); }
+// helper_call_needs marks the runtime bodies a call to the helper `name`
+// requires, for both emits of a call_direct: the stack machine's and the
+// SSA backend's. A call_direct does not imply a need, so without these a
+// call site is emitted against a body the runtime never writes.
+function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitState {
+    if (name == "__fern_i32_to_string") { s = s.need("heap"); s = s.need("i32_to_string"); }
     // __fern_u32_to_string likewise allocates its result box (#2649).
-    if (o.str == "__fern_u32_to_string") { s = s.need("heap"); s = s.need("u32_to_string"); }
+    if (name == "__fern_u32_to_string") { s = s.need("heap"); s = s.need("u32_to_string"); }
     // The WIDE siblings (#5826) — same shape: each allocates its result
     // box, so each needs the heap runtime plus its own body.
-    if (o.str == "__fern_i64_to_string") { s = s.need("heap"); s = s.need("i64_to_string"); }
-    if (o.str == "__fern_u64_to_string") { s = s.need("heap"); s = s.need("u64_to_string"); }
+    if (name == "__fern_i64_to_string") { s = s.need("heap"); s = s.need("i64_to_string"); }
+    if (name == "__fern_u64_to_string") { s = s.need("heap"); s = s.need("u64_to_string"); }
     // str_to_i32 is allocation-free (parses in registers), so it needs
     // only its own body — not the heap runtime.
-    if (o.str == "__fern_str_to_i32") { s = s.need("str_to_i32"); }
+    if (name == "__fern_str_to_i32") { s = s.need("str_to_i32"); }
     // i32[] sum / product + i32.pow (#3457): allocation-free Fern helpers,
     // so each needs only its own body emitted — NOT the heap runtime. A
     // call_direct does not imply a need, so without these the call site is
     // emitted against a body the runtime never writes and the program calls
     // an undefined symbol.
-    if (o.str == "__fern_arr_i32_sum") { s = s.need("arr_i32_sum"); }
-    if (o.str == "__fern_arr_i32_product") { s = s.need("arr_i32_product"); }
-    if (o.str == "__fern_i32_pow") { s = s.need("i32_pow"); }
+    if (name == "__fern_arr_i32_sum") { s = s.need("arr_i32_sum"); }
+    if (name == "__fern_arr_i32_product") { s = s.need("arr_i32_product"); }
+    if (name == "__fern_i32_pow") { s = s.need("i32_pow"); }
     // i32_lcm's body calls gcd; runtime_need_deps carries the
     // i32_lcm → i32_gcd edge, so close_needs emits gcd's body too.
     // __fern_map_find's body is emitted with the maps bundle; a call to it from
     // __fern_map_delete's Fern body must pull that bundle in, since call_direct
     // does not imply a need.
-    if (o.str == "__fern_map_find") { s = s.need("maps"); }
-    if (o.str == "__fern_i32_gcd") { s = s.need("i32_gcd"); }
-    if (o.str == "__fern_i32_lcm") { s = s.need("i32_lcm"); }
-    if (o.str == "__fern_arr_i32_index_of") { s = s.need("arr_i32_index_of"); }
+    if (name == "__fern_map_find") { s = s.need("maps"); }
+    if (name == "__fern_i32_gcd") { s = s.need("i32_gcd"); }
+    if (name == "__fern_i32_lcm") { s = s.need("i32_lcm"); }
+    if (name == "__fern_arr_i32_index_of") { s = s.need("arr_i32_index_of"); }
     // xs.index_of(x) (#4387) — the Option-returning scan ALLOCATES its box, so
     // like the min/max pair below it pulls in the heap runtime.
-    if (o.str == "__fern_arr_i32_index_of_opt") {
+    if (name == "__fern_arr_i32_index_of_opt") {
         s = s.need("heap");
         s = s.need("arr_i32_index_of_opt");
     }
     // xs.min() / xs.max() (#3457) — unlike the fold helpers these ALLOCATE
     // (the Option box they return), so they pull in the heap runtime too.
-    if (o.str == "__fern_arr_i32_min_opt" || o.str == "__fern_arr_i32_max_opt") {
+    if (name == "__fern_arr_i32_min_opt" || name == "__fern_arr_i32_max_opt") {
         s = s.need("heap");
         s = s.need("arr_i32_min_max_opt");
     }
     // chr allocates its 1-char box, so pull in the heap runtime too.
-    if (o.str == "__fern_chr") { s = s.need("heap"); s = s.need("chr"); }
+    if (name == "__fern_chr") { s = s.need("heap"); s = s.need("chr"); }
     // arr.join(sep) needs its own body + the heap + str_concat runtime it
     // builds the result with (mark_arr_str_join sets all three). #5328.
-    if (o.str == "__fern_arr_str_join") { s = s.mark_arr_str_join(); }
+    if (name == "__fern_arr_str_join") { s = s.mark_arr_str_join(); }
     // arr-of-arr reclaim helpers (#4355 slice 9): bodies gated on these
     // needs in emit_ir_runtime — a binary with no arr-of-arr reclaim
     // must not carry them, since the strarrarr body's inner
     // `call __fn___fern_str_arr_free` text would trip the negative
     // asm-grep contracts (e.g. strarr-elem-alias-excluded). Both free
     // through the freelist, so they need the heap runtime.
-    if (o.str == "__fern_arrarr_free") { s = s.need("heap"); s = s.need("arrarr_free"); }
-    if (o.str == "__fern_arr_inc_elems") { s = s.need("arr_inc_elems"); }
+    if (name == "__fern_arrarr_free") { s = s.need("heap"); s = s.need("arrarr_free"); }
+    if (name == "__fern_arr_inc_elems") { s = s.need("arr_inc_elems"); }
     // The VIEW-aware string[] element walk (#6544) is gated the same way
     // and for the same reason: its body's inner
     // `call __fn___fern_str_view_free` must not appear in a binary that
@@ -6809,30 +7114,42 @@ function emit_ir_op_call_direct_helper(o: ir.Op, s: asmcore.EmitState): asmcore.
     // The box-VALUE-column map frees (#4353 item 3) free that column
     // through __fern_arrarr_free, so they pull in its body as well as
     // their own.
-    if (o.str == "__fern_map_free_va" || o.str == "__fern_map_free_ksva") {
+    if (name == "__fern_map_free_va" || name == "__fern_map_free_ksva") {
         s = s.need("heap"); s = s.need("arrarr_free"); s = s.need("map_free_va");
     }
     // The string[]-VALUE-column pair frees that column through
     // __fern_strarrarr_free, so they pull in its body as well as their own.
-    if (o.str == "__fern_map_free_vsa" || o.str == "__fern_map_free_ksvsa") {
+    if (name == "__fern_map_free_vsa" || name == "__fern_map_free_ksvsa") {
         s = s.need("heap"); s = s.need("strarrarr_free"); s = s.need("map_free_vsa");
     }
-    if (o.str == "__fern_map_free_vf" || o.str == "__fern_map_free_ksvf") {
+    if (name == "__fern_map_free_vf" || name == "__fern_map_free_ksvf") {
         s = s.need("heap"); s = s.need("maps"); s = s.need("map_free_vf");
     }
-    if (o.str == "__fern_strarrarr_free") { s = s.need("heap"); s = s.need("strarrarr_free"); }
-    if (o.str == "__fern_optarrarr_free") { s = s.need("heap"); s = s.need("optarrarr_free"); }
+    if (name == "__fern_strarrarr_free") { s = s.need("heap"); s = s.need("strarrarr_free"); }
+    if (name == "__fern_optarrarr_free") { s = s.need("heap"); s = s.need("optarrarr_free"); }
     // __map_vals_struct_drop_<T>: the struct-VALUE column walk a reclaimable
     // map takes before __fern_map_free_va; its body pulls in the element walk.
-    if (ircore.is_map_vals_struct_drop_name(o.str)) { s = s.need("heap"); s = s.need("map_vals_struct_drop:" + ircore.map_vals_struct_drop_type(o.str)); }
+    if (ircore.is_map_vals_struct_drop_name(name)) { s = s.need("heap"); s = s.need("map_vals_struct_drop:" + ircore.map_vals_struct_drop_type(name)); }
     // __field_reclaim_<T> (#3457): record the type so emit_ir_field_reclaims
     // emits exactly the per-type bodies actually called; needs the heap
     // runtime (the freelist + __fn___fern_arr_dec it frees through).
-    if (ircore.is_field_reclaim_name(o.str)) { s = s.need("heap"); s = s.need("field_reclaim:" + ircore.field_reclaim_type(o.str)); }
+    if (ircore.is_field_reclaim_name(name)) { s = s.need("heap"); s = s.need("field_reclaim:" + ircore.field_reclaim_type(name)); }
     // __struct_drop_<T> (#3457): record the type so emit_ir_struct_drops
     // emits exactly the per-type bodies actually called; needs the heap
     // runtime (the freelist + __fn___fern_arr_dec it frees through).
-    if (ircore.is_struct_drop_name(o.str)) { s = s.need("heap"); s = s.need("struct_drop:" + ircore.struct_drop_type(o.str)); }
+    if (ircore.is_struct_drop_name(name)) { s = s.need("heap"); s = s.need("struct_drop:" + ircore.struct_drop_type(name)); }
+    return s;
+}
+
+function emit_ir_op_call_direct_helper(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+    // Runtime RC helper — asm.fern's stack-arg ABI + symbols (drop-in):
+    // the arg(s) are already on the operand stack (the helper reads
+    // 8(%rsp)); call, caller-clean the args, push the result. The
+    // helpers return the ptr (rc_inc / arr_dec) or the count
+    // (underflow_count) in %rax.
+    // __fern_i32_to_string allocates its result box, so it needs the
+    // heap runtime + its own body (gated on this need in emit_ir_runtime).
+    s = helper_call_needs(o.str, s);
     s = s.write("    call " + ircore.ir_helper_symbol(o.str) + "\n");
     if (o.i32_imm > 0) { s = s.write("    addq $" + util.i32_to_string(o.i32_imm * 8) + ", %rsp\n"); }
     s = s.write("    pushq %rax\n");
@@ -7838,11 +8155,12 @@ pub function emit_module_ir(mod: parser.Module): string {
 // fused gate+emit used to return ahead of the type check, so every IR-eligible
 // module skipped it and an ill-typed one miscompiled silently.
 pub function emit_module_or_error(mod: parser.Module): string {
-    return emit_module_or_error_sub(mod, ircore.no_sub());
+    return emit_module_or_error_sub(mod, ircore.no_sub(), false);
 }
 
 // The `_sub` sibling of the above: see emit_module_ir_gated_sub.
-pub function emit_module_or_error_sub(mod: parser.Module, sub: ircore.Sub): string {
+// `ssa` selects the SSA backend for every function it admits (`-backend ssa`).
+pub function emit_module_or_error_sub(mod: parser.Module, sub: ircore.Sub, ssa: boolean): string {
     var parse_errs: util.Diag[] = asmcore.parse_unknown_errors_module(mod);
     if (parse_errs.len() > 0) {
         eprint(util.format_diags(parse_errs));
@@ -7858,7 +8176,7 @@ pub function emit_module_or_error_sub(mod: parser.Module, sub: ircore.Sub): stri
         return "";
     }
     var lm: parser.Module = ircore.lift_lambdas(mod);
-    var g: string = emit_module_ir_gated_sub(lm, [], sub);
+    var g: string = emit_module_ir_gated_sub(lm, [], sub, ssa);
     if (g != "") { return g; }
     ircore.eprint_ir_ineligible();
     exit(1);
@@ -7868,14 +8186,14 @@ pub function emit_module_or_error_sub(mod: parser.Module, sub: ircore.Sub): stri
 // "" is an unambiguous "ineligible" sentinel: an eligible module always emits at
 // least `.globl _start\n    .text\n…`, never the empty string.
 pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
-    return emit_module_ir_gated_sub(mod, known, ircore.no_sub());
+    return emit_module_ir_gated_sub(mod, known, ircore.no_sub(), false);
 }
 
 // emit_module_ir_gated_sub is the same gate with a caller-supplied semantic
 // lowering substituted into it (ircore.Sub). The `fern` CLI is the one driver
 // that supplies one; every other passes ircore.no_sub(), which is this function
 // behaving exactly as it did before the seam existed.
-pub function emit_module_ir_gated_sub(mod: parser.Module, known: string[], sub: ircore.Sub): string {
+pub function emit_module_ir_gated_sub(mod: parser.Module, known: string[], sub: ircore.Sub, ssa: boolean): string {
     var sm: parser.Module = ircore.script_normalized(mod);
     // The merged-bundle SIZE budget that stood here is gone with its twin in
     // eligible_core_known_impl — see the note there for why (#3425's large-tier
@@ -7903,7 +8221,7 @@ pub function emit_module_ir_gated_sub(mod: parser.Module, known: string[], sub: 
     var g: ircore.Lowered = ircore.lower_gated(im, imtab, irlower.fn_sigs_with_dyn(base, im.trait_reqs), known, false, sub);
     if (!g.ok) { return ""; }
     // Every function eligible — emit from the cache (no second lowering).
-    return emit_module_ir_unit_flat(im, true, false, "", [], im.funcs, imtab, 0, 0 - 1, ircore.sub_cache(sub, g.cache), base);
+    return emit_module_ir_unit_backend(im, true, false, "", [], im.funcs, imtab, 0, 0 - 1, ircore.sub_cache(sub, g.cache), base, ssa);
 }
 
 // ---- The x86-64 peephole ---------------------------------------------------
@@ -8651,6 +8969,12 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
 }
 
 pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab, lo: i32, hi: i32, cache: irlower.LowerResult[], b: irlower.FnSigs): string {
+    return emit_module_ir_unit_backend(mod, is_entry, globl_defs, str_ns, extra_needs, all_funcs, all_structs, lo, hi, cache, b, false);
+}
+
+// emit_module_ir_unit_backend is emit_module_ir_unit_flat with the emitter
+// chosen: `ssa` puts every function the SSA backend admits through it.
+function emit_module_ir_unit_backend(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab, lo: i32, hi: i32, cache: irlower.LowerResult[], b: irlower.FnSigs, ssa: boolean): string {
     // Infer return types for unannotated functions so the IR path's
     // ret-type-keyed call tagging (str_ret_fns_of / opt_ret_fns_of / …)
     // matches what module_with_builtins supplies.
@@ -8663,7 +8987,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     var s: asmcore.EmitState = asmcore.new_state();
     // struct_decls is the WHOLE-PROGRAM struct set so a function emitting an
     // imported struct's layout (field offsets / sizes) resolves it.
-    s = asmcore.EmitState { ...s, struct_decls: all_structs, funcs: mod.funcs, str_ns: str_ns };
+    s = asmcore.EmitState { ...s, struct_decls: all_structs, funcs: mod.funcs, str_ns: str_ns, ssa_backend: ssa };
     if (is_entry) { s = s.write("    .globl _start\n"); }
     s = s.write("    .text\n");
     // Per-module: the entry exports its shared runtime entry points so sibling
@@ -9464,6 +9788,11 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_sleep_ns("x86_64"), all_structs, s);
     }
+    }
+    if (ssa && ircore.ssa_report_on()) {
+        eprint("FERN_SSA: module: " + util.i32_to_string(s.ssa_emitted) + " of "
+            + util.i32_to_string(s.ssa_emitted + s.ssa_declined) + " functions through the SSA backend, "
+            + util.i32_to_string(s.ssa_declined) + " declined\n");
     }
     return peephole_push_pop(strbuf_take());
 }

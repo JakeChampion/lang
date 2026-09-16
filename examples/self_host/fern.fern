@@ -2262,8 +2262,8 @@ function run(): i32 {
         eprint("fern: unknown -backend: " + backend + " (want ssa, or omit it for the target's default emitter)\n");
         return 2;
     }
-    if (backend == "ssa" && platforms.for_target(target).isa != "arm64") {
-        eprint("fern: -backend ssa is not available for -target " + target + " (available for: arm64-linux, arm64-darwin, arm64-android)\n");
+    if (backend == "ssa" && platforms.for_target(target).isa != "arm64" && platforms.for_target(target).isa != "x86-64") {
+        eprint("fern: -backend ssa is not available for -target " + target + " (available for: arm64-linux, arm64-darwin, arm64-android, x86-64-linux)\n");
         return 2;
     }
 
@@ -2702,7 +2702,7 @@ function run(): i32 {
         // own toolchain wants; the default form assembles + links it in-process
         // (x86_native + elf.fern), so it produces a runnable binary like
         // arm64-linux does and needs nothing on $PATH.
-        out_asm = asm_ir.emit_module_or_error_sub(full, sub);
+        out_asm = asm_ir.emit_module_or_error_sub(full, sub, backend == "ssa");
         if (!emit_text) {
             out_asm = x86_elf_binary(out_asm, emit_syms);
             if (out_asm.len() == 0) { return 2; }

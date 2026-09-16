@@ -19,8 +19,9 @@ import (
 // The self-host `-backend ssa` (docs/SELFHOST-SSA-BACKEND.md): each function
 // the production lift admits is emitted from SSA form with registers, the rest
 // by the stack machine, in one module. These tests build the self-host CLI for
-// this host once, compile each program both ways for an arm64 target the host
-// can run, run both, and compare stdout and exit status. FERN_SSA_REPORT=1
+// this host once, compile each program both ways for every target the host can
+// run output for (its own ISA natively, the other under its qemu user emulator
+// when present), run both, and compare stdout and exit status. FERN_SSA_REPORT=1
 // gives the per-module tally and a line per declined function, so a program
 // can also pin WHICH functions the backend emitted: a program the lift admits
 // whole must report no declined function, or the coverage has silently
@@ -142,13 +143,19 @@ function main(): i32 {
 `},
 }
 
-// ssaBackendHost is the self-host CLI built for this host, the arm64 target
-// whose output this host can run, and the runner prefix for that output.
-type ssaBackendHost struct {
-	cli    string
+// ssaBackendTarget is one target this host can run output for: the target
+// name and the runner prefix for a binary built for it ("" when native).
+type ssaBackendTarget struct {
 	target string
 	runner []string
-	stdlib string
+}
+
+// ssaBackendHost is the self-host CLI built for this host, the targets whose
+// output this host can run, and the stdlib root.
+type ssaBackendHost struct {
+	cli     string
+	targets []ssaBackendTarget
+	stdlib  string
 }
 
 var (
@@ -157,30 +164,43 @@ var (
 	ssaHostSkip string
 )
 
+// hostTargets lists the targets this host can run output for: the native
+// one, plus the other ISA through its qemu user emulator when that is on PATH.
+// The CLI itself is built for the host and never run under an emulator, since
+// it takes host filesystem paths.
+func hostTargets() (cliTarget string, targets []ssaBackendTarget, skip string) {
+	emulated := func(target, qemu string) {
+		if q, err := exec.LookPath(qemu); err == nil {
+			targets = append(targets, ssaBackendTarget{target: target, runner: []string{q}})
+		}
+	}
+	switch {
+	case runtime.GOOS == "darwin" && runtime.GOARCH == "arm64":
+		cliTarget = "arm64-darwin"
+		targets = append(targets, ssaBackendTarget{target: "arm64-darwin"})
+		emulated("x86-64-linux", "qemu-x86_64")
+	case runtime.GOOS == "linux" && runtime.GOARCH == "arm64":
+		cliTarget = "arm64-linux"
+		targets = append(targets, ssaBackendTarget{target: "arm64-linux"})
+		emulated("x86-64-linux", "qemu-x86_64")
+	case runtime.GOOS == "linux" && runtime.GOARCH == "amd64":
+		cliTarget = "x86-64-linux"
+		targets = append(targets, ssaBackendTarget{target: "x86-64-linux"})
+		emulated("arm64-linux", "qemu-aarch64")
+	default:
+		skip = runtime.GOOS + "/" + runtime.GOARCH + " cannot run the self-host CLI or its output"
+	}
+	return
+}
+
 // selfHostCLIForHost builds examples/self_host/fern.fern once per test binary
-// as a binary this host executes directly: an arm64-darwin Mach-O on Apple
-// Silicon, an arm64-linux ELF on arm64 Linux, an x86-64 ELF on x86-64 Linux
-// (whose arm64-linux output then runs under qemu-aarch64). The CLI takes host
-// filesystem paths, so it is never run under an emulator itself.
+// as a binary this host executes directly.
 func selfHostCLIForHost(t *testing.T) ssaBackendHost {
 	t.Helper()
 	ssaHostOnce.Do(func() {
-		var cliTarget, outTarget string
-		var runner []string
-		switch {
-		case runtime.GOOS == "darwin" && runtime.GOARCH == "arm64":
-			cliTarget, outTarget = "arm64-darwin", "arm64-darwin"
-		case runtime.GOOS == "linux" && runtime.GOARCH == "arm64":
-			cliTarget, outTarget = "arm64-linux", "arm64-linux"
-		case runtime.GOOS == "linux" && runtime.GOARCH == "amd64":
-			qemu, err := exec.LookPath("qemu-aarch64")
-			if err != nil {
-				ssaHostSkip = "qemu-aarch64 not on PATH; the arm64-linux output cannot run here"
-				return
-			}
-			cliTarget, outTarget, runner = "x86-64-linux", "arm64-linux", []string{qemu}
-		default:
-			ssaHostSkip = runtime.GOOS + "/" + runtime.GOARCH + " cannot run the self-host CLI or its arm64 output"
+		cliTarget, targets, skip := hostTargets()
+		if skip != "" {
+			ssaHostSkip = skip
 			return
 		}
 		fern := buildLangBinForInterp(t)
@@ -203,7 +223,7 @@ func selfHostCLIForHost(t *testing.T) ssaBackendHost {
 		if out, err := exec.Command(fern, "-target", cliTarget, "-o", cli, src).CombinedOutput(); err != nil {
 			t.Fatalf("building the self-host CLI for %s: %v\n%s", cliTarget, err, out)
 		}
-		ssaHost = ssaBackendHost{cli: cli, target: outTarget, runner: runner, stdlib: stdlib}
+		ssaHost = ssaBackendHost{cli: cli, targets: targets, stdlib: stdlib}
 	})
 	if ssaHostSkip != "" {
 		t.Skip(ssaHostSkip)
@@ -211,11 +231,11 @@ func selfHostCLIForHost(t *testing.T) ssaBackendHost {
 	return ssaHost
 }
 
-// compileWith runs the CLI on src for the host's arm64 target, with the extra
-// flags, and returns the CLI's stderr (the SSA report lives there).
-func (h ssaBackendHost) compileWith(t *testing.T, src, out string, extra ...string) string {
+// compileWith runs the CLI on src for the target, with the extra flags, and
+// returns the CLI's stderr (the SSA report lives there).
+func (h ssaBackendHost) compileWith(t *testing.T, tg ssaBackendTarget, src, out string, extra ...string) string {
 	t.Helper()
-	args := append([]string{"-target", h.target}, extra...)
+	args := append([]string{"-target", tg.target}, extra...)
 	args = append(args, "-o", out, src, h.stdlib)
 	cmd := exec.Command(h.cli, args...)
 	cmd.Env = append(os.Environ(), "FERN_SSA_REPORT=1")
@@ -229,15 +249,15 @@ func (h ssaBackendHost) compileWith(t *testing.T, src, out string, extra ...stri
 
 // runProduced runs a binary the CLI produced and returns its stdout and exit
 // status. A program that does not exit normally within the timeout fails.
-func (h ssaBackendHost) runProduced(t *testing.T, bin string) (string, int) {
+func (h ssaBackendHost) runProduced(t *testing.T, tg ssaBackendTarget, bin string) (string, int) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	var cmd *exec.Cmd
-	if len(h.runner) == 0 {
+	if len(tg.runner) == 0 {
 		cmd = exec.CommandContext(ctx, bin)
 	} else {
-		cmd = exec.CommandContext(ctx, h.runner[0], append(h.runner[1:], bin)...)
+		cmd = exec.CommandContext(ctx, tg.runner[0], append(tg.runner[1:], bin)...)
 	}
 	var stdout strings.Builder
 	cmd.Stdout = &stdout
@@ -265,46 +285,49 @@ func ssaTally(t *testing.T, report string) (emitted, total, declined int) {
 
 func TestSelfHostSSABackendAgreesWithStackMachine(t *testing.T) {
 	h := selfHostCLIForHost(t)
-	for _, p := range ssaBackendPrograms {
-		p := p
-		t.Run(p.name, func(t *testing.T) {
-			dir := t.TempDir()
-			src := filepath.Join(dir, p.name+".fern")
-			if err := os.WriteFile(src, []byte(p.src), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			flat := filepath.Join(dir, p.name+".flat")
-			ssa := filepath.Join(dir, p.name+".ssa")
-			h.compileWith(t, src, flat)
-			report := h.compileWith(t, src, ssa, "-backend", "ssa")
-
-			emitted, total, declined := ssaTally(t, report)
-			if emitted == 0 {
-				t.Errorf("the SSA backend emitted no function of %s:\n%s", p.name, report)
-			}
-			if p.allSSA && (declined != 0 || emitted != total) {
-				t.Errorf("%s: want every function through the SSA backend, got %d of %d with %d declined:\n%s", p.name, emitted, total, declined, report)
-			}
-			for _, fn := range p.viaSSA {
-				if strings.Contains(report, "FERN_SSA: "+fn+": ") {
-					t.Errorf("%s: %s was declined by the SSA backend:\n%s", p.name, fn, report)
+	for _, tg := range h.targets {
+		tg := tg
+		for _, p := range ssaBackendPrograms {
+			p := p
+			t.Run(tg.target+"/"+p.name, func(t *testing.T) {
+				dir := t.TempDir()
+				src := filepath.Join(dir, p.name+".fern")
+				if err := os.WriteFile(src, []byte(p.src), 0o644); err != nil {
+					t.Fatal(err)
 				}
-			}
+				flat := filepath.Join(dir, p.name+".flat")
+				ssa := filepath.Join(dir, p.name+".ssa")
+				h.compileWith(t, tg, src, flat)
+				report := h.compileWith(t, tg, src, ssa, "-backend", "ssa")
 
-			flatOut, flatExit := h.runProduced(t, flat)
-			ssaOut, ssaExit := h.runProduced(t, ssa)
-			if flatExit != ssaExit {
-				t.Errorf("%s: exit %d through the stack machine, %d through the SSA backend", p.name, flatExit, ssaExit)
-			}
-			if flatOut != ssaOut {
-				t.Errorf("%s: stdout differs\n--- stack machine\n%s\n--- SSA backend\n%s", p.name, flatOut, ssaOut)
-			}
-		})
+				emitted, total, declined := ssaTally(t, report)
+				if emitted == 0 {
+					t.Errorf("the SSA backend emitted no function of %s:\n%s", p.name, report)
+				}
+				if p.allSSA && (declined != 0 || emitted != total) {
+					t.Errorf("%s: want every function through the SSA backend, got %d of %d with %d declined:\n%s", p.name, emitted, total, declined, report)
+				}
+				for _, fn := range p.viaSSA {
+					if strings.Contains(report, "FERN_SSA: "+fn+": ") {
+						t.Errorf("%s: %s was declined by the SSA backend:\n%s", p.name, fn, report)
+					}
+				}
+
+				flatOut, flatExit := h.runProduced(t, tg, flat)
+				ssaOut, ssaExit := h.runProduced(t, tg, ssa)
+				if flatExit != ssaExit {
+					t.Errorf("%s: exit %d through the stack machine, %d through the SSA backend", p.name, flatExit, ssaExit)
+				}
+				if flatOut != ssaOut {
+					t.Errorf("%s: stdout differs\n--- stack machine\n%s\n--- SSA backend\n%s", p.name, flatOut, ssaOut)
+				}
+			})
+		}
 	}
 }
 
-// The backend exists for arm64 only; another target is refused with the
-// targets it is available for, as native's `-backend ssa` refuses wasm.
+// The backend exists for the two native ISAs; another target is refused with
+// the targets it is available for, as native's `-backend ssa` refuses wasm.
 func TestSelfHostSSABackendRefusesOtherTargets(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
@@ -312,14 +335,14 @@ func TestSelfHostSSABackendRefusesOtherTargets(t *testing.T) {
 	if err := os.WriteFile(src, []byte("function main(): i32 { return 0; }\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out, err := exec.Command(h.cli, "-target", "x86-64-linux", "-backend", "ssa", "-o", filepath.Join(dir, "p"), src, h.stdlib).CombinedOutput()
+	out, err := exec.Command(h.cli, "-target", "wasm32-wasi", "-backend", "ssa", "-o", filepath.Join(dir, "p"), src, h.stdlib).CombinedOutput()
 	if err == nil {
-		t.Fatalf("-backend ssa for x86-64-linux was accepted")
+		t.Fatalf("-backend ssa for wasm32-wasi was accepted")
 	}
-	if !strings.Contains(string(out), "-backend ssa is not available for -target x86-64-linux") {
+	if !strings.Contains(string(out), "-backend ssa is not available for -target wasm32-wasi") {
 		t.Errorf("refusal does not name the target: %s", out)
 	}
-	out, err = exec.Command(h.cli, "-target", h.target, "-backend", "flat", "-o", filepath.Join(dir, "p"), src, h.stdlib).CombinedOutput()
+	out, err = exec.Command(h.cli, "-target", h.targets[0].target, "-backend", "flat", "-o", filepath.Join(dir, "p"), src, h.stdlib).CombinedOutput()
 	if err == nil {
 		t.Fatalf("-backend flat was accepted")
 	}
@@ -347,13 +370,14 @@ func TestSelfHostOutputReplacesExecutable(t *testing.T) {
 	if err := os.WriteFile(second, []byte("function main(): i32 { return 55; }\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	tg := h.targets[0]
 	out := filepath.Join(dir, "prog")
-	h.compileWith(t, first, out)
+	h.compileWith(t, tg, first, out)
 	firstBytes, err := os.ReadFile(out)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, exit := h.runProduced(t, out); exit != 20 {
+	if _, exit := h.runProduced(t, tg, out); exit != 20 {
 		t.Fatalf("first program exit %d, want 20", exit)
 	}
 	held, err := os.Open(out)
@@ -361,7 +385,7 @@ func TestSelfHostOutputReplacesExecutable(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer held.Close()
-	h.compileWith(t, second, out)
+	h.compileWith(t, tg, second, out)
 	stillFirst, err := io.ReadAll(held)
 	if err != nil {
 		t.Fatal(err)
@@ -369,7 +393,7 @@ func TestSelfHostOutputReplacesExecutable(t *testing.T) {
 	if !bytes.Equal(stillFirst, firstBytes) {
 		t.Fatalf("the handle opened before the second compile no longer reads the first program; the executable was rewritten in place, not replaced")
 	}
-	if _, exit := h.runProduced(t, out); exit != 55 {
+	if _, exit := h.runProduced(t, tg, out); exit != 55 {
 		t.Fatalf("second program exit %d, want 55", exit)
 	}
 }
