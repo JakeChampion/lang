@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/ssa"
 )
 
-// The byte-scan kernels are SSE2, 16 bytes an iteration, with a scalar tail —
+// The byte-scan kernels are AVX2 then SSE2, 32 and 16 bytes an iteration, with a scalar tail —
 // so the interesting inputs are the ones near a block boundary, and the cases
 // in gas_scan_test.go all use a six-byte string that never reaches the vector
 // loop at all. This sweeps every length across two blocks and every needle
@@ -18,11 +20,12 @@ import (
 // The oracle is strings.IndexByte / LastIndexByte rather than a second copy of
 // the arithmetic, so a shared misunderstanding cannot make both agree.
 
-// scanLengths is 0..40: past two 16-byte blocks, and past every boundary the
-// forward and backward kernels round against.
+// scanLengths is 0..72: past two 32-byte blocks and the 16-byte block after
+// them, and past every boundary the forward and backward kernels round
+// against.
 func scanLengths() []int {
-	out := make([]int, 0, 41)
-	for n := 0; n <= 40; n++ {
+	out := make([]int, 0, 73)
+	for n := 0; n <= 72; n++ {
 		out = append(out, n)
 	}
 	return out
@@ -175,5 +178,37 @@ func TestAsciiRunVectorGuardMatchesStride(t *testing.T) {
 		t.Errorf("__fern_ascii_run requires %s bytes before a block but advances %s: "+
 			"requiring fewer than it consumes reads past the end of the string\n%s",
 			guard, stride, body)
+	}
+}
+
+// runScanHelper assembles main() = helper(literal, arg) and returns its exit
+// code: the count, or the index, both under 256 for these lengths.
+func runScanHelper(t *testing.T, helper, lit string, arg int64) int {
+	t.Helper()
+	f := ssa.NewFunc("main")
+	e := f.NewBlock()
+	f.SetRet(e, callOp(f, e, helper, constStr(f, e, lit), constOp(f, e, arg)))
+	return assembleRun(t, f, 8)
+}
+
+// The tally kernel over every length, with the needle every byte, every
+// third and every seventh, so each block's partial count is exercised and a
+// dropped block or a double-counted tail shows as a wrong total.
+func TestAsmRunCountByteAcrossLengths(t *testing.T) {
+	for _, n := range scanLengths() {
+		for _, every := range []int{1, 3, 7} {
+			var b strings.Builder
+			for i := 0; i < n; i++ {
+				if i%every == 0 {
+					b.WriteByte('x')
+				} else {
+					b.WriteByte('a')
+				}
+			}
+			s := b.String()
+			if got, want := runScanHelper(t, "__fern_count_byte", s, 'x'), strings.Count(s, "x"); got != want {
+				t.Errorf("len %d, a needle every %d bytes: counted %d, want %d", n, every, got, want)
+			}
+		}
 	}
 }
