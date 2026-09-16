@@ -124,6 +124,34 @@ function count_bits(w: i32, n: i32): i32 {
 }
 function main(): i32 { return (forward(3, 10) + count_bits(1431655765, 31) * 10) % 256; }
 `},
+	// The box layouts: records, arrays, tuples, Option boxes, enum variants,
+	// string literals and bytes, each lifted onto the flat backend's layout
+	// (ssa.fern kinds 40 to 48) rather than through a runtime call.
+	{name: "boxes", allSSA: true, src: `
+struct P { x: i32, y: i32 }
+enum Shape { Dot(i32), Line(i32, i32), Empty }
+function mk(a: i32, b: i32): P { return P { x: a, y: b }; }
+function sum(p: P): i32 { return p.x + p.y; }
+function third(xs: i32[]): i32 { if (xs.len() > 2) { return xs[2]; } return 0 - 1; }
+function pair(a: i32): (i32, i32) { return (a, a * 2); }
+function unwrap(o: Option[i32]): i32 { match (o) { Some(v) => { return v; }, None => { return 0; } } }
+function area(s: Shape): i32 {
+    match (s) {
+        Dot(r) => { return r; },
+        Line(a, b) => { return a * b; },
+        Empty => { return 0; },
+    }
+}
+function letters(): i32 { var s: string = "fern"; return s.len() * 100 + (s[1] as i32); }
+function main(): i32 {
+    var p: P = mk(3, 4);
+    var xs: i32[] = [5, 6, 7];
+    var t: (i32, i32) = pair(9);
+    var total: i32 = sum(p) + third(xs) + t.0 + t.1 + unwrap(Some(11)) + unwrap(None)
+        + area(Dot(2)) + area(Line(3, 4)) + area(Empty) + letters();
+    return total % 256;
+}
+`},
 	// A mixed module: main and the string helpers keep the stack machine, the
 	// integer functions go through the SSA backend, and both call each other
 	// through the shared stack ABI.

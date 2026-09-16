@@ -191,7 +191,29 @@ pub function kind_name(id: i32): string {
     if (id == 26) { return "read_file"; }
     if (id == 27) { return "write_file"; }
     if (id >= 28 && id <= 34) { return buf_kind_name(id); }
+    if (id >= 40 && id <= 48) { return prod_kind_name(id); }
     return "invalid";
+}
+
+// Kinds 40..48 are the production lift's memory vocabulary
+// (ssa_lift.lift_from_ir_prod, docs/SELFHOST-SSA-BACKEND.md): the flat
+// backends' box layouts spelled as loads, stores, checked element reads, a
+// box allocation and label addresses, so every record, array, string and
+// variant op lifts to a few of these and each emitter selects them with the
+// flat backend's own instructions.
+//
+//   40 ld_at      args [base]           imm = byte offset; 8-byte load
+//   41 st_at      args [base, val]      imm = byte offset; 8-byte store, no result read
+//   42 arr_at     args [base, idx]      element idx of a length-prefixed box, bounds-checked (imm 1: unchecked)
+//   43 arr_st     args [base, idx, val] the checked store
+//   44 str_at     args [box, idx]       byte idx of a string box, bounds-checked
+//   45 fn_addr    str = function name   the address of __fn_<name>
+//   46 shape_addr str = shape name      the address of the interned shape
+//   47 str_lit    str = literal         the address of the literal's static box
+//   48 arr_box    imm = cap             __fern_arr_box(cap): a fresh rc-headered box (a call)
+function prod_kind_name(id: i32): string {
+    var names: string[] = ["ld_at", "st_at", "arr_at", "arr_st", "str_at", "fn_addr", "shape_addr", "str_lit", "arr_box"];
+    return names[id - 40];
 }
 
 // Negative ids are the typed semantic phase's operations (ssasem.fern owns
@@ -2543,6 +2565,14 @@ function upd_hi(arr: i32[], idx: i32, pos: i32): i32[] {
     if (pos > arr[idx]) { return env_put(arr, idx, pos); }
     return arr;
 }
+// inst_is_call names the instructions that clobber the caller-saved registers:
+// the calls proper, the toy runtime's string / output / file / buffer
+// helpers, and the production lift's box allocation.
+function inst_is_call(k: i32): boolean {
+    if (k == 11 || k == 12 || k == 17 || k == 18 || k == 48) { return true; }
+    return k >= 19 && k <= 27;
+}
+
 // spans_call is true when some call position lies strictly inside (lo, hi).
 function spans_call(calls: i32[], lo: i32, hi: i32): boolean {
     var i: i32 = 0;
@@ -2684,7 +2714,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32): i32[] {
                 lo = upd_lo(lo, ins.args[a], pos); hi = upd_hi(hi, ins.args[a], pos);
                 a = a + 1;
             }
-            if (ins.kind_tag == 11 || ins.kind_tag == 12 || ins.kind_tag == 19 || ins.kind_tag == 20 || ins.kind_tag == 22 || ins.kind_tag == 21 || ins.kind_tag == 23 || ins.kind_tag == 24 || ins.kind_tag == 25 || ins.kind_tag == 26 || ins.kind_tag == 27 || ins.kind_tag == 17 || ins.kind_tag == 18) { calls = calls.append(pos); }
+            if (inst_is_call(ins.kind_tag)) { calls = calls.append(pos); }
             pos = pos + 1;
             k = k + 1;
         }
@@ -2762,7 +2792,14 @@ pub function prune_dead(f: SFunc): SFunc {
 // inst_has_effect names the instructions kept whether or not their result is
 // read: params, calls, allocation and stores, and the output and buffer ops.
 function inst_has_effect(k: i32): boolean {
-    if (k == 6 || k == 11 || k == 12 || k == 14 || k == 16 || k == 17) { return true; }
+    // Below 19: params, calls, allocation, stores and concat. From 19 on
+    // everything but a load (40) and a label address (45..47) has one: the
+    // output, file and buffer ops, a store, a bounds-checked read (it may
+    // abort) and the box allocation.
+    var below: i32[] = [6, 11, 12, 14, 16, 17];
+    for e in below { if (k == e) { return true; } }
+    var pure: i32[] = [40, 45, 46, 47];
+    for q in pure { if (k == q) { return false; } }
     return k >= 19;
 }
 

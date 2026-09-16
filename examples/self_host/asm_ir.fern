@@ -5107,6 +5107,7 @@ function ssa_unary_known(what: string): boolean {
 function ssa_inst_known(ins: ssa.SInst): boolean {
     var k: i32 = ins.kind_tag;
     if (k == 10) { return ssa_unary_known(ins.str); }
+    if (k >= 40 && k <= 48) { return true; }
     return k == 1 || k == 3 || k == 6 || k == 7 || k == 8 || k == 9 || k == 11;
 }
 
@@ -5211,9 +5212,62 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.
     return ssa_store(reg_of, ins.result, "%rax", s);
 }
 
+
+// ssa_mem_inst selects the production lift's memory kinds (ssa.fern 40..44)
+// with the instructions the stack machine's own arms use, operands in
+// %rax/%rcx/%rdx.
+function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+    var k: i32 = ins.kind_tag;
+    s = ssa_load(reg_of, ins.args[0], "%rax", s);
+    if (k == 40) {
+        s = s.write("    movq " + util.i32_to_string(ins.imm) + "(%rax), %rax\n");
+        return ssa_store(reg_of, ins.result, "%rax", s);
+    }
+    s = ssa_load(reg_of, ins.args[1], "%rcx", s);
+    if (k == 41) { return s.write("    movq %rcx, " + util.i32_to_string(ins.imm) + "(%rax)\n"); }
+    if (k == 42) {
+        s = s.need("heap");
+        if (ins.imm != 1) { s = s.write("    cmpq (%rax), %rcx\n    jae __fern_oob_abort\n"); }
+        s = s.write("    incq %rcx\n    movq (%rax,%rcx,8), %rax\n");
+        return ssa_store(reg_of, ins.result, "%rax", s);
+    }
+    if (k == 44) {
+        s = s.need("heap");
+        s = s.write("    cmpq 8(%rax), %rcx\n    jae __fern_oob_abort\n    movq (%rax), %rax\n    movzbl (%rax,%rcx), %eax\n");
+        return ssa_store(reg_of, ins.result, "%rax", s);
+    }
+    s = ssa_load(reg_of, ins.args[2], "%rdx", s);
+    s = s.need("heap");
+    return s.write("    cmpq (%rax), %rcx\n    jae __fern_oob_abort\n    incq %rcx\n    movq %rdx, (%rax,%rcx,8)\n");
+}
+
+// ssa_addr_inst selects the label addresses and the box allocation (45..48).
+function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+    var k: i32 = ins.kind_tag;
+    var label: string = "";
+    if (k == 45) { label = "__fn_" + asmcore.sanitize_label(ins.str); }
+    else if (k == 46) {
+        var sh: asmcore.ShapeRefOut = asmcore.shape_ref(s, ins.str);
+        s = sh.state;
+        label = sh.label;
+    } else if (k == 47) {
+        var lo: asmcore.StringLitOut = asmcore.add_string_lit(s, ins.str);
+        s = lo.state;
+        label = asmcore.str_box_label(s, lo.idx);
+    } else {
+        s = s.need("heap");
+        s = s.write("    movq $" + util.i32_to_string(ins.imm) + ", %rdi\n    call __fern_arr_box\n");
+        return ssa_store(reg_of, ins.result, "%rax", s);
+    }
+    s = s.write("    leaq " + label + "(%rip), %rax\n");
+    return ssa_store(reg_of, ins.result, "%rax", s);
+}
+
 function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
     var k: i32 = ins.kind_tag;
     if (k == 11) { return ssa_call(ins, reg_of, s); }
+    if (k >= 40 && k <= 44) { return ssa_mem_inst(ins, reg_of, s); }
+    if (k >= 45 && k <= 48) { return ssa_addr_inst(ins, reg_of, s); }
     if (k == 1) { s = ssa_const_rax(ins.imm, s); }
     else if (k == 3) { s = ssa_const_text_rax(ins.str, ins.imm == 64, s); }
     else if (k == 7) { s = ssa_load(reg_of, ins.args[0], "%rax", s); }

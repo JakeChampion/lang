@@ -318,7 +318,144 @@ function prod_kind(k: string): boolean {
         "load_local", "store_local", "tee_local", "drop", "return",
         "block", "loop", "if", "else", "end", "br", "brif", "call_direct"];
     for x in spine { if (x == k) { return true; } }
+    return prod_mem_kind(k);
+}
+
+// prod_mem_kind is the op vocabulary lift_prod_mem lowers onto the flat
+// backends' box layouts (ssa.fern's kinds 40..48).
+function prod_mem_kind(k: string): boolean {
+    var mem: string[] = ["struct_get", "struct_set", "arr_len", "str_len", "tuple_get", "opt_tag", "opt_payload",
+        "arr_get", "arr_set", "str_index", "const_func", "const_str", "variant_is",
+        "struct_make", "arr_make", "tuple_make", "opt_make", "opt_none"];
+    for x in mem { if (x == k) { return true; } }
     return false;
+}
+
+// ld_off is the byte offset a single-load op reads at, or -1 when `k` is
+// not one: a record field at (i+1)*8 behind the shape word, an array's
+// length at 0, a string's length at 8, a tuple element at i*8, an Option
+// box's tag at 0 and payload at 8.
+function ld_off(k: string, op: ir.Op): i32 {
+    if (k == "struct_get") { return (op.i32_imm + 1) * 8; }
+    if (k == "arr_len" || k == "opt_tag") { return 0; }
+    if (k == "str_len" || k == "opt_payload") { return 8; }
+    if (k == "tuple_get") { return op.i32_imm * 8; }
+    return 0 - 1;
+}
+
+// lift_prod_mem lowers one memory op onto kinds 40..48. Every arm pops what
+// the stack machine pops and pushes what it pushes, so the operand stack
+// stays aligned with the IR's own accounting.
+function lift_prod_mem(k: string, op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SInst[]): LiftVals {
+    var lv: LiftVals = LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: true };
+    if (k == "struct_set") { return lift_store(lv, 41, (op.i32_imm + 1) * 8); }
+    if (k == "arr_set") { return lift_store(lv, 43, 0); }
+    if (k == "variant_is") { return lift_variant_is_prod(op, lv); }
+    if (k == "struct_make") { return lift_box_make(op.i32_imm + 1, op.i32_imm, 8, op.str, lv); }
+    if (k == "arr_make") { return lift_box_make(op.i32_imm, op.i32_imm, 8, "", lv); }
+    if (k == "tuple_make") { return lift_box_make(op.i32_imm, op.i32_imm, 0, "", lv); }
+    if (k == "opt_make") { return lift_opt_make_prod(op.i32_imm, true, lv); }
+    if (k == "opt_none") { return lift_opt_make_prod(1, false, lv); }
+    return lift_prod_read(k, op, lv);
+}
+
+// lift_prod_read is the value-producing half: the single loads, the checked
+// element and byte reads, and the two label addresses.
+function lift_prod_read(k: string, op: ir.Op, lv: LiftVals): LiftVals {
+    if (ld_off(k, op) >= 0) { return lift_pop_push(lv, 1, 40, ld_off(k, op), ""); }
+    if (k == "arr_get") { return lift_pop_push(lv, 2, 42, op.i32_imm, ""); }
+    if (k == "str_index") { return lift_pop_push(lv, 2, 44, 0, ""); }
+    if (k == "const_func") { return lift_pop_push(lv, 0, 45, 0, op.str); }
+    return lift_pop_push(lv, 0, 47, 0, op.str);
+}
+
+// lift_pop_push pops `npop` operands (bottom first in args) and pushes the
+// result of one instruction of kind `kind` over them.
+function lift_pop_push(lv: LiftVals, npop: i32, kind: i32, imm: i32, str: string): LiftVals {
+    if (lv.stack.len() < npop) { return LiftVals { ...lv, ok: false }; }
+    var args: i32[] = [];
+    var d: i32 = npop - 1;
+    while (d >= 0) { args = args.append(lv.stack[lv.stack.len() - 1 - d]); d = d - 1; }
+    var stack: i32[] = lv.stack;
+    var e: i32 = 0;
+    while (e < npop) { stack = drop_last(stack); e = e + 1; }
+    var v: i32 = lv.nvals;
+    var insts: ssa.SInst[] = lv.insts.append(ssa.SInst { kind_tag: kind, result: v, args: args, imm: imm, str: str });
+    return LiftVals { nvals: v + 1, stack: stack.append(v), insts: insts, ok: true };
+}
+
+// lift_store is a store that pushes nothing: st_at pops [box, val], arr_st
+// pops [base, idx, val] (val on top in both).
+function lift_store(lv: LiftVals, kind: i32, imm: i32): LiftVals {
+    var npop: i32 = 2;
+    if (kind == 43) { npop = 3; }
+    var pushed: LiftVals = lift_pop_push(lv, npop, kind, imm, "");
+    if (!pushed.ok) { return pushed; }
+    return LiftVals { ...pushed, stack: drop_last(pushed.stack) };
+}
+
+// variant_is: the shape word at 0 of the box against the variant's interned
+// shape address, by pointer equality, as both flat backends test it.
+function lift_variant_is_prod(op: ir.Op, lv: LiftVals): LiftVals {
+    var tag: LiftVals = lift_pop_push(lv, 1, 40, 0, "");
+    if (!tag.ok) { return tag; }
+    var shape: LiftVals = lift_pop_push(tag, 0, 46, 0, op.str);
+    return lift_pop_push(shape, 2, 9, 0, "eq");
+}
+
+// lift_box_make allocates a box of `cap` words and stores the `n` operands on
+// the stack (the last pushed is the highest element) at `first` + i*8; a
+// shape name stores the shape's address at 0 first, as struct_make does.
+function lift_box_make(cap: i32, n: i32, first: i32, shape: string, lv: LiftVals): LiftVals {
+    if (lv.stack.len() < n) { return LiftVals { ...lv, ok: false }; }
+    var elems: i32[] = [];
+    var d: i32 = n - 1;
+    while (d >= 0) { elems = elems.append(lv.stack[lv.stack.len() - 1 - d]); d = d - 1; }
+    var stack: i32[] = lv.stack;
+    var e: i32 = 0;
+    while (e < n) { stack = drop_last(stack); e = e + 1; }
+    var nvals: i32 = lv.nvals;
+    var box: i32 = nvals; nvals = nvals + 1;
+    var insts: ssa.SInst[] = lv.insts.append(ssa.SInst { kind_tag: 48, result: box, args: [], imm: cap, str: "" });
+    if (shape.len() > 0) {
+        var sh: i32 = nvals; nvals = nvals + 1;
+        insts = insts.append(ssa.SInst { kind_tag: 46, result: sh, args: [], imm: 0, str: shape });
+        insts = insts.append(ssa.SInst { kind_tag: 41, result: nvals, args: [box, sh], imm: 0, str: "" });
+        nvals = nvals + 1;
+    }
+    var i: i32 = 0;
+    while (i < n) {
+        insts = insts.append(ssa.SInst { kind_tag: 41, result: nvals, args: [box, elems[i]], imm: first + i * 8, str: "" });
+        nvals = nvals + 1;
+        i = i + 1;
+    }
+    return LiftVals { nvals: nvals, stack: stack.append(box), insts: insts, ok: true };
+}
+
+// lift_opt_make_prod builds the two-word Option box [tag@0, payload@8] the
+// stack machine builds: opt_make pops the payload, opt_none stores 0.
+function lift_opt_make_prod(tag: i32, has_payload: boolean, lv: LiftVals): LiftVals {
+    var payload: i32 = 0 - 1;
+    var stack: i32[] = lv.stack;
+    if (has_payload) {
+        if (stack.len() < 1) { return LiftVals { ...lv, ok: false }; }
+        payload = stack[stack.len() - 1];
+        stack = drop_last(stack);
+    }
+    var nvals: i32 = lv.nvals;
+    var box: i32 = nvals; nvals = nvals + 1;
+    var insts: ssa.SInst[] = lv.insts.append(ssa.SInst { kind_tag: 48, result: box, args: [], imm: 2, str: "" });
+    var tv: i32 = nvals; nvals = nvals + 1;
+    insts = insts.append(ssa.SInst { kind_tag: 1, result: tv, args: [], imm: tag, str: "" });
+    insts = insts.append(ssa.SInst { kind_tag: 41, result: nvals, args: [box, tv], imm: 0, str: "" });
+    nvals = nvals + 1;
+    if (payload < 0) {
+        payload = nvals; nvals = nvals + 1;
+        insts = insts.append(ssa.SInst { kind_tag: 1, result: payload, args: [], imm: 0, str: "" });
+    }
+    insts = insts.append(ssa.SInst { kind_tag: 41, result: nvals, args: [box, payload], imm: 8, str: "" });
+    nvals = nvals + 1;
+    return LiftVals { nvals: nvals, stack: stack.append(box), insts: insts, ok: true };
 }
 
 // bin_str / bin_imm are what a lifted binary carries: the optimiser's symbol
@@ -440,6 +577,9 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[], struct
             nvals = lv.nvals; stack = lv.stack; cur_insts = lv.insts;
         } else if (prod && (k == "int_extend" || k == "int_wrap" || k == "int_cast" || k == "u32_wrap")) {
             var lv: LiftVals = lift_int_narrow_prod(k, op, nvals, stack, cur_insts, ok);
+            nvals = lv.nvals; stack = lv.stack; cur_insts = lv.insts; ok = lv.ok;
+        } else if (prod && prod_mem_kind(k)) {
+            var lv: LiftVals = lift_prod_mem(k, op, nvals, stack, cur_insts);
             nvals = lv.nvals; stack = lv.stack; cur_insts = lv.insts; ok = lv.ok;
         } else if (k == "const_i32") {
             var v: i32 = nvals; nvals = nvals + 1;
