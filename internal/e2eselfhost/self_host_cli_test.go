@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -170,11 +171,13 @@ function main(): i32 {
 		if code != 0 {
 			t.Fatalf("-target wasm emit exited %d, want 0", code)
 		}
-		if !bytes.Contains(wat, []byte("$__fern_u32_to_str")) {
-			t.Error("emitted WAT never defines/calls $__fern_u32_to_str")
-		}
-		if bytes.Contains(wat, []byte("call $__fern_u32_to_string")) {
-			t.Error("emitted WAT calls the unmapped $__fern_u32_to_string — that name has no body (#5992)")
+		// The AST lowering reaches the formatter through the runtime's
+		// $__fern_u32_to_str; the semantic lowering produces std/u32's own
+		// to_string body and calls neither runtime name. What both must hold
+		// is the #5992 invariant itself: every function the module calls, it
+		// defines or imports.
+		for _, name := range undefinedWatCalls(wat) {
+			t.Errorf("emitted WAT calls $%s, which it neither defines nor imports (#5992)", name)
 		}
 		watPath := filepath.Join(dir, "u32_to_string.wat")
 		if err := os.WriteFile(watPath, wat, 0o644); err != nil {
@@ -2982,4 +2985,29 @@ function main(): i32 {
 			t.Errorf("missing-file driver exited %d, want 1", code)
 		}
 	})
+}
+
+var (
+	watCallRe = regexp.MustCompile(`call \$([A-Za-z0-9_.$]+)`)
+	watFuncRe = regexp.MustCompile(`\(func \$([A-Za-z0-9_.$]+)`)
+)
+
+// undefinedWatCalls lists every function a WAT module calls by name without a
+// definition or an import of that name, deduped in first-seen order.
+func undefinedWatCalls(wat []byte) []string {
+	defined := map[string]bool{}
+	for _, m := range watFuncRe.FindAllSubmatch(wat, -1) {
+		defined[string(m[1])] = true
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, m := range watCallRe.FindAllSubmatch(wat, -1) {
+		name := string(m[1])
+		if defined[name] || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	return out
 }
