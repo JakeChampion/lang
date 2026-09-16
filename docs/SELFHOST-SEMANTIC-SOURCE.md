@@ -1234,7 +1234,12 @@ not obvious:
   lowering, and dropping it takes its own callers with it: `semlower.prune` is
   that fixpoint, run over the produced bodies' `call_direct` and `const_func`
   operands with the runtime helpers, the C calls and this boundary's own
-  `__sem_drop_*` set excluded.
+  `__sem_drop_*` set excluded. The same body can arrive as a FUNCTION VALUE
+  an AST-lowered caller built and handed down, which no operand names, so the
+  fixpoint also turns off a produced body that calls a value of a type an
+  AST-lowered hoisted body (`$wrap`, `$clo`, `$iife`) has — by type rather
+  than by flow, the safe direction (#9414,
+  `rc-log/2026-09-16-a-function-value-the-ast-lowering-builds-is-not-called-by-a-produced-body.md`).
 
 The whole-module refusal that preceded the fixpoint was worth measuring: over
 the conformance corpus it left 190 of 498 modules producing NOTHING, because

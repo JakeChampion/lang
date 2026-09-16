@@ -65,6 +65,10 @@ func TestSelfHostSemanticProduction(t *testing.T) {
 							t.Fatalf("FERN_SEM_IR with FERN_SEM_IR_SKIP=%s leaked %d bytes where the AST lowering leaks %d",
 								prog.skip, mixedLeak, baseLeak)
 						}
+						if prog.refuses != "" && !strings.Contains(mixedReport, prog.refuses) {
+							t.Fatalf("FERN_SEM_IR with FERN_SEM_IR_SKIP=%s did not report %q:\n%s",
+								prog.skip, prog.refuses, mixedReport)
+						}
 					}
 					// The sanitizer leg also reports what the run never
 					// released. The AST lowering is the oracle for that too, so
@@ -197,7 +201,10 @@ var semProductionPrograms = []struct {
 	// registries rewritten by ssarc.caller_sigs and irlower.regrow_sigs
 	// hold together.
 	skip string
-	src  string
+	// refuses, when set, is a line the skip leg's report must carry: a
+	// produced body the mixed module has to turn off, and why.
+	refuses string
+	src     string
 }{
 	{name: "scalar-calls", atLeast: 3, src: `
 function add(a: i32, b: i32): i32 { return a + b; }
@@ -268,6 +275,34 @@ function main(): i32 {
     var s: string = "12345 abc";
     var v: str = slice_unchecked(s, 0, 4);
     return handed(v).len() + fresh_of(v).len() + laundered(s).len();
+}
+`},
+	// A function value the AST lowering builds reaching a produced body. The
+	// AST push never retains the element it appends (its buffer leaks
+	// instead), so an array the AST-lowered ident_of hands back holds
+	// identifiers it does not own, and a produced each would release them as
+	// its own: the abort that stopped the produced compiler on checker.fern.
+	// The skip leg keeps ident_of on the AST lowering; the trampoline that
+	// names it follows through prune's direct-call rule, and each has to
+	// follow through the value's type.
+	{name: "ast-value-into-produced", atLeast: 3, skip: "ident_of",
+		refuses: "each: calls a function value of 2 arguments, a type the AST lowering builds a value of", src: `
+struct Id { name: string }
+function ident_of(e: Id, own acc: string[]): string[] { return acc.append(e.name); }
+function each(es: Id[], rounds: i32, reads: (Id, own string[]) => string[]): i32 {
+    var t: i32 = 0;
+    var r: i32 = 0;
+    while (r < rounds) {
+        for e in es { for n in reads(e, []) { t = t + n.len(); } }
+        r = r + 1;
+    }
+    return t;
+}
+function main(): i32 {
+    var es: Id[] = [Id { name: "ab" + "" }, Id { name: "cde" + "" }];
+    var t: i32 = each(es, 5, ident_of);
+    for e in es { t = t + e.name.len(); }
+    return t;
 }
 `},
 	// The other half of #9328: a callee lent a view need not RETURN the box to

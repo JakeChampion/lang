@@ -35,6 +35,8 @@ import "./semsource";
 import "./ssasem";
 import "./ssarc";
 import "./ssaunits";
+import "./semtypes";
+import "./typeinfo";
 import "./util";
 
 // Every body the substitution is considering, declarations first (aligned with
@@ -48,6 +50,10 @@ struct Rows {
     n2: string[],
     keep: boolean[],
     grows: ssaunits.GrowRow[],
+    // The type of every function value each body calls, one entry per
+    // indirect call; `prune` reads it against the values the AST lowering
+    // builds.
+    called: typeinfo.Type[][],
 }
 
 // sem_ir_on reports whether FERN_SEM_IR selects the semantic lowering. Off is
@@ -193,21 +199,98 @@ function escaping_callee(r: irlower.LowerResult, reg: irlower.SigReg): string {
     return "";
 }
 
+// The types of the function values a body calls: the callee value's own type
+// at each indirect call.
+function called_values(f: ssasem.Func): typeinfo.Type[] {
+    var out: typeinfo.Type[] = [];
+    for b in f.graph.blocks {
+        for ins in b.insts {
+            if (ins.kind_tag == ssasem.call_value() && ins.args.len() > 0) { out = out.append(f.values[ins.args[0]]); }
+        }
+    }
+    return out;
+}
+
+// A function value the AST lowering builds: the type the box hands out where
+// the declaration has a contract to read it from, else its arity alone.
+struct AstValue { ty: typeinfo.Type, arity: i32, typed: boolean }
+
+// The hoisted bodies a function value names: a no-capture lambda or a bare
+// function name's trampoline, a capturing lambda's body, an immediately
+// invoked one (irlower.lift_lambdas).
+function hoisted(name: string): boolean {
+    return util.contains(name, "$wrap") || util.contains(name, "$clo") || util.contains(name, "$iife");
+}
+
+// The function values the AST lowering builds: every hoisted body this
+// substitution is not emitting. An array such a body builds holds elements
+// it never retained, since the AST lowering's push leaks the buffer instead,
+// and a produced body that called the value would release those elements
+// as its own. A direct call to such a body is what `escaping_callee` refuses;
+// the box that names it reaches a produced body through any caller, so the
+// produced side is refused by the value's type instead.
+function ast_values(mod: parser.Module, built: semsource.Built, r: Rows): AstValue[] {
+    var out: AstValue[] = [];
+    var i: i32 = 0;
+    while (i < r.keep.len()) {
+        if (!r.keep[i]) {
+            var key: string = r.n1[i];
+            var params: i32 = 0;
+            if (i < mod.funcs.len()) { key = call_key(mod.funcs[i]); params = mod.funcs[i].params.len(); }
+            else {
+                var template: i32 = util.index_of_str(r.n2, built.instances[i - mod.funcs.len()].key);
+                key = built.instances[i - mod.funcs.len()].key;
+                if (template >= 0 && template < mod.funcs.len()) { params = mod.funcs[template].params.len(); }
+            }
+            if (hoisted(key) && params > 0) {
+                var at: i32 = ssasem.find_contract(built.contracts, key);
+                var v: AstValue = AstValue { ty: typeinfo.unchecked(), arity: params - 1, typed: false };
+                if (i < mod.funcs.len() && at >= 0 && ssasem.closure_env(built.contracts[at])) {
+                    var ty: typeinfo.Type = ssasem.closure_type(built.contracts[at]);
+                    v = AstValue { ty: ty, arity: ssasem.func_params(ty).len(), typed: semtypes.concrete(ty, true) };
+                }
+                out = out.append(v);
+            }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// Whether a value of type `t` may be one the AST lowering built: the same
+// type, or the same arity where either side's type is not in hand.
+function ast_value_call(called: typeinfo.Type[], values: AstValue[]): string {
+    for t in called {
+        var arity: i32 = ssasem.func_params(t).len();
+        for v in values {
+            if (v.arity != arity) { continue; }
+            if (v.typed && semtypes.concrete(t, true) && !semtypes.equal(v.ty, t)) { continue; }
+            return "calls a function value of " + util.i32_to_string(arity) + " arguments, a type the AST lowering builds a value of";
+        }
+    }
+    return "";
+}
+
 // prune turns off every produced body that calls one this boundary is not
 // emitting, to a fixpoint: dropping a body takes its symbol out of the live
-// set, so the next round reaches whatever called it. A round that turns
-// nothing off is the fixpoint, and `keep` only ever shrinks, so there is one.
-function prune(r: Rows): Rows {
+// set, so the next round reaches whatever called it, and may make it a
+// function value the AST lowering builds, so the next round reaches whatever
+// calls a value of its type. A round that turns nothing off is the fixpoint,
+// and `keep` only ever shrinks, so there is one.
+function prune(r: Rows, mod: parser.Module, built: semsource.Built): Rows {
     var changed: boolean = true;
     while (changed) {
         changed = false;
         var reg: irlower.SigReg = live_reg(r);
+        var values: AstValue[] = ast_values(mod, built, r);
         var i: i32 = 0;
         while (i < r.body.len()) {
             if (r.keep[i]) {
                 var bad: string = escaping_callee(r.body[i], reg);
+                if (bad.len() > 0) { bad = "calls " + bad + ", which the AST lowering defines"; }
+                else { bad = ast_value_call(r.called[i], values); }
                 if (bad.len() > 0) {
-                    report(r.n1[i], "calls " + bad + ", which the AST lowering defines");
+                    report(r.n1[i], bad);
                     r = Rows { ...r, keep: r.keep.with(i, false) };
                     changed = true;
                 }
@@ -236,7 +319,7 @@ function produced_at(built: semsource.Built, mod: parser.Module, i: i32): semsou
 function rows_of(mod: parser.Module, built: semsource.Built, structs: irlower.StructTab): Rows {
     var only: string = sem_ir_only();
     var skip: string = sem_ir_skip();
-    var r: Rows = Rows { body: [], n1: [], n2: [], keep: [], grows: [] };
+    var r: Rows = Rows { body: [], n1: [], n2: [], keep: [], grows: [], called: [] };
     var plans: ssaunits.Plan[] = [];
     var keys: string[] = [];
     var funcs: ssasem.Func[] = [];
@@ -248,7 +331,7 @@ function rows_of(mod: parser.Module, built: semsource.Built, structs: irlower.St
         plans = plans.append(plan);
         keys = keys.append(call_key(fd));
         funcs = funcs.append(built.decls[i].func);
-        r = Rows { ...r, n1: r.n1.append(fd.name), n2: r.n2.append(call_key(fd)) };
+        r = Rows { ...r, n1: r.n1.append(fd.name), n2: r.n2.append(call_key(fd)), called: r.called.append(called_values(built.decls[i].func)) };
         i = i + 1;
     }
     for p in built.instances {
@@ -259,7 +342,7 @@ function rows_of(mod: parser.Module, built: semsource.Built, structs: irlower.St
         plans = plans.append(plan);
         keys = keys.append(p.func.graph.name);
         funcs = funcs.append(p.func);
-        r = Rows { ...r, n1: r.n1.append(p.func.graph.name), n2: r.n2.append("") };
+        r = Rows { ...r, n1: r.n1.append(p.func.graph.name), n2: r.n2.append(""), called: r.called.append(called_values(p.func)) };
     }
     r = Rows { ...r, grows: ssaunits.grow_table(keys, funcs, plans) };
     i = 0;
@@ -282,7 +365,7 @@ function rows_of(mod: parser.Module, built: semsource.Built, structs: irlower.St
 pub function substitution(mod: parser.Module, structs: irlower.StructTab, base: irlower.FnSigs): ircore.Sub {
     if (!sem_ir_on()) { return ircore.no_sub(); }
     var built: semsource.Built = semsource.build_module(mod);
-    var r: Rows = prune(rows_of(mod, built, structs));
+    var r: Rows = prune(rows_of(mod, built, structs), mod, built);
     var sigs: irlower.FnSigs = base;
     var helpers: irlower.LowerResult[] = [];
     var bodies: irlower.LowerResult[] = [];
