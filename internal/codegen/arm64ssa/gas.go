@@ -9428,7 +9428,7 @@ func emitFuncBody(w func(string, ...any), name string, p *x86.Program, numAlloc 
 		w("\tret")
 	}
 
-	order := layoutOrder(p)
+	order := x86.LayoutOrder(p)
 	// nextInLayout[bi] is the block physically following bi in the emitted
 	// order, or -1 for the last one: a branch to it needs no instruction.
 	nextInLayout := make([]int, len(p.Blocks))
