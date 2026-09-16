@@ -652,6 +652,9 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[], struct
     var sc_then_blk: i32[] = [];
     var sc_then_reaches: i32[] = [];
     var sc_parent: i32[] = [];
+    // sc_edge_from: the edge count when the scope opened; its edges are the
+    // ones recorded from there on, so an exit scans those rather than all.
+    var sc_edge_from: i32[] = [];
     // Per-scope stride-nslots rows (kept for EVERY scope so positions align):
     var sc_snap: i32[] = [];          // if: pre-if slots; else: unused
     var sc_then_slots: i32[] = [];     // if: then-arm exit slots
@@ -1128,6 +1131,7 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[], struct
                 sc_then_blk = sc_then_blk.append(0 - 1);
                 sc_then_reaches = sc_then_reaches.append(0);
                 sc_parent = sc_parent.append(parent_id);
+                sc_edge_from = sc_edge_from.append(edge_owner.len());
                 var rd_if: i32 = sc_kind.len() - 1;
                 sc_snap = row_set(sc_snap, rd_if, nslots, slots, true);
                 sc_then_slots = row_set(sc_then_slots, rd_if, nslots, slots, false);
@@ -1166,6 +1170,7 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[], struct
             sc_then_blk = sc_then_blk.append(0);
             sc_then_reaches = sc_then_reaches.append(0);
             sc_parent = sc_parent.append(0);
+            sc_edge_from = sc_edge_from.append(edge_owner.len());
             var rd_blk: i32 = sc_kind.len() - 1;
             sc_snap = row_set(sc_snap, rd_blk, nslots, slots, false);
             sc_then_slots = row_set(sc_then_slots, rd_blk, nslots, slots, false);
@@ -1199,6 +1204,7 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[], struct
             sc_then_blk = sc_then_blk.append(0);
             sc_then_reaches = sc_then_reaches.append(0);
             sc_parent = sc_parent.append(entry_blk);
+            sc_edge_from = sc_edge_from.append(edge_owner.len() - 1);
             var rd_loop: i32 = sc_kind.len() - 1;
             sc_snap = row_set(sc_snap, rd_loop, nslots, slots, false);
             sc_then_slots = row_set(sc_then_slots, rd_loop, nslots, slots, false);
@@ -1297,13 +1303,13 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[], struct
                 }
                 sc_kind = drop_last_s(sc_kind); sc_uid = drop_last(sc_uid); sc_target = drop_last(sc_target);
                 sc_else = drop_last(sc_else); sc_seen_else = drop_last(sc_seen_else); sc_then_blk = drop_last(sc_then_blk);
-                sc_then_reaches = drop_last(sc_then_reaches); sc_parent = drop_last(sc_parent);
+                sc_then_reaches = drop_last(sc_then_reaches); sc_parent = drop_last(sc_parent); sc_edge_from = drop_last(sc_edge_from);
             } else if (sc_kind[t2] == "loop") {
                 var luid2: i32 = sc_uid[t2];
                 var hid: i32 = sc_target[t2];
                 // collect this loop's incoming edges (entry + back-edges).
                 var eidx: i32[] = [];
-                var j: i32 = 0;
+                var j: i32 = sc_edge_from[t2];
                 while (j < edge_owner.len()) { if (edge_owner[j] == luid2) { eidx = eidx.append(j); } j = j + 1; }
                 var lpreds: i32[] = [];
                 var q: i32 = 0;
@@ -1318,9 +1324,10 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[], struct
                         var ii: i32 = 0;
                         while (ii < b.insts.len()) {
                             var inst: ssa.SInst = b.insts[ii];
+                            // The header's first nslots instructions are its
+                            // placeholder phis, one per slot in slot order.
                             var sslot: i32 = 0 - 1;
-                            var ss: i32 = 0;
-                            while (ss < nslots) { if (sc_header_phis[t2 * nslots + ss] == inst.result) { sslot = ss; } ss = ss + 1; }
+                            if (ii < nslots && sc_header_phis[t2 * nslots + ii] == inst.result) { sslot = ii; }
                             if (inst.kind_tag == 8 && sslot >= 0) {
                                 var pargs: i32[] = [];
                                 var qq: i32 = 0;
@@ -1339,14 +1346,14 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[], struct
                 cur_dead = true;
                 sc_kind = drop_last_s(sc_kind); sc_uid = drop_last(sc_uid); sc_target = drop_last(sc_target);
                 sc_else = drop_last(sc_else); sc_seen_else = drop_last(sc_seen_else); sc_then_blk = drop_last(sc_then_blk);
-                sc_then_reaches = drop_last(sc_then_reaches); sc_parent = drop_last(sc_parent);
+                sc_then_reaches = drop_last(sc_then_reaches); sc_parent = drop_last(sc_parent); sc_edge_from = drop_last(sc_edge_from);
             } else {
                 // block: open the exit, merging all br/brif-out edges (+ a
                 // fall-through edge if the current block reaches `end` live).
                 var buid: i32 = sc_uid[t2];
                 var eid: i32 = sc_target[t2];
                 var bidx: i32[] = [];
-                var jb: i32 = 0;
+                var jb: i32 = sc_edge_from[t2];
                 while (jb < edge_owner.len()) { if (edge_owner[jb] == buid) { bidx = bidx.append(jb); } jb = jb + 1; }
                 var falls_through: boolean = (!cur_dead) && (cur_term.kind_tag == 0);
                 var fcur: i32 = cur_id;
@@ -1392,7 +1399,7 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[], struct
                 cur_dead = (bpreds.len() == 0);
                 sc_kind = drop_last_s(sc_kind); sc_uid = drop_last(sc_uid); sc_target = drop_last(sc_target);
                 sc_else = drop_last(sc_else); sc_seen_else = drop_last(sc_seen_else); sc_then_blk = drop_last(sc_then_blk);
-                sc_then_reaches = drop_last(sc_then_reaches); sc_parent = drop_last(sc_parent);
+                sc_then_reaches = drop_last(sc_then_reaches); sc_parent = drop_last(sc_parent); sc_edge_from = drop_last(sc_edge_from);
             }
         } else {
             ok = false;   // outside the slice — caller falls back.
