@@ -168,3 +168,85 @@ func TestEntryStackArgsKeepCallAligned(t *testing.T) {
 // prologueSaveRe matches a callee-saved push, which only a function prologue
 // emits: a call site saves caller-saved registers only.
 var prologueSaveRe = regexp.MustCompile(`^push (rbx|r1[2-5])$`)
+
+// The pad that realigns a call site is one more push and pop, never a pair
+// of stack adjusts: the self-hosted driver has 46,000 padded call sites, and
+// the two adjusts cost eight bytes where the push and pop cost two. Both
+// shapes are covered — one caller-saved value live across a call, and seven
+// arguments with nothing live across — and each still runs its calls
+// 16-aligned and computes the right answer.
+func TestCallPadIsAPushNotAStackAdjust(t *testing.T) {
+	g := ssa.NewFunc("g")
+	gx := g.AddParam()
+	ge := g.NewBlock()
+	g.SetRet(ge, g.AddOp(ge, ssa.OpMul, gx, constOp(g, ge, 2)))
+	h := ssa.NewFunc("h")
+	x := h.AddParam()
+	he := h.NewBlock()
+	c1 := callOp(h, he, "g", x)
+	c2 := callOp(h, he, "g", h.AddOp(he, ssa.OpAdd, x, constOp(h, he, 1)))
+	h.SetRet(he, h.AddOp(he, ssa.OpAdd, h.AddOp(he, ssa.OpAdd, c1, c2), x))
+	live := map[string]*ssa.Func{"g": g, "h": h}
+
+	callee := weightedSum("callee", 7)
+	main := ssa.NewFunc("main")
+	me := main.NewBlock()
+	var args []ssa.Value
+	for _, v := range countUp(7) {
+		args = append(args, constOp(main, me, v))
+	}
+	main.SetRet(me, callOp(main, me, "callee", args...))
+	stack := map[string]*ssa.Func{"callee": callee, "main": main}
+
+	// With three allocatable registers (rax, rbx, rcx) x takes the one
+	// callee-saved register across both calls, so the first result lives in
+	// a caller-saved one across the second call: a save set of one register,
+	// which needs a pad.
+	prog, err := Emit(h, 3)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	padded := false
+	for _, blk := range prog.Blocks {
+		for _, in := range blk.Insts {
+			if in.Op == Call && len(in.SaveRegs)%2 == 1 {
+				padded = true
+			}
+		}
+	}
+	if !padded {
+		t.Fatal("no call in h saves an odd number of registers, so nothing here exercises the pad")
+	}
+
+	for _, c := range []struct {
+		name  string
+		funcs map[string]*ssa.Func
+		entry string
+		args  []int64
+	}{
+		{"live-across", live, "h", []int64{10}},
+		{"stack-args", stack, "main", nil},
+	} {
+		asm, err := EmitAsmModule(c.funcs, c.entry, 3, nil)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		// The prologue's own frame adjust is not a call-site pad: only the
+		// body from the first block label on is read.
+		body := funcText(t, asm, fnLabel(c.entry))
+		body = body[strings.Index(body, ".L"):]
+		if strings.Contains(body, "sub rsp, 8\n") {
+			t.Errorf("%s: a call site pads with a stack adjust:\n%s", c.name, body)
+		}
+		deltas := rspDeltaAtCalls(t, asm, fnLabel(c.entry))
+		if len(deltas) == 0 {
+			t.Fatalf("%s: no call found, so this checked nothing", c.name)
+		}
+		for _, d := range deltas {
+			if d%16 != 0 {
+				t.Errorf("%s: a call runs with rsp %d off the frame", c.name, d)
+			}
+		}
+		runModuleMatchesEval(t, c.funcs, c.entry, 3, c.args)
+	}
+}

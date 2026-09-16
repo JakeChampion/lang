@@ -1,6 +1,9 @@
 package ssa
 
-import "sort"
+import (
+	"math/bits"
+	"sort"
+)
 
 // Liveness holds per-block live-in / live-out sets, keyed by Value ID. It is
 // the foundation for register allocation (#4112): a register may be reused for
@@ -21,15 +24,34 @@ type Liveness struct {
 	LiveOut map[*Block]map[int32]bool
 }
 
+// bitset is a set of Value IDs, one bit per ID, so the dataflow fixpoint
+// below unions and subtracts whole words rather than walking map entries.
+type bitset []uint64
+
+func (s bitset) set(id int32)      { s[id>>6] |= 1 << (uint(id) & 63) }
+func (s bitset) has(id int32) bool { return s[id>>6]&(1<<(uint(id)&63)) != 0 }
+
+// toMap lists the set's members as the map shape the callers read.
+func (s bitset) toMap() map[int32]bool {
+	m := map[int32]bool{}
+	for w, word := range s {
+		for word != 0 {
+			m[int32(w*64+bits.TrailingZeros64(word))] = true
+			word &= word - 1
+		}
+	}
+	return m
+}
+
 // blockLocal holds the per-block sets that don't change across the dataflow
 // fixpoint: the upward-exposed uses, the defs, and the phi bookkeeping.
 type blockLocal struct {
-	uses    map[int32]bool // upward-exposed: used before any def in this block
-	defs    map[int32]bool // every value defined in this block (incl. phi results)
-	phiDefs map[int32]bool // just the phi results of this block
+	uses    bitset // upward-exposed: used before any def in this block
+	defs    bitset // every value defined in this block (incl. phi results)
+	phiDefs bitset // just the phi results of this block
 	// phiUse[predIndex] is the set of values this block's phis pull from the
 	// predecessor at that index (i.e. live-out contributions on that edge).
-	phiUse []map[int32]bool
+	phiUse []bitset
 }
 
 // ComputeLiveness runs SSA-aware backward dataflow to a fixpoint and returns
@@ -46,16 +68,19 @@ func ComputeLiveness(f *Func) *Liveness {
 // value is used. The caller owns verification of these semantic obligations.
 // This does not mutate the graph or by itself certify ownership or uniqueness.
 func ComputeLivenessWithDependencies(f *Func, dependencies map[int32][]Value) *Liveness {
-	local := make(map[*Block]*blockLocal, len(f.Blocks))
-	for _, b := range f.Blocks {
-		local[b] = computeBlockLocalWithDependencies(b, dependencies)
+	words := int(maxValueID(f, dependencies))/64 + 1
+	index := make(map[*Block]int, len(f.Blocks))
+	local := make([]*blockLocal, len(f.Blocks))
+	for i, b := range f.Blocks {
+		index[b] = i
+		local[i] = computeBlockLocalWithDependencies(b, dependencies, words)
 	}
 
-	liveIn := make(map[*Block]map[int32]bool, len(f.Blocks))
-	liveOut := make(map[*Block]map[int32]bool, len(f.Blocks))
-	for _, b := range f.Blocks {
-		liveIn[b] = map[int32]bool{}
-		liveOut[b] = map[int32]bool{}
+	liveIn := make([]bitset, len(f.Blocks))
+	liveOut := make([]bitset, len(f.Blocks))
+	for i := range f.Blocks {
+		liveIn[i] = make(bitset, words)
+		liveOut[i] = make(bitset, words)
 	}
 
 	// Backward dataflow. Iterate over all blocks until no set changes.
@@ -66,69 +91,103 @@ func ComputeLivenessWithDependencies(f *Func, dependencies map[int32][]Value) *L
 		changed = false
 		for i := len(f.Blocks) - 1; i >= 0; i-- {
 			b := f.Blocks[i]
-			lb := local[b]
+			lb := local[i]
 
 			// liveOut(B) = ∪ over successors S of the values live across the
 			// edge B→S: (liveIn(S) minus S's phi results) plus the phi args
 			// that S pulls from B.
-			out := liveOut[b]
+			out := liveOut[i]
 			for _, s := range b.Succs() {
-				for id := range liveIn[s] {
-					if !local[s].phiDefs[id] {
-						if !out[id] {
-							out[id] = true
-							changed = true
-						}
-					}
+				si := index[s]
+				ls := local[si]
+				in := liveIn[si]
+				var edge bitset
+				if pi := predIndex(s, b); pi >= 0 && pi < len(ls.phiUse) {
+					edge = ls.phiUse[pi]
 				}
-				if pi := predIndex(s, b); pi >= 0 && pi < len(local[s].phiUse) {
-					for id := range local[s].phiUse[pi] {
-						if !out[id] {
-							out[id] = true
-							changed = true
-						}
+				for w := range out {
+					next := out[w] | (in[w] &^ ls.phiDefs[w])
+					if edge != nil {
+						next |= edge[w]
+					}
+					if next != out[w] {
+						out[w] = next
+						changed = true
 					}
 				}
 			}
 
 			// liveIn(B) = uses(B) ∪ (liveOut(B) \ defs(B)).
-			in := liveIn[b]
-			for id := range lb.uses {
-				if !in[id] {
-					in[id] = true
-					changed = true
-				}
-			}
-			for id := range out {
-				if !lb.defs[id] && !in[id] {
-					in[id] = true
+			in := liveIn[i]
+			for w := range in {
+				next := in[w] | lb.uses[w] | (out[w] &^ lb.defs[w])
+				if next != in[w] {
+					in[w] = next
 					changed = true
 				}
 			}
 		}
 	}
 
-	return &Liveness{f: f, LiveIn: liveIn, LiveOut: liveOut}
+	l := &Liveness{
+		f:       f,
+		LiveIn:  make(map[*Block]map[int32]bool, len(f.Blocks)),
+		LiveOut: make(map[*Block]map[int32]bool, len(f.Blocks)),
+	}
+	for i, b := range f.Blocks {
+		l.LiveIn[b] = liveIn[i].toMap()
+		l.LiveOut[b] = liveOut[i].toMap()
+	}
+	return l
+}
+
+// maxValueID returns the largest Value ID the dataflow can meet in f: the
+// values its ops define and use, and the dependencies attached to them.
+func maxValueID(f *Func, dependencies map[int32][]Value) int32 {
+	max := f.nextValueID
+	note := func(v Value) {
+		if v.ID > max {
+			max = v.ID
+		}
+	}
+	for _, b := range f.Blocks {
+		for _, op := range b.Ops {
+			note(op.Result)
+			note(op.Result2)
+			for _, a := range op.Args {
+				note(a)
+			}
+		}
+		for _, v := range termUses(b.Term) {
+			note(v)
+		}
+	}
+	for _, ds := range dependencies {
+		for _, d := range ds {
+			note(d)
+		}
+	}
+	return max
 }
 
 // computeBlockLocalWithDependencies builds the fixpoint-invariant sets for one block.
-func computeBlockLocalWithDependencies(b *Block, dependencies map[int32][]Value) *blockLocal {
+func computeBlockLocalWithDependencies(b *Block, dependencies map[int32][]Value, words int) *blockLocal {
 	lb := &blockLocal{
-		uses:    map[int32]bool{},
-		defs:    map[int32]bool{},
-		phiDefs: map[int32]bool{},
-		phiUse:  make([]map[int32]bool, len(b.Preds)),
+		uses:    make(bitset, words),
+		defs:    make(bitset, words),
+		phiDefs: make(bitset, words),
+		phiUse:  make([]bitset, len(b.Preds)),
 	}
 	for i := range lb.phiUse {
-		lb.phiUse[i] = map[int32]bool{}
+		lb.phiUse[i] = make(bitset, words)
 	}
-	use := func(set map[int32]bool, v Value, local bool) {
-		if v.IsValid() && (!local || !lb.defs[v.ID]) {
-			set[v.ID] = true
+	use := func(set bitset, v Value, local bool) {
+		if v.IsValid() && (!local || !lb.defs.has(v.ID)) {
+			set.set(v.ID)
 		}
 		for _, d := range dependencies[v.ID] {
-			if d.IsValid() && (!local || !lb.defs[d.ID]) {
-				set[d.ID] = true
+			if d.IsValid() && (!local || !lb.defs.has(d.ID)) {
+				set.set(d.ID)
 			}
 		}
 	}
@@ -143,8 +202,8 @@ func computeBlockLocalWithDependencies(b *Block, dependencies map[int32][]Value)
 				}
 			}
 			if op.Result.IsValid() {
-				lb.defs[op.Result.ID] = true
-				lb.phiDefs[op.Result.ID] = true
+				lb.defs.set(op.Result.ID)
+				lb.phiDefs.set(op.Result.ID)
 			}
 			continue
 		}
@@ -154,10 +213,10 @@ func computeBlockLocalWithDependencies(b *Block, dependencies map[int32][]Value)
 			use(lb.uses, a, true)
 		}
 		if op.Result.IsValid() {
-			lb.defs[op.Result.ID] = true
+			lb.defs.set(op.Result.ID)
 		}
 		if op.Result2.IsValid() {
-			lb.defs[op.Result2.ID] = true
+			lb.defs.set(op.Result2.ID)
 		}
 	}
 
