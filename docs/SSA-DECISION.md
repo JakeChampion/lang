@@ -376,6 +376,33 @@ freelist heads want an `adrp`/`add` pair per site — and it is the trade the
 plan declined; measured, it is the right one. `map_int` pays something
 else, still to be profiled.
 
+### Measured 2026-09-16: a jump on a 32-byte line ran the loop at half speed
+
+The full bench sweep with every pending slice applied put `string_count_byte`
+at 0.045 s on x86-64 SSA against 0.020 s for the same program built from
+main, with the kernel's code and instruction count identical between the
+two and only its address different. In the slow build the vector loop's
+back-edge `jmp` sat on bytes 31 and 0 of a 32-byte line. That is the shape
+the Skylake-family JCC erratum's microcode fix keeps out of the decoded-
+instruction cache, so the ten-instruction loop ran from the legacy decoder
+at half speed; whether a build hit it depended on where the helper before
+it happened to end. The in-process assembler now pads before every jump,
+call and return that would cross or end on a 32-byte line of the address
+space (`relax.go`'s `branchPad`, on for the programs the driver links and
+off for the GNU as byte oracle), for both x86-64 backends. Best of five,
+x86-64 native, every pending slice applied:
+
+| bench | flat before | flat after | SSA before | SSA after |
+| --- | --- | --- | --- | --- |
+| `string_count_byte` | 0.012 s | 0.010 s | 0.045 s | 0.023 s |
+| `string_rfind_byte` | 0.008 s | 0.005 s | 0.016 s | 0.009 s |
+| `string_scan` | 0.012 s | 0.011 s | 0.019 s | 0.019 s |
+| everything else | | ±1 ms | | ±1 ms |
+
+The remaining `string_count_byte` gap is the kernel's width: the flat
+backend's scans 32 bytes an iteration with AVX2 where the SSA helper scans
+16 with SSE.
+
 ### Per-backend disposition
 
 | backend | disposition |

@@ -19,6 +19,14 @@ type relaxEvent struct {
 	// Branch (align == 0): the relFixups entry holding the target symbol.
 	fixup int
 	short bool
+	// fixed marks a branch-class instruction with one encoding — a call, a
+	// ret, an indirect jump — recorded only so that branch alignment can
+	// pad it; it never shrinks and has no fixup of its own.
+	fixed bool
+	// bpad is the NOP padding laid before the branch under branch
+	// alignment, so that its bytes neither cross nor end on a 32-byte
+	// boundary (see Assembler.SetBranchAlignment). Filled in by relax.
+	bpad int
 	// Alignment pad (align > 1):
 	align   int
 	maxSkip int // -1 when absent
@@ -106,10 +114,16 @@ func (a *Assembler) relaxOnce() error {
 			switch {
 			case e.align > 0:
 				e.newSize = padWidth(e.newStart, e.align, e.maxSkip)
-			case e.short:
-				e.newSize = 2
 			default:
-				e.newSize = e.size
+				n := e.size
+				if e.short {
+					n = 2
+				}
+				e.bpad = 0
+				if a.alignBranches {
+					e.bpad = branchPad(a.alignBase+e.newStart, n)
+				}
+				e.newSize = e.bpad + n
 			}
 			cum += e.newSize - e.size
 			prefix[i] = cum
@@ -147,6 +161,9 @@ func (a *Assembler) relaxOnce() error {
 		if e.align > 0 {
 			continue
 		}
+		if e.fixed {
+			continue
+		}
 		// Undefined label: stays long, and the rel32 pass reports it.
 		_, ok := a.textLabels[a.relFixups[e.fixup].sym]
 		e.short = ok
@@ -177,7 +194,7 @@ func (a *Assembler) relaxOnce() error {
 				continue
 			}
 			sym := a.relFixups[e.fixup].sym
-			if disp := labelPos(sym) - (e.newStart + 2); disp < -128 || disp > 127 {
+			if disp := labelPos(sym) - (e.newStart + e.bpad + 2); disp < -128 || disp > 127 {
 				e.short = false
 				changed = true
 				if hasPad {
@@ -208,6 +225,9 @@ func (a *Assembler) relaxOnce() error {
 		if len(out) != e.newStart {
 			return fmt.Errorf("internal: branch-relaxation layout drift at %#x", e.start)
 		}
+		if e.align == 0 {
+			out = appendNopPad(out, e.bpad)
+		}
 		switch {
 		case e.align > 0:
 			out = appendNopPad(out, e.newSize)
@@ -231,11 +251,11 @@ func (a *Assembler) relaxOnce() error {
 			continue
 		}
 		sym := a.relFixups[e.fixup].sym
-		disp := labelPos(sym) - (e.newStart + 2)
+		disp := labelPos(sym) - (e.newStart + e.bpad + 2)
 		if disp < -128 || disp > 127 {
 			return fmt.Errorf("internal: relaxed branch to %q out of rel8 range (%d)", sym, disp)
 		}
-		out[e.newStart+1] = byte(disp)
+		out[e.newStart+e.bpad+1] = byte(disp)
 		resolved[e.fixup] = true
 	}
 	a.text = out
@@ -274,4 +294,20 @@ func (a *Assembler) relaxOnce() error {
 	}
 	a.relFixups = kept
 	return nil
+}
+
+// branchPad is the NOP padding that moves an n-byte branch at address start
+// so that it neither crosses a 32-byte boundary nor ends on one: the
+// start of the next 32-byte line, when it would. A jump, call or return
+// straddling a 32-byte line, or whose last byte sits on the line's last
+// byte, is the shape the Skylake-family JCC erratum's microcode fix keeps
+// out of the decoded-instruction cache, and a tight loop with one such
+// branch runs at half speed from the legacy decoder — the difference between
+// two builds of the same kernel whose only change was where a helper landed.
+func branchPad(start, n int) int {
+	last := start + n - 1
+	if start/32 == last/32 && last%32 != 31 {
+		return 0
+	}
+	return 32 - start%32
 }

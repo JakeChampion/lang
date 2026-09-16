@@ -124,6 +124,24 @@ type Assembler struct {
 	dupLabelErr error
 	// sec is the section the next label or instruction lands in.
 	sec string
+	// alignBranches pads every jump, call and return so none crosses or
+	// ends on a 32-byte boundary (relax.go's branchPad). Off by default: the
+	// encoding oracles compare .text byte for byte with GNU as, which pads
+	// nothing; the compiler driver turns it on for the programs it links.
+	alignBranches bool
+	// alignBase is the address .text offset 0 loads at, modulo 32: the
+	// boundaries are the CPU's, in addresses, and the linker places .text
+	// behind the ELF headers rather than on a line.
+	alignBase int
+}
+
+// SetBranchAlignment turns branch alignment on for the layout: relax pads
+// before every jump, call and return that would cross or end on a 32-byte
+// boundary of the address space, given that .text offset 0 loads at
+// textVAddr. It must be called before the first layout.
+func (a *Assembler) SetBranchAlignment(textVAddr uint64) {
+	a.alignBranches = true
+	a.alignBase = int(textVAddr % 32)
 }
 
 // LineRow is one DWARF .debug_line row, recorded when the code generator
@@ -687,6 +705,7 @@ func (a *Assembler) Inst(in Inst) error {
 		return fmt.Errorf("instruction outside .text")
 	}
 	nRip := len(a.ripFixups)
+	start := len(a.text)
 	var err error
 	switch in.Prefix {
 	case PrefixNone:
@@ -714,6 +733,11 @@ func (a *Assembler) Inst(in Inst) error {
 	}
 	for i := nRip; i < len(a.ripFixups); i++ {
 		a.ripFixups[i].end = len(a.text)
+	}
+	// A return or an indirect branch is a fixed-size event, for branch
+	// alignment only; the direct forms record their own relaxable event.
+	if in.Mnem == "ret" || ((in.Mnem == "call" || in.Mnem == "jmp") && len(in.Ops) == 1 && in.Ops[0].kind != opLabel) {
+		a.relaxEvents = append(a.relaxEvents, relaxEvent{start: start, size: len(a.text) - start, fixed: true})
 	}
 	return nil
 }
@@ -2073,6 +2097,7 @@ func (a *Assembler) call(ops []Operand) error {
 	if ops[0].kind != opLabel {
 		return fmt.Errorf("call expects a label, register, or memory operand")
 	}
+	a.relaxEvents = append(a.relaxEvents, relaxEvent{start: len(a.text), size: 5, fixed: true})
 	a.emit(0xE8)
 	a.relFixups = append(a.relFixups, relFixup{at: len(a.text), sym: ops[0].sym})
 	a.emit32(0)

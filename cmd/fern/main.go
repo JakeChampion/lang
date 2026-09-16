@@ -2616,6 +2616,7 @@ func linkNativeX86(asm, outPath, srcFile, compDir string, funcVars map[string][]
 		if err != nil {
 			return fmt.Errorf("native assembler: %w", err)
 		}
+		a.SetBranchAlignment(nativeelf.TextVAddrWX)
 		text, rodata, u, err := layoutX86(a)
 		if err != nil {
 			return err
@@ -2643,6 +2644,7 @@ func linkNativeX86(asm, outPath, srcFile, compDir string, funcVars map[string][]
 	if err != nil {
 		return fmt.Errorf("native assembler: %w", err)
 	}
+	a.SetBranchAlignment(nativeelf.TextVAddrWX)
 	text, rodata, u, err := layoutX86(a)
 	if err != nil {
 		return err
