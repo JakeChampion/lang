@@ -227,6 +227,7 @@ func EmitWithCalleeSaved(f *ssa.Func, numAlloc int, calleeSaved []bool) (*Progra
 			}
 		}
 	}
+	e.remat = rematerialisable(f, alloc, e.uses, e.folded)
 	// Phi-move temp slots live just above the allocator's spill slots and are
 	// reused across edges (edges never execute concurrently).
 	e.phiTempBase = alloc.NumSlots
@@ -310,6 +311,11 @@ type emitter struct {
 	// consts is every OpConstInt result's value, for the sites that can use a
 	// size known at compile time (MemAlloc, __fern_box_free).
 	consts map[int32]int64
+	// remat is every spilled constant whose readers all take their operand
+	// through materialize: it has no definition in the text and no slot
+	// store, and each reader writes the constant into its scratch register
+	// where a reload would have gone (rematerialisable).
+	remat map[int32]*ssa.Op
 
 	cur []Inst // instruction accumulator for the block being emitted
 }
@@ -578,6 +584,14 @@ func (e *emitter) moveLoc(dst, src Loc) {
 }
 
 func (e *emitter) materialize(v ssa.Value, scratch int) (int, error) {
+	if c := e.remat[v.ID]; c != nil {
+		if c.Kind == ssa.OpConstString {
+			e.push(Inst{Op: ConstStr, Dst: scratch, Str: c.Str})
+		} else {
+			e.push(Inst{Op: MovImm, Dst: scratch, Imm: c.Imm, W: c.Width})
+		}
+		return scratch, nil
+	}
 	l, ok := e.loc(v.ID)
 	if !ok {
 		return 0, fmt.Errorf("x86_64ssa: value v%d has no allocation (dead?)", v.ID)
@@ -587,6 +601,71 @@ func (e *emitter) materialize(v ssa.Value, scratch int) (int, error) {
 	}
 	e.push(Inst{Op: LoadSlot, Dst: scratch, Imm: int64(l.Slot)})
 	return scratch, nil
+}
+
+// rematerialisable finds the constants the allocator spilled whose every
+// reader takes its operand through materialize, so the constant can be
+// written into the reader's scratch register in place of the reload and
+// needs neither a definition nor a slot store. A phi, a call argument, a
+// closure or env capture and a boxing read their operand's home directly,
+// so one such reader keeps the constant's slot.
+//
+// It is a saving in bytes only when the readers are few enough: the
+// constant is seven bytes (`mov r64, imm32`, `lea r64, [rip + sym]`) where
+// a reload from one of the first sixteen slots is four, so a near-slot
+// constant read more than three times is smaller stored and reloaded.
+func rematerialisable(f *ssa.Func, alloc *ssa.Allocation, uses *ssa.Uses, folded map[int32]int64) map[int32]*ssa.Op {
+	const constBytes = 7
+	out := map[int32]*ssa.Op{}
+	for _, b := range f.Blocks {
+		for _, op := range b.Ops {
+			switch op.Kind {
+			case ssa.OpConstInt, ssa.OpConstBool, ssa.OpConstString:
+			default:
+				continue
+			}
+			if !op.Result.IsValid() {
+				continue
+			}
+			slot, ok := alloc.Slot[op.Result.ID]
+			if !ok {
+				continue
+			}
+			if _, ok := folded[op.Result.ID]; ok {
+				continue
+			}
+			reloadBytes := 7
+			if 8*(slot+1) <= 128 {
+				reloadBytes = 4
+			}
+			sites := uses.Of(op.Result)
+			if len(sites)*(constBytes-reloadBytes) > constBytes+reloadBytes {
+				continue
+			}
+			ok = true
+			for _, u := range sites {
+				if u.Op != nil && readsHomeDirectly(u.Op.Kind) {
+					ok = false
+					break
+				}
+			}
+			if ok {
+				out[op.Result.ID] = op
+			}
+		}
+	}
+	return out
+}
+
+// readsHomeDirectly reports whether an op's emitter reads its operands'
+// homes as locations (loc) rather than through materialize.
+func readsHomeDirectly(k ssa.OpKind) bool {
+	switch k {
+	case ssa.OpPhi, ssa.OpCall, ssa.OpCallPair, ssa.OpCallIndirect, ssa.OpCallDyn,
+		ssa.OpMakeEnv, ssa.OpMakeClosure, ssa.OpBoxDyn:
+		return true
+	}
+	return false
 }
 
 func (e *emitter) place(v ssa.Value, srcReg int) {
@@ -772,6 +851,9 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 	case ssa.OpConstInt, ssa.OpConstBool:
 		if _, ok := e.folded[op.Result.ID]; ok {
 			return nil // every reader takes it as an immediate
+		}
+		if e.remat[op.Result.ID] != nil {
+			return nil // every reader writes it into its own scratch register
 		}
 		dst := e.coalesceDst(op.Result, -1)
 		e.push(Inst{Op: MovImm, Dst: dst, Imm: op.Imm, W: op.Width})
@@ -1147,6 +1229,9 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 		return nil
 
 	case ssa.OpConstString:
+		if e.remat[op.Result.ID] != nil {
+			return nil
+		}
 		e.push(Inst{Op: ConstStr, Dst: e.s2, Str: op.Str})
 		e.place(op.Result, e.s2)
 		return nil
