@@ -1027,7 +1027,7 @@ reproducers to work against. Nothing else about it is outstanding.
 on the SSA paths, the rc primitives and the constant-size freelist paths
 inline, and the string reclaim, no benchmark is slower than flat on arm64 and
 one is on x86-64 by 3 ms. The full table, both targets, is in
-`docs/SSA-DECISION.md` under "Measured 2026-09-16: the full sweep".
+`docs/ssa-log/2026-09-16-full-sweep.md`.
 
 ### What the map-shaped reproducers were actually paying
 
