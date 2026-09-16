@@ -47,28 +47,33 @@ func Optimize(f *Func) int {
 	if f == nil {
 		return 0
 	}
-	prev := f.String()
+	prev := fingerprint(f)
 	for i := 1; i <= maxOptimizeIters; i++ {
-		SCCP(f)
-		Fold(f)
-		Simplify(f)
-		CmpFlip(f)
-		StrengthReduce(f)
-		Canonicalize(f)
-		FoldBranches(f)
-		ThreadPhiBranches(f)
-		PruneUnreachable(f)
-		MergeTrivialBlocks(f)
-		FuseLinearBlocks(f)
-		TrivialPhis(f)
-		CSE(f)
-		LICM(f)
-		DCE(f)
-		cur := f.String()
+		runPasses(f)
+		cur := fingerprint(f)
 		if cur == prev {
 			return i
 		}
 		prev = cur
 	}
 	return maxOptimizeIters
+}
+
+// runPasses is one iteration of the pipeline above.
+func runPasses(f *Func) {
+	SCCP(f)
+	Fold(f)
+	Simplify(f)
+	CmpFlip(f)
+	StrengthReduce(f)
+	Canonicalize(f)
+	FoldBranches(f)
+	ThreadPhiBranches(f)
+	PruneUnreachable(f)
+	MergeTrivialBlocks(f)
+	FuseLinearBlocks(f)
+	TrivialPhis(f)
+	CSE(f)
+	LICM(f)
+	DCE(f)
 }
