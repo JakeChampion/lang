@@ -24,7 +24,8 @@ pub struct Supply { value: i32, slot: i32, mode: i32 }
 // whose field the operand projects, or the parameter itself, when this frame
 // reads it no further after the call (projection_root) and so hands the
 // buffer on without a bracket; -1 otherwise. `hand_fields` is the field's
-// index, or -1 for a parameter's own buffer.
+// index, or -1 for a parameter's own buffer — an array's, or a whole record
+// parameter's, whose every field the callee may grow is handed with it.
 pub struct Step { block: i32, point: i32, target: i32, supplies: Supply[], drops: i32[], hand_roots: i32[], hand_fields: i32[] }
 // `grows` names, at an append's result, the record value whose field buffer
 // the append may grow IN PLACE (field_grow_root), or -1; `grow_fields` holds
@@ -84,7 +85,11 @@ pub function grow_rows(callee: string, f: ssasem.Func, p: Plan, table: GrowRow[]
             var root: i32 = s.hand_roots[i];
             if (root >= 0 && defs[root].kind_tag == 6 && !p.owned[root]) {
                 var ins: ssa.SInst = f.graph.blocks[block_index(f.graph, s.block)].insts[s.point];
-                if (has_row(table, ins.str, i, 0 - 1)) { out = with_row(out, callee, defs[root].imm, s.hand_fields[i]); }
+                if (is_record(f.values[root]) && s.hand_fields[i] < 0) {
+                    // A whole record handed on: every field the callee may
+                    // grow, this parameter may grow.
+                    for field in grow_fields_of(table, ins.str, i) { out = with_row(out, callee, defs[root].imm, field); }
+                } else if (has_row(table, ins.str, i, 0 - 1)) { out = with_row(out, callee, defs[root].imm, s.hand_fields[i]); }
             }
             i = i + 1;
         }
@@ -504,10 +509,12 @@ function occurrences(xs: i32[], v: i32): i32 {
 // The buffers a direct call at (`bi`, `pos`) is handed without a bracket:
 // an array operand this frame reads no further, either a borrowed parameter
 // of its own or a projection whose record it reads no further through that
-// field (projection_root). An operand named twice is bracketed, since a
-// callee growing one name would move the other. The buffer's only later
-// holder is then the callee's result — retained on identity, fresh on a
-// realloc — and the record or the caller releases the old one.
+// field (projection_root); or a whole record parameter this frame reads no
+// further, whose fields the callee grows under the record's own count. An
+// operand named twice is bracketed, since a callee growing one name would
+// move the other. The buffer's only later holder is then the callee's result
+// — retained on identity, fresh on a realloc — and the record or the caller
+// releases the old one.
 function hands(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[], bi: i32, pos: i32, s: Step): Step {
     var ins: ssa.SInst = f.graph.blocks[bi].insts[pos];
     if (ins.kind_tag != ssasem.call()) { return s; }
@@ -516,13 +523,15 @@ function hands(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.S
     for v in ins.args {
         var root: i32 = 0 - 1;
         var field: i32 = 0 - 1;
+        var lent_param: boolean = defs[v].kind_tag == 6 && !owned[v] && occurrences(ins.args, v) == 1 && !used_after(f, a, bi, pos, v);
         if (is_array(f.values[v]) && !ssasem.is_text(f.values[v]) && occurrences(ins.args, v) == 1) {
-            if (defs[v].kind_tag == 6 && !owned[v] && !used_after(f, a, bi, pos, v)) { root = v; }
+            if (lent_param) { root = v; }
             if (defs[v].kind_tag == ssasem.record_get()) {
                 root = projection_root(f, a, owned, defs, bi, pos, v);
                 if (root >= 0) { field = defs[v].imm; }
             }
         }
+        if (is_record(f.values[v]) && !semtypes.is_env(f.values[v]) && lent_param) { root = v; }
         roots = roots.append(root);
         fields = fields.append(field);
     }

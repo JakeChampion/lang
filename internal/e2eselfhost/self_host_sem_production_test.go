@@ -585,4 +585,32 @@ function main(): i32 {
     return first([40]) + total([1, 2, 3]) + names.len() + names[2].len();
 }
 `},
+	// A wrapper that lends its record parameter on to the function that
+	// appends to a field of it. `helper` reads `r` no further after each call,
+	// so it hands the whole record on and `emit` grows the field in place under
+	// the record's own count; a bracket on the field there made every first
+	// append in the callee copy the buffer, once per wrapper call, which is
+	// the quadratic term that took the produced compiler's self-build past the
+	// arena. The program reads the runtime's shared-append counter itself, so
+	// a copy is a wrong answer (200 and up) rather than a slow one.
+	{name: "record-handed-through-wrapper", atLeast: 4, src: `
+struct R { ops: i32[], n: i32, name: string }
+function emit(r: R, op: i32): R { return R { ...r, ops: r.ops.append(op) }; }
+function helper(r: R, slot: i32): R {
+    r = emit(r, slot);
+    r = emit(r, slot + 1);
+    return emit(r, slot + 2);
+}
+function build(n: i32): R {
+    var r: R = R { ops: [], n: 0, name: "h" + "" };
+    var i: i32 = 0;
+    while (i < n) { r = helper(r, i); i = i + 1; }
+    return r;
+}
+function main(): i32 {
+    var r: R = build(501);
+    if (__arr_push_shared_count() > 0) { return 200 + (__arr_push_shared_count() % 50); }
+    return r.ops.len() % 100 + r.name.len();
+}
+`},
 }
