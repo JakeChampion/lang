@@ -9542,7 +9542,11 @@ func emitFuncBody(w func(string, ...any), name string, p *x86.Program, numAlloc 
 			}
 		}
 		if fuseLeft >= 0 {
-			w("\tcmp %s, %s", xreg(fuseLeft), xreg(fuseRight))
+			prefix, right := rightOperand(fuseRight, scratch, true)
+			for _, l := range prefix {
+				w("\t%s", l)
+			}
+			w("\tcmp %s, %s", xreg(fuseLeft), right)
 		}
 		switch blk.Term.Kind {
 		case x86.TRet:
@@ -10573,11 +10577,12 @@ func asmInst(in x86.Inst, left, scratch int, fr frameLayout) ([]string, error) {
 		}
 		// 3-operand form: the abstract semantics reg[Dst] = reg[Dst] (K) reg[Src]
 		// name the accumulator twice, but AArch64 can read it from anywhere.
-		out := []string{fmt.Sprintf("%s %s, %s, %s", mnem, xreg(in.Dst), xreg(left), xreg(in.Src))}
+		out, right := rightOperand(in, scratch, in.K == ssa.OpAdd || in.K == ssa.OpSub)
+		out = append(out, fmt.Sprintf("%s %s, %s, %s", mnem, xreg(in.Dst), xreg(left), right))
 		out = append(out, maskFix(in.Dst, in.W)...)
 		return out, nil
 	case x86.SetCmp:
-		return setCmpSeq(in, left)
+		return setCmpSeq(in, left, scratch)
 	case x86.MemAlloc:
 		return memAllocSeq(in), nil
 	case x86.MemLoad:
@@ -11054,15 +11059,35 @@ func condCode(k ssa.OpKind) (string, bool) {
 // A 64-bit cmp on sign-extended i32 operands orders correctly for both signed
 // and unsigned conditions; cset materialises the 0/1 result (no i32 mask
 // needed).
-func setCmpSeq(in x86.Inst, left int) ([]string, error) {
+func setCmpSeq(in x86.Inst, left, scratch int) ([]string, error) {
 	cc, ok := condCode(in.K)
 	if !ok {
 		return nil, fmt.Errorf("arm64ssa: comparison %v not supported yet", in.K)
 	}
-	return []string{
-		fmt.Sprintf("cmp %s, %s", xreg(left), xreg(in.Src)),
+	out, right := rightOperand(in, scratch, true)
+	return append(out,
+		fmt.Sprintf("cmp %s, %s", xreg(left), right),
 		fmt.Sprintf("cset %s, %s", xreg(in.Dst), cc),
-	}, nil
+	), nil
+}
+
+// rightOperand renders an instruction's right operand: the register it names,
+// or, when the emitter folded a constant into the instruction (SrcImm), the
+// immediate itself where the mnemonic encodes one — cmp, add and sub take an
+// unsigned 12-bit immediate — and otherwise the constant materialised into
+// scratch, which is free above the allocatable file. The prefix lines come
+// first.
+func rightOperand(in x86.Inst, scratch int, imm12 bool) (prefix []string, operand string) {
+	if !in.SrcImm {
+		return nil, xreg(in.Src)
+	}
+	if imm12 && in.Imm >= 0 && in.Imm < 4096 {
+		return nil, fmt.Sprintf("#%d", in.Imm)
+	}
+	for _, l := range movImmLines(xreg(scratch), uint64(in.Imm)) {
+		prefix = append(prefix, strings.TrimPrefix(l, "\t"))
+	}
+	return prefix, xreg(scratch)
 }
 
 // invCond returns the AArch64 condition that holds exactly when cc does not,
@@ -11104,17 +11129,17 @@ func invCond(cc string) (string, bool) {
 // the terminator reads the comparison's value; the structural checks here
 // confirm the comparison really is the block's last instruction.
 // cc is "" when nothing fuses.
-func fuseBranchCmp(blk x86.MBlock) (insts []x86.Inst, cc string, left, right int) {
-	insts, left, right = blk.Insts, -1, -1
+func fuseBranchCmp(blk x86.MBlock) (insts []x86.Inst, cc string, left int, right x86.Inst) {
+	insts, left = blk.Insts, -1
 	if blk.Term.Kind != x86.TBrIf || !blk.Term.CondFuse || len(insts) == 0 {
-		return insts, "", -1, -1
+		return insts, "", -1, x86.Inst{}
 	}
 	c := insts[len(insts)-1]
 	code, ok := condCode(c.K)
 	if !ok || c.Op != x86.SetCmp || c.Dst != blk.Term.CondReg {
-		return insts, "", -1, -1
+		return insts, "", -1, x86.Inst{}
 	}
-	cc, left, right = code, c.Dst, c.Src
+	cc, left, right = code, c.Dst, c
 	insts = insts[:len(insts)-1]
 	// The same dead copy deadAccMoves would have removed, one instruction
 	// earlier because the comparison itself is gone.
