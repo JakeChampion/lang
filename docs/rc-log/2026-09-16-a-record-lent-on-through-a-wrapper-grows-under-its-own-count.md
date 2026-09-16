@@ -183,6 +183,34 @@ through the semantic path in 4.4 GB (arena 4.69 GB, against the
 native-built compiler's 7.21 GB) and its assembly is byte-identical to the
 native-built compiler's: the fixpoint holds.
 
+## The assembler's code buffer
+
+Binary output still exhausted the arena where the assembly held: the
+produced compiler's `-o fern.fern` reached 13.4 GB before the host killed
+it, and `-o checker.fern` passed 10 GB in six minutes. The phase readout
+at `x86:assembled` on `lexer.fern` said which step: 34,967 shared appends
+copying 12.3 GB, the arena growing from 17 MB to 6.85 GB across the
+assembler alone, against the native-built compiler's 24,004 appends
+copying 4.4 MB. The watchpoint sampler put the copies under `x86_le32`,
+`x86_rex_r` and `x86_rex_rr`, the byte emitters at the bottom of
+`x86_native`, reached through `x86_emit_mem`, `x86_gas_mem_op` and
+`x86_gas_emit`.
+
+Every one of those emitters took the code buffer as a borrowed `buf:
+i32[]` and returned it grown, and every caller held the buffer inside an
+owned `X86Asm` record, writing `a = X86Asm { ...a, code: x86_le32(a.code,
+0) }`. The field read lends the buffer while the record still counts it,
+so the append inside the callee finds a shared buffer and copies it, once
+per byte emitted. The 88 buffer-threading emitters now take `own buf`:
+the field of an owned record is a legal own argument, the steal supply
+moves it out of the record for the call, and the append grows the buffer
+in place. The native-built compiler and the produced compiler still emit
+byte-identical binaries for `lexer.fern` and `checker.fern` on both
+lowerings.
+With the buffers owned, the produced compiler's `-o lexer.fern` shows 8,743
+appends copying 2.3 MB, the assembler adding 155 MB to the arena, 1.5 s and
+138 MB resident.
+
 ## Traps
 
 **The watchpoint's ignore count is not honoured from a Python `stop`.** The
