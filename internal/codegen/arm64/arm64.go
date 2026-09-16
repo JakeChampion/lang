@@ -9912,12 +9912,16 @@ func (g *generator) emitSetWindowSizeRuntime() {
 // The kernel's `struct termios` on the asm-generic ABI: four 32-bit flag
 // words, one line-discipline byte, NCCS = 19 control characters — 36 bytes,
 // and 24 elements in the word array the language sees.
+//
+// Exported because the arm64 SSA backend fills the same struct for the same
+// kernel, and a word count or request number that differs between the two
+// emitters is a program whose terminal settings depend on which built it.
 const (
-	termiosNCCS  = 19
-	termiosWords = 4 + 1 + termiosNCCS
-	linuxTcgets  = 0x5401
+	TermiosNCCS  = 19
+	TermiosWords = 4 + 1 + TermiosNCCS
+	LinuxTCGETS  = 0x5401
 	// TCSETS, TCSETSW and TCSETSF are consecutive, so the action adds.
-	linuxTcsets = 0x5402
+	LinuxTCSETS = 0x5402
 )
 
 // emitTermiosGetRuntime emits `__fern_termios_get(fd) -> Result[i64[],
@@ -9951,19 +9955,19 @@ func (g *generator) emitTermiosGetRuntime() {
 		// Keep the 36-byte ioctl buffer inside the live frame until its
 		// contents have been copied. __fern_alloc uses the stack too.
 		g.emit("mov w0, w0")
-		g.emit("mov x1, #%d", linuxTcgets)
+		g.emit("mov x1, #%d", LinuxTCGETS)
 		g.emit("add x2, sp, #32")
 		g.syscall("ioctl")
 		g.emit("add x19, sp, #32")
 		g.emit("tbnz x0, #63, .Ltcg_err")
-		g.emit("mov x0, #%d", termiosWords*8+16)
+		g.emit("mov x0, #%d", TermiosWords*8+16)
 		g.emit("bl __fern_alloc")
 		g.emit("add x20, x0, #16")
-		g.emit("mov w9, #%d", termiosWords)
+		g.emit("mov w9, #%d", TermiosWords)
 		g.emit("stur w9, [x20, #-12]") // cap
 		g.emit("mov w9, #1")
 		g.emit("stur w9, [x20, #-8]") // rc = 1, a fresh owned array
-		g.emit("mov w9, #%d", termiosWords)
+		g.emit("mov w9, #%d", TermiosWords)
 		g.emit("stur w9, [x20, #-4]") // len
 		for i := 0; i < 4; i++ {
 			g.emit("ldr w9, [x19, #%d]", i*4)
@@ -9978,7 +9982,7 @@ func (g *generator) emitTermiosGetRuntime() {
 		g.emit("add x11, x20, #40")
 		g.emit("str x10, [x11, x9, lsl #3]")
 		g.emit("add x9, x9, #1")
-		g.emit("cmp x9, #%d", termiosNCCS)
+		g.emit("cmp x9, #%d", TermiosNCCS)
 		g.emit("blo .Ltcg_cc")
 		g.emit("mov x19, x20")
 		g.emit("mov x0, #16")
@@ -10032,7 +10036,7 @@ func (g *generator) emitTermiosSetRuntime() {
 		g.emit("mov x20, x1") // the action
 		g.emit("mov x21, x0") // the fd
 		g.emit("ldur w9, [x19, #-4]")
-		g.emit("cmp w9, #%d", termiosWords)
+		g.emit("cmp w9, #%d", TermiosWords)
 		g.emit("bne .Ltcs_einval")
 		g.emit("cmp x20, #2")
 		g.emit("bhi .Ltcs_einval")
@@ -10050,12 +10054,12 @@ func (g *generator) emitTermiosSetRuntime() {
 		g.emit("add x11, sp, x9")
 		g.emit("strb w10, [x11, #17]")
 		g.emit("add x9, x9, #1")
-		g.emit("cmp x9, #%d", termiosNCCS)
+		g.emit("cmp x9, #%d", TermiosNCCS)
 		g.emit("blo .Ltcs_cc")
 		g.emit("mov w0, w21")
 		// TCSETS does not fit an add-immediate's 12 bits, so the base
 		// goes through a register.
-		g.emit("mov x9, #%d", linuxTcsets)
+		g.emit("mov x9, #%d", LinuxTCSETS)
 		g.emit("add x1, x20, x9")
 		g.emit("mov x2, sp")
 		g.syscall("ioctl")

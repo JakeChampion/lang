@@ -346,29 +346,18 @@ Items that are known-broken in some configuration but considered too
 costly (or too speculative) to fix right now. Each entry should have a
 concrete fix plan and a rough scope estimate.
 
-### `termios_get` / `termios_set` are not on arm64-ssa
+### `termios_get` / `termios_set` are not on x86-64-ssa
 
-The SSA-direct backend does not emit the two terminal-settings helpers, so a
-program reaching them fails to LINK there with `a runtime helper this backend
-does not emit: fn_termios_get, fn_termios_set` — non-silent, which is the
-contract `-backend ssa` states for an op outside its coverage. The default
-emitter carries them on both natives, and `stty` (#8382) is built with it.
+The x86-64 SSA-direct backend does not emit the two terminal-settings helpers,
+so a program reaching them fails to LINK there with `a runtime helper this
+backend does not emit` — non-silent, which is the contract `-backend ssa`
+states for an op outside its coverage. Both default emitters carry them, and
+`stty` (#8382) is built with one.
 
-Not an oversight to fill in for its own sake: the pair is one TCGETS and one
-TCSETS into a 24-element word array, so it is the array construction that has
-to be written a third time, and no caller needs that backend today. x86-64-ssa
-is further out still — it has no handle family at all, so `open_writer` is
-already outside it.
-
-`set_window_size` is NOT in this gap, though it is gated on the same
-capability: three scalar operands and no array, so arm64-ssa emits it like
-every other syscall-shaped builtin (#9360). The array construction is the
-whole of what the termios pair is missing.
-
-The same split applies to the HANDLE forms (#9363): arm64-ssa emits
-`__method_Reader_window_size` and `__method_Reader_set_window_size`, and the
-termios two inherit the gap their free forms have — each is a two-instruction
-stub onto the helper, so there is nothing for a stub to jump to.
+arm64-ssa emits both, and the handle forms `__method_Reader_termios_get` /
+`__method_Reader_termios_set` with them. x86-64-ssa is further out than the
+pair itself — it has no handle family at all, so `open_writer` is already
+outside it, and the free forms alone would leave `r.termios_get()` broken.
 
 ### Line coverage (`-cover`) is native-only
 

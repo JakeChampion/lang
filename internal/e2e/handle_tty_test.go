@@ -110,7 +110,7 @@ func handleTtyRun(t *testing.T, args ...string) {
 	}
 }
 
-func handleTtyCompile(t *testing.T, target string) string {
+func handleTtyCompile(t *testing.T, target, backend string) string {
 	t.Helper()
 	fern := buildLangBinForInterp(t)
 	dir := t.TempDir()
@@ -119,15 +119,19 @@ func handleTtyCompile(t *testing.T, target string) string {
 		t.Fatal(err)
 	}
 	bin := filepath.Join(dir, "prog")
-	out, err := exec.Command(fern, "-target", target, "-o", bin, src).CombinedOutput()
+	args := []string{"-target", target, "-o", bin, src}
+	if backend != "" {
+		args = append([]string{"-backend", backend}, args...)
+	}
+	out, err := exec.Command(fern, args...).CombinedOutput()
 	if err != nil {
-		t.Fatalf("compile for %s: %v\n%s", target, err, out)
+		t.Fatalf("compile for %s -backend %q: %v\n%s", target, backend, err, out)
 	}
 	return bin
 }
 
 func TestX86_64HandleTty(t *testing.T) {
-	handleTtyRun(t, handleTtyCompile(t, "x86-64-linux"))
+	handleTtyRun(t, handleTtyCompile(t, "x86-64-linux", ""))
 }
 
 func TestArm64HandleTty(t *testing.T) {
@@ -135,7 +139,7 @@ func TestArm64HandleTty(t *testing.T) {
 	if qemu == "" {
 		t.Skip("qemu-aarch64 is not on PATH")
 	}
-	handleTtyRun(t, qemu, handleTtyCompile(t, "arm64-linux"))
+	handleTtyRun(t, qemu, handleTtyCompile(t, "arm64-linux", ""))
 }
 
 func TestInterpHandleTty(t *testing.T) {
@@ -177,4 +181,15 @@ func TestWASMHandleTtyIsNotRefusedAtCheckTime(t *testing.T) {
 			}
 		}
 	}
+}
+
+// The handle forms (`r.termios_get()`, `r.window_size()`) under the arm64 SSA
+// backend, which emits its own. Named rather than inherited, for the reason
+// TestArm64SSATermios is separate.
+func TestArm64SSAHandleTty(t *testing.T) {
+	qemu := arm64QemuOrEmpty(t)
+	if qemu == "" {
+		t.Skip("qemu-aarch64 is not on PATH")
+	}
+	handleTtyRun(t, qemu, handleTtyCompile(t, "arm64-linux", "ssa"))
 }

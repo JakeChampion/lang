@@ -1252,121 +1252,122 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__arr_idx_8":               emitArrIdxHelperN("__arr_idx_8", 3),  // stride 8 (i64 / pointer)
 	"__arr_idx_16":              emitArrIdxHelperN("__arr_idx_16", 4), // stride 16 (two-word string[])
 	// Bounds-check-elided variants (#4380 lever 3): same address compute, no trap.
-	"__arr_idx_nc":                  emitArrIdxHelperNChecked("__arr_idx_nc", 2, false),
-	"__arr_idx_1_nc":                emitArrIdxHelperNChecked("__arr_idx_1_nc", 0, false),
-	"__arr_idx_8_nc":                emitArrIdxHelperNChecked("__arr_idx_8_nc", 3, false),
-	"__arr_idx_16_nc":               emitArrIdxHelperNChecked("__arr_idx_16_nc", 4, false),
-	"__fern_arr_push_grow":          emitArrPushGrowHelper,
-	"__fern_arr_push_grow_ptr":      emitArrPushGrowElemHelper("__fern_arr_push_grow_ptr", "pgp", false),
-	"__fern_arr_push_grow_str":      emitArrPushGrowElemHelper("__fern_arr_push_grow_str", "pgs", false),
-	"__fern_arr_push_grow_move_ptr": emitArrPushGrowElemHelper("__fern_arr_push_grow_move_ptr", "pgmp", true),
-	"__fern_arr_push_grow_move_str": emitArrPushGrowElemHelper("__fern_arr_push_grow_move_str", "pgms", true),
-	"__alloc_u8":                    emitAllocU8Helper,
-	"__fern_arr_cow_inplace":        emitArrCowInplaceHelper,
-	"__fern_arr_cow_inplace_ptr":    emitArrCowInplaceElemHelper("__fern_arr_cow_inplace_ptr", "__fern_rc_inc", "cowp"),
-	"__fern_arr_cow_inplace_str":    emitArrCowInplaceElemHelper("__fern_arr_cow_inplace_str", "__fern_rc_inc", "cows"),
-	"__fern_heap_bump_bytes":        emitHeapBumpBytesHelper,
-	"__method_string_as_bytes":      emitStringAsBytesHelper,
-	"__slice_idx":                   emitSliceIdxHelper("__slice_idx", 2),
-	"__slice_idx_1":                 emitSliceIdxHelper("__slice_idx_1", 0),
-	"__slice_idx_8":                 emitSliceIdxHelper("__slice_idx_8", 3),
-	"__slice_make":                  emitSliceMakeHelper,
-	"__slice_range":                 emitSliceRangeHelper,
-	"stat":                          emitStatHelper,
-	"lstat":                         emitLstatHelper,
-	"access":                        emitAccessHelper,
-	"geteuid":                       emitIdHelper("geteuid", 175),
-	"getegid":                       emitIdHelper("getegid", 177),
-	"hostname":                      emitHostnameHelper,
-	"uname_field":                   emitUnameFieldHelper,
-	"getcwd":                        emitGetcwdHelper,
-	"cpu_count":                     emitCPUCountHelper,
-	"monotonic_ns":                  emitClockHelper("monotonic_ns", clockMonotonic, 1_000_000_000, 1),
-	"now_unix_ms":                   emitClockHelper("now_unix_ms", clockRealtime, 1_000, 1_000_000),
-	"sleep_ms":                      emitSleepMsHelper,
-	"sleep_ns":                      emitSleepNsHelper,
-	"string_from_bytes_unchecked":   emitStringFromBytesHelper,
-	"__str_slice":                   emitStrSliceHelper,
-	"args":                          emitArgsHelper,
-	"env":                           emitEnvHelper,
-	"write_file":                    emitWriteFileHelper,
-	"read_file":                     emitReadFileHelper,
-	"read_file_bytes":               emitReadFileBytesHelper,
-	"remove_file":                   emitRemoveFileHelper,
-	"create_dir_all":                emitCreateDirAllHelper,
-	"create_dir":                    emitCreateDirHelper,
-	"chdir":                         emitChdirHelper,
-	"remove_dir":                    emitRemoveDirHelper,
-	"create_link":                   emitCreateLinkHelper,
-	"create_symlink":                emitCreateSymlinkHelper,
-	"read_link":                     emitReadLinkHelper,
-	"umask":                         emitUmaskHelper,
-	"priority":                      emitPriorityHelper,
-	"set_priority":                  emitSetPriorityHelper,
-	"rename":                        emitRenameHelper,
-	"chmod":                         emitChmodHelper,
-	"truncate":                      emitTruncateHelper,
-	"mknod":                         emitMknodHelper,
-	"chown_at":                      emitChownAtHelper,
-	"set_file_times":                emitSetFileTimesHelper,
-	"remove_dir_all":                emitRemoveDirAllHelper,
-	"temp_dir":                      emitTempDirHelper,
-	"read_dir":                      emitReadDirHelper,
-	"read_dir_all":                  emitReadDirAllHelper,
-	"__fern_io_error":               emitIoErrorHelper,
-	"tcp_listen":                    emitTcpListenHelper,
-	"tcp_connect":                   emitTcpConnectHelper,
-	"tcp_accept":                    emitTcpAcceptHelper,
-	"tcp_recv":                      emitTcpRecvHelper,
-	"tcp_send":                      emitTcpSendHelper,
-	"tcp_close":                     emitTcpCloseHelper,
-	"tcp_pollable":                  emitTcpPollableHelper,
-	"poll":                          emitPollHelper,
-	"isatty":                        emitIsattyHelper,
-	"process_alive":                 emitProcessAliveHelper,
-	"signal_send":                   emitSignalSendHelper,
-	"set_process_group":             emitSetProcessGroupHelper,
-	"rlimit_nofile":                 emitRlimitNofileHelper,
-	"statfs":                        emitStatfsHelper,
-	"window_size":                   emitWindowSizeHelper,
-	"set_window_size":               emitSetWindowSizeHelper,
-	"signal_ignore":                 emitSignalDispositionHelper("signal_ignore", 1),
-	"signal_default":                emitSignalDispositionHelper("signal_default", 0),
-	"signal_mask":                   emitSignalMaskHelper,
-	"signal_disposition":            emitSignalDispositionReadHelper,
-	"wasm_timer_pollable":           emitWasmTimerPollableHelper,
-	"wasm_poll":                     emitWasmPollHelper,
-	"wasm_pollable_drop":            emitWasmPollableDropHelper,
-	"wasm_block":                    emitWasmBlockHelper,
-	"open_writer":                   emitOpenWriterHelper,
-	"__method_Writer_write":         emitWriterWriteHelper,
-	"__method_Writer_truncate":      emitWriterTruncateHelper,
-	"__method_Writer_close":         emitWriterCloseHelper,
-	"open_reader":                   emitOpenReaderHelper,
-	"__method_Reader_read_chunk":    emitReaderReadChunkHelper,
-	"__method_Reader_read_line":     emitReaderReadLineHelper,
-	"__method_Reader_close":         emitReaderCloseHelper,
-	"__method_Reader_stat":          emitFdStatHelper("__method_Reader_stat", "rst"),
-	"__method_Writer_stat":          emitFdStatHelper("__method_Writer_stat", "wst"),
-	"__method_Reader_seek":          emitSeekHelper("__method_Reader_seek", "rsk"),
-	"__method_Writer_seek":          emitSeekHelper("__method_Writer_seek", "wsk"),
-	"__method_Reader_flags":         emitFdFlagsHelper("__method_Reader_flags", "rfl"),
-	"__method_Writer_flags":         emitFdFlagsHelper("__method_Writer_flags", "wfl"),
-	"__method_Reader_isatty":        emitHandleIsattyHelper("__method_Reader_isatty"),
-	"__method_Writer_isatty":        emitHandleIsattyHelper("__method_Writer_isatty"),
-	"__method_Writer_write_some":    emitWriterWriteSomeHelper,
-	"__method_Reader_fsync":         emitFdCallHelper("__method_Reader_fsync", "rfsy", 82, nil),
-	"__method_Writer_fsync":         emitFdCallHelper("__method_Writer_fsync", "wfsy", 82, nil),
-	"__method_Reader_fdatasync":     emitFdCallHelper("__method_Reader_fdatasync", "rfds", 83, nil),
-	"__method_Writer_fdatasync":     emitFdCallHelper("__method_Writer_fdatasync", "wfds", 83, nil),
-	"__method_Reader_syncfs":        emitFdCallHelper("__method_Reader_syncfs", "rsfs", 267, nil),
-	"__method_Writer_syncfs":        emitFdCallHelper("__method_Writer_syncfs", "wsfs", 267, nil),
-	"__method_Reader_dup_onto":      emitFdCallHelper("__method_Reader_dup_onto", "rdpo", 24, prepDupOnto),
-	// Only the window-size pair: `termios_get` / `termios_set` are not
-	// emitted by this backend at all, so their handle forms inherit that
-	// gap and say so at link time (docs/BACKEND-PARITY.md).
+	"__arr_idx_nc":                    emitArrIdxHelperNChecked("__arr_idx_nc", 2, false),
+	"__arr_idx_1_nc":                  emitArrIdxHelperNChecked("__arr_idx_1_nc", 0, false),
+	"__arr_idx_8_nc":                  emitArrIdxHelperNChecked("__arr_idx_8_nc", 3, false),
+	"__arr_idx_16_nc":                 emitArrIdxHelperNChecked("__arr_idx_16_nc", 4, false),
+	"__fern_arr_push_grow":            emitArrPushGrowHelper,
+	"__fern_arr_push_grow_ptr":        emitArrPushGrowElemHelper("__fern_arr_push_grow_ptr", "pgp", false),
+	"__fern_arr_push_grow_str":        emitArrPushGrowElemHelper("__fern_arr_push_grow_str", "pgs", false),
+	"__fern_arr_push_grow_move_ptr":   emitArrPushGrowElemHelper("__fern_arr_push_grow_move_ptr", "pgmp", true),
+	"__fern_arr_push_grow_move_str":   emitArrPushGrowElemHelper("__fern_arr_push_grow_move_str", "pgms", true),
+	"__alloc_u8":                      emitAllocU8Helper,
+	"__fern_arr_cow_inplace":          emitArrCowInplaceHelper,
+	"__fern_arr_cow_inplace_ptr":      emitArrCowInplaceElemHelper("__fern_arr_cow_inplace_ptr", "__fern_rc_inc", "cowp"),
+	"__fern_arr_cow_inplace_str":      emitArrCowInplaceElemHelper("__fern_arr_cow_inplace_str", "__fern_rc_inc", "cows"),
+	"__fern_heap_bump_bytes":          emitHeapBumpBytesHelper,
+	"__method_string_as_bytes":        emitStringAsBytesHelper,
+	"__slice_idx":                     emitSliceIdxHelper("__slice_idx", 2),
+	"__slice_idx_1":                   emitSliceIdxHelper("__slice_idx_1", 0),
+	"__slice_idx_8":                   emitSliceIdxHelper("__slice_idx_8", 3),
+	"__slice_make":                    emitSliceMakeHelper,
+	"__slice_range":                   emitSliceRangeHelper,
+	"stat":                            emitStatHelper,
+	"lstat":                           emitLstatHelper,
+	"access":                          emitAccessHelper,
+	"geteuid":                         emitIdHelper("geteuid", 175),
+	"getegid":                         emitIdHelper("getegid", 177),
+	"hostname":                        emitHostnameHelper,
+	"uname_field":                     emitUnameFieldHelper,
+	"getcwd":                          emitGetcwdHelper,
+	"cpu_count":                       emitCPUCountHelper,
+	"monotonic_ns":                    emitClockHelper("monotonic_ns", clockMonotonic, 1_000_000_000, 1),
+	"now_unix_ms":                     emitClockHelper("now_unix_ms", clockRealtime, 1_000, 1_000_000),
+	"sleep_ms":                        emitSleepMsHelper,
+	"sleep_ns":                        emitSleepNsHelper,
+	"string_from_bytes_unchecked":     emitStringFromBytesHelper,
+	"__str_slice":                     emitStrSliceHelper,
+	"args":                            emitArgsHelper,
+	"env":                             emitEnvHelper,
+	"write_file":                      emitWriteFileHelper,
+	"read_file":                       emitReadFileHelper,
+	"read_file_bytes":                 emitReadFileBytesHelper,
+	"remove_file":                     emitRemoveFileHelper,
+	"create_dir_all":                  emitCreateDirAllHelper,
+	"create_dir":                      emitCreateDirHelper,
+	"chdir":                           emitChdirHelper,
+	"remove_dir":                      emitRemoveDirHelper,
+	"create_link":                     emitCreateLinkHelper,
+	"create_symlink":                  emitCreateSymlinkHelper,
+	"read_link":                       emitReadLinkHelper,
+	"umask":                           emitUmaskHelper,
+	"priority":                        emitPriorityHelper,
+	"set_priority":                    emitSetPriorityHelper,
+	"rename":                          emitRenameHelper,
+	"chmod":                           emitChmodHelper,
+	"truncate":                        emitTruncateHelper,
+	"mknod":                           emitMknodHelper,
+	"chown_at":                        emitChownAtHelper,
+	"set_file_times":                  emitSetFileTimesHelper,
+	"remove_dir_all":                  emitRemoveDirAllHelper,
+	"temp_dir":                        emitTempDirHelper,
+	"read_dir":                        emitReadDirHelper,
+	"read_dir_all":                    emitReadDirAllHelper,
+	"__fern_io_error":                 emitIoErrorHelper,
+	"tcp_listen":                      emitTcpListenHelper,
+	"tcp_connect":                     emitTcpConnectHelper,
+	"tcp_accept":                      emitTcpAcceptHelper,
+	"tcp_recv":                        emitTcpRecvHelper,
+	"tcp_send":                        emitTcpSendHelper,
+	"tcp_close":                       emitTcpCloseHelper,
+	"tcp_pollable":                    emitTcpPollableHelper,
+	"poll":                            emitPollHelper,
+	"isatty":                          emitIsattyHelper,
+	"process_alive":                   emitProcessAliveHelper,
+	"signal_send":                     emitSignalSendHelper,
+	"set_process_group":               emitSetProcessGroupHelper,
+	"rlimit_nofile":                   emitRlimitNofileHelper,
+	"statfs":                          emitStatfsHelper,
+	"window_size":                     emitWindowSizeHelper,
+	"set_window_size":                 emitSetWindowSizeHelper,
+	"termios_get":                     emitTermiosGetHelper,
+	"termios_set":                     emitTermiosSetHelper,
+	"signal_ignore":                   emitSignalDispositionHelper("signal_ignore", 1),
+	"signal_default":                  emitSignalDispositionHelper("signal_default", 0),
+	"signal_mask":                     emitSignalMaskHelper,
+	"signal_disposition":              emitSignalDispositionReadHelper,
+	"wasm_timer_pollable":             emitWasmTimerPollableHelper,
+	"wasm_poll":                       emitWasmPollHelper,
+	"wasm_pollable_drop":              emitWasmPollableDropHelper,
+	"wasm_block":                      emitWasmBlockHelper,
+	"open_writer":                     emitOpenWriterHelper,
+	"__method_Writer_write":           emitWriterWriteHelper,
+	"__method_Writer_truncate":        emitWriterTruncateHelper,
+	"__method_Writer_close":           emitWriterCloseHelper,
+	"open_reader":                     emitOpenReaderHelper,
+	"__method_Reader_read_chunk":      emitReaderReadChunkHelper,
+	"__method_Reader_read_line":       emitReaderReadLineHelper,
+	"__method_Reader_close":           emitReaderCloseHelper,
+	"__method_Reader_stat":            emitFdStatHelper("__method_Reader_stat", "rst"),
+	"__method_Writer_stat":            emitFdStatHelper("__method_Writer_stat", "wst"),
+	"__method_Reader_seek":            emitSeekHelper("__method_Reader_seek", "rsk"),
+	"__method_Writer_seek":            emitSeekHelper("__method_Writer_seek", "wsk"),
+	"__method_Reader_flags":           emitFdFlagsHelper("__method_Reader_flags", "rfl"),
+	"__method_Writer_flags":           emitFdFlagsHelper("__method_Writer_flags", "wfl"),
+	"__method_Reader_isatty":          emitHandleIsattyHelper("__method_Reader_isatty"),
+	"__method_Writer_isatty":          emitHandleIsattyHelper("__method_Writer_isatty"),
+	"__method_Writer_write_some":      emitWriterWriteSomeHelper,
+	"__method_Reader_fsync":           emitFdCallHelper("__method_Reader_fsync", "rfsy", 82, nil),
+	"__method_Writer_fsync":           emitFdCallHelper("__method_Writer_fsync", "wfsy", 82, nil),
+	"__method_Reader_fdatasync":       emitFdCallHelper("__method_Reader_fdatasync", "rfds", 83, nil),
+	"__method_Writer_fdatasync":       emitFdCallHelper("__method_Writer_fdatasync", "wfds", 83, nil),
+	"__method_Reader_syncfs":          emitFdCallHelper("__method_Reader_syncfs", "rsfs", 267, nil),
+	"__method_Writer_syncfs":          emitFdCallHelper("__method_Writer_syncfs", "wsfs", 267, nil),
+	"__method_Reader_dup_onto":        emitFdCallHelper("__method_Reader_dup_onto", "rdpo", 24, prepDupOnto),
 	"__method_Reader_window_size":     emitHandleTtyHelper("__method_Reader_window_size", "window_size"),
 	"__method_Reader_set_window_size": emitHandleTtyHelper("__method_Reader_set_window_size", "set_window_size"),
+	"__method_Reader_termios_get":     emitHandleTtyHelper("__method_Reader_termios_get", "termios_get"),
+	"__method_Reader_termios_set":     emitHandleTtyHelper("__method_Reader_termios_set", "termios_set"),
 	"__method_Writer_dup_onto":        emitFdCallHelper("__method_Writer_dup_onto", "wdpo", 24, prepDupOnto),
 	"sync":                            emitSyncHelper,
 	"open_appender":                   emitOpenAppenderHelper,
@@ -2167,6 +2168,140 @@ func emitHandleTtyHelper(name, target string) func(w func(string, ...any)) {
 		w("\tldr w0, [x0, #8]") // fd @ ptr+8
 		w("\tb %s", fnLabel(target))
 	}
+}
+
+// emitTermiosGetHelper writes termios_get(fd) -> Result[i64[], IoError]: one
+// TCGETS into the kernel's struct, widened element by element into a fresh
+// i64[].
+//
+// The words are the KERNEL's rather than normalised — `stty -g` prints them in
+// hex and reads them back — so the layout is the flat backend's exactly, and
+// both take the struct's shape from arm64.TermiosWords / arm64.TermiosNCCS.
+func emitTermiosGetHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("termios_get"))
+	w("\tstp x29, x30, [sp, #-96]!")
+	w("\tmov x29, sp")
+	w("\tstp x19, x20, [sp, #16]")
+	// The fd is an i32 value, so the high half of x0 is whatever the producer
+	// left there; ioctl reads the whole register.
+	w("\tmov w0, w0")
+	w("\tmov x1, #%d", arm64.LinuxTCGETS)
+	w("\tadd x2, sp, #48") // the 36-byte struct, inside the live frame
+	w("\tmov x8, #29")     // ioctl
+	w("\tsvc #0")
+	w("\ttbnz x0, #63, .Lssatcg_err")
+	w("\tadd x19, sp, #48")
+	// The i64[]: 16-byte header (cap, rc, len) then one 8-byte word each.
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #15")
+	w("\tand x4, x4, #-16")
+	w("\tadd x5, x4, #%d", arm64.TermiosWords*8+16)
+	w("\tstr x5, [x3]")
+	emitHeapGuardCall(w)
+	w("\tadd x20, x4, #16")
+	w("\tmov w9, #%d", arm64.TermiosWords)
+	w("\tstur w9, [x20, #-12]") // cap
+	w("\tmov w9, #1")
+	w("\tstur w9, [x20, #-8]") // rc = 1, a fresh owned array
+	w("\tmov w9, #%d", arm64.TermiosWords)
+	w("\tstur w9, [x20, #-4]") // len
+	for i := 0; i < 4; i++ {
+		w("\tldr w9, [x19, #%d]", i*4) // a flag word, zero-extended
+		w("\tstr x9, [x20, #%d]", i*8)
+	}
+	w("\tldrb w9, [x19, #16]") // c_line
+	w("\tstr x9, [x20, #32]")
+	w("\tmov x9, #0")
+	w(".Lssatcg_cc:")
+	w("\tadd x10, x19, x9")
+	w("\tldrb w10, [x10, #17]")
+	w("\tadd x11, x20, #40")
+	w("\tstr x10, [x11, x9, lsl #3]")
+	w("\tadd x9, x9, #1")
+	w("\tcmp x9, #%d", arm64.TermiosNCCS)
+	w("\tb.lo .Lssatcg_cc")
+	emitOptionBox(w, 0, "x20")
+	w("\tb .Lssatcg_ret")
+	w(".Lssatcg_err:")
+	w("\tneg x19, x0") // errno
+	emitEmptyString(w, "x1")
+	w("\tmov x0, x19")
+	w("\tbl %s", fnLabel("__fern_io_error"))
+	emitStatErrBox(w)
+	w(".Lssatcg_ret:")
+	w("\tldp x19, x20, [sp, #16]")
+	w("\tldp x29, x30, [sp], #96")
+	w("\tret")
+}
+
+// emitTermiosSetHelper writes termios_set(fd, when, words) -> Result[void,
+// IoError]: the struct packed back out of the word array and handed to TCSETS,
+// TCSETSW or TCSETSF as `when` selects.
+//
+// A wrong-length array or an out-of-range action is EINVAL, as it is on the
+// flat backend: there is a fixed-size struct to fill, and the three ioctls are
+// consecutive from TCSETS so a fourth value would name something else.
+func emitTermiosSetHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("termios_set"))
+	w("\tstp x29, x30, [sp, #-48]!")
+	w("\tmov x29, sp")
+	w("\tstp x19, x20, [sp, #16]")
+	w("\tstr x21, [sp, #32]")
+	w("\tmov x19, x2") // the words
+	w("\tmov x20, x1") // the action
+	w("\tmov x21, x0") // the fd
+	w("\tldur w9, [x19, #-4]")
+	w("\tcmp w9, #%d", arm64.TermiosWords)
+	w("\tb.ne .Lssatcs_einval")
+	w("\tcmp x20, #2")
+	w("\tb.hi .Lssatcs_einval")
+	w("\tsub sp, sp, #48") // the struct to hand the kernel
+	for i := 0; i < 4; i++ {
+		w("\tldr x9, [x19, #%d]", i*8)
+		w("\tstr w9, [sp, #%d]", i*4)
+	}
+	w("\tldr x9, [x19, #32]")
+	w("\tstrb w9, [sp, #16]") // c_line
+	w("\tmov x9, #0")
+	w(".Lssatcs_cc:")
+	w("\tadd x10, x19, #40")
+	w("\tldr x10, [x10, x9, lsl #3]")
+	w("\tadd x11, sp, x9")
+	w("\tstrb w10, [x11, #17]")
+	w("\tadd x9, x9, #1")
+	w("\tcmp x9, #%d", arm64.TermiosNCCS)
+	w("\tb.lo .Lssatcs_cc")
+	w("\tmov w0, w21")
+	// TCSETS does not fit an add-immediate's 12 bits, so the base goes
+	// through a register.
+	w("\tmov x9, #%d", arm64.LinuxTCSETS)
+	w("\tadd x1, x20, x9")
+	w("\tmov x2, sp")
+	w("\tmov x8, #29") // ioctl
+	w("\tsvc #0")
+	w("\tadd sp, sp, #48")
+	w("\ttbnz x0, #63, .Lssatcs_err")
+	emitOptionBox(w, 0, "") // Ok(())
+	w("\tb .Lssatcs_ret")
+	w(".Lssatcs_err:")
+	w("\tneg x19, x0")
+	w("\tb .Lssatcs_mkerr")
+	w(".Lssatcs_einval:")
+	w("\tmov x19, #22") // EINVAL
+	w(".Lssatcs_mkerr:")
+	emitEmptyString(w, "x1")
+	w("\tmov x0, x19")
+	w("\tbl %s", fnLabel("__fern_io_error"))
+	emitStatErrBox(w)
+	w(".Lssatcs_ret:")
+	w("\tldr x21, [sp, #32]")
+	w("\tldp x19, x20, [sp, #16]")
+	w("\tldp x29, x30, [sp], #48")
+	w("\tret")
 }
 
 // emitWindowSizeHelper writes window_size(fd) -> Result[WinSize, IoError]:
@@ -3826,6 +3961,8 @@ var runtimeHelperDeps = map[string][]string{
 	"statfs":                          {"__fern_io_error"},
 	"window_size":                     {"__fern_io_error"},
 	"set_window_size":                 {"__fern_io_error"},
+	"termios_get":                     {"__fern_io_error"},
+	"termios_set":                     {"__fern_io_error"},
 	"access":                          {"__fern_io_error"},
 	"__method_string_as_bytes":        {"__slice_make"},
 	"read_file_bytes":                 {"__fern_io_error", "__alloc_u8", "__free"},
@@ -3863,6 +4000,8 @@ var runtimeHelperDeps = map[string][]string{
 	"__method_Reader_dup_onto":        {"__fern_io_error"},
 	"__method_Reader_window_size":     {"window_size"},
 	"__method_Reader_set_window_size": {"set_window_size"},
+	"__method_Reader_termios_get":     {"termios_get"},
+	"__method_Reader_termios_set":     {"termios_set"},
 	"__method_Writer_dup_onto":        {"__fern_io_error"},
 	"open_reader":                     {"__fern_io_error"},
 	"__method_Reader_close":           {"__fern_io_error"},
@@ -3944,6 +4083,8 @@ var heapUsingHelpers = map[string]bool{
 	"statfs":                          true,
 	"window_size":                     true,
 	"set_window_size":                 true,
+	"termios_get":                     true,
+	"termios_set":                     true,
 	"set_file_times":                  true,
 	"remove_dir_all":                  true,
 	"temp_dir":                        true,
@@ -3965,6 +4106,8 @@ var heapUsingHelpers = map[string]bool{
 	"__method_Reader_dup_onto":        true,
 	"__method_Reader_window_size":     true,
 	"__method_Reader_set_window_size": true,
+	"__method_Reader_termios_get":     true,
+	"__method_Reader_termios_set":     true,
 	"__method_Writer_dup_onto":        true,
 	"sync":                            true,
 	"open_reader":                     true,
