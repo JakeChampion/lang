@@ -82,6 +82,12 @@ func TestSelfHostTypeRef(t *testing.T) {
 		"struct fnarrret fn=1 depth=0 retdepth=2\n" +
 		"struct arrfn fn=0 depth=1 elemfn=1\n" +
 		"struct groupedfn fn=1 params=T ret=U\n" +
+		"tag fn=(T) => boolean\n" +
+		"tag fn0=() => U\n" +
+		"tag fn2=(T, Map[string, U]) => (string, i32)\n" +
+		"tag fnarr=((T) => U)[]\n" +
+		"tag opaque=fn\n" +
+		"tag plain=i32[]\n" +
 		"round_trip_failures=0\n"
 
 	cmd := runX86_64Bin(runner, bin)

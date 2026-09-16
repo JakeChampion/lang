@@ -8913,6 +8913,28 @@ pub function ref_fn_param_spellings(r: TypeRef): string {
     return out;
 }
 
+// fn_tag_spelling rebuilds the callable spelling that parse_decl_type splits
+// into a coarse "fn" / "fn[]" tag and its result and parameter sidecars — the
+// inverse of that split, for a reader that wants the declared SHAPE rather than
+// the tag. A tag with no recorded result vouches for no signature, so it stays
+// itself.
+pub function fn_tag_spelling(tag: string, ret: string, params: string): string {
+    if (ret.len() == 0 || (tag != "fn" && tag != "fn[]")) { return tag; }
+    var list: string = "";
+    if (params.len() > 0) {
+        var segs: string[] = split_top_commas(params);
+        var i: i32 = 0;
+        while (i < segs.len()) {
+            if (i > 0) { list = list + ", "; }
+            list = list + util.trim(segs[i]);
+            i = i + 1;
+        }
+    }
+    var spelled: string = "(" + list + ") => " + ret;
+    if (tag == "fn[]") { return "(" + spelled + ")[]"; }
+    return spelled;
+}
+
 // fn_spelling_params is ref_fn_param_spellings asked of a fn SPELLING — the
 // parameter half of what fn_spelling_ret returns for the result.
 function fn_spelling_params(t: string): string {
