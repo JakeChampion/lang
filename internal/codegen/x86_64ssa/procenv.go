@@ -299,6 +299,7 @@ func emitStatHelper(w func(string, ...any)) {
 	w("\tjmp .Lssa_stat_ret")
 	w(".Lssa_stat_err:")
 	w("\tneg rax")
+	ssaRetainPathForIoErr(w)
 	w("\tmov edi, eax") // errno
 	w("\tmov rsi, rbx") // the path, as given
 	w("\tcall %s", fnLabel("__fern_io_error"))
