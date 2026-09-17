@@ -1670,12 +1670,33 @@ function sole_owned_base(own r: irlower.LowerResult, f: ssasem.Func, base: i32, 
 function append_push(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, defer0: boolean): irlower.LowerResult {
     if (defer0 && p.grows[ins.result] >= 0) { return append_field(r, f, p, ins); }
     if (defer0) { return append_borrowed(r, f, ins); }
-    var scratch: i32 = scratch_base(f);
-    r = reserve(r, scratch + 1);
-    r = sole_owned_base(r, f, ins.args[0], scratch);
-    r = emit(r, ir.op_load_local(scratch));
+    var elem: typeinfo.Type = elem_type(f.values[ins.args[0]]);
+    var res: i32 = scratch_base(f);
+    r = reserve(r, res + 1);
+    r = emit(r, ir.op_load_local(ins.args[0]));
+    r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
+    r = emit(r, ir.op_if(0));
+    // The box's only unit is the one this frame holds, so the consuming push
+    // grows it in place and reclaims it on a realloc.
+    r = emit(r, ir.op_load_local(ins.args[0]));
     r = emit(r, ir.op_load_local(ins.args[1]));
-    return emit(r, arr_push_op(elem_type(f.values[ins.args[0]])));
+    r = emit(r, arr_push_op(elem));
+    r = emit(r, ir.op_store_local(res));
+    r = emit(r, ir.op_else());
+    // Shared: the NON-consuming push un-shares, which is the same copy
+    // `sole_owned_base` would make here and a memcpy rather than a per-element
+    // loop through `__fern_arr_slice` (#9526). It frees nothing, so this
+    // frame's unit on the receiver is released after, and the counted elements
+    // the fresh box now aliases are retained over the receiver exactly as
+    // `append_borrowed` retains them.
+    r = emit(r, ir.op_load_local(ins.args[0]));
+    r = emit(r, ir.op_load_local(ins.args[1]));
+    r = emit(r, arr_push_borrowed_op(elem));
+    r = emit(r, ir.op_store_local(res));
+    if (reference(elem)) { r = helper(r, ins.args[0], "__fern_arr_inc_elems"); }
+    r = release(r, ins.args[0], f.values[ins.args[0]]);
+    r = emit(r, ir.op_end());
+    return emit(r, ir.op_load_local(res));
 }
 
 // The push onto a receiver the frame holds no unit of. The non-consuming push

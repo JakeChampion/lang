@@ -57,6 +57,31 @@ function main(): i32 {
     if (c[5] != 99 || b[4] != 4) { return 251; }
     return __arr_push_shared_count();
 }`, 1},
+	// The accumulator handed in as a PLAIN PARAMETER and appended to in a
+	// LOOP — coreutils/echo.fern's `append_raw`, and neither of the two shapes
+	// the tail-form case above covers. The self-host used to un-share this one
+	// ITSELF, with an `__fern_arr_slice` ahead of the consuming push, so the
+	// copy never reached `__fern_arr_push`'s own shared-cliff path: the count
+	// read 0 while the program copied the whole accumulator per call, which is
+	// the reading this counter exists to make impossible (#9526).
+	{"shared-param-accumulator-appended-in-a-loop", `function chunk(out: i32[], s: i32[]): i32[] {
+    var bs: i32[] = out;
+    var i: i32 = 0;
+    while (i < s.len()) { bs = bs.append(s[i]); i = i + 1; }
+    return bs;
+}
+function main(): i32 {
+    var a: i32[] = [];
+    var i: i32 = 0;
+    while (i < 5) { a = a.append(i); i = i + 1; }
+    var s: i32[] = [];
+    s = s.append(9);
+    var keep: i32[] = a;
+    var c: i32[] = chunk(a, s);
+    if (keep.len() != 5 || c.len() != 6) { return 250; }
+    if (c[5] != 9 || keep[4] != 4) { return 251; }
+    return __arr_push_shared_count();
+}`, 1},
 }
 
 // TestSelfHostArrPushCliffIRX86_64 routes each case through the self-hosted
