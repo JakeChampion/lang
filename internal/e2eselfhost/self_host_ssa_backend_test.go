@@ -701,10 +701,11 @@ func TestSelfHostSSAFrameIsSizedBySpills(t *testing.T) {
 		target string
 		frame  *regexp.Regexp
 	}{
-		{"x86-64-linux", regexp.MustCompile(`__fn_wide:\n(?:.*\n){1,8}?\s+subq \$(\d+), %rsp`)},
+		{"x86-64-linux", regexp.MustCompile(`__fn_wide:\n(?:.*\n){1,14}?\s+subq \$(\d+), %rsp`)},
 		// Over 4,095 bytes the arm64 prologue builds the immediate in x17; a
-		// movk after the movz would mean a frame over 64 KB.
-		{"arm64-linux", regexp.MustCompile(`__fn_wide:\n(?:.*\n){1,10}?\s+(?:sub sp, sp, #|movz x17, #)(\d+)\n(\s+movk)?`)},
+		// movk after the movz would mean a frame over 64 KB. The window covers
+		// the frame record and up to five callee-saved pairs before it.
+		{"arm64-linux", regexp.MustCompile(`__fn_wide:\n(?:.*\n){1,16}?\s+(?:sub sp, sp, #|movz x17, #)(\d+)\n(\s+movk)?`)},
 	}
 	for _, c := range cases {
 		out := filepath.Join(dir, "wide-"+c.target+".s")

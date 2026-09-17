@@ -141,15 +141,14 @@ Widening the caller-saved set from seven registers to eleven (x4 to x7)
 changed the text by 0.07%, so the frame traffic is call-crossing values,
 not register pressure. The order to take that in:
 
-1. Callee-saved registers (x19 to x28; rbx, r12 to r15) with a prologue
-   save, so values live across calls stay in registers: a second pool in
-   the allocator for the intervals `spans_call` names, a per-function save
-   and restore of the ones used, the slots moved below the save area. The
-   runtime helpers save and restore these registers as pairs and the flat
-   bodies touch x19 only on the exit path, so the ABI already holds. Native's
-   allocator work on #4112 found the spill rule that decides when a
-   call-crossing value is better in a slot than in a saved register; take
-   its result rather than re-deriving it.
+1. Done (#9579): callee-saved registers (x19 to x28; rbx, r12 to r15) as
+   a second allocator pool for the intervals `spans_call` names, a
+   per-function save and restore of the ones used, the slots below the save
+   area. Frame loads and stores fall from 1.19M and 769k to 768k and 590k;
+   the text barely moves because an operand that was loaded is now moved.
+   Native's allocator work on #4112 found the spill rule that decides when a
+   call-crossing value is better in a slot than in a saved register; that
+   rule is still to take.
 2. Call results into their home: x0 as an allocatable register for a value
    whose only reader follows the call, or a coalescing of the result copy.
 3. The optimiser (`ssa.optimize`) on the lifted function once its binary
@@ -200,8 +199,11 @@ measured on the compiler building itself and on `examples/bench`:
 
 - **Faster output.** Native's SSA build is at or under flat on every bench
   program; the self-host's must be too, and the compiler it builds must run
-  the whole tree faster than the flat-built one. Today: parity on the
-  drivers (#9503).
+  the whole tree faster than the flat-built one. Today the compiler built
+  with `-backend ssa` compiles `checker.fern` in 10.2 s against the
+  flat-built compiler's 13.2 s and `irlower.fern` in 2.2 s against 4.3 s
+  (arm64-darwin, best of three, #9579); callee-saved registers were 17% of
+  that on both.
 - **Smaller output.** Native's SSA text is 45% of flat's over the corpus.
   The self-host's SSA text is 1.12x flat's today (4.71M against 4.21M
   instructions for the compiler, down from 1.67x before #9570); the binary

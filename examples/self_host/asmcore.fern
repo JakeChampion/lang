@@ -127,7 +127,10 @@ pub struct EmitState {
     ssa_declined: i32,
     // ssa_frame is the byte size of the SSA function being emitted, 0 outside
     // one; the arm64 emitter addresses that function's frame slots from sp.
-    ssa_frame: i32
+    // ssa_save is the part of it holding the callee-saved registers the
+    // function uses, between the frame record and the slots.
+    ssa_frame: i32,
+    ssa_save: i32
 }
 
 pub function new_state(): EmitState {
@@ -174,7 +177,8 @@ pub function new_state(): EmitState {
         ssa_backend: false,
         ssa_emitted: 0,
         ssa_declined: 0,
-        ssa_frame: 0
+        ssa_frame: 0,
+        ssa_save: 0
     };
 }
 

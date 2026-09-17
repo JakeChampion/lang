@@ -5097,21 +5097,53 @@ function ssa_reg(k: i32): string {
     if (k == 2) { return "%r8"; }
     if (k == 3) { return "%r9"; }
     if (k == 4) { return "%r10"; }
-    return "%r11";
+    if (k == 5) { return "%r11"; }
+    if (k == 6) { return "%rbx"; }
+    return "%r" + util.i32_to_string(12 + k - 7);
 }
 function ssa_nregs(): i32 { return 6; }
-function ssa_slot(v: i32): string { return util.i32_to_string(0 - 8 * (v + 1)) + "(%rbp)"; }
+function ssa_nsaved(): i32 { return 5; }
+// A slot sits below the callee-saved registers' save area of `save` bytes.
+function ssa_slot(v: i32, save: i32): string { return util.i32_to_string(0 - 8 * (v + 1) - save) + "(%rbp)"; }
+
+// ssa_saved_regs is the callee-saved registers a function's allocation uses,
+// lowest first; each takes one 8-byte push.
+function ssa_saved_regs(reg_of: i32[]): i32[] {
+    var used: i32[] = [];
+    var k: i32 = ssa_nregs();
+    while (k < ssa_nregs() + ssa_nsaved()) {
+        var found: boolean = false;
+        for h in reg_of { if (h == k) { found = true; } }
+        if (found) { used = used.append(k); }
+        k = k + 1;
+    }
+    return used;
+}
+function ssa_save_asm(saved: i32[]): string {
+    var out: string = "";
+    for k in saved { out = out + "    pushq " + ssa_reg(k) + "\n"; }
+    return out;
+}
+// ssa_epilogue_for cuts %rsp back to the save area, pops the saved registers
+// in reverse, and returns as the stack machine does.
+function ssa_epilogue_for(saved: i32[]): string {
+    if (saved.len() == 0) { return ssa_epilogue(); }
+    var out: string = "    .cfi_remember_state\n    leaq -" + util.i32_to_string(8 * saved.len()) + "(%rbp), %rsp\n";
+    var i: i32 = saved.len() - 1;
+    while (i >= 0) { out = out + "    popq " + ssa_reg(saved[i]) + "\n"; i = i - 1; }
+    return out + "    popq %rbp\n    .cfi_def_cfa %rsp, 8\n    ret\n    .cfi_restore_state\n";
+}
 
 // ssa_load puts value v in `reg`; ssa_store writes `reg` to value v's home.
 function ssa_load(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): asmcore.EmitState {
-    if (reg_of[v] < 0) { return s.write("    movq " + ssa_slot(ssa.spill_slot(reg_of[v])) + ", " + reg + "\n"); }
+    if (reg_of[v] < 0) { return s.write("    movq " + ssa_slot(ssa.spill_slot(reg_of[v]), s.ssa_save) + ", " + reg + "\n"); }
     var home: string = ssa_reg(reg_of[v]);
     if (home == reg) { return s; }
     return s.write("    movq " + home + ", " + reg + "\n");
 }
 function ssa_store(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): asmcore.EmitState {
     if (reg_of[v] == 0 - 1) { return s; }
-    if (reg_of[v] < 0) { return s.write("    movq " + reg + ", " + ssa_slot(ssa.spill_slot(reg_of[v])) + "\n"); }
+    if (reg_of[v] < 0) { return s.write("    movq " + reg + ", " + ssa_slot(ssa.spill_slot(reg_of[v]), s.ssa_save) + "\n"); }
     var home: string = ssa_reg(reg_of[v]);
     if (home == reg) { return s; }
     return s.write("    movq " + reg + ", " + home + "\n");
@@ -5133,6 +5165,7 @@ function ssa_src(reg_of: i32[], v: i32, scratch: string): string {
 }
 // ssa_r32 and ssa_r8 are the 32-bit and 8-bit names of a 64-bit register.
 function ssa_r32(r: string): string {
+    if (r == "%rbx") { return "%ebx"; }
     if (r == "%rax") { return "%eax"; }
     if (r == "%rcx") { return "%ecx"; }
     if (r == "%rdx") { return "%edx"; }
@@ -5141,6 +5174,7 @@ function ssa_r32(r: string): string {
     return r + "d";
 }
 function ssa_r8(r: string): string {
+    if (r == "%rbx") { return "%bl"; }
     if (r == "%rax") { return "%al"; }
     if (r == "%rcx") { return "%cl"; }
     if (r == "%rdx") { return "%dl"; }
@@ -5618,7 +5652,7 @@ function ssa_str_view(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.E
 // SsaFrame is the frame below the values: the phi stage words after the
 // values, then three words per frame-resident string view. ssa_view_off is
 // the offset of a view's lowest word, the base the view kernel writes at.
-struct SsaFrame { nspill: i32, nstage: i32, views: i32[], blk_pos: i32[], uses: i32[] }
+struct SsaFrame { nspill: i32, nstage: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave: i32, epilogue: string }
 
 // SsaFuse is a block's compare consumed as flags by its branch: `n` trailing
 // instructions (the compare, and the `not` between it and the branch when
@@ -5653,7 +5687,7 @@ function ssa_fuse(fr: SsaFrame, blk: ssa.SBlock): SsaFuse {
 
 function ssa_view_off(fr: SsaFrame, v: i32): i32 {
     var first: i32 = fr.nspill + fr.nstage + 3 * fr.views[v];
-    return 0 - 8 * (first + 3);
+    return 0 - 8 * (first + 3) - fr.nsave;
 }
 
 // ssa_raw_inst selects the raw memory floor (52..55): unchecked 8-byte and
@@ -5798,12 +5832,12 @@ function ssa_phi_moves(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], pred: i32, suc
     var k: i32 = 0;
     while (k < srcs.len()) {
         s = ssa_load(reg_of, srcs[k], "%rax", s);
-        s = s.write("    movq %rax, " + ssa_slot(fr.nspill + k) + "\n");
+        s = s.write("    movq %rax, " + ssa_slot(fr.nspill + k, fr.nsave) + "\n");
         k = k + 1;
     }
     k = 0;
     while (k < srcs.len()) {
-        s = s.write("    movq " + ssa_slot(fr.nspill + k) + ", %rax\n");
+        s = s.write("    movq " + ssa_slot(fr.nspill + k, fr.nsave) + ", %rax\n");
         s = ssa_store(reg_of, dsts[k], "%rax", s);
         k = k + 1;
     }
@@ -5856,7 +5890,7 @@ function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
     var t: ssa.STerm = blk.term;
     if (t.kind_tag == 1) {
         s = ssa_load(reg_of, t.value, "%rax", s);
-        return s.write(ssa_epilogue());
+        return s.write(fr.epilogue);
     }
     if (t.kind_tag == 2) {
         s = ssa_phi_moves(f, fr, reg_of, blk.id, t.target, s);
@@ -5865,7 +5899,7 @@ function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
     if (t.kind_tag == 3) { return ssa_brif(f, fr, blk, reg_of, lp, next, fu, s); }
     // A block the lift left unterminated is one nothing reaches; the stack
     // machine's fallback return keeps the text well formed here too.
-    return s.write("    xorl %eax, %eax\n" + ssa_epilogue());
+    return s.write("    xorl %eax, %eax\n" + fr.epilogue);
 }
 
 // ssa_load_params moves each parameter from the caller's slot to its home;
@@ -5886,15 +5920,21 @@ function ssa_load_params(f: ssa.SFunc, reg_of: i32[], s: asmcore.EmitState): asm
 // every declared local and the loop phis nothing reads.
 function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, ops: ir.Op[], s: asmcore.EmitState): asmcore.EmitState {
     var f: ssa.SFunc = ssa.prune_dead(lifted);
-    var reg_of: i32[] = ssa.regalloc_linear(f, ssa_nregs());
+    var reg_of: i32[] = ssa.regalloc_linear(f, ssa_nregs(), ssa_nsaved());
     var lp: string = ".Lssa_" + asmcore.sanitize_label(label_name) + "_";
     s = s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n");
     s = s.write("    .cfi_startproc\n    pushq %rbp\n    .cfi_def_cfa_offset 16\n    .cfi_offset %rbp, -16\n    movq %rsp, %rbp\n    .cfi_def_cfa_register %rbp\n");
+    var saved: i32[] = ssa_saved_regs(reg_of);
+    var save: i32 = 8 * saved.len();
+    s = s.write(ssa_save_asm(saved));
     var views: i32[] = ssa_view_slots(f);
-    var fr: SsaFrame = SsaFrame { nspill: ssa.spill_count(reg_of), nstage: ssa_max_phis(f), views: views, blk_pos: ssa_block_index(f), uses: ssa.use_counts(f) };
+    var fr: SsaFrame = SsaFrame { nspill: ssa.spill_count(reg_of), nstage: ssa_max_phis(f), views: views, blk_pos: ssa_block_index(f), uses: ssa.use_counts(f), nsave: save, epilogue: ssa_epilogue_for(saved) };
     var frame: i32 = (fr.nspill + fr.nstage + 3 * ssa_view_count(views)) * 8;
-    if (frame % 16 != 0) { frame = frame + 8; }
+    // %rsp is 16-byte aligned at a call when the pushes and the frame together
+    // are a multiple of 16.
+    if ((frame + save) % 16 != 0) { frame = frame + 8; }
     if (frame > 0) { s = s.write("    subq $" + util.i32_to_string(frame) + ", %rsp\n"); }
+    s = asmcore.EmitState { ...s, ssa_save: save };
     s = ssa_load_params(f, reg_of, s);
     var bi: i32 = 0;
     while (bi < f.blocks.len()) {
@@ -5917,6 +5957,7 @@ function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, ops: ir.Op
         s = ssa_term(f, fr, blk, reg_of, lp, next, fu, s);
         bi = bi + 1;
     }
+    s = asmcore.EmitState { ...s, ssa_save: 0 };
     return s.write("    .cfi_endproc\n");
 }
 
