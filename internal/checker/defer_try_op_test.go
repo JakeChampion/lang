@@ -43,17 +43,25 @@ func TestDeferTryOpRefused(t *testing.T) {
 }`, "`?` is not allowed inside an `errdefer` action"},
 		// A `?` in a lambda inside the action leaves the LAMBDA on its own
 		// exits, not the function whose defer replays the action, so the walk
-		// must not descend into it. The lambda body carries a real `?`, so the
-		// case fails if the pruning is dropped.
+		// must not descend into it.
 		//
-		// It is not a clean accept: the checker refuses a `?` in any lambda
-		// today, reading the ENCLOSING function's return type rather than the
-		// lambda's (#9515), so this program draws E042 either way. The
-		// assertion is that it does not ALSO draw E079 — which is what the
+		// The lambda is a LITERAL in the action. A lambda bound to a local and
+		// merely called from the action does not exercise this: the action's
+		// subtree is then just a call of that name, the walk never meets a
+		// lambda, and the case passes with the pruning removed. Verified in
+		// both directions — with `firstTryOp`'s lambda arm deleted this program
+		// gains E079 and the bound-local spelling does not change at all.
+		//
+		// It is not a clean accept. A `?` in any lambda draws E042 today, the
+		// checker reading the ENCLOSING function's return type rather than the
+		// lambda's (#9515), and the lambda in argument position draws E038 with
+		// it. The assertion is that neither brings E079 — which is what the
 		// pruning decides, and all that is observable until #9515 is fixed.
-		{"try_in_lambda_in_defer_is_not_this_rule", `function f(out: Cell[i32]): i32 {
-	var h: (i32) => i32 = (x: i32) => { var y: i32 = g(x)?; return y; };
-	defer out.set(h(1));
+		//
+		// Native only: the self-host reports nothing at all for this program
+		// (#9518), so the codes differential cannot carry it yet.
+		{"try_in_lambda_literal_in_defer_is_not_this_rule", `function f(out: Cell[i32]): i32 {
+	defer out.set((x: i32) => g(x)?);
 	return 0;
 }`, ""},
 		// A `defer` nested INSIDE a lambda body is the same circular shape one

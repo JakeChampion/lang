@@ -25,7 +25,7 @@ run against it. So a diagnostic rule with only Go-side coverage is a
 rule that stops being checked at exactly the moment it starts mattering
 most.
 
-**64 of 82** codes are pinned by a conformance case. The table
+**65 of 83** codes are pinned by a conformance case. The table
 below is verified against reality by `TestDiagnosticsIndexIsAccurate`:
 a code with no explanation, an explanation with no row, a claimed case
 that does not exist or does not actually emit the code, and a `—` on a
@@ -131,7 +131,7 @@ language does not have. It is deleted.
 | `P005` | Input nests deeper than the parser's recursion bound | `diag_p005` |
 | `P006` | `function` in expression position | `diag_p006` |
 
-## The 17 unpinned codes
+## The 18 unpinned codes
 
 These have Go-side coverage but no conformance case. Most resisted the
 mechanical derivation used for the rest — their catalogue examples are
