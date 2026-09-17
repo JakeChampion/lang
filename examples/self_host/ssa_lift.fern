@@ -368,7 +368,14 @@ function lift_float_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], insts: 
     else if (prod_float_call_argc(k) > 0) { insts = insts.append(ssa.SInst { kind_tag: 50, result: v, args: args, imm: 0, str: k }); }
     else {
         var what: string = k;
-        if (k == "i32_to_f64") { what = k + ":" + util.i32_to_string(op.width); }
+        if (k == "i32_to_f64") {
+            // The lowering leaves the width 0 on the widening it inserts at an
+            // f64 parameter or in mixed arithmetic; the stack machine converts
+            // that as a signed 32-bit source.
+            var w: i32 = op.width;
+            if (w == 0) { w = 32; }
+            what = k + ":" + util.i32_to_string(w);
+        }
         var flag: i32 = 0;
         if (op.unsigned) { flag = 1; }
         insts = insts.append(ssa.SInst { kind_tag: 10, result: v, args: args, imm: flag, str: what });
