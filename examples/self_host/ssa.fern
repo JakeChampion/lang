@@ -1058,7 +1058,14 @@ function extend_loop_invariant_intervals(f: SFunc, def_pos: i32[], hi: i32[]): i
     return hi;
 }
 
-pub function regalloc_linear(f: SFunc, nregs: i32): i32[] {
+// regalloc_linear assigns each value a register index or a spill slot. The
+// indices below `nregs` are the caller-saved registers, the `nsaved` above
+// them the callee-saved ones: a value live across a call takes one of the
+// latter, or a slot when they are out; any other value takes a caller-saved
+// register first, a callee-saved one when those are out, a slot last. The
+// lowest indices go first, so an emitter that saves the callee-saved
+// registers a function uses saves a dense prefix of them.
+pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32): i32[] {
     var big: i32 = 2000000000;
     var lo: i32[] = [];
     var hi: i32[] = [];
@@ -1111,6 +1118,9 @@ pub function regalloc_linear(f: SFunc, nregs: i32): i32[] {
     var free: i32[] = [];
     var r: i32 = nregs - 1;
     while (r >= 0) { free = free.append(r); r = r - 1; }
+    var free_s: i32[] = [];
+    r = nregs + nsaved - 1;
+    while (r >= nregs) { free_s = free_s.append(r); r = r - 1; }
 
     var oi: i32 = 0;
     while (oi < order.len()) {
@@ -1120,20 +1130,20 @@ pub function regalloc_linear(f: SFunc, nregs: i32): i32[] {
         var nv: i32[] = []; var nh: i32[] = []; var nr: i32[] = [];
         var ai: i32 = 0;
         while (ai < act_val.len()) {
-            if (act_hi[ai] < lo[v]) { free = free.append(act_reg[ai]); }
-            else { nv = nv.append(act_val[ai]); nh = nh.append(act_hi[ai]); nr = nr.append(act_reg[ai]); }
+            if (act_hi[ai] < lo[v]) {
+                if (act_reg[ai] >= nregs) { free_s = free_s.append(act_reg[ai]); } else { free = free.append(act_reg[ai]); }
+            } else { nv = nv.append(act_val[ai]); nh = nh.append(act_hi[ai]); nr = nr.append(act_reg[ai]); }
             ai = ai + 1;
         }
         act_val = nv; act_hi = nh; act_reg = nr;
 
-        if (spans_call(cum, lo[v], hi[v]) || free.len() == 0) {
+        var from_caller: boolean = !spans_call(cum, lo[v], hi[v]) && free.len() > 0;
+        if (!from_caller && free_s.len() == 0) {
             reg_of = reg_of.with(v, 0 - 1);   // spill
         } else {
-            var reg: i32 = free[free.len() - 1];
-            var nf: i32[] = [];
-            var fj: i32 = 0;
-            while (fj < free.len() - 1) { nf = nf.append(free[fj]); fj = fj + 1; }
-            free = nf;
+            var reg: i32 = 0;
+            if (from_caller) { reg = free[free.len() - 1]; free = drop_last_i(free); }
+            else { reg = free_s[free_s.len() - 1]; free_s = drop_last_i(free_s); }
             reg_of = reg_of.with(v, reg);
             act_val = act_val.append(v); act_hi = act_hi.append(hi[v]); act_reg = act_reg.append(reg);
         }
@@ -1147,6 +1157,13 @@ pub function regalloc_linear(f: SFunc, nregs: i32): i32[] {
 // slots are numbered densely over the spilled values, so an emitter sizes the
 // frame by `spill_count` rather than by the id space, which the lift's phi per
 // local per merge makes hundreds of times larger than what survives pruning.
+function drop_last_i(a: i32[]): i32[] {
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < a.len() - 1) { out = out.append(a[i]); i = i + 1; }
+    return out;
+}
+
 pub function spill_code(slot: i32): i32 { return 0 - 2 - slot; }
 pub function spill_slot(code: i32): i32 { return 0 - 2 - code; }
 pub function spill_count(reg_of: i32[]): i32 {
@@ -1162,6 +1179,24 @@ function assign_spill_slots(hi: i32[], reg_of: i32[]): i32[] {
         i = i + 1;
     }
     return reg_of;
+}
+
+// use_counts is how many instruction operands and terminators read each
+// value; a value read once by the branch that ends its block can be
+// consumed as flags rather than materialised.
+pub function use_counts(f: SFunc): i32[] {
+    var uses: i32[] = [];
+    var i: i32 = 0;
+    while (i < f.nvals) { uses = uses.append(0); i = i + 1; }
+    for blk in f.blocks {
+        for ins in blk.insts {
+            for a in ins.args { if (a >= 0 && a < uses.len()) { uses = uses.with(a, uses[a] + 1); } }
+        }
+        var t: STerm = blk.term;
+        if (t.kind_tag == 1 && t.value >= 0 && t.value < uses.len()) { uses = uses.with(t.value, uses[t.value] + 1); }
+        if (t.kind_tag == 3 && t.cond >= 0 && t.cond < uses.len()) { uses = uses.with(t.cond, uses[t.cond] + 1); }
+    }
+    return uses;
 }
 
 // prune_dead drops every pure instruction (const / copy / binary / unary /
