@@ -104,8 +104,9 @@ pub struct FipResult {
 // report a budget overrun for a function that allocates nothing.
 pub function fresh_alloc_what(o: ir.Op): string {
     var t: i32 = o.kind_tag;
-    // Constructor expressions: what E053's `ctor_ok` relaxation lets a `fbip`
-    // body write, and therefore what this pass has to count on its behalf. A
+    // Constructor expressions: what E053 lets any tier write — it admits the
+    // shape and leaves the verdict here (#9602) — and therefore what this pass
+    // has to count on every claim's behalf. A
     // reuse-paired site is NOT here — it lowers to a `__fern_alloc_reuse` call
     // plus in-place field stores, and never emits its constructor op.
     if (t == 138) {

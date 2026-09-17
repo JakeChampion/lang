@@ -10,11 +10,17 @@
 // WHAT THE LANGUAGE FORCED, which is the experiment's first finding.
 //
 // The shape #9582 sets out — `fip iteration(own state) -> state` over a state
-// struct — is not available today (#9602). A `fip` function cannot update a
-// struct: a field write is E048 ("rebuild with `T { ...old, f: v }`") and that
-// rebuild is E053 in a `fip` body, so the two diagnostics forbid each other's
-// remedy. Nor can one return several owned containers, because a tuple literal
-// is an allocation.
+// struct — was not available when this was written (#9602). A `fip` function
+// could not update a struct: a field write is E048 ("rebuild with
+// `T { ...old, f: v }`") and that rebuild was E053 in a `fip` body, so the two
+// diagnostics forbade each other's remedy.
+//
+// #9602 has since fixed that — the rebuild now compiles and reuses the donor
+// box — and this file is deliberately NOT rewritten to use it. It is the
+// measurement of what a single packed array costs, and the comparison in
+// docs/FIP-EVENT-LOOP.md is only meaningful while it stays the program that
+// was measured. Returning several owned containers is still out: a tuple
+// literal has no donor to pair against.
 //
 // What a `fip` function CAN own is one array, rewritten through `.with` — the
 // spelling E056 names, which reuses the block in place while the array is

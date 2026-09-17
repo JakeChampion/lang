@@ -9,10 +9,11 @@
 //
 // This is the variant that tests whether the architecture is ERGONOMIC rather
 // than merely possible. The strict-`fip` variant packs every region into one
-// `i64[]` with hand-written base offsets, because a `fip` function cannot
-// build a struct (#9602) and can return only one owned container. Here the
-// state has field names, the compiler checks them, and a new region is a new
-// field instead of a new constant to derive by hand.
+// `i64[]` with hand-written base offsets, because when these were written a
+// `fip` function could not build a struct (#9602, since fixed) and can still
+// return only one owned container. Here the state has field names, the
+// compiler checks them, and a new region is a new field instead of a new
+// constant to derive by hand.
 //
 // What it costs is the guarantee's strength. `fbip` says every construction is
 // reuse-PAIRED, not that none happens: on a unique input the pairing writes the
@@ -155,12 +156,13 @@ fbip function apply_update(own s: State, id: i64, delta: i64): State {
         s = State { ...s, m_miss: s.m_miss + (1 as i64) };
         return respond(s, rsp_missing());
     }
-    // The read is hoisted out of the update on purpose. Written the obvious
-    // way — `vals: s.vals.with(at, s.vals[at] + delta)` — the read retains the
-    // field, `.with` finds it shared, and every update copies the whole 2 KB
-    // array instead of writing one slot: 127,073 allocations over this run's
-    // 1.28M events, all of them recycled and therefore invisible to
-    // `__heap_bump_bytes()`. See #9605.
+    // The read is hoisted out of the update, and stays hoisted although it no
+    // longer has to be. Written the obvious way — `vals: s.vals.with(at,
+    // s.vals[at] + delta)` — this used to copy the whole 2 KB array per update
+    // rather than writing one slot: 127,073 allocations over this run's 1.28M
+    // events, all recycled and so invisible to `__heap_bump_bytes()`. #9605
+    // fixed that, and both spellings now write in place; this file keeps the
+    // shape its measurements were taken on.
     var current: i64 = s.vals[at];
     s = State { ...s, vals: s.vals.with(at, current + delta), m_ok: s.m_ok + (1 as i64) };
     return respond(s, rsp_ok());

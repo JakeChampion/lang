@@ -105,10 +105,13 @@ the gap is noise.
 
 ## What the language forced
 
-### A `fip` function cannot hold state in a struct (#9602)
+### A `fip` function could not hold state in a struct (#9602 — FIXED)
 
-The architecture #9582 sets out is `fip iteration(own state) -> state`. It is
-not expressible over a struct today:
+**This is what the experiment found, and the reason `event_loop_fip.fern` is
+written the way it is. It has since been fixed; the shape below now compiles.**
+
+The architecture #9582 sets out is `fip iteration(own state) -> state`, and it
+was not expressible over a struct:
 
 ```fern
 fip function bump(own s: State): State {
@@ -117,15 +120,25 @@ fip function bump(own s: State): State {
 }
 ```
 
-Each diagnostic recommends what the other forbids. Nor can a `fip` function
-return several owned containers, because a tuple literal is an allocation. So a
-strict `fip` data plane owns exactly one array, and `event_loop_fip.fern`
-therefore packs a queue, an output ring, three table regions and eight header
-words into a single `i64[]` behind hand-written base offsets. It works, it is
-fast, and nothing about it is checked: a wrong base constant reads the
-neighbouring region and the compiler cannot know.
+Each diagnostic recommended what the other forbade. So a strict `fip` data
+plane owned exactly one array, and `event_loop_fip.fern` therefore packs a
+queue, an output ring, three table regions and eight header words into a single
+`i64[]` behind hand-written base offsets. It works, it is fast, and nothing
+about it is checked: a wrong base constant reads the neighbouring region and the
+compiler cannot know.
 
-`fbip` has none of this trouble — `State { ...s, keys: s.keys.with(i, v) }` is
+The fix admits the constructor SHAPE in every tier and leaves the verdict to
+E068 at the IR, which counts the sites that lowered to a real allocation rather
+than to a reuse-paired one — so the rebuild above compiles and allocates
+nothing, while an un-paired construction is still refused. The packed-array
+variant is kept as measured rather than rewritten: it is the record of what a
+single owned array costs, and rewriting it would throw away the comparison this
+document reports.
+
+One limit is unchanged: a `fip` function still cannot return several owned
+containers, because a tuple literal has no donor to pair against.
+
+`fbip` never had this trouble — `State { ...s, keys: s.keys.with(i, v) }` is
 just a struct update — which is why the `fbip` variant is the one a person
 would want to maintain.
 
@@ -158,7 +171,10 @@ only by trying. E051 says an owned argument must be "a fresh construction or
 another `own` parameter" and does not mention that a reassigned owned parameter
 still qualifies, which is the thing the reader needs.
 
-### Reading an array field inside the update that rewrites it costs a full copy (#9605)
+### Reading an array field inside the update that rewrites it cost a full copy (#9605 — FIXED)
+
+**This is what the experiment found, and why the `fbip` variant hoists its
+reads. It has since been fixed; both spellings below now allocate nothing.**
 
 The `fbip` variant's first measurement was 127,073 allocations over 1.28M
 events — about one per ten — and every one was a whole-array copy:
@@ -174,11 +190,20 @@ s = State { ...s, vals: s.vals.with(at, current + delta), ... };
 ```
 
 Read-modify-write is what an update IS, so this is not an exotic shape, and
-nothing reports it: the copies are recycled, so fresh bytes stay flat and the
+nothing reported it: the copies are recycled, so fresh bytes stay flat and the
 leak census balances. It took the allocation count to see it at all. The
-single-array `fip` form does not have the problem — reading through a directly
-owned array is not a retain — which is the evidence that it is field access
+single-array `fip` form did not have the problem — reading through a directly
+owned array is not a retain — which was the evidence that it was field access
 specifically.
+
+The fix was not a new rule but an existing one, scoped past this case twice
+over. A read sitting inside the call's own index / value arguments has already
+produced its scalar when the store runs, because `emitArraySet` lowers both
+arguments before it loads the receiver — and that excusal existed for a
+bare-ident receiver, while the field path only excused a read in an EARLIER
+statement, which is precisely the hoisted spelling. The inline read fell
+between them. The hoist in `event_loop_fbip.fern` is kept, with its comment
+rewritten: it is the shape the measurement above was taken on.
 
 ## Answers to the questions #9583 asked
 
@@ -193,9 +218,12 @@ diagnostic that does not name the remedy, and with a struct forbidden the state
 has to be packed by hand into one array. The `fbip` spelling is ergonomic and
 measures the same.
 
-**Which structures prevent FIP?** Structs (#9602), tuples and any multi-value
-return, enums with payloads — every one of them is a constructor, and a
-constructor is an allocation E053 refuses. What is left is arrays of scalars,
+**Which structures prevent FIP?** As measured: structs, tuples and any
+multi-value return, enums with payloads — every one of them is a constructor,
+and a constructor was an allocation E053 refused. #9602 has since admitted the
+constructor shape wherever a donor can be paired against it, so structs and
+payload-carrying enums are available; a tuple return still is not, having no
+donor. What is left is arrays of scalars,
 threaded one at a time. Closures too: capturing the state to pass it to a
 callback shares it, so the harness's own `bench.run(…, () => …)` could not be
 used to drive the `fip` variant, and the drivers sample the clock inline
@@ -215,5 +243,6 @@ workload fits — the path is exercised by the prefill, which overflows the
 - Allocation count unchanged over millions of events: yes — the gate drives
   1.28M per run and the count is exactly 0, not merely bounded.
 - Baseline/FBIP/FIP throughput and latency: the table above.
-- Compiler/library gaps documented: #9602, #9605, and the E051 ergonomics note
-  above.
+- Compiler/library gaps documented: #9602 and #9605, both since FIXED (the
+  sections above are kept as the record of what the first measurement found),
+  plus the E051 ergonomics note, which stands.
