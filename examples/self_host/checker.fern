@@ -16079,7 +16079,7 @@ function annotate_expr(e: ast.Expr, s: Scope): ast.Expr {
       return ast.ExprIndex { array: annotate_expr(x.array, s), index: annotate_expr(x.index, s), unchecked: x.unchecked, ty: type_to_irtag(check_expr(e, s)) };
     },
     ast.ExprSlice(sl) => {
-      return ast.ExprSlice { array: annotate_expr(sl.array, s), start: annotate_expr(sl.start, s), end: annotate_expr(sl.end, s), ty: type_to_arrtag(check_expr(sl.array, s)), open_end: sl.open_end };
+      return ast.ExprSlice { ...sl, array: annotate_expr(sl.array, s), start: annotate_expr(sl.start, s), end: annotate_expr(sl.end, s), ty: type_to_arrtag(check_expr(sl.array, s)) };
     },
     ast.ExprArray(a) => {
       var na: ast.Expr[] = [];

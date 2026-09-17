@@ -107,6 +107,23 @@ var t6: i32 = a << b >> c;
 return t1 + t2 + t3 + t4 + t5 + t6;
 }
 `},
+	// An omitted slice bound is not a layout choice. The AST stands a
+	// literal 0 in for a missing LOW bound and an unevaluated placeholder in
+	// for a missing HIGH one, so a printer that reads them back prints
+	// `s[1:0]` for `s[1:]` — an empty slice where the source asked for the
+	// tail. `-fmt -w` would then rewrite the program into a different one.
+	{"slice-bounds", `function f(s: string): string {
+var a: string = s[1:];
+var b: string = s[:3];
+var c: string = s[:];
+var d: string = s[1:3];
+return a + b + c + d;
+}
+function main(): i32 {
+print(f("abcdef"));
+return 0;
+}
+`},
 	// A NESTED payload (`A(Ok2(n))`) and a LITERAL one (`V(0)`) are both
 	// consumed by the lowering — the first into a merged arm plus an inner
 	// match on a `__nest` temp, the second into a synthetic binder plus a

@@ -73273,7 +73273,7 @@ function lift_expr_walk(e: ast.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
             var slar: LiftExpr = lift_expr_walk(sl.array, acc, gfns);
             var slsr: LiftExpr = lift_expr_walk(sl.start, slar.acc, gfns);
             var sler: LiftExpr = lift_expr_walk(sl.end, slsr.acc, gfns);
-            return LiftExpr { expr: ast.ExprSlice { array: slar.expr, start: slsr.expr, end: sler.expr, ty: sl.ty, open_end: sl.open_end }, acc: sler.acc };
+            return LiftExpr { expr: ast.ExprSlice { ...sl, array: slar.expr, start: slsr.expr, end: sler.expr }, acc: sler.acc };
         },
         ast.ExprFieldAccess(fa) => {
             var faor: LiftExpr = lift_expr_walk(fa.obj, acc, gfns);
@@ -77061,7 +77061,7 @@ function wcap_expr(e: ast.Expr, fd: parser.FuncDecl, gfns: string[], structs: St
             var sa: WCapExpr = wcap_expr(sl.array, fd, gfns, structs, mfuncs, acc, atargets);
             var ss: WCapExpr = wcap_expr(sl.start, fd, gfns, structs, mfuncs, sa.caps, atargets);
             var se: WCapExpr = wcap_expr(sl.end, fd, gfns, structs, mfuncs, ss.caps, atargets);
-            return WCapExpr { expr: ast.ExprSlice { array: sa.expr, start: ss.expr, end: se.expr, ty: sl.ty, open_end: sl.open_end }, caps: se.caps };
+            return WCapExpr { expr: ast.ExprSlice { ...sl, array: sa.expr, start: ss.expr, end: se.expr }, caps: se.caps };
         },
         ast.ExprStructLit(sl) => {
             var a: WCaps = acc;
