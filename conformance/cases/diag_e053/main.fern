@@ -9,10 +9,20 @@ fip function scale(own xs: i32[]): i32[] {
     return [xs[0] * 2];          // allocates a fresh array
 }
 
-// OK: mutates the uniquely-owned array in place, allocates nothing.
+// OK: rewrites one slot of the uniquely-owned array. `.with` is the spelling
+// a subscript assignment is refused in favour of (E056), and on a unique input
+// it writes the block in place rather than copying it, so the function
+// allocates nothing. A subscript assignment here would not compile at all.
 fip function double_first(own xs: i32[]): i32[] {
-    xs[0] = xs[0] * 2;
-    return xs;
+    return xs.with(0, xs[0] * 2);
+}
+
+// OK: the rebuild reuses the box `s` is handed in, so `fip` allocates
+// nothing. A field write here would be E048, whose remedy is this line —
+// and rejecting the rebuild left the two diagnostics naming each other.
+struct State { count: i32 }
+fip function bump(own s: State): State {
+    return State { ...s, count: s.count + 1 };
 }
 
 // OK as fbip: the consuming match hands each Cons box straight to the

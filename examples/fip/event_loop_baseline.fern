@@ -1,0 +1,273 @@
+// examples/fip/event_loop_baseline.fern — the idiomatic allocating variant of
+// the bounded event loop (#9583).
+//
+// Same workload, same capacities and the same answers as the `fip` and `fbip`
+// variants. What differs is that this one is written the way the feature would
+// be written by someone not thinking about allocation at all: events are an
+// enum with payloads, the queue is an array that grows and shrinks, responses
+// are appended as they are produced, and nothing is annotated or owned.
+//
+// It is the control. Without it the other two variants report a number with
+// nothing to compare against, and "zero allocations" reads as a fact about the
+// language rather than as the difference between two ways of writing the same
+// program.
+//
+// Nothing here is a straw man: every construct is the one the language makes
+// easiest. The queue really is the obvious spelling of a queue, an `Event`
+// really is what an event wants to be, and a response list really is how a
+// batch of responses is collected. That is the point — this is what the cost
+// of the obvious spelling actually is.
+import "core/cmp";
+import "std/bench";
+import "std/i32";
+import "std/i64";
+
+function max_entries(): i32 { return 256; }
+function queue_cap(): i32 { return 64; }
+
+// An event with its payload, which is what a reader wants and what a `fip`
+// data plane cannot have: constructing one is an allocation, so the strict
+// variant encodes the same information as three integers in parallel arrays.
+enum Event {
+    Create(i64, i64),
+    Update(i64, i64),
+    Read(i64),
+    Delete(i64),
+}
+
+enum Response {
+    Ok,
+    Missing,
+    Full,
+    Value(i64),
+}
+
+// An entry as a record rather than as three parallel regions — again the
+// shape a reader wants and the packed variants cannot use.
+struct Entry { key: i64, value: i64 }
+
+struct State {
+    entries: Entry[],
+    queue: Event[],
+    out: Response[],
+    m_ok: i64,
+    m_miss: i64,
+    m_full: i64,
+    m_dropped: i64,
+}
+
+function new_state(): State {
+    var none: Entry[] = [];
+    var q: Event[] = [];
+    var o: Response[] = [];
+    return State { entries: none, queue: q, out: o,
+        m_ok: 0 as i64, m_miss: 0 as i64, m_full: 0 as i64, m_dropped: 0 as i64 };
+}
+
+function enqueue(s: State, e: Event): State {
+    if (s.queue.len() >= queue_cap()) {
+        return State { ...s, m_dropped: s.m_dropped + (1 as i64) };
+    }
+    return State { ...s, queue: s.queue.append(e) };
+}
+
+function respond(s: State, r: Response): State {
+    return State { ...s, out: s.out.append(r) };
+}
+
+function find_slot(entries: Entry[], id: i64): i32 {
+    var i: i32 = 0;
+    while (i < entries.len()) {
+        if (entries[i].key == id) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+function apply_create(s: State, id: i64, value: i64): State {
+    var at: i32 = find_slot(s.entries, id);
+    if (at >= 0) {
+        var updated: Entry[] = s.entries.with(at, Entry { key: id, value: value });
+        return respond(State { ...s, entries: updated, m_ok: s.m_ok + (1 as i64) }, Response.Ok);
+    }
+    if (s.entries.len() >= max_entries()) {
+        return respond(State { ...s, m_full: s.m_full + (1 as i64) }, Response.Full);
+    }
+    var grown: Entry[] = s.entries.append(Entry { key: id, value: value });
+    return respond(State { ...s, entries: grown, m_ok: s.m_ok + (1 as i64) }, Response.Ok);
+}
+
+function apply_update(s: State, id: i64, delta: i64): State {
+    var at: i32 = find_slot(s.entries, id);
+    if (at < 0) {
+        return respond(State { ...s, m_miss: s.m_miss + (1 as i64) }, Response.Missing);
+    }
+    var e: Entry = s.entries[at];
+    var updated: Entry[] = s.entries.with(at, Entry { key: e.key, value: e.value + delta });
+    return respond(State { ...s, entries: updated, m_ok: s.m_ok + (1 as i64) }, Response.Ok);
+}
+
+function apply_read(s: State, id: i64): State {
+    var at: i32 = find_slot(s.entries, id);
+    if (at < 0) {
+        return respond(State { ...s, m_miss: s.m_miss + (1 as i64) }, Response.Missing);
+    }
+    var e: Entry = s.entries[at];
+    return respond(State { ...s, m_ok: s.m_ok + (1 as i64) }, Response.Value(e.value));
+}
+
+// Deleting from a dense array is the rebuild it looks like: every surviving
+// entry is appended to a fresh array. The packed variants mark a slot unused
+// and touch one word.
+function apply_delete(s: State, id: i64): State {
+    var at: i32 = find_slot(s.entries, id);
+    if (at < 0) {
+        return respond(State { ...s, m_miss: s.m_miss + (1 as i64) }, Response.Missing);
+    }
+    var kept: Entry[] = [];
+    var i: i32 = 0;
+    while (i < s.entries.len()) {
+        if (i != at) { kept = kept.append(s.entries[i]); }
+        i = i + 1;
+    }
+    return respond(State { ...s, entries: kept, m_ok: s.m_ok + (1 as i64) }, Response.Ok);
+}
+
+// Dequeue is a slice: the head is taken and the tail becomes the new queue,
+// which is the idiomatic spelling and a fresh array every time.
+function iteration(s: State): State {
+    if (s.queue.len() == 0) { return s; }
+    var head: Event = s.queue[0];
+    var rest: Event[] = [];
+    var i: i32 = 1;
+    while (i < s.queue.len()) {
+        rest = rest.append(s.queue[i]);
+        i = i + 1;
+    }
+    var t: State = State { ...s, queue: rest };
+    match (head) {
+        Create(id, value) => { return apply_create(t, id, value); },
+        Update(id, delta) => { return apply_update(t, id, delta); },
+        Read(id) => { return apply_read(t, id); },
+        Delete(id) => { return apply_delete(t, id); },
+    }
+}
+
+function drain_output(s: State): State {
+    var empty: Response[] = [];
+    return State { ...s, out: empty };
+}
+
+function reset_metrics(s: State): State {
+    return State { ...s, m_ok: 0 as i64, m_miss: 0 as i64, m_full: 0 as i64, m_dropped: 0 as i64 };
+}
+
+// ===================== THE WORKLOAD =====================
+//
+// Identical to the other two variants', so the three differ in how state is
+// held and in nothing else.
+
+function event_id(n: i64): i64 {
+    var x: i64 = n * (2654435761 as i64);
+    x = x ^ (x >> (15 as i64));
+    x = x * (2246822519 as i64);
+    x = x ^ (x >> (13 as i64));
+    if (x < (0 as i64)) { x = 0 - x; }
+    return x % (max_entries() as i64);
+}
+
+function event_of(n: i64): Event {
+    var bucket: i64 = n % (10 as i64);
+    var id: i64 = event_id(n);
+    if (bucket == (0 as i64)) { return Create(id, n); }
+    if (bucket == (1 as i64)) { return Delete(id); }
+    if (bucket < (4 as i64)) { return Update(id, n); }
+    return Read(id);
+}
+
+function prefill(s: State): State {
+    var t: State = s;
+    var id: i32 = 0;
+    while (id < max_entries()) {
+        t = apply_create(t, id as i64, (id as i64) * (10 as i64));
+        id = id + 1;
+    }
+    return drain_output(t);
+}
+
+function round(s: State, seed: i64, batch: i32): State {
+    var t: State = s;
+    var i: i32 = 0;
+    while (i < batch) {
+        t = enqueue(t, event_of(seed + (i as i64)));
+        i = i + 1;
+    }
+    var worked: i32 = 0;
+    while (worked < batch) {
+        t = iteration(t);
+        worked = worked + 1;
+    }
+    return drain_output(t);
+}
+
+function main(): i32 {
+    var s: State = new_state();
+    s = prefill(s);
+    s = round(s, 1 as i64, queue_cap());
+    s = reset_metrics(s);
+    var rounds: i32 = 20000;
+    // Built before the mark: the sample buffer is part of the instrument, not
+    // of the steady state being measured.
+    var samples: i64[] = [];
+    var p: i32 = 0;
+    while (p < rounds) { samples = samples.append(0 as i64); p = p + 1; }
+    var at_allocs: i64 = bench.alloc_count();
+    var at_fresh: i64 = bench.bump_bytes();
+    var started_ns: i64 = monotonic_ns();
+    var r: i32 = 0;
+    while (r < rounds) {
+        var t0: i64 = monotonic_ns();
+        s = round(s, (r as i64) * (7 as i64) + (1 as i64), queue_cap());
+        // `.with` on a uniquely-owned array writes in place, so recording a
+        // sample costs the measured region no allocation. The harness pins
+        // that property (internal/e2e/bench_module_test.go).
+        samples = samples.with(r, monotonic_ns() - t0);
+        r = r + 1;
+    }
+    var elapsed_ns: i64 = monotonic_ns() - started_ns;
+    var allocs: i64 = bench.allocs_after(at_allocs);
+    var fresh: i64 = bench.fresh_bytes_after(at_fresh);
+    var events: i64 = (rounds as i64) * (queue_cap() as i64);
+    // The per-round samples become a bench.Report, so the percentile and
+    // throughput arithmetic is the harness's and identical across the three
+    // variants. Sorting allocates, which is why it happens down here — after
+    // the allocation figures have already been read.
+    var rep: bench.Report = bench.Report {
+        name: "baseline",
+        iterations: rounds,
+        wall_ns: elapsed_ns,
+        samples_ns: cmp.sort(samples),
+        allocs: allocs,
+        fresh_bytes: fresh,
+    };
+    print("{\"variant\":\"baseline\""
+        + ",\"events\":" + events.to_string()
+        + ",\"events_per_round\":" + queue_cap().to_string()
+        + ",\"live_entries\":" + s.entries.len().to_string()
+        + ",\"ok\":" + s.m_ok.to_string()
+        + ",\"missing\":" + s.m_miss.to_string()
+        + ",\"table_full\":" + s.m_full.to_string()
+        + ",\"dropped\":" + s.m_dropped.to_string()
+        + ",\"steady_allocs\":" + allocs.to_string()
+        + ",\"steady_fresh_bytes\":" + fresh.to_string()
+        + ",\"allocs_per_event_milli\":" + (allocs * (1000 as i64) / events).to_string()
+        + ",\"ns_per_event\":" + (elapsed_ns / events).to_string()
+        + ",\"events_per_sec\":" + (events * 1000000000i64 / elapsed_ns).to_string()
+        + ",\"round_p50_ns\":" + rep.p50_ns().to_string()
+        + ",\"round_p95_ns\":" + rep.p95_ns().to_string()
+        + ",\"round_p99_ns\":" + rep.p99_ns().to_string()
+        + ",\"round_p999_ns\":" + rep.p999_ns().to_string()
+        + ",\"round_max_ns\":" + rep.max_ns().to_string()
+        + "}");
+    return 0;
+}

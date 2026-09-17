@@ -1,0 +1,406 @@
+// examples/fip/event_loop_fip.fern — the strict-FIP variant of the
+// bounded event loop (#9583).
+//
+// Initialization builds the working set; after that the steady state runs
+// entirely inside `fip` functions and calls the allocator zero times, for as
+// many events as you care to drive through it. `__heap_alloc_count()` is what
+// says so: a recycling loop keeps the bump mark flat whether or not it
+// allocates, so bytes alone could not tell this apart from a busy one.
+//
+// WHAT THE LANGUAGE FORCED, which is the experiment's first finding.
+//
+// The shape #9582 sets out — `fip iteration(own state) -> state` over a state
+// struct — was not available when this was written (#9602). A `fip` function
+// could not update a struct: a field write is E048 ("rebuild with
+// `T { ...old, f: v }`") and that rebuild was E053 in a `fip` body, so the two
+// diagnostics forbade each other's remedy.
+//
+// #9602 has since fixed that — the rebuild now compiles and reuses the donor
+// box — and this file is deliberately NOT rewritten to use it. It is the
+// measurement of what a single packed array costs, and the comparison in
+// docs/FIP-EVENT-LOOP.md is only meaningful while it stays the program that
+// was measured. Returning several owned containers is still out: a tuple
+// literal has no donor to pair against.
+//
+// What a `fip` function CAN own is one array, rewritten through `.with` — the
+// spelling E056 names, which reuses the block in place while the array is
+// unique. So all of this program's state lives in a single `i64[]` with a
+// hand-written layout, which is what the packed constants below are. That is a
+// workaround for a missing capability, not a design anyone would choose: the
+// compiler checks the arithmetic on none of it, a wrong base constant is a
+// silent read of the neighbouring region, and the "structure" exists only in
+// these comments.
+//
+// The rest of the call graph follows the same rule: `fip` may only call `fip`
+// (E053), so every helper here is annotated, and the read-only ones take the
+// array borrowed rather than owned.
+import "core/cmp";
+import "std/bench";
+import "std/i32";
+import "std/i64";
+
+// ===================== CAPACITIES =====================
+//
+// Every bound is fixed here and allocated once at startup. Nothing grows: a
+// full queue drops and counts the drop, which is what makes overload a
+// number in the metrics rather than an allocation.
+
+fip function max_entries(): i32 { return 256; }
+fip function queue_cap(): i32 { return 64; }
+fip function out_cap(): i32 { return 64; }
+
+// ===================== LAYOUT =====================
+//
+// Header words, then four regions. Each base is derived from the one before
+// it so a capacity change moves everything consistently — the one piece of
+// safety available without a struct.
+
+fip function idx_q_head(): i32 { return 0; }
+fip function idx_q_count(): i32 { return 1; }
+fip function idx_out_count(): i32 { return 2; }
+fip function idx_live(): i32 { return 3; }
+fip function idx_m_ok(): i32 { return 4; }
+fip function idx_m_miss(): i32 { return 5; }
+fip function idx_m_full(): i32 { return 6; }
+fip function idx_m_dropped(): i32 { return 7; }
+
+// The input queue is a ring of three-word events: kind, id, value.
+fip function q_base(): i32 { return 8; }
+fip function q_words(): i32 { return queue_cap() * 3; }
+// The output queue is a ring of one-word response codes.
+fip function out_base(): i32 { return q_base() + q_words(); }
+// The table is three parallel regions: key, value, and whether the slot is in
+// use. Parallel arrays rather than a record per entry, because a record would
+// be a struct and a `fip` body cannot build one.
+fip function key_base(): i32 { return out_base() + out_cap(); }
+fip function val_base(): i32 { return key_base() + max_entries(); }
+fip function used_base(): i32 { return val_base() + max_entries(); }
+fip function state_words(): i32 { return used_base() + max_entries(); }
+
+// ===================== EVENT AND RESPONSE CODES =====================
+
+fip function ev_create(): i64 { return 1 as i64; }
+fip function ev_update(): i64 { return 2 as i64; }
+fip function ev_read(): i64 { return 3 as i64; }
+fip function ev_delete(): i64 { return 4 as i64; }
+
+fip function rsp_ok(): i64 { return 1 as i64; }
+fip function rsp_missing(): i64 { return 2 as i64; }
+fip function rsp_full(): i64 { return 3 as i64; }
+fip function rsp_value(): i64 { return 4 as i64; }
+
+// ===================== INITIALIZATION (allocating, once) =====================
+
+// `new_state()` is the control plane: the one allocation the whole program
+// makes for its working set. It is deliberately NOT `fip` — building the
+// arena is exactly the work `fip` exists to keep out of the steady state.
+function new_state(): i64[] {
+    var s: i64[] = [];
+    var i: i32 = 0;
+    while (i < state_words()) {
+        s = s.append(0 as i64);
+        i = i + 1;
+    }
+    return s;
+}
+
+// ===================== THE DATA PLANE (fip, allocation-free) =====================
+
+// `enqueue` writes one event into the input ring, or counts a drop when the
+// ring is full. Overload is a metric, not a resize: a queue that grows to
+// absorb a burst has moved the failure somewhere it cannot be seen.
+fip function enqueue(own s: i64[], kind: i64, id: i64, value: i64): i64[] {
+    var count: i32 = s[idx_q_count()] as i32;
+    if (count >= queue_cap()) {
+        return s.with(idx_m_dropped(), s[idx_m_dropped()] + (1 as i64));
+    }
+    var head: i32 = s[idx_q_head()] as i32;
+    var slot: i32 = (head + count) % queue_cap();
+    var at: i32 = q_base() + slot * 3;
+    // Every step writes back to `s` itself. A local would be cleaner to read
+    // and does not compile: the result of `.with` is not an owned value (E051),
+    // so only the owned PARAMETER can carry the state from one step to the
+    // next. See the note on threading at the top of the file.
+    s = s.with(at, kind);
+    s = s.with(at + 1, id);
+    s = s.with(at + 2, value);
+    return s.with(idx_q_count(), (count + 1) as i64);
+}
+
+// `respond` writes one response code into the output ring, or counts the drop.
+// Same rule as the input side: a consumer that has stopped reading must not be
+// able to make the producer allocate.
+fip function respond(own s: i64[], code: i64): i64[] {
+    var n: i32 = s[idx_out_count()] as i32;
+    if (n >= out_cap()) {
+        return s.with(idx_m_dropped(), s[idx_m_dropped()] + (1 as i64));
+    }
+    s = s.with(out_base() + n, code);
+    return s.with(idx_out_count(), (n + 1) as i64);
+}
+
+// `find_slot` is a borrowed read: the table's slot holding `id`, or -1. Linear,
+// because a hash table over three parallel regions is the next experiment
+// (#9585) and a linear scan over 256 slots is honest about what it costs.
+fip function find_slot(s: i64[], id: i64): i32 {
+    var i: i32 = 0;
+    while (i < max_entries()) {
+        if (s[used_base() + i] != (0 as i64) && s[key_base() + i] == id) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// `free_slot` is the first unused slot, or -1 when the table is at capacity.
+fip function free_slot(s: i64[]): i32 {
+    var i: i32 = 0;
+    while (i < max_entries()) {
+        if (s[used_base() + i] == (0 as i64)) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+fip function apply_create(own s: i64[], id: i64, value: i64): i64[] {
+    var at: i32 = find_slot(s, id);
+    if (at >= 0) {
+        // A create over a live key is an update, not a second entry.
+        s = s.with(val_base() + at, value);
+        s = s.with(idx_m_ok(), s[idx_m_ok()] + (1 as i64));
+        return respond(s, rsp_ok());
+    }
+    var slot: i32 = free_slot(s);
+    if (slot < 0) {
+        s = s.with(idx_m_full(), s[idx_m_full()] + (1 as i64));
+        return respond(s, rsp_full());
+    }
+    s = s.with(key_base() + slot, id);
+    s = s.with(val_base() + slot, value);
+    s = s.with(used_base() + slot, 1 as i64);
+    s = s.with(idx_live(), s[idx_live()] + (1 as i64));
+    s = s.with(idx_m_ok(), s[idx_m_ok()] + (1 as i64));
+    return respond(s, rsp_ok());
+}
+
+fip function apply_update(own s: i64[], id: i64, delta: i64): i64[] {
+    var at: i32 = find_slot(s, id);
+    if (at < 0) {
+        s = s.with(idx_m_miss(), s[idx_m_miss()] + (1 as i64));
+        return respond(s, rsp_missing());
+    }
+    s = s.with(val_base() + at, s[val_base() + at] + delta);
+    s = s.with(idx_m_ok(), s[idx_m_ok()] + (1 as i64));
+    return respond(s, rsp_ok());
+}
+
+fip function apply_read(own s: i64[], id: i64): i64[] {
+    var at: i32 = find_slot(s, id);
+    if (at < 0) {
+        s = s.with(idx_m_miss(), s[idx_m_miss()] + (1 as i64));
+        return respond(s, rsp_missing());
+    }
+    s = s.with(idx_m_ok(), s[idx_m_ok()] + (1 as i64));
+    return respond(s, rsp_value());
+}
+
+fip function apply_delete(own s: i64[], id: i64): i64[] {
+    var at: i32 = find_slot(s, id);
+    if (at < 0) {
+        s = s.with(idx_m_miss(), s[idx_m_miss()] + (1 as i64));
+        return respond(s, rsp_missing());
+    }
+    s = s.with(used_base() + at, 0 as i64);
+    s = s.with(idx_live(), s[idx_live()] - (1 as i64));
+    s = s.with(idx_m_ok(), s[idx_m_ok()] + (1 as i64));
+    return respond(s, rsp_ok());
+}
+
+// `iteration` is one complete turn of the loop: dequeue, dispatch, respond,
+// hand the state back. This is the function #9582's architecture is about, and
+// it is `fip` — so on a unique state it calls the allocator zero times, and
+// the compiler checked that rather than the author claiming it.
+fip function iteration(own s: i64[]): i64[] {
+    var count: i32 = s[idx_q_count()] as i32;
+    if (count == 0) { return s; }
+    var head: i32 = s[idx_q_head()] as i32;
+    var at: i32 = q_base() + head * 3;
+    var kind: i64 = s[at];
+    var id: i64 = s[at + 1];
+    var value: i64 = s[at + 2];
+    s = s.with(idx_q_head(), ((head + 1) % queue_cap()) as i64);
+    s = s.with(idx_q_count(), (count - 1) as i64);
+    if (kind == ev_create()) { return apply_create(s, id, value); }
+    if (kind == ev_update()) { return apply_update(s, id, value); }
+    if (kind == ev_read()) { return apply_read(s, id); }
+    if (kind == ev_delete()) { return apply_delete(s, id); }
+    return s;
+}
+
+// `drain_output` empties the response ring. A real consumer would read the
+// codes; this one only has to free the space, and it is `fip` like everything
+// else on this side of the boundary.
+fip function drain_output(own s: i64[]): i64[] {
+    return s.with(idx_out_count(), 0 as i64);
+}
+
+// ===================== THE WORKLOAD =====================
+//
+// Deterministic, and shared verbatim by all three variants of this experiment
+// so what differs between their numbers is memory discipline and nothing else.
+//
+// Read-heavy with a live population, which is the traffic the architecture is
+// argued for: 60% reads, 20% updates, 10% creates, 10% deletes. Two earlier
+// drafts got this wrong in ways worth recording — deriving the kind and the id
+// from the same counter gives each id exactly one kind for its whole life (75%
+// of events then miss a table they never populate), and an even create/delete
+// split at one id per step leaves the table holding a single entry, so the
+// lookup never has anything to find.
+
+// `event_id` mixes the counter before reducing it, so the id a step touches is
+// independent of the kind that step carries.
+//
+// A multiply-and-reduce is not enough, and getting this wrong cost two drafts.
+// `(n * K) % 256` advances by a FIXED stride, so the ids visited by the
+// n % 10 == 0 steps (the creates) and by the n % 10 == 1 steps (the deletes)
+// are two disjoint residue classes whenever the stride shares a factor with
+// the table size: creates only ever created even ids and deletes only ever
+// removed odd ones, the table drained to 28 live entries out of 256, and 84%
+// of the run missed. The xorshift-multiply below breaks that correlation —
+// what it costs is two multiplies per event, inside the measured region and
+// identical across all three variants.
+fip function event_id(n: i64): i64 {
+    var x: i64 = n * (2654435761 as i64);
+    x = x ^ (x >> (15 as i64));
+    x = x * (2246822519 as i64);
+    x = x ^ (x >> (13 as i64));
+    if (x < (0 as i64)) { x = 0 - x; }
+    return x % (max_entries() as i64);
+}
+
+fip function event_kind(n: i64): i64 {
+    var bucket: i64 = n % (10 as i64);
+    if (bucket == (0 as i64)) { return ev_create(); }
+    if (bucket == (1 as i64)) { return ev_delete(); }
+    if (bucket < (4 as i64)) { return ev_update(); }
+    return ev_read();
+}
+
+// `prefill` populates the table before the measurement starts, so the steady
+// state runs against a table that has something in it. Without it the run
+// measures a lookup that almost always fails: 10% creates against 10% deletes
+// reaches equilibrium at a couple of dozen live entries out of 256, and 84% of
+// events miss.
+//
+// With the table full at the start, create and delete balance at roughly half
+// the slots live — a create lands on an absent id with probability (1-p) and a
+// delete removes a live one with probability p, so p settles at 0.5. Reads
+// therefore hit about half the time, which is a steady state worth measuring
+// rather than an artefact of the generator.
+fip function prefill(own s: i64[]): i64[] {
+    var id: i32 = 0;
+    while (id < max_entries()) {
+        s = apply_create(s, id as i64, (id as i64) * (10 as i64));
+        id = id + 1;
+    }
+    return drain_output(s);
+}
+
+// `reset_metrics` zeroes the counters so a report describes the MEASURED
+// region and nothing else. Without it the prefill's 256 responses overflow the
+// 64-slot output ring and 192 drops from initialization are reported as if the
+// steady state had shed load.
+fip function reset_metrics(own s: i64[]): i64[] {
+    s = s.with(idx_m_ok(), 0 as i64);
+    s = s.with(idx_m_miss(), 0 as i64);
+    s = s.with(idx_m_full(), 0 as i64);
+    return s.with(idx_m_dropped(), 0 as i64);
+}
+
+// `round` is the shape a driver actually runs: refill the input queue, work it
+// down, drain the responses. One round is `batch` events, so the whole loop —
+// producer, consumer and table — stays inside the `fip` call graph.
+fip function round(own s: i64[], seed: i64, batch: i32): i64[] {
+    var i: i32 = 0;
+    while (i < batch) {
+        var n: i64 = seed + (i as i64);
+        s = enqueue(s, event_kind(n), event_id(n), n);
+        i = i + 1;
+    }
+    var worked: i32 = 0;
+    while (worked < batch) {
+        s = iteration(s);
+        worked = worked + 1;
+    }
+    return drain_output(s);
+}
+
+// ===================== DRIVER =====================
+//
+// Initialization allocates the state once; the mark is taken after it, and
+// everything measured after the mark is the steady state. The verdict printed
+// last is the experiment's whole point: allocs=0 over millions of events, from
+// a compiler-checked `fip` call graph rather than from inspection.
+
+function main(): i32 {
+    var s: i64[] = new_state();
+    s = prefill(s);
+    // Warm the loop: the first round faults in pages and fills the freelist,
+    // and neither is part of the steady state being claimed.
+    s = round(s, 1 as i64, queue_cap());
+    s = reset_metrics(s);
+    var rounds: i32 = 20000;
+    // Built before the mark: the sample buffer is part of the instrument, not
+    // of the steady state being measured.
+    var samples: i64[] = [];
+    var p: i32 = 0;
+    while (p < rounds) { samples = samples.append(0 as i64); p = p + 1; }
+    var at_allocs: i64 = bench.alloc_count();
+    var at_fresh: i64 = bench.bump_bytes();
+    var started_ns: i64 = monotonic_ns();
+    var r: i32 = 0;
+    while (r < rounds) {
+        var t0: i64 = monotonic_ns();
+        s = round(s, (r as i64) * (7 as i64) + (1 as i64), queue_cap());
+        // `.with` on a uniquely-owned array writes in place, so recording a
+        // sample costs the measured region no allocation. The harness pins
+        // that property (internal/e2e/bench_module_test.go).
+        samples = samples.with(r, monotonic_ns() - t0);
+        r = r + 1;
+    }
+    var elapsed_ns: i64 = monotonic_ns() - started_ns;
+    var allocs: i64 = bench.allocs_after(at_allocs);
+    var fresh: i64 = bench.fresh_bytes_after(at_fresh);
+    var events: i64 = (rounds as i64) * (queue_cap() as i64);
+    // The per-round samples become a bench.Report, so the percentile and
+    // throughput arithmetic is the harness's and identical across the three
+    // variants. Sorting allocates, which is why it happens down here — after
+    // the allocation figures have already been read.
+    var rep: bench.Report = bench.Report {
+        name: "fip",
+        iterations: rounds,
+        wall_ns: elapsed_ns,
+        samples_ns: cmp.sort(samples),
+        allocs: allocs,
+        fresh_bytes: fresh,
+    };
+    print("{\"variant\":\"fip\""
+        + ",\"events\":" + events.to_string()
+        + ",\"events_per_round\":" + queue_cap().to_string()
+        + ",\"live_entries\":" + s[idx_live()].to_string()
+        + ",\"ok\":" + s[idx_m_ok()].to_string()
+        + ",\"missing\":" + s[idx_m_miss()].to_string()
+        + ",\"table_full\":" + s[idx_m_full()].to_string()
+        + ",\"dropped\":" + s[idx_m_dropped()].to_string()
+        + ",\"steady_allocs\":" + allocs.to_string()
+        + ",\"steady_fresh_bytes\":" + fresh.to_string()
+        + ",\"allocs_per_event_milli\":" + (allocs * (1000 as i64) / events).to_string()
+        + ",\"ns_per_event\":" + (elapsed_ns / events).to_string()
+        + ",\"events_per_sec\":" + (events * 1000000000i64 / elapsed_ns).to_string()
+        + ",\"round_p50_ns\":" + rep.p50_ns().to_string()
+        + ",\"round_p95_ns\":" + rep.p95_ns().to_string()
+        + ",\"round_p99_ns\":" + rep.p99_ns().to_string()
+        + ",\"round_p999_ns\":" + rep.p999_ns().to_string()
+        + ",\"round_max_ns\":" + rep.max_ns().to_string()
+        + "}");
+    return 0;
+}

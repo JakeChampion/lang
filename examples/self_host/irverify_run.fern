@@ -257,10 +257,13 @@ function fip_checks(): i32 {
     // The keyword in the message is the one that was written.
     if (!util.contains(fip_msg("fip", 0, mixed), "`fip` function")) { return 155; }
 
-    // A bare `fip` overrun is checker/IR drift — E053 rejected every allocating
-    // construct, so the remedy is a bug report, not a donor.
-    if (!util.contains(fip_msg("fip", 0, fresh_struct), "checker/IR drift")) { return 156; }
-    // A graded claim, and every `fbip`, gets the pairing remedy instead.
+    // Every tier gets the SAME remedy now that E053 admits the constructor
+    // shape and leaves the verdict here (#9602): a bare `fip` overrun is an
+    // un-paired construction the author can pair or grade, exactly as in an
+    // `fbip`, not the bug report it used to be told to file.
+    if (!util.contains(fip_msg("fip", 0, fresh_struct), "grade the claim (`fip(n)`)")) { return 156; }
+    if (util.contains(fip_msg("fip", 0, fresh_struct), "checker/IR drift")) { return 161; }
+    // A graded claim, and every `fbip`, gets the same pairing remedy.
     if (!util.contains(fip_msg("fip", 1, mixed), "grade the claim (`fip(n)`)")) { return 157; }
     if (!util.contains(fip_msg("fbip", 0, fresh_struct), "grade the claim (`fbip(n)`)")) { return 158; }
 
