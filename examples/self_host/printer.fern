@@ -614,7 +614,14 @@ function print_expr_prec(e: ast.Expr, parent_prec: i32, depth: i32): string {
             return print_expr_prec(x.array, prec_primary(), depth) + "[" + print_expr(x.index, depth) + "]";
         },
         ast.ExprSlice(sl) => {
-            return print_expr_prec(sl.array, prec_primary(), depth) + "[" + print_expr(sl.start, depth) + ":" + print_expr(sl.end, depth) + "]";
+            // `a[lo:]` writes no upper bound, and the parser fills `end` with a
+            // placeholder `0` that every consumer ignores in favour of the
+            // receiver's length. Printing it back would say `a[lo:0]`, which
+            // re-parses as the EMPTY slice — the one reprint that changes what
+            // the program means rather than how it looks.
+            var hi: string = "";
+            if (!sl.open_end) { hi = print_expr(sl.end, depth); }
+            return print_expr_prec(sl.array, prec_primary(), depth) + "[" + print_expr(sl.start, depth) + ":" + hi + "]";
         },
         ast.ExprStructLit(sl) => {
             var out: string = sl.type_name + " { ";
@@ -2891,17 +2898,30 @@ function check_string_and_slice_literals(): i32 {
         _ => { return 51; }
     }
 
-    // Slice round-trip: `s[1:4]` → re-parses as an ExprSlice.
-    var src6: string = "var s = \"hello\"; var t = s[1:4]; return 0;";
+    // Slice round-trip: `s[1:4]` re-parses as an ExprSlice, and `s[1:]`'s OPEN
+    // end has to survive too. The node kind alone does not say so — `s[1:]`
+    // reprinted as `s[1:0]` is still an ExprSlice, and it is the EMPTY slice,
+    // the one reprint that changes what the program means. So both flags are
+    // asserted: a written bound stays written, an absent one stays absent.
+    var src6: string = "var s = \"hello\"; var t = s[1:4]; var u = s[1:]; return 0;";
     var rt6: parser.Module = roundtrip_module(src6);
     match (rt6.top_stmts[1]) {
         ast.StmtVar(v) => {
             match (v.init) {
-                ast.ExprSlice(_) => { },
+                ast.ExprSlice(sl) => { if (sl.open_end) { return 62; } },
                 _ => { return 60; }
             }
         },
         _ => { return 61; }
+    }
+    match (rt6.top_stmts[2]) {
+        ast.StmtVar(v) => {
+            match (v.init) {
+                ast.ExprSlice(sl) => { if (!sl.open_end) { return 63; } },
+                _ => { return 64; }
+            }
+        },
+        _ => { return 65; }
     }
 
     return 0;
