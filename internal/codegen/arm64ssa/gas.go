@@ -463,6 +463,18 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		w("%s:", mapSeedSym)
 		w("\t.quad 0")
 	}
+	if usesHelper(helpers, "environ") {
+		w(".section .bss")
+		w(".align 8")
+		w("%s:", environCacheSym)
+		w("\t.quad 0")
+	}
+	if usesHelper(helpers, "getgroups") {
+		w(".section .bss")
+		w(".align 8")
+		w("%s:", getgroupsCacheSym)
+		w("\t.quad 0")
+	}
 	if usesArrPushCliff(helpers) {
 		// The rc==1 cliff tally: crossings, and the bytes they copied.
 		w(".section .bss")
@@ -548,6 +560,12 @@ const (
 	// emitter built it.
 	arrPushSharedSym = "__fern_arr_push_shared"
 	arrPushCopiedSym = "__fern_arr_push_copied"
+
+	// The memoised containers environ() and getgroups() answer with. Both are
+	// process-wide and immutable once built, so each is drawn once and cached
+	// with a static rc sentinel, as args() is.
+	environCacheSym   = "__ssa_environ_cache"
+	getgroupsCacheSym = "__ssa_getgroups_cache"
 
 	// The global string builder behind strbuf_reset / strbuf_append /
 	// strbuf_take, which the self-hosted compiler emits its output through:
@@ -1144,6 +1162,16 @@ func emitLcReport(w func(string, ...any), heap bool) {
 
 // usesReadLine reports whether the module references Reader.read_line, so the
 // .bss line buffer is emitted only when needed.
+// usesHelper reports whether the module reaches `name`.
+func usesHelper(helpers []string, name string) bool {
+	for _, h := range helpers {
+		if h == name {
+			return true
+		}
+	}
+	return false
+}
+
 // usesArrPushCliff reports whether the module needs the cliff cells: the
 // grower writes them, and either accessor reads them.
 func usesArrPushCliff(helpers []string) bool {
@@ -1188,14 +1216,12 @@ func usesStrbuf(helpers []string) bool {
 	return false
 }
 
-// usesEnv reports whether the module references the env() builtin, so _start
-// captures envp and the .bss slot is emitted.
-// usesEnv reports whether the envp snapshot _start takes is needed: env() walks
-// it, and __fern_proc_exec hands it to execve so the child inherits the
-// environment.
+// usesEnv reports whether the envp snapshot _start takes is needed: env()
+// looks one name up in it, environ() builds the whole vector from it, and
+// __fern_proc_exec hands it to execve so the child inherits the environment.
 func usesEnv(helpers []string) bool {
 	for _, h := range helpers {
-		if h == "env" || h == "proc_exec" {
+		if h == "env" || h == "environ" || h == "proc_exec" {
 			return true
 		}
 	}
@@ -1363,70 +1389,77 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"getcwd":                        emitGetcwdHelper,
 	"cpu_count":                     emitCPUCountHelper,
 	"monotonic_ns":                  emitClockHelper("monotonic_ns", clockMonotonic, 1_000_000_000, 1),
-	"now_unix_ms":                   emitClockHelper("now_unix_ms", clockRealtime, 1_000, 1_000_000),
-	"sleep_ms":                      emitSleepMsHelper,
-	"sleep_ns":                      emitSleepNsHelper,
-	"string_from_bytes_unchecked":   emitStringFromBytesHelper,
-	"__str_slice":                   emitStrSliceHelper,
-	"args":                          emitArgsHelper,
-	"env":                           emitEnvHelper,
-	"write_file":                    emitWriteFileHelperMode("write_file", "", 0o644, 0),
-	"write_file_exec":               emitWriteFileHelperMode("write_file_exec", "_x", 0o755, 0o755),
-	"read_file":                     emitReadFileHelper,
-	"read_file_bytes":               emitReadFileBytesHelper,
-	"remove_file":                   emitRemoveFileHelper,
-	"create_dir_all":                emitCreateDirAllHelper,
-	"create_dir":                    emitCreateDirHelper,
-	"chdir":                         emitChdirHelper,
-	"remove_dir":                    emitRemoveDirHelper,
-	"create_link":                   emitCreateLinkHelper,
-	"create_symlink":                emitCreateSymlinkHelper,
-	"read_link":                     emitReadLinkHelper,
-	"umask":                         emitUmaskHelper,
-	"priority":                      emitPriorityHelper,
-	"set_priority":                  emitSetPriorityHelper,
-	"rename":                        emitRenameHelper,
-	"chmod":                         emitChmodHelper,
-	"truncate":                      emitTruncateHelper,
-	"mknod":                         emitMknodHelper,
-	"chown_at":                      emitChownAtHelper,
-	"set_file_times":                emitSetFileTimesHelper,
-	"remove_dir_all":                emitRemoveDirAllHelper,
-	"temp_dir":                      emitTempDirHelper,
-	"read_dir":                      emitReadDirHelper,
-	"read_dir_all":                  emitReadDirAllHelper,
-	"__fern_io_error":               emitIoErrorHelper,
-	"tcp_listen":                    emitTcpListenHelper,
-	"tcp_connect":                   emitTcpConnectHelper,
-	"tcp_accept":                    emitTcpAcceptHelper,
-	"tcp_recv":                      emitTcpRecvHelper,
-	"tcp_send":                      emitTcpSendHelper,
-	"tcp_close":                     emitTcpCloseHelper,
-	"tcp_pollable":                  emitTcpPollableHelper,
-	"poll":                          emitPollHelper,
-	"isatty":                        emitIsattyHelper,
-	"process_alive":                 emitProcessAliveHelper,
-	"signal_send":                   emitSignalSendHelper,
-	"set_process_group":             emitSetProcessGroupHelper,
-	"rlimit_nofile":                 emitRlimitNofileHelper,
-	"statfs":                        emitStatfsHelper,
-	"window_size":                   emitWindowSizeHelper,
-	"set_window_size":               emitSetWindowSizeHelper,
-	"signal_ignore":                 emitSignalDispositionHelper("signal_ignore", 1),
-	"signal_default":                emitSignalDispositionHelper("signal_default", 0),
-	"signal_mask":                   emitSignalMaskHelper,
-	"signal_disposition":            emitSignalDispositionReadHelper,
-	"wasm_timer_pollable":           emitWasmTimerPollableHelper,
-	"wasm_poll":                     emitWasmPollHelper,
-	"wasm_pollable_drop":            emitWasmPollableDropHelper,
-	"wasm_block":                    emitWasmBlockHelper,
-	"open_writer":                   emitOpenWriterHelper,
-	"__method_Writer_write":         emitWriterWriteHelper,
-	"__method_Writer_truncate":      emitWriterTruncateHelper,
-	"__method_Writer_close":         emitWriterCloseHelper,
-	"open_reader":                   emitOpenReaderHelper,
-	"__method_Reader_read_chunk":    emitReaderReadChunkHelper,
-	"__method_Reader_read_line":     emitReadLineHelper("__method_Reader_read_line", "", -1),
+	// The same realtime clock now_unix_ms reads, at the resolution the syscall
+	// actually has.
+	"now_ns":                      emitClockHelper("now_ns", clockRealtime, 1_000_000_000, 1),
+	"getuid":                      emitIdHelper("getuid", 174),
+	"getgid":                      emitIdHelper("getgid", 176),
+	"getgroups":                   emitGetgroupsHelper,
+	"environ":                     emitEnvironHelper,
+	"now_unix_ms":                 emitClockHelper("now_unix_ms", clockRealtime, 1_000, 1_000_000),
+	"sleep_ms":                    emitSleepMsHelper,
+	"sleep_ns":                    emitSleepNsHelper,
+	"string_from_bytes_unchecked": emitStringFromBytesHelper,
+	"__str_slice":                 emitStrSliceHelper,
+	"args":                        emitArgsHelper,
+	"env":                         emitEnvHelper,
+	"write_file":                  emitWriteFileHelperMode("write_file", "", 0o644, 0),
+	"write_file_exec":             emitWriteFileHelperMode("write_file_exec", "_x", 0o755, 0o755),
+	"read_file":                   emitReadFileHelper,
+	"read_file_bytes":             emitReadFileBytesHelper,
+	"remove_file":                 emitRemoveFileHelper,
+	"create_dir_all":              emitCreateDirAllHelper,
+	"create_dir":                  emitCreateDirHelper,
+	"chdir":                       emitChdirHelper,
+	"remove_dir":                  emitRemoveDirHelper,
+	"create_link":                 emitCreateLinkHelper,
+	"create_symlink":              emitCreateSymlinkHelper,
+	"read_link":                   emitReadLinkHelper,
+	"umask":                       emitUmaskHelper,
+	"priority":                    emitPriorityHelper,
+	"set_priority":                emitSetPriorityHelper,
+	"rename":                      emitRenameHelper,
+	"chmod":                       emitChmodHelper,
+	"truncate":                    emitTruncateHelper,
+	"mknod":                       emitMknodHelper,
+	"chown_at":                    emitChownAtHelper,
+	"set_file_times":              emitSetFileTimesHelper,
+	"remove_dir_all":              emitRemoveDirAllHelper,
+	"temp_dir":                    emitTempDirHelper,
+	"read_dir":                    emitReadDirHelper,
+	"read_dir_all":                emitReadDirAllHelper,
+	"__fern_io_error":             emitIoErrorHelper,
+	"tcp_listen":                  emitTcpListenHelper,
+	"tcp_connect":                 emitTcpConnectHelper,
+	"tcp_accept":                  emitTcpAcceptHelper,
+	"tcp_recv":                    emitTcpRecvHelper,
+	"tcp_send":                    emitTcpSendHelper,
+	"tcp_close":                   emitTcpCloseHelper,
+	"tcp_pollable":                emitTcpPollableHelper,
+	"poll":                        emitPollHelper,
+	"isatty":                      emitIsattyHelper,
+	"process_alive":               emitProcessAliveHelper,
+	"signal_send":                 emitSignalSendHelper,
+	"set_process_group":           emitSetProcessGroupHelper,
+	"rlimit_nofile":               emitRlimitNofileHelper,
+	"statfs":                      emitStatfsHelper,
+	"window_size":                 emitWindowSizeHelper,
+	"set_window_size":             emitSetWindowSizeHelper,
+	"signal_ignore":               emitSignalDispositionHelper("signal_ignore", 1),
+	"signal_default":              emitSignalDispositionHelper("signal_default", 0),
+	"signal_mask":                 emitSignalMaskHelper,
+	"signal_disposition":          emitSignalDispositionReadHelper,
+	"wasm_timer_pollable":         emitWasmTimerPollableHelper,
+	"wasm_poll":                   emitWasmPollHelper,
+	"wasm_pollable_drop":          emitWasmPollableDropHelper,
+	"wasm_block":                  emitWasmBlockHelper,
+	"open_writer":                 emitOpenWriterHelper,
+	"__method_Writer_write":       emitWriterWriteHelper,
+	"__method_Writer_truncate":    emitWriterTruncateHelper,
+	"__method_Writer_close":       emitWriterCloseHelper,
+	"open_reader":                 emitOpenReaderHelper,
+	"__method_Reader_read_chunk":  emitReaderReadChunkHelper,
+	"__method_Reader_read_line":   emitReadLineHelper("__method_Reader_read_line", "", -1),
 	// read_line(): the same reader on stdin, which is what a program that has
 	// not opened anything reads from.
 	"read_line": emitReadLineHelper("read_line", "_0", 0),
@@ -2613,9 +2646,9 @@ func emitAccessHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
-// emitIdHelper writes a leaf that is one argument-free syscall returning
-// a 32-bit id — geteuid (175) and getegid (177). Neither can fail, so
-// there is no errno path.
+// emitIdHelper writes a leaf that is one argument-free syscall returning a
+// 32-bit id — getuid (174), getgid (176) and their effective twins geteuid
+// (175) and getegid (177). None can fail, so there is no errno path.
 func emitIdHelper(name string, sysno int) func(func(string, ...any)) {
 	return func(w func(string, ...any)) {
 		w("")
@@ -3706,6 +3739,163 @@ func emitReaderReadChunkHelper(w func(string, ...any)) {
 // the two instantiations' local labels apart — a program using both would
 // otherwise define each twice, and the assembler keeps the last definition
 // silently.
+// emitGetgroupsHelper writes getgroups() -> i64[]: the process's supplementary
+// group ids, asked for twice — once for the count, once for the ids — and
+// memoised, since the set cannot change under a process that is not asking to
+// change it.
+//
+// The kernel writes 32-bit gids; the array the language sees is i64[], so the
+// widening walks BACKWARDS from the last element. Forwards would overwrite the
+// gid at 2i before reading the one at i.
+//
+// A refusal (or an empty set) answers an empty array rather than an error:
+// getgroups has no failure a caller can act on here, and the language's
+// signature has nowhere to put one.
+func emitGetgroupsHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("getgroups"))
+	w("\tstp x29, x30, [sp, #-48]!")
+	w("\tmov x29, sp")
+	w("\tstp x19, x20, [sp, #16]")
+	w("\tstr x21, [sp, #32]")
+	w("\tadrp x0, %s", getgroupsCacheSym)
+	w("\tadd x0, x0, #:lo12:%s", getgroupsCacheSym)
+	w("\tldr x1, [x0]")
+	w("\tcbz x1, .Lssa_gg_build")
+	w("\tmov x0, x1")
+	w("\tb .Lssa_gg_ret")
+	w(".Lssa_gg_build:")
+	w("\tmov x0, #0") // size 0 asks for the count
+	w("\tmov x1, #0")
+	w("\tmov x8, #158") // getgroups
+	w("\tsvc #0")
+	w("\tmov x19, x0")
+	w("\tcmp x19, #0")
+	w("\tb.gt .Lssa_gg_alloc")
+	w("\tmov x19, #0")
+	w(".Lssa_gg_alloc:")
+	// 16-byte header + count*8, as every array container here is laid out.
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #15")
+	w("\tand x4, x4, #-16")
+	w("\tlsl x5, x19, #3")
+	w("\tadd x5, x5, #16")
+	w("\tadd x6, x4, x5")
+	w("\tstr x6, [x3]")
+	emitHeapGuardCall(w)
+	w("\tadd x20, x4, #16")
+	w("\tstur w19, [x20, #-12]") // cap
+	w("\tmov w9, #0x80000000")
+	w("\tstur w9, [x20, #-8]")  // rc = static sentinel (cached, immortal)
+	w("\tstur w19, [x20, #-4]") // len
+	w("\tcbz x19, .Lssa_gg_done")
+	w("\tmov x0, x19")
+	w("\tmov x1, x20")
+	w("\tmov x8, #158") // getgroups
+	w("\tsvc #0")
+	w("\tcmp x0, #0")
+	w("\tb.le .Lssa_gg_zero")
+	w("\tmov x19, x0")
+	w("\tstur w19, [x20, #-4]")
+	w("\tmov x21, x19")
+	w(".Lssa_gg_widen:")
+	w("\tsub x21, x21, #1")
+	w("\ttbnz x21, #63, .Lssa_gg_done")
+	w("\tldr w9, [x20, x21, lsl #2]")
+	w("\tstr x9, [x20, x21, lsl #3]")
+	w("\tb .Lssa_gg_widen")
+	w(".Lssa_gg_zero:")
+	w("\tstur wzr, [x20, #-4]")
+	w(".Lssa_gg_done:")
+	w("\tadrp x0, %s", getgroupsCacheSym)
+	w("\tadd x0, x0, #:lo12:%s", getgroupsCacheSym)
+	w("\tstr x20, [x0]")
+	w("\tmov x0, x20")
+	w(".Lssa_gg_ret:")
+	w("\tldr x21, [sp, #32]")
+	w("\tldp x19, x20, [sp, #16]")
+	w("\tldp x29, x30, [sp], #48")
+	w("\tret")
+}
+
+// emitEnvironHelper writes environ() -> string[]: every "NAME=VALUE" entry of
+// the envp vector _start captured, as a memoised string[].
+//
+// envp carries no count word — it is NULL-terminated — so the length is a scan
+// before the build. Otherwise this is args() over a different vector, down to
+// the static rc sentinel on the container and the fresh rc string per entry.
+func emitEnvironHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("environ"))
+	w("\tadrp x1, %s", environCacheSym)
+	w("\tadd x1, x1, #:lo12:%s", environCacheSym)
+	w("\tldr x0, [x1]")
+	w("\tcbnz x0, .Lssa_environ_ret")
+	w("\tadrp x3, %s", envpSym)
+	w("\tadd x3, x3, #:lo12:%s", envpSym)
+	w("\tldr x3, [x3]")
+	// Count the entries: envp is NULL-terminated.
+	w("\tmov x2, #0")
+	w(".Lssa_environ_count:")
+	w("\tldr x9, [x3, x2, lsl #3]")
+	w("\tcbz x9, .Lssa_environ_counted")
+	w("\tadd x2, x2, #1")
+	w("\tb .Lssa_environ_count")
+	w(".Lssa_environ_counted:")
+	w("\tadrp x4, %s", heapPtrSym)
+	w("\tadd x4, x4, #:lo12:%s", heapPtrSym)
+	w("\tldr x5, [x4]")
+	w("\tadd x5, x5, #15")
+	w("\tand x5, x5, #-16")
+	w("\tlsl x6, x2, #3")
+	w("\tadd x7, x6, #16")
+	w("\tadd x8, x5, x7")
+	w("\tstr x8, [x4]")
+	emitHeapGuardCall(w)
+	w("\tadd x9, x5, #16")
+	w("\tstur w2, [x9, #-12]") // cap
+	w("\tmov w6, #0x80000000")
+	w("\tstur w6, [x9, #-8]") // rc = static sentinel, matching args()
+	w("\tstur w2, [x9, #-4]") // len
+	w("\tmov x10, #0")
+	w(".Lssa_environ_loop:")
+	w("\tcmp x10, x2")
+	w("\tb.hs .Lssa_environ_done")
+	w("\tldr x11, [x3, x10, lsl #3]") // the NUL-terminated C string
+	w("\tmov x12, #0")
+	w(".Lssa_environ_slen:")
+	w("\tldrb w13, [x11, x12]")
+	w("\tcbz w13, .Lssa_environ_slen_done")
+	w("\tadd x12, x12, #1")
+	w("\tb .Lssa_environ_slen")
+	w(".Lssa_environ_slen_done:")
+	emitAllocBlock(w, "x5", "x12", 9)
+	w("\tmov w6, #1")
+	w("\tstr w6, [x5]")      // rc = 1
+	w("\tstr w12, [x5, #4]") // len
+	w("\tadd x14, x5, #8")   // string data
+	w("\tmov x15, #0")
+	w(".Lssa_environ_cp:")
+	w("\tcmp x15, x12")
+	w("\tb.hs .Lssa_environ_cpd")
+	w("\tldrb w16, [x11, x15]")
+	w("\tstrb w16, [x14, x15]")
+	w("\tadd x15, x15, #1")
+	w("\tb .Lssa_environ_cp")
+	w(".Lssa_environ_cpd:")
+	w("\tstrb wzr, [x14, x12]")       // trailing NUL
+	w("\tstr x14, [x9, x10, lsl #3]") // container[i]
+	w("\tadd x10, x10, #1")
+	w("\tb .Lssa_environ_loop")
+	w(".Lssa_environ_done:")
+	w("\tstr x9, [x1]") // memoise
+	w("\tmov x0, x9")
+	w(".Lssa_environ_ret:")
+	w("\tret")
+}
+
 // emitArrPushCliffReader writes one of the two cliff accessors: `wide` reads
 // the byte weight as an i64, otherwise the crossing count as an i32.
 func emitArrPushCliffReader(name, sym string, wide bool) func(w func(string, ...any)) {
