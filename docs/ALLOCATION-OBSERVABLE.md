@@ -185,6 +185,15 @@ now *an* observable with a written contract, so a claim about allocation
 can be pinned by a conformance case at all. Before it, the corpus could
 not express one.
 
+Nor does it say *where* in an expression an allocation is charged, and
+the two compilers currently answer differently: native buys an aggregate
+literal's box before evaluating its field expressions, the self-host
+after (#9614). The count a loop reports is unaffected — the offset is a
+constant — but a reading taken inside a literal is not portable, and a
+function that snapshots the counter and returns the snapshot as a struct
+excludes its own result box under one compiler and includes it under the
+other. `std/bench` hands back scalars for exactly this reason.
+
 ## Such a case must declare itself
 
 Every conformance case is also run with reclamation compiled OUT, and

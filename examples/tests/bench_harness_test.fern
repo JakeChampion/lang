@@ -3,7 +3,7 @@ import "std/bench";
 import "std/i32";
 import "std/i64";
 import "std/string";
-// examples/tests/bench_test.fern — std/bench, the measurement harness
+// examples/tests/bench_harness_test.fern — std/bench, the measurement harness
 // (#9592). The arithmetic is tested over HAND-BUILT reports rather than
 // timed ones: a percentile computed from a run of the clock would assert
 // whatever the machine happened to do, which is the one thing a test must
@@ -200,15 +200,16 @@ function test_run_returns_sorted_samples(): test.TestOutcome {
 // nothing after it must read clean — and under `-interp`, where the count is
 // always 0, this asserts the API answers rather than the arena's behaviour.
 function test_mark_reads_clean_over_a_quiet_region(): test.TestOutcome {
-    var m: bench.Mark = bench.mark();
+    var at_allocs: i64 = bench.mark_allocs();
+    var at_fresh: i64 = bench.mark_fresh_bytes();
     var i: i32 = 0;
     var sum: i32 = 0;
     while (i < 1000) { sum = sum + i; i = i + 1; }
     if (sum < 0) { return test.fail("unreachable"); }
-    if (!bench.no_allocs_since(m)) {
-        return test.fail("arithmetic allocated: " + bench.since(m).describe());
+    if (!bench.no_allocs_since(at_allocs)) {
+        return test.fail("arithmetic allocated: " + bench.since(at_allocs, at_fresh).describe());
     }
-    if (bench.allocs_since(m) != (0 as i64)) { return test.fail("scalar disagrees with the predicate"); }
+    if (bench.allocs_since(at_allocs) != (0 as i64)) { return test.fail("scalar disagrees with the predicate"); }
     return test.pass();
 }
 

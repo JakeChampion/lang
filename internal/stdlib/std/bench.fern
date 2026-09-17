@@ -35,9 +35,9 @@
 //
 // and for the assertion half:
 //
-//     var m: bench.Mark = bench.mark();   // steady state starts now
+//     var at: i64 = bench.mark_allocs();  // steady state starts now
 //     drive(state, 1000000);
-//     if (!bench.no_allocs_since(m)) { return test.fail(bench.since(m).describe()); }
+//     if (!bench.no_allocs_since(at)) { return test.fail(bench.allocs_since(at).to_string()); }
 import "std/i32";
 import "std/i64";
 import "core/cmp";
@@ -46,55 +46,67 @@ import "std/string";
 
 // ===================== THE ALLOCATION MARK =====================
 
-// A `Mark` is a snapshot of both allocation observables at one instant. It is
-// what "steady state starts now" means concretely: everything the program did
-// to set itself up is behind the mark, and what follows is the part a
-// zero-allocation claim is about.
-pub struct Mark {
-    allocs: i64,
-    fresh_bytes: i64,
-}
+// A mark is a reading of one allocation observable at one instant, and it is a
+// SCALAR. That is the whole design constraint: a mark is what "steady state
+// starts now" means concretely, so taking one must not itself be something the
+// allocator records. A struct or a tuple would be a box, and a box is an
+// allocation landing at the boundary the mark is supposed to draw — on the
+// wrong side of it under one compiler and the right side under the other,
+// since the two disagree about when an aggregate literal's box is bought
+// (#9614). Two `i64`s depend on none of that: they are exact on every backend
+// and under both compilers.
+//
+// The pairing is by name — `mark_allocs` with `allocs_since`, `mark_fresh_bytes`
+// with `fresh_bytes_since` — and `Delta` below is how the two travel together
+// once the measured region is over and an allocation is affordable again.
 
-// A `Delta` is what the allocator did between a mark and now.
+// A `Delta` is what the allocator did between a mark and now. It is a struct,
+// so building one is an allocation: it is for REPORTING a region that has
+// ended, never for reading one that is still running.
 pub struct Delta {
     allocs: i64,
     fresh_bytes: i64,
 }
 
-// `mark()` — snapshot the allocation observables. Call it at the boundary
-// between initialization and steady state.
-pub function mark(): Mark {
-    return Mark { allocs: __heap_alloc_count(), fresh_bytes: __heap_bump_bytes() };
+// `mark_allocs()` — the allocator-call count right now. Call it at the
+// boundary between initialization and steady state.
+pub function mark_allocs(): i64 {
+    return __heap_alloc_count();
 }
 
-// `allocs_since(m)` / `fresh_bytes_since(m)` — the two halves as scalars.
-//
-// Scalars, and not a `since(m).allocs`, because the measurement must not
-// perturb what it measures: a `Delta` is a struct, a struct literal is a box,
-// and a box is an allocation the reading would then report. Asking for the
-// count through one measured 2 allocations in an otherwise empty steady state
-// — which is the whole of what a strict experiment asserts is 0.
-pub function allocs_since(m: Mark): i64 {
-    return __heap_alloc_count() - m.allocs;
+// `mark_fresh_bytes()` — the fresh-allocation high-water mark right now.
+pub function mark_fresh_bytes(): i64 {
+    return __heap_bump_bytes();
 }
 
-pub function fresh_bytes_since(m: Mark): i64 {
-    return __heap_bump_bytes() - m.fresh_bytes;
+// `allocs_since(at)` / `fresh_bytes_since(at)` — how far each observable has
+// moved since its mark. Scalars in and scalars out, so asking the question
+// cannot change the answer: an earlier version of this module returned the
+// pair as a `Delta` and a caller reading the count through it measured 2
+// allocations in an otherwise empty steady state, which is the whole of what
+// a strict experiment asserts is 0.
+pub function allocs_since(at: i64): i64 {
+    return __heap_alloc_count() - at;
 }
 
-// `no_allocs_since(m)` — the strict-mode assertion: the allocator has not run
+pub function fresh_bytes_since(at: i64): i64 {
+    return __heap_bump_bytes() - at;
+}
+
+// `no_allocs_since(at)` — the strict-mode assertion: the allocator has not run
 // once since the mark. This is the claim a `fip` steady state makes, and the
 // one `__heap_bump_bytes()` alone cannot check: a loop that allocates and
 // recycles buys no fresh bytes and still calls the allocator every round.
-pub function no_allocs_since(m: Mark): boolean {
-    return allocs_since(m) == (0 as i64);
+pub function no_allocs_since(at: i64): boolean {
+    return allocs_since(at) == (0 as i64);
 }
 
-// `since(m)` — both halves together, for a REPORT rather than an assertion.
-// It allocates its own result box, so a caller measuring a strict steady state
-// asks through the scalars above and reaches for this once the region is over.
-pub function since(m: Mark): Delta {
-    return Delta { allocs: allocs_since(m), fresh_bytes: fresh_bytes_since(m) };
+// `since(at_allocs, at_fresh)` — both halves together, for a REPORT rather
+// than an assertion. It allocates its own result box, so a caller measuring a
+// strict steady state asks through the scalars above and reaches for this once
+// the region is over.
+pub function since(at_allocs: i64, at_fresh: i64): Delta {
+    return Delta { allocs: allocs_since(at_allocs), fresh_bytes: fresh_bytes_since(at_fresh) };
 }
 
 // `(d) describe()` — a one-line rendering for a failure message, naming both
@@ -146,7 +158,8 @@ pub function run(name: string, warmup: i32, iterations: i32, body: () => void): 
         samples = samples.append(0 as i64);
         p = p + 1;
     }
-    var m: Mark = mark();
+    var at_allocs: i64 = mark_allocs();
+    var at_fresh: i64 = mark_fresh_bytes();
     var started_ns: i64 = monotonic_ns();
     var i: i32 = 0;
     while (i < iterations) {
@@ -156,8 +169,8 @@ pub function run(name: string, warmup: i32, iterations: i32, body: () => void): 
         i = i + 1;
     }
     var wall: i64 = monotonic_ns() - started_ns;
-    var allocs: i64 = allocs_since(m);
-    var fresh: i64 = fresh_bytes_since(m);
+    var allocs: i64 = allocs_since(at_allocs);
+    var fresh: i64 = fresh_bytes_since(at_fresh);
     return Report {
         name: name,
         iterations: iterations,
