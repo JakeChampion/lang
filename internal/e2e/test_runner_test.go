@@ -2833,15 +2833,16 @@ func TestRunnerFuzzCorpusExample(t *testing.T) {
 	}
 }
 
-// `examples/tests/bench_test.fern` exercises the bench
+// `examples/tests/runner_bench_test.fern` exercises the bench
 // harness: `r.bench(name, iter, fn)` reports timing as a TAP
 // comment and always passes; `r.bench_max_us(name, iter, fn,
 // budget)` fails when the median exceeds the budget. We
 // verify both the comment shape (min / median / mean / max
-// fields) and the budgeted case's pass path.
+// fields) and the budgeted case's pass path. std/bench, a
+// separate module, has its own example and its own gate.
 func TestRunnerBenchExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/bench_test.fern")
+	src := langSrcAbs(t, "examples/tests/runner_bench_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
