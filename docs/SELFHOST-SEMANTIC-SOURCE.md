@@ -598,8 +598,16 @@ Unsupported constructs refuse the whole function with a reason.
 Refused, each with its own reason: calls of the remaining builtins, a void
 call in expression position, an operator or a literal at the pointer width,
 unsigned negation, generic records, the pattern shapes
-above, `defer`, receiver methods, external and async
+above, receiver methods, external and async
 functions.
+
+A `defer` arrives here already lowered: the desugar replaces it with a flag
+and replays its action at the scope's exits, lifting the declaration of a
+binding the action names out of the block that holds it so the slot spans the
+replay, and typing the shared return temp every expanded `return` writes.
+Both need a value to start a declaration at, chosen from the annotation, so a
+binding or a return type whose annotation has no zero literal — a struct, an
+enum, a tuple, a cell — still refuses (#9575).
 
 ## Calls
 

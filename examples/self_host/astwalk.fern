@@ -1040,7 +1040,7 @@ pub function pattern_binders(p: ast.Pattern, own acc: string[]): string[] {
 // loop variable, and the patterns of a `match`'s arms. Every one of them is
 // carried on the statement node, which is why this walk needs a statement
 // visitor and cannot be written over fold_stmt alone.
-function binders_of(st: ast.Stmt, own acc: string[]): string[] {
+pub function binders_of(st: ast.Stmt, own acc: string[]): string[] {
     match (st) {
         ast.StmtVar(v) => { return append_bound_name(acc, v.name); },
         ast.StmtFor(f) => { return append_bound_name(acc, f.var_name); },
