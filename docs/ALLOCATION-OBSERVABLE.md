@@ -41,12 +41,36 @@ it maps a 2 MB huge page under `THP=always` and a 4 KB page under
 and 552 MB on a CI runner — a 12x spread with identical allocation. The
 bump counter is exact, host-independent, and meaningful under qemu.
 
+`__heap_alloc_count()` returns the **number of blocks the allocator has
+handed out** since the program started: the freelist-pop path and the
+bump path alike, with `__fern_alloc_reuse`'s in-place path counting as
+neither. It is a monotone counter, and it is the half the bump mark
+cannot see — a pop hands out a block without moving the cursor. A loop
+of 100,000 rounds that each build and drop one string reads 32 fresh
+bytes and 200,004 allocations, so only the count can tell a `fip` steady
+state from a busy one (#9596).
+
+The two answer different questions and both are worth having. Bytes say
+whether the arena grows, which is what a leak looks like; the count says
+whether the allocator ran at all, which is what a zero-allocation claim
+asserts. A reclaiming loop is flat in bytes and linear in calls.
+
+**The counter is emitted only for a module that reads it.** A program
+that never calls `__heap_alloc_count()` compiles to the same bytes it
+did before the observable existed — the standard `FERN_LEAKCHECK` and
+`-sanitize` are already held to. On the natives the counter IS the leak
+census's `__fern_lc_alloc_count`, so the two readings cannot disagree;
+the self-host keeps its own word, because its census lives inside the
+heavier heap-event runtime.
+
 ## What is portable, and what is not
 
 | | Portable? |
 | --- | --- |
 | Whether the high-water mark **grows with the round count** | ✅ |
+| Whether the allocation **count grows with the round count** | ✅ |
 | The absolute byte count | ❌ |
+| The absolute allocation count | ❌ |
 | Availability of the observable at all | ❌ — see below |
 
 **The absolute number is not portable and must never be asserted.** It
@@ -64,7 +88,8 @@ scales with N. That difference is exactly what separates a working
 reference-counting implementation from a leaking one, and it is
 observable without knowing a single absolute number.
 
-**The interpreter does not model the arena.** `internal/interp` has no
+**The interpreter does not model the arena.** Neither observable is
+available there, for one reason: `internal/interp` has no
 bump allocator — it is a tree-walking evaluator over Go values — so
 `__heap_bump_bytes()` returns `0` there unconditionally, and the shape
 above is unobservable. This is a deliberate hole, not a defect: giving
@@ -99,6 +124,14 @@ All are stated over the *shape*, and all are pinned — see
   missing it scales with the read-heavy hot path rather than with the
   data: #6561 stranded two blocks on every lookup, and both the HIT and
   the MISS edge leaked, by different amounts and through different boxes.
+- **AL-05.** The count half of AL-01: the loop AL-01 measures as flat in
+  bytes calls the allocator every round, so doubling the rounds doubles
+  `__heap_alloc_count()`. Without it "this steady state allocates
+  nothing" and "this steady state allocates and recycles" read
+  identically, and every `fip` claim under #9582 is the difference
+  between them. The absolute count is per-backend — the register
+  backends spend two allocator calls per round on that shape and wasm
+  three — so the case asserts the ratio, never the number.
 
 ## What it found immediately
 

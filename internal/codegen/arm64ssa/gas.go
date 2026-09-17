@@ -262,7 +262,7 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 	w("\tsvc #0")
 	w("")
 	for _, name := range names {
-		if err := emitFunc(w, name, progs[name], numAlloc, strLabels, sentLabels, fnIndex); err != nil {
+		if err := emitFunc(w, name, progs[name], numAlloc, strLabels, sentLabels, fnIndex, countsAllocs(helpers)); err != nil {
 			return "", err
 		}
 		w("")
@@ -272,7 +272,7 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 	emitRuntimeHelpers(w, helpers)
 	emitAbortTails(w, b.String())
 	if heap {
-		emitHeapGuard(w)
+		emitHeapGuard(w, countsAllocs(helpers))
 		emitAllocPres(w)
 	}
 	if ast.LeakCheckEnabled {
@@ -409,7 +409,7 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		w("%s:", freelistSym)
 		w("\t.space 2048")
 	}
-	if ast.LeakCheckEnabled {
+	if countsAllocs(helpers) {
 		// The census counters. Emitted whatever the module allocates, so a
 		// no-heap program still reports its (zero) line rather than nothing.
 		w(".section .bss")
@@ -681,11 +681,11 @@ func emitHeapReserve(w func(string, ...any)) {
 //
 // Being on every bump also makes it the one place a bump-allocated block can be
 // counted, so under FERN_LEAKCHECK it ticks the census's allocation count.
-func emitHeapGuard(w func(string, ...any)) {
+func emitHeapGuard(w func(string, ...any), census bool) {
 	w("")
 	w("%s:", heapGuardSym)
 	w("\tstp x0, x1, [sp, #-16]!")
-	if ast.LeakCheckEnabled {
+	if census {
 		// Flag-safe (no cmp / no s-form), like the rest of the guard.
 		w("\tadrp x0, %s", lcAllocCountSym)
 		w("\tadd x0, x0, #:lo12:%s", lcAllocCountSym)
@@ -1391,6 +1391,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_arr_cow_inplace_ptr":    emitArrCowInplaceElemHelper("__fern_arr_cow_inplace_ptr", "__fern_rc_inc", "cowp"),
 	"__fern_arr_cow_inplace_str":    emitArrCowInplaceElemHelper("__fern_arr_cow_inplace_str", "__fern_rc_inc", "cows"),
 	"__fern_heap_bump_bytes":        emitHeapBumpBytesHelper,
+	"__fern_heap_alloc_count":       emitHeapAllocCountHelper,
 	"__method_string_as_bytes":      emitStringAsBytesHelper,
 	"__slice_idx":                   emitSliceIdxHelper("__slice_idx", 2),
 	"__slice_idx_1":                 emitSliceIdxHelper("__slice_idx_1", 0),
@@ -4421,6 +4422,7 @@ var heapUsingHelpers = map[string]bool{
 	"__fern_arr_cow_inplace_ptr":      true,
 	"__fern_arr_cow_inplace_str":      true,
 	"__fern_heap_bump_bytes":          true,
+	"__fern_heap_alloc_count":         true,
 	"__slice_make":                    true,
 	"stat":                            true,
 	"lstat":                           true,
@@ -4808,7 +4810,15 @@ func emitClosureDropHelper(w func(string, ...any)) {
 // physical extent always covers the class __free will later push it on.
 // Popped memory is NOT zeroed, the same contract as the flat __fern_alloc.
 // Clobbers x0..x10; the inline sites go through __ssa_alloc_pres instead.
-func emitAllocHelper(w func(string, ...any)) {
+func emitAllocHelper(w func(string, ...any)) { emitAllocHelperCensus(w, ast.LeakCheckEnabled) }
+
+// emitAllocHelperCounting is the allocator with the census tick a module that
+// reads __heap_alloc_count() (#9596) needs on the freelist-pop path — the one
+// allocation shape that leaves the cursor alone, so the bump guard's tick
+// cannot see it. Substituted for the plain body by emitRuntimeHelpers.
+func emitAllocHelperCounting(w func(string, ...any)) { emitAllocHelperCensus(w, true) }
+
+func emitAllocHelperCensus(w func(string, ...any), census bool) {
 	w("")
 	w("%s:", fnLabel("__alloc"))
 	w("\tmov w0, w0") // size is a non-negative i32
@@ -4819,7 +4829,7 @@ func emitAllocHelper(w func(string, ...any)) {
 	w("\tcbz x3, .Lssa_alloc_bump")
 	w("\tldr x4, [x3]")             // head.next
 	w("\tstr x4, [x2, x1, lsl #3]") // heads[idx] = next
-	if ast.LeakCheckEnabled {
+	if census {
 		// The one allocation shape that leaves the cursor alone, so the guard
 		// cannot see it. x0 still holds the class-rounded size __free counted
 		// this block with.
@@ -9076,6 +9086,19 @@ func emitStringAsBytesHelper(w func(string, ...any)) {
 // high-water mark, (cursor - base) in bytes. Zero before _start seeds the
 // reservation, which only a program that never allocates can observe. Mirrors
 // the native helper of the same name; leaf.
+// emitHeapAllocCountHelper writes __fern_heap_alloc_count() -> i64 (#9596):
+// the census count of blocks handed out, which is the half
+// __fern_heap_bump_bytes cannot see — a freelist pop hands out a block
+// without moving the cursor. Leaf.
+func emitHeapAllocCountHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_heap_alloc_count"))
+	w("\tadrp x1, %s", lcAllocCountSym)
+	w("\tadd x1, x1, #:lo12:%s", lcAllocCountSym)
+	w("\tldr x0, [x1]")
+	w("\tret")
+}
+
 func emitHeapBumpBytesHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__fern_heap_bump_bytes"))
@@ -10069,7 +10092,7 @@ func (f frameLayout) inArg(k int) int { return f.bytes + 8*k }
 // for that, once against a provisional frame and once against the final one:
 // the layout reaches paramMoveLines only as slot and incoming-argument offsets,
 // so the two renders differ in immediates and never in a register name.
-func emitFunc(out func(string, ...any), name string, p *x86.Program, numAlloc int, strLabels map[string]string, sentLabels map[int64]string, fnIndex map[string]int) error {
+func emitFunc(out func(string, ...any), name string, p *x86.Program, numAlloc int, strLabels map[string]string, sentLabels map[int64]string, fnIndex map[string]int, counting bool) error {
 	label := fnLabel(name)
 	call := funcHasCall(p)
 
@@ -10127,7 +10150,7 @@ func emitFunc(out func(string, ...any), name string, p *x86.Program, numAlloc in
 			if left < 0 {
 				left = in.Dst
 			}
-			if lines, ok := inlineAllocLines(in, fr, numAlloc, fmt.Sprintf("%s_b%d_i%d", label, bi, ii)); ok {
+			if lines, ok := inlineAllocLines(in, fr, numAlloc, fmt.Sprintf("%s_b%d_i%d", label, bi, ii), counting); ok {
 				for _, l := range lines {
 					if strings.HasSuffix(l, ":") {
 						w("%s", l)
@@ -10697,7 +10720,10 @@ func computeHelperClobbers() map[string][]bool {
 	// The two routines a body reaches by their bare labels rather than through
 	// fnLabel, so a branch to either resolves like any other helper.
 	bodies := map[string]string{
-		heapGuardSym: renderHelper(emitHeapGuard),
+		// Rendered with the census tick ON: it is the wider body, and a
+		// clobber set has to cover every spelling of the helper a module
+		// can carry.
+		heapGuardSym: renderHelper(func(w func(string, ...any)) { emitHeapGuard(w, true) }),
 		bcopySym:     renderHelper(emitBcopy),
 		// Preserves every register it touches (that is its whole job), so a
 		// body reaching it inherits nothing; reading its text would say x0..x15.
@@ -12050,13 +12076,34 @@ func maskFix(dst int, wdt int8, narrow bool) []string {
 // code read as a large regression here. The measurement behind it is
 // x86-64's (#8193); this side is the same hazard, applied symmetrically
 // rather than measured.
+// countsAllocs reports whether this module maintains the census counters.
+// The leak detector wants them; so does a module that reads
+// __heap_alloc_count() (#9596), which is the allocation half of the same
+// census without the exit report.
+func countsAllocs(helpers []string) bool {
+	if ast.LeakCheckEnabled {
+		return true
+	}
+	for _, h := range helpers {
+		if h == "__fern_heap_alloc_count" {
+			return true
+		}
+	}
+	return false
+}
+
 func emitRuntimeHelpers(w func(string, ...any), helpers []string) {
+	counting := countsAllocs(helpers)
 	for _, h := range helpers {
 		// Column 0, like every other directive the backends emit: the
 		// instruction counters (scripts/perf-bench, the SSA CLI gate) count
 		// indented lines, so an indented directive would read as an
 		// instruction the program does not execute.
 		w(".p2align 4")
+		if counting && h == "__alloc" {
+			emitAllocHelperCounting(w)
+			continue
+		}
 		runtimeHelperEmitters[h](w)
 	}
 }

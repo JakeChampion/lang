@@ -472,6 +472,7 @@ function intrinsic_result(name: string, argc: i32): typeinfo.Type {
   if (argc == 2 && name == "__free") { return t_void(); }
   if (argc == 0 && name == "__ptr_width") { return t_i32(); }
   if (argc == 0 && name == "__heap_bump_bytes") { return t_i64(); }
+  if (argc == 0 && name == "__heap_alloc_count") { return t_i64(); }
   if (argc == 0 && name == "__heap_mark") { return t_i64(); }
   if (argc == 1 && name == "__heap_release_to") { return t_void(); }
   if (argc == 3 && name == "__memcpy") { return t_void(); }

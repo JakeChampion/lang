@@ -71,4 +71,10 @@ func emitHelperBss(w func(string, ...any), helpers []string, countsUnderflow boo
 		w("%s:", rcUnderflowSym)
 		w("\t.quad 0")
 	}
+	if countsAllocs(helpers) {
+		w(".section .bss")
+		w(".align 8")
+		w("%s:", allocCountSym)
+		w("\t.quad 0")
+	}
 }

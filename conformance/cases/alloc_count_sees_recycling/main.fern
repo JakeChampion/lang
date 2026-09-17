@@ -1,0 +1,50 @@
+// spec: AL-05
+//
+// The half `__heap_bump_bytes()` cannot see. A loop that builds a string
+// and drops it recycles the same block every round: the bump cursor
+// never moves after the warm-up, so the fresh-byte curve is FLAT no
+// matter how many rounds run. The allocator was still called every
+// round, and `__heap_alloc_count()` is what says so — doubling the
+// round count doubles the count.
+//
+// Without it a program cannot tell a steady state that allocates
+// nothing from one that allocates and recycles, which is the whole of
+// what a `fip` claim asserts about the steady state.
+//
+// The case prints the SHAPE, never a count. How many allocator calls a
+// construct costs is a legitimate per-backend difference — the register
+// backends measure two per round here and wasm three — and only the
+// scaling is portable. See docs/ALLOCATION-OBSERVABLE.md.
+import "std/i32";
+import "std/i64";
+import "std/string";
+
+function round(n: i32): i32 {
+    var s: string = "abcdefgh" + n.to_string();
+    return s.len();
+}
+
+function rounds(n: i32): i32 {
+    var acc: i32 = 0;
+    for i in 0..n {
+        acc = acc + round(i);
+    }
+    return acc;
+}
+
+function main(): i32 {
+    var c0: i64 = __heap_alloc_count();
+    var x: i32 = rounds(50);
+    var c1: i64 = __heap_alloc_count();
+    var y: i32 = rounds(100);
+    var c2: i64 = __heap_alloc_count();
+
+    print(x.to_string());
+    print(y.to_string());
+    // Twice the rounds, twice the allocator calls.
+    if ((c2 - c1) == (c1 - c0) * 2i64) { print("scales"); } else { print("off"); }
+    // And the count moved at all — a reading of zero would satisfy the
+    // line above and mean the observable is blind.
+    if ((c1 - c0) > 0i64) { print("counted"); } else { print("blind"); }
+    return 0;
+}

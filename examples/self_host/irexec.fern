@@ -195,6 +195,10 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: ir.LoweredF
     // node stores [next@+0, size@+4] in its own first two words).
     var heap: i32[] = heap_in;
     var freehead: i32 = freehead_in;
+    // Blocks handed out, what op heap_alloc_count reads back (#9596): the
+    // reuse path counts exactly like the bump path, since the count is of
+    // blocks handed out rather than of memory bought.
+    var allocs: i32 = 0;
 
     var pc: i32 = 0;
     while (pc < ops.len()) {
@@ -253,6 +257,7 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: ir.LoweredF
                     cur = heap[cur / 4];
                 }
             }
+            allocs = allocs + 1;
             var ptr: i32 = 0;
             if (reuse != 0) {
                 ptr = reuse;
@@ -709,6 +714,11 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: ir.LoweredF
             var rsp2: i32 = stack[sp];
             heap = heap.with((rsp2 + rso * 4) / 4, rsv);
             stack = stack.with(sp, rsv);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind_tag == 315) {  // heap_alloc_count
+            stack = stack.with(sp, allocs);
             sp = sp + 1;
             pc = pc + 1;
         }

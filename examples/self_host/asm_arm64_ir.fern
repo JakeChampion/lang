@@ -1788,6 +1788,8 @@ pub function emit_function_via_ir_named(r: irlower.LowerResult, label_name: stri
             }
         } else if (o.kind_tag == 80) {  // heap_bump_bytes
             s = emit_arm64_op_heap_bump_bytes(o, s);
+        } else if (o.kind_tag == 315) {  // heap_alloc_count
+            s = emit_arm64_op_heap_alloc_count(o, s);
         } else if (o.kind_tag == 229) {  // heap_mark
             // The arena checkpoint: the cursor, plus a snapshot of BOTH freelist
             // head tables into their .bss shadows. Snapshotted rather than
@@ -2747,6 +2749,21 @@ function emit_arm64_op_heap_bump_bytes(o: ir.Op, s: asmcore.EmitState): asmcore.
     s = s.write("    cmp x0, #0\n");
     s = s.write("    csel x2, x2, xzr, ne\n");            // 0 if uninit, else ptr−base
     s = s.write("    str x2, [sp, #-16]!\n");
+
+    return s;
+}
+
+// emit_arm64_op_heap_alloc_count reads the allocator's call count (#9596),
+// ticked at __fern_alloc's entry so the freelist-pop path is counted exactly
+// like the bump path. Inline for heap_bump_bytes's reason: it reads a runtime
+// word, and a call would only add an ABI. The `alloc_count` need is what puts
+// the word and the tick into the runtime, so a program that never asks for
+// the number emits neither.
+function emit_arm64_op_heap_alloc_count(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+    s = s.mark_heap();
+    s = s.need("alloc_count");
+    s = s.write("    adrp x0, __fern_alloc_count\n    add x0, x0, :lo12:__fern_alloc_count\n    ldr x0, [x0]\n");
+    s = s.write("    str x0, [sp, #-16]!\n");
 
     return s;
 }
@@ -4901,6 +4918,20 @@ function leak_check_on(): boolean {
 // __fern_alloc's entry, after the rounding and BEFORE the large tier
 // re-rounds x0 to its class capacity. x1/x2 are inside __fern_alloc's
 // documented x0..x3 clobber set and dead at that point.
+// alloc_count_bump: tick the allocator's call count (#9596). Emitted at the
+// same point as the census bump below — after the rounding, ahead of the
+// class check — so the freelist pop and the bump are counted alike. x1/x2 are
+// the census's scratch here and dead at this point for the same reason.
+function alloc_count_bump(s: asmcore.EmitState): asmcore.EmitState {
+    if (!s.has_need("alloc_count")) { return s; }
+    s = s.write("    adrp x1, __fern_alloc_count\n");
+    s = s.write("    add x1, x1, :lo12:__fern_alloc_count\n");
+    s = s.write("    ldr x2, [x1]\n");
+    s = s.write("    add x2, x2, #1\n");
+    s = s.write("    str x2, [x1]\n");
+    return s;
+}
+
 function lc_bump_alloc(s: asmcore.EmitState): asmcore.EmitState {
     if (!leak_check_on()) { return s; }
     s = s.write("    adrp x1, __fern_lc_alloc_count\n");
@@ -5015,6 +5046,14 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     // See the x86-64 comment in asm_ir.fern.
     s = s.write("    .globl __fern_heap_ptr\n");
     s = s.write("__fern_heap_ptr: .quad 0\n");       // bump cursor (0 until first mmap)
+    if (s.has_need("alloc_count")) {
+        // The allocator's call count (#9596), read inline by kind_tag 315 —
+        // .globl for the cursor pair's reason, since the read is an inline
+        // adrp/add/ldr from whichever unit asked for it.
+        s = s.write("    .align 3\n");
+        s = s.write("    .globl __fern_alloc_count\n");
+        s = s.write("__fern_alloc_count: .quad 0\n");
+    }
     s = s.write("    .align 3\n");
     s = s.write("    .globl __fern_heap_end\n");
     s = s.write("__fern_heap_end: .quad 0\n");        // arena end (base + heap_size)
@@ -5086,6 +5125,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    lsr x3, x0, #3\n");        // idx = roundup8(size)/8
     s = s.write("    lsl x0, x3, #3\n");        // rounded size = idx*8
     s = lc_bump_alloc(s);
+    s = alloc_count_bump(s);
     s = s.write("    mov x2, #0x10000\n");      // freelist class cap (65536); reg form (shifted cmp imm may be unsupported)
     s = s.write("    cmp x3, x2\n");
     s = s.write("    b.hs .Lalloc_large\n");
