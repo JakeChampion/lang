@@ -405,7 +405,16 @@ function prod_host_kind(k: string): boolean {
         "load_i32", "load_i64", "load_ptr", "store_i32", "store_i64", "store_ptr", "raw_arr_box",
         "map_new", "strbuf_take", "args", "map_hash_seed", "arr_push_shared_bytes", "arr_push_shared_count"];
     for x in host { if (x == k) { return true; } }
-    return flat_op_argc(k) >= 0;
+    return flat_op_argc(k) >= 0 || flat_str_kind(k) || k == "clz" || k == "ctz" || k == "popcount";
+}
+
+// flat_str_kind is a string op the emitters select from emit_str_op, less the
+// ones the lift lowers itself; it goes through flat_op with the operand count
+// ir.op_pops gives.
+function flat_str_kind(k: string): boolean {
+    var own: string[] = ["str_len", "str_concat", "str_eq", "str_cmp", "str_index", "str_slice", "memchr"];
+    for x in own { if (x == k) { return false; } }
+    return ir.is_str_op_kind(ir.kind_id(k));
 }
 
 // flat_op_argc is the operand count of an op the emitters run through the
@@ -435,8 +444,10 @@ function flat_op_argc(k: string): i32 {
 // arm for that op between a push of the operands and a pop of the result,
 // and the allocator treats it as a call, so the arm's registers hold nothing
 // live.
-function lift_prod_host(k: string, at: i32, lv: LiftVals): LiftVals {
+function lift_prod_host(k: string, op: ir.Op, at: i32, lv: LiftVals): LiftVals {
     if (flat_op_argc(k) >= 0) { return lift_pop_push(lv, flat_op_argc(k), 59, at, k); }
+    if (flat_str_kind(k)) { return lift_pop_push(lv, ir.op_pops(op), 59, at, k); }
+    if (k == "clz" || k == "ctz" || k == "popcount") { return lift_pop_push(lv, 1, 10, 0, k + ":" + util.i32_to_string(op.width)); }
     if (k == "map_new") { return lift_pop_push(lv, 1, 50, 0, k); }
     if (k == "strbuf_take" || k == "args" || k == "map_hash_seed") { return lift_pop_push(lv, 0, 50, 0, k); }
     if (k == "arr_push_shared_bytes") { return lift_pop_push(lv, 0, 58, 1, "__fern_arr_push_copied"); }
@@ -474,10 +485,10 @@ function prod_call_argc(k: string): i32 {
     for x in two { if (x == k) { return 2; } }
     var one: string[] = ["str_from_bytes", "alloc", "alloc_u8", "raw_alloc", "print_str", "eprint_str",
         "read_line", "read_file", "read_file_bytes", "remove_dir_all", "remove_file", "create_dir_all",
-        "read_dir", "read_dir_all", "env", "stat", "lstat", "putchar"];
+        "read_dir", "read_dir_all", "env", "stat", "lstat", "putchar", "temp_dir", "reader_close"];
     for y in one { if (y == k) { return 1; } }
-    if (k == "arr_slice") { return 3; }
-    if (k == "write_file" || k == "write_file_exec") { return 2; }
+    if (k == "arr_slice" || k == "subprocess") { return 3; }
+    if (k == "write_file" || k == "write_file_exec" || k == "read_chunk" || k == "writer_write") { return 2; }
     return 0;
 }
 function prod_call_kind(k: string): i32 {
@@ -502,7 +513,7 @@ function ld_off(k: string, op: ir.Op): i32 {
 // stays aligned with the IR's own accounting.
 function lift_prod_mem(k: string, op: ir.Op, at: i32, nvals: i32, stack: i32[], cur_insts: ssa.SInst[]): LiftVals {
     var lv: LiftVals = LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: true };
-    if (prod_host_kind(k)) { return lift_prod_host(k, at, lv); }
+    if (prod_host_kind(k)) { return lift_prod_host(k, op, at, lv); }
     if (util.str_has_prefix(k, "raw_store") || k == "struct_set" || k == "arr_set") { return lift_prod_store(k, op, lv); }
     if (k == "variant_is") { return lift_variant_is_prod(op, lv); }
     if (k == "str_slice") { return lift_pop_push(lv, 3, 51, view_in_frame(op), ""); }
