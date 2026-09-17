@@ -1,6 +1,11 @@
 package ir
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/jakechampion/lang/internal/checker"
+	"github.com/jakechampion/lang/internal/parser"
+)
 
 // On the single-word string ABI computeFreeEligible taints a string local
 // passed to a user function unless the counted-retain summary clears the
@@ -250,5 +255,41 @@ function main(): i32 {
 				t.Errorf("line freeEligible is %v written directly and %v through a local alias — the two spellings name the same buffer under the same ownership and must agree", d, a)
 			}
 		})
+	}
+}
+
+// The arm is given to paramNoUncountedAlias and withheld from
+// paramCountedRetain, which ask different questions: whether the caller's local
+// may keep its release, and whether a fresh temp may be dec'd after the call
+// (#9246). Only the first is what #9549 measured, and the second has a
+// use-after-free on the wrong end of it — TestStringParamThatIsRetainedStaysUncredited
+// is the refusal from the other side.
+//
+// The split is pinned here because it is invisible at either call site: both
+// summaries come out of one inferParamRetainSummary, and a reader tidying the
+// extra parameter away would silently widen the strong one.
+func TestFrameBoundAliasCreditIsWithheldFromTheStrongSummary(t *testing.T) {
+	src := `function keep(p: string): i32 {
+    var s: string = p;
+    return s.len();
+}
+function main(): i32 { return 0; }`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	weak := inferParamNoUncountedAlias(prog, info, nil)
+	strong := inferParamCountedRetain(prog, info, nil)
+	if got := weak["keep"]; len(got) != 1 || !got[0] {
+		t.Errorf("paramNoUncountedAlias[keep] = %v, want [true] — the caller's local keeps its release", got)
+	}
+	if got := strong["keep"]; len(got) == 1 && got[0] {
+		t.Errorf("paramCountedRetain[keep] = [true], but the frame-bound alias arm must not reach " +
+			"the strong summary: it answers whether a fresh temp may be dec'd after the call, " +
+			"which nothing here has measured")
 	}
 }

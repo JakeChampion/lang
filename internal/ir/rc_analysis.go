@@ -1293,7 +1293,7 @@ func inferParamRetainSummary(prog *ast.Program, info *checker.Info, trmcFuncs ma
 			}
 			switch pt := p.Type.(type) {
 			case ast.StringType:
-				flags[i] = stringParamCounted(fn, p.Name, out, ctorCounted, consumedStr[p.Name] || creditBareReturn)
+				flags[i] = stringParamCounted(fn, p.Name, out, ctorCounted, consumedStr[p.Name] || creditBareReturn, creditBareReturn)
 			case ast.ArrayType:
 				flags[i] = arrayParamCounted(fn, p.Name, pt, info, out, ctorCounted)
 			case ast.StructType:
@@ -1734,8 +1734,22 @@ func consumedStringParams(fn *ast.FuncDecl, info *checker.Info, trmcFuncs map[st
 //     countedSeedOccurrences spells it.
 //   - never mentioned inside a Lambda: a capture lives as long as the closure
 //     does, which can be longer than the frame.
-func frameBoundStringAliases(fn *ast.FuncDecl, pn string) map[string]bool {
+//
+// `credit` is inferRetainSummary's creditBareReturn, so the arm is given to
+// paramNoUncountedAlias and withheld from paramCountedRetain. The two ask
+// different questions — whether the CALLER'S LOCAL may keep its release, and
+// whether a FRESH TEMP may be dec'd after the call (#9246) — and the leak this
+// closes is entirely the first. TestStringParamThatIsRetainedStaysUncredited
+// and TestStringParamForwardedToARetainingCalleeStaysUncredited hold the
+// stronger summary to the refusal, on the same footing as the bare-return
+// credit this flag already gates. Widening the strong side is a separate
+// question with a use-after-free on the wrong end of it, and nothing measured
+// here needs it.
+func frameBoundStringAliases(fn *ast.FuncDecl, pn string, credit bool) map[string]bool {
 	aliases := map[string]bool{pn: true}
+	if !credit {
+		return aliases
+	}
 	// Any name a closure in this body mentions. Lambda.Captures is the
 	// checker's answer and is not consulted: it is nil until the checker
 	// visits the node, and a mention is the conservative question anyway.
@@ -1795,8 +1809,8 @@ func frameBoundStringAliases(fn *ast.FuncDecl, pn string) map[string]bool {
 // The occurrences it classifies are those of `pn` and of every local that
 // frame-bound-aliases it: the same buffer under the same ownership, so the
 // same arms decide both — see frameBoundStringAliases.
-func stringParamCounted(fn *ast.FuncDecl, pn string, summary *summaryTable[[]bool], ctorCounted func(*ast.Call) bool, consumed bool) bool {
-	aliases := frameBoundStringAliases(fn, pn)
+func stringParamCounted(fn *ast.FuncDecl, pn string, summary *summaryTable[[]bool], ctorCounted func(*ast.Call) bool, consumed, creditFrameBoundAlias bool) bool {
+	aliases := frameBoundStringAliases(fn, pn, creditFrameBoundAlias)
 	safe := map[*ast.Ident]bool{}
 	seedOK := countedSeedOccurrences(fn)
 	mark := func(e ast.Expr) {
