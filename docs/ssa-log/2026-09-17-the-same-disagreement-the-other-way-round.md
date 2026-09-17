@@ -74,7 +74,29 @@ previous line freed. A stranded class gives the whole class size, every line:
 A bound is the wrong assertion here. The correct value is `0`, so
 `internal/e2e/x86_64ssa_string_block_recycle_test.go` asserts `0`.
 
-## The builder was already right, and is now pinned
+## The other builder was not right, and review caught it
+
+There are two builder families on x86-64, and my survey only opened one. The
+`buf_*` family is below; `strbuf_*` — the self-host compiler's output channel —
+lives in its own file, which the survey never read. `strbuf_take` allocated its
+string at `len + 8`.
+
+Before this change that matched the free and was consistent. Moving the free to
+`len + strBlockBytes` without moving it re-created the disagreement *in the
+overflow direction*: at `len + 8 ≡ 0 (mod 16)` the block is pushed onto the
+class ABOVE the one it came from, and the next request of that class pops a
+block too small for it. That is the corruption mode, not the leak — the same
+one the arm64 twin shipped for one revision of #9558, reached here by fixing
+the leak carelessly.
+
+The lesson is narrow and worth keeping: when a convention has one end and many
+producers, the sweep has to be over *files*, not over the sites a previous
+survey happened to list. `grep` for the alloc calls across the whole package,
+then classify each as string block or raw buffer. The raw ones on x86-64 are
+the `strbuf` growth buffer (freed at the capacity it tracks) and `temp_dir`'s
+path scratch (written from offset 0, no rc header) — neither is a string.
+
+## The buf_take builder was already right, and is now pinned
 
 On arm64 the first version of the fix moved `__fern_str_dec` without moving the
 `buf_*` builder, which hands its buffer out as a string through `buf_take`. The
@@ -92,8 +114,8 @@ the builder by one byte and the test drops from 7 to 3.
 ## What the fix changed
 
 `strBlockBytes = 9` in `internal/codegen/x86_64ssa`, used by every string
-producer, by `__fern_str_dec`, and by both halves of `__fern_str_append`'s
-in-place growth check. The bare `9`s already spelled out at the other nine
+producer — `strbuf_take` included — by `__fern_str_dec`, and by both halves of
+`__fern_str_append`'s in-place growth check. The bare `9`s already spelled out at the other nine
 producer sites moved onto it too, so a future edit has one number to change.
 
 Two `str_append` fixtures were tuned to the old capacity and moved by a byte:
