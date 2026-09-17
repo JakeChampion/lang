@@ -5541,7 +5541,7 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmco
     else if (ins.str == "struct_copy") { sym = "__fn___fern_struct_copy"; }
     else if (ins.str == "raw_arr_box") { sym = "__fern_arr_box"; }
     else if (ins.str == "map_new") { s = s.need("maps"); sym = "__fern_map_new"; }
-    else if (ins.str == "args") { sym = "__fern_args"; }
+    else if (ins.str == "args") { s = s.need("args"); sym = "__fern_args"; }
     else if (ins.str == "map_hash_seed") { s = s.need("random_i32").need("map_hash_seed"); sym = "__fern_map_hash_seed"; }
     else if (util.str_has_prefix(ins.str, "arr_push_owned")) { s = s.mark_arr_push(); s = s.need("arr_push_owned"); sym = "__fern_arr_push_owned"; }
     else if (util.str_has_prefix(ins.str, "arr_push")) { s = s.mark_arr_push(); sym = "__fern_arr_push"; }
