@@ -180,6 +180,11 @@ func killCases(t *testing.T) []invocation {
 		{name: "the table prints a row for zero", args: []string{"-t", "0"}},
 		{name: "the table masks too", args: []string{"-t", "137"}},
 		{name: "the table of a masked number with no signal", args: []string{"-t", "384"}},
+		{name: "the table by the name of zero", args: []string{"-t", "EXIT"}},
+		{name: "the table behind a SIG prefix", args: []string{"-t", "SIG9"}},
+		{name: "zero among several table rows", args: []string{"-t", "0", "9"}},
+		{name: "zero among several conversions", args: []string{"-l", "0", "9", "EXIT"}},
+		{name: "the undocumented table twin on zero", args: []string{"-L", "0"}},
 		// The send paths. Every pid here is 999999, which does not exist, so
 		// the KILL that 137 and SIG9 resolve to is delivered to nothing.
 		{name: "a wait status as an explicit signal", args: []string{"-s", "137", "999999"}},
