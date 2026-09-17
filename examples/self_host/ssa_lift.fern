@@ -1498,12 +1498,13 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[], struct
                     bi = bi + 1;
                 }
                 blocks = nb;
-                var rsl: i32 = 0;
-                while (rsl < nslots) { slots = slots.with(rsl, sc_header_phis[t2 * nslots + rsl]); rsl = rsl + 1; }
                 cur_dead = true;
                 if (lf.falls) {
                     slots = lf.slots;
                     cur_preds = [lf.tail]; cur_id = lf.cont; cur_insts = []; cur_term = STerm_none(); cur_dead = false;
+                } else {
+                    var rsl: i32 = 0;
+                    while (rsl < nslots) { slots = slots.with(rsl, sc_header_phis[t2 * nslots + rsl]); rsl = rsl + 1; }
                 }
                 sc_kind = drop_last_s(sc_kind); sc_uid = drop_last(sc_uid); sc_target = drop_last(sc_target);
                 sc_else = drop_last(sc_else); sc_seen_else = drop_last(sc_seen_else); sc_then_blk = drop_last(sc_then_blk);
