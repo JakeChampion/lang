@@ -5119,7 +5119,7 @@ function ssa_funary_known(what: string): boolean {
 function ssa_inst_known(ins: ssa.SInst): boolean {
     var k: i32 = ins.kind_tag;
     if (k == 10) { return ssa_unary_known(ins.str); }
-    if (k >= 40 && k <= 58) { return true; }
+    if (k >= 40 && k <= 59) { return true; }
     return k == 1 || k == 3 || k == 4 || k == 6 || k == 7 || k == 8 || k == 9 || k == 11;
 }
 
@@ -5440,6 +5440,27 @@ function ssa_host_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asm
     return ssa_store(reg_of, ins.result, "%rax", s);
 }
 
+function ir_memcpy_asm(): string { return "    popq %rcx\n    popq %rsi\n    popq %rdi\n    rep movsb\n    pushq $0\n"; }
+function ir_memset_asm(): string { return "    popq %rcx\n    popq %rax\n    popq %rdi\n    cld\n    rep stosb\n    pushq $0\n"; }
+
+// ssa_flat_op runs the stack machine's own arm for a byte kernel between a
+// push of the operands and a pop of the result. The allocator treats the op
+// as a call, so the registers the arm writes (%rsi, %rdi, and memchr's
+// scratch) hold nothing live.
+function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+    var i: i32 = 0;
+    while (i < ins.args.len()) {
+        s = ssa_load(reg_of, ins.args[i], "%rax", s);
+        s = s.write("    pushq %rax\n");
+        i = i + 1;
+    }
+    if (ins.str == "memcpy") { s = s.write(ir_memcpy_asm()); }
+    else if (ins.str == "memset") { s = s.write(ir_memset_asm()); }
+    else { s = emit_str_op(ir.op_memchr(), s); }
+    s = s.write("    popq %rax\n");
+    return ssa_store(reg_of, ins.result, "%rax", s);
+}
+
 // ssa_sym_addr is a static symbol's address, or the word at it (imm 1).
 function ssa_sym_addr(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
     if (ins.imm == 1) { s = s.write("    movq " + ins.str + "(%rip), %rax\n"); }
@@ -5455,6 +5476,7 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmco
     if (ins.str == "alloc_u8") { s = s.need("alloc_u8"); sym = "__fern_alloc_u8"; }
     else if (ins.str == "struct_copy") { sym = "__fn___fern_struct_copy"; }
     else if (ins.str == "raw_arr_box") { sym = "__fern_arr_box"; }
+    else if (ins.str == "map_new") { sym = "__fern_map_new"; }
     else if (util.str_has_prefix(ins.str, "arr_push_owned")) { s = s.mark_arr_push(); s = s.need("arr_push_owned"); sym = "__fern_arr_push_owned"; }
     else if (util.str_has_prefix(ins.str, "arr_push")) { s = s.mark_arr_push(); sym = "__fern_arr_push"; }
     // %rdi and %rsi are allocatable here, so an argument whose home is the
@@ -5607,6 +5629,7 @@ function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asm
 function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, s: asmcore.EmitState): asmcore.EmitState {
     var k: i32 = ins.kind_tag;
     if (k == 11) { return ssa_call(ins, reg_of, s); }
+    if (k == 59) { return ssa_flat_op(ins, reg_of, s); }
     if (k == 51) { return ssa_str_view(ins, reg_of, ssa_view_off(fr, ins.result), s); }
     if (k >= 40 && k <= 44) { return ssa_mem_inst(ins, reg_of, s); }
     if (k >= 45 && k <= 48) { return ssa_addr_inst(ins, reg_of, s); }
@@ -5977,11 +6000,11 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
             // [dst, src, n] -> copy n bytes src->dst (rep movsb), push dummy 0.
             // n is on top, then src, then dst (the lowering order). Mirrors the
             // AST __memcpy emitter in asm.fern.
-            s = s.write("    popq %rcx\n    popq %rsi\n    popq %rdi\n    rep movsb\n    pushq $0\n");
+            s = s.write(ir_memcpy_asm());
         } else if (o.kind_tag == 75) {  // memset
             // [dst, byte, n] -> fill n bytes at dst with byte's low byte (rep
             // stosb, AL), push dummy 0. n on top, then byte, then dst.
-            s = s.write("    popq %rcx\n    popq %rax\n    popq %rdi\n    cld\n    rep stosb\n    pushq $0\n");
+            s = s.write(ir_memset_asm());
         } else if (o.kind_tag == 78) {  // free
             // [ptr, size] -> no-op under the bump/leak heap; drop both, push dummy 0.
             s = s.write("    popq %rax\n    popq %rax\n    pushq $0\n");
