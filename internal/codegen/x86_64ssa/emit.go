@@ -79,6 +79,11 @@ type Inst struct {
 	K    ssa.OpKind // BinOp / SetCmp operation
 	W    int8       // result width for MovImm/BinOp/UnNeg/Call (0/32 => i32, 64 => i64)
 
+	// Narrow: no use of this result reads bits above 31, so the i32
+	// high-half fix is dead code here. Only meaningful when W != 64.
+	// See ssa.FindNarrowResults for why the analysis is a whitelist.
+	Narrow bool
+
 	// SrcImm (BinOp/SetCmp): the right operand is Imm rather than reg[Src].
 	// On a MemAlloc, or a Call to __fern_box_free, it says the size is the
 	// constant Imm as well as reg[Src] / the size argument's home, so a
@@ -206,6 +211,7 @@ func EmitWithCalleeSaved(f *ssa.Func, numAlloc int, calleeSaved []bool) (*Progra
 		f:        f,
 		alloc:    alloc,
 		uses:     alloc.Uses,
+		narrow:   ssa.FindNarrowResults(f, alloc.Uses),
 		numAlloc: numAlloc,
 		folded:   foldableConsts(f),
 		s0:       numAlloc, s1: numAlloc + 1, s2: numAlloc + 2, s3: numAlloc + 3,
@@ -288,6 +294,9 @@ type emitter struct {
 	f     *ssa.Func
 	alloc *ssa.Allocation
 	uses  *ssa.Uses
+	// narrow: results no use reads above bit 31, so the i32 high-half fix
+	// can be left off them (ssa.FindNarrowResults).
+	narrow *ssa.NarrowResults
 	// folded: OpConstInt results every reader takes as an immediate right
 	// operand (foldableConsts), so no MovImm is emitted for them.
 	folded         map[int32]int64
@@ -860,7 +869,7 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 			return nil // every reader writes it into its own scratch register
 		}
 		dst := e.coalesceDst(op.Result, -1)
-		e.push(Inst{Op: MovImm, Dst: dst, Imm: op.Imm, W: op.Width})
+		e.push(Inst{Op: MovImm, Dst: dst, Imm: op.Imm, W: op.Width, Narrow: e.narrow.HighBitsDead(op.Result)})
 		if dst == e.s2 {
 			e.place(op.Result, e.s2)
 		}
@@ -887,7 +896,7 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 			}
 			dst := e.coalesceDst(op.Result, -1)
 			e.movReg(dst, ra)
-			e.push(Inst{Op: BinOp, Dst: dst, Imm: imm, SrcImm: true, K: op.Kind, W: op.Width})
+			e.push(Inst{Op: BinOp, Dst: dst, Imm: imm, SrcImm: true, K: op.Kind, W: op.Width, Narrow: e.narrow.HighBitsDead(op.Result)})
 			if dst == e.s2 {
 				e.place(op.Result, e.s2)
 			}
@@ -906,7 +915,7 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 			dst = e.coalesceDst(op.Result, rb)
 		}
 		e.movReg(dst, ra)
-		e.push(Inst{Op: BinOp, Dst: dst, Src: rb, K: op.Kind, W: op.Width})
+		e.push(Inst{Op: BinOp, Dst: dst, Src: rb, K: op.Kind, W: op.Width, Narrow: e.narrow.HighBitsDead(op.Result)})
 		if dst == e.s2 {
 			e.place(op.Result, e.s2)
 		}
@@ -946,7 +955,7 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 		}
 		dst := e.coalesceDst(op.Result, -1)
 		e.movReg(dst, ra)
-		e.push(Inst{Op: UnNeg, Dst: dst, W: op.Width})
+		e.push(Inst{Op: UnNeg, Dst: dst, W: op.Width, Narrow: e.narrow.HighBitsDead(op.Result)})
 		if dst == e.s2 {
 			e.place(op.Result, e.s2)
 		}
@@ -960,7 +969,7 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 		}
 		dst := e.coalesceDst(op.Result, -1)
 		e.movReg(dst, ra)
-		e.push(Inst{Op: UnOp, Dst: dst, K: op.Kind, W: op.Width})
+		e.push(Inst{Op: UnOp, Dst: dst, K: op.Kind, W: op.Width, Narrow: e.narrow.HighBitsDead(op.Result)})
 		if dst == e.s2 {
 			e.place(op.Result, e.s2)
 		}
@@ -1000,7 +1009,7 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 			return err
 		}
 		e.push(Inst{Op: MovReg, Dst: e.s2, Src: ra})
-		e.push(Inst{Op: FConv, Dst: e.s2, K: op.Kind, W: op.Width})
+		e.push(Inst{Op: FConv, Dst: e.s2, K: op.Kind, W: op.Width, Narrow: e.narrow.HighBitsDead(op.Result)})
 		e.place(op.Result, e.s2)
 		return nil
 
@@ -1024,7 +1033,7 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 		if err != nil {
 			return err
 		}
-		e.push(Inst{Op: Select, Dst: e.s2, Src: rc, Src2: rt, Src3: re, W: op.Width})
+		e.push(Inst{Op: Select, Dst: e.s2, Src: rc, Src2: rt, Src3: re, W: op.Width, Narrow: e.narrow.HighBitsDead(op.Result)})
 		e.place(op.Result, e.s2)
 		return nil
 
@@ -1069,7 +1078,7 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 		}
 		saveRegs, saveSet := e.callSaveRegs(op)
 		dst := e.callResultDst(op.Result, e.s2)
-		call := Inst{Op: Call, Dst: dst, Callee: op.Str, ArgLocs: argLocs, W: op.Width, SaveRegs: saveRegs, SaveRegsSet: saveSet}
+		call := Inst{Op: Call, Dst: dst, Callee: op.Str, ArgLocs: argLocs, W: op.Width, Narrow: e.narrow.HighBitsDead(op.Result), SaveRegs: saveRegs, SaveRegsSet: saveSet}
 		// A box released at a constant size names its freelist class at
 		// compile time; the renderer that can push it inline reads Imm.
 		if op.Str == "__fern_box_free" && len(op.Args) == 2 {
@@ -1096,7 +1105,7 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 		saveRegs, saveSet := e.callSaveRegs(op)
 		dst := e.callResultDst(op.Result, e.s2)
 		dst2 := e.callResultDst(op.Result2, e.s3)
-		e.push(Inst{Op: CallPair, Dst: dst, Dst2: dst2, Callee: op.Str, ArgLocs: argLocs, W: op.Width, SaveRegs: saveRegs, SaveRegsSet: saveSet})
+		e.push(Inst{Op: CallPair, Dst: dst, Dst2: dst2, Callee: op.Str, ArgLocs: argLocs, W: op.Width, Narrow: e.narrow.HighBitsDead(op.Result), SaveRegs: saveRegs, SaveRegsSet: saveSet})
 		e.place(op.Result, dst)
 		e.place(op.Result2, dst2)
 		return nil
@@ -1122,7 +1131,7 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 		}
 		saveRegs, saveSet := e.callSaveRegs(op)
 		dst := e.callResultDst(op.Result, e.s2)
-		e.push(Inst{Op: CallIndirect, Dst: dst, IdxLoc: idxLoc, ArgLocs: argLocs, W: op.Width, SaveRegs: saveRegs, SaveRegsSet: saveSet})
+		e.push(Inst{Op: CallIndirect, Dst: dst, IdxLoc: idxLoc, ArgLocs: argLocs, W: op.Width, Narrow: e.narrow.HighBitsDead(op.Result), SaveRegs: saveRegs, SaveRegsSet: saveSet})
 		e.place(op.Result, dst)
 		return nil
 
@@ -1186,7 +1195,7 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 		}
 		saveRegs, saveSet := e.callSaveRegs(op)
 		dst := e.callResultDst(op.Result, e.s2)
-		e.push(Inst{Op: CallDyn, Dst: dst, ArgLocs: argLocs, Imm: op.Imm, W: op.Width, SaveRegs: saveRegs, SaveRegsSet: saveSet})
+		e.push(Inst{Op: CallDyn, Dst: dst, ArgLocs: argLocs, Imm: op.Imm, W: op.Width, Narrow: e.narrow.HighBitsDead(op.Result), SaveRegs: saveRegs, SaveRegsSet: saveSet})
 		e.place(op.Result, dst)
 		return nil
 
@@ -1213,7 +1222,7 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 		}
 		bytes, signed := memInfo(op.Kind)
 		dst := e.coalesceDst(op.Result, -1)
-		e.push(Inst{Op: MemLoad, Dst: dst, Src: base, Imm: op.Imm, W: op.Width, Bytes: bytes, Signed: signed})
+		e.push(Inst{Op: MemLoad, Dst: dst, Src: base, Imm: op.Imm, W: op.Width, Narrow: e.narrow.HighBitsDead(op.Result), Bytes: bytes, Signed: signed})
 		if dst == e.s2 {
 			e.place(op.Result, e.s2)
 		}

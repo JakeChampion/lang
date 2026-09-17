@@ -871,7 +871,7 @@ func callLines(in Inst, numAlloc, scratch, s0 int) ([]string, error) {
 		}
 	}
 	maskDst := func() {
-		if fix := maskFix(in.Dst, in.W); fix != "" {
+		if fix := maskFix(in.Dst, in.W, in.Narrow); fix != "" {
 			out = append(out, strings.TrimPrefix(fix, "\n\t"))
 		}
 	}
@@ -1071,7 +1071,7 @@ func selectLines(in Inst) []string {
 		fmt.Sprintf("mov %s, %s", reg(in.Dst), reg(in.Src3)),
 		fmt.Sprintf("cmovne %s, %s", reg(in.Dst), reg(in.Src2)),
 	}
-	if fix := maskFix(in.Dst, in.W); fix != "" {
+	if fix := maskFix(in.Dst, in.W, in.Narrow); fix != "" {
 		out = append(out, strings.TrimPrefix(fix, "\n\t"))
 	}
 	return out
@@ -1314,8 +1314,8 @@ func align16(n int) int {
 // sign-extends the low 32 bits back into the full register, so a value whose
 // high 32 bits are later observed (unsigned shift/div, unsigned compare) matches
 // ssa.Eval. Returns the empty string for 64-bit results (no fix needed).
-func maskFix(dst int, w int8) string {
-	if w == 64 {
+func maskFix(dst int, w int8, narrow bool) string {
+	if w == 64 || narrow {
 		return ""
 	}
 	return fmt.Sprintf("\n\tmovsxd %s, %s", reg(dst), reg32n(dst))
@@ -1331,13 +1331,13 @@ func asmInst(in Inst, scratch int) (string, error) {
 		// still needs it.
 		line := fmt.Sprintf("mov %s, %d", reg(in.Dst), in.Imm)
 		if in.Imm < -(1<<31) || in.Imm >= (1<<31) {
-			line += maskFix(in.Dst, in.W)
+			line += maskFix(in.Dst, in.W, in.Narrow)
 		}
 		return line, nil
 	case MovReg:
 		return fmt.Sprintf("mov %s, %s", reg(in.Dst), reg(in.Src)), nil
 	case UnNeg:
-		return fmt.Sprintf("neg %s", reg(in.Dst)) + maskFix(in.Dst, in.W), nil
+		return fmt.Sprintf("neg %s", reg(in.Dst)) + maskFix(in.Dst, in.W, in.Narrow), nil
 	case UnOp:
 		d := in.Dst
 		switch in.K {
@@ -1374,15 +1374,15 @@ func asmInst(in Inst, scratch int) (string, error) {
 	case BinOp:
 		switch in.K {
 		case ssa.OpShl, ssa.OpShr, ssa.OpShrU, ssa.OpRotr:
-			return shiftSeq(in) + maskFix(in.Dst, in.W), nil
+			return shiftSeq(in) + maskFix(in.Dst, in.W, in.Narrow), nil
 		case ssa.OpDiv, ssa.OpDivU, ssa.OpRem, ssa.OpRemU:
-			return divSeq(in, scratch) + maskFix(in.Dst, in.W), nil
+			return divSeq(in, scratch) + maskFix(in.Dst, in.W, in.Narrow), nil
 		}
 		op, ok := binMnemonic(in.K)
 		if !ok {
 			return "", fmt.Errorf("x86_64ssa: binary op %v unsupported in the real-asm slice", in.K)
 		}
-		return fmt.Sprintf("%s %s, %s", op, reg(in.Dst), rightOperandText(in)) + maskFix(in.Dst, in.W), nil
+		return fmt.Sprintf("%s %s, %s", op, reg(in.Dst), rightOperandText(in)) + maskFix(in.Dst, in.W, in.Narrow), nil
 	case SetCmp:
 		cc, ok := setccMnemonic(in.K)
 		if !ok {
@@ -1399,11 +1399,11 @@ func asmInst(in Inst, scratch int) (string, error) {
 	case MemLoad:
 		mem := memRef(reg(in.Src), in.Imm)
 		if in.Bytes == 8 {
-			return fmt.Sprintf("mov %s, %s", reg(in.Dst), mem) + maskFix(in.Dst, in.W), nil
+			return fmt.Sprintf("mov %s, %s", reg(in.Dst), mem) + maskFix(in.Dst, in.W, in.Narrow), nil
 		}
 		if in.Bytes == 4 {
 			// 4-byte load: `mov r32, [mem]` zero-extends into the 64-bit reg.
-			return fmt.Sprintf("mov %s, %s", reg32n(in.Dst), mem) + maskFix(in.Dst, in.W), nil
+			return fmt.Sprintf("mov %s, %s", reg32n(in.Dst), mem) + maskFix(in.Dst, in.W, in.Narrow), nil
 		}
 		size := "byte ptr"
 		if in.Bytes == 2 {
@@ -1413,7 +1413,7 @@ func asmInst(in Inst, scratch int) (string, error) {
 			if in.W == 64 {
 				return fmt.Sprintf("movsx %s, %s %s", reg(in.Dst), size, mem), nil
 			}
-			return fmt.Sprintf("movsx %s, %s %s", reg32n(in.Dst), size, mem) + maskFix(in.Dst, in.W), nil
+			return fmt.Sprintf("movsx %s, %s %s", reg32n(in.Dst), size, mem) + maskFix(in.Dst, in.W, in.Narrow), nil
 		}
 		// A zero-extending sub-word load already leaves bits 63:8 (or 63:16)
 		// clear, which is the i32 sign-extension of a value that small, so the
@@ -1580,14 +1580,14 @@ func fConvSeq(in Inst, scratch int) (string, error) {
 		// for u64. Left undone because this backend has no CLI target — it is
 		// consumed only by arm64ssa for its Inst type — so no program can reach
 		// the wrong sequence today.
-		return fmt.Sprintf("movq xmm0, %s\n\tcvttsd2si %s, xmm0", d, d) + maskFix(in.Dst, in.W), nil
+		return fmt.Sprintf("movq xmm0, %s\n\tcvttsd2si %s, xmm0", d, d) + maskFix(in.Dst, in.W, in.Narrow), nil
 	case ssa.OpReinterpretF64ToI64, ssa.OpReinterpretI64ToF64:
 		// Identity: the register already holds the f64 bit pattern.
 		return "", nil
 	case ssa.OpReinterpretF32ToI32:
 		// cvtsd2ss leaves bits 63:32 of xmm0 stale; the movsxd sign-extends
 		// the f32 pattern out of the low half into the i32 storage convention.
-		return fmt.Sprintf("movq xmm0, %s\n\tcvtsd2ss xmm0, xmm0\n\tmovq %s, xmm0", d, d) + maskFix(in.Dst, 32), nil
+		return fmt.Sprintf("movq xmm0, %s\n\tcvtsd2ss xmm0, xmm0\n\tmovq %s, xmm0", d, d) + maskFix(in.Dst, 32, in.Narrow), nil
 	case ssa.OpReinterpretI32ToF32:
 		// cvtss2sd reads only the low 32 bits, so the i32's sign-extension
 		// above them is ignored.
@@ -2101,7 +2101,7 @@ func inlinePokeLines(in Inst, numAlloc int) ([]string, bool) {
 		addr := materialise(in.ArgLocs[0], s0)
 		out = append(out, fmt.Sprintf("mov %s, %s", operand(in.Dst), memRef(reg(addr), form.off)))
 	}
-	if fix := maskFix(in.Dst, in.W); fix != "" {
+	if fix := maskFix(in.Dst, in.W, in.Narrow); fix != "" {
 		out = append(out, strings.TrimPrefix(fix, "\n\t"))
 	}
 	return out, true
@@ -2215,7 +2215,7 @@ func inlineArrIdxLines(in Inst, numAlloc int, seed string) ([]string, bool) {
 			fmt.Sprintf("lea %s, [%s + %s]", reg(in.Dst), reg(base), reg(s2)),
 		)
 	}
-	if fix := maskFix(in.Dst, in.W); fix != "" {
+	if fix := maskFix(in.Dst, in.W, in.Narrow); fix != "" {
 		out = append(out, strings.TrimPrefix(fix, "\n\t"))
 	}
 	return out, true
