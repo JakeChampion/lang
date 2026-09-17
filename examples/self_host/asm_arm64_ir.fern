@@ -1352,7 +1352,7 @@ function ssa_agg_lit(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmco
     var klbl: string = asmcore.const_agg_label(s, kout.idx);
     var d: string = ssa_dst(reg_of, ins.result);
     s = s.write("    adrp " + d + ", " + klbl + "\n    add " + d + ", " + d + ", :lo12:" + klbl + "\n");
-    return ssa_store(reg_of, ins.result, "x0", s);
+    return ssa_store(reg_of, ins.result, d, s);
 }
 
 // ssa_addr_inst selects the label addresses and the box allocation (45..48).
