@@ -107,9 +107,9 @@ func emitStrbufTakeHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("strbuf_take"))
 	w("\tlea r8, [rip + %s]", strbufCtlSym)
-	w("\tmov r9, [r8 + 8]")  // len
-	w("\tlea r10, [r9 + 8]") // plus the header
-	w("\tsub rsp, 8")        // entered 8 past alignment; the trampoline is called at 16
+	w("\tmov r9, [r8 + 8]")                  // len
+	w("\tlea r10, [r9 + %d]", strBlockBytes) // the size every producer allocates
+	w("\tsub rsp, 8")                        // entered 8 past alignment; the trampoline is called at 16
 	ssaBumpAlloc(w, "rax", "r10")
 	w("\tadd rsp, 8")
 	w("\tmov dword ptr [rax], 1") // rc = 1
