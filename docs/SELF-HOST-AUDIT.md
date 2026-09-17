@@ -218,12 +218,6 @@ findings. Ranked by leverage.
   annotates its slices `own(...)`, a different ownership contract from the
   `irlower`/`printer` pair.
 
-  **A second naming hazard, worse than the `index_of_str` one below.** `regn`
-  (`ssa_x86.fern:79`, `ssa_arm64.fern:62`) is **byte-identical text with
-  divergent behaviour**: it dispatches to `regname` / `regname64` / `slot`,
-  which are per-ISA leaves (`%r10d` vs `w12`, `-N(%rbp)` vs `[sp, #N]`). A
-  byte-diff reports it as safe to lift and it is not. **Not a dedupe target.**
-
   **Naming hazard — a naive `util.`-qualification sweep binds the wrong
   function.** `index_of_str` names **two different functions**: array index-of
   (`util.fern:330`, `watbin.fern:330`, `(xs: string[], s: string)`) and
@@ -791,55 +785,19 @@ findings. Ranked by leverage.
   returns `out + suffix` rather than `out` — the accumulator is read, so the
   shape does not apply.
 
-  The SSA backends' `emit_program` is **done** too (204 / 200 / 15 sites).
   Remaining `out = out +` sites:
 
   | file | sites | where |
   |---|---|---|
-  | `ssa_arm64.fern` | 74 | the per-instruction chain — leave it, see below |
-  | `ssa_x86.fern` | 59 | same |
   | `printer.fern` | 214 | does not take this rewrite, see below |
   | `ferndoc.fern` | 30 | unexamined |
   | `irlower.fern` | 25 | unexamined |
-  | `ssa_wasm.fern` | 3 | the per-instruction chain |
   | `asm_ir.fern` | 2 | — |
   | `asm_arm64_ir.fern` | 1 | — |
   | `wasm_ir.fern` | 1 | `fn_type_decl`, above |
 
   (`printer.fern` was missing from this table entirely; the `*_run.fern` test
   drivers also fold, and are not worth converting.)
-
-  **Where the SSA cost was, and was not.** `emit_program` folds the whole
-  program body into `out` and *then* appends the ~140-line runtime on top of
-  it — **198 of `ssa_arm64`'s 204 folds, and 194 of `ssa_x86`'s 200, come after
-  the body is already in the accumulator**. The appended strings are fixed; the
-  string they are appended TO is the entire program, so embedding the runtime
-  cost ~200 copies of a program-sized value. That is the real find here and it
-  is what got converted.
-
-  **The per-instruction chain is the opposite and should be left alone.** It
-  looks worse — the accumulator is threaded as a parameter through `emit_inst`,
-  `emit_term`, `load_op`, `store_res`, `emit_const`, `emit_binary`, `store_reg`
-  and `emit_phi_moves` — but `emit_func` seeds `emit_inst(…, "")` **fresh for
-  every instruction** (3 `""` seeds against 55 `out` threads in `ssa_arm64`),
-  so the accumulator never spans more than one instruction's output. Converting
-  it would mean changing that whole chain's signatures for a fold bounded by a
-  few hundred bytes.
-
-  A count of fold sites does not order this work; where the accumulator's
-  *contents* come from does. Both halves of that were recorded here backwards
-  until measured.
-
-  **A default `selfhost-emit-hashes` run does not gate the SSA backends** — the
-  SSA pipeline is opt-in behind `-ssa` (`fern.fern:1873`), so the sweep never
-  reaches `ssa_arm64` / `ssa_x86` / `ssa_wasm`. Verified: changing one emitted
-  string in `ssa_arm64.fern` leaves that sweep byte-identical. Use
-  **`selfhost-emit-hashes --ssa`**, which exists for this and moves every arm64
-  row under the same probe. Note that `-ssa` alone would not have been enough:
-  `try_ssa` falls through to the IR path for any program outside the SSA subset,
-  silently, so most rows would have been IR bytes — the `--ssa` mode emits each
-  case both ways and marks those `IR-FALLBACK` so they cannot count as
-  coverage.
 
   **`printer.fern`'s per-node builders do not take the same rewrite, but its
   whole-FILE accumulator did — and that is the one that mattered.** The

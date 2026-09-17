@@ -396,6 +396,23 @@ function main(): i32 {
     return (strs(s) + bits(15790080, 280375465082880)) % 251;
 }
 `},
+	// A string slice whose upper bound is read again in the same block. The
+	// slice kernel loads that bound into the scratch register and then
+	// overwrites it with the length, so a scratch tracker that survives the
+	// kernel makes the second read reuse the difference. With lo of 0 the
+	// wrong value equals the right one, so a case has to slice from further
+	// in to see it.
+	{name: "slice_bound_reuse", viaSSA: []string{"tail", "main"}, src: `
+function tail(s: string, lo: i32, hi: i32): i32 {
+    var v: str = slice_unchecked(s, lo, hi);
+    var x: i32 = hi + 1;
+    return x * 1000 + v.len();
+}
+function main(): i32 {
+    var s: string = "abcdefghijkl";
+    return (tail(s, 3, 9) + tail(s, 0, 4) + tail(s, 5, 12)) % 251;
+}
+`},
 	// An exhaustive match whose every arm returns, standing last in a
 	// generic function (ordmap's fold), lowers to a loop whose body reaches
 	// the loop's end alive: control continues after the loop in the

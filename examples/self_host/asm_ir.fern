@@ -5136,12 +5136,20 @@ function ssa_epilogue_for(saved: i32[]): string {
 
 // ssa_load puts value v in `reg`; ssa_store writes `reg` to value v's home.
 function ssa_load(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): asmcore.EmitState {
+    if (reg == "%rax") {
+        if (s.ssa_x0 == v) { return s; }
+        s = asmcore.EmitState { ...s, ssa_x0: v };
+    }
     if (reg_of[v] < 0) { return s.write("    movq " + ssa_slot(ssa.spill_slot(reg_of[v]), s.ssa_save) + ", " + reg + "\n"); }
     var home: string = ssa_reg(reg_of[v]);
     if (home == reg) { return s; }
     return s.write("    movq " + home + ", " + reg + "\n");
 }
+// ssa_x0_forget marks %rax as holding no tracked value: at a label, and
+// before a sequence that writes %rax on its own.
+function ssa_x0_forget(s: asmcore.EmitState): asmcore.EmitState { return asmcore.EmitState { ...s, ssa_x0: 0 - 1 }; }
 function ssa_store(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): asmcore.EmitState {
+    if (reg == "%rax") { s = asmcore.EmitState { ...s, ssa_x0: v }; }
     if (reg_of[v] == 0 - 1) { return s; }
     if (reg_of[v] < 0) { return s.write("    movq " + reg + ", " + ssa_slot(ssa.spill_slot(reg_of[v]), s.ssa_save) + "\n"); }
     var home: string = ssa_reg(reg_of[v]);
@@ -5374,6 +5382,7 @@ function ssa_fcall_sym(what: string): string {
 // ssa_fcall calls a transcendental helper: the operand patterns in %xmm0 (and
 // %xmm1 for fpow), the result pattern back from %xmm0.
 function ssa_fcall(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+    s = ssa_x0_forget(s);
     s = s.need("float_transcendentals");
     s = ssa_load(reg_of, ins.args[0], "%rax", s);
     if (ins.args.len() > 1) {
@@ -5401,6 +5410,7 @@ function ssa_binary(ins: ssa.SInst, lp: string, s: asmcore.EmitState): asmcore.E
 // in IR order for a runtime helper and reversed for a user function (arg0 on
 // top), the callee, the caller-side pop, and %rax stored.
 function ssa_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+    s = ssa_x0_forget(s);
     var argc: i32 = ins.args.len();
     var helper: boolean = ircore.is_fern_helper(ins.str);
     if (helper) { s = helper_call_needs(ins.str, s); }
@@ -5457,6 +5467,7 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
 // for a string or slice op: arguments pushed with the first on top, the
 // helper's need marked as the flat arm marks it.
 function ssa_str_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+    s = ssa_x0_forget(s);
     s = ssa_str_marks(ins.str, s);
     var argc: i32 = ins.args.len();
     var i: i32 = argc - 1;
@@ -5515,6 +5526,7 @@ function ssa_host_kind(op: string): boolean {
 // syscall pushes its operands and then runs the flat arm's pop sequence, so
 // no allocatable register is written before every operand has been read.
 function ssa_host_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+    s = ssa_x0_forget(s);
     if (util.str_has_prefix(ins.str, "syscall")) {
         var i: i32 = 0;
         while (i < ins.args.len()) {
@@ -5556,6 +5568,7 @@ function ir_memset_asm(): string { return "    popq %rcx\n    popq %rax\n    pop
 // the arm writes hold nothing live; its labels take the op's index under the
 // SSA function's prefix.
 function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+    s = ssa_x0_forget(s);
     var i: i32 = 0;
     while (i < ins.args.len()) {
         s = ssa_load(reg_of, ins.args[i], "%rax", s);
@@ -5583,6 +5596,7 @@ function ssa_sym_addr(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
 // ssa_rt_call is the stack machine's call of a runtime routine on the register
 // ABI: the arguments in %rdi, %rsi, the result in %rax.
 function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+    s = ssa_x0_forget(s);
     s = s.need("heap");
     var sym: string = "__fern_alloc";
     if (ins.str == "alloc_u8") { s = s.need("alloc_u8"); sym = "__fern_alloc_u8"; }
@@ -5634,6 +5648,7 @@ function ssa_view_count(views: i32[]): i32 {
 // are read before the allocation and carried across it on the machine stack,
 // since the call clobbers every register they could live in.
 function ssa_str_view(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.EmitState): asmcore.EmitState {
+    s = ssa_x0_forget(s);
     s = s.need("heap");
     s = ssa_load(reg_of, ins.args[0], "%rdx", s);
     s = ssa_load(reg_of, ins.args[1], "%rcx", s);
@@ -5646,7 +5661,9 @@ function ssa_str_view(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.E
         s = s.write("    pushq %rcx\n    pushq %rax\n    movq $24, %rdi\n    call __fern_alloc\n    movq %rax, %rdx\n    popq %rax\n    popq %rcx\n");
     }
     s = s.write("    movq $-1, (%rdx)\n    movq %rcx, 8(%rdx)\n    movq %rax, 16(%rdx)\n    addq $8, %rdx\n");
-    return ssa_store(reg_of, ins.result, "%rdx", s);
+    // The result leaves in %rdx, so the store does not re-assert what %rax
+    // holds, and the bound loaded into it above has been overwritten.
+    return ssa_store(reg_of, ins.result, "%rdx", ssa_x0_forget(s));
 }
 
 // SsaFrame is the frame below the values: the phi stage words after the
@@ -5729,6 +5746,7 @@ function ssa_agg_pack(packed: string, s: asmcore.EmitState): AggPack {
 // arguments pushed with the first on top, the target in %r11, which nothing
 // live can occupy at a call.
 function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+    s = ssa_x0_forget(s);
     var argc: i32 = ins.args.len() - 1;
     var i: i32 = argc;
     while (i >= 1) {
@@ -5756,6 +5774,7 @@ function ssa_agg_lit(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmco
 
 // ssa_addr_inst selects the label addresses and the box allocation (45..48).
 function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+    s = ssa_x0_forget(s);
     var k: i32 = ins.kind_tag;
     var label: string = "";
     if (k == 45) { label = "__fn_" + asmcore.sanitize_label(ins.str); }
@@ -5816,6 +5835,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, ops: 
 // phi the sources are staged in the frame first, so two phis that swap a pair
 // of values read both before writing either.
 function ssa_phi_moves(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], pred: i32, succ: i32, s: asmcore.EmitState): asmcore.EmitState {
+    s = ssa_x0_forget(s);
     var ti: i32 = ssa_block_at(fr, succ);
     if (ti < 0) { return s; }
     var tb: ssa.SBlock = f.blocks[ti];
@@ -5879,6 +5899,7 @@ function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
     s = ssa_phi_moves(f, fr, reg_of, blk.id, t.t, s);
     if (stub) {
         s = s.write("    jmp " + lp + util.i32_to_string(t.t) + "\n");
+        s = ssa_x0_forget(s);
         s = s.write(fl + ":\n");
         s = ssa_phi_moves(f, fr, reg_of, blk.id, t.f, s);
         return ssa_jump(lp, t.f, next, s);
@@ -5941,6 +5962,7 @@ function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, ops: ir.Op
         var blk: ssa.SBlock = f.blocks[bi];
         var next: i32 = 0 - 1;
         if (bi + 1 < f.blocks.len()) { next = f.blocks[bi + 1].id; }
+        s = ssa_x0_forget(s);
         s = s.write(lp + util.i32_to_string(blk.id) + ":\n");
         var fu: SsaFuse = ssa_fuse(fr, blk);
         var ii: i32 = 0;

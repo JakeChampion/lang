@@ -343,9 +343,6 @@ wasm_ir_run.fern 7735236
 wasm_run.fern 7710316
 wasm_runio_run.fern 7676628
 asm_pathprobe_run.fern 6917668
-ssa_lift_scan_run.fern 6727628
 asm_ir_elig_run.fern 5806436
 irlower_run.fern 6730500
 checker_modload_run.fern 2302580
-ssa_emit_run.fern 1765036
-ssa_run.fern 1549644

@@ -95,7 +95,7 @@ what let the old `wasm-ssa` spelling skip capability enforcement entirely.
 The **self-host driver spells targets the same way** since #6635 — it took the
 whole scheme, both axes: `-target <isa>-<environment>`, `-emit asm` for the
 emitter's text (GAS on the natives, WAT on wasm) and `-emit core-module` for a
-raw wasm module, `-ssa` for the alternate emitter, and `fern -targets` to list
+raw wasm module, `-backend flat|ssa` to select the emitter, and `fern -targets` to list
 them. So a build command moves between the two compilers unchanged. Two
 differences remain, each with its own issue: `wasm32-wasi-http` has no
 self-host counterpart (#6636), and `-emit asm` has no native one — native

@@ -56,14 +56,34 @@ result's home and reading operands from theirs, not the table.
 | #9570 (frame from sp, no branch to the next block) | 5,013,831 | 21.5 MB | 142 s |
 | #9571 (results to their home, operands from theirs) | 4,814,582 | 20.7 MB | 134 s |
 | #9573 (a compare read only by its branch as flags) | 4,712,644 | 20.3 MB | 135 s |
+| #9579 (values live across calls in callee-saved registers) | 4,691,722 | 20.2 MB | 137 s |
+| #9595 (no reload into x0 of the value it holds) | 4,595,948 | | |
 
 #9571 took the moves out of x0 from 529,606 to 376,860 and the moves into
 x0/x1/x2 from 335,412 to 295,644; #9573 took `cset` from 44,047 to 9,109
 and `cbz` from 100,742 to 65,927, with 51,073 `b.<cond>` in their place.
 Widening the caller-saved set from seven registers to eleven (x4 to x7,
 which no SSA sequence uses) changed the text by 3,385 instructions, 0.07%,
-so the 1.96M frame loads and stores are call-crossing values, not register
-pressure; callee-saved registers are the next item.
+so the 1.96M frame loads and stores were call-crossing values, not register
+pressure. #9579 gave those values callee-saved registers: frame loads fall
+from 1,193,827 to 768,081 and stores from 772,393 to 589,593, the moves rise
+to 1,069,458 since an operand that was loaded is now moved, and 25,190
+register pairs are saved in prologues. #9595 then drops the 87,196 moves
+that reloaded into x0 the value just moved out of it and the 15,420 slot
+reloads of the same shape.
+
+## The output's speed
+
+The compiler built with `-backend ssa` compiling one of its own modules
+with `-emit asm`, best of three, against the flat-built compiler; the
+outputs are byte-identical on every row.
+
+| | flat-built | SSA-built, #9578 | SSA-built, #9579 |
+|---|---|---|---|
+| checker.fern, arm64-darwin | 13,214 ms | 12,345 ms | 10,202 ms |
+| irlower.fern, arm64-darwin | 4,311 ms | 2,687 ms | 2,208 ms |
+| checker.fern, arm64-linux container | 13,352 ms | | 10,300 ms |
+| irlower.fern, arm64-linux container | 4,281 ms | | 2,279 ms |
 
 ## The corpus
 
@@ -84,6 +104,79 @@ its PR merged: pmap_test exited 139 on #9571's first head because the
 arm64 folded-aggregate arm stored x0 over the address it had just computed
 into the result's home; and the x86-64 `args` arm of #9570 did not mark the
 need that emits `__fern_args`, found by review.
+
+## x86-64 against arm64, on the compiler compiling itself
+
+Both ISAs at the head of the stack, `-emit asm` over the whole compiler,
+counting emitted instructions:
+
+| | flat | ssa | ssa over flat |
+|---|---|---|---|
+| arm64 | 4,266,714 | 4,603,769 | +8% |
+| x86-64 | 3,211,906 | 4,580,160 | +43% |
+
+The two SSA columns are within half a percent of each other. The two flat
+columns are a million apart, and that is what the +43% is measuring: the
+x86-64 stack machine is the compact one, not the x86-64 SSA backend the
+loose one. `pushq -N(%rbp)` stages an operand in a single instruction,
+where the arm64 stack machine needs an address and a store, so flat x86-64
+carries 436,837 pushes of a frame slot against arm64 flat's none.
+
+Where the SSA backend's own 1.37M extra instructions are on x86-64, by
+`movq` class, against flat's same classes:
+
+| movq | flat | ssa | excess |
+|---|---|---|---|
+| register to register | 28,664 | 887,817 | +859,153 |
+| frame to register | 385,451 | 899,776 | +514,325 |
+| register to frame | 468,395 | 669,352 | +200,957 |
+
+The register-to-register half is the larger one and it is the item arm64
+already names: a result computed in the scratch register and then moved to
+its home, an operand moved from its home into a scratch register. arm64
+carries 865,114 of those and x86-64 carries 887,817, so this is one item
+across both ISAs rather than an x86-64 item. Of x86-64's, 382,990 move
+into `%rax` and 429,579 move out of it, and only 11,587 sit directly after
+a call — so this is the arithmetic selection routing through the scratch
+register, not the call ABI. The shared binary table names `%rax` and
+`%rcx` outright, which is what forces it. Neither stack machine folds a
+frame slot into an arithmetic operand, so that is not the difference and
+not the fix.
+
+Correctness is not in question here: the compiler built for x86-64-linux
+on each backend, run under qemu on a program carrying the slice-then-reuse
+shape, emits byte-identical assembly at 144,505 bytes. The compiler binary
+is 21.4 MB against flat's 15.0 MB.
+
+## The optimiser on the lifted function, measured
+
+The backend runs `ssa.prune_dead` and nothing else. Calling `ssa.optimize`
+on the lifted function instead fails the backend gate on `control_flow`
+(exit 169 against the stack machine's 171) and `host_calls` (exit 63
+against 58, and differing stdout).
+
+Running each pass of the pipeline alone against the same gate isolates it
+to one:
+
+| pass | gate |
+|---|---|
+| `copy_propagate` | clean |
+| `const_fold` | control_flow, host_calls fail |
+| `algebraic_simplify` | clean |
+| `cse` | clean |
+| `branch_simplify` | clean |
+| `merge_blocks` | clean |
+
+`const_fold` folds a `binary` through `eval_binary(op, l, r)`, which takes
+two i32s and returns one. The lifted binaries carry their width and
+signedness in the instruction's `imm`, which that signature cannot see, so
+a 32-bit or unsigned op folds at 64-bit signed width and the constant is
+wrong. The other five passes are structurally conservative: each keys off
+kinds 1, 2, 9 and 10 and leaves every production kind alone.
+
+So enabling the optimiser here is one pass's worth of work, not the
+pipeline's: `eval_binary` needs the width and the sign, and `const_fold`
+needs to pass them.
 
 ## Traps
 
@@ -108,6 +201,15 @@ need that emits `__fern_args`, found by review.
   2.6 MB of frame and the SSA-built compiler ran off its stack on
   `lexer.fern`. `lldb --batch -o run -k bt` on the stage-2 binary gave the
   frame from one frame pointer.
+- **A scratch-register tracker has to be forgotten where the result leaves
+  elsewhere.** The x86 slice kernel loads the upper bound into `%rax`,
+  overwrites it with the difference, and returns the box in `%rdx`, so its
+  closing store re-asserted nothing and the tracker went on claiming the
+  bound. A later read of that bound in the same block was then elided. A
+  slice from offset 0 hides it, because there the difference equals the
+  bound. The rule the sweep of both emitters settled on: a kernel that
+  loads the scratch register and does not close by storing from it forgets
+  before it returns.
 - **The per-function sweep finds a miscompile in a few hundred builds.**
   `FERN_SSA_ONLY=<name>` over every function of a failing program, one
   build and run each, named prime_gaps' byte sieve in 170 builds.
