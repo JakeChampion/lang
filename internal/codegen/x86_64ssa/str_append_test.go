@@ -13,24 +13,24 @@ func strLen(f *ssa.Func, b *ssa.Block, s ssa.Value) ssa.Value {
 
 // A uniquely held accumulator grows in place while the grown length still
 // fits its size class, and moves to a fresh block the first time it does not.
-// "abc"+"de" is a 5-byte string in the 16-byte class (13 bytes requested), so
-// three more bytes fit exactly and a fourth does not.
+// "ab"+"cd" is a 4-byte string in the 16-byte class (4 + strBlockBytes = 13
+// requested), so three more bytes fit exactly and a fourth does not.
 func TestStrAppendGrowsInPlaceWhileTheBlockHasRoom(t *testing.T) {
 	f := ssa.NewFunc("main")
 	e := f.NewBlock()
-	acc := wideCallOp(f, e, "__str_concat", constStr(f, e, "abc"), constStr(f, e, "de"))
+	acc := wideCallOp(f, e, "__str_concat", constStr(f, e, "ab"), constStr(f, e, "cd"))
 	r1 := wideCallOp(f, e, "__fern_str_append", acc, constStr(f, e, "xyz"))
 	same1 := f.AddOp(e, ssa.OpEq, r1, acc)
 	r2 := wideCallOp(f, e, "__fern_str_append", r1, constStr(f, e, "w"))
 	moved := f.AddOp(e, ssa.OpNe, r2, r1)
-	bytes := callOp(f, e, "__str_eq", r2, constStr(f, e, "abcdexyzw"))
-	length := f.AddOp(e, ssa.OpEq, strLen(f, e, r2), constOp(f, e, 9))
+	bytes := callOp(f, e, "__str_eq", r2, constStr(f, e, "abcdxyzw"))
+	length := f.AddOp(e, ssa.OpEq, strLen(f, e, r2), constOp(f, e, 8))
 	sum := f.AddOp(e, ssa.OpAdd, same1, f.AddOp(e, ssa.OpShl, moved, constOp(f, e, 1)))
 	sum = f.AddOp(e, ssa.OpAdd, sum, f.AddOp(e, ssa.OpShl, bytes, constOp(f, e, 2)))
 	sum = f.AddOp(e, ssa.OpAdd, sum, f.AddOp(e, ssa.OpShl, length, constOp(f, e, 3)))
 	f.SetRet(e, sum)
 	if got := assembleRun(t, f, 8); got != 15 {
-		t.Errorf("in place (1) + moved when full (2) + bytes right (4) + length 9 (8) = %d, want 15", got)
+		t.Errorf("in place (1) + moved when full (2) + bytes right (4) + length 8 (8) = %d, want 15", got)
 	}
 }
 
@@ -128,12 +128,16 @@ func TestStrDecHandsTheBlockBack(t *testing.T) {
 func TestStrAppendCopyPathReleasesTheAccumulator(t *testing.T) {
 	f := ssa.NewFunc("main")
 	e := f.NewBlock()
-	acc := wideCallOp(f, e, "__str_concat", constStr(f, e, "abcdefgh"), constStr(f, e, "")) // 8 bytes: the 16-byte class, full
-	grown := wideCallOp(f, e, "__fern_str_append", acc, constStr(f, e, "x"))                // 9 bytes: a 32-byte block
+	// 23 bytes fills the 32-byte class exactly (23 + strBlockBytes = 32), so
+	// the append cannot grow in place and has to copy — which is the path
+	// under test. A shorter accumulator would have spare capacity and never
+	// move.
+	acc := wideCallOp(f, e, "__str_concat", constStr(f, e, "abcdefghijklmnopqrstuv"), constStr(f, e, "w")) // 23 bytes: the 32-byte class, full
+	grown := wideCallOp(f, e, "__fern_str_append", acc, constStr(f, e, "x"))                               // 24 bytes: a 48-byte block
 	moved := f.AddOp(e, ssa.OpNe, grown, acc)
-	again := wideCallOp(f, e, "__str_concat", constStr(f, e, "ab"), constStr(f, e, "c")) // the 16-byte class again
+	again := wideCallOp(f, e, "__str_concat", constStr(f, e, "abcdefghijklmnopqrstu"), constStr(f, e, "vw")) // the 32-byte class again
 	reused := f.AddOp(e, ssa.OpEq, again, acc)
-	bytes := callOp(f, e, "__str_eq", grown, constStr(f, e, "abcdefghx"))
+	bytes := callOp(f, e, "__str_eq", grown, constStr(f, e, "abcdefghijklmnopqrstuvwx"))
 	sum := f.AddOp(e, ssa.OpAdd, moved, f.AddOp(e, ssa.OpShl, reused, constOp(f, e, 1)))
 	f.SetRet(e, f.AddOp(e, ssa.OpAdd, sum, f.AddOp(e, ssa.OpShl, bytes, constOp(f, e, 2))))
 	if got := assembleRun(t, f, 8); got != 7 {
