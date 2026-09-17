@@ -1530,6 +1530,15 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"try-result-ret-ok", "function get(): Result[i32, string] { return Ok(3); }\nfunction f(): Result[i32, string] { var v: i32 = get()?; return Ok(v + 1); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"try-lambda-ret-i32", "function f(): Option[i32] {\n    var g = (): i32 => { var o: Option[i32] = Some(1); var v: i32 = o?; return v; };\n    return Some(1);\n}\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
 		{"try-lambda-ret-option-ok", "function f(): i32 {\n    var g = (): Option[i32] => { var o: Option[i32] = Some(1); var v: i32 = o?; return Some(v); };\n    return 2;\n}\nfunction main(): i32 { return 0; }\n", nil},
+		// E042 not-a-`?`-type on a NON-primitive operand (#9331). The rule
+		// used to fire only for a known scalar, so an unmarked enum — which
+		// types to a union here — was accepted where native refuses it, and
+		// the self-host went on to lower it, since its `?` admits a marked
+		// enum by SHAPE rather than by marker. A `type X = A | B` alias is
+		// refused for the same reason and with the same message on both.
+		{"try-on-unmarked-enum", "enum Flag { On(i32), Off }\nfunction pick(f: Flag): Flag { var v: i32 = f?; return On(v + 1); }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
+		{"try-on-union-alias", "struct A { n: i32 }\nstruct B { n: i32 }\ntype Shape = A | B;\nfunction f(x: Shape): i32 { var y: i32 = x?; return y; }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
+		{"try-on-marked-enum-ok", "@try\nenum MyOpt { Got(i32), Nope }\nfunction pick(f: MyOpt): MyOpt { var v: i32 = f?; return Got(v + 1); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"callee-undefined", "function main(): i32 { return foo(1); }\n", []string{"E001"}},
 		{"callee-user-fn-ok", "function g(): i32 { return 1; }\nfunction main(): i32 { return g(); }\n", nil},
 		{"callee-builtin-ok", "function main(): i32 { print(\"hi\"); return 0; }\n", nil},
