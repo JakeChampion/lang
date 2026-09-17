@@ -55,18 +55,19 @@ func TestCallPassesSurplusArgumentsOnTheStack(t *testing.T) {
 }
 
 // The callee side: a parameter past the register half is read from the caller's
-// frame, which sits above the callee's own.
+// frame, which sits above the callee's own. A callee that reserves nothing has
+// no frame to read above, and its parameters start at [sp, #0] — so the frame is
+// optional here and only its size enters the offsets.
 func TestCalleeReadsItsStackParameters(t *testing.T) {
 	asm, err := arm64ssa.EmitAsmModule(sumModule(12), "main", arm64ssa.DefaultNumAlloc, nil)
 	if err != nil {
 		t.Fatalf("EmitAsmModule: %v", err)
 	}
 	body := funcText(t, asm, "sum")
-	frame := regexp.MustCompile(`\n\tsub sp, sp, #(\d+)\n`).FindStringSubmatch(body)
-	if frame == nil {
-		t.Fatalf("sum has no frame to read its stack parameters above:\n%s", body)
+	base := 0
+	if frame := regexp.MustCompile(`\n\tsub sp, sp, #(\d+)\n`).FindStringSubmatch(body); frame != nil {
+		base, _ = strconv.Atoi(frame[1])
 	}
-	base, _ := strconv.Atoi(frame[1])
 	for k := 0; k < 4; k++ {
 		want := base + 8*k
 		re := regexp.MustCompile(`\n\tldr x\d+, \[sp, #` + strconv.Itoa(want) + `\]\n`)

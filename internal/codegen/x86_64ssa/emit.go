@@ -719,6 +719,39 @@ func (e *emitter) coalesceDst(result ssa.Value, avoid int) int {
 	return e.s2
 }
 
+// swapForDst reorders an op's operands when the result's register home is the
+// RIGHT one. Left as they are, coalesceDst has to refuse that home — the
+// compute-in move would clobber rb before the op reads it — and stage through
+// the s2 scratch, costing a move in and a copy out. Read the other way round
+// the compute-in move is a self-move and the result is already home.
+//
+// A commutative op is the same value either way round. A directional
+// comparison is not, so it swaps under the flipped predicate (`a < b` read as
+// `b > a`), which is the same value again. Anything else keeps its order and
+// pays the scratch.
+//
+// Returning the op kind matters beyond the moves saved: a comparison staged
+// through the scratch is no longer the last instruction defining the
+// terminator's condition register, so condFusable refuses it and the block
+// materialises a boolean — cmp/setcc/movzx/test/jcc — where a fused cmp/jcc
+// would do. That is five instructions a loop test pays every iteration.
+func (e *emitter) swapForDst(op *ssa.Op, ra, rb int) (ssa.OpKind, int, int) {
+	if ra == rb || !op.Result.IsValid() {
+		return op.Kind, ra, rb
+	}
+	l, ok := e.loc(op.Result.ID)
+	if !ok || !l.IsReg || l.Reg != rb {
+		return op.Kind, ra, rb
+	}
+	if ssa.IsCommutative(op.Kind) {
+		return op.Kind, rb, ra
+	}
+	if flipped, ok := ssa.FlipDirectionalCmp(op.Kind); ok {
+		return flipped, rb, ra
+	}
+	return op.Kind, ra, rb
+}
+
 // callResultDst names the register a call should deliver its result into: the
 // result's own register home when it has one, else the given staging scratch
 // (from which place() stores it to its slot, or drops it when the result is
@@ -910,12 +943,14 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 		// register home; div/rem/shift stage through fixed registers (rax/rdx,
 		// cl) inside asmInst, so they stay on the scratch s2.
 		dst := e.s2
+		kind := op.Kind
 		switch op.Kind {
 		case ssa.OpAdd, ssa.OpSub, ssa.OpMul, ssa.OpAnd, ssa.OpOr, ssa.OpXor:
+			kind, ra, rb = e.swapForDst(op, ra, rb)
 			dst = e.coalesceDst(op.Result, rb)
 		}
 		e.movReg(dst, ra)
-		e.push(Inst{Op: BinOp, Dst: dst, Src: rb, K: op.Kind, W: op.Width, Narrow: e.narrow.HighBitsDead(op.Result)})
+		e.push(Inst{Op: BinOp, Dst: dst, Src: rb, K: kind, W: op.Width, Narrow: e.narrow.HighBitsDead(op.Result)})
 		if dst == e.s2 {
 			e.place(op.Result, e.s2)
 		}
@@ -940,9 +975,10 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 		if err != nil {
 			return err
 		}
+		kind, ra, rb := e.swapForDst(op, ra, rb)
 		dst := e.coalesceDst(op.Result, rb)
 		e.movReg(dst, ra)
-		e.push(Inst{Op: SetCmp, Dst: dst, Src: rb, K: op.Kind})
+		e.push(Inst{Op: SetCmp, Dst: dst, Src: rb, K: kind})
 		if dst == e.s2 {
 			e.place(op.Result, e.s2)
 		}
