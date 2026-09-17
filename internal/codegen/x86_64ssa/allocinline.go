@@ -47,15 +47,24 @@ func boxFreeInline(in Inst) bool {
 // constant size as an inline push; it reports false for anything else. r11
 // is the per-instruction scratch the trampoline already uses; s0 homes a
 // slot-resident box and s1 the old list head.
-func inlineAllocLines(in Inst, numAlloc int, seed string) ([]string, bool) {
-	// Under the leak census the allocation fast paths stay calls, since
-	// __alloc and __free are where the census counts: an inline pop or push
-	// reaches neither, and the numbers would silently undercount.
+func inlineAllocLines(in Inst, numAlloc int, seed string, counting bool) ([]string, bool) {
+	// Under the leak census BOTH fast paths stay calls, not just the pop the
+	// `counting` check below turns off: __alloc and __free are where the
+	// census counts, and an inline push reaches __free no more than an inline
+	// pop reaches __alloc, so either one left on undercounts.
 	if ast.LeakCheckEnabled {
 		return nil, false
 	}
 	lbl := func(suffix string) string { return fmt.Sprintf(".Lssa_alloc_%s_%s", seed, suffix) }
 	if in.Op == MemAlloc && in.SrcImm {
+		if counting {
+			// A module reading __heap_alloc_count() (#9596) keeps every
+			// allocation on the helper, which is where the counter ticks.
+			// Inlining the pop here instead would hand out a block the
+			// count never saw, and an undercount reads as the zero-alloc
+			// steady state the observable exists to prove.
+			return nil, false
+		}
 		idx, ok := SmallClassIndex(in.Imm)
 		if !ok {
 			return nil, false

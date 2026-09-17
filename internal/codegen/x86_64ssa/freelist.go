@@ -73,9 +73,21 @@ func emitFreelistClass(w func(string, ...any), tag, sizeReg, idxReg, noneLabel s
 // waiting and otherwise bumps the cursor by the class's rounded size. Popped
 // memory is NOT zeroed, the same contract as the flat __fern_alloc. n is a
 // non-negative i32.
-func emitAllocHelper(w func(string, ...any)) {
+func emitAllocHelper(w func(string, ...any)) { emitAllocHelperCensus(w, false) }
+
+// emitAllocHelperCounting is the same allocator with the census tick a module
+// that reads __heap_alloc_count() (#9596) needs: one increment at the entry,
+// which is ahead of the freelist-pop return, so a recycled block is counted
+// exactly like a bumped one — the census is of blocks handed out, not of
+// memory bought. It is substituted for the plain body by emitRuntimeHelpers.
+func emitAllocHelperCounting(w func(string, ...any)) { emitAllocHelperCensus(w, true) }
+
+func emitAllocHelperCensus(w func(string, ...any), census bool) {
 	w("")
 	w("%s:", fnLabel("__alloc"))
+	if census {
+		w("\tadd qword ptr [rip + %s], 1", allocCountSym)
+	}
 	w("\tmov edi, edi")
 	emitFreelistClass(w, "alloc", "rdi", "rsi", ".Lssa_alloc_bump")
 	w("\tlea r8, [rip + %s]", freelistSym)

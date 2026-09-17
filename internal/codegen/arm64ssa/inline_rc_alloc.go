@@ -116,7 +116,15 @@ func inlineRcLines(in x86.Inst, fr frameLayout, numAlloc int, seed string) ([]st
 // under the census. x16 and x17 are the per-instruction scratch the
 // trampoline sequence already uses; s0 homes a slot-resident box and s1 the
 // old list head.
-func inlineAllocLines(in x86.Inst, fr frameLayout, numAlloc int, seed string) ([]string, bool) {
+func inlineAllocLines(in x86.Inst, fr frameLayout, numAlloc int, seed string, counting bool) ([]string, bool) {
+	if counting {
+		// A module reading __heap_alloc_count() (#9596) keeps every
+		// allocation on the helper, which is where the pop is counted.
+		// Inlining it here would hand out a block the count never saw,
+		// and an undercount reads as the zero-alloc steady state the
+		// observable exists to prove.
+		return nil, false
+	}
 	lbl := func(suffix string) string { return fmt.Sprintf(".Lssa_alloc_%s_%s", seed, suffix) }
 	heads := func(base string) []string {
 		return []string{

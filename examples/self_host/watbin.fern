@@ -280,6 +280,18 @@ function wvec(count: i32, elems: i32[]): i32[] {
 }
 
 // valtype_byte maps a WAT value-type spelling to its wasm binary code.
+// global_valtype names the declared type of a `(global $n (mut T) init)` or
+// `(global $n T init)` node, defaulting to i32 for a shape neither matches —
+// the assumption this function replaced, kept as the fallback so a malformed
+// node degrades exactly as it used to rather than into a different valtype.
+function global_valtype(gn: SExpr): string {
+    if (gn.items.len() < 3) { return "i32"; }
+    var ty: SExpr = gn.items[2];
+    if (ty.kind == 2) { return ty.text; }
+    if (node_head(ty) == "mut" && ty.items.len() > 1 && ty.items[1].kind == 2) { return ty.items[1].text; }
+    return "i32";
+}
+
 function valtype_byte(t: string): i32 {
     if (t == "i32") { return 127; }   // 0x7f
     if (t == "i64") { return 126; }   // 0x7e
@@ -1605,8 +1617,15 @@ function emit_binary(mod: SExpr): i32[] {
     while (i < mod.items.len()) {
         if (node_head(mod.items[i]) == "global") {
             var gn: SExpr = mod.items[i];
-            // (global $name (mut i32) (i32.const N))
-            globBody = globBody.append(valtype_byte("i32"));
+            // (global $name (mut T) (T.const N)) — T read from the node rather
+            // than assumed i32: an i64 global (the leak census's counters, and
+            // the allocation count of #9596) encoded as i32 gives a binary
+            // whose global type disagrees with its own init expression, which
+            // the module-level validator rejects with "expected i32, found
+            // i64" long before anything runs. The text form was always right,
+            // so `wasm-tools validate` on the .wat passed while the .wasm this
+            // assembler wrote did not (#9597).
+            globBody = globBody.append(valtype_byte(global_valtype(gn)));
             globBody = globBody.append(1);       // mutable
             globBody = wcat(globBody, enc_instr(gn.items[gn.items.len() - 1], [], fnames, gnames, [], []));
             globBody = globBody.append(11);      // end

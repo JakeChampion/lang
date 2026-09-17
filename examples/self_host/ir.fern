@@ -933,6 +933,15 @@ pub function op_open_file(flags: i32): Op {
 // arena and records the end); wasm reads `$heap − heap_base` and zero-extends
 // it to the declared i64. Mirrors native's __fern_heap_bump_bytes.
 pub function op_heap_bump_bytes(): Op { return op0("heap_bump_bytes"); }
+// `__heap_alloc_count` takes no operands → an i64: the number of blocks the
+// allocator has handed out, the freelist-pop path and the bump path alike
+// (#9596). It is the half heap_bump_bytes cannot see — a pop leaves the cursor
+// alone, so a recycling steady state reads flat in bytes and busy in calls.
+// Like heap_bump_bytes it reads a runtime word rather than allocating, and
+// needs the heap runtime emitted (op_allocates admits it for the gate); the
+// counter itself is ticked at the allocator's entry, and only in a module that
+// reads it. Mirrors native's __fern_heap_alloc_count.
+pub function op_heap_alloc_count(): Op { return op0("heap_alloc_count"); }
 // `__heap_mark` takes no operands -> an i64 arena checkpoint; `__heap_release_to`
 // pops that i64 and rewinds the cursor to it (#6728). A one-level checkpoint on a
 // bump arena that otherwise never gives memory back — the pair exists for the
@@ -2448,6 +2457,7 @@ function kind_id_len15(name: string): i32 {
 
 function kind_id_len16(name: string): i32 {
     var c: u8 = name[0];
+    if (c == b'h' && name == "heap_alloc_count") { return 315; }
     if (c == b'm' && name == "mapiter_has_next") { return 134; }
     if (c == b's' && name == "struct_set_shape") { return 141; }
     if (c == b'o' && name == "open_reader_with") { return 304; }
@@ -2791,6 +2801,7 @@ function kind_name_4(id: i32): string {
     if (id == 312) { return "termios_get"; }
     if (id == 313) { return "termios_set"; }
     if (id == 314) { return "set_window_size"; }
+    if (id == 315) { return "heap_alloc_count"; }
     if (id == 302) { return "arr_push_owned_i64"; }
     if (id == 303) { return "arr_push_owned_f64"; }
     return "invalid";
@@ -2853,7 +2864,7 @@ pub function kind_name(id: i32): string {
 function pops0(t: i32): boolean {
     return t == 1 || t == 2 || t == 3 || t == 4 || t == 5 || t == 6      // const_*
         || t == 18                                                       // load_local
-        || t == 79 || t == 80                                            // ptr_width, heap_bump_bytes
+        || t == 79 || t == 80 || t == 315                                // ptr_width, heap_bump_bytes, heap_alloc_count
         || t == 117 || t == 119                                          // strbuf_reset, strbuf_take
         || t == 121                                                      // opt_none
         || t == 147                                                      // dyn_dispatch (args in locals)
@@ -4667,7 +4678,7 @@ pub function op_allocates(tag: i32): boolean {
     // heap_bump_bytes does NOT allocate, but it reads the heap runtime's cursor
     // + base, so it needs that runtime emitted — fold it into the same gate
     // (the predicate's contract per the doc above is "needs the heap runtime").
-    if (tag == 80) { return true; }
+    if (tag == 80 || tag == 315) { return true; }
     // heap_mark / heap_release_to read and REWRITE that same cursor (plus the
     // freelist heads), so they need the heap runtime for the same reason (#6728).
     if (tag == 229 || tag == 230) { return true; }

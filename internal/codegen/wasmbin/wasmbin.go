@@ -752,6 +752,20 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 			maxEnumN = ex.ResultPlainEnumN
 		}
 	}
+	// A module that reads __heap_alloc_count() (#9596) needs the census
+	// counters ticked even with the leak detector off, so the four bodies
+	// that maintain them are substituted for their counting spellings.
+	// All four together: a counted alloc whose free went uncounted would
+	// drift live_bytes for the reporter that shares these slots.
+	censusBodies := map[string]func(map[string]uint32) []byte{}
+	if helpers.set["__fern_heap_alloc_count"] && !ast.LeakCheckEnabled {
+		censusBodies = map[string]func(map[string]uint32) []byte{
+			"__fern_alloc":            buildAllocBodyCounting,
+			"__free":                  buildFreeBodyCounting,
+			"__fern_str_append":       buildStrAppendBodyCounting,
+			"__fern_str_append_range": buildStrAppendRangeBodyCounting,
+		}
+	}
 	for _, name := range helpers.order {
 		var spec runtimeHelperSpec
 		isExtern := false
@@ -768,6 +782,9 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 			spec, isExtern = s, true
 		} else {
 			spec = runtimeHelperSpecs[name]
+		}
+		if counting, ok := censusBodies[name]; ok {
+			spec.body = counting
 		}
 		params, results := spec.params, spec.results
 		tIdx := addType(params, results)
