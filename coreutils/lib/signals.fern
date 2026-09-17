@@ -9,6 +9,15 @@
 // so the table is chosen by `target_os()`, each half taken from that kernel's
 // own header: Darwin's `sys/signal.h`, Linux's `asm-generic/signal.h`.
 //
+// THE NUMBERS COME FROM THE KERNEL HEADER; THE NAMES GNU PRINTS COME FROM
+// GLIBC. The two disagree, and every divergence #9643 fixed was that one
+// mistake: `asm-generic/signal.h` has `SIGIO 29` with SIGPOLL as its alias,
+// plus `SIGLOST 29` and `SIGUNUSED 31`, while glibc's `bits/signum-arch.h`
+// has `SIGPOLL 29` with SIGIO as the alias and defines neither of the other
+// two. A GNU build enumerates glibc, so glibc is what `kill -l` prints and
+// what `number()` must accept. Check a printed name against
+// `bits/signum-arch.h`, not against the kernel.
+//
 // Linux additionally has the realtime range RTMIN(32)..RTMAX(64), which Darwin
 // has not got at all. GNU spells those `RTMIN`, `RTMIN+3`, `RTMAX-1` and prints
 // them from `kill -l`, so they belong in the table rather than in a footnote.
@@ -25,7 +34,7 @@ pub function names(): string[] {
   if (target_os() == "darwin") {
     return ["HUP", "INT", "QUIT", "ILL", "TRAP", "ABRT", "EMT", "FPE", "KILL", "BUS", "SEGV", "SYS", "PIPE", "ALRM", "TERM", "URG", "STOP", "TSTP", "CONT", "CHLD", "TTIN", "TTOU", "IO", "XCPU", "XFSZ", "VTALRM", "PROF", "WINCH", "INFO", "USR1", "USR2"];
   }
-  return ["HUP", "INT", "QUIT", "ILL", "TRAP", "ABRT", "BUS", "FPE", "KILL", "USR1", "SEGV", "USR2", "PIPE", "ALRM", "TERM", "STKFLT", "CHLD", "CONT", "STOP", "TSTP", "TTIN", "TTOU", "URG", "XCPU", "XFSZ", "VTALRM", "PROF", "WINCH", "IO", "PWR", "SYS"];
+  return ["HUP", "INT", "QUIT", "ILL", "TRAP", "ABRT", "BUS", "FPE", "KILL", "USR1", "SEGV", "USR2", "PIPE", "ALRM", "TERM", "STKFLT", "CHLD", "CONT", "STOP", "TSTP", "TTIN", "TTOU", "URG", "XCPU", "XFSZ", "VTALRM", "PROF", "WINCH", "POLL", "PWR", "SYS"];
 }
 
 // `rt_min()` / `rt_max()` — the realtime range, or 0 when the kernel has none.
@@ -88,11 +97,22 @@ pub function name(n: i32): string {
 // `alternates()` — names that share a number with one in `names()`. Accepted on
 // input, never printed. Each entry is the name, and `alternate_values()` the
 // number at the same index.
+//
+// This is exactly glibc's ALIAS set: `bits/signum-arch.h` gives 29, 6 and 17
+// the primary names SIGPOLL, SIGABRT and SIGCHLD, then defines SIGIO, SIGIOT
+// and SIGCLD as aliases of them — which is also why `names()` prints POLL at
+// 29 rather than IO.
+//
+// `LOST` and `UNUSED` are NOT here, and the reason is where they come from:
+// both are KERNEL names (`asm-generic/signal.h` has SIGLOST 29 and SIGUNUSED
+// 31) that glibc never defines. A GNU build enumerates glibc, so it cannot see
+// them and answers `'LOST': invalid signal`; accepting them diverged on a name
+// a caller can actually type.
 function alternates(): string[] {
   if (target_os() == "darwin") {
     return ["POLL", "IOT"];
   }
-  return ["IOT", "LOST", "UNUSED", "POLL", "CLD"];
+  return ["IOT", "IO", "CLD"];
 }
 
 function alternate_values(): i32[] {
@@ -100,7 +120,7 @@ function alternate_values(): i32[] {
     // Darwin's 7 is EMT and POLL both; IOT is the historical ABRT.
     return [7, 6];
   }
-  return [6, 29, 31, 29, 17];
+  return [6, 29, 17];
 }
 
 // `number(s)` — the number `s` names, or 0 when it names nothing.
