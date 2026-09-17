@@ -1887,6 +1887,16 @@ function expr(e: ast.Expr, s: State, expected: typeinfo.Type): Value {
     return widen(v, expected);
 }
 
+// A zero is the one value this boundary makes without an operand: the frame
+// holds it, and at a reference type it is the null word whose release is the
+// guard every drop helper carries.
+function zero_value(e: ast.Expr, s: State, expected: typeinfo.Type): Value {
+    var ty: typeinfo.Type = expected;
+    if (!semtypes.concrete(ty, false)) { ty = checked(e, s); }
+    if (!semtypes.concrete(ty, false)) { return refused(s, "zero of an unresolved type"); }
+    return define(s, ssasem.zero(), [], 0, "", ty);
+}
+
 function produce(e: ast.Expr, s: State, expected: typeinfo.Type): Value {
     match (e) {
         ast.ExprNumber(n) => { return number(n, s, expected); },
@@ -1902,6 +1912,10 @@ function produce(e: ast.Expr, s: State, expected: typeinfo.Type): Value {
         ast.ExprBinary(b) => { return binary(e, b, s, expected); },
         ast.ExprUnary(u) => { return unary(e, u, s, expected); },
         ast.ExprCall(c) => { return call(e, c, s, false, expected); },
+        // The zero a lifted declaration starts at. Its type is the annotation
+        // the desugar wrote it from, which the checker resolved, so the value
+        // takes what the binding expects rather than the node's spelling.
+        ast.ExprZero(_) => { return zero_value(e, s, expected); },
         _ => { return refused(s, "unsupported expression"); }
     }
 }

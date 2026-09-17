@@ -1607,7 +1607,11 @@ function eval_expr(e: ast.Expr, env: Env): Value {
             if (util.is_f64_range_kind(u.kind)) { return v_err("error[P002]: " + util.f64_range_message(u.kind)); }
             return v_err("parser-side unknown: " + u.kind);
         },
-        ast.ExprZero(z) => { return v_err("zero of " + z.type_name + " read before its assignment"); }
+        // The zero word the compiled paths store. It is not an error value:
+        // every defer-using function declares its return temp this way, and a
+        // VErr here short-circuits the whole body rather than waiting for a
+        // read that never comes.
+        ast.ExprZero(z) => { return v_int(0); }
     }
     return v_err("unhandled Expr variant");
 }
