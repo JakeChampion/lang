@@ -42,17 +42,54 @@ after the call finds the value already home and emits nothing —
 `ssa_store` already returns unchanged when the home is the register it was
 handed.
 
-That is not a one-line change, which is why this is a measurement and not
-a slice. `%rax` is scratch, not a pool register: `ssa_reg` maps the pool to
-`%rsi`, `%rdi`, `%r8`-`%r11` and the callee-saved set, and the emitter arms
-use `%rax`, `%rcx` and `%rdx` as working registers, three at once in the
-slice kernel. Putting `%rax` in the pool means finding a third scratch
-outside it, which means taking one out — the pool stays the size it is, and
-every arm that names `%rax` has to be read.
+That is not a one-line change, and reading the arms it would touch says
+the obstacle is bigger than "find another scratch register".
 
-Membership alone would only place a call result in `%rax` by luck. The
-allocator also needs to prefer the ABI's result register for a value
-defined by a call, which is a hint `regalloc_linear` does not have today.
+`%rax` is scratch, not a pool register: `ssa_reg` maps the pool to `%rsi`,
+`%rdi`, `%r8`-`%r11` and the callee-saved set, and arm64's to `x9`-`x15`
+and `x19`-`x28`. The ABI result register is excluded from both because
+every arm uses it as its WORKING register, not merely as a spare: the
+binary arm forces its destination to `%rax` / `x0` and loads its left
+operand there, the unary arm does the same, and the memory and call
+kernels name it throughout. A value homed in that register would be
+destroyed by the next arithmetic instruction of any kind, so putting it in
+the pool alone produces a miscompile rather than a saving.
+
+The slice is therefore to stop using the ABI result register as the
+emitters' working register — move the arms onto a scratch that is not it,
+on both ISAs — and only then put it in the pool. On arm64 the choice is
+constrained: `x8` carries the syscall number, and `darwinize` keys its
+Mach-O rewrite off the literal `ldr x8, [sp], #16`.
+
+Membership alone would also only place a call result there by luck. The
+allocator needs to prefer the ABI's result register for a value a call
+defines, which is a hint `regalloc_linear` does not have today.
+
+## How big step one is, and the trap in counting it
+
+Counted over the 67 `ssa_*` / `emit_ssa_*` functions, which are 912 lines:
+
+| | sites |
+|---|---|
+| arm64, `x0`-`x3` | 166 |
+| arm64, `w0`-`w3` | 26 |
+| x86-64, `%rax` | 106 |
+| x86-64, `%eax` | 26 |
+| x86-64, `%al` | 14 |
+
+**A register's 32-bit and 8-bit names do not contain its 64-bit name**, so
+a search for `x0` misses 25 `w0` sites and a search for `%rax` misses 40
+spelled `%eax` or `%al` — a quarter of the work on each ISA, invisible to
+the obvious search. A missed site is a silent miscompile rather than a
+build error, and on arm64 doubly so: a `w` write zeroes the upper half of
+whatever register it names, so the wrong-register write destroys more than
+it writes.
+
+The arm64 float names (`d0`, `d1`, `s0`, 46 sites) are separate registers
+rather than views, but `fmov` ties them to the integer ones, so the pairs
+move together.
+
+Scope step one from all three name widths, not from the 64-bit one.
 
 ## What is NOT the gap
 

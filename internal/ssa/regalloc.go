@@ -279,11 +279,53 @@ func LinearScan(f *Func, target Target) *Allocation {
 			spillOverSave[id] = true
 		}
 	}
-	alloc := allocateLinear(iv, target, crosses, spillOverSave)
+	alloc := allocateLinear(iv, target, crosses, spillOverSave, phiHints(f))
 	alloc.OpPos = opPos
 	alloc.CallLive = callLive
 	alloc.Uses = uses
 	return alloc
+}
+
+// phiHints pairs each phi's result with each of its arguments, in both
+// directions. Whichever end the allocator reaches first, the other prefers the
+// same register, and the copy on that edge disappears.
+//
+// A phi's result and its args are the same value either side of a control-flow
+// join, so they never interfere by construction on the edge itself — and where
+// they DO interfere elsewhere (an arg still live past the join), the hint is
+// simply not taken, because the register will not be free. That is why this
+// needs no interference check of its own.
+func phiHints(f *Func) map[int32][]int32 {
+	if f == nil {
+		return nil
+	}
+	hints := map[int32][]int32{}
+	add := func(a, b int32) {
+		for _, x := range hints[a] {
+			if x == b {
+				return
+			}
+		}
+		hints[a] = append(hints[a], b)
+	}
+	for _, b := range f.Blocks {
+		for _, op := range b.Ops {
+			if op == nil || op.Kind != OpPhi || !op.Result.IsValid() {
+				continue
+			}
+			for _, arg := range op.Args {
+				if !arg.IsValid() || arg.ID == op.Result.ID {
+					continue
+				}
+				add(op.Result.ID, arg.ID)
+				add(arg.ID, op.Result.ID)
+			}
+		}
+	}
+	for _, v := range hints {
+		sort.Slice(v, func(a, b int) bool { return v[a] < v[b] })
+	}
+	return hints
 }
 
 // isCallOp reports whether an op transfers control to a callee (so values live
@@ -302,7 +344,7 @@ func isCallOp(k OpKind) bool {
 // in crosses prefers a callee-saved register; one also in spillOverSave takes
 // a spill slot rather than a caller-saved register when no callee-saved one
 // is free, on a target that distinguishes the two.
-func allocateLinear(iv map[int32]Interval, target Target, crosses, spillOverSave map[int32]bool) *Allocation {
+func allocateLinear(iv map[int32]Interval, target Target, crosses, spillOverSave map[int32]bool, hints map[int32][]int32) *Allocation {
 	order := make([]Interval, 0, len(iv))
 	for _, i := range iv {
 		order = append(order, i)
@@ -371,6 +413,60 @@ func allocateLinear(iv map[int32]Interval, target Target, crosses, spillOverSave
 		}
 		return best
 	}
+	// takeHinted removes and returns a free register already held by one of
+	// this value's coalescing partners — the other end of a phi edge. Landing
+	// both ends in the same register makes the edge move a self-move, which
+	// edgeMoves then drops entirely.
+	//
+	// Only a register still in `free` is taken, so this cannot hand out one a
+	// live interval is using: the hint changes WHICH free register is chosen,
+	// never whether one is available. Partners are consulted in value order so
+	// the result does not depend on map iteration.
+	takeHinted := func(id int32, wantCalleeSaved bool) (int, bool) {
+		partners := hints[id]
+		if len(partners) == 0 {
+			return 0, false
+		}
+		best := -1
+		for _, p := range partners {
+			r, ok := alloc.Reg[p]
+			if !ok {
+				continue // partner spilled, or not allocated yet
+			}
+			held := false
+			for _, fr := range free {
+				if fr == r {
+					held = true
+					break
+				}
+			}
+			if !held {
+				continue // some live value is in it
+			}
+			if calleeSaved(r) != wantCalleeSaved {
+				// Saving one edge move is not worth spilling this value
+				// around every call it crosses: a call-crossing value wants a
+				// callee-saved register far more than it wants to dodge one
+				// copy. Measured — taking the partner's register regardless
+				// cost examples/bench/closure_call 11% more retired
+				// instructions.
+				continue
+			}
+			if best == -1 || r < best {
+				best = r
+			}
+		}
+		if best == -1 {
+			return 0, false
+		}
+		for idx, r := range free {
+			if r == best {
+				free = append(free[:idx], free[idx+1:]...)
+				break
+			}
+		}
+		return best, true
+	}
 	addActive := func(i Interval) {
 		active = append(active, i)
 		sort.Slice(active, func(a, b int) bool {
@@ -422,7 +518,11 @@ func allocateLinear(iv map[int32]Interval, target Target, crosses, spillOverSave
 			}
 			continue
 		}
-		alloc.Reg[i.Value] = pickReg(crosses[i.Value])
+		if r, ok := takeHinted(i.Value, crosses[i.Value]); ok {
+			alloc.Reg[i.Value] = r
+		} else {
+			alloc.Reg[i.Value] = pickReg(crosses[i.Value])
+		}
 		addActive(i)
 	}
 
