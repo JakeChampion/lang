@@ -339,8 +339,41 @@ function main(): i32 {
 //
 // A zero DURATION disables the timeout entirely: no timer, and `-k` never
 // comes into it.
+// `over_setitimer_bound(f, seconds)` — whether Darwin's setitimer would refuse
+// this deadline. xnu's `itimerfix` is the bound, and it is not about the width
+// of the field:
+//
+//     if (tv->tv_sec < 0 || tv->tv_sec > 100000000 ||
+//         tv->tv_usec < 0 || tv->tv_usec >= 1000000) {
+//             return EINVAL;
+//     }
+//
+// so anything past 100000000 seconds — about 3.17 years — is EINVAL there.
+function over_setitimer_bound(f: ld.Format, seconds: ld.LD): boolean {
+  if (seconds.is_inf()) {
+    return true;
+  }
+  return seconds.cmp(f.from_i64(100000000 as i64)) > 0;
+}
+
 function supervise(f: ld.Format, cfg: Cfg, wait_for: ld.LD, cmd: string, cpid: i32): i32 {
   if (wait_for.is_zero()) {
+    return proc_waitpid(cpid);
+  }
+  // A DEADLINE DARWIN WILL NOT TAKE IS REPORTED, not silently run unbounded.
+  // GNU's settimeout prefers timer_create, which glibc has and Darwin has
+  // not, so there it falls back to setitimer — "more portable (to Darwin for
+  // example)", says the comment beside it — and the bound above makes `inf`
+  // or a saturated duration EINVAL. GNU warns and returns WITHOUT arming, so
+  // the command then runs to completion with no deadline and `-k` never comes
+  // into it, exactly as a zero DURATION does.
+  //
+  // We fork a sleeper rather than call setitimer, so there is no call of ours
+  // to fail and the bound is modelled instead. Measured on the macos-15
+  // runner: `timeout inf true` and `timeout 99999999999999999999 true` both
+  // warn there and neither does on Linux, where timer_create takes them.
+  if (target_os() == "darwin" && over_setitimer_bound(f, wait_for)) {
+    gnu.error("warning: setitimer: " + gnu.exec_errno_text(22));
     return proc_waitpid(cpid);
   }
   var tpid: i32 = fork_timer(f, wait_for);

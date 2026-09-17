@@ -201,24 +201,61 @@ function scan(argv: string[]): Selection {
   return s;
 }
 
+// `from_env(value, name)` — GNU's `print_element_env`, which is where the
+// UNAME_* overrides live and is APPLE-ONLY upstream:
+//
+//     print_element_env (char const *element, MAYBE_UNUSED char const *envvar)
+//     {
+//     #ifdef __APPLE__
+//       if (envvar)
+//         {
+//           char const *val = getenv (envvar);
+//           if (val)
+//             element = val;
+//         }
+//     #endif
+//       print_element (element);
+//     }
+//
+// So the five utsname fields answer to UNAME_SYSNAME, UNAME_NODENAME,
+// UNAME_RELEASE, UNAME_VERSION and UNAME_MACHINE on Darwin and ignore them
+// everywhere else. `-p`, `-i` and `-o` do NOT go through it and so are never
+// overridable on any platform.
+//
+// An EMPTY value still overrides: only the pointer is tested, never the
+// string, so `UNAME_MACHINE=` prints an empty element.
+function from_env(value: string, name: string): string {
+  if (target_os() != "darwin") {
+    return value;
+  }
+  match (env(name)) {
+    Some(v) => {
+      return v;
+    },
+    None => {
+      return value;
+    }
+  }
+}
+
 function line_for(s: Selection): string {
   var line: string = "";
   var first: boolean = true;
   var step: (string, boolean) = (line, first);
   if (s.all || s.kernel_name) {
-    step = append_element(step.0, step.1, known(sys.sysname()), s.all);
+    step = append_element(step.0, step.1, known(from_env(sys.sysname(), "UNAME_SYSNAME")), s.all);
   }
   if (s.all || s.nodename) {
-    step = append_element(step.0, step.1, known(sys.nodename()), s.all);
+    step = append_element(step.0, step.1, known(from_env(sys.nodename(), "UNAME_NODENAME")), s.all);
   }
   if (s.all || s.kernel_release) {
-    step = append_element(step.0, step.1, known(sys.release()), s.all);
+    step = append_element(step.0, step.1, known(from_env(sys.release(), "UNAME_RELEASE")), s.all);
   }
   if (s.all || s.kernel_version) {
-    step = append_element(step.0, step.1, known(sys.version()), s.all);
+    step = append_element(step.0, step.1, known(from_env(sys.version(), "UNAME_VERSION")), s.all);
   }
   if (s.all || s.machine) {
-    step = append_element(step.0, step.1, known(sys.machine()), s.all);
+    step = append_element(step.0, step.1, known(from_env(sys.machine(), "UNAME_MACHINE")), s.all);
   }
   if (s.all || s.processor) {
     step = append_element(step.0, step.1, processor(), s.all);

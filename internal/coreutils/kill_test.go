@@ -171,6 +171,16 @@ func killCases(t *testing.T) []invocation {
 		// The masked/unmasked asymmetry: the mask lives in operand2sig's
 		// DIGIT arm, which a SIG prefix means we never enter.
 		{name: "a wait status is not masked behind SIG", args: []string{"-l", "SIG137"}},
+		// The alias set is PER-PLATFORM and these three cases say so without
+		// naming either answer: on Linux POLL is 29's primary name and IOT and
+		// CLD are aliases, while on Darwin IOT is the only alias a coreutils
+		// build can see — CLD is absent from xnu's header and POLL sits in the
+		// `#if` branch that excludes SIGEMT, which `_DARWIN_C_SOURCE` turns
+		// off. Comparing against each platform's own oracle is what makes one
+		// case cover both; #9645 is that the Darwin half never ran.
+		{name: "the historical name for ABRT", args: []string{"-l", "IOT"}},
+		{name: "a name whose platform status differs", args: []string{"-l", "POLL"}},
+		{name: "a System V alias Darwin lacks", args: []string{"-l", "CLD"}},
 		{name: "a name is case insensitive", args: []string{"-l", "int"}},
 		{name: "a name in mixed case", args: []string{"-l", "iNt"}},
 		{name: "the far end of the realtime range", args: []string{"-l", "RTMAX-30"}},
