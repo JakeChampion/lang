@@ -1310,6 +1310,12 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[], struct
                 sc_else = drop_last(sc_else); sc_seen_else = drop_last(sc_seen_else); sc_then_blk = drop_last(sc_then_blk);
                 sc_then_reaches = drop_last(sc_then_reaches); sc_parent = drop_last(sc_parent); sc_edge_from = drop_last(sc_edge_from);
             } else if (sc_kind[t2] == "loop") {
+                // A body whose last statement returns reaches the loop's end
+                // as a live, terminated block; it is appended here. One that
+                // falls off the end would continue after the loop, a shape the
+                // lowering never emits, so it declines rather than guesses.
+                if (!cur_dead && cur_term.kind_tag == 0) { ok = false; bail = "loop-fallthrough"; }
+                blocks = loop_tail_appended(blocks, cur_dead, cur_id, cur_insts, cur_term, cur_preds);
                 var luid2: i32 = sc_uid[t2];
                 var hid: i32 = sc_target[t2];
                 // collect this loop's incoming edges (entry + back-edges).
@@ -1444,6 +1450,11 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[], struct
 
     var f: ssa.SFunc = ssa.SFunc { name: name, nparams: nparams, nvals: nvals, blocks: blocks, entry: 0, takes_env: false };
     return LResult { func: f, ok: ok, bail: bail };
+}
+
+function loop_tail_appended(blocks: ssa.SBlock[], dead: boolean, id: i32, insts: ssa.SInst[], term: ssa.STerm, preds: i32[]): ssa.SBlock[] {
+    if (dead || term.kind_tag == 0) { return blocks; }
+    return blocks.append(ssa.SBlock { id: id, insts: insts, term: term, preds: preds });
 }
 
 function lift_const_i64(op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SInst[], ok: boolean): LiftVals {

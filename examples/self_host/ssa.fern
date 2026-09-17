@@ -2777,6 +2777,28 @@ pub function regalloc_linear(f: SFunc, nregs: i32): i32[] {
         }
         oi = oi + 1;
     }
+    return assign_spill_slots(hi, reg_of);
+}
+
+// A value's home after allocation is a register index, or `spill_code(slot)`
+// for a frame slot; -1 is a value nothing defines, which has no home. The
+// slots are numbered densely over the spilled values, so an emitter sizes the
+// frame by `spill_count` rather than by the id space, which the lift's phi per
+// local per merge makes hundreds of times larger than what survives pruning.
+pub function spill_code(slot: i32): i32 { return 0 - 2 - slot; }
+pub function spill_slot(code: i32): i32 { return 0 - 2 - code; }
+pub function spill_count(reg_of: i32[]): i32 {
+    var n: i32 = 0;
+    for h in reg_of { if (h < 0 - 1 && spill_slot(h) + 1 > n) { n = spill_slot(h) + 1; } }
+    return n;
+}
+function assign_spill_slots(hi: i32[], reg_of: i32[]): i32[] {
+    var nslot: i32 = 0;
+    var i: i32 = 0;
+    while (i < reg_of.len()) {
+        if (hi[i] >= 0 && reg_of[i] < 0) { reg_of = reg_of.with(i, spill_code(nslot)); nslot = nslot + 1; }
+        i = i + 1;
+    }
     return reg_of;
 }
 
