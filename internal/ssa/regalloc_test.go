@@ -229,16 +229,17 @@ func TestLinearScanCoalescesAcrossAPhi(t *testing.T) {
 	if !ok {
 		t.Fatal("phi result spilled with 8 registers free")
 	}
-	// At least one arm should share the phi's register. Both cannot: the two
-	// args are live simultaneously on neither path, but linear scan sees a
-	// single hole-free interval for each, so whichever it reaches first wins.
+	// Both arms land in the phi's register here, so BOTH edge moves are
+	// elided rather than one: the two args are never live at the same time,
+	// so the register freed on one arm is available on the other, and the
+	// phi joins them where they already are.
 	ar, aok := alloc.Reg[a.ID]
 	br, bok := alloc.Reg[b.ID]
 	if !aok || !bok {
 		t.Fatalf("an arg spilled with 8 registers free: a=%v b=%v", aok, bok)
 	}
-	if ar != pr && br != pr {
-		t.Errorf("phi in r%d but args in r%d and r%d — neither edge move can be elided", pr, ar, br)
+	if ar != pr || br != pr {
+		t.Errorf("phi in r%d, args in r%d and r%d — an edge move survives; both should elide", pr, ar, br)
 	}
 }
 
