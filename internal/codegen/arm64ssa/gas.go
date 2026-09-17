@@ -1396,6 +1396,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"getgid":                      emitIdHelper("getgid", 176),
 	"getgroups":                   emitGetgroupsHelper,
 	"environ":                     emitEnvironHelper,
+	"timer_fd":                    emitTimerFdHelper,
 	"now_unix_ms":                 emitClockHelper("now_unix_ms", clockRealtime, 1_000, 1_000_000),
 	"sleep_ms":                    emitSleepMsHelper,
 	"sleep_ns":                    emitSleepNsHelper,
@@ -3877,6 +3878,47 @@ func emitReaderReadChunkHelper(w func(string, ...any)) {
 // the two instantiations' local labels apart — a program using both would
 // otherwise define each twice, and the assembler keeps the last definition
 // silently.
+// emitTimerFdHelper writes timer_fd(ms) -> i32: a CLOCK_MONOTONIC timerfd
+// readable once after `ms` milliseconds, returned as its fd, which is what the
+// reactor waits on. A failed create is returned as-is (negative), so the caller
+// sees the errno rather than a fd that never fires.
+func emitTimerFdHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("timer_fd"))
+	w("\tstp x29, x30, [sp, #-64]!")
+	w("\tmov x29, sp")
+	w("\tstp x19, x20, [sp, #16]")
+	w("\tmov x19, x0") // ms
+	w("\tmov x0, #1")  // CLOCK_MONOTONIC
+	w("\tmov x1, #0")
+	w("\tmov x8, #85") // timerfd_create
+	w("\tsvc #0")
+	w("\tmov x20, x0")
+	w("\tcmp x0, #0")
+	w("\tb.lt .Lssa_timerfd_ret")
+	// itimerspec at [x29,#32]: it_interval{0,0}, then it_value{sec,nsec}.
+	w("\tstr xzr, [x29, #32]")
+	w("\tstr xzr, [x29, #40]")
+	w("\tmov x9, #1000")
+	w("\tudiv x10, x19, x9")      // whole seconds
+	w("\tmsub x11, x10, x9, x19") // leftover milliseconds
+	movImm64(w, "x12", 1_000_000)
+	w("\tmul x11, x11, x12") // as nanoseconds
+	w("\tstr x10, [x29, #48]")
+	w("\tstr x11, [x29, #56]")
+	w("\tmov x0, x20")
+	w("\tmov x1, #0")
+	w("\tadd x2, x29, #32")
+	w("\tmov x3, #0")
+	w("\tmov x8, #86") // timerfd_settime
+	w("\tsvc #0")
+	w("\tmov x0, x20") // the fd
+	w(".Lssa_timerfd_ret:")
+	w("\tldp x19, x20, [sp, #16]")
+	w("\tldp x29, x30, [sp], #64")
+	w("\tret")
+}
+
 // emitGetgroupsHelper writes getgroups() -> i64[]: the process's supplementary
 // group ids, asked for twice — once for the count, once for the ids — and
 // memoised, since the set cannot change under a process that is not asking to
@@ -4379,6 +4421,9 @@ var heapUsingHelpers = map[string]bool{
 	"env":                             true,
 	"write_file":                      true,
 	"write_file_exec":                 true,
+	"environ":                         true,
+	"getgroups":                       true,
+	"read_line":                       true,
 	"read_file":                       true,
 	"read_file_bytes":                 true,
 	"remove_file":                     true,
@@ -6382,12 +6427,27 @@ func emitWriteFileBody(w func(string, ...any), name, sfx string, mode, fixup int
 	w("\tsvc #0")
 	w("\ttbnz x0, #63, .Lssa_wf_err%s", sfx) // fd < 0 → error
 	w("\tmov x22, x0")                       // fd
-	// write(fd, content_data, content_len).
+	// Write until the whole payload is out. One write(2) is not enough: a
+	// short write is legal on any descriptor, and treating it as the whole
+	// payload reports Ok for a file only partly written. An error ends the
+	// call as Err, as it does on the flat backend.
+	//
+	// x9 / x10 rather than more callee-saved registers: a Linux syscall
+	// returns in x0 and leaves x1-x30 alone, and nothing here calls out.
+	w("\tldur w9, [x20, #-4]") // total bytes
+	w("\tmov x10, #0")         // written so far
+	w(".Lssa_wf_loop%s:", sfx)
+	w("\tcmp x10, x9")
+	w("\tb.ge .Lssa_wf_wrote%s", sfx)
 	w("\tmov x0, x22")
-	w("\tmov x1, x20")
-	w("\tldur w2, [x20, #-4]")
+	w("\tadd x1, x20, x10")
+	w("\tsub x2, x9, x10")
 	w("\tmov x8, #64") // write
 	w("\tsvc #0")
+	w("\ttbnz x0, #63, .Lssa_wf_werr%s", sfx)
+	w("\tadd x10, x10, x0")
+	w("\tb .Lssa_wf_loop%s", sfx)
+	w(".Lssa_wf_wrote%s:", sfx)
 	if fixup != 0 {
 		w("\tmov x0, x22")
 		w("\tmov x1, #%d", fixup)
@@ -6398,7 +6458,7 @@ func emitWriteFileBody(w func(string, ...any), name, sfx string, mode, fixup int
 	w("\tmov x0, x22")
 	w("\tmov x8, #57") // close
 	w("\tsvc #0")
-	// return None box {rc=1, tag=1}.
+	// return Ok(()): a box of {rc=1, tag=0, unit payload}.
 	w("\tadrp x3, %s", heapPtrSym)
 	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
 	w("\tldr x4, [x3]")
@@ -6413,6 +6473,14 @@ func emitWriteFileBody(w func(string, ...any), name, sfx string, mode, fixup int
 	w("\tstr wzr, [x0]")     // tag = 0 (Ok)
 	w("\tstr xzr, [x0, #8]") // unit payload
 	w("\tb .Lssa_wf_ret%s", sfx)
+	w(".Lssa_wf_werr%s:", sfx)
+	// The write failed; close the fd so the error path does not leak it, then
+	// answer Err with the write's errno rather than the open's.
+	w("\tmov x9, x0") // hold -errno across the close
+	w("\tmov x0, x22")
+	w("\tmov x8, #57") // close
+	w("\tsvc #0")
+	w("\tmov x0, x9")
 	w(".Lssa_wf_err%s:", sfx)
 	w("\tneg x0, x0") // errno = -fd
 	w("\tmov x1, x19")
@@ -7293,7 +7361,7 @@ func emitRemoveFileHelper(w func(string, ...any)) {
 	w("\tmov x8, #35") // unlinkat
 	w("\tsvc #0")
 	w("\ttbnz x0, #63, .Lssa_rmf_err") // < 0 → error
-	// return None box {rc=1, tag=1}.
+	// return Ok(()): a box of {rc=1, tag=0, unit payload}.
 	w("\tadrp x3, %s", heapPtrSym)
 	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
 	w("\tldr x4, [x3]")

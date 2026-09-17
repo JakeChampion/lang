@@ -55,8 +55,24 @@ func TestEveryHeapBumpPublishesThroughTheGuard(t *testing.T) {
 			b.WriteByte('\n')
 		}
 		runtimeHelperEmitters[name](w)
-		for _, line := range unguardedBumps(b.String()) {
+		body := b.String()
+		for _, line := range unguardedBumps(body) {
 			t.Errorf("%s: cursor published without the guard: %s", name, line)
+		}
+		// A helper whose body names the arena, the guard or the
+		// alloc-preserve trampoline needs a heapUsingHelpers entry, or
+		// `heap` stays false for a module whose only call is to it and
+		// _start emits neither the reservation nor the guard. The helper
+		// then references symbols the module never defines, and the link
+		// gate refuses it — while the same program builds under the flat
+		// emitter. That list was hand-maintained and drifted: environ,
+		// getgroups and the free read_line all reached the arena without
+		// being on it.
+		for _, sym := range []string{heapPtrSym, heapGuardSym, allocPresSym} {
+			if strings.Contains(body, sym) && !heapUsingHelpers[name] {
+				t.Errorf("%s references %s but is not in heapUsingHelpers, so a module whose only call is to it emits no arena", name, sym)
+				break
+			}
 		}
 	}
 }
