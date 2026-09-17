@@ -51,13 +51,14 @@ func TestSelfHostSemanticProduction(t *testing.T) {
 				t.Run(target, func(t *testing.T) {
 					if prog.want != "" {
 						semRefusedByAST(t, fernBin, stdlibRoot, src, target)
-						got, report, _ := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, true, "")
+						got, report, leak := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, true, "")
 						if got != prog.want {
 							t.Fatalf("FERN_SEM_IR answered %q, want %q\nreport: %s", got, prog.want, report)
 						}
 						if n := semProducedCount(t, report); n < prog.atLeast {
 							t.Fatalf("produced %d declarations, want at least %d:\n%s", n, prog.atLeast, report)
 						}
+						semNoLeak(t, prog.noLeak, target, leak)
 						return
 					}
 					base, _, baseLeak := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, false, "")
@@ -91,6 +92,7 @@ func TestSelfHostSemanticProduction(t *testing.T) {
 					if leak > baseLeak {
 						t.Fatalf("FERN_SEM_IR leaked %d bytes where the AST lowering leaks %d", leak, baseLeak)
 					}
+					semNoLeak(t, prog.noLeak, target, leak)
 					// The tally is checked rather than assumed: a body that
 					// silently stops producing keeps the program correct (the
 					// AST body stands) and would leave the comparison above
@@ -104,6 +106,20 @@ func TestSelfHostSemanticProduction(t *testing.T) {
 				})
 			}
 		})
+	}
+}
+
+// semNoLeak pins that the produced bodies held nothing at exit. Only the
+// sanitize target reports a leak figure at all, so the other three are the
+// answer and tally checks alone.
+func semNoLeak(t *testing.T, want bool, target string, leak int) {
+	t.Helper()
+	if !want || target != "x86-64-sanitize" {
+		return
+	}
+	if leak != 0 {
+		t.Fatalf("the produced bodies left %d bytes held at exit; this case claims the "+
+			"semantic path reclaims the shape whole, which the relative pin cannot say", leak)
 	}
 }
 
@@ -246,7 +262,14 @@ var semProductionPrograms = []struct {
 	// against the native compiler; the AST leg is asserted to refuse it
 	// rather than run.
 	want string
-	src  string
+	// noLeak asks for an ABSOLUTE leak pin on the produced run rather than
+	// only the relative one every entry gets: the sanitize leg must report
+	// nothing still held at exit. The relative pin says the produced bodies
+	// free no LESS than the AST lowering, which is green at any leak below
+	// what the AST lowering already leaks — so a claim that the semantic path
+	// reclaims a shape WHOLE needs this instead.
+	noLeak bool
+	src    string
 }{
 	{name: "scalar-calls", atLeast: 3, src: `
 function add(a: i32, b: i32): i32 { return a + b; }
@@ -347,7 +370,7 @@ function main(): i32 { return str_keys(0) + str_values(0) + i32_keys(0); }
 	// empty one without reading the receiver at all. The AST lowering never
 	// releases the delete's tuple, and through it loses the map it holds, so
 	// the leak legs read the produced bodies freeing strictly more.
-	{name: "map-delete-and-clear", atLeast: 4, src: `
+	{name: "map-delete-and-clear", atLeast: 4, noLeak: true, src: `
 function survivors(n: i32): i32 {
     var m: Map[i32, i32] = map_new(8);
     var i: i32 = 0;
@@ -372,12 +395,36 @@ function absent(n: i32): i32 {
 }
 function main(): i32 { return survivors(5) + emptied(0) + absent(0); }
 `},
+	// An element read out of a tuple the frame is done with is TAKEN, not
+	// borrowed (#9555): `chained` deletes twice, and the map coming back out of
+	// the first delete's tuple is consumed by the second — which a borrow could
+	// not pay for, since a map box carries no count to retain. `relayed` is the
+	// same shape over a tuple literal, and reads BOTH elements, so the take has
+	// to leave the one it did not null alone.
+	{name: "tuple-element-take", atLeast: 3, noLeak: true, src: `
+function chained(n: i32): i32 {
+    var m: Map[i32, i32] = map_new(8);
+    var i: i32 = 0;
+    while (i < n) { m = m.insert(i, i * 10); i = i + 1; }
+    m = m.without(1).0;
+    m = m.without(2).0;
+    return m.len() * 100 + m.get_or(4, 0);
+}
+function relayed(n: i32): i32 {
+    var t: (i32[], string) = ([n, n + 1], "ab");
+    var b: i32[] = t.0;
+    var s: string = t.1;
+    b = b.append(n + 2);
+    return b.len() * 10 + s.len() + b[2];
+}
+function main(): i32 { return (chained(6) + relayed(1)) & 255; }
+`},
 	// Reach rather than agreement: the AST lowering reads the receiver's SLOT
 	// to find a clear's key kind, so it declines a receiver that is not a plain
 	// local. The contract reads the key kind from the result type instead and
 	// never evaluates the receiver for anything else, so a call result works
 	// the way a local does.
-	{name: "map-clear-call-receiver", atLeast: 2, want: "1|", src: `
+	{name: "map-clear-call-receiver", atLeast: 2, want: "1|", noLeak: true, src: `
 function built(n: i32): Map[i32, i32] {
     var m: Map[i32, i32] = map_new(8);
     var i: i32 = 0;

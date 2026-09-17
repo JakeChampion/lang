@@ -589,6 +589,7 @@ tuple_binder_shadows_outer_var                       0
 tuple_destructure                                    0
 tuple_elem_variant_pattern                           0
 tuple_element_field_access                           0
+tuple_element_outlives_its_tuple                     0
 tuple_match                                          0
 tuple_match_expr                                     0
 tuple_nested_destructure                             0
