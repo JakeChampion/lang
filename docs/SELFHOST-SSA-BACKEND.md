@@ -193,7 +193,12 @@ path needs `build_func` any more. In order:
 4. The default flip, on the conditions native's flip is held to: the binary
    at or under flat's, compile time within a stated multiple, the corpus
    lane clean on both targets. Native's flat retirement waits on this
-   (#4112, the 2026-09-16 comment).
+   (#4112, the 2026-09-16 comment). **arm64 now meets all three** — binary
+   0.93x, self-build 1.04x against a 1.5x ceiling, corpus clean on both
+   targets — and the numbers are in
+   `docs/ssa-log/2026-09-17-arm64-meets-every-flip-condition.md`. x86-64
+   meets the corpus condition and not the size one, so the flip is a
+   per-target decision. Taking it is a decision, not a measurement.
 
 ## The target
 
@@ -202,20 +207,20 @@ measured on the compiler building itself and on `examples/bench`:
 
 - **Faster output.** Native's SSA build is at or under flat on every bench
   program; the self-host's must be too, and the compiler it builds must run
-  the whole tree faster than the flat-built one. Today the compiler built
-  with `-backend ssa` compiles `checker.fern` in 10.2 s against the
-  flat-built compiler's 13.2 s and `irlower.fern` in 2.2 s against 4.3 s
-  (arm64-darwin, best of three, #9579); callee-saved registers were 17% of
-  that on both.
+  the whole tree faster than the flat-built one. The compiler built with
+  `-backend ssa` compiles `checker.fern` in 8.9 s against the flat-built
+  compiler's 12.7 s and `irlower.fern` in 2.1 s against 4.2 s (arm64-darwin,
+  best of three): 30% and 49% faster.
 - **Smaller output.** Native's SSA text is 45% of flat's over the corpus.
-  The self-host's SSA text is 1.12x flat's today (4.71M against 4.21M
-  instructions for the compiler, down from 1.67x before #9570); the binary
-  was 1.12x at #9571. Every call spills what it crosses; the emitter items
-  above are the plan.
+  The self-host's is **0.94x flat's on arm64** (3,815,776 against 4,051,791
+  instructions for the compiler) and the linked binary **0.93x**
+  (16,624,896 against 17,805,056), both from 1.12x before the call-result
+  work. x86-64 is 1.25x and 1.26x: its remaining excess is frame traffic
+  from a register budget half arm64's, not instruction selection.
 - **Faster compile.** The lift, prune and allocation must cost less than the
   emitted text they save the assembler: the self-host assembles its own
-  output, so fewer lines is less to parse. Today the SSA self-build is 1.11x
-  the flat one (142 s against 128 s); 1.5x is native's flip condition and the
-  ceiling here, with parity the aim.
+  output, so fewer lines is less to parse. The SSA self-build is **1.04x**
+  the flat one on arm64 (112.5 s against 108.6 s); 1.5x is native's flip
+  condition and the ceiling here, with parity the aim.
 
 An entry in `docs/ssa-log/` carries each step's numbers against these three.
