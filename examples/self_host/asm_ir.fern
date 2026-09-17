@@ -5401,7 +5401,7 @@ function ssa_str_marks(op: string, s: asmcore.EmitState): asmcore.EmitState {
 // ssa_host_kind names the register-ABI ops ssa_host_call selects: the raw
 // syscalls, exit, the string box stamp and the string builder.
 function ssa_host_kind(op: string): boolean {
-    return util.str_has_prefix(op, "syscall") || op == "exit" || op == "raw_string" || op == "strbuf_reset" || op == "strbuf_append";
+    return util.str_has_prefix(op, "syscall") || op == "exit" || op == "raw_string" || util.str_has_prefix(op, "strbuf_");
 }
 
 // ssa_host_call emits the host-floor ops as the stack machine's arms do. A
@@ -5443,26 +5443,30 @@ function ssa_host_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asm
 function ir_memcpy_asm(): string { return "    popq %rcx\n    popq %rsi\n    popq %rdi\n    rep movsb\n    pushq $0\n"; }
 function ir_memset_asm(): string { return "    popq %rcx\n    popq %rax\n    popq %rdi\n    cld\n    rep stosb\n    pushq $0\n"; }
 
-// ssa_flat_op runs the stack machine's own arm for a byte kernel between a
-// push of the operands and a pop of the result. The allocator treats the op
-// as a call, so the registers the arm writes (%rsi, %rdi, and memchr's
-// scratch) hold nothing live.
-function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+// ssa_flat_op runs the stack machine's own arm for op `o` (the byte kernels,
+// the map ops, the byte-buffer builder) between a push of the operands and a
+// pop of the result. The allocator treats the op as a call, so the registers
+// the arm writes hold nothing live; its labels take the op's index under the
+// SSA function's prefix.
+function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     var i: i32 = 0;
     while (i < ins.args.len()) {
         s = ssa_load(reg_of, ins.args[i], "%rax", s);
         s = s.write("    pushq %rax\n");
         i = i + 1;
     }
-    if (ins.str == "memcpy") { s = s.write(ir_memcpy_asm()); }
-    else if (ins.str == "memset") { s = s.write(ir_memset_asm()); }
-    else { s = emit_str_op(ir.op_memchr(), s); }
+    if (o.kind_tag == 74) { s = s.write(ir_memcpy_asm()); }
+    else if (o.kind_tag == 75) { s = s.write(ir_memset_asm()); }
+    else if (o.kind_tag == 225) { s = emit_str_op(o, s); }
+    else if (o.kind_tag >= 125 && o.kind_tag <= 137) { s = emit_ir_op_map(o, ins.imm, lp, s); }
+    else { s = emit_ir_op_buf(o, s); }
     s = s.write("    popq %rax\n");
     return ssa_store(reg_of, ins.result, "%rax", s);
 }
 
 // ssa_sym_addr is a static symbol's address, or the word at it (imm 1).
 function ssa_sym_addr(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+    if (util.str_has_prefix(ins.str, "__fern_arr_push_")) { s = s.need("heap"); }
     if (ins.imm == 1) { s = s.write("    movq " + ins.str + "(%rip), %rax\n"); }
     else { s = s.write("    leaq " + ins.str + "(%rip), %rax\n"); }
     return ssa_store(reg_of, ins.result, "%rax", s);
@@ -5477,13 +5481,15 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmco
     else if (ins.str == "struct_copy") { sym = "__fn___fern_struct_copy"; }
     else if (ins.str == "raw_arr_box") { sym = "__fern_arr_box"; }
     else if (ins.str == "map_new") { s = s.need("maps"); sym = "__fern_map_new"; }
+    else if (ins.str == "args") { sym = "__fern_args"; }
+    else if (ins.str == "map_hash_seed") { s = s.need("random_i32").need("map_hash_seed"); sym = "__fern_map_hash_seed"; }
     else if (util.str_has_prefix(ins.str, "arr_push_owned")) { s = s.mark_arr_push(); s = s.need("arr_push_owned"); sym = "__fern_arr_push_owned"; }
     else if (util.str_has_prefix(ins.str, "arr_push")) { s = s.mark_arr_push(); sym = "__fern_arr_push"; }
     // %rdi and %rsi are allocatable here, so an argument whose home is the
     // other one's register is read before either is written.
-    s = ssa_load(reg_of, ins.args[0], "%rax", s);
+    if (ins.args.len() > 0) { s = ssa_load(reg_of, ins.args[0], "%rax", s); }
     if (ins.args.len() > 1) { s = ssa_load(reg_of, ins.args[1], "%rcx", s); s = s.write("    movq %rcx, %rsi\n"); }
-    s = s.write("    movq %rax, %rdi\n");
+    if (ins.args.len() > 0) { s = s.write("    movq %rax, %rdi\n"); }
     // raw_alloc asks for 24 bytes more and hands back the pointer past them,
     // the string box header a buffer may later grow (#7351).
     if (ins.str == "raw_alloc") { s = s.write("    addq $24, %rdi\n"); }
@@ -5626,10 +5632,10 @@ function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asm
     return ssa_store(reg_of, ins.result, "%rax", s);
 }
 
-function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, s: asmcore.EmitState): asmcore.EmitState {
+function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, ops: ir.Op[], s: asmcore.EmitState): asmcore.EmitState {
     var k: i32 = ins.kind_tag;
     if (k == 11) { return ssa_call(ins, reg_of, s); }
-    if (k == 59) { return ssa_flat_op(ins, reg_of, s); }
+    if (k == 59) { return ssa_flat_op(ins, reg_of, lp, ops[ins.imm], s); }
     if (k == 51) { return ssa_str_view(ins, reg_of, ssa_view_off(fr, ins.result), s); }
     if (k >= 40 && k <= 44) { return ssa_mem_inst(ins, reg_of, s); }
     if (k >= 45 && k <= 48) { return ssa_addr_inst(ins, reg_of, s); }
@@ -5755,7 +5761,7 @@ function ssa_load_params(f: ssa.SFunc, reg_of: i32[], s: asmcore.EmitState): asm
 // the parameters loaded from the caller's slots into their homes, and each
 // block behind its label. prune_dead first takes out the zeros the lift gives
 // every declared local and the loop phis nothing reads.
-function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, s: asmcore.EmitState): asmcore.EmitState {
+function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, ops: ir.Op[], s: asmcore.EmitState): asmcore.EmitState {
     var f: ssa.SFunc = ssa.prune_dead(lifted);
     var reg_of: i32[] = ssa.regalloc_linear(f, ssa_nregs());
     var lp: string = ".Lssa_" + asmcore.sanitize_label(label_name) + "_";
@@ -5774,7 +5780,7 @@ function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, s: asmcore
         if (bi + 1 < f.blocks.len()) { next = f.blocks[bi + 1].id; }
         s = s.write(lp + util.i32_to_string(blk.id) + ":\n");
         for ins in blk.insts {
-            if (ins.kind_tag != 6 && ins.kind_tag != 8) { s = ssa_inst(ins, reg_of, lp, fr, s); }
+            if (ins.kind_tag != 6 && ins.kind_tag != 8) { s = ssa_inst(ins, reg_of, lp, fr, ops, s); }
         }
         s = ssa_term(f, fr, blk, reg_of, lp, next, s);
         bi = bi + 1;
@@ -5803,7 +5809,7 @@ function ssa_try_function(r: irlower.LowerResult, label_name: string, s: asmcore
     }
     s = asmcore.EmitState { ...s, ssa_emitted: s.ssa_emitted + 1 };
     var t_emit: i64 = monotonic_ns();
-    s = emit_ssa_function_x86(lifted.func, label_name, s);
+    s = emit_ssa_function_x86(lifted.func, label_name, r.ops, s);
     // Under the report, a function whose lift or emit took over 200 ms is
     // named with both times: the whole-compiler build is where a phase's
     // cost shows, and this is how a slow one is found.
@@ -6877,66 +6883,8 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
             // sleep_ms — one word in, the syscall return pushed for the drop.
             s = s.write("    call __fn___fern_sleep_ns\n    addq $8, %rsp\n    pushq %rax\n");
             s = s.need("sleep_ns");
-        } else if (o.kind_tag == 125) {  // map_set
-            s = emit_ir_op_map_set(o, s);
-        } else if (o.kind_tag == 126) {  // map_len
-            s = s.write("    popq %rax\n    movq (%rax), %rax\n    movq (%rax), %rax\n    pushq %rax\n");
-        } else if (o.kind_tag == 127) {  // map_get
-            s = s.write("    popq %rsi\n    popq %rdi\n");
-            if (o.str != "") { s = s.write("    leaq __fn_" + asmcore.sanitize_label(o.str) + "(%rip), %r8\n"); } else { s = s.write("    xorq %r8, %r8\n"); }
-            s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rdx\n    call __fern_map_get\n    pushq %rax\n");
-        } else if (o.kind_tag == 128) {  // map_has
-            s = s.write("    popq %rsi\n    popq %rdi\n");
-            if (o.str != "") { s = s.write("    leaq __fn_" + asmcore.sanitize_label(o.str) + "(%rip), %r8\n"); } else { s = s.write("    xorq %r8, %r8\n"); }
-            s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rdx\n    call __fern_map_has\n    pushq %rax\n");
-        } else if (o.kind_tag == 130) {  // map_delete
-            // [map, key] -> __fn___fern_map_delete(map, key, keykind, eqfn) ->
-            // the (map, existed) tuple box. The helper is Fern now (#2649), so
-            // this is the stack ABI: arguments pushed in REVERSE, leaving arg0
-            // (the map) on top, and the caller drops all four slots after.
-            s = s.need("map_delete");
-            s = s.write("    popq %rsi\n    popq %rdi\n");
-            if (o.str != "") { s = s.write("    leaq __fn_" + asmcore.sanitize_label(o.str) + "(%rip), %rax\n"); } else { s = s.write("    xorq %rax, %rax\n"); }
-            s = s.write("    pushq %rax\n");
-            s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rax\n    pushq %rax\n");
-            s = s.write("    pushq %rsi\n    pushq %rdi\n");
-            s = s.write("    call __fn___fern_map_delete\n    addq $32, %rsp\n    pushq %rax\n");
-        } else if (o.kind_tag == 129) {  // map_get_or
-            s = emit_ir_op_map_get_or(o, i, lp, s);
-        } else if (o.kind_tag == 131) {  // map_keys
-            s = emit_ir_op_map_keys(o, s);
-        } else if (o.kind_tag == 132) {  // map_values
-            // parallel-array map: values[] pointer at box+8. Same scalar-column
-            // snapshot / string-column retain-snapshot / pointer-column alias
-            // split as map_keys above.
-            if (o.i32_imm == 0) {
-                s = s.write("    popq %rdi\n    movq 8(%rdi), %rdi\n    call __fern_map_snapshot_col\n    pushq %rax\n");
-            } else if (o.i32_imm == 2) {
-                s = s.write("    popq %rdi\n    movq 8(%rdi), %rdi\n    call __fern_map_snapshot_col_str\n    pushq %rax\n");
-            } else {
-                s = s.write("    popq %rax\n    movq 8(%rax), %rax\n    pushq %rax\n");
-            }
-        } else if (o.kind_tag == 133) {  // map_iter
-            // m.iter() -> 16-byte iterator box [map_ptr@0, cursor@8] (asm.fern:1258).
-            // heap need is set centrally by op_allocates(map_iter); push the box.
-            s = s.write("    movq $16, %rdi\n    call __fern_alloc\n");
-            s = s.write("    popq %rcx\n    movq %rcx, (%rax)\n    movq $0, 8(%rax)\n    pushq %rax\n");
-        } else if (o.kind_tag == 134) {  // mapiter_has_next
-            // cursor < keys.len: keys[] at map@0, len at keys@0 (asm.fern:1269).
-            s = s.write("    popq %rax\n    movq 8(%rax), %rcx\n    movq (%rax), %rdx\n");
-            s = s.write("    movq (%rdx), %rdx\n    movq (%rdx), %rdx\n");
-            s = s.write("    cmpq %rdx, %rcx\n    movq $0, %rax\n    setl %al\n    movzbq %al, %rax\n    pushq %rax\n");
-        } else if (o.kind_tag == 135) {  // mapiter_key
-            // keys[cursor]: keys[] at map@0, element[cursor] at (keys, cursor+1, 8).
-            s = s.write("    popq %rax\n    movq 8(%rax), %rcx\n    movq (%rax), %rdx\n    movq (%rdx), %rdx\n");
-            s = s.write("    incq %rcx\n    movq (%rdx,%rcx,8), %rax\n    pushq %rax\n");
-        } else if (o.kind_tag == 136) {  // mapiter_value
-            // values[cursor]: values[] at map@8, element[cursor] at (values, cursor+1, 8).
-            s = s.write("    popq %rax\n    movq 8(%rax), %rcx\n    movq (%rax), %rdx\n    movq 8(%rdx), %rdx\n");
-            s = s.write("    incq %rcx\n    movq (%rdx,%rcx,8), %rax\n    pushq %rax\n");
-        } else if (o.kind_tag == 137) {  // mapiter_advance
-            // bump the stored cursor; push a dummy result for the statement drop.
-            s = s.write("    popq %rax\n    movq 8(%rax), %rcx\n    incq %rcx\n    movq %rcx, 8(%rax)\n    pushq $0\n");
+        } else if (o.kind_tag >= 125 && o.kind_tag <= 137) {  // the map ops
+            s = emit_ir_op_map(o, i, lp, s);
         } else if (o.kind_tag == 139) {  // struct_get
             // pop struct box; field at (index+1)*8.
             s = s.write("    popq %rax\n    movq " + util.i32_to_string((o.i32_imm + 1) * 8) + "(%rax), %rax\n    pushq %rax\n");
@@ -7383,6 +7331,78 @@ function emit_ir_op_const_struct(o: ir.Op, s: asmcore.EmitState): asmcore.EmitSt
     s = kout.state;
     s = s.write("    leaq " + asmcore.const_agg_label(s, kout.idx) + "(%rip), %rax\n    pushq %rax\n");
 
+    return s;
+}
+
+// emit_ir_op_map and emit_ir_op_map_read select the map ops, the writes
+// and lookups first, the reads and the iterator in the second.
+function emit_ir_op_map(o: ir.Op, i: i32, lp: string, s: asmcore.EmitState): asmcore.EmitState {
+    if (o.kind_tag == 125) {  // map_set
+        s = emit_ir_op_map_set(o, s);
+    } else if (o.kind_tag == 126) {  // map_len
+        s = s.write("    popq %rax\n    movq (%rax), %rax\n    movq (%rax), %rax\n    pushq %rax\n");
+    } else if (o.kind_tag == 127) {  // map_get
+        s = s.write("    popq %rsi\n    popq %rdi\n");
+        if (o.str != "") { s = s.write("    leaq __fn_" + asmcore.sanitize_label(o.str) + "(%rip), %r8\n"); } else { s = s.write("    xorq %r8, %r8\n"); }
+        s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rdx\n    call __fern_map_get\n    pushq %rax\n");
+    } else if (o.kind_tag == 128) {  // map_has
+        s = s.write("    popq %rsi\n    popq %rdi\n");
+        if (o.str != "") { s = s.write("    leaq __fn_" + asmcore.sanitize_label(o.str) + "(%rip), %r8\n"); } else { s = s.write("    xorq %r8, %r8\n"); }
+        s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rdx\n    call __fern_map_has\n    pushq %rax\n");
+    } else if (o.kind_tag == 130) {  // map_delete
+        // [map, key] -> __fn___fern_map_delete(map, key, keykind, eqfn) ->
+        // the (map, existed) tuple box. The helper is Fern now (#2649), so
+        // this is the stack ABI: arguments pushed in REVERSE, leaving arg0
+        // (the map) on top, and the caller drops all four slots after.
+        s = s.need("map_delete");
+        s = s.write("    popq %rsi\n    popq %rdi\n");
+        if (o.str != "") { s = s.write("    leaq __fn_" + asmcore.sanitize_label(o.str) + "(%rip), %rax\n"); } else { s = s.write("    xorq %rax, %rax\n"); }
+        s = s.write("    pushq %rax\n");
+        s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rax\n    pushq %rax\n");
+        s = s.write("    pushq %rsi\n    pushq %rdi\n");
+        s = s.write("    call __fn___fern_map_delete\n    addq $32, %rsp\n    pushq %rax\n");
+    } else if (o.kind_tag == 129) {  // map_get_or
+        s = emit_ir_op_map_get_or(o, i, lp, s);
+    }
+    return emit_ir_op_map_read(o, i, lp, s);
+}
+
+function emit_ir_op_map_read(o: ir.Op, i: i32, lp: string, s: asmcore.EmitState): asmcore.EmitState {
+    if (o.kind_tag == 131) {  // map_keys
+        s = emit_ir_op_map_keys(o, s);
+    } else if (o.kind_tag == 132) {  // map_values
+        // parallel-array map: values[] pointer at box+8. Same scalar-column
+        // snapshot / string-column retain-snapshot / pointer-column alias
+        // split as map_keys above.
+        if (o.i32_imm == 0) {
+            s = s.write("    popq %rdi\n    movq 8(%rdi), %rdi\n    call __fern_map_snapshot_col\n    pushq %rax\n");
+        } else if (o.i32_imm == 2) {
+            s = s.write("    popq %rdi\n    movq 8(%rdi), %rdi\n    call __fern_map_snapshot_col_str\n    pushq %rax\n");
+        } else {
+            s = s.write("    popq %rax\n    movq 8(%rax), %rax\n    pushq %rax\n");
+        }
+    } else if (o.kind_tag == 133) {  // map_iter
+        // m.iter() -> 16-byte iterator box [map_ptr@0, cursor@8] (asm.fern:1258).
+        // heap need is set centrally by op_allocates(map_iter); push the box.
+        s = s.write("    movq $16, %rdi\n    call __fern_alloc\n");
+        s = s.write("    popq %rcx\n    movq %rcx, (%rax)\n    movq $0, 8(%rax)\n    pushq %rax\n");
+    } else if (o.kind_tag == 134) {  // mapiter_has_next
+        // cursor < keys.len: keys[] at map@0, len at keys@0 (asm.fern:1269).
+        s = s.write("    popq %rax\n    movq 8(%rax), %rcx\n    movq (%rax), %rdx\n");
+        s = s.write("    movq (%rdx), %rdx\n    movq (%rdx), %rdx\n");
+        s = s.write("    cmpq %rdx, %rcx\n    movq $0, %rax\n    setl %al\n    movzbq %al, %rax\n    pushq %rax\n");
+    } else if (o.kind_tag == 135) {  // mapiter_key
+        // keys[cursor]: keys[] at map@0, element[cursor] at (keys, cursor+1, 8).
+        s = s.write("    popq %rax\n    movq 8(%rax), %rcx\n    movq (%rax), %rdx\n    movq (%rdx), %rdx\n");
+        s = s.write("    incq %rcx\n    movq (%rdx,%rcx,8), %rax\n    pushq %rax\n");
+    } else if (o.kind_tag == 136) {  // mapiter_value
+        // values[cursor]: values[] at map@8, element[cursor] at (values, cursor+1, 8).
+        s = s.write("    popq %rax\n    movq 8(%rax), %rcx\n    movq (%rax), %rdx\n    movq 8(%rdx), %rdx\n");
+        s = s.write("    incq %rcx\n    movq (%rdx,%rcx,8), %rax\n    pushq %rax\n");
+    } else if (o.kind_tag == 137) {  // mapiter_advance
+        // bump the stored cursor; push a dummy result for the statement drop.
+        s = s.write("    popq %rax\n    movq 8(%rax), %rcx\n    incq %rcx\n    movq %rcx, 8(%rax)\n    pushq $0\n");
+    }
     return s;
 }
 
