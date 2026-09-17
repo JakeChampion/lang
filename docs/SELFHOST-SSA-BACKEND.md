@@ -117,40 +117,42 @@ not usable here (see "What this retires").
 
 ## The emitter today
 
-It is written for correctness, and the measurements say so. Values live in
-seven caller-saved registers or in frame slots numbered over the spilled
-values, addressed from sp on arm64; a value live across a call is spilled,
-so a loop that calls out keeps its loop-carried values in memory. Every
-result is produced in x0 (`%rax`) and moved to its home, every operand moved
-from its home to x0/x1. Two or more phis on one edge stage through the
-frame. The optimiser's passes do not run. On the compiler compiling itself
-the SSA text is 1.19x the flat text (5.01M against 4.21M instructions,
-arm64) and the binary 1.16x (21.5 MB against 18.5 MB); the histogram of the
-difference, from `docs/ssa-log/2026-09-17-selfhost-ssa-backend-whole-compiler.md`:
+Values live in seven caller-saved registers or in frame slots numbered over
+the spilled values, addressed from sp on arm64; a value live across a call
+is spilled, so a loop that calls out keeps its loop-carried values in
+memory. An instruction the emitter selects itself writes into its result's
+home and reads operands from theirs (`ssa_dst`, `ssa_src`); one selected
+from the table shared with the stack machine goes through x0/x1
+(`%rax`/`%rcx`), as does every call result. A compare read only by its
+block's branch is consumed as flags. Two or more phis on one edge stage
+through the frame. The optimiser's passes do not run. On the compiler
+compiling itself the SSA text is 1.12x the flat text (4.71M against 4.21M
+instructions, arm64); the numbers of each step are in
+`docs/ssa-log/2026-09-17-selfhost-ssa-backend-whole-compiler.md`. What
+remains, from that histogram:
 
 | class | flat | ssa |
 |---|---|---|
-| register-to-register `mov` | 61,559 | 865,114 |
-| of which results moved out of x0 | | 529,606 |
-| of which operands moved into x0/x1/x2 | | 335,412 |
-| binary ops through the shared table | | 57,025 |
-| `mov x0, #imm` | 105,594 | 94,535 |
+| frame loads and stores | 1,062,000 | 1,960,000 |
+| register-to-register `mov` | 61,559 | 610,000 |
+| of which call results moved out of x0 | | 333,000 |
 
-The order to take that in:
+Widening the caller-saved set from seven registers to eleven (x4 to x7)
+changed the text by 0.07%, so the frame traffic is call-crossing values,
+not register pressure. The order to take that in:
 
-1. Results written to their home and operands read from theirs, for the
-   kinds the SSA emitter owns (constants, loads, stores, addresses, copies):
-   emit into `ssa_dst` instead of x0 and read `ssa_src` instead of loading
-   into x0. The shared binary table stays on x0/x1; it is under 60k of the
-   865k moves, and the call results that must leave x0 are 333k.
-2. Compare fused into the branch: a `binary` compare whose only reader is
-   the block's `brif` becomes `cmp` and `b.cond` (100k `cbz` today).
-3. Callee-saved registers (x19 to x28) with a prologue save, so values
-   live across calls stay in registers. Native's allocator work on #4112
-   found the spill rule that decides when a call-crossing value is better
-   in a slot than in a saved register; take its result rather than
-   re-deriving it.
-4. The optimiser (`ssa.optimize`) on the lifted function once its binary
+1. Callee-saved registers (x19 to x28; rbx, r12 to r15) with a prologue
+   save, so values live across calls stay in registers: a second pool in
+   the allocator for the intervals `spans_call` names, a per-function save
+   and restore of the ones used, the slots moved below the save area. The
+   runtime helpers save and restore these registers as pairs and the flat
+   bodies touch x19 only on the exit path, so the ABI already holds. Native's
+   allocator work on #4112 found the spill rule that decides when a
+   call-crossing value is better in a slot than in a saved register; take
+   its result rather than re-deriving it.
+2. Call results into their home: x0 as an allocatable register for a value
+   whose only reader follows the call, or a coalescing of the result copy.
+3. The optimiser (`ssa.optimize`) on the lifted function once its binary
    arms read IR kind names rather than the symbols the `build_func` frontend
    used.
 
@@ -201,10 +203,10 @@ measured on the compiler building itself and on `examples/bench`:
   the whole tree faster than the flat-built one. Today: parity on the
   drivers (#9503).
 - **Smaller output.** Native's SSA text is 45% of flat's over the corpus.
-  The self-host's SSA binary is 1.16x flat's today (21.5 MB against 18.5 MB
-  for the compiler, down from 1.6x before the frame addressing of #9570):
-  every result and operand goes through x0, and every call spills. The
-  emitter items above are the plan.
+  The self-host's SSA text is 1.12x flat's today (4.71M against 4.21M
+  instructions for the compiler, down from 1.67x before #9570); the binary
+  was 1.12x at #9571. Every call spills what it crosses; the emitter items
+  above are the plan.
 - **Faster compile.** The lift, prune and allocation must cost less than the
   emitted text they save the assembler: the self-host assembles its own
   output, so fewer lines is less to parse. Today the SSA self-build is 1.11x
