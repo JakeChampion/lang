@@ -816,9 +816,10 @@ function emit_const_i32_push(s: asmcore.EmitState, text: string, movz_ok: boolea
 // Registers: x9..x15 are allocatable. They are AAPCS temporaries a callee may
 // clobber, and the allocator spills a value that is live across a call, so
 // nothing is saved around one. x0/x1/x2 are the scratch ir_bin_asm already
-// uses; x16/x17 belong to fr_ldr and fr_sub_imm. A spilled value v lives at
-// [x29, #-8*(v+1)]; the slots after the values stage the moves of an edge
-// with several phis, so every source is read before any result is written.
+// uses; x16/x17 belong to fr_ldr and fr_sub_imm. A spilled value lives at
+// [x29, #-8*(slot+1)] by its allocator slot; the slots after the spills stage
+// the moves of an edge with several phis, so every source is read before any
+// result is written.
 
 function ssa_reg(k: i32): string { return "x" + util.i32_to_string(9 + k); }
 function ssa_nregs(): i32 { return 7; }
@@ -826,13 +827,14 @@ function ssa_slot_off(v: i32): i32 { return 0 - 8 * (v + 1); }
 
 // ssa_load puts value v in `reg`; ssa_store writes `reg` to value v's home.
 function ssa_load(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): asmcore.EmitState {
-    if (reg_of[v] < 0) { return fr_ldr(s, reg, ssa_slot_off(v)); }
+    if (reg_of[v] < 0) { return fr_ldr(s, reg, ssa_slot_off(ssa.spill_slot(reg_of[v]))); }
     var home: string = ssa_reg(reg_of[v]);
     if (home == reg) { return s; }
     return s.write("    mov " + reg + ", " + home + "\n");
 }
 function ssa_store(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): asmcore.EmitState {
-    if (reg_of[v] < 0) { return fr_str(s, reg, ssa_slot_off(v)); }
+    if (reg_of[v] == 0 - 1) { return s; }
+    if (reg_of[v] < 0) { return fr_str(s, reg, ssa_slot_off(ssa.spill_slot(reg_of[v]))); }
     var home: string = ssa_reg(reg_of[v]);
     if (home == reg) { return s; }
     return s.write("    mov " + home + ", " + reg + "\n");
@@ -1069,10 +1071,10 @@ function ssa_str_view(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.E
 // SsaFrame is the frame below the values: the phi stage words after the
 // values, then three words per frame-resident string view. ssa_view_off is
 // the offset of a view's lowest word, the base the view kernel writes at.
-struct SsaFrame { nvals: i32, nstage: i32, views: i32[], blk_pos: i32[] }
+struct SsaFrame { nspill: i32, nstage: i32, views: i32[], blk_pos: i32[] }
 
 function ssa_view_off(fr: SsaFrame, v: i32): i32 {
-    var first: i32 = fr.nvals + fr.nstage + 3 * fr.views[v];
+    var first: i32 = fr.nspill + fr.nstage + 3 * fr.views[v];
     return 0 - 8 * (first + 3);
 }
 
@@ -1205,12 +1207,12 @@ function ssa_phi_moves(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], pred: i32, suc
     var k: i32 = 0;
     while (k < srcs.len()) {
         s = ssa_load(reg_of, srcs[k], "x0", s);
-        s = fr_str(s, "x0", ssa_slot_off(f.nvals + k));
+        s = fr_str(s, "x0", ssa_slot_off(fr.nspill + k));
         k = k + 1;
     }
     k = 0;
     while (k < srcs.len()) {
-        s = fr_ldr(s, "x0", ssa_slot_off(f.nvals + k));
+        s = fr_ldr(s, "x0", ssa_slot_off(fr.nspill + k));
         s = ssa_store(reg_of, dsts[k], "x0", s);
         k = k + 1;
     }
@@ -1285,8 +1287,8 @@ function emit_ssa_function_arm64(lifted: ssa.SFunc, label_name: string, s: asmco
     s = s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n");
     s = s.write("    .cfi_startproc\n    stp x29, x30, [sp, #-16]!\n    .cfi_def_cfa_offset 16\n    .cfi_offset x29, -16\n    .cfi_offset x30, -8\n    mov x29, sp\n    .cfi_def_cfa_register x29\n");
     var views: i32[] = ssa_view_slots(f);
-    var fr: SsaFrame = SsaFrame { nvals: f.nvals, nstage: ssa_max_phis(f), views: views, blk_pos: ssa_block_index(f) };
-    var frame: i32 = (f.nvals + fr.nstage + 3 * ssa_view_count(views)) * 8;
+    var fr: SsaFrame = SsaFrame { nspill: ssa.spill_count(reg_of), nstage: ssa_max_phis(f), views: views, blk_pos: ssa_block_index(f) };
+    var frame: i32 = (fr.nspill + fr.nstage + 3 * ssa_view_count(views)) * 8;
     if (frame % 16 != 0) { frame = frame + 8; }
     if (frame > 0) { s = fr_sub_imm(s, "sp", "sp", frame); }
     s = ssa_load_params(f, reg_of, s);

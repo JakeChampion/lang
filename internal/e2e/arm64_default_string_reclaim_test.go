@@ -16,15 +16,15 @@ import (
 // The default arm64 emitter must reclaim a string local that was passed to a
 // user function, and the bar is that retention does NOT grow with the input.
 //
-// This measures the DEFAULT emitter, and that is what keeps it meaningful: the
-// stack machine's FERN_LEAKCHECK census reads a constant 16 bytes at every
-// input size, so growth here is the program's and not the instrument's.
+// This measures the DEFAULT emitter, which is the stack machine, and holds it
+// to flat retention across two input sizes.
 //
-// arm64ssa's census is NOT sound that way — it over-reports live bytes when
-// allocation sizes vary (#9558) — which is why the retention the default flip
-// to -backend ssa (#9511) was reverted over is not currently established. Do
-// not repurpose this test to compare the two emitters until #9558 is fixed;
-// the numbers are not comparable.
+// The flip to -backend ssa (#9511) was reverted over retention that turned out
+// to be two separate faults. One is fixed: arm64ssa allocated a string at
+// len+9 and freed it at len+8, so on a class boundary the freelist stopped
+// recycling entirely (#9558). The other is open: arm64ssa still holds one
+// large read buffer the stack machine frees, which is what coreutils/uniq.fern
+// measures. Re-measure before trusting any comparison of the two emitters.
 //
 // Measuring two input sizes rather than one absolute number is deliberate: the
 // absolute figure moves with allocator and stdlib changes, while "does it grow
@@ -114,12 +114,12 @@ func TestArm64DefaultReclaimsStringPassedToAFunction(t *testing.T) {
 		t.Errorf("the default arm64 emitter retains %d bytes at 50 rounds and %d at 800 — "+
 			"retention grows with the input, so a string passed to a user function is not "+
 			"being reclaimed.\n\n"+
-			"If this failed because the default moved to -backend ssa, the flip needs #9558 "+
-			"closed first — arm64ssa's census over-reports live bytes when allocation sizes "+
-			"vary, so what that backend retains has not actually been measured yet. Do not "+
-			"relax this bound to land the flip, and do not reach for the single-word string "+
-			"ABI as the explanation: x86-64 runs that ABI under its own default and is "+
-			"clean, which is what rules it out.", small, large)
+			"If this failed because the default moved to -backend ssa, the flip is not ready: "+
+			"the class-boundary freelist fault is fixed (#9558) but arm64ssa still retains a "+
+			"large read buffer the stack machine frees. Do not relax this bound to land the "+
+			"flip, and do not reach for the single-word string ABI as the explanation: "+
+			"x86-64 runs that ABI under its own default and is clean, which rules it out.",
+			small, large)
 	}
 	if testing.Verbose() {
 		fmt.Printf("arm64 default retention: 50 rounds=%d bytes, 800 rounds=%d bytes\n", small, large)

@@ -115,7 +115,7 @@ func emitArgsHelper(w func(string, ...any)) {
 	w("\tjmp .Lssa_args_slen")
 	w(".Lssa_args_slend:")
 	w("\tmov rbp, rcx")
-	w("\tlea rdx, [rbp + 9]") // rc header (8) + bytes + NUL
+	w("\tlea rdx, [rbp + %d]", strBlockBytes) // rc header (8) + bytes + NUL
 	ssaBumpAlloc(w, "rax", "rdx")
 	w("\tmov dword ptr [rax], 1") // rc = 1
 	w("\tmov [rax + 4], ebp")     // len
@@ -192,7 +192,7 @@ func emitEnvHelper(w func(string, ...any)) {
 	w("\tjmp .Lssa_env_slen")
 	w(".Lssa_env_slend:")
 	w("\tmov r15, rcx")
-	w("\tlea rdx, [r15 + 9]")
+	w("\tlea rdx, [r15 + %d]", strBlockBytes)
 	ssaBumpAlloc(w, "rax", "rdx")
 	w("\tmov dword ptr [rax], 1") // rc = 1
 	w("\tmov [rax + 4], r15d")    // len

@@ -167,6 +167,31 @@ function main(): i32 {
     var value: i32 = f(a);
     return value * 10 + a.get();
 }`},
+		// No value block at all: a plain `if` body is a block the replay
+		// leaves, and the binding it declares is lifted the same way.
+		{"conditional_block_binding", `function main(): i32 {
+    var seen: i32 = 1;
+    loop {
+        if (seen == 1) {
+            var items: i32[] = [2];
+            defer seen = items[0];
+            items = [9];
+        }
+        break;
+    }
+    return seen;
+}`},
+		// The expansion's shared return temp carries a reference type here,
+		// not the i32 its untyped declaration used to give it.
+		{"array_return_through_the_defer_temp", `function snapshot(): i32[] {
+    var items: i32[] = [7];
+    defer items = [9];
+    return items;
+}
+function main(): i32 {
+    var got: i32[] = snapshot();
+    return got[0];
+}`},
 		{"lambda_registration_namespace", `function f(a: Cell[i32]): i32 {
     if (true) {
         var items: i32[] = [3];

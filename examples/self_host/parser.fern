@@ -14321,6 +14321,242 @@ pub function hoist_local_funcs_module(mod: Module): Module {
     return Module { ...mod, funcs: funcs, top_stmts: top_body };
 }
 
+// ---- lifting the bindings a deferred action names ---------------------------
+
+// A deferred action is replayed at the exits of the scope that registered it,
+// and a binding declared in a block INSIDE that scope has no slot there: the
+// interpreter read whatever the name last meant and the semantic lowering
+// refused the whole function ("unbound name is not a semantic value"). The
+// lift below moves such a declaration to the top of the scope and leaves its
+// initialiser behind as an assignment, so the slot spans the replay while the
+// value still arrives where the block put it. Lexical resolution has already
+// given every declaration a unique symbol, so the lift cannot shadow anything.
+//
+// DeferHoist is the statement half of the walk: the rewritten statements, and
+// the declarations lifted out of the blocks inside them.
+struct DeferHoist { stmts: ast.Stmt[], decls: ast.Stmt[] }
+
+// DeferHoistExpr is the expression half. A value block's body is lifted the
+// same way — every backend inlines one into the enclosing function, so its
+// declarations belong to that function's scope.
+struct DeferHoistExpr { expr: ast.Expr, decls: ast.Stmt[] }
+
+function dl_is_array_type(t: string): boolean {
+    return t.len() > 2 && slice_unchecked(t, t.len() - 2, t.len()) == "[]";
+}
+
+// An annotation the lifted declaration can start at. A struct, an enum, a
+// tuple, a cell and a function have no such value, and a declaration at one is
+// left where it is — the function keeps the shape it had.
+function dl_zeroable(t: string): boolean {
+    if (t.len() == 0 || is_destr_marker(t)) { return false; }
+    if (dl_is_array_type(t)) { return true; }
+    if (t == "string" || t == "boolean" || t == "bool" || t == "f64" || t == "f32") { return true; }
+    return t == "i8" || t == "i16" || t == "i32" || t == "i64"
+        || t == "u8" || t == "u16" || t == "u32" || t == "u64";
+}
+
+// The value a lifted declaration starts at. Nothing reads the slot before the
+// assignment left at the declaration site: a replay whose block never ran is
+// behind a flag that never armed.
+function dl_zero_of(t: string): ast.Expr {
+    if (t == "string") { return e_string(""); }
+    if (t == "boolean" || t == "bool") { return e_bool(false); }
+    if (t == "f64") { return e_number("0", "", true); }
+    if (t == "f32") { return ast.ExprUnary { op: "as_f32", operand: e_number("0", "", true), line: 0, col: 0, ty: "f32" }; }
+    if (dl_is_array_type(t)) { var empty: ast.Expr[] = []; return e_array(empty); }
+    return e_number("0", "", false);
+}
+
+function dl_add_name(own acc: string[], name: string): string[] {
+    if (name.len() == 0 || util.has_str(acc, name)) { return acc; }
+    return acc.append(name);
+}
+
+// An action names a binding by writing it as much as by reading it: an
+// assignment carries its target as a string, which no expression walk sees.
+function dl_name_stmt(st: ast.Stmt, own acc: string[]): string[] {
+    if let ast.StmtAssign(a) = st { return dl_add_name(acc, a.target); }
+    return acc;
+}
+
+function dl_name_expr(e: ast.Expr, own acc: string[]): string[] {
+    if let ast.ExprIdent(id) = e { return dl_add_name(acc, id.name); }
+    return acc;
+}
+
+function dl_name_descend(e: ast.Expr): boolean { return true; }
+
+function dl_action_names(actions: ast.Stmt[]): string[] {
+    var acc: string[] = [];
+    for a in actions { acc = astwalk.fold_stmt_nodes(a, acc, dl_name_stmt, dl_name_expr, dl_name_descend); }
+    return acc;
+}
+
+function dl_hoist_stmts(stmts: ast.Stmt[], want: string[], nested: boolean): DeferHoist {
+    var out: ast.Stmt[] = [];
+    var decls: ast.Stmt[] = [];
+    for st in stmts {
+        var r: DeferHoist = dl_hoist_stmt(st, want, nested);
+        out = util.append_all(out, r.stmts);
+        decls = util.append_all(decls, r.decls);
+    }
+    return DeferHoist { stmts: out, decls: decls };
+}
+
+function dl_hoist_var(v: ast.StmtVar, want: string[], nested: boolean): DeferHoist {
+    var ir: DeferHoistExpr = dl_hoist_expr(v.init, want);
+    if (!nested || !util.has_str(want, v.name) || !dl_zeroable(v.type_name)) {
+        var kept: ast.Stmt[] = [ast.StmtVar { ...v, init: ir.expr }];
+        return DeferHoist { stmts: kept, decls: ir.decls };
+    }
+    var lifted: ast.Stmt[] = [s_var(v.name, v.type_name, dl_zero_of(v.type_name))];
+    var one: ast.Stmt[] = [s_assign_at(v.name, ir.expr, v.line, v.col, v.line, v.col)];
+    return DeferHoist { stmts: one, decls: util.append_all(lifted, ir.decls) };
+}
+
+// A `defer`'s own action is not walked: it is replayed as written, and a
+// declaration inside it belongs to the replay, not to this scope.
+function dl_hoist_stmt(st: ast.Stmt, want: string[], nested: boolean): DeferHoist {
+    match (st) {
+        ast.StmtVar(v) => { return dl_hoist_var(v, want, nested); },
+        ast.StmtIf(f) => {
+            var cr: DeferHoistExpr = dl_hoist_expr(f.cond, want);
+            var tr: DeferHoist = dl_hoist_stmts(f.then_body, want, true);
+            var er: DeferHoist = dl_hoist_stmts(f.else_body, want, true);
+            var one: ast.Stmt[] = [s_if(cr.expr, tr.stmts, er.stmts)];
+            return DeferHoist { stmts: one, decls: util.append_all(util.append_all(cr.decls, tr.decls), er.decls) };
+        },
+        ast.StmtWhile(w) => {
+            var cw: DeferHoistExpr = dl_hoist_expr(w.cond, want);
+            var br: DeferHoist = dl_hoist_stmts(w.body, want, true);
+            var one: ast.Stmt[] = [dl_while(ast.StmtWhile { ...w, cond: cw.expr }, br.stmts)];
+            return DeferHoist { stmts: one, decls: util.append_all(cw.decls, br.decls) };
+        },
+        ast.StmtFor(fr) => {
+            var itr: DeferHoistExpr = dl_hoist_expr(fr.iter, want);
+            var br: DeferHoist = dl_hoist_stmts(fr.body, want, true);
+            var one: ast.Stmt[] = [dl_for(ast.StmtFor { ...fr, iter: itr.expr }, br.stmts)];
+            return DeferHoist { stmts: one, decls: util.append_all(itr.decls, br.decls) };
+        },
+        ast.StmtMatch(m) => { return dl_hoist_match(m, want); },
+        ast.StmtReturn(r) => {
+            var vr: DeferHoistExpr = dl_hoist_expr(r.value, want);
+            var one: ast.Stmt[] = [ast.StmtReturn { ...r, value: vr.expr }];
+            return DeferHoist { stmts: one, decls: vr.decls };
+        },
+        ast.StmtExpr(x) => {
+            var xr: DeferHoistExpr = dl_hoist_expr(x.value, want);
+            var one: ast.Stmt[] = [ast.StmtExpr { ...x, value: xr.expr }];
+            return DeferHoist { stmts: one, decls: xr.decls };
+        },
+        ast.StmtAssign(a) => {
+            var ar: DeferHoistExpr = dl_hoist_expr(a.value, want);
+            var one: ast.Stmt[] = [ast.StmtAssign { ...a, value: ar.expr }];
+            return DeferHoist { stmts: one, decls: ar.decls };
+        },
+        ast.StmtBreak(_) => {},
+        ast.StmtContinue(_) => {},
+        ast.StmtUnknown(_) => {},
+        ast.StmtDefer(_) => {}
+    }
+    var same: ast.Stmt[] = [st];
+    var none: ast.Stmt[] = [];
+    return DeferHoist { stmts: same, decls: none };
+}
+
+function dl_hoist_match(m: ast.StmtMatch, want: string[]): DeferHoist {
+    var sr: DeferHoistExpr = dl_hoist_expr(m.scrutinee, want);
+    var decls: ast.Stmt[] = sr.decls;
+    var arms: ast.MatchArm[] = [];
+    for a in m.arms {
+        var gr: DeferHoistExpr = dl_hoist_expr(a.guard, want);
+        var ar: DeferHoist = dl_hoist_stmts(a.body, want, true);
+        arms = arms.append(ast.MatchArm { ...a, guard: gr.expr, body: ar.stmts });
+        decls = util.append_all(util.append_all(decls, gr.decls), ar.decls);
+    }
+    var one: ast.Stmt[] = [s_match(sr.expr, arms)];
+    return DeferHoist { stmts: one, decls: decls };
+}
+
+function dl_hoist_expr(e: ast.Expr, want: string[]): DeferHoistExpr {
+    if let ast.ExprCall(c) = e {
+        if (is_value_block(c)) {
+            if let ast.ExprLambda(l) = c.callee {
+                var vb: DeferHoist = dl_hoist_stmts(l.body, want, true);
+                return DeferHoistExpr { expr: dl_vb_rebuild(c, vb.stmts), decls: vb.decls };
+            }
+        }
+    }
+    var kids: ast.Expr[] = dl_expr_kids(e);
+    var none: ast.Stmt[] = [];
+    if (kids.len() == 0) { return DeferHoistExpr { expr: e, decls: none }; }
+    var out: ast.Expr[] = [];
+    var decls: ast.Stmt[] = none;
+    for k in kids {
+        var r: DeferHoistExpr = dl_hoist_expr(k, want);
+        out = out.append(r.expr);
+        decls = util.append_all(decls, r.decls);
+    }
+    return DeferHoistExpr { expr: dl_expr_with_kids(e, out), decls: decls };
+}
+
+// The shared return temp every expanded `return` writes before the cleanup
+// runs. It carries the scope's return type where that type has a zero to
+// start at: declared unannotated at a literal `0` it is an i32 slot, and a
+// function returning an array or a string then assigns its result into a slot
+// of the wrong type — which the AST lowering, whose frame slots carry no type,
+// never noticed.
+function dl_defret_decl(ret: string): ast.Stmt {
+    if (dl_zeroable(ret)) { return s_var("__defret", ret, dl_zero_of(ret)); }
+    return s_var("__defret", "", e_number("0", "", false));
+}
+
+function dl_param_names(params: ast.ParamDecl[]): string[] {
+    var out: string[] = [];
+    for p in params { out = out.append(p.name); }
+    return out;
+}
+
+function dl_count_str(xs: string[], name: string): i32 {
+    var n: i32 = 0;
+    for x in xs { if (x == name) { n = n + 1; } }
+    return n;
+}
+
+function dl_name_keep(e: ast.Expr, own acc: string[]): string[] { return acc; }
+
+// The lift merges a block's binding with the scope's, so it is sound only for
+// a name the scope declares ONCE. Lexical resolution gives every declaration a
+// unique symbol and the compiled path runs it first (irlower resolves before
+// it lowers defers), but the interpreter evaluates the parse-time tree, where
+// two blocks can each write `var items`. Lifting both would give them one slot.
+// The count reaches into value blocks and lambda bodies, so a name declared
+// there counts as well — over-approximating, which costs a lift that would
+// have been sound rather than making an unsound one.
+function dl_hoistable(want: string[], src: ast.Stmt[], params: string[]): string[] {
+    var bound: string[] = [];
+    for p in params { bound = astwalk.append_bound_name(bound, p); }
+    for st in src { bound = astwalk.fold_stmt_nodes(st, bound, astwalk.binders_of, dl_name_keep, dl_name_descend); }
+    var out: string[] = [];
+    for w in want { if (dl_count_str(bound, w) < 2) { out = out.append(w); } }
+    return out;
+}
+
+// dl_hoist_scope is the pass over one scope: collect what its defers name,
+// lift the declarations that answer, and put them in front of the body.
+function dl_hoist_scope(src: ast.Stmt[], params: string[]): ast.Stmt[] {
+    var empty: ast.Stmt[] = [];
+    var emptyf: i32[] = [];
+    var probe: DeferAcc = dl_collect_stmts(src, empty, emptyf);
+    if (probe.actions.len() == 0) { return src; }
+    var want: string[] = dl_hoistable(dl_action_names(probe.actions), src, params);
+    if (want.len() == 0) { return src; }
+    var h: DeferHoist = dl_hoist_stmts(src, want, false);
+    if (h.decls.len() == 0) { return src; }
+    return util.append_all(h.decls, h.stmts);
+}
+
 pub function lower_defers_func(fn: FuncDecl): FuncDecl {
     // The walks below REBUILD every expression they pass, and on a function with
     // no `defer` they throw the copy away. This pre-scan allocates nothing, so
@@ -14328,7 +14564,10 @@ pub function lower_defers_func(fn: FuncDecl): FuncDecl {
     // lambda bodies too, because a function whose only defer sits in one still
     // has work to do — see dl_stmts_have_defer_deep.
     if (!dl_stmts_have_defer_deep(fn.body)) { return fn; }
-    return FuncDecl { ...fn, body: lower_defers_body(fn.body) };
+    var pnames: string[] = [];
+    for p in fn.params { pnames = pnames.append(p.name); }
+    if (fn.receiver_name.len() > 0) { pnames = pnames.append(fn.receiver_name); }
+    return FuncDecl { ...fn, body: lower_defers_body(fn.body, pnames, fn.ret_type) };
 }
 
 // lower_defers_body is the per-SCOPE half of the pass. An ordinary lambda body
@@ -14348,11 +14587,12 @@ pub function lower_defers_func(fn: FuncDecl): FuncDecl {
 // an assignment inside a deferred action writing a stack local instead of the
 // captured env slot — the deferred code ran and its result was discarded
 // (#7174).
-function lower_defers_body(body0: ast.Stmt[]): ast.Stmt[] {
+function lower_defers_body(body0: ast.Stmt[], params: string[], ret: string): ast.Stmt[] {
     // Inner scopes first: each ordinary lambda in `body0` is lowered on its own
     // before this scope collects, so the collect below sees no lambda defers.
     var src: ast.Stmt[] = dl_lower_lambda_bodies(body0);
     if (!dl_stmts_have_defer(src)) { return src; }
+    src = dl_hoist_scope(src, params);
     var empty: ast.Stmt[] = [];
     var emptyf: i32[] = [];
     var cr: DeferAcc = dl_collect_stmts(src, empty, emptyf);
@@ -14366,7 +14606,7 @@ function lower_defers_body(body0: ast.Stmt[]): ast.Stmt[] {
     var body: ast.Stmt[] = [];
     // Shared return temp, an i32 initialised to 0, and a boolean flag per
     // defer, since a condition is a boolean and nothing else.
-    body = body.append(s_var("__defret", "", e_number("0", "", false)));
+    body = body.append(dl_defret_decl(ret));
     var i: i32 = 0;
     while (i < cr.actions.len()) {
         body = body.append(s_var("__dfa" + dl_itoa(i), "boolean", e_bool(false)));
@@ -14439,7 +14679,7 @@ function dl_ll_stmt(st: ast.Stmt): ast.Stmt {
 
 function dl_ll_expr(e: ast.Expr): ast.Expr {
     match (e) {
-        ast.ExprLambda(lm) => { return ast.ExprLambda { ...lm, body: lower_defers_body(lm.body) }; },
+        ast.ExprLambda(lm) => { return ast.ExprLambda { ...lm, body: lower_defers_body(lm.body, dl_param_names(lm.params), lm.ret_type) }; },
         ast.ExprCall(c) => {
             if (is_value_block(c)) { return dl_vb_rebuild(c, dl_lower_lambda_bodies(vb_body(c))); }
             // A hand-written IIFE carrying a defer becomes its own scope, and is
@@ -14450,7 +14690,7 @@ function dl_ll_expr(e: ast.Expr): ast.Expr {
                 match (c.callee) {
                     ast.ExprLambda(lm) => {
                         if (dl_stmts_have_defer(lm.body)) {
-                            var scoped: ast.Expr = ast.ExprLambda { ...lm, origin: ORIGIN_IIFE_SCOPED, body: lower_defers_body(lm.body) };
+                            var scoped: ast.Expr = ast.ExprLambda { ...lm, origin: ORIGIN_IIFE_SCOPED, body: lower_defers_body(lm.body, dl_param_names(lm.params), lm.ret_type) };
                             return ast.ExprCall { ...c, callee: scoped };
                         }
                     },
@@ -14790,26 +15030,43 @@ pub function lower_defers_prepass_module(mod: Module): Module {
 //         <body>                     // advances the counter — break/continue work
 //     }
 //
+// The closed form `LOW..=HIGH` is the same loop with a `>` break, so it runs
+// one more round. Its call is spelled `__range_incl`.
+//
 // Empty / reversed ranges (`5..5`, `9..3`) run zero iterations. The helpers
 // return BARE Stmt[] (never a struct wrapping a fresh array) to avoid the
 // native RC free-list reclaim that corrupts a freshly-built array placed in a
 // struct-literal field (cf. #2759).
 //
-// This runs in module_with_builtins, interp.eval_module, and
-// ssa.build_func — NOT on the IR path (lift_lambdas), which keeps the
-// `__range` shape for lower_range_for.
+// This runs in desugar_prepass_module (inside module_with_builtins),
+// interp.eval_module and ssa.build_func. module_with_builtins feeds the IR
+// emit and the semantic substitution too, so EVERY consumer sees the
+// while-loop and `irlower.lower_range_for` is reached only by the
+// un-desugared modules `irlower_run.fern` reads directly. Its own lowering is
+// tighter than this one — reclaiming it would shrink both range forms (#9565).
 function iter_range_args(iter: ast.Expr): ast.Expr[] {
-    match (iter) {
-        ast.ExprCall(c) => {
-            if (c.args.len() != 2) { return []; }
-            match (c.callee) {
-                ast.ExprIdent(id) => { if (id.name == "__range") { return c.args; } },
-                _ => {}
-            }
-        },
-        _ => {}
-    }
+    if (range_call_name(iter) == "") { return []; }
+    if let ast.ExprCall(c) = iter { return c.args; }
     return [];
+}
+
+// The synthetic range call's name, or "" when the iter is not one: `__range`
+// for `LOW..HIGH` and `__range_incl` for `LOW..=HIGH`.
+function range_call_name(iter: ast.Expr): string {
+    if let ast.ExprCall(c) = iter {
+        if (c.args.len() != 2) { return ""; }
+        if let ast.ExprIdent(id) = c.callee {
+            if (id.name == "__range" || id.name == "__range_incl") { return id.name; }
+        }
+    }
+    return "";
+}
+
+// The break test the desugared loop takes: `>=` leaves HIGH out of the
+// half-open form, `>` keeps it in the closed one.
+function range_break_op(iter: ast.Expr): string {
+    if (range_call_name(iter) == "__range_incl") { return ">"; }
+    return ">=";
 }
 
 // dr_expr rewrites the range-fors living inside an EXPRESSION — in practice a
@@ -14851,7 +15108,7 @@ function desugar_ranges_one(st: ast.Stmt): ast.Stmt[] {
                 var ivar: ast.Stmt = s_var(fr.var_name, "i32", e_binary("-", rargs[0], e_number("1", "", false)));
                 var hivar: ast.Stmt = s_var(hi_name, "i32", rargs[1]);
                 var incr: ast.Stmt = s_assign(fr.var_name, e_binary("+", e_ident(fr.var_name), e_number("1", "", false)));
-                var brk: ast.Stmt = s_if(e_binary(">=", e_ident(fr.var_name), e_ident(hi_name)), [s_break()], []);
+                var brk: ast.Stmt = s_if(e_binary(range_break_op(fr.iter), e_ident(fr.var_name), e_ident(hi_name)), [s_break()], []);
                 var wbody: ast.Stmt[] = [incr, brk];
                 var k: i32 = 0;
                 while (k < dbody.len()) { wbody = wbody.append(dbody[k]); k = k + 1; }

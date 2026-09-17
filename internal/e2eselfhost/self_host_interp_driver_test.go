@@ -91,6 +91,24 @@ var interpProgs = []struct {
 	{"range-break", "function main(): i32 { var s = 0; for i in 0..100 { if (i == 5) { break; } s = s + i; } return s; }", 10},
 	{"range-empty", "function main(): i32 { var c = 7; for i in 5..5 { c = c + 1; } return c; }", 7},
 	{"range-nested", "function main(): i32 { var t = 0; for i in 0..3 { for j in 0..3 { t = t + 1; } } return t; }", 9},
+	// The CLOSED form `LOW..=HIGH`, whose iter is spelled __range_incl. The
+	// desugar matched only __range, so the interpreter answered
+	// "undefined function: __range_incl" — a shape the six rows above never
+	// reached, which is why the half-supported desugar went unnoticed. The
+	// break test is `>` rather than `>=`, so HIGH is included and `5..=5` runs
+	// ONCE where `5..5` runs not at all.
+	{"range-incl-sum", "function main(): i32 { var s = 0; for i in 0..=5 { s = s + i; } return s; }", 15},
+	{"range-incl-continue", "function main(): i32 { var s = 0; for i in 0..=10 { if (i % 2 == 1) { continue; } s = s + i; } return s; }", 30},
+	{"range-incl-break", "function main(): i32 { var s = 0; for i in 0..=100 { if (i == 5) { break; } s = s + i; } return s; }", 10},
+	{"range-incl-single", "function main(): i32 { var c = 7; for i in 5..=5 { c = c + 1; } return c; }", 8},
+	{"range-incl-reversed", "function main(): i32 { var c = 7; for i in 9..=3 { c = c + 1; } return c; }", 7},
+	// A `defer` whose action names a binding declared in a nested block. The
+	// action is replayed at the scope's exits, where that binding had no slot,
+	// so the interpreter read whatever the name last meant instead of the
+	// value the block left. The desugar lifts the declaration to the top of
+	// the scope, and the replay sees the replacement.
+	{"defer-binding-in-a-conditional", "function observe(on: boolean): i32 { var seen = 1; loop { if (on) { var items: i32[] = [2]; defer seen = items[0]; items = [9]; } break; } return seen; }\nfunction main(): i32 { return observe(true) * 10 + observe(false); }", 91},
+	{"defer-binding-in-a-loop-body", "function main(): i32 { var seen = 0; var i = 0; while (i < 3) { var k: i32[] = [i]; defer seen = seen + k[0]; i = i + 1; } return seen; }", 3},
 	// A range-for inside a LAMBDA body. desugar_ranges_one recursed through the
 	// statement forms and had no expression descent at all, so its `_` arm
 	// returned a `var` / `return` / call statement untouched and the lambda body

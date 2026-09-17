@@ -58,7 +58,7 @@ func emitHostnameHelper(w func(string, ...any)) {
 	w("\tadd r12, 1")
 	w("\tjmp .Lssa_hn_len")
 	w(".Lssa_hn_alloc:")
-	w("\tlea rdx, [r12 + 9]")
+	w("\tlea rdx, [r12 + %d]", strBlockBytes)
 	ssaBumpAlloc(w, "rax", "rdx")
 	w("\tmov dword ptr [rax], 1") // rc = 1
 	w("\tmov dword ptr [rax + 4], r12d")

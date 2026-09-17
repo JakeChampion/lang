@@ -1617,7 +1617,19 @@ function instruction(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Pla
     // statement op pushes, so the store below takes either.
     if (ins.kind_tag == ssasem.call()) { r = call_site(r, ins); }
     // A verified copy already has its single operand on the stack.
-    return emit(r, ir.op_store_local(ins.result));
+    r = emit(r, ir.op_store_local(ins.result));
+    return took(r, p, ins);
+}
+
+// A tuple read the plan admitted as a TAKE nulls the slot it read. The source
+// dies at this instruction, so its drop runs in this same step, after this —
+// and the release helpers are null-guarded, so the walk goes past the slot the
+// frame now owns rather than freeing it twice (ssaunits.tuple_take_field).
+function took(own r: irlower.LowerResult, p: ssaunits.Plan, ins: ssa.SInst): irlower.LowerResult {
+    if (ins.result >= p.takes.len() || p.takes[ins.result] < 0) { return r; }
+    r = emit(r, ir.op_load_local(ins.args[0]));
+    r = emit(r, ir.op_const_i32(0));
+    return emit(r, ir.op_tuple_set(p.takes[ins.result]));
 }
 
 // The received unit's box when it is the only one and a fresh sole-owned copy
