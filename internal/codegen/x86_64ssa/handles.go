@@ -1,5 +1,7 @@
 package x86_64ssa
 
+import "github.com/jakechampion/lang/internal/ast"
+
 // Reader / Writer handles, and the process-level helpers that go with them.
 //
 // A handle is a 24-byte block whose value pointer is base+8: the slot at
@@ -89,13 +91,17 @@ func emitStdHandleHelper(name string, fd int) func(w func(string, ...any)) {
 }
 
 // emitExitHelper writes exit(status) — exit_group(2), which never returns.
-// arm64ssa runs the leak census here, because exit() bypasses the _start
-// epilogue that would otherwise report it; this backend does not implement
-// -leakcheck at all (internal/ast's note on the flag), so there is nothing to
-// run and no census seam to keep.
+// The leak census runs here as well as in _start's epilogue, because exit()
+// bypasses that epilogue and a program leaving this way would otherwise
+// report nothing.
 func emitExitHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("exit"))
+	if ast.LeakCheckEnabled {
+		w("\tpush rdi") // park the status across the census
+		w("\tcall %s", lcReportSym)
+		w("\tpop rdi")
+	}
 	w("\tmov eax, 231") // exit_group; status already in edi
 	w("\tsyscall")
 }

@@ -84,6 +84,13 @@ func emitAllocHelper(w func(string, ...any)) {
 	w("\tjz .Lssa_alloc_bump")
 	w("\tmov rcx, [rax]")          // head.next
 	w("\tmov [r8 + rsi * 8], rcx") // heads[idx] = next
+	if ast.LeakCheckEnabled {
+		// The one allocation shape that leaves the cursor alone, so the guard
+		// cannot see it. rdi still holds the class-rounded size __free
+		// counted this block with. Flags are dead before the ret.
+		emitLcAdd(w, lcAllocCountSym, "")
+		emitLcAdd(w, lcPopBytesSym, "rdi")
+	}
 	w("\tret")
 	w(".Lssa_alloc_bump:")
 	w("\tsub rsp, 8") // entered 8 past alignment; the guard is called at 16
@@ -102,6 +109,13 @@ func emitFreeHelper(w func(string, ...any)) {
 	w("%s:", fnLabel("__free"))
 	w("\tmov esi, esi")
 	emitFreelistClass(w, "free", "rsi", "rdx", ".Lssa_free_ret")
+	if ast.LeakCheckEnabled {
+		// After the class computation, so the census counts only what is
+		// really pushed: a block above the largest class returns unreclaimed
+		// and its bytes stay live for the rest of the process.
+		emitLcAdd(w, lcFreeCountSym, "")
+		emitLcAdd(w, lcFreeBytesSym, "rsi")
+	}
 	w("\tlea r8, [rip + %s]", freelistSym)
 	w("\tmov rax, [r8 + rdx * 8]") // old head
 	w("\tmov [rdi], rax")          // base.next = old head

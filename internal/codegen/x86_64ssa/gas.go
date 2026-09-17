@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jakechampion/lang/internal/ast"
 	nativex86_64 "github.com/jakechampion/lang/internal/codegen/x86_64"
 	"github.com/jakechampion/lang/internal/fernrt"
 	"github.com/jakechampion/lang/internal/ir"
@@ -192,6 +193,11 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 	// No cleanup after the call: _start exits through the syscall below and
 	// never returns, so the pushed arguments die with the process.
 	w("\tcall %s", fnLabel(entry))
+	if ast.LeakCheckEnabled {
+		w("\tpush rax") // park the exit status across the census
+		w("\tcall %s", lcReportSym)
+		w("\tpop rax")
+	}
 	w("\tmov edi, eax")     // exit code = return value
 	w("\tmov eax, %d", 231) // sysExitGroup
 	w("\tsyscall")
@@ -228,6 +234,9 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 	}
 	if heap {
 		emitHeapGuard(w)
+	}
+	if ast.LeakCheckEnabled {
+		emitLcReport(w, heap)
 	}
 	if len(strOrder) > 0 {
 		w("")
@@ -316,6 +325,9 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 	}
 	if slices.Contains(helpers, "__alloc") || slices.Contains(helpers, "__free") || strings.Contains(b.String(), freelistSym) {
 		emitFreelistBss(w)
+	}
+	if ast.LeakCheckEnabled {
+		emitLcBss(w)
 	}
 	emitProcBss(w, withArgs, withEnv)
 	emitHelperBss(w, helpers, strings.Contains(b.String(), rcUnderflowSym))
@@ -1671,6 +1683,11 @@ func emitHeapGuard(w func(string, ...any)) {
 	w("\tpush rax")
 	w("\tpush rcx")
 	w("\tpushfq")
+	if ast.LeakCheckEnabled {
+		// Every bump reaches the guard, so this counts them all; the pushfq
+		// above is what makes a flag-clobbering add safe here.
+		emitLcAdd(w, lcAllocCountSym, "")
+	}
 	w("\tmov rax, [rip + %s]", heapPtrSym)
 	w("\tmov rcx, [rip + %s]", heapEndSym)
 	w("\tcmp rax, rcx")
