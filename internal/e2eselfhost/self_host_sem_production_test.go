@@ -1104,4 +1104,29 @@ function main(): i32 {
     return (churn_one() + churn_two()) % 7 + s(3);
 }
 `},
+	// A function value held in a RECORD FIELD, and called through it. The
+	// holder takes a unit of the field and its release walks it, so the
+	// closure and its captures reclaim with the record; a bare named function
+	// in the same field is the shape that must NOT be walked as a box. Churned
+	// in a loop so a missed or doubled release shows as a leak or an
+	// over-release rather than a constant.
+	{name: "a-function-value-in-a-record-field", atLeast: 5, noLeak: true, src: `
+struct Holder { f: (i32) => i32 }
+function plain(x: i32): i32 { return x + 1; }
+function make(n: i32): Holder {
+    var xs: i32[] = [n, n + 1, n + 2];
+    return Holder { f: (x: i32): i32 => { return x + xs[0] + xs[2]; } };
+}
+function main(): i32 {
+    var a: Holder = Holder { f: plain };
+    var t: i32 = a.f(1);
+    var i: i32 = 0;
+    while (i < 50) {
+        var h: Holder = make(i);
+        t = t + h.f(0) % 3;
+        i = i + 1;
+    }
+    return t % 7;
+}
+`},
 }

@@ -1357,6 +1357,20 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
     if (!s.ok) { return recv; }
     var owner: string = struct_name(s.values[recv.id]);
     if (owner == "") { owner = union_name(s.values[recv.id]); }
+    // A record FIELD of function type is not a method. The contract table keys
+    // methods by `Type.name` and holds nothing for a field, so `h.f(0)` is the
+    // field read and a call through what it holds. The receiver is already
+    // produced, so the read takes its value rather than evaluating the object a
+    // second time.
+    var fsig: checker.StructSig = record_schema(owner, s);
+    if (fsig.name.len() > 0) {
+        var fat: i32 = record_field_index(fsig, fa.field);
+        if (fat >= 0 && ssasem.is_func(fsig.field_types[fat])) {
+            var fv: Value = define(s, ssasem.record_get(), [recv.id], fat, fa.field, fsig.field_types[fat]);
+            if (!fv.s.ok) { return fv; }
+            return indirect_call(c, fv.id, fv.s);
+        }
+    }
     // A builtin's receiver names no declaration this boundary can hold a
     // contract for, so it is matched by shape instead. A string's methods are
     // declared in the standard library on a `string` receiver, and a view

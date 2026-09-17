@@ -1409,10 +1409,14 @@ function field_placement_error(f: Func): string {
         var env: boolean = semtypes.is_env(record.ty);
         for field in record.fields {
             if (!holds_func(field.ty)) { continue; }
-            // A closure box BORROWS a captured function value (semsource's
-            // lent_capture): the field is never walked, and the box it names
-            // is released by the frame that owns it.
-            if (env && is_func(field.ty)) { continue; }
+            // A function value is a field like any other: the holder takes a
+            // unit of it and its release walks it, which env_schemas made
+            // possible from a frame that never built the box. A closure box
+            // still BORROWS a captured one (semsource's lent_capture), so its
+            // own field is not walked and is released by the frame that owns
+            // it. What stays refused is a function value NESTED in a field —
+            // an array or tuple of them — which holds_func also answers to.
+            if (is_func(field.ty)) { continue; }
             return "function value is not a field";
         }
     }
