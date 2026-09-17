@@ -316,6 +316,101 @@ function main(): i32 {
     return 7;
 }
 `},
+	// The map ops and the byte kernels run through the stack machine's own
+	// arms between a push of the operands and a pop of the result, with the
+	// allocator treating each as a call. String and integer keys, insert,
+	// lookup with a default, membership, the key and value snapshots.
+	{name: "maps", allSSA: true, src: `
+import "core/map";
+import "std/i32";
+function build(n: i32): Map[string, i32] {
+    var m: Map[string, i32] = Map { };
+    var i: i32 = 0;
+    while (i < n) { m = m.insert("k" + i.to_string(), i * 3); i = i + 1; }
+    return m;
+}
+function main(): i32 {
+    var m: Map[string, i32] = build(50);
+    var ints: Map[i32, i32] = Map { };
+    var j: i32 = 0;
+    while (j < 40) { ints = ints.insert(j * 7, j); j = j + 1; }
+    var total: i32 = m.get_or("k7", 0) + m.get_or("zz", 100) + ints.get_or(21, 0) + ints.get_or(22, 1000);
+    if (m.has("k9")) { total = total + 1; }
+    if (!ints.has(5)) { total = total + 2; }
+    total = total + m.len() * 10 + ints.keys().len() + ints.values().len();
+    for k in m.keys() { if (k.len() == 2) { total = total + 1; } }
+    return total % 200;
+}
+`},
+	// Aggregates the lowering folds whole (a record literal with constant
+	// fields, here the keys of a persistent map) are the address of an
+	// interned box; passed straight to a call, that address sits in a
+	// register home and must survive there. The map's own functions are
+	// pinned with the program: the lookup on a collision node is where a
+	// clobbered key address surfaced.
+	{name: "folded_aggregates", viaSSA: []string{"main", "pmap__PMap__Coarse__i32__get_or", "pmap____hm_find__Coarse__i32", "pmap__PMap__Coarse__i32__insert"}, src: `
+import "std/pmap" as pmap;
+import "std/option";
+import "std/i32";
+import "core/cmp";
+
+@derive(cmp.Eq)
+struct Coarse { bucket: i32, id: i32 }
+impl cmp.Hash for Coarse { function hash(self: Coarse): i32 { return self.bucket; } }
+function main(): i32 {
+    var m: pmap.PMap[Coarse, i32] = pmap.pmap_new();
+    var i: i32 = 0;
+    while (i < 40) { m = m.insert(Coarse { bucket: i % 5, id: i }, i); i = i + 1; }
+    var n: i32 = m.get_or(Coarse { bucket: 3, id: 13 }, -1) * 10 + m.get_or(Coarse { bucket: 3, id: 14 }, -1);
+    if (m.contains(Coarse { bucket: 1, id: 6 })) { n = n + 1000; }
+    return n % 251;
+}
+`},
+	// The string ops the stack machine selects in emit_str_op (search, split,
+	// lines, case, trim, replace, bytes, count), through the stack machine's
+	// own arm with the operand count the IR verifier gives each, and the bit
+	// counts at both widths.
+	{name: "strings", allSSA: true, src: `
+import "std/string";
+import "std/i32";
+import "std/i64";
+function strs(s: string): i32 {
+    var n: i32 = 0;
+    n = n + s.index_of("fern");
+    if (s.starts_with("the")) { n = n + 100; }
+    if (s.ends_with("end")) { n = n + 200; }
+    if (s.contains("language")) { n = n + 400; }
+    n = n + s.split(" ").len() * 10;
+    n = n + s.lines().len() * 1000;
+    n = n + s.trim().len();
+    n = n + s.replace("fern", "FERN").to_upper().len() + s.to_lower().len();
+    n = n + "ab".repeat(3).len() + s.reverse_bytes().len();
+    n = n + s.bytes().len() + s.count("e");
+    return n;
+}
+function bits(a: i32, b: i64): i32 {
+    return a.count_ones() + a.leading_zeros() * 10 + a.trailing_zeros() * 100 + (b.count_ones() as i32) * 1000 + (b.leading_zeros() as i32) * 7 + (b.trailing_zeros() as i32) * 3;
+}
+function main(): i32 {
+    var s: string = "  the fern language\n has a fern end";
+    return (strs(s) + bits(15790080, 280375465082880)) % 251;
+}
+`},
+	// An exhaustive match whose every arm returns, standing last in a
+	// generic function (ordmap's fold), lowers to a loop whose body reaches
+	// the loop's end alive: control continues after the loop in the
+	// enclosing scope, and the lift gives it a block to continue in.
+	{name: "loop_fallthrough", allSSA: true, src: `
+import "std/ordmap" as ordmap;
+import "core/cmp";
+function main(): i32 {
+    var m: ordmap.OrdMap[i32, i32] = ordmap.ordmap_new();
+    var i: i32 = 0;
+    while (i < 30) { m = m.insert((i * 7) % 31, i); i = i + 1; }
+    var total: i32 = m.fold(0, (acc: i32, k: i32, v: i32) => acc + k * 2 + v);
+    return (total + m.len()) % 251;
+}
+`},
 	// A mixed module: main and the string helpers keep the stack machine, the
 	// integer functions go through the SSA backend, and both call each other
 	// through the shared stack ABI.
@@ -606,10 +701,11 @@ func TestSelfHostSSAFrameIsSizedBySpills(t *testing.T) {
 		target string
 		frame  *regexp.Regexp
 	}{
-		{"x86-64-linux", regexp.MustCompile(`__fn_wide:\n(?:.*\n){1,8}?\s+subq \$(\d+), %rsp`)},
+		{"x86-64-linux", regexp.MustCompile(`__fn_wide:\n(?:.*\n){1,14}?\s+subq \$(\d+), %rsp`)},
 		// Over 4,095 bytes the arm64 prologue builds the immediate in x17; a
-		// movk after the movz would mean a frame over 64 KB.
-		{"arm64-linux", regexp.MustCompile(`__fn_wide:\n(?:.*\n){1,10}?\s+(?:sub sp, sp, #|movz x17, #)(\d+)\n(\s+movk)?`)},
+		// movk after the movz would mean a frame over 64 KB. The window covers
+		// the frame record and up to five callee-saved pairs before it.
+		{"arm64-linux", regexp.MustCompile(`__fn_wide:\n(?:.*\n){1,16}?\s+(?:sub sp, sp, #|movz x17, #)(\d+)\n(\s+movk)?`)},
 	}
 	for _, c := range cases {
 		out := filepath.Join(dir, "wide-"+c.target+".s")

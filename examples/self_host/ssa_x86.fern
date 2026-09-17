@@ -671,7 +671,7 @@ pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
         var reg_of: i32[] = ssa.regalloc_none(funcs[i]);
         // A float function keeps every value in its slot (the SSE2 paths
         // address slots directly), so skip register allocation for it.
-        if (use_regalloc && !func_has_float(funcs[i])) { reg_of = ssa.regalloc_linear(funcs[i], nregs()); }
+        if (use_regalloc && !func_has_float(funcs[i])) { reg_of = ssa.regalloc_linear(funcs[i], nregs(), 0); }
         chunks = chunks.append(emit_func(funcs[i], reg_of));
         i = i + 1;
     }

@@ -403,9 +403,33 @@ function prod_host_kind(k: string): boolean {
     var host: string[] = ["syscall3", "syscall4", "syscall5", "exit", "raw_string", "strbuf_reset", "strbuf_append",
         "raw_scratch", "raw_environ", "raw_addr", "monotonic_ns", "now_unix_ms",
         "load_i32", "load_i64", "load_ptr", "store_i32", "store_i64", "store_ptr", "raw_arr_box",
-        "memcpy", "memset", "memchr", "map_new"];
+        "map_new", "strbuf_take", "args", "map_hash_seed", "arr_push_shared_bytes", "arr_push_shared_count"];
     for x in host { if (x == k) { return true; } }
-    return false;
+    return flat_op_argc(k) >= 0 || flat_str_kind(k) || k == "clz" || k == "ctz" || k == "popcount";
+}
+
+// flat_str_kind is a string op the emitters select from emit_str_op, less the
+// ones the lift lowers itself; it goes through flat_op with the operand count
+// ir.op_pops gives.
+function flat_str_kind(k: string): boolean {
+    var own: string[] = ["str_len", "str_concat", "str_eq", "str_cmp", "str_index", "str_slice", "memchr"];
+    for x in own { if (x == k) { return false; } }
+    return ir.is_str_op_kind(ir.kind_id(k));
+}
+
+// flat_op_argc is the operand count of an op the emitters run through the
+// stack machine's own arm (flat_op, 59), -1 for any other op: the three byte
+// kernels, the map ops and the byte-buffer builder.
+function flat_op_argc(k: string): i32 {
+    var three: string[] = ["memcpy", "memset", "memchr", "map_set", "map_get_or"];
+    for x in three { if (x == k) { return 3; } }
+    var two: string[] = ["map_get", "map_has", "map_delete", "buf_push", "buf_push_byte", "buf_push_u64"];
+    for y in two { if (y == k) { return 2; } }
+    var one: string[] = ["map_len", "map_keys", "map_values", "map_iter", "mapiter_has_next", "mapiter_key", "mapiter_value", "mapiter_advance",
+        "buf_new", "buf_len", "buf_take", "buf_free"];
+    for z in one { if (z == k) { return 1; } }
+    if (k == "buf_push_range") { return 4; }
+    return 0 - 1;
 }
 
 // lift_prod_host lifts one host-floor op: a syscall is a register-ABI call
@@ -415,14 +439,19 @@ function prod_host_kind(k: string): boolean {
 // is wanted; raw_addr is the 64-bit add; the clock ops are stack-ABI calls
 // with no operand. The width loads and stores at an address are the box
 // load and store at offset 0, a 4-byte one carrying "i32" in `str`; a store
-// leaves the zero the stack machine pushes in its place. The three byte
-// kernels are flat_op (59): the emitter runs the stack machine's own arm
-// between a push of the operands and a pop of the result, and the
-// allocator treats the op as a call, so the arm's scratch registers hold
-// nothing live.
-function lift_prod_host(k: string, lv: LiftVals): LiftVals {
-    if (k == "memcpy" || k == "memset" || k == "memchr") { return lift_pop_push(lv, 3, 59, 0, k); }
+// leaves the zero the stack machine pushes in its place. A flat_op (59)
+// carries the op's index in `imm`: the emitter runs the stack machine's own
+// arm for that op between a push of the operands and a pop of the result,
+// and the allocator treats it as a call, so the arm's registers hold nothing
+// live.
+function lift_prod_host(k: string, op: ir.Op, at: i32, lv: LiftVals): LiftVals {
+    if (flat_op_argc(k) >= 0) { return lift_pop_push(lv, flat_op_argc(k), 59, at, k); }
+    if (flat_str_kind(k)) { return lift_pop_push(lv, ir.op_pops(op), 59, at, k); }
+    if (k == "clz" || k == "ctz" || k == "popcount") { return lift_pop_push(lv, 1, 10, 0, k + ":" + util.i32_to_string(op.width)); }
     if (k == "map_new") { return lift_pop_push(lv, 1, 50, 0, k); }
+    if (k == "strbuf_take" || k == "args" || k == "map_hash_seed") { return lift_pop_push(lv, 0, 50, 0, k); }
+    if (k == "arr_push_shared_bytes") { return lift_pop_push(lv, 0, 58, 1, "__fern_arr_push_copied"); }
+    if (k == "arr_push_shared_count") { return lift_pop_push(lv, 0, 58, 1, "__fern_arr_push_shared"); }
     if (k == "load_i64" || k == "load_ptr") { return lift_pop_push(lv, 1, 40, 0, ""); }
     if (k == "load_i32") { return lift_pop_push(lv, 1, 10, 0, k); }
     if (k == "store_i64" || k == "store_ptr" || k == "store_i32") {
@@ -456,10 +485,10 @@ function prod_call_argc(k: string): i32 {
     for x in two { if (x == k) { return 2; } }
     var one: string[] = ["str_from_bytes", "alloc", "alloc_u8", "raw_alloc", "print_str", "eprint_str",
         "read_line", "read_file", "read_file_bytes", "remove_dir_all", "remove_file", "create_dir_all",
-        "read_dir", "read_dir_all", "env", "stat", "lstat", "putchar"];
+        "read_dir", "read_dir_all", "env", "stat", "lstat", "putchar", "temp_dir", "reader_close"];
     for y in one { if (y == k) { return 1; } }
-    if (k == "arr_slice") { return 3; }
-    if (k == "write_file" || k == "write_file_exec") { return 2; }
+    if (k == "arr_slice" || k == "subprocess") { return 3; }
+    if (k == "write_file" || k == "write_file_exec" || k == "read_chunk" || k == "writer_write") { return 2; }
     return 0;
 }
 function prod_call_kind(k: string): i32 {
@@ -482,9 +511,9 @@ function ld_off(k: string, op: ir.Op): i32 {
 // lift_prod_mem lowers one memory op onto kinds 40..48. Every arm pops what
 // the stack machine pops and pushes what it pushes, so the operand stack
 // stays aligned with the IR's own accounting.
-function lift_prod_mem(k: string, op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SInst[]): LiftVals {
+function lift_prod_mem(k: string, op: ir.Op, at: i32, nvals: i32, stack: i32[], cur_insts: ssa.SInst[]): LiftVals {
     var lv: LiftVals = LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: true };
-    if (prod_host_kind(k)) { return lift_prod_host(k, lv); }
+    if (prod_host_kind(k)) { return lift_prod_host(k, op, at, lv); }
     if (util.str_has_prefix(k, "raw_store") || k == "struct_set" || k == "arr_set") { return lift_prod_store(k, op, lv); }
     if (k == "variant_is") { return lift_variant_is_prod(op, lv); }
     if (k == "str_slice") { return lift_pop_push(lv, 3, 51, view_in_frame(op), ""); }
@@ -785,7 +814,7 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[], struct
             var lv: LiftVals = lift_int_narrow_prod(k, op, nvals, stack, [], ok);
             nvals = lv.nvals; stack = lv.stack; cur_insts = splice(cur_insts, lv.insts); ok = lv.ok;
         } else if (prod && prod_mem_kind(k)) {
-            var lv: LiftVals = lift_prod_mem(k, op, nvals, stack, []);
+            var lv: LiftVals = lift_prod_mem(k, op, i, nvals, stack, []);
             nvals = lv.nvals; stack = lv.stack; cur_insts = splice(cur_insts, lv.insts); ok = lv.ok;
         } else if (prod && k != "const_f64" && prod_float_kind(k)) {
             var lv: LiftVals = lift_float_prod(k, op, nvals, stack, []);
@@ -1426,9 +1455,12 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[], struct
             } else if (sc_kind[t2] == "loop") {
                 // A body whose last statement returns reaches the loop's end
                 // as a live, terminated block; it is appended here. One that
-                // falls off the end would continue after the loop, a shape the
-                // lowering never emits, so it declines rather than guesses.
-                if (!cur_dead && cur_term.kind_tag == 0) { ok = false; bail = "loop-fallthrough"; }
+                // falls off the end continues after the loop, in the enclosing
+                // scope: it branches to a fresh block that becomes current,
+                // with the body's slot values, once the header is rebuilt.
+                var lf: LoopFall = loop_fall(cur_dead, cur_term, cur_id, next_blk, slots);
+                next_blk = lf.next_blk;
+                if (lf.falls) { cur_term = STerm_br(lf.cont); }
                 blocks = loop_tail_appended(blocks, cur_dead, cur_id, cur_insts, cur_term, cur_preds);
                 var luid2: i32 = sc_uid[t2];
                 var hid: i32 = sc_target[t2];
@@ -1466,9 +1498,14 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[], struct
                     bi = bi + 1;
                 }
                 blocks = nb;
-                var rsl: i32 = 0;
-                while (rsl < nslots) { slots = slots.with(rsl, sc_header_phis[t2 * nslots + rsl]); rsl = rsl + 1; }
                 cur_dead = true;
+                if (lf.falls) {
+                    slots = lf.slots;
+                    cur_preds = [lf.tail]; cur_id = lf.cont; cur_insts = []; cur_term = STerm_none(); cur_dead = false;
+                } else {
+                    var rsl: i32 = 0;
+                    while (rsl < nslots) { slots = slots.with(rsl, sc_header_phis[t2 * nslots + rsl]); rsl = rsl + 1; }
+                }
                 sc_kind = drop_last_s(sc_kind); sc_uid = drop_last(sc_uid); sc_target = drop_last(sc_target);
                 sc_else = drop_last(sc_else); sc_seen_else = drop_last(sc_seen_else); sc_then_blk = drop_last(sc_then_blk);
                 sc_then_reaches = drop_last(sc_then_reaches); sc_parent = drop_last(sc_parent); sc_edge_from = drop_last(sc_edge_from);
@@ -1564,6 +1601,16 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[], struct
 
     var f: ssa.SFunc = ssa.SFunc { name: name, nparams: nparams, nvals: nvals, blocks: blocks, entry: 0, takes_env: false };
     return LResult { func: f, ok: ok, bail: bail };
+}
+
+// LoopFall is a loop body that reaches the loop's end alive and unterminated:
+// `tail` is that block, `cont` the fresh block control continues in after
+// the loop, `slots` the body's slot values there.
+struct LoopFall { falls: boolean, tail: i32, cont: i32, next_blk: i32, slots: i32[] }
+
+function loop_fall(dead: boolean, term: ssa.STerm, id: i32, next_blk: i32, slots: i32[]): LoopFall {
+    if (dead || term.kind_tag != 0) { return LoopFall { falls: false, tail: id, cont: 0 - 1, next_blk: next_blk, slots: slots }; }
+    return LoopFall { falls: true, tail: id, cont: next_blk, next_blk: next_blk + 1, slots: slots };
 }
 
 function loop_tail_appended(blocks: ssa.SBlock[], dead: boolean, id: i32, insts: ssa.SInst[], term: ssa.STerm, preds: i32[]): ssa.SBlock[] {
