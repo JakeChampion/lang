@@ -28,7 +28,14 @@ func inlinedCall(in x86.Inst) bool {
 	if in.Op != x86.Call {
 		return false
 	}
-	return rcInline[in.Callee] || boxFreeInline(in)
+	return rcInlineCall(in) || boxFreeInline(in)
+}
+
+// rcInlineCall reports whether a call is an rc primitive the renderer writes
+// inline. inlinedCall and inlineRcLines both read it, so the shape conditions
+// live in one place (#9618).
+func rcInlineCall(in x86.Inst) bool {
+	return in.Op == x86.Call && rcInline[in.Callee] && len(in.ArgLocs) == 1
 }
 
 // boxFreeInline reports whether a call is a __fern_box_free whose size the
@@ -49,7 +56,7 @@ func boxFreeInline(in x86.Inst) bool {
 // alone, and both hand the pointer back. s0 homes a slot-resident operand, s1
 // the rc word, s2 the counter's address.
 func inlineRcLines(in x86.Inst, fr frameLayout, numAlloc int, seed string) ([]string, bool) {
-	if !rcInline[in.Callee] || in.Op != x86.Call || len(in.ArgLocs) != 1 {
+	if !rcInlineCall(in) {
 		return nil, false
 	}
 	s0, s1, s2 := numAlloc, numAlloc+1, numAlloc+2
@@ -117,14 +124,6 @@ func inlineRcLines(in x86.Inst, fr frameLayout, numAlloc int, seed string) ([]st
 // trampoline sequence already uses; s0 homes a slot-resident box and s1 the
 // old list head.
 func inlineAllocLines(in x86.Inst, fr frameLayout, numAlloc int, seed string, counting bool) ([]string, bool) {
-	if counting {
-		// A module reading __heap_alloc_count() (#9596) keeps every
-		// allocation on the helper, which is where the pop is counted.
-		// Inlining it here would hand out a block the count never saw,
-		// and an undercount reads as the zero-alloc steady state the
-		// observable exists to prove.
-		return nil, false
-	}
 	lbl := func(suffix string) string { return fmt.Sprintf(".Lssa_alloc_%s_%s", seed, suffix) }
 	heads := func(base string) []string {
 		return []string{
@@ -132,7 +131,16 @@ func inlineAllocLines(in x86.Inst, fr frameLayout, numAlloc int, seed string, co
 			fmt.Sprintf("add %s, %s, #:lo12:%s", base, base, freelistSym),
 		}
 	}
-	if in.Op == x86.MemAlloc && in.SrcImm && !ast.LeakCheckEnabled {
+	if in.Op == x86.MemAlloc && in.SrcImm {
+		if counting {
+			// A module whose allocations are counted — the census, or a
+			// program reading __heap_alloc_count() (#9596) — keeps every
+			// allocation on the helper, which is where the pop is counted.
+			// Inlining it here would hand out a block the count never saw,
+			// and an undercount reads as the zero-alloc steady state the
+			// observable exists to prove.
+			return nil, false
+		}
 		idx, ok := x86.SmallClassIndex(in.Imm)
 		if !ok {
 			return nil, false

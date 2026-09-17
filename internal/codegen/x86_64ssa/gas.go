@@ -2576,12 +2576,13 @@ func emitRuntimeHelpers(w func(string, ...any), helpers []string) {
 	}
 }
 
-// countsAllocs reports whether this module reads __heap_alloc_count() (#9596)
-// and so needs __alloc to tick the counter. It is the module's only census:
-// this backend does not implement FERN_LEAKCHECK, so nothing else asks for
-// the tick and no other program pays for it.
+// countsAllocs reports whether this module's allocations are counted, so
+// __alloc must tick the counter and the inline pop must not hand out a block
+// the count never saw. Two things ask for it: the leak census (#9604), which
+// counts every alloc and free, and a program reading __heap_alloc_count()
+// (#9596). No other program pays for the tick.
 func countsAllocs(helpers []string) bool {
-	return referencesHelper(helpers, "__fern_heap_alloc_count")
+	return ast.LeakCheckEnabled || referencesHelper(helpers, "__fern_heap_alloc_count")
 }
 
 // referencedRuntimeHelpers returns, sorted, the hand-written runtime-helper
@@ -2614,7 +2615,7 @@ func referencedRuntimeHelpers(progs map[string]*Program) (asm, fern []string) {
 	for _, p := range progs {
 		for _, blk := range p.Blocks {
 			for _, in := range blk.Insts {
-				if (in.Op == Call || in.Op == CallPair) && !(in.Op == Call && (rcInline[in.Callee] || boxFreeInline(in))) {
+				if (in.Op == Call || in.Op == CallPair) && !inlinedCall(in) {
 					add(in.Callee)
 				}
 			}
