@@ -220,8 +220,9 @@ func envCases(t *testing.T) []invocation {
 	// `kill` oracle showed GNU printing POLL where this printed IO.
 	add(invocation{name: "ignore by an alternate name", args: []string{"--ignore-signal=IO", "/bin/true"}})
 	add(invocation{name: "ignore by the primary name", args: []string{"--ignore-signal=POLL", "/bin/true"}})
-	// glibc defines both of these and GNU's own table does not, so each is an
-	// `invalid signal` rather than a silent no-op. Accepting a name GNU
+	// Both are KERNEL UAPI names (asm-generic/signal.h) that glibc never
+	// defines, so a GNU build cannot see them and answers `invalid signal`
+	// rather than treating them as a silent no-op. Accepting a name GNU
 	// refuses is a divergence on input a caller can type.
 	add(invocation{name: "LOST is not a signal GNU knows", args: []string{"--ignore-signal=LOST", "/bin/true"}})
 	add(invocation{name: "UNUSED is not a signal GNU knows", args: []string{"--ignore-signal=UNUSED", "/bin/true"}})
