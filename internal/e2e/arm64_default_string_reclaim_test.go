@@ -16,17 +16,15 @@ import (
 // The default arm64 emitter must reclaim a string local that was passed to a
 // user function, and the bar is that retention does NOT grow with the input.
 //
-// This is what the default flip to -backend ssa (#9511) got wrong and nothing
-// caught: arm64ssa retains one buffer whose size tracks the input, so ordinary
-// string-processing programs went from O(1) retention to O(input). #9558 has
-// the reproducer and the measurement — the object counts are a step apart
-// while live_bytes differ a thousandfold, which is what says "one growing
-// buffer" rather than "more objects leaked".
+// This measures the DEFAULT emitter, and that is what keeps it meaningful: the
+// stack machine's FERN_LEAKCHECK census reads a constant 16 bytes at every
+// input size, so growth here is the program's and not the instrument's.
 //
-// The single-word string ABI is NOT the cause, though it was the first
-// reading. x86-64 runs that ABI under its own default and is clean on the same
-// programs, so rc_analysis.go's #4174 reclaim taint cannot be what this
-// measures.
+// arm64ssa's census is NOT sound that way — it over-reports live bytes when
+// allocation sizes vary (#9558) — which is why the retention the default flip
+// to -backend ssa (#9511) was reverted over is not currently established. Do
+// not repurpose this test to compare the two emitters until #9558 is fixed;
+// the numbers are not comparable.
 //
 // Measuring two input sizes rather than one absolute number is deliberate: the
 // absolute figure moves with allocator and stdlib changes, while "does it grow
@@ -117,9 +115,10 @@ func TestArm64DefaultReclaimsStringPassedToAFunction(t *testing.T) {
 			"retention grows with the input, so a string passed to a user function is not "+
 			"being reclaimed.\n\n"+
 			"If this failed because the default moved to -backend ssa, the flip needs #9558 "+
-			"closed first: arm64ssa retains one buffer whose size tracks the input. Do not "+
+			"closed first — arm64ssa's census over-reports live bytes when allocation sizes "+
+			"vary, so what that backend retains has not actually been measured yet. Do not "+
 			"relax this bound to land the flip, and do not reach for the single-word string "+
-			"ABI as the explanation — x86-64 runs that ABI under its own default and is "+
+			"ABI as the explanation: x86-64 runs that ABI under its own default and is "+
 			"clean, which is what rules it out.", small, large)
 	}
 	if testing.Verbose() {

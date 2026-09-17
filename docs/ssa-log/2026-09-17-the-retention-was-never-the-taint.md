@@ -70,48 +70,66 @@ binaries. So the taint was not what those numbers measured.
 | arm64 `-backend ssa` | 122 | 111 | 369,040 |
 
 x86-64 runs the **same single-word ABI** — `ast.TwoWordOverride` is set only by
-`internal/codegen/arm64` — so it carries the same taint, and it is clean. Three
-orders of magnitude apart with the object counts a step apart: 10 unfreed
-against 11. Never "more objects leaked". One object whose size tracks the input.
+`internal/codegen/arm64` — so it carries the same taint, and it is clean. That
+rules the taint out.
 
-The reproducer has no aliasing and no user function in it at all:
+## And then the second measurement disagreed too
 
-```fern
-function main(): i32 {
-    var r: Reader = stdin();
-    var n: i32 = 0;
-    loop {
-        match (r.read_line()) {
-            Some(line) => { n = (n + line.len()) % 101; },
-            None => { break; }
-        }
-    }
-    return n % 7;
-}
-```
+The first reading of the table above was "one buffer whose size tracks the
+input", from the object counts being a step apart (10 unfreed against 11) while
+`live_bytes` differed a thousandfold. I filed #9558 saying so. That was wrong as
+well, and the control that shows it is holding the line *count* fixed and
+varying the line *widths*:
+
+`read_line` over 8,000 lines, identical alloc and free counts in all four runs:
 
 | input | arm64 flat | arm64 `-backend ssa` |
 | --- | ---: | ---: |
-| 1,000 lines | allocs=2002 frees=2001 live_bytes=**16** | allocs=2002 frees=2001 live_bytes=**1,520** |
-| 8,000 lines | allocs=16002 frees=16001 live_bytes=**16** | allocs=16002 frees=16001 live_bytes=**12,752** |
+| every line 40 chars, 1,000 lines | 16 B | 32 B |
+| every line 40 chars, 8,000 lines | 16 B | **32 B** |
+| lines 1–200 chars, 1,000 lines | 16 B | 832 B |
+| lines 1–200 chars, 8,000 lines | 16 B | **8,528 B** |
 
-Identical counts on both backends. One unfreed object either way: 16 bytes on
-the stack machine, the grown read buffer on arm64ssa. Filed as #9558, which is
-the actual precondition for any future SSA default.
+Constant when the sizes are uniform, growing when they vary. A retained buffer
+does not behave that way; an accounting error does. `arm64ssa` derives
+`live_bytes` from the arena cursor less what `__free` tallied, and `__free`
+tallies the size class it pushed the block onto — `emitFreelistClass` rewrites
+`x1` before `emitLcAdd` reads it — rather than what the bump site charged. The
+two agree only when every block already sits on a class boundary.
 
-## What went wrong in the diagnosis
+Peak RSS agrees with the census being at fault: 64–136 KB between the two
+emitters on `coreutils/uniq.fern`, the same at 1,000 lines and 8,000, against
+the 369 KB the census claimed.
 
-Both facts were in front of me from the start — the taint is real, and the
-coreutils retention is real — and I connected them because they were about the
-same subsystem and pointed the same direction. What I never did was run the
-control: x86-64 is single-word too, and one command would have shown it clean.
-The ABI table in `docs/BACKEND-PARITY.md` said so in writing.
+So **what the SSA backends retain is not currently known**, and #9542's revert
+rests on a measurement that has not survived. The order of work is #9558 first,
+then re-measure. #9558 is rewritten to be about the census.
 
-The alloc/free counts were also in the original write-up — "counts barely
-differ" — and were read as "it is the buffers, not the objects", which is true,
-and not as "then it is one buffer, so it is not a per-call taint", which is
-what they actually say. The number that would have settled it was quoted and
-not used.
+## What went wrong in the diagnosis, twice
+
+The taint is real and the coreutils figures are real, and I connected them
+because they were about the same subsystem and pointed the same direction. What
+I never did was run the control: x86-64 is single-word too, and one command
+would have shown it clean. The ABI table in `docs/BACKEND-PARITY.md` said so in
+writing.
+
+The alloc/free counts were in the original write-up — "counts barely differ" —
+and were read as "it is the buffers, not the objects", which is true, and not as
+"then it is one buffer, so it is not a per-call taint", which is what they
+actually say. The number that would have settled it was quoted and not used.
+
+Then I did the same thing again in the other direction. Having disproved the
+taint with a control, I filed #9558 on a fresh hypothesis WITHOUT one, on the
+strength of the same counts. The control took two minutes once I thought of it:
+hold the line count fixed, vary the widths. The lesson is not "measure" — I was
+measuring throughout — it is that a number is not evidence for a mechanism until
+something that would distinguish it from the alternatives has been varied. Both
+wrong readings were consistent with every number I had.
+
+The instrument itself was the third trap: `FERN_LEAKCHECK` is read by the
+COMPILER at build time, so the first measurements set it on the produced binary
+and reported nothing at all. Having got a number out of it, I then trusted the
+number for two rounds without asking what it was computed from.
 
 `FERN_LEAKCHECK` cost a round too: it is read by the **compiler** at build
 time, so the first measurements set it on the produced binary and reported
@@ -130,6 +148,8 @@ nothing at all.
 - The attribution corrected in `docs/BACKEND-PARITY.md`, `cmd/fern/main.go` and
   `internal/e2e/arm64_default_string_reclaim_test.go`, all three of which named
   the taint as the cause of the SSA retention.
-- #9558 (the real cause) and #9559 (x86_64ssa cannot build the coreutils at
-  all: a duplicate `.Lssa_mm_vec` label, and no `fn___method_Reader_stat`
-  emitter — which is why there is no x86-64 SSA row in any of these tables).
+- #9558 (arm64ssa's census over-reports live bytes when allocation sizes vary,
+  which is what every SSA retention figure so far was read off) and #9559
+  (x86_64ssa cannot build the coreutils at all: a duplicate `.Lssa_mm_vec`
+  label, and no `fn___method_Reader_stat` emitter — which is why there is no
+  x86-64 SSA row in any of these tables).
