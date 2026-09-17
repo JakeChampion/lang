@@ -115,19 +115,34 @@ counting emitted instructions:
 | arm64 | 4,266,714 | 4,603,769 | +8% |
 | x86-64 | 3,211,906 | 4,580,160 | +43% |
 
-The two SSA columns are within 0.5% of each other, and the two flat
-columns are a million apart. That is the finding: the x86-64 stack machine
-is compact because it folds a frame slot into an instruction's memory
-operand, and the x86-64 SSA emitter does not — it loads to a register
-first, the way the arm64 emitter must. The compiler binary follows,
-21.4 MB against flat's 15.0 MB.
+The two SSA columns are within half a percent of each other. The two flat
+columns are a million apart, and that is what the +43% is measuring: the
+x86-64 stack machine is the compact one, not the x86-64 SSA backend the
+loose one. `pushq -N(%rbp)` stages an operand in a single instruction,
+where the arm64 stack machine needs an address and a store, so flat x86-64
+carries 436,837 pushes of a frame slot against arm64 flat's none.
+
+Where the SSA backend's own 1.37M extra instructions are on x86-64, by
+`movq` class, against flat's same classes:
+
+| movq | flat | ssa | excess |
+|---|---|---|---|
+| register to register | 28,664 | 887,817 | +859,153 |
+| frame to register | 385,451 | 899,776 | +514,325 |
+| register to frame | 468,395 | 669,352 | +200,957 |
+
+The register-to-register half is the larger one and it is the item arm64
+already names: a result computed in the scratch register and then moved to
+its home, an operand moved from its home into a scratch register. arm64
+carries 865,114 of those and x86-64 carries 887,817, so this is one item
+across both ISAs rather than an x86-64 item. Neither stack machine folds a
+frame slot into an arithmetic operand, so that is not the difference and
+not the fix.
 
 Correctness is not in question here: the compiler built for x86-64-linux
 on each backend, run under qemu on a program carrying the slice-then-reuse
-shape, emits byte-identical assembly at 144,505 bytes.
-
-Folding the operand is therefore the x86-64 item, and it is worth more
-there than any arm64 item is worth on arm64.
+shape, emits byte-identical assembly at 144,505 bytes. The compiler binary
+is 21.4 MB against flat's 15.0 MB.
 
 ## The optimiser on the lifted function, measured
 
