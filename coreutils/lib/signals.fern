@@ -9,6 +9,15 @@
 // so the table is chosen by `target_os()`, each half taken from that kernel's
 // own header: Darwin's `sys/signal.h`, Linux's `asm-generic/signal.h`.
 //
+// THE NUMBERS COME FROM THE KERNEL HEADER; THE NAMES GNU PRINTS COME FROM
+// GLIBC. The two disagree, and every divergence #9643 fixed was that one
+// mistake: `asm-generic/signal.h` has `SIGIO 29` with SIGPOLL as its alias,
+// plus `SIGLOST 29` and `SIGUNUSED 31`, while glibc's `bits/signum-arch.h`
+// has `SIGPOLL 29` with SIGIO as the alias and defines neither of the other
+// two. A GNU build enumerates glibc, so glibc is what `kill -l` prints and
+// what `number()` must accept. Check a printed name against
+// `bits/signum-arch.h`, not against the kernel.
+//
 // Linux additionally has the realtime range RTMIN(32)..RTMAX(64), which Darwin
 // has not got at all. GNU spells those `RTMIN`, `RTMIN+3`, `RTMAX-1` and prints
 // them from `kill -l`, so they belong in the table rather than in a footnote.
