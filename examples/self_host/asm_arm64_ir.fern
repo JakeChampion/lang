@@ -3505,8 +3505,8 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
         s = s.mark_heap();
         s = s.need("arr_i32_min_max_opt");
     }
-    // arr.join(sep) (#5328): mark_arr_str_join sets the arr_str_join +
-    // str_concat + heap needs; the bodies come from asm_arm64.emit_runtime
+    // arr.join(sep) (#5328): mark_arr_str_join sets the arr_str_join + heap
+    // needs; the bodies come from asm_arm64.emit_runtime
     // (which asm_arm64_ir reuses verbatim — the arr_str_join block already
     // exists there), so only the call site needs marking here.
     if (name == "__fern_arr_str_join") { s = s.mark_arr_str_join(); }

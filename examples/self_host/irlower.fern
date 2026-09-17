@@ -11170,7 +11170,7 @@ pub function lower_str_method(field: string, recv: ast.Expr, args: ast.Expr[], s
 // matching the AST path + native) but must be pushed LAST so it lands on top, so
 // both operands spill to scratch locals and reload in ABI order. The helper is in
 // is_fern_helper, so the call_direct routes through the emitters' runtime-helper
-// arm, which marks the arr_str_join / str_concat / heap needs and cleans the two
+// arm, which marks the arr_str_join / heap needs and cleans the two
 // stack args. Result is a fresh owned string (expr_is_str recognises `.join`). #5328.
 pub function lower_arr_str_join(recv: ast.Expr, sep: ast.Expr, s: LowerState): LowerState {
     var xtmp: string = "$jxs" + util.i32_to_string(s.locals.len());

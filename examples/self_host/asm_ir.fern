@@ -7788,8 +7788,8 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
     }
     // chr allocates its 1-char box, so pull in the heap runtime too.
     if (name == "__fern_chr") { s = s.need("heap"); s = s.need("chr"); }
-    // arr.join(sep) needs its own body + the heap + str_concat runtime it
-    // builds the result with (mark_arr_str_join sets all three). #5328.
+    // arr.join(sep) needs its own body + the heap runtime it fills its
+    // exact-size block from (mark_arr_str_join sets both). #5328.
     if (name == "__fern_arr_str_join") { s = s.mark_arr_str_join(); }
     // arr-of-arr reclaim helpers (#4355 slice 9): bodies gated on these
     // needs in emit_ir_runtime — a binary with no arr-of-arr reclaim
