@@ -55,7 +55,7 @@ result's home and reading operands from theirs, not the table.
 | flat | 4,206,795 | 18.5 MB | 126 to 132 s |
 | #9570 (frame from sp, no branch to the next block) | 5,013,831 | 21.5 MB | 142 s |
 | #9571 (results to their home, operands from theirs) | 4,814,582 | 20.7 MB | 134 s |
-| #9573 (a compare read only by its branch as flags) | 4,712,644 | | |
+| #9573 (a compare read only by its branch as flags) | 4,712,644 | 20.3 MB | 135 s |
 
 #9571 took the moves out of x0 from 529,606 to 376,860 and the moves into
 x0/x1/x2 from 335,412 to 295,644; #9573 took `cset` from 44,047 to 9,109
@@ -68,12 +68,22 @@ pressure; callee-saved registers are the next item.
 ## The corpus
 
 Every `examples/**/*.fern` outside `self_host`, built both ways for
-arm64-linux and run, on the build of #9569: 348 programs, 322 agree on
-stdout and exit status, 3 differ only by nondeterminism (a timestamped
-path, a `yes` cut by the timeout, a benchmark's microsecond column), 23
-fail to build on both paths as they did before the backend existed. Before
-#9566's loop-end fix, eight of those programs built under flat and not
-under SSA.
+arm64-linux and run: 348 programs, 322 agree on stdout and exit status, 3
+differ only by nondeterminism (a timestamped path, a `yes` cut by the
+timeout, a benchmark's microsecond column), 23 fail to build on both paths
+as they did before the backend existed. The same on every build from #9569
+to #9573. Before #9566's loop-end fix, eight of those programs built under
+flat and not under SSA. Programs whole through the backend: 47 on #9570,
+296 on #9572 once the string ops went through the stack machine's arm,
+with 53,493 of the corpus's 53,550 functions. The eight functions #9566's
+loop-end decline kept on the stack machine (an exhaustive match whose every
+arm returns, standing last in a function) are lifted by #9578.
+
+Two miscompiles the corpus caught between those builds, each fixed before
+its PR merged: pmap_test exited 139 on #9571's first head because the
+arm64 folded-aggregate arm stored x0 over the address it had just computed
+into the result's home; and the x86-64 `args` arm of #9570 did not mark the
+need that emits `__fern_args`, found by review.
 
 ## Traps
 
