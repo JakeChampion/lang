@@ -179,20 +179,28 @@ lowering already happens; `fip` asserts zero heap allocation,
 heap values (allocation = minting owned), and every in-place
 write goes through a unique root.
 
-Self-host status: **shape ported, budget NOT enforced on the
-compile path.** All three bits are stamped by the parser (`fip`,
-`fbip`, and the graded allowance), and the E053 walk applies
-native's constructor rule and its asymmetric call rule. The
-IR-side budget check exists — `examples/self_host/irfipverify.fern`
-(#6639 slice 3) — but only the diagnostic drivers call it
-(`irlower_run -verifyfip`, `irverify_run`); `fern.fern` runs no
-verification at all, so an un-paired construction compiles silently
-under the self-host where native reports E068. That predates the
-constructor change above and applies to `fbip` today; #9623 tracks
-wiring it into the three emitters. It counts the constructor ops a
-fresh site lowers to rather than native's single `OpAlloc`, and
-names a site by op index — the self-host `ir.Op` carries no source
-position.
+Self-host status: **ported, and enforced on the compile path.** All
+three bits are stamped by the parser (`fip`, `fbip`, and the graded
+allowance), the E053 walk applies native's constructor rule and its
+asymmetric call rule, and the IR-side budget check
+(`examples/self_host/irfipverify.fern`, #6639 slice 3) runs on every
+compile.
+
+It rides `ircore.lower_gated` — the fused eligibility-and-lowering
+pass all three emitters already run — so it reads the very lowering
+the emit will use and costs no second pass, and a function carrying
+neither annotation returns before one op is examined. Each emitter
+reports the verdicts at its own `lower_gated` site rather than
+letting the gate's `""` refusal carry them, because that refusal is
+turned into "module is not IR-eligible" by its caller, which is the
+wrong thing to say about a module that lowered fine and broke a
+promise (#9623). Until then only the diagnostic drivers called it
+(`irlower_run -verifyfip`, `irverify_run`), so an un-paired
+construction compiled silently here while native reported E068.
+
+It counts the constructor ops a fresh site lowers to rather than
+native's single `OpAlloc`, and names a site by op index — the
+self-host `ir.Op` carries no source position.
 
 What is still behind is the *pairing*, not the verification: the
 self-host reuse layer pairs the R3 general case but not the R1

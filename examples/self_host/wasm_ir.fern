@@ -128,7 +128,9 @@ pub function lower_all_for_base(mod: parser.Module, all_structs: irlower.StructT
 // (ircore.lower_gated) rather than from a separate gate pass that lowered
 // everything a first time and discarded it.
 pub function lower_all_gated(mod: parser.Module, stab: irlower.StructTab, base: irlower.FnSigs, sub: ircore.Sub): ircore.Lowered {
-    return ircore.lower_gated(mod, stab, irlower.fn_sigs_with_dyn(base, mod.trait_reqs), [], true, sub);
+    var g: ircore.Lowered = ircore.lower_gated(mod, stab, irlower.fn_sigs_with_dyn(base, mod.trait_reqs), [], true, sub);
+    ircore.fail_on_fip_claims(g);
+    return g;
 }
 
 // str_values collects the module's distinct string literals (first-seen order,
