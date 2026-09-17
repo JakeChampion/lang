@@ -32,7 +32,10 @@ func init() {
 //     a NUMERIC -N is a signal only as argv[1] and a PID after that.
 //   - the bare-signal shape test is CASE, not validity: -Z and -NOPE answer
 //     `'X': invalid signal`, -z and -ab answer `invalid option -- 'z'`.
-//   - -l masks a number with 127, so -l 137 is KILL, and -l 0 prints EXIT.
+//   - a NUMBER IS MASKED, because it may be a wait status: `-l 137` is KILL.
+//     The mask is TWO masks (`& 0xFF` at 255 and above, `& 0x7F` below), so
+//     `-l 393` is nothing at all where one mod-128 would call it KILL.
+//   - `EXIT` is a NAME for signal 0, and numbers have no upper bound.
 //   - an invalid -l argument does not stop the rest.
 //   - the `Try …` line is not decided by the message text: -s NOPE and -l 99
 //     print the same `'X': invalid signal` and only the first carries it.
@@ -137,6 +140,56 @@ func killCases(t *testing.T) []invocation {
 		{name: "table filtered to two signals", args: []string{"-t", "9", "15"}},
 		{name: "table by name", args: []string{"-t", "KILL"}},
 		{name: "table of an invalid signal", args: []string{"-t", "99"}},
+
+		// ---- the shared operand2sig grammar (#9652) ----
+		//
+		// GNU parses every signal spelling — here, in env and in timeout —
+		// with one `operand2sig`, and these are the parts of it that no
+		// option's documentation implies. Each of the four ways kill spells a
+		// signal is covered, because the bug being pinned was three of them
+		// calling a name-only lookup instead.
+		{name: "the mask at 255 and above is 0xFF not 0x7F", args: []string{"-l", "393"}},
+		{name: "a masked number with no signal", args: []string{"-l", "384"}},
+		{name: "255 masks to itself", args: []string{"-l", "255"}},
+		{name: "a number has no upper bound", args: []string{"-l", "2000000000"}},
+		// 1000000 masks to RTMAX, which is the exact value the cap this
+		// replaced refused at.
+		{name: "a million is a signal", args: []string{"-l", "1000000"}},
+		{name: "a large number masking to a real signal", args: []string{"-l", "1048585"}},
+		{name: "past the int GNU parses into", args: []string{"-l", "2147483648"}},
+		{name: "past 32 bits", args: []string{"-l", "4294967296"}},
+		{name: "a leading zero is not octal", args: []string{"-l", "09"}},
+		{name: "hex is not a number", args: []string{"-l", "0x9"}},
+		{name: "a signed number is not a number", args: []string{"-l", "+9"}},
+		{name: "EXIT names signal zero", args: []string{"-l", "EXIT"}},
+		{name: "EXIT lower case", args: []string{"-l", "exit"}},
+		{name: "EXIT with the SIG prefix", args: []string{"-l", "SIGEXIT"}},
+		{name: "SIG0 is signal zero", args: []string{"-l", "SIG0"}},
+		{name: "the SIG prefix on a number", args: []string{"-l", "SIG9"}},
+		{name: "SIG on the top of the range", args: []string{"-l", "SIG64"}},
+		{name: "SIG past the range", args: []string{"-l", "SIG65"}},
+		// The masked/unmasked asymmetry: the mask lives in operand2sig's
+		// DIGIT arm, which a SIG prefix means we never enter.
+		{name: "a wait status is not masked behind SIG", args: []string{"-l", "SIG137"}},
+		{name: "a name is case insensitive", args: []string{"-l", "int"}},
+		{name: "a name in mixed case", args: []string{"-l", "iNt"}},
+		{name: "the far end of the realtime range", args: []string{"-l", "RTMAX-30"}},
+		{name: "past the far end", args: []string{"-l", "RTMAX-31"}},
+		{name: "past the near end", args: []string{"-l", "RTMIN+31"}},
+		{name: "a realtime spelling behind SIG", args: []string{"-l", "SIGRTMIN+3"}},
+		{name: "the table prints a row for zero", args: []string{"-t", "0"}},
+		{name: "the table masks too", args: []string{"-t", "137"}},
+		{name: "the table of a masked number with no signal", args: []string{"-t", "384"}},
+		// The send paths. Every pid here is 999999, which does not exist, so
+		// the KILL that 137 and SIG9 resolve to is delivered to nothing.
+		{name: "a wait status as an explicit signal", args: []string{"-s", "137", "999999"}},
+		{name: "EXIT as an explicit signal", args: []string{"-s", "EXIT", "999999"}},
+		{name: "a number masking to zero as a signal", args: []string{"-s", "256", "999999"}},
+		{name: "SIG and a number as a signal", args: []string{"-s", "SIG9", "999999"}},
+		{name: "an explicit signal that masks to nothing", args: []string{"-s", "384", "999999"}},
+		{name: "zero as an explicit signal", args: []string{"-s", "0", "999999"}},
+		{name: "a wait status in first position", args: []string{"-137", "999999"}},
+		{name: "EXIT as a bare signal", args: []string{"-EXIT", "999999"}},
 
 		// ---- operands that are not pids ----
 		{name: "lone dash", args: []string{"-"}},

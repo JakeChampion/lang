@@ -127,58 +127,10 @@ function help_text(): string {
   return out;
 }
 
-// `all_zero_digits(s)` — whether `s` is one or more `0` bytes and nothing
-// else, which is every decimal spelling of signal zero.
-function all_zero_digits(s: string): boolean {
-  if (s.len() == 0) {
-    return false;
-  }
-  var i: i32 = 0;
-  while (i < s.len()) {
-    if (s[i] as i32 != 48) {
-      return false;
-    }
-    i = i + 1;
-  }
-  return true;
-}
-
-// `signal_number(v)` — the signal `-s` names, or -1 when it names none.
-//
-// `signals.number` already implements operand2sig's grammar: every byte a
-// decimal digit, or a name with an optional `SIG` prefix matched
-// case-insensitively, or a realtime spelling with an offset. Measured
-// against that boundary — `016` is 16 and not octal, while `0x0`, `+0` and
-// ` 0` are refused, because the whole string has to be digits for the
-// numeric arm to apply.
-//
-// Zero is the one spelling it cannot report: it answers "no signal" and
-// "invalid" with the same 0, and `kill -l` lists nothing for it either.
-function signal_number(v: string): i32 {
-  var n: i32 = signals.number(v);
-  if (n != 0) {
-    return n;
-  }
-  if (all_zero_digits(v)) {
-    return 0;
-  }
-  return 0 - 1;
-}
-
 // SIGKILL, which three rules read: it cannot be ignored, it needs no
 // SIGCONT after it, and a command it killed reports 137 rather than 124.
 function sig_kill(): i32 {
   return signals.number("KILL");
-}
-
-// `signal_label(sig)` — the name `-v` prints. gnulib's sig2str spells 0
-// `EXIT`, the way a shell's `trap 0` does; `signals.name` has no entry for
-// it, because it is not a signal this kernel has.
-function signal_label(sig: i32): string {
-  if (sig == 0) {
-    return "EXIT";
-  }
-  return signals.name(sig);
 }
 
 // `interval(s)` — one DURATION operand or option value, or the diagnostic
@@ -244,7 +196,7 @@ function fired(pid: i32): boolean {
 // `--foreground -s TSTP` hangs where the default mode reports 124.
 function deliver(sig: i32, cmd: string, cpid: i32, foreground: boolean, verbose: boolean): void {
   if (verbose) {
-    gnu.error("sending signal " + signal_label(sig) + " to command " + gnu.quote(cmd));
+    gnu.error("sending signal " + signals.name(sig) + " to command " + gnu.quote(cmd));
   }
   if (!foreground && sig != 0) {
     signal_ignore(sig);
@@ -333,7 +285,7 @@ function apply_option(f: ld.Format, cfg: Cfg, m: gnu.OptMatch): Cfg {
   if (m.id == opt_kill_after()) {
     return Cfg { ...cfg, kill_after: interval(f, m.value) };
   }
-  var sig: i32 = signal_number(m.value);
+  var sig: i32 = signals.operand2sig(m.value);
   if (sig < 0) {
     gnu.error(gnu.quote(m.value) + ": invalid signal");
     gnu.try_help(status_canceled());
