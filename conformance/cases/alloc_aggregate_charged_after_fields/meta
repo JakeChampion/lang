@@ -1,0 +1,6 @@
+waiver: harness-limit
+reason: internal/interp has no bump allocator — it is a tree-walking
+  evaluator over Go values — so __heap_alloc_count() returns 0 there
+  unconditionally and every line of this case reads 0 rather than the
+  shape it asserts. Same restriction, and the same reason, as
+  alloc_flat_under_reclaim; see docs/ALLOCATION-OBSERVABLE.md.

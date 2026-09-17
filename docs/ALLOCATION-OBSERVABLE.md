@@ -152,6 +152,23 @@ All are stated over the *shape*, and all are pinned — see
   between them. The absolute count is per-backend — the register
   backends spend two allocator calls per round on that shape and wasm
   three — so the case asserts the ratio, never the number.
+- **AL-06.** An aggregate literal's box is charged AFTER its field
+  expressions: a field that reads the counter does not see the box it is
+  being built into. Stated because the two compilers answered it
+  differently and nothing could tell — native bought the box first, the
+  self-host evaluated the fields first (#9620), and the only way to see
+  the difference is to read the counter from inside a literal. It binds
+  all three aggregates that carry a box — struct, tuple and enum payload
+  — because they lower through three separate paths and only the struct
+  one was ever reported. An implementation may still buy the box first
+  where every field expression is allocation-transparent: with nothing in
+  between that can allocate or run user code, no program can tell, and
+  both compilers take that freedom. It is also silent on a construction
+  paired with FBIP reuse, where the box may not be bought at all — the
+  in-place path counts as neither — and where the decision to take the
+  source's box reads a refcount the field expressions can change, so
+  consuming the source has to come first (#6720). Those keep the order
+  they already had.
 
 ## What it found immediately
 
@@ -205,14 +222,9 @@ now *an* observable with a written contract, so a claim about allocation
 can be pinned by a conformance case at all. Before it, the corpus could
 not express one.
 
-Nor does it say *where* in an expression an allocation is charged, and
-the two compilers currently answer differently: native buys an aggregate
-literal's box before evaluating its field expressions, the self-host
-after (#9614). The count a loop reports is unaffected — the offset is a
-constant — but a reading taken inside a literal is not portable, and a
-function that snapshots the counter and returns the snapshot as a struct
-excludes its own result box under one compiler and includes it under the
-other. `std/bench` hands back scalars for exactly this reason.
+Where in an expression an allocation is charged WAS unspecified, and the
+two compilers answered differently; AL-06 above settles it and
+`alloc_aggregate_charged_after_fields` pins it on every backend.
 
 ## Such a case must declare itself
 

@@ -1,0 +1,57 @@
+// spec: AL-06
+//
+// An aggregate literal's box is charged AFTER its field expressions, so a
+// field that reads the allocation counter does not see the box it is being
+// built into. The two compilers used to answer this differently — native
+// bought the box first, the self-host evaluated the fields first (#9620) —
+// and nothing tested it, because the only way to see the difference is to
+// read the counter from inside a literal.
+//
+// Each shape reports whether the literal's own box was already charged when
+// its first field ran: 0 would mean the box was bought first, 1 means it was
+// not. All three aggregates that carry a box are covered, because they lower
+// through three separate paths and only the struct one was ever reported.
+//
+// The case prints the SHAPE, never a byte count — see
+// docs/ALLOCATION-OBSERVABLE.md.
+import "std/i64";
+
+struct P { a: i64, b: i64 }
+
+enum E { Pair(i64, i64) }
+
+function mk_struct(): P {
+  return P { a: __heap_alloc_count(), b: 0i64 };
+}
+
+function mk_tuple(): (i64, i64) {
+  return (__heap_alloc_count(), 0i64);
+}
+
+function mk_enum(): E {
+  return E.Pair(__heap_alloc_count(), 0i64);
+}
+
+// A literal whose fields cannot observe the allocation is free to be built
+// either way round, and must still allocate exactly one box.
+function plain_allocs(): i64 {
+  var before: i64 = __heap_alloc_count();
+  var p: P = P { a: 1i64, b: 2i64 };
+  return __heap_alloc_count() - before - p.a + 1i64;
+}
+
+function main(): i32 {
+  var s: P = mk_struct();
+  print((__heap_alloc_count() - s.a).to_string());
+
+  var t: (i64, i64) = mk_tuple();
+  print((__heap_alloc_count() - t.0).to_string());
+
+  var e: E = mk_enum();
+  match (e) {
+    E.Pair(a, b) => { print((__heap_alloc_count() - a).to_string()); },
+  }
+
+  print(plain_allocs().to_string());
+  return 0;
+}

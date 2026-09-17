@@ -6649,6 +6649,58 @@ func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, p
 	// shift by `rcHeaderBytes` so we keep using the same
 	// baseSlot (storing `base`) — the same accounting StructLit uses.
 	const rcHeaderBytes = 8
+	// evalPayload leaves one payload argument in a fresh slot, retained if the
+	// box co-owns it, and answers the slot. The store half reads it back.
+	evalPayload := func(i int, a ast.Expr) (int32, error) {
+		var pt ast.Type
+		if i < len(payloadTypes) {
+			pt = payloadTypes[i]
+		}
+		if err := b.expr(a); err != nil {
+			return 0, err
+		}
+		// Slice 1b (EnumRcPayloads): rc-count pointer payloads exactly like
+		// StructLit fields — an aliased payload (`Cons(0, t)`, t live elsewhere)
+		// is inc'd so the box co-owns its reference, a moved last-use owned-local
+		// payload (b.rc.moveSites, markConstructionMoves' enum case) skips the inc.
+		// Consuming-match reuse stores moved-out bindings back, so it's excluded.
+		if b.enumRcPayloadsEligible(enumName) && !b.rc.consumingMatchReuse[callNode] &&
+			needsRcIncOnAlias(a, b) && !b.rc.moveSites[a] {
+			b.emitAliasInc(a)
+		}
+		valSlot := b.allocSlot()
+		if pt != nil {
+			b.scratchType[valSlot] = pt
+		}
+		b.emit(Op{Kind: OpStoreLocal, I32: valSlot})
+		return valSlot, nil
+	}
+	// AL-06: the box is charged AFTER the payload expressions, so a payload
+	// that can observe the allocation is evaluated ahead of it. A payload that
+	// cannot, and any reuse-paired construction (for the refcount-ordering
+	// reason StructLit's hook states), keeps the existing order, where each
+	// payload is evaluated between the tag store and its own store.
+	reusePaired := false
+	if callNode != nil {
+		_, reusePaired = b.rc.reuseSources[callNode]
+	}
+	var argSlots []int32
+	for _, a := range args {
+		if reusePaired || b.fieldEvalIsAllocationTransparent(a) {
+			continue
+		}
+		argSlots = make([]int32, len(args))
+		break
+	}
+	if argSlots != nil {
+		for i, a := range args {
+			slot, err := evalPayload(i, a)
+			if err != nil {
+				return err
+			}
+			argSlots[i] = slot
+		}
+	}
 	// General FBIP reuse (computeReuseSources): a dead, owned enum local D of
 	// the same type/box-class is reused in place for this variant construction.
 	// Same machinery as the StructLit / TupleLit hooks — emitReuseToken leaves
@@ -6694,40 +6746,26 @@ func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, p
 	b.emit(Op{Kind: OpConstI32, I32: int32(varIdx)})
 	b.emit(Op{Kind: OpStore})
 	for i, a := range args {
-		// Emit the arg expression first, into a scratch slot.
-		// Pushing `base+offset` BEFORE evaluating the expression
-		// is unsafe on wasm: if the expression contains an
-		// if-block-with-result, the (addr, value) pair the store
-		// expects would straddle the if-block's local stack scope
-		// — the validator rejects loads / stores in a branch that
-		// would consume values pushed outside it.
-		//
-		// Stash-then-restore lets the expression be a full
-		// arbitrary control-flow shape; the (addr, value) pair
-		// for OpStore lands on the operand stack only after the
-		// expression's stack effects have settled.
+		// The value lands in a scratch slot before the (addr, value) pair is
+		// built. Pushing `base+offset` BEFORE evaluating the expression is
+		// unsafe on wasm: if the expression contains an if-block-with-result,
+		// the pair the store expects would straddle the if-block's local stack
+		// scope, and the validator rejects loads / stores in a branch that
+		// would consume values pushed outside it. Stash-then-restore lets the
+		// expression be an arbitrary control-flow shape.
 		var pt ast.Type
 		if i < len(payloadTypes) {
 			pt = payloadTypes[i]
 		}
-		if err := b.expr(a); err != nil {
-			return err
+		valSlot := int32(0)
+		if argSlots != nil {
+			valSlot = argSlots[i]
+		} else {
+			var err error
+			if valSlot, err = evalPayload(i, a); err != nil {
+				return err
+			}
 		}
-		// Slice 1b (EnumRcPayloads): rc-count pointer payloads exactly like
-		// StructLit fields — an aliased payload (`Cons(0, t)`, t live elsewhere)
-		// is inc'd so the box co-owns its reference, a moved last-use owned-local
-		// payload (b.rc.moveSites, markConstructionMoves' enum case) skips the inc.
-		// Inc-and-passthrough (leaves the value on the stack for the store).
-		// Consuming-match reuse stores moved-out bindings back, so it's excluded.
-		if b.enumRcPayloadsEligible(enumName) && !b.rc.consumingMatchReuse[callNode] &&
-			needsRcIncOnAlias(a, b) && !b.rc.moveSites[a] {
-			b.emitAliasInc(a)
-		}
-		valSlot := b.allocSlot()
-		if pt != nil {
-			b.scratchType[valSlot] = pt
-		}
-		b.emit(Op{Kind: OpStoreLocal, I32: valSlot})
 		b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
 		b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes + offsets[i]})
 		b.emit(Op{Kind: OpAdd})
@@ -11406,6 +11444,35 @@ func (b *builder) expr(e ast.Expr) error {
 		}
 		offs, size := tupleElemLayout(elemTypes, b.ptrW)
 		const rcHeaderBytes = 8
+		// AL-06, as StructLit: an element that can observe the allocation is
+		// evaluated into a temporary ahead of it, so the box is charged after
+		// every element expression has run. An element that cannot, and any
+		// reuse-paired construction (for the refcount-ordering reason
+		// StructLit's hook states), keeps the straight-into-the-box store.
+		_, reusePaired := b.rc.reuseSources[n]
+		var elemTemps []int32
+		for _, elem := range n.Elems {
+			if reusePaired || b.fieldEvalIsAllocationTransparent(elem) {
+				continue
+			}
+			elemTemps = make([]int32, len(n.Elems))
+			break
+		}
+		if elemTemps != nil {
+			for i, elem := range n.Elems {
+				if err := b.emitTupleElemValue(elem); err != nil {
+					return err
+				}
+				elemTemps[i] = b.allocSlot()
+				b.locals[fmt.Sprintf("__sl_elem_%d", elemTemps[i])] = elemTemps[i]
+				// As StructLit: the slot's declared type is what lets wasm
+				// declare the local at the element's width.
+				if elemTypes[i] != nil {
+					b.scratchType[elemTemps[i]] = elemTypes[i]
+				}
+				b.emit(Op{Kind: OpStoreLocal, I32: elemTemps[i]})
+			}
+		}
 		// General FBIP reuse (computeReuseSources): a dead, owned tuple local D
 		// of the same box class is reused in place for this TupleLit. Identical
 		// machinery to the StructLit hook — emitReuseToken leaves the box BASE
@@ -11437,20 +11504,10 @@ func (b *builder) expr(e ast.Expr) error {
 			b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
 			b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes + offs[i]})
 			b.emit(Op{Kind: OpAdd})
-			if err := b.expr(elem); err != nil {
+			if elemTemps != nil {
+				b.emit(Op{Kind: OpLoadLocal, I32: elemTemps[i]})
+			} else if err := b.emitTupleElemValue(elem); err != nil {
 				return err
-			}
-			// tuple element is a struct-lit-style
-			// alias site. See the StructLit case below for the
-			// gating rationale.
-			//
-			// Phase 4 move-on-construction: an owned rc local consumed
-			// as a tuple element at its last use is moved into the
-			// tuple — __drop_tuple_<...> dec's the element at the
-			// tuple's drop, balancing the skipped inc
-			// (markConstructionMoves sets b.rc.moveSites[elem]).
-			if needsRcIncOnAlias(elem, b) && !b.rc.moveSites[elem] {
-				b.emitAliasInc(elem)
 			}
 			b.emit(payloadStoreOpFor(elemTypes[i], b.ptrW))
 		}
@@ -11507,6 +11564,51 @@ func (b *builder) expr(e ast.Expr) error {
 			}
 			updBaseSlot = b.allocSlot()
 			b.emit(Op{Kind: OpStoreLocal, I32: updBaseSlot})
+		}
+		// AL-06: the box is charged AFTER the field expressions. A field that
+		// can observe the allocation — anything that allocates or runs user
+		// code — is therefore evaluated into a temporary here, ahead of the
+		// allocation below; the stores then read the temporaries. When every
+		// field is allocation-transparent nothing can tell the two orders
+		// apart, so the literal keeps the cheaper lowering and stores straight
+		// into the box. Fern has no module-level mutable state and reclamation
+		// is not tracing, so a value waiting in a temporary cannot lose its
+		// last owner to a later field's side effect.
+		//
+		// A construction paired with FBIP reuse is the exception, and the
+		// reason is not the allocation: emitReuseToken READS the source's
+		// refcount to decide whether to take its box, and the field
+		// expressions can change that count — the consuming walk in #6720
+		// reclaimed a cell its caller still reached when the decision was
+		// taken after them. Consuming the source precedes evaluating the
+		// fields, so those keep the existing order. On the branch that takes
+		// the box nothing is charged at all (`__fern_alloc_reuse`'s in-place
+		// path counts as neither), so AL-06 has nothing to say there.
+		_, paired := b.rc.reuseSources[n]
+		reusePaired := paired && updBaseSlot < 0
+		var fieldTemps []int32
+		for _, f := range n.Fields {
+			if reusePaired || b.fieldEvalIsAllocationTransparent(f.Value) {
+				continue
+			}
+			fieldTemps = make([]int32, len(n.Fields))
+			break
+		}
+		if fieldTemps != nil {
+			for i, f := range n.Fields {
+				if err := b.emitStructFieldValue(f, sd); err != nil {
+					return err
+				}
+				fieldTemps[i] = b.allocSlot()
+				b.locals[fmt.Sprintf("__sl_fld_%d", fieldTemps[i])] = fieldTemps[i]
+				// The slot carries the field's declared type so wasm declares
+				// the local at the right width; without it a 64-bit field is
+				// stored into an i32 local and the module fails validation.
+				if ft := fieldType(sd.Fields, f.Name); ft != nil {
+					b.scratchType[fieldTemps[i]] = ft
+				}
+				b.emit(Op{Kind: OpStoreLocal, I32: fieldTemps[i]})
+			}
 		}
 		// General FBIP reuse (computeReuseSources): if this construction C is
 		// paired with a dead, owned, same-shape struct local D, reuse D's box
@@ -11587,56 +11689,15 @@ func (b *builder) expr(e ast.Expr) error {
 				b.dropStructField(ast.StructType{Name: sd.Name})
 			}
 		}
-		for _, f := range n.Fields {
+		for i, f := range n.Fields {
 			off := offs[f.Name]
 			b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
 			b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes + off})
 			b.emit(Op{Kind: OpAdd})
-			if err := b.expr(f.Value); err != nil {
+			if fieldTemps != nil {
+				b.emit(Op{Kind: OpLoadLocal, I32: fieldTemps[i]})
+			} else if err := b.emitStructFieldValue(f, sd); err != nil {
 				return err
-			}
-			// struct field initialisation is an
-			// alias-creating site. `Holder { items: existing }`
-			// stores `existing`'s pointer into the struct's
-			// slot — the struct now co-owns the reference, so
-			// the rc bumps. Same gating as the Var / Assign /
-			// closure-capture sites: only fires when the
-			// initialiser is alias-shaped (Ident, FieldAccess,
-			// Index) and the field type is an array.
-			//
-			// Move-on-construction: when this field consumes an
-			// owned rc local at its last use (b.rc.moveSites set by
-			// markConstructionMoves), skip the inc — the local's
-			// reference is moved into the field and its exit-sweep dec is
-			// skipped to match.
-			if needsRcIncOnAlias(f.Value, b) && !b.rc.moveSites[f.Value] {
-				b.emitAliasInc(f.Value)
-			}
-			// Issue #2763: a Map-typed field initialised by a COW mutator
-			// result (`Struct { m: s.m.insert(...) }`) may be the SAME handle
-			// the borrowed source still owns — the COW mutates in place at
-			// rc<=1. needsRcIncOnAlias is false for a Call, so the value is
-			// stored as a move with no retain; the new container would then
-			// alias the source's buffer and a later drop of either frees it
-			// out from under the other (use-after-free → segfault). Clone the
-			// map so the container owns an independent buffer. A fresh
-			// `map_new()` result is NOT a mutator call, so it still moves in
-			// (no needless copy / no leak). The fast ownership-flow-aware
-			// inc-only path is the Perceus port's job (roadmap goal 2).
-			//
-			// Issue #4871: the same aliasing arises one `var` removed —
-			// `var m = s.m.insert(...); Struct { m: m }` — where the field value
-			// is a plain ident, not a direct call, so isMapMutatorCall misses it.
-			// borrowedMapFieldResults flags such a local (mutator with a
-			// field-access receiver); clone it too, but only when it is MOVED
-			// into the field (its last use): a moved local is not exit-dec'd, so
-			// the container's field keeps the original at rc==1 for the
-			// container's own drop while the struct owns the clone. A non-move
-			// (live-after) ident would still be exit-dec'd — cloning there would
-			// free the aliased buffer early — so it is left to the Perceus port.
-			if isMapType(fieldType(sd.Fields, f.Name)) &&
-				(isMapMutatorCall(f.Value) || b.isBorrowedMapFieldResultMove(f.Value)) {
-				b.emit(Op{Kind: OpCallDirect, Str: "__map_clone", I32: 1})
 			}
 			// Reuse payloadStoreOp so the store is correctly
 			// sized for the field's declared type: i32 / f32
@@ -19545,6 +19606,135 @@ func isSelfArraySetReassign(value ast.Expr, targetName string) bool {
 
 // isMapMutatorCall reports whether e is a call to one of the Map COW
 // mutators (`m.insert` / `.without` / `.cleared`, mangled to
+// emitTupleElemValue leaves one tuple element's value on the operand stack with
+// the retain it needs applied, so the store that follows does not have to know
+// whether the value came straight from its expression or from a temporary the
+// allocation order required (AL-06).
+func (b *builder) emitTupleElemValue(elem ast.Expr) error {
+	if err := b.expr(elem); err != nil {
+		return err
+	}
+	// tuple element is a struct-lit-style
+	// alias site. See the StructLit case below for the
+	// gating rationale.
+	//
+	// Phase 4 move-on-construction: an owned rc local consumed
+	// as a tuple element at its last use is moved into the
+	// tuple — __drop_tuple_<...> dec's the element at the
+	// tuple's drop, balancing the skipped inc
+	// (markConstructionMoves sets b.rc.moveSites[elem]).
+	if needsRcIncOnAlias(elem, b) && !b.rc.moveSites[elem] {
+		b.emitAliasInc(elem)
+	}
+	return nil
+}
+
+// emitStructFieldValue leaves one field's initialiser on the operand stack,
+// with the retain and the map clone it needs already applied — everything the
+// store that follows should not have to know about. Shared by the two orders
+// the literal can lower in: straight into the box, or into a temporary ahead
+// of the allocation (AL-06).
+func (b *builder) emitStructFieldValue(f ast.FieldInit, sd *ast.StructDecl) error {
+	if err := b.expr(f.Value); err != nil {
+		return err
+	}
+	// struct field initialisation is an
+	// alias-creating site. `Holder { items: existing }`
+	// stores `existing`'s pointer into the struct's
+	// slot — the struct now co-owns the reference, so
+	// the rc bumps. Same gating as the Var / Assign /
+	// closure-capture sites: only fires when the
+	// initialiser is alias-shaped (Ident, FieldAccess,
+	// Index) and the field type is an array.
+	//
+	// Move-on-construction: when this field consumes an
+	// owned rc local at its last use (b.rc.moveSites set by
+	// markConstructionMoves), skip the inc — the local's
+	// reference is moved into the field and its exit-sweep dec is
+	// skipped to match.
+	if needsRcIncOnAlias(f.Value, b) && !b.rc.moveSites[f.Value] {
+		b.emitAliasInc(f.Value)
+	}
+	// Issue #2763: a Map-typed field initialised by a COW mutator
+	// result (`Struct { m: s.m.insert(...) }`) may be the SAME handle
+	// the borrowed source still owns — the COW mutates in place at
+	// rc<=1. needsRcIncOnAlias is false for a Call, so the value is
+	// stored as a move with no retain; the new container would then
+	// alias the source's buffer and a later drop of either frees it
+	// out from under the other (use-after-free → segfault). Clone the
+	// map so the container owns an independent buffer. A fresh
+	// `map_new()` result is NOT a mutator call, so it still moves in
+	// (no needless copy / no leak). The fast ownership-flow-aware
+	// inc-only path is the Perceus port's job (roadmap goal 2).
+	//
+	// Issue #4871: the same aliasing arises one `var` removed —
+	// `var m = s.m.insert(...); Struct { m: m }` — where the field value
+	// is a plain ident, not a direct call, so isMapMutatorCall misses it.
+	// borrowedMapFieldResults flags such a local (mutator with a
+	// field-access receiver); clone it too, but only when it is MOVED
+	// into the field (its last use): a moved local is not exit-dec'd, so
+	// the container's field keeps the original at rc==1 for the
+	// container's own drop while the struct owns the clone. A non-move
+	// (live-after) ident would still be exit-dec'd — cloning there would
+	// free the aliased buffer early — so it is left to the Perceus port.
+	if isMapType(fieldType(sd.Fields, f.Name)) &&
+		(isMapMutatorCall(f.Value) || b.isBorrowedMapFieldResultMove(f.Value)) {
+		b.emit(Op{Kind: OpCallDirect, Str: "__map_clone", I32: 1})
+	}
+	return nil
+}
+
+// fieldEvalIsAllocationTransparent reports whether evaluating `e` can be moved
+// across an aggregate's own allocation without any program being able to tell.
+//
+// The allocation observable (`docs/ALLOCATION-OBSERVABLE.md`, AL-06) charges a
+// literal's box AFTER its field expressions, which is the order the self-host
+// compiler lowers. Sinking the allocation back before them stays sound wherever
+// nothing in between can observe it: an expression that neither allocates nor
+// runs user code has no way to read the counter, and no way to see a
+// partially-initialised box. Those fields keep the cheaper lowering, which
+// stores straight into the box and needs no temporary.
+//
+// Conservative by construction: a shape not listed here is opaque, so a new
+// expression kind costs a temporary rather than a wrong answer.
+func (b *builder) fieldEvalIsAllocationTransparent(e ast.Expr) bool {
+	switch v := e.(type) {
+	case *ast.NumberLit, *ast.FloatLit, *ast.BoolLit, *ast.CharLit:
+		return true
+	case *ast.StringLit:
+		// A literal's bytes are static; nothing is allocated to name them.
+		return true
+	case *ast.Ident, *ast.CaptureRef:
+		return true
+	case *ast.FieldAccess:
+		return b.fieldEvalIsAllocationTransparent(v.Target)
+	case *ast.Index:
+		// An array or string element read. A bounds failure aborts the
+		// process, which no program survives to observe. Anything else
+		// indexed runs a lookup that may allocate.
+		if !v.IsString {
+			if _, isArr := b.exprType(v.Array).(ast.ArrayType); !isArr {
+				return false
+			}
+		}
+		return b.fieldEvalIsAllocationTransparent(v.Array) && b.fieldEvalIsAllocationTransparent(v.Idx)
+	case *ast.Unary:
+		return b.fieldEvalIsAllocationTransparent(v.Operand)
+	case *ast.Binary:
+		// String concatenation builds a fresh buffer and the string
+		// comparisons call a runtime helper; integer and float arithmetic
+		// do neither.
+		if v.IsStringConcat || v.IsStringCmp {
+			return false
+		}
+		if _, isStr := b.exprType(v).(ast.StringType); isStr {
+			return false
+		}
+		return b.fieldEvalIsAllocationTransparent(v.Left) && b.fieldEvalIsAllocationTransparent(v.Right)
+	}
+	return false
+}
+
 // __method_Map_set / _delete / _clear). These go through __map_cow_inplace
 // and, when the receiver map is uniquely owned (rc<=1 — the borrow case),
 // mutate it IN PLACE and return the SAME handle rather than a fresh copy.

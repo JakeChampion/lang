@@ -117,6 +117,7 @@ of them.
 | `AL-03` | `docs/ALLOCATION-OBSERVABLE.md` | A loop that allocates a closure environment per round reclaims it too | `alloc_flat_closure_env` |
 | `AL-04` | `docs/ALLOCATION-OBSERVABLE.md` | A loop that only READS a container — a map lookup, hit or miss — reclaims what the read allocated | `alloc_flat_map_get` |
 | `AL-05` | `docs/ALLOCATION-OBSERVABLE.md` | A loop that recycles a block still calls the allocator every round: the allocation COUNT scales with the round count where the fresh-byte mark stays flat | `alloc_count_sees_recycling` |
+| `AL-06` | `docs/ALLOCATION-OBSERVABLE.md` | An aggregate literal's box is charged after its field expressions, so a field reading the counter does not see it — struct, tuple and enum payload alike | `alloc_aggregate_charged_after_fields` |
 | `ST-01` | `docs/STRINGS-SOTA.md` | `s[a:b]` on a string yields `None` when an endpoint is out of range, rather than aborting | `string_slice_option` |
 | `ST-02` | `docs/STRINGS-SOTA.md` | `s[a:b]` on a string yields `None` when an endpoint splits a UTF-8 code point | `string_slice_option` |
 | `ST-03` | `docs/STRINGS-SOTA.md` | `slice_unchecked(s, a, b)` indexes bytes and checks no code-point boundary | `slice_unchecked_bytes` |

@@ -52,7 +52,7 @@ x86_64/call_overhead.ir	17000999
 x86_64/closure_call.text	489
 x86_64/closure_call.ir	165360052
 x86_64/enum_match.text	513
-x86_64/enum_match.ir	131175052
+x86_64/enum_match.ir	132975052
 x86_64/int_loop.text	94
 x86_64/int_loop.ir	24000017
 x86_64/map_int.text	3837
@@ -60,13 +60,13 @@ x86_64/map_int.ir	60182359
 x86_64/map_probe_chain.text	3862
 x86_64/map_probe_chain.ir	569839127
 x86_64/map_string.text	4956
-x86_64/map_string.ir	146261931	2
+x86_64/map_string.ir	146082903	2
 x86_64/ordmap_insert.text	3073
-x86_64/ordmap_insert.ir	498637747
+x86_64/ordmap_insert.ir	497345113
 x86_64/pmap_insert.text	5950
-x86_64/pmap_insert.ir	211013186
-x86_64/pvec_with.text	6480
-x86_64/pvec_with.ir	225456347
+x86_64/pmap_insert.ir	211224231
+x86_64/pvec_with.text	6476
+x86_64/pvec_with.ir	225952492
 x86_64/record_update.ir	195235094
 x86_64/record_update.text	864
 x86_64/sort_inplace.text	784
@@ -87,14 +87,14 @@ x86_64/string_scan.text	1564
 x86_64/string_scan.ir	108073011
 x86_64/string_slice.text	487
 x86_64/string_slice.ir	165300076
-x86_64/struct_drop.text	2167
-x86_64/struct_drop.ir	541300148
+x86_64/struct_drop.text	2171
+x86_64/struct_drop.ir	543000148
 x86_64/tokenize.text	953
 x86_64/tokenize.ir	120620068
-x86_64/utf8_ingest_unchecked.text	24454
-x86_64/utf8_ingest_unchecked.ir	12407434	3
-x86_64/utf8_ingest_validated.text	25070
-x86_64/utf8_ingest_validated.ir	18767632	3
+x86_64/utf8_ingest_unchecked.text	24446
+x86_64/utf8_ingest_unchecked.ir	12389434	3
+x86_64/utf8_ingest_validated.text	25062
+x86_64/utf8_ingest_validated.ir	18705432	3
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
 # Perf workflow's own perf-aarch64 job, because no aarch64 host is available to
