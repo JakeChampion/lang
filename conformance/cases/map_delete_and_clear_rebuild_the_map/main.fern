@@ -1,0 +1,45 @@
+import "core/map";
+
+// `without` removes an entry by moving the LAST one into the hole and
+// shrinking both columns, so what survives is not in insertion order — the two
+// compilers disagreed about that once (#8839), and the columns read back below
+// are what pin it. `cleared` is a CONSTRUCTION rather than an emptying: this
+// runtime's map box is the two columns with no capacity beside them, so an
+// empty box of the same shape is the whole of clearing one, and the receiver
+// is never read.
+function main(): i32 {
+    var m: Map[i32, i32] = map_new(8);
+    var i: i32 = 0;
+    while (i < 5) { m = m.insert(i, i * 10); i = i + 1; }
+
+    var (m1, gone) = m.without(1);
+    if (!gone) { return 91; }
+    if (m1.has(1)) { return 92; }
+    if (m1.len() != 4) { return 93; }
+
+    var ks: i32[] = m1.keys();
+    var vs: i32[] = m1.values();
+    var order: i32 = 0;
+    var total: i32 = 0;
+    var j: i32 = 0;
+    while (j < ks.len()) {
+        order = order * 10 + ks[j];
+        total = total + vs[j];
+        j = j + 1;
+    }
+    if (order != 423) { return 94; }
+    if (total != 90) { return 95; }
+
+    // A key that is not there leaves both columns alone.
+    var e: Map[i32, i32] = map_new(4);
+    e = e.insert(5, 50);
+    var (e1, missing) = e.without(99);
+    if (missing) { return 96; }
+    if (e1.len() != 1) { return 97; }
+    if (e1.get_or(5, 0) != 50) { return 98; }
+
+    var m3: Map[i32, i32] = m1.cleared();
+    if (m3.len() != 0) { return 99; }
+    m3 = m3.insert(7, 3);
+    return m3.len() * 10 + m3.get_or(7, 0);
+}
