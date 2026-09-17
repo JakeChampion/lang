@@ -6638,14 +6638,14 @@ func unobservableAggregateOperand(e ast.Expr) bool {
 // reuse token releases the donor box's old fields and an operand read out of
 // that donor has to be owned before it does.
 func (b *builder) spillAggregateOperands(exprs []ast.Expr, typeOf func(int) ast.Type, value func(int) error) ([]int32, error) {
-	spill := false
+	any := false
 	for _, e := range exprs {
 		if !unobservableAggregateOperand(e) {
-			spill = true
+			any = true
 			break
 		}
 	}
-	if !spill {
+	if !any {
 		return nil, nil
 	}
 	// Ops emitted after this point still belong to the literal, not to
@@ -6655,6 +6655,16 @@ func (b *builder) spillAggregateOperands(exprs []ast.Expr, typeOf func(int) ast.
 	defer func() { b.curPos = litPos }()
 	slots := make([]int32, len(exprs))
 	for i := range exprs {
+		// An unobservable operand has no side effects to keep in order and
+		// nothing to learn from the allocation, so it costs no slot: it is
+		// emitted at its store site as before, whichever side of the box that
+		// falls on. Only the operands that can tell are staged, which is what
+		// keeps the emitted code the size it was for the literals that mix a
+		// call with constants.
+		if unobservableAggregateOperand(exprs[i]) {
+			slots[i] = -1
+			continue
+		}
 		if err := value(i); err != nil {
 			return nil, err
 		}
@@ -6670,9 +6680,9 @@ func (b *builder) spillAggregateOperands(exprs []ast.Expr, typeOf func(int) ast.
 }
 
 // pushAggregateOperand puts operand i on the stack: reloaded from its spill
-// slot when the literal pre-evaluated, otherwise evaluated in place.
+// slot when the literal staged it, otherwise evaluated in place.
 func (b *builder) pushAggregateOperand(i int, slots []int32, value func(int) error) error {
-	if slots == nil {
+	if slots == nil || slots[i] < 0 {
 		return value(i)
 	}
 	b.emit(Op{Kind: OpLoadLocal, I32: slots[i]})

@@ -334,15 +334,15 @@
 # pass; drivers that do not link that backend moved by the same 1.3-3.5% of
 # drift in the same run, so about half of each refreshed delta is drift and
 # the rest is the backend. Numbers pasted from driver-sizes' own report.
-fern.fern 12881996
-asm_load_run.fern 9202840
-asm_modload_run.fern 8816360
-asm_ir_run.fern 8581096
-asm_run.fern 8112056
-wasm_ir_run.fern 7735236
-wasm_run.fern 7710316
-wasm_runio_run.fern 7676628
-asm_pathprobe_run.fern 6917668
-asm_ir_elig_run.fern 5806436
-irlower_run.fern 6730500
-checker_modload_run.fern 2302580
+fern.fern 13006233
+asm_load_run.fern 9419265
+asm_modload_run.fern 9003953
+asm_ir_run.fern 8764593
+asm_run.fern 8222928
+wasm_ir_run.fern 8062368
+wasm_run.fern 8037448
+wasm_runio_run.fern 8003792
+asm_pathprobe_run.fern 7214120
+asm_ir_elig_run.fern 6082416
+irlower_run.fern 7014496
+checker_modload_run.fern 2386788
