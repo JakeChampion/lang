@@ -1191,8 +1191,8 @@ function cell_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: S
 // A map's methods: `insert` (spelled `set` too, as the AST lowering admits
 // both) hands over the receiver's unit and the key's and takes the map back;
 // `has`, `get_or` and `len` read through borrowed operands and answer a
-// scalar. The delete, the option-typed get, the columns and the iteration
-// have backend ops but no contract here yet.
+// scalar; `keys` and `values` snapshot a column into a fresh array. The
+// delete and the iteration have backend ops but no contract here yet.
 function map_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: State): Value {
     var t: typeinfo.Type = s.values[recv.id];
     if (!ssasem.is_supported_map(t)) { return refused(s, "unsupported map shape: " + typeinfo.spelling(t)); }
@@ -1201,7 +1201,22 @@ function map_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: St
     if (fa.field == "has" && c.args.len() == 1) { return map_read(c, recv, s, t, ssasem.map_has(), t_bool()); }
     if (fa.field == "get_or" && c.args.len() == 2) { return map_read(c, recv, s, t, ssasem.map_get_or(), ssasem.map_value(t)); }
     if (fa.field == "get" && c.args.len() == 1) { return map_read(c, recv, s, t, ssasem.map_get(), ssasem.option_of(ssasem.map_value(t))); }
+    if (fa.field == "keys" && c.args.len() == 0) { return map_column(s, recv, ssasem.map_keys(), ssasem.map_key(t)); }
+    if (fa.field == "values" && c.args.len() == 0) { return map_column(s, recv, ssasem.map_values(), ssasem.map_value(t)); }
     return refused(s, "unsupported call target: " + typeinfo.spelling(t) + "." + fa.field);
+}
+
+// A column snapshot answers a FRESH array whose ownership follows the column.
+// The runtime copies a string column with a per-element retain, so the array
+// owns its strings; an i32 column holds no references, so there is nothing to
+// own past the buffer. Every other element type is handed back as a raw alias
+// of the map's own elements — the frame would release what the map still
+// holds, so it is refused here rather than described as owned.
+function map_column(s: State, recv: Value, kind: i32, elem: typeinfo.Type): Value {
+    if (!ssasem.is_string(elem) && !ssasem.is_i32(elem)) {
+        return refused(s, "aliased column element: " + typeinfo.spelling(elem));
+    }
+    return define(s, kind, [recv.id], 0, "", typeinfo.TypeArray { elem: elem });
 }
 
 // The key's unit joins the map's key column, which releases it when the map

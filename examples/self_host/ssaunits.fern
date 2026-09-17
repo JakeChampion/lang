@@ -275,13 +275,15 @@ function fresh_unit(kind: i32): boolean {
     return kind == 8 || kind == 5 || kind == 9 || construction(kind) || hands_out(kind);
 }
 // The operations whose result is a unit handed to this function: a call's
-// result, a rebuilt container, a view's box, a cell's element and a map read,
+// result, a rebuilt container, a view's box, a cell's element, a map read,
 // which retains what it answers because the value may come from the column or
-// from the caller's default.
+// from the caller's default, and a column snapshot, which semsource admits
+// only where the runtime hands back a copy the frame owns whole.
 function hands_out(kind: i32): boolean {
     return kind == ssasem.call() || kind == ssasem.call_value() || kind == ssasem.closure_new()
         || kind == ssasem.append() || kind == ssasem.with() || kind == ssasem.slice() || kind == ssasem.cell_get()
-        || kind == ssasem.map_insert() || kind == ssasem.map_get_or() || kind == ssasem.map_get();
+        || kind == ssasem.map_insert() || kind == ssasem.map_get_or() || kind == ssasem.map_get()
+        || kind == ssasem.map_keys() || kind == ssasem.map_values();
 }
 function owned_values(f: ssasem.Func, modes: i32[]): boolean[] {
     var out: boolean[] = bits(f.graph.nvals);

@@ -357,6 +357,7 @@ loop_form                                            0
 loop_rotation_shapes                                 0
 loop_var_reclaim                                     0
 map_cleared_alias                                    0
+map_column_snapshot_outlives_the_map                 0
 map_heap_value_probe                                 0
 map_i32                                              0
 map_iter_struct_value                                7
