@@ -493,11 +493,10 @@ pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
         },
         ast.ExprSlice(sl) => {
             return ast.ExprSlice {
+                ...sl,
                 array: rewrite_expr(sl.array, ctx),
                 start: rewrite_expr(sl.start, ctx),
-                end: rewrite_expr(sl.end, ctx),
-                ty: sl.ty,
-                open_end: sl.open_end
+                end: rewrite_expr(sl.end, ctx)
             };
         },
         ast.ExprTuple(t) => {
