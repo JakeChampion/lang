@@ -56,14 +56,34 @@ result's home and reading operands from theirs, not the table.
 | #9570 (frame from sp, no branch to the next block) | 5,013,831 | 21.5 MB | 142 s |
 | #9571 (results to their home, operands from theirs) | 4,814,582 | 20.7 MB | 134 s |
 | #9573 (a compare read only by its branch as flags) | 4,712,644 | 20.3 MB | 135 s |
+| #9579 (values live across calls in callee-saved registers) | 4,691,722 | 20.2 MB | 137 s |
+| #9595 (no reload into x0 of the value it holds) | 4,595,948 | | |
 
 #9571 took the moves out of x0 from 529,606 to 376,860 and the moves into
 x0/x1/x2 from 335,412 to 295,644; #9573 took `cset` from 44,047 to 9,109
 and `cbz` from 100,742 to 65,927, with 51,073 `b.<cond>` in their place.
 Widening the caller-saved set from seven registers to eleven (x4 to x7,
 which no SSA sequence uses) changed the text by 3,385 instructions, 0.07%,
-so the 1.96M frame loads and stores are call-crossing values, not register
-pressure; callee-saved registers are the next item.
+so the 1.96M frame loads and stores were call-crossing values, not register
+pressure. #9579 gave those values callee-saved registers: frame loads fall
+from 1,193,827 to 768,081 and stores from 772,393 to 589,593, the moves rise
+to 1,069,458 since an operand that was loaded is now moved, and 25,190
+register pairs are saved in prologues. #9595 then drops the 87,196 moves
+that reloaded into x0 the value just moved out of it and the 15,420 slot
+reloads of the same shape.
+
+## The output's speed
+
+The compiler built with `-backend ssa` compiling one of its own modules
+with `-emit asm`, best of three, against the flat-built compiler; the
+outputs are byte-identical on every row.
+
+| | flat-built | SSA-built, #9578 | SSA-built, #9579 |
+|---|---|---|---|
+| checker.fern, arm64-darwin | 13,214 ms | 12,345 ms | 10,202 ms |
+| irlower.fern, arm64-darwin | 4,311 ms | 2,687 ms | 2,208 ms |
+| checker.fern, arm64-linux container | 13,352 ms | | 10,300 ms |
+| irlower.fern, arm64-linux container | 4,281 ms | | 2,279 ms |
 
 ## The corpus
 
