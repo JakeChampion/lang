@@ -5159,7 +5159,7 @@ function ssa_const_reg(text: string, wide64: boolean, d: string, s: asmcore.Emit
 // ssa_unary_known is the unary vocabulary lift_from_ir_prod produces.
 function ssa_unary_known(what: string): boolean {
     if (what == "!" || what == "int_extend" || what == "int_wrap" || what == "u32_wrap" || what == "load_i32") { return true; }
-    return util.str_has_prefix(what, "int_cast:") || ssa_funary_known(what);
+    return util.str_has_prefix(what, "int_cast:") || ssa_funary_known(what) || ssa_bits_asm(what) != "";
 }
 
 // ssa_funary_known is the f64 unary vocabulary lift_float_prod produces.
@@ -5249,6 +5249,7 @@ function ssa_const_text_rax(text: string, wide64: boolean, s: asmcore.EmitState)
 function ssa_unary_asm(what: string, unsigned: boolean, lb: string): string {
     var f: string = ssa_fmath_asm(what);
     if (f == "") { f = ssa_fconv_asm(what, unsigned, lb); }
+    if (f == "") { f = ssa_bits_asm(what); }
     if (f != "") { return f; }
     if (what == "load_i32") { return "    movslq (%rax), %rax\n"; }
     if (what == "!") { return "    testq %rax, %rax\n    setz %al\n    movzbq %al, %rax\n"; }
@@ -5259,6 +5260,18 @@ function ssa_unary_asm(what: string, unsigned: boolean, lb: string): string {
         if (unsigned) { return "    movl %eax, %eax\n"; }
         return "    movslq %eax, %rax\n";
     }
+    return "";
+}
+
+// ssa_bits_asm is the bit counts on %rax at the width the name carries, as
+// the stack machine's arms select them; "" for any other op.
+function ssa_bits_asm(what: string): string {
+    if (what == "clz:64") { return "    lzcntq %rax, %rax\n"; }
+    if (what == "clz:32") { return "    lzcntl %eax, %eax\n"; }
+    if (what == "ctz:64") { return "    tzcntq %rax, %rax\n"; }
+    if (what == "ctz:32") { return "    tzcntl %eax, %eax\n"; }
+    if (what == "popcount:64") { return "    popcntq %rax, %rax\n"; }
+    if (what == "popcount:32") { return "    popcntl %eax, %eax\n"; }
     return "";
 }
 
@@ -5425,6 +5438,7 @@ function ssa_str_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
 
 function ssa_str_target(op: string): string {
     if (op == "str_from_bytes") { return "string_from_bytes"; }
+    if (op == "read_chunk") { return "reader_read_chunk"; }
     return op;
 }
 
@@ -5433,9 +5447,10 @@ function ssa_str_target(op: string): string {
 // named by ssa_host_bare.
 function ssa_host_need(op: string): string {
     var fs: string[] = ["read_file", "read_file_bytes", "write_file", "write_file_exec", "remove_dir_all", "remove_file",
-        "create_dir_all", "read_dir", "read_dir_all", "env", "stat", "lstat"];
+        "create_dir_all", "read_dir", "read_dir_all", "env", "stat", "lstat", "subprocess", "writer_write"];
     for x in fs { if (x == op) { return op; } }
     if (op == "read_line") { return "str_read_line"; }
+    if (op == "read_chunk" || op == "reader_close") { return "reader"; }
     return "";
 }
 function ssa_host_bare(op: string): boolean {
@@ -5443,6 +5458,7 @@ function ssa_host_bare(op: string): boolean {
 }
 
 function ssa_str_marks(op: string, s: asmcore.EmitState): asmcore.EmitState {
+    if (op == "temp_dir") { return s.need("heap").need("monotonic_ns").need("temp_dir"); }
     if (ssa_host_need(op) != "") { return s.need("heap").need(ssa_host_need(op)); }
     if (ssa_host_bare(op)) { return s.need(op); }
     if (op == "str_concat") { return s.mark_str_concat(); }
@@ -5514,7 +5530,7 @@ function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, o: ir.Op, s: asm
     }
     if (o.kind_tag == 74) { s = s.write(ir_memcpy_asm()); }
     else if (o.kind_tag == 75) { s = s.write(ir_memset_asm()); }
-    else if (o.kind_tag == 225) { s = emit_str_op(o, s); }
+    else if (ir.is_str_op_kind(o.kind_tag)) { s = emit_str_op(o, s); }
     else if (o.kind_tag >= 125 && o.kind_tag <= 137) { s = emit_ir_op_map(o, ins.imm, lp, s); }
     else { s = emit_ir_op_buf(o, s); }
     s = s.write("    popq %rax\n");

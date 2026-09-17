@@ -896,7 +896,7 @@ function ssa_const_reg(text: string, d: string, s: asmcore.EmitState): asmcore.E
 // ssa_unary_known is the unary vocabulary lift_from_ir_prod produces.
 function ssa_unary_known(what: string): boolean {
     if (what == "!" || what == "int_extend" || what == "int_wrap" || what == "u32_wrap" || what == "load_i32") { return true; }
-    return util.str_has_prefix(what, "int_cast:") || ssa_funary_known(what);
+    return util.str_has_prefix(what, "int_cast:") || ssa_funary_known(what) || ssa_bits_asm(what) != "";
 }
 
 // ssa_funary_known is the f64 unary vocabulary lift_float_prod produces.
@@ -968,6 +968,7 @@ function ssa_has_phis(f: ssa.SFunc, fr: SsaFrame, id: i32): boolean {
 function ssa_unary_asm(what: string, unsigned: boolean): string {
     var f: string = ssa_fmath_asm(what);
     if (f == "") { f = ssa_fconv_asm(what, unsigned); }
+    if (f == "") { f = ssa_bits_asm(what); }
     if (f != "") { return f; }
     if (what == "load_i32") { return "    ldrsw x0, [x0]\n"; }
     if (what == "!") { return "    cmp x0, #0\n    cset x0, eq\n"; }
@@ -978,6 +979,18 @@ function ssa_unary_asm(what: string, unsigned: boolean): string {
         if (unsigned) { return "    mov w0, w0\n"; }
         return "    sxtw x0, w0\n";
     }
+    return "";
+}
+
+// ssa_bits_asm is the bit counts on x0 at the width the name carries, as the
+// stack machine's arms select them; "" for any other op.
+function ssa_bits_asm(what: string): string {
+    if (what == "clz:64") { return "    clz x0, x0\n"; }
+    if (what == "clz:32") { return "    clz w0, w0\n"; }
+    if (what == "ctz:64") { return "    rbit x0, x0\n    clz x0, x0\n"; }
+    if (what == "ctz:32") { return "    rbit w0, w0\n    clz w0, w0\n"; }
+    if (what == "popcount:64") { return "    fmov d0, x0\n    cnt v0.8b, v0.8b\n    addv b0, v0.8b\n    fmov w0, s0\n"; }
+    if (what == "popcount:32") { return "    fmov s0, w0\n    cnt v0.8b, v0.8b\n    addv b0, v0.8b\n    fmov w0, s0\n"; }
     return "";
 }
 
@@ -1134,6 +1147,7 @@ function ssa_str_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
 
 function ssa_str_target(op: string): string {
     if (op == "str_from_bytes") { return "string_from_bytes"; }
+    if (op == "read_chunk") { return "reader_read_chunk"; }
     return op;
 }
 
@@ -1142,9 +1156,10 @@ function ssa_str_target(op: string): string {
 // named by ssa_host_bare.
 function ssa_host_need(op: string): string {
     var fs: string[] = ["read_file", "read_file_bytes", "write_file", "write_file_exec", "remove_dir_all", "remove_file",
-        "create_dir_all", "read_dir", "read_dir_all", "env", "stat", "lstat"];
+        "create_dir_all", "read_dir", "read_dir_all", "env", "stat", "lstat", "subprocess", "writer_write"];
     for x in fs { if (x == op) { return op; } }
     if (op == "read_line") { return "str_read_line"; }
+    if (op == "read_chunk" || op == "reader_close") { return "reader"; }
     return "";
 }
 function ssa_host_bare(op: string): boolean {
@@ -1152,6 +1167,7 @@ function ssa_host_bare(op: string): boolean {
 }
 
 function ssa_str_marks(op: string, s: asmcore.EmitState): asmcore.EmitState {
+    if (op == "temp_dir") { return s.mark_heap().need("monotonic_ns").need("temp_dir"); }
     if (ssa_host_need(op) != "") { return s.mark_heap().need(ssa_host_need(op)); }
     if (ssa_host_bare(op)) { return s.need(op); }
     if (op == "str_concat") { return s.mark_heap().mark_str_concat(); }
@@ -2875,7 +2891,7 @@ function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, o: ir.Op, s: asm
     }
     if (o.kind_tag == 74) { s = emit_arm64_op_memcpy(o, ins.imm, lp, s); }
     else if (o.kind_tag == 75) { s = emit_arm64_op_memset(ins.imm, lp, s); }
-    else if (o.kind_tag == 225) { s = emit_str_op(o, s); }
+    else if (ir.is_str_op_kind(o.kind_tag)) { s = emit_str_op(o, s); }
     else if (o.kind_tag >= 125 && o.kind_tag <= 137) { s = emit_arm64_op_map(o, ins.imm, lp, s); }
     else { s = emit_arm64_op_buf(o, s); }
     s = s.write("    ldr x0, [sp], #16\n");
