@@ -1627,6 +1627,13 @@ const (
 	heapSlackBytes = 4096
 )
 
+// strBlockBytes is the byte overhead of a string block over its length: the
+// rc word (4), the length word (4), and the trailing NUL (1). Every site that
+// allocates a string and every site that frees one must use this same number,
+// because __alloc and __free derive the size CLASS from it and a block pushed
+// onto one class is only ever handed back out from that class.
+const strBlockBytes = 9
+
 // emitHeapReserve seeds the arena in _start: one lazy anonymous mmap with the
 // same MAP_NORESERVE flags the stack-machine backend's __fern_alloc uses, then
 // the cursor/limit pair the guard compares.
@@ -3210,9 +3217,9 @@ func emitAllocU8Helper(w func(string, ...any)) {
 func emitStringFromBytesHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("string_from_bytes_unchecked"))
-	w("\tmov esi, %s", memRef("rdi", -4)) // len (a 32-bit write zero-extends)
-	w("\tlea r11, [rsi + 8]")             // header + len
-	w("\tsub rsp, 8")                     // entered 8 past alignment; the trampoline is called at 16
+	w("\tmov esi, %s", memRef("rdi", -4))     // len (a 32-bit write zero-extends)
+	w("\tlea r11, [rsi + %d]", strBlockBytes) // header + len + NUL
+	w("\tsub rsp, 8")                         // entered 8 past alignment; the trampoline is called at 16
 	ssaBumpAlloc(w, "r8", "r11")
 	w("\tadd rsp, 8")
 	w("\tmov dword ptr [r8], 1") // rc = 1
@@ -3245,8 +3252,8 @@ func emitStrSliceHelper(w func(string, ...any)) {
 	w("\tjg .Lssa_strslice_trap")
 	w("\tmov r9d, edx")
 	w("\tsub r9d, esi") // new_len = high - low
-	// A new_len+8 block: rc=1@base, len@base+4, data@base+8.
-	w("\tlea r11, [r9 + 8]")
+	// A new_len+strBlockBytes block: rc=1@base, len@base+4, data@base+8.
+	w("\tlea r11, [r9 + %d]", strBlockBytes)
 	w("\tsub rsp, 8") // entered 8 past alignment; the trampoline is called at 16
 	ssaBumpAlloc(w, "r10", "r11")
 	w("\tadd rsp, 8")
@@ -4092,8 +4099,8 @@ func emitStrConcatHelper(w func(string, ...any)) {
 	w("\tlea r8, [rcx + rdx]")
 	w("\tcmp r8, 2147483647")
 	w("\tja .Lssa_strcat_len_overflow")
-	w("\tlea r11, [r8 + 8]") // header + total
-	w("\tsub rsp, 8")        // entered 8 past alignment; the trampoline is called at 16
+	w("\tlea r11, [r8 + %d]", strBlockBytes) // header + total + NUL
+	w("\tsub rsp, 8")                        // entered 8 past alignment; the trampoline is called at 16
 	ssaBumpAlloc(w, "r9", "r11")
 	w("\tadd rsp, 8")
 	w("\tmov dword ptr [r9], 1")          // rc = 1
@@ -4121,10 +4128,10 @@ func emitStrConcatHelper(w func(string, ...any)) {
 // through __fern_str_dec, which is what consuming it means.
 //
 // The fit test is the block's size class: every heap string is an __alloc of
-// at least la+8 bytes (the header plus its length; the string builder's
-// buffers request more), and __alloc hands out the class's whole rounded
-// extent, so the class of la+8 is capacity the string owns whatever produced
-// it. Reader.read_chunk, the one producer that bumps the cursor itself,
+// at least la+strBlockBytes bytes (the header plus its length and NUL; the
+// string builder's buffers request more), and __alloc hands out the class's
+// whole rounded extent, so that class is capacity the string owns whatever
+// produced it. Reader.read_chunk, the one producer that bumps the cursor itself,
 // rounds its block to the same class. The grown string is freed at its new
 // length, which classes the same as the block. rdi=a, rsi=b; returns
 // rax=data.
@@ -4141,9 +4148,9 @@ func emitStrAppendHelper(w func(string, ...any)) {
 	w("\tlea rdx, [r9 + r10]")             // total, in 64 bits
 	w("\tcmp rdx, 2147483647")
 	w("\tja .Lssa_strapp_copy")                                       // __str_concat aborts on it
-	w("\tlea r11, [r9 + 8]")                                          // the request the block was at least allocated at
+	w("\tlea r11, [r9 + %d]", strBlockBytes)                          // the request the block was at least allocated at
 	emitFreelistClass(w, "strapp", "r11", "rax", ".Lssa_strapp_copy") // r11 = the class's extent
-	w("\tlea rax, [rdx + 23]")
+	w("\tlea rax, [rdx + %d]", strBlockBytes+15)
 	w("\tand rax, -16") // the grown request, 16-rounded
 	w("\tcmp rax, r11")
 	w("\tja .Lssa_strapp_copy")
@@ -4168,10 +4175,11 @@ func emitStrAppendHelper(w func(string, ...any)) {
 // emitStrDecHelper writes __fern_str_dec(ptr) -> ptr: the scope-exit drop
 // for a string-valued local. Guarded (null / low-address / immortal-sentinel
 // top bit, so it skips .rodata literals); on the last reference (rc == 1 at
-// [ptr-8]) the block goes back to the freelist at base = ptr-8 and len+8
-// bytes, which every string producer covers: each is an __alloc of at least
-// that with its data at base+8, and a string grown in place stayed inside
-// its class. A shared string is decremented in place.
+// [ptr-8]) the block goes back to the freelist at base = ptr-8 and
+// len+strBlockBytes bytes, which is the number every string producer
+// allocates: each is an __alloc of at least that with its data at base+8, and
+// a string grown in place stayed inside its class. A shared string is
+// decremented in place.
 func emitStrDecHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__fern_str_dec"))
@@ -4191,7 +4199,7 @@ func emitStrDecHelper(w func(string, ...any)) {
 	w("\tpush rbx") // one push past the return address: 16-aligned for the call
 	w("\tmov rbx, rdi")
 	w("\tmov esi, %s", memRef("rdi", -4)) // len
-	w("\tadd rsi, 8")                     // plus the header
+	w("\tadd rsi, %d", strBlockBytes)     // the size every producer allocated
 	w("\tsub rdi, 8")                     // base
 	w("\tcall %s", fnLabel("__free"))
 	w("\tmov rax, rbx")
@@ -4733,7 +4741,7 @@ func emitIoErrorHelper(w func(string, ...any)) {
 	// The message string: rc header + bytes + NUL. rdx is live across the
 	// bump, so the size goes through r10 and the length is re-read after.
 	w("\tmov r10, rdx")
-	w("\tadd r10, 9")
+	w("\tadd r10, %d", strBlockBytes)
 	ssaBumpAlloc(w, "rax", "r10")
 	w("\tmov dword ptr [rax], 1") // rc = 1
 	w("\tmov [rax + 4], edx")     // len
@@ -4933,7 +4941,7 @@ func emitRemoveDirAllHelper(w func(string, ...any)) {
 	w(".Lssa_rda_nld:")
 	w("\tmov [rbp - 64], rdx")
 	// The child string "pathz/name": rc header + childlen bytes + NUL.
-	w("\tlea r10, [rcx + rdx + 10]") // 8 header + childlen(plen+1+nlen) + NUL
+	w("\tlea r10, [rcx + rdx + %d]", strBlockBytes+1) // childlen(plen+1+nlen) + the header and NUL
 	ssaBumpAlloc(w, "rax", "r10")
 	w("\tmov rcx, [rbp - 56]")
 	w("\tmov rdx, [rbp - 64]")
