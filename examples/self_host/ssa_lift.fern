@@ -1455,9 +1455,12 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[], struct
             } else if (sc_kind[t2] == "loop") {
                 // A body whose last statement returns reaches the loop's end
                 // as a live, terminated block; it is appended here. One that
-                // falls off the end would continue after the loop, a shape the
-                // lowering never emits, so it declines rather than guesses.
-                if (!cur_dead && cur_term.kind_tag == 0) { ok = false; bail = "loop-fallthrough"; }
+                // falls off the end continues after the loop, in the enclosing
+                // scope: it branches to a fresh block that becomes current,
+                // with the body's slot values, once the header is rebuilt.
+                var lf: LoopFall = loop_fall(cur_dead, cur_term, cur_id, next_blk, slots);
+                next_blk = lf.next_blk;
+                if (lf.falls) { cur_term = STerm_br(lf.cont); }
                 blocks = loop_tail_appended(blocks, cur_dead, cur_id, cur_insts, cur_term, cur_preds);
                 var luid2: i32 = sc_uid[t2];
                 var hid: i32 = sc_target[t2];
@@ -1498,6 +1501,10 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[], struct
                 var rsl: i32 = 0;
                 while (rsl < nslots) { slots = slots.with(rsl, sc_header_phis[t2 * nslots + rsl]); rsl = rsl + 1; }
                 cur_dead = true;
+                if (lf.falls) {
+                    slots = lf.slots;
+                    cur_preds = [lf.tail]; cur_id = lf.cont; cur_insts = []; cur_term = STerm_none(); cur_dead = false;
+                }
                 sc_kind = drop_last_s(sc_kind); sc_uid = drop_last(sc_uid); sc_target = drop_last(sc_target);
                 sc_else = drop_last(sc_else); sc_seen_else = drop_last(sc_seen_else); sc_then_blk = drop_last(sc_then_blk);
                 sc_then_reaches = drop_last(sc_then_reaches); sc_parent = drop_last(sc_parent); sc_edge_from = drop_last(sc_edge_from);
@@ -1593,6 +1600,16 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[], struct
 
     var f: ssa.SFunc = ssa.SFunc { name: name, nparams: nparams, nvals: nvals, blocks: blocks, entry: 0, takes_env: false };
     return LResult { func: f, ok: ok, bail: bail };
+}
+
+// LoopFall is a loop body that reaches the loop's end alive and unterminated:
+// `tail` is that block, `cont` the fresh block control continues in after
+// the loop, `slots` the body's slot values there.
+struct LoopFall { falls: boolean, tail: i32, cont: i32, next_blk: i32, slots: i32[] }
+
+function loop_fall(dead: boolean, term: ssa.STerm, id: i32, next_blk: i32, slots: i32[]): LoopFall {
+    if (dead || term.kind_tag != 0) { return LoopFall { falls: false, tail: id, cont: 0 - 1, next_blk: next_blk, slots: slots }; }
+    return LoopFall { falls: true, tail: id, cont: next_blk, next_blk: next_blk + 1, slots: slots };
 }
 
 function loop_tail_appended(blocks: ssa.SBlock[], dead: boolean, id: i32, insts: ssa.SInst[], term: ssa.STerm, preds: i32[]): ssa.SBlock[] {
