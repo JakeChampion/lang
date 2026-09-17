@@ -214,6 +214,17 @@ func envCases(t *testing.T) []invocation {
 	add(invocation{name: "signal options need a command", args: []string{"--block-signal=INT"}})
 	add(invocation{name: "default a signal", args: []string{"--default-signal=INT", "/bin/true"}})
 	add(invocation{name: "ignore a signal", args: []string{"--ignore-signal=INT", "/bin/true"}})
+	// An ALTERNATE name and the PRIMARY one for the same number: both are
+	// accepted on input and only one is ever printed, so the pair pins which
+	// way round that is. Signal 29's two names had it backwards until the
+	// `kill` oracle showed GNU printing POLL where this printed IO.
+	add(invocation{name: "ignore by an alternate name", args: []string{"--ignore-signal=IO", "/bin/true"}})
+	add(invocation{name: "ignore by the primary name", args: []string{"--ignore-signal=POLL", "/bin/true"}})
+	// glibc defines both of these and GNU's own table does not, so each is an
+	// `invalid signal` rather than a silent no-op. Accepting a name GNU
+	// refuses is a divergence on input a caller can type.
+	add(invocation{name: "LOST is not a signal GNU knows", args: []string{"--ignore-signal=LOST", "/bin/true"}})
+	add(invocation{name: "UNUSED is not a signal GNU knows", args: []string{"--ignore-signal=UNUSED", "/bin/true"}})
 
 	// ---- --list-signal-handling ----
 	add(invocation{name: "list with nothing changed", args: []string{"--list-signal-handling", "/bin/true"}})
@@ -223,6 +234,11 @@ func envCases(t *testing.T) []invocation {
 	add(invocation{name: "list several", args: []string{"--block-signal=INT,QUIT", "--ignore-signal=TERM", "--list-signal-handling", "/bin/true"}})
 	add(invocation{name: "list without a command", args: []string{"--list-signal-handling"}})
 	add(invocation{name: "list takes no argument", args: []string{"--list-signal-handling=X", "/bin/true"}})
+	// The number is the point here, not the signal: this is the one case that
+	// PRINTS a name whose number carries two of them, which is what caught
+	// the IO/POLL inversion. The oracle decides per kernel, so naming the
+	// number rather than a name keeps it honest on both.
+	add(invocation{name: "list names a two-named number", args: []string{"--ignore-signal=29", "--list-signal-handling", "/bin/true"}})
 
 	// ---- -v, which is the only way to assert the ORDER ----
 	add(invocation{name: "debug a plain run", args: []string{"-v", "/bin/true"}})

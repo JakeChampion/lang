@@ -25,7 +25,7 @@ pub function names(): string[] {
   if (target_os() == "darwin") {
     return ["HUP", "INT", "QUIT", "ILL", "TRAP", "ABRT", "EMT", "FPE", "KILL", "BUS", "SEGV", "SYS", "PIPE", "ALRM", "TERM", "URG", "STOP", "TSTP", "CONT", "CHLD", "TTIN", "TTOU", "IO", "XCPU", "XFSZ", "VTALRM", "PROF", "WINCH", "INFO", "USR1", "USR2"];
   }
-  return ["HUP", "INT", "QUIT", "ILL", "TRAP", "ABRT", "BUS", "FPE", "KILL", "USR1", "SEGV", "USR2", "PIPE", "ALRM", "TERM", "STKFLT", "CHLD", "CONT", "STOP", "TSTP", "TTIN", "TTOU", "URG", "XCPU", "XFSZ", "VTALRM", "PROF", "WINCH", "IO", "PWR", "SYS"];
+  return ["HUP", "INT", "QUIT", "ILL", "TRAP", "ABRT", "BUS", "FPE", "KILL", "USR1", "SEGV", "USR2", "PIPE", "ALRM", "TERM", "STKFLT", "CHLD", "CONT", "STOP", "TSTP", "TTIN", "TTOU", "URG", "XCPU", "XFSZ", "VTALRM", "PROF", "WINCH", "POLL", "PWR", "SYS"];
 }
 
 // `rt_min()` / `rt_max()` — the realtime range, or 0 when the kernel has none.
@@ -88,11 +88,15 @@ pub function name(n: i32): string {
 // `alternates()` — names that share a number with one in `names()`. Accepted on
 // input, never printed. Each entry is the name, and `alternate_values()` the
 // number at the same index.
+//
+// Only what GNU's own table knows. `LOST` and `UNUSED` are NOT here: glibc
+// defines both, and GNU answers `'LOST': invalid signal` for each, so
+// accepting them diverges on a name a caller can actually type.
 function alternates(): string[] {
   if (target_os() == "darwin") {
     return ["POLL", "IOT"];
   }
-  return ["IOT", "LOST", "UNUSED", "POLL", "CLD"];
+  return ["IOT", "IO", "CLD"];
 }
 
 function alternate_values(): i32[] {
@@ -100,7 +104,7 @@ function alternate_values(): i32[] {
     // Darwin's 7 is EMT and POLL both; IOT is the historical ABRT.
     return [7, 6];
   }
-  return [6, 29, 31, 29, 17];
+  return [6, 29, 17];
 }
 
 // `number(s)` — the number `s` names, or 0 when it names nothing.
