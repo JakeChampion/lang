@@ -221,6 +221,28 @@ func TestSelfHostClosureCallCensusPopulation(t *testing.T) {
 		}
 		files = append(files, got...)
 	}
+	// A case carrying expected.error or expected.lowering-error is a program
+	// the compiler must REFUSE, and this driver lowers without running the
+	// checker — so it would be counting, and crashing on, code outside the
+	// language. diag_e079's program is the `defer` whose action carries `?`
+	// that sends the lowering into unbounded recursion (#9470): the checker
+	// refuses it now, but a driver that skips the checker still segfaults on
+	// it. The census is over programs that compile.
+	kept := files[:0]
+	for _, f := range files {
+		dir := filepath.Dir(f)
+		refused := false
+		for _, marker := range []string{"expected.error", "expected.lowering-error"} {
+			if _, err := os.Stat(filepath.Join(dir, marker)); err == nil {
+				refused = true
+				break
+			}
+		}
+		if !refused {
+			kept = append(kept, f)
+		}
+	}
+	files = kept
 	if len(files) < 450 {
 		t.Fatalf("swept %d files, expected the full corpus + stdlib — a silently shrunken sweep proves nothing", len(files))
 	}

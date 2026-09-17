@@ -250,6 +250,15 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// lambda's (#9515); the differential is what pins them together.
 		{"e079-defer-try-op", "function g(v: i32): Option[i32] { if (v < 100) { return Some(v + 1); } return None; }\nfunction f(): Option[i32] { var n: i32 = 0; defer n = g(n)?; return Some(n); }\nfunction main(): i32 { return 0; }\n", []string{"E079"}},
 		{"e079-defer-inside-lambda-body", "function g(v: i32): Option[i32] { if (v < 100) { return Some(v + 1); } return None; }\nfunction main(): i32 { var h: (i32) => i32 = (x: i32) => { var n: i32 = x; defer n = g(n)?; return n; }; return h(1); }\n", []string{"E042", "E079"}},
+		// The complementary shape — a lambda LITERAL in the action, whose `?`
+		// leaves the lambda — belongs here too, and both compilers do prune for
+		// it (neither reports E079). It is absent because the self-host reports
+		// NOTHING for that program where the Go checker reports E038 and E042
+		// (#9518), and the differential below compares the full code set with no
+		// listing escape — lambdaBodyDivergences gates only the in-lambda sweep,
+		// so there is no way to land the row before #9518 is fixed. #9518 carries
+		// the row to add once it is. Native's half is pinned by
+		// TestDeferTryOpRefused, which fails if the prune is removed.
 		// The shadowing guard on that fallback: a binding typed opaquely
 		// unknown (here a builtin variant payload) still shadows the module
 		// function table. Without the is_bound gate, `Some(pair)` with a
