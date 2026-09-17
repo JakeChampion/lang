@@ -1299,7 +1299,38 @@ function ssa_str_view(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.E
 // SsaFrame is the frame below the values: the phi stage words after the
 // values, then three words per frame-resident string view. ssa_view_off is
 // the offset of a view's lowest word, the base the view kernel writes at.
-struct SsaFrame { nspill: i32, nstage: i32, views: i32[], blk_pos: i32[] }
+struct SsaFrame { nspill: i32, nstage: i32, views: i32[], blk_pos: i32[], uses: i32[] }
+
+// SsaFuse is a block's compare consumed as flags by its branch: `n` trailing
+// instructions (the compare, and the `not` between it and the branch when
+// `inverted`) are not materialised; the branch tests the condition of
+// compare `tag` on operands `a` and `b` instead. n is 0 when the block ends
+// some other way.
+struct SsaFuse { n: i32, tag: i32, inverted: boolean, a: i32, b: i32 }
+
+function ssa_no_fuse(): SsaFuse { return SsaFuse { n: 0, tag: 0, inverted: false, a: 0, b: 0 }; }
+
+// ssa_fuse finds the compare a block's brif can read as flags: the block's
+// last instruction is an integer compare read only by the branch, or a `not`
+// read only by the branch whose operand is such a compare read only by it.
+function ssa_fuse(fr: SsaFrame, blk: ssa.SBlock): SsaFuse {
+    var t: ssa.STerm = blk.term;
+    if (t.kind_tag != 3 || t.t == t.f || blk.insts.len() == 0) { return ssa_no_fuse(); }
+    var last: ssa.SInst = blk.insts[blk.insts.len() - 1];
+    if (last.result != t.cond || fr.uses[last.result] != 1) { return ssa_no_fuse(); }
+    var cmp: ssa.SInst = last;
+    var n: i32 = 1;
+    var inverted: boolean = false;
+    if (last.kind_tag == 10 && last.str == "!") {
+        if (blk.insts.len() < 2) { return ssa_no_fuse(); }
+        cmp = blk.insts[blk.insts.len() - 2];
+        if (cmp.result != last.args[0] || fr.uses[cmp.result] != 1) { return ssa_no_fuse(); }
+        n = 2;
+        inverted = true;
+    }
+    if (cmp.kind_tag != 9 || !ircore.is_int_cmp_kind(ir.kind_id(cmp.str))) { return ssa_no_fuse(); }
+    return SsaFuse { n: n, tag: ir.kind_id(cmp.str), inverted: inverted, a: cmp.args[0], b: cmp.args[1] };
+}
 
 function ssa_view_off(fr: SsaFrame, v: i32): i32 {
     var first: i32 = fr.nspill + fr.nstage + 3 * fr.views[v];
@@ -1466,8 +1497,6 @@ function ssa_epilogue(): string {
     return "    .cfi_remember_state\n    mov sp, x29\n    ldp x29, x30, [sp], #16\n    .cfi_def_cfa sp, 0\n    ret\n    .cfi_restore_state\n";
 }
 
-// ssa_brif branches on a value. An edge whose target has phis lands on a stub
-// carrying that edge's moves, since the moves of the two edges differ.
 // ssa_jump is the branch to block `to`, or nothing when `to` is the block
 // emitted next and control falls into it.
 function ssa_jump(lp: string, to: i32, next: i32, s: asmcore.EmitState): asmcore.EmitState {
@@ -1475,9 +1504,15 @@ function ssa_jump(lp: string, to: i32, next: i32, s: asmcore.EmitState): asmcore
     return s.write("    b " + lp + util.i32_to_string(to) + "\n");
 }
 
-function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp: string, next: i32, s: asmcore.EmitState): asmcore.EmitState {
+// ssa_brif branches on a value, or on the flags a fused compare left (fu.n
+// above 0), in which case the false edge is the compare's inverse. An edge
+// whose target has phis lands on a stub carrying that edge's moves, since
+// the moves of the two edges differ.
+function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp: string, next: i32, fu: SsaFuse, s: asmcore.EmitState): asmcore.EmitState {
     var t: ssa.STerm = blk.term;
+    if (fu.n == 0) {
     s = ssa_load(reg_of, t.cond, "x0", s);
+    }
     if (t.t == t.f) {
         s = ssa_phi_moves(f, fr, reg_of, blk.id, t.t, s);
         return ssa_jump(lp, t.t, next, s);
@@ -1485,7 +1520,11 @@ function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
     var fl: string = lp + util.i32_to_string(t.f);
     var stub: boolean = ssa_has_phis(f, fr, t.f);
     if (stub) { fl = lp + "e" + util.i32_to_string(blk.id) + "_" + util.i32_to_string(t.f); }
+    if (fu.n > 0) {
+    s = s.write("    b." + ir_cmp_cond(fu.tag, fu.inverted) + " " + fl + "\n");
+    } else {
     s = s.write("    cbz x0, " + fl + "\n");
+    }
     s = ssa_phi_moves(f, fr, reg_of, blk.id, t.t, s);
     if (stub) {
         s = s.write("    b " + lp + util.i32_to_string(t.t) + "\n");
@@ -1496,7 +1535,7 @@ function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
     return ssa_jump(lp, t.t, next, s);
 }
 
-function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp: string, next: i32, s: asmcore.EmitState): asmcore.EmitState {
+function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp: string, next: i32, fu: SsaFuse, s: asmcore.EmitState): asmcore.EmitState {
     var t: ssa.STerm = blk.term;
     if (t.kind_tag == 1) {
         s = ssa_load(reg_of, t.value, "x0", s);
@@ -1506,7 +1545,7 @@ function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
         s = ssa_phi_moves(f, fr, reg_of, blk.id, t.target, s);
         return ssa_jump(lp, t.target, next, s);
     }
-    if (t.kind_tag == 3) { return ssa_brif(f, fr, blk, reg_of, lp, next, s); }
+    if (t.kind_tag == 3) { return ssa_brif(f, fr, blk, reg_of, lp, next, fu, s); }
     // A block the lift left unterminated is one nothing reaches; the stack
     // machine's fallback return keeps the text well formed here too.
     return s.write("    mov x0, #0\n" + ssa_epilogue());
@@ -1537,7 +1576,7 @@ function emit_ssa_function_arm64(lifted: ssa.SFunc, label_name: string, ops: ir.
     s = s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n");
     s = s.write("    .cfi_startproc\n    stp x29, x30, [sp, #-16]!\n    .cfi_def_cfa_offset 16\n    .cfi_offset x29, -16\n    .cfi_offset x30, -8\n    mov x29, sp\n    .cfi_def_cfa_register x29\n");
     var views: i32[] = ssa_view_slots(f);
-    var fr: SsaFrame = SsaFrame { nspill: ssa.spill_count(reg_of), nstage: ssa_max_phis(f), views: views, blk_pos: ssa_block_index(f) };
+    var fr: SsaFrame = SsaFrame { nspill: ssa.spill_count(reg_of), nstage: ssa_max_phis(f), views: views, blk_pos: ssa_block_index(f), uses: ssa.use_counts(f) };
     var frame: i32 = (fr.nspill + fr.nstage + 3 * ssa_view_count(views)) * 8;
     if (frame % 16 != 0) { frame = frame + 8; }
     if (frame > 0) { s = fr_sub_imm(s, "sp", "sp", frame); }
@@ -1549,10 +1588,19 @@ function emit_ssa_function_arm64(lifted: ssa.SFunc, label_name: string, ops: ir.
         var next: i32 = 0 - 1;
         if (bi + 1 < f.blocks.len()) { next = f.blocks[bi + 1].id; }
         s = s.write(lp + util.i32_to_string(blk.id) + ":\n");
-        for ins in blk.insts {
+        var fu: SsaFuse = ssa_fuse(fr, blk);
+        var ii: i32 = 0;
+        while (ii < blk.insts.len() - fu.n) {
+            var ins: ssa.SInst = blk.insts[ii];
             if (ins.kind_tag != 6 && ins.kind_tag != 8) { s = ssa_inst(ins, reg_of, fr, lp, ops, s); }
+            ii = ii + 1;
         }
-        s = ssa_term(f, fr, blk, reg_of, lp, next, s);
+        if (fu.n > 0) {
+    s = ssa_load(reg_of, fu.a, "x0", s);
+        s = ssa_load(reg_of, fu.b, "x1", s);
+        s = s.write("    cmp x0, x1\n");
+        }
+        s = ssa_term(f, fr, blk, reg_of, lp, next, fu, s);
         bi = bi + 1;
     }
     s = asmcore.EmitState { ...s, ssa_frame: 0 };
