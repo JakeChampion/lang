@@ -385,7 +385,52 @@ function prod_mem_kind(k: string): boolean {
         "struct_make", "arr_make", "tuple_make", "opt_make", "opt_none", "str_slice",
         "raw_load_ptr", "raw_store_ptr", "raw_load8", "raw_store8", "struct_copy", "const_struct", "call_indirect"];
     for x in mem { if (x == k) { return true; } }
-    return prod_call_argc(k) > 0;
+    return prod_call_argc(k) > 0 || prod_host_kind(k);
+}
+
+// prod_host_kind is the host floor the stack machine reaches without a Fern
+// helper on the stack ABI: the raw syscalls, exit, the string box stamp, the
+// string builder, the two static addresses and the full-width address add;
+// with the zero-operand helper calls, which prod_call_argc cannot name.
+function prod_host_kind(k: string): boolean {
+    var host: string[] = ["syscall3", "syscall4", "syscall5", "exit", "raw_string", "strbuf_reset", "strbuf_append",
+        "raw_scratch", "raw_environ", "raw_addr", "monotonic_ns", "now_unix_ms",
+        "load_i32", "load_i64", "load_ptr", "store_i32", "store_i64", "store_ptr", "raw_arr_box"];
+    for x in host { if (x == k) { return true; } }
+    return false;
+}
+
+// lift_prod_host lifts one host-floor op: a syscall is a register-ABI call
+// (50) carrying its name with the number first among its operands, as are
+// exit, the string box stamp and the builder ops; the two static addresses
+// are sym_addr (58) with the symbol in `str` and `imm` 1 when the word at it
+// is wanted; raw_addr is the 64-bit add; the clock ops are stack-ABI calls
+// with no operand. The width loads and stores at an address are the box
+// load and store at offset 0, a 4-byte one carrying "i32" in `str`; a store
+// leaves the zero the stack machine pushes in its place.
+function lift_prod_host(k: string, lv: LiftVals): LiftVals {
+    if (k == "load_i64" || k == "load_ptr") { return lift_pop_push(lv, 1, 40, 0, ""); }
+    if (k == "load_i32") { return lift_pop_push(lv, 1, 10, 0, k); }
+    if (k == "store_i64" || k == "store_ptr" || k == "store_i32") {
+        var stored: LiftVals = lift_store(lv, 41, 0);
+        if (!stored.ok) { return stored; }
+        if (k == "store_i32") {
+            var last: i32 = stored.insts.len() - 1;
+            stored = LiftVals { ...stored, insts: stored.insts.with(last, ssa.SInst { ...stored.insts[last], str: "i32" }) };
+        }
+        return lift_pop_push(stored, 0, 1, 0, "");
+    }
+    if (k == "raw_arr_box") { return lift_pop_push(lv, 1, 50, 0, k); }
+    if (k == "syscall3") { return lift_pop_push(lv, 4, 50, 0, k); }
+    if (k == "syscall4") { return lift_pop_push(lv, 5, 50, 0, k); }
+    if (k == "syscall5") { return lift_pop_push(lv, 6, 50, 0, k); }
+    if (k == "raw_string") { return lift_pop_push(lv, 2, 50, 0, k); }
+    if (k == "exit" || k == "strbuf_append") { return lift_pop_push(lv, 1, 50, 0, k); }
+    if (k == "strbuf_reset") { return lift_pop_push(lv, 0, 50, 0, k); }
+    if (k == "raw_scratch") { return lift_pop_push(lv, 1, 58, 0, "__fern_scratch"); }
+    if (k == "raw_environ") { return lift_pop_push(lv, 0, 58, 1, "__fern_envp"); }
+    if (k == "raw_addr") { return lift_pop_push(lv, 2, 9, 64, "add"); }
+    return lift_pop_push(lv, 0, 49, 0, k);
 }
 
 // prod_call_argc is the operand count of an op the stack machine emits as a
@@ -395,9 +440,12 @@ function prod_mem_kind(k: string): boolean {
 function prod_call_argc(k: string): i32 {
     var two: string[] = ["str_concat", "str_eq", "str_cmp", "arr_push", "arr_push_owned", "arr_push_i64", "arr_push_f64", "arr_push_owned_i64", "arr_push_owned_f64"];
     for x in two { if (x == k) { return 2; } }
-    var one: string[] = ["str_from_bytes", "alloc", "alloc_u8", "raw_alloc", "print_str", "eprint_str"];
+    var one: string[] = ["str_from_bytes", "alloc", "alloc_u8", "raw_alloc", "print_str", "eprint_str",
+        "read_line", "read_file", "read_file_bytes", "remove_dir_all", "remove_file", "create_dir_all",
+        "read_dir", "read_dir_all", "env", "stat", "lstat", "putchar"];
     for y in one { if (y == k) { return 1; } }
     if (k == "arr_slice") { return 3; }
+    if (k == "write_file" || k == "write_file_exec") { return 2; }
     return 0;
 }
 function prod_call_kind(k: string): i32 {
@@ -422,6 +470,7 @@ function ld_off(k: string, op: ir.Op): i32 {
 // stays aligned with the IR's own accounting.
 function lift_prod_mem(k: string, op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SInst[]): LiftVals {
     var lv: LiftVals = LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: true };
+    if (prod_host_kind(k)) { return lift_prod_host(k, lv); }
     if (util.str_has_prefix(k, "raw_store") || k == "struct_set" || k == "arr_set") { return lift_prod_store(k, op, lv); }
     if (k == "variant_is") { return lift_variant_is_prod(op, lv); }
     if (k == "str_slice") { return lift_pop_push(lv, 3, 51, view_in_frame(op), ""); }

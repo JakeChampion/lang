@@ -5105,7 +5105,7 @@ function ssa_store(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): as
 
 // ssa_unary_known is the unary vocabulary lift_from_ir_prod produces.
 function ssa_unary_known(what: string): boolean {
-    if (what == "!" || what == "int_extend" || what == "int_wrap" || what == "u32_wrap") { return true; }
+    if (what == "!" || what == "int_extend" || what == "int_wrap" || what == "u32_wrap" || what == "load_i32") { return true; }
     return util.str_has_prefix(what, "int_cast:") || ssa_funary_known(what);
 }
 
@@ -5119,7 +5119,7 @@ function ssa_funary_known(what: string): boolean {
 function ssa_inst_known(ins: ssa.SInst): boolean {
     var k: i32 = ins.kind_tag;
     if (k == 10) { return ssa_unary_known(ins.str); }
-    if (k >= 40 && k <= 57) { return true; }
+    if (k >= 40 && k <= 58) { return true; }
     return k == 1 || k == 3 || k == 4 || k == 6 || k == 7 || k == 8 || k == 9 || k == 11;
 }
 
@@ -5197,6 +5197,7 @@ function ssa_unary_asm(what: string, unsigned: boolean, lb: string): string {
     var f: string = ssa_fmath_asm(what);
     if (f == "") { f = ssa_fconv_asm(what, unsigned, lb); }
     if (f != "") { return f; }
+    if (what == "load_i32") { return "    movslq (%rax), %rax\n"; }
     if (what == "!") { return "    testq %rax, %rax\n    setz %al\n    movzbq %al, %rax\n"; }
     if (what == "u32_wrap" || what == "int_cast:u32") { return "    movl %eax, %eax\n"; }
     if (what == "int_cast:u8") { return "    andq $255, %rax\n"; }
@@ -5330,6 +5331,7 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
         return ssa_store(reg_of, ins.result, "%rax", s);
     }
     s = ssa_load(reg_of, ins.args[1], "%rcx", s);
+    if (k == 41 && ins.str == "i32") { return s.write("    movl %ecx, (%rax)\n"); }
     if (k == 41) { return s.write("    movq %rcx, " + util.i32_to_string(ins.imm) + "(%rax)\n"); }
     if (k == 42) {
         s = s.need("heap");
@@ -5359,7 +5361,8 @@ function ssa_str_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
         s = s.write("    pushq %rax\n");
         i = i - 1;
     }
-    s = s.write("    call __fn___fern_" + ssa_str_target(ins.str) + "\n    addq $" + util.i32_to_string(argc * 8) + ", %rsp\n");
+    s = s.write("    call __fn___fern_" + ssa_str_target(ins.str) + "\n");
+    if (argc > 0) { s = s.write("    addq $" + util.i32_to_string(argc * 8) + ", %rsp\n"); }
     return ssa_store(reg_of, ins.result, "%rax", s);
 }
 
@@ -5368,7 +5371,23 @@ function ssa_str_target(op: string): string {
     return op;
 }
 
+// ssa_host_need is the need a host helper on the stack ABI carries besides
+// the heap, "" for an op that is not one; the three that need no heap are
+// named by ssa_host_bare.
+function ssa_host_need(op: string): string {
+    var fs: string[] = ["read_file", "read_file_bytes", "write_file", "write_file_exec", "remove_dir_all", "remove_file",
+        "create_dir_all", "read_dir", "read_dir_all", "env", "stat", "lstat"];
+    for x in fs { if (x == op) { return op; } }
+    if (op == "read_line") { return "str_read_line"; }
+    return "";
+}
+function ssa_host_bare(op: string): boolean {
+    return op == "putchar" || op == "monotonic_ns" || op == "now_unix_ms";
+}
+
 function ssa_str_marks(op: string, s: asmcore.EmitState): asmcore.EmitState {
+    if (ssa_host_need(op) != "") { return s.need("heap").need(ssa_host_need(op)); }
+    if (ssa_host_bare(op)) { return s.need(op); }
     if (op == "str_concat") { return s.mark_str_concat(); }
     if (op == "str_eq") { return s.mark_str_eq(); }
     if (op == "str_cmp") { return s.mark_str_cmp(); }
@@ -5379,6 +5398,55 @@ function ssa_str_marks(op: string, s: asmcore.EmitState): asmcore.EmitState {
     return s.need("str_from_bytes");
 }
 
+// ssa_host_kind names the register-ABI ops ssa_host_call selects: the raw
+// syscalls, exit, the string box stamp and the string builder.
+function ssa_host_kind(op: string): boolean {
+    return util.str_has_prefix(op, "syscall") || op == "exit" || op == "raw_string" || op == "strbuf_reset" || op == "strbuf_append";
+}
+
+// ssa_host_call emits the host-floor ops as the stack machine's arms do. A
+// syscall pushes its operands and then runs the flat arm's pop sequence, so
+// no allocatable register is written before every operand has been read.
+function ssa_host_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+    if (util.str_has_prefix(ins.str, "syscall")) {
+        var i: i32 = 0;
+        while (i < ins.args.len()) {
+            s = ssa_load(reg_of, ins.args[i], "%rax", s);
+            s = s.write("    pushq %rax\n");
+            i = i + 1;
+        }
+        var regs: string[] = ["%rdi", "%rsi", "%rdx", "%r10", "%r8"];
+        var a: i32 = ins.args.len() - 2;
+        while (a >= 0) { s = s.write("    popq " + regs[a] + "\n"); a = a - 1; }
+        s = s.write("    popq %rax\n    syscall\n");
+        return ssa_store(reg_of, ins.result, "%rax", s);
+    }
+    if (ins.str == "exit") {
+        s = ssa_load(reg_of, ins.args[0], "%rax", s);
+        if (leak_check_on()) { s = s.write("    pushq %rax\n    call __fern_lc_report\n    popq %rax\n"); }
+        s = s.write("    movq %rax, %rdi\n    movq $60, %rax\n    syscall\n    xorl %eax, %eax\n");
+        return ssa_store(reg_of, ins.result, "%rax", s);
+    }
+    s = s.need("heap");
+    if (ins.str == "raw_string") {
+        s = ssa_load(reg_of, ins.args[0], "%rax", s);
+        s = ssa_load(reg_of, ins.args[1], "%rcx", s);
+        s = s.write("    movq %rax, %rdi\n    movq %rcx, %rsi\n    call __fern_str_box_hdr\n");
+        return ssa_store(reg_of, ins.result, "%rax", s);
+    }
+    s = s.need("strbuf");
+    if (ins.args.len() > 0) { s = ssa_load(reg_of, ins.args[0], "%rax", s); s = s.write("    movq %rax, %rdi\n"); }
+    s = s.write("    call __fern_" + ins.str + "\n");
+    return ssa_store(reg_of, ins.result, "%rax", s);
+}
+
+// ssa_sym_addr is a static symbol's address, or the word at it (imm 1).
+function ssa_sym_addr(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+    if (ins.imm == 1) { s = s.write("    movq " + ins.str + "(%rip), %rax\n"); }
+    else { s = s.write("    leaq " + ins.str + "(%rip), %rax\n"); }
+    return ssa_store(reg_of, ins.result, "%rax", s);
+}
+
 // ssa_rt_call is the stack machine's call of a runtime routine on the register
 // ABI: the arguments in %rdi, %rsi, the result in %rax.
 function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
@@ -5386,6 +5454,7 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmco
     var sym: string = "__fern_alloc";
     if (ins.str == "alloc_u8") { s = s.need("alloc_u8"); sym = "__fern_alloc_u8"; }
     else if (ins.str == "struct_copy") { sym = "__fn___fern_struct_copy"; }
+    else if (ins.str == "raw_arr_box") { sym = "__fern_arr_box"; }
     else if (util.str_has_prefix(ins.str, "arr_push_owned")) { s = s.mark_arr_push(); s = s.need("arr_push_owned"); sym = "__fern_arr_push_owned"; }
     else if (util.str_has_prefix(ins.str, "arr_push")) { s = s.mark_arr_push(); sym = "__fern_arr_push"; }
     // %rdi and %rsi are allocatable here, so an argument whose home is the
@@ -5543,7 +5612,9 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, s: as
     if (k >= 45 && k <= 48) { return ssa_addr_inst(ins, reg_of, s); }
     if (k == 49) { return ssa_str_call(ins, reg_of, s); }
     if (k == 50 && ssa_fcall_sym(ins.str) != "") { return ssa_fcall(ins, reg_of, s); }
+    if (k == 50 && ssa_host_kind(ins.str)) { return ssa_host_call(ins, reg_of, s); }
     if (k == 50) { return ssa_rt_call(ins, reg_of, s); }
+    if (k == 58) { return ssa_sym_addr(ins, reg_of, s); }
     if (k >= 52 && k <= 55) { return ssa_raw_inst(ins, reg_of, s); }
     if (k == 56) { return ssa_call_ind(ins, reg_of, s); }
     if (k == 57) { return ssa_agg_lit(ins, reg_of, s); }
