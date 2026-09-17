@@ -166,17 +166,35 @@ if [ -z "$uu" ]; then
 fi
 echo "coreutils-bench: uutils: ${uu_multicall:-${uu:-none — the column is dropped}}" >&2
 
+# The multi-call binary's own list of the names it carries, which is what
+# decides whether a utility gets a uutils cell. Authoritative, and the reason
+# this is not a message probe: 0.11.0 refuses an absent name with `unknown
+# program 'kill'`, which the old probe did not recognise, so it linked the
+# name anyway and TIMED THE ERROR PATH — reporting `kill` as 7.6x faster than
+# a uutils that has no `kill` at all. An older uutils without `--list` falls
+# back to the probe below.
+uu_list=""
+if [ -n "$uu_multicall" ]; then
+  uu_list=$("$uu_multicall" --list 2>/dev/null || true)
+fi
+
 # uutils_bin UTIL — the uutils binary for UTIL, or nothing.
 uutils_bin() {
   [ -n "$uu" ] || return 0
   if [ -n "$uu_multicall" ] && [ ! -e "$uu/$1" ]; then
-    # `<name>: function/utility not found` is the multi-call's own refusal;
-    # anything else (a version line, or test/[ treating --version as an
-    # expression) means the name is carried.
-    case "$("$uu_multicall" "$1" --version 2>&1 || true)" in
-      *"function/utility not found"*) ;;
-      *) ln -s "$uu_multicall" "$uu/$1" ;;
-    esac
+    if [ -n "$uu_list" ]; then
+      printf '%s\n' "$uu_list" | grep -qxF -- "$1" && ln -s "$uu_multicall" "$uu/$1"
+    else
+      # No `--list`, so fall back to asking. Both refusal wordings are here:
+      # `<name>: function/utility not found` and `unknown program '<name>'`.
+      # Anything else (a version line, or test/[ treating --version as an
+      # expression) means the name is carried.
+      case "$("$uu_multicall" "$1" --version 2>&1 || true)" in
+        *"function/utility not found"*) ;;
+        *"unknown program"*) ;;
+        *) ln -s "$uu_multicall" "$uu/$1" ;;
+      esac
+    fi
   fi
   if [ -x "$uu/uutils-$1" ]; then echo "$uu/uutils-$1"; elif [ -x "$uu/$1" ]; then echo "$uu/$1"; fi
 }

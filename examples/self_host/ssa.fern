@@ -1057,12 +1057,25 @@ function extend_loop_invariant_intervals(f: SFunc, def_pos: i32[], hi: i32[]): i
     }
     return hi;
 }
+// An instruction can also fix a register without being a call: x86-64's idiv
+// takes its dividend in %rax and writes %rdx, so a division clobbers the ABI
+// result register while remaining an ordinary binary. A value may only be
+// homed there if its interval spans none of them. The op names are the IR
+// registry's (kind ids 24-27); arm64's sdiv/udiv take any registers, so its
+// emitter names none.
+pub function binary_fixes_abi(op: string): boolean {
+    return op == "div_s" || op == "div_u" || op == "rem_s" || op == "rem_u";
+}
+
 // `abi_reg` is the pool index of the register the target's ABI returns a
 // call's result in, or -1 where the emitter still uses that register as
 // scratch. A value a call defines is given it when it is free, so the store
 // after the call finds the value already home and emits nothing; every other
 // value takes it last, so it stays available for the next call result.
-function pick_caller_reg(free: i32[], abi_reg: i32, want_abi: boolean): i32 {
+// Returns -1 when no caller-saved register this value may use is free, so the
+// caller falls through to the callee-saved pool or to a spill.
+function pick_caller_reg(free: i32[], abi_reg: i32, want_abi: boolean, abi_ok: boolean): i32 {
+    if (free.len() == 0) { return 0 - 1; }
     if (abi_reg < 0) { return free[free.len() - 1]; }
     if (want_abi) {
         for r in free { if (r == abi_reg) { return abi_reg; } }
@@ -1072,7 +1085,8 @@ function pick_caller_reg(free: i32[], abi_reg: i32, want_abi: boolean): i32 {
         if (free[i] != abi_reg) { return free[i]; }
         i = i - 1;
     }
-    return free[free.len() - 1];
+    if (!abi_ok) { return 0 - 1; }
+    return abi_reg;
 }
 
 function remove_reg(free: i32[], reg: i32): i32[] {
@@ -1091,13 +1105,14 @@ function remove_reg(free: i32[], reg: i32): i32[] {
 // register first, a callee-saved one when those are out, a slot last. The
 // lowest indices go first, so an emitter that saves the callee-saved
 // registers a function uses saves a dense prefix of them.
-pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32): i32[] {
+pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, abi_fixed_by_div: boolean): i32[] {
     var big: i32 = 2000000000;
     var lo: i32[] = [];
     var hi: i32[] = [];
     var i: i32 = 0;
     while (i < f.nvals) { lo = lo.append(big); hi = hi.append(0 - 1); i = i + 1; }
     var calls: i32[] = [];
+    var abi_cl: i32[] = [];
 
     // Number instructions and record each value's def/use positions.
     var def_pos: i32[] = [];
@@ -1122,6 +1137,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32): i
                 calls = calls.append(pos);
                 if (ins.result >= 0 && ins.result < call_def.len()) { call_def = call_def.with(ins.result, 1); }
             }
+            if (abi_fixed_by_div && ins.kind_tag == 9 && binary_fixes_abi(ins.str)) { abi_cl = abi_cl.append(pos); }
             pos = pos + 1;
             k = k + 1;
         }
@@ -1135,6 +1151,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32): i
     hi = extend_backedge_phi_intervals(f, def_pos, total_pos, hi);
     hi = extend_loop_invariant_intervals(f, def_pos, hi);
     var cum: i32[] = calls_before(calls, total_pos);
+    var cum_abi: i32[] = calls_before(abi_cl, total_pos);
 
     var reg_of: i32[] = [];
     i = 0;
@@ -1167,15 +1184,14 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32): i
         }
         act_val = nv; act_hi = nh; act_reg = nr;
 
-        var from_caller: boolean = !spans_call(cum, lo[v], hi[v]) && free.len() > 0;
+        var abi_ok: boolean = !spans_call(cum_abi, lo[v], hi[v]);
+        var pick: i32 = pick_caller_reg(free, abi_reg, call_def[v] == 1 && abi_ok, abi_ok);
+        var from_caller: boolean = !spans_call(cum, lo[v], hi[v]) && pick >= 0;
         if (!from_caller && free_s.len() == 0) {
             reg_of = reg_of.with(v, 0 - 1);   // spill
         } else {
             var reg: i32 = 0;
-            if (from_caller) {
-                reg = pick_caller_reg(free, abi_reg, call_def[v] == 1);
-                free = remove_reg(free, reg);
-            }
+            if (from_caller) { reg = pick; free = remove_reg(free, reg); }
             else { reg = free_s[free_s.len() - 1]; free_s = drop_last_i(free_s); }
             reg_of = reg_of.with(v, reg);
             act_val = act_val.append(v); act_hi = act_hi.append(hi[v]); act_reg = act_reg.append(reg);
