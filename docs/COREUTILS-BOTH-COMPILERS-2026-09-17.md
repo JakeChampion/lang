@@ -264,3 +264,80 @@ faster than the self-host build there.
 | `dircolors` | dircolors --print-ls-colors | 0.37 ± 0.06 | 0.71 ± 0.14 | 1.31 ± 0.11 | 2.27 ± 0.12 | 3.55× | 6.12× | 1.86× | 3.21× | 0.52× |
 | `dircolors` | dircolors a 200k-entry config | 51.40 ± 6.64 | 102.05 ± 10.26 | 34.83 ± 1.60 | 61.78 ± 2.04 | 0.68× | 1.20× | 0.34× | 0.61× | 0.50× |
 | `dircolors` | dircolors --print-ls-colors a 200k-entry config | 44.61 ± 1.29 | 82.49 ± 1.47 | 48.26 ± 3.94 | 72.55 ± 4.70 | 1.08× | 1.63× | 0.59× | 0.88× | 0.54× |
+
+## Mechanisms behind the gap, traced
+
+Four distinct causes, separated by reproducer rather than inferred from the
+table. None of them is "codegen is 2x worse": three are asymptotic, and the
+constant-factor rows are what is left once they are accounted for.
+
+**1. `append_push` open-coded copy-on-write.** The self-host's append lowering
+gated on `__fern_rc_is_unique` itself and un-shared a shared receiver with a
+per-element `__fern_arr_slice` loop, where `__fern_arr_push`'s own hand-asm
+does the same copy with one memcpy and counts it. 12.7x on the reproducer;
+`checker.fern`'s slice sites fell 995 → 23; 47 emitted-size baseline rows got
+smaller and none grew. Fixed in #9600. It reaches the compiler's own tree and
+**no coreutils utility** — worth knowing, because the bench table did not move.
+
+**2. The self-host `Map` is an association list.** `__fern_map_find`
+(`asmcore.rt_src_map_find`) walks parallel key/value arrays comparing every key
+with `__fern_str_eq`, against native's `core/map` Swiss table. Inserting n keys
+then looking up all n, x86-64, `-O`:
+
+| n | native | self-host | self-host / native |
+|---|---|---|---|
+| 1000 | 2 ms | 8 ms | 4x |
+| 2000 | 3 ms | 25 ms | 8.3x |
+| 4000 | 4 ms | 89 ms | 22x |
+| 8000 | 6 ms | 354 ms | 59x |
+
+Native is linear, the self-host quadratic at 3.9x per doubling — so the ratio
+has no ceiling, which is what `tsort` on a 100k-edge DAG being 751x slower
+looks like from the inside. #9608.
+
+The obstacle was never the algorithm: `core/map.fern` did not type under the
+self-host checker at all. Five intrinsics its bodies call by name
+(`__map_hash_seed`, `__fern_rc_inc`, `__fern_str_dec`, `__fern_arr_dec`,
+`__fern_drop_arr_ptr`) were lowered by `irlower` but missing from the checker's
+intrinsic table, so every body calling one bailed with #4451's "could not infer
+an expression's type". Registered, and the module now checks clean. Routing the
+Map *lowering* to it is the remaining work, and it is not small — the self-host
+emits 16 distinct `__fern_map_*` calls including seven `__fern_map_free_*`
+reclaim variants tied to the parallel-array layout, against nine core/map entry
+points that own reclaim internally.
+
+**3. String self-reassign is not in-place.** Native lowers `held = held + c` to
+`__fern_str_append`, which grows the buffer in place; the self-host emits a
+fresh `__fern_str_concat` every time — 77% of `tac`'s run and growing 4.24x per
+doubling of the input, which is the row that does not finish.
+
+This one is **blocked on the allocator, not the lowering**, and the reason is
+worth stating because porting the helper is the obvious plan. Native's in-place
+arm fires only when the grown length still classes to the same block, and it
+usually does because native's classes are coarse: exact 16-byte classes to 2048
+bytes, three-significant-bit capacities above, so ~12.5% slack per class in the
+sizes an accumulator reaches. The self-host's freelist is exact-fit at 8-byte
+word granularity and **a string's length is its capacity by contract** —
+`__fern_str_free` computes the class from the length, and a string that
+under-reports its block is the #8402 heap corruption `asmcore`'s comments were
+written about. So there is nowhere to append into and nowhere to record a
+capacity. The fix is to give the self-host heap native's class scheme; its free
+sites are open-coded per backend, which is what makes that a project rather
+than a patch. #9077.
+
+**4. `join` was a left fold.** `__fern_arr_str_join` built its result with
+`r = r + xs[i]`, O(total²). Now two passes over an exact buffer: 84x at n=500,
+336x at n=2000, and n=100000 went from OOM-killed to 8 ms. No `examples/bench`
+program joins, and none of the seven utilities whose output changed had join as
+its bottleneck — it matters because `std/io.read_all_stdin` collects chunks and
+joins once, so it sits on the path of every utility reading standard input.
+#9631.
+
+**A trap, recorded because it cost a wrong diagnosis.** `__fern_arr_slice`
+open-coding was *not* what made `echo`, `tsort` and `tac` slow. `echo`'s copies
+were already inside `__fern_arr_push` and counted there, `tsort` is the Map, and
+`tac` is string concat. And do not reduce the string-append shape from first
+principles: a standalone `s = s + piece` loop is quadratic on *both* compilers
+by instruction count, because native's in-place arm needs the sizes to reach
+its coarse tier before it starts paying. Reduce from `hold_stream` with a real
+pipe.

@@ -471,6 +471,11 @@ function intrinsic_result(name: string, argc: i32): typeinfo.Type {
   if (argc == 1 && name == "__alloc_u8") { return typeinfo.TypeArray { elem: t_u8() }; }
   if (argc == 2 && name == "__free") { return t_void(); }
   if (argc == 0 && name == "__ptr_width") { return t_i32(); }
+  // core/map's per-process string-hash seed (#6194). Compiler-internal, so
+  // it carries no capability or platform row — the `__` prefix is the
+  // inventory's exemption. irlower already lowers it; only this entry was
+  // missing, and without it `core/map.map_new_impl` does not type.
+  if (argc == 0 && name == "__map_hash_seed") { return t_i32(); }
   if (argc == 0 && name == "__heap_bump_bytes") { return t_i64(); }
   if (argc == 0 && name == "__heap_alloc_count") { return t_i64(); }
   if (argc == 0 && name == "__heap_mark") { return t_i64(); }
@@ -490,6 +495,18 @@ function intrinsic_result(name: string, argc: i32): typeinfo.Type {
   if (argc == 2 && name == "__count_byte") { return t_i32(); }
   if (argc == 2 && name == "__crc32_cksum") { return t_i32(); }
   if (argc == 3 && name == "__memchr") { return t_i32(); }
+  // The rc helpers core/map calls by name to claim and release the cells it
+  // copies, typed as native types them so the two checkers agree. What the
+  // self-host EMITS is not uniform: only __fern_rc_inc is a real call that
+  // answers its pointer. The 2-arg dec pair lowers to op_free and
+  // __fern_str_dec to a bare op_const_i32(0) that does not even lower its
+  // argument — no-ops in safe-leak mode, each pushing a dummy 0 (irlower,
+  // the __fern_arr_dec / __fern_str_dec arms). core/map calls those three in
+  // statement position, so nothing may rely on the usize they declare.
+  if (argc == 1 && name == "__fern_rc_inc") { return t_usize(); }
+  if (argc == 1 && name == "__fern_str_dec") { return t_usize(); }
+  if (argc == 2 && name == "__fern_arr_dec") { return t_usize(); }
+  if (argc == 2 && name == "__fern_drop_arr_ptr") { return t_usize(); }
   if (argc == 3 && name == "__rmemchr") { return t_i32(); }
   return t_unknown("not a runtime intrinsic");
 }

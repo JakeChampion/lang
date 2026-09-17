@@ -1629,11 +1629,12 @@ function main(): i32 { return build(40000).len() % 97; }
 x86-64: the AST build answers in 2 ms; the produced build takes **23 s and
 8.9 GB**. Every push copies the whole buffer.
 
-**The mechanism.** `ssarc.sole_owned_base` asks `__fern_rc_is_unique` to decide
-between growing in place and un-sharing — but the receiver's Supply has already
-emitted `__fern_rc_inc` before it, because `supplies` runs before `instruction`.
-The count the test reads is the one the test's own supply just added, so it
-answers "shared" for a box nobody else holds, every time:
+**The mechanism.** The append gate of the time, `ssarc.sole_owned_base`, asked
+`__fern_rc_is_unique` to decide between growing in place and un-sharing — but
+the receiver's Supply had already emitted `__fern_rc_inc` before it, because
+`supplies` runs before `instruction`. The count the test read was the one the
+test's own supply had just added, so it answered "shared" for a box nobody else
+held, every time:
 
 ```
 call __fern_rc_inc          # the Supply
@@ -1641,6 +1642,13 @@ call __fern_rc_is_unique    # now 2, so never unique
   ...  __fern_arr_dec ; __fern_arr_slice    # un-share copy of the whole buffer
 call __fern_arr_push_owned
 ```
+
+None of that is the append path now. `sole_owned_base` is `with_update`'s only
+caller, and `ssarc.append_push` runs the `__fern_rc_is_unique` gate itself: the
+consuming `__fern_arr_push_owned` when unique, and the non-consuming
+`__fern_arr_push` when shared, whose hand-asm un-shares with one memcpy instead
+of the per-element `__fern_arr_slice` loop above (#9600,
+`rc-log/2026-09-17-a-shared-receiver-is-the-runtimes-copy-to-make.md`).
 
 The AST lowering has no such test. It calls the shared, NON-consuming
 `__fern_arr_push`, whose own gate grows in place at rc 1, and retains the result

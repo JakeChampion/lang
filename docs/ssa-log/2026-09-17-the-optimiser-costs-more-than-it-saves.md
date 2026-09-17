@@ -62,10 +62,33 @@ unconditional rebuilds per function replace the one `prune_dead` already
 pays. `copy_propagate` is the only pass that already declines to rebuild
 when it has nothing to do, through `has_copy`.
 
-## What would change the answer
+## The obvious fix was tried and does not work
 
-A no-op guard on `cse`, `branch_simplify` and `merge_blocks`, so a pass
-that finds nothing returns the function it was given. That is what makes
-the 1.2% cheap enough to be worth having, and it is the thing to build
-before the vocabulary port, not after: the port adds two more passes to a
-pipeline whose per-pass cost is the problem.
+The first version of this entry said a no-op guard on the passes would
+make the 1.2% cheap enough to want. It was built and measured, and it
+does not: `merge_blocks` already returns its input when it finds no
+mergeable pair, and guarding the other two moves nothing.
+
+| | baseline | optimiser on | optimiser on, guarded |
+|---|---|---|---|
+| arm64 instructions | 4,117,381 | 4,068,467 | 4,071,087 |
+| x86-64 instructions | 3,997,483 | 3,940,926 | 3,943,576 |
+| compiling `checker.fern`, best of 3 | 7,521 ms | 9,180 ms | 9,125 ms |
+
+Fifty-five milliseconds of the sixteen hundred, and slightly worse output,
+because a guard that declines a rewrite declines the rewrites it cannot
+see either.
+
+The reason is that the guard costs what the pass costs. `branch_simplify`
+has to know whether any `brif` reads a constant, which means building the
+constant table, and that table is an `i32[]` written through `.with` once
+per constant — an array copy each time unless the value is uniquely owned.
+`cse`'s guard walks every instruction and appends to a per-block array.
+Neither scan allocates less than the rebuild it is trying to avoid.
+
+So the per-pass cost is not "rebuilding when nothing changed". It is the
+shape these passes are written in: dense per-value `i32[]` tables rebuilt
+through `.with`, and a fresh `SBlock` array per pass per function, over
+9,159 functions with no GC. Making the pipeline worth enabling means
+changing that, not adding early exits to it — and 1.2% of the output is a
+small prize for it.

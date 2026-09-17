@@ -2279,6 +2279,19 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"int-unsigned-compare-literal", "function main(): i32 { var s: string = \"ab\"; var b: u8 = s[0]; if (b < 128) { return 1; } return 0; }\n"},
 		{"int-byte-digit-arith", "function main(): i32 { var s: string = \"7\"; var d: u8 = s[0] - b'0'; return d as i32; }\n"},
 		{"int-usize-mixed", "function main(): i32 { var p: usize = 16; var n: i32 = 4; return (p + n) as i32; }\n"},
+		// The compiler-internal intrinsics core/map's bodies call by name. Each
+		// was already LOWERED by irlower — the comment at its lowering says the
+		// point is that core/map compiles and links — but none was registered in
+		// the self-host checker's intrinsic table, so every body calling one
+		// answered the #4451 "could not infer an expression's type" bail while
+		// the Go checker typed it fine. `map_new_impl` was the first casualty and
+		// `__map_own_str_slot` the next, which is why core/map did not type at
+		// all on the self-host and its Map stayed the linear-scan runtime.
+		{"intrinsic-map-hash-seed", "function main(): i32 { return __map_hash_seed(); }\n"},
+		{"intrinsic-rc-inc", "function main(): i32 { var p: usize = __alloc(16); var q: usize = __fern_rc_inc(p); return 0; }\n"},
+		{"intrinsic-str-dec", "function main(): i32 { var s: string = \"ab\"; var q: usize = __fern_str_dec(s); return 0; }\n"},
+		{"intrinsic-arr-dec", "function main(): i32 { var p: usize = __alloc(16); var q: usize = __fern_arr_dec(p, 8); return 0; }\n"},
+		{"intrinsic-drop-arr-ptr", "function main(): i32 { var p: usize = __alloc(16); var q: usize = __fern_drop_arr_ptr(p, 8); return 0; }\n"},
 		{"tuple-var-annot", "function main(): i32 { var t: (i32, string) = (1, \"a\"); return t.0; }\n"},
 		{"tuple-array-annot", "function main(): i32 { var out: (i32, string)[] = []; return 0; }\n"},
 		{"tuple-nested", "function main(): i32 { var t: (i32, (string, i32)) = (1, (\"a\", 2)); return t.0; }\n"},
