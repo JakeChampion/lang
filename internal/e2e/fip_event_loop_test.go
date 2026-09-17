@@ -38,14 +38,19 @@ type fipEventLoopReport struct {
 	P999         int64  `json:"round_p999_ns"`
 }
 
-func runFipEventLoop(t *testing.T, fern, dir, variant string) fipEventLoopReport {
+func runFipEventLoop(t *testing.T, fern, dir, variant string, runner []string) fipEventLoopReport {
 	t.Helper()
 	src := langSrcAbs(t, filepath.Join("examples", "fip", "event_loop_"+variant+".fern"))
 	bin := filepath.Join(dir, variant)
 	if out, err := exec.Command(fern, "-target", "x86-64-linux", "-o", bin, src).CombinedOutput(); err != nil {
 		t.Fatalf("compile %s: %v\n%s", variant, err, out)
 	}
-	out, err := exec.Command(bin).CombinedOutput()
+	// The binary is x86-64 whatever the host is, so it goes through the runner
+	// x86NativeRunner supplies — directly on amd64, under qemu-x86_64
+	// elsewhere. Exec'ing it unconditionally failed the whole aarch64 lane
+	// with `exec format error`, which reads as the harness being broken rather
+	// than unrunnable; #9616 fixed exactly that in the std/bench gates.
+	out, err := benchX86Cmd(runner, bin).CombinedOutput()
 	if err != nil {
 		t.Fatalf("run %s: %v\n%s", variant, err, out)
 	}
@@ -63,12 +68,13 @@ func runFipEventLoop(t *testing.T, fern, dir, variant string) fipEventLoopReport
 }
 
 func TestFipEventLoopDisciplinesAgreeAndDoNotAllocate(t *testing.T) {
+	runner := x86NativeRunner(t) // SKIPs if neither native amd64 nor qemu-x86_64
 	fern := buildFernCLI(t)
 	dir := t.TempDir()
 
-	baseline := runFipEventLoop(t, fern, dir, "baseline")
-	fbip := runFipEventLoop(t, fern, dir, "fbip")
-	fip := runFipEventLoop(t, fern, dir, "fip")
+	baseline := runFipEventLoop(t, fern, dir, "baseline", runner)
+	fbip := runFipEventLoop(t, fern, dir, "fbip", runner)
+	fip := runFipEventLoop(t, fern, dir, "fip", runner)
 
 	// 1. The disciplined variants allocate nothing after initialization.
 	for _, r := range []fipEventLoopReport{fbip, fip} {
