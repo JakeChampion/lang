@@ -33,8 +33,21 @@ const arm64SSACLIHelpersSource = `function main(): i32 {
 	var xs: i32[] = [1, 2, 3];
 	var i: i32 = 0;
 	while (i < 40) { xs = xs.append(i); i = i + 1; }
-	if (__arr_push_shared_count() < 0) { return 93; }
-	if (__arr_push_shared_bytes() < (0 as i64)) { return 94; }
+	// Nothing has crossed the rc==1 cliff yet: xs held the only reference all
+	// the way through, so every append grew it in place.
+	if (__arr_push_shared_count() != 0) { return 93; }
+	if (__arr_push_shared_bytes() != (0 as i64)) { return 94; }
+	// Now make a second reference and append through it. The buffer still has
+	// spare capacity, so the copy that follows is bought by the extra
+	// reference alone — which is the crossing the tally counts.
+	var ys: i32[] = xs;
+	ys = ys.append(999);
+	if (__arr_push_shared_count() < 1) { return 95; }
+	if (__arr_push_shared_bytes() < (4 as i64)) { return 96; }
+	// xs must not see the appended element: a crossing that mutated in place
+	// instead of copying would leave the two sharing a buffer.
+	if (xs.len() != 43) { return 97; }
+	if (ys.len() != 44) { return 98; }
 	return 42;
 }
 `
@@ -62,6 +75,13 @@ func TestArm64SSACLIRuntimeHelpers(t *testing.T) {
 			t.Fatalf("compile -backend %s: %v\n%s", backend, err, o)
 		}
 		written := filepath.Join(dir, backend+".out")
+		// Pre-created WITHOUT the exec bit, so openat's O_CREAT mode never
+		// applies and only write_file_exec's fchmod can make it runnable —
+		// which is the whole of what separates it from write_file. Against a
+		// build that dropped the fchmod this comes back 0644.
+		if err := os.WriteFile(written, []byte("stale"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 		cmd := exec.Command(qemu, bin, written)
 		cmd.Stdin = strings.NewReader("hello\n")
 		var stderr bytes.Buffer
