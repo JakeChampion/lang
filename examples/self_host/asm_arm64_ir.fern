@@ -1125,6 +1125,15 @@ function ssa_fcall(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore
     return ssa_store(reg_of, ins.result, "x0", s);
 }
 
+// ssa_push_operand stages one call argument: a store straight from the value's
+// home when it has a register, so the argument costs one instruction and x0
+// keeps whatever it held. A spilled value still reaches the stack through x0.
+function ssa_push_operand(reg_of: i32[], v: i32, pushed: i32, s: asmcore.EmitState): asmcore.EmitState {
+    if (reg_of[v] >= 0) { return s.write("    str " + ssa_reg(reg_of[v]) + ", [sp, #-16]!\n"); }
+    s = ssa_load_pushed(reg_of, v, "x0", pushed, s);
+    return s.write("    str x0, [sp, #-16]!\n");
+}
+
 // ssa_call emits one call as the stack machine leaves it: the arguments pushed
 // in IR order for a runtime helper and reversed for a user function (arg0 on
 // top), the callee, the caller-side pop, and x0 stored.
@@ -1138,8 +1147,7 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.
     while (i < argc) {
         var a: i32 = i;
         if (!helper) { a = argc - 1 - i; }
-        s = ssa_load_pushed(reg_of, ins.args[a], "x0", i * 16, s);
-        s = s.write("    str x0, [sp, #-16]!\n");
+        s = ssa_push_operand(reg_of, ins.args[a], i * 16, s);
         i = i + 1;
     }
     if (helper) { s = s.write("    bl " + ircore.ir_helper_symbol(ins.str) + "\n"); }
@@ -1192,8 +1200,7 @@ function ssa_str_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
     var argc: i32 = ins.args.len();
     var i: i32 = argc - 1;
     while (i >= 0) {
-        s = ssa_load_pushed(reg_of, ins.args[i], "x0", (argc - 1 - i) * 16, s);
-        s = s.write("    str x0, [sp, #-16]!\n");
+        s = ssa_push_operand(reg_of, ins.args[i], (argc - 1 - i) * 16, s);
         i = i - 1;
     }
     s = s.write("    bl __fn___fern_" + ssa_str_target(ins.str) + "\n");
@@ -1250,8 +1257,7 @@ function ssa_host_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asm
     if (util.str_has_prefix(ins.str, "syscall")) {
         var i: i32 = 0;
         while (i < ins.args.len()) {
-            s = ssa_load_pushed(reg_of, ins.args[i], "x0", i * 16, s);
-            s = s.write("    str x0, [sp, #-16]!\n");
+            s = ssa_push_operand(reg_of, ins.args[i], i * 16, s);
             i = i + 1;
         }
         var a: i32 = ins.args.len() - 2;
@@ -1439,8 +1445,7 @@ function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
     var argc: i32 = ins.args.len() - 1;
     var i: i32 = argc;
     while (i >= 1) {
-        s = ssa_load_pushed(reg_of, ins.args[i], "x0", (argc - i) * 16, s);
-        s = s.write("    str x0, [sp, #-16]!\n");
+        s = ssa_push_operand(reg_of, ins.args[i], (argc - i) * 16, s);
         i = i - 1;
     }
     s = ssa_load_pushed(reg_of, ins.args[0], "x9", argc * 16, s);
@@ -3001,8 +3006,7 @@ function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, o: ir.Op, s: asm
     s = ssa_x0_forget(s);
     var i: i32 = 0;
     while (i < ins.args.len()) {
-        s = ssa_load_pushed(reg_of, ins.args[i], "x0", i * 16, s);
-        s = s.write("    str x0, [sp, #-16]!\n");
+        s = ssa_push_operand(reg_of, ins.args[i], i * 16, s);
         i = i + 1;
     }
     if (o.kind_tag == 74) { s = emit_arm64_op_memcpy(o, ins.imm, lp, s); }

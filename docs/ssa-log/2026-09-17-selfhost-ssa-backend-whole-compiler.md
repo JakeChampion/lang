@@ -148,6 +148,39 @@ on each backend, run under qemu on a program carrying the slice-then-reuse
 shape, emits byte-identical assembly at 144,505 bytes. The compiler binary
 is 21.4 MB against flat's 15.0 MB.
 
+## Staging a call argument, measured
+
+The argument staging was the largest single item and it is now done. A call
+argument used to load the value into the scratch register and push that;
+it now pushes the value's home. On x86-64 that is `pushq -N(%rbp)` for a
+spilled value, exactly what the stack machine emits, and the frame
+addresses from `%rbp` so the pushes do not move it. On arm64 a
+register-resident value stores straight from its home, and a spilled one
+still goes through x0 because there is no store from memory.
+
+| | flat | ssa before | ssa after | after, over flat |
+|---|---|---|---|---|
+| arm64 | 4,268,783 | 4,603,769 | 4,324,767 | +1.3% |
+| x86-64 | 3,213,372 | 4,580,160 | 4,168,281 | +30% |
+
+arm64 lands within 1.3% of the stack machine. x86-64 keeps a wider gap
+because its stack machine pushes a frame slot in one instruction where
+arm64's needs two, so the SSA backend had more of that saving already
+banked and less left to take.
+
+The x86-64 differential over all seventeen corpus programs agrees with the
+stack machine on exit code and output, and the stage-two build is
+identical.
+
+**Measured and not taken.** Computing a binary into its result's home
+instead of the scratch register, which is the register-to-register move
+above, was built and measured: it moves 11,084 of the 18,737
+register-form binaries off `%rax` and changes the whole-compiler total by
+298 instructions, upward. Binaries whose result and left operand are both
+register-resident are rare enough that the saved move and the added one
+cancel. It is not worth the register-parameterised instruction table it
+needs, so the table still names `%rax` and `%rcx`.
+
 ## The optimiser on the lifted function, measured
 
 The backend runs `ssa.prune_dead` and nothing else. Calling `ssa.optimize`
