@@ -124,7 +124,10 @@ pub struct EmitState {
     // rest take the stack-machine emit. The two counters are the module tally.
     ssa_backend: boolean,
     ssa_emitted: i32,
-    ssa_declined: i32
+    ssa_declined: i32,
+    // ssa_frame is the byte size of the SSA function being emitted, 0 outside
+    // one; the arm64 emitter addresses that function's frame slots from sp.
+    ssa_frame: i32
 }
 
 pub function new_state(): EmitState {
@@ -170,7 +173,8 @@ pub function new_state(): EmitState {
         const_aggs: [],
         ssa_backend: false,
         ssa_emitted: 0,
-        ssa_declined: 0
+        ssa_declined: 0,
+        ssa_frame: 0
     };
 }
 
