@@ -1396,11 +1396,10 @@ func runCheck(srcPath, target string) error {
 // ssa reported hundreds of KB live at exit under FERN_LEAKCHECK where the
 // stack-machine emitter reported hundreds of bytes. That measurement does not
 // hold up. arm64ssa's census derives live_bytes from the arena cursor less
-// what __free tallied, and __free tallies the size class it pushed the block
-// onto rather than what the bump site charged, so the figure drifts upward
-// with the variety of allocation sizes even when every allocation is freed —
-// constant at 32 bytes for fixed-width input at any length, 832 to 8,528 for
-// varying widths, with identical alloc and free counts throughout (#9558).
+// what __free tallied, and something breaks that identity once allocation
+// sizes vary: the figure is constant at 32 bytes for fixed-width input at any
+// length, and runs 832 to 8,528 for varying widths, with identical alloc and
+// free counts throughout. The mechanism is not yet identified (#9558).
 //
 // It was not the single-word string ABI either, which was the first reading:
 // x86-64 runs that same ABI, since ast.TwoWordOverride is set only by

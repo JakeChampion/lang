@@ -26,12 +26,10 @@ stack-machine emitter reported hundreds of bytes. **That measurement does not
 hold up, and the retention question is currently open rather than settled.**
 
 `arm64ssa`'s census derives `live_bytes` from the arena cursor less what
-`__free` tallied, and `__free` tallies the size class it pushed the block onto
-rather than the size the bump site charged. The two agree only when every
-block's size already sits on a class boundary, so the figure drifts upward with
-the *variety* of allocation sizes even when every allocation is freed. A
-`read_line` loop over 8,000 lines, identical alloc and free counts in all four
-runs:
+`__free` tallied, and something breaks that identity once allocation sizes
+vary: the figure drifts upward with the *variety* of sizes even when every
+allocation is freed. A `read_line` loop over 8,000 lines, identical alloc and
+free counts in all four runs:
 
 | input | arm64 stack machine | arm64 `-backend ssa` |
 | --- | ---: | ---: |
@@ -43,7 +41,10 @@ runs:
 Constant when the sizes are uniform, growing when they are not. That is the
 instrument, not the program. Peak RSS on `coreutils/uniq.fern` differs by
 64–136 KB between the two emitters and does not grow with the input, against
-the 369 KB the census claimed at 8,000 lines.
+the 369 KB the census claimed at 8,000 lines. Ordinary allocation through
+`__alloc` / `__free` does not show it, so it is reached through `read_line`'s
+own allocation sites. #9558 has the reproducer; the mechanism is not yet
+identified and that issue is deliberately careful not to guess at one again.
 
 It was NOT the single-word string ABI either, which was the first reading.
 x86-64 runs that same ABI — `ast.TwoWordOverride` is set only by
