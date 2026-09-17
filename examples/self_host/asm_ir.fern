@@ -5661,7 +5661,9 @@ function ssa_str_view(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.E
         s = s.write("    pushq %rcx\n    pushq %rax\n    movq $24, %rdi\n    call __fern_alloc\n    movq %rax, %rdx\n    popq %rax\n    popq %rcx\n");
     }
     s = s.write("    movq $-1, (%rdx)\n    movq %rcx, 8(%rdx)\n    movq %rax, 16(%rdx)\n    addq $8, %rdx\n");
-    return ssa_store(reg_of, ins.result, "%rdx", s);
+    // The result leaves in %rdx, so the store does not re-assert what %rax
+    // holds, and the bound loaded into it above has been overwritten.
+    return ssa_store(reg_of, ins.result, "%rdx", ssa_x0_forget(s));
 }
 
 // SsaFrame is the frame below the values: the phi stage words after the
