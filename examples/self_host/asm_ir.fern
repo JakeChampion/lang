@@ -1965,6 +1965,14 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // otherwise can't make. Used only by __fern_str_free (#2649 string RC).
     s = s.write("__fern_heap_base: .quad 0\n");
     s = s.write("    .align 8\n");
+    if (s.has_need("alloc_count")) {
+        // The allocator's call count (#9596), read inline by kind_tag 315 —
+        // .globl for the same reason as the cursor pair above, since the read
+        // is an inline `movq` from whichever unit asked for it.
+        s = s.write("    .globl __fern_alloc_count\n");
+        s = s.write("__fern_alloc_count: .quad 0\n");
+        s = s.write("    .align 8\n");
+    }
     s = s.write("__fern_rc_underflow: .quad 0\n");
     s = s.write("    .align 8\n");
     // core/map's per-process string-hash seed (#6194). Read and filled only
@@ -2056,6 +2064,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // to attribute.
     if (hev_on()) {
         s = s.write("__fern_alloc:\n");
+        if (s.has_need("alloc_count")) { s = s.write("    incq __fern_alloc_count(%rip)\n"); }
         s = s.write("    pushq %rdi\n");             // requested bytes
         s = s.write("    call __fern_alloc_inner\n");
         s = s.write("    popq %rdi\n");
@@ -2073,6 +2082,11 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("__fern_alloc_inner:\n");
     } else {
         s = s.write("__fern_alloc:\n");
+        // Ahead of every exit — the two freelist pops and the bump — so a
+        // recycled block is counted exactly like a bumped one. Under a
+        // heap-event build the wrapper above counts instead, so the inner
+        // body must not count again.
+        if (s.has_need("alloc_count")) { s = s.write("    incq __fern_alloc_count(%rip)\n"); }
     }
     s = s.write("    pushq %rbp\n");
     s = s.write("    movq %rsp, %rbp\n");
@@ -6483,6 +6497,8 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
             }
         } else if (o.kind_tag == 80) {  // heap_bump_bytes
             s = emit_ir_op_heap_bump_bytes(o, s);
+        } else if (o.kind_tag == 315) {  // heap_alloc_count
+            s = emit_ir_op_heap_alloc_count(o, s);
         } else if (o.kind_tag == 229) {  // heap_mark
             s = emit_ir_op_heap_mark(o, s);
         } else if (o.kind_tag == 230) {  // heap_release_to
@@ -7254,6 +7270,21 @@ function emit_ir_op_heap_bump_bytes(o: ir.Op, s: asmcore.EmitState): asmcore.Emi
     s = s.write("    cmovneq %rdx, %rcx\n");                 // 0 if uninit, else ptr−base
     s = s.write("    pushq %rcx\n");
     s = s.need("heap");
+
+    return s;
+}
+
+// emit_ir_op_heap_alloc_count reads the allocator's call count (#9596),
+// ticked at __fern_alloc's entry so the freelist-pop path is counted exactly
+// like the bump path. An inline read of the word for heap_bump_bytes's reason:
+// a call would only add an ABI. `alloc_count` is the need that puts the
+// counter — and the tick — into the runtime, so a program that never asks
+// for the number emits neither.
+function emit_ir_op_heap_alloc_count(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+    s = s.write("    movq __fern_alloc_count(%rip), %rax\n");
+    s = s.write("    pushq %rax\n");
+    s = s.need("heap");
+    s = s.need("alloc_count");
 
     return s;
 }

@@ -14925,6 +14925,19 @@ func (b *builder) callBody(n *ast.Call) error {
 			return nil
 		}
 	}
+	// __heap_alloc_count(): i64 — the allocator's call count (#9596), the
+	// half __heap_bump_bytes cannot see: a freelist pop hands out a block
+	// without moving the cursor, so a recycling steady state is flat in
+	// bytes and busy in calls. Same runtime-helper shape as the probe
+	// above; each backend ticks its own counter at every site that hands
+	// out a block and reads it back here. The counter is emitted only for
+	// a module that names this helper, so nothing else changes shape.
+	if id.Name == "__heap_alloc_count" && len(n.Args) == 0 {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_heap_alloc_count", Width: ResWide, I32: 0})
+			return nil
+		}
+	}
 	// Bit-counting intrinsics. Unlike the probes above these are NOT
 	// runtime-helper calls — they lower to a single IR op, which is the
 	// entire point: the SWAR sequences they replace cost ~19.5 ns per

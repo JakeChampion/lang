@@ -4680,6 +4680,10 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
     // negative. Matches native's FuncSigs; the wasm backend
     // zero-extends its i32 cursor difference to suit.
     if (id.name == "__heap_bump_bytes") { return ty_i64(); }
+    // __heap_alloc_count(): blocks handed out (#9596). i64 for the
+    // mark's reason — a long-running program passes 2^31
+    // allocations, and a wrapped count reads as a healthy one.
+    if (id.name == "__heap_alloc_count") { return ty_i64(); }
     // __heap_mark(): the arena checkpoint, an absolute cursor
     // value — i64 for the bump mark's reason and then some, since
     // this is the pointer itself rather than a difference (#6728).

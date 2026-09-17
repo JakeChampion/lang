@@ -1,0 +1,8 @@
+waiver: harness-limit
+reason: internal/interp has no allocator to count calls into — it is a
+  tree-walking evaluator over Go values — so __heap_alloc_count()
+  returns 0 there unconditionally and the shape this case measures is
+  unobservable, exactly as for __heap_bump_bytes in
+  alloc_flat_under_reclaim. Giving the interpreter a fake counter would
+  make it report a number that describes nothing; see
+  docs/ALLOCATION-OBSERVABLE.md.

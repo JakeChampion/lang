@@ -197,7 +197,7 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 	w("\tsyscall")
 	w("")
 	for _, name := range names {
-		if err := emitFuncBody(w, name, progs[name], numAlloc, strLabels, sentLabels, fnIndex); err != nil {
+		if err := emitFuncBody(w, name, progs[name], numAlloc, strLabels, sentLabels, fnIndex, countsAllocs(helpers)); err != nil {
 			return "", err
 		}
 	}
@@ -211,7 +211,11 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		if !slices.Contains(helpers, "__alloc") {
 			helpers = append(helpers, "__alloc")
 			w(".p2align 4")
-			emitAllocHelper(w)
+			if countsAllocs(helpers) {
+				emitAllocHelperCounting(w)
+			} else {
+				emitAllocHelper(w)
+			}
 		}
 	}
 	if usesTranscendentals(helpers) {
@@ -330,7 +334,7 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 // emitFuncBody writes one function's label, prologue, parameter moves, block
 // bodies, and epilogue. Block labels are namespaced by the function label so
 // several functions coexist in one program.
-func emitFuncBody(w func(string, ...any), name string, p *Program, numAlloc int, strLabels map[string]string, sentLabels map[int64]string, fnIndex map[string]int) error {
+func emitFuncBody(w func(string, ...any), name string, p *Program, numAlloc int, strLabels map[string]string, sentLabels map[int64]string, fnIndex map[string]int, counting bool) error {
 	label := fnLabel(name)
 	// s3 — the last register in the file — is the free scratch the div/shift and
 	// call sequences stage operands through. It is above the allocatable range,
@@ -357,7 +361,7 @@ func emitFuncBody(w func(string, ...any), name string, p *Program, numAlloc int,
 	bodyW := func(format string, args ...any) {
 		fmt.Fprintf(&body, format+"\n", args...)
 	}
-	if err := emitFuncBlocks(bodyW, label, p, numAlloc, scratch, strLabels, sentLabels, fnIndex); err != nil {
+	if err := emitFuncBlocks(bodyW, label, p, numAlloc, scratch, strLabels, sentLabels, fnIndex, counting); err != nil {
 		return err
 	}
 	saved := calleeSavedIn(body.String(), p.NumRegFile)
@@ -441,7 +445,7 @@ func copyLines(w func(string, ...any), body string) {
 }
 
 // emitFuncBlocks writes every block body and terminator.
-func emitFuncBlocks(w func(string, ...any), label string, p *Program, numAlloc, scratch int, strLabels map[string]string, sentLabels map[int64]string, fnIndex map[string]int) error {
+func emitFuncBlocks(w func(string, ...any), label string, p *Program, numAlloc, scratch int, strLabels map[string]string, sentLabels map[int64]string, fnIndex map[string]int, counting bool) error {
 	order := LayoutOrder(p)
 	// nextInLayout[bi] is the block physically following bi in the emitted
 	// order, or -1 for the last one: a branch to it needs no instruction.
@@ -470,7 +474,7 @@ func emitFuncBlocks(w func(string, ...any), label string, p *Program, numAlloc, 
 				}
 				continue
 			}
-			if lines, ok := inlineAllocLines(in, numAlloc, fmt.Sprintf("%s_b%d_i%d", label, bi, ii)); ok {
+			if lines, ok := inlineAllocLines(in, numAlloc, fmt.Sprintf("%s_b%d_i%d", label, bi, ii), counting); ok {
 				for _, l := range lines {
 					if strings.HasSuffix(l, ":") {
 						w("%s", l)
@@ -2366,6 +2370,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__memset":                      emitMemsetHelper,
 	"write":                         emitWriteHelper,
 	"__fern_heap_bump_bytes":        emitHeapBumpBytesHelper,
+	"__fern_heap_alloc_count":       emitHeapAllocCountHelper,
 	"__method_Reader_read_line":     emitReaderReadLineHelper,
 	"read_dir":                      emitReadDirHelper,
 	"tcp_listen":                    emitTcpListenHelper,
@@ -2474,6 +2479,7 @@ var heapUsingHelpers = map[string]bool{
 	"hostname":                   true,
 	"create_dir_all":             true,
 	"__fern_heap_bump_bytes":     true,
+	"__fern_heap_alloc_count":    true,
 }
 
 // runtimeHelperDeps records the helper→helper call edges (a helper that tail-
@@ -2538,14 +2544,27 @@ var runtimeHelperDeps = map[string][]string{
 // instructions from an EARLIER helper doubled examples/bench/string_rfind_byte,
 // 61 ms to 122 ms, without changing one instruction that program runs (#8193).
 func emitRuntimeHelpers(w func(string, ...any), helpers []string) {
+	counting := countsAllocs(helpers)
 	for _, h := range helpers {
 		// Column 0, like every other directive the backends emit: the
 		// instruction counters (scripts/perf-bench, the SSA CLI gate) count
 		// indented lines, so an indented directive would read as an
 		// instruction the program does not execute.
 		w(".p2align 4")
+		if counting && h == "__alloc" {
+			emitAllocHelperCounting(w)
+			continue
+		}
 		runtimeHelperEmitters[h](w)
 	}
+}
+
+// countsAllocs reports whether this module reads __heap_alloc_count() (#9596)
+// and so needs __alloc to tick the counter. It is the module's only census:
+// this backend does not implement FERN_LEAKCHECK, so nothing else asks for
+// the tick and no other program pays for it.
+func countsAllocs(helpers []string) bool {
+	return referencesHelper(helpers, "__fern_heap_alloc_count")
 }
 
 // referencedRuntimeHelpers returns, sorted, the hand-written runtime-helper
