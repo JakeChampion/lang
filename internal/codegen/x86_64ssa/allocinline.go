@@ -1,6 +1,10 @@
 package x86_64ssa
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/jakechampion/lang/internal/ast"
+)
 
 // The allocation fast paths. __alloc and __free are reached through
 // __ssa_alloc_pres, a trampoline that saves nine registers and the flags
@@ -44,6 +48,13 @@ func boxFreeInline(in Inst) bool {
 // is the per-instruction scratch the trampoline already uses; s0 homes a
 // slot-resident box and s1 the old list head.
 func inlineAllocLines(in Inst, numAlloc int, seed string, counting bool) ([]string, bool) {
+	// Under the leak census BOTH fast paths stay calls, not just the pop the
+	// `counting` check below turns off: __alloc and __free are where the
+	// census counts, and an inline push reaches __free no more than an inline
+	// pop reaches __alloc, so either one left on undercounts.
+	if ast.LeakCheckEnabled {
+		return nil, false
+	}
 	lbl := func(suffix string) string { return fmt.Sprintf(".Lssa_alloc_%s_%s", seed, suffix) }
 	if in.Op == MemAlloc && in.SrcImm {
 		if counting {
