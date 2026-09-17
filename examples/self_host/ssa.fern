@@ -1057,6 +1057,32 @@ function extend_loop_invariant_intervals(f: SFunc, def_pos: i32[], hi: i32[]): i
     }
     return hi;
 }
+// `abi_reg` is the pool index of the register the target's ABI returns a
+// call's result in, or -1 where the emitter still uses that register as
+// scratch. A value a call defines is given it when it is free, so the store
+// after the call finds the value already home and emits nothing; every other
+// value takes it last, so it stays available for the next call result.
+function pick_caller_reg(free: i32[], abi_reg: i32, want_abi: boolean): i32 {
+    if (abi_reg < 0) { return free[free.len() - 1]; }
+    if (want_abi) {
+        for r in free { if (r == abi_reg) { return abi_reg; } }
+    }
+    var i: i32 = free.len() - 1;
+    while (i >= 0) {
+        if (free[i] != abi_reg) { return free[i]; }
+        i = i - 1;
+    }
+    return free[free.len() - 1];
+}
+
+function remove_reg(free: i32[], reg: i32): i32[] {
+    var out: i32[] = [];
+    var dropped: boolean = false;
+    for r in free {
+        if (r == reg && !dropped) { dropped = true; } else { out = out.append(r); }
+    }
+    return out;
+}
 
 // regalloc_linear assigns each value a register index or a spill slot. The
 // indices below `nregs` are the caller-saved registers, the `nsaved` above
@@ -1065,7 +1091,7 @@ function extend_loop_invariant_intervals(f: SFunc, def_pos: i32[], hi: i32[]): i
 // register first, a callee-saved one when those are out, a slot last. The
 // lowest indices go first, so an emitter that saves the callee-saved
 // registers a function uses saves a dense prefix of them.
-pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32): i32[] {
+pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32): i32[] {
     var big: i32 = 2000000000;
     var lo: i32[] = [];
     var hi: i32[] = [];
@@ -1075,8 +1101,9 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32): i32[] {
 
     // Number instructions and record each value's def/use positions.
     var def_pos: i32[] = [];
+    var call_def: i32[] = [];
     i = 0;
-    while (i < f.nvals) { def_pos = def_pos.append(0 - 1); i = i + 1; }
+    while (i < f.nvals) { def_pos = def_pos.append(0 - 1); call_def = call_def.append(0); i = i + 1; }
     var pos: i32 = 0;
     var bi: i32 = 0;
     while (bi < f.blocks.len()) {
@@ -1091,7 +1118,10 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32): i32[] {
                 if (ins.args[a] >= 0 && ins.args[a] < lo.len() && pos < lo[ins.args[a]]) { lo = lo.with(ins.args[a], pos); } if (ins.args[a] >= 0 && ins.args[a] < hi.len() && pos > hi[ins.args[a]]) { hi = hi.with(ins.args[a], pos); }
                 a = a + 1;
             }
-            if (inst_is_call(ins.kind_tag)) { calls = calls.append(pos); }
+            if (inst_is_call(ins.kind_tag)) {
+                calls = calls.append(pos);
+                if (ins.result >= 0 && ins.result < call_def.len()) { call_def = call_def.with(ins.result, 1); }
+            }
             pos = pos + 1;
             k = k + 1;
         }
@@ -1142,7 +1172,10 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32): i32[] {
             reg_of = reg_of.with(v, 0 - 1);   // spill
         } else {
             var reg: i32 = 0;
-            if (from_caller) { reg = free[free.len() - 1]; free = drop_last_i(free); }
+            if (from_caller) {
+                reg = pick_caller_reg(free, abi_reg, call_def[v] == 1);
+                free = remove_reg(free, reg);
+            }
             else { reg = free_s[free_s.len() - 1]; free_s = drop_last_i(free_s); }
             reg_of = reg_of.with(v, reg);
             act_val = act_val.append(v); act_hi = act_hi.append(hi[v]); act_reg = act_reg.append(reg);
