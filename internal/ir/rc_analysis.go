@@ -1702,14 +1702,105 @@ func consumedStringParams(fn *ast.FuncDecl, info *checker.Info, trmcFuncs map[st
 	return out
 }
 
+// frameBoundStringAliases names `pn` together with the locals that bind it
+// by a bare `var x: string = pn`, transitively. Such a local denotes the
+// parameter's own buffer and changes nothing about who owns it:
+// computeFreeEligible's borrowed-alias leg cancels the transfer inc against
+// an exit sweep that never touches the slot, so the frame ends holding no
+// reference it did not start with (TestBorrowedParamAliasTakesNoInc). An
+// occurrence of the alias therefore retains exactly what the same occurrence
+// of the parameter would, and the walk below can classify the two alike.
+//
+// That is the whole of the gap this closes: the builder already proves the
+// binding confines the alias to the frame, and this summary — which runs
+// before any builder exists — had no arm for the shape at all, so it refused
+// the parameter and the refusal reached every caller as computeFreeEligible's
+// native single-word string taint. `function tag(src: string, i: i32): i32 {
+// var x: string = src; return x.len() + i; }` stranded the caller's whole
+// buffer, one per call: 400 allocations and 0 frees under FERN_LEAKCHECK
+// where the same body written `src.len()` freed all 400 (#9549).
+//
+// A name is admitted only when the slot cannot come to hold anything other
+// than the parameter's buffer, and cannot outlive the frame by a route the
+// occurrence arms do not see:
+//
+//   - never an assignment target. A reassigned seed is the opposite case and
+//     countedSeedOccurrences already credits it on opposite grounds — the
+//     binding is rebindable, so the *ast.Var lowering emits a real transfer
+//     inc and the local owns a reference of its own.
+//   - declared exactly once, and not shadowing a parameter, so the verdict
+//     governs one binding rather than a slot two share. This is
+//     localNameUnique, spelled without the builder's slot map the way
+//     countedSeedOccurrences spells it.
+//   - never mentioned inside a Lambda: a capture lives as long as the closure
+//     does, which can be longer than the frame.
+func frameBoundStringAliases(fn *ast.FuncDecl, pn string) map[string]bool {
+	aliases := map[string]bool{pn: true}
+	// Any name a closure in this body mentions. Lambda.Captures is the
+	// checker's answer and is not consulted: it is nil until the checker
+	// visits the node, and a mention is the conservative question anyway.
+	captured := map[string]bool{}
+	assigned := map[string]bool{}
+	declared := map[string]int{}
+	var binds []*ast.Var
+	ast.Walk(fn.Body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.Lambda:
+			ast.Walk(x, func(m ast.Node) bool {
+				if id, ok := m.(*ast.Ident); ok {
+					captured[id.Name] = true
+				}
+				return true
+			})
+		case *ast.Assign:
+			if id, ok := x.Target.(*ast.Ident); ok {
+				assigned[id.Name] = true
+			}
+		case *ast.Var:
+			declared[x.Name]++
+			binds = append(binds, x)
+		}
+		return true
+	})
+	for _, p := range fn.Params {
+		declared[p.Name] += 2
+	}
+	// `var a = p; var b = a;` chains, and ast.Walk's order is not the
+	// binding order across nested blocks, so iterate to a fixpoint. It only
+	// ever adds names, so it terminates in at most len(binds) rounds.
+	for changed := true; changed; {
+		changed = false
+		for _, v := range binds {
+			if aliases[v.Name] || assigned[v.Name] || captured[v.Name] || declared[v.Name] != 1 {
+				continue
+			}
+			if _, isStr := v.Type.(ast.StringType); !isStr {
+				continue
+			}
+			src, ok := v.Init.(*ast.Ident)
+			if !ok || !aliases[src.Name] {
+				continue
+			}
+			aliases[v.Name] = true
+			changed = true
+		}
+	}
+	return aliases
+}
+
 // stringParamCounted classifies string parameter `pn`. `consumed` says the
 // parameter is consumed-threaded (consumedStringParams), which is what lets a
 // bare `return pn` count as safe.
+//
+// The occurrences it classifies are those of `pn` and of every local that
+// frame-bound-aliases it: the same buffer under the same ownership, so the
+// same arms decide both — see frameBoundStringAliases.
 func stringParamCounted(fn *ast.FuncDecl, pn string, summary *summaryTable[[]bool], ctorCounted func(*ast.Call) bool, consumed bool) bool {
+	aliases := frameBoundStringAliases(fn, pn)
 	safe := map[*ast.Ident]bool{}
 	seedOK := countedSeedOccurrences(fn)
 	mark := func(e ast.Expr) {
-		if id, ok := e.(*ast.Ident); ok && id.Name == pn {
+		if id, ok := e.(*ast.Ident); ok && aliases[id.Name] {
 			safe[id] = true
 		}
 	}
@@ -1717,11 +1808,19 @@ func stringParamCounted(fn *ast.FuncDecl, pn string, summary *summaryTable[[]boo
 	ast.Walk(fn.Body, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.Ident:
-			if x.Name == pn {
+			if aliases[x.Name] {
 				total++
 				if seedOK[x] {
 					safe[x] = true
 				}
+			}
+		case *ast.Var:
+			// The binding that creates the alias. It hands the slot the
+			// buffer the source already names and takes no reference for
+			// it, so the occurrence naming the source retains nothing —
+			// the same fact frameBoundStringAliases admitted the name on.
+			if aliases[x.Name] {
+				mark(x.Init)
 			}
 		case *ast.Assign:
 			// The parameter slot as an assignment DESTINATION. A write
@@ -1744,8 +1843,15 @@ func stringParamCounted(fn *ast.FuncDecl, pn string, summary *summaryTable[[]boo
 			// transfers to the result, and the sweep then skips the slot. A
 			// borrowed param returned bare has no such count and keeps its
 			// refusal — that is the shape the tier's conservatism is for.
+			//
+			// Only the PARAMETER: the entry retain this credit spends is on
+			// the parameter slot, and a frame-bound alias has none of its
+			// own. Returning one hands the caller an uncounted reference,
+			// which is the escape aliasReturnsConfined refuses at lowering.
 			if consumed {
-				mark(x.Value)
+				if id, ok := x.Value.(*ast.Ident); ok && id.Name == pn {
+					safe[id] = true
+				}
 			}
 		case *ast.StructLit:
 			for _, f := range x.Fields {

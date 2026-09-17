@@ -20,30 +20,38 @@ only. A sixth, `wasmssa`, was retired (#9397). Background:
 
 ### Why the SSA backends are not the default (string retention)
 
-The SSA backends run the **single-word string ABI** — `buildArm64SSA` never
-sets `ast.TwoWordOverride`. On that ABI `internal/ir/rc_analysis.go`
-conservatively taints a string local passed to a user function out of reclaim,
-because the caller cannot see whether the callee retained it; the taint exists
-so a retained copy is never left pointing at a freed buffer (#4174). The arm64
-stack-machine emitter runs the two-word ABI and has no such taint.
+`-backend ssa` on arm64 holds hundreds of KB at exit on ordinary string
+programs where the stack-machine emitter holds hundreds of bytes. Measured at
+exit under `FERN_LEAKCHECK=1` (a census the COMPILER builds into the program,
+not a runtime switch):
 
-The cost is that retention grows with the input instead of staying flat.
-Measured at exit under `FERN_LEAKCHECK=1`:
+| program, 8,000 lines | allocs | frees | live_bytes |
+| --- | ---: | ---: | ---: |
+| `coreutils/uniq.fern`, arm64 stack machine | 118 | 108 | 368 B |
+| `coreutils/uniq.fern`, arm64 `-backend ssa` | 122 | 111 | 369,040 B |
+| `coreutils/uniq.fern`, x86-64 stack machine | 106 | 96 | 400 B |
 
-| program | stack machine | `-backend ssa` |
-| --- | --- | --- |
-| `coreutils/uniq.fern`, 1,000 lines | 384 B | 57,856 B |
-| `coreutils/uniq.fern`, 8,000 lines | 448 B | 188,992 B |
-| `coreutils/sort.fern`, 2,000 lines | 720 B | 53,184 B |
+The object counts barely move — 10 unfreed against 11 — so this is **one**
+unfreed buffer whose size tracks the input, not more objects leaked.
 
-Alloc and free *counts* barely move between the two — it is the string buffers
-that go unreclaimed, not more objects.
+It is NOT the single-word string ABI. That was the original reading (#9542),
+and the x86-64 row above is what disproves it: `ast.TwoWordOverride` is set
+only by `internal/codegen/arm64`, so x86-64 runs the same single-word ABI with
+the same `internal/ir` reclaim taint, and it is clean. A read loop with no
+aliasing and no user function reproduces the gap on its own — identical alloc
+and free counts on both backends, 16 B against 12,752 B — which puts it in
+`arm64ssa`'s read path rather than anywhere shared. #9558 has the reproducer.
 
-Making the SSA backends a default again needs one of the two gaps closed:
-`arm64ssa` running the two-word string ABI, or #4174's taint replaced by an
-interprocedural answer to whether a callee retains its string argument.
-`internal/e2e/arm64_default_string_reclaim_test.go` holds the default to that
+Making the SSA backends a default again needs #9558 closed. `arm64ssa` running
+the two-word string ABI is a separate open item and would not close it either,
+for the same reason the x86-64 row gives.
+`internal/e2e/arm64_default_string_reclaim_test.go` holds the default to the
 bar.
+
+The single-word ABI's reclaim taint is real and is being narrowed on its own
+merits rather than as a precondition: it refused a string parameter bound to a
+local, which cost the caller its reclaim once per call (#9549, 400 allocations
+and 0 frees on the shape). `frameBoundStringAliases` credits that shape now.
 
 Targets are `<isa>-<environment>` (#6529): the ISA half picks the backend, the
 environment half says what the host provides. Neither is implied — there is no
