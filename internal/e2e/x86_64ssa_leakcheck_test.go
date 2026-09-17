@@ -1,7 +1,6 @@
 package e2e
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,15 +22,16 @@ import (
 // other two by design.
 var leakcheckCounts = regexp.MustCompile(`leakcheck: allocs=(\d+) frees=(\d+) live_bytes=(-?\d+)`)
 
-// A program that allocates a heap string per iteration and drops it. Every
-// block is freed, so a census whose counters net out correctly reports
-// live_bytes 0 and frees equal to allocs. It returns n%7, so a non-zero exit
-// is the normal path.
+// Allocates per iteration and drops it all, in two shapes on purpose:
 //
-// The concatenation joins a VARIABLE to itself rather than two literals:
-// `"abc" + "defgh"` folds to a single .rodata literal at compile time and
-// allocates nothing, which made the first version of this fixture report
-// allocs=0 on both backends — the test was right and the program was wrong.
+//   - `base + base` is a VARIABLE-size concat, which never reaches
+//     inlineAllocLines. Two string literals would fold at compile time and
+//     allocate nothing at all, which is what made the first version of this
+//     fixture report allocs=0 on both backends.
+//   - `[1, 2, 3]` is a CONSTANT-size allocation, which is exactly what the
+//     inline fast path claims. Without it the allocs threshold below cannot
+//     pin the census's inline gate: every allocation would bypass that path
+//     anyway, so removing the gate would not move a single number.
 const x86SSALeakcheckSrc = `function main(): i32 {
     var n: i32 = 0;
     var i: i32 = 0;
@@ -39,23 +39,58 @@ const x86SSALeakcheckSrc = `function main(): i32 {
     loop {
         if (i >= 500) { break; }
         var s: string = base + base;
-        n = (n + s.len()) % 101;
+        var xs: i32[] = [1, 2, 3];
+        n = (n + s.len() + xs[0]) % 101;
         i = i + 1;
     }
     return n % 7;
 }
 `
 
-func censusFor(t *testing.T, bin, qemu, dir, backend string) (allocs, frees, live int) {
+// The same work, left through the exit() builtin instead of returning. exit()
+// bypasses _start's epilogue, so it carries its own call to the report: a
+// program leaving this way would otherwise print no census at all.
+const x86SSALeakcheckExitSrc = `function main(): i32 {
+    var n: i32 = 0;
+    var i: i32 = 0;
+    var base: string = "abcdefghij";
+    loop {
+        if (i >= 500) { break; }
+        var s: string = base + base;
+        var xs: i32[] = [1, 2, 3];
+        n = (n + s.len() + xs[0]) % 101;
+        i = i + 1;
+    }
+    exit(n % 7);
+    return 0;
+}
+`
+
+type census struct {
+	allocs, frees, live, exit int
+	line                      string
+}
+
+// runCensus builds src for x86-64 under `backend`, with the census on or off,
+// and returns what it reported and the status it exited with.
+func runCensus(t *testing.T, bin, qemu, dir, backend, name, src string, leakcheck bool) census {
 	t.Helper()
-	src := filepath.Join(dir, "census_"+backend+".fern")
-	if err := os.WriteFile(src, []byte(x86SSALeakcheckSrc), 0o644); err != nil {
+	tag := name + "_" + backend
+	if leakcheck {
+		tag += "_lc"
+	}
+	srcPath := filepath.Join(dir, tag+".fern")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	binPath := filepath.Join(dir, "census_"+backend+".bin")
-	compile := exec.Command(bin, "-target", "x86-64-linux", "-backend", backend, "-o", binPath, src)
+	binPath := filepath.Join(dir, tag+".bin")
+	compile := exec.Command(bin, "-target", "x86-64-linux", "-backend", backend, "-o", binPath, srcPath)
 	// The compiler reads the flag, not the produced binary.
-	compile.Env = e2eharness.ChildEnv("FERN_LEAKCHECK=1")
+	env := []string{}
+	if leakcheck {
+		env = append(env, "FERN_LEAKCHECK=1")
+	}
+	compile.Env = e2eharness.ChildEnv(env...)
 	if out, err := compile.CombinedOutput(); err != nil {
 		t.Fatalf("x86-64 -backend %s build failed: %v\n%s", backend, err, out)
 	}
@@ -63,7 +98,23 @@ func censusFor(t *testing.T, bin, qemu, dir, backend string) (allocs, frees, liv
 	run.Env = e2eharness.ChildEnv()
 	var errBuf strings.Builder
 	run.Stderr = &errBuf
-	_ = run.Run() // exits with n%7
+	err := run.Run()
+	code := 0
+	if ee, ok := err.(*exec.ExitError); ok {
+		if ee.ExitCode() < 0 {
+			t.Fatalf("%s died on a signal: %v\n%s", tag, ee, errBuf.String())
+		}
+		code = ee.ExitCode()
+	} else if err != nil {
+		t.Fatalf("run %s: %v\n%s", tag, err, errBuf.String())
+	}
+	c := census{exit: code, line: strings.TrimSpace(errBuf.String())}
+	if !leakcheck {
+		if strings.Contains(errBuf.String(), "leakcheck:") {
+			t.Errorf("%s printed a census without FERN_LEAKCHECK=1 at build time: %q", tag, errBuf.String())
+		}
+		return c
+	}
 	m := leakcheckCounts.FindStringSubmatch(errBuf.String())
 	if m == nil {
 		t.Fatalf("no census line on stderr for -backend %s.\nFERN_LEAKCHECK=1 is read by the compiler at "+
@@ -78,7 +129,8 @@ func censusFor(t *testing.T, bin, qemu, dir, backend string) (allocs, frees, liv
 		}
 		return v
 	}
-	return toInt(m[1]), toInt(m[2]), toInt(m[3])
+	c.allocs, c.frees, c.live = toInt(m[1]), toInt(m[2]), toInt(m[3])
+	return c
 }
 
 func TestX86_64SSAEmitsTheLeakCensus(t *testing.T) {
@@ -86,36 +138,61 @@ func TestX86_64SSAEmitsTheLeakCensus(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
 
-	ssaAllocs, ssaFrees, ssaLive := censusFor(t, bin, qemu, dir, "ssa")
-	flatAllocs, flatFrees, flatLive := censusFor(t, bin, qemu, dir, "flat")
+	var ssa, flat census
+	for _, backend := range []string{"ssa", "flat"} {
+		c := runCensus(t, bin, qemu, dir, backend, "ret", x86SSALeakcheckSrc, true)
+		if backend == "ssa" {
+			ssa = c
+		} else {
+			flat = c
+		}
 
-	for _, c := range []struct {
-		backend             string
-		allocs, frees, live int
-	}{
-		{"ssa", ssaAllocs, ssaFrees, ssaLive},
-		{"flat", flatAllocs, flatFrees, flatLive},
-	} {
-		t.Run(c.backend, func(t *testing.T) {
-			// The loop allocates 500 strings, so a census reporting nothing
-			// allocated is counting the wrong thing rather than being clean.
-			if c.allocs < 100 {
-				t.Errorf("%s: allocs=%d, want at least 100 — the loop allocates a string per "+
-					"iteration, so a count this low means the counter misses the sites that "+
-					"matter (under the census the inline fast paths must stay calls, because "+
-					"__alloc and __free are where the counting happens)", c.backend, c.allocs)
+		t.Run(backend, func(t *testing.T) {
+			// 500 iterations allocate a string and an array each, and the
+			// array is the constant-size shape the inline fast path claims.
+			// A count near 500 means one of the two is not being counted.
+			if c.allocs < 900 {
+				t.Errorf("%s: allocs=%d, want at least 900 — the loop allocates a variable-size "+
+					"string AND a constant-size array per iteration. A count near 500 means the "+
+					"constant-size one is being inlined past the counter: under the census the "+
+					"allocation fast paths must stay calls, because __alloc and __free are where "+
+					"the counting happens", backend, c.allocs)
 			}
 			if c.frees < c.allocs/2 {
-				t.Errorf("%s: allocs=%d frees=%d — every string in the loop is dropped, so the "+
-					"frees should track the allocs", c.backend, c.allocs, c.frees)
+				t.Errorf("%s: allocs=%d frees=%d — everything the loop allocates is dropped, so "+
+					"the frees should track the allocs", backend, c.allocs, c.frees)
 			}
-			// Everything the loop allocates is freed, so what stays live is
-			// the handful of blocks the runtime holds, not the 500 strings.
 			if c.live < 0 || c.live > 8192 {
 				t.Errorf("%s: live_bytes=%d, want a small non-negative number — every block the "+
 					"loop allocates is freed, so live_bytes is bumped+popped-freed netting out "+
 					"to the runtime's own few blocks. A negative value means the frees are "+
-					"counted against sizes the allocs were not", c.backend, c.live)
+					"counted against sizes the allocs were not", backend, c.live)
+			}
+
+			// The report runs between main returning and exit_group, so it
+			// has to park the status across itself. Comparing against the
+			// same program built WITHOUT the census pins that without
+			// hardcoding what n%7 happens to be.
+			plain := runCensus(t, bin, qemu, dir, backend, "ret", x86SSALeakcheckSrc, false)
+			if c.exit != plain.exit {
+				t.Errorf("%s: exited %d with the census and %d without it — the report must not "+
+					"clobber main's exit code, which is what parking it across the call is for",
+					backend, c.exit, plain.exit)
+			}
+
+			// exit() bypasses _start's epilogue, so it carries its own call
+			// to the report and its own parking of the status.
+			ex := runCensus(t, bin, qemu, dir, backend, "exit", x86SSALeakcheckExitSrc, true)
+			exPlain := runCensus(t, bin, qemu, dir, backend, "exit", x86SSALeakcheckExitSrc, false)
+			if ex.exit != exPlain.exit {
+				t.Errorf("%s: the exit() leg exited %d with the census and %d without it — the "+
+					"exit() builtin has to park the status across its report too",
+					backend, ex.exit, exPlain.exit)
+			}
+			if ex.allocs < 900 {
+				t.Errorf("%s: the exit() leg reported allocs=%d, want at least 900 — leaving "+
+					"through exit() must still report the same census as returning does",
+					backend, ex.allocs)
 			}
 		})
 	}
@@ -123,13 +200,11 @@ func TestX86_64SSAEmitsTheLeakCensus(t *testing.T) {
 	// The instrument has to agree between the backends or it cannot be used to
 	// compare them, which is the whole reason it was ported.
 	t.Run("the_two_backends_report_comparably", func(t *testing.T) {
-		if diff := ssaLive - flatLive; diff > 4096 || diff < -4096 {
+		if diff := ssa.live - flat.live; diff > 4096 || diff < -4096 {
 			t.Errorf("live_bytes differs by %d between the backends (ssa %d, flat %d) on a program "+
 				"that frees everything it allocates. The census is meant to be one instrument "+
 				"across both, so a gap this size is a real difference in what is retained, not "+
-				"noise.\n%s", diff, ssaLive, flatLive,
-				fmt.Sprintf("ssa: allocs=%d frees=%d / flat: allocs=%d frees=%d",
-					ssaAllocs, ssaFrees, flatAllocs, flatFrees))
+				"noise.\nssa: %q\nflat: %q", diff, ssa.live, flat.live, ssa.line, flat.line)
 		}
 	})
 }
