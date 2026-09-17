@@ -54,27 +54,6 @@ function splice(insts: ssa.SInst[], more: ssa.SInst[]): ssa.SInst[] {
 // rows never shrink; a scope exit leaves its row and the next entry at that
 // depth overwrites it.
 
-// buf_lift_tag maps one of the string builder's IR op tags (#8773) to its SSA
-// kind, or 0 when the op is not one of them; buf_lift_pops is that op's operand
-// count. The two are kept side by side because the lift needs both for the same
-// op, and a tag whose arity went missing would silently leave the model stack
-// unbalanced.
-function buf_lift_tag(k: string): i32 {
-    if (k == "buf_new") { return 28; }
-    if (k == "buf_push") { return 29; }
-    if (k == "buf_push_range") { return 30; }
-    if (k == "buf_push_byte") { return 31; }
-    if (k == "buf_len") { return 32; }
-    if (k == "buf_take") { return 33; }
-    if (k == "buf_free") { return 34; }
-    return 0;
-}
-function buf_lift_pops(k: string): i32 {
-    if (k == "buf_push_range") { return 4; }
-    if (k == "buf_push" || k == "buf_push_byte") { return 2; }
-    return 1;
-}
-
 function drop_last(a: i32[]): i32[] {
     var out: i32[] = [];
     var i: i32 = 0;
@@ -94,33 +73,8 @@ function drop_last_s(a: string[]): string[] {
     while (i < a.len() - 1) { out = out.append(a[i]); i = i + 1; }
     return out;
 }
-// drop_n drops the last n elements (used to pop a stride-nslots scope row).
-function drop_n(a: i32[], n: i32): i32[] {
-    var out: i32[] = [];
-    var i: i32 = 0;
-    while (i < a.len() - n) { out = out.append(a[i]); i = i + 1; }
-    return out;
-}
 
 // ---- IR binary-op kind -> SSA `binary`/`unary` op string ----------------
-
-// is_rc_noop reports whether a call target is an irlower RC runtime helper the
-// lift strips (SSA has no free — see the arr_make note). All of them take the
-// subject box as their FIRST argument and return it (or void with the result
-// drop'd), so substituting that box for the call's result is sound on the
-// leak-only SSA heap — including when the result FLOWS onward (the
-// consume-rebind `__field_reclaim_<T>(new, old, snap) -> new` is store_local'd).
-// has_prefix reports whether `s` begins with `p` (a byte-wise compare — the
-// compiler's own checker has no `.starts_with` method).
-function has_prefix(s: string, p: string): boolean {
-    if (s.len() < p.len()) { return false; }
-    var i: i32 = 0;
-    while (i < p.len()) {
-        if (s[i] != p[i]) { return false; }
-        i = i + 1;
-    }
-    return true;
-}
 
 // LitWord / decimal_word parse an irlower literal's SOURCE TEXT into the i32 the
 // SSA `const_int` holds. irlower carries integer literals as text so the AST
@@ -134,41 +88,6 @@ function has_prefix(s: string, p: string): boolean {
 struct LiftVals { nvals: i32, stack: i32[], insts: ssa.SInst[], ok: boolean }
 
 struct LitWord { ok: boolean, value: i32 }
-
-function decimal_word(t: string): LitWord {
-    var dec: boolean = t.len() > 0;
-    var ci: i32 = 0;
-    while (ci < t.len()) {
-        var c: i32 = t[ci] as i32;
-        if (ci == 0 && c == 45) {
-            if (t.len() == 1) { dec = false; }
-        } else if (c < 48 || c > 57) { dec = false; }
-        ci = ci + 1;
-    }
-    if (!dec) { return LitWord { ok: false, value: 0 }; }
-    return LitWord { ok: true, value: util.digits_to_i32(t) };
-}
-
-function is_rc_noop(name: string): boolean {
-    if (name == "__fern_rc_inc") { return true; }
-    if (name == "__fern_rc_dec") { return true; }
-    // #4873 grow-bracket share helpers (register-backend rc aliases; wasm
-    // no-ops) — same take-the-box-return-it shape, always drop'd.
-    if (name == "__fern_arr_share_inc") { return true; }
-    if (name == "__fern_arr_share_dec") { return true; }
-    // The per-element retain takes and returns its buffer like the pair above.
-    if (name == "__fern_arr_inc_elems") { return true; }
-    if (name == "__fern_str_free") { return true; }
-    if (name == "__fern_str_view_free") { return true; }
-    if (name == "__fern_str_arr_free") { return true; }
-    // Per-type reclamation helpers irlower emits at scope exit (deep-drop of a
-    // struct's rc-tracked fields / a consume-rebind field reclaim). The type
-    // name is a dynamic suffix; both take + return the subject box (arg 0), so
-    // the box-for-result stand-in is sound on the leak-only SSA heap.
-    if (has_prefix(name, "__struct_drop_")) { return true; }
-    if (has_prefix(name, "__field_reclaim_")) { return true; }
-    return false;
-}
 
 function bin_sym(k: string): string {
     if (k == "add") { return "+"; }
@@ -197,12 +116,10 @@ function bin_sym(k: string): string {
     return "";
 }
 
-// fbin_sym maps an f64 IR op kind to its SSA `binary` symbol. Arithmetic
-// (fadd/…) yields an f64; a compare (feq/…) yields an i32 0/1. The SSA layer
-// needs no float tag from the lift: ssa.compute_isfloat classifies each value
-// (const_float / f64-arg / float-operand arithmetic) downstream, and each
-// backend selects the float instruction (addsd / ucomisd, fadd / fcmp) from
-// that — exactly as build_func's float `binary`s are emitted.
+// fbin_sym names the f64 binaries: "" for any other op. Arithmetic (fadd
+// and the rest) yields an f64; a compare (feq and the rest) yields an i32
+// 0/1. A float is its bit pattern in an integer register throughout, so the
+// binary carries the op name and the emitter selects the float instruction.
 function fbin_sym(k: string): string {
     if (k == "fadd") { return "+"; }
     if (k == "fsub") { return "-"; }
@@ -587,10 +504,8 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResu
             cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: v, args: [], imm: op.i32_imm, str: "" });
             stack = stack.append(v);
         } else if (k == "const_f64") {
-            // An f64 literal, carried as source text (its bits don't fit an
-            // immediate) → the SSA const_float inst, which each backend
-            // materialises in a data section. compute_isfloat seeds float-ness
-            // from this inst. Matches build_func's ExprNumber(is_float) path.
+            // An f64 literal, carried as source text: the const_float inst,
+            // which each emitter materialises as the literal's bits.
             var fcv: i32 = nvals; nvals = nvals + 1;
             cur_insts = cur_insts.append(ssa.SInst { kind_tag: 4, result: fcv, args: [], imm: 0, str: op.str });
             stack = stack.append(fcv);
@@ -617,9 +532,6 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResu
                 cur_insts = cur_insts.append(ssa.SInst { kind_tag: 9, result: bv, args: [l, r], imm: op.width, str: k });
                 stack = stack.append(bv);
             }
-        } else if (fbin_sym(k) != "") {
-            var lv: LiftVals = lift_float_binop(k, nvals, stack, cur_insts, ok);
-            nvals = lv.nvals; stack = lv.stack; cur_insts = lv.insts; ok = lv.ok;
         } else if (k == "not") {
             if (stack.len() < 1) { ok = false; }
             else {
@@ -1002,25 +914,6 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResu
 function loop_tail_appended(blocks: ssa.SBlock[], dead: boolean, id: i32, insts: ssa.SInst[], term: ssa.STerm, preds: i32[]): ssa.SBlock[] {
     if (dead || term.kind_tag == 0) { return blocks; }
     return blocks.append(ssa.SBlock { id: id, insts: insts, term: term, preds: preds });
-}
-
-function lift_float_binop(k: string, nvals: i32, stack: i32[], cur_insts: ssa.SInst[], ok: boolean): LiftVals {
-    // f64 arithmetic / comparison — same shape as the integer binary,
-    // but the SSA symbol drives a float instruction downstream once
-    // compute_isfloat classifies the operands (which trace back to a
-    // const_float / f64 arg). Arithmetic pushes an f64; a compare pushes
-    // an i32 0/1 (compute_isfloat leaves it non-float, as intended).
-    if (stack.len() < 2) { ok = false; }
-    else {
-        var fr: i32 = stack[stack.len() - 1];
-        var flf: i32 = stack[stack.len() - 2];
-        stack = drop_last2(stack);
-        var fbv: i32 = nvals; nvals = nvals + 1;
-        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 9, result: fbv, args: [flf, fr], imm: 0, str: fbin_sym(k) });
-        stack = stack.append(fbv);
-    }
-
-    return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: ok };
 }
 
 // In production mode every callee is a call, the runtime helpers included:

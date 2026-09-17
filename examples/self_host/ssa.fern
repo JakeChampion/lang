@@ -1,10 +1,9 @@
-// examples/self_host/ssa.fern — a static-single-assignment IR for the
-// self-hosted compiler, plus an AST → SSA builder and an SSA interpreter
-// that validates the builder end-to-end. This is the foundation of the
-// self-hosted optimiser: the Go compiler lowers AST → SSA (internal/ssa)
-// and runs ~29 passes before codegen; this file ports the IR + builder so
-// the self-hosted backends can eventually emit from SSA (and gain the same
-// optimisation passes) instead of straight from the AST.
+// examples/self_host/ssa.fern — the static-single-assignment form the
+// self-host SSA backend (`-backend ssa`, docs/SELFHOST-SSA-BACKEND.md) works
+// on: the data model, the kind and terminator registries, the optimiser
+// passes and the register allocator. `ssa_lift.fern` builds an SFunc from a
+// lowered function's stack IR; `asm_arm64_ir.fern` and `asm_ir.fern` emit
+// it. The Go compiler's internal/ssa is the model.
 //
 // Representation (mirrors internal/ssa/ssa.go, but pointer-free — values
 // and blocks are referenced by integer id / array index, matching the
@@ -15,14 +14,7 @@
 //   - a block (SBlock) is a list of instructions ending in a terminator;
 //   - a function (SFunc) is a list of blocks with an entry index.
 //
-// SCOPE: the i32 subset — params, var / `=` locals, i32 / bool literals,
-// the binary + unary operators, calls, `return`, `if` / `else` (CFG with
-// merge phis), `while` (loop-header phi + back edge), and `break` /
-// `continue` (extra edges into the loop exit / header). build_func returns
-// ok=false for any construct outside this subset (floats, strings, structs,
-// arrays, …) so callers can fall back to the IR path. The companion
-// pipeline is optimise (copy-prop, const-fold, CSE, DCE, branch-simplify,
-// block-merge) → regalloc (linear scan) → emit (ssa_x86 / ssa_arm64).
+
 
 import "./ast";
 import "./parser";
@@ -77,79 +69,6 @@ pub struct SFunc { name: string, nparams: i32, nvals: i32, blocks: SBlock[], ent
 function t_ret(value: i32): STerm { return STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: value }; }
 function t_br(target: i32): STerm { return STerm { kind_tag: 2, cond: 0, target: target, t: 0, f: 0, value: 0 }; }
 function t_brif(cond: i32, t: i32, f: i32): STerm { return STerm { kind_tag: 3, cond: cond, target: 0, t: t, f: f, value: 0 }; }
-function t_none(): STerm { return STerm { kind_tag: 0, cond: 0, target: 0, t: 0, f: 0, value: 0 }; }
-
-// ---- integer kind registry (#4394 lever 2 / #5351, foundation slice) ----
-// The SSA analogue of ir.fern's op-kind registry (kind_id / kind_name):
-// a stable 1-based id per SInst kind and per STerm kind, with 0 as the
-// invalid / none sentinel in both spaces. The conversion this registry was
-// staged for is DONE: SInst and STerm carry `kind_tag: i32` and no string
-// kind, and the backend dispatch ladders switch on the id. What the names
-// are still for is printing and the golden below.
-// The ssa_kind_run driver + TestSelfHostSSAKindRegistry pin the id<->name
-// bijection and both sentinels, so a kind added to one direction (or a
-// duplicated id) fails the golden instead of silently misdispatching a
-// backend later (the SH-003/SH-005 class).
-//
-// NOTE: this vocabulary is the SSA layer's own — it deliberately does NOT
-// reuse ir.kind_id (SSA's "const_int"/"binary"/"phi"/... don't exist in
-// the stack-IR registry and vice versa).
-
-// kind_count is the number of registered SInst kinds (ids 1..kind_count()).
-pub function kind_count(): i32 { return 34; }
-
-pub function kind_id(name: string): i32 {
-    if (name == "const_int") { return 1; }
-    if (name == "const_bool") { return 2; }
-    if (name == "const_i64") { return 3; }
-    if (name == "const_float") { return 4; }
-    if (name == "const_str") { return 5; }
-    if (name == "param") { return 6; }
-    if (name == "copy") { return 7; }
-    if (name == "phi") { return 8; }
-    if (name == "binary") { return 9; }
-    if (name == "unary") { return 10; }
-    if (name == "call") { return 11; }
-    if (name == "call_indirect") { return 12; }
-    if (name == "funcaddr") { return 13; }
-    if (name == "alloc") { return 14; }
-    if (name == "load_elem") { return 15; }
-    if (name == "store_elem") { return 16; }
-    if (name == "concat") { return 17; }
-    if (name == "streq") { return 18; }
-    if (name == "print") { return 19; }
-    if (name == "write") { return 20; }
-    if (name == "exit") { return 21; }
-    if (name == "args") { return 22; }
-    if (name == "strbuf_reset") { return 23; }
-    if (name == "strbuf_append") { return 24; }
-    if (name == "strbuf_take") { return 25; }
-    if (name == "read_file") { return 26; }
-    if (name == "write_file") { return 27; }
-    if (name.len() >= 7 && name[0] == b'b') { return buf_kind_id(name); }
-    return 0;
-}
-
-// The capacity-carrying string builder's block (#8773), split out so the seven
-// names cost kind_id / kind_name one test apiece. `binary` is the only other
-// kind starting with 'b' and it is six bytes, so the length guard separates
-// them without a second compare.
-//
-// `buf_push_u64` is deliberately absent. This backend stores a string as one
-// byte per EIGHT-byte word, so the single store the op exists for (#9221)
-// would be eight stores here and the op would lose its whole reason to be one.
-// An unknown callee bails calls_all_known, so a module using it takes the IR
-// path — the same answer wasm's SSA lowering gives the family entire.
-function buf_kind_id(name: string): i32 {
-    if (name == "buf_new") { return 28; }
-    if (name == "buf_push") { return 29; }
-    if (name == "buf_push_range") { return 30; }
-    if (name == "buf_push_byte") { return 31; }
-    if (name == "buf_len") { return 32; }
-    if (name == "buf_take") { return 33; }
-    if (name == "buf_free") { return 34; }
-    return 0;
-}
 
 function buf_kind_name(id: i32): string {
     if (id == 28) { return "buf_new"; }
@@ -241,6 +160,78 @@ function semantic_kind_name(id: i32): string {
     return names[at];
 }
 
+// ---- integer kind registry (#4394 lever 2 / #5351, foundation slice) ----
+// The SSA analogue of ir.fern's op-kind registry (kind_id / kind_name):
+// a stable 1-based id per SInst kind and per STerm kind, with 0 as the
+// invalid / none sentinel in both spaces. The conversion this registry was
+// staged for is DONE: SInst and STerm carry `kind_tag: i32` and no string
+// kind, and the backend dispatch ladders switch on the id. What the names
+// are still for is printing and the golden below.
+// The ssa_kind_run driver + TestSelfHostSSAKindRegistry pin the id<->name
+// bijection and both sentinels, so a kind added to one direction (or a
+// duplicated id) fails the golden instead of silently misdispatching a
+// backend later (the SH-003/SH-005 class).
+//
+// NOTE: this vocabulary is the SSA layer's own — it deliberately does NOT
+// reuse ir.kind_id (SSA's "const_int"/"binary"/"phi"/... don't exist in
+// the stack-IR registry and vice versa).
+
+// kind_count is the number of registered SInst kinds (ids 1..kind_count()).
+pub function kind_count(): i32 { return 34; }
+
+pub function kind_id(name: string): i32 {
+    if (name == "const_int") { return 1; }
+    if (name == "const_bool") { return 2; }
+    if (name == "const_i64") { return 3; }
+    if (name == "const_float") { return 4; }
+    if (name == "const_str") { return 5; }
+    if (name == "param") { return 6; }
+    if (name == "copy") { return 7; }
+    if (name == "phi") { return 8; }
+    if (name == "binary") { return 9; }
+    if (name == "unary") { return 10; }
+    if (name == "call") { return 11; }
+    if (name == "call_indirect") { return 12; }
+    if (name == "funcaddr") { return 13; }
+    if (name == "alloc") { return 14; }
+    if (name == "load_elem") { return 15; }
+    if (name == "store_elem") { return 16; }
+    if (name == "concat") { return 17; }
+    if (name == "streq") { return 18; }
+    if (name == "print") { return 19; }
+    if (name == "write") { return 20; }
+    if (name == "exit") { return 21; }
+    if (name == "args") { return 22; }
+    if (name == "strbuf_reset") { return 23; }
+    if (name == "strbuf_append") { return 24; }
+    if (name == "strbuf_take") { return 25; }
+    if (name == "read_file") { return 26; }
+    if (name == "write_file") { return 27; }
+    if (name.len() >= 7 && name[0] == b'b') { return buf_kind_id(name); }
+    return 0;
+}
+
+// The capacity-carrying string builder's block (#8773), split out so the seven
+// names cost kind_id / kind_name one test apiece. `binary` is the only other
+// kind starting with 'b' and it is six bytes, so the length guard separates
+// them without a second compare.
+//
+// `buf_push_u64` is deliberately absent. This backend stores a string as one
+// byte per EIGHT-byte word, so the single store the op exists for (#9221)
+// would be eight stores here and the op would lose its whole reason to be one.
+// An unknown callee bails calls_all_known, so a module using it takes the IR
+// path — the same answer wasm's SSA lowering gives the family entire.
+function buf_kind_id(name: string): i32 {
+    if (name == "buf_new") { return 28; }
+    if (name == "buf_push") { return 29; }
+    if (name == "buf_push_range") { return 30; }
+    if (name == "buf_push_byte") { return 31; }
+    if (name == "buf_len") { return 32; }
+    if (name == "buf_take") { return 33; }
+    if (name == "buf_free") { return 34; }
+    return 0;
+}
+
 // term_count is the number of registered STerm kinds (ids 1..term_count()).
 // Id 0 is the "no terminator" sentinel (t_none's empty-string kind today):
 // term_id("") == 0 and term_name(0) == "" by construction, so the eventual
@@ -325,11 +316,10 @@ function rewrite_term(t: STerm, resolved: i32[]): STerm {
     return t;
 }
 
-// has_copy reports whether f contains any `copy` instruction. build_func
+// has_copy reports whether f contains any `copy` instruction. The lift
 // emits copies, but copy_propagate deletes them all in the first optimize
 // round, so every later round (and any already-copy-free function) can skip
-// the full O(n) rebuild entirely — a no-GC allocation saving that compounds
-// across the ~4000 functions of a whole-compiler SSA build.
+// the full O(n) rebuild entirely.
 function has_copy(f: SFunc): boolean {
     var bi: i32 = 0;
     while (bi < f.blocks.len()) {
@@ -844,256 +834,6 @@ function merge_blocks(f: SFunc): SFunc {
     return f;
 }
 
-// count_blocks returns the number of blocks (tests assert block merging).
-pub function count_blocks(f: SFunc): i32 { return f.blocks.len(); }
-
-// uses_memory reports whether a function contains any heap op (alloc /
-// load_elem / store_elem). The backends don't lower these yet, so the emit
-// path (ssa_emit_run, the CLI's -ssa) skips functions that use memory and
-// falls back to the IR path; the interpreter handles them directly.
-// binop_is_cmp reports whether a binary operator yields a boolean (i32 0/1)
-// rather than a value of its operands' width. Comparisons and the logical
-// connectives are width-collapsing (i64 operands still give an i32 result), so
-// compute_widths must NOT propagate 64-bit width through them — only through the
-// arithmetic / bitwise ops whose result takes its operands' width.
-pub function binop_is_cmp(op: string): boolean {
-    return op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=" || op == "&&" || op == "||";
-}
-
-// compute_widths returns the bit-width (32 or 64) of every SSA value: 64
-// for pointers (anything that flows from an `alloc`, threaded through copy
-// and phi to a fixpoint) and i64 values (const_i64, i64 params, i64 widen,
-// and arithmetic with a 64-bit operand), 32 for plain i32 / bool. The backends
-// use this to pick movl/movq (x86) or w/x registers (arm64) per value.
-// load_elem yields an i32 element (32); a comparison is always i32.
-pub function compute_widths(f: SFunc): i32[] {
-    var w: i32[] = [];
-    var i: i32 = 0;
-    while (i < f.nvals) { w = w.append(32); i = i + 1; }
-    var changed: boolean = true;
-    var rounds: i32 = 0;
-    while (changed && rounds < 100000) {
-        changed = false;
-        rounds = rounds + 1;
-        var bi: i32 = 0;
-        while (bi < f.blocks.len()) {
-            var blk: SBlock = f.blocks[bi];
-            var k: i32 = 0;
-            while (k < blk.insts.len()) {
-                var ins: SInst = blk.insts[k];
-                var make64: boolean = false;
-                if (ins.kind_tag == 14) { make64 = true; }
-                else if (ins.kind_tag == 5) { make64 = true; }   // a string pointer
-                else if (ins.kind_tag == 13) { make64 = true; }   // a code pointer
-                else if (ins.kind_tag == 6 && ins.str == "ptr") { make64 = true; }
-                else if (ins.kind_tag == 6 && ins.str == "f64") { make64 = true; }   // f64 param (8-byte)
-                else if (ins.kind_tag == 11 && ins.imm == 1) { make64 = true; }   // pointer-returning call
-                else if (ins.kind_tag == 11 && ins.imm == 2) { make64 = true; }   // f64-returning call (8-byte)
-                else if (ins.kind_tag == 10 && (ins.str == "f64_bits" || ins.str == "f64_from_bits")) { make64 = true; }   // f64/i64 bit reinterpret — 8-byte value
-                else if (ins.kind_tag == 25) { make64 = true; }   // a string pointer
-                else if (ins.kind_tag == 26) { make64 = true; }   // a Result box pointer
-                else if (ins.kind_tag == 27) { make64 = true; }   // an Option box pointer
-                else if (ins.kind_tag == 22) { make64 = true; }   // a string[] array pointer
-                else if (ins.kind_tag == 15 && ins.imm == 64) { make64 = true; }   // pointer element
-                else if (ins.kind_tag == 17) { make64 = true; }   // concat yields a string pointer
-                else if (ins.kind_tag == 3) { make64 = true; }   // a 64-bit integer literal
-                else if (ins.kind_tag == 6 && ins.str == "i64") { make64 = true; }   // i64 param (8-byte)
-                else if (ins.kind_tag == 10 && (ins.str == "sext_i64" || ins.str == "zext_i64")) { make64 = true; }   // i32 -> i64 widen
-                else if (ins.kind_tag == 9 && !binop_is_cmp(ins.str) && (w[ins.args[0]] == 64 || w[ins.args[1]] == 64)) { make64 = true; }   // i64 arithmetic: 64-bit operand -> 64-bit result (a comparison stays i32)
-                else if (ins.kind_tag == 7) { if (w[ins.args[0]] == 64) { make64 = true; } }
-                else if (ins.kind_tag == 8) {
-                    var a: i32 = 0;
-                    while (a < ins.args.len()) { if (w[ins.args[a]] == 64) { make64 = true; } a = a + 1; }
-                }
-                if (make64 && w[ins.result] != 64) { w = w.with(ins.result, 64); changed = true; }
-                k = k + 1;
-            }
-            bi = bi + 1;
-        }
-    }
-    return w;
-}
-
-// calls_all_known reports whether every `call` in f targets a name in
-// `known` (the program's user-defined functions). The SSA backend lowers a
-// call to `call __fn_<name>`, so a call to a builtin (print, write, …) or
-// any other unknown name can't be emitted — the caller bails to the AST
-// emitter in that case.
-// compute_isfloat returns 1 for every SSA value that holds an f64 and 0
-// otherwise — a const_float, float arithmetic / negation, an `as f64` cast,
-// or a copy / phi of a float. The backends use it to pick XMM registers +
-// the sd-suffixed instructions (movsd / addsd / cvt…) for those values.
-// Comparisons and `as i32` casts yield an i32 (0), even with float operands.
-pub function compute_isfloat(f: SFunc): i32[] {
-    var fl: i32[] = [];
-    var i: i32 = 0;
-    while (i < f.nvals) { fl = fl.append(0); i = i + 1; }
-    var changed: boolean = true;
-    var rounds: i32 = 0;
-    while (changed && rounds < 100000) {
-        changed = false;
-        rounds = rounds + 1;
-        var bi: i32 = 0;
-        while (bi < f.blocks.len()) {
-            var blk: SBlock = f.blocks[bi];
-            var k: i32 = 0;
-            while (k < blk.insts.len()) {
-                var ins: SInst = blk.insts[k];
-                var isf: boolean = false;
-                if (ins.kind_tag == 4) { isf = true; }
-                else if (ins.kind_tag == 6 && ins.str == "f64") { isf = true; }   // an f64 param
-                else if (ins.kind_tag == 11 && ins.imm == 2) { isf = true; }   // f64-returning call
-                else if (ins.kind_tag == 10) {
-                    if (ins.str == "as_f64") { isf = true; }
-                    else if (ins.str == "f64_from_bits") { isf = true; }   // i64 bits → f64
-                    else if (ins.str == "-" && fl[ins.args[0]] == 1) { isf = true; }
-                    // f64_bits → an i64 (NOT float), so it stays non-float even
-                    // though its operand is an f64 (handled by the default).
-                }
-                else if (ins.kind_tag == 9) {
-                    if (ins.str == "+" || ins.str == "-" || ins.str == "*" || ins.str == "/") {
-                        if (fl[ins.args[0]] == 1 || fl[ins.args[1]] == 1) { isf = true; }
-                    }
-                }
-                else if (ins.kind_tag == 7) { if (fl[ins.args[0]] == 1) { isf = true; } }
-                else if (ins.kind_tag == 8) {
-                    var a: i32 = 0;
-                    while (a < ins.args.len()) { if (fl[ins.args[a]] == 1) { isf = true; } a = a + 1; }
-                }
-                if (isf && fl[ins.result] != 1) { fl = fl.with(ins.result, 1); changed = true; }
-                k = k + 1;
-            }
-            bi = bi + 1;
-        }
-    }
-    return fl;
-}
-
-// any_float reports whether any function in the program holds an f64 value
-// — the driver uses it to keep float programs off the SSA path for
-// backends that don't lower f64 from the IR yet (currently arm64; the wasm
-// backend self-gates via ssa_wasm.supported, and x86-64 lowers f64).
-pub function any_float(funcs: SFunc[]): boolean {
-    var i: i32 = 0;
-    while (i < funcs.len()) {
-        var fl: i32[] = compute_isfloat(funcs[i]);
-        var k: i32 = 0;
-        while (k < fl.len()) { if (fl[k] == 1) { return true; } k = k + 1; }
-        i = i + 1;
-    }
-    return false;
-}
-
-// mark_ptr_calls tags (imm=1) every call whose callee returns a pointer
-// (its name is in ptr_ret), so compute_widths gives the call result 64-bit
-// width. Run after build_func, before optimise/emit. Leaves other insts
-// untouched.
-// any_call_named reports whether f contains a `call` whose target name is
-// in `names`. The mark_*_calls passes use it to skip their full rebuild when
-// no call needs tagging (the common case for leaf / call-free functions).
-function any_call_named(f: SFunc, names: string[]): boolean {
-    var bi: i32 = 0;
-    while (bi < f.blocks.len()) {
-        var blk: SBlock = f.blocks[bi];
-        var k: i32 = 0;
-        while (k < blk.insts.len()) {
-            var ins: SInst = blk.insts[k];
-            if (ins.kind_tag == 11 && util.index_of_str(names, ins.str) >= 0) { return true; }
-            k = k + 1;
-        }
-        bi = bi + 1;
-    }
-    return false;
-}
-
-pub function mark_ptr_calls(f: SFunc, ptr_ret: string[]): SFunc {
-    if (!any_call_named(f, ptr_ret)) { return f; }
-    var nblocks: SBlock[] = [];
-    var bi: i32 = 0;
-    while (bi < f.blocks.len()) {
-        var blk: SBlock = f.blocks[bi];
-        var ninsts: SInst[] = [];
-        var k: i32 = 0;
-        while (k < blk.insts.len()) {
-            var ins: SInst = blk.insts[k];
-            if (ins.kind_tag == 11 && util.index_of_str(ptr_ret, ins.str) >= 0) {
-                ins = SInst { kind_tag: 11, result: ins.result, args: ins.args, imm: 1, str: ins.str };
-            }
-            ninsts = ninsts.append(ins);
-            k = k + 1;
-        }
-        nblocks = nblocks.append(SBlock { id: blk.id, insts: ninsts, term: blk.term, preds: blk.preds });
-        bi = bi + 1;
-    }
-    return SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry, takes_env: f.takes_env };
-}
-
-// mark_float_calls tags (imm=2) every call whose callee returns an f64 (its
-// name is in float_ret), so compute_isfloat / compute_widths treat the call
-// result as a 64-bit float (returned in xmm0). Run after mark_ptr_calls
-// (float and pointer returns are disjoint, so the marks don't collide).
-pub function mark_float_calls(f: SFunc, float_ret: string[]): SFunc {
-    if (!any_call_named(f, float_ret)) { return f; }
-    var nblocks: SBlock[] = [];
-    var bi: i32 = 0;
-    while (bi < f.blocks.len()) {
-        var blk: SBlock = f.blocks[bi];
-        var ninsts: SInst[] = [];
-        var k: i32 = 0;
-        while (k < blk.insts.len()) {
-            var ins: SInst = blk.insts[k];
-            if (ins.kind_tag == 11 && util.index_of_str(float_ret, ins.str) >= 0) {
-                ins = SInst { kind_tag: 11, result: ins.result, args: ins.args, imm: 2, str: ins.str };
-            }
-            ninsts = ninsts.append(ins);
-            k = k + 1;
-        }
-        nblocks = nblocks.append(SBlock { id: blk.id, insts: ninsts, term: blk.term, preds: blk.preds });
-        bi = bi + 1;
-    }
-    return SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry, takes_env: f.takes_env };
-}
-
-pub function calls_all_known(f: SFunc, known: string[]): boolean {
-    var bi: i32 = 0;
-    while (bi < f.blocks.len()) {
-        var blk: SBlock = f.blocks[bi];
-        var k: i32 = 0;
-        while (k < blk.insts.len()) {
-            var ins: SInst = blk.insts[k];
-            // A direct call or a function-address (closure box slot 0) must
-            // target a known function. A capturing lambda whose lift was
-            // declined (unresolved capture type) leaves a funcaddr to an
-            // unbuilt name here, so this fails it and the whole program falls
-            // back to the IR path. (call_indirect has no static target.)
-            if (ins.kind_tag == 11 || ins.kind_tag == 13) {
-                var found: boolean = false;
-                var j: i32 = 0;
-                while (j < known.len()) { if (known[j] == ins.str) { found = true; } j = j + 1; }
-                if (!found) { return false; }
-            }
-            k = k + 1;
-        }
-        bi = bi + 1;
-    }
-    return true;
-}
-
-pub function uses_memory(f: SFunc): boolean {
-    var bi: i32 = 0;
-    while (bi < f.blocks.len()) {
-        var blk: SBlock = f.blocks[bi];
-        var k: i32 = 0;
-        while (k < blk.insts.len()) {
-            var kt: i32 = blk.insts[k].kind_tag;
-            if (kt == 14 || kt == 15 || kt == 16) { return true; }   // alloc / load_elem / store_elem
-            k = k + 1;
-        }
-        bi = bi + 1;
-    }
-    return false;
-}
-
 // ---- register allocation ------------------------------------------------
 // regalloc assigns each SSA value either a physical register index
 // (0..nregs-1) or -1 (spilled — the backend keeps it in its [sp,#8*v] /
@@ -1106,14 +846,6 @@ pub function uses_memory(f: SFunc): boolean {
 // live). Any value whose interval strictly contains a `call` is forced to
 // spill, so the backend may allocate caller-saved registers without
 // save/restore: nothing in a register is ever live across a call.
-
-// regalloc_none spills everything (the original behaviour).
-pub function regalloc_none(f: SFunc): i32[] {
-    var out: i32[] = [];
-    var i: i32 = 0;
-    while (i < f.nvals) { out = out.append(0 - 1); i = i + 1; }
-    return out;
-}
 
 // inst_is_call names the instructions that clobber the caller-saved registers:
 // the calls proper, the toy runtime's string / output / file / buffer
