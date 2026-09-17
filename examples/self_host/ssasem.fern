@@ -85,6 +85,13 @@ pub function map_values(): i32 { return 0 - 32; }
 pub function map_delete(): i32 { return 0 - 33; }
 pub function map_cleared(): i32 { return 0 - 34; }
 
+// The zero of a type: what a declaration the defer desugar lifted to the top
+// of its scope starts at, before the assignment left behind at the declaration
+// site runs. A reference type's zero is the null word — it allocates nothing,
+// and the frame's release of it is the null guard every drop helper already
+// carries — so the lift costs a slot rather than a box.
+pub function zero(): i32 { return 0 - 35; }
+
 function failed(why: string): Analysis {
     return Analysis { ok: false, why: why, dependencies: [], flow: ssalive.Flow { ok: false, why: why, live_in: [], live_out: [] } };
 }
@@ -1330,12 +1337,21 @@ function aggregate_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string
 
 function composite_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     var kind: i32 = ins.kind_tag;
+    if (kind == zero()) { return zero_error(ins, result); }
     if (is_aggregate_op(kind)) { return aggregate_error(ins, f, result); }
     if (kind == call()) { return call_error(ins, f, result); }
     if (is_function_op(kind)) { return function_error(ins, f, result); }
     if (is_builtin_op(kind)) { return builtin_error(ins, f, result); }
     if (is_variant_op(kind)) { return variant_error(ins, f, result); }
     return "unsupported semantic operation";
+}
+
+// A zero names its type and nothing else: arity 0, and a result the layout
+// tables can size, since the frame holds it in a slot and releases it.
+function zero_error(ins: ssa.SInst, result: typeinfo.Type): string {
+    if (ins.args.len() != 0) { return "zero arity"; }
+    if (!semtypes.concrete(result, false)) { return "zero type"; }
+    return "";
 }
 
 function instruction_error(ins: ssa.SInst, f: Func): string {

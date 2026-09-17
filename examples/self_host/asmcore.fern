@@ -4927,7 +4927,8 @@ pub function infer_expr_type(e: ast.Expr, s: EmitState): Ty {
             }
             return field_type_tag(fa.field, s);
         },
-        ast.ExprUnknown(_) => { return ty_unknown(); }
+        ast.ExprUnknown(_) => { return ty_unknown(); },
+        ast.ExprZero(z) => { return ty_from_name(z.type_name); }
     }
     return ty_unknown();
 }
@@ -5611,7 +5612,8 @@ function unknown_error_expr_at(e: ast.Expr, own a: UnkScan): UnkScan {
         ast.ExprSlice(_) => { return a; },
         ast.ExprStructLit(_) => { return a; },
         ast.ExprFieldAccess(_) => { return a; },
-        ast.ExprLambda(_) => { return a; }
+        ast.ExprLambda(_) => { return a; },
+        ast.ExprZero(_) => { return a; }
     }
     return a;
 }

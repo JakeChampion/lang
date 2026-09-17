@@ -4075,6 +4075,9 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
     },
     ast.ExprUnknown(u) => {
       return t_unknown("parser-side unknown:" + u.kind);
+    },
+    ast.ExprZero(z) => {
+      return s.resolve_type(z.type_name);
     }
   }
   return t_unknown("unhandled Expr variant");
@@ -11907,6 +11910,7 @@ function ow_expr_borrows(e: ast.Expr, mod: parser.Module, borrowed: string[], lo
     ast.ExprBool(_) => { return false; },
     ast.ExprFString(_) => { return false; },
     ast.ExprUnknown(_) => { return false; },
+    ast.ExprZero(_) => { return false; },
     ast.ExprLambda(_) => { return false; },
     ast.ExprStructLit(_) => { return false; },
     ast.ExprArray(_) => { return false; },
@@ -16079,7 +16083,7 @@ function annotate_expr(e: ast.Expr, s: Scope): ast.Expr {
       return ast.ExprIndex { array: annotate_expr(x.array, s), index: annotate_expr(x.index, s), unchecked: x.unchecked, ty: type_to_irtag(check_expr(e, s)) };
     },
     ast.ExprSlice(sl) => {
-      return ast.ExprSlice { array: annotate_expr(sl.array, s), start: annotate_expr(sl.start, s), end: annotate_expr(sl.end, s), ty: type_to_arrtag(check_expr(sl.array, s)), open_end: sl.open_end };
+      return ast.ExprSlice { ...sl, array: annotate_expr(sl.array, s), start: annotate_expr(sl.start, s), end: annotate_expr(sl.end, s), ty: type_to_arrtag(check_expr(sl.array, s)) };
     },
     ast.ExprArray(a) => {
       var na: ast.Expr[] = [];

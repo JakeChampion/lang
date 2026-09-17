@@ -614,7 +614,15 @@ function print_expr_prec(e: ast.Expr, parent_prec: i32, depth: i32): string {
             return print_expr_prec(x.array, prec_primary(), depth) + "[" + print_expr(x.index, depth) + "]";
         },
         ast.ExprSlice(sl) => {
-            return print_expr_prec(sl.array, prec_primary(), depth) + "[" + print_expr(sl.start, depth) + ":" + print_expr(sl.end, depth) + "]";
+            // An omitted bound is written back omitted. The AST stands a
+            // literal 0 in for a missing low bound and a placeholder in for a
+            // missing high one, so printing them would turn `s[1:]` into
+            // `s[1:0]` — a different program, not a different layout.
+            var lo: string = "";
+            if (!sl.open_start) { lo = print_expr(sl.start, depth); }
+            var hi: string = "";
+            if (!sl.open_end) { hi = print_expr(sl.end, depth); }
+            return print_expr_prec(sl.array, prec_primary(), depth) + "[" + lo + ":" + hi + "]";
         },
         ast.ExprStructLit(sl) => {
             var out: string = sl.type_name + " { ";
@@ -685,7 +693,8 @@ function print_expr_prec(e: ast.Expr, parent_prec: i32, depth: i32): string {
             }
             return out + " }";
         },
-        ast.ExprUnknown(u) => { return "/*unknown:" + u.kind + "*/"; }
+        ast.ExprUnknown(u) => { return "/*unknown:" + u.kind + "*/"; },
+        ast.ExprZero(z) => { return "/*zero:" + z.type_name + "*/"; }
     }
     return "/*unhandled-expr*/";
 }
@@ -2903,6 +2912,21 @@ function check_string_and_slice_literals(): i32 {
         },
         _ => { return 61; }
     }
+
+    // An omitted bound reprints omitted. Round-tripping cannot see this:
+    // `s[1:0]` re-parses to an ExprSlice too, so the assertions read the
+    // emitted TEXT. The stand-ins the AST carries — a literal 0 for a
+    // missing low bound, an unevaluated placeholder for a missing high one
+    // — would otherwise be printed as written bounds, turning `s[1:]` into
+    // the empty slice `s[1:0]`.
+    var srcOB: string = "function f(s: string): string { return s[1:] + s[:3] + s[:] + s[1:3]; }";
+    var outOB: string = print_module(parser.parse_module(lexer.tokenize(srcOB)));
+    if (!util.contains(outOB, "s[1:]")) { return 62; }
+    if (!util.contains(outOB, "s[:3]")) { return 63; }
+    if (!util.contains(outOB, "s[:]")) { return 64; }
+    if (!util.contains(outOB, "s[1:3]")) { return 65; }
+    if (util.contains(outOB, "s[1:0]")) { return 66; }
+    if (util.contains(outOB, "s[0:")) { return 67; }
 
     return 0;
 }

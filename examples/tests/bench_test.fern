@@ -200,15 +200,17 @@ function test_run_returns_sorted_samples(): test.TestOutcome {
 // nothing after it must read clean — and under `-interp`, where the count is
 // always 0, this asserts the API answers rather than the arena's behaviour.
 function test_mark_reads_clean_over_a_quiet_region(): test.TestOutcome {
-    var m: bench.Mark = bench.mark();
+    var a: i64 = bench.alloc_count();
+    var b: i64 = bench.bump_bytes();
     var i: i32 = 0;
     var sum: i32 = 0;
     while (i < 1000) { sum = sum + i; i = i + 1; }
     if (sum < 0) { return test.fail("unreachable"); }
-    if (!bench.no_allocs_since(m)) {
-        return test.fail("arithmetic allocated: " + bench.since(m).describe());
+    if (!bench.no_allocs_after(a)) {
+        return test.fail("arithmetic allocated: " + bench.since(a, b).describe());
     }
-    if (bench.allocs_since(m) != (0 as i64)) { return test.fail("scalar disagrees with the predicate"); }
+    if (bench.allocs_after(a) != (0 as i64)) { return test.fail("scalar disagrees with the predicate"); }
+    if (bench.fresh_bytes_after(b) != (0 as i64)) { return test.fail("arithmetic bought fresh bytes"); }
     return test.pass();
 }
 

@@ -35,9 +35,10 @@
 //
 // and for the assertion half:
 //
-//     var m: bench.Mark = bench.mark();   // steady state starts now
+//     var a: i64 = bench.alloc_count();   // steady state starts now
+//     var b: i64 = bench.bump_bytes();
 //     drive(state, 1000000);
-//     if (!bench.no_allocs_since(m)) { return test.fail(bench.since(m).describe()); }
+//     if (!bench.no_allocs_after(a)) { return test.fail(bench.since(a, b).describe()); }
 import "std/i32";
 import "std/i64";
 import "core/cmp";
@@ -46,14 +47,21 @@ import "std/string";
 
 // ===================== THE ALLOCATION MARK =====================
 
-// A `Mark` is a snapshot of both allocation observables at one instant. It is
-// what "steady state starts now" means concretely: everything the program did
-// to set itself up is behind the mark, and what follows is the part a
-// zero-allocation claim is about.
-pub struct Mark {
-    allocs: i64,
-    fresh_bytes: i64,
-}
+// A mark is "steady state starts now": everything the program did to set
+// itself up is behind it, and what follows is the part a zero-allocation
+// claim is about. It is a pair of SCALARS and never a struct.
+//
+// The reason is the one `since` states below, one level up: a struct literal
+// is a box, and a box is an allocation the reading would then report. Which
+// side of the reading that box lands on is not specified — a compiler may
+// allocate an aggregate before evaluating its field initializers or after
+// (docs/ALLOCATION-OBSERVABLE.md) — so a snapshot taken THROUGH a struct
+// reports its own box as the body's on half the implementations and not the
+// other half. Measured: an empty body under `run` reported 0 allocations
+// built by the native compiler and 1 built by the self-host one, from a
+// `Mark { allocs: __heap_alloc_count(), … }` and nothing else (#9611).
+//
+// A scalar has no such box, so the snapshot is exact everywhere.
 
 // A `Delta` is what the allocator did between a mark and now.
 pub struct Delta {
@@ -61,40 +69,39 @@ pub struct Delta {
     fresh_bytes: i64,
 }
 
-// `mark()` — snapshot the allocation observables. Call it at the boundary
-// between initialization and steady state.
-pub function mark(): Mark {
-    return Mark { allocs: __heap_alloc_count(), fresh_bytes: __heap_bump_bytes() };
+// `alloc_count()` / `bump_bytes()` — the two observables, snapshotted. Call
+// them at the boundary between initialization and steady state.
+pub function alloc_count(): i64 {
+    return __heap_alloc_count();
 }
 
-// `allocs_since(m)` / `fresh_bytes_since(m)` — the two halves as scalars.
-//
-// Scalars, and not a `since(m).allocs`, because the measurement must not
-// perturb what it measures: a `Delta` is a struct, a struct literal is a box,
-// and a box is an allocation the reading would then report. Asking for the
-// count through one measured 2 allocations in an otherwise empty steady state
-// — which is the whole of what a strict experiment asserts is 0.
-pub function allocs_since(m: Mark): i64 {
-    return __heap_alloc_count() - m.allocs;
+pub function bump_bytes(): i64 {
+    return __heap_bump_bytes();
 }
 
-pub function fresh_bytes_since(m: Mark): i64 {
-    return __heap_bump_bytes() - m.fresh_bytes;
+// `allocs_after(a)` / `fresh_bytes_after(b)` — what the allocator has done
+// since a snapshot, as scalars.
+pub function allocs_after(a: i64): i64 {
+    return __heap_alloc_count() - a;
 }
 
-// `no_allocs_since(m)` — the strict-mode assertion: the allocator has not run
+pub function fresh_bytes_after(b: i64): i64 {
+    return __heap_bump_bytes() - b;
+}
+
+// `no_allocs_after(a)` — the strict-mode assertion: the allocator has not run
 // once since the mark. This is the claim a `fip` steady state makes, and the
 // one `__heap_bump_bytes()` alone cannot check: a loop that allocates and
 // recycles buys no fresh bytes and still calls the allocator every round.
-pub function no_allocs_since(m: Mark): boolean {
-    return allocs_since(m) == (0 as i64);
+pub function no_allocs_after(a: i64): boolean {
+    return allocs_after(a) == (0 as i64);
 }
 
-// `since(m)` — both halves together, for a REPORT rather than an assertion.
+// `since(a, b)` — both halves together, for a REPORT rather than an assertion.
 // It allocates its own result box, so a caller measuring a strict steady state
 // asks through the scalars above and reaches for this once the region is over.
-pub function since(m: Mark): Delta {
-    return Delta { allocs: allocs_since(m), fresh_bytes: fresh_bytes_since(m) };
+pub function since(a: i64, b: i64): Delta {
+    return Delta { allocs: allocs_after(a), fresh_bytes: fresh_bytes_after(b) };
 }
 
 // `(d) describe()` — a one-line rendering for a failure message, naming both
@@ -146,7 +153,8 @@ pub function run(name: string, warmup: i32, iterations: i32, body: () => void): 
         samples = samples.append(0 as i64);
         p = p + 1;
     }
-    var m: Mark = mark();
+    var mark_allocs: i64 = alloc_count();
+    var mark_bytes: i64 = bump_bytes();
     var started_ns: i64 = monotonic_ns();
     var i: i32 = 0;
     while (i < iterations) {
@@ -156,8 +164,8 @@ pub function run(name: string, warmup: i32, iterations: i32, body: () => void): 
         i = i + 1;
     }
     var wall: i64 = monotonic_ns() - started_ns;
-    var allocs: i64 = allocs_since(m);
-    var fresh: i64 = fresh_bytes_since(m);
+    var allocs: i64 = allocs_after(mark_allocs);
+    var fresh: i64 = fresh_bytes_after(mark_bytes);
     return Report {
         name: name,
         iterations: iterations,

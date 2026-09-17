@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jakechampion/lang/internal/ast"
 	nativex86_64 "github.com/jakechampion/lang/internal/codegen/x86_64"
 	"github.com/jakechampion/lang/internal/fernrt"
 	"github.com/jakechampion/lang/internal/ir"
@@ -192,6 +193,11 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 	// No cleanup after the call: _start exits through the syscall below and
 	// never returns, so the pushed arguments die with the process.
 	w("\tcall %s", fnLabel(entry))
+	if ast.LeakCheckEnabled {
+		w("\tpush rax") // park the exit status across the census
+		w("\tcall %s", lcReportSym)
+		w("\tpop rax")
+	}
 	w("\tmov edi, eax")     // exit code = return value
 	w("\tmov eax, %d", 231) // sysExitGroup
 	w("\tsyscall")
@@ -232,6 +238,9 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 	}
 	if heap {
 		emitHeapGuard(w)
+	}
+	if ast.LeakCheckEnabled {
+		emitLcReport(w, heap)
 	}
 	if len(strOrder) > 0 {
 		w("")
@@ -320,6 +329,9 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 	}
 	if slices.Contains(helpers, "__alloc") || slices.Contains(helpers, "__free") || strings.Contains(b.String(), freelistSym) {
 		emitFreelistBss(w)
+	}
+	if ast.LeakCheckEnabled {
+		emitLcBss(w)
 	}
 	emitProcBss(w, withArgs, withEnv)
 	emitHelperBss(w, helpers, strings.Contains(b.String(), rcUnderflowSym))
@@ -1675,6 +1687,11 @@ func emitHeapGuard(w func(string, ...any)) {
 	w("\tpush rax")
 	w("\tpush rcx")
 	w("\tpushfq")
+	if ast.LeakCheckEnabled {
+		// Every bump reaches the guard, so this counts them all; the pushfq
+		// above is what makes a flag-clobbering add safe here.
+		emitLcAdd(w, lcAllocCountSym, "")
+	}
 	w("\tmov rax, [rip + %s]", heapPtrSym)
 	w("\tmov rcx, [rip + %s]", heapEndSym)
 	w("\tcmp rax, rcx")
@@ -2559,12 +2576,13 @@ func emitRuntimeHelpers(w func(string, ...any), helpers []string) {
 	}
 }
 
-// countsAllocs reports whether this module reads __heap_alloc_count() (#9596)
-// and so needs __alloc to tick the counter. It is the module's only census:
-// this backend does not implement FERN_LEAKCHECK, so nothing else asks for
-// the tick and no other program pays for it.
+// countsAllocs reports whether this module's allocations are counted, so
+// __alloc must tick the counter and the inline pop must not hand out a block
+// the count never saw. Two things ask for it: the leak census (#9604), which
+// counts every alloc and free, and a program reading __heap_alloc_count()
+// (#9596). No other program pays for the tick.
 func countsAllocs(helpers []string) bool {
-	return referencesHelper(helpers, "__fern_heap_alloc_count")
+	return ast.LeakCheckEnabled || referencesHelper(helpers, "__fern_heap_alloc_count")
 }
 
 // referencedRuntimeHelpers returns, sorted, the hand-written runtime-helper
@@ -2597,7 +2615,7 @@ func referencedRuntimeHelpers(progs map[string]*Program) (asm, fern []string) {
 	for _, p := range progs {
 		for _, blk := range p.Blocks {
 			for _, in := range blk.Insts {
-				if (in.Op == Call || in.Op == CallPair) && !(in.Op == Call && (rcInline[in.Callee] || boxFreeInline(in))) {
+				if (in.Op == Call || in.Op == CallPair) && !inlinedCall(in) {
 					add(in.Callee)
 				}
 			}

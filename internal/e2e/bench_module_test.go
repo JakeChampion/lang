@@ -79,20 +79,30 @@ function main(): i32 {
 	if (a.allocs_per_op_milli() != b.allocs_per_op_milli()) { return 94; }
 	// A quiet region after a mark must read clean, and the reads themselves
 	// are scalars, so asking the question cannot change the answer.
-	var m: bench.Mark = bench.mark();
+	var mk: i64 = bench.alloc_count();
 	var i: i32 = 0;
 	var sum: i32 = 0;
 	while (i < 100000) { sum = sum + i; i = i + 1; }
 	if (sum == 0) { return 95; }
-	if (!bench.no_allocs_since(m)) { return 96; }
+	if (!bench.no_allocs_after(mk)) { return 96; }
 	// And the observable is not simply stuck at zero: one more string moves it.
 	if (one_allocation(1) == 0) { return 97; }
-	if (bench.allocs_since(m) <= (0 as i64)) { return 98; }
+	if (bench.allocs_after(mk) <= (0 as i64)) { return 98; }
 	return 42;
 }
 `
 
+// benchX86Cmd runs an x86-64 Linux binary: directly on an amd64 host, under
+// the qemu prefix x86NativeRunner supplies elsewhere.
+func benchX86Cmd(runner []string, bin string) *exec.Cmd {
+	if len(runner) == 0 {
+		return exec.Command(bin)
+	}
+	return exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...)
+}
+
 func TestBenchHarnessDoesNotChargeItsOwnAllocations(t *testing.T) {
+	runner := x86NativeRunner(t) // SKIPs if neither native amd64 nor qemu-x86_64
 	fern := buildFernCLI(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "neutral.fern")
@@ -103,7 +113,7 @@ func TestBenchHarnessDoesNotChargeItsOwnAllocations(t *testing.T) {
 	if out, err := exec.Command(fern, "-target", "x86-64-linux", "-o", bin, src).CombinedOutput(); err != nil {
 		t.Fatalf("compile: %v\n%s", err, out)
 	}
-	cmd := exec.Command(bin)
+	cmd := benchX86Cmd(runner, bin)
 	out, _ := cmd.CombinedOutput()
 	// 91 means the harness allocated on an empty body's behalf, 93/94 that it
 	// charges something per run or per iteration, 96 that reading the count
@@ -137,6 +147,7 @@ function main(): i32 {
 `
 
 func TestBenchReportsCallsAndBytesSeparately(t *testing.T) {
+	runner := x86NativeRunner(t) // SKIPs if neither native amd64 nor qemu-x86_64
 	fern := buildFernCLI(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "recycling.fern")
@@ -147,7 +158,7 @@ func TestBenchReportsCallsAndBytesSeparately(t *testing.T) {
 	if out, err := exec.Command(fern, "-target", "x86-64-linux", "-o", bin, src).CombinedOutput(); err != nil {
 		t.Fatalf("compile: %v\n%s", err, out)
 	}
-	out, err := exec.Command(bin).CombinedOutput()
+	out, err := benchX86Cmd(runner, bin).CombinedOutput()
 	if err != nil {
 		t.Fatalf("run: %v\n%s", err, out)
 	}
