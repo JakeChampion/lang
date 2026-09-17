@@ -958,4 +958,67 @@ function main(): i32 {
     return b.v;
 }
 `},
+	// A `defer` is replayed at the exits of the scope that registered it, and
+	// a binding declared in a block INSIDE that scope had no slot there: each
+	// function below refused with "unbound name is not a semantic value", and
+	// with it the whole module. The desugar now lifts such a declaration to
+	// the top of the scope and leaves its initialiser behind as an assignment,
+	// so the replay reads what the block left — the replacement, not a capture
+	// taken at registration.
+	{name: "defer-binding-out-of-its-block", atLeast: 4, noLeak: true, src: `
+function conditional(enabled: boolean): i32 {
+    var seen: i32 = 1;
+    loop {
+        if (enabled) {
+            var items: i32[] = [2];
+            defer seen = items[0];
+            items = [9];
+        }
+        break;
+    }
+    return seen;
+}
+function per_iteration(): i32 {
+    var seen: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3) {
+        var k: i32[] = [i];
+        defer seen = seen + k[0];
+        i = i + 1;
+    }
+    return seen;
+}
+function from_value_block(): i32 {
+    var seen: i32 = 0;
+    loop {
+        var yielded: i32 = { var items: i32[] = [2]; defer seen = items[0]; items = [4]; 1 };
+        seen = seen + yielded;
+        break;
+    }
+    return seen;
+}
+function main(): i32 {
+    return conditional(true) + per_iteration() + from_value_block();
+}
+`},
+	// The same expansion routes every `return` through one shared temp. It was
+	// declared unannotated at a literal `0`, so a function returning an array
+	// or a string assigned its result into an i32 slot — which the AST
+	// lowering's untyped frame slots never noticed, and which the semantic
+	// lowering refused as "replacement type does not match its binding".
+	{name: "defer-typed-return-temp", atLeast: 3, noLeak: true, src: `
+function snapshot(): i32[] {
+    var items: i32[] = [7];
+    defer items = [9];
+    return items;
+}
+function labelled(): string {
+    var s: string = "ok";
+    defer s = "late" + "";
+    return s;
+}
+function main(): i32 {
+    return snapshot()[0] * 10 + labelled().len();
+}
+`},
 }
