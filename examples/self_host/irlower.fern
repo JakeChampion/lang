@@ -17766,6 +17766,15 @@ function lower_expr_dispatch(e: ast.Expr, s: LowerState): LowerState {
 // they do on an explicit return. Out of line so the ExprUnary arm stays small
 // (#2720 guard).
 function lower_try(inner: ast.Expr, s: LowerState): LowerState {
+    // E079: a `?` inside a replayed defer action. The failure edge replays the
+    // deferred actions, this one among them, so lowering it expands without
+    // end — #9470 died here, the self-host with a SIGSEGV. The checker refuses
+    // the shape, and this bail is what keeps the pass total for a pipeline that
+    // lowers WITHOUT checking first: asm_modload_run does, and the conformance
+    // sweep feeds it every fixture, diag_e079 included.
+    if (s.frame.defer_guard.len() > 0) {
+        return s.note_fail("`?` inside a defer action (E079)").fail();
+    }
     var ot: string = try_operand_type(inner, s);
     if (ot.len() == 0) { return s.fail(); }
     // A marked enum is named bare, so the bracketed-prefix tests have to run
