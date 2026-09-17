@@ -511,7 +511,8 @@ var rcResultNonPointer = map[string]bool{
 
 	// i64.
 	"__fern_arr_push_shared_bytes": true, "__fern_heap_bump_bytes": true,
-	"__fern_idiv_s64": true, "__fern_idiv_u64": true, "__fern_irem_s64": true,
+	"__fern_heap_alloc_count": true,
+	"__fern_idiv_s64":         true, "__fern_idiv_u64": true, "__fern_irem_s64": true,
 	"__fern_irem_u64": true, "__fern_monotonic_ns": true, "__fern_now_ns": true,
 	"__fern_now_unix_ms": true, "__load_i64": true, "rlimit_nofile": true,
 

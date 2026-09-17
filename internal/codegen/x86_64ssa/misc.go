@@ -7,6 +7,12 @@ package x86_64ssa
 // __fern_rc_underflow_count to read back.
 const rcUnderflowSym = "__ssa_rc_underflow"
 
+// allocCountSym counts the blocks __alloc handed out, for
+// __fern_heap_alloc_count to read back (#9596). Ticked only in a module that
+// reads it: this backend does not implement the leak census, and a counter
+// nothing reads would be a cost every program paid for nothing.
+const allocCountSym = "__ssa_alloc_count"
+
 // emitIsattyHelper writes isatty(fd) -> 0/1: one TCGETS ioctl, which only a
 // terminal answers. struct termios is 60 bytes; the frame rounds up. Leaf.
 func emitIsattyHelper(w func(string, ...any)) {
@@ -58,7 +64,7 @@ func emitHostnameHelper(w func(string, ...any)) {
 	w("\tadd r12, 1")
 	w("\tjmp .Lssa_hn_len")
 	w(".Lssa_hn_alloc:")
-	w("\tlea rdx, [r12 + 9]")
+	w("\tlea rdx, [r12 + %d]", strBlockBytes)
 	ssaBumpAlloc(w, "rax", "rdx")
 	w("\tmov dword ptr [rax], 1") // rc = 1
 	w("\tmov dword ptr [rax + 4], r12d")
@@ -155,5 +161,16 @@ func emitRcUnderflowCountHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__fern_rc_underflow_count"))
 	w("\tmov eax, [rip + %s]", rcUnderflowSym)
+	w("\tret")
+}
+
+// emitHeapAllocCountHelper writes __fern_heap_alloc_count() -> i64: the count
+// of blocks __alloc has handed out (#9596), which is the half
+// __fern_heap_bump_bytes cannot see — a freelist pop hands out a block
+// without moving the cursor. Leaf.
+func emitHeapAllocCountHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_heap_alloc_count"))
+	w("\tmov rax, [rip + %s]", allocCountSym)
 	w("\tret")
 }

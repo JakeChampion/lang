@@ -1,5 +1,7 @@
 package x86_64ssa
 
+import "github.com/jakechampion/lang/internal/ast"
+
 // Reader / Writer handles, and the process-level helpers that go with them.
 //
 // A handle is a 24-byte block whose value pointer is base+8: the slot at
@@ -89,13 +91,17 @@ func emitStdHandleHelper(name string, fd int) func(w func(string, ...any)) {
 }
 
 // emitExitHelper writes exit(status) — exit_group(2), which never returns.
-// arm64ssa runs the leak census here, because exit() bypasses the _start
-// epilogue that would otherwise report it; this backend does not implement
-// -leakcheck at all (internal/ast's note on the flag), so there is nothing to
-// run and no census seam to keep.
+// The leak census runs here as well as in _start's epilogue, because exit()
+// bypasses that epilogue and a program leaving this way would otherwise
+// report nothing.
 func emitExitHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("exit"))
+	if ast.LeakCheckEnabled {
+		w("\tpush rdi") // park the status across the census
+		w("\tcall %s", lcReportSym)
+		w("\tpop rdi")
+	}
 	w("\tmov eax, 231") // exit_group; status already in edi
 	w("\tsyscall")
 }
@@ -157,7 +163,7 @@ func emitReaderReadChunkHelper(w func(string, ...any)) {
 	// Header + n + trailing NUL, rounded to its size class: a raw bump, so
 	// the rewind below can lower the cursor, but sized as __alloc would
 	// size it, which is the extent __fern_str_append takes a string to own.
-	w("\tlea rax, [r12 + 9]")
+	w("\tlea rax, [r12 + %d]", strBlockBytes)
 	emitFreelistClass(w, "rrc_req", "rax", "rdx", ".Lssa_rrc_req_none")
 	w(".Lssa_rrc_req_none:")
 	ssaInlineBump(w, "rcx", "rax")
@@ -174,9 +180,9 @@ func emitReaderReadChunkHelper(w func(string, ...any)) {
 	w("\ttest rax, rax")
 	w("\tjs .Lssa_rrc_err")
 	w("\tje .Lssa_rrc_eof")
-	w("\tmov dword ptr [r12 - 4], eax") // len = bytes read
-	w("\tmov byte ptr [r12 + rax], 0")  // trailing NUL
-	w("\tlea rsi, [rax + 9]")           // header + bytes + NUL, to the class it now fills
+	w("\tmov dword ptr [r12 - 4], eax")       // len = bytes read
+	w("\tmov byte ptr [r12 + rax], 0")        // trailing NUL
+	w("\tlea rsi, [rax + %d]", strBlockBytes) // header + bytes + NUL, to the class it now fills
 	emitFreelistClass(w, "rrc_got", "rsi", "rdx", ".Lssa_rrc_got_none")
 	w(".Lssa_rrc_got_none:")
 	w("\tlea rcx, [r12 - 8]")

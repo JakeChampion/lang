@@ -24,5 +24,5 @@ examples/wasm/echo_handler.fern  an HTTP server: it listens until it is killed
 examples/wasm/native_http_handler.fern  an HTTP server: it listens until it is killed
 examples/wasm/url_router.fern  an HTTP server: it listens until it is killed
 examples/tests/batch8_test.fern  prints the path of a per-run temp directory; the unique suffix is a clock reading or a random draw, and neither repeats
-examples/tests/bench_test.fern  prints measured elapsed times
+examples/tests/runner_bench_test.fern  prints measured elapsed times
 examples/tests/rel_tol_and_ms_bench_test.fern  prints measured elapsed times

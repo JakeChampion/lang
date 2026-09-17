@@ -216,6 +216,218 @@ function main(): i32 {
     }
 }
 `},
+	// f64 throughout: negative literals and -0.0, the arithmetic and the
+	// NaN-aware compares, the single-instruction math, every conversion
+	// width and signedness including the saturating ones and the widening
+	// the lowering inserts for an integer literal at an f64 parameter, the
+	// f32 and i64 reinterprets, and the transcendentals the runtime supplies.
+	// A value is its bit pattern in an integer register, as on the stack
+	// machine.
+	{name: "floats", viaSSA: []string{"area", "hyp", "classify", "rounding", "convs", "bits", "neg", "widen", "signs", "trans", "main"}, src: `
+import "std/float";
+function area(r: f64): f64 { return 3.141592653589793 * r * r; }
+function hyp(a: f64, b: f64): f64 { return (a * a + b * b).sqrt(); }
+function classify(x: f64): i32 {
+    if (x < 0.0) { return 0 - 1; }
+    if (x == 0.0) { return 0; }
+    if (x > 1000.5) { return 2; }
+    if (x >= 2.5 && x <= 2.5) { return 3; }
+    if (x != x) { return 9; }
+    return 1;
+}
+function rounding(x: f64): i32 {
+    var f: i32 = x.floor() as i32;
+    var c: i32 = x.ceil() as i32;
+    var t: i32 = x.trunc() as i32;
+    var r: i32 = x.round() as i32;
+    return f + c * 10 + t * 100 + r * 1000;
+}
+function convs(n: i32, u: u32, w: i64, v: u64): i64 {
+    var a: f64 = n as f64;
+    var b: f64 = u as f64;
+    var c: f64 = w as f64;
+    var d: f64 = v as f64;
+    var s: f64 = a + b + c + d;
+    return (s as i64) + ((s / 3.0) as i32) as i64 + (((0.0 - s) as u32) as i64) + ((s * 1e30) as i32) as i64;
+}
+function bits(x: f64): i64 {
+    var b: i64 = f64_bits(x);
+    var y: f64 = f64_from_bits(b + 1);
+    var h: i32 = f32_bits(y);
+    var zf: f32 = f32_from_bits(h);
+    var z: f64 = zf as f64;
+    return b + (z as i64) + (h as i64) % 7;
+}
+function neg(x: f64): f64 { return (0.0 - x).abs() - (0.0 - x); }
+function widen(x: f64): f64 { return area(2) + hyp(3, 4) + x; }
+function signs(): i32 {
+    var m: f64 = -2.5;
+    var z: f64 = -0.0;
+    var r: i32 = 0;
+    if (m < 0.0) { r = r + 1; }
+    if (f64_bits(z) != 0) { r = r + 2; }
+    if (z == 0.0) { r = r + 4; }
+    return r + (m.abs() * 2.0) as i32;
+}
+function trans(x: f64): i32 { return ((x.sin() * 1000.0) as i32) + ((x.cos() * 1000.0) as i32) + ((x.exp() * 10.0) as i32) + ((x.log() * 1000.0) as i32) + (x.pow(2.5) as i32); }
+function main(): i32 {
+    var acc: i64 = (area(2.0) * 1000.0) as i64;
+    acc = acc + (hyp(3.0, 4.0) as i64);
+    acc = acc + (classify(0.0 - 2.5) + classify(0.0) + classify(2000.0) + classify(2.5) + classify(0.0 / 0.0) + classify(7.0)) as i64;
+    acc = acc + (rounding(2.5) + rounding(0.0 - 2.5) + rounding(3.7)) as i64;
+    acc = acc + convs(0 - 7, 4000000000, 5000000000, 18446744073709551615);
+    acc = acc + bits(1.5) + (neg(4.0) as i64);
+    acc = acc + trans(1.5) as i64;
+    acc = acc + (widen(1.5) * 10.0) as i64 + signs() as i64;
+    return (acc % 251) as i32;
+}
+`},
+	// The host floor: env, read_file and stat through their Fern helpers on
+	// the stack ABI, whose bodies use the raw syscalls, the scratch buffer,
+	// the string box stamp and the width loads; monotonic_ns with no
+	// operand; exit as the raw syscall. Whole, so the helper bodies and the
+	// byte kernels they use go through the backend on every target,
+	// including the Darwin rewrite of the syscall number register.
+	{name: "host_calls", allSSA: true, src: `
+import "std/i32";
+function probe_env(): i32 {
+    var n: i32 = 0;
+    match (env("FERN_SSA_HOST_PROBE_UNSET")) { Some(v) => { n = n + 100; }, None => { n = n + 1; } }
+    match (env("PATH")) { Some(v) => { if (v.len() > 0) { n = n + 2; } }, None => { n = n + 200; } }
+    return n;
+}
+function probe_fs(path: string): i32 {
+    var n: i32 = 0;
+    match (read_file(path)) { Ok(s) => { n = n + 300; }, Err(e) => { n = n + 4; } }
+    match (stat("/")) { Ok(st) => { n = n + 8; }, Err(e) => { n = n + 400; } }
+    match (stat(path)) { Ok(st) => { n = n + 500; }, Err(e) => { n = n + 16; } }
+    return n;
+}
+function probe_clock(): i32 {
+    var a: i64 = monotonic_ns();
+    var b: i64 = monotonic_ns();
+    if (a > 0 && b >= a) { return 32; }
+    return 600;
+}
+function main(): i32 {
+    var n: i32 = probe_env() + probe_fs("/nonexistent/fern/ssa/host/probe") + probe_clock();
+    print("host " + n.to_string() + "\n");
+    exit(n % 100);
+    return 7;
+}
+`},
+	// The map ops and the byte kernels run through the stack machine's own
+	// arms between a push of the operands and a pop of the result, with the
+	// allocator treating each as a call. String and integer keys, insert,
+	// lookup with a default, membership, the key and value snapshots.
+	{name: "maps", allSSA: true, src: `
+import "core/map";
+import "std/i32";
+function build(n: i32): Map[string, i32] {
+    var m: Map[string, i32] = Map { };
+    var i: i32 = 0;
+    while (i < n) { m = m.insert("k" + i.to_string(), i * 3); i = i + 1; }
+    return m;
+}
+function main(): i32 {
+    var m: Map[string, i32] = build(50);
+    var ints: Map[i32, i32] = Map { };
+    var j: i32 = 0;
+    while (j < 40) { ints = ints.insert(j * 7, j); j = j + 1; }
+    var total: i32 = m.get_or("k7", 0) + m.get_or("zz", 100) + ints.get_or(21, 0) + ints.get_or(22, 1000);
+    if (m.has("k9")) { total = total + 1; }
+    if (!ints.has(5)) { total = total + 2; }
+    total = total + m.len() * 10 + ints.keys().len() + ints.values().len();
+    for k in m.keys() { if (k.len() == 2) { total = total + 1; } }
+    return total % 200;
+}
+`},
+	// Aggregates the lowering folds whole (a record literal with constant
+	// fields, here the keys of a persistent map) are the address of an
+	// interned box; passed straight to a call, that address sits in a
+	// register home and must survive there. The map's own functions are
+	// pinned with the program: the lookup on a collision node is where a
+	// clobbered key address surfaced.
+	{name: "folded_aggregates", viaSSA: []string{"main", "pmap__PMap__Coarse__i32__get_or", "pmap____hm_find__Coarse__i32", "pmap__PMap__Coarse__i32__insert"}, src: `
+import "std/pmap" as pmap;
+import "std/option";
+import "std/i32";
+import "core/cmp";
+
+@derive(cmp.Eq)
+struct Coarse { bucket: i32, id: i32 }
+impl cmp.Hash for Coarse { function hash(self: Coarse): i32 { return self.bucket; } }
+function main(): i32 {
+    var m: pmap.PMap[Coarse, i32] = pmap.pmap_new();
+    var i: i32 = 0;
+    while (i < 40) { m = m.insert(Coarse { bucket: i % 5, id: i }, i); i = i + 1; }
+    var n: i32 = m.get_or(Coarse { bucket: 3, id: 13 }, -1) * 10 + m.get_or(Coarse { bucket: 3, id: 14 }, -1);
+    if (m.contains(Coarse { bucket: 1, id: 6 })) { n = n + 1000; }
+    return n % 251;
+}
+`},
+	// The string ops the stack machine selects in emit_str_op (search, split,
+	// lines, case, trim, replace, bytes, count), through the stack machine's
+	// own arm with the operand count the IR verifier gives each, and the bit
+	// counts at both widths.
+	{name: "strings", allSSA: true, src: `
+import "std/string";
+import "std/i32";
+import "std/i64";
+function strs(s: string): i32 {
+    var n: i32 = 0;
+    n = n + s.index_of("fern");
+    if (s.starts_with("the")) { n = n + 100; }
+    if (s.ends_with("end")) { n = n + 200; }
+    if (s.contains("language")) { n = n + 400; }
+    n = n + s.split(" ").len() * 10;
+    n = n + s.lines().len() * 1000;
+    n = n + s.trim().len();
+    n = n + s.replace("fern", "FERN").to_upper().len() + s.to_lower().len();
+    n = n + "ab".repeat(3).len() + s.reverse_bytes().len();
+    n = n + s.bytes().len() + s.count("e");
+    return n;
+}
+function bits(a: i32, b: i64): i32 {
+    return a.count_ones() + a.leading_zeros() * 10 + a.trailing_zeros() * 100 + (b.count_ones() as i32) * 1000 + (b.leading_zeros() as i32) * 7 + (b.trailing_zeros() as i32) * 3;
+}
+function main(): i32 {
+    var s: string = "  the fern language\n has a fern end";
+    return (strs(s) + bits(15790080, 280375465082880)) % 251;
+}
+`},
+	// A string slice whose upper bound is read again in the same block. The
+	// slice kernel loads that bound into the scratch register and then
+	// overwrites it with the length, so a scratch tracker that survives the
+	// kernel makes the second read reuse the difference. With lo of 0 the
+	// wrong value equals the right one, so a case has to slice from further
+	// in to see it.
+	{name: "slice_bound_reuse", viaSSA: []string{"tail", "main"}, src: `
+function tail(s: string, lo: i32, hi: i32): i32 {
+    var v: str = slice_unchecked(s, lo, hi);
+    var x: i32 = hi + 1;
+    return x * 1000 + v.len();
+}
+function main(): i32 {
+    var s: string = "abcdefghijkl";
+    return (tail(s, 3, 9) + tail(s, 0, 4) + tail(s, 5, 12)) % 251;
+}
+`},
+	// An exhaustive match whose every arm returns, standing last in a
+	// generic function (ordmap's fold), lowers to a loop whose body reaches
+	// the loop's end alive: control continues after the loop in the
+	// enclosing scope, and the lift gives it a block to continue in.
+	{name: "loop_fallthrough", allSSA: true, src: `
+import "std/ordmap" as ordmap;
+import "core/cmp";
+function main(): i32 {
+    var m: ordmap.OrdMap[i32, i32] = ordmap.ordmap_new();
+    var i: i32 = 0;
+    while (i < 30) { m = m.insert((i * 7) % 31, i); i = i + 1; }
+    var total: i32 = m.fold(0, (acc: i32, k: i32, v: i32) => acc + k * 2 + v);
+    return (total + m.len()) % 251;
+}
+`},
 	// A mixed module: main and the string helpers keep the stack machine, the
 	// integer functions go through the SSA backend, and both call each other
 	// through the shared stack ABI.
@@ -506,10 +718,11 @@ func TestSelfHostSSAFrameIsSizedBySpills(t *testing.T) {
 		target string
 		frame  *regexp.Regexp
 	}{
-		{"x86-64-linux", regexp.MustCompile(`__fn_wide:\n(?:.*\n){1,8}?\s+subq \$(\d+), %rsp`)},
+		{"x86-64-linux", regexp.MustCompile(`__fn_wide:\n(?:.*\n){1,14}?\s+subq \$(\d+), %rsp`)},
 		// Over 4,095 bytes the arm64 prologue builds the immediate in x17; a
-		// movk after the movz would mean a frame over 64 KB.
-		{"arm64-linux", regexp.MustCompile(`__fn_wide:\n(?:.*\n){1,10}?\s+(?:sub sp, sp, #|movz x17, #)(\d+)\n(\s+movk)?`)},
+		// movk after the movz would mean a frame over 64 KB. The window covers
+		// the frame record and up to five callee-saved pairs before it.
+		{"arm64-linux", regexp.MustCompile(`__fn_wide:\n(?:.*\n){1,16}?\s+(?:sub sp, sp, #|movz x17, #)(\d+)\n(\s+movk)?`)},
 	}
 	for _, c := range cases {
 		out := filepath.Join(dir, "wide-"+c.target+".s")

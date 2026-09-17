@@ -73,9 +73,21 @@ func emitFreelistClass(w func(string, ...any), tag, sizeReg, idxReg, noneLabel s
 // waiting and otherwise bumps the cursor by the class's rounded size. Popped
 // memory is NOT zeroed, the same contract as the flat __fern_alloc. n is a
 // non-negative i32.
-func emitAllocHelper(w func(string, ...any)) {
+func emitAllocHelper(w func(string, ...any)) { emitAllocHelperCensus(w, false) }
+
+// emitAllocHelperCounting is the same allocator with the census tick a module
+// that reads __heap_alloc_count() (#9596) needs: one increment at the entry,
+// which is ahead of the freelist-pop return, so a recycled block is counted
+// exactly like a bumped one — the census is of blocks handed out, not of
+// memory bought. It is substituted for the plain body by emitRuntimeHelpers.
+func emitAllocHelperCounting(w func(string, ...any)) { emitAllocHelperCensus(w, true) }
+
+func emitAllocHelperCensus(w func(string, ...any), census bool) {
 	w("")
 	w("%s:", fnLabel("__alloc"))
+	if census {
+		w("\tadd qword ptr [rip + %s], 1", allocCountSym)
+	}
 	w("\tmov edi, edi")
 	emitFreelistClass(w, "alloc", "rdi", "rsi", ".Lssa_alloc_bump")
 	w("\tlea r8, [rip + %s]", freelistSym)
@@ -84,6 +96,13 @@ func emitAllocHelper(w func(string, ...any)) {
 	w("\tjz .Lssa_alloc_bump")
 	w("\tmov rcx, [rax]")          // head.next
 	w("\tmov [r8 + rsi * 8], rcx") // heads[idx] = next
+	if ast.LeakCheckEnabled {
+		// The one allocation shape that leaves the cursor alone, so the guard
+		// cannot see it. rdi still holds the class-rounded size __free
+		// counted this block with. Flags are dead before the ret.
+		emitLcAdd(w, lcAllocCountSym, "")
+		emitLcAdd(w, lcPopBytesSym, "rdi")
+	}
 	w("\tret")
 	w(".Lssa_alloc_bump:")
 	w("\tsub rsp, 8") // entered 8 past alignment; the guard is called at 16
@@ -102,6 +121,13 @@ func emitFreeHelper(w func(string, ...any)) {
 	w("%s:", fnLabel("__free"))
 	w("\tmov esi, esi")
 	emitFreelistClass(w, "free", "rsi", "rdx", ".Lssa_free_ret")
+	if ast.LeakCheckEnabled {
+		// After the class computation, so the census counts only what is
+		// really pushed: a block above the largest class returns unreclaimed
+		// and its bytes stay live for the rest of the process.
+		emitLcAdd(w, lcFreeCountSym, "")
+		emitLcAdd(w, lcFreeBytesSym, "rsi")
+	}
 	w("\tlea r8, [rip + %s]", freelistSym)
 	w("\tmov rax, [r8 + rdx * 8]") // old head
 	w("\tmov [rdi], rax")          // base.next = old head

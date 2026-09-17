@@ -1548,6 +1548,21 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{},
 		Result: ast.NumberType{Width: 64, Signed: true},
 	}
+	// __heap_alloc_count(): i64 — the allocator's call count (#9596).
+	// Counts every block the runtime handed out, the freelist-pop path
+	// and the bump path alike; __fern_alloc_reuse's in-place path is
+	// neither an alloc nor a free, the same accounting the leak census
+	// uses. Complements __heap_bump_bytes, which the freelist hides a
+	// recycling loop from: 100k rounds that build and drop a string read
+	// 32 fresh bytes and 200,004 allocations, so only this one can tell a
+	// `fip` steady state from a busy one.
+	//
+	// i64 for __heap_bump_bytes's reason: a long-running program passes
+	// 2^31 allocations, and a wrapped count reads as a healthy one.
+	c.info.FuncSigs["__heap_alloc_count"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.NumberType{Width: 64, Signed: true},
+	}
 	// Bit-counting intrinsics: __clz32 / __ctz32 / __popcount32 and their
 	// 64-bit siblings. Each takes one integer of its width and returns an
 	// i32 count. clz/ctz of 0 return the operand width (32 or 64), matching

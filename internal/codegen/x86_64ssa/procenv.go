@@ -115,7 +115,7 @@ func emitArgsHelper(w func(string, ...any)) {
 	w("\tjmp .Lssa_args_slen")
 	w(".Lssa_args_slend:")
 	w("\tmov rbp, rcx")
-	w("\tlea rdx, [rbp + 9]") // rc header (8) + bytes + NUL
+	w("\tlea rdx, [rbp + %d]", strBlockBytes) // rc header (8) + bytes + NUL
 	ssaBumpAlloc(w, "rax", "rdx")
 	w("\tmov dword ptr [rax], 1") // rc = 1
 	w("\tmov [rax + 4], ebp")     // len
@@ -192,7 +192,7 @@ func emitEnvHelper(w func(string, ...any)) {
 	w("\tjmp .Lssa_env_slen")
 	w(".Lssa_env_slend:")
 	w("\tmov r15, rcx")
-	w("\tlea rdx, [r15 + 9]")
+	w("\tlea rdx, [r15 + %d]", strBlockBytes)
 	ssaBumpAlloc(w, "rax", "rdx")
 	w("\tmov dword ptr [rax], 1") // rc = 1
 	w("\tmov [rax + 4], r15d")    // len
@@ -225,18 +225,38 @@ func emitEnvHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
-// emitStatHelper writes stat(path) -> Result[FileStat, IoError]:
-// newfstatat(AT_FDCWD, path, buf, 0) into a 144-byte frame buffer, projected
-// onto a fresh FileStat box by the same table the flat x86-64 backend reads
-// (nativex86_64.LinuxStatFields), and wrapped in Ok; -errno goes through
-// __fern_io_error with the path as given and comes back in Err. The record
-// box is {rc=1, fields@+8}, as arm64ssa's is.
-//
-// rdi = path. rbx = path, r12 = pathz then the FileStat box, r13 = path len
-// then st_size, r14 = is_file, r15 = is_dir.
+// emitStatHelper writes stat(path) -> Result[FileStat, IoError].
 func emitStatHelper(w func(string, ...any)) {
+	emitStatLikeHelper(w, "stat", "stat", false)
+}
+
+// emitFdStatHelper writes __method_Reader_stat / __method_Writer_stat
+// (handle) -> Result[FileStat, IoError]: fstat(2) of the fd at [handle+8],
+// projected by the same body as stat(path), as arm64ssa's emitFdStatHelper
+// is. `lp` prefixes the local labels so both methods can live in one object.
+func emitFdStatHelper(name, lp string) func(w func(string, ...any)) {
+	return func(w func(string, ...any)) {
+		emitStatLikeHelper(w, name, lp, true)
+	}
+}
+
+// emitStatLikeHelper writes the shared body behind stat(path) and the two fd
+// methods: the stat record into a 144-byte frame buffer, projected onto a
+// fresh FileStat box by the same table the flat x86-64 backend reads
+// (nativex86_64.LinuxStatFields), and wrapped in Ok; -errno goes through
+// __fern_io_error and comes back in Err. The record box is {rc=1, fields@+8},
+// as arm64ssa's is.
+//
+// fdBased picks newfstatat(AT_FDCWD, pathz, buf, 0) over fstat(fd, buf), and
+// with it what the error reports: the path as given, or an empty string when
+// the handle never carried one. `lp` prefixes the local labels, so the path
+// form and both fd forms can be emitted into one object.
+//
+// rdi = path or handle. rbx = path, r12 = pathz then the FileStat box,
+// r13 = path len then st_size, r14 = is_file, r15 = is_dir.
+func emitStatLikeHelper(w func(string, ...any), name, lp string, fdBased bool) {
 	w("")
-	w("%s:", fnLabel("stat"))
+	w("%s:", fnLabel(name))
 	w("\tpush rbx")
 	w("\tpush r12")
 	w("\tpush r13")
@@ -245,30 +265,38 @@ func emitStatHelper(w func(string, ...any)) {
 	// Five pushes past the return address leave rsp 16-aligned; the 144-byte
 	// statbuf keeps it so.
 	w("\tsub rsp, 144")
-	w("\tmov rbx, rdi")
-	w("\tmov r13d, %s", memRef("rbx", -4))
-	w("\tlea rdx, [r13 + 1]")
-	ssaBumpAlloc(w, "rax", "rdx")
-	w("\tmov r12, rax") // pathz
-	w("\txor ecx, ecx")
-	w(".Lssa_stat_cp:")
-	w("\tcmp rcx, r13")
-	w("\tjae .Lssa_stat_cpd")
-	w("\tmov al, [rbx + rcx]")
-	w("\tmov [r12 + rcx], al")
-	w("\tinc rcx")
-	w("\tjmp .Lssa_stat_cp")
-	w(".Lssa_stat_cpd:")
-	w("\tmov byte ptr [r12 + r13], 0")
-	// newfstatat(AT_FDCWD, pathz, statbuf, 0)
-	w("\tmov edi, -100")
-	w("\tmov rsi, r12")
-	w("\tmov rdx, rsp")
-	w("\txor r10d, r10d")
-	w("\tmov eax, 262")
-	w("\tsyscall")
+	if fdBased {
+		// fstat(fd, statbuf); the fd sits at [handle+8].
+		w("\tmov edi, dword ptr [rdi + 8]")
+		w("\tmov rsi, rsp")
+		w("\tmov eax, 5")
+		w("\tsyscall")
+	} else {
+		w("\tmov rbx, rdi")
+		w("\tmov r13d, %s", memRef("rbx", -4))
+		w("\tlea rdx, [r13 + 1]")
+		ssaBumpAlloc(w, "rax", "rdx")
+		w("\tmov r12, rax") // pathz
+		w("\txor ecx, ecx")
+		w(".Lssa_%s_cp:", lp)
+		w("\tcmp rcx, r13")
+		w("\tjae .Lssa_%s_cpd", lp)
+		w("\tmov al, [rbx + rcx]")
+		w("\tmov [r12 + rcx], al")
+		w("\tinc rcx")
+		w("\tjmp .Lssa_%s_cp", lp)
+		w(".Lssa_%s_cpd:", lp)
+		w("\tmov byte ptr [r12 + r13], 0")
+		// newfstatat(AT_FDCWD, pathz, statbuf, 0)
+		w("\tmov edi, -100")
+		w("\tmov rsi, r12")
+		w("\tmov rdx, rsp")
+		w("\txor r10d, r10d")
+		w("\tmov eax, 262")
+		w("\tsyscall")
+	}
 	w("\ttest rax, rax")
-	w("\tjs .Lssa_stat_err")
+	w("\tjs .Lssa_%s_err", lp)
 	w("\tmov eax, [rsp + 24]") // st_mode
 	w("\tand eax, 61440")      // S_IFMT
 	w("\txor r14d, r14d")
@@ -296,16 +324,24 @@ func emitStatHelper(w func(string, ...any)) {
 		w("\tmov [r12 + %d], r9", f.Box)
 	}
 	ssaOptionBox(w, 0, "r12")
-	w("\tjmp .Lssa_stat_ret")
-	w(".Lssa_stat_err:")
+	w("\tjmp .Lssa_%s_ret", lp)
+	w(".Lssa_%s_err:", lp)
 	w("\tneg rax")
-	ssaRetainPathForIoErr(w)
-	w("\tmov edi, eax") // errno
-	w("\tmov rsi, rbx") // the path, as given
+	if fdBased {
+		// No path reached this helper, so the error carries an empty one,
+		// as a failed read does.
+		w("\tmov r13, rax") // errno, across the allocation
+		ssaEmptyString(w, "rsi")
+		w("\tmov edi, r13d")
+	} else {
+		ssaRetainPathForIoErr(w)
+		w("\tmov edi, eax") // errno
+		w("\tmov rsi, rbx") // the path, as given
+	}
 	w("\tcall %s", fnLabel("__fern_io_error"))
 	w("\tmov r12, rax")
 	ssaOptionBox(w, 1, "r12")
-	w(".Lssa_stat_ret:")
+	w(".Lssa_%s_ret:", lp)
 	w("\tadd rsp, 144")
 	w("\tpop r15")
 	w("\tpop r14")

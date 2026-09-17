@@ -19,6 +19,13 @@ var rcInline = map[string]bool{
 	"__fern_rc_dec":       true,
 }
 
+// rcInlineCall reports whether a call is an rc primitive the renderer writes
+// inline. inlinedCall and inlineRcLines both read it, so the shape conditions
+// live in one place (#9618).
+func rcInlineCall(in Inst) bool {
+	return in.Op == Call && rcInline[in.Callee] && len(in.ArgLocs) == 1
+}
+
 // inlineRcLines renders an rc primitive inline, or reports false when the
 // callee is something else. Each reproduces its helper exactly:
 //
@@ -33,7 +40,7 @@ var rcInline = map[string]bool{
 // and s1 the 0/1, so neither collides with a destination that aliases the
 // operand.
 func inlineRcLines(in Inst, numAlloc int, seed string) ([]string, bool) {
-	if !rcInline[in.Callee] || in.Op != Call || len(in.ArgLocs) != 1 {
+	if !rcInlineCall(in) {
 		return nil, false
 	}
 	s0, s1 := numAlloc, numAlloc+1

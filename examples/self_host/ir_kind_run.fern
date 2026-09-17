@@ -85,7 +85,7 @@ function main(): i32 {
         "buf_new", "buf_push", "buf_push_range", "buf_push_byte", "buf_push_u64",
         "buf_len", "buf_take", "buf_free", "arr_push_owned_i64", "arr_push_owned_f64",
         "open_reader_with", "open_writer_with", "write_some",
-        "read_dir_all"
+        "read_dir_all", "heap_alloc_count"
     ];
     var ext_max: i32 = n;
     var ext_ok: i32 = 0;
@@ -205,7 +205,7 @@ function main(): i32 {
         ir.op_buf_push_byte(), ir.op_buf_push_u64(), ir.op_buf_len(), ir.op_buf_take(),
         ir.op_buf_free(), ir.op_arr_push_owned_i64(), ir.op_arr_push_owned_f64(),
         ir.op_open_reader_with(), ir.op_open_writer_with(), ir.op_write_some(),
-        ir.op_read_dir_all()
+        ir.op_read_dir_all(), ir.op_heap_alloc_count()
     ];
     var names: string[] = [
         "const_i32", "const_str", "load_local",
@@ -236,7 +236,7 @@ function main(): i32 {
         "buf_push_byte", "buf_push_u64", "buf_len", "buf_take",
         "buf_free", "arr_push_owned_i64", "arr_push_owned_f64",
         "open_reader_with", "open_writer_with", "write_some",
-        "read_dir_all"
+        "read_dir_all", "heap_alloc_count"
     ];
     var tag_ok: i32 = 0;
     var tag_bad: i32 = 0;

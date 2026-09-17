@@ -1,6 +1,10 @@
 package x86_64ssa
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/jakechampion/lang/internal/ast"
+)
 
 // The allocation fast paths. __alloc and __free are reached through
 // __ssa_alloc_pres, a trampoline that saves nine registers and the flags
@@ -28,9 +32,25 @@ func SmallClassIndex(n int64) (int, bool) {
 	return int(c/16 - 1), true
 }
 
+// inlinedCall reports whether the block renderer writes this call inline
+// instead of emitting a call to the helper.
+//
+// referencedRuntimeHelpers reads this to decide a helper is unreachable, so
+// the two must agree exactly: a call the scan believes is inlined leaves its
+// helper out of the module, and a renderer that then emits the call names a
+// label nothing defines. Both readers ask the same predicate per callee for
+// that reason, rather than each spelling the conditions out (#9618).
+func inlinedCall(in Inst) bool {
+	return rcInlineCall(in) || boxFreeInline(in)
+}
+
 // boxFreeInline reports whether a call is a __fern_box_free whose size the
-// emitter knew, in the tier the inline push covers.
+// emitter knew, in the tier the inline push covers, outside the census.
 func boxFreeInline(in Inst) bool {
+	// The census counts frees in __free, which an inline push never reaches.
+	if ast.LeakCheckEnabled {
+		return false
+	}
 	if in.Op != Call || in.Callee != "__fern_box_free" || !in.SrcImm || len(in.ArgLocs) != 2 {
 		return false
 	}
@@ -43,9 +63,17 @@ func boxFreeInline(in Inst) bool {
 // constant size as an inline push; it reports false for anything else. r11
 // is the per-instruction scratch the trampoline already uses; s0 homes a
 // slot-resident box and s1 the old list head.
-func inlineAllocLines(in Inst, numAlloc int, seed string) ([]string, bool) {
+func inlineAllocLines(in Inst, numAlloc int, seed string, counting bool) ([]string, bool) {
 	lbl := func(suffix string) string { return fmt.Sprintf(".Lssa_alloc_%s_%s", seed, suffix) }
 	if in.Op == MemAlloc && in.SrcImm {
+		if counting {
+			// A module reading __heap_alloc_count() (#9596) keeps every
+			// allocation on the helper, which is where the counter ticks.
+			// Inlining the pop here instead would hand out a block the
+			// count never saw, and an undercount reads as the zero-alloc
+			// steady state the observable exists to prove.
+			return nil, false
+		}
 		idx, ok := SmallClassIndex(in.Imm)
 		if !ok {
 			return nil, false

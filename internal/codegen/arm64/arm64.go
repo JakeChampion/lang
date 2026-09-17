@@ -757,6 +757,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesHeapBumpBytes {
 		g.emitHeapBumpBytesRuntime()
 	}
+	if g.usesHeapAllocCount {
+		g.emitHeapAllocCountRuntime()
+	}
 	if g.usesHeapMark {
 		g.emitHeapMarkRuntime()
 	}
@@ -1400,7 +1403,7 @@ func (g *generator) emitDataSections() {
 		} else {
 			g.line(`.section .bss`)
 		}
-		if ast.LeakCheckEnabled {
+		if g.countsAllocs() {
 			// Leak detector counters (#5362 slice 1). alloc_count /
 			// alloc_bytes tick in __fern_alloc (post-16-rounding, both
 			// the freelist-pop and bump paths); free_count / free_bytes
@@ -1846,7 +1849,7 @@ func (g *generator) emitAllocRuntime() {
 	g.emit("mov x29, sp")
 	g.emit("add x0, x0, #15")
 	g.emit("and x0, x0, #-16")
-	if ast.LeakCheckEnabled {
+	if g.countsAllocs() {
 		// Leak detector (#5362 slice 1): count every allocation — the
 		// freelist-pop and bump paths both flow through here — at the
 		// 16-rounded size, the same rounding __fern_free's counter
@@ -2042,7 +2045,7 @@ func (g *generator) emitFreeRuntime() {
 	g.line(".global __fern_free")
 	g.typeDirective("__fern_free")
 	g.label("__fern_free")
-	if ast.LeakCheckEnabled {
+	if g.countsAllocs() {
 		// Leak detector (#5362 slice 1): every reclamation site funnels
 		// through this helper (box_free / arr_dec / map_drop /
 		// drop_arr_ptr / drop_arr_str / alloc_reuse's mismatch path /
@@ -2824,6 +2827,28 @@ func (g *generator) emitHeapBumpBytesRuntime() {
 	g.emit("mov x0, #0")
 	g.emit("ret")
 	g.sizeDirective("__fern_heap_bump_bytes")
+}
+
+// countsAllocs reports whether this module maintains the census counters
+// __fern_alloc / __fern_free tick. The leak detector wants them; so does a
+// program that reads __heap_alloc_count(), which is the same counter without
+// the exit report. Everything that keeps the four quads in step reads this,
+// so the count and the bytes can never be maintained by halves.
+func (g *generator) countsAllocs() bool { return ast.LeakCheckEnabled || g.usesHeapAllocCount }
+
+// emitHeapAllocCountRuntime emits `__fern_heap_alloc_count() -> i64`
+// (#9596): the census counter __fern_alloc ticks on both the freelist-pop
+// and the bump path, which is the half __fern_heap_bump_bytes cannot see —
+// a recycling loop moves this and not the cursor. Mirrors the x86_64 helper.
+func (g *generator) emitHeapAllocCountRuntime() {
+	g.line("")
+	g.line(".global __fern_heap_alloc_count")
+	g.typeDirective("__fern_heap_alloc_count")
+	g.label("__fern_heap_alloc_count")
+	g.adrpAdd("x1", "__fern_lc_alloc_count")
+	g.emit("ldr x0, [x1]")
+	g.emit("ret")
+	g.sizeDirective("__fern_heap_alloc_count")
 }
 
 // emitHeapMarkRuntime emits `__fern_heap_mark() -> i64` and
@@ -6721,7 +6746,7 @@ func (g *generator) emitStrBufRuntime() {
 	g.label(".Lsbgrow_alloc")
 	g.emit("mov x0, x20")
 	g.emit("bl __fern_alloc")
-	if ast.LeakCheckEnabled {
+	if g.countsAllocs() {
 		// The builder's buffer is runtime state the program never holds,
 		// so the census leaves it out as it left out the .bss reservation
 		// it replaced. x20 is a power of two >= 64 KiB, already 16-rounded.
@@ -14902,6 +14927,13 @@ type generator struct {
 	// `__fern_arr_push_shared_bytes` (returns the BSS accumulator
 	// __fern_arr_push_grow adds oldLen * stride to at each crossing).
 	usesArrPushSharedBytes bool
+	// usesHeapAllocCount gates the reader `__fern_heap_alloc_count`
+	// (#9596) and, with it, the census counters themselves: the count is
+	// the leak detector's `__fern_lc_alloc_count`, so a program that
+	// reads it compiles the same ticks `FERN_LEAKCHECK=1` would, without
+	// the exit report. Set when the IR emits the matching OpCallDirect;
+	// also pulls in the allocator, which is where the ticking happens.
+	usesHeapAllocCount bool
 	// usesHeapBumpBytes gates the Phase 6 measurement reader
 	// `__fern_heap_bump_bytes` (returns __fern_heap_ptr − __fern_heap_base,
 	// the bump high-water mark). Set when the IR emits the matching
@@ -19272,6 +19304,9 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "__fern_heap_bump_bytes":
 			g.usesHeapBumpBytes = true
 			g.usesAlloc = true // reads __fern_heap_ptr / __fern_heap_base
+		case "__fern_heap_alloc_count":
+			g.usesHeapAllocCount = true
+			g.usesAlloc = true // the counter is ticked inside __fern_alloc
 		case "__heap_mark", "__heap_release_to":
 			// The IR carries the SOURCE builtin name (see internal/ir's
 			// lowering: void-ness of release_to is resolved through the

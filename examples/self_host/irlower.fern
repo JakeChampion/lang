@@ -10511,6 +10511,9 @@ pub function infer_expr_width(e: ast.Expr, s: LowerState): i32 {
                     // rc probe uses — which routes through lower_i64 + int_wrap
                     // only when the operand reads 64 here.
                     if (cid.name == "__heap_bump_bytes") { return 64; }
+                    // The allocation count is i64 for the same reason and
+                    // read through the same `as i32` probe shape.
+                    if (cid.name == "__heap_alloc_count") { return 64; }
                     // Same for the cliff WEIGHT: bytes copied, arena-scale, so
                     // i64 — and read through `as i32` by the same probe shape.
                     if (cid.name == "__arr_push_shared_bytes") { return 64; }
@@ -10902,6 +10905,7 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
                     // result, where the width-32 sign-extend below would drop it
                     // back to the truncating read this widening removed.
                     if (cid.name == "__heap_bump_bytes") { return lower_expr(e, s); }
+                    if (cid.name == "__heap_alloc_count") { return lower_expr(e, s); }
                     // Likewise the cliff weight: an i64 value whose full width
                     // the normal call path pushes.
                     if (cid.name == "__arr_push_shared_bytes") { return lower_expr(e, s); }
@@ -12085,6 +12089,12 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
     // the IR backends compute it inline from their heap cursor.
     if (cid.name == "__heap_bump_bytes" && c.args.len() == 0) {
         return s.emit(ir.op_heap_bump_bytes());
+    }
+    // __heap_alloc_count(): the allocator's call count as an i64 (#9596) —
+    // the allocations the bump mark above cannot see, since a freelist pop
+    // hands out a block without moving the cursor. Allocation-free itself.
+    if (cid.name == "__heap_alloc_count" && c.args.len() == 0) {
+        return s.emit(ir.op_heap_alloc_count());
     }
     // __heap_mark() / __heap_release_to(mark): the one-level arena checkpoint
     // (#6728). Inline on the register backends like the bump read above — they
@@ -73278,7 +73288,7 @@ function lift_expr_walk(e: ast.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
             var slar: LiftExpr = lift_expr_walk(sl.array, acc, gfns);
             var slsr: LiftExpr = lift_expr_walk(sl.start, slar.acc, gfns);
             var sler: LiftExpr = lift_expr_walk(sl.end, slsr.acc, gfns);
-            return LiftExpr { expr: ast.ExprSlice { array: slar.expr, start: slsr.expr, end: sler.expr, ty: sl.ty, open_end: sl.open_end }, acc: sler.acc };
+            return LiftExpr { expr: ast.ExprSlice { ...sl, array: slar.expr, start: slsr.expr, end: sler.expr }, acc: sler.acc };
         },
         ast.ExprFieldAccess(fa) => {
             var faor: LiftExpr = lift_expr_walk(fa.obj, acc, gfns);
@@ -77068,7 +77078,7 @@ function wcap_expr(e: ast.Expr, fd: parser.FuncDecl, gfns: string[], structs: St
             var sa: WCapExpr = wcap_expr(sl.array, fd, gfns, structs, mfuncs, acc, atargets);
             var ss: WCapExpr = wcap_expr(sl.start, fd, gfns, structs, mfuncs, sa.caps, atargets);
             var se: WCapExpr = wcap_expr(sl.end, fd, gfns, structs, mfuncs, ss.caps, atargets);
-            return WCapExpr { expr: ast.ExprSlice { array: sa.expr, start: ss.expr, end: se.expr, ty: sl.ty, open_end: sl.open_end }, caps: se.caps };
+            return WCapExpr { expr: ast.ExprSlice { ...sl, array: sa.expr, start: ss.expr, end: se.expr }, caps: se.caps };
         },
         ast.ExprStructLit(sl) => {
             var a: WCaps = acc;

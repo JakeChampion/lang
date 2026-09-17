@@ -1081,6 +1081,8 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_arr_push_shared_bytes")
 				case "__fern_heap_bump_bytes":
 					needs.add("__fern_heap_bump_bytes")
+				case "__fern_heap_alloc_count":
+					needs.add("__fern_heap_alloc_count")
 				case "__str_idx":
 					// Same byte-fetch SSO seam used by
 					// __fern_str_byte but returns a byte
@@ -2415,6 +2417,17 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: []byte{encode.ValtypeI64},
 		body:    buildHeapBumpBytesBody,
 	},
+	"__fern_heap_alloc_count": {
+		// () → i64 (#9596). The census counter __fern_alloc ticks on
+		// both the freelist-pop and the bump path, read straight out of
+		// its reserved slot — the half __fern_heap_bump_bytes cannot
+		// see, since a pop hands out a block without moving the cursor.
+		// The natives implement the same entry point over
+		// __fern_lc_alloc_count.
+		params:  nil,
+		results: []byte{encode.ValtypeI64},
+		body:    buildHeapAllocCountBody,
+	},
 	"__alloc_u8": {
 		// (n) → i32 — allocates a length-prefixed u8[] of
 		// length n. Layout: 4-byte i32 length prefix at
@@ -3187,7 +3200,22 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 //	1: $ptr
 //	2: $end
 //	3: $need
-func buildAllocBody(_ map[string]uint32) []byte {
+//
+// buildAllocBody and the three bodies below come in two spellings: the
+// plain one the helper table holds, which counts when the leak detector is
+// on, and a `…Counting` one the module assembler substitutes when the
+// program reads __heap_alloc_count() (#9596). The census has to be all or
+// nothing across the four — a counted alloc whose free went uncounted would
+// make live_bytes drift — so they take the same flag.
+func buildAllocBody(idxs map[string]uint32) []byte {
+	return buildAllocBodyCensus(ast.LeakCheckEnabled, idxs)
+}
+
+func buildAllocBodyCounting(idxs map[string]uint32) []byte {
+	return buildAllocBodyCensus(true, idxs)
+}
+
+func buildAllocBodyCensus(census bool, _ map[string]uint32) []byte {
 	var body []byte
 	// Reject a request too large for the downstream i32 arithmetic to
 	// round without wrapping. Nothing this big is satisfiable inside a
@@ -3230,7 +3258,7 @@ func buildAllocBody(_ map[string]uint32) []byte {
 	// Leak census: count the request here, ahead of the freelist pop's
 	// early return, so a recycled block is counted exactly like a bumped
 	// one — the census is of blocks handed out, not of memory bought.
-	body = emitLcAccount(body, lcAllocCountAddr, lcAllocBytesAddr, 0)
+	body = emitLcAccount(body, census, lcAllocCountAddr, lcAllocBytesAddr, 0)
 	if ast.RcFreeEnabled {
 		// Phase 3 step-4: reuse a freed block of the same class before
 		// bumping. emitFreelistBin turns the 16-rounded request (local
@@ -3338,12 +3366,20 @@ func buildAllocBody(_ map[string]uint32) []byte {
 //
 // Signature: (param $base i32) (param $size i32). One i32 local
 // ($headAddr) after the two params.
-func buildFreeBody(_ map[string]uint32) []byte {
+func buildFreeBody(idxs map[string]uint32) []byte {
+	return buildFreeBodyCensus(ast.LeakCheckEnabled, idxs)
+}
+
+func buildFreeBodyCounting(idxs map[string]uint32) []byte {
+	return buildFreeBodyCensus(true, idxs)
+}
+
+func buildFreeBodyCensus(census bool, _ map[string]uint32) []byte {
 	var body []byte
 	// Leak census: every reclamation site funnels through this helper, so
 	// counting here covers them all — and it happens whether or not the
 	// freelist is compiled in, since a release is a release either way.
-	body = emitLcAccount(body, lcFreeCountAddr, lcFreeBytesAddr, 1)
+	body = emitLcAccount(body, census, lcFreeCountAddr, lcFreeBytesAddr, 1)
 	if ast.RcFreeEnabled {
 		// size = (size + 15) & -16
 		body = inst.InstLocalGet(body, 1)
@@ -4261,6 +4297,14 @@ func buildStrConcatBody(idxs map[string]uint32) []byte {
 // 12-25% more than it had and then copies once into a block that much
 // larger — amortised O(1) per byte with no capacity word in the rc header.
 func buildStrAppendBody(idxs map[string]uint32) []byte {
+	return buildStrAppendBodyCensus(ast.LeakCheckEnabled, idxs)
+}
+
+func buildStrAppendBodyCounting(idxs map[string]uint32) []byte {
+	return buildStrAppendBodyCensus(true, idxs)
+}
+
+func buildStrAppendBodyCensus(census bool, idxs map[string]uint32) []byte {
 	strLen := idxs["__fern_str_len"]
 	strByte := idxs["__fern_str_byte"]
 	concat := idxs["__str_concat"]
@@ -4320,7 +4364,7 @@ func buildStrAppendBody(idxs map[string]uint32) []byte {
 		body = inst.InstLocalGet(body, 11)
 		body = numeric.InstI32GtU(body)
 		body = inst.InstBrIf(body, 0)
-		if ast.LeakCheckEnabled {
+		if census {
 			// The block was charged at its 16-rounded request and __free
 			// will charge the grown one; the difference keeps the pair
 			// exact. mem[lcAllocBytesAddr] += $size_t - $size_a.
@@ -4382,6 +4426,14 @@ func buildStrAppendBody(idxs map[string]uint32) []byte {
 // The bounds are checked UP FRONT and trap the way __str_slice does, so a
 // range the unfused form would have rejected is still rejected here.
 func buildStrAppendRangeBody(idxs map[string]uint32) []byte {
+	return buildStrAppendRangeBodyCensus(ast.LeakCheckEnabled, idxs)
+}
+
+func buildStrAppendRangeBodyCounting(idxs map[string]uint32) []byte {
+	return buildStrAppendRangeBodyCensus(true, idxs)
+}
+
+func buildStrAppendRangeBodyCensus(census bool, idxs map[string]uint32) []byte {
 	strLen := idxs["__fern_str_len"]
 	strByte := idxs["__fern_str_byte"]
 	concat := idxs["__str_concat"]
@@ -4461,7 +4513,7 @@ func buildStrAppendRangeBody(idxs map[string]uint32) []byte {
 		body = inst.InstLocalGet(body, 14)
 		body = numeric.InstI32GtU(body)
 		body = inst.InstBrIf(body, 0)
-		if ast.LeakCheckEnabled {
+		if census {
 			// mem[lcAllocBytesAddr] += $size_t - $size_a, the same exact
 			// pairing __fern_str_append keeps.
 			body = inst.InstI32Const(body, lcAllocBytesAddr)
@@ -7237,6 +7289,17 @@ func buildHeapBumpBytesBody(_ map[string]uint32) []byte {
 	body = memory.InstI32Load(body, 2, 0)
 	body = numeric.InstI32Sub(body)
 	body = convert.InstI64ExtendI32U(body)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildHeapAllocCountBody assembles __fern_heap_alloc_count: () → i64
+// (#9596). The slot is already an i64 running total, so unlike the bump
+// mark there is no widening to do — it is a count of allocator calls, not
+// an address difference.
+func buildHeapAllocCountBody(_ map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstI32Const(body, lcAllocCountAddr)
+	body = memory.InstI64Load(body, 3, 0)
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 
@@ -10149,8 +10212,8 @@ const (
 // by the internal waste.
 //
 // Uses no locals, so a caller's local numbering is untouched.
-func emitLcAccount(body []byte, countAddr, bytesAddr int32, sizeLocal uint32) []byte {
-	if !ast.LeakCheckEnabled {
+func emitLcAccount(body []byte, census bool, countAddr, bytesAddr int32, sizeLocal uint32) []byte {
+	if !census {
 		return body
 	}
 	// mem[countAddr] += 1

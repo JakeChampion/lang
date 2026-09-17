@@ -29,12 +29,10 @@ compiler has:
   subset until the AST fallback is gone) and goal 2 (port Perceus to the
   self-host) both target. **This plan is for this path.**
 - **`ssa.fern`** — mirrors native's downstream optimiser
-  `internal/ssa`; a different, higher layer. Per
-  `docs/SELFHOST-SSA-ALWAYS.md` it is the *default* lowering path for
-  x86-64/arm64 in the unified driver (`fern.fern try_ssa`), and it has
-  **already implemented closures** (Phase 2e), floats, generics — its
-  `-ssa-scan` reports 100% per-function coverage, blocked only by the
-  no-GC memory wall (which the Perceus track unblocks).
+  `internal/ssa`; a different, higher layer. It holds the SSA data model,
+  optimiser and register allocator that `-backend ssa` runs over each
+  function lowered by the IR path (`docs/SELFHOST-SSA-BACKEND.md`); it is
+  not a second frontend.
 
 These are parallel efforts at the same end (retire the AST emitters).
 Closures-on-`irlower` is therefore **not** made redundant by SSA already
