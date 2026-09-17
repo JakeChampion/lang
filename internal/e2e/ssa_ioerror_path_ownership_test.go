@@ -35,7 +35,7 @@ function main(): i32 {
 // must still report once the failing call has returned.
 const wantIoErrPathLen = len("/fern/no/such/path/here")
 
-func ioErrPathLen(t *testing.T, bin, target, backend, qemu, dir, builtin string) int {
+func ioErrPathLen(t *testing.T, bin, target, backend, qemu string, x86Runner []string, dir, builtin string) int {
 	t.Helper()
 	name := builtin + "_" + backend
 	src := filepath.Join(dir, name+".fern")
@@ -54,20 +54,38 @@ func ioErrPathLen(t *testing.T, bin, target, backend, qemu, dir, builtin string)
 	if o, err := compile.CombinedOutput(); err != nil {
 		t.Fatalf("compile %s for %s (-backend %q) failed: %v\n%s", builtin, target, backend, err, o)
 	}
+	// The x86-64 leg runs the emitted binary the same way the arm64 leg does:
+	// directly on a matching host, under the emulator otherwise. This test
+	// lands in the catch-all `test-e2e-other` lane, whose matrix includes an
+	// aarch64 runner, so exec'ing an x86-64 ELF there fails to START — and a
+	// command that never started leaves ProcessState nil, which made the
+	// ExitCode() below a panic rather than a failure.
 	var run *exec.Cmd
 	if target == "arm64-linux" {
 		run = runArm64Bin(qemu, out)
-	} else {
+	} else if len(x86Runner) == 0 {
 		run = exec.Command(out)
+	} else {
+		run = exec.Command(x86Runner[0], append(append([]string{}, x86Runner[1:]...), out)...)
 	}
 	run.Env = e2eharness.ChildEnv()
-	_ = run.Run()
+	err := run.Run()
+	// Every case here exits NON-ZERO on purpose — the exit status is p.len() —
+	// so a non-nil error is the normal path and must not fail the test. What
+	// distinguishes "ran and exited 20" from "never started" is ProcessState.
+	if run.ProcessState == nil {
+		t.Fatalf("run %s for %s (-backend %q) never started: %v", builtin, target, backend, err)
+	}
 	return run.ProcessState.ExitCode()
 }
 
 func TestSSABackendsKeepThePathAFailingBuiltinWasGiven(t *testing.T) {
 	bin := buildFernCLI(t)
 	qemu := arm64QemuOrEmpty(t)
+	// Not X86_64Tooling: that skips the whole test when it cannot run an
+	// x86-64 binary, and the arm64 half still has something to say on an
+	// aarch64 host. The lookup half lets each target's legs decide alone.
+	_, x86Runner, x86OK := e2eharness.LookupX86_64Tooling()
 	dir := t.TempDir()
 
 	// Per target, because the two SSA backends emit different subsets: a
@@ -87,8 +105,11 @@ func TestSSABackendsKeepThePathAFailingBuiltinWasGiven(t *testing.T) {
 	} {
 		for _, b := range tc.builtins {
 			t.Run(tc.target+"/"+b, func(t *testing.T) {
-				flat := ioErrPathLen(t, bin, tc.target, "flat", qemu, dir, b)
-				ssa := ioErrPathLen(t, bin, tc.target, "ssa", qemu, dir, b)
+				if tc.target == "x86-64-linux" && !x86OK {
+					t.Skip("no way to run an x86-64 binary here: non-amd64 host and no qemu-x86_64 on PATH")
+				}
+				flat := ioErrPathLen(t, bin, tc.target, "flat", qemu, x86Runner, dir, b)
+				ssa := ioErrPathLen(t, bin, tc.target, "ssa", qemu, x86Runner, dir, b)
 				if flat != wantIoErrPathLen {
 					t.Fatalf("the stack-machine emitter reports p.len() = %d after a failing %s, want %d — "+
 						"the fixture is wrong, not the backend", flat, b, wantIoErrPathLen)
