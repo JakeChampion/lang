@@ -10475,17 +10475,26 @@ var fipNonAllocMethods = map[string]bool{"len": true}
 // concatenation / interpolation, writes to a non-`own` heap value (a copy), and
 // any call the checker can't prove allocation-free.
 //
-// `fbip function` (the reuse-paired tier, plan E2') runs the SAME walk
-// with one relaxation: constructor expressions — struct / tuple literals and
-// payload-carrying enum variants — are allowed, because the IR layer verifies
-// each such site is reuse-PAIRED (or covered by the graded allowance) and
-// rejects the rest with E068 at lowering time. The same relaxation applies to
-// a graded `fip(n)` / `fbip(n)` (FipAllowance > 0): the checker does NOT count
-// n — the IR owns the count — it only stops rejecting the constructor shape.
-// Everything else stays rejected for both: array literals (no array reuse
-// pairing exists), string concat / interpolation, CoW-copy writes, and unproven
-// calls. Call rule: `fip` may only call `fip` (the stronger claim); `fbip` may
-// call `fip` or `fbip`.
+// Constructor expressions — struct / tuple literals and payload-carrying enum
+// variants — are allowed in EVERY tier, `fip` included, because the checker
+// cannot tell a fresh allocation from a reuse-paired one and the IR layer can:
+// verifyFipAllocs counts the sites that lowered to a real OpAlloc rather than
+// to `__alloc_reuse`, and refuses the function with E068 when they exceed the
+// allowance. Bare `fip` is the allowance-0 case, so a rebuild paired with a
+// dead uniquely-owned donor passes and an un-paired one is refused by name and
+// position.
+//
+// Rejecting the shape here instead used to make `fip` unable to carry struct
+// state at all (#9602): a field write is E048, whose remedy is the rebuild
+// `T { ...old, f: v }`, and that rebuild was E053 — each diagnostic naming
+// what the other forbade. Koka's `fip` permits constructor reuse matched with
+// a deconstruction for exactly this reason, and this walk was stricter than
+// the model it cites.
+//
+// Everything else stays rejected for every tier: array literals (no array
+// reuse pairing exists), string concat / interpolation, CoW-copy writes, and
+// unproven calls. Call rule: `fip` may only call `fip` (the stronger claim);
+// `fbip` may call `fip` or `fbip`.
 func (c *checker) checkFipFunctions(prog *ast.Program) {
 	fip := map[string]bool{}
 	fbip := map[string]bool{}
@@ -10508,11 +10517,6 @@ func (c *checker) checkFipFunctions(prog *ast.Program) {
 		if fn.Fbip {
 			kw = "fbip"
 		}
-		// Constructor expressions are allowed whenever the IR-level E068
-		// verification owns the allocation budget: every `fbip` (each site
-		// must be reuse-paired or within the allowance) and any graded
-		// `fip(n)` (n > 0).
-		ctorOK := fn.Fbip || fn.FipAllowance > 0
 		own := map[string]bool{}
 		for _, p := range fn.Params {
 			if p.Own {
@@ -10523,14 +10527,6 @@ func (c *checker) checkFipFunctions(prog *ast.Program) {
 			switch x := n.(type) {
 			case *ast.ArrayLit:
 				c.errfCode(x.Pos(), "E053", "`%s` function %q may not allocate (array literal)", kw, fn.Name)
-			case *ast.TupleLit:
-				if !ctorOK {
-					c.errfCode(x.Pos(), "E053", "`%s` function %q may not allocate (tuple literal)", kw, fn.Name)
-				}
-			case *ast.StructLit:
-				if !ctorOK {
-					c.errfCode(x.Pos(), "E053", "`%s` function %q may not allocate (struct literal %q)", kw, fn.Name, x.TypeName)
-				}
 			case *ast.FString:
 				c.errfCode(x.Pos(), "E053", "`%s` function %q may not allocate (string interpolation)", kw, fn.Name)
 			case *ast.Binary:
@@ -10539,9 +10535,6 @@ func (c *checker) checkFipFunctions(prog *ast.Program) {
 				}
 			case *ast.Call:
 				if x.IsVariantCall {
-					if len(x.Args) > 0 && !ctorOK {
-						c.errfCode(x.Pos(), "E053", "`%s` function %q may not allocate (enum variant construction)", kw, fn.Name)
-					}
 					return true
 				}
 				if x.Method != nil {

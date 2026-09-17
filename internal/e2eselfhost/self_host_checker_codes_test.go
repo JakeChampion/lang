@@ -1909,11 +1909,18 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e044-capture-void", "function v(): void { return; }\nfunction main(): i32 {\n    var x = v();\n    var g = () => x;\n    return 0;\n}\n", []string{"E044"}},
 		{"e044-capture-scalar-ok", "function main(): i32 {\n    var x = 5;\n    var g = () => x;\n    return g();\n}\n", nil},
 		{"e044-capture-shadowed-ok", "function v(): void { return; }\nfunction main(): i32 {\n    var x = v();\n    var g = (x: i32) => x;\n    return g(1);\n}\n", nil},
-		// E053 (`fip` no-allocation): array / struct literals, string
-		// concatenation, and calls to non-fip functions are rejected inside
-		// a `fip function`; scalar arithmetic and fip→fip calls are clean.
+		// E053 (`fip` no-allocation): array literals, string concatenation
+		// and calls to non-fip functions are rejected inside a `fip
+		// function`; scalar arithmetic and fip→fip calls are clean.
+		//
+		// A CONSTRUCTOR is not an E053 shape violation in any tier (#9602):
+		// the checker cannot tell a rebuild that reuses a dead donor's box
+		// from one that allocates a fresh box, so E068 at the IR decides and
+		// both checkers stay quiet here. internal/ir/fip_verify_test.go owns
+		// the budget half; this file pins only that the two CHECKERS agree.
 		{"e053-fip-array-lit", "fip function mk(): i32 {\n    var a = [1, 2];\n    return a[0];\n}\nfunction main(): i32 { return mk(); }\n", []string{"E053"}},
-		{"e053-fip-struct-lit", "struct P { x: i32 }\nfip function mk(a: i32): i32 {\n    var p = P { x: a };\n    return p.x;\n}\nfunction main(): i32 { return mk(1); }\n", []string{"E053"}},
+		{"e053-fip-struct-lit-ok", "struct P { x: i32 }\nfip function mk(a: i32): i32 {\n    var p = P { x: a };\n    return p.x;\n}\nfunction main(): i32 { return mk(1); }\n", nil},
+		{"e053-fip-struct-rebuild-ok", "struct P { x: i32, y: i32 }\nfip function bump(own p: P): P {\n    return P { ...p, x: p.x + 1 };\n}\nfunction main(): i32 { var q: P = bump(P { x: 1, y: 2 }); return q.x; }\n", nil},
 		{"e053-fip-concat", "fip function j(a: string, b: string): string {\n    return a + b;\n}\nfunction main(): i32 { return 0; }\n", []string{"E053"}},
 		{"e053-fip-nonfip-call", "function g(): i32 { return 1; }\nfip function f(): i32 {\n    return g();\n}\nfunction main(): i32 { return f(); }\n", []string{"E053"}},
 		{"e053-fip-arith-ok", "fip function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(1, 2); }\n", nil},

@@ -7111,6 +7111,19 @@ func fieldPlaceMutationCopies(body ast.Node, noEsc argNoEscape) map[*ast.Call]bo
 			return true
 		}
 		siteIdx, siteOrdered := stmtIdx[fa]
+		// Reads of the site's own place inside its own index / value
+		// arguments. emitArraySet lowers both arguments before it loads the
+		// receiver, so such a read has already produced its scalar when the
+		// store runs — the same fact receiverDeadAfterArgs states for a bare-
+		// ident receiver, which has excused this shape all along.
+		inOwnArgs := map[ast.Node]bool{}
+		if isArraySetCall(c) {
+			for _, a := range c.Args[1:] {
+				for _, q := range placesIn(a) {
+					inOwnArgs[q.node] = true
+				}
+			}
+		}
 		for _, q := range byRoot[root] {
 			if q.node == fa || !p.overlaps(q) || overriddenSpread(spreadOf[q.node], q, p) {
 				continue
@@ -7119,6 +7132,18 @@ func fieldPlaceMutationCopies(body ast.Node, noEsc argNoEscape) map[*ast.Call]bo
 				if qi, ok := stmtIdx[q.node]; ok && qi < siteIdx {
 					continue
 				}
+			}
+			// SEQUENCED BEFORE, within one expression: the read is in LENGTH
+			// or INDEX position inside this very call's arguments, so it is
+			// complete before the store and observes neither it nor the
+			// field's move-out. Read-modify-write is what an update IS —
+			// `o.xs.with(i, o.xs[i] + 1)` — and forcing the copy here turned
+			// an O(1) write into an O(n) copy of the whole buffer, once per
+			// update, invisible to every observable but the allocation
+			// count (#9605). `esc[root]` still keeps the move-out away from a
+			// defer or lambda that runs after this statement.
+			if !esc[root] && scalarRead[q.node] && p.samePlace(q) && inOwnArgs[q.node] {
+				continue
 			}
 			if scope == nil || inScope[q.node] || (len(q.path) == 0 && capturing[q.node]) {
 				out[c] = true

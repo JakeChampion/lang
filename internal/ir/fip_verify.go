@@ -6,10 +6,10 @@ package ir
 // rules; this pass closes the loop by checking the ops the lowering
 // ACTUALLY emitted against the annotation's allocation budget:
 //
-//   - `fip`      — zero fresh allocation ops. E053 already rejects every
-//     allocating construct, so any op found here is checker/IR drift (a
-//     construct E053 believed heap-neutral that lowers to an alloc) and
-//     is deliberately surfaced as an E068 error rather than hidden.
+//   - `fip`      — zero fresh allocation ops. The checker admits the
+//     constructor SHAPE (#9602) precisely because it cannot tell a paired
+//     rebuild from a fresh one; this is where that is decided, and the
+//     allowance of 0 means every constructor must be reuse-paired.
 //   - `fbip`     — every constructor allocation site must be reuse-PAIRED
 //     with a donor box: the general pairing (computeReuseSources), the
 //     self-overwrite hooks (tryStructReuseOverwrite /
@@ -97,13 +97,10 @@ func verifyFipAllocs(fn *ast.FuncDecl, out *Func) error {
 	if fn.Fbip {
 		kw = "fbip"
 	}
+	// One remedy for every tier now that the checker admits the constructor
+	// shape everywhere (#9602): a site here is an un-paired construction the
+	// author can pair or grade, in a bare `fip` exactly as in an `fbip`.
 	remedy := "pair each construction with a dead uniquely-owned donor of the same shape, or grade the claim (`" + kw + "(n)`)"
-	if fn.Fip && fn.FipAllowance == 0 {
-		// Bare `fip` bodies pass E053 with no allocating construct at all,
-		// so a site here means a construct the checker believed
-		// heap-neutral lowers to an allocation — surface it as drift.
-		remedy = "this construct passed the E053 shape check but lowers to an allocation (checker/IR drift — please report it)"
-	}
 	return errfCode(fn.P, "E068",
 		"`%s` function %q allocates: %d un-reused allocation site(s) exceed the allowance of %d: %s — %s (run `fern explain E068`)",
 		kw, fn.Name, len(sites), fn.FipAllowance, strings.Join(sites, "; "), remedy)

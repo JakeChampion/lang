@@ -152,19 +152,25 @@ Surface: `fip function` / `fbip function` / graded `fip(n)` /
 Native analysis: `checkFipFunctions`
 (`internal/checker/checker.go:6730`), a program-level default-
 deny AST walk over each `fip`/`fbip` body. Rejected with E053:
-array literals (6766), tuple/struct literals (6769/6773 — unless
-`ctorOK`), f-strings and string concat (6776/6779),
-payload-carrying variant construction (6784), methods off the
-whitelist (`fipNonAllocMethods` = `{len}`, 6703; plus
-`.with(i,v)` on an `own` array root, 6797 — the COW
-unique-in-place branch), calls to non-`fip` functions (fip may
-call only fip; fbip may call fip|fbip — 6811/6814), indirect
-calls (6818), and writes whose root is not an `own` param
-(`fipWriteAllocates` 6833, report 6821). `ctorOK`
-(fbip or allowance > 0, 6756) relaxes ONLY the constructor
-shapes; the IR then verifies each constructor site is
-reuse-paired or within the allowance — `verifyFipAllocs`
-(`internal/ir/fip_verify.go:57`), E068 at fip_verify.go:107.
+array literals, f-strings and string concat, methods off the
+whitelist (`fipNonAllocMethods` = `{len}`; plus `.with(i,v)` on an
+`own` array root — the COW unique-in-place branch), calls to
+non-`fip` functions (fip may call only fip; fbip may call
+fip|fbip), indirect calls, and writes whose root is not an `own`
+param (`fipWriteAllocates`).
+
+Constructor shapes — struct / tuple literals and payload-carrying
+variant construction — are admitted in EVERY tier, `fip` included
+(#9602). The checker cannot tell a rebuild that reuses a dead
+donor's box from one that allocates a fresh box, so the IR decides:
+`verifyFipAllocs` (`internal/ir/fip_verify.go`) counts the sites
+that lowered to a real `OpAlloc` rather than to `__alloc_reuse` and
+reports E068 when they exceed the allowance, which for a bare `fip`
+is zero. Rejecting the shape in the checker instead left `fip`
+unable to carry struct state at all: a field write is E048, whose
+remedy names the rebuild `T { ...old, f: v }`, and that rebuild was
+E053 — the two diagnostics forbidding each other. On this axis
+Fern's `fip` now matches Koka's.
 
 Guarantee: verify-don't-enable (checker.go:6707) — the in-place
 lowering already happens; `fip` asserts zero heap allocation,
@@ -173,13 +179,18 @@ lowering already happens; `fip` asserts zero heap allocation,
 heap values (allocation = minting owned), and every in-place
 write goes through a unique root.
 
-Self-host status: **ported, with the reuse layer behind.** All
-three bits are stamped by the parser (`fip`, `fbip`, and the
-graded allowance), the E053 walk applies native's constructor
-relaxation and its asymmetric call rule, and the IR-side budget
-check is `examples/self_host/irfipverify.fern` (#6639 slice 3),
-driven by `irlower_run -verifyfip`. It counts the constructor ops
-a fresh site lowers to rather than native's single `OpAlloc`, and
+Self-host status: **shape ported, budget NOT enforced on the
+compile path.** All three bits are stamped by the parser (`fip`,
+`fbip`, and the graded allowance), and the E053 walk applies
+native's constructor rule and its asymmetric call rule. The
+IR-side budget check exists — `examples/self_host/irfipverify.fern`
+(#6639 slice 3) — but only the diagnostic drivers call it
+(`irlower_run -verifyfip`, `irverify_run`); `fern.fern` runs no
+verification at all, so an un-paired construction compiles silently
+under the self-host where native reports E068. That predates the
+constructor change above and applies to `fbip` today; #9623 tracks
+wiring it into the three emitters. It counts the constructor ops a
+fresh site lowers to rather than native's single `OpAlloc`, and
 names a site by op index — the self-host `ir.Op` carries no source
 position.
 

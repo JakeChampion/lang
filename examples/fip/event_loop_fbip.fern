@@ -1,0 +1,321 @@
+// examples/fip/event_loop_fbip.fern — the FBIP variant of the bounded event
+// loop (#9583).
+//
+// Same workload, same algorithm and the same capacities as
+// `event_loop_fip.fern`; what differs is how the state is held. Here it is an
+// ordinary struct of named arrays, updated functionally — `State { ...s, keys:
+// s.keys.with(i, v) }` — and the annotation is `fbip`, which permits a
+// constructor whose donor is the box the call consumed.
+//
+// This is the variant that tests whether the architecture is ERGONOMIC rather
+// than merely possible. The strict-`fip` variant packs every region into one
+// `i64[]` with hand-written base offsets, because when these were written a
+// `fip` function could not build a struct (#9602, since fixed) and can still
+// return only one owned container. Here the state has field names, the
+// compiler checks them, and a new region is a new field instead of a new
+// constant to derive by hand.
+//
+// What it costs is the guarantee's strength. `fbip` says every construction is
+// reuse-PAIRED, not that none happens: on a unique input the pairing writes the
+// donor box in place, and on a shared one `__alloc_reuse` falls back to a fresh
+// allocation. So this variant's steady state is allocation-free only while the
+// state stays uniquely owned, and the number printed at the end is what says
+// whether it did.
+import "core/cmp";
+import "std/bench";
+import "std/i32";
+import "std/i64";
+
+// ===================== CAPACITIES =====================
+
+fip function max_entries(): i32 { return 256; }
+fip function queue_cap(): i32 { return 64; }
+fip function out_cap(): i32 { return 64; }
+
+// ===================== STATE =====================
+//
+// The queue is three parallel arrays rather than one array of event structs:
+// an event struct would be a per-event allocation on the enqueue path, which
+// is the cost this whole experiment is about. Structure-of-arrays is the same
+// shape the `fip` variant packs by hand — the difference is that here the
+// regions have names and the compiler knows their extents.
+struct State {
+    q_head: i32,
+    q_count: i32,
+    out_count: i32,
+    live: i32,
+    m_ok: i64,
+    m_miss: i64,
+    m_full: i64,
+    m_dropped: i64,
+    q_kind: i64[],
+    q_id: i64[],
+    q_val: i64[],
+    out: i64[],
+    keys: i64[],
+    vals: i64[],
+    used: i64[],
+}
+
+fip function ev_create(): i64 { return 1 as i64; }
+fip function ev_update(): i64 { return 2 as i64; }
+fip function ev_read(): i64 { return 3 as i64; }
+fip function ev_delete(): i64 { return 4 as i64; }
+
+fip function rsp_ok(): i64 { return 1 as i64; }
+fip function rsp_missing(): i64 { return 2 as i64; }
+fip function rsp_full(): i64 { return 3 as i64; }
+fip function rsp_value(): i64 { return 4 as i64; }
+
+// ===================== INITIALIZATION (allocating, once) =====================
+
+function zeros(n: i32): i64[] {
+    var xs: i64[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        xs = xs.append(0 as i64);
+        i = i + 1;
+    }
+    return xs;
+}
+
+function new_state(): State {
+    return State {
+        q_head: 0, q_count: 0, out_count: 0, live: 0,
+        m_ok: 0 as i64, m_miss: 0 as i64, m_full: 0 as i64, m_dropped: 0 as i64,
+        q_kind: zeros(queue_cap()), q_id: zeros(queue_cap()), q_val: zeros(queue_cap()),
+        out: zeros(out_cap()),
+        keys: zeros(max_entries()), vals: zeros(max_entries()), used: zeros(max_entries()),
+    };
+}
+
+// ===================== THE DATA PLANE (fbip) =====================
+
+fbip function enqueue(own s: State, kind: i64, id: i64, value: i64): State {
+    if (s.q_count >= queue_cap()) {
+        return State { ...s, m_dropped: s.m_dropped + (1 as i64) };
+    }
+    var slot: i32 = (s.q_head + s.q_count) % queue_cap();
+    return State { ...s,
+        q_kind: s.q_kind.with(slot, kind),
+        q_id: s.q_id.with(slot, id),
+        q_val: s.q_val.with(slot, value),
+        q_count: s.q_count + 1,
+    };
+}
+
+fbip function respond(own s: State, code: i64): State {
+    if (s.out_count >= out_cap()) {
+        return State { ...s, m_dropped: s.m_dropped + (1 as i64) };
+    }
+    return State { ...s, out: s.out.with(s.out_count, code), out_count: s.out_count + 1 };
+}
+
+fip function find_slot(keys: i64[], used: i64[], id: i64): i32 {
+    var i: i32 = 0;
+    while (i < max_entries()) {
+        if (used[i] != (0 as i64) && keys[i] == id) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+fip function free_slot(used: i64[]): i32 {
+    var i: i32 = 0;
+    while (i < max_entries()) {
+        if (used[i] == (0 as i64)) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+fbip function apply_create(own s: State, id: i64, value: i64): State {
+    var at: i32 = find_slot(s.keys, s.used, id);
+    if (at >= 0) {
+        s = State { ...s, vals: s.vals.with(at, value), m_ok: s.m_ok + (1 as i64) };
+        return respond(s, rsp_ok());
+    }
+    var slot: i32 = free_slot(s.used);
+    if (slot < 0) {
+        s = State { ...s, m_full: s.m_full + (1 as i64) };
+        return respond(s, rsp_full());
+    }
+    s = State { ...s,
+        keys: s.keys.with(slot, id),
+        vals: s.vals.with(slot, value),
+        used: s.used.with(slot, 1 as i64),
+        live: s.live + 1,
+        m_ok: s.m_ok + (1 as i64),
+    };
+    return respond(s, rsp_ok());
+}
+
+fbip function apply_update(own s: State, id: i64, delta: i64): State {
+    var at: i32 = find_slot(s.keys, s.used, id);
+    if (at < 0) {
+        s = State { ...s, m_miss: s.m_miss + (1 as i64) };
+        return respond(s, rsp_missing());
+    }
+    // The read is hoisted out of the update, and stays hoisted although it no
+    // longer has to be. Written the obvious way — `vals: s.vals.with(at,
+    // s.vals[at] + delta)` — this used to copy the whole 2 KB array per update
+    // rather than writing one slot: 127,073 allocations over this run's 1.28M
+    // events, all recycled and so invisible to `__heap_bump_bytes()`. #9605
+    // fixed that, and both spellings now write in place; this file keeps the
+    // shape its measurements were taken on.
+    var current: i64 = s.vals[at];
+    s = State { ...s, vals: s.vals.with(at, current + delta), m_ok: s.m_ok + (1 as i64) };
+    return respond(s, rsp_ok());
+}
+
+fbip function apply_read(own s: State, id: i64): State {
+    var at: i32 = find_slot(s.keys, s.used, id);
+    if (at < 0) {
+        s = State { ...s, m_miss: s.m_miss + (1 as i64) };
+        return respond(s, rsp_missing());
+    }
+    s = State { ...s, m_ok: s.m_ok + (1 as i64) };
+    return respond(s, rsp_value());
+}
+
+fbip function apply_delete(own s: State, id: i64): State {
+    var at: i32 = find_slot(s.keys, s.used, id);
+    if (at < 0) {
+        s = State { ...s, m_miss: s.m_miss + (1 as i64) };
+        return respond(s, rsp_missing());
+    }
+    s = State { ...s, used: s.used.with(at, 0 as i64), live: s.live - 1, m_ok: s.m_ok + (1 as i64) };
+    return respond(s, rsp_ok());
+}
+
+fbip function iteration(own s: State): State {
+    if (s.q_count == 0) { return s; }
+    var head: i32 = s.q_head;
+    var kind: i64 = s.q_kind[head];
+    var id: i64 = s.q_id[head];
+    var value: i64 = s.q_val[head];
+    s = State { ...s, q_head: (head + 1) % queue_cap(), q_count: s.q_count - 1 };
+    if (kind == ev_create()) { return apply_create(s, id, value); }
+    if (kind == ev_update()) { return apply_update(s, id, value); }
+    if (kind == ev_read()) { return apply_read(s, id); }
+    if (kind == ev_delete()) { return apply_delete(s, id); }
+    return s;
+}
+
+fbip function drain_output(own s: State): State {
+    return State { ...s, out_count: 0 };
+}
+
+fbip function reset_metrics(own s: State): State {
+    return State { ...s, m_ok: 0 as i64, m_miss: 0 as i64, m_full: 0 as i64, m_dropped: 0 as i64 };
+}
+
+// ===================== THE WORKLOAD =====================
+//
+// Identical to the `fip` variant's, verbatim, so the two runs differ in how
+// state is held and in nothing else.
+
+fip function event_id(n: i64): i64 {
+    var x: i64 = n * (2654435761 as i64);
+    x = x ^ (x >> (15 as i64));
+    x = x * (2246822519 as i64);
+    x = x ^ (x >> (13 as i64));
+    if (x < (0 as i64)) { x = 0 - x; }
+    return x % (max_entries() as i64);
+}
+
+fip function event_kind(n: i64): i64 {
+    var bucket: i64 = n % (10 as i64);
+    if (bucket == (0 as i64)) { return ev_create(); }
+    if (bucket == (1 as i64)) { return ev_delete(); }
+    if (bucket < (4 as i64)) { return ev_update(); }
+    return ev_read();
+}
+
+fbip function prefill(own s: State): State {
+    var id: i32 = 0;
+    while (id < max_entries()) {
+        s = apply_create(s, id as i64, (id as i64) * (10 as i64));
+        id = id + 1;
+    }
+    return drain_output(s);
+}
+
+fbip function round(own s: State, seed: i64, batch: i32): State {
+    var i: i32 = 0;
+    while (i < batch) {
+        var n: i64 = seed + (i as i64);
+        s = enqueue(s, event_kind(n), event_id(n), n);
+        i = i + 1;
+    }
+    var worked: i32 = 0;
+    while (worked < batch) {
+        s = iteration(s);
+        worked = worked + 1;
+    }
+    return drain_output(s);
+}
+
+// ===================== DRIVER =====================
+
+function main(): i32 {
+    var s: State = new_state();
+    s = prefill(s);
+    s = round(s, 1 as i64, queue_cap());
+    s = reset_metrics(s);
+    var rounds: i32 = 20000;
+    // Built before the mark: the sample buffer is part of the instrument, not
+    // of the steady state being measured.
+    var samples: i64[] = [];
+    var p: i32 = 0;
+    while (p < rounds) { samples = samples.append(0 as i64); p = p + 1; }
+    var at_allocs: i64 = bench.alloc_count();
+    var at_fresh: i64 = bench.bump_bytes();
+    var started_ns: i64 = monotonic_ns();
+    var r: i32 = 0;
+    while (r < rounds) {
+        var t0: i64 = monotonic_ns();
+        s = round(s, (r as i64) * (7 as i64) + (1 as i64), queue_cap());
+        // `.with` on a uniquely-owned array writes in place, so recording a
+        // sample costs the measured region no allocation. The harness pins
+        // that property (internal/e2e/bench_module_test.go).
+        samples = samples.with(r, monotonic_ns() - t0);
+        r = r + 1;
+    }
+    var elapsed_ns: i64 = monotonic_ns() - started_ns;
+    var allocs: i64 = bench.allocs_after(at_allocs);
+    var fresh: i64 = bench.fresh_bytes_after(at_fresh);
+    var events: i64 = (rounds as i64) * (queue_cap() as i64);
+    // The per-round samples become a bench.Report, so the percentile and
+    // throughput arithmetic is the harness's and identical across the three
+    // variants. Sorting allocates, which is why it happens down here — after
+    // the allocation figures have already been read.
+    var rep: bench.Report = bench.Report {
+        name: "fbip",
+        iterations: rounds,
+        wall_ns: elapsed_ns,
+        samples_ns: cmp.sort(samples),
+        allocs: allocs,
+        fresh_bytes: fresh,
+    };
+    print("{\"variant\":\"fbip\""
+        + ",\"events\":" + events.to_string()
+        + ",\"events_per_round\":" + queue_cap().to_string()
+        + ",\"live_entries\":" + s.live.to_string()
+        + ",\"ok\":" + s.m_ok.to_string()
+        + ",\"missing\":" + s.m_miss.to_string()
+        + ",\"table_full\":" + s.m_full.to_string()
+        + ",\"dropped\":" + s.m_dropped.to_string()
+        + ",\"steady_allocs\":" + allocs.to_string()
+        + ",\"steady_fresh_bytes\":" + fresh.to_string()
+        + ",\"allocs_per_event_milli\":" + (allocs * (1000 as i64) / events).to_string()
+        + ",\"ns_per_event\":" + (elapsed_ns / events).to_string()
+        + ",\"events_per_sec\":" + (events * 1000000000i64 / elapsed_ns).to_string()
+        + ",\"round_p50_ns\":" + rep.p50_ns().to_string()
+        + ",\"round_p95_ns\":" + rep.p95_ns().to_string()
+        + ",\"round_p99_ns\":" + rep.p99_ns().to_string()
+        + ",\"round_p999_ns\":" + rep.p999_ns().to_string()
+        + ",\"round_max_ns\":" + rep.max_ns().to_string()
+        + "}");
+    return 0;
+}

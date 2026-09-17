@@ -11,9 +11,10 @@
 // Until this existed, `fbip` was an unverified assertion on the self-host side,
 // on the very reuse layer the Perceus port is about.
 //
-//   - `fip`             — zero fresh allocation ops. E053 already rejects every
-//     allocating construct, so an op found here is checker/IR drift and is
-//     reported as such rather than hidden.
+//   - `fip`             — zero UN-PAIRED allocation ops. E053 admits the
+//     constructor shape here exactly as it does for `fbip` (#9602), because
+//     the checker cannot tell a paired rebuild from a fresh one; bare `fip`
+//     is simply the allowance-0 case of the rule below.
 //   - `fbip`            — every constructor site must be reuse-PAIRED with a
 //     donor box. A paired site lowers to a `__fern_alloc_reuse` call instead of
 //     the fresh constructor op, so the scan below counts exactly the un-paired
@@ -103,8 +104,9 @@ pub struct FipResult {
 // report a budget overrun for a function that allocates nothing.
 pub function fresh_alloc_what(o: ir.Op): string {
     var t: i32 = o.kind_tag;
-    // Constructor expressions: what E053's `ctor_ok` relaxation lets a `fbip`
-    // body write, and therefore what this pass has to count on its behalf. A
+    // Constructor expressions: what E053 lets any tier write — it admits the
+    // shape and leaves the verdict here (#9602) — and therefore what this pass
+    // has to count on every claim's behalf. A
     // reuse-paired site is NOT here — it lowers to a `__fern_alloc_reuse` call
     // plus in-place field stores, and never emits its constructor op.
     if (t == 138) {
@@ -216,13 +218,10 @@ pub function verify_fip_fn(claim: FipClaim, ops: ir.Op[]): FipResult {
     }
     var kw: string = "fip";
     if (claim.is_fbip) { kw = "fbip"; }
+    // One remedy for every tier now that the checker admits the constructor
+    // shape everywhere (#9602): a site here is an un-paired construction the
+    // author can pair or grade, in a bare `fip` exactly as in an `fbip`.
     var remedy: string = "pair each construction with a dead uniquely-owned donor of the same shape, or grade the claim (`" + kw + "(n)`)";
-    if (claim.is_fip && claim.allowance == 0) {
-        // A bare `fip` body passes E053 with no allocating construct at all, so
-        // a site here is a construct the checker believed heap-neutral that
-        // lowers to an allocation.
-        remedy = "this construct passed the E053 shape check but lowers to an allocation (checker/IR drift — please report it)";
-    }
     out = out.append(irverify.Problem {
         fn_name: claim.fn_name, op: 0 - 1, kind: "E068",
         msg: "`" + kw + "` function \"" + claim.fn_name + "\" allocates: "
