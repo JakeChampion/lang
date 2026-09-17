@@ -1416,25 +1416,11 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			return
 		}
 		// Closure reclamation: an OWNED FuncType local frees its env /
-		// pair rc1 block at the last reference (rc==1). When the local
-		// has a single known closure source with rc-tracked captures
-		// (closureTarget), dispatch to that closure's
-		// __closure_drop_<name> thunk, which ALSO frees the captured
-		// pointer targets before freeing the env (Stage 3). Otherwise
-		// the generic __fern_closure_drop frees just the env (Stage 2;
-		// captures leak). Either way a single load+call keeps
-		// ElideClosurePair's reader recognising the drop as benign.
-		// Ineligible (borrowed / escaping) closures and flag-off
-		// builds fall through to the plain dec.
+		// pair rc1 block at the last reference (rc==1). Ineligible
+		// (borrowed / escaping) closures and flag-off builds fall
+		// through to the plain dec.
 		if _, isFunc := t.(*ast.FuncType); isFunc && ast.RcFreeEnabled && eligible {
-			dropFn, dropWidth := "__fern_closure_drop", ResAddr
-			tgt := b.closureTarget[name]
-			if tgt != "" && hasRcCapture(b.closureCaps[tgt], b.ptrW, b.dynRcSupported) {
-				dropFn, dropWidth = "__closure_drop_"+tgt, 0
-			}
-			b.emit(Op{Kind: OpLoadLocal, I32: slot})
-			b.emit(Op{Kind: OpCallDirect, Str: dropFn, Width: dropWidth, I32: 1})
-			b.emit(Op{Kind: OpDrop})
+			b.emitClosureSlotDrop(slot, name)
 			return
 		}
 		// Slice reclamation: an OWNED `[T]` local frees its rc1 header at
@@ -1660,6 +1646,25 @@ func (b *builder) sweepDropInline(et ast.EnumType) bool {
 
 // emitPreciseDrop deep-drops the owned local `name` at its last use and
 // zeroes the slot (see computePreciseDrops). Net-zero on the operand stack.
+// emitClosureSlotDrop releases the OWNED closure in local slot `idx`. When
+// `name` has a single known closure source whose captures are rc-tracked
+// (closureTarget), it dispatches to that closure's __closure_drop_<target>
+// thunk, which frees the captured pointer targets before the env; otherwise
+// the generic __fern_closure_drop frees just the env. Both helpers null-guard
+// and rc-guard, so a shared closure only decs and a zeroed slot is a no-op.
+// Net-zero on the operand stack, and the single load+call keeps
+// ElideClosurePair's reader recognising the drop as benign.
+func (b *builder) emitClosureSlotDrop(idx int32, name string) {
+	dropFn, dropWidth := "__fern_closure_drop", ResAddr
+	tgt := b.closureTarget[name]
+	if tgt != "" && hasRcCapture(b.closureCaps[tgt], b.ptrW, b.dynRcSupported) {
+		dropFn, dropWidth = "__closure_drop_"+tgt, 0
+	}
+	b.emit(Op{Kind: OpLoadLocal, I32: idx})
+	b.emit(Op{Kind: OpCallDirect, Str: dropFn, Width: dropWidth, I32: 1})
+	b.emit(Op{Kind: OpDrop})
+}
+
 func (b *builder) emitPreciseDrop(name string) {
 	slot, ok := b.locals[name]
 	if !ok {
@@ -1669,7 +1674,14 @@ func (b *builder) emitPreciseDrop(name string) {
 	if !ok {
 		return
 	}
-	b.emitOwnedSlotDrop(slot, t)
+	// A closure's full release needs the NAME, not just the type: only the
+	// name reaches closureTarget, and only the per-target thunk frees the
+	// captures. emitOwnedSlotDrop is type-directed, so it cannot pick it.
+	if _, isFunc := t.(*ast.FuncType); isFunc {
+		b.emitClosureSlotDrop(slot, name)
+	} else {
+		b.emitOwnedSlotDrop(slot, t)
+	}
 	b.emit(Op{Kind: OpConstI32, I32: 0})
 	b.emit(Op{Kind: OpStoreLocal, I32: slot})
 }
