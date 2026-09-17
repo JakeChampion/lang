@@ -131,10 +131,12 @@ pub struct EmitState {
     // function uses, between the frame record and the slots.
     ssa_frame: i32,
     ssa_save: i32,
-    // ssa_x0 is the value id the result register (x0, %rax) holds after the
-    // last store from it, -1 when unknown; a load of that value into it is
-    // then nothing. Forgotten at every label and by every sequence that
-    // writes the register on its own.
+    // ssa_x0 is the value id the result register (x0, %rax) holds, -1 when
+    // unknown; a load of that value into it is then nothing. A store from the
+    // register asserts the value stored, because the store is what makes the
+    // two equal. Forgotten at every label, and by every sequence that writes
+    // the register on its own — including one whose result leaves elsewhere,
+    // which is the case the store cannot re-assert.
     ssa_x0: i32
 }
 
