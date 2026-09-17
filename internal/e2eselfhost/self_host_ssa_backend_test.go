@@ -203,6 +203,19 @@ function count(s: boolean[]): i32 {
 }
 function main(): i32 { return count(sieve(1000)); }
 `},
+	// std/json's array parser ends its loop body in a return, so the block
+	// holding the return reaches the loop's end live and terminated; the lift
+	// must append it, or the if before it branches to a label nothing defines.
+	{name: "json_array", viaSSA: []string{"json____json_p_array", "json____json_p_value"}, src: `
+import "core/cmp";
+import "std/json";
+function main(): i32 {
+    match (json.json_parse_result("[1, [2, 3], [], {\"k\": [4]}]")) {
+        Ok(v) => { return json.json_encode(v).len(); },
+        Err(e) => { return 1; },
+    }
+}
+`},
 	// A mixed module: main and the string helpers keep the stack machine, the
 	// integer functions go through the SSA backend, and both call each other
 	// through the shared stack ABI.
