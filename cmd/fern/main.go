@@ -1557,9 +1557,9 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 		}
 	}
 
-	// The emitter for this build: SSA where it is the default and serves what
-	// was asked for, otherwise the stack-machine emitter. Everything below
-	// dispatches on the resolved name, never on the flag.
+	// The emitter for this build: what the caller named on -backend, or the
+	// stack-machine emitter otherwise. Everything below dispatches on the
+	// resolved name, never on the flag.
 	backend = resolveBackend(backend)
 
 	if (backend == "ssa" || backend == "typed-ssa") && target == "arm64-linux" {
