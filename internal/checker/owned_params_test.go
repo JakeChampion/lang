@@ -689,3 +689,90 @@ function build(): i32 {
     return inner(a).cfi.n;
 }`)
 }
+
+// A call's result is owned when the callee cannot have borrowed it from the
+// caller. Which functions those are is inferred from their returns, so a
+// factory that takes a reference and builds something new is admitted where
+// reading its parameter list alone refused it (#9538).
+
+func TestOwnGuardAcceptsFreshResultFromABorrowingFactory(t *testing.T) {
+	wantOK(t, "fresh-from-borrowing-factory", ownConsumer+`
+function build(tag: string): i32[] { return [tag.len()]; }
+function main(): i32 { return consume(build("xy")); }`)
+}
+
+func TestOwnGuardAcceptsFreshResultFromAPointerArgument(t *testing.T) {
+	wantOK(t, "fresh-from-pointer-argument", ownConsumer+`
+function sized(xs: i32[]): i32[] { return [xs.len()]; }
+function main(): i32 { return consume(sized([1, 2])); }`)
+}
+
+func TestOwnGuardRejectsAResultThatIsTheBorrowedParameter(t *testing.T) {
+	wantE051(t, "result-is-the-parameter", ownConsumer+`
+function passthru(xs: i32[]): i32[] { return xs; }
+function main(): i32 { return consume(passthru([1, 2])); }`)
+}
+
+func TestOwnGuardRejectsAResultBorrowedThroughALocal(t *testing.T) {
+	wantE051(t, "result-borrowed-through-a-local", ownConsumer+`
+function hop(xs: i32[]): i32[] {
+    var y: i32[] = xs;
+    return y;
+}
+function main(): i32 { return consume(hop([1, 2])); }`)
+}
+
+func TestOwnGuardRejectsAResultBorrowedThroughAField(t *testing.T) {
+	wantE051(t, "result-borrowed-through-a-field", ownConsumer+`
+function inner(p: Pair): i32[] { return p.items; }
+function main(): i32 { return consume(inner(Pair { items: [1, 2], n: 2 })); }`)
+}
+
+func TestOwnGuardRejectsAResultBorrowedThroughACallChain(t *testing.T) {
+	wantE051(t, "result-borrowed-through-a-chain", ownConsumer+`
+function passthru(xs: i32[]): i32[] { return xs; }
+function relay(ys: i32[]): i32[] { return passthru(ys); }
+function main(): i32 { return consume(relay([1, 2])); }`)
+}
+
+// A chain that ends in a construction is still fresh, however many borrowing
+// signatures it passes through.
+func TestOwnGuardAcceptsAFreshResultThroughACallChain(t *testing.T) {
+	wantOK(t, "fresh-through-a-chain", ownConsumer+`
+function sized(xs: i32[]): i32[] { return [xs.len()]; }
+function relay(ys: i32[]): i32[] { return sized(ys); }
+function main(): i32 { return consume(relay([1, 2])); }`)
+}
+
+// Recursion is seeded clean rather than pessimistically, so a recursive
+// function that returns only constructions is still a fresh owner.
+func TestOwnGuardAcceptsAFreshResultFromARecursiveFunction(t *testing.T) {
+	wantOK(t, "fresh-from-recursion", ownConsumer+`
+function grow(xs: i32[], k: i32): i32[] {
+    if (k <= 0) { return [xs.len()]; }
+    return grow(xs, k - 1);
+}
+function main(): i32 { return consume(grow([1, 2], 3)); }`)
+}
+
+// ...but a recursive function that can also return its borrowed parameter is
+// marked through the cycle.
+func TestOwnGuardRejectsARecursiveResultThatCanBeTheParameter(t *testing.T) {
+	wantE051(t, "recursive-result-is-the-parameter", ownConsumer+`
+function last(xs: i32[], k: i32): i32[] {
+    if (k <= 0) { return xs; }
+    return last(xs, k - 1);
+}
+function main(): i32 { return consume(last([1, 2], 3)); }`)
+}
+
+// An `own` parameter is not a borrow: the callee took ownership, so threading
+// it out is still a value the caller can transfer.
+func TestOwnGuardAcceptsAThreadedOwnParameter(t *testing.T) {
+	wantOK(t, "threaded-own-parameter", ownConsumer+`
+function thread(own xs: i32[], k: i32): i32[] {
+    if (k <= 0) { return xs; }
+    return [k];
+}
+function main(): i32 { return consume(thread([1, 2], 3)); }`)
+}
