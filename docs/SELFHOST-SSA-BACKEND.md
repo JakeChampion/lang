@@ -149,8 +149,10 @@ not register pressure. The order to take that in:
    Native's allocator work on #4112 found the spill rule that decides when a
    call-crossing value is better in a slot than in a saved register; that
    rule is still to take.
-2. Call results into their home: x0 as an allocatable register for a value
-   whose only reader follows the call, or a coalescing of the result copy.
+2. Call results into their home. The cheap half is done (#9595): a load
+   into x0 of the value it already holds emits nothing, which removes the
+   move back after every move out. The rest is x0 as an allocatable
+   register for a value whose only reader follows the call.
 3. The optimiser (`ssa.optimize`) on the lifted function once its binary
    arms read IR kind names rather than the symbols the `build_func` frontend
    used.
