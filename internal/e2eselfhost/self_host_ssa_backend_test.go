@@ -342,6 +342,31 @@ function main(): i32 {
     return total % 200;
 }
 `},
+	// Aggregates the lowering folds whole (a record literal with constant
+	// fields, here the keys of a persistent map) are the address of an
+	// interned box; passed straight to a call, that address sits in a
+	// register home and must survive there. The map's own functions are
+	// pinned with the program: the lookup on a collision node is where a
+	// clobbered key address surfaced.
+	{name: "folded_aggregates", viaSSA: []string{"main", "pmap__PMap__Coarse__i32__get_or", "pmap____hm_find__Coarse__i32", "pmap__PMap__Coarse__i32__insert"}, src: `
+
+import "std/pmap" as pmap;
+import "std/option";
+import "std/i32";
+import "core/cmp";
+
+@derive(cmp.Eq)
+struct Coarse { bucket: i32, id: i32 }
+impl cmp.Hash for Coarse { function hash(self: Coarse): i32 { return self.bucket; } }
+function main(): i32 {
+    var m: pmap.PMap[Coarse, i32] = pmap.pmap_new();
+    var i: i32 = 0;
+    while (i < 40) { m = m.insert(Coarse { bucket: i % 5, id: i }, i); i = i + 1; }
+    var n: i32 = m.get_or(Coarse { bucket: 3, id: 13 }, -1) * 10 + m.get_or(Coarse { bucket: 3, id: 14 }, -1);
+    if (m.contains(Coarse { bucket: 1, id: 6 })) { n = n + 1000; }
+    return n % 251;
+}
+`},
 	// A mixed module: main and the string helpers keep the stack machine, the
 	// integer functions go through the SSA backend, and both call each other
 	// through the shared stack ABI.
