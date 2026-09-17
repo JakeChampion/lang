@@ -37,7 +37,7 @@ pub struct Step { block: i32, point: i32, target: i32, supplies: Supply[], drops
 // `grows` names, at an append's or a with's result, the record value whose
 // field buffer the operation may grow or write IN PLACE (field_grow_root), or
 // -1; `grow_fields` holds that field's index at the same position.
-pub struct Plan { ok: boolean, why: string, steps: Step[], owned: boolean[], grows: i32[], grow_fields: i32[] }
+pub struct Plan { ok: boolean, why: string, steps: Step[], owned: boolean[], grows: i32[], grow_fields: i32[], takes: i32[] }
 struct Ledger { ok: boolean, why: string, bits: boolean[] }
 
 // A callee parameter whose buffer the callee may grow in place: `field` is the
@@ -129,7 +129,7 @@ pub function grow_table(keys: string[], funcs: ssasem.Func[], plans: Plan[]): Gr
     return table;
 }
 
-function bad(why: string): Plan { return Plan { ok: false, why: why, steps: [], owned: [], grows: [], grow_fields: [] }; }
+function bad(why: string): Plan { return Plan { ok: false, why: why, steps: [], owned: [], grows: [], grow_fields: [], takes: [] }; }
 pub function refused(why: string): Plan { return bad(why); }
 function rejected(why: string): Ledger { return Ledger { ok: false, why: why, bits: [] }; }
 function step(block: i32, point: i32, target: i32): Step { return Step { block: block, point: point, target: target, supplies: [], drops: [], hand_roots: [], hand_fields: [] }; }
@@ -510,6 +510,134 @@ function projection_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], d
     return root;
 }
 
+function other_tuple_get(ins: ssa.SInst, root: i32, field: i32): boolean {
+    return ins.kind_tag == ssasem.tuple_get() && ins.args.len() == 1 && ins.args[0] == root && ins.imm != field;
+}
+
+// A source whose box this frame ALLOCATED, so nulling a slot in it is invisible
+// to everyone else. The take nulls without asking, so this is the whole of its
+// safety: owning a unit is not enough, the box has to be the frame's alone.
+//
+// Only two kinds of instruction can define a TUPLE and qualify:
+//
+//   - a construction — `tuple_new` builds the box here, refcount 1;
+//   - `map_delete`, whose result is the fresh two-word box the runtime
+//     allocates to pair the map with whether the key was there.
+//
+// Everything else that can define a tuple hands back a box someone else still
+// names, and is excluded:
+//
+//   - a counted PARAMETER. `own` transfers ONE unit, not exclusive ownership,
+//     so the box may have other holders. `steal` next door admits a parameter
+//     root only because it pays for it with a runtime `__fern_rc_is_unique`
+//     test before nulling; the take does not test.
+//   - `cell_get` and `map_get_or`, which RETAIN what they read (`cell_read`'s
+//     and `map_op`'s `__fern_rc_inc`) — the cell and the map's value column
+//     still hold the box, and a counted column may hold a tuple, so nulling
+//     here would show up in every later read through the container.
+//   - a CALL result, whose exclusivity this boundary cannot establish: a callee
+//     may return a retained alias of something it goes on holding.
+//   - a phi, because one of its incoming edges may be any of the above.
+//
+// The other `hands_out` operations answer an array, a map, an Option or a
+// closure box and so can never be a take's source; naming them here would
+// suggest a judgement about them that this predicate does not make.
+function takeable_root(kind: i32): boolean {
+    return construction(kind) || kind == ssasem.map_delete();
+}
+
+// The element index a tuple read at (`bi`, `pos`) TAKES rather than borrows,
+// or -1. A projection borrows by default, so a consuming use of what it read
+// owes a retain — and a map box carries no count to retain, which is what made
+// a map read back out of a tuple impossible to use again (#9555).
+//
+// It takes when the source is a unit of this frame's own, dies at this read,
+// and is reached after it only through reads of its OTHER elements. The
+// element's unit then becomes the frame's for nothing: the physical lowering
+// nulls the slot, and the source's own drop — in this same step, since it dies
+// here — walks past the null rather than releasing what the frame now holds.
+//
+// Same shape as `projection_root` above and the same reasoning, over a tuple
+// rather than a record, and over the whole source rather than one field: a
+// tuple has no functional-update form, so a later read through another element
+// is the only way the source may still be mentioned.
+function tuple_take_field(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[], bi: i32, pos: i32): i32 {
+    var none: i32 = 0 - 1;
+    var ins: ssa.SInst = f.graph.blocks[bi].insts[pos];
+    if (ins.kind_tag != ssasem.tuple_get()) { return none; }
+    // This runs BEFORE the graph is verified, so a malformed instruction has
+    // to answer "no take" rather than read past the end of its own operands.
+    if (ins.args.len() != 1) { return none; }
+    if (ins.result < 0 || ins.result >= f.graph.nvals) { return none; }
+    var root: i32 = ins.args[0];
+    if (root < 0 || root >= f.graph.nvals || root >= owned.len() || root >= defs.len()) { return none; }
+    if (!ssasem.reference(f.values[ins.result])) { return none; }
+    if (!owned[root] || !takeable_root(defs[root].kind_tag)) { return none; }
+    var b: ssa.SBlock = f.graph.blocks[bi];
+    if (a.flow.live_out[bi * f.graph.nvals + root]) { return none; }
+    var i: i32 = pos + 1;
+    while (i < b.insts.len()) {
+        var later: ssa.SInst = b.insts[i];
+        var mentions: boolean = false;
+        for arg in later.args { if (arg == root) { mentions = true; } }
+        if (mentions && !other_tuple_get(later, root, ins.imm)) { return none; }
+        i = i + 1;
+    }
+    if (b.term.kind_tag == 1 && b.term.value == root) { return none; }
+    if (b.term.kind_tag == 3 && b.term.cond == root) { return none; }
+    var w: i32 = 0;
+    while (w < f.graph.nvals) {
+        if (w != root && w != ins.result && reads(a, w, root) && used_after(f, a, bi, pos, w)) {
+            var hop: i32 = first_hop(a, w, root);
+            if (hop != ins.result && (hop < 0 || !other_tuple_get(defs[hop], root, ins.imm))) { return none; }
+        }
+        w = w + 1;
+    }
+    return ins.imm;
+}
+
+// The element each tuple read takes, indexed by the read's result value, and
+// -1 where it borrows. Computed before the step walk because the walk runs
+// BACKWARDS: a taken element is a unit of the frame's own, and the consuming
+// use that moves it is reached before the read that produced it.
+function tuple_takes(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[]): i32[] {
+    var out: i32[] = [];
+    var vi: i32 = 0;
+    while (vi < f.graph.nvals) { out = out.append(0 - 1); vi = vi + 1; }
+    var bi: i32 = 0;
+    while (bi < f.graph.blocks.len()) {
+        var pos: i32 = 0;
+        while (pos < f.graph.blocks[bi].insts.len()) {
+            var field: i32 = tuple_take_field(f, a, owned, defs, bi, pos);
+            if (field >= 0) { out = out.with(f.graph.blocks[bi].insts[pos].result, field); }
+
+            pos = pos + 1;
+        }
+        bi = bi + 1;
+    }
+    return out;
+}
+
+// What a take changes about the plan's inputs, derived once so the planner and
+// the independent replay below reach it the same way: the element becomes a
+// unit of this frame's own, and it stops being ANCHORED to the tuple it came
+// out of — the source is released in the same step, and leaving the dependency
+// would read every later use of the element as a borrow outliving its
+// container.
+struct Units { owned: boolean[], deps: i32[][], takes: i32[] }
+
+function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa.SInst[]): Units {
+    var owned: boolean[] = base;
+    var takes: i32[] = tuple_takes(f, a, base, defs);
+    var deps: i32[][] = a.dependencies;
+    var i: i32 = 0;
+    while (i < takes.len()) {
+        if (takes[i] >= 0) { owned = owned.with(i, true); deps = deps.with(i, []); }
+        i = i + 1;
+    }
+    return Units { owned: owned, deps: deps, takes: takes };
+}
+
 // The record whose field buffer the append or with at (`bi`, `pos`) may grow
 // or write in place, or -1: `projection_root` of its receiver.
 function field_grow_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[], bi: i32, pos: i32): i32 {
@@ -615,6 +743,10 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
     var owned: boolean[] = owned_values(f, modes);
     var reachable: boolean[] = ssadeps.reachable_blocks(f.graph);
     var defs: ssa.SInst[] = definitions(f);
+    var units: Units = units_of(f, owned, analysis, defs);
+    owned = units.owned;
+    var takes: i32[] = units.takes;
+    analysis = ssasem.Analysis { ...analysis, dependencies: units.deps };
     var grows: i32[] = [];
     var grow_fields: i32[] = [];
     var vi0: i32 = 0;
@@ -675,7 +807,7 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
         }
         bi = bi + 1;
     }
-    var out: Plan = Plan { ok: true, why: "", steps: steps, owned: owned, grows: grows, grow_fields: grow_fields };
+    var out: Plan = Plan { ok: true, why: "", steps: steps, owned: owned, grows: grows, grow_fields: grow_fields, takes: takes };
     why = verify(f, modes, out);
     if (why != "") { return bad(why); }
     return out;
@@ -861,13 +993,26 @@ function verify_block(f: ssasem.Func, bi: i32, p: Plan, owned: boolean[], analys
     return ReplayProgress { why: "", state: state, count: count };
 }
 
+function same_takes(a: i32[], b: i32[]): boolean {
+    if (a.len() != b.len()) { return false; }
+    var i: i32 = 0;
+    while (i < a.len()) {
+        if (a[i] != b[i]) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
 pub function verify(f: ssasem.Func, modes: i32[], p: Plan): string {
     if (!p.ok || p.why != "") { return "missing successful unit plan"; }
     var analysis: ssasem.Analysis = ssasem.analyze(f);
     if (!analysis.ok) { return analysis.why; }
     var why: string = contract_error(f, modes);
     if (why != "") { return why; }
-    var owned: boolean[] = owned_values(f, modes);
+    var units: Units = units_of(f, owned_values(f, modes), analysis, definitions(f));
+    var owned: boolean[] = units.owned;
+    if (!same_takes(units.takes, p.takes)) { return "tuple take disagrees with the plan"; }
+    analysis = ssasem.Analysis { ...analysis, dependencies: units.deps };
     var reachable: boolean[] = ssadeps.reachable_blocks(f.graph);
     var count: i32 = 0;
     var bi: i32 = 0;

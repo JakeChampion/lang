@@ -1678,9 +1678,11 @@ pub function op_tuple_get(idx: i32): Op {
 }
 // `tuple_set` pops [tuple, value] and stores value into element `i32_imm` at
 // offset idx*8 (tuples have NO shape slot — element i lives at data+i*8, unlike
-// struct_set's (i+1)*8). Used only by the tuple constructor-reuse path
-// (emit_cross_tuple_reuse) to write a new tuple's elements into a reused dead
-// donor box in place. Tuples are otherwise immutable, so this is the sole writer.
+// struct_set's (i+1)*8). Tuples are immutable to a program, so both writers are
+// compiler-internal and write a box no one else can name: the constructor-reuse
+// path (emit_cross_tuple_reuse) fills a new tuple's elements into a reused dead
+// donor box, and ssarc.took nulls the slot of an element the frame has taken
+// out of a source dying at the read, so the source's own drop walks past it.
 // Width 0 is the i32 / pointer (string / struct / array / Option / …) case:
 // wasm i32.store; the register backends use a uniform 8-byte movq / str slot for
 // EVERY element kind (element values are 8 bytes on the operand stack), so they
