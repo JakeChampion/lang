@@ -168,6 +168,19 @@ so explicitly.
 | `RUNTIME-IN-FERN.md` | [tracker] | Runtime helpers rewritten in Fern (#2649); Tier 0–2 complete. |
 | `RUNTIME-INTRINSICS.md` | [reference] | The raw-memory intrinsic floor Tier-2 helpers build on. |
 
+## coreutils (GNU parity + the performance bar)
+
+| Doc | Status | What it is |
+| --- | --- | --- |
+| `COREUTILS.md` | [reference] | The standing definition #8278 points at: what parity means, the four exemptions, how the oracle harness enforces it, the self-host and wasm legs, the layout, and the per-utility performance record. |
+| `COREUTILS-BOTH-COMPILERS-2026-09-17.md` | [record] | First run of the two-compiler bench: every row under `bin/fern` and `bin/fern-selfhost`, and the thirty rows that beat GNU natively and lose under the self-host. |
+| `COREUTILS-SORT-2026-09-07.md` | [record] | First measured improvement for #8822 (sort's byte comparison). |
+| `COREUTILS-UNIQ-2026-09-07.md` | [record] | #8791: comparing buffered ranges without materialising slices. |
+| `COREUTILS-SSA-ARGS-2026-09-08.md` | [record] | An arm64 SSA argument-cache lifetime bug a coreutils workload exposed. |
+| `COREUTILS-SSA-BRANCHES-2026-09-08.md` | [record] | Threading SSA boolean branches. |
+| `COREUTILS-STRING-INDEX-2026-09-08.md` | [record] | Checked string-index inlining on arm64 SSA. |
+| `COREUTILS-X86-SSA-SLICES-2026-09-08.md` | [record] | Checked slice views on x86-64 SSA. |
+
 ## Tooling, tests & process
 
 | Doc | Status | What it is |
