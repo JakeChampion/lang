@@ -4084,9 +4084,9 @@ func emitCountByteHelper(w func(string, ...any)) {
 // emitStrConcatHelper writes __str_concat(a, b) -> new data pointer: a fresh
 // length-prefixed string holding a's bytes followed by b's (rc=1 at base+0,
 // total length at base+4, data at base+8 — the header ConstStr and every heap
-// string use). The block comes from __alloc at total+8 bytes, so its extent is
-// that request's size class, which is what lets __fern_str_append grow it in
-// place later. The IR lowers `a + b` on strings (OpStrConcat) to a call here.
+// string use). The block comes from __alloc at total+strBlockBytes bytes, so
+// its extent is that request's size class, which is what lets
+// __fern_str_append grow it in place later. The IR lowers `a + b` on strings (OpStrConcat) to a call here.
 // Lengths live at [ptr-4]. rdi=a, rsi=b; returns rax=data.
 func emitStrConcatHelper(w func(string, ...any)) {
 	w("")
