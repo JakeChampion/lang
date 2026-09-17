@@ -1396,6 +1396,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"getgid":                      emitIdHelper("getgid", 176),
 	"getgroups":                   emitGetgroupsHelper,
 	"environ":                     emitEnvironHelper,
+	"timer_fd":                    emitTimerFdHelper,
 	"now_unix_ms":                 emitClockHelper("now_unix_ms", clockRealtime, 1_000, 1_000_000),
 	"sleep_ms":                    emitSleepMsHelper,
 	"sleep_ns":                    emitSleepNsHelper,
@@ -3739,6 +3740,47 @@ func emitReaderReadChunkHelper(w func(string, ...any)) {
 // the two instantiations' local labels apart — a program using both would
 // otherwise define each twice, and the assembler keeps the last definition
 // silently.
+// emitTimerFdHelper writes timer_fd(ms) -> i32: a CLOCK_MONOTONIC timerfd
+// readable once after `ms` milliseconds, returned as its fd, which is what the
+// reactor waits on. A failed create is returned as-is (negative), so the caller
+// sees the errno rather than a fd that never fires.
+func emitTimerFdHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("timer_fd"))
+	w("\tstp x29, x30, [sp, #-64]!")
+	w("\tmov x29, sp")
+	w("\tstp x19, x20, [sp, #16]")
+	w("\tmov x19, x0") // ms
+	w("\tmov x0, #1")  // CLOCK_MONOTONIC
+	w("\tmov x1, #0")
+	w("\tmov x8, #85") // timerfd_create
+	w("\tsvc #0")
+	w("\tmov x20, x0")
+	w("\tcmp x0, #0")
+	w("\tb.lt .Lssa_timerfd_ret")
+	// itimerspec at [x29,#32]: it_interval{0,0}, then it_value{sec,nsec}.
+	w("\tstr xzr, [x29, #32]")
+	w("\tstr xzr, [x29, #40]")
+	w("\tmov x9, #1000")
+	w("\tudiv x10, x19, x9")      // whole seconds
+	w("\tmsub x11, x10, x9, x19") // leftover milliseconds
+	movImm64(w, "x12", 1_000_000)
+	w("\tmul x11, x11, x12") // as nanoseconds
+	w("\tstr x10, [x29, #48]")
+	w("\tstr x11, [x29, #56]")
+	w("\tmov x0, x20")
+	w("\tmov x1, #0")
+	w("\tadd x2, x29, #32")
+	w("\tmov x3, #0")
+	w("\tmov x8, #86") // timerfd_settime
+	w("\tsvc #0")
+	w("\tmov x0, x20") // the fd
+	w(".Lssa_timerfd_ret:")
+	w("\tldp x19, x20, [sp, #16]")
+	w("\tldp x29, x30, [sp], #64")
+	w("\tret")
+}
+
 // emitGetgroupsHelper writes getgroups() -> i64[]: the process's supplementary
 // group ids, asked for twice — once for the count, once for the ids — and
 // memoised, since the set cannot change under a process that is not asking to
