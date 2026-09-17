@@ -128,6 +128,15 @@ need that emits `__fern_args`, found by review.
   2.6 MB of frame and the SSA-built compiler ran off its stack on
   `lexer.fern`. `lldb --batch -o run -k bt` on the stage-2 binary gave the
   frame from one frame pointer.
+- **A scratch-register tracker has to be forgotten where the result leaves
+  elsewhere.** The x86 slice kernel loads the upper bound into `%rax`,
+  overwrites it with the difference, and returns the box in `%rdx`, so its
+  closing store re-asserted nothing and the tracker went on claiming the
+  bound. A later read of that bound in the same block was then elided. A
+  slice from offset 0 hides it, because there the difference equals the
+  bound. The rule the sweep of both emitters settled on: a kernel that
+  loads the scratch register and does not close by storing from it forgets
+  before it returns.
 - **The per-function sweep finds a miscompile in a few hundred builds.**
   `FERN_SSA_ONLY=<name>` over every function of a failing program, one
   build and run each, named prime_gaps' byte sieve in 170 builds.
