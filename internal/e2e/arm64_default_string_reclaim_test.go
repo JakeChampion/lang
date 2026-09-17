@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 // The default arm64 emitter must reclaim a string local that was passed to a
@@ -73,12 +75,12 @@ func liveBytesAtExit(t *testing.T, bin, qemu, dir, name, src string) int {
 		t.Fatalf("write %s: %v", srcPath, err)
 	}
 	compile := exec.Command(bin, "-target", "arm64-linux", "-o", binPath, srcPath)
-	compile.Env = append(os.Environ(), "FERN_LEAKCHECK=1")
+	compile.Env = e2eharness.ChildEnv("FERN_LEAKCHECK=1")
 	if out, err := compile.CombinedOutput(); err != nil {
 		t.Fatalf("default arm64 build failed: %v\n%s", err, out)
 	}
 	run := runArm64Bin(qemu, binPath)
-	run.Env = append(os.Environ(), "FERN_LEAKCHECK=1")
+	run.Env = e2eharness.ChildEnv("FERN_LEAKCHECK=1")
 	var errBuf strings.Builder
 	run.Stderr = &errBuf
 	_ = run.Run()

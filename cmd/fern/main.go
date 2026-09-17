@@ -1418,7 +1418,7 @@ func runCheck(srcPath, target string) error {
 // a caller can see from the outside and the cost is not.
 const backendFlagUsage = "code-generation backend for the selected -target. Every target defaults to the stack-machine emitter, named `flat` for a caller who wants it selected rather than inherited. `ssa` names the SSA-direct backend, available for -target arm64-linux and -target x86-64-linux: it allocates registers instead of walking a stack machine and so emits less code, but it runs the single-word string ABI, where a string passed to a user function is not reclaimed, so retention grows with the input on string-heavy programs. It also does not serve --run, -cc, -export, -shared, -g, -cover or -sanitize. Coverage is a subset of the language — the integer core, control flow, calls, memory, strings, arrays, and the RC runtime — and an unsupported op errors rather than miscompiles. Unlike the old `-target wasm-ssa` / `-target arm64-ssa` spellings this replaces, the target keeps its descriptor, so capability enforcement (E066) applies here exactly as it does to the default emitter."
 
-func resolveBackend(backend, target string, runIt bool, cc, export string, shared bool) string {
+func resolveBackend(backend string) string {
 	if backend != "" {
 		return backend
 	}
@@ -1560,7 +1560,7 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 	// The emitter for this build: SSA where it is the default and serves what
 	// was asked for, otherwise the stack-machine emitter. Everything below
 	// dispatches on the resolved name, never on the flag.
-	backend = resolveBackend(backend, target, runIt, cc, export, shared)
+	backend = resolveBackend(backend)
 
 	if (backend == "ssa" || backend == "typed-ssa") && target == "arm64-linux" {
 		// Experimental SSA-direct arm64 backend (internal/codegen/arm64ssa)

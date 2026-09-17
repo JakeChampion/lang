@@ -113,16 +113,21 @@ func TestArm64DefaultBuildCarriesUnwindData(t *testing.T) {
 // any target's default, so there is nothing to fall back FROM, and a build
 // that names it alongside a flag it cannot serve is refused by
 // ssaUnservedFlag rather than quietly re-resolved.
-func TestResolveBackendDefaultsToFlatOnEveryTarget(t *testing.T) {
-	for _, target := range []string{"arm64-linux", "x86-64-linux", "wasm32-wasi", "arm64-darwin"} {
-		if got := resolveBackend("", target, false, "", "", false); got != "flat" {
-			t.Errorf("resolveBackend(%q) = %q, want \"flat\"", target, got)
-		}
+//
+// It no longer takes the target either — every target answers the same — so
+// the per-target assertion lives in TestDefaultBackendPerTarget, which builds
+// and compares images rather than asking a function that cannot tell them
+// apart.
+func TestResolveBackendDefaultsToFlat(t *testing.T) {
+	if got := resolveBackend(""); got != "flat" {
+		t.Errorf("resolveBackend(\"\") = %q, want \"flat\"", got)
 	}
 	// A named backend is never second-guessed: the caller said which emitter,
 	// and ssaUnservedFlag is what refuses a combination it cannot serve.
-	if got := resolveBackend("ssa", "arm64-linux", true, "gcc", "add", false); got != "ssa" {
-		t.Errorf("an explicit -backend ssa resolved to %q", got)
+	for _, name := range []string{"ssa", "typed-ssa", "flat"} {
+		if got := resolveBackend(name); got != name {
+			t.Errorf("an explicit -backend %s resolved to %q", name, got)
+		}
 	}
 }
 
