@@ -1606,7 +1606,8 @@ function eval_expr(e: ast.Expr, env: Env): Value {
             // checker and the asm front end report it (#6842).
             if (util.is_f64_range_kind(u.kind)) { return v_err("error[P002]: " + util.f64_range_message(u.kind)); }
             return v_err("parser-side unknown: " + u.kind);
-        }
+        },
+        ast.ExprZero(z) => { return v_err("zero of " + z.type_name + " read before its assignment"); }
     }
     return v_err("unhandled Expr variant");
 }

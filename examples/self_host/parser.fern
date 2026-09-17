@@ -15694,7 +15694,8 @@ pub function default_nonconst_reason(e: ast.Expr): (string, boolean) {
         // rule the author did not break. Native agrees by a different route —
         // its bad float stays a FloatLit, which nonConstReason counts as
         // constant.
-        ast.ExprUnknown(uk) => { return ("", false); }
+        ast.ExprUnknown(uk) => { return ("", false); },
+        ast.ExprZero(_) => { return ("", false); }
     }
     return ("is not a constant expression", true);
 }

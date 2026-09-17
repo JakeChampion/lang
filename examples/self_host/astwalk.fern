@@ -152,7 +152,8 @@ pub function fold_expr_nodes[T](e: ast.Expr, own acc: T, visit_stmt: (ast.Stmt, 
             }
             return acc;
         },
-        ast.ExprUnknown(_) => { return acc; }
+        ast.ExprUnknown(_) => { return acc; },
+        ast.ExprZero(_) => { return acc; }
     }
     return acc;
 }
@@ -330,6 +331,7 @@ pub function map_expr(e: ast.Expr, visit: (ast.Expr) => ast.Expr): ast.Expr {
         ast.ExprString(_) => { return visit(e); },
         ast.ExprBool(_) => { return visit(e); },
         ast.ExprUnknown(_) => { return visit(e); },
+        ast.ExprZero(_) => { return visit(e); },
         ast.ExprBinary(b) => {
             return visit(ast.ExprBinary { ...b, left: map_expr(b.left, visit), right: map_expr(b.right, visit) });
         },
@@ -493,6 +495,7 @@ pub function map_expr_acc[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) => (
         ast.ExprString(_) => { return (e, a, false); },
         ast.ExprBool(_) => { return (e, a, false); },
         ast.ExprUnknown(_) => { return (e, a, false); },
+        ast.ExprZero(_) => { return (e, a, false); },
         ast.ExprBinary(b) => {
             var (le, la, lh) = map_expr_acc(b.left, a, visit_stmt, visit);
             var (re, ra, rh) = map_expr_acc(b.right, la, visit_stmt, visit);

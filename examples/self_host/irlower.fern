@@ -17746,6 +17746,16 @@ function lower_expr_dispatch(e: ast.Expr, s: LowerState): LowerState {
         ast.ExprSlice(slc) => { return lower_expr_slice(slc, s); },
         ast.ExprCall(c) => { return lower_expr_call(c, e, s); },
         ast.ExprLambda(lam) => { return lower_expr_lambda(lam, s); },
+        ast.ExprZero(z) => {
+            // The zero a lifted declaration starts at. A reference type's is
+            // the null word, which every release helper already guards, and a
+            // scalar's is its own zero — the width has to match the slot the
+            // assignment left behind will write, or the store and the load
+            // disagree.
+            if (z.type_name == "f64" || z.type_name == "f32") { return s.emit(ir.op_const_f64_text("0")); }
+            if (z.type_name == "i64" || z.type_name == "u64") { return s.emit(ir.op_const_i64_text("0")); }
+            return s.emit(ir.op_const_i32(0));
+        },
         _ => { return s.fail(); }
     }
     return s.fail();
@@ -36067,7 +36077,8 @@ function rctuple_esc_shape(e: ast.Expr, name: string, ttype: string, structs: St
         ast.ExprLambda(_) => { return 1; },
         ast.ExprMapLit(_) => { return 1; },
         ast.ExprFString(_) => { return 1; },
-        ast.ExprUnknown(_) => { return 1; }
+        ast.ExprUnknown(_) => { return 1; },
+        ast.ExprZero(_) => { return 1; }
     }
     return 0;
 }
@@ -52663,7 +52674,8 @@ function arrtup_elem_esc_shape(e: ast.Expr, name: string, ttype: string, structs
         ast.ExprLambda(_) => { return 1; },
         ast.ExprMapLit(_) => { return 1; },
         ast.ExprFString(_) => { return 1; },
-        ast.ExprUnknown(_) => { return 1; }
+        ast.ExprUnknown(_) => { return 1; },
+        ast.ExprZero(_) => { return 1; }
     }
     return 0;
 }
@@ -53572,7 +53584,8 @@ function arrstruct_elem_esc_shape(e: ast.Expr, name: string, sty: string, struct
         ast.ExprLambda(_) => { return 1; },
         ast.ExprMapLit(_) => { return 1; },
         ast.ExprFString(_) => { return 1; },
-        ast.ExprUnknown(_) => { return 1; }
+        ast.ExprUnknown(_) => { return 1; },
+        ast.ExprZero(_) => { return 1; }
     }
     return 0;
 }
@@ -53816,6 +53829,7 @@ function arrenum_esc_expr(e: ast.Expr, name: string, borrowable: string[]): bool
         ast.ExprString(_) => { return false; },
         ast.ExprBool(_) => { return false; },
         ast.ExprUnknown(_) => { return false; },
+        ast.ExprZero(_) => { return false; },
         ast.ExprMapLit(ml) => {
             var mi: i32 = 0;
             while (mi < ml.keys.len()) {
@@ -71087,6 +71101,7 @@ function da_bp_confined_expr(e: ast.Expr, name: string): boolean {
         ast.ExprString(_) => { return true; },
         ast.ExprBool(_) => { return true; },
         ast.ExprUnknown(_) => { return true; },
+        ast.ExprZero(_) => { return true; },
         ast.ExprBinary(b) => { return da_bp_confined_expr(b.left, name) && da_bp_confined_expr(b.right, name); },
         ast.ExprUnary(u) => { return da_bp_confined_expr(u.operand, name); },
         ast.ExprIndex(ix) => {
@@ -76229,7 +76244,8 @@ function ilc_expr_at(e: ast.Expr, acc: InlineCloAcc, fd: parser.FuncDecl, gfns: 
         ast.ExprNumber(_) => { return (e, acc, false); },
         ast.ExprString(_) => { return (e, acc, false); },
         ast.ExprBool(_) => { return (e, acc, false); },
-        ast.ExprUnknown(_) => { return (e, acc, false); }
+        ast.ExprUnknown(_) => { return (e, acc, false); },
+        ast.ExprZero(_) => { return (e, acc, false); }
     }
     return (e, acc, false);
 }
@@ -76305,7 +76321,8 @@ function value_use_idents_expr(e: ast.Expr, own acc: string[]): string[] {
             }
             return acc;
         },
-        ast.ExprUnknown(_) => { return acc; }
+        ast.ExprUnknown(_) => { return acc; },
+        ast.ExprZero(_) => { return acc; }
     }
     return acc;
 }
