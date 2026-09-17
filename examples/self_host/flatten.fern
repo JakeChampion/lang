@@ -248,11 +248,15 @@ pub function mod_names(mod: parser.Module): string[] {
 // module's decls carry — always the path basename (`io_buffered`), regardless of
 // any source alias (`io`). resolve_prefix pairs the two so `io.foo` mangles to
 // `io_buffered__foo`.
+//
+// Through util.mangle_prefix, so a basename that is not an identifier becomes
+// one: the driver applies the same function to the module's OWN prefix, and a
+// disagreement between the two is an unresolved symbol (#9684).
 pub function mod_prefixes(mod: parser.Module): string[] {
     var out: string[] = [];
     var i: i32 = 0;
     while (i < mod.imports.len()) {
-        out = out.append(basename(mod.imports[i].path));
+        out = out.append(util.mangle_prefix(basename(mod.imports[i].path)));
         i = i + 1;
     }
     return out;
@@ -1134,7 +1138,7 @@ pub function build_reexports(imports: LoadedModule[]): ReexportTable {
         var j: i32 = 0;
         while (j < imps.len()) {
             if (imps[j].is_reexport) {
-                var origin: string = basename(imps[j].path);
+                var origin: string = util.mangle_prefix(basename(imps[j].path));
                 var names: string[] = imps[j].reexport_names;
                 var n: i32 = 0;
                 while (n < names.len()) {

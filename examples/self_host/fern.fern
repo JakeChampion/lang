@@ -1203,7 +1203,7 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string)
                 return Bundle { entry: entry_mod, loaded: no_mods, merged: entry_mod, pkgs: pkgs, ok: false };
             }
             var m: parser.Module = parser.parse_module(lexer.tokenize(msrc));
-            loaded = loaded.append(flatten.LoadedModule { name: util.module_name(ipath), mod: m });
+            loaded = loaded.append(flatten.LoadedModule { name: util.mangle_prefix(util.module_name(ipath)), mod: m });
             // Attribute and expand against the manifest GOVERNING the importer,
             // which is the entry's only for a direct import.
             var from_man: fern_toml.Manifest = read_manifest(from);
