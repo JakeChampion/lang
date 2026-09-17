@@ -210,3 +210,144 @@ func TestWASMStrFieldAppendCorrect(t *testing.T) {
 		t.Errorf("wasm field-append accumulator exited %d, want 0", code)
 	}
 }
+
+// strFieldAppendChainSrc is the field accumulator written as a CHAIN — the
+// shape a record-update builder takes when it emits a separator in the same
+// statement. The pieces here cover what the fold has to get right: a box
+// aliased across a chained update (the buffer must not move), a chain whose
+// operands are owned temps, a chain reading the field again from the right
+// (which must decline to fuse and still answer correctly), and the empty
+// piece.
+const strFieldAppendChainSrc = `struct Acc { buf: string, xs: i32[], n: i32 }
+
+function heap(s: string): string { return s + ""; }
+
+function grow(n: i32, piece: string): Acc {
+    var a: Acc = Acc { buf: "", xs: [0], n: 0 };
+    var i: i32 = 0;
+    while (i < n) {
+        a = Acc { ...a, buf: a.buf + piece + ",", xs: [i], n: a.n + 1 };
+        i = i + 1;
+    }
+    return a;
+}
+
+function main(): i32 {
+    var a: Acc = grow(1000, "ab");
+    if (a.buf.len() != 3000) { return 1; }
+    if (a.n != 1000) { return 2; }
+    if (a.xs[0] != 999) { return 3; }
+    var e: Acc = grow(3, "");
+    if (e.buf.len() != 3) { return 4; }
+
+    var b: Acc = Acc { buf: heap("0123456789abcdefghij"), xs: [0], n: 0 };
+    var al: Acc = b;
+    b = Acc { ...b, buf: b.buf + "X" + "Y" };
+    print(al.buf);
+    print(b.buf);
+
+    var c: Acc = Acc { buf: heap("jihgfedcba9876543210"), xs: [0], n: 0 };
+    var held: string = c.buf;
+    c = Acc { ...c, buf: c.buf + "Z" + "W" };
+    print(held);
+    print(c.buf);
+
+    var d: Acc = Acc { buf: "ab", xs: [0], n: 0 };
+    d = Acc { ...d, buf: d.buf + "-" + d.buf };
+    print(d.buf);
+    return 0;
+}`
+
+const strFieldAppendChainWant = `0123456789abcdefghij
+0123456789abcdefghijXY
+jihgfedcba9876543210
+jihgfedcba9876543210ZW
+ab-ab`
+
+// TestX86_64StrFieldAppendChainCorrect covers all four shapes at once on the
+// single-word ABI, under the leak detector so an over-release shows as
+// frees > allocs. The aliased-box and aliased-buffer lines are the ones that
+// separate a correct fold from one that grew a buffer someone else reads.
+func TestX86_64StrFieldAppendChainCorrect(t *testing.T) {
+	prev := ast.RcFreeEnabled
+	ast.RcFreeEnabled = true
+	defer func() { ast.RcFreeEnabled = prev }()
+
+	stdout, stderr, code := runLeakCheckX86_64(t, strFieldAppendChainSrc)
+	if code != 0 {
+		t.Fatalf("exited %d, want 0; stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	if stdout != strFieldAppendChainWant+"\n" {
+		t.Errorf("x86-64 chained field append =\n%q\nwant\n%q", stdout, strFieldAppendChainWant+"\n")
+	}
+	if allocs, frees, _ := parseLeakCheckLine(t, stderr); frees > allocs {
+		t.Errorf("frees=%d > allocs=%d — the chained field append over-released a buffer", frees, allocs)
+	}
+}
+
+// TestArm64StrFieldAppendChainCorrect is the two-word NATIVE sibling.
+func TestArm64StrFieldAppendChainCorrect(t *testing.T) {
+	prev := ast.RcFreeEnabled
+	ast.RcFreeEnabled = true
+	defer func() { ast.RcFreeEnabled = prev }()
+
+	stdout, stderr, code := runLeakCheckArm64(t, strFieldAppendChainSrc)
+	if code != 0 {
+		t.Fatalf("exited %d, want 0; stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	if stdout != strFieldAppendChainWant+"\n" {
+		t.Errorf("arm64 chained field append =\n%q\nwant\n%q", stdout, strFieldAppendChainWant+"\n")
+	}
+	if allocs, frees, _ := parseLeakCheckLine(t, stderr); frees > allocs {
+		t.Errorf("frees=%d > allocs=%d — the chained field append over-released a buffer", frees, allocs)
+	}
+}
+
+// TestWASMStrFieldAppendChainCorrect is the wasm sibling.
+func TestWASMStrFieldAppendChainCorrect(t *testing.T) {
+	prev := ast.RcFreeEnabled
+	ast.RcFreeEnabled = true
+	defer func() { ast.RcFreeEnabled = prev }()
+
+	want := strFieldAppendChainWant
+	if got := runWasmCapturingStdout(t, strFieldAppendChainSrc); got != want {
+		t.Errorf("wasm chained field append =\n%q\nwant\n%q", got, want)
+	}
+}
+
+// strFieldAppendChainAllocSrc is the chain alone, sized so the allocation
+// count is the whole signal: 500 iterations of three joins growing to 3000
+// bytes.
+const strFieldAppendChainAllocSrc = `struct B { buf: string, n: i32 }
+function main(): i32 {
+    var b: B = B { buf: "", n: 0 };
+    var i: i32 = 0;
+    while (i < 500) {
+        b = B { ...b, buf: b.buf + "a" + "bb" + "ccc", n: b.n + 1 };
+        i = i + 1;
+    }
+    if (b.buf.len() != 3000) { return 1; }
+    return 0;
+}`
+
+// TestX86_64StrFieldAppendChainAllocsBounded pins the collapse: allocs=130
+// frees=130 live_bytes=0, the same as the single-join form over the same 3000
+// bytes. Only the leftmost join used to grow the field, so the two above it
+// allocated and copied the accumulator every iteration and cost 1128 here.
+func TestX86_64StrFieldAppendChainAllocsBounded(t *testing.T) {
+	prev := ast.RcFreeEnabled
+	ast.RcFreeEnabled = true
+	defer func() { ast.RcFreeEnabled = prev }()
+
+	stdout, stderr, code := runLeakCheckX86_64(t, strFieldAppendChainAllocSrc)
+	if code != 0 {
+		t.Fatalf("chained field append loop exited %d (want 0 — the accumulated length was wrong); stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	allocs, frees, live := parseLeakCheckLine(t, stderr)
+	if allocs > 250 {
+		t.Errorf("allocs = %d for 500 three-join iterations, want <= 250 (~one per size-class step); a join is allocating and copying instead of growing", allocs)
+	}
+	if allocs != frees || live != 0 {
+		t.Errorf("heap unbalanced after the chained field append: allocs=%d frees=%d live_bytes=%d, want allocs==frees and live_bytes==0", allocs, frees, live)
+	}
+}

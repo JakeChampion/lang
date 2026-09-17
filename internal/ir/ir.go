@@ -5315,9 +5315,10 @@ type builder struct {
 	// (#3425). Node identity keeps nested appends inside the pushed
 	// value on the retaining path.
 	selfPushMoveCall ast.Expr
-	// selfStrAppendBin is the exact `s + rhs` RHS node of a string
-	// self-append assignment (`s = s + rhs`, isSelfStrAppendLocal), set
-	// by the Assign lowering just before it lowers the RHS and cleared
+	// selfStrAppendBin is the concat node of a string self-append assignment
+	// that grows `s` in place — `s + rhs` for `s = s + rhs`, and the
+	// innermost join of the left spine for a chain (selfStrAppendLocalSpine).
+	// Set by the Assign lowering just before it lowers the RHS, cleared
 	// after. The concat lowering consults it (by node identity) to emit
 	// __fern_str_append instead of OpStrConcat — the in-place-when-unique
 	// append that turns the pervasive `var out = ""; loop { out = out +
@@ -12928,7 +12929,7 @@ func (b *builder) binary(n *ast.Binary) error {
 		// still at rc==1; every other case falls back to the plain concat
 		// and releases the consumed accumulator itself. Either way the
 		// helper owns the old buffer, which is what assign() reads
-		// selfStrAppendDone for. See isSelfStrAppendLocal. The left
+		// selfStrAppendDone for. See selfStrAppendLocalSpine. The left
 		// operand of that shape is a bare ident, so it is never a stashed
 		// owned temp — only `piece` can be, and its reclaim below is
 		// unchanged.
@@ -16488,7 +16489,7 @@ func (b *builder) structUpdateReusePlaceable(sl *ast.StructLit, sd *ast.StructDe
 			continue
 		}
 		ft := fieldType(sd.Fields, f.Name)
-		if b.isSelfStrAppendField(f.Value, ft, base.Name, f.Name) {
+		if b.selfStrAppendFieldSpine(f.Value, ft, base.Name, f.Name) != nil {
 			continue
 		}
 		if !reusePlaceableField(ft) {
@@ -16850,11 +16851,13 @@ func (b *builder) emitStructUpdateReuse(sl *ast.StructLit, sd *ast.StructDecl, t
 	// step 4a, which needs the uniqueness answer before it can pick between
 	// growing the buffer and copying it.
 	type appendField struct {
-		name     string
-		typ      ast.Type
-		slot     int32
-		rhsSlot  int32
-		rhsOwned bool
+		name string
+		typ  ast.Type
+		slot int32
+		// One entry per join, innermost first: each is appended to what the
+		// one before it returned.
+		rhsSlots []int32
+		rhsOwned []bool
 	}
 	var appends []appendField
 	temps := make([]fieldTemp, 0, len(sl.Fields))
@@ -16866,17 +16869,22 @@ func (b *builder) emitStructUpdateReuse(sl *ast.StructLit, sd *ast.StructDecl, t
 			carriedFields = append(carriedFields, ast.Param{Name: f.Name, Type: ft})
 			continue
 		}
-		if b.isSelfStrAppendField(f.Value, ft, t.Name, f.Name) {
-			rhsSlot, rhsOwned, err := b.spillStringOperand(f.Value.(*ast.Binary).Right)
-			if err != nil {
-				return err
+		if rights := b.selfStrAppendFieldSpine(f.Value, ft, t.Name, f.Name); rights != nil {
+			rhsSlots := make([]int32, len(rights))
+			rhsOwned := make([]bool, len(rights))
+			for i, r := range rights {
+				sl, owned, err := b.spillStringOperand(r)
+				if err != nil {
+					return err
+				}
+				rhsSlots[i], rhsOwned[i] = sl, owned
 			}
 			ts := b.allocSlot()
 			b.locals[fmt.Sprintf("__reuse_fld_%d", ts)] = ts
 			b.scratchType[ts] = ft
 			temps = append(temps, fieldTemp{name: f.Name, slot: ts, appended: true})
 			appends = append(appends, appendField{
-				name: f.Name, typ: ft, slot: ts, rhsSlot: rhsSlot, rhsOwned: rhsOwned,
+				name: f.Name, typ: ft, slot: ts, rhsSlots: rhsSlots, rhsOwned: rhsOwned,
 			})
 			continue
 		}
@@ -16940,7 +16948,7 @@ func (b *builder) emitStructUpdateReuse(sl *ast.StructLit, sd *ast.StructDecl, t
 	//     Either way it OWNS what the field held, which is why step 4 skips
 	//     an appended field — dropping it there is a double free, exactly
 	//     as the dec-on-overwrite in assign() is for the bare-local form
-	//     (isSelfStrAppendLocal, the `strAppended` arm).
+	//     (selfStrAppendLocalSpine, the `strAppended` arm).
 	//
 	//     DECLINE — p's box is shared and an alias reads this field through
 	//     it, so the buffer must not move: a plain concat into a fresh
@@ -16963,8 +16971,10 @@ func (b *builder) emitStructUpdateReuse(sl *ast.StructLit, sd *ast.StructDecl, t
 		b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes + offs[af.name]})
 		b.emit(Op{Kind: OpAdd})
 		b.emit(payloadLoadOpFor(af.typ, b.ptrW))
-		b.emit(Op{Kind: OpLoadLocal, I32: af.rhsSlot})
-		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_append", Width: ResAddr, I32: 2})
+		for _, rs := range af.rhsSlots {
+			b.emit(Op{Kind: OpLoadLocal, I32: rs})
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_append", Width: ResAddr, I32: 2})
+		}
 		b.emit(Op{Kind: OpStoreLocal, I32: af.slot})
 		b.emit(Op{Kind: OpElse})
 		b.emit(Op{Kind: OpLoadLocal, I32: idx})
@@ -16973,15 +16983,25 @@ func (b *builder) emitStructUpdateReuse(sl *ast.StructLit, sd *ast.StructDecl, t
 			b.emit(Op{Kind: OpAdd})
 		}
 		b.emit(payloadLoadOpFor(af.typ, b.ptrW))
-		b.emit(Op{Kind: OpLoadLocal, I32: af.rhsSlot})
+		b.emit(Op{Kind: OpLoadLocal, I32: af.rhsSlots[0]})
 		b.emit(Op{Kind: OpStrConcat})
+		// The joins above the first grow the buffer that concat just
+		// allocated: an unnameable intermediate this frame solely owns, so
+		// the append consumes it exactly as consumeLeftTemp does for a
+		// nested concat.
+		for _, rs := range af.rhsSlots[1:] {
+			b.emit(Op{Kind: OpLoadLocal, I32: rs})
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_append", Width: ResAddr, I32: 2})
+		}
 		b.emit(Op{Kind: OpStoreLocal, I32: af.slot})
 		b.emit(Op{Kind: OpEnd})
-		// The RHS is borrowed by both arms (__fern_str_append moves its
+		// Every RHS is borrowed by both arms (__fern_str_append moves its
 		// accumulator, not its piece; OpStrConcat copies out of both), so
 		// an owned temp there is released once, after both have read it.
-		if af.rhsOwned {
-			b.decStashedStringTemps(af.rhsSlot)
+		for i, rs := range af.rhsSlots {
+			if af.rhsOwned[i] {
+				b.decStashedStringTemps(rs)
+			}
 		}
 	}
 
@@ -18738,18 +18758,19 @@ func (b *builder) assign(n *ast.Assign) error {
 		if b.isSelfArrayPushLocal(n.Value, t.Name) {
 			b.selfPushMoveCall = n.Value
 		}
-		// Mark a string self-append RHS (`s = s + piece`) the same way, so
-		// the concat lowering emits the in-place-when-unique
-		// __fern_str_append rather than OpStrConcat's unconditional
-		// allocate-and-copy-both (#5637 option 3). Node identity keeps a
-		// nested concat inside `piece` on the plain OpStrConcat path.
+		// Mark the string self-append join (`s = s + piece`, or the innermost
+		// join of `s = s + piece + sep`) the same way, so the concat lowering
+		// emits the in-place-when-unique __fern_str_append rather than
+		// OpStrConcat's unconditional allocate-and-copy-both (#5637 option 3).
+		// Node identity keeps a nested concat inside `piece` on the plain
+		// OpStrConcat path.
 		// Saved / restored around the RHS so an assignment nested INSIDE
 		// `piece` (assignment is an expression here) runs with its own
 		// marking and hands this one's back untouched.
 		prevAppendBin, prevAppendDone := b.selfStrAppendBin, b.selfStrAppendDone
 		b.selfStrAppendBin, b.selfStrAppendDone = nil, false
-		if b.isSelfStrAppendLocal(n.Value, t.Name) {
-			b.selfStrAppendBin = n.Value
+		if bin := b.selfStrAppendLocalSpine(n.Value, t.Name); bin != nil {
+			b.selfStrAppendBin = bin
 		}
 		err := b.expr(n.Value)
 		b.selfPushMoveCall = nil
@@ -19095,7 +19116,7 @@ func (b *builder) assign(n *ast.Assign) error {
 			// the old buffer: it either grew it in place (still uniquely
 			// held — nothing to release) or copied into a fresh one and ran
 			// the same __fern_str_dec this branch would have. Dec'ing again
-			// here would over-release. See isSelfStrAppendLocal.
+			// here would over-release. See selfStrAppendLocalSpine.
 		} else if isStringTypeOfLocal(t.Name, b) && ast.RcFreeEnabled && b.rc.freeEligible[t.Name] &&
 			!b.callConsumesIdent(n.Value, t.Name) {
 			// `s = f(.., s, ..)` into an `own` parameter hands the callee
@@ -19669,9 +19690,10 @@ func isStringTypeOfLocal(name string, b *builder) bool {
 	return false
 }
 
-// isSelfStrAppendLocal reports whether `value` is exactly `<name> + rhs` —
-// the string self-append that `__fern_str_append` lowers in place (#5637
-// option 3). `out = out + piece` is the stdlib's universal string builder
+// selfStrAppendLocalSpine returns the concat node in `value` that the string
+// self-append marks, or nil when `value` is not one — the append that
+// `__fern_str_append` lowers in place (#5637 option 3). `out = out + piece` is
+// the stdlib's universal string builder
 // (`std/unicode`'s _map_case, `std/utf8`'s encode_all, the JSON / CSV
 // encoders), and OpStrConcat gives it an allocate-and-copy-everything per
 // piece — quadratic bytes and, for the short pieces a per-code-point loop
@@ -19695,23 +19717,57 @@ func isStringTypeOfLocal(name string, b *builder) bool {
 // release is what stops it. A target whose backend did not emit the helper
 // would therefore turn that release into a use-after-free — which is why
 // every backend emits it and there is no width test left here.
-func (b *builder) isSelfStrAppendLocal(value ast.Expr, name string) bool {
+//
+// A CHAIN — `out = out + piece + sep` — parses left-nested as
+// `((out + piece) + sep)`, so the node to mark is the INNERMOST concat, the
+// one whose left operand is the bare accumulator. Marking it makes the inner
+// join append into `out`'s own slack, and the outer join's consumeLeftTemp
+// then grows the buffer the inner returned, so the whole chain allocates at
+// most once. Marking nothing — which is what requiring `value` itself to have
+// an ident on the left did — left the inner join on OpStrConcat, copying the
+// entire accumulator once per iteration. That is the quadratic cost the
+// single-`+` form was fixed for, still charged to every builder that writes
+// its separator in the same statement.
+//
+// The spine stops at an operand ABOVE the accumulator that reads it
+// (`out = out + a + out`): the inner append has consumed `out`'s buffer by the
+// time that operand is evaluated, so it would read a buffer already grown or
+// freed. The innermost right operand is not tested — `out = out + out` is the
+// shape the single-`+` form has always taken, and the helper copies from
+// `out`'s bytes into slack past them, which do not overlap.
+func (b *builder) selfStrAppendLocalSpine(value ast.Expr, name string) ast.Expr {
 	if !ast.RcFreeEnabled {
-		return false
+		return nil
 	}
-	bin, ok := value.(*ast.Binary)
-	if !ok || !bin.IsStringConcat {
-		return false
+	if !isStringTypeOfLocal(name, b) || !b.rc.freeEligible[name] {
+		return nil
 	}
-	if id, ok := bin.Left.(*ast.Ident); !ok || id.Name != name {
-		return false
+	var outer []ast.Expr // right operands passed on the way down
+	for {
+		bin, ok := value.(*ast.Binary)
+		if !ok || !bin.IsStringConcat {
+			return nil
+		}
+		if id, isIdent := bin.Left.(*ast.Ident); isIdent {
+			if id.Name != name {
+				return nil
+			}
+			for _, r := range outer {
+				if exprMentionsIdent(r, name) {
+					return nil
+				}
+			}
+			return bin
+		}
+		outer = append(outer, bin.Right)
+		value = bin.Left
 	}
-	return isStringTypeOfLocal(name, b) && b.rc.freeEligible[name]
 }
 
-// isSelfStrAppendField is the field twin of isSelfStrAppendLocal: it reports
-// whether the struct-update field init `value` is exactly
-// `<base>.<field> + rhs` with `field` string-typed (`ft`) — the accumulator
+// selfStrAppendFieldSpine is the field twin of selfStrAppendLocalSpine: it
+// returns the right operands, innermost first, of a struct-update field init
+// `value` that grows `<base>.<field>` — with `field` string-typed (`ft`) — or
+// nil when `value` is not one. That accumulator is the one
 // written through the record-update idiom, `b = B { ...b, buf: b.buf + s }`.
 // E048 forbids field assignment, so that literal IS how a struct-held string
 // builder is appended to; `BufWriter.write_string` is one.
@@ -19724,23 +19780,53 @@ func (b *builder) isSelfStrAppendLocal(value ast.Expr, name string) bool {
 // that matters here and is not the buffer's: a struct aliased twice keeps its
 // buffer at rc 1, since only the box holds that reference, so a gate on the
 // string would grow a buffer the second alias still reads through.
-func (b *builder) isSelfStrAppendField(value ast.Expr, ft ast.Type, baseName, fieldName string) bool {
+// A CHAIN — `b = B { ...b, buf: b.buf + name + sep }` — parses left-nested, so
+// the accumulator sits at the bottom of the left spine and the rights come back
+// innermost first: each one is appended to what the one below returned, and the
+// whole statement grows a single buffer. Requiring the field access to be
+// `value`'s own left operand instead left every join but the outermost on
+// OpStrConcat, so a three-join iteration copied the accumulator twice.
+//
+// The spine stops at a right operand ABOVE the first that names `base`. All the
+// rights are evaluated up front, before the gate, but on the single-word ABI a
+// spilled slot holds only the data pointer and its length is re-read from
+// [data-4] at the append — so an earlier append that grew the buffer in place
+// would change what that later operand means.
+func (b *builder) selfStrAppendFieldSpine(value ast.Expr, ft ast.Type, baseName, fieldName string) []ast.Expr {
 	if !ast.RcFreeEnabled {
-		return false
+		return nil
 	}
 	if _, isStr := ft.(ast.StringType); !isStr {
-		return false
+		return nil
 	}
-	bin, ok := value.(*ast.Binary)
-	if !ok || !bin.IsStringConcat {
-		return false
+	var rights []ast.Expr // collected outermost first, reversed on the way out
+	for {
+		bin, ok := value.(*ast.Binary)
+		if !ok || !bin.IsStringConcat {
+			return nil
+		}
+		if fa, isField := bin.Left.(*ast.FieldAccess); isField {
+			if fa.Field != fieldName {
+				return nil
+			}
+			id, isIdent := fa.Target.(*ast.Ident)
+			if !isIdent || id.Name != baseName {
+				return nil
+			}
+			for _, r := range rights {
+				if exprMentionsIdent(r, baseName) {
+					return nil
+				}
+			}
+			rights = append(rights, bin.Right)
+			for i, j := 0, len(rights)-1; i < j; i, j = i+1, j-1 {
+				rights[i], rights[j] = rights[j], rights[i]
+			}
+			return rights
+		}
+		rights = append(rights, bin.Right)
+		value = bin.Left
 	}
-	fa, ok := bin.Left.(*ast.FieldAccess)
-	if !ok || fa.Field != fieldName {
-		return false
-	}
-	id, ok := fa.Target.(*ast.Ident)
-	return ok && id.Name == baseName
 }
 
 // tupleTypeOfLocal returns the TupleType of a param / local named
