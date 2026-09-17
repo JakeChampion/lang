@@ -62,6 +62,26 @@ func ioErrorCases(t *testing.T) []ioErrorCase {
 		{"readfile-notdir-is-other", `function main(): i32 { match (read_file("` + notDir + `")) { Ok(_) => { return 1; }, Err(e) => { match (e) { Other(_, _) => { return 5; }, NotFound(_) => { return 6; }, _ => { return 7; } } } } return 0; }`, 5},
 		{"removefile-notdir-is-other", `function main(): i32 { match (remove_file("` + notDir + `")) { Err(e) => { match (e) { Other(_, _) => { return 5; }, NotFound(_) => { return 6; }, _ => { return 7; } } }, Ok(_) => { return 1; } } return 0; }`, 5},
 		{"removefile-notfound", `function main(): i32 { match (remove_file("/nonexistent-fern-probe")) { Err(e) => { match (e) { NotFound(p) => { return 2; }, _ => { return 4; } } }, Ok(_) => { return 1; } } return 0; }`, 2},
+		// chroot (#9678) carries the same Err payload shape as the fs helpers
+		// above, through the same __fern_io_error. Both cases are
+		// PRIVILEGE-INDEPENDENT on Linux, which is what lets them sit in a
+		// table of fixed expectations: sys_chroot resolves the path BEFORE
+		// checking CAP_SYS_CHROOT, so an unprivileged caller gets the lookup's
+		// errno rather than EPERM, and this suite runs as root in the dev
+		// container and as uid 1001 on the runners.
+		{"chroot-notfound-payload-len", `function main(): i32 { match (chroot("/nonexistent-fern-probe")) { Ok(_) => { return 1; }, Err(e) => { match (e) { NotFound(p) => { return p.len(); }, _ => { return 4; } } } } return 0; }`, 23},
+		{"chroot-notdir-is-other", `function main(): i32 { match (chroot("` + notDir + `")) { Ok(_) => { return 1; }, Err(e) => { match (e) { Other(_, _) => { return 5; }, NotFound(_) => { return 6; }, _ => { return 7; } } } } return 0; }`, 5},
+		// The three credential setters' range refusals (#9678). These never
+		// reach the kernel — an id outside 32 unsigned bits is EINVAL in the
+		// helper, because the kernel reads the low 32 bits of the register for
+		// a uid_t argument and setuid(2^32 + 1) would otherwise set uid 1 —
+		// so they too answer the same at any privilege. EINVAL has no named
+		// variant, so each is Other.
+		{"setuid-unset-id-is-einval", `function main(): i32 { match (setuid(0i64 - 1i64)) { Ok(_) => { return 1; }, Err(e) => { match (e) { Other(_, _) => { return 5; }, _ => { return 7; } } } } return 0; }`, 5},
+		{"setgid-over-32-bits-is-einval", `function main(): i32 { match (setgid(4294967296i64)) { Ok(_) => { return 1; }, Err(e) => { match (e) { Other(_, _) => { return 5; }, _ => { return 7; } } } } return 0; }`, 5},
+		// One bad element refuses the WHOLE list rather than its good prefix:
+		// a partial supplementary set would be a credential nobody asked for.
+		{"setgroups-bad-element-is-einval", `function main(): i32 { match (setgroups([4294967296i64, 0i64])) { Ok(_) => { return 1; }, Err(e) => { match (e) { Other(_, _) => { return 5; }, _ => { return 7; } } } } return 0; }`, 5},
 	}
 }
 

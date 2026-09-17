@@ -49,7 +49,9 @@ RUN apt-get update \
 #
 # It also SUPPLIES what Debian leaves out: their coreutils package does not
 # build `uptime` or `kill` at all, and the `/usr/bin/uptime` most Linux
-# distributions do have belongs to procps -- a different program.
+# distributions do have belongs to procps -- a different program. `chroot` is
+# a third: Debian builds it but installs it to /usr/sbin, which is not a
+# directory the harness searches, so the corpus takes this tree's copy.
 #
 # `make` in full rather than a named target: a target skips the gnulib header
 # generation the build depends on and dies on a missing stdckdint.h.
@@ -67,6 +69,7 @@ RUN set -eux; \
     cd /; rm -rf "/tmp/coreutils-$ver" "/tmp/coreutils-$ver.tar.xz"; \
     /opt/gnu-coreutils/bin/uptime --version | head -1 | grep -q '(GNU coreutils)'; \
     /opt/gnu-coreutils/bin/kill --version | head -1 | grep -q '(GNU coreutils)'; \
+    /opt/gnu-coreutils/bin/chroot --version | head -1 | grep -q '(GNU coreutils)'; \
     /opt/gnu-coreutils/bin/yes --version | head -1 | grep -q '(GNU coreutils)'
 
 # hyperfine and python3 for scripts/coreutils-bench: it is the repo's own
