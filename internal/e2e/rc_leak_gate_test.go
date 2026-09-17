@@ -26,9 +26,10 @@ import (
 //
 // 15 of 309 cases leak on x86-64 today and 14 on arm64: the map drop
 // path, and closure and string residuals around it, do not fully
-// reclaim, which is the same list the corpus header names. A flat zero assertion could not land without
-// fixing all of that first, and deleting the leg until then is how the
-// direction stays unwatched for another year.
+// reclaim, which is the same list the corpus header names. A flat zero
+// assertion could not land without fixing all of that first, and
+// deleting the leg until then is how the direction stays unwatched for
+// another year.
 //
 // So each leaking case is pinned at its exact byte count and everything
 // else must be zero. What that buys, which nothing had before:
