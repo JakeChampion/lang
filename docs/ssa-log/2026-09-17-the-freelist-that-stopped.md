@@ -86,6 +86,25 @@ explains the numbers is not evidence for that mechanism. Only something that
 would come out differently under the alternatives is. `pops = 0` is that kind
 of number; `live_bytes = 369,040` is not.
 
+## The builder was a fifth producer, and the first version corrupted it
+
+Review caught what the fix itself broke. `buf_take` hands the builder's buffer
+out as an owned string, so the builder is a string producer — but its buffer was
+allocated at `cap + 8` and left there. Moving only the free to
+`len + strBlockBytes` pushed that block onto the class ABOVE the one it came
+from, and the next request of the larger class got a block too small for it.
+
+That is worse than the bug being fixed: a leak loses memory, this writes past a
+live block. `cap = 24` reaches it (24+8 fills the 32-byte class exactly, 24+9
+lands in 48), and `buf_push` permits a buffer filled to exactly `cap` because it
+grows only when the new length is strictly greater.
+
+`TestArmBufTakeFreesIntoTheClassItWasAllocatedFrom` allocates a canary adjacent
+to the buffer and checks it survives; with the builder back at `cap + 8` the
+canary is clobbered. The lesson is the one the fix is about: "every producer"
+has to mean every producer, and the way to be sure is one constant rather than
+a convention repeated at twenty sites.
+
 ## What this does NOT fix
 
 `coreutils/uniq.fern` is **unchanged** at 369,040 bytes over 8,000 lines
@@ -94,6 +113,14 @@ for strings, and the coreutils retention is a separate instance — most likely
 the same class of disagreement in another block kind, since `uniq` holds an
 array of lines. So the retention question behind #9542 is still open, and the
 next step is to run the same `pops`-based instrument over an array workload.
+
+`x86_64ssa` has the identical disagreement — `read_line` and its siblings
+allocate `len + 9` while `__fern_str_dec` frees `len + 8` — with RSS growing to
+47 MB against flat's 2.1 MB at a boundary width. Filed as #9568 rather than
+fixed here. It also narrows a claim in this round's write-up: the control that
+refuted the ABI reading compared arm64ssa against x86-64's FLAT default, not
+against x86_64ssa. The conclusion holds, the control was narrower than the
+wording.
 
 The test pins widths measured rather than derived: my arithmetic for which
 widths sit on a boundary was off by one, and the mutation run caught it by

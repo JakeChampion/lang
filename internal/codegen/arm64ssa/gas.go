@@ -5308,10 +5308,12 @@ func emitStrOrdHelper(w func(string, ...any)) {
 // through __fern_str_dec, which is what consuming it means.
 //
 // The fit test is the block's size class: every heap string is an __alloc of
-// at least la+8 bytes (the header plus its length; the string builder's
-// buffers request more), and __alloc hands out the class's whole rounded
-// extent, so the class of la+8 is capacity the string owns whatever produced
-// it. Reader.read_chunk, the one producer that bumps the cursor itself,
+// la+strBlockBytes (the rc word, the length word and the trailing NUL), and
+// __alloc hands out the class's whole rounded extent, so that class is
+// capacity the string owns whatever produced it. Every producer uses the same
+// number — including the builder, whose buffer buf_take hands out as a string
+// — because __free classes from the size it is handed and the two ends have to
+// agree. Reader.read_chunk, the one producer that bumps the cursor itself,
 // rounds its block to the same class. The grown string is freed at its new
 // length, which classes the same as the block. x0=a, x1=b; returns x0=data.
 func emitStrAppendHelper(w func(string, ...any)) {
@@ -5358,9 +5360,9 @@ func emitStrAppendHelper(w func(string, ...any)) {
 // emitStrConcatHelper writes __str_concat(a, b) -> new data pointer: a fresh
 // length-prefixed string holding a's bytes then b's (rc=1 at base+0, total
 // length at base+4, data at base+8 — the header ConstStr and every heap string
-// use). The block is an __alloc of total+8 bytes, so its extent is that
-// request's size class, which is what lets __fern_str_append grow it in place
-// later. Each operand is copied through __ssa_bcopy.
+// use). The block is an __alloc of total+strBlockBytes bytes, so its extent is
+// that request's size class, which is what lets __fern_str_append grow it in
+// place later. Each operand is copied through __ssa_bcopy.
 func emitStrConcatHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__str_concat"))
@@ -5392,10 +5394,14 @@ func emitStrConcatHelper(w func(string, ...any)) {
 // emitStrDecHelper writes __fern_str_dec(ptr) -> ptr: the scope-exit drop
 // for a string-valued local. Guarded (null / low-address / immortal-sentinel
 // top bit, so it skips .rodata literals); on the last reference (rc == 1 at
-// [ptr-8]) the block goes back to the freelist at base = ptr-8 and len+8
-// bytes, which every string producer covers: each is an __alloc of at least
-// that with its data at base+8 (Reader.read_chunk rounds its own bump to the
-// same class), and a string grown in place stayed inside its class. A shared
+// [ptr-8]) the block goes back to the freelist at base = ptr-8 and
+// len+strBlockBytes bytes, which is the number every string producer allocates
+// at, with its data at base+8 (Reader.read_chunk rounds its own bump to the
+// same class). The two ends must match exactly: __free derives the size class
+// from what it is handed, so freeing at a different number than the allocation
+// used puts the block on a class nothing will request (a freelist that stops
+// recycling) or on one whose later request it is too small for (#9558). A
+// string grown in place stayed inside its class. A shared
 // string is decremented in place.
 func emitStrDecHelper(w func(string, ...any)) {
 	w("")
@@ -9498,7 +9504,7 @@ func emitBufNewHelper(w func(string, ...any)) {
 	w("\tbl %s", fnLabel("__alloc"))
 	w("\tstr x0, [sp, #24]") // H
 	w("\tldr x0, [sp, #16]")
-	w("\tadd x0, x0, #8") // rc header + payload
+	w("\tadd x0, x0, #%d", strBlockBytes) // buf_take hands this out as a string
 	w("\tbl %s", fnLabel("__alloc"))
 	w("\tmov w2, #1")
 	w("\tstr w2, [x0]")   // rc = 1
@@ -9535,7 +9541,7 @@ func emitBufReserveHelper(w func(string, ...any)) {
 	w("\tb .Lssa_bufres_dbl")
 	w(".Lssa_bufres_alloc:")
 	w("\tstr x9, [sp, #24]") // new cap
-	w("\tadd x0, x9, #8")
+	w("\tadd x0, x9, #%d", strBlockBytes)
 	w("\tbl %s", fnLabel("__alloc"))
 	w("\tmov w2, #1")
 	w("\tstr w2, [x0]")
@@ -9551,8 +9557,8 @@ func emitBufReserveHelper(w func(string, ...any)) {
 	w("\tldr x11, [x1]") // old data, re-read: bcopy clobbers x0..x2
 	w("\tcbz x11, .Lssa_bufres_store")
 	w("\tldr x2, [x1, #16]")
-	w("\tadd x2, x2, #8")  // block size = cap + rc header
-	w("\tsub x0, x11, #8") // block base
+	w("\tadd x2, x2, #%d", strBlockBytes) // the size buf_new asked for
+	w("\tsub x0, x11, #8")                // block base
 	w("\tmov x1, x2")
 	w("\tbl %s", fnLabel("__free"))
 	w(".Lssa_bufres_store:")
@@ -9727,7 +9733,7 @@ func emitBufTakeHelper(w func(string, ...any)) {
 	w("\tret")
 	w(".Lssa_buftake_empty:")
 	w("\tstp x29, x30, [sp, #-16]!")
-	w("\tmov x0, #8")
+	w("\tmov x0, #%d", strBlockBytes)
 	w("\tbl %s", fnLabel("__alloc"))
 	w("\tmov w2, #1")
 	w("\tstr w2, [x0]")
@@ -9748,7 +9754,7 @@ func emitBufFreeHelper(w func(string, ...any)) {
 	w("\tldr x1, [x0]")
 	w("\tcbz x1, .Lssa_buffree_ctl")
 	w("\tldr x2, [x0, #16]")
-	w("\tadd x2, x2, #8")
+	w("\tadd x2, x2, #%d", strBlockBytes)
 	w("\tsub x0, x1, #8")
 	w("\tmov x1, x2")
 	w("\tbl %s", fnLabel("__free"))
@@ -9765,7 +9771,7 @@ func emitBufFreeHelper(w func(string, ...any)) {
 // emitStrSliceHelper writes __str_slice(base, low, high) -> data: allocate a
 // fresh length-prefixed string holding base[low:high]. Bounds-traps (exit 134)
 // on low < 0, high > src_len, or low > high, matching the native helper. The
-// result is an __alloc of new_len+8 bytes holding a single-word rc-headered
+// result is an __alloc of new_len+strBlockBytes bytes holding a single-word rc-headered
 // string (rc=1@base, len@base+4, data@base+8), copied through __ssa_bcopy. low/high arrive as i32;
 // they are sign-extended for the signed bound checks. x0=base, w1=low, w2=high;
 // returns x0=data.

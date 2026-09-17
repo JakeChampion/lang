@@ -1392,30 +1392,29 @@ func runCheck(srcPath, target string) error {
 // self-host driver is 13.4% smaller on arm64 — but it is not any target's
 // default, for a reason that is about memory rather than code size.
 //
-// The arm64 SSA default (#9511) was reverted over string retention: -backend
-// ssa reported hundreds of KB live at exit under FERN_LEAKCHECK where the
-// stack-machine emitter reported hundreds of bytes. That measurement does not
-// hold up. arm64ssa's census derives live_bytes from the arena cursor less
-// what __free tallied, and something breaks that identity once allocation
-// sizes vary: the figure is constant at 32 bytes for fixed-width input at any
-// length, and runs 832 to 8,528 for varying widths, with identical alloc and
-// free counts throughout. The mechanism is not yet identified (#9558).
+// The arm64 SSA default (#9511) was reverted over string retention, and part
+// of that has now been root-caused and fixed: arm64ssa allocated a string at
+// len+9 and freed it at len+8, so at lengths where the two round to different
+// 16-byte classes the block was pushed onto a class nothing requested, the
+// freelist stopped recycling, and the heap grew without bound. strBlockBytes
+// is the single number both ends use now (#9558).
 //
-// It was not the single-word string ABI either, which was the first reading:
+// It was never the single-word string ABI, which was the first reading:
 // x86-64 runs that same ABI, since ast.TwoWordOverride is set only by
-// internal/codegen/arm64, and is clean on the same programs.
+// internal/codegen/arm64, and its default emitter is clean on the same
+// programs.
 //
-// So what the SSA backends actually retain is not currently known, and the
-// order of work is #9558 first, then re-measure. The default stays with the
-// stack machine until that says otherwise.
-// internal/e2e/arm64_default_string_reclaim_test.go holds the default to its
-// bar, and that bar is sound: it measures the stack-machine emitter, whose
-// census reads a constant 16 bytes at every input size.
+// What remains is NOT the same bug. coreutils/uniq.fern still holds 369 KB at
+// exit against the stack machine's 368 bytes, with its freelist recycling
+// normally — one large read buffer that arm64ssa never frees. So the default
+// stays with the stack machine until that is closed and the retention is
+// re-measured. internal/e2e/arm64_default_string_reclaim_test.go holds the
+// default to its bar.
 
 // backendFlagUsage is `fern -h`'s description of -backend. It says what the
 // SSA backend costs as well as what it saves, because the saving is the part
 // a caller can see from the outside and the cost is not.
-const backendFlagUsage = "code-generation backend for the selected -target. Every target defaults to the stack-machine emitter, named `flat` for a caller who wants it selected rather than inherited. `ssa` names the SSA-direct backend, available for -target arm64-linux and -target x86-64-linux: it allocates registers instead of walking a stack machine and so emits less code, but it is not the default while what it retains is unmeasured: the FERN_LEAKCHECK census it emits over-reports live bytes when allocation sizes vary (#9558). It also does not serve --run, -cc, -export, -shared, -g, -cover or -sanitize. Coverage is a subset of the language — the integer core, control flow, calls, memory, strings, arrays, and the RC runtime — and an unsupported op errors rather than miscompiles. Unlike the old `-target wasm-ssa` / `-target arm64-ssa` spellings this replaces, the target keeps its descriptor, so capability enforcement (E066) applies here exactly as it does to the default emitter."
+const backendFlagUsage = "code-generation backend for the selected -target. Every target defaults to the stack-machine emitter, named `flat` for a caller who wants it selected rather than inherited. `ssa` names the SSA-direct backend, available for -target arm64-linux and -target x86-64-linux: it allocates registers instead of walking a stack machine and so emits less code, but it is not the default while it still retains a large read buffer that the stack-machine emitter frees, so a string-heavy program holds far more at exit. It also does not serve --run, -cc, -export, -shared, -g, -cover or -sanitize. Coverage is a subset of the language — the integer core, control flow, calls, memory, strings, arrays, and the RC runtime — and an unsupported op errors rather than miscompiles. Unlike the old `-target wasm-ssa` / `-target arm64-ssa` spellings this replaces, the target keeps its descriptor, so capability enforcement (E066) applies here exactly as it does to the default emitter."
 
 func resolveBackend(backend string) string {
 	if backend != "" {
