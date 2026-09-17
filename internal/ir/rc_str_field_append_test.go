@@ -169,3 +169,77 @@ function main(): i32 {
 		t.Errorf("a foreign-base spread must not take the in-place append, got %d", got)
 	}
 }
+
+const strFieldAppendChainSrc = `struct B { buf: string, n: i32 }
+function main(): i32 {
+    var b: B = B { buf: "", n: 0 };
+    var i: i32 = 0;
+    while (i < 4) { b = B { ...b, buf: b.buf + "a" + "bb", n: b.n + 1 }; i = i + 1; }
+    return b.buf.len() - 12;
+}`
+
+// A CHAIN of joins into the field grows one buffer, the way the bare-local
+// form does. `hdr = H { ...hdr, buf: hdr.buf + name + ": " + value }` is the
+// shape, and requiring the field access to be the whole init's own left
+// operand left every join but the outermost copying — so a three-join
+// iteration copied the accumulator twice.
+//
+// The reuse arm appends once per join; the decline arm, which must not move
+// p's buffer, concats the first and then grows THAT intermediate, so it keeps
+// exactly one OpStrConcat however long the chain is.
+func TestStrFieldAppendChainGrowsOneBuffer(t *testing.T) {
+	fn := funcByName(lowerForTest(t, strFieldAppendChainSrc), "main")
+	if got := allocReuseCount(fn); got != 1 {
+		t.Errorf("chained field append should still reuse the box, got %d __alloc_reuse", got)
+	}
+	if got := strAppendCount(fn); got != 3 {
+		t.Errorf("got %d __fern_str_append, want 3 (two joins on the reuse arm, one growing the decline arm's concat)", got)
+	}
+	if got := strConcatCount(fn); got != 1 {
+		t.Errorf("got %d OpStrConcat, want 1 (only the decline arm's first join copies)", got)
+	}
+}
+
+// The two-word ABI legs, as for the single-join form: the field load fans out
+// to (data, len) and each helper call takes both words.
+func TestStrFieldAppendChainGrowsOneBufferTwoWord(t *testing.T) {
+	fn := funcByName(lowerForTestPtrW(t, strFieldAppendChainSrc, 4), "main")
+	if got := strAppendCount(fn); got != 3 {
+		t.Errorf("wasm: got %d __fern_str_append, want 3", got)
+	}
+	if got := strConcatCount(fn); got != 1 {
+		t.Errorf("wasm: got %d OpStrConcat, want 1", got)
+	}
+}
+
+func TestStrFieldAppendChainGrowsOneBufferArm64(t *testing.T) {
+	prev := ast.TwoWordOverride
+	defer func() { ast.TwoWordOverride = prev }()
+	ast.TwoWordOverride = true
+
+	fn := funcByName(lowerForTest(t, strFieldAppendChainSrc), "main")
+	if got := strAppendCount(fn); got != 3 {
+		t.Errorf("arm64: got %d __fern_str_append, want 3", got)
+	}
+	if got := strConcatCount(fn); got != 1 {
+		t.Errorf("arm64: got %d OpStrConcat, want 1", got)
+	}
+}
+
+// Does NOT fire past an operand that names the base. Every right is evaluated
+// before the gate, but a spilled slot on the single-word ABI carries only the
+// data pointer and re-reads its length from [data-4] at the append — so a
+// join that already grew the buffer in place would change what `b.buf` in a
+// later operand means. The spine stops, and the whole init copies.
+func TestStrFieldAppendChainStopsAtAReadOfTheBase(t *testing.T) {
+	fn := funcByName(lowerForTest(t, `struct B { buf: string, n: i32 }
+function main(): i32 {
+    var b: B = B { buf: "ab", n: 0 };
+    var i: i32 = 0;
+    while (i < 3) { b = B { ...b, buf: b.buf + "-" + b.buf, n: b.n + 1 }; i = i + 1; }
+    return b.buf.len() - 23;
+}`), "main")
+	if got := strAppendCount(fn); got != 1 {
+		t.Errorf("got %d __fern_str_append, want 1 (only the outer join's own concat temp may be grown; fusing to b.buf would consume the buffer the third operand reads)", got)
+	}
+}
