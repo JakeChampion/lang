@@ -127,19 +127,31 @@ function descriptions(): string[] {
 // not use. The realtime rows number from RTMIN and count UP, so RTMAX is
 // "Real-time signal 30" — NOT `name(n)`'s nearer-end `RTMIN+k` / `RTMAX-k`
 // form, which would call the same signal RTMAX-0.
+// DARWIN SUFFIXES EVERY LINE WITH THE NUMBER, and glibc does not. `kill -t`
+// prints `strsignal(signum)`, not the raw table, and Darwin's strsignal
+// composes `"<text>: <n>"` — `Hangup: 1`, `Killed: 9` — where glibc returns
+// `Hangup` alone. Measured off the oracle on a macos-15 runner, all 31 rows.
+//
+// Which also means zero is NOT `sys_siglist[0]`. That entry is the string
+// "Signal 0", but Darwin's strsignal rejects 0 as out of range before it
+// reaches the table, so the answer is its unknown form, `Unknown signal: 0`
+// — with a colon, where glibc's has none.
+//
+// Reading `sys_siglist` and stopping there is what got this wrong: the table
+// was right and the function that wraps it was never modelled.
 pub function description(n: i32): string {
-  // Zero has a name but no signal, so each libc answers from its fallback
-  // rather than its table: glibc's `strsignal` composes "Unknown signal 0"
-  // (measured off `kill -t 0`), while Darwin's `sys_siglist[0]` is the
-  // literal "Signal 0" (Apple's Libc, `gen/FreeBSD/siglist.c`).
+  var dar: boolean = target_os() == "darwin";
   if (n == 0) {
-    if (target_os() == "darwin") {
-      return "Signal 0";
+    if (dar) {
+      return "Unknown signal: 0";
     }
     return "Unknown signal 0";
   }
   var ds: string[] = descriptions();
   if (n >= 1 && n <= ds.len()) {
+    if (dar) {
+      return ds[n - 1] + ": " + n.to_string();
+    }
     return ds[n - 1];
   }
   var lo: i32 = rt_min();
