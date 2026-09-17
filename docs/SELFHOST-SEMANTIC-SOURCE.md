@@ -604,10 +604,19 @@ functions.
 A `defer` arrives here already lowered: the desugar replaces it with a flag
 and replays its action at the scope's exits, lifting the declaration of a
 binding the action names out of the block that holds it so the slot spans the
-replay, and typing the shared return temp every expanded `return` writes.
-Both need a value to start a declaration at, chosen from the annotation, so a
-binding or a return type whose annotation has no zero literal — a struct, an
-enum, a tuple, a cell — still refuses (#9575).
+replay, and typing the shared return temp every expanded `return` writes. Both
+need a value to start a declaration at, which `ast.ExprZero` supplies for any
+annotation — the zero word, which at a reference type is the null the
+assignment left at the declaration site overwrites, so the lift costs a slot
+and not a box.
+
+The lift takes every annotated type. The return TEMP does not: it holds what a
+`return` hands back, so the binding it was assigned from stays live beside it
+and the two name one value, and at a RECORD return that pairing miscompiles
+here today. The temp keeps the types whose release this boundary already gets
+right, and a record-returning function with a defer stays on the AST lowering
+(#9575). An UNANNOTATED declaration cannot be lifted either way — the desugar
+runs before the checker and has no type to name.
 
 ## Calls
 

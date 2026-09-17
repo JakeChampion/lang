@@ -1006,6 +1006,44 @@ function main(): i32 {
 	// or a string assigned its result into an i32 slot — which the AST
 	// lowering's untyped frame slots never noticed, and which the semantic
 	// lowering refused as "replacement type does not match its binding".
+	// The binding lift needs a value to start the declaration it moves, and
+	// until ExprZero the only ones it could write were the ones source spells,
+	// so a struct, a tuple, an enum or a cell kept its module on the AST
+	// lowering. A zero now names its type and lowers to the zero word, which at
+	// a reference type is the null the assignment left at the declaration site
+	// overwrites before anything reads it.
+	{name: "defer-binding-at-a-type-with-no-literal-zero", atLeast: 4, noLeak: true, src: `
+struct P { a: i32 }
+function via_record(on: boolean): i32 {
+    var seen: i32 = 0;
+    loop {
+        if (on) { var v: P = P { a: 3 }; defer seen = v.a; v = P { a: 7 }; }
+        break;
+    }
+    return seen;
+}
+function via_tuple(on: boolean): i32 {
+    var seen: i32 = 0;
+    loop {
+        if (on) { var v: (i32, i32) = (1, 2); defer seen = v.0; v = (5, 6); }
+        break;
+    }
+    return seen;
+}
+function via_variant(on: boolean): i32 {
+    var seen: i32 = 0;
+    loop {
+        if (on) {
+            var v: Option[i32] = Some(3);
+            defer { match (v) { Some(n) => { seen = n; }, None => { seen = 1; } } }
+            v = Some(9);
+        }
+        break;
+    }
+    return seen;
+}
+function main(): i32 { return via_record(true) + via_tuple(true) + via_variant(true); }
+`},
 	{name: "defer-typed-return-temp", atLeast: 3, noLeak: true, src: `
 function snapshot(): i32[] {
     var items: i32[] = [7];

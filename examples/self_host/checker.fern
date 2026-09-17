@@ -4075,6 +4075,9 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
     },
     ast.ExprUnknown(u) => {
       return t_unknown("parser-side unknown:" + u.kind);
+    },
+    ast.ExprZero(z) => {
+      return s.resolve_type(z.type_name);
     }
   }
   return t_unknown("unhandled Expr variant");
@@ -11907,6 +11910,7 @@ function ow_expr_borrows(e: ast.Expr, mod: parser.Module, borrowed: string[], lo
     ast.ExprBool(_) => { return false; },
     ast.ExprFString(_) => { return false; },
     ast.ExprUnknown(_) => { return false; },
+    ast.ExprZero(_) => { return false; },
     ast.ExprLambda(_) => { return false; },
     ast.ExprStructLit(_) => { return false; },
     ast.ExprArray(_) => { return false; },
