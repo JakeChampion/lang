@@ -283,6 +283,38 @@ function f(fns: ((i32[]) => i32)[], xs: i32[]): i32 {
 }`)
 }
 
+// A local shadows from its declaration to the end of its block — not before it,
+// and not outside it.
+func TestOwnGuardLocalShadowsOnlyAfterItsDeclaration(t *testing.T) {
+	wantE051(t, "local-shadow-after-call", ownConsumer+`
+function f(xs: i32[]): i32 {
+    var a: i32 = consume(xs);
+    var consume: (i32[]) => i32 = (v: i32[]) => v[0];
+    return a + consume(xs);
+}`)
+}
+
+func TestOwnGuardLocalShadowStaysInItsBlock(t *testing.T) {
+	wantE051(t, "local-shadow-inner-block", ownConsumer+`
+function f(xs: i32[], c: boolean): i32 {
+    var n: i32 = 0;
+    if (c) { var consume: (i32[]) => i32 = (v: i32[]) => v[0]; n = consume(xs); }
+    return n + consume(xs);
+}`)
+}
+
+// A match binder shadows for its arm whether or not the scrutinee is owned —
+// the binding exists either way; only the ownership transfer depends on it.
+func TestOwnGuardArmBinderShadowsOnABorrowedScrutinee(t *testing.T) {
+	wantOK(t, "arm-binder-borrowed-scrutinee", `enum Box { B((i32[]) => i32) }
+function consume(own xs: i32[]): i32 { return xs[0]; }
+function f(b: Box, xs: i32[]): i32 {
+    var n: i32 = 0;
+    match (b) { B(consume) => { n = consume(xs); } }
+    return n;
+}`)
+}
+
 // A binding shadows inside ITS OWN scope. A lambda parameter elsewhere in the
 // function does not make the real call to the global own-func safe, and a
 // whole-function set of shadowed names would silence it.

@@ -11110,38 +11110,6 @@ function ow_is_own_func(ofuncs: OwnFunc[], name: string): boolean {
   return false;
 }
 
-// Every name a function BINDS: its parameters, its locals, and the parameters
-// of any lambda inside it. A call through one of these is a call through a
-// VALUE, so the own-func table — which is keyed by name and knows nothing of
-// scope — must not answer for it, neither for the call-site guard nor for the
-// consume classifier (#9532).
-function ow_bind_stmt(st: ast.Stmt, own acc: string[]): string[] {
-  if let ast.StmtVar(v) = st { return acc.append(v.name); }
-  return acc;
-}
-
-function ow_bind_expr(e: ast.Expr, own acc: string[]): string[] {
-  return acc;
-}
-
-// A lambda's parameters bind inside ITS body, not the enclosing function's, so
-// the walk stops at one: `ow_nested_ctx` layers them for the body it walks. A
-// set flattened across the whole function silences a genuine call to the global
-// own-func elsewhere in that function.
-function ow_bind_descend(e: ast.Expr): boolean {
-  if let ast.ExprLambda(_) = e { return false; }
-  return true;
-}
-
-function ow_bound_names(fn: parser.FuncDecl): string[] {
-  var out: string[] = [];
-  for p in fn.params { out = out.append(p.name); }
-  for st in fn.body {
-    out = astwalk.fold_stmt_nodes(st, out, ow_bind_stmt, ow_bind_expr, ow_bind_descend);
-  }
-  return out;
-}
-
 // ow_variant_known reports whether `name` is a declared VARIANT, optionally of
 // one named enum. A payload-less variant is spelled as a bare name rather than
 // a call, so it reaches the ownership predicate as an identifier (or, spelled
@@ -11694,9 +11662,11 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       var mv: MovedEntry[] = rs.moved;
       var d: util.Diag[] = rs.diags;
       for arm in m.arms {
-        var actx: OwnCtx = ctx;
+        // A binder shadows for its arm either way; only the ownership
+        // TRANSFER below depends on the scrutinee being owned.
+        var actx: OwnCtx = ow_arm_bind_ctx(ctx, arm.pattern);
         if (scrut_owned) {
-          actx = ow_arm_payload_ctx(ctx, arm.pattern);
+          actx = ow_arm_payload_ctx(actx, arm.pattern);
         }
         var ra: OwnWalk = ow_stmts(arm.body, rs.moved, actx);
         d = util.append_diags(d, ra.diags);
@@ -11717,10 +11687,15 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
 function ow_stmts(stmts: ast.Stmt[], moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
   var m: MovedEntry[] = moved;
   var d: util.Diag[] = [];
+  // A local binds for the REST OF THIS BLOCK: after its own statement, so its
+  // initialiser still sees the global, and not at all in an enclosing block,
+  // since each block walks its own copy.
+  var c: OwnCtx = ctx;
   for stmt in stmts {
-    var r: OwnWalk = ow_stmt(stmt, m, ctx);
+    var r: OwnWalk = ow_stmt(stmt, m, c);
     m = r.moved;
     d = util.append_diags(d, r.diags);
+    if let ast.StmtVar(v) = stmt { c = ow_bind_ctx(c, v.name); }
   }
   return OwnWalk { moved: m, diags: d };
 }
@@ -11733,6 +11708,28 @@ function ow_moved_del(m: MovedEntry[], name: string): MovedEntry[] {
     }
   }
   return out;
+}
+
+// A function's own parameter names: the bindings in scope before its body
+// begins. Everything else — locals, `for` variables, arm binders, a lambda's
+// parameters — layers onto this as the walk reaches the scope it binds in.
+function ow_param_names(fn: parser.FuncDecl): string[] {
+  var out: string[] = [];
+  for p in fn.params { out = out.append(p.name); }
+  return out;
+}
+
+// ow_arm_bind_ctx layers a match arm's binder NAMES, whatever the scrutinee's
+// ownership: the binder shadows an own-func of the same name for its arm even
+// when nothing was transferred into it.
+function ow_arm_bind_ctx(ctx: OwnCtx, pat: ast.Pattern): OwnCtx {
+  if let ast.PatVariant(pv) = pat {
+    var c: OwnCtx = ctx;
+    if (pv.binding.len() > 0) { c = ow_bind_ctx(c, pv.binding); }
+    for extra in pv.extra_bindings { c = ow_bind_ctx(c, extra); }
+    return c;
+  }
+  return ctx;
 }
 
 // ow_bind_ctx layers one binding onto the set of names in scope — a `for`
@@ -11903,7 +11900,7 @@ pub function own_diags(mod: parser.Module): util.Diag[] {
       }
     }
     if (owned.len() > 0 || ofuncs.len() > 0) {
-      var ctx: OwnCtx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, admit: "", admit_fields: [], fresh: fresh, bound: ow_bound_names(fn) };
+      var ctx: OwnCtx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, admit: "", admit_fields: [], fresh: fresh, bound: ow_param_names(fn) };
       var nomoved: MovedEntry[] = [];
       var r: OwnWalk = ow_stmts(fn.body, nomoved, ctx);
       out = util.append_diags(out, r.diags);
