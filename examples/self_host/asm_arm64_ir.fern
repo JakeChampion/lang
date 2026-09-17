@@ -825,16 +825,44 @@ function ssa_reg(k: i32): string { return "x" + util.i32_to_string(9 + k); }
 function ssa_nregs(): i32 { return 7; }
 function ssa_slot_off(v: i32): i32 { return 0 - 8 * (v + 1); }
 
+// ssa_fr_ldr / ssa_fr_str access an SSA frame slot at its x29-relative
+// offset. With the function's frame at rest the slot is also at
+// [sp, #(frame + off)], a positive offset one scaled ldr/str encodes up to
+// 32760, where the x29 form needs the address built in x16 beyond 256 bytes;
+// `pushed` is how many bytes of call arguments sit below the frame at the
+// access. Past the scaled range, or outside an SSA function, the x29 form.
+function ssa_fr_pos(s: asmcore.EmitState, off: i32, pushed: i32): i32 {
+    if (s.ssa_frame <= 0) { return 0 - 1; }
+    var pos: i32 = s.ssa_frame + off + pushed;
+    if (pos < 0 || pos > 32760) { return 0 - 1; }
+    return pos;
+}
+function ssa_fr_ldr(s: asmcore.EmitState, reg: string, off: i32, pushed: i32): asmcore.EmitState {
+    var pos: i32 = ssa_fr_pos(s, off, pushed);
+    if (pos >= 0) { return s.write("    ldr " + reg + ", [sp, #" + util.i32_to_string(pos) + "]\n"); }
+    return fr_ldr(s, reg, off);
+}
+function ssa_fr_str(s: asmcore.EmitState, reg: string, off: i32, pushed: i32): asmcore.EmitState {
+    var pos: i32 = ssa_fr_pos(s, off, pushed);
+    if (pos >= 0) { return s.write("    str " + reg + ", [sp, #" + util.i32_to_string(pos) + "]\n"); }
+    return fr_str(s, reg, off);
+}
+
 // ssa_load puts value v in `reg`; ssa_store writes `reg` to value v's home.
+// ssa_load_pushed is the load with `pushed` bytes of arguments already on the
+// machine stack below the frame.
 function ssa_load(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): asmcore.EmitState {
-    if (reg_of[v] < 0) { return fr_ldr(s, reg, ssa_slot_off(ssa.spill_slot(reg_of[v]))); }
+    return ssa_load_pushed(reg_of, v, reg, 0, s);
+}
+function ssa_load_pushed(reg_of: i32[], v: i32, reg: string, pushed: i32, s: asmcore.EmitState): asmcore.EmitState {
+    if (reg_of[v] < 0) { return ssa_fr_ldr(s, reg, ssa_slot_off(ssa.spill_slot(reg_of[v])), pushed); }
     var home: string = ssa_reg(reg_of[v]);
     if (home == reg) { return s; }
     return s.write("    mov " + reg + ", " + home + "\n");
 }
 function ssa_store(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): asmcore.EmitState {
     if (reg_of[v] == 0 - 1) { return s; }
-    if (reg_of[v] < 0) { return fr_str(s, reg, ssa_slot_off(ssa.spill_slot(reg_of[v]))); }
+    if (reg_of[v] < 0) { return ssa_fr_str(s, reg, ssa_slot_off(ssa.spill_slot(reg_of[v])), 0); }
     var home: string = ssa_reg(reg_of[v]);
     if (home == reg) { return s; }
     return s.write("    mov " + home + ", " + reg + "\n");
@@ -1024,7 +1052,7 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.
     while (i < argc) {
         var a: i32 = i;
         if (!helper) { a = argc - 1 - i; }
-        s = ssa_load(reg_of, ins.args[a], "x0", s);
+        s = ssa_load_pushed(reg_of, ins.args[a], "x0", i * 16, s);
         s = s.write("    str x0, [sp, #-16]!\n");
         i = i + 1;
     }
@@ -1073,7 +1101,7 @@ function ssa_str_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
     var argc: i32 = ins.args.len();
     var i: i32 = argc - 1;
     while (i >= 0) {
-        s = ssa_load(reg_of, ins.args[i], "x0", s);
+        s = ssa_load_pushed(reg_of, ins.args[i], "x0", (argc - 1 - i) * 16, s);
         s = s.write("    str x0, [sp, #-16]!\n");
         i = i - 1;
     }
@@ -1127,7 +1155,7 @@ function ssa_host_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asm
     if (util.str_has_prefix(ins.str, "syscall")) {
         var i: i32 = 0;
         while (i < ins.args.len()) {
-            s = ssa_load(reg_of, ins.args[i], "x0", s);
+            s = ssa_load_pushed(reg_of, ins.args[i], "x0", i * 16, s);
             s = s.write("    str x0, [sp, #-16]!\n");
             i = i + 1;
         }
@@ -1274,11 +1302,11 @@ function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
     var argc: i32 = ins.args.len() - 1;
     var i: i32 = argc;
     while (i >= 1) {
-        s = ssa_load(reg_of, ins.args[i], "x0", s);
+        s = ssa_load_pushed(reg_of, ins.args[i], "x0", (argc - i) * 16, s);
         s = s.write("    str x0, [sp, #-16]!\n");
         i = i - 1;
     }
-    s = ssa_load(reg_of, ins.args[0], "x9", s);
+    s = ssa_load_pushed(reg_of, ins.args[0], "x9", argc * 16, s);
     s = s.write("    blr x9\n");
     if (argc > 0) { s = s.write("    add sp, sp, #" + util.i32_to_string(argc * 16) + "\n"); }
     return ssa_store(reg_of, ins.result, "x0", s);
@@ -1371,12 +1399,12 @@ function ssa_phi_moves(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], pred: i32, suc
     var k: i32 = 0;
     while (k < srcs.len()) {
         s = ssa_load(reg_of, srcs[k], "x0", s);
-        s = fr_str(s, "x0", ssa_slot_off(fr.nspill + k));
+        s = ssa_fr_str(s, "x0", ssa_slot_off(fr.nspill + k), 0);
         k = k + 1;
     }
     k = 0;
     while (k < srcs.len()) {
-        s = fr_ldr(s, "x0", ssa_slot_off(fr.nspill + k));
+        s = ssa_fr_ldr(s, "x0", ssa_slot_off(fr.nspill + k), 0);
         s = ssa_store(reg_of, dsts[k], "x0", s);
         k = k + 1;
     }
@@ -1389,28 +1417,35 @@ function ssa_epilogue(): string {
 
 // ssa_brif branches on a value. An edge whose target has phis lands on a stub
 // carrying that edge's moves, since the moves of the two edges differ.
-function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
+// ssa_jump is the branch to block `to`, or nothing when `to` is the block
+// emitted next and control falls into it.
+function ssa_jump(lp: string, to: i32, next: i32, s: asmcore.EmitState): asmcore.EmitState {
+    if (to == next) { return s; }
+    return s.write("    b " + lp + util.i32_to_string(to) + "\n");
+}
+
+function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp: string, next: i32, s: asmcore.EmitState): asmcore.EmitState {
     var t: ssa.STerm = blk.term;
     s = ssa_load(reg_of, t.cond, "x0", s);
     if (t.t == t.f) {
         s = ssa_phi_moves(f, fr, reg_of, blk.id, t.t, s);
-        return s.write("    b " + lp + util.i32_to_string(t.t) + "\n");
+        return ssa_jump(lp, t.t, next, s);
     }
     var fl: string = lp + util.i32_to_string(t.f);
     var stub: boolean = ssa_has_phis(f, fr, t.f);
     if (stub) { fl = lp + "e" + util.i32_to_string(blk.id) + "_" + util.i32_to_string(t.f); }
     s = s.write("    cbz x0, " + fl + "\n");
     s = ssa_phi_moves(f, fr, reg_of, blk.id, t.t, s);
-    s = s.write("    b " + lp + util.i32_to_string(t.t) + "\n");
     if (stub) {
+        s = s.write("    b " + lp + util.i32_to_string(t.t) + "\n");
         s = s.write(fl + ":\n");
         s = ssa_phi_moves(f, fr, reg_of, blk.id, t.f, s);
-        s = s.write("    b " + lp + util.i32_to_string(t.f) + "\n");
+        return ssa_jump(lp, t.f, next, s);
     }
-    return s;
+    return ssa_jump(lp, t.t, next, s);
 }
 
-function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
+function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp: string, next: i32, s: asmcore.EmitState): asmcore.EmitState {
     var t: ssa.STerm = blk.term;
     if (t.kind_tag == 1) {
         s = ssa_load(reg_of, t.value, "x0", s);
@@ -1418,9 +1453,9 @@ function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
     }
     if (t.kind_tag == 2) {
         s = ssa_phi_moves(f, fr, reg_of, blk.id, t.target, s);
-        return s.write("    b " + lp + util.i32_to_string(t.target) + "\n");
+        return ssa_jump(lp, t.target, next, s);
     }
-    if (t.kind_tag == 3) { return ssa_brif(f, fr, blk, reg_of, lp, s); }
+    if (t.kind_tag == 3) { return ssa_brif(f, fr, blk, reg_of, lp, next, s); }
     // A block the lift left unterminated is one nothing reaches; the stack
     // machine's fallback return keeps the text well formed here too.
     return s.write("    mov x0, #0\n" + ssa_epilogue());
@@ -1455,14 +1490,21 @@ function emit_ssa_function_arm64(lifted: ssa.SFunc, label_name: string, s: asmco
     var frame: i32 = (fr.nspill + fr.nstage + 3 * ssa_view_count(views)) * 8;
     if (frame % 16 != 0) { frame = frame + 8; }
     if (frame > 0) { s = fr_sub_imm(s, "sp", "sp", frame); }
+    s = asmcore.EmitState { ...s, ssa_frame: frame };
     s = ssa_load_params(f, reg_of, s);
-    for blk in f.blocks {
+    var bi: i32 = 0;
+    while (bi < f.blocks.len()) {
+        var blk: ssa.SBlock = f.blocks[bi];
+        var next: i32 = 0 - 1;
+        if (bi + 1 < f.blocks.len()) { next = f.blocks[bi + 1].id; }
         s = s.write(lp + util.i32_to_string(blk.id) + ":\n");
         for ins in blk.insts {
             if (ins.kind_tag != 6 && ins.kind_tag != 8) { s = ssa_inst(ins, reg_of, fr, lp, s); }
         }
-        s = ssa_term(f, fr, blk, reg_of, lp, s);
+        s = ssa_term(f, fr, blk, reg_of, lp, next, s);
+        bi = bi + 1;
     }
+    s = asmcore.EmitState { ...s, ssa_frame: 0 };
     return s.write("    .cfi_endproc\n    .ltorg\n");
 }
 
@@ -2843,7 +2885,7 @@ function emit_arm64_op_memset(i: i32, lp: string, s: asmcore.EmitState): asmcore
 function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
     var i: i32 = 0;
     while (i < ins.args.len()) {
-        s = ssa_load(reg_of, ins.args[i], "x0", s);
+        s = ssa_load_pushed(reg_of, ins.args[i], "x0", i * 16, s);
         s = s.write("    str x0, [sp, #-16]!\n");
         i = i + 1;
     }
