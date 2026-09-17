@@ -14798,9 +14798,12 @@ pub function lower_defers_prepass_module(mod: Module): Module {
 // native RC free-list reclaim that corrupts a freshly-built array placed in a
 // struct-literal field (cf. #2759).
 //
-// This runs in module_with_builtins, interp.eval_module, and
-// ssa.build_func — NOT on the IR path (lift_lambdas), which keeps the
-// `__range` shape for lower_range_for.
+// This runs in desugar_prepass_module (inside module_with_builtins),
+// interp.eval_module and ssa.build_func. module_with_builtins feeds the IR
+// emit and the semantic substitution too, so EVERY consumer sees the
+// while-loop and `irlower.lower_range_for` is reached only by the
+// un-desugared modules `irlower_run.fern` reads directly. Its own lowering is
+// tighter than this one — reclaiming it would shrink both range forms (#9565).
 function iter_range_args(iter: ast.Expr): ast.Expr[] {
     if (range_call_name(iter) == "") { return []; }
     if let ast.ExprCall(c) = iter { return c.args; }
