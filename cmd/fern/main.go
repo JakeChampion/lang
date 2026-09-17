@@ -1387,57 +1387,42 @@ func runCheck(srcPath, target string) error {
 // the program's own exit code under --run.
 // resolveBackend picks the emitter this build uses.
 //
-// On arm64-linux the SSA backend is the default: it allocates registers
-// instead of walking a stack machine, so it emits less code — the self-host
-// driver is 13.4% smaller — and the corpus differential runs it against the
-// stack-machine emitter on every change, where all 328 programs both backends
-// build agree. x86-64-linux keeps the stack-machine emitter for now: the SSA
-// one is 2.0% LARGER there, and all but 9% of that is the `movsxd` an i32
-// result costs when its high half is re-established whether or not anything
-// reads it (#4112).
+// Every target defaults to the stack-machine emitter. The SSA backend is
+// available by name on arm64-linux and x86-64-linux, and is smaller — the
+// self-host driver is 13.4% smaller on arm64 — but it is not any target's
+// default, for a reason that is about memory rather than code size.
 //
-// A build that asks for something the SSA path does not serve keeps the
-// emitter that does. That is what makes this a default rather than a
-// migration: everything below goes on working exactly as it did, and nobody
-// has to learn a new flag to keep it.
+// The SSA backends run the SINGLE-WORD string ABI (buildArm64SSA never sets
+// ast.TwoWordOverride). On that ABI a string local passed to a user function
+// is conservatively tainted out of reclaim, because the caller cannot see
+// whether the callee retained it — rc_analysis.go's #4174 follow-up, which
+// trades the reclaim for never dangling a retained copy. The arm64
+// stack-machine emitter runs the TWO-word ABI and has no such taint, so it
+// reclaims those buffers.
 //
-// Naming the backend explicitly is a different matter, and the answer is not
-// uniform: -shared, -g and -cover are refused outright (ssaUnservedFlag),
-// while -sanitize warns that the build carries no checks and proceeds, and
-// --run, -cc and -export are simply not reached. Only the first three are
-// this function's mirror image; the rest is why the list here is longer than
-// that one.
+// Defaulting arm64-linux to SSA therefore moved ordinary programs from
+// O(1) retention to O(input): measured at exit under FERN_LEAKCHECK on
+// coreutils/uniq.fern, the stack machine holds ~400 bytes on any input while
+// the SSA build holds 57 KB at 1,000 lines and 189 KB at 8,000. The
+// leak-matrix rows str__fnscope__alias_param and str__if_block__alias_param
+// are the same shape caught as a verdict move.
 //
-// The list is what the SSA arm64 block does NOT reach, and each entry fails
-// silently rather than loudly if it is left out — which is why they are
-// enumerated here rather than discovered:
-//
-//   - runIt: that block writes assembly to stdout when outPath is empty, so
-//     `--run` would print the program instead of running it;
-//   - cc: it links in-process, so an external linker would be ignored and a
-//     `-cc` that cannot link would still "succeed";
-//   - export: flat serves it through EmitWithOptions{Exports}, and the SSA
-//     path drops the list;
-//   - shared, -g, -cover, -sanitize: no shared object, no line table, no
-//     instrumentation, no detectors.
+// Flipping arm64-linux back to SSA needs one of the two gaps closed first:
+// arm64ssa running the two-word ABI, or #4174's taint replaced by an
+// interprocedural answer to "does this callee retain its string argument".
+// internal/e2e/arm64_default_string_reclaim_test.go holds the default to that
+// bar, so the flip cannot land again while the retention is still there.
 
-// backendFlagUsage is `fern -h`'s description of -backend. It names every
-// flag resolveBackend falls back for, because each of them fails silently if
-// the fallback is ever dropped, and a caller has no other way to learn which
-// flags move the build off the default emitter.
-const backendFlagUsage = "code-generation backend for the selected -target. On -target arm64-linux the default is the SSA-direct backend, which allocates registers instead of walking a stack machine and so emits less code; a build asking for --run, -cc, -export, -shared, -g, -cover or -sanitize uses the stack-machine emitter automatically, since the SSA one does not serve those yet. `flat` names the stack-machine emitter, which is the default on every other target, for a caller who wants it selected rather than inherited. `ssa` names the SSA-direct backend explicitly, available for -target arm64-linux and -target x86-64-linux; on x86-64-linux it is not yet the default because it emits 2.0% more text there. Coverage is a subset of the language — the integer core, control flow, calls, memory, strings, arrays, and the RC runtime — and an unsupported op errors rather than miscompiles. Unlike the old `-target wasm-ssa` / `-target arm64-ssa` spellings this replaces, the target keeps its descriptor, so capability enforcement (E066) applies here exactly as it does to the default emitter."
+// backendFlagUsage is `fern -h`'s description of -backend. It says what the
+// SSA backend costs as well as what it saves, because the saving is the part
+// a caller can see from the outside and the cost is not.
+const backendFlagUsage = "code-generation backend for the selected -target. Every target defaults to the stack-machine emitter, named `flat` for a caller who wants it selected rather than inherited. `ssa` names the SSA-direct backend, available for -target arm64-linux and -target x86-64-linux: it allocates registers instead of walking a stack machine and so emits less code, but it runs the single-word string ABI, where a string passed to a user function is not reclaimed, so retention grows with the input on string-heavy programs. It also does not serve --run, -cc, -export, -shared, -g, -cover or -sanitize. Coverage is a subset of the language — the integer core, control flow, calls, memory, strings, arrays, and the RC runtime — and an unsupported op errors rather than miscompiles. Unlike the old `-target wasm-ssa` / `-target arm64-ssa` spellings this replaces, the target keeps its descriptor, so capability enforcement (E066) applies here exactly as it does to the default emitter."
 
 func resolveBackend(backend, target string, runIt bool, cc, export string, shared bool) string {
 	if backend != "" {
 		return backend
 	}
-	if target != "arm64-linux" {
-		return "flat"
-	}
-	if runIt || cc != "" || export != "" || shared || emitDebugSyms || ast.CoverEnabled || ast.SanitizeEnabled {
-		return "flat"
-	}
-	return "ssa"
+	return "flat"
 }
 
 // ssaUnservedFlag reports the flag a -backend ssa build cannot serve, so the
