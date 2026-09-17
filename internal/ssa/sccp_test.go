@@ -260,3 +260,70 @@ func TestSCCPKeepsAProvenConstantsWidth(t *testing.T) {
 		t.Errorf("the folded i64 sub has Width %d, want 64", subOp.Width)
 	}
 }
+
+// A block whose FIRST phi folds to a const while a later one does not.
+// SCCP rewrites ops in place, so the folded phi keeps its slot among the
+// block's leading phis and stops being a phi there — which leaves the
+// surviving phi sitting after a non-phi Op and makes Verify refuse the whole
+// function (#9638). It refused three functions of the self-host compiler, so
+// the driver could not be built with -backend ssa at all.
+//
+// Phis lead a block by construction (see AddPhi), and every consumer relies on
+// it, so the rewrite has to restore the order rather than the verifier learn to
+// tolerate it.
+func TestSCCPFoldingOnePhiKeepsPhisLeading(t *testing.T) {
+	f := NewFunc("f")
+	cond := f.AddParam()
+	entry := f.NewBlock()
+	thenB := f.NewBlock()
+	elseB := f.NewBlock()
+	merge := f.NewBlock()
+	f.SetBrIf(entry, cond, thenB, elseB)
+
+	// then: 7 and 1. else: 7 and 2. So the first phi is constant (7 both
+	// ways) and the second is not — the ordering that breaks.
+	sevenT := f.AddOp(thenB, OpConstInt)
+	thenB.Ops[len(thenB.Ops)-1].Imm = 7
+	oneT := f.AddOp(thenB, OpConstInt)
+	thenB.Ops[len(thenB.Ops)-1].Imm = 1
+	f.SetBr(thenB, merge)
+
+	sevenE := f.AddOp(elseB, OpConstInt)
+	elseB.Ops[len(elseB.Ops)-1].Imm = 7
+	twoE := f.AddOp(elseB, OpConstInt)
+	elseB.Ops[len(elseB.Ops)-1].Imm = 2
+	f.SetBr(elseB, merge)
+
+	foldable := f.AddPhi(merge, sevenT, sevenE)
+	survivor := f.AddPhi(merge, oneT, twoE)
+	sum := f.AddOp(merge, OpAdd, foldable, survivor)
+	f.SetRet(merge, sum)
+
+	SCCP(f)
+
+	if err := Verify(f); err != nil {
+		t.Fatalf("Verify after SCCP: %v", err)
+	}
+	// And the order itself, so this still fails if Verify ever softens.
+	sawNonPhi := false
+	for i, op := range merge.Ops {
+		if op.Kind == OpPhi {
+			if sawNonPhi {
+				t.Errorf("merge.Ops[%d] is a phi after a non-phi Op", i)
+			}
+			continue
+		}
+		sawNonPhi = true
+	}
+	// The foldable one really did fold — otherwise this test would pass
+	// for the wrong reason, never having created the situation.
+	folded := false
+	for _, op := range merge.Ops {
+		if op.Result == foldable && op.Kind == OpConstInt && op.Imm == 7 {
+			folded = true
+		}
+	}
+	if !folded {
+		t.Error("the constant phi was not folded, so the ordering hazard was never created")
+	}
+}

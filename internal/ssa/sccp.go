@@ -143,6 +143,11 @@ func SCCP(f *Func) int {
 		if !reach[b] {
 			continue
 		}
+		// Phis rewritten to consts below. They keep their slot
+		// among the block's leading phis, which stops leading the
+		// block the moment one of them is no longer a phi, so the
+		// block is re-sorted once the sweep is done.
+		var wasPhi []*Op
 		for _, op := range b.Ops {
 			if !op.Result.IsValid() {
 				continue
@@ -155,16 +160,24 @@ func SCCP(f *Func) int {
 			if op.Kind == lv.kind {
 				continue
 			}
-			// Skip phis: rewriting a phi in place to a const
-			// breaks the block-leading-phi invariant in
-			// downstream consumers if not careful. The phi's
-			// result is already aliased through the lattice;
-			// uses will be replaced via the const def. Actually
-			// the safer move: rewrite the phi in place to a
-			// const, since SSA Result preservation lets uses
-			// keep their Value reference.
+			// A phi is rewritten in place like any other op —
+			// preserving Result means every use keeps its Value
+			// reference and needs no patching — and the block is
+			// re-sorted afterwards to put the const after the phis
+			// that remain. Rewriting one where it stands and
+			// leaving it there is what refused whole modules with
+			// "phi at index N after a non-phi Op" (#9638).
+			if op.Kind == OpPhi {
+				wasPhi = append(wasPhi, op)
+			}
 			rewriteConst(op, lv)
 			rewritten++
+		}
+		if len(wasPhi) > 0 {
+			// Safe wherever the const lands relative to the other
+			// non-phi ops: rewriteConst clears Args, so it reads
+			// nothing and can precede any of them.
+			reorderPhisFirst(b, wasPhi)
 		}
 		// Terminator rewrites.
 		if b.Term.Kind == TermBrIf && b.Term.Cond.IsValid() {
