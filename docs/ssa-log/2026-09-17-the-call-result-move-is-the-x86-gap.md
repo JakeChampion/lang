@@ -65,6 +65,32 @@ Membership alone would also only place a call result there by luck. The
 allocator needs to prefer the ABI's result register for a value a call
 defines, which is a hint `regalloc_linear` does not have today.
 
+## How big step one is, and the trap in counting it
+
+Counted over the 67 `ssa_*` / `emit_ssa_*` functions, which are 912 lines:
+
+| | sites |
+|---|---|
+| arm64, `x0`-`x3` | 166 |
+| arm64, `w0`-`w3` | 26 |
+| x86-64, `%rax` | 106 |
+| x86-64, `%eax` | 26 |
+| x86-64, `%al` | 14 |
+
+**A register's 32-bit and 8-bit names do not contain its 64-bit name**, so
+a search for `x0` misses 25 `w0` sites and a search for `%rax` misses 40
+spelled `%eax` or `%al` — a quarter of the work on each ISA, invisible to
+the obvious search. A missed site is a silent miscompile rather than a
+build error, and on arm64 doubly so: a `w` write zeroes the upper half of
+whatever register it names, so the wrong-register write destroys more than
+it writes.
+
+The arm64 float names (`d0`, `d1`, `s0`, 46 sites) are separate registers
+rather than views, but `fmov` ties them to the integer ones, so the pairs
+move together.
+
+Scope step one from all three name widths, not from the 64-bit one.
+
 ## What is NOT the gap
 
 - Arithmetic. There are 18,737 register-form binaries in the whole
