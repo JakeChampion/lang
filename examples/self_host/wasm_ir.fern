@@ -128,9 +128,7 @@ pub function lower_all_for_base(mod: parser.Module, all_structs: irlower.StructT
 // (ircore.lower_gated) rather than from a separate gate pass that lowered
 // everything a first time and discarded it.
 pub function lower_all_gated(mod: parser.Module, stab: irlower.StructTab, base: irlower.FnSigs, sub: ircore.Sub): ircore.Lowered {
-    var g: ircore.Lowered = ircore.lower_gated(mod, stab, irlower.fn_sigs_with_dyn(base, mod.trait_reqs), [], true, sub);
-    ircore.fail_on_fip_claims(g);
-    return g;
+    return ircore.lower_gated(mod, stab, irlower.fn_sigs_with_dyn(base, mod.trait_reqs), [], true, sub);
 }
 
 // str_values collects the module's distinct string literals (first-seen order,
@@ -2636,6 +2634,7 @@ pub function emit_ir_module(mod: parser.Module, ir_cache: irlower.LowerResult[],
 // lowered with; the RC bodies are seeded from it rather than from a second
 // run of the same fixpoints.
 pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irlower.LowerResult[], mode: i32, base: irlower.FnSigs): string {
+    ircore.check_fip_claims(mod.funcs, 0, mod.funcs.len(), ir_cache, irlower.struct_tab(mod.structs), base, true);
     var sv: string[] = str_values(ir_cache);
     var cv: string[] = const_agg_values(ir_cache);
     var ft: string[] = fn_value_table(ir_cache);
