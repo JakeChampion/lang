@@ -152,6 +152,22 @@ All are stated over the *shape*, and all are pinned — see
   between them. The absolute count is per-backend — the register
   backends spend two allocator calls per round on that shape and wasm
   three — so the case asserts the ratio, never the number.
+- **AL-06.** *Where* in an expression the allocation is charged. An
+  aggregate literal buys its box AFTER evaluating its operands, so a
+  field expression that reads the counter does not see the literal's own
+  box. This is the post-order rule the rest of the language already
+  follows — a call's arguments, a closure's captures — and it is what
+  makes a reading taken inside a literal portable. It was not, until
+  #9614: native bought the box first and the self-host last, so a
+  function that snapshotted the counter and handed the snapshot back as
+  a struct excluded its own result box under one compiler and included
+  it under the other.
+
+  The claim is over the ORDER, not the cost. How many allocator calls a
+  construct spends stays per-backend, and a tuple or single-payload
+  variant small enough to be returned in registers spends none at all —
+  `internal/ir/aggregate_eval_order_test.go` pins those two on the op
+  stream, where there is an order to read whether or not a box is bought.
 
 ## What it found immediately
 
@@ -204,15 +220,6 @@ What changes with this document is smaller and prior to that: there is
 now *an* observable with a written contract, so a claim about allocation
 can be pinned by a conformance case at all. Before it, the corpus could
 not express one.
-
-Nor does it say *where* in an expression an allocation is charged, and
-the two compilers currently answer differently: native buys an aggregate
-literal's box before evaluating its field expressions, the self-host
-after (#9614). The count a loop reports is unaffected — the offset is a
-constant — but a reading taken inside a literal is not portable, and a
-function that snapshots the counter and returns the snapshot as a struct
-excludes its own result box under one compiler and includes it under the
-other. `std/bench` hands back scalars for exactly this reason.
 
 ## Such a case must declare itself
 
