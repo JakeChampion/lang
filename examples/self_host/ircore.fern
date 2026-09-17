@@ -214,8 +214,9 @@ pub function is_fern_helper(name: string): boolean {
         || name == "__fern_arr_i32_min_opt"
         || name == "__fern_arr_i32_max_opt"
         // xs.join(sep)'s array-of-strings concatenator (#5328): a real Fern
-        // runtime function (asmcore.rt_src_arr_str_join) built with `+`, so it
-        // needs the heap + str_concat runtime. Body under __fn___fern_arr_str_join,
+        // runtime function (asmcore.rt_src_arr_str_join) that fills one
+        // exact-size block, so the heap is its only runtime dep. Body under
+        // __fn___fern_arr_str_join,
         // emitted in each native backend's runtime block. Only
         // irlower's lower_arr_str_join emits the call. wasm emits a matching
         // $__fern_arr_str_join shim over the hand-written $__fern_str_join WAT

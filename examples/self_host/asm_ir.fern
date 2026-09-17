@@ -7788,8 +7788,8 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
     }
     // chr allocates its 1-char box, so pull in the heap runtime too.
     if (name == "__fern_chr") { s = s.need("heap"); s = s.need("chr"); }
-    // arr.join(sep) needs its own body + the heap + str_concat runtime it
-    // builds the result with (mark_arr_str_join sets all three). #5328.
+    // arr.join(sep) needs its own body + the heap runtime it fills its
+    // exact-size block from (mark_arr_str_join sets both). #5328.
     if (name == "__fern_arr_str_join") { s = s.mark_arr_str_join(); }
     // arr-of-arr reclaim helpers (#4355 slice 9): bodies gated on these
     // needs in emit_ir_runtime — a binary with no arr-of-arr reclaim
@@ -10094,9 +10094,9 @@ function emit_module_ir_unit_backend(mod: parser.Module, is_entry: boolean, glob
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_concat(), all_structs, s);
     }
     // arr.join(sep) — a Fern runtime function (#5328) lowered through the IR
-    // pipeline: `var r = ""` accumulator, concatenating each element with `sep`
-    // via `+` (str_concat, present above via the arr_str_join need's deps). Heap-
-    // dependent (present above). .text since the heap runtime left us in .bss.
+    // pipeline: two passes over an exact-size block, summing the lengths and
+    // then memcpy'ing each piece in. Heap-dependent (present above). .text
+    // since the heap runtime left us in .bss.
     if (s.has_need("arr_str_join")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_str_join(), all_structs, s);

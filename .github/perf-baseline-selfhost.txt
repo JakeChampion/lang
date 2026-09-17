@@ -73,7 +73,9 @@
 # comparisons are not qualified and are not the lever — see the audit's §4f).
 # Cumulative over both movements: 1,038,644 -> 82,642, -92.0%.
 
-# 2026-09-17 — forty-seven rows fell, nothing rose. `append_push` in ssarc no
+# 2026-09-17 — forty-seven rows fell from this change and none rose from it;
+# the rows that RISE in this diff are the absorbed drift described below, not
+# this change. `append_push` in ssarc no
 # longer un-shares a shared receiver itself: it hands the box to the
 # non-consuming `__fern_arr_push`, whose hand-asm does the same copy and counts
 # it, where the open-coded arm emitted an `__fern_rc_is_unique` gate and a

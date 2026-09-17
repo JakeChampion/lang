@@ -760,11 +760,18 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 		},
 		{
 			// `xs.join(sep)`. Base: allocs=700 frees=500, 3200 live.
+			//
+			// Two per round, not four: `__fern_arr_str_join` sizes one exact
+			// buffer and memcpys into it, where the `r = r + xs[i]` form it
+			// replaced allocated a fresh result per element (three for this
+			// two-element join, plus the array box). Frees track allocs and
+			// live_bytes stays 0, so the forgiveness still reaches the shape —
+			// there is simply less to forgive.
 			name: "string_alias_join_producer",
 			src: `import "std/array";
 function round(i: i32): i32 { var xs: string[] = ["ab", "cd"]; var t: string = xs.join(","); var v: string = t; return v.len() + i; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 55, allocs: 400, frees: 400,
+			want: 55, allocs: 200, frees: 200,
 		},
 		{
 			// `<string>.replace(old, new)`. Base: allocs=400 frees=200, 3200 live.
