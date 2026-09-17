@@ -131,7 +131,7 @@ language does not have. It is deleted.
 | `P005` | Input nests deeper than the parser's recursion bound | `diag_p005` |
 | `P006` | `function` in expression position | `diag_p006` |
 
-## The 17 unpinned codes
+## The 18 unpinned codes
 
 These have Go-side coverage but no conformance case. Most resisted the
 mechanical derivation used for the rest — their catalogue examples are
