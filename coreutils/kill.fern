@@ -1,0 +1,485 @@
+// kill.fern — GNU-compatible `kill`.
+//
+//   kill [-s SIGNAL | -SIGNAL] PID...
+//   kill -l [SIGNAL]...
+//   kill -t [SIGNAL]...
+//
+// Send a signal, or list what the signals are. The sending half is one
+// `signal_send` per operand; everything hard about this utility is in the
+// argument grammar, because a signal is spelled as an option.
+//
+// THE BARE `-SIGNAL` FORM IS ASYMMETRIC, and the asymmetry is GNU's, measured
+// against 9.4 rather than reasoned from its source:
+//
+//   - an ALPHABETIC `-NAME` is a signal wherever it appears, even after an
+//     operand: `kill -9 123 -HUP` is "multiple signals specified".
+//   - a NUMERIC `-N` is a signal only as the FIRST argument. Later it is a
+//     PID: `kill -INT -9 123` signals processes -9 and 123, and `kill -1 -2
+//     123` signals -2 and 123.
+//
+// So the numeric form is taken before the scan starts and the alphabetic one
+// is taken during it, both off argv directly (`gnu.Getopt`'s peek/advance,
+// which sort(1) uses for the same reason: a token that looks like an option
+// and is not one must not reach getopt's fault path).
+//
+// `-n` is an undocumented synonym for `-s` and `-L` for `-t`; neither is in
+// GNU's `--help` and both work, so both are here.
+//
+// THE `Try …` LINE IS NOT DECIDED BY THE MESSAGE. `-s NOPE` and `-l 99` print
+// the same `'X': invalid signal`, and only the first is a usage error with the
+// hint; the second is a per-operand failure without it. gnulib draws the line
+// in the same place for xdectoumax (see nproc.fern's parse_ignore), so
+// `gnu.die_usage` against `gnu.error` is the whole distinction.
+import "std/i32";
+import "std/string";
+import "./lib/gnu";
+import "./lib/signals";
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [-s SIGNAL | -SIGNAL] PID...\n";
+  out = out + "  or:  " + gnu.prog() + " -l [SIGNAL]...\n";
+  out = out + "  or:  " + gnu.prog() + " -t [SIGNAL]...\n";
+  out = out + "Send signals to processes, or list signals.\n";
+  out = out + "\n";
+  out = out + "Mandatory arguments to long options are mandatory for short options too.\n";
+  out = out + "  -s, --signal=SIGNAL, -SIGNAL\n";
+  out = out + "                   specify the name or number of the signal to be sent\n";
+  out = out + "  -l, --list       list signal names, or convert signal names to/from numbers\n";
+  out = out + "  -t, --table      print a table of signal information\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  out = out + "\n";
+  out = out + "SIGNAL may be a signal name like 'HUP', or a signal number like '1',\n";
+  out = out + "or the exit status of a process terminated by a signal.\n";
+  out = out + "PID is an integer; if negative it identifies a process group.\n";
+  return out;
+}
+
+function opt_signal(): i32 {
+  return 1;
+}
+
+function opt_list(): i32 {
+  return 2;
+}
+
+function opt_table(): i32 {
+  return 3;
+}
+
+// mode_send / mode_list / mode_table — `-l` and `-t` are mutually exclusive
+// with each other and with a signal, and GNU words the two clashes
+// differently, so the mode is one value rather than two flags.
+function mode_send(): i32 {
+  return 0;
+}
+
+function mode_list(): i32 {
+  return 1;
+}
+
+function mode_table(): i32 {
+  return 2;
+}
+
+function is_digit_str(s: string): boolean {
+  if (s.len() == 0) {
+    return false;
+  }
+  var i: i32 = 0;
+  while (i < s.len()) {
+    if (!gnu.is_digit(s[i] as i32)) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+// `bare_signal_attempt(tok)` — the text after the dash when `tok` is GNU's
+// bare-signal shape, or "" when it is not.
+//
+// GNU decides this on CASE, not on whether the name is real. `-Z`, `-HU`,
+// `-SIG` and `-NOPE` all answer `'X': invalid signal`, while `-z`, `-zz` and
+// `-ab` answer `invalid option -- 'z'` — so an UPPERCASE first letter means
+// "this is meant to be a signal" and the diagnostic says so, and a lowercase
+// one goes to getopt. Every short option GNU declares is lowercase except
+// `-L`, which is why that one is excluded here rather than resolved later.
+//
+// A returned name may name nothing; the caller reports that as an invalid
+// signal, which is the whole point of the shape test.
+function bare_signal_attempt(tok: string): string {
+  if (tok.len() < 2 || tok[0] as i32 != 45) {
+    return "";
+  }
+  if (tok == "-L") {
+    return "";
+  }
+  var b: i32 = tok[1] as i32;
+  if (b < 65 || b > 90) {
+    return "";
+  }
+  return slice_unchecked(tok, 1, tok.len()) + "";
+}
+
+// A signal already chosen, and another arrives. GNU quotes the second one AS
+// GIVEN minus the dash — `-SIGINT` reports 'SIGINT', not 'INT'.
+function refuse_second_signal(given: string): void {
+  gnu.die_usage(gnu.quote(given) + ": multiple signals specified", 1);
+}
+
+// `pad_name(s)` — the 8-wide left-aligned name column `-t` prints, measured
+// off `kill -t`: two columns of number, a space, the name in eight, a space,
+// then the text. `RTMAX` and `HUP` both land the description at column 13.
+function pad_name(s: string): string {
+  var out: string = s;
+  while (out.len() < 8) {
+    out = out + " ";
+  }
+  return out;
+}
+
+// `num2(n)` — the right-aligned two-column signal number of the `-t` table.
+// Nothing here exceeds 64, so two columns is the whole width GNU uses.
+function num2(n: i32): string {
+  var s: string = n.to_string();
+  if (s.len() < 2) {
+    return " " + s;
+  }
+  return s;
+}
+
+// `listed(v)` — the number `-l` / `-t` accept as an argument. GNU takes a
+// signal spelling OR the exit status of a process a signal killed, which is
+// why the number is MASKED with 127: `-l 137` is `KILL` because 137 is
+// 128 + 9. 0 and any multiple of 128 come back as signal 0.
+//
+// -1 means "names nothing", which the caller reports.
+function listed(v: string): i32 {
+  if (is_digit_str(v)) {
+    var raw: i32 = 0;
+    var i: i32 = 0;
+    while (i < v.len()) {
+      raw = raw * 10 + (v[i] as i32 - 48);
+      if (raw > 1000000) {
+        return 0 - 1;
+      }
+      i = i + 1;
+    }
+    var masked: i32 = raw % 128;
+    if (masked == 0) {
+      return 0;
+    }
+    if (signals.name(masked) == "") {
+      return 0 - 1;
+    }
+    return masked;
+  }
+  var n: i32 = signals.number(v);
+  if (n == 0) {
+    return 0 - 1;
+  }
+  return n;
+}
+
+// `run_list(args)` — `-l`. Bare, it prints every name this kernel has, one a
+// line, without the SIG prefix. With arguments it CONVERTS each: a number to
+// its name, a name to its number. Signal 0 prints `EXIT`, which is the shell's
+// spelling for "no signal" and has no entry in `names()`.
+//
+// An argument that names nothing does NOT stop the rest — `kill -l 1 999`
+// prints HUP and then fails — so the failure is remembered and reported at the
+// end. These per-argument messages carry no `Try` line.
+function run_list(args: string[]): i32 {
+  var out: string = "";
+  if (args.len() == 0) {
+    var n: i32 = 1;
+    while (n <= signals.highest()) {
+      var nm: string = signals.name(n);
+      if (nm != "") {
+        out = out + nm + "\n";
+      }
+      n = n + 1;
+    }
+    gnu.write_out(out);
+    return 0;
+  }
+  var bad: boolean = false;
+  for a in args {
+    var v: i32 = listed(a);
+    if (v < 0) {
+      gnu.write_out(out);
+      out = "";
+      gnu.error(gnu.quote(a) + ": invalid signal");
+      bad = true;
+    } else if (is_digit_str(a)) {
+      if (v == 0) {
+        out = out + "EXIT\n";
+      } else {
+        out = out + signals.name(v) + "\n";
+      }
+    } else {
+      out = out + v.to_string() + "\n";
+    }
+  }
+  gnu.write_out(out);
+  if (bad) {
+    return 1;
+  }
+  return 0;
+}
+
+// `run_table(args)` — `-t` and its undocumented twin `-L`. Same rows as `-l`
+// with the number and the libc description beside each name, filtered to the
+// named signals when any are given.
+function run_table(args: string[]): i32 {
+  var out: string = "";
+  if (args.len() == 0) {
+    var n: i32 = 1;
+    while (n <= signals.highest()) {
+      var nm: string = signals.name(n);
+      if (nm != "") {
+        out = out + num2(n) + " " + pad_name(nm) + " " + signals.description(n) + "\n";
+      }
+      n = n + 1;
+    }
+    gnu.write_out(out);
+    return 0;
+  }
+  var bad: boolean = false;
+  for a in args {
+    var v: i32 = listed(a);
+    if (v < 0 || v == 0) {
+      gnu.write_out(out);
+      out = "";
+      gnu.error(gnu.quote(a) + ": invalid signal");
+      bad = true;
+    } else {
+      out = out + num2(v) + " " + pad_name(signals.name(v)) + " " + signals.description(v) + "\n";
+    }
+  }
+  gnu.write_out(out);
+  if (bad) {
+    return 1;
+  }
+  return 0;
+}
+
+// `parse_pid(s)` — the integer a PID operand names, or None. Passed through to
+// `signal_send` exactly as kill(2) reads it, so the spellings the liveness
+// query refuses are the ones that matter here: a NEGATIVE pid is the process
+// group `-pid`, 0 is the caller's own group, and -1 is every process the
+// caller may signal.
+function parse_pid(s: string): Option[i32] {
+  if (s.len() == 0) {
+    return None;
+  }
+  var i: i32 = 0;
+  var neg: boolean = false;
+  if (s[0] as i32 == 45) {
+    neg = true;
+    i = 1;
+  }
+  if (i >= s.len()) {
+    return None;
+  }
+  var v: i32 = 0;
+  while (i < s.len()) {
+    if (!gnu.is_digit(s[i] as i32)) {
+      return None;
+    }
+    v = v * 10 + (s[i] as i32 - 48);
+    if (v > 2147483000) {
+      return None;
+    }
+    i = i + 1;
+  }
+  if (neg) {
+    return Some(0 - v);
+  }
+  return Some(v);
+}
+
+// `run_send(sig, pids)` — one `signal_send` per operand. Every operand is
+// attempted even after one fails, and each failure names the operand as
+// written with the errno's own text; none of them carries a `Try` line.
+function run_send(sig: i32, pids: string[]): i32 {
+  var bad: boolean = false;
+  for p in pids {
+    match (parse_pid(p)) {
+      Some(n) => {
+        match (signal_send(n, sig)) {
+          Ok(_) => {},
+          Err(e) => {
+            gnu.error(gnu.quote(p) + ": " + gnu.io_error_text(e));
+            bad = true;
+          }
+        }
+      },
+      None => {
+        gnu.error(gnu.quote(p) + ": invalid process id");
+        bad = true;
+      }
+    }
+  }
+  if (bad) {
+    return 1;
+  }
+  return 0;
+}
+
+function main(): i32 {
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.valued("s", "signal", opt_signal()));
+  opts = opts.append(gnu.valued("n", "", opt_signal()));
+  opts = opts.append(gnu.flag("l", "list", opt_list()));
+  opts = opts.append(gnu.flag("t", "table", opt_table()));
+  opts = opts.append(gnu.flag("L", "", opt_table()));
+
+  var sig: i32 = 0 - 1;
+  var mode: i32 = mode_send();
+  var rest: string[] = [];
+  var g: gnu.Getopt = gnu.getopt_new(args(), opts, "kill", help_text(), 1).return_in_order();
+
+  // A NUMERIC `-N` is a signal only in first position. Taken off argv before
+  // the scan so getopt never sees a digit it would refuse, and left alone
+  // anywhere else so it reaches `rest` as a pid.
+  match (g.peek()) {
+    Some(first) => {
+      if (first.len() >= 2 && first[0] as i32 == 45 && gnu.is_digit(first[1] as i32)) {
+        var v: string = slice_unchecked(first, 1, first.len()) + "";
+        var n: i32 = signals.number(v);
+        if (n == 0 && !is_all_zero(v)) {
+          gnu.die_usage(gnu.quote(v) + ": invalid signal", 1);
+        }
+        sig = n;
+        g = g.advance();
+      }
+    },
+    None => {}
+  }
+
+  while (true) {
+    // An ALPHABETIC `-NAME` is a signal at any position, so it is taken here
+    // rather than left to getopt, which would refuse its first letter as an
+    // unknown option.
+    var stop: boolean = false;
+    match (g.peek()) {
+      Some(tok) => {
+        var nm: string = bare_signal_attempt(tok);
+        if (nm != "") {
+          if (mode != mode_send()) {
+            gnu.die_usage("cannot combine signal with -l or -t", 1);
+          }
+          if (sig >= 0) {
+            refuse_second_signal(nm);
+          }
+          var bn: i32 = signals.number(nm);
+          if (bn == 0 && !is_all_zero(nm)) {
+            gnu.die_usage(gnu.quote(nm) + ": invalid signal", 1);
+          }
+          sig = bn;
+          g = g.advance();
+          stop = true;
+        }
+      },
+      None => {}
+    }
+    // A NUMERIC `-N` past the first argument is a PID, not an option and not
+    // a signal: `kill -INT -9 123` signals process -9. Taken off argv for the
+    // same reason as the first-position case — getopt would refuse the digit
+    // as an unknown option. argv[1] cannot reach here, the pre-scan above
+    // having consumed it.
+    if (!stop) {
+      match (g.peek()) {
+        Some(tok) => {
+          if (tok.len() >= 2 && tok[0] as i32 == 45 && is_digit_str(slice_unchecked(tok, 1, tok.len()) + "")) {
+            rest = rest.append(tok);
+            g = g.advance();
+            stop = true;
+          }
+        },
+        None => {}
+      }
+    }
+    if (!stop) {
+      var res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+      g = res.1;
+      match (res.0) {
+        Some(m) => {
+          if (m.id == gnu.operand_id()) {
+            rest = rest.append(m.value);
+          } else if (m.id == opt_signal()) {
+            if (mode != mode_send()) {
+              gnu.die_usage("cannot combine signal with -l or -t", 1);
+            }
+            if (sig >= 0) {
+              refuse_second_signal(m.value);
+            }
+            var sn: i32 = signals.number(m.value);
+            if (sn == 0 && !is_all_zero(m.value)) {
+              gnu.die_usage(gnu.quote(m.value) + ": invalid signal", 1);
+            }
+            sig = sn;
+          } else if (m.id == opt_list() || m.id == opt_table()) {
+            var want: i32 = mode_list();
+            if (m.id == opt_table()) {
+              want = mode_table();
+            }
+            if (sig >= 0) {
+              gnu.die_usage("cannot combine signal with -l or -t", 1);
+            }
+            if (mode != mode_send()) {
+              gnu.die_usage("multiple -l or -t options specified", 1);
+            }
+            mode = want;
+          }
+        },
+        None => {
+          break;
+        }
+      }
+    }
+  }
+
+  // `--` ends the scan by returning None with the remaining tokens parked in
+  // the scanner's own operand list, so they are collected here rather than
+  // through `operand_id()`. Nothing double-counts: `return_in_order` reports
+  // an ordinary operand instead of appending it, so only the post-`--` tail
+  // is ever in there.
+  for op in g.operands() {
+    rest = rest.append(op);
+  }
+
+  if (mode == mode_list()) {
+    return run_list(rest);
+  }
+  if (mode == mode_table()) {
+    return run_table(rest);
+  }
+  if (rest.len() == 0) {
+    gnu.die_usage("no process ID specified", 1);
+  }
+  if (sig < 0) {
+    sig = signals.number("TERM");
+  }
+  return run_send(sig, rest);
+}
+
+// Signal zero is the one spelling `signals.number` cannot report, because it
+// answers "no signal" and "invalid" with the same 0. Every all-digits-zero
+// form is it: `0`, `00`, and `-0`'s tail.
+function is_all_zero(s: string): boolean {
+  if (s.len() == 0) {
+    return false;
+  }
+  var i: i32 = 0;
+  while (i < s.len()) {
+    if (s[i] as i32 != 48) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
