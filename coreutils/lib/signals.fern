@@ -94,6 +94,45 @@ pub function name(n: i32): string {
   return "RTMAX-" + (hi - n).to_string();
 }
 
+// `descriptions()` — the one-line text `kill -t` / `-L` print beside each
+// signal, in NUMBER order like `names()`. Index i holds signal i+1's.
+//
+// These are the PLATFORM LIBC's strings, not GNU's: `src/kill.c` calls
+// `strsignal` whenever the host has it, and both hosts do, so gnulib's own
+// `lib/siglist.h` fallback is never what a GNU build prints. That rules out
+// taking them from the coreutils tarball.
+//
+// The Linux half is the oracle's, read straight off `kill -t` on a glibc host.
+// The Darwin half is Apple's published Libc — `gen/FreeBSD/siglist.c`'s
+// `sys_siglist`, which is what Darwin's own `strsignal` answers — and it is
+// UNGATED: the corpus never runs on Darwin (#9645), so nothing here would
+// catch an error in it. The two kernels word the same signal differently
+// often enough that neither half can be guessed from the other: 6 is
+// "Aborted" against "Abort trap", 5 "Trace/breakpoint trap" against
+// "Trace/BPT trap", 17 "Child exited" against "Suspended (signal)".
+function descriptions(): string[] {
+  if (target_os() == "darwin") {
+    return ["Hangup", "Interrupt", "Quit", "Illegal instruction", "Trace/BPT trap", "Abort trap", "EMT trap", "Floating point exception", "Killed", "Bus error", "Segmentation fault", "Bad system call", "Broken pipe", "Alarm clock", "Terminated", "Urgent I/O condition", "Suspended (signal)", "Suspended", "Continued", "Child exited", "Stopped (tty input)", "Stopped (tty output)", "I/O possible", "Cputime limit exceeded", "Filesize limit exceeded", "Virtual timer expired", "Profiling timer expired", "Window size changes", "Information request", "User defined signal 1", "User defined signal 2"];
+  }
+  return ["Hangup", "Interrupt", "Quit", "Illegal instruction", "Trace/breakpoint trap", "Aborted", "Bus error", "Floating point exception", "Killed", "User defined signal 1", "Segmentation fault", "User defined signal 2", "Broken pipe", "Alarm clock", "Terminated", "Stack fault", "Child exited", "Continued", "Stopped (signal)", "Stopped", "Stopped (tty input)", "Stopped (tty output)", "Urgent I/O condition", "CPU time limit exceeded", "File size limit exceeded", "Virtual timer expired", "Profiling timer expired", "Window changed", "I/O possible", "Power failure", "Bad system call"];
+}
+
+// `description(n)` — signal `n`'s text, or "" for a number this kernel does
+// not use. The realtime rows number from RTMIN and count UP, so RTMAX is
+// "Real-time signal 30" — NOT `name(n)`'s nearer-end `RTMIN+k` / `RTMAX-k`
+// form, which would call the same signal RTMAX-0.
+pub function description(n: i32): string {
+  var ds: string[] = descriptions();
+  if (n >= 1 && n <= ds.len()) {
+    return ds[n - 1];
+  }
+  var lo: i32 = rt_min();
+  if (lo == 0 || n < lo || n > rt_max()) {
+    return "";
+  }
+  return "Real-time signal " + (n - lo).to_string();
+}
+
 // `alternates()` — names that share a number with one in `names()`. Accepted on
 // input, never printed. Each entry is the name, and `alternate_values()` the
 // number at the same index.
