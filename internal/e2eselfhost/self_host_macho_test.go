@@ -542,12 +542,15 @@ function main(): i32 { var e: Expr = Add { l: 40, r: 2 }; return eval(e); }`, 42
 	// max and an unclamped RLIM_INFINITY reads negative, so the range is what
 	// separates a real ceiling from both. It does NOT pin the resource id: a
 	// wrong one still answers some plausible ceiling, and only the Linux legs
-	// compare against a limit the harness itself imposed.
+	// compare against a limit the harness itself imposed. The upper bound is
+	// i32 max rather than a round million because a machine may legitimately
+	// be configured well above that — 1,048,576 on the dev Mac this was
+	// written on — and i64 max is still nine orders of magnitude away.
 	runCase("rlimit_nofile",
 		`function main(): i32 {
   var n: i64 = rlimit_nofile();
   if (n < (4 as i64)) { return 90; }
-  if (n > (1000000 as i64)) { return 91; }
+  if (n > (2147483647 as i64)) { return 91; }
   return 7;
 }`,
 		7)
