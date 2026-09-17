@@ -1530,6 +1530,18 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"try-result-ret-ok", "function get(): Result[i32, string] { return Ok(3); }\nfunction f(): Result[i32, string] { var v: i32 = get()?; return Ok(v + 1); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"try-lambda-ret-i32", "function f(): Option[i32] {\n    var g = (): i32 => { var o: Option[i32] = Some(1); var v: i32 = o?; return v; };\n    return Some(1);\n}\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
 		{"try-lambda-ret-option-ok", "function f(): i32 {\n    var g = (): Option[i32] => { var o: Option[i32] = Some(1); var v: i32 = o?; return Some(v); };\n    return 2;\n}\nfunction main(): i32 { return 0; }\n", nil},
+		// E079 through a VALUE BLOCK (#9553). A value block desugars to a
+		// zero-arg call of a zero-param lambda, and irlower inlines it rather
+		// than lowering a function, so a `?` inside one still leaves the
+		// ENCLOSING function and is E079 — where the same `?` inside a real
+		// lambda is an ordinary use. The existing e079-defer-try-op row only
+		// covers the direct spelling, which is how every shape below went
+		// unnoticed reporting E042 alone.
+		{"e079-defer-match-expr", "function g(v: i32): Option[i32] { if (v < 100) { return Some(v + 1); } return None; }\nfunction f(k: i32): i32 {\n  var n: i32 = 1;\n  defer n = (match (k) { 0 => g(n)?, _ => 7 });\n  return n;\n}\nfunction main(): i32 { return f(0); }\n", []string{"E042", "E079"}},
+		{"e079-defer-if-expr", "function g(v: i32): Option[i32] { if (v < 100) { return Some(v + 1); } return None; }\nfunction f(k: i32): i32 {\n  var n: i32 = 1;\n  defer n = (if (k == 0) { g(n)? } else { 7 });\n  return n;\n}\nfunction main(): i32 { return f(0); }\n", []string{"E042", "E079"}},
+		{"e079-defer-block", "function g(v: i32): Option[i32] { if (v < 100) { return Some(v + 1); } return None; }\nfunction f(k: i32): i32 {\n  var n: i32 = 1;\n  defer { n = (match (k) { 0 => g(n)?, _ => 7 }); }\n  return n;\n}\nfunction main(): i32 { return f(0); }\n", []string{"E042", "E079"}},
+		{"e079-errdefer-match-expr", "function g(v: i32): Option[i32] { if (v < 100) { return Some(v + 1); } return None; }\nfunction f(k: i32): i32 {\n  var n: i32 = 1;\n  errdefer n = (match (k) { 0 => g(n)?, _ => 7 });\n  return n;\n}\nfunction main(): i32 { return f(0); }\n", []string{"E042", "E079"}},
+		{"e079-defer-nested-value-blocks", "function g(v: i32): Option[i32] { if (v < 100) { return Some(v + 1); } return None; }\nfunction f(k: i32): i32 {\n  var n: i32 = 1;\n  defer n = (match (k) { 0 => (if (k == 0) { g(n)? } else { 3 }), _ => 7 });\n  return n;\n}\nfunction main(): i32 { return f(0); }\n", []string{"E042", "E079"}},
 		{"callee-undefined", "function main(): i32 { return foo(1); }\n", []string{"E001"}},
 		{"callee-user-fn-ok", "function g(): i32 { return 1; }\nfunction main(): i32 { return g(); }\n", nil},
 		{"callee-builtin-ok", "function main(): i32 { print(\"hi\"); return 0; }\n", nil},

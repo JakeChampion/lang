@@ -10746,8 +10746,15 @@ function e079_note_try(e: ast.Expr, own acc: E079Probe): E079Probe {
 // e079_not_lambda keeps the walk out of a lambda body: a `?` there leaves the
 // LAMBDA on its own exits, not the function whose defer replays the action, so
 // it is an ordinary use.
+// A value block is the exception, and it parses to the identical shape (#9553).
+// `(match (k) { … })` and the if-expression / comprehension forms desugar to a
+// zero-arg call of a zero-param lambda, which irlower INLINES rather than
+// lowering as a function — `lower_defers_body` excludes them from the per-scope
+// defer lowering for that reason. So a `?` inside one leaves the ENCLOSING
+// function after all, which is what makes it E079 rather than an ordinary use.
+// Only `origin` separates the two, since a hand-written IIFE parses the same.
 function e079_not_lambda(e: ast.Expr): boolean {
-  if let ast.ExprLambda(lam) = e { return false; }
+  if let ast.ExprLambda(lam) = e { return parser.is_value_block_origin(lam.origin); }
   return true;
 }
 
