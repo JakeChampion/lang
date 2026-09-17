@@ -450,6 +450,28 @@ function skipping(n: i32): i32 {
 }
 function main(): i32 { return (closed(5) + single(3) + skipping(12)) & 255; }
 `},
+	// A tuple read out of a CONTAINER is not a take, however dead the read
+	// looks. `get_or` retains what it answers and the map's value column goes
+	// on holding the same box, so nulling a slot here would show up in every
+	// later read of that key — the #9555 corruption reached through the
+	// container instead of a tuple slot. `shared` reads `.0` out of one
+	// `get_or`, consumes it, and then reads the SAME key again: if the take
+	// fired on `get_or` the second read would see the nulled slot.
+	{name: "container-read-is-not-a-take", atLeast: 3, noLeak: true, src: `
+function seeded(n: i32): Map[i32, (i32[], i32)] {
+    var m: Map[i32, (i32[], i32)] = map_new(4);
+    return m.insert(1, ([n, n + 1], n));
+}
+function shared(n: i32): i32 {
+    var m: Map[i32, (i32[], i32)] = seeded(n);
+    var fallback: (i32[], i32) = ([], 0);
+    var first: i32[] = m.get_or(1, fallback).0;
+    first = first.append(99);
+    var again: (i32[], i32) = m.get_or(1, fallback);
+    return first.len() * 100 + again.0.len() * 10 + again.1;
+}
+function main(): i32 { return shared(7) & 255; }
+`},
 	// Reach rather than agreement: the AST lowering reads the receiver's SLOT
 	// to find a clear's key kind, so it declines a receiver that is not a plain
 	// local. The contract reads the key kind from the result type instead and

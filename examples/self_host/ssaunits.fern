@@ -514,18 +514,36 @@ function other_tuple_get(ins: ssa.SInst, root: i32, field: i32): boolean {
     return ins.kind_tag == ssasem.tuple_get() && ins.args.len() == 1 && ins.args[0] == root && ins.imm != field;
 }
 
-// A source whose box this frame built and no one else can name: a construction,
-// or an operation that handed one over.
+// A source whose box this frame ALLOCATED, so nulling a slot in it is invisible
+// to everyone else. The take nulls without asking, so this is the whole of its
+// safety: owning a unit is not enough, the box has to be the frame's alone.
 //
-// A counted PARAMETER is excluded even though the frame owns a unit of it. `own`
-// transfers ONE unit, not exclusive ownership — the box may still have other
-// holders — and the take nulls the slot without asking, which those holders
-// would see. `steal` next door admits a parameter root because it pays for it
-// with a runtime `__fern_rc_is_unique` test before nulling; the take does not
-// test, so it only fires where uniqueness is structural. A phi is excluded for
-// the same reason: one of its incoming edges may be a parameter.
+// Only two kinds of instruction can define a TUPLE and qualify:
+//
+//   - a construction — `tuple_new` builds the box here, refcount 1;
+//   - `map_delete`, whose result is the fresh two-word box the runtime
+//     allocates to pair the map with whether the key was there.
+//
+// Everything else that can define a tuple hands back a box someone else still
+// names, and is excluded:
+//
+//   - a counted PARAMETER. `own` transfers ONE unit, not exclusive ownership,
+//     so the box may have other holders. `steal` next door admits a parameter
+//     root only because it pays for it with a runtime `__fern_rc_is_unique`
+//     test before nulling; the take does not test.
+//   - `cell_get` and `map_get_or`, which RETAIN what they read (`cell_read`'s
+//     and `map_op`'s `__fern_rc_inc`) — the cell and the map's value column
+//     still hold the box, and a counted column may hold a tuple, so nulling
+//     here would show up in every later read through the container.
+//   - a CALL result, whose exclusivity this boundary cannot establish: a callee
+//     may return a retained alias of something it goes on holding.
+//   - a phi, because one of its incoming edges may be any of the above.
+//
+// The other `hands_out` operations answer an array, a map, an Option or a
+// closure box and so can never be a take's source; naming them here would
+// suggest a judgement about them that this predicate does not make.
 function takeable_root(kind: i32): boolean {
-    return construction(kind) || hands_out(kind);
+    return construction(kind) || kind == ssasem.map_delete();
 }
 
 // The element index a tuple read at (`bi`, `pos`) TAKES rather than borrows,
