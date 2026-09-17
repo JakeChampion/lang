@@ -419,6 +419,37 @@ function relayed(n: i32): i32 {
 }
 function main(): i32 { return (chained(6) + relayed(1)) & 255; }
 `},
+	// The CLOSED range form. `for i in LOW..=HIGH` parses to a synthetic
+	// `__range_incl` for-iter, and the desugar that rewrites a range-for into a
+	// counting while-loop matched only the half-open `__range` — so every
+	// module using `..=` reached this boundary with a call it has no contract
+	// for and fell to the AST lowering whole. The loop bodies here are the
+	// shapes the break test decides: HIGH included, a single-element range that
+	// runs ONCE where the half-open form runs not at all, and a reversed one
+	// that still runs zero times.
+	{name: "inclusive-range", atLeast: 3, src: `
+function closed(n: i32): i32 {
+    var s: i32 = 0;
+    for i in 0..=n { s = s + i; }
+    return s;
+}
+function single(n: i32): i32 {
+    var c: i32 = 0;
+    for i in n..=n { c = c + 1; }
+    for j in (n + 4)..=n { c = c + 100; }
+    return c;
+}
+function skipping(n: i32): i32 {
+    var s: i32 = 0;
+    for i in 0..=n {
+        if (i == 4) { continue; }
+        if (i == 9) { break; }
+        s = s + i;
+    }
+    return s;
+}
+function main(): i32 { return (closed(5) + single(3) + skipping(12)) & 255; }
+`},
 	// Reach rather than agreement: the AST lowering reads the receiver's SLOT
 	// to find a clear's key kind, so it declines a receiver that is not a plain
 	// local. The contract reads the key kind from the result type instead and
