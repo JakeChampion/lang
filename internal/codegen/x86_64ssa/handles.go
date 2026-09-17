@@ -265,6 +265,7 @@ func emitOpenHandleHelper(name, lbl string, flags, mode int) func(w func(string,
 		w(".Lssa_%s_err:", lbl)
 		w("\tneg rax")
 		w("\tmov r13d, eax") // errno
+		ssaRetainPathForIoErr(w)
 		w("\tmov edi, r13d")
 		w("\tmov rsi, rbx") // the path, as given
 		w("\tcall %s", fnLabel("__fern_io_error"))

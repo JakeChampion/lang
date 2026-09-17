@@ -2761,8 +2761,7 @@ func emitAccessHelper(w func(string, ...any)) {
 	w("\tb .Lssa_acc_ret")
 	w(".Lssa_acc_err:")
 	w("\tneg x0, x0")
-	w("\tmov x1, x19")
-	w("\tbl %s", fnLabel("__fern_io_error"))
+	emitIoErrorOwningPath(w, "x19")
 	w("\tmov x20, x0")
 	// Err(IoError): box {rc=1, tag=1, ioerr@+8}.
 	w("\tadrp x3, %s", heapPtrSym)
@@ -3407,9 +3406,8 @@ func emitOpenHandleHelper(w func(string, ...any), name, lbl string, flags, mode 
 	w("\tstr x19, [x0, #8]")
 	w("\tb .Lssa_%s_ret", lbl)
 	w(".Lssa_%s_err:", lbl)
-	w("\tneg x0, x0")  // errno
-	w("\tmov x1, x19") // path
-	w("\tbl %s", fnLabel("__fern_io_error"))
+	w("\tneg x0, x0") // errno
+	emitIoErrorOwningPath(w, "x19")
 	w("\tmov x19, x0") // IoError box
 	// Result.Err(IoError): box {rc=1, tag=1, ioerr@8}.
 	w("\tadrp x3, %s", heapPtrSym)
@@ -3534,9 +3532,8 @@ func emitOpenWithHelper(w func(string, ...any), name, lbl string, access int) {
 	w("\tstr x19, [x0, #8]")
 	w("\tb .Lssa_%s_ret", lbl)
 	w(".Lssa_%s_err:", lbl)
-	w("\tneg x0, x0")  // errno
-	w("\tmov x1, x19") // path
-	w("\tbl %s", fnLabel("__fern_io_error"))
+	w("\tneg x0, x0") // errno
+	emitIoErrorOwningPath(w, "x19")
 	w("\tmov x19, x0") // IoError box
 	w("\tadrp x3, %s", heapPtrSym)
 	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
@@ -4311,41 +4308,41 @@ var runtimeHelperDeps = map[string][]string{
 	"__fern_arr_push_grow_move_str":   {"__fern_arr_push_grow", "__fern_rc_inc"},
 	"__fern_arr_cow_inplace_ptr":      {"__fern_arr_cow_inplace", "__fern_rc_inc"},
 	"__fern_arr_cow_inplace_str":      {"__fern_arr_cow_inplace", "__fern_rc_inc"},
-	"write_file":                      {"__fern_io_error"},
-	"write_file_exec":                 {"__fern_io_error"},
-	"read_file":                       {"__fern_io_error", "__fern_utf8_valid", "__free"},
-	"stat":                            {"__fern_io_error"},
-	"lstat":                           {"__fern_io_error"},
-	"statfs":                          {"__fern_io_error"},
+	"write_file":                      {"__fern_io_error", "__fern_rc_inc"},
+	"write_file_exec":                 {"__fern_io_error", "__fern_rc_inc"},
+	"read_file":                       {"__fern_io_error", "__fern_utf8_valid", "__free", "__fern_rc_inc"},
+	"stat":                            {"__fern_io_error", "__fern_rc_inc"},
+	"lstat":                           {"__fern_io_error", "__fern_rc_inc"},
+	"statfs":                          {"__fern_io_error", "__fern_rc_inc"},
 	"window_size":                     {"__fern_io_error"},
 	"set_window_size":                 {"__fern_io_error"},
 	"termios_get":                     {"__fern_io_error"},
 	"termios_set":                     {"__fern_io_error"},
-	"access":                          {"__fern_io_error"},
+	"access":                          {"__fern_io_error", "__fern_rc_inc"},
 	"__method_string_as_bytes":        {"__slice_make"},
-	"read_file_bytes":                 {"__fern_io_error", "__alloc_u8", "__free"},
-	"remove_file":                     {"__fern_io_error"},
-	"create_dir_all":                  {"__fern_io_error"},
-	"create_dir":                      {"__fern_io_error"},
-	"chdir":                           {"__fern_io_error"},
-	"remove_dir":                      {"__fern_io_error"},
-	"create_link":                     {"__fern_io_error"},
-	"create_symlink":                  {"__fern_io_error"},
-	"read_link":                       {"__fern_io_error"},
-	"rename":                          {"__fern_io_error"},
-	"chmod":                           {"__fern_io_error"},
+	"read_file_bytes":                 {"__fern_io_error", "__alloc_u8", "__free", "__fern_rc_inc"},
+	"remove_file":                     {"__fern_io_error", "__fern_rc_inc"},
+	"create_dir_all":                  {"__fern_io_error", "__fern_rc_inc"},
+	"create_dir":                      {"__fern_io_error", "__fern_rc_inc"},
+	"chdir":                           {"__fern_io_error", "__fern_rc_inc"},
+	"remove_dir":                      {"__fern_io_error", "__fern_rc_inc"},
+	"create_link":                     {"__fern_io_error", "__fern_rc_inc"},
+	"create_symlink":                  {"__fern_io_error", "__fern_rc_inc"},
+	"read_link":                       {"__fern_io_error", "__fern_rc_inc"},
+	"rename":                          {"__fern_io_error", "__fern_rc_inc"},
+	"chmod":                           {"__fern_io_error", "__fern_rc_inc"},
 	"signal_send":                     {"__fern_io_error"},
 	"set_process_group":               {"__fern_io_error"},
 	"set_priority":                    {"__fern_io_error"},
-	"truncate":                        {"__fern_io_error"},
-	"mknod":                           {"__fern_io_error"},
-	"chown_at":                        {"__fern_io_error"},
-	"set_file_times":                  {"__fern_io_error"},
+	"truncate":                        {"__fern_io_error", "__fern_rc_inc"},
+	"mknod":                           {"__fern_io_error", "__fern_rc_inc"},
+	"chown_at":                        {"__fern_io_error", "__fern_rc_inc"},
+	"set_file_times":                  {"__fern_io_error", "__fern_rc_inc"},
 	"remove_dir_all":                  {"__fern_io_error"},
-	"temp_dir":                        {"__fern_io_error"},
-	"read_dir":                        {"__fern_io_error"},
-	"read_dir_all":                    {"__fern_io_error"},
-	"open_writer":                     {"__fern_io_error"},
+	"temp_dir":                        {"__fern_io_error", "__fern_rc_inc"},
+	"read_dir":                        {"__fern_io_error", "__fern_rc_inc"},
+	"read_dir_all":                    {"__fern_io_error", "__fern_rc_inc"},
+	"open_writer":                     {"__fern_io_error", "__fern_rc_inc"},
 	"__method_Writer_write":           {"__fern_io_error"},
 	"__method_Writer_truncate":        {"__fern_io_error"},
 	"__method_Writer_close":           {"__fern_io_error"},
@@ -4361,11 +4358,11 @@ var runtimeHelperDeps = map[string][]string{
 	"__method_Reader_termios_get":     {"termios_get"},
 	"__method_Reader_termios_set":     {"termios_set"},
 	"__method_Writer_dup_onto":        {"__fern_io_error"},
-	"open_reader":                     {"__fern_io_error"},
+	"open_reader":                     {"__fern_io_error", "__fern_rc_inc"},
 	"__method_Reader_close":           {"__fern_io_error"},
 	"__method_Reader_read_chunk":      {"__fern_io_error"},
-	"__method_Reader_stat":            {"__fern_io_error"},
-	"__method_Writer_stat":            {"__fern_io_error"},
+	"__method_Reader_stat":            {"__fern_io_error", "__fern_rc_inc"},
+	"__method_Writer_stat":            {"__fern_io_error", "__fern_rc_inc"},
 	"__method_Reader_seek":            {"__fern_io_error"},
 	"__method_Writer_seek":            {"__fern_io_error"},
 	"__method_Reader_flags":           {"__fern_io_error"},
@@ -4373,10 +4370,10 @@ var runtimeHelperDeps = map[string][]string{
 	"__method_Reader_isatty":          {"isatty"},
 	"__method_Writer_isatty":          {"isatty"},
 	"__method_Writer_write_some":      {"__fern_io_error"},
-	"open_appender":                   {"__fern_io_error"},
-	"open_exclusive":                  {"__fern_io_error"},
-	"open_reader_with":                {"__fern_io_error"},
-	"open_writer_with":                {"__fern_io_error"},
+	"open_appender":                   {"__fern_io_error", "__fern_rc_inc"},
+	"open_exclusive":                  {"__fern_io_error", "__fern_rc_inc"},
+	"open_reader_with":                {"__fern_io_error", "__fern_rc_inc"},
+	"open_writer_with":                {"__fern_io_error", "__fern_rc_inc"},
 	"__pow_f64":                       {"__log_f64", "__exp_f64"},
 	"__sin_f64":                       {"__rem_pio2_large"},
 	"__cos_f64":                       {"__rem_pio2_large"},
@@ -6207,6 +6204,29 @@ func emitEnvHelper(w func(string, ...any)) {
 // ladder over the .rodata literals emitted below it, or a fresh "Unknown error
 // N" heap string for an errno outside the table (#8265). Every box carries the
 // standard rc header (rc=1 at [box-8]). Leaf; x0=errno, x1=path.
+// emitIoErrorOwningPath calls __fern_io_error for an error path whose string
+// is the CALLER's, with errno already in x0 and the string in pathReg.
+//
+// The IoError box keeps that string and its drop releases it, so the box needs
+// a reference of its own. The sibling error paths that have no path to name
+// hand over a freshly allocated empty string (emitEmptyString, rc 1) for
+// exactly that reason: the helper's contract is that the caller passes an
+// OWNED reference. A borrowed one makes the box's drop free a buffer the
+// caller is still using — #9543, where `lstat(p)` left `p.len()` reading 0 and
+// the next allocation was handed p's block.
+//
+// errno rides the stack rather than a scratch register because these sites
+// keep the path in whichever callee-saved register was free, and no single
+// register is spare at all of them. Storing a pair keeps sp 16-aligned.
+func emitIoErrorOwningPath(w func(string, ...any), pathReg string) {
+	w("\tstp x0, x1, [sp, #-16]!") // errno, across the retain
+	w("\tmov x0, %s", pathReg)
+	w("\tbl %s", fnLabel("__fern_rc_inc"))
+	w("\tldp x0, x1, [sp], #16")
+	w("\tmov x1, %s", pathReg) // the path, now owned by the box
+	w("\tbl %s", fnLabel("__fern_io_error"))
+}
+
 func emitIoErrorHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__fern_io_error"))
@@ -6483,8 +6503,7 @@ func emitWriteFileBody(w func(string, ...any), name, sfx string, mode, fixup int
 	w("\tmov x0, x9")
 	w(".Lssa_wf_err%s:", sfx)
 	w("\tneg x0, x0") // errno = -fd
-	w("\tmov x1, x19")
-	w("\tbl %s", fnLabel("__fern_io_error"))
+	emitIoErrorOwningPath(w, "x19")
 	w("\tmov x22, x0") // IoError box
 	// return Some(IoError) box {rc=1, tag=0, ioerr@8}.
 	w("\tadrp x3, %s", heapPtrSym)
@@ -6657,8 +6676,7 @@ func emitReadFileHelper(w func(string, ...any)) {
 	w("\tneg x21, x0") // errno
 	w(".Lssa_rf_err_dispatch:")
 	w("\tmov x0, x21") // errno
-	w("\tmov x1, x19") // path
-	w("\tbl %s", fnLabel("__fern_io_error"))
+	emitIoErrorOwningPath(w, "x19")
 	w("\tmov x19, x0") // IoError box (path no longer needed)
 	// Result.Err(IoError): box {rc=1, tag=1, ioerr@8}.
 	w("\tadrp x3, %s", heapPtrSym)
@@ -6818,8 +6836,7 @@ func emitReadFileBytesHelper(w func(string, ...any)) {
 	w("\tneg x21, x0") // errno
 	w(".Lssa_rfb_err_dispatch:")
 	w("\tmov x0, x21") // errno
-	w("\tmov x1, x19") // path
-	w("\tbl %s", fnLabel("__fern_io_error"))
+	emitIoErrorOwningPath(w, "x19")
 	w("\tmov x19, x0") // IoError box (path no longer needed)
 	// Result.Err(IoError): box {rc=1, tag=1, ioerr@8}.
 	w("\tadrp x3, %s", heapPtrSym)
@@ -6937,8 +6954,7 @@ func emitPathOpHelper(name, tag string, sysno, paths, scalars int, args func(w f
 		w("\tb .Lssa_%s_ret", tag)
 		w(".Lssa_%s_err:", tag)
 		w("\tneg x0, x0")
-		w("\tmov x1, x23")
-		w("\tbl %s", fnLabel("__fern_io_error"))
+		emitIoErrorOwningPath(w, "x23")
 		w("\tmov x19, x0") // IoError box
 		emitSsaResultBox(w)
 		w("\tmov w6, #1")
@@ -7062,8 +7078,7 @@ func emitReadLinkHelper(w func(string, ...any)) {
 	w(".Lssa_rlnk_err:")
 	w("\tneg x0, x0")
 	w(".Lssa_rlnk_dispatch:")
-	w("\tmov x1, x19")
-	w("\tbl %s", fnLabel("__fern_io_error"))
+	emitIoErrorOwningPath(w, "x19")
 	w("\tmov x19, x0")
 	emitSsaResultBox(w)
 	w("\tmov w6, #1")
@@ -7230,8 +7245,7 @@ func emitSetFileTimesHelper(w func(string, ...any)) {
 	w("\tb .Lssa_sft_ret")
 	w(".Lssa_sft_err:")
 	w("\tneg x0, x0")
-	w("\tmov x1, x19")
-	w("\tbl %s", fnLabel("__fern_io_error"))
+	emitIoErrorOwningPath(w, "x19")
 	w("\tmov x19, x0")
 	emitSsaResultBox(w)
 	w("\tmov w6, #1")
@@ -7378,8 +7392,7 @@ func emitRemoveFileHelper(w func(string, ...any)) {
 	w("\tb .Lssa_rmf_ret")
 	w(".Lssa_rmf_err:")
 	w("\tneg x0, x0") // errno = -ret
-	w("\tmov x1, x19")
-	w("\tbl %s", fnLabel("__fern_io_error"))
+	emitIoErrorOwningPath(w, "x19")
 	w("\tmov x20, x0") // IoError box
 	// return Some(IoError) box {rc=1, tag=0, ioerr@8}.
 	w("\tadrp x3, %s", heapPtrSym)
@@ -7495,8 +7508,7 @@ func emitCreateDirAllHelper(w func(string, ...any)) {
 	w("\tb .Lssa_cda_ret")
 	w(".Lssa_cda_err:")
 	w("\tneg x0, x0") // errno = -ret
-	w("\tmov x1, x19")
-	w("\tbl %s", fnLabel("__fern_io_error"))
+	emitIoErrorOwningPath(w, "x19")
 	w("\tmov x20, x0") // IoError box
 	// return Err(IoError) box {rc=1, tag=1, ioerr@8}.
 	w("\tadrp x3, %s", heapPtrSym)
@@ -7830,8 +7842,7 @@ func emitTempDirHelper(w func(string, ...any)) {
 	w("\tb.eq .Lssa_td_retry")
 	// Other error: map -errno through __fern_io_error(errno, prefix).
 	w("\tneg x0, x0")
-	w("\tmov x1, x19")
-	w("\tbl %s", fnLabel("__fern_io_error"))
+	emitIoErrorOwningPath(w, "x19")
 	w("\tmov x19, x0") // IoError box
 	// Result.Err(IoError): box {rc=1, tag=1, ioerr@8}.
 	w("\tadrp x3, %s", heapPtrSym)
@@ -8121,8 +8132,7 @@ func emitReadDirLike(w func(string, ...any), name string, lb string, skipDots bo
 	w("%s:", L("err_open"))
 	w("\tneg x0, x0") // errno
 	w("%s:", L("err_dispatch"))
-	w("\tmov x1, x25") // path
-	w("\tbl %s", fnLabel("__fern_io_error"))
+	emitIoErrorOwningPath(w, "x25")
 	w("\tmov x25, x0") // IoError box
 	// Result.Err(IoError): box {rc=1, tag=1, ioerr@8}.
 	w("\tadrp x3, %s", heapPtrSym)
@@ -8705,9 +8715,8 @@ func emitStatLikeHelper(w func(string, ...any), name string, atFlags int, lp str
 	emitStatProjection(w, lp)
 	w("\tb .Lssa%s_ret", lp)
 	w(".Lssa%s_err:", lp)
-	w("\tneg x0, x0")  // errno
-	w("\tmov x1, x19") // path
-	w("\tbl %s", fnLabel("__fern_io_error"))
+	w("\tneg x0, x0") // errno
+	emitIoErrorOwningPath(w, "x19")
 	emitStatErrBox(w)
 	w(".Lssa%s_ret:", lp)
 	w("\tldp x23, x24, [sp, #48]")
@@ -8824,9 +8833,8 @@ func emitStatfsHelper(w func(string, ...any)) {
 	w("\tstr x23, [x0, #8]")
 	w("\tb .Lssasfs_ret")
 	w(".Lssasfs_err:")
-	w("\tneg x0, x0")  // errno
-	w("\tmov x1, x19") // path
-	w("\tbl %s", fnLabel("__fern_io_error"))
+	w("\tneg x0, x0") // errno
+	emitIoErrorOwningPath(w, "x19")
 	emitStatErrBox(w)
 	w(".Lssasfs_ret:")
 	w("\tldp x23, x24, [sp, #48]")

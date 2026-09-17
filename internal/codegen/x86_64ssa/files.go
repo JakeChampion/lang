@@ -32,10 +32,32 @@ func ssaPathz(w func(string, ...any), lbl string) {
 	w("\tmov byte ptr [r12 + rax], 0")
 }
 
+// ssaRetainPathForIoErr retains the path in rbx before it is handed to
+// __fern_io_error, with errno preserved across the call.
+//
+// The IoError box keeps that string and its drop releases it, so the box needs
+// a reference of its own. The error paths with no path to name hand over a
+// freshly allocated empty string (ssaEmptyString, rc 1) for exactly that
+// reason: the helper's contract is that the caller passes an OWNED reference.
+// rbx is the CALLER's string, so without this the box's drop frees a buffer
+// the caller is still using (#9543).
+//
+// The 16-byte frame is alignment, not space: one 8-byte push would leave rsp
+// misaligned at the call.
+func ssaRetainPathForIoErr(w func(string, ...any)) {
+	w("\tsub rsp, 16")
+	w("\tmov [rsp], rax") // errno, across the retain
+	w("\tmov rdi, rbx")
+	w("\tcall %s", fnLabel("__fern_rc_inc"))
+	w("\tmov rax, [rsp]")
+	w("\tadd rsp, 16")
+}
+
 // ssaIoErr appends the shared failure tail: with the positive errno in eax and
 // the path in rbx, build the IoError and leave Err(IoError) in rax. r12 is
 // scratch.
 func ssaIoErr(w func(string, ...any)) {
+	ssaRetainPathForIoErr(w)
 	w("\tmov edi, eax")
 	w("\tmov rsi, rbx")
 	w("\tcall %s", fnLabel("__fern_io_error"))
