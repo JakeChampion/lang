@@ -303,6 +303,32 @@ function main(): i32 {
     return 7;
 }
 `},
+	// The map ops and the byte kernels run through the stack machine's own
+	// arms between a push of the operands and a pop of the result, with the
+	// allocator treating each as a call. String and integer keys, insert,
+	// lookup with a default, membership, the key and value snapshots.
+	{name: "maps", allSSA: true, src: `
+import "core/map";
+import "std/i32";
+function build(n: i32): Map[string, i32] {
+    var m: Map[string, i32] = Map { };
+    var i: i32 = 0;
+    while (i < n) { m = m.insert("k" + i.to_string(), i * 3); i = i + 1; }
+    return m;
+}
+function main(): i32 {
+    var m: Map[string, i32] = build(50);
+    var ints: Map[i32, i32] = Map { };
+    var j: i32 = 0;
+    while (j < 40) { ints = ints.insert(j * 7, j); j = j + 1; }
+    var total: i32 = m.get_or("k7", 0) + m.get_or("zz", 100) + ints.get_or(21, 0) + ints.get_or(22, 1000);
+    if (m.has("k9")) { total = total + 1; }
+    if (!ints.has(5)) { total = total + 2; }
+    total = total + m.len() * 10 + ints.keys().len() + ints.values().len();
+    for k in m.keys() { if (k.len() == 2) { total = total + 1; } }
+    return total % 200;
+}
+`},
 	// A mixed module: main and the string helpers keep the stack machine, the
 	// integer functions go through the SSA backend, and both call each other
 	// through the shared stack ABI.
