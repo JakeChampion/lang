@@ -114,6 +114,64 @@ pub function kind_name(id: i32): string {
     return "invalid";
 }
 
+// The semantic operations whose str names something: a call names its callee,
+// a variant operation names its variant, and a closure names the body whose
+// address its box holds. `length` names nothing, so the set is listed rather
+// than taken as a range over the tags below call's.
+function semantic_names_symbol(id: i32): boolean {
+    return id == 0 - 7 || id == 0 - 8 || id == 0 - 9 || id == 0 - 10
+        || id == 0 - 11 || id == 0 - 12 || id == 0 - 20;
+}
+
+// What an instruction prints after its kind. A constant too wide for the
+// immediate carries the literal's TEXT instead, so that is what is printed for
+// it rather than the zero its immediate holds; the other kinds print the
+// immediate, the operator, or the symbol they name.
+function carries_imm(kind: i32): boolean {
+    return kind == 1 || kind == 2 || kind == 6 || kind == 0 - 4 || kind == 0 - 6 || kind == 0 - 10;
+}
+
+function carries_str(kind: i32): boolean {
+    return kind == 9 || kind == 10 || kind == 11 || semantic_names_symbol(kind);
+}
+
+// A variant projection carries BOTH: the field index and the variant name.
+function inst_detail(ins: SInst): string {
+    if (ins.kind_tag == 1 && ins.str != "") { return " " + ins.str; }
+    var out: string = "";
+    if (carries_imm(ins.kind_tag)) { out = out + " " + util.i32_to_string(ins.imm); }
+    if (carries_str(ins.kind_tag)) { out = out + " " + ins.str; }
+    return out;
+}
+
+pub function print_func(f: SFunc): string {
+    var out: string = "func " + f.name + " {\n";
+    var bi: i32 = 0;
+    while (bi < f.blocks.len()) {
+        var blk: SBlock = f.blocks[bi];
+        out = out + "  b" + util.i32_to_string(blk.id) + ":\n";
+        var k: i32 = 0;
+        while (k < blk.insts.len()) {
+            var ins: SInst = blk.insts[k];
+            out = out + "    v" + util.i32_to_string(ins.result) + " = " + kind_name(ins.kind_tag) + inst_detail(ins);
+            var ai: i32 = 0;
+            while (ai < ins.args.len()) {
+                out = out + " v" + util.i32_to_string(ins.args[ai]);
+                ai = ai + 1;
+            }
+            out = out + "\n";
+            k = k + 1;
+        }
+        if (blk.term.kind_tag == 4) { out = out + "    unreachable\n"; }
+        else if (blk.term.kind_tag == 1 && blk.term.value < 0) { out = out + "    ret\n"; }
+        else if (blk.term.kind_tag == 1) { out = out + "    ret v" + util.i32_to_string(blk.term.value) + "\n"; }
+        else if (blk.term.kind_tag == 2) { out = out + "    br b" + util.i32_to_string(blk.term.target) + "\n"; }
+        else if (blk.term.kind_tag == 3) { out = out + "    brif v" + util.i32_to_string(blk.term.cond) + " b" + util.i32_to_string(blk.term.t) + " b" + util.i32_to_string(blk.term.f) + "\n"; }
+        bi = bi + 1;
+    }
+    return out + "}\n";
+}
+
 // Kinds 40..48 are the production lift's memory vocabulary
 // (ssa_lift.lift_from_ir_prod, docs/SELFHOST-SSA-BACKEND.md): the flat
 // backends' box layouts spelled as loads, stores, checked element reads, a
