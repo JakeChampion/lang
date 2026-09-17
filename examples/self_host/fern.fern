@@ -36,10 +36,11 @@
 // observe an emitter in isolation.
 //
 // Codegen routes through the IR path (asm_ir / asm_arm64_ir / wasm_ir,
-// each IR-or-error per #3457) for every target. `-backend ssa` selects
-// register allocation per function on the native ISAs, falling back to the
-// stack machine for a function outside its subset. See
-// docs/SELFHOST-SSA-BACKEND.md.
+// each IR-or-error per #3457) for every target. Register allocation per
+// function (`-backend ssa`) is the DEFAULT on arm64 and available on
+// x86-64; `-backend flat` names the stack machine, which is the default
+// everywhere else. A function outside the register path's subset falls back
+// to the stack machine on its own. See docs/SELFHOST-SSA-BACKEND.md.
 //
 // It is a drop-in-shaped replacement for cmd/fern: one binary hosting
 // both the x86-64 (asm_ir.fern) and arm64 (asm_arm64.fern) emitters,
@@ -2093,6 +2094,16 @@ function run(): i32 {
     if (backend == "ssa" && platforms.for_target(target).isa != "arm64" && platforms.for_target(target).isa != "x86-64") {
         eprint("fern: -backend ssa is not available for -target " + target + " (available for: arm64-linux, arm64-darwin, arm64-android, x86-64-linux)\n");
         return 2;
+    }
+    // The target's default emitter. arm64 is on the register path: its output
+    // is smaller than the stack machine's (0.94x the instructions, 0.93x the
+    // linked binary) and the compiler it builds is 30-49% faster, at 1.04x the
+    // self-build time against a 1.5x ceiling
+    // (docs/ssa-log/2026-09-17-arm64-meets-every-flip-condition.md). x86-64
+    // stays on the stack machine until its binary meets the same condition;
+    // its excess is frame traffic from half arm64's register budget.
+    if (backend == "") {
+        if (platforms.for_target(target).isa == "arm64") { backend = "ssa"; } else { backend = "flat"; }
     }
 
     // `-fmt FILE...` is per-file, gofmt-style: every positional is formatted in
