@@ -10992,7 +10992,7 @@ struct OwnWalk { moved: MovedEntry[], diags: util.Diag[] }
 // keys admitted while walking `base = S { ...base, f: g(.., base.f, ..) }`
 // or the return of that literal (ow_field_move_fields). `borrowed` names
 // the parameters this frame does not own — never a base for that move.
-struct OwnCtx { owned: string[], borrowed: string[], ofuncs: OwnFunc[], structs: parser.StructDecl[], admit: string, admit_fields: string[], fresh: string[], bound: string[] }
+struct OwnCtx { owned: string[], borrowed: string[], ofuncs: OwnFunc[], structs: parser.StructDecl[], admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: string[] }
 
 function ow_moved_has(m: MovedEntry[], name: string): boolean {
   for elem in m {
@@ -11068,7 +11068,7 @@ function ow_nested_ctx(ctx: OwnCtx, params: ast.ParamDecl[]): OwnCtx {
   }
   var bound: string[] = ctx.bound;
   for p in params { if (!util.has_str(bound, p.name)) { bound = bound.append(p.name); } }
-  return OwnCtx { owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, admit: ctx.admit, admit_fields: ctx.admit_fields, fresh: ctx.fresh, bound: bound };
+  return OwnCtx { owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, admit: ctx.admit, admit_fields: ctx.admit_fields, fresh: ctx.fresh, fresh_methods: ctx.fresh_methods, fresh_scrut: ctx.fresh_scrut, bound: bound };
 }
 
 function ow_names_del(names: string[], name: string): string[] {
@@ -11150,6 +11150,26 @@ function ow_scalar_literal(e: ast.Expr): boolean {
   return false;
 }
 
+// ow_is_owned_scrutinee answers a DIFFERENT question from an argument transfer,
+// and deliberately keeps the narrower pre-#9538 answer for a call.
+//
+// Matching decomposes the box in place, and the RC lowering releases what it
+// decomposes off the same signature-shaped rule the checker used before the
+// returns-borrow inference. Handing the inference's wider answer to this site
+// frees a freshly-returned scrutinee AT the match and then reads it (#9539).
+// The two converge when the lowering moves with the rule, not before.
+function ow_is_owned_scrutinee(e: ast.Expr, ctx: OwnCtx): boolean {
+  if let ast.ExprCall(c) = e {
+    if let ast.ExprIdent(cid) = c.callee {
+      if (ow_struct_known(ctx.structs, cid.name)) { return true; }
+      if (ow_variant_known(ctx.structs, cid.name, "")) { return true; }
+      return util.has_str(ctx.fresh_scrut, cid.name);
+    }
+    return false;
+  }
+  return ow_is_owned_expr(e, ctx);
+}
+
 function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
   if (ow_scalar_literal(e)) { return true; }
   match (e) {
@@ -11189,11 +11209,10 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
           return ow_struct_known(ctx.structs, cid.name) || util.has_str(ctx.fresh, cid.name);
         },
         ast.ExprFieldAccess(mfa) => {
-          // `s.to_owned()` materialises a borrowed view into a fresh owned
-          // string — native's whole freshOwnedProducers table
-          // (`__method_string_to_owned`), reached here through the method
-          // spelling because the self-host does not mangle at parse time.
-          return mfa.field == "to_owned";
+          // A method is reached through its SPELLING here, because the
+          // self-host does not mangle at parse time; ow_fresh_methods settles
+          // which spellings cannot hand a receiver or an argument back.
+          return util.has_str(ctx.fresh_methods, mfa.field);
         },
         _ => {
           return false;
@@ -11657,7 +11676,7 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       // pointer-typed payloads into the arm bindings, so each is itself owned
       // for that arm — the `map(own xs) => Cons(h + 1, map(t))` shape, where
       // `t` is transferred onward. Scalar payloads are copied, not moved.
-      var scrut_owned: boolean = ow_is_owned_expr(m.scrutinee, ctx);
+      var scrut_owned: boolean = ow_is_owned_scrutinee(m.scrutinee, ctx);
       var rs: OwnWalk = ru_expr(m.scrutinee, moved, ctx);
       var mv: MovedEntry[] = rs.moved;
       var d: util.Diag[] = rs.diags;
@@ -11829,24 +11848,138 @@ function ow_type_is_pointer(tn: string, mod: parser.Module): boolean {
   return false;
 }
 
-// ow_fresh_owners names the functions whose RESULT the caller owns, so passing
-// a call to one into an `own` parameter transfers rather than borrows. Native's
-// rule (guardCallArgs' isOwnedExpr): a pointer-returning function that could
-// not be handing back a borrowed argument — either it takes no pointer
-// parameter at all, so the result is built fresh, or every pointer parameter is
-// `own`, so the callee already took ownership of each. `build_stmt(own ops, s)
-// -> Op[]` returning the grown `ops` is that second shape, and it is the one
-// this compiler's own sources are written in.
+// The ownership of a call's RESULT, which decides whether passing it into an
+// `own` parameter transfers or borrows. Native's half is computeResultBorrows
+// in internal/checker/result_borrow.go; these functions mirror it.
 //
-// Generic functions are skipped: an erased type parameter's spelling reads as a
-// nominal here, and native types it as a ParamType, which is not pointer-shaped.
-function ow_fresh_owners(mod: parser.Module, ofuncs: OwnFunc[]): string[] {
-  // The BUILTIN half of the same rule. Native registers builtins in the same
-  // FuncSigs table it reads user functions from, so `__alloc_u8(n)` is a fresh
-  // owner there; here they carry no declaration to derive it from, so the ones
-  // that pass the test (pointer result, no pointer parameter) are listed.
-  // TestSelfHostFreshOwnedBuiltinsMatchChecker recomputes the list from
-  // native's table and fails when the two drift.
+// Generic functions are skipped throughout: an erased type parameter's spelling
+// reads as a nominal here, and native types it as a ParamType, which is not
+// pointer-shaped.
+// ow_spine_stmts flattens a body into every statement its control flow
+// encloses. fold_stmt_spine enters no expression, so a lambda's body — whose
+// returns belong to the lambda, not to this function — stays out of it.
+function ow_collect_stmt(st: ast.Stmt, own acc: ast.Stmt[]): ast.Stmt[] { return acc.append(st); }
+
+function ow_spine_stmts(body: ast.Stmt[]): ast.Stmt[] {
+  var out: ast.Stmt[] = [];
+  for st in body { out = astwalk.fold_stmt_spine(st, out, ow_collect_stmt); }
+  return out;
+}
+
+// ow_borrowed_params names the parameters of `fn` that are pointers the caller
+// still owns — the only values whose owner outlives the call.
+function ow_borrowed_params(fn: parser.FuncDecl, mod: parser.Module, ofuncs: OwnFunc[]): string[] {
+  var flags: boolean[] = ow_func_flags(ofuncs, fn.name);
+  var out: string[] = [];
+  var i: i32 = 0;
+  while (i < fn.params.len()) {
+    if (ow_type_is_pointer(fn.params[i].type_name, mod)) {
+      if (i >= flags.len() || !flags[i]) { out = out.append(fn.params[i].name); }
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// ow_call_may_borrow reports whether a call's result can alias one of the
+// arguments it was handed. A struct or variant construction cannot; a declared
+// function answers from `borrows`; a builtin from the fresh list below. A
+// method is reached through a receiver this walk does not resolve, so it is
+// assumed to be able to.
+function ow_call_may_borrow(c: ast.ExprCall, mod: parser.Module, borrows: string[], builtins: string[]): boolean {
+  if let ast.ExprIdent(cid) = c.callee {
+    if (ow_struct_known(mod.structs, cid.name)) { return false; }
+    if (ow_variant_known(mod.structs, cid.name, "")) { return false; }
+    if (util.has_str(builtins, cid.name)) { return false; }
+    return util.has_str(borrows, cid.name);
+  }
+  return true;
+}
+
+// ow_expr_borrows reports whether `e` can alias one of `borrowed`.
+// Pessimistic by construction: a shape that is not a construction and not a
+// path this walk follows is assumed to be able to.
+function ow_expr_borrows(e: ast.Expr, mod: parser.Module, borrowed: string[], locals: string[], borrows: string[], builtins: string[]): boolean {
+  match (e) {
+    ast.ExprNumber(_) => { return false; },
+    ast.ExprString(_) => { return false; },
+    ast.ExprBool(_) => { return false; },
+    ast.ExprFString(_) => { return false; },
+    ast.ExprUnknown(_) => { return false; },
+    ast.ExprLambda(_) => { return false; },
+    ast.ExprStructLit(_) => { return false; },
+    ast.ExprArray(_) => { return false; },
+    ast.ExprTuple(_) => { return false; },
+    ast.ExprMapLit(_) => { return false; },
+    ast.ExprBinary(_) => { return false; },
+    ast.ExprUnary(_) => { return false; },
+    ast.ExprIdent(id) => {
+      return util.has_str(borrowed, id.name) || util.has_str(locals, id.name);
+    },
+    ast.ExprFieldAccess(fa) => {
+      return ow_expr_borrows(fa.obj, mod, borrowed, locals, borrows, builtins);
+    },
+    ast.ExprIndex(ix) => {
+      return ow_expr_borrows(ix.array, mod, borrowed, locals, borrows, builtins);
+    },
+    ast.ExprSlice(sl) => {
+      return ow_expr_borrows(sl.array, mod, borrowed, locals, borrows, builtins);
+    },
+    ast.ExprCall(c) => {
+      if (!ow_call_may_borrow(c, mod, borrows, builtins)) { return false; }
+      for a in c.args {
+        if (ow_expr_borrows(a, mod, borrowed, locals, borrows, builtins)) { return true; }
+      }
+      return false;
+    }
+  }
+}
+
+// ow_borrowed_locals names the locals that can hold a borrow of one of
+// `borrowed`. Settled to a fixed point rather than read once, so a value that
+// only becomes a borrow on a loop's second iteration is still seen.
+function ow_borrowed_locals(spine: ast.Stmt[], mod: parser.Module, borrowed: string[], borrows: string[], builtins: string[]): string[] {
+  var locals: string[] = [];
+  var changed: boolean = true;
+  while (changed) {
+    changed = false;
+    for st in spine {
+      var name: string = "";
+      var init: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
+      if let ast.StmtVar(v) = st { name = v.name; init = v.init; }
+      if let ast.StmtAssign(a) = st { name = a.target; init = a.value; }
+      if (name.len() == 0 || util.has_str(locals, name)) { continue; }
+      if (ow_expr_borrows(init, mod, borrowed, locals, borrows, builtins)) {
+        locals = locals.append(name);
+        changed = true;
+      }
+    }
+  }
+  return locals;
+}
+
+// ow_func_result_borrows reports whether any of the returns of `fn` is derived
+// from one of its borrowed pointer parameters.
+function ow_func_result_borrows(fn: parser.FuncDecl, mod: parser.Module, ofuncs: OwnFunc[], borrows: string[], builtins: string[]): boolean {
+  var borrowed: string[] = ow_borrowed_params(fn, mod, ofuncs);
+  if (borrowed.len() == 0) { return false; }
+  var spine: ast.Stmt[] = ow_spine_stmts(fn.body);
+  var locals: string[] = ow_borrowed_locals(spine, mod, borrowed, borrows, builtins);
+  for st in spine {
+    if let ast.StmtReturn(r) = st {
+      if (ow_expr_borrows(r.value, mod, borrowed, locals, borrows, builtins)) { return true; }
+    }
+  }
+  return false;
+}
+
+// ow_fresh_builtins are the builtins whose result is fresh. Native registers
+// builtins in the same FuncSigs table it reads user functions from, so
+// `__alloc_u8(n)` is derived there; here they carry no declaration to derive it
+// from, so the ones that pass the test (pointer result, no pointer parameter)
+// are listed. TestSelfHostFreshOwnedBuiltinsMatchChecker recomputes the list
+// from native's table and fails when the two drift.
+function ow_fresh_builtins(): string[] {
   var out: string[] = [
     "__alloc_u8", "args", "buf_take", "cell_new", "environ", "getcwd", "getgroups",
     "hostname", "map_new", "random_bytes", "read_line", "set_priority",
@@ -11856,6 +11989,30 @@ function ow_fresh_owners(mod: parser.Module, ofuncs: OwnFunc[]): string[] {
   ];
   // `termios_set` is deliberately absent beside its read half: it TAKES the
   // word array, and a pointer parameter is what the rule excludes.
+  return out;
+}
+
+// ow_fresh_owners names the functions whose result cannot alias a value the
+// CALLER still owns, so a call to one may be transferred into an `own`
+// parameter. Mirrors native's computeResultBorrows (#9538): which functions
+// those are comes from what each body RETURNS, not from its parameter list, so
+// a factory that takes a reference and builds something new is admitted where
+// the parameter-shape test refused it.
+//
+// Returning a local is not a borrow. A return moves it, so nothing the caller
+// holds aliases it afterwards; only a borrowed parameter has an owner that
+// outlives the call.
+//
+// Least fixed point from "nothing borrows": a function is marked when one of
+// its returns is derived from a borrowed parameter, and marking one can only
+// ever mark its callers, so iterating until nothing changes settles. A
+// recursive cycle that returns no borrow is therefore never marked.
+// ow_signature_fresh_owners is the pre-#9538 rule, kept for the match
+// scrutinee alone (#9539): a pointer-returning function takes no pointer
+// parameter, so its result is built fresh, or every pointer parameter is
+// `own`, so the callee already took ownership of each.
+function ow_signature_fresh_owners(mod: parser.Module, ofuncs: OwnFunc[], builtins: string[]): string[] {
+  var out: string[] = builtins;
   for fn in mod.funcs {
     if (fn.receiver_name.len() > 0 || fn.type_params.len() > 0) { continue; }
     if (!ow_type_is_pointer(fn.ret_type, mod)) { continue; }
@@ -11870,11 +12027,65 @@ function ow_fresh_owners(mod: parser.Module, ofuncs: OwnFunc[]): string[] {
       }
       i = i + 1;
     }
-    if (!any_ptr || all_own) {
+    if (!any_ptr || all_own) { out = out.append(fn.name); }
+  }
+  return out;
+}
+
+function ow_result_borrows(mod: parser.Module, ofuncs: OwnFunc[], builtins: string[]): string[] {
+  var borrows: string[] = [];
+  var changed: boolean = true;
+  while (changed) {
+    changed = false;
+    for fn in mod.funcs {
+      if (fn.receiver_name.len() > 0 || fn.type_params.len() > 0) { continue; }
+      if (!ow_type_is_pointer(fn.ret_type, mod)) { continue; }
+      if (util.has_str(borrows, fn.name)) { continue; }
+      if (ow_func_result_borrows(fn, mod, ofuncs, borrows, builtins)) {
+        borrows = borrows.append(fn.name);
+        changed = true;
+      }
+    }
+  }
+  return borrows;
+}
+
+// ow_fresh_owners is the complement: every pointer-returning function the
+// fixpoint did not mark, plus the builtins.
+function ow_fresh_owners(mod: parser.Module, ofuncs: OwnFunc[], builtins: string[], borrows: string[]): string[] {
+  var out: string[] = builtins;
+  for fn in mod.funcs {
+    if (fn.receiver_name.len() > 0 || fn.type_params.len() > 0) { continue; }
+    if (!ow_type_is_pointer(fn.ret_type, mod)) { continue; }
+    if (util.has_str(borrows, fn.name)) { continue; }
+    out = out.append(fn.name);
+  }
+  return out;
+}
+
+// ow_fresh_methods names the method SPELLINGS whose result cannot alias the
+// receiver or an argument. A method call is reached by spelling alone here, so
+// a spelling several methods share is admitted only when NONE of them can hand
+// a borrow back. ow_call_may_borrow already treats every method callee as able
+// to, so one pass over the settled `borrows` is enough — a method reached only
+// through another method is pessimistic already.
+function ow_fresh_methods(mod: parser.Module, ofuncs: OwnFunc[], builtins: string[], borrows: string[]): string[] {
+  var out: string[] = [];
+  var refused: string[] = [];
+  for fn in mod.funcs {
+    if (fn.receiver_name.len() == 0 || fn.type_params.len() > 0) { continue; }
+    if (!ow_type_is_pointer(fn.ret_type, mod)) { continue; }
+    if (ow_func_result_borrows(fn, mod, ofuncs, borrows, builtins)) {
+      refused = refused.append(fn.name);
+    } else {
       out = out.append(fn.name);
     }
   }
-  return out;
+  var kept: string[] = [];
+  for name in out {
+    if (!util.has_str(refused, name)) { kept = kept.append(name); }
+  }
+  return kept;
 }
 
 // own_diags runs the affine move-check over every function whose body
@@ -11884,7 +12095,11 @@ function ow_fresh_owners(mod: parser.Module, ofuncs: OwnFunc[]): string[] {
 // ordinary programs are untouched.
 pub function own_diags(mod: parser.Module): util.Diag[] {
   var ofuncs: OwnFunc[] = collect_own_funcs(mod.funcs);
-  var fresh: string[] = ow_fresh_owners(mod, ofuncs);
+  var builtins: string[] = ow_fresh_builtins();
+  var borrows: string[] = ow_result_borrows(mod, ofuncs, builtins);
+  var fresh: string[] = ow_fresh_owners(mod, ofuncs, builtins, borrows);
+  var fresh_methods: string[] = ow_fresh_methods(mod, ofuncs, builtins, borrows);
+  var fresh_scrut: string[] = ow_signature_fresh_owners(mod, ofuncs, builtins);
   var out: util.Diag[] = [];
   for fn in mod.funcs {
     var owned: string[] = [];
@@ -11897,7 +12112,7 @@ pub function own_diags(mod: parser.Module): util.Diag[] {
       }
     }
     if (owned.len() > 0 || ofuncs.len() > 0) {
-      var ctx: OwnCtx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, admit: "", admit_fields: [], fresh: fresh, bound: ow_param_names(fn) };
+      var ctx: OwnCtx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn) };
       var nomoved: MovedEntry[] = [];
       var r: OwnWalk = ow_stmts(fn.body, nomoved, ctx);
       out = util.append_diags(out, r.diags);

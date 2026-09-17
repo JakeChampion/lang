@@ -4680,6 +4680,9 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		}
 	}
 	c.info.OwnFuncs = c.ownFuncs // expose to the IR for ownership-transfer lowering
+	// Needs ownFuncs and FuncSigs, and is read by the call-site guard once the
+	// bodies below are checked.
+	c.computeResultBorrows(prog)
 
 	for _, fn := range prog.Funcs {
 		if ctx.Err() != nil {
@@ -7282,6 +7285,14 @@ type checker struct {
 	// E051) can require that arguments passed to an `own` parameter are owned
 	// values the caller can transfer.
 	ownFuncs map[string][]bool
+	// resultBorrows names the functions whose result can alias one of their
+	// borrowed pointer parameters, and resultAnalysed those whose body was
+	// available to decide it. The call-site ownership guard (E051) transfers a
+	// call's result into an `own` parameter when the callee cannot hand a
+	// borrow back (#9538); where no body was seen, signatureResultBorrows
+	// answers instead.
+	resultBorrows  map[string]bool
+	resultAnalysed map[string]bool
 	// callOwnFlags is the consuming-parameter mask at each CALL, resolved
 	// from the callee's type — the only source a call through a function
 	// value has. Read by the call-site ownership guard, which runs after
@@ -9754,23 +9765,6 @@ func (c *checker) unifyArrayArg(arg *ast.Expr, want, got ast.Type, sub map[strin
 	}
 	*arg = &ast.SliceExpr{P: (*arg).Pos(), Source: *arg, ElemType: arr.Elem, Lent: true}
 	return true
-}
-
-// freshOwnedProducers are calls whose result is a freshly allocated value by
-// contract, so an `own` parameter may consume one (E051). The general rule in
-// `isOwnedExpr` is conservative — a callee with a borrowed pointer parameter
-// could hand that same pointer back — and `to_owned` trips it: its parameter
-// is a borrowed `string`, even though its entire purpose is to return a copy
-// and its body is the `s + ""` concat `isOwnedExpr` already trusts in every
-// other position.
-//
-// That mattered because `.to_owned()` is what the checker TELLS the reader to
-// write: `argAssignable` refuses a `str` at an `own` parameter with
-// "materialise with .to_owned() instead", and doing so cleared the E038 only
-// to leave an E051 on the same expression. The advice and the rule disagreed;
-// this makes the rule agree with the advice.
-var freshOwnedProducers = map[string]bool{
-	"__method_string_to_owned": true,
 }
 
 // assignHint names the remedy for an assignment the checker deliberately
@@ -12264,33 +12258,14 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				if _, vrOk, _ := c.resolveVariant(id.Name, id.EnumName); vrOk {
 					return true // variant-constructor call → fresh enum value
 				}
-				if freshOwnedProducers[id.Name] {
-					return true
-				}
-				// A user function with a pointer result whose every pointer
-				// parameter it could return is provably not BORROWED returns a
-				// freshly-owned value. Two such cases:
-				//   - no pointer parameters at all: the result is constructed fresh
-				//     (it has no borrowed pointer argument to hand back);
-				//   - every pointer parameter is `own`: the callee consumed each one
-				//     (took ownership), so the result — whether freshly built or a
-				//     threaded-and-returned `own` param — is owned by the caller, not
-				//     a borrow of a caller-still-held value. (`build_stmt(own ops, s)
-				//     -> Op[]` returning the grown `ops` is the self-host shape.)
-				// Conservative: a BORROWED pointer parameter could be returned
-				// (`id(x) -> x`), so a function with one isn't provably owned here.
+				// A pointer result the callee cannot have borrowed from the
+				// caller is freshly owned, so it can be transferred. Which
+				// functions those are is inferred from their returns
+				// (computeResultBorrows) rather than read off their parameter
+				// list, so a factory that takes a reference and builds
+				// something new is admitted (#9538).
 				if sig, ok := c.info.FuncSigs[id.Name]; ok && sig.Result != nil && ast.IsPointerType(sig.Result) {
-					flags := c.ownFuncs[id.Name]
-					anyPtrParam, allPtrOwn := false, true
-					for i, pt := range sig.Params {
-						if pt != nil && ast.IsPointerType(pt) {
-							anyPtrParam = true
-							if i >= len(flags) || !flags[i] {
-								allPtrOwn = false
-							}
-						}
-					}
-					if !anyPtrParam || allPtrOwn {
+					if !c.calleeResultBorrows(x) {
 						return true
 					}
 				}
@@ -12679,7 +12654,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			// is owned and may be transferred onward). Scalar bindings are copied
 			// (not owned). Capture ownership BEFORE recordExprUses consumes the
 			// scrutinee.
-			scrutOwned := isOwnedExpr(x.Tag)
+			scrutOwned := c.isOwnedScrutinee(x.Tag, isOwnedExpr)
 			recordExprUses(x.Tag, moved) // a bare-ident scrutinee is consumed here
 			for _, arm := range x.Arms {
 				armMoved := cloneMoved(moved)
