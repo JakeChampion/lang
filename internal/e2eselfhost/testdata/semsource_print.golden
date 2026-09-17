@@ -2528,7 +2528,7 @@ func addr_as_bytes {
     ret v1
 }
 
-refused cast contract
+refused cast contract: string as usize
 modes 1 1 result usize
 v0:usize v1:usize v2:usize
 func handle_sum {
