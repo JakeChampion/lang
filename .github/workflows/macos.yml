@@ -35,6 +35,13 @@ on:
 jobs:
   test-arm64-darwin:
     runs-on: macos-15
+    # Pinned to the SAME version test-units.yml pins, and that lane says why:
+    # 9.4 is what the ubuntu-24.04 image's own coreutils is, "so every utility
+    # here answers to one version". A second lane holding a second opinion
+    # would show it first in `--help`, the most version-volatile output
+    # coreutils has and one the corpus compares byte for byte.
+    env:
+      GNU_COREUTILS_VERSION: "9.4"
     steps:
       - uses: actions/checkout@v7
 
@@ -71,6 +78,87 @@ jobs:
         if: steps.gate.outputs.signed != 'true'
         run: |
           gotestsum --format standard-verbose -- -run '^(TestSetFileTimesDarwin.*|TestInterpFsMetaPrimitives)$' ./internal/interp/ ./internal/e2e/
+
+      # THE DARWIN BRANCHES HAD NO ORACLE UNTIL THIS STEP (#9645). Thirteen
+      # `target_os() == "darwin"` branches across five files decide what the
+      # utilities print on this platform — seven of them in
+      # `coreutils/lib/signals.fern`, whose name, alternate and description
+      # tables were written by reading Apple's published Libc rather than by
+      # comparing against anything. Nothing ran the corpus here, so nothing
+      # checked a single one of them.
+      #
+      # macOS has BSD userland, so unlike the Linux lane — which takes seventy
+      # utilities from /usr/bin and builds only the two Debian omits — there is
+      # no system GNU to fall back to and this installs the whole tree.
+      # `hw.ncpu` because there is no nproc until the thing being built exists.
+      - name: Cache the GNU coreutils oracle
+        id: gnu-oracle
+        uses: actions/cache@v6
+        with:
+          path: ~/gnu-coreutils
+          key: gnu-coreutils-full-${{ env.GNU_COREUTILS_VERSION }}-macos-15
+      - name: Build the GNU coreutils oracle
+        if: steps.gnu-oracle.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          ver="$GNU_COREUTILS_VERSION"
+          work="$(mktemp -d)"
+          cd "$work"
+          curl -fsSLO "https://ftp.gnu.org/gnu/coreutils/coreutils-$ver.tar.xz"
+          tar xf "coreutils-$ver.tar.xz"
+          cd "coreutils-$ver"
+          # ac_cv_header_stdckdint_h=no is not a workaround for the build,
+          # it is what makes this build match the Linux one. 9.4's
+          # lib/posixtm.c calls `ckd_add (&t, t, leapsec)` with a `bool`
+          # third argument, and C23's checked-integer builtins refuse a bool
+          # operand: "operand argument to checked integer operation must be
+          # an integer type other than plain 'char', 'bool', ...". glibc
+          # ships no <stdckdint.h>, so the Linux lane silently substitutes
+          # gnulib's own, whose `ckd_add` is `(bool) _GL_INT_ADD_WRAPV(...)`
+          # and takes a bool happily. Xcode's clang DOES ship the header, so
+          # without this the macOS build defers to it and stops on that one
+          # line. Forcing the substitution gives both oracles the same
+          # checked-arithmetic header rather than patching either one.
+          FORCE_UNSAFE_CONFIGURE=1 ac_cv_header_stdckdint_h=no \
+            ./configure --quiet --disable-nls \
+            --without-selinux --prefix="$HOME/gnu-coreutils"
+          make -j"$(sysctl -n hw.ncpu)"
+          make install
+          cd /
+          rm -rf "$work"
+      # A SKIP IS A MISSING DEPENDENCY, NOT A PASS. A cache that restored an
+      # empty or half-written directory would otherwise leave the corpus with
+      # no reference, and `internal/coreutils` reports that as `ok` having
+      # compared nothing. Every utility the step below exercises is checked
+      # here, so the failure names this step rather than one corpus.
+      - name: Assert the oracle is GNU coreutils, and point the corpus at it
+        run: |
+          set -euo pipefail
+          for util in kill env timeout uname yes; do
+            bin="$HOME/gnu-coreutils/bin/$util"
+            if ! "$bin" --version | head -1 | grep -q '(GNU coreutils)'; then
+              echo "::error::$bin is not GNU coreutils; the corpus would have no oracle for $util(1)"
+              exit 1
+            fi
+          done
+          "$HOME/gnu-coreutils/bin/kill" --version | head -1
+          echo "FERN_GNU_COREUTILS=$HOME/gnu-coreutils/bin" >> "$GITHUB_ENV"
+      # The five utilities that HAVE Darwin branches, not the whole catalogue:
+      # `kill`, `env` and `timeout` for signals.fern's seven, plus `uname` and
+      # `yes`. Starting narrow so the first round is a readable list of real
+      # platform differences rather than a hundred corpora failing at once;
+      # widening to the rest is the follow-up, not this step's job.
+      #
+      # All ten function names in full rather than five prefixes, because the
+      # corpus does not name its tests uniformly: `uname` and `yes` carry a
+      # `Parity` suffix where the other three do not. A `^(…|TestUname)` would
+      # match `TestUnameParity` today and select NOTHING the day it is
+      # renamed, silently and with exit 0 — which is the whole failure
+      # `tools/testname_gate.sh` exists to refuse, and it refused this.
+      - name: go test (coreutils corpus on Darwin)
+        if: steps.gate.outputs.signed != 'true'
+        run: |
+          gotestsum --format standard-verbose -- -run '^(TestKill|TestKillHelpVersion|TestEnv|TestEnvHelpVersion|TestTimeout|TestTimeoutHelpVersion|TestUnameParity|TestUnameHelpVersion|TestYesParity|TestYesHelpVersion)$' ./internal/coreutils/
 
       - name: go test (arm64-darwin native execution)
         if: steps.gate.outputs.signed != 'true'

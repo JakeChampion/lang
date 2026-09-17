@@ -127,19 +127,31 @@ function descriptions(): string[] {
 // not use. The realtime rows number from RTMIN and count UP, so RTMAX is
 // "Real-time signal 30" — NOT `name(n)`'s nearer-end `RTMIN+k` / `RTMAX-k`
 // form, which would call the same signal RTMAX-0.
+// DARWIN SUFFIXES EVERY LINE WITH THE NUMBER, and glibc does not. `kill -t`
+// prints `strsignal(signum)`, not the raw table, and Darwin's strsignal
+// composes `"<text>: <n>"` — `Hangup: 1`, `Killed: 9` — where glibc returns
+// `Hangup` alone. Measured off the oracle on a macos-15 runner, all 31 rows.
+//
+// Which also means zero is NOT `sys_siglist[0]`. That entry is the string
+// "Signal 0", but Darwin's strsignal rejects 0 as out of range before it
+// reaches the table, so the answer is its unknown form, `Unknown signal: 0`
+// — with a colon, where glibc's has none.
+//
+// Reading `sys_siglist` and stopping there is what got this wrong: the table
+// was right and the function that wraps it was never modelled.
 pub function description(n: i32): string {
-  // Zero has a name but no signal, so each libc answers from its fallback
-  // rather than its table: glibc's `strsignal` composes "Unknown signal 0"
-  // (measured off `kill -t 0`), while Darwin's `sys_siglist[0]` is the
-  // literal "Signal 0" (Apple's Libc, `gen/FreeBSD/siglist.c`).
+  var dar: boolean = target_os() == "darwin";
   if (n == 0) {
-    if (target_os() == "darwin") {
-      return "Signal 0";
+    if (dar) {
+      return "Unknown signal: 0";
     }
     return "Unknown signal 0";
   }
   var ds: string[] = descriptions();
   if (n >= 1 && n <= ds.len()) {
+    if (dar) {
+      return ds[n - 1] + ": " + n.to_string();
+    }
     return ds[n - 1];
   }
   var lo: i32 = rt_min();
@@ -163,17 +175,42 @@ pub function description(n: i32): string {
 // 31) that glibc never defines. A GNU build enumerates glibc, so it cannot see
 // them and answers `'LOST': invalid signal`; accepting them diverged on a name
 // a caller can actually type.
+//
+// `POLL` IS NOT A DARWIN NAME EITHER, for the same reason one step removed.
+// xnu's `bsd/sys/signal.h` does define `SIGPOLL 7` — but in the `#if` branch
+// that EXCLUDES `SIGEMT` and `SIGIOT`, so a build gets one set or the other
+// and never both:
+//
+//     #if (defined(_POSIX_C_SOURCE) && !defined(_DARWIN_C_SOURCE))
+//     #define SIGPOLL 7
+//     #else
+//     #define SIGIOT  SIGABRT
+//     #define SIGEMT  7
+//     #endif
+//
+// coreutils' own `lib/config.h` defines `_DARWIN_C_SOURCE` (autoconf's
+// AC_USE_SYSTEM_EXTENSIONS), so the oracle takes the second branch: EMT and
+// IOT exist, POLL does not, gnulib's `#ifdef SIGPOLL` fails, and `kill -s
+// POLL` answers `invalid signal`. It is also why 7 PRINTS as EMT: gnulib
+// resolves a number by walking its table for the first entry with that
+// number, POLL sits ahead of EMT in it, and only POLL's absence leaves EMT.
+//
+// Both halves of this rule are the same rule: what a name resolves to is
+// decided by WHAT THE ORACLE'S BUILD CAN SEE, not by what the platform header
+// contains. Reading the header's full text is what put POLL here.
 function alternates(): string[] {
   if (target_os() == "darwin") {
-    return ["POLL", "IOT"];
+    return ["IOT"];
   }
   return ["IOT", "IO", "CLD"];
 }
 
 function alternate_values(): i32[] {
   if (target_os() == "darwin") {
-    // Darwin's 7 is EMT and POLL both; IOT is the historical ABRT.
-    return [7, 6];
+    // IOT is the historical ABRT, and Darwin has no other alias a coreutils
+    // build can see — CLD is not in xnu's header at all, and POLL is in the
+    // branch the oracle does not compile.
+    return [6];
   }
   return [6, 29, 17];
 }
