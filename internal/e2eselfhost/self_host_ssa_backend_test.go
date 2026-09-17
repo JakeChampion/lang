@@ -396,6 +396,21 @@ function main(): i32 {
     return (strs(s) + bits(15790080, 280375465082880)) % 251;
 }
 `},
+	// An exhaustive match whose every arm returns, standing last in a
+	// generic function (ordmap's fold), lowers to a loop whose body reaches
+	// the loop's end alive: control continues after the loop in the
+	// enclosing scope, and the lift gives it a block to continue in.
+	{name: "loop_fallthrough", allSSA: true, src: `
+import "std/ordmap" as ordmap;
+import "core/cmp";
+function main(): i32 {
+    var m: ordmap.OrdMap[i32, i32] = ordmap.ordmap_new();
+    var i: i32 = 0;
+    while (i < 30) { m = m.insert((i * 7) % 31, i); i = i + 1; }
+    var total: i32 = m.fold(0, (acc: i32, k: i32, v: i32) => acc + k * 2 + v);
+    return (total + m.len()) % 251;
+}
+`},
 	// A mixed module: main and the string helpers keep the stack machine, the
 	// integer functions go through the SSA backend, and both call each other
 	// through the shared stack ABI.
