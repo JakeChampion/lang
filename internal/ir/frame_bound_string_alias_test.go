@@ -293,3 +293,71 @@ function main(): i32 { return 0; }`
 			"which nothing here has measured")
 	}
 }
+
+// A match arm can bind a name equal to a frame-bound alias, and the `declared`
+// count in frameBoundStringAliases does not see it: a match binder is not an
+// *ast.Var, nor is a Destructure name. So occurrences of the BINDER are walked
+// as if they were the alias's.
+//
+// That cannot credit the alias wrongly. `safe` is keyed by *ast.Ident node, not
+// by name, so no mark placed on a binder occurrence can reach an occurrence of
+// the alias; and inside the arm the alias is shadowed, so no use of it can
+// occur there to be mis-credited. What a binder occurrence CAN do is add an
+// unmarked entry to the tally and refuse a parameter nothing was wrong with,
+// which is a leak — the safe direction.
+//
+// Pinned by comparing against the unshadowed control rather than by asserting
+// absolute verdicts: the property is that shadowing does not change the alias's
+// own answer.
+func TestMatchBinderSharingAnAliasNameDoesNotCreditIt(t *testing.T) {
+	verdict := func(t *testing.T, body string) bool {
+		t.Helper()
+		src := `enum Opt { Got(string), Nope }
+function mk(a: string): string { return a + "!"; }
+function mkopt(i: i32): Opt { if (i > 0) { return Got("zz"); } return Nope; }
+function tag(src: string, i: i32): i32 {
+    ` + body + `
+}
+function main(): i32 {
+    var line: string = mk("a string long enough to defeat the small-string optimisation");
+    return tag(line, 1) % 7;
+}`
+		dumps := map[string]string{}
+		RcPlanHook = func(fn, dump string) { dumps[fn] = dump }
+		defer func() { RcPlanHook = nil }()
+		lowerSourceWith(t, src, 8)
+		return hasPlanName(dumps["main"], "freeEligible", "line")
+	}
+	for _, c := range []struct{ name, shadowed, control string }{
+		{
+			"arm reads the binder",
+			`var x: string = src;
+    var n: i32 = 0;
+    match (mkopt(i)) { Got(x) => { n = x.len(); }, Nope => {} }
+    return x.len() + n + i;`,
+			`var x: string = src;
+    var n: i32 = 0;
+    match (mkopt(i)) { Got(y) => { n = y.len(); }, Nope => {} }
+    return x.len() + n + i;`,
+		},
+		{
+			"arm assigns the binder to an outer local",
+			`var x: string = src;
+    var out: string = "";
+    match (mkopt(i)) { Got(x) => { out = x; }, Nope => {} }
+    return x.len() + out.len() + i;`,
+			`var x: string = src;
+    var out: string = "";
+    match (mkopt(i)) { Got(y) => { out = y; }, Nope => {} }
+    return x.len() + out.len() + i;`,
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if sh, ct := verdict(t, c.shadowed), verdict(t, c.control); sh != ct {
+				t.Errorf("line freeEligible is %v with the arm binder sharing the alias's name "+
+					"and %v with it renamed — a binder is a different binding and must not "+
+					"change the alias's verdict", sh, ct)
+			}
+		})
+	}
+}
