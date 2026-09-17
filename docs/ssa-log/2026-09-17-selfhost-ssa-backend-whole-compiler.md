@@ -135,7 +135,11 @@ The register-to-register half is the larger one and it is the item arm64
 already names: a result computed in the scratch register and then moved to
 its home, an operand moved from its home into a scratch register. arm64
 carries 865,114 of those and x86-64 carries 887,817, so this is one item
-across both ISAs rather than an x86-64 item. Neither stack machine folds a
+across both ISAs rather than an x86-64 item. Of x86-64's, 382,990 move
+into `%rax` and 429,579 move out of it, and only 11,587 sit directly after
+a call — so this is the arithmetic selection routing through the scratch
+register, not the call ABI. The shared binary table names `%rax` and
+`%rcx` outright, which is what forces it. Neither stack machine folds a
 frame slot into an arithmetic operand, so that is not the difference and
 not the fix.
 
