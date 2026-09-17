@@ -1016,6 +1016,12 @@ pub function all_runtime_need_roots(): string[] {
         "wasm_timer_pollable", "wasm_pollable_drop", "wasm_block", "wasm_poll",
         // wide-int stringifiers + the Option-returning i32 min/max:
         "i64_to_string", "u64_to_string", "arr_i32_min_max_opt",
+        // The allocation counter (#9596). `__heap_bump_bytes` needs no root —
+        // it lowers to an inline read of a word the heap already defines — but
+        // `alloc_count` owns both the counter word and the tick in
+        // `__fern_alloc`, so a module that asks for the number and nothing else
+        // is the one that dangles.
+        "alloc_count",
         // the f64 transcendental bundle (sin/cos/exp/log/pow), on both register
         // backends.
         "float_transcendentals"

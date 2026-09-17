@@ -709,7 +709,7 @@ function slice_expr(e: ast.Expr, sl: ast.ExprSlice, s: State): Value {
     // An array's slice is a bare view rather than an Option, and the window it
     // hands back is a second reference to the source's buffer, which is a kind
     // this vocabulary does not have.
-    if (!ssasem.is_text(s.values[src.id])) { return refused(s, "unsupported slice source"); }
+    if (!ssasem.is_text(s.values[src.id])) { return refused(s, "unsupported slice source: " + typeinfo.spelling(s.values[src.id])); }
     var whole: typeinfo.Type = checked(e, s);
     var layout: i32 = union_layout(s, union_name(whole));
     if (layout != semrecords.layout_option()) { return refused(s, "unsupported slice result"); }
@@ -1092,12 +1092,22 @@ function try_layout(layout: i32): boolean {
 // the checker's type for the whole expression rather than the spelling, so a
 // cast to an alias or to a type this vocabulary does not admit refuses on what
 // the checker resolved instead of on how it was written.
+// An unresolved type has no spelling — typeinfo.spelling answers "" for
+// TypeUnknown — so a refusal that named one said only that it was unresolved.
+// The checker's own reason is the useful half and TypeUnknown carries it.
+function type_detail(t: typeinfo.Type): string {
+    if let typeinfo.TypeUnknown(u) = t { return u.reason; }
+    return typeinfo.spelling(t);
+}
+
 function cast(e: ast.Expr, u: ast.ExprUnary, s: State): Value {
     var operand: Value = expr(u.operand, s, typeinfo.unchecked());
     s = operand.s;
     if (!s.ok) { return operand; }
     var ty: typeinfo.Type = checked(e, s);
-    if (!ssasem.cast_admits(s.values[operand.id], ty)) { return refused(s, "cast contract"); }
+    if (!ssasem.cast_admits(s.values[operand.id], ty)) {
+        return refused(s, "cast contract: " + typeinfo.spelling(s.values[operand.id]) + " as " + typeinfo.spelling(ty));
+    }
     return define(s, ssasem.cast(), [operand.id], 0, "", ty);
 }
 
@@ -1347,6 +1357,20 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
     if (!s.ok) { return recv; }
     var owner: string = struct_name(s.values[recv.id]);
     if (owner == "") { owner = union_name(s.values[recv.id]); }
+    // A record FIELD of function type is not a method. The contract table keys
+    // methods by `Type.name` and holds nothing for a field, so `h.f(0)` is the
+    // field read and a call through what it holds. The receiver is already
+    // produced, so the read takes its value rather than evaluating the object a
+    // second time.
+    var fsig: checker.StructSig = record_schema(owner, s);
+    if (fsig.name.len() > 0) {
+        var fat: i32 = record_field_index(fsig, fa.field);
+        if (fat >= 0 && ssasem.is_func(fsig.field_types[fat])) {
+            var fv: Value = define(s, ssasem.record_get(), [recv.id], fat, fa.field, fsig.field_types[fat]);
+            if (!fv.s.ok) { return fv; }
+            return indirect_call(c, fv.id, fv.s);
+        }
+    }
     // A builtin's receiver names no declaration this boundary can hold a
     // contract for, so it is matched by shape instead. A string's methods are
     // declared in the standard library on a `string` receiver, and a view
@@ -1955,7 +1979,7 @@ function declare_tuple(st: ast.Stmt, v: ast.StmtVar, s: State): State {
 
 function bind_projection(s: State, name: string, id: i32, after: checker.Scope): State {
     var want: typeinfo.Type = bound_type(s, name, after);
-    if (!semtypes.concrete(want, false)) { return fail(s, "unresolved type of binding " + name + ": " + typeinfo.spelling(want)); }
+    if (!semtypes.concrete(want, false)) { return fail(s, "unresolved type of binding " + name + ": " + type_detail(want)); }
     if (!semtypes.equal(want, s.values[id])) { return fail(s, mismatch(name, want, s.values[id])); }
     return bind(s, name, id);
 }
@@ -2039,7 +2063,7 @@ function declare(st: ast.Stmt, v: ast.StmtVar, s: State): State {
     if (destructures(v)) { return declare_tuple(st, v, s); }
     var after: checker.Scope = checker.bind_stmt(st, s.scope);
     var ty: typeinfo.Type = bound_type(s, v.name, after);
-    if (!semtypes.concrete(ty, false)) { return fail(s, "unresolved type of binding " + v.name + ": " + typeinfo.spelling(ty)); }
+    if (!semtypes.concrete(ty, false)) { return fail(s, "unresolved type of binding " + v.name + ": " + type_detail(ty)); }
     var init: Value = expr(v.init, s, ty);
     s = init.s;
     if (!s.ok) { return s; }
@@ -2526,7 +2550,7 @@ function iterate_array(fo: ast.StmtFor, s: State): State {
     var text: boolean = ssasem.is_text(s.values[it.id]);
     var elem: typeinfo.Type = element_type(s.values[it.id]);
     if (text) { elem = t_u8(); }
-    if (!semtypes.concrete(elem, false)) { return fail(s, "unsupported iterable"); }
+    if (!semtypes.concrete(elem, false)) { return fail(s, "unsupported iterable: " + typeinfo.spelling(s.values[it.id])); }
     var before: i32 = s.names.len();
     var outer: checker.Scope = s.scope;
     var start: Value = define(s, 1, [], 0 - 1, "", t_i32());

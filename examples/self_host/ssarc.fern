@@ -147,16 +147,22 @@ function variants_of(t: typeinfo.Type, f: ssasem.Func): semrecords.Variant[] {
     return f.enums[semrecords.find_enum(f.enums, t)].variants;
 }
 
-function fields_have_children(fields: semrecords.Field[]): boolean {
-    for field in fields { if (walked(field.ty)) { return true; } }
+function fields_have_children(fields: semrecords.Field[], env: boolean): boolean {
+    for field in fields { if (walked(field.ty, env)) { return true; } }
     return false;
 }
 
-// The field types a record's release walks. A function value is the one
-// reference it does not: a closure box borrows its captures of that type, so
-// the box they name is released by the frame that owns it, which is the only
-// frame whose schema names the captures that release must walk.
-function walked(t: typeinfo.Type): boolean { return reference(t) && !ssasem.is_func(t); }
+// The field types a record's release walks. A function value is walked like any
+// other reference now that env_schemas puts every environment a value of its
+// type could carry into the holding frame's schema table, so the run-time match
+// in drop_captures works from a frame that never built the box. The exception is
+// a CLOSURE box's own fields: it borrows its captures of that type rather than
+// taking them (ssaunits.taken), so walking them would release what it never
+// owned.
+function walked(t: typeinfo.Type, env: boolean): boolean {
+    if (ssasem.is_func(t)) { return !env; }
+    return reference(t);
+}
 
 // A string box is released by its own helper: its block starts before the
 // value, where an array's starts before the data words.
@@ -501,9 +507,9 @@ function has_children(t: typeinfo.Type, f: ssasem.Func): boolean {
     // A map's own release walks its columns, and the uniqueness guard this
     // answers would read a count its box does not carry.
     if (ssasem.is_map(t)) { return false; }
-    if let typeinfo.TypeStruct(_) = t { return fields_have_children(record_fields(t, f)); }
+    if let typeinfo.TypeStruct(_) = t { return fields_have_children(record_fields(t, f), semtypes.is_env(t)); }
     if let typeinfo.TypeUnion(_) = t {
-        for v in variants_of(t, f) { if (fields_have_children(v.fields)) { return true; } }
+        for v in variants_of(t, f) { if (fields_have_children(v.fields, false)) { return true; } }
     }
     return false;
 }
@@ -513,7 +519,7 @@ function has_children(t: typeinfo.Type, f: ssasem.Func): boolean {
 // own helper.
 function env_records(f: ssasem.Func): semrecords.Record[] {
     var out: semrecords.Record[] = [];
-    for rec in f.records { if (semtypes.is_env(rec.ty) && fields_have_children(rec.fields)) { out = out.append(rec); } }
+    for rec in f.records { if (semtypes.is_env(rec.ty) && fields_have_children(rec.fields, true)) { out = out.append(rec); } }
     return out;
 }
 
@@ -584,7 +590,7 @@ function drop_variant_fields(own r: irlower.LowerResult, slot: i32, t: typeinfo.
     var e: semrecords.Enum = f.enums[semrecords.find_enum(f.enums, t)];
     if (e.layout == semrecords.layout_option()) { return drop_payload(r, slot, e, scratch, f); }
     for v in e.variants {
-        if (fields_have_children(v.fields)) {
+        if (fields_have_children(v.fields, false)) {
             r = emit(r, ir.op_load_local(slot));
             r = emit(r, ir.op_variant_is(v.name));
             r = emit(r, ir.op_if(0));
@@ -643,7 +649,7 @@ function drop_record_fields(own r: irlower.LowerResult, slot: i32, fields: semre
     r = reserve(r, child + 1);
     var i: i32 = 0;
     while (i < fields.len()) {
-        if (walked(fields[i].ty)) {
+        if (walked(fields[i].ty, env)) {
             r = emit(r, ir.op_load_local(slot));
             if (env) { r = emit(r, ir.op_const_i32(i)); r = emit(r, ir.op_arr_get(32)); }
             else { r = emit(r, ir.op_struct_get(i, 0)); }

@@ -12,6 +12,15 @@ func IsCommutative(k OpKind) bool {
 	return isCommutative(k)
 }
 
+// FlipDirectionalCmp returns the comparison kind that means the
+// same thing with the operands swapped — Lt ↔ Gt, Le ↔ Ge across
+// the signed, unsigned and ordered-float variants — and false for
+// a kind with no directional flip. Eq/Ne need none: they are
+// commutative, so IsCommutative already covers them.
+func FlipDirectionalCmp(k OpKind) (OpKind, bool) {
+	return flipDirectionalCmp(k)
+}
+
 // IsPure reports whether `k` has no observable side effect
 // beyond producing its Result Value. Pure ops can be:
 //   - deleted when their Result has no consumers (DCE);
