@@ -176,6 +176,33 @@ function main(): i32 {
     return n % 256;
 }
 `},
+	// A loop appending a constant through the owned push: the array and the
+	// value both sit in registers at the runtime call, and on x86-64 the
+	// argument registers are among the allocatable ones, so the call must
+	// read both homes before it writes either.
+	{name: "byte_sieve", viaSSA: []string{"sieve", "count", "main"}, src: `
+function sieve(n: i32): boolean[] {
+    var s: boolean[] = [];
+    for i in 0..(n + 1) { s = s.append(true); }
+    if (n >= 0) { s = s.with(0, false); }
+    if (n >= 1) { s = s.with(1, false); }
+    var i: i32 = 2;
+    while (i * i <= n) {
+        if (s[i]) {
+            var j: i32 = i * i;
+            while (j <= n) { s = s.with(j, false); j = j + i; }
+        }
+        i = i + 1;
+    }
+    return s;
+}
+function count(s: boolean[]): i32 {
+    var n: i32 = 0;
+    for b in s { if (b) { n = n + 1; } }
+    return n;
+}
+function main(): i32 { return count(sieve(1000)); }
+`},
 	// A mixed module: main and the string helpers keep the stack machine, the
 	// integer functions go through the SSA backend, and both call each other
 	// through the shared stack ABI.
@@ -437,6 +464,69 @@ func TestSelfHostSSABackendRefusesOtherTargets(t *testing.T) {
 // replaced file leaves it reading the first program, an in-place rewrite
 // shows it the second. Apple Silicon also runs the second program, which is
 // the exec the cache would have killed.
+// The lift gives every merge a phi per local slot and prune_dead removes
+// almost all of them, so the id space of a large function is hundreds of
+// times its live values. The frame is sized by the spilled values, not by
+// the ids: a function with 200 locals and 200 merges reserves well under
+// 16 KB on both ISAs, where a slot per id would be over 300 KB.
+func TestSelfHostSSAFrameIsSizedBySpills(t *testing.T) {
+	h := selfHostCLIForHost(t)
+	dir := t.TempDir()
+	var b strings.Builder
+	b.WriteString("function wide(n: i32): i32 {\n")
+	for i := 0; i < 200; i++ {
+		fmt.Fprintf(&b, "    var v%d: i32 = n + %d;\n", i, i)
+	}
+	for i := 0; i < 200; i++ {
+		fmt.Fprintf(&b, "    if (n > %d) { v%d = v%d + 1; }\n", i, i, (i+1)%200)
+	}
+	b.WriteString("    var s: i32 = 0;\n")
+	for i := 0; i < 200; i++ {
+		fmt.Fprintf(&b, "    s = s + v%d;\n", i)
+	}
+	b.WriteString("    return s;\n}\nfunction main(): i32 { return wide(3) % 256; }\n")
+	src := filepath.Join(dir, "wide.fern")
+	if err := os.WriteFile(src, []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		target string
+		frame  *regexp.Regexp
+	}{
+		{"x86-64-linux", regexp.MustCompile(`__fn_wide:\n(?:.*\n){1,8}?\s+subq \$(\d+), %rsp`)},
+		// Over 4,095 bytes the arm64 prologue builds the immediate in x17; a
+		// movk after the movz would mean a frame over 64 KB.
+		{"arm64-linux", regexp.MustCompile(`__fn_wide:\n(?:.*\n){1,10}?\s+(?:sub sp, sp, #|movz x17, #)(\d+)\n(\s+movk)?`)},
+	}
+	for _, c := range cases {
+		out := filepath.Join(dir, "wide-"+c.target+".s")
+		cmd := exec.Command(h.cli, "-target", c.target, "-backend", "ssa", "-emit", "asm", "-o", out, src, h.stdlib)
+		cmd.Env = append(os.Environ(), "FERN_SSA_REPORT=1")
+		report, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s: %v\n%s", c.target, err, report)
+		}
+		if strings.Contains(string(report), "FERN_SSA: wide:") {
+			t.Fatalf("%s: wide was declined:\n%s", c.target, report)
+		}
+		asm, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		m := c.frame.FindSubmatch(asm)
+		if m == nil {
+			t.Fatalf("%s: no frame reservation found after __fn_wide", c.target)
+		}
+		n, _ := strconv.Atoi(string(m[1]))
+		if len(m) > 2 && len(m[2]) > 0 {
+			n += 64 * 1024
+		}
+		if n > 16*1024 {
+			t.Errorf("%s: wide reserves %d bytes of frame; a slot per spilled value stays under 16 KB", c.target, n)
+		}
+	}
+}
+
 func TestSelfHostOutputReplacesExecutable(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
