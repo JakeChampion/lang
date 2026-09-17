@@ -98,3 +98,16 @@ done
 ok=$(grep -vc '^FAILED' "$OUT" || true)
 bad=$(grep -c '^FAILED' "$OUT" || true)
 echo "$(wc -l < "$OUT") rows written to $OUT ($ok emitted, $bad refused)"
+
+# A run where nothing emitted is indistinguishable from a pure refactor: both
+# sides of the diff carry the same placeholders, so the comparison reports PURE
+# for any change at all. That is how a wrong -target spelling once made this
+# gate vacuous rather than red. Every row is now a real artifact hash in both
+# modes, so one real row is enough to tell the two apart.
+if [ "$ok" -lt 1 ]; then
+    echo "$0: no row emitted — the comparison would be between placeholders" >&2
+    echo "  and would call any refactor pure." >&2
+    echo "  Check that $BIN runs, that the -target spellings above are ones it" >&2
+    echo "  accepts, and under --ssa that it accepts -backend ssa." >&2
+    exit 1
+fi
