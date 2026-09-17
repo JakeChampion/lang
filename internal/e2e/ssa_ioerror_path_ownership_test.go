@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -35,6 +36,26 @@ function main(): i32 {
 // must still report once the failing call has returned.
 const wantIoErrPathLen = len("/fern/no/such/path/here")
 
+// x86_64RunnerOrEmpty is arm64QemuOrEmpty's x86-64 twin: an empty prefix on an
+// amd64 Linux host, meaning run the binary directly; a qemu-x86_64 prefix
+// anywhere else; and ok=false only when there is no way to run such a binary
+// at all.
+//
+// Deliberately not LookupX86_64Tooling, which reports ok=false without an
+// x86-64 gcc on PATH. This test never links with one — `fern -target
+// x86-64-linux -o out` uses the CLI's own in-process linker — so gating on a
+// compiler it does not use would skip these legs on a gcc-less amd64 host,
+// where they run perfectly well.
+func x86_64RunnerOrEmpty() (runner []string, ok bool) {
+	if runtime.GOOS == "linux" && runtime.GOARCH == "amd64" {
+		return nil, true
+	}
+	if p, err := exec.LookPath("qemu-x86_64"); err == nil {
+		return []string{p}, true
+	}
+	return nil, false
+}
+
 func ioErrPathLen(t *testing.T, bin, target, backend, qemu string, x86Runner []string, dir, builtin string) int {
 	t.Helper()
 	name := builtin + "_" + backend
@@ -54,19 +75,17 @@ func ioErrPathLen(t *testing.T, bin, target, backend, qemu string, x86Runner []s
 	if o, err := compile.CombinedOutput(); err != nil {
 		t.Fatalf("compile %s for %s (-backend %q) failed: %v\n%s", builtin, target, backend, err, o)
 	}
-	// The x86-64 leg runs the emitted binary the same way the arm64 leg does:
-	// directly on a matching host, under the emulator otherwise. This test
-	// lands in the catch-all `test-e2e-other` lane, whose matrix includes an
-	// aarch64 runner, so exec'ing an x86-64 ELF there fails to START — and a
-	// command that never started leaves ProcessState nil, which made the
-	// ExitCode() below a panic rather than a failure.
+	// This test lands in the catch-all `test-e2e-other` lane, whose matrix
+	// includes an aarch64 runner, so the x86-64 leg has to dispatch the way
+	// the arm64 leg already does. RunX86_64Bin is that dispatch, and its doc
+	// comment names the exact failure a bare exec produces there: binfmt_misc
+	// makes the exec appear to work, and the program then SIGSEGVs where the
+	// explicit qemu-x86_64 prefix runs it correctly.
 	var run *exec.Cmd
 	if target == "arm64-linux" {
 		run = runArm64Bin(qemu, out)
-	} else if len(x86Runner) == 0 {
-		run = exec.Command(out)
 	} else {
-		run = exec.Command(x86Runner[0], append(append([]string{}, x86Runner[1:]...), out)...)
+		run = e2eharness.RunX86_64Bin(x86Runner, out)
 	}
 	run.Env = e2eharness.ChildEnv()
 	err := run.Run()
@@ -82,10 +101,7 @@ func ioErrPathLen(t *testing.T, bin, target, backend, qemu string, x86Runner []s
 func TestSSABackendsKeepThePathAFailingBuiltinWasGiven(t *testing.T) {
 	bin := buildFernCLI(t)
 	qemu := arm64QemuOrEmpty(t)
-	// Not X86_64Tooling: that skips the whole test when it cannot run an
-	// x86-64 binary, and the arm64 half still has something to say on an
-	// aarch64 host. The lookup half lets each target's legs decide alone.
-	_, x86Runner, x86OK := e2eharness.LookupX86_64Tooling()
+	x86Runner, x86OK := x86_64RunnerOrEmpty()
 	dir := t.TempDir()
 
 	// Per target, because the two SSA backends emit different subsets: a
