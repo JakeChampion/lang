@@ -24,16 +24,16 @@ import (
 //
 // # Why a pinned baseline rather than a flat zero
 //
-// 23 of 271 cases leak on x86-64 today and 22 on arm64: the map and
-// closure drop paths do not fully reclaim, which is the same list the
-// corpus header names. A flat zero assertion could not land without
+// 15 of 309 cases leak on x86-64 today and 14 on arm64: the map drop
+// path, and closure and string residuals around it, do not fully
+// reclaim, which is the same list the corpus header names. A flat zero assertion could not land without
 // fixing all of that first, and deleting the leg until then is how the
 // direction stays unwatched for another year.
 //
 // So each leaking case is pinned at its exact byte count and everything
 // else must be zero. What that buys, which nothing had before:
 //
-//   - the 248 (x86-64) / 249 (arm64) clean cases are now GATED. A change
+//   - the 294 (x86-64) / 295 (arm64) clean cases are now GATED. A change
 //     that starts leaking in any of them fails here.
 //   - a new corpus case that leaks fails, because absent from the table
 //     means zero. Joining the leaking set is a deliberate act.
@@ -63,11 +63,7 @@ var rcCorpusLeakBaselineX86_64 = map[string]int64{
 	// the identity-call case that pins the guard's other arm.
 	"closure_capture_rebind_map_in_place_not_over_released": 144,
 	"closure_capture_rebind_identity_call_not_stranded":     144,
-	"closure_array_capture_churn":                           4752,
 	"closure_call_arg_handed_back_is_not_reclaimed":         1920,
-	"closure_captures_arr_of_struct_churn_free":             14256,
-	"closure_captures_struct_churn_free":                    6336,
-	"closure_churn_free":                                    1584,
 	// The `m.without(k)` shapes, split out of one case so a fix to one
 	// can bank its own zero (#8276). They are NOT four times the old single
 	// entry gone wrong: each now runs its own 500-round loop over its own map,
@@ -106,11 +102,7 @@ var rcCorpusLeakBaselineArm64 = map[string]int64{
 	// the identity-call case that pins the guard's other arm.
 	"closure_capture_rebind_map_in_place_not_over_released": 160,
 	"closure_capture_rebind_identity_call_not_stranded":     144,
-	"closure_array_capture_churn":                           4752,
 	"closure_call_arg_handed_back_is_not_reclaimed":         1920,
-	"closure_captures_arr_of_struct_churn_free":             14256,
-	"closure_captures_struct_churn_free":                    6336,
-	"closure_churn_free":                                    1584,
 	// The `m.without(k)` shapes, split out of one case so a fix to one
 	// can bank its own zero (#8276). They are NOT four times the old single
 	// entry gone wrong: each now runs its own 500-round loop over its own map,
@@ -163,11 +155,7 @@ var rcCorpusLeakBaselineWasm = map[string]int64{
 	// the identity-call case that pins the guard's other arm.
 	"closure_capture_rebind_map_in_place_not_over_released": 128,
 	"closure_capture_rebind_identity_call_not_stranded":     112,
-	"closure_array_capture_churn":                           4752,
 	"closure_call_arg_handed_back_is_not_reclaimed":         1920,
-	"closure_captures_arr_of_struct_churn_free":             14256,
-	"closure_captures_struct_churn_free":                    6336,
-	"closure_churn_free":                                    1584,
 	"consumed_array_arg_temp_released_and_guarded":          128,
 	// The `m.without(k)` shapes, split out of one case so a fix to one
 	// can bank its own zero (#8276). They are NOT four times the old single

@@ -5813,14 +5813,19 @@ func (b *builder) initMayAliasLive(e ast.Expr) bool {
 }
 
 // preciseDroppableType reports whether `name`'s declared type is in the
-// precise-drop scope: any owned ARRAY. emitOwnedSlotDrop reclaims every
-// element kind fully — primitive via `__fern_arr_dec` (pure buffer free,
-// slice 1); rc-tracked (`struct[]` / `enum[]` / `T[][]` / `tuple[]`) via the
-// deep `__drop_arr_*` loop (slice 2); and `string[]` via `__fern_drop_arr_str`
-// / `__fern_drop_arr_ptr` (slice 3 — str_dec each element, then the buffer).
-// Each per-element drop is_unique-gates, so a counted alias of an element only
-// DECs. Non-array box types (structs / enums / tuples — small boxes whose deep
-// drops dec shared fields and churn the `__rc_get` golden tests) are deferred.
+// precise-drop scope. Each admitted type gets the release emitPreciseDrop
+// emits for it, and every one of those is_unique-gates, so a counted alias
+// only DECs:
+//
+//   - ARRAYS, via emitOwnedSlotDrop — primitive elements through
+//     `__fern_arr_dec` (pure buffer free, slice 1); rc-tracked elements
+//     (`struct[]` / `enum[]` / `T[][]` / `tuple[]`) through the deep
+//     `__drop_arr_*` loop (slice 2); `string[]` through
+//     `__fern_drop_arr_str` / `__fern_drop_arr_ptr` (slice 3 — str_dec each
+//     element, then the buffer).
+//   - STRUCT / Map / TUPLE boxes and rc-eligible ENUMS, via the generated
+//     `__drop_struct_<N>` / `__drop_enum_<N>` (slice 4).
+//   - CLOSURES, via emitClosureSlotDrop.
 func (b *builder) preciseDroppableType(name string) bool {
 	t, ok := b.localDeclType(name)
 	if !ok {
@@ -5863,6 +5868,16 @@ func (b *builder) preciseDroppableType(name string) bool {
 		// precise drop is rc-protected — the same reason slice-2 rc-element
 		// arrays are sound. Non-droppable runtime handles (Reader / Writer /
 		// MapIter) aren't freeEligible, so they never reach here.
+		return true
+	case *ast.FuncType:
+		// CLOSURES. A function value exposes no projection — there is no
+		// field read, index or slice of one — so nothing can hold an
+		// uncounted view of its env or of its captures, and the alias
+		// gates in preciseDropTarget are all the drop needs. Its only
+		// other use is a call, which borrows for the call and takes no
+		// reference. Without this the env lived to the exit sweep, so a
+		// closure built in a LOOP leaked one env — plus everything the
+		// per-target thunk would have freed — per iteration (#9576).
 		return true
 	}
 	return false
