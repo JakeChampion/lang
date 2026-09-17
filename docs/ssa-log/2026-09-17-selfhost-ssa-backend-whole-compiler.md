@@ -105,6 +105,36 @@ arm64 folded-aggregate arm stored x0 over the address it had just computed
 into the result's home; and the x86-64 `args` arm of #9570 did not mark the
 need that emits `__fern_args`, found by review.
 
+## The optimiser on the lifted function, measured
+
+The backend runs `ssa.prune_dead` and nothing else. Calling `ssa.optimize`
+on the lifted function instead fails the backend gate on `control_flow`
+(exit 169 against the stack machine's 171) and `host_calls` (exit 63
+against 58, and differing stdout).
+
+Running each pass of the pipeline alone against the same gate isolates it
+to one:
+
+| pass | gate |
+|---|---|
+| `copy_propagate` | clean |
+| `const_fold` | control_flow, host_calls fail |
+| `algebraic_simplify` | clean |
+| `cse` | clean |
+| `branch_simplify` | clean |
+| `merge_blocks` | clean |
+
+`const_fold` folds a `binary` through `eval_binary(op, l, r)`, which takes
+two i32s and returns one. The lifted binaries carry their width and
+signedness in the instruction's `imm`, which that signature cannot see, so
+a 32-bit or unsigned op folds at 64-bit signed width and the constant is
+wrong. The other five passes are structurally conservative: each keys off
+kinds 1, 2, 9 and 10 and leaves every production kind alone.
+
+So enabling the optimiser here is one pass's worth of work, not the
+pipeline's: `eval_binary` needs the width and the sign, and `const_fold`
+needs to pass them.
+
 ## Traps
 
 - **The runtime call's argument registers are allocatable on x86-64.**
