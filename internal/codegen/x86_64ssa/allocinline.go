@@ -32,9 +32,25 @@ func SmallClassIndex(n int64) (int, bool) {
 	return int(c/16 - 1), true
 }
 
+// inlinedCall reports whether the block renderer writes this call inline
+// instead of emitting a call to the helper.
+//
+// referencedRuntimeHelpers reads this to decide a helper is unreachable, so
+// the two must agree exactly: a call the scan believes is inlined leaves its
+// helper out of the module, and a renderer that then emits the call names a
+// label nothing defines. Both readers ask the same predicate per callee for
+// that reason, rather than each spelling the conditions out (#9618).
+func inlinedCall(in Inst) bool {
+	return rcInlineCall(in) || boxFreeInline(in)
+}
+
 // boxFreeInline reports whether a call is a __fern_box_free whose size the
-// emitter knew, in the tier the inline push covers.
+// emitter knew, in the tier the inline push covers, outside the census.
 func boxFreeInline(in Inst) bool {
+	// The census counts frees in __free, which an inline push never reaches.
+	if ast.LeakCheckEnabled {
+		return false
+	}
 	if in.Op != Call || in.Callee != "__fern_box_free" || !in.SrcImm || len(in.ArgLocs) != 2 {
 		return false
 	}
@@ -48,13 +64,6 @@ func boxFreeInline(in Inst) bool {
 // is the per-instruction scratch the trampoline already uses; s0 homes a
 // slot-resident box and s1 the old list head.
 func inlineAllocLines(in Inst, numAlloc int, seed string, counting bool) ([]string, bool) {
-	// Under the leak census BOTH fast paths stay calls, not just the pop the
-	// `counting` check below turns off: __alloc and __free are where the
-	// census counts, and an inline push reaches __free no more than an inline
-	// pop reaches __alloc, so either one left on undercounts.
-	if ast.LeakCheckEnabled {
-		return nil, false
-	}
 	lbl := func(suffix string) string { return fmt.Sprintf(".Lssa_alloc_%s_%s", seed, suffix) }
 	if in.Op == MemAlloc && in.SrcImm {
 		if counting {
