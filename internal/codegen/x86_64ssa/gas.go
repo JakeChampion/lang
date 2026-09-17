@@ -2381,6 +2381,8 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"isatty":                        emitIsattyHelper,
 	"__method_Reader_isatty":        emitHandleIsattyHelper("__method_Reader_isatty"),
 	"__method_Writer_isatty":        emitHandleIsattyHelper("__method_Writer_isatty"),
+	"__method_Reader_stat":          emitFdStatHelper("__method_Reader_stat", "rst"),
+	"__method_Writer_stat":          emitFdStatHelper("__method_Writer_stat", "wst"),
 	"hostname":                      emitHostnameHelper,
 	"putchar":                       emitPutcharHelper,
 	"create_dir_all":                emitCreateDirAllHelper,
@@ -2456,6 +2458,8 @@ var heapUsingHelpers = map[string]bool{
 	"args":                       true,
 	"env":                        true,
 	"stat":                       true,
+	"__method_Reader_stat":       true,
+	"__method_Writer_stat":       true,
 	"read_file":                  true,
 	"read_file_bytes":            true,
 	"write_file":                 true,
@@ -2503,6 +2507,8 @@ var runtimeHelperDeps = map[string][]string{
 	"__method_Reader_read_chunk":    {"__fern_io_error"},
 	"open_reader":                   {"__fern_io_error", "__fern_rc_inc"},
 	"stat":                          {"__fern_io_error", "__fern_rc_inc"},
+	"__method_Reader_stat":          {"__fern_io_error"},
+	"__method_Writer_stat":          {"__fern_io_error"},
 	"open_writer":                   {"__fern_io_error", "__fern_rc_inc"},
 	"read_file":                     {"__fern_io_error", "__fern_utf8_valid", "__fern_rc_inc"},
 	"read_file_bytes":               {"__fern_io_error", "__alloc_u8", "__fern_rc_inc"},
@@ -3539,36 +3545,36 @@ func emitMismatchHelper(w func(string, ...any)) {
 	w("\tmov r10d, %s", memRef("rdx", -4)) // len(b)
 	// Clamp each offset into [0, len].
 	w("\ttest esi, esi")
-	w("\tjns .Lssa_mm_ao_pos")
+	w("\tjns .Lssa_fmm_ao_pos")
 	w("\txor esi, esi")
-	w(".Lssa_mm_ao_pos:")
+	w(".Lssa_fmm_ao_pos:")
 	w("\tcmp esi, r9d")
-	w("\tjle .Lssa_mm_ao_ok")
+	w("\tjle .Lssa_fmm_ao_ok")
 	w("\tmov esi, r9d")
-	w(".Lssa_mm_ao_ok:")
+	w(".Lssa_fmm_ao_ok:")
 	w("\ttest ecx, ecx")
-	w("\tjns .Lssa_mm_bo_pos")
+	w("\tjns .Lssa_fmm_bo_pos")
 	w("\txor ecx, ecx")
-	w(".Lssa_mm_bo_pos:")
+	w(".Lssa_fmm_bo_pos:")
 	w("\tcmp ecx, r10d")
-	w("\tjle .Lssa_mm_bo_ok")
+	w("\tjle .Lssa_fmm_bo_ok")
 	w("\tmov ecx, r10d")
-	w(".Lssa_mm_bo_ok:")
+	w(".Lssa_fmm_bo_ok:")
 	// n = min(n, len(a) - ao, len(b) - bo), floored at 0.
 	w("\tsub r9d, esi")
 	w("\tsub r10d, ecx")
 	w("\tcmp r8d, r9d")
-	w("\tjle .Lssa_mm_n_a")
+	w("\tjle .Lssa_fmm_n_a")
 	w("\tmov r8d, r9d")
-	w(".Lssa_mm_n_a:")
+	w(".Lssa_fmm_n_a:")
 	w("\tcmp r8d, r10d")
-	w("\tjle .Lssa_mm_n_b")
+	w("\tjle .Lssa_fmm_n_b")
 	w("\tmov r8d, r10d")
-	w(".Lssa_mm_n_b:")
+	w(".Lssa_fmm_n_b:")
 	w("\ttest r8d, r8d")
-	w("\tjns .Lssa_mm_n_ok")
+	w("\tjns .Lssa_fmm_n_ok")
 	w("\txor r8d, r8d")
-	w(".Lssa_mm_n_ok:")
+	w(".Lssa_fmm_n_ok:")
 	// rsi / rcx become the range bases, r9 the clamped n (also the answer on
 	// equality), r10 the cursor offset.
 	w("\tmov esi, esi")
@@ -3580,68 +3586,68 @@ func emitMismatchHelper(w func(string, ...any)) {
 	// Length dispatch: the sub-16 band never reaches the vector loop, so it
 	// gets its own windows rather than a byte walk.
 	w("\tcmp r9, 16")
-	w("\tjge .Lssa_mm_vec")
+	w("\tjge .Lssa_fmm_vec")
 	w("\tcmp r9, 8")
-	w("\tjge .Lssa_mm_w8")
+	w("\tjge .Lssa_fmm_w8")
 	w("\tcmp r9, 4")
-	w("\tjge .Lssa_mm_w4")
-	w("\tjmp .Lssa_mm_tail")
+	w("\tjge .Lssa_fmm_w4")
+	w("\tjmp .Lssa_fmm_tail")
 	// 8..15 bytes: the leading 8 and the trailing 8, which overlap. rdi and
 	// rdx are dead by here — both were folded into the range bases above.
-	w(".Lssa_mm_w8:")
+	w(".Lssa_fmm_w8:")
 	w("\tmov rax, [rsi]")
 	w("\txor rax, [rcx]")
-	w("\tjnz .Lssa_mm_w8_lead")
+	w("\tjnz .Lssa_fmm_w8_lead")
 	w("\tmov rdi, r9")
 	w("\tsub rdi, 8")
 	w("\tmov rax, [rsi + rdi]")
 	w("\txor rax, [rcx + rdi]")
-	w("\tjz .Lssa_mm_eq")
+	w("\tjz .Lssa_fmm_eq")
 	// The leading window proved [0, 8) equal, so a difference the trailing
 	// window reports cannot land below 8 — its offset is the first one.
 	w("\tbsf rax, rax")
 	w("\tshr rax, 3")
 	w("\tadd rax, rdi")
 	w("\tret")
-	w(".Lssa_mm_w8_lead:")
+	w(".Lssa_fmm_w8_lead:")
 	// bsf finds the lowest set BIT of the xor; >> 3 turns it into the byte,
 	// little-endian, so byte 0 is the low one.
 	w("\tbsf rax, rax")
 	w("\tshr rax, 3")
 	w("\tret")
 	// 4..7 bytes: the same pair of windows, four bytes wide.
-	w(".Lssa_mm_w4:")
+	w(".Lssa_fmm_w4:")
 	w("\tmov eax, [rsi]")
 	w("\txor eax, [rcx]")
-	w("\tjnz .Lssa_mm_w4_lead")
+	w("\tjnz .Lssa_fmm_w4_lead")
 	w("\tmov rdi, r9")
 	w("\tsub rdi, 4")
 	w("\tmov eax, [rsi + rdi]")
 	w("\txor eax, [rcx + rdi]")
-	w("\tjz .Lssa_mm_eq")
+	w("\tjz .Lssa_fmm_eq")
 	w("\tbsf eax, eax")
 	w("\tshr eax, 3")
 	w("\tadd rax, rdi")
 	w("\tret")
-	w(".Lssa_mm_w4_lead:")
+	w(".Lssa_fmm_w4_lead:")
 	w("\tbsf eax, eax")
 	w("\tshr eax, 3")
 	w("\tret")
 	// SSE2 loop: 16 bytes of each operand per iteration.
-	w(".Lssa_mm_vec:")
+	w(".Lssa_fmm_vec:")
 	w("\tmov rax, r9")
 	w("\tsub rax, r10")
 	w("\tcmp rax, 16")
-	w("\tjl .Lssa_mm_tail")
+	w("\tjl .Lssa_fmm_tail")
 	w("\tmovdqu xmm0, [rsi + r10]")
 	w("\tmovdqu xmm1, [rcx + r10]")
 	w("\tpcmpeqb xmm0, xmm1")
 	w("\tpmovmskb eax, xmm0")
 	w("\tcmp eax, 65535")
-	w("\tjne .Lssa_mm_hit16")
+	w("\tjne .Lssa_fmm_hit16")
 	w("\tadd r10, 16")
-	w("\tjmp .Lssa_mm_vec")
-	w(".Lssa_mm_hit16:")
+	w("\tjmp .Lssa_fmm_vec")
+	w(".Lssa_fmm_hit16:")
 	// pmovmskb writes only the low 16 bits, so `not` sets the top half; the
 	// branch above guarantees a clear bit below 16, which is the one bsf
 	// finds first.
@@ -3652,19 +3658,19 @@ func emitMismatchHelper(w func(string, ...any)) {
 	w("\tret")
 	// Scalar remainder: fewer than 16 bytes left after the vector loop, or
 	// fewer than 4 from the dispatch above.
-	w(".Lssa_mm_tail:")
+	w(".Lssa_fmm_tail:")
 	w("\tcmp r10, r9")
-	w("\tjge .Lssa_mm_eq")
+	w("\tjge .Lssa_fmm_eq")
 	w("\tmovzx eax, byte ptr [rsi + r10]")
 	w("\tmovzx r11d, byte ptr [rcx + r10]")
 	w("\tcmp eax, r11d")
-	w("\tjne .Lssa_mm_tail_hit")
+	w("\tjne .Lssa_fmm_tail_hit")
 	w("\tinc r10")
-	w("\tjmp .Lssa_mm_tail")
-	w(".Lssa_mm_tail_hit:")
+	w("\tjmp .Lssa_fmm_tail")
+	w(".Lssa_fmm_tail_hit:")
 	w("\tmov eax, r10d")
 	w("\tret")
-	w(".Lssa_mm_eq:")
+	w(".Lssa_fmm_eq:")
 	w("\tmov eax, r9d")
 	w("\tret")
 }
