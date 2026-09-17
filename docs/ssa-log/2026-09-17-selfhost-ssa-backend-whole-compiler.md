@@ -105,6 +105,30 @@ arm64 folded-aggregate arm stored x0 over the address it had just computed
 into the result's home; and the x86-64 `args` arm of #9570 did not mark the
 need that emits `__fern_args`, found by review.
 
+## x86-64 against arm64, on the compiler compiling itself
+
+Both ISAs at the head of the stack, `-emit asm` over the whole compiler,
+counting emitted instructions:
+
+| | flat | ssa | ssa over flat |
+|---|---|---|---|
+| arm64 | 4,266,714 | 4,603,769 | +8% |
+| x86-64 | 3,211,906 | 4,580,160 | +43% |
+
+The two SSA columns are within 0.5% of each other, and the two flat
+columns are a million apart. That is the finding: the x86-64 stack machine
+is compact because it folds a frame slot into an instruction's memory
+operand, and the x86-64 SSA emitter does not — it loads to a register
+first, the way the arm64 emitter must. The compiler binary follows,
+21.4 MB against flat's 15.0 MB.
+
+Correctness is not in question here: the compiler built for x86-64-linux
+on each backend, run under qemu on a program carrying the slice-then-reuse
+shape, emits byte-identical assembly at 144,505 bytes.
+
+Folding the operand is therefore the x86-64 item, and it is worth more
+there than any arm64 item is worth on arm64.
+
 ## The optimiser on the lifted function, measured
 
 The backend runs `ssa.prune_dead` and nothing else. Calling `ssa.optimize`
