@@ -78,6 +78,7 @@ jobs:
                 "internal/**",
                 "cmd/fern/**",
                 "examples/**",
+                "coreutils/**",
                 ".github/workflows/macos.yml",
                 ".github/workflows/ci-suite.yml",
                 ".github/workflows/ci-main.yml",
