@@ -1427,6 +1427,14 @@ function container(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, s
 function map_op(own r: irlower.LowerResult, ins: ssa.SInst, f: ssasem.Func): irlower.LowerResult {
     if (ins.kind_tag == ssasem.map_new()) { return emit(r, ir.op_map_new(map_key_kind(f.values[ins.result]), "")); }
     if (ins.kind_tag == ssasem.map_len()) { return emit(r, ir.op_map_len()); }
+    // A clear reads nothing from the receiver — this runtime's map box is the
+    // two columns and no capacity beside them, so an empty box of the same key
+    // kind is what clearing produces. The capacity the construction op pops is
+    // a hint every backend discards.
+    if (ins.kind_tag == ssasem.map_cleared()) {
+        r = emit(r, ir.op_const_i32(8));
+        return emit(r, ir.op_map_new(map_key_kind(f.values[ins.result]), ""));
+    }
     var t: typeinfo.Type = f.values[ins.args[0]];
     var kkind: i32 = map_key_kind(t);
     var vkind: i32 = map_value_kind(t);
@@ -1437,9 +1445,22 @@ function map_op(own r: irlower.LowerResult, ins: ssa.SInst, f: ssasem.Func): irl
     }
     if (ins.kind_tag == ssasem.map_has()) { return emit(r, ir.op_map_has(kkind, "")); }
     if (ins.kind_tag == ssasem.map_get()) { return map_get(r, ins, kkind, vkind != 0); }
+    if (ins.kind_tag == ssasem.map_keys()) { return emit(r, ir.op_map_keys(column_flag(ssasem.map_key(t)))); }
+    if (ins.kind_tag == ssasem.map_values()) { return emit(r, ir.op_map_values(column_flag(ssasem.map_value(t)), 0)); }
+    if (ins.kind_tag == ssasem.map_delete()) { return emit(r, ir.op_map_delete(kkind, "")); }
     r = emit(r, ir.op_map_get_or(kkind, "", 0));
     if (vkind == 0) { return r; }
     return emit(r, ir.op_call_direct("__fern_rc_inc", 1));
+}
+
+// The runtime's column-snapshot flag: 2 copies a STRING column with a
+// per-element retain, 0 a column of i32 that holds no references. The raw
+// alias (1) every other element type would take is unreachable — semsource
+// refuses those columns rather than hand the frame elements the map still
+// owns — so the widekind that would go with a wide column is 0 here too.
+function column_flag(elem: typeinfo.Type): i32 {
+    if (ssasem.is_string(elem)) { return 2; }
+    return 0;
 }
 
 // A get answers an Option box of the frame's own whose payload the runtime

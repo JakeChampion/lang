@@ -300,6 +300,92 @@ function seen(words: string[], k: string): i32 {
 }
 function main(): i32 { return seen(["a", "b"], "b") + seen(["a", "b"], "z"); }
 `},
+	// A column snapshot, at both element kinds the contract admits. Nothing
+	// else pins that these PRODUCE: a contract that stopped would drop the
+	// module to the AST lowering, which answers identically, so the corpus and
+	// the leak census would stay green on two AST-lowered runs. The tally
+	// below is what makes this a claim about the semantic path.
+	//
+	// Both arrays are read after the map that owned the column is gone, which
+	// is the property the string column's per-element retain buys: an alias
+	// would be reading freed bytes by then, and the sanitizer leg would say so.
+	{name: "map-column-snapshot", atLeast: 4, src: `
+function str_keys(n: i32): i32 {
+    var ks: string[] = [];
+    {
+        var m: Map[string, i32] = map_new(4);
+        m = m.insert("alpha", 1);
+        m = m.insert("beta", 2);
+        ks = m.keys();
+    }
+    var t: i32 = 0;
+    for k in ks { t = t + k.len(); }
+    return t;
+}
+function str_values(n: i32): i32 {
+    var vs: string[] = [];
+    {
+        var m: Map[i32, string] = map_new(4);
+        m = m.insert(1, "one");
+        vs = m.values();
+    }
+    var t: i32 = 0;
+    for v in vs { t = t + v.len(); }
+    return t;
+}
+function i32_keys(n: i32): i32 {
+    var m: Map[i32, i32] = map_new(4);
+    m = m.insert(7, 1);
+    m = m.insert(9, 2);
+    var t: i32 = 0;
+    for k in m.keys() { t = t + k; }
+    return t + m.len();
+}
+function main(): i32 { return str_keys(0) + str_values(0) + i32_keys(0); }
+`},
+	// `without` hands the map back inside a fresh tuple and `cleared` builds an
+	// empty one without reading the receiver at all. The AST lowering never
+	// releases the delete's tuple, and through it loses the map it holds, so
+	// the leak legs read the produced bodies freeing strictly more.
+	{name: "map-delete-and-clear", atLeast: 4, src: `
+function survivors(n: i32): i32 {
+    var m: Map[i32, i32] = map_new(8);
+    var i: i32 = 0;
+    while (i < n) { m = m.insert(i, i * 10); i = i + 1; }
+    var (m1, gone) = m.without(1);
+    if (!gone) { return 0 - 1; }
+    return m1.len() * 10 + m1.get_or(4, 0);
+}
+function emptied(n: i32): i32 {
+    var m: Map[i32, i32] = map_new(4);
+    m = m.insert(1, 1);
+    m = m.cleared();
+    m = m.insert(7, 3);
+    return m.len();
+}
+function absent(n: i32): i32 {
+    var m: Map[i32, i32] = map_new(4);
+    m = m.insert(5, 50);
+    var (m1, missing) = m.without(99);
+    if (missing) { return 0 - 1; }
+    return m1.get_or(5, 0);
+}
+function main(): i32 { return survivors(5) + emptied(0) + absent(0); }
+`},
+	// Reach rather than agreement: the AST lowering reads the receiver's SLOT
+	// to find a clear's key kind, so it declines a receiver that is not a plain
+	// local. The contract reads the key kind from the result type instead and
+	// never evaluates the receiver for anything else, so a call result works
+	// the way a local does.
+	{name: "map-clear-call-receiver", atLeast: 2, want: "1|", src: `
+function built(n: i32): Map[i32, i32] {
+    var m: Map[i32, i32] = map_new(8);
+    var i: i32 = 0;
+    while (i < n) { m = m.insert(i, i); i = i + 1; }
+    return m;
+}
+function main(): i32 { return built(3).cleared().insert(7, 3).len(); }
+`},
 	// A callee lent a string VIEW can hand that box straight back (#9328).
 	// Both halves are here: `handed(v)` keeps what it is lent, so the produced
 	// caller hands it a copy of the bytes, and `laundered` hands the result

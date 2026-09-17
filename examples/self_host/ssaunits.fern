@@ -265,7 +265,8 @@ function contract_error(f: ssasem.Func, modes: i32[]): string {
 // cell hands out a unit of the element rather than borrowing the slot.
 function construction(kind: i32): boolean {
     return kind == ssasem.array_new() || kind == ssasem.tuple_new() || kind == ssasem.record_new() || kind == ssasem.variant_new()
-        || kind == ssasem.closure_new() || kind == ssasem.cell_new() || kind == ssasem.map_new();
+        || kind == ssasem.closure_new() || kind == ssasem.cell_new() || kind == ssasem.map_new()
+        || kind == ssasem.map_cleared();
 }
 // The operand types a construction takes a unit of: every reference but a
 // function value, which it borrows.
@@ -275,13 +276,16 @@ function fresh_unit(kind: i32): boolean {
     return kind == 8 || kind == 5 || kind == 9 || construction(kind) || hands_out(kind);
 }
 // The operations whose result is a unit handed to this function: a call's
-// result, a rebuilt container, a view's box, a cell's element and a map read,
+// result, a rebuilt container, a view's box, a cell's element, a map read,
 // which retains what it answers because the value may come from the column or
-// from the caller's default.
+// from the caller's default, a column snapshot, which semsource admits only
+// where the runtime hands back a copy the frame owns whole, and a delete,
+// whose tuple is fresh and holds the map the receiver handed over.
 function hands_out(kind: i32): boolean {
     return kind == ssasem.call() || kind == ssasem.call_value() || kind == ssasem.closure_new()
         || kind == ssasem.append() || kind == ssasem.with() || kind == ssasem.slice() || kind == ssasem.cell_get()
-        || kind == ssasem.map_insert() || kind == ssasem.map_get_or() || kind == ssasem.map_get();
+        || kind == ssasem.map_insert() || kind == ssasem.map_get_or() || kind == ssasem.map_get()
+        || kind == ssasem.map_keys() || kind == ssasem.map_values() || kind == ssasem.map_delete();
 }
 function owned_values(f: ssasem.Func, modes: i32[]): boolean[] {
     var out: boolean[] = bits(f.graph.nvals);
@@ -316,7 +320,9 @@ function add_use(own live: boolean[], value: i32, deps: i32[][]): boolean[] {
 // a cell write takes one for the element it stores and reads the cell. A map
 // insert takes one for the receiver it hands back and one for the key its
 // column holds until the map is released, and one for the value when that
-// column is counted too.
+// column is counted too. A delete takes one for the receiver it hands back
+// inside its tuple and only COMPARES the key, whose unit stays with the
+// caller.
 function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
     var out: Supply[] = [];
     var counted: boolean[] = [];
@@ -328,6 +334,8 @@ function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
         counted = [false, ssasem.reference(f.values[ins.args[1]])];
     } else if (ins.kind_tag == ssasem.map_insert()) {
         counted = [true, ssasem.reference(f.values[ins.args[1]]), ssasem.reference(f.values[ins.args[2]])];
+    } else if (ins.kind_tag == ssasem.map_delete()) {
+        counted = [true, false];
     } else if (ins.kind_tag == ssasem.append()) {
         counted = [true, ssasem.reference(f.values[ins.args[1]])];
     } else if (ins.kind_tag == ssasem.with()) {

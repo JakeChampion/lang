@@ -71,6 +71,19 @@ pub function map_has(): i32 { return 0 - 27; }
 pub function map_get_or(): i32 { return 0 - 28; }
 pub function map_len(): i32 { return 0 - 29; }
 pub function map_get(): i32 { return 0 - 30; }
+// A COLUMN SNAPSHOT: `keys` answers the key column as an array, `values` the
+// value column. The array is fresh, but whether it OWNS its elements is the
+// column's business — the runtime copies a string column with a per-element
+// retain, an i32 column holds no references at all, and every other element
+// type is handed back as a raw ALIAS of the map's own elements. semsource
+// admits only the first two, so a result of these is owned whole.
+pub function map_keys(): i32 { return 0 - 31; }
+pub function map_values(): i32 { return 0 - 32; }
+// `without` removes one entry and answers the map paired with whether the key
+// was there; `cleared` answers a fresh empty map of the same shape, reading
+// nothing from the receiver.
+pub function map_delete(): i32 { return 0 - 33; }
+pub function map_cleared(): i32 { return 0 - 34; }
 
 function failed(why: string): Analysis {
     return Analysis { ok: false, why: why, dependencies: [], flow: ssalive.Flow { ok: false, why: why, live_in: [], live_out: [] } };
@@ -83,7 +96,7 @@ function empty_dependencies(n: i32): i32[][] {
     return out;
 }
 
-function is_i32(t: typeinfo.Type): boolean {
+pub function is_i32(t: typeinfo.Type): boolean {
     if let typeinfo.TypeI32(i) = t { return i.width == 32 && !i.unsigned && !i.is_char; }
     return false;
 }
@@ -688,7 +701,8 @@ function is_builtin_op(kind: i32): boolean {
 pub function is_cell_op(kind: i32): boolean { return kind == cell_new() || kind == cell_get() || kind == cell_set(); }
 
 pub function is_map_op(kind: i32): boolean {
-    return kind == map_new() || kind == map_insert() || kind == map_has() || kind == map_get_or() || kind == map_len() || kind == map_get();
+    return kind == map_new() || kind == map_insert() || kind == map_has() || kind == map_get_or() || kind == map_len() || kind == map_get()
+        || kind == map_keys() || kind == map_values() || kind == map_delete() || kind == map_cleared();
 }
 
 function builtin_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
@@ -748,7 +762,55 @@ function map_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.kind_tag == map_has()) { return map_has_error(ins, f, result); }
     if (ins.kind_tag == map_len()) { return map_len_error(ins, f, result); }
     if (ins.kind_tag == map_get()) { return map_get_error(ins, f, result); }
+    if (ins.kind_tag == map_keys()) { return map_column_error(ins, f, result, true); }
+    if (ins.kind_tag == map_values()) { return map_column_error(ins, f, result, false); }
+    if (ins.kind_tag == map_delete()) { return map_delete_error(ins, f, result); }
+    if (ins.kind_tag == map_cleared()) { return map_cleared_error(ins, f, result); }
     return map_get_or_error(ins, f, result);
+}
+
+// A delete borrows the key to find the entry and hands the map back inside a
+// tuple with whether it was there. The runtime removes the entry by moving the
+// last one into the hole and shrinking both columns; it never releases what it
+// removed, so a column the map owns a unit of per entry would be orphaned by
+// the removal. Only the columns a map releases by freeing the buffer alone are
+// admitted.
+function map_delete_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 2) { return "map delete arity"; }
+    var m: typeinfo.Type = f.values[ins.args[0]];
+    if (!is_supported_map(m)) { return "map delete type"; }
+    if (!narrow_map_value(map_key(m)) || !narrow_map_value(map_value(m))) { return "map delete column"; }
+    if (!semtypes.equal(delete_result(m), result)) { return "map delete result"; }
+    return map_operand_error(m, f.values[ins.args[1]], map_value(m));
+}
+
+pub function delete_result(m: typeinfo.Type): typeinfo.Type {
+    return typeinfo.TypeTuple { elements: [m, typeinfo.TypeBool { tag: 0 }] };
+}
+
+// A clear is a CONSTRUCTION: this runtime's map box is the two columns with no
+// capacity beside them, so an empty box of the same shape is what clearing
+// produces. It reads nothing from the receiver, which keeps its own unit and
+// is released wherever its last use falls.
+function map_cleared_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 0) { return "map cleared arity"; }
+    if (!is_supported_map(result)) { return "map cleared type"; }
+    return "";
+}
+
+// A column snapshot borrows the map and answers an array of that column's
+// element type. Only a string column (copied with a per-element retain) and an
+// i32 column (which holds no references) are admitted: every other element
+// type comes back aliasing the map's own, which no result type here can say.
+function map_column_error(ins: ssa.SInst, f: Func, result: typeinfo.Type, keys: boolean): string {
+    if (ins.args.len() != 1) { return "map column arity"; }
+    var m: typeinfo.Type = f.values[ins.args[0]];
+    if (!is_supported_map(m)) { return "map column type"; }
+    var elem: typeinfo.Type = map_value(m);
+    if (keys) { elem = map_key(m); }
+    if (!is_string(elem) && !is_i32(elem)) { return "map column element"; }
+    if (!semtypes.equal(typeinfo.TypeArray { elem: elem }, result)) { return "map column result"; }
+    return "";
 }
 
 // A get answers an Option of the value column in a box of its own, which
