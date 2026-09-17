@@ -113,10 +113,18 @@ varying the line *widths*:
 
 Constant when the sizes are uniform, growing when they vary. A retained buffer
 does not behave that way; an accounting error does. `arm64ssa` derives
-`live_bytes` from the arena cursor less what `__free` tallied, and `__free`
-tallies the size class it pushed the block onto — `emitFreelistClass` rewrites
-`x1` before `emitLcAdd` reads it — rather than what the bump site charged. The
-two agree only when every block already sits on a class boundary.
+`live_bytes` from the arena cursor less what `__free` tallied, and something
+breaks that identity once sizes vary.
+
+I then published a mechanism for it — `__free` tallying the size class rather
+than what the bump site charged — and that is wrong too. `emitFreelistClass`
+only does class rounding above 2048 bytes; below it, it rounds to exactly 16,
+which is what the bump side uses. Every block in the measurement is under ~210
+bytes. Third wrong reading in one round, and this time refuted by reading the
+code rather than by a measurement, which it would have been at any point.
+
+So #9558 records the behaviour and says outright that the mechanism is not
+identified.
 
 Peak RSS agrees with the census being at fault: 64–136 KB between the two
 emitters on `coreutils/uniq.fern`, the same at 1,000 lines and 8,000, against
@@ -151,6 +159,14 @@ The instrument itself was the third trap: `FERN_LEAKCHECK` is read by the
 COMPILER at build time, so the first measurements set it on the produced binary
 and reported nothing at all. Having got a number out of it, I then trusted the
 number for two rounds without asking what it was computed from.
+
+And then a fourth time, in the same round: having disproved two readings, I
+published a mechanism for the census drift without checking it against
+`emitFreelistClass`, which refutes it in twenty lines. The failure is not
+impatience with measurement — every step here was measured — it is reaching for
+the first mechanism consistent with the numbers and writing it down as the
+finding. An issue is allowed to say "the mechanism is not identified"; that is
+more useful than a confident wrong one, because a wrong one gets built on.
 
 `FERN_LEAKCHECK` cost a round too: it is read by the **compiler** at build
 time, so the first measurements set it on the produced binary and reported
