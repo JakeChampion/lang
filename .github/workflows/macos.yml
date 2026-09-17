@@ -107,7 +107,20 @@ jobs:
           curl -fsSLO "https://ftp.gnu.org/gnu/coreutils/coreutils-$ver.tar.xz"
           tar xf "coreutils-$ver.tar.xz"
           cd "coreutils-$ver"
-          FORCE_UNSAFE_CONFIGURE=1 ./configure --quiet --disable-nls \
+          # ac_cv_header_stdckdint_h=no is not a workaround for the build,
+          # it is what makes this build match the Linux one. 9.4's
+          # lib/posixtm.c calls `ckd_add (&t, t, leapsec)` with a `bool`
+          # third argument, and C23's checked-integer builtins refuse a bool
+          # operand: "operand argument to checked integer operation must be
+          # an integer type other than plain 'char', 'bool', ...". glibc
+          # ships no <stdckdint.h>, so the Linux lane silently substitutes
+          # gnulib's own, whose `ckd_add` is `(bool) _GL_INT_ADD_WRAPV(...)`
+          # and takes a bool happily. Xcode's clang DOES ship the header, so
+          # without this the macOS build defers to it and stops on that one
+          # line. Forcing the substitution gives both oracles the same
+          # checked-arithmetic header rather than patching either one.
+          FORCE_UNSAFE_CONFIGURE=1 ac_cv_header_stdckdint_h=no \
+            ./configure --quiet --disable-nls \
             --without-selinux --prefix="$HOME/gnu-coreutils"
           make -j"$(sysctl -n hw.ncpu)"
           make install
