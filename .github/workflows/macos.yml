@@ -125,13 +125,20 @@ jobs:
             --without-selinux --prefix="$HOME/gnu-coreutils"
           make -j"$(sysctl -n hw.ncpu)"
           make install
-          # `arch` is in coreutils' no_install__progs list, so `make install`
-          # places every other program and never this one, and no configure
-          # flag changes that. Debian installs its own copy, which is the only
-          # reason the Linux corpora find an oracle in /usr/bin; here
-          # /usr/bin/arch is Apple's arch(1), a different program that runs a
-          # command under a named architecture. Copy the built one across or
-          # the arch corpus has nothing to compare against.
+          # `arch` is in coreutils' no_install__progs list, which makes it an
+          # automake EXTRA_PROGRAM: `make` does not build it and `make
+          # install` does not place it, and no configure flag changes either.
+          # Debian ships its own copy, which is the only reason the Linux
+          # corpora find an oracle in /usr/bin; here /usr/bin/arch is Apple's
+          # arch(1), a different program that runs a command under a named
+          # architecture, and the harness's version probe rejects it. So name
+          # the target and copy the result.
+          #
+          # Naming a target is what the Linux lane's comment warns against —
+          # it skips the gnulib header generation and dies on a missing
+          # stdckdint.h — but that is a warning about building a target in a
+          # tree where `make` has not run. Here it has, two lines up.
+          make src/arch
           cp src/arch "$HOME/gnu-coreutils/bin/arch"
           cd /
           rm -rf "$work"
