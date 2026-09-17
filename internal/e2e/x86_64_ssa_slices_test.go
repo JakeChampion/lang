@@ -1,8 +1,11 @@
 package e2e
 
 import (
+	"bytes"
+	"fmt"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -82,12 +85,11 @@ func TestX86_64SSASlices(t *testing.T) {
 					if cmd.ProcessState == nil || cmd.ProcessState.ExitCode() != tc.want {
 						t.Fatalf("run: %v, state=%v, output=%q; want exit %d", err, cmd.ProcessState, out, tc.want)
 					}
-					if len(out) != 0 {
-						t.Fatalf("unexpected SSA output: %q", out)
+					if err := checkTrapOutput(out, tc.want); err != nil {
+						t.Fatalf("SSA %v", err)
 					}
-					// Pin the same values and trap status against the shipping
-					// backend. Its bounds diagnostic is intentionally richer than
-					// the current SSA helper's status-only trap.
+					// Pin the same values, trap status and diagnostic against the
+					// shipping backend.
 					baseBin := bin + "-default"
 					baseArgs := []string{"-target", "x86-64-linux", "-o", baseBin}
 					if release {
@@ -98,11 +100,44 @@ func TestX86_64SSASlices(t *testing.T) {
 					}
 					base := runX86Bin(qemu, baseBin)
 					baseOut, err := base.CombinedOutput()
-					if base.ProcessState == nil || base.ProcessState.ExitCode() != tc.want || (tc.want != 134 && len(baseOut) != 0) {
+					if base.ProcessState == nil || base.ProcessState.ExitCode() != tc.want {
 						t.Fatalf("default run: %v, state=%v, output=%q; want exit %d", err, base.ProcessState, baseOut, tc.want)
+					}
+					if err := checkTrapOutput(baseOut, tc.want); err != nil {
+						t.Fatalf("default %v", err)
+					}
+					// The two emitters must name the same cause. Only the first
+					// line: the default one follows its message with a backtrace,
+					// which no SSA emitter produces yet.
+					if firstLine(out) != firstLine(baseOut) {
+						t.Errorf("the two emitters name the trap differently:\n  ssa:     %q\n  default: %q", firstLine(out), firstLine(baseOut))
 					}
 				})
 			}
 		})
 	}
+}
+
+// checkTrapOutput holds each leg to what the exit code says it did: a trap
+// names its cause on stderr (#5538), and a program that returns normally
+// writes nothing at all.
+func checkTrapOutput(out []byte, wantExit int) error {
+	if wantExit != 134 {
+		if len(out) != 0 {
+			return fmt.Errorf("run wrote %q on a program that returns normally", out)
+		}
+		return nil
+	}
+	if !strings.HasPrefix(string(out), "fern: ") {
+		return fmt.Errorf("trap wrote %q, which does not name its cause", out)
+	}
+	return nil
+}
+
+// firstLine is the diagnostic without whatever a backend appends after it.
+func firstLine(b []byte) string {
+	if i := bytes.IndexByte(b, '\n'); i >= 0 {
+		return string(b[:i])
+	}
+	return string(b)
 }
