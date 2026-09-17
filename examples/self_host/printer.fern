@@ -693,7 +693,8 @@ function print_expr_prec(e: ast.Expr, parent_prec: i32, depth: i32): string {
             }
             return out + " }";
         },
-        ast.ExprUnknown(u) => { return "/*unknown:" + u.kind + "*/"; }
+        ast.ExprUnknown(u) => { return "/*unknown:" + u.kind + "*/"; },
+        ast.ExprZero(z) => { return "/*zero:" + z.type_name + "*/"; }
     }
     return "/*unhandled-expr*/";
 }

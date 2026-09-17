@@ -192,11 +192,19 @@ pub struct ExprMapLit { keys: Expr[], vals: Expr[], line: i32, col: i32 }
 // print_expr — which is what native does, so the two agree on its spelling.
 pub struct ExprFString { lits: string[], exprs: Expr[], is_expr: boolean[], line: i32, col: i32 }
 
+// ExprZero is the value a compiler-synthesized declaration starts at: the zero
+// of `type_name`, which no source spells — a reference type's is the null word,
+// so it allocates nothing and its release is the null-guarded no-op every drop
+// helper already carries. The defer desugar's binding lift writes one when it
+// moves a declaration to the top of its scope; the slot is dead until the
+// assignment left behind at the declaration site runs.
+pub struct ExprZero { type_name: string, line: i32, col: i32 }
+
 pub type Expr = ExprNumber | ExprIdent | ExprString | ExprBool
               | ExprBinary | ExprUnary | ExprCall
               | ExprArray | ExprTuple | ExprIndex | ExprSlice
               | ExprStructLit | ExprFieldAccess | ExprLambda
-              | ExprMapLit | ExprFString | ExprUnknown;
+              | ExprMapLit | ExprFString | ExprUnknown | ExprZero;
 
 // expr_line / expr_col are the 1-based source position an expression node
 // carries, or 0 for the three that carry none (ExprBool, ExprIndex,
@@ -242,7 +250,8 @@ pub function expr_line(e: Expr): i32 {
         ExprLambda(lm) => { return lm.line; },
         ExprMapLit(ml) => { return ml.line; },
         ExprFString(fs) => { return fs.line; },
-        ExprUnknown(uk) => { return uk.line; }
+        ExprUnknown(uk) => { return uk.line; },
+        ExprZero(z) => { return z.line; }
     }
     return 0;
 }
@@ -265,7 +274,8 @@ pub function expr_col(e: Expr): i32 {
         ExprLambda(lm) => { return lm.col; },
         ExprMapLit(ml) => { return ml.col; },
         ExprFString(fs) => { return fs.col; },
-        ExprUnknown(uk) => { return uk.col; }
+        ExprUnknown(uk) => { return uk.col; },
+        ExprZero(z) => { return z.col; }
     }
     return 0;
 }

@@ -14352,27 +14352,21 @@ function dl_is_array_type(t: string): boolean {
     return t.len() > 2 && slice_unchecked(t, t.len() - 2, t.len()) == "[]";
 }
 
-// An annotation the lifted declaration can start at. A struct, an enum, a
-// tuple, a cell and a function have no such value, and a declaration at one is
-// left where it is — the function keeps the shape it had.
+// Every annotation can be lifted: ExprZero names the type and reaches each
+// engine as the constant zero of it, so a struct, an enum, a tuple and a cell
+// lift like a scalar. A declaration with NO annotation still cannot — the
+// desugar runs before the checker and has nothing to name.
 function dl_zeroable(t: string): boolean {
-    if (t.len() == 0 || is_destr_marker(t)) { return false; }
-    if (dl_is_array_type(t)) { return true; }
-    if (t == "string" || t == "boolean" || t == "bool" || t == "f64" || t == "f32") { return true; }
-    return t == "i8" || t == "i16" || t == "i32" || t == "i64"
-        || t == "u8" || t == "u16" || t == "u32" || t == "u64";
+    return t.len() > 0 && !is_destr_marker(t);
 }
 
 // The value a lifted declaration starts at. Nothing reads the slot before the
 // assignment left at the declaration site: a replay whose block never ran is
-// behind a flag that never armed.
+// behind a flag that never armed. A reference type's zero is the null word, so
+// the lift costs a slot and not a box — the `[]` and `""` this used to write
+// allocated one per call of the function that declared the binding.
 function dl_zero_of(t: string): ast.Expr {
-    if (t == "string") { return e_string(""); }
-    if (t == "boolean" || t == "bool") { return e_bool(false); }
-    if (t == "f64") { return e_number("0", "", true); }
-    if (t == "f32") { return ast.ExprUnary { op: "as_f32", operand: e_number("0", "", true), line: 0, col: 0, ty: "f32" }; }
-    if (dl_is_array_type(t)) { var empty: ast.Expr[] = []; return e_array(empty); }
-    return e_number("0", "", false);
+    return ast.ExprZero { type_name: t, line: 0, col: 0 };
 }
 
 function dl_add_name(own acc: string[], name: string): string[] {
@@ -14515,8 +14509,24 @@ function dl_hoist_expr(e: ast.Expr, want: string[]): DeferHoistExpr {
 // of the wrong type — which the AST lowering, whose frame slots carry no type,
 // never noticed.
 function dl_defret_decl(ret: string): ast.Stmt {
-    if (dl_zeroable(ret)) { return s_var("__defret", ret, dl_zero_of(ret)); }
+    if (dl_defret_zeroable(ret)) { return s_var("__defret", ret, dl_zero_of(ret)); }
     return s_var("__defret", "", e_number("0", "", false));
+}
+
+// The return temp is NOT every annotation the lift takes. It holds the value a
+// `return` hands back, so the binding it was assigned from stays live beside it
+// and the two name one value — an aliasing the lift never creates, since a
+// lifted slot is written before anything else reads it. At a RECORD return that
+// pairing miscompiles today (a struct-returning function with a defer segfaults
+// on this path where the AST lowering answers), so the temp keeps the types
+// whose release this boundary already gets right, and a record return stays on
+// the AST lowering as it did before ExprZero existed (#9575).
+function dl_defret_zeroable(ret: string): boolean {
+    if (!dl_zeroable(ret)) { return false; }
+    if (dl_is_array_type(ret)) { return true; }
+    return ret == "string" || ret == "boolean" || ret == "bool" || ret == "f64" || ret == "f32"
+        || ret == "i8" || ret == "i16" || ret == "i32" || ret == "i64"
+        || ret == "u8" || ret == "u16" || ret == "u32" || ret == "u64";
 }
 
 function dl_param_names(params: ast.ParamDecl[]): string[] {
@@ -15701,7 +15711,8 @@ pub function default_nonconst_reason(e: ast.Expr): (string, boolean) {
         // rule the author did not break. Native agrees by a different route —
         // its bad float stays a FloatLit, which nonConstReason counts as
         // constant.
-        ast.ExprUnknown(uk) => { return ("", false); }
+        ast.ExprUnknown(uk) => { return ("", false); },
+        ast.ExprZero(_) => { return ("", false); }
     }
     return ("is not a constant expression", true);
 }
