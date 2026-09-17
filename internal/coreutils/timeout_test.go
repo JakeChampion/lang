@@ -141,7 +141,9 @@ func timeoutCases(t *testing.T) []invocation {
 	add(invocation{name: "the last signal wins", args: []string{"-v", "-s", "KILL", "-s", "TERM", "0.05", sleepBin, "30"}})
 	add(invocation{name: "the long signal spelling", args: []string{"-v", "--signal=TERM", "0.05", sleepBin, "30"}})
 	add(invocation{name: "the signal glued to the letter", args: []string{"-v", "-sTERM", "0.05", sleepBin, "30"}})
-	for _, s := range []string{"BOGUS", "99999", "32", "33", "65", "", " TERM", "TERM ", "0x0", "+0", "-1", "int "} {
+	// LOST and UNUSED are kernel-UAPI names glibc never defines, so GNU
+	// refuses them; the shared table accepted them until #9643.
+	for _, s := range []string{"BOGUS", "99999", "32", "33", "65", "", " TERM", "TERM ", "0x0", "+0", "-1", "int ", "LOST", "UNUSED"} {
 		add(invocation{name: "bad signal " + s, args: []string{"-s", s, "1", trueBin}})
 	}
 	add(invocation{name: "zero is a signal", args: []string{"-s", "0", "5", trueBin}})
