@@ -67,17 +67,6 @@ func TestFipRejectsAllocation(t *testing.T) {
 	wantE053(t, "array literal", `fip function f(): i32[] { return [1, 2, 3]; }
 function main(): i32 { return 0; }`)
 
-	wantE053(t, "struct literal", `struct P { x: i32, y: i32 }
-fip function f(): P { return P { x: 1, y: 2 }; }
-function main(): i32 { return 0; }`)
-
-	wantE053(t, "tuple literal", `fip function f(): (i32, i32) { return (1, 2); }
-function main(): i32 { return 0; }`)
-
-	wantE053(t, "enum construction", `enum L { C(i32, L), N }
-fip function f(t: L): L { return C(1, t); }
-function main(): i32 { return 0; }`)
-
 	wantE053(t, "string concat", `fip function f(a: string, b: string): string { return a + b; }
 function main(): i32 { return 0; }`)
 
@@ -89,6 +78,39 @@ function main(): i32 { return 0; }`)
 	// is not allocation-free — only `.with` on an `own` receiver is accepted.
 	wantE053(t, "with on non-own array", `fip function f(arr: i32[]): i32[] { return arr.with(0, 9); }
 function main(): i32 { return 0; }`)
+}
+
+// A constructor in a bare `fip` body is no longer an E053 SHAPE violation
+// (#9602). The checker cannot tell a rebuild that reuses a dead donor's box
+// from one that allocates a fresh box, so it admits the shape and the IR layer
+// decides: verifyFipAllocs counts the sites that lowered to a real OpAlloc and
+// refuses the function with E068 when they exceed the allowance, which for a
+// bare `fip` is zero. internal/ir/fip_verify_test.go owns that half.
+//
+// Rejecting the shape here left `fip` unable to carry struct state at all: a
+// field write is E048, whose message names the rebuild `T { ...old, f: v }` as
+// the remedy, and that rebuild was E053 — each diagnostic pointing at what the
+// other forbade.
+func TestFipAcceptsConstructorShape(t *testing.T) {
+	for _, tc := range []struct{ name, src string }{
+		{"struct rebuild from own", `struct P { x: i32, y: i32 }
+fip function f(own p: P): P { return P { ...p, x: p.x + 1 }; }
+function main(): i32 { return 0; }`},
+		{"fresh struct literal", `struct P { x: i32, y: i32 }
+fip function f(): P { return P { x: 1, y: 2 }; }
+function main(): i32 { return 0; }`},
+		{"tuple literal", `fip function f(): (i32, i32) { return (1, 2); }
+function main(): i32 { return 0; }`},
+		{"enum construction", `enum L { C(i32, L), N }
+fip function f(t: L): L { return C(1, t); }
+function main(): i32 { return 0; }`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := checkSource(t, tc.src); err != nil {
+				t.Errorf("expected no E053 for a constructor shape, got: %v", err)
+			}
+		})
+	}
 }
 
 // wantFbipE053 is wantE053's fbip sibling: the violation must be reported
@@ -173,8 +195,4 @@ fbip function g(a: i32): P { return P { x: a }; }
 fip function f(a: i32): i32 { var p: P = g(a); return p.x; }
 function main(): i32 { return 0; }`)
 
-	// … and bare fip(0) still rejects constructors at the checker.
-	wantE053(t, "bare fip struct literal still rejected", `struct P { x: i32 }
-fip function f(a: i32): P { return P { x: a } ; }
-function main(): i32 { return 0; }`)
 }

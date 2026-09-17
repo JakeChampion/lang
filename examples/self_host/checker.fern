@@ -12954,12 +12954,12 @@ function e053_stringish(e: ast.Expr, cur: Scope): boolean {
   }
 }
 
-// E053Ctx is the per-function context the walk carries. `ctor_ok` is the
-// relaxation the IR's allocation budget pays for: a `fbip` function, and a
-// graded `fip(n)` / `fbip(n)`, may write constructor expressions because
-// irfipverify's E068 checks each emitted site is reuse-paired or inside the
-// allowance. The checker never counts n — the count is the IR's.
-struct E053Ctx { fname: string, kw: string, ctor_ok: boolean, callable: string[], variants: string[], own: string[] }
+// E053Ctx is the per-function context the walk carries. Constructor
+// expressions are admitted in EVERY tier, `fip` included (#9602): the checker
+// cannot tell a rebuild that reuses a dead donor's box from one that allocates
+// a fresh box, so irfipverify's E068 owns the verdict — each emitted site must
+// be reuse-paired or inside the allowance, which for a bare `fip` is zero.
+struct E053Ctx { fname: string, kw: string, callable: string[], variants: string[], own: string[] }
 
 // e053_at_node flags, at ONE expression node, the constructs a `fip` / `fbip`
 // function may not contain: array / tuple / struct literals and payload-carrying
@@ -12983,18 +12983,8 @@ function e053_at_node(n: ast.Expr, fx: E053Ctx, cur: Scope, own out: util.Diag[]
     ast.ExprArray(a) => {
       return out.append(dg_at("E053", "`" + fx.kw + "` function \"" + fx.fname + "\" may not allocate (array literal)", a.line, a.col));
     },
-    ast.ExprTuple(t) => {
-      if (!fx.ctor_ok) {
-        return out.append(dg_at("E053", "`" + fx.kw + "` function \"" + fx.fname + "\" may not allocate (tuple literal)", t.line, t.col));
-      }
-      return out;
-    },
-    ast.ExprStructLit(sl) => {
-      if (!fx.ctor_ok) {
-        return out.append(dg_at("E053", "`" + fx.kw + "` function \"" + fx.fname + "\" may not allocate (struct literal \"" + sl.type_name + "\")", sl.line, sl.col));
-      }
-      return out;
-    },
+    ast.ExprTuple(_) => { return out; },
+    ast.ExprStructLit(_) => { return out; },
     ast.ExprBinary(b) => {
       if (b.op == "+" && (e053_stringish(b.left, cur) || e053_stringish(b.right, cur))) {
         return out.append(dg_at("E053", "`" + fx.kw + "` function \"" + fx.fname + "\" may not allocate (string concatenation)", b.line, b.col));
@@ -13035,9 +13025,6 @@ function e053_at_node(n: ast.Expr, fx: E053Ctx, cur: Scope, own out: util.Diag[]
             }
           }
           if (is_variant) {
-            if (c.args.len() > 0 && !fx.ctor_ok) {
-              return out.append(dg_at("E053", "`" + fx.kw + "` function \"" + fx.fname + "\" may not allocate (enum variant construction)", c.line, c.col));
-            }
             return out;
           }
           // `fip` is the stronger claim and may only rely on other `fip`
@@ -13152,7 +13139,7 @@ function e053_diags(efn: parser.FuncDecl, fips: string[], fbips: string[], varia
       callable = callable.append(fbip);
     }
   }
-  var fx: E053Ctx = E053Ctx { fname: efn.name, kw: kw, ctor_ok: efn.fbip || efn.fip_allowance > 0, callable: callable, variants: variants, own: own };
+  var fx: E053Ctx = E053Ctx { fname: efn.name, kw: kw, callable: callable, variants: variants, own: own };
   return e053_stmts(efn.body, fx, s);
 }
 

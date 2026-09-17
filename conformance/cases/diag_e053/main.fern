@@ -17,6 +17,14 @@ fip function double_first(own xs: i32[]): i32[] {
     return xs.with(0, xs[0] * 2);
 }
 
+// OK: the rebuild reuses the box `s` is handed in, so `fip` allocates
+// nothing. A field write here would be E048, whose remedy is this line —
+// and rejecting the rebuild left the two diagnostics naming each other.
+struct State { count: i32 }
+fip function bump(own s: State): State {
+    return State { ...s, count: s.count + 1 };
+}
+
 // OK as fbip: the consuming match hands each Cons box straight to the
 // arm's rebuilt Cons — on unique input the function allocates nothing.
 enum List { Cons(i32, List), Nil }

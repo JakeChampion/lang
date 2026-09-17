@@ -201,3 +201,53 @@ function main(): i32 { return 0; }`)
 		}
 	}
 }
+
+// A bare `fip` carries struct state through a reuse-paired rebuild (#9602).
+//
+// This is the `fip iteration(own state) -> state` shape, and it was not
+// expressible at all before: the field write `s.count = …` is E048, whose
+// message names `T { ...old, f: v }` as the remedy, and that rebuild was E053.
+// Each diagnostic forbade what the other advised, so a `fip` data plane could
+// own exactly one array and had to pack real state into it by hand.
+//
+// The checker now admits the SHAPE for every tier and this layer decides, so
+// these two cases are the whole of the new rule: a paired rebuild verifies
+// clean, and an un-paired construction is refused by name and position with
+// the allowance of 0 that bare `fip` means.
+func TestFipVerifyPairedStructRebuild(t *testing.T) {
+	wantLowerOK(t, "fip rebuild from own param", `struct State { count: i32, total: i64 }
+fip function bump(own s: State): State {
+    return State { ...s, count: s.count + 1, total: s.total + (2 as i64) };
+}
+function main(): i32 { var s: State = bump(State { count: 0, total: 0 as i64 }); return s.count; }`)
+
+	wantLowerOK(t, "fip self-overwrite", `struct P { x: i32, y: i32 }
+fip function bump(own p: P): P {
+    p = P { x: p.x + 1, y: p.y };
+    return p;
+}
+function main(): i32 { var q: P = bump(P { x: 1, y: 2 }); return q.x; }`)
+}
+
+// The other half: `fip` did not become `fbip`. A construction with no donor to
+// reuse is a real fresh allocation, and the allowance of 0 refuses it here —
+// where the checker, which cannot tell the two apart, no longer does.
+func TestFipVerifyUnpairedConstructionRejected(t *testing.T) {
+	wantE068(t, "fip fresh struct literal", `struct State { count: i32, total: i64 }
+fip function make(n: i32): State {
+    return State { count: n, total: 0 as i64 };
+}
+function main(): i32 { return make(3).count; }`)
+
+	wantE068(t, "fip fresh tuple literal", `fip function pair(a: i32): (i32, i32) {
+    return (a, a + 1);
+}
+function main(): i32 { var t: (i32, i32) = pair(1); return t.0; }`)
+
+	// Grading the claim is the remedy the diagnostic names, and it works.
+	wantLowerOK(t, "graded fip(1) admits the fresh site", `struct State { count: i32, total: i64 }
+fip(1) function make(n: i32): State {
+    return State { count: n, total: 0 as i64 };
+}
+function main(): i32 { return make(3).count; }`)
+}
