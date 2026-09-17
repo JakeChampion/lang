@@ -20,7 +20,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 )
 
@@ -282,9 +281,7 @@ func sttyDeviceCases(t *testing.T) []invocation {
 	if err := os.Symlink("/nonexistent", filepath.Join(dir, "dangling")); err != nil {
 		t.Fatal(err)
 	}
-	if err := syscall.Mkfifo(filepath.Join(dir, "fifo"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	seedFifo(t, filepath.Join(dir, "fifo"))
 
 	args := [][]string{
 		{"-F", "/dev/null"}, {"-F", "/dev/null", "-a"}, {"-F", "/dev/null", "-g"},

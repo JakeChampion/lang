@@ -177,9 +177,7 @@ func chmodOdd(t *testing.T, dir string) {
 func chmodKinds(t *testing.T, dir string) {
 	t.Helper()
 	chmodFile(t, dir, "f", 0o644)
-	if err := syscall.Mkfifo(filepath.Join(dir, "pipe"), 0o644); err != nil {
-		t.Fatalf("mkfifo: %v", err)
-	}
+	seedFifo(t, filepath.Join(dir, "pipe"))
 	if err := os.Link(filepath.Join(dir, "f"), filepath.Join(dir, "hard")); err != nil {
 		t.Fatalf("link: %v", err)
 	}

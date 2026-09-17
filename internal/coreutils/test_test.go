@@ -79,9 +79,7 @@ func condFixtures(t *testing.T) condTree {
 		t.Fatalf("chmod sticky dir: %v", err)
 	}
 	c.fifo = filepath.Join(dir, "fifo")
-	if err := syscall.Mkfifo(c.fifo, 0o644); err != nil {
-		t.Fatalf("mkfifo: %v", err)
-	}
+	seedFifo(t, c.fifo)
 	c.sock = filepath.Join(dir, "sock")
 	ln, err := net.Listen("unix", c.sock)
 	if err != nil {

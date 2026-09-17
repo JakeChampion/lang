@@ -227,13 +227,6 @@ func cpGroup(t *testing.T, dir string) {
 	seedMkdir(t, dir, "d2")
 }
 
-func seedFifo(t *testing.T, path string) {
-	t.Helper()
-	if err := syscall.Mkfifo(path, 0o644); err != nil {
-		t.Fatalf("mkfifo %s: %v", path, err)
-	}
-}
-
 // cpFifo is the special-file fixture. Every case using it passes -r or
 // -R: a plain `cp fifo out` blocks forever on both sides, with no writer
 // to end the read.
