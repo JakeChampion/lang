@@ -71,44 +71,47 @@ the tally says how much of each program the new emitter produced.
 ## What the lift admits, and what declines
 
 Measured on the compiler compiling itself (`fern.fern`, arm64-linux,
-2026-09-16): 941 of 8,922 functions go through the SSA backend. The op that
-stopped each of the rest, most frequent first:
+2026-09-17, the build of #9566): 8,828 of 9,021 functions go through the
+SSA backend. The op that stopped each of the rest, most frequent first:
 
 | op | functions |
 |---|---|
-| `struct_get` | 1,997 |
-| `const_str` | 1,962 |
-| `variant_is` | 947 |
-| `arr_len` | 923 |
-| `arr_make` | 891 |
-| `str_len` | 476 |
-| `arr_get` | 238 |
-| `struct_make` | 153 |
-| `const_func` | 119 |
-| `str_index` | 78 |
-| `const_f64` | 65 |
+| `const_f64` | 75 |
+| `env` | 21 |
+| `read_file` | 20 |
+| `exit` | 10 |
+| `syscall3` | 9 |
+| `strbuf_reset` | 5 |
+| `strbuf_append` | 5 |
+| `raw_scratch` | 4 |
+| `f64_from_bits` | 4 |
+| `f64_bits` | 4 |
+| `raw_string` | 3 |
+| `i32_to_f64` | 3 |
 
-Everything below that is under 25. Those rows are now lifted (#9498): the
-record and array layouts are the flat backend's, fixed and documented at the
-top of `asm_arm64_ir.fern`, so `struct_get` is a load at the field's slot,
+Everything below that is one or two functions. The float rows are #9567.
+The rest are the host calls (`env`, `read_file`, `exit`, the syscalls, the
+directory and clock ops) and the string buffer, each a register-ABI call
+in the flat arm. The box layouts, the runtime calls, `call_indirect` and
+the folded aggregates were lifted by #9498 and #9503: the record and array
+layouts are the flat backend's, fixed and documented at the top of
+`asm_arm64_ir.fern`, so `struct_get` is a load at the field's slot,
 `arr_len` a load at 0, `str_len` a load at 8, `variant_is` a load of the
 shape word compared with the variant's shape address, a construction an
 allocation followed by stores, and a string op or a push the same runtime
 call the flat arm makes. The lift's older arms for these ops lower to
 `build_func`'s layouts and are not usable here (see "What this retires").
-The histogram after that lift is in the ssa-log entry for #9498, and is the
-next checklist.
 
 ## The emitter today
 
 It is written for correctness, and the measurements say so. Values live in
-seven caller-saved registers or in frame slots; a value live across a call is
-spilled, so a loop that calls out keeps its loop-carried values in memory.
-A constant is materialised into x0 and moved to its home. Two or more phis
-on one edge stage through the frame. The optimiser's passes do not run. The
-binary the backend builds is larger than the flat one, not smaller, and
-the code it emits for a call-heavy function is close to the stack machine's.
-The order to take that in:
+seven caller-saved registers or in frame slots numbered over the spilled
+values; a value live across a call is spilled, so a loop that calls out
+keeps its loop-carried values in memory. A constant is materialised into x0
+and moved to its home. Two or more phis on one edge stage through the frame.
+The optimiser's passes do not run. The binary the backend builds is 1.6x
+the flat one, and the code it emits for a call-heavy function is close to
+the stack machine's. The order to take that in:
 
 1. Callee-saved registers (x19 to x28) with a prologue save, so values
    live across calls stay in registers. Native's allocator work on #4112
@@ -167,15 +170,17 @@ measured on the compiler building itself and on `examples/bench`:
 
 - **Faster output.** Native's SSA build is at or under flat on every bench
   program; the self-host's must be too, and the compiler it builds must run
-  the whole tree faster than the flat-built one. Today: parity.
+  the whole tree faster than the flat-built one. Today: parity on the
+  drivers (#9503).
 - **Smaller output.** Native's SSA text is 45% of flat's over the corpus.
-  The self-host's SSA text is a few percent larger today; the plan is the
-  three emitter items above, then coverage, since a function the stack
-  machine still emits pays the stack machine's size.
+  The self-host's SSA binary is 1.6x flat's today (29.1 MB against 18.3 MB
+  for the compiler): every value has a frame slot or a caller-saved
+  register, every constant goes through x0, and every call spills. The
+  three emitter items above are the plan.
 - **Faster compile.** The lift, prune and allocation must cost less than the
   emitted text they save the assembler: the self-host assembles its own
-  output, so fewer lines is less to parse. Today the SSA self-build is 1.7x
-  the flat one; 1.5x is native's flip condition and the ceiling here, with
-  parity the aim.
+  output, so fewer lines is less to parse. Today the SSA self-build is 1.09x
+  the flat one (134 s against 123 s); 1.5x is native's flip condition and the
+  ceiling here, with parity the aim.
 
 An entry in `docs/ssa-log/` carries each step's numbers against these three.

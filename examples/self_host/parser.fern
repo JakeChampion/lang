@@ -14790,26 +14790,43 @@ pub function lower_defers_prepass_module(mod: Module): Module {
 //         <body>                     // advances the counter — break/continue work
 //     }
 //
+// The closed form `LOW..=HIGH` is the same loop with a `>` break, so it runs
+// one more round. Its call is spelled `__range_incl`.
+//
 // Empty / reversed ranges (`5..5`, `9..3`) run zero iterations. The helpers
 // return BARE Stmt[] (never a struct wrapping a fresh array) to avoid the
 // native RC free-list reclaim that corrupts a freshly-built array placed in a
 // struct-literal field (cf. #2759).
 //
-// This runs in module_with_builtins, interp.eval_module, and
-// ssa.build_func — NOT on the IR path (lift_lambdas), which keeps the
-// `__range` shape for lower_range_for.
+// This runs in desugar_prepass_module (inside module_with_builtins),
+// interp.eval_module and ssa.build_func. module_with_builtins feeds the IR
+// emit and the semantic substitution too, so EVERY consumer sees the
+// while-loop and `irlower.lower_range_for` is reached only by the
+// un-desugared modules `irlower_run.fern` reads directly. Its own lowering is
+// tighter than this one — reclaiming it would shrink both range forms (#9565).
 function iter_range_args(iter: ast.Expr): ast.Expr[] {
-    match (iter) {
-        ast.ExprCall(c) => {
-            if (c.args.len() != 2) { return []; }
-            match (c.callee) {
-                ast.ExprIdent(id) => { if (id.name == "__range") { return c.args; } },
-                _ => {}
-            }
-        },
-        _ => {}
-    }
+    if (range_call_name(iter) == "") { return []; }
+    if let ast.ExprCall(c) = iter { return c.args; }
     return [];
+}
+
+// The synthetic range call's name, or "" when the iter is not one: `__range`
+// for `LOW..HIGH` and `__range_incl` for `LOW..=HIGH`.
+function range_call_name(iter: ast.Expr): string {
+    if let ast.ExprCall(c) = iter {
+        if (c.args.len() != 2) { return ""; }
+        if let ast.ExprIdent(id) = c.callee {
+            if (id.name == "__range" || id.name == "__range_incl") { return id.name; }
+        }
+    }
+    return "";
+}
+
+// The break test the desugared loop takes: `>=` leaves HIGH out of the
+// half-open form, `>` keeps it in the closed one.
+function range_break_op(iter: ast.Expr): string {
+    if (range_call_name(iter) == "__range_incl") { return ">"; }
+    return ">=";
 }
 
 // dr_expr rewrites the range-fors living inside an EXPRESSION — in practice a
@@ -14851,7 +14868,7 @@ function desugar_ranges_one(st: ast.Stmt): ast.Stmt[] {
                 var ivar: ast.Stmt = s_var(fr.var_name, "i32", e_binary("-", rargs[0], e_number("1", "", false)));
                 var hivar: ast.Stmt = s_var(hi_name, "i32", rargs[1]);
                 var incr: ast.Stmt = s_assign(fr.var_name, e_binary("+", e_ident(fr.var_name), e_number("1", "", false)));
-                var brk: ast.Stmt = s_if(e_binary(">=", e_ident(fr.var_name), e_ident(hi_name)), [s_break()], []);
+                var brk: ast.Stmt = s_if(e_binary(range_break_op(fr.iter), e_ident(fr.var_name), e_ident(hi_name)), [s_break()], []);
                 var wbody: ast.Stmt[] = [incr, brk];
                 var k: i32 = 0;
                 while (k < dbody.len()) { wbody = wbody.append(dbody[k]); k = k + 1; }
