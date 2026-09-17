@@ -75,8 +75,8 @@ x86_64/sort_ints.text	2330
 x86_64/sort_ints.ir	81023185
 x86_64/sort_strings.text	3472
 x86_64/sort_strings.ir	164436289
-x86_64/string_build.text	1304
-x86_64/string_build.ir	130824724
+x86_64/string_build.text	1283
+x86_64/string_build.ir	105774688
 x86_64/string_count_byte.text	600
 x86_64/string_count_byte.ir	270804749
 x86_64/string_find_byte.text	1880
@@ -178,8 +178,8 @@ aarch64/sort_inplace.ir	112891129
 aarch64/sort_ints.text	2501
 aarch64/sort_ints.ir	105084009
 aarch64/sort_strings.text	3814
-aarch64/string_build.text	1327
-aarch64/string_build.ir	171325490
+aarch64/string_build.text	1322
+aarch64/string_build.ir	115884532
 aarch64/string_count_byte.text	563
 aarch64/string_count_byte.ir	295440050
 aarch64/string_find_byte.text	2015

@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/ast"
@@ -176,8 +177,9 @@ func TestArm64StrSelfAppendCorrect(t *testing.T) {
 
 // strConcatChainSrc builds a string through a CHAIN of joins per iteration —
 // `hdr_block = hdr_block + name + ": " + value + "\r\n"` is the shape, straight
-// from std/http's response assembly. Only the leftmost join has a borrowed left
-// operand and must allocate; the rest grow that buffer.
+// from std/http's response assembly. Every join grows the accumulator: the
+// leftmost appends into its own slack, and each join above grows the buffer the
+// one below returned.
 const strConcatChainSrc = `function main(): i32 {
     var out: string = "";
     var i: i32 = 0;
@@ -189,18 +191,19 @@ const strConcatChainSrc = `function main(): i32 {
     return 0;
 }`
 
-// TestX86_64StrConcatChainAllocsBounded pins both halves of #5637's follow-up
-// on this exact program:
+// TestX86_64StrConcatChainAllocsBounded pins #5637's follow-up on this exact
+// program: allocs=129 frees=129 live_bytes=0.
 //
-//	before -> allocs=1496 frees=998 live_bytes=756960
-//	after  -> allocs= 686 frees=686 live_bytes=0
+// Allocations are bounded because no join copies. Each join above the leftmost
+// grows the previous join's intermediate instead of allocating a fresh buffer
+// and freeing it; the leftmost grows the accumulator itself, so the only
+// allocations left are the size-class steps 3000 bytes of growth crosses. An
+// unfused leftmost join allocated and copied the whole accumulator every
+// iteration and cost 627 here.
 //
-// Allocations fall because each join above the leftmost now grows the previous
-// join's intermediate instead of allocating a fresh buffer and freeing it.
-// live_bytes falls to zero because the accumulator's dec-on-overwrite routes
-// through __fern_str_dec (which frees at rc==1) rather than __fern_rc_dec
-// (which decrements to zero and stops) — the chain shape takes the ordinary
-// overwrite branch, so it kept leaking after the self-append landed.
+// live_bytes is zero because the accumulator's reclaim routes through
+// __fern_str_dec (which frees at rc==1) rather than __fern_rc_dec (which
+// decrements to zero and stops).
 func TestX86_64StrConcatChainAllocsBounded(t *testing.T) {
 	prev := ast.RcFreeEnabled
 	ast.RcFreeEnabled = true
@@ -211,11 +214,10 @@ func TestX86_64StrConcatChainAllocsBounded(t *testing.T) {
 		t.Fatalf("chained concat loop exited %d (want 0 — the accumulated length was wrong); stdout=%q stderr=%q", code, stdout, stderr)
 	}
 	allocs, frees, live := parseLeakCheckLine(t, stderr)
-	// 500 iterations x 3 joins allocated 3 buffers each before; now the two
-	// upper joins grow the first one's. Anything at or above the old 1496
-	// means the chain is not being grown in place.
-	if allocs > 900 {
-		t.Errorf("allocs = %d for 500 three-join iterations, want <= 900 (~one per iteration); the chain is not growing its intermediate", allocs)
+	// 3000 bytes of growth crosses ~129 size classes. Anything near the
+	// iteration count means a join is copying rather than growing.
+	if allocs > 250 {
+		t.Errorf("allocs = %d for 500 three-join iterations, want <= 250 (~one per size-class step); a join is allocating and copying instead of growing", allocs)
 	}
 	if allocs != frees || live != 0 {
 		t.Errorf("heap unbalanced after the chain loop: allocs=%d frees=%d live_bytes=%d, want allocs==frees and live_bytes==0 (the accumulator's overwrite must FREE, not just decrement)", allocs, frees, live)
@@ -387,5 +389,76 @@ func TestWASMStrAppendClassBoundary(t *testing.T) {
 	}
 	if allocs != frees || live != 0 {
 		t.Errorf("heap unbalanced: allocs=%d frees=%d live_bytes=%d", allocs, frees, live)
+	}
+}
+
+// strChainAliasSrc reads the accumulator AGAIN from the right of a chained
+// append. Fusing the leftmost join would consume `out`'s buffer before that
+// third operand is evaluated, so the read would see a buffer already grown in
+// place (a doubled answer) or, on the copy path, one already freed.
+//
+// Doubling per iteration makes a fused compile visible rather than subtle:
+// each step must be `prev + "-" + prev`.
+const strChainAliasSrc = `function main(): i32 {
+    var out: string = "ab";
+    var i: i32 = 0;
+    while (i < 5) {
+        out = out + "-" + out;
+        i = i + 1;
+    }
+    print(out);
+    if (out.len() != 95) { return 1; }
+    return 0;
+}`
+
+const strChainAliasWant = "ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab\n"
+
+// TestX86_64StrSelfAppendChainAliasIsNotFused is the runtime half of
+// internal/ir's TestLowerStrSelfAppendChainStopsAtAReadOfTheAccumulator: the
+// answer stays right, and the heap stays balanced, when the spine declines to
+// fuse. Under the leak detector so an over-release shows as frees > allocs.
+func TestX86_64StrSelfAppendChainAliasIsNotFused(t *testing.T) {
+	prev := ast.RcFreeEnabled
+	ast.RcFreeEnabled = true
+	defer func() { ast.RcFreeEnabled = prev }()
+
+	stdout, stderr, code := runLeakCheckX86_64(t, strChainAliasSrc)
+	if code != 0 {
+		t.Fatalf("exited %d, want 0 (the accumulated length was wrong — the chain fused over a read of its own accumulator); stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	if stdout != strChainAliasWant {
+		t.Errorf("x86-64 aliased chain output =\n%q\nwant\n%q", stdout, strChainAliasWant)
+	}
+	if allocs, frees, live := parseLeakCheckLine(t, stderr); frees > allocs || live != 0 {
+		t.Errorf("heap after the aliased chain: allocs=%d frees=%d live_bytes=%d, want frees <= allocs and live_bytes==0", allocs, frees, live)
+	}
+}
+
+// TestArm64StrSelfAppendChainAliasIsNotFused is the two-word NATIVE sibling.
+func TestArm64StrSelfAppendChainAliasIsNotFused(t *testing.T) {
+	prev := ast.RcFreeEnabled
+	ast.RcFreeEnabled = true
+	defer func() { ast.RcFreeEnabled = prev }()
+
+	stdout, stderr, code := runLeakCheckArm64(t, strChainAliasSrc)
+	if code != 0 {
+		t.Fatalf("exited %d, want 0; stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	if stdout != strChainAliasWant {
+		t.Errorf("arm64 aliased chain output =\n%q\nwant\n%q", stdout, strChainAliasWant)
+	}
+	if allocs, frees, live := parseLeakCheckLine(t, stderr); frees > allocs || live != 0 {
+		t.Errorf("heap after the aliased chain: allocs=%d frees=%d live_bytes=%d, want frees <= allocs and live_bytes==0", allocs, frees, live)
+	}
+}
+
+// TestWASMStrSelfAppendChainAliasIsNotFused is the wasm sibling.
+func TestWASMStrSelfAppendChainAliasIsNotFused(t *testing.T) {
+	prev := ast.RcFreeEnabled
+	ast.RcFreeEnabled = true
+	defer func() { ast.RcFreeEnabled = prev }()
+
+	if got := runWasmCapturingStdout(t, strChainAliasSrc); got != strings.TrimSuffix(strChainAliasWant, "\n") {
+		t.Errorf("wasm aliased chain output =\n%q\nwant\n%q", got, strChainAliasWant)
 	}
 }

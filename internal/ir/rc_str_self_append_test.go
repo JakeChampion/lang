@@ -361,3 +361,84 @@ function main(): i32 { return build(3, "ab").len(); }`
 		}
 	}
 }
+
+// strSelfAppendChainSrc is the same accumulator written the way a builder that
+// emits a separator writes it — the two joins in ONE statement. It parses
+// left-nested as `((out + piece) + ",")`.
+const strSelfAppendChainSrc = `function build(n: i32, piece: string): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < n) {
+        out = out + piece + ",";
+        i = i + 1;
+    }
+    return out;
+}
+function main(): i32 { return build(3, "ab").len(); }`
+
+// TestLowerStrSelfAppendChainGrowsOneBuffer: a chained `out = out + piece +
+// sep` must take the in-place append at BOTH joins.
+//
+// The inner one is what this pins. The outer join has always grown its left
+// operand in place — it is an unnameable concat temp, which consumeLeftTemp
+// consumes — but the inner join was a plain OpStrConcat, because the marking
+// predicate asked whether the whole RHS had the accumulator on its left and a
+// chain has a concat there. So every iteration allocated a buffer and copied
+// the entire accumulator into it: the quadratic cost the single-`+` form was
+// fixed for in #5637, still charged to the form that writes its separator in
+// the same statement. On examples/bench/string_build that was 20% of the
+// program's retired instructions.
+//
+// Asserting OpStrConcat == 0 is the half that would catch a regression to
+// that: two appends alone would still pass if a third join copied.
+func TestLowerStrSelfAppendChainGrowsOneBuffer(t *testing.T) {
+	prev := ast.RcFreeEnabled
+	ast.RcFreeEnabled = true
+	defer func() { ast.RcFreeEnabled = prev }()
+
+	for _, ptrW := range []int{4, 8} {
+		prog := lowerSourceWith(t, strSelfAppendChainSrc, ptrW)
+		if got := countFnCallDirect(prog, "build", "__fern_str_append"); got != 2 {
+			t.Errorf("ptrW=%d: __fern_str_append calls in build = %d, want 2 (both joins of `out = out + piece + \",\"` should grow in place)", ptrW, got)
+		}
+		if got := countOpKind(prog, "build", OpStrConcat); got != 0 {
+			t.Errorf("ptrW=%d: OpStrConcat in build = %d, want 0 (a copying join survives, so the accumulator is still copied once per iteration)", ptrW, got)
+		}
+	}
+}
+
+// TestLowerStrSelfAppendChainStopsAtAReadOfTheAccumulator: `out = out + sep +
+// out` must NOT fuse. The inner append consumes `out`'s buffer, so the third
+// operand — evaluated after it — would read a buffer already grown in place or
+// freed. The spine stops there, which leaves the whole RHS on the copying
+// path, exactly as before the chain was fused at all.
+//
+// e2e's TestX86_64StrSelfAppendChainAliasIsNotFused runs it for the answer;
+// this pins that the decision is made at lowering rather than relied on to be
+// harmless.
+func TestLowerStrSelfAppendChainStopsAtAReadOfTheAccumulator(t *testing.T) {
+	prev := ast.RcFreeEnabled
+	ast.RcFreeEnabled = true
+	defer func() { ast.RcFreeEnabled = prev }()
+
+	src := `function build(n: i32, sep: string): string {
+    var out: string = "ab";
+    var i: i32 = 0;
+    while (i < n) {
+        out = out + sep + out;
+        i = i + 1;
+    }
+    return out;
+}
+function main(): i32 { return build(3, "-").len(); }`
+
+	for _, ptrW := range []int{4, 8} {
+		prog := lowerSourceWith(t, src, ptrW)
+		if got := countFnCallDirect(prog, "build", "__fern_str_append"); got != 1 {
+			t.Errorf("ptrW=%d: __fern_str_append calls in build = %d, want 1 (only the outer join's own concat temp may be grown; fusing to `out` would consume the buffer the third operand reads)", ptrW, got)
+		}
+		if got := countOpKind(prog, "build", OpStrConcat); got != 1 {
+			t.Errorf("ptrW=%d: OpStrConcat in build = %d, want 1 (the inner join must stay a copy)", ptrW, got)
+		}
+	}
+}
