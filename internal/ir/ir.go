@@ -6609,6 +6609,76 @@ func (b *builder) calleeParamOwnedByDefault(callee string, t ast.Type, i int) bo
 	return v == paramVerdictOwned || v == paramVerdictTrmcConsume
 }
 
+// unobservableAggregateOperand reports whether evaluating e is guaranteed to
+// make no allocator call and run no user code, so where it sits relative to an
+// aggregate literal's own allocation cannot be observed. Deliberately a short
+// allowlist: anything not named here spills.
+func unobservableAggregateOperand(e ast.Expr) bool {
+	switch e.(type) {
+	case *ast.NumberLit, *ast.FloatLit, *ast.BoolLit, *ast.CharLit, *ast.StringLit,
+		*ast.Ident, *ast.CaptureRef:
+		return true
+	}
+	return false
+}
+
+// spillAggregateOperands pre-evaluates an aggregate literal's operands into
+// scratch slots so the box can be bought after them, and returns one slot per
+// operand — or nil when no operand can tell the difference and the literal
+// keeps the cheaper shape of pushing each destination address first and
+// storing the value where it lands.
+//
+// Fern evaluates a value's parts before the value itself: every aggregate here
+// is an implicit heap allocation, and `__heap_alloc_count()` makes the order
+// visible from inside the literal. See spec/semantics.md and conformance case
+// eval_order_aggregate_literal.
+//
+// `value` must leave operand i on the stack carrying whatever retain the site
+// owes for it. The retain belongs here rather than at the store, because a
+// reuse token releases the donor box's old fields and an operand read out of
+// that donor has to be owned before it does.
+func (b *builder) spillAggregateOperands(exprs []ast.Expr, typeOf func(int) ast.Type, value func(int) error) ([]int32, error) {
+	spill := false
+	for _, e := range exprs {
+		if !unobservableAggregateOperand(e) {
+			spill = true
+			break
+		}
+	}
+	if !spill {
+		return nil, nil
+	}
+	// Ops emitted after this point still belong to the literal, not to
+	// whichever operand was lowered last — E068 names an un-paired
+	// construction by the position its OpAlloc carries (fip_verify.go).
+	litPos := b.curPos
+	defer func() { b.curPos = litPos }()
+	slots := make([]int32, len(exprs))
+	for i := range exprs {
+		if err := value(i); err != nil {
+			return nil, err
+		}
+		s := b.allocSlot()
+		if t := typeOf(i); t != nil {
+			b.scratchType[s] = t
+		}
+		b.locals[fmt.Sprintf("__agg_operand_%d", s)] = s
+		b.emit(Op{Kind: OpStoreLocal, I32: s})
+		slots[i] = s
+	}
+	return slots, nil
+}
+
+// pushAggregateOperand puts operand i on the stack: reloaded from its spill
+// slot when the literal pre-evaluated, otherwise evaluated in place.
+func (b *builder) pushAggregateOperand(i int, slots []int32, value func(int) error) error {
+	if slots == nil {
+		return value(i)
+	}
+	b.emit(Op{Kind: OpLoadLocal, I32: slots[i]})
+	return nil
+}
+
 func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, payloadCount int, args []ast.Expr) error {
 	// Payloadless variants return a shared static 4-byte
 	// `[tag=varIdx]` sentinel instead of allocating a fresh
@@ -6649,6 +6719,45 @@ func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, p
 	// shift by `rcHeaderBytes` so we keep using the same
 	// baseSlot (storing `base`) — the same accounting StructLit uses.
 	const rcHeaderBytes = 8
+	// Evaluate the payloads BEFORE the box is bought: a value's parts exist
+	// before the value does (spec/semantics.md, EV-01), and a payload
+	// expression can itself allocate.
+	//
+	// Stashing into scratch slots is also what lets a payload be an arbitrary
+	// control-flow shape. Pushing `base+offset` and then evaluating is
+	// rejected by the wasm validator when the expression contains an
+	// if-block with a result, because the (addr, value) pair the store
+	// expects would straddle the if-block's local stack scope.
+	//
+	// The retain belongs here rather than at the store: a reuse token
+	// releases the donor box's old payload, and a payload read out of that
+	// donor has to be owned before it does.
+	// Ops emitted after the payload loop still belong to the construction,
+	// not to whichever payload was lowered last — E068 names an un-paired
+	// construction by the position its OpAlloc carries (fip_verify.go).
+	ctorPos := b.curPos
+	valSlots := make([]int32, len(args))
+	for i, a := range args {
+		if err := b.expr(a); err != nil {
+			return err
+		}
+		// Slice 1b (EnumRcPayloads): rc-count pointer payloads exactly like
+		// StructLit fields — an aliased payload (`Cons(0, t)`, t live elsewhere)
+		// is inc'd so the box co-owns its reference, a moved last-use owned-local
+		// payload (b.rc.moveSites, markConstructionMoves' enum case) skips the inc.
+		// Inc-and-passthrough (leaves the value on the stack for the store).
+		// Consuming-match reuse stores moved-out bindings back, so it's excluded.
+		if b.enumRcPayloadsEligible(enumName) && !b.rc.consumingMatchReuse[callNode] &&
+			needsRcIncOnAlias(a, b) && !b.rc.moveSites[a] {
+			b.emitAliasInc(a)
+		}
+		valSlots[i] = b.allocSlot()
+		if i < len(payloadTypes) && payloadTypes[i] != nil {
+			b.scratchType[valSlots[i]] = payloadTypes[i]
+		}
+		b.emit(Op{Kind: OpStoreLocal, I32: valSlots[i]})
+	}
+	b.curPos = ctorPos
 	// General FBIP reuse (computeReuseSources): a dead, owned enum local D of
 	// the same type/box-class is reused in place for this variant construction.
 	// Same machinery as the StructLit / TupleLit hooks — emitReuseToken leaves
@@ -6693,45 +6802,15 @@ func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, p
 	b.emit(Op{Kind: OpAdd})
 	b.emit(Op{Kind: OpConstI32, I32: int32(varIdx)})
 	b.emit(Op{Kind: OpStore})
-	for i, a := range args {
-		// Emit the arg expression first, into a scratch slot.
-		// Pushing `base+offset` BEFORE evaluating the expression
-		// is unsafe on wasm: if the expression contains an
-		// if-block-with-result, the (addr, value) pair the store
-		// expects would straddle the if-block's local stack scope
-		// — the validator rejects loads / stores in a branch that
-		// would consume values pushed outside it.
-		//
-		// Stash-then-restore lets the expression be a full
-		// arbitrary control-flow shape; the (addr, value) pair
-		// for OpStore lands on the operand stack only after the
-		// expression's stack effects have settled.
+	for i := range args {
 		var pt ast.Type
 		if i < len(payloadTypes) {
 			pt = payloadTypes[i]
 		}
-		if err := b.expr(a); err != nil {
-			return err
-		}
-		// Slice 1b (EnumRcPayloads): rc-count pointer payloads exactly like
-		// StructLit fields — an aliased payload (`Cons(0, t)`, t live elsewhere)
-		// is inc'd so the box co-owns its reference, a moved last-use owned-local
-		// payload (b.rc.moveSites, markConstructionMoves' enum case) skips the inc.
-		// Inc-and-passthrough (leaves the value on the stack for the store).
-		// Consuming-match reuse stores moved-out bindings back, so it's excluded.
-		if b.enumRcPayloadsEligible(enumName) && !b.rc.consumingMatchReuse[callNode] &&
-			needsRcIncOnAlias(a, b) && !b.rc.moveSites[a] {
-			b.emitAliasInc(a)
-		}
-		valSlot := b.allocSlot()
-		if pt != nil {
-			b.scratchType[valSlot] = pt
-		}
-		b.emit(Op{Kind: OpStoreLocal, I32: valSlot})
 		b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
 		b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes + offsets[i]})
 		b.emit(Op{Kind: OpAdd})
-		b.emit(Op{Kind: OpLoadLocal, I32: valSlot})
+		b.emit(Op{Kind: OpLoadLocal, I32: valSlots[i]})
 		b.emit(payloadStoreOpFor(pt, b.ptrW))
 	}
 	// Push the user-visible data pointer (= base + rc header).
@@ -11269,6 +11348,37 @@ func (b *builder) expr(e ast.Expr) error {
 		// stores on arm64), the i8 / i16 / i64 / f32 / f64 lanes,
 		// and the default i32 fallback.
 		storeOpAndWidth := arrayElemStoreOpFor(n.ElemType, b.ptrW)
+		// array-element initialisation is an alias-creating site when
+		// the element type is also array-shaped — e.g.
+		// `var matrix: u8[][] = [inner];` stores `inner`'s pointer into
+		// the matrix's slot 0, so the new matrix co-owns `inner`. Same
+		// gating as the Var / Assign / call-arg / struct-field /
+		// closure-capture sites.
+		//
+		// Phase 4 move-on-construction: an owned rc local consumed as
+		// an element at its last use is moved into the array —
+		// __fern_drop_arr_ptr dec's the element at the array's drop,
+		// balancing the skipped inc (markConstructionMoves sets
+		// b.rc.moveSites[el]).
+		elemValue := func(i int) error {
+			el := n.Elems[i]
+			if err := b.expr(el); err != nil {
+				return err
+			}
+			if needsRcIncOnAlias(el, b) && !b.rc.moveSites[el] {
+				b.emitAliasInc(el)
+			}
+			return nil
+		}
+		elemSlots, err := b.spillAggregateOperands(n.Elems, func(i int) ast.Type {
+			if n.ElemType != nil {
+				return n.ElemType
+			}
+			return b.exprType(n.Elems[i])
+		}, elemValue)
+		if err != nil {
+			return err
+		}
 		b.emit(Op{Kind: OpConstI32, I32: headerBytes + nElems*stride})
 		b.emit(Op{Kind: OpAlloc})
 		baseSlot := b.allocSlot()
@@ -11306,28 +11416,12 @@ func (b *builder) expr(e ast.Expr) error {
 		b.emit(Op{Kind: OpConstI32, I32: nElems})
 		b.emit(Op{Kind: OpStore})
 		// Each element at base + headerBytes + i*stride.
-		for i, el := range n.Elems {
+		for i := range n.Elems {
 			b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
 			b.emit(Op{Kind: OpConstI32, I32: headerBytes + int32(i)*stride})
 			b.emit(Op{Kind: OpAdd})
-			if err := b.expr(el); err != nil {
+			if err := b.pushAggregateOperand(i, elemSlots, elemValue); err != nil {
 				return err
-			}
-			// array-element initialisation is an
-			// alias-creating site when the element type is also
-			// array-shaped — e.g. `var matrix: u8[][] = [inner];`
-			// stores `inner`'s pointer into the matrix's slot 0,
-			// so the new matrix co-owns `inner`. Same gating as
-			// the Var / Assign / call-arg / struct-field /
-			// closure-capture sites.
-			//
-			// Phase 4 move-on-construction: an owned rc local consumed as
-			// an element at its last use is moved into the array —
-			// __fern_drop_arr_ptr dec's the element at the array's drop,
-			// balancing the skipped inc (markConstructionMoves sets
-			// b.rc.moveSites[el]).
-			if needsRcIncOnAlias(el, b) && !b.rc.moveSites[el] {
-				b.emitAliasInc(el)
 			}
 			b.emit(storeOpAndWidth)
 		}
@@ -11406,6 +11500,28 @@ func (b *builder) expr(e ast.Expr) error {
 		}
 		offs, size := tupleElemLayout(elemTypes, b.ptrW)
 		const rcHeaderBytes = 8
+		// tuple element is a struct-lit-style alias site. See the
+		// StructLit case below for the gating rationale.
+		//
+		// Phase 4 move-on-construction: an owned rc local consumed as a
+		// tuple element at its last use is moved into the tuple —
+		// __drop_tuple_<...> dec's the element at the tuple's drop,
+		// balancing the skipped inc (markConstructionMoves sets
+		// b.rc.moveSites[elem]).
+		elemValue := func(i int) error {
+			elem := n.Elems[i]
+			if err := b.expr(elem); err != nil {
+				return err
+			}
+			if needsRcIncOnAlias(elem, b) && !b.rc.moveSites[elem] {
+				b.emitAliasInc(elem)
+			}
+			return nil
+		}
+		elemSlots, err := b.spillAggregateOperands(n.Elems, func(i int) ast.Type { return elemTypes[i] }, elemValue)
+		if err != nil {
+			return err
+		}
 		// General FBIP reuse (computeReuseSources): a dead, owned tuple local D
 		// of the same box class is reused in place for this TupleLit. Identical
 		// machinery to the StructLit hook — emitReuseToken leaves the box BASE
@@ -11433,24 +11549,12 @@ func (b *builder) expr(e ast.Expr) error {
 		if reuseSrcUniqSlot >= 0 {
 			b.emitReuseOldFieldDrops(reuseSrcUniqSlot, baseSlot, reuseSrcOffs, reuseSrcTypes)
 		}
-		for i, elem := range n.Elems {
+		for i := range n.Elems {
 			b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
 			b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes + offs[i]})
 			b.emit(Op{Kind: OpAdd})
-			if err := b.expr(elem); err != nil {
+			if err := b.pushAggregateOperand(i, elemSlots, elemValue); err != nil {
 				return err
-			}
-			// tuple element is a struct-lit-style
-			// alias site. See the StructLit case below for the
-			// gating rationale.
-			//
-			// Phase 4 move-on-construction: an owned rc local consumed
-			// as a tuple element at its last use is moved into the
-			// tuple — __drop_tuple_<...> dec's the element at the
-			// tuple's drop, balancing the skipped inc
-			// (markConstructionMoves sets b.rc.moveSites[elem]).
-			if needsRcIncOnAlias(elem, b) && !b.rc.moveSites[elem] {
-				b.emitAliasInc(elem)
 			}
 			b.emit(payloadStoreOpFor(elemTypes[i], b.ptrW))
 		}
@@ -11507,6 +11611,65 @@ func (b *builder) expr(e ast.Expr) error {
 			}
 			updBaseSlot = b.allocSlot()
 			b.emit(Op{Kind: OpStoreLocal, I32: updBaseSlot})
+		}
+		fieldExprs := make([]ast.Expr, len(n.Fields))
+		for i, f := range n.Fields {
+			fieldExprs[i] = f.Value
+		}
+		fieldValue := func(i int) error {
+			f := n.Fields[i]
+			if err := b.expr(f.Value); err != nil {
+				return err
+			}
+			// struct field initialisation is an alias-creating site.
+			// `Holder { items: existing }` stores `existing`'s pointer
+			// into the struct's slot — the struct now co-owns the
+			// reference, so the rc bumps. Same gating as the Var /
+			// Assign / closure-capture sites: only fires when the
+			// initialiser is alias-shaped (Ident, FieldAccess, Index)
+			// and the field type is an array.
+			//
+			// Move-on-construction: when this field consumes an owned rc
+			// local at its last use (b.rc.moveSites set by
+			// markConstructionMoves), skip the inc — the local's
+			// reference is moved into the field and its exit-sweep dec is
+			// skipped to match.
+			if needsRcIncOnAlias(f.Value, b) && !b.rc.moveSites[f.Value] {
+				b.emitAliasInc(f.Value)
+			}
+			// Issue #2763: a Map-typed field initialised by a COW mutator
+			// result (`Struct { m: s.m.insert(...) }`) may be the SAME handle
+			// the borrowed source still owns — the COW mutates in place at
+			// rc<=1. needsRcIncOnAlias is false for a Call, so the value is
+			// stored as a move with no retain; the new container would then
+			// alias the source's buffer and a later drop of either frees it
+			// out from under the other (use-after-free → segfault). Clone the
+			// map so the container owns an independent buffer. A fresh
+			// `map_new()` result is NOT a mutator call, so it still moves in
+			// (no needless copy / no leak). The fast ownership-flow-aware
+			// inc-only path is the Perceus port's job (roadmap goal 2).
+			//
+			// Issue #4871: the same aliasing arises one `var` removed —
+			// `var m = s.m.insert(...); Struct { m: m }` — where the field value
+			// is a plain ident, not a direct call, so isMapMutatorCall misses it.
+			// borrowedMapFieldResults flags such a local (mutator with a
+			// field-access receiver); clone it too, but only when it is MOVED
+			// into the field (its last use): a moved local is not exit-dec'd, so
+			// the container's field keeps the original at rc==1 for the
+			// container's own drop while the struct owns the clone. A non-move
+			// (live-after) ident would still be exit-dec'd — cloning there would
+			// free the aliased buffer early — so it is left to the Perceus port.
+			if isMapType(fieldType(sd.Fields, f.Name)) &&
+				(isMapMutatorCall(f.Value) || b.isBorrowedMapFieldResultMove(f.Value)) {
+				b.emit(Op{Kind: OpCallDirect, Str: "__map_clone", I32: 1})
+			}
+			return nil
+		}
+		fieldSlots, err := b.spillAggregateOperands(fieldExprs, func(i int) ast.Type {
+			return fieldType(sd.Fields, n.Fields[i].Name)
+		}, fieldValue)
+		if err != nil {
+			return err
 		}
 		// General FBIP reuse (computeReuseSources): if this construction C is
 		// paired with a dead, owned, same-shape struct local D, reuse D's box
@@ -11587,56 +11750,13 @@ func (b *builder) expr(e ast.Expr) error {
 				b.dropStructField(ast.StructType{Name: sd.Name})
 			}
 		}
-		for _, f := range n.Fields {
+		for i, f := range n.Fields {
 			off := offs[f.Name]
 			b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
 			b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes + off})
 			b.emit(Op{Kind: OpAdd})
-			if err := b.expr(f.Value); err != nil {
+			if err := b.pushAggregateOperand(i, fieldSlots, fieldValue); err != nil {
 				return err
-			}
-			// struct field initialisation is an
-			// alias-creating site. `Holder { items: existing }`
-			// stores `existing`'s pointer into the struct's
-			// slot — the struct now co-owns the reference, so
-			// the rc bumps. Same gating as the Var / Assign /
-			// closure-capture sites: only fires when the
-			// initialiser is alias-shaped (Ident, FieldAccess,
-			// Index) and the field type is an array.
-			//
-			// Move-on-construction: when this field consumes an
-			// owned rc local at its last use (b.rc.moveSites set by
-			// markConstructionMoves), skip the inc — the local's
-			// reference is moved into the field and its exit-sweep dec is
-			// skipped to match.
-			if needsRcIncOnAlias(f.Value, b) && !b.rc.moveSites[f.Value] {
-				b.emitAliasInc(f.Value)
-			}
-			// Issue #2763: a Map-typed field initialised by a COW mutator
-			// result (`Struct { m: s.m.insert(...) }`) may be the SAME handle
-			// the borrowed source still owns — the COW mutates in place at
-			// rc<=1. needsRcIncOnAlias is false for a Call, so the value is
-			// stored as a move with no retain; the new container would then
-			// alias the source's buffer and a later drop of either frees it
-			// out from under the other (use-after-free → segfault). Clone the
-			// map so the container owns an independent buffer. A fresh
-			// `map_new()` result is NOT a mutator call, so it still moves in
-			// (no needless copy / no leak). The fast ownership-flow-aware
-			// inc-only path is the Perceus port's job (roadmap goal 2).
-			//
-			// Issue #4871: the same aliasing arises one `var` removed —
-			// `var m = s.m.insert(...); Struct { m: m }` — where the field value
-			// is a plain ident, not a direct call, so isMapMutatorCall misses it.
-			// borrowedMapFieldResults flags such a local (mutator with a
-			// field-access receiver); clone it too, but only when it is MOVED
-			// into the field (its last use): a moved local is not exit-dec'd, so
-			// the container's field keeps the original at rc==1 for the
-			// container's own drop while the struct owns the clone. A non-move
-			// (live-after) ident would still be exit-dec'd — cloning there would
-			// free the aliased buffer early — so it is left to the Perceus port.
-			if isMapType(fieldType(sd.Fields, f.Name)) &&
-				(isMapMutatorCall(f.Value) || b.isBorrowedMapFieldResultMove(f.Value)) {
-				b.emit(Op{Kind: OpCallDirect, Str: "__map_clone", I32: 1})
 			}
 			// Reuse payloadStoreOp so the store is correctly
 			// sized for the field's declared type: i32 / f32
