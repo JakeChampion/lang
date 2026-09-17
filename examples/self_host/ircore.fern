@@ -33,6 +33,8 @@ import "./asmcore";
 import "./util";
 import "./ir";
 import "./irlower";
+import "./irfipverify";
+import "./irverify";
 
 
 // is_array_type reports whether a type string denotes an array (ends "[]").
@@ -1179,6 +1181,18 @@ pub function sub_cache(sub: Sub, cache: irlower.LowerResult[]): irlower.LowerRes
 pub struct Lowered {
     ok: boolean,
     cache: irlower.LowerResult[],
+    // E068 verdicts for the `fip` / `fbip` declarations in this module, read
+    // off the very lowering the emit will use (#9623). Empty when every claim
+    // holds, and empty for the overwhelming majority of modules, which carry
+    // no claim at all: the walk below skips an unannotated function before it
+    // looks at a single op, so a program that does not use the annotations
+    // pays nothing for this.
+    //
+    // It is NOT an eligibility verdict. `ok` says the module could not be
+    // lowered; this says it lowered fine and broke a promise it made, which is
+    // a different diagnostic with a different remedy, and collapsing the two
+    // would report a `fip` violation as "module is not IR-eligible".
+    fip_problems: util.Diag[],
 }
 
 // lower_gated is the FUSED eligibility gate + lowering pass every whole-program
@@ -1198,6 +1212,7 @@ pub struct Lowered {
 // lowers, so the wasm gate can sit on the same cache its emit consumes.
 pub function lower_gated(mod: parser.Module, structs: irlower.StructTab, sg: irlower.FnSigs, known: string[], for_wasm: boolean, sub: Sub): Lowered {
     var cache: irlower.LowerResult[] = [];
+    var fipd: util.Diag[] = [];
     var freg: irlower.SigReg = module_func_reg(mod);
     // The bodies the substitution defines beside the declarations, which a
     // produced body calls by name the way an AST one calls a declaration.
@@ -1212,7 +1227,7 @@ pub function lower_gated(mod: parser.Module, structs: irlower.StructTab, sg: irl
         var r: irlower.LowerResult = produced_or_lowered(sub, i, mod.funcs[i], structs, sg, for_wasm);
         if (!r.ok) {
             if (strict_ir_on()) { strict_ir_refuse(mod.funcs[i].name + " (did not lower: " + r.why + ")"); }
-            return Lowered { ok: false, cache: [] };
+            return Lowered { ok: false, cache: [], fip_problems: [] };
         }
         var j: i32 = 0;
         while (j < r.ops.len()) {
@@ -1220,18 +1235,54 @@ pub function lower_gated(mod: parser.Module, structs: irlower.StructTab, sg: irl
             if (o.kind_tag == 149) {  // call_direct
                 if (!is_fern_helper(o.str) && !is_c_call(o.str) && !module_has_func(freg, o.str) && !known_includes(known, o.str) && !known_includes(extra, o.str)) {
                     if (strict_ir_on()) { strict_ir_refuse(mod.funcs[i].name + " (call to unknown symbol " + o.str + ")"); }
-                    return Lowered { ok: false, cache: [] };
+                    return Lowered { ok: false, cache: [], fip_problems: [] };
                 }
             } else if (o.kind_tag == 6) {  // const_func
                 if (!module_has_func(freg, o.str) && !known_includes(known, o.str) && !known_includes(extra, o.str)) {
                     if (strict_ir_on()) { strict_ir_refuse(mod.funcs[i].name + " (function value " + o.str + " not defined)"); }
-                    return Lowered { ok: false, cache: [] };
+                    return Lowered { ok: false, cache: [], fip_problems: [] };
                 }
             }
             j = j + 1;
         }
+        fipd = fip_claim_diags(mod.funcs[i], r, fipd);
         cache = cache.append(r);
         i = i + 1;
     }
-    return Lowered { ok: true, cache: cache };
+    return Lowered { ok: true, cache: cache, fip_problems: fipd };
+}
+
+// fail_on_fip_claims reports the E068 verdicts lower_gated collected and stops.
+// Every whole-program emit path calls it at its own lower_gated site, which is
+// where the diagnostics can still be printed as diagnostics: the gated emit
+// signals a REFUSAL by returning "", and its caller turns that into the
+// "module is not IR-eligible" message — the wrong thing to say about a module
+// that lowered perfectly well and broke a `fip` promise.
+//
+// A no-op when nothing claimed anything, which is nearly every module.
+pub function fail_on_fip_claims(g: Lowered): void {
+    if (g.fip_problems.len() == 0) { return; }
+    eprint(util.format_diags(g.fip_problems));
+    exit(1);
+}
+
+// fip_claim_diags appends this function's E068 verdicts, if it made a claim at
+// all. The budget check is irfipverify's; what is added here is running it on
+// the COMPILE path, where nothing ran it before — `fern.fern` performed no IR
+// verification, so an un-paired construction compiled silently under the
+// self-host while native reported E068 (#9623).
+//
+// The unannotated early return is what keeps this free: it is one boolean pair
+// per function, before any op is examined.
+function fip_claim_diags(fn: parser.FuncDecl, r: irlower.LowerResult, acc: util.Diag[]): util.Diag[] {
+    if (!fn.fip && !fn.fbip) { return acc; }
+    var claim: irfipverify.FipClaim = irfipverify.FipClaim {
+        fn_name: fn.name, is_fip: fn.fip, is_fbip: fn.fbip, allowance: fn.fip_allowance
+    };
+    var res: irfipverify.FipResult = irfipverify.verify_fip_fn(claim, r.ops);
+    var out: util.Diag[] = acc;
+    for p in res.problems {
+        out = out.append(util.Diag { code: "E068", message: irverify.problem_str(p), line: fn.line, col: fn.col });
+    }
+    return out;
 }

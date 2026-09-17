@@ -210,10 +210,37 @@ func envCases(t *testing.T) []invocation {
 	add(invocation{name: "block a whitespace name", args: []string{"--block-signal= INT ", "/bin/true"}})
 	add(invocation{name: "block KILL is silently allowed", args: []string{"--block-signal=KILL", "/bin/true"}})
 	add(invocation{name: "ignore KILL is refused", args: []string{"--ignore-signal=KILL", "/bin/true"}})
+	// The shared operand2sig grammar (#9652). A number is masked because it
+	// may be a wait status, so 137 is KILL — which makes the pair below a
+	// cross-check on env's own asymmetry: blocking KILL is silently nothing
+	// while ignoring it is fatal, and 137 has to reach both.
+	add(invocation{name: "block a wait status", args: []string{"--block-signal=137", "/bin/true"}})
+	add(invocation{name: "ignore a wait status is refused", args: []string{"--ignore-signal=137", "/bin/true"}})
+	add(invocation{name: "block SIG and a number", args: []string{"--block-signal=SIG9", "/bin/true"}})
+	add(invocation{name: "block SIG on the top of the range", args: []string{"--block-signal=SIG64", "/bin/true"}})
+	// env is the one caller that cannot use signal 0, and it refuses every
+	// spelling of it with the message an unparseable name gets.
+	add(invocation{name: "block EXIT is refused", args: []string{"--block-signal=EXIT", "/bin/true"}})
+	add(invocation{name: "block SIG0 is refused", args: []string{"--block-signal=SIG0", "/bin/true"}})
+	add(invocation{name: "block a number masking to zero", args: []string{"--block-signal=256", "/bin/true"}})
+	add(invocation{name: "block an unbounded number masking to zero", args: []string{"--block-signal=2000000000", "/bin/true"}})
+	add(invocation{name: "block a masked number with no signal", args: []string{"--block-signal=384", "/bin/true"}})
 	add(invocation{name: "a separate argument is not consumed", args: []string{"--block-signal", "INT", "/bin/true"}})
 	add(invocation{name: "signal options need a command", args: []string{"--block-signal=INT"}})
 	add(invocation{name: "default a signal", args: []string{"--default-signal=INT", "/bin/true"}})
 	add(invocation{name: "ignore a signal", args: []string{"--ignore-signal=INT", "/bin/true"}})
+	// An ALTERNATE name and the PRIMARY one for the same number: both are
+	// accepted on input and only one is ever printed, so the pair pins which
+	// way round that is. Signal 29's two names had it backwards until the
+	// `kill` oracle showed GNU printing POLL where this printed IO.
+	add(invocation{name: "ignore by an alternate name", args: []string{"--ignore-signal=IO", "/bin/true"}})
+	add(invocation{name: "ignore by the primary name", args: []string{"--ignore-signal=POLL", "/bin/true"}})
+	// Both are KERNEL UAPI names (asm-generic/signal.h) that glibc never
+	// defines, so a GNU build cannot see them and answers `invalid signal`
+	// rather than treating them as a silent no-op. Accepting a name GNU
+	// refuses is a divergence on input a caller can type.
+	add(invocation{name: "LOST is not a signal GNU knows", args: []string{"--ignore-signal=LOST", "/bin/true"}})
+	add(invocation{name: "UNUSED is not a signal GNU knows", args: []string{"--ignore-signal=UNUSED", "/bin/true"}})
 
 	// ---- --list-signal-handling ----
 	add(invocation{name: "list with nothing changed", args: []string{"--list-signal-handling", "/bin/true"}})
@@ -223,6 +250,11 @@ func envCases(t *testing.T) []invocation {
 	add(invocation{name: "list several", args: []string{"--block-signal=INT,QUIT", "--ignore-signal=TERM", "--list-signal-handling", "/bin/true"}})
 	add(invocation{name: "list without a command", args: []string{"--list-signal-handling"}})
 	add(invocation{name: "list takes no argument", args: []string{"--list-signal-handling=X", "/bin/true"}})
+	// The number is the point here, not the signal: this is the one case that
+	// PRINTS a name whose number carries two of them, which is what caught
+	// the IO/POLL inversion. The oracle decides per kernel, so naming the
+	// number rather than a name keeps it honest on both.
+	add(invocation{name: "list names a two-named number", args: []string{"--ignore-signal=29", "--list-signal-handling", "/bin/true"}})
 
 	// ---- -v, which is the only way to assert the ORDER ----
 	add(invocation{name: "debug a plain run", args: []string{"-v", "/bin/true"}})

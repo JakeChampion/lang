@@ -24,7 +24,7 @@ import (
 //   - `__rc_underflow_count() == 0`. The pre-fix arm64 / wasm builds reach 1
 //     at three appends and die at five hundred.
 //   - fresh heap bytes do not scale with the round count. The eligibility
-//     entry the fix restores is also isSelfStrAppendLocal's gate, so the
+//     entry the fix restores is also selfStrAppendLocalSpine's gate, so the
 //     accumulator grows in place instead of allocating a fresh buffer per
 //     append.
 //

@@ -60,8 +60,9 @@ func TestLowerStrAppendRangeFuses(t *testing.T) {
 }
 
 // TestLowerStrAppendRangeFusesChainIntermediate: a chain's consumed
-// intermediate takes the fused helper too — `out + "|" + slice(...)` grows
-// the buffer the leftmost join allocated.
+// intermediate takes the fused helper too — in `out + "|" + slice(...)` the
+// leftmost join grows the accumulator itself and the outer join then grows
+// what it returned, so nothing in the statement copies.
 func TestLowerStrAppendRangeFusesChainIntermediate(t *testing.T) {
 	prev := ast.RcFreeEnabled
 	ast.RcFreeEnabled = true
@@ -86,8 +87,11 @@ function main(): i32 { return build(3, "abcdef").len(); }`
 		if got := countFnCallDirect(prog, "build", "__str_slice"); got != 0 {
 			t.Errorf("ptrW=%d: __str_slice calls = %d, want 0", ptrW, got)
 		}
-		if got := countOpKind(prog, "build", OpStrConcat); got != 1 {
-			t.Errorf("ptrW=%d: OpStrConcat = %d, want 1 (the leftmost join, whose left operand is borrowed)", ptrW, got)
+		if got := countFnCallDirect(prog, "build", "__fern_str_append"); got != 1 {
+			t.Errorf("ptrW=%d: __fern_str_append calls = %d, want 1 (the leftmost join, growing the accumulator)", ptrW, got)
+		}
+		if got := countOpKind(prog, "build", OpStrConcat); got != 0 {
+			t.Errorf("ptrW=%d: OpStrConcat = %d, want 0 (no join in the chain copies)", ptrW, got)
 		}
 	}
 }

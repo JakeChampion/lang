@@ -138,10 +138,24 @@ func timeoutCases(t *testing.T) []invocation {
 	add(invocation{name: "a realtime signal with an offset", args: []string{"-v", "-s", "RTMIN+1", "0.05", sleepBin, "0.3"}})
 	add(invocation{name: "the top of the realtime range", args: []string{"-v", "-s", "RTMAX", "0.05", sleepBin, "0.3"}})
 	add(invocation{name: "a number in the realtime range", args: []string{"-v", "-s", "64", "0.05", sleepBin, "0.3"}})
+	// A wait status names the signal that produced it, so these three are
+	// SIGKILL by another name and get the KILL shape.
+	add(invocation{name: "a wait status is a signal", args: []string{"-v", "-s", "137", "0.05", sleepBin, "30"}})
+	add(invocation{name: "SIG and a number", args: []string{"-v", "-s", "SIG9", "0.05", sleepBin, "30"}})
+	// Signal 0 delivers nothing, and -v prints its name, so these also pin
+	// EXIT as the name of 0 rather than a special case in timeout.
+	add(invocation{name: "EXIT is signal zero", args: []string{"-v", "-s", "EXIT", "0.05", sleepBin, "0.3"}})
+	add(invocation{name: "a number masking to zero", args: []string{"-v", "-s", "256", "0.05", sleepBin, "0.3"}})
+	add(invocation{name: "an unbounded number masking to zero", args: []string{"-v", "-s", "2000000000", "0.05", sleepBin, "0.3"}})
 	add(invocation{name: "the last signal wins", args: []string{"-v", "-s", "KILL", "-s", "TERM", "0.05", sleepBin, "30"}})
 	add(invocation{name: "the long signal spelling", args: []string{"-v", "--signal=TERM", "0.05", sleepBin, "30"}})
 	add(invocation{name: "the signal glued to the letter", args: []string{"-v", "-sTERM", "0.05", sleepBin, "30"}})
-	for _, s := range []string{"BOGUS", "99999", "32", "33", "65", "", " TERM", "TERM ", "0x0", "+0", "-1", "int "} {
+	// LOST and UNUSED are kernel-UAPI names glibc never defines, so GNU
+	// refuses them; the shared table accepted them until #9643.
+	// SIG137 and 393 are the shared operand2sig grammar (#9652): the mask is
+	// in the digit arm, so a SIG prefix never reaches it, and the mask at 255
+	// and above is 0xFF — 393 & 0xFF is 137, which no signal is.
+	for _, s := range []string{"BOGUS", "99999", "32", "33", "65", "", " TERM", "TERM ", "0x0", "+0", "-1", "int ", "LOST", "UNUSED", "SIG137", "393", "2147483648"} {
 		add(invocation{name: "bad signal " + s, args: []string{"-s", s, "1", trueBin}})
 	}
 	add(invocation{name: "zero is a signal", args: []string{"-s", "0", "5", trueBin}})

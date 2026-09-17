@@ -3356,7 +3356,7 @@ func (b *builder) computeFreeEligible() map[string]bool {
 			// sweep is the only thing that can release it. Admitting only
 			// the two-word ABIs left a single-word `own` string param
 			// unreleased on every path — one buffer per call, unbounded —
-			// and kept it out of isSelfStrAppendLocal, whose gate is this
+			// and kept it out of selfStrAppendLocalSpine, whose gate is this
 			// set, so its self-append allocated instead of growing in
 			// place (#8804).
 			elig[p.Name] = true
