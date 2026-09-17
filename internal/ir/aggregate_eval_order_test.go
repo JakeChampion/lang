@@ -136,3 +136,65 @@ function main(): i32 { return build().a; }`, "build")
 		}
 	}
 }
+
+// Staging must not reorder the operands against each other (#9614, second
+// defect). An operand that cannot observe the allocation still has to be read
+// where the source reads it: it has no side effects of its own, but one that
+// does can INVALIDATE it.
+//
+// `Parsed { headers: h, body: framed(body, h), … }` in examples/vcl is the
+// shape that taught this. `h` is an identifier, so a version of the staging
+// that skipped it left its read at the store site — after the box, and so
+// after a call taking `h`. The field then loaded a released reference and the
+// proxy segfaulted on its first response, with the sanitizer silent and
+// FERN_IR_VERIFY reporting 532 clean functions, because the IR was well formed
+// and only the ORDER was wrong.
+//
+// So everything up to the last observable operand is staged, and the parameter
+// in the middle here is the one that says so: its read must precede the box.
+func TestOperandsKeepTheirSourceOrderAcrossTheBox(t *testing.T) {
+	ops := lowerFuncOps(t, `struct Q { a: i32, b: i32, c: i32 }
+function probe(): i32 { return 1; }
+function build(k: i32): Q { return Q { a: probe(), b: k, c: probe() }; }
+function main(): i32 { return build(7).b; }`, "build")
+	alloc := firstIndex(ops, func(op ir.Op) bool { return op.Kind == ir.OpAlloc })
+	if alloc < 0 {
+		t.Fatalf("build allocates nothing, so the case proves nothing")
+	}
+	// Slot 0 is the parameter `k` — the operand between the two calls.
+	readK := firstIndex(ops, func(op ir.Op) bool {
+		return op.Kind == ir.OpLoadLocal && op.I32 == 0
+	})
+	if readK < 0 {
+		t.Fatalf("the parameter is never read in build's op stream")
+	}
+	if readK > alloc {
+		t.Errorf("the parameter is read at op %d, after the box is bought at op %d — "+
+			"an operand between two staged ones must stay between them", readK, alloc)
+	}
+}
+
+// The complement, so the rule above is not satisfied by staging everything: an
+// operand AFTER the last observable one keeps its store-site evaluation.
+// Nothing that follows can invalidate it, the box is already bought, and this
+// is what keeps a trailing `ok: true, err: ""` costing what it did before.
+func TestTrailingUnobservableOperandsAreNotStaged(t *testing.T) {
+	ops := lowerFuncOps(t, `struct Q2 { a: i32, b: i32 }
+function probe(): i32 { return 1; }
+function build(k: i32): Q2 { return Q2 { a: probe(), b: k }; }
+function main(): i32 { return build(7).b; }`, "build")
+	alloc := firstIndex(ops, func(op ir.Op) bool { return op.Kind == ir.OpAlloc })
+	if alloc < 0 {
+		t.Fatalf("build allocates nothing, so the case proves nothing")
+	}
+	readK := firstIndex(ops, func(op ir.Op) bool {
+		return op.Kind == ir.OpLoadLocal && op.I32 == 0
+	})
+	if readK < 0 {
+		t.Fatalf("the parameter is never read in build's op stream")
+	}
+	if readK < alloc {
+		t.Errorf("the trailing parameter was staged (read at op %d, before the box at op %d): "+
+			"nothing after the last observable operand needs a slot", readK, alloc)
+	}
+}

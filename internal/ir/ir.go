@@ -6638,14 +6638,30 @@ func unobservableAggregateOperand(e ast.Expr) bool {
 // reuse token releases the donor box's old fields and an operand read out of
 // that donor has to be owned before it does.
 func (b *builder) spillAggregateOperands(exprs []ast.Expr, typeOf func(int) ast.Type, value func(int) error) ([]int32, error) {
-	any := false
-	for _, e := range exprs {
+	// The last operand that can observe the allocation is what decides how
+	// much has to be staged. Everything up to it is staged — including the
+	// operands that cannot observe anything — because staging reorders, and
+	// an operand that has no side effects of its own can still be
+	// INVALIDATED by one that does.
+	//
+	// `Parsed { headers: h, body: framed(body, h), … }` is the shape that
+	// taught this: `h` is an identifier, so an earlier version left it to be
+	// read at its store site, after the box — which put the read after a call
+	// that consumes `h`. The field then loaded a released reference and the
+	// VCL proxy segfaulted on its first response. Reading `h` where the
+	// source wrote it is the whole of the fix.
+	//
+	// Operands AFTER the last observable one need no slot: nothing that
+	// follows them can invalidate them, and the box is already bought by the
+	// time they run. That is what keeps a literal of trailing constants —
+	// `{ …, ok: true, err: "" }` — costing exactly what it did before.
+	last := -1
+	for i, e := range exprs {
 		if !unobservableAggregateOperand(e) {
-			any = true
-			break
+			last = i
 		}
 	}
-	if !any {
+	if last < 0 {
 		return nil, nil
 	}
 	// Ops emitted after this point still belong to the literal, not to
@@ -6655,13 +6671,7 @@ func (b *builder) spillAggregateOperands(exprs []ast.Expr, typeOf func(int) ast.
 	defer func() { b.curPos = litPos }()
 	slots := make([]int32, len(exprs))
 	for i := range exprs {
-		// An unobservable operand has no side effects to keep in order and
-		// nothing to learn from the allocation, so it costs no slot: it is
-		// emitted at its store site as before, whichever side of the box that
-		// falls on. Only the operands that can tell are staged, which is what
-		// keeps the emitted code the size it was for the literals that mix a
-		// call with constants.
-		if unobservableAggregateOperand(exprs[i]) {
+		if i > last {
 			slots[i] = -1
 			continue
 		}
