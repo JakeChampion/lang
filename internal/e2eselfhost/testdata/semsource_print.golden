@@ -2332,7 +2332,14 @@ func scan_words {
 }
 
 refused produced graph fails semantic verification: function signature slot
-refused function value result
+modes result ((i32) => i32)
+v0:((i32) => i32)
+func fn_result_named {
+  b0:
+    v0 = closure_new fn_result_named$wrap0
+    ret v0
+}
+
 refused function address is not a closure value
 modes 2 1 result Frag
 v0:u8[] v1:i32 v2:string v3:Frag
@@ -2521,7 +2528,7 @@ func addr_as_bytes {
     ret v1
 }
 
-refused cast contract
+refused cast contract: string as usize
 modes 1 1 result usize
 v0:usize v1:usize v2:usize
 func handle_sum {
@@ -3453,7 +3460,7 @@ func scan_words$clo0 {
 
 modes 2 1 result i32
 v0:i32[] v1:i32 v2:i32
-func refused_fn_result$wrap0 {
+func fn_result_named$wrap0 {
   b0:
     v0 = param 0
     v1 = param 1

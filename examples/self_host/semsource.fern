@@ -709,7 +709,7 @@ function slice_expr(e: ast.Expr, sl: ast.ExprSlice, s: State): Value {
     // An array's slice is a bare view rather than an Option, and the window it
     // hands back is a second reference to the source's buffer, which is a kind
     // this vocabulary does not have.
-    if (!ssasem.is_text(s.values[src.id])) { return refused(s, "unsupported slice source"); }
+    if (!ssasem.is_text(s.values[src.id])) { return refused(s, "unsupported slice source: " + typeinfo.spelling(s.values[src.id])); }
     var whole: typeinfo.Type = checked(e, s);
     var layout: i32 = union_layout(s, union_name(whole));
     if (layout != semrecords.layout_option()) { return refused(s, "unsupported slice result"); }
@@ -1092,12 +1092,22 @@ function try_layout(layout: i32): boolean {
 // the checker's type for the whole expression rather than the spelling, so a
 // cast to an alias or to a type this vocabulary does not admit refuses on what
 // the checker resolved instead of on how it was written.
+// An unresolved type has no spelling — typeinfo.spelling answers "" for
+// TypeUnknown — so a refusal that named one said only that it was unresolved.
+// The checker's own reason is the useful half and TypeUnknown carries it.
+function type_detail(t: typeinfo.Type): string {
+    if let typeinfo.TypeUnknown(u) = t { return u.reason; }
+    return typeinfo.spelling(t);
+}
+
 function cast(e: ast.Expr, u: ast.ExprUnary, s: State): Value {
     var operand: Value = expr(u.operand, s, typeinfo.unchecked());
     s = operand.s;
     if (!s.ok) { return operand; }
     var ty: typeinfo.Type = checked(e, s);
-    if (!ssasem.cast_admits(s.values[operand.id], ty)) { return refused(s, "cast contract"); }
+    if (!ssasem.cast_admits(s.values[operand.id], ty)) {
+        return refused(s, "cast contract: " + typeinfo.spelling(s.values[operand.id]) + " as " + typeinfo.spelling(ty));
+    }
     return define(s, ssasem.cast(), [operand.id], 0, "", ty);
 }
 
@@ -1955,7 +1965,7 @@ function declare_tuple(st: ast.Stmt, v: ast.StmtVar, s: State): State {
 
 function bind_projection(s: State, name: string, id: i32, after: checker.Scope): State {
     var want: typeinfo.Type = bound_type(s, name, after);
-    if (!semtypes.concrete(want, false)) { return fail(s, "unresolved type of binding " + name + ": " + typeinfo.spelling(want)); }
+    if (!semtypes.concrete(want, false)) { return fail(s, "unresolved type of binding " + name + ": " + type_detail(want)); }
     if (!semtypes.equal(want, s.values[id])) { return fail(s, mismatch(name, want, s.values[id])); }
     return bind(s, name, id);
 }
@@ -2039,7 +2049,7 @@ function declare(st: ast.Stmt, v: ast.StmtVar, s: State): State {
     if (destructures(v)) { return declare_tuple(st, v, s); }
     var after: checker.Scope = checker.bind_stmt(st, s.scope);
     var ty: typeinfo.Type = bound_type(s, v.name, after);
-    if (!semtypes.concrete(ty, false)) { return fail(s, "unresolved type of binding " + v.name + ": " + typeinfo.spelling(ty)); }
+    if (!semtypes.concrete(ty, false)) { return fail(s, "unresolved type of binding " + v.name + ": " + type_detail(ty)); }
     var init: Value = expr(v.init, s, ty);
     s = init.s;
     if (!s.ok) { return s; }
@@ -2526,7 +2536,7 @@ function iterate_array(fo: ast.StmtFor, s: State): State {
     var text: boolean = ssasem.is_text(s.values[it.id]);
     var elem: typeinfo.Type = element_type(s.values[it.id]);
     if (text) { elem = t_u8(); }
-    if (!semtypes.concrete(elem, false)) { return fail(s, "unsupported iterable"); }
+    if (!semtypes.concrete(elem, false)) { return fail(s, "unsupported iterable: " + typeinfo.spelling(s.values[it.id])); }
     var before: i32 = s.names.len();
     var outer: checker.Scope = s.scope;
     var start: Value = define(s, 1, [], 0 - 1, "", t_i32());
@@ -3032,6 +3042,27 @@ function builtin_enum_entry(t: typeinfo.Type, s: State, out: Schemas): Schemas {
     return Schemas { ...out, enums: out.enums.append(semrecords.Enum { ty: t, variants: variants, layout: semrecords.layout_option() }) };
 }
 
+// A frame that merely HOLDS a function value never built the box, so its own
+// graph names no environment — yet its release still has to walk the captures.
+// ssarc matches a box at run time against the environments this schema table
+// names, so every environment a value of this type could carry has to be in
+// it. A closure body's contract takes its environment as parameter 0, and
+// closure_type spells the function value it presents; a body spelling a
+// different function value can never be in the box, so it is left out and the
+// run-time match never sees it.
+function env_schemas(named: typeinfo.Type[], contracts: ssasem.Contract[]): typeinfo.Type[] {
+    var out: typeinfo.Type[] = [];
+    for t in named {
+        if (!ssasem.is_func(t)) { continue; }
+        for c in contracts {
+            if (c.params.len() == 0 || !semtypes.is_env(c.params[0])) { continue; }
+            if (!semtypes.equal(ssasem.closure_type(c), t)) { continue; }
+            out = out.append(c.params[0]);
+        }
+    }
+    return out;
+}
+
 function contract_types(calls: ssasem.Contract[]): typeinfo.Type[] {
     var out: typeinfo.Type[] = [];
     for c in calls {
@@ -3062,6 +3093,7 @@ function complete(fd: parser.FuncDecl, s: State, name: string): Produced {
     }
     var named: typeinfo.Type[] = f.values.append(s.result);
     for t in contract_types(s.calls) { named = named.append(t); }
+    for t in env_schemas(named, s.contracts) { named = named.append(t); }
     var table: Schemas = schemas(named, s);
     if (!table.ok) { return refuse(table.why); }
     var graph: ssa.SFunc = ssa.SFunc { ...f.graph, name: name, nparams: params.len() };
@@ -3081,7 +3113,6 @@ function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Cont
     var s: State = initial(fd, scope, contracts, binding, name, handers);
     if (!semtypes.concrete(s.result, true)) { return refuse("unresolved result type: " + typeinfo.spelling(s.result)); }
     if (ssasem.is_view(s.result)) { return refuse("view result escapes its source"); }
-    if (ssasem.is_func(s.result)) { return refuse("function value result"); }
     s = parameters(fd, s);
     s = stmts(fd.body, s);
     return complete(fd, s, name);
@@ -3096,9 +3127,6 @@ function contract(fd: parser.FuncDecl, scope: checker.Scope): ssasem.Contract {
     if (unsupported_declaration(fd, scope) != "") { return none; }
     var result: typeinfo.Type = result_type(fd, scope, ssasem.unbound());
     if (!semtypes.shaped(result, true) || ssasem.is_view(result)) { return none; }
-    // A caller of a fn-returning declaration reads an env box out of it, which
-    // is not the bare address this vocabulary has; so it has no contract here.
-    if (ssasem.is_func(result)) { return none; }
     var params: typeinfo.Type[] = [];
     var modes: i32[] = [];
     var names: string[] = decl_param_names(fd);
