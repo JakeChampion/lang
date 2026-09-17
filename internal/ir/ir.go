@@ -6679,6 +6679,15 @@ func (b *builder) pushAggregateOperand(i int, slots []int32, value func(int) err
 	return nil
 }
 
+// callPos is the construction's own source position, so an OpAlloc emitted
+// after its payloads still carries it rather than the last payload's.
+func callPos(n *ast.Call, fallback ast.Position) ast.Position {
+	if n == nil {
+		return fallback
+	}
+	return n.Pos()
+}
+
 func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, payloadCount int, args []ast.Expr) error {
 	// Payloadless variants return a shared static 4-byte
 	// `[tag=varIdx]` sentinel instead of allocating a fresh
@@ -6719,25 +6728,13 @@ func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, p
 	// shift by `rcHeaderBytes` so we keep using the same
 	// baseSlot (storing `base`) — the same accounting StructLit uses.
 	const rcHeaderBytes = 8
-	// Evaluate the payloads BEFORE the box is bought: a value's parts exist
-	// before the value does (spec/semantics.md, EV-01), and a payload
-	// expression can itself allocate.
-	//
-	// Stashing into scratch slots is also what lets a payload be an arbitrary
-	// control-flow shape. Pushing `base+offset` and then evaluating is
-	// rejected by the wasm validator when the expression contains an
-	// if-block with a result, because the (addr, value) pair the store
-	// expects would straddle the if-block's local stack scope.
-	//
-	// The retain belongs here rather than at the store: a reuse token
-	// releases the donor box's old payload, and a payload read out of that
-	// donor has to be owned before it does.
-	// Ops emitted after the payload loop still belong to the construction,
-	// not to whichever payload was lowered last — E068 names an un-paired
-	// construction by the position its OpAlloc carries (fip_verify.go).
-	ctorPos := b.curPos
+	// Each payload is stashed in a scratch slot rather than stored where the
+	// destination address was pushed first: the wasm validator rejects a store
+	// whose (addr, value) pair straddles an if-block that produces the value,
+	// so this is what lets a payload be an arbitrary control-flow shape.
 	valSlots := make([]int32, len(args))
-	for i, a := range args {
+	payloadIntoSlot := func(i int) error {
+		a := args[i]
 		if err := b.expr(a); err != nil {
 			return err
 		}
@@ -6745,7 +6742,6 @@ func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, p
 		// StructLit fields — an aliased payload (`Cons(0, t)`, t live elsewhere)
 		// is inc'd so the box co-owns its reference, a moved last-use owned-local
 		// payload (b.rc.moveSites, markConstructionMoves' enum case) skips the inc.
-		// Inc-and-passthrough (leaves the value on the stack for the store).
 		// Consuming-match reuse stores moved-out bindings back, so it's excluded.
 		if b.enumRcPayloadsEligible(enumName) && !b.rc.consumingMatchReuse[callNode] &&
 			needsRcIncOnAlias(a, b) && !b.rc.moveSites[a] {
@@ -6756,8 +6752,30 @@ func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, p
 			b.scratchType[valSlots[i]] = payloadTypes[i]
 		}
 		b.emit(Op{Kind: OpStoreLocal, I32: valSlots[i]})
+		return nil
 	}
-	b.curPos = ctorPos
+	// The payloads are evaluated BEFORE the box is bought: a value's parts
+	// exist before the value does (spec/semantics.md, AL-06), and a payload
+	// expression can itself allocate.
+	//
+	// Except under consuming-match reuse, where the payloads ARE the arm
+	// bindings and the reuse token republishes them: its decline branch
+	// re-establishes ownMatchDupSlots, so a binding read ahead of the token
+	// carries the pre-dup pointer and the caller's list is released out from
+	// under it. That shape reuses the scrutinee's own box rather than buying
+	// one, so there is no purchase for the payloads to precede.
+	hoistPayloads := !b.rc.consumingMatchReuse[callNode]
+	if hoistPayloads {
+		for i := range args {
+			if err := payloadIntoSlot(i); err != nil {
+				return err
+			}
+		}
+		// Ops emitted from here still belong to the construction, not to
+		// whichever payload was lowered last — E068 names an un-paired
+		// construction by the position its OpAlloc carries (fip_verify.go).
+		b.curPos = callPos(callNode, b.curPos)
+	}
 	// General FBIP reuse (computeReuseSources): a dead, owned enum local D of
 	// the same type/box-class is reused in place for this variant construction.
 	// Same machinery as the StructLit / TupleLit hooks — emitReuseToken leaves
@@ -6806,6 +6824,11 @@ func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, p
 		var pt ast.Type
 		if i < len(payloadTypes) {
 			pt = payloadTypes[i]
+		}
+		if !hoistPayloads {
+			if err := payloadIntoSlot(i); err != nil {
+				return err
+			}
 		}
 		b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
 		b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes + offsets[i]})
