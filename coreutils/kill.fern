@@ -150,43 +150,10 @@ function num2(n: i32): string {
   return s;
 }
 
-// `listed(v)` — the number `-l` / `-t` accept as an argument. GNU takes a
-// signal spelling OR the exit status of a process a signal killed, which is
-// why the number is MASKED with 127: `-l 137` is `KILL` because 137 is
-// 128 + 9. 0 and any multiple of 128 come back as signal 0.
-//
-// -1 means "names nothing", which the caller reports.
-function listed(v: string): i32 {
-  if (is_digit_str(v)) {
-    var raw: i32 = 0;
-    var i: i32 = 0;
-    while (i < v.len()) {
-      raw = raw * 10 + (v[i] as i32 - 48);
-      if (raw > 1000000) {
-        return 0 - 1;
-      }
-      i = i + 1;
-    }
-    var masked: i32 = raw % 128;
-    if (masked == 0) {
-      return 0;
-    }
-    if (signals.name(masked) == "") {
-      return 0 - 1;
-    }
-    return masked;
-  }
-  var n: i32 = signals.number(v);
-  if (n == 0) {
-    return 0 - 1;
-  }
-  return n;
-}
-
 // `run_list(args)` — `-l`. Bare, it prints every name this kernel has, one a
 // line, without the SIG prefix. With arguments it CONVERTS each: a number to
-// its name, a name to its number. Signal 0 prints `EXIT`, which is the shell's
-// spelling for "no signal" and has no entry in `names()`.
+// its name, a name to its number. The BARE listing starts at 1, so signal 0 is
+// never in it, but `-l 0` converts to `EXIT` like any other number.
 //
 // An argument that names nothing does NOT stop the rest — `kill -l 1 999`
 // prints HUP and then fails — so the failure is remembered and reported at the
@@ -207,18 +174,16 @@ function run_list(args: string[]): i32 {
   }
   var bad: boolean = false;
   for a in args {
-    var v: i32 = listed(a);
+    var v: i32 = signals.operand2sig(a);
     if (v < 0) {
       gnu.write_out(out);
       out = "";
       gnu.error(gnu.quote(a) + ": invalid signal");
       bad = true;
-    } else if (is_digit_str(a)) {
-      if (v == 0) {
-        out = out + "EXIT\n";
-      } else {
-        out = out + signals.name(v) + "\n";
-      }
+    } else if (gnu.is_digit(a[0] as i32)) {
+      // Which way GNU converts is decided by the argument's FIRST BYTE, not by
+      // what it resolved to: `SIG9` answers `9` and `9` answers `KILL`.
+      out = out + signals.name(v) + "\n";
     } else {
       out = out + v.to_string() + "\n";
     }
@@ -249,8 +214,8 @@ function run_table(args: string[]): i32 {
   }
   var bad: boolean = false;
   for a in args {
-    var v: i32 = listed(a);
-    if (v < 0 || v == 0) {
+    var v: i32 = signals.operand2sig(a);
+    if (v < 0) {
       gnu.write_out(out);
       out = "";
       gnu.error(gnu.quote(a) + ": invalid signal");
@@ -349,8 +314,8 @@ function main(): i32 {
     Some(first) => {
       if (first.len() >= 2 && first[0] as i32 == 45 && gnu.is_digit(first[1] as i32)) {
         var v: string = slice_unchecked(first, 1, first.len()) + "";
-        var n: i32 = signals.number(v);
-        if (n == 0 && !is_all_zero(v)) {
+        var n: i32 = signals.operand2sig(v);
+        if (n < 0) {
           gnu.die_usage(gnu.quote(v) + ": invalid signal", 1);
         }
         sig = n;
@@ -375,8 +340,8 @@ function main(): i32 {
           if (sig >= 0) {
             refuse_second_signal(nm);
           }
-          var bn: i32 = signals.number(nm);
-          if (bn == 0 && !is_all_zero(nm)) {
+          var bn: i32 = signals.operand2sig(nm);
+          if (bn < 0) {
             gnu.die_usage(gnu.quote(nm) + ": invalid signal", 1);
           }
           sig = bn;
@@ -417,8 +382,8 @@ function main(): i32 {
             if (sig >= 0) {
               refuse_second_signal(m.value);
             }
-            var sn: i32 = signals.number(m.value);
-            if (sn == 0 && !is_all_zero(m.value)) {
+            var sn: i32 = signals.operand2sig(m.value);
+            if (sn < 0) {
               gnu.die_usage(gnu.quote(m.value) + ": invalid signal", 1);
             }
             sig = sn;
@@ -465,21 +430,4 @@ function main(): i32 {
     sig = signals.number("TERM");
   }
   return run_send(sig, rest);
-}
-
-// Signal zero is the one spelling `signals.number` cannot report, because it
-// answers "no signal" and "invalid" with the same 0. Every all-digits-zero
-// form is it: `0`, `00`, and `-0`'s tail.
-function is_all_zero(s: string): boolean {
-  if (s.len() == 0) {
-    return false;
-  }
-  var i: i32 = 0;
-  while (i < s.len()) {
-    if (s[i] as i32 != 48) {
-      return false;
-    }
-    i = i + 1;
-  }
-  return true;
 }
