@@ -1397,7 +1397,9 @@ func runCheck(srcPath, target string) error {
 // len+9 and freed it at len+8, so at lengths where the two round to different
 // 16-byte classes the block was pushed onto a class nothing requested, the
 // freelist stopped recycling, and the heap grew without bound. strBlockBytes
-// is the single number both ends use now (#9558).
+// is the single number both ends use now (#9558), and x86_64ssa carried the
+// same disagreement the other way round — six producers at len+9 against a
+// free at len+8 — fixed the same way (#9568).
 //
 // It was never the single-word string ABI, which was the first reading:
 // x86-64 runs that same ABI, since ast.TwoWordOverride is set only by
@@ -1414,7 +1416,7 @@ func runCheck(srcPath, target string) error {
 // backendFlagUsage is `fern -h`'s description of -backend. It says what the
 // SSA backend costs as well as what it saves, because the saving is the part
 // a caller can see from the outside and the cost is not.
-const backendFlagUsage = "code-generation backend for the selected -target. Every target defaults to the stack-machine emitter, named `flat` for a caller who wants it selected rather than inherited. `ssa` names the SSA-direct backend, available for -target arm64-linux and -target x86-64-linux: it allocates registers instead of walking a stack machine and so emits less code, but it is not the default while both targets still leak on string-heavy work: on arm64-linux it retains a large read buffer the stack-machine emitter frees, so a program holds far more at exit, and on x86-64-linux it frees a string at a different size than it allocated it, so the heap grows as the program runs (#9568). It also does not serve --run, -cc, -export, -shared, -g, -cover or -sanitize. Coverage is a subset of the language — the integer core, control flow, calls, memory, strings, arrays, and the RC runtime — and an unsupported op errors rather than miscompiles. Unlike the old `-target wasm-ssa` / `-target arm64-ssa` spellings this replaces, the target keeps its descriptor, so capability enforcement (E066) applies here exactly as it does to the default emitter."
+const backendFlagUsage = "code-generation backend for the selected -target. Every target defaults to the stack-machine emitter, named `flat` for a caller who wants it selected rather than inherited. `ssa` names the SSA-direct backend, available for -target arm64-linux and -target x86-64-linux: it allocates registers instead of walking a stack machine and so emits less code, but it is not the default while arm64-linux still leaks on string-heavy work: it retains a large read buffer the stack-machine emitter frees, so a program holds far more at exit (#9542). It also does not serve --run, -cc, -export, -shared, -g, -cover or -sanitize. Coverage is a subset of the language — the integer core, control flow, calls, memory, strings, arrays, and the RC runtime — and an unsupported op errors rather than miscompiles. Unlike the old `-target wasm-ssa` / `-target arm64-ssa` spellings this replaces, the target keeps its descriptor, so capability enforcement (E066) applies here exactly as it does to the default emitter."
 
 func resolveBackend(backend string) string {
 	if backend != "" {

@@ -157,7 +157,7 @@ func emitReaderReadChunkHelper(w func(string, ...any)) {
 	// Header + n + trailing NUL, rounded to its size class: a raw bump, so
 	// the rewind below can lower the cursor, but sized as __alloc would
 	// size it, which is the extent __fern_str_append takes a string to own.
-	w("\tlea rax, [r12 + 9]")
+	w("\tlea rax, [r12 + %d]", strBlockBytes)
 	emitFreelistClass(w, "rrc_req", "rax", "rdx", ".Lssa_rrc_req_none")
 	w(".Lssa_rrc_req_none:")
 	ssaInlineBump(w, "rcx", "rax")
@@ -174,9 +174,9 @@ func emitReaderReadChunkHelper(w func(string, ...any)) {
 	w("\ttest rax, rax")
 	w("\tjs .Lssa_rrc_err")
 	w("\tje .Lssa_rrc_eof")
-	w("\tmov dword ptr [r12 - 4], eax") // len = bytes read
-	w("\tmov byte ptr [r12 + rax], 0")  // trailing NUL
-	w("\tlea rsi, [rax + 9]")           // header + bytes + NUL, to the class it now fills
+	w("\tmov dword ptr [r12 - 4], eax")       // len = bytes read
+	w("\tmov byte ptr [r12 + rax], 0")        // trailing NUL
+	w("\tlea rsi, [rax + %d]", strBlockBytes) // header + bytes + NUL, to the class it now fills
 	emitFreelistClass(w, "rrc_got", "rsi", "rdx", ".Lssa_rrc_got_none")
 	w(".Lssa_rrc_got_none:")
 	w("\tlea rcx, [r12 - 8]")

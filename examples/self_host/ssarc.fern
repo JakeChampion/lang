@@ -2041,6 +2041,7 @@ function raw_memory_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     if (ins.str == "__free") { return Lowered { found: true, r: emit(r, ir.op_free()) }; }
     if (ins.str == "__ptr_width") { return Lowered { found: true, r: emit(r, ir.op_ptr_width()) }; }
     if (ins.str == "__heap_bump_bytes") { return Lowered { found: true, r: emit(r, ir.op_heap_bump_bytes()) }; }
+    if (ins.str == "__heap_alloc_count") { return Lowered { found: true, r: emit(r, ir.op_heap_alloc_count()) }; }
     if (ins.str == "__heap_mark") { return Lowered { found: true, r: emit(r, ir.op_heap_mark()) }; }
     if (ins.str == "__heap_release_to") { return Lowered { found: true, r: emit(r, ir.op_heap_release_to()) }; }
     if (ins.str == "__memcpy") { return Lowered { found: true, r: emit(r, ir.op_memcpy()) }; }

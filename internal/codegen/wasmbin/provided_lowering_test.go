@@ -65,7 +65,7 @@ var providedNeverReachesCodegen = map[string]bool{
 	"__sum_bytes":     true,
 	"__crc32_cksum":   true,
 	"__mismatch":      true,
-	"__map_hash_seed": true, "__heap_bump_bytes": true,
+	"__map_hash_seed": true, "__heap_bump_bytes": true, "__heap_alloc_count": true,
 	"__arr_push_shared_bytes": true, "__arr_push_shared_count": true,
 	"__rc_underflow_count": true,
 	// The rc trio — OpRcInc / OpRcDec (inline fast path, or the

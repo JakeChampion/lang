@@ -110,7 +110,7 @@ pub function kind_name(id: i32): string {
     if (id == 26) { return "read_file"; }
     if (id == 27) { return "write_file"; }
     if (id >= 28 && id <= 34) { return buf_kind_name(id); }
-    if (id >= 40 && id <= 57) { return prod_kind_name(id); }
+    if (id >= 40 && id <= 59) { return prod_kind_name(id); }
     return "invalid";
 }
 
@@ -199,7 +199,7 @@ pub function print_func(f: SFunc): string {
 //   57 agg_lit    str = packed constant a static record or variant box (ir.const_struct_*), by address
 function prod_kind_name(id: i32): string {
     var names: string[] = ["ld_at", "st_at", "arr_at", "arr_st", "str_at", "fn_addr", "shape_addr", "str_lit", "arr_box", "str_call", "rt_call", "str_view",
-        "ld_idx", "st_idx", "ld_byte", "st_byte", "call_ind", "agg_lit"];
+        "ld_idx", "st_idx", "ld_byte", "st_byte", "call_ind", "agg_lit", "sym_addr", "flat_op"];
     return names[id - 40];
 }
 
@@ -909,7 +909,7 @@ function merge_blocks(f: SFunc): SFunc {
 // the calls proper, the toy runtime's string / output / file / buffer
 // helpers, and the production lift's box allocation.
 function inst_is_call(k: i32): boolean {
-    if (k == 11 || k == 12 || k == 17 || k == 18 || k == 48 || k == 49 || k == 50 || k == 51 || k == 56) { return true; }
+    if (k == 11 || k == 12 || k == 17 || k == 18 || k == 48 || k == 49 || k == 50 || k == 51 || k == 56 || k == 59) { return true; }
     return k >= 19 && k <= 27;
 }
 
@@ -1191,7 +1191,7 @@ function inst_has_effect(k: i32): boolean {
     // abort) and the box allocation.
     var below: i32[] = [6, 11, 12, 14, 16, 17];
     for e in below { if (k == e) { return true; } }
-    var pure: i32[] = [40, 45, 46, 47, 52, 54, 57];
+    var pure: i32[] = [40, 45, 46, 47, 52, 54, 57, 58];
     for q in pure { if (k == q) { return false; } }
     return k >= 19;
 }

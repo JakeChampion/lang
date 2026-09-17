@@ -3332,6 +3332,7 @@ function memory_contracts(): ssasem.Contract[] {
         ssasem.Contract { name: "__free", params: [t_usize(), t_i32()], modes: [v, v], result: t_void() },
         ssasem.Contract { name: "__ptr_width", params: [], modes: [], result: t_i32() },
         ssasem.Contract { name: "__heap_bump_bytes", params: [], modes: [], result: t_i64() },
+        ssasem.Contract { name: "__heap_alloc_count", params: [], modes: [], result: t_i64() },
         ssasem.Contract { name: "__heap_mark", params: [], modes: [], result: t_i64() },
         ssasem.Contract { name: "__heap_release_to", params: [t_i64()], modes: [v], result: t_void() },
         ssasem.Contract { name: "__memcpy", params: [t_usize(), t_usize(), t_i32()], modes: [v, v, v], result: t_void() },

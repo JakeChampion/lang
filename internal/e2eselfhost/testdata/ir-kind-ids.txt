@@ -299,3 +299,4 @@ fd_dup_onto=311
 termios_get=312
 termios_set=313
 set_window_size=314
+heap_alloc_count=315

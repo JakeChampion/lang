@@ -23,7 +23,11 @@ func TestRuntimeHelpersPreserveCalleeSaved(t *testing.T) {
 		// The bump-heap guard is reached by a `bl` planted inline in a function
 		// body (heapGuardCallLines), so it is under the same obligation as the
 		// named helpers without being one of them.
-		heapGuardSym: emitHeapGuard,
+		// Both spellings: a module that reads __heap_alloc_count() carries
+		// the guard with its census tick, and the obligation is the same.
+		heapGuardSym:                     func(w func(string, ...any)) { emitHeapGuard(w, false) },
+		heapGuardSym + " counting":       func(w func(string, ...any)) { emitHeapGuard(w, true) },
+		fnLabel("__alloc") + " counting": emitAllocHelperCounting,
 	}
 	for name, fn := range runtimeHelperEmitters {
 		emitters[name] = fn

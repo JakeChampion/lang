@@ -762,6 +762,10 @@ func New() *Interp {
 	// under -interp without erroring (the metric is only meaningful in
 	// codegen).
 	i.Builtins["__heap_bump_bytes"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
+	// __heap_alloc_count(): the allocator's call count, 0 here for the same
+	// reason — Go's allocator serves this evaluator and there is no bump
+	// allocator to count calls into.
+	i.Builtins["__heap_alloc_count"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
 	// __rc_underflow_count(): the runtime's over-release counter, for the same
 	// reason — the interpreter has no refcounts to underflow, so it reports the
 	// clean reading rather than erroring. Every self-host driver ends in

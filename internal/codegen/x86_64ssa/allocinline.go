@@ -43,9 +43,17 @@ func boxFreeInline(in Inst) bool {
 // constant size as an inline push; it reports false for anything else. r11
 // is the per-instruction scratch the trampoline already uses; s0 homes a
 // slot-resident box and s1 the old list head.
-func inlineAllocLines(in Inst, numAlloc int, seed string) ([]string, bool) {
+func inlineAllocLines(in Inst, numAlloc int, seed string, counting bool) ([]string, bool) {
 	lbl := func(suffix string) string { return fmt.Sprintf(".Lssa_alloc_%s_%s", seed, suffix) }
 	if in.Op == MemAlloc && in.SrcImm {
+		if counting {
+			// A module reading __heap_alloc_count() (#9596) keeps every
+			// allocation on the helper, which is where the counter ticks.
+			// Inlining the pop here instead would hand out a block the
+			// count never saw, and an undercount reads as the zero-alloc
+			// steady state the observable exists to prove.
+			return nil, false
+		}
 		idx, ok := SmallClassIndex(in.Imm)
 		if !ok {
 			return nil, false

@@ -733,6 +733,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesHeapBumpBytes {
 		g.emitHeapBumpBytesRuntime()
 	}
+	if g.usesHeapAllocCount {
+		g.emitHeapAllocCountRuntime()
+	}
 	if g.usesHeapMark {
 		g.emitHeapMarkRuntime()
 	}
@@ -1502,6 +1505,13 @@ type generator struct {
 	// matching OpCallDirect; also pulls in __fern_random_i32, which fills
 	// the cached word on first call.
 	usesMapHashSeed bool
+	// usesHeapAllocCount gates the reader `__fern_heap_alloc_count`
+	// (#9596) and, with it, the census counters themselves: the count is
+	// the leak detector's `__fern_lc_alloc_count`, so a program that
+	// reads it compiles the same ticks `FERN_LEAKCHECK=1` would, without
+	// the exit report. Set when the IR emits the matching OpCallDirect;
+	// also pulls in the allocator, which is where the ticking happens.
+	usesHeapAllocCount bool
 	// usesHeapBumpBytes gates the Phase 6 measurement reader
 	// `__fern_heap_bump_bytes` (returns __fern_heap_ptr − __fern_heap_base,
 	// the bump high-water mark). Set when the IR emits the matching
@@ -1861,6 +1871,9 @@ func (g *generator) recordUse(target string) {
 	case "__fern_heap_bump_bytes":
 		g.usesHeapBumpBytes = true
 		g.usesAlloc = true // reads __fern_heap_ptr / __fern_heap_base
+	case "__fern_heap_alloc_count":
+		g.usesHeapAllocCount = true
+		g.usesAlloc = true // the counter is ticked inside __fern_alloc
 	case "__heap_mark", "__heap_release_to":
 		g.usesHeapMark = true
 		g.usesAlloc = true // rewinds __fern_heap_ptr; shadows the freelist heads
@@ -6704,7 +6717,7 @@ func (g *generator) emitDataSections() {
 			g.label("__fern_cov_counters")
 			g.line(fmt.Sprintf("\t.space %d", 8*n))
 		}
-		if ast.LeakCheckEnabled {
+		if g.countsAllocs() {
 			// Leak detector counters (#5362 slice 1). alloc_count /
 			// alloc_bytes tick in __fern_alloc (post-16-rounding, both
 			// the freelist-pop and bump paths); free_count / free_bytes
@@ -7306,7 +7319,7 @@ func (g *generator) emitAllocRuntime() {
 	g.emit("push r13") // holds mmap address hint
 	g.emit("add rdi, 15")
 	g.emit("and rdi, -16")
-	if ast.LeakCheckEnabled {
+	if g.countsAllocs() {
 		// Leak detector (#5362 slice 1): count every allocation — the
 		// freelist-pop and bump paths both flow through here — at the
 		// 16-rounded size, the same rounding __fern_free's counter
@@ -7483,7 +7496,7 @@ func (g *generator) emitFreeRuntime() {
 	g.line(".type __fern_free, @function")
 	g.label("__fern_free")
 	g.emitRcTraceEvent('f', "rdi", "rsi")
-	if ast.LeakCheckEnabled {
+	if g.countsAllocs() {
 		// Leak detector (#5362 slice 1): every reclamation site funnels
 		// through this helper (box_free / arr_dec / map_drop /
 		// drop_arr_ptr / drop_arr_str / alloc_reuse's mismatch path /
@@ -8370,6 +8383,28 @@ func (g *generator) emitHeapBumpBytesRuntime() {
 	g.emit("xor eax, eax")
 	g.emit("ret")
 	g.line(".size __fern_heap_bump_bytes, .-__fern_heap_bump_bytes")
+}
+
+// countsAllocs reports whether this module maintains the census counters
+// __fern_alloc / __fern_free tick. The leak detector wants them; so does a
+// program that reads __heap_alloc_count(), which is the same counter without
+// the exit report. Everything that keeps the four quads in step reads this,
+// so the count and the bytes can never be maintained by halves.
+func (g *generator) countsAllocs() bool { return ast.LeakCheckEnabled || g.usesHeapAllocCount }
+
+// emitHeapAllocCountRuntime emits `__fern_heap_alloc_count() -> i64`
+// (#9596): the census counter __fern_alloc ticks on both the
+// freelist-pop and the bump path, which is the half __fern_heap_bump_bytes
+// cannot see — a recycling loop moves this and not the cursor. Leaf; no
+// frame.
+func (g *generator) emitHeapAllocCountRuntime() {
+	g.line("")
+	g.line(".globl __fern_heap_alloc_count")
+	g.line(".type __fern_heap_alloc_count, @function")
+	g.label("__fern_heap_alloc_count")
+	g.emit("mov rax, qword ptr [rip + __fern_lc_alloc_count]")
+	g.emit("ret")
+	g.line(".size __fern_heap_alloc_count, .-__fern_heap_alloc_count")
 }
 
 // emitHeapMarkRuntime emits `__fern_heap_mark() -> i64` and
@@ -9407,7 +9442,7 @@ func (g *generator) emitStrAppendRuntime() {
 	g.emit("and r10, -16")
 	g.emit("cmp r10, 0x40000000")
 	g.emit("ja .Lstrapp_copy")
-	if ast.LeakCheckEnabled {
+	if g.countsAllocs() {
 		// The block was charged at its 16-rounded request and __fern_free
 		// will charge the grown one; the difference keeps the pair exact.
 		g.emit("mov rsi, r10")
@@ -9417,7 +9452,7 @@ func (g *generator) emitStrAppendRuntime() {
 	g.emit("cmp r10, r9")
 	g.emit("ja .Lstrapp_copy")
 	// --- in place: memcpy(a + la, b_data, lb) ---
-	if ast.LeakCheckEnabled {
+	if g.countsAllocs() {
 		g.emit("add qword ptr [rip + __fern_lc_alloc_bytes], rsi")
 	}
 	g.emit("mov [rbp - 32], r8") // total survives the call
@@ -9521,7 +9556,7 @@ func (g *generator) emitStrAppendRangeRuntime() {
 	g.emit("and r10, -16")
 	g.emit("cmp r10, 0x40000000")
 	g.emit("ja .Lsarange_copy")
-	if ast.LeakCheckEnabled {
+	if g.countsAllocs() {
 		// The block was charged at its 16-rounded request and __fern_free
 		// will charge the grown one; the difference keeps the pair exact.
 		g.emit("mov rsi, r10")
@@ -9531,7 +9566,7 @@ func (g *generator) emitStrAppendRangeRuntime() {
 	g.emit("cmp r10, r9")
 	g.emit("ja .Lsarange_copy")
 	// --- in place: memcpy(a + la, s_data + lo, lb) ---
-	if ast.LeakCheckEnabled {
+	if g.countsAllocs() {
 		g.emit("add qword ptr [rip + __fern_lc_alloc_bytes], rsi")
 	}
 	g.emit("mov [rbp - 48], r8") // total survives the call
@@ -11407,7 +11442,7 @@ func (g *generator) emitStrBufRuntime() {
 	g.label(".Lsbgrow_alloc")
 	g.emit("mov rdi, r12")
 	g.emit("call __fern_alloc")
-	if ast.LeakCheckEnabled {
+	if g.countsAllocs() {
 		// The builder's buffer is runtime state the program never holds,
 		// so the census leaves it out as it left out the .bss reservation
 		// it replaced. r12 is a power of two >= 64 KiB, already 16-rounded.
