@@ -336,7 +336,6 @@ function main(): i32 {
 	// pinned with the program: the lookup on a collision node is where a
 	// clobbered key address surfaced.
 	{name: "folded_aggregates", viaSSA: []string{"main", "pmap__PMap__Coarse__i32__get_or", "pmap____hm_find__Coarse__i32", "pmap__PMap__Coarse__i32__insert"}, src: `
-
 import "std/pmap" as pmap;
 import "std/option";
 import "std/i32";
@@ -352,6 +351,36 @@ function main(): i32 {
     var n: i32 = m.get_or(Coarse { bucket: 3, id: 13 }, -1) * 10 + m.get_or(Coarse { bucket: 3, id: 14 }, -1);
     if (m.contains(Coarse { bucket: 1, id: 6 })) { n = n + 1000; }
     return n % 251;
+}
+`},
+	// The string ops the stack machine selects in emit_str_op (search, split,
+	// lines, case, trim, replace, bytes, count), through the stack machine's
+	// own arm with the operand count the IR verifier gives each, and the bit
+	// counts at both widths.
+	{name: "strings", allSSA: true, src: `
+import "std/string";
+import "std/i32";
+import "std/i64";
+function strs(s: string): i32 {
+    var n: i32 = 0;
+    n = n + s.index_of("fern");
+    if (s.starts_with("the")) { n = n + 100; }
+    if (s.ends_with("end")) { n = n + 200; }
+    if (s.contains("language")) { n = n + 400; }
+    n = n + s.split(" ").len() * 10;
+    n = n + s.lines().len() * 1000;
+    n = n + s.trim().len();
+    n = n + s.replace("fern", "FERN").to_upper().len() + s.to_lower().len();
+    n = n + "ab".repeat(3).len() + s.reverse_bytes().len();
+    n = n + s.bytes().len() + s.count("e");
+    return n;
+}
+function bits(a: i32, b: i64): i32 {
+    return a.count_ones() + a.leading_zeros() * 10 + a.trailing_zeros() * 100 + (b.count_ones() as i32) * 1000 + (b.leading_zeros() as i32) * 7 + (b.trailing_zeros() as i32) * 3;
+}
+function main(): i32 {
+    var s: string = "  the fern language\n has a fern end";
+    return (strs(s) + bits(15790080, 280375465082880)) % 251;
 }
 `},
 	// A mixed module: main and the string helpers keep the stack machine, the
