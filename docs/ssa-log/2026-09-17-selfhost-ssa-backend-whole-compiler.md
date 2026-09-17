@@ -48,6 +48,23 @@ accounts for 57,025 of them, the 333k call results for the rest of the
 stores. The next item is therefore the SSA-owned kinds writing to the
 result's home and reading operands from theirs, not the table.
 
+## The emitter items, on the compiler compiling itself
+
+| build | instructions (arm64) | binary | compile |
+|---|---|---|---|
+| flat | 4,206,795 | 18.5 MB | 126 to 132 s |
+| #9570 (frame from sp, no branch to the next block) | 5,013,831 | 21.5 MB | 142 s |
+| #9571 (results to their home, operands from theirs) | 4,814,582 | 20.7 MB | 134 s |
+| #9573 (a compare read only by its branch as flags) | 4,712,644 | | |
+
+#9571 took the moves out of x0 from 529,606 to 376,860 and the moves into
+x0/x1/x2 from 335,412 to 295,644; #9573 took `cset` from 44,047 to 9,109
+and `cbz` from 100,742 to 65,927, with 51,073 `b.<cond>` in their place.
+Widening the caller-saved set from seven registers to eleven (x4 to x7,
+which no SSA sequence uses) changed the text by 3,385 instructions, 0.07%,
+so the 1.96M frame loads and stores are call-crossing values, not register
+pressure; callee-saved registers are the next item.
+
 ## The corpus
 
 Every `examples/**/*.fern` outside `self_host`, built both ways for
