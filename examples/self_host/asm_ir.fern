@@ -8907,6 +8907,7 @@ pub function emit_module_ir_gated_sub(mod: parser.Module, known: string[], sub: 
     var base: irlower.FnSigs = ircore.wp_fn_sigs(im.funcs, imtab);
     base = ircore.sub_sigs(sub, base);
     var g: ircore.Lowered = ircore.lower_gated(im, imtab, irlower.fn_sigs_with_dyn(base, im.trait_reqs), known, false, sub);
+    ircore.fail_on_fip_claims(g);
     if (!g.ok) { return ""; }
     // Every function eligible — emit from the cache (no second lowering).
     return emit_module_ir_unit_backend(im, true, false, "", [], im.funcs, imtab, 0, 0 - 1, ircore.sub_cache(sub, g.cache), base, ssa);
