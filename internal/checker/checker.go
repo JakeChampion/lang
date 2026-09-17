@@ -16711,8 +16711,19 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// not a named function or declares none) — an `own` param consumes
 		// its argument, which disables argAssignable's str-view borrow.
 		var calleeOwnFlags []bool
+		// A callee that resolves to a parameter, local or capture is a function
+		// VALUE: its consuming positions come from its TYPE, never from the
+		// global function whose name it shadows (#9532). This is the only place
+		// with a scope to tell the two apart, so the verdict is recorded below
+		// even when it is "no own positions" — the consumers must not re-derive
+		// it by name, having no scope of their own.
+		calleeIsValue := false
 		if cid, ok := n.Callee.(*ast.Ident); ok {
-			calleeOwnFlags = c.info.OwnFuncs[cid.Name]
+			if _, isValue := c.identValueBinding(cid.Name, s); isValue {
+				calleeIsValue = true
+			} else {
+				calleeOwnFlags = c.info.OwnFuncs[cid.Name]
+			}
 		}
 		// A call through a function VALUE has no declaration to read them
 		// from; the function type carries them (`(own T) => T`).
@@ -16723,7 +16734,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// the body is checked and has no callee type of its own. A
 		// dispatch-rewritten method call is excluded: its receiver is held in
 		// Args[0] and the guard has never covered that shape.
-		if len(calleeOwnFlags) > 0 && !recvIsArg0 && n.Method == nil {
+		if (len(calleeOwnFlags) > 0 || calleeIsValue) && !recvIsArg0 && n.Method == nil {
 			if c.callOwnFlags == nil {
 				c.callOwnFlags = map[*ast.Call][]bool{}
 			}

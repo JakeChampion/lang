@@ -177,6 +177,15 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		want []string // codes the self-host checker should print
 	}{
 		{"clean", "function main(): i32 { return 1 + 2; }\n", nil},
+		// Shadowed-callee scoping (#9532). A binding shadows an own-func's name
+		// inside ITS OWN scope: a block-local from its declaration to the end of
+		// its block, a match binder for its arm. The self-host answered from a
+		// whole-function name set, which silenced the first and invented the
+		// second — neither direction had a row here, which is how both reached
+		// a reviewer instead of a test.
+		{"e051-local-shadows-after-the-call", "function keep(own ys: i32[]): i32 { return ys[0]; }\nfunction f(xs: i32[]): i32 {\n    var a: i32 = keep(xs);\n    var keep: (i32[]) => i32 = (v: i32[]) => v.len();\n    return a + keep(xs);\n}\nfunction main(): i32 { return f([1, 2]); }\n", []string{"E051"}},
+		{"e051-local-shadows-in-an-inner-block", "function keep(own ys: i32[]): i32 { return ys[0]; }\nfunction f(xs: i32[], c: boolean): i32 {\n    var n: i32 = 0;\n    if (c) { var keep: (i32[]) => i32 = (v: i32[]) => v.len(); n = keep(xs); }\n    return n + keep(xs);\n}\nfunction main(): i32 { return f([1, 2], true); }\n", []string{"E051"}},
+		{"arm-binder-on-a-borrowed-scrutinee-clean", "enum Box { B((i32[]) => i32) }\nfunction keep(own ys: i32[]): i32 { return ys[0]; }\nfunction f(b: Box, xs: i32[]): i32 {\n    var n: i32 = 0;\n    match (b) { B(keep) => { n = keep(xs); } }\n    return n;\n}\nfunction main(): i32 { return f(B((v: i32[]) => v.len()), [1, 2]); }\n", nil},
 		// Call-site checks against a fn-typed PARAM (#5986's last half): the
 		// param resolves to a real TypeFunc from its sidecars, so a
 		// non-function argument draws E038 — the same code native emits —

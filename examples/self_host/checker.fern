@@ -10992,7 +10992,7 @@ struct OwnWalk { moved: MovedEntry[], diags: util.Diag[] }
 // keys admitted while walking `base = S { ...base, f: g(.., base.f, ..) }`
 // or the return of that literal (ow_field_move_fields). `borrowed` names
 // the parameters this frame does not own — never a base for that move.
-struct OwnCtx { owned: string[], borrowed: string[], ofuncs: OwnFunc[], structs: parser.StructDecl[], admit: string, admit_fields: string[], fresh: string[] }
+struct OwnCtx { owned: string[], borrowed: string[], ofuncs: OwnFunc[], structs: parser.StructDecl[], admit: string, admit_fields: string[], fresh: string[], bound: string[] }
 
 function ow_moved_has(m: MovedEntry[], name: string): boolean {
   for elem in m {
@@ -11066,7 +11066,9 @@ function ow_nested_ctx(ctx: OwnCtx, params: ast.ParamDecl[]): OwnCtx {
       }
     }
   }
-  return OwnCtx { owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, admit: ctx.admit, admit_fields: ctx.admit_fields, fresh: ctx.fresh };
+  var bound: string[] = ctx.bound;
+  for p in params { if (!util.has_str(bound, p.name)) { bound = bound.append(p.name); } }
+  return OwnCtx { owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, admit: ctx.admit, admit_fields: ctx.admit_fields, fresh: ctx.fresh, bound: bound };
 }
 
 function ow_names_del(names: string[], name: string): string[] {
@@ -11366,6 +11368,9 @@ function ow_guard_call(c: ast.ExprCall, ctx: OwnCtx): util.Diag[] {
   var out: util.Diag[] = [];
   match (c.callee) {
     ast.ExprIdent(id) => {
+      if (util.has_str(ctx.bound, id.name)) {
+        return out;
+      }
       if (ow_is_own_func(ctx.ofuncs, id.name)) {
         var flags: boolean[] = ow_func_flags(ctx.ofuncs, id.name);
         var i: i32 = 0;
@@ -11390,6 +11395,9 @@ function ow_guard_call(c: ast.ExprCall, ctx: OwnCtx): util.Diag[] {
 function ow_call_arg_flags(callee: ast.Expr, ctx: OwnCtx): boolean[] {
   match (callee) {
     ast.ExprIdent(id) => {
+      if (util.has_str(ctx.bound, id.name)) {
+        return [];
+      }
       if (ow_is_own_func(ctx.ofuncs, id.name)) {
         return ow_func_flags(ctx.ofuncs, id.name);
       }
@@ -11641,7 +11649,7 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
     },
     ast.StmtFor(fr) => {
       var ri: OwnWalk = ru_borrow(fr.iter, moved, ctx);
-      var ld: util.Diag[] = ow_loop(fr.body, ri.moved, ctx);
+      var ld: util.Diag[] = ow_loop(fr.body, ri.moved, ow_bind_ctx(ctx, fr.var_name));
       return OwnWalk { moved: ri.moved, diags: util.append_diags(ri.diags, ld) };
     },
     ast.StmtMatch(m) => {
@@ -11654,9 +11662,11 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       var mv: MovedEntry[] = rs.moved;
       var d: util.Diag[] = rs.diags;
       for arm in m.arms {
-        var actx: OwnCtx = ctx;
+        // A binder shadows for its arm either way; only the ownership
+        // TRANSFER below depends on the scrutinee being owned.
+        var actx: OwnCtx = ow_arm_bind_ctx(ctx, arm.pattern);
         if (scrut_owned) {
-          actx = ow_arm_payload_ctx(ctx, arm.pattern);
+          actx = ow_arm_payload_ctx(actx, arm.pattern);
         }
         var ra: OwnWalk = ow_stmts(arm.body, rs.moved, actx);
         d = util.append_diags(d, ra.diags);
@@ -11677,10 +11687,15 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
 function ow_stmts(stmts: ast.Stmt[], moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
   var m: MovedEntry[] = moved;
   var d: util.Diag[] = [];
+  // A local binds for the REST OF THIS BLOCK: after its own statement, so its
+  // initialiser still sees the global, and not at all in an enclosing block,
+  // since each block walks its own copy.
+  var c: OwnCtx = ctx;
   for stmt in stmts {
-    var r: OwnWalk = ow_stmt(stmt, m, ctx);
+    var r: OwnWalk = ow_stmt(stmt, m, c);
     m = r.moved;
     d = util.append_diags(d, r.diags);
+    if let ast.StmtVar(v) = stmt { c = ow_bind_ctx(c, v.name); }
   }
   return OwnWalk { moved: m, diags: d };
 }
@@ -11693,6 +11708,35 @@ function ow_moved_del(m: MovedEntry[], name: string): MovedEntry[] {
     }
   }
   return out;
+}
+
+// A function's own parameter names: the bindings in scope before its body
+// begins. Everything else — locals, `for` variables, arm binders, a lambda's
+// parameters — layers onto this as the walk reaches the scope it binds in.
+function ow_param_names(fn: parser.FuncDecl): string[] {
+  var out: string[] = [];
+  for p in fn.params { out = out.append(p.name); }
+  return out;
+}
+
+// ow_arm_bind_ctx layers a match arm's binder NAMES, whatever the scrutinee's
+// ownership: the binder shadows an own-func of the same name for its arm even
+// when nothing was transferred into it.
+function ow_arm_bind_ctx(ctx: OwnCtx, pat: ast.Pattern): OwnCtx {
+  if let ast.PatVariant(pv) = pat {
+    var c: OwnCtx = ctx;
+    if (pv.binding.len() > 0) { c = ow_bind_ctx(c, pv.binding); }
+    for extra in pv.extra_bindings { c = ow_bind_ctx(c, extra); }
+    return c;
+  }
+  return ctx;
+}
+
+// ow_bind_ctx layers one binding onto the set of names in scope — a `for`
+// variable or a match arm's binder, each of which shadows for its body only.
+function ow_bind_ctx(ctx: OwnCtx, name: string): OwnCtx {
+  if (name.len() == 0 || util.has_str(ctx.bound, name)) { return ctx; }
+  return OwnCtx { ...ctx, bound: ctx.bound.append(name) };
 }
 
 // ow_arm_payload_ctx layers a match arm's pointer-typed payload bindings onto
@@ -11853,7 +11897,7 @@ pub function own_diags(mod: parser.Module): util.Diag[] {
       }
     }
     if (owned.len() > 0 || ofuncs.len() > 0) {
-      var ctx: OwnCtx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, admit: "", admit_fields: [], fresh: fresh };
+      var ctx: OwnCtx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, admit: "", admit_fields: [], fresh: fresh, bound: ow_param_names(fn) };
       var nomoved: MovedEntry[] = [];
       var r: OwnWalk = ow_stmts(fn.body, nomoved, ctx);
       out = util.append_diags(out, r.diags);

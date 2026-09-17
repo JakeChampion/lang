@@ -227,6 +227,114 @@ function f(): i32 {
 }`)
 }
 
+// A parameter or local that shadows an `own` function's name is a function
+// VALUE. Its consuming positions come from its own TYPE, not from the global
+// declaration it happens to share a name with — the stdlib's
+// `filter(xs, keep)` was being checked against a user's `keep(own …)` and
+// refusing to compile (#9532).
+// Every argument here is a POINTER, deliberately: a scalar argument is excused
+// by `scalarArgs` regardless of the callee, so a scalar case passes whether or
+// not the shadowing rule works and proves nothing.
+func TestOwnGuardIgnoresShadowingParameter(t *testing.T) {
+	wantOK(t, "shadowing-param", ownConsumer+`
+function filterish(rows: i32[][], consume: (i32[]) => i32): i32 {
+    var n: i32 = 0;
+    for r in rows { n = n + consume(r); }
+    return n;
+}
+function main(): i32 { return filterish([[1, 2]], (v: i32[]) => v[0]); }`)
+}
+
+func TestOwnGuardIgnoresShadowingLocal(t *testing.T) {
+	wantOK(t, "shadowing-local", ownConsumer+`
+function f(xs: i32[]): i32 {
+    var consume: (i32[]) => i32 = (v: i32[]) => v[0];
+    return consume(xs);
+}`)
+}
+
+func TestOwnGuardIgnoresShadowingLambdaParameter(t *testing.T) {
+	wantOK(t, "shadowing-lambda-param", ownConsumer+`
+function f(xs: i32[]): i32 {
+    var run: ((i32[]) => i32) = (consume: i32[]) => consume.len();
+    return run(xs);
+}`)
+}
+
+// The consume classifier reads the same table, so a shadowed callee must not
+// mark its argument MOVED either — `xs` is still live on the next line. This is
+// the E050 half of the same bug, and it fires on the exact #9532 shape once the
+// argument is an owned name rather than a scalar.
+func TestOwnGuardShadowedCalleeDoesNotConsume(t *testing.T) {
+	wantOK(t, "shadowing-param-no-consume", ownConsumer+`
+function f(own xs: i32[], consume: (i32[]) => i32): i32 {
+    var r: i32 = consume(xs);
+    return r + xs.len();
+}`)
+}
+
+// A `for` variable shadows for its body, like a parameter or a local.
+func TestOwnGuardIgnoresShadowingLoopVariable(t *testing.T) {
+	wantOK(t, "shadowing-loop-var", ownConsumer+`
+function f(fns: ((i32[]) => i32)[], xs: i32[]): i32 {
+    var n: i32 = 0;
+    for consume in fns { n = n + consume(xs); }
+    return n;
+}`)
+}
+
+// A local shadows from its declaration to the end of its block — not before it,
+// and not outside it.
+func TestOwnGuardLocalShadowsOnlyAfterItsDeclaration(t *testing.T) {
+	wantE051(t, "local-shadow-after-call", ownConsumer+`
+function f(xs: i32[]): i32 {
+    var a: i32 = consume(xs);
+    var consume: (i32[]) => i32 = (v: i32[]) => v[0];
+    return a + consume(xs);
+}`)
+}
+
+func TestOwnGuardLocalShadowStaysInItsBlock(t *testing.T) {
+	wantE051(t, "local-shadow-inner-block", ownConsumer+`
+function f(xs: i32[], c: boolean): i32 {
+    var n: i32 = 0;
+    if (c) { var consume: (i32[]) => i32 = (v: i32[]) => v[0]; n = consume(xs); }
+    return n + consume(xs);
+}`)
+}
+
+// A match binder shadows for its arm whether or not the scrutinee is owned —
+// the binding exists either way; only the ownership transfer depends on it.
+func TestOwnGuardArmBinderShadowsOnABorrowedScrutinee(t *testing.T) {
+	wantOK(t, "arm-binder-borrowed-scrutinee", `enum Box { B((i32[]) => i32) }
+function consume(own xs: i32[]): i32 { return xs[0]; }
+function f(b: Box, xs: i32[]): i32 {
+    var n: i32 = 0;
+    match (b) { B(consume) => { n = consume(xs); } }
+    return n;
+}`)
+}
+
+// A binding shadows inside ITS OWN scope. A lambda parameter elsewhere in the
+// function does not make the real call to the global own-func safe, and a
+// whole-function set of shadowed names would silence it.
+func TestOwnGuardShadowElsewhereStillGuardsRealCall(t *testing.T) {
+	wantE051(t, "shadow-elsewhere", ownConsumer+`
+function apply(g: ((i32[]) => i32), zs: i32[]): i32 { return g(zs); }
+function f(xs: i32[]): i32 {
+    var a: i32 = apply((consume: i32[]) => consume.len(), xs);
+    return a + consume(xs);
+}`)
+}
+
+// The shadowing rule must not disarm the guard for the real function.
+func TestOwnGuardStillFiresForTheRealFunction(t *testing.T) {
+	wantE051(t, "unshadowed-still-guarded", ownConsumer+`
+function g(xs: i32[]): i32 {
+    return consume(xs);
+}`)
+}
+
 // A payload-less variant is spelled as a bare name, so it arrives as an Ident
 // where `Wrap([1, 2])` above arrives as a Call. Both are fresh enum values, and
 // the guard admitted only the Call shape (#9517).

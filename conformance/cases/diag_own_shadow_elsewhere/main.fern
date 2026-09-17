@@ -1,0 +1,20 @@
+// A binding that shadows an `own` function's name shadows it INSIDE ITS OWN
+// SCOPE only. Here a lambda parameter is named `keep`, and the call on the last
+// line is still the global `keep` — so passing the borrowed `xs` to its `own`
+// parameter is a genuine E051 and must stay refused.
+//
+// This case exists because a whole-function set of shadowed names silences it:
+// the name is bound somewhere in the function, so the guard stands down for the
+// real call too. The accepting side is `own_func_name_shadowed_by_param`; this
+// is the direction that a fix erring toward silence would break, and the
+// rejection sweep is what pins it (#9532).
+function keep(own ys: i32[]): i32 { return ys[0]; }
+
+function apply(g: ((i32[]) => i32), zs: i32[]): i32 { return g(zs); }
+
+function f(xs: i32[]): i32 {
+    var a: i32 = apply((keep: i32[]) => keep.len(), xs);
+    return a + keep(xs);
+}
+
+function main(): i32 { return f([1, 2]); }
