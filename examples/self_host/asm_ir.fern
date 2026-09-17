@@ -5070,8 +5070,9 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
 // caller-saved, and the allocator spills a value that is live across a call,
 // so nothing is saved around one. %rax, %rcx and %rdx are the scratch the
 // instruction table (ir_bin_asm, ir_div_guarded) already uses. A spilled value
-// v lives at -8*(v+1)(%rbp); the slots after the values stage the moves of an
-// edge with several phis, so every source is read before any result is written.
+// lives at -8*(slot+1)(%rbp) by its allocator slot; the slots after the spills
+// stage the moves of an edge with several phis, so every source is read before
+// any result is written.
 
 function ssa_reg(k: i32): string {
     if (k == 0) { return "%rsi"; }
@@ -5086,13 +5087,14 @@ function ssa_slot(v: i32): string { return util.i32_to_string(0 - 8 * (v + 1)) +
 
 // ssa_load puts value v in `reg`; ssa_store writes `reg` to value v's home.
 function ssa_load(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): asmcore.EmitState {
-    if (reg_of[v] < 0) { return s.write("    movq " + ssa_slot(v) + ", " + reg + "\n"); }
+    if (reg_of[v] < 0) { return s.write("    movq " + ssa_slot(ssa.spill_slot(reg_of[v])) + ", " + reg + "\n"); }
     var home: string = ssa_reg(reg_of[v]);
     if (home == reg) { return s; }
     return s.write("    movq " + home + ", " + reg + "\n");
 }
 function ssa_store(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): asmcore.EmitState {
-    if (reg_of[v] < 0) { return s.write("    movq " + reg + ", " + ssa_slot(v) + "\n"); }
+    if (reg_of[v] == 0 - 1) { return s; }
+    if (reg_of[v] < 0) { return s.write("    movq " + reg + ", " + ssa_slot(ssa.spill_slot(reg_of[v])) + "\n"); }
     var home: string = ssa_reg(reg_of[v]);
     if (home == reg) { return s; }
     return s.write("    movq " + reg + ", " + home + "\n");
@@ -5294,8 +5296,11 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmco
     else if (ins.str == "struct_copy") { sym = "__fn___fern_struct_copy"; }
     else if (util.str_has_prefix(ins.str, "arr_push_owned")) { s = s.mark_arr_push(); s = s.need("arr_push_owned"); sym = "__fern_arr_push_owned"; }
     else if (util.str_has_prefix(ins.str, "arr_push")) { s = s.mark_arr_push(); sym = "__fern_arr_push"; }
-    s = ssa_load(reg_of, ins.args[0], "%rdi", s);
-    if (ins.args.len() > 1) { s = ssa_load(reg_of, ins.args[1], "%rsi", s); }
+    // %rdi and %rsi are allocatable here, so an argument whose home is the
+    // other one's register is read before either is written.
+    s = ssa_load(reg_of, ins.args[0], "%rax", s);
+    if (ins.args.len() > 1) { s = ssa_load(reg_of, ins.args[1], "%rcx", s); s = s.write("    movq %rcx, %rsi\n"); }
+    s = s.write("    movq %rax, %rdi\n");
     // raw_alloc asks for 24 bytes more and hands back the pointer past them,
     // the string box header a buffer may later grow (#7351).
     if (ins.str == "raw_alloc") { s = s.write("    addq $24, %rdi\n"); }
@@ -5350,10 +5355,10 @@ function ssa_str_view(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.E
 // SsaFrame is the frame below the values: the phi stage words after the
 // values, then three words per frame-resident string view. ssa_view_off is
 // the offset of a view's lowest word, the base the view kernel writes at.
-struct SsaFrame { nvals: i32, nstage: i32, views: i32[], blk_pos: i32[] }
+struct SsaFrame { nspill: i32, nstage: i32, views: i32[], blk_pos: i32[] }
 
 function ssa_view_off(fr: SsaFrame, v: i32): i32 {
-    var first: i32 = fr.nvals + fr.nstage + 3 * fr.views[v];
+    var first: i32 = fr.nspill + fr.nstage + 3 * fr.views[v];
     return 0 - 8 * (first + 3);
 }
 
@@ -5484,12 +5489,12 @@ function ssa_phi_moves(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], pred: i32, suc
     var k: i32 = 0;
     while (k < srcs.len()) {
         s = ssa_load(reg_of, srcs[k], "%rax", s);
-        s = s.write("    movq %rax, " + ssa_slot(f.nvals + k) + "\n");
+        s = s.write("    movq %rax, " + ssa_slot(fr.nspill + k) + "\n");
         k = k + 1;
     }
     k = 0;
     while (k < srcs.len()) {
-        s = s.write("    movq " + ssa_slot(f.nvals + k) + ", %rax\n");
+        s = s.write("    movq " + ssa_slot(fr.nspill + k) + ", %rax\n");
         s = ssa_store(reg_of, dsts[k], "%rax", s);
         k = k + 1;
     }
@@ -5562,8 +5567,8 @@ function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, s: asmcore
     s = s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n");
     s = s.write("    .cfi_startproc\n    pushq %rbp\n    .cfi_def_cfa_offset 16\n    .cfi_offset %rbp, -16\n    movq %rsp, %rbp\n    .cfi_def_cfa_register %rbp\n");
     var views: i32[] = ssa_view_slots(f);
-    var fr: SsaFrame = SsaFrame { nvals: f.nvals, nstage: ssa_max_phis(f), views: views, blk_pos: ssa_block_index(f) };
-    var frame: i32 = (f.nvals + fr.nstage + 3 * ssa_view_count(views)) * 8;
+    var fr: SsaFrame = SsaFrame { nspill: ssa.spill_count(reg_of), nstage: ssa_max_phis(f), views: views, blk_pos: ssa_block_index(f) };
+    var frame: i32 = (fr.nspill + fr.nstage + 3 * ssa_view_count(views)) * 8;
     if (frame % 16 != 0) { frame = frame + 8; }
     if (frame > 0) { s = s.write("    subq $" + util.i32_to_string(frame) + ", %rsp\n"); }
     s = ssa_load_params(f, reg_of, s);
