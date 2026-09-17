@@ -443,6 +443,15 @@ function main(): i32 {
     }
   }
 
+  // `--` ends the scan by returning None with the remaining tokens parked in
+  // the scanner's own operand list, so they are collected here rather than
+  // through `operand_id()`. Nothing double-counts: `return_in_order` reports
+  // an ordinary operand instead of appending it, so only the post-`--` tail
+  // is ever in there.
+  for op in g.operands() {
+    rest = rest.append(op);
+  }
+
   if (mode == mode_list()) {
     return run_list(rest);
   }
