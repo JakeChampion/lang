@@ -79,13 +79,14 @@ jobs:
         run: |
           gotestsum --format standard-verbose -- -run '^(TestSetFileTimesDarwin.*|TestInterpFsMetaPrimitives)$' ./internal/interp/ ./internal/e2e/
 
-      # THE DARWIN BRANCHES HAD NO ORACLE UNTIL THIS STEP (#9645). Thirteen
-      # `target_os() == "darwin"` branches across five files decide what the
-      # utilities print on this platform — seven of them in
-      # `coreutils/lib/signals.fern`, whose name, alternate and description
-      # tables were written by reading Apple's published Libc rather than by
-      # comparing against anything. Nothing ran the corpus here, so nothing
-      # checked a single one of them.
+      # THE COREUTILS CORPUS HAD NO DARWIN ORACLE UNTIL THIS STEP (#9645).
+      # Every utility in `coreutils/` is held to byte-for-byte GNU parity, and
+      # that was checked on Linux only — both the thirteen explicit
+      # `target_os() == "darwin"` branches (seven in `coreutils/lib/signals.fern`,
+      # whose tables were written by reading Apple's published Libc rather
+      # than by comparing against anything) and, more of the risk, the
+      # hundred utilities with no Darwin branch at all, which reach a
+      # different kernel through the same code.
       #
       # macOS has BSD userland, so unlike the Linux lane — which takes seventy
       # utilities from /usr/bin and builds only the two Debian omits — there is
@@ -96,7 +97,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/gnu-coreutils
-          key: gnu-coreutils-full-${{ env.GNU_COREUTILS_VERSION }}-macos-15
+          key: gnu-coreutils-full-arch-${{ env.GNU_COREUTILS_VERSION }}-macos-15
       - name: Build the GNU coreutils oracle
         if: steps.gnu-oracle.outputs.cache-hit != 'true'
         run: |
@@ -124,41 +125,92 @@ jobs:
             --without-selinux --prefix="$HOME/gnu-coreutils"
           make -j"$(sysctl -n hw.ncpu)"
           make install
+          # `arch` is in coreutils' no_install__progs list, so `make install`
+          # places every other program and never this one, and no configure
+          # flag changes that. Debian installs its own copy, which is the only
+          # reason the Linux corpora find an oracle in /usr/bin; here
+          # /usr/bin/arch is Apple's arch(1), a different program that runs a
+          # command under a named architecture. Copy the built one across or
+          # the arch corpus has nothing to compare against.
+          cp src/arch "$HOME/gnu-coreutils/bin/arch"
           cd /
           rm -rf "$work"
       # A SKIP IS A MISSING DEPENDENCY, NOT A PASS. A cache that restored an
-      # empty or half-written directory would otherwise leave the corpus with
-      # no reference, and `internal/coreutils` reports that as `ok` having
-      # compared nothing. Every utility the step below exercises is checked
-      # here, so the failure names this step rather than one corpus.
+      # empty or half-written directory would otherwise leave a corpus with no
+      # reference. The corpus itself fails rather than skips in that case, but
+      # it fails naming the utility, so the same missing oracle reports as a
+      # hundred unrelated bugs; checked here, one message names the cause.
+      #
+      # The list is DERIVED from coreutils/*.fern rather than written out: the
+      # step below now runs the whole catalogue, so a utility added to the
+      # tree is one this check must cover, and an enumerated list is a list
+      # that goes stale silently.
       - name: Assert the oracle is GNU coreutils, and point the corpus at it
         run: |
           set -euo pipefail
-          for util in kill env timeout uname yes; do
-            bin="$HOME/gnu-coreutils/bin/$util"
-            if ! "$bin" --version | head -1 | grep -q '(GNU coreutils)'; then
-              echo "::error::$bin is not GNU coreutils; the corpus would have no oracle for $util(1)"
-              exit 1
+          bindir="$HOME/gnu-coreutils/bin"
+          missing=""
+          checked=0
+          for f in coreutils/*.fern; do
+            util="$(basename "$f" .fern)"
+            probe="$bindir/$util"
+            # test(1) answers no --version: POSIX reserves every argument for
+            # the expression, so only `[` — built from the same source, one
+            # name over — can vouch for it.
+            if [ "$util" = "test" ]; then probe="$bindir/["; fi
+            if [ ! -x "$probe" ]; then
+              missing="$missing $util"
+              continue
             fi
+            # `dd` is the one utility whose version line omits the word GNU:
+            # it says `dd (coreutils) 9.4`. Both spellings are the package's.
+            # Read into a variable rather than piping into grep: `head -1`
+            # closes the pipe on a program that has more to write, and under
+            # `set -o pipefail` that SIGPIPE is the pipeline's status, so a
+            # present oracle would report as a missing one.
+            line="$("$probe" --version 2>/dev/null | head -1 || true)"
+            case "$line" in
+              *"(GNU coreutils)"* | *"(coreutils)"*) checked=$((checked + 1)) ;;
+              *) missing="$missing $util" ;;
+            esac
           done
-          "$HOME/gnu-coreutils/bin/kill" --version | head -1
-          echo "FERN_GNU_COREUTILS=$HOME/gnu-coreutils/bin" >> "$GITHUB_ENV"
-      # The five utilities that HAVE Darwin branches, not the whole catalogue:
-      # `kill`, `env` and `timeout` for signals.fern's seven, plus `uname` and
-      # `yes`. Starting narrow so the first round is a readable list of real
-      # platform differences rather than a hundred corpora failing at once;
-      # widening to the rest is the follow-up, not this step's job.
+          if [ -n "$missing" ]; then
+            echo "::error::no GNU coreutils oracle in $bindir for:$missing"
+            exit 1
+          fi
+          echo "$checked utilities have a GNU oracle"
+          "$bindir/yes" --version | head -1
+          echo "FERN_GNU_COREUTILS=$bindir" >> "$GITHUB_ENV"
+      # The WHOLE catalogue. The lane landed covering the five utilities with
+      # `target_os() == "darwin"` branches — kill, env, timeout, uname, yes —
+      # deliberately, so the first round read as a list of real platform
+      # differences rather than a hundred corpora failing at once. This is the
+      # widening, and what it gates is the larger half of the problem: the
+      # other hundred utilities have NO Darwin branches at all, so what they
+      # surface is not conditional code we wrote but the same code meeting a
+      # different kernel and a different libc.
       #
-      # All ten function names in full rather than five prefixes, because the
-      # corpus does not name its tests uniformly: `uname` and `yes` carry a
-      # `Parity` suffix where the other three do not. A `^(…|TestUname)` would
-      # match `TestUnameParity` today and select NOTHING the day it is
-      # renamed, silently and with exit 0 — which is the whole failure
-      # `tools/testname_gate.sh` exists to refuse, and it refused this.
+      # Selected by SKIPPING, not by naming. `touch_test.go` and
+      # `ls_linux_fixture_test.go` are `//go:build linux`, so `TestTouch` does
+      # not EXIST on this runner: a `-run` list carrying its name would select
+      # nothing for it, silently and with exit 0, and
+      # `tools/testname_gate.sh` cannot refuse that because the gate runs on
+      # Linux, where the name is real.
+      #
+      # `^TestSelfHost` — three functions — is what the skip drops. Those
+      # build the self-host compiler and compile the catalogue a second time
+      # through it, which is the bulk of this package's ten minutes, and the
+      # Linux units lane runs them. The arm64-darwin self-host path is gated
+      # two steps down instead.
+      #
+      # -timeout is set EXPLICITLY because go test's default is also ten
+      # minutes: a binary the default kills reports whichever cases were in
+      # flight as failures with no output, so the lane names tests that did
+      # not fail and never names the wall it hit.
       - name: go test (coreutils corpus on Darwin)
         if: steps.gate.outputs.signed != 'true'
         run: |
-          gotestsum --format standard-verbose -- -run '^(TestKill|TestKillHelpVersion|TestEnv|TestEnvHelpVersion|TestTimeout|TestTimeoutHelpVersion|TestUnameParity|TestUnameHelpVersion|TestYesParity|TestYesHelpVersion)$' ./internal/coreutils/
+          gotestsum --format standard-verbose -- -timeout 25m -skip '^TestSelfHost' ./internal/coreutils/
 
       - name: go test (arm64-darwin native execution)
         if: steps.gate.outputs.signed != 'true'
