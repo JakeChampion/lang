@@ -326,7 +326,55 @@ function prod_kind(k: string): boolean {
         "load_local", "store_local", "tee_local", "drop", "return",
         "block", "loop", "if", "else", "end", "br", "brif", "call_direct"];
     for x in spine { if (x == k) { return true; } }
-    return prod_mem_kind(k);
+    return prod_mem_kind(k) || prod_float_kind(k);
+}
+
+// prod_float_kind is the f64 vocabulary: the literal, the arithmetic and
+// compares, the single-instruction math, the conversions and reinterprets,
+// and the transcendentals the stack machine calls the runtime for. A value
+// is its 8-byte IEEE pattern in an integer register throughout, as on the
+// stack machine, so the emitters need no float register class.
+function prod_float_kind(k: string): boolean {
+    if (fbin_sym(k) != "" || prod_float_call_argc(k) > 0) { return true; }
+    var un: string[] = ["const_f64", "fsqrt", "ffloor", "fceil", "ftrunc", "fabs", "fround", "fneg",
+        "i32_to_f64", "f64_to_i32", "f64_to_i64", "f32_bits", "f32_from_bits", "f64_bits", "f64_from_bits"];
+    for x in un { if (x == k) { return true; } }
+    return false;
+}
+
+// prod_float_call_argc is the operand count of a transcendental, which
+// every backend calls a runtime helper for (kind 50 with the op's name).
+function prod_float_call_argc(k: string): i32 {
+    if (k == "fpow") { return 2; }
+    if (k == "fsin" || k == "fcos" || k == "fexp" || k == "flog") { return 1; }
+    return 0;
+}
+
+// lift_float_prod lifts one f64 op: a binary carries its kind name and width
+// 64 like the integer binaries, a unary its kind name (an int-to-float
+// conversion also its source width) with the unsigned flag in `imm`, and a
+// reinterpret between f64 and i64 moves nothing.
+function lift_float_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], insts: ssa.SInst[]): LiftVals {
+    var argc: i32 = 1;
+    if (fbin_sym(k) != "" || k == "fpow") { argc = 2; }
+    if (stack.len() < argc) { return LiftVals { nvals: nvals, stack: stack, insts: insts, ok: false }; }
+    if (k == "f64_bits" || k == "f64_from_bits") { return LiftVals { nvals: nvals, stack: stack, insts: insts, ok: true }; }
+    var args: i32[] = [];
+    var i: i32 = stack.len() - argc;
+    while (i < stack.len()) { args = args.append(stack[i]); i = i + 1; }
+    stack = drop_n(stack, argc);
+    var v: i32 = nvals; nvals = nvals + 1;
+    if (fbin_sym(k) != "") { insts = insts.append(ssa.SInst { kind_tag: 9, result: v, args: args, imm: 64, str: k }); }
+    else if (prod_float_call_argc(k) > 0) { insts = insts.append(ssa.SInst { kind_tag: 50, result: v, args: args, imm: 0, str: k }); }
+    else {
+        var what: string = k;
+        if (k == "i32_to_f64") { what = k + ":" + util.i32_to_string(op.width); }
+        var flag: i32 = 0;
+        if (op.unsigned) { flag = 1; }
+        insts = insts.append(ssa.SInst { kind_tag: 10, result: v, args: args, imm: flag, str: what });
+    }
+    stack = stack.append(v);
+    return LiftVals { nvals: nvals, stack: stack, insts: insts, ok: true };
 }
 
 // prod_mem_kind is the op vocabulary lift_prod_mem lowers onto the flat
@@ -675,6 +723,9 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[], struct
             nvals = lv.nvals; stack = lv.stack; cur_insts = splice(cur_insts, lv.insts); ok = lv.ok;
         } else if (prod && prod_mem_kind(k)) {
             var lv: LiftVals = lift_prod_mem(k, op, nvals, stack, []);
+            nvals = lv.nvals; stack = lv.stack; cur_insts = splice(cur_insts, lv.insts); ok = lv.ok;
+        } else if (prod && k != "const_f64" && prod_float_kind(k)) {
+            var lv: LiftVals = lift_float_prod(k, op, nvals, stack, []);
             nvals = lv.nvals; stack = lv.stack; cur_insts = splice(cur_insts, lv.insts); ok = lv.ok;
         } else if (k == "const_i32") {
             var v: i32 = nvals; nvals = nvals + 1;
