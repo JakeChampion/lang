@@ -1100,9 +1100,9 @@ function kind_in(kinds: i32[], k: i32): boolean {
     return false;
 }
 
-// Everything that is not a container operation: the constants, a parameter, a
-// copy, a phi, the scalar operators, a call, a closure value and the call
-// through one.
+// Everything that is not a container operation: the constants and a type's
+// zero, a parameter, a copy, a phi, the scalar operators, a call, a closure
+// value and the call through one.
 function value_op(k: i32): boolean {
     return kind_in([1, 2, 5, 6, 7, 8, ssasem.zero(), ssasem.call()], k) || ssasem.scalar_op(k) || ssasem.is_function_op(k);
 }
