@@ -1191,8 +1191,10 @@ function cell_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: S
 // A map's methods: `insert` (spelled `set` too, as the AST lowering admits
 // both) hands over the receiver's unit and the key's and takes the map back;
 // `has`, `get_or` and `len` read through borrowed operands and answer a
-// scalar; `keys` and `values` snapshot a column into a fresh array. The
-// delete and the iteration have backend ops but no contract here yet.
+// scalar; `keys` and `values` snapshot a column into a fresh array; `without`
+// hands the map back inside a tuple with whether the key was there, and
+// `cleared` builds an empty map of the same shape. The iteration has backend
+// ops but no contract here yet.
 function map_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: State): Value {
     var t: typeinfo.Type = s.values[recv.id];
     if (!ssasem.is_supported_map(t)) { return refused(s, "unsupported map shape: " + typeinfo.spelling(t)); }
@@ -1203,7 +1205,24 @@ function map_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: St
     if (fa.field == "get" && c.args.len() == 1) { return map_read(c, recv, s, t, ssasem.map_get(), ssasem.option_of(ssasem.map_value(t))); }
     if (fa.field == "keys" && c.args.len() == 0) { return map_column(s, recv, ssasem.map_keys(), ssasem.map_key(t)); }
     if (fa.field == "values" && c.args.len() == 0) { return map_column(s, recv, ssasem.map_values(), ssasem.map_value(t)); }
+    if (fa.field == "without" && c.args.len() == 1) { return map_delete(c, recv, s, t); }
+    if (fa.field == "cleared" && c.args.len() == 0) { return define(s, ssasem.map_cleared(), [], 0, "", t); }
     return refused(s, "unsupported call target: " + typeinfo.spelling(t) + "." + fa.field);
+}
+
+// A delete finds the entry by comparing the key — it does not keep it — and
+// hands the map back inside a fresh tuple with whether it was there. The
+// removal is a swap with the last entry and a shrink of both columns, with no
+// release of what it took out, so a column the map owns a unit of per entry
+// would be orphaned; those are refused rather than described as removed.
+function map_delete(c: ast.ExprCall, recv: Value, s: State, t: typeinfo.Type): Value {
+    if (!ssasem.narrow_map_value(ssasem.map_key(t)) || !ssasem.narrow_map_value(ssasem.map_value(t))) {
+        return refused(s, "delete orphans a counted column: " + typeinfo.spelling(t));
+    }
+    var k: Value = map_key_value(c.args[0], s, t);
+    s = k.s;
+    if (!s.ok) { return k; }
+    return define(s, ssasem.map_delete(), [recv.id, k.id], 0, "", ssasem.delete_result(t));
 }
 
 // A column snapshot answers a FRESH array whose ownership follows the column.
