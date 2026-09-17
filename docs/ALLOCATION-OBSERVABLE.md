@@ -88,6 +88,26 @@ scales with N. That difference is exactly what separates a working
 reference-counting implementation from a leaking one, and it is
 observable without knowing a single absolute number.
 
+**When an aggregate's own box is allocated is not specified.** A struct,
+tuple or array literal allocates a box and evaluates its field
+initializers, and nothing says which comes first: the native compiler
+allocates the box and then fills it, the self-host compiler evaluates
+the fields and then builds the box from them. So a reading taken INSIDE
+a literal — `Mark { allocs: __heap_alloc_count(), … }` — may or may not
+include that literal's own box, and the two compilers disagree by
+exactly one allocation.
+
+A measurement must therefore take its snapshot as a SCALAR, never
+through an aggregate. `std/bench` learned this the expensive way: its
+`mark()` returned a struct built that way, so an empty body under `run`
+reported 0 allocations when built by the native compiler and 1 when
+built by the self-host one — the harness charging its own bookkeeping to
+the body it measures, which is the one thing the module exists not to do
+(#9611). The snapshot is two scalars now. Specifying an order instead
+would be a language change, and a large one in the self-host compiler's
+hottest lowering; nothing needs it, because a scalar reading is exact on
+either order.
+
 **The interpreter does not model the arena.** Neither observable is
 available there, for one reason: `internal/interp` has no
 bump allocator — it is a tree-walking evaluator over Go values — so
