@@ -158,10 +158,6 @@ function fmt_file(path: string, fmt_write: boolean, fmt_diff: boolean, out_path:
     }
     return 0;
 }
-import "./ssa";
-import "./ssa_x86";
-import "./ssa_arm64";
-import "./ssa_wasm";
 import "./watbin";
 import "./constfold";
 import "./embed";
@@ -434,157 +430,6 @@ function list_targets(): i32 {
         write(line);
         i = i + 1;
     }
-    return 0;
-}
-
-// SsaResult carries the SSA backend's output and whether it applied.
-struct SsaResult { asm: string, ok: boolean }
-
-// try_ssa attempts to compile the whole program through the experimental SSA
-// pipeline (build_func → optimise → emit). It is opt-in via -ssa now that the
-// IR path is the production default (issue #4391); it applies only when EVERY
-// function is in the SSA subset (build_func ok) and a `main` exists, otherwise
-// it returns ok=false so the caller compiles through the ordinary IR path
-// instead. The SSA backends cover x86-64, arm64, and (a core integer subset of)
-// wasm; arm64-darwin and the wasm binary output forms always fall back. Register allocation is always on for the
-// native path.
-function try_ssa(funcs: parser.FuncDecl[], structs: parser.StructDecl[], target: string, emit: string): SsaResult {
-    if (target != "x86-64-linux" && target != "arm64-linux" && target != "arm64-android" && target != "wasm32-wasi") { return SsaResult { asm: "", ok: false }; }
-    // The wasm SSA backend emits WAT and nothing wraps it, so it reaches only
-    // the text form; a component or core module falls back to the IR path.
-    if (target == "wasm32-wasi" && emit != "asm") { return SsaResult { asm: "", ok: false }; }
-    // The set of user-defined function names the SSA backend can `call`, and
-    // the subset that return a pointer (so their call results are 64-bit).
-    // Lambda bindings `var f = (...) => {...}` lift to top-level functions
-    // (collect_lambdas); they're built like user functions and join the known /
-    // ptr_ret sets. A capturing lambda's lifted body references an enclosing
-    // local and fails to build (or a call lands on an unbuilt name), so the
-    // whole program falls back to the IR path.
-    var lifted: parser.FuncDecl[] = ssa.collect_lambdas(funcs);
-    var allfuncs: parser.FuncDecl[] = funcs;
-    var lai: i32 = 0;
-    while (lai < lifted.len()) { allfuncs = allfuncs.append(lifted[lai]); lai = lai + 1; }
-    var known: string[] = [];
-    var ptr_ret: string[] = [];
-    var float_ret: string[] = [];
-    var ni: i32 = 0;
-    while (ni < allfuncs.len()) {
-        known = known.append(ssa.fn_sym(allfuncs[ni]));
-        if (ssa.is_ptr_type(allfuncs[ni].ret_type) || ssa.is_struct_type(allfuncs[ni].ret_type, structs)) { ptr_ret = ptr_ret.append(ssa.fn_sym(allfuncs[ni])); }
-        if (allfuncs[ni].ret_type == "f64") { float_ret = float_ret.append(ssa.fn_sym(allfuncs[ni])); }
-        ni = ni + 1;
-    }
-    // The runtime helpers (map ops / array push / slice, ssa.ssa_helpers_src)
-    // are emitted as calls by build_func; their names join known / ptr_ret so
-    // those calls resolve, and the bodies are injected below (only the ones a
-    // program actually uses). Without this a program using a map / push / slice
-    // would fail calls_all_known and fall back to the IR path.
-    var hmod: parser.Module = parser.parse_module(lexer.tokenize(ssa.ssa_helpers_src()));
-    var hk: i32 = 0;
-    while (hk < hmod.funcs.len()) {
-        known = known.append(hmod.funcs[hk].name);
-        if (ssa.is_ptr_type(hmod.funcs[hk].ret_type)) { ptr_ret = ptr_ret.append(hmod.funcs[hk].name); }
-        hk = hk + 1;
-    }
-    // Derive the module-wide var-type seed (global function + receiver-method
-    // signatures) once; build_func would otherwise rebuild it per function —
-    // O(n²)+ persistent-vt pushes that OOM on large modules.
-    var seed: ssa.Seed = ssa.build_seed(allfuncs);
-    var sfuncs: ssa.SFunc[] = [];
-    var has_main: boolean = false;
-    var i: i32 = 0;
-    while (i < allfuncs.len()) {
-        var r: ssa.BResult = ssa.build_func_seeded(allfuncs[i], structs, seed);
-        if (!r.ok) { return SsaResult { asm: "", ok: false }; }
-        // A call to a builtin (print, write, …) or any unknown name can't be
-        // lowered — fall back to the IR path for the whole program.
-        if (!ssa.calls_all_known(r.func, known)) { return SsaResult { asm: "", ok: false }; }
-        if (allfuncs[i].name == "main") { has_main = true; }
-        sfuncs = sfuncs.append(ssa.optimize(ssa.mark_float_calls(ssa.mark_ptr_calls(r.func, ptr_ret), float_ret)));
-        i = i + 1;
-    }
-    if (!has_main) { return SsaResult { asm: "", ok: false }; }
-    // Inject each runtime helper body the program actually calls.
-    var hj: i32 = 0;
-    while (hj < hmod.funcs.len()) {
-        if (ssa.calls_func(sfuncs, hmod.funcs[hj].name)) {
-            var hr: ssa.BResult = ssa.build_func_seeded(hmod.funcs[hj], structs, seed);
-            if (hr.ok) { sfuncs = sfuncs.append(ssa.optimize(ssa.mark_float_calls(ssa.mark_ptr_calls(hr.func, ptr_ret), float_ret))); }
-        }
-        hj = hj + 1;
-    }
-    // The wasm SSA backend covers a narrower subset than build_func (the
-    // core integer ops); anything it can't lower yet falls back to the AST
-    // wasm emitter rather than emitting broken WAT.
-    if (target == "wasm32-wasi" && !ssa_wasm.supported(sfuncs)) { return SsaResult { asm: "", ok: false }; }
-    var asm: string = "";
-    if (target == "arm64-linux" || target == "arm64-android") { asm = ssa_arm64.emit_program(sfuncs, true); }
-    else if (target == "wasm32-wasi") { asm = ssa_wasm.emit_program(sfuncs); }
-    else { asm = ssa_x86.emit_program(sfuncs, true); }
-    return SsaResult { asm: asm, ok: true };
-}
-
-// ssa_scan is the non-bailing twin of try_ssa: it runs build_func over EVERY
-// function in the merged program (plus lifted lambdas), and instead of
-// returning on the first failure it records ALL build_func failures and ALL
-// unknown callees across the whole program in one pass — the measurement that
-// `try_ssa` (first-bail, all-or-nothing) can't give. Used by `-ssa-scan` to
-// prove the self-host compiler's per-function SSA coverage (zero failures +
-// zero unknown callees = the whole compiler is in the subset; the only
-// remaining blocker to a full SSA self-compile is then memory, not coverage).
-function ssa_scan(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): i32 {
-    var lifted: parser.FuncDecl[] = ssa.collect_lambdas(funcs);
-    var allfuncs: parser.FuncDecl[] = funcs;
-    var lai: i32 = 0;
-    while (lai < lifted.len()) { allfuncs = allfuncs.append(lifted[lai]); lai = lai + 1; }
-    // The same known set try_ssa builds: every user/lifted function symbol plus
-    // the injected runtime-helper names (so map/push/slice calls resolve).
-    var known: string[] = [];
-    var ni: i32 = 0;
-    while (ni < allfuncs.len()) { known = known.append(ssa.fn_sym(allfuncs[ni])); ni = ni + 1; }
-    var hmod: parser.Module = parser.parse_module(lexer.tokenize(ssa.ssa_helpers_src()));
-    var hk: i32 = 0;
-    while (hk < hmod.funcs.len()) { known = known.append(hmod.funcs[hk].name); hk = hk + 1; }
-    var seed: ssa.Seed = ssa.build_seed(allfuncs);
-
-    var fails: string[] = [];
-    var unknown: string[] = [];
-    var i: i32 = 0;
-    while (i < allfuncs.len()) {
-        var r: ssa.BResult = ssa.build_func_seeded(allfuncs[i], structs, seed);
-        if (!r.ok) {
-            fails = fails.append(ssa.fn_sym(allfuncs[i]));
-        } else {
-            // Collect every call / funcaddr target this function emits that
-            // isn't a known function (dedup) — the calls_all_known bail set.
-            var bi: i32 = 0;
-            while (bi < r.func.blocks.len()) {
-                var blk: ssa.SBlock = r.func.blocks[bi];
-                var k: i32 = 0;
-                while (k < blk.insts.len()) {
-                    var ins: ssa.SInst = blk.insts[k];
-                    if (ins.kind_tag == 11 || ins.kind_tag == 13) {   // call / funcaddr
-                        if (!util.has_str(known, ins.str) && !util.has_str(unknown, ins.str)) {
-                            unknown = unknown.append(ins.str);
-                        }
-                    }
-                    k = k + 1;
-                }
-                bi = bi + 1;
-            }
-        }
-        i = i + 1;
-    }
-
-    write("functions scanned: " + util.i32_to_string(allfuncs.len()) + "\n");
-    write("build_func failures: " + util.i32_to_string(fails.len()) + "\n");
-    var fi: i32 = 0;
-    while (fi < fails.len()) { write("  FAIL " + fails[fi] + "\n"); fi = fi + 1; }
-    write("unknown callees: " + util.i32_to_string(unknown.len()) + "\n");
-    var ui: i32 = 0;
-    while (ui < unknown.len()) { write("  UNKNOWN " + unknown[ui] + "\n"); ui = ui + 1; }
-    if (fails.len() == 0 && unknown.len() == 0) { write("RESULT: full per-function SSA coverage (0 failures, 0 unknown callees)\n"); }
-    else { write("RESULT: coverage gaps remain\n"); }
     return 0;
 }
 
@@ -2072,13 +1917,11 @@ function run(): i32 {
     // Every non-flag argument, in order. The compile modes read the first two
     // (entry, stdlib root); `-add` takes three of its own.
     var pos: string[] = [];
-    var use_ssa: boolean = false;
     // -backend ssa: the register-allocating SSA emit for every function it
     // admits, beside the stack machine for the rest (docs/SELFHOST-SSA-BACKEND.md).
     // `flat` names the stack machine, so a comparison can ask for it; empty is
     // the target's default emitter.
     var backend: string = "";
-    var mode_scan: boolean = false;
     // -embed DIR: the asset bundle __fern_asset / __fern_assets resolve
     // against. Empty means the flag was not passed, which makes any use of
     // either builtin the error (embed.fern / docs/EMBED.md).
@@ -2112,21 +1955,6 @@ function run(): i32 {
             i = i + 1;
             if (i >= av.len()) { return usage(); }
             backend = av[i];
-        } else if (a == "-ssa") {
-            // Opt into the experimental SSA lowering pipeline (build_func →
-            // optimise → regalloc → emit) for x86-64 / arm64 / a wasm subset.
-            // The IR path is the production default now (issue #4391 /
-            // docs/SELFHOST-SSA-DECISION.md); -ssa is opt-in/experimental.
-            use_ssa = true;
-        } else if (a == "-no-ssa") {
-            // Back-compat no-op: the IR path is already the default, so there
-            // is nothing to disable. Accepted so existing invocations keep
-            // working unchanged.
-        } else if (a == "-ssa-scan") {
-            // Diagnostic: report every build_func failure + unknown callee across
-            // the whole merged program (non-bailing), then exit. Measures
-            // per-function SSA coverage without the all-or-nothing try_ssa bail.
-            mode_scan = true;
         } else if (a == "-g") {
             // Emit a static .symtab into the native binary (#6637). x86-64
             // Linux only for now: arm64 links through arm64_gas_link's W^X
@@ -2336,8 +2164,6 @@ function run(): i32 {
         return 0;
     }
 
-    if (mode_scan) { return ssa_scan(merged.funcs, merged.structs); }
-
     if (mode_check) { return check_bundle(b, target, target_given); }
 
     if (mode_interp) {
@@ -2486,52 +2312,6 @@ function run(): i32 {
     // capability gates therefore still see the module as written, so no
     // diagnostic moves.
     merged = treeshake.treeshake(merged);
-
-    // Production default: the IR path. All three targets route IR-or-error
-    // (asm_ir / asm_arm64_ir / wasm_ir `.emit_module*_or_error`, #3457), so this
-    // driver imports no legacy AST emitter at all — there are none left to
-    // import. The IR is the single production lowering (issue #4391 /
-    // docs/SELFHOST-SSA-DECISION.md). The SSA pipeline is opt-in
-    // via -ssa (experimental): it applies only if every function is in the SSA
-    // subset (else it too falls through), covering x86-64 / arm64 / a wasm
-    // subset. arm64-darwin and the wasm binary output forms have no SSA
-    // consumer and always take the IR path.
-    if (use_ssa) {
-        var sr: SsaResult = try_ssa(merged.funcs, merged.structs, target, emit);
-        if (sr.ok) {
-            // Both Linux targets emit a runnable ELF in-process (x86_native /
-            // arm64_native + elf.fern), dropping the `.s` + gcc/ld link —
-            // same flip as arm64-darwin. Other targets write the SSA text
-            // as-is.
-            var ssa_out: string = sr.asm;
-            if (emit != "asm") {
-                if (target == "x86-64-linux") {
-                    ssa_out = x86_elf_binary(sr.asm, emit_syms);
-                    if (ssa_out.len() == 0) { return 2; }
-                } else if (target == "arm64-linux") {
-                    ssa_out = arm64_elf_binary(sr.asm, emit_syms);
-                    if (ssa_out.len() == 0) { return 2; }
-                } else if (target == "arm64-android") {
-                    ssa_out = arm64_elf_binary_pie(sr.asm);
-                    if (ssa_out.len() == 0) { return 2; }
-                }
-            }
-            if (out_path.len() > 0) {
-                match (write_output(out_path, ssa_out, target, emit)) {
-                    Err(e) => {
-                        eprint("fern: cannot write output: ");
-                        eprint(out_path);
-                        eprint("\n");
-                        return 1;
-                    },
-                    Ok(_) => {},
-                }
-            } else {
-                write(ssa_out);
-            }
-            return 0;
-        }
-    }
 
     if (!platforms.emits_code(target)) {
         // Native reports the same shape from its descriptor's NoBackend flag.

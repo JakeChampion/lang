@@ -100,7 +100,7 @@ layouts are the flat backend's, fixed and documented at the top of
 shape word compared with the variant's shape address, a construction an
 allocation followed by stores, and a string op or a push the same runtime
 call the flat arm makes. The lift's older arms for these ops lower to
-`build_func`'s layouts and are not usable here (see "What this retires").
+`build_func`'s layouts and went with it (see "What this retires").
 
 ## The emitter today
 
@@ -151,11 +151,12 @@ path needs `build_func` any more. In order:
 
 1. Coverage by the histogram above, each op lifted to the flat backend's
    layout and emitted with the flat arm's instructions.
-2. Retire `ssa.build_func` with `-ssa`, `-ssa-scan`, `try_ssa`,
+2. Done: `ssa.build_func` with `-ssa`, `-ssa-scan`, `try_ssa`,
    `ssa_wasm.fern`, the `__fern_ssa_*` runtime in `ssa_x86.fern` and
    `ssa_arm64.fern`, the lift's `build_func`-layout arms, and the drivers
-   and Go tests that exist only for them. `ssa.fern` keeps its data model,
-   optimiser and allocator; `ssa_lift.fern` keeps the production lift.
+   and Go tests that existed only for them are gone. `ssa.fern` keeps its
+   data model, optimiser and allocator; `ssa_lift.fern` keeps the
+   production lift, now the only lift.
 3. The allocator and emitter work above, measured against the flat backend
    on `examples/bench` and on the compiler building itself.
 4. The default flip, on the conditions native's flip is held to: the binary

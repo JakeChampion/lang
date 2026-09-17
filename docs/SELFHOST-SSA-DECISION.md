@@ -3,8 +3,8 @@
 **Status:** DECIDED (2026-07-03). The **stack IR** (`irlower.fern` →
 `asm_ir.fern` / `asm_arm64_ir.fern` / `wasm_ir.fern`) is the single
 production lowering path for the self-hosted compiler. The SSA
-`build_func` pipeline is **demoted to experimental / opt-in** (`-ssa`);
-`SELFHOST-SSA-ALWAYS.md` is **shelved**.
+`build_func` pipeline was demoted to opt-in (`-ssa`) and then retired on
+2026-09-17; `SELFHOST-SSA-ALWAYS.md` is **shelved**.
 **Owner:** compiler / self-host.
 **Resolves:** #4391.
 
@@ -93,8 +93,8 @@ We **declare the stack IR the production lowering** and demote SSA
   already the default). This supersedes `SELFHOST-SSA-ALWAYS.md` Phases 1–4,
   which are shelved (see the banner atop that doc).
 
-- **Retire `ssa.build_func`** (sanctioned follow-up, **not yet done** — see the
-  scope correction below). Remove the second
+- **Retire `ssa.build_func`** ✅ (2026-09-17, once every function of the
+  compiler went through `-backend ssa`). Removed the second
   AST→SSA frontend — `build_func` / `build_expr` and its per-backend
   Option/Result boxing, closure ABI, and runtime-op derivations — while
   **keeping** `ssa.fern`'s data model + optimiser and `ssa_lift.fern`

@@ -248,7 +248,7 @@ jobs:
           # asm_run 20s, pathprobe 19s, irlower 21s, asm_ir 15s, elig 16s
           - { key: asm,  drivers: "asm_run.fern,asm_pathprobe_run.fern,irlower_run.fern,asm_ir_run.fern,asm_ir_elig_run.fern" }
           # asm_load 29s, modload 24s, checker 9s, ssa trio 21s combined
-          - { key: load, drivers: "asm_load_run.fern,asm_modload_run.fern,checker_modload_run.fern,ssa_run.fern,ssa_emit_run.fern,ssa_lift_scan_run.fern" }
+          - { key: load, drivers: "asm_load_run.fern,asm_modload_run.fern,checker_modload_run.fern" }
           # wasm_run 22s, wasm_ir 16s, wasm_runio 16s
           - { key: wasm, drivers: "wasm_run.fern,wasm_ir_run.fern,wasm_runio_run.fern" }
     name: warm-selfhost-x86_64-${{ matrix.key }}
