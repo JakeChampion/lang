@@ -463,6 +463,27 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		w("%s:", mapSeedSym)
 		w("\t.quad 0")
 	}
+	if usesHelper(helpers, "environ") {
+		w(".section .bss")
+		w(".align 8")
+		w("%s:", environCacheSym)
+		w("\t.quad 0")
+	}
+	if usesHelper(helpers, "getgroups") {
+		w(".section .bss")
+		w(".align 8")
+		w("%s:", getgroupsCacheSym)
+		w("\t.quad 0")
+	}
+	if usesArrPushCliff(helpers) {
+		// The rc==1 cliff tally: crossings, and the bytes they copied.
+		w(".section .bss")
+		w(".align 8")
+		w("%s:", arrPushSharedSym)
+		w("\t.quad 0")
+		w("%s:", arrPushCopiedSym)
+		w("\t.quad 0")
+	}
 	if withReadLine {
 		// The Reader.read_line scratch buffer (reused across calls; NOBITS).
 		w(".section .bss")
@@ -530,6 +551,21 @@ const (
 	// reads it back. A test that asserts the count is zero is only meaningful if
 	// the detector actually runs, so the two ship together.
 	rcUnderflowSym = "__fern_rc_underflow"
+
+	// The rc==1 cliff: __fern_arr_push_grow copies a buffer that had SPARE
+	// capacity, so the copy was bought by an extra reference alone. The count
+	// answers "did anything cross"; the byte weight answers "does it matter".
+	// Read back by __fern_arr_push_shared_count / _bytes. Names shared with
+	// the flat backends, since a program's diagnostic must not depend on which
+	// emitter built it.
+	arrPushSharedSym = "__fern_arr_push_shared"
+	arrPushCopiedSym = "__fern_arr_push_copied"
+
+	// The memoised containers environ() and getgroups() answer with. Both are
+	// process-wide and immutable once built, so each is drawn once and cached
+	// with a static rc sentinel, as args() is.
+	environCacheSym   = "__ssa_environ_cache"
+	getgroupsCacheSym = "__ssa_getgroups_cache"
 
 	// The global string builder behind strbuf_reset / strbuf_append /
 	// strbuf_take, which the self-hosted compiler emits its output through:
@@ -1126,9 +1162,32 @@ func emitLcReport(w func(string, ...any), heap bool) {
 
 // usesReadLine reports whether the module references Reader.read_line, so the
 // .bss line buffer is emitted only when needed.
+// usesHelper reports whether the module reaches `name`.
+func usesHelper(helpers []string, name string) bool {
+	for _, h := range helpers {
+		if h == name {
+			return true
+		}
+	}
+	return false
+}
+
+// usesArrPushCliff reports whether the module needs the cliff cells: the
+// grower writes them, and either accessor reads them.
+func usesArrPushCliff(helpers []string) bool {
+	for _, h := range helpers {
+		switch h {
+		case "__fern_arr_push_grow", "__fern_arr_push_shared_count", "__fern_arr_push_shared_bytes":
+			return true
+		}
+	}
+	return false
+}
+
 func usesReadLine(helpers []string) bool {
 	for _, h := range helpers {
-		if h == "__method_Reader_read_line" {
+		// Both readers share the one scratch buffer, so either one arms it.
+		if h == "__method_Reader_read_line" || h == "read_line" {
 			return true
 		}
 	}
@@ -1157,14 +1216,12 @@ func usesStrbuf(helpers []string) bool {
 	return false
 }
 
-// usesEnv reports whether the module references the env() builtin, so _start
-// captures envp and the .bss slot is emitted.
-// usesEnv reports whether the envp snapshot _start takes is needed: env() walks
-// it, and __fern_proc_exec hands it to execve so the child inherits the
-// environment.
+// usesEnv reports whether the envp snapshot _start takes is needed: env()
+// looks one name up in it, environ() builds the whole vector from it, and
+// __fern_proc_exec hands it to execve so the child inherits the environment.
 func usesEnv(helpers []string) bool {
 	for _, h := range helpers {
-		if h == "env" || h == "proc_exec" {
+		if h == "env" || h == "environ" || h == "proc_exec" {
 			return true
 		}
 	}
@@ -1302,118 +1359,137 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__arr_idx_8":               emitArrIdxHelperN("__arr_idx_8", 3),  // stride 8 (i64 / pointer)
 	"__arr_idx_16":              emitArrIdxHelperN("__arr_idx_16", 4), // stride 16 (two-word string[])
 	// Bounds-check-elided variants (#4380 lever 3): same address compute, no trap.
-	"__arr_idx_nc":                    emitArrIdxHelperNChecked("__arr_idx_nc", 2, false),
-	"__arr_idx_1_nc":                  emitArrIdxHelperNChecked("__arr_idx_1_nc", 0, false),
-	"__arr_idx_8_nc":                  emitArrIdxHelperNChecked("__arr_idx_8_nc", 3, false),
-	"__arr_idx_16_nc":                 emitArrIdxHelperNChecked("__arr_idx_16_nc", 4, false),
-	"__fern_arr_push_grow":            emitArrPushGrowHelper,
-	"__fern_arr_push_grow_ptr":        emitArrPushGrowElemHelper("__fern_arr_push_grow_ptr", "pgp", false),
-	"__fern_arr_push_grow_str":        emitArrPushGrowElemHelper("__fern_arr_push_grow_str", "pgs", false),
-	"__fern_arr_push_grow_move_ptr":   emitArrPushGrowElemHelper("__fern_arr_push_grow_move_ptr", "pgmp", true),
-	"__fern_arr_push_grow_move_str":   emitArrPushGrowElemHelper("__fern_arr_push_grow_move_str", "pgms", true),
-	"__alloc_u8":                      emitAllocU8Helper,
-	"__fern_arr_cow_inplace":          emitArrCowInplaceHelper,
-	"__fern_arr_cow_inplace_ptr":      emitArrCowInplaceElemHelper("__fern_arr_cow_inplace_ptr", "__fern_rc_inc", "cowp"),
-	"__fern_arr_cow_inplace_str":      emitArrCowInplaceElemHelper("__fern_arr_cow_inplace_str", "__fern_rc_inc", "cows"),
-	"__fern_heap_bump_bytes":          emitHeapBumpBytesHelper,
-	"__method_string_as_bytes":        emitStringAsBytesHelper,
-	"__slice_idx":                     emitSliceIdxHelper("__slice_idx", 2),
-	"__slice_idx_1":                   emitSliceIdxHelper("__slice_idx_1", 0),
-	"__slice_idx_8":                   emitSliceIdxHelper("__slice_idx_8", 3),
-	"__slice_make":                    emitSliceMakeHelper,
-	"__slice_range":                   emitSliceRangeHelper,
-	"stat":                            emitStatHelper,
-	"lstat":                           emitLstatHelper,
-	"access":                          emitAccessHelper,
-	"geteuid":                         emitIdHelper("geteuid", 175),
-	"getegid":                         emitIdHelper("getegid", 177),
-	"hostname":                        emitHostnameHelper,
-	"uname_field":                     emitUnameFieldHelper,
-	"getcwd":                          emitGetcwdHelper,
-	"cpu_count":                       emitCPUCountHelper,
-	"monotonic_ns":                    emitClockHelper("monotonic_ns", clockMonotonic, 1_000_000_000, 1),
-	"now_unix_ms":                     emitClockHelper("now_unix_ms", clockRealtime, 1_000, 1_000_000),
-	"sleep_ms":                        emitSleepMsHelper,
-	"sleep_ns":                        emitSleepNsHelper,
-	"string_from_bytes_unchecked":     emitStringFromBytesHelper,
-	"__str_slice":                     emitStrSliceHelper,
-	"args":                            emitArgsHelper,
-	"env":                             emitEnvHelper,
-	"write_file":                      emitWriteFileHelper,
-	"read_file":                       emitReadFileHelper,
-	"read_file_bytes":                 emitReadFileBytesHelper,
-	"remove_file":                     emitRemoveFileHelper,
-	"create_dir_all":                  emitCreateDirAllHelper,
-	"create_dir":                      emitCreateDirHelper,
-	"chdir":                           emitChdirHelper,
-	"remove_dir":                      emitRemoveDirHelper,
-	"create_link":                     emitCreateLinkHelper,
-	"create_symlink":                  emitCreateSymlinkHelper,
-	"read_link":                       emitReadLinkHelper,
-	"umask":                           emitUmaskHelper,
-	"priority":                        emitPriorityHelper,
-	"set_priority":                    emitSetPriorityHelper,
-	"rename":                          emitRenameHelper,
-	"chmod":                           emitChmodHelper,
-	"truncate":                        emitTruncateHelper,
-	"mknod":                           emitMknodHelper,
-	"chown_at":                        emitChownAtHelper,
-	"set_file_times":                  emitSetFileTimesHelper,
-	"remove_dir_all":                  emitRemoveDirAllHelper,
-	"temp_dir":                        emitTempDirHelper,
-	"read_dir":                        emitReadDirHelper,
-	"read_dir_all":                    emitReadDirAllHelper,
-	"__fern_io_error":                 emitIoErrorHelper,
-	"tcp_listen":                      emitTcpListenHelper,
-	"tcp_connect":                     emitTcpConnectHelper,
-	"tcp_accept":                      emitTcpAcceptHelper,
-	"tcp_recv":                        emitTcpRecvHelper,
-	"tcp_send":                        emitTcpSendHelper,
-	"tcp_close":                       emitTcpCloseHelper,
-	"tcp_pollable":                    emitTcpPollableHelper,
-	"poll":                            emitPollHelper,
-	"isatty":                          emitIsattyHelper,
-	"process_alive":                   emitProcessAliveHelper,
-	"signal_send":                     emitSignalSendHelper,
-	"set_process_group":               emitSetProcessGroupHelper,
-	"rlimit_nofile":                   emitRlimitNofileHelper,
-	"statfs":                          emitStatfsHelper,
-	"window_size":                     emitWindowSizeHelper,
-	"set_window_size":                 emitSetWindowSizeHelper,
-	"termios_get":                     emitTermiosGetHelper,
-	"termios_set":                     emitTermiosSetHelper,
-	"signal_ignore":                   emitSignalDispositionHelper("signal_ignore", 1),
-	"signal_default":                  emitSignalDispositionHelper("signal_default", 0),
-	"signal_mask":                     emitSignalMaskHelper,
-	"signal_disposition":              emitSignalDispositionReadHelper,
-	"wasm_timer_pollable":             emitWasmTimerPollableHelper,
-	"wasm_poll":                       emitWasmPollHelper,
-	"wasm_pollable_drop":              emitWasmPollableDropHelper,
-	"wasm_block":                      emitWasmBlockHelper,
-	"open_writer":                     emitOpenWriterHelper,
-	"__method_Writer_write":           emitWriterWriteHelper,
-	"__method_Writer_truncate":        emitWriterTruncateHelper,
-	"__method_Writer_close":           emitWriterCloseHelper,
-	"open_reader":                     emitOpenReaderHelper,
-	"__method_Reader_read_chunk":      emitReaderReadChunkHelper,
-	"__method_Reader_read_line":       emitReaderReadLineHelper,
-	"__method_Reader_close":           emitReaderCloseHelper,
-	"__method_Reader_stat":            emitFdStatHelper("__method_Reader_stat", "rst"),
-	"__method_Writer_stat":            emitFdStatHelper("__method_Writer_stat", "wst"),
-	"__method_Reader_seek":            emitSeekHelper("__method_Reader_seek", "rsk"),
-	"__method_Writer_seek":            emitSeekHelper("__method_Writer_seek", "wsk"),
-	"__method_Reader_flags":           emitFdFlagsHelper("__method_Reader_flags", "rfl"),
-	"__method_Writer_flags":           emitFdFlagsHelper("__method_Writer_flags", "wfl"),
-	"__method_Reader_isatty":          emitHandleIsattyHelper("__method_Reader_isatty"),
-	"__method_Writer_isatty":          emitHandleIsattyHelper("__method_Writer_isatty"),
-	"__method_Writer_write_some":      emitWriterWriteSomeHelper,
-	"__method_Reader_fsync":           emitFdCallHelper("__method_Reader_fsync", "rfsy", 82, nil),
-	"__method_Writer_fsync":           emitFdCallHelper("__method_Writer_fsync", "wfsy", 82, nil),
-	"__method_Reader_fdatasync":       emitFdCallHelper("__method_Reader_fdatasync", "rfds", 83, nil),
-	"__method_Writer_fdatasync":       emitFdCallHelper("__method_Writer_fdatasync", "wfds", 83, nil),
-	"__method_Reader_syncfs":          emitFdCallHelper("__method_Reader_syncfs", "rsfs", 267, nil),
-	"__method_Writer_syncfs":          emitFdCallHelper("__method_Writer_syncfs", "wsfs", 267, nil),
-	"__method_Reader_dup_onto":        emitFdCallHelper("__method_Reader_dup_onto", "rdpo", 24, prepDupOnto),
+	"__arr_idx_nc":                  emitArrIdxHelperNChecked("__arr_idx_nc", 2, false),
+	"__arr_idx_1_nc":                emitArrIdxHelperNChecked("__arr_idx_1_nc", 0, false),
+	"__arr_idx_8_nc":                emitArrIdxHelperNChecked("__arr_idx_8_nc", 3, false),
+	"__arr_idx_16_nc":               emitArrIdxHelperNChecked("__arr_idx_16_nc", 4, false),
+	"__fern_arr_push_grow":          emitArrPushGrowHelper,
+	"__fern_arr_push_grow_ptr":      emitArrPushGrowElemHelper("__fern_arr_push_grow_ptr", "pgp", false),
+	"__fern_arr_push_grow_str":      emitArrPushGrowElemHelper("__fern_arr_push_grow_str", "pgs", false),
+	"__fern_arr_push_grow_move_ptr": emitArrPushGrowElemHelper("__fern_arr_push_grow_move_ptr", "pgmp", true),
+	"__fern_arr_push_grow_move_str": emitArrPushGrowElemHelper("__fern_arr_push_grow_move_str", "pgms", true),
+	"__alloc_u8":                    emitAllocU8Helper,
+	"__fern_arr_cow_inplace":        emitArrCowInplaceHelper,
+	"__fern_arr_cow_inplace_ptr":    emitArrCowInplaceElemHelper("__fern_arr_cow_inplace_ptr", "__fern_rc_inc", "cowp"),
+	"__fern_arr_cow_inplace_str":    emitArrCowInplaceElemHelper("__fern_arr_cow_inplace_str", "__fern_rc_inc", "cows"),
+	"__fern_heap_bump_bytes":        emitHeapBumpBytesHelper,
+	"__method_string_as_bytes":      emitStringAsBytesHelper,
+	"__slice_idx":                   emitSliceIdxHelper("__slice_idx", 2),
+	"__slice_idx_1":                 emitSliceIdxHelper("__slice_idx_1", 0),
+	"__slice_idx_8":                 emitSliceIdxHelper("__slice_idx_8", 3),
+	"__slice_make":                  emitSliceMakeHelper,
+	"__slice_range":                 emitSliceRangeHelper,
+	"stat":                          emitStatHelper,
+	"lstat":                         emitLstatHelper,
+	"access":                        emitAccessHelper,
+	"geteuid":                       emitIdHelper("geteuid", 175),
+	"getegid":                       emitIdHelper("getegid", 177),
+	"hostname":                      emitHostnameHelper,
+	"uname_field":                   emitUnameFieldHelper,
+	"getcwd":                        emitGetcwdHelper,
+	"cpu_count":                     emitCPUCountHelper,
+	"monotonic_ns":                  emitClockHelper("monotonic_ns", clockMonotonic, 1_000_000_000, 1),
+	// The same realtime clock now_unix_ms reads, at the resolution the syscall
+	// actually has.
+	"now_ns":                      emitClockHelper("now_ns", clockRealtime, 1_000_000_000, 1),
+	"getuid":                      emitIdHelper("getuid", 174),
+	"getgid":                      emitIdHelper("getgid", 176),
+	"getgroups":                   emitGetgroupsHelper,
+	"environ":                     emitEnvironHelper,
+	"now_unix_ms":                 emitClockHelper("now_unix_ms", clockRealtime, 1_000, 1_000_000),
+	"sleep_ms":                    emitSleepMsHelper,
+	"sleep_ns":                    emitSleepNsHelper,
+	"string_from_bytes_unchecked": emitStringFromBytesHelper,
+	"__str_slice":                 emitStrSliceHelper,
+	"args":                        emitArgsHelper,
+	"env":                         emitEnvHelper,
+	"write_file":                  emitWriteFileHelperMode("write_file", "", 0o644, 0),
+	"write_file_exec":             emitWriteFileHelperMode("write_file_exec", "_x", 0o755, 0o755),
+	"read_file":                   emitReadFileHelper,
+	"read_file_bytes":             emitReadFileBytesHelper,
+	"remove_file":                 emitRemoveFileHelper,
+	"create_dir_all":              emitCreateDirAllHelper,
+	"create_dir":                  emitCreateDirHelper,
+	"chdir":                       emitChdirHelper,
+	"remove_dir":                  emitRemoveDirHelper,
+	"create_link":                 emitCreateLinkHelper,
+	"create_symlink":              emitCreateSymlinkHelper,
+	"read_link":                   emitReadLinkHelper,
+	"umask":                       emitUmaskHelper,
+	"priority":                    emitPriorityHelper,
+	"set_priority":                emitSetPriorityHelper,
+	"rename":                      emitRenameHelper,
+	"chmod":                       emitChmodHelper,
+	"truncate":                    emitTruncateHelper,
+	"mknod":                       emitMknodHelper,
+	"chown_at":                    emitChownAtHelper,
+	"set_file_times":              emitSetFileTimesHelper,
+	"remove_dir_all":              emitRemoveDirAllHelper,
+	"temp_dir":                    emitTempDirHelper,
+	"read_dir":                    emitReadDirHelper,
+	"read_dir_all":                emitReadDirAllHelper,
+	"__fern_io_error":             emitIoErrorHelper,
+	"tcp_listen":                  emitTcpListenHelper,
+	"tcp_connect":                 emitTcpConnectHelper,
+	"tcp_accept":                  emitTcpAcceptHelper,
+	"tcp_recv":                    emitTcpRecvHelper,
+	"tcp_send":                    emitTcpSendHelper,
+	"tcp_close":                   emitTcpCloseHelper,
+	"tcp_pollable":                emitTcpPollableHelper,
+	"poll":                        emitPollHelper,
+	"isatty":                      emitIsattyHelper,
+	"process_alive":               emitProcessAliveHelper,
+	"signal_send":                 emitSignalSendHelper,
+	"set_process_group":           emitSetProcessGroupHelper,
+	"rlimit_nofile":               emitRlimitNofileHelper,
+	"statfs":                      emitStatfsHelper,
+	"window_size":                 emitWindowSizeHelper,
+	"set_window_size":             emitSetWindowSizeHelper,
+	"termios_get":                 emitTermiosGetHelper,
+	"termios_set":                 emitTermiosSetHelper,
+	"signal_ignore":               emitSignalDispositionHelper("signal_ignore", 1),
+	"signal_default":              emitSignalDispositionHelper("signal_default", 0),
+	"signal_mask":                 emitSignalMaskHelper,
+	"signal_disposition":          emitSignalDispositionReadHelper,
+	"wasm_timer_pollable":         emitWasmTimerPollableHelper,
+	"wasm_poll":                   emitWasmPollHelper,
+	"wasm_pollable_drop":          emitWasmPollableDropHelper,
+	"wasm_block":                  emitWasmBlockHelper,
+	"open_writer":                 emitOpenWriterHelper,
+	"__method_Writer_write":       emitWriterWriteHelper,
+	"__method_Writer_truncate":    emitWriterTruncateHelper,
+	"__method_Writer_close":       emitWriterCloseHelper,
+	"open_reader":                 emitOpenReaderHelper,
+	"__method_Reader_read_chunk":  emitReaderReadChunkHelper,
+	"__method_Reader_read_line":   emitReadLineHelper("__method_Reader_read_line", "", -1),
+	// read_line(): the same reader on stdin, which is what a program that has
+	// not opened anything reads from.
+	"read_line": emitReadLineHelper("read_line", "_0", 0),
+	// The rc==1 cliff readers. They are diagnostics, so they must answer the
+	// same on both arm64 emitters — which is why __fern_arr_push_grow keeps
+	// the tally rather than these returning a constant zero.
+	"__fern_arr_push_shared_count": emitArrPushCliffReader("__fern_arr_push_shared_count", arrPushSharedSym, false),
+	"__fern_arr_push_shared_bytes": emitArrPushCliffReader("__fern_arr_push_shared_bytes", arrPushCopiedSym, true),
+	"__method_Reader_close":        emitReaderCloseHelper,
+	"__method_Reader_stat":         emitFdStatHelper("__method_Reader_stat", "rst"),
+	"__method_Writer_stat":         emitFdStatHelper("__method_Writer_stat", "wst"),
+	"__method_Reader_seek":         emitSeekHelper("__method_Reader_seek", "rsk"),
+	"__method_Writer_seek":         emitSeekHelper("__method_Writer_seek", "wsk"),
+	"__method_Reader_flags":        emitFdFlagsHelper("__method_Reader_flags", "rfl"),
+	"__method_Writer_flags":        emitFdFlagsHelper("__method_Writer_flags", "wfl"),
+	"__method_Reader_isatty":       emitHandleIsattyHelper("__method_Reader_isatty"),
+	"__method_Writer_isatty":       emitHandleIsattyHelper("__method_Writer_isatty"),
+	"__method_Writer_write_some":   emitWriterWriteSomeHelper,
+	"__method_Reader_fsync":        emitFdCallHelper("__method_Reader_fsync", "rfsy", 82, nil),
+	"__method_Writer_fsync":        emitFdCallHelper("__method_Writer_fsync", "wfsy", 82, nil),
+	"__method_Reader_fdatasync":    emitFdCallHelper("__method_Reader_fdatasync", "rfds", 83, nil),
+	"__method_Writer_fdatasync":    emitFdCallHelper("__method_Writer_fdatasync", "wfds", 83, nil),
+	"__method_Reader_syncfs":       emitFdCallHelper("__method_Reader_syncfs", "rsfs", 267, nil),
+	"__method_Writer_syncfs":       emitFdCallHelper("__method_Writer_syncfs", "wsfs", 267, nil),
+	"__method_Reader_dup_onto":     emitFdCallHelper("__method_Reader_dup_onto", "rdpo", 24, prepDupOnto),
+	// Only the window-size pair: `termios_get` / `termios_set` are not
+	// emitted by this backend at all, so their handle forms inherit that
+	// gap and say so at link time (docs/BACKEND-PARITY.md).
 	"__method_Reader_window_size":     emitHandleTtyHelper("__method_Reader_window_size", "window_size"),
 	"__method_Reader_set_window_size": emitHandleTtyHelper("__method_Reader_set_window_size", "set_window_size"),
 	"__method_Reader_termios_get":     emitHandleTtyHelper("__method_Reader_termios_get", "termios_get"),
@@ -2708,9 +2784,9 @@ func emitAccessHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
-// emitIdHelper writes a leaf that is one argument-free syscall returning
-// a 32-bit id — geteuid (175) and getegid (177). Neither can fail, so
-// there is no errno path.
+// emitIdHelper writes a leaf that is one argument-free syscall returning a
+// 32-bit id — getuid (174), getgid (176) and their effective twins geteuid
+// (175) and getegid (177). None can fail, so there is no errno path.
 func emitIdHelper(name string, sysno int) func(func(string, ...any)) {
 	return func(w func(string, ...any)) {
 		w("")
@@ -3796,20 +3872,209 @@ func emitReaderReadChunkHelper(w func(string, ...any)) {
 // Returns None when the first read returns 0 (EOF before any byte), else
 // Some(line). The read svc preserves every register but x0. x19=buffer /
 // x20=bytes read / x21=scratch-then-data / x22=fd. x0=reader handle.
-func emitReaderReadLineHelper(w func(string, ...any)) {
+// emitReadLineHelper writes the line reader for `name`, reading from `fd` when
+// it is non-negative and from the receiver's fd field otherwise. `sfx` keeps
+// the two instantiations' local labels apart — a program using both would
+// otherwise define each twice, and the assembler keeps the last definition
+// silently.
+// emitGetgroupsHelper writes getgroups() -> i64[]: the process's supplementary
+// group ids, asked for twice — once for the count, once for the ids — and
+// memoised, since the set cannot change under a process that is not asking to
+// change it.
+//
+// The kernel writes 32-bit gids; the array the language sees is i64[], so the
+// widening walks BACKWARDS from the last element. Forwards would overwrite the
+// gid at 2i before reading the one at i.
+//
+// A refusal (or an empty set) answers an empty array rather than an error:
+// getgroups has no failure a caller can act on here, and the language's
+// signature has nowhere to put one.
+func emitGetgroupsHelper(w func(string, ...any)) {
 	w("")
-	w("%s:", fnLabel("__method_Reader_read_line"))
+	w("%s:", fnLabel("getgroups"))
+	w("\tstp x29, x30, [sp, #-48]!")
+	w("\tmov x29, sp")
+	w("\tstp x19, x20, [sp, #16]")
+	w("\tstr x21, [sp, #32]")
+	w("\tadrp x0, %s", getgroupsCacheSym)
+	w("\tadd x0, x0, #:lo12:%s", getgroupsCacheSym)
+	w("\tldr x1, [x0]")
+	w("\tcbz x1, .Lssa_gg_build")
+	w("\tmov x0, x1")
+	w("\tb .Lssa_gg_ret")
+	w(".Lssa_gg_build:")
+	w("\tmov x0, #0") // size 0 asks for the count
+	w("\tmov x1, #0")
+	w("\tmov x8, #158") // getgroups
+	w("\tsvc #0")
+	w("\tmov x19, x0")
+	w("\tcmp x19, #0")
+	w("\tb.gt .Lssa_gg_alloc")
+	w("\tmov x19, #0")
+	w(".Lssa_gg_alloc:")
+	// 16-byte header + count*8, as every array container here is laid out.
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #15")
+	w("\tand x4, x4, #-16")
+	w("\tlsl x5, x19, #3")
+	w("\tadd x5, x5, #16")
+	w("\tadd x6, x4, x5")
+	w("\tstr x6, [x3]")
+	emitHeapGuardCall(w)
+	w("\tadd x20, x4, #16")
+	w("\tstur w19, [x20, #-12]") // cap
+	w("\tmov w9, #0x80000000")
+	w("\tstur w9, [x20, #-8]")  // rc = static sentinel (cached, immortal)
+	w("\tstur w19, [x20, #-4]") // len
+	w("\tcbz x19, .Lssa_gg_done")
+	w("\tmov x0, x19")
+	w("\tmov x1, x20")
+	w("\tmov x8, #158") // getgroups
+	w("\tsvc #0")
+	w("\tcmp x0, #0")
+	w("\tb.le .Lssa_gg_zero")
+	w("\tmov x19, x0")
+	w("\tstur w19, [x20, #-4]")
+	w("\tmov x21, x19")
+	w(".Lssa_gg_widen:")
+	w("\tsub x21, x21, #1")
+	w("\ttbnz x21, #63, .Lssa_gg_done")
+	w("\tldr w9, [x20, x21, lsl #2]")
+	w("\tstr x9, [x20, x21, lsl #3]")
+	w("\tb .Lssa_gg_widen")
+	w(".Lssa_gg_zero:")
+	w("\tstur wzr, [x20, #-4]")
+	w(".Lssa_gg_done:")
+	w("\tadrp x0, %s", getgroupsCacheSym)
+	w("\tadd x0, x0, #:lo12:%s", getgroupsCacheSym)
+	w("\tstr x20, [x0]")
+	w("\tmov x0, x20")
+	w(".Lssa_gg_ret:")
+	w("\tldr x21, [sp, #32]")
+	w("\tldp x19, x20, [sp, #16]")
+	w("\tldp x29, x30, [sp], #48")
+	w("\tret")
+}
+
+// emitEnvironHelper writes environ() -> string[]: every "NAME=VALUE" entry of
+// the envp vector _start captured, as a memoised string[].
+//
+// envp carries no count word — it is NULL-terminated — so the length is a scan
+// before the build. Otherwise this is args() over a different vector, down to
+// the static rc sentinel on the container and the fresh rc string per entry.
+func emitEnvironHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("environ"))
+	w("\tadrp x1, %s", environCacheSym)
+	w("\tadd x1, x1, #:lo12:%s", environCacheSym)
+	w("\tldr x0, [x1]")
+	w("\tcbnz x0, .Lssa_environ_ret")
+	w("\tadrp x3, %s", envpSym)
+	w("\tadd x3, x3, #:lo12:%s", envpSym)
+	w("\tldr x3, [x3]")
+	// Count the entries: envp is NULL-terminated.
+	w("\tmov x2, #0")
+	w(".Lssa_environ_count:")
+	w("\tldr x9, [x3, x2, lsl #3]")
+	w("\tcbz x9, .Lssa_environ_counted")
+	w("\tadd x2, x2, #1")
+	w("\tb .Lssa_environ_count")
+	w(".Lssa_environ_counted:")
+	w("\tadrp x4, %s", heapPtrSym)
+	w("\tadd x4, x4, #:lo12:%s", heapPtrSym)
+	w("\tldr x5, [x4]")
+	w("\tadd x5, x5, #15")
+	w("\tand x5, x5, #-16")
+	w("\tlsl x6, x2, #3")
+	w("\tadd x7, x6, #16")
+	w("\tadd x8, x5, x7")
+	w("\tstr x8, [x4]")
+	emitHeapGuardCall(w)
+	w("\tadd x9, x5, #16")
+	w("\tstur w2, [x9, #-12]") // cap
+	w("\tmov w6, #0x80000000")
+	w("\tstur w6, [x9, #-8]") // rc = static sentinel, matching args()
+	w("\tstur w2, [x9, #-4]") // len
+	w("\tmov x10, #0")
+	w(".Lssa_environ_loop:")
+	w("\tcmp x10, x2")
+	w("\tb.hs .Lssa_environ_done")
+	w("\tldr x11, [x3, x10, lsl #3]") // the NUL-terminated C string
+	w("\tmov x12, #0")
+	w(".Lssa_environ_slen:")
+	w("\tldrb w13, [x11, x12]")
+	w("\tcbz w13, .Lssa_environ_slen_done")
+	w("\tadd x12, x12, #1")
+	w("\tb .Lssa_environ_slen")
+	w(".Lssa_environ_slen_done:")
+	emitAllocBlock(w, "x5", "x12", 9)
+	w("\tmov w6, #1")
+	w("\tstr w6, [x5]")      // rc = 1
+	w("\tstr w12, [x5, #4]") // len
+	w("\tadd x14, x5, #8")   // string data
+	w("\tmov x15, #0")
+	w(".Lssa_environ_cp:")
+	w("\tcmp x15, x12")
+	w("\tb.hs .Lssa_environ_cpd")
+	w("\tldrb w16, [x11, x15]")
+	w("\tstrb w16, [x14, x15]")
+	w("\tadd x15, x15, #1")
+	w("\tb .Lssa_environ_cp")
+	w(".Lssa_environ_cpd:")
+	w("\tstrb wzr, [x14, x12]")       // trailing NUL
+	w("\tstr x14, [x9, x10, lsl #3]") // container[i]
+	w("\tadd x10, x10, #1")
+	w("\tb .Lssa_environ_loop")
+	w(".Lssa_environ_done:")
+	w("\tstr x9, [x1]") // memoise
+	w("\tmov x0, x9")
+	w(".Lssa_environ_ret:")
+	w("\tret")
+}
+
+// emitArrPushCliffReader writes one of the two cliff accessors: `wide` reads
+// the byte weight as an i64, otherwise the crossing count as an i32.
+func emitArrPushCliffReader(name, sym string, wide bool) func(w func(string, ...any)) {
+	return func(w func(string, ...any)) {
+		w("")
+		w("%s:", fnLabel(name))
+		w("\tadrp x0, %s", sym)
+		w("\tadd x0, x0, #:lo12:%s", sym)
+		if wide {
+			w("\tldr x0, [x0]")
+		} else {
+			w("\tldr w0, [x0]")
+		}
+		w("\tret")
+	}
+}
+
+func emitReadLineHelper(name, sfx string, fd int) func(w func(string, ...any)) {
+	return func(w func(string, ...any)) {
+		emitReadLineBody(w, name, sfx, fd)
+	}
+}
+
+func emitReadLineBody(w func(string, ...any), name, sfx string, fd int) {
+	w("")
+	w("%s:", fnLabel(name))
 	w("\tstp x29, x30, [sp, #-48]!")
 	w("\tmov x29, sp")
 	w("\tstp x19, x20, [sp, #16]")
 	w("\tstp x21, x22, [sp, #32]")
-	w("\tldr w22, [x0, #8]") // fd @ ptr+8
+	if fd < 0 {
+		w("\tldr w22, [x0, #8]") // fd @ ptr+8
+	} else {
+		w("\tmov w22, #%d", fd)
+	}
 	w("\tadrp x19, %s", readlineBufSym)
 	w("\tadd x19, x19, #:lo12:%s", readlineBufSym)
 	w("\tmov x20, #0") // bytes read
-	w(".Lssa_rrl_loop:")
+	w(".Lssa_rrl_loop%s:", sfx)
 	w("\tcmp x20, #%d", readlineBytes)
-	w("\tb.ge .Lssa_rrl_done")
+	w("\tb.ge .Lssa_rrl_done%s", sfx)
 	// read(fd, buf + bytes, 1)
 	w("\tmov w0, w22")
 	w("\tadd x1, x19, x20")
@@ -3817,15 +4082,15 @@ func emitReaderReadLineHelper(w func(string, ...any)) {
 	w("\tmov x8, #63") // read
 	w("\tsvc #0")
 	w("\tcmp x0, #1")
-	w("\tb.lt .Lssa_rrl_done") // EOF (0) or error (<0) → finish
+	w("\tb.lt .Lssa_rrl_done%s", sfx) // EOF (0) or error (<0) → finish
 	w("\tadd x21, x19, x20")
 	w("\tldrb w21, [x21]") // the byte just read
 	w("\tadd x20, x20, #1")
 	w("\tcmp w21, #10") // '\n' — kept in the line
-	w("\tb.eq .Lssa_rrl_done")
-	w("\tb .Lssa_rrl_loop")
-	w(".Lssa_rrl_done:")
-	w("\tcbz x20, .Lssa_rrl_none") // no bytes → None (EOF)
+	w("\tb.eq .Lssa_rrl_done%s", sfx)
+	w("\tb .Lssa_rrl_loop%s", sfx)
+	w(".Lssa_rrl_done%s:", sfx)
+	w("\tcbz x20, .Lssa_rrl_none%s", sfx) // no bytes → None (EOF)
 	// A single-word rc string of x20 bytes (+ NUL), the line copied in.
 	emitAllocBlock(w, "x4", "x20", 9)
 	w("\tmov w7, #1")
@@ -3833,21 +4098,21 @@ func emitReaderReadLineHelper(w func(string, ...any)) {
 	w("\tstr w20, [x4, #4]") // len = bytes read
 	w("\tadd x21, x4, #8")   // data ptr
 	w("\tmov x9, #0")
-	w(".Lssa_rrl_cp:")
+	w(".Lssa_rrl_cp%s:", sfx)
 	w("\tcmp x9, x20")
-	w("\tb.hs .Lssa_rrl_cpd")
+	w("\tb.hs .Lssa_rrl_cpd%s", sfx)
 	w("\tldrb w10, [x19, x9]")
 	w("\tstrb w10, [x21, x9]")
 	w("\tadd x9, x9, #1")
-	w("\tb .Lssa_rrl_cp")
-	w(".Lssa_rrl_cpd:")
+	w("\tb .Lssa_rrl_cp%s", sfx)
+	w(".Lssa_rrl_cpd%s:", sfx)
 	w("\tstrb wzr, [x21, x20]") // trailing NUL
 	// Some(string): box {rc=1, tag=0, string@8}.
 	emitOptionBox(w, 0, "x21")
-	w("\tb .Lssa_rrl_ret")
-	w(".Lssa_rrl_none:")
+	w("\tb .Lssa_rrl_ret%s", sfx)
+	w(".Lssa_rrl_none%s:", sfx)
 	emitOptionBox(w, 1, "")
-	w(".Lssa_rrl_ret:")
+	w(".Lssa_rrl_ret%s:", sfx)
 	w("\tldp x21, x22, [sp, #32]")
 	w("\tldp x19, x20, [sp, #16]")
 	w("\tldp x29, x30, [sp], #48")
@@ -4005,6 +4270,7 @@ var runtimeHelperDeps = map[string][]string{
 	"__fern_arr_cow_inplace_ptr":      {"__fern_arr_cow_inplace", "__fern_rc_inc"},
 	"__fern_arr_cow_inplace_str":      {"__fern_arr_cow_inplace", "__fern_rc_inc"},
 	"write_file":                      {"__fern_io_error"},
+	"write_file_exec":                 {"__fern_io_error"},
 	"read_file":                       {"__fern_io_error", "__fern_utf8_valid", "__free"},
 	"stat":                            {"__fern_io_error"},
 	"lstat":                           {"__fern_io_error"},
@@ -4112,6 +4378,7 @@ var heapUsingHelpers = map[string]bool{
 	"strbuf_take":                     true,
 	"env":                             true,
 	"write_file":                      true,
+	"write_file_exec":                 true,
 	"read_file":                       true,
 	"read_file_bytes":                 true,
 	"remove_file":                     true,
@@ -6059,9 +6326,24 @@ func byteList(s string) string {
 // openat result the errno (-fd) is mapped by __fern_io_error. Non-leaf (calls
 // __fern_io_error), so it keeps a frame with callee-saved x19=path / x20=content
 // / x21=path_nul / x22=fd across the syscalls and the call. x0=path, x1=content.
-func emitWriteFileHelper(w func(string, ...any)) {
+// emitWriteFileHelperMode writes `name`, which creates its file with `mode`
+// and, when `fixup` is non-zero, chmods an EXISTING file to it as well: openat
+// applies its mode only on create, so writing over a stale output would
+// otherwise keep the old one — for write_file_exec that is an unrunnable
+// binary, the failure it exists to remove. The chmod's result is ignored, since
+// the bytes are already written and a mode failure must not turn a successful
+// write into an Err.
+//
+// `sfx` keeps the two instantiations' local labels apart.
+func emitWriteFileHelperMode(name, sfx string, mode, fixup int) func(w func(string, ...any)) {
+	return func(w func(string, ...any)) {
+		emitWriteFileBody(w, name, sfx, mode, fixup)
+	}
+}
+
+func emitWriteFileBody(w func(string, ...any), name, sfx string, mode, fixup int) {
 	w("")
-	w("%s:", fnLabel("write_file"))
+	w("%s:", fnLabel(name))
 	w("\tstp x29, x30, [sp, #-48]!")
 	w("\tmov x29, sp")
 	w("\tstp x19, x20, [sp, #16]")
@@ -6080,14 +6362,14 @@ func emitWriteFileHelper(w func(string, ...any)) {
 	w("\tstr x6, [x3]") // bump
 	emitHeapGuardCall(w)
 	w("\tmov w7, #0")
-	w(".Lssa_wf_cp:")
+	w(".Lssa_wf_cp%s:", sfx)
 	w("\tcmp w7, w2")
-	w("\tb.hs .Lssa_wf_cpd")
+	w("\tb.hs .Lssa_wf_cpd%s", sfx)
 	w("\tldrb w8, [x19, x7]")
 	w("\tstrb w8, [x4, x7]")
 	w("\tadd w7, w7, #1")
-	w("\tb .Lssa_wf_cp")
-	w(".Lssa_wf_cpd:")
+	w("\tb .Lssa_wf_cp%s", sfx)
+	w(".Lssa_wf_cpd%s:", sfx)
 	w("\tstrb wzr, [x4, x2]") // NUL
 	w("\tmov x21, x4")        // path_nul
 	// openat(AT_FDCWD, path_nul, O_WRONLY|O_CREAT|O_TRUNC, 0644).
@@ -6095,17 +6377,23 @@ func emitWriteFileHelper(w func(string, ...any)) {
 	w("\tneg x0, x0") // AT_FDCWD = -100
 	w("\tmov x1, x21")
 	w("\tmov x2, #577") // 0x241
-	w("\tmov x3, #420") // 0644
-	w("\tmov x8, #56")  // openat
+	w("\tmov x3, #%d", mode)
+	w("\tmov x8, #56") // openat
 	w("\tsvc #0")
-	w("\ttbnz x0, #63, .Lssa_wf_err") // fd < 0 → error
-	w("\tmov x22, x0")                // fd
+	w("\ttbnz x0, #63, .Lssa_wf_err%s", sfx) // fd < 0 → error
+	w("\tmov x22, x0")                       // fd
 	// write(fd, content_data, content_len).
 	w("\tmov x0, x22")
 	w("\tmov x1, x20")
 	w("\tldur w2, [x20, #-4]")
 	w("\tmov x8, #64") // write
 	w("\tsvc #0")
+	if fixup != 0 {
+		w("\tmov x0, x22")
+		w("\tmov x1, #%d", fixup)
+		w("\tmov x8, #52") // fchmod
+		w("\tsvc #0")
+	}
 	// close(fd).
 	w("\tmov x0, x22")
 	w("\tmov x8, #57") // close
@@ -6124,8 +6412,8 @@ func emitWriteFileHelper(w func(string, ...any)) {
 	w("\tadd x0, x4, #8")    // box data
 	w("\tstr wzr, [x0]")     // tag = 0 (Ok)
 	w("\tstr xzr, [x0, #8]") // unit payload
-	w("\tb .Lssa_wf_ret")
-	w(".Lssa_wf_err:")
+	w("\tb .Lssa_wf_ret%s", sfx)
+	w(".Lssa_wf_err%s:", sfx)
 	w("\tneg x0, x0") // errno = -fd
 	w("\tmov x1, x19")
 	w("\tbl %s", fnLabel("__fern_io_error"))
@@ -6144,7 +6432,7 @@ func emitWriteFileHelper(w func(string, ...any)) {
 	w("\tadd x0, x4, #8") // box data
 	w("\tstr w6, [x0]")   // tag = 1 (Err) — w6 still holds 1 from rc
 	w("\tstr x22, [x0, #8]")
-	w(".Lssa_wf_ret:")
+	w(".Lssa_wf_ret%s:", sfx)
 	w("\tldp x21, x22, [sp, #32]")
 	w("\tldp x19, x20, [sp, #16]")
 	w("\tldp x29, x30, [sp], #48")
@@ -8040,7 +8328,7 @@ func emitArrPushGrowHelper(w func(string, ...any)) {
 	// Fast path: rc == 1 and oldLen < cap → grow in place.
 	w("\tldur w3, [x0, #-8]") // rc
 	w("\tcmp w3, #1")
-	w("\tb.ne .Lssa_apg_copy")
+	w("\tb.ne .Lssa_apg_shared")
 	w("\tldur w4, [x0, #-12]") // cap
 	w("\tcmp w1, w4")
 	w("\tb.ge .Lssa_apg_copy")
@@ -8049,6 +8337,25 @@ func emitArrPushGrowHelper(w func(string, ...any)) {
 	w("\tadd w4, w1, #1")
 	w("\tstur w4, [x0, #-4]") // len = oldLen + 1
 	w("\tret")
+	// rc != 1. If the buffer ALSO had room, the copy below is bought entirely
+	// by the extra reference — the rc==1 cliff — so count it and weight it by
+	// the bytes about to be copied. A genuinely full buffer is not a crossing.
+	// umull widens both 32-bit inputs, so the weight is exact past 4 GiB.
+	w(".Lssa_apg_shared:")
+	w("\tldur w4, [x0, #-12]") // cap
+	w("\tcmp w1, w4")
+	w("\tb.ge .Lssa_apg_copy")
+	w("\tadrp x3, %s", arrPushSharedSym)
+	w("\tadd x3, x3, #:lo12:%s", arrPushSharedSym)
+	w("\tldr w4, [x3]")
+	w("\tadd w4, w4, #1")
+	w("\tstr w4, [x3]")
+	w("\tumull x3, w1, w2") // oldLen * stride
+	w("\tadrp x4, %s", arrPushCopiedSym)
+	w("\tadd x4, x4, #:lo12:%s", arrPushCopiedSym)
+	w("\tldr x5, [x4]")
+	w("\tadd x5, x5, x3")
+	w("\tstr x5, [x4]")
 	w(".Lssa_apg_copy:")
 	w("\tadd w4, w1, #1") // w4 = newLen
 	// Sized in 64 bits: a 32-bit doubling goes negative past 2^30 elements

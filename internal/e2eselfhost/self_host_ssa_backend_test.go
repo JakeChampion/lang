@@ -3,6 +3,7 @@ package e2eselfhost
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -213,6 +214,7 @@ var (
 	ssaHostOnce sync.Once
 	ssaHost     ssaBackendHost
 	ssaHostSkip string
+	ssaHostErr  string
 )
 
 // hostTargets lists the targets this host can run output for: the native
@@ -272,10 +274,19 @@ func selfHostCLIForHost(t *testing.T) ssaBackendHost {
 		}
 		cli := filepath.Join(dir, "fern")
 		if out, err := exec.Command(fern, "-target", cliTarget, "-o", cli, src).CombinedOutput(); err != nil {
-			t.Fatalf("building the self-host CLI for %s: %v\n%s", cliTarget, err, out)
+			// Recorded rather than fatal here: sync.Once runs this for the
+			// FIRST test only, so failing inside it left every later test with
+			// a zero-valued host and no skip reason — they indexed an empty
+			// targets slice and panicked, which reads as a test bug rather
+			// than as the build failure it is.
+			ssaHostErr = fmt.Sprintf("building the self-host CLI for %s: %v\n%s", cliTarget, err, out)
+			return
 		}
 		ssaHost = ssaBackendHost{cli: cli, targets: targets, stdlib: stdlib}
 	})
+	if ssaHostErr != "" {
+		t.Fatal(ssaHostErr)
+	}
 	if ssaHostSkip != "" {
 		t.Skip(ssaHostSkip)
 	}
@@ -462,5 +473,42 @@ func TestSelfHostOutputReplacesExecutable(t *testing.T) {
 	}
 	if _, exit := h.runProduced(t, tg, out); exit != 55 {
 		t.Fatalf("second program exit %d, want 55", exit)
+	}
+}
+
+// TestSelfHostCLIBuildsForEveryNativeTarget builds the self-host compiler for
+// both native targets on whatever host runs it.
+//
+// The build is a cross-compile, so the host does not decide what can be built —
+// but every other gate here takes its target from the host (hostTargets), which
+// means each machine tests one of the two and neither machine tests both. That
+// is how #9525 reached main: the arm64 default flip left four runtime helpers
+// with no emitter, and `fern -target arm64-linux examples/self_host/fern.fern`
+// failed to link on every push while the x86-64 lanes stayed green.
+//
+// The whole compiler is the point: it is the largest program in the tree and
+// the one that reaches the widest set of runtime helpers, so a helper missing
+// from a backend shows up here and almost nowhere else. `-o` is passed so the
+// link runs too; emit alone would miss a symbol the assembler resolves.
+func TestSelfHostCLIBuildsForEveryNativeTarget(t *testing.T) {
+	fern := buildLangBinForInterp(t)
+	src, err := filepath.Abs("../../examples/self_host/fern.fern")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{"arm64-linux", "x86-64-linux"} {
+		t.Run(target, func(t *testing.T) {
+			out := filepath.Join(t.TempDir(), "fern")
+			if o, err := exec.Command(fern, "-target", target, "-o", out, src).CombinedOutput(); err != nil {
+				t.Fatalf("the self-host compiler does not build for %s: %v\n%s", target, err, o)
+			}
+			st, err := os.Stat(out)
+			if err != nil {
+				t.Fatalf("no binary written for %s: %v", target, err)
+			}
+			if st.Size() == 0 {
+				t.Fatalf("the %s build wrote an empty binary", target)
+			}
+		})
 	}
 }
