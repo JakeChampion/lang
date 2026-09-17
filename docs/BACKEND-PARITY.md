@@ -20,30 +20,47 @@ only. A sixth, `wasmssa`, was retired (#9397). Background:
 
 ### Why the SSA backends are not the default (string retention)
 
-The SSA backends run the **single-word string ABI** — `buildArm64SSA` never
-sets `ast.TwoWordOverride`. On that ABI `internal/ir/rc_analysis.go`
-conservatively taints a string local passed to a user function out of reclaim,
-because the caller cannot see whether the callee retained it; the taint exists
-so a retained copy is never left pointing at a freed buffer (#4174). The arm64
-stack-machine emitter runs the two-word ABI and has no such taint.
+The arm64 SSA default was reverted (#9542) over string retention: `-backend
+ssa` reported hundreds of KB live at exit under `FERN_LEAKCHECK` where the
+stack-machine emitter reported hundreds of bytes. **That measurement does not
+hold up, and the retention question is currently open rather than settled.**
 
-The cost is that retention grows with the input instead of staying flat.
-Measured at exit under `FERN_LEAKCHECK=1`:
+`arm64ssa`'s census derives `live_bytes` from the arena cursor less what
+`__free` tallied, and something breaks that identity once allocation sizes
+vary: the figure drifts upward with the *variety* of sizes even when every
+allocation is freed. A `read_line` loop over 8,000 lines, identical alloc and
+free counts in all four runs:
 
-| program | stack machine | `-backend ssa` |
-| --- | --- | --- |
-| `coreutils/uniq.fern`, 1,000 lines | 384 B | 57,856 B |
-| `coreutils/uniq.fern`, 8,000 lines | 448 B | 188,992 B |
-| `coreutils/sort.fern`, 2,000 lines | 720 B | 53,184 B |
+| input | arm64 stack machine | arm64 `-backend ssa` |
+| --- | ---: | ---: |
+| every line 40 chars, 1,000 lines | 16 B | 32 B |
+| every line 40 chars, 8,000 lines | 16 B | **32 B** |
+| lines 1–200 chars, 1,000 lines | 16 B | 832 B |
+| lines 1–200 chars, 8,000 lines | 16 B | **8,528 B** |
 
-Alloc and free *counts* barely move between the two — it is the string buffers
-that go unreclaimed, not more objects.
+Constant when the sizes are uniform, growing when they are not. That is the
+instrument, not the program. Peak RSS on `coreutils/uniq.fern` differs by
+64–136 KB between the two emitters and does not grow with the input, against
+the 369 KB the census claimed at 8,000 lines. Ordinary allocation through
+`__alloc` / `__free` does not show it, so it is reached through `read_line`'s
+own allocation sites. #9558 has the reproducer; the mechanism is not yet
+identified and that issue is deliberately careful not to guess at one again.
 
-Making the SSA backends a default again needs one of the two gaps closed:
-`arm64ssa` running the two-word string ABI, or #4174's taint replaced by an
-interprocedural answer to whether a callee retains its string argument.
-`internal/e2e/arm64_default_string_reclaim_test.go` holds the default to that
-bar.
+It was NOT the single-word string ABI either, which was the first reading.
+x86-64 runs that same ABI — `ast.TwoWordOverride` is set only by
+`internal/codegen/arm64` — so it carries the same `internal/ir` reclaim taint,
+and it is clean on the same programs.
+
+So the order of work is: fix the census (#9558), then re-measure, and only then
+say what the SSA backends retain. `internal/e2e/arm64_default_string_reclaim_test.go`
+still holds the DEFAULT to its bar, and that bar is sound — it measures the
+stack-machine emitter, whose census reads a constant 16 B at every input size.
+
+The single-word ABI's reclaim taint is real and is being narrowed on its own
+merits rather than as a precondition: it refused a string parameter bound to a
+local, which cost the caller its reclaim once per call (#9549, 400 allocations
+and 0 frees on the shape, measured through alloc/free COUNTS rather than
+`live_bytes`). `frameBoundStringAliases` credits that shape now.
 
 Targets are `<isa>-<environment>` (#6529): the ISA half picks the backend, the
 environment half says what the host provides. Neither is implied — there is no

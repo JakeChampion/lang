@@ -1430,27 +1430,33 @@ function main(): i32 { var keep: (i32, i32[]) = (5, [6, 7]); return get(keep).le
 			// taint PROPAGATES to — the local that aliases it, and in turn
 			// the caller's own local.
 			//
-			// The divergence below is the self-host AHEAD, not a gap. It is
-			// the same shape as the leak matrix's `str__fnscope__alias_param`
-			// cell (#7553: the callee only aliases its param, so the param
-			// stays borrowable and the caller keeps its own release), which
-			// is `clean clean` on both ISAs: native's clean is SSO keeping
-			// the string inline, the self-host's is a real reclaim. Both legs
-			// of that cell pass, including the FERN_SANITIZE re-run that is
-			// what would report an over-release, so the self-host's extra
-			// credits here are reclaims native does not make rather than
-			// frees it must not.
+			// The divergence was the self-host AHEAD, not a gap — the same
+			// shape as the leak matrix's `str__fnscope__alias_param` cell
+			// (#7553: the callee only aliases its param, so the param stays
+			// borrowable and the caller keeps its own release), which is
+			// `clean clean` on both ISAs. The self-host's extra credits were
+			// reclaims native did not make, never frees it must not.
 			//
-			// So the string exemption in rc_fe_run's seed is essential and
-			// must NOT be "fixed" into native parity: seeding a string param
-			// tainted would propagate through this alias and take #7553's
-			// reclaim back out. What was wrong was only the REASON the seed
-			// gave for it, corrected there.
+			// `main` is no longer among them: native now credits the caller's
+			// `k` too, because frameBoundStringAliases gives the counted-retain
+			// summary an arm for a parameter bound to a local, which is what
+			// `f` does to `s` (#9549). So the caller-side halves agree and
+			// this case pins that agreement rather than a gap.
+			//
+			// `f` still diverges, and the reason is worth keeping straight:
+			// what closed on the caller side is the SUMMARY's answer about
+			// what `f` retains, not native's eligibility rule for `f`'s OWN
+			// local. The self-host admits `L`; native does not.
+			//
+			// The string exemption in rc_fe_run's seed is still essential and
+			// must NOT be "fixed" into native parity. Native reaching parity
+			// at the caller by a different route is the argument for that, not
+			// against it: seeding a string param tainted would propagate
+			// through this alias and take #7553's reclaim back out.
 			//
 			// aliasBindIncs is NOT among the divergences: this is #9244's
 			// reproducer, and both sides now cancel the alias retain (the
-			// self-host since #9291 ported the borrowed-parameter leg). Only
-			// what the taint propagates to still differs.
+			// self-host since #9291 ported the borrowed-parameter leg).
 			name: "fe-string-param-alias",
 			src: `function f(s: string): i32 {
 	var L: string = s;
@@ -1461,10 +1467,6 @@ function main(): i32 { var k: string = "abcdefghij"; return f(k); }`,
 				"f": {
 					"freeEligible": {native: "", selfhost: "L"},
 					"lastUses":     {native: "", selfhost: "L=1"},
-				},
-				"main": {
-					"freeEligible": {native: "", selfhost: "k"},
-					"lastUses":     {native: "", selfhost: "k=1"},
 				},
 			},
 		},
