@@ -2802,6 +2802,24 @@ function assign_spill_slots(hi: i32[], reg_of: i32[]): i32[] {
     return reg_of;
 }
 
+// use_counts is how many instruction operands and terminators read each
+// value; a value read once by the branch that ends its block can be
+// consumed as flags rather than materialised.
+pub function use_counts(f: SFunc): i32[] {
+    var uses: i32[] = [];
+    var i: i32 = 0;
+    while (i < f.nvals) { uses = uses.append(0); i = i + 1; }
+    for blk in f.blocks {
+        for ins in blk.insts {
+            for a in ins.args { if (a >= 0 && a < uses.len()) { uses = uses.with(a, uses[a] + 1); } }
+        }
+        var t: STerm = blk.term;
+        if (t.kind_tag == 1 && t.value >= 0 && t.value < uses.len()) { uses = uses.with(t.value, uses[t.value] + 1); }
+        if (t.kind_tag == 3 && t.cond >= 0 && t.cond < uses.len()) { uses = uses.with(t.cond, uses[t.cond] + 1); }
+    }
+    return uses;
+}
+
 // prune_dead drops every pure instruction (const / copy / binary / unary /
 // phi) whose result reaches no instruction with an effect and no terminator,
 // through any number of pure instructions. Marking from those roots, rather
