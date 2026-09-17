@@ -300,6 +300,49 @@ function seen(words: string[], k: string): i32 {
 }
 function main(): i32 { return seen(["a", "b"], "b") + seen(["a", "b"], "z"); }
 `},
+	// A column snapshot, at both element kinds the contract admits. Nothing
+	// else pins that these PRODUCE: a contract that stopped would drop the
+	// module to the AST lowering, which answers identically, so the corpus and
+	// the leak census would stay green on two AST-lowered runs. The tally
+	// below is what makes this a claim about the semantic path.
+	//
+	// Both arrays are read after the map that owned the column is gone, which
+	// is the property the string column's per-element retain buys: an alias
+	// would be reading freed bytes by then, and the sanitizer leg would say so.
+	{name: "map-column-snapshot", atLeast: 4, src: `
+function str_keys(n: i32): i32 {
+    var ks: string[] = [];
+    {
+        var m: Map[string, i32] = map_new(4);
+        m = m.insert("alpha", 1);
+        m = m.insert("beta", 2);
+        ks = m.keys();
+    }
+    var t: i32 = 0;
+    for k in ks { t = t + k.len(); }
+    return t;
+}
+function str_values(n: i32): i32 {
+    var vs: string[] = [];
+    {
+        var m: Map[i32, string] = map_new(4);
+        m = m.insert(1, "one");
+        vs = m.values();
+    }
+    var t: i32 = 0;
+    for v in vs { t = t + v.len(); }
+    return t;
+}
+function i32_keys(n: i32): i32 {
+    var m: Map[i32, i32] = map_new(4);
+    m = m.insert(7, 1);
+    m = m.insert(9, 2);
+    var t: i32 = 0;
+    for k in m.keys() { t = t + k; }
+    return t + m.len();
+}
+function main(): i32 { return str_keys(0) + str_values(0) + i32_keys(0); }
+`},
 	// A callee lent a string VIEW can hand that box straight back (#9328).
 	// Both halves are here: `handed(v)` keeps what it is lent, so the produced
 	// caller hands it a copy of the bytes, and `laundered` hands the result
