@@ -4294,15 +4294,19 @@ func emitBufNewHelper(w func(string, ...any)) {
 	w("\tmov [rax], rcx")
 	w("\tmov qword ptr [rax + 8], 0")
 	w("\tmov [rax + 16], rdi")
-	w("\tmov [rax + 24], rdi")
 	w("\tadd rsp, 8")
 	w("\tret")
 }
 
 // emitBufReserveHelper writes __fern_buf_reserve(H, need): replace the buffer
-// with one of at least `need` bytes, doubling from the current capacity (or
-// from the reserve, when a take left the builder unarmed), carry the live bytes
-// across and give the old block back. Internal; the three pushes reach it.
+// with one of at least `need` bytes, doubling from the current capacity, carry
+// the live bytes across and give the old block back. Internal; the three pushes
+// reach it.
+//
+// The capacity is always set: buf_new floors it at 16 and nothing clears it,
+// since buf_take now copies out and leaves the builder holding its buffer
+// (#9542). The fallbacks this used to need — the reserve word, then a bare 64 —
+// were for the unarmed builder a take used to leave behind, and went with it.
 func emitBufReserveHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__fern_buf_reserve"))
@@ -4313,12 +4317,6 @@ func emitBufReserveHelper(w func(string, ...any)) {
 	w("\tpush r13")
 	w("\tmov rbx, rdi") // H
 	w("\tmov r12, [rbx + 16]")
-	w("\ttest r12, r12")
-	w("\tjnz .Lssa_bufres_dbl")
-	w("\tmov r12, [rbx + 24]")
-	w("\ttest r12, r12")
-	w("\tjnz .Lssa_bufres_dbl")
-	w("\tmov r12d, 64")
 	w(".Lssa_bufres_dbl:")
 	w("\tcmp r12, rsi")
 	w("\tjae .Lssa_bufres_alloc")
@@ -4513,23 +4511,47 @@ func emitBufLenHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
-// emitBufTakeHelper writes buf_take(H) -> string: stamp the length prefix and
-// the NUL into the buffer's own block and hand the pointer over, leaving the
-// builder empty and still usable. An empty build allocates a zero-length string
-// rather than giving the buffer away, so the reserve survives.
+// emitBufTakeHelper writes buf_take(H) -> string: copy the accumulated bytes
+// into a fresh string of their own length, and leave the builder holding its
+// buffer at full width with nothing in it. An empty build allocates a
+// zero-length string, so the reserve survives that path too.
+//
+// The copy is what keeps the block's size derivable from the string's length.
+// Every string this backend frees is sized len + strBlockBytes by
+// __fern_str_dec, which is sound only while each producer asked for exactly
+// that. Handing the builder's own block over instead — it is cap +
+// strBlockBytes — broke that: the block came back to the class for its LENGTH
+// and the rest of the capacity was stranded below its real class, so a program
+// that took from a builder in a loop bumped fresh arena every round and never
+// reused any of it (#9542: 125 MiB over 400 takes of a 256 KiB builder, where
+// the stack machine held flat). The flat x86-64 backend, which shares this
+// string layout, has always copied here for the same reason.
+//
+// Copying costs len bytes per take, not cap, and it is not new work overall:
+// giving the block away forced the next push to allocate a fresh full-width
+// buffer, where keeping it reuses one buffer for the builder's whole life.
 func emitBufTakeHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("buf_take"))
 	w("\tmov rax, [rdi + 8]") // len
 	w("\ttest rax, rax")
 	w("\tjz .Lssa_buftake_empty")
-	w("\tmov rdx, [rdi]") // data
-	w("\tmov [rdx - 4], eax")
-	w("\tmov byte ptr [rdx + rax], 0") // NUL
-	w("\tmov qword ptr [rdi], 0")
-	w("\tmov qword ptr [rdi + 8], 0")
-	w("\tmov qword ptr [rdi + 16], 0")
-	w("\tmov rax, rdx")
+	w("\tmov r9, rax")
+	w("\tlea r11, [r9 + %d]", strBlockBytes)
+	w("\tsub rsp, 8") // entered 8 past alignment; the trampoline is called at 16
+	ssaBumpAlloc(w, "r10", "r11")
+	w("\tadd rsp, 8")
+	w("\tmov dword ptr [r10], 1") // rc = 1
+	w("\tmov [r10 + 4], r9d")     // len
+	w("\tlea r11, [r10 + 8]")     // data
+	// The NUL sits one past the copied range, so it is written before the copy
+	// rather than after: emitBcopyCall takes rdi, and the builder's fields have
+	// to be read and cleared while rdi still holds the handle.
+	w("\tmov byte ptr [r11 + r9], 0")
+	w("\tmov rax, [rdi]")             // src: the builder's buffer
+	w("\tmov qword ptr [rdi + 8], 0") // empty, and still holding its buffer
+	emitBcopyCall(w, "r11", "rax", "r9")
+	w("\tmov rax, r11")
 	w("\tret")
 	w(".Lssa_buftake_empty:")
 	w("\tsub rsp, 8") // entered 8 past alignment; the trampoline is called at 16

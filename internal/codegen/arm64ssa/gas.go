@@ -9537,26 +9537,25 @@ func emitBufNewHelper(w func(string, ...any)) {
 	w("\tstr x2, [x1]")
 	w("\tstr xzr, [x1, #8]")
 	w("\tstr x3, [x1, #16]")
-	w("\tstr x3, [x1, #24]")
 	w("\tmov x0, x1")
 	w("\tldp x29, x30, [sp], #32")
 	w("\tret")
 }
 
 // emitBufReserveHelper writes __fern_buf_reserve(H, need): replace the buffer
-// with one of at least `need` bytes, doubling from the current capacity (or
-// from the reserve, when a take left the builder unarmed), carry the live bytes
-// across and give the old block back. Internal; the three pushes reach it.
+// with one of at least `need` bytes, doubling from the current capacity, carry
+// the live bytes across and give the old block back.
+//
+// The capacity is always set: buf_new floors it at 16 and nothing clears it,
+// since buf_take now copies out and leaves the builder holding its buffer
+// (#9542). The fallbacks this used to need — the reserve word, then a bare 64 —
+// were for the unarmed builder a take used to leave behind, and went with it. Internal; the three pushes reach it.
 func emitBufReserveHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__fern_buf_reserve"))
 	w("\tstp x29, x30, [sp, #-48]!")
 	w("\tstr x0, [sp, #16]") // H
 	w("\tldr x9, [x0, #16]")
-	w("\tcbnz x9, .Lssa_bufres_dbl")
-	w("\tldr x9, [x0, #24]")
-	w("\tcbnz x9, .Lssa_bufres_dbl")
-	w("\tmov x9, #64")
 	w(".Lssa_bufres_dbl:")
 	w("\tcmp x9, x1")
 	w("\tb.hs .Lssa_bufres_alloc")
@@ -9738,21 +9737,42 @@ func emitBufLenHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
-// emitBufTakeHelper writes buf_take(H) -> string: stamp the length prefix into
-// the buffer's own header and hand the pointer over, leaving the builder empty
-// and still usable. An empty build allocates a zero-length string rather than
-// giving the buffer away, so the reserve survives.
+// emitBufTakeHelper writes buf_take(H) -> string: copy the accumulated bytes
+// into a fresh string of their own length, and leave the builder holding its
+// buffer at full width with nothing in it. An empty build allocates a
+// zero-length string, so the reserve survives that path too.
+//
+// The copy is what keeps the block's size derivable from the string's length.
+// Every string this backend frees is sized len + strBlockBytes by
+// __fern_str_dec, which is sound only while each producer asked for exactly
+// that. Handing the builder's own block over instead — it is cap +
+// strBlockBytes — broke that: the block came back to the class for its LENGTH
+// and the rest of the capacity was stranded below its real class, so a program
+// that took from a builder in a loop bumped fresh arena every round and never
+// reused any of it (#9542). The flat backends copy here for the same reason.
+//
+// Copying costs len bytes per take, not cap, and it is not new work overall:
+// giving the block away forced the next push to allocate a fresh full-width
+// buffer, where keeping it reuses one buffer for the builder's whole life.
 func emitBufTakeHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("buf_take"))
-	w("\tldr x1, [x0, #8]")
-	w("\tcbz x1, .Lssa_buftake_empty")
-	w("\tldr x2, [x0]")
-	w("\tstur w1, [x2, #-4]")
-	w("\tstr xzr, [x0]")
-	w("\tstr xzr, [x0, #8]")
-	w("\tstr xzr, [x0, #16]")
-	w("\tmov x0, x2")
+	w("\tldr x4, [x0, #8]") // len
+	w("\tcbz x4, .Lssa_buftake_empty")
+	emitAllocBlock(w, "x6", "x4", strBlockBytes)
+	w("\tmov w7, #1")
+	w("\tstr w7, [x6]")     // rc = 1
+	w("\tstr w4, [x6, #4]") // len
+	w("\tadd x8, x6, #8")   // data
+	// The NUL sits one past the copied range, so it is written before the copy.
+	// The block is fresh here, where it used to be the builder's own buffer, so
+	// the byte is no longer incidentally whatever the buffer last held.
+	w("\tstrb wzr, [x8, x4]")
+	w("\tldr x10, [x0]")     // src: the builder's buffer
+	w("\tstr xzr, [x0, #8]") // empty, and still holding its buffer
+	w("\tmov x11, x4")       // n
+	emitBcopyCall(w, "x8", "x10", "x11")
+	w("\tmov x0, x8")
 	w("\tret")
 	w(".Lssa_buftake_empty:")
 	w("\tstp x29, x30, [sp, #-16]!")
