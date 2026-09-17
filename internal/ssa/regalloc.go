@@ -161,6 +161,14 @@ func (a *Allocation) LiveAcross(p int) map[int32]bool {
 // live intervals live in. Shared by LiveIntervals (interval construction) and the
 // emit phase (locating a call site among the intervals for call-clobber-aware
 // saves), so both agree on the numbering.
+//
+// Points step by two, so each op owns a pair: the even point it is given here is
+// its USE slot, where its operands are last read, and the odd point above it is
+// its DEF slot, where LiveIntervals ends up extending its result. An operand
+// whose last use is the op defining the result therefore ends one point below
+// where the result begins, and the two stop interfering — which is what lets a
+// result reuse an operand's register, the ordinary two-address case. Without the
+// split both land on the same point and every `x = f(x)` pays a needless move.
 func linearizePoints(f *Func) (opPos map[*Op]int, blockStart, blockEnd map[*Block]int) {
 	blockStart = map[*Block]int{}
 	blockEnd = map[*Block]int{}
@@ -168,13 +176,13 @@ func linearizePoints(f *Func) (opPos map[*Op]int, blockStart, blockEnd map[*Bloc
 	pos := 0
 	for _, b := range f.RPO() {
 		blockStart[b] = pos
-		pos++
+		pos += 2
 		for _, op := range b.Ops {
 			opPos[op] = pos
-			pos++
+			pos += 2
 		}
 		blockEnd[b] = pos // the terminator / block-exit point
-		pos++
+		pos += 2
 	}
 	return opPos, blockStart, blockEnd
 }
@@ -219,7 +227,7 @@ func LiveIntervals(f *Func, live *Liveness) map[int32]Interval {
 				// Phi args are edge-uses (already captured by the predecessors'
 				// live-out above); only the phi result is defined here.
 				if op.Result.IsValid() {
-					extend(op.Result.ID, p)
+					extend(op.Result.ID, p+1)
 				}
 				continue
 			}
@@ -228,11 +236,14 @@ func LiveIntervals(f *Func, live *Liveness) map[int32]Interval {
 					extend(a.ID, p)
 				}
 			}
+			// Results begin at the def slot, one point above the use slot the
+			// operands were read at: the machine writes the destination after
+			// reading every source.
 			if op.Result.IsValid() {
-				extend(op.Result.ID, p)
+				extend(op.Result.ID, p+1)
 			}
 			if op.Result2.IsValid() {
-				extend(op.Result2.ID, p)
+				extend(op.Result2.ID, p+1)
 			}
 		}
 		// Terminator operands are used at the block's exit point.
