@@ -79,15 +79,15 @@ function main(): i32 {
 	if (a.allocs_per_op_milli() != b.allocs_per_op_milli()) { return 94; }
 	// A quiet region after a mark must read clean, and the reads themselves
 	// are scalars, so asking the question cannot change the answer.
-	var at: i64 = bench.mark_allocs();
+	var mk: i64 = bench.alloc_count();
 	var i: i32 = 0;
 	var sum: i32 = 0;
 	while (i < 100000) { sum = sum + i; i = i + 1; }
 	if (sum == 0) { return 95; }
-	if (!bench.no_allocs_since(at)) { return 96; }
+	if (!bench.no_allocs_after(mk)) { return 96; }
 	// And the observable is not simply stuck at zero: one more string moves it.
 	if (one_allocation(1) == 0) { return 97; }
-	if (bench.allocs_since(at) <= (0 as i64)) { return 98; }
+	if (bench.allocs_after(mk) <= (0 as i64)) { return 98; }
 	return 42;
 }
 `

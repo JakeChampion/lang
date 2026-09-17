@@ -614,14 +614,15 @@ function print_expr_prec(e: ast.Expr, parent_prec: i32, depth: i32): string {
             return print_expr_prec(x.array, prec_primary(), depth) + "[" + print_expr(x.index, depth) + "]";
         },
         ast.ExprSlice(sl) => {
-            // `a[lo:]` writes no upper bound, and the parser fills `end` with a
-            // placeholder `0` that every consumer ignores in favour of the
-            // receiver's length. Printing it back would say `a[lo:0]`, which
-            // re-parses as the EMPTY slice — the one reprint that changes what
-            // the program means rather than how it looks.
+            // An omitted bound is written back omitted. The AST stands a
+            // literal 0 in for a missing low bound and a placeholder in for a
+            // missing high one, so printing them would turn `s[1:]` into
+            // `s[1:0]` — a different program, not a different layout.
+            var lo: string = "";
+            if (!sl.open_start) { lo = print_expr(sl.start, depth); }
             var hi: string = "";
             if (!sl.open_end) { hi = print_expr(sl.end, depth); }
-            return print_expr_prec(sl.array, prec_primary(), depth) + "[" + print_expr(sl.start, depth) + ":" + hi + "]";
+            return print_expr_prec(sl.array, prec_primary(), depth) + "[" + lo + ":" + hi + "]";
         },
         ast.ExprStructLit(sl) => {
             var out: string = sl.type_name + " { ";
@@ -2898,31 +2899,33 @@ function check_string_and_slice_literals(): i32 {
         _ => { return 51; }
     }
 
-    // Slice round-trip: `s[1:4]` re-parses as an ExprSlice, and `s[1:]`'s OPEN
-    // end has to survive too. The node kind alone does not say so — `s[1:]`
-    // reprinted as `s[1:0]` is still an ExprSlice, and it is the EMPTY slice,
-    // the one reprint that changes what the program means. So both flags are
-    // asserted: a written bound stays written, an absent one stays absent.
-    var src6: string = "var s = \"hello\"; var t = s[1:4]; var u = s[1:]; return 0;";
+    // Slice round-trip: `s[1:4]` → re-parses as an ExprSlice.
+    var src6: string = "var s = \"hello\"; var t = s[1:4]; return 0;";
     var rt6: parser.Module = roundtrip_module(src6);
     match (rt6.top_stmts[1]) {
         ast.StmtVar(v) => {
             match (v.init) {
-                ast.ExprSlice(sl) => { if (sl.open_end) { return 62; } },
+                ast.ExprSlice(_) => { },
                 _ => { return 60; }
             }
         },
         _ => { return 61; }
     }
-    match (rt6.top_stmts[2]) {
-        ast.StmtVar(v) => {
-            match (v.init) {
-                ast.ExprSlice(sl) => { if (!sl.open_end) { return 63; } },
-                _ => { return 64; }
-            }
-        },
-        _ => { return 65; }
-    }
+
+    // An omitted bound reprints omitted. Round-tripping cannot see this:
+    // `s[1:0]` re-parses to an ExprSlice too, so the assertions read the
+    // emitted TEXT. The stand-ins the AST carries — a literal 0 for a
+    // missing low bound, an unevaluated placeholder for a missing high one
+    // — would otherwise be printed as written bounds, turning `s[1:]` into
+    // the empty slice `s[1:0]`.
+    var srcOB: string = "function f(s: string): string { return s[1:] + s[:3] + s[:] + s[1:3]; }";
+    var outOB: string = print_module(parser.parse_module(lexer.tokenize(srcOB)));
+    if (!util.contains(outOB, "s[1:]")) { return 62; }
+    if (!util.contains(outOB, "s[:3]")) { return 63; }
+    if (!util.contains(outOB, "s[:]")) { return 64; }
+    if (!util.contains(outOB, "s[1:3]")) { return 65; }
+    if (util.contains(outOB, "s[1:0]")) { return 66; }
+    if (util.contains(outOB, "s[0:")) { return 67; }
 
     return 0;
 }

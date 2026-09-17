@@ -140,7 +140,10 @@ pub struct ExprIndex { array: Expr, index: Expr, unchecked: boolean, ty: string 
 // hand. Encoding it this way rather than desugaring to `base.len()`
 // keeps the base expression in the tree exactly once — the desugar put
 // two independent copies there, so a side-effecting base ran twice.
-pub struct ExprSlice { array: Expr, start: Expr, end: Expr, ty: string, open_end: boolean }
+// `open_start` is the mirror for `a[:hi]` / `a[:]`: `start` holds a real
+// literal 0, so every consumer but the printer can ignore the flag, and
+// the printer needs it to write back the bound the source omitted.
+pub struct ExprSlice { array: Expr, start: Expr, end: Expr, ty: string, open_end: boolean, open_start: boolean }
 
 // Struct literal `Name { field: value, field: value }`. The
 // type_name is the struct's declared name; field_names and

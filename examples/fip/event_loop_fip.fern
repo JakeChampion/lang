@@ -348,8 +348,8 @@ function main(): i32 {
     var samples: i64[] = [];
     var p: i32 = 0;
     while (p < rounds) { samples = samples.append(0 as i64); p = p + 1; }
-    var at_allocs: i64 = bench.mark_allocs();
-    var at_fresh: i64 = bench.mark_fresh_bytes();
+    var at_allocs: i64 = bench.alloc_count();
+    var at_fresh: i64 = bench.bump_bytes();
     var started_ns: i64 = monotonic_ns();
     var r: i32 = 0;
     while (r < rounds) {
@@ -362,8 +362,8 @@ function main(): i32 {
         r = r + 1;
     }
     var elapsed_ns: i64 = monotonic_ns() - started_ns;
-    var allocs: i64 = bench.allocs_since(at_allocs);
-    var fresh: i64 = bench.fresh_bytes_since(at_fresh);
+    var allocs: i64 = bench.allocs_after(at_allocs);
+    var fresh: i64 = bench.fresh_bytes_after(at_fresh);
     var events: i64 = (rounds as i64) * (queue_cap() as i64);
     // The per-round samples become a bench.Report, so the percentile and
     // throughput arithmetic is the harness's and identical across the three

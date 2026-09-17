@@ -5406,6 +5406,15 @@ function ssa_binary(ins: ssa.SInst, lp: string, s: asmcore.EmitState): asmcore.E
     return s.write(ir_bin_asm(tag, ins.imm));
 }
 
+// ssa_push_operand stages one call argument: a push of the value's home,
+// which is what the stack machine emits too. A spilled value pushes its slot
+// directly, since the frame addresses from %rbp and the pushes do not move it,
+// so an argument costs one instruction rather than a load and a push.
+function ssa_push_operand(reg_of: i32[], v: i32, s: asmcore.EmitState): asmcore.EmitState {
+    if (reg_of[v] < 0) { return s.write("    pushq " + ssa_slot(ssa.spill_slot(reg_of[v]), s.ssa_save) + "\n"); }
+    return s.write("    pushq " + ssa_reg(reg_of[v]) + "\n");
+}
+
 // ssa_call emits one call as the stack machine leaves it: the arguments pushed
 // in IR order for a runtime helper and reversed for a user function (arg0 on
 // top), the callee, the caller-side pop, and %rax stored.
@@ -5419,8 +5428,7 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.
     while (i < argc) {
         var a: i32 = i;
         if (!helper) { a = argc - 1 - i; }
-        s = ssa_load(reg_of, ins.args[a], "%rax", s);
-        s = s.write("    pushq %rax\n");
+        s = ssa_push_operand(reg_of, ins.args[a], s);
         i = i + 1;
     }
     if (helper) { s = s.write("    call " + ircore.ir_helper_symbol(ins.str) + "\n"); }
@@ -5472,8 +5480,7 @@ function ssa_str_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
     var argc: i32 = ins.args.len();
     var i: i32 = argc - 1;
     while (i >= 0) {
-        s = ssa_load(reg_of, ins.args[i], "%rax", s);
-        s = s.write("    pushq %rax\n");
+        s = ssa_push_operand(reg_of, ins.args[i], s);
         i = i - 1;
     }
     s = s.write("    call __fn___fern_" + ssa_str_target(ins.str) + "\n");
@@ -5530,8 +5537,7 @@ function ssa_host_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asm
     if (util.str_has_prefix(ins.str, "syscall")) {
         var i: i32 = 0;
         while (i < ins.args.len()) {
-            s = ssa_load(reg_of, ins.args[i], "%rax", s);
-            s = s.write("    pushq %rax\n");
+            s = ssa_push_operand(reg_of, ins.args[i], s);
             i = i + 1;
         }
         var regs: string[] = ["%rdi", "%rsi", "%rdx", "%r10", "%r8"];
@@ -5571,8 +5577,7 @@ function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, o: ir.Op, s: asm
     s = ssa_x0_forget(s);
     var i: i32 = 0;
     while (i < ins.args.len()) {
-        s = ssa_load(reg_of, ins.args[i], "%rax", s);
-        s = s.write("    pushq %rax\n");
+        s = ssa_push_operand(reg_of, ins.args[i], s);
         i = i + 1;
     }
     if (o.kind_tag == 74) { s = s.write(ir_memcpy_asm()); }
@@ -5750,8 +5755,7 @@ function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
     var argc: i32 = ins.args.len() - 1;
     var i: i32 = argc;
     while (i >= 1) {
-        s = ssa_load(reg_of, ins.args[i], "%rax", s);
-        s = s.write("    pushq %rax\n");
+        s = ssa_push_operand(reg_of, ins.args[i], s);
         i = i - 1;
     }
     s = ssa_load(reg_of, ins.args[0], "%r11", s);
