@@ -205,6 +205,16 @@ case "$compilers" in
 esac
 probe_timeout="${FERN_BENCH_PROBE_TIMEOUT:-60}"
 
+# `timeout` is itself a GNU coreutils program, and on macOS the system ships
+# none — so it is taken from the reference directories the bench already
+# found rather than assumed on PATH.
+if command -v timeout >/dev/null; then
+  timeout_bin=timeout
+else
+  timeout_bin=$(gnu_bin timeout) || {
+    echo "coreutils-bench: no timeout(1) on PATH or in $gnu_dirs" >&2; exit 1; }
+fi
+
 go build -o bin/fern ./cmd/fern
 
 # bin/fern-selfhost is rebuilt when MISSING OR STALE. A binary left over from
@@ -261,8 +271,11 @@ done
 # costs nothing here, and it is the only way a template carrying quoted
 # operands (`fmt -p "" -w 40`) is split the way hyperfine will split it.
 probe_completes() {
-  local rc=0
-  timeout -k 2 "$probe_timeout" sh -c "$1" >/dev/null 2>&1 || rc=$?
+  local rc=0 t0 t1
+  t0=$(date +%s%N)
+  "$timeout_bin" -k 2 "$probe_timeout" sh -c "$1" >/dev/null 2>&1 || rc=$?
+  t1=$(date +%s%N)
+  probe_ms=$(( (t1 - t0) / 1000000 ))
   case "$rc" in 124|137) return 1 ;; esac
   return 0
 }
@@ -295,6 +308,7 @@ for u in "$@"; do
   while IFS=$'\t' read -r label shell template; do
     cmds=()
     incomplete=()
+    slowest_ms=0
     for impl in fern selfhost gnu uutils; do
       case "$impl" in
         fern)     [ -n "$want_native" ] || continue; bin="$out/fern/$u" ;;
@@ -313,15 +327,30 @@ for u in "$@"; do
             echo "coreutils-bench: $u: $label: $impl did not finish in ${probe_timeout}s" >&2
             incomplete+=("$impl")
             continue
-          fi ;;
+          fi
+          [ "$probe_ms" -gt "$slowest_ms" ] && slowest_ms=$probe_ms ;;
       esac
       cmds+=(-n "$impl" "$cmd")
     done
     json="$out/$u-$(echo "$label" | tr -c 'a-zA-Z0-9' '_').json"
     shellopt=(-N)
     [ "$shell" = y ] && shellopt=(--shell=sh)
+    # A SLOW ROW IS CAPPED at roughly a minute per implementation. 20 runs plus
+    # 3 warmups of a workload one trial of which takes 50 s is 20 minutes for
+    # one row, and the self-host leg produces exactly that: a build slow enough
+    # to matter but not slow enough to trip the probe. The cap keeps the run
+    # bounded, the count never drops below 3 so a sigma still means something,
+    # and the report prints the count wherever it is under 20 rather than
+    # letting the header's "at least 20" cover a row that had five.
+    runopt=(--warmup 3 --min-runs 20)
+    if [ "$slowest_ms" -gt 3000 ]; then
+      n=$(( 60000 / slowest_ms ))
+      [ "$n" -lt 3 ] && n=3
+      [ "$n" -gt 20 ] && n=20
+      runopt=(--warmup 1 --runs "$n")
+    fi
     # -i: false(1) exits 1 by design, and hyperfine would otherwise abort.
-    hyperfine --warmup 3 --min-runs 20 -i "${shellopt[@]}" --export-json "$json" \
+    hyperfine "${runopt[@]}" -i "${shellopt[@]}" --export-json "$json" \
       "${cmds[@]}" >/dev/null 2>&1 || {
       echo "coreutils-bench: hyperfine failed for $u: $label" >&2; exit 1; }
     python3 - "$json" "$u" "$label" ${incomplete[@]+"${incomplete[@]}"} <<'PY'
@@ -372,7 +401,11 @@ def ms(by, inc, impl):
     if impl in inc:
         return "did not finish"
     r = by.get(impl)
-    return f'{r["mean"]*1000:.2f} ± {r["stddev"]*1000:.2f}' if r else "—"
+    if not r:
+        return "—"
+    cell = f'{r["mean"]*1000:.2f} ± {r["stddev"]*1000:.2f}'
+    n = len(r.get("times") or [])
+    return cell if n >= 20 or n == 0 else f"{cell} ({n} runs)"
 
 def ratio(by, a, b):
     ra, rb = by.get(a), by.get(b)
@@ -395,7 +428,7 @@ header="coreutils-bench: $(date -u +%Y-%m-%d) $(uname -s)/$(uname -m), fern $(gi
 # uutils prints argv[0] before its version, which for a symlink dir is a
 # scratch path; name the implementation instead.
 [ -n "$uu" ] && header="$header, uutils $("$(uutils_bin yes)" --version | head -1 | awk '{print $NF}')"
-header="$header. mean ± σ over ≥20 runs."
+header="$header. mean ± σ over ≥20 runs, except where a cell names a smaller count because one trial of that row took over 3 s."
 # Name the compiler behind each Fern column: two builds of one source are two
 # different programs, and a table that does not say which is which cannot be
 # read a month later.

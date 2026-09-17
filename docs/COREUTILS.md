@@ -625,6 +625,69 @@ Darwin.
 
 ## Performance
 
+### Both compilers, 2026-09-17 — the self-host build does not meet requirement 2
+
+The first run of the two-compiler bench (`fern` = `bin/fern`'s build,
+`fern-sh` = `bin/fern-selfhost`'s build of the same source, both `-O`).
+153 rows over 32 utilities spanning every cost class, Linux x86-64 on a
+4-core container, GNU coreutils 9.4, uutils 0.11.0, two batches each run
+with nothing else on the machine.
+
+| | native build | self-host build |
+|---|---|---|
+| rows faster than GNU | 81 / 152 | **51 / 152** |
+| rows faster than uutils | 64 / 152 | **40 / 152** |
+
+**Thirty rows beat GNU as native builds them and lose to GNU as the
+self-host builds them**, and twenty-four do the same against uutils. The
+median row is 0.53x — the self-host build is about twice as slow — and only
+23 of 152 rows are within 5% of native. Those 23 are the startup-bound
+utilities (`true`, `false`, `pwd`, `whoami`, `hostid`, `nproc`, the
+small-input rows of the digests), where nothing runs for long enough for
+codegen to matter and both builds beat GNU by 5x on process startup alone.
+
+So the answer to requirement 2 today is: **Fern is faster than GNU and uutils
+when the native compiler builds it, and is not when the self-hosted compiler
+does.** That is a release blocker for making the self-host the default, not a
+footnote, and it was invisible before the leg existed.
+
+The losses are not spread evenly — they are concentrated in accumulation:
+
+| | native | self-host | self-host / native |
+|---|---|---|---|
+| `tsort` 100k-edge DAG | 63.52 ms | 47,707.77 ms | **751x slower** |
+| `tac` 62 MiB from a pipe | 497.51 ms | did not finish in 60 s | at least 120x |
+| `shuf -r -n 1000000` | 561.88 ms | 5,621.81 ms | 10.0x |
+| `seq 1 1000000` | 4.82 ms | 36.51 ms | 7.6x |
+| `shuf` 62 MiB from a pipe | 3,130.72 ms | 16,241.92 ms | 5.2x |
+| `cat` a 62 MiB file | 9.44 ms | 38.07 ms | 4.0x |
+| `md5sum` of a 62 MiB file | 371.11 ms | 1,241.00 ms | 3.3x |
+
+`tsort` and `tac` are the shape of the problem rather than two unlucky
+utilities. Measured on DAGs of 12.5k to 100k edges, `tsort` is LINEAR under
+native (0.014, 0.016, 0.032, 0.064 s) and QUADRATIC under the self-host
+(0.661, 3.806, 15.900, 47.646 s), so the ratio grows with the input and the
+745x above is a property of that size and not a constant. `tac` from a pipe
+has to buffer the whole input, which is the same accumulation, and it is the
+one row in the corpus the self-host build cannot finish at all.
+
+#9526 has the mechanism for one such shape — a local bound from a plain
+parameter and appended to in a loop, which the self-host brackets so the
+accumulator is copied per element rather than per call, 267x on a reproducer
+and fixed completely by marking the parameter `own`. `tsort`'s site is not
+that one, so the family is wider than the single case identified so far.
+Everything else on the list is a constant factor of 2x to 4x, which is
+ordinary self-host codegen quality rather than a complexity bug.
+
+Full run, every row and both flip lists:
+`docs/COREUTILS-BOTH-COMPILERS-2026-09-17.md`.
+
+Two things this measurement does NOT say. It does not say the self-host
+miscompiles anything: `TestSelfHostCoreutilsParity` holds both builds to the
+same corpus and all 104 utilities compile and agree. And it does not say the
+native numbers moved — they match the 2026-09-13 survey below where the rows
+overlap.
+
 **Whole catalogue, 2026-09-13**, Linux x86-64 (a 4-core container; GNU
 coreutils 9.4; uutils 0.0.24 as the Debian multi-call binary). Every
 utility's workloads file ran once through `scripts/coreutils-bench` with
