@@ -3334,11 +3334,16 @@ pub function fn_value_array_lit(e: ast.Expr, field_type: string, s: LowerState):
 // (op_const_func) rather than a local load / `None` / unit-variant box / const
 // call — i.e. it names a top-level function WITH params. Mirrors the ExprIdent
 // lowering's const_func fall-through (so a tuple-element tag matches what the
-// element actually emits): not a local slot, not `None`, not a struct / unit
-// variant name, and not a const (a 0-arg receiver-less fn). const_funcs_only_known
-// still backstops a bogus name — if the tag says "fn" the element emits a
-// const_func, and an unknown function bails the whole module either way.
+// element actually emits): a declared free function of this module, and not a
+// local slot, not `None`, not a struct / unit variant name, and not a const
+// (a 0-arg receiver-less fn).
+//
+// The fn_names membership is what makes the answer POSITIVE. An ident this
+// pass cannot resolve — a match-arm payload binding has no slot, so `%?`'s
+// `__chk_v0` is one — is not a function value, and answering yes for it tags
+// the tuple element "fn" and stores an i64 payload 32 bits wide (#9468).
 pub function ident_is_fn_value(name: string, s: LowerState): boolean {
+    if (!s.is_user_fn(name)) { return false; }
     if (s.slot_of(name) >= 0) { return false; }
     if (name == "None") { return false; }
     if (decl_is_struct(s.frame.structs, name)) { return false; }
