@@ -5695,28 +5695,35 @@ function ssa_epilogue(): string {
 
 // ssa_brif branches on a value. An edge whose target has phis lands on a stub
 // carrying that edge's moves, since the moves of the two edges differ.
-function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
+// ssa_jump is the branch to block `to`, or nothing when `to` is the block
+// emitted next and control falls into it.
+function ssa_jump(lp: string, to: i32, next: i32, s: asmcore.EmitState): asmcore.EmitState {
+    if (to == next) { return s; }
+    return s.write("    jmp " + lp + util.i32_to_string(to) + "\n");
+}
+
+function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp: string, next: i32, s: asmcore.EmitState): asmcore.EmitState {
     var t: ssa.STerm = blk.term;
     s = ssa_load(reg_of, t.cond, "%rax", s);
     if (t.t == t.f) {
         s = ssa_phi_moves(f, fr, reg_of, blk.id, t.t, s);
-        return s.write("    jmp " + lp + util.i32_to_string(t.t) + "\n");
+        return ssa_jump(lp, t.t, next, s);
     }
     var fl: string = lp + util.i32_to_string(t.f);
     var stub: boolean = ssa_has_phis(f, fr, t.f);
     if (stub) { fl = lp + "e" + util.i32_to_string(blk.id) + "_" + util.i32_to_string(t.f); }
     s = s.write("    testq %rax, %rax\n    jz " + fl + "\n");
     s = ssa_phi_moves(f, fr, reg_of, blk.id, t.t, s);
-    s = s.write("    jmp " + lp + util.i32_to_string(t.t) + "\n");
     if (stub) {
+        s = s.write("    jmp " + lp + util.i32_to_string(t.t) + "\n");
         s = s.write(fl + ":\n");
         s = ssa_phi_moves(f, fr, reg_of, blk.id, t.f, s);
-        s = s.write("    jmp " + lp + util.i32_to_string(t.f) + "\n");
+        return ssa_jump(lp, t.f, next, s);
     }
-    return s;
+    return ssa_jump(lp, t.t, next, s);
 }
 
-function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
+function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp: string, next: i32, s: asmcore.EmitState): asmcore.EmitState {
     var t: ssa.STerm = blk.term;
     if (t.kind_tag == 1) {
         s = ssa_load(reg_of, t.value, "%rax", s);
@@ -5724,9 +5731,9 @@ function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
     }
     if (t.kind_tag == 2) {
         s = ssa_phi_moves(f, fr, reg_of, blk.id, t.target, s);
-        return s.write("    jmp " + lp + util.i32_to_string(t.target) + "\n");
+        return ssa_jump(lp, t.target, next, s);
     }
-    if (t.kind_tag == 3) { return ssa_brif(f, fr, blk, reg_of, lp, s); }
+    if (t.kind_tag == 3) { return ssa_brif(f, fr, blk, reg_of, lp, next, s); }
     // A block the lift left unterminated is one nothing reaches; the stack
     // machine's fallback return keeps the text well formed here too.
     return s.write("    xorl %eax, %eax\n" + ssa_epilogue());
@@ -5760,12 +5767,17 @@ function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, s: asmcore
     if (frame % 16 != 0) { frame = frame + 8; }
     if (frame > 0) { s = s.write("    subq $" + util.i32_to_string(frame) + ", %rsp\n"); }
     s = ssa_load_params(f, reg_of, s);
-    for blk in f.blocks {
+    var bi: i32 = 0;
+    while (bi < f.blocks.len()) {
+        var blk: ssa.SBlock = f.blocks[bi];
+        var next: i32 = 0 - 1;
+        if (bi + 1 < f.blocks.len()) { next = f.blocks[bi + 1].id; }
         s = s.write(lp + util.i32_to_string(blk.id) + ":\n");
         for ins in blk.insts {
             if (ins.kind_tag != 6 && ins.kind_tag != 8) { s = ssa_inst(ins, reg_of, lp, fr, s); }
         }
-        s = ssa_term(f, fr, blk, reg_of, lp, s);
+        s = ssa_term(f, fr, blk, reg_of, lp, next, s);
+        bi = bi + 1;
     }
     return s.write("    .cfi_endproc\n");
 }
