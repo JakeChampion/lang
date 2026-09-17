@@ -20,38 +20,46 @@ only. A sixth, `wasmssa`, was retired (#9397). Background:
 
 ### Why the SSA backends are not the default (string retention)
 
-`-backend ssa` on arm64 holds hundreds of KB at exit on ordinary string
-programs where the stack-machine emitter holds hundreds of bytes. Measured at
-exit under `FERN_LEAKCHECK=1` (a census the COMPILER builds into the program,
-not a runtime switch):
+The arm64 SSA default was reverted (#9542) over string retention: `-backend
+ssa` reported hundreds of KB live at exit under `FERN_LEAKCHECK` where the
+stack-machine emitter reported hundreds of bytes. **That measurement does not
+hold up, and the retention question is currently open rather than settled.**
 
-| program, 8,000 lines | allocs | frees | live_bytes |
-| --- | ---: | ---: | ---: |
-| `coreutils/uniq.fern`, arm64 stack machine | 118 | 108 | 368 B |
-| `coreutils/uniq.fern`, arm64 `-backend ssa` | 122 | 111 | 369,040 B |
-| `coreutils/uniq.fern`, x86-64 stack machine | 106 | 96 | 400 B |
+`arm64ssa`'s census derives `live_bytes` from the arena cursor less what
+`__free` tallied, and `__free` tallies the size class it pushed the block onto
+rather than the size the bump site charged. The two agree only when every
+block's size already sits on a class boundary, so the figure drifts upward with
+the *variety* of allocation sizes even when every allocation is freed. A
+`read_line` loop over 8,000 lines, identical alloc and free counts in all four
+runs:
 
-The object counts barely move — 10 unfreed against 11 — so this is **one**
-unfreed buffer whose size tracks the input, not more objects leaked.
+| input | arm64 stack machine | arm64 `-backend ssa` |
+| --- | ---: | ---: |
+| every line 40 chars, 1,000 lines | 16 B | 32 B |
+| every line 40 chars, 8,000 lines | 16 B | **32 B** |
+| lines 1–200 chars, 1,000 lines | 16 B | 832 B |
+| lines 1–200 chars, 8,000 lines | 16 B | **8,528 B** |
 
-It is NOT the single-word string ABI. That was the original reading (#9542),
-and the x86-64 row above is what disproves it: `ast.TwoWordOverride` is set
-only by `internal/codegen/arm64`, so x86-64 runs the same single-word ABI with
-the same `internal/ir` reclaim taint, and it is clean. A read loop with no
-aliasing and no user function reproduces the gap on its own — identical alloc
-and free counts on both backends, 16 B against 12,752 B — which puts it in
-`arm64ssa`'s read path rather than anywhere shared. #9558 has the reproducer.
+Constant when the sizes are uniform, growing when they are not. That is the
+instrument, not the program. Peak RSS on `coreutils/uniq.fern` differs by
+64–136 KB between the two emitters and does not grow with the input, against
+the 369 KB the census claimed at 8,000 lines.
 
-Making the SSA backends a default again needs #9558 closed. `arm64ssa` running
-the two-word string ABI is a separate open item and would not close it either,
-for the same reason the x86-64 row gives.
-`internal/e2e/arm64_default_string_reclaim_test.go` holds the default to the
-bar.
+It was NOT the single-word string ABI either, which was the first reading.
+x86-64 runs that same ABI — `ast.TwoWordOverride` is set only by
+`internal/codegen/arm64` — so it carries the same `internal/ir` reclaim taint,
+and it is clean on the same programs.
+
+So the order of work is: fix the census (#9558), then re-measure, and only then
+say what the SSA backends retain. `internal/e2e/arm64_default_string_reclaim_test.go`
+still holds the DEFAULT to its bar, and that bar is sound — it measures the
+stack-machine emitter, whose census reads a constant 16 B at every input size.
 
 The single-word ABI's reclaim taint is real and is being narrowed on its own
 merits rather than as a precondition: it refused a string parameter bound to a
 local, which cost the caller its reclaim once per call (#9549, 400 allocations
-and 0 frees on the shape). `frameBoundStringAliases` credits that shape now.
+and 0 frees on the shape, measured through alloc/free COUNTS rather than
+`live_bytes`). `frameBoundStringAliases` credits that shape now.
 
 Targets are `<isa>-<environment>` (#6529): the ISA half picks the backend, the
 environment half says what the host provides. Neither is implied — there is no
