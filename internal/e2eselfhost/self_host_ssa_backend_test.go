@@ -216,12 +216,14 @@ function main(): i32 {
     }
 }
 `},
-	// f64 throughout: literals with the sign bit set, the arithmetic and the
+	// f64 throughout: negative literals and -0.0, the arithmetic and the
 	// NaN-aware compares, the single-instruction math, every conversion
-	// width and signedness including the saturating ones, the f32 and i64
-	// reinterprets, and the transcendentals the runtime supplies. A value is
-	// its bit pattern in an integer register, as on the stack machine.
-	{name: "floats", viaSSA: []string{"area", "hyp", "classify", "rounding", "convs", "bits", "neg", "trans", "main"}, src: `
+	// width and signedness including the saturating ones and the widening
+	// the lowering inserts for an integer literal at an f64 parameter, the
+	// f32 and i64 reinterprets, and the transcendentals the runtime supplies.
+	// A value is its bit pattern in an integer register, as on the stack
+	// machine.
+	{name: "floats", viaSSA: []string{"area", "hyp", "classify", "rounding", "convs", "bits", "neg", "widen", "signs", "trans", "main"}, src: `
 import "std/float";
 function area(r: f64): f64 { return 3.141592653589793 * r * r; }
 function hyp(a: f64, b: f64): f64 { return (a * a + b * b).sqrt(); }
@@ -257,6 +259,16 @@ function bits(x: f64): i64 {
     return b + (z as i64) + (h as i64) % 7;
 }
 function neg(x: f64): f64 { return (0.0 - x).abs() - (0.0 - x); }
+function widen(x: f64): f64 { return area(2) + hyp(3, 4) + x; }
+function signs(): i32 {
+    var m: f64 = -2.5;
+    var z: f64 = -0.0;
+    var r: i32 = 0;
+    if (m < 0.0) { r = r + 1; }
+    if (f64_bits(z) != 0) { r = r + 2; }
+    if (z == 0.0) { r = r + 4; }
+    return r + (m.abs() * 2.0) as i32;
+}
 function trans(x: f64): i32 { return ((x.sin() * 1000.0) as i32) + ((x.cos() * 1000.0) as i32) + ((x.exp() * 10.0) as i32) + ((x.log() * 1000.0) as i32) + (x.pow(2.5) as i32); }
 function main(): i32 {
     var acc: i64 = (area(2.0) * 1000.0) as i64;
@@ -266,6 +278,7 @@ function main(): i32 {
     acc = acc + convs(0 - 7, 4000000000, 5000000000, 18446744073709551615);
     acc = acc + bits(1.5) + (neg(4.0) as i64);
     acc = acc + trans(1.5) as i64;
+    acc = acc + (widen(1.5) * 10.0) as i64 + signs() as i64;
     return (acc % 251) as i32;
 }
 `},
