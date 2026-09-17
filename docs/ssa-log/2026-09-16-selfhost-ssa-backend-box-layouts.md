@@ -19,7 +19,41 @@ programs, two ISAs) agree on stdout and exit status with the flat emit.
 
 ## Coverage on the compiler compiling itself
 
-SELF_COMPILE_ROWS
+Measured 2026-09-17 on the build of #9566, which carries #9503's
+`call_indirect` and aggregate rows and #9512's compile-time fix, so this is
+the whole of the box-layout work rather than #9498 alone. `fern.fern`,
+arm64-linux, the same container:
+
+| | flat | ssa |
+|---|---|---|
+| functions through the SSA backend | | 8,828 of 9,021 |
+| compile time | 123 s | 134 s |
+| binary | 18.3 MB | 29.1 MB |
+| stage-2 output on `lexer.fern`, `checker.fern` | identical | identical |
+
+The declined functions, by the op that stopped them: `const_f64` 75, `env`
+21, `read_file` 20, `exit` 10, `syscall3` 9, `strbuf_reset` 5,
+`strbuf_append` 5, `raw_scratch` 4, `f64_from_bits` 4, `f64_bits` 4,
+`raw_string` 3, `i32_to_f64` 3, and eight ops at one or two each. The float
+rows are #9567; the rest are host calls and the string buffer.
+
+The same run on the build before #9566 found the three bugs that PR fixes:
+the SSA-built compiler overflowed its stack on `lexer.fern` (a frame slot
+per value id, 2.6 MB for one parser function), prime_gaps' byte sieve
+exited 1 on x86-64 (the runtime call's argument registers are allocatable
+there), and eight corpus programs importing `std/json` would not assemble
+(a loop body ending in a return lost its block). The per-function
+`FERN_SSA_ONLY` sweep over prime_gaps found the second in 170 builds; lldb on
+the stage-2 binary found the first from one frame pointer.
+
+The corpus on the same build, every `examples/**/*.fern` outside `self_host`
+built both ways for arm64-linux and run: 348 programs, 322 agree on stdout
+and exit status, 3 differ only by nondeterminism (a timestamped path, a
+`yes` cut by the timeout, a benchmark's microsecond column), 23 fail to
+build on both paths as they did before the backend existed. 43,336 of the
+53,545 functions across the corpus went through the backend; 55 programs
+whole.
+
 
 ## What each op became
 

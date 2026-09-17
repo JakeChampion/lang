@@ -1,0 +1,30 @@
+import "core/map";
+import "std/string";
+
+// An element read out of a tuple the frame is done with outlives it: the map
+// below is deleted from twice, each delete handing it back inside a fresh
+// tuple, and the array and string come out of a literal whose box dies at the
+// read. Both are then used in ways that consume them, which a borrow of the
+// tuple could not pay for — a map box carries no count to retain (#9555).
+function chained(n: i32): i32 {
+    var m: Map[i32, i32] = map_new(8);
+    var i: i32 = 0;
+    while (i < n) { m = m.insert(i, i * 10); i = i + 1; }
+    m = m.without(1).0;
+    m = m.without(2).0;
+    return m.len() * 100 + m.get_or(4, 0);
+}
+
+function relayed(n: i32): i32 {
+    var t: (i32[], string) = ([n, n + 1], "ab");
+    var b: i32[] = t.0;
+    var s: string = t.1;
+    b = b.append(n + 2);
+    return b.len() * 10 + s.len() + b[2];
+}
+
+function main(): i32 {
+    if (chained(6) != 440) { return 91; }
+    if (relayed(1) != 35) { return 92; }
+    return 17;
+}
