@@ -868,6 +868,31 @@ function ssa_store(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): as
     return s.write("    mov " + home + ", " + reg + "\n");
 }
 
+// ssa_dst is where an instruction this emitter selects itself writes its
+// result: the value's register home, or x0 for a value in a frame slot,
+// which ssa_store then spills. ssa_src is where an operand is read from: its
+// register home, or `scratch` once ssa_load has filled it. An instruction's
+// result never shares a register with its operands: the allocator frees an
+// operand's register only after the instruction that last reads it.
+function ssa_dst(reg_of: i32[], v: i32): string {
+    if (reg_of[v] >= 0) { return ssa_reg(reg_of[v]); }
+    return "x0";
+}
+function ssa_src(reg_of: i32[], v: i32, scratch: string): string {
+    if (reg_of[v] >= 0) { return ssa_reg(reg_of[v]); }
+    return scratch;
+}
+// ssa_wreg is the 32-bit name of an x register.
+function ssa_wreg(x: string): string {
+    match (x[1:]) { Some(n) => { return "w" + n; }, None => { return "w0"; } }
+}
+// ssa_const_reg materialises an integer literal in `d` the way
+// emit_const_i32_push does: one MOVZ for a small decimal, the pool otherwise.
+function ssa_const_reg(text: string, d: string, s: asmcore.EmitState): asmcore.EmitState {
+    if (movz_text_ok(text)) { return s.write("    mov " + d + ", #" + text + "\n"); }
+    return s.write("    ldr " + d + ", =" + text + "\n");
+}
+
 // ssa_unary_known is the unary vocabulary lift_from_ir_prod produces.
 function ssa_unary_known(what: string): boolean {
     if (what == "!" || what == "int_extend" || what == "int_wrap" || what == "u32_wrap" || what == "load_i32") { return true; }
@@ -935,13 +960,6 @@ function ssa_has_phis(f: ssa.SFunc, fr: SsaFrame, id: i32): boolean {
     if (ti < 0) { return false; }
     for ins in f.blocks[ti].insts { if (ins.kind_tag == 8) { return true; } }
     return false;
-}
-
-// ssa_const_x0 materialises an integer literal in x0 the way
-// emit_const_i32_push does: one MOVZ for a small decimal, the pool otherwise.
-function ssa_const_x0(text: string, s: asmcore.EmitState): asmcore.EmitState {
-    if (movz_text_ok(text)) { return s.write("    mov x0, #" + text + "\n"); }
-    return s.write("    ldr x0, =" + text + "\n");
 }
 
 // ssa_unary_asm is the stack machine's selection for the width ops, `not`
@@ -1067,30 +1085,34 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.
 // with the instructions the stack machine's own arms use, operands in x0/x1/x2.
 function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
     var k: i32 = ins.kind_tag;
-    s = ssa_load(reg_of, ins.args[0], "x0", s);
+    var a: string = ssa_src(reg_of, ins.args[0], "x0");
+    s = ssa_load(reg_of, ins.args[0], a, s);
+    var d: string = ssa_dst(reg_of, ins.result);
     if (k == 40) {
-        s = s.write("    ldr x0, [x0, #" + util.i32_to_string(ins.imm) + "]\n");
-        return ssa_store(reg_of, ins.result, "x0", s);
+        s = s.write("    ldr " + d + ", [" + a + ", #" + util.i32_to_string(ins.imm) + "]\n");
+        return ssa_store(reg_of, ins.result, d, s);
     }
-    s = ssa_load(reg_of, ins.args[1], "x1", s);
-    if (k == 41 && ins.str == "i32") { return s.write("    str w1, [x0]\n"); }
-    if (k == 41) { return s.write("    str x1, [x0, #" + util.i32_to_string(ins.imm) + "]\n"); }
+    var b: string = ssa_src(reg_of, ins.args[1], "x1");
+    s = ssa_load(reg_of, ins.args[1], b, s);
+    if (k == 41 && ins.str == "i32") { return s.write("    str " + ssa_wreg(b) + ", [" + a + "]\n"); }
+    if (k == 41) { return s.write("    str " + b + ", [" + a + ", #" + util.i32_to_string(ins.imm) + "]\n"); }
     if (k == 42) {
         if (ins.imm != 1) {
             s = s.mark_heap();
-            s = s.write("    ldr x2, [x0]\n    cmp x1, x2\n    b.lo 1f\n    b __fern_oob_abort\n1:\n");
+            s = s.write("    ldr x2, [" + a + "]\n    cmp " + b + ", x2\n    b.lo 1f\n    b __fern_oob_abort\n1:\n");
         }
-        s = s.write("    add x1, x1, #1\n    ldr x0, [x0, x1, lsl #3]\n");
-        return ssa_store(reg_of, ins.result, "x0", s);
+        s = s.write("    add x1, " + b + ", #1\n    ldr " + d + ", [" + a + ", x1, lsl #3]\n");
+        return ssa_store(reg_of, ins.result, d, s);
     }
     if (k == 44) {
         s = s.mark_heap();
-        s = s.write("    ldr x2, [x0, #8]\n    cmp x1, x2\n    b.lo 1f\n    b __fern_oob_abort\n1:\n    ldr x0, [x0]\n    ldrb w0, [x0, x1]\n");
-        return ssa_store(reg_of, ins.result, "x0", s);
+        s = s.write("    ldr x2, [" + a + ", #8]\n    cmp " + b + ", x2\n    b.lo 1f\n    b __fern_oob_abort\n1:\n    ldr x2, [" + a + "]\n    ldrb " + ssa_wreg(d) + ", [x2, " + b + "]\n");
+        return ssa_store(reg_of, ins.result, d, s);
     }
-    s = ssa_load(reg_of, ins.args[2], "x2", s);
+    var c: string = ssa_src(reg_of, ins.args[2], "x2");
+    s = ssa_load(reg_of, ins.args[2], c, s);
     s = s.mark_heap();
-    return s.write("    ldr x3, [x0]\n    cmp x1, x3\n    b.lo 1f\n    b __fern_oob_abort\n1:\n    add x1, x1, #1\n    str x2, [x0, x1, lsl #3]\n");
+    return s.write("    ldr x3, [" + a + "]\n    cmp " + b + ", x3\n    b.lo 1f\n    b __fern_oob_abort\n1:\n    add x1, " + b + ", #1\n    str " + c + ", [" + a + ", x1, lsl #3]\n");
 }
 
 // ssa_str_call is the stack machine's call of a Fern-compiled runtime helper
@@ -1186,9 +1208,10 @@ function ssa_host_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asm
 // ssa_sym_addr is a static symbol's address, or the word at it (imm 1).
 function ssa_sym_addr(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
     if (util.str_has_prefix(ins.str, "__fern_arr_push_")) { s = s.mark_heap(); }
-    s = s.write("    adrp x0, " + ins.str + "\n    add x0, x0, :lo12:" + ins.str + "\n");
-    if (ins.imm == 1) { s = s.write("    ldr x0, [x0]\n"); }
-    return ssa_store(reg_of, ins.result, "x0", s);
+    var d: string = ssa_dst(reg_of, ins.result);
+    s = s.write("    adrp " + d + ", " + ins.str + "\n    add " + d + ", " + d + ", :lo12:" + ins.str + "\n");
+    if (ins.imm == 1) { s = s.write("    ldr " + d + ", [" + d + "]\n"); }
+    return ssa_store(reg_of, ins.result, d, s);
 }
 
 // ssa_rt_call is the stack machine's call of a runtime routine on the register
@@ -1271,13 +1294,17 @@ function ssa_view_off(fr: SsaFrame, v: i32): i32 {
 // byte loads and stores at base + idx.
 function ssa_raw_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
     var k: i32 = ins.kind_tag;
-    s = ssa_load(reg_of, ins.args[0], "x0", s);
-    s = ssa_load(reg_of, ins.args[1], "x1", s);
-    if (k == 52) { s = s.write("    ldr x0, [x0, x1, lsl #3]\n"); return ssa_store(reg_of, ins.result, "x0", s); }
-    if (k == 54) { s = s.write("    add x0, x0, x1\n    ldrb w0, [x0]\n"); return ssa_store(reg_of, ins.result, "x0", s); }
-    s = ssa_load(reg_of, ins.args[2], "x2", s);
-    if (k == 53) { return s.write("    str x2, [x0, x1, lsl #3]\n"); }
-    return s.write("    add x0, x0, x1\n    strb w2, [x0]\n");
+    var a: string = ssa_src(reg_of, ins.args[0], "x0");
+    s = ssa_load(reg_of, ins.args[0], a, s);
+    var b: string = ssa_src(reg_of, ins.args[1], "x1");
+    s = ssa_load(reg_of, ins.args[1], b, s);
+    var d: string = ssa_dst(reg_of, ins.result);
+    if (k == 52) { s = s.write("    ldr " + d + ", [" + a + ", " + b + ", lsl #3]\n"); return ssa_store(reg_of, ins.result, d, s); }
+    if (k == 54) { s = s.write("    ldrb " + ssa_wreg(d) + ", [" + a + ", " + b + "]\n"); return ssa_store(reg_of, ins.result, d, s); }
+    var c: string = ssa_src(reg_of, ins.args[2], "x2");
+    s = ssa_load(reg_of, ins.args[2], c, s);
+    if (k == 53) { return s.write("    str " + c + ", [" + a + ", " + b + ", lsl #3]\n"); }
+    return s.write("    strb " + ssa_wreg(c) + ", [" + a + ", " + b + "]\n");
 }
 
 // AggPack is a constant aggregate's `<shape label>|<w0>,<w1>,..` text for
@@ -1323,7 +1350,8 @@ function ssa_agg_lit(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmco
     var kout: asmcore.ConstAggOut = asmcore.add_const_agg(s, pk.text);
     s = kout.state;
     var klbl: string = asmcore.const_agg_label(s, kout.idx);
-    s = s.write("    adrp x0, " + klbl + "\n    add x0, x0, :lo12:" + klbl + "\n");
+    var d: string = ssa_dst(reg_of, ins.result);
+    s = s.write("    adrp " + d + ", " + klbl + "\n    add " + d + ", " + d + ", :lo12:" + klbl + "\n");
     return ssa_store(reg_of, ins.result, "x0", s);
 }
 
@@ -1346,8 +1374,9 @@ function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asm
         s = s.write("    mov x0, #" + util.i32_to_string(ins.imm) + "\n    bl __fern_arr_box\n");
         return ssa_store(reg_of, ins.result, "x0", s);
     }
-    s = s.write("    adrp x0, " + label + "\n    add x0, x0, :lo12:" + label + "\n");
-    return ssa_store(reg_of, ins.result, "x0", s);
+    var d: string = ssa_dst(reg_of, ins.result);
+    s = s.write("    adrp " + d + ", " + label + "\n    add " + d + ", " + d + ", :lo12:" + label + "\n");
+    return ssa_store(reg_of, ins.result, d, s);
 }
 
 function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, ops: ir.Op[], s: asmcore.EmitState): asmcore.EmitState {
@@ -1365,20 +1394,23 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, ops: 
     if (k >= 52 && k <= 55) { return ssa_raw_inst(ins, reg_of, s); }
     if (k == 56) { return ssa_call_ind(ins, reg_of, s); }
     if (k == 57) { return ssa_agg_lit(ins, reg_of, s); }
-    if (k == 1) { s = ssa_const_x0(util.i32_to_string(ins.imm), s); }
-    else if (k == 3) { s = ssa_const_x0(ins.str, s); }
-    else if (k == 4) { s = s.write("    ldr x0, =" + util.i64_to_string(util.parse_f64_bits(ins.str)) + "\n"); }
-    else if (k == 7) { s = ssa_load(reg_of, ins.args[0], "x0", s); }
+    var d: string = ssa_dst(reg_of, ins.result);
+    if (k == 1) { s = ssa_const_reg(util.i32_to_string(ins.imm), d, s); }
+    else if (k == 3) { s = ssa_const_reg(ins.str, d, s); }
+    else if (k == 4) { s = s.write("    ldr " + d + ", =" + util.i64_to_string(util.parse_f64_bits(ins.str)) + "\n"); }
+    else if (k == 7) { s = ssa_load(reg_of, ins.args[0], d, s); }
     else if (k == 9) {
+        d = "x0";
         s = ssa_load(reg_of, ins.args[0], "x0", s);
         s = ssa_load(reg_of, ins.args[1], "x1", s);
         var fb: string = ssa_fbin_asm(ins.str);
         if (fb != "") { s = s.write(fb); } else { s = s.write(ir_bin_asm(ir.kind_id(ins.str), ins.imm)); }
     } else {
+        d = "x0";
         s = ssa_load(reg_of, ins.args[0], "x0", s);
         s = s.write(ssa_unary_asm(ins.str, ins.imm == 1));
     }
-    return ssa_store(reg_of, ins.result, "x0", s);
+    return ssa_store(reg_of, ins.result, d, s);
 }
 
 // ssa_phi_moves emits the copies of the edge from block `pred` into block
