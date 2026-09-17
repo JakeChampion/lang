@@ -268,9 +268,17 @@ function construction(kind: i32): boolean {
         || kind == ssasem.closure_new() || kind == ssasem.cell_new() || kind == ssasem.map_new()
         || kind == ssasem.map_cleared();
 }
-// The operand types a construction takes a unit of: every reference but a
-// function value, which it borrows.
-function taken(t: typeinfo.Type): boolean { return ssasem.reference(t) && !ssasem.is_func(t); }
+// The operand types a construction takes a unit of: every reference, and a
+// function value too — except in a CLOSURE box, which borrows its captures of
+// that type. That borrow is the one this vocabulary secures separately: a
+// captured function value must be a borrowed parameter, so its owner outlives
+// the box. Every other container owns what it holds, and its release walks the
+// field (ssarc.walked), so taking the unit here is what balances that walk.
+function taken(t: typeinfo.Type, kind: i32): boolean {
+    if (!ssasem.reference(t)) { return false; }
+    if (ssasem.is_func(t)) { return kind != ssasem.closure_new(); }
+    return true;
+}
 
 // A zero is a unit this frame holds, not one it allocated: at a reference type
 // it is the null word, so the release it owes is the null guard every drop
@@ -346,7 +354,7 @@ function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
     } else if (ins.kind_tag == ssasem.with()) {
         counted = [true, false, ssasem.reference(f.values[ins.args[2]])];
     } else if (construction(ins.kind_tag)) {
-        for arg in ins.args { counted = counted.append(taken(f.values[arg])); }
+        for arg in ins.args { counted = counted.append(taken(f.values[arg], ins.kind_tag)); }
     }
     var i: i32 = 0;
     while (i < counted.len()) {
