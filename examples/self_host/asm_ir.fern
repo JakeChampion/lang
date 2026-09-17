@@ -10094,9 +10094,9 @@ function emit_module_ir_unit_backend(mod: parser.Module, is_entry: boolean, glob
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_concat(), all_structs, s);
     }
     // arr.join(sep) — a Fern runtime function (#5328) lowered through the IR
-    // pipeline: `var r = ""` accumulator, concatenating each element with `sep`
-    // via `+` (str_concat, present above via the arr_str_join need's deps). Heap-
-    // dependent (present above). .text since the heap runtime left us in .bss.
+    // pipeline: two passes over an exact-size block, summing the lengths and
+    // then memcpy'ing each piece in. Heap-dependent (present above). .text
+    // since the heap runtime left us in .bss.
     if (s.has_need("arr_str_join")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_str_join(), all_structs, s);

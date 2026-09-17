@@ -241,7 +241,8 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 			[]string{"\n__fern_str_split:", ".Lsplit_cl"},
 		},
 		{
-			// arr_str_join (string[].join) — AST-only; calls str_concat via `+`.
+			// arr_str_join (string[].join) — fills one exact-size block, so the
+			// heap is its only runtime dep.
 			"arr_str_join",
 			`function main(): i32 { var xs: string[] = ["a", "b"]; return xs.join(",").len(); }`,
 			"__fn___fern_arr_str_join",

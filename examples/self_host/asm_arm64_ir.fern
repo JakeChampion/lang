@@ -8225,8 +8225,8 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     // only because its bounds trap (#5419) is exit(134) through __syscall3 and
     // the exit number is per-target.
     // __fern_arr_str_join is now a Fern runtime function (#2649): see
-    // asmcore.rt_src_arr_str_join. It calls str_concat (via `+`); the str_concat
-    // + heap deps are declared by mark_arr_str_join so their bodies are present.
+    // asmcore.rt_src_arr_str_join. It fills one exact-size block, so the heap
+    // is its only dep and mark_arr_str_join declares it.
     if (s.has_need("arr_str_join")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_str_join(), s.struct_decls, s);
     }
