@@ -395,7 +395,8 @@ function prod_mem_kind(k: string): boolean {
 function prod_host_kind(k: string): boolean {
     var host: string[] = ["syscall3", "syscall4", "syscall5", "exit", "raw_string", "strbuf_reset", "strbuf_append",
         "raw_scratch", "raw_environ", "raw_addr", "monotonic_ns", "now_unix_ms",
-        "load_i32", "load_i64", "load_ptr", "store_i32", "store_i64", "store_ptr", "raw_arr_box"];
+        "load_i32", "load_i64", "load_ptr", "store_i32", "store_i64", "store_ptr", "raw_arr_box",
+        "memcpy", "memset", "memchr", "map_new"];
     for x in host { if (x == k) { return true; } }
     return false;
 }
@@ -407,8 +408,14 @@ function prod_host_kind(k: string): boolean {
 // is wanted; raw_addr is the 64-bit add; the clock ops are stack-ABI calls
 // with no operand. The width loads and stores at an address are the box
 // load and store at offset 0, a 4-byte one carrying "i32" in `str`; a store
-// leaves the zero the stack machine pushes in its place.
+// leaves the zero the stack machine pushes in its place. The three byte
+// kernels are flat_op (59): the emitter runs the stack machine's own arm
+// between a push of the operands and a pop of the result, and the
+// allocator treats the op as a call, so the arm's scratch registers hold
+// nothing live.
 function lift_prod_host(k: string, lv: LiftVals): LiftVals {
+    if (k == "memcpy" || k == "memset" || k == "memchr") { return lift_pop_push(lv, 3, 59, 0, k); }
+    if (k == "map_new") { return lift_pop_push(lv, 1, 50, 0, k); }
     if (k == "load_i64" || k == "load_ptr") { return lift_pop_push(lv, 1, 40, 0, ""); }
     if (k == "load_i32") { return lift_pop_push(lv, 1, 10, 0, k); }
     if (k == "store_i64" || k == "store_ptr" || k == "store_i32") {

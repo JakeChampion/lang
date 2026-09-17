@@ -272,10 +272,10 @@ function main(): i32 {
 	// The host floor: env, read_file and stat through their Fern helpers on
 	// the stack ABI, whose bodies use the raw syscalls, the scratch buffer,
 	// the string box stamp and the width loads; monotonic_ns with no
-	// operand; exit as the raw syscall. The helper bodies are pinned too, so
-	// the syscall sequence itself goes through the backend on every target,
-	// including the Darwin rewrite of its number register.
-	{name: "host_calls", viaSSA: []string{"probe_env", "probe_fs", "probe_clock", "main", "__fern_env", "__fern_read_file", "__fern_stat"}, src: `
+	// operand; exit as the raw syscall. Whole, so the helper bodies and the
+	// byte kernels they use go through the backend on every target,
+	// including the Darwin rewrite of the syscall number register.
+	{name: "host_calls", allSSA: true, src: `
 import "std/i32";
 function probe_env(): i32 {
     var n: i32 = 0;
