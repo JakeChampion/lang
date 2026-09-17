@@ -46,6 +46,27 @@ Reassignment is deliberately excluded, and that is not an oversight: a
 reassigned seed is `countedSeedOccurrences`' case and is credited on the
 opposite grounds, because a rebindable binding DOES emit a real transfer inc.
 
+## The credit goes to the weaker summary only
+
+`stringParamCounted` feeds two summaries out of one fixpoint, separated by
+`creditBareReturn`: `paramNoUncountedAlias` asks whether the CALLER'S LOCAL may
+keep its release, and `paramCountedRetain` whether a FRESH TEMP may be dec'd
+after the call (#9246). The first version of this change gave the arm to both,
+and the full `internal/ir` sweep refused it —
+`TestStringParamThatIsRetainedStaysUncredited` and
+`TestStringParamForwardedToARetainingCalleeStaysUncredited` name this exact
+shape as one the strong summary must not credit.
+
+They were right to, and the fix is not to move them: everything measured here
+is on the weak side, so the arm is gated on the same flag the bare-return
+credit already uses. The strong side keeps its refusal, and a test pins the
+split — it is invisible at either call site, since both summaries come out of
+one function, and a reader tidying the extra parameter away would widen the
+strong one silently.
+
+This is also why the sweep was worth running rather than the targeted suites
+alone. The targeted set was green on the wrong version.
+
 ## The shape that stays refused
 
 `return x` on an alias is still refused while `return src` is credited. When
