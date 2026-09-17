@@ -2,16 +2,48 @@
 
 Four code-generation backends ship today. Three lower the flat `ir.Program` —
 `internal/codegen/{arm64,x86_64,wasmbin}` — and `arm64ssa` allocates registers
-instead, which is **the default on arm64-linux**: it emits less code (the
-self-host driver is 13.4% smaller) and is at or under the stack-machine
-emitter on all 28 `examples/bench` programs. `x86_64ssa` is still reachable
-only through `-backend ssa`, because there it emits 2.0% MORE text than the
-stack-machine emitter — 91% of that being the `movsxd` an i32 result costs
-when its high half is re-established whether or not anything reads it — and
-`string_rfind_byte` remains 1.60x. `-backend flat` names the stack-machine
-emitter on any target. `-backend typed-ssa` is the experimental typed
-pre-RC pipeline, arm64-linux only. A sixth, `wasmssa`, was retired (#9397).
-Background: `docs/SSA-DECISION.md`, #4112, #8822.
+instead. **The stack-machine emitter is the default on every target**;
+`arm64ssa` and `x86_64ssa` are reachable through `-backend ssa`, and
+`-backend flat` names the stack-machine emitter explicitly.
+
+The SSA backends emit less code — the self-host driver is 13.4% smaller on
+arm64, and arm64ssa is at or under the stack-machine emitter on all 28
+`examples/bench` programs — but they are not the default, because of the
+string-retention gap below. On x86-64 they also emit 2.0% MORE text than the
+stack-machine emitter (91% of that being the `movsxd` an i32 result costs when
+its high half is re-established whether or not anything reads it), and
+`string_rfind_byte` remains 1.60x.
+
+`-backend typed-ssa` is the experimental typed pre-RC pipeline, arm64-linux
+only. A sixth, `wasmssa`, was retired (#9397). Background:
+`docs/SSA-DECISION.md`, #4112, #8822.
+
+### Why the SSA backends are not the default (string retention)
+
+The SSA backends run the **single-word string ABI** — `buildArm64SSA` never
+sets `ast.TwoWordOverride`. On that ABI `internal/ir/rc_analysis.go`
+conservatively taints a string local passed to a user function out of reclaim,
+because the caller cannot see whether the callee retained it; the taint exists
+so a retained copy is never left pointing at a freed buffer (#4174). The arm64
+stack-machine emitter runs the two-word ABI and has no such taint.
+
+The cost is that retention grows with the input instead of staying flat.
+Measured at exit under `FERN_LEAKCHECK=1`:
+
+| program | stack machine | `-backend ssa` |
+| --- | --- | --- |
+| `coreutils/uniq.fern`, 1,000 lines | 384 B | 57,856 B |
+| `coreutils/uniq.fern`, 8,000 lines | 448 B | 188,992 B |
+| `coreutils/sort.fern`, 2,000 lines | 720 B | 53,184 B |
+
+Alloc and free *counts* barely move between the two — it is the string buffers
+that go unreclaimed, not more objects.
+
+Making the SSA backends a default again needs one of the two gaps closed:
+`arm64ssa` running the two-word string ABI, or #4174's taint replaced by an
+interprocedural answer to whether a callee retains its string argument.
+`internal/e2e/arm64_default_string_reclaim_test.go` holds the default to that
+bar.
 
 Targets are `<isa>-<environment>` (#6529): the ISA half picks the backend, the
 environment half says what the host provides. Neither is implied — there is no

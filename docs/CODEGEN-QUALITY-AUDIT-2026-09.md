@@ -666,7 +666,7 @@ the wrong call. The original plan:
 | B2 | Compare-branch fusion (`cmp`+`b.cond`) instead of `cmp`/`cset`/`cbnz` | 54 027 sites |
 | B3 | Finish coalescing | 373 433 `mov`s = 18.5% of SSA output |
 | B4 | Re-measure `checker_run`; expect ~1.0–1.1 M against the default's 1.5 M | the cutover's actual gate |
-| B5 | Then default arm64 to `-backend ssa`, keeping the stack machine behind a flag | `SSA-REGALLOC-PLAN.md` phase 4 |
+| B5 | ~~Then default arm64 to `-backend ssa`, keeping the stack machine behind a flag~~ — **attempted and reverted** (#9511, #9542) | see `docs/ssa-log/2026-09-17-the-default-goes-back.md` |
 | B6 | Widen `x86_64ssa`'s corpus evidence from 25 functions to a real differential, then wire it into `cmd/fern` | phase 3 |
 
 B1–B3 are the reason the SSA path currently loses on large programs, and they

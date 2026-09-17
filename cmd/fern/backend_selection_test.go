@@ -5,10 +5,7 @@ import (
 	"encoding/binary"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 const defaultBackendProg = `function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); }
@@ -32,62 +29,32 @@ func buildWith(t *testing.T, dir, target, backend, name string) []byte {
 	return b
 }
 
-// The default emitter, per target. arm64-linux is the SSA backend: it emits
-// less code, and the corpus differential runs both on every change. Every
-// other target keeps the stack-machine emitter — x86-64-linux because the SSA
-// one is still larger there (#4112).
+// Every target defaults to the stack-machine emitter. The SSA backend is
+// selected by name only: it emits less code, but on the single-word string ABI
+// it runs, a string passed to a user function is never reclaimed, so retention
+// grows with the input (internal/e2e/arm64_default_string_reclaim_test.go).
 //
 // Byte-identity is the assertion in both directions, so this fails if a target
 // silently changes which emitter it gets.
 func TestDefaultBackendPerTarget(t *testing.T) {
-	for _, tc := range []struct{ target, want string }{
-		{"arm64-linux", "ssa"},
-		{"x86-64-linux", "flat"},
-		{"wasm32-wasi", "flat"},
-	} {
-		t.Run(tc.target, func(t *testing.T) {
+	for _, target := range []string{"arm64-linux", "x86-64-linux", "wasm32-wasi"} {
+		t.Run(target, func(t *testing.T) {
 			dir := t.TempDir()
-			dflt := buildWith(t, dir, tc.target, "", "dflt")
-			want := buildWith(t, dir, tc.target, tc.want, tc.want)
-			if !bytes.Equal(dflt, want) {
-				t.Errorf("the default for %s is not -backend %s: %d bytes against %d", tc.target, tc.want, len(dflt), len(want))
+			dflt := buildWith(t, dir, target, "", "dflt")
+			flat := buildWith(t, dir, target, "flat", "flat")
+			if !bytes.Equal(dflt, flat) {
+				t.Errorf("the default for %s is not -backend flat: %d bytes against %d", target, len(dflt), len(flat))
 			}
-			// And it is genuinely the other one, not both names reaching the
-			// same emitter — otherwise the check above proves nothing.
-			if tc.target == "arm64-linux" {
-				if flat := buildWith(t, dir, tc.target, "flat", "flat"); bytes.Equal(dflt, flat) {
-					t.Errorf("-backend ssa and -backend flat produced identical images on %s, so this test cannot tell them apart", tc.target)
-				}
+			// And the two names genuinely reach different emitters on the
+			// targets that have both — otherwise the check above proves
+			// nothing about which one ran.
+			if target == "wasm32-wasi" {
+				return
+			}
+			if ssa := buildWith(t, dir, target, "ssa", "ssa"); bytes.Equal(dflt, ssa) {
+				t.Errorf("-backend flat and -backend ssa produced identical images on %s, so this test cannot tell them apart", target)
 			}
 		})
-	}
-}
-
-// A flag the SSA backend cannot serve keeps the emitter that can, rather than
-// failing a build that never named a backend. Asking for `-backend ssa`
-// alongside one of these is still an error — that is ssaUnservedFlag, and
-// TestSSABackendRefusesFlagsItCannotServe covers it.
-func TestArm64DefaultFallsBackForFlagsSSACannotServe(t *testing.T) {
-	dir := t.TempDir()
-	flat := buildWith(t, dir, "arm64-linux", "flat", "flat")
-
-	was := emitDebugSyms
-	emitDebugSyms = true
-	withG := buildWith(t, dir, "arm64-linux", "", "withg")
-	emitDebugSyms = was
-	// -g adds a symbol table, so the image differs from a plain flat build;
-	// what matters is that it built at all and carries the debug symbols the
-	// SSA backend refuses to emit.
-	if len(withG) <= len(flat) {
-		t.Errorf("-g on arm64-linux produced %d bytes against a plain build's %d: it did not fall back to the emitter that serves -g", len(withG), len(flat))
-	}
-
-	wasCover := ast.CoverEnabled
-	ast.CoverEnabled = true
-	cover := buildWith(t, dir, "arm64-linux", "", "cover")
-	ast.CoverEnabled = wasCover
-	if len(cover) == 0 {
-		t.Error("-cover on arm64-linux produced nothing")
 	}
 }
 
@@ -141,49 +108,26 @@ func TestArm64DefaultBuildCarriesUnwindData(t *testing.T) {
 	}
 }
 
-// resolveBackend keeps the stack-machine emitter for everything the SSA arm64
-// block does not reach. Every entry here fails SILENTLY if it is left out —
-// `--run` prints the program's assembly instead of running it, `-cc` is
-// ignored by an in-process link, `-export` drops the export list — so the list
-// is a table rather than something to rediscover.
-func TestResolveBackendKeepsTheEmitterThatServesTheFlag(t *testing.T) {
-	type flags struct {
-		runIt          bool
-		cc, export     string
-		shared         bool
-		g, cover, sant bool
-	}
-	for _, tc := range []struct {
-		name   string
-		target string
-		f      flags
-		want   string
-	}{
-		{"plain", "arm64-linux", flags{}, "ssa"},
-		{"run", "arm64-linux", flags{runIt: true}, "flat"},
-		{"cc", "arm64-linux", flags{cc: "gcc"}, "flat"},
-		{"export", "arm64-linux", flags{export: "add"}, "flat"},
-		{"shared", "arm64-linux", flags{shared: true}, "flat"},
-		{"g", "arm64-linux", flags{g: true}, "flat"},
-		{"cover", "arm64-linux", flags{cover: true}, "flat"},
-		{"sanitize", "arm64-linux", flags{sant: true}, "flat"},
-		{"x86-64 plain", "x86-64-linux", flags{}, "flat"},
-		{"wasm plain", "wasm32-wasi", flags{}, "flat"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			wasG, wasCover, wasSan := emitDebugSyms, ast.CoverEnabled, ast.SanitizeEnabled
-			emitDebugSyms, ast.CoverEnabled, ast.SanitizeEnabled = tc.f.g, tc.f.cover, tc.f.sant
-			got := resolveBackend("", tc.target, tc.f.runIt, tc.f.cc, tc.f.export, tc.f.shared)
-			emitDebugSyms, ast.CoverEnabled, ast.SanitizeEnabled = wasG, wasCover, wasSan
-			if got != tc.want {
-				t.Errorf("resolveBackend = %q, want %q", got, tc.want)
-			}
-		})
+// resolveBackend returns what the caller named, and the stack-machine emitter
+// otherwise. There is no per-flag fallback any more: the SSA backend is not
+// any target's default, so there is nothing to fall back FROM, and a build
+// that names it alongside a flag it cannot serve is refused by
+// ssaUnservedFlag rather than quietly re-resolved.
+//
+// It no longer takes the target either — every target answers the same — so
+// the per-target assertion lives in TestDefaultBackendPerTarget, which builds
+// and compares images rather than asking a function that cannot tell them
+// apart.
+func TestResolveBackendDefaultsToFlat(t *testing.T) {
+	if got := resolveBackend(""); got != "flat" {
+		t.Errorf("resolveBackend(\"\") = %q, want \"flat\"", got)
 	}
 	// A named backend is never second-guessed: the caller said which emitter,
 	// and ssaUnservedFlag is what refuses a combination it cannot serve.
-	if got := resolveBackend("ssa", "arm64-linux", true, "gcc", "add", false); got != "ssa" {
-		t.Errorf("an explicit -backend ssa resolved to %q", got)
+	for _, name := range []string{"ssa", "typed-ssa", "flat"} {
+		if got := resolveBackend(name); got != name {
+			t.Errorf("an explicit -backend %s resolved to %q", name, got)
+		}
 	}
 }
 
@@ -206,44 +150,5 @@ func TestArm64DefaultHonoursExternalCC(t *testing.T) {
 	}
 	if _, statErr := os.Stat(out); statErr == nil {
 		t.Error("-cc /bin/false wrote a binary despite failing to link")
-	}
-}
-
-// `fern -h` is the only place a caller can read which flags move an arm64
-// build off the default emitter, and each trigger it leaves out is one that
-// fails silently: the build succeeds, having quietly done something else.
-//
-// Every row drives resolveBackend as well as reading the help text, so a
-// trigger cannot be documented without being active, and one that stops
-// falling back is caught here as well as in the table above.
-func TestBackendHelpNamesEveryFallbackTrigger(t *testing.T) {
-	for _, tc := range []struct {
-		spelling       string
-		runIt          bool
-		cc, export     string
-		shared         bool
-		g, cover, sant bool
-	}{
-		{spelling: "--run", runIt: true},
-		{spelling: "-cc", cc: "gcc"},
-		{spelling: "-export", export: "add"},
-		{spelling: "-shared", shared: true},
-		{spelling: "-g", g: true},
-		{spelling: "-cover", cover: true},
-		{spelling: "-sanitize", sant: true},
-	} {
-		t.Run(tc.spelling, func(t *testing.T) {
-			// The trailing separator keeps `-c` from matching inside `-cover`.
-			if !strings.Contains(backendFlagUsage, tc.spelling+" ") && !strings.Contains(backendFlagUsage, tc.spelling+",") {
-				t.Errorf("`fern -h` does not name %s among the flags that fall back to the stack-machine emitter", tc.spelling)
-			}
-			wasG, wasCover, wasSan := emitDebugSyms, ast.CoverEnabled, ast.SanitizeEnabled
-			emitDebugSyms, ast.CoverEnabled, ast.SanitizeEnabled = tc.g, tc.cover, tc.sant
-			got := resolveBackend("", "arm64-linux", tc.runIt, tc.cc, tc.export, tc.shared)
-			emitDebugSyms, ast.CoverEnabled, ast.SanitizeEnabled = wasG, wasCover, wasSan
-			if got != "flat" {
-				t.Errorf("%s resolved to %q: the help text documents a fallback that no longer happens", tc.spelling, got)
-			}
-		})
 	}
 }
