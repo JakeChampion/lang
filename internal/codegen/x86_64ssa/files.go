@@ -182,7 +182,7 @@ func emitReadFileHelper(name, lbl string, bytes bool) func(w func(string, ...any
 			w("\tmov edi, r14d")
 			w("\tcall %s", fnLabel("__alloc_u8"))
 		} else {
-			w("\tlea rdx, [r14 + 9]") // header + capacity + NUL
+			w("\tlea rdx, [r14 + %d]", strBlockBytes) // header + capacity + NUL
 			ssaBumpAlloc(w, "rax", "rdx")
 			w("\tmov dword ptr [rax], 1") // rc = 1
 			w("\tadd rax, 8")
@@ -377,7 +377,7 @@ func emitTempDirHelper(w func(string, ...any)) {
 	w("\tsyscall")
 	w("\ttest rax, rax")
 	w("\tjnz .Lssa_td_err")
-	w("\tlea rdx, [r14 + 9]") // header + length + NUL
+	w("\tlea rdx, [r14 + %d]", strBlockBytes) // header + length + NUL
 	ssaBumpAlloc(w, "rax", "rdx")
 	w("\tmov dword ptr [rax], 1") // rc = 1
 	w("\tmov dword ptr [rax + 4], r14d")

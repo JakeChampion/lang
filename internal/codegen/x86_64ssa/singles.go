@@ -73,7 +73,7 @@ func emitReaderReadLineHelper(w func(string, ...any)) {
 	w(".Lssa_rrl_done:")
 	w("\ttest r12, r12")
 	w("\tjz .Lssa_rrl_none")
-	w("\tlea rdx, [r12 + 9]") // header + bytes + NUL
+	w("\tlea rdx, [r12 + %d]", strBlockBytes) // header + bytes + NUL
 	ssaBumpAlloc(w, "rax", "rdx")
 	w("\tmov dword ptr [rax], 1") // rc = 1
 	w("\tmov dword ptr [rax + 4], r12d")
@@ -214,7 +214,7 @@ func emitReadDirHelper(w func(string, ...any)) {
 	w("\tjmp .Lssa_rd_len")
 	w(".Lssa_rd_lend:")
 	w("\tmov %s, rcx", nlen)
-	w("\tlea rdx, [rcx + 9]") // header + length + NUL
+	w("\tlea rdx, [rcx + %d]", strBlockBytes) // header + length + NUL
 	ssaBumpAlloc(w, "rax", "rdx")
 	w("\tmov dword ptr [rax], 1") // rc = 1
 	w("\tmov rcx, %s", nlen)
