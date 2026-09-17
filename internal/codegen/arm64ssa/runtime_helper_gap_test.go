@@ -102,3 +102,41 @@ func TestArmRunSleepMs(t *testing.T) {
 		}
 	}
 }
+
+// timer_fd is the readiness primitive std/async waits on: a CLOCK_MONOTONIC
+// timerfd that becomes readable once, ms from now. Both halves are checked
+// through poll, because the fd alone proves only that timerfd_create ran —
+// an unarmed or mis-scaled it_value returns a perfectly good descriptor that
+// never fires, or fires at once.
+//
+// pollOne builds an i32[] of one fd the way poll expects it — element count at
+// [ptr-4], stride 4 — over an __alloc_u8 block, whose own header writes a BYTE
+// length there instead.
+func TestArmRunTimerFd(t *testing.T) {
+	pollOne := func(timerMs, timeoutMs int64) int {
+		f := ssa.NewFunc("main")
+		e := f.NewBlock()
+		fd := callOp(f, e, "timer_fd", constOp(f, e, timerMs))
+		fds := addrCallOp(f, e, "__alloc_u8", constOp(f, e, 4))
+		store32(f, e, fds, fd, 0)
+		// len is one ELEMENT, not the four bytes __alloc_u8 recorded.
+		store32(f, e, fds, constOp(f, e, 1), -4)
+		f.SetRet(e, callOp(f, e, "poll", fds, constOp(f, e, timeoutMs)))
+		return assembleRunArmModule(t, map[string]*ssa.Func{"main": f}, "main", 12)
+	}
+
+	// Armed, and armed to the right scale: 200ms is still pending 20ms in, so
+	// poll times out at -1 (255 as an exit code). A tv_nsec scaled by 1e3
+	// rather than 1e6 puts the expiry a thousandth of the way out, which
+	// reports index 0 here instead.
+	if got := pollOne(200, 20); got != 255 {
+		t.Errorf("poll(timer_fd(200), 20ms) = %d, want 255 (-1, still pending)", got)
+	}
+	// And it does fire: a 10ms timer is readable well inside a 5s ceiling, so
+	// poll reports index 0. The ceiling is not the property under test — it is
+	// there so an unarmed fd fails this as a timeout rather than blocking the
+	// suite until the job's own timeout kills it.
+	if got := pollOne(10, 5000); got != 0 {
+		t.Errorf("poll(timer_fd(10), 5s) = %d, want 0 (fd 0 readable)", got)
+	}
+}
