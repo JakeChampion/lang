@@ -44,10 +44,20 @@
     return keep(rows[0]);
 }
 
+// A `for` variable and a match arm's binder shadow for their body, and a set
+// built only from parameters and locals misses both — each drew a false E051
+// through a shadowed loop variable.
+@noinline function via_loop(fns: ((i32[]) => i32)[], xs: i32[]): i32 {
+    var n: i32 = 0;
+    for keep in fns { n = n + keep(xs); }
+    return n;
+}
+
 function main(): i32 {
     var kept: i32[] = keep([1, 2, 3], 1);
     var rows: i32[][] = [kept, [4], [5, 6, 7]];
     return count_matching(rows, (v: i32[]) => v.len() > 1)
         + not_consumed([8, 9], (v: i32[]) => v.len() > 1)
-        + via_local(rows);
+        + via_local(rows)
+        + via_loop([(v: i32[]) => v.len()], kept);
 }

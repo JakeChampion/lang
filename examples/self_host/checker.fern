@@ -11066,7 +11066,9 @@ function ow_nested_ctx(ctx: OwnCtx, params: ast.ParamDecl[]): OwnCtx {
       }
     }
   }
-  return OwnCtx { owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, admit: ctx.admit, admit_fields: ctx.admit_fields, fresh: ctx.fresh, bound: ctx.bound };
+  var bound: string[] = ctx.bound;
+  for p in params { if (!util.has_str(bound, p.name)) { bound = bound.append(p.name); } }
+  return OwnCtx { owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, admit: ctx.admit, admit_fields: ctx.admit_fields, fresh: ctx.fresh, bound: bound };
 }
 
 function ow_names_del(names: string[], name: string): string[] {
@@ -11119,13 +11121,17 @@ function ow_bind_stmt(st: ast.Stmt, own acc: string[]): string[] {
 }
 
 function ow_bind_expr(e: ast.Expr, own acc: string[]): string[] {
-  if let ast.ExprLambda(lm) = e {
-    for p in lm.params { acc = acc.append(p.name); }
-  }
   return acc;
 }
 
-function ow_bind_descend(e: ast.Expr): boolean { return true; }
+// A lambda's parameters bind inside ITS body, not the enclosing function's, so
+// the walk stops at one: `ow_nested_ctx` layers them for the body it walks. A
+// set flattened across the whole function silences a genuine call to the global
+// own-func elsewhere in that function.
+function ow_bind_descend(e: ast.Expr): boolean {
+  if let ast.ExprLambda(_) = e { return false; }
+  return true;
+}
 
 function ow_bound_names(fn: parser.FuncDecl): string[] {
   var out: string[] = [];
@@ -11675,7 +11681,7 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
     },
     ast.StmtFor(fr) => {
       var ri: OwnWalk = ru_borrow(fr.iter, moved, ctx);
-      var ld: util.Diag[] = ow_loop(fr.body, ri.moved, ctx);
+      var ld: util.Diag[] = ow_loop(fr.body, ri.moved, ow_bind_ctx(ctx, fr.var_name));
       return OwnWalk { moved: ri.moved, diags: util.append_diags(ri.diags, ld) };
     },
     ast.StmtMatch(m) => {
@@ -11729,6 +11735,13 @@ function ow_moved_del(m: MovedEntry[], name: string): MovedEntry[] {
   return out;
 }
 
+// ow_bind_ctx layers one binding onto the set of names in scope — a `for`
+// variable or a match arm's binder, each of which shadows for its body only.
+function ow_bind_ctx(ctx: OwnCtx, name: string): OwnCtx {
+  if (name.len() == 0 || util.has_str(ctx.bound, name)) { return ctx; }
+  return OwnCtx { ...ctx, bound: ctx.bound.append(name) };
+}
+
 // ow_arm_payload_ctx layers a match arm's pointer-typed payload bindings onto
 // the owned set. The payload types come from the variant's synthesised struct
 // decl (`__ev`, `__ev1`, …), which is where the self-host records them.
@@ -11747,6 +11760,9 @@ function ow_arm_payload_ctx(ctx: OwnCtx, pat: ast.Pattern): OwnCtx {
     if (pv.binding.len() > 0) { binds = binds.append(pv.binding); }
     for extra in pv.extra_bindings { binds = binds.append(extra); }
     if (binds.len() == 0) { return ctx; }
+    var bnames: string[] = ctx.bound;
+    for b in binds { if (b.len() > 0 && !util.has_str(bnames, b)) { bnames = bnames.append(b); } }
+    ctx = OwnCtx { ...ctx, bound: bnames };
     var names: string[] = ctx.owned;
     for sd in ctx.structs {
       if (sd.name == vname && sd.enum_owner.len() > 0) {

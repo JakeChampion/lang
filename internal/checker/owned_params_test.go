@@ -273,6 +273,28 @@ function f(own xs: i32[], consume: (i32[]) => i32): i32 {
 }`)
 }
 
+// A `for` variable shadows for its body, like a parameter or a local.
+func TestOwnGuardIgnoresShadowingLoopVariable(t *testing.T) {
+	wantOK(t, "shadowing-loop-var", ownConsumer+`
+function f(fns: ((i32[]) => i32)[], xs: i32[]): i32 {
+    var n: i32 = 0;
+    for consume in fns { n = n + consume(xs); }
+    return n;
+}`)
+}
+
+// A binding shadows inside ITS OWN scope. A lambda parameter elsewhere in the
+// function does not make the real call to the global own-func safe, and a
+// whole-function set of shadowed names would silence it.
+func TestOwnGuardShadowElsewhereStillGuardsRealCall(t *testing.T) {
+	wantE051(t, "shadow-elsewhere", ownConsumer+`
+function apply(g: ((i32[]) => i32), zs: i32[]): i32 { return g(zs); }
+function f(xs: i32[]): i32 {
+    var a: i32 = apply((consume: i32[]) => consume.len(), xs);
+    return a + consume(xs);
+}`)
+}
+
 // The shadowing rule must not disarm the guard for the real function.
 func TestOwnGuardStillFiresForTheRealFunction(t *testing.T) {
 	wantE051(t, "unshadowed-still-guarded", ownConsumer+`
