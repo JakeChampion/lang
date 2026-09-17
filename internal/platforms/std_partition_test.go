@@ -48,6 +48,7 @@ var stdModuleReach = map[string]string{
 	"std/async":         "now",
 	"std/base32":        "",
 	"std/base64":        "",
+	"std/bench":         "now",
 	"std/cli":           "env",
 	"std/convert":       "",
 	"std/crypto":        "",
