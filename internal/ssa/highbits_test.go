@@ -118,3 +118,40 @@ func TestWideResultIsNeverNarrow(t *testing.T) {
 		t.Error("a 64-bit result came out narrow")
 	}
 }
+
+// The width gate. ResolveWidths marks `base + offset` an address when EITHER
+// operand is one, and widens only the RESULT — so a width-64 add can take a
+// width-32 operand, and the backends emit that add at full register width.
+// Skipping the fix on such an operand puts its high half into an address.
+//
+// No program in the tree reaches this today (an instrumented build of the
+// self-host compiler counts zero narrow defs with a 64-bit use), which is
+// exactly why it needs a test rather than a corpus run: the differential
+// oracle re-masks every result, so a missing fix that only bites on a negative
+// or >= 2^31 operand is invisible to it.
+func TestAWideReadKeepsTheFixWhateverTheOpKind(t *testing.T) {
+	for _, kind := range []OpKind{OpAdd, OpSub, OpMul, OpAnd, OpOr, OpXor, OpNeg} {
+		t.Run(kind.String(), func(t *testing.T) {
+			for _, w := range []int8{32, 64} {
+				site := UseSite{Op: &Op{Kind: kind, Width: w}, Index: 0}
+				got := useReadsHighBits(site)
+				if want := w == 64; got != want {
+					t.Errorf("a width-%d %v reads the high bits = %v, want %v", w, kind, got, want)
+				}
+			}
+		})
+	}
+	// The narrowing conversions and the sub-32-bit stores read at most 32 bits
+	// of their operand whatever their own result width is, so the gate must
+	// not sweep them up.
+	for _, kind := range []OpKind{OpTrunc, OpExtendU, OpExtend8S, OpExtend16S} {
+		if useReadsHighBits(UseSite{Op: &Op{Kind: kind, Width: 64}}) {
+			t.Errorf("a width-64 %v was treated as reading the high bits", kind)
+		}
+	}
+	for _, kind := range []OpKind{OpStore8, OpStore16, OpStore32} {
+		if useReadsHighBits(UseSite{Op: &Op{Kind: kind, Width: 64}, Index: 1}) {
+			t.Errorf("the value operand of a width-64 %v was treated as reading the high bits", kind)
+		}
+	}
+}

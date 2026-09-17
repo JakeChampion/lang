@@ -74,6 +74,25 @@ func useReadsHighBits(site UseSite) bool {
 		return true
 	}
 	switch site.Op.Kind {
+	case OpTrunc, OpExtendU, OpExtend8S, OpExtend16S:
+		// Each reads 32 bits or fewer of its operand and writes the high half
+		// itself, whatever width its own result is.
+		return false
+	case OpStore8, OpStore16, OpStore32:
+		// Args[0] is the address, Args[1] the value, and the value is stored
+		// at a width below 32 — again regardless of the op's result width.
+		return site.Index != 1
+	}
+	// An op's own WIDTH decides how much of its operands it reads, and the two
+	// are independent: ResolveWidths marks `base + offset` an address when
+	// EITHER operand is one, without widening the other, so a width-64 add can
+	// take a width-32 operand. The backends emit that add at full register
+	// width, so the high half of the narrow operand lands in the address.
+	// Anything read by a 64-bit op is therefore read whole.
+	if site.Op.Width == 64 {
+		return true
+	}
+	switch site.Op.Kind {
 	case OpAdd, OpSub, OpMul, OpAnd, OpOr, OpXor, OpNeg:
 		// The low 32 bits of the result depend only on the low 32 bits of the
 		// operands, and the result carries its own fix when it needs one.
@@ -84,13 +103,6 @@ func useReadsHighBits(site UseSite) bool {
 		// ssa.go), so what the high half holds there is not this pass's
 		// business.
 		return site.Index != 0
-	case OpTrunc, OpExtendU, OpExtend8S, OpExtend16S:
-		// Each reads 32 bits or fewer and writes the high half itself.
-		return false
-	case OpStore8, OpStore16, OpStore32:
-		// Args[0] is the address, Args[1] the value, and the value is stored
-		// at a width below 32.
-		return site.Index != 1
 	}
 	// Everything else. Worth naming the ones that most look like they could
 	// be narrow and are not: OpDivU, OpRemU, OpShrU and the unsigned compares
