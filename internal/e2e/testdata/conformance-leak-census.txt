@@ -122,6 +122,7 @@
 ackermann                                            0
 add_sub_pair                                         0
 aliased_and_used_twice                               0
+alloc_count_sees_recycling                           0
 alloc_flat_array_push_bound_elem                     0
 alloc_flat_bytes_roundtrip                           0
 alloc_flat_closure_env                               0
