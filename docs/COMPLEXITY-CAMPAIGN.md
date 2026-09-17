@@ -108,14 +108,13 @@ between two slices, so check `git diff --name-only <swept> <base> -- . ':!docs'`
 is empty rather than requiring the whole diff to be. If a compiled file did
 move, you need a fresh baseline.
 
-**Code behind `-ssa`** needs `selfhost-emit-hashes --ssa`. The default sweep
-NEVER REACHES the SSA backends, so it would compare IR-emitter bytes — which
-such a change cannot affect — and report PURE for an arbitrarily broken one.
+**Code behind `-backend ssa`** needs `selfhost-emit-hashes --ssa`. The default
+sweep builds every case on the stack machine, so it would compare flat-emitter
+bytes — which such a change cannot affect — and report PURE for an arbitrarily
+broken register allocator.
 
 **Code the compiler does not contain at all** cannot be gated by any
-emit-hash run. `ssa_lift.fern` is the example: `fern.fern` never imports it and
-nothing in the CLI calls `lift_from_ir`; its only importers are four
-`ssa_lift_*_run.fern` drivers. Its gate is those drivers — compile
+emit-hash run. Its gate is a driver that imports it — compile
 `-target x86-64-linux`, run both sides, compare exit codes and output.
 
 **A self-test `main`** (`parser.fern`, `printer.fern`, `interp.fern` each carry

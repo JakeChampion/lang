@@ -490,7 +490,7 @@ function main(): i32 {
 		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
-		defAsm, code := runDriver(t, "-no-ssa", srcPath)
+		defAsm, code := runDriver(t, srcPath)
 		if code != 0 {
 			t.Fatalf("default emit exited %d, want 0", code)
 		}
@@ -499,7 +499,7 @@ function main(): i32 {
 				t.Errorf("%s: the DEFAULT build left %d %q; constant folding is gated again:\n%s", name, n, u, defAsm)
 			}
 		}
-		optAsm, code := runDriver(t, "-no-ssa", "-O", srcPath)
+		optAsm, code := runDriver(t, "-O", srcPath)
 		if code != 0 {
 			t.Fatalf("-O emit exited %d, want 0", code)
 		}
@@ -587,8 +587,8 @@ function main(): i32 {
 			wantExit int
 			wantMsg  int
 		}{
-			{"default", []string{"-no-ssa"}, wantDefault, 1},
-			{"-O", []string{"-no-ssa", "-O"}, wantOpt, 0},
+			{"default", nil, wantDefault, 1},
+			{"-O", []string{"-O"}, wantOpt, 0},
 		} {
 			asm, code := runDriver(t, append(append([]string{}, leg.args...), srcPath)...)
 			if code != 0 {
@@ -705,8 +705,8 @@ function main(): i32 {
 				if err := os.WriteFile(srcPath, []byte(tc.src), 0o644); err != nil {
 					t.Fatalf("write src: %v", err)
 				}
-				outDef, codeDef := runDriver(t, "-no-ssa", srcPath)
-				outOpt, codeOpt := runDriver(t, "-no-ssa", "-O", srcPath)
+				outDef, codeDef := runDriver(t, srcPath)
+				outOpt, codeOpt := runDriver(t, "-O", srcPath)
 				if codeDef != codeOpt {
 					t.Errorf("default exited %d but -O exited %d; the elision is running before the IR-eligibility gate\ndefault:\n%s\n-O:\n%s",
 						codeDef, codeOpt, outDef, outOpt)
@@ -1304,7 +1304,7 @@ function main(): i32 {
 		// is a false positive. This is the bundle-wide FP guard the
 		// differential corpus can't express, mirroring the manual
 		// "fern -check over every module" validation prior slices used.
-		for _, m := range []string{"asmcore.fern", "lexer.fern", "parser.fern", "checker.fern", "flatten.fern", "interp.fern", "printer.fern", "astwalk.fern", "ssa.fern", "ssa_x86.fern", "ssa_arm64.fern", "ssa_wasm.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "wasm_ir.fern", "arm64_native.fern", "x86_native.fern", "elf.fern", "fern.fern"} {
+		for _, m := range []string{"asmcore.fern", "lexer.fern", "parser.fern", "checker.fern", "flatten.fern", "interp.fern", "printer.fern", "astwalk.fern", "ssa.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "wasm_ir.fern", "arm64_native.fern", "x86_native.fern", "elf.fern", "fern.fern"} {
 			combined, _ := exec.Command(fernBin, "-check", filepath.Join(dir, m)).CombinedOutput()
 			if strings.Contains(string(combined), "error[E001]") {
 				t.Errorf("-check on self-host module %s reported a spurious E001:\n%s", m, combined)
@@ -2146,7 +2146,7 @@ function main(): i32 {
 		outPath := filepath.Join(dir, "wasmbin_prog.wasm")
 		// Still `-target wasm32-wasi -emit core-module`: this drives the SELF-HOSTED compiler,
 		// which since #6635 shares cmd/fern's <isa>-<environment> target
-		// vocabulary and `-emit` axis, and keeps its own `-ssa` flag. cmd/fern's move to
+		// vocabulary and `-emit` axis. cmd/fern's move to
 		// `-emit core-module` (#6536) does not reach it; converging the two
 		// vocabularies is separate work.
 		stdout, code := runDriver(t, "-target", "wasm32-wasi", "-emit", "core-module", "-o", outPath, srcPath)
