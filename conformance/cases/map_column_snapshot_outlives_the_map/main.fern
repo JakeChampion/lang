@@ -1,0 +1,53 @@
+import "core/map";
+
+// A column snapshot answers a FRESH array, and whether it owns its elements
+// follows the column: the runtime copies a string column with a per-element
+// retain, while an i32 column holds no references at all. Both arrays here
+// outlive the map they came from, so a snapshot that aliased the map instead
+// of copying would read freed bytes.
+
+
+// A string column snapshots WITH a per-element retain, so the answered array
+// owns its strings and outliving the map must still be safe.
+@noinline function str_keys_outlive(n: i32): i32 {
+    var ks: string[] = [];
+    {
+        var m: Map[string, i32] = map_new(4);
+        m = m.insert("alpha", 1);
+        m = m.insert("beta", 2);
+        ks = m.keys();
+    }
+    var t: i32 = 0;
+    for k in ks { t = t + k.len(); }
+    return t;
+}
+
+@noinline function str_values_outlive(n: i32): i32 {
+    var vs: string[] = [];
+    {
+        var m: Map[i32, string] = map_new(4);
+        m = m.insert(1, "one");
+        m = m.insert(2, "three");
+        vs = m.values();
+    }
+    var t: i32 = 0;
+    for v in vs { t = t + v.len(); }
+    return t;
+}
+
+// An i32 column holds no references: the buffer is the whole of it.
+@noinline function i32_keys(n: i32): i32 {
+    var m: Map[i32, i32] = map_new(4);
+    m = m.insert(7, 1);
+    m = m.insert(9, 2);
+    var ks: i32[] = m.keys();
+    var t: i32 = 0;
+    for k in ks { t = t + k; }
+    return t + m.len();
+}
+
+function main(): i32 {
+    var v: i32 = str_keys_outlive(0) + str_values_outlive(0) + i32_keys(0);
+    if (__rc_underflow_count() != 0) { return 99; }
+    return v;
+}
