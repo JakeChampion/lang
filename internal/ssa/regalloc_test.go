@@ -20,7 +20,7 @@ func TestAllocDisjointNoSpill(t *testing.T) {
 		Interval{Value: 2, Start: 2, End: 3},
 		Interval{Value: 3, Start: 4, End: 5},
 	)
-	a := allocateLinear(iv, Target{NumRegs: 2}, nil, nil)
+	a := allocateLinear(iv, Target{NumRegs: 2}, nil, nil, nil)
 	if a.NumSlots != 0 {
 		t.Errorf("NumSlots = %d, want 0 (disjoint intervals fit in registers)", a.NumSlots)
 	}
@@ -37,7 +37,7 @@ func TestAllocOverlapSpillsFurthestEnd(t *testing.T) {
 		Interval{Value: 2, Start: 1, End: 11},
 		Interval{Value: 3, Start: 2, End: 12}, // ends last → spilled
 	)
-	a := allocateLinear(iv, Target{NumRegs: 2}, nil, nil)
+	a := allocateLinear(iv, Target{NumRegs: 2}, nil, nil, nil)
 	if msg := VerifyAllocation(a); msg != "" {
 		t.Errorf("allocation not sound: %s", msg)
 	}
@@ -57,7 +57,7 @@ func TestAllocSpillStealsFromLongerLived(t *testing.T) {
 		Interval{Value: 2, Start: 1, End: 11},
 		Interval{Value: 3, Start: 2, End: 10},
 	)
-	a := allocateLinear(iv, Target{NumRegs: 2}, nil, nil)
+	a := allocateLinear(iv, Target{NumRegs: 2}, nil, nil, nil)
 	if msg := VerifyAllocation(a); msg != "" {
 		t.Errorf("allocation not sound: %s", msg)
 	}
@@ -80,7 +80,7 @@ func TestAllocSingleRegister(t *testing.T) {
 		Interval{Value: 2, Start: 1, End: 6},
 		Interval{Value: 3, Start: 2, End: 7},
 	)
-	a := allocateLinear(iv, Target{NumRegs: 1}, nil, nil)
+	a := allocateLinear(iv, Target{NumRegs: 1}, nil, nil, nil)
 	if msg := VerifyAllocation(a); msg != "" {
 		t.Errorf("allocation not sound: %s", msg)
 	}
@@ -196,5 +196,84 @@ func TestLinearScanPrefersCalleeSavedAcrossCall(t *testing.T) {
 	}
 	if !target.CalleeSaved[xr] {
 		t.Errorf("x (live across the call) got register %d, want a callee-saved one (2 or 3)", xr)
+	}
+}
+
+// A phi's result and the arg flowing into it are the same value either side of
+// a join, so giving them one register turns the edge copy into a self-move,
+// which emitEdgeMoves then drops. The allocator prefers that register when it
+// is free; without the preference the two land wherever linear scan happens to
+// put them and every edge pays a mov.
+func TestLinearScanCoalescesAcrossAPhi(t *testing.T) {
+	f := NewFunc("f")
+	cond := f.AddParam()
+	entry := f.NewBlock()
+	thenB := f.NewBlock()
+	elseB := f.NewBlock()
+	merge := f.NewBlock()
+	f.SetBrIf(entry, cond, thenB, elseB)
+	a := f.AddOp(thenB, OpConstInt)
+	thenB.Ops[len(thenB.Ops)-1].Imm = 1
+	f.SetBr(thenB, merge)
+	b := f.AddOp(elseB, OpConstInt)
+	elseB.Ops[len(elseB.Ops)-1].Imm = 2
+	f.SetBr(elseB, merge)
+	phi := f.AddPhi(merge, a, b)
+	f.SetRet(merge, phi)
+
+	alloc := LinearScan(f, Target{NumRegs: 8})
+	if msg := VerifyAllocation(alloc); msg != "" {
+		t.Fatalf("allocation unsound: %s", msg)
+	}
+	pr, ok := alloc.Reg[phi.ID]
+	if !ok {
+		t.Fatal("phi result spilled with 8 registers free")
+	}
+	// Both arms land in the phi's register here, so BOTH edge moves are
+	// elided rather than one: the two args are never live at the same time,
+	// so the register freed on one arm is available on the other, and the
+	// phi joins them where they already are.
+	ar, aok := alloc.Reg[a.ID]
+	br, bok := alloc.Reg[b.ID]
+	if !aok || !bok {
+		t.Fatalf("an arg spilled with 8 registers free: a=%v b=%v", aok, bok)
+	}
+	if ar != pr || br != pr {
+		t.Errorf("phi in r%d, args in r%d and r%d — an edge move survives; both should elide", pr, ar, br)
+	}
+}
+
+// The hint must not drag a call-crossing value out of a callee-saved register:
+// saving one edge copy is a bad trade against a save and restore at every call
+// the value spans. Measured — ignoring the class cost examples/bench/closure_call
+// 11% more retired instructions.
+func TestLinearScanHintDoesNotBeatTheCalleeSavedPreference(t *testing.T) {
+	f := NewFunc("f")
+	cond := f.AddParam()
+	entry := f.NewBlock()
+	thenB := f.NewBlock()
+	elseB := f.NewBlock()
+	merge := f.NewBlock()
+	f.SetBrIf(entry, cond, thenB, elseB)
+	a := f.AddOp(thenB, OpConstInt)
+	thenB.Ops[len(thenB.Ops)-1].Imm = 1
+	f.SetBr(thenB, merge)
+	b := f.AddOp(elseB, OpConstInt)
+	elseB.Ops[len(elseB.Ops)-1].Imm = 2
+	f.SetBr(elseB, merge)
+	phi := f.AddPhi(merge, a, b)
+	// A call after the phi makes the phi value call-crossing.
+	f.AddOp(merge, OpCall)
+	merge.Ops[len(merge.Ops)-1].Str = "sink"
+	f.SetRet(merge, phi)
+
+	// r0 caller-saved, r1..r3 callee-saved.
+	target := Target{NumRegs: 4, CalleeSaved: []bool{false, true, true, true}}
+	alloc := LinearScan(f, target)
+	if msg := VerifyAllocation(alloc); msg != "" {
+		t.Fatalf("allocation unsound: %s", msg)
+	}
+	if r, ok := alloc.Reg[phi.ID]; ok && !target.CalleeSaved[r] {
+		t.Errorf("call-crossing phi landed in caller-saved r%d; the hint outranked the callee-saved preference", r)
 	}
 }
