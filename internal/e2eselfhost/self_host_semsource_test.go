@@ -590,7 +590,7 @@ function scan_words(x: i32, f: string): i32 {
     return fold_own(["a"], ve).len();
 }
 function refused_wide_sig(f: (i64) => i64, n: i64): i64 { return f(n); }
-function refused_fn_result(): (i32) => i32 { return twice_it; }
+function fn_result_named(): (i32) => i32 { return twice_it; }
 function refused_fn_element(n: i32): i32 { var fs: ((i32) => i32)[] = [twice_it]; return fs.len(); }
 
 // A free builtin whose result the checker types is a value like any other, so

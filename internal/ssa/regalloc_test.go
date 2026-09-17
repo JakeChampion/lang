@@ -201,9 +201,26 @@ func TestLinearScanPrefersCalleeSavedAcrossCall(t *testing.T) {
 
 // A phi's result and the arg flowing into it are the same value either side of
 // a join, so giving them one register turns the edge copy into a self-move,
-// which emitEdgeMoves then drops. The allocator prefers that register when it
-// is free; without the preference the two land wherever linear scan happens to
-// put them and every edge pays a mov.
+// which emitEdgeMoves then drops. The allocator prefers a partner's register
+// over the one first fit would return.
+//
+// THE SHAPE IS THE TEST. A plain diamond does not exercise the preference at
+// all: the two arms' intervals are disjoint, the expirer has already freed the
+// low register by the time the phi is allocated, and first fit hands the phi
+// that same register with no hint involved — the assertion passes whether or
+// not the hint exists. What discriminates is a partner holding a free register
+// that is NOT the lowest free one.
+//
+// `cond` is used in both arms, so it holds r0 across the whole diamond and
+// pushes the arms up into r2 and r3. By the phi every one of those intervals
+// has ended, so r0 and r1 are free again: first fit returns r0, and only the
+// hint returns r2. Verified by mutation — passing nil hints to allocateLinear
+// puts the phi in r0 and fails this test.
+//
+// The arms land in DIFFERENT registers here, so exactly one edge move is
+// elided rather than both. That is the honest contract: the hint takes a
+// partner's register when one is free, and only one of these two can be the
+// phi's.
 func TestLinearScanCoalescesAcrossAPhi(t *testing.T) {
 	f := NewFunc("f")
 	cond := f.AddParam()
@@ -211,12 +228,18 @@ func TestLinearScanCoalescesAcrossAPhi(t *testing.T) {
 	thenB := f.NewBlock()
 	elseB := f.NewBlock()
 	merge := f.NewBlock()
+	x := f.AddOp(entry, OpConstInt)
+	entry.Ops[len(entry.Ops)-1].Imm = 7
+	y := f.AddOp(entry, OpConstInt)
+	entry.Ops[len(entry.Ops)-1].Imm = 8
 	f.SetBrIf(entry, cond, thenB, elseB)
 	a := f.AddOp(thenB, OpConstInt)
 	thenB.Ops[len(thenB.Ops)-1].Imm = 1
+	f.AddOp(thenB, OpAdd, cond, x) // keeps cond and x live past a's definition
 	f.SetBr(thenB, merge)
 	b := f.AddOp(elseB, OpConstInt)
 	elseB.Ops[len(elseB.Ops)-1].Imm = 2
+	f.AddOp(elseB, OpAdd, cond, y) // and past b's
 	f.SetBr(elseB, merge)
 	phi := f.AddPhi(merge, a, b)
 	f.SetRet(merge, phi)
@@ -229,17 +252,19 @@ func TestLinearScanCoalescesAcrossAPhi(t *testing.T) {
 	if !ok {
 		t.Fatal("phi result spilled with 8 registers free")
 	}
-	// Both arms land in the phi's register here, so BOTH edge moves are
-	// elided rather than one: the two args are never live at the same time,
-	// so the register freed on one arm is available on the other, and the
-	// phi joins them where they already are.
 	ar, aok := alloc.Reg[a.ID]
 	br, bok := alloc.Reg[b.ID]
 	if !aok || !bok {
 		t.Fatalf("an arg spilled with 8 registers free: a=%v b=%v", aok, bok)
 	}
-	if ar != pr || br != pr {
-		t.Errorf("phi in r%d, args in r%d and r%d — an edge move survives; both should elide", pr, ar, br)
+	// Guards the shape rather than the behaviour: if a change to the allocator
+	// puts both arms in one register, first fit can reach that register on its
+	// own and the assertion below stops discriminating.
+	if ar == br {
+		t.Fatalf("both args landed in r%d — this shape no longer separates the hint from first fit; rebuild it so a partner holds a register that is not the lowest free one", ar)
+	}
+	if pr != ar && pr != br {
+		t.Errorf("phi in r%d, args in r%d and r%d — the phi took neither partner's register, so both edge moves survive", pr, ar, br)
 	}
 }
 

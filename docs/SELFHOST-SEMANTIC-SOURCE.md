@@ -429,19 +429,22 @@ Unsupported constructs refuse the whole function with a reason.
   the constructor is checked against the same list (count and type, one lift
   writes both sides), and the box's release walks the captures with the
   record's own drop helper. A capture that is itself a FUNCTION value is the
-  one the box BORROWS rather than takes: only the frame that built the
-  captured box can walk its captures, so a unit of it here would promise a
-  release this frame cannot perform. The borrow holds because the capture
-  must be a borrowed PARAMETER, whose owner is the caller and so outlives
-  every box built here; a function value reaches a frame no other way that
-  outlives it, since a function value result and an owning function parameter
-  are both refused and a local closure dies with the frame that captures it.
-  So the field is never walked, and the box it names is released by its own
-  owner. A function type names no capture, so a box is
+  one the box BORROWS rather than takes: a unit of it here would promise a
+  release, and the box has no way to know whether the frame that owns the
+  captured box outlives it. The borrow is secured directly rather than by
+  inference — a capture that is a function value must be a borrowed
+  PARAMETER, whose owner is the caller and so outlives every box built here,
+  and anything else is refused ("captured function value is not a borrowed
+  parameter"). So the field is never walked, and the box it names is released
+  by its own owner. A function type names no capture, so a box is
   matched at run time: the drop compares slot 0 with the address of each
   environment the function's schema table names and calls that helper, and a
   box that matches none — one whose captures own nothing, or one built by an
-  AST-lowered caller, which lends its captures — is released alone. A wide
+  AST-lowered caller, which lends its captures — is released alone. A frame
+  that only RECEIVES a function value never built one, so its graph names no
+  environment of its own; `semsource.env_schemas` puts every environment a
+  value of that type could carry into its schema table, which is what lets a
+  returned closure be released by the frame it was handed to. A wide
   capture is refused at the physical layer for the reason a wide TUPLE
   element is — the env box stores each slot through `op_arr_make` at width
   32, the one array construction here that is not written at its element's

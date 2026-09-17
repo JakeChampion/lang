@@ -72,6 +72,12 @@ pub function highest(): i32 {
 // this kernel does not use. Realtime signals are named by their offset from
 // whichever end is nearer, the way `kill -l` prints them.
 pub function name(n: i32): string {
+  // gnulib's sig2str table carries `{ 0, "EXIT" }`, and operand2sig's validity
+  // test is `sig2str` succeeding — so zero having a name here is what makes
+  // `name(n) != ""` mean exactly "a signal spelling GNU accepts".
+  if (n == 0) {
+    return "EXIT";
+  }
   var ns: string[] = names();
   if (n >= 1 && n <= ns.len()) {
     return ns[n - 1];
@@ -122,6 +128,16 @@ function descriptions(): string[] {
 // "Real-time signal 30" — NOT `name(n)`'s nearer-end `RTMIN+k` / `RTMAX-k`
 // form, which would call the same signal RTMAX-0.
 pub function description(n: i32): string {
+  // Zero has a name but no signal, so each libc answers from its fallback
+  // rather than its table: glibc's `strsignal` composes "Unknown signal 0"
+  // (measured off `kill -t 0`), while Darwin's `sys_siglist[0]` is the
+  // literal "Signal 0" (Apple's Libc, `gen/FreeBSD/siglist.c`).
+  if (n == 0) {
+    if (target_os() == "darwin") {
+      return "Signal 0";
+    }
+    return "Unknown signal 0";
+  }
   var ds: string[] = descriptions();
   if (n >= 1 && n <= ds.len()) {
     return ds[n - 1];
@@ -162,32 +178,29 @@ function alternate_values(): i32[] {
   return [6, 29, 17];
 }
 
-// `number(s)` — the number `s` names, or 0 when it names nothing.
+// `number(s)` — the number the NAME `s` spells, or 0 when it spells nothing.
 //
-// Accepts what GNU's `operand2sig` accepts: a bare name (`INT`), the same with
-// the `SIG` prefix (`SIGINT`), a decimal number, and on Linux a realtime name
-// with an offset (`RTMIN+3`, `RTMAX-1`). Case-SENSITIVE, as GNU's is: `int` is
-// not a signal.
+// For a name this program writes down itself (`number("TERM")`). ANYTHING FROM
+// ARGV GOES THROUGH `operand2sig` INSTEAD: a number reaching here is refused,
+// where on the command line it is a signal, and zero is not expressible.
+// Getting that split wrong is what shipped #9652 in three utilities.
+//
+// Case-insensitive, as GNU is: `int`, `Int` and `sigint` all name signal 2.
+// Only the INPUT is; every name this module PRINTS is upper case.
 pub function number(s: string): i32 {
   if (s.len() == 0) {
     return 0;
   }
-  if (all_digits(s)) {
-    var v: i32 = parse_dec(s);
-    // A number names a signal only where this kernel has one, which is why
-    // this asks `name` rather than testing a range: 32 and 33 sit between the
-    // named signals and glibc's RTMIN and belong to neither.
-    if (v >= 1 && name(v) != "") {
-      return v;
-    }
-    return 0;
-  }
-  // Case-insensitive, as GNU is: `int`, `Int` and `sigint` all name signal 2.
-  // Only the INPUT is; every name this module PRINTS is upper case.
   var bare: string = upper(s);
   if (bare.starts_with("SIG")) {
     bare = slice_unchecked(bare, 3, bare.len()) + "";
   }
+  return table_number(bare);
+}
+
+// `table_number(bare)` — the names-and-alternates lookup both name paths share,
+// already upper case and already stripped of any `SIG`. 0 for no match.
+function table_number(bare: string): i32 {
   var ns: string[] = names();
   var i: i32 = 0;
   while (i < ns.len()) {
@@ -206,6 +219,117 @@ pub function number(s: string): i32 {
     j = j + 1;
   }
   return realtime_number(bare);
+}
+
+// `parse_u31(s)` — `s` as a non-negative decimal, or -1 unless every byte is a
+// digit AND the value fits the `int` GNU parses into.
+//
+// Both halves of that are GNU's: `operand2sig` reads with `strtol` into a
+// `long`, then rejects on `*endp` (a non-digit byte), on `errno` (out of
+// `long` range) and on `i != l` (out of `int` range). So `2000000000` is a
+// signal spelling and `2147483648` is not.
+function parse_u31(s: string): i32 {
+  if (s.len() == 0) {
+    return 0 - 1;
+  }
+  var v: i32 = 0;
+  var i: i32 = 0;
+  while (i < s.len()) {
+    var c: i32 = s[i] as i32;
+    if (c < 48 || c > 57) {
+      return 0 - 1;
+    }
+    var d: i32 = c - 48;
+    if (v > 214748364) {
+      return 0 - 1;
+    }
+    if (v == 214748364 && d > 7) {
+      return 0 - 1;
+    }
+    v = v * 10 + d;
+    i = i + 1;
+  }
+  return v;
+}
+
+// `str2signum(bare)` — gnulib's `str2signum`, on a string already upper cased.
+// -1 for no match.
+//
+// A LEADING DIGIT is accepted here and bounded by the highest signal, which is
+// how `SIG9` reaches signal 9 once `operand2sig` has stripped the prefix. Note
+// what that means: the mask below does NOT apply on this path, so `137` is
+// KILL while `SIG137` is nothing at all.
+function str2signum(bare: string): i32 {
+  if (bare.len() == 0) {
+    return 0 - 1;
+  }
+  var c0: i32 = bare[0] as i32;
+  if (c0 >= 48 && c0 <= 57) {
+    var v: i32 = parse_u31(bare);
+    if (v < 0 || v > highest()) {
+      return 0 - 1;
+    }
+    return v;
+  }
+  if (bare == "EXIT") {
+    return 0;
+  }
+  var t: i32 = table_number(bare);
+  if (t != 0) {
+    return t;
+  }
+  return 0 - 1;
+}
+
+// `operand2sig(operand)` — the signal one command-line word names, or -1.
+//
+// GNU's `src/operand2sig.c`, which `kill`, `env` and `timeout` all share, and
+// the ONLY entry point any of their argument parsing may use. Two rules in it
+// are not guessable from the option's documentation:
+//
+//   - A NUMBER IS MASKED, because it may be the exit status of a process a
+//     signal killed rather than a signal: `signum &= signum >= 0xFF ? 0xFF :
+//     0x7F`, so `-l 137` is KILL (128 + 9) and `-l 393` is nothing (393 & 255
+//     is 137, which no signal is). The two masks are not one mask — mod 128
+//     would call 393 KILL as well — and 0xFF is there for the shells that add
+//     255 rather than 128. GNU caps the input at nothing at all, on purpose
+//     and with a comment saying so, so `-l 2000000000` is `EXIT`.
+//   - `EXIT` NAMES SIGNAL 0, from the same table `name` reads. Callers that
+//     cannot use signal 0 reject it themselves after asking, the way `env`
+//     does; it is a valid spelling here.
+//
+// Zero and invalid are DIFFERENT ANSWERS, which is the whole reason this
+// returns -1 rather than `number`'s 0.
+pub function operand2sig(operand: string): i32 {
+  if (operand.len() == 0) {
+    return 0 - 1;
+  }
+  var c0: i32 = operand[0] as i32;
+  if (c0 >= 48 && c0 <= 57) {
+    var v: i32 = parse_u31(operand);
+    if (v < 0) {
+      return 0 - 1;
+    }
+    var n: i32 = v % 128;
+    if (v >= 255) {
+      n = v % 256;
+    }
+    if (name(n) == "") {
+      return 0 - 1;
+    }
+    return n;
+  }
+  var up: string = upper(operand);
+  var found: i32 = str2signum(up);
+  // The prefix is stripped only on a SECOND attempt, so `RTMIN+3` and
+  // `SIGRTMIN+3` both resolve while `SIGSIGINT` does not.
+  if (found < 0 && up.starts_with("SIG")) {
+    found = str2signum(slice_unchecked(up, 3, up.len()) + "");
+  }
+  if (found < 0 || name(found) == "") {
+    return 0 - 1;
+  }
+  return found;
 }
 
 // The realtime spellings: RTMIN, RTMAX, and either with a signed offset. Linux
@@ -236,10 +360,10 @@ function realtime_number(bare: string): i32 {
   }
   var sign: string = slice_unchecked(rest, 0, 1) + "";
   var digits: string = slice_unchecked(rest, 1, rest.len()) + "";
-  if (!all_digits(digits)) {
+  var off: i32 = parse_u31(digits);
+  if (off < 0) {
     return 0;
   }
-  var off: i32 = parse_dec(digits);
   var n: i32 = 0;
   if (sign == "+") {
     n = base + off;
@@ -267,34 +391,4 @@ function upper(s: string): string {
     i = i + 1;
   }
   return out;
-}
-
-function all_digits(s: string): boolean {
-  if (s.len() == 0) {
-    return false;
-  }
-  var i: i32 = 0;
-  while (i < s.len()) {
-    var c: i32 = s[i] as i32;
-    if (c < 48 || c > 57) {
-      return false;
-    }
-    i = i + 1;
-  }
-  return true;
-}
-
-// A plain decimal parse, bounded so a long run of digits saturates rather than
-// wrapping into a number that happens to be a valid signal.
-function parse_dec(s: string): i32 {
-  var v: i32 = 0;
-  var i: i32 = 0;
-  while (i < s.len()) {
-    if (v > 100000) {
-      return 1000000;
-    }
-    v = v * 10 + (s[i] as i32 - 48);
-    i = i + 1;
-  }
-  return v;
 }
