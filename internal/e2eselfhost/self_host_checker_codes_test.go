@@ -186,6 +186,17 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e051-local-shadows-after-the-call", "function keep(own ys: i32[]): i32 { return ys[0]; }\nfunction f(xs: i32[]): i32 {\n    var a: i32 = keep(xs);\n    var keep: (i32[]) => i32 = (v: i32[]) => v.len();\n    return a + keep(xs);\n}\nfunction main(): i32 { return f([1, 2]); }\n", []string{"E051"}},
 		{"e051-local-shadows-in-an-inner-block", "function keep(own ys: i32[]): i32 { return ys[0]; }\nfunction f(xs: i32[], c: boolean): i32 {\n    var n: i32 = 0;\n    if (c) { var keep: (i32[]) => i32 = (v: i32[]) => v.len(); n = keep(xs); }\n    return n + keep(xs);\n}\nfunction main(): i32 { return f([1, 2], true); }\n", []string{"E051"}},
 		{"arm-binder-on-a-borrowed-scrutinee-clean", "enum Box { B((i32[]) => i32) }\nfunction keep(own ys: i32[]): i32 { return ys[0]; }\nfunction f(b: Box, xs: i32[]): i32 {\n    var n: i32 = 0;\n    match (b) { B(keep) => { n = keep(xs); } }\n    return n;\n}\nfunction main(): i32 { return f(B((v: i32[]) => v.len()), [1, 2]); }\n", nil},
+		// Whether a call's result may be transferred into an `own` parameter
+		// comes from what the callee RETURNS, not from its parameter list
+		// (#9538). Both compilers infer it, so a factory that takes a
+		// reference and builds something new is clean in both, and one that
+		// can hand its borrowed parameter back — directly, through a local, or
+		// through a chain — still draws E051 in both.
+		{"e051-fresh-result-from-a-borrowing-factory", "function keep(own ys: i32[]): i32 { return ys[0]; }\nfunction build(tag: string): i32[] { return [tag.len()]; }\nfunction main(): i32 { return keep(build(\"xy\")); }\n", nil},
+		{"e051-fresh-result-through-a-call-chain", "function keep(own ys: i32[]): i32 { return ys[0]; }\nfunction sized(xs: i32[]): i32[] { return [xs.len()]; }\nfunction relay(ys: i32[]): i32[] { return sized(ys); }\nfunction main(): i32 { return keep(relay([1, 2])); }\n", nil},
+		{"e051-result-is-the-borrowed-parameter", "function keep(own ys: i32[]): i32 { return ys[0]; }\nfunction passthru(xs: i32[]): i32[] { return xs; }\nfunction main(): i32 { return keep(passthru([1, 2])); }\n", []string{"E051"}},
+		{"e051-result-borrowed-through-a-local", "function keep(own ys: i32[]): i32 { return ys[0]; }\nfunction hop(xs: i32[]): i32[] {\n    var y: i32[] = xs;\n    return y;\n}\nfunction main(): i32 { return keep(hop([1, 2])); }\n", []string{"E051"}},
+		{"e051-result-borrowed-through-a-chain", "function keep(own ys: i32[]): i32 { return ys[0]; }\nfunction passthru(xs: i32[]): i32[] { return xs; }\nfunction relay(ys: i32[]): i32[] { return passthru(ys); }\nfunction main(): i32 { return keep(relay([1, 2])); }\n", []string{"E051"}},
 		// Call-site checks against a fn-typed PARAM (#5986's last half): the
 		// param resolves to a real TypeFunc from its sidecars, so a
 		// non-function argument draws E038 — the same code native emits —
