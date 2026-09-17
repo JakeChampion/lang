@@ -1,5 +1,7 @@
 # Self-hosted compiler: SSA always-on, every backend on the IR
 
+**Retired 2026-09-17:** the `-ssa` flag, `build_func` and the three SSA backends this plan is about no longer exist; `-backend ssa` (`docs/SELFHOST-SSA-BACKEND.md`) is the SSA path. Kept as the record of the plan.
+
 > **⚠️ SHELVED (2026-07-03, #4391).** This plan is superseded. The self-host
 > backend has **one** production lowering — the stack **IR** path
 > (`irlower.fern` → `asm_ir` / `asm_arm64_ir` / `wasm_ir`), not SSA

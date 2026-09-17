@@ -124,7 +124,20 @@ pub struct EmitState {
     // rest take the stack-machine emit. The two counters are the module tally.
     ssa_backend: boolean,
     ssa_emitted: i32,
-    ssa_declined: i32
+    ssa_declined: i32,
+    // ssa_frame is the byte size of the SSA function being emitted, 0 outside
+    // one; the arm64 emitter addresses that function's frame slots from sp.
+    // ssa_save is the part of it holding the callee-saved registers the
+    // function uses, between the frame record and the slots.
+    ssa_frame: i32,
+    ssa_save: i32,
+    // ssa_x0 is the value id the result register (x0, %rax) holds, -1 when
+    // unknown; a load of that value into it is then nothing. A store from the
+    // register asserts the value stored, because the store is what makes the
+    // two equal. Forgotten at every label, and by every sequence that writes
+    // the register on its own — including one whose result leaves elsewhere,
+    // which is the case the store cannot re-assert.
+    ssa_x0: i32
 }
 
 pub function new_state(): EmitState {
@@ -170,7 +183,10 @@ pub function new_state(): EmitState {
         const_aggs: [],
         ssa_backend: false,
         ssa_emitted: 0,
-        ssa_declined: 0
+        ssa_declined: 0,
+        ssa_frame: 0,
+        ssa_save: 0,
+        ssa_x0: 0 - 1
     };
 }
 

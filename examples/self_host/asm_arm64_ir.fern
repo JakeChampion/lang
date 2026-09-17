@@ -821,29 +821,135 @@ function emit_const_i32_push(s: asmcore.EmitState, text: string, movz_ok: boolea
 // the moves of an edge with several phis, so every source is read before any
 // result is written.
 
-function ssa_reg(k: i32): string { return "x" + util.i32_to_string(9 + k); }
+function ssa_reg(k: i32): string {
+    if (k >= ssa_nregs()) { return "x" + util.i32_to_string(19 + k - ssa_nregs()); }
+    return "x" + util.i32_to_string(9 + k);
+}
 function ssa_nregs(): i32 { return 7; }
+function ssa_nsaved(): i32 { return 10; }
+
+// ssa_saved_regs is the callee-saved registers a function's allocation uses,
+// lowest first; ssa_save_bytes their save area, a 16-byte pair per two.
+function ssa_saved_regs(reg_of: i32[]): i32[] {
+    var used: i32[] = [];
+    var k: i32 = ssa_nregs();
+    while (k < ssa_nregs() + ssa_nsaved()) {
+        var found: boolean = false;
+        for h in reg_of { if (h == k) { found = true; } }
+        if (found) { used = used.append(k); }
+        k = k + 1;
+    }
+    return used;
+}
+function ssa_save_bytes(saved: i32[]): i32 { return ((saved.len() + 1) / 2) * 16; }
+
+// ssa_save_asm pushes the saved registers in pairs below the frame record;
+// ssa_epilogue_for restores them in the reverse order after cutting sp back
+// to the save area, then returns as the stack machine does.
+function ssa_save_asm(saved: i32[]): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i + 1 < saved.len()) {
+        out = out + "    stp " + ssa_reg(saved[i]) + ", " + ssa_reg(saved[i + 1]) + ", [sp, #-16]!\n";
+        i = i + 2;
+    }
+    if (i < saved.len()) { out = out + "    str " + ssa_reg(saved[i]) + ", [sp, #-16]!\n"; }
+    return out;
+}
+function ssa_epilogue_for(saved: i32[]): string {
+    if (saved.len() == 0) { return ssa_epilogue(); }
+    var out: string = "    .cfi_remember_state\n    sub sp, x29, #" + util.i32_to_string(ssa_save_bytes(saved)) + "\n";
+    var i: i32 = saved.len();
+    if (i % 2 == 1) { i = i - 1; out = out + "    ldr " + ssa_reg(saved[i]) + ", [sp], #16\n"; }
+    while (i >= 2) {
+        i = i - 2;
+        out = out + "    ldp " + ssa_reg(saved[i]) + ", " + ssa_reg(saved[i + 1]) + ", [sp], #16\n";
+    }
+    return out + "    ldp x29, x30, [sp], #16\n    .cfi_def_cfa sp, 0\n    ret\n    .cfi_restore_state\n";
+}
 function ssa_slot_off(v: i32): i32 { return 0 - 8 * (v + 1); }
 
+// ssa_fr_ldr / ssa_fr_str access an SSA frame slot at its x29-relative
+// offset. With the function's frame at rest the slot is also at
+// [sp, #(frame + off)], a positive offset one scaled ldr/str encodes up to
+// 32760, where the x29 form needs the address built in x16 beyond 256 bytes;
+// `pushed` is how many bytes of call arguments sit below the frame at the
+// access. Past the scaled range, or outside an SSA function, the x29 form.
+function ssa_fr_pos(s: asmcore.EmitState, off: i32, pushed: i32): i32 {
+    if (s.ssa_frame <= 0) { return 0 - 1; }
+    var pos: i32 = s.ssa_frame + off + pushed;
+    if (pos < 0 || pos > 32760) { return 0 - 1; }
+    return pos;
+}
+// A slot's x29-relative offset is below the callee-saved registers' save area.
+function ssa_fr_ldr(s: asmcore.EmitState, reg: string, off: i32, pushed: i32): asmcore.EmitState {
+    var pos: i32 = ssa_fr_pos(s, off - s.ssa_save, pushed);
+    if (pos >= 0) { return s.write("    ldr " + reg + ", [sp, #" + util.i32_to_string(pos) + "]\n"); }
+    return fr_ldr(s, reg, off - s.ssa_save);
+}
+function ssa_fr_str(s: asmcore.EmitState, reg: string, off: i32, pushed: i32): asmcore.EmitState {
+    var pos: i32 = ssa_fr_pos(s, off - s.ssa_save, pushed);
+    if (pos >= 0) { return s.write("    str " + reg + ", [sp, #" + util.i32_to_string(pos) + "]\n"); }
+    return fr_str(s, reg, off - s.ssa_save);
+}
+
 // ssa_load puts value v in `reg`; ssa_store writes `reg` to value v's home.
+// ssa_load_pushed is the load with `pushed` bytes of arguments already on the
+// machine stack below the frame.
 function ssa_load(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): asmcore.EmitState {
-    if (reg_of[v] < 0) { return fr_ldr(s, reg, ssa_slot_off(ssa.spill_slot(reg_of[v]))); }
+    return ssa_load_pushed(reg_of, v, reg, 0, s);
+}
+function ssa_load_pushed(reg_of: i32[], v: i32, reg: string, pushed: i32, s: asmcore.EmitState): asmcore.EmitState {
+    if (reg == "x0") {
+        if (s.ssa_x0 == v) { return s; }
+        s = asmcore.EmitState { ...s, ssa_x0: v };
+    }
+    if (reg_of[v] < 0) { return ssa_fr_ldr(s, reg, ssa_slot_off(ssa.spill_slot(reg_of[v])), pushed); }
     var home: string = ssa_reg(reg_of[v]);
     if (home == reg) { return s; }
     return s.write("    mov " + reg + ", " + home + "\n");
 }
 function ssa_store(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): asmcore.EmitState {
+    if (reg == "x0") { s = asmcore.EmitState { ...s, ssa_x0: v }; }
     if (reg_of[v] == 0 - 1) { return s; }
-    if (reg_of[v] < 0) { return fr_str(s, reg, ssa_slot_off(ssa.spill_slot(reg_of[v]))); }
+    if (reg_of[v] < 0) { return ssa_fr_str(s, reg, ssa_slot_off(ssa.spill_slot(reg_of[v])), 0); }
     var home: string = ssa_reg(reg_of[v]);
     if (home == reg) { return s; }
     return s.write("    mov " + home + ", " + reg + "\n");
+}
+// ssa_x0_forget marks x0 as holding no tracked value: at a label, and
+// before a sequence that writes x0 on its own.
+function ssa_x0_forget(s: asmcore.EmitState): asmcore.EmitState { return asmcore.EmitState { ...s, ssa_x0: 0 - 1 }; }
+
+// ssa_dst is where an instruction this emitter selects itself writes its
+// result: the value's register home, or x0 for a value in a frame slot,
+// which ssa_store then spills. ssa_src is where an operand is read from: its
+// register home, or `scratch` once ssa_load has filled it. An instruction's
+// result never shares a register with its operands: the allocator frees an
+// operand's register only after the instruction that last reads it.
+function ssa_dst(reg_of: i32[], v: i32): string {
+    if (reg_of[v] >= 0) { return ssa_reg(reg_of[v]); }
+    return "x0";
+}
+function ssa_src(reg_of: i32[], v: i32, scratch: string): string {
+    if (reg_of[v] >= 0) { return ssa_reg(reg_of[v]); }
+    return scratch;
+}
+// ssa_wreg is the 32-bit name of an x register.
+function ssa_wreg(x: string): string {
+    match (x[1:]) { Some(n) => { return "w" + n; }, None => { return "w0"; } }
+}
+// ssa_const_reg materialises an integer literal in `d` the way
+// emit_const_i32_push does: one MOVZ for a small decimal, the pool otherwise.
+function ssa_const_reg(text: string, d: string, s: asmcore.EmitState): asmcore.EmitState {
+    if (movz_text_ok(text)) { return s.write("    mov " + d + ", #" + text + "\n"); }
+    return s.write("    ldr " + d + ", =" + text + "\n");
 }
 
 // ssa_unary_known is the unary vocabulary lift_from_ir_prod produces.
 function ssa_unary_known(what: string): boolean {
     if (what == "!" || what == "int_extend" || what == "int_wrap" || what == "u32_wrap" || what == "load_i32") { return true; }
-    return util.str_has_prefix(what, "int_cast:") || ssa_funary_known(what);
+    return util.str_has_prefix(what, "int_cast:") || ssa_funary_known(what) || ssa_bits_asm(what) != "";
 }
 
 // ssa_funary_known is the f64 unary vocabulary lift_float_prod produces.
@@ -909,19 +1015,13 @@ function ssa_has_phis(f: ssa.SFunc, fr: SsaFrame, id: i32): boolean {
     return false;
 }
 
-// ssa_const_x0 materialises an integer literal in x0 the way
-// emit_const_i32_push does: one MOVZ for a small decimal, the pool otherwise.
-function ssa_const_x0(text: string, s: asmcore.EmitState): asmcore.EmitState {
-    if (movz_text_ok(text)) { return s.write("    mov x0, #" + text + "\n"); }
-    return s.write("    ldr x0, =" + text + "\n");
-}
-
 // ssa_unary_asm is the stack machine's selection for the width ops, `not`
 // and the f64 unaries, on x0. A cast to a type none of the arms name moves
 // nothing there either.
 function ssa_unary_asm(what: string, unsigned: boolean): string {
     var f: string = ssa_fmath_asm(what);
     if (f == "") { f = ssa_fconv_asm(what, unsigned); }
+    if (f == "") { f = ssa_bits_asm(what); }
     if (f != "") { return f; }
     if (what == "load_i32") { return "    ldrsw x0, [x0]\n"; }
     if (what == "!") { return "    cmp x0, #0\n    cset x0, eq\n"; }
@@ -932,6 +1032,18 @@ function ssa_unary_asm(what: string, unsigned: boolean): string {
         if (unsigned) { return "    mov w0, w0\n"; }
         return "    sxtw x0, w0\n";
     }
+    return "";
+}
+
+// ssa_bits_asm is the bit counts on x0 at the width the name carries, as the
+// stack machine's arms select them; "" for any other op.
+function ssa_bits_asm(what: string): string {
+    if (what == "clz:64") { return "    clz x0, x0\n"; }
+    if (what == "clz:32") { return "    clz w0, w0\n"; }
+    if (what == "ctz:64") { return "    rbit x0, x0\n    clz x0, x0\n"; }
+    if (what == "ctz:32") { return "    rbit w0, w0\n    clz w0, w0\n"; }
+    if (what == "popcount:64") { return "    fmov d0, x0\n    cnt v0.8b, v0.8b\n    addv b0, v0.8b\n    fmov w0, s0\n"; }
+    if (what == "popcount:32") { return "    fmov s0, w0\n    cnt v0.8b, v0.8b\n    addv b0, v0.8b\n    fmov w0, s0\n"; }
     return "";
 }
 
@@ -1002,6 +1114,7 @@ function ssa_fcall_sym(what: string): string {
 // ssa_fcall calls a transcendental helper: the operand patterns in d0 (and d1
 // for fpow), the result pattern back from d0.
 function ssa_fcall(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+    s = ssa_x0_forget(s);
     s = s.need("float_transcendentals");
     s = ssa_load(reg_of, ins.args[0], "x0", s);
     if (ins.args.len() > 1) {
@@ -1016,6 +1129,7 @@ function ssa_fcall(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore
 // in IR order for a runtime helper and reversed for a user function (arg0 on
 // top), the callee, the caller-side pop, and x0 stored.
 function ssa_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+    s = ssa_x0_forget(s);
     var argc: i32 = ins.args.len();
     var helper: boolean = ircore.is_fern_helper(ins.str);
     if (helper) { s = helper_call_needs(ins.str, s); }
@@ -1024,7 +1138,7 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.
     while (i < argc) {
         var a: i32 = i;
         if (!helper) { a = argc - 1 - i; }
-        s = ssa_load(reg_of, ins.args[a], "x0", s);
+        s = ssa_load_pushed(reg_of, ins.args[a], "x0", i * 16, s);
         s = s.write("    str x0, [sp, #-16]!\n");
         i = i + 1;
     }
@@ -1039,41 +1153,46 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.
 // with the instructions the stack machine's own arms use, operands in x0/x1/x2.
 function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
     var k: i32 = ins.kind_tag;
-    s = ssa_load(reg_of, ins.args[0], "x0", s);
+    var a: string = ssa_src(reg_of, ins.args[0], "x0");
+    s = ssa_load(reg_of, ins.args[0], a, s);
+    var d: string = ssa_dst(reg_of, ins.result);
     if (k == 40) {
-        s = s.write("    ldr x0, [x0, #" + util.i32_to_string(ins.imm) + "]\n");
-        return ssa_store(reg_of, ins.result, "x0", s);
+        s = s.write("    ldr " + d + ", [" + a + ", #" + util.i32_to_string(ins.imm) + "]\n");
+        return ssa_store(reg_of, ins.result, d, s);
     }
-    s = ssa_load(reg_of, ins.args[1], "x1", s);
-    if (k == 41 && ins.str == "i32") { return s.write("    str w1, [x0]\n"); }
-    if (k == 41) { return s.write("    str x1, [x0, #" + util.i32_to_string(ins.imm) + "]\n"); }
+    var b: string = ssa_src(reg_of, ins.args[1], "x1");
+    s = ssa_load(reg_of, ins.args[1], b, s);
+    if (k == 41 && ins.str == "i32") { return s.write("    str " + ssa_wreg(b) + ", [" + a + "]\n"); }
+    if (k == 41) { return s.write("    str " + b + ", [" + a + ", #" + util.i32_to_string(ins.imm) + "]\n"); }
     if (k == 42) {
         if (ins.imm != 1) {
             s = s.mark_heap();
-            s = s.write("    ldr x2, [x0]\n    cmp x1, x2\n    b.lo 1f\n    b __fern_oob_abort\n1:\n");
+            s = s.write("    ldr x2, [" + a + "]\n    cmp " + b + ", x2\n    b.lo 1f\n    b __fern_oob_abort\n1:\n");
         }
-        s = s.write("    add x1, x1, #1\n    ldr x0, [x0, x1, lsl #3]\n");
-        return ssa_store(reg_of, ins.result, "x0", s);
+        s = s.write("    add x1, " + b + ", #1\n    ldr " + d + ", [" + a + ", x1, lsl #3]\n");
+        return ssa_store(reg_of, ins.result, d, s);
     }
     if (k == 44) {
         s = s.mark_heap();
-        s = s.write("    ldr x2, [x0, #8]\n    cmp x1, x2\n    b.lo 1f\n    b __fern_oob_abort\n1:\n    ldr x0, [x0]\n    ldrb w0, [x0, x1]\n");
-        return ssa_store(reg_of, ins.result, "x0", s);
+        s = s.write("    ldr x2, [" + a + ", #8]\n    cmp " + b + ", x2\n    b.lo 1f\n    b __fern_oob_abort\n1:\n    ldr x2, [" + a + "]\n    ldrb " + ssa_wreg(d) + ", [x2, " + b + "]\n");
+        return ssa_store(reg_of, ins.result, d, s);
     }
-    s = ssa_load(reg_of, ins.args[2], "x2", s);
+    var c: string = ssa_src(reg_of, ins.args[2], "x2");
+    s = ssa_load(reg_of, ins.args[2], c, s);
     s = s.mark_heap();
-    return s.write("    ldr x3, [x0]\n    cmp x1, x3\n    b.lo 1f\n    b __fern_oob_abort\n1:\n    add x1, x1, #1\n    str x2, [x0, x1, lsl #3]\n");
+    return s.write("    ldr x3, [" + a + "]\n    cmp " + b + ", x3\n    b.lo 1f\n    b __fern_oob_abort\n1:\n    add x1, " + b + ", #1\n    str " + c + ", [" + a + ", x1, lsl #3]\n");
 }
 
 // ssa_str_call is the stack machine's call of a Fern-compiled runtime helper
 // for a string or slice op: arguments pushed with the first on top, the
 // helper's need marked as the flat arm marks it.
 function ssa_str_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+    s = ssa_x0_forget(s);
     s = ssa_str_marks(ins.str, s);
     var argc: i32 = ins.args.len();
     var i: i32 = argc - 1;
     while (i >= 0) {
-        s = ssa_load(reg_of, ins.args[i], "x0", s);
+        s = ssa_load_pushed(reg_of, ins.args[i], "x0", (argc - 1 - i) * 16, s);
         s = s.write("    str x0, [sp, #-16]!\n");
         i = i - 1;
     }
@@ -1084,6 +1203,7 @@ function ssa_str_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
 
 function ssa_str_target(op: string): string {
     if (op == "str_from_bytes") { return "string_from_bytes"; }
+    if (op == "read_chunk") { return "reader_read_chunk"; }
     return op;
 }
 
@@ -1092,9 +1212,10 @@ function ssa_str_target(op: string): string {
 // named by ssa_host_bare.
 function ssa_host_need(op: string): string {
     var fs: string[] = ["read_file", "read_file_bytes", "write_file", "write_file_exec", "remove_dir_all", "remove_file",
-        "create_dir_all", "read_dir", "read_dir_all", "env", "stat", "lstat"];
+        "create_dir_all", "read_dir", "read_dir_all", "env", "stat", "lstat", "subprocess", "writer_write"];
     for x in fs { if (x == op) { return op; } }
     if (op == "read_line") { return "str_read_line"; }
+    if (op == "read_chunk" || op == "reader_close") { return "reader"; }
     return "";
 }
 function ssa_host_bare(op: string): boolean {
@@ -1102,6 +1223,7 @@ function ssa_host_bare(op: string): boolean {
 }
 
 function ssa_str_marks(op: string, s: asmcore.EmitState): asmcore.EmitState {
+    if (op == "temp_dir") { return s.mark_heap().need("monotonic_ns").need("temp_dir"); }
     if (ssa_host_need(op) != "") { return s.mark_heap().need(ssa_host_need(op)); }
     if (ssa_host_bare(op)) { return s.need(op); }
     if (op == "str_concat") { return s.mark_heap().mark_str_concat(); }
@@ -1116,7 +1238,7 @@ function ssa_str_marks(op: string, s: asmcore.EmitState): asmcore.EmitState {
 // ssa_host_kind names the register-ABI ops ssa_host_call selects: the raw
 // syscalls, exit, the string box stamp and the string builder.
 function ssa_host_kind(op: string): boolean {
-    return util.str_has_prefix(op, "syscall") || op == "exit" || op == "raw_string" || op == "strbuf_reset" || op == "strbuf_append";
+    return util.str_has_prefix(op, "syscall") || op == "exit" || op == "raw_string" || util.str_has_prefix(op, "strbuf_");
 }
 
 // ssa_host_call emits the host-floor ops as the stack machine's arms do. A
@@ -1124,10 +1246,11 @@ function ssa_host_kind(op: string): boolean {
 // sequence: its `ldr x8, [sp], #16` is the line darwinize keys the Mach-O
 // syscall rewrite off, so the text must not change.
 function ssa_host_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+    s = ssa_x0_forget(s);
     if (util.str_has_prefix(ins.str, "syscall")) {
         var i: i32 = 0;
         while (i < ins.args.len()) {
-            s = ssa_load(reg_of, ins.args[i], "x0", s);
+            s = ssa_load_pushed(reg_of, ins.args[i], "x0", i * 16, s);
             s = s.write("    str x0, [sp, #-16]!\n");
             i = i + 1;
         }
@@ -1157,23 +1280,28 @@ function ssa_host_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asm
 
 // ssa_sym_addr is a static symbol's address, or the word at it (imm 1).
 function ssa_sym_addr(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
-    s = s.write("    adrp x0, " + ins.str + "\n    add x0, x0, :lo12:" + ins.str + "\n");
-    if (ins.imm == 1) { s = s.write("    ldr x0, [x0]\n"); }
-    return ssa_store(reg_of, ins.result, "x0", s);
+    if (util.str_has_prefix(ins.str, "__fern_arr_push_")) { s = s.mark_heap(); }
+    var d: string = ssa_dst(reg_of, ins.result);
+    s = s.write("    adrp " + d + ", " + ins.str + "\n    add " + d + ", " + d + ", :lo12:" + ins.str + "\n");
+    if (ins.imm == 1) { s = s.write("    ldr " + d + ", [" + d + "]\n"); }
+    return ssa_store(reg_of, ins.result, d, s);
 }
 
 // ssa_rt_call is the stack machine's call of a runtime routine on the register
 // ABI: the arguments in x0, x1, the result in x0.
 function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+    s = ssa_x0_forget(s);
     s = s.mark_heap();
     var sym: string = "__fern_alloc";
     if (ins.str == "alloc_u8") { sym = "__fern_alloc_u8"; }
     else if (ins.str == "struct_copy") { sym = "__fn___fern_struct_copy"; }
     else if (ins.str == "raw_arr_box") { sym = "__fern_arr_box"; }
     else if (ins.str == "map_new") { s = s.need("maps"); sym = "__fern_map_new"; }
+    else if (ins.str == "args") { s = s.need("args"); sym = "__fern_args"; }
+    else if (ins.str == "map_hash_seed") { s = s.need("random_i32").need("map_hash_seed"); sym = "__fern_map_hash_seed"; }
     else if (util.str_has_prefix(ins.str, "arr_push_owned")) { s = s.mark_arr_push(); sym = "__fern_arr_push_owned"; }
     else if (util.str_has_prefix(ins.str, "arr_push")) { s = s.mark_arr_push(); sym = "__fern_arr_push"; }
-    s = ssa_load(reg_of, ins.args[0], "x0", s);
+    if (ins.args.len() > 0) { s = ssa_load(reg_of, ins.args[0], "x0", s); }
     if (ins.args.len() > 1) { s = ssa_load(reg_of, ins.args[1], "x1", s); }
     // raw_alloc asks for 24 bytes more and hands back the pointer past them,
     // the string box header a buffer may later grow (#7351).
@@ -1211,6 +1339,7 @@ function ssa_view_count(views: i32[]): i32 {
 // are read before the allocation and carried across it on the machine stack,
 // since the call clobbers every register they could live in.
 function ssa_str_view(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.EmitState): asmcore.EmitState {
+    s = ssa_x0_forget(s);
     s = s.mark_heap();
     s = ssa_load(reg_of, ins.args[0], "x0", s);
     s = ssa_load(reg_of, ins.args[1], "x1", s);
@@ -1229,24 +1358,59 @@ function ssa_str_view(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.E
 // SsaFrame is the frame below the values: the phi stage words after the
 // values, then three words per frame-resident string view. ssa_view_off is
 // the offset of a view's lowest word, the base the view kernel writes at.
-struct SsaFrame { nspill: i32, nstage: i32, views: i32[], blk_pos: i32[] }
+struct SsaFrame { nspill: i32, nstage: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave: i32, epilogue: string }
+
+// SsaFuse is a block's compare consumed as flags by its branch: `n` trailing
+// instructions (the compare, and the `not` between it and the branch when
+// `inverted`) are not materialised; the branch tests the condition of
+// compare `tag` on operands `a` and `b` instead. n is 0 when the block ends
+// some other way.
+struct SsaFuse { n: i32, tag: i32, inverted: boolean, a: i32, b: i32 }
+
+function ssa_no_fuse(): SsaFuse { return SsaFuse { n: 0, tag: 0, inverted: false, a: 0, b: 0 }; }
+
+// ssa_fuse finds the compare a block's brif can read as flags: the block's
+// last instruction is an integer compare read only by the branch, or a `not`
+// read only by the branch whose operand is such a compare read only by it.
+function ssa_fuse(fr: SsaFrame, blk: ssa.SBlock): SsaFuse {
+    var t: ssa.STerm = blk.term;
+    if (t.kind_tag != 3 || t.t == t.f || blk.insts.len() == 0) { return ssa_no_fuse(); }
+    var last: ssa.SInst = blk.insts[blk.insts.len() - 1];
+    if (last.result != t.cond || fr.uses[last.result] != 1) { return ssa_no_fuse(); }
+    var cmp: ssa.SInst = last;
+    var n: i32 = 1;
+    var inverted: boolean = false;
+    if (last.kind_tag == 10 && last.str == "!") {
+        if (blk.insts.len() < 2) { return ssa_no_fuse(); }
+        cmp = blk.insts[blk.insts.len() - 2];
+        if (cmp.result != last.args[0] || fr.uses[cmp.result] != 1) { return ssa_no_fuse(); }
+        n = 2;
+        inverted = true;
+    }
+    if (cmp.kind_tag != 9 || !ircore.is_int_cmp_kind(ir.kind_id(cmp.str))) { return ssa_no_fuse(); }
+    return SsaFuse { n: n, tag: ir.kind_id(cmp.str), inverted: inverted, a: cmp.args[0], b: cmp.args[1] };
+}
 
 function ssa_view_off(fr: SsaFrame, v: i32): i32 {
     var first: i32 = fr.nspill + fr.nstage + 3 * fr.views[v];
-    return 0 - 8 * (first + 3);
+    return 0 - 8 * (first + 3) - fr.nsave;
 }
 
 // ssa_raw_inst selects the raw memory floor (52..55): unchecked 8-byte and
 // byte loads and stores at base + idx.
 function ssa_raw_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
     var k: i32 = ins.kind_tag;
-    s = ssa_load(reg_of, ins.args[0], "x0", s);
-    s = ssa_load(reg_of, ins.args[1], "x1", s);
-    if (k == 52) { s = s.write("    ldr x0, [x0, x1, lsl #3]\n"); return ssa_store(reg_of, ins.result, "x0", s); }
-    if (k == 54) { s = s.write("    add x0, x0, x1\n    ldrb w0, [x0]\n"); return ssa_store(reg_of, ins.result, "x0", s); }
-    s = ssa_load(reg_of, ins.args[2], "x2", s);
-    if (k == 53) { return s.write("    str x2, [x0, x1, lsl #3]\n"); }
-    return s.write("    add x0, x0, x1\n    strb w2, [x0]\n");
+    var a: string = ssa_src(reg_of, ins.args[0], "x0");
+    s = ssa_load(reg_of, ins.args[0], a, s);
+    var b: string = ssa_src(reg_of, ins.args[1], "x1");
+    s = ssa_load(reg_of, ins.args[1], b, s);
+    var d: string = ssa_dst(reg_of, ins.result);
+    if (k == 52) { s = s.write("    ldr " + d + ", [" + a + ", " + b + ", lsl #3]\n"); return ssa_store(reg_of, ins.result, d, s); }
+    if (k == 54) { s = s.write("    ldrb " + ssa_wreg(d) + ", [" + a + ", " + b + "]\n"); return ssa_store(reg_of, ins.result, d, s); }
+    var c: string = ssa_src(reg_of, ins.args[2], "x2");
+    s = ssa_load(reg_of, ins.args[2], c, s);
+    if (k == 53) { return s.write("    str " + c + ", [" + a + ", " + b + ", lsl #3]\n"); }
+    return s.write("    strb " + ssa_wreg(c) + ", [" + a + ", " + b + "]\n");
 }
 
 // AggPack is a constant aggregate's `<shape label>|<w0>,<w1>,..` text for
@@ -1271,14 +1435,15 @@ function ssa_agg_pack(packed: string, s: asmcore.EmitState): AggPack {
 // arguments pushed with the first on top, the target in x9, which nothing
 // live can occupy at a call.
 function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+    s = ssa_x0_forget(s);
     var argc: i32 = ins.args.len() - 1;
     var i: i32 = argc;
     while (i >= 1) {
-        s = ssa_load(reg_of, ins.args[i], "x0", s);
+        s = ssa_load_pushed(reg_of, ins.args[i], "x0", (argc - i) * 16, s);
         s = s.write("    str x0, [sp, #-16]!\n");
         i = i - 1;
     }
-    s = ssa_load(reg_of, ins.args[0], "x9", s);
+    s = ssa_load_pushed(reg_of, ins.args[0], "x9", argc * 16, s);
     s = s.write("    blr x9\n");
     if (argc > 0) { s = s.write("    add sp, sp, #" + util.i32_to_string(argc * 16) + "\n"); }
     return ssa_store(reg_of, ins.result, "x0", s);
@@ -1292,12 +1457,14 @@ function ssa_agg_lit(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmco
     var kout: asmcore.ConstAggOut = asmcore.add_const_agg(s, pk.text);
     s = kout.state;
     var klbl: string = asmcore.const_agg_label(s, kout.idx);
-    s = s.write("    adrp x0, " + klbl + "\n    add x0, x0, :lo12:" + klbl + "\n");
-    return ssa_store(reg_of, ins.result, "x0", s);
+    var d: string = ssa_dst(reg_of, ins.result);
+    s = s.write("    adrp " + d + ", " + klbl + "\n    add " + d + ", " + d + ", :lo12:" + klbl + "\n");
+    return ssa_store(reg_of, ins.result, d, s);
 }
 
 // ssa_addr_inst selects the label addresses and the box allocation (45..48).
 function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+    s = ssa_x0_forget(s);
     var k: i32 = ins.kind_tag;
     var label: string = "";
     if (k == 45) { label = "__fn_" + asmcore.sanitize_label(ins.str); }
@@ -1315,14 +1482,15 @@ function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asm
         s = s.write("    mov x0, #" + util.i32_to_string(ins.imm) + "\n    bl __fern_arr_box\n");
         return ssa_store(reg_of, ins.result, "x0", s);
     }
-    s = s.write("    adrp x0, " + label + "\n    add x0, x0, :lo12:" + label + "\n");
-    return ssa_store(reg_of, ins.result, "x0", s);
+    var d: string = ssa_dst(reg_of, ins.result);
+    s = s.write("    adrp " + d + ", " + label + "\n    add " + d + ", " + d + ", :lo12:" + label + "\n");
+    return ssa_store(reg_of, ins.result, d, s);
 }
 
-function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, s: asmcore.EmitState): asmcore.EmitState {
+function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, ops: ir.Op[], s: asmcore.EmitState): asmcore.EmitState {
     var k: i32 = ins.kind_tag;
     if (k == 11) { return ssa_call(ins, reg_of, s); }
-    if (k == 59) { return ssa_flat_op(ins, reg_of, lp, s); }
+    if (k == 59) { return ssa_flat_op(ins, reg_of, lp, ops[ins.imm], s); }
     if (k == 51) { return ssa_str_view(ins, reg_of, ssa_view_off(fr, ins.result), s); }
     if (k >= 40 && k <= 44) { return ssa_mem_inst(ins, reg_of, s); }
     if (k >= 45 && k <= 48) { return ssa_addr_inst(ins, reg_of, s); }
@@ -1334,20 +1502,23 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, s: as
     if (k >= 52 && k <= 55) { return ssa_raw_inst(ins, reg_of, s); }
     if (k == 56) { return ssa_call_ind(ins, reg_of, s); }
     if (k == 57) { return ssa_agg_lit(ins, reg_of, s); }
-    if (k == 1) { s = ssa_const_x0(util.i32_to_string(ins.imm), s); }
-    else if (k == 3) { s = ssa_const_x0(ins.str, s); }
-    else if (k == 4) { s = s.write("    ldr x0, =" + util.i64_to_string(util.parse_f64_bits(ins.str)) + "\n"); }
-    else if (k == 7) { s = ssa_load(reg_of, ins.args[0], "x0", s); }
+    var d: string = ssa_dst(reg_of, ins.result);
+    if (k == 1) { s = ssa_const_reg(util.i32_to_string(ins.imm), d, s); }
+    else if (k == 3) { s = ssa_const_reg(ins.str, d, s); }
+    else if (k == 4) { s = s.write("    ldr " + d + ", =" + util.i64_to_string(util.parse_f64_bits(ins.str)) + "\n"); }
+    else if (k == 7) { s = ssa_load(reg_of, ins.args[0], d, s); }
     else if (k == 9) {
+        d = "x0";
         s = ssa_load(reg_of, ins.args[0], "x0", s);
         s = ssa_load(reg_of, ins.args[1], "x1", s);
         var fb: string = ssa_fbin_asm(ins.str);
         if (fb != "") { s = s.write(fb); } else { s = s.write(ir_bin_asm(ir.kind_id(ins.str), ins.imm)); }
     } else {
+        d = "x0";
         s = ssa_load(reg_of, ins.args[0], "x0", s);
         s = s.write(ssa_unary_asm(ins.str, ins.imm == 1));
     }
-    return ssa_store(reg_of, ins.result, "x0", s);
+    return ssa_store(reg_of, ins.result, d, s);
 }
 
 // ssa_phi_moves emits the copies of the edge from block `pred` into block
@@ -1355,6 +1526,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, s: as
 // phi the sources are staged in the frame first, so two phis that swap a pair
 // of values read both before writing either.
 function ssa_phi_moves(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], pred: i32, succ: i32, s: asmcore.EmitState): asmcore.EmitState {
+    s = ssa_x0_forget(s);
     var ti: i32 = ssa_block_at(fr, succ);
     if (ti < 0) { return s; }
     var tb: ssa.SBlock = f.blocks[ti];
@@ -1371,12 +1543,12 @@ function ssa_phi_moves(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], pred: i32, suc
     var k: i32 = 0;
     while (k < srcs.len()) {
         s = ssa_load(reg_of, srcs[k], "x0", s);
-        s = fr_str(s, "x0", ssa_slot_off(fr.nspill + k));
+        s = ssa_fr_str(s, "x0", ssa_slot_off(fr.nspill + k), 0);
         k = k + 1;
     }
     k = 0;
     while (k < srcs.len()) {
-        s = fr_ldr(s, "x0", ssa_slot_off(fr.nspill + k));
+        s = ssa_fr_ldr(s, "x0", ssa_slot_off(fr.nspill + k), 0);
         s = ssa_store(reg_of, dsts[k], "x0", s);
         k = k + 1;
     }
@@ -1387,43 +1559,59 @@ function ssa_epilogue(): string {
     return "    .cfi_remember_state\n    mov sp, x29\n    ldp x29, x30, [sp], #16\n    .cfi_def_cfa sp, 0\n    ret\n    .cfi_restore_state\n";
 }
 
-// ssa_brif branches on a value. An edge whose target has phis lands on a stub
-// carrying that edge's moves, since the moves of the two edges differ.
-function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
+// ssa_jump is the branch to block `to`, or nothing when `to` is the block
+// emitted next and control falls into it.
+function ssa_jump(lp: string, to: i32, next: i32, s: asmcore.EmitState): asmcore.EmitState {
+    if (to == next) { return s; }
+    return s.write("    b " + lp + util.i32_to_string(to) + "\n");
+}
+
+// ssa_brif branches on a value, or on the flags a fused compare left (fu.n
+// above 0), in which case the false edge is the compare's inverse. An edge
+// whose target has phis lands on a stub carrying that edge's moves, since
+// the moves of the two edges differ.
+function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp: string, next: i32, fu: SsaFuse, s: asmcore.EmitState): asmcore.EmitState {
     var t: ssa.STerm = blk.term;
+    if (fu.n == 0) {
     s = ssa_load(reg_of, t.cond, "x0", s);
+    }
     if (t.t == t.f) {
         s = ssa_phi_moves(f, fr, reg_of, blk.id, t.t, s);
-        return s.write("    b " + lp + util.i32_to_string(t.t) + "\n");
+        return ssa_jump(lp, t.t, next, s);
     }
     var fl: string = lp + util.i32_to_string(t.f);
     var stub: boolean = ssa_has_phis(f, fr, t.f);
     if (stub) { fl = lp + "e" + util.i32_to_string(blk.id) + "_" + util.i32_to_string(t.f); }
+    if (fu.n > 0) {
+    s = s.write("    b." + ir_cmp_cond(fu.tag, fu.inverted) + " " + fl + "\n");
+    } else {
     s = s.write("    cbz x0, " + fl + "\n");
+    }
     s = ssa_phi_moves(f, fr, reg_of, blk.id, t.t, s);
-    s = s.write("    b " + lp + util.i32_to_string(t.t) + "\n");
     if (stub) {
+        s = s.write("    b " + lp + util.i32_to_string(t.t) + "\n");
+        s = ssa_x0_forget(s);
         s = s.write(fl + ":\n");
         s = ssa_phi_moves(f, fr, reg_of, blk.id, t.f, s);
-        s = s.write("    b " + lp + util.i32_to_string(t.f) + "\n");
+        return ssa_jump(lp, t.f, next, s);
     }
-    return s;
+    return ssa_jump(lp, t.t, next, s);
 }
 
-function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
+function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp: string, next: i32, fu: SsaFuse, s: asmcore.EmitState): asmcore.EmitState {
     var t: ssa.STerm = blk.term;
     if (t.kind_tag == 1) {
         s = ssa_load(reg_of, t.value, "x0", s);
-        return s.write(ssa_epilogue());
+        return s.write(fr.epilogue);
     }
     if (t.kind_tag == 2) {
         s = ssa_phi_moves(f, fr, reg_of, blk.id, t.target, s);
-        return s.write("    b " + lp + util.i32_to_string(t.target) + "\n");
+        return ssa_jump(lp, t.target, next, s);
     }
-    if (t.kind_tag == 3) { return ssa_brif(f, fr, blk, reg_of, lp, s); }
+    if (t.kind_tag == 3) { return ssa_brif(f, fr, blk, reg_of, lp, next, fu, s); }
     // A block the lift left unterminated is one nothing reaches; the stack
     // machine's fallback return keeps the text well formed here too.
-    return s.write("    mov x0, #0\n" + ssa_epilogue());
+    return s.write("    mov x0, #0\n" + fr.epilogue);
 }
 
 // ssa_load_params moves each parameter from the caller's slot to its home;
@@ -1444,25 +1632,45 @@ function ssa_load_params(f: ssa.SFunc, reg_of: i32[], s: asmcore.EmitState): asm
 // The lift gives every declared local a zero and every loop a phi per local,
 // most of them never read; prune_dead takes those out before the allocator
 // sees them.
-function emit_ssa_function_arm64(lifted: ssa.SFunc, label_name: string, s: asmcore.EmitState): asmcore.EmitState {
+function emit_ssa_function_arm64(lifted: ssa.SFunc, label_name: string, ops: ir.Op[], s: asmcore.EmitState): asmcore.EmitState {
     var f: ssa.SFunc = ssa.prune_dead(lifted);
-    var reg_of: i32[] = ssa.regalloc_linear(f, ssa_nregs());
+    var reg_of: i32[] = ssa.regalloc_linear(f, ssa_nregs(), ssa_nsaved());
     var lp: string = ".Lssa_" + asmcore.sanitize_label(label_name) + "_";
     s = s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n");
     s = s.write("    .cfi_startproc\n    stp x29, x30, [sp, #-16]!\n    .cfi_def_cfa_offset 16\n    .cfi_offset x29, -16\n    .cfi_offset x30, -8\n    mov x29, sp\n    .cfi_def_cfa_register x29\n");
+    var saved: i32[] = ssa_saved_regs(reg_of);
+    var save: i32 = ssa_save_bytes(saved);
+    s = s.write(ssa_save_asm(saved));
     var views: i32[] = ssa_view_slots(f);
-    var fr: SsaFrame = SsaFrame { nspill: ssa.spill_count(reg_of), nstage: ssa_max_phis(f), views: views, blk_pos: ssa_block_index(f) };
+    var fr: SsaFrame = SsaFrame { nspill: ssa.spill_count(reg_of), nstage: ssa_max_phis(f), views: views, blk_pos: ssa_block_index(f), uses: ssa.use_counts(f), nsave: save, epilogue: ssa_epilogue_for(saved) };
     var frame: i32 = (fr.nspill + fr.nstage + 3 * ssa_view_count(views)) * 8;
     if (frame % 16 != 0) { frame = frame + 8; }
     if (frame > 0) { s = fr_sub_imm(s, "sp", "sp", frame); }
+    s = asmcore.EmitState { ...s, ssa_frame: frame + save, ssa_save: save };
     s = ssa_load_params(f, reg_of, s);
-    for blk in f.blocks {
+    var bi: i32 = 0;
+    while (bi < f.blocks.len()) {
+        var blk: ssa.SBlock = f.blocks[bi];
+        var next: i32 = 0 - 1;
+        if (bi + 1 < f.blocks.len()) { next = f.blocks[bi + 1].id; }
+        s = ssa_x0_forget(s);
         s = s.write(lp + util.i32_to_string(blk.id) + ":\n");
-        for ins in blk.insts {
-            if (ins.kind_tag != 6 && ins.kind_tag != 8) { s = ssa_inst(ins, reg_of, fr, lp, s); }
+        var fu: SsaFuse = ssa_fuse(fr, blk);
+        var ii: i32 = 0;
+        while (ii < blk.insts.len() - fu.n) {
+            var ins: ssa.SInst = blk.insts[ii];
+            if (ins.kind_tag != 6 && ins.kind_tag != 8) { s = ssa_inst(ins, reg_of, fr, lp, ops, s); }
+            ii = ii + 1;
         }
-        s = ssa_term(f, fr, blk, reg_of, lp, s);
+        if (fu.n > 0) {
+    s = ssa_load(reg_of, fu.a, "x0", s);
+        s = ssa_load(reg_of, fu.b, "x1", s);
+        s = s.write("    cmp x0, x1\n");
+        }
+        s = ssa_term(f, fr, blk, reg_of, lp, next, fu, s);
+        bi = bi + 1;
     }
+    s = asmcore.EmitState { ...s, ssa_frame: 0, ssa_save: 0 };
     return s.write("    .cfi_endproc\n    .ltorg\n");
 }
 
@@ -1487,7 +1695,7 @@ function ssa_try_function(r: irlower.LowerResult, label_name: string, s: asmcore
     }
     s = asmcore.EmitState { ...s, ssa_emitted: s.ssa_emitted + 1 };
     var t_emit: i64 = monotonic_ns();
-    s = emit_ssa_function_arm64(lifted.func, label_name, s);
+    s = emit_ssa_function_arm64(lifted.func, label_name, r.ops, s);
     // Under the report, a function whose lift or emit took over 200 ms is
     // named with both times: the whole-compiler build is where a phase's
     // cost shows, and this is how a slow one is found.
@@ -2567,63 +2775,8 @@ pub function emit_function_via_ir_named(r: irlower.LowerResult, label_name: stri
             // sleep_ms — one word in, x0 pushed for the drop.
             s = s.need("sleep_ns");
             s = s.write("    bl __fn___fern_sleep_ns\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
-        } else if (o.kind_tag == 125) {  // map_set
-            s = emit_arm64_op_map_set(o, s);
-        } else if (o.kind_tag == 126) {  // map_len
-            // pop map; len = keys-array length ([[map]]).
-            s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0]\n    ldr x0, [x0]\n    str x0, [sp, #-16]!\n");
-        } else if (o.kind_tag == 127) {  // map_get
-            s = s.need("maps");
-            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-            s = map_eqfn_x5(s, o.str);
-            s = s.write("    mov x2, #" + util.i32_to_string(o.i32_imm) + "\n    bl __fern_map_get\n    str x0, [sp, #-16]!\n");
-        } else if (o.kind_tag == 128) {  // map_has
-            s = s.need("maps");
-            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-            s = map_eqfn_x5(s, o.str);
-            s = s.write("    mov x2, #" + util.i32_to_string(o.i32_imm) + "\n    bl __fern_map_has\n    str x0, [sp, #-16]!\n");
-        } else if (o.kind_tag == 130) {  // map_delete
-            // [map, key] -> __fn___fern_map_delete(map, key, keykind, eqfn) ->
-            // the (map, existed) tuple box (`m.without(k)`). The helper is Fern
-            // now (#2649), so this is the stack ABI: arguments pushed in
-            // REVERSE, leaving arg0 (the map) on top, four 16-byte slots
-            // dropped after.
-            s = s.need("maps");
-            s = s.need("map_delete");
-            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-            s = map_eqfn_x5(s, o.str);
-            s = s.write("    mov x2, #" + util.i32_to_string(o.i32_imm) + "\n");
-            s = s.write("    str x5, [sp, #-16]!\n    str x2, [sp, #-16]!\n");
-            s = s.write("    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
-            s = s.write("    bl __fn___fern_map_delete\n    add sp, sp, #64\n    str x0, [sp, #-16]!\n");
-        } else if (o.kind_tag == 129) {  // map_get_or
-            s = emit_arm64_op_map_get_or(o, i, lp, s);
-        } else if (o.kind_tag == 131) {  // map_keys
-            s = emit_arm64_op_map_keys(o, s);
-        } else if (o.kind_tag == 132) {  // map_values
-            s = emit_arm64_op_map_values(o, s);
-        } else if (o.kind_tag == 133) {  // map_iter
-            // m.iter() -> 16-byte iterator box [map_ptr@0, cursor@8] (asm_arm64.fern:1243).
-            // arm64 has no central op_allocates heap gate, so mark_heap explicitly.
-            s = s.mark_heap();
-            s = s.write("    mov x0, #16\n    bl __fern_alloc\n");
-            s = s.write("    ldr x1, [sp], #16\n    str x1, [x0]\n    mov x1, #0\n    str x1, [x0, #8]\n    str x0, [sp, #-16]!\n");
-        } else if (o.kind_tag == 134) {  // mapiter_has_next
-            // cursor < keys.len: keys[] at map@0, len at keys@0 (asm_arm64.fern:1255).
-            s = s.write("    ldr x0, [sp], #16\n    ldr x1, [x0, #8]\n    ldr x2, [x0]\n");
-            s = s.write("    ldr x2, [x2]\n    ldr x2, [x2]\n");
-            s = s.write("    cmp x1, x2\n    cset x0, lt\n    str x0, [sp, #-16]!\n");
-        } else if (o.kind_tag == 135) {  // mapiter_key
-            // keys[cursor]: keys[] at map@0, element[cursor] at keys[cursor+1].
-            s = s.write("    ldr x0, [sp], #16\n    ldr x1, [x0, #8]\n    ldr x2, [x0]\n    ldr x2, [x2]\n");
-            s = s.write("    add x1, x1, #1\n    ldr x0, [x2, x1, lsl #3]\n    str x0, [sp, #-16]!\n");
-        } else if (o.kind_tag == 136) {  // mapiter_value
-            // values[cursor]: values[] at map@8, element[cursor] at values[cursor+1].
-            s = s.write("    ldr x0, [sp], #16\n    ldr x1, [x0, #8]\n    ldr x2, [x0]\n    ldr x2, [x2, #8]\n");
-            s = s.write("    add x1, x1, #1\n    ldr x0, [x2, x1, lsl #3]\n    str x0, [sp, #-16]!\n");
-        } else if (o.kind_tag == 137) {  // mapiter_advance
-            // bump the stored cursor; push a dummy result for the statement drop.
-            s = s.write("    ldr x0, [sp], #16\n    ldr x1, [x0, #8]\n    add x1, x1, #1\n    str x1, [x0, #8]\n    mov x0, #0\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag >= 125 && o.kind_tag <= 137) {  // the map ops
+            s = emit_arm64_op_map(o, i, lp, s);
         } else if (o.kind_tag == 138) {  // struct_make
             s = emit_arm64_op_struct_make(o, s);
         } else if (o.kind_tag == 218) {  // const_struct
@@ -2839,19 +2992,24 @@ function emit_arm64_op_memset(i: i32, lp: string, s: asmcore.EmitState): asmcore
     return s.write("    mov x0, #0\n    str x0, [sp, #-16]!\n");
 }
 
-// ssa_flat_op runs the stack machine's own arm for a byte kernel between a
-// push of the operands and a pop of the result. The allocator treats the op
-// as a call, so the arm's scratch registers (x9, x10) hold nothing live.
-function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
+// ssa_flat_op runs the stack machine's own arm for op `o` (the byte kernels,
+// the map ops, the byte-buffer builder) between a push of the operands and a
+// pop of the result. The allocator treats the op as a call, so the arm's
+// registers hold nothing live; its labels take the op's index under the SSA
+// function's prefix.
+function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+    s = ssa_x0_forget(s);
     var i: i32 = 0;
     while (i < ins.args.len()) {
-        s = ssa_load(reg_of, ins.args[i], "x0", s);
+        s = ssa_load_pushed(reg_of, ins.args[i], "x0", i * 16, s);
         s = s.write("    str x0, [sp, #-16]!\n");
         i = i + 1;
     }
-    if (ins.str == "memcpy") { s = emit_arm64_op_memcpy(ir.op_memcpy(), ins.result, lp, s); }
-    else if (ins.str == "memset") { s = emit_arm64_op_memset(ins.result, lp, s); }
-    else { s = emit_str_op(ir.op_memchr(), s); }
+    if (o.kind_tag == 74) { s = emit_arm64_op_memcpy(o, ins.imm, lp, s); }
+    else if (o.kind_tag == 75) { s = emit_arm64_op_memset(ins.imm, lp, s); }
+    else if (ir.is_str_op_kind(o.kind_tag)) { s = emit_str_op(o, s); }
+    else if (o.kind_tag >= 125 && o.kind_tag <= 137) { s = emit_arm64_op_map(o, ins.imm, lp, s); }
+    else { s = emit_arm64_op_buf(o, s); }
     s = s.write("    ldr x0, [sp], #16\n");
     return ssa_store(reg_of, ins.result, "x0", s);
 }
@@ -3007,6 +3165,75 @@ function emit_arm64_op_buf(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         return s.write("    ldr x0, [sp], #16\n    bl __fern_buf_take\n    str x0, [sp, #-16]!\n");
     }
     return s.write("    ldr x0, [sp], #16\n    bl __fern_buf_free\n    str x0, [sp, #-16]!\n");  // buf_free
+}
+
+// emit_arm64_op_map and emit_arm64_op_map_read select the map ops, the
+// writes and lookups first, the reads and the iterator in the second.
+function emit_arm64_op_map(o: ir.Op, i: i32, lp: string, s: asmcore.EmitState): asmcore.EmitState {
+    if (o.kind_tag == 125) {  // map_set
+        s = emit_arm64_op_map_set(o, s);
+    } else if (o.kind_tag == 126) {  // map_len
+        // pop map; len = keys-array length ([[map]]).
+        s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0]\n    ldr x0, [x0]\n    str x0, [sp, #-16]!\n");
+    } else if (o.kind_tag == 127) {  // map_get
+        s = s.need("maps");
+        s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+        s = map_eqfn_x5(s, o.str);
+        s = s.write("    mov x2, #" + util.i32_to_string(o.i32_imm) + "\n    bl __fern_map_get\n    str x0, [sp, #-16]!\n");
+    } else if (o.kind_tag == 128) {  // map_has
+        s = s.need("maps");
+        s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+        s = map_eqfn_x5(s, o.str);
+        s = s.write("    mov x2, #" + util.i32_to_string(o.i32_imm) + "\n    bl __fern_map_has\n    str x0, [sp, #-16]!\n");
+    } else if (o.kind_tag == 130) {  // map_delete
+        // [map, key] -> __fn___fern_map_delete(map, key, keykind, eqfn) ->
+        // the (map, existed) tuple box (`m.without(k)`). The helper is Fern
+        // now (#2649), so this is the stack ABI: arguments pushed in
+        // REVERSE, leaving arg0 (the map) on top, four 16-byte slots
+        // dropped after.
+        s = s.need("maps");
+        s = s.need("map_delete");
+        s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+        s = map_eqfn_x5(s, o.str);
+        s = s.write("    mov x2, #" + util.i32_to_string(o.i32_imm) + "\n");
+        s = s.write("    str x5, [sp, #-16]!\n    str x2, [sp, #-16]!\n");
+        s = s.write("    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
+        s = s.write("    bl __fn___fern_map_delete\n    add sp, sp, #64\n    str x0, [sp, #-16]!\n");
+    } else if (o.kind_tag == 129) {  // map_get_or
+        s = emit_arm64_op_map_get_or(o, i, lp, s);
+    }
+    return emit_arm64_op_map_read(o, i, lp, s);
+}
+
+function emit_arm64_op_map_read(o: ir.Op, i: i32, lp: string, s: asmcore.EmitState): asmcore.EmitState {
+    if (o.kind_tag == 131) {  // map_keys
+        s = emit_arm64_op_map_keys(o, s);
+    } else if (o.kind_tag == 132) {  // map_values
+        s = emit_arm64_op_map_values(o, s);
+    } else if (o.kind_tag == 133) {  // map_iter
+        // m.iter() -> 16-byte iterator box [map_ptr@0, cursor@8] (asm_arm64.fern:1243).
+        // arm64 has no central op_allocates heap gate, so mark_heap explicitly.
+        s = s.mark_heap();
+        s = s.write("    mov x0, #16\n    bl __fern_alloc\n");
+        s = s.write("    ldr x1, [sp], #16\n    str x1, [x0]\n    mov x1, #0\n    str x1, [x0, #8]\n    str x0, [sp, #-16]!\n");
+    } else if (o.kind_tag == 134) {  // mapiter_has_next
+        // cursor < keys.len: keys[] at map@0, len at keys@0 (asm_arm64.fern:1255).
+        s = s.write("    ldr x0, [sp], #16\n    ldr x1, [x0, #8]\n    ldr x2, [x0]\n");
+        s = s.write("    ldr x2, [x2]\n    ldr x2, [x2]\n");
+        s = s.write("    cmp x1, x2\n    cset x0, lt\n    str x0, [sp, #-16]!\n");
+    } else if (o.kind_tag == 135) {  // mapiter_key
+        // keys[cursor]: keys[] at map@0, element[cursor] at keys[cursor+1].
+        s = s.write("    ldr x0, [sp], #16\n    ldr x1, [x0, #8]\n    ldr x2, [x0]\n    ldr x2, [x2]\n");
+        s = s.write("    add x1, x1, #1\n    ldr x0, [x2, x1, lsl #3]\n    str x0, [sp, #-16]!\n");
+    } else if (o.kind_tag == 136) {  // mapiter_value
+        // values[cursor]: values[] at map@8, element[cursor] at values[cursor+1].
+        s = s.write("    ldr x0, [sp], #16\n    ldr x1, [x0, #8]\n    ldr x2, [x0]\n    ldr x2, [x2, #8]\n");
+        s = s.write("    add x1, x1, #1\n    ldr x0, [x2, x1, lsl #3]\n    str x0, [sp, #-16]!\n");
+    } else if (o.kind_tag == 137) {  // mapiter_advance
+        // bump the stored cursor; push a dummy result for the statement drop.
+        s = s.write("    ldr x0, [sp], #16\n    ldr x1, [x0, #8]\n    add x1, x1, #1\n    str x1, [x0, #8]\n    mov x0, #0\n    str x0, [sp, #-16]!\n");
+    }
+    return s;
 }
 
 function emit_arm64_op_map_set(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {

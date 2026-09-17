@@ -36,17 +36,11 @@ func TestSelfHostUnwindData(t *testing.T) {
 	stdlib := langSrcAbs(t, "internal/stdlib")
 
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
-		for _, backend := range []string{"", "-ssa"} {
-			name := target
-			if backend != "" {
-				name += backend
-			}
+		for _, backend := range []string{"flat", "ssa"} {
+			name := target + "-" + backend
 			t.Run(name, func(t *testing.T) {
 				out := filepath.Join(dir, strings.ReplaceAll(name, "-", "_")+".bin")
-				args := []string{"-g", "-target", target}
-				if backend != "" {
-					args = append(args, backend)
-				}
+				args := []string{"-g", "-target", target, "-backend", backend}
 				args = append(args, "-o", out, src, stdlib)
 				if b, err := exec.Command(cli, args...).CombinedOutput(); err != nil {
 					t.Fatalf("fern-selfhost %v: %v\n%s", args, err, b)
