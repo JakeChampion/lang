@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -27,6 +28,13 @@ const readFilePseudoSrc = `function main(): i32 {
 }`
 
 func TestSelfHostReadFilePseudoFileX86_64(t *testing.T) {
+	// procfs is a Linux thing. Off Linux there is nothing to read and nothing
+	// to assert, which is a missing host rather than a failure — the Linux
+	// legs are where this gets its coverage. On Linux an unreadable
+	// /proc/self/mounts IS a failure: the subject is gone.
+	if runtime.GOOS != "linux" {
+		t.Skip("no procfs on " + runtime.GOOS + "; this test's whole subject is /proc")
+	}
 	if _, err := os.Stat("/proc/self/mounts"); err != nil {
 		t.Fatalf("/proc/self/mounts unreadable (%v); this test's whole subject is procfs", err)
 	}
