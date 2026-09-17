@@ -20,10 +20,12 @@ import (
 // most, since it has no allocator to count: that the harness does not charge
 // its own bookkeeping to the body it measures. That is the compiled leg below.
 
-// `examples/tests/bench_test.fern` is the TAP suite. Passing → exit 0.
-func TestRunnerBenchExamplePasses(t *testing.T) {
+// `examples/tests/bench_harness_test.fern` is the TAP suite. Passing → exit 0.
+// Named for the module rather than "bench", because `bench_test.fern` is
+// already std/test's own bench-helper suite and this is a different module.
+func TestRunnerBenchHarnessExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/bench_test.fern")
+	src := langSrcAbs(t, "examples/tests/bench_harness_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
