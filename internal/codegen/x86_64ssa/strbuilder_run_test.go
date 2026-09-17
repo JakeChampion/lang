@@ -57,9 +57,14 @@ func TestAsmRunBufPushU64(t *testing.T) {
 
 // The string-builder helpers on the real-asm path: pushes of a whole string, a
 // byte range and a single byte, a grow past the initial capacity on each of the
-// push paths, a zero-copy take, a re-arm from the reserve after it, and an
-// empty take. Each fact is one bit of the exit code, so a failure names the
-// helper that broke rather than the sum.
+// push paths, a take, the builder's state after it, and an empty take. Each
+// fact is one bit of the exit code, so a failure names the helper that broke
+// rather than the sum.
+//
+// The take copies out and the builder keeps its buffer (#9542). Both halves are
+// pinned here: handing the buffer over instead is what stranded a block under
+// the class for its length, and a take that copied but dropped the buffer would
+// cost an allocation per round without being caught by the byte assertions.
 func TestAsmRunStrBuilder(t *testing.T) {
 	f := ssa.NewFunc("main")
 	e := f.NewBlock()
@@ -69,11 +74,14 @@ func TestAsmRunStrBuilder(t *testing.T) {
 	callOp(f, e, "buf_push_byte", h, constOp(f, e, '!'))
 	len1 := callOp(f, e, "buf_len", h)
 	callOp(f, e, "buf_push", h, constStr(f, e, "0123456789ABCDEFGHIJ")) // 33 bytes: past the 16
-	data := f.AddOp(e, ssa.OpLoad, h)                                   // the buffer buf_take must hand back
+	data := f.AddOp(e, ssa.OpLoad, h)                                   // the buffer the builder must keep
 	s1 := callPtrOp(f, e, "buf_take", h)
 	lenAfterTake := callOp(f, e, "buf_len", h)
+	dataAfterTake := f.AddOp(e, ssa.OpLoad, h)
 
-	// Re-armed from the reserve: 16 bytes fit exactly, the byte grows it.
+	// The retained buffer already spans 33 bytes, so these 17 fit without a
+	// grow; the grow paths are covered by the pushes above and by
+	// TestAsmRunBufPushU64's sixteen-push doubling.
 	callOp(f, e, "buf_push", h, constStr(f, e, "0123456789ABCDEF"))
 	callOp(f, e, "buf_push_byte", h, constOp(f, e, 'Z'))
 	s2 := callPtrOp(f, e, "buf_take", h)
@@ -86,7 +94,8 @@ func TestAsmRunStrBuilder(t *testing.T) {
 		f.AddOp(e, ssa.OpEq, len1, constOp(f, e, 13)),
 		f.AddOp(e, ssa.OpEq, callOp(f, e, "__str_len", s1), constOp(f, e, 33)),
 		callOp(f, e, "__str_eq", s1, constStr(f, e, "Hello, world!0123456789ABCDEFGHIJ")),
-		f.AddOp(e, ssa.OpEq, s1, data),
+		f.AddOp(e, ssa.OpNe, s1, data),
+		f.AddOp(e, ssa.OpEq, dataAfterTake, data),
 		f.AddOp(e, ssa.OpEq, lenAfterTake, constOp(f, e, 0)),
 		callOp(f, e, "__str_eq", s2, constStr(f, e, "0123456789ABCDEFZ")),
 		f.AddOp(e, ssa.OpEq, callOp(f, e, "__str_len", s3), constOp(f, e, 0)),
@@ -99,7 +108,7 @@ func TestAsmRunStrBuilder(t *testing.T) {
 
 	want := 1<<len(bits) - 1
 	if got := assembleRunModule(t, map[string]*ssa.Func{"main": f}, "main", 8, nil); got != want {
-		t.Errorf("exit=%d (bits: len 13, take len 33, take bytes, take is the buffer, empty after take, "+
-			"re-arm+byte grow, empty take), want %d", got, want)
+		t.Errorf("exit=%d (bits: len 13, take len 33, take bytes, take is NOT the buffer, "+
+			"builder kept its buffer, empty after take, push after take, empty take), want %d", got, want)
 	}
 }
