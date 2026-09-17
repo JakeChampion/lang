@@ -64,7 +64,7 @@ const STDLIB_GROUPS = [
   ["Files, I/O & time", ["async", "cli", "dotenv", "io", "io_buffered",
     "log", "path", "signal", "stream", "time"]],
   ["Networking", ["fetch", "headers", "http", "platform", "tcp"]],
-  ["Testing", ["fuzz", "mock_platform", "sim", "test"]],
+  ["Testing", ["bench", "fuzz", "mock_platform", "sim", "test"]],
   ["WebAssembly", ["wasm_component", "wasm_convert", "wasm_encode",
     "wasm_imports", "wasm_inst", "wasm_leb128", "wasm_memory",
     "wasm_module", "wasm_numeric", "wasm_sections"]],
