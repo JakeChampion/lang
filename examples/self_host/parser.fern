@@ -14455,7 +14455,10 @@ function dl_hoist_stmt(st: ast.Stmt, want: string[], nested: boolean): DeferHois
             var one: ast.Stmt[] = [ast.StmtAssign { ...a, value: ar.expr }];
             return DeferHoist { stmts: one, decls: ar.decls };
         },
-        _ => {}
+        ast.StmtBreak(_) => {},
+        ast.StmtContinue(_) => {},
+        ast.StmtUnknown(_) => {},
+        ast.StmtDefer(_) => {}
     }
     var same: ast.Stmt[] = [st];
     var none: ast.Stmt[] = [];
@@ -14477,19 +14480,13 @@ function dl_hoist_match(m: ast.StmtMatch, want: string[]): DeferHoist {
 }
 
 function dl_hoist_expr(e: ast.Expr, want: string[]): DeferHoistExpr {
-    match (e) {
-        ast.ExprCall(c) => {
-            if (is_value_block(c)) {
-                match (c.callee) {
-                    ast.ExprLambda(l) => {
-                        var vb: DeferHoist = dl_hoist_stmts(l.body, want, true);
-                        return DeferHoistExpr { expr: dl_vb_rebuild(c, vb.stmts), decls: vb.decls };
-                    },
-                    _ => {}
-                }
+    if let ast.ExprCall(c) = e {
+        if (is_value_block(c)) {
+            if let ast.ExprLambda(l) = c.callee {
+                var vb: DeferHoist = dl_hoist_stmts(l.body, want, true);
+                return DeferHoistExpr { expr: dl_vb_rebuild(c, vb.stmts), decls: vb.decls };
             }
-        },
-        _ => {}
+        }
     }
     var kids: ast.Expr[] = dl_expr_kids(e);
     var none: ast.Stmt[] = [];
