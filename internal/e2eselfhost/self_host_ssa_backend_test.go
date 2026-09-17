@@ -269,6 +269,40 @@ function main(): i32 {
     return (acc % 251) as i32;
 }
 `},
+	// The host floor: env, read_file and stat through their Fern helpers on
+	// the stack ABI, whose bodies use the raw syscalls, the scratch buffer,
+	// the string box stamp and the width loads; monotonic_ns with no
+	// operand; exit as the raw syscall. The helper bodies are pinned too, so
+	// the syscall sequence itself goes through the backend on every target,
+	// including the Darwin rewrite of its number register.
+	{name: "host_calls", viaSSA: []string{"probe_env", "probe_fs", "probe_clock", "main", "__fern_env", "__fern_read_file", "__fern_stat"}, src: `
+import "std/i32";
+function probe_env(): i32 {
+    var n: i32 = 0;
+    match (env("FERN_SSA_HOST_PROBE_UNSET")) { Some(v) => { n = n + 100; }, None => { n = n + 1; } }
+    match (env("PATH")) { Some(v) => { if (v.len() > 0) { n = n + 2; } }, None => { n = n + 200; } }
+    return n;
+}
+function probe_fs(path: string): i32 {
+    var n: i32 = 0;
+    match (read_file(path)) { Ok(s) => { n = n + 300; }, Err(e) => { n = n + 4; } }
+    match (stat("/")) { Ok(st) => { n = n + 8; }, Err(e) => { n = n + 400; } }
+    match (stat(path)) { Ok(st) => { n = n + 500; }, Err(e) => { n = n + 16; } }
+    return n;
+}
+function probe_clock(): i32 {
+    var a: i64 = monotonic_ns();
+    var b: i64 = monotonic_ns();
+    if (a > 0 && b >= a) { return 32; }
+    return 600;
+}
+function main(): i32 {
+    var n: i32 = probe_env() + probe_fs("/nonexistent/fern/ssa/host/probe") + probe_clock();
+    print("host " + n.to_string() + "\n");
+    exit(n % 100);
+    return 7;
+}
+`},
 	// A mixed module: main and the string helpers keep the stack machine, the
 	// integer functions go through the SSA backend, and both call each other
 	// through the shared stack ABI.
