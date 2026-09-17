@@ -585,6 +585,24 @@ const (
 	readlineBufSym = "__ssa_readline_buf"
 	readlineBytes  = 4096
 
+	// strBlockBytes is the byte overhead of a string block over its length:
+	// the rc word (4), the length word (4), and the trailing NUL (1). Every
+	// site that allocates a string and every site that frees one must use
+	// this same number, because __alloc and __free derive the size CLASS from
+	// it and a block pushed onto one class is only ever handed back out from
+	// that class.
+	//
+	// Two conventions used to coexist — most producers allocated len+9 while
+	// __fern_str_dec freed len+8, and four producers allocated len+8. At most
+	// lengths the two round to the same 16-byte class and the disagreement
+	// cancels. Exactly where len+9 lands on a class boundary it does not: the
+	// block is pushed onto a class nothing ever requests, so the freelist
+	// stops recycling and the bump cursor runs away. A read_line loop over
+	// 8,000 lines of one such length allocated 16,002 blocks and reused NONE
+	// of them, growing the heap 16 bytes a line with a constant live set
+	// (#9558).
+	strBlockBytes = 9
+
 	// The FERN_LEAKCHECK census (#5362 slice 1, #8698 on this backend). Every
 	// allocation either moves the bump cursor — the guard every bump site calls
 	// counts those — or pops the freelist, which __alloc counts here; __free
@@ -2820,7 +2838,7 @@ func emitHostnameHelper(w func(string, ...any)) {
 	w("\tadd x10, x10, #1")
 	w("\tb .Lssa_hn_slen")
 	w(".Lssa_hn_alloc:")
-	emitAllocBlock(w, "x13", "x10", 9) // header(8) + len + NUL(1)
+	emitAllocBlock(w, "x13", "x10", strBlockBytes) // header(8) + len + NUL(1)
 	w("\tmov w14, #1")
 	w("\tstr w14, [x13]")     // rc = 1
 	w("\tstr w10, [x13, #4]") // len
@@ -2907,7 +2925,7 @@ func emitGetcwdHelper(w func(string, ...any)) {
 // data@base+8, +NUL), an __alloc, returned in x0. `lp` prefixes
 // the local labels so both can be emitted into one object.
 func emitStrFromBytesTail(w func(string, ...any), lp string) {
-	emitAllocBlock(w, "x13", "x10", 9) // header(8) + len + NUL(1)
+	emitAllocBlock(w, "x13", "x10", strBlockBytes) // header(8) + len + NUL(1)
 	w("\tmov w14, #1")
 	w("\tstr w14, [x13]")     // rc = 1
 	w("\tstr w10, [x13, #4]") // len
@@ -4048,7 +4066,7 @@ func emitEnvironHelper(w func(string, ...any)) {
 	w("\tadd x12, x12, #1")
 	w("\tb .Lssa_environ_slen")
 	w(".Lssa_environ_slen_done:")
-	emitAllocBlock(w, "x5", "x12", 9)
+	emitAllocBlock(w, "x5", "x12", strBlockBytes)
 	w("\tmov w6, #1")
 	w("\tstr w6, [x5]")      // rc = 1
 	w("\tstr w12, [x5, #4]") // len
@@ -4131,7 +4149,7 @@ func emitReadLineBody(w func(string, ...any), name, sfx string, fd int) {
 	w(".Lssa_rrl_done%s:", sfx)
 	w("\tcbz x20, .Lssa_rrl_none%s", sfx) // no bytes → None (EOF)
 	// A single-word rc string of x20 bytes (+ NUL), the line copied in.
-	emitAllocBlock(w, "x4", "x20", 9)
+	emitAllocBlock(w, "x4", "x20", strBlockBytes)
 	w("\tmov w7, #1")
 	w("\tstr w7, [x4]")      // rc = 1
 	w("\tstr w20, [x4, #4]") // len = bytes read
@@ -5308,11 +5326,11 @@ func emitStrAppendHelper(w func(string, ...any)) {
 	w("\tldur w4, [x1, #-4]") // lb
 	w("\tadd x5, x3, x4")     // total, in 64 bits
 	w("\tlsr x6, x5, #31")
-	w("\tcbnz x6, .Lssa_strapp_copy") // __str_concat aborts on it
-	w("\tadd x6, x3, #8")             // the request the block was at least allocated at
+	w("\tcbnz x6, .Lssa_strapp_copy")     // __str_concat aborts on it
+	w("\tadd x6, x3, #%d", strBlockBytes) // the request the block was at least allocated at
 	// x6 becomes the class's extent.
 	emitFreelistClass(w, "strapp", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13", ".Lssa_strapp_copy")
-	w("\tadd x7, x5, #23")
+	w("\tadd x7, x5, #%d", strBlockBytes+15)
 	w("\tand x7, x7, #-16") // the grown request, 16-rounded
 	w("\tcmp x7, x6")
 	w("\tb.hi .Lssa_strapp_copy")
@@ -5354,7 +5372,7 @@ func emitStrConcatHelper(w func(string, ...any)) {
 	w("\tadd x4, x2, x3")
 	w("\tlsr x5, x4, #31")
 	w("\tcbnz x5, .Lssa_strcat_len_overflow")
-	emitAllocBlock(w, "x6", "x4", 8) // total + the header
+	emitAllocBlock(w, "x6", "x4", strBlockBytes) // total + the header + NUL
 	w("\tmov w7, #1")
 	w("\tstr w7, [x6]")     // rc = 1
 	w("\tstr w4, [x6, #4]") // len = total
@@ -5396,9 +5414,9 @@ func emitStrDecHelper(w func(string, ...any)) {
 	w(".Lssa_strdec_free:")
 	w("\tstp x29, x30, [sp, #-32]!")
 	w("\tstr x0, [sp, #16]")
-	w("\tldur w1, [x0, #-4]") // len
-	w("\tadd x1, x1, #8")     // plus the header
-	w("\tsub x0, x0, #8")     // base
+	w("\tldur w1, [x0, #-4]")             // len
+	w("\tadd x1, x1, #%d", strBlockBytes) // the size the producers allocated
+	w("\tsub x0, x0, #8")                 // base
 	w("\tbl %s", fnLabel("__free"))
 	w("\tldr x0, [sp, #16]")
 	w("\tldp x29, x30, [sp], #32")
@@ -6071,7 +6089,7 @@ func emitArgsHelper(w func(string, ...any)) {
 	w("\tb .Lssa_args_slen")
 	w(".Lssa_args_slen_done:")
 	// A single-word string: 8-byte header + len bytes + 1 NUL.
-	emitAllocBlock(w, "x5", "x12", 9)
+	emitAllocBlock(w, "x5", "x12", strBlockBytes)
 	w("\tmov w6, #1")
 	w("\tstr w6, [x5]")      // rc = 1
 	w("\tstr w12, [x5, #4]") // len
@@ -6143,7 +6161,7 @@ func emitEnvHelper(w func(string, ...any)) {
 	w("\tb .Lssa_env_slen")
 	w(".Lssa_env_slen_done:")
 	// Allocate a single-word rc string of the value: rc=1@base, len@base+4, data@base+8, +1 NUL.
-	emitAllocBlock(w, "x13", "x10", 9) // header(8) + len + NUL(1)
+	emitAllocBlock(w, "x13", "x10", strBlockBytes) // header(8) + len + NUL(1)
 	w("\tmov w14, #1")
 	w("\tstr w14, [x13]")     // rc = 1
 	w("\tstr w10, [x13, #4]") // len
@@ -6281,8 +6299,8 @@ func emitIoErrorHelper(w func(string, ...any)) {
 	w("\tsubs w4, w4, #1")
 	w("\tb.ne .Lssa_ioe_prefix")
 	w("\tadd x7, sp, #32")
-	w("\tsub x7, x7, x2")            // x7 = byte length
-	emitAllocBlock(w, "x4", "x7", 9) // 8 header + bytes + NUL
+	w("\tsub x7, x7, x2")                        // x7 = byte length
+	emitAllocBlock(w, "x4", "x7", strBlockBytes) // 8 header + bytes + NUL
 	w("\tmov w5, #1")
 	w("\tstr w5, [x4]")     // rc = 1
 	w("\tstr w7, [x4, #4]") // len
@@ -6590,7 +6608,7 @@ func emitReadFileHelper(w func(string, ...any)) {
 	// byte catches a file longer than its hint.
 	w("\tadd x22, x22, #1")
 	// A single-word rc string of cap bytes (+ NUL).
-	emitAllocBlock(w, "x4", "x22", 9) // 8 header + cap + 1 NUL
+	emitAllocBlock(w, "x4", "x22", strBlockBytes) // 8 header + cap + 1 NUL
 	w("\tmov w7, #1")
 	w("\tstr w7, [x4]")    // rc = 1
 	w("\tadd x21, x4, #8") // x21 = string data ptr
@@ -6607,7 +6625,7 @@ func emitReadFileHelper(w func(string, ...any)) {
 	w("\tb.hs .Lssa_rf_grow")
 	w("\tmov x24, #4096")
 	w(".Lssa_rf_grow:")
-	emitAllocBlock(w, "x4", "x24", 9)
+	emitAllocBlock(w, "x4", "x24", strBlockBytes)
 	w("\tmov w7, #1")
 	w("\tstr w7, [x4]")   // rc = 1
 	w("\tadd x5, x4, #8") // new string data ptr
@@ -7056,7 +7074,7 @@ func emitReadLinkHelper(w func(string, ...any)) {
 	w(".Lssa_rlnk_fits:")
 	// The target string in its own rc block: {rc@0, len@4, data@8},
 	// data NUL-terminated so a C consumer can read it back.
-	emitAllocBlock(w, "x4", "x21", 9)
+	emitAllocBlock(w, "x4", "x21", strBlockBytes)
 	w("\tmov w6, #1")
 	w("\tstr w6, [x4]")      // rc = 1
 	w("\tstr w21, [x4, #4]") // len
@@ -7862,7 +7880,7 @@ func emitTempDirHelper(w func(string, ...any)) {
 	w("\tb .Lssa_td_ret")
 	w(".Lssa_td_ok:")
 	// Allocate a single-word rc string of path_len bytes (+ NUL).
-	emitAllocBlock(w, "x4", "x21", 9)
+	emitAllocBlock(w, "x4", "x21", strBlockBytes)
 	w("\tmov w7, #1")
 	w("\tstr w7, [x4]")      // rc = 1
 	w("\tstr w21, [x4, #4]") // len = path_len
@@ -8079,7 +8097,7 @@ func emitReadDirLike(w func(string, ...any), name string, lb string, skipDots bo
 	w("\tb %s", L("p2sl"))
 	w("%s:", L("p2sd"))
 	// A single-word rc string: 8-byte header + len + NUL.
-	emitAllocBlock(w, "x4", "x12", 9)
+	emitAllocBlock(w, "x4", "x12", strBlockBytes)
 	w("\tmov w7, #1")
 	w("\tstr w7, [x4]")      // rc = 1
 	w("\tstr w12, [x4, #4]") // len
@@ -9440,8 +9458,8 @@ func emitStrbufTakeHelper(w func(string, ...any)) {
 	w("%s:", fnLabel("strbuf_take"))
 	w("\tadrp x1, %s", strbufCtlSym)
 	w("\tadd x1, x1, #:lo12:%s", strbufCtlSym)
-	w("\tldr x2, [x1, #8]")          // len
-	emitAllocBlock(w, "x4", "x2", 8) // len + the header
+	w("\tldr x2, [x1, #8]")                      // len
+	emitAllocBlock(w, "x4", "x2", strBlockBytes) // len + the header + NUL
 	w("\tmov w7, #1")
 	w("\tstr w7, [x4]")     // rc = 1
 	w("\tstr w2, [x4, #4]") // len
@@ -9764,8 +9782,8 @@ func emitStrSliceHelper(w func(string, ...any)) {
 	w("\tb.gt .Lssa_strslice_trap")
 	w("\tcmp x1, x2")
 	w("\tb.gt .Lssa_strslice_trap")
-	w("\tsub w4, w2, w1")            // new_len = high - low
-	emitAllocBlock(w, "x6", "x4", 8) // new_len + the header
+	w("\tsub w4, w2, w1")                        // new_len = high - low
+	emitAllocBlock(w, "x6", "x4", strBlockBytes) // new_len + the header + NUL
 	w("\tmov w7, #1")
 	w("\tstr w7, [x6]")     // rc = 1
 	w("\tstr w4, [x6, #4]") // len = new_len
@@ -9790,8 +9808,8 @@ func emitStrSliceHelper(w func(string, ...any)) {
 func emitStringFromBytesHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("string_from_bytes_unchecked"))
-	w("\tldur w1, [x0, #-4]")        // w1 = byte length of bs (zero-extends into x1)
-	emitAllocBlock(w, "x3", "x1", 8) // len + the header
+	w("\tldur w1, [x0, #-4]")                    // w1 = byte length of bs (zero-extends into x1)
+	emitAllocBlock(w, "x3", "x1", strBlockBytes) // len + the header + NUL
 	w("\tmov w4, #1")
 	w("\tstr w4, [x3]")     // rc = 1
 	w("\tstr w1, [x3, #4]") // len
