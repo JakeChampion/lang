@@ -32,7 +32,16 @@ var leakcheckCounts = regexp.MustCompile(`leakcheck: allocs=(\d+) frees=(\d+) li
 //     inline fast path claims. Without it the allocs threshold below cannot
 //     pin the census's inline gate: every allocation would bypass that path
 //     anyway, so removing the gate would not move a single number.
-const x86SSALeakcheckSrc = `function main(): i32 {
+//   - `P { a: i, b: 2 }` is a struct literal, and a struct box is freed by
+//     __fern_box_free rather than __fern_arr_dec or __fern_str_dec. It is here
+//     because the first version of this fixture had neither a struct nor any
+//     other box, so nothing exercised the census's gate on the inline PUSH —
+//     and #9618 shipped with that half of the gate reaching only the renderer,
+//     leaving the helper-reachability scan believing the push was inlined. Any
+//     program with a struct literal then refused to build under the census.
+const x86SSALeakcheckSrc = `struct P { a: i32, b: i32 }
+
+function main(): i32 {
     var n: i32 = 0;
     var i: i32 = 0;
     var base: string = "abcdefghij";
@@ -40,7 +49,8 @@ const x86SSALeakcheckSrc = `function main(): i32 {
         if (i >= 500) { break; }
         var s: string = base + base;
         var xs: i32[] = [1, 2, 3];
-        n = (n + s.len() + xs[0]) % 101;
+        var p: P = P { a: i, b: 2 };
+        n = (n + s.len() + xs[0] + p.a + p.b) % 101;
         i = i + 1;
     }
     return n % 7;
@@ -50,7 +60,9 @@ const x86SSALeakcheckSrc = `function main(): i32 {
 // The same work, left through the exit() builtin instead of returning. exit()
 // bypasses _start's epilogue, so it carries its own call to the report: a
 // program leaving this way would otherwise print no census at all.
-const x86SSALeakcheckExitSrc = `function main(): i32 {
+const x86SSALeakcheckExitSrc = `struct P { a: i32, b: i32 }
+
+function main(): i32 {
     var n: i32 = 0;
     var i: i32 = 0;
     var base: string = "abcdefghij";
@@ -58,7 +70,8 @@ const x86SSALeakcheckExitSrc = `function main(): i32 {
         if (i >= 500) { break; }
         var s: string = base + base;
         var xs: i32[] = [1, 2, 3];
-        n = (n + s.len() + xs[0]) % 101;
+        var p: P = P { a: i, b: 2 };
+        n = (n + s.len() + xs[0] + p.a + p.b) % 101;
         i = i + 1;
     }
     exit(n % 7);
