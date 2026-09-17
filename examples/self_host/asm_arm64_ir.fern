@@ -1666,7 +1666,7 @@ function ssa_load_params(f: ssa.SFunc, reg_of: i32[], s: asmcore.EmitState): asm
 // most of them never read; prune_dead takes those out before the allocator
 // sees them.
 function emit_ssa_function_arm64(lifted: ssa.SFunc, label_name: string, ops: ir.Op[], s: asmcore.EmitState): asmcore.EmitState {
-    var f: ssa.SFunc = ssa.prune_dead(lifted);
+    var f: ssa.SFunc = ssa.prune_dead(ssa.prune_trivial_phis(lifted));
     var reg_of: i32[] = ssa.regalloc_linear(f, ssa_nregs(), ssa_nsaved(), 0, false);
     var lp: string = ".Lssa_" + asmcore.sanitize_label(label_name) + "_";
     s = s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n");
