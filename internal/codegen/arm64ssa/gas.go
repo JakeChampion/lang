@@ -4279,6 +4279,9 @@ var heapUsingHelpers = map[string]bool{
 	"env":                             true,
 	"write_file":                      true,
 	"write_file_exec":                 true,
+	"environ":                         true,
+	"getgroups":                       true,
+	"read_line":                       true,
 	"read_file":                       true,
 	"read_file_bytes":                 true,
 	"remove_file":                     true,
@@ -6278,12 +6281,27 @@ func emitWriteFileBody(w func(string, ...any), name, sfx string, mode, fixup int
 	w("\tsvc #0")
 	w("\ttbnz x0, #63, .Lssa_wf_err%s", sfx) // fd < 0 → error
 	w("\tmov x22, x0")                       // fd
-	// write(fd, content_data, content_len).
+	// Write until the whole payload is out. One write(2) is not enough: a
+	// short write is legal on any descriptor, and treating it as the whole
+	// payload reports Ok for a file only partly written. An error ends the
+	// call as Err, as it does on the flat backend.
+	//
+	// x9 / x10 rather than more callee-saved registers: a Linux syscall
+	// returns in x0 and leaves x1-x30 alone, and nothing here calls out.
+	w("\tldur w9, [x20, #-4]") // total bytes
+	w("\tmov x10, #0")         // written so far
+	w(".Lssa_wf_loop%s:", sfx)
+	w("\tcmp x10, x9")
+	w("\tb.ge .Lssa_wf_wrote%s", sfx)
 	w("\tmov x0, x22")
-	w("\tmov x1, x20")
-	w("\tldur w2, [x20, #-4]")
+	w("\tadd x1, x20, x10")
+	w("\tsub x2, x9, x10")
 	w("\tmov x8, #64") // write
 	w("\tsvc #0")
+	w("\ttbnz x0, #63, .Lssa_wf_werr%s", sfx)
+	w("\tadd x10, x10, x0")
+	w("\tb .Lssa_wf_loop%s", sfx)
+	w(".Lssa_wf_wrote%s:", sfx)
 	if fixup != 0 {
 		w("\tmov x0, x22")
 		w("\tmov x1, #%d", fixup)
@@ -6294,7 +6312,7 @@ func emitWriteFileBody(w func(string, ...any), name, sfx string, mode, fixup int
 	w("\tmov x0, x22")
 	w("\tmov x8, #57") // close
 	w("\tsvc #0")
-	// return None box {rc=1, tag=1}.
+	// return Ok(()): a box of {rc=1, tag=0, unit payload}.
 	w("\tadrp x3, %s", heapPtrSym)
 	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
 	w("\tldr x4, [x3]")
@@ -6309,6 +6327,14 @@ func emitWriteFileBody(w func(string, ...any), name, sfx string, mode, fixup int
 	w("\tstr wzr, [x0]")     // tag = 0 (Ok)
 	w("\tstr xzr, [x0, #8]") // unit payload
 	w("\tb .Lssa_wf_ret%s", sfx)
+	w(".Lssa_wf_werr%s:", sfx)
+	// The write failed; close the fd so the error path does not leak it, then
+	// answer Err with the write's errno rather than the open's.
+	w("\tmov x9, x0") // hold -errno across the close
+	w("\tmov x0, x22")
+	w("\tmov x8, #57") // close
+	w("\tsvc #0")
+	w("\tmov x0, x9")
 	w(".Lssa_wf_err%s:", sfx)
 	w("\tneg x0, x0") // errno = -fd
 	w("\tmov x1, x19")
@@ -7189,7 +7215,7 @@ func emitRemoveFileHelper(w func(string, ...any)) {
 	w("\tmov x8, #35") // unlinkat
 	w("\tsvc #0")
 	w("\ttbnz x0, #63, .Lssa_rmf_err") // < 0 → error
-	// return None box {rc=1, tag=1}.
+	// return Ok(()): a box of {rc=1, tag=0, unit payload}.
 	w("\tadrp x3, %s", heapPtrSym)
 	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
 	w("\tldr x4, [x3]")

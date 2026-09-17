@@ -28,6 +28,14 @@ const arm64SSACLIHelpersSource = `function main(): i32 {
 				Err(_) => { return 92; },
 				Ok(_) => {}
 			}
+			// /dev/full opens fine and fails every write with ENOSPC, which
+			// is the only shape that separates a checked write result from a
+			// discarded one — a path that cannot be opened at all fails at
+			// openat, which was always checked.
+			match (write_file("/dev/full", line)) {
+				Ok(_) => { return 99; },
+				Err(_) => {}
+			}
 		}
 	}
 	var xs: i32[] = [1, 2, 3];
@@ -54,9 +62,6 @@ const arm64SSACLIHelpersSource = `function main(): i32 {
 
 func TestArm64SSACLIRuntimeHelpers(t *testing.T) {
 	qemu := arm64QemuOrEmpty(t)
-	if qemu == "" {
-		t.Skip("qemu-aarch64 is not on PATH")
-	}
 	fern := buildFernCLI(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "helpers.fern")
@@ -82,7 +87,10 @@ func TestArm64SSACLIRuntimeHelpers(t *testing.T) {
 		if err := os.WriteFile(written, []byte("stale"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		cmd := exec.Command(qemu, bin, written)
+		cmd := exec.Command(bin, written)
+		if qemu != "" {
+			cmd = exec.Command(qemu, bin, written)
+		}
 		cmd.Stdin = strings.NewReader("hello\n")
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
@@ -129,7 +137,11 @@ func TestArm64SSACLIRuntimeHelpers(t *testing.T) {
 const arm64SSAProcessHelpersSource = `function main(): i32 {
 	if (getuid() < 0) { return 80; }
 	if (getgid() < 0) { return 81; }
-	if (getgroups().len() < 0) { return 82; }
+	// Two calls must agree: the second takes the memoised cell, so a cache
+	// that stored the wrong pointer, or a widening pass that ran twice over
+	// the same buffer, answers a different length here.
+	var g0: i64[] = getgroups();
+	if (getgroups().len() != g0.len()) { return 82; }
 	var env: string[] = environ();
 	if (env.len() != 2) { return 83; }
 	if (env[0].len() == 0) { return 84; }
@@ -144,9 +156,6 @@ const arm64SSAProcessHelpersSource = `function main(): i32 {
 
 func TestArm64SSAProcessHelpers(t *testing.T) {
 	qemu := arm64QemuOrEmpty(t)
-	if qemu == "" {
-		t.Skip("qemu-aarch64 is not on PATH")
-	}
 	fern := buildFernCLI(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "process.fern")
@@ -159,7 +168,10 @@ func TestArm64SSAProcessHelpers(t *testing.T) {
 		if o, err := exec.Command(fern, "-target", "arm64-linux", "-backend", backend, "-o", bin, src).CombinedOutput(); err != nil {
 			t.Fatalf("compile -backend %s: %v\n%s", backend, err, o)
 		}
-		cmd := exec.Command(qemu, bin)
+		cmd := exec.Command(bin)
+		if qemu != "" {
+			cmd = exec.Command(qemu, bin)
+		}
 		cmd.Env = []string{"FERN_HELPER_PROBE=1", "PATH=/usr/bin"}
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
