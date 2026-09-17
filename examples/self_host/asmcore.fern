@@ -2860,8 +2860,11 @@ pub function rt_src_string_from_bytes(): string {
     return "function __fern_string_from_bytes(a: i32[]): string { var n: i32 = a.len(); var p: i32 = __raw_alloc(n); var i: i32 = 0; while (i < n) { __raw_store8(p, i, a[i]); i = i + 1; } return __raw_string(p, n); }";
 }
 
+// No str_concat edge: the body sizes and fills one exact-size block with no
+// string `+` in it, so the heap is the only runtime it reaches.
+// runtime_need_deps declares the same edge for close_needs.
 pub function (s: EmitState) mark_arr_str_join(): EmitState {
-    return s.need("heap").need("str_concat").need("arr_str_join");
+    return s.need("heap").need("arr_str_join");
 }
 
 pub function (s: EmitState) mark_arr_i32_sum(): EmitState {
@@ -3117,14 +3120,21 @@ pub function rt_src_str_cmp(): string {
     return "function __fern_str_cmp(a: string, b: string): i32 { var la: i32 = a.len(); var lb: i32 = b.len(); var n: i32 = la; if (lb < n) { n = lb; } var i: i32 = 0; while (i < n) { var ca: i32 = a[i]; var cb: i32 = b[i]; if (ca != cb) { return ca - cb; } i = i + 1; } return la - lb; }";
 }
 
-// rt_src_arr_str_join backs `xs.join(sep)` on string arrays (#2649). Builds the
-// joined string with the `+` operator (which lowers to __fern_str_concat — a
-// declared dep via mark_arr_str_join, so its body is present). Written as an
-// always-fresh accumulator (`var r = ""` then concat) rather than aliasing
-// xs[0], so the returned string is a normal owned value with clean Perceus RC
-// (no borrowed array element escaping as the result). Empty array → "".
+// rt_src_arr_str_join backs `xs.join(sep)` on string arrays (#2649). TWO PASSES
+// OVER AN EXACT-SIZE BUFFER, which is native's `__method_Array_join` algorithm:
+// sum the lengths, allocate once, memcpy each piece in. The result is a fresh
+// __raw_string, so it is still a normal owned value with clean Perceus RC and
+// still does not alias xs[0] — the property the accumulator form was written
+// for. Empty array → "".
+//
+// It used to build the result with `r = r + xs[i]`, which recopies the whole
+// prefix on every step: O(total²), the hazard native's own join comment names.
+// `std/io.read_all_stdin` collects chunks and joins them once, so EVERY utility
+// that reads standard input paid it — `tac` on a 62 MiB pipe could not finish
+// in 60 s against native's 497 ms, with __fern_str_concat 77% of the run and
+// growing 4.2x per doubling of the input. This is #9077's string half.
 pub function rt_src_arr_str_join(): string {
-    return "function __fern_arr_str_join(xs: string[], sep: string): string { var n: i32 = xs.len(); var r: string = \"\"; var i: i32 = 0; while (i < n) { if (i > 0) { r = r + sep; } r = r + xs[i]; i = i + 1; } return r; }";
+    return "function __fern_arr_str_join(xs: string[], sep: string): string { var n: i32 = xs.len(); if (n == 0) { return \"\"; } var ls: i32 = sep.len(); var total: i32 = ls * (n - 1); var i: i32 = 0; while (i < n) { total = total + xs[i].len(); i = i + 1; } var p: i32 = __raw_alloc(total); var off: i32 = 0; var j: i32 = 0; while (j < n) { if (j > 0) { __memcpy(__raw_addr(p, off), __raw_data(sep), ls); off = off + ls; } var e: string = xs[j]; var le: i32 = e.len(); __memcpy(__raw_addr(p, off), __raw_data(e), le); off = off + le; j = j + 1; } return __raw_string(p, total); }";
 }
 
 // rt_src_str_search backs the string-search predicates (#2649): all three are
@@ -4920,7 +4930,8 @@ pub function infer_expr_type(e: ast.Expr, s: EmitState): Ty {
             }
             return field_type_tag(fa.field, s);
         },
-        ast.ExprUnknown(_) => { return ty_unknown(); }
+        ast.ExprUnknown(_) => { return ty_unknown(); },
+        ast.ExprZero(z) => { return ty_from_name(z.type_name); }
     }
     return ty_unknown();
 }
@@ -5246,8 +5257,8 @@ pub function runtime_need_deps(name: string): string[] {
         return dlcm;
     }
     if (name == "arr_str_join") {
-        // Joins with a separator via __fern_str_concat (which itself needs heap).
-        var d4: string[] = ["heap", "str_concat"];
+        // Sizes and fills one exact-size block, so the heap is all it reaches.
+        var d4: string[] = ["heap"];
         return d4;
     }
     if (name == "str_lines") {
@@ -5604,7 +5615,8 @@ function unknown_error_expr_at(e: ast.Expr, own a: UnkScan): UnkScan {
         ast.ExprSlice(_) => { return a; },
         ast.ExprStructLit(_) => { return a; },
         ast.ExprFieldAccess(_) => { return a; },
-        ast.ExprLambda(_) => { return a; }
+        ast.ExprLambda(_) => { return a; },
+        ast.ExprZero(_) => { return a; }
     }
     return a;
 }

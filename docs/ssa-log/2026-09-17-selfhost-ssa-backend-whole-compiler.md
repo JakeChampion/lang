@@ -183,13 +183,16 @@ needs, so the table still names `%rax` and `%rcx`.
 
 ## The optimiser on the lifted function, measured
 
-The backend runs `ssa.prune_dead` and nothing else. Calling `ssa.optimize`
-on the lifted function instead fails the backend gate on `control_flow`
-(exit 169 against the stack machine's 171) and `host_calls` (exit 63
-against 58, and differing stdout).
-
-Running each pass of the pipeline alone against the same gate isolates it
-to one:
+Superseded by `2026-09-17-the-optimiser-costs-more-than-it-saves.md`,
+which has the whole measurement. The short version: the reading below is
+right that only `const_fold` fails the gate, and wrong about why. The
+cause is not the width and sign `eval_binary` cannot see; it is that
+`eval_binary`, `simplify_binary` and `is_commutative` all switch on the
+retired frontend's SOURCE operators, so on a lifted function `const_fold`
+folds every binary to the trailing 0 and `algebraic_simplify` is inert.
+Enabling the passes that do work costs 22% of compile time for 1.2% of
+output, so none of it is worth taking until the passes stop rebuilding
+every function unconditionally.
 
 | pass | gate |
 |---|---|
@@ -199,17 +202,6 @@ to one:
 | `cse` | clean |
 | `branch_simplify` | clean |
 | `merge_blocks` | clean |
-
-`const_fold` folds a `binary` through `eval_binary(op, l, r)`, which takes
-two i32s and returns one. The lifted binaries carry their width and
-signedness in the instruction's `imm`, which that signature cannot see, so
-a 32-bit or unsigned op folds at 64-bit signed width and the constant is
-wrong. The other five passes are structurally conservative: each keys off
-kinds 1, 2, 9 and 10 and leaves every production kind alone.
-
-So enabling the optimiser here is one pass's worth of work, not the
-pipeline's: `eval_binary` needs the width and the sign, and `const_fold`
-needs to pass them.
 
 ## Traps
 

@@ -17,11 +17,12 @@ import (
 // with one exception hard-coded inline: `len`. That default is the right way
 // round — a method returning an element, a slice, or the array itself hands out
 // a lasting alias — but `join` belongs on the other side of it.
-// __fern_arr_str_join walks the elements building a fresh accumulator with `+`
-// and stores nothing, on every backend: the register one is Fern source
-// (`asmcore.rt_src_arr_str_join`) written as `var r = ""` then concat precisely
-// so it cannot alias, and wasm's `$__fern_str_join` copies bytes into a freshly
-// boxed result.
+// __fern_arr_str_join reads the elements to size and fill a fresh block and
+// stores nothing, on every backend: the register one is Fern source
+// (`asmcore.rt_src_arr_str_join`), which sums the lengths and memcpy's each
+// piece into one exact-size `__raw_alloc` so the result cannot alias any
+// element, and wasm's `$__fern_str_join` copies bytes into a freshly boxed
+// result.
 //
 // Measured, 400 rounds of the harness below, a pair of compilers from the same
 // commit:

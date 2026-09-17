@@ -167,6 +167,21 @@ function main(): i32 {
     var value: i32 = f(a);
     return value * 10 + a.get();
 }`},
+		// A lifted binding whose type has no zero the source can spell: it
+		// starts at the zero word and the block's assignment overwrites it.
+		{"record_block_binding", `struct P { a: i32 }
+function main(): i32 {
+    var seen: i32 = 1;
+    loop {
+        if (seen == 1) {
+            var v: P = P { a: 2 };
+            defer seen = v.a;
+            v = P { a: 9 };
+        }
+        break;
+    }
+    return seen;
+}`},
 		// No value block at all: a plain `if` body is a block the replay
 		// leaves, and the binding it declares is lifted the same way.
 		{"conditional_block_binding", `function main(): i32 {
