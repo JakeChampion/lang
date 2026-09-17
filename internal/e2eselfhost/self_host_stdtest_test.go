@@ -306,11 +306,8 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		{"http_request_headers_migrated", langSrcAbs(t, "examples/tests/http_request_headers_migrated_test.fern"), ""},
 		{"http_response_headers_migrated", langSrcAbs(t, "examples/tests/http_response_headers_migrated_test.fern"), ""},
 		{"string_prelude_migrated", langSrcAbs(t, "examples/tests/string_prelude_migrated_test.fern"), ""},
-		{"bench", langSrcAbs(t, "examples/tests/bench_test.fern"), "# bench "},
-		// std/bench's own suite (#9592). It is what the FIP experiments
-		// measure with, and they are compiled by both compilers, so the
-		// harness has to hold up under the self-host one too.
-		{"bench_harness", langSrcAbs(t, "examples/tests/bench_harness_test.fern"), ""},
+		{"runner_bench", langSrcAbs(t, "examples/tests/runner_bench_test.fern"), "# bench "},
+		{"bench_module", langSrcAbs(t, "examples/tests/bench_test.fern"), "# Suite: std/bench harness"},
 		{"rel_tol_and_ms_bench", langSrcAbs(t, "examples/tests/rel_tol_and_ms_bench_test.fern"), "# bench "},
 		{"batch8", langSrcAbs(t, "examples/tests/batch8_test.fern"), "# golden file bootstrapped at "},
 		{"process_assertions", langSrcAbs(t, "examples/tests/process_assertions_test.fern"), ""},

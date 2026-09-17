@@ -1,43 +1,238 @@
 import "std/test";
-// examples/tests/bench_test.fern — exercises the bench
-// harness added to std/test.
+import "std/bench";
+import "std/i32";
+import "std/i64";
+import "std/string";
+// examples/tests/bench_test.fern — std/bench, the measurement harness
+// (#9592). The arithmetic is tested over HAND-BUILT reports rather than
+// timed ones: a percentile computed from a run of the clock would assert
+// whatever the machine happened to do, which is the one thing a test must
+// not do. The timed path is exercised separately, for the properties that
+// hold whatever the clock says.
 //
-// `r.bench(name, iter, fn)` runs `fn` repeatedly, emits a
-// TAP comment with min/median/mean/max in microseconds.
-// Always passes. `r.bench_max_us(name, iter, fn, budget)`
-// adds a median-vs-budget regression check.
-//
-// Median (not mean) is the right regression signal — a
-// single GC pause inflates the mean but leaves the median
-// accurate.
+// The allocation figures read 0 under `-interp` — the interpreter has no
+// arena, the documented hole `docs/ALLOCATION-OBSERVABLE.md` describes for
+// both observables — so what is asserted here is the SHAPE of the accounting,
+// and the conformance case `alloc_count_sees_recycling` pins the numbers on
+// the backends that have an allocator.
 
-function workload_tiny(): void {
-    var i: i32 = 0;
-    var sum: i32 = 0;
-    while (i < 100) { sum = sum + i; i = i + 1; }
+// report_of builds a Report with known samples, so every percentile has one
+// right answer.
+function report_of(name: string, samples: i64[], allocs: i64): bench.Report {
+    return bench.Report {
+        name: name,
+        iterations: samples.len(),
+        wall_ns: 1000000i64,
+        samples_ns: samples,
+        allocs: allocs,
+        fresh_bytes: 0 as i64,
+    };
 }
 
-function workload_string_build(): void {
-    var s: string = "";
+function ten_samples(): i64[] {
+    // 10, 20, … 100 — sorted, as `run` leaves them.
+    var out: i64[] = [];
+    var i: i32 = 1;
+    while (i <= 10) {
+        out = out.append((i * 10) as i64);
+        i = i + 1;
+    }
+    return out;
+}
+
+function test_percentiles_are_nearest_rank(): test.TestOutcome {
+    var r: bench.Report = report_of("p", ten_samples(), 0 as i64);
+    // Nearest-rank over ten samples: p50 is the 5th, p95 the 10th.
+    if (r.min_ns() != 10i64) { return test.fail("min " + r.min_ns().to_string()); }
+    if (r.p50_ns() != 50i64) { return test.fail("p50 " + r.p50_ns().to_string()); }
+    if (r.p95_ns() != 100i64) { return test.fail("p95 " + r.p95_ns().to_string()); }
+    if (r.max_ns() != 100i64) { return test.fail("max " + r.max_ns().to_string()); }
+    return test.pass();
+}
+
+// A percentile must always name a sample the run produced, never interpolate
+// one it did not — that is what makes "the p99.9 was 3.4us" a fact about the
+// program rather than about the arithmetic.
+function test_percentile_names_a_real_sample(): test.TestOutcome {
+    var r: bench.Report = report_of("p", [5i64, 7i64, 11i64], 0 as i64);
+    var per: i32 = 0;
+    while (per <= 1000) {
+        var v: i64 = r.percentile_ns(per);
+        if (v != 5i64 && v != 7i64 && v != 11i64) {
+            return test.fail("percentile " + per.to_string() + " invented " + v.to_string());
+        }
+        per = per + 50;
+    }
+    return test.pass();
+}
+
+// An empty report answers 0 rather than indexing off the end of its samples.
+function test_empty_report_is_answerable(): test.TestOutcome {
+    var empty: i64[] = [];
+    var r: bench.Report = bench.Report {
+        name: "empty", iterations: 0, wall_ns: 0 as i64,
+        samples_ns: empty, allocs: 0 as i64, fresh_bytes: 0 as i64,
+    };
+    if (r.p99_ns() != (0 as i64)) { return test.fail("p99 of nothing"); }
+    if (r.mean_ns() != (0 as i64)) { return test.fail("mean of nothing"); }
+    if (r.ops_per_sec() != (0 as i64)) { return test.fail("throughput of nothing"); }
+    if (r.ns_per_op() != (0 as i64)) { return test.fail("cost of nothing"); }
+    if (r.allocs_per_op_milli() != (0 as i64)) { return test.fail("allocs/op of nothing"); }
+    return test.pass();
+}
+
+function test_mean_and_throughput(): test.TestOutcome {
+    var r: bench.Report = report_of("m", ten_samples(), 0 as i64);
+    // (10 + … + 100) / 10 = 55.
+    if (r.mean_ns() != 55i64) { return test.fail("mean " + r.mean_ns().to_string()); }
+    // 10 iterations in 1ms = 10,000 ops/s, 100,000 ns each.
+    if (r.ops_per_sec() != 10000i64) { return test.fail("ops/s " + r.ops_per_sec().to_string()); }
+    if (r.ns_per_op() != 100000i64) { return test.fail("ns/op " + r.ns_per_op().to_string()); }
+    return test.pass();
+}
+
+// Per-op allocation is reported in thousandths so a body that allocates once
+// every few iterations does not round to "allocates nothing" — the reading a
+// strict experiment would take as proof.
+function test_allocs_per_op_does_not_round_to_zero(): test.TestOutcome {
+    var r: bench.Report = report_of("a", ten_samples(), 1i64);
+    if (r.allocs_per_op_milli() != 100i64) {
+        return test.fail("one alloc over ten iterations read " + r.allocs_per_op_milli().to_string());
+    }
+    var none: bench.Report = report_of("a", ten_samples(), 0 as i64);
+    if (none.allocs_per_op_milli() != (0 as i64)) { return test.fail("zero must read zero"); }
+    return test.pass();
+}
+
+function test_json_carries_every_figure(): test.TestOutcome {
+    var r: bench.Report = report_of("json", ten_samples(), 3i64);
+    var j: string = r.to_json();
+    return test.assert_contains_all(j, [
+        "\"name\":\"json\"", "\"iterations\":10", "\"ops_per_sec\":10000",
+        "\"p50_ns\":50", "\"p99_ns\":100", "\"p999_ns\":100",
+        "\"allocs\":3", "\"allocs_per_op_milli\":300", "\"fresh_bytes\":0",
+    ]);
+}
+
+// A name with a quote in it must not break the JSON, and one with a comma must
+// not shift every later CSV column.
+function test_output_escapes_the_name(): test.TestOutcome {
+    var r: bench.Report = report_of("odd\"name", ten_samples(), 0 as i64);
+    if (!r.to_json().contains("odd\\\"name")) { return test.fail("json: " + r.to_json()); }
+    var c: bench.Report = report_of("a,b", ten_samples(), 0 as i64);
+    if (!c.to_csv_row().starts_with("\"a,b\",10,")) { return test.fail("csv: " + c.to_csv_row()); }
+    return test.pass();
+}
+
+function test_csv_row_matches_its_header(): test.TestOutcome {
+    var r: bench.Report = report_of("csv", ten_samples(), 0 as i64);
+    var cols: i32 = bench.csv_header().split(",").len();
+    // The name is quoted and holds no comma here, so a plain split counts the
+    // row's columns.
+    var cells: i32 = r.to_csv_row().split(",").len();
+    if (cols != cells) {
+        return test.fail("header has " + cols.to_string() + " columns, row has " + cells.to_string());
+    }
+    return test.pass();
+}
+
+// summarize reduces repeated runs to their spread: the best, the middle and
+// the worst, so a reader can see whether one run would have been enough.
+function test_summary_spreads_repeated_runs(): test.TestOutcome {
+    var fast: bench.Report = report_of("s", [10i64], 4i64);       // 1 iter / 1ms
+    var slow: bench.Report = bench.Report {
+        name: "s", iterations: 1, wall_ns: 4000000i64,
+        samples_ns: [40i64], allocs: 4i64, fresh_bytes: 0 as i64,
+    };
+    var mid: bench.Report = bench.Report {
+        name: "s", iterations: 1, wall_ns: 2000000i64,
+        samples_ns: [20i64], allocs: 4i64, fresh_bytes: 0 as i64,
+    };
+    var s: bench.Summary = bench.summarize("s", [slow, fast, mid]);
+    if (s.runs != 3) { return test.fail("runs " + s.runs.to_string()); }
+    if (s.best_ops_per_sec != 1000i64) { return test.fail("best " + s.best_ops_per_sec.to_string()); }
+    if (s.median_ops_per_sec != 500i64) { return test.fail("median " + s.median_ops_per_sec.to_string()); }
+    if (s.worst_ops_per_sec != 250i64) { return test.fail("worst " + s.worst_ops_per_sec.to_string()); }
+    if (s.best_p50_ns != 10i64) { return test.fail("best p50 " + s.best_p50_ns.to_string()); }
+    if (!s.allocation_is_stable()) { return test.fail("every run allocated 4"); }
+    return test.pass();
+}
+
+// An allocation count that differs between runs is the finding, not noise: it
+// says the amount allocated depends on something the benchmark does not
+// control.
+function test_summary_reports_unstable_allocation(): test.TestOutcome {
+    var a: bench.Report = report_of("u", [10i64], 4i64);
+    var b: bench.Report = report_of("u", [10i64], 9i64);
+    var s: bench.Summary = bench.summarize("u", [a, b]);
+    if (s.allocation_is_stable()) { return test.fail("4 and 9 are not stable"); }
+    if (s.min_allocs != 4i64 || s.max_allocs != 9i64) {
+        return test.fail("range " + s.min_allocs.to_string() + ".." + s.max_allocs.to_string());
+    }
+    return test.assert_contains(s.to_json(), "\"max_allocs\":9");
+}
+
+// The timed path, asserted only where the clock cannot change the answer.
+function test_run_measures_every_iteration(): test.TestOutcome {
+    var calls: i32 = 0;
+    var r: bench.Report = bench.run("counted", 2, 5, () => { calls = calls + 1; });
+    // Two warm-ups plus five measured.
+    if (calls != 7) { return test.fail("body ran " + calls.to_string() + " times, want 7"); }
+    if (r.iterations != 5) { return test.fail("iterations " + r.iterations.to_string()); }
+    if (r.samples_ns.len() != 5) { return test.fail("samples " + r.samples_ns.len().to_string()); }
+    if (r.name != "counted") { return test.fail("name " + r.name); }
+    return test.pass();
+}
+
+// The samples come back sorted, which is what makes a percentile an index.
+function test_run_returns_sorted_samples(): test.TestOutcome {
+    var sink: i32 = 0;
+    var r: bench.Report = bench.run("sorted", 1, 8, () => { sink = sink + 1; });
+    var i: i32 = 1;
+    while (i < r.samples_ns.len()) {
+        if (r.samples_ns[i] < r.samples_ns[i - 1]) { return test.fail("samples are not sorted"); }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// The mark is the "steady state starts now" boundary. A body that allocates
+// nothing after it must read clean — and under `-interp`, where the count is
+// always 0, this asserts the API answers rather than the arena's behaviour.
+function test_mark_reads_clean_over_a_quiet_region(): test.TestOutcome {
+    var at_allocs: i64 = bench.mark_allocs();
+    var at_fresh: i64 = bench.mark_fresh_bytes();
     var i: i32 = 0;
-    while (i < 50) { s = s + "x"; i = i + 1; }
+    var sum: i32 = 0;
+    while (i < 1000) { sum = sum + i; i = i + 1; }
+    if (sum < 0) { return test.fail("unreachable"); }
+    if (!bench.no_allocs_since(at_allocs)) {
+        return test.fail("arithmetic allocated: " + bench.since(at_allocs, at_fresh).describe());
+    }
+    if (bench.allocs_since(at_allocs) != (0 as i64)) { return test.fail("scalar disagrees with the predicate"); }
+    return test.pass();
+}
+
+function test_delta_describes_both_halves(): test.TestOutcome {
+    var d: bench.Delta = bench.Delta { allocs: 7i64, fresh_bytes: 64i64 };
+    return test.assert_eq(d.describe(), "allocs=7 fresh_bytes=64");
 }
 
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("bench harness");
-
-    // No-regression bench — reports timing, always passes.
-    r = r.bench("tiny arithmetic loop", 20, workload_tiny);
-    r = r.bench("string build (50 chars)", 10, workload_string_build);
-
-    // Budgeted bench — must finish under 1s median or the
-    // case fails. `tiny_loop` is sub-millisecond on any modern
-    // host; the very generous bound is a deliberate hedge for
-    // virtualised / loaded CI runners where a 100-element
-    // tree-walker loop occasionally takes longer than the
-    // raw arithmetic would suggest. Tightening this bound is
-    // tempting but consistently flaky — leave the slack.
-    r = r.bench_max_us("tiny loop under 1s budget", 20, workload_tiny, 1000000 as i64);
-
+    var r: test.TestRunner = test.test_new("std/bench harness");
+    r = r.it("percentiles are nearest-rank", test_percentiles_are_nearest_rank);
+    r = r.it("a percentile names a real sample", test_percentile_names_a_real_sample);
+    r = r.it("an empty report is answerable", test_empty_report_is_answerable);
+    r = r.it("mean and throughput", test_mean_and_throughput);
+    r = r.it("allocs/op does not round to zero", test_allocs_per_op_does_not_round_to_zero);
+    r = r.it("json carries every figure", test_json_carries_every_figure);
+    r = r.it("output escapes the name", test_output_escapes_the_name);
+    r = r.it("csv row matches its header", test_csv_row_matches_its_header);
+    r = r.it("summary spreads repeated runs", test_summary_spreads_repeated_runs);
+    r = r.it("summary reports unstable allocation", test_summary_reports_unstable_allocation);
+    r = r.it("run measures every iteration", test_run_measures_every_iteration);
+    r = r.it("run returns sorted samples", test_run_returns_sorted_samples);
+    r = r.it("the mark reads clean over a quiet region", test_mark_reads_clean_over_a_quiet_region);
+    r = r.it("delta describes both halves", test_delta_describes_both_halves);
     return r.finish();
 }
