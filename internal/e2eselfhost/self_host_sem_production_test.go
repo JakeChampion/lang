@@ -1059,4 +1059,49 @@ function main(): i32 {
     return snapshot()[0] * 10 + labelled().len();
 }
 `},
+	// A function value handed back across a call boundary: the frame that
+	// receives one never built the box, so env_schemas is what puts the
+	// environments it could carry into that frame's schema table and lets the
+	// release walk the captures. Churned in a loop so a missed capture shows
+	// up as a leak rather than a constant. Each loop binds ONE returned
+	// closure: two distinct ones in a single loop body is #9657, where the AST
+	// lowering this case compares against answers wrongly.
+	{name: "a-function-value-returned-from-a-declaration", atLeast: 9, noLeak: true, src: `
+function scalar_capture(n: i32): (i32) => i32 {
+    return (x: i32): i32 => { return x + n; };
+}
+function array_capture(n: i32): (i32) => i32 {
+    var xs: i32[] = [n, n + 1, n + 2];
+    return (x: i32): i32 => { return x + xs[0] + xs[2]; };
+}
+function two_captures(n: i32): (i32) => i32 {
+    var xs: i32[] = [n, n];
+    var ys: i32[] = [n, n];
+    return (x: i32): i32 => { return x + xs[0] + ys[1]; };
+}
+function churn_one(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) {
+        var f: (i32) => i32 = array_capture(i);
+        t = t + f(0) % 3;
+        i = i + 1;
+    }
+    return t;
+}
+function churn_two(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) {
+        var g: (i32) => i32 = two_captures(i);
+        t = t + g(0) % 3;
+        i = i + 1;
+    }
+    return t;
+}
+function main(): i32 {
+    var s: (i32) => i32 = scalar_capture(2);
+    return (churn_one() + churn_two()) % 7 + s(3);
+}
+`},
 }

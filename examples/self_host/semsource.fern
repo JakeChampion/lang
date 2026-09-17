@@ -3032,6 +3032,27 @@ function builtin_enum_entry(t: typeinfo.Type, s: State, out: Schemas): Schemas {
     return Schemas { ...out, enums: out.enums.append(semrecords.Enum { ty: t, variants: variants, layout: semrecords.layout_option() }) };
 }
 
+// A frame that merely HOLDS a function value never built the box, so its own
+// graph names no environment — yet its release still has to walk the captures.
+// ssarc matches a box at run time against the environments this schema table
+// names, so every environment a value of this type could carry has to be in
+// it. A closure body's contract takes its environment as parameter 0, and
+// closure_type spells the function value it presents; a body spelling a
+// different function value can never be in the box, so it is left out and the
+// run-time match never sees it.
+function env_schemas(named: typeinfo.Type[], contracts: ssasem.Contract[]): typeinfo.Type[] {
+    var out: typeinfo.Type[] = [];
+    for t in named {
+        if (!ssasem.is_func(t)) { continue; }
+        for c in contracts {
+            if (c.params.len() == 0 || !semtypes.is_env(c.params[0])) { continue; }
+            if (!semtypes.equal(ssasem.closure_type(c), t)) { continue; }
+            out = out.append(c.params[0]);
+        }
+    }
+    return out;
+}
+
 function contract_types(calls: ssasem.Contract[]): typeinfo.Type[] {
     var out: typeinfo.Type[] = [];
     for c in calls {
@@ -3062,6 +3083,7 @@ function complete(fd: parser.FuncDecl, s: State, name: string): Produced {
     }
     var named: typeinfo.Type[] = f.values.append(s.result);
     for t in contract_types(s.calls) { named = named.append(t); }
+    for t in env_schemas(named, s.contracts) { named = named.append(t); }
     var table: Schemas = schemas(named, s);
     if (!table.ok) { return refuse(table.why); }
     var graph: ssa.SFunc = ssa.SFunc { ...f.graph, name: name, nparams: params.len() };
@@ -3081,7 +3103,6 @@ function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Cont
     var s: State = initial(fd, scope, contracts, binding, name, handers);
     if (!semtypes.concrete(s.result, true)) { return refuse("unresolved result type: " + typeinfo.spelling(s.result)); }
     if (ssasem.is_view(s.result)) { return refuse("view result escapes its source"); }
-    if (ssasem.is_func(s.result)) { return refuse("function value result"); }
     s = parameters(fd, s);
     s = stmts(fd.body, s);
     return complete(fd, s, name);
@@ -3096,9 +3117,6 @@ function contract(fd: parser.FuncDecl, scope: checker.Scope): ssasem.Contract {
     if (unsupported_declaration(fd, scope) != "") { return none; }
     var result: typeinfo.Type = result_type(fd, scope, ssasem.unbound());
     if (!semtypes.shaped(result, true) || ssasem.is_view(result)) { return none; }
-    // A caller of a fn-returning declaration reads an env box out of it, which
-    // is not the bare address this vocabulary has; so it has no contract here.
-    if (ssasem.is_func(result)) { return none; }
     var params: typeinfo.Type[] = [];
     var modes: i32[] = [];
     var names: string[] = decl_param_names(fd);
