@@ -4412,8 +4412,9 @@ function ir_div_const_generic(r: DivRegs, uns: boolean, is_rem: boolean, k: i64)
 // The ucomisd/jb pair also carries NaN and the infinities through untouched —
 // their |x - t| is NaN, which leaves CF set, so the bump is skipped.
 // `lb` is a per-op-unique label base.
-function ir_fround(lb: string): string {
-    var s: string = "    popq %rax\n    movq %rax, %xmm0\n";                   // x
+function ir_fround(lb: string): string { return "    popq %rax\n" + ir_fround_rax(lb) + "    pushq %rax\n"; }
+function ir_fround_rax(lb: string): string {
+    var s: string = "    movq %rax, %xmm0\n";                                   // x
     s = s + "    roundsd $3, %xmm0, %xmm1\n";                                  // t = trunc(x)
     s = s + "    subsd %xmm1, %xmm0\n";                                        // frac = x - t
     s = s + "    movq %xmm0, %rcx\n    movabsq $0x7fffffffffffffff, %rdx\n    andq %rdx, %rcx\n";
@@ -4423,7 +4424,7 @@ function ir_fround(lb: string): string {
     s = s + "    movq %rax, %rcx\n    movabsq $0x8000000000000000, %rdx\n    andq %rdx, %rcx\n";
     s = s + "    movabsq $0x3ff0000000000000, %rdx\n    orq %rdx, %rcx\n";      // copysign(1.0, x)
     s = s + "    movq %rcx, %xmm0\n    addsd %xmm0, %xmm1\n";
-    s = s + lb + "_rdone:\n    movq %xmm1, %rax\n    pushq %rax\n";
+    s = s + lb + "_rdone:\n    movq %xmm1, %rax\n";
     return s;
 }
 
@@ -4433,31 +4434,32 @@ function ir_fround(lb: string): string {
 // and otherwise wraps — but the contract (docs/FLOAT-SEMANTICS.md) is total:
 // NaN -> 0, +overflow -> INT_MAX, -overflow -> INT_MIN. Mirror native
 // emitFloatToIntSat. `lb` is a per-op-unique label base. width is 32 or 64. (#4332)
-function ir_f2i_sat(width: i32, lb: string): string {
+function ir_f2i_sat(width: i32, lb: string): string { return "    popq %rax\n" + ir_f2i_sat_rax(width, lb) + "    pushq %rax\n"; }
+function ir_f2i_sat_rax(width: i32, lb: string): string {
     if (width != 64) {
         // i32: clamp the DOUBLE into [INT32_MIN, INT32_MAX] (as f64 bit
         // patterns) so cvttsd2si never hits its sentinel, after an explicit
         // NaN -> 0. minsd/maxsd here are safe because NaN is already handled.
-        var s: string = "    popq %rax\n    movq %rax, %xmm0\n";
+        var s: string = "    movq %rax, %xmm0\n";
         s = s + "    ucomisd %xmm0, %xmm0\n    jp " + lb + "_nan\n";
         s = s + "    movabsq $0x41dfffffffc00000, %rcx\n    movq %rcx, %xmm1\n    minsd %xmm1, %xmm0\n";   // INT32_MAX as f64
         s = s + "    movabsq $0xc1e0000000000000, %rcx\n    movq %rcx, %xmm1\n    maxsd %xmm1, %xmm0\n";   // INT32_MIN as f64
         s = s + "    cvttsd2si %xmm0, %eax\n    movslq %eax, %rax\n    jmp " + lb + "_done\n";
         s = s + lb + "_nan:\n    xorl %eax, %eax\n";
-        s = s + lb + "_done:\n    pushq %rax\n";
+        s = s + lb + "_done:\n";
         return s;
     }
     // i64: cvttsd2si is exact for in-range values; only NaN and |x| >= 2^63
     // yield the INT64_MIN sentinel. On the sentinel, disambiguate via x:
     // NaN -> 0, x > 0 -> INT64_MAX, else keep INT64_MIN (also the correct
     // answer for the exact -2^63 input).
-    var s64: string = "    popq %rax\n    movq %rax, %xmm0\n    cvttsd2si %xmm0, %rax\n";
+    var s64: string = "    movq %rax, %xmm0\n    cvttsd2si %xmm0, %rax\n";
     s64 = s64 + "    movabsq $0x8000000000000000, %rcx\n    cmpq %rcx, %rax\n    jne " + lb + "_done\n";
     s64 = s64 + "    ucomisd %xmm0, %xmm0\n    jp " + lb + "_nan\n";
     s64 = s64 + "    xorpd %xmm1, %xmm1\n    ucomisd %xmm1, %xmm0\n    jbe " + lb + "_done\n";
     s64 = s64 + "    movabsq $0x7fffffffffffffff, %rax\n    jmp " + lb + "_done\n";
     s64 = s64 + lb + "_nan:\n    xorl %eax, %eax\n";
-    s64 = s64 + lb + "_done:\n    pushq %rax\n";
+    s64 = s64 + lb + "_done:\n";
     return s64;
 }
 
@@ -4465,26 +4467,27 @@ function ir_f2i_sat(width: i32, lb: string): string {
 // — the unsigned sibling of ir_f2i_sat, mirroring native emitFloatToIntSat's
 // unsigned shapes: NaN / x < 0 -> 0, x >= 2^width -> all-ones. `lb` is a
 // per-op-unique label base. width is 32 or 64.
-function ir_f2u_sat(width: i32, lb: string): string {
+function ir_f2u_sat(width: i32, lb: string): string { return "    popq %rax\n" + ir_f2u_sat_rax(width, lb) + "    pushq %rax\n"; }
+function ir_f2u_sat_rax(width: i32, lb: string): string {
     if (width != 64) {
         // u32: convert with 64-bit headroom (rax covers the whole u32 range
         // exactly), then clamp against the ORIGINAL float: x < 0 / NaN -> 0
         // (ucomisd sets CF on less-than AND on unordered, so one jb catches
         // both), x >= 2^32 -> u32::MAX.
-        var s: string = "    popq %rax\n    movq %rax, %xmm0\n    cvttsd2si %xmm0, %rax\n";
+        var s: string = "    movq %rax, %xmm0\n    cvttsd2si %xmm0, %rax\n";
         s = s + "    xorpd %xmm1, %xmm1\n    ucomisd %xmm1, %xmm0\n    jb " + lb + "_zero\n";
         s = s + "    movabsq $0x41f0000000000000, %rcx\n    movq %rcx, %xmm1\n";   // 2^32 as f64
         s = s + "    ucomisd %xmm1, %xmm0\n    jae " + lb + "_max\n    jmp " + lb + "_done\n";
         s = s + lb + "_zero:\n    xorl %eax, %eax\n    jmp " + lb + "_done\n";
         s = s + lb + "_max:\n    movl $0xffffffff, %eax\n";                        // zero-extends into rax
-        s = s + lb + "_done:\n    pushq %rax\n";
+        s = s + lb + "_done:\n";
         return s;
     }
     // u64: cvttsd2si only covers [0, 2^63); for x >= 2^63 convert x - 2^63 and
     // set bit 63 back. The original x is saved in xmm2 (the subtraction
     // mutates xmm0) and the edge clamps compare against it: x < 0 / NaN -> 0,
     // x >= 2^64 -> u64::MAX.
-    var u: string = "    popq %rax\n    movq %rax, %xmm0\n    movaps %xmm0, %xmm2\n";
+    var u: string = "    movq %rax, %xmm0\n    movaps %xmm0, %xmm2\n";
     u = u + "    movabsq $0x43e0000000000000, %rcx\n    movq %rcx, %xmm1\n";       // 2^63 as f64
     u = u + "    ucomisd %xmm1, %xmm0\n    jae " + lb + "_big\n";
     u = u + "    cvttsd2si %xmm0, %rax\n    jmp " + lb + "_sat\n";
@@ -4495,7 +4498,7 @@ function ir_f2u_sat(width: i32, lb: string): string {
     u = u + "    ucomisd %xmm1, %xmm2\n    jae " + lb + "_umax\n    jmp " + lb + "_done\n";
     u = u + lb + "_zero:\n    xorl %eax, %eax\n    jmp " + lb + "_done\n";
     u = u + lb + "_umax:\n    movq $-1, %rax\n";
-    u = u + lb + "_done:\n    pushq %rax\n";
+    u = u + lb + "_done:\n";
     return u;
 }
 
@@ -5103,14 +5106,21 @@ function ssa_store(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): as
 // ssa_unary_known is the unary vocabulary lift_from_ir_prod produces.
 function ssa_unary_known(what: string): boolean {
     if (what == "!" || what == "int_extend" || what == "int_wrap" || what == "u32_wrap") { return true; }
-    return util.str_has_prefix(what, "int_cast:");
+    return util.str_has_prefix(what, "int_cast:") || ssa_funary_known(what);
+}
+
+// ssa_funary_known is the f64 unary vocabulary lift_float_prod produces.
+function ssa_funary_known(what: string): boolean {
+    var un: string[] = ["fsqrt", "ffloor", "fceil", "ftrunc", "fabs", "fround", "fneg", "f64_to_i32", "f64_to_i64", "f32_bits", "f32_from_bits"];
+    for x in un { if (x == what) { return true; } }
+    return util.str_has_prefix(what, "i32_to_f64:");
 }
 
 function ssa_inst_known(ins: ssa.SInst): boolean {
     var k: i32 = ins.kind_tag;
     if (k == 10) { return ssa_unary_known(ins.str); }
     if (k >= 40 && k <= 57) { return true; }
-    return k == 1 || k == 3 || k == 6 || k == 7 || k == 8 || k == 9 || k == 11;
+    return k == 1 || k == 3 || k == 4 || k == 6 || k == 7 || k == 8 || k == 9 || k == 11;
 }
 
 // ssa_unsupported names the first instruction this emitter has no selection
@@ -5179,9 +5189,14 @@ function ssa_const_text_rax(text: string, wide64: boolean, s: asmcore.EmitState)
     return s.write("    movl $" + text + ", %eax\n");
 }
 
-// ssa_unary_asm is the stack machine's selection for the width ops and `not`,
-// on %rax. A cast to a type none of the arms name moves nothing there either.
-function ssa_unary_asm(what: string, unsigned: boolean): string {
+// ssa_unary_asm is the stack machine's selection for the width ops, `not`
+// and the f64 unaries, on %rax. A cast to a type none of the arms name moves
+// nothing there either. `lb` is a per-op-unique label base for the saturating
+// conversions and fround.
+function ssa_unary_asm(what: string, unsigned: boolean, lb: string): string {
+    var f: string = ssa_fmath_asm(what);
+    if (f == "") { f = ssa_fconv_asm(what, unsigned, lb); }
+    if (f != "") { return f; }
     if (what == "!") { return "    testq %rax, %rax\n    setz %al\n    movzbq %al, %rax\n"; }
     if (what == "u32_wrap" || what == "int_cast:u32") { return "    movl %eax, %eax\n"; }
     if (what == "int_cast:u8") { return "    andq $255, %rax\n"; }
@@ -5193,10 +5208,87 @@ function ssa_unary_asm(what: string, unsigned: boolean): string {
     return "";
 }
 
+// ssa_fmath_asm is the single-instruction f64 math on the pattern in %rax,
+// as the stack machine's arms select it; "" for any other op.
+function ssa_fmath_asm(what: string): string {
+    var xmm: string = "";
+    if (what == "fsqrt") { xmm = "    sqrtsd %xmm0, %xmm0\n"; }
+    else if (what == "ffloor") { xmm = "    roundsd $1, %xmm0, %xmm0\n"; }
+    else if (what == "fceil") { xmm = "    roundsd $2, %xmm0, %xmm0\n"; }
+    else if (what == "ftrunc") { xmm = "    roundsd $3, %xmm0, %xmm0\n"; }
+    if (xmm != "") { return "    movq %rax, %xmm0\n" + xmm + "    movq %xmm0, %rax\n"; }
+    if (what == "fabs") { return "    movabsq $0x7fffffffffffffff, %rcx\n    andq %rcx, %rax\n"; }
+    if (what == "fneg") { return "    movabsq $0x8000000000000000, %rcx\n    xorq %rcx, %rax\n"; }
+    return "";
+}
+
+// ssa_fconv_asm is the f64 conversions and reinterprets on %rax, the
+// saturating and rounding ones through the same cores the stack machine's
+// arms wrap; "" for any other op.
+function ssa_fconv_asm(what: string, unsigned: boolean, lb: string): string {
+    if (what == "fround") { return ir_fround_rax(lb); }
+    if (what == "f64_to_i32" || what == "f64_to_i64") {
+        var w: i32 = 32;
+        if (what == "f64_to_i64") { w = 64; }
+        if (unsigned) { return ir_f2u_sat_rax(w, lb); }
+        return ir_f2i_sat_rax(w, lb);
+    }
+    if (what == "i32_to_f64:64") { return ir_i2f_rax(64, unsigned, lb); }
+    if (what == "i32_to_f64:32") { return ir_i2f_rax(32, unsigned, lb); }
+    if (what == "f32_bits") { return "    movq %rax, %xmm0\n    cvtsd2ss %xmm0, %xmm0\n    movd %xmm0, %eax\n    movsxd %eax, %rax\n"; }
+    if (what == "f32_from_bits") { return "    movd %eax, %xmm0\n    cvtss2sd %xmm0, %xmm0\n    movq %xmm0, %rax\n"; }
+    return "";
+}
+
+// ssa_fbin_asm is one f64 binary with the patterns in %rax (lhs) and %rcx
+// (rhs), the result pattern or 0/1 in %rax; "" for an integer op. The
+// compares are the stack machine's NaN-correct ucomisd forms.
+function ssa_fbin_asm(what: string): string {
+    var ld: string = "    movq %rax, %xmm0\n    movq %rcx, %xmm1\n";
+    var arith: string = "";
+    if (what == "fadd") { arith = "addsd"; } else if (what == "fsub") { arith = "subsd"; }
+    else if (what == "fmul") { arith = "mulsd"; } else if (what == "fdiv") { arith = "divsd"; }
+    if (arith != "") { return ld + "    " + arith + " %xmm1, %xmm0\n    movq %xmm0, %rax\n"; }
+    var cc: string = "";
+    if (what == "flt") { cc = "    setb %al\n    setnp %dl\n    andb %dl, %al\n"; }
+    else if (what == "fle") { cc = "    setbe %al\n    setnp %dl\n    andb %dl, %al\n"; }
+    else if (what == "fgt") { cc = "    seta %al\n"; }
+    else if (what == "fge") { cc = "    setae %al\n"; }
+    else if (what == "feq") { cc = "    sete %al\n    setnp %dl\n    andb %dl, %al\n"; }
+    else if (what == "fne") { cc = "    setne %al\n    setp %dl\n    orb %dl, %al\n"; }
+    if (cc == "") { return ""; }
+    return ld + "    ucomisd %xmm1, %xmm0\n    movq $0, %rax\n" + cc + "    movzbq %al, %rax\n";
+}
+
+// ssa_fcall_sym is the runtime helper for a transcendental, "" otherwise.
+function ssa_fcall_sym(what: string): string {
+    if (what == "fsin") { return "__fern_sin_f64"; }
+    if (what == "fcos") { return "__fern_cos_f64"; }
+    if (what == "fexp") { return "__fern_exp_f64"; }
+    if (what == "flog") { return "__fern_log_f64"; }
+    if (what == "fpow") { return "__fern_pow_f64"; }
+    return "";
+}
+
+// ssa_fcall calls a transcendental helper: the operand patterns in %xmm0 (and
+// %xmm1 for fpow), the result pattern back from %xmm0.
+function ssa_fcall(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+    s = s.need("float_transcendentals");
+    s = ssa_load(reg_of, ins.args[0], "%rax", s);
+    if (ins.args.len() > 1) {
+        s = ssa_load(reg_of, ins.args[1], "%rcx", s);
+        s = s.write("    movq %rcx, %xmm1\n");
+    }
+    s = s.write("    movq %rax, %xmm0\n    call " + ssa_fcall_sym(ins.str) + "\n    movq %xmm0, %rax\n");
+    return ssa_store(reg_of, ins.result, "%rax", s);
+}
+
 // ssa_binary is one binary op with the operands in %rax and %rcx: the guarded
 // division for the four div/rem kinds (a per-op-unique label base, as the
-// stack machine's), ir_bin_asm for the rest.
+// stack machine's), the f64 forms, ir_bin_asm for the rest.
 function ssa_binary(ins: ssa.SInst, lp: string, s: asmcore.EmitState): asmcore.EmitState {
+    var fb: string = ssa_fbin_asm(ins.str);
+    if (fb != "") { return s.write(fb); }
     var tag: i32 = ir.kind_id(ins.str);
     if (tag == 24 || tag == 25 || tag == 26 || tag == 27) {
         return s.write(ir_div_guarded(tag, ins.imm, lp + "d" + util.i32_to_string(ins.result)));
@@ -5450,12 +5542,14 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, s: as
     if (k >= 40 && k <= 44) { return ssa_mem_inst(ins, reg_of, s); }
     if (k >= 45 && k <= 48) { return ssa_addr_inst(ins, reg_of, s); }
     if (k == 49) { return ssa_str_call(ins, reg_of, s); }
+    if (k == 50 && ssa_fcall_sym(ins.str) != "") { return ssa_fcall(ins, reg_of, s); }
     if (k == 50) { return ssa_rt_call(ins, reg_of, s); }
     if (k >= 52 && k <= 55) { return ssa_raw_inst(ins, reg_of, s); }
     if (k == 56) { return ssa_call_ind(ins, reg_of, s); }
     if (k == 57) { return ssa_agg_lit(ins, reg_of, s); }
     if (k == 1) { s = ssa_const_rax(ins.imm, s); }
     else if (k == 3) { s = ssa_const_text_rax(ins.str, ins.imm == 64, s); }
+    else if (k == 4) { s = s.write("    movabsq $" + util.i64_to_string(util.parse_f64_bits(ins.str)) + ", %rax\n"); }
     else if (k == 7) { s = ssa_load(reg_of, ins.args[0], "%rax", s); }
     else if (k == 9) {
         s = ssa_load(reg_of, ins.args[0], "%rax", s);
@@ -5463,7 +5557,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, s: as
         s = ssa_binary(ins, lp, s);
     } else {
         s = ssa_load(reg_of, ins.args[0], "%rax", s);
-        s = s.write(ssa_unary_asm(ins.str, ins.imm == 1));
+        s = s.write(ssa_unary_asm(ins.str, ins.imm == 1, lp + "u" + util.i32_to_string(ins.result)));
     }
     return ssa_store(reg_of, ins.result, "%rax", s);
 }
@@ -7626,33 +7720,28 @@ function emit_ir_op_call_indirect(o: ir.Op, s: asmcore.EmitState): asmcore.EmitS
 }
 
 function emit_ir_op_i32_to_f64(o: ir.Op, i: i32, lp: string, s: asmcore.EmitState): asmcore.EmitState {
-    // int -> f64, selected by the op's width + signedness. x86 has only
-    // the SIGNED cvtsi2sd, so the two unsigned cases need help: a u32 is
-    // zero-extended into the 64-bit source first (its value fits i64, so
-    // the signed convert is then exact), and a u64 >= 2^63 — where a bare
-    // cvtsi2sd reads the all-ones pattern as -1.0 (#6051) — goes through
-    // the round-to-odd halving `y = (x >> 1) | (x & 1)`, converts that,
-    // and doubles. Mirrors native emitFConvertI64's sequence exactly.
-    // The old unconditional cvtsi2sd was justified by "one instruction
-    // covers i32 and i64 alike"; that holds for every source EXCEPT a
-    // u64 with bit 63 set, which is the whole bug.
-    if (o.width == 64 && o.unsigned) {
-        var u2d: string = lp + "u2d" + util.i32_to_string(i);
-        s = s.write("    popq %rax\n");
-        s = s.write("    testq %rax, %rax\n    js " + u2d + "_big\n");
-        s = s.write("    cvtsi2sd %rax, %xmm0\n    jmp " + u2d + "_done\n");
-        s = s.write(u2d + "_big:\n");
-        s = s.write("    movq %rax, %rcx\n    shrq $1, %rcx\n    andl $1, %eax\n    orq %rax, %rcx\n");
-        s = s.write("    cvtsi2sd %rcx, %xmm0\n    addsd %xmm0, %xmm0\n");
-        s = s.write(u2d + "_done:\n");
-        s = s.write("    movq %xmm0, %rax\n    pushq %rax\n");
-    } else if (o.unsigned) {
-        s = s.write("    popq %rax\n    movl %eax, %eax\n    cvtsi2sd %rax, %xmm0\n    movq %xmm0, %rax\n    pushq %rax\n");
-    } else {
-        s = s.write("    popq %rax\n    cvtsi2sd %rax, %xmm0\n    movq %xmm0, %rax\n    pushq %rax\n");
-    }
+    return s.write("    popq %rax\n" + ir_i2f_rax(o.width, o.unsigned, lp + "u2d" + util.i32_to_string(i)) + "    pushq %rax\n");
+}
 
-    return s;
+// ir_i2f_rax converts the integer in %rax to an f64 pattern in %rax, selected
+// by width and signedness. x86 has only the SIGNED cvtsi2sd, so a u32 is
+// zero-extended into the 64-bit source first (its value fits i64, so the
+// signed convert is then exact), and a u64 with bit 63 set, which a bare
+// cvtsi2sd reads as negative (#6051), goes through the round-to-odd halving
+// `y = (x >> 1) | (x & 1)`, converts that, and doubles; native's
+// emitFConvertI64 sequence. `lb` is a per-op-unique label base.
+function ir_i2f_rax(width: i32, unsigned: boolean, lb: string): string {
+    if (width == 64 && unsigned) {
+        var u: string = "    testq %rax, %rax\n    js " + lb + "_big\n";
+        u = u + "    cvtsi2sd %rax, %xmm0\n    jmp " + lb + "_done\n";
+        u = u + lb + "_big:\n";
+        u = u + "    movq %rax, %rcx\n    shrq $1, %rcx\n    andl $1, %eax\n    orq %rax, %rcx\n";
+        u = u + "    cvtsi2sd %rcx, %xmm0\n    addsd %xmm0, %xmm0\n";
+        u = u + lb + "_done:\n    movq %xmm0, %rax\n";
+        return u;
+    }
+    if (unsigned) { return "    movl %eax, %eax\n    cvtsi2sd %rax, %xmm0\n    movq %xmm0, %rax\n"; }
+    return "    cvtsi2sd %rax, %xmm0\n    movq %xmm0, %rax\n";
 }
 
 function emit_ir_op_binary(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: asmcore.EmitState): asmcore.EmitState {

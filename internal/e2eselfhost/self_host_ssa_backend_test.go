@@ -216,6 +216,59 @@ function main(): i32 {
     }
 }
 `},
+	// f64 throughout: literals with the sign bit set, the arithmetic and the
+	// NaN-aware compares, the single-instruction math, every conversion
+	// width and signedness including the saturating ones, the f32 and i64
+	// reinterprets, and the transcendentals the runtime supplies. A value is
+	// its bit pattern in an integer register, as on the stack machine.
+	{name: "floats", viaSSA: []string{"area", "hyp", "classify", "rounding", "convs", "bits", "neg", "trans", "main"}, src: `
+import "std/float";
+function area(r: f64): f64 { return 3.141592653589793 * r * r; }
+function hyp(a: f64, b: f64): f64 { return (a * a + b * b).sqrt(); }
+function classify(x: f64): i32 {
+    if (x < 0.0) { return 0 - 1; }
+    if (x == 0.0) { return 0; }
+    if (x > 1000.5) { return 2; }
+    if (x >= 2.5 && x <= 2.5) { return 3; }
+    if (x != x) { return 9; }
+    return 1;
+}
+function rounding(x: f64): i32 {
+    var f: i32 = x.floor() as i32;
+    var c: i32 = x.ceil() as i32;
+    var t: i32 = x.trunc() as i32;
+    var r: i32 = x.round() as i32;
+    return f + c * 10 + t * 100 + r * 1000;
+}
+function convs(n: i32, u: u32, w: i64, v: u64): i64 {
+    var a: f64 = n as f64;
+    var b: f64 = u as f64;
+    var c: f64 = w as f64;
+    var d: f64 = v as f64;
+    var s: f64 = a + b + c + d;
+    return (s as i64) + ((s / 3.0) as i32) as i64 + (((0.0 - s) as u32) as i64) + ((s * 1e30) as i32) as i64;
+}
+function bits(x: f64): i64 {
+    var b: i64 = f64_bits(x);
+    var y: f64 = f64_from_bits(b + 1);
+    var h: i32 = f32_bits(y);
+    var zf: f32 = f32_from_bits(h);
+    var z: f64 = zf as f64;
+    return b + (z as i64) + (h as i64) % 7;
+}
+function neg(x: f64): f64 { return (0.0 - x).abs() - (0.0 - x); }
+function trans(x: f64): i32 { return ((x.sin() * 1000.0) as i32) + ((x.cos() * 1000.0) as i32) + ((x.exp() * 10.0) as i32) + ((x.log() * 1000.0) as i32) + (x.pow(2.5) as i32); }
+function main(): i32 {
+    var acc: i64 = (area(2.0) * 1000.0) as i64;
+    acc = acc + (hyp(3.0, 4.0) as i64);
+    acc = acc + (classify(0.0 - 2.5) + classify(0.0) + classify(2000.0) + classify(2.5) + classify(0.0 / 0.0) + classify(7.0)) as i64;
+    acc = acc + (rounding(2.5) + rounding(0.0 - 2.5) + rounding(3.7)) as i64;
+    acc = acc + convs(0 - 7, 4000000000, 5000000000, 18446744073709551615);
+    acc = acc + bits(1.5) + (neg(4.0) as i64);
+    acc = acc + trans(1.5) as i64;
+    return (acc % 251) as i32;
+}
+`},
 	// A mixed module: main and the string helpers keep the stack machine, the
 	// integer functions go through the SSA backend, and both call each other
 	// through the shared stack ABI.

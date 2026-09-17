@@ -843,14 +843,21 @@ function ssa_store(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): as
 // ssa_unary_known is the unary vocabulary lift_from_ir_prod produces.
 function ssa_unary_known(what: string): boolean {
     if (what == "!" || what == "int_extend" || what == "int_wrap" || what == "u32_wrap") { return true; }
-    return util.str_has_prefix(what, "int_cast:");
+    return util.str_has_prefix(what, "int_cast:") || ssa_funary_known(what);
+}
+
+// ssa_funary_known is the f64 unary vocabulary lift_float_prod produces.
+function ssa_funary_known(what: string): boolean {
+    var un: string[] = ["fsqrt", "ffloor", "fceil", "ftrunc", "fabs", "fround", "fneg", "f64_to_i32", "f64_to_i64", "f32_bits", "f32_from_bits"];
+    for x in un { if (x == what) { return true; } }
+    return util.str_has_prefix(what, "i32_to_f64:");
 }
 
 function ssa_inst_known(ins: ssa.SInst): boolean {
     var k: i32 = ins.kind_tag;
     if (k == 10) { return ssa_unary_known(ins.str); }
     if (k >= 40 && k <= 57) { return true; }
-    return k == 1 || k == 3 || k == 6 || k == 7 || k == 8 || k == 9 || k == 11;
+    return k == 1 || k == 3 || k == 4 || k == 6 || k == 7 || k == 8 || k == 9 || k == 11;
 }
 
 // ssa_unsupported names the first instruction this emitter has no selection
@@ -909,9 +916,13 @@ function ssa_const_x0(text: string, s: asmcore.EmitState): asmcore.EmitState {
     return s.write("    ldr x0, =" + text + "\n");
 }
 
-// ssa_unary_asm is the stack machine's selection for the width ops and `not`,
-// on x0. A cast to a type none of the arms name moves nothing there either.
+// ssa_unary_asm is the stack machine's selection for the width ops, `not`
+// and the f64 unaries, on x0. A cast to a type none of the arms name moves
+// nothing there either.
 function ssa_unary_asm(what: string, unsigned: boolean): string {
+    var f: string = ssa_fmath_asm(what);
+    if (f == "") { f = ssa_fconv_asm(what, unsigned); }
+    if (f != "") { return f; }
     if (what == "!") { return "    cmp x0, #0\n    cset x0, eq\n"; }
     if (what == "u32_wrap" || what == "int_cast:u32") { return "    mov w0, w0\n"; }
     if (what == "int_cast:u8") { return "    and x0, x0, #255\n"; }
@@ -921,6 +932,83 @@ function ssa_unary_asm(what: string, unsigned: boolean): string {
         return "    sxtw x0, w0\n";
     }
     return "";
+}
+
+// ssa_fmath_asm is the single-instruction f64 math on the pattern in x0, as
+// the stack machine's arms select it; "" for any other op.
+function ssa_fmath_asm(what: string): string {
+    var op: string = "";
+    if (what == "fsqrt") { op = "fsqrt"; } else if (what == "ffloor") { op = "frintm"; }
+    else if (what == "fceil") { op = "frintp"; } else if (what == "ftrunc") { op = "frintz"; }
+    else if (what == "fround") { op = "frinta"; } else if (what == "fneg") { op = "fneg"; }
+    else if (what == "fabs") { op = "fabs"; }
+    if (op == "") { return ""; }
+    return "    fmov d0, x0\n    " + op + " d0, d0\n    fmov x0, d0\n";
+}
+
+// ssa_fconv_asm is the f64 conversions and reinterprets on x0: the saturating
+// fcvtz forms and the width-selected scvtf/ucvtf, as the stack machine's arms
+// select them; "" for any other op.
+function ssa_fconv_asm(what: string, unsigned: boolean): string {
+    if (what == "i32_to_f64:64") {
+        if (unsigned) { return "    ucvtf d0, x0\n    fmov x0, d0\n"; }
+        return "    scvtf d0, x0\n    fmov x0, d0\n";
+    }
+    if (what == "i32_to_f64:32") {
+        if (unsigned) { return "    ucvtf d0, w0\n    fmov x0, d0\n"; }
+        return "    scvtf d0, x0\n    fmov x0, d0\n";
+    }
+    if (what == "f64_to_i32") {
+        if (unsigned) { return "    fmov d0, x0\n    fcvtzu w0, d0\n"; }
+        return "    fmov d0, x0\n    fcvtzs w0, d0\n    sxtw x0, w0\n";
+    }
+    if (what == "f64_to_i64") {
+        if (unsigned) { return "    fmov d0, x0\n    fcvtzu x0, d0\n"; }
+        return "    fmov d0, x0\n    fcvtzs x0, d0\n";
+    }
+    if (what == "f32_bits") { return "    fmov d0, x0\n    fcvt s0, d0\n    fmov w0, s0\n    sxtw x0, w0\n"; }
+    if (what == "f32_from_bits") { return "    fmov s0, w0\n    fcvt d0, s0\n    fmov x0, d0\n"; }
+    return "";
+}
+
+// ssa_fbin_asm is one f64 binary with the patterns in x0 (lhs) and x1 (rhs),
+// the result pattern or 0/1 in x0; "" for an integer op. fcmp's condition
+// codes are NaN-aware, as the stack machine's compare arm relies on.
+function ssa_fbin_asm(what: string): string {
+    var ld: string = "    fmov d0, x0\n    fmov d1, x1\n";
+    var arith: string = "";
+    if (what == "fadd") { arith = "fadd"; } else if (what == "fsub") { arith = "fsub"; }
+    else if (what == "fmul") { arith = "fmul"; } else if (what == "fdiv") { arith = "fdiv"; }
+    if (arith != "") { return ld + "    " + arith + " d0, d0, d1\n    fmov x0, d0\n"; }
+    var cc: string = "";
+    if (what == "flt") { cc = "mi"; } else if (what == "fle") { cc = "ls"; }
+    else if (what == "fgt") { cc = "gt"; } else if (what == "fge") { cc = "ge"; }
+    else if (what == "feq") { cc = "eq"; } else if (what == "fne") { cc = "ne"; }
+    if (cc == "") { return ""; }
+    return ld + "    fcmp d0, d1\n    cset w0, " + cc + "\n";
+}
+
+// ssa_fcall_sym is the runtime helper for a transcendental, "" otherwise.
+function ssa_fcall_sym(what: string): string {
+    if (what == "fsin") { return "__fern_sin_f64"; }
+    if (what == "fcos") { return "__fern_cos_f64"; }
+    if (what == "fexp") { return "__fern_exp_f64"; }
+    if (what == "flog") { return "__fern_log_f64"; }
+    if (what == "fpow") { return "__fern_pow_f64"; }
+    return "";
+}
+
+// ssa_fcall calls a transcendental helper: the operand patterns in d0 (and d1
+// for fpow), the result pattern back from d0.
+function ssa_fcall(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+    s = s.need("float_transcendentals");
+    s = ssa_load(reg_of, ins.args[0], "x0", s);
+    if (ins.args.len() > 1) {
+        s = ssa_load(reg_of, ins.args[1], "x1", s);
+        s = s.write("    fmov d1, x1\n");
+    }
+    s = s.write("    fmov d0, x0\n    bl " + ssa_fcall_sym(ins.str) + "\n    fmov x0, d0\n");
+    return ssa_store(reg_of, ins.result, "x0", s);
 }
 
 // ssa_call emits one call as the stack machine leaves it: the arguments pushed
@@ -1168,17 +1256,20 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmcore.EmitSt
     if (k >= 40 && k <= 44) { return ssa_mem_inst(ins, reg_of, s); }
     if (k >= 45 && k <= 48) { return ssa_addr_inst(ins, reg_of, s); }
     if (k == 49) { return ssa_str_call(ins, reg_of, s); }
+    if (k == 50 && ssa_fcall_sym(ins.str) != "") { return ssa_fcall(ins, reg_of, s); }
     if (k == 50) { return ssa_rt_call(ins, reg_of, s); }
     if (k >= 52 && k <= 55) { return ssa_raw_inst(ins, reg_of, s); }
     if (k == 56) { return ssa_call_ind(ins, reg_of, s); }
     if (k == 57) { return ssa_agg_lit(ins, reg_of, s); }
     if (k == 1) { s = ssa_const_x0(util.i32_to_string(ins.imm), s); }
     else if (k == 3) { s = ssa_const_x0(ins.str, s); }
+    else if (k == 4) { s = s.write("    ldr x0, =" + util.i64_to_string(util.parse_f64_bits(ins.str)) + "\n"); }
     else if (k == 7) { s = ssa_load(reg_of, ins.args[0], "x0", s); }
     else if (k == 9) {
         s = ssa_load(reg_of, ins.args[0], "x0", s);
         s = ssa_load(reg_of, ins.args[1], "x1", s);
-        s = s.write(ir_bin_asm(ir.kind_id(ins.str), ins.imm));
+        var fb: string = ssa_fbin_asm(ins.str);
+        if (fb != "") { s = s.write(fb); } else { s = s.write(ir_bin_asm(ir.kind_id(ins.str), ins.imm)); }
     } else {
         s = ssa_load(reg_of, ins.args[0], "x0", s);
         s = s.write(ssa_unary_asm(ins.str, ins.imm == 1));
