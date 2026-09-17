@@ -358,6 +358,19 @@ var rcInertBuiltins = map[string]bool{
 	// Native-only -- WASI has no process cwd -- so it is named here the
 	// way `chmod` is.
 	"chdir": true,
+	// (path) -> Result. Same shape as `chdir` one line up and the same
+	// reasoning: the path is read and NUL-copied, and the root it moves
+	// to is process state rather than a counted reference. Native-only,
+	// so it is named here the way `chdir` is.
+	"chroot": true,
+	// (id) -> Result and (gids) -> Result. The two scalar setters take
+	// nothing counted at all. `setgroups` reads an i64[] and packs it
+	// into a 32-bit gid buffer without retaining the array, so its
+	// argument is borrowed for the length of the call the way a path is.
+	// All three native-only: no wasm world has a credential to set.
+	"setuid":    true,
+	"setgid":    true,
+	"setgroups": true,
 	// No arguments and no result: sync(2) writes back every dirty buffer
 	// on the machine. Native-only — a preopen is a capability handle
 	// rather than a mount, so no wasm world has a set of filesystems to

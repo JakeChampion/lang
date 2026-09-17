@@ -1186,6 +1186,10 @@ func New() *Interp {
 	i.Builtins["uname_field"] = &Builtin{Fn: builtinUnameField}
 	i.Builtins["getcwd"] = &Builtin{Fn: builtinGetcwd}
 	i.Builtins["chdir"] = &Builtin{Fn: builtinChdir}
+	i.Builtins["chroot"] = &Builtin{Fn: builtinChroot}
+	i.Builtins["setuid"] = &Builtin{Fn: builtinSetuid}
+	i.Builtins["setgid"] = &Builtin{Fn: builtinSetgid}
+	i.Builtins["setgroups"] = &Builtin{Fn: builtinSetgroups}
 	i.Builtins["cpu_count"] = &Builtin{Fn: builtinCPUCount}
 	i.Builtins["signal_ignore"] = &Builtin{Fn: builtinSignalIgnore}
 	i.Builtins["signal_default"] = &Builtin{Fn: builtinSignalDefault}
@@ -3050,6 +3054,61 @@ func builtinChdir(_ *Interp, args []Value) (Value, error) {
 		return nil, err
 	}
 	return ioResult(p[0], syscall.Chdir(p[0])), nil
+}
+
+// builtinChroot, builtinSetuid, builtinSetgid and builtinSetgroups all
+// REFUSE with ENOSYS rather than making the syscall, the way proc_exec
+// and proc_fork do and for a stronger version of their reason.
+//
+// The interpreter is the compiler's own process. A chroot here would
+// confine the compiler to the directory a compiled program asked for, and
+// a setuid would drop the compiler's privileges irreversibly — there is no
+// setuid back. Both would then apply to every later module the same
+// process compiles, which is a failure with no diagnostic anywhere near
+// its cause.
+//
+// ENOSYS rather than EPERM because it is the truthful one: the
+// interpreter has no process control, as distinct from having it and
+// being refused. `chroot(1)` under `fern -run` therefore reports
+// "Function not implemented" where a compiled build reports "Operation
+// not permitted", and that difference is the interpreter's honestly.
+func builtinChroot(_ *Interp, args []Value) (Value, error) {
+	p, err := pathArgs("chroot", args, 1)
+	if err != nil {
+		return nil, err
+	}
+	return ioResult(p[0], syscall.ENOSYS), nil
+}
+
+func builtinSetuid(_ *Interp, args []Value) (Value, error) {
+	return credRefusal("setuid", args)
+}
+
+func builtinSetgid(_ *Interp, args []Value) (Value, error) {
+	return credRefusal("setgid", args)
+}
+
+func builtinSetgroups(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("setgroups: expected 1 arg, got %d", len(args))
+	}
+	if _, ok := args[0].(Array); !ok {
+		return nil, fmt.Errorf("setgroups: expected array arg, got %T", args[0])
+	}
+	return ioResult("", syscall.ENOSYS), nil
+}
+
+// credRefusal is the shared body of setuid and setgid: the argument is
+// type-checked so a caller passing the wrong shape is still told, and the
+// call is then refused.
+func credRefusal(name string, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("%s: expected 1 arg, got %d", name, len(args))
+	}
+	if _, ok := args[0].(Number); !ok {
+		return nil, fmt.Errorf("%s: expected number arg, got %T", name, args[0])
+	}
+	return ioResult("", syscall.ENOSYS), nil
 }
 
 // builtinCPUCount reports how many processing units the process may run
