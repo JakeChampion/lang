@@ -11757,9 +11757,6 @@ function ow_arm_payload_ctx(ctx: OwnCtx, pat: ast.Pattern): OwnCtx {
     if (pv.binding.len() > 0) { binds = binds.append(pv.binding); }
     for extra in pv.extra_bindings { binds = binds.append(extra); }
     if (binds.len() == 0) { return ctx; }
-    var bnames: string[] = ctx.bound;
-    for b in binds { if (b.len() > 0 && !util.has_str(bnames, b)) { bnames = bnames.append(b); } }
-    ctx = OwnCtx { ...ctx, bound: bnames };
     var names: string[] = ctx.owned;
     for sd in ctx.structs {
       if (sd.name == vname && sd.enum_owner.len() > 0) {
