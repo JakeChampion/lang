@@ -227,11 +227,49 @@ jobs:
       # output while the job sits there. That is what round five did — the log
       # stops mid-corpus and the 25-minute wall passes unremarked. A step-level
       # limit is enforced by the runner, which kills the process group.
+      #
+      # Output goes to a FILE, not to this step's stdout, and that is the
+      # whole reason the hang above was invisible. The runner ends a step when
+      # every writer of its stdout pipe has closed; a case that leaks a child
+      # holding that pipe means the step never ends, and `-timeout`'s panic —
+      # the one thing that would name the blocked test — is written into a pipe
+      # nobody will read. A leaked child holding a FILE descriptor blocks
+      # nothing, so the panic lands in the file and the step exits.
+      #
+      # The cost is that the log arrives at the end of the step rather than
+      # live. The step below prints it however the run ended, and the artifact
+      # keeps it when the 30-minute limit kills the step mid-write.
       - name: go test (coreutils corpus on Darwin)
         if: steps.gate.outputs.signed != 'true'
         timeout-minutes: 30
         run: |
-          gotestsum --format standard-verbose -- -timeout 25m -skip '^TestSelfHost' ./internal/coreutils/
+          set +e
+          gotestsum --format standard-verbose -- -timeout 25m -skip '^TestSelfHost' ./internal/coreutils/ > corpus-darwin.log 2>&1
+          status=$?
+          set -e
+          echo "EXIT=$status"
+          exit "$status"
+
+      - name: the corpus log, however that ended
+        if: always() && steps.gate.outputs.signed != 'true'
+        run: |
+          if [ ! -f corpus-darwin.log ]; then
+            echo "no corpus-darwin.log: the step did not get as far as running it"
+            exit 0
+          fi
+          echo "### failures"
+          grep -E '^(---|===) (FAIL|Failed)' corpus-darwin.log || echo "(none named)"
+          echo "### the last case to start, and what followed it"
+          tail -40 corpus-darwin.log
+
+      - name: Keep the corpus log
+        if: always() && steps.gate.outputs.signed != 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: coreutils-corpus-darwin
+          path: corpus-darwin.log
+          retention-days: 7
+          if-no-files-found: ignore
 
       - name: go test (arm64-darwin native execution)
         if: steps.gate.outputs.signed != 'true'
