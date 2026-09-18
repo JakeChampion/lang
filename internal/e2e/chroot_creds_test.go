@@ -50,12 +50,13 @@ function main(): i32 {
     // CAP_SYS_CHROOT, so it answers ENOENT at any privilege, while XNU's
     // suser() check runs before namei and answers EPERM to an unprivileged
     // caller. Both are truthful, so what is asserted is that it failed and
-    // named one of the two.
+    // named one of the two — ENOENT as NotFound, EPERM as Other, since
+    // PermissionDenied is EACCES's variant and EPERM has none of its own.
     match (chroot("/no-such-directory-at-all-9678")) {
         Ok(v) => { return 61; },
         Err(e) => {
             var c: i32 = code_of(e);
-            if (c != 1) { if (c != 2) { return 62; } }
+            if (c != 1) { if (c != 7) { return 62; } }
         }
     }
 
@@ -116,17 +117,41 @@ function main(): i32 {
     } else {
         // Unprivileged, every one of the three is EPERM — which is an answer,
         // not a no-op that claims a change nothing made.
+        //
+        // EPERM arrives as Other carrying the message, NOT as
+        // PermissionDenied: __fern_io_error names ENOENT, EACCES, EEXIST,
+        // EINTR and EILSEQ and leaves every other errno to Other, and that
+        // is load-bearing rather than incidental. The utilities print the
+        // message out of Other, so chroot's "cannot change root directory to
+        // 'x': Operation not permitted" is byte-for-byte GNU's only because
+        // EPERM is not folded into a variant that drops it. Checking the
+        // message is what makes this stronger than "it failed somehow".
         match (setgroups([])) {
             Ok(v) => { return 79; },
-            Err(e) => { if (code_of(e) != 2) { return 80; } }
+            Err(e) => {
+                match (e) {
+                    Other(p, m) => { if (m != "Operation not permitted") { return 80; } },
+                    _ => { return 80; }
+                }
+            }
         }
         match (setgid(0i64)) {
             Ok(v) => { return 81; },
-            Err(e) => { if (code_of(e) != 2) { return 82; } }
+            Err(e) => {
+                match (e) {
+                    Other(p, m) => { if (m != "Operation not permitted") { return 82; } },
+                    _ => { return 82; }
+                }
+            }
         }
         match (setuid(0i64)) {
             Ok(v) => { return 83; },
-            Err(e) => { if (code_of(e) != 2) { return 84; } }
+            Err(e) => {
+                match (e) {
+                    Other(p, m) => { if (m != "Operation not permitted") { return 84; } },
+                    _ => { return 84; }
+                }
+            }
         }
     }
     return 0;
