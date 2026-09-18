@@ -1737,10 +1737,10 @@ func requireParityBinary(t *testing.T, util, ours string, cases []invocation) {
 			}
 			diffArtifacts(t, util, inv, wantFiles, inv.readArtifacts(t), "gnu", "fern")
 			if !sameOutput(inv, want.stdout, got.stdout) {
-				t.Errorf("stdout differs for %s %s\n gnu: %s\nfern: %s", util, quoteArgs(inv.args), quote(want.stdout), quote(got.stdout))
+				t.Errorf("stdout differs for %s %s%s", util, quoteArgs(inv.args), diffBody("gnu", "fern", want.stdout, got.stdout))
 			}
 			if !sameOutput(inv, want.stderr, got.stderr) {
-				t.Errorf("stderr differs for %s %s\n gnu: %s\nfern: %s", util, quoteArgs(inv.args), quote(want.stderr), quote(got.stderr))
+				t.Errorf("stderr differs for %s %s%s", util, quoteArgs(inv.args), diffBody("gnu", "fern", want.stderr, got.stderr))
 			}
 			if want.how() != got.how() {
 				t.Errorf("status differs for %s %s: gnu %s, fern %s", util, quoteArgs(inv.args), want.how(), got.how())
@@ -1858,6 +1858,81 @@ func quote(b []byte) string {
 	return sb.String()
 }
 
+// A difference bigger than diffFull is reported as a window of diffContext
+// bytes either side of the first differing byte rather than in full.
+//
+// Quoting both streams whole is what wedged the macOS lane twice: the log
+// stopped draining and the test binary blocked on write (#9703). The first
+// complete Darwin round measured the scale — 11 GB of log for 1412 failures,
+// with one 1.2 GB line, because `printf "%.99999999999d" 1` answers 1.2 GB
+// of zeros there. Beside that, a listing case's few kilobytes are the mild
+// version of the same thing, and in every case the difference is one field
+// of one line. The limit is high enough that every short case prints whole.
+const (
+	diffFull    = 512
+	diffContext = 96
+)
+
+// diffBody renders the two sides of a byte difference, leftName and rightName
+// saying which is which. The names are padded to a common width here rather
+// than by hand at each call site.
+func diffBody(leftName, rightName string, left, right []byte) string {
+	width := len(leftName)
+	if len(rightName) > width {
+		width = len(rightName)
+	}
+	// The window is chosen BEFORE either side is quoted. Quoting first and
+	// discarding the result would allocate the very thing this avoids:
+	// `printf "%.99999999999d" 1` answers 1.2 GB of zeros on Darwin, and
+	// quote() of that is a multi-gigabyte string in the test process.
+	var head, l, r string
+	if len(left) > diffFull || len(right) > diffFull {
+		at := firstDiff(left, right)
+		head = fmt.Sprintf("\n%*s  %d and %d bytes, first differing at byte %d",
+			width, "", len(left), len(right), at)
+		l, r = excerptAt(left, at), excerptAt(right, at)
+	} else {
+		l, r = quote(left), quote(right)
+	}
+	return fmt.Sprintf("%s\n%*s: %s\n%*s: %s", head, width, leftName, l, width, rightName, r)
+}
+
+// firstDiff is the index of the first byte the two differ at. Two streams
+// that agree as far as the shorter one differ at its length.
+func firstDiff(a, b []byte) int {
+	n := len(a)
+	if len(b) < n {
+		n = len(b)
+	}
+	for i := 0; i < n; i++ {
+		if a[i] != b[i] {
+			return i
+		}
+	}
+	return n
+}
+
+// excerptAt quotes the window around `at`, with what was dropped counted
+// rather than silently elided — a reader who needs the rest has to know
+// there is a rest.
+func excerptAt(b []byte, at int) string {
+	lo, hi := at-diffContext, at+diffContext
+	if lo < 0 {
+		lo = 0
+	}
+	if hi > len(b) {
+		hi = len(b)
+	}
+	s := quote(b[lo:hi])
+	if lo > 0 {
+		s = fmt.Sprintf("[%d bytes before] %s", lo, s)
+	}
+	if hi < len(b) {
+		s = fmt.Sprintf("%s [%d bytes after]", s, len(b)-hi)
+	}
+	return s
+}
+
 func quoteArgs(args []string) string {
 	if len(args) == 0 {
 		return "(no arguments)"
@@ -1893,7 +1968,7 @@ func requireHelpVersion(t *testing.T, util string, args []string, wantExit int, 
 		t.Errorf("%s %s: gnu %s, fern %s", util, quoteArgs(args), want.how(), got.how())
 	}
 	if len(want.stderr) != 0 || len(got.stderr) != 0 {
-		t.Errorf("%s %s: stderr must be empty on both sides\n gnu: %s\nfern: %s", util, quoteArgs(args), quote(want.stderr), quote(got.stderr))
+		t.Errorf("%s %s: stderr must be empty on both sides%s", util, quoteArgs(args), diffBody("gnu", "fern", want.stderr, got.stderr))
 	}
 	if len(got.stdout) == 0 {
 		t.Errorf("%s %s: wrote nothing to stdout", util, quoteArgs(args))
