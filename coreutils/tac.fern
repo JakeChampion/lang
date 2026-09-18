@@ -282,25 +282,25 @@ function tac_backward(src: Src, name: string, size: i64, o: Out, s: Settings): O
 // back in the same 8 KiB windows the temporary file would be read in,
 // so a regular expression meets the same buffer boundaries.
 function hold_stream(r: Reader, name: string, o: Out): (Out, string, boolean) {
-  var held: string = "";
+  // Chunks into an array, joined once at EOF, the idiom std/io's
+  // read_all_stdin documents: `held = held + c` copies the whole prefix per
+  // chunk, so holding an N-byte stream in 8 KiB pieces copies ~N²/8192 bytes.
+  // `join` sums the lengths and blits once, so the hold is O(N).
+  var chunks: string[] = [];
   while (true) {
     match (r.read_chunk(8192)) {
       Ok(c) => {
         if (c.len() == 0) {
-          return (o, held, true);
+          return (o, chunks.join(""), true);
         }
-        if (held.len() == 0) {
-          held = c;
-        } else {
-          held = held + c;
-        }
+        chunks = chunks.append(c);
       },
       Err(e) => {
         return (fail(o, gnu.quotef(name) + ": read error: " + gnu.io_error_text(e)), "", false);
       }
     }
   }
-  return (o, held, true);
+  return (o, chunks.join(""), true);
 }
 
 // `tac_file(path, o, s)` — one operand. `-` is stdin, which the
