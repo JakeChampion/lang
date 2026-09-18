@@ -302,6 +302,25 @@ of whether Fern should follow 9.5+ instead. Nothing forces that today — every
 CI runner and this container ship 9.4 — so it is a future-GNU decision rather
 than a live divergence.
 
+**The benchmark's GNU is a different tree from the oracle's, on purpose.** The
+corpus is pinned to 9.4 by the paragraph above; a benchmark pinned there would
+be claiming to beat a release from 2023. So `scripts/coreutils-bench` reads
+`FERN_GNU_COREUTILS_BENCH` — a PATH-style list tried ahead of
+`FERN_GNU_COREUTILS` — and `scripts/devbox.Dockerfile` builds a second tree at
+the newest release (`BENCH_GNU_COREUTILS_VERSION`, currently 9.12) into
+`/opt/gnu-coreutils-bench`, setting that variable in the image. With the
+variable unset the two are the same tree and nothing changes.
+
+The bench script carries the newest release as `bench_gnu_floor` and says on
+stderr when the tree it found is older, rather than quietly comparing against
+whatever is on PATH. It warns and does not exit: the bench is a comparison and
+not a gate, and a developer without a current tree still wants the uutils
+column. Two utilities stay on the fallback tree whatever is installed —
+`chcon` and `runcon` need SELinux and both trees configure `--without-selinux`
+— and `arch`, `kill` and `uptime` need `--enable-install-program`, which the
+image passes. A utility answered from a different directory than the bulk
+names its real version on stderr, so a mixed run is never silent.
+
 ### The Darwin ratchet
 
 Running the whole catalogue on macOS surfaces 1,887 failing cases over 19,913
