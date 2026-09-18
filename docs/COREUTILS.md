@@ -720,9 +720,9 @@ A utility named as an ARGUMENT — `fern-coreutils yes` — is refused rather
 than run. It would see this binary's name in its diagnostics, and Fern has
 no module-level mutable state, so there is no `set_program_name` to
 correct it with. Supporting that form needs a `set_args` primitive in the
-runtime (the backends already cache `args()` in a slot a store could
-replace); until then the symlink is the only invocation, and the release
-archive ships the symlinks so untarring it is the whole install.
+runtime (#9694 — the backends already cache `args()` in a slot a store
+could replace); until then the symlink is the only invocation, and the
+release archive ships the symlinks so untarring it is the whole install.
 
 Under its own name the binary answers for itself: `--list` prints the
 catalogue, `--help` and `--version` do the usual.

@@ -89,13 +89,103 @@ jobs:
             fern-${{ matrix.name }}.tar.gz
             fern-${{ matrix.name }}.tar.gz.sha256
 
+  # The coreutils catalogue as ONE binary per host, built twice: once by the
+  # native compiler and once by the self-hosted one. Both are published while
+  # the self-host is on its way to becoming the default, so a regression in
+  # either is visible in the artifact rather than only in CI.
+  #
+  # `fern-coreutils` picks its utility from the basename of argv[0], so the
+  # archive ships the symlinks beside it and untarring it is the whole
+  # install. There is no wasm archive: dispatch reads argv[0], and a wasm
+  # module has no name of its own to read.
+  coreutils:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest,    goos: linux,  goarch: amd64, name: linux-x86_64,  target: x86-64-linux }
+          - { runner: ubuntu-24.04-arm, goos: linux,  goarch: arm64, name: linux-arm64,   target: arm64-linux }
+          - { runner: macos-15,         goos: darwin, goarch: arm64, name: darwin-arm64,  target: arm64-darwin }
+    name: coreutils-${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go (pinned in mise.toml)
+        uses: jdx/mise-action@v4
+        with:
+          version: 2026.9.1
+          github_token: ${{ github.token }}
+          install_args: go
+
+      - name: Build the native compiler
+        env:
+          CGO_ENABLED: "0"
+        run: go build -trimpath -ldflags="-s -w" -o bin/fern ./cmd/fern
+
+      # The self-host compiler is itself a Fern program compiled for this
+      # host's target, so it runs here like the utilities it goes on to build.
+      - name: Build the self-host compiler
+        run: ./bin/fern -target "${{ matrix.target }}" -o bin/fern-selfhost examples/self_host/fern.fern
+
+      - name: Build the multicall binary with both compilers
+        run: |
+          set -euo pipefail
+          mkdir -p dist/native dist/selfhost
+          ./bin/fern -O -target "${{ matrix.target }}" \
+            -o dist/native/fern-coreutils coreutils/multicall/fern-coreutils.fern
+          ./bin/fern-selfhost -O -target "${{ matrix.target }}" \
+            -o dist/selfhost/fern-coreutils coreutils/multicall/fern-coreutils.fern internal/stdlib
+
+      # Publishing a binary nobody ran is worse than publishing nothing, so
+      # each one answers for itself and then runs a utility through a symlink
+      # — the invocation the archive is built around.
+      - name: Smoke-test both binaries and lay out the symlinks
+        run: |
+          set -euo pipefail
+          expected="$(ls coreutils/*.fern | wc -l | tr -d ' ')"
+          for leg in native selfhost; do
+            cd "dist/$leg"
+            n="$(./fern-coreutils --list | wc -l | tr -d ' ')"
+            if [ "$n" != "$expected" ]; then
+              echo "::error::$leg: --list names $n utilities, coreutils/ holds $expected"
+              exit 1
+            fi
+            for util in $(./fern-coreutils --list); do
+              ln -s fern-coreutils "$util"
+            done
+            [ "$(./echo hello)" = "hello" ]
+            [ "$(./seq 1 3 | tr '\n' ' ')" = "1 2 3 " ]
+            [ "$(printf 'a\nb\n' | ./wc -l | tr -d ' ')" = "2" ]
+            ./true
+            if ./false; then echo "::error::$leg: false(1) succeeded"; exit 1; fi
+            cd ../..
+          done
+
+      - name: Package archives
+        run: |
+          set -euo pipefail
+          for leg in native selfhost; do
+            name="fern-coreutils-$leg-${{ matrix.name }}"
+            tar -czf "$name.tar.gz" -C "dist/$leg" .
+            shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
+          done
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: fern-coreutils-${{ matrix.name }}
+          path: |
+            fern-coreutils-*-${{ matrix.name }}.tar.gz
+            fern-coreutils-*-${{ matrix.name }}.tar.gz.sha256
+
   release:
     # Only publish on the scheduled daily run; workflow_dispatch runs still
     # build + upload artifacts (handy for verifying changes to this workflow
     # without spamming the releases page). On `schedule`, github.sha is main's
     # HEAD, so the rolling `nightly` lands on the latest commit as intended.
     if: github.event_name == 'schedule'
-    needs: build
+    needs: [build, coreutils]
     runs-on: ubuntu-latest
     steps:
       - name: Download all build artifacts
@@ -143,6 +233,23 @@ jobs:
             | Linux x86_64       | `fern-linux-x86_64.tar.gz`       |
             | Linux arm64        | `fern-linux-arm64.tar.gz`        |
             | macOS Apple Silicon| `fern-darwin-arm64.tar.gz`       |
+
+            ## The coreutils catalogue
+
+            Every utility in `coreutils/` in one binary, which picks
+            which one to be from the name it is invoked as. Untar it
+            and the symlinks are already there:
+
+            ```
+            tar xzf fern-coreutils-native-linux-x86_64.tar.gz
+            ./yes | head -2
+            ```
+
+            Two builds of the same sources are published per platform
+            while the self-hosted compiler is on its way to becoming
+            the default: `fern-coreutils-native-*` is built by the Go
+            compiler in this release, `fern-coreutils-selfhost-*` by
+            the self-hosted one it produces.
 
             Each archive ships a single self-contained `fern`
             binary; the prelude and WASI WIT files are embedded.

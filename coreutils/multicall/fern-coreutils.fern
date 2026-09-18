@@ -20,8 +20,9 @@
 // argument (`fern-coreutils yes`) is NOT supported — a utility invoked
 // that way would see this binary's name in its diagnostics, and there
 // is no `set_program_name` to reach for because Fern has no
-// module-level mutable state. The release artifact ships the symlinks
-// beside the binary, so the supported path is the only one needed.
+// module-level mutable state; #9694 is the runtime primitive that would
+// lift it. The release artifact ships the symlinks beside the binary,
+// so the supported path is the only one needed meanwhile.
 //
 // The imports below are the catalogue, and
 // `internal/coreutils/multicall_test.go` fails when a `coreutils/*.fern`
