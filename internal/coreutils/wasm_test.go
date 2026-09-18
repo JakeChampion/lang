@@ -103,10 +103,10 @@ func TestWasmSmoke(t *testing.T) {
 				t.Fatalf("wasmtime: %v", err)
 			}
 			if !bytes.Equal(want.stdout, stdout.Bytes()) {
-				t.Errorf("stdout differs for %s %s\nnative: %s\n  wasm: %s", c.util, quoteArgs(c.args), quote(want.stdout), quote(stdout.Bytes()))
+				t.Errorf("stdout differs for %s %s%s", c.util, quoteArgs(c.args), diffBody("native", "wasm", want.stdout, stdout.Bytes()))
 			}
 			if !bytes.Equal(want.stderr, stderr.Bytes()) {
-				t.Errorf("stderr differs for %s %s\nnative: %s\n  wasm: %s", c.util, quoteArgs(c.args), quote(want.stderr), quote(stderr.Bytes()))
+				t.Errorf("stderr differs for %s %s%s", c.util, quoteArgs(c.args), diffBody("native", "wasm", want.stderr, stderr.Bytes()))
 			}
 			if (want.exit != 0) != (exit != 0) || want.signal != "" {
 				t.Errorf("status differs for %s %s: native %s, wasm exit %d", c.util, quoteArgs(c.args), want.how(), exit)

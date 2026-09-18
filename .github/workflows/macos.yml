@@ -318,6 +318,22 @@ jobs:
             tail -5 corpus-darwin.log || true
             exit 1
           fi
+          # A DONE line is not enough: a runaway case can take the tail of the
+          # run down with it and still leave one, which is how 32 utilities
+          # were recorded as passing without ever having run (see the header
+          # of the known-failures file). A short run's narrower failure set
+          # would read as an improvement, so refuse it instead.
+          ran=$(sed -n 's/^DONE \([0-9][0-9]*\) tests.*/\1/p' corpus-darwin.log | head -1)
+          floor=$(sed -n 's/^# min-tests: *\([0-9][0-9]*\).*/\1/p' .github/darwin-corpus-known-failures.txt | head -1)
+          if [ -z "$ran" ] || [ -z "$floor" ]; then
+            echo "::error::could not read the test count ('$ran') or the min-tests floor ('$floor')"
+            exit 1
+          fi
+          echo "### $ran tests ran, floor is $floor"
+          if [ "$ran" -lt "$floor" ]; then
+            echo "::error::the corpus ran $ran tests, below the $floor floor — the catalogue did not finish, so its failure set is not a measurement. Lower the floor only when the catalogue shrinks on purpose."
+            exit 1
+          fi
           grep -oE '^--- FAIL: Test[A-Za-z0-9]+' corpus-darwin.log \
             | sed 's/^--- FAIL: //' | sort -u > failed-now.txt
           grep -vE '^[[:space:]]*(#|$)' .github/darwin-corpus-known-failures.txt \
