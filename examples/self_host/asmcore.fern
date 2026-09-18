@@ -589,10 +589,6 @@ pub function sysno(t: string, name: string): string {
         if (name == "getuid") { return "24"; }
         if (name == "getgid") { return "47"; }
         if (name == "getgroups") { return "79"; }
-        // XNU's __getcwd. Same (buf, size) shape as Linux's; only the RETURN
-        // differs (0 here, the length there), which rt_src_getcwd sidesteps by
-        // measuring the buffer instead.
-        if (name == "getcwd") { return "296"; }
         // XNU's sigaction is 3-argument where Linux's rt_sigaction is 4; the
         // extra `sigsetsize` is ignored here, so one body serves both (see
         // rt_src_signal_disposition).
@@ -2834,10 +2830,19 @@ pub function rt_src_uname_field(t: string): string {
 
 // rt_src_getcwd backs `getcwd()` → the process's working directory as a fresh
 // string. The buffer's first byte is zeroed before the call and the length is
-// then measured from the bytes, so the two kernels' different SUCCESS returns
-// (Linux answers the length including the NUL, XNU 0) need no branch: a
-// refusal writes nothing, and the leading NUL reads back as the empty string.
+// then measured from the bytes, so Linux's SUCCESS return (the length
+// including the NUL) is never read: a refusal writes nothing, and the leading
+// NUL reads back as the empty string.
+//
+// Darwin has no getcwd syscall to issue — there is no SYS___getcwd in the
+// macOS SDK's syscall.h, and the number this used to pass (296) is
+// vm_pressure_monitor (#9131). It opens a descriptor on "." and asks for that
+// descriptor's path with fcntl(F_GETPATH = 50), which wants MAXPATHLEN of
+// buffer and NUL-terminates what it writes.
 pub function rt_src_getcwd(t: string): string {
+    if (t == "arm64-darwin") {
+        return "function __fern_getcwd(): string { var dot: i32 = __raw_alloc(2); __raw_store8(dot, 0, 46); __raw_store8(dot, 1, 0); var fd: i32 = __syscall4(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", dot, 0, 0); if (fd < 0) { return \"\"; } var buf: i32 = __raw_alloc(4096); __raw_store8(buf, 0, 0); var rc: i32 = __syscall3(" + sysno(t, "fcntl") + ", fd, 50, buf); __syscall3(" + sysno(t, "close") + ", fd, 0, 0); if (rc < 0) { return \"\"; } var n: i32 = 0; while (n < 4096 && __raw_load8(buf, n) != 0) { n = n + 1; } var p: i32 = __raw_alloc(n); __memcpy(p, __raw_addr(buf, 0), n); return __raw_string(p, n); }";
+    }
     return "function __fern_getcwd(): string { var buf: i32 = __raw_alloc(4096); __raw_store8(buf, 0, 0); __syscall3(" + sysno(t, "getcwd") + ", buf, 4096, 0); var n: i32 = 0; while (n < 4096 && __raw_load8(buf, n) != 0) { n = n + 1; } var p: i32 = __raw_alloc(n); __memcpy(p, __raw_addr(buf, 0), n); return __raw_string(p, n); }";
 }
 

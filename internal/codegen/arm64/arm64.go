@@ -270,11 +270,6 @@ var linuxDarwinSysno = map[string][2]int{
 	"getgid": {176, 47},
 	// getgroups(2) — Linux asm-generic 158, Darwin BSD 79.
 	"getgroups": {158, 79},
-	// getcwd(2) — Linux asm-generic 17, Darwin's `__getcwd` BSD 296.
-	// Same (buf, size) shape; the RETURN differs (Linux answers the
-	// length including the NUL, Darwin 0), so `__fern_getcwd` measures
-	// the string itself rather than trusting either.
-	"getcwd": {17, 296},
 	// rt_sigaction(2) — Linux asm-generic 134, Darwin's sigaction BSD 46.
 	// Linux takes a fourth `sigsetsize` argument that Darwin ignores, and
 	// the two `struct sigaction` layouts disagree past the first field —
@@ -346,6 +341,16 @@ var linuxOnlySysno = map[string]int{
 	// __fern_fd_syncfs branches inline on Darwin rather than reaching
 	// this row.
 	"syncfs": 267,
+	// getcwd: current XNU has no __getcwd trap — there is no SYS___getcwd
+	// in the macOS SDK's syscall.h and slot 326, where older XNU carried
+	// it, is empty. This row used to claim Darwin 296, which is
+	// vm_pressure_monitor: it SUCCEEDS, leaves the buffer untouched so the
+	// strlen measured stack garbage, and took its third argument as a
+	// pointer to copy a page count out to — four kernel-written bytes at
+	// whatever the caller happened to leave in x2 (#9131, and the
+	// corrupted paths in #9722). __fern_getcwd builds the answer out of
+	// fcntl(F_GETPATH) on Darwin instead, so no number belongs here.
+	"getcwd": 17,
 }
 
 // regArgs is the AAPCS64 register-argument count: args 0..7
@@ -13537,12 +13542,13 @@ func (g *generator) emitUnameFieldRuntime() {
 }
 
 // emitGetcwdRuntime emits `__fern_getcwd()` → a fresh rc string holding
-// the process's working directory. Both kernels fill a caller's buffer
-// and NUL-terminate it; only the return differs (Linux answers the
-// length including the NUL, Darwin 0), so the length is measured from
-// the bytes rather than taken from the syscall. A refusal — an unlinked
-// working directory, an unreadable ancestor, a path past the page the
-// kernel builds it in — answers the empty string.
+// the process's working directory. A refusal — an unlinked working
+// directory, an unreadable ancestor, a path past the page the kernel
+// builds it in — answers the empty string.
+//
+// Linux fills a caller's buffer and answers the length including the NUL;
+// the length is measured from the bytes rather than taken from the
+// syscall. Darwin has no getcwd trap at all and is emitted separately.
 //
 // Frame: fp/lr (16) + x19/x20 (16) + PATH_MAX of buffer = 4128.
 func (g *generator) emitGetcwdRuntime() {
@@ -13550,6 +13556,10 @@ func (g *generator) emitGetcwdRuntime() {
 	g.line(".global __fern_getcwd")
 	g.typeDirective("__fern_getcwd")
 	g.label("__fern_getcwd")
+	if g.darwin {
+		g.emitGetcwdRuntimeDarwin()
+		return
+	}
 	// 4128 is past the 12-bit immediate a single `sub sp` takes, so the
 	// frame is opened (and closed) in two steps.
 	g.emit("sub sp, sp, #4096")
@@ -13560,12 +13570,8 @@ func (g *generator) emitGetcwdRuntime() {
 	g.emit("add x0, sp, #32")
 	g.emit("mov x1, #4096")
 	g.syscall("getcwd")
-	if g.darwin {
-		g.emit("b.cs .Lcwd_empty") // carry set = error
-	} else {
-		g.emit("cmp x0, #0")
-		g.emit("b.le .Lcwd_empty")
-	}
+	g.emit("cmp x0, #0")
+	g.emit("b.le .Lcwd_empty")
 	g.emit("add x19, sp, #32")
 	g.emit("mov x20, #0")
 	g.label(".Lcwd_strlen")
@@ -13601,6 +13607,87 @@ func (g *generator) emitGetcwdRuntime() {
 	g.emit("ldp x19, x20, [sp, #16]")
 	g.emit("ldp x29, x30, [sp]")
 	g.emit("add sp, sp, #32")
+	g.emit("add sp, sp, #4096")
+	g.emit("ret")
+	g.sizeDirective("__fern_getcwd")
+	g.line(".ltorg")
+}
+
+// emitGetcwdRuntimeDarwin is __fern_getcwd for arm64-darwin, which has no
+// getcwd syscall to issue: there is no SYS___getcwd in the macOS SDK's
+// syscall.h, and the number this backend used to pass (296) is
+// vm_pressure_monitor (#9131).
+//
+// So the answer is built the way macOS documents: open a descriptor on
+// "." and ask the kernel for that descriptor's path with
+// fcntl(F_GETPATH). F_GETPATH wants a buffer of at least MAXPATHLEN
+// (1024) and NUL-terminates what it writes.
+//
+// Frame: fp/lr (16) + x19/x20 (16) + the "." operand (16) + 4096 of
+// buffer = 4144. The operand gets its own slot rather than borrowing the
+// buffer, which openat reads and fcntl then overwrites.
+func (g *generator) emitGetcwdRuntimeDarwin() {
+	const fGetPath = 50
+	g.emit("sub sp, sp, #4096")
+	g.emit("sub sp, sp, #48")
+	g.emit("stp x29, x30, [sp]")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	// "." NUL, built in the frame so this needs no .rodata literal.
+	g.emit("mov w9, #46")
+	g.emit("strb w9, [sp, #32]")
+	g.emit("strb wzr, [sp, #33]")
+	// openat(AT_FDCWD, ".", O_RDONLY, 0)
+	g.emit("mov x0, #%d", g.atFdCwd())
+	g.emit("add x1, sp, #32")
+	g.emit("mov x2, #0")
+	g.emit("mov x3, #0")
+	g.syscall("openat")
+	g.emit("tbnz x0, #63, .Lcwdd_empty")
+	g.emit("mov x19, x0") // fd
+	// fcntl(fd, F_GETPATH, buf)
+	g.emit("mov x1, #%d", fGetPath)
+	g.emit("add x2, sp, #48")
+	g.syscall("fcntl")
+	g.emit("mov x20, x0") // stash the verdict across close
+	g.emit("mov x0, x19")
+	g.syscall("close")
+	g.emit("tbnz x20, #63, .Lcwdd_empty")
+	g.emit("add x19, sp, #48")
+	g.emit("mov x20, #0")
+	g.label(".Lcwdd_strlen")
+	g.emit("ldrb w1, [x19, x20]")
+	g.emit("cbz w1, .Lcwdd_len")
+	g.emit("add x20, x20, #1")
+	g.emit("b .Lcwdd_strlen")
+	g.label(".Lcwdd_len")
+	g.emit("cbz x20, .Lcwdd_empty")
+	g.emit("add w0, w20, #1")
+	g.emit("bl __fern_alloc_rc1") // x0 = data
+	if !ast.UseTwoWordStrings(8) {
+		g.emitStrLenStore("w20", "x0")
+	}
+	g.emit("strb wzr, [x0, x20]")
+	g.emit("mov x1, x19")
+	g.emit("mov x19, x0")
+	g.emit("mov x2, x20")
+	g.emit("bl __fern_memcpy")
+	g.emit("mov x0, x19")
+	if ast.UseTwoWordStrings(8) {
+		g.emit("mov w1, w20")
+	}
+	g.emit("b .Lcwdd_done")
+	g.label(".Lcwdd_empty")
+	if ast.UseTwoWordStrings(8) {
+		g.emit("mov x0, xzr")
+		g.emit("movz x1, #0x8000, lsl #48")
+	} else {
+		g.emitStrEmpty("x0")
+	}
+	g.label(".Lcwdd_done")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp]")
+	g.emit("add sp, sp, #48")
 	g.emit("add sp, sp, #4096")
 	g.emit("ret")
 	g.sizeDirective("__fern_getcwd")
