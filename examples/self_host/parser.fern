@@ -9814,7 +9814,23 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
                         var recvt: string = mono_infer(cfa.obj, env, funcs);
                         if (type_ends_arr(recvt)) {
                             var el: str = slice_unchecked(recvt, 0, recvt.len() - 2);
-                            return subst_ty(funcs.decls[amgi].ret_type, funcs.decls[amgi].type_params, [el + ""]);
+                            var amrt: string = subst_ty(funcs.decls[amgi].ret_type, funcs.decls[amgi].type_params, [el + ""]);
+                            // `type_params` carries only the BOUNDED receiver var, so a
+                            // method with an unbounded param of its own — `map[U]`,
+                            // whose return is `U[]` — leaves U residual and the
+                            // substitution above hands back a type VARIABLE spelled
+                            // like a type. A chained `reduce` then instantiates at `U`
+                            // and its match binding lowers as the wrong slot kind
+                            // (#9743). Same residual, and the same repair, as
+                            // call_ret_type's.
+                            var amvars: string[] = type_str_vars(amrt, []);
+                            if (amvars.len() > 0) {
+                                var amargs: ast.Expr[] = [cfa.obj];
+                                var amk: i32 = 0;
+                                while (amk < c.args.len()) { amargs = amargs.append(c.args[amk]); amk = amk + 1; }
+                                amrt = resolve_residual_ret(funcs.decls[amgi], amargs, env, funcs, amrt, amvars);
+                            }
+                            return amrt;
                         }
                     }
                     // Generic-struct method with its own type params — folded to
