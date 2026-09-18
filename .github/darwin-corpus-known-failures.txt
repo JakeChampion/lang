@@ -18,6 +18,13 @@
 # a filesystem now and the rest are held to GNU, which also put 3186
 # comparisons back that had never run.
 #
+# TestMulticallParity is the one entry that is not about a utility. It re-runs
+# EVERY utility's corpus through the multicall binary, so it fails while any
+# single one of them fails and cannot leave this file before the last of them
+# does. It is listed for the same reason the seed was — a test that never
+# passed on Darwin rather than one that stopped — and it is the entry to delete
+# last, not the one to chase.
+#
 # One test function per line, so the granularity is a utility rather than a
 # case. The case counts behind these names, and the clusters they fall into,
 # are in #9714; the largest by far is the listing code behind vdir, ls and
@@ -83,6 +90,7 @@ TestMkdir
 TestMkfifoParity
 TestMknodParity
 TestMktempRetryExhaustion
+TestMulticallParity
 TestMvCrossDeviceOrder
 TestMvParity
 TestNice
@@ -114,7 +122,6 @@ TestStat
 TestStty
 TestSyncParity
 TestTailParity
-TestTeeParity
 TestTestParity
 TestTruncateParity
 TestTtyParity
