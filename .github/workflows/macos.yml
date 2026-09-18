@@ -331,7 +331,7 @@ jobs:
           fi
           echo "### $ran tests ran, floor is $floor"
           if [ "$ran" -lt "$floor" ]; then
-            echo "::error::the corpus ran $ran tests, below the $floor floor — the catalogue did not finish, so its failure set is not a measurement. Raise the floor only when the catalogue shrinks on purpose."
+            echo "::error::the corpus ran $ran tests, below the $floor floor — the catalogue did not finish, so its failure set is not a measurement. Lower the floor only when the catalogue shrinks on purpose."
             exit 1
           fi
           grep -oE '^--- FAIL: Test[A-Za-z0-9]+' corpus-darwin.log \
