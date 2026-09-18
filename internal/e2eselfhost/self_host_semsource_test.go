@@ -649,17 +649,19 @@ function built(n: i32): string {
     buf_free(b);
     return s;
 }
-// An address read back as the box it names: the reinterpretation core/map's
-// key column writes, and the graph carries the cast the lowering emits nothing
-// for. The refused sibling is the OTHER direction, and the asymmetry is the
-// point — an address is not a reference the ownership planner tracks, so
-// a text-to-address cast is the last typed use of the local, the box is
-// dropped there, and the address goes on naming freed memory. core/map
-// compensates with an explicit rc-inc; that is the source's to write, not
-// this boundary's to infer.
+// An address and the box it names share a slot, so both directions of the
+// reinterpretation are casts the lowering emits nothing for: the one core/map's
+// key column reads back, and the one that hands the address out. The second
+// ANCHORS its source, so the box outlives every read through the address. What
+// an anchor cannot cover is an address that leaves the frame, which is why
+// core/map writes an explicit rc-inc on the one it returns.
 function addr_as_text(p: usize): string { return p as string; }
 function addr_as_bytes(p: usize): u8[] { return p as u8[]; }
-function refused_text_as_addr(s: string): usize { return s as usize; }
+function text_as_addr(s: string): usize { return s as usize; }
+// The byte is the one integer width cast_admits keeps out of the float domain,
+// so this is what a refused cast looks like now that both directions of the
+// address reinterpretation are admitted.
+function refused_byte_as_float(b: u8): f64 { return b as f64; }
 function handle_sum(h: usize, k: usize): usize { return h + k; }
 function handle_narrow(h: usize): i32 { return h as i32; }
 function handle_byte(h: usize): u8 { return h as u8; }
