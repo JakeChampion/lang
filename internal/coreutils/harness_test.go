@@ -383,6 +383,11 @@ type outcome struct {
 	// killed the process, which is not something a signal can be told
 	// from: the kill IS a signal.
 	overran bool
+	// flooded is set when the run wrote more than captureCap to one
+	// stream and the harness killed it. Both sides are held to the same
+	// cap, so a case where both flood still compares: the prefixes are
+	// the comparison and the verdicts agree.
+	flooded bool
 	// tree is the working directory the run left behind, for a case
 	// that asked for one.
 	tree []treeEntry
@@ -392,6 +397,9 @@ type outcome struct {
 }
 
 func (o outcome) how() string {
+	if o.flooded {
+		return "wrote past the capture cap"
+	}
 	if o.overran {
 		return "did not finish"
 	}
@@ -400,6 +408,79 @@ func (o outcome) how() string {
 	}
 	return fmt.Sprintf("exit %d", o.exit)
 }
+
+// rootThroughChild spells the root by way of one of its child directories,
+// which is what the case using it is about: `--preserve-root` has to refuse
+// the root however it is written, and both binaries must refuse it alike.
+//
+// It is NOT `/tmp/..`, which is what this was. On Linux that is the root and
+// the failsafe fires. On macOS `/tmp` is a symlink to `private/tmp`, so it
+// spells `/private` — the failsafe correctly does not fire, and GNU and Fern
+// then both recursively chmod 0777 everything under `/private` that the user
+// owns. On a dev machine that is the temp trees and build caches that live
+// there; it took 37 seconds a run and left 300k files world-writable before
+// anyone noticed it was not testing a refusal at all.
+//
+// `/usr` is a real directory on both, so `/usr/..` is the root on both. The
+// resolution is checked rather than assumed, because getting this wrong is
+// not a failing test — it is a recursive chmod of whatever it did hit.
+func rootThroughChild(t *testing.T) string {
+	t.Helper()
+	const spelling = "/usr/.."
+	got, err := filepath.EvalSymlinks(spelling)
+	if err != nil {
+		t.Fatalf("resolving %s: %v", spelling, err)
+	}
+	if got != "/" {
+		t.Fatalf("%s resolves to %q, not the root: a --preserve-root case built on it "+
+			"would recursively chmod that directory instead of being refused", spelling, got)
+	}
+	return spelling
+}
+
+// captureCap bounds what one run may write to one captured stream.
+//
+// Without it a case can ask both binaries for an unbounded stream and the
+// harness will try to hold all of it: `numfmt --padding=99999999999999999999 1`
+// is a valid invocation that GNU answers with about 10^20 spaces, which it
+// produces at around 400 MB/s. That case took three minutes on an M-series
+// laptop, and the memory it took killed a test running beside it.
+//
+// 64 MiB is far above every real case here — the widest legitimate output in
+// the catalogue is a `seq`/`yes` stream measured in kilobytes — and far below
+// the runaway, so it bounds the damage without weakening any comparison.
+const captureCap = 64 << 20
+
+// cappedBuffer collects up to captureCap bytes and kills the writer when it
+// goes past that, so a runaway stream costs a fraction of a second rather
+// than minutes and all of memory.
+//
+// Discarding the overflow without killing would bound the memory and not the
+// clock: the child happily writes its 10^20 bytes into a sink. The kill is
+// what makes the cap cheap, and `full` is what tells the comparison it is
+// looking at a prefix.
+type cappedBuffer struct {
+	buf  bytes.Buffer
+	full bool
+	kill func()
+}
+
+func (c *cappedBuffer) Write(p []byte) (int, error) {
+	if c.full {
+		return len(p), nil
+	}
+	if room := captureCap - c.buf.Len(); len(p) > room {
+		c.buf.Write(p[:room])
+		c.full = true
+		if c.kill != nil {
+			c.kill()
+		}
+		return len(p), nil
+	}
+	return c.buf.Write(p)
+}
+
+func (c *cappedBuffer) Bytes() []byte { return c.buf.Bytes() }
 
 // artifact is one path's state after a run: its bytes, or the fact that
 // it is absent. `uniq f -` leaves no output file, and a Fern build that
@@ -983,7 +1064,14 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 		cmd.Stdin = f
 	}
 
-	var errBuf bytes.Buffer
+	// The kill reads cmd.Process, which Start sets before the copier
+	// goroutine that feeds these buffers exists.
+	killChild := func() {
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+	}
+	errBuf := cappedBuffer{kill: killChild}
 	if !inv.ttyErr {
 		cmd.Stderr = &errBuf
 	}
@@ -993,6 +1081,8 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 
 	var out []byte
 	var overran bool
+	// Set by whichever captured stream hit captureCap first.
+	flooded := false
 	switch inv.stdout {
 	case stdoutCaptured:
 		if inv.stdoutPath != "" {
@@ -1053,7 +1143,7 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 		r.Close()
 		_ = cmd.Wait()
 	} else {
-		var outBuf bytes.Buffer
+		outBuf := cappedBuffer{kill: killChild}
 		if !inv.ttyOut {
 			cmd.Stdout = &outBuf
 			if inv.merged {
@@ -1070,6 +1160,7 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 		} else {
 			out = outBuf.Bytes()
 		}
+		flooded = flooded || outBuf.full
 	}
 
 	// A case the kernel refuses to start at all — an argv holding a NUL,
@@ -1082,7 +1173,13 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 	if inv.ttyErr {
 		stderr = ptyErr.wait()
 	}
-	res := outcome{stdout: out, stderr: stderr, exit: cmd.ProcessState.ExitCode(), overran: overran}
+	res := outcome{
+		stdout:  out,
+		stderr:  stderr,
+		exit:    cmd.ProcessState.ExitCode(),
+		overran: overran,
+		flooded: flooded || errBuf.full,
+	}
 	if inv.ttyState {
 		res.ttyState = ptySettings(t, ptyIn)
 	}
@@ -1631,6 +1728,13 @@ func requireParityBinary(t *testing.T, util, ours string, cases []invocation) {
 			wantFiles := inv.readArtifacts(t)
 			inv.prep(t)
 			got := inv.run(t, ours, util)
+			// Both sides flooding is a real comparison of the first
+			// captureCap bytes, but it is not the whole stream, so say
+			// so rather than let the log read as a clean pass.
+			if want.flooded || got.flooded {
+				t.Logf("output past %d bytes was not compared (gnu flooded=%v, fern flooded=%v)",
+					captureCap, want.flooded, got.flooded)
+			}
 			diffArtifacts(t, util, inv, wantFiles, inv.readArtifacts(t), "gnu", "fern")
 			if !sameOutput(inv, want.stdout, got.stdout) {
 				t.Errorf("stdout differs for %s %s\n gnu: %s\nfern: %s", util, quoteArgs(inv.args), quote(want.stdout), quote(got.stdout))

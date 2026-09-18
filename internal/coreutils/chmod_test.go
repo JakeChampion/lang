@@ -435,7 +435,7 @@ func chmodCases(t *testing.T) []invocation {
 		{name: "two slashes say so", args: []string{"-R", "--preserve-root", "0777", "//"}, seedTree: chmodOne},
 		{name: "three collapse to one", args: []string{"-R", "--preserve-root", "0777", "///"}, seedTree: chmodOne},
 		{name: "the root as dot", args: []string{"-R", "--preserve-root", "0777", "/."}, seedTree: chmodOne},
-		{name: "the root through a child", args: []string{"-R", "--preserve-root", "0777", "/tmp/.."}, seedTree: chmodOne},
+		{name: "the root through a child", args: []string{"-R", "--preserve-root", "0777", rootThroughChild(t)}, seedTree: chmodOne},
 		{name: "the failsafe is not quieted by -f", args: []string{"-Rf", "--preserve-root", "0777", "/"}, seedTree: chmodOne},
 		{name: "nor by -v", args: []string{"-Rv", "--preserve-root", "0777", "/"}, seedTree: chmodOne},
 		{name: "a later --preserve-root puts it back", args: []string{"-R", "--no-preserve-root", "--preserve-root", "0777", "/"}, seedTree: chmodOne},

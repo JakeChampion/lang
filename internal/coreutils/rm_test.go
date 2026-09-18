@@ -324,7 +324,7 @@ func rmCases(t *testing.T) []invocation {
 		// The dot check runs first, so these never reach the failsafe.
 		{name: "the root as dot", args: []string{"-r", "/."}, seedTree: rmFlat},
 		{name: "the root as dotdot", args: []string{"-r", "/.."}, seedTree: rmFlat},
-		{name: "the root reached through a child", args: []string{"-r", "/tmp/.."}, seedTree: rmFlat},
+		{name: "the root reached through a child", args: []string{"-r", rootThroughChild(t)}, seedTree: rmFlat},
 		{name: "preserve-root is the default", args: []string{"--preserve-root", "-r", "/"}, seedTree: rmFlat},
 		{name: "and preserve-root=all keeps it", args: []string{"--preserve-root=all", "-r", "/"}, seedTree: rmFlat},
 		{name: "the failsafe is not quieted by -v", args: []string{"-rv", "/"}, seedTree: rmFlat},
