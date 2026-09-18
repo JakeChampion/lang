@@ -1,1 +1,2 @@
 default value for parameter "b" reads "a": a default must be a constant expression, because it is evaluated at each call site rather than inside f
+function expects 2 arguments, got 1
