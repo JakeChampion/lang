@@ -97,8 +97,8 @@ whole scheme, both axes: `-target <isa>-<environment>`, `-emit asm` for the
 emitter's text (GAS on the natives, WAT on wasm) and `-emit core-module` for a
 raw wasm module, `-backend flat|ssa` to select the emitter, and `fern -targets` to list
 them. So a build command moves between the two compilers unchanged. The
-DEFAULT emitter differs by target on the self-host driver: arm64 is on the
-register path, x86-64 and wasm on the stack machine
+DEFAULT emitter on the self-host driver is the register path on both native
+ISAs and the stack machine on wasm, which has no register path
 (`docs/SELFHOST-SSA-BACKEND.md`). Two other
 differences remain, each with its own issue: `wasm32-wasi-http` has no
 self-host counterpart (#6636), and `-emit asm` has no native one — native
