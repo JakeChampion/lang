@@ -4,7 +4,7 @@ QEMU        ?= qemu-aarch64
 EXAMPLES := $(basename $(notdir $(wildcard examples/*.fern)))
 ASMS     := $(addprefix build/,$(addsuffix .s,$(EXAMPLES)))
 BINS     := $(addprefix build/,$(EXAMPLES))
-LANG_SRCS := $(wildcard examples/*.fern) $(wildcard coreutils/*.fern) $(wildcard coreutils/lib/*.fern)
+LANG_SRCS := $(wildcard examples/*.fern) $(wildcard coreutils/*.fern) $(wildcard coreutils/lib/*.fern) $(wildcard coreutils/multicall/*.fern)
 
 .PHONY: all build test vet deadcode actionlint hooks testnames freeze check-sources selfhost-cli bootstrap distcheck clean examples run-% fmt fmt-check gofmt gofmt-check lint-all ci-selftest fern-test-cache digest-check
 

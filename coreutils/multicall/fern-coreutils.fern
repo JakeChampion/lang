@@ -31,7 +31,6 @@
 //
 // Aliased imports throughout: a module name is bound as an identifier,
 // and `[`, `true` and `false` are not identifiers.
-import "std/string";
 import "../lib/gnu";
 import "../[" as u_bracket;
 import "../arch" as u_arch;
@@ -142,22 +141,7 @@ import "../yes" as u_yes;
 
 // The catalogue, in the order `--list` prints it.
 function catalogue(): string[] {
-  return [
-    "[", "arch", "b2sum", "base32", "base64", "basename", "basenc", "cat",
-    "chcon", "chgrp", "chmod", "chown", "chroot", "cksum", "comm", "cp",
-    "csplit", "cut", "date", "dd", "df", "dir", "dircolors", "dirname",
-    "du", "echo", "env", "expand", "expr", "factor", "false", "fmt",
-    "fold", "groups", "head", "hostid", "id", "install", "join", "kill",
-    "link", "ln", "logname", "ls", "md5sum", "mkdir", "mkfifo", "mknod",
-    "mktemp", "mv", "nice", "nl", "nohup", "nproc", "numfmt", "od",
-    "paste", "pathchk", "pinky", "pr", "printenv", "printf", "ptx", "pwd",
-    "readlink", "realpath", "rm", "rmdir", "runcon", "seq", "sha1sum", "sha224sum",
-    "sha256sum", "sha384sum", "sha512sum", "shred", "shuf", "sleep", "sort", "split",
-    "stat", "stty", "sum", "sync", "tac", "tail", "tee", "test",
-    "timeout", "touch", "tr", "true", "truncate", "tsort", "tty", "uname",
-    "unexpand", "uniq", "unlink", "uptime", "users", "vdir", "wc", "who",
-    "whoami", "yes"
-  ];
+  return ["[", "arch", "b2sum", "base32", "base64", "basename", "basenc", "cat", "chcon", "chgrp", "chmod", "chown", "chroot", "cksum", "comm", "cp", "csplit", "cut", "date", "dd", "df", "dir", "dircolors", "dirname", "du", "echo", "env", "expand", "expr", "factor", "false", "fmt", "fold", "groups", "head", "hostid", "id", "install", "join", "kill", "link", "ln", "logname", "ls", "md5sum", "mkdir", "mkfifo", "mknod", "mktemp", "mv", "nice", "nl", "nohup", "nproc", "numfmt", "od", "paste", "pathchk", "pinky", "pr", "printenv", "printf", "ptx", "pwd", "readlink", "realpath", "rm", "rmdir", "runcon", "seq", "sha1sum", "sha224sum", "sha256sum", "sha384sum", "sha512sum", "shred", "shuf", "sleep", "sort", "split", "stat", "stty", "sum", "sync", "tac", "tail", "tee", "test", "timeout", "touch", "tr", "true", "truncate", "tsort", "tty", "uname", "unexpand", "uniq", "unlink", "uptime", "users", "vdir", "wc", "who", "whoami", "yes"];
 }
 
 function in_catalogue(n: string): boolean {
@@ -250,111 +234,323 @@ function main(): i32 {
     return 1;
   }
   var n: string = basename(argv[0]);
-  if (n == "[") { return u_bracket.main(); }
-  if (n == "arch") { return u_arch.main(); }
-  if (n == "b2sum") { return u_b2sum.main(); }
-  if (n == "base32") { return u_base32.main(); }
-  if (n == "base64") { return u_base64.main(); }
-  if (n == "basename") { return u_basename.main(); }
-  if (n == "basenc") { return u_basenc.main(); }
-  if (n == "cat") { return u_cat.main(); }
-  if (n == "chcon") { return u_chcon.main(); }
-  if (n == "chgrp") { return u_chgrp.main(); }
-  if (n == "chmod") { return u_chmod.main(); }
-  if (n == "chown") { return u_chown.main(); }
-  if (n == "chroot") { return u_chroot.main(); }
-  if (n == "cksum") { return u_cksum.main(); }
-  if (n == "comm") { return u_comm.main(); }
-  if (n == "cp") { return u_cp.main(); }
-  if (n == "csplit") { return u_csplit.main(); }
-  if (n == "cut") { return u_cut.main(); }
-  if (n == "date") { return u_date.main(); }
-  if (n == "dd") { return u_dd.main(); }
-  if (n == "df") { return u_df.main(); }
-  if (n == "dir") { return u_dir.main(); }
-  if (n == "dircolors") { return u_dircolors.main(); }
-  if (n == "dirname") { return u_dirname.main(); }
-  if (n == "du") { return u_du.main(); }
-  if (n == "echo") { return u_echo.main(); }
-  if (n == "env") { return u_env.main(); }
-  if (n == "expand") { return u_expand.main(); }
-  if (n == "expr") { return u_expr.main(); }
-  if (n == "factor") { return u_factor.main(); }
-  if (n == "false") { return u_false.main(); }
-  if (n == "fmt") { return u_fmt.main(); }
-  if (n == "fold") { return u_fold.main(); }
-  if (n == "groups") { return u_groups.main(); }
-  if (n == "head") { return u_head.main(); }
-  if (n == "hostid") { return u_hostid.main(); }
-  if (n == "id") { return u_id.main(); }
-  if (n == "install") { return u_install.main(); }
-  if (n == "join") { return u_join.main(); }
-  if (n == "kill") { return u_kill.main(); }
-  if (n == "link") { return u_link.main(); }
-  if (n == "ln") { return u_ln.main(); }
-  if (n == "logname") { return u_logname.main(); }
-  if (n == "ls") { return u_ls.main(); }
-  if (n == "md5sum") { return u_md5sum.main(); }
-  if (n == "mkdir") { return u_mkdir.main(); }
-  if (n == "mkfifo") { return u_mkfifo.main(); }
-  if (n == "mknod") { return u_mknod.main(); }
-  if (n == "mktemp") { return u_mktemp.main(); }
-  if (n == "mv") { return u_mv.main(); }
-  if (n == "nice") { return u_nice.main(); }
-  if (n == "nl") { return u_nl.main(); }
-  if (n == "nohup") { return u_nohup.main(); }
-  if (n == "nproc") { return u_nproc.main(); }
-  if (n == "numfmt") { return u_numfmt.main(); }
-  if (n == "od") { return u_od.main(); }
-  if (n == "paste") { return u_paste.main(); }
-  if (n == "pathchk") { return u_pathchk.main(); }
-  if (n == "pinky") { return u_pinky.main(); }
-  if (n == "pr") { return u_pr.main(); }
-  if (n == "printenv") { return u_printenv.main(); }
-  if (n == "printf") { return u_printf.main(); }
-  if (n == "ptx") { return u_ptx.main(); }
-  if (n == "pwd") { return u_pwd.main(); }
-  if (n == "readlink") { return u_readlink.main(); }
-  if (n == "realpath") { return u_realpath.main(); }
-  if (n == "rm") { return u_rm.main(); }
-  if (n == "rmdir") { return u_rmdir.main(); }
-  if (n == "runcon") { return u_runcon.main(); }
-  if (n == "seq") { return u_seq.main(); }
-  if (n == "sha1sum") { return u_sha1sum.main(); }
-  if (n == "sha224sum") { return u_sha224sum.main(); }
-  if (n == "sha256sum") { return u_sha256sum.main(); }
-  if (n == "sha384sum") { return u_sha384sum.main(); }
-  if (n == "sha512sum") { return u_sha512sum.main(); }
-  if (n == "shred") { return u_shred.main(); }
-  if (n == "shuf") { return u_shuf.main(); }
-  if (n == "sleep") { return u_sleep.main(); }
-  if (n == "sort") { return u_sort.main(); }
-  if (n == "split") { return u_split.main(); }
-  if (n == "stat") { return u_stat.main(); }
-  if (n == "stty") { return u_stty.main(); }
-  if (n == "sum") { return u_sum.main(); }
-  if (n == "sync") { return u_sync.main(); }
-  if (n == "tac") { return u_tac.main(); }
-  if (n == "tail") { return u_tail.main(); }
-  if (n == "tee") { return u_tee.main(); }
-  if (n == "test") { return u_test.main(); }
-  if (n == "timeout") { return u_timeout.main(); }
-  if (n == "touch") { return u_touch.main(); }
-  if (n == "tr") { return u_tr.main(); }
-  if (n == "true") { return u_true.main(); }
-  if (n == "truncate") { return u_truncate.main(); }
-  if (n == "tsort") { return u_tsort.main(); }
-  if (n == "tty") { return u_tty.main(); }
-  if (n == "uname") { return u_uname.main(); }
-  if (n == "unexpand") { return u_unexpand.main(); }
-  if (n == "uniq") { return u_uniq.main(); }
-  if (n == "unlink") { return u_unlink.main(); }
-  if (n == "uptime") { return u_uptime.main(); }
-  if (n == "users") { return u_users.main(); }
-  if (n == "vdir") { return u_vdir.main(); }
-  if (n == "wc") { return u_wc.main(); }
-  if (n == "who") { return u_who.main(); }
-  if (n == "whoami") { return u_whoami.main(); }
-  if (n == "yes") { return u_yes.main(); }
+  if (n == "[") {
+    return u_bracket.main();
+  }
+  if (n == "arch") {
+    return u_arch.main();
+  }
+  if (n == "b2sum") {
+    return u_b2sum.main();
+  }
+  if (n == "base32") {
+    return u_base32.main();
+  }
+  if (n == "base64") {
+    return u_base64.main();
+  }
+  if (n == "basename") {
+    return u_basename.main();
+  }
+  if (n == "basenc") {
+    return u_basenc.main();
+  }
+  if (n == "cat") {
+    return u_cat.main();
+  }
+  if (n == "chcon") {
+    return u_chcon.main();
+  }
+  if (n == "chgrp") {
+    return u_chgrp.main();
+  }
+  if (n == "chmod") {
+    return u_chmod.main();
+  }
+  if (n == "chown") {
+    return u_chown.main();
+  }
+  if (n == "chroot") {
+    return u_chroot.main();
+  }
+  if (n == "cksum") {
+    return u_cksum.main();
+  }
+  if (n == "comm") {
+    return u_comm.main();
+  }
+  if (n == "cp") {
+    return u_cp.main();
+  }
+  if (n == "csplit") {
+    return u_csplit.main();
+  }
+  if (n == "cut") {
+    return u_cut.main();
+  }
+  if (n == "date") {
+    return u_date.main();
+  }
+  if (n == "dd") {
+    return u_dd.main();
+  }
+  if (n == "df") {
+    return u_df.main();
+  }
+  if (n == "dir") {
+    return u_dir.main();
+  }
+  if (n == "dircolors") {
+    return u_dircolors.main();
+  }
+  if (n == "dirname") {
+    return u_dirname.main();
+  }
+  if (n == "du") {
+    return u_du.main();
+  }
+  if (n == "echo") {
+    return u_echo.main();
+  }
+  if (n == "env") {
+    return u_env.main();
+  }
+  if (n == "expand") {
+    return u_expand.main();
+  }
+  if (n == "expr") {
+    return u_expr.main();
+  }
+  if (n == "factor") {
+    return u_factor.main();
+  }
+  if (n == "false") {
+    return u_false.main();
+  }
+  if (n == "fmt") {
+    return u_fmt.main();
+  }
+  if (n == "fold") {
+    return u_fold.main();
+  }
+  if (n == "groups") {
+    return u_groups.main();
+  }
+  if (n == "head") {
+    return u_head.main();
+  }
+  if (n == "hostid") {
+    return u_hostid.main();
+  }
+  if (n == "id") {
+    return u_id.main();
+  }
+  if (n == "install") {
+    return u_install.main();
+  }
+  if (n == "join") {
+    return u_join.main();
+  }
+  if (n == "kill") {
+    return u_kill.main();
+  }
+  if (n == "link") {
+    return u_link.main();
+  }
+  if (n == "ln") {
+    return u_ln.main();
+  }
+  if (n == "logname") {
+    return u_logname.main();
+  }
+  if (n == "ls") {
+    return u_ls.main();
+  }
+  if (n == "md5sum") {
+    return u_md5sum.main();
+  }
+  if (n == "mkdir") {
+    return u_mkdir.main();
+  }
+  if (n == "mkfifo") {
+    return u_mkfifo.main();
+  }
+  if (n == "mknod") {
+    return u_mknod.main();
+  }
+  if (n == "mktemp") {
+    return u_mktemp.main();
+  }
+  if (n == "mv") {
+    return u_mv.main();
+  }
+  if (n == "nice") {
+    return u_nice.main();
+  }
+  if (n == "nl") {
+    return u_nl.main();
+  }
+  if (n == "nohup") {
+    return u_nohup.main();
+  }
+  if (n == "nproc") {
+    return u_nproc.main();
+  }
+  if (n == "numfmt") {
+    return u_numfmt.main();
+  }
+  if (n == "od") {
+    return u_od.main();
+  }
+  if (n == "paste") {
+    return u_paste.main();
+  }
+  if (n == "pathchk") {
+    return u_pathchk.main();
+  }
+  if (n == "pinky") {
+    return u_pinky.main();
+  }
+  if (n == "pr") {
+    return u_pr.main();
+  }
+  if (n == "printenv") {
+    return u_printenv.main();
+  }
+  if (n == "printf") {
+    return u_printf.main();
+  }
+  if (n == "ptx") {
+    return u_ptx.main();
+  }
+  if (n == "pwd") {
+    return u_pwd.main();
+  }
+  if (n == "readlink") {
+    return u_readlink.main();
+  }
+  if (n == "realpath") {
+    return u_realpath.main();
+  }
+  if (n == "rm") {
+    return u_rm.main();
+  }
+  if (n == "rmdir") {
+    return u_rmdir.main();
+  }
+  if (n == "runcon") {
+    return u_runcon.main();
+  }
+  if (n == "seq") {
+    return u_seq.main();
+  }
+  if (n == "sha1sum") {
+    return u_sha1sum.main();
+  }
+  if (n == "sha224sum") {
+    return u_sha224sum.main();
+  }
+  if (n == "sha256sum") {
+    return u_sha256sum.main();
+  }
+  if (n == "sha384sum") {
+    return u_sha384sum.main();
+  }
+  if (n == "sha512sum") {
+    return u_sha512sum.main();
+  }
+  if (n == "shred") {
+    return u_shred.main();
+  }
+  if (n == "shuf") {
+    return u_shuf.main();
+  }
+  if (n == "sleep") {
+    return u_sleep.main();
+  }
+  if (n == "sort") {
+    return u_sort.main();
+  }
+  if (n == "split") {
+    return u_split.main();
+  }
+  if (n == "stat") {
+    return u_stat.main();
+  }
+  if (n == "stty") {
+    return u_stty.main();
+  }
+  if (n == "sum") {
+    return u_sum.main();
+  }
+  if (n == "sync") {
+    return u_sync.main();
+  }
+  if (n == "tac") {
+    return u_tac.main();
+  }
+  if (n == "tail") {
+    return u_tail.main();
+  }
+  if (n == "tee") {
+    return u_tee.main();
+  }
+  if (n == "test") {
+    return u_test.main();
+  }
+  if (n == "timeout") {
+    return u_timeout.main();
+  }
+  if (n == "touch") {
+    return u_touch.main();
+  }
+  if (n == "tr") {
+    return u_tr.main();
+  }
+  if (n == "true") {
+    return u_true.main();
+  }
+  if (n == "truncate") {
+    return u_truncate.main();
+  }
+  if (n == "tsort") {
+    return u_tsort.main();
+  }
+  if (n == "tty") {
+    return u_tty.main();
+  }
+  if (n == "uname") {
+    return u_uname.main();
+  }
+  if (n == "unexpand") {
+    return u_unexpand.main();
+  }
+  if (n == "uniq") {
+    return u_uniq.main();
+  }
+  if (n == "unlink") {
+    return u_unlink.main();
+  }
+  if (n == "uptime") {
+    return u_uptime.main();
+  }
+  if (n == "users") {
+    return u_users.main();
+  }
+  if (n == "vdir") {
+    return u_vdir.main();
+  }
+  if (n == "wc") {
+    return u_wc.main();
+  }
+  if (n == "who") {
+    return u_who.main();
+  }
+  if (n == "whoami") {
+    return u_whoami.main();
+  }
+  if (n == "yes") {
+    return u_yes.main();
+  }
   return own_main(argv);
 }

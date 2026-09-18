@@ -79,7 +79,7 @@ var fernImportReTest = regexp.MustCompile(`(?m)^\s*import\s+"([^"]+)"`)
 // dispatchRe matches one arm of the dispatch chain in `main()`, and pairs the
 // name tested against the module called so that a copy-paste mismatch —
 // `if (n == "sum") { return u_shuf.main(); }` — is caught rather than counted.
-var dispatchRe = regexp.MustCompile(`if \(n == "([^"]+)"\) \{ return (\w+)\.main\(\); \}`)
+var dispatchRe = regexp.MustCompile(`if \(n == "([^"]+)"\) \{\s*return (\w+)\.main\(\);\s*\}`)
 
 // multicallDispatch is the utility each arm of `main()` dispatches to. An arm
 // whose name and module disagree is reported here rather than returned.
@@ -242,14 +242,19 @@ func TestMulticallDispatch(t *testing.T) {
 }
 
 // runAs runs bin with argv[0] set to argv0, the way the corpus harness does.
+//
+// Under the emulator that needs qemu's -0: the guest otherwise reads the
+// emulator's own argv, whose argv[0] is the binary's path, so every case
+// would dispatch on the dispatcher's name and exercise the own-name path
+// instead of the utility it names.
 func runAs(t *testing.T, bin, argv0 string, args ...string) ([]byte, error) {
 	t.Helper()
-	argv := crossArgv(bin, args...)
-	cmd := exec.Command(argv[0], argv[1:]...)
-	if len(crossPrefix()) == 0 {
-		cmd.Path = bin
-		cmd.Args = append([]string{argv0}, args...)
+	if pre := crossPrefix(); len(pre) > 0 {
+		argv := append(append(append([]string{}, pre...), "-0", argv0, bin), args...)
+		return exec.Command(argv[0], argv[1:]...).CombinedOutput()
 	}
+	cmd := exec.Command(bin, args...)
+	cmd.Args = append([]string{argv0}, args...)
 	return cmd.CombinedOutput()
 }
 
