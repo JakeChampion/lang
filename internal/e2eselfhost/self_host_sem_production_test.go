@@ -1226,4 +1226,28 @@ function main(): i32 {
     return t % 7;
 }
 `},
+
+	// The three helper-backed array builtins. Each borrows its operands and
+	// hands back a fresh unit, so the loop would leak one joined string per
+	// round if the result were not this frame's to release.
+	// std/array is imported because the CHECKER keeps these three out of the
+	// bare method table; every declaration it brings produces too, so the
+	// tally below is the whole program's.
+	{name: "the-array-reduce-and-join-builtins", atLeast: 70, noLeak: true, src: `
+import "std/array";
+
+function total(xs: i32[]): i32 { return xs.sum() + xs.product(); }
+
+function names(sep: string): i32 {
+    var parts: string[] = ["ab", "cde", "f"];
+    return parts.join(sep).len();
+}
+
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) { t = t + total([2, 3, 4]) + names("--"); i = i + 1; }
+    return t % 7;
+}
+`},
 }
