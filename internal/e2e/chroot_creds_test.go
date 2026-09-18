@@ -163,6 +163,26 @@ func TestArm64SSAChrootCreds(t *testing.T) {
 	})
 }
 
+// The x86-64 SSA leg, against the flat x86-64 emitter rather than against a
+// hardcoded expectation: the two backends are two implementations of the same
+// four builtins, so the only question is whether they agree. #9559's stack
+// gave this backend `chdir` and the credential getters, which is what made
+// their write side reachable here at all.
+func TestX86_64SSAChrootCreds(t *testing.T) {
+	qemu := x86QemuOrEmpty(t)
+	bin := buildFernCLI(t)
+	dir := t.TempDir()
+
+	flat := runPathProbe(t, bin, qemu, dir, "creds", "flat", chrootCredsSource, "")
+	if flat != 0 {
+		t.Fatalf("the flat emitter itself reports %d — the probe is wrong, not the SSA backend", flat)
+	}
+	if ssa := runPathProbe(t, bin, qemu, dir, "creds", "ssa", chrootCredsSource, ""); ssa != flat {
+		t.Errorf("-backend ssa reports %d where the flat emitter reports %d.\n\n"+
+			"Each code names one step in the probe source above.", ssa, flat)
+	}
+}
+
 // The Mach-O leg, run natively on Apple Silicon. XNU's BSD numbers for these
 // four are 61 / 23 / 181 / 80 and share no arithmetic with Linux's 51 / 146 /
 // 144 / 159 — 4.3BSD put getgroups and setgroups adjacent at 79 and 80 while

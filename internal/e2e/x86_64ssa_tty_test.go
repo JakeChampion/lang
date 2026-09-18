@@ -6,7 +6,9 @@ import (
 
 // The last group of builtins x86_64ssa had no emitter for (#9559): the
 // window-size pair, the termios pair, their four Reader methods, and
-// set_file_times. With these the backend builds all 105 coreutils.
+// set_file_times. With these the backend builds every coreutil the catalogue
+// had at the time; chroot arrived after, with four credential builtins of its
+// own, and internal/e2e/chroot_creds_test.go is where those are pinned.
 //
 // Nothing in a test harness is a terminal, so the terminal half is asserted on
 // the refusal: every query must answer ENOTTY rather than a value, and must
