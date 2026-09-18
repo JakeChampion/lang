@@ -43,13 +43,20 @@ open; #9737 tracks it, with the ruled-out list. Recorded rather than left as a
 green run, because a one-byte self-compile divergence that stops reproducing is
 exactly the shape `docs/TEST-GATES.md` warns about.
 
-Ruled out since: a per-process nondeterminism in either compiler — the obvious
-suspect being `__map_hash_seed()`, a random draw per process — is not it, six
-emits across the driver and gen1 answering one md5. What is NOT ruled out is
+**The gate passes at `aa7e035` on re-run** — the same commit in a clean
+worktree, `-count=1`, 744 s. So it is intermittent inside the harness rather
+than a property of the commit, which is what rules out a miscompile: a
+miscompile is deterministic.
+
+Also ruled out: a per-process nondeterminism in either compiler — the obvious
+suspect being `__map_hash_seed()`, a random draw per process — six emits across
+the driver and gen1 answering one md5 between them. What is NOT ruled out is
 the harness: `e2eharness.BuildSelfHostBin` serves the driver from a
 source-hash-keyed binary cache that a warm job can pre-link into a shared disk
-cache, so the gate compares a CACHED driver against a gen1 built from it, which
-no manual run reproduces.
+cache, so the gate compares a CACHED driver against a gen1 built from it, and a
+cache entry that did not come from the same link pairs two compilers with no
+shared lineage. That fits a one-byte difference; no manual run reproduces it
+because no manual run uses the cache.
 
 ## The `tuple_set` decline
 
