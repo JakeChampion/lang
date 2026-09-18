@@ -143,7 +143,10 @@ jobs:
       - name: Smoke-test both binaries and lay out the symlinks
         run: |
           set -euo pipefail
-          expected="$(ls coreutils/*.fern | wc -l | tr -d ' ')"
+          # find, not ls: `coreutils/[.fern` is exactly the non-alphanumeric
+          # name ls handles badly, and it is the reason this binary needed
+          # the mangle-prefix sanitiser (#9684) to build at all.
+          expected="$(find coreutils -maxdepth 1 -name '*.fern' | wc -l | tr -d ' ')"
           for leg in native selfhost; do
             cd "dist/$leg"
             n="$(./fern-coreutils --list | wc -l | tr -d ' ')"
