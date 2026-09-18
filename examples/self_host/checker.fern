@@ -13014,6 +13014,31 @@ function e053_stringish(e: ast.Expr, cur: Scope): boolean {
 // be reuse-paired or inside the allowance, which for a bare `fip` is zero.
 struct E053Ctx { fname: string, kw: string, callable: string[], variants: string[], own: string[] }
 
+// fip_recv_root names the variable a `.with` receiver is rooted at, or "" when
+// the expression is not rooted at one. It is native's fipRootIdent: an index or
+// a field access reaches the container it reads, and a `.with` call reaches its
+// own receiver, because `.with` returns the array it was given — so
+// `b.with(i, v).with(j, w)` is rooted where `b` is and each call is the
+// in-place set the single form already admits (#9699).
+function fip_recv_root(e: ast.Expr): string {
+  match (e) {
+    ast.ExprIdent(id) => { return id.name; },
+    ast.ExprIndex(ix) => { return fip_recv_root(ix.array); },
+    ast.ExprFieldAccess(fa) => { return fip_recv_root(fa.obj); },
+    ast.ExprCall(c) => {
+      match (c.callee) {
+        ast.ExprFieldAccess(cf) => {
+          if (cf.field == "with") { return fip_recv_root(cf.obj); }
+          return "";
+        },
+        _ => { return ""; }
+      }
+    },
+    _ => { return ""; }
+  }
+  return "";
+}
+
 // e053_at_node flags, at ONE expression node, the constructs a `fip` / `fbip`
 // function may not contain: array / tuple / struct literals and payload-carrying
 // enum construction, string concatenation, a method call outside the
@@ -13049,13 +13074,7 @@ function e053_at_node(n: ast.Expr, fx: E053Ctx, cur: Scope, own out: util.Diag[]
         ast.ExprFieldAccess(fa) => {
           // Method call. `recv.with(i, v)` on an `own` receiver is the in-place
           // element set; `len` is the whitelisted non-allocating read.
-          var recv_root: string = "";
-          match (fa.obj) {
-            ast.ExprIdent(ro) => {
-              recv_root = ro.name;
-            },
-            _ => {}
-          }
+          var recv_root: string = fip_recv_root(fa.obj);
           var root_own: boolean = false;
           for elem in fx.own {
             if (elem == recv_root) {

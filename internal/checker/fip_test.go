@@ -196,3 +196,40 @@ fip function f(a: i32): i32 { var p: P = g(a); return p.x; }
 function main(): i32 { return 0; }`)
 
 }
+
+// The receiver root walk reaches through a field access, an index and a `.with`
+// call. `.with` returns the array it was given, so a chain of them is rooted
+// where its first receiver is and each call is the same in-place set the single
+// form is accepted as. A run of element writes is the natural shape for an
+// encoder, and before #9699 it had to be spelled one statement per element —
+// which emits the same code, so the refusal protected nothing.
+func TestFipWithChainAndFieldReceiversAreRooted(t *testing.T) {
+	wantNoErr(t, "chained with on own array",
+		`fip function f(own b: i32[]): i32[] { return b.with(0, 1).with(1, 2); }`)
+
+	wantNoErr(t, "long chain on own array",
+		`fip function f(own b: i32[]): i32[] { return b.with(0, 1).with(1, 2).with(2, 3).with(3, 4); }`)
+
+	wantNoErr(t, "with on an own struct's array field", `struct S { xs: i32[] }
+fip function f(own s: S): i32[] { return s.xs.with(0, 1); }`)
+
+	wantNoErr(t, "chained with on an own struct's array field", `struct S { xs: i32[] }
+fip function f(own s: S): i32[] { return s.xs.with(0, 1).with(1, 2); }`)
+
+	wantNoErr(t, "fbip struct update with a chained with", `struct S { xs: i32[], n: i32 }
+fbip function f(own s: S): S { return S { ...s, xs: s.xs.with(0, 1).with(1, 2), n: s.n + 1 }; }`)
+
+	// The walk is wider; the ownership claim is not. A chain rooted at a
+	// borrowed parameter copies on write at the first link and stays E053.
+	wantE053(t, "chained with on a non-own array",
+		`fip function f(b: i32[]): i32[] { return b.with(0, 1).with(1, 2); }`)
+
+	wantE053(t, "chained with on a non-own struct's array field", `struct S { xs: i32[] }
+fip function f(s: S): i32[] { return s.xs.with(0, 1).with(1, 2); }`)
+
+	// A chain rooted at a call that is not `.with` reaches no owner at all.
+	// `pick` is itself allocation-free, so the only thing left to report is
+	// the `.with` whose receiver the walk could not root.
+	wantE053(t, "chain rooted at a non-with call", `fip function pick(own a: i32[]): i32[] { return a; }
+fip function f(own b: i32[]): i32[] { return pick(b).with(0, 1); }`)
+}

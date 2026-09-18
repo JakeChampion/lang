@@ -177,6 +177,17 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		want []string // codes the self-host checker should print
 	}{
 		{"clean", "function main(): i32 { return 1 + 2; }\n", nil},
+		// The `.with` receiver root walk (#9699). The self-host matched a bare
+		// identifier only, so a field receiver — the structure-of-arrays shape
+		// `fbip` exists for — drew E053 there and nothing natively, and
+		// examples/fip/event_loop_fbip.fern did not compile self-host at all.
+		// Neither compiler saw through a chain, whose later links have the
+		// unique array the first link returned.
+		{"e053-with-chain-on-own", "fip function f(own b: i32[]): i32[] { return b.with(0, 1).with(1, 2); }\nfunction main(): i32 { return f([1, 2])[0]; }\n", nil},
+		{"e053-with-on-an-own-structs-field", "struct S { xs: i32[] }\nfip function f(own s: S): i32[] { return s.xs.with(0, 1); }\nfunction main(): i32 { return f(S { xs: [1, 2] })[0]; }\n", nil},
+		{"e053-with-chain-on-an-own-structs-field", "struct S { xs: i32[] }\nfip function f(own s: S): i32[] { return s.xs.with(0, 1).with(1, 2); }\nfunction main(): i32 { return f(S { xs: [1, 2] })[0]; }\n", nil},
+		// The walk is wider; the ownership claim is not.
+		{"e053-with-chain-on-a-borrowed-array", "fip function f(b: i32[]): i32[] { return b.with(0, 1).with(1, 2); }\nfunction main(): i32 { return f([1, 2])[0]; }\n", []string{"E053"}},
 		// Shadowed-callee scoping (#9532). A binding shadows an own-func's name
 		// inside ITS OWN scope: a block-local from its declaration to the end of
 		// its block, a match binder for its arm. The self-host answered from a
