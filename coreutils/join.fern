@@ -862,7 +862,7 @@ function take_operand(s: Scan, name: string): Scan {
   return Scan { ...s, toks: s.toks.append(Tok { text: name, kind: 0 }), nfiles: s.nfiles + 1 };
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var argv: string[] = args();
   var opts: gnu.Opt[] = [];
   opts = opts.append(gnu.valued("a", "", opt_a()));

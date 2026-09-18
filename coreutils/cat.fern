@@ -393,7 +393,7 @@ function cat_file(path: string, st: State, f: Fmt, out_stat: FileStat): State {
   return State { ...s, w: gnu.flush(s.w) };
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var argv: string[] = args();
   var opts: gnu.Opt[] = [];
   // GNU's long_options order: it is the order an ambiguity lists them in.

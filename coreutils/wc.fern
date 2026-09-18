@@ -515,7 +515,7 @@ function count_job(job: Job, show: Show, o: io_buffered.BufWriter): Done {
   return Done { counts: c, counted: true, failed: false, w: w };
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var argv: string[] = args();
   var opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("c", "bytes", opt_bytes()));

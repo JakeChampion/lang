@@ -52,7 +52,7 @@ function dir_name(s: string): string {
   return slice_unchecked(s, 0, i) + "";
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var argv: string[] = args();
   var opts: gnu.Opt[] = [gnu.flag("z", "zero", 1)];
   var g: gnu.Getopt = gnu.getopt_new(argv, opts, "dirname", help_text(), 1);

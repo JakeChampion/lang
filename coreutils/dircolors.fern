@@ -500,7 +500,7 @@ function env_or(name: string, fallback: string): string {
   return fallback;
 }
 
-function main(): i32 {
+pub function main(): i32 {
   // Declaration order is glibc's ambiguity list: `--=x` names every
   // candidate but `--sh`, which shares `--bourne-shell`'s id.
   var opts: gnu.Opt[] = [];

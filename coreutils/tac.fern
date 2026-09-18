@@ -353,7 +353,7 @@ function tac_file(path: string, o: Out, s: Settings): Out {
   return out;
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var argv: string[] = args();
   var opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("b", "before", opt_before()));

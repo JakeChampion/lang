@@ -40,7 +40,7 @@ function help_text(): string {
   return out;
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var opts: gnu.Opt[] = [gnu.flag("0", "null", 1)];
   var g: gnu.Getopt = gnu.getopt_new(args(), opts, "printenv", help_text(), 2).in_order();
   var zero: boolean = false;

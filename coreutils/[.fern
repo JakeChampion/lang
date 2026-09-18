@@ -67,6 +67,6 @@ function help_text(): string {
   return out;
 }
 
-function main(): i32 {
+pub function main(): i32 {
   return cond.run(true, "[", help_text());
 }

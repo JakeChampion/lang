@@ -32,6 +32,21 @@ them all:
 $ for f in coreutils/*.fern; do fern -O -target arm64-linux -o "bin/$(basename "$f" .fern)" "$f"; done
 ```
 
+Or all of them in ONE binary, which picks the utility from the name it is
+invoked as:
+
+```
+$ fern -O -target arm64-linux -o bin/fern-coreutils coreutils/multicall/fern-coreutils.fern
+$ cd bin && for u in $(./fern-coreutils --list); do ln -s fern-coreutils "$u"; done
+$ ./yes | head -2
+y
+y
+```
+
+That is what the release archive ships — the binary plus the symlinks, so
+untarring it is the whole install. `docs/COREUTILS.md` ("One binary") has the
+sizes and why naming a utility as an argument is refused.
+
 ## Test
 
 ```

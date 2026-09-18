@@ -543,7 +543,7 @@ function delimiters(cc: string): (string, string, string) {
   return (d, d + d, d + d + d);
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var argv: string[] = args();
   var opts: gnu.Opt[] = [];
   opts = opts.append(gnu.valued("h", "header-numbering", opt_header()));

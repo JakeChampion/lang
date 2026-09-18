@@ -209,7 +209,7 @@ function min_u64(a: u64, b: u64): u64 {
   return b;
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("", "all", opt_all()));
   opts = opts.append(gnu.valued("", "ignore", opt_ignore()));

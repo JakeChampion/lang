@@ -22,7 +22,7 @@ function help_text(): string {
   return out;
 }
 
-function main(): i32 {
+pub function main(): i32 {
   gnu.sole_help_version(args(), "true", help_text(), 0);
   return 0;
 }

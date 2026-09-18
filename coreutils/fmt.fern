@@ -781,7 +781,7 @@ function int_text(v: i32): string {
   return out;
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var argv: string[] = args();
 
   // The obsolete `-WIDTH`: only argv[1], and everything after the `-` is

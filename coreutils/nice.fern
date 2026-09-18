@@ -216,7 +216,7 @@ function clamp_nice(n: i64): i32 {
   return n as i32;
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var opts: gnu.Opt[] = [];
   opts = opts.append(gnu.valued("n", "adjustment", opt_adjust()));
 
