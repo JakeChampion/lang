@@ -701,9 +701,9 @@ function drops_less(own r: irlower.LowerResult, step: ssaunits.Step, f: ssasem.F
 // SLOTS. `reuse_slots` is that number, matched against what the construction
 // claims. Measured over the compiler's own sources, pairing on shape alone —
 // any dying record, union or tuple to any construction — admits 839 sites of
-// which only 229 have counts the runtime can honour. Pairing on the count
-// admits 287, all of them spendable, because the donor is chosen FOR the
-// construction in front of it rather than taken first-come.
+// which only 229 have counts the runtime can honour; pairing on the count
+// admits 390, all of them spendable, once the donor is held for whichever
+// construction claims it (`block_claims`, below) rather than taken first-come.
 struct ReusePairs { tokens: i32[], builds: i32[] }
 
 // The slots a value's box has, or -1 where this frame cannot say. This is the

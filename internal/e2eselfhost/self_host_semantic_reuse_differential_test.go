@@ -200,6 +200,46 @@ function main(): i32 {
     return t;
 }`, 21, 1, 0, 2, 4, false},
 
+	// The two rules that decide WHICH dying box the block's one token slot
+	// holds, each of which changes emitted code and neither of which the cases
+	// above can see, since every one of them puts the matching construction
+	// immediately after the donor.
+	//
+	// `hold_over` is the hold: a three-slot donor dies, a FOUR-slot
+	// construction follows it, and the three-slot one that can take it comes
+	// after that. Holding the donor past a construction that cannot serve it
+	// is the whole of the pairing there — taken for the next construction
+	// alone it fires 0.
+	//
+	// `chain_up` is the same-instruction refill: a chain of functional updates
+	// of one type, where each superseded box dies AT the construction that
+	// spends the previous token. The emission order allows it —
+	// `reuse_construct` reads the token slot before `reuse_token` writes it —
+	// and with the drop scan left in an `else` it fires 0. This is the shape
+	// the compiler's own 70 refill sites have: `x86_native`'s assembler
+	// threading `a = X86Asm { ...a, code: … }`.
+	{"pairing-reach", `struct A3 { p: string, q: i32 }
+struct B4 { x: string, y: i32, z: i32 }
+function hold_over(seed: i32): i32 {
+    var a: A3 = A3 { p: "aa", q: seed };
+    var s: i32 = a.q + a.p.len();
+    var b: B4 = B4 { x: "bb", y: s, z: s + 1 };
+    var c: A3 = A3 { p: "cc", q: b.y + b.z };
+    return c.q + c.p.len() + b.z;
+}
+function chain_up(seed: i32): i32 {
+    var a: A3 = A3 { p: "a1", q: seed };
+    a = A3 { ...a, q: a.q + 1 };
+    a = A3 { ...a, q: a.q + 2 };
+    a = A3 { ...a, q: a.q + 3 };
+    return a.q + a.p.len();
+}
+function main(): i32 {
+    var t: i32 = hold_over(3) + chain_up(5);
+    if (__rc_underflow_count() != 0) { return 99; }
+    return t;
+}`, 32, 3, 4, 4, 7, false},
+
 	// A record of scalars: pure storage, with no children to release at the
 	// token. The AST path pairs this shape too, so the count alone does not
 	// separate the layers here — the switch and the answer do.

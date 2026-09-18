@@ -58,6 +58,28 @@ Compiling the compiler, `-emit asm`, x86-64:
 **+243 reuses for +26,738 emitted lines**, against the shape-only rule's +82
 for +41,769.
 
+## Pinned
+
+Neither rule had a witness when it landed, and a review on the PR said so:
+every case in the differential suite puts the matching construction
+immediately after the donor, so all five were invariant to both. The
+whole-compiler gate cannot see them either — it compares two builds of the
+same `ssarc` source, so the rule cancels.
+
+`pairing-reach` is that witness, and each half was confirmed by reverting its
+own rule:
+
+- `hold_over` — a three-slot donor, then a FOUR-slot construction, then the
+  three-slot one that can take it. 1 firing held; **0** with the donor taken
+  for the next construction alone.
+- `chain_up` — a chain of functional updates of one type, where each
+  superseded box dies AT the construction spending the previous token. 2
+  firings; **0** with the drop scan back in an `else`. This is the shape the
+  compiler's own 70 refill sites have, all of them `x86_native` and
+  `arm64_native` threading `a = X86Asm { ...a, code: … }` — found by probing
+  for positions where `tokens[pos]` and `builds[pos]` are both set, rather
+  than by guessing a fixture.
+
 ## Next lead
 
 Not another token slot: the pool measurement above prices two at +11 and
