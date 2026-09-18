@@ -1568,6 +1568,21 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e021-inherent-method-is-not-an-impl", "trait Feed[T] { function head(self: Self): T; }\nstruct Wide { v: f64 }\nfunction (w: Wide) head(): f64 { return w.v; }\nfunction first[T, I: Feed[T]](it: I): T { return it.head(); }\nfunction main(): i32 { return first(Wide { v: 6.5 }) as i32; }\n", []string{"E021"}},
 		{"e021-no-method-at-all", "trait Feed[T] { function head(self: Self): T; }\nstruct Wide { v: f64 }\nfunction first[T, I: Feed[T]](it: I): T { return it.head(); }\nfunction main(): i32 { return first(Wide { v: 6.5 }) as i32; }\n", []string{"E021"}},
 		{"e021-impl-backed-ok", "trait Feed[T] { function head(self: Self): T; }\nstruct Wide { v: f64 }\nimpl Feed[f64] for Wide { function head(self: Self): f64 { return self.v; } }\nfunction first[T, I: Feed[T]](it: I): T { return it.head(); }\nfunction main(): i32 { var d: f64 = first(Wide { v: 6.5 }); return d as i32; }\n", nil},
+		// Cell[T]'s two methods are builtins, so they are in neither the
+		// method table nor the struct table and the ordinary method path
+		// resolved nothing — a call was accepted whatever it was handed,
+		// a lambda included (#9518). Arity counts the RECEIVER, matching
+		// native, which models these as functions carrying the cell: a bad
+		// value on `set` is "argument 2", and `c.set()` is one argument of
+		// the two it wants.
+		{"cell-set-wrong-type", "function f(c: Cell[i32]): i32 { c.set(\"hi\"); return 0; }\nfunction main(): i32 { var c: Cell[i32] = cell_new(0); return f(c); }\n", []string{"E038"}},
+		{"cell-set-lambda-arg", "function f(c: Cell[i32]): i32 { c.set((x: i32) => x + 1); return 0; }\nfunction main(): i32 { var c: Cell[i32] = cell_new(0); return f(c); }\n", []string{"E038"}},
+		{"cell-set-too-few", "function f(c: Cell[i32]): i32 { c.set(); return 0; }\nfunction main(): i32 { var c: Cell[i32] = cell_new(0); return f(c); }\n", []string{"E004"}},
+		{"cell-set-too-many", "function f(c: Cell[i32]): i32 { c.set(1, 2); return 0; }\nfunction main(): i32 { var c: Cell[i32] = cell_new(0); return f(c); }\n", []string{"E004"}},
+		{"cell-get-too-many", "function f(c: Cell[i32]): i32 { var v: i32 = c.get(3); return 0; }\nfunction main(): i32 { var c: Cell[i32] = cell_new(0); return f(c); }\n", []string{"E004"}},
+		{"cell-unknown-method", "function f(c: Cell[i32]): i32 { c.nosuch(); return 0; }\nfunction main(): i32 { var c: Cell[i32] = cell_new(0); return f(c); }\n", []string{"E043"}},
+		{"cell-set-ok", "function f(c: Cell[i32]): i32 { c.set(5); return 0; }\nfunction main(): i32 { var c: Cell[i32] = cell_new(0); return f(c); }\n", nil},
+		{"cell-get-ok", "function f(c: Cell[i32]): i32 { var v: i32 = c.get(); return 0; }\nfunction main(): i32 { var c: Cell[i32] = cell_new(0); return f(c); }\n", nil},
 		{"callee-undefined", "function main(): i32 { return foo(1); }\n", []string{"E001"}},
 		{"callee-user-fn-ok", "function g(): i32 { return 1; }\nfunction main(): i32 { return g(); }\n", nil},
 		{"callee-builtin-ok", "function main(): i32 { print(\"hi\"); return 0; }\n", nil},
