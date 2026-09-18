@@ -486,13 +486,12 @@ function reserve(own r: irlower.LowerResult, end: i32): irlower.LowerResult {
 }
 
 // A value's SSA id is its local slot, so the slots above `nvals` are the
-// frame's scratch. The two lowest belong to the reuse pairing and are the only
-// ones that live ACROSS instructions: a token is taken where a value dies and
+// frame's scratch. The lowest belongs to the reuse pairing and is the only one
+// that lives ACROSS instructions: a token is taken where a value dies and
 // spent at a construction further down the block. Everything else is scratch
-// within one instruction, so it starts above them.
+// within one instruction, so it starts above it.
 function token_slot(f: ssasem.Func): i32 { return f.graph.nvals; }
-function shape_slot(f: ssasem.Func): i32 { return f.graph.nvals + 1; }
-function scratch_base(f: ssasem.Func): i32 { return f.graph.nvals + 2; }
+function scratch_base(f: ssasem.Func): i32 { return f.graph.nvals + 1; }
 
 // A parent owns one unit per reference field. Shared parents release only
 // their own unit; the final parent release walks children before its box.
@@ -688,13 +687,21 @@ function drops_less(own r: irlower.LowerResult, step: ssaunits.Step, f: ssasem.F
 // `builds[i]` the token an instruction i construction builds in; -1 for
 // neither. One pairing is live at a time, so one token slot serves the block —
 // a second candidate while one is pending is simply left to drop normally.
+//
+// The donor and the recipient need not share a TYPE. A box is storage, and
+// what separates two of them is the number of slots — which `__fern_alloc_reuse`
+// compares itself, handing the block to its freelist and allocating fresh when
+// the counts disagree. So a static type test buys nothing the runtime one does
+// not already give, and costs every pairing between two records of the same
+// arity: measured over the compiler's own sources, 603 of 750 candidate
+// constructions had a donor dying in front of them that only that test refused.
 struct ReusePairs { tokens: i32[], builds: i32[] }
 
-// A nominal record. Paired with the equal-type test below, this admits exactly
-// the structs, since only a struct is built by `record_new` — a union's box
-// carries a tag and is never a construction's result here. An environment is
-// excluded: its fields are addressed as array slots rather than struct ones,
-// and no `record_new` builds one.
+// A dying box this frame may hand on as storage: a nominal record or a union
+// value, both of which are one `__fern_arr_box` block whose slot 0 the
+// recipient overwrites with its own identity. An environment is excluded: its
+// fields are addressed as array slots rather than struct ones, and its box is
+// the closure's, built and read through a schema of its own.
 function reuse_shape(t: typeinfo.Type, f: ssasem.Func): boolean {
     return named(t) != "" && !semtypes.is_env(t);
 }
@@ -717,7 +724,6 @@ function reuse_pairs(f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock): ReusePair
             var step: ssaunits.Step = at(p, b.id, pos, 0 - 1);
             if (off) { pending = 0 - 1; }
             else if (pending >= 0 && ins.kind_tag == ssasem.record_new()
-                    && semtypes.equal(f.values[ins.result], f.values[pending])
                     && util.index_of_i32(ins.args, pending) < 0) {
                 builds = builds.with(pos, pending);
                 tokens = tokens.with(pending_at, pending);
@@ -751,15 +757,6 @@ function reuse_pairs(f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock): ReusePair
 function reuse_token(own r: irlower.LowerResult, f: ssasem.Func, donor: i32): irlower.LowerResult {
     var token: i32 = token_slot(f);
     r = reserve(r, scratch_base(f));
-    // The box's first word identifies its type, and `struct_make` is what
-    // normally writes it. A construction building through a token never runs
-    // that op, and the box it gets is the donor's only when the count test
-    // passed — so the word is read off the donor here, while it is live on
-    // both arms, and written below whichever box arrives.
-    r = emit(r, ir.op_load_local(donor));
-    r = emit(r, ir.op_const_i32(0));
-    r = emit(r, ir.op_raw_load_ptr());
-    r = emit(r, ir.op_store_local(shape_slot(f)));
     r = emit(r, ir.op_load_local(donor));
     r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
     r = emit(r, ir.op_if(0));
@@ -783,10 +780,14 @@ function reuse_construct(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SI
     r = emit(r, ir.op_const_i32(fields.len() + 1));
     r = emit(r, ir.op_call_direct("__fern_alloc_reuse", 2));
     r = emit(r, ir.op_store_local(ins.result));
+    // The box's first word identifies its type, and `struct_make` is what
+    // normally writes it. A construction building through a token never runs
+    // that op, and neither box that reaches it carries the right word: the
+    // donor's is the DONOR's, and the fresh one holds the length `__fern_arr_box`
+    // wrote. So the recipient writes its own, which is also what lets a donor of
+    // another type serve it.
     r = emit(r, ir.op_load_local(ins.result));
-    r = emit(r, ir.op_const_i32(0));
-    r = emit(r, ir.op_load_local(shape_slot(f)));
-    r = emit(r, ir.op_raw_store_ptr());
+    r = emit(r, ir.op_struct_set_shape(record_name(f.values[ins.result])));
     r = emit(r, ir.op_drop());
     var i: i32 = 0;
     while (i < ins.args.len() && i < fields.len()) {
