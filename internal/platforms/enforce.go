@@ -231,6 +231,14 @@ var gatedBuiltins = map[string]string{
 	"getuid":    "userid",
 	"getgid":    "userid",
 	"getgroups": "userid",
+	// And the write side of the same three. Same capability rather than
+	// one of its own: a target that cannot report an identity has none
+	// to change, and there is no truthful no-op here — a `setuid` that
+	// "succeeded" would claim a change nothing made, which is the
+	// argument `set_window_size` makes next door.
+	"setuid":    "userid",
+	"setgid":    "userid",
+	"setgroups": "userid",
 
 	// Signal dispositions. A signal is something a HOST delivers to a
 	// process, so a target that runs no process cannot have one
@@ -286,6 +294,10 @@ var gatedBuiltins = map[string]string{
 	// the question has no answer there rather than an empty one.
 	"getcwd": "cwd",
 	"chdir":  "cwd",
+	// And the root the working directory is resolved from (`chroot`).
+	// Process state of the same kind, gated for the same reason: WASI
+	// has no process root to move any more than it has a cwd.
+	"chroot": "cwd",
 
 	// The C-ABI FFI shims (#4375). Enumerated rather than matched by
 	// prefix so this table stays the one place the classification lives —

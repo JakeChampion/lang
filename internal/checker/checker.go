@@ -2626,6 +2626,58 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			ast.EnumType{Name: "IoError"},
 		}},
 	}
+	// chroot(path): Result[void, IoError] — chroot(2). The twin of
+	// `chdir` in signature and in kind: it changes what every later
+	// path resolves against without touching a file, so it is
+	// process state and shares chdir's `cwd` target capability
+	// rather than `fs`. WASI has no process root to move and E066
+	// refuses it there. Err carries the errno, which is EPERM for
+	// any caller without CAP_SYS_CHROOT — the common case, and the
+	// one `chroot: cannot change root directory to 'x'` reports.
+	c.info.FuncSigs["chroot"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// setgroups(gids) / setgid(gid) / setuid(uid): the inverses of
+	// getgroups / getgid / getuid, and the order they are written in
+	// is the order they must be CALLED in — each one drops a
+	// privilege the ones after it need, so setuid last.
+	//
+	// Three builtins rather than one indexed like `uname_field`,
+	// which takes an index precisely to avoid N kinds and 4N
+	// classifications: these are three different syscalls, not three
+	// fields of one record, and the load-bearing ordering is visible
+	// at a call site that names them and invisible at one passing 0,
+	// 1, 2.
+	//
+	// i64 for the same reason getgroups answers in i64: gid_t and
+	// uid_t are 32-bit UNSIGNED, and the widening keeps every value
+	// representable without an id past 2^31 reading as negative.
+	// Out of range is EINVAL from the kernel, not a silent truncation.
+	c.info.FuncSigs["setgroups"] = &ast.FuncType{
+		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 64, Signed: true}}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	c.info.FuncSigs["setgid"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	c.info.FuncSigs["setuid"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
 	// cpu_count(): how many processing units this process may run
 	// on — the affinity mask's population count on Linux
 	// (sched_getaffinity(2)), `hw.activecpu` on Darwin. That is

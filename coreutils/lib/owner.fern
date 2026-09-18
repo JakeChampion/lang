@@ -103,17 +103,25 @@ function fail(kind: i32): Parsed {
   return Parsed { ok: false, spec: spec_none(), kind: kind, warn_dot: false };
 }
 
+// The bare reason a parse failed — gnulib's own string, with no spec
+// attached. chown and chgrp decorate it (`%s: %s` with the quoted spec);
+// chroot prints it alone, so the two shapes are one function and its caller
+// rather than two spellings of the same three words.
+pub function (p: Parsed) reason(): string {
+  if (p.kind == err_user()) {
+    return "invalid user";
+  }
+  if (p.kind == err_group()) {
+    return "invalid group";
+  }
+  return "invalid spec";
+}
+
 // The message for a failed parse, already quoted. The spec goes through
 // `gnu.quote` and not `gnu.quotea`: a spec is not a file name, and the two
 // escape differently — `it's` is `'it\'s'` here and `"it's"` there.
 pub function (p: Parsed) message(spec: string): string {
-  if (p.kind == err_user()) {
-    return "invalid user: " + gnu.quote(spec);
-  }
-  if (p.kind == err_group()) {
-    return "invalid group: " + gnu.quote(spec);
-  }
-  return "invalid spec: " + gnu.quote(spec);
+  return p.reason() + ": " + gnu.quote(spec);
 }
 
 function is_space(c: i32): boolean {
@@ -363,8 +371,15 @@ pub function parse_group_only(db: Db, spec: string): Parsed {
   }
 }
 
+// The bare warning gnulib returns for a '.' separator, and the decorated
+// form chown and chgrp print. Split for the reason `reason` above is: chroot
+// prints the string alone, where those two append `: 'spec'`.
+pub function dot_warning_reason(): string {
+  return "warning: '.' should be ':'";
+}
+
 pub function dot_warning(spec: string): string {
-  return "warning: '.' should be ':': " + gnu.quote(spec);
+  return dot_warning_reason() + ": " + gnu.quote(spec);
 }
 
 // ---- what a -v line says ----------------------------------------------------

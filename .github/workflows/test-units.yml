@@ -147,12 +147,13 @@ jobs:
           if command -v llvm-mc >/dev/null 2>&1; then
             llvm-mc --version | head -2
           fi
-      # GNU coreutils' own `uptime` and `kill`, neither of which the runner
-      # image has. Debian and Ubuntu do not build either into their coreutils
-      # package, and /usr/bin/uptime and /usr/bin/kill both belong to PROCPS
-      # -- different programs, with different options and different output.
+      # GNU coreutils' own `uptime`, `kill` and `chroot`, none of which the
+      # harness can find on the runner image. Debian and Ubuntu build none of
+      # the three into their coreutils package, and /usr/bin/uptime and
+      # /usr/bin/kill both belong to PROCPS -- different programs, with
+      # different options and different output.
       # internal/coreutils compares each utility against the GNU binary of the
-      # same name, so without this those two corpora have no oracle, and a
+      # same name, so without this those three corpora have no oracle, and a
       # gate with no oracle is the shape that reports `ok` having compared
       # nothing.
       #
@@ -164,22 +165,28 @@ jobs:
       # the record, and 9.4 is what the ubuntu-24.04 image's own coreutils is,
       # so every utility here answers to one version.
       #
+      # `chroot` is the third and is there for a different reason: Debian
+      # DOES build it, but installs it to /usr/sbin, which is not one of the
+      # directories gnuCandidates() searches. Taking this tree's copy rather
+      # than widening that list keeps one version answering for every
+      # utility, where /usr/sbin's could be the image's own.
+      #
       # Cached, because the build is the only slow part of this step: about
-      # three minutes cold on four cores, seconds warm. Only the two are
-      # installed; the other seventy come from /usr/bin. `kill` is in the
+      # three minutes cold on four cores, seconds warm. Only the three are
+      # installed; the rest of the catalogue comes from /usr/bin. All three are in the
       # cache KEY as well, so a cache written when this step installed
-      # uptime alone cannot satisfy a run that now needs both.
-      - name: Cache the GNU uptime and kill oracles
+      # uptime alone cannot satisfy a run that now needs more.
+      - name: Cache the GNU uptime, kill and chroot oracles
         id: gnu-oracles
         uses: actions/cache@v6
         with:
           path: ~/gnu-coreutils
-          key: gnu-coreutils-uptime-kill-${{ env.GNU_COREUTILS_VERSION }}-${{ matrix.host }}
+          key: gnu-coreutils-uptime-kill-chroot-${{ env.GNU_COREUTILS_VERSION }}-${{ matrix.host }}
       # `make` in full rather than the two named targets: a named target skips
       # the gnulib header generation the build depends on and dies on a
       # missing stdckdint.h. FORCE_UNSAFE_CONFIGURE because coreutils' configure
       # refuses to run as a user it thinks might be root.
-      - name: Build the GNU uptime and kill oracles
+      - name: Build the GNU uptime, kill and chroot oracles
         if: steps.gnu-oracles.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
@@ -193,6 +200,7 @@ jobs:
           make -j"$(nproc)"
           install -D src/uptime "$HOME/gnu-coreutils/bin/uptime"
           install -D src/kill "$HOME/gnu-coreutils/bin/kill"
+          install -D src/chroot "$HOME/gnu-coreutils/bin/chroot"
           cd /
           rm -rf "$work"
       # A SKIP IS A MISSING DEPENDENCY, NOT A PASS. Without this a cache that
@@ -203,7 +211,7 @@ jobs:
       - name: Assert the oracles are GNU coreutils, and point the corpus at them
         run: |
           set -euo pipefail
-          for util in uptime kill; do
+          for util in uptime kill chroot; do
             bin="$HOME/gnu-coreutils/bin/$util"
             if ! "$bin" --version | head -1 | grep -q '(GNU coreutils)'; then
               echo "::error::$bin is not GNU coreutils; internal/coreutils would have no oracle for $util(1)"

@@ -12086,12 +12086,16 @@ function ow_fresh_builtins(): string[] {
   var out: string[] = [
     "__alloc_u8", "args", "buf_take", "cell_new", "environ", "getcwd", "getgroups",
     "hostname", "map_new", "random_bytes", "read_line", "set_priority",
+    "setgid", "setuid",
     "signal_send", "set_process_group", "set_window_size",
     "stderr", "stdin", "stdout", "strbuf_take", "target_arch", "target_os",
     "tcp_recv", "termios_get", "uname_field", "window_size"
   ];
   // `termios_set` is deliberately absent beside its read half: it TAKES the
-  // word array, and a pointer parameter is what the rule excludes.
+  // word array, and a pointer parameter is what the rule excludes. `chroot`
+  // and `setgroups` are absent for the same reason — a string and an i64[]
+  // are both pointer parameters — where `setgid` and `setuid` take a scalar
+  // and so qualify.
   return out;
 }
 

@@ -341,8 +341,12 @@ jobs:
           fi
           echo "no Darwin regressions"
 
+      # `!cancelled()` on the four steps below: the ratchet above gates the
+      # CORPUS, and these check native arm64-darwin EXECUTION. Without it a
+      # red ratchet skips them, so the one Darwin machine in CI reports
+      # nothing about the other half of the target.
       - name: go test (arm64-darwin native execution)
-        if: steps.gate.outputs.signed != 'true'
+        if: "!cancelled() && steps.gate.outputs.signed != 'true'"
         # TestArm64DarwinBuilds detects runtime.GOOS=="darwin"
         # && GOARCH=="arm64" and switches from "verify Mach-O
         # file format" to "build with native clang+ld64 and
@@ -355,7 +359,7 @@ jobs:
           gotestsum --format standard-verbose -- -run TestArm64Darwin ./internal/e2e/
 
       - name: go test (SELF-HOST arm64-darwin native execution)
-        if: steps.gate.outputs.signed != 'true'
+        if: "!cancelled() && steps.gate.outputs.signed != 'true'"
         # The sibling of the step above for the SELF-HOST arm64-darwin path,
         # which lives in a different package (internal/e2eselfhost) and so was
         # not selected by the `-run TestArm64Darwin ./internal/e2e/` filter —
@@ -368,6 +372,7 @@ jobs:
           gotestsum --format standard-verbose -- -run '^(TestSelfHostArm64Darwin.*|TestSelfHostCheckerFallbackHint)$' ./internal/e2eselfhost/
 
       - name: Compile + run every example for arm64-darwin (native, default)
+        if: "!cancelled()"
         # Build each examples/*.fern via the driver's DEFAULT path — the
         # in-process Mach-O backend, no clang/ld64 — then actually execute
         # the binary. This is the full-corpus execution check for the
@@ -392,6 +397,7 @@ jobs:
           done
 
       - name: clang fallback still works (-cc opt-out)
+        if: "!cancelled()"
         # The external-toolchain path must remain available via -cc.
         run: |
           echo 'function main(): i32 { return 7; }' > /tmp/fb.fern

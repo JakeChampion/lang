@@ -107,6 +107,27 @@ var BuiltinCaps = map[string]string{
 	// package question has none of the target question's subtlety here.
 	"statfs":   "fs",
 	"temp_dir": "fs",
+	// Changing what every later path resolves against — strictly more
+	// than `umask` above, which only changes the mode of what gets
+	// created. A dependency that reaches this reaches the whole
+	// filesystem view of everything after it.
+	"chroot": "fs",
+	// SETTING the process's identity, where reading it is Ungated below.
+	// This is the `umask` split one level up: the ids were chosen by
+	// whoever exec'd the program and learning them confers nothing, but
+	// changing them changes the outcome of every later access decision.
+	//
+	// `fs` undersells it — a credential is also what a low port bind and
+	// a signal to another process are checked against, so the honest
+	// answer spans `fs`, `net` and `subprocess` at once. The v1
+	// vocabulary is deliberately coarse and a builtin gets exactly one
+	// row, so these sit in the bucket that covers the dominant effect,
+	// by the same argument `umask` and `chown_at` sit there. Splitting
+	// them properly is a change to the vocabulary, which
+	// docs/PACKAGE-CAPABILITIES-BRIEF.md owns.
+	"setuid":    "fs",
+	"setgid":    "fs",
+	"setgroups": "fs",
 
 	"env":     "env",
 	"environ": "env",

@@ -1,0 +1,587 @@
+// chroot.fern — GNU-compatible `chroot`.
+//
+//   chroot [OPTION] NEWROOT [COMMAND [ARG]...]
+//
+// Move the process root, optionally change identity, then exec. The four
+// syscalls that takes — chroot(2), setgroups(2), setgid(2), setuid(2) —
+// arrived as builtins in #9678; everything above them was already here.
+// `owner.parse` is gnulib's parse_user_spec, `pwdb.group_list` is
+// xgetgroups, `canon.canonicalize` is canonicalize_file_name, and
+// `gnu.exec_command` is execvp.
+//
+// THE LOOKUPS HAPPEN TWICE, which is the only surprising thing about the
+// control flow and is deliberate in the reference. Once before the chroot,
+// against the outer root's passwd and group files, and once after, against
+// the new root's — the second is the whole justification for chroot(1)
+// owning `--userspec` at all rather than leaving it to a `su` inside. Where
+// the outer lookup succeeded and the inner one fails, the outer answer is
+// kept.
+//
+// Privilege decides how far this gets. chroot(2) is EPERM for any caller
+// without CAP_SYS_CHROOT, and since that is the first thing after the
+// argument grammar, an unprivileged run never reaches the credential half at
+// all — on Linux it does not even reach the permission check for a NEWROOT
+// that does not exist, because sys_chroot resolves the path first and
+// answers the lookup's errno.
+//
+// Usage errors exit 125, a command found but not invocable 126, one not
+// found 127; otherwise the command's own status passes through.
+import "./lib/gnu";
+import "./lib/owner";
+import "./lib/pwdb";
+import "./lib/canon";
+
+function opt_groups(): i32 {
+  return 1;
+}
+
+function opt_userspec(): i32 {
+  return 2;
+}
+
+function opt_skip_chdir(): i32 {
+  return 3;
+}
+
+// The status a failure of chroot ITSELF takes, as its own --help documents.
+function status_canceled(): i32 {
+  return 125;
+}
+
+// The sentinel an unset uid or gid carries. GNU spells it (uid_t) -1 and
+// tests it with uid_unset(); here every id is an i64 and negative is the
+// same question.
+function id_unset(): i64 {
+  return 0i64 - 1i64;
+}
+
+function is_set(id: i64): boolean {
+  return id >= 0i64;
+}
+
+// `seeded(named, outer)` — one half of a userspec, resolved the way gnulib
+// resolves it on the SECOND pass.
+//
+// parse_user_spec starts from what the caller already holds
+// (`unum = *uid; gnum = gid ? *gid : -1` in userspec.c), and chroot.c hands
+// both passes the same two variables, so a half the spec does not name keeps
+// the value the outer root gave it. `--userspec=alice` takes alice's uid from
+// the new root and her gid from the old one, which is only visible when the
+// two passwd files disagree.
+function seeded(named: i64, outer: i64): i64 {
+  if (is_set(named)) {
+    return named;
+  }
+  return outer;
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION] NEWROOT [COMMAND [ARG]...]\n";
+  out = out + "  or:  " + gnu.prog() + " OPTION\n";
+  out = out + "Run COMMAND with root directory set to NEWROOT.\n";
+  out = out + "\n";
+  out = out + "      --groups=G_LIST        specify supplementary groups as g1,g2,..,gN\n";
+  out = out + "      --userspec=USER:GROUP  specify user and group (ID or name) to use\n";
+  out = out + "      --skip-chdir           do not change working directory to " + gnu.quotea("/") + "\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  out = out + "\n";
+  out = out + "If no command is given, run '\"$SHELL\" -i' (default: '/bin/sh -i').\n";
+  out = out + "\n";
+  out = out + "Exit status:\n";
+  out = out + "  125  if the chroot command itself fails\n";
+  out = out + "  126  if COMMAND is found but cannot be invoked\n";
+  out = out + "  127  if COMMAND cannot be found\n";
+  out = out + "  -    the exit status of COMMAND otherwise\n";
+  return out;
+}
+
+// `is_old_root(dir)` — whether `dir` resolves to the root the process
+// already has.
+//
+// Resolved rather than compared literally, and NOT compared against the
+// root's device and inode the way `rm` guards itself: "/" can be bind-mounted
+// somewhere else, so two paths naming the same inode are not the same root.
+// The reference makes the same choice and says so.
+function is_old_root(dir: string): boolean {
+  match (canon.canonicalize(dir, canon.existing(), false)) {
+    Ok(p) => {
+      return p == "/";
+    },
+    Err(e) => {
+      return false;
+    }
+  }
+}
+
+// `split_commas(s)` — strtok(s, ",") over the whole string.
+//
+// strtok, not a plain split: it treats a RUN of delimiters as one and
+// produces no empty tokens at either end, so "1,,2" is two tokens and ",,"
+// is none. A split would give five and three, and the empty ones would each
+// be reported as an invalid group.
+function split_commas(s: string): string[] {
+  var out: string[] = [];
+  var start: i32 = 0;
+  var i: i32 = 0;
+  while (i <= s.len()) {
+    var at_end: boolean = i == s.len();
+    var is_comma: boolean = false;
+    if (!at_end) {
+      is_comma = s[i] as i32 == 44;
+    }
+    if (at_end || is_comma) {
+      if (i > start) {
+        out = out.append(slice_unchecked(s, start, i) + "");
+      }
+      start = i + 1;
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+function is_space(c: i32): boolean {
+  return c == 32 || c == 9 || c == 10 || c == 11 || c == 12 || c == 13;
+}
+
+// `skip_spaces(s)` — `s` with its leading whitespace dropped, which is what
+// the reference's `while (isspace (*tmp)) tmp++` leaves behind.
+function skip_spaces(s: string): string {
+  var i: i32 = 0;
+  while (i < s.len()) {
+    if (!is_space(s[i] as i32)) {
+      break;
+    }
+    i = i + 1;
+  }
+  return slice_unchecked(s, i, s.len()) + "";
+}
+
+// `parse_gid_number(tok)` — xstrtoumax(tok, NULL, 10, &v, "") bounded at
+// MAXGID, which is chroot's own numeric grammar and NOT owner.parse_number.
+//
+// The two differ in three ways that are each observable. A leading '+' is
+// consumed HERE, by strtoumax, where userspec treats it as a separate marker
+// and strips it before reading digits — so "+0" is the number 0 and the
+// marker meaning survives only because chroot.c then re-tests the first
+// character. A leading '-' is refused outright rather than wrapping, so
+// "-0" is not 0. And the ceiling is MAXGID itself, 4294967295, which
+// userspec excludes as its unset sentinel: `--groups=4294967295` parses here
+// and fails at the syscall with EINVAL, which is what GNU reports.
+//
+// The whole string must be consumed, so a TRAILING space is a fault where a
+// leading one is not.
+function parse_gid_number(tok: string): Option[i64] {
+  var t: string = skip_spaces(tok);
+  var i: i32 = 0;
+  if (i < t.len()) {
+    if (t[i] as i32 == 43) {
+      i = i + 1;
+    }
+  }
+  var v: i64 = 0;
+  var digits: i32 = 0;
+  while (i < t.len()) {
+    var c: i32 = t[i] as i32;
+    if (c < 48 || c > 57) {
+      return None;
+    }
+    v = v * 10i64 + (c - 48) as i64;
+    if (v > 4294967295i64) {
+      return None;
+    }
+    i = i + 1;
+    digits = digits + 1;
+  }
+  if (digits == 0) {
+    return None;
+  }
+  return Some(v);
+}
+
+// One entry of --groups, resolved. `ok` false means the token named no
+// group; the token itself is carried back so the diagnostic can quote what
+// was typed rather than what it was trimmed to.
+struct Gid { ok: boolean, value: i64 }
+
+// `resolve_group_token(db, tok)` — one comma-separated --groups entry.
+//
+// The numeric branch is not "a number is a gid". A token that parses as one
+// is looked up BY NAME first and takes the group's gid when a group of that
+// spelling exists, so on a host with a group literally called "12" the
+// token 12 means that group rather than gid 12. A leading '+' opts out and
+// forces the number, which is the only way to name gid 12 there. That is
+// the reference's rule and the reason the branch is not simply a parse.
+function resolve_group_token(db: owner.Db, tok: string): Gid {
+  match (parse_gid_number(tok)) {
+    Some(v) => {
+      var trimmed: string = skip_spaces(tok);
+      var plus: boolean = false;
+      if (trimmed.len() > 0) {
+        plus = trimmed[0] as i32 == 43;
+      }
+      if (!plus) {
+        match (pwdb.group_by_name_in(db.gr, trimmed)) {
+          Some(gr) => {
+            return Gid { ok: true, value: gr.gid };
+          },
+          None => {}
+        }
+      }
+      return Gid { ok: true, value: v };
+    },
+    None => {}
+  }
+  match (pwdb.group_by_name_in(db.gr, tok)) {
+    Some(gr) => {
+      return Gid { ok: true, value: gr.gid };
+    },
+    None => {}
+  }
+  return Gid { ok: false, value: 0i64 };
+}
+
+// `parse_groups(db, spec, show_errors)` — the whole of --groups, or None
+// when it named nothing usable.
+//
+// Two distinct failures, and they are reported differently: a token that
+// resolves to no group is `invalid group 'tok'`, once per bad token, while a
+// spec that yields no tokens at all — "" or "," — is `invalid group list
+// 'spec'` naming the whole thing.
+//
+// `show_errors` is off for the lookup OUTSIDE the chroot. That pass is
+// speculative: a group that does not exist out here may exist in the new
+// root, and reporting it would name a failure that has not happened yet.
+function parse_groups(db: owner.Db, spec: string, show_errors: boolean): Option[i64[]] {
+  var out: i64[] = [];
+  var bad: boolean = false;
+  for tok in split_commas(spec) {
+    var g: Gid = resolve_group_token(db, tok);
+    if (!g.ok) {
+      bad = true;
+      if (show_errors) {
+        gnu.error("invalid group " + gnu.quote(tok));
+        continue;
+      }
+      break;
+    }
+    out = out.append(g.value);
+  }
+  if (bad) {
+    return None;
+  }
+  if (out.len() == 0) {
+    if (show_errors) {
+      gnu.error("invalid group list " + gnu.quote(spec));
+    }
+    return None;
+  }
+  return Some(out);
+}
+
+// What the two lookup passes produce. `uname` is not decoration: it is the
+// key xgetgroups needs, so a uid whose passwd entry could not be read leaves
+// the supplementary set unfilled rather than wrongly empty.
+struct Ids { uid: i64, gid: i64, uname: string }
+
+// `fill_from_passwd(db, ids, has_groups, fatal)` — the reference's "if no gid
+// is supplied or looked up, do so now", which also picks up the user name.
+//
+// The lookup runs only when a uid is set AND either no --groups was given or
+// the gid is still unset — so `--userspec=1000:1000 --groups=x` skips it,
+// having nothing left to learn.
+//
+// `fatal` separates the two passes. Outside the chroot an unreadable passwd
+// entry is left alone; inside, a uid with no entry AND no gid is the end of
+// the run, because there is then no group for the process to take.
+function fill_from_passwd(db: owner.Db, ids: Ids, has_groups: boolean, fatal: boolean): Ids {
+  if (!is_set(ids.uid)) {
+    return ids;
+  }
+  if (has_groups && is_set(ids.gid)) {
+    return ids;
+  }
+  match (pwdb.user_by_uid_in(db.pw, ids.uid)) {
+    Some(u) => {
+      var gid: i64 = ids.gid;
+      if (!is_set(gid)) {
+        gid = u.gid;
+      }
+      return Ids { uid: ids.uid, gid: gid, uname: u.name };
+    },
+    None => {
+      if (fatal && !is_set(ids.gid)) {
+        gnu.error("no group specified for unknown uid: " + ids.uid.to_string());
+        exit(status_canceled());
+      }
+      return ids;
+    }
+  }
+}
+
+// `fail_exec(cmd, errno)` — the diagnostic and status for a command that
+// could not be run: 127 when nothing of that name was found, 126 when
+// something was and could not be invoked. Same wording as nohup's, which is
+// the same line in the reference.
+function fail_exec(cmd: string, errno: i32): void {
+  gnu.error("failed to run command " + gnu.quote(cmd) + ": " + gnu.exec_errno_text(errno));
+  if (errno == 2) {
+    exit(127);
+  }
+  exit(126);
+}
+
+// `shell_argv()` — the command vector when none was given: `"$SHELL" -i`,
+// falling back to /bin/sh. An EMPTY $SHELL is not unset, so it is taken as
+// typed and the exec fails naming it, which is what the reference does.
+function shell_argv(): string[] {
+  match (env("SHELL")) {
+    Some(s) => {
+      return [s, "-i"];
+    },
+    None => {
+      return ["/bin/sh", "-i"];
+    }
+  }
+}
+
+// `strip_trailing_colon(s)` — `user:` means `user`.
+//
+// The reference does this by writing a NUL over the colon, and the comment
+// there gives the reason: the primary group is looked up by default anyway,
+// so `user:` asking for "this user and their default group" is already what
+// `user` means. Only ONE colon comes off — `user::` keeps the first and
+// fails as a spec with an empty group.
+function strip_trailing_colon(s: string): string {
+  if (s.len() == 0) {
+    return s;
+  }
+  if (s[s.len() - 1] as i32 != 58) {
+    return s;
+  }
+  return slice_unchecked(s, 0, s.len() - 1) + "";
+}
+
+struct Scan { userspec: string, has_userspec: boolean, groups: string, has_groups: boolean, skip_chdir: boolean }
+
+function scan(g: gnu.Getopt): (Scan, gnu.Getopt) {
+  var s: Scan = Scan { userspec: "", has_userspec: false, groups: "", has_groups: false, skip_chdir: false };
+  while (true) {
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    match (r.0) {
+      Some(m) => {
+        if (m.id == opt_userspec()) {
+          s = Scan { ...s, userspec: strip_trailing_colon(m.value), has_userspec: true };
+        }
+        if (m.id == opt_groups()) {
+          s = Scan { ...s, groups: m.value, has_groups: true };
+        }
+        if (m.id == opt_skip_chdir()) {
+          s = Scan { ...s, skip_chdir: true };
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  return (s, g);
+}
+
+// The supplementary set, as far as either pass got. `n` is separate from
+// `gids.len()` only in that a pass which failed leaves the previous pass's
+// answer in place; an empty `gids` with the flag false means nothing was
+// looked up, which is not the same as "in no groups".
+struct Supp { gids: i64[], found: boolean }
+
+// `lookup_groups(db, spec, has_groups, ids, prior, report)` — the
+// supplementary set for one pass.
+//
+// Two sources and they are exclusive: an explicit --groups is parsed, and
+// its absence means the set is read from the group file for the user name,
+// which is xgetgroups. A pass that fails keeps `prior` — the outer lookup's
+// answer — rather than emptying the set, since an empty set is itself a
+// request.
+//
+// `report` marks the pass INSIDE the new root, the one whose answer is used.
+// There a failure is diagnosed, and it ends the run when there is no prior
+// answer to fall back on. The outer pass is silent for the reason
+// parse_groups gives: a group missing out here may exist in the new root.
+function lookup_groups(db: owner.Db, spec: string, has_groups: boolean, ids: Ids, prior: Supp, report: boolean): Supp {
+  if (has_groups && spec.len() > 0) {
+    return groups_from_spec(db, spec, prior, report);
+  }
+  if (!has_groups && is_set(ids.gid) && ids.uname.len() > 0) {
+    return groups_from_passwd(db, ids, prior, report);
+  }
+  return prior;
+}
+
+// The --groups source.
+function groups_from_spec(db: owner.Db, spec: string, prior: Supp, report: boolean): Supp {
+  var last: boolean = report && !prior.found;
+  match (parse_groups(db, spec, last)) {
+    Some(gs) => {
+      return Supp { gids: gs, found: true };
+    },
+    None => {
+      // parse_groups has already named which token or list was at fault.
+      if (last) {
+        exit(status_canceled());
+      }
+      return prior;
+    }
+  }
+}
+
+// The group-file source, which is xgetgroups: every group naming this user,
+// plus their primary one.
+function groups_from_passwd(db: owner.Db, ids: Ids, prior: Supp, report: boolean): Supp {
+  var gl: i64[] = pwdb.group_list_in(db.gr, ids.uname, ids.gid);
+  if (gl.len() > 0) {
+    return Supp { gids: gl, found: true };
+  }
+  if (report && !prior.found) {
+    gnu.error("failed to get supplemental groups");
+    exit(status_canceled());
+  }
+  return prior;
+}
+
+// `apply(ids, supp, has_groups)` — setgroups, then setgid, then setuid.
+//
+// The ORDER is the whole of it: each call drops a privilege the ones after
+// it need, so setuid goes last. Any failure is fatal at 125 — a process that
+// kept part of a credential change it asked for would run the command as
+// something nobody named.
+function apply(ids: Ids, supp: Supp, has_groups: boolean): void {
+  if (is_set(ids.uid) || has_groups) {
+    must(setgroups(supp.gids), "failed to set supplemental groups");
+  }
+  if (is_set(ids.gid)) {
+    must(setgid(ids.gid), "failed to set group-ID");
+  }
+  if (is_set(ids.uid)) {
+    must(setuid(ids.uid), "failed to set user-ID");
+  }
+}
+
+// `must(r, what)` — every fatal step of this utility reports the same way:
+// its own clause, the errno's strerror text, and exit 125. Four callers.
+function must(r: Result[void, IoError], what: string): void {
+  match (r) {
+    Ok(v) => {},
+    Err(e) => {
+      gnu.error(what + ": " + gnu.io_error_text(e));
+      exit(status_canceled());
+    }
+  }
+}
+
+// What the two passes carry between them.
+struct Creds { ids: Ids, supp: Supp }
+
+// `outer_pass(s, is_oldroot)` — the lookup OUTSIDE the new root.
+//
+// Skipped entirely when NEWROOT already IS the root, since the second pass
+// would then read the same files. Every failure here is silent: what it
+// finds is a fallback for the pass that matters, not an answer of its own.
+function outer_pass(s: Scan, is_oldroot: boolean): Creds {
+  var c: Creds = Creds { ids: Ids { uid: id_unset(), gid: id_unset(), uname: "" }, supp: Supp { gids: [], found: false } };
+  if (is_oldroot) {
+    return c;
+  }
+  var db: owner.Db = owner.db_load();
+  if (s.has_userspec) {
+    var p: owner.Parsed = owner.parse(db, s.userspec);
+    if (p.ok) {
+      c = Creds { ...c, ids: Ids { uid: p.spec.uid, gid: p.spec.gid, uname: "" } };
+    }
+  }
+  var ids: Ids = fill_from_passwd(db, c.ids, s.has_groups, false);
+  return Creds { ids: ids, supp: lookup_groups(db, s.groups, s.has_groups, ids, c.supp, false) };
+}
+
+// `inner_pass(s, c)` — the lookup INSIDE the new root, against its own
+// passwd and group files.
+//
+// This is the pass that reports: a spec that resolves nowhere here ends the
+// run even when the outer pass resolved it, because the ids it found are the
+// outer root's and mean nothing in this one.
+function inner_pass(s: Scan, c: Creds): Creds {
+  var db: owner.Db = owner.db_load();
+  var ids: Ids = c.ids;
+  if (s.has_userspec) {
+    var p: owner.Parsed = owner.parse(db, s.userspec);
+    if (!p.ok) {
+      gnu.error(p.reason());
+      exit(status_canceled());
+    }
+    // A '.' separator parses, and warns. The run continues: gnulib returns
+    // the ids alongside the complaint.
+    if (p.warn_dot) {
+      gnu.error(owner.dot_warning_reason());
+    }
+    // The username is NOT carried over from the parse: the inner call passes
+    // nullptr for it, so it keeps the outer pass's answer until
+    // fill_from_passwd replaces it from the new root's passwd.
+    ids = Ids { uid: seeded(p.spec.uid, ids.uid), gid: seeded(p.spec.gid, ids.gid), uname: ids.uname };
+  }
+  ids = fill_from_passwd(db, ids, s.has_groups, true);
+  return Creds { ids: ids, supp: lookup_groups(db, s.groups, s.has_groups, ids, c.supp, true) };
+}
+
+// `command_argv(rest)` — the vector to exec: the operands after NEWROOT, or
+// the interactive shell when there are none.
+function command_argv(rest: string[]): string[] {
+  if (rest.len() <= 1) {
+    return shell_argv();
+  }
+  var argv: string[] = [];
+  var i: i32 = 1;
+  while (i < rest.len()) {
+    argv = argv.append(rest[i]);
+    i = i + 1;
+  }
+  return argv;
+}
+
+function main(): i32 {
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.valued("", "groups", opt_groups()));
+  opts = opts.append(gnu.valued("", "userspec", opt_userspec()));
+  opts = opts.append(gnu.flag("", "skip-chdir", opt_skip_chdir()));
+  // in_order, so the scan stops at the first operand: the options after
+  // NEWROOT belong to the command, and `chroot / ls --help` runs ls.
+  var g: gnu.Getopt = gnu.getopt_new(args(), opts, "chroot", help_text(), status_canceled()).in_order();
+  var sr: (Scan, gnu.Getopt) = scan(g);
+  var s: Scan = sr.0;
+  var rest: string[] = sr.1.operands();
+  if (rest.len() == 0) {
+    gnu.die_usage("missing operand", status_canceled());
+  }
+
+  var newroot: string = rest[0];
+  var is_oldroot: boolean = is_old_root(newroot);
+  if (!is_oldroot && s.skip_chdir) {
+    gnu.die_usage("option --skip-chdir only permitted if NEWROOT is old " + gnu.quotea("/"), status_canceled());
+  }
+
+  var c: Creds = outer_pass(s, is_oldroot);
+
+  must(chroot(newroot), "cannot change root directory to " + gnu.quotea(newroot));
+  if (!s.skip_chdir) {
+    must(chdir("/"), "cannot chdir to root directory");
+  }
+
+  var argv: string[] = command_argv(rest);
+  c = inner_pass(s, c);
+  apply(c.ids, c.supp, s.has_groups);
+
+  // Only returns when the exec failed.
+  fail_exec(argv[0], gnu.exec_command(argv[0], argv, environ()));
+  return 126;
+}

@@ -1431,6 +1431,10 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"create_dir_all":              emitCreateDirAllHelper,
 	"create_dir":                  emitCreateDirHelper,
 	"chdir":                       emitChdirHelper,
+	"chroot":                      emitChrootHelper,
+	"setuid":                      emitSetuidHelper,
+	"setgid":                      emitSetgidHelper,
+	"setgroups":                   emitSetgroupsHelper,
 	"remove_dir":                  emitRemoveDirHelper,
 	"create_link":                 emitCreateLinkHelper,
 	"create_symlink":              emitCreateSymlinkHelper,
@@ -2654,6 +2658,154 @@ func emitChdirHelper(w func(string, ...any)) {
 	emitPathOpHelper("chdir", "chdir", 49, 1, 0, func(w func(string, ...any)) {
 		w("\tmov x0, x20")
 	})(w)
+}
+
+// emitChrootHelper writes chroot(path) -> Result[void, IoError] — chroot(2)
+// (asm-generic 51), the same move one level up from chdir: what every later
+// path resolves against rather than where relative ones start.
+func emitChrootHelper(w func(string, ...any)) {
+	emitPathOpHelper("chroot", "chroot", sysChroot, 1, 0, func(w func(string, ...any)) {
+		w("\tmov x0, x20")
+	})(w)
+}
+
+// emitSetuidHelper / emitSetgidHelper write setuid(id) / setgid(id) ->
+// Result[void, IoError]. One body over two syscall numbers.
+func emitSetuidHelper(w func(string, ...any)) {
+	emitCredSetHelper("setuid", "setuid", sysSetuid)(w)
+}
+
+func emitSetgidHelper(w func(string, ...any)) {
+	emitCredSetHelper("setgid", "setgid", sysSetgid)(w)
+}
+
+// emitCredSetHelper is the shared body of the two scalar credential
+// setters. The id arrives in x0 as an i64 and the kernel's argument is a
+// 32-bit uid_t / gid_t, so a value that does not fit is EINVAL here rather
+// than a truncation at the syscall boundary — the kernel reads the low 32
+// bits and would set uid 1 for an argument of 2^32 + 1. It also refuses
+// GNU's "no id" spelling, (uid_t) -1, whose i64 form has every high bit
+// set, instead of setting uid 0xFFFFFFFF.
+func emitCredSetHelper(name, tag string, sysno int) func(func(string, ...any)) {
+	return func(w func(string, ...any)) {
+		w("")
+		w("%s:", fnLabel(name))
+		w("\tstp x29, x30, [sp, #-32]!")
+		w("\tmov x29, sp")
+		w("\tstr x19, [sp, #16]")
+		w("\tlsr x9, x0, #32")
+		w("\tcbz x9, .Lssa_%s_call", tag)
+		w("\tmov x0, #-22") // -EINVAL
+		w("\tb .Lssa_%s_err", tag)
+		w(".Lssa_%s_call:", tag)
+		w("\tmov x8, #%d", sysno)
+		w("\tsvc #0")
+		w("\ttbnz x0, #63, .Lssa_%s_err", tag)
+		emitCredSetOkBox(w, tag)
+		w(".Lssa_%s_err:", tag)
+		emitCredSetErrBox(w, tag)
+		w(".Lssa_%s_ret:", tag)
+		w("\tldr x19, [sp, #16]")
+		w("\tldp x29, x30, [sp], #32")
+		w("\tret")
+	}
+}
+
+// emitCredSetOkBox and emitCredSetErrBox box a credential setter's syscall
+// return — 0 or -errno in x0 — as Result[void, IoError]. The IoError names
+// the EMPTY string: there is no path to blame, the same way set_priority's
+// EACCES has none. Both clobber x19.
+func emitCredSetOkBox(w func(string, ...any), tag string) {
+	emitSsaResultBox(w)
+	w("\tstr wzr, [x0]")     // tag = 0 (Ok)
+	w("\tstr xzr, [x0, #8]") // unit payload
+	w("\tb .Lssa_%s_ret", tag)
+}
+
+func emitCredSetErrBox(w func(string, ...any), tag string) {
+	w("\tneg x19, x0") // errno, across the inline empty-string alloc
+	emitEmptyString(w, "x1")
+	w("\tmov x0, x19")
+	w("\tbl %s", fnLabel("__fern_io_error"))
+	w("\tmov x19, x0") // IoError box
+	emitSsaResultBox(w)
+	w("\tmov w6, #1")
+	w("\tstr w6, [x0]") // tag = 1 (Err)
+	w("\tstr x19, [x0, #8]")
+}
+
+// emitSetgroupsHelper writes setgroups(gids) -> Result[void, IoError] —
+// setgroups(2) over a Fern i64[]. The inverse of getgroups, which widens the
+// kernel's 32-bit gids into 8-byte slots; this narrows 8-byte slots into a
+// 32-bit buffer, which needs its own allocation rather than an in-place
+// pass, because narrowing in place would overwrite slots not yet read.
+//
+// Each element is range-checked as the scalar setters check theirs: a gid
+// past 2^32 would otherwise be truncated into a different, valid group.
+//
+// Frame: fp/lr (16) + x19/x20 (16) + x21/x22 (16) + x23 (16, half pad) =
+// 64. x19 count, x20 buffer, x21 index, x22 syscall result across the free,
+// x23 the array's data pointer. x19 is reused by emitCredSetErrBox, so both
+// frees happen before either box.
+func emitSetgroupsHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("setgroups"))
+	w("\tstp x29, x30, [sp, #-64]!")
+	w("\tmov x29, sp")
+	w("\tstp x19, x20, [sp, #16]")
+	w("\tstp x21, x22, [sp, #32]")
+	w("\tstr x23, [sp, #48]")
+	w("\tmov x23, x0")
+	w("\tldur w19, [x23, #-4]")
+	w("\tcbz w19, .Lssa_sgr_empty")
+	w("\tlsl x0, x19, #2")
+	w("\tbl %s", fnLabel("__alloc"))
+	w("\tmov x20, x0")
+	w("\tmov x21, xzr")
+	w(".Lssa_sgr_pack:")
+	w("\tcmp x21, x19")
+	w("\tb.ge .Lssa_sgr_packed")
+	w("\tldr x9, [x23, x21, lsl #3]")
+	w("\tlsr x10, x9, #32")
+	w("\tcbnz x10, .Lssa_sgr_range")
+	w("\tstr w9, [x20, x21, lsl #2]")
+	w("\tadd x21, x21, #1")
+	w("\tb .Lssa_sgr_pack")
+	w(".Lssa_sgr_packed:")
+	w("\tmov x0, x19")
+	w("\tmov x1, x20")
+	w("\tmov x8, #%d", sysSetgroups)
+	w("\tsvc #0")
+	w("\tmov x22, x0")
+	w("\tmov x0, x20")
+	w("\tlsl x1, x19, #2")
+	w("\tbl %s", fnLabel("__free"))
+	w("\tmov x0, x22")
+	w("\tb .Lssa_sgr_box")
+	w(".Lssa_sgr_range:")
+	w("\tmov x0, x20")
+	w("\tlsl x1, x19, #2")
+	w("\tbl %s", fnLabel("__free"))
+	w("\tmov x0, #-22") // -EINVAL
+	w("\tb .Lssa_sgr_box")
+	// An empty list is setgroups(0, NULL) — "in no supplementary groups",
+	// a real request and the one `chroot --groups=""` makes.
+	w(".Lssa_sgr_empty:")
+	w("\tmov x0, xzr")
+	w("\tmov x1, xzr")
+	w("\tmov x8, #%d", sysSetgroups)
+	w("\tsvc #0")
+	w(".Lssa_sgr_box:")
+	w("\ttbnz x0, #63, .Lssa_sgr_err")
+	emitCredSetOkBox(w, "sgr")
+	w(".Lssa_sgr_err:")
+	emitCredSetErrBox(w, "sgr")
+	w(".Lssa_sgr_ret:")
+	w("\tldr x23, [sp, #48]")
+	w("\tldp x21, x22, [sp, #32]")
+	w("\tldp x19, x20, [sp, #16]")
+	w("\tldp x29, x30, [sp], #64")
+	w("\tret")
 }
 
 // emitSignalMaskHelper writes signal_mask(how, mask) -> i64 —
@@ -4344,6 +4496,10 @@ var runtimeHelperDeps = map[string][]string{
 	"create_dir_all":                  {"__fern_io_error", "__fern_rc_inc"},
 	"create_dir":                      {"__fern_io_error", "__fern_rc_inc"},
 	"chdir":                           {"__fern_io_error", "__fern_rc_inc"},
+	"chroot":                          {"__fern_io_error", "__fern_rc_inc"},
+	"setuid":                          {"__fern_io_error", "__fern_rc_inc"},
+	"setgid":                          {"__fern_io_error", "__fern_rc_inc"},
+	"setgroups":                       {"__fern_io_error", "__fern_rc_inc", "__alloc", "__free"},
 	"remove_dir":                      {"__fern_io_error", "__fern_rc_inc"},
 	"create_link":                     {"__fern_io_error", "__fern_rc_inc"},
 	"create_symlink":                  {"__fern_io_error", "__fern_rc_inc"},
@@ -4447,6 +4603,10 @@ var heapUsingHelpers = map[string]bool{
 	"create_dir_all":                  true,
 	"create_dir":                      true,
 	"chdir":                           true,
+	"chroot":                          true,
+	"setuid":                          true,
+	"setgid":                          true,
+	"setgroups":                       true,
 	"remove_dir":                      true,
 	"create_link":                     true,
 	"create_symlink":                  true,
@@ -9174,6 +9334,15 @@ const (
 	// backends' tables are not interchangeable.
 	sysSetpriority = 140
 	sysGetpriority = 141
+	// chroot(2), asm-generic 51 — chdir's (49) counterpart one level up.
+	sysChroot = 51
+	// setuid(2) 146 / setgid(2) 144 / setgroups(2) 159, asm-generic: the
+	// write side of getuid / getgid / getgroups. setgid is the LOWER
+	// number of the pair, as with setpriority above, so the x86-64
+	// table's 105/106 ordering does not carry over.
+	sysSetuid      = 146
+	sysSetgid      = 144
+	sysSetgroups   = 159
 	clockRealtime  = 0
 	clockMonotonic = 1
 )

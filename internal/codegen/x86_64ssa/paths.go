@@ -235,6 +235,15 @@ func emitChdirHelper(w func(string, ...any)) {
 	})(w)
 }
 
+// emitChrootHelper writes chroot(path) -> Result[(), IoError] — chroot(2),
+// the same move one level up from chdir: what every later path resolves
+// against rather than where relative ones start (#9678).
+func emitChrootHelper(w func(string, ...any)) {
+	ssaPathOpHelper("chroot", "chroot", 161, 1, 0, func(w func(string, ...any)) {
+		w("\tmov rdi, r12")
+	})(w)
+}
+
 // emitCreateDirHelper writes create_dir(path, mode) -> Result[(), IoError]:
 // mkdirat(AT_FDCWD, path, mode). One directory, no parents, and EEXIST
 // reaches the caller — the whole difference from create_dir_all.

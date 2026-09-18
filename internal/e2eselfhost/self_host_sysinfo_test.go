@@ -129,8 +129,10 @@ func mustGetwd(t *testing.T) string {
 // What it pins is that the darwin fork is taken at all — the failure it
 // exists to catch is a helper added on the Linux side only, which emits
 // a `__syscall3` of the -1 `sysno` returns for a call XNU does not have.
-// `getcwd` is deliberately NOT in the darwin list: XNU's `__getcwd` has
-// the same shape as Linux's, so one Fern body serves both.
+// `getcwd` forks for the same reason: XNU has no getcwd syscall, so the
+// darwin body opens "." and asks the descriptor its own path with
+// fcntl(F_GETPATH). Its Linux body reaching a darwin build is #9131,
+// where BSD 296 — `vm_pressure_monitor` — was mistaken for `__getcwd`.
 func TestSelfHostSysinfoIRArm64Darwin(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -171,5 +173,23 @@ func TestSelfHostSysinfoIRArm64Darwin(t *testing.T) {
 	// it, so its appearance is a Linux body reaching a darwin build.
 	if strings.Contains(text, "__syscall3(-1") || strings.Contains(text, "mov x8, #-1") {
 		t.Error("arm64-darwin emit issues syscall -1, so a Linux-only body reached this target")
+	}
+	// getcwd's darwin body, named by the numbers only it issues: openat
+	// (BSD 463) on ".", then fcntl (BSD 92) with F_GETPATH (50), then
+	// close (BSD 6). These land in x0 and reach x16 through the stack,
+	// because a Fern body passes its syscall number as a value where the
+	// two hand-written bodies above write `mov x16` literally — so their
+	// absence is the Linux body having reached this target.
+	for _, want := range []string{"mov x0, #463", "mov x0, #92", "mov x0, #50"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("arm64-darwin emit is missing %q — getcwd's darwin body did not reach it", want)
+		}
+	}
+	// BSD 296 is `vm_pressure_monitor`, which the darwin getcwd row used
+	// to name (#9131). It fills nothing, and it copies an int OUT through
+	// its third argument, so it also writes four bytes wherever the
+	// caller last left one — the corruption in #9722.
+	if strings.Contains(text, "mov x0, #296") {
+		t.Error("arm64-darwin emit issues BSD 296 (vm_pressure_monitor), which is not getcwd")
 	}
 }

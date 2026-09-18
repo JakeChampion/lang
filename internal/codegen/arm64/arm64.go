@@ -270,11 +270,6 @@ var linuxDarwinSysno = map[string][2]int{
 	"getgid": {176, 47},
 	// getgroups(2) — Linux asm-generic 158, Darwin BSD 79.
 	"getgroups": {158, 79},
-	// getcwd(2) — Linux asm-generic 17, Darwin's `__getcwd` BSD 296.
-	// Same (buf, size) shape; the RETURN differs (Linux answers the
-	// length including the NUL, Darwin 0), so `__fern_getcwd` measures
-	// the string itself rather than trusting either.
-	"getcwd": {17, 296},
 	// rt_sigaction(2) — Linux asm-generic 134, Darwin's sigaction BSD 46.
 	// Linux takes a fourth `sigsetsize` argument that Darwin ignores, and
 	// the two `struct sigaction` layouts disagree past the first field —
@@ -289,7 +284,20 @@ var linuxDarwinSysno = map[string][2]int{
 	// 0/1/2, XNU 1/2/3), which the helper normalises rather than the table.
 	"sigprocmask": {135, 48},
 	// chdir(2) — Linux asm-generic 49, Darwin BSD 12. getcwd's counterpart.
-	"chdir":      {49, 12},
+	"chdir": {49, 12},
+	// chroot(2) — Linux asm-generic 51, Darwin BSD 61. chdir's
+	// counterpart one level up: it moves what every later path
+	// resolves against.
+	"chroot": {51, 61},
+	// setuid(2) / setgid(2) / setgroups(2) — Linux asm-generic 146 /
+	// 144 / 159, Darwin BSD 23 / 181 / 80. The write side of the
+	// getuid / getgid / getgroups rows above, and note the Darwin
+	// numbers are NOT adjacent the way the Linux ones are: 4.3BSD
+	// numbered getgroups 79 and setgroups 80 next to each other, but
+	// setuid and setgid came from different eras of the ABI.
+	"setuid":     {146, 23},
+	"setgid":     {144, 181},
+	"setgroups":  {159, 80},
 	"exit":       {sysExit, darExit},
 	"exit_group": {sysExitGroup, darExit},
 	"mmap":       {sysMmap, darMmap},
@@ -333,6 +341,16 @@ var linuxOnlySysno = map[string]int{
 	// __fern_fd_syncfs branches inline on Darwin rather than reaching
 	// this row.
 	"syncfs": 267,
+	// getcwd: current XNU has no __getcwd trap — there is no SYS___getcwd
+	// in the macOS SDK's syscall.h and slot 326, where older XNU carried
+	// it, is empty. This row used to claim Darwin 296, which is
+	// vm_pressure_monitor: it SUCCEEDS, leaves the buffer untouched so the
+	// strlen measured stack garbage, and took its third argument as a
+	// pointer to copy a page count out to — four kernel-written bytes at
+	// whatever the caller happened to leave in x2 (#9131, and the
+	// corrupted paths in #9722). __fern_getcwd builds the answer out of
+	// fcntl(F_GETPATH) on Darwin instead, so no number belongs here.
+	"getcwd": 17,
 }
 
 // regArgs is the AAPCS64 register-argument count: args 0..7
@@ -617,7 +635,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.usesRemoveFile || g.usesTempDir || g.usesReadDir || g.usesReadDirAll || g.usesStat || g.usesLstat ||
 		g.usesFdStat || g.usesReaderSeek || g.usesFdFlags || g.usesWriterTruncate ||
 		g.usesAccess || g.usesRemoveDirAll || g.usesCreateDirAll ||
-		g.usesCreateDir || g.usesChdir || g.usesRemoveDir || g.usesCreateLink ||
+		g.usesCreateDir || g.usesChdir || g.usesChroot || g.usesRemoveDir || g.usesCreateLink ||
 		g.usesCreateSymlink || g.usesReadLink || g.usesStatfs ||
 		g.usesRename || g.usesChmod || g.usesSetFileTimes || g.usesTruncate ||
 		g.usesMknod || g.usesChownAt {
@@ -646,7 +664,8 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// The path-taking fs helpers free their NUL-terminated path copies and
 	// working buffers (#9001); remove_dir_all also releases its child paths.
 	if g.usesReadFile || g.usesReadFileBytes || g.usesWriteFile || g.usesWriteFileExec ||
-		g.usesRemoveFile || g.usesCreateDirAll || g.usesCreateDir || g.usesChdir || g.usesRemoveDir ||
+		g.usesRemoveFile || g.usesCreateDirAll || g.usesCreateDir || g.usesChdir || g.usesChroot ||
+		g.usesSetgroups || g.usesRemoveDir ||
 		g.usesCreateLink || g.usesCreateSymlink || g.usesReadLink || g.usesTempDir ||
 		g.usesReadDir || g.usesReadDirAll || g.usesStat || g.usesLstat || g.usesStatfs || g.usesAccess ||
 		g.usesRemoveDirAll ||
@@ -994,6 +1013,18 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesChdir {
 		g.emitChdirRuntime()
+	}
+	if g.usesChroot {
+		g.emitChrootRuntime()
+	}
+	if g.usesSetuid {
+		g.emitCredSetRuntime("__fern_setuid", "setuid", "setuid")
+	}
+	if g.usesSetgid {
+		g.emitCredSetRuntime("__fern_setgid", "setgid", "setgid")
+	}
+	if g.usesSetgroups {
+		g.emitSetgroupsRuntime()
 	}
 	if g.usesRemoveDir {
 		g.emitRemoveDirRuntime()
@@ -11481,6 +11512,170 @@ func (g *generator) emitChdirRuntime() {
 	})
 }
 
+// emitChrootRuntime emits `__fern_chroot(path)` — chroot(2). Structurally
+// identical to __fern_chdir above, down to the factory call: one path
+// operand and no scalars. EPERM is the answer for any caller without
+// CAP_SYS_CHROOT, which is what `chroot: cannot change root directory to
+// 'x': Operation not permitted` prints.
+func (g *generator) emitChrootRuntime() {
+	g.emitPathOpRuntime("__fern_chroot", "chroot", "chroot", 1, 0, func() {
+		g.emit("mov x0, x21")
+	})
+}
+
+// emitCredSetRuntime emits one of `__fern_setuid(id)` / `__fern_setgid(id)`
+// — the same body over a different syscall name. The id arrives in x0 as an
+// i64 and the kernel's argument is a 32-bit uid_t / gid_t, so a value that
+// does not fit is EINVAL HERE rather than a silent truncation at the
+// syscall boundary: the kernel reads the low 32 bits of the register and
+// would set uid 1 for an argument of 2^32 + 1.
+//
+// That check also catches the value a caller is most likely to have by
+// accident. GNU spells "no id" as (uid_t) -1, whose i64 form has every high
+// bit set, so an unset id is refused instead of setting uid 0xFFFFFFFF.
+func (g *generator) emitCredSetRuntime(sym, lp, sysname string) {
+	g.line("")
+	g.line(".global " + sym)
+	g.typeDirective(sym)
+	g.label(sym)
+	g.emit("stp x29, x30, [sp, #-32]!")
+	g.emit("mov x29, sp")
+	g.emit("str x19, [sp, #16]")
+	// Refuse anything that does not fit in 32 unsigned bits.
+	g.emit("lsr x9, x0, #32")
+	g.emit("cbz x9, .L%s_call", lp)
+	g.emit("mov x0, #-22") // -EINVAL
+	g.emit("b .L%s_err", lp)
+	g.label(fmt.Sprintf(".L%s_call", lp))
+	g.syscall(sysname)
+	g.emit("cmp x0, #0")
+	g.emit("b.lt .L%s_err", lp)
+	g.emitCredSetOk(lp)
+	g.label(fmt.Sprintf(".L%s_err", lp))
+	g.emitCredSetErr(lp)
+	g.label(fmt.Sprintf(".L%s_ret", lp))
+	g.emit("ldr x19, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #32")
+	g.emit("ret")
+	g.sizeDirective(sym)
+	g.line(".ltorg")
+}
+
+// emitCredSetOk and emitCredSetErr are the two halves of boxing a
+// credential setter's syscall return as Result[void, IoError]. Split so
+// __fern_setgroups, whose frame and cleanup differ, can reuse them around
+// its own prologue.
+//
+// The IoError names the EMPTY string: there is no path to blame here, the
+// same way a write error has none. EPERM and EINVAL are neither of them a
+// named IoError variant, so each arrives as Other(path, strerror).
+func (g *generator) emitCredSetOk(lp string) {
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("str wzr, [x0]")     // tag = 0 (Ok)
+	g.emit("str xzr, [x0, #8]") // unit payload
+	g.emit("b .L%s_ret", lp)
+}
+
+func (g *generator) emitCredSetErr(lp string) {
+	g.emit("neg x0, x0")
+	if ast.UseTwoWordStrings(8) {
+		g.emit("mov x1, xzr")
+		g.emit("movz x2, #0x8000, lsl #48")
+	} else {
+		g.adrpAdd("x1", ".LStr_ioerr_empty")
+	}
+	g.emit("bl __fern_io_error")
+	g.emit("mov x19, x0") // the IoError box, across the Result alloc
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov w1, #1") // tag = 1 (Err)
+	g.emit("str w1, [x0]")
+	g.emit("str x19, [x0, #8]")
+}
+
+// emitSetgroupsRuntime emits `__fern_setgroups(gids)` — setgroups(2) over a
+// Fern i64[]. The inverse of __fern_getgroups, which reads the kernel's
+// 32-bit gids and widens them into 8-byte slots ASCENDING; this narrows
+// 8-byte slots into a 32-bit buffer, which needs its own allocation rather
+// than the in-place trick, because narrowing in place would overwrite slots
+// the loop has not read yet.
+//
+// Each element is range-checked the way the scalar setters check theirs: a
+// gid past 2^32 would otherwise be truncated into a different, valid group.
+//
+// Frame: fp/lr (16) + x19/x20 (16) + x21/x22 (16) + x23 (16, 8 of it pad)
+// = 64. x19 is the count, x20 the packed buffer, x21 the loop index, x22
+// the syscall result across the free, x23 the array's data pointer. x19 is
+// reused by emitCredSetErr for the IoError box, which is why the count has
+// to be dead by the time either half of the boxing runs — both frees are
+// above it.
+func (g *generator) emitSetgroupsRuntime() {
+	g.line("")
+	g.line(".global __fern_setgroups")
+	g.typeDirective("__fern_setgroups")
+	g.label("__fern_setgroups")
+	g.emit("stp x29, x30, [sp, #-64]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("str x23, [sp, #48]")
+	g.emit("mov x23, x0") // gids data ptr
+	g.emit("ldur w19, [x23, #-4]")
+	g.emit("cbz w19, .Lsgr_empty")
+	// buf = alloc(n * 4)
+	g.emit("lsl x0, x19, #2")
+	g.emit("bl __fern_alloc")
+	g.emit("mov x20, x0")
+	g.emit("mov x21, xzr")
+	g.label(".Lsgr_pack")
+	g.emit("cmp x21, x19")
+	g.emit("b.ge .Lsgr_packed")
+	g.emit("ldr x9, [x23, x21, lsl #3]")
+	g.emit("lsr x10, x9, #32")
+	g.emit("cbnz x10, .Lsgr_range")
+	g.emit("str w9, [x20, x21, lsl #2]")
+	g.emit("add x21, x21, #1")
+	g.emit("b .Lsgr_pack")
+	g.label(".Lsgr_packed")
+	g.emit("mov x0, x19")
+	g.emit("mov x1, x20")
+	g.syscall("setgroups")
+	g.emit("mov x22, x0")
+	g.emit("mov x0, x20")
+	g.emit("lsl x1, x19, #2")
+	g.emit("bl __fern_free")
+	g.emit("mov x0, x22")
+	g.emit("b .Lsgr_box")
+	// An out-of-range element: free what was allocated, then EINVAL.
+	g.label(".Lsgr_range")
+	g.emit("mov x0, x20")
+	g.emit("lsl x1, x19, #2")
+	g.emit("bl __fern_free")
+	g.emit("mov x0, #-22") // -EINVAL
+	g.emit("b .Lsgr_box")
+	// An empty list is setgroups(0, NULL) — "in no supplementary groups",
+	// which is a real request and the one `chroot --groups=""` makes.
+	g.label(".Lsgr_empty")
+	g.emit("mov x0, xzr")
+	g.emit("mov x1, xzr")
+	g.syscall("setgroups")
+	g.label(".Lsgr_box")
+	g.emit("cmp x0, #0")
+	g.emit("b.lt .Lsgr_err")
+	g.emitCredSetOk("sgr")
+	g.label(".Lsgr_err")
+	g.emitCredSetErr("sgr")
+	g.label(".Lsgr_ret")
+	g.emit("ldr x23, [sp, #48]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #64")
+	g.emit("ret")
+	g.sizeDirective("__fern_setgroups")
+	g.line(".ltorg")
+}
+
 // emitSignalMaskRuntime emits `__fern_signal_mask(how, mask) -> i64` —
 // sigprocmask(2), answering the mask that was blocked BEFORE the call so one
 // call both reads and writes.
@@ -13347,12 +13542,13 @@ func (g *generator) emitUnameFieldRuntime() {
 }
 
 // emitGetcwdRuntime emits `__fern_getcwd()` → a fresh rc string holding
-// the process's working directory. Both kernels fill a caller's buffer
-// and NUL-terminate it; only the return differs (Linux answers the
-// length including the NUL, Darwin 0), so the length is measured from
-// the bytes rather than taken from the syscall. A refusal — an unlinked
-// working directory, an unreadable ancestor, a path past the page the
-// kernel builds it in — answers the empty string.
+// the process's working directory. A refusal — an unlinked working
+// directory, an unreadable ancestor, a path past the page the kernel
+// builds it in — answers the empty string.
+//
+// Linux fills a caller's buffer and answers the length including the NUL;
+// the length is measured from the bytes rather than taken from the
+// syscall. Darwin has no getcwd trap at all and is emitted separately.
 //
 // Frame: fp/lr (16) + x19/x20 (16) + PATH_MAX of buffer = 4128.
 func (g *generator) emitGetcwdRuntime() {
@@ -13360,6 +13556,10 @@ func (g *generator) emitGetcwdRuntime() {
 	g.line(".global __fern_getcwd")
 	g.typeDirective("__fern_getcwd")
 	g.label("__fern_getcwd")
+	if g.darwin {
+		g.emitGetcwdRuntimeDarwin()
+		return
+	}
 	// 4128 is past the 12-bit immediate a single `sub sp` takes, so the
 	// frame is opened (and closed) in two steps.
 	g.emit("sub sp, sp, #4096")
@@ -13370,12 +13570,8 @@ func (g *generator) emitGetcwdRuntime() {
 	g.emit("add x0, sp, #32")
 	g.emit("mov x1, #4096")
 	g.syscall("getcwd")
-	if g.darwin {
-		g.emit("b.cs .Lcwd_empty") // carry set = error
-	} else {
-		g.emit("cmp x0, #0")
-		g.emit("b.le .Lcwd_empty")
-	}
+	g.emit("cmp x0, #0")
+	g.emit("b.le .Lcwd_empty")
 	g.emit("add x19, sp, #32")
 	g.emit("mov x20, #0")
 	g.label(".Lcwd_strlen")
@@ -13411,6 +13607,87 @@ func (g *generator) emitGetcwdRuntime() {
 	g.emit("ldp x19, x20, [sp, #16]")
 	g.emit("ldp x29, x30, [sp]")
 	g.emit("add sp, sp, #32")
+	g.emit("add sp, sp, #4096")
+	g.emit("ret")
+	g.sizeDirective("__fern_getcwd")
+	g.line(".ltorg")
+}
+
+// emitGetcwdRuntimeDarwin is __fern_getcwd for arm64-darwin, which has no
+// getcwd syscall to issue: there is no SYS___getcwd in the macOS SDK's
+// syscall.h, and the number this backend used to pass (296) is
+// vm_pressure_monitor (#9131).
+//
+// So the answer is built the way macOS documents: open a descriptor on
+// "." and ask the kernel for that descriptor's path with
+// fcntl(F_GETPATH). F_GETPATH wants a buffer of at least MAXPATHLEN
+// (1024) and NUL-terminates what it writes.
+//
+// Frame: fp/lr (16) + x19/x20 (16) + the "." operand (16) + 4096 of
+// buffer = 4144. The operand gets its own slot rather than borrowing the
+// buffer, which openat reads and fcntl then overwrites.
+func (g *generator) emitGetcwdRuntimeDarwin() {
+	const fGetPath = 50
+	g.emit("sub sp, sp, #4096")
+	g.emit("sub sp, sp, #48")
+	g.emit("stp x29, x30, [sp]")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	// "." NUL, built in the frame so this needs no .rodata literal.
+	g.emit("mov w9, #46")
+	g.emit("strb w9, [sp, #32]")
+	g.emit("strb wzr, [sp, #33]")
+	// openat(AT_FDCWD, ".", O_RDONLY, 0)
+	g.emit("mov x0, #%d", g.atFdCwd())
+	g.emit("add x1, sp, #32")
+	g.emit("mov x2, #0")
+	g.emit("mov x3, #0")
+	g.syscall("openat")
+	g.emit("tbnz x0, #63, .Lcwdd_empty")
+	g.emit("mov x19, x0") // fd
+	// fcntl(fd, F_GETPATH, buf)
+	g.emit("mov x1, #%d", fGetPath)
+	g.emit("add x2, sp, #48")
+	g.syscall("fcntl")
+	g.emit("mov x20, x0") // stash the verdict across close
+	g.emit("mov x0, x19")
+	g.syscall("close")
+	g.emit("tbnz x20, #63, .Lcwdd_empty")
+	g.emit("add x19, sp, #48")
+	g.emit("mov x20, #0")
+	g.label(".Lcwdd_strlen")
+	g.emit("ldrb w1, [x19, x20]")
+	g.emit("cbz w1, .Lcwdd_len")
+	g.emit("add x20, x20, #1")
+	g.emit("b .Lcwdd_strlen")
+	g.label(".Lcwdd_len")
+	g.emit("cbz x20, .Lcwdd_empty")
+	g.emit("add w0, w20, #1")
+	g.emit("bl __fern_alloc_rc1") // x0 = data
+	if !ast.UseTwoWordStrings(8) {
+		g.emitStrLenStore("w20", "x0")
+	}
+	g.emit("strb wzr, [x0, x20]")
+	g.emit("mov x1, x19")
+	g.emit("mov x19, x0")
+	g.emit("mov x2, x20")
+	g.emit("bl __fern_memcpy")
+	g.emit("mov x0, x19")
+	if ast.UseTwoWordStrings(8) {
+		g.emit("mov w1, w20")
+	}
+	g.emit("b .Lcwdd_done")
+	g.label(".Lcwdd_empty")
+	if ast.UseTwoWordStrings(8) {
+		g.emit("mov x0, xzr")
+		g.emit("movz x1, #0x8000, lsl #48")
+	} else {
+		g.emitStrEmpty("x0")
+	}
+	g.label(".Lcwdd_done")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp]")
+	g.emit("add sp, sp, #48")
 	g.emit("add sp, sp, #4096")
 	g.emit("ret")
 	g.sizeDirective("__fern_getcwd")
@@ -15210,7 +15487,15 @@ type generator struct {
 	// readlinkat. usesUmask is the process file-mode creation mask.
 	usesCreateDir bool
 	// usesChdir pulls in `__fern_chdir(path)` — chdir(2).
-	usesChdir         bool
+	usesChdir bool
+	// usesChroot is the same shape one level up — `__fern_chroot(path)`,
+	// chroot(2) — and the three credential setters are the write side of
+	// getuid / getgid / getgroups, Result[void, IoError] over scalars
+	// rather than paths (#9678).
+	usesChroot        bool
+	usesSetuid        bool
+	usesSetgid        bool
+	usesSetgroups     bool
 	usesRemoveDir     bool
 	usesCreateLink    bool
 	usesCreateSymlink bool
@@ -19940,6 +20225,27 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// getcwd only ever reported.
 			target = "__fern_chdir"
 			g.usesChdir = true
+		case "chroot":
+			// chroot(path): Result[void, IoError] — the same
+			// move one level up (#9678).
+			target = "__fern_chroot"
+			g.usesChroot = true
+		case "setuid":
+			// setuid(id) / setgid(id) / setgroups(gids):
+			// Result[void, IoError] — the write side of the
+			// credential getters.
+			target = "__fern_setuid"
+			g.usesSetuid = true
+			g.usesAlloc = true
+			g.usesIoError = true
+		case "setgid":
+			target = "__fern_setgid"
+			g.usesSetgid = true
+			g.usesAlloc = true
+			g.usesIoError = true
+		case "setgroups":
+			target = "__fern_setgroups"
+			g.usesSetgroups = true
 			g.usesAlloc = true
 			g.usesIoError = true
 		case "create_dir":

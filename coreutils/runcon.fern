@@ -98,7 +98,7 @@ function help_text(): string {
   out = out + "      --version     output version information and exit\n";
   out = out + "\n";
   out = out + "Exit status:\n";
-  out = out + "  125  if the " + gnu.prog() + " command itself fails\n";
+  out = out + "  125  if the runcon command itself fails\n";
   out = out + "  126  if COMMAND is found but cannot be invoked\n";
   out = out + "  127  if COMMAND cannot be found\n";
   out = out + "  -    the exit status of COMMAND otherwise\n";

@@ -300,3 +300,7 @@ termios_get=312
 termios_set=313
 set_window_size=314
 heap_alloc_count=315
+chroot=316
+setuid=317
+setgid=318
+setgroups=319

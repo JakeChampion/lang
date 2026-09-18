@@ -3018,8 +3018,18 @@ groups are the order of work. Each sub-issue names its group.
   than an alarm is the reason the second primitive exists)
   `nohup` (done, on `dup_onto` — the handle that installs itself at a
   descriptor, which is what all three of its redirections are; the message
-  wording it emits is 9.4's, see the divergence below) `kill` `stdbuf`
-  `chroot` (signals, exec), `dd`
+  wording it emits is 9.4's, see the divergence below) `kill` (done, on the
+  shared `operand2sig` in `lib/signals.fern` — GNU's own signal-operand
+  grammar, which `env` and `timeout` had each half-implemented differently,
+  #9652) `chroot` (done — the last utility in the catalogue, on the four
+  primitives of #9678: `chroot`, `setgroups`, `setgid`, `setuid`. Everything
+  above them was already here, and the two lookups it runs — once outside the
+  new root and once inside — are the reference's shape rather than
+  belt-and-braces), `stdbuf` (**not planned**, #8378: it needs Fern to call
+  host libc, both `setvbuf` and libc's `stdout` / `stdin` / `stderr` DATA
+  symbols, and Fern has no FFI. Syscalls cannot substitute, because buffering
+  is a libc userspace concept with nothing behind it in the kernel. That is
+  why the catalogue is 106 of 107), `dd`
   (done, on `w.seek(offset, whence)` — lseek on a Writer, which is what
   writing at an offset without rewriting the file needs; the operand
   families it does NOT have are in the divergences above, each with its
