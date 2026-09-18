@@ -174,22 +174,27 @@ function main(): i32 {
 
 	// A UNION donor: a declared enum whose variants agree on field count, so
 	// its box is a count this frame can state, dying at a call before a record
-	// of the same slot count is built. The enum's own drop helper releases the
-	// live variant's children at the token. Its box is the record's, so the
-	// program allocates half what it does with the pairing off — the shape
-	// `reuse_slots` admits and, before this suite counted allocations, the one
-	// nothing witnessed.
-	{"union-donor", `enum Duo { Two(i32, string), Both(string, i32) }
+	// of the same slot count is built. Its box becomes the record's, so the
+	// program allocates two fewer blocks than with the pairing off.
+	//
+	// The live variant's payload is an ARRAY rather than a string, and that is
+	// the half of this case that tests the token's child release: the enum's
+	// own drop helper has to free it before the box is handed on, since the
+	// runtime frees a size-mismatched donor block SHALLOWLY. Written with a
+	// string literal instead, the child is a static box whose release is a
+	// no-op, and the fixture passes with `drop_children` deleted — measured,
+	// which is why it is not written that way.
+	{"union-donor", `enum Duo { Two(i32, i32[]), Both(i32[], i32) }
 struct Trip { a: string, b: i32 }
 function duo_size(d: Duo): i32 {
     match (d) {
-        Two(n, t) => { return n + t.len(); },
-        Both(t2, n2) => { return n2 + t2.len(); }
+        Two(n, xs) => { return n + xs[0]; },
+        Both(ys, n2) => { return n2 + ys[0]; }
     }
     return 0 - 1;
 }
 function union_donor(seed: i32): i32 {
-    var u: Duo = Two(seed, "uu");
+    var u: Duo = Two(seed, [seed, seed + 1]);
     var s: i32 = duo_size(u);
     var r: Trip = Trip { a: "vv", b: s };
     return r.b + r.a.len();
@@ -198,7 +203,7 @@ function main(): i32 {
     var t: i32 = union_donor(4) + union_donor(9);
     if (__rc_underflow_count() != 0) { return 99; }
     return t;
-}`, 21, 1, 0, 2, 4, false},
+}`, 30, 1, 0, 4, 6, false},
 
 	// The two rules that decide WHICH dying box the block's one token slot
 	// holds, each of which changes emitted code and neither of which the cases

@@ -86,7 +86,15 @@ declines cannot land again.
 
 `union-donor` is new, and it is the coverage the review asked for: a declared
 enum whose variants agree on field count, dying at a call in front of a
-same-slot record. Its box becomes the record's, the enum's own drop helper
-releases the live variant's children at the token, and the program allocates
-half what it does with the pairing off. It is also the shape that matters most
-to keep watched, since the builtin union beside it is now refused.
+same-slot record. Its box becomes the record's, and the program allocates two
+fewer blocks than with the pairing off. It is the shape that matters most to
+keep watched, since the builtin union beside it is now refused.
+
+Its payload is an ARRAY, and the first draft's string literal was the same
+fault this whole series keeps finding: a claim the fixture does not witness.
+The comment said the enum's drop helper releases the live variant's children
+at the token, and a literal's box is static, so the release is a no-op —
+measured, with `drop_children` deleted from `reuse_token`: the string version
+answers 2 allocations and 2 frees and PASSES, while the array version answers
+4 and 2 with 80 bytes live and trips the balance check. Found by the same
+review that asked for the case.
