@@ -86,9 +86,11 @@ instruction counts show is the reverse of the truth.
 | `closure_loop` | 0 | 0 | 0 | 0 |
 | `loop` | 0 | 0 | 0 | 0 |
 
-`filter_map_reduce` is the same shape at a third of the volume — 21 cold allocs,
-15,392 cold bytes, 4,200 steady allocs — because the predicate keeps one element
-in three and the intermediate the `map` stage builds is a third of the size.
+`filter_map_reduce` is the same shape, smaller: 21 cold allocs, 15,392 cold
+bytes, 4,200 steady allocs. The predicate keeps one element in three, so both
+intermediates hold 1,364 elements rather than 4,096 — fewer regrows, and enough
+of them recycled inside the single pass that the cold byte figure lands well
+below a third of pipeline 1's rather than at it.
 
 So: **25 allocator calls per round, about 24.8 fresh bytes per input element on
 the cold pass, and zero fresh bytes forever after.** The count is per geometric
