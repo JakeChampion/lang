@@ -5,6 +5,14 @@ Null result. Porting native's in-place string append (`__fern_str_append`,
 lowering makes the common case **14x slower**. Both causes are below the
 append helper, so the port has to wait for them.
 
+Native hit the first of the two already, and fixed it: #8404 is where its
+append stopped testing "same 16-byte class" and started asking the allocator's
+own class function, which is the whole difference between copying the
+accumulator every time and amortised O(1).
+`2026-09-05-str-append-class-capacity.md` is that entry, and it is the model
+for the self-host port below rather than something to re-derive. (Native's
+arm64 has no in-place append at all — #8414.)
+
 ## What was measured
 
 An x86-64 self-host compiler with an in-place `__fern_str_append` helper,
@@ -73,7 +81,11 @@ benchmark for anything order-sensitive has to vary the piece.
 
 Geometric size classes in the self-host heap, as their own change: one capacity
 function shared by `__fern_alloc` and every free site, since a block freed to a
-class it was not allocated at is the #8402 corruption. The append port, with
+class it was not allocated at is the #8402 corruption. That sharing is the
+point, not an implementation detail — #8404 reduced native's class arithmetic
+to one definition per backend for alloc, free and the append together, and the
+self-host recomputes `(bytes + 7) >> 3` inline at ~14 free sites on x86-64 and
+~20 on arm64, every one of which has to agree. The append port, with
 the dec suppression above, comes after it — on the shared Fern runtime
 (`asmcore.rt_src_*`) rather than per-backend asm, so arm64 and wasm are served
 by the same body.
