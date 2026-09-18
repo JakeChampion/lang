@@ -99,6 +99,12 @@ informed, not a pre-flight ask.
 problem, asking how something works, or thinking out loud, the deliverable is
 your assessment: report what you found and stop; apply a fix when they ask.
 
+**A red lane that is red on `main` too is not a stop.** Compare the failing set
+on the branch against `main`'s; an empty difference is the proof it is not yours,
+and then the PR merges (`gh pr merge N --rebase --admin`) and the pre-existing
+breakage gets its own fix, not a hand-back. Surfacing it as a decision costs a
+round trip the evidence already settled.
+
 **Check your last paragraph before ending the turn.** If it is a plan, a list of
 next steps, or a promise — "I'll…", "next I'll…" — that work is undone; do it
 now rather than announce it. A long session is not a reason to stop early: end
