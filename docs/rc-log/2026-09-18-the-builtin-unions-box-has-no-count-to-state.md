@@ -91,7 +91,8 @@ pairing ON and OFF, under `FERN_LEAKCHECK`. The difference is the reuse itself:
 | shared-donor-degrades | 1 | 6 | 6 | 0 |
 | cross-type | 2 | 13 | 18 | 5 |
 | tuple-form | 3 | 10 | 16 | 6 |
-| union-donor | 1 | 2 | 4 | 2 |
+| union-donor | 1 | 4 | 6 | 2 |
+| pairing-reach | 3 | 4 | 7 | 3 |
 | scalar-fields | 1 | 3 | 6 | 3 |
 
 A case that saves nothing now FAILS unless it is marked `degrades` — the
