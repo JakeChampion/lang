@@ -1,0 +1,487 @@
+// examples/fip/packet_fip.fern — the strict-`fip` variant of the bounded packet
+// codec (#9584).
+//
+// Same protocol, same workload and the same answers as the other three. The
+// data plane is `fip` all the way down — a checked claim that it allocates
+// nothing, rather than `fbip`'s weaker "every construction is reuse-paired" —
+// and it holds no struct at all: one owned byte buffer is threaded through, and
+// the parse's results stay as scalars in the function that uses them.
+//
+// Two modes, selected by argv, because the issue asks for both:
+//
+//   (default)    the response is framed OVER the request, in one buffer
+//   `separate`   the response goes into a second buffer, preallocated once
+//
+// The first is the one that shows why this experiment counts bytes and not just
+// allocations: an echo's answer is already in the buffer, so the whole response
+// is 16 header bytes rewritten and no payload movement at all. No other variant
+// here can express that, and the allocation counter cannot see the difference —
+// both modes are flat at zero.
+import "core/cmp";
+import "std/bench";
+import "std/i32";
+import "std/i64";
+
+// ===================== THE PROTOCOL =====================
+//
+// A 16-byte fixed header and a bounded payload, so a whole packet fits in 256
+// bytes and every buffer in every variant can be sized once, up front.
+//
+//   0..1   magic 0xFE 0x52
+//   2      version
+//   3      message type
+//   4      status (0 on a request)
+//   5      reserved
+//   6..9   request id, u32 little-endian
+//   10..11 payload length, u16 little-endian
+//   12..13 Fletcher-16 of the payload
+//   14..15 reserved
+fip function header_len(): i32 { return 16; }
+fip function max_payload(): i32 { return 240; }
+fip function max_packet(): i32 { return 256; }
+fip function magic0(): i32 { return 254; }
+fip function magic1(): i32 { return 82; }
+fip function version(): i32 { return 1; }
+
+fip function msg_echo(): i32 { return 1; }
+fip function msg_sum(): i32 { return 2; }
+fip function msg_reverse(): i32 { return 3; }
+fip function msg_upper(): i32 { return 4; }
+
+fip function st_ok(): i32 { return 0; }
+fip function st_bad_magic(): i32 { return 1; }
+fip function st_bad_version(): i32 { return 2; }
+fip function st_bad_type(): i32 { return 3; }
+fip function st_oversize(): i32 { return 4; }
+fip function st_truncated(): i32 { return 5; }
+fip function st_bad_checksum(): i32 { return 6; }
+
+// Fletcher-16: two running sums mod 255, which catches byte transposition
+// where a plain sum does not. Cheap enough that it is not what any variant's
+// throughput is measuring.
+fip function checksum(bytes: u8[], from: i32, n: i32): i32 {
+    var a: i32 = 0;
+    var b: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        a = (a + (bytes[from + i] as i32)) % 255;
+        b = (b + a) % 255;
+        i = i + 1;
+    }
+    return b * 256 + a;
+}
+
+fip function read_u16(bytes: u8[], at: i32): i32 {
+    return (bytes[at] as i32) + (bytes[at + 1] as i32) * 256;
+}
+
+fip function read_u32(bytes: u8[], at: i32): i64 {
+    return (bytes[at] as i64)
+        + (bytes[at + 1] as i64) * (256 as i64)
+        + (bytes[at + 2] as i64) * (65536 as i64)
+        + (bytes[at + 3] as i64) * (16777216 as i64);
+}
+
+fip function known_type(t: i32): boolean {
+    return t == msg_echo() || t == msg_sum() || t == msg_reverse() || t == msg_upper();
+}
+
+fip function pow256(k: i32): i64 {
+    var p: i64 = 1 as i64;
+    var i: i32 = 0;
+    while (i < k) { p = p * (256 as i64); i = i + 1; }
+    return p;
+}
+
+// ===================== THE DATA PLANE (strict fip) =====================
+//
+// No struct and no record: one owned byte buffer threaded through, and the
+// parse's results held as scalars inside the one function that uses them. Every
+// function here is `fip`, so the checker says the whole plane allocates nothing
+// — not that it reuses well, that it does not allocate at all.
+//
+// Every store is its own statement. `b = b.with(i, x).with(j, y)` reads better
+// for a run of header bytes and is what this file was first written as, but a
+// chained `.with` in assignment position allocates a fresh box per evaluation
+// (#9702) — so the spelling that reads best is the one that would have put an
+// allocation on every request.
+
+fip function rev_inplace(own b: u8[], at: i32, n: i32): u8[] {
+    var i: i32 = 0;
+    var j: i32 = n - 1;
+    while (i < j) {
+        var lo: u8 = b[at + i];
+        var hi: u8 = b[at + j];
+        b = b.with(at + i, hi);
+        b = b.with(at + j, lo);
+        i = i + 1;
+        j = j - 1;
+    }
+    return b;
+}
+
+fip function upper_inplace(own b: u8[], at: i32, n: i32): u8[] {
+    var i: i32 = 0;
+    while (i < n) {
+        var ch: i32 = b[at + i] as i32;
+        if (ch >= 97 && ch <= 122) { b = b.with(at + i, (ch - 32) as u8); }
+        i = i + 1;
+    }
+    return b;
+}
+
+// The in-place sum needs its own spelling rather than `sum_into(b, b, …)`:
+// handing the owned buffer in as its own borrowed source is E050, correctly,
+// since the callee would be writing through one reference while reading
+// through another. Every in-place transform here pays that — the copying and
+// the rewriting forms cannot share a body.
+fip function sum_inplace(own b: u8[], at: i32, n: i32): u8[] {
+    var total: i64 = 0 as i64;
+    var s: i32 = 0;
+    while (s < n) { total = total + (b[at + s] as i64); s = s + 1; }
+    var k: i32 = 0;
+    while (k < 8) { b = b.with(at + k, ((total / pow256(k)) % (256 as i64)) as u8); k = k + 1; }
+    return b;
+}
+
+fip function sum_into(own dst: u8[], src: u8[], at: i32, n: i32, to: i32): u8[] {
+    var total: i64 = 0 as i64;
+    var s: i32 = 0;
+    while (s < n) { total = total + (src[at + s] as i64); s = s + 1; }
+    var b: i32 = 0;
+    while (b < 8) {
+        dst = dst.with(to + b, ((total / pow256(b)) % (256 as i64)) as u8);
+        b = b + 1;
+    }
+    return dst;
+}
+
+fip function copy_into(own dst: u8[], src: u8[], at: i32, n: i32, to: i32): u8[] {
+    var i: i32 = 0;
+    while (i < n) { dst = dst.with(to + i, src[at + i]); i = i + 1; }
+    return dst;
+}
+
+fip function rev_into(own dst: u8[], src: u8[], at: i32, n: i32, to: i32): u8[] {
+    var i: i32 = 0;
+    while (i < n) { dst = dst.with(to + i, src[at + n - 1 - i]); i = i + 1; }
+    return dst;
+}
+
+fip function upper_into(own dst: u8[], src: u8[], at: i32, n: i32, to: i32): u8[] {
+    var i: i32 = 0;
+    while (i < n) {
+        var ch: i32 = src[at + i] as i32;
+        if (ch >= 97 && ch <= 122) { ch = ch - 32; }
+        dst = dst.with(to + i, ch as u8);
+        i = i + 1;
+    }
+    return dst;
+}
+
+// The validation ladder, returning the status rather than a record: a record
+// would be a fresh allocation per request, which is the whole cost this variant
+// exists to avoid.
+fip function validate(wire: u8[], wire_len: i32): i32 {
+    if (wire_len < header_len()) { return st_truncated(); }
+    if ((wire[0] as i32) != magic0() || (wire[1] as i32) != magic1()) { return st_bad_magic(); }
+    if ((wire[2] as i32) != version()) { return st_bad_version(); }
+    var n: i32 = read_u16(wire, 10);
+    if (n > max_payload()) { return st_oversize(); }
+    if (wire_len < header_len() + n) { return st_truncated(); }
+    if (checksum(wire, header_len(), n) != read_u16(wire, 12)) { return st_bad_checksum(); }
+    if (!known_type(wire[3] as i32)) { return st_bad_type(); }
+    return st_ok();
+}
+
+fip function frame(own out: u8[], mtype: i32, status: i32, rid: i64, plen: i32): u8[] {
+    var ck: i32 = checksum(out, header_len(), plen);
+    out = out.with(0, magic0() as u8);
+    out = out.with(1, magic1() as u8);
+    out = out.with(2, version() as u8);
+    out = out.with(3, mtype as u8);
+    out = out.with(4, status as u8);
+    out = out.with(5, 0 as u8);
+    var idb: i32 = 0;
+    while (idb < 4) {
+        out = out.with(6 + idb, ((rid / pow256(idb)) % (256 as i64)) as u8);
+        idb = idb + 1;
+    }
+    out = out.with(10, (plen % 256) as u8);
+    out = out.with(11, (plen / 256) as u8);
+    out = out.with(12, (ck % 256) as u8);
+    out = out.with(13, (ck / 256) as u8);
+    out = out.with(14, 0 as u8);
+    return out.with(15, 0 as u8);
+}
+
+// IN-PLACE: the response is framed over the request, in the same buffer. An
+// echo moves no payload bytes at all — the answer is already where it belongs
+// and only the 16 header bytes are rewritten. That is the term no other variant
+// can remove, and it is why "bytes copied" is measured here and not just
+// "allocations".
+fip function serve_inplace(own buf: u8[], wire_len: i32): u8[] {
+    var status: i32 = validate(buf, wire_len);
+    var mtype: i32 = 0;
+    var rid: i64 = 0 as i64;
+    var plen: i32 = 0;
+    // Only a packet whose magic and version are good has a type and an id to
+    // echo back; the baseline's record leaves both zero on the earlier
+    // rejections, and the response bytes have to match.
+    if (status != st_bad_magic() && status != st_bad_version() && wire_len >= header_len()) {
+        mtype = buf[3] as i32;
+        rid = read_u32(buf, 6);
+    }
+    if (status == st_ok()) {
+        var n: i32 = read_u16(buf, 10);
+        plen = n;
+        if (mtype == msg_reverse()) { buf = rev_inplace(buf, header_len(), n); }
+        if (mtype == msg_upper()) { buf = upper_inplace(buf, header_len(), n); }
+        if (mtype == msg_sum()) { buf = sum_inplace(buf, header_len(), n); plen = 8; }
+    }
+    return frame(buf, mtype, status, rid, plen);
+}
+
+// SEPARATE: the response goes into a second buffer, preallocated once, and the
+// request buffer is only read. Every payload byte moves, so this is the cost of
+// the output buffer that the in-place path avoids — and the shape a real server
+// needs when the request must survive its own response.
+fip function serve_separate(own out: u8[], wire: u8[], wire_len: i32): u8[] {
+    var status: i32 = validate(wire, wire_len);
+    var mtype: i32 = 0;
+    var rid: i64 = 0 as i64;
+    var plen: i32 = 0;
+    if (status != st_bad_magic() && status != st_bad_version() && wire_len >= header_len()) {
+        mtype = wire[3] as i32;
+        rid = read_u32(wire, 6);
+    }
+    if (status == st_ok()) {
+        var n: i32 = read_u16(wire, 10);
+        plen = n;
+        if (mtype == msg_echo()) { out = copy_into(out, wire, header_len(), n, header_len()); }
+        if (mtype == msg_reverse()) { out = rev_into(out, wire, header_len(), n, header_len()); }
+        if (mtype == msg_upper()) { out = upper_into(out, wire, header_len(), n, header_len()); }
+        if (mtype == msg_sum()) { out = sum_into(out, wire, header_len(), n, header_len()); plen = 8; }
+    }
+    return frame(out, mtype, status, rid, plen);
+}
+
+// Bytes the transform actually wrote, by the same rule in both modes: the
+// header always, plus whatever the payload cost. An in-place echo writes none.
+fip function moved(mtype: i32, status: i32, plen: i32, inplace: boolean): i64 {
+    if (status != st_ok()) { return header_len() as i64; }
+    if (mtype == msg_sum()) { return (header_len() + 8) as i64; }
+    if (inplace && mtype == msg_echo()) { return header_len() as i64; }
+    return (header_len() + plen) as i64;
+}
+
+// ===================== THE WORKLOAD =====================
+//
+// Identical in all four variants, verbatim, so the runs differ in how the
+// bytes are held and in nothing else. Every 17th request is malformed, cycling
+// through the six rejections, so the error ladder is exercised in the steady
+// state rather than in a separate test that proves nothing about throughput.
+
+fip function gen_payload_len(n: i64): i32 {
+    return ((n * (37 as i64)) % (241 as i64)) as i32;
+}
+
+fip function gen_byte(n: i64, j: i32): u8 {
+    return (((n + (j as i64)) % (251 as i64)) as i32) as u8;
+}
+
+fip function corruption(n: i64): i32 {
+    if (n % (17 as i64) != (0 as i64)) { return 0 - 1; }
+    return ((n / (17 as i64)) % (6 as i64)) as i32;
+}
+
+// Writes one request into the buffer it is handed and gives it back. It takes
+// the buffer `own` in every variant, including this one: generating the input
+// is the harness, not the codec, and a borrowed `wire` would copy all 256
+// bytes on each `.with` — charging every variant for the instrument.
+fip function build_request(own wire: u8[], n: i64): u8[] {
+    var t: i32 = 1 + ((n % (4 as i64)) as i32);
+    var plen: i32 = gen_payload_len(n);
+    var corrupt: i32 = corruption(n);
+    var i: i32 = 0;
+    while (i < plen) { wire = wire.with(header_len() + i, gen_byte(n, i)); i = i + 1; }
+    var ck: i32 = checksum(wire, header_len(), plen);
+    var m0: i32 = magic0();
+    var ver: i32 = version();
+    var wire_plen: i32 = plen;
+    if (corrupt == 0) { m0 = 1; }
+    if (corrupt == 1) { ver = 9; }
+    if (corrupt == 2) { t = 77; }
+    if (corrupt == 3) { wire_plen = max_payload() + 8; }
+    if (corrupt == 5) { ck = ck ^ 1; }
+    wire = wire.with(0, m0 as u8);
+    wire = wire.with(1, magic1() as u8);
+    wire = wire.with(2, ver as u8);
+    wire = wire.with(3, t as u8);
+    wire = wire.with(4, 0 as u8);
+    wire = wire.with(5, 0 as u8);
+    var idb: i32 = 0;
+    while (idb < 4) {
+        wire = wire.with(6 + idb, ((n / pow256(idb)) % (256 as i64)) as u8);
+        idb = idb + 1;
+    }
+    wire = wire.with(10, (wire_plen % 256) as u8);
+    wire = wire.with(11, (wire_plen / 256) as u8);
+    wire = wire.with(12, (ck % 256) as u8);
+    wire = wire.with(13, (ck / 256) as u8);
+    wire = wire.with(14, 0 as u8);
+    return wire.with(15, 0 as u8);
+}
+
+fip function wire_len_for(n: i64): i32 {
+    var plen: i32 = gen_payload_len(n);
+    if (corruption(n) == 4) { return header_len() + plen - 1; }
+    return header_len() + plen;
+}
+
+// A running digest over every response byte. Four implementations of one codec
+// agree only if this agrees, which is what makes the comparison a differential
+// test rather than three unrelated benchmarks.
+fip function mix(d: i64, b: i32): i64 {
+    var x: i64 = d ^ (b as i64);
+    x = x * (1099511628211 as i64);
+    x = x ^ (x >> (29 as i64));
+    if (x < (0 as i64)) { x = 0 - x; }
+    return x % (1000000007 as i64);
+}
+
+function zeros_u8(n: i32): u8[] {
+    var xs: u8[] = __alloc_u8(n);
+    var i: i32 = 0;
+    while (i < n) { xs = xs.with(i, 0 as u8); i = i + 1; }
+    return xs;
+}
+
+// ===================== DRIVER =====================
+//
+// The driver is NOT `fip`: it owns the buffers, tallies, and prints. That is
+// the intended split — a strict data plane with an ordinary shell around it —
+// and it is what lets the plane return one owned buffer and nothing else. The
+// status and the response length come back in the response header, where a
+// caller would read them anyway.
+
+function main(): i32 {
+    var argv: string[] = args();
+    var inplace: boolean = true;
+    var name: string = "fip";
+    if (argv.len() > 1 && argv[1] == "separate") { inplace = false; name = "fip-separate"; }
+
+    var batch: i32 = 64;
+    // 4000 rounds is 256,000 requests, which holds the per-request medians steady
+    // while keeping this program the same weight as experiment 1's — it is run
+    // under both backends, under qemu, by the SSA differential sweep over
+    // examples/, and five times that was 5x the cost for no more signal.
+    var rounds: i32 = 4000;
+    var wire: u8[] = zeros_u8(max_packet());
+    var out: u8[] = zeros_u8(max_packet());
+
+    var ok: i64 = 0 as i64; var bad_magic: i64 = 0 as i64; var bad_version: i64 = 0 as i64;
+    var bad_type: i64 = 0 as i64; var oversize: i64 = 0 as i64; var truncated: i64 = 0 as i64;
+    var bad_checksum: i64 = 0 as i64;
+    var digest: i64 = 1469598103934665603 as i64;
+    var copied: i64 = 0 as i64;
+
+    var r: i32 = 0 - 1;
+    var samples: i64[] = [];
+    var p: i32 = 0;
+    while (p < rounds) { samples = samples.append(0 as i64); p = p + 1; }
+
+    // One warm round before the mark.
+    var w: i32 = 0;
+    while (w < batch) {
+        wire = build_request(wire, w as i64);
+        if (inplace) { wire = serve_inplace(wire, wire_len_for(w as i64)); }
+        else { out = serve_separate(out, wire, wire_len_for(w as i64)); }
+        w = w + 1;
+    }
+
+    var at_allocs: i64 = bench.alloc_count();
+    var at_fresh: i64 = bench.bump_bytes();
+    var started_ns: i64 = monotonic_ns();
+    r = 0;
+    while (r < rounds) {
+        var t0: i64 = monotonic_ns();
+        var k: i32 = 0;
+        while (k < batch) {
+            var n: i64 = (r as i64) * (batch as i64) + (k as i64);
+            wire = build_request(wire, n);
+            var wl: i32 = wire_len_for(n);
+            if (inplace) {
+                wire = serve_inplace(wire, wl);
+                var st1: i32 = wire[4] as i32;
+                var pl1: i32 = read_u16(wire, 10);
+                var mt1: i32 = wire[3] as i32;
+                var i1: i32 = 0;
+                while (i1 < header_len() + pl1) { digest = mix(digest, wire[i1] as i32); i1 = i1 + 1; }
+                copied = copied + moved(mt1, st1, pl1, true);
+                if (st1 == st_ok()) { ok = ok + (1 as i64); }
+                if (st1 == st_bad_magic()) { bad_magic = bad_magic + (1 as i64); }
+                if (st1 == st_bad_version()) { bad_version = bad_version + (1 as i64); }
+                if (st1 == st_bad_type()) { bad_type = bad_type + (1 as i64); }
+                if (st1 == st_oversize()) { oversize = oversize + (1 as i64); }
+                if (st1 == st_truncated()) { truncated = truncated + (1 as i64); }
+                if (st1 == st_bad_checksum()) { bad_checksum = bad_checksum + (1 as i64); }
+            } else {
+                out = serve_separate(out, wire, wl);
+                var st2: i32 = out[4] as i32;
+                var pl2: i32 = read_u16(out, 10);
+                var mt2: i32 = out[3] as i32;
+                var i2: i32 = 0;
+                while (i2 < header_len() + pl2) { digest = mix(digest, out[i2] as i32); i2 = i2 + 1; }
+                copied = copied + moved(mt2, st2, pl2, false);
+                if (st2 == st_ok()) { ok = ok + (1 as i64); }
+                if (st2 == st_bad_magic()) { bad_magic = bad_magic + (1 as i64); }
+                if (st2 == st_bad_version()) { bad_version = bad_version + (1 as i64); }
+                if (st2 == st_bad_type()) { bad_type = bad_type + (1 as i64); }
+                if (st2 == st_oversize()) { oversize = oversize + (1 as i64); }
+                if (st2 == st_truncated()) { truncated = truncated + (1 as i64); }
+                if (st2 == st_bad_checksum()) { bad_checksum = bad_checksum + (1 as i64); }
+            }
+            k = k + 1;
+        }
+        samples = samples.with(r, monotonic_ns() - t0);
+        r = r + 1;
+    }
+    var elapsed_ns: i64 = monotonic_ns() - started_ns;
+    var allocs: i64 = bench.allocs_after(at_allocs);
+    var fresh: i64 = bench.fresh_bytes_after(at_fresh);
+    var requests: i64 = (rounds as i64) * (batch as i64);
+    var rep: bench.Report = bench.Report {
+        name: name,
+        iterations: rounds,
+        wall_ns: elapsed_ns,
+        samples_ns: cmp.sort(samples),
+        allocs: allocs,
+        fresh_bytes: fresh,
+    };
+    print("{\"variant\":\"" + name + "\""
+        + ",\"requests\":" + requests.to_string()
+        + ",\"requests_per_round\":" + batch.to_string()
+        + ",\"ok\":" + ok.to_string()
+        + ",\"bad_magic\":" + bad_magic.to_string()
+        + ",\"bad_version\":" + bad_version.to_string()
+        + ",\"bad_type\":" + bad_type.to_string()
+        + ",\"oversize\":" + oversize.to_string()
+        + ",\"truncated\":" + truncated.to_string()
+        + ",\"bad_checksum\":" + bad_checksum.to_string()
+        + ",\"digest\":" + digest.to_string()
+        + ",\"bytes_copied\":" + copied.to_string()
+        + ",\"bytes_copied_per_request\":" + (copied / requests).to_string()
+        + ",\"steady_allocs\":" + allocs.to_string()
+        + ",\"steady_fresh_bytes\":" + fresh.to_string()
+        + ",\"allocs_per_request_milli\":" + (allocs * (1000 as i64) / requests).to_string()
+        + ",\"ns_per_request\":" + (elapsed_ns / requests).to_string()
+        + ",\"requests_per_sec\":" + (requests * 1000000000i64 / elapsed_ns).to_string()
+        + ",\"round_p50_ns\":" + rep.p50_ns().to_string()
+        + ",\"round_p95_ns\":" + rep.p95_ns().to_string()
+        + ",\"round_p99_ns\":" + rep.p99_ns().to_string()
+        + ",\"round_p999_ns\":" + rep.p999_ns().to_string()
+        + ",\"round_max_ns\":" + rep.max_ns().to_string()
+        + "}");
+    return 0;
+}

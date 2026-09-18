@@ -29,3 +29,7 @@ examples/tests/rel_tol_and_ms_bench_test.fern  prints measured elapsed times
 examples/fip/event_loop_baseline.fern  prints measured elapsed times: ns/event, events/s and five round-latency percentiles
 examples/fip/event_loop_fbip.fern  prints measured elapsed times: ns/event, events/s and five round-latency percentiles
 examples/fip/event_loop_fip.fern  prints measured elapsed times: ns/event, events/s and five round-latency percentiles
+examples/fip/packet_baseline.fern  prints measured elapsed times: ns/request, requests/s and five round-latency percentiles
+examples/fip/packet_borrowed.fern  prints measured elapsed times: ns/request, requests/s and five round-latency percentiles
+examples/fip/packet_fbip.fern  prints measured elapsed times: ns/request, requests/s and five round-latency percentiles
+examples/fip/packet_fip.fern  prints measured elapsed times: ns/request, requests/s and five round-latency percentiles
