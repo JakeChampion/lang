@@ -878,6 +878,43 @@ pub function module_name(import_path: string): string {
   return import_path;
 }
 
+// mangle_prefix maps a module's bundle name to something an assembler will
+// accept in a symbol. A file name is not required to be an identifier —
+// `coreutils/[.fern` is the bracket form of test(1) and is named for the
+// program it is — but the name becomes the prefix on that module's emitted
+// decls (`__fn_[__help_text`), and gas answers "junk at end of line" (#9684).
+//
+// Separate from `module_name` because that answer is also what resolves the
+// file on disk and what attributes a capability grant to a package, and both
+// of those want the name as written.
+//
+// Identity for every name that is already an identifier, which is every
+// stdlib module and all but one file in the tree, so no existing program's
+// symbols move.
+pub function mangle_prefix(name: string): string {
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < name.len()) {
+    var c: i32 = name[i] as i32;
+    var ok: boolean = (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || c == 95;
+    if (ok) {
+      out = out + slice_unchecked(name, i, i + 1);
+    } else {
+      if (c >= 48 && c <= 57) {
+        // A leading digit is legal in a file name and not in a symbol, so
+        // it takes an underscore in front of it.
+        if (i == 0) { out = out + "_"; }
+        out = out + slice_unchecked(name, i, i + 1);
+      } else {
+        out = out + "_";
+      }
+    }
+    i = i + 1;
+  }
+  if (out.len() == 0) { return "_"; }
+  return out;
+}
+
 // is_local is true for `./…` / `../…` imports (loaded from the entry's
 // directory), false for `core/…` / `std/…` (resolved under the stdlib
 // root, when one is configured).
