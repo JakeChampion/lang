@@ -89,6 +89,9 @@ RUN set -eux; \
 #
 # It costs a second full coreutils build in the image. That is the price of
 # the split; the alternative is a benchmark quoting a version from 2023.
+# Tracks the same upstream release as bench_gnu_floor in
+# scripts/coreutils-bench, which warns when the tree it found is older: bump
+# the two together or that warning stops naming the newest.
 ARG BENCH_GNU_COREUTILS_VERSION=9.12
 RUN set -eux; \
     ver="$BENCH_GNU_COREUTILS_VERSION"; \

@@ -132,7 +132,8 @@ jobs:
           make install
           # `arch` is in coreutils' no_install__progs list, which makes it an
           # automake EXTRA_PROGRAM: `make` does not build it and `make
-          # install` does not place it, and no configure flag changes either.
+          # install` does not place it unless the build names it in
+          # --enable-install-program, which this lane does not pass.
           # Debian ships its own copy, which is the only reason the Linux
           # corpora find an oracle in /usr/bin; here /usr/bin/arch is Apple's
           # arch(1), a different program that runs a command under a named
