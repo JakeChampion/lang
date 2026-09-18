@@ -38,7 +38,9 @@ func splitSeed(t *testing.T, dir string) {
 	write("f'n", "x\ny\n")
 	// A name that is not valid UTF-8: it reaches the diagnostics as
 	// bytes, so nothing may re-encode it.
-	write("na\xffme", "x\ny\n")
+	// Only where the filesystem holds it: this seed serves every split case
+	// and one names this file, so a t.Fatal here takes the other forty with it.
+	seedRawByteName(t, dir, "x\ny\n")
 	if err := os.Mkdir(filepath.Join(dir, "d"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +213,7 @@ func splitCases(*testing.T) []invocation {
 		splitCase("double dash alone", "-l", "3", "--"),
 		splitCase("operand with a space", "-l", "1", "f name"),
 		splitCase("operand with a quote", "-l", "1", "f'n"),
-		splitCase("operand that is not utf-8", "-l", "1", "na\xffme"),
+		rawByteCase(splitCase("operand that is not utf-8", "-l", "1", rawByteNameFixture)),
 		splitCase("operand empty", "-l", "1", ""),
 		splitCase("operand missing", "-l", "2", "nosuch"),
 		splitCase("operand is a directory", "-l", "2", "d"),
