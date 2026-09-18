@@ -39,9 +39,17 @@ refusing the builtin union fixed it, and **that reading is wrong** — put back
 (`layout_option` answering 2 again, everything else here in place) the fixpoint
 still holds, at 89,835,284 bytes. So the builtin-union donor is not the cause,
 `-backend ssa` is opt-in and off the default route, and the cause is still
-open. Recorded here rather than left as a green run, because a one-byte
-self-compile divergence that stops reproducing is exactly the shape
-`docs/TEST-GATES.md` warns about.
+open; #9737 tracks it, with the ruled-out list. Recorded rather than left as a
+green run, because a one-byte self-compile divergence that stops reproducing is
+exactly the shape `docs/TEST-GATES.md` warns about.
+
+Ruled out since: a per-process nondeterminism in either compiler — the obvious
+suspect being `__map_hash_seed()`, a random draw per process — is not it, six
+emits across the driver and gen1 answering one md5. What is NOT ruled out is
+the harness: `e2eharness.BuildSelfHostBin` serves the driver from a
+source-hash-keyed binary cache that a warm job can pre-link into a shared disk
+cache, so the gate compares a CACHED driver against a gen1 built from it, which
+no manual run reproduces.
 
 ## The `tuple_set` decline
 
