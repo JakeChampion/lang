@@ -1643,7 +1643,7 @@ function run_operands(operands: string[], o: Opts, out0: Out): Out {
   return out;
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var parsed: (Opts, string[]) = options(args());
   var o: Opts = parsed.0;
   var operands: string[] = parsed.1;

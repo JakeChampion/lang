@@ -677,7 +677,7 @@ function take_file(f: Files, tok: string): Files {
   return Files { n: 2, in_name: f.in_name, out_name: tok };
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var argv: string[] = args();
   var opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("c", "count", opt_count()));

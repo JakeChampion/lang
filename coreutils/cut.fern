@@ -345,7 +345,7 @@ function complement_of(r: Ranges): Ranges {
 // ---- settings --------------------------------------------------------------
 struct Settings { r: Ranges, fields: boolean, delim: i32, term: i32, suppress: boolean, out_delim: string, out_delim_set: boolean }
 
-function main(): i32 {
+pub function main(): i32 {
   var argv: string[] = args();
   var opts: gnu.Opt[] = [];
   opts = opts.append(gnu.valued("b", "bytes", opt_bytes()));

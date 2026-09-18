@@ -938,7 +938,7 @@ function extend_byte(s2: Item[]): i32 {
   return fb;
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var argv: string[] = args();
   var opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("c", "complement", opt_complement()));

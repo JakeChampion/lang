@@ -150,7 +150,7 @@ function resolve_dir(dir: string, mode: i32, links: i32): string {
   return "";
 }
 
-function main(): i32 {
+pub function main(): i32 {
   // Declaration order, which the ambiguity list prints and which is
   // NOT the order `--help` lists them in: `--logical` and `--physical`
   // come last of the utility's own options, after `--zero`.

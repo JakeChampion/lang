@@ -28,7 +28,7 @@ function help_text(): string {
   return out;
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var argv: string[] = args();
   // The missing operand is judged on argv, not on what the option scan
   // left: `sleep --` has nothing to sleep for and still exits 0.

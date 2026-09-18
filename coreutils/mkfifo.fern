@@ -152,7 +152,7 @@ function make(name: string, perm: i32, mode_given: boolean): boolean {
   }
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var scanned: (Scan, string[]) = scan_options();
   var s: Scan = scanned.0;
   var operands: string[] = scanned.1;

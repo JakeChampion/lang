@@ -549,7 +549,7 @@ function command_argv(rest: string[]): string[] {
   return argv;
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var opts: gnu.Opt[] = [];
   opts = opts.append(gnu.valued("", "groups", opt_groups()));
   opts = opts.append(gnu.valued("", "userspec", opt_userspec()));

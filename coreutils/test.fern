@@ -6,6 +6,6 @@
 // prints help. The evaluator is `lib/cond.fern`, shared by both.
 import "./lib/cond";
 
-function main(): i32 {
+pub function main(): i32 {
   return cond.run(false, "test", "");
 }

@@ -582,7 +582,7 @@ function reference_size(name: string): i64 {
   return 0 as i64;
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var scanned: (Scan, string[]) = scan_options();
   var s: Scan = scanned.0;
 

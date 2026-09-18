@@ -72,7 +72,7 @@ function names_of(o: io_buffered.BufWriter, gids: i64[]): Line {
   return Line { out: w, text: text, ok: ok };
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var operands: string[] = gnu.parse_standard_options_only(args(), "groups", help_text(), 1);
   var o: io_buffered.BufWriter = gnu.out_new();
   var ok: boolean = true;
