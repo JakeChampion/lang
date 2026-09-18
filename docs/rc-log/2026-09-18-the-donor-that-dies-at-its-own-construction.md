@@ -169,6 +169,16 @@ rather than a list of ops, and the x86-64 gate and wasm's `module_allocates`
 share it — wasm already had a call clause with four names in it, which is the
 drift this removes. arm64 marks the need at its emit sites and needed nothing.
 
+The list is the block's exports, and getting it exhaustive took a second pass:
+the #4873 grow-bracket aliases `__fern_arr_share_inc` / `_dec` reach the block
+under their OWN names, because `ircore.helper_symbol` resolves them to
+`__fn___fern_rc_inc` / `__fn___fern_arr_dec` at label time and the op this gate
+reads still spells the alias; `__fern_arr_inc_elems` declares a runtime need of
+its own while its body calls `__fn___fern_rc_inc`. A review bot caught the
+comment claiming more than the code did, which is the right thing to be caught
+on: a gate that says "the block's exports" and lists some of them is the
+stale-enumeration bug again, one iteration in.
+
 **No test can fail on that half**, because excluding the degenerate donor
 removes the only route to it: a module has to construct its first aggregate
 somewhere, and a constant one is already admitted as `const_struct`. It is kept

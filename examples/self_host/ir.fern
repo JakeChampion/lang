@@ -4607,6 +4607,13 @@ pub function render_op(o: Op): string {
 pub function call_needs_heap(name: string): boolean {
     if (name == "__fern_alloc_reuse" || name == "__fern_arr_dec") { return true; }
     if (name == "__fern_rc_inc" || name == "__fern_rc_dec" || name == "__fern_rc_is_unique") { return true; }
+    // The #4873 grow-bracket aliases reach the block under their own names —
+    // `ircore.helper_symbol` resolves them to __fn___fern_rc_inc /
+    // __fn___fern_arr_dec at LABEL time, so the op this gate reads still spells
+    // the alias. `arr_inc_elems` declares a runtime need of its own and its
+    // body calls __fn___fern_rc_inc, so it claims this block too.
+    if (name == "__fern_arr_share_inc" || name == "__fern_arr_share_dec") { return true; }
+    if (name == "__fern_arr_inc_elems") { return true; }
     if (name == "__fern_rc_underflow_count" || name == "__fern_rc_underflow_get") { return true; }
     if (name == "__fern_snapshot_dec" || name == "__fern_struct_copy") { return true; }
     if (name == "__fern_str_free" || name == "__fern_str_view_free" || name == "__fern_str_arr_free") { return true; }
