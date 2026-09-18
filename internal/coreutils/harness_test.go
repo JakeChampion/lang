@@ -535,7 +535,8 @@ func diffArtifacts(t *testing.T, util string, inv invocation, want, got []artifa
 			continue
 		}
 		if w.present && !bytes.Equal(w.data, g.data) {
-			t.Errorf("%s %s: %s differs\n%8s: %s\n%8s: %s", util, quoteArgs(inv.args), w.name, wantWho, quote(w.data), gotWho, quote(g.data))
+			t.Errorf("%s %s: %s differs%s", util, quoteArgs(inv.args), w.name,
+				diffBody(wantWho, gotWho, w.data, g.data))
 		}
 	}
 }
@@ -1881,10 +1882,8 @@ func diffBody(leftName, rightName string, left, right []byte) string {
 	if len(rightName) > width {
 		width = len(rightName)
 	}
-	// The window is chosen BEFORE either side is quoted. Quoting first and
-	// discarding the result would allocate the very thing this avoids:
-	// `printf "%.99999999999d" 1` answers 1.2 GB of zeros on Darwin, and
-	// quote() of that is a multi-gigabyte string in the test process.
+	// The window is chosen before either side is quoted, so a stream that is
+	// windowed away is never rendered at all.
 	var head, l, r string
 	if len(left) > diffFull || len(right) > diffFull {
 		at := firstDiff(left, right)
