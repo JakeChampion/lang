@@ -1116,7 +1116,8 @@ function value_op(k: i32): boolean {
 function container_op(k: i32): boolean {
     return kind_in([ssasem.array_new(), ssasem.tuple_new(), ssasem.record_new(),
         ssasem.array_get(), ssasem.tuple_get(), ssasem.record_get(),
-        ssasem.length(), ssasem.append(), ssasem.with(), ssasem.slice(), ssasem.str_index()], k)
+        ssasem.length(), ssasem.append(), ssasem.with(), ssasem.slice(), ssasem.str_index(),
+        ssasem.str_bytes()], k)
         || variant_op(k) || ssasem.is_cell_op(k) || ssasem.is_map_op(k);
 }
 
@@ -1410,6 +1411,7 @@ function container(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, s
         return emit(r, ir.op_arr_len());
     }
     if (ins.kind_tag == ssasem.slice()) { return emit(r, ir.op_str_slice()); }
+    if (ins.kind_tag == ssasem.str_bytes()) { return emit(r, ir.op_str_bytes()); }
     if (ins.kind_tag == ssasem.str_index()) { return emit(r, ir.op_str_index()); }
     if (ssasem.is_map_op(ins.kind_tag)) { return map_op(r, ins, f); }
     if (ins.kind_tag == ssasem.array_get()) { return emit(r, arr_get_op(f.values[ins.result])); }

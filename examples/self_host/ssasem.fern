@@ -91,6 +91,11 @@ pub function map_cleared(): i32 { return 0 - 34; }
 // and the frame's release of it is the null guard every drop helper already
 // carries — so the lift costs a slot rather than a box.
 pub function zero(): i32 { return 0 - 35; }
+// `s.bytes()` / `s.as_bytes()`: one text operand's bytes as a FRESH `u8[]`, a
+// slot per byte. Not a window — the slot-array model has no zero-copy view, so
+// the AST lowering allocates here too (ir.op_str_bytes) and the result is a
+// unit of this frame like any other fresh container.
+pub function str_bytes(): i32 { return 0 - 36; }
 
 function failed(why: string): Analysis {
     return Analysis { ok: false, why: why, dependencies: [], flow: ssalive.Flow { ok: false, why: why, live_in: [], live_out: [] } };
@@ -702,7 +707,7 @@ function str_index_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string
 // bytes, and the cell and map vocabularies.
 function is_builtin_op(kind: i32): boolean {
     return kind == length() || kind == append() || kind == with() || kind == slice() || kind == str_index()
-        || is_cell_op(kind) || is_map_op(kind);
+        || kind == str_bytes() || is_cell_op(kind) || is_map_op(kind);
 }
 
 pub function is_cell_op(kind: i32): boolean { return kind == cell_new() || kind == cell_get() || kind == cell_set(); }
@@ -712,10 +717,22 @@ pub function is_map_op(kind: i32): boolean {
         || kind == map_keys() || kind == map_values() || kind == map_delete() || kind == map_cleared();
 }
 
+// A view reaches the bytes the same way a string does, so either box is a legal
+// receiver; the result is the fresh byte array, never a window onto the source.
+function str_bytes_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 1) { return "str bytes arity"; }
+    if (!is_text(f.values[ins.args[0]])) { return "str bytes receiver"; }
+    if let typeinfo.TypeArray(a) = result {
+        if (is_u8(a.elem)) { return ""; }
+    }
+    return "str bytes result";
+}
+
 function builtin_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.kind_tag == length()) { return length_error(ins, f, result); }
     if (ins.kind_tag == slice()) { return slice_error(ins, f, result); }
     if (ins.kind_tag == str_index()) { return str_index_error(ins, f, result); }
+    if (ins.kind_tag == str_bytes()) { return str_bytes_error(ins, f, result); }
     if (ins.kind_tag == with()) { return with_error(ins, f, result); }
     if (is_cell_op(ins.kind_tag)) { return cell_error(ins, f, result); }
     if (is_map_op(ins.kind_tag)) { return map_error(ins, f, result); }

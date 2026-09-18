@@ -298,7 +298,8 @@ function hands_out(kind: i32): boolean {
     return kind == ssasem.call() || kind == ssasem.call_value() || kind == ssasem.closure_new()
         || kind == ssasem.append() || kind == ssasem.with() || kind == ssasem.slice() || kind == ssasem.cell_get()
         || kind == ssasem.map_insert() || kind == ssasem.map_get_or() || kind == ssasem.map_get()
-        || kind == ssasem.map_keys() || kind == ssasem.map_values() || kind == ssasem.map_delete();
+        || kind == ssasem.map_keys() || kind == ssasem.map_values() || kind == ssasem.map_delete()
+        || kind == ssasem.str_bytes();
 }
 function owned_values(f: ssasem.Func, modes: i32[]): boolean[] {
     var out: boolean[] = bits(f.graph.nvals);

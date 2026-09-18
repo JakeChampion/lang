@@ -1129,4 +1129,30 @@ function main(): i32 {
     return t % 7;
 }
 `},
+	// `s.as_bytes()`: the bytes as a fresh u8[], one slot per byte. Not a
+	// window onto the string — the slot-array model has no zero-copy view — so
+	// the array is an ordinary unit of the frame and the loop would leak one
+	// per call if it were not. (`s.bytes()` is intercepted by the same shape
+	// rule, but it is a std/string declaration rather than a builtin, so a
+	// case for it would pull that whole module's refusals in with it.)
+	{name: "the-bytes-of-a-string", atLeast: 3, noLeak: true, src: `
+function total(s: string): i32 {
+    var bs = s.as_bytes();
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < bs.len()) { t = t + (bs[i] as i32); i = i + 1; }
+    return t;
+}
+function first(s: string): i32 {
+    var bs = s.as_bytes();
+    if (bs.len() == 0) { return 0; }
+    return bs[0] as i32;
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) { t = t + total("abc") % 5 + first("z") % 3; i = i + 1; }
+    return t % 7;
+}
+`},
 }
