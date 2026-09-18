@@ -35,6 +35,11 @@ on:
 jobs:
   test-arm64-darwin:
     runs-on: macos-15
+    # A hung step here holds the repository's single CI lock, because ci.yml
+    # queues one PR at a time: without this the job runs to GitHub's 360-minute
+    # default and every open PR waits behind it. Round five wedged inside the
+    # corpus at 03:19 and was still "in progress" ninety minutes later.
+    timeout-minutes: 110
     # Pinned to the SAME version test-units.yml pins, and that lane says why:
     # 9.4 is what the ubuntu-24.04 image's own coreutils is, "so every utility
     # here answers to one version". A second lane holding a second opinion
@@ -79,13 +84,14 @@ jobs:
         run: |
           gotestsum --format standard-verbose -- -run '^(TestSetFileTimesDarwin.*|TestInterpFsMetaPrimitives)$' ./internal/interp/ ./internal/e2e/
 
-      # THE DARWIN BRANCHES HAD NO ORACLE UNTIL THIS STEP (#9645). Thirteen
-      # `target_os() == "darwin"` branches across five files decide what the
-      # utilities print on this platform — seven of them in
-      # `coreutils/lib/signals.fern`, whose name, alternate and description
-      # tables were written by reading Apple's published Libc rather than by
-      # comparing against anything. Nothing ran the corpus here, so nothing
-      # checked a single one of them.
+      # THE COREUTILS CORPUS HAD NO DARWIN ORACLE UNTIL THIS STEP (#9645).
+      # Every utility in `coreutils/` is held to byte-for-byte GNU parity, and
+      # that was checked on Linux only — both the thirteen explicit
+      # `target_os() == "darwin"` branches (seven in `coreutils/lib/signals.fern`,
+      # whose tables were written by reading Apple's published Libc rather
+      # than by comparing against anything) and, more of the risk, the
+      # hundred utilities with no Darwin branch at all, which reach a
+      # different kernel through the same code.
       #
       # macOS has BSD userland, so unlike the Linux lane — which takes seventy
       # utilities from /usr/bin and builds only the two Debian omits — there is
@@ -96,7 +102,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/gnu-coreutils
-          key: gnu-coreutils-full-${{ env.GNU_COREUTILS_VERSION }}-macos-15
+          key: gnu-coreutils-full-arch-${{ env.GNU_COREUTILS_VERSION }}-macos-15
       - name: Build the GNU coreutils oracle
         if: steps.gnu-oracle.outputs.cache-hit != 'true'
         run: |
@@ -124,41 +130,216 @@ jobs:
             --without-selinux --prefix="$HOME/gnu-coreutils"
           make -j"$(sysctl -n hw.ncpu)"
           make install
+          # `arch` is in coreutils' no_install__progs list, which makes it an
+          # automake EXTRA_PROGRAM: `make` does not build it and `make
+          # install` does not place it, and no configure flag changes either.
+          # Debian ships its own copy, which is the only reason the Linux
+          # corpora find an oracle in /usr/bin; here /usr/bin/arch is Apple's
+          # arch(1), a different program that runs a command under a named
+          # architecture, and the harness's version probe rejects it. So name
+          # the target and copy the result.
+          #
+          # Naming a target is what the Linux lane's comment warns against —
+          # it skips the gnulib header generation and dies on a missing
+          # stdckdint.h — but that is a warning about building a target in a
+          # tree where `make` has not run. Here it has, two lines up.
+          make src/arch
+          cp src/arch "$HOME/gnu-coreutils/bin/arch"
           cd /
           rm -rf "$work"
       # A SKIP IS A MISSING DEPENDENCY, NOT A PASS. A cache that restored an
-      # empty or half-written directory would otherwise leave the corpus with
-      # no reference, and `internal/coreutils` reports that as `ok` having
-      # compared nothing. Every utility the step below exercises is checked
-      # here, so the failure names this step rather than one corpus.
+      # empty or half-written directory would otherwise leave a corpus with no
+      # reference. The corpus itself fails rather than skips in that case, but
+      # it fails naming the utility, so the same missing oracle reports as a
+      # hundred unrelated bugs; checked here, one message names the cause.
+      #
+      # The list is DERIVED from coreutils/*.fern rather than written out: the
+      # step below now runs the whole catalogue, so a utility added to the
+      # tree is one this check must cover, and an enumerated list is a list
+      # that goes stale silently.
       - name: Assert the oracle is GNU coreutils, and point the corpus at it
         run: |
           set -euo pipefail
-          for util in kill env timeout uname yes; do
-            bin="$HOME/gnu-coreutils/bin/$util"
-            if ! "$bin" --version | head -1 | grep -q '(GNU coreutils)'; then
-              echo "::error::$bin is not GNU coreutils; the corpus would have no oracle for $util(1)"
-              exit 1
+          bindir="$HOME/gnu-coreutils/bin"
+          missing=""
+          checked=0
+          for f in coreutils/*.fern; do
+            util="$(basename "$f" .fern)"
+            probe="$bindir/$util"
+            # test(1) answers no --version: POSIX reserves every argument for
+            # the expression, so only `[` — built from the same source, one
+            # name over — can vouch for it.
+            if [ "$util" = "test" ]; then probe="$bindir/["; fi
+            if [ ! -x "$probe" ]; then
+              missing="$missing $util"
+              continue
             fi
+            # `dd` is the one utility whose version line omits the word GNU:
+            # it says `dd (coreutils) 9.4`. Both spellings are the package's.
+            # Read into a variable rather than piping into grep: `head -1`
+            # closes the pipe on a program that has more to write, and under
+            # `set -o pipefail` that SIGPIPE is the pipeline's status, so a
+            # present oracle would report as a missing one.
+            line="$("$probe" --version 2>/dev/null | head -1 || true)"
+            case "$line" in
+              *"(GNU coreutils)"* | *"(coreutils)"*) checked=$((checked + 1)) ;;
+              *) missing="$missing $util" ;;
+            esac
           done
-          "$HOME/gnu-coreutils/bin/kill" --version | head -1
-          echo "FERN_GNU_COREUTILS=$HOME/gnu-coreutils/bin" >> "$GITHUB_ENV"
-      # The five utilities that HAVE Darwin branches, not the whole catalogue:
-      # `kill`, `env` and `timeout` for signals.fern's seven, plus `uname` and
-      # `yes`. Starting narrow so the first round is a readable list of real
-      # platform differences rather than a hundred corpora failing at once;
-      # widening to the rest is the follow-up, not this step's job.
+          if [ -n "$missing" ]; then
+            echo "::error::no GNU coreutils oracle in $bindir for:$missing"
+            exit 1
+          fi
+          echo "$checked utilities have a GNU oracle"
+          "$bindir/yes" --version | head -1
+          echo "FERN_GNU_COREUTILS=$bindir" >> "$GITHUB_ENV"
+      # The WHOLE catalogue. The lane landed covering the five utilities with
+      # `target_os() == "darwin"` branches — kill, env, timeout, uname, yes —
+      # deliberately, so the first round read as a list of real platform
+      # differences rather than a hundred corpora failing at once. This is the
+      # widening, and what it gates is the larger half of the problem: the
+      # other hundred utilities have NO Darwin branches at all, so what they
+      # surface is not conditional code we wrote but the same code meeting a
+      # different kernel and a different libc.
       #
-      # All ten function names in full rather than five prefixes, because the
-      # corpus does not name its tests uniformly: `uname` and `yes` carry a
-      # `Parity` suffix where the other three do not. A `^(…|TestUname)` would
-      # match `TestUnameParity` today and select NOTHING the day it is
-      # renamed, silently and with exit 0 — which is the whole failure
-      # `tools/testname_gate.sh` exists to refuse, and it refused this.
+      # Selected by SKIPPING, not by naming. `touch_test.go` and
+      # `ls_linux_fixture_test.go` are `//go:build linux`, so `TestTouch` does
+      # not EXIST on this runner: a `-run` list carrying its name would select
+      # nothing for it, silently and with exit 0, and
+      # `tools/testname_gate.sh` cannot refuse that because the gate runs on
+      # Linux, where the name is real.
+      #
+      # `^TestSelfHost` — three functions — is what the skip drops. Those
+      # build the self-host compiler and compile the catalogue a second time
+      # through it, which is the bulk of this package's ten minutes, and the
+      # Linux units lane runs them. The arm64-darwin self-host path is gated
+      # two steps down instead.
+      #
+      # -timeout is set EXPLICITLY because go test's default is ten minutes:
+      # a binary the default kills reports whichever cases were in flight as
+      # failures with no output, so the lane names tests that did not fail and
+      # never names the wall it hit.
+      #
+      # 45 minutes because this runner's speed varies about twofold. The whole
+      # catalogue took 784s on one round and was still going at 1500s on the
+      # next — the second hit the 25 minutes it used to get, and reported 1425
+      # failures over 14881 tests where the completed round reported 1987 over
+      # 19678. A cut-short round understates both numbers and says nothing
+      # about which of the two it is, so the budget has to cover the slow end.
+      #
+      # Output goes to a FILE rather than to this step's stdout, because
+      # writing it to the pipe wedged the lane: a parity failure quotes BOTH
+      # streams in full, so one line here can be 8 KB, and once the pipe
+      # stopped draining the test binary blocked on write — as did the
+      # watchdog trying to report it. No progress and no diagnosis, for 85
+      # minutes. A file blocks neither.
+      #
+      # The step's own limit exists for the same reason `-timeout` was not
+      # enough: that watchdog lives inside the test binary and cannot report
+      # when its own output is blocked, whereas a step limit is enforced by
+      # the runner, which kills the process group.
+      #
+      # The cost is that the log arrives at the end of the step rather than
+      # live. The artifact is uploaded first so that the 50-minute limit
+      # killing the step mid-write cannot lose it, and the summary prints
+      # after that.
       - name: go test (coreutils corpus on Darwin)
         if: steps.gate.outputs.signed != 'true'
+        timeout-minutes: 50
         run: |
-          gotestsum --format standard-verbose -- -run '^(TestKill|TestKillHelpVersion|TestEnv|TestEnvHelpVersion|TestTimeout|TestTimeoutHelpVersion|TestUnameParity|TestUnameHelpVersion|TestYesParity|TestYesHelpVersion)$' ./internal/coreutils/
+          set +e
+          gotestsum --format standard-verbose -- -timeout 45m -skip '^TestSelfHost' ./internal/coreutils/ > corpus-darwin.log 2>&1
+          echo "EXIT=$?"
+          # Deliberately not the step's exit status. The catalogue does not
+          # pass on Darwin yet, so a non-zero here is the expected state; what
+          # decides the lane is the ratchet below, which cares about WHICH
+          # utilities failed rather than that some did.
+
+      # The artifact FIRST, and the summary after it. The whole log is the
+      # thing worth keeping, so it must not be behind a step that prints.
+      - name: Keep the corpus log
+        if: always() && steps.gate.outputs.signed != 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: coreutils-corpus-darwin
+          path: corpus-darwin.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+      # NAMES ONLY, each cut to 200 columns, and capped. A parity failure
+      # quotes both streams in full, so one line of this log can be several
+      # kilobytes and forty of them can be a megabyte — which is how the
+      # corpus wedged in the first place. Printing that back into the step's
+      # stdout reproduces the stall it was moved off; the first version of
+      # this step did exactly that and hung for 23 minutes. Read the artifact
+      # for detail; this is only the shape of the round.
+      - name: which cases failed
+        if: always() && steps.gate.outputs.signed != 'true'
+        timeout-minutes: 3
+        run: |
+          if [ ! -f corpus-darwin.log ]; then
+            echo "no corpus-darwin.log: the step did not get as far as running it"
+            exit 0
+          fi
+          grep -oE '^DONE .{0,120}' corpus-darwin.log | tail -1 || true
+          # Per UTILITY, not per case. The first round of the whole catalogue
+          # reported 1987 failures, and sixty names off the top of that is not
+          # something anyone can plan against: it got as far as chown
+          # alphabetically. A count against each test function says which
+          # utilities diverge and how wide each one is, in about a hundred
+          # bounded lines, and that is the list the Darwin work is drawn from.
+          echo "### failing cases per utility:"
+          grep -oE '^--- FAIL: Test[A-Za-z0-9]+' corpus-darwin.log \
+            | sed 's/^--- FAIL: //' | sort | uniq -c | sort -rn || true
+
+      # The ratchet. The catalogue runs in full and the set of test functions
+      # that failed is compared against the checked-in list of utilities not
+      # yet working on Darwin. A name that fails and is not on the list fails
+      # the lane, so the Darwin result cannot drift while the divergences are
+      # worked through; a name on the list that now passes is reported for its
+      # line to be deleted.
+      #
+      # That second direction is a warning rather than an error, which is where
+      # this parts from the complexity ratchet in internal/lint: TestPtxParity
+      # failed on one round of the catalogue and passed on the next two, and an
+      # error there would make one flaky utility hold the lane red whichever
+      # way it landed. A name going quiet is good news either way, and the
+      # worst case is a stale line that someone deletes later.
+      - name: the Darwin ratchet
+        if: always() && steps.gate.outputs.signed != 'true'
+        timeout-minutes: 3
+        run: |
+          if [ ! -f corpus-darwin.log ]; then
+            echo "::error::no corpus-darwin.log: the corpus step did not run"
+            exit 1
+          fi
+          if ! grep -qE '^DONE ' corpus-darwin.log; then
+            echo "::error::the corpus produced no DONE line, so it did not finish — read the coreutils-corpus-darwin artifact"
+            tail -5 corpus-darwin.log || true
+            exit 1
+          fi
+          grep -oE '^--- FAIL: Test[A-Za-z0-9]+' corpus-darwin.log \
+            | sed 's/^--- FAIL: //' | sort -u > failed-now.txt
+          grep -vE '^[[:space:]]*(#|$)' .github/darwin-corpus-known-failures.txt \
+            | sort -u > failed-known.txt
+
+          echo "### $(wc -l < failed-now.txt) utilities failing, $(wc -l < failed-known.txt) on the list"
+
+          if comm -13 failed-now.txt failed-known.txt | grep -q .; then
+            echo "### these are on the list but PASSED — delete their lines:"
+            comm -13 failed-now.txt failed-known.txt | sed 's/^/  /'
+            comm -13 failed-now.txt failed-known.txt \
+              | while read -r u; do echo "::warning::$u passes on Darwin now; remove it from .github/darwin-corpus-known-failures.txt"; done
+          fi
+
+          if comm -23 failed-now.txt failed-known.txt | grep -q .; then
+            echo "### these FAILED and are not on the list:"
+            comm -23 failed-now.txt failed-known.txt | sed 's/^/  /'
+            comm -23 failed-now.txt failed-known.txt \
+              | while read -r u; do echo "::error::$u fails on Darwin and is not in .github/darwin-corpus-known-failures.txt — a regression, not a line to add"; done
+            exit 1
+          fi
+          echo "no Darwin regressions"
 
       - name: go test (arm64-darwin native execution)
         if: steps.gate.outputs.signed != 'true'

@@ -290,6 +290,22 @@ func TestArm64SSAChownAt(t *testing.T) {
 	chownAtCheckTree(t, dir, ids)
 }
 
+// The x86-64 SSA-direct backend builds the same call in its own hand-written
+// sequence, so it gets the probe too.
+func TestX86_64SSAChownAt(t *testing.T) {
+	qemu := x86QemuOrEmpty(t)
+	fern := buildFernCLI(t)
+	dir := t.TempDir()
+	ids := measureChownIds(t, dir)
+	chownAtSeed(t, dir)
+	bin := compileX86_64SSA(t, fern, chownAtSource(dir, ids), os.Environ())
+	code, stderr := runX86_64SSABin(t, qemu, bin, dir, os.Environ())
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0 — the code names the step (see chownAtSource)\n%s", code, stderr)
+	}
+	chownAtCheckTree(t, dir, ids)
+}
+
 func TestInterpChownAt(t *testing.T) {
 	dir := t.TempDir()
 	ids := measureChownIds(t, dir)
