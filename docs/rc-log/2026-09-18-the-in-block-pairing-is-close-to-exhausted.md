@@ -1,5 +1,12 @@
 # 2026-09-18 — the in-block pairing is close to exhausted
 
+**WRONG, and corrected by
+`2026-09-18-the-donor-that-dies-at-its-own-construction.md`.** Every probe
+below asks which constructions have a donor dying at an EARLIER position, and
+none asks about one dying at the construction's own. There are 795 of those,
+twice the pairing count this entry calls close to exhausted. The numbers stand;
+the conclusion does not.
+
 No code change. This entry exists because the leads it prices are three
 near-nulls and one expensive maybe, and the log's own rule is that a null
 result recorded is what stops the next person repeating it. The reuse work of
