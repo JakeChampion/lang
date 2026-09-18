@@ -401,6 +401,35 @@ func (o outcome) how() string {
 	return fmt.Sprintf("exit %d", o.exit)
 }
 
+// rootThroughChild spells the root by way of one of its child directories,
+// which is what the case using it is about: `--preserve-root` has to refuse
+// the root however it is written, and both binaries must refuse it alike.
+//
+// It is NOT `/tmp/..`, which is what this was. On Linux that is the root and
+// the failsafe fires. On macOS `/tmp` is a symlink to `private/tmp`, so it
+// spells `/private` — the failsafe correctly does not fire, and GNU and Fern
+// then both recursively chmod 0777 everything under `/private` that the user
+// owns. On a dev machine that is the temp trees and build caches that live
+// there; it took 37 seconds a run and left 300k files world-writable before
+// anyone noticed it was not testing a refusal at all.
+//
+// `/usr` is a real directory on both, so `/usr/..` is the root on both. The
+// resolution is checked rather than assumed, because getting this wrong is
+// not a failing test — it is a recursive chmod of whatever it did hit.
+func rootThroughChild(t *testing.T) string {
+	t.Helper()
+	const spelling = "/usr/.."
+	got, err := filepath.EvalSymlinks(spelling)
+	if err != nil {
+		t.Fatalf("resolving %s: %v", spelling, err)
+	}
+	if got != "/" {
+		t.Fatalf("%s resolves to %q, not the root: a --preserve-root case built on it "+
+			"would recursively chmod that directory instead of being refused", spelling, got)
+	}
+	return spelling
+}
+
 // artifact is one path's state after a run: its bytes, or the fact that
 // it is absent. `uniq f -` leaves no output file, and a Fern build that
 // created an empty one would be diverging.
