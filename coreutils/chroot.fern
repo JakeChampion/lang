@@ -59,6 +59,22 @@ function is_set(id: i64): boolean {
   return id >= 0i64;
 }
 
+// `seeded(named, outer)` — one half of a userspec, resolved the way gnulib
+// resolves it on the SECOND pass.
+//
+// parse_user_spec starts from what the caller already holds
+// (`unum = *uid; gnum = gid ? *gid : -1` in userspec.c), and chroot.c hands
+// both passes the same two variables, so a half the spec does not name keeps
+// the value the outer root gave it. `--userspec=alice` takes alice's uid from
+// the new root and her gid from the old one, which is only visible when the
+// two passwd files disagree.
+function seeded(named: i64, outer: i64): i64 {
+  if (is_set(named)) {
+    return named;
+  }
+  return outer;
+}
+
 function help_text(): string {
   var out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION] NEWROOT [COMMAND [ARG]...]\n";
@@ -509,7 +525,10 @@ function inner_pass(s: Scan, c: Creds): Creds {
     if (p.warn_dot) {
       gnu.error(owner.dot_warning_reason());
     }
-    ids = Ids { uid: p.spec.uid, gid: p.spec.gid, uname: ids.uname };
+    // The username is NOT carried over from the parse: the inner call passes
+    // nullptr for it, so it keeps the outer pass's answer until
+    // fill_from_passwd replaces it from the new root's passwd.
+    ids = Ids { uid: seeded(p.spec.uid, ids.uid), gid: seeded(p.spec.gid, ids.gid), uname: ids.uname };
   }
   ids = fill_from_passwd(db, ids, s.has_groups, true);
   return Creds { ids: ids, supp: lookup_groups(db, s.groups, s.has_groups, ids, c.supp, true) };

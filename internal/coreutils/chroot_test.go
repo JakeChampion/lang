@@ -1,6 +1,10 @@
 package coreutils
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func init() {
 	registerCorpus("chroot", chrootCases)
@@ -93,6 +97,25 @@ func chrootCases(t *testing.T) []invocation {
 		{name: "userspec naming a user that does not exist", args: []string{"--userspec=no-such-user-probe", "/", "true"}},
 		{name: "userspec with a trailing colon", args: []string{"--userspec=root:", "/", "true"}},
 		{name: "userspec that is a bare colon", args: []string{"--userspec=:", "/", "true"}},
+
+		// The SECOND pass is seeded by the first, so a half the spec does not
+		// name keeps the value the OUTER root gave it. This is the only case
+		// that can see it: every other one chroots to "/", where the two
+		// passes read the same files and the seeding cannot show.
+		//
+		// The new root's passwd gives `daemon` the host's uid and a gid the
+		// host does not, so `--userspec=daemon` must come out with the uid
+		// from INSIDE and the gid from OUTSIDE. Reading both from inside —
+		// which is what this corpus caught — prints the new root's gid.
+		//
+		// Unprivileged the chroot is EPERM for both sides and the case
+		// compares that instead, which is the same bargain every other
+		// chroot case makes.
+		{
+			name:     "userspec keeps the outer gid for a half the spec does not name",
+			args:     []string{"--userspec=daemon", "newroot", "/id", "-G"},
+			seedTree: seedMismatchedRoot,
+		},
 		{name: "userspec that is two colons", args: []string{"--userspec=::", "/", "true"}},
 		{name: "userspec that is empty", args: []string{"--userspec=", "/", "true"}},
 		{name: "userspec by name and group", args: []string{"--userspec=root:root", "/", "id"}},
@@ -153,4 +176,40 @@ func TestChrootHelpVersion(t *testing.T) {
 	requireVersion(t, "chroot", []string{"--version"}, 0)
 	requireVersion(t, "chroot", []string{"--vers"}, 0)
 	requireVersion(t, "chroot", []string{"--version", "x"}, 0)
+}
+
+// seedMismatchedRoot builds a new root whose passwd disagrees with the host's
+// about one user, which is the only way to observe how the two lookup passes
+// combine. `daemon` is the user because every platform this corpus runs on
+// ships it in the flat passwd file — Debian, Ubuntu and macOS all give it uid
+// 1 — so the OUTER pass resolves it without the corpus having to create it.
+//
+// The gid inside is 99, which is not daemon's anywhere, so the two answers
+// cannot coincide by accident.
+//
+// The program to exec is this tree's own `id`, because it is statically
+// linked: a dynamically linked one would need its loader and libc inside the
+// new root as well. Both sides exec the same bytes, so what the case compares
+// is chroot's behaviour and not id's.
+func seedMismatchedRoot(t *testing.T, dir string) {
+	t.Helper()
+	root := filepath.Join(dir, "newroot")
+	if err := os.MkdirAll(filepath.Join(root, "etc"), 0o755); err != nil {
+		t.Fatalf("new root: %v", err)
+	}
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(root, "etc", name), []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	write("passwd", "root:x:0:0:root:/:/nonexistent\ndaemon:x:1:99:daemon:/:/nonexistent\n")
+	write("group", "root:x:0:\ninside:x:99:\n")
+
+	probe, err := os.ReadFile(fernBin(t, "id"))
+	if err != nil {
+		t.Fatalf("read the id probe: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "id"), probe, 0o755); err != nil {
+		t.Fatalf("install the id probe: %v", err)
+	}
 }
