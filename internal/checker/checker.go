@@ -10606,16 +10606,6 @@ func fipRootIdent(e ast.Expr) string {
 			e = x.Array
 		case *ast.FieldAccess:
 			e = x.Target
-		case *ast.Call:
-			// `.with` returns its receiver: the same array, still uniquely
-			// owned. So `b.with(i, v).with(j, w)` is rooted where `b` is, and
-			// each call is the in-place set the single form already admits.
-			// Without this step the walk stops at the inner call and a run of
-			// element writes has to be spelled one statement per element.
-			if x.Method == nil || x.Method.Field != "with" || len(x.Args) == 0 {
-				return ""
-			}
-			e = x.Args[0]
 		default:
 			return ""
 		}

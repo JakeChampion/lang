@@ -197,37 +197,42 @@ function main(): i32 { return 0; }`)
 
 }
 
-// The receiver root walk reaches through a field access, an index and a `.with`
-// call. `.with` returns the array it was given, so a chain of them is rooted
-// where its first receiver is and each call is the same in-place set the single
-// form is accepted as. A run of element writes is the natural shape for an
-// encoder, and before #9699 it had to be spelled one statement per element —
-// which emits the same code, so the refusal protected nothing.
-func TestFipWithChainAndFieldReceiversAreRooted(t *testing.T) {
-	wantNoErr(t, "chained with on own array",
-		`fip function f(own b: i32[]): i32[] { return b.with(0, 1).with(1, 2); }`)
-
-	wantNoErr(t, "long chain on own array",
-		`fip function f(own b: i32[]): i32[] { return b.with(0, 1).with(1, 2).with(2, 3).with(3, 4); }`)
-
+// The receiver root walk reaches through a field access and an index, so a
+// `.with` on an `own` struct's array field is the same in-place set as one on
+// the parameter itself. The self-host accepted only a bare identifier, which
+// made structure-of-arrays — the shape `fbip` exists for — E053 there and
+// clean here (#9699).
+//
+// The walk stops at a CALL, so a chain stays out. It reads as though it should
+// be admitted, since the second link holds the array the first returned, but in
+// assignment position the lowering materialises that intermediate: one fresh
+// box per evaluation (#9702). Admitting it would let a `fip` function allocate
+// while claiming it does not. When #9702 lands, the chain rows below become
+// `wantNoErr`.
+func TestFipWithReceiverRootWalk(t *testing.T) {
 	wantNoErr(t, "with on an own struct's array field", `struct S { xs: i32[] }
 fip function f(own s: S): i32[] { return s.xs.with(0, 1); }`)
 
-	wantNoErr(t, "chained with on an own struct's array field", `struct S { xs: i32[] }
+	wantNoErr(t, "with on an own struct's nested array field", `struct Inner { xs: i32[] }
+struct S { inner: Inner }
+fip function f(own s: S): i32[] { return s.inner.xs.with(0, 1); }`)
+
+	wantNoErr(t, "fbip struct update writing its own array field", `struct S { xs: i32[], n: i32 }
+fbip function f(own s: S): S { return S { ...s, xs: s.xs.with(0, 1), n: s.n + 1 }; }`)
+
+	// The claim follows ownership, not shape: a field receiver on a BORROWED
+	// struct copies on write and stays E053.
+	wantE053(t, "with on a non-own struct's array field", `struct S { xs: i32[] }
+fip function f(s: S): i32[] { return s.xs.with(0, 1); }`)
+
+	// #9702: allocating, so not admitted.
+	wantE053(t, "chained with on an own array",
+		`fip function f(own b: i32[]): i32[] { return b.with(0, 1).with(1, 2); }`)
+
+	wantE053(t, "chained with on an own struct's array field", `struct S { xs: i32[] }
 fip function f(own s: S): i32[] { return s.xs.with(0, 1).with(1, 2); }`)
 
-	wantNoErr(t, "fbip struct update with a chained with", `struct S { xs: i32[], n: i32 }
-fbip function f(own s: S): S { return S { ...s, xs: s.xs.with(0, 1).with(1, 2), n: s.n + 1 }; }`)
-
-	// The walk is wider; the ownership claim is not. A chain rooted at a
-	// borrowed parameter copies on write at the first link and stays E053.
-	wantE053(t, "chained with on a non-own array",
-		`fip function f(b: i32[]): i32[] { return b.with(0, 1).with(1, 2); }`)
-
-	wantE053(t, "chained with on a non-own struct's array field", `struct S { xs: i32[] }
-fip function f(s: S): i32[] { return s.xs.with(0, 1).with(1, 2); }`)
-
-	// A chain rooted at a call that is not `.with` reaches no owner at all.
+	// A chain rooted at a call that is not `.with` reaches no owner either.
 	// `pick` is itself allocation-free, so the only thing left to report is
 	// the `.with` whose receiver the walk could not root.
 	wantE053(t, "chain rooted at a non-with call", `fip function pick(own a: i32[]): i32[] { return a; }
