@@ -112,7 +112,7 @@ function collapse(list: string): u8[] {
   return out;
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var argv: string[] = args();
   var opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("s", "serial", opt_serial()));

@@ -988,7 +988,7 @@ function print_formatted(p: Pf, s: string, a: Args): (Pf, Args, boolean) {
   return (q, args, false);
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var argv: string[] = args();
   gnu.sole_help_version(argv, "printf", help_text(), 0);
   var first: i32 = 1;

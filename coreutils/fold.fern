@@ -155,7 +155,7 @@ function advance(column: u64, c: i32, count_bytes: boolean): u64 {
   return column + 1 as u64;
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var argv: string[] = args();
   var opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("b", "bytes", opt_bytes()));

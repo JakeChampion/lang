@@ -164,7 +164,7 @@ function is_flag_token(a: string): boolean {
   return true;
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var argv: string[] = args();
   var posix: boolean = false;
   match (env("POSIXLY_CORRECT")) {

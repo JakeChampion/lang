@@ -584,6 +584,14 @@ coreutils/
                     of /proc/self/mounts and /proc/self/attr/current —
                     for id and runcon
   <util>.fern       one program per utility
+  multicall/fern-coreutils.fern
+                    all of them in ONE binary, which picks the utility
+                    from the basename of argv[0] — used through
+                    symlinks named after the utilities, which is what
+                    the release archive ships. It lives in its own
+                    directory because `coreutils/*.fern` means "a
+                    utility" to the corpus, the bench and the macOS
+                    lane, and this is not one
 internal/coreutils/
   harness_test.go   the oracle harness (this file's "How parity is enforced"),
                     including the per-case working directory and resulting-tree
@@ -591,6 +599,11 @@ internal/coreutils/
   longdouble_test.go
                     the long double each target gets, which the
                     host-oracle corpus cannot see (#8513)
+  multicall_test.go the multicall binary: the catalogue gate that fails
+                    when a utility is missing from it, the dispatcher
+                    answering for itself, and the whole corpus run
+                    against it and required to agree with the
+                    standalone builds
   <util>_test.go    that utility's cases
   sums_test.go      the corpus the seven checksum utilities share, since
                     they are one program: each <util>_test.go names its
@@ -694,9 +707,56 @@ Darwin.
 5. Add the utility's workloads as `scripts/coreutils-bench.d/<util>.sh` and
    record its first numbers in the sub-issue. If it is slower than GNU, that is the
    next task, not a footnote.
-6. Any Fern quirk or bug you hit on the way gets an issue and a fix, never a
+6. Add the utility to `coreutils/multicall/fern-coreutils.fern` in all three
+   places — the import, the `catalogue()` table and the dispatch arm in
+   `main()`. `TestMulticallCatalogue` fails until you have, and names the
+   three.
+7. Any Fern quirk or bug you hit on the way gets an issue and a fix, never a
    workaround. That is the project's standing order and it is doubly so here,
    where the whole exercise is to find them.
+
+## One binary
+
+`coreutils/multicall/fern-coreutils.fern` is every utility in a single
+binary. It reads the basename of argv[0] and becomes that utility, so it
+is used through symlinks named after the utilities:
+
+```
+$ ln -s fern-coreutils yes
+$ ./yes | head -2
+y
+y
+```
+
+Nothing in `lib/gnu.fern` or the utilities changes to support this, and
+that is the point: `gnu.prog()` returns argv[0] verbatim, which under a
+symlink is already the utility's own name, path included, so a diagnostic
+out of the multicall binary is byte-for-byte the one the standalone build
+prints. `TestMulticallParity` runs the whole corpus through it and
+requires exactly that.
+
+A utility named as an ARGUMENT — `fern-coreutils yes` — is refused rather
+than run. It would see this binary's name in its diagnostics, and Fern has
+no module-level mutable state, so there is no `set_program_name` to
+correct it with. Supporting that form needs a `set_args` primitive in the
+runtime (#9694 — the backends already cache `args()` in a slot a store
+could replace); until then the symlink is the only invocation, and the
+release archive ships the symlinks so untarring it is the whole install.
+
+Under its own name the binary answers for itself: `--list` prints the
+catalogue, `--help` and `--version` do the usual.
+
+Size, Linux x86-64, all 106 utilities, 2026-09-18:
+
+| built by | wall | size |
+|---|---|---|
+| `bin/fern` | 5.4 s | 3,614,505 B |
+| `bin/fern-selfhost` | 38.1 s | 3,367,952 B |
+
+Against 106 standalone binaries at roughly 120 KB each, one binary is
+about a quarter of the bytes. Both are published per platform by
+`.github/workflows/release.yml` while the self-host compiler is on its way
+to becoming the default.
 
 ## Performance
 

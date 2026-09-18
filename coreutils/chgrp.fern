@@ -17,6 +17,6 @@
 //     what was meant.
 import "./chown";
 
-function main(): i32 {
+pub function main(): i32 {
   return chown.run(args(), true, "chgrp");
 }

@@ -1734,7 +1734,7 @@ function check_speeds(st: Set): void {
 }
 
 // ---- main -------------------------------------------------------------------
-function main(): i32 {
+pub function main(): i32 {
   var sc: Scan = scan(args());
   // The two output styles first, in this order: `-ag` reports the conflict
   // where `-aecho` reports the modes, and `-igna` — whose scan abandons the

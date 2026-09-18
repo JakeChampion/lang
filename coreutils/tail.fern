@@ -1187,7 +1187,7 @@ function drop_piped_stdin(files: File[]): (File[], i32) {
   return (fs, viable);
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var argv: string[] = args();
   // GNU asks fstat(1) only once it knows it will follow, but its opens
   // never hand out descriptor 1 (gnulib's open_safer), so the answer is
