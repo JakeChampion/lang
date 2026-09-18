@@ -46,9 +46,12 @@ pairing matches it:
 The second half matters as much as the first. A donor used to be whatever died
 first and fit the shape; it is now taken FOR the construction in front of it
 (`next_wants`, one backward pass over the block), and dropped if that
-construction does not take it. One token slot serves the block either way, so
-holding a box for a construction further down is holding it away from the one
-in front.
+construction does not take it.
+
+**Dropping it there is corrected by
+`2026-09-18-hold-the-donor-for-the-construction-that-wants-it.md`**: a donor
+the next construction cannot take is worth holding for a later one that can,
+and holding it is worth 287 -> 390.
 
 ## Measured
 
