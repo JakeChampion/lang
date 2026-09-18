@@ -67,6 +67,22 @@ function main(): i32 {
     return r & 127;
 }
 `},
+	// A construction that reuses a dead box of another type through a Perceus
+	// token: ssarc's reuse_construct writes the recipient's own shape word over
+	// the donor's with struct_set_shape, since neither box arrives carrying it.
+	// That op bailed the production lift, and it was 116 of the 117 functions
+	// the self-build declined — every one of them a reuse site like this.
+	{name: "reuse_cross_type_shape", allSSA: true, src: `
+struct P { x: i32, y: i32 }
+struct Q { a: i32, b: i32 }
+function f(): i32 {
+    var p: P = P { x: 1, y: 2 };
+    var t: i32 = p.x + p.y;
+    var q: Q = Q { a: 3, b: 4 };
+    return t + q.a + q.b;
+}
+function main(): i32 { return f(); }
+`},
 	{name: "control_flow", allSSA: true, src: `
 function first_square_over(limit: i32): i32 {
     var i: i32 = 0;
