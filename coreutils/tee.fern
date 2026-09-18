@@ -232,7 +232,7 @@ function open_outs(files: string[], append: boolean, mode: i32): Copy {
   return c;
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var argv: string[] = args();
   var opts: gnu.Opt[] = [];
   // GNU's long_options order, which is the order an ambiguity would

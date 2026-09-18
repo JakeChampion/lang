@@ -227,7 +227,7 @@ function fail_exec(cmd: string, errno: i32): void {
   exit(126);
 }
 
-function main(): i32 {
+pub function main(): i32 {
   // in_order, so the scan stops at the first operand: `nohup echo --help`
   // runs echo. There are no options of nohup's own beyond the two standard
   // ones the Getopt handles itself.

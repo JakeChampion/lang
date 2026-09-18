@@ -324,7 +324,7 @@ function make_special(op: string[], perm: i32): void {
   make(op[0], perm | kind, major, minor);
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var scanned: (Scan, string[]) = scan_options();
   var s: Scan = scanned.0;
 

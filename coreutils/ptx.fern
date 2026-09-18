@@ -1063,7 +1063,7 @@ function render_tex(f: Fields, ref: string, g: Geom, opts: Opts): string {
 }
 
 // ---- main -------------------------------------------------------------------
-function main(): i32 {
+pub function main(): i32 {
   var argv: string[] = args();
   var opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("A", "auto-reference", opt_auto()));

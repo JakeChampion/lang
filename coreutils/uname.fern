@@ -269,7 +269,7 @@ function line_for(s: Selection): string {
   return step.0 + "\n";
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var s: Selection = scan(args());
   if (nothing_selected(s)) {
     s = Selection { ...s, kernel_name: true };

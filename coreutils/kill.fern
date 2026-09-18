@@ -317,7 +317,7 @@ function run_send(sig: i32, pids: string[]): i32 {
   return 0;
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var opts: gnu.Opt[] = [];
   opts = opts.append(gnu.valued("s", "signal", opt_signal()));
   opts = opts.append(gnu.valued("n", "", opt_signal()));

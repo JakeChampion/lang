@@ -1742,7 +1742,7 @@ function use_fast_rendered(ldbl: ld.Format, first: ld.LD, step: ld.LD, last: ld.
   }
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var a: Args = parse_args(args());
   var ops: string[] = a.operands;
   if (ops.len() == 0) {

@@ -1482,7 +1482,7 @@ function open_input(path: string): Reader {
   return stdin();
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var argv: string[] = args();
   var r: (Settings, string[]) = scan(argv);
   var s: Settings = r.0;

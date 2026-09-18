@@ -86,7 +86,7 @@ function mode_none(): i32 {
   return 0 - 1;
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("f", "canonicalize", opt_canonicalize()));
   opts = opts.append(gnu.flag("e", "canonicalize-existing", opt_existing()));

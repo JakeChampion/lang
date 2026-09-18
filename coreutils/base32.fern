@@ -43,7 +43,7 @@ function help_text(): string {
   return out;
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var argv: string[] = args();
   var opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("d", "decode", opt_decode()));

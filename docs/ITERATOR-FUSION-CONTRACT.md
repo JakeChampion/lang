@@ -64,7 +64,27 @@ if Fern ever grows a comptime (see `COMPTIME-BRIEF.md`), fusion-
 as-a-library becomes an alternative host; until then the IR pass
 is the path.
 
+## The per-operator proof
+
+Clause 1 is a claim about operators, so it is discharged per operator
+rather than per benchmark: `docs/ARRAY-FUSION-OPERATORS.md` gives each
+one's `init` / `step` / `finish` fragments, the obligations a fragment
+carries, and the argument that concatenating fragments that allocate
+nothing yields a loop that allocates nothing. It is written for the
+EAGER `std/array` combinators of #9731, and the argument does not depend
+on which of the two surfaces the operators came from.
+
 ## Trigger conditions
+
+The trigger condition below is **met**, as of
+`docs/ARRAY-PIPELINE-BASELINE-2026-09.md` (#9728): the eager combinators
+cost 2.6x to 4.4x a hand-written loop on native-built code and
+materialize an intermediate per stage that is linear in the input. What
+that measurement also found is that the intermediates are not the whole
+of it — the per-element indirect call is a quarter to two fifths of the
+gap on native-built code and half to three quarters on self-host-built
+code, so clause 1's second half ("no unspecialised calls per element")
+is load-bearing rather than a refinement.
 
 Build this when a real workload demonstrates the eager
 combinators allocating measurably in a hot path (an edge handler

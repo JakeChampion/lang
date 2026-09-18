@@ -570,7 +570,7 @@ function verify(c: Conf, names: string[], o: io_buffered.BufWriter): (boolean, i
   return (ok, out);
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var argv: string[] = args();
   var c: Conf = Conf { s: digest.settings_new(0), sel: sel_crc(), specified: false, bits: 0, named_bits: false, bits_text: "", raw: false, b64: false };
   c = Conf { ...c, s: digest.Settings { ...c.s, tag: true, cksum: true } };
