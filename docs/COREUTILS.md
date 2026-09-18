@@ -279,7 +279,19 @@ That also supplies the two binaries Debian does not build at all, `uptime`
 and `kill`, and asserts both rather than only the first. CI's `test-units`
 lane builds the same 9.4 and installs those two beside `/usr/bin`, with both
 in the cache key — a cache written when the step installed `uptime` alone
-cannot satisfy a run that needs both. Benchmarks
+cannot satisfy a run that needs both.
+
+The `macos-15` lane (`.github/workflows/macos.yml`) builds the same 9.4 and
+installs the WHOLE tree to `~/gnu-coreutils`, because there is no system GNU
+on that runner to fall back to for the rest. One program needs installing by
+hand: `arch` is in coreutils' `no_install__progs`, so `make install` places
+every other program and never it, and no configure flag changes that — Debian
+ships its own copy, which is the only reason the Linux corpora find one in
+`/usr/bin`, and `/usr/bin/arch` on macOS is Apple's unrelated arch(1). That
+lane runs the corpus for the whole catalogue with `-skip '^TestSelfHost'`:
+selected by skipping rather than by naming, because `touch_test.go` and
+`ls_linux_fixture_test.go` are `//go:build linux` and a `-run` list carrying
+`TestTouch` would select nothing there, silently and with exit 0. Benchmarks
 compare against both GNU coreutils and Rust uutils, recording their actual
 versions. Install missing comparison implementations before measuring.
 A case whose behaviour changed between versions records the version it needs in a
@@ -289,6 +301,31 @@ both `coreutils/numfmt.fern` and its corpus, and #8765 holds the open question
 of whether Fern should follow 9.5+ instead. Nothing forces that today — every
 CI runner and this container ship 9.4 — so it is a future-GNU decision rather
 than a live divergence.
+
+### The Darwin ratchet
+
+Running the whole catalogue on macOS surfaced 1,411 failing cases across 51
+utilities — divergences the Linux lanes never see, because Darwin has no
+`/proc`, a different `struct stat`, a different `getgrouplist`, and a
+case-insensitive filesystem by default. Holding the lane to zero would leave
+it red indefinitely, so it is gated by a ratchet instead:
+`.github/darwin-corpus-known-failures.txt` names the test functions allowed
+to fail, and the lane fails when a name NOT on that list fails. Entries only
+ever leave the file — a utility that starts failing is a regression to fix,
+never a line to add. The case counts behind those names and the order worth
+working them in are #9714.
+
+The gate reads the corpus log rather than the corpus step's exit status: that
+step deliberately does not propagate it, because the whole point is that a
+failing corpus is not by itself a failing lane. What the gate does insist on
+is a `DONE` line, so a corpus that died partway cannot pass as a corpus with
+nothing new failing.
+
+A name on the list that PASSED is a `::warning::`, not an error. That is a
+deliberate deviation from the two-way ratchet in `internal/lint`, where a
+number moving in either direction fails: `ptx` failed on one round and passed
+on two, so erroring in that direction would make the lane flaky on a utility
+nobody had changed. The warning is still the prompt to delete the line.
 
 ### The self-host leg
 
