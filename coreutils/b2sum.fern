@@ -5,6 +5,6 @@
 // checksum line carries the length it was written at.
 import "./lib/digest";
 
-function main(): i32 {
+pub function main(): i32 {
   return digest.run(digest.algo_blake2b());
 }

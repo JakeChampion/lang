@@ -644,7 +644,7 @@ function prompt_once(s: Settings, n: i32): boolean {
   return gnu.prompt("remove " + n.to_string() + noun + how + "? ");
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var parsed: (Settings, gnu.Getopt) = parse(args());
   var s: Settings = parsed.0;
   var files: string[] = parsed.1.operands();

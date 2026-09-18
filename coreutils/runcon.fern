@@ -159,7 +159,7 @@ function print_current_context(): i32 {
   return canceled();
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var opts: gnu.Opt[] = [];
   opts = opts.append(gnu.valued("r", "role", opt_role()));
   opts = opts.append(gnu.valued("t", "type", opt_type()));

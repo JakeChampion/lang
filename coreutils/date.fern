@@ -319,7 +319,7 @@ function batch(o: io_buffered.BufWriter, s: Show, name: string): (boolean, io_bu
   return (ok, w);
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var opts: gnu.Opt[] = [];
   opts = opts.append(gnu.valued("d", "date", opt_date()));
   opts = opts.append(gnu.flag("", "debug", opt_debug()));

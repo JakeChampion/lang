@@ -288,10 +288,32 @@ operator outside the algebra (`ITERATOR-FUSION-CONTRACT.md` §2).
 
 This is the same stance as the fusion contract's clause 4, "failure is
 visible, not silent", and as `REUSE-CONTRACT.md`'s specified-not-
-best-effort framing. It is filed separately as #9732 because it is
-implementation work; what belongs here is that the diagnostic reports a
-**rule**, and that every rule in this document is therefore written to
-be nameable in one.
+best-effort framing.
+
+**It is built.** `fern -array-report FILE.fern` prints, per pipeline, the
+recognized plan, whether it fused, how many of its stages materialize an
+array, and — where a chain stopped — which rule stopped it:
+
+```
+run:3:26  map(n->n)
+            not fused (no fusion pass yet, #9731); 1 stage(s) materialize
+            chain ends here: the intermediate is read again, so this is not one traversal
+            map        elementwise  __closure_lambda_1
+```
+
+`FERN_ARRAY_REPORT=1` adds a histogram. The refusal reasons are a **closed
+set** with stable tags, for the reason `FERN_SSA_REPORT` is: the set of
+things declined is the coverage checklist for the fusion pass, and a tally
+of free-text strings cannot be counted. Every reason prints a row even at
+zero, so a reason that stops firing shows as a zero rather than as a line
+nobody notices went missing.
+
+Two honest limits while #9731 does not exist. Every pipeline reports *not
+fused*, because none is — a report that claimed otherwise would be worse
+than no report. And the histogram is read from the report mode rather than
+from every compile: until fusion lands the tally says the same thing for
+every program, so wiring a print into five backends would buy one sentence.
+It moves into the build when the numbers start moving.
 
 ## The claims
 

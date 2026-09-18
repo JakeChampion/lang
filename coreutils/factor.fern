@@ -1290,7 +1290,7 @@ function handle_stdin(st: State, exponents: boolean): State {
   return State { o: o, status: status, failed: failed, pr: pr, seen: seen };
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var argv: string[] = args();
   var opts: gnu.Opt[] = [gnu.flag("h", "exponents", 1), gnu.flag("", "-debug", 2)];
   var g: gnu.Getopt = gnu.getopt_new(argv, opts, "factor", help_text(), 1);

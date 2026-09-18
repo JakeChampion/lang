@@ -2,6 +2,7 @@ package main
 
 import (
 	"io"
+	"os"
 
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/constfold"
@@ -43,6 +44,22 @@ func runArrayReport(srcPath string, w io.Writer) error {
 	if err != nil {
 		return e.format(err)
 	}
-	_, err = io.WriteString(w, ir.FormatArrayPipelines(irProg))
+	if _, err := io.WriteString(w, ir.FormatArrayPipelines(irProg)); err != nil {
+		return err
+	}
+	// FERN_ARRAY_REPORT adds the histogram, whose value is that the refusals
+	// are countable: the set of reasons a pipeline stopped IS the coverage
+	// checklist for the fusion pass (#9732), the same property
+	// FERN_SSA_REPORT has for the SSA backend.
+	//
+	// It is read here rather than on every compile path deliberately. Until
+	// #9731 exists the tally reads the same for every program — nothing
+	// fuses — so a per-build hook would cost a print in five backends to say
+	// one thing. It becomes worth wiring into the build when the numbers
+	// start moving, which is when fusion lands.
+	if os.Getenv("FERN_ARRAY_REPORT") == "" {
+		return nil
+	}
+	_, err = io.WriteString(w, "\n"+ir.FormatArrayPipelineHistogram(irProg))
 	return err
 }

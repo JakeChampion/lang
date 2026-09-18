@@ -396,7 +396,7 @@ function check_mode(m: Mode): string {
   return "";
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var parsed: (Mode, string[]) = parse_mode(args());
   var m: Mode = parsed.0;
   var operands: string[] = parsed.1;

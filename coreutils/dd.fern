@@ -1469,7 +1469,7 @@ function seek_output(w: Writer, s: Settings, name: string): boolean {
 }
 
 // ---- main -------------------------------------------------------------------
-function main(): void {
+pub function main(): i32 {
   var argv: string[] = args();
   scan_options(argv);
   var scan: Scan = scan_operands(argv);
@@ -1538,4 +1538,5 @@ function main(): void {
     r.close();
   }
   exit(status);
+  return 0;
 }

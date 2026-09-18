@@ -1793,7 +1793,7 @@ function declare_options(): gnu.Opt[] {
   return opts;
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var argv: string[] = args();
   var specs: Spec[] = [];
   var base: i32 = 8;

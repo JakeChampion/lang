@@ -268,7 +268,7 @@ function check_name(name: string, posix: boolean, shape: boolean): boolean {
   return check_filesystem(name);
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var argv: string[] = args();
   var opts: gnu.Opt[] = [gnu.flag("p", "", 1), gnu.flag("P", "", 2), gnu.flag("", "portability", 3)];
   var g: gnu.Getopt = gnu.getopt_new(argv, opts, "pathchk", help_text(), 1);

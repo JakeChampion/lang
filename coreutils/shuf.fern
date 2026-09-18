@@ -812,7 +812,7 @@ function check_operands(a: Args, operands: string[]): void {
   }
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var argv: string[] = args();
   var parsed: (Args, string[]) = parse_args(argv);
   var a: Args = parsed.0;

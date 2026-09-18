@@ -54,7 +54,7 @@ function help_text(): string {
   return out;
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var argv: string[] = args();
   var operands: string[] = gnu.parse_standard_options_only(argv, "yes", help_text(), 1);
   var line: string = "y";
