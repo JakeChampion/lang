@@ -201,7 +201,7 @@ function pad2(v: i32): string {
   return v.to_string();
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var opts: gnu.Opt[] = [];
   opts = opts.append(gnu.valued("", "time", opt_time()));
   opts = opts.append(gnu.flag("c", "no-create", opt_no_create()));

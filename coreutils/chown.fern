@@ -648,6 +648,6 @@ pub function run(argv: string[], chgrp_mode: boolean, name: string): i32 {
   return st.status;
 }
 
-function main(): i32 {
+pub function main(): i32 {
   return run(args(), false, "chown");
 }

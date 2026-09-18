@@ -592,7 +592,7 @@ function head_file(path: string, o: gnu.Stream, s: Settings, show: boolean): gnu
   return out;
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var argv: string[] = args();
   var opts: gnu.Opt[] = [];
   opts = opts.append(gnu.valued("c", "bytes", opt_bytes()));

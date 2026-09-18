@@ -1412,7 +1412,7 @@ function getnum_first_line(value: string): i32 {
   return r.0 as i32;
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var argv: string[] = args();
   var g: gnu.Getopt = gnu.getopt_new(argv, build_opts(), "pr", help_text(), 1).return_in_order();
 

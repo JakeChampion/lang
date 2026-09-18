@@ -525,7 +525,7 @@ function sole_option(argv: string[]): void {
   }
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var argv: string[] = args();
   sole_option(argv);
   var start: i32 = 1;

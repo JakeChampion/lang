@@ -224,7 +224,7 @@ function remove_parents(o0: Out, dir0: string, verbose: boolean, ignore: boolean
   return o;
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("", "ignore-fail-on-non-empty", opt_ignore()));
   // `--path` is a deprecated synonym for `--parents` that the help text

@@ -401,7 +401,7 @@ function current_umask(): i32 {
   return mask & mode.all_bits();
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var p: Parsed = parse(args());
   var s: Settings = p.s;
   var files: string[] = p.files;

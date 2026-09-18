@@ -205,7 +205,7 @@ function next_line_slow(r: Reader, chunk0: string, pos0: i32, eof0: boolean, ter
 // `Cfg` — everything the option scan settles.
 struct Cfg { only1: boolean, only2: boolean, both: boolean, sep: string, check: i32, total: boolean, term: i32 }
 
-function main(): i32 {
+pub function main(): i32 {
   var argv: string[] = args();
   var opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("1", "", opt_only1()));

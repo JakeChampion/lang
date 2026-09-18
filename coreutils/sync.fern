@@ -120,7 +120,7 @@ function sync_arg(name: string, mode: i32): boolean {
   }
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var opts: gnu.Opt[] = [];
   // Declaration order is visible in the ambiguity list: `sync --=x`
   // names these two, then help and version.
