@@ -3162,9 +3162,9 @@ struct Reused { tag: string, cells: i32[], n: i32 }
 // members of a struct-union, so the shape word a construction writes is READ by
 // the match below — a recipient inheriting the donor's would take the wrong arm
 // rather than leak, which is what makes these witness the word and not just the
-// storage. Trio is one field wider than either, so its pairing is statically
-// admitted and declined at run time: the donor block goes to its freelist and
-// the construction allocates fresh.
+// storage. Trio is one field wider than either, so the pairing declines it: the
+// donor's box has three slots and the construction claims four, and the
+// runtime would return the block to its freelist and allocate anyway.
 struct Mote { text: string, k: i32 }
 struct Glyph { xs: i32[], k: i32 }
 type Sigil = Mote | Glyph;
@@ -3205,7 +3205,10 @@ struct Trio { a: string, b: i32[], c: i32 }
 // A tuple box is one word per element and no shape word, so it is storage a
 // donor of any of the three forms can be, and storage any of them can take:
 // tuple_step pairs a tuple with a tuple, tuple_from_rec a record's box with a
-// tuple, and rec_from_tuple a tuple's with a record's.
+// tuple, and rec_from_tuple a tuple's with a record's. The two cross-form ones
+// are a two-field record against a three-element tuple because the pairing
+// matches SLOTS: a record box carries a shape word the tuple's does not, so
+// the two agree at three slots and not at two.
 struct Parcel { a: string, b: i32 }
 @noinline function tuple_step(seed: i32): (i32, string) {
     var a: (string, i32[]) = ("aa", [seed, seed + 1]);
@@ -3225,12 +3228,12 @@ struct Parcel { a: string, b: i32 }
 @noinline function tuple_from_rec(n: i32): i32 {
     var d: Parcel = Parcel { a: "cc", b: n };
     var s: i32 = d.b + d.a.len();
-    var q: (i32, string) = (s, "dd");
-    return q.0 + q.1.len();
+    var q: (i32, string, i32) = (s, "dd", s + 1);
+    return q.0 + q.1.len() + q.2;
 }
 @noinline function rec_from_tuple(n: i32): i32 {
-    var d: (string, i32) = ("ee", n);
-    var s: i32 = d.1 + d.0.len();
+    var d: (string, i32, i32) = ("ee", n, n + 1);
+    var s: i32 = d.1 + d.2 + d.0.len();
     var q: Parcel = Parcel { a: "ff", b: s };
     return q.b + q.a.len();
 }
@@ -3582,13 +3585,13 @@ function main(): i32 {
 // a Glyph's box for 10, and cross_wide(3) offers a two-field donor to a
 // three-field construction, which the runtime declines, for 5 + 5 + 2 = 12.
 // The tuple forms: tuple_loop(4) sums 2i + 5 over i = 0..3 for 32,
-// tuple_from_rec(3) is 5 + 2 = 7 and rec_from_tuple(5) is 7 + 2 = 9.
+// tuple_from_rec(3) is 5 + 2 + 6 = 13 and rec_from_tuple(5) is 13 + 2 = 15.
 // The wasm leg's standing leak from the existing fixtures, in bytes (#9305).
 // It may only be LOWERED — a drop here means something started freeing, and
 // the new figure belongs in this constant.
 const wasmSemsourceRCLeakFloor = 8976
 
-const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n12\n9\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n4\n5\n3\n5\n5\n0\n3\n1\n0\n10\n-2147483648\n0\n28\n8\n-20\n2\n6\n3\n7\n6\n4\n10\n9\n98\n196\n98\n98\n97\n97\n195\n0\n0\n2\n144\n1\n1\n1\n44\n65\n65\n90\n128\n0\n1\n35\n35\n705032739\n1\n3\n1\n2\n1\n40\n1\n0\n625\n38\n30\n3\n3\n25\n150\n0\n-1\n1\n10\n10\n5000\n6\n9\n10\n4\n5\n6\n0\n3\n5\n6\n3\n10\n7\n70\n28\n16\n21\n8\n5\n12\n7\n5\n5\n6\n42\n3\ntick\n2\n1\n5\n2\n11\n-2\n3\n0\n6\n9\n48\n4224\n0\n3\n2\n13\n12\n16\n0\n8\n11\n5\n9\n-3\n2\n9\n18\n-1\n5\n18\n3\n16\n2\n32\n71\n32\n43\n43\n332\n42\n15\n27\n0\n15\n0\n0\n0\n4\n4\n2\n0\n3\n-1\n1\nA66\n2\n0\n0\n0\n0\n0\n7\n12\n6\n9\n1\n1431655765\n3\n15\n0\n255\n-1\n255\n4294\n11718750\n1\n9223\n854775808\n8\n15\n255\n771\n9223\n-1966660860\n3\n12\n10\n1\n0\n1\n13\n6\n6\n1\n23\n5\n1\n3\n1\n2\n3\n2\n3\n2\n5\n0\n2\n4\n3\n17\n7\n13\n8\n6\n6\n17\n8\n1\n1\n7\n1\n0\n1\n0\n7\n8\n5\n6\n3\n6\n16777216\n1036831949\n1266679808\n1056964609\n1\n1077936128\n14\n6\n15\n13\n4\n7\n9\n397\n15\n10\n0\n20\n0\n21\n8\n18\n9\n131\n2\n67\n7\n5\n1\n0\n10\n2\n51\n234\n9\n4743\n61\n121\n12\n210\n13\n-2147452531\n11\n0\n15\n8\n-1\n255100\n-7\n4\n224\n223\n22\n11\n1804\n642\n94\n915\n152\n50128\n85\n3\n101\n205\n0\n1004\n14\n3\n7\n1\n18\n7\n8\n10\n40\n4\n2\n7\n0\n11\nelem!\n5\nelem\n4\n48\n12\npt:pt\n5\npt\n2\n5\n12\n107\n34\n12\n3\n9\n42\n50\n1072\n13\npt!\n6\n9\n17\n14\n3\n9\n3\n6\n6\n4\nob\nob\nob\n13\n2\n60\n9\n50\n36\n1\n2\n72\n17\n418\n10\n12\n32\n7\n9\n"
+const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n12\n9\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n4\n5\n3\n5\n5\n0\n3\n1\n0\n10\n-2147483648\n0\n28\n8\n-20\n2\n6\n3\n7\n6\n4\n10\n9\n98\n196\n98\n98\n97\n97\n195\n0\n0\n2\n144\n1\n1\n1\n44\n65\n65\n90\n128\n0\n1\n35\n35\n705032739\n1\n3\n1\n2\n1\n40\n1\n0\n625\n38\n30\n3\n3\n25\n150\n0\n-1\n1\n10\n10\n5000\n6\n9\n10\n4\n5\n6\n0\n3\n5\n6\n3\n10\n7\n70\n28\n16\n21\n8\n5\n12\n7\n5\n5\n6\n42\n3\ntick\n2\n1\n5\n2\n11\n-2\n3\n0\n6\n9\n48\n4224\n0\n3\n2\n13\n12\n16\n0\n8\n11\n5\n9\n-3\n2\n9\n18\n-1\n5\n18\n3\n16\n2\n32\n71\n32\n43\n43\n332\n42\n15\n27\n0\n15\n0\n0\n0\n4\n4\n2\n0\n3\n-1\n1\nA66\n2\n0\n0\n0\n0\n0\n7\n12\n6\n9\n1\n1431655765\n3\n15\n0\n255\n-1\n255\n4294\n11718750\n1\n9223\n854775808\n8\n15\n255\n771\n9223\n-1966660860\n3\n12\n10\n1\n0\n1\n13\n6\n6\n1\n23\n5\n1\n3\n1\n2\n3\n2\n3\n2\n5\n0\n2\n4\n3\n17\n7\n13\n8\n6\n6\n17\n8\n1\n1\n7\n1\n0\n1\n0\n7\n8\n5\n6\n3\n6\n16777216\n1036831949\n1266679808\n1056964609\n1\n1077936128\n14\n6\n15\n13\n4\n7\n9\n397\n15\n10\n0\n20\n0\n21\n8\n18\n9\n131\n2\n67\n7\n5\n1\n0\n10\n2\n51\n234\n9\n4743\n61\n121\n12\n210\n13\n-2147452531\n11\n0\n15\n8\n-1\n255100\n-7\n4\n224\n223\n22\n11\n1804\n642\n94\n915\n152\n50128\n85\n3\n101\n205\n0\n1004\n14\n3\n7\n1\n18\n7\n8\n10\n40\n4\n2\n7\n0\n11\nelem!\n5\nelem\n4\n48\n12\npt:pt\n5\npt\n2\n5\n12\n107\n34\n12\n3\n9\n42\n50\n1072\n13\npt!\n6\n9\n17\n14\n3\n9\n3\n6\n6\n4\nob\nob\nob\n13\n2\n60\n9\n50\n36\n1\n2\n72\n17\n418\n10\n12\n32\n13\n15\n"
 
 const semsourceRCDriver = `import "./semsource"; import "./ssarc"; import "./ssaunits"; import "./ssa"; import "./ssasem";
 import "./parser"; import "./lexer"; import "./irlower"; import "./ir";
