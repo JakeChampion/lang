@@ -8693,6 +8693,39 @@ function call_diags(e: ast.Expr, s: Scope): util.Diag[] {
   return out;
 }
 
+// cell_call_diags checks a call of one of Cell[T]'s two builtin methods.
+//
+// `get` reads the slot and `set` writes it; neither is in the method table or
+// the struct table, because Cell is a reserved builtin rather than a declared
+// struct, so the ordinary method path resolved nothing and reported nothing
+// (#9518). A lambda handed to `set` was accepted in silence.
+//
+// The arity numbers count the RECEIVER, which is how native models these — as
+// plain functions whose first parameter is the cell — so `c.set(v)` is two
+// arguments and `c.get()` is one, and a wrong value on `set` is "argument 2".
+function cell_call_diags(c: ast.ExprCall, mfa: ast.ExprFieldAccess, recv: typeinfo.Type, s: Scope): util.Diag[] {
+  var out: util.Diag[] = [];
+  var want: i32 = 0 - 1;
+  if (mfa.field == "get") { want = 0; }
+  if (mfa.field == "set") { want = 1; }
+  if (want < 0) {
+    return [dg_at("E043", "struct Cell has no field \"" + mfa.field + "\"", mfa.line, mfa.col)];
+  }
+  if (c.args.len() != want) {
+    return [dg_at("E004", "function expects " + util.i32_to_string(want + 1) + " arguments, got " + util.i32_to_string(c.args.len() + 1), c.line, c.col)];
+  }
+  if (want == 1) {
+    var pt: typeinfo.Type = cell_elem_type(recv);
+    var at: typeinfo.Type = check_expr(c.args[0], s);
+    out = util.append_diags(out, int_dest_range_diags(c.args[0], pt));
+    if (!is_unknown(at) && !is_unknown(pt) && !settles_to(c.args[0], pt, s) && !str_arg_borrow(at, pt) && !type_assignable(at, pt, s.unions.unions)) {
+      out = out.append(dg_at("E038", "argument 2: expected " + type_label(pt) + ", got " + type_label(at), expr_line(c.args[0]), expr_col(c.args[0])));
+    }
+    out = util.append_diags(out, array_elem_check(array_elem_type_of(pt), c.args[0], s));
+  }
+  return out;
+}
+
 // Value calls share one semantic contract regardless of the expression that
 // produced the callee. Unknown constituents suppress only their own type check,
 // not a known arity or checks on the other parameters.
@@ -9070,6 +9103,18 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           }
         },
         typeinfo.TypeStruct(sn) => {
+          // Cell[T]'s two methods are builtins, so they are in neither the
+          // method table nor the struct table. Both lookups missed, the arm
+          // below found no struct to resolve a field against, and the call
+          // was accepted whatever it was handed (#9518). Checked here, ahead
+          // of the user tables, the way the receiver's type is.
+          //
+          // Arity and position follow native, which models these as ordinary
+          // functions carrying the receiver: `c.set(v)` is two arguments and
+          // the value is the SECOND, so a mismatch reads "argument 2".
+          if (is_cell_type(recv)) {
+            out = util.append_diags(out, cell_call_diags(c, mfa, recv, s));
+          } else {
           var msig: MethodSig = s.lookup_method(mfa.field, sn.name);
           if (msig.name.len() > 0) {
             if (c.args.len() != msig.param_types.len()) {
@@ -9132,6 +9177,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
                 }
               }
             }
+          }
           }
         },
         _ => {
