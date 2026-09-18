@@ -59,7 +59,7 @@ func emitHelperBss(w func(string, ...any), helpers []string, countsUnderflow boo
 	if usesStrbuf(helpers) {
 		emitStrbufBss(w)
 	}
-	if referencesHelper(helpers, "__method_Reader_read_line") {
+	if referencesHelper(helpers, "__method_Reader_read_line") || referencesHelper(helpers, "read_line") {
 		w(".section .bss")
 		w(".align 8")
 		w("%s:", readlineBufSym)

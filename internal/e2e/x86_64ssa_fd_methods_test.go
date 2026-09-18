@@ -76,11 +76,11 @@ func TestX86_64SSAFdMethodsMatchTheFlatEmitter(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
 
-	flat := runPathProbe(t, bin, qemu, dir, "fdmethods", "flat", x86SSAFdMethodSrc)
+	flat := runPathProbe(t, bin, qemu, dir, "fdmethods", "flat", x86SSAFdMethodSrc, "")
 	if flat != 0 {
 		t.Fatalf("the flat emitter itself reports %d - the probe is wrong, not the SSA backend", flat)
 	}
-	if ssa := runPathProbe(t, bin, qemu, dir, "fdmethods", "ssa", x86SSAFdMethodSrc); ssa != flat {
+	if ssa := runPathProbe(t, bin, qemu, dir, "fdmethods", "ssa", x86SSAFdMethodSrc, ""); ssa != flat {
 		t.Errorf("-backend ssa reports %d where the flat emitter reports %d.\n\n"+
 			"Each code names one assertion in the probe source above; the two backends "+
 			"are two implementations of the same builtins and must agree.", ssa, flat)

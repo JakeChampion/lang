@@ -3,8 +3,8 @@ package x86_64ssa
 // Four helpers that each blocked a handful of corpus programs on their own:
 // write, __fern_heap_bump_bytes, __method_Reader_read_line and read_dir.
 
-// readlineBufSym is the shared 4 KiB .bss line buffer Reader.read_line fills
-// before it knows the line's length; readlineBytes bounds one line.
+// readlineBufSym is the shared 4 KiB .bss line buffer the two line readers
+// fill before they know the line's length; readlineBytes bounds one line.
 const (
 	readlineBufSym = "__ssa_readline_buf"
 	readlineBytes  = 4096
@@ -40,39 +40,54 @@ func emitHeapBumpBytesHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
-// emitReaderReadLineHelper writes __method_Reader_read_line(reader) ->
-// Option[string]: one byte at a time from the handle's fd (at [reader + 8])
-// into the .bss line buffer until '\n' (kept), the buffer's end, or EOF or an
-// error, then a fresh right-sized rc string of what was read. None when the
-// first read returns nothing. rbx = buffer, r12 = bytes read then the string,
-// r13 = fd.
-func emitReaderReadLineHelper(w func(string, ...any)) {
+// emitReadLineHelper returns the emitter for a line read -> Option[string]:
+// one byte at a time into the .bss line buffer until '\n' (kept), the
+// buffer's end, or EOF or an error, then a fresh right-sized rc string of what
+// was read. None when the first read returns nothing.
+//
+// `fd` is the descriptor to read, or -1 to take it from a handle argument at
+// [rdi + 8]: __method_Reader_read_line asks a Reader, the free read_line asks
+// standard input. `sfx` keeps the local labels distinct so both can live in
+// one object.
+//
+// rbx = buffer, r12 = bytes read then the string, r13 = fd.
+func emitReadLineHelper(name, sfx string, fd int) func(w func(string, ...any)) {
+	return func(w func(string, ...any)) {
+		emitReadLineBody(w, name, sfx, fd)
+	}
+}
+
+func emitReadLineBody(w func(string, ...any), name, sfx string, fd int) {
 	w("")
-	w("%s:", fnLabel("__method_Reader_read_line"))
+	w("%s:", fnLabel(name))
 	w("\tpush rbx")
 	w("\tpush r12")
 	w("\tpush r13")
 	// Three pushes past the return address leave rsp 16-aligned.
-	w("\tmov r13d, dword ptr [rdi + 8]") // fd
+	if fd < 0 {
+		w("\tmov r13d, dword ptr [rdi + 8]")
+	} else {
+		w("\tmov r13d, %d", fd)
+	}
 	w("\tlea rbx, [rip + %s]", readlineBufSym)
 	w("\txor r12d, r12d")
-	w(".Lssa_rrl_loop:")
+	w(".Lssa_rrl_loop%s:", sfx)
 	w("\tcmp r12, %d", readlineBytes)
-	w("\tjae .Lssa_rrl_done")
+	w("\tjae .Lssa_rrl_done%s", sfx)
 	w("\tmov edi, r13d")
 	w("\tlea rsi, [rbx + r12]")
 	w("\tmov edx, 1")
 	w("\txor eax, eax") // read
 	w("\tsyscall")
 	w("\tcmp rax, 1")
-	w("\tjl .Lssa_rrl_done") // EOF or an error ends the line
+	w("\tjl .Lssa_rrl_done%s", sfx) // EOF or an error ends the line
 	w("\tmovzx eax, byte ptr [rbx + r12]")
 	w("\tadd r12, 1")
 	w("\tcmp eax, 10") // '\n', kept
-	w("\tjne .Lssa_rrl_loop")
-	w(".Lssa_rrl_done:")
+	w("\tjne .Lssa_rrl_loop%s", sfx)
+	w(".Lssa_rrl_done%s:", sfx)
 	w("\ttest r12, r12")
-	w("\tjz .Lssa_rrl_none")
+	w("\tjz .Lssa_rrl_none%s", sfx)
 	w("\tlea rdx, [r12 + %d]", strBlockBytes) // header + bytes + NUL
 	ssaBumpAlloc(w, "rax", "rdx")
 	w("\tmov dword ptr [rax], 1") // rc = 1
@@ -82,10 +97,10 @@ func emitReaderReadLineHelper(w func(string, ...any)) {
 	w("\tmov byte ptr [rax + r12], 0")
 	w("\tmov r12, rax")
 	ssaOptionBox(w, 0, "r12")
-	w("\tjmp .Lssa_rrl_ret")
-	w(".Lssa_rrl_none:")
+	w("\tjmp .Lssa_rrl_ret%s", sfx)
+	w(".Lssa_rrl_none%s:", sfx)
 	ssaOptionBox(w, 1, "")
-	w(".Lssa_rrl_ret:")
+	w(".Lssa_rrl_ret%s:", sfx)
 	w("\tpop r13")
 	w("\tpop r12")
 	w("\tpop rbx")
