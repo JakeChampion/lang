@@ -1,0 +1,239 @@
+// examples/array_pipeline/filter_map_reduce.fern — pipeline 2 of #9728.
+//
+// `xs.filter(p).map(g).reduce(h)` against the hand-written `while` loop. The
+// difference from pipeline 1 is variable cardinality: the first stage's output
+// length is not known before the traversal runs, and there is a branch per
+// element. A fusion scheme that assumes a fixed trip count breaks here, which
+// is why this shape is measured separately rather than assumed to behave like
+// the same-cardinality one.
+//
+// The predicate keeps one element in three, so the `map` stage sees a third of
+// the input and the intermediate that a fusion pass would remove is a third of
+// the size pipeline 1's is. If the pipeline cost tracked the input length
+// rather than the intermediate's, that would show up here as the same slowdown
+// as pipeline 1 instead of a smaller one.
+//
+// Variants and checksum agreement work exactly as in map_map_reduce.fern.
+import "core/cmp";
+import "std/bench";
+import "std/string";
+
+function modulus(): i64 {
+  return 1000003 as i64;
+}
+
+function keep(x: i64): boolean {
+  return x % (3 as i64) == 0 as i64;
+}
+
+function elem_g(x: i64): i64 {
+  return (x * (5 as i64) + 7 as i64) % modulus();
+}
+
+function combine(a: i64, b: i64): i64 {
+  return (a + b) % modulus();
+}
+
+// `i * 3` rather than a mixing function: the predicate has to keep a
+// predictable fraction, and a hashed input would make the surviving count a
+// property of the hash rather than of `n`.
+function build_input(n: i32): i64[] {
+  var xs: i64[] = [];
+  var i: i32 = 0;
+  while (i < n) {
+    xs = xs.append(i as i64 * (2654435761 as i64) % modulus());
+    i = i + 1;
+  }
+  return xs;
+}
+
+function run_pipeline(xs: i64[]): i64 {
+  var out: Option[i64] = xs.filter((x: i64): boolean => keep(x)).map((x: i64): i64 => elem_g(x)).reduce((a: i64, b: i64): i64 => combine(a, b));
+  match (out) {
+    Some(v) => {
+      return v;
+    },
+    None => {
+      return 0 as i64;
+    }
+  }
+}
+
+// The seedless `reduce` takes its accumulator from the first SURVIVING
+// element, so both loops have to find that element before they can start
+// combining — the `seeded` flag, not an index of 1.
+// The element functions have to reach the loop as values the compiler cannot
+// see through. Assigning a lambda straight to a local lets it be inlined into
+// the loop — verified in the emitted code, where that form contains no call at
+// all — and the variant then measures the same thing `loop` does. `map` and
+// `reduce` reach their `f` through a parameter, across a generic boundary
+// nothing devirtualizes, so the control has to pay that call too.
+//
+// Both arms of each picker compute the same value, so a run with `sel` set the
+// other way still checksums identically; what it cannot do is be folded.
+function pick_p(sel: i32): (i64) => boolean {
+  if (sel == 1) {
+    return (x: i64): boolean => keep(x + 0 as i64);
+  }
+  return (x: i64): boolean => keep(x);
+}
+
+function pick_g(sel: i32): (i64) => i64 {
+  if (sel == 1) {
+    return (x: i64): i64 => elem_g(x + 0 as i64);
+  }
+  return (x: i64): i64 => elem_g(x);
+}
+
+function pick_h(sel: i32): (i64, i64) => i64 {
+  if (sel == 1) {
+    return (a: i64, b: i64): i64 => combine(a + 0 as i64, b);
+  }
+  return (a: i64, b: i64): i64 => combine(a, b);
+}
+
+function run_closure_loop(sel: i32, xs: i64[]): i64 {
+  var p: (i64) => boolean = pick_p(sel);
+  var g: (i64) => i64 = pick_g(sel);
+  var h: (i64, i64) => i64 = pick_h(sel);
+  var acc: i64 = 0 as i64;
+  var seeded: boolean = false;
+  var i: i32 = 0;
+  while (i < xs.len()) {
+    var x: i64 = xs[i];
+    if (p(x)) {
+      var v: i64 = g(x);
+      if (seeded) {
+        acc = h(acc, v);
+      } else {
+        acc = v;
+        seeded = true;
+      }
+    }
+    i = i + 1;
+  }
+  return acc;
+}
+
+// The `i < xs.len()` spelling, for the reason given in map_map_reduce.fern's
+// run_loop.
+function run_loop(xs: i64[]): i64 {
+  var m: i64 = modulus();
+  var acc: i64 = 0 as i64;
+  var seeded: boolean = false;
+  var i: i32 = 0;
+  while (i < xs.len()) {
+    var x: i64 = xs[i];
+    if (x % (3 as i64) == 0 as i64) {
+      var v: i64 = (x * (5 as i64) + 7 as i64) % m;
+      if (seeded) {
+        acc = (acc + v) % m;
+      } else {
+        acc = v;
+        seeded = true;
+      }
+    }
+    i = i + 1;
+  }
+  return acc;
+}
+
+// How many elements survive the predicate, so the report can say what the
+// intermediate array the pipeline builds actually holds.
+function kept_count(xs: i64[]): i32 {
+  var c: i32 = 0;
+  var i: i32 = 0;
+  while (i < xs.len()) {
+    if (keep(xs[i])) {
+      c = c + 1;
+    }
+    i = i + 1;
+  }
+  return c;
+}
+
+function dispatch(variant: i32, sel: i32, xs: i64[]): i64 {
+  if (variant == 0) {
+    return run_pipeline(xs);
+  }
+  if (variant == 1) {
+    return run_closure_loop(sel, xs);
+  }
+  return run_loop(xs);
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+  var name: string = "pipeline";
+  if (argv.len() > 1) {
+    name = argv[1];
+  }
+  var variant: i32 = 0;
+  if (name == "closure_loop") {
+    variant = 1;
+  }
+  if (name == "loop") {
+    variant = 2;
+  }
+
+  var n: i32 = 4096;
+  if (argv.len() > 2) {
+    n = argv[2].parse_int_or(4096);
+  }
+  var rounds: i32 = 200;
+  if (argv.len() > 3) {
+    rounds = argv[3].parse_int_or(200);
+  }
+
+  // `sel` is 0 in every run this harness makes — the runner passes three
+  // arguments — but nothing at compile time can know that, which is exactly
+  // its job: it keeps the pickers above from folding to one known lambda.
+  var sel: i32 = 0;
+  if (argv.len() > 4) {
+    sel = 1;
+  }
+
+  var xs: i64[] = build_input(n);
+  var kept: i32 = kept_count(xs);
+
+  var samples: i64[] = [];
+  var p: i32 = 0;
+  while (p < rounds) {
+    samples = samples.append(0 as i64);
+    p = p + 1;
+  }
+
+  // The COLD mark: the first pass over the data, before the freelist holds
+  // anything to hand back. The steady-state counters below cannot see what
+  // an intermediate array costs in BYTES — by then the allocator is
+  // recycling the same blocks and the bump cursor never moves
+  // (docs/ALLOCATION-OBSERVABLE.md: a reclaiming loop is flat in bytes and
+  // linear in calls). This is the reading that answers "by how much".
+  var cold_a0: i64 = bench.alloc_count();
+  var cold_b0: i64 = bench.bump_bytes();
+  var checksum: i64 = dispatch(variant, sel, xs);
+  var cold_allocs: i64 = bench.allocs_after(cold_a0);
+  var cold_fresh: i64 = bench.fresh_bytes_after(cold_b0);
+
+  var at_allocs: i64 = bench.alloc_count();
+  var at_fresh: i64 = bench.bump_bytes();
+  var started_ns: i64 = monotonic_ns();
+  var r: i32 = 0;
+  while (r < rounds) {
+    var t0: i64 = monotonic_ns();
+    // Mixed in, not XORed: `c ^ c` collapses to zero on an even number of
+    // rounds, and a checksum that is zero half the time cannot catch a
+    // variant that skipped the work (examples/bench/README.md).
+    checksum = (checksum * (31 as i64) + dispatch(variant, sel, xs)) % modulus();
+    samples = samples.with(r, monotonic_ns() - t0);
+    r = r + 1;
+  }
+  var elapsed_ns: i64 = monotonic_ns() - started_ns;
+  var allocs: i64 = bench.allocs_after(at_allocs);
+  var fresh: i64 = bench.fresh_bytes_after(at_fresh);
+
+  var rep: bench.Report = bench.Report { name: name, iterations: rounds, wall_ns: elapsed_ns, samples_ns: cmp.sort(samples), allocs: allocs, fresh_bytes: fresh };
+  var elements: i64 = rounds as i64 * (n as i64);
+  print("{\"program\":\"filter_map_reduce\"" + ",\"variant\":\"" + name + "\"" + ",\"n\":" + n.to_string() + ",\"kept\":" + kept.to_string() + ",\"rounds\":" + rounds.to_string() + ",\"checksum\":" + checksum.to_string() + ",\"cold_allocs\":" + cold_allocs.to_string() + ",\"cold_fresh_bytes\":" + cold_fresh.to_string() + ",\"steady_allocs\":" + allocs.to_string() + ",\"steady_fresh_bytes\":" + fresh.to_string() + ",\"allocs_per_round_milli\":" + (allocs * (1000 as i64) / (rounds as i64)).to_string() + ",\"fresh_bytes_per_round\":" + (fresh / (rounds as i64)).to_string() + ",\"fresh_bytes_per_element_milli\":" + (fresh * (1000 as i64) / elements).to_string() + ",\"ns_per_round\":" + (elapsed_ns / (rounds as i64)).to_string() + ",\"ns_per_element_milli\":" + (elapsed_ns * (1000 as i64) / elements).to_string() + ",\"round_p50_ns\":" + rep.p50_ns().to_string() + ",\"round_p99_ns\":" + rep.p99_ns().to_string() + "}");
+  return 0;
+}

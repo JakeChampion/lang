@@ -17,6 +17,12 @@
 # opaque `invalid leading byte (0x43)` when it falls behind.
 FROM debian:bookworm
 
+# valgrind because the project's performance instrument is a retired-instruction
+# count (scripts/perf-bench), and callgrind is the only thing that produces one.
+# It runs NATIVELY or not at all: valgrind cannot run under qemu-user, so on an
+# arm64 base only the aarch64 leg is measurable here and the x86-64 count comes
+# from CI.
+#
 # qemu-user-static carries the user-mode emulators for BOTH arches, so one
 # image runs either leg. The x86-64 cross-gcc links the x86-64 ELF that the
 # native backend emits; on an arm64 base the aarch64 compiler is the system
@@ -29,6 +35,7 @@ RUN apt-get update \
       libc6-dev \
       make git \
       xz-utils curl ca-certificates gdb \
+      valgrind \
  && rm -rf /var/lib/apt/lists/* \
  && for t in qemu-x86_64 qemu-aarch64; do \
       [ -e "/usr/bin/$t" ] || ln -sf "/usr/bin/$t-static" "/usr/bin/$t"; \

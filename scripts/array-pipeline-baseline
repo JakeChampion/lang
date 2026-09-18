@@ -1,0 +1,244 @@
+#!/usr/bin/env bash
+# array-pipeline-baseline — measure examples/array_pipeline across every
+# compiler and backend this host can actually run, and write one report.
+#
+# Usage: array-pipeline-baseline [REPORT]
+#
+#   REPORT  where to write the `key<TAB>value` report (default: stdout).
+#
+# This is the experiment #9728 asks for: what the eager `std/array`
+# combinators cost today, against the hand-written loop, before any fusion
+# design is committed to. docs/ARRAY-PIPELINE-BASELINE-2026-09.md reports what
+# it found; this script is how the numbers are reproduced.
+#
+# WHAT IS MEASURED, AND WHY IN THAT ORDER
+#
+# The allocation counters are the primary metric and the portable one:
+# `__heap_alloc_count()` and `__heap_bump_bytes()` are deterministic for a
+# given (backend, program, n), so a row that differs between two backends is a
+# real difference and not a noisy host. docs/ALLOCATION-OBSERVABLE.md is the
+# contract — only the SHAPE (flat vs growing with n) is portable, never the
+# absolute number, so every program is run at n and 2n and the report carries
+# both.
+#
+# The static instruction count (.text) is the second deterministic metric, and
+# it is free: a count over assembly the compiler emitted anyway. The dynamic
+# one, retired instructions under callgrind, is the third — and it is the only
+# runtime number here a percentage can be read off, so it is measured wherever
+# valgrind can run natively.
+#
+# Wall time is recorded LAST and labelled noisy, because it is. Every figure
+# here is a median over $RUNS runs of the same binary; on an unpinned laptop
+# the spread between the fastest and slowest run of an UNCHANGED binary has
+# been measured at over 1.6x, which is larger than most of the differences
+# this experiment is looking for. Treat a wall-time row as an order of
+# magnitude, and reach for scripts/perf-bench's callgrind Ir count when a
+# percentage has to carry a decision.
+#
+# WHAT IS SKIPPED, AND LOUDLY
+#
+# A backend this host cannot run is recorded as a `# skipped:` directive
+# naming what was missing, never omitted. A report that quietly measures three
+# backends while claiming four is worse than one that measures three and says
+# so: docs/ALLOCATION-OBSERVABLE.md exists because the x86-64-only Go gates
+# could not see a backend that allocated differently.
+set -uo pipefail
+
+cd "$(dirname "$0")/.."
+ROOT="$PWD"
+
+REPORT="${1:-/dev/stdout}"
+PROG_DIR="${FERN_ARRAY_PIPELINE_DIR:-examples/array_pipeline}"
+# n and 2n. The allocation question is whether the count and the byte volume
+# scale with the input, which needs both and cannot be answered from either.
+N="${FERN_ARRAY_PIPELINE_N:-4096}"
+N2=$((N * 2))
+ROUNDS="${FERN_ARRAY_PIPELINE_ROUNDS:-200}"
+# Callgrind is roughly a 50x slowdown, so the Ir leg runs its own much smaller
+# round count. The number is a per-round cost either way; what matters is that
+# every variant is measured at the SAME count, not that it matches the
+# wall-time leg's.
+IR_ROUNDS="${FERN_ARRAY_PIPELINE_IR_ROUNDS:-10}"
+RUNS="${FERN_ARRAY_PIPELINE_RUNS:-5}"
+
+# Which compilers to measure. Overridable because the Linux legs are run
+# inside scripts/devbox, where bin/ is the HOST's bind-mounted directory and
+# writing a Linux binary over bin/fern would leave the host without one.
+NATIVE_BIN="${FERN_NATIVE_BIN:-$ROOT/bin/fern}"
+SELFHOST_BIN="${FERN_SELFHOST_BIN:-$ROOT/bin/fern-selfhost}"
+
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+
+# program:variant,variant,...
+PROGRAMS=(
+  "map_map_reduce:pipeline,closure_loop,loop"
+  "filter_map_reduce:pipeline,closure_loop,loop"
+  "own_map_inplace:map_own,with_own,with_borrowed"
+)
+
+log() { echo "$*" >&2; }
+emit() { printf '%s\t%s\n' "$1" "$2" >> "$work/report"; }
+note() { printf '# %s\n' "$*" >> "$work/report"; }
+
+host_os="$(uname -s)"
+host_arch="$(uname -m)"
+
+# runner_for TARGET prints the command prefix needed to execute a binary built
+# for TARGET on this host, or nothing when the host cannot run it at all.
+# A native ISA+OS match runs bare; a matching ISA under a different OS does
+# not, which is why the Darwin/Linux split is explicit rather than arch-only.
+runner_for() {
+  case "$1" in
+    arm64-darwin)
+      if [ "$host_os" = Darwin ] && [ "$host_arch" = arm64 ]; then echo "-"; fi ;;
+    arm64-linux)
+      if [ "$host_os" = Linux ] && { [ "$host_arch" = aarch64 ] || [ "$host_arch" = arm64 ]; }; then
+        echo "-"
+      elif command -v qemu-aarch64 >/dev/null 2>&1; then
+        echo "qemu-aarch64"
+      fi ;;
+    x86-64-linux)
+      if [ "$host_os" = Linux ] && [ "$host_arch" = x86_64 ]; then
+        echo "-"
+      elif command -v qemu-x86_64 >/dev/null 2>&1; then
+        echo "qemu-x86_64"
+      fi ;;
+    wasm32-wasi)
+      if command -v wasmtime >/dev/null 2>&1; then echo "wasmtime run --"; fi ;;
+  esac
+}
+
+# compile COMPILER TARGET SRC OUT — the two compilers take different command
+# lines: the self-hosted one wants the stdlib root positionally and absolute
+# paths for both.
+compile() {
+  local compiler="$1" target="$2" src="$3" out="$4"
+  if [ "$compiler" = native ]; then
+    "$NATIVE_BIN" -target "$target" -o "$out" "$ROOT/$src" 2>&1
+  else
+    "$SELFHOST_BIN" -target "$target" -o "$out" "$ROOT/$src" "$ROOT/internal/stdlib" 2>&1
+  fi
+}
+
+# measure COMPILER TARGET PROGRAM VARIANT N — compile once, run $RUNS times,
+# emit the deterministic allocation rows plus a median wall-time row.
+measure() {
+  local compiler="$1" target="$2" prog="$3" variant="$4" n="$5"
+  local runner; runner="$(runner_for "$target")"
+  local bin="$work/$compiler.$target.$prog"
+  local key="$compiler/$target/$prog/$variant/n$n"
+
+  # -f, not -x: a wasm module is not an executable file, and testing for the
+  # executable bit skipped every wasm measurement in silence — which is the
+  # failure this script's own header calls worse than no lane at all.
+  if [ ! -f "$bin" ]; then
+    note "missing: $key — $compiler produced no artifact for $target"
+    return 0
+  fi
+
+  local cmd=()
+  [ "$runner" = "-" ] || read -r -a cmd <<< "$runner"
+  cmd+=("$bin" "$variant" "$n" "$ROUNDS")
+
+  local out; out="$("${cmd[@]}" 2>&1)"
+  if [ $? -ne 0 ] || [ -z "$out" ]; then
+    note "failed: $key — ${out:-no output}"
+    return 0
+  fi
+
+  # The counters and the checksum are deterministic, so one run establishes
+  # them and the remaining runs only contribute wall-time samples.
+  local field
+  # cold_* is the FIRST pass, before the freelist holds anything; steady_* is
+  # every later round. The intermediate arrays are bytes in the first and
+  # nothing in the second, so a report carrying only one of them cannot say
+  # what a stage costs.
+  for field in checksum cold_allocs cold_fresh_bytes steady_allocs steady_fresh_bytes \
+               allocs_per_round_milli fresh_bytes_per_round fresh_bytes_per_element_milli; do
+    emit "$key.$field" "$(sed -n "s/.*\"$field\":\([0-9-]*\).*/\1/p" <<< "$out")"
+  done
+
+  # Retired instructions, the project's performance instrument
+  # (scripts/perf-bench). Deterministic to the digit for a given commit, which
+  # is the whole reason it is here: the wall-time rows below cannot separate a
+  # 20% difference from a busy host, and this can.
+  #
+  # NATIVE EXECUTION ONLY. valgrind does not run under qemu-user, so a
+  # cross-target leg gets no Ir row rather than a wrong one, and wasm has no
+  # callgrind at all.
+  if [ "$runner" = "-" ] && command -v valgrind >/dev/null 2>&1; then
+    local cg="$work/cg.out"
+    valgrind --tool=callgrind --callgrind-out-file=/dev/null \
+      "$bin" "$variant" "$n" "$IR_ROUNDS" > /dev/null 2> "$cg" || true
+    local ir; ir="$(sed -n 's/.*I *refs: *//p' "$cg" | tr -d ', ' | head -1)"
+    if [ -n "$ir" ]; then
+      emit "$key.ir_rounds${IR_ROUNDS}" "$ir"
+    else
+      note "no-callgrind: $key produced no instruction count"
+    fi
+  fi
+
+  # round_p50_ns, not the mean: one descheduled round drags a mean and leaves
+  # a median alone, and on an unpinned host there is always one.
+  local samples=() r
+  samples+=("$(sed -n 's/.*"round_p50_ns":\([0-9]*\).*/\1/p' <<< "$out")")
+  for ((r = 1; r < RUNS; r++)); do
+    out="$("${cmd[@]}" 2>&1)" || continue
+    samples+=("$(sed -n 's/.*"round_p50_ns":\([0-9]*\).*/\1/p' <<< "$out")")
+  done
+  local median; median="$(printf '%s\n' "${samples[@]}" | sort -n | awk '{a[NR]=$1} END {print a[int((NR+1)/2)]}')"
+  local spread; spread="$(printf '%s\n' "${samples[@]}" | sort -n | awk '{a[NR]=$1} END {printf "%.2f", a[NR]/a[1]}')"
+  emit "$key.round_p50_ns_median" "$median"
+  emit "$key.round_p50_ns_spread" "$spread"
+}
+
+{
+  echo "# scripts/array-pipeline-baseline report"
+  echo "# host $host_os/$host_arch, n=$N and n=$N2, rounds=$ROUNDS, wall-time runs=$RUNS"
+  echo "# commit $(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+} > "$work/report"
+
+for compiler in native selfhost; do
+  bin="$NATIVE_BIN"; [ "$compiler" = selfhost ] && bin="$SELFHOST_BIN"
+  if [ ! -x "$bin" ]; then
+    note "skipped: compiler $compiler — $bin is not built (make ${compiler/native/build})"
+    continue
+  fi
+  for target in arm64-darwin arm64-linux x86-64-linux wasm32-wasi; do
+    runner="$(runner_for "$target")"
+    if [ -z "$runner" ]; then
+      note "skipped: $compiler/$target — this host has no way to execute it"
+      continue
+    fi
+    for entry in "${PROGRAMS[@]}"; do
+      prog="${entry%%:*}"; variants="${entry#*:}"
+      src="$PROG_DIR/$prog.fern"
+      out="$work/$compiler.$target.$prog"
+      if ! err="$(compile "$compiler" "$target" "$src" "$out")"; then
+        note "failed: $compiler/$target/$prog did not compile — ${err%%$'\n'*}"
+        continue
+      fi
+      # The static instruction count, from the same compiler and target that
+      # produced the binary. Free, deterministic, and it moves when codegen
+      # density moves — the half wall time cannot see.
+      if [ "$compiler" = native ] && [ "${target#wasm}" = "$target" ]; then
+        asm="$work/$compiler.$target.$prog.s"
+        if "$NATIVE_BIN" -target "$target" "$ROOT/$src" > "$asm" 2>/dev/null; then
+          emit "$compiler/$target/$prog.text_instructions" \
+            "$(grep -cE '^[[:space:]]+[a-z]' "$asm")"
+        fi
+      fi
+      log "measuring $compiler/$target/$prog"
+      IFS=',' read -r -a vs <<< "$variants"
+      for variant in "${vs[@]}"; do
+        measure "$compiler" "$target" "$prog" "$variant" "$N"
+        measure "$compiler" "$target" "$prog" "$variant" "$N2"
+      done
+    done
+  done
+done
+
+sort -k1,1 -t$'\t' "$work/report" | grep -v '^#' > "$work/sorted" || true
+{ grep '^#' "$work/report"; cat "$work/sorted"; } > "$REPORT"
+log "array-pipeline-baseline: wrote $REPORT"

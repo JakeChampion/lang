@@ -1,0 +1,171 @@
+// examples/array_pipeline/own_map_inplace.fern — pipeline 3 of #9728.
+//
+// Not a fusion question. The result of a same-shape `map` has to exist, so
+// what is being asked is whether it can BE the input's buffer: an `own` array
+// in, a same-shape transform, an array of the same length back out. Pipelines
+// 1 and 2 ask whether an intermediate can disappear; this one asks whether the
+// donor can be taken over.
+//
+// Three variants, threaded the same way — `xs = transform(xs)` each round, so
+// the argument dies at the call and reaches the callee unique:
+//
+//   map_own        `own xs` handed straight to `xs.map(f)`
+//   with_own       the hand-written same-shape loop, `xs = xs.with(i, f(xs[i]))`
+//   with_borrowed  the same loop over a BORROWED parameter, which is what
+//                  `.with` costs when the receiver is not uniquely owned
+//
+// with_borrowed is the control. Without it "with_own allocates nothing" is
+// satisfiable by a `.with` that never copies for anyone, and the reuse would
+// not have been demonstrated to depend on ownership at all.
+//
+// `with_own` is annotated `fip`, so the native compiler's E068 pass is
+// asserting the space claim at compile time rather than the measurement
+// asserting it after the fact. `map_own` is deliberately NOT annotated: what
+// happens when it is belongs in the report, not in a file that has to compile.
+import "core/cmp";
+import "std/bench";
+import "std/string";
+
+// `fip` all the way down: E053 requires a `fip` function to call only `fip`
+// functions, so the element transform and the modulus it reads are annotated
+// too. Neither allocates, so the annotation is describing them, not
+// constraining them.
+fip function modulus(): i64 {
+  return 1000003 as i64;
+}
+
+fip function elem_f(x: i64): i64 {
+  return (x * (3 as i64) + 1 as i64) % modulus();
+}
+
+function build_input(n: i32): i64[] {
+  var xs: i64[] = [];
+  var i: i32 = 0;
+  while (i < n) {
+    xs = xs.append(i as i64 * (2654435761 as i64) % modulus());
+    i = i + 1;
+  }
+  return xs;
+}
+
+// The combinator spelling. `own` licenses the callee to consume `xs`, but
+// `std/array`'s `map` builds its result from `[]` and appends, so there is no
+// construction site for the donor's box to be paired with.
+function via_map_own(own xs: i64[]): i64[] {
+  return xs.map((x: i64): i64 => elem_f(x));
+}
+
+// The hand-written same-shape loop. `fip` is a compile-time claim that this
+// function allocates nothing at all, checked by E068 on the native compiler —
+// not a comment, and not something the benchmark has to discover.
+fip function via_with_own(own xs: i64[], n: i32): i64[] {
+  var i: i32 = 0;
+  while (i < n) {
+    xs = xs.with(i, elem_f(xs[i]));
+    i = i + 1;
+  }
+  return xs;
+}
+
+// The same loop with nothing owned. The receiver is live in the caller, so
+// `.with` takes the copy-on-write path on the first write and the function
+// pays for a whole fresh buffer.
+function via_with_borrowed(xs: i64[], n: i32): i64[] {
+  var out: i64[] = xs;
+  var i: i32 = 0;
+  while (i < n) {
+    out = out.with(i, elem_f(out[i]));
+    i = i + 1;
+  }
+  return out;
+}
+
+// One place the variant is chosen, so the warm round and the timed round
+// cannot drift apart — and so `main` has one branch on it rather than two
+// copies of three.
+function apply(variant: i32, own xs: i64[], n: i32): i64[] {
+  if (variant == 0) {
+    return via_map_own(xs);
+  }
+  if (variant == 1) {
+    return via_with_own(xs, n);
+  }
+  return via_with_borrowed(xs, n);
+}
+
+function digest(xs: i64[]): i64 {
+  var d: i64 = 0 as i64;
+  var i: i32 = 0;
+  while (i < xs.len()) {
+    d = (d * (31 as i64) + xs[i]) % modulus();
+    i = i + 1;
+  }
+  return d;
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+  var name: string = "map_own";
+  if (argv.len() > 1) {
+    name = argv[1];
+  }
+  var variant: i32 = 0;
+  if (name == "with_own") {
+    variant = 1;
+  }
+  if (name == "with_borrowed") {
+    variant = 2;
+  }
+
+  var n: i32 = 4096;
+  if (argv.len() > 2) {
+    n = argv[2].parse_int_or(4096);
+  }
+  var rounds: i32 = 200;
+  if (argv.len() > 3) {
+    rounds = argv[3].parse_int_or(200);
+  }
+
+  var xs: i64[] = build_input(n);
+
+  var samples: i64[] = [];
+  var p: i32 = 0;
+  while (p < rounds) {
+    samples = samples.append(0 as i64);
+    p = p + 1;
+  }
+
+  // One untimed warm round. It also advances the data by one application of
+  // `f`, identically in all three variants, so the checksums still agree.
+  // The COLD mark: the first pass over the data, before the freelist holds
+  // anything to hand back. The steady-state counters below cannot see what
+  // an intermediate array costs in BYTES — by then the allocator is
+  // recycling the same blocks and the bump cursor never moves
+  // (docs/ALLOCATION-OBSERVABLE.md: a reclaiming loop is flat in bytes and
+  // linear in calls). This is the reading that answers "by how much".
+  var cold_a0: i64 = bench.alloc_count();
+  var cold_b0: i64 = bench.bump_bytes();
+  xs = apply(variant, xs, n);
+  var cold_allocs: i64 = bench.allocs_after(cold_a0);
+  var cold_fresh: i64 = bench.fresh_bytes_after(cold_b0);
+
+  var at_allocs: i64 = bench.alloc_count();
+  var at_fresh: i64 = bench.bump_bytes();
+  var started_ns: i64 = monotonic_ns();
+  var r: i32 = 0;
+  while (r < rounds) {
+    var t0: i64 = monotonic_ns();
+    xs = apply(variant, xs, n);
+    samples = samples.with(r, monotonic_ns() - t0);
+    r = r + 1;
+  }
+  var elapsed_ns: i64 = monotonic_ns() - started_ns;
+  var allocs: i64 = bench.allocs_after(at_allocs);
+  var fresh: i64 = bench.fresh_bytes_after(at_fresh);
+  var checksum: i64 = digest(xs);
+
+  var rep: bench.Report = bench.Report { name: name, iterations: rounds, wall_ns: elapsed_ns, samples_ns: cmp.sort(samples), allocs: allocs, fresh_bytes: fresh };
+  var elements: i64 = rounds as i64 * (n as i64);
+  print("{\"program\":\"own_map_inplace\"" + ",\"variant\":\"" + name + "\"" + ",\"n\":" + n.to_string() + ",\"rounds\":" + rounds.to_string() + ",\"checksum\":" + checksum.to_string() + ",\"cold_allocs\":" + cold_allocs.to_string() + ",\"cold_fresh_bytes\":" + cold_fresh.to_string() + ",\"steady_allocs\":" + allocs.to_string() + ",\"steady_fresh_bytes\":" + fresh.to_string() + ",\"allocs_per_round_milli\":" + (allocs * (1000 as i64) / (rounds as i64)).to_string() + ",\"fresh_bytes_per_round\":" + (fresh / (rounds as i64)).to_string() + ",\"fresh_bytes_per_element_milli\":" + (fresh * (1000 as i64) / elements).to_string() + ",\"ns_per_round\":" + (elapsed_ns / (rounds as i64)).to_string() + ",\"ns_per_element_milli\":" + (elapsed_ns * (1000 as i64) / elements).to_string() + ",\"round_p50_ns\":" + rep.p50_ns().to_string() + ",\"round_p99_ns\":" + rep.p99_ns().to_string() + "}");
+  return 0;
+}
