@@ -131,6 +131,41 @@ function main(): i32 { return run([1 as i64, 2 as i64]) as i32; }`)
 	}
 }
 
+// The prefix family. `scan` is free-function only — std/array declares no
+// method form — so this is also the one case that exercises the `array__`
+// spelling rather than `__method_Array_`, and the accept set has to carry
+// both or the operator is recognised in one program shape and not the other.
+//
+// It was the family with no test when the recogniser landed, which is how a
+// pass can ship claiming a minimum viable set it has only demonstrated four
+// fifths of.
+func TestRecognizePrefixScan(t *testing.T) {
+	p := lowerPipelineSrc(t, `import "std/array";
+function run(xs: i64[]): i64 {
+  var sums: i64[] = array.scan(xs, 0 as i64, (a: i64, b: i64): i64 => a + b);
+  var out: Option[i64] = sums.reduce((a: i64, b: i64): i64 => a + b);
+  match (out) { Some(v) => { return v; }, None => { return 0 as i64; } }
+}
+function main(): i32 { return run([1 as i64, 2 as i64]) as i32; }`)
+
+	got := shapesIn(t, p, "run")
+	want := "scan(n->n) -> reduce(n->1)"
+	if len(got) != 1 || got[0] != want {
+		t.Errorf("recognized %v, want [%s]:\n%s", got, want, ir.FormatArrayPipelines(p))
+	}
+	// docs/ARRAY-FUSION-OPERATORS.md makes scan a SINK that materializes:
+	// its output is the same length as its input, so it cannot be fused away
+	// and must be counted as materializing like any other array-producing
+	// stage. A cardinality that said otherwise would mislead the pass that
+	// reads it.
+	for _, pl := range ir.RecognizeArrayPipelines(p) {
+		if pl.Func == "run" && pl.Materializes() != 1 {
+			t.Errorf("scan -> reduce materializes %d stages, want 1 (scan's output)",
+				pl.Materializes())
+		}
+	}
+}
+
 // NEGATIVE: an intermediate read twice is not one traversal.
 //
 // This is the case that decides whether the pass is safe to build fusion on.
