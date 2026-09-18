@@ -216,10 +216,17 @@ monomorphises at `U`. The trigger is narrowly `reduce` chained directly onto
 `map(f).map(g)` and `map(f).fold(z, g)`. The fix is about nine lines in one
 function, and it is the next PR.
 
-On `own_map_inplace`, which does build, the two compilers agree exactly on the
-checksum and on every allocation figure — including `with_own`'s zero, so the
-self-host compiler reaches the same allocation-free steady state. What differs
-is the code:
+On `own_map_inplace`, which does build, the two compilers agree on the checksum
+and on the allocation SHAPE — `with_own` is zero under both, so the self-host
+compiler reaches the same allocation-free steady state, and `with_borrowed`
+pays exactly one copy per round under both. They do not agree on the volume,
+which `docs/ALLOCATION-OBSERVABLE.md` says is per-implementation and must never
+be asserted: the self-host compiler spends one more allocator call on the
+combinator (13 cold, 2,600 steady against 12 and 2,400) and hands out fewer
+fresh bytes for it (34,896 against 52,224), which is a different regrow policy
+rather than a defect.
+
+What differs much more is the code:
 
 | variant | native Ir | self-host Ir | self-host ÷ native |
 | --- | ---: | ---: | ---: |
