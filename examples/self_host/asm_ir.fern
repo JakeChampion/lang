@@ -2024,9 +2024,14 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // arena (exit 137) — the self-host runtime lagging the native two-tier design. This
     // array is the large tier: LINEAR 512-KiB classes, class = round_up(size, 512 KiB)
     // >> 19 (1..2048 for 512 KiB..1 GiB), so 2049 slots suffice (2560 for headroom).
-    // A power-of-two/log2 binning is deliberately AVOIDED: the self-host x86_gas
-    // assembler (used by the capstone self-assembly test) has no `bsr` and only
-    // immediate-count shifts, so the linear scheme uses only leaq/andq/shrq-$imm.
+    // Linear costs two things against native's 3-significant-bit tier: a 513-KiB
+    // request occupies 1 MiB, and an accumulator grown in place copies every
+    // 512 KiB rather than every ~12.5%, so growing one stays O(n^2) where
+    // native's is amortised linear (#9077). Geometric binning was once
+    // impossible here — the x86_gas assembler had no `bsr` and no `%cl` shift —
+    // but `%cl` shifts are supported now (x86_shift_r_cl; the emitted runtime
+    // uses `shldq %cl` above), leaving only `bsr` unwired in the gas front-end,
+    // and even its encoder (x86_bsr_r32) already exists.
     // Each large ALLOC rounds the request up to its class capacity (a 512-KiB multiple)
     // and bumps at THAT — so every block in a class has one capacity and any freed block
     // satisfies any same-class request; each large FREE re-derives the class from the
@@ -2112,8 +2117,9 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // multiple (the class capacity — bump AT it so every block in a class has one
     // size, so any freed block satisfies any same-class request), derive class =
     // cap >> 19, and pop the large freelist; empty falls through to the bump with
-    // %rdi = capacity. >1 GiB is bump-only. Linear (no bsr / no %cl shift) so the
-    // self-host x86_gas assembler can encode it. %rcx/%rdx are already saved.
+    // %rdi = capacity. >1 GiB is bump-only. Linear rather than geometric; see
+    // the note on __fern_large_freelist above for what that costs and why it is
+    // no longer forced. %rcx/%rdx are already saved.
     s = s.write(".Lalloc_large:\n");
     s = s.write("    cmpq $0x40000000, %rdi\n");        // > 1 GiB: bump exact, no freelist
     s = s.write("    ja .Lalloc_nofl\n");
