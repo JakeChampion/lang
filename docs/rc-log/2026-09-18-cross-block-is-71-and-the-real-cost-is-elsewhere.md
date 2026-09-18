@@ -61,30 +61,56 @@ Emitted-line counts mislead here twice over, and both traps cost time:
   they cost assembly time and nothing else, and no `jmp` targets the next
   label on either path, so the obvious peephole is already done.
 
-## The lead this opens
+## The lead this opens — and why it is not "the typed path is 24.6% wasteful"
 
-Why the typed path reclaims 3.7x as often is not yet known and is the next
-thing to measure. The candidates, in the order they should be probed:
+**The baseline aborts.** A compiler built through the AST lowering exits 134 —
+`__fern_oob_abort` — compiling `literate.fern`, `printer.fern`, `lexer.fern`,
+`parser.fern` and `checker.fern`, on all three targets, while the same sources
+built through the semantic path compile every one of them. It reproduces on
+`main` with no local changes and nothing gates it, because no test builds the
+whole compiler through the AST lowering and RUNS the result. #9763.
 
-1. **Borrow inference.** The AST path proves more values borrowed, so they
-   need no drop at all. If the unit planner is counting values the AST path
-   borrows, that is one change with a large multiplier.
-2. **Helper granularity.** 467 drop helpers against 131 suggests the typed
-   path emits a distinct deep drop per type where the AST path shares or
-   inlines a shallower one.
+So the table above compares against a lowering with a known miscompile, and the
+obvious reading of it is not available. The AST path emits 3.7x fewer deep drop
+helper calls and 4.7x fewer uniqueness tests **and its output faults on a
+bounds check** — and a missing retain is exactly what turns a live value into a
+freed one and an index into an out-of-bounds index. At least some of that
+"extra" reclaim traffic on the typed path is correctness the AST path is
+missing, which is also why every reclaim gap list is clean on both compilers
+(`selfhost-leak-matrix`, `-arm64`, `construction-retain`, `container-sink`:
+150, 150, 35 and 21 cells) — those grids are small programs the AST path still
+gets right.
+
+What survives as a lead is the question, not the number: is any of the typed
+path's reclaim traffic avoidable? The candidates, in the order they should be
+probed, each now needing its own correctness argument rather than a diff
+against a broken baseline:
+
+1. **Borrow inference.** A value proved borrowed needs no drop at all.
+2. **Helper granularity.** 467 drop helpers against 131 suggests a distinct
+   deep drop per type where one shared shallower helper would do.
 3. **The uniqueness test per field.** `__sem_drop_T` tests `rc_is_unique` on
-   each child before recursing; at 41,545 calls that test is itself a
-   measurable fraction of the delta.
+   each child before recursing; 41,545 calls is a measurable fraction by
+   itself.
 
-None of it is a correctness gap — every reclaim gap list (`selfhost-leak-
-matrix`, `-arm64`, `construction-retain`, `container-sink`) is clean on both
-compilers, 150, 150, 35 and 21 cells — so this is a performance question
-about the path that is becoming the default, which is exactly the trade
-`CLAUDE.md` says to weigh explicitly rather than assume.
+A worked non-example, because it looked like the whole answer for an hour:
+`asmcore.EmitState.write` returns its own borrowed receiver unchanged, and
+`emit_function_via_ir_named` carries 546 `rc_is_unique` + `__sem_drop_EmitState`
+pairs that the AST path does not emit at all. Reduced to a nine-line fixture
+the direction REVERSES — the typed path emits 2 deep drops where the AST path
+emits 3 — so "the typed path fails to elide a returned borrow" is not what
+those 546 are. Whatever they are, the fixture does not have it, and the
+hypothesis was refuted in ten minutes by writing one.
 
 ## Trap
 
-Both prices in the first table were stale by the time they were quoted, and
-the entry that quoted them did not say when they had been taken. A ceiling
-measured against an older rule set is not a ceiling. **Re-measure before
-building, and put the date of the measurement next to the number.**
+Both prices in the first table were stale by the time they were quoted, and the
+entry that quoted them did not say when they had been taken. A ceiling measured
+against an older rule set is not a ceiling. **Re-measure before building, and
+put the date of the measurement next to the number.**
+
+The second trap is larger and is the reason this section was rewritten: the
+first draft read the call-count table as the typed path's waste, having never
+run the baseline. **A differential against another implementation is worth
+nothing until that implementation is known to be correct** — and here it took
+one `echo $?` to find out that it was not.
