@@ -37,10 +37,11 @@
 //
 // Codegen routes through the IR path (asm_ir / asm_arm64_ir / wasm_ir,
 // each IR-or-error per #3457) for every target. Register allocation per
-// function (`-backend ssa`) is the DEFAULT on arm64 and available on
-// x86-64; `-backend flat` names the stack machine, which is the default
-// everywhere else. A function outside the register path's subset falls back
-// to the stack machine on its own. See docs/SELFHOST-SSA-BACKEND.md.
+// function (`-backend ssa`) is the DEFAULT on both native ISAs;
+// `-backend flat` names the stack machine, which is the default on wasm,
+// the one target with no register path. A function outside the register
+// path's subset falls back to the stack machine on its own. See
+// docs/SELFHOST-SSA-BACKEND.md.
 //
 // It is a drop-in-shaped replacement for cmd/fern: one binary hosting
 // both the x86-64 (asm_ir.fern) and arm64 (asm_arm64.fern) emitters,
@@ -2095,15 +2096,15 @@ function run(): i32 {
         eprint("fern: -backend ssa is not available for -target " + target + " (available for: arm64-linux, arm64-darwin, arm64-android, x86-64-linux)\n");
         return 2;
     }
-    // The target's default emitter. arm64 is on the register path: its output
-    // is smaller than the stack machine's (0.94x the instructions, 0.93x the
-    // linked binary) and the compiler it builds is 30-49% faster, at 1.04x the
-    // self-build time against a 1.5x ceiling
-    // (docs/ssa-log/2026-09-17-arm64-meets-every-flip-condition.md). x86-64
-    // stays on the stack machine until its binary meets the same condition;
-    // its excess is frame traffic from half arm64's register budget.
+    // The target's default emitter. Both native ISAs are on the register path:
+    // it emits 0.69x the stack machine's instructions on arm64 and 0.92x on
+    // x86-64, links a smaller compiler on both, and the compiler it builds is
+    // 40-53% faster, at 1.02x the self-build time against a 1.5x ceiling
+    // (docs/ssa-log/2026-09-18-the-trivial-phi-was-the-whole-gap.md). wasm has
+    // no register path and stays on the stack machine.
     if (backend == "") {
-        if (platforms.for_target(target).isa == "arm64") { backend = "ssa"; } else { backend = "flat"; }
+        var isa: string = platforms.for_target(target).isa;
+        if (isa == "arm64" || isa == "x86-64") { backend = "ssa"; } else { backend = "flat"; }
     }
 
     // `-fmt FILE...` is per-file, gofmt-style: every positional is formatted in

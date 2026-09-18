@@ -665,17 +665,15 @@ func TestSelfHostSSABackendRefusesOtherTargets(t *testing.T) {
 	if !strings.Contains(string(out), "unknown -backend: nope") {
 		t.Errorf("unknown backend not reported: %s", out)
 	}
-	// Omitting -backend selects the target's default emitter, which is not
-	// the same on both: arm64 is on the register path since its output is
-	// smaller and its compiler faster than the stack machine's, and x86-64
-	// is still on the stack machine. Naming the default explicitly must
-	// reproduce it byte for byte, and naming the other one must not.
+	// Omitting -backend selects the target's default emitter, which is the
+	// register path on both native ISAs — it emits less than the stack
+	// machine on each and the compiler it builds is faster. wasm has no
+	// register path and is not among the targets a host can run output for
+	// here. Naming the default explicitly must reproduce it byte for byte,
+	// and naming the other one must not.
 	for _, tg := range h.targets {
-		want := "flat"
-		other := "ssa"
-		if strings.HasPrefix(tg.target, "arm64-") {
-			want, other = "ssa", "flat"
-		}
+		want := "ssa"
+		other := "flat"
 		base := strings.ReplaceAll(tg.target, "-", "_")
 		h.compileWith(t, tg, src, filepath.Join(dir, base+"_dflt"))
 		h.compileWith(t, tg, src, filepath.Join(dir, base+"_want"), "-backend", want)

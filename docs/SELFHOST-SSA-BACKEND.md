@@ -193,14 +193,16 @@ path needs `build_func` any more. In order:
 4. The default flip, on the conditions native's flip is held to: the binary
    at or under flat's, compile time within a stated multiple, the corpus
    lane clean on both targets. Native's flat retirement waits on this
-   (#4112, the 2026-09-16 comment). **arm64 now meets all three** — binary
-   0.93x, self-build 1.04x against a 1.5x ceiling, corpus clean on both
-   targets — and the numbers are in
-   `docs/ssa-log/2026-09-17-arm64-meets-every-flip-condition.md`. x86-64
-   meets the corpus condition and not the size one, so the flip is per
-   target. **Taken for arm64**: omitting `-backend` selects the register
-   path there and the stack machine everywhere else. `-backend flat` still
-   names the stack machine on arm64, and a function the register path
+   (#4112, the 2026-09-16 comment). **Taken on both native ISAs.** arm64 met
+   all three first (binary 0.93x, self-build 1.04x against a 1.5x ceiling,
+   corpus clean on both targets:
+   `docs/ssa-log/2026-09-17-arm64-meets-every-flip-condition.md`); x86-64
+   followed once the trivial-phi folding took it to 0.92x the instructions
+   and 0.80x the linked binary
+   (`docs/ssa-log/2026-09-18-the-trivial-phi-was-the-whole-gap.md`).
+   Omitting `-backend` selects the register path on either; wasm, which has
+   no register path, stays on the stack machine. `-backend flat` still
+   names the stack machine everywhere, and a function the register path
    declines still falls back to it on its own.
 
 ## The target

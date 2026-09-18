@@ -14,9 +14,9 @@
 # change to the assembler itself, where an asm-text hash would be invariant by
 # construction and prove nothing. (`--ssa` builds every case with
 # `-backend ssa`, the register-allocating emitter, and hashes the same
-# artifact. Since the arm64 flip that is also what the DEFAULT sweep emits
-# for arm64, so `--ssa` now differs from it only on x86-64, where the stack
-# machine is still the default.)
+# artifact. Both native ISAs default to `-backend ssa` now, so `--ssa` and
+# the default sweep emit the same bytes for them; the flag is what keeps the
+# mode meaningful if a target's default ever moves back.)
 #
 # This exists because the compiler's own type system cannot catch the mistakes
 # a mechanical refactor makes. Whole families of values here share one type —
