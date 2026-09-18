@@ -5,6 +5,8 @@
 // also checks the catalogue's example really does produce the error
 // it documents.
 // error[E065]: the backing string is reclaimed when "greeting" returns
+function name(): string { return "world"; }
+
 function greeting(): str {
     var s: string = "hello, " + name();
     return s;                 // `str` view of local `s` — dangles

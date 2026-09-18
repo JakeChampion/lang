@@ -500,6 +500,14 @@ When editing inference / checker / `Ty` / `EmitState`, edit `asmcore.fern` once
 — it is *not* mirrored in the backends. Anything compiling those backends must
 also provide `asmcore.fern`.
 
+**Two termios tests fail under qemu and pass on real arm64.**
+`TestArm64Termios` and `TestArm64SSATermios` exit 21 locally — a control byte
+written with `termios_set` does not read back through `termios_get` — while
+`TestX86_64Termios` runs the same program on the same pty and passes, and CI's
+arm64 lane, which runs natively, is green. It is qemu-user's ioctl emulation,
+not a Fern defect, and it is not worth chasing: a full local `internal/e2e`
+therefore reports two failures CI never shows.
+
 ## WASM toolchain
 
 Pinned in `mise.toml` (wasmtime, wasm-tools and the preview1 adapter — the
