@@ -1155,4 +1155,45 @@ function main(): i32 {
     return t % 7;
 }
 `},
+
+	// The `@` whole-value binder. It names the scrutinee itself rather than a
+	// projection of it, so the arm holds no reference of its own and the
+	// scrutinee has to stay live past the payload name that would otherwise
+	// end it — `whole_after_payload` reads `w` after `c`, and
+	// `whole_as_value` carries `w` out of the match as the arm's value.
+	{name: "the-at-binder-in-a-match-arm", atLeast: 4, noLeak: true, src: `
+enum Shape { Circle(string), Square(string) }
+
+function label(s: Shape): string {
+    match (s) {
+        Circle(c) => { return c; },
+        Square(q) => { return q; }
+    }
+}
+
+function whole_after_payload(s: Shape): i32 {
+    match (s) {
+        w @ Circle(c) => { return c.len() + label(w).len(); },
+        _ => { return 0; }
+    }
+}
+
+function whole_as_value(s: Shape): Shape {
+    return match (s) {
+        w @ Circle(v) => w,
+        w2 @ Square(v2) => w2
+    };
+}
+
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) {
+        t = t + whole_after_payload(Shape.Circle("abc"));
+        t = t + label(whole_as_value(Shape.Square("wxyz"))).len();
+        i = i + 1;
+    }
+    return t % 7;
+}
+`},
 }
