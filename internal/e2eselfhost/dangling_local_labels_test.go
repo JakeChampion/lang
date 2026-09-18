@@ -37,3 +37,40 @@ func TestDanglingLocalLabels(t *testing.T) {
 		})
 	}
 }
+
+// TestDuplicateLocalLabels pins the matcher behind
+// assertNoDuplicateLocalLabels: a label defined twice is reported once, a label
+// merely REFERENCED twice is not, and the `.Lssa_*` register-path labels count
+// alongside the stack machine's `.Lir_*` / `.Lira_*`.
+func TestDuplicateLocalLabels(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		asm  string
+		want []string
+	}{
+		{"clean", "" +
+			".Lir_f_1:\n" +
+			"    jz .Lir_f_1\n" +
+			".Lir_f_2:\n", nil},
+		{"referenced-twice-is-not-a-definition", "" +
+			".Lir_f_1:\n" +
+			"    jz .Lir_f_1\n" +
+			"    jmp .Lir_f_1\n", nil},
+		{"defined-twice", "" +
+			".Lssa_walk_4:\n" +
+			"    ret\n" +
+			".Lssa_walk_4:\n" +
+			"    ret\n", []string{".Lssa_walk_4"}},
+		{"defined-three-times-reported-once", "" +
+			".Lira_f_7:\n.Lira_f_7:\n.Lira_f_7:\n", []string{".Lira_f_7"}},
+		{"distinct-functions-same-block-id", "" +
+			".Lssa_f_2:\n" +
+			".Lssa_g_2:\n", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := duplicateLocalLabels([]byte(tc.asm)); !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("duplicateLocalLabels() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
