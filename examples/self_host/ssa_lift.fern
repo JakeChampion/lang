@@ -970,6 +970,15 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResu
                     slots = lf.slots;
                     cur_preds = [lf.tail]; cur_id = lf.cont; cur_insts = []; cur_term = STerm_none(); cur_dead = false;
                 } else {
+                    // Nothing leaves the loop alive and the tail block was
+                    // just appended, so control continues in a FRESH dead
+                    // block — the same shape `br` leaves behind. Staying on
+                    // the published id let a later unconditional append (the
+                    // function's own tail, an `if`, a `loop`) emit that block
+                    // a second time, and two entries with one id spell one
+                    // label twice (#9688).
+                    cur_id = next_blk; next_blk = next_blk + 1;
+                    cur_insts = []; cur_preds = []; cur_term = STerm_none();
                     var rsl: i32 = 0;
                     while (rsl < nslots) { slots = slots.with(rsl, sc_header_phis[t2 * nslots + rsl]); rsl = rsl + 1; }
                 }

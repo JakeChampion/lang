@@ -1372,6 +1372,23 @@ pub function prune_trivial_phis(f: SFunc): SFunc {
     return SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry, takes_env: f.takes_env };
 }
 
+// repeated_block_id names the first block id that appears twice in `f.blocks`,
+// or -1 when every id is distinct. The emitters write one `.Lssa_<fn>_<id>:`
+// per entry, so a repeat spells one label twice and the assembler rejects the
+// whole module without naming the pass that produced it (#9688).
+pub function repeated_block_id(f: SFunc): i32 {
+    var top: i32 = 0;
+    for blk in f.blocks { if (blk.id > top) { top = blk.id; } }
+    var seen: i32[] = [];
+    var i: i32 = 0;
+    while (i <= top) { seen = seen.append(0); i = i + 1; }
+    for blk in f.blocks {
+        if (seen[blk.id] == 1) { return blk.id; }
+        seen = seen.with(blk.id, 1);
+    }
+    return 0 - 1;
+}
+
 // prune_dead drops every pure instruction (const / copy / binary / unary /
 // phi) whose result reaches no instruction with an effect and no terminator,
 // through any number of pure instructions. Marking from those roots, rather
