@@ -141,8 +141,13 @@ func TestTcpLocalPortInterp(t *testing.T) {
 
 // TestTcpLocalPortErrno pins the failure arm on both x86-64 emitters: a
 // descriptor that is not a socket must come back as a negative errno, not as a
-// port read out of whatever the sockaddr buffer happened to hold. fd 0 is
-// stdin, which getsockname(2) rejects with ENOTSOCK.
+// port read out of whatever the sockaddr buffer happened to hold.
+//
+// The descriptor is fd 0, and what makes that a non-socket is leaving
+// cmd.Stdin nil: os/exec then hands the child the null device. Do not wire this
+// to the test process's own stdin — a socket there (some CI runners and agent
+// shells do exactly that) makes getsockname SUCCEED and report port 0, and the
+// case passes or fails on the harness rather than on the emitter.
 func TestTcpLocalPortErrno(t *testing.T) {
 	if qemu := x86QemuOrEmpty(t); qemu != "" {
 		t.Skip("tcp_local_port errno test runs host-native only")
@@ -174,7 +179,9 @@ func TestTcpLocalPortErrno(t *testing.T) {
 				t.Fatalf("build failed: %v\n%s", err, o)
 			}
 			code := 0
-			if err := exec.Command(out).Run(); err != nil {
+			run := exec.Command(out)
+			run.Stdin = nil // the null device; see the comment above
+			if err := run.Run(); err != nil {
 				var ee *exec.ExitError
 				if !errors.As(err, &ee) {
 					t.Fatalf("run: %v", err)
