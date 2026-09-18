@@ -96,6 +96,13 @@ pub function zero(): i32 { return 0 - 35; }
 // the AST lowering allocates here too (ir.op_str_bytes) and the result is a
 // unit of this frame like any other fresh container.
 pub function str_bytes(): i32 { return 0 - 36; }
+// `xs.sum()` / `xs.product()` over an `i32[]`: the array is read and the answer
+// is a fresh i32 that owns nothing. `xs.join(sep)` over a `string[]` reads both
+// operands and answers a fresh string. Each is one runtime helper, the same one
+// the AST lowering calls.
+pub function arr_sum(): i32 { return 0 - 37; }
+pub function arr_product(): i32 { return 0 - 38; }
+pub function arr_join(): i32 { return 0 - 39; }
 
 function failed(why: string): Analysis {
     return Analysis { ok: false, why: why, dependencies: [], flow: ssalive.Flow { ok: false, why: why, live_in: [], live_out: [] } };
@@ -707,7 +714,11 @@ function str_index_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string
 // bytes, and the cell and map vocabularies.
 function is_builtin_op(kind: i32): boolean {
     return kind == length() || kind == append() || kind == with() || kind == slice() || kind == str_index()
-        || kind == str_bytes() || is_cell_op(kind) || is_map_op(kind);
+        || kind == str_bytes() || is_arr_helper_op(kind) || is_cell_op(kind) || is_map_op(kind);
+}
+
+pub function is_arr_helper_op(kind: i32): boolean {
+    return kind == arr_sum() || kind == arr_product() || kind == arr_join();
 }
 
 pub function is_cell_op(kind: i32): boolean { return kind == cell_new() || kind == cell_get() || kind == cell_set(); }
@@ -728,7 +739,31 @@ function str_bytes_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string
     return "str bytes result";
 }
 
+// The reductions read an `i32[]` and answer a plain i32; the join reads a
+// `string[]` and a separator and answers a fresh string. None of the three
+// keeps an operand, so the receiver is borrowed as a length's is.
+function arr_reduce_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 1) { return "array reduce arity"; }
+    if (!is_i32(result)) { return "array reduce result"; }
+    if let typeinfo.TypeArray(a) = f.values[ins.args[0]] {
+        if (is_i32(a.elem)) { return ""; }
+    }
+    return "array reduce receiver";
+}
+
+function arr_join_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 2) { return "array join arity"; }
+    if (!is_string(result)) { return "array join result"; }
+    if (!is_text(f.values[ins.args[1]])) { return "array join separator"; }
+    if let typeinfo.TypeArray(a) = f.values[ins.args[0]] {
+        if (is_string(a.elem)) { return ""; }
+    }
+    return "array join receiver";
+}
+
 function builtin_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.kind_tag == arr_join()) { return arr_join_error(ins, f, result); }
+    if (ins.kind_tag == arr_sum() || ins.kind_tag == arr_product()) { return arr_reduce_error(ins, f, result); }
     if (ins.kind_tag == length()) { return length_error(ins, f, result); }
     if (ins.kind_tag == slice()) { return slice_error(ins, f, result); }
     if (ins.kind_tag == str_index()) { return str_index_error(ins, f, result); }

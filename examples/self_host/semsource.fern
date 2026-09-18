@@ -1183,6 +1183,38 @@ function builtin_with(c: ast.ExprCall, recv: Value, s: State): Value {
     return define(s, ssasem.with(), [recv.id, at.id, v.id], 0, "", t);
 }
 
+// The two reductions are declared on `i32[]` alone and the join on `string[]`
+// alone, as the AST lowering gates them, so a receiver of any other shape falls
+// through to a declared method of that name.
+function is_i32_array(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeArray(a) = t { return ssasem.is_i32(a.elem); }
+    return false;
+}
+
+function is_string_array(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeArray(a) = t { return ssasem.is_string(a.elem); }
+    return false;
+}
+
+// `xs.sum()` / `xs.product()` read the array and answer a fresh i32, so the
+// receiver is borrowed and nothing is handed over.
+function builtin_reduce(fa: ast.ExprFieldAccess, recv: Value, s: State): Value {
+    var kind: i32 = ssasem.arr_sum();
+    if (fa.field == "product") { kind = ssasem.arr_product(); }
+    return define(s, kind, [recv.id], 0, "", t_i32());
+}
+
+// `xs.join(sep)` reads the array and the separator and answers a fresh string.
+// A view is a legal separator — the joined bytes are copied out of it — so the
+// element rule an append carries does not apply here.
+function builtin_join(c: ast.ExprCall, recv: Value, s: State): Value {
+    var sep: Value = expr(c.args[0], s, t_string());
+    s = sep.s;
+    if (!s.ok) { return sep; }
+    if (!ssasem.is_text(s.values[sep.id])) { return refused(s, "join separator type"); }
+    return define(s, ssasem.arr_join(), [recv.id, sep.id], 0, "", t_string());
+}
+
 // A cell's methods: `get` hands out a unit of the element, and `set` takes the
 // new element's unit and returns nothing, so it stands only as a statement.
 function cell_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: State, statement: boolean): Value {
@@ -1341,6 +1373,12 @@ function builtin_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: 
     }
     if (fa.field == "append" && c.args.len() == 1) { return builtin_append(c, recv, s); }
     if (fa.field == "with" && c.args.len() == 2) { return builtin_with(c, recv, s); }
+    if ((fa.field == "sum" || fa.field == "product") && c.args.len() == 0 && is_i32_array(s.values[recv.id])) {
+        return builtin_reduce(fa, recv, s);
+    }
+    if (fa.field == "join" && c.args.len() == 1 && is_string_array(s.values[recv.id])) {
+        return builtin_join(c, recv, s);
+    }
     return refused(s, "unsupported call target: " + typeinfo.spelling(s.values[recv.id]) + "." + fa.field);
 }
 
