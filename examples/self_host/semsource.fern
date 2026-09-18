@@ -1336,6 +1336,9 @@ function builtin_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: 
     if (semtypes.is_cell(s.values[recv.id])) { return cell_method(c, fa, recv, s, statement); }
     if (ssasem.is_map(s.values[recv.id])) { return map_method(c, fa, recv, s); }
     if (fa.field == "len" && c.args.len() == 0) { return builtin_length(recv, s); }
+    if ((fa.field == "bytes" || fa.field == "as_bytes") && c.args.len() == 0 && ssasem.is_text(s.values[recv.id])) {
+        return define(s, ssasem.str_bytes(), [recv.id], 0, "", typeinfo.TypeArray { elem: t_u8() });
+    }
     if (fa.field == "append" && c.args.len() == 1) { return builtin_append(c, recv, s); }
     if (fa.field == "with" && c.args.len() == 2) { return builtin_with(c, recv, s); }
     return refused(s, "unsupported call target: " + typeinfo.spelling(s.values[recv.id]) + "." + fa.field);
@@ -1374,8 +1377,8 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
     // A builtin's receiver names no declaration this boundary can hold a
     // contract for, so it is matched by shape instead. A string's methods are
     // declared in the standard library on a `string` receiver, and a view
-    // reaches them as a lent box; the two builtins every text has come first.
-    if (owner == "" && (fa.field == "len" || fa.field == "append" || !ssasem.is_text(s.values[recv.id]))) {
+    // reaches them as a lent box; the builtins every text has come first.
+    if (owner == "" && (fa.field == "len" || fa.field == "append" || fa.field == "bytes" || fa.field == "as_bytes" || !ssasem.is_text(s.values[recv.id]))) {
         var b: Value = builtin_call(c, fa, recv, s, statement);
         if (b.s.ok) { return b; }
         // A receiver the builtin vocabulary does not own may still be a method
