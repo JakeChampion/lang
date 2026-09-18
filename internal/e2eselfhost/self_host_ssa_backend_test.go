@@ -665,17 +665,17 @@ func TestSelfHostSSABackendRefusesOtherTargets(t *testing.T) {
 	if !strings.Contains(string(out), "unknown -backend: nope") {
 		t.Errorf("unknown backend not reported: %s", out)
 	}
-	// Omitting -backend selects the target's default emitter, which is not
-	// the same on both: arm64 is on the register path since its output is
-	// smaller and its compiler faster than the stack machine's, and x86-64
-	// is still on the stack machine. Naming the default explicitly must
+	// Omitting -backend selects the target's default emitter, which is the
+	// register path wherever there is one — both native ISAs, since #9683 put
+	// x86-64's output under its stack machine's as arm64's already was — and
+	// the stack machine where there is not. Naming the default explicitly must
 	// reproduce it byte for byte, and naming the other one must not.
+	//
+	// h.targets is native-only, so the loop covers the register-path half. The
+	// other half is wasm below, where the default must be the stack machine
+	// that `-backend ssa` was just refused for.
 	for _, tg := range h.targets {
-		want := "flat"
-		other := "ssa"
-		if strings.HasPrefix(tg.target, "arm64-") {
-			want, other = "ssa", "flat"
-		}
+		want, other := "ssa", "flat"
 		base := strings.ReplaceAll(tg.target, "-", "_")
 		h.compileWith(t, tg, src, filepath.Join(dir, base+"_dflt"))
 		h.compileWith(t, tg, src, filepath.Join(dir, base+"_want"), "-backend", want)
@@ -698,6 +698,28 @@ func TestSelfHostSSABackendRefusesOtherTargets(t *testing.T) {
 		if bytes.Equal(dflt, notIt) {
 			t.Errorf("%s: -backend %s matches the default emitter, so the default is not %s", tg.target, other, want)
 		}
+	}
+	// A target with no register path defaults to the stack machine. Without
+	// this the rule is only half-pinned: the refusal above says `-backend ssa`
+	// is unavailable for wasm, not that omitting it lands on flat.
+	wasmDflt := filepath.Join(dir, "wasm_dflt")
+	wasmFlat := filepath.Join(dir, "wasm_flat")
+	for _, a := range [][]string{{"-o", wasmDflt}, {"-backend", "flat", "-o", wasmFlat}} {
+		args := append([]string{"-target", "wasm32-wasi"}, a...)
+		if out, err := exec.Command(h.cli, append(args, src, h.stdlib)...).CombinedOutput(); err != nil {
+			t.Fatalf("self-host CLI %v: %v\n%s", args, err, out)
+		}
+	}
+	dflt, err := os.ReadFile(wasmDflt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	flat, err := os.ReadFile(wasmFlat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(dflt, flat) {
+		t.Errorf("wasm32-wasi: -backend flat differs from the default emitter, which it is")
 	}
 }
 

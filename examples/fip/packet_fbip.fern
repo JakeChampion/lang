@@ -1,0 +1,433 @@
+// examples/fip/packet_fbip.fern — the FBIP variant of the bounded packet codec
+// (#9584).
+//
+// Same protocol, same workload and the same answers as the other three. The
+// response buffer, the parse's results and every counter live in one `Codec`
+// struct that the data plane consumes and rebuilds, `fbip`-annotated, so each
+// construction is reuse-PAIRED: on a uniquely-owned donor it writes that box in
+// place rather than allocating.
+//
+// This is the ergonomic shape — the buffer has a name, the counters have names,
+// and a new region is a new field. What it costs shows up here in a way it did
+// not in the event loop (#9583), because that workload wrote ONE element per
+// event and this one writes up to 240. Every byte into a struct-held buffer is
+// a whole `Codec` reconstruction, and while each one is allocation-free, it is
+// not free. `packet_fip.fern` is the same algorithm with the buffer threaded as
+// its own `own` parameter, and the gap between the two is what this pair is
+// for.
+import "core/cmp";
+import "std/bench";
+import "std/i32";
+import "std/i64";
+
+// ===================== THE PROTOCOL =====================
+//
+// A 16-byte fixed header and a bounded payload, so a whole packet fits in 256
+// bytes and every buffer in every variant can be sized once, up front.
+//
+//   0..1   magic 0xFE 0x52
+//   2      version
+//   3      message type
+//   4      status (0 on a request)
+//   5      reserved
+//   6..9   request id, u32 little-endian
+//   10..11 payload length, u16 little-endian
+//   12..13 Fletcher-16 of the payload
+//   14..15 reserved
+fip function header_len(): i32 { return 16; }
+fip function max_payload(): i32 { return 240; }
+fip function max_packet(): i32 { return 256; }
+fip function magic0(): i32 { return 254; }
+fip function magic1(): i32 { return 82; }
+fip function version(): i32 { return 1; }
+
+fip function msg_echo(): i32 { return 1; }
+fip function msg_sum(): i32 { return 2; }
+fip function msg_reverse(): i32 { return 3; }
+fip function msg_upper(): i32 { return 4; }
+
+fip function st_ok(): i32 { return 0; }
+fip function st_bad_magic(): i32 { return 1; }
+fip function st_bad_version(): i32 { return 2; }
+fip function st_bad_type(): i32 { return 3; }
+fip function st_oversize(): i32 { return 4; }
+fip function st_truncated(): i32 { return 5; }
+fip function st_bad_checksum(): i32 { return 6; }
+
+// Fletcher-16: two running sums mod 255, which catches byte transposition
+// where a plain sum does not. Cheap enough that it is not what any variant's
+// throughput is measuring.
+fip function checksum(bytes: u8[], from: i32, n: i32): i32 {
+    var a: i32 = 0;
+    var b: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        a = (a + (bytes[from + i] as i32)) % 255;
+        b = (b + a) % 255;
+        i = i + 1;
+    }
+    return b * 256 + a;
+}
+
+fip function read_u16(bytes: u8[], at: i32): i32 {
+    return (bytes[at] as i32) + (bytes[at + 1] as i32) * 256;
+}
+
+fip function read_u32(bytes: u8[], at: i32): i64 {
+    return (bytes[at] as i64)
+        + (bytes[at + 1] as i64) * (256 as i64)
+        + (bytes[at + 2] as i64) * (65536 as i64)
+        + (bytes[at + 3] as i64) * (16777216 as i64);
+}
+
+fip function known_type(t: i32): boolean {
+    return t == msg_echo() || t == msg_sum() || t == msg_reverse() || t == msg_upper();
+}
+
+fip function pow256(k: i32): i64 {
+    var p: i64 = 1 as i64;
+    var i: i32 = 0;
+    while (i < k) { p = p * (256 as i64); i = i + 1; }
+    return p;
+}
+
+// ===================== STATE =====================
+//
+// One response buffer, sized once for the largest packet the protocol admits,
+// the parse's five results, and the counters. The request buffer stays a local
+// in `main` and is threaded through the generator as `own`, exactly as in the
+// other three variants, so the harness is byte-identical and only the codec
+// differs.
+//
+// The parse writes its result into these fields instead of returning a record.
+// That is not a stylistic choice: a returned `Request` has no donor to pair
+// with, so it is a fresh allocation per request, and the baseline and borrowed
+// variants pay exactly that. Folding it into the state is how the count reaches
+// zero, and it is the first place this discipline changes the shape of the code
+// rather than just its annotations.
+struct Codec {
+    out: u8[],
+    out_len: i32,
+    st: i32, mtype: i32, rid: i64, at: i32, plen: i32,
+    ok: i64, bad_magic: i64, bad_version: i64, bad_type: i64,
+    oversize: i64, truncated: i64, bad_checksum: i64,
+    digest: i64, copied: i64,
+}
+
+// ===================== THE PARSE (fbip, no copy, no record) =====================
+//
+// The validation ladder, in the order a receiver can actually apply it: the
+// framing first, because a bad length makes every later read a guess.
+
+fbip function reject(own c: Codec, status: i32): Codec {
+    return Codec { ...c, st: status, plen: 0, at: 0 };
+}
+
+fbip function parse_into(own c: Codec, wire: u8[], wire_len: i32): Codec {
+    if (wire_len < header_len()) { return reject(c, st_truncated()); }
+    if ((wire[0] as i32) != magic0() || (wire[1] as i32) != magic1()) { return reject(c, st_bad_magic()); }
+    if ((wire[2] as i32) != version()) { return reject(c, st_bad_version()); }
+    c = Codec { ...c, mtype: wire[3] as i32 };
+    c = Codec { ...c, rid: read_u32(wire, 6) };
+    var n: i32 = read_u16(wire, 10);
+    if (n > max_payload()) { return reject(c, st_oversize()); }
+    if (wire_len < header_len() + n) { return reject(c, st_truncated()); }
+    if (checksum(wire, header_len(), n) != read_u16(wire, 12)) { return reject(c, st_bad_checksum()); }
+    if (!known_type(c.mtype)) { return reject(c, st_bad_type()); }
+    return Codec { ...c, st: st_ok(), at: header_len(), plen: n };
+}
+
+// ===================== THE TRANSFORM AND ENCODE (fbip) =====================
+//
+// Each of these writes bytes into `c.out` one reconstruction at a time. That is
+// the shape the annotation permits and the honest spelling of "hold the buffer
+// in a record": the buffer cannot be lifted into a local first, because
+// `var b = c.out` while `c` is still live leaves `b` SHARED and `.with` on it
+// copies — which E053 says, correctly. `packet_fip.fern` threads the same
+// buffer as its own `own` parameter and pays the store instead.
+
+fbip function put(own c: Codec, at: i32, v: u8): Codec {
+    return Codec { ...c, out: c.out.with(at, v) };
+}
+
+fbip function write_echo(own c: Codec, wire: u8[]): Codec {
+    var at: i32 = c.at;
+    var n: i32 = c.plen;
+    var i: i32 = 0;
+    while (i < n) { c = put(c, header_len() + i, wire[at + i]); i = i + 1; }
+    return Codec { ...c, out_len: n };
+}
+
+fbip function write_reverse(own c: Codec, wire: u8[]): Codec {
+    var at: i32 = c.at;
+    var n: i32 = c.plen;
+    var i: i32 = 0;
+    while (i < n) { c = put(c, header_len() + i, wire[at + n - 1 - i]); i = i + 1; }
+    return Codec { ...c, out_len: n };
+}
+
+fbip function write_upper(own c: Codec, wire: u8[]): Codec {
+    var at: i32 = c.at;
+    var n: i32 = c.plen;
+    var i: i32 = 0;
+    while (i < n) {
+        var ch: i32 = wire[at + i] as i32;
+        if (ch >= 97 && ch <= 122) { ch = ch - 32; }
+        c = put(c, header_len() + i, ch as u8);
+        i = i + 1;
+    }
+    return Codec { ...c, out_len: n };
+}
+
+fbip function write_sum(own c: Codec, wire: u8[]): Codec {
+    var at: i32 = c.at;
+    var n: i32 = c.plen;
+    var total: i64 = 0 as i64;
+    var s: i32 = 0;
+    while (s < n) { total = total + (wire[at + s] as i64); s = s + 1; }
+    var b: i32 = 0;
+    while (b < 8) {
+        c = put(c, header_len() + b, ((total / pow256(b)) % (256 as i64)) as u8);
+        b = b + 1;
+    }
+    return Codec { ...c, out_len: 8 };
+}
+
+fbip function transform(own c: Codec, wire: u8[]): Codec {
+    if (c.mtype == msg_echo()) { return write_echo(c, wire); }
+    if (c.mtype == msg_reverse()) { return write_reverse(c, wire); }
+    if (c.mtype == msg_upper()) { return write_upper(c, wire); }
+    return write_sum(c, wire);
+}
+
+fbip function encode_header(own c: Codec): Codec {
+    // Every field this writes is read out first: a field read in the same
+    // expression that consumes the state is E050, since the argument is
+    // evaluated after the move.
+    var plen: i32 = c.out_len;
+    var mt: i32 = c.mtype;
+    var status: i32 = c.st;
+    var rid: i64 = c.rid;
+    var ck: i32 = checksum(c.out, header_len(), plen);
+    c = put(c, 0, magic0() as u8);
+    c = put(c, 1, magic1() as u8);
+    c = put(c, 2, version() as u8);
+    c = put(c, 3, mt as u8);
+    c = put(c, 4, status as u8);
+    c = put(c, 5, 0 as u8);
+    var idb: i32 = 0;
+    while (idb < 4) {
+        c = put(c, 6 + idb, ((rid / pow256(idb)) % (256 as i64)) as u8);
+        idb = idb + 1;
+    }
+    c = put(c, 10, (plen % 256) as u8);
+    c = put(c, 11, (plen / 256) as u8);
+    c = put(c, 12, (ck % 256) as u8);
+    c = put(c, 13, (ck / 256) as u8);
+    c = put(c, 14, 0 as u8);
+    return put(c, 15, 0 as u8);
+}
+
+fbip function tally(own c: Codec): Codec {
+    if (c.st == st_ok()) { return Codec { ...c, ok: c.ok + (1 as i64) }; }
+    if (c.st == st_bad_magic()) { return Codec { ...c, bad_magic: c.bad_magic + (1 as i64) }; }
+    if (c.st == st_bad_version()) { return Codec { ...c, bad_version: c.bad_version + (1 as i64) }; }
+    if (c.st == st_bad_type()) { return Codec { ...c, bad_type: c.bad_type + (1 as i64) }; }
+    if (c.st == st_oversize()) { return Codec { ...c, oversize: c.oversize + (1 as i64) }; }
+    if (c.st == st_truncated()) { return Codec { ...c, truncated: c.truncated + (1 as i64) }; }
+    return Codec { ...c, bad_checksum: c.bad_checksum + (1 as i64) };
+}
+
+fbip function absorb(own c: Codec, n: i32): Codec {
+    var d: i64 = c.digest;
+    var i: i32 = 0;
+    while (i < n) { d = mix(d, c.out[i] as i32); i = i + 1; }
+    return Codec { ...c, digest: d };
+}
+
+fbip function serve(own c: Codec, wire: u8[], n: i64): Codec {
+    c = Codec { ...c, out_len: 0, st: st_ok(), mtype: 0, rid: 0 as i64, at: 0, plen: 0 };
+    c = parse_into(c, wire, wire_len_for(n));
+    if (c.st == st_ok()) { c = transform(c, wire); }
+    c = encode_header(c);
+    var framed: i32 = header_len() + c.out_len;
+    c = absorb(c, framed);
+    c = tally(c);
+    // Bytes moved: the transform's write into the response buffer, and the
+    // header written over it. Nothing is copied into or out of a fresh array.
+    return Codec { ...c, copied: c.copied + (c.out_len as i64) + (header_len() as i64) };
+}
+
+fbip function reset(own c: Codec): Codec {
+    return Codec { ...c,
+        out_len: 0, st: 0, mtype: 0, rid: 0 as i64, at: 0, plen: 0,
+        ok: 0 as i64, bad_magic: 0 as i64, bad_version: 0 as i64, bad_type: 0 as i64,
+        oversize: 0 as i64, truncated: 0 as i64, bad_checksum: 0 as i64,
+        digest: 1469598103934665603 as i64, copied: 0 as i64 };
+}
+
+// ===================== THE WORKLOAD =====================
+//
+// Identical in all four variants, verbatim, so the runs differ in how the
+// bytes are held and in nothing else. Every 17th request is malformed, cycling
+// through the six rejections, so the error ladder is exercised in the steady
+// state rather than in a separate test that proves nothing about throughput.
+
+fip function gen_payload_len(n: i64): i32 {
+    return ((n * (37 as i64)) % (241 as i64)) as i32;
+}
+
+fip function gen_byte(n: i64, j: i32): u8 {
+    return (((n + (j as i64)) % (251 as i64)) as i32) as u8;
+}
+
+fip function corruption(n: i64): i32 {
+    if (n % (17 as i64) != (0 as i64)) { return 0 - 1; }
+    return ((n / (17 as i64)) % (6 as i64)) as i32;
+}
+
+// Writes one request into the buffer it is handed and gives it back. It takes
+// the buffer `own` in every variant, including this one: generating the input
+// is the harness, not the codec, and a borrowed `wire` would copy all 256
+// bytes on each `.with` — charging every variant for the instrument.
+fip function build_request(own wire: u8[], n: i64): u8[] {
+    var t: i32 = 1 + ((n % (4 as i64)) as i32);
+    var plen: i32 = gen_payload_len(n);
+    var corrupt: i32 = corruption(n);
+    var i: i32 = 0;
+    while (i < plen) { wire = wire.with(header_len() + i, gen_byte(n, i)); i = i + 1; }
+    var ck: i32 = checksum(wire, header_len(), plen);
+    var m0: i32 = magic0();
+    var ver: i32 = version();
+    var wire_plen: i32 = plen;
+    if (corrupt == 0) { m0 = 1; }
+    if (corrupt == 1) { ver = 9; }
+    if (corrupt == 2) { t = 77; }
+    if (corrupt == 3) { wire_plen = max_payload() + 8; }
+    if (corrupt == 5) { ck = ck ^ 1; }
+    wire = wire.with(0, m0 as u8);
+    wire = wire.with(1, magic1() as u8);
+    wire = wire.with(2, ver as u8);
+    wire = wire.with(3, t as u8);
+    wire = wire.with(4, 0 as u8);
+    wire = wire.with(5, 0 as u8);
+    var idb: i32 = 0;
+    while (idb < 4) {
+        wire = wire.with(6 + idb, ((n / pow256(idb)) % (256 as i64)) as u8);
+        idb = idb + 1;
+    }
+    wire = wire.with(10, (wire_plen % 256) as u8);
+    wire = wire.with(11, (wire_plen / 256) as u8);
+    wire = wire.with(12, (ck % 256) as u8);
+    wire = wire.with(13, (ck / 256) as u8);
+    wire = wire.with(14, 0 as u8);
+    return wire.with(15, 0 as u8);
+}
+
+fip function wire_len_for(n: i64): i32 {
+    var plen: i32 = gen_payload_len(n);
+    if (corruption(n) == 4) { return header_len() + plen - 1; }
+    return header_len() + plen;
+}
+
+// A running digest over every response byte. Four implementations of one codec
+// agree only if this agrees, which is what makes the comparison a differential
+// test rather than three unrelated benchmarks.
+fip function mix(d: i64, b: i32): i64 {
+    var x: i64 = d ^ (b as i64);
+    x = x * (1099511628211 as i64);
+    x = x ^ (x >> (29 as i64));
+    if (x < (0 as i64)) { x = 0 - x; }
+    return x % (1000000007 as i64);
+}
+
+function zeros_u8(n: i32): u8[] {
+    var xs: u8[] = __alloc_u8(n);
+    var i: i32 = 0;
+    while (i < n) { xs = xs.with(i, 0 as u8); i = i + 1; }
+    return xs;
+}
+
+function new_codec(): Codec {
+    return Codec {
+        out: zeros_u8(max_packet()), out_len: 0,
+        st: 0, mtype: 0, rid: 0 as i64, at: 0, plen: 0,
+        ok: 0 as i64, bad_magic: 0 as i64, bad_version: 0 as i64, bad_type: 0 as i64,
+        oversize: 0 as i64, truncated: 0 as i64, bad_checksum: 0 as i64,
+        digest: 1469598103934665603 as i64, copied: 0 as i64,
+    };
+}
+
+function main(): i32 {
+    var batch: i32 = 64;
+    // 4000 rounds is 256,000 requests, which holds the per-request medians steady
+    // while keeping this program the same weight as experiment 1's — it is run
+    // under both backends, under qemu, by the SSA differential sweep over
+    // examples/, and five times that was 5x the cost for no more signal.
+    var rounds: i32 = 4000;
+    var wire: u8[] = zeros_u8(max_packet());
+    var c: Codec = new_codec();
+    var w: i32 = 0;
+    while (w < batch) {
+        wire = build_request(wire, w as i64);
+        c = serve(c, wire, w as i64);
+        w = w + 1;
+    }
+    c = reset(c);
+    var samples: i64[] = [];
+    var p: i32 = 0;
+    while (p < rounds) { samples = samples.append(0 as i64); p = p + 1; }
+    var at_allocs: i64 = bench.alloc_count();
+    var at_fresh: i64 = bench.bump_bytes();
+    var started_ns: i64 = monotonic_ns();
+    var r: i32 = 0;
+    while (r < rounds) {
+        var t0: i64 = monotonic_ns();
+        var k: i32 = 0;
+        while (k < batch) {
+            var n: i64 = (r as i64) * (batch as i64) + (k as i64);
+            wire = build_request(wire, n);
+            c = serve(c, wire, n);
+            k = k + 1;
+        }
+        samples = samples.with(r, monotonic_ns() - t0);
+        r = r + 1;
+    }
+    var elapsed_ns: i64 = monotonic_ns() - started_ns;
+    var allocs: i64 = bench.allocs_after(at_allocs);
+    var fresh: i64 = bench.fresh_bytes_after(at_fresh);
+    var requests: i64 = (rounds as i64) * (batch as i64);
+    var rep: bench.Report = bench.Report {
+        name: "fbip",
+        iterations: rounds,
+        wall_ns: elapsed_ns,
+        samples_ns: cmp.sort(samples),
+        allocs: allocs,
+        fresh_bytes: fresh,
+    };
+    print("{\"variant\":\"fbip\""
+        + ",\"requests\":" + requests.to_string()
+        + ",\"requests_per_round\":" + batch.to_string()
+        + ",\"ok\":" + c.ok.to_string()
+        + ",\"bad_magic\":" + c.bad_magic.to_string()
+        + ",\"bad_version\":" + c.bad_version.to_string()
+        + ",\"bad_type\":" + c.bad_type.to_string()
+        + ",\"oversize\":" + c.oversize.to_string()
+        + ",\"truncated\":" + c.truncated.to_string()
+        + ",\"bad_checksum\":" + c.bad_checksum.to_string()
+        + ",\"digest\":" + c.digest.to_string()
+        + ",\"bytes_copied\":" + c.copied.to_string()
+        + ",\"bytes_copied_per_request\":" + (c.copied / requests).to_string()
+        + ",\"steady_allocs\":" + allocs.to_string()
+        + ",\"steady_fresh_bytes\":" + fresh.to_string()
+        + ",\"allocs_per_request_milli\":" + (allocs * (1000 as i64) / requests).to_string()
+        + ",\"ns_per_request\":" + (elapsed_ns / requests).to_string()
+        + ",\"requests_per_sec\":" + (requests * 1000000000i64 / elapsed_ns).to_string()
+        + ",\"round_p50_ns\":" + rep.p50_ns().to_string()
+        + ",\"round_p95_ns\":" + rep.p95_ns().to_string()
+        + ",\"round_p99_ns\":" + rep.p99_ns().to_string()
+        + ",\"round_p999_ns\":" + rep.p999_ns().to_string()
+        + ",\"round_max_ns\":" + rep.max_ns().to_string()
+        + "}");
+    return 0;
+}

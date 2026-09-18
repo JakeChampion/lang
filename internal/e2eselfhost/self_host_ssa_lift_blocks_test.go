@@ -13,15 +13,18 @@ import (
 //
 // A loop nothing leaves alive is where that happened: the loop's `end` appends
 // the body's tail block, and the lift then stayed on that block's id, so the
-// function's own tail appended it a second time. The driver lifts the op
-// streams directly, which is what lets one case pin each unconditional append
-// site on its own.
+// function's own tail appended it a second time. The driver lifts that op
+// stream directly rather than going through a source program, because no loop
+// anybody WRITES ends that way: the scope comes from irlower.tco_self_tail,
+// which wraps a whole function body in `loop { … } end` so a self tail call
+// jumps to the header, and a function body ends in a return. That is why the
+// 55 collisions were all in the compiler's own modules — every one of those
+// functions is self-recursive and none contains a source loop
+// (docs/ssa-log/2026-09-18-where-the-lifts-duplicate-loop-came-from.md).
 //
-// Source reaches this too: TCO wraps a self-tail-recursive body in a bare
-// `loop`, so a function whose self-call sits in an early arm and whose last
-// statement is a plain `return` arrives here — which is why the 55 collisions
-// on `main` were all compiler-module predicates of that shape.
-// TestSelfHostSSALoopTailBlockEmittedOnce compiles one and assembles it.
+// A source program does reach it through that wrapper, on the leg where TCO runs
+// (#9692): TestSelfHostSSALoopTailBlockEmittedOnce compiles one and assembles
+// the listing.
 const ssaLiftBlockIDProg = `// Assert the lift never returns two blocks with one id.
 import "./ir";
 import "./ssa";
