@@ -29,7 +29,7 @@ func unexpandCases(t *testing.T) []invocation {
 	rest := tabFile(t, dir, "rest", " b\n")
 	empty := tabFile(t, dir, "e0", "")
 	blank := tabFile(t, dir, "blank", "\n\n")
-	raw := tabFile(t, dir, "na\xffme", "        a\n")
+	raw := rawByteFile(t, dir, "        a\n")
 	missing := filepath.Join(dir, "nosuch")
 	if err := os.Mkdir(filepath.Join(dir, "d"), 0o755); err != nil {
 		t.Fatal(err)
@@ -114,7 +114,7 @@ func unexpandCases(t *testing.T) []invocation {
 		{name: "two files join", args: []string{"-a", nonl, rest}},
 		{name: "dashdash", args: []string{"--", lead}},
 		{name: "empty operand", args: []string{""}},
-		{name: "operand that is not valid UTF-8", args: []string{raw}},
+		{name: "operand that is not valid UTF-8", args: []string{raw}, rawByteName: true},
 		{name: "missing file", args: []string{missing}},
 		{name: "missing then good", args: []string{missing, lead}},
 		{name: "missing name that needs quoting", args: []string{filepath.Join(dir, "no such")}},

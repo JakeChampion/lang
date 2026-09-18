@@ -108,7 +108,7 @@ func uniqCases(t *testing.T) []invocation {
 	high := writeFile(t, dir, "high", "\xc3\xa9\n\xc3\x89\n")
 	spaced := writeFile(t, dir, "f name", "x\nx\n")
 	quoted := writeFile(t, dir, "f'n", "x\nx\n")
-	raw := writeFile(t, dir, "na\xffme", "x\nx\n")
+	raw := rawByteFile(t, dir, "x\nx\n")
 	missing := filepath.Join(dir, "nosuch")
 	if err := os.Mkdir(filepath.Join(dir, "d"), 0o755); err != nil {
 		t.Fatal(err)
@@ -359,7 +359,7 @@ func uniqCases(t *testing.T) []invocation {
 		{name: "missing name that is not valid UTF-8", args: []string{filepath.Join(dir, "no\xffsuch")}},
 		{name: "name with a space", args: []string{"-c", spaced}},
 		{name: "name with a quote", args: []string{"-c", quoted}},
-		{name: "name that is not valid UTF-8", args: []string{"-c", raw}},
+		{name: "name that is not valid UTF-8", args: []string{"-c", raw}, rawByteName: true},
 		{name: "input is a directory", args: []string{d}},
 		{name: "input is a directory with -c", args: []string{"-c", d}},
 		{name: "output is a directory", args: []string{d1, d}},

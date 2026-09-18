@@ -46,7 +46,7 @@ func wcCases(t *testing.T) []invocation {
 	words := wcFile(t, dir, "words", "  spaced  words  \nand\tmore\n")
 	spaced := wcFile(t, dir, "f name", "x\n")
 	quoted := wcFile(t, dir, "f'n", "x\n")
-	raw := wcFile(t, dir, "na\xffme", "x\n")
+	raw := rawByteFile(t, dir, "x\n")
 	missing := filepath.Join(dir, "nosuch")
 	if err := os.Mkdir(filepath.Join(dir, "d"), 0o755); err != nil {
 		t.Fatal(err)
@@ -174,7 +174,7 @@ func wcCases(t *testing.T) []invocation {
 		{name: "directory max line length", args: []string{"-L", d}},
 		{name: "name with a space", args: []string{spaced}},
 		{name: "name with a quote", args: []string{quoted}},
-		{name: "name that is not valid UTF-8", args: []string{raw}},
+		{name: "name that is not valid UTF-8", args: []string{raw}, rawByteName: true},
 		{name: "missing name with a space", args: []string{filepath.Join(dir, "no such")}},
 		{name: "missing name that is not valid UTF-8", args: []string{filepath.Join(dir, "no\xffsuch")}},
 		{name: "empty file", args: []string{empty}},

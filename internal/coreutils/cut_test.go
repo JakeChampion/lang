@@ -39,7 +39,7 @@ func cutCases(t *testing.T) []invocation {
 	nul := cutFile(t, dir, "nul", "a:b\x00c:d\x00")
 	empty := cutFile(t, dir, "e0", "")
 	blank := cutFile(t, dir, "blank", "\n\n")
-	raw := cutFile(t, dir, "na\xffme", "x:y\n")
+	raw := rawByteFile(t, dir, "x:y\n")
 	missing := filepath.Join(dir, "nosuch")
 	if err := os.Mkdir(filepath.Join(dir, "d"), 0o755); err != nil {
 		t.Fatal(err)
@@ -194,7 +194,7 @@ func cutCases(t *testing.T) []invocation {
 		{name: "missing file", args: []string{"-b1", missing}},
 		{name: "missing then good", args: []string{"-b1", missing, f}},
 		{name: "good then missing", args: []string{"-b1", f, missing}},
-		{name: "operand that is not valid UTF-8", args: []string{"-d:", "-f2", raw}},
+		{name: "operand that is not valid UTF-8", args: []string{"-d:", "-f2", raw}, rawByteName: true},
 		{name: "missing name that needs quoting", args: []string{"-b1", filepath.Join(dir, "no such")}},
 		{name: "directory", args: []string{"-b1", d}},
 		{name: "directory then a file", args: []string{"-b1", d, f}},

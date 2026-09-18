@@ -33,7 +33,7 @@ func tailCases(t *testing.T) []invocation {
 	zeros := catFile(t, dir, "zeros", "a\x00b\x00c\x00d")
 	spaced := catFile(t, dir, "f name", "x\n")
 	quoted := catFile(t, dir, "f'n", "x\n")
-	raw := catFile(t, dir, "na\xffme", "x\n")
+	raw := rawByteFile(t, dir, "x\n")
 	missing := filepath.Join(dir, "nosuch")
 	if err := os.Mkdir(filepath.Join(dir, "d"), 0o755); err != nil {
 		t.Fatal(err)
@@ -155,13 +155,13 @@ func tailCases(t *testing.T) []invocation {
 		{name: "quiet then verbose", args: []string{"-n", "1", "-q", "-v", f, x}},
 		{name: "header spaced name", args: []string{"-n", "1", f, spaced}},
 		{name: "header quoted name", args: []string{"-n", "1", f, quoted}},
-		{name: "header raw name", args: []string{"-n", "1", f, raw}},
+		{name: "header raw name", args: []string{"-n", "1", f, raw}, rawByteName: true},
 		{name: "header after a missing file", args: []string{"-n", "1", missing, f}},
 		{name: "missing between files", args: []string{"-n", "1", f, missing, f}},
 
 		// Errors.
 		{name: "missing file", args: []string{missing}},
-		{name: "missing raw name", args: []string{filepath.Join(dir, "no\xffsuch")}},
+		{name: "missing raw name", args: []string{filepath.Join(dir, "no\xffsuch")}, rawByteName: true},
 		{name: "missing quoted name", args: []string{filepath.Join(dir, "no'such")}},
 		{name: "empty operand", args: []string{"-n", "1", ""}},
 		{name: "empty operand after a file", args: []string{"-n", "1", f, ""}},

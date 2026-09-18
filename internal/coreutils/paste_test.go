@@ -39,7 +39,7 @@ func pasteCases(t *testing.T) []invocation {
 	blanks := pasteFile(t, dir, "blanks", "\n\n\n")
 	nul := pasteFile(t, dir, "nul", "1\x002\x00")
 	nul2 := pasteFile(t, dir, "nul2", "a\x00")
-	raw := pasteFile(t, dir, "na\xffme", "z\n")
+	raw := rawByteFile(t, dir, "z\n")
 	missing := filepath.Join(dir, "nosuch")
 	if err := os.Mkdir(filepath.Join(dir, "d"), 0o755); err != nil {
 		t.Fatal(err)
@@ -121,7 +121,7 @@ func pasteCases(t *testing.T) []invocation {
 		{name: "serial two dashes", args: []string{"-s", "-", "-"}, stdin: "q\nr\n"},
 		{name: "dashdash", args: []string{"--", three}},
 		{name: "empty operand", args: []string{""}},
-		{name: "operand that is not valid UTF-8", args: []string{raw, three}},
+		{name: "operand that is not valid UTF-8", args: []string{raw, three}, rawByteName: true},
 		{name: "missing file", args: []string{three, missing}},
 		{name: "missing file first", args: []string{missing, three}},
 		{name: "two missing files name the first", args: []string{missing, missing + "2"}},
