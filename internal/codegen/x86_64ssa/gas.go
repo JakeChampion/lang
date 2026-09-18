@@ -2661,7 +2661,7 @@ var runtimeHelperDeps = map[string][]string{
 	"chroot":                          {"__fern_io_error", "__fern_rc_inc"},
 	"setuid":                          {"__fern_io_error"},
 	"setgid":                          {"__fern_io_error"},
-	"setgroups":                       {"__fern_io_error"},
+	"setgroups":                       {"__fern_io_error", "__free"},
 	"create_dir":                      {"__fern_io_error", "__fern_rc_inc"},
 	"remove_dir":                      {"__fern_io_error", "__fern_rc_inc"},
 	"create_link":                     {"__fern_io_error", "__fern_rc_inc"},

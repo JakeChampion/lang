@@ -91,17 +91,30 @@ func emitSetgroupsHelper(w func(string, ...any)) {
 	w("\tadd r14, 1")
 	w("\tjmp .Lssa_sgrp_pack")
 	w(".Lssa_sgrp_empty:")
-	w("\txor r13d, r13d") // NULL
+	w("\txor r13d, r13d") // NULL, and nothing to release
 	w(".Lssa_sgrp_call:")
 	w("\tmov edi, ebx")
 	w("\tmov rsi, r13")
 	w("\tmov eax, 116") // setgroups
 	w("\tsyscall")
+	// The buffer goes back to its size class before anything is boxed, so
+	// the failure path releases it too. r14 is dead once the loop is done
+	// and __free leaves it alone, which is where the syscall's answer waits;
+	// neither rax nor rbx can hold it, since __free takes one and
+	// ssaFdIoErr clobbers the other.
+	w("\tmov r14, rax")
+	w("\ttest r13, r13")
+	w("\tjz .Lssa_sgrp_freed")
+	ssaFreeGidBuf(w)
+	w(".Lssa_sgrp_freed:")
+	w("\tmov rax, r14")
 	w("\ttest rax, rax")
 	w("\tjs .Lssa_sgrp_err")
 	ssaOptionBox(w, 0, "") // Ok
 	w("\tjmp .Lssa_sgrp_ret")
 	w(".Lssa_sgrp_inval:")
+	// Reached only from inside the pack loop, so the buffer always exists.
+	ssaFreeGidBuf(w)
 	w("\tmov eax, 22") // EINVAL, never reaching the kernel
 	w("\tjmp .Lssa_sgrp_fail")
 	w(".Lssa_sgrp_err:")
@@ -115,4 +128,14 @@ func emitSetgroupsHelper(w func(string, ...any)) {
 	w("\tpop r12")
 	w("\tpop rbx")
 	w("\tret")
+}
+
+// ssaFreeGidBuf returns the packed buffer in r13 to its size class. rbx holds
+// the element count, and the block is four bytes an element — the same
+// arithmetic the allocation used.
+func ssaFreeGidBuf(w func(string, ...any)) {
+	w("\tmov rdi, r13")
+	w("\tmov esi, ebx")
+	w("\tshl esi, 2")
+	w("\tcall %s", fnLabel("__free"))
 }
