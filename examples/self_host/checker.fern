@@ -1951,27 +1951,18 @@ function e021_trait_idx(tr: string, trait_reqs: parser.TraitReq[]): i32 {
 }
 
 // e021_conforms decides whether concrete type `cty` satisfies trait bound
-// `tr` — the parity-faithful conformance test. True when the module has an
-// explicit `impl tr for cty`, OR `cty` provides every required (abstract)
-// method of `tr` as a receiver method. The method-set arm captures
-// @derive(tr) — which synthesises exactly those methods — the same way the
-// native checker treats a derived impl as conformance. Biased toward TRUE
-// (a trait with no required methods relies solely on the explicit impl),
-// so it never flags a type the native checker would accept.
-function e021_conforms(s: Scope, tr: string, treq_idx: i32, cty: string): boolean {
-  if (e021_scope_has_impl(s.impls, tr, cty)) {
-    return true;
-  }
-  var reqs: string[] = s.trait_reqs[treq_idx].methods;
-  if (reqs.len() == 0) {
-    return false;
-  }
-  for req in reqs {
-    if (!s.has_method(req, cty)) {
-      return false;
-    }
-  }
-  return true;
+// `tr` — the parity-faithful conformance test. Two sources, both of which
+// native accepts: an explicit `impl tr for cty`, or a `@derive(tr)` on the
+// declaration, which synthesises the methods without an impl-table entry.
+//
+// It used to accept a third — `cty` merely HAVING receiver methods of the
+// required names — as a way to reach the derive case. That admitted an
+// INHERENT method as a trait impl, which native refuses with E021 and which
+// the lowering then had no dispatch for, so the program ran and answered
+// wrongly (#9486). Asking about the derive directly reaches the same case
+// without the hole.
+function e021_conforms(s: Scope, tr: string, cty: string): boolean {
+  return conforms_by_impl_or_derive(s, cty, tr);
 }
 
 // e021_type_known reports whether `cty` is a type this module knows well
@@ -2004,11 +1995,14 @@ function e021_scope_has_impl(impls: parser.ImplInfo[], trait_name: string, impl_
   return false;
 }
 
-// map_key_conforms names whether `tyname` implements trait `tr` for map-key
-// purposes: an explicit `impl tr for tyname`, or a `@derive(cmp.tr)` on the
-// declaration — for an enum, on any variant, which carries the owner's derives.
-// Both sources, because a derive does not synthesise an impl-table entry.
-function map_key_conforms(s: Scope, tyname: string, tr: string): boolean {
+// conforms_by_impl_or_derive names whether `tyname` implements trait `tr`:
+// an explicit `impl tr for tyname`, or a `@derive(cmp.tr)` on the declaration
+// — for an enum, on any variant, which carries the owner's derives. Both
+// sources, because a derive does not synthesise an impl-table entry.
+//
+// Written for map keys (E045) and now also the generic-bound check (E021),
+// which are the same question asked twice.
+function conforms_by_impl_or_derive(s: Scope, tyname: string, tr: string): boolean {
   if (e021_scope_has_impl(s.impls, tr, tyname)) { return true; }
   for sd in s.structs.structs {
     if (sd.name == tyname || sd.enum_owner == tyname) {
@@ -2037,7 +2031,7 @@ function map_key_type_error(s: Scope, kt: typeinfo.Type): string {
     _ => {}
   }
   if (kn != "") {
-    if (map_key_conforms(s, kn, "Eq") && map_key_conforms(s, kn, "Hash")) { return ""; }
+    if (conforms_by_impl_or_derive(s, kn, "Eq") && conforms_by_impl_or_derive(s, kn, "Hash")) { return ""; }
     return "map key type " + type_label(kt) + " is not supported — " + kw + " used as a key must derive Eq and Hash: add `@derive(cmp.Eq, cmp.Hash)`, which requires `import \"core/cmp\";`";
   }
   return "map key type " + type_label(kt) + " is not yet supported — use i32, string, or a struct/enum with `@derive(cmp.Eq, cmp.Hash)`, which requires `import \"core/cmp\";`";
@@ -2100,9 +2094,11 @@ function map_key_dest_diag(declared: typeinfo.Type, line: i32, col: i32, s: Scop
 // `+`-joined bound list) whose call-site argument has concrete type `at`
 // that does not conform to Tr (no `impl Tr` and not @derive-provided).
 // Conservative gates (declared trait, known concrete type, bare-name
-// argument, method-set conformance) keep it from false-firing on the
-// self-host bundle's own pervasive bounded-generic calls, which all carry
-// their impls or derives. Mirrors native checker.go's call-site E021 arm.
+// argument) keep it from firing on a type this module cannot reason about.
+// The bundle's own pervasive bounded-generic calls stay clean because they
+// carry their impls or derives, which is what conformance now asks about —
+// not because the check is lenient. Mirrors native checker.go's call-site
+// E021 arm.
 function e021_bound_call_diag(pbound: string, at: typeinfo.Type, s: Scope, ln: i32, cl: i32): util.Diag[] {
   var out: util.Diag[] = [];
   var cty: string = type_label(at);
@@ -2126,7 +2122,7 @@ function e021_bound_call_diag(pbound: string, at: typeinfo.Type, s: Scope, ln: i
       if (i > start) {
         var tr: str = slice_unchecked(pbound, start, i);
         var tidx: i32 = e021_trait_idx(tr, s.trait_reqs);
-        if (tidx >= 0 && !e021_conforms(s, tr, tidx, cty)) {
+        if (tidx >= 0 && !e021_conforms(s, tr, cty)) {
           out = out.append(dg_at("E021", "type argument " + cty + " does not implement trait " + tr, ln, cl));
         }
       }
@@ -13974,8 +13970,13 @@ function e021_derive_field_known(mod: parser.Module, fty: string): boolean {
 // for fty`, or fty providing every required trait method as a receiver
 // method — which captures both an inherent method set and a field type
 // whose OWN @derive already synthesised the methods at parse time.
-// Mirrors e021_conforms' bias: a trait with no required methods
-// conforms only via the explicit impl.
+//
+// The method-set arm is right HERE and wrong for a bound: this asks whether
+// a derive on the owner can be synthesised from its fields, and a field whose
+// derive already ran carries the methods and no impl-table entry. The bound
+// check (e021_conforms) asks whether a type argument conforms, where an
+// inherent method is not an impl — see #9486. A trait with no required
+// methods conforms only via the explicit impl either way.
 function e021_derive_conforms(mod: parser.Module, tr: string, treq_idx: i32, fty: string): boolean {
   if (e021_has_impl(mod, tr, fty)) {
     return true;

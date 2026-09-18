@@ -1,10 +1,16 @@
 package x86_64ssa
 
-// Four helpers that each blocked a handful of corpus programs on their own:
-// write, __fern_heap_bump_bytes, __method_Reader_read_line and read_dir.
+import (
+	"fmt"
+	"strings"
+)
 
-// readlineBufSym is the shared 4 KiB .bss line buffer Reader.read_line fills
-// before it knows the line's length; readlineBytes bounds one line.
+// Four helpers that each blocked a handful of corpus programs on their own:
+// write, __fern_heap_bump_bytes, the two line readers and the two directory
+// listings.
+
+// readlineBufSym is the shared 4 KiB .bss line buffer the two line readers
+// fill before they know the line's length; readlineBytes bounds one line.
 const (
 	readlineBufSym = "__ssa_readline_buf"
 	readlineBytes  = 4096
@@ -40,39 +46,54 @@ func emitHeapBumpBytesHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
-// emitReaderReadLineHelper writes __method_Reader_read_line(reader) ->
-// Option[string]: one byte at a time from the handle's fd (at [reader + 8])
-// into the .bss line buffer until '\n' (kept), the buffer's end, or EOF or an
-// error, then a fresh right-sized rc string of what was read. None when the
-// first read returns nothing. rbx = buffer, r12 = bytes read then the string,
-// r13 = fd.
-func emitReaderReadLineHelper(w func(string, ...any)) {
+// emitReadLineHelper returns the emitter for a line read -> Option[string]:
+// one byte at a time into the .bss line buffer until '\n' (kept), the
+// buffer's end, or EOF or an error, then a fresh right-sized rc string of what
+// was read. None when the first read returns nothing.
+//
+// `fd` is the descriptor to read, or -1 to take it from a handle argument at
+// [rdi + 8]: __method_Reader_read_line asks a Reader, the free read_line asks
+// standard input. `sfx` keeps the local labels distinct so both can live in
+// one object.
+//
+// rbx = buffer, r12 = bytes read then the string, r13 = fd.
+func emitReadLineHelper(name, sfx string, fd int) func(w func(string, ...any)) {
+	return func(w func(string, ...any)) {
+		emitReadLineBody(w, name, sfx, fd)
+	}
+}
+
+func emitReadLineBody(w func(string, ...any), name, sfx string, fd int) {
 	w("")
-	w("%s:", fnLabel("__method_Reader_read_line"))
+	w("%s:", fnLabel(name))
 	w("\tpush rbx")
 	w("\tpush r12")
 	w("\tpush r13")
 	// Three pushes past the return address leave rsp 16-aligned.
-	w("\tmov r13d, dword ptr [rdi + 8]") // fd
+	if fd < 0 {
+		w("\tmov r13d, dword ptr [rdi + 8]")
+	} else {
+		w("\tmov r13d, %d", fd)
+	}
 	w("\tlea rbx, [rip + %s]", readlineBufSym)
 	w("\txor r12d, r12d")
-	w(".Lssa_rrl_loop:")
+	w(".Lssa_rrl_loop%s:", sfx)
 	w("\tcmp r12, %d", readlineBytes)
-	w("\tjae .Lssa_rrl_done")
+	w("\tjae .Lssa_rrl_done%s", sfx)
 	w("\tmov edi, r13d")
 	w("\tlea rsi, [rbx + r12]")
 	w("\tmov edx, 1")
 	w("\txor eax, eax") // read
 	w("\tsyscall")
 	w("\tcmp rax, 1")
-	w("\tjl .Lssa_rrl_done") // EOF or an error ends the line
+	w("\tjl .Lssa_rrl_done%s", sfx) // EOF or an error ends the line
 	w("\tmovzx eax, byte ptr [rbx + r12]")
 	w("\tadd r12, 1")
 	w("\tcmp eax, 10") // '\n', kept
-	w("\tjne .Lssa_rrl_loop")
-	w(".Lssa_rrl_done:")
+	w("\tjne .Lssa_rrl_loop%s", sfx)
+	w(".Lssa_rrl_done%s:", sfx)
 	w("\ttest r12, r12")
-	w("\tjz .Lssa_rrl_none")
+	w("\tjz .Lssa_rrl_none%s", sfx)
 	w("\tlea rdx, [r12 + %d]", strBlockBytes) // header + bytes + NUL
 	ssaBumpAlloc(w, "rax", "rdx")
 	w("\tmov dword ptr [rax], 1") // rc = 1
@@ -82,19 +103,22 @@ func emitReaderReadLineHelper(w func(string, ...any)) {
 	w("\tmov byte ptr [rax + r12], 0")
 	w("\tmov r12, rax")
 	ssaOptionBox(w, 0, "r12")
-	w("\tjmp .Lssa_rrl_ret")
-	w(".Lssa_rrl_none:")
+	w("\tjmp .Lssa_rrl_ret%s", sfx)
+	w(".Lssa_rrl_none%s:", sfx)
 	ssaOptionBox(w, 1, "")
-	w(".Lssa_rrl_ret:")
+	w(".Lssa_rrl_ret%s:", sfx)
 	w("\tpop r13")
 	w("\tpop r12")
 	w("\tpop rbx")
 	w("\tret")
 }
 
-// emitReadDirHelper writes read_dir(path) -> Result[string[], IoError]: the
-// immediate children of a directory as base names, "." and ".." excluded, in
-// getdents64 order as the flat backend lists them. Two passes over a 4 KiB
+// emitReadDirLike writes a directory listing -> Result[string[], IoError]: the
+// immediate children as base names, in getdents64 order as the flat backend
+// lists them, with "." and ".." excluded when skipDots is set and kept when it
+// is not. `lb` prefixes the local labels so both forms can live in one object.
+//
+// Two passes over a 4 KiB
 // scratch block: the first counts the kept entries to size the container, an
 // lseek rewinds, and the second allocates a string per name. Each pass drains
 // getdents64 until it returns 0, so a directory of any size is listed. The
@@ -105,12 +129,12 @@ func emitReaderReadLineHelper(w func(string, ...any)) {
 // scratch block, r15 = count; the frame carries the chunk offset, the chunk
 // length, the fill index, and the current name's pointer and length across
 // the string allocation, whose guard call may clobber the rest.
-func emitReadDirHelper(w func(string, ...any)) {
+func emitReadDirLike(w func(string, ...any), name, lb string, skipDots bool) {
 	const (
 		off   = "[rsp]"
 		chunk = "[rsp + 8]"
 		fill  = "[rsp + 16]"
-		name  = "[rsp + 24]"
+		nptr  = "[rsp + 24]"
 		nlen  = "[rsp + 32]"
 	)
 	getdents := func(next, end, fail string) {
@@ -126,12 +150,15 @@ func emitReadDirHelper(w func(string, ...any)) {
 		w("\tmov qword ptr %s, 0", off)
 		w("%s:", next)
 	}
-	// dotSkip branches to skip when the entry at r14 + [rsp] is "." or "..",
-	// leaving its d_name pointer in r10.
-	dotSkip := func(keep, skip string) {
+	// entryName leaves the entry's d_name pointer in r10 and, when the caller
+	// excludes them, branches to skip for "." and "..".
+	entryName := func(keep, skip string) {
 		w("\tmov r10, %s", off)
 		w("\tlea r10, [r14 + r10 + 19]") // d_name
-		w("\tcmp byte ptr [r10], 46")    // '.'
+		if !skipDots {
+			return
+		}
+		w("\tcmp byte ptr [r10], 46") // '.'
 		w("\tjne %s", keep)
 		w("\tmovzx eax, byte ptr [r10 + 1]")
 		w("\ttest eax, eax")
@@ -152,7 +179,7 @@ func emitReadDirHelper(w func(string, ...any)) {
 		w("\tjmp %s", again)
 	}
 	w("")
-	w("%s:", fnLabel("read_dir"))
+	w("%s:", fnLabel(name))
 	w("\tpush rbx")
 	w("\tpush r12")
 	w("\tpush r13")
@@ -160,7 +187,9 @@ func emitReadDirHelper(w func(string, ...any)) {
 	w("\tpush r15")
 	w("\tsub rsp, 48") // five pushes past the return address: 16-aligned, and so is this
 	w("\tmov rbx, rdi")
-	ssaPathz(w, "rd")
+	// The pathz labels take the same prefix, so the two listings do not share
+	// a label when both are emitted.
+	ssaPathz(w, strings.TrimPrefix(lb, ".Lssa_"))
 	w("\tmov edi, -100") // AT_FDCWD
 	w("\tmov rsi, r12")
 	w("\tmov edx, 65536") // O_RDONLY|O_DIRECTORY
@@ -168,19 +197,19 @@ func emitReadDirHelper(w func(string, ...any)) {
 	w("\tmov eax, 257") // openat
 	w("\tsyscall")
 	w("\ttest rax, rax")
-	w("\tjs .Lssa_rd_err")
+	w("\tjs %s_err", lb)
 	w("\tmov r13d, eax")
 	ssaBumpAlloc(w, "rax", "4096")
 	w("\tmov r14, rax")
 	w("\txor r15d, r15d")
 	// Pass 1: count the kept entries.
-	w(".Lssa_rd_g1:")
-	getdents(".Lssa_rd_c1", ".Lssa_rd_g1d", ".Lssa_rd_err_close")
-	dotSkip(".Lssa_rd_c1keep", ".Lssa_rd_c1skip")
+	w("%s_g1:", lb)
+	getdents(fmt.Sprintf("%s_c1", lb), fmt.Sprintf("%s_g1d", lb), fmt.Sprintf("%s_err_close", lb))
+	entryName(fmt.Sprintf("%s_c1keep", lb), fmt.Sprintf("%s_c1skip", lb))
 	w("\tadd r15, 1")
-	w(".Lssa_rd_c1skip:")
-	advance(".Lssa_rd_c1", ".Lssa_rd_g1")
-	w(".Lssa_rd_g1d:")
+	w("%s_c1skip:", lb)
+	advance(fmt.Sprintf("%s_c1", lb), fmt.Sprintf("%s_g1", lb))
+	w("%s_g1d:", lb)
 	w("\tmov edi, r13d")
 	w("\txor esi, esi")
 	w("\txor edx, edx")
@@ -196,23 +225,23 @@ func emitReadDirHelper(w func(string, ...any)) {
 	w("\tmov r12, rax")
 	w("\tmov qword ptr %s, 0", fill)
 	// Pass 2: a fresh string per kept entry.
-	w(".Lssa_rd_g2:")
-	getdents(".Lssa_rd_c2", ".Lssa_rd_g2d", ".Lssa_rd_err_close")
-	dotSkip(".Lssa_rd_c2keep", ".Lssa_rd_c2skip")
+	w("%s_g2:", lb)
+	getdents(fmt.Sprintf("%s_c2", lb), fmt.Sprintf("%s_g2d", lb), fmt.Sprintf("%s_err_close", lb))
+	entryName(fmt.Sprintf("%s_c2keep", lb), fmt.Sprintf("%s_c2skip", lb))
 	// The directory can gain entries between the passes; the container was
 	// sized by the first, so the extras are dropped rather than written
 	// past it.
 	w("\tmov rcx, %s", fill)
 	w("\tcmp rcx, r15")
-	w("\tjae .Lssa_rd_c2skip")
-	w("\tmov %s, r10", name)
+	w("\tjae %s_c2skip", lb)
+	w("\tmov %s, r10", nptr)
 	w("\txor ecx, ecx")
-	w(".Lssa_rd_len:")
+	w("%s_len:", lb)
 	w("\tcmp byte ptr [r10 + rcx], 0")
-	w("\tje .Lssa_rd_lend")
+	w("\tje %s_lend", lb)
 	w("\tadd rcx, 1")
-	w("\tjmp .Lssa_rd_len")
-	w(".Lssa_rd_lend:")
+	w("\tjmp %s_len", lb)
+	w("%s_lend:", lb)
 	w("\tmov %s, rcx", nlen)
 	w("\tlea rdx, [rcx + %d]", strBlockBytes) // header + length + NUL
 	ssaBumpAlloc(w, "rax", "rdx")
@@ -220,7 +249,7 @@ func emitReadDirHelper(w func(string, ...any)) {
 	w("\tmov rcx, %s", nlen)
 	w("\tmov dword ptr [rax + 4], ecx")
 	w("\tadd rax, 8")
-	w("\tmov rsi, %s", name)
+	w("\tmov rsi, %s", nptr)
 	emitBcopyCall(w, "rax", "rsi", "rcx")
 	w("\tmov rcx, %s", nlen)
 	w("\tmov byte ptr [rax + rcx], 0")
@@ -228,29 +257,29 @@ func emitReadDirHelper(w func(string, ...any)) {
 	w("\tmov [r12 + rcx * 8], rax")
 	w("\tadd rcx, 1")
 	w("\tmov %s, rcx", fill)
-	w(".Lssa_rd_c2skip:")
-	advance(".Lssa_rd_c2", ".Lssa_rd_g2")
-	w(".Lssa_rd_g2d:")
+	w("%s_c2skip:", lb)
+	advance(fmt.Sprintf("%s_c2", lb), fmt.Sprintf("%s_g2", lb))
+	w("%s_g2d:", lb)
 	w("\tmov rcx, %s", fill)
 	w("\tmov %s, ecx", memRef("r12", -4)) // len = filled: entries can also go away between the passes
 	w("\tmov edi, r13d")
 	w("\tmov eax, 3") // close
 	w("\tsyscall")
 	ssaOptionBox(w, 0, "r12")
-	w("\tjmp .Lssa_rd_ret")
-	w(".Lssa_rd_err_close:")
+	w("\tjmp %s_ret", lb)
+	w("%s_err_close:", lb)
 	w("\tneg rax")
 	w("\tmov r12d, eax") // errno, across the close
 	w("\tmov edi, r13d")
 	w("\tmov eax, 3") // close
 	w("\tsyscall")
 	w("\tmov eax, r12d")
-	w("\tjmp .Lssa_rd_errno")
-	w(".Lssa_rd_err:")
+	w("\tjmp %s_errno", lb)
+	w("%s_err:", lb)
 	w("\tneg rax")
-	w(".Lssa_rd_errno:")
+	w("%s_errno:", lb)
 	ssaIoErr(w)
-	w(".Lssa_rd_ret:")
+	w("%s_ret:", lb)
 	w("\tadd rsp, 48")
 	w("\tpop r15")
 	w("\tpop r14")
@@ -258,4 +287,14 @@ func emitReadDirHelper(w func(string, ...any)) {
 	w("\tpop r12")
 	w("\tpop rbx")
 	w("\tret")
+}
+
+// emitReadDirHelper writes read_dir(path) -> Result[string[], IoError], and
+// emitReadDirAllHelper the same listing with "." and ".." kept.
+func emitReadDirHelper(w func(string, ...any)) {
+	emitReadDirLike(w, "read_dir", ".Lssa_rd", true)
+}
+
+func emitReadDirAllHelper(w func(string, ...any)) {
+	emitReadDirLike(w, "read_dir_all", ".Lssa_rdall", false)
 }

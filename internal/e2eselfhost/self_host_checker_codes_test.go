@@ -1559,6 +1559,15 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e079-defer-block", "function g(v: i32): Option[i32] { if (v < 100) { return Some(v + 1); } return None; }\nfunction f(k: i32): i32 {\n  var n: i32 = 1;\n  defer { n = (match (k) { 0 => g(n)?, _ => 7 }); }\n  return n;\n}\nfunction main(): i32 { return f(0); }\n", []string{"E042", "E079"}},
 		{"e079-errdefer-match-expr", "function g(v: i32): Option[i32] { if (v < 100) { return Some(v + 1); } return None; }\nfunction f(k: i32): i32 {\n  var n: i32 = 1;\n  errdefer n = (match (k) { 0 => g(n)?, _ => 7 });\n  return n;\n}\nfunction main(): i32 { return f(0); }\n", []string{"E042", "E079"}},
 		{"e079-defer-nested-value-blocks", "function g(v: i32): Option[i32] { if (v < 100) { return Some(v + 1); } return None; }\nfunction f(k: i32): i32 {\n  var n: i32 = 1;\n  defer n = (match (k) { 0 => (if (k == 0) { g(n)? } else { 3 }), _ => 7 });\n  return n;\n}\nfunction main(): i32 { return f(0); }\n", []string{"E042", "E079"}},
+		// E021 generic-bound conformance is an `impl` or a `@derive`, never a
+		// receiver method that merely has the right name (#9486). The method-set
+		// arm was there to reach the derive case, which the derive is now asked
+		// about directly; it also admitted an INHERENT method as a trait impl,
+		// which native refuses and the lowering had no dispatch for — so the
+		// program ran and answered wrongly rather than being refused.
+		{"e021-inherent-method-is-not-an-impl", "trait Feed[T] { function head(self: Self): T; }\nstruct Wide { v: f64 }\nfunction (w: Wide) head(): f64 { return w.v; }\nfunction first[T, I: Feed[T]](it: I): T { return it.head(); }\nfunction main(): i32 { return first(Wide { v: 6.5 }) as i32; }\n", []string{"E021"}},
+		{"e021-no-method-at-all", "trait Feed[T] { function head(self: Self): T; }\nstruct Wide { v: f64 }\nfunction first[T, I: Feed[T]](it: I): T { return it.head(); }\nfunction main(): i32 { return first(Wide { v: 6.5 }) as i32; }\n", []string{"E021"}},
+		{"e021-impl-backed-ok", "trait Feed[T] { function head(self: Self): T; }\nstruct Wide { v: f64 }\nimpl Feed[f64] for Wide { function head(self: Self): f64 { return self.v; } }\nfunction first[T, I: Feed[T]](it: I): T { return it.head(); }\nfunction main(): i32 { var d: f64 = first(Wide { v: 6.5 }); return d as i32; }\n", nil},
 		// Cell[T]'s two methods are builtins, so they are in neither the
 		// method table nor the struct table and the ordinary method path
 		// resolved nothing — a call was accepted whatever it was handed,

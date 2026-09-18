@@ -14,22 +14,30 @@ package x86_64ssa
 // r13. Clobbers rax, rcx and r11, and needs rsp 16-aligned for the guard call.
 // lbl keeps the copy loop's labels distinct per helper.
 func ssaPathz(w func(string, ...any), lbl string) {
-	w("\tmov r13d, %s", memRef("rbx", -4))
-	w("\tmov r12, r13")
-	w("\tadd r12, 1") // + NUL
-	ssaBumpAlloc(w, "rax", "r12")
-	w("\tmov r12, rax") // pathz
+	ssaPathzInto(w, lbl, "rbx", "r12", "r13")
+}
+
+// ssaPathzInto is ssaPathz over a chosen register triple, for the two-path
+// helpers, which need a second copy while the first is still live. src is the
+// path string, dst takes the NUL-terminated copy and n its length; dst and n
+// must be r8-r15, since their low halves are written with the `d` suffix.
+func ssaPathzInto(w func(string, ...any), lbl, src, dst, n string) {
+	w("\tmov %sd, %s", n, memRef(src, -4))
+	w("\tmov %s, %s", dst, n)
+	w("\tadd %s, 1", dst) // + NUL
+	ssaBumpAlloc(w, "rax", dst)
+	w("\tmov %s, rax", dst) // pathz
 	w("\txor ecx, ecx")
 	w(".Lssa_%s_cp:", lbl)
-	w("\tcmp ecx, r13d")
+	w("\tcmp ecx, %sd", n)
 	w("\tjae .Lssa_%s_cpd", lbl)
-	w("\tmov al, [rbx + rcx]")
-	w("\tmov [r12 + rcx], al")
+	w("\tmov al, [%s + rcx]", src)
+	w("\tmov [%s + rcx], al", dst)
 	w("\tadd ecx, 1")
 	w("\tjmp .Lssa_%s_cp", lbl)
 	w(".Lssa_%s_cpd:", lbl)
-	w("\tmov rax, r13")
-	w("\tmov byte ptr [r12 + rax], 0")
+	w("\tmov rax, %s", n)
+	w("\tmov byte ptr [%s + rax], 0", dst)
 }
 
 // ssaRetainPathForIoErr retains the path in rbx before it is handed to
