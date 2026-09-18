@@ -1021,7 +1021,7 @@ pub function all_runtime_need_roots(): string[] {
         // And how it competes for the CPU.
         "priority", "set_priority",
         // sockets + readiness (the edge-handler serve loop):
-        "tcp_listen", "tcp_accept", "tcp_connect", "tcp_send", "tcp_recv", "udp_send",
+        "tcp_listen", "tcp_accept", "tcp_local_port", "tcp_connect", "tcp_send", "tcp_recv", "udp_send",
         "tcp_close", "tcp_pollable", "poll", "timer_fd",
         "wasm_timer_pollable", "wasm_pollable_drop", "wasm_block", "wasm_poll",
         // wide-int stringifiers + the Option-returning i32 min/max:

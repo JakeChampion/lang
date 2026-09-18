@@ -1244,6 +1244,7 @@ func New() *Interp {
 	i.Builtins["int____int_to_string_u64"] = &Builtin{Fn: builtinIntToStringU64}
 	i.Builtins["tcp_listen"] = &Builtin{Fn: builtinTcpListen}
 	i.Builtins["tcp_accept"] = &Builtin{Fn: builtinTcpAccept}
+	i.Builtins["tcp_local_port"] = &Builtin{Fn: builtinTcpLocalPort}
 	i.Builtins["tcp_recv"] = &Builtin{Fn: builtinTcpRecv}
 	i.Builtins["tcp_send"] = &Builtin{Fn: builtinTcpSend}
 	i.Builtins["tcp_close"] = &Builtin{Fn: builtinTcpClose}
@@ -1435,6 +1436,33 @@ func builtinWasmTimerPollable(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("wasm_timer_pollable: expected 1 arg, got %d", len(args))
 	}
 	return Number(-1), nil
+}
+
+// builtinTcpLocalPort is the interpreter's `tcp_local_port(handle)` — the
+// port a listener or connection is bound to, or -1 when the handle names
+// neither. Both tables are consulted because the AOT backends take one
+// getsockname path for either kind of socket.
+func builtinTcpLocalPort(i *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("tcp_local_port: expected 1 arg, got %d", len(args))
+	}
+	id, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("tcp_local_port: expected number arg, got %T", args[0])
+	}
+	var addr net.Addr
+	if ln, ok := i.tcpListeners[int64(id)]; ok {
+		addr = ln.Addr()
+	} else if conn, ok := i.tcpConns[int64(id)]; ok {
+		addr = conn.LocalAddr()
+	} else {
+		return Number(-1), nil
+	}
+	ta, ok := addr.(*net.TCPAddr)
+	if !ok {
+		return Number(-1), nil
+	}
+	return Number(ta.Port), nil
 }
 
 // builtinTcpPollable is the interpreter's `tcp_pollable(fd)` — identity, like

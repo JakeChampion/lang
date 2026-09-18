@@ -9,6 +9,7 @@
 package e2e
 
 import (
+	"bufio"
 	"bytes"
 	"io"
 	"net"
@@ -17,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -512,11 +514,11 @@ func TestWasmPreview2ReadWriteFile(t *testing.T) {
 // self-contained — the only host privilege needed is
 // `-S inherit-network` for outbound socket creation.
 //
-// Picking a port: we open + immediately close a transient
-// listener on :0 to extract a free ephemeral port i32, then
-// hand it to the guest via wasmtime's positional args. Race
-// window is tiny but non-zero; if the test ever flakes here,
-// that's the cause.
+// Picking a port: the guest binds 0 and prints the port
+// tcp_local_port reports, and the host dials what it read. That
+// replaces probing for a free port on the host and handing it to
+// the guest, which raced anything else on the machine between the
+// probe closing and the guest binding.
 func TestWasmPreview2TcpEcho(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("preview-2 toolchain not exercised on windows")
@@ -528,29 +530,19 @@ func TestWasmPreview2TcpEcho(t *testing.T) {
 		t.Skip("wasmtime not on PATH; skipping preview-2 e2e")
 	}
 
-	// Pick a free port — open a listener on :0, capture the
-	// kernel-assigned port, close before the guest tries to
-	// bind. There's a tiny race against another process grabbing
-	// the same port, but it's localhost-only and the test is
-	// short-lived.
-	probe, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("probe listen: %v", err)
-	}
-	port := probe.Addr().(*net.TCPAddr).Port
-	probe.Close()
-
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "echo.fern")
-	// Hardcode the port in the source instead of plumbing
-	// args() — args() comes back as `Array<string>` and the
-	// language doesn't have a string-to-int builtin yet, so
-	// passing the port through would need a bespoke parser.
-	// Acceptable: the port is templated in via Go string
-	// formatting at build time.
-	src := strings.Replace(`function main(): i32 {
-    var sock = tcp_listen(__PORT__);
+	// The guest announces where it is listening. `tcp_listen(0)`
+	// takes whatever port is free and `tcp_local_port` reads it
+	// back off the socket, so no port is named anywhere.
+	src := `import "core/int";
+
+function main(): i32 {
+    var sock = tcp_listen(0);
     if (sock < 0) { return 1; }
+    var port: i32 = tcp_local_port(sock);
+    if (port <= 0) { return 4; }
+    print(int.int_to_string(port));
     var conn = tcp_accept(sock);
     if (conn < 0) { return 2; }
     var msg: string = string_from_bytes_unchecked(tcp_recv(conn, 1024));
@@ -560,7 +552,7 @@ func TestWasmPreview2TcpEcho(t *testing.T) {
     tcp_close(sock);
     return 0;
 }
-`, "__PORT__", strings.TrimSpace(itoa(port)), 1)
+`
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
@@ -588,8 +580,11 @@ func TestWasmPreview2TcpEcho(t *testing.T) {
 	// create + bind sockets via wasi:sockets — without it the
 	// host denies tcp-create-socket / start-bind.
 	run := exec.Command("wasmtime", "run", "-S", "inherit-network", componentPath)
-	var sout, serr bytes.Buffer
-	run.Stdout = &sout
+	stdout, err := run.StdoutPipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
+	var serr bytes.Buffer
 	run.Stderr = &serr
 	if err := run.Start(); err != nil {
 		t.Fatalf("wasmtime run start: %v", err)
@@ -602,19 +597,14 @@ func TestWasmPreview2TcpEcho(t *testing.T) {
 		run.Wait()
 	})
 
-	// Connect with a short retry loop — wasmtime takes a moment
-	// to spin up the component and reach start-listen.
-	deadline := time.Now().Add(5 * time.Second)
-	var conn net.Conn
-	for {
-		conn, err = net.Dial("tcp", net.JoinHostPort("127.0.0.1", itoa(port)))
-		if err == nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("dial: %v\nstdout:\n%s\nstderr:\n%s", err, sout.String(), serr.String())
-		}
-		time.Sleep(50 * time.Millisecond)
+	// The guest's first line is the port it bound. Reading it is
+	// also the readiness signal: it is printed after start-listen
+	// returns, so there is nothing to poll for and no retry loop.
+	port := readGuestPort(t, stdout, &serr)
+
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", itoa(port)), 5*time.Second)
+	if err != nil {
+		t.Fatalf("dial %d: %v\nstderr:\n%s", port, err, serr.String())
 	}
 	defer conn.Close()
 
@@ -636,7 +626,38 @@ func TestWasmPreview2TcpEcho(t *testing.T) {
 		t.Fatalf("echo = %q; want %q (stderr=%q)", string(got), want, serr.String())
 	}
 	if err := run.Wait(); err != nil {
-		t.Fatalf("wasmtime exit: %v\nstdout:\n%s\nstderr:\n%s", err, sout.String(), serr.String())
+		t.Fatalf("wasmtime exit: %v\nstderr:\n%s", err, serr.String())
+	}
+}
+
+// readGuestPort reads the port a self-announcing guest prints on its first
+// stdout line. A guest that dies before printing gives an EOF here rather than
+// a dial that times out against a port nobody ever bound, so the failure names
+// the real cause.
+func readGuestPort(t *testing.T, stdout io.Reader, serr *bytes.Buffer) int {
+	t.Helper()
+	type result struct {
+		line string
+		err  error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		line, err := bufio.NewReader(stdout).ReadString('\n')
+		ch <- result{line, err}
+	}()
+	select {
+	case r := <-ch:
+		if r.err != nil {
+			t.Fatalf("reading the guest's port line: %v\nstderr:\n%s", r.err, serr.String())
+		}
+		port, err := strconv.Atoi(strings.TrimSpace(r.line))
+		if err != nil || port <= 0 || port > 65535 {
+			t.Fatalf("guest announced %q, want a port\nstderr:\n%s", r.line, serr.String())
+		}
+		return port
+	case <-time.After(20 * time.Second):
+		t.Fatalf("guest never announced a port\nstderr:\n%s", serr.String())
+		return 0
 	}
 }
 

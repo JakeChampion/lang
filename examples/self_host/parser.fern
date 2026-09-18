@@ -8235,7 +8235,7 @@ pub function builtin_function_names(): string[] {
         // float / int bit reinterprets
         "f64_bits", "f64_from_bits", "f32_bits", "f32_from_bits",
         // networking
-        "tcp_listen", "tcp_accept", "tcp_recv", "tcp_send", "tcp_close",
+        "tcp_listen", "tcp_accept", "tcp_local_port", "tcp_recv", "tcp_send", "tcp_close",
         "udp_send", "tcp_connect", "tcp_pollable"
     ];
 }

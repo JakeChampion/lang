@@ -134,14 +134,15 @@ var gatedBuiltins = map[string]string{
 	"random_i32":   "random",
 
 	// Sockets.
-	"tcp_listen":   "tcp",
-	"tcp_accept":   "tcp",
-	"tcp_connect":  "tcp",
-	"tcp_recv":     "tcp",
-	"tcp_send":     "tcp",
-	"tcp_close":    "tcp",
-	"tcp_pollable": "tcp",
-	"udp_send":     "tcp",
+	"tcp_listen":     "tcp",
+	"tcp_accept":     "tcp",
+	"tcp_local_port": "tcp",
+	"tcp_connect":    "tcp",
+	"tcp_recv":       "tcp",
+	"tcp_send":       "tcp",
+	"tcp_close":      "tcp",
+	"tcp_pollable":   "tcp",
+	"udp_send":       "tcp",
 
 	// Filesystem.
 	"read_file":        "fs",

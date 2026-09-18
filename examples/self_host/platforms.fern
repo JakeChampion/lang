@@ -282,6 +282,7 @@ pub function gated_builtins(): Gate[] {
         // Sockets.
         Gate { builtin: "tcp_listen", capability: "tcp" },
         Gate { builtin: "tcp_accept", capability: "tcp" },
+        Gate { builtin: "tcp_local_port", capability: "tcp" },
         Gate { builtin: "tcp_connect", capability: "tcp" },
         Gate { builtin: "tcp_recv", capability: "tcp" },
         Gate { builtin: "tcp_send", capability: "tcp" },

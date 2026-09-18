@@ -60,6 +60,9 @@ const (
 	sysListen    = 201
 	sysAccept    = 202
 	sysConnect   = 203
+	// getsockname(2) — the only way to read the port the kernel picked
+	// for a socket bound to port 0.
+	sysGetsockname = 204
 	// clock_gettime(2): asm-generic table syscall 113.
 	// Used by `__fern_now_unix_ms` / `__fern_monotonic_ns` for the
 	// clock-now surface (docs/STDLIB-DESIGN-RESEARCH.md Rec §4 Phase 2).
@@ -91,18 +94,19 @@ const (
 // `svc #0x80` with the number in x16, and on error returns
 // +errno in x0 with the C flag set (vs Linux's -errno in x0).
 const (
-	darRead       = 3
-	darWrite      = 4
-	darClose      = 6
-	darExit       = 1
-	darAccept     = 30
-	darConnect    = 98
-	darSocket     = 97
-	darBind       = 104
-	darListen     = 106
-	darMmap       = 197
-	darOpenat     = 463
-	darGetentropy = 500
+	darRead        = 3
+	darWrite       = 4
+	darClose       = 6
+	darExit        = 1
+	darAccept      = 30
+	darConnect     = 98
+	darGetsockname = 32
+	darSocket      = 97
+	darBind        = 104
+	darListen      = 106
+	darMmap        = 197
+	darOpenat      = 463
+	darGetentropy  = 500
 	// fstat64 (BSD 339): arm64 macOS is always 64-bit-inode, so this
 	// fills the modern `struct stat` whose st_size sits at offset 96
 	// (vs Linux's 48). gettimeofday (BSD 116) fills a `struct timeval`
@@ -147,13 +151,14 @@ var linuxDarwinSysno = map[string][2]int{
 	// lseek(2) — Linux asm-generic 62, Darwin BSD 199. Same
 	// (fd, off_t, whence) shape and the same carry-flag error
 	// convention every other Darwin row normalises.
-	"lseek":   {62, 199},
-	"socket":  {sysSocket, darSocket},
-	"bind":    {sysBind, darBind},
-	"listen":  {sysListen, darListen},
-	"accept":  {sysAccept, darAccept},
-	"connect": {sysConnect, darConnect},
-	"openat":  {sysOpenat, darOpenat},
+	"lseek":       {62, 199},
+	"socket":      {sysSocket, darSocket},
+	"bind":        {sysBind, darBind},
+	"listen":      {sysListen, darListen},
+	"accept":      {sysAccept, darAccept},
+	"connect":     {sysConnect, darConnect},
+	"getsockname": {sysGetsockname, darGetsockname},
+	"openat":      {sysOpenat, darOpenat},
 	// fcntl(2) — Linux asm-generic 25, Darwin BSD 92. Backs the open
 	// helpers' F_DUPFD (0 on both) move off descriptors 0/1/2.
 	"fcntl": {25, 92},
@@ -831,6 +836,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.emitTcpListenRuntime()
 		g.emitTcpConnectRuntime()
 		g.emitTcpAcceptRuntime()
+		g.emitTcpLocalPortRuntime()
 		g.emitTcpRecvRuntime()
 		g.emitTcpSendRuntime()
 		g.emitTcpCloseRuntime()
@@ -6202,6 +6208,35 @@ func (g *generator) emitTcpAcceptRuntime() {
 	g.syscall("accept")
 	g.emit("ret")
 	g.sizeDirective("__fern_tcp_accept")
+	g.line(".ltorg")
+}
+
+// emitTcpLocalPortRuntime emits `__fern_tcp_local_port(fd)` —
+// getsockname(2) into a stack sockaddr_in, returning the port
+// the socket is bound to in host order, or `-errno`. This is
+// what reports the kernel-picked port of a `tcp_listen(0)`.
+func (g *generator) emitTcpLocalPortRuntime() {
+	g.line("")
+	g.line(".global __fern_tcp_local_port")
+	g.typeDirective("__fern_tcp_local_port")
+	g.label("__fern_tcp_local_port")
+	// x0 = fd (already in x0 from caller). sockaddr_in at [sp],
+	// socklen_t at [sp, #16].
+	g.emit("sub sp, sp, #32")
+	g.emit("mov w9, #16")
+	g.emit("str w9, [sp, #16]")
+	g.emit("mov x1, sp")
+	g.emit("add x2, sp, #16")
+	g.syscall("getsockname")
+	lbl := g.freshLabel("tcp_lport_done")
+	// x0 holds -errno from the failed syscall.
+	g.emit("tbnz x0, #63, %s", lbl)
+	g.emit("ldrh w0, [sp, #2]") // sin_port, network order
+	g.emit("rev16 w0, w0")      // ntohs
+	g.label(lbl)
+	g.emit("add sp, sp, #32")
+	g.emit("ret")
+	g.sizeDirective("__fern_tcp_local_port")
 	g.line(".ltorg")
 }
 
@@ -19732,7 +19767,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesStringFromBytes = true
 			g.usesAlloc = true
 			g.usesMemcpy = true
-		case "tcp_listen", "tcp_accept", "tcp_recv", "tcp_send", "tcp_close", "tcp_pollable", "tcp_connect":
+		case "tcp_listen", "tcp_accept", "tcp_local_port", "tcp_recv", "tcp_send", "tcp_close", "tcp_pollable", "tcp_connect":
 			target = "__fern_" + target
 			g.usesTcp = true
 			// usesTcp always emits __fern_tcp_recv, which calls

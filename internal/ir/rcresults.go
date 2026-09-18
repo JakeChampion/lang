@@ -560,6 +560,7 @@ var rcResultNonPointer = map[string]bool{
 
 	// Byte counts and status codes from the socket layer.
 	"__fern_tcp_send": true, "__fern_udp_send": true, "__fern_tcp_close": true,
+	"__fern_tcp_local_port": true,
 
 	// Opaque host handles. Pointer-SHAPED and not memory: a wasi
 	// pollable or network handle indexes a host table. `rcsigs.go`
