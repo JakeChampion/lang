@@ -292,6 +292,47 @@ jobs:
           grep -oE '^--- FAIL: Test[A-Za-z0-9]+' corpus-darwin.log \
             | sed 's/^--- FAIL: //' | sort | uniq -c | sort -rn || true
 
+      # DID THE ROUND COVER THE CATALOGUE? A DONE line does not say so, and
+      # that is how the ratchet's seed came to be short by 32 utilities: the
+      # seeding round stopped after `ptx_test.go`, printed a DONE line for the
+      # 14814 tests it had managed, and everything from `pwd_test.go` onward
+      # went unmeasured. When a later fix let the catalogue finish, those 32
+      # names arrived at once and the ratchet read them as 32 simultaneous
+      # regressions — `main` red, and every lane behind it cancelled.
+      #
+      # The ratchet below insists on a DONE line for a corpus that "died
+      # partway", which is the right instinct aimed one step short: a round
+      # that dies partway still summarises what it saw. What says the round was
+      # COMPLETE is that every test function declared in the package appears in
+      # the log.
+      #
+      # Derived from the tree, never enumerated, for the same reason the oracle
+      # check is: a list written out here is a list that goes stale silently.
+      # `-skip '^TestSelfHost'` on the corpus step is the one deliberate
+      # exclusion, so it is the one subtraction made here.
+      - name: Assert the corpus round covered the whole catalogue
+        if: always() && steps.gate.outputs.signed != 'true'
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          if [ ! -f corpus-darwin.log ]; then
+            echo "::error::no corpus-darwin.log: the corpus step did not run"
+            exit 1
+          fi
+          grep -ohE '^func (Test[A-Za-z0-9_]+)\(' internal/coreutils/*_test.go \
+            | sed 's/^func //; s/($//' | grep -v '^TestSelfHost' | sort -u > declared.txt
+          grep -oE '^=== RUN   Test[A-Za-z0-9_]+$' corpus-darwin.log \
+            | sed 's/^=== RUN   //' | sort -u > ran.txt
+          echo "### $(wc -l < ran.txt) of $(wc -l < declared.txt) declared test functions ran"
+          if comm -23 declared.txt ran.txt | grep -q .; then
+            echo "### these never ran, so the round did not finish the catalogue:"
+            comm -23 declared.txt ran.txt | sed 's/^/  /'
+            echo "::error::the corpus round covered $(wc -l < ran.txt) of $(wc -l < declared.txt) test functions and stopped partway, so the ratchet below would compare against a set nobody measured"
+            exit 1
+          fi
+          echo "the round covered the whole catalogue"
+
+
       # The ratchet. The catalogue runs in full and the set of test functions
       # that failed is compared against the checked-in list of utilities not
       # yet working on Darwin. A name that fails and is not on the list fails

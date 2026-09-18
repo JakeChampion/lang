@@ -11,13 +11,33 @@
 # utility that used to pass on Darwin now does not, which is a regression to
 # fix rather than to record.
 #
+# The one exception was finishing the seed, below, and it is not a precedent.
+#
 # One test function per line, so the granularity is a utility rather than a
 # case. The case counts behind these names, and the clusters they fall into,
 # are in #9714; the largest by far is the listing code behind vdir, ls and
 # dir, which is one program and 43% of the failures.
 #
-# Seeded from the first complete run of the catalogue on macos-15,
-# 1411 failures over 14814 tests (PR #9676).
+# Seeded from what was believed to be the first complete run of the catalogue
+# on macos-15 — 1411 failures over 14814 tests (PR #9676) — and it was not
+# complete. That round stopped after `ptx_test.go`: its failing set is a clean
+# alphabetical prefix by test FILE, and the one name in it that looks like an
+# exception, TestVdir, is declared in `ls_test.go`. Everything from
+# `pwd_test.go` onward never executed, so 32 utilities went unmeasured and
+# unlisted.
+#
+# The round completes now — 19909 tests in 264s against that round's 14814 in
+# 648s — because #9738 capped a case that could write about 10^20 bytes and
+# fixed another that recursively chmod'd /private for 37 seconds a run. With
+# the catalogue finishing, those 32 names appeared at once and the ratchet read
+# them as 32 simultaneous regressions, which held `main` red and cancelled
+# every lane behind it.
+#
+# They are not regressions: they are the tail of the seed. Verified by
+# comparing the failing set of the seed round's own job log against `main`'s —
+# the difference is exactly the names from `pwd_test.go` on, and the set is
+# identical on `main` and on an unrelated branch. The case counts behind all
+# 83 are #9714's.
 
 TestB2sumParity
 TestBase32Parity
@@ -69,4 +89,36 @@ TestPinkyParity
 TestPrParity
 TestPrintfParity
 TestPtxParity
+TestPwdUnlinkedWorkingDirectory
+TestReadlinkParity
+TestRealpathParity
+TestRmdirParity
+TestRunconParity
+TestSeqParity
+TestSha1sumParity
+TestSha224sumParity
+TestSha256sumParity
+TestSha384sumParity
+TestSha512sumParity
+TestShred
+TestShufParity
+TestSortParity
+TestSplitParity
+TestStat
+TestStty
+TestSumParity
+TestSyncParity
+TestTailParity
+TestTeeParity
+TestTestParity
+TestTruncateParity
+TestTtyParity
+TestUnexpandParity
+TestUniqParity
+TestUptime
+TestUsersParity
+TestUtmpRecordLayoutMatchesTheHost
 TestVdir
+TestWcParity
+TestWhoParity
+TestWhoamiParity
