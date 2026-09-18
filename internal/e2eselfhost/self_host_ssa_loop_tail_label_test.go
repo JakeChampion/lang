@@ -23,6 +23,12 @@ import (
 // The recursion is deep enough that it only returns if TCO fired — 300,000
 // frames overflow the stack — so a case that stops being tail-call-rewritten
 // fails here instead of quietly stopping covering the duplicate label.
+//
+// The arm order is load-bearing: written the other way round, with the base
+// case first and the self-call LAST, the body ends in the branch the rewrite
+// produced — appended at the `br` and leaving the loop's `end` with nothing to
+// append — and no duplicate appears at all. So the obvious spelling of this
+// program covers nothing; do not "simplify" it to one.
 const loopTailLabelProgram = `function walk(n: i32, seen: i32): i32 {
     if (n > 0) { return walk(n - 1, seen + 1); }
     return seen;
