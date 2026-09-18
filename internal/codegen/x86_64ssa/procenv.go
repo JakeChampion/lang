@@ -227,7 +227,14 @@ func emitEnvHelper(w func(string, ...any)) {
 
 // emitStatHelper writes stat(path) -> Result[FileStat, IoError].
 func emitStatHelper(w func(string, ...any)) {
-	emitStatLikeHelper(w, "stat", "stat", false)
+	emitStatLikeHelper(w, "stat", "stat", 0, false)
+}
+
+// emitLstatHelper writes lstat(path) -> Result[FileStat, IoError]: the same
+// body with AT_SYMLINK_NOFOLLOW, so a symlink reports itself rather than its
+// target.
+func emitLstatHelper(w func(string, ...any)) {
+	emitStatLikeHelper(w, "lstat", "lstat", 256, false)
 }
 
 // emitFdStatHelper writes __method_Reader_stat / __method_Writer_stat
@@ -236,7 +243,7 @@ func emitStatHelper(w func(string, ...any)) {
 // is. `lp` prefixes the local labels so both methods can live in one object.
 func emitFdStatHelper(name, lp string) func(w func(string, ...any)) {
 	return func(w func(string, ...any)) {
-		emitStatLikeHelper(w, name, lp, true)
+		emitStatLikeHelper(w, name, lp, 0, true)
 	}
 }
 
@@ -247,14 +254,15 @@ func emitFdStatHelper(name, lp string) func(w func(string, ...any)) {
 // __fern_io_error and comes back in Err. The record box is {rc=1, fields@+8},
 // as arm64ssa's is.
 //
-// fdBased picks newfstatat(AT_FDCWD, pathz, buf, 0) over fstat(fd, buf), and
-// with it what the error reports: the path as given, or an empty string when
-// the handle never carried one. `lp` prefixes the local labels, so the path
-// form and both fd forms can be emitted into one object.
+// fdBased picks newfstatat(AT_FDCWD, pathz, buf, atFlags) over fstat(fd, buf),
+// and with it what the error reports: the path as given, or an empty string
+// when the handle never carried one. atFlags is the newfstatat flag word, 0
+// for stat and AT_SYMLINK_NOFOLLOW for lstat. `lp` prefixes the local labels,
+// so the path form and both fd forms can be emitted into one object.
 //
 // rdi = path or handle. rbx = path, r12 = pathz then the FileStat box,
 // r13 = path len then st_size, r14 = is_file, r15 = is_dir.
-func emitStatLikeHelper(w func(string, ...any), name, lp string, fdBased bool) {
+func emitStatLikeHelper(w func(string, ...any), name, lp string, atFlags int, fdBased bool) {
 	w("")
 	w("%s:", fnLabel(name))
 	w("\tpush rbx")
@@ -287,11 +295,15 @@ func emitStatLikeHelper(w func(string, ...any), name, lp string, fdBased bool) {
 		w("\tjmp .Lssa_%s_cp", lp)
 		w(".Lssa_%s_cpd:", lp)
 		w("\tmov byte ptr [r12 + r13], 0")
-		// newfstatat(AT_FDCWD, pathz, statbuf, 0)
+		// newfstatat(AT_FDCWD, pathz, statbuf, atFlags)
 		w("\tmov edi, -100")
 		w("\tmov rsi, r12")
 		w("\tmov rdx, rsp")
-		w("\txor r10d, r10d")
+		if atFlags == 0 {
+			w("\txor r10d, r10d")
+		} else {
+			w("\tmov r10d, %d", atFlags)
+		}
 		w("\tmov eax, 262")
 		w("\tsyscall")
 	}
