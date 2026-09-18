@@ -226,7 +226,7 @@ function lift_float_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], insts: 
 // prod_mem_kind is the op vocabulary lift_prod_mem lowers onto the flat
 // backends' box layouts (ssa.fern's kinds 40..48).
 function prod_mem_kind(k: string): boolean {
-    var mem: string[] = ["struct_get", "struct_set", "arr_len", "str_len", "tuple_get", "opt_tag", "opt_payload",
+    var mem: string[] = ["struct_get", "struct_set", "tuple_set", "arr_len", "str_len", "tuple_get", "opt_tag", "opt_payload",
         "arr_get", "arr_set", "str_index", "const_func", "const_str", "variant_is",
         "struct_make", "arr_make", "tuple_make", "opt_make", "opt_none", "str_slice",
         "raw_load_ptr", "raw_store_ptr", "raw_load8", "raw_store8", "struct_copy", "const_struct", "call_indirect"];
@@ -353,7 +353,7 @@ function ld_off(k: string, op: ir.Op): i32 {
 function lift_prod_mem(k: string, op: ir.Op, at: i32, nvals: i32, stack: i32[], cur_insts: ssa.SInst[]): LiftVals {
     var lv: LiftVals = LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: true };
     if (prod_host_kind(k)) { return lift_prod_host(k, op, at, lv); }
-    if (util.str_has_prefix(k, "raw_store") || k == "struct_set" || k == "arr_set") { return lift_prod_store(k, op, lv); }
+    if (util.str_has_prefix(k, "raw_store") || k == "struct_set" || k == "tuple_set" || k == "arr_set") { return lift_prod_store(k, op, lv); }
     if (k == "variant_is") { return lift_variant_is_prod(op, lv); }
     if (k == "str_slice") { return lift_pop_push(lv, 3, 51, view_in_frame(op), ""); }
     if (k == "call_indirect") { return lift_call_indirect_prod(op, lv); }
@@ -380,10 +380,16 @@ function lift_call_indirect_prod(op: ir.Op, lv: LiftVals): LiftVals {
     return LiftVals { nvals: v + 1, stack: stack.append(v), insts: insts, ok: true };
 }
 
-// lift_prod_store is the four stores: a record field and a checked array
-// element push nothing back, the raw stores leave the stored value.
+// lift_prod_store is the five stores: a record field, a tuple element and a
+// checked array element push nothing back, the raw stores leave the stored
+// value. A tuple element sits at `idx * 8` where a record field sits one shape
+// word further in, the offsets `ld_off` already reads them back at, and every
+// element rides the same eight bytes on these backends whatever its width —
+// which is why the wide form takes this arm too, as the wide READ takes the
+// plain load.
 function lift_prod_store(k: string, op: ir.Op, lv: LiftVals): LiftVals {
     if (k == "struct_set") { return lift_store(lv, 41, (op.i32_imm + 1) * 8); }
+    if (k == "tuple_set") { return lift_store(lv, 41, op.i32_imm * 8); }
     if (k == "arr_set") { return lift_store(lv, 43, 0); }
     if (k == "raw_store_ptr") { return lift_store_keep(lv, 53); }
     return lift_store_keep(lv, 55);

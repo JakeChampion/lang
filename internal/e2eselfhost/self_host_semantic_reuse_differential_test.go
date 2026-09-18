@@ -35,6 +35,20 @@ var semanticReuseCases = []struct {
 	// satisfied by irlower and the case witnesses this layer alone.
 	firings int
 	astPath int
+	// Allocations the program makes under FERN_LEAKCHECK with the pairing on
+	// and off. A FIRING IS A CALL: `__fern_alloc_reuse` hands the donor block
+	// back only when its cap matches what the construction asks for, and
+	// returns it to its freelist and allocates fresh when it does not. So the
+	// count above cannot tell a reuse from a pairing that declines, and the
+	// difference between these two can — it is the allocations the reuse
+	// actually saved. Nothing in this suite could see that until it was asked
+	// (rc-log/2026-09-18-a-firing-is-not-a-reuse.md).
+	allocsOn  int64
+	allocsOff int64
+	// A case whose pairing is admitted statically and declined at RUN time, so
+	// it saves nothing by design. Every other case must save, or it is pinning
+	// machinery that never fires.
+	degrades bool
 }{
 	// A record owning a string and an array, rebuilt from its own fields. The
 	// donor dies at its last field read and the construction below builds in
@@ -52,7 +66,7 @@ function main(): i32 {
     while (i < 4) { var r: R = step(i); t = t + r.n + r.cells[0] + r.tag.len(); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t;
-}`, 72, 1, 0},
+}`, 72, 1, 0, 12, 16, false},
 
 	// The degrade path: an array holds a second count on the donor, so the
 	// pairing is static but `__fern_rc_is_unique` fails and the construction
@@ -71,7 +85,7 @@ function main(): i32 {
     var v: i32 = shared(5);
     if (__rc_underflow_count() != 0) { return 99; }
     return v;
-}`, 17, 1, 0},
+}`, 17, 1, 0, 6, 6, true},
 
 	// The donor and the recipient are different TYPES and the same number of
 	// SLOTS, which is the only thing a box has to agree on. Mote and Glyph are
@@ -116,7 +130,7 @@ function main(): i32 {
     t = t + sigil_code(cross_back(5)) + cross_wide(3);
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 251;
-}`, 189, 2, 0},
+}`, 189, 2, 0, 13, 18, false},
 
 	// A tuple box is one word per element and no shape word, so it is storage
 	// a donor of any form can be and storage any form can take: tuple to
@@ -156,7 +170,35 @@ function main(): i32 {
     var t: i32 = tuple_loop(4) + tuple_from_rec(3) + rec_from_tuple(5);
     if (__rc_underflow_count() != 0) { return 99; }
     return t;
-}`, 60, 3, 0},
+}`, 60, 3, 0, 10, 16, false},
+
+	// A UNION donor: a declared enum whose variants agree on field count, so
+	// its box is a count this frame can state, dying at a call before a record
+	// of the same slot count is built. The enum's own drop helper releases the
+	// live variant's children at the token. Its box is the record's, so the
+	// program allocates half what it does with the pairing off — the shape
+	// `reuse_slots` admits and, before this suite counted allocations, the one
+	// nothing witnessed.
+	{"union-donor", `enum Duo { Two(i32, string), Both(string, i32) }
+struct Trip { a: string, b: i32 }
+function duo_size(d: Duo): i32 {
+    match (d) {
+        Two(n, t) => { return n + t.len(); },
+        Both(t2, n2) => { return n2 + t2.len(); }
+    }
+    return 0 - 1;
+}
+function union_donor(seed: i32): i32 {
+    var u: Duo = Two(seed, "uu");
+    var s: i32 = duo_size(u);
+    var r: Trip = Trip { a: "vv", b: s };
+    return r.b + r.a.len();
+}
+function main(): i32 {
+    var t: i32 = union_donor(4) + union_donor(9);
+    if (__rc_underflow_count() != 0) { return 99; }
+    return t;
+}`, 21, 1, 0, 2, 4, false},
 
 	// A record of scalars: pure storage, with no children to release at the
 	// token. The AST path pairs this shape too, so the count alone does not
@@ -174,7 +216,7 @@ function main(): i32 {
     while (i < 3) { t = t + bump(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t;
-}`, 21, 1, 1},
+}`, 21, 1, 1, 3, 6, false},
 }
 
 func TestSelfHostSemanticReuseDifferentialX86_64(t *testing.T) {
@@ -223,6 +265,36 @@ func TestSelfHostSemanticReuseDifferentialX86_64(t *testing.T) {
 		_ = rcmd.Run()
 		return rcmd.ProcessState.ExitCode()
 	}
+	// allocs builds the case under FERN_LEAKCHECK and runs it, answering what
+	// the program allocated. Balance is checked here too: a pairing that hands
+	// a box to a construction not entitled to it shows as a free the program
+	// cannot account for.
+	allocs := func(t *testing.T, proj, src, tag string, extraEnv ...string) int64 {
+		t.Helper()
+		asm, _ := emit(t, proj, src, tag, append([]string{"FERN_LEAKCHECK=1"}, extraEnv...)...)
+		asmPath := filepath.Join(proj, tag+".leak.s")
+		if werr := os.WriteFile(asmPath, []byte(asm), 0o644); werr != nil {
+			t.Fatalf("write %s: %v", asmPath, werr)
+		}
+		binPath := filepath.Join(proj, tag+".leak.bin")
+		if out, lerr := exec.Command(gcc, "-nostdlib", "-static", "-o", binPath, asmPath).CombinedOutput(); lerr != nil {
+			t.Fatalf("link %s: %v (%s)", tag, lerr, out)
+		}
+		rcmd := runX86_64Bin(runner, binPath)
+		out, _ := rcmd.CombinedOutput()
+		summary := leakSummaryLine(string(out))
+		if summary == "" {
+			t.Fatalf("%s: no leakcheck summary in:\n%s", tag, out)
+		}
+		var a, f, live int64
+		if _, err := fmtSscan(summary, &a, &f, &live); err != nil {
+			t.Fatalf("%s: %v (%q)", tag, err, summary)
+		}
+		if a != f || live != 0 {
+			t.Fatalf("%s: unbalanced: %s", tag, summary)
+		}
+		return a
+	}
 
 	for _, tc := range semanticReuseCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -247,6 +319,22 @@ func TestSelfHostSemanticReuseDifferentialX86_64(t *testing.T) {
 			}
 			if got := strings.Count(asmAST, witness); got != tc.astPath {
 				t.Errorf("%s: AST lowering emitted %d reuse calls, want %d — the split between the layers has moved", tc.name, got, tc.astPath)
+			}
+
+			// The allocations the reuse SAVED. A firing that declines saves
+			// none, so this is what separates a pairing the runtime can
+			// honour from one that only emits its machinery.
+			onAllocs := allocs(t, proj, tc.src, "leakon")
+			offAllocs := allocs(t, proj, tc.src, "leakoff", "FERN_SELFHOST_NO_REUSE=1")
+			if onAllocs != tc.allocsOn || offAllocs != tc.allocsOff {
+				t.Errorf("%s: allocations on/off were %d/%d, want %d/%d — the reuse saved %d where %d was measured",
+					tc.name, onAllocs, offAllocs, tc.allocsOn, tc.allocsOff, offAllocs-onAllocs, tc.allocsOff-tc.allocsOn)
+			}
+			if !tc.degrades && tc.allocsOff <= tc.allocsOn {
+				t.Errorf("%s: the case is pinned to save no allocation, so it witnesses a pairing that declines", tc.name)
+			}
+			if tc.degrades && tc.allocsOff != tc.allocsOn {
+				t.Errorf("%s: marked as a runtime decline, but it saves %d allocations", tc.name, tc.allocsOff-tc.allocsOn)
 			}
 
 			gotOn, gotOff := link(t, proj, "on", asmOn), link(t, proj, "off", asmOff)
