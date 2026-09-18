@@ -6045,7 +6045,11 @@ function ssa_try_function(r: irlower.LowerResult, label_name: string, s: asmcore
     var t_lift: i64 = monotonic_ns();
     var lifted: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(label_name, r.n_params, r.n_locals, r.ops);
     var why: string = lifted.bail;
-    if (lifted.ok) { why = ssa_unsupported(lifted.func); }
+    if (lifted.ok) {
+        var collision: i32 = ssa.repeated_block_id(lifted.func);
+        if (collision >= 0) { ircore.ssa_block_id_collision(label_name, collision); }
+        why = ssa_unsupported(lifted.func);
+    }
     var lift_ms: i64 = (monotonic_ns() - t_lift) / 1000000i64;
     if (why != "") {
         if (ircore.ssa_report_on()) { eprint("FERN_SSA: " + label_name + ": " + why + "\n"); }
