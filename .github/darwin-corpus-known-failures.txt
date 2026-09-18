@@ -1,0 +1,72 @@
+# Utilities whose corpus does not yet pass on Darwin.
+#
+# The macOS lane runs the WHOLE catalogue and compares the set of test
+# functions that failed against this list. A name that fails and is not here
+# fails the lane — that is the ratchet, and it is what stops the Darwin
+# result from drifting while the divergences are worked through.
+#
+# Entries only ever LEAVE. When a utility's Darwin branch lands, its line is
+# deleted in the same change, and the lane starts holding it to GNU from then
+# on. Nothing is ever added to buy a green lane: a new name here means a
+# utility that used to pass on Darwin now does not, which is a regression to
+# fix rather than to record.
+#
+# One test function per line, so the granularity is a utility rather than a
+# case. The case counts behind these names, and the clusters they fall into,
+# are in #9714; the largest by far is the listing code behind vdir, ls and
+# dir, which is one program and 43% of the failures.
+#
+# Seeded from the first complete run of the catalogue on macos-15,
+# 1411 failures over 14814 tests (PR #9676).
+
+TestB2sumParity
+TestBase32Parity
+TestBase64Parity
+TestBasencParity
+TestBracketParity
+TestCatParity
+TestChmodParity
+TestChown
+TestCksumParity
+TestCommParity
+TestCpParity
+TestCpWalkOrder
+TestCsplit
+TestCutParity
+TestDD
+TestDateParity
+TestDf
+TestDir
+TestDircolorsParity
+TestDu
+TestExpandParity
+TestFmtParity
+TestFoldParity
+TestGroupsParity
+TestHeadParity
+TestHostidParity
+TestIdParity
+TestJoinParity
+TestLinkParity
+TestLnParity
+TestLognameParity
+TestLs
+TestMd5sumParity
+TestMkdir
+TestMkfifoParity
+TestMknodParity
+TestMktempRetryExhaustion
+TestMvCrossDeviceOrder
+TestMvParity
+TestNice
+TestNiceReadsTheNicenessItWasStartedAt
+TestNlParity
+TestNprocParity
+TestNumfmtParity
+TestOd
+TestPasteParity
+TestPinkyParity
+TestPrParity
+TestPrintfParity
+TestPtxParity
+TestVdir
