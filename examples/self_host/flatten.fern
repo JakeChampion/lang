@@ -1059,7 +1059,8 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
     var mclaims: string[] = [];
     var i: i32 = 0;
     while (i < imports.len()) {
-        var md: MethodDedup = disambiguate_methods(mangle_module(imports[i].mod, imports[i].name, ivar_names, ivar_mangled, rx.keys, rx.targets), imports[i].name, mclaims);
+        var pfx: string = util.mangle_prefix(imports[i].name);
+        var md: MethodDedup = disambiguate_methods(mangle_module(imports[i].mod, pfx, ivar_names, ivar_mangled, rx.keys, rx.targets), pfx, mclaims);
         mclaims = md.keys;
         var m: parser.Module = md.mod;
         funcs = util.append_all(funcs, m.funcs);
@@ -1196,7 +1197,8 @@ pub function bundle_per_module(entry: parser.Module, imports: LoadedModule[]): P
     var mclaims: string[] = [];
     var i: i32 = 0;
     while (i < imports.len()) {
-        var md: MethodDedup = disambiguate_methods(mangle_module(imports[i].mod, imports[i].name, ivar_names, ivar_mangled, rx.keys, rx.targets), imports[i].name, mclaims);
+        var pfx: string = util.mangle_prefix(imports[i].name);
+        var md: MethodDedup = disambiguate_methods(mangle_module(imports[i].mod, pfx, ivar_names, ivar_mangled, rx.keys, rx.targets), pfx, mclaims);
         mclaims = md.keys;
         var m: parser.Module = md.mod;
         out = out.append(PerModule { ns: imports[i].name, mod: m, is_entry: false });

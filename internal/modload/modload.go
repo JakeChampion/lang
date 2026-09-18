@@ -1296,17 +1296,22 @@ func assignManglePrefixes(loaded map[string]*module, entryPath string) {
 // symbols move.
 func sanitizeManglePrefix(name string) string {
 	var b strings.Builder
-	for i, r := range name {
+	// BYTES, not runes: the self-host's util.mangle_prefix indexes a Fern
+	// string, which is bytes, and the two compilers have to agree on the
+	// symbol a given module produces. Over runes, `café.fern` would be
+	// `caf_` here and `caf__` there.
+	for i := 0; i < len(name); i++ {
+		c := name[i]
 		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r == '_':
-			b.WriteRune(r)
-		case r >= '0' && r <= '9':
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c == '_':
+			b.WriteByte(c)
+		case c >= '0' && c <= '9':
 			// A leading digit is legal in a file name and not in a
 			// symbol, so it takes an underscore in front of it.
 			if i == 0 {
 				b.WriteByte('_')
 			}
-			b.WriteRune(r)
+			b.WriteByte(c)
 		default:
 			b.WriteByte('_')
 		}

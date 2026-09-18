@@ -74,7 +74,7 @@ func writeModuleNameMangleProject(t *testing.T) string {
 // rejected this is the ASSEMBLER: the mangler produces a string that looks
 // fine, and only the encoder has an opinion about it. The default path is the
 // in-process native backend, which is the one that failed.
-func runModuleNameMangle(t *testing.T, target string, runner string) {
+func runModuleNameMangle(t *testing.T, target string, runner []string) {
 	t.Helper()
 	fern := buildFernCLI(t)
 	dir := writeModuleNameMangleProject(t)
@@ -82,24 +82,32 @@ func runModuleNameMangle(t *testing.T, target string, runner string) {
 	if o, err := exec.Command(fern, "-target", target, "-o", out, filepath.Join(dir, "main.fern")).CombinedOutput(); err != nil {
 		t.Fatalf("build for %s failed: %v\n%s", target, err, o)
 	}
-	var cmd *exec.Cmd
-	if runner == "" {
-		cmd = exec.Command(out)
-	} else {
-		cmd = exec.Command(runner, out)
-	}
+	cmd := runUnder(runner, out)
 	_, _ = cmd.CombinedOutput()
 	if got := cmd.ProcessState.ExitCode(); got != moduleNameMangleWant {
 		t.Errorf("exit code: got %d, want %d", got, moduleNameMangleWant)
 	}
 }
 
+// runUnder builds the command for a binary that may need an emulator in
+// front of it. A nil prefix runs it directly.
+func runUnder(runner []string, prog string) *exec.Cmd {
+	if len(runner) == 0 {
+		return exec.Command(prog)
+	}
+	return exec.Command(runner[0], append(append([]string{}, runner[1:]...), prog)...)
+}
+
+// Neither name matches `^TestX86_64` or `^TestArm64`, so both legs land in the
+// catch-all lane — whose matrix includes an aarch64 runner. The x86-64 leg
+// therefore cannot assume it can exec what it just built: x86NativeRunner is
+// nil on amd64, qemu-x86_64 elsewhere, and a skip when neither can run it.
 func TestModuleNameMangleX86_64(t *testing.T) {
-	runModuleNameMangle(t, "x86-64-linux", "")
+	runModuleNameMangle(t, "x86-64-linux", x86NativeRunner(t))
 }
 
 func TestModuleNameMangleArm64(t *testing.T) {
-	runModuleNameMangle(t, "arm64-linux", arm64QemuOrEmpty(t))
+	runModuleNameMangle(t, "arm64-linux", arm64RunnerPrefix(t))
 }
 
 // Two modules whose sanitised prefixes are the same string.
@@ -136,7 +144,7 @@ func writeModuleNameMangleCollisionProject(t *testing.T) string {
 	return dir
 }
 
-func runModuleNameMangleCollision(t *testing.T, target string, runner string) {
+func runModuleNameMangleCollision(t *testing.T, target string, runner []string) {
 	t.Helper()
 	fern := buildFernCLI(t)
 	dir := writeModuleNameMangleCollisionProject(t)
@@ -144,12 +152,7 @@ func runModuleNameMangleCollision(t *testing.T, target string, runner string) {
 	if o, err := exec.Command(fern, "-target", target, "-o", out, filepath.Join(dir, "main.fern")).CombinedOutput(); err != nil {
 		t.Fatalf("build for %s failed: %v\n%s", target, err, o)
 	}
-	var cmd *exec.Cmd
-	if runner == "" {
-		cmd = exec.Command(out)
-	} else {
-		cmd = exec.Command(runner, out)
-	}
+	cmd := runUnder(runner, out)
 	_, _ = cmd.CombinedOutput()
 	// Both modules' answer(), so a prefix collision that lost one of the two
 	// definitions would not reach this number even if it linked.
@@ -159,9 +162,18 @@ func runModuleNameMangleCollision(t *testing.T, target string, runner string) {
 }
 
 func TestModuleNameMangleCollisionX86_64(t *testing.T) {
-	runModuleNameMangleCollision(t, "x86-64-linux", "")
+	runModuleNameMangleCollision(t, "x86-64-linux", x86NativeRunner(t))
 }
 
 func TestModuleNameMangleCollisionArm64(t *testing.T) {
-	runModuleNameMangleCollision(t, "arm64-linux", arm64QemuOrEmpty(t))
+	runModuleNameMangleCollision(t, "arm64-linux", arm64RunnerPrefix(t))
+}
+
+// arm64QemuOrEmpty as a runner prefix.
+func arm64RunnerPrefix(t *testing.T) []string {
+	t.Helper()
+	if r := arm64QemuOrEmpty(t); r != "" {
+		return []string{r}
+	}
+	return nil
 }
