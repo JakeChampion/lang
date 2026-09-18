@@ -43,14 +43,15 @@ var Capabilities = []string{"env", "fs", "net", "random", "subprocess", "time"}
 //     are host-mediated channels the invoker already handed the
 //     process, not ambient authority a dependency escalates through.
 var BuiltinCaps = map[string]string{
-	"tcp_listen":   "net",
-	"tcp_accept":   "net",
-	"tcp_connect":  "net",
-	"tcp_recv":     "net",
-	"tcp_send":     "net",
-	"tcp_close":    "net",
-	"tcp_pollable": "net",
-	"udp_send":     "net",
+	"tcp_listen":     "net",
+	"tcp_accept":     "net",
+	"tcp_local_port": "net",
+	"tcp_connect":    "net",
+	"tcp_recv":       "net",
+	"tcp_send":       "net",
+	"tcp_close":      "net",
+	"tcp_pollable":   "net",
+	"udp_send":       "net",
 
 	"read_file":        "fs",
 	"read_file_bytes":  "fs",

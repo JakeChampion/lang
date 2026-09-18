@@ -126,9 +126,23 @@ func TestSelfHostArm64LinuxBuilds(t *testing.T) {
 		// contacted: socket -> bind -> listen -> close is enough to prove the
 		// helper is present and callable.
 		{"tcp_listen_close_no_alloc", `function main(): i32 {
-  var fd: i32 = tcp_listen(39621);
+  var fd: i32 = tcp_listen(0);
   if (fd < 0) { return 1; }
   if (tcp_close(fd) < 0) { return 2; }
+  return 42;
+}`, 42, ""},
+		// tcp_local_port is the third socket leaf with no allocation of its own
+		// (it answers out of the scratch buffer), so it is the same #6164 shape
+		// as the case above and gets the same no-other-allocation guard. It is
+		// also what makes the port-0 bind usable: the kernel picks the port and
+		// this reads it back.
+		{"tcp_local_port_no_alloc", `function main(): i32 {
+  var fd: i32 = tcp_listen(0);
+  if (fd < 0) { return 1; }
+  var port: i32 = tcp_local_port(fd);
+  if (tcp_close(fd) < 0) { return 2; }
+  if (port <= 0) { return 3; }
+  if (port > 65535) { return 4; }
   return 42;
 }`, 42, ""},
 		// A frame past 64 KiB: the semantic lowering gives main one slot per

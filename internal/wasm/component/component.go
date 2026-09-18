@@ -1397,9 +1397,9 @@ func wasiSocketsTcpInstanceTypeBody(networkT, errorCodeT, ipSockAddrT, inputStre
 		body = append(body, name...)
 		return append(body, 0x01, funcTypeidx)
 	}
-	declCount := byte(0x1c) // 28
+	declCount := byte(0x1f) // 31
 	if withConnect {
-		declCount = 0x22 // 34: +tuple, +result, +2 functypes, +2 exports
+		declCount = 0x25 // 37: +tuple, +result, +2 functypes, +2 exports
 	}
 	body := []byte{0x01, 0x42, declCount}
 	body = append(body, OuterAliasTypeDecl(1, networkT)...)      // 0
@@ -1455,6 +1455,17 @@ func wasiSocketsTcpInstanceTypeBody(networkT, errorCodeT, ipSockAddrT, inputStre
 		body = append(body, tcpMethodFuncDecl("finish-connect", []string{"self"}, []byte{0x07}, 0x17)...)
 		body = exportMethod(body, "[method]tcp-socket.finish-connect", 0x19)
 	}
+	// local-address(self) -> result<ip-socket-address=2, error-code=1>, the
+	// port a socket is bound to. Appended LAST so every index above is the
+	// same with and without the connect half.
+	localAddr := byte(0x16) // 22 without connect
+	if withConnect {
+		localAddr = 0x1a // 26 with it
+	}
+	body = append(body, 0x01)
+	body = append(body, InnerTypeResultOkErr(2, 1)...)
+	body = append(body, tcpMethodFuncDecl("local-address", []string{"self"}, []byte{0x07}, localAddr)...)
+	body = exportMethod(body, "[method]tcp-socket.local-address", localAddr+1)
 	return body
 }
 

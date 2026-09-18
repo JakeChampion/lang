@@ -1861,6 +1861,15 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.NumberType{},
 	}
+	// tcp_local_port(sock): number — the port the socket is bound to,
+	// or a negative errno. The answer for `tcp_listen(0)`, where the
+	// kernel picks the port and nothing else can report which one: a
+	// server that binds an ephemeral port and then advertises it no
+	// longer has to guess a free number and hope.
+	c.info.FuncSigs["tcp_local_port"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
 	// tcp_recv(fd, max): u8[] — one blocking read of at most max
 	// bytes; socket data is raw bytes (D9, #5714). The empty array
 	// signals EOF / error / closed alike.

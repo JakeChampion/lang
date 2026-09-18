@@ -12023,68 +12023,9 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
     // the wasi:io/poll shims — see lower_call_wasm_pollable, split out for the
     // same reason lower_call_os_query is.
     if (is_wasm_pollable_call(cid.name, c.args.len())) { return lower_call_wasm_pollable(c, cid, s); }
-    // udp_send(host, port, data) — one-shot datagram (#4375).
-    // host is an IPv4 LITERAL STRING ("a.b.c.d"), not a packed
-    // i32 like tcp_connect's, so all three args lower as plain
-    // values and the backend helper parses the dotted quad.
-    if (cid.name == "udp_send" && c.args.len() == 3) {
-        var us: LowerState = lower_expr(c.args[0], s);
-        if (!us.ok) { return us; }
-        us = lower_expr(c.args[1], us);
-        if (!us.ok) { return us; }
-        us = lower_expr(c.args[2], us);
-        if (!us.ok) { return us; }
-        return us.emit(ir.op_udp_send());
-    }
-    // tcp_connect(host_be, port) / tcp_send(fd, str) /
-    // tcp_recv(fd, max): 2-arg client primitives. Lower both
-    // operands (left then right), then the matching op.
-    if (cid.name == "tcp_connect" && c.args.len() == 2) {
-        var tc: LowerState = lower_expr(c.args[0], s);
-        if (!tc.ok) { return tc; }
-        tc = lower_expr(c.args[1], tc);
-        if (!tc.ok) { return tc; }
-        return tc.emit(ir.op_tcp_connect());
-    }
-    if (cid.name == "tcp_send" && c.args.len() == 2) {
-        var ts: LowerState = lower_expr(c.args[0], s);
-        if (!ts.ok) { return ts; }
-        ts = lower_expr(c.args[1], ts);
-        if (!ts.ok) { return ts; }
-        return ts.emit(ir.op_tcp_send());
-    }
-    if (cid.name == "tcp_recv" && c.args.len() == 2) {
-        var tr: LowerState = lower_expr(c.args[0], s);
-        if (!tr.ok) { return tr; }
-        tr = lower_expr(c.args[1], tr);
-        if (!tr.ok) { return tr; }
-        return tr.emit(ir.op_tcp_recv());
-    }
-    // tcp_close(fd) / tcp_pollable(fd): 1-arg.
-    if (cid.name == "tcp_close" && c.args.len() == 1) {
-        var tcl: LowerState = lower_expr(c.args[0], s);
-        if (!tcl.ok) { return tcl; }
-        return tcl.emit(ir.op_tcp_close());
-    }
-    if (cid.name == "tcp_pollable" && c.args.len() == 1) {
-        var tp: LowerState = lower_expr(c.args[0], s);
-        if (!tp.ok) { return tp; }
-        return tp.emit(ir.op_tcp_pollable());
-    }
-    // tcp_listen(port) / tcp_accept(fd): the server-half 1-arg
-    // primitives (#4371). tcp_listen opens a bound+listening
-    // socket on 0.0.0.0:port; tcp_accept blocks for a connection
-    // on a listener. Both -> i32 fd (or -errno).
-    if (cid.name == "tcp_listen" && c.args.len() == 1) {
-        var tls: LowerState = lower_expr(c.args[0], s);
-        if (!tls.ok) { return tls; }
-        return tls.emit(ir.op_tcp_listen());
-    }
-    if (cid.name == "tcp_accept" && c.args.len() == 1) {
-        var tac: LowerState = lower_expr(c.args[0], s);
-        if (!tac.ok) { return tac; }
-        return tac.emit(ir.op_tcp_accept());
-    }
+    // The socket primitives — see lower_call_socket, split out for the same
+    // reason lower_call_os_query is.
+    if (is_socket_call(cid.name, c.args.len())) { return lower_call_socket(c, cid, s); }
     // __heap_bump_bytes(): the bump allocator's high-water mark
     // (cursor − base) as an i64. Allocation-free introspection;
     // the IR backends compute it inline from their heap cursor.
@@ -12995,6 +12936,45 @@ function lower_call_proc(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState): Lo
     var a2: LowerState = lower_expr(c.args[2], a1);
     if (!a2.ok) { return a2; }
     return a2.emit(ir.op_proc_exec_as());
+}
+
+// is_socket_call recognises the socket primitives: the 1-operand ones that
+// take a descriptor (tcp_close / tcp_pollable / tcp_accept / tcp_local_port)
+// or a port (tcp_listen), the 2-operand client half (tcp_connect / tcp_send /
+// tcp_recv), and the one-shot datagram (udp_send). The ARITY is part of the
+// test so a call with the wrong number of arguments falls through to the
+// ordinary named-call path.
+function is_socket_call(name: string, argc: i32): boolean {
+    if (name == "tcp_close" || name == "tcp_pollable") { return argc == 1; }
+    if (name == "tcp_listen" || name == "tcp_accept" || name == "tcp_local_port") { return argc == 1; }
+    if (name == "tcp_connect" || name == "tcp_send" || name == "tcp_recv") { return argc == 2; }
+    if (name == "udp_send") { return argc == 3; }
+    return false;
+}
+
+// lower_call_socket lowers what is_socket_call selects: the operands in argv
+// order, then the op. Each pushes one i32 — a descriptor, a port, a byte count
+// or a -errno — except tcp_recv, whose op pushes the u8[] box.
+//
+// The address is the one place the two families differ, and neither needs
+// anything special here: tcp_connect takes it as an i32 already in network
+// order, udp_send as a dotted-quad string the backend helper parses.
+function lower_call_socket(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState): LowerState {
+    var a0: LowerState = lower_expr(c.args[0], s);
+    if (!a0.ok) { return a0; }
+    if (cid.name == "tcp_close") { return a0.emit(ir.op_tcp_close()); }
+    if (cid.name == "tcp_pollable") { return a0.emit(ir.op_tcp_pollable()); }
+    if (cid.name == "tcp_listen") { return a0.emit(ir.op_tcp_listen()); }
+    if (cid.name == "tcp_accept") { return a0.emit(ir.op_tcp_accept()); }
+    if (cid.name == "tcp_local_port") { return a0.emit(ir.op_tcp_local_port()); }
+    var a1: LowerState = lower_expr(c.args[1], a0);
+    if (!a1.ok) { return a1; }
+    if (cid.name == "tcp_connect") { return a1.emit(ir.op_tcp_connect()); }
+    if (cid.name == "tcp_send") { return a1.emit(ir.op_tcp_send()); }
+    if (cid.name == "tcp_recv") { return a1.emit(ir.op_tcp_recv()); }
+    var a2: LowerState = lower_expr(c.args[2], a1);
+    if (!a2.ok) { return a2; }
+    return a2.emit(ir.op_udp_send());
 }
 
 // is_dirlink_call recognises the single-step directory, link, working-
