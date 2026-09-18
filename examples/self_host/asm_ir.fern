@@ -2029,9 +2029,9 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // 512 KiB rather than every ~12.5%, so growing one stays O(n^2) where
     // native's is amortised linear (#9077). Geometric binning was once
     // impossible here — the x86_gas assembler had no `bsr` and no `%cl` shift —
-    // but `%cl` shifts are supported now (x86_shift_r_cl; the emitted runtime
-    // uses `shldq %cl` above), leaving only `bsr` unwired in the gas front-end,
-    // and even its encoder (x86_bsr_r32) already exists.
+    // but both are supported now: x86_gas_bitscan_op maps bsrl/bsrq and
+    // x86_gas_shift_family takes a `%cl` count, so native's class function
+    // ports across and the constraint no longer applies.
     // Each large ALLOC rounds the request up to its class capacity (a 512-KiB multiple)
     // and bumps at THAT — so every block in a class has one capacity and any freed block
     // satisfies any same-class request; each large FREE re-derives the class from the
