@@ -12,10 +12,13 @@ measurement. Read `docs/ALLOCATION-OBSERVABLE.md` first for what the allocation
 numbers mean and which half of them is portable.
 
 **Verdict in one line: the gap is real and it is worth closing, but it is not
-made of the one thing the design note assumed.** The intermediate arrays are
-the larger term and the per-element indirect call is a solid quarter to two
-fifths of the rest, so a fusion pass that removes the intermediates and leaves
-the calls unspecialised recovers well under half of what is on the table.
+made of the one thing the design note assumed.** The intermediate arrays are the
+larger term on native-built code and the per-element indirect call is a solid
+quarter to two fifths of the rest — and on SELF-HOST-built code, which
+`docs/NATIVE-CONVERGENCE.md` makes the definition, that second term is half to
+three quarters. A fusion pass that removes the intermediates and leaves the
+calls unspecialised recovers well under half of what is on the table, and less
+than that on the compiler this is heading toward.
 
 ## The three programs
 
@@ -200,25 +203,40 @@ That is a finding for #9729 and #9732 rather than a defect: the space-contract
 system and the combinator library are disconnected today, and "fusion makes
 `map` allocation-free" would not by itself connect them.
 
-### 5. The two compilers do not agree, and two of three programs do not build
+### 5. The two compilers agree on answers and disagree on cost — and the split moves
 
-**`map_map_reduce` and `filter_map_reduce` cannot be compiled by the
-self-hosted compiler at all**, on any target:
+Measuring this at all needed #9743 fixed first: `mono_infer`'s
+generic-array-method arm handed back the erased type variable `U[]` as though it
+were a type, so `xs.map(f).reduce(g)` did not lower and the self-hosted compiler
+could not build two of these three programs on any target. With that repaired,
+every variant of every program agrees with native's checksum, and the
+interesting column opens up.
 
-```
-FERN_STRICT_IR: run_pipeline (did not lower: `return` of ident `v`)
-```
+**The decomposition of §2 shifts, in the direction that matters.** Retired
+instructions, arm64-linux, 10 rounds at n=4096:
 
-Filed as **#9743** with the root cause: `mono_infer`'s generic-array-method arm
-(`examples/self_host/parser.fern:9812`) substitutes only the receiver's element
-variable, so a method with an erased unbounded type param — `map` — hands back
-the type *variable* `U[]` as though it were a type, and `reduce` chained onto it
-monomorphises at `U`. The trigger is narrowly `reduce` chained directly onto
-`map`; splitting it across two statements lowers, as do `filter(p).reduce(h)`,
-`map(f).map(g)` and `map(f).fold(z, g)`. The fix is about nine lines in one
-function, and it is the next PR.
+| | ratio vs loop | intermediates + traversals | per-element indirect call |
+| --- | ---: | ---: | ---: |
+| `map_map_reduce`, native | 4.37x | 73.6% | 26.4% |
+| `map_map_reduce`, **self-host** | 4.77x | 48.8% | **51.2%** |
+| `filter_map_reduce`, native | 2.58x | 61.1% | 38.9% |
+| `filter_map_reduce`, **self-host** | 2.20x | 27.4% | **72.6%** |
 
-On `own_map_inplace`, which does build, the two compilers agree on the checksum
+The gap a fusion pass would close is comparable under both compilers, but what
+it is *made of* is not: the per-element call is a quarter to two fifths of it on
+native-built code and **half to three quarters** on self-host-built code. The
+self-host IR has none of native's defunctionalise / elide passes (#6638), so a
+call native devirtualises stays indirect there — and a capture-free closure
+merely *returned from a function* costs an environment allocation per call,
+which is why `closure_loop` reads zero steady allocations native-built and three
+per round self-host-built. Minimal repro on #6638.
+
+Since `docs/NATIVE-CONVERGENCE.md` makes the self-host compiler the definition
+once the freeze preconditions go green, the half of the fusion contract about
+unspecialised calls is the LARGER half on the compiler this is heading toward,
+not the smaller one §2's native figures suggest.
+
+On `own_map_inplace` the two compilers agree on the checksum
 and on the allocation SHAPE — `with_own` is zero under both, so the self-host
 compiler reaches the same allocation-free steady state, and `with_borrowed`
 pays exactly one copy per round under both. They do not agree on the volume,
@@ -244,10 +262,11 @@ against native-built output — on the same three functions. That belongs to
 goal 2 and to `docs/rc-log/`, not to this epic, but it is the sort of divergence
 the epic would otherwise design on top of.
 
-The self-hosted compiler also cannot build any of the three for wasm: its
-component wrapper refuses a program importing both `args()` and the clock. Not
-new and not caused by these programs — `examples/fip/packet_fip.fern` fails the
-same way.
+The self-hosted compiler still cannot build any of the three for wasm: its
+component wrapper refuses a program importing both `args()` and the clock,
+either alone being fine. Not new and not caused by these programs —
+`examples/fip/packet_fip.fern` fails the same way — so the self-host wasm column
+is the one gap this round leaves open.
 
 ## Verdicts on #9728's questions
 
@@ -266,10 +285,11 @@ same way.
 4. **Does `fip` pass E068 on that pipeline?** The question cannot be reached.
    E053 rejects the call to `map` first, because `std/array` carries no space
    annotation. The hand-written `own` loop does pass E068 and does measure zero.
-5. **Do the two compilers agree?** No. Two of the three programs do not compile
-   under the self-hosted one (#9743). On the third, allocation and answers agree
-   exactly while instruction counts differ by up to 1.94x and the ranking of the
-   three variants inverts.
+5. **Do the two compilers agree?** On answers, yes — every variant of every
+   program, once #9743 was fixed; before it, two of the three did not compile
+   under the self-hosted compiler at all. On cost, no: instruction counts differ
+   by up to 1.94x, the ranking of pipeline 3's three variants inverts, and the
+   share of the gap owed to the per-element call roughly doubles.
 
 ## What this means for #9727
 
@@ -288,14 +308,16 @@ opaque function value per element stops between a quarter and two fifths short.
 `docs/ITERATOR-FUSION-CONTRACT.md` already says, and which this measurement now
 prices.
 
-**The caveat is that the self-hosted compiler cannot express the subject
-matter.** Two of the three programs do not lower there (#9743), and where it does
-lower, its ranking of the same three functions is the reverse of native's.
-`docs/NATIVE-CONVERGENCE.md` makes the self-host compiler the definition once the
-freeze preconditions go green; a fusion pass designed and measured only against
-native-built output would be tuned for the compiler that is on its way out.
-#9743 is the immediate blocker and is small; the instruction-count divergence is
-goal 2's and is not.
+**The caveat is that measuring only native-built output would aim the work
+wrongly.** `docs/NATIVE-CONVERGENCE.md` makes the self-host compiler the
+definition once the freeze preconditions go green, and on self-host-built code
+the per-element call is half to three quarters of the gap rather than a quarter
+to two fifths — because the self-host IR has none of native's defunctionalise
+and elide passes (#6638). So the call-specialisation half of
+`ITERATOR-FUSION-CONTRACT.md` is not a refinement to do after fusion lands; on
+the compiler this is heading toward it is the bigger win of the two. Pipeline
+3's ranking inverting between the compilers is the same warning in a second
+place, and belongs to goal 2.
 
 ## Reproducing
 
