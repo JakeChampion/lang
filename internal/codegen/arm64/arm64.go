@@ -20161,8 +20161,6 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesSetgroups = true
 			g.usesAlloc = true
 			g.usesIoError = true
-			g.usesAlloc = true
-			g.usesIoError = true
 		case "create_dir":
 			// create_dir(path, mode): Result[void, IoError] —
 			// one mkdirat, EEXIST included.

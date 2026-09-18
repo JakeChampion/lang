@@ -148,11 +148,12 @@ jobs:
             llvm-mc --version | head -2
           fi
       # GNU coreutils' own `uptime`, `kill` and `chroot`, none of which the
-      # harness can find on the runner image. Debian and Ubuntu do not build either into their coreutils
-      # package, and /usr/bin/uptime and /usr/bin/kill both belong to PROCPS
-      # -- different programs, with different options and different output.
+      # harness can find on the runner image. Debian and Ubuntu build none of
+      # the three into their coreutils package, and /usr/bin/uptime and
+      # /usr/bin/kill both belong to PROCPS -- different programs, with
+      # different options and different output.
       # internal/coreutils compares each utility against the GNU binary of the
-      # same name, so without this those two corpora have no oracle, and a
+      # same name, so without this those three corpora have no oracle, and a
       # gate with no oracle is the shape that reports `ok` having compared
       # nothing.
       #
@@ -172,7 +173,7 @@ jobs:
       #
       # Cached, because the build is the only slow part of this step: about
       # three minutes cold on four cores, seconds warm. Only the three are
-      # installed; the other seventy come from /usr/bin. All three are in the
+      # installed; the rest of the catalogue comes from /usr/bin. All three are in the
       # cache KEY as well, so a cache written when this step installed
       # uptime alone cannot satisfy a run that now needs more.
       - name: Cache the GNU uptime, kill and chroot oracles

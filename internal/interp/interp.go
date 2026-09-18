@@ -3071,7 +3071,7 @@ func builtinChdir(_ *Interp, args []Value) (Value, error) {
 // interpreter has no process control, as distinct from having it and
 // being refused. `chroot(1)` under `fern -run` therefore reports
 // "Function not implemented" where a compiled build reports "Operation
-// not permitted", and that difference is the interpreter's honestly.
+// not permitted", and that difference is the interpreter's honesty.
 func builtinChroot(_ *Interp, args []Value) (Value, error) {
 	p, err := pathArgs("chroot", args, 1)
 	if err != nil {
