@@ -54,7 +54,7 @@ func nlCases(t *testing.T) []invocation {
 	re := nlFile(t, dir, "re", "abc\nxbc\na|b\naab\na+b\na?b\nab\n")
 	// A line that is not valid UTF-8, and a name that is not either.
 	raw := nlFile(t, dir, "raw", "a\xffb\nc\n")
-	rawname := nlFile(t, dir, "na\xffme", "x\n")
+	rawname := rawByteFile(t, dir, "x\n")
 	missing := filepath.Join(dir, "nosuch")
 	if err := os.Mkdir(filepath.Join(dir, "d"), 0o755); err != nil {
 		t.Fatal(err)
@@ -222,7 +222,7 @@ func nlCases(t *testing.T) []invocation {
 		{name: "missing file then a good one", args: []string{missing, s4}},
 		{name: "good file then a missing one", args: []string{s4, missing}},
 		{name: "empty operand", args: []string{""}},
-		{name: "operand that is not valid UTF-8", args: []string{rawname}},
+		{name: "operand that is not valid UTF-8", args: []string{rawname}, rawByteName: true},
 		{name: "missing name that needs quoting", args: []string{filepath.Join(dir, "no such")}},
 		{name: "missing name with a quote", args: []string{filepath.Join(dir, "no'such")}},
 		{name: "directory", args: []string{d}},

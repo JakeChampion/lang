@@ -1,0 +1,39 @@
+// spec: AA-02
+//
+// A float reduction evaluates in INDEX ORDER. Float addition is not
+// associative, so the order is observable and a reassociating
+// implementation is caught here rather than in whatever program first
+// depends on the sum.
+//
+// [1e16, 1.0, -1e16] is the witness for the non-associativity itself:
+// 1e16 + 1.0 is 1e16, because the 1.0 falls off the bottom of the
+// mantissa, so the sum is 0 while the exact answer is 1. Every grouping
+// of three gives 0 here, so this line documents the hazard rather than
+// detecting a regrouping.
+//
+// FOUR elements is what discriminates, because a balanced tree has a
+// shape to take that index order does not:
+//   index order  ((1e16 + 1) - 1e16) + 1  =  0 + 1  =  1
+//   tree         (1e16 + 1) + (-1e16 + 1) =  1e16 - 1e16  =  0
+// So the second line reads 1 under index order and 0 under any
+// implementation that paired the terms — which is what a vectorized or
+// parallel `sum` would do.
+//
+// docs/ARRAY-ALGEBRA.md §3: this is not a new promise. FLOAT-SEMANTICS
+// already calls `a + b` portable — identical on every backend for the
+// same inputs — and an implementation free to reassociate could not
+// meet that. The case makes the consequence for reductions checkable.
+import "std/array";
+import "std/float";
+import "std/num";
+
+function main(): i32 {
+  var xs: f64[] = [1.0e16, 1.0, -1.0e16];
+  print(xs.sum().to_string());
+
+  // Four elements, so a tree reduction has a balanced shape to take:
+  // ((a+b)+(c+d)) regroups where ((a+b)+c)+d does not.
+  var ys: f64[] = [1.0e16, 1.0, -1.0e16, 1.0];
+  print(ys.sum().to_string());
+  return 0;
+}

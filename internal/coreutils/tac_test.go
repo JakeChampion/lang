@@ -17,22 +17,6 @@ func tacFile(t *testing.T, dir, name, content string) string {
 	return p
 }
 
-// tacFileOptional writes a file whose NAME the filesystem may refuse — a name
-// that is not valid UTF-8 is rejected by APFS with EILSEQ, while ext4 takes any
-// byte but "/" and NUL. It returns "" when the name could not be created, and
-// the caller drops the case rather than failing: the subject is the diagnostic
-// path for such a name, and on a filesystem that cannot hold one there is
-// nothing to diagnose.
-func tacFileOptional(t *testing.T, dir, name, content string) string {
-	t.Helper()
-	p := filepath.Join(dir, name)
-	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
-		t.Logf("skipping the non-UTF-8 name case: %v", err)
-		return ""
-	}
-	return p
-}
-
 func init() {
 	registerCorpus("tac", tacCases)
 }
@@ -77,7 +61,7 @@ func tacCases(t *testing.T) []invocation {
 	// create it at all — APFS rejects a name that is not valid UTF-8 with
 	// EILSEQ — and there the case has no subject rather than a failure,
 	// so it drops out and the rest of the parity run stands.
-	raw := tacFileOptional(t, dir, "na\xffme", "x\ny\n")
+	raw := rawByteFile(t, dir, "x\ny\n")
 	// Content that is not valid UTF-8 either side of a separator.
 	rawc := tacFile(t, dir, "rawc", "\xff\xfe\n\xfd\n")
 	missing := filepath.Join(dir, "nosuch")
@@ -318,10 +302,7 @@ func tacCases(t *testing.T) []invocation {
 		{name: "stdout closed with a large output", args: []string{w13192}, stdout: stdoutClosed},
 		{name: "stdout full from stdin", stdin: lines(3000), stdout: stdoutFull},
 	}
-	// The non-UTF-8 name exists only where the filesystem accepts one.
-	if raw != "" {
-		cases = append(cases, invocation{name: "operand that is not valid UTF-8", args: []string{raw}})
-	}
+	cases = append(cases, invocation{name: "operand that is not valid UTF-8", args: []string{raw}, rawByteName: true})
 	return cases
 }
 

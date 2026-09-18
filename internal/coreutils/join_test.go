@@ -77,7 +77,7 @@ func joinCases(t *testing.T) []invocation {
 	h2 := joinFile(t, dir, "h2", "H2 B\na x\n")
 	h3 := joinFile(t, dir, "h3", "H1 A\n")
 	// A name that is not valid UTF-8, and one that needs quoting.
-	raw := joinFile(t, dir, "na\xffme", "a 1\n")
+	raw := rawByteFile(t, dir, "a 1\n")
 	missing := filepath.Join(dir, "nosuch")
 	// A directory: open(2) succeeds and read(2) fails EISDIR.
 	if err := os.Mkdir(filepath.Join(dir, "d"), 0o755); err != nil {
@@ -279,7 +279,7 @@ func joinCases(t *testing.T) []invocation {
 		{name: "three operands", args: []string{f1, f2, f1}},
 		{name: "four operands", args: []string{f1, f2, f1, f2}},
 		{name: "empty operand", args: []string{"", f2}},
-		{name: "operand that is not valid UTF-8", args: []string{raw, f2}},
+		{name: "operand that is not valid UTF-8", args: []string{raw, f2}, rawByteName: true},
 		{name: "missing file 1", args: []string{missing, f2}},
 		{name: "missing file 2", args: []string{f1, missing}},
 		{name: "missing name that needs quoting", args: []string{filepath.Join(dir, "no such"), f2}},

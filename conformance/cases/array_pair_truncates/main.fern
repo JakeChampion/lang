@@ -1,0 +1,42 @@
+// spec: AA-01
+//
+// Positional pairing runs to the SHORTER input and drops the longer
+// tail. Every such function in std/array agrees — `zip` structurally,
+// and the three f64 helpers numerically — and none of them traps or
+// answers an Option on a length mismatch.
+//
+// The case exists because a multidimensional algebra wants the opposite
+// rule (docs/ARRAY-ALGEBRA.md §4), and the 1-D behaviour has to be
+// pinned before that argument is had: what is shipped and documented
+// here is truncation, and it is not to be changed by inheritance from a
+// later design.
+//
+// Both operand lengths are printed alongside the result so a run that
+// truncated to the WRONG length is distinguishable from one that
+// truncated to the right one.
+import "std/array";
+import "std/i32";
+import "std/float";
+
+function main(): i32 {
+  var a: i32[] = [1, 2, 3, 4, 5];
+  var b: i32[] = [10, 20, 30];
+  print(a.len().to_string());
+  print(b.len().to_string());
+  print(array.zip(a, b).len().to_string());
+
+  // The longer array on the other side, so the rule is "shorter wins"
+  // rather than "the first one wins".
+  print(array.zip(b, a).len().to_string());
+
+  var xs: f64[] = [1.0, 2.0, 3.0, 4.0];
+  var ys: f64[] = [10.0, 20.0];
+  // 1*10 + 2*20 = 50, not 1*10 + 2*20 + 3*0 + 4*0 and not a trap.
+  print(array.dot_f64(xs, ys).to_string());
+  // Element-wise sum runs to 2 elements: [11, 22].
+  var sum: f64[] = array.add_f64(xs, ys);
+  print(sum.len().to_string());
+  print(sum[0].to_string());
+  print(sum[1].to_string());
+  return 0;
+}

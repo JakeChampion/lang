@@ -137,7 +137,7 @@ func ptxCases(t *testing.T) []invocation {
 	}
 	d := filepath.Join(dir, "d")
 	spaced := ptxFile(t, dir, "f name", "aa bb\n")
-	raw := ptxFile(t, dir, "na\xffme", "aa bb\n")
+	raw := rawByteFile(t, dir, "aa bb\n")
 
 	return []invocation{
 		// The default format, and the two it is not.
@@ -282,7 +282,7 @@ func ptxCases(t *testing.T) []invocation {
 		{name: "empty flag string", args: []string{"-F", "", "-w", "30", in1}},
 		{name: "long flag string", args: []string{"-F", "****", "-w", "40", in1}},
 		{name: "flag string in roff", args: []string{"-O", "-F", "XX", "-w", "20", in1}},
-		{name: "flag string is emitted raw in roff", args: []string{"-O", "-F", "\"", "-w", "30", longline}},
+		{name: "flag string is emitted raw in roff", args: []string{"-O", "-F", "\"", "-w", "30", longline}, rawByteName: true},
 		{name: "flag escape bel", args: []string{"-F", "\\007", "-w", "14", in1}},
 		{name: "flag escape hex", args: []string{"-F", "\\x41", "-w", "14", in1}},
 		{name: "flag escape short octal", args: []string{"-F", "\\07", "-w", "14", in1}},
@@ -302,7 +302,7 @@ func ptxCases(t *testing.T) []invocation {
 		{name: "macro name in tex", args: []string{"-T", "-M", "ZZ", in1}},
 		{name: "empty macro name", args: []string{"-O", "-M", "", in1}},
 		{name: "macro name is not escape processed", args: []string{"-O", "-M", "a\\tb", sent}},
-		{name: "macro name is emitted raw", args: []string{"-O", "-M", "a\"b", sent}},
+		{name: "macro name is emitted raw", args: []string{"-O", "-M", "a\"b", sent}, rawByteName: true},
 		{name: "last macro wins", args: []string{"-O", "-M", "AA", "-M", "BB", in1}},
 		{name: "macro name does nothing in columns", args: []string{"-M", "ZZ", in1}},
 
@@ -455,7 +455,7 @@ func ptxCases(t *testing.T) []invocation {
 		{name: "missing break file", args: []string{"-b", missing, in1}},
 		{name: "list files are opened before the input", args: []string{"-i", missing, missing}},
 		{name: "name with a space", args: []string{"-O", spaced}},
-		{name: "name that is not valid UTF-8", args: []string{"-O", raw}},
+		{name: "name that is not valid UTF-8", args: []string{"-O", raw}, rawByteName: true},
 		{name: "empty input", args: []string{empty}},
 		{name: "empty stdin", stdin: ""},
 		{name: "no trailing newline", args: []string{"-O", nonl}},

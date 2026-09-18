@@ -667,6 +667,7 @@ func main() {
 	flag.Var(&lintOpts, "lint-opt", "with -lint: set one rule option, `RULE.OPTION=VALUE` (e.g. cyclomatic-complexity.max=20). Repeatable; wins over the manifest's [lint.options] table.")
 	doCheck := flag.Bool("check", false, "type-check FILE.fern (or `-` for stdin) and its transitive imports. No codegen, no link, no binary. Silent on success; prints formatted diagnostics and exits 1 on the first error.")
 	doAppendReport := flag.Bool("append-report", false, "print every `.append` site in FILE.fern and its transitive imports and whether the compiler grew the array in place or copied it, with the rule that decided. A copying append reallocates and copies the whole buffer, so one inside a loop is O(n\u00b2) bytes \u2014 the shape that OOM-killed CI in #4838, and which no other output distinguishes from the O(1) form. `.with` is absent: it lowers to a copy-on-write helper that reads the refcount at run time, so only the field-place form has a compile-time decision at all (the same admission this reports for `.append`, #8523) and it is not listed here. Report mode; no codegen.")
+	doArrayReport := flag.Bool("array-report", false, "print the `std/array` combinator pipelines FILE.fern contains, as the IR recognises them: each chain's stages, what each stage does to the element count, and the element function it applies. A chain breaks where an intermediate is read by anything but the next stage, so a value used twice reports as two pipelines rather than one — which is the honest answer, since there is no single traversal there to fuse. Recognition only: nothing about the emitted code changes (#9730). Report mode; no codegen.")
 	doCapabilities := flag.Bool("capabilities", false, "print the per-package capability usage of FILE.fern and its transitive imports — one line per package (fern.toml package name, or `(root)` when no manifest governs the program): the v1 capabilities (net, fs, env, subprocess, time, random) its declared functions can reach by call-graph reachability, with an example call chain down to the tagged runtime builtin. Stdlib usage is attributed to the calling package. The report itself enforces nothing; manifests' `capabilities` grants are enforced (E070) on the compile/-check/-interp paths (docs/PACKAGE-CAPABILITIES-BRIEF.md). No codegen.")
 
 	doEffects := flag.Bool("effects", false, "print the per-FUNCTION effect row of FILE.fern and its transitive imports — the effects (net, fs, env, subprocess, time, random) each declared function can reach by call-graph reachability, with an example call chain, and which effects it is charged only because it calls through a function value whose target is not statically known. Ends with the row-size distribution and the split between functions that call a tagged builtin themselves and those that only inherit. `-capabilities` answers the same question per PACKAGE; this one is per function. Report mode; nothing here enforces. No codegen. (docs/EFFECT-ROWS-BRIEF.md)")
@@ -864,6 +865,18 @@ func main() {
 			os.Exit(2)
 		}
 		if err := runAppendReport(flag.Arg(0), os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	if *doArrayReport {
+		if flag.NArg() < 1 {
+			fmt.Fprintln(os.Stderr, "usage: fern -array-report FILE.fern")
+			os.Exit(2)
+		}
+		if err := runArrayReport(flag.Arg(0), os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}

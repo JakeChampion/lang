@@ -54,7 +54,7 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**41 of 44** claims are pinned by a conformance case. The remaining
+**43 of 46** claims are pinned by a conformance case. The remaining
 **three are freedoms** — see below. There are no gaps left.
 
 ## Freedoms are not gaps
@@ -78,6 +78,8 @@ of them.
 
 | Claim | Doc | Rule | Pinned by |
 | --- | --- | --- | --- |
+| `AA-01` | `docs/ARRAY-ALGEBRA.md` | Positional pairing truncates to the shorter input: `zip`, `dot_f64`, `distance_f64` and `add_f64` drop the longer tail rather than aborting or answering an `Option` | `array_pair_truncates` |
+| `AA-02` | `docs/ARRAY-ALGEBRA.md` | A float reduction evaluates in index order, so no implementation may reassociate `sum` over an `f64[]` | `float_reduce_in_index_order` |
 | `AB-01` | `docs/ARRAY-BOUNDS.md` | Reading an array past its end aborts | `oob_index_read` |
 | `AB-02` | `docs/ARRAY-BOUNDS.md` | A negative index aborts | `oob_index_negative` |
 | `AB-03` | `docs/ARRAY-BOUNDS.md` | Writing past the end (`xs.with(i, v)`) aborts | `oob_index_write` |

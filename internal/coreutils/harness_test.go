@@ -269,6 +269,17 @@ type invocation struct {
 	// sides would differ on that one name while agreeing about every
 	// file under it. Needs seedTree.
 	crossDev func(t *testing.T, dir string)
+	// rawByteName marks a case whose fixture is a FILENAME that is not
+	// valid UTF-8. Linux filesystems take a name as bytes and hold it;
+	// APFS validates UTF-8 and refuses one with EILSEQ, so the fixture
+	// cannot be built on Darwin at all and the case is skipped there.
+	//
+	// The flag is on the CASE rather than a skip inside the file helper
+	// because the helper runs while the corpus is being built, once for a
+	// fixture several cases may name: failing there took the utility's
+	// whole parity test down with it, which is how 663 cases across 35
+	// utilities came to fail for this one reason (#9714).
+	rawByteName bool
 }
 
 // treeEntry is one path under a seedTree case's working directory, as the
@@ -1716,6 +1727,58 @@ func requireParity(t *testing.T, util string, cases []invocation) {
 	requireParityBinary(t, util, fernBin(t, util), cases)
 }
 
+// rawByteNameFixture is the name the corpus uses wherever a case needs a
+// filename that is not valid UTF-8. One spelling, so one filesystem probe
+// answers for every site.
+const rawByteNameFixture = "na\xffme"
+
+var rawByteNamesOnce struct {
+	sync.Once
+	ok bool
+}
+
+// rawByteNamesHeld reports whether the filesystem behind the temp directory
+// will hold a filename that is not valid UTF-8.
+//
+// Probed rather than switched on GOOS: what decides it is the filesystem, not
+// the kernel — and the answer is the same for every case in a round, so it is
+// taken once.
+func rawByteNamesHeld(t *testing.T) bool {
+	t.Helper()
+	rawByteNamesOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "rawbyte")
+		if err != nil {
+			return
+		}
+		defer os.RemoveAll(dir)
+		if err := os.WriteFile(filepath.Join(dir, rawByteNameFixture), nil, 0o600); err != nil {
+			return
+		}
+		rawByteNamesOnce.ok = true
+	})
+	return rawByteNamesOnce.ok
+}
+
+// rawByteFile writes `content` under `dir` as the not-valid-UTF-8 fixture name
+// and returns its path.
+//
+// Where the filesystem refuses the name it writes nothing and returns the path
+// anyway. That is not a silent pass: every case naming this path carries
+// `rawByteName: true` and is skipped with a reason, and the utility's other
+// cases — which used to be lost to a t.Fatal here — run and are held to GNU
+// exactly as before.
+func rawByteFile(t *testing.T, dir, content string) string {
+	t.Helper()
+	p := filepath.Join(dir, rawByteNameFixture)
+	if !rawByteNamesHeld(t) {
+		return p
+	}
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
 func requireParityBinary(t *testing.T, util, ours string, cases []invocation) {
 	t.Helper()
 	ref := referenceBin(t, util)
@@ -1724,6 +1787,9 @@ func requireParityBinary(t *testing.T, util, ours string, cases []invocation) {
 
 	for _, inv := range cases {
 		t.Run(inv.name, func(t *testing.T) {
+			if inv.rawByteName && !rawByteNamesHeld(t) {
+				t.Skipf("the fixture name is not valid UTF-8 and this filesystem refuses one (%s validates it)", runtime.GOOS)
+			}
 			inv.prep(t)
 			want := inv.run(t, ref, util)
 			wantFiles := inv.readArtifacts(t)

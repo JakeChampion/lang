@@ -248,11 +248,15 @@ pub function mod_names(mod: parser.Module): string[] {
 // module's decls carry — always the path basename (`io_buffered`), regardless of
 // any source alias (`io`). resolve_prefix pairs the two so `io.foo` mangles to
 // `io_buffered__foo`.
+//
+// Through util.mangle_prefix, so a basename that is not an identifier becomes
+// one: the driver applies the same function to the module's OWN prefix, and a
+// disagreement between the two is an unresolved symbol (#9684).
 pub function mod_prefixes(mod: parser.Module): string[] {
     var out: string[] = [];
     var i: i32 = 0;
     while (i < mod.imports.len()) {
-        out = out.append(basename(mod.imports[i].path));
+        out = out.append(util.mangle_prefix(basename(mod.imports[i].path)));
         i = i + 1;
     }
     return out;
@@ -922,6 +926,22 @@ pub function collect_enum_names(mod: parser.Module): string[] {
     return names;
 }
 
+// unique_prefix is the self-host half of native's collision loop
+// (modload.assignManglePrefixes). Sanitising is not injective — `[.fern` and
+// `_.fern` both reduce to `_`, as do `a-b.fern` and `a_b.fern` — so without
+// this the two modules mangle their decls to the same symbol and one
+// definition silently wins. Suffixes match native's, so a program compiled by
+// either compiler carries the same symbols.
+function unique_prefix(base: string, used: string[]): string {
+    var cand: string = base;
+    var k: i32 = 1;
+    while (is_in(cand, used)) {
+        cand = base + "_" + util.i32_to_string(k);
+        k = k + 1;
+    }
+    return cand;
+}
+
 // mangle_module renames a non-entry module's own decls to
 // `prefix__name` and rewrites every internal reference to match, plus
 // flattens any qualified refs it makes to other modules.
@@ -1053,9 +1073,12 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
     // (which mangles to `facade__name`) to the original `origin__name`.
     var rx: ReexportTable = build_reexports(imports);
     var mclaims: string[] = [];
+    var used_pfx: string[] = [];
     var i: i32 = 0;
     while (i < imports.len()) {
-        var md: MethodDedup = disambiguate_methods(mangle_module(imports[i].mod, imports[i].name, ivar_names, ivar_mangled, rx.keys, rx.targets), imports[i].name, mclaims);
+        var pfx: string = unique_prefix(util.mangle_prefix(imports[i].name), used_pfx);
+        used_pfx = used_pfx.append(pfx);
+        var md: MethodDedup = disambiguate_methods(mangle_module(imports[i].mod, pfx, ivar_names, ivar_mangled, rx.keys, rx.targets), pfx, mclaims);
         mclaims = md.keys;
         var m: parser.Module = md.mod;
         funcs = util.append_all(funcs, m.funcs);
@@ -1134,7 +1157,7 @@ pub function build_reexports(imports: LoadedModule[]): ReexportTable {
         var j: i32 = 0;
         while (j < imps.len()) {
             if (imps[j].is_reexport) {
-                var origin: string = basename(imps[j].path);
+                var origin: string = util.mangle_prefix(basename(imps[j].path));
                 var names: string[] = imps[j].reexport_names;
                 var n: i32 = 0;
                 while (n < names.len()) {
@@ -1190,9 +1213,12 @@ pub function bundle_per_module(entry: parser.Module, imports: LoadedModule[]): P
     // per-module units and the merged bundle agree on which definition owns a
     // `<Type>.<name>` symbol.
     var mclaims: string[] = [];
+    var used_pfx: string[] = [];
     var i: i32 = 0;
     while (i < imports.len()) {
-        var md: MethodDedup = disambiguate_methods(mangle_module(imports[i].mod, imports[i].name, ivar_names, ivar_mangled, rx.keys, rx.targets), imports[i].name, mclaims);
+        var pfx: string = unique_prefix(util.mangle_prefix(imports[i].name), used_pfx);
+        used_pfx = used_pfx.append(pfx);
+        var md: MethodDedup = disambiguate_methods(mangle_module(imports[i].mod, pfx, ivar_names, ivar_mangled, rx.keys, rx.targets), pfx, mclaims);
         mclaims = md.keys;
         var m: parser.Module = md.mod;
         out = out.append(PerModule { ns: imports[i].name, mod: m, is_entry: false });
