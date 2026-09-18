@@ -92,9 +92,7 @@ func shredSeed(t *testing.T, dir string) {
 func shredTypesSeed(t *testing.T, dir string) {
 	t.Helper()
 	p := filepath.Join(dir, "p")
-	if err := syscall.Mkfifo(p, 0o644); err != nil {
-		t.Fatalf("mkfifo: %v", err)
-	}
+	seedFifo(t, p)
 	fd, err := syscall.Open(p, syscall.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		t.Fatalf("open fifo for reading: %v", err)

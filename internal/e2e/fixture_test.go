@@ -25,10 +25,14 @@
 //
 // Compile-error fixtures: if a directory contains an `expected.error`
 // file, the fixture is NOT run. Instead it is expected to FAIL the
-// front-end (parse / module-load / type-check), and the captured error
-// message must contain the trimmed `expected.error` text. This gives
-// declarative coverage of the checker's rejection paths. Such fixtures
-// ignore expected.stdout / expected.exit / stdin / match / backends.
+// front-end (parse / module-load / type-check). This gives declarative
+// coverage of the checker's rejection paths. Such fixtures ignore
+// expected.stdout / expected.exit / stdin / match / backends.
+//
+// `expected.error` holds one line per expected diagnostic, and both
+// directions are asserted: every line must be reported, and every code
+// reported must be named by some line. See checkExpectedDiagnostics for
+// why the second half is over distinct codes and what it found.
 //
 // Lowering-error fixtures: `expected.lowering-error` is the sibling for
 // a rejection the front end does NOT make. Such a fixture must be
@@ -58,6 +62,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -68,6 +73,7 @@ import (
 	"github.com/jakechampion/lang/internal/codegen/wasmbin"
 	"github.com/jakechampion/lang/internal/codegen/x86_64"
 	"github.com/jakechampion/lang/internal/constfold"
+	"github.com/jakechampion/lang/internal/diag"
 	"github.com/jakechampion/lang/internal/ir"
 	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/monomorph"
@@ -89,7 +95,7 @@ type fixtureSpec struct {
 	// lowering. Kept separate from compileError because which stage
 	// rejected the program is exactly what such a case asserts.
 	loweringError bool
-	wantError     string // required substring of the compile error
+	wantErrors    []string // one required substring per expected diagnostic
 
 	// reclaimObservable marks a case whose output is DELIBERATELY different
 	// with reclamation off — a case about the allocator rather than about the
@@ -125,8 +131,8 @@ func loadFixture(t *testing.T, dir string) *fixtureSpec {
 	// the run-oriented sidecar parsing.
 	if raw, ok := readOptionalFile(dir, "expected.error"); ok {
 		f.compileError = true
-		f.wantError = strings.TrimSpace(raw)
-		if f.wantError == "" {
+		f.wantErrors = expectedDiagnosticLines(raw)
+		if len(f.wantErrors) == 0 {
 			t.Fatalf("%s: expected.error file is empty", f.name)
 		}
 		return f
@@ -138,8 +144,8 @@ func loadFixture(t *testing.T, dir string) *fixtureSpec {
 	// belongs in expected.error.
 	if raw, ok := readOptionalFile(dir, "expected.lowering-error"); ok {
 		f.loweringError = true
-		f.wantError = strings.TrimSpace(raw)
-		if f.wantError == "" {
+		f.wantErrors = expectedDiagnosticLines(raw)
+		if len(f.wantErrors) == 0 {
 			t.Fatalf("%s: expected.lowering-error file is empty", f.name)
 		}
 		return f
@@ -242,10 +248,10 @@ func TestFernFixtures(t *testing.T) {
 				t.Run("check", func(t *testing.T) {
 					errText, failed := runFixtureCompileError(f.mainPath)
 					if !failed {
-						t.Errorf("expected a compile error containing %q, but the program compiled cleanly", f.wantError)
-					} else if !strings.Contains(errText, f.wantError) {
-						t.Errorf("compile error does not contain %q\nfull error:\n%s", f.wantError, errText)
+						t.Errorf("expected a compile error containing %q, but the program compiled cleanly", f.wantErrors[0])
+						return
 					}
+					checkExpectedDiagnostics(t, "compile", f.wantErrors, errText)
 				})
 				return
 			}
@@ -259,14 +265,12 @@ func TestFernFixtures(t *testing.T) {
 						errText, stage := runFixtureLoweringError(f.mainPath, w)
 						switch stage {
 						case loweringRejected:
-							if !strings.Contains(errText, f.wantError) {
-								t.Errorf("lowering error does not contain %q\nfull error:\n%s", f.wantError, errText)
-							}
+							checkExpectedDiagnostics(t, "lowering", f.wantErrors, errText)
 						case frontEndRejected:
 							t.Errorf("the front end rejected this program, so it pins a front-end rule and belongs "+
 								"in expected.error rather than expected.lowering-error\nfront-end error:\n%s", errText)
 						case loweredCleanly:
-							t.Errorf("expected lowering to fail with %q, but the program lowered cleanly", f.wantError)
+							t.Errorf("expected lowering to fail with %q, but the program lowered cleanly", f.wantErrors[0])
 						}
 					})
 				}
@@ -411,15 +415,27 @@ func runFixtureWasm(t *testing.T, mainPath, stdin string) (string, int) {
 // failed. Backend-agnostic: parse / module-load / type errors are the
 // same regardless of target, so this runs once per fixture.
 func runFixtureCompileError(mainPath string) (string, bool) {
+	// Rendered the way the CLI renders it, which is what puts the `error[EXXX]`
+	// code on each diagnostic. `err.Error()` alone gives "type error at L:C:
+	// message" with no code at all, so the completeness check in
+	// checkExpectedDiagnostics had nothing to read and a second diagnostic was
+	// invisible to the harness as well as to the sidecar (#9601).
+	render := func(err error) string {
+		src, rerr := os.ReadFile(mainPath)
+		if rerr != nil {
+			return err.Error()
+		}
+		return diag.Format(mainPath, string(src), err)
+	}
 	prog, _, err := modload.Load(mainPath)
 	if err != nil {
-		return err.Error(), true
+		return render(err), true
 	}
 	if err := constfold.Fold(prog, nil); err != nil {
-		return err.Error(), true
+		return render(err), true
 	}
 	if _, err := checker.Check(prog); err != nil {
-		return err.Error(), true
+		return render(err), true
 	}
 	return "", false
 }
@@ -486,4 +502,102 @@ func readOptionalFileDefault(dir, name, def string) string {
 		return s
 	}
 	return def
+}
+
+// diagCodeLine matches the first line of a diagnostic — `path:line:col:
+// error[E123]: message` — and captures the code. The lines that follow are the
+// source echo and the caret, which belong to the diagnostic above them.
+var diagCodeLine = regexp.MustCompile(`^.*: error\[(E\d+)\]: `)
+
+// expectedDiagnosticLines splits an `expected.error` / `expected.lowering-error`
+// sidecar into one required substring per non-blank line.
+//
+// One line per expected DIAGNOSTIC is the contract (#9601). A message that
+// wraps across lines still works: each part is individually a substring of the
+// same diagnostic, so it matches the same one and contributes the same code.
+func expectedDiagnosticLines(raw string) []string {
+	var out []string
+	for _, ln := range strings.Split(raw, "\n") {
+		if s := strings.TrimSpace(ln); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// splitDiagnostics cuts an error text into one block per coded diagnostic,
+// returning each block's code alongside its full text.
+func splitDiagnostics(errText string) (codes []string, blocks []string) {
+	var cur []string
+	flush := func() {
+		if len(cur) > 0 {
+			blocks = append(blocks, strings.Join(cur, "\n"))
+			cur = nil
+		}
+	}
+	for _, ln := range strings.Split(errText, "\n") {
+		if m := diagCodeLine.FindStringSubmatch(ln); m != nil {
+			flush()
+			codes = append(codes, m[1])
+		}
+		if len(codes) > 0 {
+			cur = append(cur, ln)
+		}
+	}
+	flush()
+	return codes, blocks
+}
+
+// checkExpectedDiagnostics asserts both halves of a negative fixture's claim:
+// every expected substring is reported, and every code reported is expected.
+//
+// The second half is what #9601 added. A negative fixture used to pass on a
+// substring match alone, so a SECOND diagnostic — from the functions a case
+// includes to show what IS allowed — was reported, matched past, and never
+// seen. `diag_e053` documented an in-place array write as the allocation-free
+// `fip` shape for months that way; the program did not compile, and the E056
+// saying so sat in the output the whole time.
+//
+// Repeats of the pinned code are the case doing its job — `diag_e034` reports
+// its E034 once per offending element — so the rule is over distinct CODES,
+// not over the number of diagnostics. A second code is either a cascade worth
+// recording in the sidecar or a defect worth fixing, and telling those apart is
+// a judgement per case rather than something a matcher can do.
+func checkExpectedDiagnostics(t *testing.T, stage string, want []string, errText string) {
+	t.Helper()
+	codes, blocks := splitDiagnostics(errText)
+	matched := map[string]bool{}
+	for _, w := range want {
+		hit := false
+		for i, b := range blocks {
+			if strings.Contains(b, w) {
+				matched[codes[i]] = true
+				hit = true
+			}
+		}
+		// A sidecar line may also name something outside any coded block —
+		// a parse error with no code, say — so fall back to the whole text.
+		if !hit && strings.Contains(errText, w) {
+			hit = true
+		}
+		if !hit {
+			t.Errorf("%s error does not contain %q\nfull error:\n%s", stage, w, errText)
+		}
+	}
+	var unexpected []string
+	seen := map[string]bool{}
+	for _, c := range codes {
+		if matched[c] || seen[c] {
+			continue
+		}
+		seen[c] = true
+		unexpected = append(unexpected, c)
+	}
+	if len(unexpected) > 0 {
+		t.Errorf("%s reported %s that no line of the sidecar expects — either the case is "+
+			"documenting something that does not work (which is what #9601 found in diag_e053), "+
+			"or the cascade is legitimate and belongs in the sidecar, one line per diagnostic"+
+			"\nfull error:\n%s",
+			stage, strings.Join(unexpected, ", "), errText)
+	}
 }

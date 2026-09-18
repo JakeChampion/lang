@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 // mv(1) writes almost nothing, so nearly every case here is about the
@@ -46,46 +45,6 @@ import (
 // not the copy's order. TestMvCrossDeviceOrder pins that pair of orders
 // on a multi-entry tree, running both binaries against one tree so the
 // inodes are shared.
-
-func seedWrite(t *testing.T, dir, name, content string) {
-	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
-		t.Fatalf("write %s: %v", name, err)
-	}
-}
-
-func seedMkdir(t *testing.T, dir, name string) {
-	t.Helper()
-	if err := os.MkdirAll(filepath.Join(dir, name), 0o755); err != nil {
-		t.Fatalf("mkdir %s: %v", name, err)
-	}
-}
-
-func seedSymlink(t *testing.T, dir, target, name string) {
-	t.Helper()
-	if err := os.Symlink(target, filepath.Join(dir, name)); err != nil {
-		t.Fatalf("symlink %s: %v", name, err)
-	}
-}
-
-func seedHardlink(t *testing.T, dir, old, name string) {
-	t.Helper()
-	if err := os.Link(filepath.Join(dir, old), filepath.Join(dir, name)); err != nil {
-		t.Fatalf("link %s: %v", name, err)
-	}
-}
-
-// seedTouch pins a file's timestamps. Every --update case needs them: the
-// two sides run seconds apart, so a fixture that took the wall clock
-// would have the source newer than the destination on one run and not on
-// the other, and the case would be random rather than a comparison.
-func seedTouch(t *testing.T, dir, name string, sec int64, nsec int64) {
-	t.Helper()
-	when := time.Unix(sec, nsec)
-	if err := os.Chtimes(filepath.Join(dir, name), when, when); err != nil {
-		t.Fatalf("chtimes %s: %v", name, err)
-	}
-}
 
 // mvBasic is the main fixture: two plain files, a directory holding
 // one of their names, a symbolic link to a file, a dangling one, and a

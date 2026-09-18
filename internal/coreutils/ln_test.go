@@ -1,8 +1,6 @@
 package coreutils
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 )
 
@@ -24,71 +22,43 @@ import (
 //     does nothing when both names already reach one file, so the temporary
 //     name has to be dealt with rather than renamed away.
 
-func lnWrite(t *testing.T, dir, name, content string) {
-	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
-		t.Fatalf("write %s: %v", name, err)
-	}
-}
-
-func lnMkdir(t *testing.T, dir, name string) {
-	t.Helper()
-	if err := os.MkdirAll(filepath.Join(dir, name), 0o755); err != nil {
-		t.Fatalf("mkdir %s: %v", name, err)
-	}
-}
-
-func lnSymlink(t *testing.T, dir, target, name string) {
-	t.Helper()
-	if err := os.Symlink(target, filepath.Join(dir, name)); err != nil {
-		t.Fatalf("symlink %s: %v", name, err)
-	}
-}
-
-func lnHardlink(t *testing.T, dir, old, name string) {
-	t.Helper()
-	if err := os.Link(filepath.Join(dir, old), filepath.Join(dir, name)); err != nil {
-		t.Fatalf("link %s: %v", name, err)
-	}
-}
-
 // lnBasic is the main fixture: two plain files, a directory, a symlink
 // to a file and a dangling one. `a` is the usual TARGET and `b` the usual
 // occupied destination.
 func lnBasic(t *testing.T, dir string) {
 	t.Helper()
-	lnWrite(t, dir, "a", "A\n")
-	lnWrite(t, dir, "b", "B\n")
-	lnMkdir(t, dir, "adir")
-	lnSymlink(t, dir, "a", "sl")
-	lnSymlink(t, dir, "nowhere", "dangling")
+	seedWrite(t, dir, "a", "A\n")
+	seedWrite(t, dir, "b", "B\n")
+	seedMkdir(t, dir, "adir")
+	seedSymlink(t, dir, "a", "sl")
+	seedSymlink(t, dir, "nowhere", "dangling")
 }
 
 // lnOne is one file and nothing else — the fixture for the operand-count
 // diagnostics, where anything more would be noise.
 func lnOne(t *testing.T, dir string) {
 	t.Helper()
-	lnWrite(t, dir, "a", "A\n")
+	seedWrite(t, dir, "a", "A\n")
 }
 
 // lnDir is a target DIRECTORY and two files to put in it, one of which is
 // already there so the 3rd form has a failing operand among the good ones.
 func lnDir(t *testing.T, dir string) {
 	t.Helper()
-	lnWrite(t, dir, "a", "A\n")
-	lnWrite(t, dir, "b", "B\n")
-	lnWrite(t, dir, "c", "C\n")
-	lnMkdir(t, dir, "d")
-	lnWrite(t, dir, "d/b", "old b\n")
+	seedWrite(t, dir, "a", "A\n")
+	seedWrite(t, dir, "b", "B\n")
+	seedWrite(t, dir, "c", "C\n")
+	seedMkdir(t, dir, "d")
+	seedWrite(t, dir, "d/b", "old b\n")
 }
 
 // lnSymDir is the `-n` fixture: a directory and a symbolic link to it, which
 // is the one destination whose meaning the option changes.
 func lnSymDir(t *testing.T, dir string) {
 	t.Helper()
-	lnWrite(t, dir, "a", "A\n")
-	lnMkdir(t, dir, "d")
-	lnSymlink(t, dir, "d", "dl")
+	seedWrite(t, dir, "a", "A\n")
+	seedMkdir(t, dir, "d")
+	seedSymlink(t, dir, "d", "dl")
 }
 
 // lnPair is two names on ONE inode, plus a directory holding a third. The
@@ -96,23 +66,23 @@ func lnSymDir(t *testing.T, dir string) {
 // tells the two apart.
 func lnPair(t *testing.T, dir string) {
 	t.Helper()
-	lnWrite(t, dir, "a", "A\n")
-	lnMkdir(t, dir, "d")
-	lnHardlink(t, dir, "a", "d/a")
+	seedWrite(t, dir, "a", "A\n")
+	seedMkdir(t, dir, "d")
+	seedHardlink(t, dir, "a", "d/a")
 }
 
 // lnBackupSimple is the plain backup fixture, and lnBackupTaken adds a `b~`
 // that the backup has to replace.
 func lnBackupSimple(t *testing.T, dir string) {
 	t.Helper()
-	lnWrite(t, dir, "a", "A\n")
-	lnWrite(t, dir, "b", "B\n")
+	seedWrite(t, dir, "a", "A\n")
+	seedWrite(t, dir, "b", "B\n")
 }
 
 func lnBackupTaken(t *testing.T, dir string) {
 	t.Helper()
 	lnBackupSimple(t, dir)
-	lnWrite(t, dir, "b~", "OLD\n")
+	seedWrite(t, dir, "b~", "OLD\n")
 }
 
 // lnBackupDir is the destination whose backup name is a DIRECTORY: the
@@ -121,7 +91,7 @@ func lnBackupTaken(t *testing.T, dir string) {
 func lnBackupDir(t *testing.T, dir string) {
 	t.Helper()
 	lnBackupSimple(t, dir)
-	lnMkdir(t, dir, "b~")
+	seedMkdir(t, dir, "b~")
 }
 
 // lnLinked is a destination that is already a second name for the target —
@@ -129,8 +99,8 @@ func lnBackupDir(t *testing.T, dir string) {
 // its count to three.
 func lnLinked(t *testing.T, dir string) {
 	t.Helper()
-	lnWrite(t, dir, "a", "A\n")
-	lnHardlink(t, dir, "a", "b")
+	seedWrite(t, dir, "a", "A\n")
+	seedHardlink(t, dir, "a", "b")
 }
 
 // The numbered-backup fixtures. GNU takes max(N)+1 over names matching
@@ -139,35 +109,35 @@ func lnLinked(t *testing.T, dir string) {
 func lnNumbered(t *testing.T, dir string) {
 	t.Helper()
 	lnBackupSimple(t, dir)
-	lnWrite(t, dir, "b.~1~", "one\n")
+	seedWrite(t, dir, "b.~1~", "one\n")
 }
 
 func lnNumberedNine(t *testing.T, dir string) {
 	t.Helper()
 	lnBackupSimple(t, dir)
-	lnWrite(t, dir, "b.~9~", "nine\n")
+	seedWrite(t, dir, "b.~9~", "nine\n")
 }
 
 func lnNumberedGap(t *testing.T, dir string) {
 	t.Helper()
 	lnBackupSimple(t, dir)
-	lnWrite(t, dir, "b.~3~", "three\n")
-	lnWrite(t, dir, "b.~10~", "ten\n")
+	seedWrite(t, dir, "b.~3~", "three\n")
+	seedWrite(t, dir, "b.~10~", "ten\n")
 }
 
 func lnNumberedJunk(t *testing.T, dir string) {
 	t.Helper()
 	lnBackupSimple(t, dir)
-	lnWrite(t, dir, "b.~09~", "leading zero\n")
-	lnWrite(t, dir, "b.~x~", "not a number\n")
-	lnWrite(t, dir, "b.~-1~", "negative\n")
-	lnWrite(t, dir, "b.~0~", "zero\n")
+	seedWrite(t, dir, "b.~09~", "leading zero\n")
+	seedWrite(t, dir, "b.~x~", "not a number\n")
+	seedWrite(t, dir, "b.~-1~", "negative\n")
+	seedWrite(t, dir, "b.~0~", "zero\n")
 }
 
 func lnNumberedDir(t *testing.T, dir string) {
 	t.Helper()
 	lnBackupSimple(t, dir)
-	lnMkdir(t, dir, "b.~1~")
+	seedMkdir(t, dir, "b.~1~")
 }
 
 // lnNested is the `-r` fixture: two branches deep enough that the relative
@@ -175,14 +145,14 @@ func lnNumberedDir(t *testing.T, dir string) {
 // canonicalisation is visible.
 func lnNested(t *testing.T, dir string) {
 	t.Helper()
-	lnMkdir(t, dir, "x/y")
-	lnWrite(t, dir, "x/y/f", "F\n")
-	lnMkdir(t, dir, "p/q")
-	lnWrite(t, dir, "a", "A\n")
-	lnMkdir(t, dir, "d")
-	lnWrite(t, dir, "d/f", "DF\n")
-	lnSymlink(t, dir, "d", "dl")
-	lnSymlink(t, dir, "x", "xl")
+	seedMkdir(t, dir, "x/y")
+	seedWrite(t, dir, "x/y/f", "F\n")
+	seedMkdir(t, dir, "p/q")
+	seedWrite(t, dir, "a", "A\n")
+	seedMkdir(t, dir, "d")
+	seedWrite(t, dir, "d/f", "DF\n")
+	seedSymlink(t, dir, "d", "dl")
+	seedSymlink(t, dir, "x", "xl")
 }
 
 // lnLoop is a pair of symbolic links pointing at each other. Canonicalising
@@ -190,29 +160,29 @@ func lnNested(t *testing.T, dir string) {
 // written rather than failing — `realpath -m l1` answers `<cwd>/l1`.
 func lnLoop(t *testing.T, dir string) {
 	t.Helper()
-	lnWrite(t, dir, "a", "A\n")
-	lnSymlink(t, dir, "l2", "l1")
-	lnSymlink(t, dir, "l1", "l2")
-	lnMkdir(t, dir, "sub")
+	seedWrite(t, dir, "a", "A\n")
+	seedSymlink(t, dir, "l2", "l1")
+	seedSymlink(t, dir, "l1", "l2")
+	seedMkdir(t, dir, "sub")
 }
 
 // lnSrcSlash is a target reached through a path with trailing slashes: the
 // destination's name drops them and a symbolic link's stored text keeps them.
 func lnSrcSlash(t *testing.T, dir string) {
 	t.Helper()
-	lnMkdir(t, dir, "s")
-	lnWrite(t, dir, "s/f", "F\n")
-	lnMkdir(t, dir, "d")
+	seedMkdir(t, dir, "s")
+	seedWrite(t, dir, "s/f", "F\n")
+	seedMkdir(t, dir, "d")
 }
 
 // lnNotDir is a plain file where a directory operand is expected, the fault
 // GNU words two different ways depending on which form reached it.
 func lnNotDir(t *testing.T, dir string) {
 	t.Helper()
-	lnMkdir(t, dir, "n1")
-	lnWrite(t, dir, "n1/f", "F\n")
-	lnWrite(t, dir, "a", "A\n")
-	lnWrite(t, dir, "b", "B\n")
+	seedMkdir(t, dir, "n1")
+	seedWrite(t, dir, "n1/f", "F\n")
+	seedWrite(t, dir, "a", "A\n")
+	seedWrite(t, dir, "b", "B\n")
 }
 
 // lnQuoting is the names whose diagnostics differ between quote, quotef and
@@ -220,11 +190,11 @@ func lnNotDir(t *testing.T, dir string) {
 // quotes), a leading `~`, and one that is not valid UTF-8.
 func lnQuoting(t *testing.T, dir string) {
 	t.Helper()
-	lnWrite(t, dir, "a", "A\n")
-	lnWrite(t, dir, "sp ace", "S\n")
-	lnWrite(t, dir, "ap'os", "Q\n")
-	lnWrite(t, dir, "bad\xff", "N\n")
-	lnMkdir(t, dir, "d x")
+	seedWrite(t, dir, "a", "A\n")
+	seedWrite(t, dir, "sp ace", "S\n")
+	seedWrite(t, dir, "ap'os", "Q\n")
+	seedWrite(t, dir, "bad\xff", "N\n")
+	seedMkdir(t, dir, "d x")
 }
 
 // lnPrompt is the `-i` fixture with several occupied destinations, so one
@@ -232,11 +202,11 @@ func lnQuoting(t *testing.T, dir string) {
 // accepted ones are relinked.
 func lnPrompt(t *testing.T, dir string) {
 	t.Helper()
-	lnWrite(t, dir, "a1", "A1\n")
-	lnWrite(t, dir, "a2", "A2\n")
-	lnMkdir(t, dir, "dd")
-	lnWrite(t, dir, "dd/a1", "old 1\n")
-	lnWrite(t, dir, "dd/a2", "old 2\n")
+	seedWrite(t, dir, "a1", "A1\n")
+	seedWrite(t, dir, "a2", "A2\n")
+	seedMkdir(t, dir, "dd")
+	seedWrite(t, dir, "dd/a1", "old 1\n")
+	seedWrite(t, dir, "dd/a2", "old 2\n")
 }
 
 func init() {

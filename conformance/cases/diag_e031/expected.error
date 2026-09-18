@@ -1,1 +1,2 @@
 match-expression arms differ: i32 vs string
+return type mismatch: function returns string but expression is i32
