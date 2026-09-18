@@ -1019,7 +1019,7 @@ function how_of(v: string): i32 {
   return gnu.argmatch(v, names, "--remove");
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var scanned: (Settings, string[]) = scan_options();
   var s: Settings = scanned.0;
   var operands: string[] = scanned.1;

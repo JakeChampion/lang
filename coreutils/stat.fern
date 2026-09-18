@@ -1139,7 +1139,7 @@ function do_fs(o: io_buffered.BufWriter, pieces: Piece[], name: string, newline:
 }
 
 // ---- main -------------------------------------------------------------------
-function main(): i32 {
+pub function main(): i32 {
   var opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("L", "dereference", opt_dereference()));
   opts = opts.append(gnu.flag("f", "file-system", opt_file_system()));

@@ -61,7 +61,7 @@ function strip_suffix(name: string, suffix: string): string {
   return name;
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var argv: string[] = args();
   var opts: gnu.Opt[] = [gnu.flag("a", "multiple", 1), gnu.valued("s", "suffix", 2), gnu.flag("z", "zero", 3)];
   var g: gnu.Getopt = gnu.getopt_new(argv, opts, "basename", help_text(), 1).in_order();

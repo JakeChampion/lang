@@ -293,7 +293,7 @@ function apply_option(f: ld.Format, cfg: Cfg, m: gnu.OptMatch): Cfg {
   return Cfg { ...cfg, sig: sig };
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var f: ld.Format = ld.format();
   var parsed: (Cfg, string[]) = parse_options(f);
   var cfg: Cfg = parsed.0;

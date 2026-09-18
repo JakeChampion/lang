@@ -385,7 +385,7 @@ function process(st0: St, s: Settings, path: string, shown: string, top: boolean
   }
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var scanned: (Settings, string[], boolean, string) = scan_options();
   var s: Settings = resolve_traversal(scanned.0);
   var operands: string[] = scanned.1;

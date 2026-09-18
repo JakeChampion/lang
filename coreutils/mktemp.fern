@@ -472,7 +472,7 @@ function emit(s: Settings, name: string): i32 {
   return 1;
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var r: (Settings, string[]) = scan(args());
   var s: Settings = r.0;
   var operands: string[] = r.1;

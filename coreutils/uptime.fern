@@ -207,7 +207,7 @@ function report(read: Result[utmp.Entry[], IoError], now: i64): (string, i32) {
   return (out + "\n", status);
 }
 
-function main(): i32 {
+pub function main(): i32 {
   var operands: string[] = gnu.parse_standard_options_only(args(), "uptime", help_text(), 1);
   // After the option scan, so `--help` and `--version` answer on every
   // target and only a run that would have to produce the load averages

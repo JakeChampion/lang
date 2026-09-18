@@ -1062,7 +1062,7 @@ function all_fields(): i32[] {
 }
 
 // ---- main ------------------------------------------------------------------
-function main(): i32 {
+pub function main(): i32 {
   var argv: string[] = args();
   var opts: gnu.Opt[] = declare_options();
 
