@@ -65,7 +65,7 @@ func truncateRef(t *testing.T, dir string) {
 	t.Helper()
 	truncateWrite(t, dir, "f", "hello")
 	truncateWrite(t, dir, "r", "abcdefgh")
-	truncateLink(t, "r", dir, "sr")
+	seedSymlink(t, dir, "r", "sr")
 }
 
 // truncateShapes holds one of every name the open can fail on: a
@@ -82,9 +82,9 @@ func truncateShapes(t *testing.T, dir string) {
 	if err := os.Chmod(filepath.Join(dir, "ro"), 0o444); err != nil {
 		t.Fatalf("chmod ro: %v", err)
 	}
-	truncateLink(t, "missing", dir, "dl")
-	truncateLink(t, "d", dir, "sd")
-	truncateLink(t, "loop", dir, "loop")
+	seedSymlink(t, dir, "missing", "dl")
+	seedSymlink(t, dir, "d", "sd")
+	seedSymlink(t, dir, "loop", "loop")
 }
 
 // truncateNames seeds the names whose diagnostics show GNU's quoting: an
@@ -100,24 +100,15 @@ func truncateNames(t *testing.T, dir string) {
 	}
 }
 
+// truncateWrite is seedWrite plus a chmod: WriteFile applies the creation mask,
+// which a truncate case may have changed, and Chmod sets exactly the bits asked
+// for — so the fixture is the same on both sides whatever mask the case runs
+// under.
 func truncateWrite(t *testing.T, dir, name, body string) {
 	t.Helper()
-	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatalf("write %s: %v", name, err)
-	}
-	// WriteFile applies the creation mask, which a case may have changed;
-	// Chmod sets exactly the bits asked for, so the fixture is the same
-	// on both sides whatever mask the case runs under.
-	if err := os.Chmod(path, 0o644); err != nil {
+	seedWrite(t, dir, name, body)
+	if err := os.Chmod(filepath.Join(dir, name), 0o644); err != nil {
 		t.Fatalf("chmod %s: %v", name, err)
-	}
-}
-
-func truncateLink(t *testing.T, target, dir, name string) {
-	t.Helper()
-	if err := os.Symlink(target, filepath.Join(dir, name)); err != nil {
-		t.Fatalf("symlink %s: %v", name, err)
 	}
 }
 

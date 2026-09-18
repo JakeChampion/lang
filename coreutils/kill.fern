@@ -129,12 +129,34 @@ function refuse_second_signal(given: string): void {
   gnu.die_usage(gnu.quote(given) + ": multiple signals specified", 1);
 }
 
-// `pad_name(s)` — the 8-wide left-aligned name column `-t` prints, measured
-// off `kill -t`: two columns of number, a space, the name in eight, a space,
-// then the text. `RTMAX` and `HUP` both land the description at column 13.
-function pad_name(s: string): string {
+// `name_width()` — how wide the name column is, which GNU COMPUTES rather than
+// fixes. `list_signals` walks every signal and keeps the longest name:
+//
+//     for (signum = 1; signum <= SIGNUM_BOUND; signum++)
+//       if (sig2str (signum, signame) == 0)
+//         ... if (name_width < len) name_width = len;
+//
+// That is 8 on Linux, where `RTMIN+13` and `RTMAX-13` are the longest, and 6
+// on Darwin, where the longest is `VTALRM`. Hardcoding 8 was Linux's answer
+// wearing the look of a constant, and it put every Darwin row a column wide
+// (#9645).
+function name_width(): i32 {
+  var w: i32 = 0;
+  var n: i32 = 1;
+  while (n <= signals.highest()) {
+    var nm: string = signals.name(n);
+    if (nm.len() > w) {
+      w = nm.len();
+    }
+    n = n + 1;
+  }
+  return w;
+}
+
+// `pad_name(s, w)` — the left-aligned name column, GNU's `%-*s`.
+function pad_name(s: string, w: i32): string {
   var out: string = s;
-  while (out.len() < 8) {
+  while (out.len() < w) {
     out = out + " ";
   }
   return out;
@@ -200,12 +222,13 @@ function run_list(args: string[]): i32 {
 // named signals when any are given.
 function run_table(args: string[]): i32 {
   var out: string = "";
+  var w: i32 = name_width();
   if (args.len() == 0) {
     var n: i32 = 1;
     while (n <= signals.highest()) {
       var nm: string = signals.name(n);
       if (nm != "") {
-        out = out + num2(n) + " " + pad_name(nm) + " " + signals.description(n) + "\n";
+        out = out + num2(n) + " " + pad_name(nm, w) + " " + signals.description(n) + "\n";
       }
       n = n + 1;
     }
@@ -221,7 +244,7 @@ function run_table(args: string[]): i32 {
       gnu.error(gnu.quote(a) + ": invalid signal");
       bad = true;
     } else {
-      out = out + num2(v) + " " + pad_name(signals.name(v)) + " " + signals.description(v) + "\n";
+      out = out + num2(v) + " " + pad_name(signals.name(v), w) + " " + signals.description(v) + "\n";
     }
   }
   gnu.write_out(out);

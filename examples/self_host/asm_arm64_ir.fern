@@ -1666,7 +1666,7 @@ function ssa_load_params(f: ssa.SFunc, reg_of: i32[], s: asmcore.EmitState): asm
 // most of them never read; prune_dead takes those out before the allocator
 // sees them.
 function emit_ssa_function_arm64(lifted: ssa.SFunc, label_name: string, ops: ir.Op[], s: asmcore.EmitState): asmcore.EmitState {
-    var f: ssa.SFunc = ssa.prune_dead(lifted);
+    var f: ssa.SFunc = ssa.prune_dead(ssa.prune_trivial_phis(lifted));
     var reg_of: i32[] = ssa.regalloc_linear(f, ssa_nregs(), ssa_nsaved(), 0, false);
     var lp: string = ".Lssa_" + asmcore.sanitize_label(label_name) + "_";
     s = s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n");
@@ -4035,6 +4035,7 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
     s = s.write("    .text\n");
     var sg: irlower.FnSigs = irlower.fn_sigs_with_dyn(base, mod.trait_reqs);
     var vsigs: irverify.NameIndex = irlower.fn_sig_index(mod.funcs);
+    ircore.check_fip_claims(mod.funcs, 0, mod.funcs.len(), cache, s.struct_decls, sg, false);
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
         if (cache.len() == 0) {
@@ -10330,7 +10331,6 @@ pub function emit_module_ir_gated_sub(mod: parser.Module, darwin: boolean, sub: 
     var base: irlower.FnSigs = ircore.wp_fn_sigs(im.funcs, imtab);
     base = ircore.sub_sigs(sub, base);
     var g: ircore.Lowered = ircore.lower_gated(im, imtab, irlower.fn_sigs_with_dyn(base, im.trait_reqs), [], false, sub);
-    ircore.fail_on_fip_claims(g);
     if (!g.ok) { return ""; }
     return emit_module_ir_flat(im, imtab, darwin, ircore.sub_cache(sub, g.cache), base, ssa);
 }
@@ -10415,6 +10415,7 @@ pub function emit_module_ir_unit_arm64_flat(mod: parser.Module, is_entry: boolea
     var vsigs: irverify.NameIndex = irlower.fn_sig_index(all_funcs);
     var hh: i32 = hi;
     if (hh < 0 || hh > mod.funcs.len()) { hh = mod.funcs.len(); }
+    ircore.check_fip_claims(mod.funcs, lo, hh, [], all_structs, sg, false);
     var fi: i32 = lo;
     while (fi < hh) {
         if (globl_defs) {

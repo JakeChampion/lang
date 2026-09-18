@@ -197,8 +197,11 @@ path needs `build_func` any more. In order:
    0.93x, self-build 1.04x against a 1.5x ceiling, corpus clean on both
    targets — and the numbers are in
    `docs/ssa-log/2026-09-17-arm64-meets-every-flip-condition.md`. x86-64
-   meets the corpus condition and not the size one, so the flip is a
-   per-target decision. Taking it is a decision, not a measurement.
+   meets the corpus condition and not the size one, so the flip is per
+   target. **Taken for arm64**: omitting `-backend` selects the register
+   path there and the stack machine everywhere else. `-backend flat` still
+   names the stack machine on arm64, and a function the register path
+   declines still falls back to it on its own.
 
 ## The target
 

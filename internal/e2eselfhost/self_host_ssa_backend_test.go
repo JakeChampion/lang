@@ -665,19 +665,39 @@ func TestSelfHostSSABackendRefusesOtherTargets(t *testing.T) {
 	if !strings.Contains(string(out), "unknown -backend: nope") {
 		t.Errorf("unknown backend not reported: %s", out)
 	}
-	tg := h.targets[0]
-	h.compileWith(t, tg, src, filepath.Join(dir, "dflt"))
-	h.compileWith(t, tg, src, filepath.Join(dir, "flat"), "-backend", "flat")
-	dflt, err := os.ReadFile(filepath.Join(dir, "dflt"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	flat, err := os.ReadFile(filepath.Join(dir, "flat"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(dflt, flat) {
-		t.Errorf("-backend flat and the default emitter produced different executables")
+	// Omitting -backend selects the target's default emitter, which is not
+	// the same on both: arm64 is on the register path since its output is
+	// smaller and its compiler faster than the stack machine's, and x86-64
+	// is still on the stack machine. Naming the default explicitly must
+	// reproduce it byte for byte, and naming the other one must not.
+	for _, tg := range h.targets {
+		want := "flat"
+		other := "ssa"
+		if strings.HasPrefix(tg.target, "arm64-") {
+			want, other = "ssa", "flat"
+		}
+		base := strings.ReplaceAll(tg.target, "-", "_")
+		h.compileWith(t, tg, src, filepath.Join(dir, base+"_dflt"))
+		h.compileWith(t, tg, src, filepath.Join(dir, base+"_want"), "-backend", want)
+		h.compileWith(t, tg, src, filepath.Join(dir, base+"_other"), "-backend", other)
+		dflt, err := os.ReadFile(filepath.Join(dir, base+"_dflt"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		named, err := os.ReadFile(filepath.Join(dir, base+"_want"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		notIt, err := os.ReadFile(filepath.Join(dir, base+"_other"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(dflt, named) {
+			t.Errorf("%s: -backend %s differs from the default emitter, which it is", tg.target, want)
+		}
+		if bytes.Equal(dflt, notIt) {
+			t.Errorf("%s: -backend %s matches the default emitter, so the default is not %s", tg.target, other, want)
+		}
 	}
 }
 

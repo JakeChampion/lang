@@ -83,9 +83,7 @@ func lsTree(t *testing.T) string {
 	link("plain", j("link_ok"))
 	link("nosuch", j("link_broken"))
 	link("adir", j("link_dir"))
-	if err := syscall.Mkfifo(j("afifo"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	seedFifo(t, j("afifo"))
 	if err := os.Link(j("plain"), j("hardlink")); err != nil {
 		t.Fatal(err)
 	}

@@ -10,8 +10,10 @@ function first_two(): [i32] {
     return xs[0:2];            // slice views local `xs` — dangles
 }
 
-// OK: `xs` is owned by the caller, so the view stays valid.
-function first_two(xs: i32[]): [i32] {
+// OK: `xs` is owned by the caller, so the view stays valid. A distinct
+// name because the rejected one above is a declaration too, and two
+// `first_two`s is E006 — which is what hid this half from the gate.
+function first_two_of(xs: i32[]): [i32] {
     return xs[0:2];
 }
 

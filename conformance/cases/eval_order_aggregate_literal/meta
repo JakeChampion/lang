@@ -1,0 +1,6 @@
+waiver: harness-limit
+reason: internal/interp has no allocator to count calls into — it is a
+  tree-walking evaluator over Go values — so __heap_alloc_count()
+  returns 0 there unconditionally, every literal reads as "no box" and
+  the order this case measures is unobservable, exactly as for
+  alloc_count_sees_recycling. See docs/ALLOCATION-OBSERVABLE.md.

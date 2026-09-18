@@ -184,19 +184,32 @@ three bits are stamped by the parser (`fip`, `fbip`, and the graded
 allowance), the E053 walk applies native's constructor rule and its
 asymmetric call rule, and the IR-side budget check
 (`examples/self_host/irfipverify.fern`, #6639 slice 3) runs on every
-compile.
+emit — the whole-program CLI path and the per-unit and per-module
+builds alike.
 
-It rides `ircore.lower_gated` — the fused eligibility-and-lowering
-pass all three emitters already run — so it reads the very lowering
-the emit will use and costs no second pass, and a function carrying
-neither annotation returns before one op is examined. Each emitter
-reports the verdicts at its own `lower_gated` site rather than
-letting the gate's `""` refusal carry them, because that refusal is
-turned into "module is not IR-eligible" by its caller, which is the
-wrong thing to say about a module that lowered fine and broke a
-promise (#9623). Until then only the diagnostic drivers called it
-(`irlower_run -verifyfip`, `irverify_run`), so an un-paired
-construction compiled silently here while native reported E068.
+`ircore.check_fip_claims` is called from each backend's EMIT entry,
+over the window of declarations that emit covers and against the
+lowering it will use — the caller's, where one was kept, and a fresh
+one for a claimed function otherwise, which costs one lowering per
+CLAIM rather than per function. A function carrying neither
+annotation returns before one op is examined.
+
+The verdicts do not ride the gate's `""` refusal, because that
+refusal is turned into "module is not IR-eligible" by its caller,
+which is the wrong thing to say about a module that lowered fine and
+broke a promise (#9623). Nor does the check ride `ircore.lower_gated`
+itself, where it started: lowering is also what the routing and
+eligibility probes do — `wasm_ir.ir_route_ok` and `wasm_eligible`
+lower a module only to return a boolean, and
+`asm_ir.module_runtime_needs` runs the whole per-function emit and
+throws the text away — so hooking the lowering made all three exit on
+a claim they were only asked about, and left the per-unit and
+per-module builds, which re-lower outside the gate, checking nothing
+(#9655).
+
+Until #9623 only the diagnostic drivers called it (`irlower_run
+-verifyfip`, `irverify_run`), so an un-paired construction compiled
+silently here while native reported E068.
 
 It counts the constructor ops a fresh site lowers to rather than
 native's single `OpAlloc`, and names a site by op index — the
