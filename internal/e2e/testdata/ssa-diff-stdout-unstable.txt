@@ -33,3 +33,6 @@ examples/fip/packet_baseline.fern  prints measured elapsed times: ns/request, re
 examples/fip/packet_borrowed.fern  prints measured elapsed times: ns/request, requests/s and five round-latency percentiles
 examples/fip/packet_fbip.fern  prints measured elapsed times: ns/request, requests/s and five round-latency percentiles
 examples/fip/packet_fip.fern  prints measured elapsed times: ns/request, requests/s and five round-latency percentiles
+examples/array_pipeline/map_map_reduce.fern  prints measured elapsed times: ns/round, ns/element and two round-latency percentiles
+examples/array_pipeline/filter_map_reduce.fern  prints measured elapsed times: ns/round, ns/element and two round-latency percentiles
+examples/array_pipeline/own_map_inplace.fern  prints measured elapsed times: ns/round, ns/element and two round-latency percentiles
