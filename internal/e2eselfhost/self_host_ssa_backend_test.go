@@ -83,6 +83,26 @@ function f(): i32 {
 }
 function main(): i32 { return f(); }
 `},
+	// heap_bump_bytes is the last op the production lift had no arm for, and
+	// util__arr_push_cliff_report was the one function on the self-build still
+	// declining for it. It reads two runtime globals and guards the
+	// uninitialised cursor, so it is not a single global's word -- it goes
+	// through the flat op, which re-emits the stack machine's own sequence.
+	// The check is ordering only, so both builds print the same thing.
+	{name: "heap_bump_bytes", allSSA: true, src: `
+function report(): i32 {
+    var before: i64 = __heap_bump_bytes();
+    var xs: i32[] = [];
+    var i: i32 = 0;
+    while (i < 500) { xs = xs.append(i); i = i + 1; }
+    var after: i64 = __heap_bump_bytes();
+    if (before > after) { return 1; }
+    if (after == 0i64) { return 2; }
+    if (xs.len() != 500) { return 3; }
+    return 0;
+}
+function main(): i32 { return report(); }
+`},
 	{name: "control_flow", allSSA: true, src: `
 function first_square_over(limit: i32): i32 {
     var i: i32 = 0;

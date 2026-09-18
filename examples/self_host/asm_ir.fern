@@ -5623,6 +5623,7 @@ function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, o: ir.Op, s: asm
     }
     if (o.kind_tag == 74) { s = s.write(ir_memcpy_asm()); }
     else if (o.kind_tag == 75) { s = s.write(ir_memset_asm()); }
+    else if (o.kind_tag == 80) { s = emit_ir_op_heap_bump_bytes(o, s); }
     else if (ir.is_str_op_kind(o.kind_tag)) { s = emit_str_op(o, s); }
     else if (o.kind_tag >= 125 && o.kind_tag <= 137) { s = emit_ir_op_map(o, ins.imm, lp, s); }
     else { s = emit_ir_op_buf(o, s); }
