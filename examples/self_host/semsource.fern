@@ -2197,10 +2197,10 @@ function qualified(name: string): boolean {
     return false;
 }
 
-// Nested, struct-field, tuple, literal and `@` patterns read a value through
-// no operation this boundary has.
+// Nested, struct-field, tuple and literal patterns read a value through no
+// operation this boundary has.
 function pattern_shape_error(pv: ast.PatVariant): string {
-    if (pv.nested.len() > 0 || pv.at_binding != "" || pv.has_lit_cond) { return "unsupported pattern"; }
+    if (pv.nested.len() > 0 || pv.has_lit_cond) { return "unsupported pattern"; }
     if (pv.tup_kinds.len() > 0 || pv.field_names.len() > 0) { return "unsupported pattern"; }
     if (qualified(pv.type_name)) { return "unsupported qualified pattern"; }
     return "";
@@ -2231,10 +2231,19 @@ function narrowed(pv: ast.PatVariant, scrut: i32, s: State): State {
     return bind(v.s, pv.binding, v.id);
 }
 
+// `@` names the complete scrutinee alongside the pattern's own bindings. The
+// scrutinee is already a value of the graph, so the name is a second spelling
+// of it rather than a projection, and it holds no reference of its own.
+function at_bound(pv: ast.PatVariant, scrut: i32, s: State): State {
+    if (pv.at_binding == "" || pv.at_binding == "_") { return s; }
+    return bind(s, pv.at_binding, scrut);
+}
+
 // Each named payload position is a projection of the scrutinee, bound for
 // the arm's body; `_`, an absent payload list and a `void` payload's binding
 // bind nothing.
 function payloads(pv: ast.PatVariant, scrut: i32, fields: typeinfo.Type[], s: State, layout: i32): State {
+    s = at_bound(pv, scrut, s);
     if (layout == semrecords.layout_member()) { return narrowed(pv, scrut, s); }
     if (pv.binding == "" || fields.len() == 0) { return s; }
     var names: string[] = [pv.binding];
