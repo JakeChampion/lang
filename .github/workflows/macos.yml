@@ -276,10 +276,16 @@ jobs:
             echo "no corpus-darwin.log: the step did not get as far as running it"
             exit 0
           fi
-          echo "### $(grep -c '^--- FAIL' corpus-darwin.log || true) failing cases, first 60:"
-          grep -oE '^--- FAIL: [A-Za-z0-9_/-]+' corpus-darwin.log | head -60 | cut -c1-200
-          echo "### the DONE line:"
-          grep -oE '^DONE .{0,120}' corpus-darwin.log | tail -1
+          grep -oE '^DONE .{0,120}' corpus-darwin.log | tail -1 || true
+          # Per UTILITY, not per case. The first round of the whole catalogue
+          # reported 1987 failures, and sixty names off the top of that is not
+          # something anyone can plan against: it got as far as chown
+          # alphabetically. A count against each test function says which
+          # utilities diverge and how wide each one is, in about a hundred
+          # bounded lines, and that is the list the Darwin work is drawn from.
+          echo "### failing cases per utility:"
+          grep -oE '^--- FAIL: Test[A-Za-z0-9]+' corpus-darwin.log \
+            | sed 's/^--- FAIL: //' | sort | uniq -c | sort -rn || true
 
       - name: go test (arm64-darwin native execution)
         if: steps.gate.outputs.signed != 'true'
