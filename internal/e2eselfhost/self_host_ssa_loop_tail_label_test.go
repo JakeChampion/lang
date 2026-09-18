@@ -14,11 +14,18 @@ import (
 // `end` live and terminated.
 //
 // The lift appends exactly that block at the loop's `end`, and used to stay on
-// it as the current block afterwards, so the function-tail flush appended it a
+// it as the current block afterwards, so the function's own tail appended it a
 // SECOND time. The emitters write one label per block, which made the listing
-// define `.Lssa_walk_<id>` twice and gas refuse it (#9685, #9687): on the
-// compiler's own sources 55 symbols at once, which is what
+// define `.Lssa_walk_<id>` twice and gas refuse it (#9685, #9687, fixed under
+// #9688): on the compiler's own sources 55 symbols at once, which is what
 // TestSelfHostSSAPhysicalRCIRArm64 assembles.
+//
+// This is that shape as SOURCE, which is what the reproduction costs to find:
+// TestSelfHostSSALiftGivesEachBlockOneID lifts the op streams directly, and
+// `ssa.repeated_block_id` guards the block list from inside the compiler. Here
+// the whole path runs — lower, lift, emit, assemble, execute — so a label
+// written twice for a reason the block list cannot show (two spellings
+// colliding in `asmcore.sanitize_label`, say) fails here and nowhere else.
 //
 // The recursion is deep enough that it only returns if TCO fired — 300,000
 // frames overflow the stack — so a case that stops being tail-call-rewritten
@@ -47,7 +54,9 @@ function main(): i32 {
 //
 // FERN_SEM_IR= selects the AST lowering, which is where TCO runs: the semantic
 // path produces bodies without it (#9692), so the shape reaches the lift only on
-// this leg.
+// this leg. That is also why the 55 collisions came from the compiler's own
+// modules — theirs are self-tail-recursive predicates the semantic path
+// declines, so they fall back to the AST lowering and pick up the wrapper.
 func TestSelfHostSSALoopTailBlockEmittedOnce(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {

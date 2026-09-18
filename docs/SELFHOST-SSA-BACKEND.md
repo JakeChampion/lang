@@ -167,19 +167,29 @@ not register pressure. The order to take that in:
   the functions that must go through the backend. It also pins the refusal
   for other targets and that a second `-o` to one path replaces the
   executable.
-- `internal/e2eselfhost/self_host_ssa_loop_tail_label_test.go` pins the lift
-  invariant the emitters rest on: a block reaches the block list exactly once,
-  so the listing defines each `.Lssa_<fn>_<id>` once. What broke it was a
-  TCO wrapper's `loop` whose body ends in a `return` — the lift stayed on the
-  tail block it had just appended and the function-tail flush appended it again,
-  and gas refused 55 already-defined symbols in the compiler's own sources
-  (#9685, #9687). `assertNoDuplicateLocalLabels` carries the same check over the
-  read_file and frontend-bundle listings.
+- `internal/e2eselfhost/self_host_ssa_loop_tail_label_test.go` reaches the
+  same invariant from the SOURCE end: a self-tail-recursive function whose
+  body ends in a `return`, compiled through the register path for both ISAs
+  and then assembled and run. `assertNoDuplicateLocalLabels` reads the
+  listing, so it catches a label written twice for ANY reason — including two
+  distinct blocks or functions whose `asmcore.sanitize_label` spellings
+  collide, which `repeated_block_id` cannot see. It carries over the
+  read_file and frontend-bundle listings too.
 - The whole examples corpus, built both ways and run, is the measurement
   in the ssa-log entries; `.github` has no lane for it yet. That lane is
   shaped like `internal/e2e/arm64_ssa_differential_test.go`.
 - `scripts/selfhost-emit-hashes` does not reach this backend; a purity sweep
   of it needs `-backend ssa` added to that script's SSA mode.
+- `ssa.repeated_block_id` is checked in each backend's `ssa_try_function`
+  before emit: the emitters write one `.Lssa_<fn>_<id>:` label per entry in
+  `f.blocks`, so two entries carrying one id spell one label twice and the
+  assembler rejects the module without naming the pass that produced it. A
+  repeat is a compiler bug, so the check exits rather than declining the
+  function onto the stack machine. Every state the lift leaves a dead block
+  in must therefore carry a FRESH id — the shape `br` establishes, and what
+  a loop nothing leaves alive failed to (#9688).
+  `internal/e2eselfhost/self_host_ssa_lift_blocks_test.go` lifts those op
+  streams directly.
 
 ## What this retires, and in what order
 
