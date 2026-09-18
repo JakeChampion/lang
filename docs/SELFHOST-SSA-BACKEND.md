@@ -172,6 +172,16 @@ not register pressure. The order to take that in:
   shaped like `internal/e2e/arm64_ssa_differential_test.go`.
 - `scripts/selfhost-emit-hashes` does not reach this backend; a purity sweep
   of it needs `-backend ssa` added to that script's SSA mode.
+- `ssa.repeated_block_id` is checked in each backend's `ssa_try_function`
+  before emit: the emitters write one `.Lssa_<fn>_<id>:` label per entry in
+  `f.blocks`, so two entries carrying one id spell one label twice and the
+  assembler rejects the module without naming the pass that produced it. A
+  repeat is a compiler bug, so the check exits rather than declining the
+  function onto the stack machine. Every state the lift leaves a dead block
+  in must therefore carry a FRESH id — the shape `br` establishes, and what
+  a loop nothing leaves alive failed to (#9688).
+  `internal/e2eselfhost/self_host_ssa_lift_blocks_test.go` lifts those op
+  streams directly.
 
 ## What this retires, and in what order
 

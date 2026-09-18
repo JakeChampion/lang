@@ -501,6 +501,15 @@ pub function strict_ir_refuse(what: string): i32 {
     return 0;
 }
 
+// ssa_block_id_collision reports an SSA lift that returned two blocks carrying
+// one id, and exits. Declining the function instead would hide a compiler
+// defect behind a silent fall-through to the stack machine (#9688).
+pub function ssa_block_id_collision(name: string, id: i32): i32 {
+    eprint("error: internal: the SSA lift returned block " + util.i32_to_string(id) + " twice in " + name + " — one `.Lssa_` label would be written twice; this is a compiler bug (#9688)\n");
+    exit(3);
+    return 0;
+}
+
 // all_eligible_view_base is the PER-MODULE eligibility gate (#3451 — retiring
 // the AST fallback for the bootstrap self-compile): one module of a program,
 // judged against the WHOLE-PROGRAM view. A function in it that calls a sibling
