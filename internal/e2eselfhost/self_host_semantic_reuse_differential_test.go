@@ -73,13 +73,15 @@ function main(): i32 {
     return v;
 }`, 17, 1, 0},
 
-	// The donor and the recipient are different TYPES. A box is slots, so the
-	// static type test the pairing used to run bought nothing the runtime's own
-	// size-class check does not already give. Mote and Glyph are members of a
-	// struct-union, so the match reads the shape word each construction wrote:
-	// a recipient inheriting the donor's takes the wrong arm, which is why the
-	// answer separates this from a pairing that merely reuses the storage. The
-	// AST path pairs none of the three.
+	// The donor and the recipient are different TYPES and the same number of
+	// SLOTS, which is the only thing a box has to agree on. Mote and Glyph are
+	// members of a struct-union, so the match reads the shape word each
+	// construction wrote: a recipient inheriting the donor's takes the wrong
+	// arm, which is why the answer separates this from a pairing that merely
+	// reuses the storage. cross_wide is the third candidate and it does NOT
+	// pair — a three-slot donor against a four-slot construction — so the
+	// count of 2 over three sites is what pins that the pairing asks. The AST
+	// path pairs none of them.
 	{"cross-type", `struct Mote { text: string, k: i32 }
 struct Glyph { xs: i32[], k: i32 }
 type Sigil = Mote | Glyph;
@@ -114,12 +116,14 @@ function main(): i32 {
     t = t + sigil_code(cross_back(5)) + cross_wide(3);
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 251;
-}`, 189, 3, 0},
+}`, 189, 2, 0},
 
 	// A tuple box is one word per element and no shape word, so it is storage
 	// a donor of any form can be and storage any form can take: tuple to
-	// tuple, a record's box to a tuple, and a tuple's to a record. The AST
-	// path pairs none of the three.
+	// tuple, a record's box to a tuple, and a tuple's to a record. The two
+	// cross-form ones are a two-field record against a three-element tuple,
+	// because the pairing matches SLOTS and a record box carries a shape word
+	// the tuple's does not. The AST path pairs none of the three.
 	{"tuple-form", `struct Parcel { a: string, b: i32 }
 function tuple_step(seed: i32): (i32, string) {
     var a: (string, i32[]) = ("aa", [seed, seed + 1]);
@@ -139,12 +143,12 @@ function tuple_loop(n: i32): i32 {
 function tuple_from_rec(n: i32): i32 {
     var d: Parcel = Parcel { a: "cc", b: n };
     var s: i32 = d.b + d.a.len();
-    var q: (i32, string) = (s, "dd");
-    return q.0 + q.1.len();
+    var q: (i32, string, i32) = (s, "dd", s + 1);
+    return q.0 + q.1.len() + q.2;
 }
 function rec_from_tuple(n: i32): i32 {
-    var d: (string, i32) = ("ee", n);
-    var s: i32 = d.1 + d.0.len();
+    var d: (string, i32, i32) = ("ee", n, n + 1);
+    var s: i32 = d.1 + d.2 + d.0.len();
     var q: Parcel = Parcel { a: "ff", b: s };
     return q.b + q.a.len();
 }
@@ -152,7 +156,7 @@ function main(): i32 {
     var t: i32 = tuple_loop(4) + tuple_from_rec(3) + rec_from_tuple(5);
     if (__rc_underflow_count() != 0) { return 99; }
     return t;
-}`, 48, 3, 0},
+}`, 60, 3, 0},
 
 	// A record of scalars: pure storage, with no children to release at the
 	// token. The AST path pairs this shape too, so the count alone does not

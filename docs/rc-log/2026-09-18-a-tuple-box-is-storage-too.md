@@ -37,6 +37,9 @@ tuple donor's elements are released where a record's fields are.
 
 ## Measured
 
+**Corrected by `2026-09-18-a-firing-is-not-a-reuse.md`, which reads these
+counts as what they are: calls, of which 610 of 839 decline at run time.**
+
 Firings of `__fern_alloc_reuse` compiling the compiler
 (`bin/fern-selfhost -target x86-64-linux -emit asm examples/self_host/fern.fern`):
 
@@ -58,9 +61,6 @@ targets.
 
 ## Next lead
 
-The probe's own ranking, re-read after this: `record_new` with no donor
-pending was 3,424, and 11,470 struct drops were passed over because a donor
-was already pending in the block's ONE token slot. Those two numbers look like
-a second slot pays, and they should not be trusted that far — most pendings
-are never spent at all, so a second slot buys a pairing only where a second
-construction follows the first. Re-probe before building it.
+Re-probing after this is what found the correction above, and it moved the
+lead: a second token slot is not the question while the donor a block holds is
+chosen without asking what the construction in front of it needs.

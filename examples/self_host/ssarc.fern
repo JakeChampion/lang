@@ -696,33 +696,83 @@ function drops_less(own r: irlower.LowerResult, step: ssaunits.Step, f: ssasem.F
 // neither. One pairing is live at a time, so one token slot serves the block —
 // a second candidate while one is pending is simply left to drop normally.
 //
-// The donor and the recipient need not share a TYPE. A box is storage, and
-// what separates two of them is the number of slots — which `__fern_alloc_reuse`
-// compares itself, handing the block to its freelist and allocating fresh when
-// the counts disagree. So a static type test buys nothing the runtime one does
-// not already give, and costs every pairing between two records of the same
-// arity: measured over the compiler's own sources, 603 of 750 candidate
-// constructions had a donor dying in front of them that only that test refused.
+// The donor and the recipient need not share a TYPE, and the pairing does not
+// ask: a box is storage, and what separates two of them is the number of
+// SLOTS. `reuse_slots` is that number, matched against what the construction
+// claims. Measured over the compiler's own sources, pairing on shape alone —
+// any dying record, union or tuple to any construction — admits 839 sites of
+// which only 229 have counts the runtime can honour. Pairing on the count
+// admits 287, all of them spendable, because the donor is chosen FOR the
+// construction in front of it rather than taken first-come.
 struct ReusePairs { tokens: i32[], builds: i32[] }
 
-// A dying box this frame may hand on as storage: a nominal record, a union
-// value or a tuple. Each is one `__fern_arr_box` block, and each of the three
-// recipient forms writes every slot it claims — so what the next construction
-// finds in the block never survives into a read. An environment is excluded:
-// its fields are addressed as array slots rather than struct ones, and its box
-// is the closure's, built and read through a schema of its own. An array is
-// too: its cap is a CAPACITY rather than its length, so the slots a donor
-// block has are not the slots its type names.
-function reuse_shape(t: typeinfo.Type, f: ssasem.Func): boolean {
-    if let typeinfo.TypeTuple(_) = t { return true; }
-    return named(t) != "" && !semtypes.is_env(t);
+// The slots a value's box has, or -1 where this frame cannot say. This is the
+// number `__fern_alloc_reuse` compares, and comparing it HERE is what makes a
+// pairing worth emitting: the runtime's own test is sound either way, but the
+// arm it takes when the counts disagree returns the donor block to its
+// freelist and allocates anyway, so the pairing has bought a uniqueness test
+// and a branch and changed nothing, at 25 lines of emitted text apiece.
+// Measured over the compiler's own sources, 610 of 839 pairings admitted on
+// shape alone were of that kind.
+//
+// A record's box is its shape word and one word per field, a tuple's one word
+// per element and no shape word. An environment is excluded: its fields are
+// addressed as array slots rather than struct ones, and its box is the
+// closure's. So is an array: its cap is a CAPACITY rather than its length, so
+// the slots the block has are not the slots its type names.
+function reuse_slots(t: typeinfo.Type, f: ssasem.Func): i32 {
+    if (semtypes.is_env(t) || semtypes.is_cell(t)) { return 0 - 1; }
+    if let typeinfo.TypeTuple(tup) = t { return tup.elements.len(); }
+    if let typeinfo.TypeStruct(_) = t {
+        if (semrecords.find(f.records, t) < 0) { return 0 - 1; }
+        return record_fields(t, f).len() + 1;
+    }
+    if let typeinfo.TypeUnion(_) = t { return union_slots(t, f); }
+    return 0 - 1;
 }
 
-// The constructions a token can be spent at, and the slots each claims: a
-// record or variant box is its shape word and one word per field, a tuple box
-// one word per element and no shape word at all.
-function reuse_recipient(k: i32): boolean {
-    return k == ssasem.record_new() || k == ssasem.tuple_new();
+// A builtin union's box is a tag word and one payload word whatever the
+// variant. A declared one's box is the LIVE variant's, so its count is this
+// frame's to know only where every variant agrees — native's own enum reuse
+// asks the same question (`enum_all_variants_same_field_count`).
+function union_slots(t: typeinfo.Type, f: ssasem.Func): i32 {
+    var at: i32 = semrecords.find_enum(f.enums, t);
+    if (at < 0) { return 0 - 1; }
+    if (f.enums[at].layout == semrecords.layout_option()) { return 2; }
+    var n: i32 = 0 - 1;
+    for v in f.enums[at].variants {
+        if (n < 0) { n = v.fields.len(); }
+        else if (n != v.fields.len()) { return 0 - 1; }
+    }
+    if (n < 0) { return 0 - 1; }
+    return n + 1;
+}
+
+// The slots a construction claims, or -1 where it is not one a token can be
+// spent at. An array construction is excluded for the reason a dying array is:
+// what it asks the allocator for is a capacity.
+function recipient_slots(f: ssasem.Func, ins: ssa.SInst): i32 {
+    if (ins.kind_tag == ssasem.tuple_new()) { return tuple_elements(f.values[ins.result]).len(); }
+    if (ins.kind_tag == ssasem.record_new()) { return reuse_slots(f.values[ins.result], f); }
+    return 0 - 1;
+}
+
+// The slots claimed by the first construction after each position, or -1 where
+// there is none. A donor is taken for THAT construction and no other: one
+// token slot serves the block, so holding a box for a construction further
+// down means the one in front of it gets nothing.
+function next_wants(f: ssasem.Func, b: ssa.SBlock): i32[] {
+    var out: i32[] = [];
+    for ins in b.insts { out = out.append(0 - 1); }
+    var pos: i32 = b.insts.len() - 1;
+    var cur: i32 = 0 - 1;
+    while (pos >= 0) {
+        out = out.with(pos, cur);
+        var want: i32 = recipient_slots(f, b.insts[pos]);
+        if (want >= 0) { cur = want; }
+        pos = pos - 1;
+    }
+    return out;
 }
 
 function reuse_pairs(f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock): ReusePairs {
@@ -732,6 +782,7 @@ function reuse_pairs(f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock): ReusePair
     // answers too: with it set every construction allocates, so a program's
     // observable behaviour can be compared against its own reusing build.
     var off: boolean = irlower.reuse_layer_disabled();
+    var wants: i32[] = next_wants(f, b);
     var pending: i32 = 0 - 1;
     var pending_at: i32 = 0 - 1;
     var pos: i32 = 0;
@@ -741,16 +792,22 @@ function reuse_pairs(f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock): ReusePair
         var ins: ssa.SInst = b.insts[pos];
         if (ins.kind_tag != 6 && ins.kind_tag != 8) {
             var step: ssaunits.Step = at(p, b.id, pos, 0 - 1);
+            var claims: i32 = recipient_slots(f, ins);
             if (off) { pending = 0 - 1; }
-            else if (pending >= 0 && reuse_recipient(ins.kind_tag)
-                    && util.index_of_i32(ins.args, pending) < 0) {
-                builds = builds.with(pos, pending);
-                tokens = tokens.with(pending_at, pending);
+            else if (claims >= 0 && pending >= 0) {
+                // The donor was taken for this construction, so either it is
+                // spent here or it was never worth taking: a later one cannot
+                // want it, `next_wants` having pointed at this one.
+                if (claims == reuse_slots(f.values[pending], f)
+                        && util.index_of_i32(ins.args, pending) < 0) {
+                    builds = builds.with(pos, pending);
+                    tokens = tokens.with(pending_at, pending);
+                }
                 pending = 0 - 1;
                 pending_at = 0 - 1;
-            } else if (pending < 0) {
+            } else if (pending < 0 && wants[pos] >= 0) {
                 for d in step.drops {
-                    if (pending < 0 && reuse_shape(f.values[d], f)) { pending = d; pending_at = pos; }
+                    if (pending < 0 && reuse_slots(f.values[d], f) == wants[pos]) { pending = d; pending_at = pos; }
                 }
             }
         }

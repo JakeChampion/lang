@@ -34,6 +34,10 @@ dead weight in the one token slot the block has, and the drops behind them
 
 ## Measured
 
+**Corrected by `2026-09-18-a-firing-is-not-a-reuse.md`: a firing is a CALL,
+and most of the ones this entry counts decline at run time.** The numbers below
+stand as measured; what they measure is not what this entry took them for.
+
 Firings of `__fern_alloc_reuse` compiling the compiler
 (`bin/fern-selfhost -target x86-64-linux -emit asm examples/self_host/fern.fern`):
 
