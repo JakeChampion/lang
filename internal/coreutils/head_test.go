@@ -56,7 +56,7 @@ func headCases(t *testing.T) []invocation {
 	quoted := headFile(t, dir, "f'n", "x\n")
 	// A name that is not valid UTF-8: it reaches the header and the
 	// diagnostics as bytes, so nothing may re-encode it.
-	raw := headFile(t, dir, "na\xffme", "x\n")
+	raw := rawByteFile(t, dir, "x\n")
 	missing := filepath.Join(dir, "nosuch")
 	// A directory: open(2) succeeds and read(2) fails EISDIR, which is
 	// the only way this corpus reaches a read error.
@@ -232,8 +232,8 @@ func headCases(t *testing.T) []invocation {
 		{name: "dashdash then an option-looking name", args: []string{"-n", "2", "--", "-3"}},
 		{name: "empty operand", args: []string{""}},
 		{name: "empty operand among others", args: []string{"-n", "1", "", s20}},
-		{name: "operand that is not valid UTF-8", args: []string{raw}},
-		{name: "verbose header of a name that is not valid UTF-8", args: []string{"-v", raw}},
+		{name: "operand that is not valid UTF-8", args: []string{raw}, rawByteName: true},
+		{name: "verbose header of a name that is not valid UTF-8", args: []string{"-v", raw}, rawByteName: true},
 		{name: "name with a space", args: []string{"-v", spaced}},
 		{name: "name with a quote", args: []string{"-v", quoted}},
 		{name: "missing file", args: []string{missing}},

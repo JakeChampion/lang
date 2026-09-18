@@ -54,7 +54,7 @@ func fmtCases(t *testing.T) []invocation {
 	tabs := fmtFile(t, dir, "tabs", "\tfoo bar baz qux quux corge grault garply waldo fred\n")
 	quoted := fmtFile(t, dir, "quoted", "> aaa bbb ccc ddd eee fff ggg hhh\n> iii jjj kkk lll\nnot quoted at all\n")
 	comment := fmtFile(t, dir, "comment", "#    aaa bbb ccc ddd eee\n#  fff ggg hhh iii\n")
-	raw := fmtFile(t, dir, "na\xffme", "aaa bbb ccc\n")
+	raw := rawByteFile(t, dir, "aaa bbb ccc\n")
 	missing := filepath.Join(dir, "nosuch")
 	if err := os.Mkdir(filepath.Join(dir, "d"), 0o755); err != nil {
 		t.Fatal(err)
@@ -354,7 +354,7 @@ func fmtCases(t *testing.T) []invocation {
 		{name: "dash among files", args: []string{"-w", "40", two, "-", words}, stdin: "from stdin here\n"},
 		{name: "dashdash", args: []string{"-w", "40", "--", two}},
 		{name: "empty operand", args: []string{"-w", "40", ""}},
-		{name: "operand that is not valid UTF-8", args: []string{"-w", "40", raw}},
+		{name: "operand that is not valid UTF-8", args: []string{"-w", "40", raw}, rawByteName: true},
 		{name: "missing file", args: []string{"-w", "40", missing}},
 		{name: "missing then good", args: []string{"-w", "40", missing, two}},
 		{name: "missing name that needs quoting", args: []string{filepath.Join(dir, "no such")}},

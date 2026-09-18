@@ -57,7 +57,7 @@ func commCases(t *testing.T) []invocation {
 	// the whole file is the key.
 	spaced := writeFile(t, dir, "f name", "a\n")
 	quoted := writeFile(t, dir, "f'n", "a\n")
-	raw := writeFile(t, dir, "na\xffme", "a\n")
+	raw := rawByteFile(t, dir, "a\n")
 	missing := filepath.Join(dir, "nosuch")
 	if err := os.Mkdir(filepath.Join(dir, "d"), 0o755); err != nil {
 		t.Fatal(err)
@@ -173,7 +173,7 @@ func commCases(t *testing.T) []invocation {
 		{name: "second is a directory", args: []string{c1, d}},
 		{name: "name with a space", args: []string{spaced, bare}},
 		{name: "name with a quote", args: []string{quoted, bare}},
-		{name: "name that is not valid UTF-8", args: []string{raw, bare}},
+		{name: "name that is not valid UTF-8", args: []string{raw, bare}, rawByteName: true},
 		{name: "dashdash then operands", args: []string{"--", c1, c2}},
 		{name: "dashdash before an option-looking name", args: []string{"--", "-1", c2}},
 		{name: "two empty files", args: []string{empty, empty}},

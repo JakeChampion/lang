@@ -46,7 +46,7 @@ func catCases(t *testing.T) []invocation {
 	ctrl := catFile(t, dir, "ctrl", "x\ty\x01\x7f\x80\x89\x8a\x9f\xa0\xfe\xff\r\x1b\n\x00\n")
 	spaced := catFile(t, dir, "f name", "x\n")
 	quoted := catFile(t, dir, "f'n", "x\n")
-	raw := catFile(t, dir, "na\xffme", "x\n")
+	raw := rawByteFile(t, dir, "x\n")
 	missing := filepath.Join(dir, "nosuch")
 	if err := os.Mkdir(filepath.Join(dir, "d"), 0o755); err != nil {
 		t.Fatal(err)
@@ -143,7 +143,7 @@ func catCases(t *testing.T) []invocation {
 		{name: "directory on stdin with numbers", args: []string{"-n"}, stdinPath: d},
 		{name: "name with a space", args: []string{spaced}},
 		{name: "name with a quote", args: []string{quoted}},
-		{name: "name that is not valid UTF-8", args: []string{raw}},
+		{name: "name that is not valid UTF-8", args: []string{raw}, rawByteName: true},
 		{name: "missing name with a space", args: []string{filepath.Join(dir, "no such")}},
 		{name: "missing name that is not valid UTF-8", args: []string{filepath.Join(dir, "no\xffsuch")}},
 		{name: "dashdash", args: []string{"--"}, stdin: "p\n"},

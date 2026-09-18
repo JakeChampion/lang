@@ -11,6 +11,13 @@
 # utility that used to pass on Darwin now does not, which is a regression to
 # fix rather than to record.
 #
+# Eight names left in one change: their only Darwin failure was a fixture —
+# the corpus builds a file whose NAME is not valid UTF-8, APFS refuses it with
+# EILSEQ, and the t.Fatal fired while the corpus was being BUILT, taking the
+# utility's whole parity test down before a case ran. Those cases skip on such
+# a filesystem now and the rest are held to GNU, which also put 3186
+# comparisons back that had never run.
+#
 # One test function per line, so the granularity is a utility rather than a
 # case. The case counts behind these names, and the clusters they fall into,
 # are in #9714; the largest by far is the listing code behind vdir, ls and
@@ -48,7 +55,6 @@ TestBase32Parity
 TestBase64Parity
 TestBasencParity
 TestBracketParity
-TestCatParity
 TestChmodParity
 TestChown
 TestCksumParity
@@ -56,21 +62,18 @@ TestCommParity
 TestCpParity
 TestCpWalkOrder
 TestCsplit
-TestCutParity
 TestDD
 TestDateParity
 TestDf
 TestDir
 TestDircolorsParity
 TestDu
-TestExpandParity
 TestFmtParity
 TestFoldParity
 TestGroupsParity
 TestHeadParity
 TestHostidParity
 TestIdParity
-TestJoinParity
 TestLinkParity
 TestLnParity
 TestLognameParity
@@ -88,7 +91,6 @@ TestNlParity
 TestNprocParity
 TestNumfmtParity
 TestOd
-TestPasteParity
 TestPinkyParity
 TestPrParity
 TestPrintfParity
@@ -110,19 +112,16 @@ TestSortParity
 TestSplitParity
 TestStat
 TestStty
-TestSumParity
 TestSyncParity
 TestTailParity
 TestTeeParity
 TestTestParity
 TestTruncateParity
 TestTtyParity
-TestUnexpandParity
 TestUniqParity
 TestUptime
 TestUsersParity
 TestUtmpRecordLayoutMatchesTheHost
 TestVdir
-TestWcParity
 TestWhoParity
 TestWhoamiParity

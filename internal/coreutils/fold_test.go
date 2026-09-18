@@ -39,7 +39,7 @@ func foldCases(t *testing.T) []invocation {
 	empty := foldFile(t, dir, "e0", "")
 	blank := foldFile(t, dir, "blank", "\n\n")
 	nul := foldFile(t, dir, "nul", "a\x00b\n")
-	raw := foldFile(t, dir, "na\xffme", "abcdef\n")
+	raw := rawByteFile(t, dir, "abcdef\n")
 	// 100 columns, so the default width of 80 wraps it once.
 	wide := foldFile(t, dir, "wide", strings.Repeat("x", 100)+"\n")
 	missing := filepath.Join(dir, "nosuch")
@@ -126,7 +126,7 @@ func foldCases(t *testing.T) []invocation {
 		{name: "two files both unterminated", args: []string{"-w2", nonl, nonl}},
 		{name: "dashdash", args: []string{"-w3", "--", alpha}},
 		{name: "empty operand", args: []string{"-w3", ""}},
-		{name: "operand that is not valid UTF-8", args: []string{"-w3", raw}},
+		{name: "operand that is not valid UTF-8", args: []string{"-w3", raw}, rawByteName: true},
 		{name: "missing file", args: []string{missing}},
 		{name: "missing then good", args: []string{"-w3", missing, alpha}},
 		{name: "missing name that needs quoting", args: []string{filepath.Join(dir, "no such")}},

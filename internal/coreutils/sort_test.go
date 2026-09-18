@@ -42,7 +42,7 @@ func sortCases(t *testing.T) []invocation {
 	raw := catFile(t, dir, "raw", "\xff\n\x01\na\n")
 	spaced := catFile(t, dir, "f name", "z\ny\n")
 	quoted := catFile(t, dir, "f'n", "z\ny\n")
-	rawName := catFile(t, dir, "na\xffme", "z\ny\n")
+	rawName := rawByteFile(t, dir, "z\ny\n")
 	missing := filepath.Join(dir, "nosuch")
 	if err := os.Mkdir(filepath.Join(dir, "d"), 0o755); err != nil {
 		t.Fatal(err)
@@ -542,7 +542,7 @@ func sortCases(t *testing.T) []invocation {
 		{name: "empty operand after a file", args: []string{ab, ""}},
 		{name: "spaced name", args: []string{spaced}},
 		{name: "quoted name", args: []string{quoted}},
-		{name: "raw name", args: []string{rawName}},
+		{name: "raw name", args: []string{rawName}, rawByteName: true},
 		{name: "missing raw name", args: []string{filepath.Join(dir, "no\xffsuch")}},
 		{name: "missing quoted name", args: []string{filepath.Join(dir, "no'such")}},
 

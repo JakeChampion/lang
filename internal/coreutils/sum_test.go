@@ -65,7 +65,7 @@ func sumCases(t *testing.T) []invocation {
 	// Names that the diagnostics have to quote, and one that does not.
 	spaced := sumFile(t, dir, "f name", "x\n")
 	quoted := sumFile(t, dir, "f'n", "x\n")
-	rawName := sumFile(t, dir, "na\xffme", "x\n")
+	rawName := rawByteFile(t, dir, "x\n")
 	missing := filepath.Join(dir, "nosuch")
 	missingSpaced := filepath.Join(dir, "no such")
 	missingRaw := filepath.Join(dir, "ba\xffd")
@@ -158,7 +158,7 @@ func sumCases(t *testing.T) []invocation {
 		// Names the diagnostics quote, and names that print as they are.
 		{name: "name with a space", args: []string{spaced}},
 		{name: "name with an apostrophe", args: []string{quoted}},
-		{name: "name that is not utf-8", args: []string{rawName}},
+		{name: "name that is not utf-8", args: []string{rawName}, rawByteName: true},
 		{name: "missing name with a space", args: []string{missingSpaced}},
 		{name: "missing name that is not utf-8", args: []string{missingRaw}},
 
