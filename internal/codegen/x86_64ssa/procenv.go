@@ -24,7 +24,8 @@ const (
 // that read the environment vector.
 func usesArgs(helpers []string) bool { return referencesHelper(helpers, "args") }
 func usesEnv(helpers []string) bool {
-	return referencesHelper(helpers, "env") || referencesHelper(helpers, "environ")
+	return referencesHelper(helpers, "env") || referencesHelper(helpers, "environ") ||
+		referencesHelper(helpers, "proc_exec")
 }
 
 func referencesHelper(helpers []string, name string) bool {
