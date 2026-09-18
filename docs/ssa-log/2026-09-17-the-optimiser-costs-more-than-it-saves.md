@@ -92,3 +92,22 @@ through `.with`, and a fresh `SBlock` array per pass per function, over
 9,159 functions with no GC. Making the pipeline worth enabling means
 changing that, not adding early exits to it — and 1.2% of the output is a
 small prize for it.
+
+## Re-checked after the value counts fell, 2026-09-18
+
+Folding the lift's trivial phis took a quarter of the values out
+(`2026-09-18-the-trivial-phi-was-the-whole-gap.md`), which is exactly the
+change that ought to make a pass pipeline cheap enough to want: fewer
+values, less for each pass to walk and rebuild. It does not.
+
+| | without | with the three live passes |
+|---|---|---|
+| arm64 instructions | 2,805,064 | 2,752,326 |
+| compiling `checker.fern`, best of 3 | 7,154 ms | 8,593 ms |
+
+1.9% of the output for 20% of the compile time — the same trade as before,
+at a quarter the value count. Whatever the passes cost, it does not scale
+down with the values the way the win does.
+
+So the verdict holds through a 26% change in the input, which is the sort
+of thing that would otherwise invite a third measurement.
