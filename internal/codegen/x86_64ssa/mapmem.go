@@ -65,6 +65,9 @@ func emitHelperBss(w func(string, ...any), helpers []string, countsUnderflow boo
 		w("%s:", readlineBufSym)
 		w("\t.space %d", readlineBytes)
 	}
+	if referencesHelper(helpers, "getgroups") {
+		emitGetgroupsBss(w)
+	}
 	if countsUnderflow || referencesHelper(helpers, "__fern_rc_underflow_count") {
 		w(".section .bss")
 		w(".align 8")

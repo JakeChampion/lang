@@ -13419,7 +13419,7 @@ func (g *generator) emitTimerFdRuntime() {
 	g.line(".size __fern_timer_fd, .-__fern_timer_fd")
 }
 
-// linuxStatfsFields maps each FsStat field onto the offset it is read
+// LinuxStatfsFields maps each FsStat field onto the offset it is read
 // from in Linux's 120-byte `struct statfs`, whose every member is a
 // 64-bit word on both supported ISAs:
 //
@@ -13429,7 +13429,11 @@ func (g *generator) emitTimerFdRuntime() {
 // `path_max` is absent from the record and is stored separately: Linux
 // has no pathconf syscall, and PATH_MAX is the kernel's own 4096 for
 // every filesystem it mounts.
-var linuxStatfsFields = []struct{ box, src int32 }{
+// LinuxStatfsField is one projection: Box is the offset in the FsStat box,
+// Src the offset in the kernel's record.
+type LinuxStatfsField struct{ Box, Src int32 }
+
+var LinuxStatfsFields = []LinuxStatfsField{
 	{ir.FsStat.BlockSize, 8},
 	{ir.FsStat.Blocks, 16},
 	{ir.FsStat.BlocksFree, 24},
@@ -13439,16 +13443,16 @@ var linuxStatfsFields = []struct{ box, src int32 }{
 	{ir.FsStat.NameMax, 64},
 }
 
-// linuxPathMax is PATH_MAX, the longest pathname the Linux kernel will
+// LinuxPathMax is PATH_MAX, the longest pathname the Linux kernel will
 // resolve. A constant rather than a lookup because Linux has no
 // pathconf syscall and `getconf PATH_MAX` reports this for every
 // filesystem; Darwin, which does have one, asks it (see the arm64
 // emitter).
-const linuxPathMax = 4096
+const LinuxPathMax = 4096
 
 // emitStatfsRuntime emits `__fern_statfs(path) → Result[FsStat, IoError]`
 // — statfs(2) into a 120-byte stack buffer, projected onto FsStat by
-// linuxStatfsFields. System V: rdi = path string value.
+// LinuxStatfsFields. System V: rdi = path string value.
 //
 // Built on the same shape as __fern_stat: a NUL-terminated heap copy
 // of the path for the syscall, the buffer left live across
@@ -13501,11 +13505,11 @@ func (g *generator) emitStatfsRuntime() {
 	g.emit("js .Lsfs_err")
 	g.emit(fmt.Sprintf("mov edi, %d", ir.FsStat.Bytes))
 	g.emit("call __fern_alloc_box")
-	for _, f := range linuxStatfsFields {
-		g.emit(fmt.Sprintf("mov r9, [rsp + %d]", f.src))
-		g.emit(fmt.Sprintf("mov [rax + %d], r9", f.box))
+	for _, f := range LinuxStatfsFields {
+		g.emit(fmt.Sprintf("mov r9, [rsp + %d]", f.Src))
+		g.emit(fmt.Sprintf("mov [rax + %d], r9", f.Box))
 	}
-	g.emit(fmt.Sprintf("mov r9d, %d", linuxPathMax))
+	g.emit(fmt.Sprintf("mov r9d, %d", LinuxPathMax))
 	g.emit(fmt.Sprintf("mov [rax + %d], r9", ir.FsStat.PathMax))
 	g.emit("mov r13, rax")
 	g.emit("mov edi, 16")
