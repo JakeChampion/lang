@@ -1116,7 +1116,8 @@ function value_op(k: i32): boolean {
 function container_op(k: i32): boolean {
     return kind_in([ssasem.array_new(), ssasem.tuple_new(), ssasem.record_new(),
         ssasem.array_get(), ssasem.tuple_get(), ssasem.record_get(),
-        ssasem.length(), ssasem.append(), ssasem.with(), ssasem.slice(), ssasem.str_index()], k)
+        ssasem.length(), ssasem.append(), ssasem.with(), ssasem.slice(), ssasem.str_index(),
+        ssasem.str_bytes(), ssasem.arr_sum(), ssasem.arr_product(), ssasem.arr_join()], k)
         || variant_op(k) || ssasem.is_cell_op(k) || ssasem.is_map_op(k);
 }
 
@@ -1325,13 +1326,12 @@ function from_f64(to: typeinfo.Type): ir.Op {
 function cast(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
     var from: typeinfo.Type = f.values[ins.args[0]];
     var to: typeinfo.Type = f.values[ins.result];
-    // An address read back as the box it names shares its slot, so the cast
-    // moves nothing. It has to answer before the width arms below, which would
-    // read the reference as a narrow integer and emit a wrap for it. The other
-    // direction has no arm on purpose: the schema refuses it, and a no-op here
-    // would quietly lower it if that refusal were ever loosened without the
-    // escape compensation core/map writes by hand.
+    // An address and the box it names share a slot, so neither direction of the
+    // reinterpretation moves anything. Both have to answer before the width
+    // arms below, which would read the reference as a narrow integer and emit a
+    // wrap for it.
     if (ssasem.is_usize(from) && ssasem.reference(to)) { return r; }
+    if (ssasem.reference(from) && ssasem.is_usize(to)) { return r; }
     if (ssasem.is_float(to)) { return into_float(r, from, to); }
     if (ssasem.is_float(from)) { return emit(r, from_f64(to)); }
     if (ssasem.is_usize(from)) { return from_address(r, to); }
@@ -1410,6 +1410,9 @@ function container(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, s
         return emit(r, ir.op_arr_len());
     }
     if (ins.kind_tag == ssasem.slice()) { return emit(r, ir.op_str_slice()); }
+    if (ins.kind_tag == ssasem.str_bytes()) { return emit(r, ir.op_str_bytes()); }
+    if (ins.kind_tag == ssasem.arr_sum()) { return emit(r, ir.op_call_direct("__fern_arr_i32_sum", 1)); }
+    if (ins.kind_tag == ssasem.arr_product()) { return emit(r, ir.op_call_direct("__fern_arr_i32_product", 1)); }
     if (ins.kind_tag == ssasem.str_index()) { return emit(r, ir.op_str_index()); }
     if (ssasem.is_map_op(ins.kind_tag)) { return map_op(r, ins, f); }
     if (ins.kind_tag == ssasem.array_get()) { return emit(r, arr_get_op(f.values[ins.result])); }
@@ -1620,6 +1623,7 @@ function instruction(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Pla
     if (ins.kind_tag == ssasem.with()) { r = with_update(r, f, p, ins, defer0); return emit(r, ir.op_store_local(ins.result)); }
     if (ssasem.is_cell_op(ins.kind_tag)) { return cell_site(r, f, ins); }
     if (ssasem.is_function_op(ins.kind_tag)) { r = function_site(r, ins); return emit(r, ir.op_store_local(ins.result)); }
+    if (ins.kind_tag == ssasem.arr_join()) { r = join_call(r, ins); return emit(r, ir.op_store_local(ins.result)); }
     if (ins.kind_tag == ssasem.append()) { r = append_push(r, f, p, ins, defer0); return emit(r, ir.op_store_local(ins.result)); }
     if (ins.kind_tag == 9 && (ssasem.saturating(ins.str) || ssasem.checked_arith(ins.str))) { r = overflow_binary(r, f, ins); return emit(r, ir.op_store_local(ins.result)); }
     for arg in ins.args { r = emit(r, ir.op_load_local(arg)); }
@@ -1640,6 +1644,17 @@ function instruction(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Pla
 // dies at this instruction, so its drop runs in this same step, after this —
 // and the release helpers are null-guarded, so the walk goes past the slot the
 // frame now owns rather than freeing it twice (ssaunits.tuple_take_field).
+// __fern_arr_str_join reads the array as parameter 0, and a direct call takes
+// its last parameter from the top of the stack, so the separator is pushed
+// first. The instruction spells the receiver first, as every other operation
+// here does, which is why this loads the two in reverse rather than leaving
+// them to the generic push.
+function join_call(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
+    r = emit(r, ir.op_load_local(ins.args[1]));
+    r = emit(r, ir.op_load_local(ins.args[0]));
+    return emit(r, ir.op_call_direct("__fern_arr_str_join", 2));
+}
+
 function took(own r: irlower.LowerResult, p: ssaunits.Plan, ins: ssa.SInst): irlower.LowerResult {
     if (ins.result >= p.takes.len() || p.takes[ins.result] < 0) { return r; }
     r = emit(r, ir.op_load_local(ins.args[0]));

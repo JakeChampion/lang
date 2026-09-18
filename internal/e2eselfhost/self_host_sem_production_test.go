@@ -1129,4 +1129,125 @@ function main(): i32 {
     return t % 7;
 }
 `},
+	// `s.as_bytes()`: the bytes as a fresh u8[], one slot per byte. Not a
+	// window onto the string — the slot-array model has no zero-copy view — so
+	// the array is an ordinary unit of the frame and the loop would leak one
+	// per call if it were not. (`s.bytes()` is intercepted by the same shape
+	// rule, but it is a std/string declaration rather than a builtin, so a
+	// case for it would pull that whole module's refusals in with it.)
+	{name: "the-bytes-of-a-string", atLeast: 3, noLeak: true, src: `
+function total(s: string): i32 {
+    var bs = s.as_bytes();
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < bs.len()) { t = t + (bs[i] as i32); i = i + 1; }
+    return t;
+}
+function first(s: string): i32 {
+    var bs = s.as_bytes();
+    if (bs.len() == 0) { return 0; }
+    return bs[0] as i32;
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) { t = t + total("abc") % 5 + first("z") % 3; i = i + 1; }
+    return t % 7;
+}
+`},
+
+	// The `@` whole-value binder. It names the scrutinee itself rather than a
+	// projection of it, so the arm holds no reference of its own and the
+	// scrutinee has to stay live past the payload name that would otherwise
+	// end it — `whole_after_payload` reads `w` after `c`, and
+	// `whole_as_value` carries `w` out of the match as the arm's value.
+	{name: "the-at-binder-in-a-match-arm", atLeast: 4, noLeak: true, src: `
+enum Shape { Circle(string), Square(string) }
+
+function label(s: Shape): string {
+    match (s) {
+        Circle(c) => { return c; },
+        Square(q) => { return q; }
+    }
+}
+
+function whole_after_payload(s: Shape): i32 {
+    match (s) {
+        w @ Circle(c) => { return c.len() + label(w).len(); },
+        _ => { return 0; }
+    }
+}
+
+function whole_as_value(s: Shape): Shape {
+    return match (s) {
+        w @ Circle(v) => w,
+        w2 @ Square(v2) => w2
+    };
+}
+
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) {
+        t = t + whole_after_payload(Shape.Circle("abc"));
+        t = t + label(whole_as_value(Shape.Square("wxyz"))).len();
+        i = i + 1;
+    }
+    return t % 7;
+}
+`},
+
+	// A reference cast to `usize`. The address is the box's own slot, so the
+	// cast converts nothing and owns nothing — and the array's LAST typed use
+	// is the cast itself, so without the anchor the planner releases the box
+	// there and __memcpy reads freed bytes. This is the shape std/string's
+	// `bytes()` is written in.
+	//
+	// WHICH address the cast answers is #8799's open question — native gives
+	// the data pointer and the self-host the box — so this case compares the
+	// two lowerings of ONE compiler and settles nothing about that.
+	{name: "a-reference-cast-to-an-address", atLeast: 2, noLeak: true, src: `
+function copy_bytes(s: string): i32 {
+    var n: i32 = s.len();
+    var out: u8[] = __alloc_u8(n);
+    if (n > 0) {
+        __memcpy(out as usize, s.as_bytes() as usize, n);
+    }
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < out.len()) { t = t + (out[i] as i32); i = i + 1; }
+    return t;
+}
+
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) { t = t + copy_bytes("abc"); i = i + 1; }
+    return t % 7;
+}
+`},
+
+	// The three helper-backed array builtins. Each borrows its operands and
+	// hands back a fresh unit, so the loop would leak one joined string per
+	// round if the result were not this frame's to release.
+	// std/array is imported because the CHECKER keeps these three out of the
+	// bare method table; every declaration it brings produces too, so the
+	// tally below is the whole program's.
+	{name: "the-array-reduce-and-join-builtins", atLeast: 70, noLeak: true, src: `
+import "std/array";
+
+function total(xs: i32[]): i32 { return xs.sum() + xs.product(); }
+
+function names(sep: string): i32 {
+    var parts: string[] = ["ab", "cde", "f"];
+    return parts.join(sep).len();
+}
+
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) { t = t + total([2, 3, 4]) + names("--"); i = i + 1; }
+    return t % 7;
+}
+`},
 }
