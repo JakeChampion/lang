@@ -1095,8 +1095,9 @@ pub function rt_src_writer_write(t: string): string {
     return "function __fern_writer_write(fd: i32, s: string): Option[IoError] { var n: i32 = s.len(); var data: i32 = __raw_data(s); var off: i32 = 0; while (off < n) { var w: i32 = __syscall3(" + sysno(t, "write") + ", fd, __raw_addr(data, off), n - off); if (w < 0) { return Some(__fern_io_error(0 - w, \"\")); } if (w == 0) { off = n; } else { off = off + w; } } return None; }";
 }
 
-// rt_src_tcp_close / rt_src_tcp_accept are the two socket leaves that take only
-// an fd (#2649, syscall-leaf) — close(2) and accept(2) with a NULL addr/addrlen.
+// rt_src_tcp_close / rt_src_tcp_accept / rt_src_tcp_local_port are the three
+// socket leaves that take only an fd (#2649, syscall-leaf) — close(2), accept(2)
+// with a NULL addr/addrlen, and getsockname(2).
 pub function rt_src_tcp_close(t: string): string {
     return "function __fern_tcp_close(fd: i32): i32 { return __syscall3(" + sysno(t, "close") + ", fd, 0, 0); }";
 }

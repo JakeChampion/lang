@@ -925,8 +925,9 @@ remainder splits three ways:
 - **Not builtins at all**: `_start`, `alloc`'s `mmap`, and the abort paths
   (`oob_abort`, `san_abort`, `hev_f`).
 
-`tcp_close`, `tcp_accept` and `tcp_listen` have since moved — the first two take
-only an fd, and `tcp_listen` builds its `sockaddr_in` a byte at a time, since the
+`tcp_close`, `tcp_accept`, `tcp_local_port` and `tcp_listen` have since moved —
+the first three take only an fd, and `tcp_listen` builds its `sockaddr_in` a byte
+at a time, since the
 floor has no 16- or 32-bit store and the port must be big-endian regardless of
 host. Its first two bytes are the struct's one per-target difference (XNU leads
 with a `sin_len` byte where Linux has a u16 `sin_family`), which `sockaddr_head`
