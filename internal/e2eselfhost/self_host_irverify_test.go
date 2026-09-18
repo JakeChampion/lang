@@ -646,21 +646,22 @@ func parseProvidedTally(out string) (int, int) {
 }
 
 // providedCorpusExpectedDirty are the conformance fixtures the resolution pass
-// reports, and is a list of two rather than a tolerance because each one is
-// the pass being RIGHT about a program that is deliberately wrong.
+// reports, and is a list rather than a tolerance because each entry is the pass
+// being RIGHT about a program that is deliberately wrong.
 //
 // This driver runs the front end and the lowerer, not the checker — that is
 // what makes it a verifier of the lowering rather than a second compiler. So a
 // fixture whose whole point is a program the checker rejects reaches the
 // lowerer anyway, and a program that calls a function it never declares
-// genuinely does emit a call to a symbol nothing defines:
+// genuinely does emit a call to a symbol nothing defines: diag_p004 calls
+// `add()`, which it does not define.
 //
-//   - diag_e065 calls `name()`, which the fixture never defines.
-//   - diag_p004 calls `add()`, likewise.
-//
-// Every other fixture in the corpus resolves clean.
+// So an entry here tracks one fixture's SOURCE, and completing that source
+// retires the entry: #9601 gave diag_e065 the `name()` it was calling, and it
+// resolves clean from there like the rest of the corpus. Every fixture not
+// named here must resolve clean, which is what makes this the sweep's floor
+// rather than its exception list.
 var providedCorpusExpectedDirty = map[string]bool{
-	"diag_e065": true,
 	"diag_p004": true,
 }
 
