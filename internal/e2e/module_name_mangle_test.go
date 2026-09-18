@@ -101,3 +101,67 @@ func TestModuleNameMangleX86_64(t *testing.T) {
 func TestModuleNameMangleArm64(t *testing.T) {
 	runModuleNameMangle(t, "arm64-linux", arm64QemuOrEmpty(t))
 }
+
+// Two modules whose sanitised prefixes are the same string.
+//
+// Replacing what an assembler will not take with `_` is not injective:
+// `[.fern` and `_.fern` both want the prefix `_`, as would `a-b.fern` beside
+// `a_b.fern`. Sanitising BEFORE the collision loop rather than after is what
+// keeps that from silently becoming one prefix and two definitions of every
+// symbol — the loop that already disambiguates two modules sharing a basename
+// disambiguates these too, and the emitted pair is `__fn____help_text` and
+// `__fn___1__help_text`.
+//
+// Worth its own fixture because the ordinary one cannot fail this way: it has
+// a single non-identifier module, so the replacement has nothing to collide
+// with.
+const moduleNameMangleCollisionMain = `import "./[" as bracket;
+import "./_" as under;
+
+function main(): i32 { return bracket.answer() + under.answer(); }
+`
+
+func writeModuleNameMangleCollisionProject(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	for name, src := range map[string]string{
+		"[.fern":    moduleNameMangleBracket,
+		"_.fern":    moduleNameMangleBracket,
+		"main.fern": moduleNameMangleCollisionMain,
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	return dir
+}
+
+func runModuleNameMangleCollision(t *testing.T, target string, runner string) {
+	t.Helper()
+	fern := buildFernCLI(t)
+	dir := writeModuleNameMangleCollisionProject(t)
+	out := filepath.Join(dir, "prog")
+	if o, err := exec.Command(fern, "-target", target, "-o", out, filepath.Join(dir, "main.fern")).CombinedOutput(); err != nil {
+		t.Fatalf("build for %s failed: %v\n%s", target, err, o)
+	}
+	var cmd *exec.Cmd
+	if runner == "" {
+		cmd = exec.Command(out)
+	} else {
+		cmd = exec.Command(runner, out)
+	}
+	_, _ = cmd.CombinedOutput()
+	// Both modules' answer(), so a prefix collision that lost one of the two
+	// definitions would not reach this number even if it linked.
+	if got, want := cmd.ProcessState.ExitCode(), 2*moduleNameMangleWant; got != want {
+		t.Errorf("exit code: got %d, want %d", got, want)
+	}
+}
+
+func TestModuleNameMangleCollisionX86_64(t *testing.T) {
+	runModuleNameMangleCollision(t, "x86-64-linux", "")
+}
+
+func TestModuleNameMangleCollisionArm64(t *testing.T) {
+	runModuleNameMangleCollision(t, "arm64-linux", arm64QemuOrEmpty(t))
+}
