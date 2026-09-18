@@ -260,6 +260,34 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t;
 }`, 21, 1, 1, 3, 6, false},
+	// The frame has ONE token slot, and this case is the shape that made that
+	// matter: a 3-slot donor held for a later 3-slot construction, with a
+	// 4-slot self-update between them. The self pairing's token overwrote the
+	// held donor's box, so the later construction was handed a box the update
+	// had already built into and was returning live. It read as a LEAK
+	// (`live_bytes=24` where the same program balances with the pairing off)
+	// because the two boxes differ in size class, so `__fern_alloc_reuse`
+	// declined and put a live block on its freelist — the same clobber lands
+	// as an alias whenever the sizes agree.
+	//
+	// Nothing in the compiler's own sources has this overlap: the firing count
+	// over the whole tree is 1,167 either way, which is why every suite passed
+	// while it was wrong. Only a fixture built for it can fail.
+	{"token-slot-overlap", `struct A3 { p: string, q: i32 }
+struct B4 { x: string, y: i32, z: i32 }
+function f(seed: i32): i32 {
+    var a: A3 = A3 { p: "aa", q: seed };
+    var s: i32 = a.q + a.p.len();
+    var b: B4 = B4 { x: "bb", y: seed, z: seed + 1 };
+    b = B4 { ...b, y: s };
+    var c: A3 = A3 { p: "cc", q: b.y + b.z };
+    return c.q + c.p.len() + b.z;
+}
+function main(): i32 {
+    var t: i32 = f(5);
+    if (__rc_underflow_count() != 0) { return 99; }
+    return t;
+}`, 21, 1, 2, 3, 4, false},
 }
 
 func TestSelfHostSemanticReuseDifferentialX86_64(t *testing.T) {

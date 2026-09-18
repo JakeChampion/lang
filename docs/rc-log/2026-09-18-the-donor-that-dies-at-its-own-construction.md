@@ -94,6 +94,40 @@ fail on, in code where a wrong pairing is a double free, is the wrong side of
 that trade. The drop scan goes back into an `else`, which is also what it
 meant in the first place.
 
+## The soundness condition, found in review
+
+The first cut took a self donor whenever no EARLIER donor served the
+construction — and the pending donor is still held in that case, waiting for a
+construction further down. **The frame has one token slot.** A self pairing
+emitted while a donor is held overwrites that donor's box with its own, and the
+later construction is handed a box the self-update has already built into and
+is returning live.
+
+```fern
+var a: A3 = A3 { p: "aa", q: seed };      // 3-slot donor, held pending
+var s: i32 = a.q + a.p.len();             // a dies here
+var b: B4 = B4 { x: "bb", y: seed, z: seed + 1 };
+b = B4 { ...b, y: s };                    // 4-slot self pairing — clobbers the slot
+var c: A3 = A3 { p: "cc", q: b.y + b.z }; // reads b's box, not a's
+```
+
+It reads as a LEAK — `allocs=3 frees=3 live_bytes=24` where the same program
+balances with the pairing off — because the two boxes differ in size class, so
+`__fern_alloc_reuse` declines and puts a LIVE block on its freelist. Where the
+sizes agree it is an alias instead, which is worse and quieter.
+
+So the condition is `pending < 0 && claims >= 0`, and it is soundness rather
+than preference. **It costs nothing measurable**: the whole compiler emits
+1,167 pairings with the guard and 1,167 without it, because no function in the
+tree has a held donor straddling a self-update of a different arity. Which is
+exactly why every suite passed while it was wrong — the differential, the RC
+suite, the SSA agreement, the lint ratchet and the whole-compiler fixpoint,
+all green on a pairing that aliases two live values.
+
+Found by a review bot on the PR, with a fixture; confirmed by running it
+rather than on its word, and its fix taken unchanged. `token-slot-overlap` in
+`TestSelfHostSemanticReuseDifferentialX86_64` is that fixture.
+
 ## Trap
 
 The entry this one corrects ranked the forms it had conceived of and read the
@@ -103,3 +137,12 @@ stronger rule arrived, silently, with the suite still green. **A witness is
 only a witness against the rules that existed when it was written** — which is
 why each half of `pairing-reach` is re-verified by reverting its own rule
 whenever that file changes.
+
+The second trap is the sharper one. Every gate this project holds a reuse
+change behind passed on a pairing that hands a live box to a second value,
+because the compiler's own sources do not contain the shape. **A suite that
+compiles this tree cannot witness a rule this tree does not exercise**, and the
+whole-compiler fixpoint is the least able of them to: it proves the compiler
+reproduces itself, and a pairing that never fires there is invisible to it. A
+new pairing rule needs a fixture built for the rule, and the fixture has to be
+shown to FAIL without it.

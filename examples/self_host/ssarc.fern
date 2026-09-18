@@ -837,13 +837,19 @@ function reuse_pairs(f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock): ReusePair
                     tokens = tokens.with(pending_at, pending);
                     pending = 0 - 1;
                     pending_at = 0 - 1;
-                } else if (claims >= 0) {
+                } else if (pending < 0 && claims >= 0) {
                     // Nothing earlier serves this construction, so the box it
                     // supersedes may: a value dying HERE, of the count this
                     // construction claims, that the construction does not read.
                     // Not reading it is what makes it safe to hand on — the
                     // projections that carried its fields over are earlier
                     // instructions, and the plan has already proved it dead.
+                    //
+                    // `pending < 0` is a soundness condition, not a preference:
+                    // the frame has ONE token slot, so a self pairing emitted
+                    // while a donor is held for a later construction overwrites
+                    // that donor's box with its own — which this construction
+                    // has already built into and is returning live.
                     for d in step.drops {
                         if (selfs[pos] < 0 && reuse_slots(f.values[d], f) == claims
                                 && util.index_of_i32(ins.args, d) < 0) { selfs = selfs.with(pos, d); }
