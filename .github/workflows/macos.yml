@@ -227,25 +227,22 @@ jobs:
       # 19678. A cut-short round understates both numbers and says nothing
       # about which of the two it is, so the budget has to cover the slow end.
       #
-      # The step carries its own limit as well, because `-timeout` is enforced
-      # by a watchdog INSIDE the test binary and that is not enough on its own:
-      # a case that leaks a child holding this step's stdout leaves the
-      # watchdog's panic with nowhere to go, and the step produces no further
-      # output while the job sits there. That is what round five did — the log
-      # stops mid-corpus and the 25-minute wall passes unremarked. A step-level
-      # limit is enforced by the runner, which kills the process group.
+      # Output goes to a FILE rather than to this step's stdout, because
+      # writing it to the pipe wedged the lane: a parity failure quotes BOTH
+      # streams in full, so one line here can be 8 KB, and once the pipe
+      # stopped draining the test binary blocked on write — as did the
+      # watchdog trying to report it. No progress and no diagnosis, for 85
+      # minutes. A file blocks neither.
       #
-      # Output goes to a FILE, not to this step's stdout, and that is the
-      # whole reason the hang above was invisible. The runner ends a step when
-      # every writer of its stdout pipe has closed; a case that leaks a child
-      # holding that pipe means the step never ends, and `-timeout`'s panic —
-      # the one thing that would name the blocked test — is written into a pipe
-      # nobody will read. A leaked child holding a FILE descriptor blocks
-      # nothing, so the panic lands in the file and the step exits.
+      # The step's own limit exists for the same reason `-timeout` was not
+      # enough: that watchdog lives inside the test binary and cannot report
+      # when its own output is blocked, whereas a step limit is enforced by
+      # the runner, which kills the process group.
       #
       # The cost is that the log arrives at the end of the step rather than
-      # live. The step below prints it however the run ended, and the artifact
-      # keeps it when the 30-minute limit kills the step mid-write.
+      # live. The artifact is uploaded first so that the 50-minute limit
+      # killing the step mid-write cannot lose it, and the summary prints
+      # after that.
       - name: go test (coreutils corpus on Darwin)
         if: steps.gate.outputs.signed != 'true'
         timeout-minutes: 50
