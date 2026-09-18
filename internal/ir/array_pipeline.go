@@ -136,7 +136,87 @@ type ArrayPipeline struct {
 	// Stop names the rule that ended the chain. docs/ARRAY-ALGEBRA.md §7: a
 	// report that says only "did not fuse" is not the answer, because the
 	// thing a reader is trying to find out is which rule to argue with.
-	Stop string
+	Stop ArrayRefusal
+}
+
+// ArrayRefusal is why a chain stopped where it did.
+//
+// A CLOSED set, deliberately, and #9732 asks for it in those words: the
+// refusals are the work-remaining checklist for the fusion pass, and a
+// checklist made of free-text strings cannot be counted. `FERN_ARRAY_REPORT=1`
+// tallies them, which is the same property `FERN_SSA_REPORT` has — the set of
+// things declined IS the list of what is left to build.
+type ArrayRefusal int
+
+const (
+	// RefusalNone: the chain ended because it was finished, not because
+	// anything declined it. A reduction produces a scalar, so there is
+	// nothing left to chain and nothing to explain.
+	RefusalNone ArrayRefusal = iota
+	// RefusalUnboundResult: the stage's result was not bound to a local, so
+	// no later stage in this function could name it.
+	RefusalUnboundResult
+	// RefusalConsumerNotInAlgebra: the next thing to read the result is not a
+	// recognized std/array combinator.
+	RefusalConsumerNotInAlgebra
+	// RefusalIntermediateReadAgain: the intermediate is read by something
+	// other than the next stage and its own reclaim, so the chain is not one
+	// traversal and fusing it would remove an array something else needs.
+	RefusalIntermediateReadAgain
+)
+
+func (r ArrayRefusal) String() string {
+	switch r {
+	case RefusalNone:
+		return ""
+	case RefusalUnboundResult:
+		return "the stage's result is not bound to a local, so nothing here can consume it"
+	case RefusalConsumerNotInAlgebra:
+		return "the next consumer is not a recognized std/array combinator"
+	case RefusalIntermediateReadAgain:
+		return "the intermediate is read again, so this is not one traversal"
+	}
+	return "unknown"
+}
+
+// Tag is the short, stable name the histogram counts. Separate from String()
+// because a tally wants a key that does not move when the prose is reworded.
+func (r ArrayRefusal) Tag() string {
+	switch r {
+	case RefusalNone:
+		return "complete"
+	case RefusalUnboundResult:
+		return "unbound-result"
+	case RefusalConsumerNotInAlgebra:
+		return "consumer-not-in-algebra"
+	case RefusalIntermediateReadAgain:
+		return "intermediate-read-again"
+	}
+	return "unknown"
+}
+
+// allRefusals is every reason, for the histogram to report a zero against
+// rather than omitting a row nobody then notices is missing.
+var allRefusals = []ArrayRefusal{
+	RefusalNone, RefusalUnboundResult, RefusalConsumerNotInAlgebra, RefusalIntermediateReadAgain,
+}
+
+// Materializes counts the stages that build an array.
+//
+// Today that is every stage that does not reduce to a scalar, because nothing
+// fuses yet — so this number IS what a fusion pass would remove, and printing
+// it is how the report answers "why did this allocate" without claiming a
+// fusion that did not happen (#9732). docs/ARRAY-PIPELINE-BASELINE-2026-09.md
+// measured what one such intermediate costs: about 24.8 fresh bytes per input
+// element on the cold pass, and an allocator call per geometric regrow.
+func (p ArrayPipeline) Materializes() int {
+	n := 0
+	for _, s := range p.Stages {
+		if s.Card != cardScalar {
+			n++
+		}
+	}
+	return n
 }
 
 // Shape renders the pipeline the way the report prints it, e.g.
@@ -264,11 +344,11 @@ func recognizeInFunc(fn *Func) []ArrayPipeline {
 			continue
 		}
 		chain := []int{i}
-		stop := ""
+		stop := RefusalNone
 		for {
 			last := calls[chain[len(chain)-1]]
 			if last.result < 0 {
-				stop = "the stage's result is not bound to a local, so nothing here can consume it"
+				stop = RefusalUnboundResult
 				break
 			}
 			next := -1
@@ -279,13 +359,13 @@ func recognizeInFunc(fn *Func) []ArrayPipeline {
 				}
 			}
 			if next < 0 {
-				stop = "the next consumer is not a recognized std/array combinator"
+				stop = RefusalConsumerNotInAlgebra
 				break
 			}
 			if loads[last.result].other > 0 {
 				// The intermediate is read by something that is neither the
 				// next stage nor a reclaim. Refuse rather than guess.
-				stop = "the intermediate is read again, so this is not one traversal"
+				stop = RefusalIntermediateReadAgain
 				break
 			}
 			chain = append(chain, next)
@@ -304,7 +384,7 @@ func recognizeInFunc(fn *Func) []ArrayPipeline {
 		if len(stages) > 0 && stages[len(stages)-1].Card == cardScalar {
 			// A reduction ends the pipeline by producing a scalar; there is
 			// nothing left to chain and no refusal to report.
-			stop = ""
+			stop = RefusalNone
 		}
 		out = append(out, ArrayPipeline{
 			Func: fn.Name, Line: pos.Line, Col: pos.Col, Stages: stages, Stop: stop,
@@ -413,6 +493,35 @@ func countSlotLoads(fn *Func) map[int32]*slotLoads {
 	return out
 }
 
+// FormatArrayPipelineHistogram tallies the program's pipelines by how they
+// ended, and by how much they materialize.
+//
+// The shape is FERN_SSA_REPORT's, for the reason #9732 gives: the set of
+// refusals is the coverage checklist for the fusion pass, so it has to be
+// countable. Every reason gets a row even at zero — a reason that vanished
+// from the output when it stopped firing is one nobody notices is missing.
+func FormatArrayPipelineHistogram(p *Program) string {
+	pipes := RecognizeArrayPipelines(p)
+	counts := map[ArrayRefusal]int{}
+	stages, materialize, chained := 0, 0, 0
+	for _, pl := range pipes {
+		counts[pl.Stop]++
+		stages += len(pl.Stages)
+		materialize += pl.Materializes()
+		if len(pl.Stages) > 1 {
+			chained++
+		}
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "array pipelines: %d (%d with more than one stage), %d stages, %d materializing\n",
+		len(pipes), chained, stages, materialize)
+	fmt.Fprintf(&b, "fused: 0 — no fusion pass exists yet (#9731)\n")
+	for _, r := range allRefusals {
+		fmt.Fprintf(&b, "  %-24s %d\n", r.Tag(), counts[r])
+	}
+	return b.String()
+}
+
 // FormatArrayPipelines renders what the program's array pipelines are, in the
 // shape `-append-report` established: one line per site, naming the rule that
 // decided, and a summary. docs/ARRAY-ALGEBRA.md §7 is why the rule is printed
@@ -437,7 +546,14 @@ func FormatArrayPipelines(p *Program) string {
 			chained++
 		}
 		fmt.Fprintf(&b, "%-*s  %s\n", posW, posOf[i], pl.Shape())
-		if pl.Stop != "" {
+		// "Did it fuse?" is the first question #9732 asks, and the answer is
+		// the same for every pipeline until #9731 lands. Saying it per site
+		// rather than once at the bottom is deliberate: a reader checking one
+		// expression should not have to know that the absence of a word means
+		// no.
+		fmt.Fprintf(&b, "%-*s    not fused (no fusion pass yet, #9731); %d stage(s) materialize\n",
+			posW, "", pl.Materializes())
+		if pl.Stop != RefusalNone {
 			fmt.Fprintf(&b, "%-*s    chain ends here: %s\n", posW, "", pl.Stop)
 		}
 		for _, s := range pl.Stages {

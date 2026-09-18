@@ -158,7 +158,7 @@ function main(): i32 { return run([1 as i64, 2 as i64]) as i32; }`)
 				"would have no array left for `ys.len()` to measure:\n%s",
 				pl.Shape(), ir.FormatArrayPipelines(p))
 		}
-		if strings.Contains(pl.Stop, "read again") {
+		if pl.Stop == ir.RefusalIntermediateReadAgain {
 			sawReason = true
 		}
 	}
@@ -298,5 +298,57 @@ function main(): i32 { return run([1 as i64, 2 as i64]) as i32; }`)
 	_ = ir.FormatArrayPipelines(p)
 	if after := p.String(); after != before {
 		t.Error("recognition changed the program; it is supposed only to read it")
+	}
+}
+
+// The refusal set is CLOSED and countable, which is what makes it the
+// coverage checklist #9732 asks for: a tally of free-text strings is not a
+// checklist. Every reason has a stable tag, and the histogram prints a row
+// for each even at zero, so a reason that stops firing is visible as a zero
+// rather than as an absent line nobody misses.
+func TestRefusalTagsAreStableAndComplete(t *testing.T) {
+	seen := map[string]ir.ArrayRefusal{}
+	for _, r := range []ir.ArrayRefusal{
+		ir.RefusalNone, ir.RefusalUnboundResult,
+		ir.RefusalConsumerNotInAlgebra, ir.RefusalIntermediateReadAgain,
+	} {
+		tag := r.Tag()
+		if tag == "" || tag == "unknown" {
+			t.Errorf("refusal %d has no tag", int(r))
+		}
+		if prev, dup := seen[tag]; dup {
+			t.Errorf("tag %q is shared by refusals %d and %d", tag, int(prev), int(r))
+		}
+		seen[tag] = r
+		if r != ir.RefusalNone && r.String() == "" {
+			t.Errorf("refusal %q has a tag but no prose", tag)
+		}
+	}
+}
+
+// The histogram says plainly that nothing fused, and counts what would have
+// to stop materializing for that to change. #9732's first acceptance line is
+// that a report must not claim a fusion the backend did not perform.
+func TestHistogramReportsNothingFusedAndCountsMaterialization(t *testing.T) {
+	p := lowerPipelineSrc(t, `import "std/array";
+function run(xs: i64[]): i64 {
+  var out: Option[i64] = xs
+    .map((x: i64): i64 => x + (1 as i64))
+    .filter((x: i64): boolean => x > (0 as i64))
+    .reduce((a: i64, b: i64): i64 => a + b);
+  match (out) { Some(v) => { return v; }, None => { return 0 as i64; } }
+}
+function main(): i32 { return run([1 as i64, 2 as i64]) as i32; }`)
+
+	got := ir.FormatArrayPipelineHistogram(p)
+	for _, want := range []string{
+		"fused: 0",
+		"3 stages, 2 materializing",
+		"complete",
+		"intermediate-read-again",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("histogram does not mention %q:\n%s", want, got)
+		}
 	}
 }
