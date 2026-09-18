@@ -21,6 +21,10 @@ import (
 // 55 collisions were all in the compiler's own modules — every one of those
 // functions is self-recursive and none contains a source loop
 // (docs/ssa-log/2026-09-18-where-the-lifts-duplicate-loop-came-from.md).
+//
+// A source program does reach it through that wrapper, on the leg where TCO runs
+// (#9692): TestSelfHostSSALoopTailBlockEmittedOnce compiles one and assembles
+// the listing.
 const ssaLiftBlockIDProg = `// Assert the lift never returns two blocks with one id.
 import "./ir";
 import "./ssa";

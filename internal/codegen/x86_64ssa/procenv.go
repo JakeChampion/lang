@@ -16,12 +16,17 @@ const (
 	argvSym      = "__ssa_argv"
 	argsCacheSym = "__ssa_args_cache"
 	envpSym      = "__ssa_envp"
+	environCache = "__ssa_environ_cache"
 )
 
 // usesArgs reports whether the module references args(), so _start captures
-// argc/argv and the .bss slots exist. usesEnv is the same for env().
+// argc/argv and the .bss slots exist. usesEnv is the same for the two helpers
+// that read the environment vector.
 func usesArgs(helpers []string) bool { return referencesHelper(helpers, "args") }
-func usesEnv(helpers []string) bool  { return referencesHelper(helpers, "env") }
+func usesEnv(helpers []string) bool {
+	return referencesHelper(helpers, "env") || referencesHelper(helpers, "environ") ||
+		referencesHelper(helpers, "proc_exec")
+}
 
 func referencesHelper(helpers []string, name string) bool {
 	for _, h := range helpers {
@@ -68,22 +73,50 @@ func emitProcBss(w func(string, ...any), withArgs, withEnv bool) {
 		w(".align 8")
 		w("%s:", envpSym)
 		w("\t.quad 0")
+		w("%s:", environCache)
+		w("\t.quad 0")
 	}
 }
 
-// emitArgsHelper writes args() -> string[]: one single-word rc string per
-// argv entry in a container whose header carries the static rc sentinel, as
-// the flat backend's does, memoised in .bss so every call hands back the same
-// buffer. The container's data pointer is 16-aligned (the bump base is), so
-// element 0 lands at a 16-aligned address with cap / rc / len at data-12 /
-// -8 / -4.
-//
-// rbx = argc, r12 = argv, r13 = i, r14 = container data, r15 = argv[i],
-// rbp = strlen(argv[i]). All callee-saved, since ssaBumpAlloc calls the heap
-// guard between the length count and the copy.
+// emitArgsHelper writes args() -> string[] over the argv vector, and
+// emitEnvironHelper writes environ() -> string[] over envp. They differ only
+// in how the entry count is reached: argv's came from the kernel in argc,
+// while envp carries no count word and has to be scanned to its NULL.
 func emitArgsHelper(w func(string, ...any)) {
+	emitCStringVectorHelper(w, "args", "args", argsCacheSym, func(w func(string, ...any)) {
+		w("\tmov rbx, [rip + %s]", argcSym)
+		w("\tmov r12, [rip + %s]", argvSym)
+	})
+}
+
+// emitEnvironHelper writes environ() -> string[]: every "NAME=VALUE" entry of
+// the envp vector _start captured.
+func emitEnvironHelper(w func(string, ...any)) {
+	emitCStringVectorHelper(w, "environ", "environ", environCache, func(w func(string, ...any)) {
+		w("\tmov r12, [rip + %s]", envpSym)
+		w("\txor ebx, ebx")
+		w(".Lssa_environ_count:")
+		w("\tcmp qword ptr [r12 + rbx*8], 0")
+		w("\tje .Lssa_environ_counted")
+		w("\tinc rbx")
+		w("\tjmp .Lssa_environ_count")
+		w(".Lssa_environ_counted:")
+	})
+}
+
+// emitCStringVectorHelper writes a helper that turns a NUL-terminated C string
+// vector into a string[]: one single-word rc string per entry in a container
+// whose header carries the static rc sentinel, as the flat backend's does,
+// memoised in .bss so every call hands back the same buffer. The container's
+// data pointer is 16-aligned (the bump base is), so element 0 lands at a
+// 16-aligned address with cap / rc / len at data-12 / -8 / -4.
+//
+// `load` leaves the entry count in rbx and the vector base in r12. rbp and
+// r13-r15 carry the loop; six pushes and the realigning slot keep rsp
+// 16-aligned across the two allocations, each of which calls the heap guard.
+func emitCStringVectorHelper(w func(string, ...any), name, tag, cacheSym string, load func(w func(string, ...any))) {
 	w("")
-	w("%s:", fnLabel("args"))
+	w("%s:", fnLabel(name))
 	w("\tpush rbx")
 	w("\tpush r12")
 	w("\tpush r13")
@@ -91,29 +124,28 @@ func emitArgsHelper(w func(string, ...any)) {
 	w("\tpush r15")
 	w("\tpush rbp")
 	w("\tsub rsp, 8") // six pushes past the return address: realign
-	w("\tmov rax, [rip + %s]", argsCacheSym)
+	w("\tmov rax, [rip + %s]", cacheSym)
 	w("\ttest rax, rax")
-	w("\tjnz .Lssa_args_ret")
-	w("\tmov rbx, [rip + %s]", argcSym)
-	w("\tmov r12, [rip + %s]", argvSym)
+	w("\tjnz .Lssa_%s_ret", tag)
+	load(w)
 	w("\tlea rdx, [rbx*8 + 16]")
 	ssaBumpAlloc(w, "rax", "rdx")
 	w("\tlea r14, [rax + 16]")
-	w("\tmov dword ptr [r14 - 12], ebx")       // cap = argc
+	w("\tmov dword ptr [r14 - 12], ebx")       // cap
 	w("\tmov dword ptr [r14 - 8], 0x80000000") // rc = static sentinel
-	w("\tmov dword ptr [r14 - 4], ebx")        // len = argc
+	w("\tmov dword ptr [r14 - 4], ebx")        // len
 	w("\txor r13d, r13d")
-	w(".Lssa_args_loop:")
+	w(".Lssa_%s_loop:", tag)
 	w("\tcmp r13, rbx")
-	w("\tjae .Lssa_args_done")
-	w("\tmov r15, [r12 + r13*8]") // argv[i], NUL-terminated
+	w("\tjae .Lssa_%s_done", tag)
+	w("\tmov r15, [r12 + r13*8]") // the entry, NUL-terminated
 	w("\txor ecx, ecx")
-	w(".Lssa_args_slen:")
+	w(".Lssa_%s_slen:", tag)
 	w("\tcmp byte ptr [r15 + rcx], 0")
-	w("\tje .Lssa_args_slend")
+	w("\tje .Lssa_%s_slend", tag)
 	w("\tinc rcx")
-	w("\tjmp .Lssa_args_slen")
-	w(".Lssa_args_slend:")
+	w("\tjmp .Lssa_%s_slen", tag)
+	w(".Lssa_%s_slend:", tag)
 	w("\tmov rbp, rcx")
 	w("\tlea rdx, [rbp + %d]", strBlockBytes) // rc header (8) + bytes + NUL
 	ssaBumpAlloc(w, "rax", "rdx")
@@ -121,22 +153,22 @@ func emitArgsHelper(w func(string, ...any)) {
 	w("\tmov [rax + 4], ebp")     // len
 	w("\tlea rdi, [rax + 8]")     // data
 	w("\txor ecx, ecx")
-	w(".Lssa_args_cp:")
+	w(".Lssa_%s_cp:", tag)
 	w("\tcmp rcx, rbp")
-	w("\tjae .Lssa_args_cpd")
+	w("\tjae .Lssa_%s_cpd", tag)
 	w("\tmov dl, [r15 + rcx]")
 	w("\tmov [rdi + rcx], dl")
 	w("\tinc rcx")
-	w("\tjmp .Lssa_args_cp")
-	w(".Lssa_args_cpd:")
+	w("\tjmp .Lssa_%s_cp", tag)
+	w(".Lssa_%s_cpd:", tag)
 	w("\tmov byte ptr [rdi + rbp], 0")
 	w("\tmov [r14 + r13*8], rdi")
 	w("\tinc r13")
-	w("\tjmp .Lssa_args_loop")
-	w(".Lssa_args_done:")
-	w("\tmov [rip + %s], r14", argsCacheSym)
+	w("\tjmp .Lssa_%s_loop", tag)
+	w(".Lssa_%s_done:", tag)
+	w("\tmov [rip + %s], r14", cacheSym)
 	w("\tmov rax, r14")
-	w(".Lssa_args_ret:")
+	w(".Lssa_%s_ret:", tag)
 	w("\tadd rsp, 8")
 	w("\tpop rbp")
 	w("\tpop r15")
@@ -227,7 +259,14 @@ func emitEnvHelper(w func(string, ...any)) {
 
 // emitStatHelper writes stat(path) -> Result[FileStat, IoError].
 func emitStatHelper(w func(string, ...any)) {
-	emitStatLikeHelper(w, "stat", "stat", false)
+	emitStatLikeHelper(w, "stat", "stat", 0, false)
+}
+
+// emitLstatHelper writes lstat(path) -> Result[FileStat, IoError]: the same
+// body with AT_SYMLINK_NOFOLLOW, so a symlink reports itself rather than its
+// target.
+func emitLstatHelper(w func(string, ...any)) {
+	emitStatLikeHelper(w, "lstat", "lstat", 256, false)
 }
 
 // emitFdStatHelper writes __method_Reader_stat / __method_Writer_stat
@@ -236,7 +275,7 @@ func emitStatHelper(w func(string, ...any)) {
 // is. `lp` prefixes the local labels so both methods can live in one object.
 func emitFdStatHelper(name, lp string) func(w func(string, ...any)) {
 	return func(w func(string, ...any)) {
-		emitStatLikeHelper(w, name, lp, true)
+		emitStatLikeHelper(w, name, lp, 0, true)
 	}
 }
 
@@ -247,14 +286,15 @@ func emitFdStatHelper(name, lp string) func(w func(string, ...any)) {
 // __fern_io_error and comes back in Err. The record box is {rc=1, fields@+8},
 // as arm64ssa's is.
 //
-// fdBased picks newfstatat(AT_FDCWD, pathz, buf, 0) over fstat(fd, buf), and
-// with it what the error reports: the path as given, or an empty string when
-// the handle never carried one. `lp` prefixes the local labels, so the path
-// form and both fd forms can be emitted into one object.
+// fdBased picks newfstatat(AT_FDCWD, pathz, buf, atFlags) over fstat(fd, buf),
+// and with it what the error reports: the path as given, or an empty string
+// when the handle never carried one. atFlags is the newfstatat flag word, 0
+// for stat and AT_SYMLINK_NOFOLLOW for lstat. `lp` prefixes the local labels,
+// so the path form and both fd forms can be emitted into one object.
 //
 // rdi = path or handle. rbx = path, r12 = pathz then the FileStat box,
 // r13 = path len then st_size, r14 = is_file, r15 = is_dir.
-func emitStatLikeHelper(w func(string, ...any), name, lp string, fdBased bool) {
+func emitStatLikeHelper(w func(string, ...any), name, lp string, atFlags int, fdBased bool) {
 	w("")
 	w("%s:", fnLabel(name))
 	w("\tpush rbx")
@@ -287,11 +327,15 @@ func emitStatLikeHelper(w func(string, ...any), name, lp string, fdBased bool) {
 		w("\tjmp .Lssa_%s_cp", lp)
 		w(".Lssa_%s_cpd:", lp)
 		w("\tmov byte ptr [r12 + r13], 0")
-		// newfstatat(AT_FDCWD, pathz, statbuf, 0)
+		// newfstatat(AT_FDCWD, pathz, statbuf, atFlags)
 		w("\tmov edi, -100")
 		w("\tmov rsi, r12")
 		w("\tmov rdx, rsp")
-		w("\txor r10d, r10d")
+		if atFlags == 0 {
+			w("\txor r10d, r10d")
+		} else {
+			w("\tmov r10d, %d", atFlags)
+		}
 		w("\tmov eax, 262")
 		w("\tsyscall")
 	}

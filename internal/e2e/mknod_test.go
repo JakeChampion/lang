@@ -247,6 +247,21 @@ func TestArm64SSAMknod(t *testing.T) {
 	mknodCheckTree(t, dir, dev)
 }
 
+// The x86-64 SSA-direct backend packs the dev_t in its own hand-written
+// sequence, in its own frame discipline, so it gets the probe too.
+func TestX86_64SSAMknod(t *testing.T) {
+	qemu := x86QemuOrEmpty(t)
+	fern := buildFernCLI(t)
+	dir := t.TempDir()
+	dev := mknodDevAllowed(t, dir)
+	bin := compileX86_64SSA(t, fern, mknodSource(dir, dev), os.Environ())
+	code, stderr := runX86_64SSABin(t, qemu, bin, dir, os.Environ())
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0 — the code names the step (see mknodSource)\n%s", code, stderr)
+	}
+	mknodCheckTree(t, dir, dev)
+}
+
 func TestInterpMknod(t *testing.T) {
 	dir := t.TempDir()
 	dev := mknodDevAllowed(t, dir)

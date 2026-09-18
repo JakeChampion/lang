@@ -1547,6 +1547,42 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"try-on-unmarked-enum", "enum Flag { On(i32), Off }\nfunction pick(f: Flag): Flag { var v: i32 = f?; return On(v + 1); }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
 		{"try-on-union-alias", "struct A { n: i32 }\nstruct B { n: i32 }\ntype Shape = A | B;\nfunction f(x: Shape): i32 { var y: i32 = x?; return y; }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
 		{"try-on-marked-enum-ok", "@try\nenum MyOpt { Got(i32), Nope }\nfunction pick(f: MyOpt): MyOpt { var v: i32 = f?; return Got(v + 1); }\nfunction main(): i32 { return 0; }\n", nil},
+		// E079 through a VALUE BLOCK (#9553). A value block desugars to a
+		// zero-arg call of a zero-param lambda, and irlower inlines it rather
+		// than lowering a function, so a `?` inside one still leaves the
+		// ENCLOSING function and is E079 — where the same `?` inside a real
+		// lambda is an ordinary use. The existing e079-defer-try-op row only
+		// covers the direct spelling, which is how every shape below went
+		// unnoticed reporting E042 alone.
+		{"e079-defer-match-expr", "function g(v: i32): Option[i32] { if (v < 100) { return Some(v + 1); } return None; }\nfunction f(k: i32): i32 {\n  var n: i32 = 1;\n  defer n = (match (k) { 0 => g(n)?, _ => 7 });\n  return n;\n}\nfunction main(): i32 { return f(0); }\n", []string{"E042", "E079"}},
+		{"e079-defer-if-expr", "function g(v: i32): Option[i32] { if (v < 100) { return Some(v + 1); } return None; }\nfunction f(k: i32): i32 {\n  var n: i32 = 1;\n  defer n = (if (k == 0) { g(n)? } else { 7 });\n  return n;\n}\nfunction main(): i32 { return f(0); }\n", []string{"E042", "E079"}},
+		{"e079-defer-block", "function g(v: i32): Option[i32] { if (v < 100) { return Some(v + 1); } return None; }\nfunction f(k: i32): i32 {\n  var n: i32 = 1;\n  defer { n = (match (k) { 0 => g(n)?, _ => 7 }); }\n  return n;\n}\nfunction main(): i32 { return f(0); }\n", []string{"E042", "E079"}},
+		{"e079-errdefer-match-expr", "function g(v: i32): Option[i32] { if (v < 100) { return Some(v + 1); } return None; }\nfunction f(k: i32): i32 {\n  var n: i32 = 1;\n  errdefer n = (match (k) { 0 => g(n)?, _ => 7 });\n  return n;\n}\nfunction main(): i32 { return f(0); }\n", []string{"E042", "E079"}},
+		{"e079-defer-nested-value-blocks", "function g(v: i32): Option[i32] { if (v < 100) { return Some(v + 1); } return None; }\nfunction f(k: i32): i32 {\n  var n: i32 = 1;\n  defer n = (match (k) { 0 => (if (k == 0) { g(n)? } else { 3 }), _ => 7 });\n  return n;\n}\nfunction main(): i32 { return f(0); }\n", []string{"E042", "E079"}},
+		// E021 generic-bound conformance is an `impl` or a `@derive`, never a
+		// receiver method that merely has the right name (#9486). The method-set
+		// arm was there to reach the derive case, which the derive is now asked
+		// about directly; it also admitted an INHERENT method as a trait impl,
+		// which native refuses and the lowering had no dispatch for — so the
+		// program ran and answered wrongly rather than being refused.
+		{"e021-inherent-method-is-not-an-impl", "trait Feed[T] { function head(self: Self): T; }\nstruct Wide { v: f64 }\nfunction (w: Wide) head(): f64 { return w.v; }\nfunction first[T, I: Feed[T]](it: I): T { return it.head(); }\nfunction main(): i32 { return first(Wide { v: 6.5 }) as i32; }\n", []string{"E021"}},
+		{"e021-no-method-at-all", "trait Feed[T] { function head(self: Self): T; }\nstruct Wide { v: f64 }\nfunction first[T, I: Feed[T]](it: I): T { return it.head(); }\nfunction main(): i32 { return first(Wide { v: 6.5 }) as i32; }\n", []string{"E021"}},
+		{"e021-impl-backed-ok", "trait Feed[T] { function head(self: Self): T; }\nstruct Wide { v: f64 }\nimpl Feed[f64] for Wide { function head(self: Self): f64 { return self.v; } }\nfunction first[T, I: Feed[T]](it: I): T { return it.head(); }\nfunction main(): i32 { var d: f64 = first(Wide { v: 6.5 }); return d as i32; }\n", nil},
+		// Cell[T]'s two methods are builtins, so they are in neither the
+		// method table nor the struct table and the ordinary method path
+		// resolved nothing — a call was accepted whatever it was handed,
+		// a lambda included (#9518). Arity counts the RECEIVER, matching
+		// native, which models these as functions carrying the cell: a bad
+		// value on `set` is "argument 2", and `c.set()` is one argument of
+		// the two it wants.
+		{"cell-set-wrong-type", "function f(c: Cell[i32]): i32 { c.set(\"hi\"); return 0; }\nfunction main(): i32 { var c: Cell[i32] = cell_new(0); return f(c); }\n", []string{"E038"}},
+		{"cell-set-lambda-arg", "function f(c: Cell[i32]): i32 { c.set((x: i32) => x + 1); return 0; }\nfunction main(): i32 { var c: Cell[i32] = cell_new(0); return f(c); }\n", []string{"E038"}},
+		{"cell-set-too-few", "function f(c: Cell[i32]): i32 { c.set(); return 0; }\nfunction main(): i32 { var c: Cell[i32] = cell_new(0); return f(c); }\n", []string{"E004"}},
+		{"cell-set-too-many", "function f(c: Cell[i32]): i32 { c.set(1, 2); return 0; }\nfunction main(): i32 { var c: Cell[i32] = cell_new(0); return f(c); }\n", []string{"E004"}},
+		{"cell-get-too-many", "function f(c: Cell[i32]): i32 { var v: i32 = c.get(3); return 0; }\nfunction main(): i32 { var c: Cell[i32] = cell_new(0); return f(c); }\n", []string{"E004"}},
+		{"cell-unknown-method", "function f(c: Cell[i32]): i32 { c.nosuch(); return 0; }\nfunction main(): i32 { var c: Cell[i32] = cell_new(0); return f(c); }\n", []string{"E043"}},
+		{"cell-set-ok", "function f(c: Cell[i32]): i32 { c.set(5); return 0; }\nfunction main(): i32 { var c: Cell[i32] = cell_new(0); return f(c); }\n", nil},
+		{"cell-get-ok", "function f(c: Cell[i32]): i32 { var v: i32 = c.get(); return 0; }\nfunction main(): i32 { var c: Cell[i32] = cell_new(0); return f(c); }\n", nil},
 		{"callee-undefined", "function main(): i32 { return foo(1); }\n", []string{"E001"}},
 		{"callee-user-fn-ok", "function g(): i32 { return 1; }\nfunction main(): i32 { return g(); }\n", nil},
 		{"callee-builtin-ok", "function main(): i32 { print(\"hi\"); return 0; }\n", nil},

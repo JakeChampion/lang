@@ -57,6 +57,43 @@ func danglingLocalLabels(asm []byte) []string {
 	return dangling
 }
 
+// blockLabelRe matches a self-host per-block label — the stack machine's
+// `.Lir_*` (asm_ir.fern) and `.Lira_*` (asm_arm64_ir.fern), and the register
+// path's `.Lssa_*` (both emitters).
+var blockLabelRe = regexp.MustCompile(`\.L(?:ira?|ssa)_[A-Za-z0-9_.$]+`)
+
+// assertNoDuplicateLocalLabels fails if the emitted asm DEFINES one per-block
+// label twice — gas's "symbol `.Lssa_ssarc__walkable_22' is already defined"
+// (#9685, #9687), where the lift left a loop's terminated tail block as the
+// current one and the function-tail flush appended it again. Caught here as a
+// test error naming the label instead of an assembler error on a 2-million-line
+// listing.
+func assertNoDuplicateLocalLabels(t *testing.T, ctx string, asm []byte) {
+	t.Helper()
+	if dup := duplicateLocalLabels(asm); len(dup) > 0 {
+		t.Fatalf("%s: local label(s) defined more than once: %v", ctx, dup)
+	}
+}
+
+// duplicateLocalLabels returns the per-block labels `asm` defines more than
+// once, sorted.
+func duplicateLocalLabels(asm []byte) []string {
+	seen := map[string]int{}
+	var dup []string
+	for _, line := range strings.Split(string(asm), "\n") {
+		lbl, ok := strings.CutSuffix(strings.TrimSpace(line), ":")
+		if !ok || strings.ContainsAny(lbl, " \t") || !blockLabelRe.MatchString(lbl) {
+			continue
+		}
+		seen[lbl]++
+		if seen[lbl] == 2 {
+			dup = append(dup, lbl)
+		}
+	}
+	sort.Strings(dup)
+	return dup
+}
+
 // readFileIRCases exercise the `read_file(path)` builtin through the IR path on
 // x86-64, arm64, and wasm (the wasm IR path opens the path under preopen fd 3 —
 // run with `--dir`). read_file lowers to a value IR op that pops the path string box and
@@ -109,6 +146,7 @@ func TestSelfHostReadFileIRX86_64(t *testing.T) {
 				t.Fatalf("%s: no call to __fn___fern_read_file — did not lower through the IR path", tc.name)
 			}
 			assertNoDanglingLocalLabels(t, tc.name, asm)
+			assertNoDuplicateLocalLabels(t, tc.name, asm)
 			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
 			var cmd *exec.Cmd
 			if len(runner) == 0 {
@@ -220,6 +258,7 @@ func TestSelfHostReadFileIRArm64(t *testing.T) {
 				t.Fatalf("%s: no bl __fn___fern_read_file — did not lower through the arm64 IR path", tc.name)
 			}
 			assertNoDanglingLocalLabels(t, "arm64 "+tc.name, asm)
+			assertNoDuplicateLocalLabels(t, "arm64 "+tc.name, asm)
 			bin := buildBinArm64(t, arm64gcc, dir, "rf_"+tc.name, string(asm))
 			run := runArm64Bin(qemu, bin)
 			run.Dir = dir

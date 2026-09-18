@@ -1951,27 +1951,18 @@ function e021_trait_idx(tr: string, trait_reqs: parser.TraitReq[]): i32 {
 }
 
 // e021_conforms decides whether concrete type `cty` satisfies trait bound
-// `tr` — the parity-faithful conformance test. True when the module has an
-// explicit `impl tr for cty`, OR `cty` provides every required (abstract)
-// method of `tr` as a receiver method. The method-set arm captures
-// @derive(tr) — which synthesises exactly those methods — the same way the
-// native checker treats a derived impl as conformance. Biased toward TRUE
-// (a trait with no required methods relies solely on the explicit impl),
-// so it never flags a type the native checker would accept.
-function e021_conforms(s: Scope, tr: string, treq_idx: i32, cty: string): boolean {
-  if (e021_scope_has_impl(s.impls, tr, cty)) {
-    return true;
-  }
-  var reqs: string[] = s.trait_reqs[treq_idx].methods;
-  if (reqs.len() == 0) {
-    return false;
-  }
-  for req in reqs {
-    if (!s.has_method(req, cty)) {
-      return false;
-    }
-  }
-  return true;
+// `tr` — the parity-faithful conformance test. Two sources, both of which
+// native accepts: an explicit `impl tr for cty`, or a `@derive(tr)` on the
+// declaration, which synthesises the methods without an impl-table entry.
+//
+// It used to accept a third — `cty` merely HAVING receiver methods of the
+// required names — as a way to reach the derive case. That admitted an
+// INHERENT method as a trait impl, which native refuses with E021 and which
+// the lowering then had no dispatch for, so the program ran and answered
+// wrongly (#9486). Asking about the derive directly reaches the same case
+// without the hole.
+function e021_conforms(s: Scope, tr: string, cty: string): boolean {
+  return conforms_by_impl_or_derive(s, cty, tr);
 }
 
 // e021_type_known reports whether `cty` is a type this module knows well
@@ -2004,11 +1995,14 @@ function e021_scope_has_impl(impls: parser.ImplInfo[], trait_name: string, impl_
   return false;
 }
 
-// map_key_conforms names whether `tyname` implements trait `tr` for map-key
-// purposes: an explicit `impl tr for tyname`, or a `@derive(cmp.tr)` on the
-// declaration — for an enum, on any variant, which carries the owner's derives.
-// Both sources, because a derive does not synthesise an impl-table entry.
-function map_key_conforms(s: Scope, tyname: string, tr: string): boolean {
+// conforms_by_impl_or_derive names whether `tyname` implements trait `tr`:
+// an explicit `impl tr for tyname`, or a `@derive(cmp.tr)` on the declaration
+// — for an enum, on any variant, which carries the owner's derives. Both
+// sources, because a derive does not synthesise an impl-table entry.
+//
+// Written for map keys (E045) and now also the generic-bound check (E021),
+// which are the same question asked twice.
+function conforms_by_impl_or_derive(s: Scope, tyname: string, tr: string): boolean {
   if (e021_scope_has_impl(s.impls, tr, tyname)) { return true; }
   for sd in s.structs.structs {
     if (sd.name == tyname || sd.enum_owner == tyname) {
@@ -2037,7 +2031,7 @@ function map_key_type_error(s: Scope, kt: typeinfo.Type): string {
     _ => {}
   }
   if (kn != "") {
-    if (map_key_conforms(s, kn, "Eq") && map_key_conforms(s, kn, "Hash")) { return ""; }
+    if (conforms_by_impl_or_derive(s, kn, "Eq") && conforms_by_impl_or_derive(s, kn, "Hash")) { return ""; }
     return "map key type " + type_label(kt) + " is not supported — " + kw + " used as a key must derive Eq and Hash: add `@derive(cmp.Eq, cmp.Hash)`, which requires `import \"core/cmp\";`";
   }
   return "map key type " + type_label(kt) + " is not yet supported — use i32, string, or a struct/enum with `@derive(cmp.Eq, cmp.Hash)`, which requires `import \"core/cmp\";`";
@@ -2100,9 +2094,11 @@ function map_key_dest_diag(declared: typeinfo.Type, line: i32, col: i32, s: Scop
 // `+`-joined bound list) whose call-site argument has concrete type `at`
 // that does not conform to Tr (no `impl Tr` and not @derive-provided).
 // Conservative gates (declared trait, known concrete type, bare-name
-// argument, method-set conformance) keep it from false-firing on the
-// self-host bundle's own pervasive bounded-generic calls, which all carry
-// their impls or derives. Mirrors native checker.go's call-site E021 arm.
+// argument) keep it from firing on a type this module cannot reason about.
+// The bundle's own pervasive bounded-generic calls stay clean because they
+// carry their impls or derives, which is what conformance now asks about —
+// not because the check is lenient. Mirrors native checker.go's call-site
+// E021 arm.
 function e021_bound_call_diag(pbound: string, at: typeinfo.Type, s: Scope, ln: i32, cl: i32): util.Diag[] {
   var out: util.Diag[] = [];
   var cty: string = type_label(at);
@@ -2126,7 +2122,7 @@ function e021_bound_call_diag(pbound: string, at: typeinfo.Type, s: Scope, ln: i
       if (i > start) {
         var tr: str = slice_unchecked(pbound, start, i);
         var tidx: i32 = e021_trait_idx(tr, s.trait_reqs);
-        if (tidx >= 0 && !e021_conforms(s, tr, tidx, cty)) {
+        if (tidx >= 0 && !e021_conforms(s, tr, cty)) {
           out = out.append(dg_at("E021", "type argument " + cty + " does not implement trait " + tr, ln, cl));
         }
       }
@@ -8697,6 +8693,39 @@ function call_diags(e: ast.Expr, s: Scope): util.Diag[] {
   return out;
 }
 
+// cell_call_diags checks a call of one of Cell[T]'s two builtin methods.
+//
+// `get` reads the slot and `set` writes it; neither is in the method table or
+// the struct table, because Cell is a reserved builtin rather than a declared
+// struct, so the ordinary method path resolved nothing and reported nothing
+// (#9518). A lambda handed to `set` was accepted in silence.
+//
+// The arity numbers count the RECEIVER, which is how native models these — as
+// plain functions whose first parameter is the cell — so `c.set(v)` is two
+// arguments and `c.get()` is one, and a wrong value on `set` is "argument 2".
+function cell_call_diags(c: ast.ExprCall, mfa: ast.ExprFieldAccess, recv: typeinfo.Type, s: Scope): util.Diag[] {
+  var out: util.Diag[] = [];
+  var want: i32 = 0 - 1;
+  if (mfa.field == "get") { want = 0; }
+  if (mfa.field == "set") { want = 1; }
+  if (want < 0) {
+    return [dg_at("E043", "struct Cell has no field \"" + mfa.field + "\"", mfa.line, mfa.col)];
+  }
+  if (c.args.len() != want) {
+    return [dg_at("E004", "function expects " + util.i32_to_string(want + 1) + " arguments, got " + util.i32_to_string(c.args.len() + 1), c.line, c.col)];
+  }
+  if (want == 1) {
+    var pt: typeinfo.Type = cell_elem_type(recv);
+    var at: typeinfo.Type = check_expr(c.args[0], s);
+    out = util.append_diags(out, int_dest_range_diags(c.args[0], pt));
+    if (!is_unknown(at) && !is_unknown(pt) && !settles_to(c.args[0], pt, s) && !str_arg_borrow(at, pt) && !type_assignable(at, pt, s.unions.unions)) {
+      out = out.append(dg_at("E038", "argument 2: expected " + type_label(pt) + ", got " + type_label(at), expr_line(c.args[0]), expr_col(c.args[0])));
+    }
+    out = util.append_diags(out, array_elem_check(array_elem_type_of(pt), c.args[0], s));
+  }
+  return out;
+}
+
 // Value calls share one semantic contract regardless of the expression that
 // produced the callee. Unknown constituents suppress only their own type check,
 // not a known arity or checks on the other parameters.
@@ -9074,6 +9103,18 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           }
         },
         typeinfo.TypeStruct(sn) => {
+          // Cell[T]'s two methods are builtins, so they are in neither the
+          // method table nor the struct table. Both lookups missed, the arm
+          // below found no struct to resolve a field against, and the call
+          // was accepted whatever it was handed (#9518). Checked here, ahead
+          // of the user tables, the way the receiver's type is.
+          //
+          // Arity and position follow native, which models these as ordinary
+          // functions carrying the receiver: `c.set(v)` is two arguments and
+          // the value is the SECOND, so a mismatch reads "argument 2".
+          if (is_cell_type(recv)) {
+            out = util.append_diags(out, cell_call_diags(c, mfa, recv, s));
+          } else {
           var msig: MethodSig = s.lookup_method(mfa.field, sn.name);
           if (msig.name.len() > 0) {
             if (c.args.len() != msig.param_types.len()) {
@@ -9136,6 +9177,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
                 }
               }
             }
+          }
           }
         },
         _ => {
@@ -10778,8 +10820,15 @@ function e079_note_try(e: ast.Expr, own acc: E079Probe): E079Probe {
 // e079_not_lambda keeps the walk out of a lambda body: a `?` there leaves the
 // LAMBDA on its own exits, not the function whose defer replays the action, so
 // it is an ordinary use.
+// A value block is the exception, and it parses to the identical shape (#9553).
+// `(match (k) { … })` and the if-expression / comprehension forms desugar to a
+// zero-arg call of a zero-param lambda, which irlower INLINES rather than
+// lowering as a function — `lower_defers_body` excludes them from the per-scope
+// defer lowering for that reason. So a `?` inside one leaves the ENCLOSING
+// function after all, which is what makes it E079 rather than an ordinary use.
+// Only `origin` separates the two, since a hand-written IIFE parses the same.
 function e079_not_lambda(e: ast.Expr): boolean {
-  if let ast.ExprLambda(lam) = e { return false; }
+  if let ast.ExprLambda(lam) = e { return parser.is_value_block_origin(lam.origin); }
   return true;
 }
 
@@ -13921,8 +13970,13 @@ function e021_derive_field_known(mod: parser.Module, fty: string): boolean {
 // for fty`, or fty providing every required trait method as a receiver
 // method — which captures both an inherent method set and a field type
 // whose OWN @derive already synthesised the methods at parse time.
-// Mirrors e021_conforms' bias: a trait with no required methods
-// conforms only via the explicit impl.
+//
+// The method-set arm is right HERE and wrong for a bound: this asks whether
+// a derive on the owner can be synthesised from its fields, and a field whose
+// derive already ran carries the methods and no impl-table entry. The bound
+// check (e021_conforms) asks whether a type argument conforms, where an
+// inherent method is not an impl — see #9486. A trait with no required
+// methods conforms only via the explicit impl either way.
 function e021_derive_conforms(mod: parser.Module, tr: string, treq_idx: i32, fty: string): boolean {
   if (e021_has_impl(mod, tr, fty)) {
     return true;
