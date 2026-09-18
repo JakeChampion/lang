@@ -250,18 +250,8 @@ jobs:
           echo "EXIT=$status"
           exit "$status"
 
-      - name: the corpus log, however that ended
-        if: always() && steps.gate.outputs.signed != 'true'
-        run: |
-          if [ ! -f corpus-darwin.log ]; then
-            echo "no corpus-darwin.log: the step did not get as far as running it"
-            exit 0
-          fi
-          echo "### failures"
-          grep -E '^(---|===) (FAIL|Failed)' corpus-darwin.log || echo "(none named)"
-          echo "### the last case to start, and what followed it"
-          tail -40 corpus-darwin.log
-
+      # The artifact FIRST, and the summary after it. The whole log is the
+      # thing worth keeping, so it must not be behind a step that prints.
       - name: Keep the corpus log
         if: always() && steps.gate.outputs.signed != 'true'
         uses: actions/upload-artifact@v7
@@ -270,6 +260,26 @@ jobs:
           path: corpus-darwin.log
           retention-days: 7
           if-no-files-found: ignore
+
+      # NAMES ONLY, each cut to 200 columns, and capped. A parity failure
+      # quotes both streams in full, so one line of this log can be several
+      # kilobytes and forty of them can be a megabyte — which is how the
+      # corpus wedged in the first place. Printing that back into the step's
+      # stdout reproduces the stall it was moved off; the first version of
+      # this step did exactly that and hung for 23 minutes. Read the artifact
+      # for detail; this is only the shape of the round.
+      - name: which cases failed
+        if: always() && steps.gate.outputs.signed != 'true'
+        timeout-minutes: 3
+        run: |
+          if [ ! -f corpus-darwin.log ]; then
+            echo "no corpus-darwin.log: the step did not get as far as running it"
+            exit 0
+          fi
+          echo "### $(grep -c '^--- FAIL' corpus-darwin.log || true) failing cases, first 60:"
+          grep -oE '^--- FAIL: [A-Za-z0-9_/-]+' corpus-darwin.log | head -60 | cut -c1-200
+          echo "### the DONE line:"
+          grep -oE '^DONE .{0,120}' corpus-darwin.log | tail -1
 
       - name: go test (arm64-darwin native execution)
         if: steps.gate.outputs.signed != 'true'
