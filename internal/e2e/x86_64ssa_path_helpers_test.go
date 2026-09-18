@@ -101,9 +101,11 @@ const x86SSAPathOpSrc = `function main(): i32 {
 `
 
 // runPathProbe builds src for x86-64 with the named backend and runs it in a
-// directory of its own, since both programs create names beside the working
-// directory. The program's exit status is the result.
-func runPathProbe(t *testing.T, bin, qemu, dir, name, backend, src string) int {
+// directory of its own, since these programs create names beside the working
+// directory. `stdin` is fed to the program on a pipe, which is what a probe
+// reading standard input needs and what an empty string skips. The program's
+// exit status is the result.
+func runPathProbe(t *testing.T, bin, qemu, dir, name, backend, src, stdin string) int {
 	t.Helper()
 	srcPath := filepath.Join(dir, name+"_"+backend+".fern")
 	binPath := filepath.Join(dir, name+"_"+backend+".bin")
@@ -122,6 +124,9 @@ func runPathProbe(t *testing.T, bin, qemu, dir, name, backend, src string) int {
 	run := runX86Bin(qemu, binPath)
 	run.Env = e2eharness.ChildEnv()
 	run.Dir = runDir
+	if stdin != "" {
+		run.Stdin = strings.NewReader(stdin)
+	}
 	var errBuf strings.Builder
 	run.Stderr = &errBuf
 	err := run.Run()
@@ -148,11 +153,11 @@ func TestX86_64SSAPathHelpersMatchTheFlatEmitter(t *testing.T) {
 		{"path_op", x86SSAPathOpSrc},
 	} {
 		t.Run(probe.name, func(t *testing.T) {
-			flat := runPathProbe(t, bin, qemu, dir, probe.name, "flat", probe.src)
+			flat := runPathProbe(t, bin, qemu, dir, probe.name, "flat", probe.src, "")
 			if flat != 0 {
 				t.Fatalf("the flat emitter itself reports %d — the probe is wrong, not the SSA backend", flat)
 			}
-			if ssa := runPathProbe(t, bin, qemu, dir, probe.name, "ssa", probe.src); ssa != flat {
+			if ssa := runPathProbe(t, bin, qemu, dir, probe.name, "ssa", probe.src, ""); ssa != flat {
 				t.Errorf("-backend ssa reports %d where the flat emitter reports %d.\n\n"+
 					"Each code names one assertion in the probe source above; the two "+
 					"backends are two implementations of the same builtins and must agree.", ssa, flat)
