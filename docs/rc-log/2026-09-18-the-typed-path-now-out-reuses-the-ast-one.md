@@ -22,6 +22,13 @@ The 348-site, 126-function AST advantage that
 eight are peephole rules in the two native assemblers — `asm_ir.peep_p1`,
 `peep_p4`, `peep_p5_acc`, `peep_p5_call` and their arm64 twins.
 
+The AST column is a count of what that lowering EMITS, not a reference to
+measure correctness against: a compiler built through it aborts on a bounds
+check compiling half these modules (#9763, and
+`cross-block-is-71-and-the-real-cost-is-elsewhere.md`). Reuse-site counts are
+still comparable — the emit itself succeeds — but nothing else in a diff
+against that path should be read as a target.
+
 Separately: `FERN_SEM_IR_REPORT=1` says **produced 8555 of 8555 declarations**.
 The typed path refuses nothing in the compiler's own sources, so the AST
 lowering is dead code for this tree — it is reached only by whatever a future
