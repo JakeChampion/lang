@@ -675,9 +675,9 @@ function drops(own r: irlower.LowerResult, step: ssaunits.Step, f: ssasem.Func):
 
 // The drops of a step less the one a construction took as its box: that value's
 // storage became the result's, so releasing it here would free a live box.
-function drops_less(own r: irlower.LowerResult, step: ssaunits.Step, f: ssasem.Func, taken: i32): irlower.LowerResult {
+function drops_less(own r: irlower.LowerResult, step: ssaunits.Step, f: ssasem.Func, taken: i32, took: i32): irlower.LowerResult {
     for value in step.drops {
-        if (value != taken) { r = drop_value(r, value, f.values[value], scratch_base(f), f); }
+        if (value != taken && value != took) { r = drop_value(r, value, f.values[value], scratch_base(f), f); }
     }
     return r;
 }
@@ -704,7 +704,18 @@ function drops_less(own r: irlower.LowerResult, step: ssaunits.Step, f: ssasem.F
 // which only 229 have counts the runtime can honour; pairing on the count
 // admits 390, all of them spendable, once the donor is held for whichever
 // construction claims it (`block_claims`, below) rather than taken first-come.
-struct ReusePairs { tokens: i32[], builds: i32[] }
+// `selfs[i]` is a value dying AT instruction i whose box that same
+// instruction's construction builds in — the update chain's shape, where the
+// box a `T { ...a, f: v }` supersedes dies as the update consumes it rather
+// than at some earlier instruction. Its token is taken before the construction
+// instead of after, which is the only thing that separates it from the pairing
+// above; it is the same donor, the same runtime test and the same box.
+//
+// Measured over the compiler's own sources, 795 constructions have a
+// matching-slot value dying at their own instruction, against 390 pairings
+// from earlier drops. Most of them are the two native assemblers, which are
+// nothing but update chains.
+struct ReusePairs { tokens: i32[], builds: i32[], selfs: i32[] }
 
 // The slots a value's box has, or -1 where this frame cannot say. This is the
 // number `__fern_alloc_reuse` compares, and comparing it HERE is what makes a
@@ -800,6 +811,7 @@ function claimed_after(c: Claims, slots: i32, pos: i32): boolean {
 function reuse_pairs(f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock): ReusePairs {
     var tokens: i32[] = [];
     var builds: i32[] = [];
+    var selfs: i32[] = [];
     // The #4350 §6.5 differential switch, which the AST path's reuse layer
     // answers too: with it set every construction allocates, so a program's
     // observable behaviour can be compared against its own reusing build.
@@ -811,6 +823,7 @@ function reuse_pairs(f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock): ReusePair
     while (pos < b.insts.len()) {
         tokens = tokens.append(0 - 1);
         builds = builds.append(0 - 1);
+        selfs = selfs.append(0 - 1);
         var ins: ssa.SInst = b.insts[pos];
         if (ins.kind_tag != 6 && ins.kind_tag != 8) {
             var step: ssaunits.Step = at(p, b.id, pos, 0 - 1);
@@ -824,15 +837,26 @@ function reuse_pairs(f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock): ReusePair
                     tokens = tokens.with(pending_at, pending);
                     pending = 0 - 1;
                     pending_at = 0 - 1;
+                } else if (claims >= 0) {
+                    // Nothing earlier serves this construction, so the box it
+                    // supersedes may: a value dying HERE, of the count this
+                    // construction claims, that the construction does not read.
+                    // Not reading it is what makes it safe to hand on — the
+                    // projections that carried its fields over are earlier
+                    // instructions, and the plan has already proved it dead.
+                    for d in step.drops {
+                        if (selfs[pos] < 0 && reuse_slots(f.values[d], f) == claims
+                                && util.index_of_i32(ins.args, d) < 0) { selfs = selfs.with(pos, d); }
+                    }
                 }
-                // Not an `else`: the token a construction spends here frees the
-                // slot for a value dying at the same instruction, and the
-                // emission order gives it to them in that order — the
-                // construction reads the slot, then the new token writes it.
                 // A construction this pending cannot serve leaves it HELD
                 // rather than dropped, the one it is waiting for being further
-                // down the block.
-                if (pending < 0) {
+                // down the block. A value dying AT a construction was offered
+                // to that construction above and is not taken as a pending
+                // here: the shape that reading was worth — a dying box refilling
+                // the slot the construction just emptied — is the same-instruction
+                // pairing, which spends it on the spot rather than saving it.
+                if (pending < 0 && claims < 0) {
                     for d in step.drops {
                         var sl: i32 = reuse_slots(f.values[d], f);
                         if (pending < 0 && sl >= 0 && claimed_after(claims_tab, sl, pos)) { pending = d; pending_at = pos; }
@@ -842,7 +866,7 @@ function reuse_pairs(f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock): ReusePair
         }
         pos = pos + 1;
     }
-    return ReusePairs { tokens: tokens, builds: builds };
+    return ReusePairs { tokens: tokens, builds: builds, selfs: selfs };
 }
 
 // The donor's box when this frame holds its only count, and null otherwise —
@@ -2300,11 +2324,16 @@ function block_body(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan
             var defer0: boolean = deferred_retain(f, p, step, ins);
             r = supplies(r, f, step, defer0);
             r = bracket_take(r, f, held);
-            if (pairs.builds[pos] >= 0) { r = reuse_construct(r, f, ins); }
+            // A box superseded by the construction at this same instruction is
+            // taken BEFORE it, where an earlier drop's token was taken at the
+            // drop and is already in the slot. Either way `reuse_construct`
+            // reads one token slot and the runtime decides.
+            if (pairs.selfs[pos] >= 0) { r = reuse_token(r, f, pairs.selfs[pos]); }
+            if (pairs.builds[pos] >= 0 || pairs.selfs[pos] >= 0) { r = reuse_construct(r, f, ins); }
             else { r = instruction(r, f, p, ins, structs, defer0); }
             r = bracket_give(r, f, held);
             if (pairs.tokens[pos] >= 0) { r = reuse_token(r, f, pairs.tokens[pos]); }
-            r = drops_less(r, step, f, pairs.tokens[pos]);
+            r = drops_less(r, step, f, pairs.tokens[pos], pairs.selfs[pos]);
         }
         pos = pos + 1;
     }

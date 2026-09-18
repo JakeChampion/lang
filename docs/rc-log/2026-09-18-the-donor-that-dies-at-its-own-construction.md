@@ -52,18 +52,54 @@ for.** The 4,129 is still true and still says what it says about earlier-drop
 donors. It says nothing about same-instruction ones, and the entry that quoted
 it did not notice the difference.
 
-## What it costs to take
+## What it cost to take
 
 Structurally the smallest of the forms, not the largest: donor and recipient
 are one instruction, in one block, with no token carried across control flow
-and no slot-conflict analysis. What moves is the emission ORDER —
-`block_body` emits `reuse_construct` then `reuse_token`, and this shape needs
-the token taken from the dying value before the construction builds through
-it — plus `drops_less` skipping the value the construction took, which it
-already does for the paired case.
+and no slot-conflict analysis. `ReusePairs` gains `selfs[i]`, `block_body`
+emits that token BEFORE the construction where an earlier drop's is already in
+the slot, and `drops_less` skips the box the construction took.
 
-Unmeasured, and to be measured before building: how many of the 795 survive
-the uniqueness test at run time. A self-overwrite whose box is shared degrades
-to a fresh allocation exactly as any other pairing does, so the ceiling is
-sound but the yield is not yet known. The allocation-saved assertions in
-`TestSelfHostSemanticReuseDifferentialX86_64` are what will say.
+**Measured, compiling the compiler to x86-64:**
+
+| pairing | firings | emitted lines |
+|---|---|---|
+| before this entry | 390 | 3,506,632 |
+| **with the same-instruction form** | **1,167** | **3,544,008** |
+| the AST lowering, same sources | 449 | 2,761,415 |
+
++777 pairings, and the typed path is now 2.6x the AST one where it was 0.87x.
+The predicted 795 and the delivered 796 agree; the 19 between 796 and 777 is
+the refill rule, removed below.
+
+## What came out: the refill rule
+
+`2026-09-18-hold-the-donor-for-the-construction-that-wants-it.md` added a
+second reading — the slot a construction frees by spending its token can be
+refilled by a value dying at that same instruction — and witnessed it with
+`chain_up`, worth 44 of that entry's 103.
+
+**The same-instruction pairing subsumes its witness.** `chain_up` fires 3 with
+the refill rule reverted, because every box it was refilling with is now spent
+on the spot instead of saved. Measured over the whole compiler the refill is
+worth **+19 of 1,186**, and no fixture distinguishes it: two attempts at one
+failed, because in straight-line code a value's last use is a projection, so
+the only value dying AT a construction is the box that construction supersedes
+— which matches its arity and is taken by the new rule first. Its real sites
+(47, in `parser.mono_expr`, the `astwalk` folds and `irlower`) are nested
+constructions of differing arity, which no small fixture reproduces.
+
+So it is removed rather than carried unwitnessed: 1.6% for a rule no test can
+fail on, in code where a wrong pairing is a double free, is the wrong side of
+that trade. The drop scan goes back into an `else`, which is also what it
+meant in the first place.
+
+## Trap
+
+The entry this one corrects ranked the forms it had conceived of and read the
+result as a property of the program. The same care applies to what replaced
+it: `chain_up` was a valid witness when it landed and stopped being one when a
+stronger rule arrived, silently, with the suite still green. **A witness is
+only a witness against the rules that existed when it was written** — which is
+why each half of `pairing-reach` is re-verified by reverting its own rule
+whenever that file changes.

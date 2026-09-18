@@ -205,24 +205,22 @@ function main(): i32 {
     return t;
 }`, 30, 1, 0, 4, 6, false},
 
-	// The two rules that decide WHICH dying box the block's one token slot
-	// holds, each of which changes emitted code and neither of which the cases
-	// above can see, since every one of them puts the matching construction
-	// immediately after the donor.
+	// The two rules that decide WHICH dying box a construction builds in,
+	// neither of which the cases above can see: every one of them puts the
+	// matching construction immediately after the donor.
 	//
-	// `hold_over` is the hold: a three-slot donor dies, a FOUR-slot
-	// construction follows it, and the three-slot one that can take it comes
-	// after that. Holding the donor past a construction that cannot serve it
-	// is the whole of the pairing there — taken for the next construction
-	// alone it fires 0.
+	// `hold_over` is the hold: a three-slot donor dies at an ordinary
+	// instruction, a FOUR-slot construction follows it, and the three-slot one
+	// that can take it comes after that. Holding the donor past a construction
+	// that cannot serve it is the whole of the pairing there — taken for the
+	// next construction alone it fires 0.
 	//
-	// `chain_up` is the same-instruction refill: a chain of functional updates
-	// of one type, where each superseded box dies AT the construction that
-	// spends the previous token. The emission order allows it —
-	// `reuse_construct` reads the token slot before `reuse_token` writes it —
-	// and with the drop scan left in an `else` it fires 0. This is the shape
-	// the compiler's own 70 refill sites have: `x86_native`'s assembler
-	// threading `a = X86Asm { ...a, code: … }`.
+	// `chain_up` is the same-instruction pairing: a chain of functional
+	// updates of one type, where each superseded box dies AT the construction
+	// that supersedes it rather than before it, so a rule that only looks
+	// backwards never sees it. 3 firings; 0 without that rule. This is the
+	// shape the two native assemblers are made of — `a = X86Asm { ...a, code:
+	// … }` — and 795 of the compiler's constructions have it.
 	{"pairing-reach", `struct A3 { p: string, q: i32 }
 struct B4 { x: string, y: i32, z: i32 }
 function hold_over(seed: i32): i32 {
@@ -243,7 +241,7 @@ function main(): i32 {
     var t: i32 = hold_over(3) + chain_up(5);
     if (__rc_underflow_count() != 0) { return 99; }
     return t;
-}`, 32, 3, 4, 4, 7, false},
+}`, 32, 4, 4, 3, 7, false},
 
 	// A record of scalars: pure storage, with no children to release at the
 	// token. The AST path pairs this shape too, so the count alone does not
