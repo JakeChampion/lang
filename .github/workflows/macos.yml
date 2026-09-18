@@ -306,10 +306,14 @@ jobs:
       # COMPLETE is that every test function declared in the package appears in
       # the log.
       #
-      # Derived from the tree, never enumerated, for the same reason the oracle
-      # check is: a list written out here is a list that goes stale silently.
+      # `go test -list` rather than a grep over the sources, because the
+      # question is which tests exist ON THIS PLATFORM: `touch_test.go` is
+      # `//go:build linux` and `ls_linux_fixture_test.go` is Linux-only by
+      # name, so a grep counts five tests that cannot run here and reports a
+      # complete round as short. -list compiles for the target and answers for
+      # it. TestMain is not a test and never appears as a RUN line, and
       # `-skip '^TestSelfHost'` on the corpus step is the one deliberate
-      # exclusion, so it is the one subtraction made here.
+      # exclusion, so those two are the subtractions.
       - name: Assert the corpus round covered the whole catalogue
         if: always() && steps.gate.outputs.signed != 'true'
         timeout-minutes: 3
@@ -319,8 +323,9 @@ jobs:
             echo "::error::no corpus-darwin.log: the corpus step did not run"
             exit 1
           fi
-          grep -ohE '^func (Test[A-Za-z0-9_]+)\(' internal/coreutils/*_test.go \
-            | sed 's/^func //; s/($//' | grep -v '^TestSelfHost' | sort -u > declared.txt
+          go test -list '.*' ./internal/coreutils/ \
+            | grep -E '^Test' | grep -v '^TestSelfHost' | grep -v '^TestMain$' \
+            | sort -u > declared.txt
           grep -oE '^=== RUN   Test[A-Za-z0-9_]+$' corpus-darwin.log \
             | sed 's/^=== RUN   //' | sort -u > ran.txt
           echo "### $(wc -l < ran.txt) of $(wc -l < declared.txt) declared test functions ran"
