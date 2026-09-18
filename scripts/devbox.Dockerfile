@@ -79,6 +79,34 @@ RUN set -eux; \
     /opt/gnu-coreutils/bin/chroot --version | head -1 | grep -q '(GNU coreutils)'; \
     /opt/gnu-coreutils/bin/yes --version | head -1 | grep -q '(GNU coreutils)'
 
+# A SECOND GNU tree, at the newest release, for scripts/coreutils-bench alone.
+# The two versions answer different questions and cannot be one tree: the
+# corpus is held to 9.4 because moving it is an open conformance question
+# (#8765 -- 9.5 grew numfmt's padding buffer and 66 rows are pinned against
+# the refusal it replaced), while "faster than GNU" is only worth claiming
+# against the GNU people actually run. The bench prefers this tree via
+# FERN_GNU_COREUTILS_BENCH and falls back to the oracle's when it is absent.
+#
+# It costs a second full coreutils build in the image. That is the price of
+# the split; the alternative is a benchmark quoting a version from 2023.
+ARG BENCH_GNU_COREUTILS_VERSION=9.12
+RUN set -eux; \
+    ver="$BENCH_GNU_COREUTILS_VERSION"; \
+    cd /tmp; \
+    curl -fsSLO "https://ftp.gnu.org/gnu/coreutils/coreutils-$ver.tar.xz"; \
+    tar xf "coreutils-$ver.tar.xz"; \
+    cd "coreutils-$ver"; \
+    FORCE_UNSAFE_CONFIGURE=1 ./configure --quiet --disable-nls --without-selinux \
+      --enable-install-program=arch,kill,uptime; \
+    make -j"$(nproc)"; \
+    make install prefix=/opt/gnu-coreutils-bench; \
+    rm -rf /opt/gnu-coreutils-bench/share /opt/gnu-coreutils-bench/libexec; \
+    cd /; rm -rf "/tmp/coreutils-$ver" "/tmp/coreutils-$ver.tar.xz"; \
+    for u in yes arch kill uptime; do \
+      "/opt/gnu-coreutils-bench/bin/$u" --version | head -1 | grep -q "(GNU coreutils) $ver"; \
+    done
+ENV FERN_GNU_COREUTILS_BENCH=/opt/gnu-coreutils-bench/bin
+
 # hyperfine and python3 for scripts/coreutils-bench: it is the repo's own
 # benchmark runner and could not run in the repo's own Linux image, which
 # matters for the utilities that cannot run on the macOS host at all.
