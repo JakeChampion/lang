@@ -196,12 +196,16 @@ path needs `build_func` any more. In order:
    (#4112, the 2026-09-16 comment). **arm64 now meets all three** — binary
    0.93x, self-build 1.04x against a 1.5x ceiling, corpus clean on both
    targets — and the numbers are in
-   `docs/ssa-log/2026-09-17-arm64-meets-every-flip-condition.md`. x86-64
-   meets the corpus condition and not the size one, so the flip is per
-   target. **Taken for arm64**: omitting `-backend` selects the register
-   path there and the stack machine everywhere else. `-backend flat` still
-   names the stack machine on arm64, and a function the register path
-   declines still falls back to it on its own.
+   `docs/ssa-log/2026-09-17-arm64-meets-every-flip-condition.md`. x86-64 met
+   the corpus condition and not the size one until #9683 folded the trivial
+   phis, which took its output from 1.25x the stack machine's to 0.92x;
+   re-measured after it, every condition holds there too
+   (`docs/ssa-log/2026-09-18-x86-64-meets-every-flip-condition.md`).
+   **Taken on both native ISAs**: omitting `-backend` selects the register
+   path wherever there is one, and the stack machine on wasm, where there is
+   not. `-backend flat` still names the stack machine on either native ISA,
+   and a function the register path declines still falls back to it on its
+   own.
 
 ## The target
 
