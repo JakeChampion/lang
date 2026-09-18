@@ -48,9 +48,7 @@ func touchTree(t *testing.T, dir string) {
 	if err := os.Symlink("nowhere", filepath.Join(dir, "dangling")); err != nil {
 		t.Fatalf("symlink dangling: %v", err)
 	}
-	if err := syscall.Mkfifo(filepath.Join(dir, "p"), 0o644); err != nil {
-		t.Fatalf("mkfifo p: %v", err)
-	}
+	seedFifo(t, filepath.Join(dir, "p"))
 	if err := os.WriteFile(filepath.Join(dir, "ref"), []byte("r"), 0o644); err != nil {
 		t.Fatalf("write ref: %v", err)
 	}

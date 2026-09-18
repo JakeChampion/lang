@@ -91,6 +91,18 @@ pub function map_cleared(): i32 { return 0 - 34; }
 // and the frame's release of it is the null guard every drop helper already
 // carries — so the lift costs a slot rather than a box.
 pub function zero(): i32 { return 0 - 35; }
+// `s.bytes()` / `s.as_bytes()`: one text operand's bytes as a FRESH `u8[]`, a
+// slot per byte. Not a window — the slot-array model has no zero-copy view, so
+// the AST lowering allocates here too (ir.op_str_bytes) and the result is a
+// unit of this frame like any other fresh container.
+pub function str_bytes(): i32 { return 0 - 36; }
+// `xs.sum()` / `xs.product()` over an `i32[]`: the array is read and the answer
+// is a fresh i32 that owns nothing. `xs.join(sep)` over a `string[]` reads both
+// operands and answers a fresh string. Each is one runtime helper, the same one
+// the AST lowering calls.
+pub function arr_sum(): i32 { return 0 - 37; }
+pub function arr_product(): i32 { return 0 - 38; }
+pub function arr_join(): i32 { return 0 - 39; }
 
 function failed(why: string): Analysis {
     return Analysis { ok: false, why: why, dependencies: [], flow: ssalive.Flow { ok: false, why: why, live_in: [], live_out: [] } };
@@ -702,7 +714,11 @@ function str_index_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string
 // bytes, and the cell and map vocabularies.
 function is_builtin_op(kind: i32): boolean {
     return kind == length() || kind == append() || kind == with() || kind == slice() || kind == str_index()
-        || is_cell_op(kind) || is_map_op(kind);
+        || kind == str_bytes() || is_arr_helper_op(kind) || is_cell_op(kind) || is_map_op(kind);
+}
+
+pub function is_arr_helper_op(kind: i32): boolean {
+    return kind == arr_sum() || kind == arr_product() || kind == arr_join();
 }
 
 pub function is_cell_op(kind: i32): boolean { return kind == cell_new() || kind == cell_get() || kind == cell_set(); }
@@ -712,10 +728,46 @@ pub function is_map_op(kind: i32): boolean {
         || kind == map_keys() || kind == map_values() || kind == map_delete() || kind == map_cleared();
 }
 
+// A view reaches the bytes the same way a string does, so either box is a legal
+// receiver; the result is the fresh byte array, never a window onto the source.
+function str_bytes_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 1) { return "str bytes arity"; }
+    if (!is_text(f.values[ins.args[0]])) { return "str bytes receiver"; }
+    if let typeinfo.TypeArray(a) = result {
+        if (is_u8(a.elem)) { return ""; }
+    }
+    return "str bytes result";
+}
+
+// The reductions read an `i32[]` and answer a plain i32; the join reads a
+// `string[]` and a separator and answers a fresh string. None of the three
+// keeps an operand, so the receiver is borrowed as a length's is.
+function arr_reduce_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 1) { return "array reduce arity"; }
+    if (!is_i32(result)) { return "array reduce result"; }
+    if let typeinfo.TypeArray(a) = f.values[ins.args[0]] {
+        if (is_i32(a.elem)) { return ""; }
+    }
+    return "array reduce receiver";
+}
+
+function arr_join_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 2) { return "array join arity"; }
+    if (!is_string(result)) { return "array join result"; }
+    if (!is_text(f.values[ins.args[1]])) { return "array join separator"; }
+    if let typeinfo.TypeArray(a) = f.values[ins.args[0]] {
+        if (is_string(a.elem)) { return ""; }
+    }
+    return "array join receiver";
+}
+
 function builtin_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.kind_tag == arr_join()) { return arr_join_error(ins, f, result); }
+    if (ins.kind_tag == arr_sum() || ins.kind_tag == arr_product()) { return arr_reduce_error(ins, f, result); }
     if (ins.kind_tag == length()) { return length_error(ins, f, result); }
     if (ins.kind_tag == slice()) { return slice_error(ins, f, result); }
     if (ins.kind_tag == str_index()) { return str_index_error(ins, f, result); }
+    if (ins.kind_tag == str_bytes()) { return str_bytes_error(ins, f, result); }
     if (ins.kind_tag == with()) { return with_error(ins, f, result); }
     if (is_cell_op(ins.kind_tag)) { return cell_error(ins, f, result); }
     if (is_map_op(ins.kind_tag)) { return map_error(ins, f, result); }
@@ -1260,17 +1312,14 @@ function converts_as_integer(t: typeinfo.Type): boolean { return is_integer(t) |
 // compares, is this direction, and the AST lowering treats it as an ascription
 // for the same reason.
 //
-// The OTHER direction is not admitted, and the asymmetry is the point rather
-// than an omission. An address is not a reference the ownership planner
-// tracks, so `s as usize` is the last typed USE of `s`: the planner drops the
-// box there while the address goes on naming it, and a later `p as string`
-// reads freed memory. core/map knows this — `out as usize` carries an explicit
-// `__fern_rc_inc` for exactly that reason, and its comment calls it severing
-// the escape analysis — but the compensation is the source's, not something
-// this boundary can infer. Admitting it unguarded is a use-after-free the
-// sanitizer catches on the escaping shape.
+// The other direction hands out a second name for storage this frame still
+// owns, so the address ANCHORS its source (borrows_storage): without that the
+// planner would drop the box at `s as usize`, its last typed use, while the
+// address went on naming it. An address that leaves the frame outlives the
+// anchor, which is why core/map carries an explicit `__fern_rc_inc` on the one
+// it returns; the anchor covers every read inside the frame.
 function reinterprets(from: typeinfo.Type, to: typeinfo.Type): boolean {
-    return is_usize(from) && reference(to);
+    return (is_usize(from) && reference(to)) || (reference(from) && is_usize(to));
 }
 
 // The address converts to and from every integer width, as native admits it
@@ -1611,13 +1660,22 @@ function projects(kind: i32): boolean {
         || kind == slice() || kind == str_as();
 }
 
+// An address is the box's own slot read as an integer: it owns nothing and
+// converts nothing, so its type says it anchors nothing while every read
+// through it reads the source's storage.
+function borrows_storage(ins: ssa.SInst, f: Func): boolean {
+    if (ins.kind_tag != cast()) { return false; }
+    return reference(f.values[ins.args[0]]) && is_usize(f.values[ins.result]);
+}
+
 function borrow_parents(f: Func): i32[] {
     var parents: i32[] = [];
     var i: i32 = 0;
     while (i < f.graph.nvals) { parents = parents.append(0 - 1); i = i + 1; }
     for b in f.graph.blocks {
         for ins in b.insts {
-            if (projects(ins.kind_tag) && semtypes.needs_anchor(f.values[ins.result])) {
+            var anchors: boolean = projects(ins.kind_tag) && semtypes.needs_anchor(f.values[ins.result]);
+            if (anchors || borrows_storage(ins, f)) {
                 parents = parents.with(ins.result, ins.args[0]);
             }
         }

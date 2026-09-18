@@ -68,9 +68,25 @@ file" readable as "is restricted".
 ### Compile-error cases
 
 A case containing `expected.error` is **not run**. It must fail the
-front-end — parse, module load, or type check — and the captured error
-must contain the trimmed contents of `expected.error`. This gives
-declarative coverage of the rejection paths behind the `E0NN` codes.
+front-end — parse, module load, or type check. This gives declarative
+coverage of the rejection paths behind the `E0NN` codes.
+
+`expected.error` holds **one line per expected diagnostic**, and the
+case asserts both directions: every line must appear in the reported
+errors, and every error CODE reported must be named by some line.
+Repeats of the same code are the case doing its job — one diagnostic
+per offending element is normal — so the second half is over distinct
+codes, not over the number of diagnostics.
+
+The second half is why the file is a list. A case usually carries
+functions showing what IS allowed beside the one that is rejected, and
+under a plain substring match those were never checked to compile: a
+second diagnostic was reported, matched past, and never seen.
+`diag_e053` documented an in-place array write as the allocation-free
+`fip` shape for months that way, with the `E056` saying it does not
+compile sitting in the output the whole time (#9601). When a second
+code IS legitimate — a cascade the rejected construct causes — add a
+line for it, which records the cascade rather than hiding it.
 
 Such a case must carry none of `expected.stdout`, `expected.exit`,
 `stdin`, `match` or `backends`; those are ignored on this path, and a

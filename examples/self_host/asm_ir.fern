@@ -5989,7 +5989,7 @@ function ssa_load_params(f: ssa.SFunc, reg_of: i32[], s: asmcore.EmitState): asm
 // block behind its label. prune_dead first takes out the zeros the lift gives
 // every declared local and the loop phis nothing reads.
 function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, ops: ir.Op[], s: asmcore.EmitState): asmcore.EmitState {
-    var f: ssa.SFunc = ssa.prune_dead(lifted);
+    var f: ssa.SFunc = ssa.prune_dead(ssa.prune_trivial_phis(lifted));
     var reg_of: i32[] = ssa.regalloc_linear(f, ssa_nregs(), ssa_nsaved(), 0, true);
     var lp: string = ".Lssa_" + asmcore.sanitize_label(label_name) + "_";
     s = s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n");
@@ -6045,7 +6045,11 @@ function ssa_try_function(r: irlower.LowerResult, label_name: string, s: asmcore
     var t_lift: i64 = monotonic_ns();
     var lifted: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(label_name, r.n_params, r.n_locals, r.ops);
     var why: string = lifted.bail;
-    if (lifted.ok) { why = ssa_unsupported(lifted.func); }
+    if (lifted.ok) {
+        var collision: i32 = ssa.repeated_block_id(lifted.func);
+        if (collision >= 0) { ircore.ssa_block_id_collision(label_name, collision); }
+        why = ssa_unsupported(lifted.func);
+    }
     var lift_ms: i64 = (monotonic_ns() - t_lift) / 1000000i64;
     if (why != "") {
         if (ircore.ssa_report_on()) { eprint("FERN_SSA: " + label_name + ": " + why + "\n"); }
@@ -8765,7 +8769,10 @@ function emit_ir_runtime_fern_fn(src: string, all_structs: irlower.StructTab, s:
 // under the leak-mode ceiling. The side-table bases (b_*) are ALWAYS computed
 // over the WHOLE all_funcs (never windowed) so cross-window call tagging is
 // identical to the unsharded emit; only the emit loop is windowed.
-function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab, s: asmcore.EmitState, globl_defs: boolean, lo: i32, hi: i32, cache: irlower.LowerResult[], base: irlower.FnSigs): asmcore.EmitState {
+// `check_claims` is false for module_runtime_needs, which runs this whole loop
+// only to read the need-set off the EmitState and discards the text. A probe
+// must answer, so it does not get to refuse the module (#9655).
+function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab, s: asmcore.EmitState, globl_defs: boolean, lo: i32, hi: i32, cache: irlower.LowerResult[], base: irlower.FnSigs, check_claims: boolean): asmcore.EmitState {
     var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
     // #4394 lever 3: when `cache` is non-empty the caller (emit_module_ir_gated)
     // has ALREADY lowered every function — into cache[i], indexed by mod.funcs
@@ -8788,6 +8795,7 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all
     // window that overshoots the module length can't index past mod.funcs.
     var hh: i32 = hi;
     if (hh < 0 || hh > mod.funcs.len()) { hh = mod.funcs.len(); }
+    if (check_claims) { ircore.check_fip_claims(mod.funcs, lo, hh, cache, s.struct_decls, sg, false); }
     var fi: i32 = lo;
     while (fi < hh) {
         // Per-module: mark the definition `.globl` so a sibling module's
@@ -8841,7 +8849,7 @@ pub function module_runtime_needs(mod: parser.Module): string[] {
     // signature view suffices (a cross-module call's NEED set is the callee's,
     // aggregated separately via module_runtime_needs over each module). Extract
     // the bases into locals here (once) and pass them as individual params.
-    s = emit_module_funcs(mod, mod.funcs, stab, s, false, 0, 0 - 1, [], ircore.wp_fn_sigs(mod.funcs, stab));
+    s = emit_module_funcs(mod, mod.funcs, stab, s, false, 0, 0 - 1, [], ircore.wp_fn_sigs(mod.funcs, stab), false);
     s = s.close_needs();
     strbuf_reset();
     return s.needed;
@@ -8952,7 +8960,6 @@ pub function emit_module_ir_gated_sub(mod: parser.Module, known: string[], sub: 
     var base: irlower.FnSigs = ircore.wp_fn_sigs(im.funcs, imtab);
     base = ircore.sub_sigs(sub, base);
     var g: ircore.Lowered = ircore.lower_gated(im, imtab, irlower.fn_sigs_with_dyn(base, im.trait_reqs), known, false, sub);
-    ircore.fail_on_fip_claims(g);
     if (!g.ok) { return ""; }
     // Every function eligible — emit from the cache (no second lowering).
     return emit_module_ir_unit_backend(im, true, false, "", [], im.funcs, imtab, 0, 0 - 1, ircore.sub_cache(sub, g.cache), base, ssa);
@@ -9731,7 +9738,7 @@ function emit_module_ir_unit_backend(mod: parser.Module, is_entry: boolean, glob
     // emit_module_funcs. The strfldok / FNPTR need seeding below recomputes its
     // two columns directly (all_funcs is in scope) rather than re-reading a base
     // that was just passed as an arg.
-    s = emit_module_funcs(mod, all_funcs, all_structs, s, globl_defs, lo, hi, cache, b);
+    s = emit_module_funcs(mod, all_funcs, all_structs, s, globl_defs, lo, hi, cache, b, true);
     // #4355: admit the replaced-STRING-field arm per type, from the
     // WHOLE-PROGRAM read scan (a unit-local func list would under-count the
     // reads and re-open the UAF the scan exists to prevent; see

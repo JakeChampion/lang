@@ -177,6 +177,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		want []string // codes the self-host checker should print
 	}{
 		{"clean", "function main(): i32 { return 1 + 2; }\n", nil},
+		// The `.with` receiver root walk (#9699). The self-host matched a bare
+		// identifier only, so a field receiver — the structure-of-arrays shape
+		// `fbip` exists for — drew E053 there and nothing natively, and
+		// examples/fip/event_loop_fbip.fern did not compile self-host at all.
+		// A chain is E053 in both: it allocates in assignment position (#9702).
+		{"e053-with-on-an-own-structs-field", "struct S { xs: i32[] }\nfip function f(own s: S): i32[] { return s.xs.with(0, 1); }\nfunction main(): i32 { return f(S { xs: [1, 2] })[0]; }\n", nil},
+		{"e053-with-on-a-borrowed-structs-field", "struct S { xs: i32[] }\nfip function f(s: S): i32[] { return s.xs.with(0, 1); }\nfunction main(): i32 { return f(S { xs: [1, 2] })[0]; }\n", []string{"E053"}},
+		{"e053-with-chain-on-own", "fip function f(own b: i32[]): i32[] { return b.with(0, 1).with(1, 2); }\nfunction main(): i32 { return f([1, 2])[0]; }\n", []string{"E053"}},
 		// Shadowed-callee scoping (#9532). A binding shadows an own-func's name
 		// inside ITS OWN scope: a block-local from its declaration to the end of
 		// its block, a match binder for its arm. The self-host answered from a
@@ -1530,6 +1538,15 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"try-result-ret-ok", "function get(): Result[i32, string] { return Ok(3); }\nfunction f(): Result[i32, string] { var v: i32 = get()?; return Ok(v + 1); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"try-lambda-ret-i32", "function f(): Option[i32] {\n    var g = (): i32 => { var o: Option[i32] = Some(1); var v: i32 = o?; return v; };\n    return Some(1);\n}\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
 		{"try-lambda-ret-option-ok", "function f(): i32 {\n    var g = (): Option[i32] => { var o: Option[i32] = Some(1); var v: i32 = o?; return Some(v); };\n    return 2;\n}\nfunction main(): i32 { return 0; }\n", nil},
+		// E042 not-a-`?`-type on a NON-primitive operand (#9331). The rule
+		// used to fire only for a known scalar, so an unmarked enum — which
+		// types to a union here — was accepted where native refuses it, and
+		// the self-host went on to lower it, since its `?` admits a marked
+		// enum by SHAPE rather than by marker. A `type X = A | B` alias is
+		// refused for the same reason and with the same message on both.
+		{"try-on-unmarked-enum", "enum Flag { On(i32), Off }\nfunction pick(f: Flag): Flag { var v: i32 = f?; return On(v + 1); }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
+		{"try-on-union-alias", "struct A { n: i32 }\nstruct B { n: i32 }\ntype Shape = A | B;\nfunction f(x: Shape): i32 { var y: i32 = x?; return y; }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
+		{"try-on-marked-enum-ok", "@try\nenum MyOpt { Got(i32), Nope }\nfunction pick(f: MyOpt): MyOpt { var v: i32 = f?; return Got(v + 1); }\nfunction main(): i32 { return 0; }\n", nil},
 		// E079 through a VALUE BLOCK (#9553). A value block desugars to a
 		// zero-arg call of a zero-param lambda, and irlower inlines it rather
 		// than lowering a function, so a `?` inside one still leaves the

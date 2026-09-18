@@ -2528,7 +2528,16 @@ func addr_as_bytes {
     ret v1
 }
 
-refused cast contract: string as usize
+modes 2 result usize
+v0:string v1:usize
+func text_as_addr {
+  b0:
+    v0 = param 0
+    v1 = cast v0
+    ret v1
+}
+
+refused cast contract: u8 as f64
 modes 1 1 result usize
 v0:usize v1:usize v2:usize
 func handle_sum {

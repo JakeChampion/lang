@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -181,9 +180,7 @@ func duTree(t *testing.T) string {
 	duWrite(t, j("dir\xffx", "inner\xfe"), 1)
 
 	// A FIFO, which du counts and does not open.
-	if err := syscall.Mkfifo(j("fifo"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	seedFifo(t, j("fifo"))
 
 	// --files0-from lists: two names, no trailing NUL, empty, an empty
 	// NAME mid-list, a `-` name, a missing name, and a trailing slash.

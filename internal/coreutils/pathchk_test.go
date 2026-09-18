@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 )
 
@@ -56,9 +55,7 @@ func pathchkTree(t *testing.T) string {
 	// `loop/x` is ELOOP.
 	link("loop", "loop")
 	link("dir", "dirlink")
-	if err := syscall.Mkfifo(filepath.Join(dir, "fifo"), 0o644); err != nil {
-		t.Fatalf("mkfifo: %v", err)
-	}
+	seedFifo(t, filepath.Join(dir, "fifo"))
 	// A directory nothing may search. The mode goes back before t.TempDir's
 	// own cleanup, which was registered first and so runs last.
 	noperm := filepath.Join(dir, "noperm")

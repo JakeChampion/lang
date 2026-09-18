@@ -2091,19 +2091,23 @@ function run(): i32 {
         eprint("fern: unknown -backend: " + backend + " (want flat or ssa, or omit it for the target's default emitter)\n");
         return 2;
     }
-    if (backend == "ssa" && platforms.for_target(target).isa != "arm64" && platforms.for_target(target).isa != "x86-64") {
+    var ssa_isa: boolean = platforms.for_target(target).isa == "arm64" || platforms.for_target(target).isa == "x86-64";
+    if (backend == "ssa" && !ssa_isa) {
         eprint("fern: -backend ssa is not available for -target " + target + " (available for: arm64-linux, arm64-darwin, arm64-android, x86-64-linux)\n");
         return 2;
     }
-    // The target's default emitter. arm64 is on the register path: its output
-    // is smaller than the stack machine's (0.94x the instructions, 0.93x the
-    // linked binary) and the compiler it builds is 30-49% faster, at 1.04x the
-    // self-build time against a 1.5x ceiling
-    // (docs/ssa-log/2026-09-17-arm64-meets-every-flip-condition.md). x86-64
-    // stays on the stack machine until its binary meets the same condition;
-    // its excess is frame traffic from half arm64's register budget.
+    // The target's default emitter is the register path wherever there is one,
+    // which is the same pair the refusal above names. Both native ISAs meet
+    // every condition the flip is held to: the output is smaller than the
+    // stack machine's — arm64 0.94x the instructions and 0.93x the linked
+    // binary, x86-64 0.92x and 0.80x — the compiler it builds is faster,
+    // 30-49% on arm64 and 35% on x86-64, and the self-build costs 1.04x and
+    // 1.08x against a 1.5x ceiling. wasm has no register path to select.
+    // docs/ssa-log/2026-09-17-arm64-meets-every-flip-condition.md and
+    // docs/ssa-log/2026-09-18-x86-64-meets-every-flip-condition.md.
     if (backend == "") {
-        if (platforms.for_target(target).isa == "arm64") { backend = "ssa"; } else { backend = "flat"; }
+        backend = "flat";
+        if (ssa_isa) { backend = "ssa"; }
     }
 
     // `-fmt FILE...` is per-file, gofmt-style: every positional is formatted in

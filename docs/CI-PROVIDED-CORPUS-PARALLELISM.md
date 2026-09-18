@@ -95,7 +95,7 @@ Run the focused case selection first:
 
 ```sh
 go test ./internal/e2eselfhost \
-  -run '^TestSelfHostIRVerifyProvidedCorpusClean$/cases/^(multi_file|pub_use_reexport|diag_e065)$' \
+  -run '^TestSelfHostIRVerifyProvidedCorpusClean$/cases/^(multi_file|pub_use_reexport|diag_p004)$' \
   -race -parallel 4 -count=1 -v
 ```
 

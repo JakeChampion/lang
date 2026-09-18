@@ -3,7 +3,6 @@ package coreutils
 import (
 	"os"
 	"path/filepath"
-	"syscall"
 	"testing"
 )
 
@@ -43,9 +42,7 @@ func syncTree(t *testing.T, dir string) {
 	if err := os.Symlink("nowhere", filepath.Join(dir, "dangling")); err != nil {
 		t.Fatalf("symlink dangling: %v", err)
 	}
-	if err := syscall.Mkfifo(filepath.Join(dir, "p"), 0o644); err != nil {
-		t.Fatalf("mkfifo p: %v", err)
-	}
+	seedFifo(t, filepath.Join(dir, "p"))
 }
 
 func syncCases(t *testing.T) []invocation {

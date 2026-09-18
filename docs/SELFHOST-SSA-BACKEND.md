@@ -172,6 +172,16 @@ not register pressure. The order to take that in:
   shaped like `internal/e2e/arm64_ssa_differential_test.go`.
 - `scripts/selfhost-emit-hashes` does not reach this backend; a purity sweep
   of it needs `-backend ssa` added to that script's SSA mode.
+- `ssa.repeated_block_id` is checked in each backend's `ssa_try_function`
+  before emit: the emitters write one `.Lssa_<fn>_<id>:` label per entry in
+  `f.blocks`, so two entries carrying one id spell one label twice and the
+  assembler rejects the module without naming the pass that produced it. A
+  repeat is a compiler bug, so the check exits rather than declining the
+  function onto the stack machine. Every state the lift leaves a dead block
+  in must therefore carry a FRESH id — the shape `br` establishes, and what
+  a loop nothing leaves alive failed to (#9688).
+  `internal/e2eselfhost/self_host_ssa_lift_blocks_test.go` lifts those op
+  streams directly.
 
 ## What this retires, and in what order
 
@@ -196,34 +206,43 @@ path needs `build_func` any more. In order:
    (#4112, the 2026-09-16 comment). **arm64 now meets all three** — binary
    0.93x, self-build 1.04x against a 1.5x ceiling, corpus clean on both
    targets — and the numbers are in
-   `docs/ssa-log/2026-09-17-arm64-meets-every-flip-condition.md`. x86-64
-   meets the corpus condition and not the size one, so the flip is per
-   target. **Taken for arm64**: omitting `-backend` selects the register
-   path there and the stack machine everywhere else. `-backend flat` still
-   names the stack machine on arm64, and a function the register path
-   declines still falls back to it on its own.
+   `docs/ssa-log/2026-09-17-arm64-meets-every-flip-condition.md`. x86-64 met
+   the corpus condition and not the size one until #9683 folded the trivial
+   phis, which took its output from 1.25x the stack machine's to 0.92x the
+   instructions and 0.80x the linked binary; re-measured after it, every
+   condition holds there too
+   (`docs/ssa-log/2026-09-18-x86-64-meets-every-flip-condition.md`).
+   **Taken on both native ISAs** — arm64 in #9672, x86-64 after it: omitting
+   `-backend` selects the register path wherever there is one, and the stack
+   machine on wasm, where there is not. `-backend flat` still names the stack
+   machine on either native ISA, and a function the register path declines
+   still falls back to it on its own.
 
 ## The target
 
 The backend exists to beat the stack machine on all three of these at once,
 measured on the compiler building itself and on `examples/bench`:
 
+All three are met on BOTH targets as of 2026-09-18, after folding the
+lift's trivial phis (`docs/ssa-log/2026-09-18-the-trivial-phi-was-the-whole-gap.md`).
+
 - **Faster output.** Native's SSA build is at or under flat on every bench
   program; the self-host's must be too, and the compiler it builds must run
   the whole tree faster than the flat-built one. The compiler built with
-  `-backend ssa` compiles `checker.fern` in 8.9 s against the flat-built
-  compiler's 12.7 s and `irlower.fern` in 2.1 s against 4.2 s (arm64-darwin,
-  best of three): 30% and 49% faster.
+  `-backend ssa` compiles `checker.fern` in 8.2 s against the flat-built
+  compiler's 13.5 s and `irlower.fern` in 2.0 s against 4.4 s (arm64-darwin,
+  best of three): **40% and 53% faster**.
 - **Smaller output.** Native's SSA text is 45% of flat's over the corpus.
-  The self-host's is **0.94x flat's on arm64** (3,815,776 against 4,051,791
-  instructions for the compiler) and the linked binary **0.93x**
-  (16,624,896 against 17,805,056), both from 1.12x before the call-result
-  work. x86-64 is 1.25x and 1.26x: its remaining excess is frame traffic
-  from a register budget half arm64's, not instruction selection.
+  The self-host's is **0.69x flat's on arm64** (2,805,064 against 4,043,922
+  instructions for the compiler) and **0.92x on x86-64** (2,812,651 against
+  3,043,396), from 1.12x and 1.25x. The linked compiler follows: 12.8 MB
+  against 18.0 on arm64-darwin, 11.6 against 14.5 on x86-64-linux.
 - **Faster compile.** The lift, prune and allocation must cost less than the
   emitted text they save the assembler: the self-host assembles its own
-  output, so fewer lines is less to parse. The SSA self-build is **1.04x**
-  the flat one on arm64 (112.5 s against 108.6 s); 1.5x is native's flip
-  condition and the ceiling here, with parity the aim.
+  output, so fewer lines is less to parse. The SSA self-build is **1.02x**
+  the flat one on arm64 (110.3 s against 108.6 s); 1.5x is native's flip
+  condition and the ceiling here, with parity the aim. Per module it is
+  already under: `checker.fern` emits in 7.2 s through the register path
+  against 7.5 s through the stack machine.
 
 An entry in `docs/ssa-log/` carries each step's numbers against these three.

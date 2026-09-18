@@ -1292,6 +1292,103 @@ pub function use_counts(f: SFunc): i32[] {
     return uses;
 }
 
+// A phi whose operands are all one value IS that value. The production lift
+// emits a placeholder phi per live local at every merge and every loop
+// header, and most locals are untouched on the paths that meet there, so most
+// of those phis are trivial. Folding them before allocation takes the values
+// out of the interval set altogether, which is where the frame traffic comes
+// from — an allocator can only choose between spilling and not spilling, it
+// cannot decline to have a value.
+//
+// A self-reference does not count: a loop header phi reads [init, itself]
+// while the body leaves the local alone, and that is trivial too.
+
+// phi_sole_operand is the one value a phi collapses to, or -1. `repl`
+// resolves operands folded in an earlier round.
+function phi_sole_operand(ins: SInst, repl: i32[]): i32 {
+    var only: i32 = 0 - 1;
+    var i: i32 = 0;
+    while (i < ins.args.len()) {
+        var a: i32 = resolve_repl(repl, ins.args[i]);
+        if (a != ins.result) {
+            if (only < 0) { only = a; } else if (only != a) { return 0 - 1; }
+        }
+        i = i + 1;
+    }
+    return only;
+}
+
+function resolve_repl(repl: i32[], v: i32): i32 {
+    var seen: i32 = 0;
+    while (repl[v] != v && seen < 1000) { v = repl[v]; seen = seen + 1; }
+    return v;
+}
+
+// trivial_phi_repl builds the value-to-value map, to a fixpoint: folding one
+// phi can make the next trivial.
+function trivial_phi_repl(f: SFunc): i32[] {
+    var repl: i32[] = [];
+    var i: i32 = 0;
+    while (i < f.nvals) { repl = repl.append(i); i = i + 1; }
+    var rounds: i32 = 0;
+    var changed: boolean = true;
+    while (changed && rounds < 100) {
+        changed = false;
+        rounds = rounds + 1;
+        for blk in f.blocks {
+            for ins in blk.insts {
+                if (ins.kind_tag != 8) { continue; }
+                if (repl[ins.result] != ins.result) { continue; }
+                var only: i32 = phi_sole_operand(ins, repl);
+                if (only >= 0 && only != ins.result) {
+                    repl = repl.with(ins.result, only);
+                    changed = true;
+                }
+            }
+        }
+    }
+    return repl;
+}
+
+// prune_trivial_phis drops the folded phis and rewrites every reader.
+pub function prune_trivial_phis(f: SFunc): SFunc {
+    var repl: i32[] = trivial_phi_repl(f);
+    var any: boolean = false;
+    var i: i32 = 0;
+    while (i < f.nvals) { if (repl[i] != i) { any = true; } i = i + 1; }
+    if (!any) { return f; }
+    var flat: i32[] = [];
+    i = 0;
+    while (i < f.nvals) { flat = flat.append(resolve_repl(repl, i)); i = i + 1; }
+    var nblocks: SBlock[] = [];
+    for blk in f.blocks {
+        var ninsts: SInst[] = [];
+        for ins in blk.insts {
+            if (ins.kind_tag == 8 && flat[ins.result] != ins.result) { continue; }
+            ninsts = ninsts.append(rewrite_args(ins, flat));
+        }
+        nblocks = nblocks.append(SBlock { id: blk.id, insts: ninsts, term: rewrite_term(blk.term, flat), preds: blk.preds });
+    }
+    return SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry, takes_env: f.takes_env };
+}
+
+// repeated_block_id names the first block id that appears twice in `f.blocks`,
+// or -1 when every id is distinct. The emitters write one `.Lssa_<fn>_<id>:`
+// per entry, so a repeat spells one label twice and the assembler rejects the
+// whole module without naming the pass that produced it (#9688).
+pub function repeated_block_id(f: SFunc): i32 {
+    var top: i32 = 0;
+    for blk in f.blocks { if (blk.id > top) { top = blk.id; } }
+    var seen: i32[] = [];
+    var i: i32 = 0;
+    while (i <= top) { seen = seen.append(0); i = i + 1; }
+    for blk in f.blocks {
+        if (seen[blk.id] == 1) { return blk.id; }
+        seen = seen.with(blk.id, 1);
+    }
+    return 0 - 1;
+}
+
 // prune_dead drops every pure instruction (const / copy / binary / unary /
 // phi) whose result reaches no instruction with an effect and no terminator,
 // through any number of pure instructions. Marking from those roots, rather

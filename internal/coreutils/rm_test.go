@@ -1,9 +1,7 @@
 package coreutils
 
 import (
-	"os"
 	"path/filepath"
-	"syscall"
 	"testing"
 )
 
@@ -38,13 +36,13 @@ func init() {
 // the per-file prompt names.
 func rmFlat(t *testing.T, dir string) {
 	t.Helper()
-	rmWriteFile(t, dir, "a", "")
-	rmWriteFile(t, dir, "b", "abc")
-	rmWriteFile(t, dir, "c", "")
-	rmMkdirAll(t, dir, "adir")
-	rmSymlink(t, "a", dir, "sym")
-	rmSymlink(t, "nowhere", dir, "dang")
-	rmMkfifo(t, dir, "fifo")
+	seedWrite(t, dir, "a", "")
+	seedWrite(t, dir, "b", "abc")
+	seedWrite(t, dir, "c", "")
+	seedMkdir(t, dir, "adir")
+	seedSymlink(t, dir, "a", "sym")
+	seedSymlink(t, dir, "nowhere", "dang")
+	seedFifo(t, filepath.Join(dir, "fifo"))
 }
 
 // rmTree is the recursion fixture: a directory holding a file, a
@@ -53,11 +51,11 @@ func rmFlat(t *testing.T, dir string) {
 // visible in `-v`.
 func rmTree(t *testing.T, dir string) {
 	t.Helper()
-	rmMkdirAll(t, dir, "d")
-	rmWriteFile(t, dir, "d/x", "")
-	rmMkdirAll(t, dir, "d/e")
-	rmWriteFile(t, dir, "d/e/y", "")
-	rmWriteFile(t, dir, "d/z", "")
+	seedMkdir(t, dir, "d")
+	seedWrite(t, dir, "d/x", "")
+	seedMkdir(t, dir, "d/e")
+	seedWrite(t, dir, "d/e/y", "")
+	seedWrite(t, dir, "d/z", "")
 }
 
 // rmDash is the fixture for the leading-hyphen hint: names that getopt
@@ -65,11 +63,11 @@ func rmTree(t *testing.T, dir string) {
 // lstat finds where a stat would not.
 func rmDash(t *testing.T, dir string) {
 	t.Helper()
-	rmWriteFile(t, dir, "-x", "")
-	rmWriteFile(t, dir, "-r", "")
-	rmWriteFile(t, dir, "-v", "")
-	rmWriteFile(t, dir, "--foo", "")
-	rmSymlink(t, "nowhere", dir, "-z")
+	seedWrite(t, dir, "-x", "")
+	seedWrite(t, dir, "-r", "")
+	seedWrite(t, dir, "-v", "")
+	seedWrite(t, dir, "--foo", "")
+	seedSymlink(t, dir, "nowhere", "-z")
 }
 
 // rmWide is 26 files created in reverse alphabetical order. rm passes fts
@@ -78,9 +76,9 @@ func rmDash(t *testing.T, dir string) {
 // tells the two apart.
 func rmWide(t *testing.T, dir string) {
 	t.Helper()
-	rmMkdirAll(t, dir, "d")
+	seedMkdir(t, dir, "d")
 	for c := 'z'; c >= 'a'; c-- {
-		rmWriteFile(t, dir, "d/"+string(c), "")
+		seedWrite(t, dir, "d/"+string(c), "")
 	}
 }
 
@@ -88,48 +86,48 @@ func rmWide(t *testing.T, dir string) {
 // is not simply "files then directories".
 func rmMixed(t *testing.T, dir string) {
 	t.Helper()
-	rmMkdirAll(t, dir, "d")
-	rmWriteFile(t, dir, "d/zz", "")
-	rmMkdirAll(t, dir, "d/aa")
-	rmWriteFile(t, dir, "d/aa/1", "")
-	rmSymlink(t, "zz", dir, "d/ll")
-	rmMkdirAll(t, dir, "d/bb")
-	rmWriteFile(t, dir, "d/mm", "")
+	seedMkdir(t, dir, "d")
+	seedWrite(t, dir, "d/zz", "")
+	seedMkdir(t, dir, "d/aa")
+	seedWrite(t, dir, "d/aa/1", "")
+	seedSymlink(t, dir, "zz", "d/ll")
+	seedMkdir(t, dir, "d/bb")
+	seedWrite(t, dir, "d/mm", "")
 }
 
 // rmDeep is four levels, to prove the post-order unwinding.
 func rmDeep(t *testing.T, dir string) {
 	t.Helper()
-	rmMkdirAll(t, dir, "d/a/b/c")
-	rmWriteFile(t, dir, "d/a/b/c/x", "")
-	rmWriteFile(t, dir, "d/a/y", "")
-	rmWriteFile(t, dir, "d/z", "")
+	seedMkdir(t, dir, "d/a/b/c")
+	seedWrite(t, dir, "d/a/b/c/x", "")
+	seedWrite(t, dir, "d/a/y", "")
+	seedWrite(t, dir, "d/z", "")
 }
 
 // rmEmpty is one empty directory: the shape `-d` exists for, and the one
 // whose `-r -i` prompt is `remove directory` rather than `descend into`.
 func rmEmpty(t *testing.T, dir string) {
 	t.Helper()
-	rmMkdirAll(t, dir, "emp")
+	seedMkdir(t, dir, "emp")
 }
 
 // rmSymDir is a symlink to a non-empty directory, for the trailing-slash
 // rule: `rm -r sl/` descends through the link and then fails to rmdir it.
 func rmSymDir(t *testing.T, dir string) {
 	t.Helper()
-	rmMkdirAll(t, dir, "sd")
-	rmWriteFile(t, dir, "sd/x", "")
-	rmSymlink(t, "sd", dir, "sl")
+	seedMkdir(t, dir, "sd")
+	seedWrite(t, dir, "sd/x", "")
+	seedSymlink(t, dir, "sd", "sl")
 }
 
 func rmDangling(t *testing.T, dir string) {
 	t.Helper()
-	rmSymlink(t, "nowhere", dir, "sl")
+	seedSymlink(t, dir, "nowhere", "sl")
 }
 
 func rmLoop(t *testing.T, dir string) {
 	t.Helper()
-	rmSymlink(t, "loop", dir, "loop")
+	seedSymlink(t, dir, "loop", "loop")
 }
 
 // rmNested is a directory holding a file and an empty directory, for the
@@ -137,16 +135,16 @@ func rmLoop(t *testing.T, dir string) {
 // ancestors alone while declining a child FILE's does not.
 func rmNested(t *testing.T, dir string) {
 	t.Helper()
-	rmMkdirAll(t, dir, "d")
-	rmWriteFile(t, dir, "d/f", "")
-	rmMkdirAll(t, dir, "d/e")
+	seedMkdir(t, dir, "d")
+	seedWrite(t, dir, "d/f", "")
+	seedMkdir(t, dir, "d/e")
 }
 
 // rmNestedDirs is three levels of empty directories, so a decline at the
 // deepest one is visible in what the two above it are never asked.
 func rmNestedDirs(t *testing.T, dir string) {
 	t.Helper()
-	rmMkdirAll(t, dir, "d/e/g")
+	seedMkdir(t, dir, "d/e/g")
 }
 
 // rmNestedFile is a file one level down, so declining it and then
@@ -154,36 +152,8 @@ func rmNestedDirs(t *testing.T, dir string) {
 // grandparent asked.
 func rmNestedFile(t *testing.T, dir string) {
 	t.Helper()
-	rmMkdirAll(t, dir, "d/e")
-	rmWriteFile(t, dir, "d/e/x", "")
-}
-
-func rmWriteFile(t *testing.T, dir, name, data string) {
-	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(data), 0o644); err != nil {
-		t.Fatalf("write %s: %v", name, err)
-	}
-}
-
-func rmMkdirAll(t *testing.T, dir, name string) {
-	t.Helper()
-	if err := os.MkdirAll(filepath.Join(dir, name), 0o755); err != nil {
-		t.Fatalf("mkdir %s: %v", name, err)
-	}
-}
-
-func rmSymlink(t *testing.T, target, dir, name string) {
-	t.Helper()
-	if err := os.Symlink(target, filepath.Join(dir, name)); err != nil {
-		t.Fatalf("symlink %s: %v", name, err)
-	}
-}
-
-func rmMkfifo(t *testing.T, dir, name string) {
-	t.Helper()
-	if err := syscall.Mkfifo(filepath.Join(dir, name), 0o644); err != nil {
-		t.Fatalf("mkfifo %s: %v", name, err)
-	}
+	seedMkdir(t, dir, "d/e")
+	seedWrite(t, dir, "d/e/x", "")
 }
 
 // rmYes is one prompt answer per line, for a case that will be asked n times.
@@ -495,48 +465,48 @@ func rmEmptyCwd(t *testing.T, dir string) {
 // element longer than one byte.
 func rmDashFile(t *testing.T, dir string) {
 	t.Helper()
-	rmWriteFile(t, dir, "-", "")
+	seedWrite(t, dir, "-", "")
 }
 
 // rmFifoTree puts a kind the walk has to unlink rather than descend
 // into next to a plain file.
 func rmFifoTree(t *testing.T, dir string) {
 	t.Helper()
-	rmMkdirAll(t, dir, "d")
-	rmMkfifo(t, dir, "d/p")
-	rmWriteFile(t, dir, "d/f", "")
+	seedMkdir(t, dir, "d")
+	seedFifo(t, filepath.Join(dir, "d/p"))
+	seedWrite(t, dir, "d/f", "")
 }
 
 // rmOptDir is a directory whose name getopt would read as an option.
 func rmOptDir(t *testing.T, dir string) {
 	t.Helper()
-	rmMkdirAll(t, dir, "-d")
-	rmWriteFile(t, dir, "-d/x", "")
+	seedMkdir(t, dir, "-d")
+	seedWrite(t, dir, "-d/x", "")
 }
 
 // rmSymEmpty is a symlink to an EMPTY directory: `-d sl` removes the
 // link, `-d sl/` reaches the directory and fails to rmdir it.
 func rmSymEmpty(t *testing.T, dir string) {
 	t.Helper()
-	rmMkdirAll(t, dir, "sd")
-	rmSymlink(t, "sd", dir, "sl")
+	seedMkdir(t, dir, "sd")
+	seedSymlink(t, dir, "sd", "sl")
 }
 
 func rmDots(t *testing.T, dir string) {
 	t.Helper()
-	rmMkdirAll(t, dir, "...")
+	seedMkdir(t, dir, "...")
 }
 
 func rmDotPrefix(t *testing.T, dir string) {
 	t.Helper()
-	rmMkdirAll(t, dir, "d/..x")
+	seedMkdir(t, dir, "d/..x")
 }
 
 func rmSymInTree(t *testing.T, dir string) {
 	t.Helper()
-	rmMkdirAll(t, dir, "d/sub")
-	rmWriteFile(t, dir, "d/sub/x", "")
-	rmSymlink(t, "sub", dir, "d/link")
+	seedMkdir(t, dir, "d/sub")
+	seedWrite(t, dir, "d/sub/x", "")
+	seedSymlink(t, dir, "sub", "d/link")
 }
 
 func rmTreeAndFlat(t *testing.T, dir string) {

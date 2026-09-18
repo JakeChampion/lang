@@ -94,11 +94,11 @@ function main(): i32 {
 
 // benchX86Cmd runs an x86-64 Linux binary: directly on an amd64 host, under
 // the qemu prefix x86NativeRunner supplies elsewhere.
-func benchX86Cmd(runner []string, bin string) *exec.Cmd {
+func benchX86Cmd(runner []string, bin string, args ...string) *exec.Cmd {
 	if len(runner) == 0 {
-		return exec.Command(bin)
+		return exec.Command(bin, args...)
 	}
-	return exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...)
+	return exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), bin), args...)...)
 }
 
 func TestBenchHarnessDoesNotChargeItsOwnAllocations(t *testing.T) {

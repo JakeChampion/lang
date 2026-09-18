@@ -1183,6 +1183,38 @@ function builtin_with(c: ast.ExprCall, recv: Value, s: State): Value {
     return define(s, ssasem.with(), [recv.id, at.id, v.id], 0, "", t);
 }
 
+// The two reductions are declared on `i32[]` alone and the join on `string[]`
+// alone, as the AST lowering gates them, so a receiver of any other shape falls
+// through to a declared method of that name.
+function is_i32_array(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeArray(a) = t { return ssasem.is_i32(a.elem); }
+    return false;
+}
+
+function is_string_array(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeArray(a) = t { return ssasem.is_string(a.elem); }
+    return false;
+}
+
+// `xs.sum()` / `xs.product()` read the array and answer a fresh i32, so the
+// receiver is borrowed and nothing is handed over.
+function builtin_reduce(fa: ast.ExprFieldAccess, recv: Value, s: State): Value {
+    var kind: i32 = ssasem.arr_sum();
+    if (fa.field == "product") { kind = ssasem.arr_product(); }
+    return define(s, kind, [recv.id], 0, "", t_i32());
+}
+
+// `xs.join(sep)` reads the array and the separator and answers a fresh string.
+// A view is a legal separator — the joined bytes are copied out of it — so the
+// element rule an append carries does not apply here.
+function builtin_join(c: ast.ExprCall, recv: Value, s: State): Value {
+    var sep: Value = expr(c.args[0], s, t_string());
+    s = sep.s;
+    if (!s.ok) { return sep; }
+    if (!ssasem.is_text(s.values[sep.id])) { return refused(s, "join separator type"); }
+    return define(s, ssasem.arr_join(), [recv.id, sep.id], 0, "", t_string());
+}
+
 // A cell's methods: `get` hands out a unit of the element, and `set` takes the
 // new element's unit and returns nothing, so it stands only as a statement.
 function cell_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: State, statement: boolean): Value {
@@ -1336,8 +1368,17 @@ function builtin_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: 
     if (semtypes.is_cell(s.values[recv.id])) { return cell_method(c, fa, recv, s, statement); }
     if (ssasem.is_map(s.values[recv.id])) { return map_method(c, fa, recv, s); }
     if (fa.field == "len" && c.args.len() == 0) { return builtin_length(recv, s); }
+    if ((fa.field == "bytes" || fa.field == "as_bytes") && c.args.len() == 0 && ssasem.is_text(s.values[recv.id])) {
+        return define(s, ssasem.str_bytes(), [recv.id], 0, "", typeinfo.TypeArray { elem: t_u8() });
+    }
     if (fa.field == "append" && c.args.len() == 1) { return builtin_append(c, recv, s); }
     if (fa.field == "with" && c.args.len() == 2) { return builtin_with(c, recv, s); }
+    if ((fa.field == "sum" || fa.field == "product") && c.args.len() == 0 && is_i32_array(s.values[recv.id])) {
+        return builtin_reduce(fa, recv, s);
+    }
+    if (fa.field == "join" && c.args.len() == 1 && is_string_array(s.values[recv.id])) {
+        return builtin_join(c, recv, s);
+    }
     return refused(s, "unsupported call target: " + typeinfo.spelling(s.values[recv.id]) + "." + fa.field);
 }
 
@@ -1374,8 +1415,8 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
     // A builtin's receiver names no declaration this boundary can hold a
     // contract for, so it is matched by shape instead. A string's methods are
     // declared in the standard library on a `string` receiver, and a view
-    // reaches them as a lent box; the two builtins every text has come first.
-    if (owner == "" && (fa.field == "len" || fa.field == "append" || !ssasem.is_text(s.values[recv.id]))) {
+    // reaches them as a lent box; the builtins every text has come first.
+    if (owner == "" && (fa.field == "len" || fa.field == "append" || fa.field == "bytes" || fa.field == "as_bytes" || !ssasem.is_text(s.values[recv.id]))) {
         var b: Value = builtin_call(c, fa, recv, s, statement);
         if (b.s.ok) { return b; }
         // A receiver the builtin vocabulary does not own may still be a method
@@ -2194,10 +2235,10 @@ function qualified(name: string): boolean {
     return false;
 }
 
-// Nested, struct-field, tuple, literal and `@` patterns read a value through
-// no operation this boundary has.
+// Nested, struct-field, tuple and literal patterns read a value through no
+// operation this boundary has.
 function pattern_shape_error(pv: ast.PatVariant): string {
-    if (pv.nested.len() > 0 || pv.at_binding != "" || pv.has_lit_cond) { return "unsupported pattern"; }
+    if (pv.nested.len() > 0 || pv.has_lit_cond) { return "unsupported pattern"; }
     if (pv.tup_kinds.len() > 0 || pv.field_names.len() > 0) { return "unsupported pattern"; }
     if (qualified(pv.type_name)) { return "unsupported qualified pattern"; }
     return "";
@@ -2228,10 +2269,19 @@ function narrowed(pv: ast.PatVariant, scrut: i32, s: State): State {
     return bind(v.s, pv.binding, v.id);
 }
 
+// `@` names the complete scrutinee alongside the pattern's own bindings. The
+// scrutinee is already a value of the graph, so the name is a second spelling
+// of it rather than a projection, and it holds no reference of its own.
+function at_bound(pv: ast.PatVariant, scrut: i32, s: State): State {
+    if (pv.at_binding == "" || pv.at_binding == "_") { return s; }
+    return bind(s, pv.at_binding, scrut);
+}
+
 // Each named payload position is a projection of the scrutinee, bound for
 // the arm's body; `_`, an absent payload list and a `void` payload's binding
 // bind nothing.
 function payloads(pv: ast.PatVariant, scrut: i32, fields: typeinfo.Type[], s: State, layout: i32): State {
+    s = at_bound(pv, scrut, s);
     if (layout == semrecords.layout_member()) { return narrowed(pv, scrut, s); }
     if (pv.binding == "" || fields.len() == 0) { return s; }
     var names: string[] = [pv.binding];
