@@ -48,6 +48,52 @@ function main(): i32 { return bracket.answer(); }
 
 const selfHostMangleWant = 40
 
+// The self-host leg of the native collision fixture.
+//
+// Sanitising is not injective: `[.fern` and `_.fern` both reduce to `_`. Native
+// has had a collision loop in assignManglePrefixes all along; the self-host
+// bundler had none, so sanitising alone would have made these two modules
+// mangle their decls to the same symbol — a divergence introduced by the fix
+// rather than by the input. Both compilers now suffix the second one.
+const selfHostMangleCollisionMain = `import "./[" as bracket;
+import "./_" as under;
+
+function main(): i32 { return bracket.answer() + under.answer(); }
+`
+
+func TestSelfHostModuleNameMangleCollision(t *testing.T) {
+	h := selfHostCLIForHost(t)
+	dir := t.TempDir()
+	for name, src := range map[string]string{
+		"[.fern":    selfHostMangleBracket,
+		"_.fern":    selfHostMangleBracket,
+		"main.fern": selfHostMangleCollisionMain,
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	entry := filepath.Join(dir, "main.fern")
+	for _, tg := range h.targets {
+		t.Run(tg.target, func(t *testing.T) {
+			out := filepath.Join(dir, "prog-"+tg.target)
+			h.compileWith(t, tg, entry, out)
+			var cmd *exec.Cmd
+			if len(tg.runner) == 0 {
+				cmd = exec.Command(out)
+			} else {
+				cmd = exec.Command(tg.runner[0], append(append([]string{}, tg.runner[1:]...), out)...)
+			}
+			_, _ = cmd.CombinedOutput()
+			// Both modules' answer(), so a collision that lost one definition
+			// would not reach this number even if it linked.
+			if got, want := cmd.ProcessState.ExitCode(), 2*selfHostMangleWant; got != want {
+				t.Errorf("exit code: got %d, want %d", got, want)
+			}
+		})
+	}
+}
+
 func TestSelfHostModuleNameMangle(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
