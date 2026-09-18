@@ -167,6 +167,14 @@ not register pressure. The order to take that in:
   the functions that must go through the backend. It also pins the refusal
   for other targets and that a second `-o` to one path replaces the
   executable.
+- `internal/e2eselfhost/self_host_ssa_loop_tail_label_test.go` pins the lift
+  invariant the emitters rest on: a block reaches the block list exactly once,
+  so the listing defines each `.Lssa_<fn>_<id>` once. What broke it was a
+  TCO wrapper's `loop` whose body ends in a `return` — the lift stayed on the
+  tail block it had just appended and the function-tail flush appended it again,
+  and gas refused 55 already-defined symbols in the compiler's own sources
+  (#9685, #9687). `assertNoDuplicateLocalLabels` carries the same check over the
+  read_file and frontend-bundle listings.
 - The whole examples corpus, built both ways and run, is the measurement
   in the ssa-log entries; `.github` has no lane for it yet. That lane is
   shaped like `internal/e2e/arm64_ssa_differential_test.go`.

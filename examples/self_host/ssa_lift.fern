@@ -928,6 +928,7 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResu
                 var lf: LoopFall = loop_fall(cur_dead, cur_term, cur_id, next_blk, slots);
                 next_blk = lf.next_blk;
                 if (lf.falls) { cur_term = STerm_br(lf.cont); }
+                var tail_lives: boolean = loop_tail_lives(cur_dead, cur_term);
                 blocks = loop_tail_appended(blocks, cur_dead, cur_id, cur_insts, cur_term, cur_preds);
                 var luid2: i32 = sc_uid[t2];
                 var hid: i32 = sc_target[t2];
@@ -972,6 +973,16 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResu
                 } else {
                     var rsl: i32 = 0;
                     while (rsl < nslots) { slots = slots.with(rsl, sc_header_phis[t2 * nslots + rsl]); rsl = rsl + 1; }
+                    // The tail block is in `blocks` now, so the dead region
+                    // after the loop continues in a fresh block — as a `br`
+                    // leaves one. Staying on the appended id let the
+                    // function-tail flush append it a SECOND time, and the
+                    // emitters write one label per block: two definitions of
+                    // `.Lssa_<fn>_<id>`, which gas refuses (#9685, #9687).
+                    if (tail_lives) {
+                        cur_id = next_blk; next_blk = next_blk + 1;
+                        cur_insts = []; cur_preds = []; cur_term = STerm_none();
+                    }
                 }
                 sc_kind = drop_last_s(sc_kind); sc_uid = drop_last(sc_uid); sc_target = drop_last(sc_target);
                 sc_else = drop_last(sc_else); sc_seen_else = drop_last(sc_seen_else); sc_then_blk = drop_last(sc_then_blk);
@@ -1080,8 +1091,15 @@ function loop_fall(dead: boolean, term: ssa.STerm, id: i32, next_blk: i32, slots
     return LoopFall { falls: true, tail: id, cont: next_blk, next_blk: next_blk + 1, slots: slots };
 }
 
+// loop_tail_lives reports whether the loop body's last block reaches the loop's
+// `end` live and terminated — the block loop_tail_appended appends, and the one
+// the `end` handler must then stop naming as current.
+function loop_tail_lives(dead: boolean, term: ssa.STerm): boolean {
+    return !dead && term.kind_tag != 0;
+}
+
 function loop_tail_appended(blocks: ssa.SBlock[], dead: boolean, id: i32, insts: ssa.SInst[], term: ssa.STerm, preds: i32[]): ssa.SBlock[] {
-    if (dead || term.kind_tag == 0) { return blocks; }
+    if (!loop_tail_lives(dead, term)) { return blocks; }
     return blocks.append(ssa.SBlock { id: id, insts: insts, term: term, preds: preds });
 }
 

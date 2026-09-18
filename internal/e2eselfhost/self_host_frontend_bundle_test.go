@@ -48,6 +48,7 @@ func TestSelfHostFrontendBundleX86_64(t *testing.T) {
 	// cite, a driver segfault). Asserting it here turns any such regression into a
 	// clear "dangling label X" failure naming the offending symbol.
 	assertNoDanglingLocalLabels(t, "frontend bundle merged asm", []byte(mergedAsm))
+	assertNoDuplicateLocalLabels(t, "frontend bundle merged asm", []byte(mergedAsm))
 
 	mergedBin := buildBin(t, gcc, progDir, "merged", mergedAsm)
 	var mcmd *exec.Cmd
