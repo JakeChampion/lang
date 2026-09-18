@@ -1135,7 +1135,11 @@ pub struct MethodSig { name: string, receiver_type: string, param_types: typeinf
 // `pub type Shape = Circle | Square`. Variants are captured
 // as bare type-name strings; variant resolution lives in
 // type_assignable, which walks the variant list at use sites.
-pub struct UnionSig { name: string, variants: string[] }
+// is_try carries the decl's `@try` marker, which `?` needs and variant lookup
+// does not. A `type X = A | B` alias is never marked, which is the right
+// answer for it: native refuses `?` on one exactly as it refuses an unmarked
+// enum.
+pub struct UnionSig { name: string, variants: string[], is_try: boolean }
 
 // A flat name → type map plus the function signature table
 // plus the struct-decl table plus the union-alias table.
@@ -2788,7 +2792,20 @@ function (s: Scope) lookup_union(name: string): UnionSig {
   }
   // Sentinel: empty name signals "no such union".
   var empty_v: string[] = [];
-  return UnionSig { name: "", variants: empty_v };
+  return UnionSig { name: "", variants: empty_v, is_try: false };
+}
+
+// try_able_union answers whether `?` accepts an operand of this union type.
+// Option and Result are accepted without a marker — they predate it and
+// cannot be spelled with one — and any other enum needs `@try`. Mirrors
+// native's registerTryShape membership; the SHAPE rule the marker also
+// carries is E078's, checked at the declaration.
+function try_able_union(s: Scope, name: string): boolean {
+  if (name == "Option" || name == "Result") {
+    return true;
+  }
+  var us: UnionSig = s.lookup_union(name);
+  return us.name.len() != 0 && us.is_try;
 }
 
 // is_variant_of: is the named struct one of the variants of the
@@ -5026,7 +5043,7 @@ function collect_union_sigs(aliases: parser.TypeAlias[], struct_names: string[])
       k = k + 1;
     }
     if (!dup) {
-      out = out.append(UnionSig { name: a.name, variants: a.variants });
+      out = out.append(UnionSig { name: a.name, variants: a.variants, is_try: false });
     }
   }
   return out;
@@ -9454,10 +9471,25 @@ function call_diags_unary(u: ast.ExprUnary, s: Scope, out: util.Diag[]): util.Di
       // return's generic args the way the native message does.
       match (trt) {
         typeinfo.TypeUnion(tu) => {
-          if (tu.name == "Option" && is_primitive_type(s.ret_type)) {
-            out = out.append(dg_at("E042", "`?` on Option requires the surrounding function to return Option[_], got " + type_label(s.ret_type), u.line, u.col));
-          } else if (tu.name == "Result" && is_primitive_type(s.ret_type)) {
-            out = out.append(dg_at("E042", "`?` on Result requires the surrounding function to return Result[_, E], got " + type_label(s.ret_type), u.line, u.col));
+          if (try_able_union(s, tu.name)) {
+            // The enum IS `?`-able, so the remaining question is the
+            // return shape. Naming the enum rather than a placeholder
+            // matches native, which prints the operand's enum in both
+            // slots (#9344).
+            if (is_primitive_type(s.ret_type)) {
+              out = out.append(dg_at("E042", "`?` on " + tu.name + " requires the surrounding function to return " + tu.name + ", got " + type_label(s.ret_type), u.line, u.col));
+            }
+          } else {
+            // E042 not-a-`?`-type (#9331). The conservatism above covers a
+            // primitive operand; an unmarked enum is the other operand `?`
+            // cannot take, and it reads as a union here rather than a
+            // primitive, so it fell through. Gated on the union being
+            // DECLARED in this module, so an unresolved name stays with the
+            // native checker rather than drawing a guess.
+            var us: UnionSig = s.lookup_union(tu.name);
+            if (us.name.len() != 0) {
+              out = out.append(dg_at("E042", "`?` operator requires an Option, a Result, or an `@try` enum, got " + tu.name + " — mark it `@try` to make it one", u.line, u.col));
+            }
           }
         },
         _ => {}
@@ -14639,7 +14671,7 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
   // no enum decls, so this is inert on the bundle; it enables
   // exhaustiveness for user / corpus enum matches.
   for ed in mod.enums {
-    unions = unions.append(UnionSig { name: ed.name, variants: ed.variant_names });
+    unions = unions.append(UnionSig { name: ed.name, variants: ed.variant_names, is_try: ed.try_marker });
   }
   var well_typed: boolean = true;
   if (!validate_union_sigs(unions, struct_names)) {
@@ -15054,7 +15086,7 @@ function module_env(mod: parser.Module): ModuleEnv {
   }
   var unions: UnionSig[] = collect_union_sigs(mod.aliases, struct_names);
   for ed in mod.enums {
-    unions = unions.append(UnionSig { name: ed.name, variants: ed.variant_names });
+    unions = unions.append(UnionSig { name: ed.name, variants: ed.variant_names, is_try: ed.try_marker });
   }
   var union_names: string[] = union_sig_names(unions);
   var sigs: FuncSig[] = collect_func_sigs(mod.funcs, struct_names, union_names);
@@ -16027,7 +16059,7 @@ function build_module_tables(mod: parser.Module): ModuleTables {
   }
   var unions: UnionSig[] = collect_union_sigs(mod.aliases, struct_names);
   for ed in mod.enums {
-    unions = unions.append(UnionSig { name: ed.name, variants: ed.variant_names });
+    unions = unions.append(UnionSig { name: ed.name, variants: ed.variant_names, is_try: ed.try_marker });
   }
   var union_names: string[] = union_sig_names(unions);
   var sigs: FuncSig[] = collect_func_sigs(mod.funcs, struct_names, union_names);
