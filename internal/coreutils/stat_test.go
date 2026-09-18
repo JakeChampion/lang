@@ -78,9 +78,7 @@ func statTree(t *testing.T) string {
 	if err := os.Link(j("f"), j("hard")); err != nil {
 		t.Fatal(err)
 	}
-	if err := syscall.Mkfifo(j("fifo"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	seedFifo(t, j("fifo"))
 
 	// The permission alphabet %A and %a have to render: the three special
 	// bits with and without the execute bit under them, an empty mode and
