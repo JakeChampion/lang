@@ -845,13 +845,23 @@ function reuse_pairs(f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock): ReusePair
                     // projections that carried its fields over are earlier
                     // instructions, and the plan has already proved it dead.
                     //
+                    // `d != ins.result` excludes the degenerate donor: a
+                    // construction whose value is never read has its drop at its
+                    // own step, so the value dying here IS the result. Pairing it
+                    // with itself reads a token slot for a value that does not
+                    // exist yet, which always declines — and it costs the
+                    // module its last allocating op, so the heap runtime block
+                    // stopped being emitted and the link broke on an undefined
+                    // `__fn___fern_arr_dec`.
+                    //
                     // `pending < 0` is a soundness condition, not a preference:
                     // the frame has ONE token slot, so a self pairing emitted
                     // while a donor is held for a later construction overwrites
                     // that donor's box with its own — which this construction
                     // has already built into and is returning live.
                     for d in step.drops {
-                        if (selfs[pos] < 0 && reuse_slots(f.values[d], f) == claims
+                        if (selfs[pos] < 0 && d != ins.result
+                                && reuse_slots(f.values[d], f) == claims
                                 && util.index_of_i32(ins.args, d) < 0) { selfs = selfs.with(pos, d); }
                     }
                 }

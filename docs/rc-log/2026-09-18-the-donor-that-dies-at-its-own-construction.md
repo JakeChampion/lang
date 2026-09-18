@@ -128,6 +128,55 @@ Found by a review bot on the PR, with a fixture; confirmed by running it
 rather than on its word, and its fix taken unchanged. `token-slot-overlap` in
 `TestSelfHostSemanticReuseDifferentialX86_64` is that fixture.
 
+## The donor that is its own recipient
+
+A construction whose value is never read has its drop at its own step — so the
+value dying there IS the construction's result, and the first cut took it as a
+donor for itself. The token is emitted before the construction, so it read a
+frame slot for a value that does not exist yet: zeroed, `rc_is_unique(0)` false,
+token null, `__fern_alloc_reuse(null, n)` allocates fresh. A pairing that can
+only decline.
+
+Harmless on its own, and not harmless in effect. **It cost the module its last
+ALLOCATING op.** `ir.op_allocates` is the gate that decides whether the heap +
+RC runtime block is emitted, and the reuse emits `__fern_alloc_reuse` in PLACE
+of the construction's allocating op. A `main` whose one construction is a
+degenerate self-pairing therefore claims no heap need, and the link fails:
+
+```
+undefined reference to `__fn___fern_arr_dec'
+undefined reference to `__fn___fern_alloc_reuse'
+```
+
+`d != ins.result` is the fix, and it is worth exactly **one** pairing over the
+whole compiler — 1,167 to 1,166 — so every other one was real.
+
+Caught by `TestDifferential_SelfHostSemanticX86_64` at seed 452, a fuzzer
+program the targeted suites have no equivalent of, and reduced to three lines:
+a struct built and never read.
+
+### The second bug under it
+
+`op_allocates` answers "needs the heap + RC runtime", and its own comments
+record two earlier times the enumeration had gone stale — `const_struct` in
+#6149 and `struct_copy` before it, both found the same way, by a link breaking
+on an undefined `__fn___fern_arr_dec`. **A direct call into that block is a
+third claimant it never admitted**, and the reuse is the first thing to emit
+one with no allocating op beside it.
+
+So `ir.op_needs_heap(o)` now answers for both, naming the block's own exports
+rather than a list of ops, and the x86-64 gate and wasm's `module_allocates`
+share it — wasm already had a call clause with four names in it, which is the
+drift this removes. arm64 marks the need at its emit sites and needed nothing.
+
+**No test can fail on that half**, because excluding the degenerate donor
+removes the only route to it: a module has to construct its first aggregate
+somewhere, and a constant one is already admitted as `const_struct`. It is kept
+because the predicate was wrong for a program the fuzzer really produced, and
+because the failure mode of a gate is one-sided — the worst a widened one does
+is emit a runtime block nothing calls, where the worst a pairing rule does is
+free a live box.
+
 ## Trap
 
 The entry this one corrects ranked the forms it had conceived of and read the
@@ -146,3 +195,10 @@ whole-compiler fixpoint is the least able of them to: it proves the compiler
 reproduces itself, and a pairing that never fires there is invisible to it. A
 new pairing rule needs a fixture built for the rule, and the fixture has to be
 shown to FAIL without it.
+
+Both bugs this entry records were found by things outside those suites — a
+review bot reading the diff, and a fuzzer seed. Neither was found by the gate
+that exists to hold reuse changes, and the reuse differential could not even
+express the second one: it had a case for a pairing the runtime declines and no
+case for a pairing the compiler must never offer. That third class is `noPair`
+now, and `degenerate-self-donor` is its first member.
