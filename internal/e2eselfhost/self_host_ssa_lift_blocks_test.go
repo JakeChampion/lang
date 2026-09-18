@@ -14,10 +14,13 @@ import (
 // A loop nothing leaves alive is where that happened: the loop's `end` appends
 // the body's tail block, and the lift then stayed on that block's id, so the
 // function's own tail appended it a second time. The driver lifts that op
-// stream directly rather than going through a source program, because no
-// source shape in the corpus reaches a bare `loop` scope whose body leaves
-// alive — the 55 collisions on `main` all came from the compiler's own
-// modules.
+// stream directly rather than going through a source program, because no loop
+// anybody WRITES ends that way: the scope comes from irlower.tco_self_tail,
+// which wraps a whole function body in `loop { … } end` so a self tail call
+// jumps to the header, and a function body ends in a return. That is why the
+// 55 collisions were all in the compiler's own modules — every one of those
+// functions is self-recursive and none contains a source loop
+// (docs/ssa-log/2026-09-18-where-the-lifts-duplicate-loop-came-from.md).
 const ssaLiftBlockIDProg = `// Assert the lift never returns two blocks with one id.
 import "./ir";
 import "./ssa";
