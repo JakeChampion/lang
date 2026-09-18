@@ -731,14 +731,22 @@ function reuse_slots(t: typeinfo.Type, f: ssasem.Func): i32 {
     return 0 - 1;
 }
 
-// A builtin union's box is a tag word and one payload word whatever the
-// variant. A declared one's box is the LIVE variant's, so its count is this
-// frame's to know only where every variant agrees — native's own enum reuse
-// asks the same question (`enum_all_variants_same_field_count`).
+// A declared enum's box is the LIVE variant's, so its count is this frame's to
+// know only where every variant agrees — native's own enum reuse asks the same
+// question (`enum_all_variants_same_field_count`).
+//
+// A BUILTIN union's box has no count this boundary can state, and that is a
+// target fact rather than a conservatism. One lowering feeds all three
+// backends: the register ones build every Option/Result as `__fern_arr_box(2)`,
+// while wasm sizes the box by the payload AT THE SITE — eight bytes for a
+// narrow one and sixteen for an i64 or an f64 — so a `Result[i64, string]`
+// box is two slots built as Ok and one built as Err. There is no single answer
+// to give, and a wrong one is the pairing that emits its machinery and then
+// declines.
 function union_slots(t: typeinfo.Type, f: ssasem.Func): i32 {
     var at: i32 = semrecords.find_enum(f.enums, t);
     if (at < 0) { return 0 - 1; }
-    if (f.enums[at].layout == semrecords.layout_option()) { return 2; }
+    if (f.enums[at].layout == semrecords.layout_option()) { return 0 - 1; }
     var n: i32 = 0 - 1;
     for v in f.enums[at].variants {
         if (n < 0) { n = v.fields.len(); }
