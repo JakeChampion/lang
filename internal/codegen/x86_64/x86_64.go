@@ -13715,13 +13715,16 @@ func (g *generator) emitSetProcessGroupRuntime() {
 // line-discipline byte, and NCCS = 19 control characters — 36 bytes. The word
 // array the language sees is one element per field in that order, so 24
 // elements, and `internal/tty` carries the same layout for the interpreter.
+// Exported because the x86-64 SSA backend fills the same struct for the same
+// kernel, and a word count or request number that differs between the two
+// emitters is a program whose terminal settings depend on which built it.
 const (
 	termiosBytes = 36
-	termiosNCCS  = 19
-	termiosWords = 4 + 1 + termiosNCCS
-	tcgets       = 0x5401
+	TermiosNCCS  = 19
+	TermiosWords = 4 + 1 + TermiosNCCS
+	LinuxTCGETS  = 0x5401
 	// TCSETS, TCSETSW and TCSETSF are consecutive, so the action adds.
-	tcsets = 0x5402
+	LinuxTCSETS = 0x5402
 )
 
 // emitTermiosGetRuntime emits `__fern_termios_get(fd) → Result[i64[],
@@ -13747,19 +13750,19 @@ func (g *generator) emitTermiosGetRuntime() {
 	// struct at [rsp].
 	g.emit("sub rsp, 40")
 	g.emit("mov edi, edi") // the fd is an i32; ioctl reads the whole register
-	g.emit(fmt.Sprintf("mov esi, %d", tcgets))
+	g.emit(fmt.Sprintf("mov esi, %d", LinuxTCGETS))
 	g.emit("mov rdx, rsp")
 	g.emitSyscall(sysIoctl)
 	g.emit("test rax, rax")
 	g.emit("js .Ltcg_err")
 	// i64[] in the array box shape: cap and rc below the data pointer,
 	// length at -4. rc = 1, because the array is fresh and owned.
-	g.emit(fmt.Sprintf("mov edi, %d", termiosWords*8+16))
+	g.emit(fmt.Sprintf("mov edi, %d", TermiosWords*8+16))
 	g.emit("call __fern_alloc")
 	g.emit("lea r12, [rax + 16]")
-	g.emit(fmt.Sprintf("mov dword ptr [r12 - 12], %d", termiosWords))
+	g.emit(fmt.Sprintf("mov dword ptr [r12 - 12], %d", TermiosWords))
 	g.emit("mov dword ptr [r12 - 8], 1")
-	g.emit(fmt.Sprintf("mov ebx, %d", termiosWords))
+	g.emit(fmt.Sprintf("mov ebx, %d", TermiosWords))
 	g.emitArrayLenStore("ebx", "r12")
 	// The four flag words zero-extend: a 32-bit load clears the high half.
 	for i := 0; i < 4; i++ {
@@ -13773,7 +13776,7 @@ func (g *generator) emitTermiosGetRuntime() {
 	g.emit("movzx eax, byte ptr [rsp + rcx + 17]")
 	g.emit("mov [r12 + rcx*8 + 40], rax")
 	g.emit("inc rcx")
-	g.emit(fmt.Sprintf("cmp rcx, %d", termiosNCCS))
+	g.emit(fmt.Sprintf("cmp rcx, %d", TermiosNCCS))
 	g.emit("jb .Ltcg_cc")
 	g.emit("mov rbx, r12")
 	g.emit("mov edi, 16")
@@ -13822,7 +13825,7 @@ func (g *generator) emitTermiosSetRuntime() {
 	g.emit("sub rsp, 40")
 	g.emit("mov rbx, rdx")  // the words
 	g.emit("mov r12d, esi") // the action
-	g.emit(fmt.Sprintf("cmp dword ptr [rbx - 4], %d", termiosWords))
+	g.emit(fmt.Sprintf("cmp dword ptr [rbx - 4], %d", TermiosWords))
 	g.emit("jne .Ltcs_einval")
 	g.emit("cmp r12d, 2")
 	g.emit("ja .Ltcs_einval")
@@ -13837,10 +13840,10 @@ func (g *generator) emitTermiosSetRuntime() {
 	g.emit("mov rax, [rbx + rcx*8 + 40]")
 	g.emit("mov [rsp + rcx + 17], al")
 	g.emit("inc rcx")
-	g.emit(fmt.Sprintf("cmp rcx, %d", termiosNCCS))
+	g.emit(fmt.Sprintf("cmp rcx, %d", TermiosNCCS))
 	g.emit("jb .Ltcs_cc")
 	g.emit("mov edi, edi")
-	g.emit(fmt.Sprintf("lea esi, [r12 + %d]", tcsets))
+	g.emit(fmt.Sprintf("lea esi, [r12 + %d]", LinuxTCSETS))
 	g.emit("mov rdx, rsp")
 	g.emitSyscall(sysIoctl)
 	g.emit("test rax, rax")
@@ -13882,7 +13885,7 @@ func (g *generator) emitTermiosSetRuntime() {
 // to be attached to, so the helper is a constant 0 — the answer that
 // selects plain text (docs/FREESTANDING-CORE.md).
 func (g *generator) emitIsattyRuntime() {
-	const tcgets = 0x5401
+	const LinuxTCGETS = 0x5401
 	g.line("")
 	g.line(".globl __fern_isatty")
 	g.line(".type __fern_isatty, @function")
@@ -13895,7 +13898,7 @@ func (g *generator) emitIsattyRuntime() {
 	}
 	// ioctl(fd, TCGETS, buf). `struct termios` is 60 bytes on Linux; the
 	// 128-byte red zone below rsp holds it without a frame.
-	g.emit(fmt.Sprintf("mov esi, %d", tcgets))
+	g.emit(fmt.Sprintf("mov esi, %d", LinuxTCGETS))
 	g.emit("lea rdx, [rsp - 72]")
 	g.emitSyscall(sysIoctl)
 	// rax == 0 (success) is the terminal answer; anything else is -errno.
