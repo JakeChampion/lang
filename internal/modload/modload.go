@@ -1261,7 +1261,7 @@ func assignManglePrefixes(loaded map[string]*module, entryPath string) {
 			continue
 		}
 		if strings.HasPrefix(m.path, stdlibPrefix) {
-			m.manglePrefix = m.name + "__"
+			m.manglePrefix = sanitizeManglePrefix(m.name) + "__"
 			used[m.manglePrefix] = true
 		}
 	}
@@ -1270,13 +1270,56 @@ func assignManglePrefixes(loaded map[string]*module, entryPath string) {
 		if m.path == entryPath || strings.HasPrefix(m.path, stdlibPrefix) {
 			continue
 		}
-		pref := m.name + "__"
+		base := sanitizeManglePrefix(m.name)
+		pref := base + "__"
 		for k := 1; used[pref]; k++ {
-			pref = fmt.Sprintf("%s_%d__", m.name, k)
+			pref = fmt.Sprintf("%s_%d__", base, k)
 		}
 		m.manglePrefix = pref
 		used[pref] = true
 	}
+}
+
+// sanitizeManglePrefix maps a module basename to something an assembler will
+// accept in a symbol. A file name is not required to be an identifier —
+// `coreutils/[.fern` is the bracket form of test(1) and is named for the
+// program it is — but the prefix contributes to emitted symbols
+// (`__fn_[__help_text`), and gas answers "junk at end of line" (#9684).
+//
+// Applied BEFORE the collision loop above rather than after, so a collision
+// the replacement itself creates — `a-b.fern` beside `a_b.fern` — is
+// disambiguated by the same `_1__` mechanism that already handles two
+// modules sharing a basename, instead of silently becoming one prefix.
+//
+// Identity for every name that is already an identifier, which is every
+// stdlib module and all but one file in the tree, so no existing program's
+// symbols move.
+func sanitizeManglePrefix(name string) string {
+	var b strings.Builder
+	// BYTES, not runes: the self-host's util.mangle_prefix indexes a Fern
+	// string, which is bytes, and the two compilers have to agree on the
+	// symbol a given module produces. Over runes, `café.fern` would be
+	// `caf_` here and `caf__` there.
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c == '_':
+			b.WriteByte(c)
+		case c >= '0' && c <= '9':
+			// A leading digit is legal in a file name and not in a
+			// symbol, so it takes an underscore in front of it.
+			if i == 0 {
+				b.WriteByte('_')
+			}
+			b.WriteByte(c)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	if b.Len() == 0 {
+		return "_"
+	}
+	return b.String()
 }
 
 // exportedMangled resolves a name in this module to the flat mangled
