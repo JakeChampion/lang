@@ -73,6 +73,49 @@ function main(): i32 {
     return v;
 }`, 17, 1, 0},
 
+	// The donor and the recipient are different TYPES. A box is slots, so the
+	// static type test the pairing used to run bought nothing the runtime's own
+	// size-class check does not already give. Mote and Glyph are members of a
+	// struct-union, so the match reads the shape word each construction wrote:
+	// a recipient inheriting the donor's takes the wrong arm, which is why the
+	// answer separates this from a pairing that merely reuses the storage. The
+	// AST path pairs none of the three.
+	{"cross-type", `struct Mote { text: string, k: i32 }
+struct Glyph { xs: i32[], k: i32 }
+type Sigil = Mote | Glyph;
+struct Trio { a: string, b: i32[], c: i32 }
+function sigil_code(g: Sigil): i32 {
+    match (g) {
+        Mote(m) => { return m.k; },
+        Glyph(y) => { return y.xs[1] + 100; }
+    }
+    return 0 - 1;
+}
+function cross_step(seed: i32): Sigil {
+    var a: Mote = Mote { text: "nn", k: seed };
+    var s: i32 = a.k + a.text.len();
+    return Glyph { xs: [s, s + 1], k: s };
+}
+function cross_back(seed: i32): Sigil {
+    var a: Glyph = Glyph { xs: [seed], k: seed };
+    var s: i32 = a.k + a.xs[0];
+    return Mote { text: "mm", k: s };
+}
+function cross_wide(n: i32): i32 {
+    var p: Mote = Mote { text: "pp", k: n };
+    var s: i32 = p.k + p.text.len();
+    var w: Trio = Trio { a: "qq", b: [s], c: s };
+    return w.c + w.b[0] + w.a.len();
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) { t = t + sigil_code(cross_step(i)); i = i + 1; }
+    t = t + sigil_code(cross_back(5)) + cross_wide(3);
+    if (__rc_underflow_count() != 0) { return 99; }
+    return t % 251;
+}`, 189, 3, 0},
+
 	// A record of scalars: pure storage, with no children to release at the
 	// token. The AST path pairs this shape too, so the count alone does not
 	// separate the layers here — the switch and the answer do.
