@@ -382,3 +382,84 @@ func emitChownAtHelper(w func(string, ...any)) {
 		w(".Lssa_chwn_flag:")
 	})(w)
 }
+
+// emitSetFileTimesHelper writes set_file_times(path, atime_sec, atime_nsec,
+// mtime_sec, mtime_nsec, flags) -> Result[(), IoError]: utimensat(AT_FDCWD,
+// path, times, flags).
+//
+// The two `struct timespec`s go on the frame in the kernel's order, access
+// time first. `flags` is Fern's word rather than the kernel's: bit 0 becomes
+// AT_SYMLINK_NOFOLLOW, bits 3 and 4 become UTIME_NOW and bits 1 and 2
+// UTIME_OMIT in the nanosecond half of the timespec they name — each is a
+// sentinel VALUE to utimensat, not a flag, and the seconds half is then not
+// read. Omit is written after now so that it wins when both name one half.
+//
+// rbx = path, r12 = pathz, r13 = its length, r14 = the flags.
+func emitSetFileTimesHelper(w func(string, ...any)) {
+	const (
+		utimeNow  = 1073741823
+		utimeOmit = 1073741822
+	)
+	w("")
+	w("%s:", fnLabel("set_file_times"))
+	w("\tpush rbx")
+	w("\tpush r12")
+	w("\tpush r13")
+	w("\tpush r14")
+	// The timespec pair plus the eight bytes that keep rsp 16-aligned past
+	// four pushes.
+	w("\tsub rsp, 40")
+	w("\tmov rbx, rdi")
+	w("\tmov r14, r9") // flags, across the NUL-termination call
+	w("\tmov [rsp], rsi")
+	w("\tmov [rsp + 8], rdx")
+	w("\tmov [rsp + 16], rcx")
+	w("\tmov [rsp + 24], r8")
+	for _, sub := range []struct {
+		val  int
+		aBit int
+		mBit int
+		aLbl string
+		mLbl string
+	}{
+		{utimeNow, 8, 16, "na", "nm"},
+		{utimeOmit, 2, 4, "a", "m"},
+	} {
+		w("\tmov eax, %d", sub.val)
+		w("\ttest r14d, %d", sub.aBit)
+		w("\tjz .Lssa_sft_%s", sub.aLbl)
+		w("\tmov qword ptr [rsp], 0")
+		w("\tmov [rsp + 8], rax")
+		w(".Lssa_sft_%s:", sub.aLbl)
+		w("\ttest r14d, %d", sub.mBit)
+		w("\tjz .Lssa_sft_%s", sub.mLbl)
+		w("\tmov qword ptr [rsp + 16], 0")
+		w("\tmov [rsp + 24], rax")
+		w(".Lssa_sft_%s:", sub.mLbl)
+	}
+	ssaPathz(w, "sft")
+	ssaAtFdcwd(w, "edi")
+	w("\tmov rsi, r12")
+	w("\tmov rdx, rsp") // &times
+	w("\txor r10d, r10d")
+	w("\ttest r14d, 1")
+	w("\tjz .Lssa_sft_go")
+	w("\tmov r10d, 256") // AT_SYMLINK_NOFOLLOW
+	w(".Lssa_sft_go:")
+	w("\tmov eax, 280") // utimensat
+	w("\tsyscall")
+	w("\ttest rax, rax")
+	w("\tjs .Lssa_sft_err")
+	ssaOptionBox(w, 0, "")
+	w("\tjmp .Lssa_sft_ret")
+	w(".Lssa_sft_err:")
+	w("\tneg rax")
+	ssaIoErr(w)
+	w(".Lssa_sft_ret:")
+	w("\tadd rsp, 40")
+	w("\tpop r14")
+	w("\tpop r13")
+	w("\tpop r12")
+	w("\tpop rbx")
+	w("\tret")
+}
