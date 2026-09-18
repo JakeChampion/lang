@@ -2094,9 +2094,11 @@ function map_key_dest_diag(declared: typeinfo.Type, line: i32, col: i32, s: Scop
 // `+`-joined bound list) whose call-site argument has concrete type `at`
 // that does not conform to Tr (no `impl Tr` and not @derive-provided).
 // Conservative gates (declared trait, known concrete type, bare-name
-// argument, method-set conformance) keep it from false-firing on the
-// self-host bundle's own pervasive bounded-generic calls, which all carry
-// their impls or derives. Mirrors native checker.go's call-site E021 arm.
+// argument) keep it from firing on a type this module cannot reason about.
+// The bundle's own pervasive bounded-generic calls stay clean because they
+// carry their impls or derives, which is what conformance now asks about —
+// not because the check is lenient. Mirrors native checker.go's call-site
+// E021 arm.
 function e021_bound_call_diag(pbound: string, at: typeinfo.Type, s: Scope, ln: i32, cl: i32): util.Diag[] {
   var out: util.Diag[] = [];
   var cty: string = type_label(at);
