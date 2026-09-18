@@ -368,16 +368,32 @@ function x86_elf_binary(asm: string, emit_syms: boolean): string {
 // without knowing where it was written (#6756).
 struct ImportQueue { paths: string[], dirs: string[] }
 
-// queue_imports appends each of mod's loadable import paths (deduped by full
-// path), each tagged with `from_dir` — mod's own directory, which is what its
-// imports resolve against.
+// queued reports whether this import path has already been queued FROM this
+// same directory.
+function queued(paths: string[], dirs: string[], ip: string, from_dir: string): boolean {
+    var i: i32 = 0;
+    while (i < paths.len()) {
+        if (paths[i] == ip && dirs[i] == from_dir) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// queue_imports appends each of mod's loadable import paths, deduped by path
+// AND directory, each tagged with `from_dir` — mod's own directory, which is
+// what its imports resolve against.
 function queue_imports(q: ImportQueue, mod: parser.Module, from_dir: string, root: string, deps: string[]): ImportQueue {
     var paths: string[] = q.paths;
     var dirs: string[] = q.dirs;
     var i: i32 = 0;
     while (i < mod.imports.len()) {
         var ip: string = mod.imports[i].path;
-        if (util.should_load(ip, root, deps) && !util.has_str(paths, ip)) {
+        // Keyed on the path AND the directory it was written in. `./sort` from
+        // the entry and `./sort` from a module in sub/ are the same string and
+        // different files, so deduping on the string alone queued one of them
+        // and gave it the other's directory (#9762). Genuine duplicates are
+        // still collapsed downstream, where the RESOLVED path says so.
+        if (util.should_load(ip, root, deps) && !queued(paths, dirs, ip, from_dir)) {
             paths = paths.append(ip);
             dirs = dirs.append(from_dir + "");
         }
@@ -1158,7 +1174,6 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string)
 
     var q: ImportQueue = queue_imports(ImportQueue { paths: [], dirs: [] }, entry_mod, dir_slash, root, deps);
     var loaded: flatten.LoadedModule[] = [];
-    var done: string[] = [];
     var done_paths: string[] = [];
     var j: i32 = 0;
     while (j < q.paths.len()) {
@@ -1168,10 +1183,13 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string)
         var from_dir: string = from;
         if (from_dir.len() > 1) { from_dir = slice_unchecked(from_dir, 0, from_dir.len() - 1) + ""; }
         var mpath: string = util.resolve_path(ipath, from_dir, root);
-        // One module is one file: `./lib/gnu` from the entry and `./gnu` from
-        // a module in lib/ name the same file and load it once.
-        if (!util.has_str(done, ipath) && !util.has_str(done_paths, mpath)) {
-            done = done.append(ipath);
+        // One module is one file, and the RESOLVED path is the only thing that
+        // says so. `./lib/gnu` from the entry and `./gnu` from a module in
+        // lib/ name the same file and load once; `./sort` from the entry and
+        // `./sort` from a module in sub/ name DIFFERENT files and must both
+        // load. Deduping on the path as written did the second one wrong and
+        // silently dropped the module (#9762).
+        if (!util.has_str(done_paths, mpath)) {
             done_paths = done_paths.append(mpath);
             var msrc: string = "";
             var mok: boolean = false;
@@ -1203,7 +1221,11 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string)
                 return Bundle { entry: entry_mod, loaded: no_mods, merged: entry_mod, pkgs: pkgs, ok: false };
             }
             var m: parser.Module = parser.parse_module(lexer.tokenize(msrc));
-            loaded = loaded.append(flatten.LoadedModule { name: util.module_name(ipath), mod: m });
+            // Identity is the FILE, not its basename: two modules can share a
+            // basename (`std/sort` and `coreutils/sort`) and the bundler has
+            // to tell them apart to give each its own prefix (#9762).
+            m = flatten.resolve_imports(m, mdir, root);
+            loaded = loaded.append(flatten.LoadedModule { name: flatten.module_ident(mpath), mod: m });
             // Attribute and expand against the manifest GOVERNING the importer,
             // which is the entry's only for a direct import.
             var from_man: fern_toml.Manifest = read_manifest(from);
@@ -1211,7 +1233,7 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string)
             q = queue_imports(q, m, mdir, root, fern_toml.dep_names(read_manifest(mdir)));
         }
     }
-    var merged: parser.Module = flatten.bundle(entry_mod, loaded);
+    var merged: parser.Module = flatten.bundle(flatten.resolve_imports(entry_mod, dir_slash, root), loaded);
     // Fill omitted trailing args from default parameter values up front, so the
     // checker, SSA, and interpreter all see complete calls.
     merged = parser.fill_default_args_module(merged);
