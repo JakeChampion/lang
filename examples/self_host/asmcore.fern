@@ -490,6 +490,10 @@ pub function sysno(t: string, name: string): string {
         if (name == "sigaction") { return "13"; }
         if (name == "sigprocmask") { return "14"; }
         if (name == "chdir") { return "80"; }
+        if (name == "chroot") { return "161"; }
+        if (name == "setuid") { return "105"; }
+        if (name == "setgid") { return "106"; }
+        if (name == "setgroups") { return "116"; }
         if (name == "linkat") { return "265"; }
         if (name == "symlinkat") { return "266"; }
         if (name == "readlinkat") { return "267"; }
@@ -598,6 +602,14 @@ pub function sysno(t: string, name: string): string {
         // normalised by rt_src_signal_mask, not here.
         if (name == "sigprocmask") { return "48"; }
         if (name == "chdir") { return "12"; }
+        if (name == "chroot") { return "61"; }
+        // 4.3BSD numbered getgroups 79 and setgroups 80 adjacently;
+        // setuid and setgid came from different eras of the ABI and
+        // are nowhere near either, so these four cannot be derived
+        // from the Linux row by an offset.
+        if (name == "setuid") { return "23"; }
+        if (name == "setgid") { return "181"; }
+        if (name == "setgroups") { return "80"; }
         if (name == "linkat") { return "471"; }
         if (name == "symlinkat") { return "474"; }
         if (name == "readlinkat") { return "473"; }
@@ -698,6 +710,13 @@ pub function sysno(t: string, name: string): string {
     // rt_sigprocmask(2), matching the native arm64 syscall table.
     if (name == "sigprocmask") { return "135"; }
     if (name == "chdir") { return "49"; }
+    // chroot(2) and the credential setters, asm-generic. setgid is the
+    // LOWER number of the setuid/setgid pair here where x86-64 numbers
+    // them the other way, so the two tables are not interchangeable.
+    if (name == "chroot") { return "51"; }
+    if (name == "setuid") { return "146"; }
+    if (name == "setgid") { return "144"; }
+    if (name == "setgroups") { return "159"; }
     return "-1";
 }
 
@@ -1933,6 +1952,54 @@ pub function needs_any(s: EmitState, names: string[]): boolean {
 
 pub function rt_src_chdir(t: string): string {
     return "function __fern_chdir(path: string): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall3(" + sysno(t, "chdir") + ", pathz, 0, 0); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } return Ok(()); }";
+}
+
+// rt_src_chroot backs `chroot(path)` → Result[void, IoError]. chroot(2), the
+// same move one level up from chdir: what every later path resolves against
+// rather than where relative ones start. Byte-for-byte the chdir body above
+// with a different syscall number, so the two stay side by side.
+//
+// EPERM is the answer for any caller without CAP_SYS_CHROOT, which is what
+// `chroot: cannot change root directory to 'x'` reports (#9678).
+pub function rt_src_chroot(t: string): string {
+    return "function __fern_chroot(path: string): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall3(" + sysno(t, "chroot") + ", pathz, 0, 0); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } return Ok(()); }";
+}
+
+// rt_src_setuid and rt_src_setgid back `setuid(id)` / `setgid(id)` →
+// Result[void, IoError]: one body over two syscall numbers, the write side of
+// getuid / getgid.
+//
+// The id is refused HERE when it does not fit in 32 unsigned bits, rather
+// than truncated at the syscall boundary: the kernel reads the low 32 bits of
+// the register for a uid_t argument, so setuid(2^32 + 1) would set uid 1.
+// The check also catches GNU's "no id" spelling, (uid_t) -1, whose i64 form
+// is negative and would otherwise set uid 0xFFFFFFFF.
+//
+// No path to blame, so the IoError names the empty string — the same answer
+// a write error gives.
+pub function rt_src_setuid(t: string): string {
+    return rt_src_cred_set(t, "setuid");
+}
+
+pub function rt_src_setgid(t: string): string {
+    return rt_src_cred_set(t, "setgid");
+}
+
+function rt_src_cred_set(t: string, name: string): string {
+    return "function __fern_" + name + "(id: i64): Result[void, IoError] { if (id < 0) { return Err(__fern_io_error(22, \"\")); } if (id > 4294967295) { return Err(__fern_io_error(22, \"\")); } var rc: i32 = __syscall3(" + sysno(t, name) + ", id as i32, 0, 0); if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } return Ok(()); }";
+}
+
+// rt_src_setgroups backs `setgroups(gids)` → Result[void, IoError]: the
+// inverse of rt_src_getgroups, which reads the kernel's 32-bit gids out of a
+// buffer a byte at a time. This writes them back the same way, and for the
+// same reason — gid_t is 32-bit UNSIGNED, so there is no signed 32-bit store
+// that round-trips a gid past 2^31.
+//
+// An empty list is setgroups(0, NULL), which is a real request — "in no
+// supplementary groups" — and the one `chroot --groups=""` makes, so it
+// reaches the kernel rather than answering Ok without asking.
+pub function rt_src_setgroups(t: string): string {
+    return "function __fern_setgroups(gids: i64[]): Result[void, IoError] { var n: i32 = gids.len(); if (n == 0) { var rc0: i32 = __syscall3(" + sysno(t, "setgroups") + ", 0, 0, 0); if (rc0 < 0) { return Err(__fern_io_error(0 - rc0, \"\")); } return Ok(()); } var buf: i32 = __raw_alloc(n * 4); var i: i32 = 0; while (i < n) { var g: i64 = gids[i]; if (g < 0) { return Err(__fern_io_error(22, \"\")); } if (g > 4294967295) { return Err(__fern_io_error(22, \"\")); } __raw_store8(buf, i * 4, (g % 256) as u8); __raw_store8(buf, i * 4 + 1, ((g / 256) % 256) as u8); __raw_store8(buf, i * 4 + 2, ((g / 65536) % 256) as u8); __raw_store8(buf, i * 4 + 3, ((g / 16777216) % 256) as u8); i = i + 1; } var rc: i32 = __syscall3(" + sysno(t, "setgroups") + ", n, buf, 0); if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } return Ok(()); }";
 }
 
 // rt_src_signal_mask backs `signal_mask(how, mask)` (#9090, syscall-leaf) →

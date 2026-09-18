@@ -2582,6 +2582,21 @@ pub function emit_function_via_ir_named(r: irlower.LowerResult, label_name: stri
             // [pathbox] IS param[0] — one chdir(2).
             s = s.need("heap"); s = s.need("chdir");
             s = s.write("    bl __fn___fern_chdir\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 316) {  // chroot
+            // [pathbox] IS param[0] — one chroot(2), same shape.
+            s = s.need("heap"); s = s.need("chroot");
+            s = s.write("    bl __fn___fern_chroot\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 317) {  // setuid
+            // [id] IS param[0]; the helper range-checks before the syscall.
+            s = s.need("heap"); s = s.need("setuid");
+            s = s.write("    bl __fn___fern_setuid\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 318) {  // setgid
+            s = s.need("heap"); s = s.need("setgid");
+            s = s.write("    bl __fn___fern_setgid\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 319) {  // setgroups
+            // [gidsbox] IS param[0]; the helper packs it to 32-bit gids.
+            s = s.need("heap"); s = s.need("setgroups");
+            s = s.write("    bl __fn___fern_setgroups\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 278) {  // signal_mask
             // [how][mask] with mask on top; param[0] is how, so swap.
             s = s.need("signal_mask");
@@ -8372,6 +8387,10 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         if (s.has_need("create_dir")) { fs_src = fs_src + " " + asmcore.rt_src_create_dir(tgt); }
         if (s.has_need("remove_dir")) { fs_src = fs_src + " " + asmcore.rt_src_remove_dir(tgt); }
         if (s.has_need("chdir")) { fs_src = fs_src + " " + asmcore.rt_src_chdir(tgt); }
+        if (s.has_need("chroot")) { fs_src = fs_src + " " + asmcore.rt_src_chroot(tgt); }
+        if (s.has_need("setuid")) { fs_src = fs_src + " " + asmcore.rt_src_setuid(tgt); }
+        if (s.has_need("setgid")) { fs_src = fs_src + " " + asmcore.rt_src_setgid(tgt); }
+        if (s.has_need("setgroups")) { fs_src = fs_src + " " + asmcore.rt_src_setgroups(tgt); }
         if (s.has_need("create_link")) { fs_src = fs_src + " " + asmcore.rt_src_create_link(tgt); }
         if (s.has_need("create_symlink")) { fs_src = fs_src + " " + asmcore.rt_src_create_symlink(tgt); }
         if (s.has_need("rename")) { fs_src = fs_src + " " + asmcore.rt_src_rename(tgt); }
@@ -9496,7 +9515,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
         "remove_file", "create_dir_all", "create_dir", "remove_dir",
         "create_link", "create_symlink", "rename", "chmod", "truncate",
         "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times", "read_link",
-        "chdir", "umask", "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync",
+        "chdir", "chroot", "setuid", "setgid", "setgroups", "umask", "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync",
         "temp_dir", "stat", "lstat", "statfs", "access", "read_dir", "read_dir_all",
         "remove_dir_all", "open_file", "open_with", "writer_write", "write_some",
         "reader", "signal_send", "set_process_group", "set_priority"

@@ -1898,7 +1898,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
         "read_file_bytes", "remove_file", "create_dir_all", "create_dir",
         "remove_dir", "create_link", "create_symlink", "rename", "chmod",
         "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times",
-        "read_link", "chdir", "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync",
+        "read_link", "chdir", "chroot", "setuid", "setgid", "setgroups", "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync",
         "umask", "write_file", "write_file_exec", "temp_dir", "read_dir", "read_dir_all",
         "remove_dir_all", "open_file", "open_with", "writer_write", "write_some",
         "reader", "signal_send", "set_process_group", "set_priority"
@@ -1916,7 +1916,7 @@ function needs_io_error_shapes(s: asmcore.EmitState): boolean {
         "remove_dir_all", "temp_dir", "create_dir_all", "create_dir",
         "remove_dir", "create_link", "create_symlink", "rename", "chmod",
         "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times",
-        "read_link", "chdir", "writer_truncate", "fd_fsync", "fd_fdatasync", "fd_syncfs"
+        "read_link", "chdir", "chroot", "setuid", "setgid", "setgroups", "writer_truncate", "fd_fsync", "fd_fdatasync", "fd_syncfs"
     ]);
 }
 
@@ -1932,7 +1932,7 @@ function needs_heap_runtime(s: asmcore.EmitState): boolean {
         "read_dir", "read_dir_all", "remove_file", "create_dir_all", "create_dir",
         "remove_dir", "create_link", "create_symlink", "rename", "chmod",
         "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times",
-        "read_link", "chdir",
+        "read_link", "chdir", "chroot", "setuid", "setgid", "setgroups",
         "umask", "env", "environ", "getgroups", "stat", "lstat", "statfs",
         "access", "fd_fsync", "fd_fdatasync", "fd_syncfs", "subprocess",
         "signal_send", "set_process_group", "set_priority"
@@ -6897,6 +6897,21 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
             // [pathbox] IS param[0] (+16) — one chdir(2).
             s = s.write("    call __fn___fern_chdir\n    addq $8, %rsp\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("chdir");
+        } else if (o.kind_tag == 316) {  // chroot
+            // [pathbox] IS param[0] (+16) — one chroot(2), same shape.
+            s = s.write("    call __fn___fern_chroot\n    addq $8, %rsp\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("chroot");
+        } else if (o.kind_tag == 317) {  // setuid
+            // [id] IS param[0]; the helper range-checks before the syscall.
+            s = s.write("    call __fn___fern_setuid\n    addq $8, %rsp\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("setuid");
+        } else if (o.kind_tag == 318) {  // setgid
+            s = s.write("    call __fn___fern_setgid\n    addq $8, %rsp\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("setgid");
+        } else if (o.kind_tag == 319) {  // setgroups
+            // [gidsbox] IS param[0]; the helper packs it to 32-bit gids.
+            s = s.write("    call __fn___fern_setgroups\n    addq $8, %rsp\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("setgroups");
         } else if (o.kind_tag == 278) {  // signal_mask
             // [how][mask] with mask on top; the stack ABI wants param[0]
             // (how) on top, so re-push the popped pair in reverse.
@@ -10360,6 +10375,10 @@ function emit_module_ir_unit_backend(mod: parser.Module, is_entry: boolean, glob
         if (s.has_need("create_dir")) { fs_src = fs_src + " " + asmcore.rt_src_create_dir("x86_64"); }
         if (s.has_need("remove_dir")) { fs_src = fs_src + " " + asmcore.rt_src_remove_dir("x86_64"); }
         if (s.has_need("chdir")) { fs_src = fs_src + " " + asmcore.rt_src_chdir("x86_64"); }
+        if (s.has_need("chroot")) { fs_src = fs_src + " " + asmcore.rt_src_chroot("x86_64"); }
+        if (s.has_need("setuid")) { fs_src = fs_src + " " + asmcore.rt_src_setuid("x86_64"); }
+        if (s.has_need("setgid")) { fs_src = fs_src + " " + asmcore.rt_src_setgid("x86_64"); }
+        if (s.has_need("setgroups")) { fs_src = fs_src + " " + asmcore.rt_src_setgroups("x86_64"); }
         if (s.has_need("create_link")) { fs_src = fs_src + " " + asmcore.rt_src_create_link("x86_64"); }
         if (s.has_need("create_symlink")) { fs_src = fs_src + " " + asmcore.rt_src_create_symlink("x86_64"); }
         if (s.has_need("rename")) { fs_src = fs_src + " " + asmcore.rt_src_rename("x86_64"); }

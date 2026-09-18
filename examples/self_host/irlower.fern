@@ -12997,13 +12997,18 @@ function lower_call_proc(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState): Lo
     return a2.emit(ir.op_proc_exec_as());
 }
 
-// is_dirlink_call recognises the nine single-step directory, link, working-
-// directory and permission primitives. The ARITY is part of the test so a call with the
+// is_dirlink_call recognises the single-step directory, link, working-
+// directory, process-root, credential and permission primitives. The ARITY is
+// part of the test so a call with the
 // wrong number of arguments falls through to the ordinary named-call path.
 function is_dirlink_call(name: string, argc: i32): boolean {
     if (name == "create_dir" || name == "chmod") { return argc == 2; }
     if (name == "remove_dir" || name == "read_link" || name == "umask") { return argc == 1; }
-    if (name == "chdir") { return argc == 1; }
+    if (name == "chdir" || name == "chroot") { return argc == 1; }
+    // The credential setters sit here rather than with the signal ops: they
+    // take one operand and push one Result[void, IoError] box, which is
+    // exactly this path's shape (#9678).
+    if (name == "setuid" || name == "setgid" || name == "setgroups") { return argc == 1; }
     if (name == "create_link" || name == "create_symlink" || name == "rename") { return argc == 2; }
     return false;
 }
@@ -13018,6 +13023,10 @@ function lower_call_dirlink(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState):
     if (!a0.ok) { return a0; }
     if (cid.name == "remove_dir") { return a0.emit(ir.op_remove_dir()); }
     if (cid.name == "chdir") { return a0.emit(ir.op_chdir()); }
+    if (cid.name == "chroot") { return a0.emit(ir.op_chroot()); }
+    if (cid.name == "setuid") { return a0.emit(ir.op_setuid()); }
+    if (cid.name == "setgid") { return a0.emit(ir.op_setgid()); }
+    if (cid.name == "setgroups") { return a0.emit(ir.op_setgroups()); }
     if (cid.name == "read_link") { return a0.emit(ir.op_read_link()); }
     if (cid.name == "umask") { return a0.emit(ir.op_umask()); }
     var a1: LowerState = lower_expr(c.args[1], a0);
@@ -72621,6 +72630,10 @@ function builtin_opt_ret_type(name: string): string {
     if (name == "create_dir_all") { return "Result[void, IoError]"; }
     if (name == "create_dir") { return "Result[void, IoError]"; }
     if (name == "chdir") { return "Result[void, IoError]"; }
+    if (name == "chroot") { return "Result[void, IoError]"; }
+    if (name == "setuid") { return "Result[void, IoError]"; }
+    if (name == "setgid") { return "Result[void, IoError]"; }
+    if (name == "setgroups") { return "Result[void, IoError]"; }
     if (name == "remove_dir") { return "Result[void, IoError]"; }
     if (name == "create_link") { return "Result[void, IoError]"; }
     if (name == "create_symlink") { return "Result[void, IoError]"; }

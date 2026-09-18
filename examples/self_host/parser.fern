@@ -8148,6 +8148,10 @@ pub function builtin_function_names(): string[] {
         // chdir(2), the move getcwd only ever reported, and the mask and
         // read side of the signal dispositions (#9090).
         "chdir", "signal_mask", "signal_disposition",
+        // chroot(2) and the write side of the credential getters:
+        // setgroups, then setgid, then setuid, the order they must be
+        // called in (#9678).
+        "chroot", "setuid", "setgid", "setgroups",
         // Liveness of one pid — kill(pid, 0), the zero signal that runs
         // every check kill(2) makes and delivers nothing (#8767).
         "process_alive",

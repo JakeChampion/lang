@@ -1367,6 +1367,18 @@ pub function op_putchar(): Op { return op0("putchar"); }
 // No wasm: WASI resolves every path against a preopen, so there is no cwd
 // to move and E066 withholds it on the `cwd` capability, as for getcwd.
 pub function op_chdir(): Op { return op0("chdir"); }
+// `chroot` pops a path and moves the process ROOT, pushing
+// Result[void, IoError] — the same move one level up from chdir, and
+// what chroot(1) needs. No wasm, for the same reason and on the same
+// `cwd` capability: a component has no process root either (#9678).
+pub function op_chroot(): Op { return op0("chroot"); }
+// `setgroups` pops an i64[] and `setgid` / `setuid` each pop one i64,
+// all three pushing Result[void, IoError]. The write side of
+// getgroups / getgid / getuid, and the order written here is the order
+// they must be CALLED in: each drops the privilege the next needs.
+pub function op_setgroups(): Op { return op0("setgroups"); }
+pub function op_setgid(): Op { return op0("setgid"); }
+pub function op_setuid(): Op { return op0("setuid"); }
 // `signal_mask` pops [how, mask] and pushes the mask that was blocked
 // BEFORE the call, so one op both reads and writes; `signal_disposition`
 // pops a signal number and pushes 0 default / 1 ignore / 2 a handler is
@@ -2072,6 +2084,7 @@ function kind_id_len6(name: string): i32 {
     if (c == b'a' && name == "arg_at") { return 210; }
     if (c == b'a' && name == "access") { return 237; }
     if (c == b'f') { return kind_id_len6_f(name); }
+    if (c == b'c' && name == "chroot") { return 316; }
     if (c == b'g' && name == "getuid") { return 246; }
     if (c == b'g' && name == "getgid") { return 247; }
     if (c == b'g' && name == "getcwd") { return 251; }
@@ -2080,6 +2093,8 @@ function kind_id_len6(name: string): i32 {
     if (c == b'n' && name == "now_ns") { return 183; }
     if (c == b'r' && name == "rename") { return 267; }
     if (c == b'r' && name == "return") { return 160; }
+    if (c == b's' && name == "setuid") { return 317; }
+    if (c == b's' && name == "setgid") { return 318; }
     if (c == b's' && name == "str_eq") { return 99; }
     if (c == b's' && name == "statfs") { return 270; }
     return 0;
@@ -2260,6 +2275,7 @@ function kind_id_len9_r(name: string): i32 {
 }
 
 function kind_id_len9_s(name: string): i32 {
+    if (name == "setgroups") { return 319; }
     if (name == "sum_bytes") { return 253; }
     if (name == "store_i32") { return 72; }
     if (name == "store_ptr") { return 73; }
@@ -2802,6 +2818,10 @@ function kind_name_4(id: i32): string {
     if (id == 313) { return "termios_set"; }
     if (id == 314) { return "set_window_size"; }
     if (id == 315) { return "heap_alloc_count"; }
+    if (id == 316) { return "chroot"; }
+    if (id == 317) { return "setuid"; }
+    if (id == 318) { return "setgid"; }
+    if (id == 319) { return "setgroups"; }
     if (id == 302) { return "arr_push_owned_i64"; }
     if (id == 303) { return "arr_push_owned_f64"; }
     return "invalid";

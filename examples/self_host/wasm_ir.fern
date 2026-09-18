@@ -1758,6 +1758,14 @@ pub function wasm_unsupported_builtin(mod: parser.Module): string {
         // descriptor, so there is no process working directory to move.
         // The same absence that withholds getcwd.
         if (util.index_of_str(ids, "chdir") >= 0) { return "chdir"; }
+        // chroot and the three credential setters (#9678) — the same
+        // absence one level up and one level sideways: a component has no
+        // process root to move and no identity to change, which is what
+        // withholds them on `cwd` and `userid` in platforms.fern.
+        if (util.index_of_str(ids, "chroot") >= 0) { return "chroot"; }
+        if (util.index_of_str(ids, "setuid") >= 0) { return "setuid"; }
+        if (util.index_of_str(ids, "setgid") >= 0) { return "setgid"; }
+        if (util.index_of_str(ids, "setgroups") >= 0) { return "setgroups"; }
         // process_alive (#8767) — the same missing process table. A component
         // is one instance with no pids to ask about, which is why
         // platforms.fern withholds it on the `proc` capability; naming it here
@@ -1831,6 +1839,12 @@ pub function wasm_unsupported_message(name: string): string {
     }
     if (name == "chdir") {
         return "error: chdir is not supported on the wasm target (WASI resolves every path against a preopened descriptor, so there is no process working directory to change)\n";
+    }
+    if (name == "chroot") {
+        return "error: chroot is not supported on the wasm target (WASI resolves every path against a preopened descriptor, so there is no process root to move any more than there is a working directory)\n";
+    }
+    if (name == "setuid" || name == "setgid" || name == "setgroups") {
+        return "error: " + name + " is not supported on the wasm target (a component has no process identity: neither preview reports a uid, gid or group set, so there is nothing for a change to move)\n";
     }
     if (name == "statfs") {
         return "error: statfs is not supported on the wasm target (neither preview has a volume to measure: a preopen is a capability handle, not a mount, so it reports neither a size nor a name-length limit)\n";
