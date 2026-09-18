@@ -543,16 +543,24 @@ function drop_captures(own r: irlower.LowerResult, slot: i32, f: ssasem.Func): i
     return r;
 }
 
+// The units a box owns, released without releasing the box. The caller has
+// already emitted the uniqueness test this belongs under: `drop_value` before
+// it releases the box, `reuse_token` before it hands the box on.
+function drop_children(own r: irlower.LowerResult, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irlower.LowerResult {
+    if let typeinfo.TypeFunc(_) = t { r = drop_captures(r, slot, f); }
+    if let typeinfo.TypeArray(a) = t { r = drop_elements(r, slot, a.elem, scratch, f); }
+    if (semtypes.is_cell(t)) { r = drop_elements(r, slot, semtypes.cell_elem(t), scratch, f); }
+    if let typeinfo.TypeTuple(tup) = t { r = drop_tuple_fields(r, slot, tup, scratch, f); }
+    if (named(t) != "") { r = helper(r, slot, drop_helper_name(t)); }
+    return r;
+}
+
 function drop_value(own r: irlower.LowerResult, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irlower.LowerResult {
     if (has_children(t, f)) {
         r = emit(r, ir.op_load_local(slot));
         r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
         r = emit(r, ir.op_if(0));
-        if let typeinfo.TypeFunc(_) = t { r = drop_captures(r, slot, f); }
-        if let typeinfo.TypeArray(a) = t { r = drop_elements(r, slot, a.elem, scratch, f); }
-        if (semtypes.is_cell(t)) { r = drop_elements(r, slot, semtypes.cell_elem(t), scratch, f); }
-        if let typeinfo.TypeTuple(tup) = t { r = drop_tuple_fields(r, slot, tup, scratch, f); }
-        if (named(t) != "") { r = helper(r, slot, drop_helper_name(t)); }
+        r = drop_children(r, slot, t, scratch, f);
         r = emit(r, ir.op_end());
     }
     return release(r, slot, t);
@@ -697,13 +705,24 @@ function drops_less(own r: irlower.LowerResult, step: ssaunits.Step, f: ssasem.F
 // constructions had a donor dying in front of them that only that test refused.
 struct ReusePairs { tokens: i32[], builds: i32[] }
 
-// A dying box this frame may hand on as storage: a nominal record or a union
-// value, both of which are one `__fern_arr_box` block whose slot 0 the
-// recipient overwrites with its own identity. An environment is excluded: its
-// fields are addressed as array slots rather than struct ones, and its box is
-// the closure's, built and read through a schema of its own.
+// A dying box this frame may hand on as storage: a nominal record, a union
+// value or a tuple. Each is one `__fern_arr_box` block, and each of the three
+// recipient forms writes every slot it claims — so what the next construction
+// finds in the block never survives into a read. An environment is excluded:
+// its fields are addressed as array slots rather than struct ones, and its box
+// is the closure's, built and read through a schema of its own. An array is
+// too: its cap is a CAPACITY rather than its length, so the slots a donor
+// block has are not the slots its type names.
 function reuse_shape(t: typeinfo.Type, f: ssasem.Func): boolean {
+    if let typeinfo.TypeTuple(_) = t { return true; }
     return named(t) != "" && !semtypes.is_env(t);
+}
+
+// The constructions a token can be spent at, and the slots each claims: a
+// record or variant box is its shape word and one word per field, a tuple box
+// one word per element and no shape word at all.
+function reuse_recipient(k: i32): boolean {
+    return k == ssasem.record_new() || k == ssasem.tuple_new();
 }
 
 function reuse_pairs(f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock): ReusePairs {
@@ -723,7 +742,7 @@ function reuse_pairs(f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock): ReusePair
         if (ins.kind_tag != 6 && ins.kind_tag != 8) {
             var step: ssaunits.Step = at(p, b.id, pos, 0 - 1);
             if (off) { pending = 0 - 1; }
-            else if (pending >= 0 && ins.kind_tag == ssasem.record_new()
+            else if (pending >= 0 && reuse_recipient(ins.kind_tag)
                     && util.index_of_i32(ins.args, pending) < 0) {
                 builds = builds.with(pos, pending);
                 tokens = tokens.with(pending_at, pending);
@@ -760,7 +779,7 @@ function reuse_token(own r: irlower.LowerResult, f: ssasem.Func, donor: i32): ir
     r = emit(r, ir.op_load_local(donor));
     r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
     r = emit(r, ir.op_if(0));
-    if (has_children(f.values[donor], f)) { r = helper(r, donor, drop_helper_name(f.values[donor])); }
+    if (has_children(f.values[donor], f)) { r = drop_children(r, donor, f.values[donor], scratch_base(f), f); }
     r = emit(r, ir.op_load_local(donor));
     r = emit(r, ir.op_store_local(token));
     r = emit(r, ir.op_else());
@@ -775,6 +794,7 @@ function reuse_token(own r: irlower.LowerResult, f: ssasem.Func, donor: i32): ir
 }
 
 function reuse_construct(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
+    if (ins.kind_tag == ssasem.tuple_new()) { return reuse_tuple(r, f, ins); }
     var fields: semrecords.Field[] = record_fields(f.values[ins.result], f);
     r = emit(r, ir.op_load_local(token_slot(f)));
     r = emit(r, ir.op_const_i32(fields.len() + 1));
@@ -798,6 +818,34 @@ function reuse_construct(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SI
         i = i + 1;
     }
     return r;
+}
+
+// A tuple box has no shape word: element i is slot i, so the box is one word
+// per element and there is nothing at slot 0 to identify. The element stores
+// carry their own width, as `op_tuple_make_k` does on the fresh path, or wasm
+// writes the low half of an eight-byte slot and the read back is garbage.
+function reuse_tuple(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
+    var elems: typeinfo.Type[] = tuple_elements(f.values[ins.result]);
+    r = emit(r, ir.op_load_local(token_slot(f)));
+    r = emit(r, ir.op_const_i32(elems.len()));
+    r = emit(r, ir.op_call_direct("__fern_alloc_reuse", 2));
+    r = emit(r, ir.op_store_local(ins.result));
+    var i: i32 = 0;
+    while (i < ins.args.len() && i < elems.len()) {
+        r = emit(r, ir.op_load_local(ins.result));
+        r = emit(r, ir.op_load_local(ins.args[i]));
+        var kind: string = tuple_kind(elems[i]);
+        if (kind == "i64") { r = emit(r, ir.op_tuple_set_w(i, 64, true)); }
+        else if (kind == "f64") { r = emit(r, ir.op_tuple_set_w(i, 64, false)); }
+        else { r = emit(r, ir.op_tuple_set(i)); }
+        i = i + 1;
+    }
+    return r;
+}
+
+function tuple_elements(t: typeinfo.Type): typeinfo.Type[] {
+    if let typeinfo.TypeTuple(tup) = t { return tup.elements; }
+    return [];
 }
 
 function at(p: ssaunits.Plan, block: i32, point: i32, target: i32): ssaunits.Step {
