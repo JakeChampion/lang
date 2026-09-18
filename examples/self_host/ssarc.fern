@@ -1326,13 +1326,12 @@ function from_f64(to: typeinfo.Type): ir.Op {
 function cast(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
     var from: typeinfo.Type = f.values[ins.args[0]];
     var to: typeinfo.Type = f.values[ins.result];
-    // An address read back as the box it names shares its slot, so the cast
-    // moves nothing. It has to answer before the width arms below, which would
-    // read the reference as a narrow integer and emit a wrap for it. The other
-    // direction has no arm on purpose: the schema refuses it, and a no-op here
-    // would quietly lower it if that refusal were ever loosened without the
-    // escape compensation core/map writes by hand.
+    // An address and the box it names share a slot, so neither direction of the
+    // reinterpretation moves anything. Both have to answer before the width
+    // arms below, which would read the reference as a narrow integer and emit a
+    // wrap for it.
     if (ssasem.is_usize(from) && ssasem.reference(to)) { return r; }
+    if (ssasem.reference(from) && ssasem.is_usize(to)) { return r; }
     if (ssasem.is_float(to)) { return into_float(r, from, to); }
     if (ssasem.is_float(from)) { return emit(r, from_f64(to)); }
     if (ssasem.is_usize(from)) { return from_address(r, to); }

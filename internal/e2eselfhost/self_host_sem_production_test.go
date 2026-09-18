@@ -1196,4 +1196,34 @@ function main(): i32 {
     return t % 7;
 }
 `},
+
+	// A reference cast to `usize`. The address is the box's own slot, so the
+	// cast converts nothing and owns nothing — and the array's LAST typed use
+	// is the cast itself, so without the anchor the planner releases the box
+	// there and __memcpy reads freed bytes. This is the shape std/string's
+	// `bytes()` is written in.
+	//
+	// WHICH address the cast answers is #8799's open question — native gives
+	// the data pointer and the self-host the box — so this case compares the
+	// two lowerings of ONE compiler and settles nothing about that.
+	{name: "a-reference-cast-to-an-address", atLeast: 2, noLeak: true, src: `
+function copy_bytes(s: string): i32 {
+    var n: i32 = s.len();
+    var out: u8[] = __alloc_u8(n);
+    if (n > 0) {
+        __memcpy(out as usize, s.as_bytes() as usize, n);
+    }
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < out.len()) { t = t + (out[i] as i32); i = i + 1; }
+    return t;
+}
+
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) { t = t + copy_bytes("abc"); i = i + 1; }
+    return t % 7;
+}
+`},
 }
