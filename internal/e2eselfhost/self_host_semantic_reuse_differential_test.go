@@ -116,6 +116,44 @@ function main(): i32 {
     return t % 251;
 }`, 189, 3, 0},
 
+	// A tuple box is one word per element and no shape word, so it is storage
+	// a donor of any form can be and storage any form can take: tuple to
+	// tuple, a record's box to a tuple, and a tuple's to a record. The AST
+	// path pairs none of the three.
+	{"tuple-form", `struct Parcel { a: string, b: i32 }
+function tuple_step(seed: i32): (i32, string) {
+    var a: (string, i32[]) = ("aa", [seed, seed + 1]);
+    var s: i32 = a.1[0] + a.1[1] + a.0.len();
+    return (s, "bb");
+}
+function tuple_loop(n: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        var p: (i32, string) = tuple_step(i);
+        t = t + p.0 + p.1.len();
+        i = i + 1;
+    }
+    return t;
+}
+function tuple_from_rec(n: i32): i32 {
+    var d: Parcel = Parcel { a: "cc", b: n };
+    var s: i32 = d.b + d.a.len();
+    var q: (i32, string) = (s, "dd");
+    return q.0 + q.1.len();
+}
+function rec_from_tuple(n: i32): i32 {
+    var d: (string, i32) = ("ee", n);
+    var s: i32 = d.1 + d.0.len();
+    var q: Parcel = Parcel { a: "ff", b: s };
+    return q.b + q.a.len();
+}
+function main(): i32 {
+    var t: i32 = tuple_loop(4) + tuple_from_rec(3) + rec_from_tuple(5);
+    if (__rc_underflow_count() != 0) { return 99; }
+    return t;
+}`, 48, 3, 0},
+
 	// A record of scalars: pure storage, with no children to release at the
 	// token. The AST path pairs this shape too, so the count alone does not
 	// separate the layers here — the switch and the answer do.
