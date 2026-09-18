@@ -13475,7 +13475,7 @@ func (g *generator) emitTimerFdRuntime() {
 	g.line(".size __fern_timer_fd, .-__fern_timer_fd")
 }
 
-// linuxStatfsFields maps each FsStat field onto the offset it is read
+// LinuxStatfsFields maps each FsStat field onto the offset it is read
 // from in Linux's 120-byte `struct statfs`, whose every member is a
 // 64-bit word on both supported ISAs:
 //
@@ -13485,7 +13485,11 @@ func (g *generator) emitTimerFdRuntime() {
 // `path_max` is absent from the record and is stored separately: Linux
 // has no pathconf syscall, and PATH_MAX is the kernel's own 4096 for
 // every filesystem it mounts.
-var linuxStatfsFields = []struct{ box, src int32 }{
+// LinuxStatfsField is one projection: Box is the offset in the FsStat box,
+// Src the offset in the kernel's record.
+type LinuxStatfsField struct{ Box, Src int32 }
+
+var LinuxStatfsFields = []LinuxStatfsField{
 	{ir.FsStat.BlockSize, 8},
 	{ir.FsStat.Blocks, 16},
 	{ir.FsStat.BlocksFree, 24},
@@ -13495,16 +13499,16 @@ var linuxStatfsFields = []struct{ box, src int32 }{
 	{ir.FsStat.NameMax, 64},
 }
 
-// linuxPathMax is PATH_MAX, the longest pathname the Linux kernel will
+// LinuxPathMax is PATH_MAX, the longest pathname the Linux kernel will
 // resolve. A constant rather than a lookup because Linux has no
 // pathconf syscall and `getconf PATH_MAX` reports this for every
 // filesystem; Darwin, which does have one, asks it (see the arm64
 // emitter).
-const linuxPathMax = 4096
+const LinuxPathMax = 4096
 
 // emitStatfsRuntime emits `__fern_statfs(path) → Result[FsStat, IoError]`
 // — statfs(2) into a 120-byte stack buffer, projected onto FsStat by
-// linuxStatfsFields. System V: rdi = path string value.
+// LinuxStatfsFields. System V: rdi = path string value.
 //
 // Built on the same shape as __fern_stat: a NUL-terminated heap copy
 // of the path for the syscall, the buffer left live across
@@ -13557,11 +13561,11 @@ func (g *generator) emitStatfsRuntime() {
 	g.emit("js .Lsfs_err")
 	g.emit(fmt.Sprintf("mov edi, %d", ir.FsStat.Bytes))
 	g.emit("call __fern_alloc_box")
-	for _, f := range linuxStatfsFields {
-		g.emit(fmt.Sprintf("mov r9, [rsp + %d]", f.src))
-		g.emit(fmt.Sprintf("mov [rax + %d], r9", f.box))
+	for _, f := range LinuxStatfsFields {
+		g.emit(fmt.Sprintf("mov r9, [rsp + %d]", f.Src))
+		g.emit(fmt.Sprintf("mov [rax + %d], r9", f.Box))
 	}
-	g.emit(fmt.Sprintf("mov r9d, %d", linuxPathMax))
+	g.emit(fmt.Sprintf("mov r9d, %d", LinuxPathMax))
 	g.emit(fmt.Sprintf("mov [rax + %d], r9", ir.FsStat.PathMax))
 	g.emit("mov r13, rax")
 	g.emit("mov edi, 16")
@@ -13767,13 +13771,16 @@ func (g *generator) emitSetProcessGroupRuntime() {
 // line-discipline byte, and NCCS = 19 control characters — 36 bytes. The word
 // array the language sees is one element per field in that order, so 24
 // elements, and `internal/tty` carries the same layout for the interpreter.
+// Exported because the x86-64 SSA backend fills the same struct for the same
+// kernel, and a word count or request number that differs between the two
+// emitters is a program whose terminal settings depend on which built it.
 const (
 	termiosBytes = 36
-	termiosNCCS  = 19
-	termiosWords = 4 + 1 + termiosNCCS
-	tcgets       = 0x5401
+	TermiosNCCS  = 19
+	TermiosWords = 4 + 1 + TermiosNCCS
+	LinuxTCGETS  = 0x5401
 	// TCSETS, TCSETSW and TCSETSF are consecutive, so the action adds.
-	tcsets = 0x5402
+	LinuxTCSETS = 0x5402
 )
 
 // emitTermiosGetRuntime emits `__fern_termios_get(fd) → Result[i64[],
@@ -13799,19 +13806,19 @@ func (g *generator) emitTermiosGetRuntime() {
 	// struct at [rsp].
 	g.emit("sub rsp, 40")
 	g.emit("mov edi, edi") // the fd is an i32; ioctl reads the whole register
-	g.emit(fmt.Sprintf("mov esi, %d", tcgets))
+	g.emit(fmt.Sprintf("mov esi, %d", LinuxTCGETS))
 	g.emit("mov rdx, rsp")
 	g.emitSyscall(sysIoctl)
 	g.emit("test rax, rax")
 	g.emit("js .Ltcg_err")
 	// i64[] in the array box shape: cap and rc below the data pointer,
 	// length at -4. rc = 1, because the array is fresh and owned.
-	g.emit(fmt.Sprintf("mov edi, %d", termiosWords*8+16))
+	g.emit(fmt.Sprintf("mov edi, %d", TermiosWords*8+16))
 	g.emit("call __fern_alloc")
 	g.emit("lea r12, [rax + 16]")
-	g.emit(fmt.Sprintf("mov dword ptr [r12 - 12], %d", termiosWords))
+	g.emit(fmt.Sprintf("mov dword ptr [r12 - 12], %d", TermiosWords))
 	g.emit("mov dword ptr [r12 - 8], 1")
-	g.emit(fmt.Sprintf("mov ebx, %d", termiosWords))
+	g.emit(fmt.Sprintf("mov ebx, %d", TermiosWords))
 	g.emitArrayLenStore("ebx", "r12")
 	// The four flag words zero-extend: a 32-bit load clears the high half.
 	for i := 0; i < 4; i++ {
@@ -13825,7 +13832,7 @@ func (g *generator) emitTermiosGetRuntime() {
 	g.emit("movzx eax, byte ptr [rsp + rcx + 17]")
 	g.emit("mov [r12 + rcx*8 + 40], rax")
 	g.emit("inc rcx")
-	g.emit(fmt.Sprintf("cmp rcx, %d", termiosNCCS))
+	g.emit(fmt.Sprintf("cmp rcx, %d", TermiosNCCS))
 	g.emit("jb .Ltcg_cc")
 	g.emit("mov rbx, r12")
 	g.emit("mov edi, 16")
@@ -13874,7 +13881,7 @@ func (g *generator) emitTermiosSetRuntime() {
 	g.emit("sub rsp, 40")
 	g.emit("mov rbx, rdx")  // the words
 	g.emit("mov r12d, esi") // the action
-	g.emit(fmt.Sprintf("cmp dword ptr [rbx - 4], %d", termiosWords))
+	g.emit(fmt.Sprintf("cmp dword ptr [rbx - 4], %d", TermiosWords))
 	g.emit("jne .Ltcs_einval")
 	g.emit("cmp r12d, 2")
 	g.emit("ja .Ltcs_einval")
@@ -13889,10 +13896,10 @@ func (g *generator) emitTermiosSetRuntime() {
 	g.emit("mov rax, [rbx + rcx*8 + 40]")
 	g.emit("mov [rsp + rcx + 17], al")
 	g.emit("inc rcx")
-	g.emit(fmt.Sprintf("cmp rcx, %d", termiosNCCS))
+	g.emit(fmt.Sprintf("cmp rcx, %d", TermiosNCCS))
 	g.emit("jb .Ltcs_cc")
 	g.emit("mov edi, edi")
-	g.emit(fmt.Sprintf("lea esi, [r12 + %d]", tcsets))
+	g.emit(fmt.Sprintf("lea esi, [r12 + %d]", LinuxTCSETS))
 	g.emit("mov rdx, rsp")
 	g.emitSyscall(sysIoctl)
 	g.emit("test rax, rax")
@@ -13934,7 +13941,7 @@ func (g *generator) emitTermiosSetRuntime() {
 // to be attached to, so the helper is a constant 0 — the answer that
 // selects plain text (docs/FREESTANDING-CORE.md).
 func (g *generator) emitIsattyRuntime() {
-	const tcgets = 0x5401
+	const LinuxTCGETS = 0x5401
 	g.line("")
 	g.line(".globl __fern_isatty")
 	g.line(".type __fern_isatty, @function")
@@ -13947,7 +13954,7 @@ func (g *generator) emitIsattyRuntime() {
 	}
 	// ioctl(fd, TCGETS, buf). `struct termios` is 60 bytes on Linux; the
 	// 128-byte red zone below rsp holds it without a frame.
-	g.emit(fmt.Sprintf("mov esi, %d", tcgets))
+	g.emit(fmt.Sprintf("mov esi, %d", LinuxTCGETS))
 	g.emit("lea rdx, [rsp - 72]")
 	g.emitSyscall(sysIoctl)
 	// rax == 0 (success) is the terminal answer; anything else is -errno.

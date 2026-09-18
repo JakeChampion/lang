@@ -236,53 +236,109 @@ func emitOpenHandleHelper(name, lbl string, flags, mode int) func(w func(string,
 		w("\tmov rbx, rdi") // path
 		ssaPathz(w, lbl)
 		// openat(AT_FDCWD, pathz, flags, mode)
-		w("\tmov edi, -100")
+		ssaAtFdcwd(w, "edi")
 		w("\tmov rsi, r12")
 		w("\tmov edx, %d", flags)
 		w("\tmov r10d, %d", mode)
 		w("\tmov eax, 257")
 		w("\tsyscall")
-		w("\ttest rax, rax")
-		w("\tjs .Lssa_%s_err", lbl)
-		// A descriptor below 3 is a standard stream the program was exec'd
-		// without: move it up (fcntl F_DUPFD 3) and close the original, so
-		// stdout() never aliases the file (#8823).
-		w("\tcmp rax, 3")
-		w("\tjae .Lssa_%s_hi", lbl)
-		w("\tmov r13, rax") // the low descriptor
-		w("\tmov edi, eax")
-		w("\txor esi, esi") // F_DUPFD
-		w("\tmov edx, 3")
-		w("\tmov eax, 72") // fcntl
-		w("\tsyscall")
-		w("\tmov r12, rax") // the moved-up descriptor (or -errno)
-		w("\tmov edi, r13d")
-		w("\tmov eax, 3") // close the original
-		w("\tsyscall")
-		w("\tmov rax, r12")
-		w("\ttest rax, rax")
-		w("\tjs .Lssa_%s_err", lbl)
-		w(".Lssa_%s_hi:", lbl)
-		w("\tmov r13d, eax") // fd, across the two allocations below
-		ssaHandleAlloc(w, "r13d", true)
-		w("\tmov r12, rax") // handle
-		ssaOptionBox(w, 0, "r12")
-		w("\tjmp .Lssa_%s_ret", lbl)
-		w(".Lssa_%s_err:", lbl)
-		w("\tneg rax")
-		w("\tmov r13d, eax") // errno
-		ssaRetainPathForIoErr(w)
-		w("\tmov edi, r13d")
-		w("\tmov rsi, rbx") // the path, as given
-		w("\tcall %s", fnLabel("__fern_io_error"))
-		w("\tmov r12, rax")
-		ssaOptionBox(w, 1, "r12")
-		w(".Lssa_%s_ret:", lbl)
+		ssaOpenHandleTail(w, lbl)
 		w("\tpop r13")
 		w("\tpop r12")
 		w("\tpop rbx")
 		w("\tret")
 	}
+}
+
+// emitOpenWithHelper returns the emitter for open_reader_with(path, flags) and
+// open_writer_with(path, flags), which are open_reader / open_writer with the
+// caller naming two of the kernel's flags: bit 0 is O_CREAT and bit 1 is
+// O_NONBLOCK, folded onto the access mode `access`. Anything else in the word
+// is ignored rather than passed through, so a caller cannot reach a flag the
+// builtin does not document.
+//
+// rbx = path, r12 = pathz, r13 = its length then the fd, r14 = the caller's
+// flag word, which has to be callee-saved because the NUL-termination calls
+// the heap guard.
+func emitOpenWithHelper(name, lbl string, access int) func(w func(string, ...any)) {
+	return func(w func(string, ...any)) {
+		w("")
+		w("%s:", fnLabel(name))
+		w("\tpush rbx")
+		w("\tpush r12")
+		w("\tpush r13")
+		w("\tpush r14")
+		w("\tsub rsp, 8") // four pushes and one slot keep rsp 16-aligned
+		w("\tmov rbx, rdi")
+		w("\tmov r14, rsi") // the flag word
+		ssaPathz(w, lbl)
+		// openat(AT_FDCWD, pathz, access | creat | nonblock, 0666)
+		ssaAtFdcwd(w, "edi")
+		w("\tmov rsi, r12")
+		w("\tmov edx, %d", access)
+		w("\ttest r14b, 1")
+		w("\tjz .Lssa_%s_nc", lbl)
+		w("\tor edx, 64") // O_CREAT
+		w(".Lssa_%s_nc:", lbl)
+		w("\ttest r14b, 2")
+		w("\tjz .Lssa_%s_nb", lbl)
+		w("\tor edx, 2048") // O_NONBLOCK
+		w(".Lssa_%s_nb:", lbl)
+		w("\tmov r10d, 438")
+		w("\tmov eax, 257")
+		w("\tsyscall")
+		ssaOpenHandleTail(w, lbl)
+		w("\tadd rsp, 8")
+		w("\tpop r14")
+		w("\tpop r13")
+		w("\tpop r12")
+		w("\tpop rbx")
+		w("\tret")
+	}
+}
+
+// ssaOpenHandleTail appends what every open helper does with openat's answer:
+// move a low descriptor out of the way, wrap it in a handle and box that as
+// Ok, or classify the errno against the path as given and box it as Err. The
+// syscall's result is in rax; rbx holds the path, and r12 and r13 are scratch.
+// The caller writes its own epilogue after this.
+func ssaOpenHandleTail(w func(string, ...any), lbl string) {
+	w("\ttest rax, rax")
+	w("\tjs .Lssa_%s_err", lbl)
+	// A descriptor below 3 is a standard stream the program was exec'd
+	// without: move it up (fcntl F_DUPFD 3) and close the original, so
+	// stdout() never aliases the file (#8823).
+	w("\tcmp rax, 3")
+	w("\tjae .Lssa_%s_hi", lbl)
+	w("\tmov r13, rax") // the low descriptor
+	w("\tmov edi, eax")
+	w("\txor esi, esi") // F_DUPFD
+	w("\tmov edx, 3")
+	w("\tmov eax, 72") // fcntl
+	w("\tsyscall")
+	w("\tmov r12, rax") // the moved-up descriptor (or -errno)
+	w("\tmov edi, r13d")
+	w("\tmov eax, 3") // close the original
+	w("\tsyscall")
+	w("\tmov rax, r12")
+	w("\ttest rax, rax")
+	w("\tjs .Lssa_%s_err", lbl)
+	w(".Lssa_%s_hi:", lbl)
+	w("\tmov r13d, eax") // fd, across the two allocations below
+	ssaHandleAlloc(w, "r13d", true)
+	w("\tmov r12, rax") // handle
+	ssaOptionBox(w, 0, "r12")
+	w("\tjmp .Lssa_%s_ret", lbl)
+	w(".Lssa_%s_err:", lbl)
+	w("\tneg rax")
+	w("\tmov r13d, eax") // errno
+	ssaRetainPathForIoErr(w)
+	w("\tmov edi, r13d")
+	w("\tmov rsi, rbx") // the path, as given
+	w("\tcall %s", fnLabel("__fern_io_error"))
+	w("\tmov r12, rax")
+	ssaOptionBox(w, 1, "r12")
+	w(".Lssa_%s_ret:", lbl)
 }
 
 // emitWriterWriteHelper writes __method_Writer_write(writer, s) ->
