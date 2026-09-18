@@ -285,7 +285,8 @@ The `macos-15` lane (`.github/workflows/macos.yml`) builds the same 9.4 and
 installs the WHOLE tree to `~/gnu-coreutils`, because there is no system GNU
 on that runner to fall back to for the rest. One program needs installing by
 hand: `arch` is in coreutils' `no_install__progs`, so `make install` places
-every other program and never it, and no configure flag changes that — Debian
+every other program and never it unless the build asks for it by name with
+`--enable-install-program`, which this lane does not pass — Debian
 ships its own copy, which is the only reason the Linux corpora find one in
 `/usr/bin`, and `/usr/bin/arch` on macOS is Apple's unrelated arch(1). That
 lane runs the corpus for the whole catalogue with `-skip '^TestSelfHost'`:

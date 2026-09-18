@@ -135,6 +135,10 @@ fi
 # so falling short is SAID rather than assumed away. It warns and does not
 # exit, because the bench is a comparison and not a gate (see WALL TIME above)
 # and a developer without a current tree still wants the other two columns.
+#
+# Tracks the same upstream release as BENCH_GNU_COREUTILS_VERSION in
+# scripts/devbox.Dockerfile, which is the tree this warning tells you to point
+# at: bump the two together or the warning stops naming the newest.
 bench_gnu_floor=9.12
 gnu_ver=$({ "$gnu/yes" --version || true; } | head -1 | awk '{print $NF}')
 if [ "$(printf '%s\n%s\n' "$bench_gnu_floor" "$gnu_ver" | sort -V | head -1)" != "$bench_gnu_floor" ]; then
