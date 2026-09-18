@@ -35,6 +35,11 @@ on:
 jobs:
   test-arm64-darwin:
     runs-on: macos-15
+    # A hung step here holds the repository's single CI lock, because ci.yml
+    # queues one PR at a time: without this the job runs to GitHub's 360-minute
+    # default and every open PR waits behind it. Round five wedged inside the
+    # corpus at 03:19 and was still "in progress" ninety minutes later.
+    timeout-minutes: 75
     # Pinned to the SAME version test-units.yml pins, and that lane says why:
     # 9.4 is what the ubuntu-24.04 image's own coreutils is, "so every utility
     # here answers to one version". A second lane holding a second opinion
@@ -214,8 +219,17 @@ jobs:
       # minutes: a binary the default kills reports whichever cases were in
       # flight as failures with no output, so the lane names tests that did
       # not fail and never names the wall it hit.
+      #
+      # The step carries its own limit as well, because `-timeout` is enforced
+      # by a watchdog INSIDE the test binary and that is not enough on its own:
+      # a case that leaks a child holding this step's stdout leaves the
+      # watchdog's panic with nowhere to go, and the step produces no further
+      # output while the job sits there. That is what round five did — the log
+      # stops mid-corpus and the 25-minute wall passes unremarked. A step-level
+      # limit is enforced by the runner, which kills the process group.
       - name: go test (coreutils corpus on Darwin)
         if: steps.gate.outputs.signed != 'true'
+        timeout-minutes: 30
         run: |
           gotestsum --format standard-verbose -- -timeout 25m -skip '^TestSelfHost' ./internal/coreutils/
 
