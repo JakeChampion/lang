@@ -29,7 +29,8 @@ import (
 
 // The interrogating helpers: getcwd, access, lstat against stat over a
 // symlink, and read_link. create_symlink is here too, since a symlink is what
-// makes the other three distinguishable.
+// makes the other three distinguishable, and chmod because access has to be
+// asked something whose answer depends on the mode it was handed.
 const x86SSAPathQuerySrc = `function main(): i32 {
     var cwd: string = getcwd();
     if (cwd.len() < 1) { return 10; }
@@ -37,6 +38,13 @@ const x86SSAPathQuerySrc = `function main(): i32 {
 
     match (access(cwd, 4)) { Ok(_) => {}, Err(e) => { return 20; } }
     match (access(cwd + "/no-such-entry-here", 4)) { Ok(_) => { return 21; }, Err(e) => {} }
+    // The mode has to reach the kernel: a 0600 regular file is readable and
+    // not executable, so R_OK and X_OK must answer differently over the same
+    // name. A helper that ignored the mode would pass both.
+    match (write_file(cwd + "/plain", "x")) { Ok(_) => {}, Err(e) => { return 22; } }
+    match (chmod(cwd + "/plain", 384)) { Ok(_) => {}, Err(e) => { return 23; } }
+    match (access(cwd + "/plain", 4)) { Ok(_) => {}, Err(e) => { return 24; } }
+    match (access(cwd + "/plain", 1)) { Ok(_) => { return 25; }, Err(e) => {} }
 
     match (create_symlink(cwd, cwd + "/lnk")) { Ok(_) => {}, Err(e) => { return 30; } }
     match (lstat(cwd + "/lnk")) {
@@ -164,4 +172,39 @@ func TestX86_64SSAPathHelpersMatchTheFlatEmitter(t *testing.T) {
 			}
 		})
 	}
+}
+
+// compileX86_64SSA and runX86_64SSABin are the x86-64 twins of the arm64 SSA
+// pair in arm64_ssa_read_chunk_test.go, for the probes that live in their own
+// files rather than here: mknod's dev_t packing and chown_at's follow flag are
+// each written out once and run on every backend that provides the builtin, so
+// this backend gets the same probe rather than being taken on trust.
+func compileX86_64SSA(t *testing.T, fern, src string, env []string) string {
+	t.Helper()
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	out := filepath.Join(dir, "main.bin")
+	cmd := exec.Command(fern, "-target", "x86-64-linux", "-backend", "ssa", "-o", out, srcPath)
+	cmd.Env = env
+	if o, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("compile: %v\n%s", err, o)
+	}
+	return out
+}
+
+func runX86_64SSABin(t *testing.T, qemu, bin, dir string, env []string) (int, string) {
+	t.Helper()
+	cmd := runX86Bin(qemu, bin)
+	cmd.Dir = dir
+	cmd.Env = env
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if _, ok := err.(*exec.ExitError); err != nil && !ok {
+		t.Fatalf("run: %v", err)
+	}
+	return cmd.ProcessState.ExitCode(), stderr.String()
 }
