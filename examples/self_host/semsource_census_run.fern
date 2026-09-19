@@ -233,23 +233,18 @@ function main(): i32 {
             // census counts against the default target.
             var desc: platforms.Descriptor = platforms.for_target("arm64-linux");
             merged = constfold.fold_target_name(merged, desc.environment, desc.isa);
-            // A method on a generic receiver — `(xs: T[]) first()` — carries
-            // its type variable in the RECEIVER and spells no `[T]` list, so
-            // the boundary would read it as concrete and refuse it on its
-            // unresolved result. These passes fold such a method into the
-            // ordinary free generic the boundary already instantiates, exactly
-            // as the production pipeline does before it lowers. The struct
-            // pass runs for parity with production; the boundary keys no
-            // `__smm_` prefix, so what it folds is refused at the call.
-            // The front end's own enums — JsonValue, IoError and the rest of
-            // builtins.fern — are injected as declarations before lowering, so
-            // a module that names one finds its variants. Without this the
-            // boundary sees an undeclared union, reads no variants for it, and
-            // refuses every declaration that touches one: IoError is the error
-            // arm of every filesystem Result, so the miss is wide and the
-            // refusal it produces is the instrument's, not the boundary's.
-            merged = parser.Module { ...merged, structs: parser.inject_builtin_enums(merged.structs) };
-            merged = parser.register_struct_method_generics(parser.register_map_method_generics(parser.register_array_method_generics(merged)));
+            // The pipeline every real driver runs before it lowers:
+            // `ircore.lift_lambdas(parser.module_with_builtins(merged))`
+            // (asm_load_run, asm_modload_run, asm_ir_run, asm_ir_elig_run,
+            // asm_pathprobe_run). This used to hand-roll a prefix of it —
+            // the three method-generic registrations and the enum injection —
+            // and skip the rest, so it measured a module the compiler never
+            // lowers and charged the difference to the boundary. It cost a
+            // wrongly-filed issue: a self-recursive nested `function` refused
+            // here and produces whole in production, because
+            // `hoist_local_funcs_module` is one of the passes that was missing
+            // (#9773, #9778).
+            merged = parser.module_with_builtins(merged);
             merged = irlower.lift_lambdas(merged);
             var tab: irlower.StructTab = irlower.struct_tab(merged.structs);
 

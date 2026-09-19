@@ -108,13 +108,54 @@ function main(): i32 { return used([1, 2]); }
 		n, _ := strconv.Atoi(m[1])
 		return n
 	}
-	if n := countIn(shakenReport, "bodyless"); n != 1 {
-		t.Errorf("bodyless = %d, want 1: never_asked is a template nothing instantiates, so it has "+
-			"no body to lower and must not be counted as a refusal.\n%s", n, shakenReport)
+	// A template nothing instantiates does not reach the boundary at all: the
+	// production prepass this driver now runs monomorphises the instantiated
+	// one and drops the other, so `never_asked` is not in the module to be
+	// measured, counted apart, or refused. Before the prepass was restored it
+	// survived as a bodyless declaration and the assertion here was that it be
+	// counted apart from the refusals — one pipeline further from what the
+	// compiler does, for the same underlying property.
+	if n := countIn(shakenReport, "bodyless"); n != 0 {
+		t.Errorf("bodyless = %d, want 0: the prepass drops an uninstantiated template, so nothing "+
+			"here should be measured without a body.\n%s", n, shakenReport)
 	}
-	if got, want := countIn(shakenReport, "measured"), countIn(shakenReport, "functions")-1; got != want {
-		t.Errorf("measured = %d, want %d (functions minus the bodyless template)\n%s", got, want, shakenReport)
+	if got, want := countIn(shakenReport, "measured"), countIn(shakenReport, "produced"); got != want {
+		t.Errorf("measured %d and produced %d: the shaken entry has nothing the boundary "+
+			"refuses.\n%s", got, want, shakenReport)
 	}
+	// The census has to measure the module the COMPILER lowers, which is
+	// `ircore.lift_lambdas(parser.module_with_builtins(merged))` in every real
+	// driver. It once hand-rolled a prefix of that and skipped
+	// `hoist_local_funcs_module`, so a self-recursive nested `function` — which
+	// that pass lifts to a top-level declaration — was measured as a binding
+	// production has already removed, and its calls charged to
+	// `no semantic contract: $binding$0$…`. It refused 0 of 2 here and produced
+	// whole in the compiler, which cost an issue filed against the language for
+	// a defect the instrument invented (#9773, #9778).
+	prepass := filepath.Join(dir, "prepass.fern")
+	writeEntry(t, prepass, `function main(): i32 {
+    function rec(n: i32): i32 {
+        if (n <= 0) { return 0; }
+        return rec(n - 1);
+    }
+    return rec(3);
+}
+`)
+	out, err = exec.Command(bin, prepass).CombinedOutput()
+	if err != nil {
+		t.Fatalf("census failed: %v\n%s", err, out)
+	}
+	prepassReport := string(out)
+	t.Logf("census of a self-recursive nested function:\n%s", prepassReport)
+	pm, pp := countIn(prepassReport, "measured"), countIn(prepassReport, "produced")
+	if pp != pm {
+		t.Errorf("produced %d of %d: the census is measuring a module the production "+
+			"prepass would have rewritten. Every real driver lowers "+
+			"ircore.lift_lambdas(parser.module_with_builtins(merged)); this driver has to "+
+			"run the same prepass or it reports the instrument's refusals as the "+
+			"boundary's.\n%s", pp, pm, prepassReport)
+	}
+
 	if strings.Contains(shakenReport, "uninstantiated generic") {
 		t.Errorf("an uninstantiated template still appears in the refusal histogram; it is not a "+
 			"refusal, it is a declaration with nothing to measure.\n%s", shakenReport)
