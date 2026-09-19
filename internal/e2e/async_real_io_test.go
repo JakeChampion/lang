@@ -88,9 +88,18 @@ function main(): i32 {
 }
 
 // race drives the fd-tagged futures until the FIRST resolves and returns
-// (winnerIndex, value). Two timerfds (slow 50ms at index 0, fast 10ms at
-// index 1): race returns the fast one (value 10, index 1), blocking in
-// real poll only until the first fires. Deterministic via timerfds.
+// (winnerIndex, value). Two timerfds, the slow one at index 0 and the fast
+// one at index 1: race returns the fast one, blocking in real poll only
+// until it fires. The slow timer is dropped, so the gap costs no wall clock.
+//
+// The gap has to be wide because `poll` returns the FIRST READY token, so
+// index order is the tiebreak when both have fired. The timers are armed
+// before the loop is entered, and if the process takes longer to reach poll
+// than the slow timer's delay then both are ready and index 0 -- the slow
+// one -- wins. At 50ms against 10ms that margin was 40ms, which a loaded
+// machine closes: the case failed about one run in four on idle main and
+// three in three under a full sweep, always exit 91, which is the assertion
+// that the value came from the fast timer (#9796).
 func TestAsyncRaceTimers(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
@@ -104,7 +113,7 @@ function start_timer(ms: i32): async.Future[i32] {
 }
 
 function main(): i32 {
-    var tasks: async.Future[i32][] = [start_timer(50), start_timer(10)];
+    var tasks: async.Future[i32][] = [start_timer(5000), start_timer(10)];
     var (winner, value) = async.race(tasks, -1);
     if (value != 10) { return 91; }
     if (winner != 1) { return 92; }
@@ -116,8 +125,14 @@ function main(): i32 {
 
 // with_deadline bounds the whole fan-out by a wall-clock deadline,
 // returning Option[T] per future: Some(result) for one that resolves in
-// time, None for one whose timer outlives the deadline. Both paths
-// deterministic via timerfds + monotonic_ns (no network).
+// time, None for one whose timer outlives the deadline.
+//
+// Both gaps are wide for the reason race's is: a timer is armed by
+// start_timer BEFORE with_deadline is entered and its window opens, so a
+// process descheduled in between meets a timer that has already fired. At
+// 500ms against a 20ms deadline the timed-out case answered Some once in
+// sixty runs under contention, which is the right answer to the wrong
+// question -- the future really had resolved by the time the window opened.
 func TestAsyncWithDeadline(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
@@ -135,20 +150,20 @@ function start_timer(ms: i32): async.Future[i32] {
 		want       int
 	}{
 		{
-			// 5ms timer, 500ms deadline → completes → Some(5).
+			// 5ms timer, 5s deadline → completes → Some(5).
 			name: "completes_in_time",
 			body: `function main(): i32 {
     var tasks: async.Future[i32][] = [start_timer(5)];
-    var r: Option[i32][] = async.with_deadline(500, tasks);
+    var r: Option[i32][] = async.with_deadline(5000, tasks);
     match (r[0]) { Some(v) => { return v; }, None => { return 99; } }
 }`,
 			want: 5,
 		},
 		{
-			// 500ms timer, 20ms deadline → times out → None → map to 42.
+			// 5s timer, 20ms deadline → times out → None → map to 42.
 			name: "times_out",
 			body: `function main(): i32 {
-    var tasks: async.Future[i32][] = [start_timer(500)];
+    var tasks: async.Future[i32][] = [start_timer(5000)];
     var r: Option[i32][] = async.with_deadline(20, tasks);
     match (r[0]) { Some(v) => { return 99; }, None => { return 42; } }
 }`,
