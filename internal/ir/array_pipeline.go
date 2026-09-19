@@ -520,6 +520,7 @@ func FormatArrayPipelineHistogram(p *Program) string {
 	verdicts := ArrayFusionVerdicts(p)
 	counts := map[ArrayRefusal]int{}
 	fusionCounts := map[FusionRefusal]int{}
+	storageCounts := map[ArrayStorage]int{}
 	stages, materialize, chained, fused := 0, 0, 0, 0
 	for _, pl := range pipes {
 		counts[pl.Stop]++
@@ -533,6 +534,9 @@ func FormatArrayPipelineHistogram(p *Program) string {
 		if v.Why == FusionFused {
 			fused++
 		}
+		for si := range pl.Stages {
+			storageCounts[ArrayStageStorage(p, pl, si, v.Why == FusionFused)]++
+		}
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "array pipelines: %d (%d with more than one stage), %d stages, %d materializing\n",
@@ -542,6 +546,10 @@ func FormatArrayPipelineHistogram(p *Program) string {
 		fmt.Fprintf(&b, "  %-26s %d\n", r.Tag(), fusionCounts[r])
 	}
 	b.WriteString(arrayReportCompilerNote)
+	fmt.Fprintf(&b, "stage buffers (#9732):\n")
+	for _, st := range AllArrayStorage {
+		fmt.Fprintf(&b, "  %-26s %d\n", st.Tag(), storageCounts[st])
+	}
 	fmt.Fprintf(&b, "chains stopped by (#9730):\n")
 	for _, r := range allRefusals {
 		fmt.Fprintf(&b, "  %-26s %d\n", r.Tag(), counts[r])
@@ -583,12 +591,17 @@ func FormatArrayPipelines(p *Program) string {
 		if pl.Stop != RefusalNone {
 			fmt.Fprintf(&b, "%-*s    chain ends here: %s\n", posW, "", pl.Stop)
 		}
-		for _, s := range pl.Stages {
+		fused := verdicts[arrayPipelineKey(pl.Func, pl)].Why == FusionFused
+		for si, s := range pl.Stages {
 			elem := s.Element
 			if elem == "" {
 				elem = "(element function not statically resolved)"
 			}
 			fmt.Fprintf(&b, "%-*s    %-10s %-12s %s\n", posW, "", s.Verb, s.Kind, elem)
+			// "Why did it allocate?" is #9732's second question, and it is
+			// asked per STAGE because that is where a buffer comes from.
+			fmt.Fprintf(&b, "%-*s      %s\n", posW, "",
+				ArrayStageStorage(p, pl, si, fused))
 		}
 	}
 	fmt.Fprintf(&b, "\n%d pipeline(s), %d with more than one stage\n", len(pipes), chained)
