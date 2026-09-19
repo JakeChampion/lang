@@ -95,9 +95,23 @@ func mkdirGuarded(t *testing.T, dir string) {
 // mkdirNames seeds the names whose diagnostics show GNU's two quoting
 // styles: the `-v` line quotes a file name as a shell would need it
 // typed and the error line escapes it in C.
+// mkdirQuotedNames is the set of names whose quoting the -v line and the error
+// line have to differ on. The one that is not valid UTF-8 is in it only where
+// the filesystem holds such a name: the seed creates every name in this list
+// and the case generator makes two cases per name, so both halves have to
+// agree about which names exist.
+func mkdirQuotedNames(t *testing.T) []string {
+	t.Helper()
+	names := []string{"a b", "a'b", "a\"b", "a\\b", "a\tb", "a\nb", "a~b", "a:b"}
+	if rawByteNamesHeld(t) {
+		names = append(names, "\xff\xfe")
+	}
+	return names
+}
+
 func mkdirNames(t *testing.T, dir string) {
 	t.Helper()
-	for _, n := range []string{"a b", "a'b", "a\"b", "a\\b", "a\tb", "a\nb", "\xff\xfe", "a~b", "a:b"} {
+	for _, n := range mkdirQuotedNames(t) {
 		mkdirFile(t, dir, n)
 	}
 }
@@ -334,7 +348,7 @@ func mkdirCases(t *testing.T) []invocation {
 	add(invocation{name: "an ancestor past NAME_MAX", args: []string{"-v", "-p", mkdirLong(256) + "/x"}, seedTree: mkdirBare})
 
 	// ---- quoting: the -v line and the error line differ ----
-	for _, n := range []string{"a b", "a'b", "a\"b", "a\\b", "a\tb", "a\nb", "\xff\xfe", "a~b", "a:b"} {
+	for _, n := range mkdirQuotedNames(t) {
 		add(invocation{name: "created " + fmt.Sprintf("%q", n), args: []string{"-v", "--", n}, seedTree: mkdirBare})
 		add(invocation{name: "taken " + fmt.Sprintf("%q", n), args: []string{"-v", "--", n}, seedTree: mkdirNames})
 	}

@@ -1,8 +1,9 @@
 # The per-operator fusion proof
 
-Status: design doc for #9731. What each array operator contributes to a
-fused loop, and why composing those contributions gives the guarantee
-`docs/ITERATOR-FUSION-CONTRACT.md` clause 1 asks for.
+Status: the contract `internal/ir/array_fusion.go` implements (#9731). What
+each array operator contributes to a fused loop, and why composing those
+contributions gives the guarantee `docs/ITERATOR-FUSION-CONTRACT.md` clause
+1 asks for.
 
 Written before the pass, because clause 1 is a claim a benchmark cannot
 establish:
@@ -197,8 +198,13 @@ preconditions of the argument:
 
 1. **Every element function is statically resolved** (§1). Without it
    the call is indirect and the "no unspecialised call" half fails.
-2. **Every element function reaches no capability-tagged builtin** (§1).
-   Without it merging traversals can reorder effects.
+2. **Every element function reaches no observable effect** (§1). Without
+   it merging traversals can reorder effects. The pass tests this more
+   strictly than §1 words it: `internal/caps` answers a security
+   question, and `print` is deliberately ungated there while being
+   exactly the effect an interleave exposes. So the allowed set is
+   inverted — a program function, walked through, or a codegen runtime
+   helper, and nothing else.
 3. **No fragment elides an application that would be observable** (§2).
    The three-outcome vocabulary cannot express early exit, so the first
    slice satisfies this by construction — which is the other reason
@@ -211,22 +217,104 @@ A pipeline failing any of these does not fuse, and says so with the
 closed refusal set of `internal/ir/array_pipeline.go` (#9732) rather
 than silently allocating per stage — clause 4.
 
-## How this will be measured
+## What the first slice reaches
 
-Clause 3 is hand-written-loop parity: allocation count equal, asserted
-through `docs/ALLOCATION-OBSERVABLE.md`'s counters, and runtime within
-noise. `examples/array_pipeline/` already holds the three programs and
-their hand-written equivalents, and
-`docs/ARRAY-PIPELINE-BASELINE-2026-09.md` holds the numbers to beat:
+`map` and `filter` as stages, `fold` and `reduce` as sinks, over 8-byte
+elements. The pass is `internal/ir/array_fusion.go`; `FERN_NO_ARRAY_FUSION=1`
+turns it off, which is how a miscompilation suspected here is ruled out in
+one run rather than by rebuilding the compiler.
 
-| | combinator ÷ loop, native | ÷ loop, self-host |
-| --- | ---: | ---: |
-| `map.map.reduce` | 4.37x | 4.77x |
-| `filter.map.reduce` | 2.58x | 2.20x |
+Clause 1's second half — "no unspecialised calls per element" — holds, and it
+is not something this pass does by itself. Fusion runs FIRST in
+`OptimizeProgram`, so what the later passes see is one loop whose element
+functions are locally constructed closures, and `Defunctionalise` resolves
+each call to a statically named target. After the full battery the fused
+`map.map.reduce` contains **no `OpCallIndirect` at all**.
 
-Parity means those ratios reach 1.0 within noise, and the allocation
-columns — 25 and 21 allocator calls per round — reach the loops' zero.
+Be precise about what that does and does not say. Resolving the dispatch is
+not the same as removing the call. Whether the call then survives is
+`Inline`'s ordinary decision and nothing fusion does: a LEAF element function
+is absorbed and the loop body ends up with no call at all, while one that
+calls something else stays an `OpCallClosureDirect`. The benchmark programs in
+`examples/array_pipeline` are the second kind — their element functions call
+`modulus()` — so the fused loop there makes three calls an element, one per
+stage plus the sink. Their `call_loop` control makes the same three, which is
+how the measurement below separates the cost of calling from the cost of
+reaching the callee through a closure.
 
-The measurement already exists, which is the useful part: `scripts/array-pipeline-baseline`
-runs both compilers over every backend, so the parity claim is checkable
-the day the pass lands rather than needing a harness built alongside it.
+An earlier version of this section said the element functions were "inlined
+outright". That was read off a count of `OpCallIndirect` and `OpCallDirect`
+which never looked at `OpCallClosureDirect`, the kind they are dispatched
+through when they are not inlined. Both shapes are now pinned in
+`internal/ir/array_fusion_test.go`.
+
+Running fusion after `Inline` instead would have left the chain
+unrecognisable, since `Inline` rewrites std/array's one-line method
+delegates.
+
+Two shapes inside that vocabulary still decline, and both are coverage rather
+than correctness:
+
+- **A receiver that is not a named local.** `b.xs.map(f).fold(...)` reads the
+  array out of a field, so the receiver is not a slot the argument walk can
+  name, and the chain is left alone. A receiver that is a call result does
+  fuse — the result lands in a local first.
+- **A chain whose element function reaches another chain.** std/array's
+  combinators call their element function indirectly, an indirect call is
+  counted effectful because its target is unknown here, and that propagates to
+  anything calling them. So in `xs.map(x => x + inner(ys))`, `inner`'s own
+  chain fuses and the outer one does not. Resolving a locally-constructed
+  closure is `Defunctionalise`'s job and it runs later; duplicating it here to
+  widen this would be the wrong place.
+
+Measured on `examples/array_pipeline/`, arm64-darwin, 2000 elements over 50
+rounds, against `docs/ARRAY-PIPELINE-BASELINE-2026-09.md`'s numbers:
+
+| | allocator calls per round, before | after | hand-written loop |
+| --- | ---: | ---: | ---: |
+| `map.map.reduce` | 23 | 1 | 0 |
+| `filter.map.reduce` | 19 | 1 | 0 |
+
+Cold fresh bytes fall from 49952 and 6944 to 32. The one remaining
+allocation per round is `reduce`'s own `Some(acc)` box, which its
+`Option[T]` return type requires and which is O(1) rather than linear in
+the input — the hand-written loops return a bare `i64` and so pay nothing.
+A `fold` sink allocates nothing at all.
+
+Runtime, measured the way the baseline was — callgrind retired instructions,
+arm64-linux running natively in `scripts/devbox`, 2000 elements over 30 rounds.
+
+The comparison needs the right control, and the one the baseline shipped is
+not it. `loop` spells the element functions' arithmetic out by hand and hoists
+`modulus()` above the loop; `closure_loop` calls them through function values,
+which is the indirect dispatch fusion removes. Neither is "the same work,
+written as a loop". `call_loop` is: a hand-written loop that CALLS the same
+element functions the pipeline's lambdas call.
+
+| | unfused ÷ call_loop | fused ÷ call_loop | fused ÷ loop |
+| --- | ---: | ---: | ---: |
+| `map.map.reduce` | 4.60x | **1.148x** | 1.169x |
+| `filter.map.reduce` | 2.73x | **0.937x** | 0.974x |
+
+`filter.map.reduce` is below both controls. That is not a measurement error:
+its hand-written loops carry the same `seeded` flag the fused form does, and
+the fused form reads each element once where the pipeline's loop equivalents
+re-read `xs[i]`.
+
+`map.map.reduce` keeps about 8 instructions an element over `call_loop`, and
+the control is what makes that number mean something. Hand-inlining the callee
+bodies — `call_loop` against `loop` — is worth only 1.8% and 4.0%, so the gap
+is NOT the calls, which was the first guess and the second. Both controls make
+three calls an element to the same functions. What differs is that the fused
+loop reaches its through a closure: `load fn; +ptrW; load; call_closure_direct`
+where `call_loop` calls a plain function.
+
+That env fetch has a known owner. `ElideClosurePair` already recognises the
+four-op sequence and removes it along with the pair allocation — but only for
+a slot whose every reader is one of those call sites. The fused form also
+emits `__drop_closure_value` on each slot, which is not, so the slots fail its
+eligibility and keep the detour. Whether that drop can be elided alongside the
+pair is that pass's question, not this one's. `HoistLoopInvariants` is not the
+answer either: it hoists only from a loop HEADER, deliberately, so a
+zero-iteration loop cannot gain a read it never made.
+

@@ -2835,17 +2835,44 @@ function decl_key(fd: parser.FuncDecl): string {
     return util.base_type_name(fd.receiver_type) + "." + fd.name;
 }
 
+// coarse_fn_tag_without_contract reports a declaration whose result is the
+// coarse callable tag carrying none of the signature that tag drops. The one
+// this exists for is synthesised: the IIFE irlower.hoist_value_iife declares
+// for an if/match-expression whose arms are UNANNOTATED lambdas, which have a
+// parameter list to report and no result.
+//
+// A declaration the SOURCE wrote can match too, at a depth parse_decl_type does
+// not recover the pair for — `((i32) => void)[][]` is `fn[][]` with an empty
+// sidecar. Admitting it is harmless: the inference either resolves the result
+// or does not, and a result that stays unresolved is refused exactly as before.
+// So this tests the tag, not who wrote it.
+function coarse_fn_tag_without_contract(fd: parser.FuncDecl): boolean {
+    return fd.ret_fn_ret.len() == 0 && parser.is_coarse_fn_tag(fd.ret_type);
+}
+
 // A declaration that spells no result type is void unless its body returns a
 // value: a hoisted lambda carries no annotation, and its result is the type
 // the checker gives the first value it returns, read in the scope the
 // statements before it built.
+function inferred_result(fd: parser.FuncDecl, scope: checker.Scope, b: ssasem.Binding): typeinfo.Type {
+    var (returned, at) = first_returned(fd.body, scope);
+    if (bare_return(returned)) { return t_void(); }
+    return resolved(checker.expr_type(returned, at), generic_decl(fd, scope), scope, b);
+}
+
 function result_type(fd: parser.FuncDecl, scope: checker.Scope, b: ssasem.Binding): typeinfo.Type {
-    if (fd.ret_type.len() == 0) {
-        var (returned, at) = first_returned(fd.body, scope);
-        if (bare_return(returned)) { return t_void(); }
-        return resolved(checker.expr_type(returned, at), generic_decl(fd, scope), scope, b);
+    if (fd.ret_type.len() == 0) { return inferred_result(fd, scope, b); }
+    var declared: typeinfo.Type = resolved(scope.ret_type, generic_decl(fd, scope), scope, b);
+    // A coarse fn tag with no contract has nothing for the checker to resolve,
+    // so the declaration is refused for an unresolved result type — but the
+    // body still says what it returns, and that is the same inference an
+    // unannotated declaration above already relies on. The tag itself stays:
+    // hoist_value_iife declares it deliberately and closure_ret_fns_of is gated
+    // on it, so only the unresolved RESULT is filled in here.
+    if (!semtypes.concrete(declared, true) && coarse_fn_tag_without_contract(fd)) {
+        return inferred_result(fd, scope, b);
     }
-    return resolved(scope.ret_type, generic_decl(fd, scope), scope, b);
+    return declared;
 }
 
 // The first `return` carrying a value, looked for through the branches, arms
@@ -3167,6 +3194,20 @@ function complete(fd: parser.FuncDecl, s: State, name: string): Produced {
     return Produced { ok: true, why: "", func: f, modes: modes, template: false, key: "", requests: s.requests, bodyless: false };
 }
 
+// unresolved_result_spelling names what the refusal failed ON. A type that did
+// not resolve has no spelling to report, so printing the resolved type alone
+// gave an empty message for every cause at once — which is how `if_expr_rt`
+// tagging a boolean branch with the non-existent type name `bool` survived 167
+// refusals that all read `unresolved result type: `. The DECLARED spelling is
+// the one that identifies the cause, so it is what the message carries when the
+// resolved type has none.
+function unresolved_result_spelling(fd: parser.FuncDecl, s: State): string {
+    var resolved: string = typeinfo.spelling(s.result);
+    if (resolved.len() > 0) { return resolved; }
+    if (fd.ret_type.len() > 0) { return "declared `" + fd.ret_type + "`"; }
+    return "inferred from the first returned value";
+}
+
 // build produces one body's typed semantic graph from its checked declaration,
 // the checker's function scope, the module's call contracts and — for a
 // template — the instantiation to produce it under, named `name`. Unsupported
@@ -3175,7 +3216,7 @@ function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Cont
     var why: string = unsupported_declaration(fd, scope);
     if (why != "") { return refuse(why); }
     var s: State = initial(fd, scope, contracts, binding, name, handers);
-    if (!semtypes.concrete(s.result, true)) { return refuse("unresolved result type: " + typeinfo.spelling(s.result)); }
+    if (!semtypes.concrete(s.result, true)) { return refuse("unresolved result type: " + unresolved_result_spelling(fd, s)); }
     if (ssasem.is_view(s.result)) { return refuse("view result escapes its source"); }
     s = parameters(fd, s);
     s = stmts(fd.body, s);
@@ -3393,7 +3434,29 @@ function intrinsic_contracts(): ssasem.Contract[] {
     for c in bit_count_contracts() { out = out.append(c); }
     for c in memory_contracts() { out = out.append(c); }
     for c in byte_scan_contracts() { out = out.append(c); }
+    for c in rc_contracts() { out = out.append(c); }
     return out;
+}
+
+// The reference-counting and container helpers `core/map` calls by name. It is
+// written against the runtime directly — an inline (SSO) key has no buffer to
+// count, a value column's kind decides whether a slot is owned — so the calls
+// are in the source rather than inserted by the RC lowering, and the producer
+// needs a contract for each the way it does for `__memcpy`.
+//
+// Signatures are the call sites': `__fern_rc_inc` answers the pointer it was
+// given (map.fern:477, 747, 970), `__fern_str_dec` takes the string and gives
+// nothing back (657, 719), `__map_hash_seed` answers the i32 stored in the
+// header (342), and the two array drops take a pointer and a stride (727, 730).
+function rc_contracts(): ssasem.Contract[] {
+    var v: i32 = ssaunits.value_mode();
+    return [
+        ssasem.Contract { name: "__fern_rc_inc", params: [t_usize()], modes: [v], result: t_usize() },
+        ssasem.Contract { name: "__fern_str_dec", params: [t_string()], modes: [v], result: t_void() },
+        ssasem.Contract { name: "__map_hash_seed", params: [], modes: [], result: t_i32() },
+        ssasem.Contract { name: "__fern_drop_arr_ptr", params: [t_usize(), t_i32()], modes: [v, v], result: t_void() },
+        ssasem.Contract { name: "__fern_arr_dec", params: [t_usize(), t_i32()], modes: [v, v], result: t_void() }
+    ];
 }
 
 // The ten f64 primitives `std/float` dispatches to, and the one two-operand

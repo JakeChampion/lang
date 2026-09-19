@@ -143,7 +143,12 @@ func odCases(t *testing.T) []invocation {
 		t.Fatal(err)
 	}
 	d := filepath.Join(dir, "d")
-	raw := odFile(t, dir, "na\xffme", []byte("x\n"))
+	// Created only where the filesystem holds the name; the cases naming it
+	// carry rawByteName and skip there.
+	raw := filepath.Join(dir, rawByteNameFixture)
+	if rawByteNamesHeld(t) {
+		raw = odFile(t, dir, rawByteNameFixture, []byte("x\n"))
+	}
 	// Past a read block, so the elision and the offsets cross one.
 	big := odFile(t, dir, "big", []byte(strings.Repeat("0123456789abcdef", 20000)))
 	// A run of identical blocks that straddles the seam between two

@@ -107,7 +107,7 @@ func newDigestTree(t *testing.T, spec digestSpec) digestTree {
 		carriage:  digestFile(t, dir, "car\rriage", "x\n"),
 		spaced:    digestFile(t, dir, "sp ace", "x\n"),
 		quoted:    digestFile(t, dir, "q'uote", "x\n"),
-		raw:       digestFile(t, dir, "na\xffme", "x\n"),
+		raw:       digestRawName(t, dir, "x\n"),
 		missing:   filepath.Join(dir, "nosuch"),
 		subdir:    filepath.Join(dir, "d"),
 		hex:       strings.Repeat("0", spec.bits/4),
@@ -119,6 +119,22 @@ func newDigestTree(t *testing.T, spec digestSpec) digestTree {
 }
 
 // digestCases is the corpus of one checksum utility.
+// digestRawName writes the not-valid-UTF-8 fixture for the seven checksum
+// utilities, which share one tree. Where the filesystem refuses the name it
+// creates nothing and returns the path: the two cases that use it carry
+// rawByteName and skip, and the other ninety in the shared corpus still run.
+func digestRawName(t *testing.T, dir, content string) string {
+	t.Helper()
+	p := filepath.Join(dir, rawByteNameFixture)
+	if !rawByteNamesHeld(t) {
+		return p
+	}
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
 func digestCases(t *testing.T, util string) []invocation {
 	t.Helper()
 	spec := digestSpecs()[util]
@@ -191,7 +207,7 @@ func computeCases(t *testing.T, spec digestSpec, tr digestTree) []invocation {
 		{name: "name with a tab is not escaped", args: []string{digestFile(t, tr.dir, "ta\tb", "x\n")}},
 		{name: "name with a space is not escaped", args: []string{tr.spaced}},
 		{name: "name with a quote is not escaped", args: []string{tr.quoted}},
-		{name: "name that is not valid UTF-8", args: []string{tr.raw}},
+		{name: "name that is not valid UTF-8", args: []string{tr.raw}, rawByteName: true},
 		{name: "escaped names and plain ones", args: []string{tr.a, tr.backslash, tr.newline}},
 		{name: "tag with a backslash name", args: []string{"--tag", tr.backslash}},
 		{name: "tag with a newline name", args: []string{"--tag", tr.newline}},
@@ -277,7 +293,13 @@ func checkCases(t *testing.T, spec digestSpec, tr digestTree) []invocation {
 	okTwo := mk("c.two", refOutput(t, spec.util, tr.a, tr.empty))
 	esc := mk("c.esc", refOutput(t, spec.util, tr.backslash, tr.newline, tr.carriage))
 	escTag := mk("c.esctag", refOutput(t, spec.util, "--tag", tr.backslash, tr.newline, tr.carriage))
-	rawName := mk("c.rawname", refOutput(t, spec.util, tr.raw))
+	// Built only where the fixture exists: refOutput runs the reference
+	// binary on tr.raw, which cannot answer for a file the filesystem refused
+	// to create. Its one case carries rawByteName and skips there.
+	rawName := filepath.Join(t.TempDir(), "unused")
+	if rawByteNamesHeld(t) {
+		rawName = mk("c.rawname", refOutput(t, spec.util, tr.raw))
+	}
 	spacedName := mk("c.spaced", refOutput(t, spec.util, tr.spaced))
 
 	fail := mk("c.fail", tr.hex+"  "+tr.a+"\n")
@@ -317,7 +339,7 @@ func checkCases(t *testing.T, spec digestSpec, tr digestTree) []invocation {
 		{name: "check two files", args: []string{"-c", okTwo}},
 		{name: "check escaped names", args: []string{"-c", esc}},
 		{name: "check escaped tagged names", args: []string{"-c", escTag}},
-		{name: "check a name that is not valid UTF-8", args: []string{"-c", rawName}},
+		{name: "check a name that is not valid UTF-8", args: []string{"-c", rawName}, rawByteName: true},
 		{name: "check a name with a space", args: []string{"-c", spacedName}},
 		{name: "check mismatch", args: []string{"-c", fail}},
 		{name: "check missing", args: []string{"-c", miss}},

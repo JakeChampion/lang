@@ -111,6 +111,14 @@ wasmtime run factorial.wasm
 # (dependencies without the key warn for now).
 ./fern -capabilities app/main.fern
 
+# What the std/array combinator chains in a program cost, and whether the IR
+# fused each into one loop (see docs/ARRAY-ALGEBRA.md). A chain that did not
+# fuse names the stage and the rule that stopped it, rather than silently
+# allocating a temporary per stage. FERN_ARRAY_REPORT=1 adds a histogram of
+# the reasons. Describes the NATIVE compiler; the self-hosted one fuses
+# nothing.
+./fern -array-report app/main.fern
+
 # Literate programming (Knuth-style named chunks; see docs/LITERATE.md)
 ./fern -interp examples/literate/fizzbuzz.fern.md   # tangle in memory, then run
 ./fern -tangle examples/literate/fizzbuzz.fern.md   # emit plain Fern source

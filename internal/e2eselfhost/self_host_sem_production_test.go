@@ -271,6 +271,90 @@ var semProductionPrograms = []struct {
 	noLeak bool
 	src    string
 }{
+	// A lambda the SOURCE wrote, with an explicit callable return annotation.
+	// parse_type_name coarsens that annotation to the tag "fn" and the lambda
+	// parse discarded the contract, so e_lambda_at built every source lambda
+	// with an empty pair — the same empty-spelling refusal the nested-decl
+	// desugar hit, reached without any `function` keyword. The annotation is now
+	// re-read verbatim by the reader that produced the tag, which is what
+	// parse_decl_type already did for a declaration. Produces 0 of 3 without it.
+	{name: "source-lambda-returning-callable", atLeast: 3, src: `
+function main(): i32 {
+    var mk: () => ((i32) => i32) = ((): ((i32) => i32) => { var g: (i32) => i32 = ((y: i32) => y); return g; });
+    var f: (i32) => i32 = mk();
+    return f(42);
+}
+`},
+	// The same annotation written WITHOUT the outer parentheses. The two
+	// spellings are read by different halves of the ambiguity dance
+	// parse_arrow_lambda does (#8743) — one read swallows the lambda's own arrow
+	// and one does not — and the contract is recovered on both paths, so both
+	// are gated. Also produces 0 of 3 without the fix.
+	{name: "source-lambda-returning-callable-bare", atLeast: 3, src: `
+function main(): i32 {
+    var mk: () => ((i32) => i32) = ((): (i32) => i32 => { var g: (i32) => i32 = ((y: i32) => y); return g; });
+    var f: (i32) => i32 = mk();
+    return f(42);
+}
+`},
+	// An if-expression desugars to an IIFE whose ret_type if_expr_rt reads off
+	// the then-branch, and for a boolean branch it tagged it "bool" — a spelling
+	// the language does not have. The checker rejects `bool` as a type name (it
+	// answers "did you mean `boolean`?"), so scope.ret_type came back unresolved
+	// and semsource refused the IIFE for an empty result type, taking the module
+	// with it. i32 and string branches were unaffected, which is why this
+	// survived: only the boolean arm of if_expr_rt spelled its own tag wrong.
+	// Produces 0 of 2 without the fix; the comparison case covers the binary arm,
+	// which spelled it the same way.
+	{name: "if-expr-boolean-branches", atLeast: 2, src: `
+function main(): i32 {
+    var v: boolean = if (true) { false } else { true };
+    var w: boolean = if (v) { 1 < 2 } else { 2 < 1 };
+    return if (v) { 0 } else { if (w) { 42 } else { 1 } };
+}
+`},
+	// An if-expression whose ARMS are lambdas. The IIFE it desugars to is built
+	// by e_lambda_origin, which writes the #5986 sidecar pair empty, and
+	// irlower.hoist_value_iife declares the hoisted function with the coarse "fn"
+	// tag on purpose (it IS a higher-order factory). Tag without contract is an
+	// unresolved result type, so the module went to the AST lowering. The arms
+	// carry the contract, so the hoist reads it off the returned lambda.
+	//
+	// The arms are ANNOTATED here: the contract is read straight off them, with
+	// no result to infer. The unannotated case below covers the other half, which
+	// reaches semsource with the tag and nothing to resolve.
+	// Produces 0 of 4 without the fix.
+	{name: "if-expr-lambda-arms-annotated", atLeast: 4, src: `
+function main(): i32 {
+    var f: (i32) => i32 = if (true) { ((x: i32): i32 => x) } else { ((y: i32): i32 => y + 1) };
+    return f(42);
+}
+`},
+	// The same shape in a MATCH expression. Its IIFE body is a StmtMatch, which
+	// the contract walk has to enter for the same reason the if-expression's
+	// StmtIf does — the hoist gate (iife_arms_have_lambda) already reaches both.
+	// Produces 0 of 4 without the match arm.
+	{name: "match-expr-lambda-arms-annotated", atLeast: 4, src: `
+enum Pick { A, B }
+function main(): i32 {
+    var p: Pick = Pick.A;
+    var f: (i32) => i32 = match (p) { A => ((x: i32): i32 => x), B => ((y: i32): i32 => y + 1) };
+    return f(42);
+}
+`},
+	// The UNANNOTATED arm — what the previous change deliberately left refusing.
+	// An arm lambda's parameter spellings are always written but its result only
+	// when the author annotates it, so irlower yields no contract rather than half
+	// of one, and the hoisted IIFE reaches semsource with the coarse "fn" tag and
+	// nothing to resolve. The body still says what it returns, so the result is
+	// inferred the same way an unannotated declaration's already is. Produces
+	// 0 of 4 without the fix.
+	{name: "if-expr-lambda-arms-unannotated", atLeast: 4, src: `
+function main(): i32 {
+    var f: (i32) => i32 = if (true) { ((x: i32) => x) } else { ((y: i32) => y + 1) };
+    return f(42);
+}
+`},
 	{name: "scalar-calls", atLeast: 3, src: `
 function add(a: i32, b: i32): i32 { return a + b; }
 function total(xs: i32[]): i32 {

@@ -650,6 +650,8 @@ pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
                 ...lm,
                 params: rewrite_params(lm.params, ctx),
                 ret_type: rewrite_type_name(lm.ret_type, ctx),
+                ret_fn_ret: rewrite_type_name(lm.ret_fn_ret, ctx),
+                ret_fn_param_types: rewrite_type_name_list(lm.ret_fn_param_types, ctx),
                 body: rewrite_block(lm.body, lctx)
             };
         },

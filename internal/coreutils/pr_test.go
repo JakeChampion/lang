@@ -83,7 +83,12 @@ func prCases(t *testing.T) []invocation {
 	nonl := prFile(t, dir, "nonl", "a\nb", mt)
 	nonl2 := prFile(t, dir, "nonl2", "1\n2\n3", mt)
 	blank := prFile(t, dir, "blank", "a\n\nb\n", mt)
-	raw := prFile(t, dir, "na\xffme", "x\n", mt)
+	// Created only where the filesystem holds the name; the case naming it
+	// carries rawByteName and skips there.
+	raw := filepath.Join(dir, rawByteNameFixture)
+	if rawByteNamesHeld(t) {
+		raw = prFile(t, dir, rawByteNameFixture, "x\n", mt)
+	}
 	big := prFile(t, dir, "big", seqLines(20000), mt)
 	missing := filepath.Join(dir, "nosuch")
 	if err := os.Mkdir(filepath.Join(dir, "d"), 0o755); err != nil {

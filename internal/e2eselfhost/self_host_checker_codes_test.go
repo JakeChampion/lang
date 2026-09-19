@@ -1962,6 +1962,31 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e044-capture-void", "function v(): void { return; }\nfunction main(): i32 {\n    var x = v();\n    var g = () => x;\n    return 0;\n}\n", []string{"E044"}},
 		{"e044-capture-scalar-ok", "function main(): i32 {\n    var x = 5;\n    var g = () => x;\n    return g();\n}\n", nil},
 		{"e044-capture-shadowed-ok", "function v(): void { return; }\nfunction main(): i32 {\n    var x = v();\n    var g = (x: i32) => x;\n    return g(1);\n}\n", nil},
+		// A nested `function` declaration desugars to a lambda, and the rule
+		// applies to it the same way. It is the one parser-synthesised lambda
+		// the programmer did write, so the E044 gate admits it by origin
+		// (parser.is_written_lambda_origin) rather than by an empty one.
+		{"e044-capture-void-nested-fn", "function v(): void { return; }\nfunction main(): i32 {\n    var x = v();\n    function pick(): i32 { x; return 0; }\n    return pick();\n}\n", []string{"E044"}},
+		{"e044-nested-fn-shadowed-ok", "function v(): void { return; }\nfunction main(): i32 {\n    var x = v();\n    function pick(x: i32): i32 { return x; }\n    return pick(1);\n}\n", nil},
+		// A `use` callback is the other lambda the programmer wrote that the
+		// parser gives an origin. Native desugars `use` to a local function and
+		// runs the same capture sink over it, so the rule applies there too.
+		{"e044-capture-void-use-callback", "function v(): void { return; }\nfunction apply(n: i32, cb: (i32) => i32): i32 { return cb(n); }\nfunction main(): i32 {\n    var x = v();\n    use n <- apply(41);\n    x;\n    return n;\n}\n", []string{"E044"}},
+		{"e044-capture-generic-use-callback", "function apply(n: i32, cb: (i32) => i32): i32 { return cb(n); }\nfunction f[T](x: T): i32 {\n    use n <- apply(41);\n    x;\n    return n;\n}\nfunction main(): i32 { return f(1); }\n", []string{"E044"}},
+		// A suspect declared AFTER the `use` lives inside the callback body, so
+		// it is not a capture — and the walk must not report it as one.
+		{"e044-use-callback-declares-suspect-ok", "function v(): void { return; }\nfunction apply(n: i32, cb: (i32) => i32): i32 { return cb(n); }\nfunction main(): i32 {\n    use n <- apply(41);\n    var x = v();\n    return n;\n}\n", nil},
+		// The rule asks what a lambda CAPTURES, not what its body mentions. A
+		// suspect whose only appearance is a NESTED binder's own name is not a
+		// capture, in any of the three syntaxes that reach the check — native
+		// accepts all three, and a syntactic mention test rejected them.
+		{"e044-nested-lambda-shadow-ok", "function v(): void { return; }\nfunction main(): i32 {\n    var x = v();\n    var outer: () => i32 = (): i32 => {\n        var g: (i32) => i32 = (x: i32) => x;\n        return g(1);\n    };\n    return outer();\n}\n", nil},
+		{"e044-nested-fn-inner-shadow-ok", "function v(): void { return; }\nfunction main(): i32 {\n    var x = v();\n    function outer(): i32 {\n        function helper(x: i32): i32 { return x; }\n        return helper(1);\n    }\n    return outer();\n}\n", nil},
+		{"e044-use-callback-nested-shadow-ok", "function v(): void { return; }\nfunction apply(n: i32, cb: (i32) => i32): i32 { return cb(n); }\nfunction main(): i32 {\n    var x = v();\n    use n <- apply(41);\n    var g: (i32) => i32 = (x: i32) => x;\n    return n;\n}\n", nil},
+		// Writing a suspect is capturing it. An assignment target is a field on
+		// the statement rather than an ExprIdent, so a mention test could not
+		// see one; the free-variable walk counts it, as native does.
+		{"e044-capture-void-write-only", "function v(): void { return; }\nfunction main(): i32 {\n    var x = v();\n    var g: () => i32 = (): i32 => {\n        x = 42;\n        return 0;\n    };\n    return g();\n}\n", []string{"E003", "E044"}},
 		// E053 (`fip` no-allocation): array literals, string concatenation
 		// and calls to non-fip functions are rejected inside a `fip
 		// function`; scalar arithmetic and fip→fip calls are clean.
@@ -2254,7 +2279,13 @@ func wrapMainBodyInLambda(src string) string {
 // directions, so a listed row that starts agreeing fails too and must be
 // removed. Emptying this map closes the class.
 var lambdaBodyDivergences = map[string]string{
-	"e044-capture-void": "E044 — the under-report already pinned in the sequence gate; needs a scoping decision, not a transcription",
+	// Every row here is #9777: the E044 walk never enters a lambda body, so a
+	// capture site inside one is invisible whatever syntax holds it. They
+	// differ only in that syntax, and one scoping decision closes them all.
+	"e044-capture-void":              "E044 — #9777, the capture site is in a bare lambda",
+	"e044-capture-void-nested-fn":    "E044 — #9777, the capture site is in a nested `function`",
+	"e044-capture-void-use-callback": "E044 — #9777, the capture site is in a `use` callback",
+	"e044-capture-void-write-only":   "E044 — #9777, the capture site is a write in a bare lambda",
 }
 
 func equalStrings(a, b []string) bool {

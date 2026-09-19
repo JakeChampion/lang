@@ -21,6 +21,10 @@ package ir
 // caller as its last reference. The dead-function cull stays with the
 // caller: its root set is per-backend, and so is the alias map it walks.
 func OptimizeProgram(prog *Program, ptrW int32) {
+	// Array-pipeline fusion runs FIRST, on the shape the lowering produced.
+	// `Inline` below rewrites std/array's one-line method delegates, so the
+	// chain is recognisable before it and not reliably after (#9731).
+	FuseArrayPipelines(prog, int(ptrW))
 	// Tail-call optimisation: `OpCallDirect <self> ; OpReturn` becomes a
 	// parameter rebind plus `OpBr` back to the entry, so a self-recursive
 	// function runs in O(1) stack instead of growing one frame per call.

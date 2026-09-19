@@ -176,8 +176,12 @@ func duTree(t *testing.T) string {
 	// bytes that are not UTF-8 at all.
 	duMkdir(t, j("weird dir"))
 	duWrite(t, j("weird dir", "x"), 1)
-	duMkdir(t, j("dir\xffx"))
-	duWrite(t, j("dir\xffx", "inner\xfe"), 1)
+	// Only where the filesystem holds the names; the case naming them carries
+	// rawByteName and skips there.
+	if rawByteNamesHeld(t) {
+		duMkdir(t, j("dir\xffx"))
+		duWrite(t, j("dir\xffx", "inner\xfe"), 1)
+	}
 
 	// A FIFO, which du counts and does not open.
 	seedFifo(t, j("fifo"))
@@ -260,7 +264,9 @@ func duCases(t *testing.T) []invocation {
 	add("deep-a-d1", "-a", "-d1", "deep")
 	add("fifo-and-devices", "-a", "fifo", "/dev/null", "/dev/zero")
 	add("weird-name", "-a", "weird dir")
-	add("non-utf8-name", "-a", "dir\xffx")
+	if rawByteNamesHeld(t) {
+		add("non-utf8-name", "-a", "dir\xffx")
+	}
 	add("non-utf8-missing", "no\xffsuch")
 	add("quoting-apostrophe", "it's")
 	add("quoting-double", "a'b")

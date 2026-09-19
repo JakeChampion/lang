@@ -404,19 +404,30 @@ function e_field_access(obj: ast.Expr, field: string): ast.Expr {
 function e_field_access_at(obj: ast.Expr, field: string, line: i32, col: i32): ast.Expr {
     return ast.ExprFieldAccess { obj: obj, field: field, line: line, col: col, ty: "" };
 }
-function e_lambda(params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[]): ast.Expr {
-    return e_lambda_at(params, ret_type, body, "", 0, 0);
+// e_lambda_at is the one place the ExprLambda literal is written; e_lambda_fn
+// and e_lambda_origin route through it. Only the two parses of a lambda the
+// source WROTE pass a position — the synthesised ones have none to give; see
+// ExprLambda.line. It takes the #5986 sidecar pair because a source lambda can
+// be annotated `: (i32) => i32` too, and fn_contract_of at the parse site hands
+// it both halves.
+function e_lambda_at(params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], origin: string, line: i32, col: i32, ret_fn_ret: string, ret_fn_param_types: string): ast.Expr {
+    return ast.ExprLambda { params: params, ret_type: ret_type, body: body, use_infer: false, origin: origin, line: line, col: col, captures: [], captures_known: false, ret_fn_ret: ret_fn_ret, ret_fn_param_types: ret_fn_param_types };
 }
-// e_lambda_at is e_lambda for the two parses of a lambda the source WROTE, which
-// are the only ones that carry a position; see ExprLambda.line.
-function e_lambda_at(params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], origin: string, line: i32, col: i32): ast.Expr {
-    return ast.ExprLambda { params: params, ret_type: ret_type, body: body, use_infer: false, origin: origin, line: line, col: col, captures: [], captures_known: false };
+
+// e_lambda_fn builds a lambda the PARSER synthesised for a declaration that
+// RETURNS a function value, carrying the signature `parse_type_name` coarsened
+// to the flat "fn" tag. Only a caller holding BOTH halves uses it:
+// `fn_tag_spelling` reads the result to decide whether it can rebuild the
+// spelling at all, and a result with no parameter list would rebuild `() => R`
+// for a function that takes arguments.
+function e_lambda_fn(params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], fn_ret: string, fn_ptys: string): ast.Expr {
+    return e_lambda_at(params, ret_type, body, ORIGIN_NESTED_FN, 0, 0, fn_ret, fn_ptys);
 }
-// e_lambda_origin is e_lambda for a lambda the PARSER synthesised, labelled
+// e_lambda_origin builds a lambda the PARSER synthesised, labelled
 // with the source form it stands in for so `-fmt` reprints that form. "block"
 // is a value-position `{ … }`; see ExprLambda.origin.
 function e_lambda_origin(params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], origin: string): ast.Expr {
-    return e_lambda_at(params, ret_type, body, origin, 0, 0);
+    return e_lambda_at(params, ret_type, body, origin, 0, 0, "", "");
 }
 pub function e_unknown(kind: string): ast.Expr { return ast.ExprUnknown { kind: kind, line: 0, col: 0 }; }
 pub function e_unknown_at(kind: string, line: i32, col: i32): ast.Expr { return ast.ExprUnknown { kind: kind, line: line, col: col }; }
@@ -583,8 +594,14 @@ pub const ORIGIN_IIFE_SCOPED: string = "iife_scoped";
 
 // ORIGIN_USE marks the callback lambda a `use NAME[: TYPE] <- CALL;` desugars
 // to, appended as CALL's last argument. The printer reads it back to reprint
-// the `use`; nothing else treats the lambda differently from a written one.
+// the `use`; nothing else treats the lambda differently from a written one,
+// which is what is_written_lambda_origin admitting it keeps true.
 pub const ORIGIN_USE: string = "use";
+
+// ORIGIN_NESTED_FN marks the lambda a nested `function` declaration desugars to.
+// Like ORIGIN_USE it marks a lambda the PROGRAMMER wrote rather than one the
+// parser synthesised, so is_written_lambda_origin admits it.
+pub const ORIGIN_NESTED_FN: string = "nested_fn";
 
 // no_match_sugar is the empty MatchSugar every StmtIf but the two match
 // desugars carries.
@@ -797,7 +814,7 @@ function maybe_desugar_array_build(base: ast.Expr): ast.Expr {
                                         ri = ri + 1;
                                     }
                                     stmts = stmts.append(s_return(e_ident(bname)));
-                                    var iife: ast.Expr = ast.ExprLambda { params: [], ret_type: arrty, body: stmts, use_infer: false, origin: ORIGIN_ARR_COMP, line: 0, col: 0, captures: [], captures_known: false };
+                                    var iife: ast.Expr = ast.ExprLambda { params: [], ret_type: arrty, body: stmts, use_infer: false, origin: ORIGIN_ARR_COMP, line: 0, col: 0, captures: [], captures_known: false, ret_fn_ret: "", ret_fn_param_types: "" };
                                     return ast.ExprCall { callee: iife, args: [], line: call.line, col: call.col, type_argc: 0, ty: "" };
                                 },
                                 _ => { return base; },
@@ -864,7 +881,7 @@ function maybe_desugar_map_build(base: ast.Expr): ast.Expr {
                                         ri = ri + 1;
                                     }
                                     stmts = stmts.append(s_return(e_ident(bname)));
-                                    var iife: ast.Expr = ast.ExprLambda { params: [], ret_type: mapty, body: stmts, use_infer: false, origin: ORIGIN_MAP_COMP, line: 0, col: 0, captures: [], captures_known: false };
+                                    var iife: ast.Expr = ast.ExprLambda { params: [], ret_type: mapty, body: stmts, use_infer: false, origin: ORIGIN_MAP_COMP, line: 0, col: 0, captures: [], captures_known: false, ret_fn_ret: "", ret_fn_param_types: "" };
                                     return ast.ExprCall { callee: iife, args: [], line: call.line, col: call.col, type_argc: 0, ty: "" };
                                 },
                                 _ => { return base; },
@@ -1607,6 +1624,8 @@ function parse_arrow_lambda(p: Par): (ast.Expr, Par) {
     }
     if (p.peek_punct() == ")") { p = p.advance(); }
     var ret_type: string = "";
+    var lam_fn_ret: string = "";
+    var lam_fn_ptys: string = "";
     if (p.peek_punct() == ":") {
         p = p.advance();
         // A parenthesised annotation is ambiguous with a function type:
@@ -1624,10 +1643,23 @@ function parse_arrow_lambda(p: Par): (ast.Expr, Par) {
         if (rtr_p.peek_punct() == "=>") {
             p = rtr_p;
             ret_type = rtr_name;
+            // The same verbatim re-read parse_decl_type does, with the reader
+            // that produced this tag. It yields BOTH halves of the contract,
+            // where the coarse `fn_ret` of parse_type_name is only one — and
+            // half a signature is worse than none, since fn_tag_spelling would
+            // rebuild `() => R` for a function that takes arguments.
+            var (gw, gwa, gwr, gwe) = parse_type_name(Par { ...saved, verbatim: true });
+            var (g_ret, g_ptys) = fn_contract_of(rtr_name, gw);
+            lam_fn_ret = g_ret;
+            lam_fn_ptys = g_ptys;
         } else {
             var (ra_name, ra_ret_arr, ra_fn_ret, ra_p) = parse_type_name_reserving_arrow(saved);
             p = ra_p;
             ret_type = ra_name;
+            var (rw, rwa, rwr, rwe) = parse_type_name_reserving_arrow(Par { ...saved, verbatim: true });
+            var (r_ret, r_ptys) = fn_contract_of(ra_name, rw);
+            lam_fn_ret = r_ret;
+            lam_fn_ptys = r_ptys;
         }
     }
     if (p.peek_punct() == "=>") { p = p.advance(); }
@@ -1648,7 +1680,7 @@ function parse_arrow_lambda(p: Par): (ast.Expr, Par) {
         body = [s_return(ber_expr)];
     }
     body = prepend_param_destrs(body, apd);
-    return parse_postfix(p, e_lambda_at(params, ret_type, body, "", lam_line, lam_col));
+    return parse_postfix(p, e_lambda_at(params, ret_type, body, "", lam_line, lam_col, lam_fn_ret, lam_fn_ptys));
 }
 
 // Parse results are `(parsed_thing…, Par)` tuple returns — both pieces
@@ -2652,7 +2684,7 @@ function value_arm_body(body: ast.Stmt[], val: string): ast.Stmt[] {
 // i32 0, which at worst re-bails rather than miscompiling.
 function zero_expr_for(rt: string): ast.Expr {
     if (rt == "string") { return e_string(""); }
-    if (rt == "bool") { return e_bool(false); }
+    if (rt == "boolean") { return e_bool(false); }
     if (rt == "f64") { return e_number("0", "", true); }
     if (rt == "i64" || rt == "u64") { return e_number("0", rt, false); }
     return e_number("0", "", false);
@@ -2665,7 +2697,7 @@ function zero_expr_for(rt: string): ast.Expr {
 function if_expr_rt(e: ast.Expr): string {
     match (e) {
         ast.ExprString(_) => { return "string"; },
-        ast.ExprBool(_) => { return "bool"; },
+        ast.ExprBool(_) => { return "boolean"; },
         ast.ExprNumber(n) => {
             if (n.is_float) { return "f64"; }
             // A WIDE literal — explicit `i64` / `u64` suffix, or a magnitude past
@@ -2675,7 +2707,7 @@ function if_expr_rt(e: ast.Expr): string {
             // 5000000000 } else { … })` bailed the whole module off the IR path.
             //
             // The other branch kinds were already classified, which is why only
-            // wide integers were affected — string / bool / f64 branches, i64 branches
+            // wide integers were affected — string / boolean / f64 branches, i64 branches
             // through an IDENT (the slot carries the width), and an i64 if-expr
             // in `return` position inside an i64 function (the enclosing return
             // type supplies it) all lowered fine. A bare wide literal is the one
@@ -2716,12 +2748,12 @@ function if_expr_rt(e: ast.Expr): string {
         // can recover the width and the module bails ("did not lower: `return`
         // of binary `/`").
         //
-        // A comparison yields a bool whatever its operands are; anything else
+        // A comparison yields a boolean whatever its operands are; anything else
         // takes wider_rt of the two sides, the same combination parse_if_chain
         // already applies ACROSS branches, so a width appearing on either side
         // survives.
         ast.ExprBinary(b) => {
-            if (irt_is_cmp(b.op)) { return "bool"; }
+            if (irt_is_cmp(b.op)) { return "boolean"; }
             return wider_rt(if_expr_rt(b.left), if_expr_rt(b.right));
         },
         _ => { return "i32"; }
@@ -4249,7 +4281,7 @@ function parse_block_body_nested(p: Par, tail_value: boolean): (ast.Stmt[], Par)
             // no `: TYPE` — the checker's E032 rule verifies the binding
             // type is inferrable from the callee's signature (native
             // inferUseParam). An annotated `use n: T <- …` never draws E032.
-            var cb: ast.Expr = ast.ExprLambda { params: cbparams, ret_type: "", body: rest_body, use_infer: utype.len() == 0, origin: ORIGIN_USE, line: 0, col: 0, captures: [], captures_known: false };
+            var cb: ast.Expr = ast.ExprLambda { params: cbparams, ret_type: "", body: rest_body, use_infer: utype.len() == 0, origin: ORIGIN_USE, line: 0, col: 0, captures: [], captures_known: false, ret_fn_ret: "", ret_fn_param_types: "" };
             match (usrc_expr) {
                 ast.ExprCall(c) => {
                     var newargs: ast.Expr[] = c.args.append(cb);
@@ -5589,9 +5621,9 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
             // itself (the name binds after the lambda captures), so this
             // needs top-level hoisting (closureconv), not yet ported.
             // Surface it rather than miscompile silently.
-            return (s_var(fr_func.name, "", e_lambda(fr_func.params, fr_func.ret_type, fr_func.body)), p);
+            return (s_var(fr_func.name, "", e_lambda_fn(fr_func.params, fr_func.ret_type, fr_func.body, fr_func.ret_fn_ret, fr_func.ret_fn_param_types)), p);
         }
-        var lam: ast.Expr = e_lambda(fr_func.params, fr_func.ret_type, fr_func.body);
+        var lam: ast.Expr = e_lambda_fn(fr_func.params, fr_func.ret_type, fr_func.body, fr_func.ret_fn_ret, fr_func.ret_fn_param_types);
         // `-fmt` records which of the two spellings was written, the way a
         // struct destructure uses the same field ("@sd:…"): both parse to a
         // lambda-valued local, so without the marker a nested declaration came
@@ -6987,12 +7019,30 @@ function parse_decl_type(p: Par): (DeclType, Par) {
     }
     if (p.verbatim || (name != "fn" && name != "fn[]")) { return (out, end); }
     var (written, wr_arr, wr_ret, wr_end) = parse_type_name(Par { ...p, verbatim: true });
-    var ref: TypeRef = ref_ungroup(parse_type_ref(written));
-    if (name == "fn[]" && ref.array_depth == 1) { ref = ref_ungroup(elem_type_ref(ref)); }
+    var ref: TypeRef = fn_ref_of(name, written);
     if (!ref_is_fn_value(ref)) { return (out, end); }
     var result: string = render_type_ref(ref_fn_result(ref));
     return (DeclType { name: name, is_str: false, ret_arr: ret_spelling_is_array(result), fn_ret: result,
         fn_params: ref_fn_param_spellings(ref), fn_dyn: ref_fn_param_dyn(ref) }, end);
+}
+
+// fn_ref_of is the callable a coarsened tag stands for, read back out of the
+// annotation's VERBATIM spelling. parse_type_name flattens `(i32) => i32` to
+// "fn", and this is what parse_decl_type and the lambda annotation both recover
+// it with, so a declaration and a lambda agree on the contract by construction.
+function fn_ref_of(name: string, written: string): TypeRef {
+    var ref: TypeRef = ref_ungroup(parse_type_ref(written));
+    if (name == "fn[]" && ref.array_depth == 1) { ref = ref_ungroup(elem_type_ref(ref)); }
+    return ref;
+}
+
+// fn_contract_of is the #5986 sidecar pair for a tag, or two empty strings when
+// the tag is not callable.
+function fn_contract_of(name: string, written: string): (string, string) {
+    if (name != "fn" && name != "fn[]") { return ("", ""); }
+    var ref: TypeRef = fn_ref_of(name, written);
+    if (!ref_is_fn_value(ref)) { return ("", ""); }
+    return (render_type_ref(ref_fn_result(ref)), ref_fn_param_spellings(ref));
 }
 
 function ref_fn_param_dyn(ref: TypeRef): string {
@@ -8978,6 +9028,21 @@ pub function fn_tag_spelling(tag: string, ret: string, params: string): string {
     return spelled;
 }
 
+// is_coarse_fn_tag reports whether `s` is the callable TAG parse_type_name
+// produces rather than a spelling — "fn" with one "[]" per array dimension.
+// fn_tag_spelling rebuilds only the first two depths and returns every deeper
+// tag unchanged, so the shape is what decides this, not the two strings it
+// happens to rewrite.
+pub function is_coarse_fn_tag(s: string): boolean {
+    if (s.len() < 2 || slice_unchecked(s, 0, 2) != "fn") { return false; }
+    var i: i32 = 2;
+    while (i < s.len()) {
+        if (i + 2 > s.len() || slice_unchecked(s, i, i + 2) != "[]") { return false; }
+        i = i + 2;
+    }
+    return true;
+}
+
 // fn_spelling_params is ref_fn_param_spellings asked of a fn SPELLING — the
 // parameter half of what fn_spelling_ret returns for the result.
 function fn_spelling_params(t: string): string {
@@ -10706,7 +10771,7 @@ function subst_expr(e: ast.Expr, tparams: string[], cts: string[]): ast.Expr {
             for lpd in lm.params { lps = lps.append(ast.ParamDecl { ...lpd, type_name: subst_ty(lpd.type_name, tparams, cts), fn_ret: subst_ty(lpd.fn_ret, tparams, cts), fn_param_types: subst_ty_list(lpd.fn_param_types, tparams, cts) }); }
             // Capture types were checked in the generic declaration's scope.
             // The clone must resolve them again against its substituted bindings.
-            return ast.ExprLambda { ...lm, params: lps, ret_type: subst_ty(lm.ret_type, tparams, cts), body: subst_stmts(lm.body, tparams, cts), captures: [], captures_known: false };
+            return ast.ExprLambda { ...lm, params: lps, ret_type: subst_ty(lm.ret_type, tparams, cts), ret_fn_ret: subst_ty(lm.ret_fn_ret, tparams, cts), ret_fn_param_types: subst_ty_list(lm.ret_fn_param_types, tparams, cts), body: subst_stmts(lm.body, tparams, cts), captures: [], captures_known: false };
         },
         _ => { return e; }
     }
@@ -13348,6 +13413,19 @@ pub function mkclo_body(name: string): string {
     return slice_unchecked(name, marker.len(), name.len()) + "";
 }
 
+// is_written_lambda_origin reports whether a lambda with this origin is one the
+// PROGRAMMER wrote. A bare lambda carries no origin; a nested `function`
+// declaration and a `use` callback each desugar to one the programmer did
+// write, so both are admitted. The rest — a value block, an if- or
+// match-expression, a comprehension — are IIFEs the parser synthesised, with no
+// counterpart in the native AST.
+//
+// ORIGIN_IIFE_SCOPED belongs to neither group: the defer lowering stamps it
+// after the checker has run, so no checker rule ever sees it.
+pub function is_written_lambda_origin(origin: string): boolean {
+    return origin.len() == 0 || origin == ORIGIN_NESTED_FN || origin == ORIGIN_USE;
+}
+
 // is_value_block_origin reports whether `origin` names one of the desugars that
 // produce an inlined value block. Every pass that rebuilds an ExprLambda does so
 // by spread, so the marker survives to the consumers that need it.
@@ -14265,7 +14343,7 @@ function hl_rewrite(stmts: ast.Stmt[], enclosing: string[], hoisted: FuncDecl[])
                                 body: lifted_body, line: v.line, col: v.col,
                                 import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false,
                                 is_pub: true
-                           , is_const: false, ret_fn_ret: "", ret_fn_param_types: "" , is_package: false });
+                           , is_const: false, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false });
                             if (caps.len() > 0) { acc_lifts = acc_lifts.append(CapLift { name: v.name, caps: caps }); }
                         }
                     },

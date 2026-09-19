@@ -296,24 +296,53 @@ array, and — where a chain stopped — which rule stopped it:
 
 ```
 run:3:26  map(n->n)
-            not fused (no fusion pass yet, #9731); 1 stage(s) materialize
+            not fused: one stage is not a chain, and its result is the value; 1 stage(s) materialize unfused
             chain ends here: the intermediate is read again, so this is not one traversal
             map        elementwise  __closure_lambda_1
 ```
 
-`FERN_ARRAY_REPORT=1` adds a histogram. The refusal reasons are a **closed
-set** with stable tags, for the reason `FERN_SSA_REPORT` is: the set of
-things declined is the coverage checklist for the fusion pass, and a tally
-of free-text strings cannot be counted. Every reason prints a row even at
-zero, so a reason that stops firing shows as a zero rather than as a line
-nobody notices went missing.
+A refusal that belongs to one stage names it, and names the element
+function when the reason is about that:
 
-Two honest limits while #9731 does not exist. Every pipeline reports *not
-fused*, because none is — a report that claimed otherwise would be worse
-than no report. And the histogram is read from the report mode rather than
-from every compile: until fusion lands the tally says the same thing for
-every program, so wiring a print into five backends would buy one sentence.
-It moves into the build when the numbers start moving.
+```
+run:4:44  map(n->n) -> map(n->n) -> scan(n->n) -> fold(n->1)
+            not fused at stage 3 (scan): neither map nor filter; 3 stage(s) materialize unfused
+```
+
+Naming the stage is the point. "Neither map nor filter" on a four-stage
+chain sends the reader back to count stages themselves, which is the work
+the report exists to save. A refusal no single stage owns — the array is
+not held in a local, say — names none rather than blaming the first.
+
+`FERN_ARRAY_REPORT=1` adds a histogram, in two sections: why each chain
+was not FUSED (#9731), then where each chain STOPPED being one chain
+(#9730). Both sets are **closed** with stable tags, for the reason
+`FERN_SSA_REPORT` is: the set of things declined is the coverage checklist
+for widening the algebra, and a tally of free-text strings cannot be
+counted. Every reason prints a row even at zero, so a reason that stops
+firing shows as a zero rather than as a line nobody notices went missing.
+
+```
+array pipelines: 4 (4 with more than one stage), 8 stages, 4 materializing
+fused: 0 (#9731)
+  single-stage               0
+  sink-not-a-reduction       0
+  stage-not-elementwise      1
+  element-fn-unresolved      0
+  element-fn-effectful       1
+  receiver-not-a-slot        1
+  element-width-unsupported  1
+  ...
+chains stopped by (#9730):
+  complete                   4
+  ...
+```
+
+The verdict comes from the fusion planner itself (#9731), not from a
+constant: a report that claimed a fusion the backend did not perform would
+be worse than no report. The histogram is read from the report mode rather
+than from every compile, because a per-build hook would cost a print in
+five backends for a number most builds do not want.
 
 ## The claims
 
@@ -324,12 +353,22 @@ It moves into the build when the numbers start moving.
 
 Both are pinned; see `spec/semantics.md`.
 
-The rules in §1, §2, §5, §6 and §7 are **not** index claims, because
-there is nothing to pin: no fusion pass exists, and a conformance case
-cannot observe a rule about a transformation that never runs. They
-become index rows in the change that builds the pass, which is the same
-order `ALLOCATION-OBSERVABLE.md` followed — the observable first, the
-claims when there was something to measure.
+The rules in §1, §2, §5, §6 and §7 are still **not** index claims, and
+#9731 building the pass did not change that — for a reason worth stating
+rather than leaving as an omission.
+
+§1 is now enforced and tested (`internal/ir/array_fusion_test.go`), but it
+is enforced as a *refusal*: a chain with an effectful element function is
+left unfused. So §1 and §2 together make the fused and unfused programs
+indistinguishable, which is the point — and a conformance case can only
+observe a difference. There is nothing for one to assert that a compiler
+ignoring the rules would fail. §5, §6 and §7 are compiler-internal in the
+same way.
+
+That is the opposite of `ALLOCATION-OBSERVABLE.md`'s path, where building
+the observable is what made the claims checkable. Here the guarantee is
+that nothing is observable, so the gates are the IR and e2e tests, not the
+conformance corpus.
 
 ## What this does not settle
 

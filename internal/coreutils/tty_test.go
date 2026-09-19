@@ -1,6 +1,10 @@
 package coreutils
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func init() {
 	registerCorpus("tty", ttyCases)
@@ -20,6 +24,17 @@ func init() {
 // `--quiet` is here as an option that works and is invisible in the ambiguity
 // list: glibc names only the prefix candidates that differ from the first
 // match, and `--quiet` is a second spelling of `--silent`.
+// ttyRegularFile is a regular file that exists on every platform the corpus
+// runs on, for the cases that need stdin to be one.
+func ttyRegularFile(t *testing.T) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "regular")
+	if err := os.WriteFile(p, []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
 func ttyCases(t *testing.T) []invocation {
 	return []invocation{
 		// Standard input is a pipe under the harness, so the default answer
@@ -45,7 +60,11 @@ func ttyCases(t *testing.T) []invocation {
 		// The other ways stdin is not a terminal: each is `not a tty`, and the
 		// errno behind it never reaches the output.
 		{name: "a character device that is not a terminal", stdinPath: "/dev/null"},
-		{name: "a regular file", stdinPath: "/etc/hostname"},
+		// A regular file the test owns, not /etc/hostname: that path is
+		// Linux's and does not exist on Darwin, where the harness cannot open
+		// it and the case fails before either binary runs. What the case is
+		// about is stdin being a regular file, which any file supplies.
+		{name: "a regular file", stdinPath: ttyRegularFile(t)},
 		{name: "a directory", stdinPath: "/"},
 
 		// Operands: tty takes none, and every shape of one is `extra operand`

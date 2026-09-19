@@ -6972,34 +6972,47 @@ func (b *builder) emitDowncast(n *ast.DowncastExpr) error {
 // payload inc is emitted (leak-mode dyn, like the rest of the dyn
 // lowering — docs/DYN-TRAITS.md §4.4 RC follow-up).
 func (b *builder) emitOptionSomeFromSlot(payloadType ast.Type, dataSlot int32) error {
-	const rcHeaderBytes = 8
-	offsets, size := payloadLayout([]ast.Type{payloadType}, 1, b.ptrW)
-	b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
-	b.emit(Op{Kind: OpAlloc})
 	baseSlot := b.allocSlot()
 	b.scratchType[baseSlot] = ast.NumberType{Width: 32}
-	b.emit(Op{Kind: OpStoreLocal, I32: baseSlot})
-	// rc = 1 at [base+0].
-	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
-	b.emit(Op{Kind: OpConstI32, I32: 1})
-	b.emit(Op{Kind: OpStore})
-	// tag = 0 (Some) at [base+rcHeader].
-	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
-	b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes})
-	b.emit(Op{Kind: OpAdd})
-	b.emit(Op{Kind: OpConstI32, I32: 0})
-	b.emit(Op{Kind: OpStore})
-	// payload = data at [base+rcHeader+offset].
-	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
-	b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes + offsets[0]})
-	b.emit(Op{Kind: OpAdd})
-	b.emit(Op{Kind: OpLoadLocal, I32: dataSlot})
-	b.emit(payloadStoreOpFor(payloadType, b.ptrW))
-	// Push the user-visible data pointer (= base + rc header).
-	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
-	b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes})
-	b.emit(Op{Kind: OpAdd})
+	for _, op := range optionSomeOps(payloadType, dataSlot, baseSlot, b.ptrW) {
+		b.emit(op)
+	}
 	return nil
+}
+
+// optionSomeOps is the box itself, as a plain op list: the array-fusion pass
+// builds a `reduce` sink's `Some(acc)` finish after lowering has finished, and
+// a second copy of this layout would be a layout change away from a silent
+// miscompile. `valSlot` holds the payload, `baseSlot` is a caller-owned i32
+// scratch, and the ops leave the user-visible data pointer on the stack.
+func optionSomeOps(payloadType ast.Type, valSlot, baseSlot int32, ptrW int) []Op {
+	const rcHeaderBytes = 8
+	offsets, size := payloadLayout([]ast.Type{payloadType}, 1, ptrW)
+	return []Op{
+		{Kind: OpConstI32, I32: size + rcHeaderBytes},
+		{Kind: OpAlloc},
+		{Kind: OpStoreLocal, I32: baseSlot},
+		// rc = 1 at [base+0].
+		{Kind: OpLoadLocal, I32: baseSlot},
+		{Kind: OpConstI32, I32: 1},
+		{Kind: OpStore},
+		// tag = 0 (Some) at [base+rcHeader].
+		{Kind: OpLoadLocal, I32: baseSlot},
+		{Kind: OpConstI32, I32: rcHeaderBytes},
+		{Kind: OpAdd},
+		{Kind: OpConstI32, I32: 0},
+		{Kind: OpStore},
+		// payload = value at [base+rcHeader+offset].
+		{Kind: OpLoadLocal, I32: baseSlot},
+		{Kind: OpConstI32, I32: rcHeaderBytes + offsets[0]},
+		{Kind: OpAdd},
+		{Kind: OpLoadLocal, I32: valSlot},
+		payloadStoreOpFor(payloadType, ptrW),
+		// Push the user-visible data pointer (= base + rc header).
+		{Kind: OpLoadLocal, I32: baseSlot},
+		{Kind: OpConstI32, I32: rcHeaderBytes},
+		{Kind: OpAdd},
+	}
 }
 
 // boxPrimitiveDynValue heap-boxes the primitive/string value currently on

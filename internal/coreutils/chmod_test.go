@@ -168,7 +168,11 @@ func chmodOdd(t *testing.T, dir string) {
 	chmodFile(t, dir, "a'b", 0o777)
 	chmodFile(t, dir, "tab\there", 0o777)
 	chmodFile(t, dir, "-lead", 0o777)
-	chmodFile(t, dir, "raw\xff\xfe", 0o777)
+	// Only where the filesystem holds the name; the cases naming it carry
+	// rawByteName and skip there.
+	if rawByteNamesHeld(t) {
+		chmodFile(t, dir, "raw\xff\xfe", 0o777)
+	}
 }
 
 // chmodKinds is the two non-regular shapes a corpus can build: a fifo, which
@@ -576,7 +580,7 @@ func chmodCases(t *testing.T) []invocation {
 		{name: "a name with a tab", args: []string{"-v", "0644", "tab\there"}, seedTree: chmodOdd},
 		{name: "a missing name with a space", args: []string{"-v", "0644", "no such"}, seedTree: chmodOdd},
 		{name: "a missing name with an apostrophe", args: []string{"-v", "0644", "no'such"}, seedTree: chmodOdd},
-		{name: "a name that is not valid UTF-8", args: []string{"-v", "0644", "raw\xff\xfe"}, seedTree: chmodOdd},
+		{name: "a name that is not valid UTF-8", args: []string{"-v", "0644", "raw\xff\xfe"}, seedTree: chmodOdd, rawByteName: true},
 		// A file whose name begins with `-` reaches chmod only behind `--`
 		// or a `./` prefix; bare, its first byte is read as a mode letter
 		// and the second as an option that is not one.
