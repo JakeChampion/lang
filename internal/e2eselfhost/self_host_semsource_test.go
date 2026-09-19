@@ -2,6 +2,7 @@ package e2eselfhost
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -532,14 +533,12 @@ function inferred_ret(k: i32, n: i32): i32 { return apply_int((x: i32) => { var 
 // its box and release it here has no contract, since only the frame that
 // built the box knows the captures its release must walk.
 function refused_own_fn(own f: (i32) => i32, n: i32): i32 { return f(n); }
-// A closure BORROWS a captured function value: only the frame that built the
-// captured box can walk its captures, so the box must outlive every box that
-// names it, and a borrowed parameter — held by the caller across the whole
-// call — is the one source that does. A local closure dies with the frame
-// that captures it, and a cell outlives the frame that filled it, so a
-// function value reaches neither.
+// A closure TAKES a captured function value, like every other reference it
+// holds, so the box's release walks that field. The capture is a parameter
+// here and a local closure below, and neither is a special case. A cell is a
+// separate rule and still refused: a function value is not an element.
 function via_capture(f: (i32) => i32, n: i32): i32 { return apply_int((x: i32): i32 => { return f(x) + 1; }, n); }
-function refused_capture_local(n: i32): i32 {
+function capture_local(n: i32): i32 {
     var g: (i32) => i32 = (x: i32): i32 => { return x + n; };
     return apply_int((x: i32): i32 => { return g(x) + 1; }, n);
 }
@@ -859,8 +858,40 @@ func TestSelfHostSemanticSourcePrint(t *testing.T) {
 		t.Fatal(err)
 	}
 	if string(got) != string(want) {
-		t.Fatalf("produced graphs differ from testdata/semsource_print.golden:\n%s", got)
+		t.Fatalf("produced graphs differ from testdata/semsource_print.golden:\n%s", goldenDiff(string(want), string(got)))
 	}
+}
+
+// goldenDiff reports the first differing line with a window either side.
+// Printing the whole output instead buries the one changed line in several
+// thousand, and the reader's next move is to extract it from the CI log and
+// diff it by hand.
+func goldenDiff(want, got string) string {
+	w, g := strings.Split(want, "\n"), strings.Split(got, "\n")
+	at := 0
+	for at < len(w) && at < len(g) && w[at] == g[at] {
+		at++
+	}
+	window := func(lines []string) string {
+		lo, hi := at-3, at+8
+		if lo < 0 {
+			lo = 0
+		}
+		if hi > len(lines) {
+			hi = len(lines)
+		}
+		var b strings.Builder
+		for i := lo; i < hi; i++ {
+			mark := "  "
+			if i >= at {
+				mark = "> "
+			}
+			fmt.Fprintf(&b, "%s%4d | %s\n", mark, i+1, lines[i])
+		}
+		return b.String()
+	}
+	return fmt.Sprintf("%d golden lines, %d produced; first differ at line %d\n--- want ---\n%s--- got ---\n%s",
+		len(w), len(g), at+1, window(w), window(g))
 }
 
 const semsourceRCProgram = `
