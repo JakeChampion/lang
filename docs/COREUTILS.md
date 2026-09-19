@@ -274,15 +274,15 @@ Versions: the corpus is held to GNU coreutils **9.12**, and that is enforced
 by supplying the reference rather than hoping for it.
 `scripts/devbox`'s base is `debian:bookworm`, whose coreutils is **9.1** —
 below the floor, and the container spent its life comparing against it, which
-is not a gate (#9162). The image now builds 9.4 and puts it ahead of
+is not a gate (#9162). The image now builds 9.12 and puts it ahead of
 `/usr/bin`, so a green run in the container means what a green lane means.
 That also supplies the two binaries Debian does not build at all, `uptime`
 and `kill`, and asserts both rather than only the first. CI's `test-units`
-lane builds the same 9.4 and installs those two beside `/usr/bin`, with both
+lane builds the same 9.12 and installs those two beside `/usr/bin`, with both
 in the cache key — a cache written when the step installed `uptime` alone
 cannot satisfy a run that needs both.
 
-The `macos-15` lane (`.github/workflows/macos.yml`) builds the same 9.4 and
+The `macos-15` lane (`.github/workflows/macos.yml`) builds the same 9.12 and
 installs the WHOLE tree to `~/gnu-coreutils`, because there is no system GNU
 on that runner to fall back to for the rest. One program needs installing by
 hand: `arch` is in coreutils' `no_install__progs`, so `make install` places

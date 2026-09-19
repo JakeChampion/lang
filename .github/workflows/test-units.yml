@@ -157,13 +157,12 @@ jobs:
       # gate with no oracle is the shape that reports `ok` having compared
       # nothing.
       #
-      # The version is PINNED, and 9.4 rather than "whatever the image has",
-      # because where uptime reads its boot time changed: 9.1 reads
-      # /proc/uptime and lets it OVERRIDE the utmp BOOT_TIME record, so a
-      # corpus handing it a fixture database would measure the runner's real
-      # uptime instead. 9.4 and the 9.10 this project is held to both take
-      # the record, and 9.4 is what the ubuntu-24.04 image's own coreutils is,
-      # so every utility here answers to one version.
+      # The version is PINNED rather than "whatever the image has", because
+      # where uptime reads its boot time changed: 9.1 reads /proc/uptime and
+      # lets it OVERRIDE the utmp BOOT_TIME record, so a corpus handing it a
+      # fixture database would measure the runner's real uptime instead. The
+      # pin is the version docs/COREUTILS.md holds the corpus to, so every
+      # utility here answers to one version.
       #
       # `chroot` is the third and is there for a different reason: Debian
       # DOES build it, but installs it to /usr/sbin, which is not one of the
