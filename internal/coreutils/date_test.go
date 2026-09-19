@@ -137,6 +137,16 @@ func dateCases(t *testing.T) []invocation {
 		"TZ=\"Not/AZone\" 2024-06-15 12:00", "TZ=\"XXX-5:30\" 2024-06-15 12:00", "TZ=\"<-03>3\" 2024-06-15 12:00",
 		"2024-06-15 12:00 foo", "jan 1 2024 foo", "2024-06-15 ;", "2024-06-15\n12:00", "2024-06-15\t12:00",
 		"2024-06-15 \xff",
+		// The European dotted date, and the decimals it has to stay
+		// distinct from: the lexer decides between them by whether a
+		// second '.' turns up where the fraction would be.
+		"1.2.3", "31.12.99", "1.2.2024", "01.02.2024", "13.13.13", "29.2.24", "2024.06.15",
+		"1.2", "1.2.3.4", "5.6.7890", "17.6.", "17.6", "1.2.3 4:5:6", "1,2,3", "1.2,3",
+		"1.234567890.5", "1.23456789.5", "0.0.0", "1.2.3 UTC", "12.12.12 12:12:12",
+		"1.2.3.", ".1.2", "1..2", "1.2.3 bogus", "1.2.3 +1 day", "@1.2.3",
+		// The most negative epoch second there is, which the lexer only
+		// holds because it accumulates the sign with each digit.
+		"@-9223372036854775808", "@-9223372036854775807", "@-99999999999999999999",
 	} {
 		d(s)
 	}
