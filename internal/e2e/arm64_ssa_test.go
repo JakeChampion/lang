@@ -18,13 +18,10 @@ package e2e
 import (
 	"bytes"
 	"errors"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
-	"strings"
 	"testing"
 )
 
@@ -650,16 +647,18 @@ function main(): i32 {
 			// second thread. Covers the helper's sockaddr_in, its htons and the
 			// -errno passthrough, since a connect to a closed port must be negative.
 			//
-			// The port is a placeholder the runner fills in, because nothing in
-			// the language exposes the bound port of an ephemeral listener and a
-			// FIXED one made this case flaky: anything else on the machine holding
-			// 48620, or a socket from an earlier round still in TIME_WAIT, fails
-			// tcp_listen and the case exits 90 having tested nothing.
+			// The listener takes an ephemeral port and tcp_local_port reports
+			// which one, so nothing here names a port: a fixed one made this case
+			// flaky (anything else on the machine holding it, or a socket from an
+			// earlier round still in TIME_WAIT, failed tcp_listen and the case
+			// exited 90 having tested nothing), and a port probed on the host is
+			// a hint the guest can still lose the race for.
 			name: "tcp_connect_loopback_roundtrip",
 			src: `function main(): i32 {
-  var port: i32 = ` + tcpPortPlaceholder + `;
-  var l = tcp_listen(port);
+  var l = tcp_listen(0);
   if (l < 0) { return 90; }
+  var port: i32 = tcp_local_port(l);
+  if (port <= 0) { return 91; }
   var loopback: i32 = 127 + (1 << 24);
   var c = tcp_connect(loopback, port);
   if (c < 0) { return 92; }
@@ -1711,58 +1710,12 @@ function main(): i32 {
 				return 0
 			}
 
-			// A case that binds a port gets a fresh one per attempt, and a
-			// failed bind is retried rather than reported: the kernel handing
-			// back a free port and the program binding it are two steps, and
-			// anything on the machine can take it in between. `tcpListenFailed`
-			// is the only exit code retried, so a genuine wrong answer still
-			// fails on the first attempt.
-			got := 0
-			if strings.Contains(c.src, tcpPortPlaceholder) {
-				for attempt := 0; ; attempt++ {
-					got = runOnce(strings.ReplaceAll(c.src, tcpPortPlaceholder, strconv.Itoa(freeTCPPort(t))))
-					if got != tcpListenFailed || attempt == 4 {
-						break
-					}
-				}
-			} else {
-				got = runOnce(c.src)
-			}
+			got := runOnce(c.src)
 			if got != c.want {
 				t.Errorf("%s: exit=%d, want %d", c.name, got, c.want)
 			}
 		})
 	}
-}
-
-// tcpPortPlaceholder is substituted in a case's source with a port the kernel
-// has just said is free. Spelled as something that is not valid Fern, so a
-// case that carries it and is run without the substitution fails to compile
-// rather than binding a nonsense port.
-const tcpPortPlaceholder = "@PORT@"
-
-// tcpListenFailed is what the loopback case returns when its tcp_listen does
-// not come back with a descriptor. It is the one exit code worth retrying.
-const tcpListenFailed = 90
-
-// freeTCPPort asks the kernel for an unused loopback port and gives it back.
-//
-// The listener is closed before the port is returned, so this is a hint and
-// not a reservation — which is why the caller retries. There is no way to hand
-// an already-bound descriptor to the Fern program, and nothing in the language
-// reports the port of an ephemeral listener, so a hint plus a retry is the
-// best available.
-func freeTCPPort(t *testing.T) int {
-	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("reserving a loopback port: %v", err)
-	}
-	port := l.Addr().(*net.TCPAddr).Port
-	if err := l.Close(); err != nil {
-		t.Fatalf("closing the probe listener: %v", err)
-	}
-	return port
 }
 
 // TestArm64SSAConstAddressWidth pins the sign-extension of a negative i32 read

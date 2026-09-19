@@ -49,6 +49,12 @@ var semanticReuseCases = []struct {
 	// it saves nothing by design. Every other case must save, or it is pinning
 	// machinery that never fires.
 	degrades bool
+	// A case where NO pairing may be admitted — a third class the suite could
+	// not express, and the one the degenerate self-donor needed. `degrades` is
+	// a pairing the runtime turns down; this is a pairing the compiler must
+	// never offer, so saving nothing is the correct answer rather than evidence
+	// of machinery that never fires.
+	noPair bool
 }{
 	// A record owning a string and an array, rebuilt from its own fields. The
 	// donor dies at its last field read and the construction below builds in
@@ -66,7 +72,7 @@ function main(): i32 {
     while (i < 4) { var r: R = step(i); t = t + r.n + r.cells[0] + r.tag.len(); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t;
-}`, 72, 1, 0, 12, 16, false},
+}`, 72, 1, 0, 12, 16, false, false},
 
 	// The degrade path: an array holds a second count on the donor, so the
 	// pairing is static but `__fern_rc_is_unique` fails and the construction
@@ -85,7 +91,7 @@ function main(): i32 {
     var v: i32 = shared(5);
     if (__rc_underflow_count() != 0) { return 99; }
     return v;
-}`, 17, 1, 0, 6, 6, true},
+}`, 17, 1, 0, 6, 6, true, false},
 
 	// The donor and the recipient are different TYPES and the same number of
 	// SLOTS, which is the only thing a box has to agree on. Mote and Glyph are
@@ -130,7 +136,7 @@ function main(): i32 {
     t = t + sigil_code(cross_back(5)) + cross_wide(3);
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 251;
-}`, 189, 2, 0, 13, 18, false},
+}`, 189, 2, 0, 13, 18, false, false},
 
 	// A tuple box is one word per element and no shape word, so it is storage
 	// a donor of any form can be and storage any form can take: tuple to
@@ -170,7 +176,7 @@ function main(): i32 {
     var t: i32 = tuple_loop(4) + tuple_from_rec(3) + rec_from_tuple(5);
     if (__rc_underflow_count() != 0) { return 99; }
     return t;
-}`, 60, 3, 0, 10, 16, false},
+}`, 60, 3, 0, 10, 16, false, false},
 
 	// A UNION donor: a declared enum whose variants agree on field count, so
 	// its box is a count this frame can state, dying at a call before a record
@@ -203,26 +209,24 @@ function main(): i32 {
     var t: i32 = union_donor(4) + union_donor(9);
     if (__rc_underflow_count() != 0) { return 99; }
     return t;
-}`, 30, 1, 0, 4, 6, false},
+}`, 30, 1, 0, 4, 6, false, false},
 
-	// The two rules that decide WHICH dying box the block's one token slot
-	// holds, each of which changes emitted code and neither of which the cases
-	// above can see, since every one of them puts the matching construction
-	// immediately after the donor.
+	// The two rules that decide WHICH dying box a construction builds in,
+	// neither of which the cases above can see: every one of them puts the
+	// matching construction immediately after the donor.
 	//
-	// `hold_over` is the hold: a three-slot donor dies, a FOUR-slot
-	// construction follows it, and the three-slot one that can take it comes
-	// after that. Holding the donor past a construction that cannot serve it
-	// is the whole of the pairing there — taken for the next construction
-	// alone it fires 0.
+	// `hold_over` is the hold: a three-slot donor dies at an ordinary
+	// instruction, a FOUR-slot construction follows it, and the three-slot one
+	// that can take it comes after that. Holding the donor past a construction
+	// that cannot serve it is the whole of the pairing there — taken for the
+	// next construction alone it fires 0.
 	//
-	// `chain_up` is the same-instruction refill: a chain of functional updates
-	// of one type, where each superseded box dies AT the construction that
-	// spends the previous token. The emission order allows it —
-	// `reuse_construct` reads the token slot before `reuse_token` writes it —
-	// and with the drop scan left in an `else` it fires 0. This is the shape
-	// the compiler's own 70 refill sites have: `x86_native`'s assembler
-	// threading `a = X86Asm { ...a, code: … }`.
+	// `chain_up` is the same-instruction pairing: a chain of functional
+	// updates of one type, where each superseded box dies AT the construction
+	// that supersedes it rather than before it, so a rule that only looks
+	// backwards never sees it. 3 firings; 0 without that rule. This is the
+	// shape the two native assemblers are made of — `a = X86Asm { ...a, code:
+	// … }` — and 795 of the compiler's constructions have it.
 	{"pairing-reach", `struct A3 { p: string, q: i32 }
 struct B4 { x: string, y: i32, z: i32 }
 function hold_over(seed: i32): i32 {
@@ -243,7 +247,7 @@ function main(): i32 {
     var t: i32 = hold_over(3) + chain_up(5);
     if (__rc_underflow_count() != 0) { return 99; }
     return t;
-}`, 32, 3, 4, 4, 7, false},
+}`, 32, 4, 4, 3, 7, false, false},
 
 	// A record of scalars: pure storage, with no children to release at the
 	// token. The AST path pairs this shape too, so the count alone does not
@@ -261,7 +265,52 @@ function main(): i32 {
     while (i < 3) { t = t + bump(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t;
-}`, 21, 1, 1, 3, 6, false},
+}`, 21, 1, 1, 3, 6, false, false},
+	// The frame has ONE token slot, and this case is the shape that made that
+	// matter: a 3-slot donor held for a later 3-slot construction, with a
+	// 4-slot self-update between them. The self pairing's token overwrote the
+	// held donor's box, so the later construction was handed a box the update
+	// had already built into and was returning live. It read as a LEAK
+	// (`live_bytes=24` where the same program balances with the pairing off)
+	// because the two boxes differ in size class, so `__fern_alloc_reuse`
+	// declined and put a live block on its freelist — the same clobber lands
+	// as an alias whenever the sizes agree.
+	//
+	// Nothing in the compiler's own sources has this overlap: the firing count
+	// over the whole tree is 1,167 either way, which is why every suite passed
+	// while it was wrong. Only a fixture built for it can fail.
+	{"token-slot-overlap", `struct A3 { p: string, q: i32 }
+struct B4 { x: string, y: i32, z: i32 }
+function f(seed: i32): i32 {
+    var a: A3 = A3 { p: "aa", q: seed };
+    var s: i32 = a.q + a.p.len();
+    var b: B4 = B4 { x: "bb", y: seed, z: seed + 1 };
+    b = B4 { ...b, y: s };
+    var c: A3 = A3 { p: "cc", q: b.y + b.z };
+    return c.q + c.p.len() + b.z;
+}
+function main(): i32 {
+    var t: i32 = f(5);
+    if (__rc_underflow_count() != 0) { return 99; }
+    return t;
+}`, 21, 1, 2, 3, 4, false, false},
+	// A construction whose value is never read has its drop at its own step, so
+	// the value dying there IS the construction's result. The first cut of the
+	// same-instruction pairing took it as a donor for itself: it read a token
+	// slot for a value that does not exist yet, always declined — and it cost
+	// the module its last ALLOCATING op, so the heap runtime block stopped
+	// being emitted and the link failed on an undefined `__fn___fern_arr_dec`.
+	//
+	// Found by `TestDifferential_SelfHostSemanticX86_64` at seed 452, reduced to
+	// this. The suite could not express it before: the point is not that the
+	// pairing declines but that it must never be OFFERED, which is what
+	// `noPair` says.
+	{"degenerate-self-donor", `struct S0 { f0: i32, f1: i64, f2: boolean }
+function main(): i32 {
+    var v0: S0 = S0 { f0: 687i32, f1: 942i64, f2: false };
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 326i32 & 255i32;
+}`, 70, 0, 0, 1, 1, false, true},
 }
 
 func TestSelfHostSemanticReuseDifferentialX86_64(t *testing.T) {
@@ -375,11 +424,15 @@ func TestSelfHostSemanticReuseDifferentialX86_64(t *testing.T) {
 				t.Errorf("%s: allocations on/off were %d/%d, want %d/%d — the reuse saved %d where %d was measured",
 					tc.name, onAllocs, offAllocs, tc.allocsOn, tc.allocsOff, offAllocs-onAllocs, tc.allocsOff-tc.allocsOn)
 			}
-			if !tc.degrades && tc.allocsOff <= tc.allocsOn {
+			if !tc.degrades && !tc.noPair && tc.allocsOff <= tc.allocsOn {
 				t.Errorf("%s: the case is pinned to save no allocation, so it witnesses a pairing that declines", tc.name)
 			}
 			if tc.degrades && tc.allocsOff != tc.allocsOn {
 				t.Errorf("%s: marked as a runtime decline, but it saves %d allocations", tc.name, tc.allocsOff-tc.allocsOn)
+			}
+			if tc.noPair && (tc.firings != 0 || tc.allocsOff != tc.allocsOn) {
+				t.Errorf("%s: marked as admitting no pairing, but it is pinned to %d firings and %d saved allocations",
+					tc.name, tc.firings, tc.allocsOff-tc.allocsOn)
 			}
 
 			gotOn, gotOff := link(t, proj, "on", asmOn), link(t, proj, "off", asmOff)

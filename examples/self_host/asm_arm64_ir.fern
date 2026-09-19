@@ -2429,6 +2429,15 @@ pub function emit_function_via_ir_named(r: irlower.LowerResult, label_name: stri
             s = s.need("heap");
             s = s.need("tcp_accept");
             s = s.write("    bl __fn___fern_tcp_accept\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 320) {  // tcp_local_port
+            // [fd] IS param[0] already. -> the bound port / -errno. No "heap"
+            // need, unlike the socket arms above: the helper is emitted from
+            // emit_rt_collections_and_proc, which runs whether or not the heap
+            // block does, and the __fern_scratch it writes into has its own
+            // gate. Marking heap would hand a program whose only socket call is
+            // this one the whole arena/rc/fs bundle — x86-64 marks nothing here.
+            s = s.need("tcp_local_port");
+            s = s.write("    bl __fn___fern_tcp_local_port\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 202) {  // writer_write (#4372)
             // [fd, str box] -> the Fern-compiled __fn___fern_writer_write(fd, s),
             // pushing a fresh Option[IoError] (#7926). The box is on top but
@@ -4797,7 +4806,7 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
         "read_file", "read_file_bytes", "random_i32", "sleep_ms",
         "sleep_ns", "set_file_times", "statfs", "poll", "proc_waitpid",
         "proc_waitpid_nohang",
-        "timer_fd", "tcp_listen", "tcp_connect", "print_int", "putchar",
+        "timer_fd", "tcp_listen", "tcp_local_port", "tcp_connect", "print_int", "putchar",
         "eprint", "read_int", "udp_send", "isatty", "window_size", "set_window_size", "termios_get", "termios_set",
         "rlimit_nofile", "signal_ignore", "signal_default", "signal_mask",
         "signal_disposition", "access",
@@ -8448,16 +8457,19 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     if (s.has_need("random_i32")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_i32(tgt), s.struct_decls, s);
     }
-    // tcp_close / tcp_accept: the two socket leaves that take only an fd
-    // (#2649). Need-gated HERE rather than in emit_rt_net, which runs only under
-    // the heap gate and emits its helpers unconditionally — neither of these
-    // allocates, so a program that closes a socket without otherwise touching
-    // the heap must still get them.
+    // tcp_close / tcp_accept / tcp_local_port: the three socket leaves that take
+    // only an fd (#2649). Need-gated HERE rather than in emit_rt_net, which runs
+    // only under the heap gate and emits its helpers unconditionally — none of
+    // these allocates, so a program that closes a socket, or asks one its port,
+    // without otherwise touching the heap must still get them.
     if (s.has_need("tcp_close")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_close(tgt), s.struct_decls, s);
     }
     if (s.has_need("tcp_accept")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_accept(tgt), s.struct_decls, s);
+    }
+    if (s.has_need("tcp_local_port")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_local_port(tgt), s.struct_decls, s);
     }
     // sleep_ms: nanosleep on Linux, select on Darwin (XNU has no nanosleep) —
     // the first __syscall5 consumer. Writes its timespec/timeval into

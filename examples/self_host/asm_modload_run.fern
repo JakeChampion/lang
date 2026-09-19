@@ -957,7 +957,7 @@ function fold_target_calls(entry: parser.Module, loaded: flatten.LoadedModule[],
     var e2: parser.Module = constfold.fold_target_name(entry, d.environment, d.isa);
     var out: flatten.LoadedModule[] = [];
     for lm in loaded {
-        out = out.append(flatten.LoadedModule { name: lm.name, mod: constfold.fold_target_name(lm.mod, d.environment, d.isa) });
+        out = out.append(flatten.LoadedModule { name: lm.name, ident: lm.ident, mod: constfold.fold_target_name(lm.mod, d.environment, d.isa) });
     }
     return (e2, out);
 }

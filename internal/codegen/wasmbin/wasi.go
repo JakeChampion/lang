@@ -907,6 +907,17 @@ var importSpecs = map[string]importSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: nil,
 	},
+	"wasi_sockets_tcp_local_address": {
+		// (self, retptr) → (). retptr holds
+		// `result<ip-socket-address, error-code>`: 1 disc byte at
+		// +0, 3 bytes pad, then the address variant at +4 — its own
+		// disc at +4 and its payload at +8. The widest case is the
+		// 28-byte ipv6-socket-address, so the area is 36 bytes.
+		module:  "wasi:sockets/tcp@0.2.0",
+		name:    "[method]tcp-socket.local-address",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+	},
 	"wasi_sockets_tcp_subscribe": {
 		// (self) → pollable handle. Paired with pollable.block to
 		// wait until a connection is ready before calling accept.
@@ -2391,6 +2402,9 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 		in.add("wasi_sockets_tcp_subscribe")
 		in.add("wasi_io_pollable_block")
 		in.add("wasi_io_pollable_drop")
+	}
+	if helpers.set["__fern_tcp_local_port"] {
+		in.add("wasi_sockets_tcp_local_address")
 	}
 	if helpers.set["__fern_tcp_pollable"] {
 		in.add("wasi_sockets_tcp_subscribe")

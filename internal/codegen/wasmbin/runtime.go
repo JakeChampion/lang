@@ -857,6 +857,11 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_alloc")
 					needs.add("__network_handle")
 					needs.add("__fern_tcp_connect")
+				case "__fern_tcp_local_port":
+					// (sock) → i32 — the bound port, or -errno.
+					// The retptr scratch comes from plain alloc.
+					needs.add("__fern_alloc")
+					needs.add("__fern_tcp_local_port")
 				case "__fern_tcp_pollable":
 					// (conn) → i32 — the connection's readiness
 					// pollable for reactor fan-out.
@@ -2704,6 +2709,13 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildTcpConnectBody,
+	},
+	"__fern_tcp_local_port": {
+		// (sock: i32) → i32 — the port the socket struct's
+		// tcp-socket is bound to, or -errno. See wasi_tcp.go.
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildTcpLocalPortBody,
 	},
 	"__fern_tcp_pollable": {
 		// (conn: i32) → i32 — a wasi:io/poll pollable for the
