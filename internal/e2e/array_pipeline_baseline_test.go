@@ -133,13 +133,14 @@ func TestArrayPipelineCombinatorsAllocateAndLoopsDoNot(t *testing.T) {
 			pipeline := runArrayPipeline(t, bin, program, "pipeline", arrayPipelineN, runner)
 			closureLoop := runArrayPipeline(t, bin, program, "closure_loop", arrayPipelineN, runner)
 			loop := runArrayPipeline(t, bin, program, "loop", arrayPipelineN, runner)
+			callLoop := runArrayPipeline(t, bin, program, "call_loop", arrayPipelineN, runner)
 			pipeline2n := runArrayPipeline(t, bin, program, "pipeline", 2*arrayPipelineN, runner)
 			loop2n := runArrayPipeline(t, bin, program, "loop", 2*arrayPipelineN, runner)
 
 			// 1. Every variant computes the same answer, fused or not. A
 			//    fusion that changed the result is the failure this catches
 			//    before any allocation number is worth reading.
-			for _, r := range []arrayPipelineReport{closureLoop, loop, raw} {
+			for _, r := range []arrayPipelineReport{closureLoop, loop, callLoop, raw} {
 				if r.Checksum != pipeline.Checksum {
 					t.Errorf("%s computed %d, the fused combinator chain computed %d — the variants are no longer the same function, so nothing else here compares anything",
 						r.Variant, r.Checksum, pipeline.Checksum)
@@ -186,7 +187,11 @@ func TestArrayPipelineCombinatorsAllocateAndLoopsDoNot(t *testing.T) {
 
 			// 4. The hand-written loops are the parity bar
 			//    (docs/ITERATOR-FUSION-CONTRACT.md) and stay allocation-free.
-			for _, r := range []arrayPipelineReport{closureLoop, loop} {
+			//    `call_loop` is the one that controls for the calls: it invokes
+			//    the same element functions the pipeline's lambdas do, where
+			//    `loop` writes their arithmetic out by hand. Without it a
+			//    comparison against `loop` measures inlining as much as fusion.
+			for _, r := range []arrayPipelineReport{closureLoop, loop, callLoop} {
 				if r.SteadyAllocs != 0 {
 					t.Errorf("%s allocated %d times over %d rounds, want 0 — the hand-written baseline is the parity bar and it is no longer allocation-free",
 						r.Variant, r.SteadyAllocs, r.Rounds)
@@ -202,7 +207,7 @@ func TestArrayPipelineCombinatorsAllocateAndLoopsDoNot(t *testing.T) {
 
 			// 5. A distribution, so the latency half cannot quietly become
 			//    zeros and keep reporting.
-			for _, r := range []arrayPipelineReport{pipeline, closureLoop, loop, raw} {
+			for _, r := range []arrayPipelineReport{pipeline, closureLoop, loop, callLoop, raw} {
 				if r.P50 <= 0 {
 					t.Errorf("%s reported p50=%d", r.Variant, r.P50)
 				}
