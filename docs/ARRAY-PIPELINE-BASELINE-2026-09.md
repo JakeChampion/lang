@@ -170,6 +170,11 @@ baselines here use the elided spelling so that they and the combinators' own
 
 ### 3. `own` plus a same-shape `map` does not reuse the donor
 
+**Superseded by #9733**, which made it reuse — the numbers below are
+reproduced with `FERN_NO_ARRAY_INPLACE=1`, and `map_own` now matches
+`with_own`'s zero. The finding is kept because it is what motivated the
+shape, and `docs/REUSE-CONTRACT.md`'s R7 is what replaced it.
+
 `own_map_inplace`, n=4096, native compiler. Again identical on all four backends.
 
 | variant | cold allocs | cold fresh bytes | steady allocs | Ir (arm64, 10 rounds) |
@@ -294,9 +299,12 @@ is the one gap this round leaves open.
    The intermediates, at 74% (same cardinality) and 61% (with a filter) of the
    gap over a hand-written loop. The per-element indirect call is the remaining
    26% and 39% and is not negligible.
-3. **Does `own` plus a same-shape `map` reuse the donor?** No, and not because
-   the site is tainted: `map` builds a fresh array by append, so there is no
-   paired construction for any R-shape of `docs/REUSE-CONTRACT.md` to fire on.
+3. **Does `own` plus a same-shape `map` reuse the donor?** It did not when
+   this was measured, and not because the site was tainted: `map` builds a
+   fresh array by append, so there was no paired construction for any R-shape
+   of `docs/REUSE-CONTRACT.md` to fire on. That answered #9733's first
+   question — it needed a NEW shape rather than falling out of the existing
+   pairing — and R7 is that shape. `map_own` now allocates nothing.
 4. **Does `fip` pass E068 on that pipeline?** The question cannot be reached.
    E053 rejects the call to `map` first, because `std/array` carries no space
    annotation. The hand-written `own` loop does pass E068 and does measure zero.

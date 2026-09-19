@@ -62,6 +62,27 @@ func buildArrayPipeline(t *testing.T, fern, dir, program string) string {
 	return buildArrayPipelineFused(t, fern, dir, program, true)
 }
 
+// buildArrayPipelineInPlace compiles with ownership-aware materialization
+// (#9733) on or off. The off build is what pipeline 3 measured before the pass
+// existed, and keeping it reachable is what lets the premise and the
+// improvement be asserted in the same test rather than one replacing the other.
+func buildArrayPipelineInPlace(t *testing.T, fern, dir, program string, inPlace bool) string {
+	t.Helper()
+	src := langSrcAbs(t, filepath.Join("examples", "array_pipeline", program+".fern"))
+	name := program
+	cmd := exec.Command(fern, "-target", "x86-64-linux", "-o", "", src)
+	if !inPlace {
+		name = program + "_noinplace"
+		cmd.Env = append(os.Environ(), "FERN_NO_ARRAY_INPLACE=1")
+	}
+	bin := filepath.Join(dir, name)
+	cmd.Args[len(cmd.Args)-2] = bin
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("compile %s (in-place=%v): %v\n%s", program, inPlace, err, out)
+	}
+	return bin
+}
+
 // buildArrayPipelineFused compiles one of the baseline programs with array
 // fusion (#9731) on or off. The off build is what this experiment measured
 // before the pass existed, and keeping it reachable is what lets the premise
@@ -216,27 +237,35 @@ func TestArrayPipelineCombinatorsAllocateAndLoopsDoNot(t *testing.T) {
 	}
 }
 
-// TestArrayPipelineOwnMapDoesNotReuseTheDonor covers pipeline 3, which asks a
-// different question from the other two: not whether an intermediate can
-// disappear, but whether the result can BE the input's buffer.
+// Pipeline 3 asks a different question from the other two: not whether an
+// intermediate can disappear, but whether the result can BE the input's
+// buffer.
 //
-// The answer today is no through the combinator and yes through the loop, and
-// both halves matter. `with_borrowed` is the control: without it, `with_own`
-// allocating nothing would be satisfiable by a `.with` that never copies for
-// anybody, and ownership would not have been shown to be what did it.
-func TestArrayPipelineOwnMapDoesNotReuseTheDonor(t *testing.T) {
+// The answer used to be no through the combinator and yes through the loop.
+// #9733 changed it: `own xs` handed to `xs.map(f)` now writes through the
+// donor's buffer, so the combinator reaches the hand-written loop's zero. Both
+// builds are measured — the off build still asserts what pipeline 3 was built
+// to record, so what the pass bought stays visible, and `with_borrowed`
+// remains the control proving OWNERSHIP is what does it rather than the
+// transform firing on anything that looks like a map.
+func TestArrayPipelineOwnMapReusesTheDonor(t *testing.T) {
 	runner := x86NativeRunner(t)
 	fern := buildFernCLI(t)
 	dir := t.TempDir()
-	bin := buildArrayPipeline(t, fern, dir, "own_map_inplace")
+	bin := buildArrayPipelineInPlace(t, fern, dir, "own_map_inplace", true)
+	off := buildArrayPipelineInPlace(t, fern, dir, "own_map_inplace", false)
 
 	mapOwn := runArrayPipeline(t, bin, "own_map_inplace", "map_own", arrayPipelineN, runner)
 	withOwn := runArrayPipeline(t, bin, "own_map_inplace", "with_own", arrayPipelineN, runner)
 	withBorrowed := runArrayPipeline(t, bin, "own_map_inplace", "with_borrowed", arrayPipelineN, runner)
+	rawMapOwn := runArrayPipeline(t, off, "own_map_inplace", "map_own", arrayPipelineN, runner)
 
-	for _, r := range []arrayPipelineReport{withOwn, withBorrowed} {
+	// Every variant computes the same transform the same number of times,
+	// with the pass and without it. A reuse that changed the answer is the
+	// failure to catch before any allocation number is worth reading.
+	for _, r := range []arrayPipelineReport{withOwn, withBorrowed, rawMapOwn} {
 		if r.Checksum != mapOwn.Checksum {
-			t.Errorf("%s computed %d, the combinator computed %d — the three are meant to apply the same transform the same number of times",
+			t.Errorf("%s computed %d, the combinator computed %d — the variants are meant to apply the same transform the same number of times",
 				r.Variant, r.Checksum, mapOwn.Checksum)
 		}
 	}
@@ -250,21 +279,23 @@ func TestArrayPipelineOwnMapDoesNotReuseTheDonor(t *testing.T) {
 			withOwn.SteadyAllocs, withOwn.Rounds)
 	}
 
-	// `own` handed to `.map` does not recover the buffer. This is the finding
-	// pipeline 3 exists to record; if it ever stops being true, the report is
-	// wrong and ownership-aware materialization (#9733) has already happened.
-	if mapOwn.SteadyAllocs <= withOwn.SteadyAllocs {
-		t.Errorf("`own xs` through `xs.map(f)` allocated %d times against the in-place loop's %d — the combinator has started reusing the donor, which is #9733's job and would make docs/ARRAY-PIPELINE-BASELINE-2026-09.md's verdict stale",
+	// THE PREMISE, with the pass off: rebuilding by append costs an
+	// allocation per round and more.
+	if rawMapOwn.SteadyAllocs <= withOwn.SteadyAllocs {
+		t.Errorf("with ownership-aware materialization OFF, `own xs` through `xs.map(f)` allocated %d times against the in-place loop's %d — pipeline 3 exists to record that gap",
+			rawMapOwn.SteadyAllocs, withOwn.SteadyAllocs)
+	}
+
+	// WHAT IT BOUGHT: the combinator reaches the hand-written loop.
+	if mapOwn.SteadyAllocs != withOwn.SteadyAllocs {
+		t.Errorf("`own xs` through `xs.map(f)` allocated %d times against the in-place loop's %d: the point of #9733 is that they match",
 			mapOwn.SteadyAllocs, withOwn.SteadyAllocs)
 	}
 
-	// The control: the borrowed receiver pays the copy-on-write copy, so it
-	// allocates — less than the combinator, more than nothing.
+	// The control, and the one that matters most. A BORROWED receiver still
+	// pays the copy: ownership is what licenses the reuse, so a transform
+	// that fired on anything shaped like a map would show up as this zero.
 	if withBorrowed.SteadyAllocs == 0 {
-		t.Errorf("the borrowed-receiver loop allocated nothing: it is the control that shows ownership is what makes `with_own` free, and without it that zero means nothing")
-	}
-	if withBorrowed.SteadyAllocs >= mapOwn.SteadyAllocs {
-		t.Errorf("the borrowed loop allocated %d times and the combinator %d: one copy-on-write copy per round is meant to be cheaper than rebuilding the array by append",
-			withBorrowed.SteadyAllocs, mapOwn.SteadyAllocs)
+		t.Errorf("the borrowed-receiver loop allocated nothing: it is the control that shows ownership is what makes the owned forms free, and without it those zeros mean nothing")
 	}
 }
