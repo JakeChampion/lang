@@ -171,10 +171,11 @@ func TestSelfHostSSAPhysicalRCIRArm64(t *testing.T) {
 	testPhysicalRC(t, true)
 }
 
-func TestSelfHostSSAPhysicalRCRejects(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := copySelfHostTree(t)
-	source := strings.Split(physicalRCSource("", ""), "function main(): i32 {")[0] + `
+// physicalRCRejectSource is the contract-rejection program: the fixture prefix
+// plus a main that asserts every refusal. Built apart from its test so the
+// fixture gate can type-check it without the x86_64 tooling.
+func physicalRCRejectSource() string {
+	return strings.Split(physicalRCSource("", ""), "function main(): i32 {")[0] + `
 function refused(r: irlower.LowerResult, why: string): boolean {
     return !r.ok && r.why == why && r.ops.len() == 0 && r.n_locals == 0 && r.n_params == 0;
 }
@@ -1129,6 +1130,12 @@ function main(): i32 {
     return 0;
 }
 `
+}
+
+func TestSelfHostSSAPhysicalRCRejects(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := copySelfHostTree(t)
+	source := physicalRCRejectSource()
 	if err := os.WriteFile(filepath.Join(dir, "reject.fern"), []byte(source), 0o644); err != nil {
 		t.Fatal(err)
 	}
