@@ -106,3 +106,49 @@ synthesises: the `$wrap`, `$clo` and `$iife` bodies behind an
 immediately-invoked expression or a closure built inside another expression.
 `creator_of` names exactly those three markers, and they are the ones with no
 contract on the typed side.
+
+## The reproducer for the largest bucket
+
+`unresolved result type` in a lifted body is 238 of the 1,054, and it reduces
+to four lines. A lambda RETURNED FROM A NESTED function declaration:
+
+```fern
+function main(): i32 {
+    function mk(): (i32) => i32 { return ((x: i32) => x); }
+    var f: (i32) => i32 = mk();
+    return f(42);
+}
+```
+
+```
+FERN_SEM_IR: main: call target has no semantic contract: __lam_0
+FERN_SEM_IR: __lam_0: unresolved result type:
+FERN_SEM_IR: module: produced 0 of 3 declarations — the AST lowering stands
+```
+
+The spelling after the colon is EMPTY: `s.result` is not merely wrong, it is
+absent. What varies and what does not:
+
+| lambda | nested creator | result |
+|---|---|---|
+| returned | no (top level) | **produced whole** |
+| returned | **yes** | refused |
+| returned with a block body | yes | refused |
+| returned with an EXPLICIT `: i32` | **yes** | **still refused** |
+| bound to a local, not returned | yes | produced whole |
+| passed as a `(i32) => i32` argument | — | produced whole |
+
+The explicit annotation is the informative row. `semsource.result_type` reads
+`fd.ret_type` when it is present and falls back to inferring from the first
+returned expression when it is not — and the annotated case refuses too, so
+this is not inference failing to reach a type. **The lifted body's checker
+scope is what is missing**, which is why `resolved(scope.ret_type, …)` answers
+nothing whichever branch it takes.
+
+So the largest single bucket is one defect in how a nested creator's lift
+carries its scope, not 238 instances of an unsupported construct. That is the
+next slice, and it is worth re-measuring the census after it lands rather than
+assuming the other buckets hold still — three of them (`call target has no
+semantic contract`, `a function value the AST lowering defines`, the verifier's
+`function value is not an element`) are downstream of the same refusal
+propagating.
