@@ -488,6 +488,11 @@ function scratch_base(f: ssasem.Func): i32 { return f.graph.nvals + 1; }
 // their own unit; the final parent release walks children before its box.
 // Array/tuple/struct opcodes preserve the production native/Wasm layouts.
 function has_children(t: typeinfo.Type, f: ssasem.Func): boolean {
+    // A stream handle has no box, so there is nothing under it to walk — and
+    // no schema either, which is what the record arm below would go looking
+    // for. `caller_sigs` asks this of every parameter type, so a handle
+    // reaches here on any program that opens one.
+    if (semtypes.is_handle(t)) { return false; }
     if let typeinfo.TypeFunc(_) = t { return env_records(f).len() > 0; }
     if let typeinfo.TypeArray(a) = t { return ssasem.reference(a.elem); }
     if let typeinfo.TypeTuple(tup) = t {
