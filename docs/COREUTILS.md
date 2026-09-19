@@ -2569,16 +2569,16 @@ happened. `fmt.fern` formats the paragraph. The first divergence is 999
 one-character words at `-w 75`; nothing under 998 differs, and the corpus holds
 a 996-word paragraph and none above it.
 
-**`dircolors -p` prints GNU 9.4's database.** The text `-p` prints is a data
+**`dircolors -p` prints GNU 9.12's database.** The text `-p` prints is a data
 file that changes between coreutils releases — the copyright year on its third
 line moves, and entries come and go — so there is no version-independent answer
-to print. `coreutils/dircolors.fern` carries GNU 9.4's, transcribed from that
+to print. `coreutils/lib/colordb.fern` carries GNU 9.12's, transcribed from that
 binary's own `-p` output (the file grants permission to copy and distribute it
 with its notice preserved, which is why it can be carried at all). `-p` and
-every invocation with no FILE read that text, so against a newer oracle those
-cases fail loudly rather than passing something wrong, as `uname -p` does on an
-unpatched distribution; the fix is to transcribe the newer `dircolors -p`.
-Nothing else in the utility is version-sensitive.
+every invocation with no FILE read that text, so against a different oracle
+those cases fail loudly rather than passing something wrong, as `uname -p` does
+on a distribution binary; the fix is to transcribe that release's `dircolors
+-p`. Nothing else in the utility is version-sensitive.
 
 **`od -t fL` prints a canonical value for an encoding x87 never
 produces.** The 80-bit extended format has bit patterns that are not
@@ -2646,20 +2646,18 @@ The two agree on every date between those dates and 2037 and differ
 outside it; the corpus therefore carries no case of that TZ shape, and
 `who_test.go` says so where a reader will meet it.
 
-**`uname -p` and `-i` print the machine name, as Linux distributions'
-GNU does.** Upstream coreutils can answer neither on Linux — the two
-`#if`s in uname.c are a Solaris `sysinfo(2)` and a BSD `sysctl`, and glibc
-has neither — so an upstream build prints `unknown` for both and `-a`
-omits them. Every distribution patches that to the machine name: Debian,
-Ubuntu, Fedora and RHEL all ship it, `setarch linux32 uname -p` follows
-`-m` to `i686`, and the binaries this corpus is compared against on the
-Ubuntu runners are among them. So that is what `uname.fern` prints, and
-the `-a` omission rule is live only on Darwin, where upstream's own
-answers stand: `-p` is the CPU family (`arm`, not `arm64`) and `-i` is
-genuinely unknown, so `-a` drops it. The one environment where this
-diverges is a distribution shipping unpatched coreutils — Arch is the
-example — where the corpus fails loudly on the `-p` / `-i` / `-a` cases
-rather than passing something wrong.
+**`uname -p` and `-i` print `unknown` on Linux, and `-a` omits both.**
+Coreutils can answer neither there — the two `#if`s in uname.c are a
+Solaris `sysinfo(2)` and a BSD `sysctl`, and glibc has neither — so an
+upstream build says `unknown` for each and the `-a` omission rule drops
+them. That is what `uname.fern` does, because the oracle every lane
+compares against is a build from the GNU tarball rather than a
+distribution's binary. Distributions patch `-p` and `-i` to the machine
+name (Debian, Ubuntu, Fedora and RHEL all ship that patch, and under it
+`setarch linux32 uname -p` follows `-m` to `i686`), so running the corpus
+against a distribution `/usr/bin/uname` instead fails loudly on the `-p`
+/ `-i` / `-a` cases rather than passing something wrong. On Darwin `-p`
+is the CPU family (`arm`, not `arm64`) and `-i` is still unknown.
 
 **`hostid` asks DNS over TCP.** The id is glibc's `gethostid`: `/etc/hostid`
 if it holds four bytes, else the hostname's IPv4 address with its halves
