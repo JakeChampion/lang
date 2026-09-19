@@ -3407,7 +3407,29 @@ function intrinsic_contracts(): ssasem.Contract[] {
     for c in bit_count_contracts() { out = out.append(c); }
     for c in memory_contracts() { out = out.append(c); }
     for c in byte_scan_contracts() { out = out.append(c); }
+    for c in rc_contracts() { out = out.append(c); }
     return out;
+}
+
+// The reference-counting and container helpers `core/map` calls by name. It is
+// written against the runtime directly — an inline (SSO) key has no buffer to
+// count, a value column's kind decides whether a slot is owned — so the calls
+// are in the source rather than inserted by the RC lowering, and the producer
+// needs a contract for each the way it does for `__memcpy`.
+//
+// Signatures are the call sites': `__fern_rc_inc` answers the pointer it was
+// given (map.fern:477, 747, 970), `__fern_str_dec` takes the string and gives
+// nothing back (657, 719), `__map_hash_seed` answers the i32 stored in the
+// header (342), and the two array drops take a pointer and a stride (727, 730).
+function rc_contracts(): ssasem.Contract[] {
+    var v: i32 = ssaunits.value_mode();
+    return [
+        ssasem.Contract { name: "__fern_rc_inc", params: [t_usize()], modes: [v], result: t_usize() },
+        ssasem.Contract { name: "__fern_str_dec", params: [t_string()], modes: [v], result: t_void() },
+        ssasem.Contract { name: "__map_hash_seed", params: [], modes: [], result: t_i32() },
+        ssasem.Contract { name: "__fern_drop_arr_ptr", params: [t_usize(), t_i32()], modes: [v, v], result: t_void() },
+        ssasem.Contract { name: "__fern_arr_dec", params: [t_usize(), t_i32()], modes: [v, v], result: t_void() }
+    ];
 }
 
 // The ten f64 primitives `std/float` dispatches to, and the one two-operand
