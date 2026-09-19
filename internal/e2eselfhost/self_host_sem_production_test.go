@@ -1395,4 +1395,25 @@ function main(): i32 {
     return t % 7;
 }
 `},
+	// Self-tail recursion. Tail-call optimisation reached a declaration
+	// through `irlower.lower_func`, which a produced body never enters, so a
+	// produced self-tail call grew the stack once per round and a deep enough
+	// recursion took the program out — SIGSEGV on the default path, where the
+	// AST leg answers (#9692). The depth is what makes this a gate rather than
+	// a decoration: a million rounds is several times any stack here, and
+	// before the rewrite the same program died at two hundred thousand on
+	// every target. It costs about a sixth of a second natively.
+	//
+	// Scalars deliberately: the AST leg's own TCO fires for this shape, so the
+	// two legs are comparable and the table's default assertion — same answer
+	// as the AST lowering — is the gate. The reference-typed shapes are in
+	// TestSelfHostSemanticTailRecursion, where the AST leg is not an oracle.
+	{name: "self-tail-recursion", atLeast: 2, src: `
+function count(n: i32, acc: i32): i32 {
+    if (n == 0) { return acc; }
+    return count(n - 1, acc + 1);
+}
+
+function main(): i32 { return count(1000000, 0) % 7; }
+`},
 }
