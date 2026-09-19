@@ -44,15 +44,19 @@ RUN apt-get update \
 
 # GNU coreutils, built, because the image's own is not an oracle the corpus
 # can be held to. internal/coreutils compares each utility against the GNU
-# binary of the same name and docs/COREUTILS.md pins that to 9.4 OR NEWER;
+# binary of the same name and docs/COREUTILS.md pins that to 9.12;
 # debian:bookworm ships 9.1, so a corpus run in here was measuring a version
 # out of support and failing for reasons that were nothing to do with Fern.
 #
 # Two things 9.1 gets differently, both of which a corpus run trips over:
 # `uptime` reads /proc/uptime and lets it OVERRIDE the utmp BOOT_TIME record,
 # so a fixture database proves nothing against it, and `comm`'s write-error
-# wording differs. 9.4 is the version the CI image's own coreutils is, so a
-# green run in here means the same thing a green lane does.
+# wording differs. Every CI lane builds this same 9.12, so a green run in
+# here means the same thing a green lane does.
+#
+# One tree, not two. The benchmark used to want a newer GNU than the corpus
+# could be held to; now that the corpus IS 9.12 there is nothing to differ
+# about, and the second build is gone.
 #
 # It also SUPPLIES what Debian leaves out: their coreutils package does not
 # build `uptime` or `kill` at all, and the `/usr/bin/uptime` most Linux
@@ -62,14 +66,15 @@ RUN apt-get update \
 #
 # `make` in full rather than a named target: a target skips the gnulib header
 # generation the build depends on and dies on a missing stdckdint.h.
-ARG GNU_COREUTILS_VERSION=9.4
+ARG GNU_COREUTILS_VERSION=9.12
 RUN set -eux; \
     ver="$GNU_COREUTILS_VERSION"; \
     cd /tmp; \
     curl -fsSLO "https://ftp.gnu.org/gnu/coreutils/coreutils-$ver.tar.xz"; \
     tar xf "coreutils-$ver.tar.xz"; \
     cd "coreutils-$ver"; \
-    FORCE_UNSAFE_CONFIGURE=1 ./configure --quiet --disable-nls --without-selinux; \
+    FORCE_UNSAFE_CONFIGURE=1 ./configure --quiet --disable-nls --without-selinux \
+      --enable-install-program=arch,kill,uptime; \
     make -j"$(nproc)"; \
     make install prefix=/opt/gnu-coreutils; \
     rm -rf /opt/gnu-coreutils/share /opt/gnu-coreutils/libexec; \
@@ -78,6 +83,7 @@ RUN set -eux; \
     /opt/gnu-coreutils/bin/kill --version | head -1 | grep -q '(GNU coreutils)'; \
     /opt/gnu-coreutils/bin/chroot --version | head -1 | grep -q '(GNU coreutils)'; \
     /opt/gnu-coreutils/bin/yes --version | head -1 | grep -q '(GNU coreutils)'
+
 
 # hyperfine and python3 for scripts/coreutils-bench: it is the repo's own
 # benchmark runner and could not run in the repo's own Linux image, which

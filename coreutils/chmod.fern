@@ -97,6 +97,47 @@ function opt_mode(): i32 {
   return 8;
 }
 
+function opt_dereference(): i32 {
+  return 9;
+}
+
+function opt_no_dereference(): i32 {
+  return 10;
+}
+
+function opt_comfollow(): i32 {
+  return 11;
+}
+
+function opt_logical(): i32 {
+  return 12;
+}
+
+function opt_physical(): i32 {
+  return 13;
+}
+
+// -H, -L and -P: which symbolic links the WALK follows. -H is the
+// default and follows only one named on the command line.
+function trav_command_line(): i32 {
+  return 0;
+}
+
+function trav_logical(): i32 {
+  return 1;
+}
+
+function trav_physical(): i32 {
+  return 2;
+}
+
+// `--dereference` / `-h`: whether the change lands on the link or on
+// what it points at. Neither given follows a command-line link and
+// nothing below one, which is what the walk did before 9.5 named it.
+function deref_unset(): i32 {
+  return 0 - 1;
+}
+
 function v_quiet(): i32 {
   return 0;
 }
@@ -109,7 +150,7 @@ function v_all(): i32 {
   return 2;
 }
 
-struct Settings { verbosity: i32, quiet: boolean, recursive: boolean, preserve_root: boolean }
+struct Settings { verbosity: i32, quiet: boolean, recursive: boolean, preserve_root: boolean, deref: i32, traverse: i32 }
 
 // What one run has to say about every file: the compiled MODE or the fixed
 // mode `--reference` read, the umask the empty-who clauses are filtered by,
@@ -132,6 +173,9 @@ function help_text(): string {
   out = out + "  -c, --changes          like verbose but report only when a change is made\n";
   out = out + "  -f, --silent, --quiet  suppress most error messages\n";
   out = out + "  -v, --verbose          output a diagnostic for every file processed\n";
+  out = out + "      --dereference      affect the referent of each symbolic link,\n";
+  out = out + "                         rather than the symbolic link itself\n";
+  out = out + "  -h, --no-dereference   affect each symbolic link, rather than the referent\n";
   out = out + "      --no-preserve-root  do not treat '/' specially (the default)\n";
   out = out + "      --preserve-root    fail to operate recursively on '/'\n";
   out = out + "      --reference=RFILE  use RFILE's mode instead of specifying MODE values.\n";
@@ -139,6 +183,15 @@ function help_text(): string {
   out = out + "  -R, --recursive        change files and directories recursively\n";
   out = out + "      --help        display this help and exit\n";
   out = out + "      --version     output version information and exit\n";
+  out = out + "\n";
+  out = out + "The following options modify how a hierarchy is traversed when the -R\n";
+  out = out + "option is also specified.  If more than one is specified, only the final\n";
+  out = out + "one takes effect. -H is the default.\n";
+  out = out + "\n";
+  out = out + "  -H                     if a command line argument is a symlink to a directory,\n";
+  out = out + "                           traverse it\n";
+  out = out + "  -L                     traverse every symbolic link to a directory encountered\n";
+  out = out + "  -P                     do not traverse any symbolic links\n";
   out = out + "\n";
   out = out + "Each MODE is of the form '[ugoa]*([-+=]([rwxXst]*|[ugo]))+|[-+=][0-7]+'.\n";
   return out;
@@ -150,13 +203,18 @@ function help_text(): string {
 function option_table(): gnu.Opt[] {
   var opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("c", "changes", opt_changes()));
+  opts = opts.append(gnu.flag("", "dereference", opt_dereference()));
   opts = opts.append(gnu.flag("R", "recursive", opt_recursive()));
+  opts = opts.append(gnu.flag("h", "no-dereference", opt_no_dereference()));
   opts = opts.append(gnu.flag("", "no-preserve-root", opt_no_preserve_root()));
   opts = opts.append(gnu.flag("", "preserve-root", opt_preserve_root()));
   opts = opts.append(gnu.flag("f", "quiet", opt_silent()));
   opts = opts.append(gnu.valued("", "reference", opt_reference()));
   opts = opts.append(gnu.flag("", "silent", opt_silent()));
   opts = opts.append(gnu.flag("v", "verbose", opt_verbose()));
+  opts = opts.append(gnu.flag("H", "", opt_comfollow()));
+  opts = opts.append(gnu.flag("L", "", opt_logical()));
+  opts = opts.append(gnu.flag("P", "", opt_physical()));
   var i: i32 = 0;
   var letters: string = "rwxXstugoa,+=01234567";
   while (i < letters.len()) {
@@ -169,7 +227,7 @@ function option_table(): gnu.Opt[] {
 struct Parsed { s: Settings, mode: string, has_mode: boolean, reference: string, has_reference: boolean, files: string[] }
 
 function parse(argv: string[]): Parsed {
-  var s: Settings = Settings { verbosity: v_quiet(), quiet: false, recursive: false, preserve_root: false };
+  var s: Settings = Settings { verbosity: v_quiet(), quiet: false, recursive: false, preserve_root: false, deref: deref_unset(), traverse: trav_command_line() };
   var mode: string = "";
   var has_mode: boolean = false;
   var reference: string = "";
@@ -195,6 +253,16 @@ function parse(argv: string[]): Parsed {
           has_reference = true;
         } else if (m.id == opt_recursive()) {
           s = Settings { ...s, recursive: true };
+        } else if (m.id == opt_dereference()) {
+          s = Settings { ...s, deref: 1 };
+        } else if (m.id == opt_no_dereference()) {
+          s = Settings { ...s, deref: 0 };
+        } else if (m.id == opt_comfollow()) {
+          s = Settings { ...s, traverse: trav_command_line() };
+        } else if (m.id == opt_logical()) {
+          s = Settings { ...s, traverse: trav_logical() };
+        } else if (m.id == opt_physical()) {
+          s = Settings { ...s, traverse: trav_physical() };
         } else if (m.id == opt_mode()) {
           // The WHOLE argv element is the mode, however much of it getopt
           // already consumed as options: `-vRw` is the mode `-vRw`, and a
@@ -285,10 +353,17 @@ function target_mode(t: Target, old: i32, is_dir: boolean): (i32, i32, boolean) 
   return (masked.mode, naive.mode, (masked.mode & mode.complement(naive.mode)) != 0);
 }
 
-function change_one(st0: St, s: Settings, t: Target, path: string, info: FileStat): St {
+// `follows` is whether the change lands on what the name points AT.
+// When it does not and the name is a symbolic link there is no call to
+// make: Linux has no mode on one, and GNU reads the ENOTSUP its
+// fchmodat(AT_SYMLINK_NOFOLLOW) answers as "not applied".
+function change_one(st0: St, s: Settings, t: Target, path: string, info: FileStat, is_link: boolean, follows: boolean): St {
   var st: St = st0;
   var old: i32 = info.mode as i32 & mode.all_bits();
   var is_dir: boolean = filetype.is_dir(info.mode);
+  if (is_link && !follows) {
+    return say(st, s, "neither symbolic link " + gnu.quotea(path) + " nor referent has been changed\n");
+  }
   var r: (i32, i32, boolean) = target_mode(t, old, is_dir);
   var wanted: i32 = r.0;
   match (chmod(path, wanted)) {
@@ -318,36 +393,55 @@ function describe(path: string, old: i32, wanted: i32): string {
 }
 
 // ---- the walk --------------------------------------------------------------
-// `top` marks a command-line operand: only there is a symlink FOLLOWED, and
-// only there is the root failsafe asked. A symlink met below one is neither
-// followed nor changed — Linux has no mode on a symlink to set — and says so
-// under `-v` without touching the exit status.
+// Two independent questions, and 9.5 named the second one. -H / -L / -P
+// decide which symbolic links the WALK follows, which is what makes an
+// entry a directory to descend into; --dereference / -h decide whether
+// the CHANGE lands on the link or on what it points at. `top` marks a
+// command-line operand, which is the level -H follows at and the only
+// one the root failsafe is asked about.
 function process(st0: St, s: Settings, t: Target, path: string, top: boolean): St {
   var st: St = st0;
-  if (!top) {
-    match (lstat(path)) {
+  // What the walk sees: the target's type when this link is one it
+  // follows, and the link itself otherwise.
+  var followed: boolean = s.traverse == trav_logical() || top && s.traverse != trav_physical();
+  var lands: boolean = s.deref == 1 || s.deref == deref_unset() && top;
+  if (followed) {
+    match (stat(path)) {
       Ok(info) => {
-        if (filetype.is_link(info.mode)) {
-          return say(st, s, "neither symbolic link " + gnu.quotea(path) + " nor referent has been changed\n");
-        }
-        return visit(st, s, t, path, info, false);
+        return visit(st, s, t, path, info, names_symlink(path), lands, top);
       },
       Err(e) => {
+        // A symlink whose target is not there is its own wording; every other
+        // failure — a loop, a name too long, a component that is not a
+        // directory — is the plain one. `-h` does not complain about it at
+        // all, having nothing to dereference.
+        if (gnu.io_error_text(e) == "No such file or directory" && names_symlink(path)) {
+          if (s.deref == 0) {
+            return say(st, s, "neither symbolic link " + gnu.quotea(path) + " nor referent has been changed\n");
+          }
+          return unreachable(st, s, path, "cannot operate on dangling symlink " + gnu.quotea(path));
+        }
         return unreachable(st, s, path, "cannot access " + gnu.quotea(path) + ": " + gnu.io_error_text(e));
       }
     }
   }
-  match (stat(path)) {
+  match (lstat(path)) {
     Ok(info) => {
-      return visit(st, s, t, path, info, true);
+      if (filetype.is_link(info.mode) && s.deref == 1) {
+        // The walk did not follow it but the change does, so the mode
+        // reported is the referent's.
+        match (stat(path)) {
+          Ok(target) => {
+            return visit(st, s, t, path, target, true, true, top);
+          },
+          Err(e) => {
+            return unreachable(st, s, path, "cannot dereference " + gnu.quotea(path) + ": " + gnu.io_error_text(e));
+          }
+        }
+      }
+      return visit(st, s, t, path, info, filetype.is_link(info.mode), lands, top);
     },
     Err(e) => {
-      // A symlink whose target is not there is its own wording; every other
-      // failure — a loop, a name too long, a component that is not a
-      // directory — is the plain one.
-      if (gnu.io_error_text(e) == "No such file or directory" && names_symlink(path)) {
-        return unreachable(st, s, path, "cannot operate on dangling symlink " + gnu.quotea(path));
-      }
       return unreachable(st, s, path, "cannot access " + gnu.quotea(path) + ": " + gnu.io_error_text(e));
     }
   }
@@ -366,12 +460,12 @@ function names_symlink(path: string): boolean {
 
 // One entry that was reached. The directory is chmod'ed BEFORE its children
 // are read, which is the order GNU's pre-order walk imposes.
-function visit(st0: St, s: Settings, t: Target, path: string, info: FileStat, top: boolean): St {
+function visit(st0: St, s: Settings, t: Target, path: string, info: FileStat, is_link: boolean, follows: boolean, top: boolean): St {
   var st: St = st0;
   if (top && s.recursive && s.preserve_root && filetype.is_dir(info.mode) && is_root_dir(info)) {
     return refuse_root(st, path);
   }
-  st = change_one(st, s, t, path, info);
+  st = change_one(st, s, t, path, info, is_link, follows);
   if (!s.recursive || !filetype.is_dir(info.mode)) {
     return st;
   }
@@ -404,6 +498,19 @@ function current_umask(): i32 {
 pub function main(): i32 {
   var p: Parsed = parse(args());
   var s: Settings = p.s;
+  // A recursive walk that follows no link cannot reach a referent, so
+  // asking it to change one is refused; asking it nothing settles on the
+  // link. And a walk that follows every link changes every referent.
+  if (s.recursive && s.traverse == trav_physical()) {
+    if (s.deref == 1) {
+      gnu.error("-R --dereference requires either -H or -L");
+      exit(1);
+    }
+    s = Settings { ...s, deref: 0 };
+  }
+  if (s.deref == deref_unset() && s.traverse == trav_logical()) {
+    s = Settings { ...s, deref: 1 };
+  }
   var files: string[] = p.files;
   var mode_spec: string = p.mode;
   // A mode that arrived through the option letters and a --reference are the

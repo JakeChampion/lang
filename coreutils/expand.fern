@@ -138,6 +138,7 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
   var pos: i32 = 0;
   var tabat: i32 = 0 - 1;
   var bsat: i32 = 0 - 1;
+  var nulat: i32 = 0 - 1;
   var carry: string = "";
   var final: boolean = false;
 
@@ -196,6 +197,7 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
             pos = 0;
             tabat = __memchr(chunk, 9, 0);
             bsat = __memchr(chunk, 8, 0);
+            nulat = __memchr(chunk, 0, 0);
             got = true;
           } else {
             if (!is_stdin) {
@@ -208,6 +210,7 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
       if (final) {
         tabat = __memchr(chunk, 9, 0);
         bsat = __memchr(chunk, 8, 0);
+        nulat = __memchr(chunk, 0, 0);
         if (chunk.len() == 0) {
           break;
         }
@@ -239,14 +242,16 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
     }
     pos = j + 1;
 
-    // Where the next tab and the next backspace are. Both are cursors
+    // Where the next tab, backspace and NUL are. All three are cursors
     // over the chunk, so finding every one of them costs a single pass
     // over it rather than a scan per line.
     var ta: i32 = tabat;
     var ba: i32 = bsat;
+    var na: i32 = nulat;
     if (carried) {
       ta = __memchr(buf, 9, 0);
       ba = __memchr(buf, 8, 0);
+      na = __memchr(buf, 0, 0);
     }
     if (ta < 0 || ta >= hi) {
       // No tab on this line, so nothing on it converts and a backspace
@@ -273,6 +278,9 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
         if (ba >= p && ba < k) {
           k = ba;
         }
+        if (na >= p && na < k) {
+          k = na;
+        }
         if (k > p) {
           buf_push_range(h, buf, p, k);
           column = column + (k - p) as u64;
@@ -283,7 +291,12 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
         }
         var c: i32 = buf[p] as i32;
         p = p + 1;
-        if (c == 8) {
+        if (c == 0) {
+          // wcwidth answers 0 for a NUL, so it takes no column at all —
+          // the one byte for which the count is not the byte count.
+          buf_push_byte(h, c);
+          na = __memchr(buf, 0, p);
+        } else if (c == 8) {
           if (column > 0 as u64) {
             column = column - 1 as u64;
           }
@@ -341,11 +354,15 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
     // is still ahead of the cursor.
     tabat = ta;
     bsat = ba;
+    nulat = na;
     if (carried || tabat >= 0 && tabat < pos) {
       tabat = __memchr(chunk, 9, pos);
     }
     if (carried || bsat >= 0 && bsat < pos) {
       bsat = __memchr(chunk, 8, pos);
+    }
+    if (carried || nulat >= 0 && nulat < pos) {
+      nulat = __memchr(chunk, 0, pos);
     }
     if (buf_len(h) >= block_size()) {
       o = o.flush();

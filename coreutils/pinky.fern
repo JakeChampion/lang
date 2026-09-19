@@ -71,6 +71,15 @@ function opt_omit_idle(): i32 {
   return 9;
 }
 
+// `--lookup`, 9.5's. It asks for the utmp host field to be canonicalised
+// through DNS, which Fern has no primitive for, so `apply` leaves the
+// mode alone and the host prints as the database holds it — the answer
+// GNU gives too whenever the lookup does not resolve.
+// docs/COREUTILS.md carries the gap.
+function opt_lookup(): i32 {
+  return 10;
+}
+
 function help_text(): string {
   var out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [USER]...\n";
@@ -84,6 +93,8 @@ function help_text(): string {
   out = out + "  -w              omit the user's full name in short format\n";
   out = out + "  -i              omit the user's full name and remote host in short format\n";
   out = out + "  -q              omit the user's full name, remote host and idle time\n";
+  out = out + "                  in short format\n";
+  out = out + "      --lookup    attempt to canonicalize hostnames via DNS\n";
   out = out + "                  in short format\n";
   out = out + "      --help        display this help and exit\n";
   out = out + "      --version     output version information and exit\n";
@@ -144,6 +155,7 @@ function parse_mode(argv: string[]): (Mode, string[]) {
   opts = opts.append(gnu.flag("w", "", opt_omit_name()));
   opts = opts.append(gnu.flag("i", "", opt_omit_where()));
   opts = opts.append(gnu.flag("q", "", opt_omit_idle()));
+  opts = opts.append(gnu.flag("", "lookup", opt_lookup()));
   var g: gnu.Getopt = gnu.getopt_new(argv, opts, "pinky", help_text(), 1);
   var m: Mode = mode_new();
   while (true) {

@@ -24,11 +24,10 @@
 // offset-plus-count overflow at 8 KiB where a larger block would reach
 // the descriptor and say EISDIR.
 //
-// Output goes through GNU's own 8 KiB buffer and then glibc's stdio,
-// both emulated (lib/gnu.fern's Stdio), because tac never checks an
-// fwrite: whether a failed write is reported as `write error: No space
-// left on device` or as a bare `write error` is decided entirely by
-// which bytes stdio still had pending when fclose ran.
+// Output goes through GNU's own 8 KiB buffer and then straight to fd 1:
+// since 9.5 tac writes with full_write rather than fwrite, so a failed
+// write is reported where it happens, with its errno, instead of being
+// left for the close to word out of whatever stdio still had pending.
 import "./lib/gnu";
 import "./lib/bre";
 
@@ -64,21 +63,37 @@ function help_text(): string {
 struct Settings { sep: string, before: boolean, regex: boolean, re: bre.Bre }
 
 // ---- output ----------------------------------------------------------------
-// `Out` — glibc's stdio, GNU's own 8 KiB buffer in front of it (a
-// builder handle), and whether any operand failed. The buffer reaches
-// stdio as one fwrite per full block, which is the call sequence the
-// write-error wording is decided by.
-struct Out { st: gnu.Stdio, buf: usize, ok: boolean }
+// `Out` — fd 1, GNU's own 8 KiB buffer in front of it (a builder
+// handle), and whether any operand failed. The buffer reaches the
+// descriptor as one write per full block.
+struct Out { w: Writer, buf: usize, ok: boolean }
 
-// GNU's WRITESIZE: the bytes it accumulates before each fwrite.
+// GNU's WRITESIZE: the bytes it accumulates before each write.
 function write_size(): i32 {
   return 8192;
 }
 
-// One diagnostic, with stdout flushed ahead of it as gnulib's error()
-// does, and the exit status turned to 1.
+// GNU's full_write, with write_error() behind it: a failed write ends
+// the program naming the errno, and nothing is left for the close.
+function write_out(o: Out, data: string): void {
+  if (data.len() == 0) {
+    return;
+  }
+  match (o.w.write(data)) {
+    Some(e) => {
+      gnu.error("write error: " + gnu.io_error_text(e));
+      exit(1);
+    },
+    None => {}
+  }
+}
+
+// One diagnostic and the exit status turned to 1. Nothing is flushed
+// ahead of it: gnulib's error() flushes STDIO, which tac's output no
+// longer passes through, so the pending block stays pending.
 function fail(o: Out, msg: string): Out {
-  return Out { ...o, st: o.st.report(msg), ok: false };
+  gnu.error(msg);
+  return Out { ...o, ok: false };
 }
 
 // ---- the separator search --------------------------------------------------
@@ -250,10 +265,10 @@ function tac_backward(src: Src, name: string, size: i64, o: Out, s: Settings): O
         buf_push_range(h, w, lo, past_end);
       } else {
         buf_push_range(h, w, lo, lo + avail);
-        out = Out { ...out, st: out.st.fwrite(buf_take(h)) };
+        write_out(out, buf_take(h));
         var from: i32 = lo + avail;
         while (past_end - from >= write_size()) {
-          out = Out { ...out, st: out.st.fwrite(slice_unchecked(w, from, from + write_size()) + "") };
+          write_out(out, slice_unchecked(w, from, from + write_size()) + "");
           from = from + write_size();
         }
         if (from < past_end) {
@@ -405,7 +420,7 @@ pub function main(): i32 {
   if (files.len() == 0) {
     files = files.append("-");
   }
-  var out: Out = Out { st: gnu.stdio_new(), buf: buf_new(write_size()), ok: true };
+  var out: Out = Out { w: stdout(), buf: buf_new(write_size()), ok: true };
   var read_stdin: boolean = false;
   var i: i32 = 0;
   while (i < files.len()) {
@@ -416,7 +431,7 @@ pub function main(): i32 {
     i = i + 1;
   }
   if (buf_len(out.buf) > 0) {
-    out = Out { ...out, st: out.st.fwrite(buf_take(out.buf)) };
+    write_out(out, buf_take(out.buf));
   }
   buf_free(out.buf);
   if (read_stdin) {
@@ -427,7 +442,19 @@ pub function main(): i32 {
       None => {}
     }
   }
-  out.st.close_stdout();
+  // gnulib's close_stdout over a stream tac no longer writes through:
+  // with nothing pending and no earlier failure, only a close that fails
+  // for something other than a closed descriptor is reported.
+  match (out.w.close()) {
+    Some(e) => {
+      var text: string = gnu.io_error_text(e);
+      if (text != "Bad file descriptor") {
+        gnu.error("write error: " + text);
+        exit(1);
+      }
+    },
+    None => {}
+  }
   if (!out.ok) {
     return 1;
   }

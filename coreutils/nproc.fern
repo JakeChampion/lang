@@ -256,11 +256,13 @@ function parse_ignore(v: string): u64 {
   if (r.1 == 0) {
     return r.0;
   }
-  var msg: string = "invalid number: " + gnu.quote(v);
+  // A count past ULONG saturates in silence (XTOINT_MAX_QUIET), and a
+  // saturated ignore leaves the floor of one processor. GNU <= 9.4
+  // refused it instead.
   if (gnu.count_overflow(r.1)) {
-    msg = msg + ": Value too large for defined data type";
+    return 18446744073709551615 as u64;
   }
-  gnu.error(msg);
+  gnu.error("invalid number: " + gnu.quote(v));
   exit(1);
   return 0 as u64;
 }

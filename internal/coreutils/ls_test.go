@@ -610,6 +610,13 @@ func listingCases(t *testing.T, util string) []invocation {
 	env("color-after-f", []string{"LS_COLORS=di=2"}, "-f", "-t", "--color=always")
 	env("color-f-unsorted", []string{"LS_COLORS=di=2"}, "-f", "--color=always")
 	env("color-before-f", []string{"LS_COLORS=di=2"}, "--color=always", "-f", "-t")
+	// 9.5 cut -f back to -a -U, so it no longer turns the long format,
+	// -s or --hyperlink off along with the sorting.
+	add("f-keeps-long", "-f", "-l")
+	add("f-keeps-blocks", "-f", "-s")
+	add("f-keeps-hyperlink", "-f", "--hyperlink=always")
+	add("f-after-long", "-l", "-f")
+	add("f-alone", "-f")
 
 	// --- --hyperlink ------------------------------------------------------------------
 	// The URI is the CANONICAL path with links resolved, percent-encoded
@@ -709,6 +716,10 @@ func listingCases(t *testing.T, util string) []invocation {
 	add("err-hide-requires-argument", "--hide")
 	add("err-sort-requires-argument", "--sort")
 	add("err-sort-bogus", "--sort=bogus")
+	add("sort-name", "--sort=name", "-U")
+	add("sort-name-abbrev", "--sort=na", "-U")
+	add("sort-n-is-ambiguous", "--sort=n")
+	add("sort-name-beats-t", "-t", "--sort=name")
 	add("err-sort-ambiguous", "--sort=t")
 	add("err-format-bogus", "--format=bogus")
 	add("err-format-ambiguous", "--format=ver")

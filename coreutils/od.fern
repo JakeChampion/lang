@@ -228,6 +228,12 @@ function k_float(): i32 {
   return 6;
 }
 
+// `fB` — bfloat16. It is two bytes like `fH`, and only the kind tells
+// them apart: same width, same decimal, a different encoding.
+function k_bfloat(): i32 {
+  return 7;
+}
+
 // `Spec` — one output format: its kind, the bytes per unit, the columns
 // one unit occupies before the block padding is spread over it, whether
 // the `z` suffix asked for the printable-character trailer, and the pad
@@ -250,7 +256,7 @@ function spec_width(kind: i32, size: i32): i32 {
   if (kind == k_signed()) {
     return signed_dec_digits(size);
   }
-  return float_digits(float_format(size));
+  return float_digits(print_format(size));
 }
 
 // The format a float of `size` bytes has on the target: `lib/ld.fern`
@@ -263,6 +269,29 @@ function float_format(size: i32): ld.Format {
     return ld.binary64();
   }
   return ld.format();
+}
+
+// The format the unit's BYTES are in. The two-byte types are the only
+// place this differs from the one the value is printed in.
+function decode_format(kind: i32, size: i32): ld.Format {
+  if (kind == k_bfloat()) {
+    return ld.bfloat16();
+  }
+  if (size == 2) {
+    return ld.binary16();
+  }
+  return float_format(size);
+}
+
+// The format the printed decimal has to read back as. GNU widens both
+// two-byte types to `float` before calling ftoastr, so what a half
+// prints is the shortest text that identifies the float it widened to —
+// and its column is a float's column, not a narrower one.
+function print_format(size: i32): ld.Format {
+  if (size == 2) {
+    return ld.binary32();
+  }
+  return float_format(size);
 }
 
 // The bytes `long double` occupies on the target. x87 is ten bytes of
@@ -318,7 +347,13 @@ function int_size_letter(c: i32): i32 {
   return 0;
 }
 
+// `f`'s size letters. `H` and `B` are 9.5's two-byte pair — IEEE
+// binary16 and bfloat16 — and they are the only ones that also decide
+// the kind, which `parse_type` reads back from the letter.
 function float_size_letter(c: i32): i32 {
+  if (c == 66 || c == 72) {
+    return 2;
+  }
   if (c == 70) {
     return 4;
   }
@@ -336,7 +371,7 @@ function valid_int_size(n: i32): boolean {
 }
 
 function valid_float_size(n: i32): boolean {
-  return n == 4 || n == 8 || n == long_double_size();
+  return n == 2 || n == 4 || n == 8 || n == long_double_size();
 }
 
 // `parse_type(arg, specs)` — every specification in one `-t` argument,
@@ -405,6 +440,9 @@ function parse_type(arg: string, specs: Spec[]): Spec[] {
       }
       if (letter > 0) {
         size = letter;
+        if (arg[i] as i32 == 66) {
+          kind = k_bfloat();
+        }
         i = i + 1;
       }
     }
@@ -615,8 +653,8 @@ function is_printable(c: i32): boolean {
 // ---- floating point --------------------------------------------------------
 //
 // The unit's bytes as the exact value the format holds.
-function decode_float(block: string, at: i32, size: i32, big: boolean): ld.LD {
-  var f: ld.Format = float_format(size);
+function decode_float(block: string, at: i32, kind: i32, size: i32, big: boolean): ld.LD {
+  var f: ld.Format = decode_format(kind, size);
   var lo: u64 = 0 as u64;
   var hi: u64 = 0 as u64;
   if (size <= 8) {
@@ -1071,7 +1109,7 @@ function push_field(h: usize, t: Tables, sp: Spec, block: string, at: i32, width
   } else if (sp.kind == k_named()) {
     push_entry(h, t, t.names, block[at] as i32, width);
   } else {
-    push_text(h, t, ftoa(float_format(sp.size), decode_float(block, at, sp.size, big)), width);
+    push_text(h, t, ftoa(print_format(sp.size), decode_float(block, at, sp.kind, sp.size, big)), width);
   }
 }
 
@@ -1238,10 +1276,10 @@ function other_line(h: usize, t: Tables, sp: Spec, block: string, base: i32, fie
 // `buf` / `pos` hold what has been read and not yet handed out. A block
 // is 16 bytes by default, so without them a 62 MiB dump would be four
 // million read(2) calls.
-struct Src { files: string[], at: i32, r: Reader, open: boolean, is_stdin: boolean, buf: string, pos: i32, eof: boolean, ok: boolean, opened: boolean }
+struct Src { files: string[], at: i32, r: Reader, open: boolean, is_stdin: boolean, buf: string, pos: i32, eof: boolean, fails: i32, opened: boolean }
 
 function src_new(files: string[]): Src {
-  return Src { files: files, at: 0, r: stdin(), open: false, is_stdin: false, buf: "", pos: 0, eof: false, ok: true, opened: false };
+  return Src { files: files, at: 0, r: stdin(), open: false, is_stdin: false, buf: "", pos: 0, eof: false, fails: 0, opened: false };
 }
 
 function read_size(): i32 {
@@ -1266,7 +1304,7 @@ function src_ensure(s0: Src): Src {
         },
         Err(e) => {
           gnu.error(gnu.quotef(name) + ": " + gnu.io_error_text(e));
-          s = Src { ...s, ok: false };
+          s = Src { ...s, fails: s.fails + 1 };
         }
       }
     }
@@ -1336,7 +1374,7 @@ function src_read(s0: Src, want: i32): (string, Src) {
       },
       Err(e) => {
         gnu.error(gnu.quotef(s.files[s.at - 1]) + ": " + gnu.io_error_text(e));
-        s = Src { ...src_close(s), ok: false };
+        s = Src { ...src_close(s), fails: s.fails + 1 };
       }
     }
   }
@@ -1424,7 +1462,7 @@ function skip_in_file(s0: Src, left0: u64): (u64, Src) {
       },
       Err(e) => {
         gnu.error(gnu.quotef(s.files[s.at - 1]) + ": " + gnu.io_error_text(e));
-        return (left, Src { ...s, ok: false });
+        return (left, Src { ...s, fails: s.fails + 1 });
       }
     }
   }
@@ -1442,6 +1480,7 @@ function dump(w0: io_buffered.BufWriter, t: Tables, s: Settings, src0: Src): (io
   var w: io_buffered.BufWriter = w0;
   var h: usize = w.handle();
   var src: Src = src0;
+  var fails0: i32 = src.fails;
   var off: u64 = s.skip;
   var left: u64 = s.limit;
   var carry: string = "";
@@ -1503,7 +1542,13 @@ function dump(w0: io_buffered.BufWriter, t: Tables, s: Settings, src0: Src): (io
       break;
     }
   }
-  if ((s.base != radix_none() || s.labelled) && src.opened) {
+  // Two conditions, and they are not the same one. GNU never reaches
+  // the dump when no operand opened, which is what `src.opened` stands
+  // for; and 9.5 stopped printing the closing address when nothing was
+  // read and something failed INSIDE the dump, which is the directory
+  // operand. An operand that would not open failed before the dump
+  // began, so `od nosuch -` still prints the address.
+  if ((s.base != radix_none() || s.labelled) && src.opened && (src.fails == fails0 || off != 0 as u64)) {
     push_address(h, t, s, off);
     buf_push_byte(h, 10);
   }
@@ -1591,8 +1636,11 @@ function dump_strings(w0: io_buffered.BufWriter, t: Tables, s: Settings, src0: S
     }
     off = off + block.len() as u64;
   }
-  if (s.limited && left == 0 as u64 && buf_len(held) as u64 > s.min_string) {
-    push_run(h, t, s, start - 1 as u64, held);
+  // A run the byte limit cut short is printed as it stands: 9.5 stopped
+  // requiring the terminator, and the address it carries is the run's
+  // own start rather than one byte before it.
+  if (s.limited && left == 0 as u64 && buf_len(held) > 0 && buf_len(held) as u64 >= s.min_string) {
+    push_run(h, t, s, start, held);
   }
   buf_free(held);
   return (gnu.check(w), src);
@@ -1628,19 +1676,27 @@ function parse_old_offset(s: string): (u64, boolean) {
   if (i >= s.len() || !gnu.is_digit(s[i] as i32)) {
     return (0 as u64, false);
   }
-  // A `.` anywhere picks decimal — and then fails, because gnulib's
-  // suffix set for this operand is `Bb` and the point is not in it. GNU
-  // documents the point as an octal marker and accepts it nowhere.
+  // The `.` that picks decimal has to be the LAST thing in the operand,
+  // or the last but one with the `b`/`B` multiplier after it. Anywhere
+  // else it is not a radix marker at all: the radix stays octal and the
+  // point then makes the operand a file name. 9.5 added this; before it
+  // a point anywhere chose decimal and the operand was refused.
+  var dot: i32 = dot_at(s, i);
   var base: i32 = 8;
-  if (s.index_of(".") >= 0) {
+  if (dot >= 0) {
     base = 10;
   } else if (s.len() > i + 1 && s[i] as i32 == 48 && (s[i + 1] as i32 == 120 || s[i + 1] as i32 == 88)) {
     base = 16;
     i = i + 2;
   }
+  var end: i32 = s.len();
+  if (dot >= 0) {
+    end = dot;
+  }
   var v: u64 = 0 as u64;
   var any: boolean = false;
-  while (i < s.len()) {
+  var over: boolean = false;
+  while (i < end) {
     var d: i32 = hex_value(s[i] as i32);
     if (d < 0 || d >= base) {
       break;
@@ -1650,14 +1706,23 @@ function parse_old_offset(s: string): (u64, boolean) {
         v = m + d as u64;
       },
       None => {
-        return (0 as u64, false);
+        over = true;
       }
+    }
+    if (v > 9223372036854775807 as u64) {
+      over = true;
     }
     any = true;
     i = i + 1;
   }
   if (!any) {
     return (0 as u64, false);
+  }
+  if (dot >= 0) {
+    if (i != end) {
+      return (0 as u64, false);
+    }
+    i = i + 1;
   }
   if (i < s.len()) {
     var mul: u64 = 0 as u64;
@@ -1673,15 +1738,45 @@ function parse_old_offset(s: string): (u64, boolean) {
         v = m;
       },
       None => {
-        return (0 as u64, false);
+        over = true;
       }
+    }
+    if (v > 9223372036854775807 as u64) {
+      over = true;
     }
     i = i + 1;
   }
   if (i != s.len()) {
     return (0 as u64, false);
   }
+  // An offset that parses and does not fit ends the program, rather
+  // than falling back to the operand being a file name.
+  if (over) {
+    gnu.error(gnu.quotef(s) + ": Numerical result out of range");
+    exit(1);
+  }
   return (v, true);
+}
+
+// The point that makes an old-style offset decimal: the last byte of the
+// operand, or the last but one with `b` or `B` after it. -1 when there
+// is none in that position, whether or not the operand holds a point.
+function dot_at(s: string, from: i32): i32 {
+  var i: i32 = from;
+  while (i < s.len()) {
+    if (s[i] as i32 == 46) {
+      var after: i32 = i + 1;
+      if (after < s.len() && (s[after] as i32 == 98 || s[after] as i32 == 66)) {
+        after = after + 1;
+      }
+      if (after == s.len()) {
+        return i;
+      }
+      return 0 - 1;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
 }
 
 // ---- main ------------------------------------------------------------------
@@ -1804,7 +1899,7 @@ pub function main(): i32 {
   var big: boolean = false;
   var strings: boolean = false;
   var min_string: u64 = 3 as u64;
-  var width: i32 = 16;
+  var width: u64 = 16 as u64;
   var width_given: boolean = false;
   var modern: boolean = false;
   var traditional: boolean = false;
@@ -1838,13 +1933,13 @@ pub function main(): i32 {
           strings = true;
           if (m.has_value) {
             var n: u64 = count_arg(m.value, strings_name(argv));
-            // GNU allocates max(100, n) bytes before it scans, so a length
-            // it cannot allocate is `memory exhausted` rather than a run
-            // nothing reaches. At PTRDIFF_MAX and above no host can serve
-            // that; below it the answer is the host's, and od.fern accepts
-            // what GNU would only refuse for want of memory.
+            // The buffer is the run plus its terminator, so a length whose
+            // successor leaves idx_t is the option's own overflow — worded
+            // the way xstrtol_fatal words a value the parse could not hold.
+            // Below that the answer is the host's, and od.fern accepts what
+            // GNU would only refuse for want of memory.
             if (n >= 9223372036854775807 as u64) {
-              gnu.error("memory exhausted");
+              gnu.error(strings_name(argv) + " argument " + gnu.quote(m.value) + " too large");
               exit(1);
             }
             min_string = n;
@@ -1852,14 +1947,14 @@ pub function main(): i32 {
         } else if (m.id == opt_width()) {
           modern = true;
           width_given = true;
-          width = 32;
+          width = 32 as u64;
           if (m.has_value) {
             var w: u64 = count_arg(m.value, width_name(argv));
-            if (w > 2147483647 as u64) {
-              gnu.error("memory exhausted");
+            if (w > 9223372036854775807 as u64) {
+              gnu.error(width_name(argv) + " argument " + gnu.quote(m.value) + " too large");
               exit(1);
             }
-            width = w as i32;
+            width = w;
           }
         } else if (m.id == opt_endian()) {
           big = endian_of(m.value);
@@ -1933,7 +2028,7 @@ pub function main(): i32 {
     src = dd.1;
   }
   gnu.finish(w);
-  if (!src.ok) {
+  if (src.fails > 0) {
     return 1;
   }
   return 0;
@@ -1941,19 +2036,34 @@ pub function main(): i32 {
 
 // `-w`'s block, which is a multiple of every spec's unit: the least
 // common multiple, or the width asked for when that is a multiple of it.
-function block_bytes(specs: Spec[], width: i32, given: boolean): i32 {
+function block_bytes(specs: Spec[], width: u64, given: boolean): i32 {
   var l: i32 = lcm_of(specs);
+  var chosen: u64 = l as u64;
   if (!given) {
     if (l < 16) {
-      return l * (16 / l);
+      chosen = (l * (16 / l)) as u64;
     }
-    return l;
+  } else if (width % (l as u64) == 0 as u64) {
+    chosen = width;
+  } else {
+    gnu.error("warning: invalid width " + width.to_string() + "; using " + l.to_string() + " instead");
   }
-  if (width % l == 0) {
-    return width;
+  // gnulib's pad_at_overflow: spreading a block's padding over its
+  // fields squares their count, so more than 3037000500 of them for any
+  // one spec is refused before a byte is allocated for the block.
+  var i: i32 = 0;
+  while (i < specs.len()) {
+    if (chosen / (specs[i].size as u64) > 3037000500 as u64) {
+      gnu.error(width.to_string() + " is too large");
+      exit(1);
+    }
+    i = i + 1;
   }
-  gnu.error("warning: invalid width " + width.to_string() + "; using " + l.to_string() + " instead");
-  return l;
+  if (chosen > 2147483647 as u64) {
+    gnu.error("memory exhausted");
+    exit(1);
+  }
+  return chosen as i32;
 }
 
 function radix_of(v: string): i32 {

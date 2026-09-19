@@ -253,6 +253,22 @@ func condCases(t *testing.T) []invocation {
 		{name: "string then upper case nt then string", args: []string{"x", "-Nt", "y"}},
 		{name: "string then less than then string", args: []string{"x", "<", "y"}},
 		{name: "string then greater than then string", args: []string{"x", ">", "y"}},
+
+		// < and > compare in collating order (9.6), which in the C
+		// locale is byte order with a shorter prefix first.
+		{name: "less than the other way", args: []string{"y", "<", "x"}},
+		{name: "greater than the other way", args: []string{"y", ">", "x"}},
+		{name: "less than equal strings", args: []string{"x", "<", "x"}},
+		{name: "greater than equal strings", args: []string{"x", ">", "x"}},
+		{name: "less than a prefix", args: []string{"ab", "<", "abc"}},
+		{name: "greater than a prefix", args: []string{"abc", ">", "ab"}},
+		{name: "less than the empty string", args: []string{"", "<", "a"}},
+		{name: "greater than the empty string", args: []string{"a", ">", ""}},
+		{name: "less than by high byte", args: []string{"\x7f", "<", "\x80"}},
+		{name: "less than negated", args: []string{"!", "x", "<", "y"}},
+		{name: "less than in a group", args: []string{"(", "x", "<", "y", ")"}},
+		{name: "less than joined by and", args: []string{"x", "<", "y", "-a", "y", "<", "z"}},
+		{name: "less than with -l on the left", args: []string{"-l", "ab", "<", "b"}},
 		{name: "string then quote then string", args: []string{"x", "it's", "y"}},
 		{name: "string then non UTF-8 then string", args: []string{"x", "\xff", "y"}},
 		{name: "string then control bytes then string", args: []string{"x", "a\tb\n", "y"}},

@@ -93,18 +93,44 @@ if [ -n "$gnu_dirs" ]; then
     if is_gnu "$d"; then gnu="$d"; break; fi
   done
 fi
-if [ -z "$gnu" ]; then
-  if p=$(command -v yes) && is_gnu "$(dirname "$p")"; then
-    gnu=$(dirname "$p")
-  else
-    for d in /nix/store/*-coreutils-*/bin; do
-      if is_gnu "$d"; then gnu="$d"; break; fi
-    done
-  fi
-  gnu_dirs="${gnu_dirs:+$gnu_dirs:}$gnu"
+# The tree on PATH is appended ALWAYS, not only when the list named nothing.
+# Both trees above are built from source `--without-selinux`, so neither has
+# `chcon` or `runcon`, and the distribution's own coreutils is the only place
+# those two rows can be measured at all. gnu_bin still prefers the earlier
+# entries, so this costs nothing for the other 104.
+path_gnu=""
+if p=$(command -v yes) && is_gnu "$(dirname "$p")"; then
+  path_gnu=$(dirname "$p")
+else
+  for d in /nix/store/*-coreutils-*/bin; do
+    if is_gnu "$d"; then path_gnu="$d"; break; fi
+  done
+fi
+if [ -n "$path_gnu" ]; then
+  case ":$gnu_dirs:" in
+    *":$path_gnu:"*) ;;
+    *) gnu_dirs="${gnu_dirs:+$gnu_dirs:}$path_gnu" ;;
+  esac
+  [ -n "$gnu" ] || gnu="$path_gnu"
 fi
 [ -n "$gnu" ] && is_gnu "$gnu" || {
   echo "coreutils-bench: no GNU coreutils; set FERN_GNU_COREUTILS=/path/to/bin (a PATH-style list)" >&2; exit 1; }
+
+# The claim this script exists to support is "faster than GNU", and it is only
+# as current as the tree it found: beating a release nobody runs any more is
+# not the claim. bench_gnu_floor is the newest release at the time of writing,
+# so falling short is SAID rather than assumed away. It warns and does not
+# exit, because the bench is a comparison and not a gate (see WALL TIME above)
+# and a developer without a current tree still wants the other two columns.
+#
+# The same release GNU_COREUTILS_VERSION pins in scripts/devbox.Dockerfile and
+# the CI lanes, which is the tree the corpus is held to: bump them together or
+# this warning stops naming the version the oracle is.
+bench_gnu_floor=9.12
+gnu_ver=$({ "$gnu/yes" --version || true; } | head -1 | awk '{print $NF}')
+if [ "$(printf '%s\n%s\n' "$bench_gnu_floor" "$gnu_ver" | sort -V | head -1)" != "$bench_gnu_floor" ]; then
+  echo "coreutils-bench: comparing against GNU coreutils ${gnu_ver:-?}, older than $bench_gnu_floor — point FERN_GNU_COREUTILS at a newer tree (scripts/devbox.Dockerfile builds one at /opt/gnu-coreutils)" >&2
+fi
 
 # gnu_bin UTIL — the GNU coreutils binary for UTIL. The name is VERIFIED
 # rather than assumed present in $gnu: /usr/bin/uptime is procps on Debian
@@ -120,7 +146,7 @@ gnu_bin() {
     # `false --version` prints its version and exits 1, which under pipefail
     # would fail the whole pipeline; the exit status is not the question.
     # `dd` is the one utility whose version line omits the word GNU — it
-    # says `dd (coreutils) 9.4` where every sibling says `(GNU coreutils)`
+    # says `dd (coreutils) 9.12` where every sibling says `(GNU coreutils)`
     # — so both spellings name the package.
     if [ -x "$d/$u" ] && [ -x "$d/$probe" ] && { "$d/$probe" --version 2>/dev/null || true; } | head -1 | grep -qE '\((GNU )?coreutils\)'; then
       # The header names the version of the directory holding the bulk, so

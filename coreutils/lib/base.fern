@@ -46,7 +46,7 @@ import "std/io_buffered";
 import "./gnu";
 
 // `Codec` — one encoding.
-pub struct Codec { bits: i32, in_block: i32, out_block: i32, pad: boolean, short_tail: boolean, rev: boolean, alpha: usize, dec: usize }
+pub struct Codec { bits: i32, in_block: i32, out_block: i32, pad: boolean, rev: boolean, alpha: usize, dec: usize }
 
 // `Chars` — the characters one input block encodes to, packed one per
 // byte with the first in the low byte. No block is more than eight
@@ -93,33 +93,45 @@ function tables(alphabet: string): (usize, usize) {
   return (a, d);
 }
 
-function bit_codec(alphabet: string, bits: i32, in_block: i32, out_block: i32, pad: boolean, short_tail: boolean, rev: boolean): Codec {
+function bit_codec(alphabet: string, bits: i32, in_block: i32, out_block: i32, pad: boolean, rev: boolean): Codec {
   var t: (usize, usize) = tables(alphabet);
-  return Codec { bits: bits, in_block: in_block, out_block: out_block, pad: pad, short_tail: short_tail, rev: rev, alpha: t.0, dec: t.1 };
+  return Codec { bits: bits, in_block: in_block, out_block: out_block, pad: pad, rev: rev, alpha: t.0, dec: t.1 };
+}
+
+// `also_decodes(c, extra)` — more characters the DECODER accepts,
+// `extra[i]` standing for the alphabet's `i`th entry. base16 writes
+// upper-case hex and, since 9.5, reads either.
+function also_decodes(c: Codec, extra: string): Codec {
+  var i: i32 = 0;
+  while (i < extra.len()) {
+    __store_i32(c.dec + (extra[i] as i32 * 4) as usize, i);
+    i = i + 1;
+  }
+  return c;
 }
 
 pub function base64(): Codec {
-  return bit_codec("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/", 6, 3, 4, true, true, false);
+  return bit_codec("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/", 6, 3, 4, true, false);
 }
 
 pub function base64url(): Codec {
-  return bit_codec("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_", 6, 3, 4, true, true, false);
+  return bit_codec("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_", 6, 3, 4, true, false);
 }
 
 pub function base32(): Codec {
-  return bit_codec("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567", 5, 5, 8, true, false, false);
+  return bit_codec("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567", 5, 5, 8, true, false);
 }
 
 pub function base32hex(): Codec {
-  return bit_codec("0123456789ABCDEFGHIJKLMNOPQRSTUV", 5, 5, 8, true, false, false);
+  return bit_codec("0123456789ABCDEFGHIJKLMNOPQRSTUV", 5, 5, 8, true, false);
 }
 
 pub function base16(): Codec {
-  return bit_codec("0123456789ABCDEF", 4, 1, 2, false, false, false);
+  return also_decodes(bit_codec("0123456789ABCDEF", 4, 1, 2, false, false), "0123456789abcdef");
 }
 
 pub function base2msbf(): Codec {
-  return bit_codec("01", 1, 1, 8, false, false, false);
+  return bit_codec("01", 1, 1, 8, false, false);
 }
 
 // base2lsbf differs from base2msbf only in which end of the byte the
@@ -127,14 +139,24 @@ pub function base2msbf(): Codec {
 // reversed. `rev` is that reversal, applied to the block on the way out
 // and to the byte on the way back in.
 pub function base2lsbf(): Codec {
-  return bit_codec("01", 1, 1, 8, false, false, true);
+  return bit_codec("01", 1, 1, 8, false, true);
+}
+
+// base58, the visually unambiguous alphabet (9.8): 0, O, I and l are
+// absent so no two characters can be confused. The WHOLE input is one
+// number in base 256 rewritten in base 58, so neither direction can be
+// done a block at a time and a leading zero byte, which carries no
+// value, is written as a `1` of its own. `bits` is -1, which marks the
+// codec as neither a bit codec nor z85.
+pub function base58(): Codec {
+  return bit_codec("123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz", 0 - 1, 1, 1, false, false);
 }
 
 // z85 (ZeroMQ RFC 32): four bytes are a big-endian u32 written as five
 // base-85 digits. `bits` is 0, which is what marks the codec as not a
 // bit codec at all.
 pub function z85(): Codec {
-  return bit_codec("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#", 0, 4, 5, false, false, false);
+  return bit_codec("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#", 0, 4, 5, false, false);
 }
 
 // The eight bits of `b`, reversed.
@@ -236,10 +258,6 @@ function dec_group(c: Codec, g: usize, gn: i32): Grp {
   if (c.bits == 0) {
     return z85_group(c, g, gn);
   }
-  var full: boolean = gn == c.out_block;
-  if (!full && !c.short_tail) {
-    return Grp { v: 0, n: 0, ok: false };
-  }
   var acc: i32 = 0;
   var held: i32 = 0;
   var out: i64 = 0;
@@ -273,6 +291,7 @@ function dec_group(c: Codec, g: usize, gn: i32): Grp {
   if (bad) {
     return Grp { v: out, n: w, ok: false };
   }
+  var padded: boolean = d < gn;
   var k: i32 = d;
   while (k < gn) {
     if (__load_i32(g + (k * 4) as usize) != 61) {
@@ -280,13 +299,25 @@ function dec_group(c: Codec, g: usize, gn: i32): Grp {
     }
     k = k + 1;
   }
-  if (!full || d == 0) {
+  // Padding is optional, but a group that HAS it must be a whole one:
+  // `Zg=` is short by a character rather than unpadded.
+  if (padded && gn != c.out_block) {
+    return Grp { v: out, n: w, ok: false };
+  }
+  if (d == 0) {
     return Grp { v: out, n: w, ok: false };
   }
   // The data characters must be exactly as many as some whole number of
   // bytes needs: any leftover worth a character of its own is a count no
-  // encoder produces.
+  // encoder produces. A group that is SHORT rather than padded is fine
+  // by that rule — 9.5 stopped requiring the padding.
   if (d * c.bits - d * c.bits / 8 * 8 >= c.bits) {
+    return Grp { v: out, n: w, ok: false };
+  }
+  // And the bits left over past the last whole byte have to be zero,
+  // which is what an encoder writes there. GNU <= 9.4 ignored them and
+  // decoded `Zh==` as if it were `Zg==`.
+  if (acc != 0) {
     return Grp { v: out, n: w, ok: false };
   }
   return Grp { v: out, n: w, ok: true };
@@ -594,7 +625,9 @@ function decode(r: Reader, c: Codec, ignore: boolean, o: io_buffered.BufWriter):
       var b: i32 = bs[i] as i32;
       i = i + 1;
       if (ignore) {
-        if (b != 61 && __load_i32(c.dec + (b * 4) as usize) < 0) {
+        // `=` survives --ignore-garbage only where it is padding; in
+        // base16 and base2 it is garbage like any other byte.
+        if (!(c.pad && b == 61) && __load_i32(c.dec + (b * 4) as usize) < 0) {
           continue;
         }
       } else if (b == 10) {
@@ -654,9 +687,165 @@ function decode(r: Reader, c: Codec, ignore: boolean, o: io_buffered.BufWriter):
 pub function run(c: Codec, decoding: boolean, ignore: boolean, wrap: i64, has_file: boolean, file: string): void {
   var r: Reader = open_input(has_file, file);
   var o: io_buffered.BufWriter = gnu.out_new();
+  if (c.bits < 0) {
+    if (decoding) {
+      b58_decode(r, c, ignore, o);
+    } else {
+      b58_encode(r, c, wrap, o);
+    }
+    return;
+  }
   if (decoding) {
     decode(r, c, ignore, o);
   } else {
     encode(r, c, wrap, o);
   }
+}
+
+// `read_all(r, o)` — the whole input. base58 has no block: a byte at
+// either end changes every character between.
+function read_all(r: Reader, o: io_buffered.BufWriter): string {
+  var all: string = "";
+  while (true) {
+    var chunk: string = read_block(r, o, block_bytes());
+    if (chunk.len() == 0) {
+      return all;
+    }
+    all = all + chunk;
+  }
+  return all;
+}
+
+// `rebase(digits, from, to)` — `digits`, most significant first and each
+// below `from`, rewritten in base `to`. Schoolbook long division, one
+// pass per output digit: quadratic, which is what base-58 costs without
+// a bignum library.
+function rebase(digits: u8[], from: i32, to: i32): u8[] {
+  var cur: u8[] = digits;
+  var rev: u8[] = [];
+  while (cur.len() > 0) {
+    var next: u8[] = [];
+    var rem: i32 = 0;
+    var i: i32 = 0;
+    while (i < cur.len()) {
+      var acc: i32 = rem * from + cur[i] as i32;
+      var q: i32 = acc / to;
+      rem = acc - q * to;
+      if (next.len() > 0 || q != 0) {
+        next = next.append(q as u8);
+      }
+      i = i + 1;
+    }
+    rev = rev.append(rem as u8);
+    cur = next;
+  }
+  var out: u8[] = [];
+  var k: i32 = rev.len();
+  while (k > 0) {
+    k = k - 1;
+    out = out.append(rev[k]);
+  }
+  return out;
+}
+
+function b58_encode(r: Reader, c: Codec, wrap: i64, o: io_buffered.BufWriter): void {
+  var data: string = read_all(r, o);
+  var zeros: i32 = 0;
+  while (zeros < data.len() && data[zeros] as i32 == 0) {
+    zeros = zeros + 1;
+  }
+  var rest: u8[] = [];
+  var i: i32 = zeros;
+  while (i < data.len()) {
+    rest = rest.append(data[i]);
+    i = i + 1;
+  }
+  var digits: u8[] = rebase(rest, 256, 58);
+  var text: u8[] = [];
+  var z: i32 = 0;
+  while (z < zeros) {
+    text = text.append(49 as u8);
+    z = z + 1;
+  }
+  var d: i32 = 0;
+  while (d < digits.len()) {
+    text = text.append(__load_i32(c.alpha + digits[d] as usize) as u8);
+    d = d + 1;
+  }
+  var out: io_buffered.BufWriter = o;
+  out = gnu.put(out, wrapped(string_from_bytes_unchecked(text), wrap));
+  gnu.finish(out);
+}
+
+// `wrapped(text, wrap)` — a newline every `wrap` characters, and one at
+// the end unless the text is empty. A wrap of zero is one long line
+// with NO newline after it, as it is for every other encoding.
+function wrapped(text: string, wrap: i64): string {
+  if (text.len() == 0) {
+    return "";
+  }
+  if (wrap <= 0 as i64) {
+    return text;
+  }
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < text.len()) {
+    var e: i32 = i + wrap as i32;
+    if (e > text.len()) {
+      e = text.len();
+    }
+    out = out + slice_unchecked(text, i, e) + "\n";
+    i = e;
+  }
+  return out;
+}
+
+function b58_decode(r: Reader, c: Codec, ignore: boolean, o: io_buffered.BufWriter): void {
+  var text: string = read_all(r, o);
+  var vals: u8[] = [];
+  var i: i32 = 0;
+  while (i < text.len()) {
+    var b: i32 = text[i] as i32;
+    i = i + 1;
+    // A newline is always a separator; anything else outside the
+    // alphabet is garbage, which only --ignore-garbage forgives.
+    if (b == 10) {
+      continue;
+    }
+    var v: i32 = __load_i32(c.dec + (b * 4) as usize);
+    if (v < 0) {
+      if (ignore) {
+        continue;
+      }
+      fail(o, "invalid input");
+    }
+    vals = vals.append(v as u8);
+  }
+  var zeros: i32 = 0;
+  while (zeros < vals.len() && vals[zeros] as i32 == 0) {
+    zeros = zeros + 1;
+  }
+  var rest: u8[] = [];
+  var k: i32 = zeros;
+  while (k < vals.len()) {
+    rest = rest.append(vals[k]);
+    k = k + 1;
+  }
+  var bytes: u8[] = rebase(rest, 58, 256);
+  var all: u8[] = [];
+  var z: i32 = 0;
+  while (z < zeros) {
+    all = all.append(0 as u8);
+    z = z + 1;
+  }
+  var d: i32 = 0;
+  while (d < bytes.len()) {
+    all = all.append(bytes[d]);
+    d = d + 1;
+  }
+  var out: io_buffered.BufWriter = o;
+  if (all.len() > 0) {
+    out = gnu.put(out, string_from_bytes_unchecked(all));
+  }
+  gnu.finish(out);
 }
