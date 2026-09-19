@@ -425,15 +425,6 @@ pub function escape_name(name: string): string {
   return string_from_bytes_unchecked(bs);
 }
 
-// `shown_name(name)` — the name as a line carries it: escaped, with the
-// leading `\` that marks the line, or bare when nothing needs escaping.
-pub function shown_name(name: string): string {
-  if (!needs_escape(name)) {
-    return name;
-  }
-  return "\\" + escape_name(name);
-}
-
 // `unescape(name)` — the reverse, for a line that began with `\`. Only
 // `\\`, `\n` and `\r` exist; anything else, a trailing lone backslash
 // included, makes the line improperly formatted.
@@ -910,7 +901,11 @@ function plural(n: i64, one: string, many: string): string {
 function check_one(s: Settings, ln: Line, c: Check): Check {
   var st: Check = c;
   var sum: Sum = digest_path(ln.name, ln.algo.kind, ln.bits);
-  var shown: string = shown_name(ln.name);
+  // The REPORT quotes the name the way every other diagnostic does
+  // (gnulib's quotearg_n_style_colon, which the line's own colon calls
+  // for); the `\`-escaped form is for the checksum FILE, not for this.
+  // GNU <= 9.4 printed the escaped form here instead.
+  var shown: string = gnu.quotef(ln.name);
   if (sum.failed) {
     if (s.ignore_missing && sum_is_missing(sum)) {
       return st;
@@ -1026,7 +1021,22 @@ function report(s: Settings, st: Check, file: string): (boolean, io_buffered.Buf
     w = gnu.error_out(w, gnu.quotef(file) + ": no properly formatted checksum lines found");
     return (false, w);
   }
-  if (!s.status) {
+  // Once stdout has failed there is no summary: the write error is the
+  // whole report. GNU <= 9.4 printed the tallies first and the write
+  // error after them.
+  //
+  // Flushed first, because the verdict lines are still in the buffer at
+  // this point and a closed stdout only fails when one is actually
+  // written — without this the error is not yet on the stream to see.
+  w = w.flush();
+  var wrote_ok: boolean = true;
+  match (w.error()) {
+    Some(_) => {
+      wrote_ok = false;
+    },
+    None => {}
+  }
+  if (!s.status && wrote_ok) {
     if (st.improper > 0 as i64) {
       w = gnu.error_out(w, "WARNING: " + st.improper.to_string() + plural(st.improper, " line is", " lines are") + " improperly formatted");
     }
@@ -1176,7 +1186,11 @@ function apply(a: Algo, s: Settings, m: gnu.OptMatch): Settings {
     return Settings { ...s, binary: 0 };
   }
   if (m.id == opt_tag()) {
-    return Settings { ...s, tag: true, binary: 1 };
+    // `--tag` does NOT select binary mode. GNU <= 9.4 had it do so,
+    // which is what let a later `--tag` overrule an earlier `-t`; from
+    // 9.5 the text flag survives and validate() refuses the pair, so
+    // `-t --tag` and `--tag -t` are both errors rather than one of each.
+    return Settings { ...s, tag: true };
   }
   if (m.id == opt_check()) {
     return Settings { ...s, check: true };
@@ -1202,18 +1216,20 @@ function apply(a: Algo, s: Settings, m: gnu.OptMatch): Settings {
   return Settings { ...s, strict: true };
 }
 
-// The combinations GNU refuses, in the order it tests them: `-z --tag
-// -t -c` reports the text one and `-z -t -c` the zero one, so this
-// sequence is observable rather than a choice.
+// The combinations GNU refuses, in the order it tests them, which is
+// observable rather than a choice: `-z --tag -t -c` reports the zero
+// one, `--tag -t -c` the check one, and `-t -c` the binary/text one.
+// The verifying conflicts all come before `--tag`'s quarrel with
+// --text.
 function validate(s: Settings): void {
-  if (s.tag && s.binary == 0) {
-    gnu.die_usage("--tag does not support --text mode", 1);
-  }
   if (s.zero && s.check) {
     gnu.die_usage("the --zero option is not supported when verifying checksums", 1);
   }
   if (s.tag && s.check) {
     gnu.die_usage("the --tag option is meaningless when verifying checksums", 1);
+  }
+  if (s.tag && s.binary == 0) {
+    gnu.die_usage("--tag does not support --text mode", 1);
   }
   if (s.binary >= 0 && s.check) {
     gnu.die_usage("the --binary and --text options are meaningless when verifying checksums", 1);
