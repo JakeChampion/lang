@@ -14,6 +14,11 @@
 //   with_borrowed  the same loop over a BORROWED parameter, which is what
 //                  `.with` costs when the receiver is not uniquely owned
 //
+// The answer is now yes: #9733 rewrites `map_own` to write through the
+// donor's buffer, and it reaches with_own's zero. `FERN_NO_ARRAY_INPLACE=1`
+// reproduces what this measured before that — which is what the gate uses, so
+// the gap the experiment found stays visible alongside what closed it.
+//
 // with_borrowed is the control. Without it "with_own allocates nothing" is
 // satisfiable by a `.with` that never copies for anyone, and the reuse would
 // not have been demonstrated to depend on ownership at all.
