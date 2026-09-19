@@ -24,12 +24,15 @@ a spread keeps the PRE-rewrite spelling — a type var the clone no longer binds
 or an unmangled name from another module. Stale is worse than empty, because
 `fn_tag_spelling` will happily rebuild a spelling out of it.
 
-Only the desugar path is wired. A lambda the source WRITES with a
-function-returning annotation still loses its parameter list: the lambda parse
-reads `parse_type_name`, which yields `fn_ret` and no `fn_params`, where the
-declaration parse reads `parse_decl_type` and gets both. Half a signature is
-worse than none — `fn_tag_spelling` would rebuild `() => R` for a function that
-takes arguments — so that path is left alone rather than half-filled.
+A lambda the source WRITES with a function-returning annotation is wired too,
+one PR later. The lambda parse reads `parse_type_name`, which yields `fn_ret`
+and no `fn_params`, and half a signature IS worse than none —
+`fn_tag_spelling` would rebuild `() => R` for a function that takes arguments.
+But half is not all that is available: `parse_decl_type` recovers both halves by
+re-reading the annotation VERBATIM with the reader that produced the tag, and
+the lambda parse now does the same through the shared `fn_contract_of`. It buys
+nothing on this census — fernsmith writes no such lambda — and closes the hole
+anyway.
 
 ## What it bought
 
@@ -58,6 +61,11 @@ result spelling, on `__lam_N` (167) and `main$…` (49) owners. Whatever leaves
 those unresolved is not the sidecar. One probe at one refusal identified one
 cause and I generalised it to a bucket that shares a message, which is the same
 shape of error as reading a histogram for a ranking.
+
+The 167 turned out to be one cause after all — `if_expr_rt` tagging a boolean
+branch `"bool"`, a type name the language does not have. That does not rescue
+the generalisation: it was still a guess, and it was wrong about which cause.
+`2026-09-19-the-other-167-were-a-type-name-that-does-not-exist.md`.
 
 **"All five hoists."** There are six — `hl_rewrite`'s self-recursive-local lift
 is a lambda-to-`FuncDecl` hoist too, and it was still writing the empty pair.
