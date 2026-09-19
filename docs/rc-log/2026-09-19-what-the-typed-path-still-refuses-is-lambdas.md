@@ -125,7 +125,7 @@ function main(): i32 {
 ```
 FERN_SEM_IR: main: call target has no semantic contract: __lam_0
 FERN_SEM_IR: __lam_0: unresolved result type:
-FERN_SEM_IR: module: produced 0 of 3 declarations — the AST lowering stands
+FERN_SEM_IR: module: produced 0 of 3 declarations and 0 of 0 instances: 2 refused, the AST lowering stands
 ```
 
 The spelling after the colon is EMPTY: `s.result` is not merely wrong, it is
