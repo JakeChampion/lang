@@ -504,6 +504,17 @@ type artifact struct {
 
 func (inv invocation) prep(t *testing.T) {
 	t.Helper()
+	// The rawByteName guard lives HERE rather than in the parity runner
+	// because prep is the one thing every harness calls before running a
+	// case, and a flag honoured in one runner is a flag the next runner
+	// forgets. internal/coreutils/multicall_test.go is that next runner: it
+	// re-runs the same invocations through the multicall binary and knew
+	// nothing about the flag, so every case needing a name the filesystem
+	// refuses came back as a t.Fatal there after being correctly skipped in
+	// the parity leg.
+	if inv.rawByteName && !rawByteNamesHeld(t) {
+		t.Skipf("the fixture name is not valid UTF-8 and this filesystem refuses one (%s validates it)", runtime.GOOS)
+	}
 	if inv.prepare == nil {
 		return
 	}
@@ -1759,6 +1770,35 @@ func rawByteNamesHeld(t *testing.T) bool {
 	return rawByteNamesOnce.ok
 }
 
+// rawByteCase marks an invocation as needing a filename that is not valid
+// UTF-8. A helper rather than a field write at each site because most cases
+// are built by a per-utility constructor that returns an invocation, and
+// `inv.rawByteName = true` on the next line reads as an afterthought where
+// this reads as part of the case.
+func rawByteCase(inv invocation) invocation {
+	inv.rawByteName = true
+	return inv
+}
+
+// seedRawByteName writes the not-valid-UTF-8 fixture name into a seed tree
+// when the filesystem will hold it, and reports whether it did.
+//
+// Seeds are shared: one tree serves every case of a utility, and only some of
+// them name this file. So the seed cannot t.Fatal on a refusal — that would
+// take down the cases that never asked for it — and it cannot silently
+// succeed either. It writes what it can and the cases that need the name
+// carry `rawByteName: true`, which prep skips.
+func seedRawByteName(t *testing.T, dir, content string) bool {
+	t.Helper()
+	if !rawByteNamesHeld(t) {
+		return false
+	}
+	if err := os.WriteFile(filepath.Join(dir, rawByteNameFixture), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return true
+}
+
 // rawByteFile writes `content` under `dir` as the not-valid-UTF-8 fixture name
 // and returns its path.
 //
@@ -1787,9 +1827,6 @@ func requireParityBinary(t *testing.T, util, ours string, cases []invocation) {
 
 	for _, inv := range cases {
 		t.Run(inv.name, func(t *testing.T) {
-			if inv.rawByteName && !rawByteNamesHeld(t) {
-				t.Skipf("the fixture name is not valid UTF-8 and this filesystem refuses one (%s validates it)", runtime.GOOS)
-			}
 			inv.prep(t)
 			want := inv.run(t, ref, util)
 			wantFiles := inv.readArtifacts(t)

@@ -236,29 +236,99 @@ pub function mod_names(mod: parser.Module): string[] {
     var i: i32 = 0;
     while (i < mod.imports.len()) {
         // The QUALIFIER used in source: the alias when `import "p" as alias`, else
-        // the path basename. mod_prefixes returns the parallel mangle prefixes.
+        // the path basename. import_prefixes returns the parallel mangle prefixes.
         if (mod.imports[i].alias.len() > 0) { out = out.append(mod.imports[i].alias); }
         else { out = out.append(basename(mod.imports[i].path)); }
         i = i + 1;
     }
     return out;
 }
+// module_ident is a module's IDENTITY: the resolved file path with the
+// `.fern` extension removed, so basename() still yields the short name the
+// mangle prefix and PerModule.ns are built from. One string per file, which
+// a basename is not -- `std/sort` and `coreutils/sort` share theirs.
+pub function module_ident(mpath: string): string {
+    if (mpath.len() > 5) {
+        if (slice_unchecked(mpath, mpath.len() - 5, mpath.len()) + "" == ".fern") {
+            return slice_unchecked(mpath, 0, mpath.len() - 5) + "";
+        }
+    }
+    return mpath;
+}
 
-// mod_prefixes returns, parallel to mod_names, the mangle PREFIX each imported
-// module's decls carry — always the path basename (`io_buffered`), regardless of
-// any source alias (`io`). resolve_prefix pairs the two so `io.foo` mangles to
-// `io_buffered__foo`.
+// resolve_imports records on each of `mod`'s imports the identity the driver
+// resolves it to. Only the driver can do this: `./lib/gnu` from the entry and
+// `./gnu` from inside lib/ are one file, and flatten sees neither directory.
+pub function resolve_imports(mod: parser.Module, dir: string, root: string): parser.Module {
+    // Callers pass the directory with a trailing slash; resolve_path wants it
+    // without. Checked rather than assumed: stripping the last byte of a path
+    // that does not end in one would silently name a different directory.
+    var d: string = dir;
+    if (d.len() > 1 && d[d.len() - 1] == b'/') { d = slice_unchecked(d, 0, d.len() - 1) + ""; }
+    var out: parser.Import[] = [];
+    var i: i32 = 0;
+    while (i < mod.imports.len()) {
+        var r: string = module_ident(util.resolve_path(mod.imports[i].path, d, root));
+        out = out.append(parser.Import { ...mod.imports[i], resolved: r });
+        i = i + 1;
+    }
+    return parser.Module { ...mod, imports: out };
+}
+
+// index_of_str returns the position of `want` in `list`, or -1.
+function index_of_str(want: string, list: string[]): i32 {
+    var i: i32 = 0;
+    while (i < list.len()) {
+        if (list[i] == want) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// import_prefixes returns, parallel to mod_names, the prefix each of `mod`'s
+// imports was ASSIGNED by the bundle, looked up by the identity the driver
+// resolved it to. This is the only prefix authority: deriving one from the
+// basename here and another in the bundle is how two files sharing a name
+// (`std/sort` and `coreutils/sort`) ended up with one emitting under the
+// other's prefix and every reference to the loser undefined (#9762).
 //
-// Through util.mangle_prefix, so a basename that is not an identifier becomes
-// one: the driver applies the same function to the module's OWN prefix, and a
-// disagreement between the two is an unresolved symbol (#9684).
-pub function mod_prefixes(mod: parser.Module): string[] {
+// Falls back to the basename when `resolved` is empty, which is every
+// single-file driver -- with one module there is nothing to collide with.
+function import_prefixes(mod: parser.Module, ids: string[], pfxs: string[]): string[] {
     var out: string[] = [];
     var i: i32 = 0;
     while (i < mod.imports.len()) {
-        out = out.append(util.mangle_prefix(basename(mod.imports[i].path)));
+        var k: i32 = 0 - 1;
+        if (mod.imports[i].resolved.len() > 0) { k = index_of_str(mod.imports[i].resolved, ids); }
+        if (k >= 0) { out = out.append(pfxs[k]); }
+        else { out = out.append(util.mangle_prefix(basename(mod.imports[i].path))); }
         i = i + 1;
     }
+    return out;
+}
+
+// assign_prefixes gives every loaded module its one mangle prefix, unique
+// across the bundle, parallel to the identities it returns them against.
+function assign_prefixes(imports: LoadedModule[]): string[] {
+    var pfxs: string[] = [];
+    var used: string[] = [];
+    var i: i32 = 0;
+    while (i < imports.len()) {
+        var base: string = imports[i].name;
+        if (imports[i].ident.len() > 0) { base = basename(imports[i].ident); }
+        var pf: string = unique_prefix(util.mangle_prefix(base), used);
+        used = used.append(pf);
+        pfxs = pfxs.append(pf);
+        i = i + 1;
+    }
+    return pfxs;
+}
+
+// module_ids returns each loaded module's identity, for import_prefixes.
+function module_ids(imports: LoadedModule[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < imports.len()) { out = out.append(imports[i].ident); i = i + 1; }
     return out;
 }
 
@@ -863,9 +933,9 @@ function mangle_enum_decls(enums: parser.EnumDecl[], ctx: RewriteCtx): parser.En
 // flatten_qualified rewrites only QUALIFIED cross-module references
 // (`mod.X` → `mod__X`) in a module — no own-decl mangling. Used on
 // the entry module (whose own decls keep their bare names).
-pub function flatten_qualified(mod: parser.Module, ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[]): parser.Module {
+pub function flatten_qualified(mod: parser.Module, ids: string[], pfxs: string[], ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[]): parser.Module {
     var empty: string[] = [];
-    var ctx: RewriteCtx = RewriteCtx { modnames: mod_names(mod), modprefixes: mod_prefixes(mod), prefix: "", declnames: empty, declnames_mangled: empty, dn_head: [], dn_next: [], locals: empty, enumnames: empty, ivar_names: ivar_names, ivar_mangled: ivar_mangled, reexport_keys: reexport_keys, reexport_targets: reexport_targets };
+    var ctx: RewriteCtx = RewriteCtx { modnames: mod_names(mod), modprefixes: import_prefixes(mod, ids, pfxs), prefix: "", declnames: empty, declnames_mangled: empty, dn_head: [], dn_next: [], locals: empty, enumnames: empty, ivar_names: ivar_names, ivar_mangled: ivar_mangled, reexport_keys: reexport_keys, reexport_targets: reexport_targets };
     return rewrite_module_bodies(mod, ctx);
 }
 
@@ -945,11 +1015,11 @@ function unique_prefix(base: string, used: string[]): string {
 // mangle_module renames a non-entry module's own decls to
 // `prefix__name` and rewrites every internal reference to match, plus
 // flattens any qualified refs it makes to other modules.
-pub function mangle_module(mod: parser.Module, prefix: string, ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[]): parser.Module {
+pub function mangle_module(mod: parser.Module, prefix: string, ids: string[], pfxs: string[], ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[]): parser.Module {
     var decls: string[] = collect_decl_names(mod);
     var ctx: RewriteCtx = RewriteCtx {
         modnames: mod_names(mod),
-        modprefixes: mod_prefixes(mod),
+        modprefixes: import_prefixes(mod, ids, pfxs),
         prefix: prefix,
         declnames: decls,
         declnames_mangled: build_mangled_names(prefix, decls),
@@ -967,9 +1037,17 @@ pub function mangle_module(mod: parser.Module, prefix: string, ivar_names: strin
 
 // =================== VALIDATION ====================
 
-// LoadedModule pairs an imported module's local name with its parsed
-// AST. The bundler mangles each one to `name__*` before merging.
-pub struct LoadedModule { name: string, mod: parser.Module }
+// LoadedModule pairs an imported module with its two names, which are NOT
+// the same string and must not be conflated:
+//
+//   name  — the QUALIFIER, the basename or alias source writes to reach it.
+//           visibility.fern keys on this, so it stays what a `lib.hidden`
+//           reference spells.
+//   ident — the IDENTITY, one string per FILE, which the bundler needs to
+//           give two same-basename modules their own prefixes (#9762).
+//           Empty from a loader that does not resolve paths; then the
+//           qualifier is the best available answer and behaviour is as before.
+pub struct LoadedModule { name: string, ident: string, mod: parser.Module }
 
 
 // MethodDedup is disambiguate_methods' answer: the rewritten module, and the
@@ -1054,6 +1132,12 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
     // the owning module's decl to. Threaded into every module's rewrite
     // so a bare variant reference (`Fail`) from any module resolves the
     // same way the reference front-end resolves it (issue #2666).
+    // One prefix authority for the whole bundle. Everything below -- the
+    // enum-variant map, the re-export table, each module's own decls, and
+    // every importer's references -- reads these rather than deriving a
+    // prefix of its own (#9762).
+    var ids: string[] = module_ids(imports);
+    var pfxs: string[] = assign_prefixes(imports);
     var ivar_names: string[] = [];
     var ivar_mangled: string[] = [];
     var iv: i32 = 0;
@@ -1063,7 +1147,7 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
             var sd: parser.StructDecl = imports[iv].mod.structs[isd];
             if (sd.enum_owner.len() > 0) {
                 ivar_names = ivar_names.append(sd.name);
-                ivar_mangled = ivar_mangled.append(imports[iv].name + "__" + sd.name);
+                ivar_mangled = ivar_mangled.append(pfxs[iv] + "__" + sd.name);
             }
             isd = isd + 1;
         }
@@ -1071,14 +1155,12 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
     }
     // `pub use` re-export table: redirects a consumer's `facade.name`
     // (which mangles to `facade__name`) to the original `origin__name`.
-    var rx: ReexportTable = build_reexports(imports);
+    var rx: ReexportTable = build_reexports(imports, ids, pfxs);
     var mclaims: string[] = [];
-    var used_pfx: string[] = [];
     var i: i32 = 0;
     while (i < imports.len()) {
-        var pfx: string = unique_prefix(util.mangle_prefix(imports[i].name), used_pfx);
-        used_pfx = used_pfx.append(pfx);
-        var md: MethodDedup = disambiguate_methods(mangle_module(imports[i].mod, pfx, ivar_names, ivar_mangled, rx.keys, rx.targets), pfx, mclaims);
+        var pfx: string = pfxs[i];
+        var md: MethodDedup = disambiguate_methods(mangle_module(imports[i].mod, pfx, ids, pfxs, ivar_names, ivar_mangled, rx.keys, rx.targets), pfx, mclaims);
         mclaims = md.keys;
         var m: parser.Module = md.mod;
         funcs = util.append_all(funcs, m.funcs);
@@ -1097,7 +1179,7 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
         while (mdi < m.trait_decls.len()) { trait_decls = trait_decls.append(m.trait_decls[mdi]); mdi = mdi + 1; }
         i = i + 1;
     }
-    var e: parser.Module = disambiguate_methods(flatten_qualified(entry, ivar_names, ivar_mangled, rx.keys, rx.targets), "__entry", mclaims).mod;
+    var e: parser.Module = disambiguate_methods(flatten_qualified(entry, ids, pfxs, ivar_names, ivar_mangled, rx.keys, rx.targets), "__entry", mclaims).mod;
     funcs = util.append_all(funcs, e.funcs);
     structs = util.append_all(structs, e.structs);
     aliases = util.append_all(aliases, e.aliases);
@@ -1147,17 +1229,22 @@ pub struct ReexportTable { keys: string[], targets: string[] }
 // then redirects it to the original `helpers__name`, which is the symbol
 // the bundled program actually defines. Mirrors the native compiler's
 // modload.resolveReexports (see internal/modload/modload.go).
-pub function build_reexports(imports: LoadedModule[]): ReexportTable {
+pub function build_reexports(imports: LoadedModule[], ids: string[], pfxs: string[]): ReexportTable {
     var keys: string[] = [];
     var targets: string[] = [];
     var i: i32 = 0;
     while (i < imports.len()) {
-        var ns: string = imports[i].name;
+        var ns: string = pfxs[i];
         var imps: parser.Import[] = imports[i].mod.imports;
         var j: i32 = 0;
         while (j < imps.len()) {
             if (imps[j].is_reexport) {
+                // The re-export's ORIGIN is a module too, so it takes its
+                // assigned prefix by identity like any other reference.
+                var ok: i32 = 0 - 1;
+                if (imps[j].resolved.len() > 0) { ok = index_of_str(imps[j].resolved, ids); }
                 var origin: string = util.mangle_prefix(basename(imps[j].path));
+                if (ok >= 0) { origin = pfxs[ok]; }
                 var names: string[] = imps[j].reexport_names;
                 var n: i32 = 0;
                 while (n < names.len()) {
@@ -1192,6 +1279,12 @@ pub struct PerModule { ns: string, mod: parser.Module, is_entry: boolean }
 // imports → library units exposing their `.globl __fn_*`), and the units link
 // into one binary. The entry is the LAST element.
 pub function bundle_per_module(entry: parser.Module, imports: LoadedModule[]): PerModule[] {
+    // One prefix authority for the whole bundle. Everything below -- the
+    // enum-variant map, the re-export table, each module's own decls, and
+    // every importer's references -- reads these rather than deriving a
+    // prefix of its own (#9762).
+    var ids: string[] = module_ids(imports);
+    var pfxs: string[] = assign_prefixes(imports);
     var ivar_names: string[] = [];
     var ivar_mangled: string[] = [];
     var iv: i32 = 0;
@@ -1201,30 +1294,28 @@ pub function bundle_per_module(entry: parser.Module, imports: LoadedModule[]): P
             var sd: parser.StructDecl = imports[iv].mod.structs[isd];
             if (sd.enum_owner.len() > 0) {
                 ivar_names = ivar_names.append(sd.name);
-                ivar_mangled = ivar_mangled.append(imports[iv].name + "__" + sd.name);
+                ivar_mangled = ivar_mangled.append(pfxs[iv] + "__" + sd.name);
             }
             isd = isd + 1;
         }
         iv = iv + 1;
     }
-    var rx: ReexportTable = build_reexports(imports);
+    var rx: ReexportTable = build_reexports(imports, ids, pfxs);
     var out: PerModule[] = [];
     // Same claim threading `bundle` does, in the same module order, so the
     // per-module units and the merged bundle agree on which definition owns a
     // `<Type>.<name>` symbol.
     var mclaims: string[] = [];
-    var used_pfx: string[] = [];
     var i: i32 = 0;
     while (i < imports.len()) {
-        var pfx: string = unique_prefix(util.mangle_prefix(imports[i].name), used_pfx);
-        used_pfx = used_pfx.append(pfx);
-        var md: MethodDedup = disambiguate_methods(mangle_module(imports[i].mod, pfx, ivar_names, ivar_mangled, rx.keys, rx.targets), pfx, mclaims);
+        var pfx: string = pfxs[i];
+        var md: MethodDedup = disambiguate_methods(mangle_module(imports[i].mod, pfx, ids, pfxs, ivar_names, ivar_mangled, rx.keys, rx.targets), pfx, mclaims);
         mclaims = md.keys;
         var m: parser.Module = md.mod;
         out = out.append(PerModule { ns: imports[i].name, mod: m, is_entry: false });
         i = i + 1;
     }
-    var e: parser.Module = disambiguate_methods(flatten_qualified(entry, ivar_names, ivar_mangled, rx.keys, rx.targets), "__entry", mclaims).mod;
+    var e: parser.Module = disambiguate_methods(flatten_qualified(entry, ids, pfxs, ivar_names, ivar_mangled, rx.keys, rx.targets), "__entry", mclaims).mod;
     out = out.append(PerModule { ns: "__entry", mod: e, is_entry: true });
     return out;
 }
@@ -1232,12 +1323,12 @@ pub function bundle_per_module(entry: parser.Module, imports: LoadedModule[]): P
 
 function flatten_source(src: string): parser.Module {
     var none: string[] = [];
-    return flatten_qualified(parser.parse_module(lexer.tokenize(src)), none, none, none, none);
+    return flatten_qualified(parser.parse_module(lexer.tokenize(src)), none, none, none, none, none, none);
 }
 
 function mangle_source(src: string, prefix: string): parser.Module {
     var none: string[] = [];
-    return mangle_module(parser.parse_module(lexer.tokenize(src)), prefix, none, none, none, none);
+    return mangle_module(parser.parse_module(lexer.tokenize(src)), prefix, none, none, none, none, none, none);
 }
 
 function main(): i32 {
@@ -1460,7 +1551,7 @@ function main(): i32 {
     var emod: parser.Module = parser.parse_module(lexer.tokenize(
         "import \"./a\"; function main(): i32 { return a.add(2, 3); }"));
     var loaded: LoadedModule[] = [];
-    loaded = loaded.append(LoadedModule { name: "a", mod: amod });
+    loaded = loaded.append(LoadedModule { name: "a", ident: "", mod: amod });
     var merged: parser.Module = bundle(emod, loaded);
 
     // a.add → a__add; a's own main → a__main (mangled, no collision);
@@ -1498,8 +1589,8 @@ function main(): i32 {
     var rxmod: parser.Module = parser.parse_module(lexer.tokenize(
         "import \"./facade\"; function main(): i32 { return facade.add5(10); }"));
     var rxloaded: LoadedModule[] = [];
-    rxloaded = rxloaded.append(LoadedModule { name: "facade", mod: fmod });
-    rxloaded = rxloaded.append(LoadedModule { name: "helpers", mod: hmod });
+    rxloaded = rxloaded.append(LoadedModule { name: "facade", ident: "", mod: fmod });
+    rxloaded = rxloaded.append(LoadedModule { name: "helpers", ident: "", mod: hmod });
     var rxmerged: parser.Module = bundle(rxmod, rxloaded);
     // Find entry main and confirm its call resolved to helpers__add5.
     var fi: i32 = 0;

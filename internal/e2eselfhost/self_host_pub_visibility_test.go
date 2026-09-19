@@ -172,6 +172,35 @@ pub const SHOWN_N: i32 = 9;
 		"import \"./lib\";\nfunction main(): i32 { return lib.own_secret() - 5; }\n",
 		0, "")
 
+	// --- #9762: the rule still fires for a module in a SUBDIRECTORY --------
+	//
+	// A module's QUALIFIER (`lib`) and its IDENTITY (the file it resolves to)
+	// are the same string only for a sibling import. Give the bundler a second
+	// `lib.fern` one directory down and they diverge, which is where the two
+	// were conflated: keying visibility on the identity made `lib.hidden`
+	// match nothing, and every cross-module private reference compiled clean.
+	// A silent loss of enforcement, so it is pinned on both sides.
+	if err := os.MkdirAll(filepath.Join(dir, "sub"), 0o755); err != nil {
+		t.Fatalf("mkdir sub: %v", err)
+	}
+	subLib := `pub function visible(): i32 { return 2; }
+function hidden(): i32 { return 42; }
+`
+	if err := os.WriteFile(filepath.Join(dir, "sub", "lib.fern"), []byte(subLib), 0o644); err != nil {
+		t.Fatalf("write sub/lib.fern: %v", err)
+	}
+
+	// REJECT: the subdirectory module's private member.
+	check(t, "subdir_private_ref",
+		"import \"./sub/lib\";\nfunction main(): i32 { return lib.hidden(); }\n",
+		1, "lib.hidden is not exported")
+
+	// ACCEPT: its exported one, so the rule is not simply refusing everything
+	// it cannot key.
+	check(t, "subdir_public_ref",
+		"import \"./sub/lib\";\nfunction main(): i32 { return lib.visible() - 2; }\n",
+		0, "")
+
 	// An ATTRIBUTE in front of the declaration used to disable this rule
 	// outright. `@derive` and `@must_consume` each parse their own `pub` — the
 	// keyword may be written on either side of the attribute — and then built

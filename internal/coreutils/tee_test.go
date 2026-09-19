@@ -13,15 +13,18 @@ import (
 func teeSeed(t *testing.T, dir string) {
 	t.Helper()
 	for name, content := range map[string]string{
-		"exists":   "PREEXISTING\n",
-		"f name":   "",
-		"f'n":      "",
-		"na\xffme": "",
+		"exists": "PREEXISTING\n",
+		"f name": "",
+		"f'n":    "",
 	} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
+	// Written only where the filesystem holds it. This seed serves every tee
+	// case and only one names this file, so a t.Fatal here takes down the
+	// other thirty for a name they never asked for.
+	seedRawByteName(t, dir, "")
 	if err := os.Mkdir(filepath.Join(dir, "d"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +105,7 @@ func teeCases(t *testing.T) []invocation {
 		{name: "empty operand then a file", args: []string{"", "a"}, stdin: "x\n", seedTree: teeSeed},
 		{name: "name with a space", args: []string{"f name"}, stdin: "x\n", seedTree: teeSeed},
 		{name: "name with a quote", args: []string{"f'n"}, stdin: "x\n", seedTree: teeSeed},
-		{name: "name that is not valid UTF-8", args: []string{"na\xffme"}, stdin: "x\n", seedTree: teeSeed},
+		{name: "name that is not valid UTF-8", args: []string{rawByteNameFixture}, stdin: "x\n", seedTree: teeSeed, rawByteName: true},
 		{name: "missing name with a space", args: []string{"no dir/f"}, stdin: "x\n", seedTree: teeSeed},
 		{name: "missing name that is not valid UTF-8", args: []string{"no\xffdir/f"}, stdin: "x\n", seedTree: teeSeed},
 		{name: "dashdash then an option-looking name", args: []string{"--", "-a"}, stdin: "x\n", seedTree: teeSeed},

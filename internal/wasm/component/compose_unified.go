@@ -176,6 +176,7 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 			gImport{iface: tcp, name: "[method]tcp-socket.start-listen", kind: gMem, params: composeTcpSelfRetParams},
 			gImport{iface: tcp, name: "[method]tcp-socket.finish-listen", kind: gMem, params: composeTcpSelfRetParams},
 			gImport{iface: tcp, name: "[method]tcp-socket.accept", kind: gMem, params: composeTcpSelfRetParams},
+			gImport{iface: tcp, name: "[method]tcp-socket.local-address", kind: gMem, params: composeTcpSelfRetParams},
 			gImport{iface: tcp, name: "[method]tcp-socket.subscribe", kind: gNoOpt},
 			gImport{iface: tcp, name: "[resource-drop]tcp-socket", kind: gDrop, resourceT: g.surfaced["tcp-socket"]},
 			gImport{iface: "wasi:io/poll@0.2.0", name: "[method]pollable.block", kind: gNoOpt},

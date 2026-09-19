@@ -5623,6 +5623,7 @@ function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, o: ir.Op, s: asm
     }
     if (o.kind_tag == 74) { s = s.write(ir_memcpy_asm()); }
     else if (o.kind_tag == 75) { s = s.write(ir_memset_asm()); }
+    else if (o.kind_tag == 80) { s = emit_ir_op_heap_bump_bytes(o, s); }
     else if (ir.is_str_op_kind(o.kind_tag)) { s = emit_str_op(o, s); }
     else if (o.kind_tag >= 125 && o.kind_tag <= 137) { s = emit_ir_op_map(o, ins.imm, lp, s); }
     else { s = emit_ir_op_buf(o, s); }
@@ -6138,7 +6139,7 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
         // __fern_map_snapshot_col, which lives in the maps runtime block; a
         // pointer-column read (i32_imm 1) is a raw load and needs nothing.
         if ((dopop.kind_tag == 131 || dopop.kind_tag == 132) && dopop.i32_imm != 1) { s = s.need("maps"); }
-        if (ir.op_allocates(dopop.kind_tag)) { s = s.need("heap"); }
+        if (ir.op_needs_heap(dopop)) { s = s.need("heap"); }
         dop = dop + 1;
     }
 
@@ -6686,6 +6687,10 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
             // [listener fd] IS param[0] already. -> connection fd / -errno.
             s = s.write("    call __fn___fern_tcp_accept\n    addq $8, %rsp\n    pushq %rax\n");
             s = s.need("tcp_accept");
+        } else if (o.kind_tag == 320) {  // tcp_local_port
+            // [fd] IS param[0] already. -> the bound port / -errno.
+            s = s.write("    call __fn___fern_tcp_local_port\n    addq $8, %rsp\n    pushq %rax\n");
+            s = s.need("tcp_local_port");
         } else if (o.kind_tag == 202) {  // writer_write (#4372)
             // [fd, str box]; the Fern __fn___fern_writer_write(fd, s) -> a fresh
             // Option[IoError] box via the stack ABI (#7926). The box is on top but
@@ -10298,7 +10303,7 @@ function emit_module_ir_unit_backend(mod: parser.Module, is_entry: boolean, glob
         "read_file", "read_file_bytes", "random_i32", "sleep_ms",
         "sleep_ns", "set_file_times", "statfs", "poll", "proc_waitpid",
         "proc_waitpid_nohang",
-        "timer_fd", "tcp_listen", "tcp_connect", "print_int", "putchar",
+        "timer_fd", "tcp_listen", "tcp_local_port", "tcp_connect", "print_int", "putchar",
         "eprint", "read_int", "udp_send", "isatty", "window_size", "set_window_size", "termios_get", "termios_set",
         "rlimit_nofile", "signal_ignore", "signal_default", "signal_mask",
         "signal_disposition", "access",
@@ -10545,6 +10550,10 @@ function emit_module_ir_unit_backend(mod: parser.Module, is_entry: boolean, glob
     if (s.has_need("tcp_accept")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_accept("x86_64"), all_structs, s);
+    }
+    if (s.has_need("tcp_local_port")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_local_port("x86_64"), all_structs, s);
     }
     if (s.has_need("sleep_ms")) {
         s = s.write("    .text\n");

@@ -118,7 +118,13 @@ pub struct TypeAlias { name: string, variants: string[], line: i32, col: i32, is
 // bundled), and the bundler reads the names to build the re-export table
 // that redirects a consumer's `facade.name` to the original module's
 // mangled symbol. See flatten.bundle / docs/PRELUDE-TO-MODULES.md.
-pub struct Import { path: string, is_reexport: boolean, reexport_names: string[], alias: string, line: i32 }
+// `resolved` is the module IDENTITY the driver resolved `path` to — one
+// string per distinct FILE, where `path` is only what this module wrote.
+// Two modules can spell the same file differently (`./lib/gnu` and `./gnu`)
+// and two files can share a basename (`std/sort` and `coreutils/sort`), so
+// the basename is not an identity and flatten cannot recover one. Empty when
+// no loader filled it, which is every single-file driver.
+pub struct Import { path: string, is_reexport: boolean, reexport_names: string[], alias: string, line: i32, resolved: string }
 
 // warn_unresolved_imports prints a stderr diagnostic when `mod` declares imports
 // that the CALLER has no module loader to resolve, and reports whether it did.
@@ -8014,7 +8020,7 @@ function parse_import(p: Par): (Import, Par) {
         if (alias.len() > 0) { p = p.advance(); }
     }
     if (p.peek_punct() == ";") { p = p.advance(); }
-    return (Import { path: path, is_reexport: false, reexport_names: [], alias: alias, line: imp_line }, p);
+    return (Import { path: path, is_reexport: false, reexport_names: [], alias: alias, line: imp_line, resolved: "" }, p);
 }
 
 // parse_pubuse consumes `use "path".{name1, name2, …};` (cursor on the
@@ -8047,7 +8053,7 @@ function parse_pubuse(p: Par): (Import, Par) {
         if (p.peek_punct() == "}") { p = p.advance(); }
     }
     if (p.peek_punct() == ";") { p = p.advance(); }
-    return (Import { path: path, is_reexport: true, reexport_names: names, alias: "", line: pu_line }, p);
+    return (Import { path: path, is_reexport: true, reexport_names: names, alias: "", line: pu_line, resolved: "" }, p);
 }
 
 // parse_const_decl consumes `const NAME[: T] = EXPR;` (cursor on the
@@ -8235,7 +8241,7 @@ pub function builtin_function_names(): string[] {
         // float / int bit reinterprets
         "f64_bits", "f64_from_bits", "f32_bits", "f32_from_bits",
         // networking
-        "tcp_listen", "tcp_accept", "tcp_recv", "tcp_send", "tcp_close",
+        "tcp_listen", "tcp_accept", "tcp_local_port", "tcp_recv", "tcp_send", "tcp_close",
         "udp_send", "tcp_connect", "tcp_pollable"
     ];
 }

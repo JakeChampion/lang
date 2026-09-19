@@ -2394,6 +2394,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"tcp_listen":                      emitTcpListenHelper,
 	"tcp_connect":                     emitTcpConnectHelper,
 	"tcp_accept":                      emitTcpAcceptHelper,
+	"tcp_local_port":                  emitTcpLocalPortHelper,
 	"tcp_recv":                        emitTcpRecvHelper,
 	"tcp_send":                        emitTcpSendHelper,
 	"tcp_close":                       emitTcpCloseHelper,

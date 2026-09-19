@@ -1,0 +1,216 @@
+# 2026-09-19 — what the typed path still refuses is lambdas
+
+No code change. A census, taken because "fully onto typed IR" had a number for
+the compiler's own sources (8555 of 8555 declarations) and none for anything
+else. The differential's own log has been saying so for a while:
+
+> semantic lowering produced every declaration for 284 of 512 sampled seeds (0.55)
+
+The other 45% do not run as a mix of the two. **Production is all-or-nothing
+per module**: of 508 programs, 284 produce every declaration and 224 produce
+`0 of N`, with not one partial module between them. One refusal anywhere sends
+the ENTIRE module to the AST lowering — the lowering whose own output
+out-of-bounds aborts on half the compiler's modules (#9763).
+
+That ratio is the real distance left, and nothing said what was in it.
+
+## The census
+
+512 fernsmith programs (`fernsmith.GenMain(0..511)`), each compiled with
+`FERN_SEM_IR=1 FERN_SEM_IR_REPORT=1`, every refusal line kept. Four programs
+the checker rejects outright (E042, `?` on Option in a function returning i32 —
+a generator bug, not a gap) leave **508 compilable**: 284 produced whole, 224
+produced not at all, **1,054 refusals**.
+
+| refusal | count | share |
+|---|---|---|
+| a function value the AST lowering defines | 387 | 36.7% |
+| unresolved result type, in a lifted body | 238 | 22.6% |
+| call target has no semantic contract (a lambda) | 207 | 19.6% |
+| return type mismatch | 48 | 4.6% |
+| verifier: function value is not an element | 40 | 3.8% |
+| function address is not a closure value | 27 | 2.6% |
+| unsupported record literal | 10 | 0.9% |
+| everything else, 12 distinct kinds | ~97 | 9.2% |
+
+**85% of all refusals are lambdas and function values**, and the tail after
+them is not one more big thing — it is a dozen small ones: `Map` iteration (10),
+condition type (7), array element type (8), unresolved array literal (3),
+binding type disagreements (5).
+
+## What it would buy
+
+Per program rather than per refusal, which is what decides whether a module
+reaches the typed path at all:
+
+| | programs |
+|---|---|
+| produced whole today | 284 of 508 |
+| refused, whose refusals are ALL lambda / function-value | **157** of 224 (70%) |
+| produced whole if only that gap closed | **441 of 508 (86%)** |
+
+So one gap is worth +157 whole modules and the remaining dozen are worth +67
+between them. And because production is all-or-nothing, each of those 157 is a
+module compiled *entirely* by the AST lowering today — a single lambda in a
+56-declaration program takes the other 55 with it.
+
+## Why it is a coupling, not a missing feature
+
+The refusal that dominates is not "the typed path cannot lower a lambda". It is
+`semlower.ast_built_value`:
+
+> is a function value `<creator>` builds, which the AST lowering defines
+
+A lambda is lifted to a hoisted body named `<creator>$wrapN`, and the lift
+names the env box it is called through `__mkclo$<creator>$wrapN` — the two are
+not the same symbol, and `parser.mkclo_body` is what strips one to the other.
+The CREATOR — the function whose body builds that box — hands the value out.
+If the creator is AST-lowered, the hoisted body must be too, because the AST
+lowering calls it through that box under the AST convention. The 207
+`call target has no semantic contract: __lam_N` are the same edge from the
+other side: a produced body calling a lambda the typed path did not produce.
+
+**The two paths' closure-call conventions do not interoperate, so a refusal
+anywhere in a closure's creator chain drags the whole chain to the AST path.**
+That is why one gap accounts for 70% of the refused modules: it propagates,
+and the all-or-nothing rule then multiplies it by the module. It also
+means the fix is not "add lambdas to `semsource`" but making the closure
+boundary a contract both paths can meet, which is the same shape as the
+direct-call contracts (`ssarc.caller_sigs`, `irlower.consume_sigs`) that
+already exist for ordinary calls.
+
+## Trap
+
+The compiler's own sources are 8555 of 8555, and that number is worth nothing
+as a coverage claim. It says the typed path handles the code this project
+happens to write, in a tree with a house style — and the house style barely
+uses lambdas where a random program uses them constantly. **A self-hosting
+compiler measuring itself measures its own idiom.** The fuzzer's 55% is the
+honest figure, and it was in the differential's log the whole time, logged and
+unread.
+
+## What is NOT the gap
+
+Worth recording, because it was the obvious first guess and it is wrong: a
+nested function is not the problem. Each of these produces whole —
+
+```fern
+function main(): i32 {
+    var base: i32 = 41;
+    function inner(x: i32): i32 { return x + base; }   // captures, produced
+    return inner(1);
+}
+```
+
+— and so do passing one as a `(i32) => i32` argument, binding one to a local,
+and handing one to `array.map`. What refuses is the LIFTED shapes the parser
+synthesises: the `$wrap`, `$clo` and `$iife` bodies behind an
+immediately-invoked expression or a closure built inside another expression.
+`creator_of` names exactly those three markers, and they are the ones with no
+contract on the typed side.
+
+## The reproducer for the largest bucket
+
+`unresolved result type` in a lifted body is 238 of the 1,054, and it reduces
+to four lines. A lambda RETURNED FROM A NESTED function declaration:
+
+```fern
+function main(): i32 {
+    function mk(): (i32) => i32 { return ((x: i32) => x); }
+    var f: (i32) => i32 = mk();
+    return f(42);
+}
+```
+
+```
+FERN_SEM_IR: main: call target has no semantic contract: __lam_0
+FERN_SEM_IR: __lam_0: unresolved result type:
+FERN_SEM_IR: module: produced 0 of 3 declarations and 0 of 0 instances: 2 refused, the AST lowering stands
+```
+
+The spelling after the colon is EMPTY: `s.result` is not merely wrong, it is
+absent. What varies and what does not:
+
+| lambda | nested creator | result |
+|---|---|---|
+| returned | no (top level) | **produced whole** |
+| returned | **yes** | refused |
+| returned with a block body | yes | refused |
+| returned with an EXPLICIT `: i32` | **yes** | **still refused** |
+| bound to a local, not returned | yes | produced whole |
+| passed as a `(i32) => i32` argument | — | produced whole |
+
+### The root cause, from a probe rather than a reading
+
+A scratch probe at the refusal, printing the declaration it is refusing:
+
+```
+PROBE name=__lam_0 nparams=0 ret_type=[fn] scope_ret=[]
+      ret_fn_ret=[] ret_fn_params=[] tag_spelling=[fn]
+```
+
+Three facts, none of which a reading of the code would have given:
+
+1. **The refused declaration is not the inner lambda.** It has ZERO parameters,
+   so it is the hoist of `mk` — the nested function that RETURNS the lambda.
+   The inner `(x: i32) => x` produces fine.
+2. **Its `ret_type` is the bare string `"fn"`.** `parse_type_name` coarsens
+   `(i32) => i32` to that flat tag, which is by design.
+3. **Its `ret_fn_ret` and `ret_fn_param_types` sidecars are EMPTY**, so
+   `fn_tag_spelling` can only answer `"fn"` back, `func_ret_type` resolves
+   nothing, and `build_func_scope` leaves `scope.ret_type` unset — the branch
+   at `checker.fern:5104` runs only `if (fd.ret_type.len() > 0)` and the
+   resolution inside it is what fails.
+
+The sidecars are the #5986 mechanism: `parse_type_name` throws the signature
+away and `ret_fn_ret` / `ret_fn_param_types` carry it alongside, on `FuncDecl`,
+`ParamDecl`, `StructFieldDecl` and `StmtVar`. **`ast.ExprLambda` is the one
+member of that family that never got them**, and the loss happens in two steps:
+
+1. **`parser.fern:5588` drops them.** A nested `function mk(): (i32) => i32`
+   is desugared to a lambda-valued local by
+   `e_lambda(fr_func.params, fr_func.ret_type, fr_func.body)` — the parsed
+   `FuncDecl` HAS `ret_fn_ret` filled in, and `e_lambda` takes no parameter to
+   put it in, because `ExprLambda` has no field for it.
+2. **`irlower.try_lift_binding` (`irlower.fern:73715`) hoists that binding to
+   `__lam_0`** and writes `ret_fn_ret: ""`, because by then there is nothing
+   left to copy. It is one of only two places in the tree that mint a `__lam_N`
+   name — the other is `lift_call_arg` (`irlower.fern:73141`).
+
+That is the whole of the 238: a missing field with four precedents for how to
+add it, not an unsupported construct. Two fields on `ExprLambda`, populated at
+the parse sites that build one from a declaration, and copied by every hoist
+that builds a `FuncDecl` from one — of which I have verified five, all writing
+the empty pair today:
+
+| site | builds |
+|---|---|
+| `irlower.fern:73143` | `lift_call_arg` → `__lam_N` |
+| `irlower.fern:73717` | `try_lift_binding` → `__lam_N` (the reproducer's) |
+| `irlower.fern:73905` | `make_clo_func` → `$clo` |
+| `irlower.fern:74012` | `make_wrap_lambda_func` → `$wrap` |
+| `irlower.fern:75836` | `hoist_value_iife` → `$iife` |
+
+Those are the three markers `creator_of` matches, which is the check that the
+list covers the shapes this entry says refuse. **Treat it as verified, not as
+exhaustive** — the enumeration went wrong twice already in review, and an
+incomplete one here is what leaves the next shape losing the signature.
+
+`hoist_value_iife` declares `ret_type: "fn"` deliberately (`irlower.fern:75818`
+— a mixed IIFE bound as a plain scalar SIGSEGV'd without it), and the sidecar
+is additive to that: it records the signature the coarse tag drops, which is
+the whole point of the pair, so the two do not conflict.
+
+A sibling gap, not the same one: `make_wrap_named_func` (`irlower.fern:74045`)
+also hardcodes the empty pair, but it wraps a NAMED function rather than a
+lambda — it should copy the target's `ret_fn_ret`, and needs nothing from
+`ExprLambda`.
+
+Of the 45 `ExprLambda` construction sites, 40 are spreads that carry new fields
+for free and 5 are full literals.
+
+It is also worth re-measuring the census after it lands rather than assuming
+the other buckets hold still — three of them (`call target has no semantic
+contract`, `a function value the AST lowering defines`, the verifier's
+`function value is not an element`) are downstream of the same refusal
+propagating.

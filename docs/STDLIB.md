@@ -1039,10 +1039,16 @@ serializer.
   (docs/PLATFORM-RESEARCH.md Rec §3); mismatching the two is
   E075.
 
-The raw socket primitives `tcp_listen` / `tcp_accept` / `tcp_recv`
-/ `tcp_send` / `tcp_close` are runtime-provided, emitted by
-codegen from extern stubs at module boundary — not declared in
-this module.
+The raw socket primitives `tcp_listen` / `tcp_accept` /
+`tcp_local_port` / `tcp_recv` / `tcp_send` / `tcp_close` are
+runtime-provided, emitted by codegen from extern stubs at module
+boundary — not declared in this module.
+
+`tcp_local_port(sock)` answers the port a socket is bound to, or a
+negative errno. It is what makes `tcp_listen(0)` usable: the host
+picks the port there, and a server that wants a free one can now
+bind and then report where it is instead of naming a port and
+hoping nothing else holds it.
 
 ### `std/fetch`
 

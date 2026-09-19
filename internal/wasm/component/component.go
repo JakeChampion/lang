@@ -1358,9 +1358,10 @@ func tcpMethodFuncDecl(method string, paramNames []string, paramValtypes []byte,
 }
 
 // WasiSocketsTcpInstanceTypeBody returns the type-section body for
-// `wasi:sockets/tcp@0.2.0` — the `tcp-socket` resource plus the six
+// `wasi:sockets/tcp@0.2.0` — the `tcp-socket` resource plus the seven
 // methods a listening server uses: start-bind / finish-bind /
-// start-listen / finish-listen / accept / subscribe. It outer-aliases
+// start-listen / finish-listen / accept / subscribe / local-address.
+// It outer-aliases
 // network / error-code / ip-socket-address (from sockets/network),
 // input-stream / output-stream (from io/streams), and pollable (from
 // io/poll); the caller must have surfaced those six at the top level
@@ -1368,13 +1369,16 @@ func tcpMethodFuncDecl(method string, paramNames []string, paramValtypes []byte,
 //
 // accept returns result<tuple<own<tcp-socket>, own<input-stream>,
 // own<output-stream>>, error-code>; subscribe returns own<pollable>;
-// the bind/listen methods return result<_, error-code>.
+// local-address returns result<ip-socket-address, error-code>; the
+// bind/listen methods return result<_, error-code>.
 //
 // Inner type indices: 0-5 the six outer aliases, 6 tcp-socket
 // resource, 7 borrow<tcp-socket>, 8 borrow<network>, 9
 // result<_,error-code>, 10-13 own<tcp-socket|input|output|pollable>,
 // 14 tuple<10,11,12>, 15 result<14,error-code>, then 16/18/20/22/24/26
-// the method functypes (each followed by its export). 28 decls.
+// the method functypes (each followed by its export). local-address is
+// appended LAST — 22/23 here, 26/27 in the connect variant — so the
+// indices above hold either way. 31 decls, 37 with connect.
 func WasiSocketsTcpInstanceTypeBody(networkT, errorCodeT, ipSockAddrT, inputStreamT, outputStreamT, pollableT uint32) []byte {
 	return wasiSocketsTcpInstanceTypeBody(networkT, errorCodeT, ipSockAddrT, inputStreamT, outputStreamT, pollableT, false)
 }
@@ -1397,9 +1401,9 @@ func wasiSocketsTcpInstanceTypeBody(networkT, errorCodeT, ipSockAddrT, inputStre
 		body = append(body, name...)
 		return append(body, 0x01, funcTypeidx)
 	}
-	declCount := byte(0x1c) // 28
+	declCount := byte(0x1f) // 31
 	if withConnect {
-		declCount = 0x22 // 34: +tuple, +result, +2 functypes, +2 exports
+		declCount = 0x25 // 37: +tuple, +result, +2 functypes, +2 exports
 	}
 	body := []byte{0x01, 0x42, declCount}
 	body = append(body, OuterAliasTypeDecl(1, networkT)...)      // 0
@@ -1455,6 +1459,17 @@ func wasiSocketsTcpInstanceTypeBody(networkT, errorCodeT, ipSockAddrT, inputStre
 		body = append(body, tcpMethodFuncDecl("finish-connect", []string{"self"}, []byte{0x07}, 0x17)...)
 		body = exportMethod(body, "[method]tcp-socket.finish-connect", 0x19)
 	}
+	// local-address(self) -> result<ip-socket-address=2, error-code=1>, the
+	// port a socket is bound to. Appended LAST so every index above is the
+	// same with and without the connect half.
+	localAddr := byte(0x16) // 22 without connect
+	if withConnect {
+		localAddr = 0x1a // 26 with it
+	}
+	body = append(body, 0x01)
+	body = append(body, InnerTypeResultOkErr(2, 1)...)
+	body = append(body, tcpMethodFuncDecl("local-address", []string{"self"}, []byte{0x07}, localAddr)...)
+	body = exportMethod(body, "[method]tcp-socket.local-address", localAddr+1)
 	return body
 }
 
