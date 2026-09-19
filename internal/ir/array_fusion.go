@@ -3,6 +3,9 @@ package ir
 import (
 	"fmt"
 	"os"
+	"strings"
+
+	"github.com/jakechampion/lang/internal/caps"
 
 	"github.com/jakechampion/lang/internal/ast"
 )
@@ -117,18 +120,27 @@ func FuseArrayPipelines(prog *Program, ptrW int) int {
 // is observable. Restricting fusion to element functions that touch nothing
 // makes the two orders indistinguishable.
 //
-// The test is "reaches a builtin", not "reaches a CAPABILITY-TAGGED builtin"
-// as §1 spells it. `internal/caps` classifies what a package may be permitted
-// to reach, which is a security question: `print` is deliberately ungated
-// there and is exactly the effect that makes an interleave visible. So the
-// allowed set is inverted instead — a program function (walked through) or a
-// codegen runtime helper (array indexing, refcount traffic, arithmetic
-// shims), and nothing else. An indirect call counts as effectful too: its
-// target is not known here, so nothing can be said about what it reaches.
+// "Observable effect" is read as "reaches a source-level builtin", which is
+// `internal/caps`' two tables together: the capability-gated ones and the
+// deliberately ungated ones. §1 names only the first table, and that is not
+// enough — `print` is ungated there, being a security question rather than an
+// observability one, and printing is exactly the effect an interleave exposes.
+// A few ungated entries are pure reads (`target_os`), so counting the whole
+// table costs a little coverage and no correctness.
 //
-// This is deliberately conservative. A `map` whose element function calls a
-// pure builtin does not fuse, which costs coverage and cannot cost
-// correctness.
+// Everything else a function can call is a program function, walked through,
+// or a compiler-generated helper — array indexing, refcount traffic, the
+// arithmetic shims — which the lowering spells with a `__` prefix and which
+// carries no effect of its own. An indirect call counts as effectful: its
+// target is not known here, so nothing can be said about what it reaches.
+// isBuiltinCallee reports whether a callee names a source-level builtin.
+func isBuiltinCallee(name string) bool {
+	if _, gated := caps.BuiltinCaps[name]; gated {
+		return true
+	}
+	return caps.Ungated[name]
+}
+
 func effectfulFuncs(prog *Program) map[string]bool {
 	known := make(map[string]bool, len(prog.Funcs))
 	for _, fn := range prog.Funcs {
@@ -143,10 +155,12 @@ func effectfulFuncs(prog *Program) map[string]bool {
 				bad[fn.Name] = true
 			case OpCallDirect:
 				switch {
+				case isBuiltinCallee(op.Str):
+					bad[fn.Name] = true
 				case known[op.Str]:
 					callers[op.Str] = append(callers[op.Str], fn.Name)
-				case op.Runtime:
-					// A codegen helper: no effect of its own.
+				case op.Runtime || strings.HasPrefix(op.Str, "__"):
+					// A compiler-generated helper: no effect of its own.
 				default:
 					bad[fn.Name] = true
 				}

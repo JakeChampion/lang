@@ -234,6 +234,21 @@ closure drops. Running fusion after `Inline` instead would have left the
 chain unrecognisable, since `Inline` rewrites std/array's one-line method
 delegates.
 
+Two shapes inside that vocabulary still decline, and both are coverage rather
+than correctness:
+
+- **A receiver that is not a named local.** `b.xs.map(f).fold(...)` reads the
+  array out of a field, so the receiver is not a slot the argument walk can
+  name, and the chain is left alone. A receiver that is a call result does
+  fuse — the result lands in a local first.
+- **A chain whose element function reaches another chain.** std/array's
+  combinators call their element function indirectly, an indirect call is
+  counted effectful because its target is unknown here, and that propagates to
+  anything calling them. So in `xs.map(x => x + inner(ys))`, `inner`'s own
+  chain fuses and the outer one does not. Resolving a locally-constructed
+  closure is `Defunctionalise`'s job and it runs later; duplicating it here to
+  widen this would be the wrong place.
+
 Measured on `examples/array_pipeline/`, arm64-darwin, 2000 elements over 50
 rounds, against `docs/ARRAY-PIPELINE-BASELINE-2026-09.md`'s numbers:
 
