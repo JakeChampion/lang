@@ -255,10 +255,10 @@ function option_table(): gnu.Opt[] {
 
 // `Scan` — what the option scan decided, before the environment fills in
 // what no option said.
-struct Scan { cfg: copy.Cfg, target_dir: string, have_target_dir: boolean, no_target_dir: boolean, parents: boolean, strip: boolean, deref_given: boolean, backup_given: boolean, control_given: boolean, control_text: string, suffix_given: boolean, warn_no_clobber: boolean, warn_context: boolean }
+struct Scan { cfg: copy.Cfg, target_dir: string, have_target_dir: boolean, no_target_dir: boolean, parents: boolean, strip: boolean, deref_given: boolean, backup_given: boolean, control_given: boolean, control_text: string, suffix_given: boolean, warn_context: boolean }
 
 function scan_new(): Scan {
-  return Scan { cfg: copy.cfg_new(), target_dir: "", have_target_dir: false, no_target_dir: false, parents: false, strip: false, deref_given: false, backup_given: false, control_given: false, control_text: "", suffix_given: false, warn_no_clobber: false, warn_context: false };
+  return Scan { cfg: copy.cfg_new(), target_dir: "", have_target_dir: false, no_target_dir: false, parents: false, strip: false, deref_given: false, backup_given: false, control_given: false, control_text: "", suffix_given: false, warn_context: false };
 }
 
 function scan_options(argv: string[]): (Scan, string[]) {
@@ -334,7 +334,7 @@ function apply_option(s: Scan, m: gnu.OptMatch): Scan {
   if (m.id == opt_no_clobber()) {
     // The short and long spellings of the same thing, and the warning is
     // attached to the spelling rather than the behaviour.
-    return Scan { ...s, cfg: copy.Cfg { ...c, ask: copy.ask_never(), update: copy.update_none() }, warn_no_clobber: true };
+    return Scan { ...s, cfg: copy.Cfg { ...c, ask: copy.ask_never() } };
   }
   if (m.id == opt_no_dereference()) {
     return Scan { ...s, cfg: copy.Cfg { ...c, deref: copy.deref_never() }, deref_given: true };
@@ -528,10 +528,16 @@ pub function main(): i32 {
   if (s.warn_context) {
     gnu.error("warning: ignoring --context; it requires an SELinux-enabled kernel");
   }
-  if (s.warn_no_clobber) {
-    gnu.error("warning: behavior of -n is non-portable and may change in future; use --update=none instead");
-  }
   var cfg: copy.Cfg = from_environment(s);
+  // `-n` is `--update=none` decided once the whole command line has
+  // been read, so it beats an `--update` on either side of it. 9.5
+  // dropped the warning that used to come with it.
+  if (cfg.ask == copy.ask_never()) {
+    cfg = copy.Cfg { ...cfg, update: copy.update_none() };
+  }
+  if (s.backup_given && copy.update_skips(cfg.update)) {
+    gnu.die_usage("--backup is mutually exclusive with -n or --update=none-fail", 1);
+  }
   // The dereference DEFAULT is decided by -r, not fixed: measured,
   // `cp sl out` follows a command-line symlink and `cp -r sl out` does
   // not. `-H` is how the command-line-only reading is asked for outright.

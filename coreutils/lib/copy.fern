@@ -116,12 +116,25 @@ pub function update_older(): i32 {
   return 2;
 }
 
+// `none-fail`, 9.5's: `none`'s refusal to replace anything, said out
+// loud and costing the exit status.
+pub function update_none_fail(): i32 {
+  return 3;
+}
+
 pub function update_names(): string[] {
-  return ["all", "none", "older"];
+  return ["all", "none", "none-fail", "older"];
 }
 
 pub function update_values(): i32[] {
-  return [update_all(), update_none(), update_older()];
+  return [update_all(), update_none(), update_none_fail(), update_older()];
+}
+
+// Whether this mode leaves an existing destination alone. `-n` is
+// `none` — the caller maps it AFTER the option scan, so it wins over an
+// `--update` on either side of it.
+pub function update_skips(u: i32): boolean {
+  return u == update_none() || u == update_none_fail();
 }
 
 // ---- sparse and reflink ------------------------------------------------------
@@ -347,18 +360,22 @@ function newer(src: Info, dst: Info): boolean {
 
 pub struct Replace { verdict: i32, backup: string, out: io_buffered.BufWriter, status: i32 }
 
-// The decision, for a destination that EXISTS. `--update=none` and `-n`
-// differ only in the warning `cp` prints for the short form, which is the
-// caller's to print: this one just skips.
+// The decision, for a destination that EXISTS. `-n` reaches this as
+// `--update=none`, mapped by the caller once the whole command line has
+// been read; `none-fail` is the same skip with a diagnostic and a
+// failing status, and `--debug` names the skip either way.
 function decide(cfg: Cfg, s: State, src: Info, dst: Info, dest: string): Replace {
   var w: io_buffered.BufWriter = s.out;
-  if (cfg.update == update_none()) {
+  if (update_skips(cfg.update)) {
+    if (cfg.update == update_none_fail()) {
+      return Replace { verdict: skip(), backup: "", out: gnu.error_out(w, "not replacing " + gnu.quotea(dest)), status: 1 };
+    }
+    if (cfg.debug) {
+      w = gnu.put(w, "skipped " + gnu.quotea(dest) + "\n");
+    }
     return Replace { verdict: skip(), backup: "", out: w, status: 0 };
   }
   if (cfg.update == update_older() && !newer(src, dst)) {
-    return Replace { verdict: skip(), backup: "", out: w, status: 0 };
-  }
-  if (cfg.ask == ask_never()) {
     return Replace { verdict: skip(), backup: "", out: w, status: 0 };
   }
   if (cfg.ask == ask_prompt()) {
@@ -1080,13 +1097,18 @@ pub function copy_one(cfg: Cfg, s: State, src_path: string, dest: string, top: b
     return copy_dir(cfg, st, src_path, dest, src, existed, top);
   }
   if (existed && dst.is_dir) {
-    return fail(st, "cannot overwrite directory " + gnu.quotea(dest) + " with non-directory");
+    return fail(st, "cannot overwrite directory " + gnu.quotea(dest) + " with non-directory " + gnu.quotea(src_path));
   }
   var backup: string = "";
   if (existed) {
     var r: Replace = decide(cfg, st, src, dst, dest);
     st = State { ...st, out: r.out };
     if (r.verdict == skip()) {
+      // A skip is not always a success: `--update=none-fail` refuses to
+      // replace and says so, and the status it carries is the point.
+      if (r.status != 0) {
+        return State { ...st, status: r.status };
+      }
       return st;
     }
     if (r.verdict == stop()) {
