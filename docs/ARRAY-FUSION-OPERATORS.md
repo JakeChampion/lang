@@ -224,14 +224,30 @@ elements. The pass is `internal/ir/array_fusion.go`; `FERN_NO_ARRAY_FUSION=1`
 turns it off, which is how a miscompilation suspected here is ruled out in
 one run rather than by rebuilding the compiler.
 
-Both halves of clause 1 hold, and the second one is not something this pass
-does by itself. Fusion runs FIRST in `OptimizeProgram`, so what the later
-passes see is one loop whose element functions are locally constructed
-closures — `Defunctionalise` and `InlineZeroCaptureClosures` then inline them
-outright. After the full battery the fused `map.map.fold` contains **no
-indirect call at all**: the only calls left are the index helper and the
-closure drops. Running fusion after `Inline` instead would have left the
-chain unrecognisable, since `Inline` rewrites std/array's one-line method
+Clause 1's second half — "no unspecialised calls per element" — holds, and it
+is not something this pass does by itself. Fusion runs FIRST in
+`OptimizeProgram`, so what the later passes see is one loop whose element
+functions are locally constructed closures, and `Defunctionalise` resolves
+each call to a statically named target. After the full battery the fused
+`map.map.reduce` contains **no `OpCallIndirect` at all**.
+
+Be precise about what that does and does not say. Resolving the dispatch is
+not the same as removing the call. Whether the call then survives is
+`Inline`'s ordinary decision and nothing fusion does: a LEAF element function
+is absorbed and the loop body ends up with no call at all, while one that
+calls something else stays an `OpCallClosureDirect`. The benchmark programs in
+`examples/array_pipeline` are the second kind — their element functions call
+`modulus()` — so the fused loop there makes three calls an element, one per
+stage plus the sink.
+
+An earlier version of this section said the element functions were "inlined
+outright". That was read off a count of `OpCallIndirect` and `OpCallDirect`
+which never looked at `OpCallClosureDirect`, the kind they are dispatched
+through when they are not inlined. Both shapes are now pinned in
+`internal/ir/array_fusion_test.go`.
+
+Running fusion after `Inline` instead would have left the chain
+unrecognisable, since `Inline` rewrites std/array's one-line method
 delegates.
 
 Two shapes inside that vocabulary still decline, and both are coverage rather
@@ -284,9 +300,15 @@ the per-element `__arr_idx_8_nc` call: computing that address inline instead
 — `base; index; stride; mul; add`, the lowering's own spelling — measured at
 0.18%, inside the run-to-run variance of the controls, and was dropped.
 
-What is left is the closure call. Each stage fetches its captured environment
-per element (`load fn; +8; load; call_closure_direct`) where the hand-written
-loop calls a plain function. That load is loop-invariant and is not being
-hoisted. The fix is in whichever of `HoistLoopInvariants` or the closure-call
-lowering should be doing it, not here — every loop that calls a closure pays
-it, fused or not.
+What is left, on the benchmark programs, is the closure call itself: three per
+element, each preceded by a fetch of its captured environment (`load fn; +8; load; call_closure_direct`)
+where the hand-written loop calls a plain function or inlines the arithmetic.
+
+The env fetch has a known owner. `ElideClosurePair` already recognises exactly
+that four-op sequence and removes it along with the pair allocation — but only
+for a slot whose every reader is one of those call sites. The fused form also
+emits `__drop_closure_value` on each slot, which is not, so the slots fail its
+eligibility and keep the detour. Whether the drop can be elided alongside the
+pair is that pass's question, not this one's. `HoistLoopInvariants` is not the
+answer either: it hoists only from a loop HEADER, deliberately, so that a
+zero-iteration loop cannot gain a read it never made.

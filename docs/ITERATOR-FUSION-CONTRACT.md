@@ -78,7 +78,12 @@ That eager pass is **built** — `internal/ir/array_fusion.go`, covering
 `map` and `filter` as stages and `fold` and `reduce` as sinks. It
 discharges clause 1 for those operators on the eager surface: the
 intermediates are gone and, because fusion runs before
-`Defunctionalise`, so is every per-element indirect call. Clause 2's
+`Defunctionalise`, every per-element call is resolved to a statically
+named target. So "no unspecialised call per element" holds. Whether the
+call is then removed is `Inline`'s ordinary decision: a leaf element
+function is absorbed, one that calls something else stays a direct call.
+"No per-element closure call" therefore holds for some chains and not
+others, which is weaker than clause 1 reads at first. Clause 2's
 harder operators (`take`, `flat_map`, `zip`) are not in it, and clause
 3's runtime half has not been remeasured since it landed. None of that
 flips the posture on LAZY chains, which is what this document governs —

@@ -522,3 +522,82 @@ function main(): i32 { return peeled([1 as i64]) as i32 + flagged([1 as i64]) as
 			got, want)
 	}
 }
+
+// What the fused loop actually calls per element, pinned by kind and by
+// whether the element function is inlinable.
+//
+// This exists because the claim "the element functions are inlined outright"
+// went into two documents on the strength of a count that looked at
+// OpCallIndirect and OpCallDirect and never at OpCallClosureDirect — which is
+// the kind they are dispatched through when they are NOT inlined.
+//
+// What is always true is the dispatch: fusion runs before `Defunctionalise`,
+// which resolves every element call to a statically named target, so no
+// element function is reached through a function value at run time. That is
+// clause 1's "no unspecialised call per element".
+//
+// What varies is whether the call then survives, and that is `Inline`'s
+// ordinary decision rather than anything fusion does. A leaf element function
+// is absorbed; one that calls something else is not, and stays a direct call.
+// The benchmark programs in examples/array_pipeline are the second kind —
+// their element functions call `modulus()` — which is why the fused loop there
+// still makes three calls an element, and most of why it does not reach a
+// hand-written loop that spells the arithmetic inline.
+func countCallKinds(t *testing.T, src string) (indirect, closureDirect int) {
+	t.Helper()
+	p := lowerPipelineSrc(t, src)
+	ir.OptimizeProgram(p, 8)
+	for _, fn := range p.Funcs {
+		if fn.Name != "run" {
+			continue
+		}
+		for _, op := range fn.Ops {
+			switch op.Kind {
+			case ir.OpCallIndirect:
+				indirect++
+			case ir.OpCallClosureDirect:
+				closureDirect++
+			}
+		}
+	}
+	return indirect, closureDirect
+}
+
+const fusedCallShapeChain = `
+function run(xs: i64[]): i64 {
+  return xs.map((x: i64): i64 => f(x))
+           .map((x: i64): i64 => g(x))
+           .fold(0 as i64, (a: i64, b: i64): i64 => h(a, b));
+}
+function main(): i32 { return run([1 as i64]) as i32; }`
+
+func TestFusedLoopResolvesDispatchAndInlinesLeafElementFunctions(t *testing.T) {
+	indirect, closureDirect := countCallKinds(t, `import "std/array";
+function f(x: i64): i64 { return x + (1 as i64); }
+function g(x: i64): i64 { return x * (2 as i64); }
+function h(a: i64, b: i64): i64 { return a + b; }`+fusedCallShapeChain)
+	if indirect != 0 {
+		t.Errorf("fused loop makes %d indirect calls, want 0", indirect)
+	}
+	if closureDirect != 0 {
+		t.Errorf("fused loop makes %d direct closure calls over LEAF element functions, "+
+			"want 0 — these are small enough for Inline to absorb", closureDirect)
+	}
+}
+
+func TestFusedLoopStillCallsNonInlinableElementFunctions(t *testing.T) {
+	indirect, closureDirect := countCallKinds(t, `import "std/array";
+function k(): i64 { return 7 as i64; }
+function f(x: i64): i64 { return x + k(); }
+function g(x: i64): i64 { return x * k(); }
+function h(a: i64, b: i64): i64 { return a + b + k(); }`+fusedCallShapeChain)
+	if indirect != 0 {
+		t.Errorf("fused loop makes %d indirect calls, want 0 — the dispatch is meant to be "+
+			"resolved whether or not the body is then inlined", indirect)
+	}
+	if closureDirect != 3 {
+		t.Errorf("fused loop makes %d direct closure calls, want 3 (two maps and the sink). "+
+			"0 would mean Inline grew to absorb non-leaf element functions, which is better "+
+			"than docs/ARRAY-FUSION-OPERATORS.md claims — update it deliberately", closureDirect)
+	}
+}
