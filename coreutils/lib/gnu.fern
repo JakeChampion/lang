@@ -931,6 +931,24 @@ function shell_quote(s: string, elide: boolean, escapes: boolean, extra: string)
   return string_from_bytes_unchecked(bs);
 }
 
+// `env_entry(entry, style)` — one environment entry the way GNU's
+// print_envvar writes it under quoting: the name and the value quoted
+// separately, so the `=` between them stays visible. An empty value
+// prints as `VAR=` rather than `VAR=''`, and an entry with no `=` at
+// all — which a parent writing environ directly can leave — is quoted
+// whole.
+pub function env_entry(entry: string, style: i32): string {
+  var eq: i32 = entry.index_of("=");
+  if (eq < 0) {
+    return quote_style(entry, style);
+  }
+  var name: string = quote_style(slice_unchecked(entry, 0, eq) + "", style);
+  if (eq + 1 == entry.len()) {
+    return name + "=";
+  }
+  return name + "=" + quote_style(slice_unchecked(entry, eq + 1, entry.len()) + "", style);
+}
+
 // ---- buffered stdout -------------------------------------------------------
 //
 // Output goes through a io_buffered.BufWriter, one write(2) per block, and a
