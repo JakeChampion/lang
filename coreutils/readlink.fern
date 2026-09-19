@@ -143,6 +143,23 @@ pub function main(): i32 {
   } else if (zero) {
     term = "\x00";
   }
+  // 9.5 quotes the answer when it is going to a TERMINAL, in whatever
+  // style QUOTING_STYLE names — shell-escape rather than gnulib's usual
+  // shell-escape-always when it names none, and no quoting at all under
+  // `literal` or `-z`.
+  var qstyle: i32 = 0;
+  if (!zero && stdout().isatty()) {
+    qstyle = gnu.quoting_style_from_env_with(3);
+  }
+  // POSIX wants the diagnostic and the non-zero status for a name that
+  // is not a symbolic link, so 9.5 turns verbosity on from the
+  // environment — after the options, so it overrides `-q` too.
+  match (env("POSIXLY_CORRECT")) {
+    Some(_) => {
+      verbose = true;
+    },
+    None => {}
+  }
 
   var status: i32 = 0;
   var o: io_buffered.BufWriter = gnu.out_new();
@@ -157,7 +174,7 @@ pub function main(): i32 {
     }
     match (answer) {
       Ok(value) => {
-        o = gnu.put(o, value + term);
+        o = gnu.put(o, gnu.quote_style(value, qstyle) + term);
       },
       Err(e) => {
         if (verbose) {

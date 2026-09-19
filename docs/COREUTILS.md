@@ -2170,6 +2170,14 @@ errno they discard is the whole of what those two utilities report.
 
 ## Known divergences
 
+**`pinky --lookup` is accepted and canonicalizes nothing.** 9.5 gave pinky
+the option `who` has had for years: the utmp host field run through
+`getaddrinfo` with `AI_CANONNAME`. Fern has no name-resolution primitive, so
+the option parses and the host prints as the database holds it — which is
+also what GNU prints whenever the lookup does not resolve, so every corpus
+case compares equal. The option is not implemented until the primitive
+exists.
+
 **`uptime`'s `couldn't get boot time` carries an errno nothing on the path
 set, so the corpus masks the suffix.** GNU appends `strerror (errno)` to that
 message whether or not anything failed: when the database reads fine and
@@ -2183,14 +2191,6 @@ database reads fine and holds no boot record compare the message, the exit
 status and stdout, with the suffix masked off both sides (`stderrMask`).
 Where the open itself FAILED the errno is that failure's, and those cases
 compare it in full.
-
-**`nohup`'s stderr clause is the 9.4 wording, and 9.10 changed it.** The
-clause for a terminal on stderr alone is `redirecting stderr to stdout` here;
-coreutils 9.10 spells both streams out, `redirecting standard error to
-standard output`. The corpus compares against the installed binary and that
-is 9.4, so 9.4 is what the implementation emits. This is the one place a
-coreutils version bump under the oracle would turn a passing case red, and
-the fix then is the new string rather than an exemption.
 
 **`nohup` has one diagnostic GNU has no counterpart for**: a dup3 onto fds 0,
 1 or 2 that fails reports `failed to redirect standard input` / `output` /

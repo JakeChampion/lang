@@ -81,6 +81,9 @@ func readlinkTree(t *testing.T) string {
 		{"\xff\xfe", "badtarget"},
 		{"loop2", "loop1"},
 		{"loop1", "loop2"},
+		// A target whose bytes a shell would have to quote, for the
+		// terminal-quoting cases.
+		{"a file", "spaced"},
 		{"b", "a"},
 		{"c", "b"},
 		{"a", "c"},
@@ -332,6 +335,22 @@ func readlinkCases(t *testing.T) []invocation {
 		at("an operand with an apostrophe", "-v", "a'b"),
 		at("several empty operands", "-v", "", ""),
 		{name: "POSIXLY_CORRECT stops at the first operand", args: []string{"link", "-v"}, dir: tree, env: []string{"POSIXLY_CORRECT=1"}},
+		// POSIXLY_CORRECT turns error reporting on AFTER the options,
+		// so it overrides -q and -s rather than losing to them.
+		{name: "POSIXLY_CORRECT reports a failure", args: []string{"file"}, dir: tree, env: []string{"POSIXLY_CORRECT=1"}},
+		{name: "POSIXLY_CORRECT beats quiet", args: []string{"-q", "file"}, dir: tree, env: []string{"POSIXLY_CORRECT=1"}},
+		{name: "POSIXLY_CORRECT beats silent", args: []string{"-s", "file"}, dir: tree, env: []string{"POSIXLY_CORRECT=1"}},
+
+		// The answer is QUOTED when it goes to a terminal, in the style
+		// QUOTING_STYLE names — shell-escape when it names none, which
+		// is not gnulib's usual shell-escape-always default.
+		{name: "a terminal quotes the answer", args: []string{"spaced"}, dir: tree, ttyOut: true},
+		{name: "a terminal leaves a plain answer alone", args: []string{"link"}, dir: tree, ttyOut: true},
+		{name: "a terminal under literal quoting", args: []string{"spaced"}, dir: tree, ttyOut: true, env: []string{"QUOTING_STYLE=literal"}},
+		{name: "a terminal under c quoting", args: []string{"spaced"}, dir: tree, ttyOut: true, env: []string{"QUOTING_STYLE=c"}},
+		{name: "a terminal under an invalid quoting style", args: []string{"spaced"}, dir: tree, ttyOut: true, env: []string{"QUOTING_STYLE=bogus"}},
+		{name: "zero leaves a terminal answer unquoted", args: []string{"-z", "spaced"}, dir: tree, ttyOut: true},
+		{name: "a pipe leaves the answer unquoted", args: []string{"spaced"}, dir: tree},
 
 		// The write-failure paths. A closed stdout with something
 		// buffered is close_stdout's `write error`; one with nothing

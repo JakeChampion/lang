@@ -19,16 +19,12 @@ import (
 //     end-of-input. That is the `cat` case below.
 //   - stdout a terminal: appended to nohup.out, created 0600 — the clause is
 //     `appending output to 'nohup.out'`.
-//   - stderr a terminal AND stdout not: the clause is `redirecting stderr to
-//     stdout`. When stdout IS a terminal there is no separate stderr clause;
-//     stderr follows stdout into nohup.out and only the append is announced.
+//   - stderr a terminal AND stdout not: the clause is `redirecting standard
+//     error to standard output`. When stdout IS a terminal there is no
+//     separate stderr clause; stderr follows stdout into nohup.out and only
+//     the append is announced.
 //   - the clauses join with a literal ` and `, and the line goes to the
 //     ORIGINAL stderr, before fd 2 is replaced.
-//
-// The wording is 9.4's. Coreutils 9.10 spells the stderr clause
-// `redirecting standard error to standard output`; the corpus compares
-// against the installed binary, so 9.4's shorter form is what the
-// implementation emits — docs/COREUTILS.md carries the difference.
 //
 // `seedTree` on every terminal-stdout case, not `artifacts`: nohup.out's
 // twelve-bit MODE is half of what those cases prove, and a fresh directory

@@ -735,8 +735,15 @@ pub function main(): i32 {
           var used: boolean = false;
           if (obsolete_plus && m.value.len() > 0 && m.value[0] as i32 == 43) {
             var p: (u64, i32) = parse_size(m.value);
-            if (p.1 == 0) {
-              cfg = Cfg { ...cfg, skip_chars: p.0 };
+            // 9.5 takes a `+N` that overflows as well as one that fits,
+            // clamping either to IDX_MAX. Only a MALFORMED one stays a
+            // file name.
+            if (p.1 == 0 || p.1 == 2) {
+              var n: u64 = p.0;
+              if (p.1 == 2 || n > 9223372036854775807 as u64) {
+                n = 9223372036854775807 as u64;
+              }
+              cfg = Cfg { ...cfg, skip_chars: n };
               used = true;
             }
           }
