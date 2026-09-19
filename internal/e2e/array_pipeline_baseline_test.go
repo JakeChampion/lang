@@ -58,10 +58,6 @@ const (
 	arrayPipelineRounds = 20
 )
 
-func buildArrayPipeline(t *testing.T, fern, dir, program string) string {
-	return buildArrayPipelineFused(t, fern, dir, program, true)
-}
-
 // buildArrayPipelineInPlace compiles with ownership-aware materialization
 // (#9733) on or off. The off build is what pipeline 3 measured before the pass
 // existed, and keeping it reachable is what lets the premise and the
