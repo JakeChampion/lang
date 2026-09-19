@@ -432,15 +432,13 @@ func collectArrayCalls(fn *Func) []arrayCall {
 			if fn.Ops[k].Kind != OpLoadLocal {
 				continue
 			}
-			if c.recv < 0 {
-				c.recv = fn.Ops[k].I32
-			}
 			// The last load before the call is the callback slot.
 			if name, isClosure := closureOf[fn.Ops[k].I32]; isClosure {
 				c.element = name
 				c.fnSlot = fn.Ops[k].I32
 			}
 		}
+		c.recv = receiverSlotOf(fn, i, op.I32, c.fnSlot)
 		for k := i + 1; k < len(fn.Ops); k++ {
 			if fn.Ops[k].Kind == OpStoreLocal {
 				c.result = fn.Ops[k].I32
@@ -581,4 +579,87 @@ func FormatArrayPipelines(p *Program) string {
 	}
 	fmt.Fprintf(&b, "\n%d pipeline(s), %d with more than one stage\n", len(pipes), chained)
 	return b.String()
+}
+
+// elementFuncStart returns the index at which the element function's push
+// sequence begins — the ops from there up to the call are exactly what put the
+// function on the stack, whether the chain built a closure here or loaded one
+// already built.
+//
+// Callers use it to walk the call's arguments backwards. The alternative, and
+// what this replaced, is to scan forward for the first local load since the
+// previous call: inside a `while` that finds the loop condition's counter
+// rather than the array, and a fusion built on that answer traverses the wrong
+// slot.
+func elementFuncStart(fn *Func, callIdx int, fnSlot int32) (int, bool) {
+	if fnSlot < 0 {
+		return 0, false
+	}
+	k := -1
+	for i := callIdx - 1; i >= 0; i-- {
+		if fn.Ops[i].Kind == OpLoadLocal && fn.Ops[i].I32 == fnSlot {
+			k = i
+			break
+		}
+	}
+	if k < 0 {
+		return 0, false
+	}
+	for k > 0 {
+		switch prev := fn.Ops[k-1]; prev.Kind {
+		case OpStoreLocal:
+			if prev.I32 != fnSlot {
+				return k, true
+			}
+			k--
+		case OpConstFunc:
+			k--
+		case OpMakeClosure:
+			k--
+			// A closure's captures are pushed ahead of it. Only single-op
+			// captures are stepped over; an expression has no fixed width to
+			// skip, so the caller is told nothing rather than a wrong index.
+			for n := prev.I32; n > 0; n-- {
+				if k == 0 || !isSingleOpPush(fn.Ops[k-1]) {
+					return 0, false
+				}
+				k--
+			}
+		default:
+			return k, true
+		}
+	}
+	return k, true
+}
+
+// receiverSlotOf returns the slot holding the array a combinator call is
+// applied to, or -1. The receiver is the call's FIRST argument, so it is found
+// by starting at the element function (the last) and stepping back over the
+// arguments between them.
+func receiverSlotOf(fn *Func, callIdx int, argc, fnSlot int32) int32 {
+	k, ok := elementFuncStart(fn, callIdx, fnSlot)
+	if !ok {
+		return -1
+	}
+	// `fold(xs, seed, f)` and `scan(xs, seed, f)` put one argument between the
+	// receiver and the function; `map(xs, f)` and the rest put none.
+	for n := argc - 2; n > 0; n-- {
+		if k == 0 || !isSingleOpPush(fn.Ops[k-1]) {
+			return -1
+		}
+		k--
+	}
+	if k == 0 || fn.Ops[k-1].Kind != OpLoadLocal {
+		return -1
+	}
+	return fn.Ops[k-1].I32
+}
+
+// isSingleOpPush reports whether op pushes one value and consumes none.
+func isSingleOpPush(op Op) bool {
+	switch op.Kind {
+	case OpLoadLocal, OpConstI32, OpConstI64, OpConstFunc:
+		return true
+	}
+	return false
 }

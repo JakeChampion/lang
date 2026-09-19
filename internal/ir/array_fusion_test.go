@@ -300,3 +300,49 @@ function main(): i32 { return run([1 as i64]) as i32; }`)
 		t.Fatalf("fused %d pipelines over a pure helper, want 1", n)
 	}
 }
+
+// Two chains in one function. Emitting the first rewrites the op slice, so
+// every index the planner recorded for the second is stale — the pass replans
+// from scratch after each emission for exactly this reason, and a version that
+// planned both up front would corrupt the second.
+func TestFuseTwoChainsInOneFunction(t *testing.T) {
+	p, n := fuseSrc(t, `import "std/array";
+function run(xs: i64[], ys: i64[]): i64 {
+  var a: i64 = xs.map((x: i64): i64 => x + (1 as i64))
+                 .fold(0 as i64, (p: i64, q: i64): i64 => p + q);
+  var b: i64 = ys.filter((y: i64): boolean => y > (0 as i64))
+                 .fold(0 as i64, (p: i64, q: i64): i64 => p + q);
+  return a + b;
+}
+function main(): i32 { return run([1 as i64], [2 as i64]) as i32; }`)
+	if n != 2 {
+		t.Fatalf("fused %d pipelines, want 2", n)
+	}
+	if got := callsIn(t, p, "run", "array__"); len(got) != 0 {
+		t.Errorf("run still calls std/array combinators: %v", got)
+	}
+}
+
+// A chain inside a loop. The fused body is emitted into the middle of an
+// enclosing structured-control-flow region, so its own OpBlock/OpLoop nesting
+// has to balance or the br targets of the enclosing loop shift underneath it.
+func TestFuseChainInsideALoop(t *testing.T) {
+	p, n := fuseSrc(t, `import "std/array";
+function run(xs: i64[], rounds: i32): i64 {
+  var total: i64 = 0 as i64;
+  var i: i32 = 0;
+  while (i < rounds) {
+    total = total + xs.map((x: i64): i64 => x + (1 as i64))
+                      .fold(0 as i64, (p: i64, q: i64): i64 => p + q);
+    i = i + 1;
+  }
+  return total;
+}
+function main(): i32 { return run([1 as i64], 2) as i32; }`)
+	if n != 1 {
+		t.Fatalf("fused %d pipelines, want 1", n)
+	}
+	if got := callsIn(t, p, "run", "array__"); len(got) != 0 {
+		t.Errorf("run still calls std/array combinators: %v", got)
+	}
+}
