@@ -167,7 +167,7 @@ away and `ret_fn_ret` / `ret_fn_param_types` carry it alongside, on `FuncDecl`,
 `ParamDecl`, `StructFieldDecl` and `StmtVar`. **`ast.ExprLambda` is the one
 member of that family that never got them**, and the loss happens in two steps:
 
-1. **`parser.fern:5589` drops them.** A nested `function mk(): (i32) => i32`
+1. **`parser.fern:5588` drops them.** A nested `function mk(): (i32) => i32`
    is desugared to a lambda-valued local by
    `e_lambda(fr_func.params, fr_func.ret_type, fr_func.body)` — the parsed
    `FuncDecl` HAS `ret_fn_ret` filled in, and `e_lambda` takes no parameter to
@@ -175,17 +175,39 @@ member of that family that never got them**, and the loss happens in two steps:
 2. **`irlower.try_lift_binding` (`irlower.fern:73715`) hoists that binding to
    `__lam_0`** and writes `ret_fn_ret: ""`, because by then there is nothing
    left to copy. It is one of only two places in the tree that mint a `__lam_N`
-   name — the other is `lift_call_arg` (`irlower.fern:73141`) — and both
-   hardcode the empty pair, as do the escaping-closure builders at `73905` and
-   `74012`.
+   name — the other is `lift_call_arg` (`irlower.fern:73141`).
 
 That is the whole of the 238: a missing field with four precedents for how to
 add it, not an unsupported construct. Two fields on `ExprLambda`, populated at
-the parse sites that build one from a declaration, and copied by **every**
-lambda-to-`FuncDecl` hoist — all four `irlower` sites above, not just the one
-the reproducer happens to exercise, or the next shape loses the signature
-again. Of the 47 `ExprLambda` construction sites the 39 spreads carry new
-fields for free; 6 are full literals.
+the parse sites that build one from a declaration, and copied by every hoist
+that builds a `FuncDecl` from one — of which I have verified five, all writing
+the empty pair today:
+
+| site | builds |
+|---|---|
+| `irlower.fern:73143` | `lift_call_arg` → `__lam_N` |
+| `irlower.fern:73717` | `try_lift_binding` → `__lam_N` (the reproducer's) |
+| `irlower.fern:73905` | `make_clo_func` → `$clo` |
+| `irlower.fern:74012` | `make_wrap_lambda_func` → `$wrap` |
+| `irlower.fern:75836` | `hoist_value_iife` → `$iife` |
+
+Those are the three markers `creator_of` matches, which is the check that the
+list covers the shapes this entry says refuse. **Treat it as verified, not as
+exhaustive** — the enumeration went wrong twice already in review, and an
+incomplete one here is what leaves the next shape losing the signature.
+
+`hoist_value_iife` declares `ret_type: "fn"` deliberately (`irlower.fern:75818`
+— a mixed IIFE bound as a plain scalar SIGSEGV'd without it), and the sidecar
+is additive to that: it records the signature the coarse tag drops, which is
+the whole point of the pair, so the two do not conflict.
+
+A sibling gap, not the same one: `make_wrap_named_func` (`irlower.fern:74045`)
+also hardcodes the empty pair, but it wraps a NAMED function rather than a
+lambda — it should copy the target's `ret_fn_ret`, and needs nothing from
+`ExprLambda`.
+
+Of the 45 `ExprLambda` construction sites, 40 are spreads that carry new fields
+for free and 5 are full literals.
 
 It is also worth re-measuring the census after it lands rather than assuming
 the other buckets hold still — three of them (`call target has no semantic
