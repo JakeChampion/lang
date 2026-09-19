@@ -1005,9 +1005,9 @@ pub function finish_with(o: io_buffered.BufWriter, status: i32): void {
 // the way close_stdout reports it. `prev_fail` is the stream's error flag
 // set by something other than a write here (glibc refusing a conversion).
 // fclose failing with EBADF and nothing pending is not an error, so a
-// utility that printed nothing to a closed stdout exits 0; a failure
-// already on the stream is reported without strerror text unless fclose
-// itself failed too.
+// utility that printed nothing to a closed stdout exits 0. A failure
+// already on the stream is reported WITH its strerror text: GNU <= 9.4
+// printed a bare `write error` there, having lost the errno by then.
 pub function close_stdout(o: io_buffered.BufWriter, prev_fail: boolean): void {
   close_stdout_with(o, prev_fail, 1);
 }
@@ -1017,9 +1017,14 @@ pub function close_stdout(o: io_buffered.BufWriter, prev_fail: boolean): void {
 pub function close_stdout_with(o: io_buffered.BufWriter, prev_fail: boolean, status: i32): void {
   var some_pending: boolean = o.buffered() > 0;
   var prev: boolean = prev_fail;
+  // The recorded error's text is kept, not just the fact of it: the
+  // report below names it. Only a `prev_fail` handed in by the caller
+  // has no errno to name.
+  var prev_text: string = "";
   match (o.error()) {
-    Some(_) => {
+    Some(e) => {
       prev = true;
+      prev_text = io_error_text(e);
     },
     None => {}
   }
@@ -1034,7 +1039,11 @@ pub function close_stdout_with(o: io_buffered.BufWriter, prev_fail: boolean, sta
     None => {}
   }
   if (prev) {
-    error("write error");
+    if (prev_text.len() > 0) {
+      error("write error: " + prev_text);
+    } else {
+      error("write error");
+    }
     exit(status);
   }
 }
