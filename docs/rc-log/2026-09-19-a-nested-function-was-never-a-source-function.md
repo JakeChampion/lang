@@ -82,6 +82,19 @@ was missing. Before adding an `ORIGIN_*` value, the question to ask is which
 sites treat the empty origin as a fact about the lambda rather than as the
 absence of a label.
 
+Writing the predicate down then showed that the old test had been wrong about a
+second origin all along: a `use` callback is a lambda the programmer wrote, and
+native reports E044 for a capture inside one, but `origin.len() == 0` excluded
+it. The predicate admits `ORIGIN_USE` too, with the three corpus rows to pin it
+— the two captures native reports, and a suspect declared AFTER the `use`, which
+lives inside the callback body and must not read as a capture.
+
+`ORIGIN_IIFE_SCOPED` looks like a third case and is not: the defer lowering
+stamps it after the checker has run, so no checker rule ever sees that value, and
+the self-host already agrees with native on a hand-written IIFE. Verified before
+changing anything — the predicate says so rather than listing an origin that
+cannot reach it.
+
 ## What did not move
 
 The self-recursive nested function still refuses, at `unresolved type of binding
