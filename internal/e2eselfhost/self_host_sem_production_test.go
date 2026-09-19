@@ -1416,4 +1416,34 @@ function count(n: i32, acc: i32): i32 {
 
 function main(): i32 { return count(1000000, 0) % 7; }
 `},
+	// An array of function values. `ssasem.nests_func` refused one as an
+	// element, so a program holding closures in an array put its whole
+	// function on the AST lowering -- 52 of the 550 refusals across 512
+	// fernsmith programs, and the last layer of a wall three checks deep.
+	//
+	// Both elements CAPTURE, because the release is what the refusal was
+	// guarding: the array's drop walks each element through
+	// `ssarc.drop_value`, which dispatches a function type to
+	// `drop_captures`. `caps` and `other` are freed by that walk or not at
+	// all, so noLeak is the assertion that carries this case.
+	{name: "an-array-of-capturing-closures", atLeast: 4, noLeak: true, src: `
+function build(n: i32): ((i32) => i32)[] {
+    var caps: i32[] = [n, n + 1, n + 2];
+    var other: i32[] = [n * 2, n * 3];
+    return [((x: i32) => { return x + caps[0] + caps[2]; }),
+            ((y: i32) => { return y + other[0] + other[1]; })];
+}
+
+function main(): i32 {
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) {
+        var fs: ((i32) => i32)[] = build(i);
+        total = total + fs[0](1) % 3 + fs[1](1) % 5;
+        i = i + 1;
+    }
+    if (__rc_underflow_count() != 0) { return 90; }
+    return total % 7;
+}
+`},
 }
