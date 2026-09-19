@@ -143,14 +143,44 @@ This change's own numbers were re-measured under the restored pipeline and hold,
 which was worth doing rather than assuming: the fix is in `try_lift_binding`,
 which both pipelines run.
 
-## The trap under the trap
+## The trap under the trap, and the measurement that shrank it
 
 A refusal message is not a diagnosis, and a diagnostic driver is not the
-compiler. Every number steering this effort — 284 of 508 produced whole, the
-bucket ranking, the `unresolved result type` count this log has been chasing for
-two entries — came from an instrument that measures a module the compiler never
-lowers. They are lower bounds by an unknown margin, and the RANKING can be wrong
-too, because the missing passes do not touch all constructs equally.
+compiler. Having found the second, I immediately wrote that every number steering
+this effort was a lower bound by an unknown margin and the bucket ranking might
+not hold either — and then measured it. 512 fernsmith programs, censused with the
+driver as shipped and with `module_with_builtins` restored:
+
+| | as shipped | + `module_with_builtins` |
+|---|---|---|
+| declarations measured | 509,527 | 511,063 |
+| declarations produced | 496,592 | 498,128 |
+| refusal leaves | 12,935 | 12,935 |
+| distinct buckets | 139 | 139 |
+| buckets whose count moved | — | none |
+
+Not one bucket moves. The prepass adds three producing declarations per program
+and changes nothing else. fernsmith does not generate nested `function`
+declarations or self-recursive locals, so the corpus never had the shapes the
+missing passes resolve. The distortion is real — a self-recursive nested function
+goes 0 of 2 to 2 of 2 — and it is invisible to this corpus.
+
+So the instrument bug cost a wrongly-filed issue and a wrong paragraph, not the
+roadmap's numbers. Worth fixing for what it prevents next time; not a
+re-measurement.
+
+That is the third guess in one session that measurement cut down: the sidecar was
+12 of 238 rather than all of it, the self-recursive shape was the instrument
+rather than the language, and the instrument was narrower than the alarm I raised
+about it. The pattern is not carelessness about any one of them — it is reaching
+for the implication before running the experiment that bounds it.
+
+What the sweep did surface, unmeasured and unclaimed: 91% of every refusal in the
+corpus is three buckets, `call target has no semantic contract` on
+`__fern_rc_inc` (7,168), `__fern_str_dec` (4,096) and `__map_hash_seed` (512).
+`unresolved result type`, which two entries of this log have been chasing, is
+396. Whether those three are a real gap or another artefact is the next
+measurement, and this entry is not going to guess at it.
 
 Twice now in three entries the error has been the same: read one refusal message,
 infer a cause, act on the inference. The message names where the producer
