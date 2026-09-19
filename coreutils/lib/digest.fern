@@ -247,11 +247,11 @@ function read_size(): i32 {
 // digest is read wherever a hex one is, and a line shorter than the
 // digest plus a blank plus a name is still read — cksum's minimum line
 // is three bytes where the seven want the digest and two more.
-pub struct Settings { binary: i32, check: boolean, tag: boolean, zero: boolean, ignore_missing: boolean, status: boolean, warn: boolean, quiet: boolean, strict: boolean, bits: i32, detect: boolean, cksum: boolean }
+pub struct Settings { binary: i32, check: boolean, tag: boolean, zero: boolean, ignore_missing: boolean, status: boolean, warn: boolean, quiet: boolean, strict: boolean, bits: i32, bits_text: string, has_bits: boolean, detect: boolean, cksum: boolean }
 
 // `settings_new(bits)` — the defaults every caller starts from.
 pub function settings_new(bits: i32): Settings {
-  return Settings { binary: 0 - 1, check: false, tag: false, zero: false, ignore_missing: false, status: false, warn: false, quiet: false, strict: false, bits: bits, detect: false, cksum: false };
+  return Settings { binary: 0 - 1, check: false, tag: false, zero: false, ignore_missing: false, status: false, warn: false, quiet: false, strict: false, bits: bits, bits_text: "", has_bits: false, detect: false, cksum: false };
 }
 
 function opt_binary(): i32 {
@@ -717,16 +717,23 @@ function tag_open(a: Algo, s: Settings, cs: string, i: i32): (i32, i32) {
   var j: i32 = i + a.tag.len();
   if (a.variable || s.cksum) {
     if (at(cs, j) == 45) {
+      // A DIGIT has to follow the dash. GNU <= 9.4 read the length with
+      // strtoumax base 0 straight off, which also took `BLAKE2b-+8` and
+      // `BLAKE2b- 8`; from 9.5 neither is a line. `0x8` still is.
+      if (!isdigit(at(cs, j + 1))) {
+        return (0 - 1, bits);
+      }
       var n: (i32, i32) = strtou_base0(cs, j + 1);
       if (n.1 == j + 1) {
         return (0 - 1, bits);
       }
       bits = n.0;
       j = n.1;
-    } else if (iswhite(at(cs, j))) {
-      j = j + 1;
     }
   }
+  // Exactly ONE space between the tag and the `(`. GNU <= 9.4 took any
+  // run of blanks here, so `BLAKE2b  (f)` and `BLAKE2b\t(f)` were lines;
+  // from 9.5 they are improperly formatted.
   if (at(cs, j) == 32) {
     j = j + 1;
   }
@@ -1103,6 +1110,21 @@ pub function parse_bits_value(v: string): i32 {
   if (i < v.len() && v[i] as i32 == 43) {
     i = i + 1;
   }
+  // strtoumax takes a leading minus and NEGATES, so `-8` is a value just
+  // under 2^64: out of range rather than malformed, and reported with the
+  // range wording.
+  if (i < v.len() && v[i] as i32 == 45) {
+    var j: i32 = i + 1;
+    var nd: i32 = 0;
+    while (j < v.len() && isdigit(v[j] as i32)) {
+      nd = nd + 1;
+      j = j + 1;
+    }
+    if (nd > 0 && j == v.len()) {
+      gnu.error("invalid length: " + gnu.quote(v) + ": Value too large for defined data type");
+      exit(1);
+    }
+  }
   var digits: i32 = 0;
   var over: boolean = false;
   // uintmax_t's real ceiling, because passing it is what chooses the
@@ -1122,31 +1144,28 @@ pub function parse_bits_value(v: string): i32 {
     gnu.error("invalid length: " + gnu.quote(v));
     exit(1);
   }
-  if (over) {
-    gnu.error("invalid length: " + gnu.quote(v) + ": Value too large for defined data type");
-    exit(1);
-  }
-  // The range rules read the value at its full width: 2^64-1 is not a
-  // multiple of 8, and saying so is not the same as saying it is over
-  // the maximum.
-  if (acc % (8 as u64) != 0 as u64) {
-    gnu.error("invalid length: " + gnu.quote(v));
-    gnu.error("length is not a multiple of 8");
-    exit(1);
-  }
-  // Saturated at the maximum any algorithm allows, which `check_bits_max`
-  // then reports: nothing above it is a length, so the i32 need not hold it.
-  if (acc > 100000 as u64) {
+  // Overflow SATURATES rather than being reported here: a number too big
+  // for uintmax_t is also over every algorithm's maximum, and that is
+  // what GNU 9.5+ says about it.
+  if (over || acc > 100000 as u64) {
     return 100000;
   }
   return acc as i32;
 }
 
-// `check_bits_max(a, bits, v)` — the one rule that needs the algorithm.
+// `check_bits_max(a, bits, v)` — the rules that need the algorithm, in
+// GNU 9.5+'s order: over the maximum first, then not a multiple of 8. A
+// length that is both (516, or 2^64-1) reports the maximum; 9.4 tested
+// the multiple first and reported that instead.
 pub function check_bits_max(a: Algo, bits: i32, v: string): void {
   if (bits > a.bits) {
     gnu.error("invalid length: " + gnu.quote(v));
     gnu.error("maximum digest length for " + gnu.quote(a.tag) + " is " + a.bits.to_string() + " bits");
+    exit(1);
+  }
+  if (bits % 8 != 0) {
+    gnu.error("invalid length: " + gnu.quote(v));
+    gnu.error("length is not a multiple of 8");
     exit(1);
   }
 }
@@ -1199,7 +1218,10 @@ function apply(a: Algo, s: Settings, m: gnu.OptMatch): Settings {
     return Settings { ...s, zero: true };
   }
   if (m.id == opt_length()) {
-    return Settings { ...s, bits: parse_bits(a, m.value) };
+    // Kept as TEXT and read after the loop: GNU validates the length once
+    // the options are parsed, so `-l 4 -x` reports the invalid option
+    // rather than the length.
+    return Settings { ...s, bits_text: m.value, has_bits: true };
   }
   if (m.id == opt_ignore_missing()) {
     return Settings { ...s, ignore_missing: true };
@@ -1305,6 +1327,11 @@ pub function run(a: Algo): i32 {
         break;
       }
     }
+  }
+  // Flagged rather than inferred from the text, so `-l ''` is still a
+  // length to reject rather than a length not given.
+  if (s.has_bits) {
+    s = Settings { ...s, bits: parse_bits(a, s.bits_text) };
   }
   validate(s);
 
