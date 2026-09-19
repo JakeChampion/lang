@@ -102,6 +102,51 @@ function via_all_filtered(xs: i64[]): i64 {
 	match (out) { Some(v) => { return v; }, None => { return 0 as i64 - (7 as i64); } }
 }
 
+// Two chains in one function: emitting the first shifts every op index the
+// second was planned against.
+function via_two_chains(xs: i64[]): i64 {
+	var a: i64 = xs.map((x: i64): i64 => x + (1 as i64))
+	               .fold(0 as i64, (p: i64, q: i64): i64 => p + q);
+	var b: i64 = xs.filter((y: i64): boolean => y > (2 as i64))
+	               .fold(0 as i64, (p: i64, q: i64): i64 => p + q);
+	return a + b;
+}
+function loop_two_chains(xs: i64[]): i64 {
+	var a: i64 = 0 as i64;
+	var b: i64 = 0 as i64;
+	var i: i32 = 0;
+	while (i < xs.len()) {
+		a = a + xs[i] + (1 as i64);
+		if (xs[i] > (2 as i64)) { b = b + xs[i]; }
+		i = i + 1;
+	}
+	return a + b;
+}
+
+// A chain inside a loop. The fused body is emitted into the middle of an
+// enclosing structured-control-flow region, so a br target off by one level
+// leaves the enclosing loop spinning or exits it early.
+function via_chain_in_loop(xs: i64[], rounds: i32): i64 {
+	var total: i64 = 0 as i64;
+	var i: i32 = 0;
+	while (i < rounds) {
+		total = total + xs.map((x: i64): i64 => x + (1 as i64))
+		                  .fold(0 as i64, (p: i64, q: i64): i64 => p + q);
+		i = i + 1;
+	}
+	return total;
+}
+function loop_chain_in_loop(xs: i64[], rounds: i32): i64 {
+	var total: i64 = 0 as i64;
+	var r: i32 = 0;
+	while (r < rounds) {
+		var i: i32 = 0;
+		while (i < xs.len()) { total = total + xs[i] + (1 as i64); i = i + 1; }
+		r = r + 1;
+	}
+	return total;
+}
+
 function check(n: i32): i32 {
 	var xs: i64[] = build(n);
 	if (via_map_fold(xs) != loop_map_fold(xs)) { return 10; }
@@ -109,6 +154,8 @@ function check(n: i32): i32 {
 	if (via_map_map_reduce(xs) != loop_map_map_reduce(xs)) { return 12; }
 	if (via_order_sensitive(xs) != loop_order_sensitive(xs)) { return 13; }
 	if (via_all_filtered(xs) != 0 as i64 - (7 as i64)) { return 14; }
+	if (via_two_chains(xs) != loop_two_chains(xs)) { return 15; }
+	if (via_chain_in_loop(xs, 3) != loop_chain_in_loop(xs, 3)) { return 16; }
 	return 0;
 }
 

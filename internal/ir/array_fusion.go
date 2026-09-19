@@ -329,58 +329,15 @@ func seedType(seed Op) ast.Type {
 // own closure construction emitted (a captured literal) as the seed instead,
 // which is a wrong answer rather than a missed fusion.
 func foldSeedOp(fn *Func, c arrayCall) (Op, bool) {
-	k := -1
-	for i := c.op - 1; i >= 0; i-- {
-		if fn.Ops[i].Kind == OpLoadLocal && fn.Ops[i].I32 == c.fnSlot {
-			k = i
-			break
-		}
-	}
-	if k < 0 {
+	k, ok := elementFuncStart(fn, c.op, c.fnSlot)
+	if !ok || k == 0 {
 		return Op{}, false
 	}
-	// Step back over the construction that parked f in its slot, if the
-	// chain built it here rather than receiving it already built. A closure
-	// carries its captures as operands pushed ahead of OpMakeClosure, so
-	// those are stepped over too — a captured value sitting where the seed
-	// would be is precisely the confusion this anchoring exists to avoid.
-	for k > 0 {
-		prev := fn.Ops[k-1]
-		switch prev.Kind {
-		case OpStoreLocal:
-			if prev.I32 != c.fnSlot {
-				return Op{}, false
-			}
-			k--
-		case OpConstFunc:
-			k--
-		case OpMakeClosure:
-			k--
-			for n := prev.I32; n > 0; n-- {
-				// Only single-op captures are stepped over. A capture built
-				// by an expression has no fixed width to skip, so the chain
-				// is declined rather than counted through.
-				if k == 0 || !isSingleOpPush(fn.Ops[k-1]) {
-					return Op{}, false
-				}
-				k--
-			}
-		case OpConstI64, OpConstI32:
-			return prev, true
-		default:
-			return Op{}, false
-		}
+	switch prev := fn.Ops[k-1]; prev.Kind {
+	case OpConstI64, OpConstI32:
+		return prev, true
 	}
 	return Op{}, false
-}
-
-// isSingleOpPush reports whether op pushes one value and consumes none.
-func isSingleOpPush(op Op) bool {
-	switch op.Kind {
-	case OpLoadLocal, OpConstI32, OpConstI64, OpConstFunc:
-		return true
-	}
-	return false
 }
 
 // rangeStart is the op that begins the chain: the load of the receiver.
@@ -460,7 +417,7 @@ func emitFusion(fn *Func, p fusedPipeline, ptrW int) {
 	add(Op{Kind: OpBlock}, Op{Kind: OpLoop})
 	add(Op{Kind: OpLoadLocal, I32: idx})
 	add(Op{Kind: OpLoadLocal, I32: p.recvSlot}, Op{Kind: OpConstI32, I32: 4}, Op{Kind: OpSub}, Op{Kind: OpLoad})
-	add(Op{Kind: OpLtS}, Op{Kind: OpNot}, Op{Kind: OpBrIf, I32: 1})
+	add(Op{Kind: OpLtS, Width: 32}, Op{Kind: OpNot}, Op{Kind: OpBrIf, I32: 1})
 
 	// elem = xs[idx]
 	add(Op{Kind: OpLoadLocal, I32: p.recvSlot}, Op{Kind: OpLoadLocal, I32: idx})
@@ -480,7 +437,7 @@ func emitFusion(fn *Func, p fusedPipeline, ptrW int) {
 			add(Op{Kind: OpLoadLocal, I32: elem}, Op{Kind: OpLoadLocal, I32: s.fn})
 			add(Op{Kind: OpCallIndirect, I32: 1}, Op{Kind: OpNot})
 			add(Op{Kind: OpIf})
-			add(Op{Kind: OpLoadLocal, I32: idx}, Op{Kind: OpConstI32, I32: 1}, Op{Kind: OpAdd})
+			add(Op{Kind: OpLoadLocal, I32: idx}, Op{Kind: OpConstI32, I32: 1}, Op{Kind: OpAdd, Width: 32})
 			add(Op{Kind: OpStoreLocal, I32: idx}, Op{Kind: OpBr, I32: 1})
 			add(Op{Kind: OpEnd})
 		}
@@ -507,16 +464,9 @@ func emitFusion(fn *Func, p fusedPipeline, ptrW int) {
 	}
 
 	// idx++
-	add(Op{Kind: OpLoadLocal, I32: idx}, Op{Kind: OpConstI32, I32: 1}, Op{Kind: OpAdd})
+	add(Op{Kind: OpLoadLocal, I32: idx}, Op{Kind: OpConstI32, I32: 1}, Op{Kind: OpAdd, Width: 32})
 	add(Op{Kind: OpStoreLocal, I32: idx})
 	add(Op{Kind: OpBr}, Op{Kind: OpEnd}, Op{Kind: OpEnd})
-
-	// The closure releases the replaced range carried, re-emitted verbatim.
-	for k := p.first; k <= p.last; k++ {
-		if fn.Ops[k].Kind == OpCallDirect && fn.Ops[k].Str == "__drop_closure_value" {
-			add(fn.Ops[k-1], fn.Ops[k], Op{Kind: OpDrop})
-		}
-	}
 
 	// finish: the reduction's answer, left where the chain's was. fold's is
 	// the accumulator; reduce's is `Some(acc)`, or `None` when the loop never
@@ -533,6 +483,23 @@ func emitFusion(fn *Func, p fusedPipeline, ptrW int) {
 		add(Op{Kind: OpStoreLocal, I32: result})
 		add(Op{Kind: OpEnd})
 		add(Op{Kind: OpLoadLocal, I32: result})
+	}
+
+	// The closure releases the replaced range carried, re-emitted verbatim —
+	// and AFTER the finish, because that is where the lowering puts them. A
+	// combinator call leaves its result on the stack and the reclaim traffic
+	// runs underneath it, so the store that consumes the result comes last.
+	//
+	// The order is not cosmetic. `collectArrayCalls` takes a chain's receiver
+	// to be the first local load in the window since the previous non-array
+	// call, and a bare `local.load acc` sitting after the drops is the first
+	// thing a LATER chain in the same function sees. It was read as that
+	// chain's receiver, which made the second fusion in a function traverse
+	// the first one's accumulator and swallow its finish.
+	for k := p.first; k <= p.last; k++ {
+		if fn.Ops[k].Kind == OpCallDirect && fn.Ops[k].Str == "__drop_closure_value" {
+			add(fn.Ops[k-1], fn.Ops[k], Op{Kind: OpDrop})
+		}
 	}
 
 	next := make([]Op, 0, len(fn.Ops)+len(out))
