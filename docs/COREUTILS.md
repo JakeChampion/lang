@@ -2170,6 +2170,17 @@ errno they discard is the whole of what those two utilities report.
 
 ## Known divergences
 
+**`ptx` breaks a tie between two equal keywords by a pointer, so the corpus
+gives each file its own words.** `compare_occurs` falls back to
+`_GL_CMP (first->key.start, second->key.start)` when the keywords compare
+equal, and ptx reads each operand into its own allocation of `text_buffer` —
+so the order of two identical keywords from two different files is the order
+the allocator happened to place the buffers in, not a fact about either file.
+Measured: `ptx -O nonl sent` over two files both starting `aa bb` prints the
+LONGER file's line first whichever order the operands are given in. Within one
+file the tie-break is a real offset comparison and is compared in full; the
+one case that pairs two files gives them distinct words instead.
+
 **`mv --exchange` is three renames rather than one (#9784).** 9.5 added the
 option, and GNU does it in a single `renameat2 (…, RENAME_EXCHANGE)`. Fern's
 `rename` has no flag word — the checker's note on it records that a flag one
