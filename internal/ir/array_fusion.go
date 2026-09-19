@@ -205,16 +205,16 @@ func effectfulFuncs(prog *Program) map[string]bool {
 // than silently allocating per stage. The decision does not consult the
 // pointer width, which shapes only the emission, so a report need not know the
 // target to answer.
-func ArrayFusionVerdicts(prog *Program) map[string]FusionRefusal {
-	out := map[string]FusionRefusal{}
+func ArrayFusionVerdicts(prog *Program) map[string]FusionVerdict {
+	out := map[string]FusionVerdict{}
 	effectful := effectfulFuncs(prog)
 	for _, fn := range prog.Funcs {
 		if _, isStdlibBody := arrayVerbOf(fn.Name); isStdlibBody {
 			continue
 		}
 		for _, pl := range recognizeInFunc(fn) {
-			_, why := planOne(fn, pl, effectful)
-			out[arrayPipelineKey(fn.Name, pl)] = why
+			_, v := planOne(fn, pl, effectful)
+			out[arrayPipelineKey(fn.Name, pl)] = v
 		}
 	}
 	return out
@@ -229,27 +229,28 @@ func arrayPipelineKey(fnName string, pl ArrayPipeline) string {
 // none. One at a time, because emitting shifts every later op index.
 func planFusion(fn *Func, effectful map[string]bool) (fusedPipeline, bool) {
 	for _, pl := range recognizeInFunc(fn) {
-		if p, why := planOne(fn, pl, effectful); why == FusionFused {
+		if p, v := planOne(fn, pl, effectful); v.Why == FusionFused {
 			return p, true
 		}
 	}
 	return fusedPipeline{}, false
 }
 
-func planOne(fn *Func, pl ArrayPipeline, effectful map[string]bool) (fusedPipeline, FusionRefusal) {
+func planOne(fn *Func, pl ArrayPipeline, effectful map[string]bool) (fusedPipeline, FusionVerdict) {
 	if len(pl.Stages) < 2 {
-		return fusedPipeline{}, FusionSingleStage
+		return fusedPipeline{}, FusionVerdict{Why: FusionSingleStage}
 	}
 	// The vocabulary of the first slice: elementwise and selection stages,
 	// then a `fold` or a `reduce`.
 	sink := pl.Stages[len(pl.Stages)-1]
 	if sink.Verb != "fold" && sink.Verb != "reduce" {
-		return fusedPipeline{}, FusionSinkNotAReduction
+		return fusedPipeline{}, FusionVerdict{
+			Why: FusionSinkNotAReduction, Stage: len(pl.Stages) - 1, Verb: sink.Verb}
 	}
 	var stages []fusedStage
-	for _, s := range pl.Stages[:len(pl.Stages)-1] {
+	for i, s := range pl.Stages[:len(pl.Stages)-1] {
 		if s.Verb != "map" && s.Verb != "filter" {
-			return fusedPipeline{}, FusionStageNotElementwise
+			return fusedPipeline{}, FusionVerdict{Why: FusionStageNotElementwise, Stage: i, Verb: s.Verb}
 		}
 		stages = append(stages, fusedStage{verb: s.Verb})
 	}
@@ -266,10 +267,11 @@ func planOne(fn *Func, pl ArrayPipeline, effectful map[string]bool) (fusedPipeli
 		// resolved (a slot the matcher could follow to a construction here)
 		// and must reach nothing capability-tagged.
 		if !ok || c.fnSlot < 0 || c.element == "" {
-			return fusedPipeline{}, FusionElementFunctionUnresolved
+			return fusedPipeline{}, FusionVerdict{Why: FusionElementFunctionUnresolved, Stage: i, Verb: s.Verb}
 		}
 		if effectful[c.element] {
-			return fusedPipeline{}, FusionElementFunctionEffectful
+			return fusedPipeline{}, FusionVerdict{
+				Why: FusionElementFunctionEffectful, Stage: i, Verb: s.Verb, Element: c.element}
 		}
 		if i < len(stages) {
 			stages[i].fn = c.fnSlot
@@ -278,7 +280,7 @@ func planOne(fn *Func, pl ArrayPipeline, effectful map[string]bool) (fusedPipeli
 	head := byOp[pl.Stages[0].Op]
 	tail := byOp[pl.Stages[len(pl.Stages)-1].Op]
 	if head.recv < 0 {
-		return fusedPipeline{}, FusionReceiverNotASlot
+		return fusedPipeline{}, FusionVerdict{Why: FusionReceiverNotASlot}
 	}
 	// Every stage's element type, not just the head's. A `map` may change it
 	// — `(i64) => i32` is an ordinary map — and one `elem` slot cannot hold
@@ -287,16 +289,16 @@ func planOne(fn *Func, pl ArrayPipeline, effectful map[string]bool) (fusedPipeli
 	// single slot sound.
 	width, elemT, ok := elemWidthOf(fn.Ops[head.op])
 	if !ok {
-		return fusedPipeline{}, FusionElementWidthUnsupported
+		return fusedPipeline{}, FusionVerdict{Why: FusionElementWidthUnsupported}
 	}
-	for _, s := range pl.Stages {
+	for i, s := range pl.Stages {
 		c, found := byOp[s.Op]
 		if !found {
-			return fusedPipeline{}, FusionElementFunctionUnresolved
+			return fusedPipeline{}, FusionVerdict{Why: FusionElementFunctionUnresolved, Stage: i, Verb: s.Verb}
 		}
 		w, et, okw := elemWidthOf(fn.Ops[c.op])
 		if !okw || w != width || et != elemT {
-			return fusedPipeline{}, FusionElementTypeVaries
+			return fusedPipeline{}, FusionVerdict{Why: FusionElementTypeVaries, Stage: i, Verb: s.Verb}
 		}
 	}
 	var seed Op
@@ -304,23 +306,24 @@ func planOne(fn *Func, pl ArrayPipeline, effectful map[string]bool) (fusedPipeli
 	if sink.Verb == "fold" {
 		seed, ok = foldSeedOp(fn, tail)
 		if !ok {
-			return fusedPipeline{}, FusionSeedNotConstant
+			return fusedPipeline{}, FusionVerdict{
+				Why: FusionSeedNotConstant, Stage: len(pl.Stages) - 1, Verb: sink.Verb}
 		}
 		accT = seedType(seed)
 	}
 	first, ok := rangeStart(fn, head)
 	if !ok {
-		return fusedPipeline{}, FusionRangeNotDelimited
+		return fusedPipeline{}, FusionVerdict{Why: FusionRangeNotDelimited}
 	}
 	last, ok := rangeEnd(fn, tail)
 	if !ok {
-		return fusedPipeline{}, FusionRangeNotDelimited
+		return fusedPipeline{}, FusionVerdict{Why: FusionRangeNotDelimited}
 	}
 	return fusedPipeline{
 		first: first, last: last, recvSlot: head.recv, seedOp: seed,
 		stages: stages, sinkFn: byOp[sink.Op].fnSlot, elemBytes: width,
 		elemType: elemT, accType: accT, sinkVerb: sink.Verb,
-	}, FusionFused
+	}, FusionVerdict{Why: FusionFused}
 }
 
 // elemWidthOf reads the element size from the combinator call's recorded
@@ -660,31 +663,66 @@ func (r FusionRefusal) Tag() string {
 	return "unknown"
 }
 
-// String is the sentence a per-site report prints.
+// String is the reason CLAUSE, without a verdict in front of it: FusionVerdict
+// composes it with the stage that owns it, and a report that wants the bare
+// reason should not have to strip a prefix off it.
 func (r FusionRefusal) String() string {
 	switch r {
 	case FusionFused:
 		return "fused into one loop"
 	case FusionSingleStage:
-		return "not fused: one stage is not a chain, and its result is the value"
+		return "one stage is not a chain, and its result is the value"
 	case FusionSinkNotAReduction:
-		return "not fused: the chain does not end in fold or reduce"
+		return "the chain does not end in fold or reduce"
 	case FusionStageNotElementwise:
-		return "not fused: a stage is neither map nor filter"
+		return "neither map nor filter"
 	case FusionElementFunctionUnresolved:
-		return "not fused: an element function is not statically resolved"
+		return "the element function is not statically resolved"
 	case FusionElementFunctionEffectful:
-		return "not fused: an element function can reach an observable effect, and fusing interleaves the stages"
+		return "the element function can reach an observable effect, and fusing interleaves the stages"
 	case FusionReceiverNotASlot:
-		return "not fused: the array is not held in a local"
+		return "the array is not held in a local"
 	case FusionElementWidthUnsupported:
-		return "not fused: only 8-byte elements are emitted"
+		return "only 8-byte elements are emitted"
 	case FusionElementTypeVaries:
-		return "not fused: a stage changes the element type"
+		return "the element type changes here"
 	case FusionSeedNotConstant:
-		return "not fused: fold's seed is not a constant"
+		return "fold's seed is not a constant"
 	case FusionRangeNotDelimited:
-		return "not fused: the chain's op range could not be delimited"
+		return "the chain's op range could not be delimited"
 	}
-	return "not fused"
+	return "no reason recorded"
+}
+
+// FusionVerdict is what the pass decided about one recognized pipeline, and
+// where. #9732's acceptance asks a refusal to name a STAGE as well as a
+// reason: "a stage is neither map nor filter" sends a reader back to count
+// stages themselves on a chain of four, which is the work the report exists to
+// save. Stage is an index into the pipeline's stage list and Verb is that
+// stage's combinator; both are meaningless when Why is FusionFused, and Stage
+// is 0 for a refusal no single stage owns.
+type FusionVerdict struct {
+	Why   FusionRefusal
+	Stage int
+	Verb  string
+	// Element is the element function the refusal is about, when the reason
+	// is about one. Empty otherwise.
+	Element string
+}
+
+// String renders the verdict as the report prints it, naming the stage when
+// the reason belongs to one. The stage leads, because a reader scanning a
+// four-stage chain wants to know WHERE before they read why.
+func (v FusionVerdict) String() string {
+	switch {
+	case v.Why == FusionFused:
+		return v.Why.String()
+	case v.Verb == "":
+		return "not fused: " + v.Why.String()
+	case v.Element != "":
+		return fmt.Sprintf("not fused at stage %d (%s, %s): %s",
+			v.Stage+1, v.Verb, v.Element, v.Why.String())
+	default:
+		return fmt.Sprintf("not fused at stage %d (%s): %s", v.Stage+1, v.Verb, v.Why.String())
+	}
 }

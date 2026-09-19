@@ -296,10 +296,23 @@ array, and — where a chain stopped — which rule stopped it:
 
 ```
 run:3:26  map(n->n)
-            not fused; 1 stage(s) materialize unfused
+            not fused: one stage is not a chain, and its result is the value; 1 stage(s) materialize unfused
             chain ends here: the intermediate is read again, so this is not one traversal
             map        elementwise  __closure_lambda_1
 ```
+
+A refusal that belongs to one stage names it, and names the element
+function when the reason is about that:
+
+```
+run:4:44  map(n->n) -> map(n->n) -> scan(n->n) -> fold(n->1)
+            not fused at stage 3 (scan): neither map nor filter; 3 stage(s) materialize unfused
+```
+
+Naming the stage is the point. "Neither map nor filter" on a four-stage
+chain sends the reader back to count stages themselves, which is the work
+the report exists to save. A refusal no single stage owns — the array is
+not held in a local, say — names none rather than blaming the first.
 
 `FERN_ARRAY_REPORT=1` adds a histogram, in two sections: why each chain
 was not FUSED (#9731), then where each chain STOPPED being one chain
