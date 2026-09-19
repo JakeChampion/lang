@@ -12803,30 +12803,28 @@ function e057_var_annot_diags(an: Annot[]): util.Diag[] {
 // with no runtime representation — natively ast.VoidType (a `void` call
 // result bound to a var) or ast.ParamType (an erased generic type
 // parameter), the only two shapes the native captureSink rejects
-// (checker.go E044). The self-host type model erases both to `unknown`,
-// so this walk works SYNTACTICALLY and stays deliberately narrow (it must
-// never false-positive on the bundle):
+// (checker.go E044). The self-host type model erases both to `unknown`, so
+// the suspects are identified SYNTACTICALLY and the rule stays deliberately
+// narrow (it must never false-positive on the bundle):
 //   - void suspect: a body `var x = f();` whose callee is a declared free
 //     function with an explicit `void` return type;
 //   - param-type suspect: in a GENERIC function only, a parameter or body
 //     var whose annotation is a bare unknown identifier — a generic's
 //     `x: T` is exactly the shape the native checker types as ParamType.
-// A lambda (incl. a desugared local `function`) that mentions a suspect —
-// without a same-named lambda param shadowing it — draws E044 at the
-// enclosing statement, naming the suspect's annotation spelling like
-// native ("T" / "void"). Nested blocks re-walk with a copy of the suspect
-// set so block-scoped vars don't leak.
+// A lambda that CAPTURES a suspect draws E044 at the enclosing statement,
+// naming the suspect's annotation spelling like native ("T" / "void").
+// is_written_lambda_origin decides which lambdas this reaches: a bare one, a
+// desugared local `function`, a `use` callback. Nested blocks re-walk with a
+// copy of the suspect set so block-scoped vars don't leak.
 function e044_lambda_check(lam: ast.ExprLambda, line: i32, col: i32, suspects: string[], labels: string[]): util.Diag[] {
   var out: util.Diag[] = [];
+  // Captured, not mentioned: a suspect whose only appearance is a nested
+  // binder's own name is not a capture, and every coded diagnostic is a build
+  // gate, so a syntactic mention test here REJECTS programs native accepts.
+  var free: string[] = astwalk.collect_lambda_idents(lam, []);
   var i: i32 = 0;
   while (i < suspects.len()) {
-    var shadowed: boolean = false;
-    for param in lam.params {
-      if (param.name == suspects[i]) {
-        shadowed = true;
-      }
-    }
-    if (!shadowed && parser.stmts_mention(lam.body, suspects[i])) {
+    if (util.has_str(free, suspects[i])) {
       out = out.append(dg_at("E044", "captured variable \"" + suspects[i] + "\" has unsupported type " + labels[i], line, col));
     }
     i = i + 1;
@@ -12847,9 +12845,9 @@ function e044_expr(e: ast.Expr, line: i32, col: i32, suspects: string[], labels:
       // keeping the rule's deliberate narrowness: a written lambda nested
       // inside a synthesised one is under-reported, never false-reported.
       //
-      // Report and stop: stmts_mention already recursed into any
-      // nested lambda, so descending again would double-report.
-      if (lm.origin.len() == 0) {
+      // Report and stop: collect_lambda_idents already folds in a nested
+      // lambda's own free names, so descending again would double-report.
+      if (parser.is_written_lambda_origin(lm.origin)) {
         out = util.append_diags(out, e044_lambda_check(lm, line, col, suspects, labels));
       }
     },

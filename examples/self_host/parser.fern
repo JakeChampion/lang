@@ -421,7 +421,7 @@ function e_lambda_at(params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[]
 // spelling at all, and a result with no parameter list would rebuild `() => R`
 // for a function that takes arguments.
 function e_lambda_fn(params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], fn_ret: string, fn_ptys: string): ast.Expr {
-    return e_lambda_at(params, ret_type, body, "", 0, 0, fn_ret, fn_ptys);
+    return e_lambda_at(params, ret_type, body, ORIGIN_NESTED_FN, 0, 0, fn_ret, fn_ptys);
 }
 // e_lambda_origin builds a lambda the PARSER synthesised, labelled
 // with the source form it stands in for so `-fmt` reprints that form. "block"
@@ -594,8 +594,14 @@ pub const ORIGIN_IIFE_SCOPED: string = "iife_scoped";
 
 // ORIGIN_USE marks the callback lambda a `use NAME[: TYPE] <- CALL;` desugars
 // to, appended as CALL's last argument. The printer reads it back to reprint
-// the `use`; nothing else treats the lambda differently from a written one.
+// the `use`; nothing else treats the lambda differently from a written one,
+// which is what is_written_lambda_origin admitting it keeps true.
 pub const ORIGIN_USE: string = "use";
+
+// ORIGIN_NESTED_FN marks the lambda a nested `function` declaration desugars to.
+// Like ORIGIN_USE it marks a lambda the PROGRAMMER wrote rather than one the
+// parser synthesised, so is_written_lambda_origin admits it.
+pub const ORIGIN_NESTED_FN: string = "nested_fn";
 
 // no_match_sugar is the empty MatchSugar every StmtIf but the two match
 // desugars carries.
@@ -13390,6 +13396,19 @@ pub function mkclo_body(name: string): string {
     var marker: string = "__mkclo$";
     if (name.len() <= marker.len() || slice_unchecked(name, 0, marker.len()) != marker) { return ""; }
     return slice_unchecked(name, marker.len(), name.len()) + "";
+}
+
+// is_written_lambda_origin reports whether a lambda with this origin is one the
+// PROGRAMMER wrote. A bare lambda carries no origin; a nested `function`
+// declaration and a `use` callback each desugar to one the programmer did
+// write, so both are admitted. The rest — a value block, an if- or
+// match-expression, a comprehension — are IIFEs the parser synthesised, with no
+// counterpart in the native AST.
+//
+// ORIGIN_IIFE_SCOPED belongs to neither group: the defer lowering stamps it
+// after the checker has run, so no checker rule ever sees it.
+pub function is_written_lambda_origin(origin: string): boolean {
+    return origin.len() == 0 || origin == ORIGIN_NESTED_FN || origin == ORIGIN_USE;
 }
 
 // is_value_block_origin reports whether `origin` names one of the desugars that
