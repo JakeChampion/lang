@@ -416,7 +416,7 @@ function e_lambda_at(params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[]
 // whether it can rebuild the spelling at all, and a result with no parameter
 // list would rebuild `() => R` for a function that takes arguments.
 function e_lambda_fn(params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], fn_ret: string, fn_ptys: string): ast.Expr {
-    return ast.ExprLambda { params: params, ret_type: ret_type, body: body, use_infer: false, origin: "", line: 0, col: 0, captures: [], captures_known: false, ret_fn_ret: fn_ret, ret_fn_param_types: fn_ptys };
+    return ast.ExprLambda { params: params, ret_type: ret_type, body: body, use_infer: false, origin: ORIGIN_NESTED_FN, line: 0, col: 0, captures: [], captures_known: false, ret_fn_ret: fn_ret, ret_fn_param_types: fn_ptys };
 }
 // e_lambda_origin is e_lambda for a lambda the PARSER synthesised, labelled
 // with the source form it stands in for so `-fmt` reprints that form. "block"
@@ -591,6 +591,9 @@ pub const ORIGIN_IIFE_SCOPED: string = "iife_scoped";
 // to, appended as CALL's last argument. The printer reads it back to reprint
 // the `use`; nothing else treats the lambda differently from a written one.
 pub const ORIGIN_USE: string = "use";
+
+// ORIGIN_NESTED_FN marks the lambda a nested `function` declaration desugars to.
+pub const ORIGIN_NESTED_FN: string = "nested_fn";
 
 // no_match_sugar is the empty MatchSugar every StmtIf but the two match
 // desugars carries.
