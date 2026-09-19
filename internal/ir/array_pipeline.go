@@ -507,8 +507,9 @@ func countSlotLoads(fn *Func) map[int32]*slotLoads {
 // from the output when it stopped firing is one nobody notices is missing.
 func FormatArrayPipelineHistogram(p *Program) string {
 	pipes := RecognizeArrayPipelines(p)
-	fusible := FusibleArrayPipelines(p)
+	verdicts := ArrayFusionVerdicts(p)
 	counts := map[ArrayRefusal]int{}
+	fusionCounts := map[FusionRefusal]int{}
 	stages, materialize, chained, fused := 0, 0, 0, 0
 	for _, pl := range pipes {
 		counts[pl.Stop]++
@@ -517,7 +518,9 @@ func FormatArrayPipelineHistogram(p *Program) string {
 		if len(pl.Stages) > 1 {
 			chained++
 		}
-		if fusible[arrayPipelineKey(pl.Func, pl)] {
+		why := verdicts[arrayPipelineKey(pl.Func, pl)]
+		fusionCounts[why]++
+		if why == FusionFused {
 			fused++
 		}
 	}
@@ -525,8 +528,12 @@ func FormatArrayPipelineHistogram(p *Program) string {
 	fmt.Fprintf(&b, "array pipelines: %d (%d with more than one stage), %d stages, %d materializing\n",
 		len(pipes), chained, stages, materialize)
 	fmt.Fprintf(&b, "fused: %d (#9731)\n", fused)
+	for _, r := range AllFusionRefusals {
+		fmt.Fprintf(&b, "  %-26s %d\n", r.Tag(), fusionCounts[r])
+	}
+	fmt.Fprintf(&b, "chains stopped by (#9730):\n")
 	for _, r := range allRefusals {
-		fmt.Fprintf(&b, "  %-24s %d\n", r.Tag(), counts[r])
+		fmt.Fprintf(&b, "  %-26s %d\n", r.Tag(), counts[r])
 	}
 	return b.String()
 }
@@ -548,7 +555,7 @@ func FormatArrayPipelines(p *Program) string {
 			posW = len(posOf[i])
 		}
 	}
-	fusible := FusibleArrayPipelines(p)
+	verdicts := ArrayFusionVerdicts(p)
 	var b strings.Builder
 	chained := 0
 	for i, pl := range pipes {
@@ -560,12 +567,8 @@ func FormatArrayPipelines(p *Program) string {
 		// per site rather than once at the bottom: a reader checking one
 		// expression should not have to know that the absence of a word means
 		// no.
-		verdict := "not fused"
-		if fusible[arrayPipelineKey(pl.Func, pl)] {
-			verdict = "fused into one loop"
-		}
 		fmt.Fprintf(&b, "%-*s    %s; %d stage(s) materialize unfused\n",
-			posW, "", verdict, pl.Materializes())
+			posW, "", verdicts[arrayPipelineKey(pl.Func, pl)], pl.Materializes())
 		if pl.Stop != RefusalNone {
 			fmt.Fprintf(&b, "%-*s    chain ends here: %s\n", posW, "", pl.Stop)
 		}

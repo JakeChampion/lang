@@ -301,12 +301,29 @@ run:3:26  map(n->n)
             map        elementwise  __closure_lambda_1
 ```
 
-`FERN_ARRAY_REPORT=1` adds a histogram. The refusal reasons are a **closed
-set** with stable tags, for the reason `FERN_SSA_REPORT` is: the set of
-things declined is the coverage checklist for the fusion pass, and a tally
-of free-text strings cannot be counted. Every reason prints a row even at
-zero, so a reason that stops firing shows as a zero rather than as a line
-nobody notices went missing.
+`FERN_ARRAY_REPORT=1` adds a histogram, in two sections: why each chain
+was not FUSED (#9731), then where each chain STOPPED being one chain
+(#9730). Both sets are **closed** with stable tags, for the reason
+`FERN_SSA_REPORT` is: the set of things declined is the coverage checklist
+for widening the algebra, and a tally of free-text strings cannot be
+counted. Every reason prints a row even at zero, so a reason that stops
+firing shows as a zero rather than as a line nobody notices went missing.
+
+```
+array pipelines: 4 (4 with more than one stage), 8 stages, 4 materializing
+fused: 0 (#9731)
+  single-stage               0
+  sink-not-a-reduction       0
+  stage-not-elementwise      1
+  element-fn-unresolved      0
+  element-fn-effectful       1
+  receiver-not-a-slot        1
+  element-width-unsupported  1
+  ...
+chains stopped by (#9730):
+  complete                   4
+  ...
+```
 
 The verdict comes from the fusion planner itself (#9731), not from a
 constant: a report that claimed a fusion the backend did not perform would

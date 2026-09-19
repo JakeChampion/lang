@@ -133,10 +133,24 @@ default-correct unless we have a specific reason to deviate.
 - **MoonBit's UTF-16 string internals.** Java/JS heritage. UTF-8 is
   right for wasm + edge HTTP. MoonBit themselves are migrating
   APIs Unicode-safe over time.
-- **Rust's monomorphized lazy iterator chains.** Beautiful when the
-  optimizer fuses them, allocation traps when it doesn't. Without
-  an aggressive inliner we'd ship code that looks fast but isn't.
-  Eager combinators + pipe is safer until the IR can fuse.
+- **Rust's monomorphized lazy iterator chains.** ⚠️ **The reason is
+  half gone.** The original call was: beautiful when the optimizer
+  fuses them, allocation traps when it doesn't; without an
+  aggressive inliner we'd ship code that looks fast but isn't, so
+  eager combinators + pipe is safer until the IR can fuse. The IR
+  now fuses (#9731, `internal/ir/array_fusion.go`) — `map` and
+  `filter` stages into a `fold` or `reduce` become one loop with no
+  intermediate and, because the pass runs before
+  `Defunctionalise`, no per-element indirect call either. So the
+  "looks fast but isn't" objection no longer applies to those
+  operators.
+  The stance still stands, for the narrower reason that the fused
+  algebra is not yet the whole of what a lazy chain would offer:
+  `take`, `flat_map` and `zip` are unfused, and a surface that
+  invites chains the IR silently declines to fuse is the same trap
+  named differently. `docs/ITERATOR-FUSION-CONTRACT.md` is the
+  contract to flip it against, and its clause 2 is the remaining
+  work.
 - **Hare's no-generics stance.** Forces users to rewrite map / set
   / vec each time. Bad fit for "small fast CLI tools" where you
   want batteries.
