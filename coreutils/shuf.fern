@@ -117,10 +117,12 @@ function reservoir_min_input(): i64 {
   return 8388608 as i64;
 }
 
-// What `-n` means when it was never given: gnulib's SIZE_MAX, which is
-// also the value that turns the reservoir back off when it IS given.
+// What `-n` means when it was never given: gnulib's MIN(IDX_MAX,
+// SIZE_MAX), which on every target here is IDX_MAX. A `-n` at or above
+// it is clamped down to it and so turns the reservoir back off, and 9.5
+// moved that line down from SIZE_MAX.
 function count_cap(): u64 {
-  return 18446744073709551615 as u64;
+  return 9223372036854775807 as u64;
 }
 
 // ---- the random source ------------------------------------------------------

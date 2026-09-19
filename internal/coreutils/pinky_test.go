@@ -130,6 +130,14 @@ func pinkyCases(t *testing.T) []invocation {
 		invocation{name: "POSIXLY_CORRECT stops options at the first operand",
 			args: []string{"root", "-q"}, env: []string{"POSIXLY_CORRECT=1"}},
 
+		// --lookup, 9.5's. Nothing in the fixture resolves, so both
+		// sides print the host as the database holds it.
+		invocation{name: "lookup", args: []string{"--lookup", "root"}},
+		invocation{name: "lookup in the long format", args: []string{"--lookup", "-l", "root"}},
+		invocation{name: "lookup abbreviated", args: []string{"--look", "root"}},
+		invocation{name: "lookup rejects a value", args: []string{"--lookup=x", "root"}},
+		invocation{name: "l is ambiguous between lookup and nothing", args: []string{"--l", "root"}},
+
 		// The write-failure paths.
 		invocation{name: "stdout closed", args: []string{"fernnosuchuser"}, stdout: stdoutClosed},
 		invocation{name: "stdout full", args: []string{"fernnosuchuser"}, stdout: stdoutFull},

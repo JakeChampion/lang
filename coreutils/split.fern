@@ -246,13 +246,14 @@ function u64_max(): u64 {
 }
 
 // `-a N`. A negative operand is strtoumax's wrap rather than a parse
-// failure, so gnulib reports ERANGE for it and EOVERFLOW for digits past
-// uintmax_t — two different strerror texts for what looks like one fault.
+// failure, and gnulib reserves ERANGE for a bound the CALLER imposed —
+// split imposes none, so a wrap and digits past uintmax_t carry the same
+// EOVERFLOW text.
 function suffix_length_operand(value: string): i32 {
   var r: (u64, i32) = gnu.parse_number(value);
   if (gnu.count_malformed(r.1)) {
     if (negated_number(value)) {
-      gnu.error("invalid suffix length: " + gnu.quote(value) + ": Numerical result out of range");
+      gnu.error("invalid suffix length: " + gnu.quote(value) + ": Value too large for defined data type");
       exit(1);
     }
     gnu.error("invalid suffix length: " + gnu.quote(value));
