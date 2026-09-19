@@ -271,6 +271,48 @@ var semProductionPrograms = []struct {
 	noLeak bool
 	src    string
 }{
+	// A lambda the SOURCE wrote, with an explicit callable return annotation.
+	// parse_type_name coarsens that annotation to the tag "fn" and the lambda
+	// parse discarded the contract, so e_lambda_at built every source lambda
+	// with an empty pair — the same empty-spelling refusal the nested-decl
+	// desugar hit, reached without any `function` keyword. The annotation is now
+	// re-read verbatim by the reader that produced the tag, which is what
+	// parse_decl_type already did for a declaration. Produces 0 of 3 without it.
+	{name: "source-lambda-returning-callable", atLeast: 3, src: `
+function main(): i32 {
+    var mk: () => ((i32) => i32) = ((): ((i32) => i32) => { var g: (i32) => i32 = ((y: i32) => y); return g; });
+    var f: (i32) => i32 = mk();
+    return f(42);
+}
+`},
+	// The same annotation written WITHOUT the outer parentheses. The two
+	// spellings are read by different halves of the ambiguity dance
+	// parse_arrow_lambda does (#8743) — one read swallows the lambda's own arrow
+	// and one does not — and the contract is recovered on both paths, so both
+	// are gated. Also produces 0 of 3 without the fix.
+	{name: "source-lambda-returning-callable-bare", atLeast: 3, src: `
+function main(): i32 {
+    var mk: () => ((i32) => i32) = ((): (i32) => i32 => { var g: (i32) => i32 = ((y: i32) => y); return g; });
+    var f: (i32) => i32 = mk();
+    return f(42);
+}
+`},
+	// An if-expression desugars to an IIFE whose ret_type if_expr_rt reads off
+	// the then-branch, and for a boolean branch it tagged it "bool" — a spelling
+	// the language does not have. The checker rejects `bool` as a type name (it
+	// answers "did you mean `boolean`?"), so scope.ret_type came back unresolved
+	// and semsource refused the IIFE for an empty result type, taking the module
+	// with it. i32 and string branches were unaffected, which is why this
+	// survived: only the boolean arm of if_expr_rt spelled its own tag wrong.
+	// Produces 0 of 2 without the fix; the comparison case covers the binary arm,
+	// which spelled it the same way.
+	{name: "if-expr-boolean-branches", atLeast: 2, src: `
+function main(): i32 {
+    var v: boolean = if (true) { false } else { true };
+    var w: boolean = if (v) { 1 < 2 } else { 2 < 1 };
+    return if (v) { 0 } else { if (w) { 42 } else { 1 } };
+}
+`},
 	{name: "scalar-calls", atLeast: 3, src: `
 function add(a: i32, b: i32): i32 { return a + b; }
 function total(xs: i32[]): i32 {
