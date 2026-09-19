@@ -12818,15 +12818,14 @@ function e057_var_annot_diags(an: Annot[]): util.Diag[] {
 // set so block-scoped vars don't leak.
 function e044_lambda_check(lam: ast.ExprLambda, line: i32, col: i32, suspects: string[], labels: string[]): util.Diag[] {
   var out: util.Diag[] = [];
+  // What the lambda CAPTURES, not what it mentions. `stmts_mention` is purely
+  // syntactic and descends into nested lambda bodies, so a suspect whose only
+  // appearance is a nested lambda's own parameter read as a capture and the
+  // build gate rejected a program native accepts.
+  var free: string[] = astwalk.collect_lambda_idents(lam, []);
   var i: i32 = 0;
   while (i < suspects.len()) {
-    var shadowed: boolean = false;
-    for param in lam.params {
-      if (param.name == suspects[i]) {
-        shadowed = true;
-      }
-    }
-    if (!shadowed && parser.stmts_mention(lam.body, suspects[i])) {
+    if (util.has_str(free, suspects[i])) {
       out = out.append(dg_at("E044", "captured variable \"" + suspects[i] + "\" has unsupported type " + labels[i], line, col));
     }
     i = i + 1;

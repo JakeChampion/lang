@@ -95,6 +95,20 @@ the self-host already agrees with native on a hand-written IIFE. Verified before
 changing anything — the predicate says so rather than listing an origin that
 cannot reach it.
 
+Admitting the third syntax then exposed what the rule had been doing all along.
+`e044_lambda_check` asked `stmts_mention`, which is purely syntactic and descends
+INTO nested lambda bodies, so a suspect whose only appearance was a nested
+binder's own parameter read as a capture. Since every coded diagnostic is a build
+gate, that is not an over-report in a diagnostic — it is the self-host compiler
+REJECTING a program native accepts. It was already true on main for a bare lambda
+and for a nested `function`; admitting `ORIGIN_USE` added a third syntax to it.
+
+The rule asks what a lambda CAPTURES now: `astwalk.collect_lambda_idents`, the
+shadow-aware free-variable walk the capture consumers already share, which binds
+params and threads `var` declarations in source order. Three more corpus rows,
+one per syntax. A false positive that rejects valid code outranks the widening
+that surfaced it, so the fix is the walk rather than the admission.
+
 ## The instrument, found while chasing what did not move
 
 One shape kept refusing: the SELF-recursive nested function, at `unresolved type
