@@ -1,7 +1,6 @@
 package e2eselfhost
 
 import (
-	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -90,5 +89,4 @@ function main(): i32 {
 		t.Errorf("produced %d of %d (%.1f%%), want at least 99%%\n%s",
 			produced, measured, 100*float64(produced)/float64(measured), report)
 	}
-	_ = os.Remove(entry)
 }
