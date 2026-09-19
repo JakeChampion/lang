@@ -404,10 +404,12 @@ function e_field_access(obj: ast.Expr, field: string): ast.Expr {
 function e_field_access_at(obj: ast.Expr, field: string, line: i32, col: i32): ast.Expr {
     return ast.ExprFieldAccess { obj: obj, field: field, line: line, col: col, ty: "" };
 }
-// e_lambda_at builds a lambda for the two parses of one the source WROTE, which
-// are the only ones that carry a position; see ExprLambda.line. It takes the
-// #5986 sidecar pair because a source lambda can be annotated `: (i32) => i32`
-// too, and fn_contract_of at the parse site hands it both halves.
+// e_lambda_at is the one place the ExprLambda literal is written; e_lambda_fn
+// and e_lambda_origin route through it. Only the two parses of a lambda the
+// source WROTE pass a position — the synthesised ones have none to give; see
+// ExprLambda.line. It takes the #5986 sidecar pair because a source lambda can
+// be annotated `: (i32) => i32` too, and fn_contract_of at the parse site hands
+// it both halves.
 function e_lambda_at(params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], origin: string, line: i32, col: i32, ret_fn_ret: string, ret_fn_param_types: string): ast.Expr {
     return ast.ExprLambda { params: params, ret_type: ret_type, body: body, use_infer: false, origin: origin, line: line, col: col, captures: [], captures_known: false, ret_fn_ret: ret_fn_ret, ret_fn_param_types: ret_fn_param_types };
 }
