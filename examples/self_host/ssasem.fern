@@ -204,6 +204,9 @@ pub function is_integer(t: typeinfo.Type): boolean {
 // ownership planner defines, so ssaunits reads it from here rather than
 // keeping a second copy.
 pub function reference(t: typeinfo.Type): boolean {
+    // A stream handle wears a record's nominal but holds a descriptor, so it
+    // occupies a scalar slot and there is no address to count.
+    if (semtypes.is_handle(t)) { return false; }
     if let typeinfo.TypeString(_) = t { return true; }
     if let typeinfo.TypeArray(_) = t { return true; }
     if let typeinfo.TypeTuple(_) = t { return true; }
