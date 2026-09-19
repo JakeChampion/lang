@@ -41,12 +41,16 @@ was present and wrong about width, here it is present and not a type at all.
 for a missing mechanism, not for one arm of a five-arm match spelling its own
 tag wrong.
 
-**The refusal names nothing.** `unresolved result type: ` prints
+**The refusal named nothing.** `unresolved result type: ` printed
 `typeinfo.spelling(s.result)`, and an unresolved type spells empty. The message
-that would have ended this in a minute — `unresolved result type: bool` — is
-the one message it cannot print, because a type that failed to resolve has no
-spelling to report. Worth fixing separately: the refusal should carry the
-DECLARED spelling it failed on, not the resolved type it did not get.
+that would have ended this in a minute — `unresolved result type: bool` — was
+the one message it could not print, because a type that failed to resolve has no
+spelling to report.
+
+That one is fixed here too, because it is the reason the other three mattered:
+167 refusals whose cause was a single word read identically to refusals whose
+cause was something else. `unresolved_result_spelling` falls back to the
+DECLARED spelling when the resolved type has none.
 
 ## What it bought
 
@@ -86,8 +90,9 @@ thing they share, not the first.
 
 ## The remaining 59
 
-All `$iife`, and the improved refusal message named their cause on sight:
-`unresolved result type: declared `fn``. Four lines reproduce it.
+All `$iife`, and the improved refusal message named their cause on sight —
+it reads `unresolved result type: declared` followed by `fn` in backticks. Four
+lines reproduce it.
 
 ```fern
 function main(): i32 {
