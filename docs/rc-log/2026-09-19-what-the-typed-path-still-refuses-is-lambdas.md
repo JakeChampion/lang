@@ -61,8 +61,10 @@ The refusal that dominates is not "the typed path cannot lower a lambda". It is
 
 > is a function value `<creator>` builds, which the AST lowering defines
 
-A lambda is lifted to a hoisted body named `__mkclo$<creator>$wrapN`, and the
-CREATOR — the function whose body builds the closure box — hands the value out.
+A lambda is lifted to a hoisted body named `<creator>$wrapN`, and the lift
+names the env box it is called through `__mkclo$<creator>$wrapN` — the two are
+not the same symbol, and `parser.mkclo_body` is what strips one to the other.
+The CREATOR — the function whose body builds that box — hands the value out.
 If the creator is AST-lowered, the hoisted body must be too, because the AST
 lowering calls it through that box under the AST convention. The 207
 `call target has no semantic contract: __lam_N` are the same edge from the
