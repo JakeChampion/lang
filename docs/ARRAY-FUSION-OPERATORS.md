@@ -263,10 +263,23 @@ allocation per round is `reduce`'s own `Some(acc)` box, which its
 the input — the hand-written loops return a bare `i64` and so pay nothing.
 A `fold` sink allocates nothing at all.
 
-The runtime half of clause 3 is not claimed here. Wall-clock on this
-hardware put a pipeline ahead of its own hand-written loop, which is how
-`docs/ARRAY-PIPELINE-BASELINE-2026-09.md` came to use callgrind retired
-instructions instead; that instrument needs the Linux devbox and the ratio
-has not been remeasured since the pass landed. `scripts/array-pipeline-baseline`
-runs both compilers over every backend, so it is one command when someone
-wants it.
+Runtime, measured the way the baseline was — callgrind retired instructions,
+arm64-linux running natively in `scripts/devbox`, 2000 elements over 30 rounds:
+
+| | combinator ÷ loop, before | after |
+| --- | ---: | ---: |
+| `map.map.reduce` | 4.69x | **1.21x** |
+| `filter.map.reduce` | 2.84x | **0.98x** |
+
+`filter.map.reduce` is faster than the loop it is compared against, which is
+not a measurement error: that loop indexes `xs[i]` twice, once for the
+predicate and once for the value, where the fused form loads the element once
+into its own slot. The `closure_loop` and `loop` variants moved by under 0.1%
+between the two builds, which is what says the instrument is reading the
+change and not the weather.
+
+`map.map.reduce` keeps a residual of about 12 instructions per element. The
+likely remainder is the per-element `__arr_idx_8_nc` call, which the
+hand-written loop does not pay because its indexing is inlined; emitting that
+address arithmetic directly is a pointer-width question on three backends and
+belongs in its own change, measured on its own.

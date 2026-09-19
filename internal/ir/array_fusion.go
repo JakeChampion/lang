@@ -396,12 +396,14 @@ func emitFusion(fn *Func, p fusedPipeline, ptrW int) {
 	acc, idx, elem := base, base+1, base+2
 	// `reduce` needs three more: whether anything has arrived yet, the box
 	// being built, and the Option the two arms of the finish agree on.
-	seen, boxBase, result := base+3, base+4, base+5
+	length := base + 3
+	seen, boxBase, result := base+4, base+5, base+6
 	i32 := ast.NumberType{Width: 32, Signed: true}
 	fn.ScratchTypes = append(fn.ScratchTypes,
 		p.accType,  // the accumulator
 		i32,        // the cursor
-		p.elemType) // the element in flight
+		p.elemType, // the element in flight
+		i32)        // the length, read once
 	if p.sinkVerb == "reduce" {
 		fn.ScratchTypes = append(fn.ScratchTypes, i32, i32, i32)
 	}
@@ -431,10 +433,17 @@ func emitFusion(fn *Func, p fusedPipeline, ptrW int) {
 	}
 	add(Op{Kind: OpConstI32}, Op{Kind: OpStoreLocal, I32: idx})
 
-	// while idx < len(xs)
-	add(Op{Kind: OpBlock}, Op{Kind: OpLoop})
-	add(Op{Kind: OpLoadLocal, I32: idx})
+	// The length is read ONCE. It cannot change under the loop: every stage
+	// is applied to an element rather than to the array, and the purity
+	// boundary already refuses a stage that could reach anything else. Left
+	// in the loop it is a load and an address computation per element, which
+	// is most of what separated the fused form from the hand-written one.
 	add(Op{Kind: OpLoadLocal, I32: p.recvSlot}, Op{Kind: OpConstI32, I32: 4}, Op{Kind: OpSub}, Op{Kind: OpLoad})
+	add(Op{Kind: OpStoreLocal, I32: length})
+
+	// while idx < length
+	add(Op{Kind: OpBlock}, Op{Kind: OpLoop})
+	add(Op{Kind: OpLoadLocal, I32: idx}, Op{Kind: OpLoadLocal, I32: length})
 	add(Op{Kind: OpLtS, Width: 32}, Op{Kind: OpNot}, Op{Kind: OpBrIf, I32: 1})
 
 	// elem = xs[idx]
