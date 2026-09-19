@@ -404,25 +404,30 @@ function e_field_access(obj: ast.Expr, field: string): ast.Expr {
 function e_field_access_at(obj: ast.Expr, field: string, line: i32, col: i32): ast.Expr {
     return ast.ExprFieldAccess { obj: obj, field: field, line: line, col: col, ty: "" };
 }
-// e_lambda_at builds a lambda for the two parses of one the source WROTE, which
-// are the only ones that carry a position; see ExprLambda.line.
-function e_lambda_at(params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], origin: string, line: i32, col: i32): ast.Expr {
-    return ast.ExprLambda { params: params, ret_type: ret_type, body: body, use_infer: false, origin: origin, line: line, col: col, captures: [], captures_known: false, ret_fn_ret: "", ret_fn_param_types: "" };
+// e_lambda_at is the one place the ExprLambda literal is written; e_lambda_fn
+// and e_lambda_origin route through it. Only the two parses of a lambda the
+// source WROTE pass a position — the synthesised ones have none to give; see
+// ExprLambda.line. It takes the #5986 sidecar pair because a source lambda can
+// be annotated `: (i32) => i32` too, and fn_contract_of at the parse site hands
+// it both halves.
+function e_lambda_at(params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], origin: string, line: i32, col: i32, ret_fn_ret: string, ret_fn_param_types: string): ast.Expr {
+    return ast.ExprLambda { params: params, ret_type: ret_type, body: body, use_infer: false, origin: origin, line: line, col: col, captures: [], captures_known: false, ret_fn_ret: ret_fn_ret, ret_fn_param_types: ret_fn_param_types };
 }
 
-// e_lambda_fn is e_lambda for a lambda that RETURNS a function value, carrying
-// the signature `parse_type_name` coarsened to the flat "fn" tag. Only a caller
-// holding BOTH halves uses it: `fn_tag_spelling` reads the result to decide
-// whether it can rebuild the spelling at all, and a result with no parameter
-// list would rebuild `() => R` for a function that takes arguments.
+// e_lambda_fn builds a lambda the PARSER synthesised for a declaration that
+// RETURNS a function value, carrying the signature `parse_type_name` coarsened
+// to the flat "fn" tag. Only a caller holding BOTH halves uses it:
+// `fn_tag_spelling` reads the result to decide whether it can rebuild the
+// spelling at all, and a result with no parameter list would rebuild `() => R`
+// for a function that takes arguments.
 function e_lambda_fn(params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], fn_ret: string, fn_ptys: string): ast.Expr {
-    return ast.ExprLambda { params: params, ret_type: ret_type, body: body, use_infer: false, origin: ORIGIN_NESTED_FN, line: 0, col: 0, captures: [], captures_known: false, ret_fn_ret: fn_ret, ret_fn_param_types: fn_ptys };
+    return e_lambda_at(params, ret_type, body, ORIGIN_NESTED_FN, 0, 0, fn_ret, fn_ptys);
 }
-// e_lambda_origin is e_lambda for a lambda the PARSER synthesised, labelled
+// e_lambda_origin builds a lambda the PARSER synthesised, labelled
 // with the source form it stands in for so `-fmt` reprints that form. "block"
 // is a value-position `{ … }`; see ExprLambda.origin.
 function e_lambda_origin(params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], origin: string): ast.Expr {
-    return e_lambda_at(params, ret_type, body, origin, 0, 0);
+    return e_lambda_at(params, ret_type, body, origin, 0, 0, "", "");
 }
 pub function e_unknown(kind: string): ast.Expr { return ast.ExprUnknown { kind: kind, line: 0, col: 0 }; }
 pub function e_unknown_at(kind: string, line: i32, col: i32): ast.Expr { return ast.ExprUnknown { kind: kind, line: line, col: col }; }
@@ -1619,6 +1624,8 @@ function parse_arrow_lambda(p: Par): (ast.Expr, Par) {
     }
     if (p.peek_punct() == ")") { p = p.advance(); }
     var ret_type: string = "";
+    var lam_fn_ret: string = "";
+    var lam_fn_ptys: string = "";
     if (p.peek_punct() == ":") {
         p = p.advance();
         // A parenthesised annotation is ambiguous with a function type:
@@ -1636,10 +1643,23 @@ function parse_arrow_lambda(p: Par): (ast.Expr, Par) {
         if (rtr_p.peek_punct() == "=>") {
             p = rtr_p;
             ret_type = rtr_name;
+            // The same verbatim re-read parse_decl_type does, with the reader
+            // that produced this tag. It yields BOTH halves of the contract,
+            // where the coarse `fn_ret` of parse_type_name is only one — and
+            // half a signature is worse than none, since fn_tag_spelling would
+            // rebuild `() => R` for a function that takes arguments.
+            var (gw, gwa, gwr, gwe) = parse_type_name(Par { ...saved, verbatim: true });
+            var (g_ret, g_ptys) = fn_contract_of(rtr_name, gw);
+            lam_fn_ret = g_ret;
+            lam_fn_ptys = g_ptys;
         } else {
             var (ra_name, ra_ret_arr, ra_fn_ret, ra_p) = parse_type_name_reserving_arrow(saved);
             p = ra_p;
             ret_type = ra_name;
+            var (rw, rwa, rwr, rwe) = parse_type_name_reserving_arrow(Par { ...saved, verbatim: true });
+            var (r_ret, r_ptys) = fn_contract_of(ra_name, rw);
+            lam_fn_ret = r_ret;
+            lam_fn_ptys = r_ptys;
         }
     }
     if (p.peek_punct() == "=>") { p = p.advance(); }
@@ -1660,7 +1680,7 @@ function parse_arrow_lambda(p: Par): (ast.Expr, Par) {
         body = [s_return(ber_expr)];
     }
     body = prepend_param_destrs(body, apd);
-    return parse_postfix(p, e_lambda_at(params, ret_type, body, "", lam_line, lam_col));
+    return parse_postfix(p, e_lambda_at(params, ret_type, body, "", lam_line, lam_col, lam_fn_ret, lam_fn_ptys));
 }
 
 // Parse results are `(parsed_thing…, Par)` tuple returns — both pieces
@@ -2664,7 +2684,7 @@ function value_arm_body(body: ast.Stmt[], val: string): ast.Stmt[] {
 // i32 0, which at worst re-bails rather than miscompiling.
 function zero_expr_for(rt: string): ast.Expr {
     if (rt == "string") { return e_string(""); }
-    if (rt == "bool") { return e_bool(false); }
+    if (rt == "boolean") { return e_bool(false); }
     if (rt == "f64") { return e_number("0", "", true); }
     if (rt == "i64" || rt == "u64") { return e_number("0", rt, false); }
     return e_number("0", "", false);
@@ -2677,7 +2697,7 @@ function zero_expr_for(rt: string): ast.Expr {
 function if_expr_rt(e: ast.Expr): string {
     match (e) {
         ast.ExprString(_) => { return "string"; },
-        ast.ExprBool(_) => { return "bool"; },
+        ast.ExprBool(_) => { return "boolean"; },
         ast.ExprNumber(n) => {
             if (n.is_float) { return "f64"; }
             // A WIDE literal — explicit `i64` / `u64` suffix, or a magnitude past
@@ -2687,7 +2707,7 @@ function if_expr_rt(e: ast.Expr): string {
             // 5000000000 } else { … })` bailed the whole module off the IR path.
             //
             // The other branch kinds were already classified, which is why only
-            // wide integers were affected — string / bool / f64 branches, i64 branches
+            // wide integers were affected — string / boolean / f64 branches, i64 branches
             // through an IDENT (the slot carries the width), and an i64 if-expr
             // in `return` position inside an i64 function (the enclosing return
             // type supplies it) all lowered fine. A bare wide literal is the one
@@ -2728,12 +2748,12 @@ function if_expr_rt(e: ast.Expr): string {
         // can recover the width and the module bails ("did not lower: `return`
         // of binary `/`").
         //
-        // A comparison yields a bool whatever its operands are; anything else
+        // A comparison yields a boolean whatever its operands are; anything else
         // takes wider_rt of the two sides, the same combination parse_if_chain
         // already applies ACROSS branches, so a width appearing on either side
         // survives.
         ast.ExprBinary(b) => {
-            if (irt_is_cmp(b.op)) { return "bool"; }
+            if (irt_is_cmp(b.op)) { return "boolean"; }
             return wider_rt(if_expr_rt(b.left), if_expr_rt(b.right));
         },
         _ => { return "i32"; }
@@ -6999,12 +7019,30 @@ function parse_decl_type(p: Par): (DeclType, Par) {
     }
     if (p.verbatim || (name != "fn" && name != "fn[]")) { return (out, end); }
     var (written, wr_arr, wr_ret, wr_end) = parse_type_name(Par { ...p, verbatim: true });
-    var ref: TypeRef = ref_ungroup(parse_type_ref(written));
-    if (name == "fn[]" && ref.array_depth == 1) { ref = ref_ungroup(elem_type_ref(ref)); }
+    var ref: TypeRef = fn_ref_of(name, written);
     if (!ref_is_fn_value(ref)) { return (out, end); }
     var result: string = render_type_ref(ref_fn_result(ref));
     return (DeclType { name: name, is_str: false, ret_arr: ret_spelling_is_array(result), fn_ret: result,
         fn_params: ref_fn_param_spellings(ref), fn_dyn: ref_fn_param_dyn(ref) }, end);
+}
+
+// fn_ref_of is the callable a coarsened tag stands for, read back out of the
+// annotation's VERBATIM spelling. parse_type_name flattens `(i32) => i32` to
+// "fn", and this is what parse_decl_type and the lambda annotation both recover
+// it with, so a declaration and a lambda agree on the contract by construction.
+function fn_ref_of(name: string, written: string): TypeRef {
+    var ref: TypeRef = ref_ungroup(parse_type_ref(written));
+    if (name == "fn[]" && ref.array_depth == 1) { ref = ref_ungroup(elem_type_ref(ref)); }
+    return ref;
+}
+
+// fn_contract_of is the #5986 sidecar pair for a tag, or two empty strings when
+// the tag is not callable.
+function fn_contract_of(name: string, written: string): (string, string) {
+    if (name != "fn" && name != "fn[]") { return ("", ""); }
+    var ref: TypeRef = fn_ref_of(name, written);
+    if (!ref_is_fn_value(ref)) { return ("", ""); }
+    return (render_type_ref(ref_fn_result(ref)), ref_fn_param_spellings(ref));
 }
 
 function ref_fn_param_dyn(ref: TypeRef): string {

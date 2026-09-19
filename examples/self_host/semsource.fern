@@ -3167,6 +3167,20 @@ function complete(fd: parser.FuncDecl, s: State, name: string): Produced {
     return Produced { ok: true, why: "", func: f, modes: modes, template: false, key: "", requests: s.requests, bodyless: false };
 }
 
+// unresolved_result_spelling names what the refusal failed ON. A type that did
+// not resolve has no spelling to report, so printing the resolved type alone
+// gave an empty message for every cause at once — which is how `if_expr_rt`
+// tagging a boolean branch with the non-existent type name `bool` survived 167
+// refusals that all read `unresolved result type: `. The DECLARED spelling is
+// the one that identifies the cause, so it is what the message carries when the
+// resolved type has none.
+function unresolved_result_spelling(fd: parser.FuncDecl, s: State): string {
+    var resolved: string = typeinfo.spelling(s.result);
+    if (resolved.len() > 0) { return resolved; }
+    if (fd.ret_type.len() > 0) { return "declared `" + fd.ret_type + "`"; }
+    return "inferred from the first returned value";
+}
+
 // build produces one body's typed semantic graph from its checked declaration,
 // the checker's function scope, the module's call contracts and — for a
 // template — the instantiation to produce it under, named `name`. Unsupported
@@ -3175,7 +3189,7 @@ function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Cont
     var why: string = unsupported_declaration(fd, scope);
     if (why != "") { return refuse(why); }
     var s: State = initial(fd, scope, contracts, binding, name, handers);
-    if (!semtypes.concrete(s.result, true)) { return refuse("unresolved result type: " + typeinfo.spelling(s.result)); }
+    if (!semtypes.concrete(s.result, true)) { return refuse("unresolved result type: " + unresolved_result_spelling(fd, s)); }
     if (ssasem.is_view(s.result)) { return refuse("view result escapes its source"); }
     s = parameters(fd, s);
     s = stmts(fd.body, s);
