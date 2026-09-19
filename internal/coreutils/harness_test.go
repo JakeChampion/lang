@@ -879,8 +879,21 @@ const crossDevName = "xdev"
 func crossDevDir(t *testing.T, near string) string {
 	t.Helper()
 	base := os.Getenv("FERN_COREUTILS_XDEV")
-	if base == "" {
+	named := base != ""
+	if !named {
 		base = "/dev/shm"
+	}
+	// /dev/shm is Linux's, and there is no conventional equivalent on Darwin
+	// — no tmpfs is mounted by default and none of the usual mounts is on a
+	// second filesystem. So an ABSENT default is a dependency to name and
+	// skip on, while a path the caller NAMED and that does not work is a
+	// failure: they asked for it.
+	if !named {
+		if _, err := os.Stat(base); err != nil {
+			t.Skipf(`no second filesystem to reach EXDEV: %s does not exist on %s.
+Name one with FERN_COREUTILS_XDEV=/path (a tmpfs mount on Linux; on Darwin,
+`+"`hdiutil attach -nomount ram://…`"+` and a mounted volume).`, base, runtime.GOOS)
+		}
 	}
 	dir, err := os.MkdirTemp(base, "fern-coreutils-xdev-")
 	if err != nil {

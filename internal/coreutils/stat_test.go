@@ -137,9 +137,17 @@ func statTree(t *testing.T) string {
 	write(j("dq\"x"), 1)
 	write(j("tab\tx"), 1)
 	write(j("back\\x"), 1)
-	write(j("weird\xffname"), 1)
+	// The two names that are not valid UTF-8 exist only where the filesystem
+	// holds one — APFS refuses them with EILSEQ. Built conditionally rather
+	// than fataling, so the other ninety stat cases still run; the cases that
+	// name them are omitted below by the same predicate.
+	if rawByteNamesHeld(t) {
+		write(j("weird\xffname"), 1)
+	}
 	link("sp ace", j("link to"))
-	link("weird\xffname", j("weird\xfelink"))
+	if rawByteNamesHeld(t) {
+		link("weird\xffname", j("weird\xfelink"))
+	}
 	// The rest of what tells the ten QUOTING_STYLE styles apart: a colon
 	// (never special), a lone brace (special) against one inside a name
 	// (not), an apostrophe beside a byte that is only safe in double
@@ -175,6 +183,19 @@ func statTree(t *testing.T) string {
 // block, --terse, -f and -t -f. Those are refusals in this build and the
 // header of coreutils/stat.fern says why; a case for one would be
 // comparing our diagnostic against GNU's answer.
+// appendRawStatNames adds the two fixture names that are not valid UTF-8, on a
+// filesystem that holds them. Where it does not, the names were never created
+// (see statTree) and the cases quoting them would be stat'ing something absent
+// — so they are left out rather than added and skipped, because what they
+// test is the QUOTING of a name and there is no name to quote.
+func appendRawStatNames(t *testing.T, names []string) []string {
+	t.Helper()
+	if !rawByteNamesHeld(t) {
+		return names
+	}
+	return append(names, "weird\xffname", "weird\xfelink")
+}
+
 func statCases(t *testing.T) []invocation {
 	dir := statTree(t)
 	var cases []invocation
@@ -213,10 +234,10 @@ func statCases(t *testing.T) []invocation {
 	add("kind-proc", "-c", "%F|%m", "/proc")
 
 	// --- %N and the names it has to quote ---------------------------------
-	for _, name := range []string{
-		"f", "sp ace", "quo'te", "dq\"x", "tab\tx", "back\\x", "weird\xffname",
-		"sl", "dangle", "link to", "weird\xfelink", "dirlink",
-	} {
+	for _, name := range appendRawStatNames(t, []string{
+		"f", "sp ace", "quo'te", "dq\"x", "tab\tx", "back\\x",
+		"sl", "dangle", "link to", "dirlink",
+	}) {
 		add("quoted-name-"+name, "-c", "%N", name)
 		add("raw-name-"+name, "-c", "%n", name)
 	}
@@ -227,12 +248,12 @@ func statCases(t *testing.T) []invocation {
 	// Every gnulib style over every name above, then the abbreviations
 	// ARGMATCH accepts and the values it does not, which warn once and
 	// fall back to the default.
-	quotedNames := []string{
-		"f", "sp ace", "quo'te", "dq\"x", "tab\tx", "back\\x", "weird\xffname",
-		"sl", "dangle", "link to", "weird\xfelink", "dirlink", "link'to",
+	quotedNames := appendRawStatNames(t, []string{
+		"f", "sp ace", "quo'te", "dq\"x", "tab\tx", "back\\x",
+		"sl", "dangle", "link to", "dirlink", "link'to",
 		"col:on", "{", "a{b}", "quo'te@", "eq=ual", "bell\ax", "del\x7fx",
 		"new\nline", "ctl\x01x", "bs\\dq\"",
-	}
+	})
 	for _, style := range []string{
 		"literal", "shell", "shell-always", "shell-escape", "shell-escape-always",
 		"c", "c-maybe", "escape", "locale", "clocale",
@@ -531,19 +552,27 @@ func statCases(t *testing.T) []invocation {
 	add("mount-point-width", "-c", "[%10m][%-10m][%.2m]", "f")
 
 	// --- the file system mode ---------------------------------------------------
-	// Only the fields that do not move between the two runs: the total
-	// block and inode counts, the block size and the name length. The
-	// three free counters are what a busy machine changes underneath the
-	// corpus, so they appear only where the point is the SCANNER.
+	// Only the fields that do not move between the two runs: the total block
+	// count, the block size and the name length. The three free counters are
+	// what a busy machine changes underneath the corpus, so they appear only
+	// where the point is the SCANNER.
+	//
+	// %c, the total inode count, WAS in that stable set and is not stable.
+	// That was an ext4 assumption — a fixed inode table sized at mkfs time —
+	// and APFS has no such table: it computes the total and the answer drifts
+	// between two runs of the same case, which is exactly the comparison this
+	// corpus makes. It reads as a standalone-vs-multicall disagreement of a
+	// few thousand inodes and is neither binary's doing. It can come back if
+	// the harness ever learns to compare a field's SHAPE rather than its
+	// value; until then it belongs with the free counters.
 	add("fs-block-size", "-f", "-c", "%s", ".")
-	// %a, %d and %f are absent by design: see statTree's header.
+	// %a, %c, %d and %f are absent by design: see statTree's header.
 	add("fs-blocks-total", "-f", "-c", "%b", ".")
-	add("fs-inodes-total", "-f", "-c", "%c", ".")
 	add("fs-namelen", "-f", "-c", "%l", ".")
 	add("fs-name", "-f", "-c", "%n", ".")
-	add("fs-stable-set", "-f", "-c", "%n|%l|%s|%b|%c", ".")
+	add("fs-stable-set", "-f", "-c", "%n|%l|%s|%b", ".")
 	add("fs-long-option", "--file-system", "-c", "%b", ".")
-	add("fs-root", "-f", "-c", "%b|%c|%l|%s", "/")
+	add("fs-root", "-f", "-c", "%b|%l|%s", "/")
 	add("fs-file-operand", "-f", "-c", "%b|%l", "f")
 	add("fs-dev", "-f", "-c", "%l|%n", "/dev/null")
 	add("fs-two-operands", "-f", "-c", "%n|%l", ".", "/")

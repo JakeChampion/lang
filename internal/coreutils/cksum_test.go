@@ -79,7 +79,7 @@ func newCkTree(t *testing.T) ckTree {
 		newline:   sumFile(t, dir, "new\nline", "x\n"),
 		carriage:  sumFile(t, dir, "car\rriage", "x\n"),
 		spaced:    sumFile(t, dir, "sp ace", "x\n"),
-		raw:       sumFile(t, dir, "na\xffme", "x\n"),
+		raw:       sumRawName(t, dir),
 		missing:   filepath.Join(dir, "nosuch"),
 		subdir:    filepath.Join(dir, "d"),
 		b512:      sumFile(t, dir, "b512", strings.Repeat("z", 512)),
@@ -109,6 +109,17 @@ func ckLines(t *testing.T, dir, prefix string) func(string) string {
 
 func init() {
 	registerCorpus("cksum", cksumCases)
+}
+
+// sumRawName writes the not-valid-UTF-8 fixture where the filesystem holds it,
+// and returns the path either way; the cases naming it carry rawByteName.
+func sumRawName(t *testing.T, dir string) string {
+	t.Helper()
+	p := filepath.Join(dir, rawByteNameFixture)
+	if !rawByteNamesHeld(t) {
+		return p
+	}
+	return sumFile(t, dir, rawByteNameFixture, "x\n")
 }
 
 func cksumCases(t *testing.T) []invocation {
@@ -188,7 +199,9 @@ func ckAlgorithmCases(t *testing.T, tr ckTree) []invocation {
 		add(a+" newline name", "-a", a, tr.newline)
 		add(a+" carriage return name", "-a", a, tr.carriage)
 		add(a+" space in the name", "-a", a, tr.spaced)
-		add(a+" name that is not valid UTF-8", "-a", a, tr.raw)
+		if rawByteNamesHeld(t) {
+			add(a+" name that is not valid UTF-8", "-a", a, tr.raw)
+		}
 		add(a+" untagged backslash name", "-a", a, "--untagged", tr.backslash)
 		add(a+" untagged newline name", "-a", a, "--untagged", tr.newline)
 		add(a+" zero newline name", "-a", a, "-z", tr.newline)
@@ -422,7 +435,12 @@ func ckCheckCases(t *testing.T, tr ckTree) []invocation {
 		b64Untagged := line(refOutput(t, "cksum", "--base64", "--untagged", "-a", a, tr.a))
 		esc := line(refOutput(t, "cksum", "-a", a, tr.backslash, tr.newline, tr.carriage))
 		escUntagged := line(refOutput(t, "cksum", "--untagged", "-a", a, tr.backslash, tr.newline))
-		rawName := line(refOutput(t, "cksum", "-a", a, tr.raw))
+		// refOutput runs the reference binary on tr.raw, which cannot answer
+		// for a file the filesystem refused to create.
+		rawName := ""
+		if rawByteNamesHeld(t) {
+			rawName = line(refOutput(t, "cksum", "-a", a, tr.raw))
+		}
 
 		add(a+" check tagged", "-c", "-a", a, tagged)
 		add(a+" check untagged", "-c", "-a", a, untagged)
@@ -430,7 +448,9 @@ func ckCheckCases(t *testing.T, tr ckTree) []invocation {
 		add(a+" check base64 untagged", "-c", "-a", a, b64Untagged)
 		add(a+" check escaped names", "-c", "-a", a, esc)
 		add(a+" check escaped untagged names", "-c", "-a", a, escUntagged)
-		add(a+" check a name that is not valid UTF-8", "-c", "-a", a, rawName)
+		if rawName != "" {
+			add(a+" check a name that is not valid UTF-8", "-c", "-a", a, rawName)
+		}
 		add(a+" check tagged without an algorithm", "-c", tagged)
 		add(a+" check untagged without an algorithm", "-c", untagged)
 		add(a+" check base64 without an algorithm", "-c", b64)

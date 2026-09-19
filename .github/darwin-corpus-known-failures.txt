@@ -11,19 +11,26 @@
 # utility that used to pass on Darwin now does not, which is a regression to
 # fix rather than to record.
 #
+# Thirteen more left when the fixture work was finished properly. The first
+# pass converted the sites matching one spelling; there were four more, and a
+# harness that never consulted the skip flag at all. What was left after that
+# was not GNU divergence either: a Linux-only path the harness opens, a unix
+# socket address longer than Darwin's 104-byte limit, a cross-device case with
+# no second filesystem to reach, and `stat -f %c` — the filesystem's live inode
+# total, which the corpus listed as stable because ext4 fixes it at mkfs time
+# and APFS does not.
+#
+# TestMulticallParity was briefly listed here and should not have been. It
+# compares the standalone binary against the multicall one and never consults
+# GNU, so it does not belong in a ledger of GNU divergences; it was failing on
+# the fixtures above, and it passes now.
+#
 # Eight names left in one change: their only Darwin failure was a fixture —
 # the corpus builds a file whose NAME is not valid UTF-8, APFS refuses it with
 # EILSEQ, and the t.Fatal fired while the corpus was being BUILT, taking the
 # utility's whole parity test down before a case ran. Those cases skip on such
 # a filesystem now and the rest are held to GNU, which also put 3186
 # comparisons back that had never run.
-#
-# TestMulticallParity is the one entry that is not about a utility. It re-runs
-# EVERY utility's corpus through the multicall binary, so it fails while any
-# single one of them fails and cannot leave this file before the last of them
-# does. It is listed for the same reason the seed was — a test that never
-# passed on Darwin rather than one that stopped — and it is the entry to delete
-# last, not the one to chase.
 #
 # One test function per line, so the granularity is a utility rather than a
 # case. The case counts behind these names, and the clusters they fall into,
@@ -58,11 +65,7 @@
 # byte-for-byte: 35356807225 and 35372825718, 1887 failures over 19913 tests.
 
 TestB2sumParity
-TestBase32Parity
-TestBase64Parity
-TestBasencParity
 TestBracketParity
-TestChmodParity
 TestChown
 TestCksumParity
 TestCommParity
@@ -85,13 +88,10 @@ TestLinkParity
 TestLnParity
 TestLognameParity
 TestLs
-TestMd5sumParity
 TestMkdir
 TestMkfifoParity
 TestMknodParity
 TestMktempRetryExhaustion
-TestMulticallParity
-TestMvCrossDeviceOrder
 TestMvParity
 TestNice
 TestNiceReadsTheNicenessItWasStartedAt
@@ -104,16 +104,10 @@ TestPrParity
 TestPrintfParity
 TestPtxParity
 TestPwdUnlinkedWorkingDirectory
-TestReadlinkParity
 TestRealpathParity
 TestRmdirParity
 TestRunconParity
 TestSeqParity
-TestSha1sumParity
-TestSha224sumParity
-TestSha256sumParity
-TestSha384sumParity
-TestSha512sumParity
 TestShred
 TestShufParity
 TestSortParity

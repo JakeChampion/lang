@@ -222,7 +222,11 @@ func mvQuoting(t *testing.T, dir string) {
 	seedWrite(t, dir, "a", "A\n")
 	seedWrite(t, dir, "sp ace", "S\n")
 	seedWrite(t, dir, "ap'os", "Q\n")
-	seedWrite(t, dir, "bad\xff", "N\n")
+	// Only where the filesystem holds the name. This seed serves every
+	// quoting case and one names this file, so a fatal here takes the rest.
+	if rawByteNamesHeld(t) {
+		seedWrite(t, dir, "bad\xff", "N\n")
+	}
 	seedMkdir(t, dir, "d x")
 }
 
@@ -643,7 +647,7 @@ func mvCases(t *testing.T) []invocation {
 		// ---- quoting ---------------------------------------------------------------------------
 		{name: "a name with a space", args: []string{"-v", "sp ace", "out"}, seedTree: mvQuoting},
 		{name: "a name with an apostrophe", args: []string{"-v", "ap'os", "out"}, seedTree: mvQuoting},
-		{name: "a name that is not valid UTF-8", args: []string{"-v", "bad\xff", "out"}, seedTree: mvQuoting},
+		{name: "a name that is not valid UTF-8", args: []string{"-v", "bad\xff", "out"}, seedTree: mvQuoting, rawByteName: true},
 		{name: "a missing name that is not valid UTF-8", args: []string{"nosuch\xff", "out"}, seedTree: mvQuoting},
 		{name: "a destination that is not valid UTF-8", args: []string{"-v", "a", "o\xfft"}, seedTree: mvQuoting},
 		{name: "a destination with a newline", args: []string{"-v", "a", "x\ny"}, seedTree: mvQuoting},
