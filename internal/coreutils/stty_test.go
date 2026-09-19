@@ -19,6 +19,7 @@ package coreutils
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -136,6 +137,25 @@ func sttyCases(t *testing.T) []invocation {
 		add("ispeed "+s, "ispeed", s)
 		add("ospeed "+s, "ospeed", s)
 	}
+	// A speed is a number strtoul reads, not a name looked up, so one speed
+	// has many spellings and a fraction is rounded to nearest with ties to
+	// even. The empty string is among them: strtoul consumes nothing and
+	// answers zero, which is a speed.
+	for _, s := range strings.Fields(`+9600 00009600 9600. 9600.0 9600.00 9600.4 9600.5
+		9600.49 9600.50 9600.500 9600.51 9600.6 9600.9 134.4 134.5 134.6 134.50 134.51
+		133.5 135.5 0.0 0.5 0.6 -0 -9600 9600x 9600.x 9600.5x 9600..0 96e2 0x2580 09600
+		EXTA Exta extb. exta1 9601 1 99 4000001 18446744073709551615
+		18446744073709551616 99999999999999999999`) {
+		add("speed "+s, s)
+		add("ispeed "+s, "ispeed", s)
+		add("ospeed "+s, "ospeed", s)
+	}
+	for _, s := range []string{" 9600", "9600 ", "\t9600", "\n9600", " exta", "", " ", "+", "-", "."} {
+		add("speed "+strconv.Quote(s), s)
+		add("ispeed "+strconv.Quote(s), "ispeed", s)
+		add("ospeed "+strconv.Quote(s), "ospeed", s)
+	}
+
 	// The valued settings, over the values that decide which diagnostic they
 	// reach: the kernel's own truncation, the two parse limits, and the two
 	// range messages.
