@@ -1,6 +1,7 @@
 // Typed semantic values before RC. Reuse SSA's graph, never lift ownership
 // facts from physical load/store/alloc or runtime helper names.
 import "./ssa";
+import "./util";
 import "./ssalive";
 import "./ssadeps";
 import "./semtypes";
@@ -1714,4 +1715,193 @@ pub function analyze(f: Func): Analysis {
     why = operations_error(f);
     if (why != "") { return failed(why); }
     return analyze_parents(f, borrow_parents(f));
+}
+
+// ---- self-tail recursion ----------------------------------------------------
+
+// A self-recursive call in tail position reuses its own activation on the AST
+// lowering, which gets `irlower.tco_self_tail` out of `lower_func`. A produced
+// body never reaches `lower_func`, so until now it grew the stack once per
+// iteration and a deep enough recursion took the program's stack out (#9692).
+//
+// The rewrite is on the GRAPH, before the unit planner and the RC lowering see
+// it, and that placement is the point rather than a convenience: a tail call
+// HANDS ITS ARGUMENTS OVER and a jump does not. Only the planner knows which
+// arguments carry a unit, so a rewrite applied after it has planned would
+// leave a transfer planned for a call that is no longer there. Rewritten
+// first, the loop is an ordinary loop and the planner brackets it as one.
+//
+// The shape: the entry block is SPLIT. It keeps its id and its index, because
+// the lowering reads `blocks[0]` as the entry, and becomes an empty block
+// branching to a new HEADER that holds everything it had. The header takes one
+// phi per parameter, merging the incoming argument with the one each tail call
+// passes, and every use of a parameter becomes a use of its phi. Each tail
+// call drops its call instruction and branches to the header.
+pub function tail_recursion(own f: Func, name: string): Func {
+    if (name.len() == 0 || f.graph.blocks.len() == 0) { return f; }
+    if (f.graph.blocks[0].preds.len() > 0) { return f; }
+    var nparams: i32 = f.graph.nparams;
+    if (nparams == 0 || f.values.len() < nparams) { return f; }
+    var tails: i32[] = tail_blocks(f, name, nparams);
+    if (tails.len() == 0) { return f; }
+    return spliced(f, tails, nparams);
+}
+
+// The blocks whose last instruction is a self-call the terminator returns.
+// Nothing follows such a call, so its result has no other reader: the block
+// ends there. A void body spells the same shape with a statement call and a
+// valueless return.
+function tail_blocks(f: Func, name: string, nparams: i32): i32[] {
+    var out: i32[] = [];
+    var bi: i32 = 0;
+    while (bi < f.graph.blocks.len()) {
+        if (is_self_tail(f, f.graph.blocks[bi], name, nparams)) { out = out.append(bi); }
+        bi = bi + 1;
+    }
+    return out;
+}
+
+function is_self_tail(f: Func, b: ssa.SBlock, name: string, nparams: i32): boolean {
+    if (b.term.kind_tag != 1 || b.insts.len() == 0) { return false; }
+    var last: ssa.SInst = b.insts[b.insts.len() - 1];
+    if (last.kind_tag != call() || last.str != name || last.args.len() != nparams) { return false; }
+    if (b.term.value == last.result) { return true; }
+    return b.term.value < 0 && is_void(f.result);
+}
+
+// The arguments each tail call passes, read BEFORE the parameter uses are
+// rewritten and mapped afterwards, so an argument that is a parameter itself
+// (`return f(n - 1, acc)`) carries the phi the loop is re-entered with rather
+// than the value the function was first called on.
+function tail_args(f: Func, tails: i32[]): i32[][] {
+    var out: i32[][] = [];
+    for bi in tails {
+        var insts: ssa.SInst[] = f.graph.blocks[bi].insts;
+        out = out.append(insts[insts.len() - 1].args);
+    }
+    return out;
+}
+
+function fresh_block_id(f: Func): i32 {
+    var top: i32 = 0;
+    for b in f.graph.blocks { if (b.id > top) { top = b.id; } }
+    return top + 1;
+}
+
+// param_phis maps parameter i to the phi that replaces it. The map is over
+// EVERY value, so a rewrite of an instruction's operands is one lookup rather
+// than a search.
+function phi_map(f: Func, nparams: i32): i32[] {
+    var map: i32[] = [];
+    var v: i32 = 0;
+    while (v < f.graph.nvals) {
+        if (v < nparams) { map = map.append(f.graph.nvals + v); } else { map = map.append(v); }
+        v = v + 1;
+    }
+    return map;
+}
+
+function mapped(map: i32[], v: i32): i32 {
+    if (v < 0 || v >= map.len()) { return v; }
+    return map[v];
+}
+
+function mapped_list(map: i32[], vs: i32[]): i32[] {
+    var out: i32[] = [];
+    for v in vs { out = out.append(mapped(map, v)); }
+    return out;
+}
+
+function mapped_inst(map: i32[], ins: ssa.SInst): ssa.SInst {
+    return ssa.SInst { ...ins, args: mapped_list(map, ins.args) };
+}
+
+function mapped_ret_term(map: i32[], t: ssa.STerm): ssa.STerm {
+    if (t.kind_tag == 1) { return ssa.STerm { ...t, value: mapped(map, t.value) }; }
+    if (t.kind_tag == 3) { return ssa.STerm { ...t, cond: mapped(map, t.cond) }; }
+    return t;
+}
+
+// spliced performs the rewrite: it is one pass over the blocks with the
+// parameter map applied, then the header assembled from what block 0 held.
+function spliced(own f: Func, tails: i32[], nparams: i32): Func {
+    var args: i32[][] = tail_args(f, tails);
+    var map: i32[] = phi_map(f, nparams);
+    var header: i32 = fresh_block_id(f);
+    var entry: ssa.SBlock = f.graph.blocks[0];
+    var preds: i32[] = [entry.id];
+    for bi in tails { preds = preds.append(f.graph.blocks[bi].id); }
+
+    // The parameter definitions STAY in the entry block: ssadeps.verify reads a
+    // `param` instruction anywhere else as a malformed graph, and they are also
+    // what the entry edge's phi operands name.
+    var blocks: ssa.SBlock[] = [ssa.SBlock { id: entry.id, insts: kind_6(entry.insts), term: ssa.STerm { kind_tag: 2, cond: 0, target: header, t: 0, f: 0, value: 0 }, preds: [] }];
+    var head_insts: ssa.SInst[] = phis(f, map, args, nparams);
+    for ins in rewritten(map, not_kind_6(entry.insts)) { head_insts = head_insts.append(ins); }
+    blocks = blocks.append(ssa.SBlock { id: header, insts: head_insts, term: mapped_ret_term(map, entry.term), preds: preds });
+    var bi: i32 = 1;
+    while (bi < f.graph.blocks.len()) {
+        blocks = blocks.append(rewritten_block(f.graph.blocks[bi], map, header, entry.id, util.index_of_i32(tails, bi) >= 0));
+        bi = bi + 1;
+    }
+
+    var values: typeinfo.Type[] = f.values;
+    var p: i32 = 0;
+    while (p < nparams) { values = values.append(f.values[p]); p = p + 1; }
+    var graph: ssa.SFunc = ssa.SFunc { ...f.graph, nvals: f.graph.nvals + nparams, blocks: blocks };
+    return Func { ...f, graph: graph, values: values };
+}
+
+// A tail block loses its call and branches to the header; every other block
+// keeps its own terminator. Every block reached FROM the entry is now reached
+// from the header instead, so the entry's id leaves their predecessor lists in
+// the same slot the header takes — the slot is what a phi's operands are
+// parallel to, so it has to be the same one.
+function rewritten_block(b: ssa.SBlock, map: i32[], header: i32, entry: i32, tail: boolean): ssa.SBlock {
+    var preds: i32[] = repointed(b.preds, entry, header);
+    if (!tail) { return ssa.SBlock { ...b, insts: rewritten(map, b.insts), term: mapped_ret_term(map, b.term), preds: preds }; }
+    var kept: ssa.SInst[] = [];
+    var i: i32 = 0;
+    while (i + 1 < b.insts.len()) { kept = kept.append(mapped_inst(map, b.insts[i])); i = i + 1; }
+    return ssa.SBlock { ...b, insts: kept, term: ssa.STerm { kind_tag: 2, cond: 0, target: header, t: 0, f: 0, value: 0 }, preds: preds };
+}
+
+function repointed(preds: i32[], from: i32, to: i32): i32[] {
+    var out: i32[] = [];
+    for p in preds { if (p == from) { out = out.append(to); } else { out = out.append(p); } }
+    return out;
+}
+
+// The parameter definitions, and everything else, in their original order.
+function kind_6(insts: ssa.SInst[]): ssa.SInst[] {
+    var out: ssa.SInst[] = [];
+    for ins in insts { if (ins.kind_tag == 6) { out = out.append(ins); } }
+    return out;
+}
+
+function not_kind_6(insts: ssa.SInst[]): ssa.SInst[] {
+    var out: ssa.SInst[] = [];
+    for ins in insts { if (ins.kind_tag != 6) { out = out.append(ins); } }
+    return out;
+}
+
+function rewritten(map: i32[], insts: ssa.SInst[]): ssa.SInst[] {
+    var out: ssa.SInst[] = [];
+    for ins in insts { out = out.append(mapped_inst(map, ins)); }
+    return out;
+}
+
+// One phi per parameter, its operands parallel to the header's predecessors:
+// the entry edge carries the parameter itself, each tail edge the argument
+// that call passed.
+function phis(f: Func, map: i32[], args: i32[][], nparams: i32): ssa.SInst[] {
+    var out: ssa.SInst[] = [];
+    var p: i32 = 0;
+    while (p < nparams) {
+        var ops: i32[] = [p];
+        for a in args { ops = ops.append(mapped(map, a[p])); }
+        out = out.append(ssa.SInst { kind_tag: 8, result: map[p], args: ops, imm: 0, str: "" });
+        p = p + 1;
+    }
+    return out;
 }
