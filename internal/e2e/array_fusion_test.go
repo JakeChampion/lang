@@ -324,3 +324,87 @@ func TestWASMArrayFusionStopsAllocatingIntermediates(t *testing.T) {
 		t.Errorf("array fusion allocations on wasm: got %d, want 0", got)
 	}
 }
+
+// Folding a zero-capture closure's env fetch (#9731's residual) changes what
+// every closure call site passes as its environment. The failure it risks is
+// not a compile error: a capturing closure handed a null env reads its
+// captured values as garbage and returns a wrong number.
+//
+// So this computes the same answers three ways — through closures that capture
+// nothing, through closures that capture one value and two, and through plain
+// loops — and compares them inside the program.
+const closureEnvSrc = `
+function scale(): i64 { return 3 as i64; }
+
+function apply1(fn: (i64) => i64, xs: i64[]): i64 {
+	var acc: i64 = 0 as i64;
+	var i: i32 = 0;
+	while (i < xs.len()) { acc = acc + fn(xs[i]); i = i + 1; }
+	return acc;
+}
+
+function build(n: i32): i64[] {
+	var xs: i64[] = [];
+	var i: i32 = 0;
+	while (i < n) { xs = xs.append((i as i64) + (1 as i64)); i = i + 1; }
+	return xs;
+}
+
+function main(): i32 {
+	var xs: i64[] = build(64);
+
+	// Captures nothing: its env is the constant the fold replaces.
+	var plain: i64 = apply1((x: i64): i64 => x * scale(), xs);
+	var wantPlain: i64 = 0 as i64;
+	var i: i32 = 0;
+	while (i < xs.len()) { wantPlain = wantPlain + xs[i] * scale(); i = i + 1; }
+	if (plain != wantPlain) { return 90; }
+
+	// Captures one value. A null env would read 'bump' as garbage.
+	var bump: i64 = 11 as i64;
+	var one: i64 = apply1((x: i64): i64 => x * scale() + bump, xs);
+	if (one != wantPlain + (64 as i64) * bump) { return 91; }
+
+	// Captures two, so a null env cannot accidentally read the right one.
+	var a: i64 = 5 as i64;
+	var b: i64 = 7 as i64;
+	var two: i64 = apply1((x: i64): i64 => x * a + b, xs);
+	var wantTwo: i64 = 0 as i64;
+	var j: i32 = 0;
+	while (j < xs.len()) { wantTwo = wantTwo + xs[j] * a + b; j = j + 1; }
+	if (two != wantTwo) { return 92; }
+
+	// A capturing closure called through a value that outlives its scope.
+	var made: (i64) => i64 = (x: i64): i64 => x + a + b;
+	if (apply1(made, xs) != wantPlain / scale() + (64 as i64) * (a + b)) { return 93; }
+	return 0;
+}
+`
+
+func TestArm64ClosureEnvSurvivesTheZeroCaptureFold(t *testing.T) {
+	if _, code := compileAndRunArm64FreeOn(t, closureEnvSrc); code != 0 {
+		t.Errorf("closure env on arm64: got %d, want 0 (90 = zero-capture, 91 = one capture, "+
+			"92 = two captures, 93 = escaping closure)", code)
+	}
+}
+
+func TestX86_64ClosureEnvSurvivesTheZeroCaptureFold(t *testing.T) {
+	if _, code := compileAndRunX86_64FreeOn(t, closureEnvSrc); code != 0 {
+		t.Errorf("closure env on x86-64: got %d, want 0", code)
+	}
+}
+
+func TestWASMClosureEnvSurvivesTheZeroCaptureFold(t *testing.T) {
+	prev := ast.RcFreeEnabled
+	ast.RcFreeEnabled = true
+	defer func() { ast.RcFreeEnabled = prev }()
+	if got := runWasm(t, closureEnvSrc); got != 0 {
+		t.Errorf("closure env on wasm: got %d, want 0", got)
+	}
+}
+
+func TestInterpClosureEnvSurvivesTheZeroCaptureFold(t *testing.T) {
+	if got := runInterpExit(t, closureEnvSrc); got != 0 {
+		t.Errorf("closure env on interp: got %d, want 0", got)
+	}
+}
