@@ -1241,8 +1241,10 @@ function apply(a: Algo, s: Settings, m: gnu.OptMatch): Settings {
 // The combinations GNU refuses, in the order it tests them, which is
 // observable rather than a choice: `-z --tag -t -c` reports the zero
 // one, `--tag -t -c` the check one, and `-t -c` the binary/text one.
-// The verifying conflicts all come before `--tag`'s quarrel with
-// --text.
+// So --zero's and --tag's quarrels with --check come first, then
+// --tag's with --text. The binary/text-with-check test sits after that
+// one and is reachable only without --tag, since a --tag with --check
+// is caught two tests earlier; the two cannot both fire.
 function validate(s: Settings): void {
   if (s.zero && s.check) {
     gnu.die_usage("the --zero option is not supported when verifying checksums", 1);

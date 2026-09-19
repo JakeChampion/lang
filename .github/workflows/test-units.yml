@@ -43,7 +43,7 @@ jobs:
     name: test-units-${{ matrix.host }}
     runs-on: ${{ matrix.runner }}
     env:
-      GNU_COREUTILS_VERSION: "9.4"
+      GNU_COREUTILS_VERSION: "9.12"
     steps:
       - uses: actions/checkout@v7
       # THE REPO'S ONE Go-BUILD-CACHE PRODUCER. Every other job in every
@@ -196,7 +196,11 @@ jobs:
           curl -fsSLO "https://ftp.gnu.org/gnu/coreutils/coreutils-$ver.tar.xz"
           tar xf "coreutils-$ver.tar.xz"
           cd "coreutils-$ver"
-          FORCE_UNSAFE_CONFIGURE=1 ./configure --quiet --disable-nls --without-selinux
+          # --enable-install-program is what BUILDS kill and uptime: from 9.5
+          # they are optional programs and `make` alone leaves no src/kill or
+          # src/uptime for the installs below to copy.
+          FORCE_UNSAFE_CONFIGURE=1 ./configure --quiet --disable-nls --without-selinux \
+            --enable-install-program=kill,uptime
           make -j"$(nproc)"
           install -D src/uptime "$HOME/gnu-coreutils/bin/uptime"
           install -D src/kill "$HOME/gnu-coreutils/bin/kill"
