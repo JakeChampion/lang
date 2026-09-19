@@ -1983,6 +1983,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e044-nested-lambda-shadow-ok", "function v(): void { return; }\nfunction main(): i32 {\n    var x = v();\n    var outer: () => i32 = (): i32 => {\n        var g: (i32) => i32 = (x: i32) => x;\n        return g(1);\n    };\n    return outer();\n}\n", nil},
 		{"e044-nested-fn-inner-shadow-ok", "function v(): void { return; }\nfunction main(): i32 {\n    var x = v();\n    function outer(): i32 {\n        function helper(x: i32): i32 { return x; }\n        return helper(1);\n    }\n    return outer();\n}\n", nil},
 		{"e044-use-callback-nested-shadow-ok", "function v(): void { return; }\nfunction apply(n: i32, cb: (i32) => i32): i32 { return cb(n); }\nfunction main(): i32 {\n    var x = v();\n    use n <- apply(41);\n    var g: (i32) => i32 = (x: i32) => x;\n    return n;\n}\n", nil},
+		// Writing a suspect is capturing it. An assignment target is a field on
+		// the statement rather than an ExprIdent, so a mention test could not
+		// see one; the free-variable walk counts it, as native does.
+		{"e044-capture-void-write-only", "function v(): void { return; }\nfunction main(): i32 {\n    var x = v();\n    var g: () => i32 = (): i32 => {\n        x = 42;\n        return 0;\n    };\n    return g();\n}\n", []string{"E003", "E044"}},
 		// E053 (`fip` no-allocation): array literals, string concatenation
 		// and calls to non-fip functions are rejected inside a `fip
 		// function`; scalar arithmetic and fip→fip calls are clean.
@@ -2281,6 +2285,7 @@ var lambdaBodyDivergences = map[string]string{
 	"e044-capture-void":              "E044 — #9777, the capture site is in a bare lambda",
 	"e044-capture-void-nested-fn":    "E044 — #9777, the capture site is in a nested `function`",
 	"e044-capture-void-use-callback": "E044 — #9777, the capture site is in a `use` callback",
+	"e044-capture-void-write-only":   "E044 — #9777, the capture site is a write in a bare lambda",
 }
 
 func equalStrings(a, b []string) bool {
