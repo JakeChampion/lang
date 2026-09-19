@@ -2839,13 +2839,46 @@ function decl_key(fd: parser.FuncDecl): string {
 // value: a hoisted lambda carries no annotation, and its result is the type
 // the checker gives the first value it returns, read in the scope the
 // statements before it built.
-function result_type(fd: parser.FuncDecl, scope: checker.Scope, b: ssasem.Binding): typeinfo.Type {
-    if (fd.ret_type.len() == 0) {
-        var (returned, at) = first_returned(fd.body, scope);
-        if (bare_return(returned)) { return t_void(); }
-        return resolved(checker.expr_type(returned, at), generic_decl(fd, scope), scope, b);
+// coarse_fn_tag_without_contract reports a declaration whose result is the
+// callable tag parse_type_name produces — "fn" with one "[]" per array
+// dimension — carrying none of the signature that tag drops. A function the
+// SOURCE wrote never looks like this: parse_decl_type recovers the pair beside
+// the tag. Only a synthesised one does, and only one kind — the IIFE
+// irlower.hoist_value_iife declares for an if/match-expression whose arms are
+// UNANNOTATED lambdas, which have a parameter list to report and no result.
+function coarse_fn_tag_without_contract(fd: parser.FuncDecl): boolean {
+    if (fd.ret_fn_ret.len() > 0) { return false; }
+    var t: string = fd.ret_type;
+    if (t.len() < 2 || slice_unchecked(t, 0, 2) != "fn") { return false; }
+    var i: i32 = 2;
+    while (i < t.len()) {
+        if (i + 2 > t.len() || slice_unchecked(t, i, i + 2) != "[]") { return false; }
+        i = i + 2;
     }
-    return resolved(scope.ret_type, generic_decl(fd, scope), scope, b);
+    return true;
+}
+
+// inferred_result is the result type read off the first value the body returns,
+// which is what the checker worked out for it.
+function inferred_result(fd: parser.FuncDecl, scope: checker.Scope, b: ssasem.Binding): typeinfo.Type {
+    var (returned, at) = first_returned(fd.body, scope);
+    if (bare_return(returned)) { return t_void(); }
+    return resolved(checker.expr_type(returned, at), generic_decl(fd, scope), scope, b);
+}
+
+function result_type(fd: parser.FuncDecl, scope: checker.Scope, b: ssasem.Binding): typeinfo.Type {
+    if (fd.ret_type.len() == 0) { return inferred_result(fd, scope, b); }
+    var declared: typeinfo.Type = resolved(scope.ret_type, generic_decl(fd, scope), scope, b);
+    // A coarse fn tag with no contract has nothing for the checker to resolve,
+    // so the declaration is refused for an unresolved result type — but the
+    // body still says what it returns, and that is the same inference an
+    // unannotated declaration above already relies on. The tag itself stays:
+    // hoist_value_iife declares it deliberately and closure_ret_fns_of is gated
+    // on it, so only the unresolved RESULT is filled in here.
+    if (!semtypes.concrete(declared, true) && coarse_fn_tag_without_contract(fd)) {
+        return inferred_result(fd, scope, b);
+    }
+    return declared;
 }
 
 // The first `return` carrying a value, looked for through the branches, arms

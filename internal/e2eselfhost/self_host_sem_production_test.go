@@ -343,6 +343,19 @@ function main(): i32 {
     return f(42);
 }
 `},
+	// The UNANNOTATED arm — what the previous change deliberately left refusing.
+	// An arm lambda's parameter spellings are always written but its result only
+	// when the author annotates it, so irlower yields no contract rather than half
+	// of one, and the hoisted IIFE reaches semsource with the coarse "fn" tag and
+	// nothing to resolve. The body still says what it returns, so the result is
+	// inferred the same way an unannotated declaration's already is. Produces
+	// 0 of 4 without the fix.
+	{name: "if-expr-lambda-arms-unannotated", atLeast: 4, src: `
+function main(): i32 {
+    var f: (i32) => i32 = if (true) { ((x: i32) => x) } else { ((y: i32) => y + 1) };
+    return f(42);
+}
+`},
 	{name: "scalar-calls", atLeast: 3, src: `
 function add(a: i32, b: i32): i32 { return a + b; }
 function total(xs: i32[]): i32 {
