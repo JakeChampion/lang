@@ -464,3 +464,61 @@ function main(): i32 { return fieldRecv(Box { xs: [1 as i64] }) as i32; }`)
 		}
 	}
 }
+
+// countOps returns how many ops of one kind `fn` holds.
+func countOps(t *testing.T, p *ir.Program, fn string, kind ir.OpKind) int {
+	t.Helper()
+	n := 0
+	for _, f := range p.Funcs {
+		if f.Name != fn {
+			continue
+		}
+		for _, op := range f.Ops {
+			if op.Kind == kind {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+// `reduce` seeds from the first element to ARRIVE. With no stage that can
+// skip, that is element 0, so the first iteration is peeled and the loop runs
+// from 1 with no flag — which is what the hand-written loop does, and what the
+// per-element flag cost about two instructions an element to avoid. With a
+// filter in the chain the first arrival is not known until the loop runs, so
+// the flag stays; peeling there would seed the accumulator from an element the
+// filter rejected.
+//
+// Both shapes live in one program and the assertion is the DIFFERENCE between
+// them, because the absolute count includes the equality tests the surrounding
+// `match` and the prologue emit. Peeled asks "is the array empty" once;
+// flagged asks "has anything arrived" per element and again in the finish, so
+// the filtered one carries exactly one more. A regression that quietly stopped
+// peeling would otherwise be invisible — the answers stay right either way.
+func TestReducePeelsOnlyWhenNoStageCanSkip(t *testing.T) {
+	p, n := fuseSrc(t, `import "std/array";
+function peeled(xs: i64[]): i64 {
+  var out: Option[i64] = xs
+    .map((x: i64): i64 => x + (1 as i64))
+    .reduce((a: i64, b: i64): i64 => a + b);
+  match (out) { Some(v) => { return v; }, None => { return 0 as i64; } }
+}
+function flagged(xs: i64[]): i64 {
+  var out: Option[i64] = xs
+    .filter((x: i64): boolean => x > (0 as i64))
+    .reduce((a: i64, b: i64): i64 => a + b);
+  match (out) { Some(v) => { return v; }, None => { return 0 as i64; } }
+}
+function main(): i32 { return peeled([1 as i64]) as i32 + flagged([1 as i64]) as i32; }`)
+	if n != 2 {
+		t.Fatalf("fused %d pipelines, want 2", n)
+	}
+	got, want := countOps(t, p, "flagged", ir.OpEq)-countOps(t, p, "peeled", ir.OpEq), 1
+	if got != want {
+		t.Errorf("the filtered chain carries %d more equality tests than the unfiltered one, want %d: "+
+			"0 means the filtered chain peeled, which would seed the accumulator from a rejected "+
+			"element; 2 or more means the unfiltered chain kept its per-element arrival flag",
+			got, want)
+	}
+}
