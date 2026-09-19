@@ -314,9 +314,29 @@ chain sends the reader back to count stages themselves, which is the work
 the report exists to save. A refusal no single stage owns — the array is
 not held in a local, say — names none rather than blaming the first.
 
-`FERN_ARRAY_REPORT=1` adds a histogram, in two sections: why each chain
-was not FUSED (#9731), then where each chain STOPPED being one chain
-(#9730). Both sets are **closed** with stable tags, for the reason
+Each stage also says where its buffer came from, which is #9732's second
+question:
+
+```
+map        elementwise  __closure_lambda_1
+  fresh buffer: the combinator borrows its array, so there is no donor to reuse
+fold       reduction    __closure_lambda_2
+  no buffer: a reduction produces a value
+```
+
+The verdicts are read off the IR, not asserted: whether a combinator
+consumes its array is `Func.ParamConsumed`, and whether the element shape
+survives a stage is the two stages' parameter types. That matters because
+the answer today is the SAME for every std/array combinator — they all
+borrow — and a hardcoded sentence would go on being printed after the fact
+it describes stopped being true. `shape-change` and `reused` cannot fire
+until one of them takes an `own` array; a test in
+`internal/ir/array_storage_test.go` fails when that happens, so the report
+gains its new cases deliberately rather than by accident.
+
+`FERN_ARRAY_REPORT=1` adds a histogram, in three sections: why each chain
+was not FUSED (#9731), where each stage's BUFFER came from (#9732), and
+where each chain STOPPED being one chain (#9730). Both sets are **closed** with stable tags, for the reason
 `FERN_SSA_REPORT` is: the set of things declined is the coverage checklist
 for widening the algebra, and a tally of free-text strings cannot be
 counted. Every reason prints a row even at zero, so a reason that stops
