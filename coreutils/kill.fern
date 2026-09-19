@@ -142,7 +142,7 @@ function refuse_second_signal(given: string): void {
 // (#9645).
 function name_width(): i32 {
   var w: i32 = 0;
-  var n: i32 = 1;
+  var n: i32 = 0;
   while (n <= signals.highest()) {
     var nm: string = signals.name(n);
     if (nm.len() > w) {
@@ -151,6 +151,16 @@ function name_width(): i32 {
     n = n + 1;
   }
   return w;
+}
+
+// What `-l` and `-t` print for a number: its name, or the number itself where
+// the kernel names none — 32 and 33, which glibc reserves.
+function shown_name(n: i32): string {
+  var nm: string = signals.name(n);
+  if (nm == "") {
+    return n.to_string();
+  }
+  return nm;
 }
 
 // `pad_name(s, w)` — the left-aligned name column, GNU's `%-*s`.
@@ -173,9 +183,10 @@ function num2(n: i32): string {
 }
 
 // `run_list(args)` — `-l`. Bare, it prints every name this kernel has, one a
-// line, without the SIG prefix. With arguments it CONVERTS each: a number to
-// its name, a name to its number. The BARE listing starts at 1, so signal 0 is
-// never in it, but `-l 0` converts to `EXIT` like any other number.
+// line, without the SIG prefix, starting at EXIT: signal 0 joined the listing
+// in 9.6, as a signal you may legitimately send. With arguments it CONVERTS
+// each: a number to its name, a name to its number, and a number the kernel
+// leaves unnamed to itself.
 //
 // An argument that names nothing does NOT stop the rest — `kill -l 1 999`
 // prints HUP and then fails — so the failure is remembered and reported at the
@@ -183,7 +194,7 @@ function num2(n: i32): string {
 function run_list(args: string[]): i32 {
   var out: string = "";
   if (args.len() == 0) {
-    var n: i32 = 1;
+    var n: i32 = 0;
     while (n <= signals.highest()) {
       var nm: string = signals.name(n);
       if (nm != "") {
@@ -205,7 +216,7 @@ function run_list(args: string[]): i32 {
     } else if (gnu.is_digit(a[0] as i32)) {
       // Which way GNU converts is decided by the argument's FIRST BYTE, not by
       // what it resolved to: `SIG9` answers `9` and `9` answers `KILL`.
-      out = out + signals.name(v) + "\n";
+      out = out + shown_name(v) + "\n";
     } else {
       out = out + v.to_string() + "\n";
     }
@@ -224,7 +235,7 @@ function run_table(args: string[]): i32 {
   var out: string = "";
   var w: i32 = name_width();
   if (args.len() == 0) {
-    var n: i32 = 1;
+    var n: i32 = 0;
     while (n <= signals.highest()) {
       var nm: string = signals.name(n);
       if (nm != "") {
@@ -244,7 +255,7 @@ function run_table(args: string[]): i32 {
       gnu.error(gnu.quote(a) + ": invalid signal");
       bad = true;
     } else {
-      out = out + num2(v) + " " + pad_name(signals.name(v), w) + " " + signals.description(v) + "\n";
+      out = out + num2(v) + " " + pad_name(shown_name(v), w) + " " + signals.description(v) + "\n";
     }
   }
   gnu.write_out(out);

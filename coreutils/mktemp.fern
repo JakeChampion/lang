@@ -364,8 +364,9 @@ struct Plan { head: string, run: i32, tail: string, path: string }
 
 // The template, its suffix and its X run, with every fault reported in
 // GNU's order: --suffix's must-end-in-X, then a separator in the suffix,
-// then the X count. --suffix is glued on before all three, so the
-// diagnostics name the concatenated string.
+// then the X count. --suffix is glued on before all three, but the X
+// count names the template WITHOUT it — an appended suffix is not part
+// of what the user wrote and GNU cuts it back off for that one line.
 function split_template(s: Settings, template: string): (string, string, i32) {
   var tmpl: string = template;
   var suffix: string = "";
@@ -385,7 +386,11 @@ function split_template(s: Settings, template: string): (string, string, i32) {
   }
   var run: i32 = x_run(tmpl, tmpl.len() - suffix.len());
   if (run < 3) {
-    gnu.error("too few X's in template " + gnu.quote(tmpl));
+    var named: string = tmpl;
+    if (s.suffix_set) {
+      named = slice_unchecked(tmpl, 0, tmpl.len() - suffix.len()) + "";
+    }
+    gnu.error("too few X's in template " + gnu.quote(named));
     exit(1);
   }
   return (tmpl, suffix, run);

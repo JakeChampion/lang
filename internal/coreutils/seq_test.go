@@ -417,7 +417,20 @@ func seqCases(t *testing.T) []invocation {
 		{name: "half the smallest subnormal", args: []string{"0x1p-16446", "1"}},
 		{name: "smallest normal", args: []string{"0x1p-16382", "1"}},
 		{name: "inexact subnormal", args: []string{"0x1.8p-16445", "1"}},
-		{name: "increment underflows to zero", args: []string{"1", "1e-4951", "2"}},
+		// These boundaries are the target's `long double`, and it is not
+		// one type: x86-64 carries x87's 80-bit, every other ISA the
+		// AAPCS64 quad, and Darwin narrows to `double`. A spelling that
+		// underflows to zero on one is a subnormal on the next, so an
+		// increment meant to reach zero is written below the quad's least
+		// subnormal (2^-16494) rather than the 80-bit one's.
+		{name: "increment underflows to zero", args: []string{"1", "1e-5000", "2"}},
+		// The other side of it: 1e-4951 is below the least normal in every
+		// format, but only the 80-bit one rounds it away — the quad keeps
+		// it as a subnormal, and an increment the format keeps counts
+		// forever. Bounded, because the terms are 4,951 fraction digits
+		// each and filling the 64 MiB capture cap with them takes the
+		// self-host build seventeen minutes.
+		{name: "increment below the least normal", args: []string{"1", "1e-4951", "2"}, limit: 65536},
 		{name: "last underflows to zero", args: []string{"1", "1", "1e-4951"}},
 		{name: "zero increment", args: []string{"1", "0", "3"}},
 		{name: "zero increment descending", args: []string{"5", "0", "1"}},

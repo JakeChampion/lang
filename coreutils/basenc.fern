@@ -3,8 +3,8 @@
 //   basenc --ENCODING [-d] [-i] [-w COLS] [FILE]
 //
 // The superset `base64` and `base32` are single-alphabet cuts of: the
-// two base64 alphabets, the two base32 ones, base16, the two bit
-// orders of base2, and z85. All nine drive the one codec in
+// two base64 alphabets, base58, the two base32 ones, base16, the two
+// bit orders of base2, and z85. All ten drive the one codec in
 // `lib/base.fern`; this file chooses which.
 //
 // The encoding is mandatory and its absence is reported before
@@ -62,6 +62,10 @@ function opt_z85(): i32 {
   return 11;
 }
 
+function opt_base58(): i32 {
+  return 12;
+}
+
 function help_text(): string {
   var out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]\n";
@@ -73,6 +77,7 @@ function help_text(): string {
   out = out + "      --base64url       RFC 4648 section 5, safe in URLs and file names\n";
   out = out + "      --base32          RFC 4648 section 6, as the base32 program\n";
   out = out + "      --base32hex       RFC 4648 section 7, the extended hex alphabet\n";
+  out = out + "      --base58          visually unambiguous base58 encoding\n";
   out = out + "      --base16          RFC 4648 section 8, uppercase hexadecimal\n";
   out = out + "      --base2msbf       bits of each byte, most significant first\n";
   out = out + "      --base2lsbf       bits of each byte, least significant first\n";
@@ -99,6 +104,9 @@ function codec_for(id: i32): base.Codec {
   if (id == opt_base64url()) {
     return base.base64url();
   }
+  if (id == opt_base58()) {
+    return base.base58();
+  }
   if (id == opt_base32()) {
     return base.base32();
   }
@@ -124,6 +132,7 @@ function declare(): gnu.Opt[] {
   opts = opts.append(gnu.flag("i", "ignore-garbage", opt_ignore()));
   opts = opts.append(gnu.flag("", "base64", opt_base64()));
   opts = opts.append(gnu.flag("", "base64url", opt_base64url()));
+  opts = opts.append(gnu.flag("", "base58", opt_base58()));
   opts = opts.append(gnu.flag("", "base32", opt_base32()));
   opts = opts.append(gnu.flag("", "base32hex", opt_base32hex()));
   opts = opts.append(gnu.flag("", "base16", opt_base16()));

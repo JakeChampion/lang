@@ -16,9 +16,11 @@ func init() {
 //   - `-a` is not the same as naming all eight options. GNU's `-a` is a
 //     distinct value, and the omission rule ("drop -p and -i when they
 //     are unknown") tests exactly that value, so `-s -n -r -v -m -p -i
-//     -o` prints an unknown element where `-a` drops it. On Linux
-//     neither is unknown, which is what makes the two lines identical
-//     here and is itself worth pinning.
+//     -o` prints `unknown` twice where `-a` drops both. On Linux glibc
+//     can answer neither, so the two lines genuinely differ here.
+//   - `-A` selects the same set as `-a` and labels each field on its own
+//     line. The two overwrite each other rather than accumulating, so
+//     whichever came last decides whether labels appear.
 //   - `--sysname` and `--release` are obsolescent aliases GNU still
 //     declares. They are why `--s` and `--r` resolve while `--k` is
 //     ambiguous between three, listed in declaration order.
@@ -37,6 +39,7 @@ func unameCases(t *testing.T) []invocation {
 		{name: "-i", args: []string{"-i"}},
 		{name: "-o", args: []string{"-o"}},
 		{name: "-a", args: []string{"-a"}},
+		{name: "-A", args: []string{"-A"}},
 
 		// The long spellings, including the two obsolescent aliases.
 		{name: "--kernel-name", args: []string{"--kernel-name"}},
@@ -50,6 +53,7 @@ func unameCases(t *testing.T) []invocation {
 		{name: "--hardware-platform", args: []string{"--hardware-platform"}},
 		{name: "--operating-system", args: []string{"--operating-system"}},
 		{name: "--all", args: []string{"--all"}},
+		{name: "--all-labeled", args: []string{"--all-labeled"}},
 
 		// Unique-prefix matching, and the prefixes the aliases save.
 		{name: "--s is sysname", args: []string{"--s"}},
@@ -62,6 +66,8 @@ func unameCases(t *testing.T) []invocation {
 		{name: "--kernel- is ambiguous", args: []string{"--kernel-"}},
 		{name: "--k is ambiguous between three", args: []string{"--k"}},
 		{name: "--a is ambiguous with all", args: []string{"--a"}},
+		{name: "--all- is all-labeled", args: []string{"--all-"}},
+		{name: "--all-l", args: []string{"--all-l"}},
 
 		// Combinations: the order is the record's, not the argv's.
 		{name: "-sm", args: []string{"-sm"}},
@@ -72,6 +78,13 @@ func unameCases(t *testing.T) []invocation {
 		{name: "-a then -s adds nothing", args: []string{"-a", "-s"}},
 		{name: "-s then -a is still all", args: []string{"-s", "-a"}},
 		{name: "-a twice", args: []string{"-a", "-a"}},
+		{name: "-A twice", args: []string{"-A", "-A"}},
+		{name: "-A then -a drops the labels", args: []string{"-A", "-a"}},
+		{name: "-a then -A adds them", args: []string{"-a", "-A"}},
+		{name: "-A then -s adds nothing", args: []string{"-A", "-s"}},
+		{name: "-s then -A is still all labeled", args: []string{"-s", "-A"}},
+		{name: "-A clustered with a named element", args: []string{"-Am"}},
+		{name: "-p then -A", args: []string{"-p", "-A"}},
 		{name: "-s twice", args: []string{"-s", "-s"}},
 		{name: "long and short mixed", args: []string{"--machine", "-s"}},
 		{name: "alias and canonical name for one field", args: []string{"--sysname", "--kernel-name"}},
@@ -114,6 +127,7 @@ func unameCases(t *testing.T) []invocation {
 		{name: "stdout closed", stdout: stdoutClosed},
 		{name: "stdout full", stdout: stdoutFull},
 		{name: "stdout closed on -a", args: []string{"-a"}, stdout: stdoutClosed},
+		{name: "stdout closed on -A", args: []string{"-A"}, stdout: stdoutClosed},
 		{name: "stdout closed on a fault", args: []string{"x"}, stdout: stdoutClosed},
 	}
 }

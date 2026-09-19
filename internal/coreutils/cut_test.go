@@ -35,6 +35,7 @@ func cutCases(t *testing.T) []invocation {
 	dir := t.TempDir()
 	f := cutFile(t, dir, "f", "a:b:c:d\nnodelim\n:x::y:\n")
 	tabs := cutFile(t, dir, "tabs", "a\tb\tc\n")
+	ws := cutFile(t, dir, "ws", "  a   b  c \nx\ty z\nnoblank\n\n")
 	nonl := cutFile(t, dir, "nonl", "a:b:c")
 	nul := cutFile(t, dir, "nul", "a:b\x00c:d\x00")
 	empty := cutFile(t, dir, "e0", "")
@@ -82,6 +83,32 @@ func cutCases(t *testing.T) []invocation {
 		{name: "complement nothing selected", args: []string{"--complement", "-b", "100", f}},
 		{name: "complement fields", args: []string{"--complement", "-d:", "-f2", f}},
 		{name: "complement all fields", args: []string{"--complement", "-d:", "-f1-", f}},
+
+		// -w / -F (9.11): a RUN of blanks is one delimiter, so a run at
+		// either end leaves an empty field there unless `=trimmed` took
+		// it off. -F is -w with a space as the output delimiter.
+		{name: "whitespace first field", args: []string{"-w", "-f1", ws}},
+		{name: "whitespace second field", args: []string{"-w", "-f2", ws}},
+		{name: "whitespace all fields", args: []string{"-w", "-f1-", ws}},
+		{name: "whitespace long name", args: []string{"--whitespace-delimited", "-f2", ws}},
+		{name: "whitespace trimmed", args: []string{"--whitespace-delimited=trimmed", "-f1", ws}},
+		{name: "whitespace trimmed all", args: []string{"--whitespace-delimited=trimmed", "-f1-", ws}},
+		{name: "whitespace bad value", args: []string{"--whitespace-delimited=nope", "-f1", ws}},
+		{name: "whitespace with an output delimiter", args: []string{"-w", "-f1-", "-O", ":", ws}},
+		{name: "whitespace suppressed", args: []string{"-w", "-s", "-f1", ws}},
+		{name: "whitespace complement", args: []string{"-w", "--complement", "-f1", ws}},
+		{name: "whitespace with bytes is refused", args: []string{"-w", "-b1", ws}},
+		{name: "whitespace and delimiter are exclusive", args: []string{"-w", "-d:", "-f1", ws}},
+		{name: "F is whitespace with a space", args: []string{"-F1", ws}},
+		{name: "F two fields", args: []string{"-F1,2", ws}},
+		{name: "F all fields", args: []string{"-F1-", ws}},
+		{name: "F then an explicit delimiter", args: []string{"-F1-", "-d:", f}},
+		{name: "F and f are one list", args: []string{"-F1", "-f2", ws}},
+		{name: "O short output delimiter", args: []string{"-d:", "-f1,3", "-O", "|", f}},
+		{name: "O empty is NUL", args: []string{"-d:", "-f1,3", "-O", "", f}},
+		{name: "n is no-partial", args: []string{"-n", "-b1", f}},
+		{name: "n long name", args: []string{"--no-partial", "-b1", f}},
+		{name: "no-partial with fields", args: []string{"-n", "-d:", "-f2", f}},
 		{name: "complement with only-delimited", args: []string{"-s", "--complement", "-d:", "-f1", f}},
 
 		// --output-delimiter separates RANGES under -b and FIELDS under -f.

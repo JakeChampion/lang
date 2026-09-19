@@ -108,6 +108,12 @@ function opt_update_short(): i32 {
   return 14;
 }
 
+// `--exchange`, 9.5's: swap the two names rather than replace one with
+// the other.
+function opt_exchange(): i32 {
+  return 15;
+}
+
 // What `-i`, `-f` and `-n` set. Only the LAST of the three on the command
 // line counts, which is what one field rather than three flags says.
 // `-f` is the default rather than a fourth state: nothing about a move is
@@ -137,12 +143,25 @@ function update_older(): i32 {
   return 2;
 }
 
+// `none-fail`, 9.5's: `none`'s refusal to replace anything, said out
+// loud and costing the exit status.
+function update_none_fail(): i32 {
+  return 3;
+}
+
 function update_names(): string[] {
-  return ["all", "none", "older"];
+  return ["all", "none", "none-fail", "older"];
 }
 
 function update_values(): i32[] {
-  return [update_all(), update_none(), update_older()];
+  return [update_all(), update_none(), update_none_fail(), update_older()];
+}
+
+// Whether this mode leaves an existing destination alone. `-n` is
+// `none`, mapped AFTER the option scan so it wins over an `--update` on
+// either side of it.
+function update_skips(u: i32): boolean {
+  return u == update_none() || u == update_none_fail();
 }
 
 function help_text(): string {
@@ -155,6 +174,7 @@ function help_text(): string {
   out = out + "      --backup[=CONTROL]      back up each existing destination\n";
   out = out + "  -b                          like --backup, taking no argument\n";
   out = out + "      --debug                 explain how each file is moved; implies -v\n";
+  out = out + "      --exchange              exchange source and destination\n";
   out = out + "  -f, --force                 do not prompt before overwriting\n";
   out = out + "  -i, --interactive           prompt before overwriting\n";
   out = out + "  -n, --no-clobber            do not overwrite an existing file\n";
@@ -164,7 +184,7 @@ function help_text(): string {
   out = out + "  -t, --target-directory=DIRECTORY  move every SOURCE into DIRECTORY\n";
   out = out + "  -T, --no-target-directory   treat DEST as a normal file always\n";
   out = out + "      --update[=UPDATE]       which existing destinations are replaced:\n";
-  out = out + "                                all, none, or older (the default)\n";
+  out = out + "                                all, none, none-fail, or older (the default)\n";
   out = out + "  -u                          like --update=older\n";
   out = out + "  -v, --verbose               print each move as it is made\n";
   out = out + "  -Z, --context               give the destination the default SELinux type\n";
@@ -181,7 +201,7 @@ function help_text(): string {
 }
 
 // `Cfg` — everything the option scan decided, for the per-operand work.
-struct Cfg { ask: i32, update: i32, strip: boolean, verbose: boolean, backups: boolean, control: i32, suffix: string, no_copy: boolean }
+struct Cfg { ask: i32, update: i32, strip: boolean, verbose: boolean, debug: boolean, exchange: boolean, backups: boolean, control: i32, suffix: string, no_copy: boolean }
 
 // ---- stat ------------------------------------------------------------------
 // `StatInfo` — the four facts every caller here wants from a stat, and
@@ -337,7 +357,7 @@ struct Move { raw_src: string, raw_dest: string, src: string, dest: string }
 // destination that is a directory means "inside it" — true only for the
 // two-operand form, and only until the name has been joined once:
 // `mv a deep` with `deep/a` a directory is `cannot overwrite directory
-// 'deep/a' with non-directory`, not a second descent.
+// 'deep/a' with non-directory 'a'`, not a second descent.
 function do_move(cfg: Cfg, m0: Move, allow_into: boolean, o: io_buffered.BufWriter): MoveOut {
   var w: io_buffered.BufWriter = o;
   var m: Move = m0;
@@ -347,6 +367,9 @@ function do_move(cfg: Cfg, m0: Move, allow_into: boolean, o: io_buffered.BufWrit
     // the directory is already past the stripping.
     var into: string = gnu.join_path(m.dest, gnu.base_name(m.src));
     return do_move(cfg, Move { raw_src: m.src, raw_dest: into, src: m.src, dest: into }, false, w);
+  }
+  if (cfg.exchange) {
+    return exchange_pair(cfg, m, w);
   }
 
   // The rename itself, tried before the destination is asked about. Its
@@ -429,7 +452,7 @@ function replace_dest(cfg: Cfg, m: Move, s: StatInfo, d: StatInfo, o: io_buffere
     return MoveOut { status: 1, out: w };
   }
   if (!s.is_dir && d.is_dir) {
-    w = gnu.error_out(w, "cannot overwrite directory " + gnu.quotea(m.dest) + " with non-directory");
+    w = gnu.error_out(w, "cannot overwrite directory " + gnu.quotea(m.dest) + " with non-directory " + gnu.quotea(m.src));
     return MoveOut { status: 1, out: w };
   }
   var backup: string = "";
@@ -613,17 +636,92 @@ function verbose(cfg: Cfg, m: Move, backup: string, o: io_buffered.BufWriter): M
   return MoveOut { status: 0, out: w };
 }
 
-// The two ways an occupied destination ends the operand before anything
-// is stat'd: `-n`, which says so and costs the exit status, and
-// `--update=none`, which is the same refusal made silently. A `status`
-// below zero means neither applied and the move goes on.
+// `--exchange`: the two names swap what they point at, with neither
+// file copied and neither inode changed.
+//
+// GNU asks the kernel for it in one renameat2(RENAME_EXCHANGE). Fern
+// has no such primitive (#9784), so this is the three-rename sequence
+// that leaves the same tree behind and is NOT atomic: a crash between
+// the renames leaves the temporary name in the source's directory.
+// docs/COREUTILS.md carries the difference.
+function exchange_pair(cfg: Cfg, m: Move, o: io_buffered.BufWriter): MoveOut {
+  var w: io_buffered.BufWriter = o;
+  var s: StatInfo = lstat_info(m.src);
+  if (!s.ok) {
+    return MoveOut { status: 1, out: gnu.error_out(w, "cannot stat " + gnu.quotea(m.src) + ": " + s.err) };
+  }
+  var dest: string = dest_path(m.dest);
+  var d: StatInfo = lstat_info(dest);
+  if (same_file(cfg, m.src, m.dest, s, d)) {
+    return MoveOut { status: 1, out: gnu.error_out(w, gnu.quotea(m.src) + " and " + gnu.quotea(m.dest) + " are the same file") };
+  }
+  var tmp: string = scratch_name(m.src);
+  match (rename(m.src, tmp)) {
+    Ok(_) => {},
+    Err(e) => {
+      return MoveOut { status: 1, out: gnu.error_out(w, exchange_failure(m, gnu.io_error_text(e))) };
+    }
+  }
+  match (rename(dest, m.src)) {
+    Ok(_) => {},
+    Err(e) => {
+      var why: string = gnu.io_error_text(e);
+      // Put the source back before reporting, so a failure here leaves
+      // the tree exactly as it was found.
+      match (rename(tmp, m.src)) {
+        Ok(_) => {},
+        Err(_) => {}
+      }
+      return MoveOut { status: 1, out: gnu.error_out(w, exchange_failure(m, why)) };
+    }
+  }
+  match (rename(tmp, dest)) {
+    Ok(_) => {},
+    Err(e) => {
+      return MoveOut { status: 1, out: gnu.error_out(w, exchange_failure(m, gnu.io_error_text(e))) };
+    }
+  }
+  if (cfg.verbose) {
+    w = gnu.put(w, "exchanged " + gnu.quotea(m.src) + " <-> " + gnu.quotea(m.dest) + "\n");
+  }
+  return MoveOut { status: 0, out: w };
+}
+
+function exchange_failure(m: Move, why: string): string {
+  return "cannot exchange " + gnu.quotea(m.src) + " and " + gnu.quotea(m.dest) + ": " + why;
+}
+
+// A name nothing holds, beside `path` so the rename onto it cannot
+// cross a filesystem. Only `--exchange` needs one, and only for the
+// moment between its first rename and its last.
+function scratch_name(path: string): string {
+  var dir: string = gnu.dir_name(path);
+  var i: i32 = 0;
+  while (true) {
+    var name: string = gnu.join_path(dir, ".mv_exchange." + i.to_string());
+    if (!lstat_info(name).ok) {
+      return name;
+    }
+    i = i + 1;
+  }
+  return path;
+}
+
+// How an occupied destination ends the operand before anything is
+// stat'd. `-n` reaches this as `--update=none`, a silent skip that
+// `--debug` names; `none-fail` is the same skip said out loud and
+// costing the exit status. A `status` below zero means neither applied
+// and the move goes on.
 function refuse_existing(cfg: Cfg, dest: string, o: io_buffered.BufWriter): MoveOut {
-  if (cfg.ask == ask_never()) {
-    var w: io_buffered.BufWriter = gnu.error_out(o, "not replacing " + gnu.quotea(dest));
-    return MoveOut { status: 1, out: w };
+  if (cfg.update == update_none_fail()) {
+    return MoveOut { status: 1, out: gnu.error_out(o, "not replacing " + gnu.quotea(dest)) };
   }
   if (cfg.update == update_none()) {
-    return MoveOut { status: 0, out: o };
+    var w: io_buffered.BufWriter = o;
+    if (cfg.debug) {
+      w = gnu.put(w, "skipped " + gnu.quotea(dest) + "\n");
+    }
+    return MoveOut { status: 0, out: w };
   }
   return MoveOut { status: 0 - 1, out: o };
 }
@@ -662,6 +760,7 @@ function option_table(): gnu.Opt[] {
   opts = opts.append(gnu.optional_long("b", "backup", opt_backup()));
   opts = opts.append(gnu.flag("Z", "context", opt_context()));
   opts = opts.append(gnu.flag("", "debug", opt_debug()));
+  opts = opts.append(gnu.flag("", "exchange", opt_exchange()));
   opts = opts.append(gnu.flag("f", "force", opt_force()));
   opts = opts.append(gnu.flag("i", "interactive", opt_interactive()));
   opts = opts.append(gnu.flag("n", "no-clobber", opt_no_clobber()));
@@ -681,7 +780,7 @@ function option_table(): gnu.Opt[] {
 struct Scan { cfg: Cfg, backup_given: boolean, control_given: boolean, control_text: string, suffix_given: boolean, target_dir: string, have_target_dir: boolean, no_target_dir: boolean }
 
 function scan_options(argv: string[]): (Scan, string[]) {
-  var cfg: Cfg = Cfg { ask: ask_yes(), update: update_all(), strip: false, verbose: false, backups: false, control: gnu.backup_existing(), suffix: "~", no_copy: false };
+  var cfg: Cfg = Cfg { ask: ask_yes(), update: update_all(), strip: false, verbose: false, debug: false, exchange: false, backups: false, control: gnu.backup_existing(), suffix: "~", no_copy: false };
   var s: Scan = Scan { cfg: cfg, backup_given: false, control_given: false, control_text: "", suffix_given: false, target_dir: "", have_target_dir: false, no_target_dir: false };
   var g: gnu.Getopt = gnu.getopt_new(argv, option_table(), "mv", help_text(), 1);
   while (true) {
@@ -716,7 +815,10 @@ function apply_option(s: Scan, m: gnu.OptMatch): Scan {
     return s;
   }
   if (m.id == opt_debug()) {
-    return Scan { ...s, cfg: Cfg { ...c, verbose: true } };
+    return Scan { ...s, cfg: Cfg { ...c, verbose: true, debug: true } };
+  }
+  if (m.id == opt_exchange()) {
+    return Scan { ...s, cfg: Cfg { ...c, exchange: true } };
   }
   if (m.id == opt_force()) {
     return Scan { ...s, cfg: Cfg { ...c, ask: ask_yes() } };
@@ -828,10 +930,19 @@ pub function main(): i32 {
     gnu.error("cannot combine --target-directory (-t) and --no-target-directory (-T)");
     return 1;
   }
-  if (s.backup_given && s.cfg.ask == ask_never()) {
-    gnu.die_usage("options --backup and --no-clobber are mutually exclusive", 1);
+  // `-n` is `--update=none` decided once the whole command line has
+  // been read, so it beats an `--update` on either side of it. Both it
+  // and the backup conflict are settled before the environment is
+  // read, so `-b -n` under a bogus VERSION_CONTROL reports the
+  // conflict rather than the variable.
+  var settled: Scan = s;
+  if (settled.cfg.ask == ask_never()) {
+    settled = Scan { ...settled, cfg: Cfg { ...settled.cfg, update: update_none() } };
   }
-  var cfg: Cfg = from_environment(s);
+  if (settled.backup_given && (settled.cfg.exchange || update_skips(settled.cfg.update))) {
+    gnu.die_usage("cannot combine --backup with --exchange, -n, or --update=none-fail", 1);
+  }
+  var cfg: Cfg = from_environment(settled);
 
   var o: io_buffered.BufWriter = gnu.out_new();
   if (s.have_target_dir) {

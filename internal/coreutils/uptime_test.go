@@ -26,8 +26,8 @@ func init() {
 //	 00:00:00  up  0:00,  3 users,  load average: 0.00, 0.00, 0.00
 //
 // Everything that says whether the FORMAT is right survives it: the
-// leading space, the colons, the two spaces after the clock, `up`
-// followed by two spaces with no whole days and one with, the `%2d`
+// leading space, the colons, the two spaces after the clock, the single
+// space after `up`, the `%2d`
 // hours column that keeps a space for a single digit, the `%02d`
 // minutes, the comma-and-two-spaces between fields, the singular or
 // plural of `user`, and the whole load-average clause including its
@@ -66,6 +66,18 @@ func maskUptime(s string) string {
 	s = uptimeLoadRe.ReplaceAllStringFunc(s, uptimeZeroDigits)
 	return s
 }
+
+// maskBootErrno drops the strerror suffix GNU appends to `couldn't get
+// boot time`. Nothing on that path sets errno, so the value is whatever
+// gnulib's proper_name_lite left behind probing the locale at startup —
+// EILSEQ under LC_ALL=C, ENOENT under C.UTF-8. Only cases whose
+// database READS fine and simply holds no boot record need it: where
+// the open itself failed, the errno is that failure's and is compared.
+func maskBootErrno(s string) string {
+	return uptimeBootErrno.ReplaceAllString(s, "couldn't get boot time\n")
+}
+
+var uptimeBootErrno = regexp.MustCompile(`couldn't get boot time: [^\n]*\n`)
 
 // uptimeDB writes a database whose boot record sits `ago` before now and
 // which holds `sessions` logged-in users. `ago` is chosen per case so the
@@ -161,9 +173,9 @@ func uptimeCases(t *testing.T) []invocation {
 	trailing := utmpRaw(t, dir, "trailing", append(utmpRec{typ: utBootTime, line: "~", user: "reboot", sec: int32(time.Now().Unix() - 3600)}.bytes(), 1, 2, 3))
 	cases = append(cases,
 		invocation{name: "a boot time in the future", args: []string{future}, mask: maskUptime},
-		invocation{name: "no boot record at all", args: []string{noBoot}, mask: maskUptime},
-		invocation{name: "an empty database", args: []string{empty}, mask: maskUptime},
-		invocation{name: "a partial record is no record", args: []string{short}, mask: maskUptime},
+		invocation{name: "no boot record at all", args: []string{noBoot}, mask: maskUptime, stderrMask: maskBootErrno},
+		invocation{name: "an empty database", args: []string{empty}, mask: maskUptime, stderrMask: maskBootErrno},
+		invocation{name: "a partial record is no record", args: []string{short}, mask: maskUptime, stderrMask: maskBootErrno},
 		invocation{name: "a trailing partial record is dropped", args: []string{trailing}, mask: maskUptime},
 		invocation{name: "a database that is not there", args: []string{dir + "/nosuchz"}, mask: maskUptime},
 		invocation{name: "a directory as the database", args: []string{dir}, mask: maskUptime},

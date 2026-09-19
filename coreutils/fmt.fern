@@ -113,14 +113,10 @@ function tab_width(): i32 {
   return 8;
 }
 
-// The widest line fmt will aim for, and the largest number its width
-// parse accepts before the value itself is out of range.
+// The widest line fmt will aim for: MAXCHARS / 2, above which the
+// output would be unreadable anyway.
 function max_width_limit(): i32 {
   return 2500;
-}
-
-function parse_limit(): i64 {
-  return 1073741823 as i64;
 }
 
 // ---- the cost function ------------------------------------------------------
@@ -362,7 +358,7 @@ function choose(ws: Word[], p: Para, st: Settings, lead: i32): i32[] {
         break;
       }
       ln = ln + adv[w];
-      if (ln >= maxw) {
+      if (ln > maxw) {
         break;
       }
       w = w + 1;
@@ -723,12 +719,14 @@ function feed(s0: State, line: string, term: boolean): State {
 }
 
 // ---- options ----------------------------------------------------------------
-// `width_of(text)` — a `-w` or `-g` value as gnulib parses it: leading
-// white space and a leading `+` are accepted, a `-` is not, the whole
-// string has to be digits, a value past INT_MAX/2 is an overflow and one
-// past 2500 is out of range. A usage error here prints one line and NO
-// `Try …` line.
-function width_of(text: string): i32 {
+// `width_of(text, max, range)` — a `-w` or `-g` value as gnulib's
+// xnumtoumax parses it: leading white space and a leading `+` are
+// accepted, a `-` is not, and the whole string has to be digits.
+// Anything above `max` is out of range, and which errno that reads as
+// is the caller's: `-w` asks for ERANGE because its bound is the
+// caller's own, `-g` gets xdectoumax's default EOVERFLOW. A usage error
+// here prints one line and NO `Try …` line.
+function width_of(text: string, max: i32, range: boolean): i32 {
   var i: i32 = 0;
   while (i < text.len() && (text[i] as i32 == 32 || text[i] as i32 >= 9 && text[i] as i32 <= 13)) {
     i = i + 1;
@@ -751,12 +749,12 @@ function width_of(text: string): i32 {
     gnu.error("invalid width: " + gnu.quote(text));
     exit(1);
   }
-  if (over || value > parse_limit()) {
-    gnu.error("invalid width: " + gnu.quote(text) + ": Value too large for defined data type");
-    exit(1);
-  }
-  if (value > max_width_limit() as i64) {
-    gnu.error("invalid width: " + gnu.quote(text) + ": Numerical result out of range");
+  if (over || value > max as i64) {
+    var why: string = ": Value too large for defined data type";
+    if (range) {
+      why = ": Numerical result out of range";
+    }
+    gnu.error("invalid width: " + gnu.quote(text) + why);
     exit(1);
   }
   return value as i32;
@@ -764,21 +762,6 @@ function width_of(text: string): i32 {
 
 function digit_of(id: i32): string {
   return slice_unchecked("0123456789", id - 10, id - 9) + "";
-}
-
-// The goal's own text for its out-of-range diagnostic, which names the
-// number rather than the token it was written as.
-function int_text(v: i32): string {
-  if (v == 0) {
-    return "0";
-  }
-  var out: string = "";
-  var n: i32 = v;
-  while (n > 0) {
-    out = slice_unchecked("0123456789", n % 10, n % 10 + 1) + out;
-    n = n / 10;
-  }
-  return out;
 }
 
 pub function main(): i32 {
@@ -820,11 +803,13 @@ pub function main(): i32 {
   var uniform: boolean = false;
   var prefix: string = "";
   var width: i32 = 75;
+  var width_text: string = "";
   var have_width: boolean = false;
   var goal: i32 = 0;
+  var goal_text: string = "";
   var have_goal: boolean = false;
   if (have_obsolete) {
-    width = width_of(obsolete);
+    width_text = obsolete;
     have_width = true;
   }
 
@@ -845,10 +830,10 @@ pub function main(): i32 {
         } else if (m.id == opt_uniform()) {
           uniform = true;
         } else if (m.id == opt_width()) {
-          width = width_of(m.value);
+          width_text = m.value;
           have_width = true;
         } else if (m.id == opt_goal()) {
-          goal = width_of(m.value);
+          goal_text = m.value;
           have_goal = true;
         } else {
           gnu.die_usage("invalid option -- " + digit_of(m.id) + "; -WIDTH is recognized only when it is the first\noption; use -w N instead", 1);
@@ -860,11 +845,13 @@ pub function main(): i32 {
     }
   }
 
+  // Both values are read here rather than in the loop, because the
+  // goal's bound is the width, whichever order the two were given in.
+  if (have_width) {
+    width = width_of(width_text, max_width_limit(), true);
+  }
   if (have_goal) {
-    if (goal > width) {
-      gnu.error("invalid width: " + gnu.quote(int_text(goal)) + ": Numerical result out of range");
-      exit(1);
-    }
+    goal = width_of(goal_text, width, false);
     if (!have_width) {
       width = goal + 10;
     }
@@ -928,7 +915,13 @@ function run(files: string[], st: Settings): i32 {
             piece = c;
           },
           Err(e) => {
-            s = State { ...s, o: report(s.o, "read error"), ok: false };
+            // GNU words the two differently: stdin has no name to
+            // print, a FILE is named with shell-escape quoting.
+            var why: string = "read error: " + gnu.io_error_text(e);
+            if (!is_stdin) {
+              why = "error reading " + gnu.quotea(name) + ": " + gnu.io_error_text(e);
+            }
+            s = State { ...s, o: report(s.o, why), ok: false };
             more = false;
           }
         }

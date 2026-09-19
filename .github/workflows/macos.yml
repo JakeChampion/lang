@@ -41,12 +41,12 @@ jobs:
     # corpus at 03:19 and was still "in progress" ninety minutes later.
     timeout-minutes: 110
     # Pinned to the SAME version test-units.yml pins, and that lane says why:
-    # 9.4 is what the ubuntu-24.04 image's own coreutils is, "so every utility
-    # here answers to one version". A second lane holding a second opinion
-    # would show it first in `--help`, the most version-volatile output
-    # coreutils has and one the corpus compares byte for byte.
+    # "so every utility here answers to one version". A second lane holding a
+    # second opinion would show it first in `--help`, the most
+    # version-volatile output coreutils has and one the corpus compares byte
+    # for byte.
     env:
-      GNU_COREUTILS_VERSION: "9.4"
+      GNU_COREUTILS_VERSION: "9.12"
     steps:
       - uses: actions/checkout@v7
 
@@ -114,7 +114,7 @@ jobs:
           tar xf "coreutils-$ver.tar.xz"
           cd "coreutils-$ver"
           # ac_cv_header_stdckdint_h=no is not a workaround for the build,
-          # it is what makes this build match the Linux one. 9.4's
+          # it is what makes this build match the Linux one. Coreutils'
           # lib/posixtm.c calls `ckd_add (&t, t, leapsec)` with a `bool`
           # third argument, and C23's checked-integer builtins refuse a bool
           # operand: "operand argument to checked integer operation must be
@@ -125,26 +125,30 @@ jobs:
           # without this the macOS build defers to it and stops on that one
           # line. Forcing the substitution gives both oracles the same
           # checked-arithmetic header rather than patching either one.
+          # --with-selinux, on a system that has no SELinux at all, is not
+          # a contradiction: it is the flag that keeps chcon and runcon in
+          # the build. Coreutils 9.9 added "Don't build chcon and runcon if
+          # only have gnulib stubs. Honor --without-selinux to force disable
+          # and --with-selinux to force enable" to configure.ac, so 9.4 built
+          # both here and 9.12 with --without-selinux builds neither, and the
+          # oracle check below reported exactly that. Nothing else in the
+          # tree reads the flag — gnulib's gl_LIBSELINUX finds no libselinux
+          # either way and warns — so the two binaries are the same
+          # stub-backed ones 9.4 produced, which is what this lane has
+          # compared against all along. Keeping the oracle SET constant is
+          # what makes a version bump measure version differences.
           FORCE_UNSAFE_CONFIGURE=1 ac_cv_header_stdckdint_h=no \
             ./configure --quiet --disable-nls \
-            --without-selinux --prefix="$HOME/gnu-coreutils"
+            --with-selinux --prefix="$HOME/gnu-coreutils" \
+            --enable-install-program=arch,kill,uptime
           make -j"$(sysctl -n hw.ncpu)"
           make install
-          # `arch` is in coreutils' no_install__progs list, which makes it an
-          # automake EXTRA_PROGRAM: `make` does not build it and `make
-          # install` does not place it, and no configure flag changes either.
-          # Debian ships its own copy, which is the only reason the Linux
-          # corpora find an oracle in /usr/bin; here /usr/bin/arch is Apple's
-          # arch(1), a different program that runs a command under a named
-          # architecture, and the harness's version probe rejects it. So name
-          # the target and copy the result.
-          #
-          # Naming a target is what the Linux lane's comment warns against —
-          # it skips the gnulib header generation and dies on a missing
-          # stdckdint.h — but that is a warning about building a target in a
-          # tree where `make` has not run. Here it has, two lines up.
-          make src/arch
-          cp src/arch "$HOME/gnu-coreutils/bin/arch"
+          # `arch` needs naming in --enable-install-program above, which is
+          # also what builds it: it is an automake EXTRA_PROGRAM, so `make`
+          # alone produces nothing to copy. Debian ships its own, which is
+          # the only reason the Linux corpora find one in /usr/bin; here
+          # /usr/bin/arch is Apple's unrelated arch(1) and the harness's
+          # version probe rejects it.
           cd /
           rm -rf "$work"
       # A SKIP IS A MISSING DEPENDENCY, NOT A PASS. A cache that restored an
@@ -175,7 +179,7 @@ jobs:
               continue
             fi
             # `dd` is the one utility whose version line omits the word GNU:
-            # it says `dd (coreutils) 9.4`. Both spellings are the package's.
+            # it says `dd (coreutils) 9.12`. Both spellings are the package's.
             # Read into a variable rather than piping into grep: `head -1`
             # closes the pipe on a program that has more to write, and under
             # `set -o pipefail` that SIGPIPE is the pipeline's status, so a
@@ -273,8 +277,13 @@ jobs:
       # stdout reproduces the stall it was moved off; the first version of
       # this step did exactly that and hung for 23 minutes. Read the artifact
       # for detail; this is only the shape of the round.
+      # `!cancelled()` rather than `always()`: a red lane elsewhere cancels
+      # this one mid-corpus, and under `always()` both this step and the
+      # ratchet below read the truncated log as a finding — a cancelled lane
+      # reporting as a second bug. The upload above stays `always()`, because
+      # a partial log is still worth keeping.
       - name: which cases failed
-        if: always() && steps.gate.outputs.signed != 'true'
+        if: "!cancelled() && steps.gate.outputs.signed != 'true'"
         timeout-minutes: 3
         run: |
           if [ ! -f corpus-darwin.log ]; then
@@ -306,7 +315,7 @@ jobs:
       # way it landed. A name going quiet is good news either way, and the
       # worst case is a stale line that someone deletes later.
       - name: the Darwin ratchet
-        if: always() && steps.gate.outputs.signed != 'true'
+        if: "!cancelled() && steps.gate.outputs.signed != 'true'"
         timeout-minutes: 3
         run: |
           if [ ! -f corpus-darwin.log ]; then

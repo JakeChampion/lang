@@ -9,22 +9,24 @@ import "./fnmatch";
 
 // ---- the built-in database -------------------------------------------------
 //
-// GNU coreutils 9.4's, transcribed from what its own `dircolors -p`
+// GNU coreutils 9.12's, transcribed from what its own `dircolors -p`
 // prints. The text carries a copyright notice and the permission to
 // copy and distribute it with that notice preserved, which is what
 // keeps it here; nothing was taken from GNU sources.
 //
 // It is VERSION-PINNED: the copyright year in the third line moves with
 // each release, and the entries below it change too, so `dircolors -p`
-// and the no-operand output are compared against a 9.4 oracle. A newer
-// reference fails those cases loudly (docs/COREUTILS.md's version rule,
-// and `uname -p`'s precedent) rather than passing something wrong, and
-// the fix is to transcribe the newer `dircolors -p` here.
+// and the no-operand output are compared against a 9.12 oracle. A
+// different reference fails those cases loudly (docs/COREUTILS.md's
+// version rule, and `uname -p`'s precedent) rather than passing
+// something wrong, and the fix is to transcribe that `dircolors -p`
+// here. 9.4 to 9.12 moved the year, added a `TERM vt220` line, said
+// "regular file" in three descriptions, and changed the extension list.
 pub function text(): string {
   var out: string = "";
   out = out + "# Configuration file for dircolors, a utility to help you set the\n";
   out = out + "# LS_COLORS environment variable used by GNU ls with the --color option.\n";
-  out = out + "# Copyright (C) 1996-2023 Free Software Foundation, Inc.\n";
+  out = out + "# Copyright (C) 1996-2026 Free Software Foundation, Inc.\n";
   out = out + "# Copying and distribution of this file, with or without modification,\n";
   out = out + "# are permitted provided the copyright notice and this notice are preserved.\n";
   out = out + "#\n";
@@ -61,6 +63,7 @@ pub function text(): string {
   out = out + "TERM terminator\n";
   out = out + "TERM tmux*\n";
   out = out + "TERM vt100\n";
+  out = out + "TERM vt220\n";
   out = out + "TERM xterm*\n";
   out = out + "# ===================================================================\n";
   out = out + "# Basic file attributes\n";
@@ -89,13 +92,13 @@ pub function text(): string {
   out = out + "CHR 40;33;01 # character device driver\n";
   out = out + "ORPHAN 40;31;01 # symlink to nonexistent file, or non-stat'able file ...\n";
   out = out + "MISSING 00 # ... and the files they point to\n";
-  out = out + "SETUID 37;41 # file that is setuid (u+s)\n";
-  out = out + "SETGID 30;43 # file that is setgid (g+s)\n";
-  out = out + "CAPABILITY 00 # file with capability (very expensive to lookup)\n";
+  out = out + "SETUID 37;41 # regular file that is setuid (u+s)\n";
+  out = out + "SETGID 30;43 # regular file that is setgid (g+s)\n";
+  out = out + "CAPABILITY 00 # regular file with capability (very expensive to lookup)\n";
   out = out + "STICKY_OTHER_WRITABLE 30;42 # dir that is sticky and other-writable (+t,o+w)\n";
   out = out + "OTHER_WRITABLE 34;42 # dir that is other-writable (o+w) and not sticky\n";
   out = out + "STICKY 37;44 # dir with the sticky bit set (+t) and not other-writable\n";
-  out = out + "# This is for files with execute permission:\n";
+  out = out + "# This is for regular files with execute permission:\n";
   out = out + "EXEC 01;32\n";
   out = out + "# ===================================================================\n";
   out = out + "# File extension attributes\n";
@@ -117,56 +120,64 @@ pub function text(): string {
   out = out + "#.sh 01;32\n";
   out = out + "#.csh 01;32\n";
   out = out + "# archives or compressed (bright red)\n";
-  out = out + ".tar 01;31\n";
-  out = out + ".tgz 01;31\n";
+  out = out + ".7z 01;31\n";
+  out = out + ".ace 01;31\n";
+  out = out + ".alz 01;31\n";
+  out = out + ".apk 01;31\n";
   out = out + ".arc 01;31\n";
   out = out + ".arj 01;31\n";
-  out = out + ".taz 01;31\n";
+  out = out + ".bz 01;31\n";
+  out = out + ".bz2 01;31\n";
+  out = out + ".cab 01;31\n";
+  out = out + ".cpio 01;31\n";
+  out = out + ".crate 01;31\n";
+  out = out + ".deb 01;31\n";
+  out = out + ".drpm 01;31\n";
+  out = out + ".dwm 01;31\n";
+  out = out + ".dz 01;31\n";
+  out = out + ".ear 01;31\n";
+  out = out + ".egg 01;31\n";
+  out = out + ".esd 01;31\n";
+  out = out + ".gz 01;31\n";
+  out = out + ".jar 01;31\n";
   out = out + ".lha 01;31\n";
+  out = out + ".lrz 01;31\n";
+  out = out + ".lz 01;31\n";
   out = out + ".lz4 01;31\n";
   out = out + ".lzh 01;31\n";
   out = out + ".lzma 01;31\n";
-  out = out + ".tlz 01;31\n";
-  out = out + ".txz 01;31\n";
-  out = out + ".tzo 01;31\n";
-  out = out + ".t7z 01;31\n";
-  out = out + ".zip 01;31\n";
-  out = out + ".z 01;31\n";
-  out = out + ".dz 01;31\n";
-  out = out + ".gz 01;31\n";
-  out = out + ".lrz 01;31\n";
-  out = out + ".lz 01;31\n";
   out = out + ".lzo 01;31\n";
-  out = out + ".xz 01;31\n";
-  out = out + ".zst 01;31\n";
-  out = out + ".tzst 01;31\n";
-  out = out + ".bz2 01;31\n";
-  out = out + ".bz 01;31\n";
+  out = out + ".pyz 01;31\n";
+  out = out + ".rar 01;31\n";
+  out = out + ".rpm 01;31\n";
+  out = out + ".rz 01;31\n";
+  out = out + ".sar 01;31\n";
+  out = out + ".swm 01;31\n";
+  out = out + ".t7z 01;31\n";
+  out = out + ".tar 01;31\n";
+  out = out + ".taz 01;31\n";
   out = out + ".tbz 01;31\n";
   out = out + ".tbz2 01;31\n";
+  out = out + ".tgz 01;31\n";
+  out = out + ".tlz 01;31\n";
+  out = out + ".txz 01;31\n";
   out = out + ".tz 01;31\n";
-  out = out + ".deb 01;31\n";
-  out = out + ".rpm 01;31\n";
-  out = out + ".jar 01;31\n";
+  out = out + ".tzo 01;31\n";
+  out = out + ".tzst 01;31\n";
+  out = out + ".udeb 01;31\n";
   out = out + ".war 01;31\n";
-  out = out + ".ear 01;31\n";
-  out = out + ".sar 01;31\n";
-  out = out + ".rar 01;31\n";
-  out = out + ".alz 01;31\n";
-  out = out + ".ace 01;31\n";
-  out = out + ".zoo 01;31\n";
-  out = out + ".cpio 01;31\n";
-  out = out + ".7z 01;31\n";
-  out = out + ".rz 01;31\n";
-  out = out + ".cab 01;31\n";
+  out = out + ".whl 01;31\n";
   out = out + ".wim 01;31\n";
-  out = out + ".swm 01;31\n";
-  out = out + ".dwm 01;31\n";
-  out = out + ".esd 01;31\n";
+  out = out + ".xz 01;31\n";
+  out = out + ".z 01;31\n";
+  out = out + ".zip 01;31\n";
+  out = out + ".zoo 01;31\n";
+  out = out + ".zst 01;31\n";
   out = out + "# image formats\n";
   out = out + ".avif 01;35\n";
   out = out + ".jpg 01;35\n";
   out = out + ".jpeg 01;35\n";
+  out = out + ".jxl 01;35\n";
   out = out + ".mjpg 01;35\n";
   out = out + ".mjpeg 01;35\n";
   out = out + ".gif 01;35\n";

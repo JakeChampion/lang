@@ -198,6 +198,11 @@ func init() {
 func basencCases(t *testing.T) []invocation {
 	f := baseFixtureFor(t)
 	encodings := []string{"--base64", "--base64url", "--base32", "--base32hex", "--base16", "--base2msbf", "--base2lsbf"}
+	var allBytesBuf []byte
+	for i := 0; i < 256; i++ {
+		allBytesBuf = append(allBytesBuf, byte(i))
+	}
+	allBytes := string(allBytesBuf)
 
 	cases := []invocation{
 		// The encoding is mandatory, and its absence is reported before
@@ -260,6 +265,29 @@ func basencCases(t *testing.T) []invocation {
 
 		// z85: the block requirement on both sides, and the one
 		// diagnostic that is not `invalid input`.
+		// --base58 (9.8): the whole input is one number, so a leading
+		// zero byte carries no value and is written as a `1` instead.
+		{name: "base58 empty", args: []string{"--base58"}, stdin: ""},
+		{name: "base58 hello world", args: []string{"--base58"}, stdin: "hello world"},
+		{name: "base58 one byte", args: []string{"--base58"}, stdin: "a"},
+		{name: "base58 a zero byte", args: []string{"--base58"}, stdin: "\x00"},
+		{name: "base58 leading zeros", args: []string{"--base58"}, stdin: "\x00\x00abc"},
+		{name: "base58 all zeros", args: []string{"--base58"}, stdin: "\x00\x00\x00"},
+		{name: "base58 every byte value", args: []string{"--base58"}, stdin: allBytes},
+		{name: "base58 wrapped", args: []string{"--base58", "-w", "10"}, stdin: "hello world hello world"},
+		{name: "base58 unwrapped", args: []string{"--base58", "-w", "0"}, stdin: "hello world hello world"},
+		{name: "base58 decode", args: []string{"--base58", "-d"}, stdin: "StV1DL6CwTryKyV"},
+		{name: "base58 decode ones", args: []string{"--base58", "-d"}, stdin: "11"},
+		{name: "base58 decode empty", args: []string{"--base58", "-d"}, stdin: ""},
+		{name: "base58 decode a newline", args: []string{"--base58", "-d"}, stdin: "StV1DL6\nCwTryKyV\n"},
+		{name: "base58 decode a zero is garbage", args: []string{"--base58", "-d"}, stdin: "StV1DL6CwTryKyV0"},
+		{name: "base58 decode an O is garbage", args: []string{"--base58", "-d"}, stdin: "O"},
+		{name: "base58 decode a space is garbage", args: []string{"--base58", "-d"}, stdin: "StV1 DL6CwTryKyV"},
+		{name: "base58 decode ignoring garbage", args: []string{"--base58", "-d", "-i"}, stdin: "StV1 DL6CwTryKyV"},
+		{name: "base58 round trip", args: []string{"--base58", "-d"}, stdin: "1BMphAQwBXpRKbahhHTbLznKUCCg9TVYwGpWDy18iUsc87zD9ndHfDr3sDZRZgZwqZNWtj1fgjqcrG63uM"},
+		{name: "base58 then base64", args: []string{"--base58", "--base64"}, stdin: "hello"},
+		{name: "base58 prefix", args: []string{"--base5"}, stdin: "hello"},
+
 		{name: "z85 four bytes", args: []string{"--z85"}, stdin: "hell"},
 		{name: "z85 eight bytes", args: []string{"--z85"}, stdin: "hellhell"},
 		{name: "z85 empty", args: []string{"--z85"}, stdin: ""},
