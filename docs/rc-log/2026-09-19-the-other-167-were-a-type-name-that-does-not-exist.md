@@ -103,10 +103,20 @@ that declaration. The coarse tag is right. What it has no sidecar pair for is
 the contract: it copies `lam.ret_fn_ret` / `lam.ret_fn_param_types`, and the
 if-expression's IIFE is built by `e_lambda_origin`, which writes the empty pair.
 
-The contract exists at the parse site. `if_expr_rt` sees the arm lambda's own
-`params` and `ret_type` and could name `(i32) => i32` outright; it currently
-falls to its `"i32"` default for a lambda arm, which is the same shape of wrong
-tag as `"bool"` was, one arm over. Carrying it means `IfChain` and
-`e_lambda_origin` growing the pair the way `ExprLambda` just did. That is the
-next increment, and this time the mechanism is identified rather than guessed at
-from a count — which is the whole point of making the refusal name its input.
+Half of the contract exists at the parse site and half does not, and which half
+is missing decides what the next increment is. The arm lambda's PARAMETER
+spellings are always written — `((x: i32) => …)` names `i32` whether or not the
+lambda is annotated. Its RESULT is written only when the author annotates it:
+`((x: i32): i32 => x)` names one, `((x: i32) => x)` does not, and fernsmith
+writes the second. Annotating both arms by hand changes the refusal not at all,
+so the plumbing gap is real on its own — `if_expr_rt` falls to its `"i32"`
+default for a lambda arm, which is the same shape of wrong tag as `"bool"` was,
+one arm over, and `IfChain` / `e_lambda_origin` have no pair to carry even when
+one exists.
+
+But plumbing alone reaches only the annotated arm. The unannotated one needs the
+result INFERRED from the lambda's body, and inferring a tag is what produced
+both bugs this pair of entries is about. So the next increment is the plumbing,
+measured on its own, before any inference is layered on top of it — not the two
+together, where a wrong guess would again be indistinguishable from a missing
+mechanism.
