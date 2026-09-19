@@ -362,7 +362,7 @@ function choose(ws: Word[], p: Para, st: Settings, lead: i32): i32[] {
         break;
       }
       ln = ln + adv[w];
-      if (ln >= maxw) {
+      if (ln > maxw) {
         break;
       }
       w = w + 1;

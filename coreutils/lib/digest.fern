@@ -1000,6 +1000,10 @@ function check_lines(a: Algo, s: Settings, r: Reader, file: string, o: io_buffer
         }
         st = Check { ...st, properly: st.properly + 1 as i64 };
         st = check_one(s, ln, st);
+        // Line buffering: GNU sets _IOLBF on stdout, so a verdict line
+        // reaches the fd as it is printed and a failure is diagnosed
+        // here rather than at the close, with the summary never reached.
+        st = Check { ...st, out: gnu.flush(st.out) };
       },
       None => {
         break;
@@ -1028,22 +1032,7 @@ function report(s: Settings, st: Check, file: string): (boolean, io_buffered.Buf
     w = gnu.error_out(w, gnu.quotef(file) + ": no properly formatted checksum lines found");
     return (false, w);
   }
-  // Once stdout has failed there is no summary: the write error is the
-  // whole report. GNU <= 9.4 printed the tallies first and the write
-  // error after them.
-  //
-  // Flushed first, because the verdict lines are still in the buffer at
-  // this point and a closed stdout only fails when one is actually
-  // written — without this the error is not yet on the stream to see.
-  w = w.flush();
-  var wrote_ok: boolean = true;
-  match (w.error()) {
-    Some(_) => {
-      wrote_ok = false;
-    },
-    None => {}
-  }
-  if (!s.status && wrote_ok) {
+  if (!s.status) {
     if (st.improper > 0 as i64) {
       w = gnu.error_out(w, "WARNING: " + st.improper.to_string() + plural(st.improper, " line is", " lines are") + " improperly formatted");
     }
@@ -1290,7 +1279,7 @@ function compute(a: Algo, s: Settings, names: string[], o: io_buffered.BufWriter
       out = gnu.error_out(out, gnu.quotef(name) + ": " + sum_error_text(sum));
       ok = false;
     } else {
-      out = gnu.put(out, sum_line(a, s, sum.hex, name));
+      out = gnu.flush(gnu.put(out, sum_line(a, s, sum.hex, name)));
     }
     i = i + 1;
   }
@@ -1352,7 +1341,6 @@ pub function run(a: Algo): i32 {
     ok = rc.0;
     out = rc.1;
   }
-  out = out.flush();
   gnu.close_stdout(out, false);
   if (!ok) {
     return 1;
