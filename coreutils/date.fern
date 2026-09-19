@@ -354,8 +354,6 @@ pub function main(): i32 {
   while (true) {
     var res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = res.1;
-    var new_format: string = "";
-    var has_new: boolean = false;
     match (res.0) {
       Some(m) => {
         if (m.id == opt_date()) {
@@ -373,21 +371,21 @@ pub function main(): i32 {
           resolution = true;
         } else if (m.id == opt_rfc_3339()) {
           var names: string[] = ["date", "seconds", "ns"];
-          new_format = rfc_3339_formats()[gnu.argmatch(m.value, names, "--rfc-3339")];
-          has_new = true;
+          format = rfc_3339_formats()[gnu.argmatch(m.value, names, "--rfc-3339")];
+          has_format = true;
         } else if (m.id == opt_iso()) {
           var which: i32 = 2;
           if (m.has_value) {
             which = gnu.argmatch(m.value, time_spec_names(), "--iso-8601");
           }
-          new_format = iso_formats()[which];
-          has_new = true;
+          format = iso_formats()[which];
+          has_format = true;
         } else if (m.id == opt_reference()) {
           reference = m.value;
           has_reference = true;
         } else if (m.id == opt_rfc_email()) {
-          new_format = rfc_email_format();
-          has_new = true;
+          format = rfc_email_format();
+          has_format = true;
         } else if (m.id == opt_set()) {
           if (set_date) {
             discarded_set = true;
@@ -401,14 +399,6 @@ pub function main(): i32 {
       None => {
         break;
       }
-    }
-    if (has_new) {
-      if (has_format) {
-        gnu.error("multiple output formats specified");
-        exit(1);
-      }
-      format = new_format;
-      has_format = true;
     }
   }
   var specified: i32 = 0;
