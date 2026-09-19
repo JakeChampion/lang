@@ -149,12 +149,17 @@ type invocation struct {
 	// whole observable — `tee` dies of SIGINT, `tee -i` ignores it and
 	// dies of the SIGPIPE that the closing read end delivers instead.
 	sigint bool
-	// dir is the working directory the child runs in; the default is the
-	// harness's own. A case needs one when an operand has to be
-	// RELATIVE, which is the only way to spell uniq's output operand as
-	// `-c` or `+2` and see what POSIXLY_CORRECT does with it — and it is
-	// all `pwd` is about, where a path reached through a
-	// symbolic link is how the logical and physical answers differ.
+	// dir is the working directory the child runs in. A case that names
+	// none gets a fresh temporary one per case, which is what keeps a
+	// utility that creates a file named by an operand from writing it
+	// into the source tree: the test process's own directory is
+	// internal/coreutils, and `uniq -c +2 f` left an untracked `+2`
+	// there on every corpus run (#9765).
+	//
+	// Name one when the case is ABOUT the directory: a path reached
+	// through a symbolic link is how `pwd` separates the logical answer
+	// from the physical one, and a relative operand has to be spelled
+	// against a tree the case built.
 	dir string
 	// prepare runs immediately before each side starts, so a case for a
 	// utility that WRITES hands both implementations the same tree: the
@@ -514,6 +519,26 @@ type artifact struct {
 	data    []byte
 }
 
+// own gives a case that named no directory a fresh one of its own, and is
+// what every driver that walks the corpus calls before running a case.
+//
+// Without it the child inherits the test process's working directory, which
+// is internal/coreutils, so a utility that creates a file named by an operand
+// writes it into the source tree: `uniq -c +2 f` left an untracked `+2` there
+// on every run (#9765). The two legs that run cases CONCURRENTLY made it a
+// race as well, since two cases writing that name shared it.
+//
+// Both sides of a comparison share the one directory, as they shared the
+// package directory before it, so `prepare` still has a tree to reset between
+// them.
+func (inv invocation) own(t *testing.T) invocation {
+	t.Helper()
+	if inv.dir == "" && inv.seedTree == nil {
+		inv.dir = t.TempDir()
+	}
+	return inv
+}
+
 func (inv invocation) prep(t *testing.T) {
 	t.Helper()
 	// The rawByteName guard lives HERE rather than in the parity runner
@@ -546,7 +571,7 @@ func (inv invocation) readArtifacts(t *testing.T) []artifact {
 	t.Helper()
 	out := make([]artifact, 0, len(inv.artifacts))
 	for _, name := range inv.artifacts {
-		b, err := os.ReadFile(name)
+		b, err := os.ReadFile(childPath(name, inv.dir))
 		switch {
 		case err == nil:
 			out = append(out, artifact{name: name, present: true, data: b})
@@ -1878,6 +1903,7 @@ func requireParityBinary(t *testing.T, util, ours string, cases []invocation) {
 
 	for _, inv := range cases {
 		t.Run(inv.name, func(t *testing.T) {
+			inv := inv.own(t)
 			inv.prep(t)
 			want := inv.run(t, ref, util)
 			wantFiles := inv.readArtifacts(t)
