@@ -95,14 +95,16 @@ function arr_push_borrowed_op(elem: typeinfo.Type): ir.Op {
     return ir.op_arr_push();
 }
 // The types whose stack representation needs no declaration looked up: a
-// boolean and a void occupy one word, a string is its own box, and a function
-// value is the env box its captures are stored in.
+// boolean and a void occupy one word, a string is its own box, a function
+// value is the env box its captures are stored in, and a stream handle is the
+// descriptor word. The handle is read here rather than under the nominal
+// ladder below, which would look for a schema no handle has.
 function supported_leaf(t: typeinfo.Type): boolean {
     if let typeinfo.TypeBool(_) = t { return true; }
     if let typeinfo.TypeVoid(_) = t { return true; }
     if let typeinfo.TypeString(_) = t { return true; }
     if let typeinfo.TypeFunc(_) = t { return true; }
-    return false;
+    return semtypes.is_handle(t);
 }
 // A nominal box is named by a declaration this function's schema table carries,
 // except a cell's: no declaration names it, and what it holds is one slot of
@@ -121,17 +123,6 @@ function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
     if let typeinfo.TypeTuple(tup) = t { return supported_tuple(tup, f); }
     if (ssasem.is_map(t)) { return ssasem.is_supported_map(t); }
     return supported_nominal(t, f);
-}
-
-function reference(t: typeinfo.Type): boolean {
-    if let typeinfo.TypeString(_) = t { return true; }
-    if let typeinfo.TypeArray(_) = t { return true; }
-    if let typeinfo.TypeTuple(_) = t { return true; }
-    if let typeinfo.TypeStruct(_) = t { return true; }
-    if let typeinfo.TypeUnion(_) = t { return true; }
-    if let typeinfo.TypeFunc(_) = t { return true; }
-    if let typeinfo.TypeMap(_) = t { return true; }
-    return false;
 }
 
 function record_name(t: typeinfo.Type): string {
@@ -161,7 +152,7 @@ function fields_have_children(fields: semrecords.Field[], env: boolean): boolean
 // owned.
 function walked(t: typeinfo.Type, env: boolean): boolean {
     if (ssasem.is_func(t)) { return !env; }
-    return reference(t);
+    return ssasem.reference(t);
 }
 
 // A string box is released by its own helper: its block starts before the
@@ -498,11 +489,11 @@ function scratch_base(f: ssasem.Func): i32 { return f.graph.nvals + 1; }
 // Array/tuple/struct opcodes preserve the production native/Wasm layouts.
 function has_children(t: typeinfo.Type, f: ssasem.Func): boolean {
     if let typeinfo.TypeFunc(_) = t { return env_records(f).len() > 0; }
-    if let typeinfo.TypeArray(a) = t { return reference(a.elem); }
+    if let typeinfo.TypeArray(a) = t { return ssasem.reference(a.elem); }
     if let typeinfo.TypeTuple(tup) = t {
-        for elem in tup.elements { if (reference(elem)) { return true; } }
+        for elem in tup.elements { if (ssasem.reference(elem)) { return true; } }
     }
-    if (semtypes.is_cell(t)) { return reference(semtypes.cell_elem(t)); }
+    if (semtypes.is_cell(t)) { return ssasem.reference(semtypes.cell_elem(t)); }
     // A map's own release walks its columns, and the uniqueness guard this
     // answers would read a count its box does not carry.
     if (ssasem.is_map(t)) { return false; }
@@ -574,7 +565,7 @@ function drop_payload(own r: irlower.LowerResult, slot: i32, e: semrecords.Enum,
     var tag: i32 = 0;
     while (tag < e.variants.len()) {
         var fields: semrecords.Field[] = e.variants[tag].fields;
-        if (fields.len() == 1 && reference(fields[0].ty)) {
+        if (fields.len() == 1 && ssasem.reference(fields[0].ty)) {
             r = emit(r, ir.op_load_local(slot));
             r = emit(r, ir.op_opt_tag());
             r = emit(r, ir.op_const_i32(tag));
@@ -640,7 +631,7 @@ function drop_tuple_fields(own r: irlower.LowerResult, slot: i32, tup: typeinfo.
     r = reserve(r, child + 1);
     var i: i32 = 0;
     while (i < tup.elements.len()) {
-        if (reference(tup.elements[i])) {
+        if (ssasem.reference(tup.elements[i])) {
             r = emit(r, ir.op_load_local(slot));
             r = emit(r, ir.op_tuple_get(i));
             r = emit(r, ir.op_store_local(child));
@@ -1074,7 +1065,10 @@ function enum_name(t: typeinfo.Type): string {
 function walkable(t: typeinfo.Type, f: ssasem.Func): boolean {
     if let typeinfo.TypeArray(a) = t { return walkable(a.elem, f); }
     if let typeinfo.TypeTuple(tup) = t { return walkable_tuple(tup, f); }
-    if (reference(t)) { return supported(t, f); }
+    if (ssasem.reference(t)) { return supported(t, f); }
+    // A stream handle stores as the descriptor word and its release walks
+    // nothing, so a field or payload of one is walkable without a schema.
+    if (semtypes.is_handle(t)) { return true; }
     if let typeinfo.TypeI32(_) = t { return true; }
     if let typeinfo.TypeBool(_) = t { return true; }
     if let typeinfo.TypeFloat(fl) = t { return fl.width == 32 || fl.width == 64; }
@@ -1861,7 +1855,7 @@ function sole_owned_base(own r: irlower.LowerResult, f: ssasem.Func, base: i32, 
     r = emit(r, ir.op_load_local(base));
     r = emit(r, ir.op_arr_len());
     r = emit(r, ir.op_arr_slice(elem_width(elem)));
-    if (reference(elem)) { r = emit(r, ir.op_call_direct("__fern_arr_inc_elems", 1)); }
+    if (ssasem.reference(elem)) { r = emit(r, ir.op_call_direct("__fern_arr_inc_elems", 1)); }
     r = emit(r, ir.op_store_local(scratch));
     return emit(r, ir.op_end());
 }
@@ -1898,7 +1892,7 @@ function append_push(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Pla
     r = emit(r, ir.op_load_local(ins.args[1]));
     r = emit(r, arr_push_borrowed_op(elem));
     r = emit(r, ir.op_store_local(res));
-    if (reference(elem)) { r = helper(r, ins.args[0], "__fern_arr_inc_elems"); }
+    if (ssasem.reference(elem)) { r = helper(r, ins.args[0], "__fern_arr_inc_elems"); }
     r = release(r, ins.args[0], f.values[ins.args[0]]);
     r = emit(r, ir.op_end());
     return emit(r, ir.op_load_local(res));
@@ -1936,7 +1930,7 @@ function append_borrowed(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SI
     r = emit(r, ir.op_bin("eq", 0, false));
     r = emit(r, ir.op_if(0));
     r = helper(r, scratch, "__fern_rc_inc");
-    if (reference(elem)) {
+    if (ssasem.reference(elem)) {
         r = emit(r, ir.op_else());
         r = helper(r, ins.args[0], "__fern_arr_inc_elems");
     }
@@ -1977,7 +1971,7 @@ function append_field(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Pl
     r = emit(r, ir.op_load_local(root));
     r = emit(r, ir.op_const_i32(0));
     r = emit(r, ir.op_struct_set(p.grow_fields[ins.result], 0));
-    if (reference(elem)) {
+    if (ssasem.reference(elem)) {
         r = emit(r, ir.op_else());
         r = helper(r, ins.args[0], "__fern_arr_inc_elems");
     }
@@ -2017,7 +2011,7 @@ function with_update(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Pla
     var scratch: i32 = scratch_base(f);
     r = reserve(r, scratch + 1);
     r = sole_owned_base(r, f, ins.args[0], scratch);
-    if (reference(elem)) { r = drop_replaced(r, f, ins, scratch, elem); }
+    if (ssasem.reference(elem)) { r = drop_replaced(r, f, ins, scratch, elem); }
     r = emit(r, ir.op_load_local(scratch));
     r = emit(r, ir.op_load_local(ins.args[1]));
     r = emit(r, ir.op_load_local(ins.args[2]));
@@ -2061,10 +2055,10 @@ function with_field(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan
     r = emit(r, ir.op_load_local(ins.args[0]));
     r = emit(r, ir.op_arr_len());
     r = emit(r, ir.op_arr_slice(elem_width(elem)));
-    if (reference(elem)) { r = emit(r, ir.op_call_direct("__fern_arr_inc_elems", 1)); }
+    if (ssasem.reference(elem)) { r = emit(r, ir.op_call_direct("__fern_arr_inc_elems", 1)); }
     r = emit(r, ir.op_store_local(res));
     r = emit(r, ir.op_end());
-    if (reference(elem)) { r = drop_replaced(r, f, ins, res, elem); }
+    if (ssasem.reference(elem)) { r = drop_replaced(r, f, ins, res, elem); }
     r = emit(r, ir.op_load_local(res));
     r = emit(r, ir.op_load_local(ins.args[1]));
     r = emit(r, ir.op_load_local(ins.args[2]));
@@ -2091,7 +2085,7 @@ function cell_read(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): 
     r = emit(r, ir.op_const_i32(0));
     r = emit(r, arr_get_op(elem));
     r = emit(r, ir.op_store_local(ins.result));
-    if (reference(elem)) { r = helper(r, ins.result, "__fern_rc_inc"); }
+    if (ssasem.reference(elem)) { r = helper(r, ins.result, "__fern_rc_inc"); }
     return r;
 }
 
@@ -2099,7 +2093,7 @@ function cell_read(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): 
 // leaves the dummy a statement op leaves for the store of its void result.
 function cell_write(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
     var elem: typeinfo.Type = f.values[ins.args[1]];
-    if (reference(elem)) {
+    if (ssasem.reference(elem)) {
         var old: i32 = scratch_base(f);
         r = reserve(r, old + 1);
         r = emit(r, ir.op_load_local(ins.args[0]));
@@ -2166,6 +2160,27 @@ struct Lowered { found: boolean, r: irlower.LowerResult }
 // stack IR op the AST lowering emits for the same call. `read_line` reads a FD
 // operand and the bare builtin names none, so its lowering pushes the zero the
 // AST path pushes.
+// The stream handles: a handle IS its descriptor, so the three standard ones
+// are constants and every method is the free op with the receiver as its
+// first operand — which is how the AST lowering emits them too
+// (irlower.lower_call_method). Writer.close shares Reader.close's op.
+function handle_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
+    if (ins.str == "stdin") { return Lowered { found: true, r: emit(r, ir.op_const_i32(0)) }; }
+    if (ins.str == "stdout") { return Lowered { found: true, r: emit(r, ir.op_const_i32(1)) }; }
+    if (ins.str == "stderr") { return Lowered { found: true, r: emit(r, ir.op_const_i32(2)) }; }
+    if (ins.str == "open_reader") { return Lowered { found: true, r: emit(r, ir.op_open_file(0)) }; }
+    if (ins.str == "open_writer") { return Lowered { found: true, r: emit(r, ir.op_open_file(577)) }; }
+    if (ins.str == "open_appender") { return Lowered { found: true, r: emit(r, ir.op_open_file(1089)) }; }
+    if (ins.str == "open_exclusive") { return Lowered { found: true, r: emit(r, ir.op_open_file(193)) }; }
+    if (ins.str == "open_reader_with") { return Lowered { found: true, r: emit(r, ir.op_open_reader_with()) }; }
+    if (ins.str == "open_writer_with") { return Lowered { found: true, r: emit(r, ir.op_open_writer_with()) }; }
+    if (ins.str == "Reader.read_line") { return Lowered { found: true, r: emit(r, ir.op_read_line()) }; }
+    if (ins.str == "Reader.read_chunk") { return Lowered { found: true, r: emit(r, ir.op_read_chunk()) }; }
+    if (ins.str == "Reader.close" || ins.str == "Writer.close") { return Lowered { found: true, r: emit(r, ir.op_reader_close()) }; }
+    if (ins.str == "Writer.write") { return Lowered { found: true, r: emit(r, ir.op_writer_write()) }; }
+    return Lowered { found: false, r: r };
+}
+
 function union_builtin_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     if (ins.str == "env") { return Lowered { found: true, r: emit(r, ir.op_env()) }; }
     if (ins.str == "read_file") { return Lowered { found: true, r: emit(r, ir.op_read_file()) }; }
@@ -2317,7 +2332,8 @@ function string_method_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered
 // A name no half owns is a runtime helper with a symbol of its own, which a
 // direct call reaches.
 function builtin_site(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
-    var done: Lowered = union_builtin_site(r, ins);
+    var done: Lowered = handle_site(r, ins);
+    if (!done.found) { r = done.r; done = union_builtin_site(r, ins); }
     if (!done.found) { r = done.r; done = value_builtin_site(r, ins); }
     if (!done.found) { r = done.r; done = intrinsic_site(r, ins); }
     if (!done.found) { r = done.r; done = string_method_site(r, ins); }
@@ -2569,7 +2585,7 @@ pub function caller_sigs(sg: irlower.FnSigs, name: string, f: ssasem.Func, modes
 // needs no test, since a returned parameter is a retained one here.
 function counted_tier(t: typeinfo.Type): string {
     if let typeinfo.TypeArray(a) = t {
-        if (!reference(a.elem) || ssasem.is_string(a.elem)) { return "ACNT:"; }
+        if (!ssasem.reference(a.elem) || ssasem.is_string(a.elem)) { return "ACNT:"; }
         if (named(a.elem) != "") { return "DCNT:"; }
         return "";
     }
@@ -2641,7 +2657,7 @@ function box_only_result(f: ssasem.Func): boolean {
 }
 
 function scalar_array(t: typeinfo.Type): boolean {
-    if let typeinfo.TypeArray(a) = t { return !reference(a.elem); }
+    if let typeinfo.TypeArray(a) = t { return !ssasem.reference(a.elem); }
     return false;
 }
 
