@@ -1404,6 +1404,15 @@ function refused(): Body {
   return Body { s: "", refused: true };
 }
 
+// The most fractional digits any value of any supported format has
+// exactly. The narrowest value is the smallest subnormal, 2^-16445 for
+// the 80-bit format, whose expansion is that many digits; past this a
+// `%f` fraction is all zeros however much precision was asked for, so
+// a caller can format at this width and write the rest as a run.
+pub function max_exact_fraction(): i32 {
+  return 16500;
+}
+
 // The length at which glibc refuses a conversion outright: one past
 // INT_MAX, which is the largest count its return value can carry.
 pub function overflow_len(): i64 {
