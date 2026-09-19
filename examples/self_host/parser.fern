@@ -2676,7 +2676,7 @@ function value_arm_body(body: ast.Stmt[], val: string): ast.Stmt[] {
 // i32 0, which at worst re-bails rather than miscompiling.
 function zero_expr_for(rt: string): ast.Expr {
     if (rt == "string") { return e_string(""); }
-    if (rt == "bool") { return e_bool(false); }
+    if (rt == "boolean") { return e_bool(false); }
     if (rt == "f64") { return e_number("0", "", true); }
     if (rt == "i64" || rt == "u64") { return e_number("0", rt, false); }
     return e_number("0", "", false);
@@ -2689,7 +2689,7 @@ function zero_expr_for(rt: string): ast.Expr {
 function if_expr_rt(e: ast.Expr): string {
     match (e) {
         ast.ExprString(_) => { return "string"; },
-        ast.ExprBool(_) => { return "bool"; },
+        ast.ExprBool(_) => { return "boolean"; },
         ast.ExprNumber(n) => {
             if (n.is_float) { return "f64"; }
             // A WIDE literal — explicit `i64` / `u64` suffix, or a magnitude past
@@ -2745,7 +2745,7 @@ function if_expr_rt(e: ast.Expr): string {
         // already applies ACROSS branches, so a width appearing on either side
         // survives.
         ast.ExprBinary(b) => {
-            if (irt_is_cmp(b.op)) { return "bool"; }
+            if (irt_is_cmp(b.op)) { return "boolean"; }
             return wider_rt(if_expr_rt(b.left), if_expr_rt(b.right));
         },
         _ => { return "i32"; }
