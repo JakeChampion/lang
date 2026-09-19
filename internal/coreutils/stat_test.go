@@ -266,10 +266,10 @@ func statCases(t *testing.T) []invocation {
 		env("style-"+style+"-plain", []string{"QUOTING_STYLE=" + style}, "-c", "%N", "f")
 		env("style-"+style+"-quote", []string{"QUOTING_STYLE=" + style}, "-c", "%N", "quo'te")
 	}
-	// The variable is read only when the format AS WRITTEN holds `%N`:
-	// a modified %N, an octal-escaped `%`, and the default block never
-	// warn; `%%N` does. The warning comes after the operand check and
-	// before the first operand is looked at.
+	// The variable is read the first time a `%N` or `%Qn` is PRINTED and
+	// not before, so a format that never reaches one never warns, an
+	// operand that cannot be stat'd is reported first, and a format
+	// holding two warns once.
 	bogus := []string{"QUOTING_STYLE=bogus"}
 	env("bogus-unread-n", bogus, "-c", "%n", "f")
 	env("bogus-unread-raw-N", bogus, "-c", "%-N", "f")
@@ -281,14 +281,30 @@ func statCases(t *testing.T) []invocation {
 	env("bogus-trailing-text", bogus, "-c", "%Nz", "f")
 	env("bogus-last-format-wins", bogus, "-c", "%n", "--printf", "%N\\n", "f")
 	env("bogus-after-missing-operand", bogus, "-c", "%N")
+	env("bogus-unread-fs-n", bogus, "-f", "-c", "%n", "f")
+	env("bogus-read-fs-Qn", bogus, "-f", "-c", "%Qn", "f")
+	env("bogus-read-Qn", bogus, "-c", "%Qn", "f")
+	env("bogus-unread-Q-alone", bogus, "-c", "%Q", "f")
+	env("bogus-N-then-missing", bogus, "--printf", "%N\n", "f", "nowhere")
+	env("bogus-missing-then-N", bogus, "--printf", "%N\n", "nowhere", "f")
+
+	// `%Q` quotes a name, and `n` is the only name there is — in either
+	// mode, and unlike `H` and `L`, which only a device number has.
+	for _, spec := range []string{"%Qn", "%-Qn", "%12Qn", "%-12Qn", "%.3Qn", "%Q", "%QQn", "%HQn", "%QHn", "%Qs", "%QN", "%Qd", "%Qr", "%Qz"} {
+		add("mod-Q-"+spec, "-c", "["+spec+"]", "sp ace")
+		add("mod-Q-fs-"+spec, "-f", "-c", "["+spec+"]", "f")
+	}
+	add("mod-Q-link", "-c", "[%Qn]", "sl")
+	add("mod-Q-plain", "-c", "[%Qn]", "f")
+
 	add("name-quoted-bare", "-c", "[%N]", "dangle")
-	add("name-flag-drops-quotes", "-c", "[%-N]", "dangle")
-	add("name-hash-drops-quotes", "-c", "[%#N]", "dangle")
-	add("name-zero-drops-quotes", "-c", "[%0N]", "f")
-	add("name-plus-drops-quotes", "-c", "[%+N]", "f")
-	add("name-space-drops-quotes", "-c", "[% N]", "f")
-	add("name-apostrophe-drops-quotes", "-c", "[%'N]", "f")
-	add("name-width-drops-quotes", "-c", "[%12N]", "sp ace")
+	add("name-flag-minus", "-c", "[%-N]", "dangle")
+	add("name-flag-hash", "-c", "[%#N]", "dangle")
+	add("name-flag-zero", "-c", "[%0N]", "f")
+	add("name-flag-plus", "-c", "[%+N]", "f")
+	add("name-flag-space", "-c", "[% N]", "f")
+	add("name-flag-apostrophe", "-c", "[%'N]", "f")
+	add("name-width-quoted", "-c", "[%12N]", "sp ace")
 	add("name-width-left", "-c", "[%-12N]", "sp ace")
 	add("name-width-link", "-c", "[%20N]", "link to")
 	add("name-prec-0", "-c", "[%.0N]", "dangle")
@@ -299,7 +315,7 @@ func statCases(t *testing.T) []invocation {
 	add("name-prec-tab", "-c", "[%.5N]", "tab\tx")
 	add("name-prec-nonutf8", "-c", "[%.7N]", "weird\xffname")
 	add("name-width-prec", "-c", "[%10.3N]", "dangle")
-	// GNU 9.4 writes a stray `s` after a SYMLINK's target when %N carries
+	// GNU writes a stray `s` after a SYMLINK's target when %N carries
 	// exactly one flag other than `-`. The grid is what pins the rule: zero
 	// flags, one, two and three, with and without `-` among them, and the
 	// same directives against a file that is not a link, where none of it
