@@ -112,6 +112,16 @@ const (
 	// (vs Linux's 48). gettimeofday (BSD 116) fills a `struct timeval`
 	// {i64 tv_sec @0, i32 tv_usec @8} — Darwin's stand-in for the
 	// clock_gettime the Linux now-helper uses.
+	//
+	// It takes THREE arguments, not the two libc exposes: XNU's
+	// `gettimeofday(struct timeval *tp, struct timezone *tzp,
+	// uint64_t *mach_absolute_time)` writes the machine's absolute time
+	// through the third when it is non-null, and the third is whatever the
+	// caller happened to leave in x2. Every call site below zeroes it. A
+	// stale x2 pointing anywhere writable is an eight-byte store into it,
+	// which is a heap corruption that surfaces later and elsewhere — it
+	// took `pr -` out inside __fern_alloc, a hundred instructions and one
+	// allocation after the clock was read (#9799).
 	darFstat64      = 339
 	darGettimeofday = 116
 	// select (BSD 93): Darwin has no nanosleep syscall, so
@@ -7302,6 +7312,7 @@ func (g *generator) emitNowUnixMsRuntime() {
 		// ms = tv_sec*1000 + tv_usec/1000.
 		g.emit("add x0, sp, #16") // timeval buffer
 		g.emit("mov x1, #0")      // tz = NULL
+		g.emit("mov x2, #0")      // no mach_absolute_time out-parameter
 		g.emit("mov x16, #%d", darGettimeofday)
 		g.emit("svc #0x80")
 		g.emit("ldr x9, [sp, #16]") // tv_sec (i64)
@@ -7408,6 +7419,7 @@ func (g *generator) emitNowNsRuntime() {
 	if g.darwin {
 		g.emit("add x0, sp, #16") // timeval buffer
 		g.emit("mov x1, #0")      // tz = NULL
+		g.emit("mov x2, #0")      // no mach_absolute_time out-parameter
 		g.emit("mov x16, #%d", darGettimeofday)
 		g.emit("svc #0x80")
 		g.emit("ldr x9, [sp, #16]") // tv_sec (i64)
@@ -12111,6 +12123,7 @@ func (g *generator) emitSetFileTimesRuntime() {
 		g.emit("stp x4, x5, [x29, #112]")
 		g.emit("add x0, x29, #128") // timeval buffer, before the attributes land there
 		g.emit("mov x1, #0")        // tz = NULL
+		g.emit("mov x2, #0")        // no mach_absolute_time out-parameter
 		g.emit("mov x16, #%d", darGettimeofday)
 		g.emit("svc #0x80")
 		g.emit("ldp x2, x3, [x29, #96]")
