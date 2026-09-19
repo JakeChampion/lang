@@ -149,11 +149,11 @@ function contains(s: string, byte: i32): boolean {
 // — it is measured like any other run of bytes, and asks for precision 0.
 function scan_arg(f: ld.Format, s: string): Operand {
   var r: ld.Parse = f.strtold(s);
-  // A value out of the format's range is rejected, but underflow all the
-  // way to zero is not: an operand below the least subnormal counts from
-  // 0, where a slightly larger one — a subnormal, and inexact — is
-  // refused.
-  if (r.end == 0 || r.end < s.len() || r.erange && !r.v.is_zero()) {
+  // An out-of-range value is rejected only when it OVERFLOWED: 9.5 made
+  // gnulib's xstrtod read an ERANGE below one as gradual underflow and
+  // hand the subnormal back, so `seq 4e-4951 1` counts from a subnormal
+  // where it used to be refused.
+  if (r.end == 0 || r.end < s.len() || r.erange && r.v.abs_ge_one()) {
     gnu.die_usage("invalid floating point argument: " + gnu.quote(s), 1);
   }
   if (r.v.is_nan()) {
@@ -1633,6 +1633,15 @@ function parse_args(argv: string[]): Args {
 // and the bound (None for an infinite LAST).
 struct Fast { first: u8[], step: u64, bound: Option[u8[]] }
 
+// FIRST as the digit engine takes it: the operand as typed when that is
+// a run of digits, and otherwise what `%.0Lf` would print.
+function first_digits(ldbl: ld.Format, v: ld.LD, text: string): Option[u8[]] {
+  if (all_digits(text)) {
+    return Some(trim_zeros(text));
+  }
+  return whole_digits(ldbl, v);
+}
+
 // FIRST as `%.0Lf` would print it, when that is a run of digits.
 function whole_digits(ldbl: ld.Format, v: ld.LD): Option[u8[]] {
   var s0: Spec = spec(102);
@@ -1686,28 +1695,30 @@ function use_fast(a: Args, f: Fmt, first: Operand, step: Operand, last: Operand,
   if (all_digits(first_str) && all_digits(step_str) && all_digits(last_str)) {
     var lo: u8[] = trim_zeros(first_str);
     var hi: u8[] = trim_zeros(last_str);
-    // A range that runs backwards is not this engine's: the values, not
-    // the digits, decide it, and rounded to the format they may still
-    // meet — `seq 100000000000000000001 1 99999999999999999999` prints
-    // the one term where both ends are 10^20.
-    if (cmp_digits(lo, hi) <= 0) {
-      match (digits_to_u64(trim_zeros(step_str))) {
-        Some(sv) => {
-          if (sv > fast_step_limit()) {
-            return None;
-          }
-          return Some(Fast { first: lo, step: sv, bound: Some(hi) });
-        },
-        None => {
+    // A range that runs backwards is this engine's too: it compares the
+    // DIGITS, prints nothing and exits, where the values rounded to the
+    // format would still meet — `seq 100000000000000000001 1
+    // 99999999999999999999` prints nothing, not the one term at 10^20.
+    match (digits_to_u64(trim_zeros(step_str))) {
+      Some(sv) => {
+        if (sv > fast_step_limit()) {
           return None;
         }
+        return Some(Fast { first: lo, step: sv, bound: Some(hi) });
+      },
+      None => {
+        return None;
       }
     }
   }
-  return use_fast_rendered(f.ldbl, first.v, step.v, last.v);
+  return use_fast_rendered(f.ldbl, first.v, step.v, last.v, first_str);
 }
 
-function use_fast_rendered(ldbl: ld.Format, first: ld.LD, step: ld.LD, last: ld.LD): Option[Fast] {
+// The second attempt, for integers spelled in a way the digits engine
+// could not read — `1e1`, `+1`, `inf`. FIRST keeps its original digits
+// when it has them, so an operand too long for the format is printed as
+// it was typed rather than as the value it rounded to.
+function use_fast_rendered(ldbl: ld.Format, first: ld.LD, step: ld.LD, last: ld.LD, first_str: string): Option[Fast] {
   match (whole_digits(ldbl, step)) {
     Some(sd) => {
       match (digits_to_u64(sd)) {
@@ -1715,7 +1726,7 @@ function use_fast_rendered(ldbl: ld.Format, first: ld.LD, step: ld.LD, last: ld.
           if (sv > fast_step_limit()) {
             return None;
           }
-          match (whole_digits(ldbl, first)) {
+          match (first_digits(ldbl, first, first_str)) {
             Some(fd) => {
               match (bound_digits(last)) {
                 Some(bound) => {

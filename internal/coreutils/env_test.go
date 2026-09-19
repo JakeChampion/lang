@@ -108,6 +108,8 @@ var envSplitStrings = []struct {
 func envCases(t *testing.T) []invocation {
 	var cases []invocation
 	add := func(inv invocation) { cases = append(cases, inv) }
+	execTree := envExecTree(t)
+	env0Tree := env0Files(t)
 
 	// ---- the bare forms ----
 	add(invocation{name: "no arguments dumps the environment"})
@@ -163,12 +165,42 @@ func envCases(t *testing.T) []invocation {
 	add(invocation{name: "chdir without a command outranks a bad directory", args: []string{"-C", "/no/such/dir9090"}})
 	add(invocation{name: "last chdir wins", args: []string{"-C", "/no/such/dir9090", "-C", "/", "/bin/echo", "ok"}})
 
-	// ---- -a / --argv0 is NOT ours to have ----
-	// It arrived in coreutils 9.5 and docs/COREUTILS.md holds this corpus to
-	// 9.4, which rejects it. Matching the reference means rejecting it too, so
-	// these cases pin the refusal rather than the feature.
-	add(invocation{name: "argv0 short is not an option", args: []string{"-a", "ZERO", "/bin/echo", "a"}})
-	add(invocation{name: "argv0 long is not an option", args: []string{"--argv0=ZERO", "/bin/echo", "a"}})
+	// ---- -a / --argv0 (9.5) ----
+	// It replaces what the child sees as its own name; the file run is
+	// still the COMMAND operand, so `-a` cannot redirect the exec.
+	add(invocation{name: "argv0 short", args: []string{"-a", "ZERO", "/bin/echo", "a"}})
+	add(invocation{name: "argv0 long", args: []string{"--argv0=ZERO", "/bin/echo", "a"}})
+	add(invocation{name: "argv0 glued", args: []string{"-aZERO", "/bin/echo", "a"}})
+	add(invocation{name: "argv0 long separate", args: []string{"--argv0", "ZERO", "/bin/echo", "a"}})
+	add(invocation{name: "argv0 is unambiguous as --a", args: []string{"--a=ZERO", "/bin/echo", "a"}})
+	add(invocation{name: "argv0 shows in the trace", args: []string{"-v", "-a", "ZERO", "/bin/echo", "a"}})
+	add(invocation{name: "argv0 empty", args: []string{"-a", "", "/bin/echo", "a"}})
+	add(invocation{name: "last argv0 wins", args: []string{"-a", "ONE", "-a", "TWO", "/bin/echo", "a"}})
+	add(invocation{name: "argv0 without a command", args: []string{"-a", "ZERO"}})
+	add(invocation{name: "argv0 without a command outranks a bad chdir", args: []string{"-C", "/no/such/dir9090", "-a", "ZERO"}})
+	add(invocation{name: "argv0 on a command that is not there", args: []string{"-a", "ZERO", "/no/such/cmd9090"}})
+	add(invocation{name: "argv0 with what the child sees", args: []string{"-a", "ZERO", filepath.Join(execTree, "showargs"), "x"}})
+
+	// ---- --env0-from (9.12) ----
+	// The file's entries are NUL separated and it must end with one.
+	// Without -i they are merged into the inherited environment the way
+	// putenv merges an assignment; with -i they REPLACE it exactly, which
+	// is what lets an environment holding duplicates round-trip.
+	add(invocation{name: "env0 from a file", args: []string{"--env0-from", filepath.Join(env0Tree, "two")}})
+	add(invocation{name: "env0 equals form", args: []string{"--env0-from=" + filepath.Join(env0Tree, "two")}})
+	add(invocation{name: "env0 replaces an inherited name", args: []string{"--env0-from", filepath.Join(env0Tree, "overrides")}})
+	add(invocation{name: "env0 with -i", args: []string{"-i", "--env0-from", filepath.Join(env0Tree, "two")}})
+	add(invocation{name: "env0 with -i keeps duplicates", args: []string{"-i", "--env0-from", filepath.Join(env0Tree, "dupes")}})
+	add(invocation{name: "env0 with -i keeps an entry with no equals", args: []string{"-i", "--env0-from", filepath.Join(env0Tree, "noequals")}})
+	add(invocation{name: "env0 merging an entry with no equals", args: []string{"--env0-from", filepath.Join(env0Tree, "noequals")}})
+	add(invocation{name: "env0 empty file", args: []string{"-i", "--env0-from", filepath.Join(env0Tree, "empty")}})
+	add(invocation{name: "env0 without a trailing NUL", args: []string{"--env0-from", filepath.Join(env0Tree, "unterminated")}})
+	add(invocation{name: "env0 file that is not there", args: []string{"--env0-from", filepath.Join(env0Tree, "nosuch9090")}})
+	add(invocation{name: "env0 from a directory", args: []string{"--env0-from", env0Tree}})
+	add(invocation{name: "env0 then -u", args: []string{"-i", "--env0-from", filepath.Join(env0Tree, "two"), "-u", "E0A"}})
+	add(invocation{name: "env0 then an assignment", args: []string{"-i", "--env0-from", filepath.Join(env0Tree, "two"), "E0A=changed"}})
+	add(invocation{name: "env0 traced", args: []string{"-v", "-i", "--env0-from", filepath.Join(env0Tree, "noequals")}})
+	add(invocation{name: "env0 with a command", args: []string{"-i", "--env0-from", filepath.Join(env0Tree, "two"), "/bin/echo", "ran"}})
 
 	// ---- NAME=VALUE operands ----
 	add(invocation{name: "one assignment", args: []string{"FOO=bar"}})
@@ -321,7 +353,6 @@ func envCases(t *testing.T) []invocation {
 	// execve was handed, `$#` counts the caller's own arguments, and a
 	// garbage ELF reaches the shell too, where the diagnostic is the shell's
 	// and not env's.
-	execTree := envExecTree(t)
 	add(invocation{name: "a script with no shebang runs under the shell", dir: execTree, args: []string{"./noshebang"}})
 	add(invocation{name: "the shell sees the resolved path and the caller's arguments", dir: execTree, args: []string{"./showargs", "a", "b"}})
 	add(invocation{name: "the shell retry also applies to a name found on PATH", dir: execTree, args: []string{"showargs"}, env: []string{"PATH=" + execTree}})
@@ -337,6 +368,25 @@ func envCases(t *testing.T) []invocation {
 
 // envExecTree is the fixture for the shell-retry cases: a directory of files
 // that differ only in how the kernel refuses to exec them.
+// env0Files writes the NUL-separated fixtures --env0-from reads. The
+// terminating NUL is part of the format: a file without one is refused.
+func env0Files(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	write("two", "E0A=1\x00E0B=2\x00")
+	write("overrides", "LANG=from-file\x00")
+	write("dupes", "E0A=first\x00E0A=second\x00")
+	write("noequals", "E0A=1\x00bare-entry\x00")
+	write("empty", "")
+	write("unterminated", "E0A=1")
+	return dir
+}
+
 func envExecTree(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()

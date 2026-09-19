@@ -351,7 +351,10 @@ pub function operand2sig(operand: string): i32 {
     if (v >= 255) {
       n = v % 256;
     }
-    if (name(n) == "") {
+    // A NUMBER only has to be in range; it does not have to be one the
+    // kernel names. GNU <= 9.4 asked sig2str for a name and refused 32
+    // and 33, which glibc reserves and leaves unnamed.
+    if (n > highest()) {
       return 0 - 1;
     }
     return n;

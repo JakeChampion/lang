@@ -98,7 +98,20 @@ func foldCases(t *testing.T) []invocation {
 		{name: "bytes ignore the backspace", args: []string{"-b", "-w2"}, stdin: "ab\bc\n"},
 		{name: "bytes ignore the carriage return", args: []string{"-b", "-w3"}, stdin: "ab\rcd\n"},
 		{name: "a tab alone on a line", args: []string{"-w5"}, stdin: "a\tb\n"},
-		{name: "NUL is one column", args: []string{"-w1", nul}},
+		{name: "NUL is no columns at all", args: []string{"-w1", nul}},
+
+		// -c (9.8): characters rather than columns. In the C locale
+		// that differs from the default only in that every byte counts
+		// as one, NUL included, and only in that a backspace goes back
+		// over one rather than over the last character's width.
+		{name: "characters count tabs to the next stop", args: []string{"-c", "-w9", tabs}},
+		{name: "long characters option", args: []string{"--characters", "-w3", tabs}},
+		{name: "characters count NUL as one", args: []string{"-c", "-w1", nul}},
+		{name: "characters honour the backspace", args: []string{"-c", "-w2"}, stdin: "ab\bc\n"},
+		{name: "characters honour the carriage return", args: []string{"-c", "-w3"}, stdin: "ab\rcd\n"},
+		{name: "characters then bytes, the last wins", args: []string{"-c", "-b", "-w3", tabs}},
+		{name: "bytes then characters, the last wins", args: []string{"-b", "-c", "-w3", tabs}},
+		{name: "characters with spaces", args: []string{"-c", "-s", "-w7", words}},
 
 		// -s.
 		{name: "break at spaces", args: []string{"-s", "-w7", words}},

@@ -37,6 +37,7 @@ function help_text(): string {
   out = out + "Print the resolved absolute file name;\n";
   out = out + "all but the last component must exist\n";
   out = out + "\n";
+  out = out + "  -E, --canonicalize           the default; the last component need not exist\n";
   out = out + "  -e, --canonicalize-existing  all components of the path must exist\n";
   out = out + "  -m, --canonicalize-missing   no path components need exist or be a directory\n";
   out = out + "  -L, --logical                resolve '..' components before symlinks\n";
@@ -49,6 +50,10 @@ function help_text(): string {
   out = out + "      --help        display this help and exit\n";
   out = out + "      --version     output version information and exit\n";
   return out;
+}
+
+function opt_default(): i32 {
+  return 10;
 }
 
 function opt_existing(): i32 {
@@ -155,6 +160,7 @@ pub function main(): i32 {
   // NOT the order `--help` lists them in: `--logical` and `--physical`
   // come last of the utility's own options, after `--zero`.
   var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.flag("E", "canonicalize", opt_default()));
   opts = opts.append(gnu.flag("e", "canonicalize-existing", opt_existing()));
   opts = opts.append(gnu.flag("m", "canonicalize-missing", opt_missing()));
   opts = opts.append(gnu.valued("", "relative-to", opt_relative_to()));
@@ -181,7 +187,9 @@ pub function main(): i32 {
     g = r.1;
     match (r.0) {
       Some(m) => {
-        if (m.id == opt_existing()) {
+        if (m.id == opt_default()) {
+          mode = canon.all_but_last();
+        } else if (m.id == opt_existing()) {
           mode = canon.existing();
         } else if (m.id == opt_missing()) {
           mode = canon.missing();

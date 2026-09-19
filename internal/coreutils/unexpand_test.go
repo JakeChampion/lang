@@ -46,6 +46,12 @@ func unexpandCases(t *testing.T) []invocation {
 		{name: "a tab among the leading blanks", args: []string{mixed}},
 		{name: "conversion stops at the first non-blank", args: []string{}, stdin: "  \ta  \tb\n"},
 		{name: "a line that is only blanks", args: []string{}, stdin: "        \n"},
+		// wcwidth answers 0 for a NUL, so it takes no column: the blanks
+		// after it reach a tab stop one earlier than their byte count
+		// says. Every other byte, printable or not, is one column.
+		{name: "NUL takes no column", args: []string{"-a"}, stdin: "a\x00      b\n"},
+		{name: "NUL takes no column at four", args: []string{"-a", "-t4"}, stdin: "a\x00      b\n"},
+		{name: "a control byte takes one column", args: []string{"-a"}, stdin: "a\x01      b\n"},
 		{name: "blanks past a stop", args: []string{}, stdin: "         x\n"},
 		{name: "a leading tab", args: []string{}, stdin: "\ta\n"},
 		{name: "empty lines", args: []string{blank}},

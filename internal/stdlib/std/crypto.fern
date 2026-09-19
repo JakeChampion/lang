@@ -50,6 +50,17 @@ function __zero_u8(n: i32): u8[] {
     return a;
 }
 
+// __zero_u64 is the same for a 64-bit lane array, which Keccak's state is.
+function __zero_u64(n: i32): u64[] {
+    var a: u64[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        a = a.append(0 as u64);
+        i = i + 1;
+    }
+    return a;
+}
+
 // __copy_in writes src[from .. from+len) over dst[at ..] and returns dst,
 // consumed and rewritten in place. A `u8[]` argument lends itself as the
 // `[u8]` view without a copy.
@@ -3607,4 +3618,388 @@ pub function hotp_sha256(key: u8[], counter: i64, digits: i32): i32 {
 pub function totp_sha256(key: u8[], unix_time: i64, period: i32, digits: i32): i32 {
     var counter: i64 = unix_time / (period as i64);
     return hotp_sha256(key, counter, digits);
+}
+
+// === SHA-3 (FIPS 202), the four fixed digest lengths ===
+//
+// Keccak-f[1600] over 25 64-bit lanes, absorbing `rate` bytes at a time
+// and padding with SHA-3's own `0x06 … 0x80` domain separator — the byte
+// that tells a SHA-3 digest from a raw Keccak one. The rate is
+// `200 - 2 * digest bytes`, so a wider digest absorbs less per
+// permutation: 144 bytes for SHA3-224 down to 72 for SHA3-512.
+//
+// The lanes are 25 fields rather than an array for the same reason the
+// other hashes here spell their state out: every round reads all of
+// them and writes all of them, and an array walk per step would be the
+// whole cost.
+pub struct Sha3 {
+    s00: u64,
+    s01: u64,
+    s02: u64,
+    s03: u64,
+    s04: u64,
+    s05: u64,
+    s06: u64,
+    s07: u64,
+    s08: u64,
+    s09: u64,
+    s10: u64,
+    s11: u64,
+    s12: u64,
+    s13: u64,
+    s14: u64,
+    s15: u64,
+    s16: u64,
+    s17: u64,
+    s18: u64,
+    s19: u64,
+    s20: u64,
+    s21: u64,
+    s22: u64,
+    s23: u64,
+    s24: u64,
+    // Pending partial block (`rate` bytes, `buf_len` of them live).
+    buf: u8[],
+    buf_len: i32,
+    rate: i32,
+    out_len: i32
+}
+
+function __sha3_with(bits: i32): Sha3 {
+    var bytes: i32 = bits / 8;
+    return Sha3 { s00: 0 as u64, s01: 0 as u64, s02: 0 as u64, s03: 0 as u64, s04: 0 as u64, s05: 0 as u64, s06: 0 as u64, s07: 0 as u64, s08: 0 as u64, s09: 0 as u64, s10: 0 as u64, s11: 0 as u64, s12: 0 as u64, s13: 0 as u64, s14: 0 as u64, s15: 0 as u64, s16: 0 as u64, s17: 0 as u64, s18: 0 as u64, s19: 0 as u64, s20: 0 as u64, s21: 0 as u64, s22: 0 as u64, s23: 0 as u64, s24: 0 as u64, buf: __zero_u8(200 - 2 * bytes), buf_len: 0, rate: 200 - 2 * bytes, out_len: bytes };
+}
+
+pub function sha3_224_new(): Sha3 {
+    return __sha3_with(224);
+}
+
+pub function sha3_256_new(): Sha3 {
+    return __sha3_with(256);
+}
+
+pub function sha3_384_new(): Sha3 {
+    return __sha3_with(384);
+}
+
+pub function sha3_512_new(): Sha3 {
+    return __sha3_with(512);
+}
+
+// Fold `nblocks` rate-sized blocks of `bs` from byte `from` into the
+// state: each block is XORed in little-endian lane order, then the
+// permutation's 24 rounds run over the lanes in locals.
+function __sha3_blocks(st: Sha3, bs: [u8], from: i32, nblocks: i32): Sha3 {
+    var a00: u64 = st.s00;
+    var a01: u64 = st.s01;
+    var a02: u64 = st.s02;
+    var a03: u64 = st.s03;
+    var a04: u64 = st.s04;
+    var a05: u64 = st.s05;
+    var a06: u64 = st.s06;
+    var a07: u64 = st.s07;
+    var a08: u64 = st.s08;
+    var a09: u64 = st.s09;
+    var a10: u64 = st.s10;
+    var a11: u64 = st.s11;
+    var a12: u64 = st.s12;
+    var a13: u64 = st.s13;
+    var a14: u64 = st.s14;
+    var a15: u64 = st.s15;
+    var a16: u64 = st.s16;
+    var a17: u64 = st.s17;
+    var a18: u64 = st.s18;
+    var a19: u64 = st.s19;
+    var a20: u64 = st.s20;
+    var a21: u64 = st.s21;
+    var a22: u64 = st.s22;
+    var a23: u64 = st.s23;
+    var a24: u64 = st.s24;
+    var c0: u64 = 0 as u64;
+    var c1: u64 = 0 as u64;
+    var c2: u64 = 0 as u64;
+    var c3: u64 = 0 as u64;
+    var c4: u64 = 0 as u64;
+    var d0: u64 = 0 as u64;
+    var d1: u64 = 0 as u64;
+    var d2: u64 = 0 as u64;
+    var d3: u64 = 0 as u64;
+    var d4: u64 = 0 as u64;
+    var b00: u64 = 0 as u64;
+    var b01: u64 = 0 as u64;
+    var b02: u64 = 0 as u64;
+    var b03: u64 = 0 as u64;
+    var b04: u64 = 0 as u64;
+    var b05: u64 = 0 as u64;
+    var b06: u64 = 0 as u64;
+    var b07: u64 = 0 as u64;
+    var b08: u64 = 0 as u64;
+    var b09: u64 = 0 as u64;
+    var b10: u64 = 0 as u64;
+    var b11: u64 = 0 as u64;
+    var b12: u64 = 0 as u64;
+    var b13: u64 = 0 as u64;
+    var b14: u64 = 0 as u64;
+    var b15: u64 = 0 as u64;
+    var b16: u64 = 0 as u64;
+    var b17: u64 = 0 as u64;
+    var b18: u64 = 0 as u64;
+    var b19: u64 = 0 as u64;
+    var b20: u64 = 0 as u64;
+    var b21: u64 = 0 as u64;
+    var b22: u64 = 0 as u64;
+    var b23: u64 = 0 as u64;
+    var b24: u64 = 0 as u64;
+    var rc: u64[] = [0x0000000000000001 as u64, 0x0000000000008082 as u64, 0x800000000000808a as u64, 0x8000000080008000 as u64, 0x000000000000808b as u64, 0x0000000080000001 as u64, 0x8000000080008081 as u64, 0x8000000000008009 as u64, 0x000000000000008a as u64, 0x0000000000000088 as u64, 0x0000000080008009 as u64, 0x000000008000000a as u64, 0x000000008000808b as u64, 0x800000000000008b as u64, 0x8000000000008089 as u64, 0x8000000000008003 as u64, 0x8000000000008002 as u64, 0x8000000000000080 as u64, 0x000000000000800a as u64, 0x800000008000000a as u64, 0x8000000080008081 as u64, 0x8000000000008080 as u64, 0x0000000080000001 as u64, 0x8000000080008008 as u64];
+    var lanes: i32 = st.rate / 8;
+    var at: i32 = from;
+    var blk: i32 = 0;
+    while (blk < nblocks) {
+        var i: i32 = 0;
+        while (i < lanes) {
+            var o: i32 = at + i * 8;
+            var v: u64 = bs[o] as u64 | bs[o + 1] as u64 << 8 as u64 | bs[o + 2] as u64 << 16 as u64 | bs[o + 3] as u64 << 24 as u64 | bs[o + 4] as u64 << 32 as u64 | bs[o + 5] as u64 << 40 as u64 | bs[o + 6] as u64 << 48 as u64 | bs[o + 7] as u64 << 56 as u64;
+            if (i == 0) {
+                a00 = a00 ^ v;
+            }
+            if (i == 1) {
+                a01 = a01 ^ v;
+            }
+            if (i == 2) {
+                a02 = a02 ^ v;
+            }
+            if (i == 3) {
+                a03 = a03 ^ v;
+            }
+            if (i == 4) {
+                a04 = a04 ^ v;
+            }
+            if (i == 5) {
+                a05 = a05 ^ v;
+            }
+            if (i == 6) {
+                a06 = a06 ^ v;
+            }
+            if (i == 7) {
+                a07 = a07 ^ v;
+            }
+            if (i == 8) {
+                a08 = a08 ^ v;
+            }
+            if (i == 9) {
+                a09 = a09 ^ v;
+            }
+            if (i == 10) {
+                a10 = a10 ^ v;
+            }
+            if (i == 11) {
+                a11 = a11 ^ v;
+            }
+            if (i == 12) {
+                a12 = a12 ^ v;
+            }
+            if (i == 13) {
+                a13 = a13 ^ v;
+            }
+            if (i == 14) {
+                a14 = a14 ^ v;
+            }
+            if (i == 15) {
+                a15 = a15 ^ v;
+            }
+            if (i == 16) {
+                a16 = a16 ^ v;
+            }
+            if (i == 17) {
+                a17 = a17 ^ v;
+            }
+            i = i + 1;
+        }
+        var r: i32 = 0;
+        while (r < 24) {
+            c0 = a00 ^ a05 ^ a10 ^ a15 ^ a20;
+            c1 = a01 ^ a06 ^ a11 ^ a16 ^ a21;
+            c2 = a02 ^ a07 ^ a12 ^ a17 ^ a22;
+            c3 = a03 ^ a08 ^ a13 ^ a18 ^ a23;
+            c4 = a04 ^ a09 ^ a14 ^ a19 ^ a24;
+            d0 = c4 ^ (c1 << 1 as u64 | c1 >> 63 as u64);
+            d1 = c0 ^ (c2 << 1 as u64 | c2 >> 63 as u64);
+            d2 = c1 ^ (c3 << 1 as u64 | c3 >> 63 as u64);
+            d3 = c2 ^ (c4 << 1 as u64 | c4 >> 63 as u64);
+            d4 = c3 ^ (c0 << 1 as u64 | c0 >> 63 as u64);
+            a00 = a00 ^ d0;
+            a01 = a01 ^ d1;
+            a02 = a02 ^ d2;
+            a03 = a03 ^ d3;
+            a04 = a04 ^ d4;
+            a05 = a05 ^ d0;
+            a06 = a06 ^ d1;
+            a07 = a07 ^ d2;
+            a08 = a08 ^ d3;
+            a09 = a09 ^ d4;
+            a10 = a10 ^ d0;
+            a11 = a11 ^ d1;
+            a12 = a12 ^ d2;
+            a13 = a13 ^ d3;
+            a14 = a14 ^ d4;
+            a15 = a15 ^ d0;
+            a16 = a16 ^ d1;
+            a17 = a17 ^ d2;
+            a18 = a18 ^ d3;
+            a19 = a19 ^ d4;
+            a20 = a20 ^ d0;
+            a21 = a21 ^ d1;
+            a22 = a22 ^ d2;
+            a23 = a23 ^ d3;
+            a24 = a24 ^ d4;
+            b00 = a00;
+            b10 = a01 << 1 as u64 | a01 >> 63 as u64;
+            b20 = a02 << 62 as u64 | a02 >> 2 as u64;
+            b05 = a03 << 28 as u64 | a03 >> 36 as u64;
+            b15 = a04 << 27 as u64 | a04 >> 37 as u64;
+            b16 = a05 << 36 as u64 | a05 >> 28 as u64;
+            b01 = a06 << 44 as u64 | a06 >> 20 as u64;
+            b11 = a07 << 6 as u64 | a07 >> 58 as u64;
+            b21 = a08 << 55 as u64 | a08 >> 9 as u64;
+            b06 = a09 << 20 as u64 | a09 >> 44 as u64;
+            b07 = a10 << 3 as u64 | a10 >> 61 as u64;
+            b17 = a11 << 10 as u64 | a11 >> 54 as u64;
+            b02 = a12 << 43 as u64 | a12 >> 21 as u64;
+            b12 = a13 << 25 as u64 | a13 >> 39 as u64;
+            b22 = a14 << 39 as u64 | a14 >> 25 as u64;
+            b23 = a15 << 41 as u64 | a15 >> 23 as u64;
+            b08 = a16 << 45 as u64 | a16 >> 19 as u64;
+            b18 = a17 << 15 as u64 | a17 >> 49 as u64;
+            b03 = a18 << 21 as u64 | a18 >> 43 as u64;
+            b13 = a19 << 8 as u64 | a19 >> 56 as u64;
+            b14 = a20 << 18 as u64 | a20 >> 46 as u64;
+            b24 = a21 << 2 as u64 | a21 >> 62 as u64;
+            b09 = a22 << 61 as u64 | a22 >> 3 as u64;
+            b19 = a23 << 56 as u64 | a23 >> 8 as u64;
+            b04 = a24 << 14 as u64 | a24 >> 50 as u64;
+            a00 = b00 ^ (b01 ^ 0xffffffffffffffff as u64) & b02;
+            a01 = b01 ^ (b02 ^ 0xffffffffffffffff as u64) & b03;
+            a02 = b02 ^ (b03 ^ 0xffffffffffffffff as u64) & b04;
+            a03 = b03 ^ (b04 ^ 0xffffffffffffffff as u64) & b00;
+            a04 = b04 ^ (b00 ^ 0xffffffffffffffff as u64) & b01;
+            a05 = b05 ^ (b06 ^ 0xffffffffffffffff as u64) & b07;
+            a06 = b06 ^ (b07 ^ 0xffffffffffffffff as u64) & b08;
+            a07 = b07 ^ (b08 ^ 0xffffffffffffffff as u64) & b09;
+            a08 = b08 ^ (b09 ^ 0xffffffffffffffff as u64) & b05;
+            a09 = b09 ^ (b05 ^ 0xffffffffffffffff as u64) & b06;
+            a10 = b10 ^ (b11 ^ 0xffffffffffffffff as u64) & b12;
+            a11 = b11 ^ (b12 ^ 0xffffffffffffffff as u64) & b13;
+            a12 = b12 ^ (b13 ^ 0xffffffffffffffff as u64) & b14;
+            a13 = b13 ^ (b14 ^ 0xffffffffffffffff as u64) & b10;
+            a14 = b14 ^ (b10 ^ 0xffffffffffffffff as u64) & b11;
+            a15 = b15 ^ (b16 ^ 0xffffffffffffffff as u64) & b17;
+            a16 = b16 ^ (b17 ^ 0xffffffffffffffff as u64) & b18;
+            a17 = b17 ^ (b18 ^ 0xffffffffffffffff as u64) & b19;
+            a18 = b18 ^ (b19 ^ 0xffffffffffffffff as u64) & b15;
+            a19 = b19 ^ (b15 ^ 0xffffffffffffffff as u64) & b16;
+            a20 = b20 ^ (b21 ^ 0xffffffffffffffff as u64) & b22;
+            a21 = b21 ^ (b22 ^ 0xffffffffffffffff as u64) & b23;
+            a22 = b22 ^ (b23 ^ 0xffffffffffffffff as u64) & b24;
+            a23 = b23 ^ (b24 ^ 0xffffffffffffffff as u64) & b20;
+            a24 = b24 ^ (b20 ^ 0xffffffffffffffff as u64) & b21;
+            a00 = a00 ^ rc[r];
+            r = r + 1;
+        }
+        at = at + st.rate;
+        blk = blk + 1;
+    }
+    return Sha3 { ...st, s00: a00, s01: a01, s02: a02, s03: a03, s04: a04, s05: a05, s06: a06, s07: a07, s08: a08, s09: a09, s10: a10, s11: a11, s12: a12, s13: a13, s14: a14, s15: a15, s16: a16, s17: a17, s18: a18, s19: a19, s20: a20, s21: a21, s22: a22, s23: a23, s24: a24 };
+}
+
+function __sha3_absorb(own h: Sha3, bs: [u8]): Sha3 {
+    var n: i32 = bs.len();
+    var pos: i32 = 0;
+    var bl: i32 = h.buf_len;
+    if (bl > 0) {
+        var take: i32 = h.rate - bl;
+        if (take > n) {
+            take = n;
+        }
+        h = Sha3 { ...h, buf: __copy_in(h.buf, bl, bs, 0, take) };
+        bl = bl + take;
+        pos = take;
+        if (bl == h.rate) {
+            h = __sha3_blocks(h, h.buf, 0, 1);
+            bl = 0;
+        }
+    }
+    var nb: i32 = (n - pos) / h.rate;
+    if (nb > 0) {
+        h = __sha3_blocks(h, bs, pos, nb);
+        pos = pos + nb * h.rate;
+    }
+    if (pos < n) {
+        h = Sha3 { ...h, buf: __copy_in(h.buf, bl, bs, pos, n - pos) };
+        bl = bl + (n - pos);
+    }
+    return Sha3 { ...h, buf_len: bl };
+}
+
+pub function (h: Sha3) update(chunk: string): Sha3 {
+    h = __sha3_absorb(h, chunk.as_bytes());
+    return h;
+}
+
+pub function (h: Sha3) update_bytes(chunk: [u8]): Sha3 {
+    h = __sha3_absorb(h, chunk);
+    return h;
+}
+
+// The pad is one block: `0x06` after the pending bytes and `0x80` in the
+// last, which coincide in a single `0x86` byte when one byte is left.
+pub function (h: Sha3) final_bytes(): u8[] {
+    var pad: u8[] = __copy_in(__zero_u8(h.rate), 0, h.buf, 0, h.buf_len);
+    pad = pad.with(h.buf_len, 0x06 as u8);
+    pad = pad.with(h.rate - 1, (pad[h.rate - 1] | 0x80) as u8);
+    var st: Sha3 = __sha3_blocks(h, pad, 0, 1);
+    var out: u8[] = __alloc_u8(h.out_len);
+    var i: i32 = 0;
+    while (i < h.out_len) {
+        out = out.with(i, (__sha3_lane(st, i / 8) >> (i % 8 * 8) as u64 & 255 as u64) as u8);
+        i = i + 1;
+    }
+    return out;
+}
+
+// The squeeze reads at most the first eight lanes, which is the widest
+// digest SHA-3 defines.
+function __sha3_lane(st: Sha3, i: i32): u64 {
+    if (i == 0) {
+        return st.s00;
+    }
+    if (i == 1) {
+        return st.s01;
+    }
+    if (i == 2) {
+        return st.s02;
+    }
+    if (i == 3) {
+        return st.s03;
+    }
+    if (i == 4) {
+        return st.s04;
+    }
+    if (i == 5) {
+        return st.s05;
+    }
+    if (i == 6) {
+        return st.s06;
+    }
+    if (i == 7) {
+        return st.s07;
+    }
+    return st.s08;
+}
+
+pub function (h: Sha3) final_hex(): string {
+    return __bytes_to_hex(h.final_bytes());
+}
+
+pub function sha3_256_hex(s: string): string {
+    return sha3_256_new().update(s).final_hex();
 }

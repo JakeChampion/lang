@@ -19,11 +19,6 @@
 // is no separate stderr clause when stdout is a terminal too: stderr follows
 // stdout into nohup.out and only the append is announced.
 //
-// Measured against coreutils 9.4, which is the oracle the corpus compares
-// against. Its stderr clause is shorter than 9.10's — `redirecting stderr to
-// stdout` where the newer one spells both streams out. docs/COREUTILS.md
-// carries the difference.
-//
 // Options are honoured only BEFORE the command, which is gnulib's
 // stop-at-the-first-operand scan: `nohup echo --help` runs `echo --help`.
 // Usage errors exit 125, a command found but not invocable 126, one not found
@@ -270,7 +265,7 @@ pub function main(): i32 {
     clauses = clauses.append("appending output to " + gnu.quote(a.name));
   } else {
     if (tty_err) {
-      clauses = clauses.append("redirecting stderr to stdout");
+      clauses = clauses.append("redirecting standard error to standard output");
     }
   }
 

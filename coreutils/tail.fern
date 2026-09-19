@@ -65,6 +65,10 @@ function opt_follow(): i32 {
   return 2;
 }
 
+function opt_debug(): i32 {
+  return 15;
+}
+
 function opt_lines(): i32 {
   return 3;
 }
@@ -138,7 +142,9 @@ function help_text(): string {
   out = out + "                             to see if it has been unlinked or renamed\n";
   out = out + "                             (this is the usual case of rotated log files);\n";
   out = out + "                             with inotify, this option is rarely useful\n";
-  out = out + "      --pid=PID            with -f, terminate after process ID, PID dies\n";
+  out = out + "      --debug              print detail of the --follow implementation used\n";
+  out = out + "      --pid=PID            with -f, terminate after process ID, PID dies;\n";
+  out = out + "                             can be repeated to watch several\n";
   out = out + "  -q, --quiet, --silent    never output headers giving file names\n";
   out = out + "      --retry              keep trying to open a file if it is inaccessible\n";
   out = out + "  -s, --sleep-interval=N   with -f, sleep for approximately N seconds\n";
@@ -168,7 +174,7 @@ function help_text(): string {
 // `Settings` — everything the option scan decides. `count` is lines or
 // bytes as `lines` says, from the end unless `from_start`; `header` is
 // 0 auto, 1 never, 2 always; `term` the line terminator.
-struct Settings { count: u64, lines: boolean, from_start: boolean, forever: boolean, by_name: boolean, retry: boolean, header: i32, term: i32, sleep_ms: i64, max_unchanged: u64, pid: u64, presume_pipe: boolean }
+struct Settings { count: u64, lines: boolean, from_start: boolean, forever: boolean, by_name: boolean, retry: boolean, header: i32, term: i32, sleep_ms: i64, max_unchanged: u64, pids: u64[], presume_pipe: boolean, debug: boolean }
 
 function header_auto(): i32 {
   return 0;
@@ -203,11 +209,18 @@ function count_of(value: string, lines: boolean, s: Settings): Settings {
     gnu.error("invalid number of " + noun + ": " + gnu.quote(body));
     exit(1);
   }
+  // A count past uintmax saturates in silence, as 9.12's
+  // XTOINT_MAX_QUIET asks: `tail -n 1Y` reads the whole file.
+  var count: u64 = r.0;
   if (r.1 != 0) {
-    gnu.error("invalid number of " + noun + ": " + gnu.quote(body) + ": Value too large for defined data type");
-    exit(1);
+    count = count_max();
   }
-  return Settings { ...s, count: r.0, lines: lines, from_start: from_start };
+  return Settings { ...s, count: count, lines: lines, from_start: from_start };
+}
+
+// The ceiling tail counts to: GNU's COUNT_MAX, which is INTMAX_MAX.
+function count_max(): u64 {
+  return 9223372036854775807 as u64;
 }
 
 // `plain_of(value, what, max)` — xdectoumax with no suffixes: a value
@@ -221,6 +234,25 @@ function plain_of(value: string, what: string, max: u64): u64 {
   if (r.1 != 0 || r.0 > max) {
     gnu.error(what + ": " + gnu.quote(value) + ": Value too large for defined data type");
     exit(1);
+  }
+  return r.0;
+}
+
+// `quiet_max_of(value, what)` — xnumtoimax with XTOINT_MAX_QUIET: a
+// value past COUNT_MAX saturates in silence, a negative one is still
+// the too-large diagnostic because the flag covers only the ceiling.
+function quiet_max_of(value: string, what: string): u64 {
+  if (value.len() > 0 && value[0] as i32 == 45) {
+    gnu.error(what + ": " + gnu.quote(value) + ": Value too large for defined data type");
+    exit(1);
+  }
+  var r: (u64, i32) = gnu.parse_number(value);
+  if (gnu.count_malformed(r.1)) {
+    gnu.error(what + ": " + gnu.quote(value));
+    exit(1);
+  }
+  if (r.1 != 0 || r.0 > count_max()) {
+    return count_max();
   }
   return r.0;
 }
@@ -486,17 +518,13 @@ function obsolete(argv: string[], s: Settings): (boolean, Settings) {
   }
   var count: u64 = default_count;
   if (digits.len() > 0) {
+    // The digits and the `b` multiply both saturate at COUNT_MAX rather
+    // than being refused — GNU <= 9.4 reported `invalid number` here.
     var r: (u64, i32) = gnu.parse_units(digits + mult);
-    if (r.1 != 0) {
-      // error(…, errno, …): ERANGE only when strtoumax itself overflowed.
-      var why: string = "";
-      if (r.1 == 2) {
-        why = ": Numerical result out of range";
-      }
-      gnu.error("invalid number: " + gnu.quote(p) + why);
-      exit(1);
-    }
     count = r.0;
+    if (r.1 != 0) {
+      count = count_max();
+    }
   }
   return (true, Settings { ...s, count: count, lines: lines, from_start: from_start, forever: forever });
 }
@@ -975,7 +1003,6 @@ function note(o: gnu.Stream, msg: string): gnu.Stream {
 // its start, or nothing to follow — in GNU's words.
 function recheck(f: File, s: Settings): File {
   var spec: File = f;
-  var was_tailable: boolean = spec.tailable;
   var prev_errnum: i32 = spec.errnum;
   var opened: boolean = true;
   var nr: Reader = stdin();
@@ -990,7 +1017,6 @@ function recheck(f: File, s: Settings): File {
       }
     }
   }
-  spec = File { ...spec, tailable: !(s.retry && !opened) };
   var ok: boolean = true;
   var st: FileStat = FileStat { is_file: false, is_dir: false, size: 0 as i64, mode: 0 as u32, nlink: 0 as u32, uid: 0 as u32, gid: 0 as u32, dev: 0 as i64, rdev: 0 as i64, ino: 0 as i64, blksize: 0 as i64, blocks: 0 as i64, atime: 0 as i64, atime_nsec: 0 as i64, mtime: 0 as i64, mtime_nsec: 0 as i64, ctime: 0 as i64, ctime_nsec: 0 as i64 };
   var stat_failed: boolean = !opened;
@@ -1005,10 +1031,14 @@ function recheck(f: File, s: Settings): File {
       }
     }
   }
+  // `tailable` is what the LAST check found, not something recomputed
+  // from --retry: a name that goes away is reported once and after that
+  // in silence. GNU <= 9.4 recomputed it and so said nothing at all
+  // without --retry.
   if (stat_failed) {
     ok = false;
-    if (!spec.tailable) {
-      if (was_tailable) {
+    if (!opened) {
+      if (spec.tailable) {
         gnu.error(gnu.quotea(spec.pretty) + " has become inaccessible: " + spec.err_text);
       }
     } else if (prev_errnum != spec.errnum) {
@@ -1021,13 +1051,14 @@ function recheck(f: File, s: Settings): File {
     if (giving_up) {
       suffix = "; giving up on this name";
     }
-    spec = File { ...spec, errnum: 0 - 1, tailable: false, ignore: giving_up };
-    if (was_tailable || prev_errnum != 0 - 1) {
+    if (spec.tailable || !(prev_errnum < 0 || prev_errnum == 21)) {
       gnu.error(gnu.quotea(spec.pretty) + " has been replaced with an untailable file" + suffix);
     }
+    spec = File { ...spec, errnum: 0 - 1, ignore: giving_up };
   } else {
     spec = File { ...spec, errnum: 0 };
   }
+  spec = File { ...spec, tailable: ok };
   var new_file: boolean = false;
   if (!ok) {
     if (opened && !spec.is_stdin) {
@@ -1097,7 +1128,16 @@ function tail_forever(files: File[], o: gnu.Stream, s: Settings, show: boolean):
   var fs: File[] = files;
   var out: gnu.Stream = o;
   var last: i32 = fs.len() - 1;
-  var blocking: boolean = s.pid == 0 as u64 && !s.by_name && fs.len() == 1 && fs[0].has_fd && !is_regular(fs[0].mode);
+  var blocking: boolean = s.pids.len() == 0 && !s.by_name && fs.len() == 1 && fs[0].has_fd && !is_regular(fs[0].mode);
+  // `--debug` (9.10) names the --follow implementation in force. There
+  // is no inotify here, so it is never GNU's third answer.
+  if (s.debug) {
+    if (blocking) {
+      gnu.error("using blocking mode");
+    } else {
+      gnu.error("using polling mode");
+    }
+  }
   while (true) {
     var any_input: boolean = false;
     var i: i32 = 0;
@@ -1157,7 +1197,10 @@ function tail_forever(files: File[], o: gnu.Stream, s: Settings, show: boolean):
       i = i + 1;
     }
     if (!any_live(fs, s)) {
-      return note(out, "no files remaining");
+      // Fatal since 9.5: error(EXIT_FAILURE, …) rather than a note
+      // the loop then breaks out of, so the run exits 1.
+      out = note(out, "no files remaining");
+      gnu.stream_finish_with(out, 1);
     }
     if (!any_input || blocking) {
       out = gnu.stream_flush(out);
@@ -1202,6 +1245,7 @@ pub function main(): i32 {
   }
   var opts: gnu.Opt[] = [];
   opts = opts.append(gnu.valued("c", "bytes", opt_bytes()));
+  opts = opts.append(gnu.flag("", "debug", opt_debug()));
   opts = opts.append(gnu.optional_long("f", "follow", opt_follow()));
   opts = opts.append(gnu.valued("n", "lines", opt_lines()));
   opts = opts.append(gnu.valued("", "max-unchanged-stats", opt_max_unchanged()));
@@ -1221,7 +1265,7 @@ pub function main(): i32 {
     d = d + 1;
   }
 
-  var s: Settings = Settings { count: 10 as u64, lines: true, from_start: false, forever: false, by_name: false, retry: false, header: header_auto(), term: 10, sleep_ms: 1000 as i64, max_unchanged: 5 as u64, pid: 0 as u64, presume_pipe: false };
+  var s: Settings = Settings { count: 10 as u64, lines: true, from_start: false, forever: false, by_name: false, retry: false, header: header_auto(), term: 10, sleep_ms: 1000 as i64, max_unchanged: 5 as u64, pids: [], presume_pipe: false, debug: false };
 
   // The obsolete form is argv[1] and nowhere else; the scan then runs
   // over argv with that token removed.
@@ -1259,9 +1303,12 @@ pub function main(): i32 {
         } else if (m.id == opt_retry()) {
           s = Settings { ...s, retry: true };
         } else if (m.id == opt_max_unchanged()) {
-          s = Settings { ...s, max_unchanged: plain_of(m.value, "invalid maximum number of unchanged stats between opens", 18446744073709551615 as u64) };
+          s = Settings { ...s, max_unchanged: quiet_max_of(m.value, "invalid maximum number of unchanged stats between opens") };
+        } else if (m.id == opt_debug()) {
+          s = Settings { ...s, debug: true };
         } else if (m.id == opt_pid()) {
-          s = Settings { ...s, pid: plain_of(m.value, "invalid PID", pid_max()) };
+          // Repeatable since 9.5: -f ends when every named process has.
+          s = Settings { ...s, pids: s.pids.append(plain_of(m.value, "invalid PID", pid_max())) };
         } else if (m.id == opt_presume()) {
           s = Settings { ...s, presume_pipe: true };
         } else if (m.id == opt_quiet()) {
@@ -1291,13 +1338,15 @@ pub function main(): i32 {
       gnu.error("warning: --retry only effective for the initial open");
     }
   }
-  if (s.pid != 0 as u64 && !s.forever) {
+  // The warning turns on a --pid having been GIVEN, not on its value:
+  // GNU <= 9.4 tested the number and so said nothing about `--pid=0`.
+  if (s.pids.len() > 0 && !s.forever) {
     gnu.error("warning: PID ignored; --pid=PID is useful only when following");
-  } else if (s.pid != 0 as u64) {
+  } else if (s.pids.len() > 0) {
     // GNU's own words for a kill(2) that answers ENOSYS; here the
     // liveness test is what the language lacks (#8767).
     gnu.error("warning: --pid=PID is not supported on this system");
-    s = Settings { ...s, pid: 0 as u64 };
+    s = Settings { ...s, pids: [] };
   }
 
   var names: string[] = g.operands();

@@ -185,6 +185,18 @@ type invocation struct {
 	// Keep it to genuinely unpredictable output. Anything a mask hides
 	// is a thing this corpus no longer proves.
 	mask func(string) string
+	// stderrMask is the same for a DIAGNOSTIC no implementation can
+	// match, which is a narrower thing than mask covers: GNU's uptime
+	// says `couldn't get boot time: %s` with whatever errno was left on
+	// the thread, and nothing on the path sets one — the value comes
+	// from a probe gnulib's proper_name_lite ran during startup, so it
+	// is EILSEQ in the C locale, ENOENT in C.UTF-8, and neither is a
+	// fact about the run. The mask drops the suffix and leaves the
+	// message, the exit status and stdout compared.
+	//
+	// Every use of it is an upstream bug named in docs/COREUTILS.md.
+	// It is not a way to get a diagnostic of ours green.
+	stderrMask func(string) string
 	// seedTree is the same requirement for a utility whose output names
 	// cannot be listed in advance: `split` chooses `xaa`, `xab`, … from
 	// the input's length. It gets a fresh working directory per SIDE,
@@ -1243,6 +1255,9 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 			res.tree = append(kept, readTreeInto(t, crossRoot, crossDevName+"/", groups, treeOptsOf(inv))...)
 			sort.Slice(res.tree, func(i, j int) bool { return res.tree[i].name < res.tree[j].name })
 		}
+	}
+	if inv.stderrMask != nil {
+		res.stderr = []byte(inv.stderrMask(string(res.stderr)))
 	}
 	if inv.mask != nil {
 		res.stdout = []byte(inv.mask(string(res.stdout)))

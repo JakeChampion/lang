@@ -591,7 +591,7 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
       continue;
     }
     if (from_stdin && arg == "-") {
-      out = gnu.error_out(out, "when reading file names from stdin, no file name of '-' allowed");
+      out = gnu.error_out(out, "when reading file names from standard input, no file name of '-' allowed");
       failed = true;
       continue;
     }
@@ -836,7 +836,6 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
   if (c.total) {
     out = emit(c, out, grand, gtime, gnsec, "total");
   }
-  out = out.flush();
   gnu.close_stdout(out, false);
   if (failed) {
     return 1;
@@ -980,6 +979,26 @@ function time_word(v: string): i32 {
   return time_mtime();
 }
 
+// GNU's x_timestyle_match: the names unquoted, one per line, and the
+// `+FORMAT` escape hatch argmatch knows nothing about. `ls` offers the
+// `posix-` prefix and `du` does not. GNU <= 9.11 reported du's through
+// plain argmatch, which quoted the names and left out the last line.
+pub function die_time_style(spec: string, names: string[], posix: boolean, status: i32, what: string): void {
+  gnu.error(what + " argument " + gnu.quote(spec) + " for " + gnu.quote("time style"));
+  eprint("Valid arguments are:");
+  var prefix: string = "";
+  if (posix) {
+    prefix = "[posix-]";
+  }
+  var i: i32 = 0;
+  while (i < names.len()) {
+    eprint("  - " + prefix + names[i]);
+    i = i + 1;
+  }
+  eprint("  - +FORMAT (e.g., +%H:%M) for a 'date'-style format");
+  gnu.try_help(status);
+}
+
 // The strftime format a --time-style names. `+FORMAT` is its own
 // format; everything else is argmatch over the three ISO styles.
 function style_format(v: string): string {
@@ -988,7 +1007,17 @@ function style_format(v: string): string {
   }
   var names: string[] = ["full-iso", "long-iso", "iso"];
   var formats: string[] = ["%Y-%m-%d %H:%M:%S.%N %z", "%Y-%m-%d %H:%M", "%Y-%m-%d"];
-  return formats[gnu.argmatch(v, names, "time style")];
+  var k: i32 = gnu.argmatch_find(v, names, [0, 1, 2]);
+  if (k < 0) {
+    // -2 is a prefix of several with different meanings; the empty
+    // string is a prefix of all three, so `--time-style=` is ambiguous.
+    var what: string = "invalid";
+    if (k == 0 - 2) {
+      what = "ambiguous";
+    }
+    die_time_style(v, names, false, 1, what);
+  }
+  return formats[k];
 }
 
 // TIME_STYLE, which is not --time-style: the literal `locale` is
@@ -1012,8 +1041,8 @@ function env_style(v: string): string {
 // quotes. `invalid maximum depth`, `extra operand` and the argmatch
 // lists all use the C-escaping `quote` instead.
 // `--max-depth=N`, base 0 with blanks and a sign tolerated in FRONT of
-// the digits and nothing at all after them. A negative wraps, which is
-// how `-d -1` comes out unlimited.
+// the digits and nothing at all after them. A negative is refused:
+// GNU <= 9.4 let it wrap and `-d -1` came out unlimited.
 function parse_depth(spec: string): u64 {
   var i: i32 = 0;
   while (i < spec.len() && gnu.is_blank(spec[i] as i32)) {
@@ -1027,11 +1056,8 @@ function parse_depth(spec: string): u64 {
     i = i + 1;
   }
   var n: (u64, i32, boolean) = blocks.scan_number(spec, i);
-  if (n.1 == i || n.1 != spec.len() || n.2) {
+  if (n.1 == i || n.1 != spec.len() || n.2 || neg && n.0 != 0 as u64) {
     gnu.die_usage("invalid maximum depth " + gnu.quote(spec), 1);
-  }
-  if (neg) {
-    return 0 as u64 - n.0;
   }
   return n.0;
 }

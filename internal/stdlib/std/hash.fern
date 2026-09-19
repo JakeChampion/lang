@@ -1,5 +1,5 @@
-// std/hash — non-cryptographic checksums: the CRC-32 that cksum(1) prints
-// and the two sum(1) checksums (BSD `sum -r`, System V `sum -s`).
+// std/hash — non-cryptographic checksums: the two CRC-32s that cksum(1)
+// prints and the two sum(1) checksums (BSD `sum -r`, System V `sum -s`).
 //
 // These share std/crypto's streaming shape — a value with `update` /
 // `update_bytes` that is rebound (`c = c.update(chunk)`) and read out with
@@ -16,6 +16,9 @@
 //   cksum:  crc = CRC-32/CKSUM (poly 0x04C11DB7, MSB first, no reflection),
 //           over the data followed by the length in little-endian bytes with
 //           trailing zero bytes dropped, then complemented.
+//   cksum -a crc32b:
+//           CRC-32/ISO-HDLC, the zlib one (poly 0xEDB88320 reflected, the
+//           register complemented at both ends, the length not folded in).
 //   sum -r: 16-bit right-rotate-then-add over every byte.
 //   sum -s: the 32-bit byte sum folded to 16 bits twice.
 
@@ -132,6 +135,99 @@ pub function (c: Cksum) finish(): u32 {
 // cksum_of(s) — the one-shot checksum of `s`.
 pub function cksum_of(s: string): u32 {
     return cksum_new().update(s).finish();
+}
+
+// === CRC-32 as everything else computes it (zlib, `cksum -a crc32b`) ===
+//
+// The REFLECTED form of the same polynomial cksum uses: bits enter at the
+// bottom, the table is built from 0xEDB88320, and the register starts and
+// ends complemented. It is a different function from the one above it over a
+// polynomial that looks the same, which is why both live here.
+pub struct Crc32 {
+    crc: u32,
+    len: u64,
+    // Eight 256-entry slicing tables laid end to end, as Cksum's are, so
+    // the absorb loop consumes eight bytes against eight independent
+    // lookups rather than a chain of eight dependent ones.
+    table: u32[]
+}
+
+function __crc32b_tables(): u32[] {
+    var t: u32[] = [];
+    var i: u32 = 0;
+    while (i < 256) {
+        var c: u32 = i;
+        var k: i32 = 0;
+        while (k < 8) {
+            if ((c & 1) != 0) {
+                c = c >> 1 ^ 0xedb88320;
+            } else {
+                c = c >> 1;
+            }
+            k = k + 1;
+        }
+        t = t.append(c);
+        i = i + 1;
+    }
+    var j: i32 = 0;
+    var p: u32 = 0;
+    while (j < 1792) {
+        p = t[j];
+        t = t.append(p >> 8 ^ t[(p & 255) as i32]);
+        j = j + 1;
+    }
+    return t;
+}
+
+pub function crc32_new(): Crc32 {
+    return Crc32 { crc: 0xffffffff, len: 0 as u64, table: __crc32b_tables() };
+}
+
+function __crc32_absorb(c: Crc32, bs: [u8]): Crc32 {
+    var t: u32[] = c.table;
+    var crc: u32 = c.crc;
+    var n: i32 = bs.len();
+    var i: i32 = 0;
+    var lim: i32 = n - 8;
+    var w0: u32 = 0;
+    var w1: u32 = 0;
+    while (i <= lim) {
+        w0 = crc ^ (bs[i] as u32 | bs[i + 1] as u32 << 8 | bs[i + 2] as u32 << 16 | bs[i + 3] as u32 << 24);
+        w1 = bs[i + 4] as u32 | bs[i + 5] as u32 << 8 | bs[i + 6] as u32 << 16 | bs[i + 7] as u32 << 24;
+        crc = t[1792 + (w0 & 255) as i32] ^ t[1536 + (w0 >> 8 & 255) as i32] ^ t[1280 + (w0 >> 16 & 255) as i32] ^ t[1024 + (w0 >> 24 & 255) as i32] ^ t[768 + (w1 & 255) as i32] ^ t[512 + (w1 >> 8 & 255) as i32] ^ t[256 + (w1 >> 16 & 255) as i32] ^ t[(w1 >> 24 & 255) as i32];
+        i = i + 8;
+    }
+    while (i < n) {
+        crc = crc >> 8 ^ t[((crc ^ bs[i] as u32) & 255) as i32];
+        i = i + 1;
+    }
+    return Crc32 { ...c, crc: crc, len: c.len + n as u64 };
+}
+
+pub function (c: Crc32) update(chunk: string): Crc32 {
+    c = __crc32_absorb(c, chunk.as_bytes());
+    return c;
+}
+
+pub function (c: Crc32) update_bytes(chunk: [u8]): Crc32 {
+    c = __crc32_absorb(c, chunk);
+    return c;
+}
+
+// len() — the number of bytes absorbed, the second field cksum prints.
+pub function (c: Crc32) len(): u64 {
+    return c.len;
+}
+
+// finish() — the register complemented. Reads the state without
+// consuming it: more `update`s may follow.
+pub function (c: Crc32) finish(): u32 {
+    return c.crc ^ 0xffffffff;
+}
+
+// crc32_of(s) — the one-shot checksum of `s`.
+pub function crc32_of(s: string): u32 {
+    return crc32_new().update(s).finish();
 }
 
 // === BSD sum (`sum -r`): 16-bit rotate-and-add, 1 KiB blocks ===

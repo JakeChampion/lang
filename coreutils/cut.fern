@@ -68,6 +68,15 @@ function opt_n(): i32 {
   return 9;
 }
 
+function opt_whitespace(): i32 {
+  return 10;
+}
+
+// `-F` is `-w -O ' '` with a field list, for busybox and toybox.
+function opt_blank_fields(): i32 {
+  return 11;
+}
+
 function help_text(): string {
   var out: string = "";
   out = out + "Usage: " + gnu.prog() + " OPTION... [FILE]...\n";
@@ -81,11 +90,13 @@ function help_text(): string {
   out = out + "  -f, --fields=LIST       select only these fields;  also print any line\n";
   out = out + "                            that contains no delimiter character, unless\n";
   out = out + "                            the -s option is specified\n";
-  out = out + "  -n                      (ignored)\n";
+  out = out + "  -n, --no-partial        with -b, do not split multibyte characters\n";
+  out = out + "  -w, --whitespace-delimited[=trimmed]  use whitespace as the field delimiter\n";
+  out = out + "  -F LIST                 shorthand for -w -O ' ' -f LIST\n";
   out = out + "      --complement        complement the set of selected bytes, characters\n";
   out = out + "                            or fields\n";
   out = out + "  -s, --only-delimited    do not print lines not containing delimiters\n";
-  out = out + "      --output-delimiter=STRING  use STRING as the output delimiter\n";
+  out = out + "  -O, --output-delimiter=STRING  use STRING as the output delimiter\n";
   out = out + "                            the default is to use the input delimiter\n";
   out = out + "  -z, --zero-terminated   line delimiter is NUL, not newline\n";
   out = out + "      --help        display this help and exit\n";
@@ -101,6 +112,10 @@ function help_text(): string {
   out = out + "  N-M   from N'th to M'th (included) byte, character or field\n";
   out = out + "  -M    from first to M'th (included) byte, character or field\n";
   return out;
+}
+
+function is_blank_byte(b: i32): boolean {
+  return b == 32 || b == 9;
 }
 
 // Bytes per read(2), and the writer's threshold: bytes per write(2).
@@ -343,7 +358,7 @@ function complement_of(r: Ranges): Ranges {
 }
 
 // ---- settings --------------------------------------------------------------
-struct Settings { r: Ranges, fields: boolean, delim: i32, term: i32, suppress: boolean, out_delim: string, out_delim_set: boolean }
+struct Settings { r: Ranges, fields: boolean, delim: i32, term: i32, suppress: boolean, out_delim: string, out_delim_set: boolean, ws: boolean, trim: boolean }
 
 pub function main(): i32 {
   var argv: string[] = args();
@@ -352,11 +367,13 @@ pub function main(): i32 {
   opts = opts.append(gnu.valued("c", "characters", opt_chars()));
   opts = opts.append(gnu.valued("f", "fields", opt_fields()));
   opts = opts.append(gnu.valued("d", "delimiter", opt_delim()));
+  opts = opts.append(gnu.flag("n", "no-partial", opt_n()));
+  opts = opts.append(gnu.optional("w", "whitespace-delimited", opt_whitespace()));
   opts = opts.append(gnu.flag("s", "only-delimited", opt_suppress()));
-  opts = opts.append(gnu.valued("", "output-delimiter", opt_outdelim()));
+  opts = opts.append(gnu.valued("O", "output-delimiter", opt_outdelim()));
   opts = opts.append(gnu.flag("", "complement", opt_complement()));
   opts = opts.append(gnu.flag("z", "zero-terminated", opt_zero()));
-  opts = opts.append(gnu.flag("n", "", opt_n()));
+  opts = opts.append(gnu.valued("F", "", opt_blank_fields()));
 
   var spec: string = "";
   // 0 none yet, 1 bytes or characters, 2 fields.
@@ -368,6 +385,12 @@ pub function main(): i32 {
   var complement: boolean = false;
   var out_delim: string = "";
   var out_delim_set: boolean = false;
+  // `-w` / `-F`: a run of blanks is the delimiter. `space_out` is the
+  // `-F` half, which also makes a space the default output delimiter.
+  var ws: boolean = false;
+  var ws_set: boolean = false;
+  var trim: boolean = false;
+  var space_out: boolean = false;
 
   var g: gnu.Getopt = gnu.getopt_new(argv, opts, "cut", help_text(), 1);
   while (true) {
@@ -375,16 +398,26 @@ pub function main(): i32 {
     g = res.1;
     match (res.0) {
       Some(m) => {
-        if (m.id == opt_bytes() || m.id == opt_chars() || m.id == opt_fields()) {
+        if (m.id == opt_bytes() || m.id == opt_chars() || m.id == opt_fields() || m.id == opt_blank_fields()) {
           var want: i32 = 1;
-          if (m.id == opt_fields()) {
+          if (m.id == opt_fields() || m.id == opt_blank_fields()) {
             want = 2;
+          }
+          if (m.id == opt_blank_fields()) {
+            ws = true;
+            space_out = true;
           }
           if (mode != 0) {
             gnu.die_usage("only one list may be specified", 1);
           }
           mode = want;
           spec = m.value;
+        } else if (m.id == opt_whitespace()) {
+          ws = true;
+          ws_set = true;
+          if (m.has_value) {
+            trim = gnu.argmatch(m.value, ["trimmed"], "--whitespace-delimited") == 0;
+          }
         } else if (m.id == opt_delim()) {
           if (m.value.len() > 1) {
             gnu.die_usage("the delimiter must be a single character", 1);
@@ -419,11 +452,19 @@ pub function main(): i32 {
   if (mode == 0) {
     gnu.die_usage("you must specify a list of bytes, characters, or fields", 1);
   }
-  if (delim_set && mode != 2) {
-    gnu.die_usage("an input delimiter may be specified only when operating on fields", 1);
+  if ((delim_set || ws) && mode != 2) {
+    gnu.die_usage("an input delimiter makes sense\n\tonly when operating on fields", 1);
   }
   if (suppress && mode != 2) {
     gnu.die_usage("suppressing non-delimited lines makes sense\n\tonly when operating on fields", 1);
+  }
+  if (delim_set && ws_set) {
+    gnu.die_usage("-d and -w are mutually exclusive", 1);
+  }
+  // An explicit -d overrides the blank delimiter -F asked for, but not
+  // the space it made the default output delimiter.
+  if (delim_set && !ws_set) {
+    ws = false;
   }
   var r: Ranges = parse_list(spec, mode == 2);
   if (complement) {
@@ -431,13 +472,16 @@ pub function main(): i32 {
   }
   if (!out_delim_set) {
     out_delim = byte_str(delim);
+    if (space_out) {
+      out_delim = " ";
+    }
   }
 
   var files: string[] = g.operands();
   if (files.len() == 0) {
     files = files.append("-");
   }
-  return run(files, Settings { r: r, fields: mode == 2, delim: delim, term: term, suppress: suppress, out_delim: out_delim, out_delim_set: out_delim_set });
+  return run(files, Settings { r: r, fields: mode == 2, delim: delim, term: term, suppress: suppress, out_delim: out_delim, out_delim_set: out_delim_set, ws: ws, trim: trim });
 }
 
 // `run(files, s)` — the whole selection. Every selected piece is pushed
@@ -474,9 +518,8 @@ function run(files: string[], s: Settings): i32 {
   // wanted" holds, the other cannot be decided without the field.
   // Whether the output delimiter is the input delimiter, which is what
   // lets consecutive selected fields go out as one slice of the input.
-  var join_runs: boolean = !s.out_delim_set || s.out_delim.len() == 1 && s.out_delim[0] as i32 == s.delim;
+  var join_runs: boolean = s.out_delim.len() == 1 && s.out_delim[0] as i32 == s.delim;
   var first_sel: boolean = s.r.los.len() > 0 && s.r.los[0] <= 1 as u64;
-  var buffered: boolean = s.suppress == first_sel;
 
   while (true) {
     if (pos >= chunk.len()) {
@@ -636,6 +679,63 @@ function run(files: string[], s: Settings): i32 {
         rec_k = rec_k + 1;
         rec_open = true;
       }
+    } else if (s.ws) {
+      // `-w` / `-F`: a RUN of blanks is one delimiter, so a leading or
+      // trailing run leaves an empty field at that end — unless
+      // `--whitespace-delimited=trimmed` took the two runs off first.
+      var a: i32 = lo;
+      var z: i32 = body;
+      if (s.trim) {
+        while (a < z && is_blank_byte(buf[a] as i32)) {
+          a = a + 1;
+        }
+        while (z > a && is_blank_byte(buf[z - 1] as i32)) {
+          z = z - 1;
+        }
+      }
+      var wb: i32 = a;
+      while (wb < z && !is_blank_byte(buf[wb] as i32)) {
+        wb = wb + 1;
+      }
+      if (wb >= z) {
+        if (s.r.los.len() == 0) {
+          buf_push_byte(h, s.term);
+        } else if (!s.suppress) {
+          buf_push_range(h, buf, a, z);
+          buf_push_byte(h, s.term);
+        }
+      } else {
+        var widx: u64 = 1 as u64;
+        var wri: i32 = 0;
+        var wprinted: boolean = false;
+        var wp: i32 = a;
+        while (true) {
+          var we: i32 = wp;
+          while (we < z && !is_blank_byte(buf[we] as i32)) {
+            we = we + 1;
+          }
+          while (wri < s.r.los.len() && s.r.his[wri] < widx) {
+            wri = wri + 1;
+          }
+          if (wri < s.r.los.len() && s.r.los[wri] <= widx) {
+            if (wprinted) {
+              buf_push(h, s.out_delim);
+            }
+            buf_push_range(h, buf, wp, we);
+            wprinted = true;
+          }
+          if (we >= z || wri >= s.r.los.len()) {
+            break;
+          }
+          var wn: i32 = we;
+          while (wn < z && is_blank_byte(buf[wn] as i32)) {
+            wn = wn + 1;
+          }
+          wp = wn;
+          widx = widx + 1 as u64;
+        }
+        buf_push_byte(h, s.term);
+      }
     } else {
       // Where the next delimiter is. Kept as a cursor across lines so
       // the scans over one chunk cost it once in total.
@@ -645,10 +745,15 @@ function run(files: string[], s: Settings): i32 {
       } else if (nd >= 0 && nd < lo) {
         nd = __memchr(chunk, s.delim, lo);
       }
-      var first_nd: i32 = nd;
       if (nd < 0 || nd >= body) {
         // No delimiter on this line: it goes out whole, or not at all.
-        if (!s.suppress) {
+        // A selection that can never match anything — `--complement
+        // -f1-` — leaves the line empty rather than whole: GNU stops
+        // reading fields the moment no later one can be selected, and
+        // that is before it has anything to print the line from.
+        if (s.r.los.len() == 0) {
+          buf_push_byte(h, s.term);
+        } else if (!s.suppress) {
           buf_push_range(h, buf, lo, body);
           buf_push_byte(h, s.term);
         }
@@ -699,14 +804,9 @@ function run(files: string[], s: Settings): i32 {
           buf_push_range(h, buf, run, body);
           run = 0 - 1;
         }
-        // The line delimiter always follows a delimited line — except
-        // for the one shape GNU's own buffering leaves without it: the
-        // FIRST field of the record was read into a buffer, the record
-        // ends at EOF with an empty second field, and NUL is the line
-        // delimiter, so what gnulib carries into the test reads as one.
-        if (terminated || !(buffered && s.term == 0 && first_nd == body - 1)) {
-          buf_push_byte(h, s.term);
-        }
+        // The line delimiter always follows. GNU <= 9.11 left it off
+        // one shape its own buffering lost track of, under -z at EOF.
+        buf_push_byte(h, s.term);
       }
       if (carried) {
         delimat = __memchr(chunk, s.delim, pos);

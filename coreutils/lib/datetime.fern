@@ -144,6 +144,14 @@ function t_j(): i32 {
   return 24;
 }
 
+// The middle number of `DD.MM.YYYY`: a number whose `.` the lexer has
+// already decided is a separator rather than a decimal point. It is
+// the only thing that tells a date from a second and a fraction, and
+// the grammar takes it in one place and nowhere else.
+function t_unumber_dotted(): i32 {
+  return 25;
+}
+
 // A number carries `value`, its `digits`, and whether it was written
 // with a minus sign, which is what tells `-00:30` from `+00:30`; a
 // decimal number carries the whole seconds in `value` and `nsec`; a
@@ -758,6 +766,9 @@ function lex(s: string, lt: LocalTable): (Tok[], string) {
   var out: Tok[] = [];
   var i: i32 = 0;
   var n: i32 = s.len();
+  // Set when a number's fraction turned out to hold a second `.`, and
+  // read by the next number, which is then the month of a dotted date.
+  var not_decimal: boolean = false;
   while (true) {
     var c: i32 = 0;
     while (i < n) {
@@ -797,8 +808,16 @@ function lex(s: string, lt: LocalTable): (Tok[], string) {
         if (digit < 0 || digit > 9) {
           break;
         }
+        // The sign is applied to each DIGIT, as the original applies it,
+        // so that the most negative number there is — `@-9223372036854775808`
+        // — is a number and not an overflow.
         var d: i64 = digit as i64;
-        if (value > 922337203685477580 as i64 || value == 922337203685477580 as i64 && d > 7 as i64) {
+        if (sign < 0) {
+          d = 0 as i64 - d;
+          if (value < 0 as i64 - 922337203685477580 as i64 || value == 0 as i64 - 922337203685477580 as i64 && d < 0 as i64 - 8 as i64) {
+            overflow = true;
+          }
+        } else if (value > 922337203685477580 as i64 || value == 922337203685477580 as i64 && d > 7 as i64) {
           overflow = true;
         }
         if (!overflow) {
@@ -809,47 +828,65 @@ function lex(s: string, lt: LocalTable): (Tok[], string) {
       if (overflow) {
         return (out.append(with_end(tok(t_bad(), 0), start)), "");
       }
-      if (sign < 0) {
-        value = 0 as i64 - value;
+      var fraction: boolean = p + 1 < n && (s[p] as i32 == 46 || s[p] as i32 == 44) && is_digit(s[p + 1] as i32);
+      if (fraction && not_decimal) {
+        not_decimal = false;
+        out = out.append(Tok { kind: t_unumber_dotted(), value: value, digits: p - start, negative: sign < 0, nsec: 0, end: p });
+        i = p;
+        continue;
       }
-      if (p + 1 < n && (s[p] as i32 == 46 || s[p] as i32 == 44) && is_digit(s[p + 1] as i32)) {
+      var decimal: boolean = fraction;
+      if (fraction) {
+        var dot: i32 = p;
         p = p + 1;
         var ns: i64 = (s[p] as i32 - 48) as i64;
         p = p + 1;
         var digits: i32 = 2;
         while (digits <= 9) {
           ns = ns * (10 as i64);
-          if (p < n && is_digit(s[p] as i32)) {
+          if (p < n && s[p] as i32 == 46) {
+            // A second `.` where the fraction should be: the text is a
+            // dotted date, so the number ends at the first one and the
+            // next number is the month.
+            p = dot;
+            not_decimal = true;
+            decimal = false;
+            digits = 9;
+          } else if (p < n && is_digit(s[p] as i32)) {
             ns = ns + (s[p] as i32 - 48) as i64;
             p = p + 1;
           }
           digits = digits + 1;
         }
-        // Excess digits truncate toward minus infinity.
-        if (sign < 0) {
-          while (p < n && is_digit(s[p] as i32)) {
-            if (s[p] as i32 != 48) {
-              ns = ns + 1 as i64;
-              break;
+        if (decimal) {
+          // Excess digits truncate toward minus infinity.
+          if (sign < 0) {
+            while (p < n && is_digit(s[p] as i32)) {
+              if (s[p] as i32 != 48) {
+                ns = ns + 1 as i64;
+                break;
+              }
+              p = p + 1;
             }
+          }
+          while (p < n && is_digit(s[p] as i32)) {
             p = p + 1;
           }
+          var whole: i64 = value;
+          if (sign < 0 && ns != 0 as i64) {
+            whole = whole - 1 as i64;
+            ns = 1000000000 as i64 - ns;
+          }
+          var kind: i32 = t_udecimal();
+          if (sign != 0) {
+            kind = t_sdecimal();
+          }
+          out = out.append(Tok { kind: kind, value: whole, digits: 0, negative: sign < 0, nsec: ns, end: p });
+          i = p;
+          continue;
         }
-        while (p < n && is_digit(s[p] as i32)) {
-          p = p + 1;
-        }
-        var whole: i64 = value;
-        if (sign < 0 && ns != 0 as i64) {
-          whole = whole - 1 as i64;
-          ns = 1000000000 as i64 - ns;
-        }
-        var kind: i32 = t_udecimal();
-        if (sign != 0) {
-          kind = t_sdecimal();
-        }
-        out = out.append(Tok { kind: kind, value: whole, digits: 0, negative: sign < 0, nsec: ns, end: p });
-        i = p;
-        continue;
+      } else {
+        not_decimal = false;
       }
       var kind: i32 = t_unumber();
       if (sign != 0) {
@@ -1397,6 +1434,30 @@ function slash_date(pc: Pc, toks: Tok[], i: i32): Pc {
   return done(trace_current(Pc { ...p, dates_seen: p.dates_seen + 1 }, "date"), i + 5, false);
 }
 
+// `dot_date(pc, toks, i)` — `D.M.` and `D.M.Y`, the European order.
+// The middle number is the one the lexer marked, which is the whole of
+// what tells the two apart: `1.2.3` is the first of February in the
+// year 3, `1.2` a second and a fraction.
+function dot_date(pc: Pc, toks: Tok[], i: i32): Pc {
+  var b: Tok = at(toks, i + 2);
+  if (b.kind != t_unumber() && b.kind != t_unumber_dotted()) {
+    return fail_at(pc, i + 2);
+  }
+  if (!is_char(at(toks, i + 3), 46)) {
+    return fail_at(pc, i + 3);
+  }
+  var n: Tok = at(toks, i);
+  var p: Pc = Pc { ...pc, day: n.value, month: b.value, dates_seen: pc.dates_seen + 1 };
+  if (b.kind != t_unumber_dotted()) {
+    return done(trace_current(p, "date"), i + 4, false);
+  }
+  var y: Tok = at(toks, i + 4);
+  if (y.kind != t_unumber()) {
+    return fail_at(pc, i + 4);
+  }
+  return done(trace_current(Pc { ...p, year: y.value, year_digits: y.digits }, "date"), i + 5, false);
+}
+
 // `number_item(pc, toks, i)` — every item that opens with an unsigned
 // number, chosen by the token after it.
 function number_item(pc: Pc, toks: Tok[], i: i32): Pc {
@@ -1430,6 +1491,9 @@ function number_item(pc: Pc, toks: Tok[], i: i32): Pc {
   }
   if (is_char(a, 47)) {
     return slash_date(pc, toks, i);
+  }
+  if (is_char(a, 46)) {
+    return dot_date(pc, toks, i);
   }
   if (a.kind == t_month()) {
     var b: Tok = at(toks, i + 2);
@@ -1784,7 +1848,10 @@ function fail(pc: Pc, hint: i64): Result {
 // `fields_text(y, mon, mday, h, m, s)` — the trace's `(Y-M-D) …` form
 // of a set of fields, normalised or not.
 function fields_text(year: i64, mon: i64, mday: i64, hour: i64, min: i64, sec: i64): string {
-  return "(Y-M-D) " + pad(year, 4) + "-" + pad(mon + 1 as i64, 2) + "-" + pad(mday, 2) + " " + pad(hour, 2) + ":" + pad(min, 2) + ":" + pad(sec, 2);
+  // The year is NOT padded: the original renders this line with the C
+  // library's strftime, whose `%Y` writes the number as it is. Only
+  // `parsed date part`, which is a printf of its own, pads to four.
+  return "(Y-M-D) " + year.to_string() + "-" + pad(mon + 1 as i64, 2) + "-" + pad(mday, 2) + " " + pad(hour, 2) + ":" + pad(min, 2) + ":" + pad(sec, 2);
 }
 
 function civil_text(f: tz.Civil): string {
@@ -1834,21 +1901,14 @@ function trace_not_ok(pc: Pc, year: i64, mon: i64, mday: i64, hour: i64, min: i6
     }
     p = dline(p, slice_unchecked(line, 0, end) + "");
   }
+  // The first two are printed whatever went wrong; only the overflow
+  // is conditional, on mktime having failed rather than moved a field.
   p = dline(p, "     possible reasons:");
-  var f2: tz.Civil = r.f;
-  var eq_sec: boolean = f2.sec as i64 == sec;
-  var eq_min: boolean = f2.min as i64 == min;
-  var eq_hour: boolean = f2.hour as i64 == hour;
-  var eq_mday: boolean = f2.day as i64 == mday;
-  var eq_month: boolean = (f2.month - 1) as i64 == mon;
-  var eq_year: boolean = f2.year == year;
-  if (r.ok && eq_sec && eq_min && !eq_hour && eq_mday && eq_month && eq_year) {
-    p = dline(p, "       nonexistent due to daylight-saving time;");
+  p = dline(p, "       nonexistent due to daylight-saving time;");
+  p = dline(p, "       invalid day/month combination;");
+  if (!r.ok) {
+    p = dline(p, "       numeric values overflow;");
   }
-  if (r.ok && !eq_mday && !eq_month) {
-    p = dline(p, "       invalid day/month combination;");
-  }
-  p = dline(p, "       numeric values overflow;");
   if (zone_seen) {
     return dline(p, "       incorrect timezone");
   }
@@ -2021,7 +2081,7 @@ function resolve(pc_in: Pc, z: tz.Zone, now_isdst: boolean, hint: i64): Result {
     var rm: i64 = (r.f.month - 1) as i64 + pc.rel.month;
     var rd: i64 = r.f.day as i64 + pc.rel.day;
     if (!year_ok(ry) || rm > 2147483647 as i64 || rm < 0 as i64 - 2147483648 as i64 || rd > 2147483647 as i64 || rd < 0 as i64 - 2147483648 as i64) {
-      pc = dline(pc, "error: parse-datetime.y:2144");
+      pc = dline(pc, "error: parse-datetime.y:2179");
       return fail(pc, h);
     }
     r = mktime(z, ry, rm, rd, hour, min, sec, tm0_isdst, h);

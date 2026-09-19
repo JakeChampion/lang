@@ -196,7 +196,13 @@ function fired(pid: i32): boolean {
 // `--foreground -s TSTP` hangs where the default mode reports 124.
 function deliver(sig: i32, cmd: string, cpid: i32, foreground: boolean, verbose: boolean): void {
   if (verbose) {
-    gnu.error("sending signal " + signals.name(sig) + " to command " + gnu.quote(cmd));
+    // Signal 0 has no name to print — `-v -s 0` and `-v -s EXIT` both
+    // say `signal 0`, where GNU <= 9.9 wrote `EXIT`.
+    var shown: string = signals.name(sig);
+    if (sig == 0) {
+      shown = "0";
+    }
+    gnu.error("sending signal " + shown + " to command " + gnu.quote(cmd));
   }
   if (!foreground && sig != 0) {
     signal_ignore(sig);
