@@ -573,12 +573,15 @@ pub function stream_fail(o: Stream, msg: string): Stream {
 // One `==> NAME <==` header, with the blank line every header after the
 // first carries. A file that failed to OPEN never reaches this, so it
 // does not consume the first-file slot.
+// The name is quoted the way every other diagnostic quotes one, so a
+// header cannot be confused with the content around it. GNU <= 9.11
+// printed it raw.
 pub function stream_header(o: Stream, name: string): Stream {
   var lead: string = "\n";
   if (o.first) {
     lead = "";
   }
-  return Stream { ...stream_put(o, lead + "==> " + name + " <==\n"), first: false };
+  return Stream { ...stream_put(o, lead + "==> " + quotef(name) + " <==\n"), first: false };
 }
 
 // `stream_flush(o)` — what is buffered goes out now; a failure is
@@ -589,6 +592,13 @@ pub function stream_flush(o: Stream): Stream {
 
 pub function stream_finish(o: Stream): void {
   finish(o.w);
+}
+
+// `stream_finish_with(o, status)` — the end of a run that is exiting on
+// a diagnostic rather than because it ran out of work.
+pub function stream_finish_with(o: Stream, status: i32): void {
+  finish_with(o.w, status);
+  exit(status);
 }
 
 // ---- quoting ---------------------------------------------------------------
