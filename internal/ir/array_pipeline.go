@@ -324,6 +324,10 @@ type arrayCall struct {
 	recv    int32 // slot the receiver was loaded from, -1 if not a slot load
 	result  int32 // slot the result was stored into, -1 if not stored
 	element string
+	// fnSlot is where the element function was parked, which fusion needs in
+	// order to load it; -1 when the matcher could not follow it. The NAME
+	// alone is not enough — a fused loop calls the value, not the symbol.
+	fnSlot int32
 }
 
 func recognizeInFunc(fn *Func) []ArrayPipeline {
@@ -423,7 +427,7 @@ func collectArrayCalls(fn *Func) []arrayCall {
 			windowStart = i + 1
 			continue
 		}
-		c := arrayCall{op: i, verb: verb, callee: op.Str, recv: -1, result: -1}
+		c := arrayCall{op: i, verb: verb, callee: op.Str, recv: -1, result: -1, fnSlot: -1}
 		for k := windowStart; k < i; k++ {
 			if fn.Ops[k].Kind != OpLoadLocal {
 				continue
@@ -432,7 +436,10 @@ func collectArrayCalls(fn *Func) []arrayCall {
 				c.recv = fn.Ops[k].I32
 			}
 			// The last load before the call is the callback slot.
-			c.element = closureOf[fn.Ops[k].I32]
+			if name, isClosure := closureOf[fn.Ops[k].I32]; isClosure {
+				c.element = name
+				c.fnSlot = fn.Ops[k].I32
+			}
 		}
 		for k := i + 1; k < len(fn.Ops); k++ {
 			if fn.Ops[k].Kind == OpStoreLocal {
@@ -502,8 +509,9 @@ func countSlotLoads(fn *Func) map[int32]*slotLoads {
 // from the output when it stopped firing is one nobody notices is missing.
 func FormatArrayPipelineHistogram(p *Program) string {
 	pipes := RecognizeArrayPipelines(p)
+	fusible := FusibleArrayPipelines(p)
 	counts := map[ArrayRefusal]int{}
-	stages, materialize, chained := 0, 0, 0
+	stages, materialize, chained, fused := 0, 0, 0, 0
 	for _, pl := range pipes {
 		counts[pl.Stop]++
 		stages += len(pl.Stages)
@@ -511,11 +519,14 @@ func FormatArrayPipelineHistogram(p *Program) string {
 		if len(pl.Stages) > 1 {
 			chained++
 		}
+		if fusible[arrayPipelineKey(pl.Func, pl)] {
+			fused++
+		}
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "array pipelines: %d (%d with more than one stage), %d stages, %d materializing\n",
 		len(pipes), chained, stages, materialize)
-	fmt.Fprintf(&b, "fused: 0 — no fusion pass exists yet (#9731)\n")
+	fmt.Fprintf(&b, "fused: %d (#9731)\n", fused)
 	for _, r := range allRefusals {
 		fmt.Fprintf(&b, "  %-24s %d\n", r.Tag(), counts[r])
 	}
@@ -539,6 +550,7 @@ func FormatArrayPipelines(p *Program) string {
 			posW = len(posOf[i])
 		}
 	}
+	fusible := FusibleArrayPipelines(p)
 	var b strings.Builder
 	chained := 0
 	for i, pl := range pipes {
@@ -546,13 +558,16 @@ func FormatArrayPipelines(p *Program) string {
 			chained++
 		}
 		fmt.Fprintf(&b, "%-*s  %s\n", posW, posOf[i], pl.Shape())
-		// "Did it fuse?" is the first question #9732 asks, and the answer is
-		// the same for every pipeline until #9731 lands. Saying it per site
-		// rather than once at the bottom is deliberate: a reader checking one
+		// "Did it fuse?" is the first question #9732 asks, so it is answered
+		// per site rather than once at the bottom: a reader checking one
 		// expression should not have to know that the absence of a word means
 		// no.
-		fmt.Fprintf(&b, "%-*s    not fused (no fusion pass yet, #9731); %d stage(s) materialize\n",
-			posW, "", pl.Materializes())
+		verdict := "not fused"
+		if fusible[arrayPipelineKey(pl.Func, pl)] {
+			verdict = "fused into one loop"
+		}
+		fmt.Fprintf(&b, "%-*s    %s; %d stage(s) materialize unfused\n",
+			posW, "", verdict, pl.Materializes())
 		if pl.Stop != RefusalNone {
 			fmt.Fprintf(&b, "%-*s    chain ends here: %s\n", posW, "", pl.Stop)
 		}

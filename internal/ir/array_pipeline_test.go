@@ -361,10 +361,11 @@ func TestRefusalTagsAreStableAndComplete(t *testing.T) {
 	}
 }
 
-// The histogram says plainly that nothing fused, and counts what would have
-// to stop materializing for that to change. #9732's first acceptance line is
-// that a report must not claim a fusion the backend did not perform.
-func TestHistogramReportsNothingFusedAndCountsMaterialization(t *testing.T) {
+// The histogram counts what fused and what each pipeline would materialize
+// without it. #9732's first acceptance line is that a report must not claim a
+// fusion the backend did not perform, so the count comes from the fusion
+// planner itself rather than from a constant.
+func TestHistogramCountsFusedAndMaterialization(t *testing.T) {
 	p := lowerPipelineSrc(t, `import "std/array";
 function run(xs: i64[]): i64 {
   var out: Option[i64] = xs
@@ -377,7 +378,7 @@ function main(): i32 { return run([1 as i64, 2 as i64]) as i32; }`)
 
 	got := ir.FormatArrayPipelineHistogram(p)
 	for _, want := range []string{
-		"fused: 0",
+		"fused: 1",
 		"3 stages, 2 materializing",
 		"complete",
 		"intermediate-read-again",

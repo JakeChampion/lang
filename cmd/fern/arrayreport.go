@@ -52,11 +52,9 @@ func runArrayReport(srcPath string, w io.Writer) error {
 	// checklist for the fusion pass (#9732), the same property
 	// FERN_SSA_REPORT has for the SSA backend.
 	//
-	// It is read here rather than on every compile path deliberately. Until
-	// #9731 exists the tally reads the same for every program — nothing
-	// fuses — so a per-build hook would cost a print in five backends to say
-	// one thing. It becomes worth wiring into the build when the numbers
-	// start moving, which is when fusion lands.
+	// It is read here rather than on every compile path deliberately: a
+	// per-build hook would cost a print in five backends for a number most
+	// builds do not want.
 	if os.Getenv("FERN_ARRAY_REPORT") == "" {
 		return nil
 	}

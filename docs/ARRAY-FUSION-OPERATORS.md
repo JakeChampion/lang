@@ -1,8 +1,9 @@
 # The per-operator fusion proof
 
-Status: design doc for #9731. What each array operator contributes to a
-fused loop, and why composing those contributions gives the guarantee
-`docs/ITERATOR-FUSION-CONTRACT.md` clause 1 asks for.
+Status: the contract `internal/ir/array_fusion.go` implements (#9731). What
+each array operator contributes to a fused loop, and why composing those
+contributions gives the guarantee `docs/ITERATOR-FUSION-CONTRACT.md` clause
+1 asks for.
 
 Written before the pass, because clause 1 is a claim a benchmark cannot
 establish:
@@ -197,8 +198,13 @@ preconditions of the argument:
 
 1. **Every element function is statically resolved** (§1). Without it
    the call is indirect and the "no unspecialised call" half fails.
-2. **Every element function reaches no capability-tagged builtin** (§1).
-   Without it merging traversals can reorder effects.
+2. **Every element function reaches no observable effect** (§1). Without
+   it merging traversals can reorder effects. The pass tests this more
+   strictly than §1 words it: `internal/caps` answers a security
+   question, and `print` is deliberately ungated there while being
+   exactly the effect an interleave exposes. So the allowed set is
+   inverted — a program function, walked through, or a codegen runtime
+   helper, and nothing else.
 3. **No fragment elides an application that would be observable** (§2).
    The three-outcome vocabulary cannot express early exit, so the first
    slice satisfies this by construction — which is the other reason
@@ -211,22 +217,41 @@ A pipeline failing any of these does not fuse, and says so with the
 closed refusal set of `internal/ir/array_pipeline.go` (#9732) rather
 than silently allocating per stage — clause 4.
 
-## How this will be measured
+## What the first slice reaches
 
-Clause 3 is hand-written-loop parity: allocation count equal, asserted
-through `docs/ALLOCATION-OBSERVABLE.md`'s counters, and runtime within
-noise. `examples/array_pipeline/` already holds the three programs and
-their hand-written equivalents, and
-`docs/ARRAY-PIPELINE-BASELINE-2026-09.md` holds the numbers to beat:
+`map` and `filter` as stages, `fold` and `reduce` as sinks, over 8-byte
+elements. The pass is `internal/ir/array_fusion.go`; `FERN_NO_ARRAY_FUSION=1`
+turns it off, which is how a miscompilation suspected here is ruled out in
+one run rather than by rebuilding the compiler.
 
-| | combinator ÷ loop, native | ÷ loop, self-host |
-| --- | ---: | ---: |
-| `map.map.reduce` | 4.37x | 4.77x |
-| `filter.map.reduce` | 2.58x | 2.20x |
+Both halves of clause 1 hold, and the second one is not something this pass
+does by itself. Fusion runs FIRST in `OptimizeProgram`, so what the later
+passes see is one loop whose element functions are locally constructed
+closures — `Defunctionalise` and `InlineZeroCaptureClosures` then inline them
+outright. After the full battery the fused `map.map.fold` contains **no
+indirect call at all**: the only calls left are the index helper and the
+closure drops. Running fusion after `Inline` instead would have left the
+chain unrecognisable, since `Inline` rewrites std/array's one-line method
+delegates.
 
-Parity means those ratios reach 1.0 within noise, and the allocation
-columns — 25 and 21 allocator calls per round — reach the loops' zero.
+Measured on `examples/array_pipeline/`, arm64-darwin, 2000 elements over 50
+rounds, against `docs/ARRAY-PIPELINE-BASELINE-2026-09.md`'s numbers:
 
-The measurement already exists, which is the useful part: `scripts/array-pipeline-baseline`
-runs both compilers over every backend, so the parity claim is checkable
-the day the pass lands rather than needing a harness built alongside it.
+| | allocator calls per round, before | after | hand-written loop |
+| --- | ---: | ---: | ---: |
+| `map.map.reduce` | 23 | 1 | 0 |
+| `filter.map.reduce` | 19 | 1 | 0 |
+
+Cold fresh bytes fall from 49952 and 6944 to 32. The one remaining
+allocation per round is `reduce`'s own `Some(acc)` box, which its
+`Option[T]` return type requires and which is O(1) rather than linear in
+the input — the hand-written loops return a bare `i64` and so pay nothing.
+A `fold` sink allocates nothing at all.
+
+The runtime half of clause 3 is not claimed here. Wall-clock on this
+hardware put a pipeline ahead of its own hand-written loop, which is how
+`docs/ARRAY-PIPELINE-BASELINE-2026-09.md` came to use callgrind retired
+instructions instead; that instrument needs the Linux devbox and the ratio
+has not been remeasured since the pass landed. `scripts/array-pipeline-baseline`
+runs both compilers over every backend, so it is one command when someone
+wants it.
