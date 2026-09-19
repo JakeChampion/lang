@@ -138,11 +138,22 @@ function count_of(value: string, lines: boolean): Count {
     gnu.error("invalid number of " + noun + ": " + gnu.quote(body));
     exit(1);
   }
+  // A count past the ceiling saturates in silence: 9.12 passes
+  // XTOINT_MAX_QUIET, so `head -n 1Y` reads the whole file rather than
+  // refusing the number.
   if (status != 0) {
-    gnu.error("invalid number of " + noun + ": " + gnu.quote(body) + ": Value too large for defined data type");
-    exit(1);
+    return Count { n: off_t_max_or_all(elide, lines), elide: elide };
   }
   return Count { n: r.0, elide: elide };
+}
+
+// What a saturated count becomes: the elided-bytes ceiling is an
+// offset, everything else is uintmax.
+function off_t_max_or_all(elide: boolean, lines: boolean): u64 {
+  if (elide && !lines) {
+    return off_t_max();
+  }
+  return 18446744073709551615 as u64;
 }
 
 // ---- the obsolete -NUM form ------------------------------------------------
