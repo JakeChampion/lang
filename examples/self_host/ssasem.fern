@@ -14,8 +14,20 @@ pub struct Func {
     result: typeinfo.Type,
     records: semrecords.Record[],
     enums: semrecords.Enum[],
-    calls: Contract[]
+    calls: Contract[],
+    envs: EnvRow[]
 }
+
+// Which environments a function value of a given type can be carrying. A
+// function value's static type names no captures, so releasing one matches the
+// box against these at run time — and the set has to be a property of the TYPE
+// rather than of whichever frame is doing the releasing, because the drop
+// helper for a record holding a function value is emitted by every function
+// that mentions that record and the copies must agree byte for byte
+// (ssarc.merge_helpers refuses a disagreement). Read off the module's whole
+// contract table, so two frames holding the same function value list the same
+// environments for it.
+pub struct EnvRow { fn_ty: typeinfo.Type, env_ty: typeinfo.Type }
 
 // A callee's declared signature as this function sees it: exact parameter
 // and result types, and one mode per parameter (the unit planner's value,

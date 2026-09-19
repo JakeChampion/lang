@@ -269,16 +269,17 @@ function construction(kind: i32): boolean {
         || kind == ssasem.closure_new() || kind == ssasem.cell_new() || kind == ssasem.map_new()
         || kind == ssasem.map_cleared();
 }
-// The operand types a construction takes a unit of: every reference, and a
-// function value too — except in a CLOSURE box, which borrows its captures of
-// that type. That borrow is the one this vocabulary secures separately: a
-// captured function value must be a borrowed parameter, so its owner outlives
-// the box. Every other container owns what it holds, and its release walks the
-// field (ssarc.walked), so taking the unit here is what balances that walk.
+// The operand types a construction takes a unit of: every reference, without
+// exception. A closure box used to BORROW a captured function value, secured
+// by requiring the capture to be a borrowed parameter so its owner outlived
+// the box. That rule could not describe a box that escapes: a local function
+// value captured into a returned box is owned by a frame that is going away,
+// and the box never took it, so nobody freed it (#9637). The box owns it now,
+// and its release walks the field (ssarc.walked) — which a frame that never
+// built the box can do, because env_schemas puts every environment a value of
+// that type could carry into its schema table.
 function taken(t: typeinfo.Type, kind: i32): boolean {
-    if (!ssasem.reference(t)) { return false; }
-    if (ssasem.is_func(t)) { return kind != ssasem.closure_new(); }
-    return true;
+    return ssasem.reference(t);
 }
 
 // A zero is a unit this frame holds, not one it allocated: at a reference type

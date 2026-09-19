@@ -1359,4 +1359,40 @@ function main(): i32 {
     return text.len();
 }
 `},
+
+	// A closure that captures a closure. A construction used to BORROW a
+	// function-value operand, and the producer secured that borrow by
+	// refusing any capture that was not a borrowed parameter — a rule that
+	// cannot describe an escape. Here `inner` is a LOCAL of `wrap` and the
+	// box holding it is RETURNED: `wrap` cannot free it, because the escaping
+	// box still points at it, and the box never took it, so nobody did.
+	// Native leaks three blocks an iteration on this program and the
+	// self-host refused to produce `wrap` at all (#9637).
+	//
+	// noLeak, because the answer never depended on this: the program is
+	// correct while leaking, and the leak is the whole subject. Measured 0 of
+	// 150 blocks live on arm64-darwin under FERN_LEAKCHECK, against 150 of
+	// 250 for the AST lowering.
+	{name: "a-closure-that-captures-a-closure", atLeast: 5, noLeak: true, src: `
+function make(n: i32): (i32) => i32 {
+    var xs: i32[] = [n, n + 1, n + 2];
+    return (x: i32): i32 => { return x + xs[0] + xs[2]; };
+}
+
+function wrap(n: i32): (i32) => i32 {
+    var inner: (i32) => i32 = make(n);
+    return (x: i32): i32 => { return inner(x) + 1; };
+}
+
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) {
+        var f: (i32) => i32 = wrap(i);
+        t = t + f(0) % 3;
+        i = i + 1;
+    }
+    return t % 7;
+}
+`},
 }
