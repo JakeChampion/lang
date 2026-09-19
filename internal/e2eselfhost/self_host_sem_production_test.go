@@ -331,6 +331,18 @@ function main(): i32 {
     return f(42);
 }
 `},
+	// The same shape in a MATCH expression. Its IIFE body is a StmtMatch, which
+	// the contract walk has to enter for the same reason the if-expression's
+	// StmtIf does — the hoist gate (iife_arms_have_lambda) already reaches both.
+	// Produces 0 of 4 without the match arm.
+	{name: "match-expr-lambda-arms-annotated", atLeast: 4, src: `
+enum Pick { A, B }
+function main(): i32 {
+    var p: Pick = Pick.A;
+    var f: (i32) => i32 = match (p) { A => ((x: i32): i32 => x), B => ((y: i32): i32 => y + 1) };
+    return f(42);
+}
+`},
 	{name: "scalar-calls", atLeast: 3, src: `
 function add(a: i32, b: i32): i32 { return a + b; }
 function total(xs: i32[]): i32 {

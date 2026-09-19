@@ -73315,13 +73315,20 @@ struct DesugarRet { body: ast.Stmt[], counter: i32 }
 // needs the pair that tag drops. A lambda the source wrote INSIDE an
 // if/match-expression arm never had one to give: e_lambda_origin builds the
 // IIFE and writes the pair empty, so the declaration reached semsource with a
-// tag and no contract and was refused for an unresolved result type. The arms
-// carry it — parameter spellings always, and a result spelling once
-// infer_ret_types_module has run — so read it from them.
+// tag and no contract and was refused for an unresolved result type.
 //
-// Both halves or neither: fn_tag_spelling rebuilds `() => R` from a result with
-// no parameter list, which is a contract that lies rather than one that is
-// missing.
+// Every spelling it reports goes through fn_tag_spelling, because a parameter
+// or result that is ITSELF callable carries the same coarse tag with its own
+// sidecars beside it. Joining the bare tag records `fn` as the type and
+// rebuilds `(fn) => R` — a contract that LIES, which is worse than one that is
+// missing, so a tag this cannot resolve yields no contract at all.
+function contract_spelling(tag: string, fn_ret: string, fn_ptys: string): string {
+    if (tag.len() == 0) { return ""; }
+    var spelled: string = parser.fn_tag_spelling(tag, fn_ret, fn_ptys);
+    if (spelled == "fn" || spelled == "fn[]") { return ""; }
+    return spelled;
+}
+
 function returned_lambda_contract(body: ast.Stmt[]): (string, string) {
     var i: i32 = 0;
     while (i < body.len()) {
@@ -73329,16 +73336,18 @@ function returned_lambda_contract(body: ast.Stmt[]): (string, string) {
             ast.StmtReturn(r) => {
                 match (r.value) {
                     ast.ExprLambda(lm) => {
-                        if (lm.ret_type.len() == 0) { return ("", ""); }
+                        var res: string = contract_spelling(lm.ret_type, lm.ret_fn_ret, lm.ret_fn_param_types);
+                        if (res.len() == 0) { return ("", ""); }
                         var ptys: string = "";
                         var k: i32 = 0;
                         while (k < lm.params.len()) {
-                            if (lm.params[k].type_name.len() == 0) { return ("", ""); }
+                            var pt: string = contract_spelling(lm.params[k].type_name, lm.params[k].fn_ret, lm.params[k].fn_param_types);
+                            if (pt.len() == 0) { return ("", ""); }
                             if (k > 0) { ptys = ptys + ","; }
-                            ptys = ptys + lm.params[k].type_name;
+                            ptys = ptys + pt;
                             k = k + 1;
                         }
-                        return (lm.ret_type, ptys);
+                        return (res, ptys);
                     },
                     _ => {}
                 }
@@ -73348,6 +73357,22 @@ function returned_lambda_contract(body: ast.Stmt[]): (string, string) {
                 if (tr.len() > 0) { return (tr, tp); }
                 var (er, ep) = returned_lambda_contract(f.else_body);
                 if (er.len() > 0) { return (er, ep); }
+            },
+            ast.StmtMatch(m) => {
+                var a: i32 = 0;
+                while (a < m.arms.len()) {
+                    var (mr, mp) = returned_lambda_contract(m.arms[a].body);
+                    if (mr.len() > 0) { return (mr, mp); }
+                    a = a + 1;
+                }
+            },
+            ast.StmtWhile(w) => {
+                var (wr, wp) = returned_lambda_contract(w.body);
+                if (wr.len() > 0) { return (wr, wp); }
+            },
+            ast.StmtFor(fo) => {
+                var (fr, fp) = returned_lambda_contract(fo.body);
+                if (fr.len() > 0) { return (fr, fp); }
             },
             _ => {}
         }
