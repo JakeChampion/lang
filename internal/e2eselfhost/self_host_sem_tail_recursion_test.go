@@ -43,6 +43,17 @@ function serve(c: Cell[i32]): void {
     serve(c);
 }
 
+// The tail call's argument is a VIEW of the parameter it replaces. A call
+// keeps the anchor alive for the callee's frame; a jump re-enters the loop
+// with that anchor already dead, so this one must NOT become a loop — the
+// rewrite declines it, and the answer and the heap have to survive either
+// way. irlower.rc_consumed_drop_wired is this shape, and rewriting it
+// corrupted the heap of every compiler built through the path.
+function shrink(t: string, n: i32): i32 {
+    if (t.len() <= 1) { return n; }
+    return shrink(slice_unchecked(t, 0, t.len() - 1), n + 1);
+}
+
 function main(): i32 {
     var t: string = "ab" + "cde";
     var keep: i32[] = [7, 8];
@@ -54,18 +65,21 @@ function main(): i32 {
     var ticks: Cell[i32] = cell_new(0);
     serve(ticks);
 
+    var view: i32 = shrink("abcdefghij" + "klmnopqrst", 0);
+
     // The lender reads its own values AFTER the loops had them.
     var alive: i32 = t.len() + keep.len() + keep[0];
 
     print("a=" + a.to_string() + " b=" + b.to_string() + " c=" + c.to_string()
         + " alive=" + alive.to_string()
         + " ticks=" + ticks.get().to_string()
+        + " view=" + view.to_string()
         + " underflow=" + __rc_underflow_count().to_string() + "\n");
     return __rc_underflow_count();
 }
 `
 
-const selfHostTailRecursionWant = "0|a=5 b=3 c=206 alive=14 ticks=300000 underflow=0\n"
+const selfHostTailRecursionWant = "0|a=5 b=3 c=206 alive=14 ticks=300000 view=19 underflow=0\n"
 
 // TestSelfHostSemanticTailRecursion is the reference-typed half of #9692.
 //

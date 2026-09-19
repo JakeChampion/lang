@@ -1745,7 +1745,7 @@ pub function tail_recursion(own f: Func, name: string): Func {
     if (f.graph.blocks[0].preds.len() > 0) { return f; }
     var nparams: i32 = f.graph.nparams;
     if (f.values.len() < nparams) { return f; }
-    var tails: i32[] = tail_blocks(f, name, nparams);
+    var tails: i32[] = tail_blocks(f, name, nparams, borrow_parents(f));
     if (tails.len() == 0) { return f; }
     return spliced(f, tails, nparams);
 }
@@ -1754,20 +1754,40 @@ pub function tail_recursion(own f: Func, name: string): Func {
 // Nothing follows such a call, so its result has no other reader: the block
 // ends there. A void body spells the same shape with a statement call and a
 // valueless return.
-function tail_blocks(f: Func, name: string, nparams: i32): i32[] {
+function tail_blocks(f: Func, name: string, nparams: i32, parents: i32[]): i32[] {
     var out: i32[] = [];
     var bi: i32 = 0;
     while (bi < f.graph.blocks.len()) {
-        if (is_self_tail(f, f.graph.blocks[bi], name, nparams)) { out = out.append(bi); }
+        if (is_self_tail(f, f.graph.blocks[bi], name, nparams, parents)) { out = out.append(bi); }
         bi = bi + 1;
     }
     return out;
 }
 
-function is_self_tail(f: Func, b: ssa.SBlock, name: string, nparams: i32): boolean {
+// An argument that is a VIEW of something cannot travel a jump. The call kept
+// its anchor alive: the anchor is this frame's, and the frame stands until the
+// callee returns. A jump re-enters the loop, where the anchor is a parameter
+// the phi has just replaced or a local the iteration has just finished with —
+// either way dead, and the view left pointing into a buffer the next release
+// frees. `irlower.rc_consumed_drop_wired` is the shape: it recurses on
+// `slice_unchecked(t, 0, t.len() - 2)`, a view of the very parameter the
+// argument replaces, and rewriting it corrupted the heap of every compiler
+// built through this path (#9692).
+//
+// Nothing here is a view's fault — a tail call with a fresh argument, or one
+// that passes a parameter along whole, has no anchor to lose and still
+// rewrites. This declines the ONE block, not the function: a call that stays a
+// call keeps holding what it holds.
+function borrowed_arg(args: i32[], parents: i32[]): boolean {
+    for a in args { if (a >= 0 && a < parents.len() && parents[a] >= 0) { return true; } }
+    return false;
+}
+
+function is_self_tail(f: Func, b: ssa.SBlock, name: string, nparams: i32, parents: i32[]): boolean {
     if (b.term.kind_tag != 1 || b.insts.len() == 0) { return false; }
     var last: ssa.SInst = b.insts[b.insts.len() - 1];
     if (last.kind_tag != call() || last.str != name || last.args.len() != nparams) { return false; }
+    if (borrowed_arg(last.args, parents)) { return false; }
     if (b.term.value == last.result) { return true; }
     return b.term.value < 0 && is_void(f.result);
 }
