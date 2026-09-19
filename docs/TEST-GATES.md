@@ -779,6 +779,37 @@ declared type, a name resolution — give it a `fern.fern` leg too
 on disk). Expect that leg to reach checker refusals the emit driver skips
 straight past; those are findings, not noise (#7961 is one).
 
+### A structural IR test cannot see a well-formed op stream naming the wrong slot
+
+A pass that rewrites `Func.Ops` is tempting to gate by reading the result back:
+count the calls that disappeared, check the loop nests balance, assert the
+stage list. That catches a malformed stream and nothing else. An op stream can
+be perfectly well formed, balance its blocks, and carry the right opcodes in
+the right order while pointing one of them at the wrong local — and the
+register backends will run it, because they do not type-check their locals.
+
+Wasm does. `wasmtime` refuses the module with a type mismatch and an offset,
+which turns a silent wrong answer into a build failure.
+
+#9731 paid for this three times in one session. All three defects produced
+well-formed IR that the pass's own structural tests passed:
+
+- a scratch slot declared as the zero `NumberType`, which reads as i32, holding
+  an i64 element;
+- `collectArrayCalls` taking a chain's receiver to be the first local load in a
+  window, which inside a `while` is the loop counter, so the fused loop indexed
+  an i32 cursor as an array;
+- a bare `local.load` of the accumulator emitted where the next chain's matcher
+  looks for a receiver, so the second fusion in a function traversed the first
+  one's accumulator.
+
+arm64 ran all three. So when a pass emits or rewrites IR, the gate is an e2e
+case on a backend that type-checks — and the case has to compute something and
+compare it, since a refused rewrite also returns the right answer. Pair it with
+an off switch (`FERN_NO_ARRAY_FUSION=1` is the pattern) so "did the pass do
+this?" is one run rather than a rebuild, and so a suite failure can be
+attributed without bisecting.
+
 ## Diagnostic modes
 
 When a gate fails and the failure is a heap corruption rather than a wrong
