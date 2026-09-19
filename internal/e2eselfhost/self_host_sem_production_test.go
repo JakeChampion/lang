@@ -320,10 +320,9 @@ function main(): i32 {
 	// unresolved result type, so the module went to the AST lowering. The arms
 	// carry the contract, so the hoist reads it off the returned lambda.
 	//
-	// The arms are ANNOTATED here, and that is the whole of what this gates: an
-	// unannotated arm has parameter spellings but no result spelling, and half a
-	// contract is worse than none — fn_tag_spelling would rebuild `() => R` for a
-	// function that takes arguments. That half still refuses; see the rc-log.
+	// The arms are ANNOTATED here: the contract is read straight off them, with
+	// no result to infer. The unannotated case below covers the other half, which
+	// reaches semsource with the tag and nothing to resolve.
 	// Produces 0 of 4 without the fix.
 	{name: "if-expr-lambda-arms-annotated", atLeast: 4, src: `
 function main(): i32 {
