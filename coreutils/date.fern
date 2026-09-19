@@ -220,6 +220,10 @@ struct Show { zone: tz.Zone, tzstring: string, has_tz: boolean, format: string, 
 
 // `show_date(o, s, sec, nsec)` — one formatted line, the format
 // announced first under --debug.
+//
+// The newline is not part of the format and is written whatever the
+// format did: an instant localtime refuses still ends a line, and so
+// does a format that renders to nothing.
 function show_date(o: io_buffered.BufWriter, s: Show, sec: i64, nsec: i64): (boolean, io_buffered.BufWriter) {
   var w: io_buffered.BufWriter = o;
   if (s.debug) {
@@ -228,7 +232,8 @@ function show_date(o: io_buffered.BufWriter, s: Show, sec: i64, nsec: i64): (boo
   // localtime refuses an instant whose year does not fit an int.
   var year: i64 = s.zone.local_fields(sec).year - 1900 as i64;
   if (year > 2147483647 as i64 || year < 0 as i64 - 2147483648 as i64) {
-    return (false, gnu.error_out(w, "time " + gnu.quote(sec.to_string()) + " is out of range"));
+    w = gnu.error_out(w, "time " + gnu.quote(sec.to_string()) + " is out of range");
+    return (false, gnu.put(w, "\n"));
   }
   return (true, gnu.put(w, timefmt.strftime(s.format, s.zone, sec, nsec) + "\n"));
 }

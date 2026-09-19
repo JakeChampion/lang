@@ -808,8 +808,16 @@ function lex(s: string, lt: LocalTable): (Tok[], string) {
         if (digit < 0 || digit > 9) {
           break;
         }
+        // The sign is applied to each DIGIT, as the original applies it,
+        // so that the most negative number there is — `@-9223372036854775808`
+        // — is a number and not an overflow.
         var d: i64 = digit as i64;
-        if (value > 922337203685477580 as i64 || value == 922337203685477580 as i64 && d > 7 as i64) {
+        if (sign < 0) {
+          d = 0 as i64 - d;
+          if (value < 0 as i64 - 922337203685477580 as i64 || value == 0 as i64 - 922337203685477580 as i64 && d < 0 as i64 - 8 as i64) {
+            overflow = true;
+          }
+        } else if (value > 922337203685477580 as i64 || value == 922337203685477580 as i64 && d > 7 as i64) {
           overflow = true;
         }
         if (!overflow) {
@@ -819,9 +827,6 @@ function lex(s: string, lt: LocalTable): (Tok[], string) {
       }
       if (overflow) {
         return (out.append(with_end(tok(t_bad(), 0), start)), "");
-      }
-      if (sign < 0) {
-        value = 0 as i64 - value;
       }
       var fraction: boolean = p + 1 < n && (s[p] as i32 == 46 || s[p] as i32 == 44) && is_digit(s[p + 1] as i32);
       if (fraction && not_decimal) {
