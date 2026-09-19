@@ -519,6 +519,26 @@ type artifact struct {
 	data    []byte
 }
 
+// own gives a case that named no directory a fresh one of its own, and is
+// what every driver that walks the corpus calls before running a case.
+//
+// Without it the child inherits the test process's working directory, which
+// is internal/coreutils, so a utility that creates a file named by an operand
+// writes it into the source tree: `uniq -c +2 f` left an untracked `+2` there
+// on every run (#9765). The two legs that run cases CONCURRENTLY made it a
+// race as well, since two cases writing that name shared it.
+//
+// Both sides of a comparison share the one directory, as they shared the
+// package directory before it, so `prepare` still has a tree to reset between
+// them.
+func (inv invocation) own(t *testing.T) invocation {
+	t.Helper()
+	if inv.dir == "" && inv.seedTree == nil {
+		inv.dir = t.TempDir()
+	}
+	return inv
+}
+
 func (inv invocation) prep(t *testing.T) {
 	t.Helper()
 	// The rawByteName guard lives HERE rather than in the parity runner
@@ -1860,13 +1880,7 @@ func requireParityBinary(t *testing.T, util, ours string, cases []invocation) {
 
 	for _, inv := range cases {
 		t.Run(inv.name, func(t *testing.T) {
-			inv := inv
-			if inv.dir == "" && inv.seedTree == nil {
-				// Both sides share the one directory, as they shared the
-				// package directory before it, so `prepare` still has a
-				// tree to reset between them.
-				inv.dir = t.TempDir()
-			}
+			inv := inv.own(t)
 			inv.prep(t)
 			want := inv.run(t, ref, util)
 			wantFiles := inv.readArtifacts(t)
