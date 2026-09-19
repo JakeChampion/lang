@@ -227,7 +227,7 @@ function lift_float_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], insts: 
 // backends' box layouts (ssa.fern's kinds 40..48).
 function prod_mem_kind(k: string): boolean {
     var mem: string[] = ["struct_get", "struct_set", "tuple_set", "arr_len", "str_len", "tuple_get", "opt_tag", "opt_payload",
-        "arr_get", "arr_set", "str_index", "const_func", "const_str", "variant_is",
+        "arr_get", "arr_set", "str_index", "const_func", "const_str", "variant_is", "struct_set_shape",
         "struct_make", "arr_make", "tuple_make", "opt_make", "opt_none", "str_slice",
         "raw_load_ptr", "raw_store_ptr", "raw_load8", "raw_store8", "struct_copy", "const_struct", "call_indirect"];
     for x in mem { if (x == k) { return true; } }
@@ -242,7 +242,8 @@ function prod_host_kind(k: string): boolean {
     var host: string[] = ["syscall3", "syscall4", "syscall5", "exit", "raw_string", "strbuf_reset", "strbuf_append",
         "raw_scratch", "raw_environ", "raw_addr", "monotonic_ns", "now_unix_ms",
         "load_i32", "load_i64", "load_ptr", "store_i32", "store_i64", "store_ptr", "raw_arr_box",
-        "map_new", "strbuf_take", "args", "map_hash_seed", "arr_push_shared_bytes", "arr_push_shared_count"];
+        "map_new", "strbuf_take", "args", "map_hash_seed", "arr_push_shared_bytes", "arr_push_shared_count",
+        "heap_bump_bytes"];
     for x in host { if (x == k) { return true; } }
     return flat_op_argc(k) >= 0 || flat_str_kind(k) || k == "clz" || k == "ctz" || k == "popcount";
 }
@@ -289,6 +290,10 @@ function lift_prod_host(k: string, op: ir.Op, at: i32, lv: LiftVals): LiftVals {
     if (k == "clz" || k == "ctz" || k == "popcount") { return lift_pop_push(lv, 1, 10, 0, k + ":" + util.i32_to_string(op.width)); }
     if (k == "map_new") { return lift_pop_push(lv, 1, 50, 0, k); }
     if (k == "strbuf_take" || k == "args" || k == "map_hash_seed") { return lift_pop_push(lv, 0, 50, 0, k); }
+    // Not kind 58: the bump high-water mark is a computation over two runtime
+    // globals and a guard, not one global's word, so it goes through the flat
+    // op the emitters already have for it.
+    if (k == "heap_bump_bytes") { return lift_pop_push(lv, 0, 59, at, k); }
     if (k == "arr_push_shared_bytes") { return lift_pop_push(lv, 0, 58, 1, "__fern_arr_push_copied"); }
     if (k == "arr_push_shared_count") { return lift_pop_push(lv, 0, 58, 1, "__fern_arr_push_shared"); }
     if (k == "load_i64" || k == "load_ptr") { return lift_pop_push(lv, 1, 40, 0, ""); }
@@ -355,6 +360,7 @@ function lift_prod_mem(k: string, op: ir.Op, at: i32, nvals: i32, stack: i32[], 
     if (prod_host_kind(k)) { return lift_prod_host(k, op, at, lv); }
     if (util.str_has_prefix(k, "raw_store") || k == "struct_set" || k == "tuple_set" || k == "arr_set") { return lift_prod_store(k, op, lv); }
     if (k == "variant_is") { return lift_variant_is_prod(op, lv); }
+    if (k == "struct_set_shape") { return lift_struct_set_shape_prod(op, lv); }
     if (k == "str_slice") { return lift_pop_push(lv, 3, 51, view_in_frame(op), ""); }
     if (k == "call_indirect") { return lift_call_indirect_prod(op, lv); }
     if (prod_call_argc(k) > 0) { return lift_pop_push(lv, prod_call_argc(k), prod_call_kind(k), 0, k); }
@@ -469,6 +475,20 @@ function lift_store(lv: LiftVals, kind: i32, imm: i32): LiftVals {
     var pushed: LiftVals = lift_pop_push(lv, npop, kind, imm, "");
     if (!pushed.ok) { return pushed; }
     return LiftVals { ...pushed, stack: drop_last(pushed.stack) };
+}
+
+// struct_set_shape: write the interned shape address over slot 0 of the box on
+// top of the stack and leave the box there. The store is the same kind 41 that
+// struct_set uses at offset 0 and the address the same kind 46 variant_is
+// compares against, so both emitters already select for it.
+function lift_struct_set_shape_prod(op: ir.Op, lv: LiftVals): LiftVals {
+    if (lv.stack.len() < 1) { return LiftVals { ...lv, ok: false }; }
+    var box: i32 = lv.stack[lv.stack.len() - 1];
+    var shape: LiftVals = lift_pop_push(lv, 0, 46, 0, op.str);
+    if (!shape.ok) { return shape; }
+    var stored: LiftVals = lift_store(shape, 41, 0);
+    if (!stored.ok) { return stored; }
+    return LiftVals { ...stored, stack: stored.stack.append(box) };
 }
 
 // variant_is: the shape word at 0 of the box against the variant's interned
