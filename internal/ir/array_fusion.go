@@ -73,6 +73,19 @@ type fusedPipeline struct {
 	sinkVerb string
 }
 
+// canSkip reports whether any stage may drop an element, so that the number
+// of elements reaching the sink is not the number the array holds. Only a
+// selection stage can; it is what makes the first ARRIVING element unknown
+// until the loop runs.
+func (p fusedPipeline) canSkip() bool {
+	for _, s := range p.stages {
+		if s.verb == "filter" {
+			return true
+		}
+	}
+	return false
+}
+
 // fusedStage is one elementwise or selection stage.
 type fusedStage struct {
 	verb string // "map" or "filter"
@@ -423,12 +436,23 @@ func emitFusion(fn *Func, p fusedPipeline, ptrW int) {
 		}
 	}
 
+	// `reduce` has no seed: its accumulator is the first element to ARRIVE.
+	// When no stage can skip, that is the element at index 0, so the first
+	// iteration is peeled — the accumulator is seeded before the loop and the
+	// loop runs from 1 with a plain combine. With a `filter` in the chain the
+	// first arrival is not known statically, so the flag stays and is tested
+	// per element.
+	//
+	// The flag was the fused form's largest remaining per-element cost on a
+	// chain of maps: a load, a compare and a branch on every element, where
+	// the hand-written loop seeds once and never branches. std/array's own
+	// `reduce` peels for the same reason.
+	peel := p.sinkVerb == "reduce" && !p.canSkip()
+
 	// init: the cursor starts at zero, and the accumulator takes fold's seed.
-	// reduce has no seed — its accumulator is the first element to arrive, so
-	// its init is the flag that says none has.
 	if p.sinkVerb == "fold" {
 		add(p.seedOp, Op{Kind: OpStoreLocal, I32: acc})
-	} else {
+	} else if !peel {
 		add(Op{Kind: OpConstI32}, Op{Kind: OpStoreLocal, I32: seen})
 	}
 	add(Op{Kind: OpConstI32}, Op{Kind: OpStoreLocal, I32: idx})
@@ -441,34 +465,59 @@ func emitFusion(fn *Func, p fusedPipeline, ptrW int) {
 	add(Op{Kind: OpLoadLocal, I32: p.recvSlot}, Op{Kind: OpConstI32, I32: 4}, Op{Kind: OpSub}, Op{Kind: OpLoad})
 	add(Op{Kind: OpStoreLocal, I32: length})
 
+	// elem = xs[idx]
+	fetch := func() {
+		add(Op{Kind: OpLoadLocal, I32: p.recvSlot}, Op{Kind: OpLoadLocal, I32: idx})
+		add(Op{Kind: OpCallDirect, Str: "__arr_idx_8_nc", Width: ResAddr, I32: 2},
+			Op{Kind: OpLoad, Width: 64})
+		add(Op{Kind: OpStoreLocal, I32: elem})
+	}
+
+	// The steps, concatenated. This is the whole of the compositional claim:
+	// it does not look at what came before or after. `skip` is only available
+	// inside the loop, which is why a peeled first element is emitted only
+	// for a chain that cannot skip.
+	steps := func() {
+		for _, s := range p.stages {
+			switch s.verb {
+			case "map":
+				add(Op{Kind: OpLoadLocal, I32: elem}, Op{Kind: OpLoadLocal, I32: s.fn})
+				add(Op{Kind: OpCallIndirect, I32: 1}, Op{Kind: OpStoreLocal, I32: elem})
+			case "filter":
+				// skip: the predicate says no, so advance and take the next.
+				add(Op{Kind: OpLoadLocal, I32: elem}, Op{Kind: OpLoadLocal, I32: s.fn})
+				add(Op{Kind: OpCallIndirect, I32: 1}, Op{Kind: OpNot})
+				add(Op{Kind: OpIf})
+				add(Op{Kind: OpLoadLocal, I32: idx}, Op{Kind: OpConstI32, I32: 1}, Op{Kind: OpAdd, Width: 32})
+				add(Op{Kind: OpStoreLocal, I32: idx}, Op{Kind: OpBr, I32: 1})
+				add(Op{Kind: OpEnd})
+			}
+		}
+	}
+
+	// The peeled first element: seed the accumulator from it, then start the
+	// loop at 1. The whole of it — peel, loop and finish — sits in the
+	// non-empty arm, because `xs[0]` is only there to read when the array has
+	// one. That single test replaces the per-element flag.
+	if peel {
+		add(Op{Kind: OpLoadLocal, I32: length}, Op{Kind: OpConstI32}, Op{Kind: OpEq, Width: 32})
+		add(Op{Kind: OpIf, I32: BlockTypeVoid})
+		add(Op{Kind: OpEnumSentinel, I32: 1}, Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
+		add(Op{Kind: OpStoreLocal, I32: result})
+		add(Op{Kind: OpElse})
+		fetch()
+		steps()
+		add(Op{Kind: OpLoadLocal, I32: elem}, Op{Kind: OpStoreLocal, I32: acc})
+		add(Op{Kind: OpConstI32, I32: 1}, Op{Kind: OpStoreLocal, I32: idx})
+	}
+
 	// while idx < length
 	add(Op{Kind: OpBlock}, Op{Kind: OpLoop})
 	add(Op{Kind: OpLoadLocal, I32: idx}, Op{Kind: OpLoadLocal, I32: length})
 	add(Op{Kind: OpLtS, Width: 32}, Op{Kind: OpNot}, Op{Kind: OpBrIf, I32: 1})
 
-	// elem = xs[idx]
-	add(Op{Kind: OpLoadLocal, I32: p.recvSlot}, Op{Kind: OpLoadLocal, I32: idx})
-	add(Op{Kind: OpCallDirect, Str: "__arr_idx_8_nc", Width: ResAddr, I32: 2},
-		Op{Kind: OpLoad, Width: 64})
-	add(Op{Kind: OpStoreLocal, I32: elem})
-
-	// The steps, concatenated. This loop is the whole of the compositional
-	// claim: it does not look at what came before or after.
-	for _, s := range p.stages {
-		switch s.verb {
-		case "map":
-			add(Op{Kind: OpLoadLocal, I32: elem}, Op{Kind: OpLoadLocal, I32: s.fn})
-			add(Op{Kind: OpCallIndirect, I32: 1}, Op{Kind: OpStoreLocal, I32: elem})
-		case "filter":
-			// skip: the predicate says no, so advance and take the next.
-			add(Op{Kind: OpLoadLocal, I32: elem}, Op{Kind: OpLoadLocal, I32: s.fn})
-			add(Op{Kind: OpCallIndirect, I32: 1}, Op{Kind: OpNot})
-			add(Op{Kind: OpIf})
-			add(Op{Kind: OpLoadLocal, I32: idx}, Op{Kind: OpConstI32, I32: 1}, Op{Kind: OpAdd, Width: 32})
-			add(Op{Kind: OpStoreLocal, I32: idx}, Op{Kind: OpBr, I32: 1})
-			add(Op{Kind: OpEnd})
-		}
-	}
+	fetch()
+	steps()
 
 	// the sink's step: acc = h(acc, elem). reduce's first arrival seeds the
 	// accumulator instead of combining into it — `h` is never called on one
@@ -478,7 +527,7 @@ func emitFusion(fn *Func, p fusedPipeline, ptrW int) {
 		{Kind: OpLoadLocal, I32: acc}, {Kind: OpLoadLocal, I32: elem}, {Kind: OpLoadLocal, I32: p.sinkFn},
 		{Kind: OpCallIndirect, I32: 2}, {Kind: OpStoreLocal, I32: acc},
 	}
-	if p.sinkVerb == "fold" {
+	if p.sinkVerb == "fold" || peel {
 		add(combine...)
 	} else {
 		add(Op{Kind: OpLoadLocal, I32: seen}, Op{Kind: OpConstI32}, Op{Kind: OpEq, Width: 32})
@@ -498,9 +547,17 @@ func emitFusion(fn *Func, p fusedPipeline, ptrW int) {
 	// finish: the reduction's answer, left where the chain's was. fold's is
 	// the accumulator; reduce's is `Some(acc)`, or `None` when the loop never
 	// ran — an empty input, or a filter that admitted nothing.
-	if p.sinkVerb == "fold" {
+	switch {
+	case p.sinkVerb == "fold":
 		add(Op{Kind: OpLoadLocal, I32: acc})
-	} else {
+	case peel:
+		// Still inside the non-empty arm opened before the peel: the loop ran
+		// at least once, so the answer is always Some.
+		add(optionSomeOps(p.accType, acc, boxBase, ptrW)...)
+		add(Op{Kind: OpStoreLocal, I32: result})
+		add(Op{Kind: OpEnd})
+		add(Op{Kind: OpLoadLocal, I32: result})
+	default:
 		add(Op{Kind: OpLoadLocal, I32: seen}, Op{Kind: OpConstI32}, Op{Kind: OpEq, Width: 32})
 		add(Op{Kind: OpIf, I32: BlockTypeVoid})
 		add(Op{Kind: OpEnumSentinel, I32: 1}, Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})

@@ -268,7 +268,7 @@ arm64-linux running natively in `scripts/devbox`, 2000 elements over 30 rounds:
 
 | | combinator ÷ loop, before | after |
 | --- | ---: | ---: |
-| `map.map.reduce` | 4.69x | **1.21x** |
+| `map.map.reduce` | 4.69x | **1.17x** |
 | `filter.map.reduce` | 2.84x | **0.98x** |
 
 `filter.map.reduce` is faster than the loop it is compared against, which is
@@ -278,8 +278,15 @@ into its own slot. The `closure_loop` and `loop` variants moved by under 0.1%
 between the two builds, which is what says the instrument is reading the
 change and not the weather.
 
-`map.map.reduce` keeps a residual of about 12 instructions per element. The
-likely remainder is the per-element `__arr_idx_8_nc` call, which the
-hand-written loop does not pay because its indexing is inlined; emitting that
-address arithmetic directly is a pointer-width question on three backends and
-belongs in its own change, measured on its own.
+`map.map.reduce` keeps a residual of about 9 instructions per element, and it
+is worth saying where it is NOT, since the obvious guess was wrong. It is not
+the per-element `__arr_idx_8_nc` call: computing that address inline instead
+— `base; index; stride; mul; add`, the lowering's own spelling — measured at
+0.18%, inside the run-to-run variance of the controls, and was dropped.
+
+What is left is the closure call. Each stage fetches its captured environment
+per element (`load fn; +8; load; call_closure_direct`) where the hand-written
+loop calls a plain function. That load is loop-invariant and is not being
+hoisted. The fix is in whichever of `HoistLoopInvariants` or the closure-call
+lowering should be doing it, not here — every loop that calls a closure pays
+it, fused or not.
