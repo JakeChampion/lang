@@ -593,6 +593,8 @@ pub const ORIGIN_IIFE_SCOPED: string = "iife_scoped";
 pub const ORIGIN_USE: string = "use";
 
 // ORIGIN_NESTED_FN marks the lambda a nested `function` declaration desugars to.
+// It is the one origin that marks a lambda the PROGRAMMER wrote rather than one
+// the parser synthesised, so is_written_lambda_origin admits it.
 pub const ORIGIN_NESTED_FN: string = "nested_fn";
 
 // no_match_sugar is the empty MatchSugar every StmtIf but the two match
@@ -13360,6 +13362,14 @@ pub function mkclo_body(name: string): string {
 // is_value_block_origin reports whether `origin` names one of the desugars that
 // produce an inlined value block. Every pass that rebuilds an ExprLambda does so
 // by spread, so the marker survives to the consumers that need it.
+// is_written_lambda_origin reports whether a lambda with this origin is one the
+// PROGRAMMER wrote: a bare lambda carries none, and a nested `function`
+// declaration desugars to one. Every other origin marks an IIFE the parser
+// synthesised, which has no counterpart in the native AST.
+pub function is_written_lambda_origin(origin: string): boolean {
+    return origin.len() == 0 || origin == ORIGIN_NESTED_FN;
+}
+
 pub function is_value_block_origin(origin: string): boolean {
     if (origin == ORIGIN_BLOCK) { return true; }
     if (origin == ORIGIN_MATCH_EXPR) { return true; }

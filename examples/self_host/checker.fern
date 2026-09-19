@@ -12849,7 +12849,7 @@ function e044_expr(e: ast.Expr, line: i32, col: i32, suspects: string[], labels:
       //
       // Report and stop: stmts_mention already recursed into any
       // nested lambda, so descending again would double-report.
-      if (lm.origin.len() == 0) {
+      if (parser.is_written_lambda_origin(lm.origin)) {
         out = util.append_diags(out, e044_lambda_check(lm, line, col, suspects, labels));
       }
     },
