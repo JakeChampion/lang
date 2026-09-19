@@ -540,18 +540,29 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
         t1 = t1 + 1 as u64;
       }
     }
+    var wrote: boolean = false;
     if (class == 1) {
       if (show1) {
         buf_push_range(h, cur1, lo1, hi1);
+        wrote = true;
       }
     } else if (class == 2) {
       if (show2) {
         buf_push(h, pre2);
         buf_push_range(h, cur2, lo2, hi2);
+        wrote = true;
       }
     } else if (show3) {
       buf_push(h, pre3);
       buf_push_range(h, cur2, lo2, hi2);
+      wrote = true;
+    }
+    // GNU checks the stream after every line it WRITES, so a failure
+    // the disorder warning's own flush met is what the next line
+    // reports — and the summary is never reached. A suppressed column
+    // writes nothing and so asks nothing.
+    if (wrote) {
+      out = gnu.check(out);
     }
     if (buf_len(h) >= block) {
       out = gnu.settle(out);
@@ -565,19 +576,22 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
   }
 
   // GNU closes both inputs before the summary, and both closes are
-  // reported: with `comm - -` the second one meets a descriptor the
-  // first already closed.
+  // reported — except with `comm - -`, where the two are one stream and
+  // it closes only once. GNU <= 9.4 closed twice and reported the
+  // second one's EBADF.
   match (r1.close()) {
     Some(e) => {
       gnu.die(out, gnu.quotef(name1) + ": " + gnu.io_error_text(e), 1);
     },
     None => {}
   }
-  match (r2.close()) {
-    Some(e) => {
-      gnu.die(out, gnu.quotef(name2) + ": " + gnu.io_error_text(e), 1);
-    },
-    None => {}
+  if (!shared) {
+    match (r2.close()) {
+      Some(e) => {
+        gnu.die(out, gnu.quotef(name2) + ": " + gnu.io_error_text(e), 1);
+      },
+      None => {}
+    }
   }
   if (cfg.total) {
     io_buffered.buf_push_u64(h, t0);
@@ -593,13 +607,16 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
   // reported, so a write failing here replaces the status; a failure
   // met earlier, with nothing left pending, is reported after it by the
   // close, as a bare `write error`.
-  if (out.buffered() > 0) {
-    out = gnu.check(out.flush());
-  }
   if (issued1 || issued2) {
-    gnu.error("input is not in sorted order");
+    // error() flushes stdout before it writes, so what is pending goes
+    // out first and a failure there does not swallow the status: the
+    // close reports it after.
+    out = gnu.error_out(out, "input is not in sorted order");
     gnu.close_stdout(out, false);
     exit(1);
+  }
+  if (out.buffered() > 0) {
+    out = gnu.check(out.flush());
   }
   gnu.close_stdout(out, false);
   return 0;
