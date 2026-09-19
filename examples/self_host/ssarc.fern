@@ -145,9 +145,9 @@ function fields_have_children(fields: semrecords.Field[]): boolean {
 
 // The field types a record's release walks — every reference, a function value
 // included. That works from a frame that never built the box because
-// env_schemas puts every environment a value of its type could carry into the
-// holding frame's schema table, and drop_captures matches on the body address
-// at run time. A closure box's own captures are no exception since #9637: it
+// `semsource.env_rows` pairs every environment a value of that type could
+// carry with the type itself, and drop_captures matches on the body address at
+// run time. A closure box's own captures are no exception since #9637: it
 // takes a unit of each (ssaunits.taken), so walking them is what balances it.
 function walked(t: typeinfo.Type): boolean {
     return ssasem.reference(t);
@@ -513,10 +513,20 @@ function has_children(t: typeinfo.Type, f: ssasem.Func): boolean {
 // Keyed on `fn_ty` and ordered by body name, and both halves are the same
 // requirement. A drop helper is emitted by EVERY function that mentions its
 // type and `merge_helpers` refuses two copies that disagree, so the chain
-// `drop_captures` emits has to be a property of the TYPE rather than of the
-// frame. `f.envs` supplies the pairing, read off the module's whole contract
-// table; a schema table on its own is the producing function's own values in
-// the producing function's own order, which is neither.
+// `drop_captures` emits must not vary with the frame emitting it. `f.envs`
+// supplies the pairing, read off the module's whole contract table; a schema
+// table on its own is the producing function's own values in the producing
+// function's own order, which varies with both.
+//
+// What that delivers, exactly: two frames that NAME the function type list the
+// same environments for it, in the same order. A frame that holds the type
+// only indirectly — as a field of a record it never names — gets no row and an
+// empty chain, because `env_rows` runs over the frame's own type list before
+// the schema walk recurses into fields (#9804). The result is a refusal from
+// `merge_helpers` rather than a helper that frees too little: a producing
+// frame always names the type, so the two copies differ and the disagreement
+// is caught. Stated because the stronger claim — a property of the type, full
+// stop — is the one worth having and is not yet the one in force.
 function env_records(f: ssasem.Func, fn_ty: typeinfo.Type): semrecords.Record[] {
     var out: semrecords.Record[] = [];
     for rec in f.records {

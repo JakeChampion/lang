@@ -442,9 +442,12 @@ Unsupported constructs refuse the whole function with a reason.
   box that matches none — one whose captures own nothing, or one built by an
   AST-lowered caller, which lends its captures — is released alone. A frame
   that only RECEIVES a function value never built one, so its graph names no
-  environment of its own; `semsource.env_schemas` puts every environment a
-  value of that type could carry into its schema table, which is what lets a
-  returned closure be released by the frame it was handed to. A wide
+  environment of its own; `semsource.env_rows` pairs every environment a value
+  of that type could carry with the type itself, read off the module's whole
+  contract table, which is what lets a returned closure be released by the
+  frame it was handed to. A closure box owns its own captured function values
+  too, and its release walks them (#9637): the borrow that rule replaced could
+  not describe a box that escapes the frame holding what it captured. A wide
   capture is refused at the physical layer for the reason a wide TUPLE
   element is — the env box stores each slot through `op_arr_make` at width
   32, the one array construction here that is not written at its element's

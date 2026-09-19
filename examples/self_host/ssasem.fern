@@ -25,8 +25,11 @@ pub struct Func {
 // helper for a record holding a function value is emitted by every function
 // that mentions that record and the copies must agree byte for byte
 // (ssarc.merge_helpers refuses a disagreement). Read off the module's whole
-// contract table, so two frames holding the same function value list the same
-// environments for it.
+// contract table, so two frames that NAME the same function value list the
+// same environments for it. A frame that reaches the type only through a
+// record field gets no row, because these are built before the schema walk
+// recurses into fields — which costs a refusal rather than a short helper,
+// since a frame that constructs one always names it (#9804).
 pub struct EnvRow { fn_ty: typeinfo.Type, env_ty: typeinfo.Type }
 
 // A callee's declared signature as this function sees it: exact parameter
@@ -1474,12 +1477,12 @@ function field_placement_error(f: Func): string {
         for field in record.fields {
             if (!holds_func(field.ty)) { continue; }
             // A function value is a field like any other: the holder takes a
-            // unit of it and its release walks it, which env_schemas made
-            // possible from a frame that never built the box. A closure box
-            // still BORROWS a captured one (semsource's lent_capture), so its
-            // own field is not walked and is released by the frame that owns
-            // it. What stays refused is a function value NESTED in a field —
-            // an array or tuple of them — which holds_func also answers to.
+            // unit of it and its release walks it, which `semsource.env_rows`
+            // makes possible from a frame that never built the box. A closure
+            // box's own captures are no longer the exception they were — it
+            // takes a unit of each since #9637, and its release walks them.
+            // What stays refused is a function value NESTED in a field — an
+            // array or tuple of them — which holds_func also answers to.
             if (is_func(field.ty)) { continue; }
             return "function value is not a field";
         }
