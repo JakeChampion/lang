@@ -12798,6 +12798,14 @@ function e057_var_annot_diags(an: Annot[]): util.Diag[] {
   return out;
 }
 
+// E044Walk is what every step of the capture walk needs and none of it
+// changes: the enclosing function's genericity and the three name sets that
+// decide whether an annotation is an erased type variable. It is a record
+// rather than four more parameters because the walk now recurses through
+// EXPRESSIONS as well as statements, and the expression side has twenty-five
+// recursive call sites.
+struct E044Walk { is_generic: boolean, struct_names: string[], union_names: string[], void_fns: string[] }
+
 // e044_diags ports the Go checker's capture-eligibility rule (E044): a
 // closure may capture scalars and pointer-shaped values, but NOT a value
 // with no runtime representation — natively ast.VoidType (a `void` call
@@ -12816,7 +12824,7 @@ function e057_var_annot_diags(an: Annot[]): util.Diag[] {
 // is_written_lambda_origin decides which lambdas this reaches: a bare one, a
 // desugared local `function`, a `use` callback. Nested blocks re-walk with a
 // copy of the suspect set so block-scoped vars don't leak.
-function e044_lambda_check(lam: ast.ExprLambda, line: i32, col: i32, suspects: string[], labels: string[]): util.Diag[] {
+function e044_lambda_check(lam: ast.ExprLambda, line: i32, col: i32, wk: E044Walk, suspects: string[], labels: string[]): util.Diag[] {
   var out: util.Diag[] = [];
   // Captured, not mentioned: a suspect whose only appearance is a nested
   // binder's own name is not a capture, and every coded diagnostic is a build
@@ -12832,7 +12840,30 @@ function e044_lambda_check(lam: ast.ExprLambda, line: i32, col: i32, suspects: s
   return out;
 }
 
-function e044_expr(e: ast.Expr, line: i32, col: i32, suspects: string[], labels: string[]): util.Diag[] {
+// A lambda's own parameters seed its scope the way a generic function's do:
+// inside a generic, `(x: T) => …` binds a value with no runtime
+// representation, and a lambda nested in that body capturing `x` is the same
+// E044 native reports for the enclosing function's parameter. Outside a
+// generic there are no such parameters and the scope starts empty.
+function lambda_suspects(lm: ast.ExprLambda, wk: E044Walk): string[] {
+  var out: string[] = [];
+  if (!wk.is_generic) { return out; }
+  for param in lm.params {
+    if (e064_unknown_bare(param.type_name, wk.struct_names, wk.union_names)) { out = out.append(param.name); }
+  }
+  return out;
+}
+
+function lambda_labels(lm: ast.ExprLambda, wk: E044Walk): string[] {
+  var out: string[] = [];
+  if (!wk.is_generic) { return out; }
+  for param in lm.params {
+    if (e064_unknown_bare(param.type_name, wk.struct_names, wk.union_names)) { out = out.append(param.type_name); }
+  }
+  return out;
+}
+
+function e044_expr(e: ast.Expr, line: i32, col: i32, wk: E044Walk, suspects: string[], labels: string[]): util.Diag[] {
   var out: util.Diag[] = [];
   match (e) {
     ast.ExprLambda(lm) => {
@@ -12845,53 +12876,60 @@ function e044_expr(e: ast.Expr, line: i32, col: i32, suspects: string[], labels:
       // keeping the rule's deliberate narrowness: a written lambda nested
       // inside a synthesised one is under-reported, never false-reported.
       //
-      // Report and stop: collect_lambda_idents already folds in a nested
-      // lambda's own free names, so descending again would double-report.
+      // Report, then descend with a scope of the lambda's OWN. The report
+      // covers every outer suspect this lambda captures, at any depth, because
+      // collect_lambda_idents folds in a nested lambda's free names — so
+      // descending with the outer set would report the same capture twice.
+      // Descending with an EMPTY one reports neither twice nor not at all: a
+      // suspect declared inside the body is found by the statement walk as it
+      // goes, and a parameter of the lambda shadows an outer name of the same
+      // spelling by simply not being in the set (#9777).
       if (parser.is_written_lambda_origin(lm.origin)) {
-        out = util.append_diags(out, e044_lambda_check(lm, line, col, suspects, labels));
+        out = util.append_diags(out, e044_lambda_check(lm, line, col, wk, suspects, labels));
+        out = util.append_diags(out, e044_stmts(lm.body, wk, lambda_suspects(lm, wk), lambda_labels(lm, wk)));
       }
     },
     ast.ExprBinary(b) => {
-      out = util.append_diags(out, e044_expr(b.left, line, col, suspects, labels));
-      out = util.append_diags(out, e044_expr(b.right, line, col, suspects, labels));
+      out = util.append_diags(out, e044_expr(b.left, line, col, wk, suspects, labels));
+      out = util.append_diags(out, e044_expr(b.right, line, col, wk, suspects, labels));
     },
     ast.ExprUnary(u) => {
-      out = util.append_diags(out, e044_expr(u.operand, line, col, suspects, labels));
+      out = util.append_diags(out, e044_expr(u.operand, line, col, wk, suspects, labels));
     },
     ast.ExprCall(c) => {
-      out = util.append_diags(out, e044_expr(c.callee, line, col, suspects, labels));
+      out = util.append_diags(out, e044_expr(c.callee, line, col, wk, suspects, labels));
       for arg in c.args {
-        out = util.append_diags(out, e044_expr(arg, line, col, suspects, labels));
+        out = util.append_diags(out, e044_expr(arg, line, col, wk, suspects, labels));
       }
     },
     ast.ExprArray(a) => {
       for element in a.elements {
-        out = util.append_diags(out, e044_expr(element, line, col, suspects, labels));
+        out = util.append_diags(out, e044_expr(element, line, col, wk, suspects, labels));
       }
     },
     ast.ExprTuple(t) => {
       for element in t.elements {
-        out = util.append_diags(out, e044_expr(element, line, col, suspects, labels));
+        out = util.append_diags(out, e044_expr(element, line, col, wk, suspects, labels));
       }
     },
     ast.ExprIndex(ix) => {
-      out = util.append_diags(out, e044_expr(ix.array, line, col, suspects, labels));
-      out = util.append_diags(out, e044_expr(ix.index, line, col, suspects, labels));
+      out = util.append_diags(out, e044_expr(ix.array, line, col, wk, suspects, labels));
+      out = util.append_diags(out, e044_expr(ix.index, line, col, wk, suspects, labels));
     },
     ast.ExprSlice(sl) => {
-      out = util.append_diags(out, e044_expr(sl.array, line, col, suspects, labels));
-      out = util.append_diags(out, e044_expr(sl.start, line, col, suspects, labels));
-      out = util.append_diags(out, e044_expr(sl.end, line, col, suspects, labels));
+      out = util.append_diags(out, e044_expr(sl.array, line, col, wk, suspects, labels));
+      out = util.append_diags(out, e044_expr(sl.start, line, col, wk, suspects, labels));
+      out = util.append_diags(out, e044_expr(sl.end, line, col, wk, suspects, labels));
     },
     ast.ExprFieldAccess(fa) => {
-      out = util.append_diags(out, e044_expr(fa.obj, line, col, suspects, labels));
+      out = util.append_diags(out, e044_expr(fa.obj, line, col, wk, suspects, labels));
     },
     ast.ExprStructLit(s) => {
       if (s.has_base) {
-        out = util.append_diags(out, e044_expr(s.base, line, col, suspects, labels));
+        out = util.append_diags(out, e044_expr(s.base, line, col, wk, suspects, labels));
       }
       for field_value in s.field_values {
-        out = util.append_diags(out, e044_expr(field_value, line, col, suspects, labels));
+        out = util.append_diags(out, e044_expr(field_value, line, col, wk, suspects, labels));
       }
     },
     _ => {}
@@ -12899,21 +12937,21 @@ function e044_expr(e: ast.Expr, line: i32, col: i32, suspects: string[], labels:
   return out;
 }
 
-function e044_stmts(stmts: ast.Stmt[], is_generic: boolean, struct_names: string[], union_names: string[], void_fns: string[], suspects0: string[], labels0: string[]): util.Diag[] {
+function e044_stmts(stmts: ast.Stmt[], wk: E044Walk, suspects0: string[], labels0: string[]): util.Diag[] {
   var out: util.Diag[] = [];
   var suspects: string[] = suspects0;
   var labels: string[] = labels0;
   for stmt in stmts {
     match (stmt) {
       ast.StmtVar(v) => {
-        out = util.append_diags(out, e044_expr(v.init, v.line, v.col, suspects, labels));
+        out = util.append_diags(out, e044_expr(v.init, v.line, v.col, wk, suspects, labels));
         // A `var x = f();` binding of a void call is a void suspect.
         var is_void_init: boolean = false;
         match (v.init) {
           ast.ExprCall(c) => {
             match (c.callee) {
               ast.ExprIdent(id) => {
-                for void_fn in void_fns {
+                for void_fn in wk.void_fns {
                   if (void_fn == id.name) {
                     is_void_init = true;
                   }
@@ -12927,42 +12965,42 @@ function e044_stmts(stmts: ast.Stmt[], is_generic: boolean, struct_names: string
         if (is_void_init && v.type_name.len() == 0) {
           suspects = suspects.append(v.name);
           labels = labels.append("void");
-        } else if (is_generic && e064_unknown_bare(v.type_name, struct_names, union_names)) {
+        } else if (wk.is_generic && e064_unknown_bare(v.type_name, wk.struct_names, wk.union_names)) {
           suspects = suspects.append(v.name);
           labels = labels.append(v.type_name);
         }
       },
       ast.StmtReturn(r) => {
-        out = util.append_diags(out, e044_expr(r.value, r.line, r.col, suspects, labels));
+        out = util.append_diags(out, e044_expr(r.value, r.line, r.col, wk, suspects, labels));
       },
       ast.StmtExpr(e) => {
-        out = util.append_diags(out, e044_expr(e.value, 0, 0, suspects, labels));
+        out = util.append_diags(out, e044_expr(e.value, 0, 0, wk, suspects, labels));
       },
       ast.StmtAssign(a) => {
-        out = util.append_diags(out, e044_expr(a.value, a.line, a.col, suspects, labels));
+        out = util.append_diags(out, e044_expr(a.value, a.line, a.col, wk, suspects, labels));
       },
       ast.StmtIf(f) => {
-        out = util.append_diags(out, e044_expr(f.cond, 0, 0, suspects, labels));
-        out = util.append_diags(out, e044_stmts(f.then_body, is_generic, struct_names, union_names, void_fns, suspects, labels));
-        out = util.append_diags(out, e044_stmts(f.else_body, is_generic, struct_names, union_names, void_fns, suspects, labels));
+        out = util.append_diags(out, e044_expr(f.cond, 0, 0, wk, suspects, labels));
+        out = util.append_diags(out, e044_stmts(f.then_body, wk, suspects, labels));
+        out = util.append_diags(out, e044_stmts(f.else_body, wk, suspects, labels));
       },
       ast.StmtWhile(w) => {
-        out = util.append_diags(out, e044_expr(w.cond, 0, 0, suspects, labels));
-        out = util.append_diags(out, e044_stmts(w.body, is_generic, struct_names, union_names, void_fns, suspects, labels));
+        out = util.append_diags(out, e044_expr(w.cond, 0, 0, wk, suspects, labels));
+        out = util.append_diags(out, e044_stmts(w.body, wk, suspects, labels));
       },
       ast.StmtFor(fr) => {
-        out = util.append_diags(out, e044_expr(fr.iter, 0, 0, suspects, labels));
-        out = util.append_diags(out, e044_stmts(fr.body, is_generic, struct_names, union_names, void_fns, suspects, labels));
+        out = util.append_diags(out, e044_expr(fr.iter, 0, 0, wk, suspects, labels));
+        out = util.append_diags(out, e044_stmts(fr.body, wk, suspects, labels));
       },
       ast.StmtMatch(m) => {
-        out = util.append_diags(out, e044_expr(m.scrutinee, m.line, m.col, suspects, labels));
+        out = util.append_diags(out, e044_expr(m.scrutinee, m.line, m.col, wk, suspects, labels));
         for arm in m.arms {
-          out = util.append_diags(out, e044_stmts(arm.body, is_generic, struct_names, union_names, void_fns, suspects, labels));
+          out = util.append_diags(out, e044_stmts(arm.body, wk, suspects, labels));
         }
       },
       ast.StmtDefer(d) => {
         var one: ast.Stmt[] = [d.action];
-        out = util.append_diags(out, e044_stmts(one, is_generic, struct_names, union_names, void_fns, suspects, labels));
+        out = util.append_diags(out, e044_stmts(one, wk, suspects, labels));
       },
       _ => {}
     }
@@ -12982,7 +13020,8 @@ function e044_diags(efn: parser.FuncDecl, struct_names: string[], union_names: s
       }
     }
   }
-  return e044_stmts(efn.body, is_generic, struct_names, union_names, void_fns, suspects, labels);
+  var wk: E044Walk = E044Walk { is_generic: is_generic, struct_names: struct_names, union_names: union_names, void_fns: void_fns };
+  return e044_stmts(efn.body, wk, suspects, labels);
 }
 
 // ---- E053: `fip` fully-in-place verification -------------------------------

@@ -1987,6 +1987,21 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// the statement rather than an ExprIdent, so a mention test could not
 		// see one; the free-variable walk counts it, as native does.
 		{"e044-capture-void-write-only", "function v(): void { return; }\nfunction main(): i32 {\n    var x = v();\n    var g: () => i32 = (): i32 => {\n        x = 42;\n        return 0;\n    };\n    return g();\n}\n", []string{"E003", "E044"}},
+		// The suspect DECLARED inside a lambda, captured by one nested in it
+		// (#9777). The in-lambda sweep reaches this shape for every row it
+		// wraps, but only by accident of the wrapping; written out, it is the
+		// case the descent exists for and it belongs in the corpus on its own.
+		{"e044-capture-void-declared-in-a-lambda", "function v(): void { return; }\nfunction main(): i32 {\n    var f = (): i32 => {\n        var x = v();\n        var g = () => x;\n        return 0;\n    };\n    return f();\n}\n", []string{"E044"}},
+		// A LAMBDA's own type-variable parameter is a suspect the same way the
+		// enclosing generic's parameter is: native's capture sink runs per
+		// function-like body, so `(x: T)` binds a value with no runtime
+		// representation and a lambda nested in that body capturing it is E044.
+		// The walk seeds each lambda's scope from its own parameters to match.
+		{"e044-capture-generic-lambda-param", "function outer[T](a: T): i32 {\n    var f = (x: T): i32 => {\n        var g = () => x;\n        return 0;\n    };\n    return f(a);\n}\nfunction main(): i32 { return outer(1); }\n", []string{"E044"}},
+		// The negative: an ordinary binding captured by a nested lambda draws
+		// nothing. The descent widens what is walked, so without this a rule
+		// that reported on every nested lambda would look correct.
+		{"e044-nested-lambda-clean", "function main(): i32 {\n    var f = (): i32 => {\n        var y = 1;\n        var g = () => y;\n        return g();\n    };\n    return f();\n}\n", nil},
 		// E053 (`fip` no-allocation): array literals, string concatenation
 		// and calls to non-fip functions are rejected inside a `fip
 		// function`; scalar arithmetic and fip→fip calls are clean.
@@ -2278,15 +2293,12 @@ func wrapMainBodyInLambda(src string) string {
 // named owner, not a row that may quietly differ: the map is exact in both
 // directions, so a listed row that starts agreeing fails too and must be
 // removed. Emptying this map closes the class.
-var lambdaBodyDivergences = map[string]string{
-	// Every row here is #9777: the E044 walk never enters a lambda body, so a
-	// capture site inside one is invisible whatever syntax holds it. They
-	// differ only in that syntax, and one scoping decision closes them all.
-	"e044-capture-void":              "E044 — #9777, the capture site is in a bare lambda",
-	"e044-capture-void-nested-fn":    "E044 — #9777, the capture site is in a nested `function`",
-	"e044-capture-void-use-callback": "E044 — #9777, the capture site is in a `use` callback",
-	"e044-capture-void-write-only":   "E044 — #9777, the capture site is a write in a bare lambda",
-}
+// EMPTY, and that is the state to keep it in. The four E044 rows that used to
+// live here were one defect — the capture walk never entered a lambda body, so
+// a capture site inside one was invisible whatever syntax held it — and #9777
+// closed the class by descending with a scope of the lambda's own. A row added
+// back names a new hole, not a new exception.
+var lambdaBodyDivergences = map[string]string{}
 
 func equalStrings(a, b []string) bool {
 	if len(a) != len(b) {
