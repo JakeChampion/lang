@@ -26,7 +26,7 @@ import (
 //     eight bytes of an MD5.
 //
 // `--debug` is the one output not compared here. It names which CRC
-// implementation GNU chose — `using pclmul hardware support` on a CPU
+// implementation GNU chose for `crc` and for `crc32b` — `using pclmul hardware support` on a CPU
 // that has the instruction — which is a runtime dispatch a static Fern
 // binary does not have and cannot honestly claim; docs/COREUTILS.md
 // records it beside `--help` and `--version`. Everything else about the
@@ -37,7 +37,7 @@ import (
 // ckAlgos are `-a`'s names in declaration order, which is the order the
 // `Valid arguments are:` list prints them in.
 func ckAlgos() []string {
-	return []string{"bsd", "sysv", "crc", "md5", "sha1", "sha224", "sha256", "sha384", "sha512", "blake2b", "sm3"}
+	return []string{"bsd", "sysv", "crc", "crc32b", "md5", "sha1", "sha224", "sha256", "sha384", "sha512", "blake2b", "sm3"}
 }
 
 // ckDigests are the eight that are digests: the ones `-c`, `--tag`,
@@ -117,6 +117,7 @@ func cksumCases(t *testing.T) []invocation {
 	cases := ckAlgorithmCases(t, tr)
 	cases = append(cases, ckOptionCases(t, tr)...)
 	cases = append(cases, ckLengthCases(t, tr)...)
+	cases = append(cases, ckShaFamilyCases(t, tr)...)
 	cases = append(cases, ckCheckCases(t, tr)...)
 	cases = append(cases, ckDetectCases(t, tr)...)
 	cases = append(cases, ckGrammarCases(t, tr)...)
@@ -177,10 +178,10 @@ func ckAlgorithmCases(t *testing.T, tr ckTree) []invocation {
 		add(a+" raw zero", "-a", a, "--raw", "-z", tr.a)
 		add(a+" raw two files", "-a", a, "--raw", tr.a, tr.empty)
 		add(a+" raw missing", "-a", a, "--raw", tr.missing)
-		if a != "crc" {
-			// The CRC is the one algorithm GNU has more than one
-			// implementation of, so it is the one `--debug` names; see
-			// the note at the top of this file.
+		if a != "crc" && a != "crc32b" {
+			// The two CRCs are the algorithms GNU has more than one
+			// implementation of, so they are the ones `--debug` names;
+			// see the note at the top of this file.
 			add(a+" debug", "-a", a, "--debug", tr.a)
 		}
 		// Names: escaped for the eight digests, verbatim for the three.
@@ -402,6 +403,111 @@ func ckLengthCases(t *testing.T, tr ckTree) []invocation {
 	add("length past uintmax on md5", "-l", "18446744073709551616", "-a", "md5", tr.a)
 	add("length before an invalid option", "-l", "4", "-x", tr.a)
 	add("invalid option before a length", "-x", "-l", "4", tr.a)
+	return cases
+}
+
+// sha2 and sha3, the two names that stand for a family: neither runs
+// without `-l`, the length picks the member, and sha2's tag is that
+// member's own name while sha3's carries the length.
+func ckShaFamilyCases(t *testing.T, tr ckTree) []invocation {
+	t.Helper()
+	var cases []invocation
+	add := func(name string, args ...string) {
+		cases = append(cases, invocation{name: name, args: args})
+	}
+	line := ckLines(t, tr.dir, "shafam")
+
+	for _, a := range []string{"sha2", "sha3"} {
+		add(a+" without a length", "-a", a, tr.a)
+		add(a+" without a length and no operand", "-a", a)
+		add(a+" without a length when checking", "-a", a, "-c", tr.a)
+		add(a+" without a length with raw and base64", "-a", a, "--raw", "--base64", tr.a)
+		for _, bits := range []string{"224", "256", "384", "512"} {
+			add(a+" "+bits, "-a", a, "-l", bits, tr.a)
+			add(a+" "+bits+" empty file", "-a", a, "-l", bits, tr.empty)
+			add(a+" "+bits+" spanning read blocks", "-a", a, "-l", bits, tr.big)
+			add(a+" "+bits+" untagged", "-a", a, "-l", bits, "--untagged", tr.a)
+			add(a+" "+bits+" base64", "-a", a, "-l", bits, "--base64", tr.a)
+			add(a+" "+bits+" raw", "-a", a, "-l", bits, "--raw", tr.a)
+			add(a+" "+bits+" zero", "-a", a, "-l", bits, "-z", tr.a)
+			add(a+" "+bits+" missing file", "-a", a, "-l", bits, tr.missing)
+			add(a+" "+bits+" newline name", "-a", a, "-l", bits, tr.newline)
+			add(a+" "+bits+" two files", "-a", a, "-l", bits, tr.a, tr.empty)
+			add(a+" "+bits+" debug", "-a", a, "-l", bits, "--debug", tr.a)
+			cases = append(cases, invocation{
+				name:  a + " " + bits + " stdin",
+				args:  []string{"-a", a, "-l", bits},
+				stdin: "hello\n",
+			})
+
+			tagged := line(refOutput(t, "cksum", "-a", a, "-l", bits, tr.a))
+			untagged := line(refOutput(t, "cksum", "-a", a, "-l", bits, "--untagged", tr.a))
+			b64 := line(refOutput(t, "cksum", "-a", a, "-l", bits, "--base64", tr.a))
+			add(a+" "+bits+" check", "-c", "-a", a, "-l", bits, tagged)
+			add(a+" "+bits+" check without a length", "-c", "-a", a, tagged)
+			add(a+" "+bits+" check without an algorithm", "-c", tagged)
+			add(a+" "+bits+" check untagged", "-c", "-a", a, "-l", bits, untagged)
+			add(a+" "+bits+" check untagged without an algorithm", "-c", untagged)
+			add(a+" "+bits+" check base64", "-c", "-a", a, "-l", bits, b64)
+			add(a+" "+bits+" check at another length", "-c", "-a", a, "-l", "512", tagged)
+		}
+
+		// The length rules: the four members and nothing else, tested
+		// where `-l` is parsed rather than where the digest is chosen.
+		for _, bits := range []string{"0", "8", "128", "200", "223", "225", "255", "1024", "-8", "", "abc", "0x100", "0256", "+256", "99999999999999999999"} {
+			add(a+" length "+strconv.Quote(bits), "-a", a, "-l", bits, tr.a)
+		}
+		add(a+" length before the algorithm", "-l", "256", "-a", a, tr.a)
+		add(a+" length twice", "-a", a, "-l", "224", "-l", "512", tr.a)
+		add(a+" length then another algorithm", "-a", a, "-l", "224", "-a", "md5", tr.a)
+		add("md5 then "+a, "-a", "md5", "-a", a, "-l", "224", tr.a)
+	}
+
+	// The tag grammar the two family names bring: `SHA3` spells its
+	// length or takes the default, `SHA2` stands aside for whichever
+	// member a line names, and having stood aside once it stays that
+	// member for every line after — including the ones it cannot read.
+	name := filepath.Join(tr.dir, "a")
+	s3 := func(bits string) string {
+		out := refOutput(t, "cksum", "-a", "sha3", "-l", bits, "--untagged", tr.a)
+		return strings.Fields(out)[0]
+	}
+	s2 := func(bits string) string {
+		out := refOutput(t, "cksum", "-a", "sha2", "-l", bits, "--untagged", tr.a)
+		return strings.Fields(out)[0]
+	}
+	g := func(what, content string, args ...string) {
+		add(what, append(append([]string{"-c", "-w"}, args...), line(content))...)
+	}
+	g("sha3 tag with no length", "SHA3 ("+name+") = "+s3("512")+"\n")
+	g("sha3 tag with no length and a short digest", "SHA3 ("+name+") = "+s3("224")+"\n")
+	g("sha3 tag at a length that does not exist", "SHA3-100 ("+name+") = "+s3("512")+"\n")
+	g("sha3 tag at 8", "SHA3-8 ("+name+") = "+s3("512")[:2]+"\n")
+	g("sha3 tag at 1024", "SHA3-1024 ("+name+") = "+s3("512")+"\n")
+	g("sha3 tag with a length and the wrong digest", "SHA3-224 ("+name+") = "+s3("256")+"\n")
+	g("sha2 literal tag", "SHA2-256 ("+name+") = "+s2("256")+"\n", "-a", "sha2")
+	g("sha2 literal tag detected", "SHA2-256 ("+name+") = "+s2("256")+"\n")
+	g("sha2 literal tag with no length", "SHA2 ("+name+") = "+s2("512")+"\n")
+	g("sha2 literal tag at a length that does not exist", "SHA2-128 ("+name+") = "+s2("512")+"\n")
+	g("sha2 stands aside", "SHA384 ("+name+") = "+s2("384")+"\n", "-a", "sha2")
+	g("sha2 stays aside", "SHA384 ("+name+") = "+s2("384")+"\nSHA224 ("+name+") = "+s2("224")+"\n", "-a", "sha2")
+	g("sha2 stands aside once", "SHA384 ("+name+") = "+s2("384")+"\ngarbage\n", "-a", "sha2")
+	g("sha2 does not stand aside for md5", "MD5 ("+name+") = d41d8cd98f00b204e9800998ecf8427e\n", "-a", "sha2")
+	g("sha2 does not stand aside for the crc", "CRC ("+name+") = 12345\n", "-a", "sha2")
+	g("sha3 does not stand aside", "SHA384 ("+name+") = "+s2("384")+"\n", "-a", "sha3")
+	g("sha3 untagged hex", s3("224")+"  "+name+"\n", "-a", "sha3")
+	g("sha3 untagged at a length that does not exist", s3("512")[:40]+"  "+name+"\n", "-a", "sha3")
+	g("sha2 untagged hex", s2("384")+"  "+name+"\n", "-a", "sha2")
+	g("sha2 untagged at a length that does not exist", s2("512")[:40]+"  "+name+"\n", "-a", "sha2")
+	g("sha3 untagged base64", strings.Fields(refOutput(t, "cksum", "-a", "sha3", "-l", "256", "--untagged", "--base64", tr.a))[0]+"  "+name+"\n", "-a", "sha3")
+	g("sha2 untagged base64", strings.Fields(refOutput(t, "cksum", "-a", "sha2", "-l", "384", "--untagged", "--base64", tr.a))[0]+"  "+name+"\n", "-a", "sha2")
+	g("bare crc32b tag", "CRC32B ("+name+") = 909783072\n")
+
+	// crc32b is a plain checksum: no tag, no base64, no length.
+	add("crc32b length", "-a", "crc32b", "-l", "8", tr.a)
+	add("crc32b length 0", "-a", "crc32b", "-l", "0", tr.a)
+	add("crc32b check", "-a", "crc32b", "-c", tr.a)
+	add("crc32b block sizes", "-a", "crc32b", tr.b512, tr.b513, tr.b1024, tr.b1025)
 	return cases
 }
 
@@ -745,9 +851,7 @@ func ckGrammarCases(t *testing.T, tr ckTree) []invocation {
 
 	// BLAKE2b's own lengths, which the tag declares and `-l` does not
 	// override. Eight, sixteen and thirty-two bits are the three whose
-	// base64 form cannot verify — a digest that small is smaller than
-	// the room its own base64 needs — and the reference reports the
-	// mismatch rather than a malformed line.
+	// base64 form the reference could not read back before 9.5.
 	for _, bits := range []int{8, 16, 24, 32, 40, 48, 56, 64, 128, 256, 512} {
 		s := strconv.Itoa(bits)
 		hexD := strings.Fields(refOutput(t, "cksum", "--untagged", "-a", "blake2b", "-l", s, tr.a))[0]

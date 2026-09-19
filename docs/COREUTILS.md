@@ -112,15 +112,16 @@ implementation:
   authors and (in 9.x) terminal hyperlink escapes; reproducing it would be
   copying, and it would be wrong in every particular that matters.
 - `cksum --debug` — "indicate which implementation used" — is silent. GNU's
-  CRC has several implementations and it picks one at startup by asking the
-  CPU (`using pclmul hardware support` where the instruction exists), which
-  is a runtime dispatch a static Fern binary with no CPU detection does not
-  have; claiming the message would say something untrue about our own code,
-  and printing a different one would diverge just the same. Only the CRC
-  reaches it — GNU says nothing under `--debug` for the other ten
-  algorithms, and neither do we, so those ARE in the byte-exact corpus, as
-  is everything else about the option: that it is accepted, that it refuses
-  a value, and that it stands in the ambiguity list.
+  two CRCs have several implementations each and it picks one at startup by
+  asking the CPU (`using pclmul hardware support` where the instruction
+  exists), which is a runtime dispatch a static Fern binary with no CPU
+  detection does not have; claiming the message would say something untrue
+  about our own code, and printing a different one would diverge just the
+  same. Only `crc` and `crc32b` reach it — GNU says nothing under `--debug`
+  for the other twelve algorithms, and neither do we, so those ARE in the
+  byte-exact corpus, as is everything else about the option: that it is
+  accepted, that it refuses a value, and that it stands in the ambiguity
+  list.
 - `cp --debug`'s second line is ours, for the same reason as `cksum
   --debug`'s and no other. GNU's names ITS OWN syscall strategy —
   measured, `copy offload: yes, reflink: unsupported, sparse detection:
@@ -459,16 +460,20 @@ coreutils/
   lib/tabs.fern     the `-t` tab-stop grammar and lookup expand and
                     unexpand share
   lib/digest.fern   md5sum, sha1sum, sha224sum, sha256sum, sha384sum,
-                    sha512sum, b2sum and the eight digests of cksum,
+                    sha512sum, b2sum and the ten digests of cksum,
                     which GNU also builds from one source: the option
                     surface, the file-name escaping and the check-line
                     grammar, parameterised by the digest each utility
                     names. cksum widens two rules of that grammar and
                     the module carries both behind one flag — a base64
                     digest is read wherever a hex one is, and a line's
-                    TAG chooses the algorithm when no -a did. The three
+                    TAG chooses the algorithm when no -a did. Two of the
+                    ten, `sha2` and `sha3`, name a family rather than a
+                    digest: -l picks the member when computing and the
+                    line's own tag picks it when checking. The four
                     checksums cksum offers that are NOT digests (the
-                    POSIX crc, and sum's bsd and sysv) are std/hash
+                    POSIX crc, crc32b, and sum's bsd and sysv) are
+                    std/hash
   lib/pwdb.fern     /etc/passwd and /etc/group as glibc's `files`
                     backend reads them — the lookups by name and by id,
                     getgrouplist's ordering, the process's own group
