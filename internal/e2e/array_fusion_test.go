@@ -35,6 +35,12 @@ function via_map_fold(xs: i64[]): i64 {
 	return xs.map((x: i64): i64 => x * (3 as i64))
 	         .fold(0 as i64, (a: i64, b: i64): i64 => a + b);
 }
+function loop_map_fold_plus_one(xs: i64[]): i64 {
+	var acc: i64 = 0 as i64;
+	var i: i32 = 0;
+	while (i < xs.len()) { acc = acc + xs[i] + (1 as i64); i = i + 1; }
+	return acc;
+}
 function loop_map_fold(xs: i64[]): i64 {
 	var acc: i64 = 0 as i64;
 	var i: i32 = 0;
@@ -147,6 +153,50 @@ function loop_chain_in_loop(xs: i64[], rounds: i32): i64 {
 	return total;
 }
 
+// Three stages, to exercise concatenation past the two-stage case. The proof
+// is quantified over any number of stages, so a pass that happened to handle
+// exactly two would satisfy every other case here.
+function via_three_maps(xs: i64[]): i64 {
+	return xs.map((a: i64): i64 => a + (1 as i64))
+	         .map((a: i64): i64 => a * (2 as i64))
+	         .map((a: i64): i64 => a - (1 as i64))
+	         .fold(0 as i64, (p: i64, q: i64): i64 => p + q);
+}
+function loop_three_maps(xs: i64[]): i64 {
+	var acc: i64 = 0 as i64;
+	var i: i32 = 0;
+	while (i < xs.len()) { acc = acc + ((xs[i] + (1 as i64)) * (2 as i64)) - (1 as i64); i = i + 1; }
+	return acc;
+}
+
+// A chain in a branch, and one whose receiver is a call result rather than a
+// named local: both put the fused loop somewhere the op-range arithmetic has
+// to land on the right boundary.
+function via_in_branch(xs: i64[], c: i32): i64 {
+	if (c > 0) {
+		return xs.map((x: i64): i64 => x + (1 as i64))
+		         .fold(0 as i64, (p: i64, q: i64): i64 => p + q);
+	}
+	return 0 as i64;
+}
+
+function doubled(xs: i64[]): i64[] {
+	var out: i64[] = [];
+	var i: i32 = 0;
+	while (i < xs.len()) { out = out.append(xs[i] * (2 as i64)); i = i + 1; }
+	return out;
+}
+function via_call_receiver(xs: i64[]): i64 {
+	return doubled(xs).map((x: i64): i64 => x + (1 as i64))
+	                  .fold(0 as i64, (p: i64, q: i64): i64 => p + q);
+}
+function loop_call_receiver(xs: i64[]): i64 {
+	var acc: i64 = 0 as i64;
+	var i: i32 = 0;
+	while (i < xs.len()) { acc = acc + xs[i] * (2 as i64) + (1 as i64); i = i + 1; }
+	return acc;
+}
+
 function check(n: i32): i32 {
 	var xs: i64[] = build(n);
 	if (via_map_fold(xs) != loop_map_fold(xs)) { return 10; }
@@ -156,6 +206,10 @@ function check(n: i32): i32 {
 	if (via_all_filtered(xs) != 0 as i64 - (7 as i64)) { return 14; }
 	if (via_two_chains(xs) != loop_two_chains(xs)) { return 15; }
 	if (via_chain_in_loop(xs, 3) != loop_chain_in_loop(xs, 3)) { return 16; }
+	if (via_three_maps(xs) != loop_three_maps(xs)) { return 17; }
+	if (via_in_branch(xs, 1) != loop_map_fold_plus_one(xs)) { return 18; }
+	if (via_in_branch(xs, 0) != 0 as i64) { return 19; }
+	if (via_call_receiver(xs) != loop_call_receiver(xs)) { return 20; }
 	return 0;
 }
 
