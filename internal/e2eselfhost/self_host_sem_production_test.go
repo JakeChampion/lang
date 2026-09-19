@@ -1148,9 +1148,9 @@ function main(): i32 {
 }
 `},
 	// A function value handed back across a call boundary: the frame that
-	// receives one never built the box, so env_schemas is what puts the
-	// environments it could carry into that frame's schema table and lets the
-	// release walk the captures. Churned in a loop so a missed capture shows
+	// receives one never built the box, so env_rows is what pairs the
+	// environments it could carry with the type and lets the release walk the
+	// captures. Churned in a loop so a missed capture shows
 	// up as a leak rather than a constant. Each loop binds ONE returned
 	// closure: two distinct ones in a single loop body is #9657, where the AST
 	// lowering this case compares against answers wrongly.
@@ -1360,6 +1360,41 @@ function main(): i32 {
 }
 `},
 
+	// A closure that captures a closure. A construction used to BORROW a
+	// function-value operand, and the producer secured that borrow by
+	// refusing any capture that was not a borrowed parameter — a rule that
+	// cannot describe an escape. Here `inner` is a LOCAL of `wrap` and the
+	// box holding it is RETURNED: `wrap` cannot free it, because the escaping
+	// box still points at it, and the box never took it, so nobody did.
+	// Native leaks three blocks an iteration on this program and the
+	// self-host refused to produce `wrap` at all (#9637).
+	//
+	// noLeak, because the answer never depended on this: the program is
+	// correct while leaking, and the leak is the whole subject. Measured 0 of
+	// 150 blocks live on arm64-darwin under FERN_LEAKCHECK, against 150 of
+	// 250 for the AST lowering.
+	{name: "a-closure-that-captures-a-closure", atLeast: 5, noLeak: true, src: `
+function make(n: i32): (i32) => i32 {
+    var xs: i32[] = [n, n + 1, n + 2];
+    return (x: i32): i32 => { return x + xs[0] + xs[2]; };
+}
+
+function wrap(n: i32): (i32) => i32 {
+    var inner: (i32) => i32 = make(n);
+    return (x: i32): i32 => { return inner(x) + 1; };
+}
+
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) {
+        var f: (i32) => i32 = wrap(i);
+        t = t + f(0) % 3;
+        i = i + 1;
+    }
+    return t % 7;
+}
+`},
 	// Self-tail recursion. Tail-call optimisation reached a declaration
 	// through `irlower.lower_func`, which a produced body never enters, so a
 	// produced self-tail call grew the stack once per round and a deep enough

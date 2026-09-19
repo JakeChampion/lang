@@ -1747,22 +1747,10 @@ function closure(body: string, c: ast.ExprCall, s: State): Value {
 
 struct Captured { s: State, ids: i32[] }
 
-// A captured FUNCTION value is borrowed rather than taken: the box holds the
-// address of another box whose captures only that box's own frame can walk, so
-// taking a unit of it would promise a release this frame cannot perform. The
-// borrow is sound exactly when the value's owner outlives every box built
-// here, and a borrowed parameter is such an owner — the caller holds it across
-// the whole call. A function value reaches a frame no other way that outlives
-// it: a function value result and an owning function parameter are both
-// refused, and a local closure dies with the frame that captures it.
-function lent_capture(s: State, id: i32, t: typeinfo.Type): boolean {
-    if (!ssasem.is_func(t)) { return true; }
-    return id < s.modes.len() && s.modes[id] == ssaunits.borrow_mode();
-}
-
 // Each capture is produced at the type the body's environment declares for
-// its slot; the box takes one unit of every reference among them but the
-// function values, which it borrows.
+// its slot; the box takes one unit of every reference among them, function
+// values included — a box that borrowed one could not describe an escape
+// (#9637).
 function captures(c: ast.ExprCall, s: State, types: typeinfo.Type[]): Captured {
     if (c.args.len() != types.len()) { return Captured { s: fail(s, "closure capture count"), ids: [] }; }
     var ids: i32[] = [];
@@ -1772,7 +1760,6 @@ function captures(c: ast.ExprCall, s: State, types: typeinfo.Type[]): Captured {
         s = v.s;
         if (!s.ok) { return Captured { s: s, ids: [] }; }
         if (!semtypes.equal(s.values[v.id], types[i])) { return Captured { s: fail(s, "closure capture type"), ids: [] }; }
-        if (!lent_capture(s, v.id, types[i])) { return Captured { s: fail(s, "captured function value is not a borrowed parameter"), ids: [] }; }
         ids = ids.append(v.id);
         i = i + 1;
     }
@@ -2779,7 +2766,7 @@ function renumber(blocks: ssa.SBlock[], map: i32[], values: typeinfo.Type[]): ss
         out = out.append(ssa.SBlock { ...b, insts: insts, term: term });
     }
     var graph: ssa.SFunc = ssa.SFunc { name: "", nparams: 0, nvals: kept.len(), blocks: out, entry: 0, takes_env: false };
-    return ssasem.Func { graph: graph, values: kept, params: [], result: t_void(), records: [], enums: [], calls: [] };
+    return ssasem.Func { graph: graph, values: kept, params: [], result: t_void(), records: [], enums: [], calls: [], envs: [] };
 }
 
 // ---- functions --------------------------------------------------------------
@@ -2981,7 +2968,7 @@ function parameters(fd: parser.FuncDecl, s: State): State {
 
 function refuse(why: string): Produced {
     var graph: ssa.SFunc = ssa.SFunc { name: "", nparams: 0, nvals: 0, blocks: [], entry: 0, takes_env: false };
-    return Produced { ok: false, why: why, func: ssasem.Func { graph: graph, values: [], params: [], result: t_void(), records: [], enums: [], calls: [] }, modes: [], template: false, key: "", requests: [], bodyless: false };
+    return Produced { ok: false, why: why, func: ssasem.Func { graph: graph, values: [], params: [], result: t_void(), records: [], enums: [], calls: [], envs: [] }, modes: [], template: false, key: "", requests: [], bodyless: false };
 }
 
 function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contract[], binding: ssasem.Binding, name: string, handers: string[]): State {
@@ -3144,17 +3131,24 @@ function builtin_enum_entry(t: typeinfo.Type, s: State, out: Schemas): Schemas {
 // closure_type spells the function value it presents; a body spelling a
 // different function value can never be in the box, so it is left out and the
 // run-time match never sees it.
-function env_schemas(named: typeinfo.Type[], contracts: ssasem.Contract[]): typeinfo.Type[] {
-    var out: typeinfo.Type[] = [];
+function env_rows(named: typeinfo.Type[], contracts: ssasem.Contract[]): ssasem.EnvRow[] {
+    var out: ssasem.EnvRow[] = [];
     for t in named {
         if (!ssasem.is_func(t)) { continue; }
         for c in contracts {
             if (c.params.len() == 0 || !semtypes.is_env(c.params[0])) { continue; }
             if (!semtypes.equal(ssasem.closure_type(c), t)) { continue; }
-            out = out.append(c.params[0]);
+            if (!has_env_row(out, t, c.params[0])) { out = out.append(ssasem.EnvRow { fn_ty: t, env_ty: c.params[0] }); }
         }
     }
     return out;
+}
+
+function has_env_row(rows: ssasem.EnvRow[], fn_ty: typeinfo.Type, env_ty: typeinfo.Type): boolean {
+    for row in rows {
+        if (semtypes.equal(row.fn_ty, fn_ty) && semtypes.equal(row.env_ty, env_ty)) { return true; }
+    }
+    return false;
 }
 
 function contract_types(calls: ssasem.Contract[]): typeinfo.Type[] {
@@ -3187,11 +3181,12 @@ function complete(fd: parser.FuncDecl, s: State, name: string): Produced {
     }
     var named: typeinfo.Type[] = f.values.append(s.result);
     for t in contract_types(s.calls) { named = named.append(t); }
-    for t in env_schemas(named, s.contracts) { named = named.append(t); }
+    var rows: ssasem.EnvRow[] = env_rows(named, s.contracts);
+    for row in rows { named = named.append(row.env_ty); }
     var table: Schemas = schemas(named, s);
     if (!table.ok) { return refuse(table.why); }
     var graph: ssa.SFunc = ssa.SFunc { ...f.graph, name: name, nparams: params.len() };
-    f = ssasem.Func { ...f, graph: graph, params: params, result: s.result, records: table.records, enums: table.enums, calls: s.calls };
+    f = ssasem.Func { ...f, graph: graph, params: params, result: s.result, records: table.records, enums: table.enums, calls: s.calls, envs: rows };
     // Before the verifier, so the rewritten graph is the one it checks, and
     // before anything downstream plans ownership over it (#9692).
     f = ssasem.tail_recursion(f, name);

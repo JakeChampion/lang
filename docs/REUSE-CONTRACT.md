@@ -156,6 +156,65 @@ what it holds.
 Locked by: `internal/ir/append_inplace_test.go`,
 `push_counted_store_test.go`.
 
+### R7 — owned same-shape elementwise map (#9733)
+
+`own xs` handed to `xs.map(f)` writes through the donor's buffer
+instead of building a fresh one by append. Phase 2 of #9727: where
+fusion removes an intermediate because a consumer absorbs its
+producer, this handles the case where the array result HAS to
+exist, so the only question is whose storage it is.
+
+**Static qualification**, all required:
+
+- the receiver is a parameter this function CONSUMES
+  (`Func.ParamConsumed`) — a borrowed receiver has an owner
+  elsewhere and nothing licenses writing through it;
+- the element function is statically resolved and captures
+  NOTHING;
+- it reaches no observable effect (the same purity boundary
+  fusion uses, `docs/ARRAY-ALGEBRA.md` §1);
+- the element type is unchanged across the stage, and is 8 bytes
+  in the first slice;
+- the donor's own decrement is in the call's epilogue, which is
+  what says it is dead here.
+
+**Runtime guard.** `__fern_rc_is_unique`, then
+`__fern_arr_cow_inplace` on the shared path — R6's helper, not a
+new one. rc==1 writes through the buffer; rc>1 copies and
+decrements the original, so a donor that turns out to be shared
+still gets ordinary immutable semantics. #9727 §12's non-goal
+(reuse must never make mutation observable) is discharged by
+construction rather than by analysis. The guard is asked ONCE
+before the loop rather than per element as `.with` does, because
+the array's identity cannot change under it.
+
+**Why the epilogue is part of the rewrite.** An `own` parameter
+dead after the call is decremented by the lowering. Once the
+result IS the donor's buffer, that decrement would free what is
+being returned, so the replaced op range runs through it and
+ownership transfers into the returned value.
+
+**Why the capture rule is stated rather than inferred.** An
+element function closing over the donor would read, mid-loop,
+elements already overwritten — `xs.map(x => x + xs[0])`, where
+value semantics give every element the ORIGINAL `xs[0]`. The
+runtime guard happens to cover it (a capture holds a reference,
+so the donor is not unique and the buffer is copied), but resting
+a soundness property on a refcount is the wrong way round.
+
+**Taints**: a borrowed receiver; any capture; a type-changing
+`map`; an element function that can reach the world; a donor
+whose decrement is not in the epilogue. `FERN_NO_ARRAY_INPLACE=1`
+turns the shape off.
+
+Locked by: `internal/ir/array_inplace_test.go` (the rewrite, and
+one refusal per condition above),
+`internal/e2e/array_inplace_test.go` (the same answers as a
+hand-written loop, four backends),
+`internal/e2e/array_pipeline_baseline_test.go` (pipeline 3
+reaches the hand-written loop's zero, with the borrowed control
+still paying its copy).
+
 ### M — the move family (pair cancellation)
 
 Not reuse, but the same contract class (allocation/RC traffic

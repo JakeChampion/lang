@@ -263,6 +263,13 @@ Two directories rather than one is the point. The older `dir` / `prepare` /
 files' bytes, which is right for a utility whose output is a file it was told
 to write (`uniq f out`) and wrong for one whose answer is which entries exist.
 
+That shared directory is a fresh temporary one per case unless the case names
+a `dir`, so a utility that creates a file named by an operand cannot write it
+into the source tree. Name a `dir` when the case is ABOUT the directory: `pwd`
+reached through a symbolic link, where the logical and physical answers
+differ, or an operand that has to be spelled relative to a tree the case
+built.
+
 The reference is whatever GNU coreutils the harness finds:
 `$FERN_GNU_COREUTILS`, then the `yes` on PATH if its `--version` says GNU,
 then the fixed system paths, then a nix store glob. **Not finding one is a
