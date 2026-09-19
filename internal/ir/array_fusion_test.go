@@ -229,8 +229,8 @@ function run(xs: i64[]): i64 {
 function main(): i32 { return run([1 as i64]) as i32; }`)
 	// Recognition skips them, so the planner never sees one — and the
 	// caller's own chain has already been rewritten, so nothing is left.
-	for key, why := range ir.ArrayFusionVerdicts(p) {
-		if why == ir.FusionFused {
+	for key, v := range ir.ArrayFusionVerdicts(p) {
+		if v.Why == ir.FusionFused {
 			t.Errorf("after fusing, %s still reports as fusible", key)
 		}
 	}
@@ -381,7 +381,7 @@ function main(): i32 { return 0; }`)
 	got := map[string]ir.FusionRefusal{}
 	for _, pl := range ir.RecognizeArrayPipelines(p) {
 		if _, interesting := want[pl.Func]; interesting {
-			got[pl.Func] = ir.ArrayFusionVerdicts(p)[pl.Func+"#"+strconv.Itoa(pl.Stages[0].Op)]
+			got[pl.Func] = ir.ArrayFusionVerdicts(p)[pl.Func+"#"+strconv.Itoa(pl.Stages[0].Op)].Why
 		}
 	}
 	for fn, wantWhy := range want {
@@ -404,5 +404,63 @@ function main(): i32 { return 0; }`)
 	}
 	if _, listed := tags[ir.FusionFused.Tag()]; listed {
 		t.Error("FusionFused is listed as a refusal; it is the absence of one")
+	}
+}
+
+// #9732's acceptance: a refusal names a STAGE as well as a reason. "neither
+// map nor filter" sends a reader back to count stages themselves on a chain of
+// four, which is the work the report exists to save.
+func TestRefusalsNameTheOffendingStage(t *testing.T) {
+	p := lowerPipelineSrc(t, `import "std/array";
+function late(xs: i64[]): i64 {
+  return xs.map((x: i64): i64 => x + (1 as i64))
+           .map((x: i64): i64 => x * (2 as i64))
+           .scan(0 as i64, (a: i64, b: i64): i64 => a + b)
+           .fold(0 as i64, (a: i64, b: i64): i64 => a + b);
+}
+function main(): i32 { return late([1 as i64]) as i32; }`)
+
+	var got ir.FusionVerdict
+	for key, v := range ir.ArrayFusionVerdicts(p) {
+		if strings.HasPrefix(key, "late#") {
+			got = v
+		}
+	}
+	if got.Why != ir.FusionStageNotElementwise {
+		t.Fatalf("refused with %q, want %q", got.Why.Tag(), ir.FusionStageNotElementwise.Tag())
+	}
+	// `scan` is the third stage, and naming the first two would be worse than
+	// naming none: it would send the reader to a stage that is fine.
+	if got.Stage != 2 || got.Verb != "scan" {
+		t.Errorf("blamed stage %d (%q), want stage 2 (\"scan\")", got.Stage, got.Verb)
+	}
+	if s := got.String(); !strings.Contains(s, "stage 3") || !strings.Contains(s, "scan") {
+		t.Errorf("rendered %q, want it to name stage 3 and scan", s)
+	}
+}
+
+// A refusal that no single stage owns says so rather than blaming stage 1.
+func TestChainLevelRefusalBlamesNoStage(t *testing.T) {
+	p := lowerPipelineSrc(t, `import "std/array";
+struct Box { xs: i64[] }
+function fieldRecv(b: Box): i64 {
+  return b.xs.map((x: i64): i64 => x + (1 as i64))
+             .fold(0 as i64, (a: i64, b0: i64): i64 => a + b0);
+}
+function main(): i32 { return fieldRecv(Box { xs: [1 as i64] }) as i32; }`)
+
+	for key, v := range ir.ArrayFusionVerdicts(p) {
+		if !strings.HasPrefix(key, "fieldRecv#") {
+			continue
+		}
+		if v.Why != ir.FusionReceiverNotASlot {
+			t.Fatalf("refused with %q, want %q", v.Why.Tag(), ir.FusionReceiverNotASlot.Tag())
+		}
+		if v.Verb != "" {
+			t.Errorf("blamed stage %d (%q) for a refusal about the whole chain", v.Stage, v.Verb)
+		}
+		if s := v.String(); strings.Contains(s, "stage") {
+			t.Errorf("rendered %q, want no stage named", s)
+		}
 	}
 }
