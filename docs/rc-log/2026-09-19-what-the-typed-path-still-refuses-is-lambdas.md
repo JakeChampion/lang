@@ -140,17 +140,42 @@ absent. What varies and what does not:
 | bound to a local, not returned | yes | produced whole |
 | passed as a `(i32) => i32` argument | — | produced whole |
 
-The explicit annotation is the informative row. `semsource.result_type` reads
-`fd.ret_type` when it is present and falls back to inferring from the first
-returned expression when it is not — and the annotated case refuses too, so
-this is not inference failing to reach a type. **The lifted body's checker
-scope is what is missing**, which is why `resolved(scope.ret_type, …)` answers
-nothing whichever branch it takes.
+### The root cause, from a probe rather than a reading
 
-So the largest single bucket is one defect in how a nested creator's lift
-carries its scope, not 238 instances of an unsupported construct. That is the
-next slice, and it is worth re-measuring the census after it lands rather than
-assuming the other buckets hold still — three of them (`call target has no
-semantic contract`, `a function value the AST lowering defines`, the verifier's
+A scratch probe at the refusal, printing the declaration it is refusing:
+
+```
+PROBE name=__lam_0 nparams=0 ret_type=[fn] scope_ret=[]
+      ret_fn_ret=[] ret_fn_params=[] tag_spelling=[fn]
+```
+
+Three facts, none of which a reading of the code would have given:
+
+1. **The refused declaration is not the inner lambda.** It has ZERO parameters,
+   so it is the hoist of `mk` — the nested function that RETURNS the lambda.
+   The inner `(x: i32) => x` produces fine.
+2. **Its `ret_type` is the bare string `"fn"`.** `parse_type_name` coarsens
+   `(i32) => i32` to that flat tag, which is by design.
+3. **Its `ret_fn_ret` and `ret_fn_param_types` sidecars are EMPTY**, so
+   `fn_tag_spelling` can only answer `"fn"` back, `func_ret_type` resolves
+   nothing, and `build_func_scope` leaves `scope.ret_type` unset — the branch
+   at `checker.fern:5104` runs only `if (fd.ret_type.len() > 0)` and the
+   resolution inside it is what fails.
+
+The sidecars are the #5986 mechanism: `parse_type_name` throws the signature
+away and `ret_fn_ret` / `ret_fn_param_types` carry it alongside, on `FuncDecl`,
+`ParamDecl`, `StructFieldDecl` and `StmtVar`. **`ast.ExprLambda` is the one
+member of that family that never got them.** So a lambda whose return type is
+itself a function type loses its signature at parse, and the hoist at
+`parser.fern:14258` writes `ret_fn_ret: ""` because there is nothing to copy.
+
+That is the whole of the 238. It is a missing field with four precedents for
+how to add it, not an unsupported construct: two fields on `ExprLambda`,
+populated where the lambda's return type is parsed, and carried at the hoist.
+45 full literals would need the fields; the 39 spread constructions do not.
+
+It is also worth re-measuring the census after it lands rather than assuming
+the other buckets hold still — three of them (`call target has no semantic
+contract`, `a function value the AST lowering defines`, the verifier's
 `function value is not an element`) are downstream of the same refusal
 propagating.
