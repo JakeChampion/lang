@@ -86,8 +86,27 @@ thing they share, not the first.
 
 ## The remaining 59
 
-All `$iife`. Nested ones dominate — `main$iife0$iife`, `main$iife0$iife0$iife`,
-`gen_f0$iife1$iife1$iife` — which is the shape `if_expr_rt`'s `ExprCall` arm was
-added for (#6276: read the inner IIFE's `ret_type` back rather than falling
-through to `"i32"`). Whether that arm is now reaching them correctly is the next
-measurement, and it is a measurement, not a prediction.
+All `$iife`, and the improved refusal message named their cause on sight:
+`unresolved result type: declared `fn``. Four lines reproduce it.
+
+```fern
+function main(): i32 {
+    var f: (i32) => i32 = if (true) { ((x: i32) => x) } else { ((y: i32) => y + 1) };
+    return f(42);
+}
+```
+
+`irlower.hoist_value_iife` declares the hoisted IIFE `ret_type: "fn"`
+deliberately — the hoist fires only when the arms yield a fn value, so the
+function IS a higher-order factory and `closure_ret_fns_of` is gated on exactly
+that declaration. The coarse tag is right. What it has no sidecar pair for is
+the contract: it copies `lam.ret_fn_ret` / `lam.ret_fn_param_types`, and the
+if-expression's IIFE is built by `e_lambda_origin`, which writes the empty pair.
+
+The contract exists at the parse site. `if_expr_rt` sees the arm lambda's own
+`params` and `ret_type` and could name `(i32) => i32` outright; it currently
+falls to its `"i32"` default for a lambda arm, which is the same shape of wrong
+tag as `"bool"` was, one arm over. Carrying it means `IfChain` and
+`e_lambda_origin` growing the pair the way `ExprLambda` just did. That is the
+next increment, and this time the mechanism is identified rather than guessed at
+from a count — which is the whole point of making the refusal name its input.
