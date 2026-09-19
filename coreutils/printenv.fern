@@ -61,13 +61,28 @@ pub function main(): i32 {
     term = "\x00";
   }
   var operands: string[] = g.operands();
+  // Quoted since 9.12, so the output can be sourced by a shell and so
+  // that arbitrary bytes do not reach a terminal raw. `-0` is the
+  // machine-readable form and stays exact; with named VARIABLEs the
+  // output is a value rather than a pair, and only a terminal gets it
+  // quoted.
+  var qstyle: i32 = 0;
+  var quoted_out: boolean = false;
+  if (!zero && (operands.len() == 0 || isatty(1))) {
+    qstyle = gnu.quoting_style_from_env_with(3);
+    quoted_out = qstyle != 0;
+  }
   var o: io_buffered.BufWriter = gnu.out_new();
   var ok: boolean = true;
   if (operands.len() == 0) {
     var all: string[] = environ();
     var i: i32 = 0;
     while (i < all.len()) {
-      o = gnu.put_with(o, all[i] + term, 2);
+      var shown: string = all[i];
+      if (quoted_out) {
+        shown = gnu.env_entry(all[i], qstyle);
+      }
+      o = gnu.put_with(o, shown + term, 2);
       i = i + 1;
     }
   } else {
@@ -82,7 +97,11 @@ pub function main(): i32 {
       if (operands[k].index_of("=") < 0) {
         match (env(operands[k])) {
           Some(v) => {
-            o = gnu.put_with(o, v + term, 2);
+            var shown: string = v;
+            if (quoted_out) {
+              shown = gnu.quote_style(v, qstyle);
+            }
+            o = gnu.put_with(o, shown + term, 2);
             found = true;
           },
           None => {}
