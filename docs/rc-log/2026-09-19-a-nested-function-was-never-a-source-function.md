@@ -65,6 +65,23 @@ expression`, a different leaf from the one this fix was aimed at, and the same
 change clears it. Two rows of the histogram, one cause — the inverse of the
 mistake the previous entry made, which was reading one cause into one row.
 
+## The trap the origin sets
+
+An origin is not a free label. `checker.e044_expr` used `origin.len() == 0` as
+its proxy for "a lambda the PROGRAMMER wrote" — right when every origin marked a
+parser-synthesised IIFE, wrong the moment one marks a construct the programmer
+did write. Stamping the nested-function lambda silently switched E044 off for
+every nested `function`, and the self-host checker accepted a capture the Go
+checker rejects. Found in review, not by a gate: no corpus row exercised E044
+through a nested declaration, so the checker differential had nothing to
+disagree about.
+
+The rule now reads `parser.is_written_lambda_origin`, which says what the check
+means instead of encoding it in a length, and the corpus carries the row that
+was missing. Before adding an `ORIGIN_*` value, the question to ask is which
+sites treat the empty origin as a fact about the lambda rather than as the
+absence of a label.
+
 ## What did not move
 
 The self-recursive nested function still refuses, at `unresolved type of binding

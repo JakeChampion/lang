@@ -1962,6 +1962,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e044-capture-void", "function v(): void { return; }\nfunction main(): i32 {\n    var x = v();\n    var g = () => x;\n    return 0;\n}\n", []string{"E044"}},
 		{"e044-capture-scalar-ok", "function main(): i32 {\n    var x = 5;\n    var g = () => x;\n    return g();\n}\n", nil},
 		{"e044-capture-shadowed-ok", "function v(): void { return; }\nfunction main(): i32 {\n    var x = v();\n    var g = (x: i32) => x;\n    return g(1);\n}\n", nil},
+		// A nested `function` declaration desugars to a lambda, and the rule
+		// applies to it the same way. It is the one parser-synthesised lambda
+		// the programmer did write, so the E044 gate admits it by origin
+		// (parser.is_written_lambda_origin) rather than by an empty one.
+		{"e044-capture-void-nested-fn", "function v(): void { return; }\nfunction main(): i32 {\n    var x = v();\n    function pick(): i32 { x; return 0; }\n    return pick();\n}\n", []string{"E044"}},
+		{"e044-nested-fn-shadowed-ok", "function v(): void { return; }\nfunction main(): i32 {\n    var x = v();\n    function pick(x: i32): i32 { return x; }\n    return pick(1);\n}\n", nil},
 		// E053 (`fip` no-allocation): array literals, string concatenation
 		// and calls to non-fip functions are rejected inside a `fip
 		// function`; scalar arithmetic and fip→fip calls are clean.
@@ -2254,7 +2260,8 @@ func wrapMainBodyInLambda(src string) string {
 // directions, so a listed row that starts agreeing fails too and must be
 // removed. Emptying this map closes the class.
 var lambdaBodyDivergences = map[string]string{
-	"e044-capture-void": "E044 — the under-report already pinned in the sequence gate; needs a scoping decision, not a transcription",
+	"e044-capture-void":           "E044 — the under-report already pinned in the sequence gate; needs a scoping decision, not a transcription",
+	"e044-capture-void-nested-fn": "E044 — same under-report as e044-capture-void, reached through a nested `function`; one scoping decision closes both",
 }
 
 func equalStrings(a, b []string) bool {
