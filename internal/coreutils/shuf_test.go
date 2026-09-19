@@ -25,6 +25,22 @@ func shufSource(t *testing.T, dir, name string, bytes []byte) string {
 	return "--random-source=" + shufFile(t, dir, name, bytes)
 }
 
+// shufRawName writes the not-valid-UTF-8 fixture name, with an optional
+// suffix, where the filesystem will hold it. Where it will not, it returns the
+// path without creating anything: the cases naming it carry `rawByteName` and
+// prep skips them, and shuf's other forty cases still run.
+func shufRawName(t *testing.T, dir, suffix string, content []byte) string {
+	t.Helper()
+	p := filepath.Join(dir, rawByteNameFixture+suffix)
+	if !rawByteNamesHeld(t) {
+		return p
+	}
+	if err := os.WriteFile(p, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
 // shufLCG is a deterministic byte stream with no structure: a source of
 // zeros drives every draw to its lowest value and a counting source
 // climbs, so neither exercises a rejection the way arbitrary bytes do.
@@ -94,7 +110,9 @@ func shufCases(t *testing.T) []invocation {
 	// Source names that are not plain: the two diagnostics quote
 	// differently — an exhausted source always, a source that would not
 	// open only when the name needs it.
-	rawSrc := shufSource(t, dir, "na\xffme.src", nil)
+	// Written only where the filesystem holds the name; the cases that use
+	// these two carry rawByteName and skip where it does not.
+	rawSrc := "--random-source=" + shufRawName(t, dir, ".src", nil)
 	spacedSrc := shufSource(t, dir, "sp ace.src", nil)
 	tabbedSrc := shufSource(t, dir, "ta\tb.src", nil)
 
@@ -108,7 +126,7 @@ func shufCases(t *testing.T) []invocation {
 	zsepNo := shufFile(t, dir, "zsepnonl", []byte("a\x00b\x00c"))
 	in100 := shufFile(t, dir, "in100", []byte(strings.Repeat("line\n", 100)))
 	spaced := shufFile(t, dir, "a b", []byte("x\n"))
-	raw := shufFile(t, dir, "na\xffme", []byte("x\n"))
+	raw := shufRawName(t, dir, "", []byte("x\n"))
 	missing := filepath.Join(dir, "nosuch")
 	if err := os.Mkdir(filepath.Join(dir, "d"), 0o755); err != nil {
 		t.Fatal(err)
@@ -219,7 +237,7 @@ func shufCases(t *testing.T) []invocation {
 		{name: "hundred lines", args: []string{in100, lcg}},
 		{name: "stdin from a regular file", args: []string{count}, stdinPath: in5},
 		{name: "quoted name", args: []string{spaced, count}},
-		{name: "raw byte name", args: []string{raw, count}},
+		{name: "raw byte name", args: []string{raw, count}, rawByteName: true},
 
 		// ---- -e ------------------------------------------------------
 		{name: "echo", args: []string{"-e", "a", "b", "c", count}},
@@ -345,10 +363,10 @@ func shufCases(t *testing.T) []invocation {
 		{name: "a missing source beats a bad output", args: []string{"--random-source=" + missing, "-o", "/nonexistent-dir/x"}, stdin: "a\nb\n"},
 		{name: "source prefix", args: []string{"--ra=" + strings.TrimPrefix(count, "--random-source="), "-i", "1-5"}},
 		{name: "source long split", args: []string{"--random-source", strings.TrimPrefix(count, "--random-source="), "-i", "1-5"}},
-		{name: "exhausted source with a raw byte in its name", args: []string{rawSrc, "-i", "1-5"}},
+		{name: "exhausted source with a raw byte in its name", args: []string{rawSrc, "-i", "1-5"}, rawByteName: true},
 		{name: "exhausted source with a space in its name", args: []string{spacedSrc, "-i", "1-5"}},
 		{name: "exhausted source with a tab in its name", args: []string{tabbedSrc, "-i", "1-5"}},
-		{name: "missing source with a raw byte in its name", args: []string{rawSrc + ".missing", "-i", "1-5"}},
+		{name: "missing source with a raw byte in its name", args: []string{rawSrc + ".missing", "-i", "1-5"}, rawByteName: true},
 		{name: "missing source with a space in its name", args: []string{spacedSrc + ".missing", "-i", "1-5"}},
 
 		// ---- the exhaustion boundary ---------------------------------

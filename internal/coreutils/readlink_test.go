@@ -56,7 +56,16 @@ func readlinkTree(t *testing.T) string {
 	// `read_link` is where one that is not valid UTF-8 enters a Fern
 	// program — so the fixture carries a link holding such a target and
 	// the file it names.
-	for _, name := range []string{"file", "dir/f", "\xff\xfe"} {
+	names := []string{"file", "dir/f"}
+	// The file whose NAME is not valid UTF-8 exists only where the filesystem
+	// holds one. The symlink below whose TARGET is those same bytes is
+	// created either way and is the more interesting fixture: a target is a
+	// byte string the kernel stores verbatim and never resolves at creation,
+	// so APFS takes it where it refuses the name.
+	if rawByteNamesHeld(t) {
+		names = append(names, "\xff\xfe")
+	}
+	for _, name := range names {
 		if err := os.WriteFile(filepath.Join(base, name), []byte("payload\n"), 0o644); err != nil {
 			t.Fatalf("write %s: %v", name, err)
 		}
@@ -313,7 +322,7 @@ func readlinkCases(t *testing.T) []invocation {
 		at("an empty operand reported", "-v", ""),
 		at("an empty operand reported under -f", "-v", "-f", ""),
 		at("an empty operand reported under -m", "-v", "-m", ""),
-		at("an operand that is not valid UTF-8", "-v", "\xff\xfe"),
+		rawByteCase(at("an operand that is not valid UTF-8", "-v", "\xff\xfe")),
 		at("a target that is not valid UTF-8", "badtarget"),
 		at("-f a target that is not valid UTF-8", "-f", "badtarget"),
 		at("-e a target that is not valid UTF-8", "-e", "badtarget"),
