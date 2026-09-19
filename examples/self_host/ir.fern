@@ -4602,6 +4602,38 @@ pub function render_op(o: Op): string {
 // pull the heap in via $__fern_strcat; the const_str/str_concat/str_slice
 // members below are a subset of that, so listing them here does not change its
 // result.)
+// call_needs_heap names the symbols the heap + RC runtime block EXPORTS. A
+// direct call to one claims that block exactly as an allocating op does, and
+// naming the block's own exports is what keeps the gate from drifting: the two
+// bugs op_allocates records below were both an enumeration that had gone stale.
+//
+// ssarc's reuse is why a call can be the only claimant. It emits
+// `__fern_alloc_reuse` in PLACE of the construction's allocating op, so a
+// function whose every construction is reused has no allocating tag left, and
+// the link failed on an undefined __fn___fern_alloc_reuse / __fn___fern_arr_dec.
+pub function call_needs_heap(name: string): boolean {
+    if (name == "__fern_alloc_reuse" || name == "__fern_arr_dec") { return true; }
+    if (name == "__fern_rc_inc" || name == "__fern_rc_dec" || name == "__fern_rc_is_unique") { return true; }
+    // The #4873 grow-bracket aliases reach the block under their own names —
+    // `ircore.helper_symbol` resolves them to __fn___fern_rc_inc /
+    // __fn___fern_arr_dec at LABEL time, so the op this gate reads still spells
+    // the alias. `arr_inc_elems` declares a runtime need of its own and its
+    // body calls __fn___fern_rc_inc, so it claims this block too.
+    if (name == "__fern_arr_share_inc" || name == "__fern_arr_share_dec") { return true; }
+    if (name == "__fern_arr_inc_elems") { return true; }
+    if (name == "__fern_rc_underflow_count" || name == "__fern_rc_underflow_get") { return true; }
+    if (name == "__fern_snapshot_dec" || name == "__fern_struct_copy") { return true; }
+    if (name == "__fern_str_free" || name == "__fern_str_view_free" || name == "__fern_str_arr_free") { return true; }
+    return name == "__fern_map_free" || name == "__fern_map_free_ks"
+        || name == "__fern_map_free_kvs" || name == "__fern_map_free_vs";
+}
+
+// op_needs_heap is the gate every emitter reads: the op allocates, or it calls
+// into the block that does.
+pub function op_needs_heap(o: Op): boolean {
+    return op_allocates(o.kind_tag) || (o.kind_tag == 149 && call_needs_heap(o.str));
+}
+
 pub function op_allocates(tag: i32): boolean {
     // const_struct (#6149) allocates NOTHING — its box is static data — but the
     // value still flows through the rc runtime: a dec at scope exit, an

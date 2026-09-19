@@ -6138,7 +6138,7 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
         // __fern_map_snapshot_col, which lives in the maps runtime block; a
         // pointer-column read (i32_imm 1) is a raw load and needs nothing.
         if ((dopop.kind_tag == 131 || dopop.kind_tag == 132) && dopop.i32_imm != 1) { s = s.need("maps"); }
-        if (ir.op_allocates(dopop.kind_tag)) { s = s.need("heap"); }
+        if (ir.op_needs_heap(dopop)) { s = s.need("heap"); }
         dop = dop + 1;
     }
 
