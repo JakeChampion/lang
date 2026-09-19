@@ -4794,6 +4794,21 @@ function type_from_ref_names(r: parser.TypeRef, struct_names: string[], union_na
       return t_union(name);
     }
   }
+  // The front end injects Reader / Writer / MapIter / … as struct
+  // declarations on every program (checker.go's builtinStructDecls), so
+  // naming one resolves to that struct even though no module declares it.
+  // Their FIELDS stay unregistered — `lookup_struct` misses, which is what
+  // keeps `r.read_line()` a builtin method rather than an E043 field read,
+  // and what keeps the handle out of the reference-counted shapes.
+  //
+  // `Map` and `Cell` are excluded: they are containers resolved by the
+  // is_map_ref / is_cell_ref arms above, which need the instantiation, and
+  // an argless spelling of either names no layout. Resolving those two here
+  // would make `var m: Map = map_new(4)` — which native accepts — an E003
+  // against a nominal nothing produces.
+  if (is_reserved_struct_name(name) && name != "Map" && name != "Cell") {
+    return t_struct(name);
+  }
   // Unknown-BASE generic `Foo[T]` (non-tuple, non-Map, base declared
   // nowhere): the Go checker's resolveType keeps this shape as an
   // `ast.EnumType{Foo}` — an *unknown enum* — so a match / if-let /
