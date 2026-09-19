@@ -1394,32 +1394,37 @@ function has_nonzero(d: string, from: i32): boolean {
 
 // ---- %e %f %g ----------------------------------------------------------------
 // `Body` — the characters of one conversion, or the refusal glibc
-// answers a field that would reach INT_MAX-1 bytes with: the directive
-// prints nothing and the stream carries an error. `extra` below is how
-// many bytes the caller puts in front (a sign, a radix), which counts
-// toward that limit the same way.
+// answers a field longer than INT_MAX bytes with: the directive prints
+// nothing and the stream carries an error. `extra` below is how many
+// bytes the caller puts in front (a sign, a radix), which counts toward
+// that limit the same way.
 pub struct Body { s: string, refused: boolean }
 
 function refused(): Body {
   return Body { s: "", refused: true };
 }
 
-// The length at which glibc refuses a conversion outright.
+// The length at which glibc refuses a conversion outright: one past
+// INT_MAX, which is the largest count its return value can carry.
 pub function overflow_len(): i64 {
-  return 2147483646 as i64;
+  return 2147483648 as i64;
 }
 
 // `fixed(d, prec, alt, extra)` — the `%f` body: `prec` digits after the
 // point, `alt` keeping the point when there are none.
 pub function fixed(d: Dec, prec: i64, alt: boolean, extra: i64): Body {
   if (d.digits.len() == 0) {
-    if (prec + 7 as i64 + extra >= overflow_len()) {
+    if (prec + 2 as i64 + extra >= overflow_len()) {
       return refused();
     }
     return fixed_shape("", 0 - prec as i32, prec, alt);
   }
   var n: i64 = d.dp as i64 + prec;
-  if (n + 2 as i64 + extra >= overflow_len()) {
+  var whole: i64 = d.dp as i64;
+  if (whole < 1 as i64) {
+    whole = 1 as i64;
+  }
+  if (whole + prec + 1 as i64 + extra >= overflow_len()) {
     return refused();
   }
   var rf: (string, boolean) = round_digits(d.digits, n as i32);
@@ -1477,7 +1482,7 @@ function exp_suffix(x: i32, upper: boolean): string {
 // point, `prec` more, then the exponent.
 pub function sci(d: Dec, prec: i64, alt: boolean, upper: boolean, extra: i64): Body {
   if (d.digits.len() == 0) {
-    if (prec + 7 as i64 + extra >= overflow_len()) {
+    if (prec + 6 as i64 + extra >= overflow_len()) {
       return refused();
     }
     return sci_shape("0".repeat(prec as i32 + 1), 0, prec, alt, upper);
@@ -1765,7 +1770,18 @@ function sign_of(v: LD): string {
 // in hex, and a carry out of the top digit lifts the leading one — past
 // f it renormalises four binades up, which only a stored integer bit
 // can reach.
+// `HexBody` — a `%a` body in three pieces, so a precision wider than
+// the significand never has to be a string: `head` is the leading digit
+// with the point and the digits the value has, `zeros` is how many
+// zeros pad that out to the precision, and `tail` is the `p±N`.
+pub struct HexBody { head: string, zeros: i64, tail: string }
+
 pub function (f: Format) hex(v: LD, prec: i64, alt: boolean): string {
+  var b: HexBody = f.hex_parts(v, prec, alt);
+  return b.head + "0".repeat(b.zeros as i32) + b.tail;
+}
+
+pub function (f: Format) hex_parts(v: LD, prec: i64, alt: boolean): HexBody {
   var shift: i32 = hex_shift(f);
   var nd: i32 = shift / 4;
   var lead: i32 = 0;
@@ -1829,11 +1845,12 @@ pub function (f: Format) hex(v: LD, prec: i64, alt: boolean): string {
     }
   }
   var digits: string = slice_unchecked(string_from_bytes_unchecked(frac), 0, keep) + "";
+  var zeros: i64 = 0 as i64;
   if (prec > nd as i64) {
-    digits = digits + "0".repeat(prec as i32 - nd);
+    zeros = prec - nd as i64;
   }
   var body: string = string_from_bytes_unchecked([hex_char(lead) as u8]);
-  if (digits.len() > 0 || alt) {
+  if (digits.len() > 0 || zeros > 0 as i64 || alt) {
     body = body + "." + digits;
   }
   var ps: string = "p";
@@ -1842,7 +1859,7 @@ pub function (f: Format) hex(v: LD, prec: i64, alt: boolean): string {
   } else {
     ps = ps + "+" + (pe as i64).to_string();
   }
-  return body + ps;
+  return HexBody { head: body, zeros: zeros, tail: ps };
 }
 
 // The four bits of the significand starting at bit `at`.

@@ -542,7 +542,9 @@ function compute(c: Conf, names: string[], named: boolean, o: io_buffered.BufWri
   var i: i32 = 0;
   while (i < names.len()) {
     var r: (boolean, io_buffered.BufWriter) = compute_one(c, names[i], named, out);
-    out = r.1;
+    // Line buffering, as GNU sets stdout to be: a failure is named on
+    // the line that met it rather than at the close.
+    out = gnu.flush(r.1);
     if (!r.0) {
       ok = false;
     }
@@ -617,7 +619,6 @@ pub function main(): i32 {
     ok = rc.0;
     out = rc.1;
   }
-  out = out.flush();
   gnu.close_stdout(out, false);
   if (!ok) {
     return 1;
