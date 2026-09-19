@@ -165,14 +165,27 @@ Three facts, none of which a reading of the code would have given:
 The sidecars are the #5986 mechanism: `parse_type_name` throws the signature
 away and `ret_fn_ret` / `ret_fn_param_types` carry it alongside, on `FuncDecl`,
 `ParamDecl`, `StructFieldDecl` and `StmtVar`. **`ast.ExprLambda` is the one
-member of that family that never got them.** So a lambda whose return type is
-itself a function type loses its signature at parse, and the hoist at
-`parser.fern:14258` writes `ret_fn_ret: ""` because there is nothing to copy.
+member of that family that never got them**, and the loss happens in two steps:
 
-That is the whole of the 238. It is a missing field with four precedents for
-how to add it, not an unsupported construct: two fields on `ExprLambda`,
-populated where the lambda's return type is parsed, and carried at the hoist.
-45 full literals would need the fields; the 39 spread constructions do not.
+1. **`parser.fern:5589` drops them.** A nested `function mk(): (i32) => i32`
+   is desugared to a lambda-valued local by
+   `e_lambda(fr_func.params, fr_func.ret_type, fr_func.body)` — the parsed
+   `FuncDecl` HAS `ret_fn_ret` filled in, and `e_lambda` takes no parameter to
+   put it in, because `ExprLambda` has no field for it.
+2. **`irlower.try_lift_binding` (`irlower.fern:73715`) hoists that binding to
+   `__lam_0`** and writes `ret_fn_ret: ""`, because by then there is nothing
+   left to copy. It is one of only two places in the tree that mint a `__lam_N`
+   name — the other is `lift_call_arg` (`irlower.fern:73141`) — and both
+   hardcode the empty pair, as do the escaping-closure builders at `73905` and
+   `74012`.
+
+That is the whole of the 238: a missing field with four precedents for how to
+add it, not an unsupported construct. Two fields on `ExprLambda`, populated at
+the parse sites that build one from a declaration, and copied by **every**
+lambda-to-`FuncDecl` hoist — all four `irlower` sites above, not just the one
+the reproducer happens to exercise, or the next shape loses the signature
+again. Of the 47 `ExprLambda` construction sites the 39 spreads carry new
+fields for free; 6 are full literals.
 
 It is also worth re-measuring the census after it lands rather than assuming
 the other buckets hold still — three of them (`call target has no semantic
