@@ -3,7 +3,7 @@
 `coreutils/` reimplements GNU coreutils in Fern, one program per file, to two
 requirements that do not bend:
 
-1. **Byte-for-byte parity with GNU coreutils 9.4 or newer.** Same stdout, same stderr,
+1. **Byte-for-byte parity with GNU coreutils 9.12.** Same stdout, same stderr,
    same exit status, for every invocation. Not "compatible", not "the common
    cases": a divergence is a bug with the same standing as a miscompile.
 2. **Faster than GNU on every utility, and faster than uutils (the Rust
@@ -269,8 +269,8 @@ failure, not a skip.** On the Ubuntu CI runners it is the system coreutils;
 on macOS the system tools are BSD, so a nix or Homebrew GNU coreutils is
 needed and the failure message says so.
 
-Versions: the corpus is held to GNU coreutils **9.4 or newer**, and the
-floor is enforced by supplying the reference rather than hoping for it.
+Versions: the corpus is held to GNU coreutils **9.12**, and that is enforced
+by supplying the reference rather than hoping for it.
 `scripts/devbox`'s base is `debian:bookworm`, whose coreutils is **9.1** —
 below the floor, and the container spent its life comparing against it, which
 is not a gate (#9162). The image now builds 9.4 and puts it ahead of
@@ -296,31 +296,24 @@ selected by skipping rather than by naming, because `touch_test.go` and
 compare against both GNU coreutils and Rust uutils, recording their actual
 versions. Install missing comparison implementations before measuring.
 A case whose behaviour changed between versions records the version it needs in a
-comment and is the exception, not the pattern. There is exactly one such case:
-`numfmt`'s buffer-length refusal is GNU <= 9.4 behaviour, pinned by a comment in
-both `coreutils/numfmt.fern` and its corpus, and #8765 holds the open question
-of whether Fern should follow 9.5+ instead. Nothing forces that today — every
-CI runner and this container ship 9.4 — so it is a future-GNU decision rather
-than a live divergence.
+comment and is the exception, not the pattern. #8765 was the standing example —
+`numfmt`'s buffer-length refusal is GNU <= 9.4 behaviour — and it is settled:
+Fern follows 9.5+, the refusal is gone from the scaled path, and the corpus
+compares those rows against 9.12 like any other. The unscaled
+`value/precision too large` limit is a different rule and 9.12 still applies
+it, so only half of that issue's surface moved.
 
-**The benchmark's GNU is a different tree from the oracle's, on purpose.** The
-corpus is pinned to 9.4 by the paragraph above; a benchmark pinned there would
-be claiming to beat a release from 2023. So `scripts/coreutils-bench` reads
-`FERN_GNU_COREUTILS_BENCH` — a PATH-style list tried ahead of
-`FERN_GNU_COREUTILS` — and `scripts/devbox.Dockerfile` builds a second tree at
-the newest release (`BENCH_GNU_COREUTILS_VERSION`, currently 9.12) into
-`/opt/gnu-coreutils-bench`, setting that variable in the image. With the
-variable unset the two are the same tree and nothing changes.
-
-The bench script carries the newest release as `bench_gnu_floor` and says on
-stderr when the tree it found is older, rather than quietly comparing against
-whatever is on PATH. It warns and does not exit: the bench is a comparison and
-not a gate, and a developer without a current tree still wants the uutils
-column. Two utilities stay on the fallback tree whatever is installed —
-`chcon` and `runcon` need SELinux and both trees configure `--without-selinux`
-— and `arch`, `kill` and `uptime` need `--enable-install-program`, which the
-image passes. A utility answered from a different directory than the bulk
-names its real version on stderr, so a mixed run is never silent.
+**The benchmark uses the same tree.** It did not always: while the corpus was
+pinned to 9.4 the bench had its own 9.12 so "faster than GNU" meant the GNU
+people run. Now that both are 9.12 there is nothing to differ about, and
+`scripts/coreutils-bench` reads `FERN_GNU_COREUTILS` like everything else. It
+still carries the release as `bench_gnu_floor` and says on stderr when the
+tree it found is older, warning rather than exiting: the bench is a
+comparison and not a gate. Two utilities always answer from elsewhere —
+`chcon` and `runcon` need SELinux and the built tree configures
+`--without-selinux` — so the directory on PATH is appended to the search list
+after the named ones, and a utility answered from there names its real
+version on stderr.
 
 ### The Darwin ratchet
 
@@ -2832,9 +2825,10 @@ the link's real ownership.
 chgrp answers `unrecognized option '--from='` and accepts `4294967295` as a
 gid, where 9.10 takes the option and answers `invalid group: '4294967295'`.
 chgrp reached GNU's shared `parse_user_spec` somewhere between the two. The
-corpus is held to "9.4 or newer" and a case may only assert what every version
-in that range does, so these two are implemented to 9.10 and left uncompared
-rather than pinned to a version the runner may not have. `chown` is unaffected
+corpus was held to "9.4 or newer" when these were written, and a case could
+only assert what every version in that range did, so the two are implemented
+to 9.10 and left uncompared. Now that the corpus names one version they could
+be compared instead; nothing has needed it yet. `chown` is unaffected
 — it has had both since long before 9.1, and its cases cover them.
 
 **Three rm paths are outside the corpus.** `--one-file-system` and

@@ -46,7 +46,7 @@ jobs:
     # would show it first in `--help`, the most version-volatile output
     # coreutils has and one the corpus compares byte for byte.
     env:
-      GNU_COREUTILS_VERSION: "9.4"
+      GNU_COREUTILS_VERSION: "9.12"
     steps:
       - uses: actions/checkout@v7
 
@@ -127,25 +127,16 @@ jobs:
           # checked-arithmetic header rather than patching either one.
           FORCE_UNSAFE_CONFIGURE=1 ac_cv_header_stdckdint_h=no \
             ./configure --quiet --disable-nls \
-            --without-selinux --prefix="$HOME/gnu-coreutils"
+            --without-selinux --prefix="$HOME/gnu-coreutils" \
+            --enable-install-program=arch,kill,uptime
           make -j"$(sysctl -n hw.ncpu)"
           make install
-          # `arch` is in coreutils' no_install__progs list, which makes it an
-          # automake EXTRA_PROGRAM: `make` does not build it and `make
-          # install` does not place it unless the build names it in
-          # --enable-install-program, which this lane does not pass.
-          # Debian ships its own copy, which is the only reason the Linux
-          # corpora find an oracle in /usr/bin; here /usr/bin/arch is Apple's
-          # arch(1), a different program that runs a command under a named
-          # architecture, and the harness's version probe rejects it. So name
-          # the target and copy the result.
-          #
-          # Naming a target is what the Linux lane's comment warns against —
-          # it skips the gnulib header generation and dies on a missing
-          # stdckdint.h — but that is a warning about building a target in a
-          # tree where `make` has not run. Here it has, two lines up.
-          make src/arch
-          cp src/arch "$HOME/gnu-coreutils/bin/arch"
+          # `arch` needs naming in --enable-install-program above, which is
+          # also what builds it: it is an automake EXTRA_PROGRAM, so `make`
+          # alone produces nothing to copy. Debian ships its own, which is
+          # the only reason the Linux corpora find one in /usr/bin; here
+          # /usr/bin/arch is Apple's unrelated arch(1) and the harness's
+          # version probe rejects it.
           cd /
           rm -rf "$work"
       # A SKIP IS A MISSING DEPENDENCY, NOT A PASS. A cache that restored an

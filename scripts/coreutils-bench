@@ -10,10 +10,6 @@
 #
 #   FERN_GNU_COREUTILS  directory holding the GNU binaries. Default: the
 #                       directory `yes` resolves to on PATH, if it is GNU.
-#   FERN_GNU_COREUTILS_BENCH  the GNU binaries to COMPARE AGAINST, when those
-#                       should not be the version the corpus is held to.
-#                       Tried ahead of FERN_GNU_COREUTILS; unset, the two are
-#                       the same tree.
 #   FERN_UUTILS         directory holding uutils binaries, named either
 #                       `<util>` or `uutils-<util>`. Default: search PATH
 #                       for `uutils-yes`, then for a `coreutils` multi-call
@@ -89,16 +85,7 @@ is_gnu() { [ -x "$1/yes" ] && "$1/yes" --version 2>/dev/null | head -1 | grep -q
 # into their coreutils package, and the /usr/bin/uptime that exists on most
 # Linux distributions belongs to procps. $gnu is the directory holding the
 # bulk; gnu_bin looks the rest up across the whole list.
-# The BENCH's GNU need not be the ORACLE's, and deliberately is not. The
-# corpus is held to 9.4 because moving it is an open conformance question —
-# 9.5 grew numfmt's padding buffer and 66 corpus rows are pinned against the
-# refusal it replaced (#8765). A benchmark carries no such tie: "faster than
-# GNU" is only worth claiming against the GNU people actually run. So a newer
-# tree wins here when one is supplied, and the oracle's is the fallback.
 gnu_dirs="${FERN_GNU_COREUTILS:-}"
-if [ -n "${FERN_GNU_COREUTILS_BENCH:-}" ]; then
-  gnu_dirs="${FERN_GNU_COREUTILS_BENCH}${gnu_dirs:+:$gnu_dirs}"
-fi
 gnu=""
 if [ -n "$gnu_dirs" ]; then
   IFS=: read -r -a _gnu_list <<< "$gnu_dirs"
@@ -136,13 +123,13 @@ fi
 # exit, because the bench is a comparison and not a gate (see WALL TIME above)
 # and a developer without a current tree still wants the other two columns.
 #
-# Tracks the same upstream release as BENCH_GNU_COREUTILS_VERSION in
-# scripts/devbox.Dockerfile, which is the tree this warning tells you to point
-# at: bump the two together or the warning stops naming the newest.
+# The same release GNU_COREUTILS_VERSION pins in scripts/devbox.Dockerfile and
+# the CI lanes, which is the tree the corpus is held to: bump them together or
+# this warning stops naming the version the oracle is.
 bench_gnu_floor=9.12
 gnu_ver=$({ "$gnu/yes" --version || true; } | head -1 | awk '{print $NF}')
 if [ "$(printf '%s\n%s\n' "$bench_gnu_floor" "$gnu_ver" | sort -V | head -1)" != "$bench_gnu_floor" ]; then
-  echo "coreutils-bench: comparing against GNU coreutils ${gnu_ver:-?}, older than $bench_gnu_floor — point FERN_GNU_COREUTILS_BENCH at a newer tree (scripts/devbox.Dockerfile builds one at /opt/gnu-coreutils-bench)" >&2
+  echo "coreutils-bench: comparing against GNU coreutils ${gnu_ver:-?}, older than $bench_gnu_floor — point FERN_GNU_COREUTILS at a newer tree (scripts/devbox.Dockerfile builds one at /opt/gnu-coreutils)" >&2
 fi
 
 # gnu_bin UTIL — the GNU coreutils binary for UTIL. The name is VERIFIED
