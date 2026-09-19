@@ -146,7 +146,7 @@ gnu_bin() {
     # `false --version` prints its version and exits 1, which under pipefail
     # would fail the whole pipeline; the exit status is not the question.
     # `dd` is the one utility whose version line omits the word GNU — it
-    # says `dd (coreutils) 9.4` where every sibling says `(GNU coreutils)`
+    # says `dd (coreutils) 9.12` where every sibling says `(GNU coreutils)`
     # — so both spellings name the package.
     if [ -x "$d/$u" ] && [ -x "$d/$probe" ] && { "$d/$probe" --version 2>/dev/null || true; } | head -1 | grep -qE '\((GNU )?coreutils\)'; then
       # The header names the version of the directory holding the bulk, so
