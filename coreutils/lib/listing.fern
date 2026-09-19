@@ -465,7 +465,7 @@ function six_months(): i64 {
 // `fsize` renders the SIZE column and `bsize` the `total` line and the
 // `-s` block counts, so `ls -lk` still prints a file size in bytes
 // while its total is in kibibytes. `--block-size` and `-h` set both.
-pub struct Cfg { format: i32, ignore_mode: i32, sort_key: i32, reverse: boolean, time_type: i32, deref: i32, immediate_dirs: boolean, recursive: boolean, inode: boolean, show_blocks: boolean, indicator: i32, qstyle: i32, qmark: boolean, show_owner: boolean, show_group: boolean, show_author: boolean, numeric_ids: boolean, show_context: boolean, width: i64, tabsize: i64, ignores: string[], hides: string[], ignore_backups: boolean, dirs_first: boolean, dired: boolean, hyperlink: boolean, color: boolean, zero: boolean, fsize: blocks.Unit, bsize: blocks.Unit, nonrecent_fmt: string, recent_fmt: string, zone: tz.Zone, now: i64, colors: Palette }
+pub struct Cfg { format: i32, ignore_mode: i32, sort_key: i32, reverse: boolean, time_type: i32, deref: i32, immediate_dirs: boolean, recursive: boolean, inode: boolean, show_blocks: boolean, indicator: i32, qstyle: i32, qmark: boolean, qmark_newline: boolean, show_owner: boolean, show_group: boolean, show_author: boolean, numeric_ids: boolean, show_context: boolean, width: i64, tabsize: i64, ignores: string[], hides: string[], ignore_backups: boolean, dirs_first: boolean, dired: boolean, hyperlink: boolean, color: boolean, zero: boolean, fsize: blocks.Unit, bsize: blocks.Unit, nonrecent_fmt: string, recent_fmt: string, zone: tz.Zone, now: i64, colors: Palette }
 
 // `defaults(format, qstyle, qmark)` — the starting configuration the
 // three programs differ in and nothing else: off a terminal `ls` is
@@ -473,7 +473,7 @@ pub struct Cfg { format: i32, ignore_mode: i32, sort_key: i32, reverse: boolean,
 // vertical columns and escape, `vdir` is long and escape. On a terminal
 // `ls` starts from three different answers; see `ls()`.
 pub function defaults(format: i32, qstyle: i32, qmark: boolean): Cfg {
-  return Cfg { format: format, ignore_mode: ignore_default(), sort_key: sort_name(), reverse: false, time_type: time_mtime(), deref: deref_none(), immediate_dirs: false, recursive: false, inode: false, show_blocks: false, indicator: ind_none(), qstyle: qstyle, qmark: qmark, show_owner: true, show_group: true, show_author: false, numeric_ids: false, show_context: false, width: 80 as i64, tabsize: 8 as i64, ignores: [], hides: [], ignore_backups: false, dirs_first: false, dired: false, hyperlink: false, color: false, zero: false, fsize: blocks.plain_unit(1 as u64), bsize: blocks.default_unit(), nonrecent_fmt: "%b %e  %Y", recent_fmt: "%b %e %H:%M", zone: tz.utc_zone(), now: 0 as i64, colors: palette_off() };
+  return Cfg { format: format, ignore_mode: ignore_default(), sort_key: sort_name(), reverse: false, time_type: time_mtime(), deref: deref_none(), immediate_dirs: false, recursive: false, inode: false, show_blocks: false, indicator: ind_none(), qstyle: qstyle, qmark: qmark, qmark_newline: false, show_owner: true, show_group: true, show_author: false, numeric_ids: false, show_context: false, width: 80 as i64, tabsize: 8 as i64, ignores: [], hides: [], ignore_backups: false, dirs_first: false, dired: false, hyperlink: false, color: false, zero: false, fsize: blocks.plain_unit(1 as u64), bsize: blocks.default_unit(), nonrecent_fmt: "%b %e  %Y", recent_fmt: "%b %e %H:%M", zone: tz.utc_zone(), now: 0 as i64, colors: palette_off() };
 }
 
 // ---- output -----------------------------------------------------------------
@@ -1328,7 +1328,31 @@ function quoted_name(c: Cfg, name: string): string {
   if (c.qmark && qmark_applies(c.qstyle)) {
     return qmark(out);
   }
+  // A NEWLINE is `?` even without -q, under the same styles -q applies
+  // to — the ones that do not spell a control byte out — in the layouts
+  // `qmark_newline` names. Only the newline: a tab, a DEL or a \x01
+  // still go out raw, and `--quoting-style=c` or `escape` write `\n`
+  // rather than `?`. Never under `--dired`, whose byte offsets are
+  // measured over the name as it stands.
+  if (qmark_applies(c.qstyle) && c.qmark_newline && !c.dired) {
+    return newline_qmark(out);
+  }
   return out;
+}
+
+// `?` for the newline and nothing else.
+function newline_qmark(s: string): string {
+  var bs: u8[] = [];
+  var i: i32 = 0;
+  while (i < s.len()) {
+    if (s[i] as i32 == 10) {
+      bs = bs.append(63 as u8);
+    } else {
+      bs = bs.append(s[i]);
+    }
+    i = i + 1;
+  }
+  return string_from_bytes_unchecked(bs);
 }
 
 // A directory header is quoted in the same style with a COLON in the
@@ -1481,6 +1505,13 @@ function ends_with_fold(name: string, suffix: string): boolean {
     i = i + 1;
   }
   return true;
+}
+
+// What ends an OSC 8 sequence. 9.5 moved from BEL to ST — `ESC \` —
+// which is the terminator the OSC 8 specification names and the one
+// more terminals understand.
+function osc_end(): string {
+  return "\x1b\\";
 }
 
 // `--hyperlink` wraps the name in OSC 8 with a `file://HOST/ABS-PATH`
@@ -1929,7 +1960,7 @@ function write_name(c: Cfg, o: Out, p: Paint, e: Ent, colour: (string, boolean),
     body = slice_unchecked(text, 1, text.len() - 1) + "";
   }
   if (c.hyperlink) {
-    out = put(out, "\x1b]8;;file://" + hostname() + uri_encode(canonical(e.path)) + "\x07");
+    out = put(out, "\x1b]8;;file://" + hostname() + uri_encode(canonical(e.path)) + osc_end());
   }
   if (record) {
     out = put_name(c, out, body);
@@ -1937,7 +1968,7 @@ function write_name(c: Cfg, o: Out, p: Paint, e: Ent, colour: (string, boolean),
     out = put(out, body);
   }
   if (c.hyperlink) {
-    out = put(out, "\x1b]8;;\x07");
+    out = put(out, "\x1b]8;;" + osc_end());
   }
   if (hoist) {
     out = put(out, slice_unchecked(text, text.len() - 1, text.len()) + "");
@@ -2083,13 +2114,19 @@ function printable_width(s: string): i32 {
 }
 
 // ---- the column layout ------------------------------------------------------
-// The count is the largest whose total is STRICTLY less than the width,
-// every column floored at three characters; `by_columns` is `-C`'s
+// The count is the largest whose total FITS the width — 9.5 made that
+// inclusive, so a layout exactly filling it is allowed — with every
+// column floored at three characters; `by_columns` is `-C`'s
 // down-then-across against `-x`'s across-then-down, and the two differ
 // only in which column an entry lands in.
 function column_count(c: Cfg, lens: i32[], by_columns: boolean, width: i32): i32 {
   var n: i32 = lens.len();
+  // The first column carries no separator, and a width below the
+  // minimum still fits one column, so a remainder buys one more.
   var max_cols: i32 = width / min_column_width();
+  if (width % min_column_width() != 0) {
+    max_cols = max_cols + 1;
+  }
   if (max_cols > n) {
     max_cols = n;
   }
@@ -2141,7 +2178,7 @@ function column_count(c: Cfg, lens: i32[], by_columns: boolean, width: i32): i32
         if (flat[slot] < want) {
           total = total.with(k, total[k] + want - flat[slot]);
           flat = flat.with(slot, want);
-          valid = valid.with(k, total[k] < width);
+          valid = valid.with(k, total[k] <= width);
         }
       }
       k = k + 1;
@@ -2266,7 +2303,14 @@ function emit_separated(c: Cfg, o: Out, p: Paint, es: Ent[], w: Widths, sep: str
     }
     if (i > 0) {
       out = put(out, sep);
-      if (width == 0 || pos + len + 2 < width) {
+      // What this entry will occupy: the two separator bytes, the name,
+      // and the comma that will follow it when it is not the last. 9.5
+      // made the comparison inclusive and started counting that comma.
+      var want: i32 = pos + len + 2;
+      if (sep == "," && i < es.len() - 1) {
+        want = want + 1;
+      }
+      if (width == 0 || want <= width) {
         pos = pos + 2;
         out = put(out, " ");
       } else {
@@ -2807,11 +2851,11 @@ function format_values(): i32[] {
 }
 
 function sort_names(): string[] {
-  return ["none", "time", "size", "extension", "version", "width"];
+  return ["none", "size", "time", "version", "extension", "name", "width"];
 }
 
 function sort_values(): i32[] {
-  return [sort_none(), sort_time(), sort_size(), sort_ext(), sort_version(), sort_width()];
+  return [sort_none(), sort_size(), sort_time(), sort_version(), sort_ext(), sort_name(), sort_width()];
 }
 
 function time_names(): string[] {
@@ -2969,10 +3013,15 @@ function help_text(): string {
 }
 
 // ---- the option scan --------------------------------------------------------
-struct Scan { c: Cfg, width_seen: boolean, operands: string[] }
+struct Scan { c: Cfg, width_seen: boolean, hide_opt: i32, operands: string[] }
 
 function scan(argv: string[], start: Cfg): Scan {
   var c: Cfg = start;
+  // gnulib's hide_control_chars_opt: -1 for neither option given, which
+  // is not the same as `--show-control-chars`. The newline
+  // substitution asks whether that option was given, where the general
+  // one asks for the resolved answer.
+  var hide_opt: i32 = 0 - 1;
   c = Cfg { ...c, qstyle: gnu.quoting_style_from_env_with(c.qstyle) };
   var g: gnu.Getopt = gnu.getopt_new(argv, options(), gnu.prog(), help_text(), status_usage());
   // The format an option ASKED for, apart from the program's default:
@@ -3014,12 +3063,19 @@ function scan(argv: string[], start: Cfg): Scan {
           c = Cfg { ...c, qstyle: gnu.argmatch(m.value, gnu.quoting_style_names(), "--quoting-style") };
         } else if (m.id == op_hide_control()) {
           c = Cfg { ...c, qmark: true };
+          hide_opt = 1;
         } else if (m.id == op_show_control()) {
           c = Cfg { ...c, qmark: false };
+          hide_opt = 0;
         } else if (m.id == op_directory()) {
           c = Cfg { ...c, immediate_dirs: true };
         } else if (m.id == op_dired()) {
+          // 9.5 made `-D` ask for the long format and refuse
+          // hyperlinks, rather than being dropped when either did not
+          // hold: `ls --dired` alone is now a long listing.
           c = Cfg { ...c, dired: true };
+          format_opt = fmt_long();
+          link_when = when_never();
         } else if (m.id == op_full_time()) {
           format_opt = fmt_long();
           time_style = "full-iso";
@@ -3122,9 +3178,10 @@ function scan(argv: string[], start: Cfg): Scan {
         } else if (m.id == op_sort_ext()) {
           sort_opt = sort_ext();
         } else if (m.id == op_unsorted_all()) {
+          // 9.5 cut `-f` back to `-a -U`: it no longer turns colour,
+          // hyperlinks, `-s` or the long format off as well.
           c = Cfg { ...c, ignore_mode: ignore_minimal() };
           sort_opt = sort_none();
-          color_when = when_never();
         } else if (m.id == op_time()) {
           c = Cfg { ...c, time_type: gnu.argmatch_valued(m.value, time_names(), time_values(), "--time") };
           explicit_time = true;
@@ -3256,7 +3313,7 @@ function scan(argv: string[], start: Cfg): Scan {
   if (kibibytes) {
     c = Cfg { ...c, bsize: blocks.plain_unit(1024 as u64) };
   }
-  return Scan { c: c, width_seen: width_seen, operands: g.operands() };
+  return Scan { c: c, width_seen: width_seen, hide_opt: hide_opt, operands: g.operands() };
 }
 
 function env_or_empty(name: string): string {
@@ -3374,6 +3431,14 @@ function run(format: i32, qstyle: i32, qmark: boolean): i32 {
   var start: Cfg = defaults(format, qstyle, qmark);
   var s: Scan = scan(argv, start);
   var c: Cfg = resolve_width(s.c, s.width_seen);
+  // A NEWLINE in a name comes out `?` under the styles that do not
+  // spell a control byte out, whatever standard output is — an entry
+  // may not span two lines. 9.5 narrowed it to the layouts a newline
+  // could really be confused in: the ones that SEPARATE with a newline,
+  // and the column layouts only while a width bounds them. Not under
+  // `--show-control-chars`, which asks for the bytes as they are, and
+  // not under `--zero`, where a NUL ends each record.
+  c = Cfg { ...c, qmark_newline: s.hide_opt != 0 && !c.zero && (c.width != 0 as i64 && (c.format == fmt_commas() || c.format == fmt_vertical() || c.format == fmt_across()) || c.format == fmt_single() || c.format == fmt_long()) };
   c = Cfg { ...c, zone: tz.local_zone(), now: now_unix_ms() / (1000 as i64) };
   var o: Out = run_operands(c, out_new(), s.operands);
   var status: i32 = o.status;

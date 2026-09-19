@@ -117,6 +117,7 @@ function help_text(): string {
   out = out + "  %i   inode number\n";
   out = out + "  %m   mount point\n";
   out = out + "  %n   file name\n";
+  out = out + "  %Qn  quoted file name\n";
   out = out + "  %N   quoted file name with dereference if symbolic link\n";
   out = out + "  %o   optimal I/O transfer size hint\n";
   out = out + "  %s   total size, in bytes\n";
@@ -144,6 +145,7 @@ function help_text(): string {
   out = out + "  %f   free blocks in file system\n";
   out = out + "  %l   maximum length of filenames\n";
   out = out + "  %n   file name\n";
+  out = out + "  %Qn  quoted file name\n";
   out = out + "  %s   block size (for faster transfers)\n";
   out = out + "\n";
   out = out + "This build cannot report the file birth time (%w, %W), a file's\n";
@@ -180,10 +182,10 @@ function opt_cached(): i32 {
 }
 
 // ---- the parsed directive ---------------------------------------------------
-// One `%` directive. `mod` is 0, `H` or `L`; `conv` is the conversion
-// byte. `raw` records that the directive carried ANY flag, width or
-// precision, which is the only thing that decides whether `%N` quotes
-// (a bare `%N` is `'f'`, and `%-N`, `%12N` and `%.7N` are all `f`).
+// One `%` directive. `mod` is 0, `H`, `L` or `Q`; `conv` is the
+// conversion byte. `raw` records that the directive carried ANY flag,
+// width or precision, which is what keeps a `%%` with modifiers from
+// being the literal `%` a bare `%%` is.
 struct Directive {
   minus: boolean,
   zero: boolean,
@@ -308,7 +310,7 @@ function scan(fmt: string, fs_mode: boolean, escapes: boolean): Piece[] {
     }
     if (i < fmt.len()) {
       var m: i32 = fmt[i] as i32;
-      if (m == 72 || m == 76) {
+      if (m == 72 || m == 76 || m == 81) {
         d = Directive { ...d, mod: m };
         i = i + 1;
       }
@@ -323,10 +325,12 @@ function scan(fmt: string, fs_mode: boolean, escapes: boolean): Piece[] {
     }
     var conv: i32 = fmt[i] as i32;
     i = i + 1;
-    if (d.mod != 0 && !(!fs_mode && (conv == 100 || conv == 114))) {
+    var mod_ok: boolean = d.mod == 81 && conv == 110 || (d.mod == 72 || d.mod == 76) && !fs_mode && (conv == 100 || conv == 114);
+    if (d.mod != 0 && !mod_ok) {
       // `H` and `L` select a half of a device number and only `d` and
-      // `r` have halves — and `-f` has no device numbers at all. The
-      // byte that followed is NOT consumed: `%Hx` is `?` and then a
+      // `r` have halves — and `-f` has no device numbers at all; `Q`
+      // quotes a name and only `n` is one, in either mode. The byte
+      // that followed is NOT consumed: `%Hx` is `?` and then a
       // literal `x`, where a plain unknown conversion swallows its own
       // byte (`%q` is `?`, not `?q`).
       i = i - 1;
@@ -784,10 +788,29 @@ function ok_rendered(s: string): Rendered {
   return Rendered { text: s, failed: false };
 }
 
-function render_file(d: Directive, it: Item, z: tz.Zone, style: i32): Rendered {
+// The style `%N` and `%Qn` quote in. It is read from the environment the
+// first time one of them is PRINTED and not before, so a format that
+// never reaches one never warns about a bad QUOTING_STYLE, and a format
+// holding two warns once.
+struct Quoting { style: i32, ready: boolean }
+
+function quoting_new(): Quoting {
+  return Quoting { style: 0, ready: false };
+}
+
+// stat falls back on shell-escape rather than gnulib's own default, so
+// a name needing no quotes is printed without them.
+function quoting_ready(q: Quoting): Quoting {
+  if (q.ready) {
+    return q;
+  }
+  return Quoting { style: gnu.quoting_style_from_env_with(3), ready: true };
+}
+
+function render_file(d: Directive, it: Item, z: tz.Zone, qi: Quoting): (Rendered, Quoting) {
   var st: FileStat = it.st;
   var c: i32 = d.conv;
-  if (d.mod != 0) {
+  if (d.mod != 0 && d.mod != 81) {
     // The scanner only lets `H` and `L` through in front of `d` and
     // `r`, so the half is all that is left to choose.
     var dev: u64 = st.dev as u64;
@@ -795,126 +818,126 @@ function render_file(d: Directive, it: Item, z: tz.Zone, style: i32): Rendered {
       dev = st.rdev as u64;
     }
     if (d.mod == 72) {
-      return ok_rendered(out_unsigned(d, dev_major(dev)));
+      return (ok_rendered(out_unsigned(d, dev_major(dev))), qi);
     }
-    return ok_rendered(out_unsigned(d, dev_minor(dev)));
+    return (ok_rendered(out_unsigned(d, dev_minor(dev))), qi);
   }
   if (c == 97) {
-    return ok_rendered(out_octal(d, (st.mode & 0xfff as u32) as u64));
+    return (ok_rendered(out_octal(d, (st.mode & 0xfff as u32) as u64)), qi);
   }
   if (c == 65) {
-    return ok_rendered(out_string(d, filetype.mode_string(st.mode)));
+    return (ok_rendered(out_string(d, filetype.mode_string(st.mode))), qi);
   }
   if (c == 98) {
-    return ok_rendered(out_unsigned(d, st.blocks as u64));
+    return (ok_rendered(out_unsigned(d, st.blocks as u64)), qi);
   }
   if (c == 66) {
-    return ok_rendered(out_unsigned(d, 512 as u64));
+    return (ok_rendered(out_unsigned(d, 512 as u64)), qi);
   }
   if (c == 100) {
-    return ok_rendered(out_unsigned(d, st.dev as u64));
+    return (ok_rendered(out_unsigned(d, st.dev as u64)), qi);
   }
   if (c == 68) {
-    return ok_rendered(out_hex(d, st.dev as u64));
+    return (ok_rendered(out_hex(d, st.dev as u64)), qi);
   }
   if (c == 102) {
-    return ok_rendered(out_hex(d, st.mode as u64));
+    return (ok_rendered(out_hex(d, st.mode as u64)), qi);
   }
   if (c == 70) {
-    return ok_rendered(out_string(d, filetype.type_name(st.mode, st.size)));
+    return (ok_rendered(out_string(d, filetype.type_name(st.mode, st.size))), qi);
   }
   if (c == 103) {
-    return ok_rendered(out_unsigned(d, st.gid as u64));
+    return (ok_rendered(out_unsigned(d, st.gid as u64)), qi);
   }
   if (c == 71) {
-    return ok_rendered(out_string(d, group_text(st.gid as i64)));
+    return (ok_rendered(out_string(d, group_text(st.gid as i64))), qi);
   }
   if (c == 104) {
-    return ok_rendered(out_unsigned(d, st.nlink as u64));
+    return (ok_rendered(out_unsigned(d, st.nlink as u64)), qi);
   }
   if (c == 105) {
-    return ok_rendered(out_unsigned(d, st.ino as u64));
+    return (ok_rendered(out_unsigned(d, st.ino as u64)), qi);
   }
   if (c == 109) {
     match (mount_point(it.name, st)) {
       Some(mp) => {
-        return ok_rendered(out_string(d, mp));
+        return (ok_rendered(out_string(d, mp)), qi);
       },
       None => {
         gnu.error("failed to canonicalize " + gnu.quotea(it.name) + ": No such file or directory");
-        return Rendered { text: "?", failed: true };
+        return (Rendered { text: "?", failed: true }, qi);
       }
     }
   }
   if (c == 110) {
-    return ok_rendered(out_string(d, it.name));
+    if (d.mod == 81) {
+      var qn: Quoting = quoting_ready(qi);
+      return (ok_rendered(out_string(d, gnu.quote_style(it.name, qn.style))), qn);
+    }
+    return (ok_rendered(out_string(d, it.name)), qi);
   }
   if (c == 78) {
-    return ok_rendered(quoted_name(d, it, style));
+    var qq: Quoting = quoting_ready(qi);
+    return (ok_rendered(quoted_name(d, it, qq.style)), qq);
   }
   if (c == 111) {
-    return ok_rendered(out_unsigned(d, st.blksize as u64));
+    return (ok_rendered(out_unsigned(d, st.blksize as u64)), qi);
   }
   if (c == 114) {
-    return ok_rendered(out_unsigned(d, st.rdev as u64));
+    return (ok_rendered(out_unsigned(d, st.rdev as u64)), qi);
   }
   if (c == 82) {
-    return ok_rendered(out_hex(d, st.rdev as u64));
+    return (ok_rendered(out_hex(d, st.rdev as u64)), qi);
   }
   if (c == 115) {
-    return ok_rendered(out_unsigned(d, st.size as u64));
+    return (ok_rendered(out_unsigned(d, st.size as u64)), qi);
   }
   if (c == 116) {
-    return ok_rendered(out_hex(d, dev_major(st.rdev as u64)));
+    return (ok_rendered(out_hex(d, dev_major(st.rdev as u64))), qi);
   }
   if (c == 84) {
-    return ok_rendered(out_hex(d, dev_minor(st.rdev as u64)));
+    return (ok_rendered(out_hex(d, dev_minor(st.rdev as u64))), qi);
   }
   if (c == 117) {
-    return ok_rendered(out_unsigned(d, st.uid as u64));
+    return (ok_rendered(out_unsigned(d, st.uid as u64)), qi);
   }
   if (c == 85) {
-    return ok_rendered(out_string(d, user_text(st.uid as i64)));
+    return (ok_rendered(out_string(d, user_text(st.uid as i64))), qi);
   }
   if (c == 120) {
-    return ok_rendered(out_string(d, human_time(z, st.atime, st.atime_nsec)));
+    return (ok_rendered(out_string(d, human_time(z, st.atime, st.atime_nsec))), qi);
   }
   if (c == 88) {
-    return ok_rendered(epoch_time(d, st.atime, st.atime_nsec));
+    return (ok_rendered(epoch_time(d, st.atime, st.atime_nsec)), qi);
   }
   if (c == 121) {
-    return ok_rendered(out_string(d, human_time(z, st.mtime, st.mtime_nsec)));
+    return (ok_rendered(out_string(d, human_time(z, st.mtime, st.mtime_nsec))), qi);
   }
   if (c == 89) {
-    return ok_rendered(epoch_time(d, st.mtime, st.mtime_nsec));
+    return (ok_rendered(epoch_time(d, st.mtime, st.mtime_nsec)), qi);
   }
   if (c == 122) {
-    return ok_rendered(out_string(d, human_time(z, st.ctime, st.ctime_nsec)));
+    return (ok_rendered(out_string(d, human_time(z, st.ctime, st.ctime_nsec))), qi);
   }
   if (c == 90) {
-    return ok_rendered(epoch_time(d, st.ctime, st.ctime_nsec));
+    return (ok_rendered(epoch_time(d, st.ctime, st.ctime_nsec)), qi);
   }
-  return unknown_rendered();
+  return (unknown_rendered(), qi);
 }
 
-// `%N`. A BARE `%N` quotes in the style QUOTING_STYLE chose; a
-// directive carrying any flag, width or precision prints the raw name
-// instead and applies the modifiers to the name and to a link target
-// separately.
+// `%N`. The name is quoted in the style QUOTING_STYLE chose and the
+// width and precision then apply to THAT, so `%12N` pads the quotes
+// along with the name and `%.3N` can cut a quote off. A link's target
+// is quoted and padded the same way, separately.
 function quoted_name(d: Directive, it: Item, style: i32): string {
-  if (!d.raw) {
-    if (it.is_link) {
-      return gnu.quote_style(it.name, style) + " -> " + gnu.quote_style(it.link, style);
-    }
-    return gnu.quote_style(it.name, style);
+  var name: string = out_string(d, gnu.quote_style(it.name, style));
+  if (!it.is_link) {
+    return name;
   }
-  if (it.is_link) {
-    return out_string(d, it.name) + " -> " + out_string(d, it.link) + link_tail(d);
-  }
-  return out_string(d, it.name);
+  return name + " -> " + out_string(d, gnu.quote_style(it.link, style)) + link_tail(d);
 }
 
-// GNU 9.4 writes a stray `s` after a symlink's target when `%N` carries
+// GNU writes a stray `s` after a symlink's target when `%N` carries
 // exactly ONE flag character other than `-`: `%#N`, `%+N`, `%0N`, `% N`,
 // `%'N`, `%IN`, `%#-N` and `%#.5N` all show it, and `%-N`, `%##N`, `%#+N`,
 // `%###N` and a bare width or precision do not. It is the `s` out_string
@@ -956,37 +979,41 @@ function group_text(gid: i64): string {
   }
 }
 
-function render_fs(d: Directive, it: FsItem): Rendered {
+function render_fs(d: Directive, it: FsItem, qi: Quoting): (Rendered, Quoting) {
   var fs: FsStat = it.fs;
   var c: i32 = d.conv;
+  if (d.mod == 81 && c == 110) {
+    var qn: Quoting = quoting_ready(qi);
+    return (ok_rendered(out_string(d, gnu.quote_style(it.name, qn.style))), qn);
+  }
   if (d.mod != 0) {
-    return unknown_rendered();
+    return (unknown_rendered(), qi);
   }
   if (c == 97) {
-    return ok_rendered(out_unsigned(d, fs.blocks_avail as u64));
+    return (ok_rendered(out_unsigned(d, fs.blocks_avail as u64)), qi);
   }
   if (c == 98) {
-    return ok_rendered(out_unsigned(d, fs.blocks as u64));
+    return (ok_rendered(out_unsigned(d, fs.blocks as u64)), qi);
   }
   if (c == 99) {
-    return ok_rendered(out_unsigned(d, fs.files as u64));
+    return (ok_rendered(out_unsigned(d, fs.files as u64)), qi);
   }
   if (c == 100) {
-    return ok_rendered(out_unsigned(d, fs.files_free as u64));
+    return (ok_rendered(out_unsigned(d, fs.files_free as u64)), qi);
   }
   if (c == 102) {
-    return ok_rendered(out_unsigned(d, fs.blocks_free as u64));
+    return (ok_rendered(out_unsigned(d, fs.blocks_free as u64)), qi);
   }
   if (c == 108) {
-    return ok_rendered(out_unsigned(d, fs.name_max as u64));
+    return (ok_rendered(out_unsigned(d, fs.name_max as u64)), qi);
   }
   if (c == 110) {
-    return ok_rendered(out_string(d, it.name));
+    return (ok_rendered(out_string(d, it.name)), qi);
   }
   if (c == 115) {
-    return ok_rendered(out_unsigned(d, fs.block_size as u64));
+    return (ok_rendered(out_unsigned(d, fs.block_size as u64)), qi);
   }
-  return unknown_rendered();
+  return (unknown_rendered(), qi);
 }
 
 // ---- the refusal --------------------------------------------------------------
@@ -1014,8 +1041,9 @@ function blocked(d: Directive, fs_mode: boolean): string {
 // wearing a modifier, and on a directive this build cannot answer. Both
 // leave the text already written in place, which is what makes
 // `stat -c '[%5%]' f` write its `[` before the diagnostic.
-function render_pieces(o: io_buffered.BufWriter, pieces: Piece[], fs_mode: boolean, it: Item, fs: FsItem, z: tz.Zone, style: i32): (io_buffered.BufWriter, boolean) {
+function render_pieces(o: io_buffered.BufWriter, pieces: Piece[], fs_mode: boolean, it: Item, fs: FsItem, z: tz.Zone, qi: Quoting): (io_buffered.BufWriter, boolean, Quoting) {
   var w: io_buffered.BufWriter = o;
+  var q: Quoting = qi;
   var failed: boolean = false;
   var i: i32 = 0;
   while (i < pieces.len()) {
@@ -1036,19 +1064,20 @@ function render_pieces(o: io_buffered.BufWriter, pieces: Piece[], fs_mode: boole
     if (stop != "") {
       gnu.die(w, stop + " is not supported on this system", 1);
     }
-    var r: Rendered = unknown_rendered();
+    var rq: (Rendered, Quoting) = (unknown_rendered(), q);
     if (fs_mode) {
-      r = render_fs(d, fs);
+      rq = render_fs(d, fs, q);
     } else {
-      r = render_file(d, it, z, style);
+      rq = render_file(d, it, z, q);
     }
-    w = gnu.put(w, r.text);
-    if (r.failed) {
+    q = rq.1;
+    w = gnu.put(w, rq.0.text);
+    if (rq.0.failed) {
       failed = true;
     }
     i = i + 1;
   }
-  return (w, failed);
+  return (w, failed, q);
 }
 
 // Whether the format asks for a human-readable time, which is the only
@@ -1080,7 +1109,7 @@ function is_symlink(st: FileStat): boolean {
   return filetype.is_link(st.mode);
 }
 
-function do_file(o: io_buffered.BufWriter, pieces: Piece[], name: string, deref: boolean, newline: boolean, z: tz.Zone, style: i32, builtin: string): (io_buffered.BufWriter, boolean) {
+function do_file(o: io_buffered.BufWriter, pieces: Piece[], name: string, deref: boolean, newline: boolean, z: tz.Zone, qi: Quoting, builtin: string): (io_buffered.BufWriter, boolean, Quoting) {
   var w: io_buffered.BufWriter = o;
   match (stat_of(name, deref)) {
     Ok(st) => {
@@ -1101,21 +1130,21 @@ function do_file(o: io_buffered.BufWriter, pieces: Piece[], name: string, deref:
       }
       var it: Item = Item { name: name, st: st, link: link, is_link: is_link };
       var empty_fs: FsItem = FsItem { name: name, fs: fsstat_zero() };
-      var rendered: (io_buffered.BufWriter, boolean) = render_pieces(w, pieces, false, it, empty_fs, z, style);
+      var rendered: (io_buffered.BufWriter, boolean, Quoting) = render_pieces(w, pieces, false, it, empty_fs, z, qi);
       w = rendered.0;
       if (newline) {
         w = gnu.put(w, "\n");
       }
-      return (w, !rendered.1);
+      return (w, !rendered.1, rendered.2);
     },
     Err(e) => {
       w = gnu.error_out(w, "cannot statx " + gnu.quotea(name) + ": " + gnu.io_error_text(e));
-      return (w, false);
+      return (w, false, qi);
     }
   }
 }
 
-function do_fs(o: io_buffered.BufWriter, pieces: Piece[], name: string, newline: boolean, builtin: string): (io_buffered.BufWriter, boolean) {
+function do_fs(o: io_buffered.BufWriter, pieces: Piece[], name: string, newline: boolean, qi: Quoting, builtin: string): (io_buffered.BufWriter, boolean, Quoting) {
   var w: io_buffered.BufWriter = o;
   match (statfs(name)) {
     Ok(fs) => {
@@ -1124,16 +1153,16 @@ function do_fs(o: io_buffered.BufWriter, pieces: Piece[], name: string, newline:
       }
       var it: FsItem = FsItem { name: name, fs: fs };
       var empty_st: Item = Item { name: name, st: stat_zero(), link: "", is_link: false };
-      var rendered: (io_buffered.BufWriter, boolean) = render_pieces(w, pieces, true, empty_st, it, tz.utc_zone(), 0);
+      var rendered: (io_buffered.BufWriter, boolean, Quoting) = render_pieces(w, pieces, true, empty_st, it, tz.utc_zone(), qi);
       w = rendered.0;
       if (newline) {
         w = gnu.put(w, "\n");
       }
-      return (w, !rendered.1);
+      return (w, !rendered.1, rendered.2);
     },
     Err(e) => {
       w = gnu.error_out(w, "cannot read file system information for " + gnu.quotea(name) + ": " + gnu.io_error_text(e));
-      return (w, false);
+      return (w, false, qi);
     }
   }
 }
@@ -1211,12 +1240,7 @@ pub function main(): i32 {
     }
   }
 
-  // GNU reads QUOTING_STYLE only when the format as written holds the
-  // two bytes `%N`, so `%-N` and `\045N` never warn and `%%N` does.
-  var style: i32 = gnu.quoting_style_default();
-  if (have_format && format.index_of("%N") >= 0) {
-    style = gnu.quoting_style_from_env();
-  }
+  var quoting: Quoting = quoting_new();
   var pieces: Piece[] = scan(format, fs_mode, escapes);
 
   var z: tz.Zone = tz.utc_zone();
@@ -1234,13 +1258,14 @@ pub function main(): i32 {
       i = i + 1;
       continue;
     }
-    var res: (io_buffered.BufWriter, boolean) = (o, true);
+    var res: (io_buffered.BufWriter, boolean, Quoting) = (o, true, quoting);
     if (fs_mode) {
-      res = do_fs(o, pieces, name, !escapes, builtin);
+      res = do_fs(o, pieces, name, !escapes, quoting, builtin);
     } else {
-      res = do_file(o, pieces, name, deref, !escapes, z, style, builtin);
+      res = do_file(o, pieces, name, deref, !escapes, z, quoting, builtin);
     }
     o = res.0;
+    quoting = res.2;
     if (!res.1) {
       status = 1;
     }

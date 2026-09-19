@@ -467,8 +467,10 @@ pub function format_size(n: u64, block_size: u64, suffix: string, human_base: u6
   return q.to_string() + suffix;
 }
 
+// gnulib's `quote()`, which since 9.12 backslashes an apostrophe inside
+// the value rather than letting it close the quotes.
 function quote_size(spec: string): string {
-  return "'" + spec + "'";
+  return gnu.quote(spec);
 }
 
 // The three diagnostics a bad SIZE earns, with the option spelled the

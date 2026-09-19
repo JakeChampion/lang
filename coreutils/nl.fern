@@ -237,8 +237,14 @@ function parse_imax(s: string): (i64, i32) {
   if (i != s.len()) {
     return (0 as i64, 1);
   }
+  // strtoimax saturates, and the caller needs the SIGN of what it
+  // saturated to: the flags that decide whether an out-of-range value is
+  // reported are chosen by it.
   if (over) {
-    return (0 as i64, 2);
+    if (neg) {
+      return (0 as i64 - 9223372036854775807 as i64 - 1 as i64, 2);
+    }
+    return (9223372036854775807 as i64, 2);
   }
   if (neg) {
     if (mag == 9223372036854775808 as u64) {
@@ -249,25 +255,45 @@ function parse_imax(s: string): (i64, i32) {
   return (mag as i64, 0);
 }
 
-// `number_option(value, what, min, has_min)` — the whole diagnostic for
-// one of -v -i -l -w: no suffix when the operand is malformed, glibc's
-// ERANGE text when it is under the minimum, and its overflow text when
-// it is past intmax_t. No `Try …` line on any of them.
-function number_option(value: string, what: string, min: i64, has_min: boolean, max: i64, has_max: boolean): i64 {
+// `number_option(...)` — gnulib's xnumtoimax for one of -v -i -l -w: the
+// value clamped into [min, max], with no suffix on the diagnostic when
+// the operand is malformed and glibc's text for the errno the flags pick
+// when it is out of range. No `Try …` line on any of them.
+//
+//	min_range   the MINIMUM is the caller's rather than the type's,
+//	            which makes a value under it ERANGE where the type's
+//	            own bound would be EOVERFLOW
+//	max_quiet   an out-of-range value is the bound, silently — and
+//	            gnulib chooses between the two quiet flags on the SIGN
+//	            of what it parsed, so a zero under a minimum of one
+//	            takes this one rather than the min's
+function number_option(value: string, what: string, min: i64, max: i64, min_range: boolean, max_quiet: boolean): i64 {
   var r: (i64, i32) = parse_imax(value);
   if (r.1 == 1) {
     gnu.error("invalid " + what + ": " + gnu.quote(value));
     exit(1);
   }
-  if (r.1 == 2 || has_max && r.0 > max) {
-    gnu.error("invalid " + what + ": " + gnu.quote(value) + ": Value too large for defined data type");
-    exit(1);
+  var out: i64 = r.0;
+  var range: boolean = false;
+  var bad: boolean = r.1 == 2;
+  if (r.0 < min) {
+    out = min;
+    range = min_range;
+    bad = true;
+  } else if (r.0 > max) {
+    out = max;
+    bad = true;
   }
-  if (has_min && r.0 < min) {
+  if (!bad || r.0 >= 0 as i64 && max_quiet) {
+    return out;
+  }
+  if (range) {
     gnu.error("invalid " + what + ": " + gnu.quote(value) + ": Numerical result out of range");
     exit(1);
   }
-  return r.0;
+  gnu.error("invalid " + what + ": " + gnu.quote(value) + ": Value too large for defined data type");
+  exit(1);
+  return out;
 }
 
 // ---- settings ---------------------------------------------------------------
@@ -574,17 +600,17 @@ pub function main(): i32 {
         } else if (m.id == opt_footer()) {
           o = Opts { ...o, footer: parse_style(m.value, "footer") };
         } else if (m.id == opt_start()) {
-          o = Opts { ...o, start: number_option(m.value, "starting line number", 0 as i64, false, 0 as i64, false) };
+          o = Opts { ...o, start: number_option(m.value, "starting line number", 0 as i64 - 9223372036854775807 as i64 - 1 as i64, 9223372036854775807 as i64, false, false) };
         } else if (m.id == opt_incr()) {
-          o = Opts { ...o, incr: number_option(m.value, "line number increment", 0 as i64, false, 0 as i64, false) };
+          o = Opts { ...o, incr: number_option(m.value, "line number increment", 0 as i64 - 9223372036854775807 as i64 - 1 as i64, 9223372036854775807 as i64, false, false) };
         } else if (m.id == opt_norenumber()) {
           o = Opts { ...o, renumber: false };
         } else if (m.id == opt_join()) {
-          o = Opts { ...o, join_blank: number_option(m.value, "line number of blank lines", 1 as i64, true, 0 as i64, false) };
+          o = Opts { ...o, join_blank: number_option(m.value, "line number of blank lines", 1 as i64, 9223372036854775807 as i64, true, true) };
         } else if (m.id == opt_sep()) {
           o = Opts { ...o, sep: m.value };
         } else if (m.id == opt_width()) {
-          o = Opts { ...o, width: number_option(m.value, "line number field width", 1 as i64, true, 2147483647 as i64, true) as i32 };
+          o = Opts { ...o, width: number_option(m.value, "line number field width", 1 as i64, 2147483647 as i64, true, false) as i32 };
         } else if (m.id == opt_format()) {
           if (m.value == "ln") {
             o = Opts { ...o, fmt: fmt_ln() };

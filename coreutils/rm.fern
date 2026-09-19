@@ -13,11 +13,10 @@
 // Four checks stand between an operand and its removal, in this order,
 // and each has its own wording:
 //
-//   1. a directory without -r or -d is EISDIR, and with -d but not
-//      empty is ENOTEMPTY — both are rm's own hard-coded errno rather
-//      than the one rmdir would return, which is how `rm -d sl/` on a
-//      symlink to a non-empty directory says `Directory not empty`
-//      where rmdir(2) would say `Not a directory`;
+//   1. a directory without -r or -d is EISDIR, which is rm's own
+//      hard-coded errno; with -d the rmdir(2) is simply made and its
+//      errno reported, so `rm -d sl/` on a symlink to a directory says
+//      `Not a directory` and the three checks below are not asked;
 //   2. an operand whose last component is `.` or `..` is refused;
 //   3. an operand that IS the root directory — compared by device and
 //      inode, so a bind mount of `/` is caught too — is the failsafe;
@@ -365,14 +364,17 @@ function rm_entry(st0: St, s: Settings, path: string, top: boolean, cl_dev: i64)
 // The refusals that stand between a directory and its removal, in the
 // order GNU applies them. Returns None to go on, or the state after
 // the diagnostic it printed.
-function refuse_dir(st: St, s: Settings, path: string, top: boolean, cl_dev: i64, info: FileStat, empty: boolean): Option[St] {
+function refuse_dir(st: St, s: Settings, path: string, top: boolean, cl_dev: i64, info: FileStat): Option[St] {
   if (!s.recursive) {
     if (!s.dir) {
       return Some(fail(st, "cannot remove " + gnu.quotea(path) + ": Is a directory"));
     }
-    if (!empty) {
-      return Some(fail(st, "cannot remove " + gnu.quotea(path) + ": Directory not empty"));
-    }
+    // `-d` without `-r` is one rmdir(2) and whatever it answers. 9.5
+    // stopped standing rm's own ENOTEMPTY in front of the call, and
+    // every refusal below goes with it: `rm -d sl/` is the ENOTDIR
+    // rmdir returns, `rm -d .` EINVAL and `rm -d /` EBUSY, none of
+    // which rm has a wording of its own for any more.
+    return None;
   }
   if (top) {
     var base: string = base_name(path);
@@ -434,7 +436,7 @@ function rm_dir(st0: St, s: Settings, path: string, top: boolean, cl_dev: i64, i
     }
   }
   var empty: boolean = names.len() == 0;
-  match (refuse_dir(st, s, path, top, cl_dev, info, empty)) {
+  match (refuse_dir(st, s, path, top, cl_dev, info)) {
     Some(next) => {
       return (next, res_mark());
     },

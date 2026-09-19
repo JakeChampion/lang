@@ -639,20 +639,33 @@ function compare_streams(ra: Reader, rb: Reader): boolean {
 // report.
 struct StripOut { status: i32, out: io_buffered.BufWriter }
 
+// 9.5 replaced install's fork+exec with posix_spawnp, which reports a
+// program it could not START from the PARENT and never reaches a wait —
+// so the diagnostic is one line, and the `-v` line is not duplicated
+// across a fork the way 9.4's was.
+//
+// Fern has no spawn primitive, so the parent asks the same question
+// posix_spawnp answers before it forks: resolve the name the way execvp
+// does and see whether it can be executed. What that leaves uncovered is
+// a program that IS executable and still fails to exec (ENOEXEC,
+// ETXTBSY), which lands on the abnormal-termination line instead.
 function run_strip(s: Scan, dest: string, o: io_buffered.BufWriter): StripOut {
   var w: io_buffered.BufWriter = o;
+  match (spawnable(s.strip_program)) {
+    Some(why) => {
+      var what: string = "cannot run strip program ";
+      if (s.strip_program == "strip") {
+        what = "cannot run ";
+      }
+      w = gnu.error_out(w, what + gnu.quotea(s.strip_program) + ": " + why);
+      return strip_failed(dest, w);
+    },
+    None => {}
+  }
   var pid: i32 = proc_fork();
   if (pid == 0) {
     var argv: string[] = [s.strip_program, dest];
     proc_exec(s.strip_program, argv);
-    // Only reached when the exec failed, and the CHILD is what reports
-    // it — which is why a failed `-s` prints the `-v` line TWICE. Both
-    // processes carry the same unflushed stdout across the fork, so the
-    // child's flush emits its copy ahead of this message and the
-    // parent's emits another ahead of the next one. Measured against
-    // GNU, which duplicates it the same way for the same reason.
-    var cw: io_buffered.BufWriter = gnu.error_out(w, "cannot run " + gnu.quote(s.strip_program) + ": No such file or directory");
-    gnu.finish(cw);
     exit(127);
   }
   if (pid < 0) {
@@ -663,17 +676,80 @@ function run_strip(s: Scan, dest: string, o: io_buffered.BufWriter): StripOut {
   if (status == 0) {
     return StripOut { status: 0, out: w };
   }
-  // The child said what went wrong; this is the parent's half, and its
-  // own flush is the second `-v` line.
   w = gnu.error_out(w, "strip process terminated abnormally");
-  // And the destination does not survive. Measured: after a failed strip
-  // GNU leaves no `out` at all, having made it and taken it away again,
-  // so a half-installed file is never left behind.
+  return strip_failed(dest, w);
+}
+
+// A strip that did not happen, however it failed. The destination does
+// not survive either way: measured, GNU leaves no `out` at all, having
+// made it and taken it away again, so a half-installed file is never
+// left behind.
+function strip_failed(dest: string, w: io_buffered.BufWriter): StripOut {
   match (remove_file(dest)) {
     Ok(_) => {},
     Err(_) => {}
   }
   return StripOut { status: 1, out: w };
+}
+
+// Why `name` could not be started, or None when it can be. A name
+// holding a slash is used as it stands; one without is searched for
+// along PATH, and an empty PATH entry means the working directory, both
+// of which is what execvp does.
+function spawnable(name: string): Option[string] {
+  if (name.index_of("/") >= 0) {
+    return executable(name);
+  }
+  var path: string = "";
+  match (env("PATH")) {
+    Some(v) => {
+      path = v;
+    },
+    None => {
+      // execvp falls back to confstr(_CS_PATH), which is this on glibc.
+      path = "/bin:/usr/bin";
+    }
+  }
+  var why: string = "No such file or directory";
+  var from: i32 = 0;
+  while (true) {
+    var end: i32 = from;
+    while (end < path.len() && path[end] as i32 != 58) {
+      end = end + 1;
+    }
+    var dir: string = slice_unchecked(path, from, end) + "";
+    if (dir.len() == 0) {
+      dir = ".";
+    }
+    match (executable(gnu.join_path(dir, name))) {
+      Some(e) => {
+        // execvp keeps looking, and remembers EACCES over ENOENT so a
+        // directory holding an unreadable match is what it reports.
+        if (e == "Permission denied") {
+          why = e;
+        }
+      },
+      None => {
+        return None;
+      }
+    }
+    if (end >= path.len()) {
+      break;
+    }
+    from = end + 1;
+  }
+  return Some(why);
+}
+
+function executable(path: string): Option[string] {
+  match (access(path, 1)) {
+    Ok(_) => {
+      return None;
+    },
+    Err(e) => {
+      return Some(gnu.io_error_text(e));
+    }
+  }
 }
 
 // ---- installing one file ----------------------------------------------------

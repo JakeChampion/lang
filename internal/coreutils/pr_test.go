@@ -683,10 +683,15 @@ func prCases(t *testing.T) []invocation {
 
 	// -D is gnulib's nstrftime, and the header date is the FILE's
 	// mtime, so each of these is a fixed instant in a fixed zone.
+	//
+	// %D, %F, %R and %T are absent, and their expansions stand in for
+	// them: GNU 9.12 prints uninitialised memory for a format holding
+	// one (docs/COREUTILS.md), which differs between two runs of the
+	// same command and is nothing a corpus can be held to.
 	formats := []string{
-		"%a", "%A", "%b", "%B", "%c", "%C", "%d", "%D", "%e", "%F", "%g", "%G", "%h",
+		"%a", "%A", "%b", "%B", "%c", "%C", "%d", "%m/%d/%y", "%e", "%Y-%m-%d", "%g", "%G", "%h",
 		"%H", "%I", "%j", "%k", "%l", "%m", "%M", "%n", "%N", "%p", "%P", "%q", "%r",
-		"%R", "%s", "%S", "%t", "%T", "%u", "%U", "%V", "%w", "%W", "%x", "%X", "%y",
+		"%H:%M", "%s", "%S", "%t", "%H:%M:%S", "%u", "%U", "%V", "%w", "%W", "%x", "%X", "%y",
 		"%Y", "%z", "%:z", "%::z", "%:::z", "%Z", "%%", "%f", "%Q", "%", "%-d", "%_d",
 		"%0e", "%^a", "%#a", "%#Z", "%10Y", "%Ey", "%Od", "%-j", "%_j", "%03d", "%1N",
 		"%3N", "%9N", "%12N", "%20N", "%0N", "%Y-%m-%d %H:%M", "%s.%N", "x%Zy", "%:",
@@ -703,8 +708,8 @@ func prCases(t *testing.T) []invocation {
 	// four more of them: the epoch itself, a date before it, one past
 	// every transition table, and one carrying nanoseconds.
 	for _, spec := range []string{
-		"%F %T", "%s", "%j", "%N", "%s.%N", "%G-W%V-%u", "%U %W", "%C %y",
-		"%a %A %b %B", "%c", "%x %X", "%Z %z", "%q", "%D %e %k %l %p %r",
+		"%Y-%m-%d %H:%M:%S", "%s", "%j", "%N", "%s.%N", "%G-W%V-%u", "%U %W", "%C %y",
+		"%a %A %b %B", "%c", "%x %X", "%Z %z", "%q", "%m/%d/%y %e %k %l %p %r",
 	} {
 		for _, file := range []string{epoch, pre70, y2100, nsec} {
 			cases = append(cases, invocation{

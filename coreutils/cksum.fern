@@ -45,7 +45,7 @@ import "./lib/digest";
 // `-a`'s names, in the order the `Valid arguments are:` list prints them.
 // The first three are not digests; `is_digest` is that split.
 function algo_names(): string[] {
-  return ["bsd", "sysv", "crc", "md5", "sha1", "sha224", "sha256", "sha384", "sha512", "blake2b", "sm3"];
+  return ["bsd", "sysv", "crc", "crc32b", "md5", "sha1", "sha224", "sha256", "sha384", "sha512", "sha2", "sha3", "blake2b", "sm3"];
 }
 
 function sel_bsd(): i32 {
@@ -60,32 +60,70 @@ function sel_crc(): i32 {
   return 2;
 }
 
+function sel_crc32b(): i32 {
+  return 3;
+}
+
+// `sha2` and `sha3` are FAMILIES rather than one digest each: neither
+// runs without `-l` naming 224, 256, 384 or 512, and `-l` is refused
+// for everything but these two and blake2b.
+function sel_sha2(): i32 {
+  return 10;
+}
+
+function sel_sha3(): i32 {
+  return 11;
+}
+
 function sel_blake2b(): i32 {
-  return 9;
+  return 12;
 }
 
 function is_digest(sel: i32): boolean {
-  return sel > sel_crc();
+  return sel > sel_crc32b();
 }
 
-function digest_algo(sel: i32): digest.Algo {
-  if (sel == 3) {
+// Whether `-l` names this algorithm's digest length rather than being a
+// fault.
+function takes_length(sel: i32): boolean {
+  return sel == sel_blake2b() || sel == sel_sha2() || sel == sel_sha3();
+}
+
+function digest_algo(sel: i32, bits: i32): digest.Algo {
+  if (sel == 4) {
     return digest.algo_md5();
   }
-  if (sel == 4) {
+  if (sel == 5) {
     return digest.algo_sha1();
   }
-  if (sel == 5) {
+  if (sel == 6) {
     return digest.algo_sha224();
   }
-  if (sel == 6) {
+  if (sel == 7) {
     return digest.algo_sha256();
   }
-  if (sel == 7) {
+  if (sel == 8) {
     return digest.algo_sha384();
   }
-  if (sel == 8) {
+  if (sel == 9) {
     return digest.algo_sha512();
+  }
+  if (sel == sel_sha2()) {
+    // The tag `sha2` prints is the plain one for the length it was
+    // given, so `-a sha2 -l 256` is indistinguishable from `-a sha256`.
+    if (bits == 224) {
+      return digest.algo_sha224();
+    }
+    if (bits == 256) {
+      return digest.algo_sha256();
+    }
+    if (bits == 384) {
+      return digest.algo_sha384();
+    }
+    return digest.algo_sha512();
+  }
+  if (sel == sel_sha3()) {
+    return digest.algo_sha3();
   }
   if (sel == sel_blake2b()) {
     return digest.algo_blake2b();
@@ -95,7 +133,7 @@ function digest_algo(sel: i32): digest.Algo {
 
 // ---- the three that are not digests ---------------------------------------
 // `Plain` — the running state of `crc`, `sysv` and `bsd`.
-enum Plain { PCrc(hash.Cksum), PBsd(hash.BsdSum), PSysv(hash.SysvSum) }
+enum Plain { PCrc(hash.Cksum), PCrc32(hash.Crc32), PBsd(hash.BsdSum), PSysv(hash.SysvSum) }
 
 function plain_new(sel: i32): Plain {
   if (sel == sel_bsd()) {
@@ -104,6 +142,9 @@ function plain_new(sel: i32): Plain {
   if (sel == sel_sysv()) {
     return PSysv(hash.sysv_sum_new());
   }
+  if (sel == sel_crc32b()) {
+    return PCrc32(hash.crc32_new());
+  }
   return PCrc(hash.cksum_new());
 }
 
@@ -111,6 +152,9 @@ function plain_update(p: Plain, chunk: string): Plain {
   match (p) {
     PCrc(c) => {
       return PCrc(c.update(chunk));
+    },
+    PCrc32(c) => {
+      return PCrc32(c.update(chunk));
     },
     PBsd(c) => {
       return PBsd(c.update(chunk));
@@ -128,6 +172,9 @@ function plain_value(p: Plain): u32 {
     PCrc(c) => {
       return c.finish();
     },
+    PCrc32(c) => {
+      return c.finish();
+    },
     PBsd(c) => {
       return c.finish();
     },
@@ -140,6 +187,9 @@ function plain_value(p: Plain): u32 {
 function plain_count(p: Plain): u64 {
   match (p) {
     PCrc(c) => {
+      return c.len();
+    },
+    PCrc32(c) => {
       return c.len();
     },
     PBsd(c) => {
@@ -177,7 +227,7 @@ function pad_left(s: string, width: i32, fill: string): string {
 function plain_raw(sel: i32, p: Plain): u8[] {
   var v: u32 = plain_value(p);
   var out: u8[] = [];
-  if (sel == sel_crc()) {
+  if (sel == sel_crc() || sel == sel_crc32b()) {
     out = out.append((v >> 24 & 255) as u8);
     out = out.append((v >> 16 & 255) as u8);
   }
@@ -246,7 +296,7 @@ function plain_error_text(c: PlainSum): string {
 // shares. `specified` is whether `-a` was named at all, which is the
 // whole of check mode's algorithm rule; `named_bits` is whether `-l`
 // named a non-zero length, because `-l 0` is `-l` unset.
-struct Conf { s: digest.Settings, sel: i32, specified: boolean, bits: i32, named_bits: boolean, bits_text: string, raw: boolean, b64: boolean }
+struct Conf { s: digest.Settings, sel: i32, specified: boolean, bits: i32, named_bits: boolean, bits_text: string, raw: boolean, b64: boolean, tag_given: boolean }
 
 function opt_length(): i32 {
   return 1;
@@ -349,7 +399,7 @@ function apply(c: Conf, m: gnu.OptMatch): Conf {
     return Conf { ...c, s: digest.Settings { ...c.s, check: true } };
   }
   if (m.id == opt_tag()) {
-    return Conf { ...c, s: digest.Settings { ...c.s, tag: true, binary: 1 } };
+    return Conf { ...c, s: digest.Settings { ...c.s, tag: true }, tag_given: true };
   }
   if (m.id == opt_untagged()) {
     return Conf { ...c, s: digest.Settings { ...c.s, tag: false } };
@@ -387,30 +437,53 @@ function apply(c: Conf, m: gnu.OptMatch): Conf {
   return Conf { ...c, s: digest.Settings { ...c.s, strict: true } };
 }
 
+// The tag the two FAMILIES carry in a length complaint, which is the
+// selector's own name upper-cased rather than the digest's.
+function family_tag(sel: i32): string {
+  if (sel == sel_sha2()) {
+    return "SHA2";
+  }
+  return "SHA3";
+}
+
 // The combinations GNU refuses, in the order it tests them — `--raw
 // --base64 -t` reports the mutual exclusion and `--raw -t` the text one,
 // so the sequence is observable rather than a choice. The first two and
 // the last carry no `Try …` line; the rest do.
 function validate(c: Conf, operands: i32): void {
-  if (c.named_bits) {
-    if (c.sel != sel_blake2b()) {
-      gnu.error("--length is only supported with --algorithm=blake2b");
+  if (c.named_bits && !takes_length(c.sel)) {
+    gnu.error("--length is only supported with --algorithm blake2b, sha2, or sha3");
+    exit(1);
+  }
+  if (c.sel == sel_sha2() || c.sel == sel_sha3()) {
+    // Neither family has a default length, so one has to be named —
+    // except under `--check`, where each line's tag carries it.
+    if (c.bits == 0 && c.bits_text.len() == 0 && !c.s.check) {
+      gnu.error("--algorithm=" + algo_names()[c.sel] + " requires specifying --length 224, 256, 384, or 512");
       exit(1);
     }
+    if ((!c.s.check || c.bits_text.len() > 0) && c.bits != 224 && c.bits != 256 && c.bits != 384 && c.bits != 512) {
+      gnu.error("invalid length: " + gnu.quote(c.bits_text));
+      gnu.error("digest length for " + gnu.quote(family_tag(c.sel)) + " must be 224, 256, 384, or 512");
+      exit(1);
+    }
+  } else if (c.named_bits) {
     digest.check_bits_max(digest.algo_blake2b(), c.bits, c.bits_text);
   }
   if (c.s.check && c.specified && !is_digest(c.sel)) {
-    gnu.error("--check is not supported with --algorithm={bsd,sysv,crc}");
+    gnu.error("--check is not supported with --algorithm={bsd,sysv,crc,crc32b}");
     exit(1);
   }
   if (c.b64 && c.raw) {
     gnu.die_usage("--base64 and --raw are mutually exclusive", 1);
   }
-  if (c.s.tag && c.s.binary == 0) {
-    gnu.die_usage("--text mode is only supported with --untagged", 1);
-  }
   if (c.s.zero && c.s.check) {
     gnu.die_usage("the --zero option is not supported when verifying checksums", 1);
+  }
+  if (c.tag_given && c.s.check) {
+    // `--untagged` is allowed with `--check`, so this asks whether the
+    // option was TYPED rather than what the default left behind.
+    gnu.die_usage("the --tag option is meaningless when verifying checksums", 1);
   }
   if (c.s.binary >= 0 && c.s.check) {
     gnu.die_usage("the --binary and --text options are meaningless when verifying checksums", 1);
@@ -432,6 +505,12 @@ function validate(c: Conf, operands: i32): void {
       gnu.die_usage("the --strict option is meaningful only when verifying checksums", 1);
     }
   }
+  // Last, so `--tag -t -c` reports the check conflicts first. A tagged
+  // line has nowhere to put the mode character, which is why the pair
+  // is refused rather than one of them ignored.
+  if (c.s.tag && c.s.binary == 0) {
+    gnu.die_usage("--text mode is only supported with --untagged", 1);
+  }
   if (c.raw && operands > 1) {
     gnu.error("the --raw option is not supported with multiple files");
     exit(1);
@@ -449,8 +528,9 @@ function help_text(): string {
   out = out + "  -a, --algorithm=TYPE  select the digest type to use.  See DIGEST below.\n";
   out = out + "      --base64          emit base64-encoded digests, not hexadecimal\n";
   out = out + "  -c, --check           read checksums from the FILEs and check them\n";
-  out = out + "  -l, --length=BITS     digest length in bits; must not exceed the max for\n";
-  out = out + "                          the blake2 algorithm and must be a multiple of 8\n";
+  out = out + "  -l, --length=BITS     digest length in bits; must not exceed the max size\n";
+  out = out + "                          and must be a multiple of 8 for blake2b;\n";
+  out = out + "                          must be 224, 256, 384, or 512 for sha2 or sha3\n";
   out = out + "      --raw             emit a raw binary digest, not hexadecimal\n";
   out = out + "      --tag             create a BSD-style checksum (the default)\n";
   out = out + "      --untagged        create a reversed style checksum, without digest type\n";
@@ -472,12 +552,11 @@ function help_text(): string {
   out = out + "  sysv      (equivalent to sum -s)\n";
   out = out + "  bsd       (equivalent to sum -r)\n";
   out = out + "  crc       (equivalent to cksum)\n";
+  out = out + "  crc32b    (only available through cksum)\n";
   out = out + "  md5       (equivalent to md5sum)\n";
   out = out + "  sha1      (equivalent to sha1sum)\n";
-  out = out + "  sha224    (equivalent to sha224sum)\n";
-  out = out + "  sha256    (equivalent to sha256sum)\n";
-  out = out + "  sha384    (equivalent to sha384sum)\n";
-  out = out + "  sha512    (equivalent to sha512sum)\n";
+  out = out + "  sha2      (equivalent to sha{224,256,384,512}sum)\n";
+  out = out + "  sha3      (only available through cksum)\n";
   out = out + "  blake2b   (equivalent to b2sum)\n";
   out = out + "  sm3       (only available through cksum)\n";
   out = out + "\n";
@@ -516,7 +595,7 @@ function plain_line(c: Conf, fields: string, name: string, named: boolean): stri
 function compute_one(c: Conf, name: string, named: boolean, o: io_buffered.BufWriter): (boolean, io_buffered.BufWriter) {
   var out: io_buffered.BufWriter = o;
   if (is_digest(c.sel)) {
-    var a: digest.Algo = digest_algo(c.sel);
+    var a: digest.Algo = digest_algo(c.sel, c.s.bits);
     var sum: digest.Sum = digest.digest_path(name, a.kind, c.s.bits);
     if (sum.failed) {
       return (false, gnu.error_out(out, gnu.quotef(name) + ": " + digest.sum_error_text(sum)));
@@ -542,7 +621,9 @@ function compute(c: Conf, names: string[], named: boolean, o: io_buffered.BufWri
   var i: i32 = 0;
   while (i < names.len()) {
     var r: (boolean, io_buffered.BufWriter) = compute_one(c, names[i], named, out);
-    out = r.1;
+    // Line buffering, as GNU sets stdout to be: a failure is named on
+    // the line that met it rather than at the close.
+    out = gnu.flush(r.1);
     if (!r.0) {
       ok = false;
     }
@@ -554,7 +635,14 @@ function compute(c: Conf, names: string[], named: boolean, o: io_buffered.BufWri
 function verify(c: Conf, names: string[], o: io_buffered.BufWriter): (boolean, io_buffered.BufWriter) {
   var a: digest.Algo = digest.algo_crc();
   if (c.specified) {
-    a = digest_algo(c.sel);
+    // `-a sha2` stays the family name when checking: each line's own tag
+    // picks the member, whatever `-l` said. Computing has no line to
+    // read, so there `-l` is the only thing that can pick one.
+    if (c.sel == sel_sha2()) {
+      a = digest.algo_sha2();
+    } else {
+      a = digest_algo(c.sel, c.s.bits);
+    }
   }
   var out: io_buffered.BufWriter = o;
   var ok: boolean = true;
@@ -572,7 +660,7 @@ function verify(c: Conf, names: string[], o: io_buffered.BufWriter): (boolean, i
 
 pub function main(): i32 {
   var argv: string[] = args();
-  var c: Conf = Conf { s: digest.settings_new(0), sel: sel_crc(), specified: false, bits: 0, named_bits: false, bits_text: "", raw: false, b64: false };
+  var c: Conf = Conf { s: digest.settings_new(0), sel: sel_crc(), specified: false, bits: 0, named_bits: false, bits_text: "", raw: false, b64: false, tag_given: false };
   c = Conf { ...c, s: digest.Settings { ...c.s, tag: true, cksum: true } };
   var g: gnu.Getopt = gnu.getopt_new(argv, options(), "cksum", help_text(), 1);
   while (true) {
@@ -591,6 +679,12 @@ pub function main(): i32 {
   var names: string[] = g.operands();
   var named: boolean = names.len() > 0;
   validate(c, names.len());
+  // Neither `-b` nor `-t` given is TEXT mode, which is the separator an
+  // untagged line carries; `--tag` no longer decides it, so
+  // `--tag --untagged` prints the two-space form.
+  if (c.s.binary < 0) {
+    c = Conf { ...c, s: digest.Settings { ...c.s, binary: 0 } };
+  }
   if (!named) {
     names = ["-"];
   }
@@ -599,7 +693,7 @@ pub function main(): i32 {
   // where each line's tag chooses.
   var bits: i32 = 0;
   if (is_digest(c.sel)) {
-    bits = digest_algo(c.sel).bits;
+    bits = digest_algo(c.sel, c.bits).bits;
     if (c.named_bits) {
       bits = c.bits;
     }
@@ -617,7 +711,6 @@ pub function main(): i32 {
     ok = rc.0;
     out = rc.1;
   }
-  out = out.flush();
   gnu.close_stdout(out, false);
   if (!ok) {
     return 1;

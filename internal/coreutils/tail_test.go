@@ -242,6 +242,13 @@ func tailCases(t *testing.T) []invocation {
 		{name: "pid too large", args: []string{"--pid=99999999999", f}},
 		{name: "pid huge", args: []string{"--pid=99999999999999999999", f}},
 		{name: "pid zero", args: []string{"--pid=0", "-n", "1", f}},
+		{name: "pid repeated", args: []string{"--pid=1", "--pid=2", "-n", "1", f}},
+		{name: "pid repeated with a bad one", args: []string{"--pid=1", "--pid=x", "-n", "1", f}},
+
+		// --debug (9.10) names the --follow implementation, so without
+		// -f there is nothing to name.
+		{name: "debug without follow", args: []string{"--debug", "-n", "1", f}},
+		{name: "debug is unambiguous as --de", args: []string{"--de", "-n", "1", f}},
 		{name: "pid plus zero", args: []string{"--pid=+0", "-n", "1", f}},
 		{name: "pid negative", args: []string{"--pid=-1", f}},
 		{name: "pid suffix", args: []string{"--pid=1k", f}},

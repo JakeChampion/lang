@@ -114,7 +114,7 @@ func printfCases(t *testing.T) []invocation {
 		{name: "q missing argument", args: []string{`%q`}},
 		{name: "q missing argument with a following directive", args: []string{`%q|%q|`, "a"}},
 		{name: "q control bytes", args: []string{`%q\n`, "a\tb", "\x01x", "it's\n", "\xff", "a\nb\n", "\x1b[0m", "a\x7fb", "x\ty'z", "a\tb\tc", "\t", "\t\x01", "a\t'", "'\t", "\xc3\xa9", "a\xc3\xa9b", "\n", "\r\n", "\a\b\f\v", " \x01 ", "\x01 \x02", "a\x80b\xff"}},
-		{name: "q rescan quirk", args: []string{`%q\n`, "\x01'\x02", "'\x01'", "a'\x01", "'\x01", "\x01\x02'\x03", "\x01a'\x02", "\x01'a\x02", "x\x01'\x02", "\x01'\x02x", "\xff'\xff", "\x01'", "ab'\x01", "\x01\x02'", "\x01''\x02", "'\x01'\x02", "\x01'\x02'\x03", "\t'\t", "\x01 '\x02", " \x01'\x02", "a\x01b'\x02", "\x01a'\x02\x03", "'\x01\x02", "''\x01", "a''\x01", "\x01'\x02'\x03'"}},
+		{name: "q single quote then control", args: []string{`%q\n`, "\x01'\x02", "'\x01'", "a'\x01", "'\x01", "\x01\x02'\x03", "\x01a'\x02", "\x01'a\x02", "x\x01'\x02", "\x01'\x02x", "\xff'\xff", "\x01'", "ab'\x01", "\x01\x02'", "\x01''\x02", "'\x01'\x02", "\x01'\x02'\x03", "\t'\t", "\x01 '\x02", " \x01'\x02", "a\x01b'\x02", "\x01a'\x02\x03", "'\x01\x02", "''\x01", "a''\x01", "\x01'\x02'\x03'"}},
 		{name: "q with a flag is invalid", args: []string{`%-q|`, "a"}},
 		{name: "q with a precision is invalid", args: []string{`%.1q|`, "ab"}},
 		{name: "q cycles", args: []string{`%q\n`, "a", "b c", ""}},

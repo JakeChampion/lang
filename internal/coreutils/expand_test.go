@@ -127,7 +127,11 @@ func expandCases(t *testing.T) []invocation {
 		{name: "backspace at column zero", args: []string{"-t4"}, stdin: "\b\b\tc\n"},
 		{name: "backspace with a stop list", args: []string{"-t", "2,4,6"}, stdin: "\t\t\b\ta\n"},
 		{name: "carriage return is one column", args: []string{"-t4"}, stdin: "a\r\tb\n"},
-		{name: "NUL is one column", args: []string{"-t4", nul}},
+		// wcwidth answers 0 for a NUL, so it takes no column at all —
+		// the one byte for which the column count is not the byte
+		// count. Every other non-printable is one.
+		{name: "NUL takes no column", args: []string{"-t4", nul}},
+		{name: "NUL takes no column at eight", args: []string{nul}},
 		{name: "no tabs at all", args: []string{"-t4"}, stdin: "plain text\n"},
 		{name: "empty lines", args: []string{"-t4", blank}},
 		{name: "empty file", args: []string{"-t4", empty}},

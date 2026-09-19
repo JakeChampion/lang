@@ -400,6 +400,35 @@ func chmodCases(t *testing.T) []invocation {
 		{name: "a refused no-op still fails", args: []string{"-v", "0500", "/proc/self/fd"}},
 
 		// ---- symlinks ----------------------------------------------------
+		// ---- --dereference, -h and the -H / -L / -P traversal ---------------
+		// 9.5 named the two questions apart: which links the WALK
+		// follows, and whether the CHANGE lands on the link or on what
+		// it points at. Linux has no mode on a symlink, so a change
+		// that does not follow one is `neither … has been changed`.
+		{name: "-h on a symlink", args: []string{"-hv", "0600", "good"}, seedTree: chmodLinks},
+		{name: "-h on a dangling symlink", args: []string{"-hv", "0600", "gone"}, seedTree: chmodLinks},
+		{name: "-h on an ordinary file", args: []string{"-hv", "0600", "f"}, seedTree: chmodLinks},
+		{name: "--dereference on a symlink", args: []string{"-v", "--dereference", "0600", "good"}, seedTree: chmodLinks},
+		{name: "--dereference on a dangling symlink", args: []string{"-v", "--dereference", "0600", "gone"}, seedTree: chmodLinks},
+		{name: "-h then --dereference", args: []string{"-hv", "--dereference", "0600", "good"}, seedTree: chmodLinks},
+		{name: "--dereference then -h", args: []string{"-v", "--dereference", "-h", "0600", "good"}, seedTree: chmodLinks},
+		{name: "-P on a symlink", args: []string{"-Pv", "0600", "good"}, seedTree: chmodLinks},
+		{name: "-P on a dangling symlink", args: []string{"-Pv", "0600", "gone"}, seedTree: chmodLinks},
+		{name: "-L on a symlink", args: []string{"-Lv", "0600", "good"}, seedTree: chmodLinks},
+		{name: "-h beats -L", args: []string{"-hLv", "0600", "good"}, seedTree: chmodLinks},
+		{name: "-R -h through a symlinked directory", args: []string{"-Rhv", "0700", "dlink"}, seedTree: chmodLinks},
+		{name: "-R -H through a symlinked directory", args: []string{"-RHv", "0700", "dlink"}, seedTree: chmodLinks},
+		{name: "-R -L through a symlinked directory", args: []string{"-RLv", "0700", "dlink"}, seedTree: chmodLinks},
+		{name: "-R -P through a symlinked directory", args: []string{"-RPv", "0700", "dlink"}, seedTree: chmodLinks},
+		{name: "-R over a tree with links", args: []string{"-Rv", "0700", "t"}, seedTree: chmodTree},
+		{name: "-R -L over a tree with links", args: []string{"-RLv", "0700", "t"}, seedTree: chmodTree},
+		{name: "-R -P over a tree with links", args: []string{"-RPv", "0700", "t"}, seedTree: chmodTree},
+		{name: "-R -h over a tree with links", args: []string{"-Rhv", "0700", "t"}, seedTree: chmodTree},
+		{name: "-R --dereference needs -H or -L", args: []string{"-R", "--dereference", "-P", "0700", "t"}, seedTree: chmodTree},
+		{name: "-R --dereference with -L is allowed", args: []string{"-R", "--dereference", "-L", "-v", "0700", "t"}, seedTree: chmodTree},
+		{name: "the last traversal option wins", args: []string{"-RLPHv", "0700", "dlink"}, seedTree: chmodLinks},
+		{name: "-H without -R", args: []string{"-Hv", "0600", "good"}, seedTree: chmodLinks},
+
 		{name: "a symlink operand is followed", args: []string{"-v", "0600", "good"}, seedTree: chmodLinks},
 		{name: "a dangling symlink operand", args: []string{"-v", "0600", "gone"}, seedTree: chmodLinks},
 		{name: "a dangling symlink under -f", args: []string{"-fv", "0600", "gone"}, seedTree: chmodLinks},

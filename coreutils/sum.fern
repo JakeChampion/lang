@@ -185,10 +185,9 @@ pub function main(): i32 {
     operands = ["-"];
   }
 
-  // Writes go through the buffer with no check of their own: a failure
-  // is sticky, and glibc reports it once at the end. The final flush
-  // is what makes `> /dev/full` say `write error` with no errno left to
-  // name, the way GNU does, rather than naming ENOSPC at the close.
+  // Line buffered, as GNU sets stdout to be: each line reaches the fd
+  // as it is printed, so `> /dev/full` names ENOSPC on the line that
+  // failed rather than at the close.
   var out: io_buffered.BufWriter = gnu.out_new();
   var ok: boolean = true;
   var i: i32 = 0;
@@ -203,11 +202,10 @@ pub function main(): i32 {
         None => {}
       }
     } else {
-      out = out.write_string(line_for(t, sysv, operands[i], named));
+      out = gnu.flush(gnu.put(out, line_for(t, sysv, operands[i], named)));
     }
     i = i + 1;
   }
-  out = out.flush();
   gnu.close_stdout(out, false);
   if (!ok) {
     return 1;

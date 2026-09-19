@@ -1987,7 +1987,7 @@ function numeric_locale_warnings(tab: i32, span: boolean): void {
   if (span && tab == 45) {
     gnu.error("field separator " + gnu.quote("-") + " is treated as a minus sign in numbers");
   }
-  gnu.error("note numbers use " + gnu.quote(".") + " as a decimal point in this locale");
+  gnu.error("numbers use " + gnu.quote(".") + " as a decimal point in this locale");
 }
 
 // ---- the check --------------------------------------------------------------
@@ -2048,7 +2048,7 @@ function read_names(file: string): string[] {
       die(gnu.quotef(file) + ":" + n.to_string() + ": invalid zero-length file name");
     }
     if (name == "-") {
-      die("when reading file names from stdin, no file name of '-' allowed");
+      die("when reading file names from standard input, no file name of '-' allowed");
     }
     names = names.append(name);
     start = end + 1;
