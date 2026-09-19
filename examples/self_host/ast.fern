@@ -96,7 +96,17 @@ pub struct ExprArray { elements: Expr[], elem_ty: string, line: i32, col: i32 }
 // and match-/if-expression IIFEs — which is what keeps a reporter off their
 // guessed `ret_type`: those carry no annotation the programmer wrote.
 pub struct TypedBinding { name: string, ty: typeinfo.Type }
-pub struct ExprLambda { params: ParamDecl[], ret_type: string, body: Stmt[], use_infer: boolean, origin: string, line: i32, col: i32, captures: TypedBinding[], captures_known: boolean }
+// ret_fn_ret / ret_fn_param_types describe a lambda that RETURNS a function
+// value, the way the identically-named pair does on FuncDecl, ParamDecl,
+// StructFieldDecl and StmtVar (#5986): `parse_type_name` coarsens `(i32) => i32`
+// to the flat "fn" tag, and these carry the signature it drops. ExprLambda was
+// the one member of that family without them, so a nested
+// `function mk(): (i32) => i32` — desugared to a lambda-valued local — lost its
+// signature at parse, every hoist that rebuilt it as a FuncDecl wrote the empty
+// pair, and the semantic lowering refused the module for an unresolved result
+// type. That refusal was 238 of the 1,054 the fuzzer corpus produced
+// (docs/rc-log/2026-09-19-what-the-typed-path-still-refuses-is-lambdas.md).
+pub struct ExprLambda { params: ParamDecl[], ret_type: string, body: Stmt[], use_infer: boolean, origin: string, line: i32, col: i32, captures: TypedBinding[], captures_known: boolean, ret_fn_ret: string, ret_fn_param_types: string }
 
 // ExprTuple holds a parenthesised comma-separated list:
 // `(a, b, c)`. Distinct from arrays because tuple shape is

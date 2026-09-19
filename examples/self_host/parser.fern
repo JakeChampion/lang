@@ -410,7 +410,16 @@ function e_lambda(params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[]): 
 // e_lambda_at is e_lambda for the two parses of a lambda the source WROTE, which
 // are the only ones that carry a position; see ExprLambda.line.
 function e_lambda_at(params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], origin: string, line: i32, col: i32): ast.Expr {
-    return ast.ExprLambda { params: params, ret_type: ret_type, body: body, use_infer: false, origin: origin, line: line, col: col, captures: [], captures_known: false };
+    return ast.ExprLambda { params: params, ret_type: ret_type, body: body, use_infer: false, origin: origin, line: line, col: col, captures: [], captures_known: false, ret_fn_ret: "", ret_fn_param_types: "" };
+}
+
+// e_lambda_fn is e_lambda for a lambda that RETURNS a function value, carrying
+// the signature `parse_type_name` coarsened to the flat "fn" tag. Only a caller
+// holding BOTH halves uses it: `fn_tag_spelling` reads the result to decide
+// whether it can rebuild the spelling at all, and a result with no parameter
+// list would rebuild `() => R` for a function that takes arguments.
+function e_lambda_fn(params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], fn_ret: string, fn_ptys: string): ast.Expr {
+    return ast.ExprLambda { params: params, ret_type: ret_type, body: body, use_infer: false, origin: "", line: 0, col: 0, captures: [], captures_known: false, ret_fn_ret: fn_ret, ret_fn_param_types: fn_ptys };
 }
 // e_lambda_origin is e_lambda for a lambda the PARSER synthesised, labelled
 // with the source form it stands in for so `-fmt` reprints that form. "block"
@@ -797,7 +806,7 @@ function maybe_desugar_array_build(base: ast.Expr): ast.Expr {
                                         ri = ri + 1;
                                     }
                                     stmts = stmts.append(s_return(e_ident(bname)));
-                                    var iife: ast.Expr = ast.ExprLambda { params: [], ret_type: arrty, body: stmts, use_infer: false, origin: ORIGIN_ARR_COMP, line: 0, col: 0, captures: [], captures_known: false };
+                                    var iife: ast.Expr = ast.ExprLambda { params: [], ret_type: arrty, body: stmts, use_infer: false, origin: ORIGIN_ARR_COMP, line: 0, col: 0, captures: [], captures_known: false, ret_fn_ret: "", ret_fn_param_types: "" };
                                     return ast.ExprCall { callee: iife, args: [], line: call.line, col: call.col, type_argc: 0, ty: "" };
                                 },
                                 _ => { return base; },
@@ -864,7 +873,7 @@ function maybe_desugar_map_build(base: ast.Expr): ast.Expr {
                                         ri = ri + 1;
                                     }
                                     stmts = stmts.append(s_return(e_ident(bname)));
-                                    var iife: ast.Expr = ast.ExprLambda { params: [], ret_type: mapty, body: stmts, use_infer: false, origin: ORIGIN_MAP_COMP, line: 0, col: 0, captures: [], captures_known: false };
+                                    var iife: ast.Expr = ast.ExprLambda { params: [], ret_type: mapty, body: stmts, use_infer: false, origin: ORIGIN_MAP_COMP, line: 0, col: 0, captures: [], captures_known: false, ret_fn_ret: "", ret_fn_param_types: "" };
                                     return ast.ExprCall { callee: iife, args: [], line: call.line, col: call.col, type_argc: 0, ty: "" };
                                 },
                                 _ => { return base; },
@@ -4249,7 +4258,7 @@ function parse_block_body_nested(p: Par, tail_value: boolean): (ast.Stmt[], Par)
             // no `: TYPE` — the checker's E032 rule verifies the binding
             // type is inferrable from the callee's signature (native
             // inferUseParam). An annotated `use n: T <- …` never draws E032.
-            var cb: ast.Expr = ast.ExprLambda { params: cbparams, ret_type: "", body: rest_body, use_infer: utype.len() == 0, origin: ORIGIN_USE, line: 0, col: 0, captures: [], captures_known: false };
+            var cb: ast.Expr = ast.ExprLambda { params: cbparams, ret_type: "", body: rest_body, use_infer: utype.len() == 0, origin: ORIGIN_USE, line: 0, col: 0, captures: [], captures_known: false, ret_fn_ret: "", ret_fn_param_types: "" };
             match (usrc_expr) {
                 ast.ExprCall(c) => {
                     var newargs: ast.Expr[] = c.args.append(cb);
@@ -5589,9 +5598,9 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
             // itself (the name binds after the lambda captures), so this
             // needs top-level hoisting (closureconv), not yet ported.
             // Surface it rather than miscompile silently.
-            return (s_var(fr_func.name, "", e_lambda(fr_func.params, fr_func.ret_type, fr_func.body)), p);
+            return (s_var(fr_func.name, "", e_lambda_fn(fr_func.params, fr_func.ret_type, fr_func.body, fr_func.ret_fn_ret, fr_func.ret_fn_param_types)), p);
         }
-        var lam: ast.Expr = e_lambda(fr_func.params, fr_func.ret_type, fr_func.body);
+        var lam: ast.Expr = e_lambda_fn(fr_func.params, fr_func.ret_type, fr_func.body, fr_func.ret_fn_ret, fr_func.ret_fn_param_types);
         // `-fmt` records which of the two spellings was written, the way a
         // struct destructure uses the same field ("@sd:…"): both parse to a
         // lambda-valued local, so without the marker a nested declaration came
