@@ -95,10 +95,50 @@ the self-host already agrees with native on a hand-written IIFE. Verified before
 changing anything — the predicate says so rather than listing an origin that
 cannot reach it.
 
-## What did not move
+## The instrument, found while chasing what did not move
 
-The self-recursive nested function still refuses, at `unresolved type of binding
-$binding$0$rec: ` with an EMPTY spelling. Both nested-function desugar sites
-bind with no type at all (#9773), and that one cannot be inferred from the
-lambda, because the name binds after the lambda is built. Same area, different
-producer, filed rather than folded in.
+One shape kept refusing: the SELF-recursive nested function, at `unresolved type
+of binding $binding$0$rec: ` with an empty spelling. I filed it, proposed a fix
+from the message alone — the binding is given no type, so stamp it — and
+prototyped that fix. It changed nothing.
+
+The empty spelling was `type_detail` of an UNRESOLVED type, not an absent one.
+Reducing further, to a self-recursive nested function returning a plain `i32`,
+gave a different refusal: `call target has no semantic contract:
+$binding$0$rec`, on a program with no function-returning anywhere in it. A
+binding production has already removed, still being called.
+
+`semsource_census_run` does not run `parser.module_with_builtins`, though every
+real driver does. So it never runs `hoist_local_funcs_module`, the pass that
+lifts a self-recursive local to a top-level declaration — nor `desugar_prepass`,
+`lower_defers_prepass`, the three `monomorphize_*` passes, or
+`inline_callonly_fn_values`. With `module_with_builtins` restored, both
+self-recursive shapes produce whole, with or without this change:
+
+| program | census as shipped | census + `module_with_builtins` |
+|---|---|---|
+| self-recursive nested fn, returns `i32` | 0 of 2 | 2 of 2 |
+| self-recursive nested fn, returns a function | 1 of 3 | 3 of 3 |
+| nested fn returning a fn, not recursive (control) | 1 of 4 | 1 of 4 |
+
+The control is this entry's own defect, and it moves identically under both
+pipelines — which is what makes the first two rows instrument rather than
+coincidence. #9773 is closed as an artefact; the instrument is #9778.
+
+This change's own numbers were re-measured under the restored pipeline and hold,
+which was worth doing rather than assuming: the fix is in `try_lift_binding`,
+which both pipelines run.
+
+## The trap under the trap
+
+A refusal message is not a diagnosis, and a diagnostic driver is not the
+compiler. Every number steering this effort — 284 of 508 produced whole, the
+bucket ranking, the `unresolved result type` count this log has been chasing for
+two entries — came from an instrument that measures a module the compiler never
+lowers. They are lower bounds by an unknown margin, and the RANKING can be wrong
+too, because the missing passes do not touch all constructs equally.
+
+Twice now in three entries the error has been the same: read one refusal message,
+infer a cause, act on the inference. The message names where the producer
+stopped. It does not name why, and it does not promise the program reaching the
+producer is the program the compiler lowers.
