@@ -186,6 +186,7 @@ func TestSelfHostCoreutilsParity(t *testing.T) {
 						inv.prepare == nil && len(inv.artifacts) == 0 {
 						t.Parallel()
 					}
+					inv := inv.own(t)
 					inv.prep(t)
 					want := inv.run(t, native, util)
 					wantFiles := inv.readArtifacts(t)

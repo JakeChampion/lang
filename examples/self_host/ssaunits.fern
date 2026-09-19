@@ -269,16 +269,20 @@ function construction(kind: i32): boolean {
         || kind == ssasem.closure_new() || kind == ssasem.cell_new() || kind == ssasem.map_new()
         || kind == ssasem.map_cleared();
 }
-// The operand types a construction takes a unit of: every reference, and a
-// function value too — except in a CLOSURE box, which borrows its captures of
-// that type. That borrow is the one this vocabulary secures separately: a
-// captured function value must be a borrowed parameter, so its owner outlives
-// the box. Every other container owns what it holds, and its release walks the
-// field (ssarc.walked), so taking the unit here is what balances that walk.
-function taken(t: typeinfo.Type, kind: i32): boolean {
-    if (!ssasem.reference(t)) { return false; }
-    if (ssasem.is_func(t)) { return kind != ssasem.closure_new(); }
-    return true;
+// The operand types a construction takes a unit of: every reference, without
+// exception. A closure box used to BORROW a captured function value, secured
+// by requiring the capture to be a borrowed parameter so its owner outlived
+// the box. That rule could not describe a box that escapes: a local function
+// value captured into a returned box is owned by a frame that is going away,
+// and the box never took it, so nobody freed it (#9637). The box owns it now,
+// and its release walks the field (ssarc.walked) — which a frame that never
+// built the box can do, because `semsource.env_rows` pairs every environment
+// a value of that type could carry with the type itself, and the whole module
+// contract table is what it reads.
+//
+// No `kind`: there is no construction with an exception any more.
+function taken(t: typeinfo.Type): boolean {
+    return ssasem.reference(t);
 }
 
 // A zero is a unit this frame holds, not one it allocated: at a reference type
@@ -326,10 +330,9 @@ function add_use(own live: boolean[], value: i32, deps: i32[][]): boolean[] {
     for dep in deps[value] { live = live.with(dep, true); }
     return live;
 }
-// A construction takes one unit per reference operand, except a FUNCTION
-// value, which every construction that can hold one borrows: only a closure
-// box can, and it borrows its captures of that type (semsource's
-// lent_capture). A call takes one per counted parameter; a borrowed parameter
+// A construction takes one unit per reference operand, function values
+// included: the closure box that used to borrow its captures of that type now
+// owns them (#9637). A call takes one per counted parameter; a borrowed parameter
 // only reads the caller's unit. An append or a with takes one for its
 // receiver, which a receiver this function does not own reaches by retaining;
 // a cell write takes one for the element it stores and reads the cell. A map
@@ -356,7 +359,7 @@ function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
     } else if (ins.kind_tag == ssasem.with()) {
         counted = [true, false, ssasem.reference(f.values[ins.args[2]])];
     } else if (construction(ins.kind_tag)) {
-        for arg in ins.args { counted = counted.append(taken(f.values[arg], ins.kind_tag)); }
+        for arg in ins.args { counted = counted.append(taken(f.values[arg])); }
     }
     var i: i32 = 0;
     while (i < counted.len()) {

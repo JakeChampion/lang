@@ -25,6 +25,9 @@ func OptimizeProgram(prog *Program, ptrW int32) {
 	// `Inline` below rewrites std/array's one-line method delegates, so the
 	// chain is recognisable before it and not reliably after (#9731).
 	FuseArrayPipelines(prog, int(ptrW))
+	// Storage selection, after fusion has removed the chains whose results
+	// never needed storage at all (#9733).
+	MapOwnedArrayInPlace(prog, int(ptrW))
 	// Tail-call optimisation: `OpCallDirect <self> ; OpReturn` becomes a
 	// parameter rebind plus `OpBr` back to the entry, so a self-recursive
 	// function runs in O(1) stack instead of growing one frame per call.

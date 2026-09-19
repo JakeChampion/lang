@@ -2119,7 +2119,17 @@ func via_capture {
     ret v3
 }
 
-refused captured function value is not a borrowed parameter
+modes 1 result i32
+v0:i32 v1:((i32) => i32) v2:((i32) => i32) v3:i32
+func capture_local {
+  b0:
+    v0 = param 0
+    v1 = closure_new capture_local$clo0 v0
+    v2 = closure_new capture_local$clo1 v1
+    v3 = call apply_int v2 v0
+    ret v3
+}
+
 refused produced graph fails semantic verification: function value is not an element
 modes 1 result i32
 v0:i32 v1:((i32) => i32) v2:i32 v3:i32 v4:i32 v5:i32
@@ -3310,8 +3320,8 @@ func via_capture$clo0 {
 }
 
 modes 2 1 result i32
-v0:__env$refused_capture_local$clo0[i32] v1:i32 v2:i32 v3:i32
-func refused_capture_local$clo0 {
+v0:__env$capture_local$clo0[i32] v1:i32 v2:i32 v3:i32
+func capture_local$clo0 {
   b0:
     v0 = param 0
     v1 = param 1
@@ -3321,8 +3331,8 @@ func refused_capture_local$clo0 {
 }
 
 modes 2 1 result i32
-v0:__env$refused_capture_local$clo1[((i32) => i32)] v1:i32 v2:((i32) => i32) v3:i32 v4:i32 v5:i32
-func refused_capture_local$clo1 {
+v0:__env$capture_local$clo1[((i32) => i32)] v1:i32 v2:((i32) => i32) v3:i32 v4:i32 v5:i32
+func capture_local$clo1 {
   b0:
     v0 = param 0
     v1 = param 1
