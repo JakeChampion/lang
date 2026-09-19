@@ -2646,6 +2646,18 @@ The two agree on every date between those dates and 2037 and differ
 outside it; the corpus therefore carries no case of that TZ shape, and
 `who_test.go` says so where a reader will meet it.
 
+**`pr -D` with `%D`, `%F`, `%R` or `%T` prints uninitialised memory in
+GNU 9.12.** `init_header` sizes the date buffer by calling gnulib's
+`nstrftime` with a null buffer first, and for the four directives that
+nstrftime expands into a sub-format that counting pass gets the length
+wrong: the header then carries whatever was in the allocation. Two runs
+of the same command print different bytes, so there is nothing for a
+corpus to compare — `pr_test.go` uses `%m/%d/%y`, `%Y-%m-%d`, `%H:%M`
+and `%H:%M:%S` in their place, which are the same dates by a route
+nstrftime measures correctly. `pr.fern` expands all four properly;
+against a fixed 9.12 it will agree, and against this one it differs on
+purpose.
+
 **`uname -p` and `-i` print `unknown` on Linux, and `-a` omits both.**
 Coreutils can answer neither there — the two `#if`s in uname.c are a
 Solaris `sysinfo(2)` and a BSD `sysctl`, and glibc has neither — so an
