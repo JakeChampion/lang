@@ -90,5 +90,8 @@ func TestArm64LinuxClockHelpersHaveNoThirdArgument(t *testing.T) {
 		if strings.Contains(body, "mov x16, #116") {
 			t.Errorf("arm64-linux %s issues a Darwin BSD syscall", helper)
 		}
+		if strings.Contains(body, "mov x2, #0") {
+			t.Errorf("arm64-linux %s zeroes x2, which clock_gettime has no argument for", helper)
+		}
 	}
 }
