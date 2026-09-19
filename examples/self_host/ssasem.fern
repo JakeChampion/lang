@@ -1745,9 +1745,39 @@ pub function tail_recursion(own f: Func, name: string): Func {
     if (f.graph.blocks[0].preds.len() > 0) { return f; }
     var nparams: i32 = f.graph.nparams;
     if (f.values.len() < nparams) { return f; }
+    if (carries_view(f, nparams)) { return f; }
     var tails: i32[] = tail_blocks(f, name, nparams, borrow_parents(f));
     if (tails.len() == 0) { return f; }
     return spliced(f, tails, nparams);
+}
+
+// A VIEW parameter cannot be carried by the loop, because the two halves of
+// owning one do not balance. Every parameter gains a phi, the planner marks a
+// reference-typed phi owned, and the entry edge then supplies the parameter by
+// RETAINING it — which on a view is a no-op, since a view's box carries the
+// immortal sentinel rather than a count. The matching release is not a no-op:
+// `__fern_str_view_free` frees the box. So the loop gives back a unit it was
+// never able to take, and the caller's view is gone while it still holds it —
+// `walk(v, 100000)` returned the right answer and left `v` empty, with the
+// over-release counter at one.
+//
+// The asymmetry is the planner's rather than this pass's (#9802; ssarc's
+// #9328 note records the same retain-noop / release-frees shape for the
+// call-argument bracket, and restricts that to arrays for the same reason).
+// What this pass contributes is the only way to reach it: a phi whose operand
+// is a BORROWED PARAMETER. A loop that rebuilds its view each round merges
+// fresh values and is correct on both legs, which is why nothing else has met
+// this.
+//
+// So the parameter list decides, not the argument: every parameter gets a phi
+// whether or not a tail call varies it.
+function carries_view(f: Func, nparams: i32): boolean {
+    var i: i32 = 0;
+    while (i < nparams) {
+        if (is_view(f.values[i])) { return true; }
+        i = i + 1;
+    }
+    return false;
 }
 
 // The blocks whose last instruction is a self-call the terminator returns.

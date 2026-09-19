@@ -57,6 +57,18 @@ function shrink(t: string, n: i32): i32 {
     return shrink(slice_unchecked(t, 0, t.len() - 1), n + 1);
 }
 
+// A str parameter — a VIEW. The loop cannot carry one: every parameter
+// gains a phi, a reference-typed phi is owned, and the entry edge supplies it
+// by RETAINING, which on a view is a no-op while the matching release frees
+// the box. So the rewrite declines this shape, and the assertion is that the
+// caller's view survives the call with the over-release counter still at
+// zero. Before the decline this answered b=0 with an empty view and the
+// counter at one.
+function view_walk(s: str, i: i32): i32 {
+    if (i == 0) { return s.len(); }
+    return view_walk(s, i - 1);
+}
+
 function main(): i32 {
     var t: string = "ab" + "cde";
     var keep: i32[] = [7, 8];
@@ -70,6 +82,16 @@ function main(): i32 {
 
     var view: i32 = shrink("abcdefghij" + "klmnopqrst", 0);
 
+    var lent: string = "abcde" + "fghij";
+    var peek: str = slice_unchecked(lent, 0, 5);
+    var vw: i32 = view_walk(peek, 2000);
+    // Churn the allocator, so a box the loop released would be reissued
+    // before the read below.
+    var churn: string[] = [];
+    var ci: i32 = 0;
+    while (ci < 200) { churn = churn.append("c" + ci.to_string()); ci = ci + 1; }
+    var still: i32 = peek.len();
+
     // The lender reads its own values AFTER the loops had them.
     var alive: i32 = t.len() + keep.len() + keep[0];
 
@@ -77,12 +99,13 @@ function main(): i32 {
         + " alive=" + alive.to_string()
         + " ticks=" + ticks.get().to_string()
         + " view=" + view.to_string()
+        + " vw=" + vw.to_string() + " still=" + still.to_string()
         + " underflow=" + __rc_underflow_count().to_string());
     return __rc_underflow_count();
 }
 `
 
-const selfHostTailRecursionWant = "0|a=5 b=3 c=206 alive=14 ticks=300000 view=19 underflow=0\n"
+const selfHostTailRecursionWant = "0|a=5 b=3 c=206 alive=14 ticks=300000 view=19 vw=5 still=5 underflow=0\n"
 
 // TestSelfHostSemanticTailRecursion is the reference-typed half of #9692.
 //
