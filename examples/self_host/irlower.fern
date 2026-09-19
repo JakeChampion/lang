@@ -73308,6 +73308,54 @@ function lift_expr_walk(e: ast.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
 // bare lambda returns, so this fires on none of them and leaves the self-compile
 // byte-identical.
 struct DesugarRet { body: ast.Stmt[], counter: i32 }
+// returned_lambda_contract reads the #5986 sidecar pair off the first lambda a
+// body RETURNS, walking the same branch shapes desugar_lambda_returns rewrites.
+//
+// hoist_value_iife declares its hoisted function with the coarse "fn" tag and
+// needs the pair that tag drops. A lambda the source wrote INSIDE an
+// if/match-expression arm never had one to give: e_lambda_origin builds the
+// IIFE and writes the pair empty, so the declaration reached semsource with a
+// tag and no contract and was refused for an unresolved result type. The arms
+// carry it — parameter spellings always, and a result spelling once
+// infer_ret_types_module has run — so read it from them.
+//
+// Both halves or neither: fn_tag_spelling rebuilds `() => R` from a result with
+// no parameter list, which is a contract that lies rather than one that is
+// missing.
+function returned_lambda_contract(body: ast.Stmt[]): (string, string) {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            ast.StmtReturn(r) => {
+                match (r.value) {
+                    ast.ExprLambda(lm) => {
+                        if (lm.ret_type.len() == 0) { return ("", ""); }
+                        var ptys: string = "";
+                        var k: i32 = 0;
+                        while (k < lm.params.len()) {
+                            if (lm.params[k].type_name.len() == 0) { return ("", ""); }
+                            if (k > 0) { ptys = ptys + ","; }
+                            ptys = ptys + lm.params[k].type_name;
+                            k = k + 1;
+                        }
+                        return (lm.ret_type, ptys);
+                    },
+                    _ => {}
+                }
+            },
+            ast.StmtIf(f) => {
+                var (tr, tp) = returned_lambda_contract(f.then_body);
+                if (tr.len() > 0) { return (tr, tp); }
+                var (er, ep) = returned_lambda_contract(f.else_body);
+                if (er.len() > 0) { return (er, ep); }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return ("", "");
+}
+
 function desugar_lambda_returns(body: ast.Stmt[], counter: i32): DesugarRet {
     var out: ast.Stmt[] = [];
     var c: i32 = counter;
@@ -75815,7 +75863,16 @@ function hoist_value_iife(lam: ast.ExprLambda, fd: parser.FuncDecl, funcs: parse
     // the worklist do NOT get this (#5281), which is why it is applied here
     // rather than at the drain.
     var dlr: DesugarRet = desugar_lambda_returns(lam.body, 0);
-    var nf: parser.FuncDecl = parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: "fn", body: dlr.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false };
+    // e_lambda_origin gives a synthesised IIFE an empty sidecar pair, so for an
+    // if/match-expression arm the contract has to come from the arm itself.
+    var fnret: string = lam.ret_fn_ret;
+    var fnptys: string = lam.ret_fn_param_types;
+    if (fnret.len() == 0) {
+        var (armret, armptys) = returned_lambda_contract(lam.body);
+        fnret = armret;
+        fnptys = armptys;
+    }
+    var nf: parser.FuncDecl = parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: "fn", body: dlr.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: fnret, ret_fn_param_types: fnptys , is_package: false };
     var ncall: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: nm, line: 0, col: 0, ty: "" }, args: args, line: 0, col: 0, type_argc: 0, ty: "" };
     return InlineCloRes { expr: ncall, funcs: funcs.append(nf), counter: counter + 1 };
 }
