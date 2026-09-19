@@ -435,6 +435,38 @@ func mvCases(t *testing.T) []invocation {
 		{name: "a backup does not excuse one entry through dotdot", args: []string{"-b", "d/../a", "a"}, seedTree: mvLinks},
 		{name: "a backup does not excuse one link named twice", args: []string{"-b", "sl", "sl"}, seedTree: mvLinks},
 		{name: "-n beats the same-file rule", args: []string{"-n", "a", "a"}, seedTree: mvLinks},
+
+		// ---- --update=none-fail, --debug and --exchange ---------------------
+		// `-n` is `--update=none` settled after the option scan, so it
+		// skips silently whichever side of an --update it falls on, and
+		// only `none-fail` says anything. --debug names every skip.
+		{name: "update none-fail", args: []string{"--update=none-fail", "a", "b"}, seedTree: mvBasic},
+		{name: "update none-fail verbose", args: []string{"--update=none-fail", "-v", "a", "b"}, seedTree: mvBasic},
+		{name: "update none-fail with nothing in the way", args: []string{"--update=none-fail", "-v", "a", "gone"}, seedTree: mvBasic},
+		{name: "update none-fail is not a prefix of none", args: []string{"--update=none-f", "a", "b"}, seedTree: mvBasic},
+		{name: "update n is ambiguous", args: []string{"--update=n", "a", "b"}, seedTree: mvBasic},
+		{name: "debug names a skip", args: []string{"--debug", "-n", "a", "b"}, seedTree: mvBasic},
+		{name: "debug names an update=none skip", args: []string{"--debug", "--update=none", "a", "b"}, seedTree: mvBasic},
+		{name: "debug does not name a none-fail refusal twice", args: []string{"--debug", "--update=none-fail", "a", "b"}, seedTree: mvBasic},
+		{name: "backup and update=none conflict", args: []string{"-b", "--update=none", "a", "b"}, seedTree: mvBasic},
+		{name: "backup and update=none-fail conflict", args: []string{"-b", "--update=none-fail", "a", "b"}, seedTree: mvBasic},
+		{name: "backup and update=all do not", args: []string{"-bv", "--update=all", "a", "b"}, seedTree: mvBackupSimple},
+
+		// --exchange swaps the two names. Only the paths that SUCCEED are
+		// compared: GNU's failure line carries an errno nothing set
+		// (docs/COREUTILS.md), and the implementation here is three
+		// renames rather than one (#9784).
+		{name: "exchange two files", args: []string{"--exchange", "-v", "a", "b"}, seedTree: mvBasic},
+		{name: "exchange without verbose", args: []string{"--exchange", "a", "b"}, seedTree: mvBasic},
+		{name: "exchange a directory and a file", args: []string{"--exchange", "-v", "d", "b"}, seedTree: mvBasic},
+		{name: "exchange a file and a directory", args: []string{"--exchange", "-v", "b", "d"}, seedTree: mvBasic},
+		{name: "exchange a symlink and its target", args: []string{"--exchange", "-v", "sl", "a"}, seedTree: mvBasic},
+		{name: "exchange across a directory", args: []string{"--exchange", "-v", "a", "d/b"}, seedTree: mvBasic},
+		{name: "exchange under -T", args: []string{"--exchange", "-T", "-v", "a", "b"}, seedTree: mvBasic},
+		{name: "exchange one name with itself", args: []string{"--exchange", "a", "a"}, seedTree: mvBasic},
+		{name: "exchange and backup conflict", args: []string{"--exchange", "-b", "a", "b"}, seedTree: mvBasic},
+		{name: "exchange abbreviated", args: []string{"--exc", "-v", "a", "b"}, seedTree: mvBasic},
+		{name: "exchange rejects a value", args: []string{"--exchange=x", "a", "b"}, seedTree: mvBasic},
 		{name: "the same file joined into a directory", args: []string{"a", "d"}, seedTree: mvLinks},
 
 		// ---- directory against non-directory --------------------------------
