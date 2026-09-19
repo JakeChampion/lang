@@ -1,5 +1,5 @@
 // coreutils/lib/digest.fern — md5sum, sha1sum, sha224sum, sha256sum,
-// sha384sum, sha512sum and b2sum, which are one program, and the eight
+// sha384sum, sha512sum and b2sum, which are one program, and the ten
 // digests cksum reaches through `-a`.
 //
 //   <util> [-bt] [--tag] [-z] [FILE]...
@@ -10,8 +10,15 @@
 // run, its length in bits, the word their BSD tag and their diagnostics
 // use, and whether `-l` may resize the digest — so each of the seven
 // files names an `Algo` holding those four and calls `run`. cksum names
-// one of eight `Algo`s per invocation and drives the pieces rather than
+// one of ten `Algo`s per invocation and drives the pieces rather than
 // `run`, because its output shapes are not these: see `cksum.fern`.
+//
+// Two of the ten name a FAMILY rather than a digest, and `Algo.fam`
+// says which: `sha3` is the four SHA-3 digests and `sha2` the four
+// SHA-2 ones. Both take only 224, 256, 384 and 512 bits. `-l` picks the
+// member when computing; when checking, the line's own tag picks, so
+// `-a sha2` reads a `SHA384 (…)` line and becomes SHA-384 from there
+// on — for the lines it cannot read as well as the ones it can.
 //
 // Two parts of this are worth reading before changing them, because
 // both were measured off the reference binary rather than reasoned out:
@@ -55,8 +62,9 @@ import "./gnu";
 // `Algo` — everything one digest does not share with another.
 // `kind` selects the crypto state, `bits` is the digest length nothing
 // overrides, `tag` is the BSD prefix and the word in `improperly
-// formatted %s checksum line`, and `variable` is b2sum's alone.
-pub struct Algo { name: string, tag: string, bits: i32, kind: i32, variable: boolean, rfc: string }
+// formatted %s checksum line`, `variable` means the length is written
+// into the tag and read back off the digest, and `fam` is `fam_*`.
+pub struct Algo { name: string, tag: string, bits: i32, kind: i32, variable: boolean, fam: i32, rfc: string }
 
 function k_md5(): i32 {
   return 0;
@@ -90,32 +98,64 @@ function k_sm3(): i32 {
   return 7;
 }
 
+function k_sha3(): i32 {
+  return 8;
+}
+
+// `k_sha2fam()` — the `sha2` name itself, which digests with the SHA-2
+// member its length picks. GNU reaches the same four states through one
+// stream function rather than resolving the name first.
+function k_sha2fam(): i32 {
+  return 9;
+}
+
+// `fam_*` — the two `-a` names that stand for a family of digests
+// rather than one. Both take only SHA-2's four lengths. `sha3` always
+// spells the chosen one in its tag; `sha2` gives way to the member a
+// check line's own tag names, and once it has, it is that member.
+function fam_none(): i32 {
+  return 0;
+}
+
+function fam_sha2(): i32 {
+  return 1;
+}
+
+function fam_sha3(): i32 {
+  return 2;
+}
+
+// The four lengths a family name has members at.
+function sha2_size(bits: i32): boolean {
+  return bits == 224 || bits == 256 || bits == 384 || bits == 512;
+}
+
 pub function algo_md5(): Algo {
-  return Algo { name: "md5sum", tag: "MD5", bits: 128, kind: k_md5(), variable: false, rfc: "RFC 1321" };
+  return Algo { name: "md5sum", tag: "MD5", bits: 128, kind: k_md5(), variable: false, fam: fam_none(), rfc: "RFC 1321" };
 }
 
 pub function algo_sha1(): Algo {
-  return Algo { name: "sha1sum", tag: "SHA1", bits: 160, kind: k_sha1(), variable: false, rfc: "FIPS-180-1" };
+  return Algo { name: "sha1sum", tag: "SHA1", bits: 160, kind: k_sha1(), variable: false, fam: fam_none(), rfc: "FIPS-180-1" };
 }
 
 pub function algo_sha224(): Algo {
-  return Algo { name: "sha224sum", tag: "SHA224", bits: 224, kind: k_sha224(), variable: false, rfc: "RFC 3874" };
+  return Algo { name: "sha224sum", tag: "SHA224", bits: 224, kind: k_sha224(), variable: false, fam: fam_none(), rfc: "RFC 3874" };
 }
 
 pub function algo_sha256(): Algo {
-  return Algo { name: "sha256sum", tag: "SHA256", bits: 256, kind: k_sha256(), variable: false, rfc: "FIPS-180-2" };
+  return Algo { name: "sha256sum", tag: "SHA256", bits: 256, kind: k_sha256(), variable: false, fam: fam_none(), rfc: "FIPS-180-2" };
 }
 
 pub function algo_sha384(): Algo {
-  return Algo { name: "sha384sum", tag: "SHA384", bits: 384, kind: k_sha384(), variable: false, rfc: "FIPS-180-2" };
+  return Algo { name: "sha384sum", tag: "SHA384", bits: 384, kind: k_sha384(), variable: false, fam: fam_none(), rfc: "FIPS-180-2" };
 }
 
 pub function algo_sha512(): Algo {
-  return Algo { name: "sha512sum", tag: "SHA512", bits: 512, kind: k_sha512(), variable: false, rfc: "FIPS-180-2" };
+  return Algo { name: "sha512sum", tag: "SHA512", bits: 512, kind: k_sha512(), variable: false, fam: fam_none(), rfc: "FIPS-180-2" };
 }
 
 pub function algo_blake2b(): Algo {
-  return Algo { name: "b2sum", tag: "BLAKE2b", bits: 512, kind: k_blake2b(), variable: true, rfc: "RFC 7693" };
+  return Algo { name: "b2sum", tag: "BLAKE2b", bits: 512, kind: k_blake2b(), variable: true, fam: fam_none(), rfc: "RFC 7693" };
 }
 
 // `algo_crc()` — cksum's default. It is not a digest and no checksum
@@ -123,12 +163,40 @@ pub function algo_blake2b(): Algo {
 // `-a` names `CRC` in the diagnostic for every line until a tag names
 // something else.
 pub function algo_crc(): Algo {
-  return Algo { name: "cksum", tag: "CRC", bits: 0, kind: 0 - 1, variable: false, rfc: "" };
+  return Algo { name: "cksum", tag: "CRC", bits: 0, kind: 0 - 1, variable: false, fam: fam_none(), rfc: "" };
+}
+
+// SHA-3, 9.5's. Like BLAKE2b it is a family rather than one digest and
+// the tag carries the length — `SHA3-256` — but unlike BLAKE2b the
+// length is always spelled, the widest included, and only SHA-2's four
+// lengths exist. `bits` is the default the tag implies when it spells
+// none, which is also the widest.
+pub function algo_sha3(): Algo {
+  return Algo { name: "cksum", tag: "SHA3", bits: 512, kind: k_sha3(), variable: true, fam: fam_sha3(), rfc: "FIPS 202" };
+}
+
+// SHA-2, 9.5's: the four SHA-2 digests under one name. Computing
+// resolves it to the member `-l` picks, so this Algo is reached only
+// when checking, where each line's own tag picks instead.
+pub function algo_sha2(): Algo {
+  return Algo { name: "cksum", tag: "SHA2", bits: 512, kind: k_sha2fam(), variable: true, fam: fam_sha2(), rfc: "" };
+}
+
+// `sha2_members()` — the four tags that displace `sha2` when a check
+// line names one. `SHA2` itself is absent: it leaves the algorithm
+// where it is, so the ordinary tag match reads the line.
+function sha2_members(): Algo[] {
+  var all: Algo[] = [];
+  all = all.append(algo_sha224());
+  all = all.append(algo_sha256());
+  all = all.append(algo_sha384());
+  all = all.append(algo_sha512());
+  return all;
 }
 
 // SM3 has no utility of its own: `cksum -a sm3` is the only way to reach it.
 pub function algo_sm3(): Algo {
-  return Algo { name: "cksum", tag: "SM3", bits: 256, kind: k_sm3(), variable: false, rfc: "GB/T 32905-2016" };
+  return Algo { name: "cksum", tag: "SM3", bits: 256, kind: k_sm3(), variable: false, fam: fam_none(), rfc: "GB/T 32905-2016" };
 }
 
 // `checkable()` — the algorithms a check line's tag may name, in the
@@ -142,6 +210,8 @@ pub function checkable(): Algo[] {
   all = all.append(algo_sha256());
   all = all.append(algo_sha384());
   all = all.append(algo_sha512());
+  all = all.append(algo_sha2());
+  all = all.append(algo_sha3());
   all = all.append(algo_blake2b());
   all = all.append(algo_sm3());
   return all;
@@ -150,7 +220,7 @@ pub function checkable(): Algo[] {
 // `Ctx` — the running digest. One variant per crypto state rather than
 // one per utility: SHA-224 and SHA-256 share a state, as do SHA-384
 // and SHA-512.
-enum Ctx { CMd5(crypto.Md5), CSha1(crypto.Sha1), CSha2(crypto.Sha256), CSha5(crypto.Sha512), CB2(crypto.Blake2b), CSm3(crypto.Sm3) }
+enum Ctx { CMd5(crypto.Md5), CSha1(crypto.Sha1), CSha2(crypto.Sha256), CSha5(crypto.Sha512), CB2(crypto.Blake2b), CSm3(crypto.Sm3), CSha3(crypto.Sha3) }
 
 function ctx_new(kind: i32, bits: i32): Ctx {
   if (kind == k_md5()) {
@@ -174,6 +244,30 @@ function ctx_new(kind: i32, bits: i32): Ctx {
   if (kind == k_sm3()) {
     return CSm3(crypto.sm3_new());
   }
+  if (kind == k_sha2fam()) {
+    if (bits == 224) {
+      return CSha2(crypto.sha224_new());
+    }
+    if (bits == 256) {
+      return CSha2(crypto.sha256_new());
+    }
+    if (bits == 384) {
+      return CSha5(crypto.sha384_new());
+    }
+    return CSha5(crypto.sha512_new());
+  }
+  if (kind == k_sha3()) {
+    if (bits == 224) {
+      return CSha3(crypto.sha3_224_new());
+    }
+    if (bits == 256) {
+      return CSha3(crypto.sha3_256_new());
+    }
+    if (bits == 384) {
+      return CSha3(crypto.sha3_384_new());
+    }
+    return CSha3(crypto.sha3_512_new());
+  }
   return CB2(crypto.blake2b_new(bits / 8));
 }
 
@@ -196,6 +290,9 @@ function ctx_update(c: Ctx, chunk: string): Ctx {
     },
     CSm3(h) => {
       return CSm3(h.update(chunk));
+    },
+    CSha3(h) => {
+      return CSha3(h.update(chunk));
     }
   }
 }
@@ -220,6 +317,9 @@ function ctx_bytes(c: Ctx): u8[] {
       return h.final_bytes();
     },
     CSm3(h) => {
+      return h.final_bytes();
+    },
+    CSha3(h) => {
       return h.final_bytes();
     }
   }
@@ -531,9 +631,9 @@ pub function sum_is_missing(s: Sum): boolean {
 
 // ---- writing a checksum ---------------------------------------------------
 // `tag_prefix(a, bits)` — the BSD tag. b2sum names its length in it,
-// but only when the length is not the default 512.
+// but only when the length is not the default 512; SHA-3 always does.
 pub function tag_prefix(a: Algo, bits: i32): string {
-  if (a.variable && bits != a.bits) {
+  if (a.fam == fam_sha3() || a.variable && bits != a.bits) {
     return a.tag + "-" + bits.to_string();
   }
   return a.tag;
@@ -569,13 +669,10 @@ pub function sum_line(a: Algo, s: Settings, digest: string, name: string): strin
 // it at, or `ok: false` for a line that is not one. `algo` is set even
 // on a bad line, because cksum's check mode carries the last tag it
 // recognised into the next line's diagnostic.
-//
-// `fits` is false for the one shape that parses and can never match: see
-// `b64_room`.
-struct Line { ok: boolean, hex: string, name: string, algo: Algo, bits: i32, fits: boolean }
+struct Line { ok: boolean, hex: string, name: string, algo: Algo, bits: i32 }
 
 function bad_line(a: Algo): Line {
-  return Line { ok: false, hex: "", name: "", algo: a, bits: 0, fits: true };
+  return Line { ok: false, hex: "", name: "", algo: a, bits: 0 };
 }
 
 // `base64_len(n)` — `n` bytes in base64, padding included.
@@ -583,24 +680,25 @@ function base64_len(n: i32): i32 {
   return (n + 2) / 3 * 4;
 }
 
-// `b64_room(n)` — the room a base64 digest needs to land in an n-byte
-// buffer: three bytes for the first four characters and two for every
-// four after them. A digest of 1, 2 or 4 bytes is smaller than its own
-// requirement, so `cksum --base64 -a blake2b -l 8|16|32` writes a line
-// that parses and then never verifies. Measured off the reference over
-// every length from 8 to 200 bits, not reasoned out.
-function b64_room(n: i32): i32 {
-  return 2 * ((n + 2) / 3) + 1;
-}
-
 // `Digest` — a check line's digest field. It is read as base64 when its
 // length is the base64 length of the digest and as hex otherwise, so a
 // two- or four-byte digest — whose hex is the same width as its base64 —
 // is only ever read as base64.
-struct Digest { ok: boolean, hex: string, fits: boolean }
+//
+// A digest of 1, 2 or 4 bytes used to parse and then never verify: the
+// decode wanted more room than the digest occupied. 9.5 sized the buffer
+// for it, so `cksum --base64 -a blake2b -l 8` now reads back what it
+// wrote.
+struct Digest { ok: boolean, hex: string }
 
 function bad_digest(): Digest {
-  return Digest { ok: false, hex: "", fits: true };
+  return Digest { ok: false, hex: "" };
+}
+
+// The base64 alphabet without its padding, which is what GNU's
+// `isubase64` names.
+function isubase64(b: i32): boolean {
+  return b >= 48 && b <= 57 || b >= 65 && b <= 90 || b >= 97 && b <= 122 || b == 43 || b == 47;
 }
 
 function read_digest(s: Settings, field: string, n: i32): Digest {
@@ -610,7 +708,7 @@ function read_digest(s: Settings, field: string, n: i32): Digest {
         if (bs.len() != n) {
           return bad_digest();
         }
-        return Digest { ok: true, hex: hex.hex_encode(bs), fits: n >= b64_room(n) };
+        return Digest { ok: true, hex: hex.hex_encode(bs) };
       },
       None => {
         return bad_digest();
@@ -627,7 +725,7 @@ function read_digest(s: Settings, field: string, n: i32): Digest {
     }
     k = k + 1;
   }
-  return Digest { ok: true, hex: lower_hex(field), fits: true };
+  return Digest { ok: true, hex: lower_hex(field) };
 }
 
 // `strtou_base0(s, i)` — C's strtoumax with base 0 over `s` from `i`:
@@ -729,6 +827,11 @@ function tag_open(a: Algo, s: Settings, cs: string, i: i32): (i32, i32) {
       }
       bits = n.0;
       j = n.1;
+      // sha2 and sha3 take SHA-2's four lengths and nothing else, in
+      // place of the multiple-of-eight rule the rest are held to.
+      if (a.fam != fam_none() && !sha2_size(bits)) {
+        return (0 - 1, bits);
+      }
     }
   }
   // Exactly ONE space between the tag and the `(`. GNU <= 9.4 took any
@@ -807,13 +910,64 @@ function raw_split(a: Algo, s: Settings, cs: string, i: i32, full_len: i32, esca
   var n: i32 = 0;
   var bits: i32 = a.bits;
   if (a.variable) {
-    while (isxdigit(at(cs, i + n))) {
-      n = n + 1;
+    // The length is read off the DIGEST, and 9.5 taught it base64: the
+    // hex run first, then the base64-only characters after it and the
+    // `=` padding behind those. A field that is all hex is its own
+    // length; one that is not is matched against the encoded length of
+    // every digest size the algorithm has, the padding count standing
+    // in for the size modulo three.
+    var hexn: i32 = 0;
+    while (isxdigit(at(cs, i + hexn))) {
+      hexn = hexn + 1;
+    }
+    var b64n: i32 = hexn;
+    while (isubase64(at(cs, i + b64n))) {
+      b64n = b64n + 1;
+    }
+    var eqs: i32 = 0;
+    while (at(cs, i + b64n + eqs) == 61) {
+      eqs = eqs + 1;
+    }
+    n = hexn;
+    if (a.fam != fam_none()) {
+      // A family name has four lengths, so a hex run that is not one of
+      // them is matched against the four base64 widths instead. Unlike
+      // BLAKE2b's search this runs even when the field is all hex: the
+      // hex reading has to be one of the four to stand.
+      if (!sha2_size(n * 4)) {
+        n = 0;
+        var ms: Algo[] = sha2_members();
+        var mi: i32 = 0;
+        while (mi < ms.len()) {
+          if (base64_len(ms[mi].bits / 8) == b64n + eqs) {
+            n = ms[mi].bits / 4;
+          }
+          mi = mi + 1;
+        }
+        if (n == 0) {
+          return bad_line(a);
+        }
+      }
+    } else if (hexn < b64n) {
+      var j: i32 = 8;
+      while (j <= a.bits) {
+        if (base64_len(j / 8) == b64n + eqs && j % 3 == eqs) {
+          n = j / 4;
+          j = a.bits;
+        }
+        j = j + 8;
+      }
     }
     if (n < 2 || n > a.bits / 4 || n % 2 != 0) {
       return bad_line(a);
     }
     bits = n * 4;
+    // The FIELD is whatever runs to the next blank, which for a base64
+    // digest is longer than the hex length just derived.
+    n = 0;
+    while (i + n < cs.len() && !iswhite(at(cs, i + n))) {
+      n = n + 1;
+    }
   } else {
     // The field runs to the first blank rather than a fixed width: a
     // base64 digest is narrower than the hex one.
@@ -852,7 +1006,7 @@ function finish_line(a: Algo, d: Digest, bits: i32, raw_name: string, escaped: b
     }
     name = u.1;
   }
-  return Line { ok: true, hex: d.hex, name: name, algo: a, bits: bits, fits: d.fits };
+  return Line { ok: true, hex: d.hex, name: name, algo: a, bits: bits };
 }
 
 // `parse_line(a, s, cs, full_len)` — one checksum line. `a` is the
@@ -885,6 +1039,20 @@ function parse_line(a: Algo, s: Settings, cs: string, full_len: i32): Line {
       k = k + 1;
     }
     return bad_line(a);
+  }
+  if (a.fam == fam_sha2()) {
+    var m: Algo[] = sha2_members();
+    var j: i32 = 0;
+    while (j < m.len()) {
+      if (tag_name_at(m[j], cs, i)) {
+        var md: (i32, i32) = tag_open(m[j], s, cs, i);
+        if (md.0 < 0) {
+          return bad_line(m[j]);
+        }
+        return bsd_split(m[j], s, cs, md.0, md.1, escaped);
+      }
+      j = j + 1;
+    }
   }
   var t: (i32, i32) = tag_open(a, s, cs, i);
   if (t.0 >= 0) {
@@ -932,7 +1100,7 @@ function check_one(s: Settings, ln: Line, c: Check): Check {
   if (ln.bits / 4 < want.len()) {
     want = slice_unchecked(want, 0, ln.bits / 4) + "";
   }
-  if (want == ln.hex && ln.fits) {
+  if (want == ln.hex) {
     st = Check { ...st, matched: true };
     if (!s.status && !s.quiet) {
       st = Check { ...st, out: gnu.put(st.out, shown + ": OK\n") };
