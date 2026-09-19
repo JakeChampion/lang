@@ -196,6 +196,33 @@ func TestSelfHostWasmIRTcpServer(t *testing.T) {
 		}
 	})
 
+	// tcp_local_port on wasm is a different mechanism from the native one: no
+	// getsockname, but `[method]tcp-socket.local-address` answering a
+	// `result<ip-socket-address, error-code>` whose port the helper reads out
+	// of the retptr. No client is needed to check it — a listener on 0 reports
+	// the port the host picked, or it does not.
+	t.Run("local_port_of_ephemeral_listener", func(t *testing.T) {
+		src := `function main(): i32 {
+    var l: i32 = tcp_listen(0);
+    if (l < 0) { write("listen-failed\n"); return 1; }
+    var port: i32 = tcp_local_port(l);
+    tcp_close(l);
+    if (port <= 0) { write("no-port\n"); return 1; }
+    if (port > 65535) { write("bad-port\n"); return 1; }
+    write("port-in-range\n");
+    return 0;
+}`
+		comp := compile(t, "tcp_local_port", src,
+			[]string{"call $__fern_tcp_local_port", "tcp-socket.local-address"})
+		out, err := exec.Command(wasmtime, "run", "-S", "inherit-network", comp).Output()
+		if err != nil {
+			t.Fatalf("guest exited with error: %v\nstdout:\n%s", err, out)
+		}
+		if got := strings.TrimSpace(string(out)); got != "port-in-range" {
+			t.Errorf("guest stdout = %q, want %q", got, "port-in-range")
+		}
+	})
+
 	// tcp_pollable feeds the wasm_poll multiplexer from #4316 — the composition
 	// std/async relies on. Polling a connection with data pending must report
 	// index 0 ready, and the subsequent recv must still see the bytes.

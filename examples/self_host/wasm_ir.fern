@@ -343,6 +343,7 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
     if (module_emits_op_cached(cache, "tcp_close")) { out = out.append("tcp_close"); }
     if (module_emits_op_cached(cache, "tcp_connect")) { out = out.append("tcp_connect"); }
     if (module_emits_op_cached(cache, "tcp_listen")) { out = out.append("tcp_listen"); }
+    if (module_emits_op_cached(cache, "tcp_local_port")) { out = out.append("tcp_local_port"); }
     if (module_emits_op_cached(cache, "tcp_pollable")) { out = out.append("tcp_pollable"); }
     if (module_emits_op_cached(cache, "tcp_recv")) { out = out.append("tcp_recv"); }
     if (module_emits_op_cached(cache, "tcp_send")) { out = out.append("tcp_send"); }
@@ -2963,6 +2964,33 @@ pub function tcp_accept_func(): string {
     return o;
 }
 
+// Local-address import: the port a socket is bound to. Its own function rather
+// than a row in wasi_sockets_server_imports because tcp_local_port is useful on
+// a connection too, and a program that never listens should not import bind.
+pub function wasi_sockets_local_address_import(): string {
+    return "  (import \"wasi:sockets/tcp@0.2.0\" \"[method]tcp-socket.local-address\" (func $__fern_wasi_tcp_local_address (param i32 i32)))\n";
+}
+
+// $__fern_tcp_local_port(sock) -> the port mem[sock+0] is bound to, or -errno.
+//
+// `local-address` answers `result<ip-socket-address, error-code>`: disc@+0,
+// 3 pad, then the address variant at +4 — its own disc at +4 and its payload
+// at +8, since the widest case (ipv6-socket-address) aligns to 4. `port` is
+// the FIRST field of both the ipv4 and the ipv6 case, so the u16 at +8 is the
+// port whichever family the host answered with. The ipv6 case is 28 bytes, so
+// the retptr is 4 + 4 + 28 = 36.
+pub function tcp_local_port_func(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_tcp_local_port (param $c i32) (result i32)\n";
+    o = o + "    (local $ret i32)\n";
+    o = o + "    (local.set $ret (call $__fern_alloc (i32.const 36)))\n";
+    o = o + "    (call $__fern_wasi_tcp_local_address (i32.load (local.get $c)) (local.get $ret))\n";
+    o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
+    o = o + "      (return (i32.sub (i32.const 0) (i32.load8_u offset=4 (local.get $ret))))))\n";
+    o = o + "    (i32.load16_u offset=8 (local.get $ret)))\n";
+    return o;
+}
+
 // $__fern_tcp_pollable(conn) -> a wasi:io/poll pollable for the connection's
 // tcp-socket (mem[conn+0]). This is the handle std/async feeds to wasm_poll for
 // overlapped fan-out, so it composes directly with the multiplexer from #4316.
@@ -4296,6 +4324,9 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     } else if (o.kind_tag == 201) {  // tcp_accept
         // tcp_accept(listener) -> a fresh connection struct, or -errno.
         parts = parts.append("    call $__fern_tcp_accept\n");
+    } else if (o.kind_tag == 320) {  // tcp_local_port
+        // tcp_local_port(sock) -> the bound port, or -errno.
+        parts = parts.append("    call $__fern_tcp_local_port\n");
     } else if (o.kind_tag == 112) {  // tcp_pollable
         // tcp_pollable(conn) -> a wasi:io/poll pollable for the socket.
         parts = parts.append("    call $__fern_tcp_pollable\n");
@@ -10031,6 +10062,9 @@ function preview1_imports(needs: string[]): string {
     // tcp_listen / tcp_accept add bind + listen + accept; tcp_pollable and
     // tcp_accept both need the sockets base set (subscribe + the drops).
     if (need(needs, "tcp_listen") || need(needs, "tcp_accept")) { parts = parts.append(wasi_sockets_server_imports()); }
+    // tcp_local_port reads a socket's bound port and nothing else, so it
+    // brings in local-address alone — no bind, no network handle.
+    if (need(needs, "tcp_local_port")) { parts = parts.append(wasi_sockets_local_address_import()); }
     // udp_send pulls the wasi:sockets/udp set plus the pollable block/drop it
     // uses for the send-permit wait (#4375). The network handle is shared
     // with the tcp ops; the pollable imports are gated so they are not
@@ -10275,7 +10309,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // is emitted from the module's declarations. A program whose only allocation
     // is a wrapper's return area / lifted string block (module_extern_needs_heap)
     // would otherwise emit `call $__fern_alloc` against nothing.
-    if (mode == 2 || module_extern_needs_heap(mod) || need(needs, "@allocates") || need(needs, "@uses_maps") || need(needs, "@uses_arr_i32_helpers") || need(needs, "@uses_i32_to_string") || need(needs, "@uses_i64_to_string") || need(needs, "@uses_u64_to_string") || need(needs, "@uses_u32_to_string") || need(needs, "@uses_chr") || need(needs, "@uses_strbuf") || need(needs, "@uses_buf") || need(needs, "env") || need(needs, "stat") || need(needs, "lstat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "read_dir") || need(needs, "read_dir_all") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "read_chunk") || need(needs, "reader_close") || need(needs, "fd_stat") || need(needs, "reader_seek") || need(needs, "writer_truncate") || needs_fd_sync(needs) || need_open_file(needs) || need(needs, "writer_write") || need(needs, "write_some") || need(needs, "wasm_poll") || need(needs, "tcp_connect") || need(needs, "tcp_send") || need(needs, "tcp_recv") || need(needs, "tcp_listen") || need(needs, "tcp_accept") || need(needs, "udp_send") || need(needs, "poll")) {
+    if (mode == 2 || module_extern_needs_heap(mod) || need(needs, "@allocates") || need(needs, "@uses_maps") || need(needs, "@uses_arr_i32_helpers") || need(needs, "@uses_i32_to_string") || need(needs, "@uses_i64_to_string") || need(needs, "@uses_u64_to_string") || need(needs, "@uses_u32_to_string") || need(needs, "@uses_chr") || need(needs, "@uses_strbuf") || need(needs, "@uses_buf") || need(needs, "env") || need(needs, "stat") || need(needs, "lstat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "read_dir") || need(needs, "read_dir_all") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "read_chunk") || need(needs, "reader_close") || need(needs, "fd_stat") || need(needs, "reader_seek") || need(needs, "writer_truncate") || needs_fd_sync(needs) || need_open_file(needs) || need(needs, "writer_write") || need(needs, "write_some") || need(needs, "wasm_poll") || need(needs, "tcp_connect") || need(needs, "tcp_send") || need(needs, "tcp_recv") || need(needs, "tcp_listen") || need(needs, "tcp_accept") || need(needs, "tcp_local_port") || need(needs, "udp_send") || need(needs, "poll")) {
         parts = parts.append(heap_alloc_helpers(heap_base_for_strs(sv, cv), fl_base_for_strs(sv, cv), fl_cells(), large_fl_base_for_strs(sv, cv), need(needs, "@heap_alloc_count")));
         parts = parts.append(rc_runtime_helpers(heap_base_for_strs(sv, cv)));
     }
@@ -10455,6 +10489,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     if (need(needs, "tcp_recv")) { parts = parts.append(tcp_recv_func()); }
     if (need(needs, "tcp_listen")) { parts = parts.append(tcp_listen_func()); }
     if (need(needs, "tcp_accept")) { parts = parts.append(tcp_accept_func()); }
+    if (need(needs, "tcp_local_port")) { parts = parts.append(tcp_local_port_func()); }
     if (need(needs, "tcp_pollable")) { parts = parts.append(tcp_pollable_func()); }
     if (need(needs, "udp_send")) { parts = parts.append(ipv4_parse_func() + udp_send_func()); }
     // $__fern_read_file / $__fern_write_file: open under preopen fd 3 and

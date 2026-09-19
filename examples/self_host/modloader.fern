@@ -412,7 +412,7 @@ pub function load_imports(ov: Overlay, dir: string, entry: parser.Module): flatt
         var r: Resolved = resolve_module(ov, from, path, name);
         if (r.ok) {
             var m: parser.Module = parser.parse_module(lexer.tokenize(r.src));
-            loaded = loaded.append(flatten.LoadedModule { name: name, mod: m });
+            loaded = loaded.append(flatten.LoadedModule { name: name, ident: "", mod: m });
             var before: i32 = queue.len();
             queue = enqueue_imports(queue, seen, m);
             // The module's own imports resolve against ITS directory.

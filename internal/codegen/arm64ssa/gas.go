@@ -1456,6 +1456,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"tcp_listen":                  emitTcpListenHelper,
 	"tcp_connect":                 emitTcpConnectHelper,
 	"tcp_accept":                  emitTcpAcceptHelper,
+	"tcp_local_port":              emitTcpLocalPortHelper,
 	"tcp_recv":                    emitTcpRecvHelper,
 	"tcp_send":                    emitTcpSendHelper,
 	"tcp_close":                   emitTcpCloseHelper,
@@ -3290,6 +3291,28 @@ func emitTcpAcceptHelper(w func(string, ...any)) {
 	w("\tmov x2, #0")   // addrlen = NULL
 	w("\tmov x8, #202") // accept
 	w("\tsvc #0")
+	w("\tret")
+}
+
+// emitTcpLocalPortHelper writes tcp_local_port(fd) → i32: getsockname(2) into a
+// frame sockaddr_in, answering the bound port in host order or -errno. The port
+// the kernel chose for a tcp_listen(0) is only readable this way. Leaf.
+// x0=fd.
+func emitTcpLocalPortHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("tcp_local_port"))
+	w("\tsub sp, sp, #32") // sockaddr_in at [sp], socklen_t at [sp, #16]
+	w("\tmov w9, #16")
+	w("\tstr w9, [sp, #16]") // addrlen = sizeof(sockaddr_in)
+	w("\tmov x1, sp")
+	w("\tadd x2, sp, #16")
+	w("\tmov x8, #204") // getsockname
+	w("\tsvc #0")
+	w("\ttbnz x0, #63, .Lssa_tcplp_ret")
+	w("\tldrh w0, [sp, #2]") // sin_port, network order
+	w("\trev16 w0, w0")      // ntohs
+	w(".Lssa_tcplp_ret:")
+	w("\tadd sp, sp, #32")
 	w("\tret")
 }
 

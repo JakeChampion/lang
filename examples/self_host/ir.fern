@@ -899,6 +899,10 @@ pub function op_tcp_pollable(): Op { return op0("tcp_pollable"); }
 // (#4371); the client ops above are the outbound-fetch half.
 pub function op_tcp_listen(): Op { return op0("tcp_listen"); }
 pub function op_tcp_accept(): Op { return op0("tcp_accept"); }
+// `tcp_local_port` [fd] -> i32 port (or -errno): getsockname(2) on a socket,
+// answering the port it is bound to. The only way to learn the port the kernel
+// picked for a `tcp_listen(0)`.
+pub function op_tcp_local_port(): Op { return op0("tcp_local_port"); }
 // `writer_write` [fd, str box] -> a fresh `Option[IoError]` box: write(2) of the
 // box's bytes to the fd, looping until they are all out — None once they are,
 // Some(io_error(errno, "")) on a failing write. The write-half streaming
@@ -2455,6 +2459,7 @@ function kind_id_len14(name: string): i32 {
     if (c == b's' && name == "str_from_bytes") { return 103; }
     if (c == b's' && name == "signal_default") { return 244; }
     if (c == b's' && name == "set_file_times") { return 269; }
+    if (c == b't' && name == "tcp_local_port") { return 320; }
     return 0;
 }
 
@@ -2727,6 +2732,7 @@ function kind_name_4(id: i32): string {
     if (id == 199) { return "store_i64"; }
     if (id == 200) { return "tcp_listen"; }
     if (id == 201) { return "tcp_accept"; }
+    if (id == 320) { return "tcp_local_port"; }
     if (id == 202) { return "writer_write"; }
     if (id == 203) { return "open_file"; }
     if (id == 306) { return "buf_push_u64"; }
@@ -2955,7 +2961,8 @@ function pops1_io(t: i32): boolean {
         || t == 185 || t == 210 || t == 212                              // random_bytes, arg_at, proc_waitpid
         || t == 286                                                      // proc_waitpid_nohang
         || t == 188 || t == 189 || t == 190 || t == 191 || t == 192      // timer_fd, wasm_*
-        || t == 196 || t == 112 || t == 200 || t == 201 || t == 203;     // tcp_close, tcp_pollable(112), tcp_listen/accept, open_file
+        || t == 196 || t == 112 || t == 200 || t == 201 || t == 203     // tcp_close, tcp_pollable(112), tcp_listen/accept, open_file
+        || t == 320;                                                     // tcp_local_port
 }
 
 function pops2_arith(t: i32): boolean {

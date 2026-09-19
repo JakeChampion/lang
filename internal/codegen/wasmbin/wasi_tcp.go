@@ -416,6 +416,62 @@ func buildTcpPollableBody(idxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 
+// buildTcpLocalPortBody assembles __fern_tcp_local_port.
+//
+// Signature: (sock: i32) → i32 — the port mem[sock+0] is bound to,
+// or -errno. The answer for a `tcp_listen(0)`, whose port the host
+// picked and nothing else reports.
+//
+// `local-address` returns `result<ip-socket-address, error-code>`.
+// Laid out in memory that is 1 disc byte at +0, 3 bytes pad, then
+// the ip-socket-address variant at +4: its own disc at +4 (ipv4 / ipv6)
+// and its payload at +8, since the widest case (ipv6-socket-address)
+// aligns to 4. `port` is the first field of BOTH cases, so the u16 at
+// +8 is the port whichever address family the host answered with —
+// no branch on the variant tag. Largest case is the 28-byte ipv6
+// address, so the retptr is 4 + 4 + 28 = 36 bytes.
+//
+// Locals (after the one param):
+//
+//	1: $sock   — tcp-socket handle (mem[$sock])
+//	2: $retptr — 36-byte retptr scratch
+func buildTcpLocalPortBody(idxs map[string]uint32) []byte {
+	alloc := idxs["__fern_alloc"]
+	localAddress := idxs["wasi_sockets_tcp_local_address"]
+
+	var body []byte
+
+	// $sock = mem[$sockstruct]
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalSet(body, 1)
+
+	// $retptr = alloc(36); local-address($sock, $retptr).
+	body = inst.InstI32Const(body, 36)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, 2)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstCall(body, localAddress)
+
+	// Err arm: return -errno.
+	body = inst.InstLocalGet(body, 2)
+	body = memory.InstI32Load8U(body, 0, 0)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = emitErrnoNegReturn(body, 2)
+	body = inst.InstEnd(body)
+
+	// Ok arm: the port, a u16 at retptr+8 in linear-memory order.
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Add(body)
+	body = memory.InstI32Load16U(body, 1, 0)
+
+	// 2 i32 locals after the 1 param.
+	locals := inst.PutLocalsOneGroup(nil, 2, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
 // buildTcpAcceptBody assembles __fern_tcp_accept.
 //
 // Signature: (listener: i32) → i32 — heap pointer to a fresh

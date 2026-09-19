@@ -242,15 +242,18 @@ const (
 	sysSyncfs    = 306
 	// dup3(2), behind the handle `dup_onto` method. Linux/arm64 has no
 	// dup2 at all, so dup3 is the form both Linux architectures carry.
-	sysDup3      = 292
-	sysMmap      = 9
-	sysSocket    = 41
-	sysConnect   = 42
-	sysAccept    = 43
-	sysBind      = 49
-	sysListen    = 50
-	sysExitGroup = 231
-	sysGetrandom = 318
+	sysDup3    = 292
+	sysMmap    = 9
+	sysSocket  = 41
+	sysConnect = 42
+	sysAccept  = 43
+	sysBind    = 49
+	sysListen  = 50
+	// getsockname(2): the only way to read the port the kernel picked for
+	// a socket bound to port 0.
+	sysGetsockname = 51
+	sysExitGroup   = 231
+	sysGetrandom   = 318
 	// faccessat2(2): x86-64 syscall 439, backing `__fern_access`.
 	// Deliberately NOT faccessat (269), which takes no flags word and
 	// so cannot express AT_EACCESS — the effective-id question that is
@@ -892,6 +895,7 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesTcp {
 		g.emitTcpListenRuntime()
 		g.emitTcpAcceptRuntime()
+		g.emitTcpLocalPortRuntime()
 		g.emitTcpRecvRuntime()
 		g.emitTcpSendRuntime()
 		g.emitTcpCloseRuntime()
@@ -2038,7 +2042,7 @@ func (g *generator) recordUse(target string) {
 		g.usesProcWaitpid = true
 	case "proc_waitpid_nohang":
 		g.usesProcWaitpidNohang = true
-	case "tcp_listen", "tcp_accept", "tcp_recv", "tcp_send", "tcp_close", "tcp_connect", "tcp_pollable":
+	case "tcp_listen", "tcp_accept", "tcp_local_port", "tcp_recv", "tcp_send", "tcp_close", "tcp_connect", "tcp_pollable":
 		g.usesTcp = true
 		// usesTcp always emits the __fern_tcp_recv helper, which calls
 		// __alloc_u8 for its read buffer — so any tcp builtin needs
@@ -3880,6 +3884,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_tcp_listen"
 		case "tcp_accept":
 			target = "__fern_tcp_accept"
+		case "tcp_local_port":
+			target = "__fern_tcp_local_port"
 		case "tcp_recv":
 			target = "__fern_tcp_recv"
 		case "poll":
@@ -12770,6 +12776,32 @@ func (g *generator) emitTcpAcceptRuntime() {
 	g.emitSyscall(sysAccept)
 	g.emit("ret")
 	g.line(".size __fern_tcp_accept, .-__fern_tcp_accept")
+}
+
+// emitTcpLocalPortRuntime emits `__fern_tcp_local_port(fd)` —
+// getsockname(2) into a stack sockaddr_in, returning the port
+// the socket is bound to in host order, or -errno. This is what
+// reports the kernel-picked port of a `tcp_listen(0)`.
+func (g *generator) emitTcpLocalPortRuntime() {
+	g.line("")
+	g.line(".globl __fern_tcp_local_port")
+	g.line(".type __fern_tcp_local_port, @function")
+	g.label("__fern_tcp_local_port")
+	// fd in rdi. sockaddr_in at [rsp], socklen_t at [rsp+16].
+	g.emit("sub rsp, 24")
+	g.emit("mov dword ptr [rsp+16], 16")
+	g.emit("mov rsi, rsp")
+	g.emit("lea rdx, [rsp+16]")
+	g.emitSyscall(sysGetsockname)
+	g.emit("test eax, eax")
+	g.emit("js .Ltcp_lport_done")
+	g.emit("movzx eax, word ptr [rsp+2]") // sin_port, network order
+	g.emit("xchg al, ah")                 // ntohs
+	g.label(".Ltcp_lport_done")
+	// On failure rax already holds -errno from getsockname.
+	g.emit("add rsp, 24")
+	g.emit("ret")
+	g.line(".size __fern_tcp_local_port, .-__fern_tcp_local_port")
 }
 
 // emitTcpRecvRuntime emits `__fern_tcp_recv(fd, max)` —

@@ -96,6 +96,27 @@ func emitTcpAcceptHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
+// emitTcpLocalPortHelper writes tcp_local_port(fd) -> i32: getsockname(2) into
+// a frame sockaddr_in, answering the bound port in host order or -errno. The
+// port the kernel chose for a tcp_listen(0) is only readable this way. Leaf.
+func emitTcpLocalPortHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("tcp_local_port"))
+	w("\tsub rsp, 24")                  // sockaddr_in at [rsp], socklen_t at [rsp+16]
+	w("\tmov dword ptr [rsp + 16], 16") // addrlen = sizeof(sockaddr_in)
+	w("\tmov rsi, rsp")
+	w("\tlea rdx, [rsp + 16]")
+	w("\tmov eax, 51") // getsockname
+	w("\tsyscall")
+	w("\ttest rax, rax")
+	w("\tjs .Lssa_tcplp_ret")
+	w("\tmovzx eax, word ptr [rsp + 2]") // sin_port, network order
+	w("\txchg al, ah")                   // ntohs
+	w(".Lssa_tcplp_ret:")
+	w("\tadd rsp, 24")
+	w("\tret")
+}
+
 // emitTcpRecvHelper writes tcp_recv(fd, max) -> u8[]: up to max bytes from
 // the socket into a fresh u8[] whose len is what arrived; EOF, an error and a
 // non-positive max all leave it empty. rbx = fd, r12 = data.
