@@ -156,13 +156,14 @@ function supported_tuple(tup: typeinfo.TypeTuple, f: ssasem.Func): boolean {
     for t in tup.elements { if (!supported(t, f)) { return false; } }
     return true;
 }
-// The types this pass plans no unit for: the scalars.
+// The types this pass plans no unit for: the scalars, and the stream handles,
+// which are a descriptor and so one of them.
 function unit_free(t: typeinfo.Type): boolean {
     if let typeinfo.TypeI32(_) = t { return true; }
     if let typeinfo.TypeBool(_) = t { return true; }
     if let typeinfo.TypeFloat(_) = t { return true; }
     if let typeinfo.TypeVoid(_) = t { return true; }
-    return false;
+    return semtypes.is_handle(t);
 }
 function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
     if (unit_free(t)) { return true; }

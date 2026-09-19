@@ -51,7 +51,7 @@ func TestSelfHostSemanticProduction(t *testing.T) {
 				t.Run(target, func(t *testing.T) {
 					if prog.want != "" {
 						semRefusedByAST(t, fernBin, stdlibRoot, src, target)
-						got, report, leak := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, true, "")
+						got, report, leak := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, true, "", prog.stdin)
 						if got != prog.want {
 							t.Fatalf("FERN_SEM_IR answered %q, want %q\nreport: %s", got, prog.want, report)
 						}
@@ -61,8 +61,8 @@ func TestSelfHostSemanticProduction(t *testing.T) {
 						semNoLeak(t, prog.noLeak, target, leak)
 						return
 					}
-					base, _, baseLeak := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, false, "")
-					got, report, leak := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, true, "")
+					base, _, baseLeak := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, false, "", prog.stdin)
+					got, report, leak := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, true, "", prog.stdin)
 					if got != base {
 						t.Fatalf("FERN_SEM_IR changed the answer:\n with = %q\nwithout = %q\nreport: %s",
 							got, base, report)
@@ -71,7 +71,7 @@ func TestSelfHostSemanticProduction(t *testing.T) {
 						t.Fatalf("FERN_SEM_IR did not report %q:\n%s", prog.refuses, report)
 					}
 					if prog.skip != "" {
-						mixed, mixedReport, mixedLeak := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, true, prog.skip)
+						mixed, mixedReport, mixedLeak := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, true, prog.skip, prog.stdin)
 						if mixed != base {
 							t.Fatalf("FERN_SEM_IR with FERN_SEM_IR_SKIP=%s changed the answer:\n with = %q\nwithout = %q\nreport: %s",
 								prog.skip, mixed, base, mixedReport)
@@ -163,7 +163,7 @@ func semProducedCount(t *testing.T, report string) int {
 // semCompileRun compiles src for target with the semantic path on or off, runs
 // the result, and returns "<exit>|<stdout>", the compiler's stderr, and the
 // bytes the sanitizer reports unreleased (0 on the legs that do not sanitize).
-func semCompileRun(t *testing.T, gcc string, runner []string, fernBin, stdlibRoot, src, target string, sem bool, skip string) (string, string, int) {
+func semCompileRun(t *testing.T, gcc string, runner []string, fernBin, stdlibRoot, src, target string, sem bool, skip, stdin string) (string, string, int) {
 	t.Helper()
 	dir := t.TempDir()
 	out := filepath.Join(dir, "prog")
@@ -218,6 +218,7 @@ func semCompileRun(t *testing.T, gcc string, runner []string, fernBin, stdlibRoo
 	}
 	var runErr strings.Builder
 	run.Stderr = &runErr
+	run.Stdin = strings.NewReader(stdin)
 	stdout, _ := run.Output()
 	return fmt.Sprintf("%d|%s", run.ProcessState.ExitCode(), stdout), stderr.String(), sanitizerLeak(t, runErr.String())
 }
@@ -269,7 +270,10 @@ var semProductionPrograms = []struct {
 	// what the AST lowering already leaks — so a claim that the semantic path
 	// reclaims a shape WHOLE needs this instead.
 	noLeak bool
-	src    string
+	// stdin is fed to every run of this program, so a body that reads it
+	// answers the same thing on each leg.
+	stdin string
+	src   string
 }{
 	// A lambda the SOURCE wrote, with an explicit callable return annotation.
 	// parse_type_name coarsens that annotation to the tag "fn" and the lambda
@@ -1332,6 +1336,27 @@ function main(): i32 {
     var i: i32 = 0;
     while (i < 50) { t = t + total([2, 3, 4]) + names("--"); i = i + 1; }
     return t % 7;
+}
+`},
+
+	// A driver that reads stdin. `io.read_all_stdin` binds `var r: Reader =
+	// stdin()` and loops `r.read_chunk`, and the whole of std/io went to the
+	// AST lowering because the checker resolved no type called `Reader` and
+	// the producer held no contract for the handle builtins (#9781). Every
+	// driver that reads stdin comes through here, so this is the production
+	// shape rather than one entry's: 0 of 55 before, 55 of 55 after. The
+	// stdin methods and the two standard Writers are all one family, so the
+	// second half drives those too.
+	{name: "stdin-and-the-stream-handles", atLeast: 55, stdin: "alpha\nbeta\n", src: `
+import "std/io";
+
+function main(): i32 {
+    var text: string = io.read_all_stdin();
+    var w: Writer = stdout();
+    w.write(text);
+    var e: Writer = stderr();
+    e.write("");
+    return text.len();
 }
 `},
 }

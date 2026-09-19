@@ -3046,6 +3046,9 @@ function schema_of(t: typeinfo.Type, s: State, out: Schemas): Schemas {
         return schema_of(m.value, s, out);
     }
     if let typeinfo.TypeStruct(r) = t {
+        // A stream handle is its descriptor, not a box: it has no layout to
+        // record and nothing to walk.
+        if (semtypes.is_handle(t)) { return out; }
         if (semrecords.find(out.records, t) >= 0) { return out; }
         if (semtypes.is_env(t)) { return env_entry(t, out); }
         return record_entry(t, r, s, out);
@@ -3361,6 +3364,50 @@ function contracts(mod: parser.Module, scopes: checker.Scope[]): ssasem.Contract
     return out;
 }
 
+// The stream HANDLES and what a program does with one. A handle is its bare
+// descriptor (semtypes.is_handle), so every one of these is a value: the
+// constructors answer a number, the methods are handed one, and nothing here
+// takes or releases a unit of the handle itself. The paths and the written
+// text are read and copied, so they are lent; each result box is fresh and
+// owns whatever it carries.
+//
+// Result types are native's registerStructMethod / FuncSigs entries, which is
+// also where irlower's `opt_ret_type` reads them — the three copies name one
+// table so they cannot drift.
+//
+// The handle METADATA surface (stat / seek / flags / truncate / isatty /
+// dup_onto, the four terminal questions and the three fd syncs) has no
+// contract here yet and refuses where it stands.
+function handle_contracts(): ssasem.Contract[] {
+    var value: i32[] = [ssaunits.value_mode()];
+    var path: i32[] = [ssaunits.borrow_mode()];
+    var path_flags: i32[] = [ssaunits.borrow_mode(), ssaunits.value_mode()];
+    var reader: typeinfo.Type = t_handle("Reader");
+    var writer: typeinfo.Type = t_handle("Writer");
+    var io_error: typeinfo.Type = t_option(typeinfo.TypeUnion { name: "IoError", args: [] });
+    return [
+        ssasem.Contract { name: "stdin", params: [], modes: [], result: reader },
+        ssasem.Contract { name: "stdout", params: [], modes: [], result: writer },
+        ssasem.Contract { name: "stderr", params: [], modes: [], result: writer },
+        ssasem.Contract { name: "open_reader", params: [t_string()], modes: path, result: t_io_result(reader) },
+        ssasem.Contract { name: "open_writer", params: [t_string()], modes: path, result: t_io_result(writer) },
+        ssasem.Contract { name: "open_appender", params: [t_string()], modes: path, result: t_io_result(writer) },
+        ssasem.Contract { name: "open_exclusive", params: [t_string()], modes: path, result: t_io_result(writer) },
+        ssasem.Contract { name: "open_reader_with", params: [t_string(), t_i32()], modes: path_flags, result: t_io_result(reader) },
+        ssasem.Contract { name: "open_writer_with", params: [t_string(), t_i32()], modes: path_flags, result: t_io_result(writer) },
+        ssasem.Contract { name: "Reader.read_line", params: [reader], modes: value, result: t_option(t_string()) },
+        ssasem.Contract { name: "Reader.read_chunk", params: [reader, t_i32()], modes: [ssaunits.value_mode(), ssaunits.value_mode()], result: t_io_result(t_string()) },
+        ssasem.Contract { name: "Reader.close", params: [reader], modes: value, result: io_error },
+        ssasem.Contract { name: "Writer.close", params: [writer], modes: value, result: io_error },
+        ssasem.Contract { name: "Writer.write", params: [writer, t_string()], modes: [ssaunits.value_mode(), ssaunits.borrow_mode()], result: io_error }
+    ];
+}
+
+// A handle's nominal, as the checker resolves the injected declaration.
+function t_handle(name: string): typeinfo.Type {
+    return typeinfo.TypeStruct { name: name, args: [] };
+}
+
 function t_option(payload: typeinfo.Type): typeinfo.Type {
     return typeinfo.TypeUnion { name: "Option", args: [payload] };
 }
@@ -3380,6 +3427,7 @@ function t_file_stat(): typeinfo.Type {
 // pushes the dummy every statement op pushes.
 function builtin_contracts(): ssasem.Contract[] {
     var out: ssasem.Contract[] = union_result_contracts();
+    for c in handle_contracts() { out = out.append(c); }
     for c in value_contracts() { out = out.append(c); }
     for c in string_contracts() { out = out.append(c); }
     for c in builder_contracts() { out = out.append(c); }
