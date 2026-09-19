@@ -11,8 +11,18 @@ It is 12 of them.
 The mechanism that entry describes is real and the fix is correct. `ExprLambda`
 now carries `ret_fn_ret` / `ret_fn_param_types` like the four other members of
 the #5986 family, `e_lambda_fn` hands them to the nested-function desugar from
-the `FuncDecl` that already had them, and all five lambda-to-`FuncDecl` hoists
-copy them instead of writing the empty pair.
+the `FuncDecl` that already had them, and everything downstream carries them:
+the six lambda-to-`FuncDecl` hoists (five in `irlower`, plus `hl_rewrite`'s
+self-recursive-local lift in `parser`), the `make_wrap_named_func` trampoline,
+which takes its return type from the target it wraps, and the two rewriters that
+rebuild an `ExprLambda` in place — `subst_expr` substitutes them like
+`ret_type`, `flatten.rewrite_expr` mangles them like `ret_type`.
+
+That last group was the review's find and it is worth naming: a hoist writing
+the empty pair loses the signature, but a rewriter that copies the pair through
+a spread keeps the PRE-rewrite spelling — a type var the clone no longer binds,
+or an unmangled name from another module. Stale is worse than empty, because
+`fn_tag_spelling` will happily rebuild a spelling out of it.
 
 Only the desugar path is wired. A lambda the source WRITES with a
 function-returning annotation still loses its parameter list: the lambda parse
@@ -41,13 +51,19 @@ The reproducer is the clearest case. The four-line program the previous entry
 reduced now gets past the result type and refuses with
 `function address is not a closure value`, still `0 of 3`.
 
-## The two claims that were wrong
+## The three claims that were wrong
 
 **"That is the whole of the 238."** The remaining 226 still report an EMPTY
 result spelling, on `__lam_N` (167) and `main$…` (49) owners. Whatever leaves
 those unresolved is not the sidecar. One probe at one refusal identified one
 cause and I generalised it to a bucket that shares a message, which is the same
 shape of error as reading a histogram for a ranking.
+
+**"All five hoists."** There are six — `hl_rewrite`'s self-recursive-local lift
+is a lambda-to-`FuncDecl` hoist too, and it was still writing the empty pair.
+The enumeration this entry made to guard against an incomplete enumeration was
+itself incomplete, which is the one failure mode a five-row table cannot catch:
+it is a list of what was checked, not a proof that nothing else exists.
 
 **The 157 modules.** That figure was the count of modules refusing for
 lambda-related reasons ONLY — the whole lambda gap. The previous entry put it

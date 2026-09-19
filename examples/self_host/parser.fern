@@ -404,10 +404,7 @@ function e_field_access(obj: ast.Expr, field: string): ast.Expr {
 function e_field_access_at(obj: ast.Expr, field: string, line: i32, col: i32): ast.Expr {
     return ast.ExprFieldAccess { obj: obj, field: field, line: line, col: col, ty: "" };
 }
-function e_lambda(params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[]): ast.Expr {
-    return e_lambda_at(params, ret_type, body, "", 0, 0);
-}
-// e_lambda_at is e_lambda for the two parses of a lambda the source WROTE, which
+// e_lambda_at builds a lambda for the two parses of one the source WROTE, which
 // are the only ones that carry a position; see ExprLambda.line.
 function e_lambda_at(params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], origin: string, line: i32, col: i32): ast.Expr {
     return ast.ExprLambda { params: params, ret_type: ret_type, body: body, use_infer: false, origin: origin, line: line, col: col, captures: [], captures_known: false, ret_fn_ret: "", ret_fn_param_types: "" };
@@ -10715,7 +10712,7 @@ function subst_expr(e: ast.Expr, tparams: string[], cts: string[]): ast.Expr {
             for lpd in lm.params { lps = lps.append(ast.ParamDecl { ...lpd, type_name: subst_ty(lpd.type_name, tparams, cts), fn_ret: subst_ty(lpd.fn_ret, tparams, cts), fn_param_types: subst_ty_list(lpd.fn_param_types, tparams, cts) }); }
             // Capture types were checked in the generic declaration's scope.
             // The clone must resolve them again against its substituted bindings.
-            return ast.ExprLambda { ...lm, params: lps, ret_type: subst_ty(lm.ret_type, tparams, cts), body: subst_stmts(lm.body, tparams, cts), captures: [], captures_known: false };
+            return ast.ExprLambda { ...lm, params: lps, ret_type: subst_ty(lm.ret_type, tparams, cts), ret_fn_ret: subst_ty(lm.ret_fn_ret, tparams, cts), ret_fn_param_types: subst_ty_list(lm.ret_fn_param_types, tparams, cts), body: subst_stmts(lm.body, tparams, cts), captures: [], captures_known: false };
         },
         _ => { return e; }
     }
@@ -14274,7 +14271,7 @@ function hl_rewrite(stmts: ast.Stmt[], enclosing: string[], hoisted: FuncDecl[])
                                 body: lifted_body, line: v.line, col: v.col,
                                 import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false,
                                 is_pub: true
-                           , is_const: false, ret_fn_ret: "", ret_fn_param_types: "" , is_package: false });
+                           , is_const: false, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false });
                             if (caps.len() > 0) { acc_lifts = acc_lifts.append(CapLift { name: v.name, caps: caps }); }
                         }
                     },
