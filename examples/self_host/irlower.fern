@@ -73308,6 +73308,93 @@ function lift_expr_walk(e: ast.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
 // bare lambda returns, so this fires on none of them and leaves the self-compile
 // byte-identical.
 struct DesugarRet { body: ast.Stmt[], counter: i32 }
+// is_coarse_fn_tag reports whether `s` is the callable tag parse_type_name
+// produces rather than a spelling — "fn" with one "[]" per array dimension.
+// fn_tag_spelling only rebuilds the first two depths and returns every deeper
+// tag unchanged, so the shape is what decides this, not the two strings it
+// happens to rewrite.
+function is_coarse_fn_tag(s: string): boolean {
+    if (s.len() < 2 || slice_unchecked(s, 0, 2) != "fn") { return false; }
+    var i: i32 = 2;
+    while (i < s.len()) {
+        if (i + 2 > s.len() || slice_unchecked(s, i, i + 2) != "[]") { return false; }
+        i = i + 2;
+    }
+    return true;
+}
+
+// contract_spelling is how returned_lambda_contract names one type. It goes
+// through fn_tag_spelling because a parameter or result that is ITSELF callable
+// carries the same coarse tag with its own sidecars beside it. Recording the
+// bare tag rebuilds `(fn) => R` — a contract that LIES, which is worse than one
+// that is missing, so a tag left coarse yields no contract at all.
+function contract_spelling(tag: string, fn_ret: string, fn_ptys: string): string {
+    if (tag.len() == 0) { return ""; }
+    var spelled: string = parser.fn_tag_spelling(tag, fn_ret, fn_ptys);
+    if (is_coarse_fn_tag(spelled)) { return ""; }
+    return spelled;
+}
+
+// returned_lambda_contract reads the #5986 sidecar pair off the first lambda a
+// body RETURNS, walking the same branch shapes desugar_lambda_returns rewrites.
+//
+// hoist_value_iife declares its hoisted function with the coarse "fn" tag and
+// needs the pair that tag drops. A lambda the source wrote INSIDE an
+// if/match-expression arm never had one to give: e_lambda_origin builds the
+// IIFE and writes the pair empty, so the declaration reached semsource with a
+// tag and no contract and was refused for an unresolved result type.
+function returned_lambda_contract(body: ast.Stmt[]): (string, string) {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            ast.StmtReturn(r) => {
+                match (r.value) {
+                    ast.ExprLambda(lm) => {
+                        var res: string = contract_spelling(lm.ret_type, lm.ret_fn_ret, lm.ret_fn_param_types);
+                        if (res.len() == 0) { return ("", ""); }
+                        var ptys: string = "";
+                        var k: i32 = 0;
+                        while (k < lm.params.len()) {
+                            var pt: string = contract_spelling(lm.params[k].type_name, lm.params[k].fn_ret, lm.params[k].fn_param_types);
+                            if (pt.len() == 0) { return ("", ""); }
+                            if (k > 0) { ptys = ptys + ","; }
+                            ptys = ptys + pt;
+                            k = k + 1;
+                        }
+                        return (res, ptys);
+                    },
+                    _ => {}
+                }
+            },
+            ast.StmtIf(f) => {
+                var (tr, tp) = returned_lambda_contract(f.then_body);
+                if (tr.len() > 0) { return (tr, tp); }
+                var (er, ep) = returned_lambda_contract(f.else_body);
+                if (er.len() > 0) { return (er, ep); }
+            },
+            ast.StmtMatch(m) => {
+                var a: i32 = 0;
+                while (a < m.arms.len()) {
+                    var (mr, mp) = returned_lambda_contract(m.arms[a].body);
+                    if (mr.len() > 0) { return (mr, mp); }
+                    a = a + 1;
+                }
+            },
+            ast.StmtWhile(w) => {
+                var (wr, wp) = returned_lambda_contract(w.body);
+                if (wr.len() > 0) { return (wr, wp); }
+            },
+            ast.StmtFor(fo) => {
+                var (fr, fp) = returned_lambda_contract(fo.body);
+                if (fr.len() > 0) { return (fr, fp); }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return ("", "");
+}
+
 function desugar_lambda_returns(body: ast.Stmt[], counter: i32): DesugarRet {
     var out: ast.Stmt[] = [];
     var c: i32 = counter;
@@ -75815,7 +75902,16 @@ function hoist_value_iife(lam: ast.ExprLambda, fd: parser.FuncDecl, funcs: parse
     // the worklist do NOT get this (#5281), which is why it is applied here
     // rather than at the drain.
     var dlr: DesugarRet = desugar_lambda_returns(lam.body, 0);
-    var nf: parser.FuncDecl = parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: "fn", body: dlr.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false };
+    // e_lambda_origin gives a synthesised IIFE an empty sidecar pair, so for an
+    // if/match-expression arm the contract has to come from the arm itself.
+    var fnret: string = lam.ret_fn_ret;
+    var fnptys: string = lam.ret_fn_param_types;
+    if (fnret.len() == 0) {
+        var (armret, armptys) = returned_lambda_contract(lam.body);
+        fnret = armret;
+        fnptys = armptys;
+    }
+    var nf: parser.FuncDecl = parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: "fn", body: dlr.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: fnret, ret_fn_param_types: fnptys , is_package: false };
     var ncall: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: nm, line: 0, col: 0, ty: "" }, args: args, line: 0, col: 0, type_argc: 0, ty: "" };
     return InlineCloRes { expr: ncall, funcs: funcs.append(nf), counter: counter + 1 };
 }
