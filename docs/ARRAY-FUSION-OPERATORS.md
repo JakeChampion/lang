@@ -238,7 +238,9 @@ is absorbed and the loop body ends up with no call at all, while one that
 calls something else stays an `OpCallClosureDirect`. The benchmark programs in
 `examples/array_pipeline` are the second kind — their element functions call
 `modulus()` — so the fused loop there makes three calls an element, one per
-stage plus the sink.
+stage plus the sink. Their `call_loop` control makes the same three, which is
+how the measurement below separates the cost of calling from the cost of
+reaching the callee through a closure.
 
 An earlier version of this section said the element functions were "inlined
 outright". That was read off a count of `OpCallIndirect` and `OpCallDirect`
@@ -280,35 +282,39 @@ the input — the hand-written loops return a bare `i64` and so pay nothing.
 A `fold` sink allocates nothing at all.
 
 Runtime, measured the way the baseline was — callgrind retired instructions,
-arm64-linux running natively in `scripts/devbox`, 2000 elements over 30 rounds:
+arm64-linux running natively in `scripts/devbox`, 2000 elements over 30 rounds.
 
-| | combinator ÷ loop, before | after |
-| --- | ---: | ---: |
-| `map.map.reduce` | 4.69x | **1.17x** |
-| `filter.map.reduce` | 2.84x | **0.98x** |
+The comparison needs the right control, and the one the baseline shipped is
+not it. `loop` spells the element functions' arithmetic out by hand and hoists
+`modulus()` above the loop; `closure_loop` calls them through function values,
+which is the indirect dispatch fusion removes. Neither is "the same work,
+written as a loop". `call_loop` is: a hand-written loop that CALLS the same
+element functions the pipeline's lambdas call.
 
-`filter.map.reduce` is faster than the loop it is compared against, which is
-not a measurement error: that loop indexes `xs[i]` twice, once for the
-predicate and once for the value, where the fused form loads the element once
-into its own slot. The `closure_loop` and `loop` variants moved by under 0.1%
-between the two builds, which is what says the instrument is reading the
-change and not the weather.
+| | unfused ÷ call_loop | fused ÷ call_loop | fused ÷ loop |
+| --- | ---: | ---: | ---: |
+| `map.map.reduce` | 4.60x | **1.148x** | 1.169x |
+| `filter.map.reduce` | 2.73x | **0.937x** | 0.974x |
 
-`map.map.reduce` keeps a residual of about 9 instructions per element, and it
-is worth saying where it is NOT, since the obvious guess was wrong. It is not
-the per-element `__arr_idx_8_nc` call: computing that address inline instead
-— `base; index; stride; mul; add`, the lowering's own spelling — measured at
-0.18%, inside the run-to-run variance of the controls, and was dropped.
+`filter.map.reduce` is below both controls. That is not a measurement error:
+its hand-written loops carry the same `seeded` flag the fused form does, and
+the fused form reads each element once where the pipeline's loop equivalents
+re-read `xs[i]`.
 
-What is left, on the benchmark programs, is the closure call itself: three per
-element, each preceded by a fetch of its captured environment (`load fn; +8; load; call_closure_direct`)
-where the hand-written loop calls a plain function or inlines the arithmetic.
+`map.map.reduce` keeps about 8 instructions an element over `call_loop`, and
+the control is what makes that number mean something. Hand-inlining the callee
+bodies — `call_loop` against `loop` — is worth only 1.8% and 4.0%, so the gap
+is NOT the calls, which was the first guess and the second. Both controls make
+three calls an element to the same functions. What differs is that the fused
+loop reaches its through a closure: `load fn; +ptrW; load; call_closure_direct`
+where `call_loop` calls a plain function.
 
-The env fetch has a known owner. `ElideClosurePair` already recognises exactly
-that four-op sequence and removes it along with the pair allocation — but only
-for a slot whose every reader is one of those call sites. The fused form also
+That env fetch has a known owner. `ElideClosurePair` already recognises the
+four-op sequence and removes it along with the pair allocation — but only for
+a slot whose every reader is one of those call sites. The fused form also
 emits `__drop_closure_value` on each slot, which is not, so the slots fail its
-eligibility and keep the detour. Whether the drop can be elided alongside the
+eligibility and keep the detour. Whether that drop can be elided alongside the
 pair is that pass's question, not this one's. `HoistLoopInvariants` is not the
-answer either: it hoists only from a loop HEADER, deliberately, so that a
+answer either: it hoists only from a loop HEADER, deliberately, so a
 zero-iteration loop cannot gain a read it never made.
+

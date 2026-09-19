@@ -72,8 +72,8 @@ trap 'rm -rf "$work"' EXIT
 
 # program:variant,variant,...
 PROGRAMS=(
-  "map_map_reduce:pipeline,closure_loop,loop"
-  "filter_map_reduce:pipeline,closure_loop,loop"
+  "map_map_reduce:pipeline,closure_loop,call_loop,loop"
+  "filter_map_reduce:pipeline,closure_loop,call_loop,loop"
   "own_map_inplace:map_own,with_own,with_borrowed"
 )
 

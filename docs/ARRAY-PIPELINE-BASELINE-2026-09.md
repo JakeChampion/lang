@@ -11,8 +11,12 @@ reproduced only with `FERN_NO_ARRAY_FUSION=1` — which is how the gate still
 asserts them, alongside what the pass changed. Fused, `map.map.reduce` falls
 from 23 allocator calls per round to 1 and `filter.map.reduce` from 19 to 1,
 the remainder being `reduce`'s own `Option` box rather than anything linear in
-the input. On retired instructions the combinator-to-loop ratios fall from
-4.69x to 1.21x and from 2.84x to 0.98x. The warning below about the indirect call turned out not to bind:
+the input. On retired instructions, against a
+`call_loop` control that makes the same calls the pipeline does, the ratios
+fall from 4.60x to 1.15x and from 2.73x to 0.94x. That control is new: the
+`loop` variant these pages measured against spells the element functions'
+arithmetic out by hand, so comparing to it measures inlining as much as
+fusion. The warning below about the indirect call turned out not to bind:
 fusion runs before `Defunctionalise`, which then inlines the element functions
 outright, so the fused loop makes no indirect call at all.
 

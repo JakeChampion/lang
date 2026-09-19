@@ -12,6 +12,8 @@
 //   closure_loop  one loop, no intermediate arrays, but `f`/`g`/`h` still
 //                 reached through function values, one indirect call each
 //                 per element
+//   call_loop     one loop that CALLS the same element functions, so the
+//                 comparison isolates fusion from inlining
 //   loop          one loop with the arithmetic written inline
 //
 // pipeline - closure_loop is what the intermediate arrays cost; closure_loop -
@@ -138,6 +140,28 @@ function run_loop(xs: i64[]): i64 {
   return acc;
 }
 
+// A hand-written loop that CALLS the element functions instead of spelling
+// their arithmetic out. This is the control the parity claim actually needs.
+//
+// `loop` below writes the arithmetic inline and hoists `modulus()` out of the
+// loop by hand, so comparing the pipeline against it measures INLINING as much
+// as fusion — and no fusion pass inlines a callee body. `closure_loop` does
+// call them, but through function values, which is the indirect dispatch
+// fusion removes. Neither is "the same work, written as a loop"; this is, and
+// it is what a fused chain should reach.
+function run_call_loop(xs: i64[]): i64 {
+  if (xs.len() == 0) {
+    return 0 as i64;
+  }
+  var acc: i64 = elem_g(elem_f(xs[0]));
+  var i: i32 = 1;
+  while (i < xs.len()) {
+    acc = combine(acc, elem_g(elem_f(xs[i])));
+    i = i + 1;
+  }
+  return acc;
+}
+
 function dispatch(variant: i32, sel: i32, xs: i64[]): i64 {
   if (variant == 0) {
     return run_pipeline(xs);
@@ -145,7 +169,10 @@ function dispatch(variant: i32, sel: i32, xs: i64[]): i64 {
   if (variant == 1) {
     return run_closure_loop(sel, xs);
   }
-  return run_loop(xs);
+  if (variant == 2) {
+    return run_loop(xs);
+  }
+  return run_call_loop(xs);
 }
 
 function main(): i32 {
@@ -160,6 +187,9 @@ function main(): i32 {
   }
   if (name == "loop") {
     variant = 2;
+  }
+  if (name == "call_loop") {
+    variant = 3;
   }
 
   // `n` is on the command line because the report has to answer whether
