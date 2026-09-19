@@ -1,10 +1,18 @@
 package coreutils
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func init() {
 	registerCorpus("seq", seqCases)
 }
+
+// seqFormatRunLimit bounds a format case whose reference may never answer.
+// Well above the milliseconds a seq case takes, because the bound is not a
+// performance assertion.
+const seqFormatRunLimit = 10 * time.Second
 
 // seqCases is the corpus, shared by the GNU parity gate and the
 // self-host leg so neither can test something narrower than the other.
@@ -284,7 +292,18 @@ func seqCases(t *testing.T) []invocation {
 		{name: "format two precisions", args: []string{"-f", "%1.1.1g", "2"}},
 		{name: "format width beyond an int", args: []string{"-f", "%9999999999g", "1"}},
 		{name: "format width one past an int", args: []string{"-f", "%2147483648g", "1"}},
-		{name: "format precision past an int", args: []string{"-f", "%.2147483648g", "1"}},
+		// Bounded because the REFERENCE does not always answer: GNU
+		// coreutils 9.12 does not terminate on this format on macOS, where
+		// 9.4 returned at once, so the corpus hung the whole package rather
+		// than reporting anything. A run that outlasts the bound is reported
+		// as the divergence it is, which is what `timeout` is for (the same
+		// reason expr's regex differential carries one, #9092).
+		//
+		// Only this one. Measured against 9.12 on macOS arm64: the two WIDTH
+		// forms above are refused at once (exit 1), `%.9999999999g` aborts,
+		// and `%.1000000000g` answers -- it is the precision one past an int
+		// that never returns.
+		{name: "format precision past an int", args: []string{"-f", "%.2147483648g", "1"}, timeout: seqFormatRunLimit},
 		{name: "format two long modifiers", args: []string{"-f", "%LLg", "1.5"}},
 		{name: "format h modifier", args: []string{"-f", "%hg", "1.5"}},
 		{name: "format q modifier", args: []string{"-f", "%qg", "1.5"}},
