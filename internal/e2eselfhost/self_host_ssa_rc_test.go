@@ -66,7 +66,7 @@ function caller(template: irlower.LowerResult, mode: i32): irlower.LowerResult {
     return irlower.LowerResult { ...template, ops: ops, n_locals: 3,
         n_params: 0, arr_slots: [0, 1], str_slots: [], i64_slots: [], f64_slots: [] };
 }
-function fixture(): ssasem.Func { envs: [], 
+function fixture(): ssasem.Func {
     var i: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false };
     var row: typeinfo.Type = typeinfo.TypeArray { elem: i };
     var rows: typeinfo.Type = typeinfo.TypeArray { elem: row };
@@ -220,7 +220,7 @@ function binary_masks(op: string, t: typeinfo.Type, result: typeinfo.Type): stri
     if (!p.ok) { return "plan:" + p.why; }
     return masks(ssarc.lower(f, [1, 1], p, irlower.struct_tab_empty(), []));
 }
-function wide_binary(t: typeinfo.Type, result: typeinfo.Type, op: string): ssasem.Func { envs: [], 
+function wide_binary(t: typeinfo.Type, result: typeinfo.Type, op: string): ssasem.Func {
     var g = ssa.SFunc { name: "wbin", nparams: 2, nvals: 3, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1),
             ssa.SInst { kind_tag: 9, result: 2, args: [0, 1], imm: 0, str: op }], term: ret(2) }] };
