@@ -16,6 +16,9 @@ import (
 // The program reports the over-release counter and returns it, so a loop that
 // released a borrowed argument fails on the exit code rather than on whether
 // a freed string happened to still read correctly.
+//
+// No trailing escape on the print: `print` ends the line itself, and adding
+// one makes the answer carry a blank line the expectation does not.
 const selfHostTailRecursionSource = `import "std/i32";
 
 function borrowed(s: string, i: i32): i32 {
@@ -74,7 +77,7 @@ function main(): i32 {
         + " alive=" + alive.to_string()
         + " ticks=" + ticks.get().to_string()
         + " view=" + view.to_string()
-        + " underflow=" + __rc_underflow_count().to_string() + "\n");
+        + " underflow=" + __rc_underflow_count().to_string());
     return __rc_underflow_count();
 }
 `
