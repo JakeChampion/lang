@@ -498,6 +498,16 @@ func countSlotLoads(fn *Func) map[int32]*slotLoads {
 	return out
 }
 
+// arrayReportCompilerNote says whose plan this is. #9732 asks the report to
+// work on both compilers or to say plainly which one it describes, and it is
+// the second: recognition (#9730) and fusion (#9731) both live in
+// `internal/ir`, which the self-hosted compiler does not share. A reader who
+// took this for the plan of whatever built their binary would be reading a
+// claim about a different compiler.
+const arrayReportCompilerNote = "This is the NATIVE compiler's plan. " +
+	"The self-hosted compiler implements neither recognition nor fusion, " +
+	"so a program it builds fuses nothing regardless of what is above.\n"
+
 // FormatArrayPipelineHistogram tallies the program's pipelines by how they
 // ended, and by how much they materialize.
 //
@@ -518,9 +528,9 @@ func FormatArrayPipelineHistogram(p *Program) string {
 		if len(pl.Stages) > 1 {
 			chained++
 		}
-		why := verdicts[arrayPipelineKey(pl.Func, pl)]
-		fusionCounts[why]++
-		if why == FusionFused {
+		v := verdicts[arrayPipelineKey(pl.Func, pl)]
+		fusionCounts[v.Why]++
+		if v.Why == FusionFused {
 			fused++
 		}
 	}
@@ -531,6 +541,7 @@ func FormatArrayPipelineHistogram(p *Program) string {
 	for _, r := range AllFusionRefusals {
 		fmt.Fprintf(&b, "  %-26s %d\n", r.Tag(), fusionCounts[r])
 	}
+	b.WriteString(arrayReportCompilerNote)
 	fmt.Fprintf(&b, "chains stopped by (#9730):\n")
 	for _, r := range allRefusals {
 		fmt.Fprintf(&b, "  %-26s %d\n", r.Tag(), counts[r])
@@ -581,6 +592,7 @@ func FormatArrayPipelines(p *Program) string {
 		}
 	}
 	fmt.Fprintf(&b, "\n%d pipeline(s), %d with more than one stage\n", len(pipes), chained)
+	b.WriteString(arrayReportCompilerNote)
 	return b.String()
 }
 
