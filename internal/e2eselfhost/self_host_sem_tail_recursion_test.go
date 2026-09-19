@@ -33,6 +33,16 @@ function both(s: string, xs: i32[], i: i32): i32 {
     return both(s, xs.append(i), i - 1);
 }
 
+// A VOID loop, which the language spells as a statement call and a fall-off
+// return: returning the call is E002. Its self call is the last thing in the
+// ENTRY block, with no branch before it, so the block being split is also the
+// block that jumps back to the header.
+function serve(c: Cell[i32]): void {
+    if (c.get() >= 300000) { return; }
+    c.set(c.get() + 1);
+    serve(c);
+}
+
 function main(): i32 {
     var t: string = "ab" + "cde";
     var keep: i32[] = [7, 8];
@@ -41,17 +51,21 @@ function main(): i32 {
     var b: i32 = rebuilt(keep, 400000);
     var c: i32 = both(t, [1], 200);
 
+    var ticks: Cell[i32] = cell_new(0);
+    serve(ticks);
+
     // The lender reads its own values AFTER the loops had them.
     var alive: i32 = t.len() + keep.len() + keep[0];
 
     print("a=" + a.to_string() + " b=" + b.to_string() + " c=" + c.to_string()
         + " alive=" + alive.to_string()
+        + " ticks=" + ticks.get().to_string()
         + " underflow=" + __rc_underflow_count().to_string() + "\n");
     return __rc_underflow_count();
 }
 `
 
-const selfHostTailRecursionWant = "0|a=5 b=3 c=206 alive=14 underflow=0\n"
+const selfHostTailRecursionWant = "0|a=5 b=3 c=206 alive=14 ticks=300000 underflow=0\n"
 
 // TestSelfHostSemanticTailRecursion is the reference-typed half of #9692.
 //

@@ -1741,7 +1741,7 @@ pub function tail_recursion(own f: Func, name: string): Func {
     if (name.len() == 0 || f.graph.blocks.len() == 0) { return f; }
     if (f.graph.blocks[0].preds.len() > 0) { return f; }
     var nparams: i32 = f.graph.nparams;
-    if (nparams == 0 || f.values.len() < nparams) { return f; }
+    if (f.values.len() < nparams) { return f; }
     var tails: i32[] = tail_blocks(f, name, nparams);
     if (tails.len() == 0) { return f; }
     return spliced(f, tails, nparams);
@@ -1824,21 +1824,30 @@ function mapped_ret_term(map: i32[], t: ssa.STerm): ssa.STerm {
 
 // spliced performs the rewrite: it is one pass over the blocks with the
 // parameter map applied, then the header assembled from what block 0 held.
+//
+// The entry block can BE a tail block — an unconditional self-call, which is
+// how a parameterless event loop is written. Everything it holds moves to the
+// header anyway, so what changes is that the header keeps the branch instead
+// of the return, and the edge that tail contributes comes from the header
+// rather than from the entry.
 function spliced(own f: Func, tails: i32[], nparams: i32): Func {
     var args: i32[][] = tail_args(f, tails);
     var map: i32[] = phi_map(f, nparams);
     var header: i32 = fresh_block_id(f);
     var entry: ssa.SBlock = f.graph.blocks[0];
+    var loops: boolean = util.index_of_i32(tails, 0) >= 0;
     var preds: i32[] = [entry.id];
-    for bi in tails { preds = preds.append(f.graph.blocks[bi].id); }
+    for bi in tails { if (bi == 0) { preds = preds.append(header); } else { preds = preds.append(f.graph.blocks[bi].id); } }
 
     // The parameter definitions STAY in the entry block: ssadeps.verify reads a
     // `param` instruction anywhere else as a malformed graph, and they are also
     // what the entry edge's phi operands name.
     var blocks: ssa.SBlock[] = [ssa.SBlock { id: entry.id, insts: kind_6(entry.insts), term: ssa.STerm { kind_tag: 2, cond: 0, target: header, t: 0, f: 0, value: 0 }, preds: [] }];
     var head_insts: ssa.SInst[] = phis(f, map, args, nparams);
-    for ins in rewritten(map, not_kind_6(entry.insts)) { head_insts = head_insts.append(ins); }
-    blocks = blocks.append(ssa.SBlock { id: header, insts: head_insts, term: mapped_ret_term(map, entry.term), preds: preds });
+    for ins in rewritten(map, not_kind_6(without_tail_call(entry.insts, loops))) { head_insts = head_insts.append(ins); }
+    var head_term: ssa.STerm = mapped_ret_term(map, entry.term);
+    if (loops) { head_term = ssa.STerm { kind_tag: 2, cond: 0, target: header, t: 0, f: 0, value: 0 }; }
+    blocks = blocks.append(ssa.SBlock { id: header, insts: head_insts, term: head_term, preds: preds });
     var bi: i32 = 1;
     while (bi < f.graph.blocks.len()) {
         blocks = blocks.append(rewritten_block(f.graph.blocks[bi], map, header, entry.id, util.index_of_i32(tails, bi) >= 0));
@@ -1869,6 +1878,15 @@ function rewritten_block(b: ssa.SBlock, map: i32[], header: i32, entry: i32, tai
 function repointed(preds: i32[], from: i32, to: i32): i32[] {
     var out: i32[] = [];
     for p in preds { if (p == from) { out = out.append(to); } else { out = out.append(p); } }
+    return out;
+}
+
+// The block's instructions without the self-call that ended it.
+function without_tail_call(insts: ssa.SInst[], drop: boolean): ssa.SInst[] {
+    if (!drop) { return insts; }
+    var out: ssa.SInst[] = [];
+    var i: i32 = 0;
+    while (i + 1 < insts.len()) { out = out.append(insts[i]); i = i + 1; }
     return out;
 }
 
