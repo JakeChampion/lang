@@ -534,6 +534,13 @@ type artifact struct {
 func (inv invocation) own(t *testing.T) invocation {
 	t.Helper()
 	if inv.dir == "" && inv.seedTree == nil {
+		// Under the READ side of the mask lock, for the reason prep takes it:
+		// the creation mask is process-global, so a umask case holding the
+		// write side would have this directory created under ITS mask rather
+		// than the harness's. At `umask 0777` that is a directory nothing can
+		// write, and every case that lands in the window fails with
+		// "permission denied" from TempDir itself.
+		defer holdMask(nil)()
 		inv.dir = t.TempDir()
 	}
 	return inv
