@@ -114,10 +114,16 @@ freeze:
 # main with nothing to report it (#7570). Two lanes run this target — lint.yml
 # on PRs, check-sources.yml on push to main — so putting it here rather than in
 # either workflow is what keeps them from diverging.
+#
+# The fixture gate rides along for the same reason and answers the half the
+# first line cannot: `-check examples/self_host/fern.fern` reads the tree, and
+# the Fern fixtures that only exist as Go string literals are not in it, so a
+# field added to a struct they name is clean here and red on every self-host
+# shard (#9805). It type-checks them in 9 s.
 check-sources: bin/fern
 	./bin/fern -check examples/self_host/fern.fern
 	./tools/stdlib_check.sh
-	go test ./internal/e2eselfhost/ -run 'TestSelfHostFeatureCensus$$' -count=1
+	go test ./internal/e2eselfhost/ -run 'TestSelfHostFeatureCensus$$|TestSelfHostFixtureSourcesCheck$$' -count=1
 
 # Build the SELF-HOST compiler to a native binary for THIS host, so self-host
 # behaviour can be checked locally in seconds instead of only in CI.

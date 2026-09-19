@@ -115,6 +115,7 @@ rather than the IR path.
 | Gate | Proves | Blind to |
 |---|---|---|
 | `make check-sources` (lint job on every PR; check-sources.yml on every push to main) | The self-host sources and every stdlib module (each as a standalone import — `tools/stdlib_check.sh`, the CLI twin of `TestStdlibModulesImportStandalone`) type-check under the native `fern -check`. Every self-host lane needs this but asks it only implicitly, by building a driver, so a type error surfaced as a build-step failure in a job named for something else — and a merge race landed an unbuildable main with every contributing PR green (#7317). The main-push leg reports that against the merge that caused it | Whether anything RUNS — no codegen, no link, no execution. The SELF-HOST checker's verdict: this is native's, and the self-host build path filters through `filter_build_gate`, so the two can disagree by design (#7273 / #4346) |
+| `TestSelfHostFixtureSourcesCheck` (rides `make check-sources`) | The Fern fixtures `internal/e2eselfhost` embeds in Go string literals still type-check. They are assembled at test time and live in no `.fern` file, so the line above cannot see them: a field added to a struct they name -- `ssasem.Func`, `ssa.SFunc`, `ssa.SBlock`, `ssa.SInst`, `semrecords.Record` -- was clean locally and E005 on every self-host shard, a CI round per attempt on the longest lane (#9805). 9 s, and the failure names the Go function that built the fixture | Whether a fixture ASSERTS the right thing. It compiles them and stops; the owning test still owns the behaviour |
 | `internal/e2e` fixtures (`TestFernFixtures`) | The NATIVE compiler is right on the corpus | Anything self-host-only; anything about *how much* it allocated |
 | `TestFernFixturesSelfHost{Wasm,X86_64,Arm64}` (`FERN_SELFHOST_FIXTURES=1`) | The self-host compiler agrees with native on the corpus, on all three emitted targets. Both Linux legs produce the finished binary by themselves (emit + assemble + link in-process), so they are also the gates on `arm64_native.fern` and `x86_native.fern`. NOTE what that does NOT gate: an assembler that DROPS an instruction still emits a plausible binary, so a green leg is not evidence the assembler is complete — `rep stosq` was silently ignored at 63,637 sites and this leg stayed green on the programs that did not depend on zeroed memory. The gate for THAT is a decoded-instruction differential against the same program built via `-target x86-64-linux -emit asm` and linked by gcc | Values >= 126 on the wasm leg, which WASI cannot express — the x86-64 and arm64 legs check those. Each leg's `testdata/selfhost-<target>-known-divergences.txt` rows, which are listed rather than fixed |
 | `internal/e2eselfhost` | The self-host compiler is right on programs outside its own sources | Whole-program self-compilation; memory |
@@ -203,6 +204,15 @@ both at once. The SH-022 walker migration moved it three times in one session:
 +4 nested fns and −1 `for..in` from one slice, +3 and −4 from the next, +2 from
 a bug fix. Each looked unrelated to the census right up to the moment CI failed
 on it. It runs in under a second — there is no reason to select around it.
+
+**A field added to a struct the embedded fixtures name must run
+`TestSelfHostFixtureSourcesCheck`.** It triggers on the same kind of thing the
+census does -- not on what the change is about, but on what it is written
+against. The fixtures build `ssasem.Func` and friends field by field rather than
+spreading a constructor, precisely so they can make graphs no source program
+produces, and Fern requires every field of a literal. Adding the gate's 9 s to a
+self-host struct change buys back the CI round that finding it the other way
+costs.
 
 **Delete `bin/fern` before building the after side.** `make selfhost-cli` is
 timestamp-driven and will happily reuse a `bin/fern` built from an older commit,
