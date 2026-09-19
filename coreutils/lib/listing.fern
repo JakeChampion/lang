@@ -1328,11 +1328,18 @@ function quoted_name(c: Cfg, name: string): string {
   if (c.qmark && qmark_applies(c.qstyle)) {
     return qmark(out);
   }
-  // A NEWLINE is `?` under the literal style even without -q, because an
-  // entry may not span two lines. Only the newline: a tab, a DEL or a
-  // \x01 still go out raw, as they do in 9.4. GNU <= 9.4 wrote the
-  // newline raw too, so `ls` down a pipe turned one name into two lines.
-  if (c.qstyle == 0) {
+  // A NEWLINE is `?` even without -q, under the same styles -q applies to
+  // — the ones that do not spell a control byte out — because an entry
+  // may not span two lines. Only the newline: a tab, a DEL or a \x01
+  // still go out raw, as they do in 9.4, and `--quoting-style=c` or
+  // `escape` write `\n` rather than `?`.
+  //
+  // NOT under --zero, where the records are NUL-terminated and a newline
+  // cannot end one early. Both versions leave it raw there.
+  //
+  // GNU <= 9.4 wrote the newline raw in every case, so `ls` down a pipe
+  // turned one name into two lines.
+  if (qmark_applies(c.qstyle) && !c.zero) {
     return newline_qmark(out);
   }
   return out;
