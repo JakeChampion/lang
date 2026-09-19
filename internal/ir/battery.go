@@ -47,6 +47,9 @@ func OptimizeProgram(prog *Program, ptrW int32) {
 	// materialises against a static .rodata cell rather than a
 	// heap-allocated pair.
 	InlineZeroCaptureClosures(prog)
+	// …and then the env fetch at each of its call sites, which reads a
+	// constant 0 out of the static cell it just created.
+	FoldZeroCaptureEnvLoads(prog, ptrW)
 	Inline(prog)
 	OptimizeFunctions(prog)
 }
