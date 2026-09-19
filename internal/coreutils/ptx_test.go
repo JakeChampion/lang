@@ -61,6 +61,13 @@ func ptxCases(t *testing.T) []invocation {
 	mixedcase := ptxFile(t, dir, "mixedcase", "Apple banana APPLE Banana cherry\n")
 	classes := ptxFile(t, dir, "classes", "a.b c!d foo_bar baz-qux 123 caf\xc3\xa9\n")
 	nonl := ptxFile(t, dir, "nonl", "aa bb")
+	// The second file of the joining case carries words of its own. GNU
+	// breaks a tie between two equal keywords by the ADDRESS of the key
+	// in the buffer it read the file into, and it reads each file into
+	// its own allocation — so two files sharing a keyword order by
+	// whatever the allocator did, which no second implementation can
+	// reproduce. Distinct words keep the case about the join.
+	joinl := ptxFile(t, dir, "joinl", "zz yy")
 	empty := ptxFile(t, dir, "empty", "")
 	blanks := ptxFile(t, dir, "blanks", "  aa bb\n   cc\n")
 	ctrl := ptxFile(t, dir, "ctrl", "aa\r\vbb\f\x01cc\x80dd\tee\n")
@@ -223,7 +230,7 @@ func ptxCases(t *testing.T) []invocation {
 		{name: "ties keep input order", args: []string{"-G", "-O"}, stdin: "zzz the\naaa the\n"},
 		{name: "two files interleave by position", args: []string{"-O", in1, in1}},
 		{name: "contexts do not join across files", args: []string{"-O", sent3, sent}},
-		{name: "unterminated file does not join the next", args: []string{"-O", nonl, sent}},
+		{name: "unterminated file does not join the next", args: []string{"-O", joinl, sent}},
 
 		// Width and gap.
 		{name: "width 20", args: []string{"-w", "20", in1}},

@@ -516,6 +516,15 @@ func cpCases(t *testing.T) []invocation {
 		args []string
 	}{
 		{"no-clobber", []string{"-n", "old", "dest"}},
+		{"update-none-fail", []string{"--update=none-fail", "old", "dest"}},
+		{"update-none-fail-verbose", []string{"--update=none-fail", "-v", "old", "dest"}},
+		{"update-none-fail-nothing-there", []string{"--update=none-fail", "-v", "old", "gone"}},
+		{"debug-names-a-skip", []string{"--debug", "-n", "old", "dest"}},
+		{"debug-names-an-update-none-skip", []string{"--debug", "--update=none", "old", "dest"}},
+		{"backup-and-update-none-conflict", []string{"-b", "--update=none", "old", "dest"}},
+		{"backup-and-update-none-fail-conflict", []string{"-b", "--update=none-fail", "old", "dest"}},
+		{"backup-and-update-all-do-not", []string{"-bv", "--update=all", "old", "dest"}},
+		{"suffix-turns-the-backup-conflict-on", []string{"-S", ".x", "-n", "old", "dest"}},
 		{"no-clobber-long", []string{"--no-clobber", "old", "dest"}},
 		{"update-none", []string{"--update=none", "old", "dest"}},
 		{"update-all", []string{"--update=all", "old", "dest"}},

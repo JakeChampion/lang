@@ -666,6 +666,55 @@ included. A cycle without a single dominating header (an irreducible graph)
 is refused as "physical RC needs reducible graph"; the rejection test builds
 one by hand.
 
+## Self-tail recursion
+
+A self-recursive call in tail position reuses its own activation on the AST
+lowering, which gets `irlower.tco_self_tail` out of `lower_func`. A produced
+body never reaches `lower_func`, so until #9692 it grew the stack once per
+round and a deep enough recursion took the program out — on the DEFAULT path,
+since `semlower.sem_ir_on` is true unless `FERN_SEM_IR` is set empty.
+
+`ssasem.tail_recursion` rewrites it on the graph, before the unit planner and
+the RC lowering see it, and that placement is the design rather than a
+convenience: a tail call HANDS ITS ARGUMENTS OVER and a jump does not, so only
+the planner knows which arguments carry a unit. Rewritten first, the loop is
+an ordinary loop and the planner brackets it as one.
+
+The entry block is SPLIT. It keeps its id and its index — the lowering reads
+`blocks[0]` as the entry, and `ssadeps.verify` refuses a `param` instruction
+anywhere else, so the parameter definitions stay put — and what is left
+becomes a branch to a new HEADER holding the rest. The header takes one phi
+per parameter, merging the incoming argument with the one each tail call
+passes; every other use of a parameter becomes a use of its phi; each tail
+call drops its call and branches to the header, and every block the entry used
+to reach takes the header in the entry slot of its predecessor list so the phi
+operands stay parallel. The pass runs before `ssasem.analyze`, so the verifier
+checks what it produced.
+
+Two shapes are DECLINED, and both are soundness preconditions rather than
+conservatism:
+
+- A tail call whose ARGUMENT is a view. The call kept the anchor alive,
+  because the anchor is the caller's and the caller's frame stands until the
+  callee returns; a jump re-enters the loop with the anchor already replaced
+  by the phi. `irlower.rc_consumed_drop_wired` is the shape — it recurses on
+  `slice_unchecked(t, 0, t.len() - 2)`, a view of the very parameter the
+  argument replaces — and rewriting it corrupted the heap of every compiler
+  built through this path. This declines the one BLOCK: a call that stays a
+  call keeps holding what it holds.
+- A function with a view PARAMETER. Every parameter gains a phi, the planner
+  marks a reference-typed phi owned, and the entry edge then supplies it by
+  RETAINING — which on a view is a no-op, since a view's box carries the
+  immortal sentinel rather than a count, while the matching release frees the
+  box. The loop would give back a unit it was never able to take. The
+  asymmetry is the planner's (#9802); what this pass contributed was the only
+  way to reach it, a phi whose operand is a borrowed parameter, since a loop
+  that rebuilds its view each round merges fresh values and is correct.
+
+The cost of the second is that a deep self-tail recursion on a `str` parameter
+still grows the stack here while the AST lowering optimises it. It shows on
+wasm, whose stack is small, and not natively.
+
 ## Validation
 
 `internal/e2eselfhost/self_host_semsource_test.go`:

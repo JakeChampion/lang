@@ -10,7 +10,7 @@
 // option checks read oddly until you see that the composite has nowhere
 // to put a name-only or real-only answer:
 //
-//   -n / -r without one of -ugG  `cannot print only names or real IDs
+//   -n / -r without one of -ugG  `printing only names or real IDs
 //                                 in default format`
 //   -z  without one of -ugGZ     `option --zero not permitted in
 //                                 default format`
@@ -377,7 +377,7 @@ function check_mode(m: Mode): string {
   }
   if (only == 0) {
     if (m.name || m.real) {
-      gnu.error("cannot print only names or real IDs in default format");
+      gnu.error("printing only names or real IDs requires -u, -g, or -G");
       exit(1);
     }
     if (m.zero) {
@@ -423,15 +423,9 @@ pub function main(): i32 {
           o = print_one(o, m, u.uid, u.gid, u.uid, u.gid, pwdb.group_list(u.name, u.gid), "", term, extra);
         },
         None => {
-          // The empty operand is the one that carries an errno:
-          // glibc's lookup answers ENOENT for a name that is not a
-          // name at all, where one that is merely absent leaves errno
-          // alone, and `id` reports errno when it is set.
-          var msg: string = gnu.quote(operands[i]) + ": no such user";
-          if (operands[i].len() == 0) {
-            msg = msg + ": No such file or directory";
-          }
-          o = Out { w: gnu.error_out(o.w, msg), ok: false };
+          // No errno: GNU <= 9.4 let glibc's ENOENT for the empty name
+          // through, and 9.5 clears it before reporting.
+          o = Out { w: gnu.error_out(o.w, gnu.quote(operands[i]) + ": no such user"), ok: false };
         }
       }
       i = i + 1;

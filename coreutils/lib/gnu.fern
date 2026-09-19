@@ -57,10 +57,31 @@ pub function error(msg: string): void {
 // first, which is what gnulib's error() does. Without it a
 // diagnostic overtakes the output written before it whenever both
 // streams are the same pipe. Rebind: `o = gnu.error_out(o, msg);`.
+//
+// The flush is skipped when fd 1 is closed, as gnulib's flush_stdout
+// skips it: the stream is then left untouched rather than picking up a
+// write failure, which a utility checking it after every line would
+// otherwise report in place of what it had to say next.
 pub function error_out(o: io_buffered.BufWriter, msg: string): io_buffered.BufWriter {
+  if (!stdout_open()) {
+    error(msg);
+    return o;
+  }
   var w: io_buffered.BufWriter = o.flush();
   error(msg);
   return w;
+}
+
+// Whether fd 1 is open, which is gnulib's `is_open` — fcntl F_GETFL.
+function stdout_open(): boolean {
+  match (stdout().flags()) {
+    Ok(_) => {
+      return true;
+    },
+    Err(_) => {
+      return false;
+    }
+  }
 }
 
 // `die(o, msg, status)` — a fatal diagnostic from a utility that
@@ -573,12 +594,15 @@ pub function stream_fail(o: Stream, msg: string): Stream {
 // One `==> NAME <==` header, with the blank line every header after the
 // first carries. A file that failed to OPEN never reaches this, so it
 // does not consume the first-file slot.
+// The name is quoted the way every other diagnostic quotes one, so a
+// header cannot be confused with the content around it. GNU <= 9.11
+// printed it raw.
 pub function stream_header(o: Stream, name: string): Stream {
   var lead: string = "\n";
   if (o.first) {
     lead = "";
   }
-  return Stream { ...stream_put(o, lead + "==> " + name + " <==\n"), first: false };
+  return Stream { ...stream_put(o, lead + "==> " + quotef(name) + " <==\n"), first: false };
 }
 
 // `stream_flush(o)` — what is buffered goes out now; a failure is
@@ -589,6 +613,13 @@ pub function stream_flush(o: Stream): Stream {
 
 pub function stream_finish(o: Stream): void {
   finish(o.w);
+}
+
+// `stream_finish_with(o, status)` — the end of a run that is exiting on
+// a diagnostic rather than because it ran out of work.
+pub function stream_finish_with(o: Stream, status: i32): void {
+  finish_with(o.w, status);
+  exit(status);
 }
 
 // ---- quoting ---------------------------------------------------------------
@@ -929,6 +960,24 @@ function shell_quote(s: string, elide: boolean, escapes: boolean, extra: string)
     bs = bs.append(39 as u8);
   }
   return string_from_bytes_unchecked(bs);
+}
+
+// `env_entry(entry, style)` — one environment entry the way GNU's
+// print_envvar writes it under quoting: the name and the value quoted
+// separately, so the `=` between them stays visible. An empty value
+// prints as `VAR=` rather than `VAR=''`, and an entry with no `=` at
+// all — which a parent writing environ directly can leave — is quoted
+// whole.
+pub function env_entry(entry: string, style: i32): string {
+  var eq: i32 = entry.index_of("=");
+  if (eq < 0) {
+    return quote_style(entry, style);
+  }
+  var name: string = quote_style(slice_unchecked(entry, 0, eq) + "", style);
+  if (eq + 1 == entry.len()) {
+    return name + "=";
+  }
+  return name + "=" + quote_style(slice_unchecked(entry, eq + 1, entry.len()) + "", style);
 }
 
 // ---- buffered stdout -------------------------------------------------------

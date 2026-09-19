@@ -468,9 +468,11 @@ function parse_int(s: string): (i64, boolean) {
 }
 
 // The two errno texts gnulib's xstrtol_fatal reports a refused number
-// with, and the band that chooses between them: a value below the
-// option's minimum is ERANGE down to -2^30 and EOVERFLOW past it, while
-// anything above INT_MAX is EOVERFLOW whatever it is.
+// with, and what chooses between them: the FLAG the option was parsed
+// under, not the magnitude. pr asks for XTOINT_MIN_RANGE only where the
+// minimum is its own rather than the type's, so a value below a
+// positive minimum is ERANGE and everything else out of range is
+// EOVERFLOW. GNU <= 9.4 put the boundary at -2^30 instead.
 function num_fault(v: i64, ok: boolean, min: i64): i32 {
   if (!ok) {
     return 1;
@@ -478,7 +480,7 @@ function num_fault(v: i64, ok: boolean, min: i64): i32 {
   if (v >= min && v <= 2147483647 as i64) {
     return 0;
   }
-  if (v < min && v >= 0 as i64 - 1073741824 as i64) {
+  if (v < min && min > 0 as i64) {
     return 2;
   }
   return 3;

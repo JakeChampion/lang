@@ -242,15 +242,17 @@ function parse_num(v: string, positive: boolean): Num {
   var start: i32 = 0;
   var i: i32 = 0;
   var pieces: i32 = 0;
+  var zero_multiplier: boolean = false;
   while (i <= v.len()) {
     if (i == v.len() || v[i] == b'x') {
       var piece: string = slice_unchecked(v, start, i) + "";
       // A single zero in front of an `x` reads as the start of a hex
       // literal, which this grammar has no notion of, so GNU says what
       // the value really is rather than refusing it. `00x3` is the
-      // spelling that means it.
+      // spelling that means it. 9.5 says it ONCE per operand however
+      // many such factors there are, and only when the product is zero.
       if (piece == "0" && i < v.len()) {
-        gnu.error("warning: '0x' is a zero multiplier; use '00x' if that is intended");
+        zero_multiplier = true;
       }
       var marked: boolean = piece.len() > 0 && piece[piece.len() - 1] == b'B';
       var got: (u64, i32) = piece_units(piece);
@@ -282,6 +284,9 @@ function parse_num(v: string, positive: boolean): Num {
   }
   if (pieces == 0) {
     return Num { value: 0 as i64, status: num_bad(), bytes: false };
+  }
+  if (zero_multiplier && total == 0 as u64) {
+    gnu.error("warning: '0x' is a zero multiplier; use '00x' if that is intended");
   }
   if (positive && total == 0 as u64) {
     return Num { value: 0 as i64, status: num_bad(), bytes: false };

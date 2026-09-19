@@ -752,9 +752,8 @@ function convert(h: usize, s: Spec, tm: Tm, t: i64, nsec: i64, yr_spec: i32): bo
     return true;
   }
   if (c == 89) {
-    if (o) {
-      return false;
-    }
+    // `%OY` is `%Y`: the year takes both modifiers, and only `E` means
+    // anything to it.
     if (e) {
       text(h, s, c_year(year), false, false);
       return true;

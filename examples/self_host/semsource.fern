@@ -3192,6 +3192,9 @@ function complete(fd: parser.FuncDecl, s: State, name: string): Produced {
     if (!table.ok) { return refuse(table.why); }
     var graph: ssa.SFunc = ssa.SFunc { ...f.graph, name: name, nparams: params.len() };
     f = ssasem.Func { ...f, graph: graph, params: params, result: s.result, records: table.records, enums: table.enums, calls: s.calls };
+    // Before the verifier, so the rewritten graph is the one it checks, and
+    // before anything downstream plans ownership over it (#9692).
+    f = ssasem.tail_recursion(f, name);
     var analysis: ssasem.Analysis = ssasem.analyze(f);
     if (!analysis.ok) { return refuse("produced graph fails semantic verification: " + analysis.why); }
     return Produced { ok: true, why: "", func: f, modes: modes, template: false, key: "", requests: s.requests, bodyless: false };

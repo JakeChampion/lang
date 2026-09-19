@@ -67,6 +67,19 @@ pub function binary32(): Format {
   return Format { mant: 24, emax: 127, explicit_bit: false };
 }
 
+// IEEE binary16 and bfloat16: two-byte types `od -t fH` and `-t fB`
+// read out of a buffer. Neither is a Fern type, and neither is C's on
+// every compiler, so they exist here only as an encoding to decode —
+// both widen exactly into `float`, which is what the decimal they print
+// has to read back as.
+pub function binary16(): Format {
+  return Format { mant: 11, emax: 15, explicit_bit: false };
+}
+
+pub function bfloat16(): Format {
+  return Format { mant: 8, emax: 127, explicit_bit: false };
+}
+
 // `format()` — the target's. Darwin is the only environment that
 // narrows the type to `double`, and x86-64 the only ISA that carries
 // x87; every other target is the AAPCS64 / clang quad. There is no
@@ -156,6 +169,22 @@ pub function (v: LD) abs(): LD {
 // The exponent of the value's leading bit; meaningless for zero.
 function top_of(v: LD): i32 {
   return v.e + bit_length128(v.hi, v.lo) - 1;
+}
+
+// Whether the magnitude is at least one. gnulib's xstrtod tells an
+// ERANGE that OVERFLOWED from one that merely underflowed by exactly
+// this test, the two being the only ways a conversion sets it.
+pub function (v: LD) abs_ge_one(): boolean {
+  if (v.is_nan()) {
+    return false;
+  }
+  if (v.is_inf()) {
+    return true;
+  }
+  if (v.is_zero()) {
+    return false;
+  }
+  return top_of(v) >= 0;
 }
 
 // Whether a finite value is zero or below the format's least normal.
@@ -1394,32 +1423,46 @@ function has_nonzero(d: string, from: i32): boolean {
 
 // ---- %e %f %g ----------------------------------------------------------------
 // `Body` — the characters of one conversion, or the refusal glibc
-// answers a field that would reach INT_MAX-1 bytes with: the directive
-// prints nothing and the stream carries an error. `extra` below is how
-// many bytes the caller puts in front (a sign, a radix), which counts
-// toward that limit the same way.
+// answers a field longer than INT_MAX bytes with: the directive prints
+// nothing and the stream carries an error. `extra` below is how many
+// bytes the caller puts in front (a sign, a radix), which counts toward
+// that limit the same way.
 pub struct Body { s: string, refused: boolean }
 
 function refused(): Body {
   return Body { s: "", refused: true };
 }
 
-// The length at which glibc refuses a conversion outright.
+// The most fractional digits any value of any supported format has
+// exactly. The narrowest value is the smallest subnormal, 2^-16445 for
+// the 80-bit format, whose expansion is that many digits; past this a
+// `%f` fraction is all zeros however much precision was asked for, so
+// a caller can format at this width and write the rest as a run.
+pub function max_exact_fraction(): i32 {
+  return 16500;
+}
+
+// The length at which glibc refuses a conversion outright: one past
+// INT_MAX, which is the largest count its return value can carry.
 pub function overflow_len(): i64 {
-  return 2147483646 as i64;
+  return 2147483648 as i64;
 }
 
 // `fixed(d, prec, alt, extra)` — the `%f` body: `prec` digits after the
 // point, `alt` keeping the point when there are none.
 pub function fixed(d: Dec, prec: i64, alt: boolean, extra: i64): Body {
   if (d.digits.len() == 0) {
-    if (prec + 7 as i64 + extra >= overflow_len()) {
+    if (prec + 2 as i64 + extra >= overflow_len()) {
       return refused();
     }
     return fixed_shape("", 0 - prec as i32, prec, alt);
   }
   var n: i64 = d.dp as i64 + prec;
-  if (n + 2 as i64 + extra >= overflow_len()) {
+  var whole: i64 = d.dp as i64;
+  if (whole < 1 as i64) {
+    whole = 1 as i64;
+  }
+  if (whole + prec + 1 as i64 + extra >= overflow_len()) {
     return refused();
   }
   var rf: (string, boolean) = round_digits(d.digits, n as i32);
@@ -1477,7 +1520,7 @@ function exp_suffix(x: i32, upper: boolean): string {
 // point, `prec` more, then the exponent.
 pub function sci(d: Dec, prec: i64, alt: boolean, upper: boolean, extra: i64): Body {
   if (d.digits.len() == 0) {
-    if (prec + 7 as i64 + extra >= overflow_len()) {
+    if (prec + 6 as i64 + extra >= overflow_len()) {
       return refused();
     }
     return sci_shape("0".repeat(prec as i32 + 1), 0, prec, alt, upper);
@@ -1765,7 +1808,18 @@ function sign_of(v: LD): string {
 // in hex, and a carry out of the top digit lifts the leading one — past
 // f it renormalises four binades up, which only a stored integer bit
 // can reach.
+// `HexBody` — a `%a` body in three pieces, so a precision wider than
+// the significand never has to be a string: `head` is the leading digit
+// with the point and the digits the value has, `zeros` is how many
+// zeros pad that out to the precision, and `tail` is the `p±N`.
+pub struct HexBody { head: string, zeros: i64, tail: string }
+
 pub function (f: Format) hex(v: LD, prec: i64, alt: boolean): string {
+  var b: HexBody = f.hex_parts(v, prec, alt);
+  return b.head + "0".repeat(b.zeros as i32) + b.tail;
+}
+
+pub function (f: Format) hex_parts(v: LD, prec: i64, alt: boolean): HexBody {
   var shift: i32 = hex_shift(f);
   var nd: i32 = shift / 4;
   var lead: i32 = 0;
@@ -1829,11 +1883,12 @@ pub function (f: Format) hex(v: LD, prec: i64, alt: boolean): string {
     }
   }
   var digits: string = slice_unchecked(string_from_bytes_unchecked(frac), 0, keep) + "";
+  var zeros: i64 = 0 as i64;
   if (prec > nd as i64) {
-    digits = digits + "0".repeat(prec as i32 - nd);
+    zeros = prec - nd as i64;
   }
   var body: string = string_from_bytes_unchecked([hex_char(lead) as u8]);
-  if (digits.len() > 0 || alt) {
+  if (digits.len() > 0 || zeros > 0 as i64 || alt) {
     body = body + "." + digits;
   }
   var ps: string = "p";
@@ -1842,7 +1897,7 @@ pub function (f: Format) hex(v: LD, prec: i64, alt: boolean): string {
   } else {
     ps = ps + "+" + (pe as i64).to_string();
   }
-  return body + ps;
+  return HexBody { head: body, zeros: zeros, tail: ps };
 }
 
 // The four bits of the significand starting at bit `at`.

@@ -158,7 +158,7 @@ function field_number(s: string): u64 {
 function file_number(s: string): i32 {
   var r: (u64, i32) = gnu.parse_number(s);
   if (r.1 != 0 || r.0 == 0 as u64 || r.0 > 2 as u64) {
-    gnu.error("invalid field number: " + gnu.quote(s));
+    gnu.error("invalid file number: " + gnu.quote(s));
     exit(1);
   }
   return r.0 as i32;
@@ -249,7 +249,8 @@ function is_sep(c: i32): boolean {
 // gnulib's xfields, walked once for the field count and the join
 // field's bounds. An empty line has no fields at all; a `-t` line
 // always has one more field than it has separators, so a leading
-// separator makes the first field empty. `-t ''` sets the separator to
+// separator makes the first field empty; in the default mode blanks at
+// either end are skipped and add no field. `-t ''` sets the separator to
 // a newline, which no line can contain, so the whole line is one field.
 // A join field the line does not have is the empty range at `lo`.
 // `other` is where the first tab or newline at or after `lo` sits, or
@@ -342,23 +343,9 @@ function make_line(text: string, lo: i32, hi: i32, tab: i32, jf: u64, other: i32
         while (i < hi && is_sep(text[i] as i32)) {
           i = i + 1;
         }
+        // Trailing blanks end the line rather than opening an empty
+        // field after them. GNU <= 9.11 extracted one there.
         if (i >= hi) {
-          // The line ends with a separator, so one empty field follows it.
-          if (n == want) {
-            k0 = hi;
-            k1 = hi;
-          }
-          if (n == 1) {
-            s1 = hi;
-            e1 = hi;
-          } else if (n == 2) {
-            s2 = hi;
-            e2 = hi;
-          } else if (n == 3) {
-            s3 = hi;
-            e3 = hi;
-          }
-          n = n + 1;
           more = false;
         }
       }

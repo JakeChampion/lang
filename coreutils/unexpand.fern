@@ -359,7 +359,10 @@ function run(files: string[], stops: tabs.Tabs, convert_all: boolean): i32 {
                 if (idx > 0) {
                   idx = idx - 1;
                 }
-              } else {
+              } else if (b != 0) {
+                // wcwidth answers 0 for a NUL, so it takes no column at
+                // all — the one byte for which the count is not the
+                // byte count.
                 column = column + 1 as u64;
               }
               q = q + 1;

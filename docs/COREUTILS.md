@@ -3,7 +3,7 @@
 `coreutils/` reimplements GNU coreutils in Fern, one program per file, to two
 requirements that do not bend:
 
-1. **Byte-for-byte parity with GNU coreutils 9.4 or newer.** Same stdout, same stderr,
+1. **Byte-for-byte parity with GNU coreutils 9.12.** Same stdout, same stderr,
    same exit status, for every invocation. Not "compatible", not "the common
    cases": a divergence is a bug with the same standing as a miscompile.
 2. **Faster than GNU on every utility, and faster than uutils (the Rust
@@ -112,15 +112,16 @@ implementation:
   authors and (in 9.x) terminal hyperlink escapes; reproducing it would be
   copying, and it would be wrong in every particular that matters.
 - `cksum --debug` — "indicate which implementation used" — is silent. GNU's
-  CRC has several implementations and it picks one at startup by asking the
-  CPU (`using pclmul hardware support` where the instruction exists), which
-  is a runtime dispatch a static Fern binary with no CPU detection does not
-  have; claiming the message would say something untrue about our own code,
-  and printing a different one would diverge just the same. Only the CRC
-  reaches it — GNU says nothing under `--debug` for the other ten
-  algorithms, and neither do we, so those ARE in the byte-exact corpus, as
-  is everything else about the option: that it is accepted, that it refuses
-  a value, and that it stands in the ambiguity list.
+  two CRCs have several implementations each and it picks one at startup by
+  asking the CPU (`using pclmul hardware support` where the instruction
+  exists), which is a runtime dispatch a static Fern binary with no CPU
+  detection does not have; claiming the message would say something untrue
+  about our own code, and printing a different one would diverge just the
+  same. Only `crc` and `crc32b` reach it — GNU says nothing under `--debug`
+  for the other twelve algorithms, and neither do we, so those ARE in the
+  byte-exact corpus, as is everything else about the option: that it is
+  accepted, that it refuses a value, and that it stands in the ambiguity
+  list.
 - `cp --debug`'s second line is ours, for the same reason as `cksum
   --debug`'s and no other. GNU's names ITS OWN syscall strategy —
   measured, `copy offload: yes, reflink: unsupported, sparse detection:
@@ -269,38 +270,56 @@ failure, not a skip.** On the Ubuntu CI runners it is the system coreutils;
 on macOS the system tools are BSD, so a nix or Homebrew GNU coreutils is
 needed and the failure message says so.
 
-Versions: the corpus is held to GNU coreutils **9.4 or newer**, and the
-floor is enforced by supplying the reference rather than hoping for it.
+Versions: the corpus is held to GNU coreutils **9.12**, and that is enforced
+by supplying the reference rather than hoping for it.
 `scripts/devbox`'s base is `debian:bookworm`, whose coreutils is **9.1** —
 below the floor, and the container spent its life comparing against it, which
-is not a gate (#9162). The image now builds 9.4 and puts it ahead of
+is not a gate (#9162). The image now builds 9.12 and puts it ahead of
 `/usr/bin`, so a green run in the container means what a green lane means.
 That also supplies the two binaries Debian does not build at all, `uptime`
 and `kill`, and asserts both rather than only the first. CI's `test-units`
-lane builds the same 9.4 and installs those two beside `/usr/bin`, with both
-in the cache key — a cache written when the step installed `uptime` alone
-cannot satisfy a run that needs both.
+lane installs the same 9.12 tree the same way, AHEAD of `/usr/bin` rather
+than beside it. Installing only the binaries the image lacks is what this
+looks like when it goes wrong: the lane did that, with `/usr/bin` first in
+the list, so sixty-odd utilities compared against ubuntu-24.04's **9.4**
+while the corpus encoded 9.12 — around two thousand cases reporting a
+version difference as Fern's bug. The harness takes the first directory on
+the list that holds the utility, so a system coreutils in front of the built
+one shadows every name it also carries.
 
-The `macos-15` lane (`.github/workflows/macos.yml`) builds the same 9.4 and
+The `macos-15` lane (`.github/workflows/macos.yml`) builds the same 9.12 and
 installs the WHOLE tree to `~/gnu-coreutils`, because there is no system GNU
-on that runner to fall back to for the rest. One program needs installing by
-hand: `arch` is in coreutils' `no_install__progs`, so `make install` places
-every other program and never it, and no configure flag changes that — Debian
-ships its own copy, which is the only reason the Linux corpora find one in
-`/usr/bin`, and `/usr/bin/arch` on macOS is Apple's unrelated arch(1). That
-lane runs the corpus for the whole catalogue with `-skip '^TestSelfHost'`:
+on that runner to fall back to for the rest. One program needs naming: `arch`
+is an automake EXTRA_PROGRAM in coreutils' `no_install__progs`, so `make`
+alone builds nothing to copy and `make install` places every other program
+and never it. Every lane passes `--enable-install-program=arch,kill,uptime`
+for that reason. `/usr/bin/arch` on macOS is Apple's unrelated arch(1), which
+the harness's version probe rejects. That lane runs the corpus for the whole
+catalogue with `-skip '^TestSelfHost'`:
 selected by skipping rather than by naming, because `touch_test.go` and
 `ls_linux_fixture_test.go` are `//go:build linux` and a `-run` list carrying
 `TestTouch` would select nothing there, silently and with exit 0. Benchmarks
 compare against both GNU coreutils and Rust uutils, recording their actual
 versions. Install missing comparison implementations before measuring.
 A case whose behaviour changed between versions records the version it needs in a
-comment and is the exception, not the pattern. There is exactly one such case:
-`numfmt`'s buffer-length refusal is GNU <= 9.4 behaviour, pinned by a comment in
-both `coreutils/numfmt.fern` and its corpus, and #8765 holds the open question
-of whether Fern should follow 9.5+ instead. Nothing forces that today — every
-CI runner and this container ship 9.4 — so it is a future-GNU decision rather
-than a live divergence.
+comment and is the exception, not the pattern. #8765 was the standing example —
+`numfmt`'s buffer-length refusal is GNU <= 9.4 behaviour — and it is settled:
+Fern follows 9.5+, the refusal is gone from the scaled path, and the corpus
+compares those rows against 9.12 like any other. The unscaled
+`value/precision too large` limit is a different rule and 9.12 still applies
+it, so only half of that issue's surface moved.
+
+**The benchmark uses the same tree.** It did not always: while the corpus was
+pinned to 9.4 the bench had its own 9.12 so "faster than GNU" meant the GNU
+people run. Now that both are 9.12 there is nothing to differ about, and
+`scripts/coreutils-bench` reads `FERN_GNU_COREUTILS` like everything else. It
+still carries the release as `bench_gnu_floor` and says on stderr when the
+tree it found is older, warning rather than exiting: the bench is a
+comparison and not a gate. Two utilities always answer from elsewhere —
+`chcon` and `runcon` need SELinux and the built tree configures
+`--without-selinux` — so the directory on PATH is appended to the search list
+after the named ones, and a utility answered from there names its real
+version on stderr.
 
 ### The Darwin ratchet
 
@@ -446,16 +465,20 @@ coreutils/
   lib/tabs.fern     the `-t` tab-stop grammar and lookup expand and
                     unexpand share
   lib/digest.fern   md5sum, sha1sum, sha224sum, sha256sum, sha384sum,
-                    sha512sum, b2sum and the eight digests of cksum,
+                    sha512sum, b2sum and the ten digests of cksum,
                     which GNU also builds from one source: the option
                     surface, the file-name escaping and the check-line
                     grammar, parameterised by the digest each utility
                     names. cksum widens two rules of that grammar and
                     the module carries both behind one flag — a base64
                     digest is read wherever a hex one is, and a line's
-                    TAG chooses the algorithm when no -a did. The three
+                    TAG chooses the algorithm when no -a did. Two of the
+                    ten, `sha2` and `sha3`, name a family rather than a
+                    digest: -l picks the member when computing and the
+                    line's own tag picks it when checking. The four
                     checksums cksum offers that are NOT digests (the
-                    POSIX crc, and sum's bsd and sysv) are std/hash
+                    POSIX crc, crc32b, and sum's bsd and sysv) are
+                    std/hash
   lib/pwdb.fern     /etc/passwd and /etc/group as glibc's `files`
                     backend reads them — the lookups by name and by id,
                     getgrouplist's ordering, the process's own group
@@ -2157,13 +2180,56 @@ errno they discard is the whole of what those two utilities report.
 
 ## Known divergences
 
-**`nohup`'s stderr clause is the 9.4 wording, and 9.10 changed it.** The
-clause for a terminal on stderr alone is `redirecting stderr to stdout` here;
-coreutils 9.10 spells both streams out, `redirecting standard error to
-standard output`. The corpus compares against the installed binary and that
-is 9.4, so 9.4 is what the implementation emits. This is the one place a
-coreutils version bump under the oracle would turn a passing case red, and
-the fix then is the new string rather than an exemption.
+**`ptx` breaks a tie between two equal keywords by a pointer, so the corpus
+gives each file its own words.** `compare_occurs` falls back to
+`_GL_CMP (first->key.start, second->key.start)` when the keywords compare
+equal, and ptx reads each operand into its own allocation of `text_buffer` —
+so the order of two identical keywords from two different files is the order
+the allocator happened to place the buffers in, not a fact about either file.
+Measured: `ptx -O nonl sent` over two files both starting `aa bb` prints the
+LONGER file's line first whichever order the operands are given in. Within one
+file the tie-break is a real offset comparison and is compared in full; the
+one case that pairs two files gives them distinct words instead.
+
+**`mv --exchange` is three renames rather than one (#9784).** 9.5 added the
+option, and GNU does it in a single `renameat2 (…, RENAME_EXCHANGE)`. Fern's
+`rename` has no flag word — the checker's note on it records that a flag one
+target honours and two refuse belongs to the capability system — so
+`mv.fern` renames the source aside, the destination onto the source, and the
+aside name onto the destination, undoing the first when the second fails. The
+tree left behind is the same and every corpus case compares equal; what
+differs is that a crash between the renames can leave `.mv_exchange.N` behind,
+and that a filesystem GNU would refuse for want of `RENAME_EXCHANGE` support
+is one three plain renames do not need.
+
+GNU's own failure line on that path is unmatched, and it is a bug rather than
+a divergence invented here: `mv.c` sets `x.rename_errno` only when
+`n_files == 2 && !x.exchange`, so an `--exchange` that fails reports the `-1`
+sentinel — `cannot exchange 'a' and 'nosuch': Unknown error -1`, measured.
+Fern names the real errno, and no corpus case pairs `--exchange` with a
+failure.
+
+**`pinky --lookup` is accepted and canonicalizes nothing.** 9.5 gave pinky
+the option `who` has had for years: the utmp host field run through
+`getaddrinfo` with `AI_CANONNAME`. Fern has no name-resolution primitive, so
+the option parses and the host prints as the database holds it — which is
+also what GNU prints whenever the lookup does not resolve, so every corpus
+case compares equal. The option is not implemented until the primitive
+exists.
+
+**`uptime`'s `couldn't get boot time` carries an errno nothing on the path
+set, so the corpus masks the suffix.** GNU appends `strerror (errno)` to that
+message whether or not anything failed: when the database reads fine and
+simply holds no boot record, the value left on the thread is the one gnulib's
+`proper_name_lite` produced probing the locale at startup — `mbrtoc32` over
+`\337\277`, which is EILSEQ under `LC_ALL=C` and succeeds under `C.UTF-8`,
+leaving ENOENT from an earlier open instead. Both were measured against 9.12
+on one machine. No implementation can reproduce a value that is a fact about
+the reference's startup rather than about the run, so the three cases whose
+database reads fine and holds no boot record compare the message, the exit
+status and stdout, with the suffix masked off both sides (`stderrMask`).
+Where the open itself FAILED the errno is that failure's, and those cases
+compare it in full.
 
 **`nohup` has one diagnostic GNU has no counterpart for**: a dup3 onto fds 0,
 1 or 2 that fails reports `failed to redirect standard input` / `output` /
@@ -2556,16 +2622,16 @@ happened. `fmt.fern` formats the paragraph. The first divergence is 999
 one-character words at `-w 75`; nothing under 998 differs, and the corpus holds
 a 996-word paragraph and none above it.
 
-**`dircolors -p` prints GNU 9.4's database.** The text `-p` prints is a data
+**`dircolors -p` prints GNU 9.12's database.** The text `-p` prints is a data
 file that changes between coreutils releases — the copyright year on its third
 line moves, and entries come and go — so there is no version-independent answer
-to print. `coreutils/dircolors.fern` carries GNU 9.4's, transcribed from that
+to print. `coreutils/lib/colordb.fern` carries GNU 9.12's, transcribed from that
 binary's own `-p` output (the file grants permission to copy and distribute it
 with its notice preserved, which is why it can be carried at all). `-p` and
-every invocation with no FILE read that text, so against a newer oracle those
-cases fail loudly rather than passing something wrong, as `uname -p` does on an
-unpatched distribution; the fix is to transcribe the newer `dircolors -p`.
-Nothing else in the utility is version-sensitive.
+every invocation with no FILE read that text, so against a different oracle
+those cases fail loudly rather than passing something wrong, as `uname -p` does
+on a distribution binary; the fix is to transcribe that release's `dircolors
+-p`. Nothing else in the utility is version-sensitive.
 
 **`od -t fL` prints a canonical value for an encoding x87 never
 produces.** The 80-bit extended format has bit patterns that are not
@@ -2633,20 +2699,30 @@ The two agree on every date between those dates and 2037 and differ
 outside it; the corpus therefore carries no case of that TZ shape, and
 `who_test.go` says so where a reader will meet it.
 
-**`uname -p` and `-i` print the machine name, as Linux distributions'
-GNU does.** Upstream coreutils can answer neither on Linux — the two
-`#if`s in uname.c are a Solaris `sysinfo(2)` and a BSD `sysctl`, and glibc
-has neither — so an upstream build prints `unknown` for both and `-a`
-omits them. Every distribution patches that to the machine name: Debian,
-Ubuntu, Fedora and RHEL all ship it, `setarch linux32 uname -p` follows
-`-m` to `i686`, and the binaries this corpus is compared against on the
-Ubuntu runners are among them. So that is what `uname.fern` prints, and
-the `-a` omission rule is live only on Darwin, where upstream's own
-answers stand: `-p` is the CPU family (`arm`, not `arm64`) and `-i` is
-genuinely unknown, so `-a` drops it. The one environment where this
-diverges is a distribution shipping unpatched coreutils — Arch is the
-example — where the corpus fails loudly on the `-p` / `-i` / `-a` cases
-rather than passing something wrong.
+**`pr -D` with `%D`, `%F`, `%R` or `%T` prints uninitialised memory in
+GNU 9.12.** `init_header` sizes the date buffer by calling gnulib's
+`nstrftime` with a null buffer first, and for the four directives that
+nstrftime expands into a sub-format that counting pass gets the length
+wrong: the header then carries whatever was in the allocation. Two runs
+of the same command print different bytes, so there is nothing for a
+corpus to compare — `pr_test.go` uses `%m/%d/%y`, `%Y-%m-%d`, `%H:%M`
+and `%H:%M:%S` in their place, which are the same dates by a route
+nstrftime measures correctly. `pr.fern` expands all four properly;
+against a fixed 9.12 it will agree, and against this one it differs on
+purpose.
+
+**`uname -p` and `-i` print `unknown` on Linux, and `-a` omits both.**
+Coreutils can answer neither there — the two `#if`s in uname.c are a
+Solaris `sysinfo(2)` and a BSD `sysctl`, and glibc has neither — so an
+upstream build says `unknown` for each and the `-a` omission rule drops
+them. That is what `uname.fern` does, because the oracle every lane
+compares against is a build from the GNU tarball rather than a
+distribution's binary. Distributions patch `-p` and `-i` to the machine
+name (Debian, Ubuntu, Fedora and RHEL all ship that patch, and under it
+`setarch linux32 uname -p` follows `-m` to `i686`), so running the corpus
+against a distribution `/usr/bin/uname` instead fails loudly on the `-p`
+/ `-i` / `-a` cases rather than passing something wrong. On Darwin `-p`
+is the CPU family (`arm`, not `arm64`) and `-i` is still unknown.
 
 **`hostid` asks DNS over TCP.** The id is glibc's `gethostid`: `/etc/hostid`
 if it holds four bytes, else the hostname's IPv4 address with its halves
@@ -2812,9 +2888,10 @@ the link's real ownership.
 chgrp answers `unrecognized option '--from='` and accepts `4294967295` as a
 gid, where 9.10 takes the option and answers `invalid group: '4294967295'`.
 chgrp reached GNU's shared `parse_user_spec` somewhere between the two. The
-corpus is held to "9.4 or newer" and a case may only assert what every version
-in that range does, so these two are implemented to 9.10 and left uncompared
-rather than pinned to a version the runner may not have. `chown` is unaffected
+corpus was held to "9.4 or newer" when these were written, and a case could
+only assert what every version in that range did, so the two are implemented
+to 9.10 and left uncompared. Now that the corpus names one version they could
+be compared instead; nothing has needed it yet. `chown` is unaffected
 — it has had both since long before 9.1, and its cases cover them.
 
 **Three rm paths are outside the corpus.** `--one-file-system` and
