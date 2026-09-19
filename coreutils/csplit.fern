@@ -494,9 +494,11 @@ function parse_patterns(ops: string[]): Pat[] {
 // ---- settings --------------------------------------------------------------
 struct Settings { prefix: string, fmt: Fmt, keep: boolean, elide: boolean, suppress: boolean, quiet: boolean }
 
-// `-n`'s value, worded the three ways GNU words it: a malformed number
-// carries no strerror text, one below zero carries ERANGE's and one past
-// INT_MAX carries EOVERFLOW's.
+// `-n`'s value, worded the two ways GNU words it: a malformed number
+// carries no strerror text, and one outside [0, INT_MAX] on either side
+// carries EOVERFLOW's — gnulib's xdectoint reserves ERANGE for a caller
+// that passes XTOINT_MIN_RANGE or XTOINT_MAX_RANGE, and csplit passes
+// no flags.
 function digits_value(s: string): i32 {
   var i: i32 = 0;
   while (i < s.len() && gnu.is_blank(s[i] as i32)) {
@@ -534,7 +536,7 @@ function digits_value(s: string): i32 {
     exit(1);
   }
   if (neg && v > 0 as i64) {
-    gnu.error(bad + ": Numerical result out of range");
+    gnu.error(bad + ": Value too large for defined data type");
     exit(1);
   }
   if (v > 2147483647 as i64) {
@@ -838,16 +840,14 @@ function run_line(st: St, p: Pat, rep: i64): St {
   if (target / (rep + 1 as i64) != p.num) {
     fatal_dump(s, out_of_range);
   }
-  // The same question, asked twice with two different answers, as GNU
-  // asks it: an input with nothing left at all before the piece begins
-  // has DISAPPEARED, while a break line the input never reaches is out
-  // of range.
+  // Nothing left at all before the piece begins is out of range too:
+  // 9.5 made get_first_line_in_buffer answer 0 instead of dying with
+  // `input disappeared`, so the caller reports the break line and cleans
+  // up — the empty piece's count reaches stdout and the pieces go.
   var h: (boolean, St) = head_empty(s);
   s = h.1;
   if (h.0) {
-    gnu.error("input disappeared");
-    gnu.finish(s.so);
-    exit(1);
+    fatal(s, out_of_range);
   }
   if (target > s.sline) {
     var r: (boolean, St) = scan_to(s, target);

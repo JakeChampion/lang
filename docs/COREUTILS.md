@@ -2170,6 +2170,20 @@ errno they discard is the whole of what those two utilities report.
 
 ## Known divergences
 
+**`uptime`'s `couldn't get boot time` carries an errno nothing on the path
+set, so the corpus masks the suffix.** GNU appends `strerror (errno)` to that
+message whether or not anything failed: when the database reads fine and
+simply holds no boot record, the value left on the thread is the one gnulib's
+`proper_name_lite` produced probing the locale at startup — `mbrtoc32` over
+`\337\277`, which is EILSEQ under `LC_ALL=C` and succeeds under `C.UTF-8`,
+leaving ENOENT from an earlier open instead. Both were measured against 9.12
+on one machine. No implementation can reproduce a value that is a fact about
+the reference's startup rather than about the run, so the three cases whose
+database reads fine and holds no boot record compare the message, the exit
+status and stdout, with the suffix masked off both sides (`stderrMask`).
+Where the open itself FAILED the errno is that failure's, and those cases
+compare it in full.
+
 **`nohup`'s stderr clause is the 9.4 wording, and 9.10 changed it.** The
 clause for a terminal on stderr alone is `redirecting stderr to stdout` here;
 coreutils 9.10 spells both streams out, `redirecting standard error to

@@ -8,8 +8,8 @@
 //	 19:49:16  up  1:02,  3 users,  load average: 0.56, 0.81, 0.67
 //
 // The spacing is required and none of it is regular. A leading
-// space, two spaces after the clock, `up` followed by TWO spaces when
-// there are no whole days and one when there are, `%2d` hours so a
+// space, two spaces after the clock, one space after `up` and after the
+// day count, `%2d` hours so a
 // single-digit hour keeps a column, `%02d` minutes, a comma and two
 // spaces between every field, and two spaces again before `load
 // average:`.
@@ -191,7 +191,7 @@ function report(read: Result[utmp.Entry[], IoError], now: i64): (string, i32) {
       }
       out = out + "up " + days.to_string() + unit + pad2(hours) + ":" + two(mins) + ",  ";
     } else {
-      out = out + "up  " + pad2(hours) + ":" + two(mins) + ",  ";
+      out = out + "up " + pad2(hours) + ":" + two(mins) + ",  ";
     }
   }
   out = out + sessions.to_string() + " user";
