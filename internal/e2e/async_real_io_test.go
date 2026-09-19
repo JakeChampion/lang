@@ -98,8 +98,8 @@ function main(): i32 {
 // than the slow timer's delay then both are ready and index 0 -- the slow
 // one -- wins. At 50ms against 10ms that margin was 40ms, which a loaded
 // machine closes: the case failed about one run in four on idle main and
-// three in three under a full sweep, always exit 91, which is the assertion
-// that the value came from the fast timer (#9796).
+// three in three under a full sweep, always exit 91 -- the check that the
+// value came from the fast timer, failing (#9796).
 func TestAsyncRaceTimers(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
