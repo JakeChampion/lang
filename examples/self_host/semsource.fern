@@ -1804,7 +1804,19 @@ function call(e: ast.Expr, c: ast.ExprCall, s: State, statement: boolean, expect
     if let ast.ExprIdent(id) = c.callee { name = id.name; }
     var bound: i32 = lookup(s, name);
     if (bound >= 0) { return bound_call(c, bound, s); }
-    if (name == "") { return refused(s, "unsupported call target: callee is neither a name nor a field"); }
+    if (name == "") {
+        // A callee that is neither a bare name nor a field is still callable
+        // when it EVALUATES to a function value -- an element read out of an
+        // array of them. indirect_call dispatches through a value id rather
+        // than a name, so producing the callee is the whole of it.
+        var cty: typeinfo.Type = checked(c.callee, s);
+        if (ssasem.is_func(cty)) {
+            var cv: Value = expr(c.callee, s, typeinfo.unchecked());
+            if (!cv.s.ok) { return cv; }
+            return indirect_call(c, cv.id, cv.s);
+        }
+        return refused(s, "unsupported call target: callee is neither a name nor a field");
+    }
     return free_call(e, name, c, s, statement, expected);
 }
 

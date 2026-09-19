@@ -76144,6 +76144,12 @@ function ilc_expr_at(e: ast.Expr, acc: InlineCloAcc, fd: parser.FuncDecl, gfns: 
             var sc: i32 = 0;
             while (sc < arr.elements.len()) {
                 if (array_elem_is_env_boxed(arr.elements[sc], fd, structs, mfuncs)) { has_cap_lam = true; }
+                // Any lambda element at all, not just a capturing one. A bare
+                // fn pointer is not a value the semantic source can produce --
+                // `semsource.ident` refuses the address -- so an
+                // all-non-capturing array used to put its whole function on
+                // the AST lowering.
+                match (arr.elements[sc]) { ast.ExprLambda(_) => { has_cap_lam = true; }, _ => {} }
                 sc = sc + 1;
             }
             // Bound names in this function's scope (params + body binders): a
