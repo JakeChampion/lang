@@ -975,12 +975,7 @@ pub function module_allocates(cache: irlower.LowerResult[]): boolean {
     // scalar-capture closure allocates nothing an op reports, and its
     // `__fern_rc_underflow_count()` then called a function the module never
     // emitted ("unknown func $__fern_rc_underflow_count").
-    function needs_heap(o: ir.Op): boolean {
-        return ir.op_allocates(o.kind_tag)
-            || (o.kind_tag == 149 && (o.str == "__fern_rc_underflow_get"        // call_direct
-                || o.str == "__fern_rc_is_unique" || o.str == "__fern_rc_inc"
-                || o.str == "__fern_rc_dec"));
-    }
+    function needs_heap(o: ir.Op): boolean { return ir.op_needs_heap(o); }
     if (any_op(cache, needs_heap)) { return true; }
     // String programs need the heap too: $__fern_strcat allocates via
     // $__fern_str_box, and strcat_helpers references it even for a str_eq-only
