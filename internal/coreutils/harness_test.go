@@ -1497,13 +1497,19 @@ func readTreeInto(t *testing.T, root, prefix string, groups map[[2]uint64]int, o
 // divergence is reported, the lane runs to its own `go test -timeout` (25
 // minutes on units, 45 on macOS) and prints a goroutine dump.
 //
-// A minute because the huge-format cases are SLOW as well as occasionally
-// endless, and the two are told apart only by waiting. On 9.12/macOS
-// `printf '%.2147483640e' 1` takes 7.1s and `numfmt
-// --format=%02000000000.0f 1000` 2.3s, both answering; the slowest ordinary
-// case in a full corpus run is 1.27s. Ten seconds would have cut printf under
-// load.
-const corpusRunLimit = 60 * time.Second
+// Five minutes, because the huge-format cases are SLOW as well as
+// occasionally endless and only waiting tells them apart. The slowest single
+// run in a full corpus sweep is OURS, not the reference's: `printf
+// '%.2147483640e' 1` takes 31.6s under coreutils/printf.fern against GNU
+// 9.12's 7.5s on the same input (macOS arm64, #9812). `numfmt
+// --format=%02000000000.0f 1000` is 2.3s and the ordinary case is
+// milliseconds.
+//
+// So the headroom that matters is over 31.6s and not over the millisecond
+// cases: a minute is 1.9x, which a slower runner closes, and cutting a case
+// that PASSES is the one thing a bound must not do. Five minutes is ~9x, and
+// still turns a lane-length stall into a named divergence.
+const corpusRunLimit = 5 * time.Minute
 
 // bound is the case's own timeout, or corpusRunLimit when it set none.
 func (inv invocation) bound() time.Duration {
