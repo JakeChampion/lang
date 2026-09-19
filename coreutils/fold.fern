@@ -24,9 +24,13 @@ import "std/io_buffered";
 import "./lib/gnu";
 
 // Option ids in GNU's declaration order — `fold --=x` lists `--bytes`
-// `--spaces` `--width`.
+// `--characters` `--spaces` `--width`.
 function opt_bytes(): i32 {
   return 1;
+}
+
+function opt_chars(): i32 {
+  return 4;
 }
 
 function opt_spaces(): i32 {
@@ -52,6 +56,7 @@ function help_text(): string {
   out = out + "With no FILE, or when FILE is -, read standard input.\n";
   out = out + "\n";
   out = out + "  -b, --bytes         count bytes rather than columns\n";
+  out = out + "  -c, --characters    count characters rather than columns\n";
   out = out + "  -s, --spaces        break at spaces\n";
   out = out + "  -w, --width=WIDTH   use WIDTH columns instead of 80\n";
   out = out + "      --help        display this help and exit\n";
@@ -124,7 +129,7 @@ function width_of(text: string): u64 {
     exit(1);
   }
   if (over || value > width_max()) {
-    gnu.error("invalid number of columns: " + gnu.quote(text) + ": Value too large for defined data type");
+    gnu.error("invalid number of columns: " + gnu.quote(text) + ": Numerical result out of range");
     exit(1);
   }
   if (value == 0 as u64) {
@@ -134,31 +139,61 @@ function width_of(text: string): u64 {
   return value;
 }
 
-// The column `c` leaves the cursor on, from `column`. Under `-b` every
-// byte is one column and nothing is special.
-function advance(column: u64, c: i32, count_bytes: boolean): u64 {
-  if (count_bytes) {
-    return column + 1 as u64;
+// The three ways fold measures a line: its display columns (the
+// default), its bytes (`-b`), or its characters (`-c`, 9.8), which in
+// the C locale differs from columns only in that every byte counts as
+// one.
+function count_columns(): i32 {
+  return 0;
+}
+
+function count_bytes_mode(): i32 {
+  return 1;
+}
+
+function count_chars(): i32 {
+  return 2;
+}
+
+// What one byte costs. In the C locale `c32width` answers 0 for NUL and
+// -1 — which fold reads as 1 — for every other non-printable byte, so
+// NUL is the one byte that occupies no column at all. `-c` counts it as
+// a character like any other.
+function byte_width(c: i32, mode: i32): i32 {
+  if (mode == count_columns() && c == 0) {
+    return 0;
+  }
+  return 1;
+}
+
+// The column `c` leaves the cursor on, and how wide it was — which is
+// what the NEXT backspace goes back over. Under `-b` every byte is one
+// column and nothing is special.
+function advance(column: u64, lastw: i32, c: i32, mode: i32): (u64, i32) {
+  if (mode == count_bytes_mode()) {
+    return (column + 1 as u64, 1);
   }
   if (c == 8) {
-    if (column == 0 as u64) {
-      return column;
+    if (column < lastw as u64) {
+      return (0 as u64, lastw);
     }
-    return column - 1 as u64;
+    return (column - lastw as u64, lastw);
   }
   if (c == 13) {
-    return 0 as u64;
+    return (0 as u64, lastw);
   }
   if (c == 9) {
-    return column + (8 as u64 - column % (8 as u64));
+    return (column + (8 as u64 - column % (8 as u64)), lastw);
   }
-  return column + 1 as u64;
+  var w: i32 = byte_width(c, mode);
+  return (column + w as u64, w);
 }
 
 pub function main(): i32 {
   var argv: string[] = args();
   var opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("b", "bytes", opt_bytes()));
+  opts = opts.append(gnu.flag("c", "characters", opt_chars()));
   opts = opts.append(gnu.flag("s", "spaces", opt_spaces()));
   opts = opts.append(gnu.valued("w", "width", opt_width()));
   var d: i32 = 0;
@@ -167,7 +202,7 @@ pub function main(): i32 {
     d = d + 1;
   }
 
-  var count_bytes: boolean = false;
+  var mode: i32 = count_columns();
   var break_spaces: boolean = false;
   var width: u64 = 80 as u64;
   var g: gnu.Getopt = gnu.getopt_new(argv, opts, "fold", help_text(), 1);
@@ -177,7 +212,9 @@ pub function main(): i32 {
     match (r.0) {
       Some(m) => {
         if (m.id == opt_bytes()) {
-          count_bytes = true;
+          mode = count_bytes_mode();
+        } else if (m.id == opt_chars()) {
+          mode = count_chars();
         } else if (m.id == opt_spaces()) {
           break_spaces = true;
         } else if (m.id == opt_width()) {
@@ -196,14 +233,14 @@ pub function main(): i32 {
   if (files.len() == 0) {
     files = files.append("-");
   }
-  return run(files, width, count_bytes, break_spaces);
+  return run(files, width, mode, break_spaces);
 }
 
-// `run(files, width, count_bytes, break_spaces)` — the whole fold. Every
+// `run(files, width, mode, break_spaces)` — the whole fold. Every
 // output line is pushed straight into stdout's builder, which is flushed
 // once it holds a block, so no byte is copied into an accumulator on the
 // way.
-function run(files: string[], width: u64, count_bytes: boolean, break_spaces: boolean): i32 {
+function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32 {
   var o: io_buffered.BufWriter = gnu.out_with(block_size());
   var h: usize = o.handle();
   var ok: boolean = true;
@@ -269,7 +306,7 @@ function run(files: string[], width: u64, count_bytes: boolean, break_spaces: bo
           if (read_ok && piece.len() > 0) {
             chunk = piece;
             pos = 0;
-            specat = special_at(chunk, 0);
+            specat = special_at(chunk, 0, mode);
             got = true;
           } else {
             if (!is_stdin) {
@@ -282,7 +319,7 @@ function run(files: string[], width: u64, count_bytes: boolean, break_spaces: bo
               chunk = carry;
               carry = "";
               pos = 0;
-              specat = special_at(chunk, 0);
+              specat = special_at(chunk, 0, mode);
               tail = true;
               got = true;
             }
@@ -333,17 +370,18 @@ function run(files: string[], width: u64, count_bytes: boolean, break_spaces: bo
     var start: i32 = lo;
     var p: i32 = lo;
     var column: u64 = 0 as u64;
+    var lastw: i32 = 1;
     // The next byte whose column cost is not one. Under -b there is no
     // such byte; otherwise it is a cursor over the chunk, so finding
     // them all costs one pass over it rather than one scan per line.
     var sp: i32 = 0 - 1;
-    if (!count_bytes) {
+    if (mode != count_bytes_mode()) {
       if (carried) {
-        sp = special_at(buf, lo);
+        sp = special_at(buf, lo, mode);
       } else {
         sp = specat;
         if (sp >= 0 && sp < lo) {
-          sp = special_at(chunk, lo);
+          sp = special_at(chunk, lo, mode);
         }
       }
     }
@@ -365,6 +403,7 @@ function run(files: string[], width: u64, count_bytes: boolean, break_spaces: bo
         var avail: i32 = run_end - p;
         if (avail as u64 <= room) {
           column = column + avail as u64;
+          lastw = 1;
           p = run_end;
         } else {
           var cut: i32 = break_before(buf, start, p + room as i32, break_spaces);
@@ -378,7 +417,9 @@ function run(files: string[], width: u64, count_bytes: boolean, break_spaces: bo
             column = 0 as u64;
             var m: i32 = cut;
             while (m < p) {
-              column = advance(column, buf[m] as i32, count_bytes);
+              var st: (u64, i32) = advance(column, lastw, buf[m] as i32, mode);
+              column = st.0;
+              lastw = st.1;
               m = m + 1;
             }
           }
@@ -392,9 +433,11 @@ function run(files: string[], width: u64, count_bytes: boolean, break_spaces: bo
       }
       // One byte that moves the column by something other than one.
       var c: i32 = buf[p] as i32;
-      var next: u64 = advance(column, c, count_bytes);
+      var step: (u64, i32) = advance(column, lastw, c, mode);
+      var next: u64 = step.0;
       if (next <= width) {
         column = next;
+        lastw = step.1;
         p = p + 1;
       } else {
         var cut: i32 = break_before(buf, start, p, break_spaces);
@@ -405,7 +448,9 @@ function run(files: string[], width: u64, count_bytes: boolean, break_spaces: bo
           column = 0 as u64;
           var m: i32 = cut;
           while (m < p) {
-            column = advance(column, buf[m] as i32, count_bytes);
+            var st2: (u64, i32) = advance(column, lastw, buf[m] as i32, mode);
+            column = st2.0;
+            lastw = st2.1;
             m = m + 1;
           }
           if (buf_len(h) >= block_size()) {
@@ -414,14 +459,15 @@ function run(files: string[], width: u64, count_bytes: boolean, break_spaces: bo
         } else {
           // It does not fit an empty line either, so it goes out alone.
           column = next;
+          lastw = step.1;
           p = p + 1;
         }
       }
       if (sp >= 0 && sp < p) {
         if (carried) {
-          sp = special_at(buf, p);
+          sp = special_at(buf, p, mode);
         } else {
-          sp = special_at(chunk, p);
+          sp = special_at(chunk, p, mode);
         }
       }
     }
@@ -430,7 +476,7 @@ function run(files: string[], width: u64, count_bytes: boolean, break_spaces: bo
     buf_push_range(h, buf, start, hi);
 
     if (specat >= 0 && specat < pos) {
-      specat = special_at(chunk, pos);
+      specat = special_at(chunk, pos, mode);
     }
     if (buf_len(h) >= block_size()) {
       o = o.flush();
@@ -465,7 +511,7 @@ function break_before(s: string, start: i32, limit: i32, break_spaces: boolean):
 
 // The first byte at or after `from` whose column cost is not one: a tab,
 // a backspace or a carriage return. -1 when the rest holds none.
-function special_at(s: string, from: i32): i32 {
+function special_at(s: string, from: i32, mode: i32): i32 {
   var best: i32 = __memchr(s, 9, from);
   var b: i32 = __memchr(s, 8, from);
   if (b >= 0 && (best < 0 || b < best)) {
@@ -474,6 +520,12 @@ function special_at(s: string, from: i32): i32 {
   var c: i32 = __memchr(s, 13, from);
   if (c >= 0 && (best < 0 || c < best)) {
     best = c;
+  }
+  if (mode == count_columns()) {
+    var z: i32 = __memchr(s, 0, from);
+    if (z >= 0 && (best < 0 || z < best)) {
+      best = z;
+    }
   }
   return best;
 }
