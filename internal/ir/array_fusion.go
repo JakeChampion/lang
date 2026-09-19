@@ -185,21 +185,23 @@ func effectfulFuncs(prog *Program) map[string]bool {
 	return bad
 }
 
-// FusibleArrayPipelines names the pipelines the fusion pass would rewrite, as
-// `<function>#<first op>` keys. The report uses it to say per site whether
-// fusion applies; the decision does not consult the pointer width, which
-// shapes only the emission, so a report need not know the target to answer.
-func FusibleArrayPipelines(prog *Program) map[string]bool {
-	out := map[string]bool{}
+// ArrayFusionVerdicts says, for every recognized pipeline, whether the pass
+// would rewrite it and if not why — keyed by `<function>#<first op>`. The
+// report prints it per site, which is clause 4 of
+// docs/ITERATOR-FUSION-CONTRACT.md: a chain outside the algebra says so rather
+// than silently allocating per stage. The decision does not consult the
+// pointer width, which shapes only the emission, so a report need not know the
+// target to answer.
+func ArrayFusionVerdicts(prog *Program) map[string]FusionRefusal {
+	out := map[string]FusionRefusal{}
 	effectful := effectfulFuncs(prog)
 	for _, fn := range prog.Funcs {
 		if _, isStdlibBody := arrayVerbOf(fn.Name); isStdlibBody {
 			continue
 		}
 		for _, pl := range recognizeInFunc(fn) {
-			if _, ok := planOne(fn, pl, effectful); ok {
-				out[arrayPipelineKey(fn.Name, pl)] = true
-			}
+			_, why := planOne(fn, pl, effectful)
+			out[arrayPipelineKey(fn.Name, pl)] = why
 		}
 	}
 	return out
@@ -214,28 +216,27 @@ func arrayPipelineKey(fnName string, pl ArrayPipeline) string {
 // none. One at a time, because emitting shifts every later op index.
 func planFusion(fn *Func, effectful map[string]bool) (fusedPipeline, bool) {
 	for _, pl := range recognizeInFunc(fn) {
-		p, ok := planOne(fn, pl, effectful)
-		if ok {
+		if p, why := planOne(fn, pl, effectful); why == FusionFused {
 			return p, true
 		}
 	}
 	return fusedPipeline{}, false
 }
 
-func planOne(fn *Func, pl ArrayPipeline, effectful map[string]bool) (fusedPipeline, bool) {
+func planOne(fn *Func, pl ArrayPipeline, effectful map[string]bool) (fusedPipeline, FusionRefusal) {
 	if len(pl.Stages) < 2 {
-		return fusedPipeline{}, false // nothing to fuse into anything
+		return fusedPipeline{}, FusionSingleStage
 	}
 	// The vocabulary of the first slice: elementwise and selection stages,
 	// then a `fold` or a `reduce`.
 	sink := pl.Stages[len(pl.Stages)-1]
 	if sink.Verb != "fold" && sink.Verb != "reduce" {
-		return fusedPipeline{}, false
+		return fusedPipeline{}, FusionSinkNotAReduction
 	}
 	var stages []fusedStage
 	for _, s := range pl.Stages[:len(pl.Stages)-1] {
 		if s.Verb != "map" && s.Verb != "filter" {
-			return fusedPipeline{}, false
+			return fusedPipeline{}, FusionStageNotElementwise
 		}
 		stages = append(stages, fusedStage{verb: s.Verb})
 	}
@@ -251,8 +252,11 @@ func planOne(fn *Func, pl ArrayPipeline, effectful map[string]bool) (fusedPipeli
 		// §1's purity boundary: the element function must be statically
 		// resolved (a slot the matcher could follow to a construction here)
 		// and must reach nothing capability-tagged.
-		if !ok || c.fnSlot < 0 || c.element == "" || effectful[c.element] {
-			return fusedPipeline{}, false
+		if !ok || c.fnSlot < 0 || c.element == "" {
+			return fusedPipeline{}, FusionElementFunctionUnresolved
+		}
+		if effectful[c.element] {
+			return fusedPipeline{}, FusionElementFunctionEffectful
 		}
 		if i < len(stages) {
 			stages[i].fn = c.fnSlot
@@ -261,7 +265,7 @@ func planOne(fn *Func, pl ArrayPipeline, effectful map[string]bool) (fusedPipeli
 	head := byOp[pl.Stages[0].Op]
 	tail := byOp[pl.Stages[len(pl.Stages)-1].Op]
 	if head.recv < 0 {
-		return fusedPipeline{}, false
+		return fusedPipeline{}, FusionReceiverNotASlot
 	}
 	// Every stage's element type, not just the head's. A `map` may change it
 	// — `(i64) => i32` is an ordinary map — and one `elem` slot cannot hold
@@ -270,16 +274,16 @@ func planOne(fn *Func, pl ArrayPipeline, effectful map[string]bool) (fusedPipeli
 	// single slot sound.
 	width, elemT, ok := elemWidthOf(fn.Ops[head.op])
 	if !ok {
-		return fusedPipeline{}, false
+		return fusedPipeline{}, FusionElementWidthUnsupported
 	}
 	for _, s := range pl.Stages {
 		c, found := byOp[s.Op]
 		if !found {
-			return fusedPipeline{}, false
+			return fusedPipeline{}, FusionElementFunctionUnresolved
 		}
 		w, et, okw := elemWidthOf(fn.Ops[c.op])
 		if !okw || w != width || et != elemT {
-			return fusedPipeline{}, false
+			return fusedPipeline{}, FusionElementTypeVaries
 		}
 	}
 	var seed Op
@@ -287,23 +291,23 @@ func planOne(fn *Func, pl ArrayPipeline, effectful map[string]bool) (fusedPipeli
 	if sink.Verb == "fold" {
 		seed, ok = foldSeedOp(fn, tail)
 		if !ok {
-			return fusedPipeline{}, false
+			return fusedPipeline{}, FusionSeedNotConstant
 		}
 		accT = seedType(seed)
 	}
 	first, ok := rangeStart(fn, head)
 	if !ok {
-		return fusedPipeline{}, false
+		return fusedPipeline{}, FusionRangeNotDelimited
 	}
 	last, ok := rangeEnd(fn, tail)
 	if !ok {
-		return fusedPipeline{}, false
+		return fusedPipeline{}, FusionRangeNotDelimited
 	}
 	return fusedPipeline{
 		first: first, last: last, recvSlot: head.recv, seedOp: seed,
 		stages: stages, sinkFn: byOp[sink.Op].fnSlot, elemBytes: width,
 		elemType: elemT, accType: accT, sinkVerb: sink.Verb,
-	}, true
+	}, FusionFused
 }
 
 // elemWidthOf reads the element size from the combinator call's recorded
@@ -521,4 +525,100 @@ func emitFusion(fn *Func, p fusedPipeline, ptrW int) {
 	next = append(next, out...)
 	next = append(next, fn.Ops[p.last+1:]...)
 	fn.Ops = next
+}
+
+// FusionRefusal is why a recognized pipeline was not fused, or FusionFused
+// when it was. The set is CLOSED and each member has a stable tag, for the
+// reason `FERN_SSA_REPORT`'s histogram is countable: the refusals are the
+// coverage checklist for widening the algebra, and a checklist made of
+// free-text strings cannot be tallied.
+type FusionRefusal int
+
+const (
+	FusionFused FusionRefusal = iota
+	FusionSingleStage
+	FusionSinkNotAReduction
+	FusionStageNotElementwise
+	FusionElementFunctionUnresolved
+	FusionElementFunctionEffectful
+	FusionReceiverNotASlot
+	FusionElementWidthUnsupported
+	FusionElementTypeVaries
+	FusionSeedNotConstant
+	FusionRangeNotDelimited
+)
+
+// AllFusionRefusals is every reason a pipeline was NOT fused, so a report can
+// print a row per reason even at zero — a reason that vanished when it stopped
+// firing is one nobody notices is missing. FusionFused is absent: it is the
+// absence of a refusal, and the report states it as a total instead.
+var AllFusionRefusals = []FusionRefusal{
+	FusionSingleStage,
+	FusionSinkNotAReduction,
+	FusionStageNotElementwise,
+	FusionElementFunctionUnresolved,
+	FusionElementFunctionEffectful,
+	FusionReceiverNotASlot,
+	FusionElementWidthUnsupported,
+	FusionElementTypeVaries,
+	FusionSeedNotConstant,
+	FusionRangeNotDelimited,
+}
+
+// Tag is the stable one-word name a histogram counts under.
+func (r FusionRefusal) Tag() string {
+	switch r {
+	case FusionFused:
+		return "fused"
+	case FusionSingleStage:
+		return "single-stage"
+	case FusionSinkNotAReduction:
+		return "sink-not-a-reduction"
+	case FusionStageNotElementwise:
+		return "stage-not-elementwise"
+	case FusionElementFunctionUnresolved:
+		return "element-fn-unresolved"
+	case FusionElementFunctionEffectful:
+		return "element-fn-effectful"
+	case FusionReceiverNotASlot:
+		return "receiver-not-a-slot"
+	case FusionElementWidthUnsupported:
+		return "element-width-unsupported"
+	case FusionElementTypeVaries:
+		return "element-type-varies"
+	case FusionSeedNotConstant:
+		return "seed-not-constant"
+	case FusionRangeNotDelimited:
+		return "range-not-delimited"
+	}
+	return "unknown"
+}
+
+// String is the sentence a per-site report prints.
+func (r FusionRefusal) String() string {
+	switch r {
+	case FusionFused:
+		return "fused into one loop"
+	case FusionSingleStage:
+		return "not fused: one stage is not a chain, and its result is the value"
+	case FusionSinkNotAReduction:
+		return "not fused: the chain does not end in fold or reduce"
+	case FusionStageNotElementwise:
+		return "not fused: a stage is neither map nor filter"
+	case FusionElementFunctionUnresolved:
+		return "not fused: an element function is not statically resolved"
+	case FusionElementFunctionEffectful:
+		return "not fused: an element function can reach an observable effect, and fusing interleaves the stages"
+	case FusionReceiverNotASlot:
+		return "not fused: the array is not held in a local"
+	case FusionElementWidthUnsupported:
+		return "not fused: only 8-byte elements are emitted"
+	case FusionElementTypeVaries:
+		return "not fused: a stage changes the element type"
+	case FusionSeedNotConstant:
+		return "not fused: fold's seed is not a constant"
+	case FusionRangeNotDelimited:
+		return "not fused: the chain's op range could not be delimited"
+	}
+	return "not fused"
 }

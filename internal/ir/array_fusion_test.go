@@ -1,6 +1,7 @@
 package ir_test
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -228,8 +229,10 @@ function run(xs: i64[]): i64 {
 function main(): i32 { return run([1 as i64]) as i32; }`)
 	// Recognition skips them, so the planner never sees one — and the
 	// caller's own chain has already been rewritten, so nothing is left.
-	if got := ir.FusibleArrayPipelines(p); len(got) != 0 {
-		t.Errorf("after fusing, %d pipelines still report as fusible: %v", len(got), got)
+	for key, why := range ir.ArrayFusionVerdicts(p) {
+		if why == ir.FusionFused {
+			t.Errorf("after fusing, %s still reports as fusible", key)
+		}
 	}
 }
 
@@ -344,5 +347,62 @@ function main(): i32 { return run([1 as i64], 2) as i32; }`)
 	}
 	if got := callsIn(t, p, "run", "array__"); len(got) != 0 {
 		t.Errorf("run still calls std/array combinators: %v", got)
+	}
+}
+
+// Clause 4 of docs/ITERATOR-FUSION-CONTRACT.md: a chain outside the algebra
+// says so, and says WHY, rather than quietly allocating per stage. The set of
+// reasons is closed so the report can tally them — a checklist of free-text
+// strings is not a checklist.
+func TestRefusalsNameTheirReason(t *testing.T) {
+	p := lowerPipelineSrc(t, `import "std/array";
+struct Box { xs: i64[] }
+function noisy(x: i64): i64 { print("x"); return x + (1 as i64); }
+function effectful(xs: i64[]): i64 {
+  return xs.map((x: i64): i64 => noisy(x)).fold(0 as i64, (p: i64, q: i64): i64 => p + q);
+}
+function fieldRecv(b: Box): i64 {
+  return b.xs.map((x: i64): i64 => x + (1 as i64)).fold(0 as i64, (p: i64, q: i64): i64 => p + q);
+}
+function narrow(xs: i32[]): i32 {
+  return xs.map((x: i32): i32 => x + 1).fold(0, (p: i32, q: i32): i32 => p + q);
+}
+function prefix(xs: i64[]): i64 {
+  return xs.scan(0 as i64, (p: i64, q: i64): i64 => p + q).fold(0 as i64, (p: i64, q: i64): i64 => p + q);
+}
+function main(): i32 { return 0; }`)
+
+	want := map[string]ir.FusionRefusal{
+		"effectful": ir.FusionElementFunctionEffectful,
+		"fieldRecv": ir.FusionReceiverNotASlot,
+		"narrow":    ir.FusionElementWidthUnsupported,
+		"prefix":    ir.FusionStageNotElementwise,
+	}
+	got := map[string]ir.FusionRefusal{}
+	for _, pl := range ir.RecognizeArrayPipelines(p) {
+		if _, interesting := want[pl.Func]; interesting {
+			got[pl.Func] = ir.ArrayFusionVerdicts(p)[pl.Func+"#"+strconv.Itoa(pl.Stages[0].Op)]
+		}
+	}
+	for fn, wantWhy := range want {
+		if got[fn] != wantWhy {
+			t.Errorf("%s refused with %q, want %q", fn, got[fn].Tag(), wantWhy.Tag())
+		}
+	}
+
+	// Every reason is distinct and none renders as the fallback, or the
+	// histogram would tally different failures into one row.
+	tags := map[string]bool{}
+	for _, r := range ir.AllFusionRefusals {
+		if r.Tag() == "unknown" || r.String() == "not fused" {
+			t.Errorf("refusal %d has no tag or no prose", int(r))
+		}
+		if tags[r.Tag()] {
+			t.Errorf("tag %q is shared by two refusals", r.Tag())
+		}
+		tags[r.Tag()] = true
+	}
+	if _, listed := tags[ir.FusionFused.Tag()]; listed {
+		t.Error("FusionFused is listed as a refusal; it is the absence of one")
 	}
 }
