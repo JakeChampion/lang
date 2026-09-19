@@ -73308,15 +73308,6 @@ function lift_expr_walk(e: ast.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
 // bare lambda returns, so this fires on none of them and leaves the self-compile
 // byte-identical.
 struct DesugarRet { body: ast.Stmt[], counter: i32 }
-// returned_lambda_contract reads the #5986 sidecar pair off the first lambda a
-// body RETURNS, walking the same branch shapes desugar_lambda_returns rewrites.
-//
-// hoist_value_iife declares its hoisted function with the coarse "fn" tag and
-// needs the pair that tag drops. A lambda the source wrote INSIDE an
-// if/match-expression arm never had one to give: e_lambda_origin builds the
-// IIFE and writes the pair empty, so the declaration reached semsource with a
-// tag and no contract and was refused for an unresolved result type.
-//
 // is_coarse_fn_tag reports whether `s` is the callable tag parse_type_name
 // produces rather than a spelling — "fn" with one "[]" per array dimension.
 // fn_tag_spelling only rebuilds the first two depths and returns every deeper
@@ -73332,11 +73323,11 @@ function is_coarse_fn_tag(s: string): boolean {
     return true;
 }
 
-// Every spelling it reports goes through fn_tag_spelling, because a parameter
-// or result that is ITSELF callable carries the same coarse tag with its own
-// sidecars beside it. Recording the bare tag rebuilds `(fn) => R` — a contract
-// that LIES, which is worse than one that is missing, so a tag left coarse
-// yields no contract at all.
+// contract_spelling is how returned_lambda_contract names one type. It goes
+// through fn_tag_spelling because a parameter or result that is ITSELF callable
+// carries the same coarse tag with its own sidecars beside it. Recording the
+// bare tag rebuilds `(fn) => R` — a contract that LIES, which is worse than one
+// that is missing, so a tag left coarse yields no contract at all.
 function contract_spelling(tag: string, fn_ret: string, fn_ptys: string): string {
     if (tag.len() == 0) { return ""; }
     var spelled: string = parser.fn_tag_spelling(tag, fn_ret, fn_ptys);
@@ -73344,6 +73335,14 @@ function contract_spelling(tag: string, fn_ret: string, fn_ptys: string): string
     return spelled;
 }
 
+// returned_lambda_contract reads the #5986 sidecar pair off the first lambda a
+// body RETURNS, walking the same branch shapes desugar_lambda_returns rewrites.
+//
+// hoist_value_iife declares its hoisted function with the coarse "fn" tag and
+// needs the pair that tag drops. A lambda the source wrote INSIDE an
+// if/match-expression arm never had one to give: e_lambda_origin builds the
+// IIFE and writes the pair empty, so the declaration reached semsource with a
+// tag and no contract and was refused for an unresolved result type.
 function returned_lambda_contract(body: ast.Stmt[]): (string, string) {
     var i: i32 = 0;
     while (i < body.len()) {
