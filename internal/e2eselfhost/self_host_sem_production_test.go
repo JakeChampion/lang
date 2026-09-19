@@ -313,6 +313,36 @@ function main(): i32 {
     return if (v) { 0 } else { if (w) { 42 } else { 1 } };
 }
 `},
+	// An if-expression whose ARMS are lambdas. The IIFE it desugars to is built
+	// by e_lambda_origin, which writes the #5986 sidecar pair empty, and
+	// irlower.hoist_value_iife declares the hoisted function with the coarse "fn"
+	// tag on purpose (it IS a higher-order factory). Tag without contract is an
+	// unresolved result type, so the module went to the AST lowering. The arms
+	// carry the contract, so the hoist reads it off the returned lambda.
+	//
+	// The arms are ANNOTATED here, and that is the whole of what this gates: an
+	// unannotated arm has parameter spellings but no result spelling, and half a
+	// contract is worse than none — fn_tag_spelling would rebuild `() => R` for a
+	// function that takes arguments. That half still refuses; see the rc-log.
+	// Produces 0 of 4 without the fix.
+	{name: "if-expr-lambda-arms-annotated", atLeast: 4, src: `
+function main(): i32 {
+    var f: (i32) => i32 = if (true) { ((x: i32): i32 => x) } else { ((y: i32): i32 => y + 1) };
+    return f(42);
+}
+`},
+	// The same shape in a MATCH expression. Its IIFE body is a StmtMatch, which
+	// the contract walk has to enter for the same reason the if-expression's
+	// StmtIf does — the hoist gate (iife_arms_have_lambda) already reaches both.
+	// Produces 0 of 4 without the match arm.
+	{name: "match-expr-lambda-arms-annotated", atLeast: 4, src: `
+enum Pick { A, B }
+function main(): i32 {
+    var p: Pick = Pick.A;
+    var f: (i32) => i32 = match (p) { A => ((x: i32): i32 => x), B => ((y: i32): i32 => y + 1) };
+    return f(42);
+}
+`},
 	{name: "scalar-calls", atLeast: 3, src: `
 function add(a: i32, b: i32): i32 { return a + b; }
 function total(xs: i32[]): i32 {

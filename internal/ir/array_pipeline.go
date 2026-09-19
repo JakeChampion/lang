@@ -324,6 +324,10 @@ type arrayCall struct {
 	recv    int32 // slot the receiver was loaded from, -1 if not a slot load
 	result  int32 // slot the result was stored into, -1 if not stored
 	element string
+	// fnSlot is where the element function was parked, which fusion needs in
+	// order to load it; -1 when the matcher could not follow it. The NAME
+	// alone is not enough — a fused loop calls the value, not the symbol.
+	fnSlot int32
 }
 
 func recognizeInFunc(fn *Func) []ArrayPipeline {
@@ -423,17 +427,18 @@ func collectArrayCalls(fn *Func) []arrayCall {
 			windowStart = i + 1
 			continue
 		}
-		c := arrayCall{op: i, verb: verb, callee: op.Str, recv: -1, result: -1}
+		c := arrayCall{op: i, verb: verb, callee: op.Str, recv: -1, result: -1, fnSlot: -1}
 		for k := windowStart; k < i; k++ {
 			if fn.Ops[k].Kind != OpLoadLocal {
 				continue
 			}
-			if c.recv < 0 {
-				c.recv = fn.Ops[k].I32
-			}
 			// The last load before the call is the callback slot.
-			c.element = closureOf[fn.Ops[k].I32]
+			if name, isClosure := closureOf[fn.Ops[k].I32]; isClosure {
+				c.element = name
+				c.fnSlot = fn.Ops[k].I32
+			}
 		}
+		c.recv = receiverSlotOf(fn, i, op.I32, c.fnSlot)
 		for k := i + 1; k < len(fn.Ops); k++ {
 			if fn.Ops[k].Kind == OpStoreLocal {
 				c.result = fn.Ops[k].I32
@@ -502,8 +507,10 @@ func countSlotLoads(fn *Func) map[int32]*slotLoads {
 // from the output when it stopped firing is one nobody notices is missing.
 func FormatArrayPipelineHistogram(p *Program) string {
 	pipes := RecognizeArrayPipelines(p)
+	verdicts := ArrayFusionVerdicts(p)
 	counts := map[ArrayRefusal]int{}
-	stages, materialize, chained := 0, 0, 0
+	fusionCounts := map[FusionRefusal]int{}
+	stages, materialize, chained, fused := 0, 0, 0, 0
 	for _, pl := range pipes {
 		counts[pl.Stop]++
 		stages += len(pl.Stages)
@@ -511,13 +518,22 @@ func FormatArrayPipelineHistogram(p *Program) string {
 		if len(pl.Stages) > 1 {
 			chained++
 		}
+		why := verdicts[arrayPipelineKey(pl.Func, pl)]
+		fusionCounts[why]++
+		if why == FusionFused {
+			fused++
+		}
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "array pipelines: %d (%d with more than one stage), %d stages, %d materializing\n",
 		len(pipes), chained, stages, materialize)
-	fmt.Fprintf(&b, "fused: 0 — no fusion pass exists yet (#9731)\n")
+	fmt.Fprintf(&b, "fused: %d (#9731)\n", fused)
+	for _, r := range AllFusionRefusals {
+		fmt.Fprintf(&b, "  %-26s %d\n", r.Tag(), fusionCounts[r])
+	}
+	fmt.Fprintf(&b, "chains stopped by (#9730):\n")
 	for _, r := range allRefusals {
-		fmt.Fprintf(&b, "  %-24s %d\n", r.Tag(), counts[r])
+		fmt.Fprintf(&b, "  %-26s %d\n", r.Tag(), counts[r])
 	}
 	return b.String()
 }
@@ -539,6 +555,7 @@ func FormatArrayPipelines(p *Program) string {
 			posW = len(posOf[i])
 		}
 	}
+	verdicts := ArrayFusionVerdicts(p)
 	var b strings.Builder
 	chained := 0
 	for i, pl := range pipes {
@@ -546,13 +563,12 @@ func FormatArrayPipelines(p *Program) string {
 			chained++
 		}
 		fmt.Fprintf(&b, "%-*s  %s\n", posW, posOf[i], pl.Shape())
-		// "Did it fuse?" is the first question #9732 asks, and the answer is
-		// the same for every pipeline until #9731 lands. Saying it per site
-		// rather than once at the bottom is deliberate: a reader checking one
+		// "Did it fuse?" is the first question #9732 asks, so it is answered
+		// per site rather than once at the bottom: a reader checking one
 		// expression should not have to know that the absence of a word means
 		// no.
-		fmt.Fprintf(&b, "%-*s    not fused (no fusion pass yet, #9731); %d stage(s) materialize\n",
-			posW, "", pl.Materializes())
+		fmt.Fprintf(&b, "%-*s    %s; %d stage(s) materialize unfused\n",
+			posW, "", verdicts[arrayPipelineKey(pl.Func, pl)], pl.Materializes())
 		if pl.Stop != RefusalNone {
 			fmt.Fprintf(&b, "%-*s    chain ends here: %s\n", posW, "", pl.Stop)
 		}
@@ -566,4 +582,87 @@ func FormatArrayPipelines(p *Program) string {
 	}
 	fmt.Fprintf(&b, "\n%d pipeline(s), %d with more than one stage\n", len(pipes), chained)
 	return b.String()
+}
+
+// elementFuncStart returns the index at which the element function's push
+// sequence begins — the ops from there up to the call are exactly what put the
+// function on the stack, whether the chain built a closure here or loaded one
+// already built.
+//
+// Callers use it to walk the call's arguments backwards. The alternative, and
+// what this replaced, is to scan forward for the first local load since the
+// previous call: inside a `while` that finds the loop condition's counter
+// rather than the array, and a fusion built on that answer traverses the wrong
+// slot.
+func elementFuncStart(fn *Func, callIdx int, fnSlot int32) (int, bool) {
+	if fnSlot < 0 {
+		return 0, false
+	}
+	k := -1
+	for i := callIdx - 1; i >= 0; i-- {
+		if fn.Ops[i].Kind == OpLoadLocal && fn.Ops[i].I32 == fnSlot {
+			k = i
+			break
+		}
+	}
+	if k < 0 {
+		return 0, false
+	}
+	for k > 0 {
+		switch prev := fn.Ops[k-1]; prev.Kind {
+		case OpStoreLocal:
+			if prev.I32 != fnSlot {
+				return k, true
+			}
+			k--
+		case OpConstFunc:
+			k--
+		case OpMakeClosure:
+			k--
+			// A closure's captures are pushed ahead of it. Only single-op
+			// captures are stepped over; an expression has no fixed width to
+			// skip, so the caller is told nothing rather than a wrong index.
+			for n := prev.I32; n > 0; n-- {
+				if k == 0 || !isSingleOpPush(fn.Ops[k-1]) {
+					return 0, false
+				}
+				k--
+			}
+		default:
+			return k, true
+		}
+	}
+	return k, true
+}
+
+// receiverSlotOf returns the slot holding the array a combinator call is
+// applied to, or -1. The receiver is the call's FIRST argument, so it is found
+// by starting at the element function (the last) and stepping back over the
+// arguments between them.
+func receiverSlotOf(fn *Func, callIdx int, argc, fnSlot int32) int32 {
+	k, ok := elementFuncStart(fn, callIdx, fnSlot)
+	if !ok {
+		return -1
+	}
+	// `fold(xs, seed, f)` and `scan(xs, seed, f)` put one argument between the
+	// receiver and the function; `map(xs, f)` and the rest put none.
+	for n := argc - 2; n > 0; n-- {
+		if k == 0 || !isSingleOpPush(fn.Ops[k-1]) {
+			return -1
+		}
+		k--
+	}
+	if k == 0 || fn.Ops[k-1].Kind != OpLoadLocal {
+		return -1
+	}
+	return fn.Ops[k-1].I32
+}
+
+// isSingleOpPush reports whether op pushes one value and consumes none.
+func isSingleOpPush(op Op) bool {
+	switch op.Kind {
+	case OpLoadLocal, OpConstI32, OpConstI64, OpConstFunc:
+		return true
+	}
+	return false
 }

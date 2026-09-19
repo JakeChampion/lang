@@ -109,7 +109,7 @@ func baseFixtureFor(t *testing.T) baseFixture {
 		short:   baseFile(t, dir, "short", fill(block-1)),
 		exact:   baseFile(t, dir, "exact", fill(block)),
 		over:    baseFile(t, dir, "over", fill(block+1)),
-		nonUTF:  baseFile(t, dir, "na\xffme", []byte("x")),
+		nonUTF:  baseRawName(t, dir),
 		subdir:  filepath.Join(dir, "d"),
 		nosuch:  filepath.Join(dir, "nosuch"),
 	}
@@ -131,6 +131,17 @@ func baseFixtureFor(t *testing.T) baseFixture {
 // wrapCases are the `-w` values, which every one of the three parses
 // the same way. `name` prefixes each case so the three corpora do not
 // collide in the test log.
+// baseRawName writes the not-valid-UTF-8 fixture where the filesystem holds
+// it, and returns the path either way; the cases naming it carry rawByteName.
+func baseRawName(t *testing.T, dir string) string {
+	t.Helper()
+	p := filepath.Join(dir, rawByteNameFixture)
+	if !rawByteNamesHeld(t) {
+		return p
+	}
+	return baseFile(t, dir, rawByteNameFixture, []byte("x"))
+}
+
 func wrapCases(prefix string, lead []string) []invocation {
 	args := func(rest ...string) []string {
 		return append(append([]string{}, lead...), rest...)
@@ -241,7 +252,7 @@ func basencCases(t *testing.T) []invocation {
 		{name: "missing file", args: []string{"--base64", f.nosuch}},
 		{name: "empty operand", args: []string{"--base64", ""}},
 		{name: "directory operand", args: []string{"--base64", f.subdir}},
-		{name: "name that is not valid UTF-8", args: []string{"--base64", f.nonUTF}},
+		{name: "name that is not valid UTF-8", args: []string{"--base64", f.nonUTF}, rawByteName: true},
 		{name: "missing name that is not valid UTF-8", args: []string{"--base64", f.nosuch + "\xff"}},
 		{name: "terminator before the operand", args: []string{"--base64", "--", f.hello}},
 		{name: "posix stops at the operand", args: []string{"--base64", f.hello, "-w0"}, env: []string{"POSIXLY_CORRECT=1"}},

@@ -5,6 +5,17 @@ the measurement is `scripts/array-pipeline-baseline`, and
 `internal/e2e/array_pipeline_baseline_test.go` keeps the claims below from
 rotting.
 
+**These are PRE-FUSION numbers.** #9731 has since landed
+(`internal/ir/array_fusion.go`), so the allocation figures below are now
+reproduced only with `FERN_NO_ARRAY_FUSION=1` — which is how the gate still
+asserts them, alongside what the pass changed. Fused, `map.map.reduce` falls
+from 23 allocator calls per round to 1 and `filter.map.reduce` from 19 to 1,
+the remainder being `reduce`'s own `Option` box rather than anything linear in
+the input. On retired instructions the combinator-to-loop ratios fall from
+4.69x to 1.21x and from 2.84x to 0.98x. The warning below about the indirect call turned out not to bind:
+fusion runs before `Defunctionalise`, which then inlines the element functions
+outright, so the fused loop makes no indirect call at all.
+
 This is the prerequisite for #9727. `docs/ITERATOR-FUSION-CONTRACT.md` already
 names its own trigger condition — "a real workload demonstrates the eager
 combinators allocating measurably in a hot path" — and nobody had produced the
