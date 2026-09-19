@@ -171,6 +171,22 @@ function top_of(v: LD): i32 {
   return v.e + bit_length128(v.hi, v.lo) - 1;
 }
 
+// Whether the magnitude is at least one. gnulib's xstrtod tells an
+// ERANGE that OVERFLOWED from one that merely underflowed by exactly
+// this test, the two being the only ways a conversion sets it.
+pub function (v: LD) abs_ge_one(): boolean {
+  if (v.is_nan()) {
+    return false;
+  }
+  if (v.is_inf()) {
+    return true;
+  }
+  if (v.is_zero()) {
+    return false;
+  }
+  return top_of(v) >= 0;
+}
+
 // Whether a finite value is zero or below the format's least normal.
 pub function (f: Format) is_subnormal(v: LD): boolean {
   if (v.is_zero()) {
