@@ -589,12 +589,13 @@ pub const ORIGIN_IIFE_SCOPED: string = "iife_scoped";
 
 // ORIGIN_USE marks the callback lambda a `use NAME[: TYPE] <- CALL;` desugars
 // to, appended as CALL's last argument. The printer reads it back to reprint
-// the `use`; nothing else treats the lambda differently from a written one.
+// the `use`; nothing else treats the lambda differently from a written one,
+// which is what is_written_lambda_origin admitting it keeps true.
 pub const ORIGIN_USE: string = "use";
 
 // ORIGIN_NESTED_FN marks the lambda a nested `function` declaration desugars to.
-// It is the one origin that marks a lambda the PROGRAMMER wrote rather than one
-// the parser synthesised, so is_written_lambda_origin admits it.
+// Like ORIGIN_USE it marks a lambda the PROGRAMMER wrote rather than one the
+// parser synthesised, so is_written_lambda_origin admits it.
 pub const ORIGIN_NESTED_FN: string = "nested_fn";
 
 // no_match_sugar is the empty MatchSugar every StmtIf but the two match
@@ -13359,17 +13360,22 @@ pub function mkclo_body(name: string): string {
     return slice_unchecked(name, marker.len(), name.len()) + "";
 }
 
+// is_written_lambda_origin reports whether a lambda with this origin is one the
+// PROGRAMMER wrote. A bare lambda carries no origin; a nested `function`
+// declaration and a `use` callback each desugar to one the programmer did
+// write, so both are admitted. The rest — a value block, an if- or
+// match-expression, a comprehension — are IIFEs the parser synthesised, with no
+// counterpart in the native AST.
+//
+// ORIGIN_IIFE_SCOPED belongs to neither group: the defer lowering stamps it
+// after the checker has run, so no checker rule ever sees it.
+pub function is_written_lambda_origin(origin: string): boolean {
+    return origin.len() == 0 || origin == ORIGIN_NESTED_FN || origin == ORIGIN_USE;
+}
+
 // is_value_block_origin reports whether `origin` names one of the desugars that
 // produce an inlined value block. Every pass that rebuilds an ExprLambda does so
 // by spread, so the marker survives to the consumers that need it.
-// is_written_lambda_origin reports whether a lambda with this origin is one the
-// PROGRAMMER wrote: a bare lambda carries none, and a nested `function`
-// declaration desugars to one. Every other origin marks an IIFE the parser
-// synthesised, which has no counterpart in the native AST.
-pub function is_written_lambda_origin(origin: string): boolean {
-    return origin.len() == 0 || origin == ORIGIN_NESTED_FN;
-}
-
 pub function is_value_block_origin(origin: string): boolean {
     if (origin == ORIGIN_BLOCK) { return true; }
     if (origin == ORIGIN_MATCH_EXPR) { return true; }
