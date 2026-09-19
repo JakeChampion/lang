@@ -428,26 +428,26 @@ Unsupported constructs refuse the whole function with a reason.
   so `__env[k]` is the record projection of field `k` typed by the capture,
   the constructor is checked against the same list (count and type, one lift
   writes both sides), and the box's release walks the captures with the
-  record's own drop helper. A capture that is itself a FUNCTION value is the
-  one the box BORROWS rather than takes: a unit of it here would promise a
-  release, and the box has no way to know whether the frame that owns the
-  captured box outlives it. The borrow is secured directly rather than by
-  inference — a capture that is a function value must be a borrowed
-  PARAMETER, whose owner is the caller and so outlives every box built here,
-  and anything else is refused ("captured function value is not a borrowed
-  parameter"). So the field is never walked, and the box it names is released
-  by its own owner. A function type names no capture, so a box is
+  record's own drop helper. A capture that is itself a FUNCTION value is no
+  exception: the box takes a unit of it and its release walks the field, like
+  every other reference it holds. It used to BORROW one instead, secured by
+  requiring the capture to be a borrowed PARAMETER whose owner outlived every
+  box built here — a rule that could not describe a box that ESCAPES, since a
+  local closure captured into a returned box is owned by a frame that is going
+  away and the box never took it, so nobody freed it (#9637). A function type
+  names no capture, so a box is
   matched at run time: the drop compares slot 0 with the address of each
-  environment the function's schema table names and calls that helper, and a
+  environment paired with that function type and calls that helper, and a
   box that matches none — one whose captures own nothing, or one built by an
   AST-lowered caller, which lends its captures — is released alone. A frame
   that only RECEIVES a function value never built one, so its graph names no
   environment of its own; `semsource.env_rows` pairs every environment a value
   of that type could carry with the type itself, read off the module's whole
   contract table, which is what lets a returned closure be released by the
-  frame it was handed to. A closure box owns its own captured function values
-  too, and its release walks them (#9637): the borrow that rule replaced could
-  not describe a box that escapes the frame holding what it captured. A wide
+  frame it was handed to. The pairing is the TYPE's rather than the frame's,
+  which it has to be: a drop helper is emitted by every function that mentions
+  the record, and two copies that disagree are a refusal (#9804 names the one
+  case where the pairing is still reached frame-first). A wide
   capture is refused at the physical layer for the reason a wide TUPLE
   element is — the env box stores each slot through `op_arr_make` at width
   32, the one array construction here that is not written at its element's

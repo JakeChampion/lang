@@ -1148,9 +1148,9 @@ function main(): i32 {
 }
 `},
 	// A function value handed back across a call boundary: the frame that
-	// receives one never built the box, so env_schemas is what puts the
-	// environments it could carry into that frame's schema table and lets the
-	// release walk the captures. Churned in a loop so a missed capture shows
+	// receives one never built the box, so env_rows is what pairs the
+	// environments it could carry with the type and lets the release walk the
+	// captures. Churned in a loop so a missed capture shows
 	// up as a leak rather than a constant. Each loop binds ONE returned
 	// closure: two distinct ones in a single loop body is #9657, where the AST
 	// lowering this case compares against answers wrongly.
