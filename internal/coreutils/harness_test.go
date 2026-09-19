@@ -46,12 +46,12 @@ type invocation struct {
 	// stdin is fed to both processes and closed.
 	stdin string
 	// timeout bounds ONE run, after which the harness kills the child
-	// and the outcome is "did not finish". Zero leaves it unbounded,
-	// which is what every written-down case wants — they all terminate.
-	// The randomized differential sets one because the REFERENCE does
+	// and the outcome is "did not finish". Zero takes corpusRunLimit
+	// rather than leaving the run unbounded, because the REFERENCE does
 	// not always terminate: GNU expr never returns from
-	// `expr bba : '\(b\|\|a\)\?*'`, and a sweep that waited would hang
-	// instead of naming the input that hung it.
+	// `expr bba : '\(b\|\|a\)\?*'`, and neither does GNU coreutils 9.12
+	// on `seq -f '%.2147483648g' 1` on macOS. Set one only to ask for
+	// LONGER than the default, or SHORTER where the bound is the point.
 	timeout time.Duration
 	// stdinPath, when set, is opened and handed to the child as fd 0
 	// instead of a pipe — `prog < file`. A regular file there is what
@@ -1134,9 +1134,9 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 	switch inv.stdout {
 	case stdoutCaptured:
 		if inv.stdoutPath != "" {
-			out = inv.runToFile(t, cmd, cmd.Dir)
+			out, overran = inv.runToFile(t, cmd, cmd.Dir)
 		} else if inv.stdoutFile != "" {
-			out = inv.runToRegularFile(t, cmd, cmd.Dir)
+			out, overran = inv.runToRegularFile(t, cmd, cmd.Dir)
 		} else if len(inv.follow) > 0 {
 			out = inv.runFollow(t, cmd)
 		}
@@ -1487,7 +1487,33 @@ func readTreeInto(t *testing.T, root, prefix string, groups map[[2]uint64]int, o
 	return out
 }
 
-// runBounded runs cmd and reports whether inv.timeout ran out first, in
+// corpusRunLimit bounds any run the case did not bound itself. It is not a
+// performance assertion: a case that wants longer sets its own `timeout`.
+//
+// It has to be a DEFAULT rather than a per-case opt-in because the reference
+// is what fails to return, and which reference that is changes under us. The
+// move to GNU coreutils 9.12 (#9761) left `seq -f '%.2147483648g' 1` spinning
+// on macOS where 9.4 answered it, and unbounded that stops the package: no
+// divergence is reported, the lane runs to its own `go test -timeout` (25
+// minutes on units, 45 on macOS) and prints a goroutine dump.
+//
+// A minute because the huge-format cases are SLOW as well as occasionally
+// endless, and the two are told apart only by waiting. On 9.12/macOS
+// `printf '%.2147483640e' 1` takes 7.1s and `numfmt
+// --format=%02000000000.0f 1000` 2.3s, both answering; the slowest ordinary
+// case in a full corpus run is 1.27s. Ten seconds would have cut printf under
+// load.
+const corpusRunLimit = 60 * time.Second
+
+// bound is the case's own timeout, or corpusRunLimit when it set none.
+func (inv invocation) bound() time.Duration {
+	if inv.timeout > 0 {
+		return inv.timeout
+	}
+	return corpusRunLimit
+}
+
+// runBounded runs cmd and reports whether the bound ran out first, in
 // which case the child was killed.
 //
 // `afterStart` runs once the child exists and before the wait, which is
@@ -1501,12 +1527,8 @@ func (inv invocation) runBounded(cmd *exec.Cmd, afterStart func()) bool {
 		return false
 	}
 	afterStart()
-	if inv.timeout <= 0 {
-		_ = cmd.Wait()
-		return false
-	}
 	fired := make(chan struct{})
-	timer := time.AfterFunc(inv.timeout, func() {
+	timer := time.AfterFunc(inv.bound(), func() {
 		_ = cmd.Process.Kill()
 		close(fired)
 	})
@@ -1520,8 +1542,8 @@ func (inv invocation) runBounded(cmd *exec.Cmd, afterStart func()) bool {
 
 // runToFile runs cmd with fd 1 appended to inv.stdoutPath and returns
 // the bytes the run added to the file, with the file put back as it
-// was for the other side.
-func (inv invocation) runToFile(t *testing.T, cmd *exec.Cmd, workDir string) []byte {
+// was for the other side, and whether the run outlasted its bound.
+func (inv invocation) runToFile(t *testing.T, cmd *exec.Cmd, workDir string) ([]byte, bool) {
 	t.Helper()
 	path := childPath(inv.stdoutPath, workDir)
 	before, err := os.ReadFile(path)
@@ -1533,7 +1555,7 @@ func (inv invocation) runToFile(t *testing.T, cmd *exec.Cmd, workDir string) []b
 		t.Fatalf("open stdout %s: %v", path, err)
 	}
 	cmd.Stdout = f
-	_ = cmd.Run()
+	overran := inv.runBounded(cmd, func() {})
 	f.Close()
 	after, err := os.ReadFile(path)
 	if err != nil {
@@ -1545,7 +1567,7 @@ func (inv invocation) runToFile(t *testing.T, cmd *exec.Cmd, workDir string) []b
 	if !bytes.HasPrefix(after, before) {
 		t.Fatalf("%s was rewritten rather than appended to", path)
 	}
-	return after[len(before):]
+	return after[len(before):], overran
 }
 
 // childPath resolves a file name the way the CHILD would: a seeded-tree
@@ -1560,10 +1582,11 @@ func childPath(name, workDir string) string {
 
 // runToRegularFile runs cmd with fd 1 on inv.stdoutFile opened without
 // truncation or append, and returns the file's whole content afterwards,
-// with the file put back as it was for the other side. Unlike runToFile
+// with the file put back as it was for the other side, and whether the
+// run outlasted its bound. Unlike runToFile
 // there is no prefix to strip and none to require: the point of the mode
 // is a utility that REWRITES what it was given.
-func (inv invocation) runToRegularFile(t *testing.T, cmd *exec.Cmd, workDir string) []byte {
+func (inv invocation) runToRegularFile(t *testing.T, cmd *exec.Cmd, workDir string) ([]byte, bool) {
 	t.Helper()
 	path := childPath(inv.stdoutFile, workDir)
 	before, err := os.ReadFile(path)
@@ -1575,7 +1598,7 @@ func (inv invocation) runToRegularFile(t *testing.T, cmd *exec.Cmd, workDir stri
 		t.Fatalf("open stdout %s: %v", path, err)
 	}
 	cmd.Stdout = f
-	_ = cmd.Run()
+	overran := inv.runBounded(cmd, func() {})
 	f.Close()
 	after, err := os.ReadFile(path)
 	if err != nil {
@@ -1584,7 +1607,7 @@ func (inv invocation) runToRegularFile(t *testing.T, cmd *exec.Cmd, workDir stri
 	if err := os.WriteFile(path, before, 0o644); err != nil {
 		t.Fatalf("restore %s: %v", path, err)
 	}
-	return after
+	return after, overran
 }
 
 // runFollow runs a case that follows a file: the steps fire as the
