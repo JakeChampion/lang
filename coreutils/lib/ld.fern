@@ -67,6 +67,19 @@ pub function binary32(): Format {
   return Format { mant: 24, emax: 127, explicit_bit: false };
 }
 
+// IEEE binary16 and bfloat16: two-byte types `od -t fH` and `-t fB`
+// read out of a buffer. Neither is a Fern type, and neither is C's on
+// every compiler, so they exist here only as an encoding to decode —
+// both widen exactly into `float`, which is what the decimal they print
+// has to read back as.
+pub function binary16(): Format {
+  return Format { mant: 11, emax: 15, explicit_bit: false };
+}
+
+pub function bfloat16(): Format {
+  return Format { mant: 8, emax: 127, explicit_bit: false };
+}
+
 // `format()` — the target's. Darwin is the only environment that
 // narrows the type to `double`, and x86-64 the only ISA that carries
 // x87; every other target is the AAPCS64 / clang quad. There is no
