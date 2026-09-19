@@ -361,6 +361,12 @@ function fits_u64(f: ld.Format, v: ld.LD): boolean {
 // The power of the unit letter `b`, 0 when there is none and -1 when
 // the byte is not a unit letter at all.
 function unit_power(b: i32): i32 {
+  // A lowercase `k` reads as kilo on INPUT too, so `--from=si 1k` is
+  // 1000 where 9.4 called it an invalid suffix. iec-i still refuses both
+  // cases, because what it wants is the `i`.
+  if (b == 107) {
+    return 1;
+  }
   var letters: string = unit_letters();
   var k: i32 = 0;
   while (k < letters.len()) {
@@ -975,13 +981,13 @@ function to_human(val0: ld.LD, prec: i32, o: Opts): Human {
   if (o.fmt.prec >= 0 as i64) {
     out_prec = o.fmt.prec as i32;
   }
-  if (out_prec > 0 && out_prec as i64 + 2 as i64 >= scaled_buf_len()) {
-    return refused_human(f, val);
-  }
+  // No length refusal on the SCALED path. GNU <= 9.4 formatted into a
+  // fixed 128-byte buffer and refused a conversion that filled it; from
+  // 9.5 `prepare_padded_number` grows the buffer with xpalloc, so the
+  // conversion prints however long it is (#8765, settled in favour of
+  // following 9.5+). The UNSCALED path's `value/precision too large`
+  // limit is a different rule and 9.12 still applies it.
   var text: string = f.to_fixed(val, out_prec);
-  if (human_width(text, power, o) >= scaled_buf_len()) {
-    return refused_human(f, val);
-  }
   return Human { text: text, unit: unit_suffix(power, o.to), err: "", fatal: false };
 }
 
@@ -997,13 +1003,6 @@ function to_human(val0: ld.LD, prec: i32, o: Opts): Human {
 // the question of which behaviour Fern should keep.
 function out_buf_len(): i32 {
   return 128;
-}
-
-// A scaled conversion is measured against one byte less, which is what
-// keeps the `i` of --to=iec-i a byte to go in; the `i` itself is
-// therefore not part of the length that is refused.
-function scaled_buf_len(): i64 {
-  return out_buf_len() as i64 - 1 as i64;
 }
 
 // GNU names the value it could not print at `%Lf`, so at six decimals
@@ -1026,6 +1025,11 @@ function human_width(text: string, power: i32, o: Opts): i64 {
 function unit_suffix(power: i32, to: i32): string {
   if (to == scale_iec_i() && power > 0 && power <= unit_letters().len()) {
     return iec_i_letter(power);
+  }
+  // SI's kilo is a LOWERCASE k, which is what GNU 9.5+ prints; 9.4 wrote
+  // `1.0K`. Only si: iec keeps `1.0K` and iec-i `1.0Ki` in both.
+  if (to == scale_si() && power == 1) {
+    return "k";
   }
   return suffix_power_char(power);
 }
