@@ -278,19 +278,24 @@ is not a gate (#9162). The image now builds 9.12 and puts it ahead of
 `/usr/bin`, so a green run in the container means what a green lane means.
 That also supplies the two binaries Debian does not build at all, `uptime`
 and `kill`, and asserts both rather than only the first. CI's `test-units`
-lane builds the same 9.12 and installs those two beside `/usr/bin`, with both
-in the cache key — a cache written when the step installed `uptime` alone
-cannot satisfy a run that needs both.
+lane installs the same 9.12 tree the same way, AHEAD of `/usr/bin` rather
+than beside it. Installing only the binaries the image lacks is what this
+looks like when it goes wrong: the lane did that, with `/usr/bin` first in
+the list, so sixty-odd utilities compared against ubuntu-24.04's **9.4**
+while the corpus encoded 9.12 — around two thousand cases reporting a
+version difference as Fern's bug. The harness takes the first directory on
+the list that holds the utility, so a system coreutils in front of the built
+one shadows every name it also carries.
 
 The `macos-15` lane (`.github/workflows/macos.yml`) builds the same 9.12 and
 installs the WHOLE tree to `~/gnu-coreutils`, because there is no system GNU
-on that runner to fall back to for the rest. One program needs installing by
-hand: `arch` is in coreutils' `no_install__progs`, so `make install` places
-every other program and never it unless the build asks for it by name with
-`--enable-install-program`, which this lane does not pass — Debian
-ships its own copy, which is the only reason the Linux corpora find one in
-`/usr/bin`, and `/usr/bin/arch` on macOS is Apple's unrelated arch(1). That
-lane runs the corpus for the whole catalogue with `-skip '^TestSelfHost'`:
+on that runner to fall back to for the rest. One program needs naming: `arch`
+is an automake EXTRA_PROGRAM in coreutils' `no_install__progs`, so `make`
+alone builds nothing to copy and `make install` places every other program
+and never it. Every lane passes `--enable-install-program=arch,kill,uptime`
+for that reason. `/usr/bin/arch` on macOS is Apple's unrelated arch(1), which
+the harness's version probe rejects. That lane runs the corpus for the whole
+catalogue with `-skip '^TestSelfHost'`:
 selected by skipping rather than by naming, because `touch_test.go` and
 `ls_linux_fixture_test.go` are `//go:build linux` and a `-run` list carrying
 `TestTouch` would select nothing there, silently and with exit 0. Benchmarks
