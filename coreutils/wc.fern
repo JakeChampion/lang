@@ -14,8 +14,8 @@
 //     `wc f1 -` pads to seven because a stream has no size to read.
 //     Nothing is statted at all when there is one input and one count
 //     to print, which is why `wc -l f` never pads.
-//   - Words and the longest line are C-locale ISPRINT, not ISSPACE:
-//     a NUL or a byte over 0x7f neither starts a word nor ends one and
+//   - A word ends at an ISSPACE byte, and the longest line counts the
+//     ISPRINT ones: a NUL or a byte over 0x7f is part of a word and
 //     adds nothing to the line's width, so `a\0b c` is two words and
 //     `a\bb` is two columns wide. A tab advances to the next multiple
 //     of eight; a carriage return or form feed starts the line over.
@@ -184,8 +184,14 @@ function scan_chunk(c: Counts, st: Scan, s: string): (Counts, Scan) {
         words = words + 1 as i64;
       }
       in_word = false;
-    } else if (is_print(b)) {
-      pos = pos + 1 as i64;
+    } else {
+      // Every isspace byte has its own case above, so anything here is
+      // a word character — a NUL or a high byte included, which GNU
+      // <= 9.4 counted as neither word nor space. Only a PRINTABLE one
+      // adds to the line's width.
+      if (is_print(b)) {
+        pos = pos + 1 as i64;
+      }
       in_word = true;
     }
     i = i + 1;
@@ -386,7 +392,7 @@ function read_names(file: string): Job[] {
     var name: string = slice_unchecked(text, start, end) + "";
     n = n + 1;
     if (name == "-" && from_stdin) {
-      gnu.error("when reading file names from stdin, no file name of '-' allowed");
+      gnu.error("when reading file names from standard input, no file name of '-' allowed");
       exit(1);
     }
     jobs = jobs.append(Job { path: name, name: name, origin: gnu.quotef(file) + ":" + n.to_string() });
@@ -612,7 +618,6 @@ pub function main(): i32 {
     var named: boolean = total_when != total_only();
     out = gnu.put(out, line_for(total, show, width, "total", named));
   }
-  out = out.flush();
   gnu.close_stdout(out, false);
   if (!ok) {
     return 1;

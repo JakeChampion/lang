@@ -57,10 +57,31 @@ pub function error(msg: string): void {
 // first, which is what gnulib's error() does. Without it a
 // diagnostic overtakes the output written before it whenever both
 // streams are the same pipe. Rebind: `o = gnu.error_out(o, msg);`.
+//
+// The flush is skipped when fd 1 is closed, as gnulib's flush_stdout
+// skips it: the stream is then left untouched rather than picking up a
+// write failure, which a utility checking it after every line would
+// otherwise report in place of what it had to say next.
 pub function error_out(o: io_buffered.BufWriter, msg: string): io_buffered.BufWriter {
+  if (!stdout_open()) {
+    error(msg);
+    return o;
+  }
   var w: io_buffered.BufWriter = o.flush();
   error(msg);
   return w;
+}
+
+// Whether fd 1 is open, which is gnulib's `is_open` — fcntl F_GETFL.
+function stdout_open(): boolean {
+  match (stdout().flags()) {
+    Ok(_) => {
+      return true;
+    },
+    Err(_) => {
+      return false;
+    }
+  }
 }
 
 // `die(o, msg, status)` — a fatal diagnostic from a utility that
