@@ -1976,6 +1976,13 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// A suspect declared AFTER the `use` lives inside the callback body, so
 		// it is not a capture — and the walk must not report it as one.
 		{"e044-use-callback-declares-suspect-ok", "function v(): void { return; }\nfunction apply(n: i32, cb: (i32) => i32): i32 { return cb(n); }\nfunction main(): i32 {\n    use n <- apply(41);\n    var x = v();\n    return n;\n}\n", nil},
+		// The rule asks what a lambda CAPTURES, not what its body mentions. A
+		// suspect whose only appearance is a NESTED binder's own name is not a
+		// capture, in any of the three syntaxes that reach the check — native
+		// accepts all three, and a syntactic mention test rejected them.
+		{"e044-nested-lambda-shadow-ok", "function v(): void { return; }\nfunction main(): i32 {\n    var x = v();\n    var outer: () => i32 = (): i32 => {\n        var g: (i32) => i32 = (x: i32) => x;\n        return g(1);\n    };\n    return outer();\n}\n", nil},
+		{"e044-nested-fn-inner-shadow-ok", "function v(): void { return; }\nfunction main(): i32 {\n    var x = v();\n    function outer(): i32 {\n        function helper(x: i32): i32 { return x; }\n        return helper(1);\n    }\n    return outer();\n}\n", nil},
+		{"e044-use-callback-nested-shadow-ok", "function v(): void { return; }\nfunction apply(n: i32, cb: (i32) => i32): i32 { return cb(n); }\nfunction main(): i32 {\n    var x = v();\n    use n <- apply(41);\n    var g: (i32) => i32 = (x: i32) => x;\n    return n;\n}\n", nil},
 		// E053 (`fip` no-allocation): array literals, string concatenation
 		// and calls to non-fip functions are rejected inside a `fip
 		// function`; scalar arithmetic and fip→fip calls are clean.
