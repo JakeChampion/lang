@@ -1225,7 +1225,7 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string)
             // basename (`std/sort` and `coreutils/sort`) and the bundler has
             // to tell them apart to give each its own prefix (#9762).
             m = flatten.resolve_imports(m, mdir, root);
-            loaded = loaded.append(flatten.LoadedModule { name: flatten.module_ident(mpath), mod: m });
+            loaded = loaded.append(flatten.LoadedModule { name: util.module_name(ipath), ident: flatten.module_ident(mpath), mod: m });
             // Attribute and expand against the manifest GOVERNING the importer,
             // which is the entry's only for a direct import.
             var from_man: fern_toml.Manifest = read_manifest(from);

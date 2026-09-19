@@ -314,7 +314,9 @@ function assign_prefixes(imports: LoadedModule[]): string[] {
     var used: string[] = [];
     var i: i32 = 0;
     while (i < imports.len()) {
-        var pf: string = unique_prefix(util.mangle_prefix(basename(imports[i].name)), used);
+        var base: string = imports[i].name;
+        if (imports[i].ident.len() > 0) { base = basename(imports[i].ident); }
+        var pf: string = unique_prefix(util.mangle_prefix(base), used);
         used = used.append(pf);
         pfxs = pfxs.append(pf);
         i = i + 1;
@@ -326,7 +328,7 @@ function assign_prefixes(imports: LoadedModule[]): string[] {
 function module_ids(imports: LoadedModule[]): string[] {
     var out: string[] = [];
     var i: i32 = 0;
-    while (i < imports.len()) { out = out.append(imports[i].name); i = i + 1; }
+    while (i < imports.len()) { out = out.append(imports[i].ident); i = i + 1; }
     return out;
 }
 
@@ -1035,9 +1037,17 @@ pub function mangle_module(mod: parser.Module, prefix: string, ids: string[], pf
 
 // =================== VALIDATION ====================
 
-// LoadedModule pairs an imported module's local name with its parsed
-// AST. The bundler mangles each one to `name__*` before merging.
-pub struct LoadedModule { name: string, mod: parser.Module }
+// LoadedModule pairs an imported module with its two names, which are NOT
+// the same string and must not be conflated:
+//
+//   name  — the QUALIFIER, the basename or alias source writes to reach it.
+//           visibility.fern keys on this, so it stays what a `lib.hidden`
+//           reference spells.
+//   ident — the IDENTITY, one string per FILE, which the bundler needs to
+//           give two same-basename modules their own prefixes (#9762).
+//           Empty from a loader that does not resolve paths; then the
+//           qualifier is the best available answer and behaviour is as before.
+pub struct LoadedModule { name: string, ident: string, mod: parser.Module }
 
 
 // MethodDedup is disambiguate_methods' answer: the rewritten module, and the
@@ -1302,7 +1312,7 @@ pub function bundle_per_module(entry: parser.Module, imports: LoadedModule[]): P
         var md: MethodDedup = disambiguate_methods(mangle_module(imports[i].mod, pfx, ids, pfxs, ivar_names, ivar_mangled, rx.keys, rx.targets), pfx, mclaims);
         mclaims = md.keys;
         var m: parser.Module = md.mod;
-        out = out.append(PerModule { ns: basename(imports[i].name), mod: m, is_entry: false });
+        out = out.append(PerModule { ns: imports[i].name, mod: m, is_entry: false });
         i = i + 1;
     }
     var e: parser.Module = disambiguate_methods(flatten_qualified(entry, ids, pfxs, ivar_names, ivar_mangled, rx.keys, rx.targets), "__entry", mclaims).mod;
@@ -1541,7 +1551,7 @@ function main(): i32 {
     var emod: parser.Module = parser.parse_module(lexer.tokenize(
         "import \"./a\"; function main(): i32 { return a.add(2, 3); }"));
     var loaded: LoadedModule[] = [];
-    loaded = loaded.append(LoadedModule { name: "a", mod: amod });
+    loaded = loaded.append(LoadedModule { name: "a", ident: "", mod: amod });
     var merged: parser.Module = bundle(emod, loaded);
 
     // a.add → a__add; a's own main → a__main (mangled, no collision);
@@ -1579,8 +1589,8 @@ function main(): i32 {
     var rxmod: parser.Module = parser.parse_module(lexer.tokenize(
         "import \"./facade\"; function main(): i32 { return facade.add5(10); }"));
     var rxloaded: LoadedModule[] = [];
-    rxloaded = rxloaded.append(LoadedModule { name: "facade", mod: fmod });
-    rxloaded = rxloaded.append(LoadedModule { name: "helpers", mod: hmod });
+    rxloaded = rxloaded.append(LoadedModule { name: "facade", ident: "", mod: fmod });
+    rxloaded = rxloaded.append(LoadedModule { name: "helpers", ident: "", mod: hmod });
     var rxmerged: parser.Module = bundle(rxmod, rxloaded);
     // Find entry main and confirm its call resolved to helpers__add5.
     var fi: i32 = 0;
