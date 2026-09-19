@@ -2279,9 +2279,9 @@ func wrapMainBodyInLambda(src string) string {
 // directions, so a listed row that starts agreeing fails too and must be
 // removed. Emptying this map closes the class.
 var lambdaBodyDivergences = map[string]string{
-	// All three are #9777: the E044 walk never enters a lambda body, so a
+	// Every row here is #9777: the E044 walk never enters a lambda body, so a
 	// capture site inside one is invisible whatever syntax holds it. They
-	// differ only in that syntax, and one scoping decision closes all three.
+	// differ only in that syntax, and one scoping decision closes them all.
 	"e044-capture-void":              "E044 — #9777, the capture site is in a bare lambda",
 	"e044-capture-void-nested-fn":    "E044 — #9777, the capture site is in a nested `function`",
 	"e044-capture-void-use-callback": "E044 — #9777, the capture site is in a `use` callback",
