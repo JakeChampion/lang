@@ -74,6 +74,16 @@ nothing yields a loop that allocates nothing. It is written for the
 EAGER `std/array` combinators of #9731, and the argument does not depend
 on which of the two surfaces the operators came from.
 
+That eager pass is **built** — `internal/ir/array_fusion.go`, covering
+`map` and `filter` as stages and `fold` and `reduce` as sinks. It
+discharges clause 1 for those operators on the eager surface: the
+intermediates are gone and, because fusion runs before
+`Defunctionalise`, so is every per-element indirect call. Clause 2's
+harder operators (`take`, `flat_map`, `zip`) are not in it, and clause
+3's runtime half has not been remeasured since it landed. None of that
+flips the posture on LAZY chains, which is what this document governs —
+it removes one of the two reasons the posture existed.
+
 ## Trigger conditions
 
 The trigger condition below is **met**, as of
