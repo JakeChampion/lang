@@ -125,9 +125,21 @@ jobs:
           # without this the macOS build defers to it and stops on that one
           # line. Forcing the substitution gives both oracles the same
           # checked-arithmetic header rather than patching either one.
+          # --with-selinux, on a system that has no SELinux at all, is not
+          # a contradiction: it is the flag that keeps chcon and runcon in
+          # the build. Coreutils 9.9 added "Don't build chcon and runcon if
+          # only have gnulib stubs. Honor --without-selinux to force disable
+          # and --with-selinux to force enable" to configure.ac, so 9.4 built
+          # both here and 9.12 with --without-selinux builds neither, and the
+          # oracle check below reported exactly that. Nothing else in the
+          # tree reads the flag — gnulib's gl_LIBSELINUX finds no libselinux
+          # either way and warns — so the two binaries are the same
+          # stub-backed ones 9.4 produced, which is what this lane has
+          # compared against all along. Keeping the oracle SET constant is
+          # what makes a version bump measure version differences.
           FORCE_UNSAFE_CONFIGURE=1 ac_cv_header_stdckdint_h=no \
             ./configure --quiet --disable-nls \
-            --without-selinux --prefix="$HOME/gnu-coreutils" \
+            --with-selinux --prefix="$HOME/gnu-coreutils" \
             --enable-install-program=arch,kill,uptime
           make -j"$(sysctl -n hw.ncpu)"
           make install
