@@ -277,8 +277,13 @@ jobs:
       # stdout reproduces the stall it was moved off; the first version of
       # this step did exactly that and hung for 23 minutes. Read the artifact
       # for detail; this is only the shape of the round.
+      # `!cancelled()` rather than `always()`: a red lane elsewhere cancels
+      # this one mid-corpus, and under `always()` both this step and the
+      # ratchet below read the truncated log as a finding — a cancelled lane
+      # reporting as a second bug. The upload above stays `always()`, because
+      # a partial log is still worth keeping.
       - name: which cases failed
-        if: always() && steps.gate.outputs.signed != 'true'
+        if: "!cancelled() && steps.gate.outputs.signed != 'true'"
         timeout-minutes: 3
         run: |
           if [ ! -f corpus-darwin.log ]; then
@@ -310,7 +315,7 @@ jobs:
       # way it landed. A name going quiet is good news either way, and the
       # worst case is a stale line that someone deletes later.
       - name: the Darwin ratchet
-        if: always() && steps.gate.outputs.signed != 'true'
+        if: "!cancelled() && steps.gate.outputs.signed != 'true'"
         timeout-minutes: 3
         run: |
           if [ ! -f corpus-darwin.log ]; then
