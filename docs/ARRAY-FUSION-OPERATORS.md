@@ -293,28 +293,42 @@ element functions the pipeline's lambdas call.
 
 | | unfused ÷ call_loop | fused ÷ call_loop | fused ÷ loop |
 | --- | ---: | ---: | ---: |
-| `map.map.reduce` | 4.60x | **1.148x** | 1.169x |
-| `filter.map.reduce` | 2.73x | **0.937x** | 0.974x |
+| `map.map.reduce` | 4.60x | **1.000x** | 1.021x |
+| `filter.map.reduce` | 2.73x | **0.841x** | 0.877x |
 
-`filter.map.reduce` is below both controls. That is not a measurement error:
-its hand-written loops carry the same `seeded` flag the fused form does, and
-the fused form reads each element once where the pipeline's loop equivalents
-re-read `xs[i]`.
+That is clause 3's runtime half: parity with a hand-written loop doing the
+same work, and within 2% of one that hand-inlines the callee bodies as well.
+`filter.map.reduce` is below both, which is not a measurement error — its
+hand-written loops carry the same `seeded` flag the fused form does, and the
+fused form reads each element once where they re-read `xs[i]`.
 
-`map.map.reduce` keeps about 8 instructions an element over `call_loop`, and
-the control is what makes that number mean something. Hand-inlining the callee
-bodies — `call_loop` against `loop` — is worth only 1.8% and 4.0%, so the gap
-is NOT the calls, which was the first guess and the second. Both controls make
-three calls an element to the same functions. What differs is that the fused
-loop reaches its through a closure: `load fn; +ptrW; load; call_closure_direct`
-where `call_loop` calls a plain function.
+Getting there took three wrong guesses about the residual, each disproved by
+measuring it, and the sequence is worth keeping because the wrong answers were
+all plausible:
 
-That env fetch has a known owner. `ElideClosurePair` already recognises the
-four-op sequence and removes it along with the pair allocation — but only for
-a slot whose every reader is one of those call sites. The fused form also
-emits `__drop_closure_value` on each slot, which is not, so the slots fail its
-eligibility and keep the detour. Whether that drop can be elided alongside the
-pair is that pass's question, not this one's. `HoistLoopInvariants` is not the
-answer either: it hoists only from a loop HEADER, deliberately, so a
-zero-iteration loop cannot gain a read it never made.
+1. **The per-element `__arr_idx_8_nc` call.** Computing the address inline
+   instead measured 0.18%, inside the run-to-run variance of the controls.
+   Dropped.
+2. **`reduce`'s per-element arrival flag.** Real, worth 3.2%, and shipped —
+   the first iteration is peeled when no stage can skip.
+3. **The calls to the element functions themselves.** Disproved by the
+   `call_loop` control: hand-inlining the callee bodies is worth 1.8% and
+   4.0%, and both the fused loop and `call_loop` make three calls an element.
+
+What it actually was: the fused loop reached its element functions through a
+closure, so every call site re-read an env pointer out of memory —
+`load fn; +ptrW; load` — that is the constant 0 for a closure capturing
+nothing. `FoldZeroCaptureEnvLoads` replaces those three memory touches with
+the constant, which is the whole of the remaining gap.
+
+How widely that applies is narrower than it first looks, and worth writing
+down because the obvious phrasing — "any loop calling a zero-capture closure
+was paying it" — is wrong. `ElideClosurePair` already removes the same
+sequence, and more, for a slot whose every reader is one of those call sites.
+Two microbenchmarks written to show the general case measured IDENTICALLY with
+the pass on and off, because that pass had already handled them. What reaches
+`FoldZeroCaptureEnvLoads` is a slot that `Defunctionalise` resolved but
+`ElideClosurePair` declined — one with a reader that is not a call. The fused
+form is such a shape: it re-emits the chain's `__drop_closure_value` calls,
+and those are the readers that block the earlier pass.
 
