@@ -2835,17 +2835,44 @@ function decl_key(fd: parser.FuncDecl): string {
     return util.base_type_name(fd.receiver_type) + "." + fd.name;
 }
 
+// coarse_fn_tag_without_contract reports a declaration whose result is the
+// coarse callable tag carrying none of the signature that tag drops. The one
+// this exists for is synthesised: the IIFE irlower.hoist_value_iife declares
+// for an if/match-expression whose arms are UNANNOTATED lambdas, which have a
+// parameter list to report and no result.
+//
+// A declaration the SOURCE wrote can match too, at a depth parse_decl_type does
+// not recover the pair for — `((i32) => void)[][]` is `fn[][]` with an empty
+// sidecar. Admitting it is harmless: the inference either resolves the result
+// or does not, and a result that stays unresolved is refused exactly as before.
+// So this tests the tag, not who wrote it.
+function coarse_fn_tag_without_contract(fd: parser.FuncDecl): boolean {
+    return fd.ret_fn_ret.len() == 0 && parser.is_coarse_fn_tag(fd.ret_type);
+}
+
 // A declaration that spells no result type is void unless its body returns a
 // value: a hoisted lambda carries no annotation, and its result is the type
 // the checker gives the first value it returns, read in the scope the
 // statements before it built.
+function inferred_result(fd: parser.FuncDecl, scope: checker.Scope, b: ssasem.Binding): typeinfo.Type {
+    var (returned, at) = first_returned(fd.body, scope);
+    if (bare_return(returned)) { return t_void(); }
+    return resolved(checker.expr_type(returned, at), generic_decl(fd, scope), scope, b);
+}
+
 function result_type(fd: parser.FuncDecl, scope: checker.Scope, b: ssasem.Binding): typeinfo.Type {
-    if (fd.ret_type.len() == 0) {
-        var (returned, at) = first_returned(fd.body, scope);
-        if (bare_return(returned)) { return t_void(); }
-        return resolved(checker.expr_type(returned, at), generic_decl(fd, scope), scope, b);
+    if (fd.ret_type.len() == 0) { return inferred_result(fd, scope, b); }
+    var declared: typeinfo.Type = resolved(scope.ret_type, generic_decl(fd, scope), scope, b);
+    // A coarse fn tag with no contract has nothing for the checker to resolve,
+    // so the declaration is refused for an unresolved result type — but the
+    // body still says what it returns, and that is the same inference an
+    // unannotated declaration above already relies on. The tag itself stays:
+    // hoist_value_iife declares it deliberately and closure_ret_fns_of is gated
+    // on it, so only the unresolved RESULT is filled in here.
+    if (!semtypes.concrete(declared, true) && coarse_fn_tag_without_contract(fd)) {
+        return inferred_result(fd, scope, b);
     }
-    return resolved(scope.ret_type, generic_decl(fd, scope), scope, b);
+    return declared;
 }
 
 // The first `return` carrying a value, looked for through the branches, arms

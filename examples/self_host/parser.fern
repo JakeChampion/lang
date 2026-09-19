@@ -9028,6 +9028,21 @@ pub function fn_tag_spelling(tag: string, ret: string, params: string): string {
     return spelled;
 }
 
+// is_coarse_fn_tag reports whether `s` is the callable TAG parse_type_name
+// produces rather than a spelling — "fn" with one "[]" per array dimension.
+// fn_tag_spelling rebuilds only the first two depths and returns every deeper
+// tag unchanged, so the shape is what decides this, not the two strings it
+// happens to rewrite.
+pub function is_coarse_fn_tag(s: string): boolean {
+    if (s.len() < 2 || slice_unchecked(s, 0, 2) != "fn") { return false; }
+    var i: i32 = 2;
+    while (i < s.len()) {
+        if (i + 2 > s.len() || slice_unchecked(s, i, i + 2) != "[]") { return false; }
+        i = i + 2;
+    }
+    return true;
+}
+
 // fn_spelling_params is ref_fn_param_spellings asked of a fn SPELLING — the
 // parameter half of what fn_spelling_ret returns for the result.
 function fn_spelling_params(t: string): string {

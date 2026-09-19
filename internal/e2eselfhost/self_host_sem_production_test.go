@@ -320,10 +320,9 @@ function main(): i32 {
 	// unresolved result type, so the module went to the AST lowering. The arms
 	// carry the contract, so the hoist reads it off the returned lambda.
 	//
-	// The arms are ANNOTATED here, and that is the whole of what this gates: an
-	// unannotated arm has parameter spellings but no result spelling, and half a
-	// contract is worse than none — fn_tag_spelling would rebuild `() => R` for a
-	// function that takes arguments. That half still refuses; see the rc-log.
+	// The arms are ANNOTATED here: the contract is read straight off them, with
+	// no result to infer. The unannotated case below covers the other half, which
+	// reaches semsource with the tag and nothing to resolve.
 	// Produces 0 of 4 without the fix.
 	{name: "if-expr-lambda-arms-annotated", atLeast: 4, src: `
 function main(): i32 {
@@ -340,6 +339,19 @@ enum Pick { A, B }
 function main(): i32 {
     var p: Pick = Pick.A;
     var f: (i32) => i32 = match (p) { A => ((x: i32): i32 => x), B => ((y: i32): i32 => y + 1) };
+    return f(42);
+}
+`},
+	// The UNANNOTATED arm — what the previous change deliberately left refusing.
+	// An arm lambda's parameter spellings are always written but its result only
+	// when the author annotates it, so irlower yields no contract rather than half
+	// of one, and the hoisted IIFE reaches semsource with the coarse "fn" tag and
+	// nothing to resolve. The body still says what it returns, so the result is
+	// inferred the same way an unannotated declaration's already is. Produces
+	// 0 of 4 without the fix.
+	{name: "if-expr-lambda-arms-unannotated", atLeast: 4, src: `
+function main(): i32 {
+    var f: (i32) => i32 = if (true) { ((x: i32) => x) } else { ((y: i32) => y + 1) };
     return f(42);
 }
 `},

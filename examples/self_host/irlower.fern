@@ -73308,21 +73308,6 @@ function lift_expr_walk(e: ast.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
 // bare lambda returns, so this fires on none of them and leaves the self-compile
 // byte-identical.
 struct DesugarRet { body: ast.Stmt[], counter: i32 }
-// is_coarse_fn_tag reports whether `s` is the callable tag parse_type_name
-// produces rather than a spelling — "fn" with one "[]" per array dimension.
-// fn_tag_spelling only rebuilds the first two depths and returns every deeper
-// tag unchanged, so the shape is what decides this, not the two strings it
-// happens to rewrite.
-function is_coarse_fn_tag(s: string): boolean {
-    if (s.len() < 2 || slice_unchecked(s, 0, 2) != "fn") { return false; }
-    var i: i32 = 2;
-    while (i < s.len()) {
-        if (i + 2 > s.len() || slice_unchecked(s, i, i + 2) != "[]") { return false; }
-        i = i + 2;
-    }
-    return true;
-}
-
 // contract_spelling is how returned_lambda_contract names one type. It goes
 // through fn_tag_spelling because a parameter or result that is ITSELF callable
 // carries the same coarse tag with its own sidecars beside it. Recording the
@@ -73331,7 +73316,7 @@ function is_coarse_fn_tag(s: string): boolean {
 function contract_spelling(tag: string, fn_ret: string, fn_ptys: string): string {
     if (tag.len() == 0) { return ""; }
     var spelled: string = parser.fn_tag_spelling(tag, fn_ret, fn_ptys);
-    if (is_coarse_fn_tag(spelled)) { return ""; }
+    if (parser.is_coarse_fn_tag(spelled)) { return ""; }
     return spelled;
 }
 
