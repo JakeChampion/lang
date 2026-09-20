@@ -4080,18 +4080,18 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
       // returns are checked against the lambda's own
       // ret_type (when one is declared), not the enclosing
       // function's.
-      var body_scope: Scope = s;
-      if (lm.ret_type.len() > 0) {
-        body_scope = body_scope.with_ret_type(rt);
-      } else {
-        body_scope = body_scope.with_ret_type(t_unknown("no enclosing function"));
-      }
-      var bi: i32 = 0;
-      while (bi < lm.params.len()) {
-        body_scope = body_scope.bind(lm.params[bi].name, pts[bi]);
-        bi = bi + 1;
-      }
+      var body_scope: Scope = lambda_body_scope(lm, s);
       check_block(lm.body, body_scope);
+      // A lambda that spells no result returns what its body returns: the
+      // first value-carrying `return`, typed in the scope at that statement.
+      // A body returning nothing keeps the empty annotation's reading.
+      if (lm.ret_type.len() == 0) {
+        var (returned, at) = first_returned(lm.body, body_scope);
+        if (!bare_return(returned)) {
+          var inferred: typeinfo.Type = check_expr(returned, at);
+          if (!is_unknown(inferred)) { rt = inferred; }
+        }
+      }
       return t_func_own(pts, lambda_owns(lm), rt);
     },
     ast.ExprMapLit(_) => {
@@ -9775,8 +9775,9 @@ function call_diags_struct_lit(sl: ast.ExprStructLit, s: Scope, out: util.Diag[]
 // scope (lexical capture) plus the lambda's own parameters, so a reference to
 // one is not an undefined name, with the return type the lambda declares — or
 // unknown when it declares none — so a `return` inside it is checked against
-// the lambda rather than the enclosing function.
-function lambda_body_scope(lm: ast.ExprLambda, s: Scope): Scope {
+// the lambda rather than the enclosing function. The semantic phase reads the
+// type of what the body returns in it when the lambda spells no result.
+pub function lambda_body_scope(lm: ast.ExprLambda, s: Scope): Scope {
   var lsc: Scope = s;
   for param in lm.params {
     lsc = lsc.bind(param.name, s.resolve_param(param));
@@ -15287,6 +15288,48 @@ pub function variant_shape_sig(s: Scope, name: string, owner: string): StructSig
 
 // arm_scope is the scope a match arm's body sees: `s` plus the arm's payload
 // bindings, typed as check_stmt types them.
+pub function bare_return(e: ast.Expr): boolean {
+  if let ast.ExprUnknown(u) = e { return u.kind == "punct:;"; }
+  return parser.is_unit_expr(e);
+}
+
+// The first `return` carrying a value, looked for through the branches, arms
+// and loops of a body, with the scope at that statement; the `;` sentinel when
+// there is none. It is what an unannotated lambda's result is read from, and
+// what the semantic phase reads a synthesised declaration's result from.
+pub function first_returned(body: ast.Stmt[], scope: Scope): (ast.Expr, Scope) {
+    var none: ast.Expr = ast.ExprUnknown { kind: "punct:;", line: 0, col: 0 };
+    for st in body {
+        match (st) {
+            ast.StmtReturn(r) => { if (!bare_return(r.value)) { return (r.value, scope); } },
+            ast.StmtIf(f) => {
+                var (t, ts) = first_returned(f.then_body, scope);
+                if (!bare_return(t)) { return (t, ts); }
+                var (e, es) = first_returned(f.else_body, scope);
+                if (!bare_return(e)) { return (e, es); }
+            },
+            ast.StmtWhile(w) => {
+                var (v, vs) = first_returned(w.body, scope);
+                if (!bare_return(v)) { return (v, vs); }
+            },
+            ast.StmtFor(fo) => {
+                var (v, vs) = first_returned(fo.body, for_body_scope(fo, scope));
+                if (!bare_return(v)) { return (v, vs); }
+            },
+            ast.StmtMatch(m) => {
+                var whole: typeinfo.Type = expr_type(m.scrutinee, scope);
+                for a in m.arms {
+                    var (v, vs) = first_returned(a.body, arm_scope(a, scope, whole));
+                    if (!bare_return(v)) { return (v, vs); }
+                }
+            },
+            _ => {}
+        }
+        scope = bind_stmt(st, scope);
+    }
+    return (none, scope);
+}
+
 pub function arm_scope(arm: ast.MatchArm, s: Scope, whole: typeinfo.Type): Scope {
   return annotate_arm_scope(arm, s, whole);
 }
