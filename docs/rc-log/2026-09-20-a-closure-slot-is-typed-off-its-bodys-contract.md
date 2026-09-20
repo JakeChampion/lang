@@ -36,11 +36,30 @@ Seeds 066, 254, 298, 309 and 427 produce whole. The stale paragraph in
 admitted goes with this change: `without`, `cleared`, `keys`, `values` and
 `for (k, v) in m` have been produced since #9825.
 
+## A record literal is the struct it names
+
+`unsupported record literal`, three seeds (052, 226, 369), reduced to a
+record literal handed to a template with a value block among its fields:
+
+```fern
+var v: Xyz = pick(c, (Xyz { n: 636, valid: (if (d) { pick(true, false, true) } else { false }) }), (Xyz { … }));
+```
+
+`record` read the literal's type off the checker, and the checker leaves
+such a literal untyped when a field holds a value block over a template
+call. `record_schema` already admits only a struct without type
+parameters, so the literal's type is the struct it names and nothing else;
+`record_type` builds it from the schema, for the plain literal and the
+`...base` update alike, and the checker's reading is not consulted. Seeds
+052 and 369 produce whole; 226 moves to `map unit is not shared`.
+
 ## Census
 
 | binary | whole | agree | diverge |
 |---|---|---|---|
 | main after #9826 | 491 / 509 | 500 | 0 |
-| this change | 496 / 509 | 500 | 0 |
+| closure slots | 496 / 509 | 500 | 0 |
+| record literals | 498 / 509 | 500 | 0 |
 
-The compiler's own sources produce whole (8628 of 8628).
+Only the named seeds change between rows. The compiler's own sources produce
+whole (8629 of 8629).

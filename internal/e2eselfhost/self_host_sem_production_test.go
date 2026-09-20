@@ -713,6 +713,26 @@ function main(): i32 {
     }
     return t % 101;
 }`},
+	// A record literal's type is the struct it names. It was read off the
+	// checker, which leaves a literal untyped when a field holds a value
+	// block over a template call, and the literal was refused whole even
+	// though every field is produced at its declared type. Here the literal
+	// is a template argument too, so the destination binding types the
+	// parameter and the field's block picks between two template calls.
+	{name: "record-literal-is-the-struct-it-names", atLeast: 2, noLeak: true, src: `
+struct Xyz { n: i32, valid: boolean, tag: string }
+function pick[T](c: boolean, a: T, b: T): T { return if (c) { a } else { b }; }
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 40) {
+        var v: Xyz = pick(i % 2 == 0, (Xyz { n: i, valid: (if (i % 3 == 0) { pick(true, false, true) } else { true }), tag: "a" + "b" }), (Xyz { n: 1, valid: false, tag: "c" }));
+        var w: Xyz = Xyz { ...v, n: (if (v.valid) { pick(false, 1, 2) } else { 3 }) };
+        t = t + w.n + (if (w.valid) { 10 } else { 0 }) + w.tag.len();
+        i = i + 1;
+    }
+    return t % 97;
+}`},
 	{name: "map-delete-and-clear", atLeast: 4, noLeak: true, src: `
 function survivors(n: i32): i32 {
     var m: Map[i32, i32] = map_new(8);

@@ -860,9 +860,9 @@ function built_record(w: Written, ty: typeinfo.Type): Value {
 // the construction takes its own unit of every reference field, so the base
 // stays live to the construction and is released after it.
 function record_update(e: ast.Expr, sl: ast.ExprStructLit, s: State): Value {
-    var ty: typeinfo.Type = checked(e, s);
     var sig: checker.StructSig = record_schema(sl.type_name, s);
-    if (sig.name.len() == 0 || !semtypes.concrete(ty, false)) { return refused(s, "unsupported record literal"); }
+    if (sig.name.len() == 0) { return refused(s, "unsupported record literal"); }
+    var ty: typeinfo.Type = record_type(sig);
     var base: Value = expr(sl.base, s, ty);
     s = base.s;
     if (!s.ok) { return base; }
@@ -892,10 +892,18 @@ function index_of_i32(xs: i32[], v: i32): i32 {
 // every slot exactly once and no slot is left to read.
 function record(e: ast.Expr, sl: ast.ExprStructLit, s: State): Value {
     if (sl.has_base) { return record_update(e, sl, s); }
-    var ty: typeinfo.Type = checked(e, s);
     var sig: checker.StructSig = record_schema(sl.type_name, s);
-    if (sig.name.len() == 0 || !semtypes.concrete(ty, false) || sl.field_values.len() != sig.field_types.len()) { return refused(s, "unsupported record literal"); }
-    return built_record(place_fields(written_fields(sl, sig, s), sig, 0 - 1), ty);
+    if (sig.name.len() == 0 || sl.field_values.len() != sig.field_types.len()) { return refused(s, "unsupported record literal"); }
+    return built_record(place_fields(written_fields(sl, sig, s), sig, 0 - 1), record_type(sig));
+}
+
+// A literal's type is the struct it names: record_schema admits only a
+// declaration without type parameters, so the name is the whole of it. The
+// checker's reading of the literal is not consulted, since a field holding a
+// value block over a template call is one it leaves untyped while every
+// field is produced at its declared type here anyway.
+function record_type(sig: checker.StructSig): typeinfo.Type {
+    return typeinfo.TypeStruct { name: sig.name, args: [] };
 }
 
 // A variant literal supplies its payload fields in declaration order; the
