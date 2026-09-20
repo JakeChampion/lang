@@ -2318,7 +2318,30 @@ function handle_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     if (ins.str == "Reader.read_chunk") { return Lowered { found: true, r: emit(r, ir.op_read_chunk()) }; }
     if (ins.str == "Reader.close" || ins.str == "Writer.close") { return Lowered { found: true, r: emit(r, ir.op_reader_close()) }; }
     if (ins.str == "Writer.write") { return Lowered { found: true, r: emit(r, ir.op_writer_write()) }; }
+    if (ins.str == "Writer.write_some") { return Lowered { found: true, r: emit(r, ir.op_write_some()) }; }
+    if (ins.str == "Writer.truncate") { return Lowered { found: true, r: emit(r, ir.op_writer_truncate()) }; }
+    return handle_metadata_site(r, ins);
+}
+
+// The handle metadata ops, each asked of the bare descriptor like close and
+// shared by the two handle types.
+function handle_metadata_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
+    var op: string = handle_method(ins.str);
+    if (op == "stat") { return Lowered { found: true, r: emit(r, ir.op_fd_stat()) }; }
+    if (op == "flags") { return Lowered { found: true, r: emit(r, ir.op_fd_flags()) }; }
+    if (op == "seek") { return Lowered { found: true, r: emit(r, ir.op_reader_seek()) }; }
+    if (op == "fsync") { return Lowered { found: true, r: emit(r, ir.op_fd_fsync()) }; }
+    if (op == "fdatasync") { return Lowered { found: true, r: emit(r, ir.op_fd_fdatasync()) }; }
+    if (op == "syncfs") { return Lowered { found: true, r: emit(r, ir.op_fd_syncfs()) }; }
     return Lowered { found: false, r: r };
+}
+
+// handle_method is the method half of a `Reader.` or `Writer.` metadata
+// contract name, "" for any other name.
+function handle_method(name: string): string {
+    var methods: string[] = ["stat", "flags", "seek", "fsync", "fdatasync", "syncfs"];
+    for m in methods { if (name == "Reader." + m || name == "Writer." + m) { return m; } }
+    return "";
 }
 
 function union_builtin_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
@@ -2369,6 +2392,45 @@ function host_builtin_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered 
     if (ins.str == "now_ns") { return Lowered { found: true, r: emit(r, ir.op_now_ns()) }; }
     if (ins.str == "sleep_ms") { return Lowered { found: true, r: emit(r, ir.op_sleep_ms()) }; }
     if (ins.str == "sleep_ns") { return Lowered { found: true, r: emit(r, ir.op_sleep_ns()) }; }
+    return os_query_site(r, ins);
+}
+
+// The process and host queries: each is the op the AST lowering emits, with
+// no operand but the ones the call names.
+function os_query_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
+    if (ins.str == "getcwd") { return Lowered { found: true, r: emit(r, ir.op_getcwd()) }; }
+    if (ins.str == "hostname") { return Lowered { found: true, r: emit(r, ir.op_hostname()) }; }
+    if (ins.str == "cpu_count") { return Lowered { found: true, r: emit(r, ir.op_cpu_count()) }; }
+    if (ins.str == "geteuid") { return Lowered { found: true, r: emit(r, ir.op_geteuid()) }; }
+    if (ins.str == "getegid") { return Lowered { found: true, r: emit(r, ir.op_getegid()) }; }
+    if (ins.str == "getuid") { return Lowered { found: true, r: emit(r, ir.op_getuid()) }; }
+    if (ins.str == "getgid") { return Lowered { found: true, r: emit(r, ir.op_getgid()) }; }
+    if (ins.str == "environ") { return Lowered { found: true, r: emit(r, ir.op_environ()) }; }
+    if (ins.str == "proc_fork") { return Lowered { found: true, r: emit(r, ir.op_proc_fork()) }; }
+    if (ins.str == "isatty") { return Lowered { found: true, r: emit(r, ir.op_isatty()) }; }
+    if (ins.str == "uname_field") { return Lowered { found: true, r: emit(r, ir.op_uname_field()) }; }
+    if (ins.str == "umask") { return Lowered { found: true, r: emit(r, ir.op_umask()) }; }
+    if (ins.str == "proc_waitpid") { return Lowered { found: true, r: emit(r, ir.op_proc_waitpid()) }; }
+    if (ins.str == "proc_waitpid_nohang") { return Lowered { found: true, r: emit(r, ir.op_proc_waitpid_nohang()) }; }
+    if (ins.str == "tcp_connect") { return Lowered { found: true, r: emit(r, ir.op_tcp_connect()) }; }
+    if (ins.str == "signal_send") { return Lowered { found: true, r: emit(r, ir.op_signal_send()) }; }
+    if (ins.str == "subprocess") { return Lowered { found: true, r: emit(r, ir.op_subprocess()) }; }
+    return fs_op_site(r, ins);
+}
+
+// The directory, link and permission ops, each the op the AST lowering emits.
+function fs_op_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
+    if (ins.str == "temp_dir") { return Lowered { found: true, r: emit(r, ir.op_temp_dir()) }; }
+    if (ins.str == "read_link") { return Lowered { found: true, r: emit(r, ir.op_read_link()) }; }
+    if (ins.str == "remove_dir") { return Lowered { found: true, r: emit(r, ir.op_remove_dir()) }; }
+    if (ins.str == "statfs") { return Lowered { found: true, r: emit(r, ir.op_statfs()) }; }
+    if (ins.str == "create_dir") { return Lowered { found: true, r: emit(r, ir.op_create_dir()) }; }
+    if (ins.str == "chmod") { return Lowered { found: true, r: emit(r, ir.op_chmod()) }; }
+    if (ins.str == "access") { return Lowered { found: true, r: emit(r, ir.op_access()) }; }
+    if (ins.str == "rename") { return Lowered { found: true, r: emit(r, ir.op_rename()) }; }
+    if (ins.str == "create_link") { return Lowered { found: true, r: emit(r, ir.op_create_link()) }; }
+    if (ins.str == "create_symlink") { return Lowered { found: true, r: emit(r, ir.op_create_symlink()) }; }
+    if (ins.str == "chown_at") { return Lowered { found: true, r: emit(r, ir.op_chown_at()) }; }
     return builder_builtin_site(r, ins);
 }
 
