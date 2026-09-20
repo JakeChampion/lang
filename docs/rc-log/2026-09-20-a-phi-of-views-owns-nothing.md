@@ -64,10 +64,10 @@ Corpus census (865 seeds), both legs run here with the same script:
 | | before | after |
 |---|---|---|
 | programs produced whole | 819 | 822 |
-| declarations produced | 83,189 of 87,203 | 83,709 of 87,219 |
+| declarations produced | 83,189 of 87,203 | 83,710 of 87,220 |
 | programs reporting `a view is lent, never retained` | 5 | 1 |
 
-The denominator grows by the 16 declarations this change adds to the compiler.
+The denominator grows by the 17 declarations this change adds to the compiler.
 
 ## What is still refused
 
