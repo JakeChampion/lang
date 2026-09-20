@@ -152,6 +152,7 @@ aarch64/array_append.ir	54644883
 aarch64/array_index.text	509
 aarch64/array_index.ir	47307769
 aarch64/array_scale_f64.text	592
+aarch64/array_scale_f64.ir	148492862
 aarch64/array_with.text	612
 aarch64/array_with.ir	70706939
 aarch64/ascii_scan.text	1225

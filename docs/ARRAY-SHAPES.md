@@ -246,11 +246,11 @@ Four consequences:
   steps 1 and 2, with the measurement), allocating its own result so no
   sized-array primitive was needed, and chosen over the dot product
   because a reduction may not reassociate (`ARRAY-ALGEBRA.md` §3) while a
-  multiply has nothing to reassociate. `inner` and `outer` are recognized (§6) and
-  lowered as the scalar loop; which of their sites a kernel replaces,
-  and how a site's element functions are proved to be the arithmetic the
-  kernel implements, is not decided here. §1 and §8 say what licenses an
-  in-place elementwise op; nothing here takes it.
+  multiply has nothing to reassociate. `inner` and `outer` are recognized
+  (§6) and lowered as the scalar loop; which of their sites a kernel
+  replaces, and how a site's element functions are proved to be the
+  arithmetic the kernel implements, is not decided here. §1 and §8 say
+  what licenses an in-place elementwise op; nothing here takes it.
 - **In-place through a handle.** The consuming-handle plus unique-storage
   rule in §1 is stated, not implemented; nothing in `std/ndarray` writes.
 - **Static shapes.** §4.
