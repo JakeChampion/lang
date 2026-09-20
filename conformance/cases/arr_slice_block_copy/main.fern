@@ -1,0 +1,39 @@
+// The copy-on-write path of an array update: `prev` keeps the buffer alive,
+// so each `with` copies it rather than writing in place, and that copy is
+// __fern_arr_slice. The lengths cross the copy's size classes — nothing, one
+// element, under and over the eight bytes arm64's memcpy switches loops at,
+// and a whole 32-element trie node — so a copy that moves the wrong number
+// of elements at any of them changes the answer (#9875).
+struct Buf { xs: i32[], tag: string }
+
+function (b: Buf) put(i: i32, v: i32): Buf {
+    return Buf { ...b, xs: b.xs.with(i, v) };
+}
+
+function roll(n: i32): i32 {
+    var xs: i32[] = [];
+    var i: i32 = 0;
+    while (i < n) { xs = xs.append(i + 1); i = i + 1; }
+    var b: Buf = Buf { xs: xs, tag: "a refcounted field the copy carries" };
+    var total: i32 = 0;
+    var r: i32 = 0;
+    while (r < 3) {
+        var j: i32 = 0;
+        while (j < n) {
+            var prev: Buf = b;
+            b = b.put(j, b.xs[j] + 1);
+            total = total + prev.xs[j];
+            j = j + 1;
+        }
+        r = r + 1;
+    }
+    var k: i32 = 0;
+    while (k < n) { total = total + b.xs[k]; k = k + 1; }
+    return total;
+}
+
+function main(): i32 {
+    var t: i32 = 0;
+    for n in [0, 1, 2, 7, 8, 9, 31, 32, 33] { t = t + roll(n); }
+    return (t % 239) + 1;
+}
