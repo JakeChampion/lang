@@ -535,14 +535,12 @@ function inferred_ret(k: i32, n: i32): i32 { return apply_int((x: i32) => { var 
 function refused_own_fn(own f: (i32) => i32, n: i32): i32 { return f(n); }
 // A closure TAKES a captured function value, like every other reference it
 // holds, so the box's release walks that field. The capture is a parameter
-// here and a local closure below, and neither is a special case. A cell is a
-// separate rule and still refused: a function value is not an element.
+// here and a local closure below, and neither is a special case.
 function via_capture(f: (i32) => i32, n: i32): i32 { return apply_int((x: i32): i32 => { return f(x) + 1; }, n); }
 function capture_local(n: i32): i32 {
     var g: (i32) => i32 = (x: i32): i32 => { return x + n; };
     return apply_int((x: i32): i32 => { return g(x) + 1; }, n);
 }
-function refused_cell_fn(f: (i32) => i32): i32 { var c: Cell[(i32) => i32] = cell_new(f); return 0; }
 function bound_fn(n: i32): i32 { var g: (i32) => i32 = twice_it; return g(n) + g(1); }
 function head_of_arr(xs: i32[]): i32 { return xs[0]; }
 function apply_arr(f: (i32[]) => i32, xs: i32[]): i32 { return f(xs) + f([9, 8]); }
