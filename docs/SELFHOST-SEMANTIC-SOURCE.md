@@ -294,7 +294,8 @@ Unsupported constructs refuse the whole function with a reason.
   (`os_contracts`, `handle_metadata_contracts`): the process and host
   queries, the directory, link and permission ops, `temp_dir`, `statfs`,
   `subprocess` with its `ProcessResult` record, the sockets' connect, the
-  signal and process ops, and the handle metadata asked of the bare
+  signal and process ops, the terminal's `termios_get`, `termios_set` and
+  `set_window_size`, and the handle metadata asked of the bare
   descriptor like `close` — `stat`, `flags`, `seek`, the three syncs,
   `write_some`, `truncate`. Every string and array argument is lent, a
   scalar is a value, a fresh string or array is the caller's. `ssarc`

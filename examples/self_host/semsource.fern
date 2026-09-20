@@ -3721,6 +3721,9 @@ function os_floor_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Co
         ssasem.Contract { name: "wasm_timer_pollable", params: [t_i64()], modes: [v], result: t_i32() },
         ssasem.Contract { name: "wasm_pollable_drop", params: [t_i32()], modes: [v], result: t_i32() },
         ssasem.Contract { name: "window_size", params: [t_i32()], modes: [v], result: win },
+        ssasem.Contract { name: "set_window_size", params: [t_i32(), t_i32(), t_i32()], modes: [v, v, v], result: done },
+        ssasem.Contract { name: "termios_get", params: [t_i32()], modes: [v], result: t_io_result(gids) },
+        ssasem.Contract { name: "termios_set", params: [t_i32(), t_i32(), gids], modes: [v, v, b], result: done },
         ssasem.Contract { name: "tcp_close", params: [t_i32()], modes: [v], result: t_i32() },
         ssasem.Contract { name: "setuid", params: [t_i64()], modes: [v], result: done },
         ssasem.Contract { name: "setgid", params: [t_i64()], modes: [v], result: done },
@@ -3741,6 +3744,7 @@ function fs_op_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Contr
         ssasem.Contract { name: "tcp_connect", params: [t_i32(), t_i32()], modes: [v, v], result: t_i32() },
         ssasem.Contract { name: "signal_send", params: [t_i32(), t_i32()], modes: [v, v], result: done },
         ssasem.Contract { name: "chown_at", params: [t_string(), t_i32(), t_i32(), t_bool()], modes: [b, v, v, v], result: done },
+        ssasem.Contract { name: "truncate", params: [t_string(), t_i64()], modes: [b, v], result: done },
         ssasem.Contract { name: "subprocess", params: [t_string(), strs, t_string()], modes: [b, b, b], result: typeinfo.TypeStruct { name: "ProcessResult", args: [] } }
     ];
 }

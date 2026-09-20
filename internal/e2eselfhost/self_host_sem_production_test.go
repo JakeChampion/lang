@@ -2248,4 +2248,73 @@ function main(): i32 {
     return total + mid[0] + mid.len() + (tail[1] as i32) + tail.len() + (head[1] as i32);
 }
 `},
+	// The OS-floor builtins that answer a fresh string, string array or
+	// record: their runtime helpers used to keep the scratch block each call
+	// filled (the 4 KiB path buffer, the 64 KiB drain buffers), so nothing
+	// could pin these at zero (#9832). The helpers own their scratch now, so
+	// the typed lowering, which releases the results, frees everything. The
+	// AST lowering still never releases the fresh result, which the relative
+	// pin tolerates and this row records.
+	{name: "os-floor-fresh-results-are-freed", atLeast: 2, noLeak: true, nativeOnly: true, src: `
+function each(dir: string): i32 {
+    var n: i32 = 0;
+    var cwd: string = getcwd();
+    n = n + cwd.len() % 7;
+    var host: string = hostname();
+    n = n + host.len() % 7;
+    var sys: string = uname_field(0);
+    n = n + sys.len() % 7;
+    var env: string[] = environ();
+    n = n + env.len() % 7;
+    match (create_symlink("target", dir + "/lnk")) {
+        Ok(_) => {
+            match (read_link(dir + "/lnk")) {
+                Ok(t) => { n = n + t.len(); },
+                Err(_) => {}
+            }
+        },
+        Err(_) => { n = n + 1; }
+    }
+    match (create_symlink("target", dir + "/missing/lnk")) {
+        Ok(_) => {},
+        Err(_) => { n = n + 2; }
+    }
+    match (write_file(dir + "/f", "hello")) {
+        Ok(_) => {
+            match (truncate(dir + "/f", 3i64)) {
+                Ok(_) => { n = n + 3; },
+                Err(_) => {}
+            }
+        },
+        Err(_) => {}
+    }
+    match (termios_get(0)) {
+        Ok(words) => {
+            match (termios_set(0, 0, words)) {
+                Ok(_) => { n = n + 4; },
+                Err(_) => { n = n + 5; }
+            }
+        },
+        Err(_) => { n = n + 6; }
+    }
+    var r: ProcessResult = subprocess("echo", ["hi", "there"], "");
+    n = n + r.exit_code + r.stdout.len() + r.stderr.len();
+    return n;
+}
+function main(): i32 {
+    var n: i32 = 0;
+    match (temp_dir("fernfresh")) {
+        Ok(d) => {
+            var i: i32 = 0;
+            while (i < 3) { n = n + each(d); i = i + 1; }
+            match (remove_dir_all(d)) {
+                Ok(_) => {},
+                Err(_) => {}
+            }
+        },
+        Err(_) => {}
+    }
+    return n % 100;
+}
+`},
 }
