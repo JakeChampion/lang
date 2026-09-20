@@ -1894,4 +1894,29 @@ function main(): i32 {
     return p.exit_code + p.stdout.len();
 }
 `},
+	// A generic struct's method that redeclares the receiver's own variables
+	// (`insert[K: cmp.Ord, V]` on `OrdMap[K, V]`) is cloned per receiver
+	// instantiation by parser.monomorphize_structs. The clone is concrete, so
+	// it is an ordinary declaration here, not a template nothing instantiates.
+	{name: "generic-struct-method-redeclares-receiver-vars", atLeast: 2, src: `
+struct Pair[T] { a: T, b: T }
+function (p: Pair[T]) put[T](v: T): Pair[T] { return Pair { a: p.b, b: v }; }
+function main(): i32 {
+    var p: Pair[i32] = Pair { a: 1, b: 2 };
+    p = p.put(7);
+    return p.a * 10 + p.b;
+}
+`},
+	// The same shape through the standard library: every ordmap method with a
+	// bounded key is that clone, and the tree under it is produced with it.
+	{name: "ordmap-bounded-method-clones", atLeast: 69, src: `
+import "std/ordmap";
+function main(): i32 {
+    var m: ordmap.OrdMap[i32, i32] = ordmap.ordmap_new();
+    m = m.insert(3, 4);
+    m = m.insert(3, 5);
+    m = m.insert(9, 1);
+    return m.get_or(3, 0) * 10 + m.len();
+}
+`},
 }
