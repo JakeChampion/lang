@@ -3628,6 +3628,12 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
     if (name == "__fern_map_free_vf" || name == "__fern_map_free_ksvf") {
         s = s.mark_heap(); s = s.need("maps"); s = s.need("map_free_vf");
     }
+    // The shallow and string-column frees are emitted with the maps bundle, and
+    // a release reached without a map_new in the same unit — a produced
+    // callee's, or a drop helper's — has to pull that bundle in.
+    if (name == "__fern_map_free" || name == "__fern_map_free_vs" || name == "__fern_map_free_ks" || name == "__fern_map_free_kvs") {
+        s = s.mark_heap(); s = s.need("maps");
+    }
     if (name == "__fern_strarrarr_free") { s = s.need("strarrarr_free"); }
     if (name == "__fern_optarrarr_free") { s = s.need("optarrarr_free"); }
     // __map_vals_struct_drop_<T>: the struct-VALUE column walk a reclaimable
@@ -6944,30 +6950,34 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     if (s.has_need("optarrarr_free")) {
     s = emit_arm64_arr_deep_free_variant(s, "optarrarr_free", "oaf", arm64_optarrarr_elem());
     }
-    // __fern_map_free(box) — reclaim a FRESH, sole-owned map local (Perceus
-    // map-local slice), the arm64 sibling of the x86-64 body in
-    // asm_ir.emit_ir_runtime. The asm map box is a RAW 16-byte __fern_alloc(16)
-    // {keys@0, vals@8}; keys/vals are rc-headered __fern_arr_box buffers. Frees
-    // both (rc-guarded, via __fn___fern_arr_dec — no-op if aliased by a
-    // keys()/values() view) THEN returns the 16-byte box to the size-classed
-    // freelist (class 2). Called ONLY on compile-time-proven fresh, non-escaping,
-    // non-iterated map locals (irlower slot_is_reclaimable_map). Null / low-addr
+    // __fern_map_free(box) — release one unit of a map, the arm64 sibling of
+    // the x86-64 body in asm_ir.emit_ir_runtime. The box is a two-word
+    // {keys@0, vals@8} __fern_arr_box, so it carries a count: a shared box is
+    // decremented and left whole, and the last unit frees both columns
+    // (rc-guarded, via __fn___fern_arr_dec — no-op if aliased by a
+    // keys()/values() view) THEN returns the box to its class. The AST lowering
+    // calls it only on compile-time-proven fresh, non-escaping, non-iterated map
+    // locals (irlower slot_is_reclaimable_map), whose count is always 1; the
+    // semantic lowering shares a box and releases it by count. Null / low-addr
     // guarded (a null slot / the precise-drop + exit-sweep double-call are safe
     // no-ops). In THIS variant both columns are shallow, so boxes they hold leak
     // one level (sound; a credited column takes a deep variant below instead).
     // Stack-arg ABI (box at [sp]); x19 holds the box across the nested arr_dec
     // calls (callee-saved; __fern_arr_dec uses no bl so x30 survives too, but
-    // both are saved for safety). x9 scratch.
+    // both are saved for safety). x9 scratch. Need-gated with the rest of the
+    // map runtime: a program with no map carries none of the family.
+    if (s.has_need("maps")) {
     s = emit_arm64_map_free_variant(s, "",     "arr_dec",      "arr_dec",      "mapfree");
     // The deep-release variants (#4353), the arm64 siblings of the x86-64 family:
     // a credited fresh-string column is freed per element via __fern_str_arr_free,
     // a credited fresh one-dec-BOX column (scalar-element array / all-scalar
-    // struct) via __fern_arrarr_free. Emitted only on irlower-proven columns
+    // struct) via __fern_arrarr_free. Called only on irlower-proven columns
     // (MAPVS: / MAPKS: / MAPVA:), where the map is the sole rc=1 owner of every
     // element.
     s = emit_arm64_map_free_variant(s, "_vs",   "arr_dec",      "str_arr_free", "mapfvs");
     s = emit_arm64_map_free_variant(s, "_ks",   "str_arr_free", "arr_dec",      "mapfks");
     s = emit_arm64_map_free_variant(s, "_kvs",  "str_arr_free", "str_arr_free", "mapfkvs");
+    }
     // Need-gated: these name __fn___fern_arrarr_free, whose own body is need-gated.
     if (s.has_need("map_free_va")) {
     s = emit_arm64_map_free_variant(s, "_va",   "arr_dec",      "arrarr_free",  "mapfva");
@@ -7111,6 +7121,32 @@ function arm64_optarrarr_elem(): string {
 }
 
 
+// A map free releases ONE unit of the box (asm_ir.map_free_shared_guard): a
+// shared box is decremented and left whole, and only the last unit walks the
+// columns. `__fn___fern_arr_dec` does the decrement, the underflow count of a
+// dead box, and the block's return to its class. x0 is the box; x10 is
+// scratch, x9 keeps the low-address bound the callers still compare against.
+function arm64_map_free_shared_guard(s: asmcore.EmitState, lbl: string): asmcore.EmitState {
+    s = s.write("    ldur w10, [x0, #-8]\n");
+    s = s.write("    cmp w10, #1\n");
+    s = s.write("    b.eq .L" + lbl + "_last\n");
+    s = s.write("    str x30, [sp, #-16]!\n");
+    s = s.write("    str x0, [sp, #-16]!\n");
+    s = s.write("    bl __fn___fern_arr_dec\n");
+    s = s.write("    add sp, sp, #16\n");
+    s = s.write("    ldr x30, [sp], #16\n");
+    s = s.write("    b .L" + lbl + "_ret\n");
+    s = s.write(".L" + lbl + "_last:\n");
+    return s;
+}
+
+function arm64_map_free_block(s: asmcore.EmitState): asmcore.EmitState {
+    s = s.write("    str x19, [sp, #-16]!\n");
+    s = s.write("    bl __fn___fern_arr_dec\n");
+    s = s.write("    add sp, sp, #16\n");
+    return s;
+}
+
 function emit_arm64_map_free_variant(s: asmcore.EmitState, suffix: string, kfree: string, vfree: string, lbl: string): asmcore.EmitState {
     s = s.write("__fn___fern_map_free" + suffix + ":\n");
     s = s.write("    ldr x0, [sp]\n");                  // box
@@ -7118,6 +7154,7 @@ function emit_arm64_map_free_variant(s: asmcore.EmitState, suffix: string, kfree
     s = s.write("    mov x9, #0x10000\n");
     s = s.write("    cmp x0, x9\n");
     s = s.write("    blo .L" + lbl + "_ret\n");         // low-addr guard
+    s = arm64_map_free_shared_guard(s, lbl);
     s = s.write("    stp x19, x30, [sp, #-16]!\n");     // save callee-saved + link
     s = s.write("    mov x19, x0\n");                   // box
     s = s.write("    ldr x0, [x19]\n");                 // keys = box[0]
@@ -7128,12 +7165,7 @@ function emit_arm64_map_free_variant(s: asmcore.EmitState, suffix: string, kfree
     s = s.write("    str x0, [sp, #-16]!\n");
     s = s.write("    bl __fn___fern_" + vfree + "\n");
     s = s.write("    add sp, sp, #16\n");
-    s = lc_bump_free_add(s, "#16", "x3", "x10");
-    s = s.write("    adrp x3, __fern_freelist\n");
-    s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
-    s = s.write("    ldr x10, [x3, #16]\n");            // freelist[2] (16-byte box = 2 words)
-    s = s.write("    str x10, [x19]\n");                // *box = old head
-    s = s.write("    str x19, [x3, #16]\n");            // freelist[2] = box
+    s = arm64_map_free_block(s);
     s = s.write("    mov x0, x19\n");                   // return box (caller drops)
     s = s.write("    ldp x19, x30, [sp], #16\n");
     s = s.write(".L" + lbl + "_ret:\n");
@@ -7155,6 +7187,7 @@ function emit_arm64_map_free_vf_variant(s: asmcore.EmitState, suffix: string, kf
     s = s.write("    mov x9, #0x10000\n");
     s = s.write("    cmp x0, x9\n");
     s = s.write("    blo .L" + lbl + "_ret\n");         // low-addr guard
+    s = arm64_map_free_shared_guard(s, lbl);
     s = s.write("    ldr x1, [sp]\n");                  // release
     s = s.write("    stp x19, x30, [sp, #-16]!\n");     // save callee-saved + link
     s = s.write("    stp x20, x21, [sp, #-16]!\n");
@@ -7188,12 +7221,7 @@ function emit_arm64_map_free_vf_variant(s: asmcore.EmitState, suffix: string, kf
     s = s.write("    str x20, [sp, #-16]!\n");
     s = s.write("    bl __fn___fern_arr_dec\n");
     s = s.write("    add sp, sp, #16\n");
-    s = lc_bump_free_add(s, "#16", "x3", "x10");
-    s = s.write("    adrp x3, __fern_freelist\n");
-    s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
-    s = s.write("    ldr x10, [x3, #16]\n");            // freelist[2] (16-byte box = 2 words)
-    s = s.write("    str x10, [x19]\n");                // *box = old head
-    s = s.write("    str x19, [x3, #16]\n");            // freelist[2] = box
+    s = arm64_map_free_block(s);
     s = s.write("    mov x0, x19\n");                   // return box (caller drops)
     s = s.write("    ldp x22, x23, [sp], #16\n");
     s = s.write("    ldp x20, x21, [sp], #16\n");
@@ -7795,8 +7823,8 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
         s = s.write("    stp x19, x20, [sp, #-16]!\n");
-        s = s.write("    mov x0, #16\n");
-        s = s.write("    bl __fern_alloc\n");          // mapbox
+        s = s.write("    mov x0, #2\n");
+        s = s.write("    bl __fern_arr_box\n");        // mapbox: a counted two-word box
         s = s.write("    mov x19, x0\n");
         s = s.write("    mov x0, #0\n");
         s = s.write("    bl __fern_alloc_u8\n");        // empty keys
