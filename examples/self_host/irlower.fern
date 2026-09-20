@@ -810,8 +810,9 @@ pub struct LowerFrame {
     // clones instead of mutating in place (map_clone_insert_sites_of, #7235).
     map_clone_sites: string[],
     // borrowed_names: the ARRAY/MAP names this function does not OWN — a
-    // param that is neither `own`, inferred-moved, nor a `$cell$` capture cell,
-    // or a local bound from a field read whose source is still live (#6158).
+    // param that is neither `own` nor inferred-moved (a mutated capture's
+    // `Cell[T]` is not an array and never enters), or a local bound from a
+    // field read whose source is still live (#6158).
     // ONLY the `.with` self-reassign consults it; see borrowed_names_of for why
     // it is not folded into aliased_names.
     borrowed_names: string[],
@@ -4038,7 +4039,7 @@ function map_key_int_evidence(k: ast.Expr, s: LowerState): boolean {
         ast.ExprCall(kc) => { return is_int_irtag(kc.ty); },
         // An ELEMENT key `xs[i]`. Written by hand it is rare, but the lift pass
         // makes it the common shape: a mutable local a closure captures is boxed
-        // into a one-element cell and every read rewritten to `$cell$x[0]`, so an
+        // into a cell, whose reads this lowering desugars to `$cell$x[0]`, so an
         // integer key SPELLED as a bare ident reaches here as an index (#8090).
         ast.ExprIndex(kix) => {
             if (is_int_irtag(kix.ty)) { return true; }
