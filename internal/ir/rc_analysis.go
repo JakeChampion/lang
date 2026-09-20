@@ -8230,6 +8230,10 @@ func callArgDeaths(fn *ast.FuncDecl, info *checker.Info, obs map[string][]fieldO
 			if !admitted(aid.Name) {
 				continue
 			}
+			// An enclosing call may already hold the value (#9879).
+			if heldByEnclosingCall(body, c, aid.Name) {
+				continue
+			}
 			markOnce(c, aid.Name)
 		}
 		return true
@@ -8274,12 +8278,78 @@ func callArgDeaths(fn *ast.FuncDecl, info *checker.Info, obs map[string][]fieldO
 			if !returnsBeforeReading(stmtIdx, c, aid.Name) {
 				continue
 			}
+			// An enclosing call may already hold the value (#9879).
+			if heldByEnclosingCall(body, c, aid.Name) {
+				continue
+			}
 			markOnce(c, aid.Name)
 		}
 		return true
 	})
 	markUnobservedParamFields(out, fn, info, obs, repeating, escaping, occurrences)
 	return out
+}
+
+// heldByEnclosingCall reports whether a call that strictly contains `c` also
+// names `name` outside `c`. Both occurrence-order shapes above read the text:
+// `isLast` asks whether anything reads the name LATER, which is the wrong
+// question when the other read is EARLIER and its value is still in flight.
+//
+// `f(x, g(x))` evaluates `x` for f, then calls g. The operand is on the stack
+// with nothing holding a count for it, so calling g's occurrence the last use
+// hands g a value f is about to read — and a callee that may steal from a
+// consumed argument then blanks a field under f's feet. That is #9879, where
+// `a.zip(a.flip(1))` on a struct with two array fields segfaulted on every
+// compiled backend while the interpreter was correct.
+//
+// Cheapest sound test: any earlier mention inside an enclosing call withdraws
+// the death. It declines some occurrences that are harmless — `f(x.len(), g(x))`
+// materialises an i32, not a reference — which costs an optimisation, never
+// correctness.
+func heldByEnclosingCall(body ast.Node, c *ast.Call, name string) bool {
+	found := false
+	ast.Walk(body, func(n ast.Node) bool {
+		if found {
+			return false
+		}
+		p, isCall := n.(*ast.Call)
+		if !isCall || p == c || !callContains(p, c) {
+			return true
+		}
+		ast.Walk(p, func(m ast.Node) bool {
+			if found {
+				return false
+			}
+			if mc, isC := m.(*ast.Call); isC && mc == c {
+				return false
+			}
+			if id, isID := m.(*ast.Ident); isID && id.Name == name {
+				found = true
+			}
+			return true
+		})
+		return !found
+	})
+	return found
+}
+
+// callContains reports whether target is somewhere inside p, p itself aside.
+func callContains(p *ast.Call, target *ast.Call) bool {
+	if p == target {
+		return false
+	}
+	found := false
+	ast.Walk(p, func(n ast.Node) bool {
+		if found {
+			return false
+		}
+		if c, ok := n.(*ast.Call); ok && c == target {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
 }
 
 // arrayArgPosition reports whether `aid` is an argument of `c` at a parameter
