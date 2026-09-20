@@ -117,6 +117,10 @@ pub function str_bytes(): i32 { return 0 - 36; }
 pub function arr_sum(): i32 { return 0 - 37; }
 pub function arr_product(): i32 { return 0 - 38; }
 pub function arr_join(): i32 { return 0 - 39; }
+// `xs[lo:hi]` on an array of scalars: a fresh array holding a copy of the
+// window, bounds-checked by the runtime. An array whose elements own something
+// is not admitted, since the runtime copies the words without a retain.
+pub function arr_slice(): i32 { return 0 - 40; }
 
 function failed(why: string): Analysis {
     return Analysis { ok: false, why: why, dependencies: [], flow: ssalive.Flow { ok: false, why: why, live_in: [], live_out: [] } };
@@ -713,6 +717,20 @@ function slice_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     return "";
 }
 
+// A copy of a window of an array of scalars, the same type as its source and
+// owned whole: no element of it is a reference, so the raw word copy the
+// runtime makes owes nothing to the source.
+function arr_slice_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 3) { return "slice arity"; }
+    var src: typeinfo.Type = f.values[ins.args[0]];
+    if (!semtypes.equal(src, result)) { return "slice container type"; }
+    if let typeinfo.TypeArray(a) = src {
+        if (reference(a.elem)) { return "slice container type"; }
+    } else { return "slice container type"; }
+    if (!is_i32(f.values[ins.args[1]]) || !is_i32(f.values[ins.args[2]])) { return "slice bound type"; }
+    return "";
+}
+
 // One byte of a string, handed back as a u8 — the type the checker gives the
 // expression, so a binding or an operator over it needs no reconciliation. The
 // receiver is read the way a length's is, and the result owns nothing and
@@ -731,7 +749,7 @@ function str_index_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string
 // bytes, and the cell and map vocabularies.
 function is_builtin_op(kind: i32): boolean {
     return kind == length() || kind == append() || kind == with() || kind == slice() || kind == str_index()
-        || kind == str_bytes() || is_arr_helper_op(kind) || is_cell_op(kind) || is_map_op(kind);
+        || kind == str_bytes() || kind == arr_slice() || is_arr_helper_op(kind) || is_cell_op(kind) || is_map_op(kind);
 }
 
 pub function is_arr_helper_op(kind: i32): boolean {
@@ -783,6 +801,7 @@ function builtin_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.kind_tag == arr_sum() || ins.kind_tag == arr_product()) { return arr_reduce_error(ins, f, result); }
     if (ins.kind_tag == length()) { return length_error(ins, f, result); }
     if (ins.kind_tag == slice()) { return slice_error(ins, f, result); }
+    if (ins.kind_tag == arr_slice()) { return arr_slice_error(ins, f, result); }
     if (ins.kind_tag == str_index()) { return str_index_error(ins, f, result); }
     if (ins.kind_tag == str_bytes()) { return str_bytes_error(ins, f, result); }
     if (ins.kind_tag == with()) { return with_error(ins, f, result); }
