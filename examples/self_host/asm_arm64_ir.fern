@@ -4129,7 +4129,9 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
     while (fi < mod.funcs.len()) {
         if (cache.len() == 0) {
             s = emit_function_via_ir(mod.funcs[fi], s, sg, vsigs);
-        } else {
+        } else if (!cache[fi].superseded) {
+            // A template the substitution superseded has no body: its
+            // instances are on the cache tail.
             s = emit_function_via_ir_pre(cache[fi], mod.funcs[fi], s, vsigs);
         }
         fi = fi + 1;

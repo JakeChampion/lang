@@ -2314,6 +2314,11 @@ function main(): i32 {
 			// refuses a value block over an Option of an array): the no-I/O
 			// framing takes the substituted bodies like every other framing.
 			{"typed-only", "function picked(k: i32): i32 { var rows: i32[] = [k, k]; var some: i32[] = (match (Some(rows)) { Some(r) => r, None => [] }); return some.len(); }\nfunction main(): i32 { return picked(4) - 2; }\n", "", false},
+			// A std/array combinator over a wide element under the method
+			// spelling (#9838): the erased `__arrm_map__i64` clone is a
+			// superseded template with no body here, so its wasm verdict
+			// cannot decline the route.
+			{"i64-map-method", "import \"std/array\";\nfunction dbl(x: i64): i64 { return x * (2 as i64); }\nfunction twice(own xs: i64[]): i64[] { return xs.map(dbl); }\nfunction main(): i32 { return twice([1 as i64, 2 as i64]).len() - 2; }\n", "", true},
 		} {
 			srcPath := filepath.Join(dir, "comp_"+c.name+".fern")
 			if err := os.WriteFile(srcPath, []byte(c.src), 0o644); err != nil {

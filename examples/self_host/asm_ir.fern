@@ -8894,6 +8894,9 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all
     if (check_claims) { ircore.check_fip_claims(mod.funcs, lo, hh, cache, s.struct_decls, sg, false); }
     var fi: i32 = lo;
     while (fi < hh) {
+        // A template the substitution superseded has no body: its instances
+        // are on the cache tail (emit_named_bodies).
+        if (cache.len() > 0 && cache[fi].superseded) { fi = fi + 1; continue; }
         // Per-module: mark the definition `.globl` so a sibling module's
         // `call __fn_<label>` (an unresolved extern in that module) links
         // against it. The label is computed exactly as emit_function_via_ir
