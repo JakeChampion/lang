@@ -73321,7 +73321,7 @@ struct DesugarRet { body: ast.Stmt[], counter: i32 }
 struct RetSig { tag: string, fn_ret: string, fn_ptys: string }
 
 function ret_sig_of(tag: string, fn_ret: string, fn_ptys: string): RetSig {
-    if (!parser.is_coarse_fn_tag(tag)) { return RetSig { tag: "", fn_ret: "", fn_ptys: "" }; }
+    if (!parser.is_coarse_fn_tag(tag) || fn_ret.len() == 0) { return RetSig { tag: "", fn_ret: "", fn_ptys: "" }; }
     return RetSig { tag: tag, fn_ret: fn_ret, fn_ptys: fn_ptys };
 }
 
@@ -75913,9 +75913,10 @@ function hoist_value_iife(lam: ast.ExprLambda, fd: parser.FuncDecl, funcs: parse
     // instead, one per arm. The lifted `__lam_N` / `$cloN` bodies drained onto
     // the worklist do NOT get this (#5281), which is why it is applied here
     // rather than at the drain.
-    var dlr: DesugarRet = desugar_lambda_returns(lam.body, 0, ret_sig_of(lam.ret_type, lam.ret_fn_ret, lam.ret_fn_param_types));
     // e_lambda_origin gives a synthesised IIFE an empty sidecar pair, so for an
-    // if/match-expression arm the contract has to come from the arm itself.
+    // if/match-expression arm the contract has to come from the arm itself,
+    // and the `$lamret$N` slot the desugar binds each arm's lambda to is
+    // declared with that contract, the way a source function's is with its own.
     var fnret: string = lam.ret_fn_ret;
     var fnptys: string = lam.ret_fn_param_types;
     if (fnret.len() == 0) {
@@ -75923,6 +75924,7 @@ function hoist_value_iife(lam: ast.ExprLambda, fd: parser.FuncDecl, funcs: parse
         fnret = armret;
         fnptys = armptys;
     }
+    var dlr: DesugarRet = desugar_lambda_returns(lam.body, 0, ret_sig_of("fn", fnret, fnptys));
     var nf: parser.FuncDecl = parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: "fn", body: dlr.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: fnret, ret_fn_param_types: fnptys , is_package: false };
     var ncall: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: nm, line: 0, col: 0, ty: "" }, args: args, line: 0, col: 0, type_argc: 0, ty: "" };
     return InlineCloRes { expr: ncall, funcs: funcs.append(nf), counter: counter + 1 };

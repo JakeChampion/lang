@@ -691,6 +691,48 @@ function main(): i32 {
     }
     return t % 97;
 }`},
+	// A value block whose arms are capturing lambdas is hoisted to a
+	// `$iife` declaration tagged `fn`, each arm's lambda bound to a
+	// `$lamret$N` slot the lift then fills with a closure constructor. The
+	// checker types that constructor as nothing, so the slot and the
+	// declaration's result were both unresolved. Both are typed off the
+	// hoisted body's contract: what the closure hands out is its body's
+	// promise minus the environment. The chosen closure is called every
+	// round and its box reclaimed.
+	{name: "value-block-of-capturing-lambdas", atLeast: 3, noLeak: true, src: `
+function main(): i32 {
+    var base: i32 = 5;
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 60) {
+        var k: i32 = i;
+        var f: (i32) => i32 = (if (i % 2 == 0) { ((x: i32) => x + base) } else { ((x: i32) => x * k) });
+        var g: (i32) => i32 = (match (i % 3) { 0 => ((x: i32) => x - base), 1 => ((x: i32) => k), _ => ((x: i32) => x + 1) });
+        t = t + f(2) % 11 + g(3) % 7;
+        i = i + 1;
+    }
+    return t % 101;
+}`},
+	// A record literal's type is the struct it names. It was read off the
+	// checker, which leaves a literal untyped when a field holds a value
+	// block over a template call, and the literal was refused whole even
+	// though every field is produced at its declared type. Here the literal
+	// is a template argument too, so the destination binding types the
+	// parameter and the field's block picks between two template calls.
+	{name: "record-literal-is-the-struct-it-names", atLeast: 2, noLeak: true, src: `
+struct Xyz { n: i32, valid: boolean, tag: string }
+function pick[T](c: boolean, a: T, b: T): T { return if (c) { a } else { b }; }
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 40) {
+        var v: Xyz = pick(i % 2 == 0, (Xyz { n: i, valid: (if (i % 3 == 0) { pick(true, false, true) } else { true }), tag: "a" + "b" }), (Xyz { n: 1, valid: false, tag: "c" }));
+        var w: Xyz = Xyz { ...v, n: (if (v.valid) { pick(false, 1, 2) } else { 3 }) };
+        t = t + w.n + (if (w.valid) { 10 } else { 0 }) + w.tag.len();
+        i = i + 1;
+    }
+    return t % 97;
+}`},
 	{name: "map-delete-and-clear", atLeast: 4, noLeak: true, src: `
 function survivors(n: i32): i32 {
     var m: Map[i32, i32] = map_new(8);

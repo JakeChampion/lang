@@ -552,11 +552,13 @@ Unsupported constructs refuse the whole function with a reason.
   of the frame's own, released as any Option is; the runtime copies the
   column's entry into it without a retain, so over a counted column the
   lowering retains the payload on a hit, and the box owns one unit of it as
-  any Option this frame drops does. The rest
-  of the map surface — `op_map_delete`, `op_map_keys` / `op_map_values` and the
-  `op_map_iter` cluster — is not ADMITTED here. Those ops exist and every
-  backend lowers them; what this boundary lacks is a contract stating what each
-  one owns, which is the work of reaching them.
+  any Option this frame drops does. `without`
+  takes the receiver's unit and answers the map and a flag; `cleared` is a
+  fresh empty map; `keys` and `values` answer fresh arrays snapshotted from the
+  columns, which is also how `for (k, v) in m` walks a map: the key column is
+  what the loop indexes and the value column's element beside each key is the
+  second binding (`docs/rc-log/2026-09-20-a-map-is-walked-through-its-two-columns.md`).
+  The `op_map_iter` cluster itself is not admitted here.
 
   A map names no element in its construction, so the DESTINATION is the only
   place its shape is written: `map_new(2)` at an annotated binding or a
