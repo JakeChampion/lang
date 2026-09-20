@@ -131,7 +131,7 @@ func chmodAtLstatMode(t *testing.T, dir, name string) uint32 {
 	if err := syscall.Lstat(filepath.Join(dir, name), &st); err != nil {
 		t.Fatalf("lstat %s: %v", name, err)
 	}
-	return st.Mode & 0o7777
+	return uint32(st.Mode) & 0o7777
 }
 
 // chmodAtSeed builds the tree chmodAtSource operates on and returns the mode
