@@ -105,7 +105,7 @@ function main(): i32 {
 	// A fresh builtin result handed to a RETAINING callee: the struct field outlives
 	// the call, so nothing may release it. Value-exact under same-size-class
 	// pressure, so a wrongly freed buffer is recycled with different bytes.
-	{"str-fresh-builtin-stored-still-live", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
+	{"str-fresh-builtin-stored-still-live", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 struct Hold { v: string }
 function stash(s: string): Hold { return Hold { v: s }; }
 function round(pre: string): i32 {
@@ -114,8 +114,8 @@ function round(pre: string): i32 {
     var p2: string = w("YYYYYYYY");
     var p3: string = w("XXXXXXXX");
     if (p1.len() + p2.len() + p3.len() < 0) { return 0; }
-    if (h.v.index_of("XXXX") >= 0) { return 0 - 1; }
-    if (!h.v.starts_with("ABCDEFGH")) { return 0 - 2; }
+    if (has_sub(h.v, "XXXX")) { return 0 - 1; }
+    if (!has_prefix(h.v, "ABCDEFGH")) { return 0 - 2; }
     return h.v.len();
 }
 function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
@@ -126,7 +126,7 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
 	// observable fault, exactly as the same distinction was contract-only in the
 	// binding credit. It stays excluded because the runtime body says view, not
 	// because a test caught it.
-	{"str-trim-view-not-fresh-alloc", `function w(pre: string): string { return "  " + pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789  "; }
+	{"str-trim-view-not-fresh-alloc", strProbeHelpers + `function w(pre: string): string { return "  " + pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789  "; }
 function round(pre: string): i32 {
     var b: string = w(pre);
     var n: i32 = b.trim().len();
@@ -134,8 +134,8 @@ function round(pre: string): i32 {
     var p2: string = w("YYYYYYYY");
     var p3: string = w("XXXXXXXX");
     if (p1.len() + p2.len() + p3.len() < 0) { return 0; }
-    if (b.index_of("XXXX") >= 0) { return 0 - 1; }
-    if (!b.starts_with("  abcdefgh-a-wide")) { return 0 - 2; }
+    if (has_sub(b, "XXXX")) { return 0 - 1; }
+    if (!has_prefix(b, "  abcdefgh-a-wide")) { return 0 - 2; }
     return n;
 }
 function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},

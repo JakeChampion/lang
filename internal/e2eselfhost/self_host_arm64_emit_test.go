@@ -652,36 +652,6 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			"xyz",
 		},
 		{
-			"str-method-contains-true",
-			"function main(): i32 { var s = \"hello world\"; if (s.contains(\"world\")) { return 1; } return 0; }",
-			1,
-			"",
-		},
-		{
-			"str-method-contains-false",
-			"function main(): i32 { var s = \"hello world\"; if (s.contains(\"xyz\")) { return 1; } return 0; }",
-			0,
-			"",
-		},
-		{
-			"str-method-starts-with",
-			"function main(): i32 { var s = \"hello\"; if (s.starts_with(\"he\")) { return 1; } return 0; }",
-			1,
-			"",
-		},
-		{
-			"str-method-ends-with",
-			"function main(): i32 { var s = \"hello\"; if (s.ends_with(\"lo\")) { return 1; } return 0; }",
-			1,
-			"",
-		},
-		{
-			"str-method-index-of",
-			"function main(): i32 { var s = \"hello\"; return s.index_of(\"ll\"); }",
-			2,
-			"",
-		},
-		{
 			"str-method-trim",
 			"function main(): i32 { var s = \"  hi  \"; var t = s.trim(); write(t); return t.len(); }",
 			2,

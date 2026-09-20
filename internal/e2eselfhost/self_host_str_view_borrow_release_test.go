@@ -51,7 +51,7 @@ import (
 const viewBorrowPrelude = `import "std/i32";
 import "std/i64";
 import "std/string";
-function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
+` + strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function own2(s: string): string { return s + ""; }
 `
 
@@ -110,13 +110,13 @@ var strViewBorrowReleaseCases = []struct {
     var p2: string = w("YYYYYYYY");
     var p3: string = w("ZZZZZZZZ");
     if (p1.len() + p2.len() + p3.len() < 0) { return 0; }
-    if (!base.starts_with("abcdefgh-a-wide")) { return 0 - 1; }
-    if (base.index_of("XXXX") >= 0) { return 0 - 2; }
+    if (!has_prefix(base, "abcdefgh-a-wide")) { return 0 - 1; }
+    if (has_sub(base, "XXXX")) { return 0 - 2; }
     if (n != 102 || fl != 102) { return 0 - 3; }
     if (eq) { return 0 - 4; }
     if (!lt) { return 0 - 5; }
-    if (!cat.starts_with("efgh-a-wide")) { return 0 - 6; }
-    if (!cat.ends_with("-tail")) { return 0 - 7; }
+    if (!has_prefix(cat, "efgh-a-wide")) { return 0 - 6; }
+    if (!has_suffix(cat, "-tail")) { return 0 - 7; }
     if (ch != 101) { return 0 - 8; }
     if (sub != "fgh-") { return 0 - 9; }
     return n;
