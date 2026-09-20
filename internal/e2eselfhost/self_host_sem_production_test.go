@@ -458,6 +458,37 @@ function main(): i32 { return str_keys(0) + str_values(0) + i32_keys(0); }
 	// empty one without reading the receiver at all. The AST lowering never
 	// releases the delete's tuple, and through it loses the map it holds, so
 	// the leak legs read the produced bodies freeing strictly more.
+	// A record holding a capturing closure, built in one function and dropped
+	// in another that never names the function type itself. The drop helper
+	// for the record is emitted by every function that mentions it, and the
+	// environment chain it walks came from each frame's OWN type list, taken
+	// before the schema walk reached the field: the dropping frame emitted an
+	// empty chain, the building frame a full one, and merge_helpers refused
+	// the two under one symbol -- at emit time, after the module had produced
+	// whole, so the compile FAILED rather than falling back (#9804). The rows
+	// now close over the schema table, so the chain is a property of the type.
+	{name: "closure-field-built-and-dropped-apart", atLeast: 4, noLeak: true, src: `
+struct Holder { f: (i32) => i32 }
+
+function make(n: i32): Holder {
+    var xs: i32[] = [n, n + 1, n + 2];
+    return Holder { f: (x: i32): i32 => { return x + xs[0] + xs[2]; } };
+}
+
+function apply(h: Holder): i32 {
+    return h.f(1);
+}
+
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) {
+        var h: Holder = make(i);
+        t = t + apply(h) % 3;
+        i = i + 1;
+    }
+    return t % 7;
+}`},
 	{name: "map-delete-and-clear", atLeast: 4, noLeak: true, src: `
 function survivors(n: i32): i32 {
     var m: Map[i32, i32] = map_new(8);

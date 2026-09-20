@@ -446,8 +446,9 @@ Unsupported constructs refuse the whole function with a reason.
   contract table, which is what lets a returned closure be released by the
   frame it was handed to. The pairing is the TYPE's rather than the frame's,
   which it has to be: a drop helper is emitted by every function that mentions
-  the record, and two copies that disagree are a refusal (#9804 names the one
-  case where the pairing is still reached frame-first). A wide
+  the record, and two copies that disagree are a refusal; the rows close over
+  the schema table (`env_rows_closed`), so a frame reaching the type only
+  through a field lists the same environments as the frame that built it. A wide
   capture is refused at the physical layer for the reason a wide TUPLE
   element is — the env box stores each slot through `op_arr_make` at width
   32, the one array construction here that is not written at its element's

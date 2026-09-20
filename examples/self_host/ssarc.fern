@@ -518,15 +518,9 @@ function has_children(t: typeinfo.Type, f: ssasem.Func): boolean {
 // table on its own is the producing function's own values in the producing
 // function's own order, which varies with both.
 //
-// What that delivers, exactly: two frames that NAME the function type list the
-// same environments for it, in the same order. A frame that holds the type
-// only indirectly — as a field of a record it never names — gets no row and an
-// empty chain, because `env_rows` runs over the frame's own type list before
-// the schema walk recurses into fields (#9804). The result is a refusal from
-// `merge_helpers` rather than a helper that frees too little: a producing
-// frame always names the type, so the two copies differ and the disagreement
-// is caught. Stated because the stronger claim — a property of the type, full
-// stop — is the one worth having and is not yet the one in force.
+// `semsource.env_rows_closed` closes the rows over the schema table, so a
+// frame that holds the type only indirectly — as a field of a record it never
+// names — lists the same environments as the frame that built the closure.
 function env_records(f: ssasem.Func, fn_ty: typeinfo.Type): semrecords.Record[] {
     var out: semrecords.Record[] = [];
     for rec in f.records {

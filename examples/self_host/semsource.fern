@@ -3156,6 +3156,47 @@ function env_rows(named: typeinfo.Type[], contracts: ssasem.Contract[]): ssasem.
     return out;
 }
 
+// The rows of every function type the schema table reaches, with the table
+// that results. A function type reachable only through a record or enum field
+// -- or nested in an array, tuple, Map or Cell one of them holds -- gets its
+// rows too, and each row's environment is a record whose captures the walk
+// then reaches, so the two close together. The chain a helper walks is a
+// property of the type and of the module, not of how the frame emitting the
+// helper happens to reach the type: a frame that constructs the closure and
+// one that only drops the record holding it emit the same helper (#9804).
+function env_rows_closed(named: typeinfo.Type[], s: State): (ssasem.EnvRow[], Schemas) {
+    var rows: ssasem.EnvRow[] = [];
+    var table: Schemas = schemas(named, s);
+    while (table.ok) {
+        var reach: typeinfo.Type[] = [];
+        for t in named_by_schemas(table, 0, 0, named) { reach = func_types_in(t, reach); }
+        var grown: boolean = false;
+        for row in env_rows(reach, s.contracts) {
+            if (has_env_row(rows, row.fn_ty, row.env_ty)) { continue; }
+            rows = rows.append(row);
+            named = named.append(row.env_ty);
+            grown = true;
+        }
+        if (!grown) { break; }
+        table = schemas(named, s);
+    }
+    return (rows, table);
+}
+
+// The function types a type carries, itself included, through the containers
+// a release walks into.
+function func_types_in(t: typeinfo.Type, out: typeinfo.Type[]): typeinfo.Type[] {
+    if (ssasem.is_func(t)) { return out.append(t); }
+    if let typeinfo.TypeArray(a) = t { return func_types_in(a.elem, out); }
+    if let typeinfo.TypeTuple(tup) = t {
+        for e in tup.elements { out = func_types_in(e, out); }
+        return out;
+    }
+    if (semtypes.is_cell(t)) { return func_types_in(semtypes.cell_elem(t), out); }
+    if let typeinfo.TypeMap(m) = t { return func_types_in(m.value, func_types_in(m.key, out)); }
+    return out;
+}
+
 function has_env_row(rows: ssasem.EnvRow[], fn_ty: typeinfo.Type, env_ty: typeinfo.Type): boolean {
     for row in rows {
         if (semtypes.equal(row.fn_ty, fn_ty) && semtypes.equal(row.env_ty, env_ty)) { return true; }
@@ -3193,9 +3234,7 @@ function complete(fd: parser.FuncDecl, s: State, name: string): Produced {
     }
     var named: typeinfo.Type[] = f.values.append(s.result);
     for t in contract_types(s.calls) { named = named.append(t); }
-    var rows: ssasem.EnvRow[] = env_rows(named, s.contracts);
-    for row in rows { named = named.append(row.env_ty); }
-    var table: Schemas = schemas(named, s);
+    var (rows, table) = env_rows_closed(named, s);
     if (!table.ok) { return refuse(table.why); }
     var graph: ssa.SFunc = ssa.SFunc { ...f.graph, name: name, nparams: params.len() };
     f = ssasem.Func { ...f, graph: graph, params: params, result: s.result, records: table.records, enums: table.enums, calls: s.calls, envs: rows };

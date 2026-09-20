@@ -26,11 +26,9 @@ pub struct Func {
 // helper for a record holding a function value is emitted by every function
 // that mentions that record and the copies must agree byte for byte
 // (ssarc.merge_helpers refuses a disagreement). Read off the module's whole
-// contract table, so two frames that NAME the same function value list the
-// same environments for it. A frame that reaches the type only through a
-// record field gets no row, because these are built before the schema walk
-// recurses into fields — which costs a refusal rather than a short helper,
-// since a frame that constructs one always names it (#9804).
+// contract table, and closed over the frame's schema table, so a frame that
+// reaches the type only through a record field, or nested in a container a
+// field holds, lists the same environments as one that names it.
 pub struct EnvRow { fn_ty: typeinfo.Type, env_ty: typeinfo.Type }
 
 // A callee's declared signature as this function sees it: exact parameter
