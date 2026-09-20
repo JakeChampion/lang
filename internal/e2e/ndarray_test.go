@@ -150,20 +150,44 @@ function main(): i32 {
 	var total: i64 = a.fold_all(0 as i64, (acc: i64, x: i64): i64 => acc + x);
 	if (one.rank() != 0 || one.get([]) != total || total != ((n * n) as i64) * ((n * n - 1) as i64) / (2 as i64)) { return 135; }
 
+	// Broadcasting: a stretched axis is stride 0, so broadcast_to is
+	// metadata, and zip_with over a row, a column and a scalar allocates
+	// the one result buffer.
+	var b10: i64 = __heap_bump_bytes();
+	var rowv: ndarray.NdArray[i64] = a.select(0, 0);
+	var wide: ndarray.NdArray[i64] = rowv.broadcast_to([n, n]);
+	var d_bc: i64 = __heap_bump_bytes() - b10;
+	if (wide.rank() != 2 || wide.strides()[0] != 0 || wide.get([5, 3]) != a.get([0, 3])) { return 140; }
+	if (counters && d_bc >= small) { return 141; }
+	if (wide.is_row_major() || wide.to_flat()[n + 3] != a.get([0, 3])) { return 142; }
+	var sub: ndarray.NdArray[i64] = a.zip_with(rowv, (x: i64, y: i64): i64 => x - y);
+	if (sub.shape()[0] != n || sub.get([5, 3]) != (5 * n) as i64) { return 143; }
+	var colv: ndarray.NdArray[i64] = a.slice(1, 0, 1);
+	var diff: ndarray.NdArray[i64] = a.zip_with(colv, (x: i64, y: i64): i64 => x - y);
+	if (diff.shape()[1] != n || diff.get([5, 3]) != 3 as i64) { return 144; }
+	var scal: ndarray.NdArray[i64] = ndarray.from_flat([2 as i64], []);
+	var dbl: ndarray.NdArray[i64] = scal.zip_with(a, (x: i64, y: i64): i64 => x * y);
+	if (dbl.rank() != 2 || dbl.get([5, 3]) != (2 * (5 * n + 3)) as i64) { return 145; }
+	var op: ndarray.NdArray[i64] = colv.zip_with(rowv, (x: i64, y: i64): i64 => x * y);
+	if (op.shape()[0] != n || op.shape()[1] != n || op.get([5, 3]) != (5 * n * 3) as i64) { return 146; }
+	var bs: i32[] = ndarray.broadcast_shape([1, n], [n, 1]);
+	if (bs.len() != 2 || bs[0] != n || bs[1] != n) { return 147; }
+
 	// The keep-alive: every buffer measured above is still held here.
 	var live: i32 = t.rank() + rv.rank() + sl.rank() + se.rank() + pm.rank() + col.rank()
 		+ r2.rank() + r3.rank() + f1.len() + f2.len() + p.rank() + z.rank() + e.rank()
 		+ rvf.len() + both.rank() + m.rank() + zw.rank() + rows.rank() + ord.rank()
-		+ sc0.rank() + ordrv.rank() + scrv.rank() + one.rank();
-	if (live != 3 * n * n + 29) { return 110; }
+		+ sc0.rank() + ordrv.rank() + scrv.rank() + one.rank() + rowv.rank() + wide.rank()
+		+ sub.rank() + colv.rank() + diff.rank() + scal.rank() + dbl.rank() + op.rank();
+	if (live != 3 * n * n + 42) { return 110; }
 	return 0;
 }
 `
 
 // A shape that does not account for its storage, two shapes that do not
-// match under zip_with, and an axis that is not one of the handle's are
-// each a derived-shape error, and docs/ARRAY-ALGEBRA.md §4 makes that an
-// abort rather than a truncation.
+// broadcast, a broadcast that would drop an axis, and an axis that is not
+// one of the handle's are each a derived-shape error, and
+// docs/ARRAY-ALGEBRA.md §4 makes that an abort rather than a truncation.
 var ndarrayAbortSrcs = map[string]string{
 	"a shape that does not fit its storage": `import "std/ndarray";
 function main(): i32 {
@@ -171,11 +195,24 @@ function main(): i32 {
 	return a.rank();
 }
 `,
-	"zip_with over two shapes": `import "std/ndarray";
+	"zip_with over two shapes of one rank that do not broadcast": `import "std/ndarray";
 function main(): i32 {
 	var a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5, 6], [2, 3]);
 	var b: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5, 6], [3, 2]);
 	return a.zip_with(b, (x: i32, y: i32): i32 => x + y).rank();
+}
+`,
+	"zip_with over a row of the wrong extent": `import "std/ndarray";
+function main(): i32 {
+	var a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5, 6], [2, 3]);
+	var b: ndarray.NdArray[i32] = ndarray.from_flat([1, 2], [2]);
+	return a.zip_with(b, (x: i32, y: i32): i32 => x + y).rank();
+}
+`,
+	"broadcast_to a shape of lower rank": `import "std/ndarray";
+function main(): i32 {
+	var a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5, 6], [2, 3]);
+	return a.broadcast_to([6]).rank();
 }
 `,
 	"reduce_axis over an axis the handle lacks": `import "std/ndarray";
@@ -189,7 +226,7 @@ function main(): i32 {
 // 1x = construction, 2x = transpose, 3x = the other metadata operations,
 // 4x = chains, 5x/6x = reshape (metadata / copy), 7x/8x = to_flat (no copy /
 // copy), 90-92 = packed, 93-96 = a reversed handle materialized, 10x = rank
-// 0 and empty, 12x = elementwise, 13x = along an axis.
+// 0 and empty, 12x = elementwise, 13x = along an axis, 14x = broadcasting.
 func TestX86_64NdarrayStructuralOpsAreMetadata(t *testing.T) {
 	if _, code := compileAndRunX86_64FreeOn(t, ndarraySrc); code != 0 {
 		t.Errorf("ndarray on x86-64: got %d, want 0", code)
