@@ -8275,11 +8275,12 @@ func callArgDeaths(fn *ast.FuncDecl, info *checker.Info, obs map[string][]fieldO
 			if arrayArgPosition(info, c, aid) {
 				continue
 			}
+			// No heldByEnclosingCall gate here, unlike the textual shape
+			// above: returnsBeforeReading already requires the whole
+			// STATEMENT to name it once, and an enclosing call is in that
+			// statement, so #9879's shape cannot reach this line. Relaxing
+			// that count reopens it.
 			if !returnsBeforeReading(stmtIdx, c, aid.Name) {
-				continue
-			}
-			// An enclosing call may already hold the value (#9879).
-			if heldByEnclosingCall(body, c, aid.Name) {
 				continue
 			}
 			markOnce(c, aid.Name)
@@ -8291,7 +8292,7 @@ func callArgDeaths(fn *ast.FuncDecl, info *checker.Info, obs map[string][]fieldO
 }
 
 // heldByEnclosingCall reports whether a call that strictly contains `c` also
-// names `name` outside `c`. Both occurrence-order shapes above read the text:
+// names `name` outside `c`. The last-occurrence shape reads the text:
 // `isLast` asks whether anything reads the name LATER, which is the wrong
 // question when the other read is EARLIER and its value is still in flight.
 //
