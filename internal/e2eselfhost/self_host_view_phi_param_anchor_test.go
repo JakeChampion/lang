@@ -97,10 +97,3 @@ func producedFunctionEntryBlock(t *testing.T, asm, label string) string {
 	}
 	return rest[:next]
 }
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
