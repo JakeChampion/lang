@@ -691,6 +691,28 @@ function main(): i32 {
     }
     return t % 97;
 }`},
+	// A value block whose arms are capturing lambdas is hoisted to a
+	// `$iife` declaration tagged `fn`, each arm's lambda bound to a
+	// `$lamret$N` slot the lift then fills with a closure constructor. The
+	// checker types that constructor as nothing, so the slot and the
+	// declaration's result were both unresolved. Both are typed off the
+	// hoisted body's contract: what the closure hands out is its body's
+	// promise minus the environment. The chosen closure is called every
+	// round and its box reclaimed.
+	{name: "value-block-of-capturing-lambdas", atLeast: 3, noLeak: true, src: `
+function main(): i32 {
+    var base: i32 = 5;
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 60) {
+        var k: i32 = i;
+        var f: (i32) => i32 = (if (i % 2 == 0) { ((x: i32) => x + base) } else { ((x: i32) => x * k) });
+        var g: (i32) => i32 = (match (i % 3) { 0 => ((x: i32) => x - base), 1 => ((x: i32) => k), _ => ((x: i32) => x + 1) });
+        t = t + f(2) % 11 + g(3) % 7;
+        i = i + 1;
+    }
+    return t % 101;
+}`},
 	{name: "map-delete-and-clear", atLeast: 4, noLeak: true, src: `
 function survivors(n: i32): i32 {
     var m: Map[i32, i32] = map_new(8);

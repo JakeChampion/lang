@@ -2144,6 +2144,7 @@ function declare(st: ast.Stmt, v: ast.StmtVar, s: State): State {
     if (destructures(v)) { return declare_tuple(st, v, s); }
     var after: checker.Scope = checker.bind_stmt(st, s.scope);
     var ty: typeinfo.Type = bound_type(s, v.name, after);
+    if (!semtypes.concrete(ty, false)) { ty = closure_slot_type(v.init, s.contracts); }
     if (!semtypes.concrete(ty, false)) { return fail(s, "unresolved type of binding " + v.name + ": " + type_detail(ty)); }
     var init: Value = expr(v.init, s, ty);
     s = init.s;
@@ -2918,7 +2919,57 @@ function inferred_result(fd: parser.FuncDecl, scope: checker.Scope, b: ssasem.Bi
     var (returned, at) = checker.first_returned(fd.body, scope);
     if (checker.bare_return(returned)) { return t_void(); }
     if (calls_synthesised(returned)) { return called_synthesised_result(returned, contracts); }
+    if let ast.ExprIdent(id) = returned {
+        var slot: typeinfo.Type = closure_slot_type(slot_init(fd.body, id.name), contracts);
+        if (semtypes.concrete(slot, false)) { return slot; }
+    }
     return resolved(checker.expr_type(returned, at), generic_decl(fd, scope), scope, b);
+}
+
+// The type of a slot the lambda lift filled with a closure constructor:
+// `var $lamret$0 = __mkclo$<body>(caps)` names the hoisted body, whose
+// contract says what the function value hands out. The checker types the
+// constructor as nothing, so a slot with no annotation of its own is typed
+// here off the body's contract, and is unchecked until that contract lands.
+function closure_slot_type(init: ast.Expr, contracts: ssasem.Contract[]): typeinfo.Type {
+    if let ast.ExprCall(c) = init {
+        if let ast.ExprIdent(id) = c.callee {
+            var body: string = parser.mkclo_body(id.name);
+            if (body.len() == 0) { return typeinfo.unchecked(); }
+            var at: i32 = ssasem.find_contract(contracts, body);
+            if (at < 0) { return typeinfo.unchecked(); }
+            var contract: ssasem.Contract = contracts[at];
+            if (!ssasem.closure_env(contract) || ssasem.contract_variables(contract).len() > 0) { return typeinfo.unchecked(); }
+            return ssasem.closure_type(contract);
+        }
+    }
+    return typeinfo.unchecked();
+}
+
+// The initializer of the binding `name` declares in `body`, at any depth, or
+// an unknown expression when no statement declares it.
+function slot_init(body: ast.Stmt[], name: string): ast.Expr {
+    for st in body {
+        if let ast.StmtVar(v) = st { if (v.name == name) { return v.init; } }
+        if let ast.StmtIf(f) = st {
+            var then_init: ast.Expr = slot_init(f.then_body, name);
+            if (!is_unknown_expr(then_init)) { return then_init; }
+            var else_init: ast.Expr = slot_init(f.else_body, name);
+            if (!is_unknown_expr(else_init)) { return else_init; }
+        }
+        if let ast.StmtMatch(m) = st {
+            for arm in m.arms {
+                var arm_init: ast.Expr = slot_init(arm.body, name);
+                if (!is_unknown_expr(arm_init)) { return arm_init; }
+            }
+        }
+    }
+    return parser.e_unknown("no such slot");
+}
+
+function is_unknown_expr(e: ast.Expr): boolean {
+    if let ast.ExprUnknown(_) = e { return true; }
+    return false;
 }
 
 function calls_synthesised(e: ast.Expr): boolean {
