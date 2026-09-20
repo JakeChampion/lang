@@ -144,7 +144,15 @@ constant those ops alone read is an immediate operand and is never
 materialised (`ssa.imm_operands`: any i32 on x86-64, 0 to 4,095 on arm64
 for add, sub and the compares; a constant on the left swaps or flips the
 same way, and an op whose operands are both constants keeps them in
-registers). Division,
+registers). A phi's result shares a register with the operand that
+arrives from before it when that operand dies at the phi, and with a
+loop-carried operand whenever no use of the phi is reachable from the
+operand's definition without passing the header (`ssa.phi_mates`,
+`ssa.mate_interferes`), so `sum = sum + i` computes into `sum`'s register
+and the back edge moves nothing; a phi reads its operand on the edge,
+at the predecessor's terminator, not inside the header. Empty blocks
+holding only a branch are skipped by every edge into them and dropped
+(`ssa.thread_forwarding`). Division,
 the shifts and the table shared with the stack machine still go through
 x0/x1 (`%rax`/`%rcx`), as does every call result. The phis of one edge are
 parallel moves between homes (`ssa_parallel_moves`): one instruction per

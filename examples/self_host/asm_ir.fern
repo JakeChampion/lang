@@ -5213,8 +5213,10 @@ function ssa_store(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): as
 // result: the value's register home, or %rax for a value in a frame slot,
 // which ssa_store then spills. ssa_src is where an operand is read from: its
 // register home, or `scratch` once ssa_load has filled it. An instruction's
-// result never shares a register with its operands: the allocator frees an
-// operand's register only after the instruction that last reads it.
+// result shares a register with an operand only when it is a phi or one of
+// the two-operand integer ops, whose operand is read before the result is
+// written; the allocator frees any other operand's register only after the
+// instruction that last reads it.
 function ssa_dst(reg_of: i32[], v: i32): string {
     if (reg_of[v] >= 0) { return ssa_reg(reg_of[v]); }
     return "%r11";
@@ -6148,7 +6150,7 @@ function ssa_load_params(f: ssa.SFunc, reg_of: i32[], s: asmcore.EmitState): asm
 // block behind its label. prune_dead first takes out the zeros the lift gives
 // every declared local and the loop phis nothing reads.
 function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, r: irlower.LowerResult, s: asmcore.EmitState): asmcore.EmitState {
-    var f: ssa.SFunc = ssa.prune_dead(ssa.prune_trivial_phis(lifted));
+    var f: ssa.SFunc = ssa.thread_forwarding(ssa.prune_dead(ssa.prune_trivial_phis(lifted)));
     var imm: ssa.Imms = ssa.imm_operands(f, 0i64 - 2147483648i64, 2147483647i64, ssa_imm_right(), ssa_imm_left());
     var reg_of: i32[] = ssa.regalloc_linear(f, ssa_nregs(), ssa_nsaved(), 0, true, imm.is_imm);
     var lp: string = ".Lssa_" + asmcore.sanitize_label(label_name) + "_";
