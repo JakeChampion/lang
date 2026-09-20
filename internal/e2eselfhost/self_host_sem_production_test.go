@@ -2040,4 +2040,28 @@ function main(): i32 {
     return m.get_or(3, 0) * 10 + m.len();
 }
 `},
+	// A function value whose call yields nothing: the callback of a for_each.
+	// Its result is the one word every void body hands back, so the type is
+	// admitted and the call stands in statement position like any void call.
+	// The value reaches the call every way a function value can: a parameter,
+	// a local, a record field, a tuple element, a lambda and a bare name (the
+	// lift's trampoline for a void target calls it as a statement).
+	{name: "void-callback", atLeast: 7, src: `
+function each(xs: string[], f: (string) => void): void {
+    for x in xs { f(x); }
+}
+function show(x: string): void { print(x); }
+struct Visitor { hit: (string) => void }
+function main(): i32 {
+    each(["a", "b"], show);
+    each(["c"], (x: string): void => { print(x + "!"); });
+    var v: Visitor = Visitor { hit: show };
+    v.hit("d");
+    var g: (string) => void = show;
+    g("e");
+    var pair: ((string) => void, i32) = (show, 1);
+    pair.0("f");
+    return pair.1;
+}
+`},
 }

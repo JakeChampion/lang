@@ -1433,12 +1433,13 @@ function instruction_error(ins: ssa.SInst, f: Func): string {
 
 // A function type is one word of code address, and the call through one
 // carries the signature it dispatches by (`ssarc.signature_tag`), so a slot
-// may be any width. A function type inside another has no address to take,
-// and a void result no value to hold.
+// may be any width. A function type inside another has no address to take.
+// A void result is a word like any other: every backend hands one back from
+// a void body, so the call stands in statement position like any void call.
 function func_shape_error(fn: typeinfo.TypeFunc): string {
     if (!fn.params_known) { return "function type without a signature"; }
     for p in fn.param_types { if (!signature_slot(p)) { return "function signature slot"; } }
-    if (is_void(fn.ret_type) || !signature_slot(fn.ret_type)) { return "function signature slot"; }
+    if (!is_void(fn.ret_type) && !signature_slot(fn.ret_type)) { return "function signature slot"; }
     return "";
 }
 

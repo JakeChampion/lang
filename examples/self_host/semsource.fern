@@ -1433,7 +1433,7 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
         if (fat >= 0 && ssasem.is_func(fsig.field_types[fat])) {
             var fv: Value = define(s, ssasem.record_get(), [recv.id], fat, fa.field, fsig.field_types[fat]);
             if (!fv.s.ok) { return fv; }
-            return indirect_call(c, fv.id, fv.s);
+            return indirect_call(c, fv.id, fv.s, statement);
         }
     }
     // A tuple ELEMENT of function type is the same shape one container over:
@@ -1443,7 +1443,7 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
         if (tat >= 0 && ssasem.is_func(tup.elements[tat])) {
             var tv: Value = define(s, ssasem.tuple_get(), [recv.id], tat, "", tup.elements[tat]);
             if (!tv.s.ok) { return tv; }
-            return indirect_call(c, tv.id, tv.s);
+            return indirect_call(c, tv.id, tv.s, statement);
         }
     }
     // A builtin's receiver names no declaration this boundary can hold a
@@ -1580,11 +1580,11 @@ function keeps(s: State, callee: string): boolean {
 // function's own, the way a direct call's is, and the box itself is lent: it
 // is the environment the body reads its captures out of. No body is in hand
 // to ask whether it keeps a lent view, so every view is handed as a copy.
-function indirect_call(c: ast.ExprCall, callee: i32, s: State): Value {
+function indirect_call(c: ast.ExprCall, callee: i32, s: State, statement: boolean): Value {
     var params: typeinfo.Type[] = ssasem.func_params(s.values[callee]);
     var result: typeinfo.Type = ssasem.func_result(s.values[callee]);
     if (c.type_argc > 0 || c.args.len() != params.len()) { return refused(s, "call arity"); }
-    if (is_void(result)) { return refused(s, "unsupported void call"); }
+    if (is_void(result) && !statement) { return refused(s, "unsupported void call"); }
     var ids: i32[] = [callee];
     var i: i32 = 0;
     while (i < c.args.len()) {
@@ -1600,8 +1600,8 @@ function indirect_call(c: ast.ExprCall, callee: i32, s: State): Value {
 
 // A name bound in this body holds a VALUE, not a declaration: a function value
 // is called through the address it holds, and nothing else is a callee.
-function bound_call(c: ast.ExprCall, bound: i32, s: State): Value {
-    if (ssasem.is_func(s.values[bound])) { return indirect_call(c, bound, s); }
+function bound_call(c: ast.ExprCall, bound: i32, s: State, statement: boolean): Value {
+    if (ssasem.is_func(s.values[bound])) { return indirect_call(c, bound, s, statement); }
     return refused(s, "unsupported call target");
 }
 
@@ -1851,7 +1851,7 @@ function call(e: ast.Expr, c: ast.ExprCall, s: State, statement: boolean, expect
     var name: string = "";
     if let ast.ExprIdent(id) = c.callee { name = id.name; }
     var bound: i32 = lookup(s, name);
-    if (bound >= 0) { return bound_call(c, bound, s); }
+    if (bound >= 0) { return bound_call(c, bound, s, statement); }
     if (name == "") {
         // A callee that is neither a bare name nor a field is still callable
         // when it EVALUATES to a function value -- an element read out of an
@@ -1861,7 +1861,7 @@ function call(e: ast.Expr, c: ast.ExprCall, s: State, statement: boolean, expect
         if (ssasem.is_func(cty)) {
             var cv: Value = expr(c.callee, s, typeinfo.unchecked());
             if (!cv.s.ok) { return cv; }
-            return indirect_call(c, cv.id, cv.s);
+            return indirect_call(c, cv.id, cv.s, statement);
         }
         return refused(s, "unsupported call target: callee is neither a name nor a field");
     }
