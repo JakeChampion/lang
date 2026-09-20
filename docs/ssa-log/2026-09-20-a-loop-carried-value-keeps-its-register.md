@@ -39,7 +39,11 @@ which is what lets the header's phi take it over: `movq $0, %rsi` is
 wherever an arm or an exit carried only dead values; every edge into such
 a block now goes to its target when that target has no phis (a phi's
 operands are per predecessor, so an edge into a phi block stays), and a
-block nothing reaches afterwards is dropped. The header's branch lands on
+block nothing reaches afterwards is dropped, along with the slot every phi
+of its successors held for it (a labelled `continue` out of an inner loop
+that never exits leaves the outer header a predecessor nothing reaches; the
+allocator once took that slot's operand, which nothing defined, for a
+loop-carried value and indexed a block at -1). The header's branch lands on
 the body directly and the body falls through from the header.
 
 `int_loop`, x86-64: `cmpq $3000000, %rdi; jge exit; addq %rdi, %rsi;

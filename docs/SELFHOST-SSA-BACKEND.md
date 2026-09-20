@@ -151,8 +151,8 @@ operand's definition without passing the header (`ssa.phi_mates`,
 `ssa.mate_interferes`), so `sum = sum + i` computes into `sum`'s register
 and the back edge moves nothing; a phi reads its operand on the edge,
 at the predecessor's terminator, not inside the header. Empty blocks
-holding only a branch are skipped by every edge into them and dropped
-(`ssa.thread_forwarding`). Division,
+holding only a branch are skipped by every edge into them and dropped, and
+a phi loses its slot for a dropped predecessor (`ssa.thread_forwarding`). Division,
 the shifts and the table shared with the stack machine still go through
 x0/x1 (`%rax`/`%rcx`), as does every call result. The phis of one edge are
 parallel moves between homes (`ssa_parallel_moves`): one instruction per

@@ -1353,10 +1353,11 @@ function shares_operand_home(op: string): boolean {
 }
 
 // Mates pairs each phi with its operands for register sharing: `hint[r]` for
-// a phi result r is the operand that arrives from before the phi, `hint[a]`
-// for an operand a defined at or after its phi is the phi, and `carried[a]`
-// marks that second kind, whose interference with the phi is a question of
-// paths rather than positions.
+// a phi result r is the operand that arrives from before the phi (a
+// parameter, which nothing defines, counts as one), `hint[a]` for an operand
+// a defined at or after its phi is the phi, and `carried[a]` marks that
+// second kind, whose interference with the phi is a question of paths rather
+// than positions.
 struct Mates { hint: i32[], carried: boolean[] }
 
 function phi_mates(f: SFunc, def_pos: i32[]): Mates {
@@ -1370,7 +1371,7 @@ function phi_mates(f: SFunc, def_pos: i32[]): Mates {
             if (ins.kind_tag == 8 && ins.result >= 0 && ins.result < hint.len()) {
                 for a in ins.args {
                     if (a < 0 || a >= hint.len()) { continue; }
-                    if (def_pos[a] >= 0 && def_pos[a] < pos) {
+                    if (def_pos[a] < pos) {
                         if (hint[ins.result] < 0) { hint = hint.with(ins.result, a); }
                     } else if (hint[a] < 0) {
                         hint = hint.with(a, ins.result);
@@ -1398,15 +1399,22 @@ function block_positions(f: SFunc): i32[] {
     return out;
 }
 
+// successor_positions lists the positions of bi's successors; an edge to an
+// id no block carries contributes -1.
 function successor_positions(f: SFunc, at: i32[], bi: i32): i32[] {
     var t: STerm = f.blocks[bi].term;
     var out: i32[] = [];
-    if (t.kind_tag == 2) { out = out.append(at[t.target]); }
+    if (t.kind_tag == 2) { out = out.append(position_of(at, t.target)); }
     if (t.kind_tag == 3) {
-        out = out.append(at[t.t]);
-        if (t.f != t.t) { out = out.append(at[t.f]); }
+        out = out.append(position_of(at, t.t));
+        if (t.f != t.t) { out = out.append(position_of(at, t.f)); }
     }
     return out;
+}
+
+function position_of(at: i32[], id: i32): i32 {
+    if (id < 0 || id >= at.len()) { return 0 - 1; }
+    return at[id];
 }
 
 function reads_value(ins: SInst, v: i32): boolean {
@@ -1675,7 +1683,7 @@ pub function thread_forwarding(f: SFunc): SFunc {
     var live: boolean[] = [];
     var i: i32 = 0;
     while (i < g.blocks.len()) { live = live.append(false); i = i + 1; }
-    var work: i32[] = [at[g.entry]];
+    var work: i32[] = [position_of(at, g.entry)];
     while (work.len() > 0) {
         var b: i32 = work[work.len() - 1];
         work = drop_last_i(work);
@@ -1716,8 +1724,9 @@ function has_phi(b: SBlock): boolean {
 }
 
 // refreshed_preds recomputes the predecessor list of every block without
-// phis from the edges as they now are; a block with phis keeps its list,
-// whose order the phis' operands follow.
+// phis from the edges as they now are. A block with phis keeps its list,
+// whose order the phis' operands follow, less the entries no edge backs any
+// more: a dropped block, or a folded branch that no longer comes this way.
 function refreshed_preds(f: SFunc): SBlock[] {
     var at: i32[] = block_positions(f);
     var preds: i32[][] = [];
@@ -1734,10 +1743,36 @@ function refreshed_preds(f: SFunc): SBlock[] {
     i = 0;
     while (i < f.blocks.len()) {
         var b: SBlock = f.blocks[i];
-        if (has_phi(b)) { out = out.append(b); } else { out = out.append(SBlock { ...b, preds: preds[i] }); }
+        if (has_phi(b)) { out = out.append(trim_phi_edges(b, preds[i])); } else { out = out.append(SBlock { ...b, preds: preds[i] }); }
         i = i + 1;
     }
     return out;
+}
+
+// trim_phi_edges drops the predecessor slots of b, and each phi's operand
+// for them, whose predecessor is not among `edges`, the blocks that branch
+// to b now.
+function trim_phi_edges(b: SBlock, edges: i32[]): SBlock {
+    var keep: boolean[] = [];
+    var npreds: i32[] = [];
+    for p in b.preds {
+        var k: boolean = has_pred(edges, p);
+        keep = keep.append(k);
+        if (k) { npreds = npreds.append(p); }
+    }
+    if (npreds.len() == b.preds.len()) { return b; }
+    var ninsts: SInst[] = [];
+    for ins in b.insts {
+        if (ins.kind_tag != 8) { ninsts = ninsts.append(ins); continue; }
+        var nargs: i32[] = [];
+        var i: i32 = 0;
+        while (i < ins.args.len()) {
+            if (i >= keep.len() || keep[i]) { nargs = nargs.append(ins.args[i]); }
+            i = i + 1;
+        }
+        ninsts = ninsts.append(SInst { ...ins, args: nargs });
+    }
+    return SBlock { id: b.id, insts: ninsts, term: b.term, preds: npreds };
 }
 
 function has_pred(ps: i32[], id: i32): boolean {
