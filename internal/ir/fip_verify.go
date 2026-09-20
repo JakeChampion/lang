@@ -131,6 +131,16 @@ func verifyFipAllocs(fn *ast.FuncDecl, out *Func, cx arrayContext) error {
 				continue
 			}
 			what = "closure construction"
+		case OpCallDirect:
+			// E053 admits `map` on an `own` root by the method NAME, and
+			// R7 recognizes only std/array's (the verb table is derived
+			// from the program). A `map` the program declared for itself
+			// is neither verified nor known to be allocation-free, so it
+			// is a site, or the claim would pass over it vacuously.
+			if v, named := arrayVerbOf(op.Str); !named || v != "map" || cx.verbs[op.Str] != "" {
+				continue
+			}
+			what = "`map` that is not std/array's, so nothing verifies it"
 		default:
 			continue
 		}
