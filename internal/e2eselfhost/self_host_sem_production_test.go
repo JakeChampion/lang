@@ -565,6 +565,25 @@ function main(): i32 {
     var r: u8 = apply(((x: i32): u8 => 5), 1);
     return (r as i32) + 2;
 }`},
+	// A capturing closure held in a TUPLE and called through the element.
+	// `ssasem.nests_func` refused a function value as a tuple element and
+	// `semsource.method_call` had no arm for `p.0(1)`, so the whole function
+	// went to the AST lowering — which leaks the closure's box and its
+	// captures every round (16000 bytes at 200 rounds under the sanitizer).
+	// The release walk already reached a tuple's elements through
+	// `drop_tuple_fields`; produced, the shape is reclaimed whole.
+	{name: "closure-in-a-tuple", atLeast: 2, noLeak: true, src: `
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) {
+        var xs: i32[] = [i, i + 1, i + 2];
+        var p: ((i32) => i32, i32) = (((x: i32) => x + xs[0] + xs[2]), i);
+        t = t + (p.0)(1) % 3 + p.1 % 2;
+        i = i + 1;
+    }
+    return t % 7;
+}`},
 	{name: "map-delete-and-clear", atLeast: 4, noLeak: true, src: `
 function survivors(n: i32): i32 {
     var m: Map[i32, i32] = map_new(8);

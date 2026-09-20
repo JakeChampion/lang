@@ -1447,24 +1447,18 @@ function narrow_word(t: typeinfo.Type): boolean {
     return semtypes.concrete(t, false);
 }
 
-// Where a function value may NOT sit. An ARRAY element is no longer on that
-// list: `ssarc.drop_elements` walks each element through `drop_value`, which
-// dispatches a function type to `drop_captures`, so the release reaches the
-// box's captures the same way it reaches a struct field's since #9637 -- and
-// `ssasem.reference` already counts a function value, so the array knows it
-// has children to walk. Measured leak-clean at 200 and 400 rounds over an
-// array of capturing closures, allocs equal to frees on both legs.
-//
-// A tuple element, a Map key or value, and a Cell element are still refused,
-// for the reason the array once was: nothing has walked those slots yet. An
-// array of arrays of function values is refused too -- hence nests_func on the
-// element rather than holds_func -- because the inner array is a slot no
-// walk reaches.
+// Where a function value may NOT sit: nested in a Map's key or value, or in
+// an array of arrays, tuples or maps of them -- slots no release walk reaches
+// yet. An array element and a tuple element are admitted: `ssarc.drop_elements`
+// and `drop_tuple_fields` walk each through `drop_value`, which dispatches a
+// function type to `drop_captures`, and `ssasem.reference` counts a function
+// value, so the container knows it has children to walk. A Cell is not on the
+// list because the checker refuses a Cell of any composite type (E057), so
+// one never holds a function value.
 function nests_func(t: typeinfo.Type): boolean {
-    if (semtypes.is_cell(t)) { return holds_func(semtypes.cell_elem(t)); }
     if let typeinfo.TypeArray(a) = t { return nests_func(a.elem); }
     if let typeinfo.TypeTuple(tup) = t {
-        for e in tup.elements { if (holds_func(e)) { return true; } }
+        for e in tup.elements { if (nests_func(e)) { return true; } }
     }
     if let typeinfo.TypeMap(m) = t { return holds_func(m.key) || holds_func(m.value); }
     return false;
