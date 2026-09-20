@@ -115,8 +115,8 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 			[]string{"\n__fern_str_eq:", ".Lstreq_loop"},
 		},
 		{
-			// str_trim (s.trim()) — AST-only; a zero-copy slice helper, un-bundled
-			// from the str_search need. The IR path keeps its own str_trim emission.
+			// str_trim (s.trim()) — AST-only; a zero-copy slice helper under its
+			// own str_trim need. The IR path keeps its own str_trim emission.
 			"str_trim",
 			`function main(): i32 { return "  hi ".trim().len(); }`,
 			"__fn___fern_str_trim",
@@ -167,8 +167,8 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 			[]string{"\n__fern_i32_to_string:", ".Li2s_div"},
 		},
 		{
-			// str_to_upper — Tier-2 via the intrinsics (#2649), un-bundled from
-			// str_search. The old register-ABI hand-asm (__fern_str_to_upper: /
+			// str_to_upper — Tier-2 via the intrinsics (#2649), under its own
+			// str_case need. The old register-ABI hand-asm (__fern_str_to_upper: /
 			// .Lupper_loop) is gone.
 			"str_to_upper",
 			`function main(): i32 { return "aB".to_ascii_upper()[0] as i32; }`,

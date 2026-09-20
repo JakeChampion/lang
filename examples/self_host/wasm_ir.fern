@@ -4320,13 +4320,13 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     } else if (o.kind_tag == 112) {  // tcp_pollable
         // tcp_pollable(conn) -> a wasi:io/poll pollable for the socket.
         parts = parts.append("    call $__fern_tcp_pollable\n");
-    } else if (o.kind_tag == 194) {  // tcp_send
+    } else if (o.kind_tag == 114) {  // tcp_send
         // tcp_send(conn, s) -> bytes written, or -1. Both args on the stack.
         parts = parts.append("    call $__fern_tcp_send\n");
-    } else if (o.kind_tag == 195) {  // tcp_recv
+    } else if (o.kind_tag == 115) {  // tcp_recv
         // tcp_recv(conn, max) -> a fresh u8[] array block (empty on error/EOF).
         parts = parts.append("    call $__fern_tcp_recv\n");
-    } else if (o.kind_tag == 196) {  // tcp_close
+    } else if (o.kind_tag == 116) {  // tcp_close
         // tcp_close(conn) -> 0. Drops the streams then the socket.
         parts = parts.append("    call $__fern_tcp_close\n");
     } else if (o.kind_tag == 187) {  // poll

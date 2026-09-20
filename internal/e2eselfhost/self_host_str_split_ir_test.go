@@ -46,15 +46,14 @@ var strSplitIRCases = []struct {
 	{"replace", `function main(): i32 { return "a-b-c".replace("-", "_").len(); }`},
 	{"replace-param", `function rp(s: string): i32 { return s.replace("o", "0").len(); } function main(): i32 { return rp("foo"); }`},
 	// Free-function spellings of the transform builtins (str_to_upper(s) /
-	// str_to_lower / str_trim / str_repeat(s, n) / str_replace(s, a, b) /
-	// str_contains(s, sub)). The self-host source uses these, so they must be
+	// str_to_lower / str_trim / str_repeat(s, n) / str_replace(s, a, b)). The
+	// self-host source uses these, so they must be
 	// IR-eligible too — the free-call companions to to-upper / repeat / … above.
 	{"free-to-upper", `function main(): i32 { return str_to_upper("ab").len(); }`},
 	{"free-to-lower", `function main(): i32 { return str_to_lower("AB")[0] as i32; }`},
 	{"free-trim", `function main(): i32 { return str_trim("  a  ").len(); }`},
 	{"free-repeat", `function main(): i32 { return str_repeat("ab", 3).len(); }`},
 	{"free-replace", `function main(): i32 { return str_replace("a-b", "-", "_").len(); }`},
-	{"free-contains", `function main(): i32 { if (str_contains("abc", "b")) { return 1; } return 0; }`},
 	// String lines (op_str_lines) -- likewise IR-eligible.
 	{"lines", `function main(): i32 { return "a\nb\nc".lines().len(); }`},
 	{"lines-forin", `function main(): i32 { var n = 0; for ln in "x\ny".lines() { n = n + 1; } return n; }`},

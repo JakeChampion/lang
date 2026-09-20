@@ -6783,7 +6783,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
         s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n");
         s = s.write("    call __fn___fern_tcp_connect\n    addq $16, %rsp\n    pushq %rax\n");
         s = s.need("tcp_connect");
-    } else if (o.kind_tag == 194) {  // tcp_send
+    } else if (o.kind_tag == 114) {  // tcp_send
         // [fd, str box] with the box on top; the stack ABI wants param[0]
         // (fd) lowest, so pop and re-push swapped.
         s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n");
@@ -6797,13 +6797,13 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
         s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n");
         s = s.write("    call __fn___fern_udp_send\n    addq $24, %rsp\n    pushq %rax\n");
         s = s.need("udp_send");
-    } else if (o.kind_tag == 195) {  // tcp_recv
+    } else if (o.kind_tag == 115) {  // tcp_recv
         // [fd, max] with max on top; the stack ABI wants param[0] (fd)
         // lowest, so pop and re-push swapped.
         s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n");
         s = s.write("    call __fn___fern_tcp_recv\n    addq $16, %rsp\n    pushq %rax\n");
         s = s.need("heap"); s = s.need("tcp_recv");
-    } else if (o.kind_tag == 196) {  // tcp_close
+    } else if (o.kind_tag == 116) {  // tcp_close
         // [fd] IS param[0] already, so the stack ABI needs no marshalling:
         // call, drop the arg slot, push the result. 0 / -errno.
         s = s.write("    call __fn___fern_tcp_close\n    addq $8, %rsp\n    pushq %rax\n");

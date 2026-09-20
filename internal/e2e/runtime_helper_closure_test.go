@@ -49,7 +49,7 @@ var allRuntimeNeedRoots = []string{
 	"print_int", "putchar", "random_bytes", "random_i32", "read_file",
 	"read_file_bytes", "read_int", "sleep_ms", "str_bytes", "str_case", "str_cmp",
 	"str_concat", "str_eq", "str_from_bytes", "str_lines", "str_print",
-	"str_read_line", "str_repeat", "str_replace", "str_reverse", "str_search",
+	"str_read_line", "str_repeat", "str_replace", "str_reverse",
 	"str_split", "str_to_i32", "str_trim", "strbuf",
 }
 

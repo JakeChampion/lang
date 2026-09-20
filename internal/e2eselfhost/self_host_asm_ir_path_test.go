@@ -1325,7 +1325,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"bytes-vals", `function main(): i32 { var b: i32[] = "AB".bytes(); return b[0] + b[1]; }`},
 		{"as-bytes-heap", `function main(): i32 { var b: i32[] = "ABCDEFGHIJ".as_bytes(); return b.len() + b[9]; }`},
 		// string.split(sep) → string[] (op_str_split). The AST path emits
-		// __fern_str_split inside emit_runtime (gated on the str_search need that
+		// __fern_str_split inside emit_runtime (gated on the str_split need that
 		// the split dispatch sets), and the IR path emits its own transcribed
 		// __fern_str_split — so the segment count / element lengths must match.
 		{"split-count", `function main(): i32 { var p = "a,b,c".split(","); return p.len(); }`},
@@ -1358,7 +1358,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"fstring-plain", `function main(): i32 { return f"plain".len(); }`},
 		{"fstring-esc-brace", `function main(): i32 { var s = f"a{{b"; return s[1] as i32; }`},
 		// ASCII case transforms → fresh string (op_str_to_upper / _to_lower). The
-		// AST path emits __fern_str_to_upper/_lower (str_search runtime); the IR
+		// AST path emits __fern_str_to_upper/_lower (a Fern runtime helper); the IR
 		// path emits its own emit_ir_str_case bodies — lengths/bytes must match.
 		{"to-upper-len", `function main(): i32 { var s = "Hello"; return s.to_ascii_upper().len(); }`},
 		{"to-upper-byte", `function main(): i32 { var s = "abc"; var u = s.to_ascii_upper(); return u[0]; }`},
@@ -1370,7 +1370,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"case-param", `function up(s: string): i32 { return s.to_ascii_upper()[0]; } function main(): i32 { return up("xyz"); }`},
 		{"case-on-literal", `function main(): i32 { return "Mixed".to_ascii_lower().len(); }`},
 		// String repeat → fresh string (op_str_repeat). AST path emits
-		// __fern_str_repeat (str_search runtime); IR path emits emit_ir_str_repeat.
+		// __fern_str_repeat (a Fern runtime helper); IR path emits emit_ir_str_repeat.
 		{"repeat-len", `function main(): i32 { return "ab".repeat(3).len(); }`},
 		{"repeat-byte", `function main(): i32 { var r = "xy".repeat(4); return r[0] + r[7]; }`},
 		{"repeat-one", `function main(): i32 { return "hello".repeat(1).len(); }`},
@@ -1379,7 +1379,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"repeat-param", `function rep(s: string, n: i32): i32 { return s.repeat(n).len(); } function main(): i32 { return rep("xyz", 4); }`},
 		{"repeat-concat", `function main(): i32 { var r = "a".repeat(3) + "b".repeat(2); return r.len(); }`},
 		// String trim → fresh string with leading/trailing whitespace removed
-		// (op_str_trim). AST path emits __fern_str_trim (str_search runtime); IR
+		// (op_str_trim). AST path emits __fern_str_trim (a Fern runtime helper); IR
 		// path emits emit_ir_str_trim (both a zero-copy view, same len/bytes).
 		{"trim-both", `function main(): i32 { return "  hi  ".trim().len(); }`},
 		{"trim-byte", `function main(): i32 { var t = "  hi".trim(); return t[0]; }`},
@@ -1410,8 +1410,8 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"replace-multichar", `function main(): i32 { return "axxbxxc".replace("xx", "-").len(); }`},
 		{"replace-param", `function rp(s: string): i32 { return s.replace("o", "0").len(); } function main(): i32 { return rp("foobar"); }`},
 		// Free-function spellings of the transform builtins (str_to_upper(s) /
-		// str_to_lower / str_trim / str_repeat(s, n) / str_replace(s, a, b) /
-		// str_contains(s, sub)) — the receiver is the first positional arg, the
+		// str_to_lower / str_trim / str_repeat(s, n) / str_replace(s, a, b)) —
+		// the receiver is the first positional arg, the
 		// rest are the method args. These route through the SAME ops as the
 		// `.<field>()` method forms (lower_str_method), so AST and IR must agree.
 		// The self-host compiler's own source uses these spellings, so lowering
@@ -1426,8 +1426,6 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"free-repeat-byte", `function main(): i32 { var t = str_repeat("xy", 4); return t[0] + t[7]; }`},
 		{"free-replace-len", `function main(): i32 { var t = str_replace("a-b-c", "-", "_"); return t.len(); }`},
 		{"free-replace-grow", `function main(): i32 { var t = str_replace("aaa", "a", "bb"); return t.len(); }`},
-		{"free-contains-true", `function main(): i32 { if (str_contains("hello world", "o w")) { return 7; } return 0; }`},
-		{"free-contains-false", `function main(): i32 { if (str_contains("hello", "xyz")) { return 7; } return 9; }`},
 		{"free-nested", `function main(): i32 { var t = str_trim(str_to_upper("  ab  ")); return t.len(); }`},
 		{"free-concat", `function main(): i32 { var t = str_to_upper("ab") + "Z"; return t.len(); }`},
 		// str_to_i32(s): parse a string box to an i32 (the inverse of
