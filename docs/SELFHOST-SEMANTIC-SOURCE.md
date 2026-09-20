@@ -534,9 +534,17 @@ Unsupported constructs refuse the whole function with a reason.
   on the register backends (`__fern_map_new` takes it from `__fern_arr_box`)
   and the string box header on wasm, so a retain is the ordinary
   `__fern_rc_inc`, and the free family releases one unit: a decrement while
-  the box is shared, and the columns and the block for the last. Every
-  ordinary use still moves: `m = m.insert(k, v)` leaves the receiver dead at
-  the insert.
+  the box is shared, and the columns and the block for the last. A consuming
+  mutation — `insert`, `without` — runs on a box the frame is the only holder
+  of: `ssarc.unshared_map` reads the count the receiver's unit is part of,
+  and copies the entries into a fresh box first when it is shared, so a
+  `snapshot = m` still reads what it held. The receiver's retain is never
+  held back the way an array append's is (`deferred_retain`): a map the frame
+  still reads counts as shared, and `var n = m.insert(k, v)` leaves `m` as it
+  was, which is what E055 promises. Native, the interpreter and the AST
+  lowering borrow the receiver and write a sole-held box in place instead
+  (#9834); the production row `a-map-the-frame-still-reads-is-not-written`
+  pins both answers.
 
   The vocabulary is `map_new(cap)`, `insert` (spelled `set` too, as the AST
   lowering admits both), `has`, `get_or`, `get` and `len`. An insert takes the receiver's

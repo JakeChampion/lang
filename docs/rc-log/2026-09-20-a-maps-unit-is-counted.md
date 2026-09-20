@@ -34,13 +34,46 @@ and read through three bindings, and a string-keyed, string-valued map
 chosen between two by a function, whose columns must be released exactly
 once.
 
+## A shared map is copied before it is written
+
+With a unit that can be shared, the fixture corpus's `cow_alias_safety`
+came back 81 for 129: `var snapshot = m; m = m.insert(1, 99)` wrote the
+box both bindings held. The AST lowering never meets this because its
+alias group refuses the shape; the semantic lowering's `insert` and
+`without` consumed their receiver's unit and wrote in place whatever the
+count said. `ssarc.unshared_map` now gates every consuming mutation on
+`__fern_rc_is_unique`: a sole-held box is written as before, and a shared
+one is copied first — `map_new` at the receiver's length and one insert
+per entry over plain snapshots of the two columns, each entry's units
+supplied as the typed insert takes them, since the register runtimes
+retain nothing on an insert. The snapshots are released shallow and the
+shared box loses this frame's unit, which cannot be its last.
+
+Two shapes were tried and put back. Holding the receiver's retain back the
+way `deferred_retain` does for an array append — so the gate reads the
+count without this frame's unit and writes a lent map in place — matches
+what native answers for `grown(m, 7)` through a lent parameter (43), but
+native's answer is the bug: E055 says every collection operation returns a
+new value, and native's rc pass borrows a map mutator's receiver, so
+`var n = m.insert(k, v)` changes `m` on the native compiler, the
+interpreter and the AST lowering alike (#9834). The semantic lowering keeps
+the retain: a map the frame still reads counts as shared and is copied,
+and `a-map-the-frame-still-reads-is-not-written` pins the contract's
+answer (85) beside the AST lowering's (63, `astAnswers`), so the row is
+retired with the fix. The other half of that 63 is the AST lowering's own:
+`without` on an aliased receiver writes the shared box in place where
+native copies (#9835).
+
 ## Census
 
 | binary | whole | agree | diverge |
 |---|---|---|---|
 | the signature leaf (#9831) | 501 / 509 | 500 | 0 |
-| this change | 509 / 509 | 500 | 0 |
+| a map's unit is counted | 509 / 509 | 500 | 0 |
+| a shared map is copied before it is written | 509 / 509 | 500 | 0 |
 
 Every program the corpus holds is produced whole, and the AST lowering
-refuses exactly the nine it refused before. The compiler's own sources
-produce whole (8638 of 8638).
+refuses exactly the nine it refused before. No corpus program reads a map
+it has mutated, so the copy-on-write gate changes no answer there; the
+production rows above are what pin it. The compiler's own sources
+produce whole (8640 of 8640).

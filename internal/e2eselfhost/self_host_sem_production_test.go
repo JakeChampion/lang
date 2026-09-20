@@ -50,7 +50,11 @@ func TestSelfHostSemanticProduction(t *testing.T) {
 			for _, target := range []string{"x86-64-linux", "x86-64-sanitize", "arm64-linux", "wasm32-wasi"} {
 				t.Run(target, func(t *testing.T) {
 					if prog.want != "" {
-						semRefusedByAST(t, fernBin, stdlibRoot, src, target)
+						if prog.astAnswers == "" {
+							semRefusedByAST(t, fernBin, stdlibRoot, src, target)
+						} else if base, _, _ := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, false, "", prog.stdin); base != prog.astAnswers {
+							t.Fatalf("the AST lowering answered %q, the case pins %q", base, prog.astAnswers)
+						}
 						got, report, leak := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, true, "", prog.stdin)
 						if got != prog.want {
 							t.Fatalf("FERN_SEM_IR answered %q, want %q\nreport: %s", got, prog.want, report)
@@ -263,6 +267,12 @@ var semProductionPrograms = []struct {
 	// against the native compiler; the AST leg is asserted to refuse it
 	// rather than run.
 	want string
+	// astAnswers, with want, is the answer the AST lowering gives INSTEAD:
+	// the program is one the native rc design gets wrong and the typed path
+	// gets right, so `want` is the language's answer, confirmed by hand
+	// against the contract the case names, and the AST answer is pinned so
+	// the row is retired the day that lowering is fixed.
+	astAnswers string
 	// noLeak asks for an ABSOLUTE leak pin on the produced run rather than
 	// only the relative one every entry gets: the sanitize leg must report
 	// nothing still held at exit. The relative pin says the produced bodies
@@ -1855,6 +1865,67 @@ function main(): i32 {
         n = n.insert("z", "w");
         var p: Map[string, string] = pick(r % 2 == 0, m, n);
         acc = acc + p.len() + m.len() + n.len() + p.get_or("x", "").len();
+        r = r + 1;
+    }
+    return acc % 101;
+}`},
+	// A consuming mutation of a SHARED map copies first. `snapshot = m` holds
+	// a unit of m's box, so `m.insert` in place would show through it; the
+	// frame takes a fresh box with the same entries when the count says the
+	// box is shared, and a string key and a counted value each get the unit
+	// the copy's entry owns.
+	{name: "a-shared-map-is-copied-before-it-is-written", atLeast: 1, noLeak: true, src: `
+import "core/map";
+function main(): i32 {
+    var acc: i32 = 0;
+    var r: i32 = 0;
+    while (r < 30) {
+        var m: Map[i32, i32] = map_new(8);
+        m = m.insert(1, 10);
+        var snapshot: Map[i32, i32] = m;
+        m = m.insert(1, 99);
+        m = m.insert(2, 20);
+        acc = acc + snapshot.len() * 100 + snapshot.get_or(1, -1) + m.get_or(1, -1) + m.get_or(2, -1) + m.len();
+        r = r + 1;
+    }
+    return acc % 127;
+}`},
+	// A map the frame still reads is not written through. Every collection
+	// operation returns a new value (E055), so `var n = m.insert(k, v)` leaves
+	// `m` as it was, a callee's insert through a lent parameter leaves the
+	// caller's map as it was, and `without` leaves its receiver whole for the
+	// bindings that still read it. The receiver's retain is what makes the
+	// copy-on-write gate see a second holder. The AST lowering — with the
+	// native compiler and the interpreter — borrows the receiver and writes
+	// the sole-held box in place, so the write shows through `m` (#9834), and
+	// its `without` writes an ALIASED receiver in place too (#9835).
+	{name: "a-map-the-frame-still-reads-is-not-written", atLeast: 2, noLeak: true, want: "85|", astAnswers: "63|", src: `
+import "core/map";
+function grown(m: Map[i32, i32], k: i32): Map[i32, i32] { return m.insert(k, k * 3); }
+function main(): i32 {
+    var m: Map[i32, i32] = map_new(8);
+    m = m.insert(1, 10);
+    var n: Map[i32, i32] = m.insert(2, 20);
+    var g: Map[i32, i32] = grown(m, 7);
+    var (rest, had) = n.without(2);
+    var snapshot: Map[i32, i32] = n;
+    var (rest2, had2) = n.without(1);
+    if (g.get_or(7, -1) != 21 || !had || !had2) { return 99; }
+    return m.len() + n.len() * 2 + g.len() * 4 + rest.len() * 8 + snapshot.len() * 16 + rest2.len() * 32;
+}`},
+	{name: "a-shared-string-map-is-copied-before-it-is-written", atLeast: 1, noLeak: true, src: `
+import "core/map";
+function main(): i32 {
+    var acc: i32 = 0;
+    var r: i32 = 0;
+    while (r < 30) {
+        var word: string = if (r % 2 == 0) { "even" } else { "odd" };
+        var m: Map[string, string] = map_new(4);
+        m = m.insert(word + "k", word + "v");
+        var snapshot: Map[string, string] = m;
+        m = m.insert(word + "k", "changed");
+        m = m.insert("x", word);
+        acc = acc + snapshot.len() + snapshot.get_or(word + "k", "").len() + m.get_or(word + "k", "").len() + m.len();
         r = r + 1;
     }
     return acc % 101;
