@@ -2928,10 +2928,6 @@ pub function (s: EmitState) mark_eprint(): EmitState {
     return s.need("eprint");
 }
 
-pub function (s: EmitState) mark_str_search(): EmitState {
-    return s.need("str_search");
-}
-
 pub function (s: EmitState) mark_args(): EmitState {
     return s.need("heap").need("args");
 }
@@ -3022,7 +3018,7 @@ pub function (s: EmitState) mark_str_case(): EmitState {
 // (#2649), via the raw-memory intrinsic floor (docs/RUNTIME-INTRINSICS.md). Alloc
 // len bytes, copy each byte case-flipped if it's an ASCII letter (a-z 97-122 →
 // upper by -32; A-Z 65-90 → lower by +32), box it. Tier-2; heap is the sole dep.
-// Nested ifs instead of `&&` to stay in the proven subset (cf. rt_src_str_search).
+// Nested ifs instead of `&&` to stay in the proven subset.
 // Both gated on the single str_case need (mark_str_case emits both bodies).
 pub function rt_src_str_to_upper(): string {
     return "function __fern_str_to_upper(s: string): string { var n: i32 = s.len(); var p: i32 = __raw_alloc(n); var i: i32 = 0; while (i < n) { var c: i32 = s[i]; if (c >= 97) { if (c <= 122) { c = c - 32; } } __raw_store8(p, i, c); i = i + 1; } return __raw_string(p, n); }";
@@ -3246,21 +3242,6 @@ pub function rt_src_arr_str_join(): string {
     return "function __fern_arr_str_join(xs: string[], sep: string): string { var n: i32 = xs.len(); if (n == 0) { return \"\"; } var ls: i32 = sep.len(); var total: i32 = ls * (n - 1); var i: i32 = 0; while (i < n) { total = total + xs[i].len(); i = i + 1; } var p: i32 = __raw_alloc(total); var off: i32 = 0; var j: i32 = 0; while (j < n) { if (j > 0) { __memcpy(__raw_addr(p, off), __raw_data(sep), ls); off = off + ls; } var e: string = xs[j]; var le: i32 = e.len(); __memcpy(__raw_addr(p, off), __raw_data(e), le); off = off + le; j = j + 1; } return __raw_string(p, total); }";
 }
 
-// rt_src_str_search backs the string-search predicates (#2649): all three are
-// gated by the single `str_search` need, so one source defines all three and
-// emit_*_runtime_fern_fn emits each. They allocate nothing and call no other
-// helper, but byte indexing is bounds-checked (#8454), so each body branches
-// to __fern_oob_abort — hence the `heap` edge runtime_need_deps declares for
-// this root.
-// __fern_str_starts_with(s, p) / _ends_with(s, p): 1 if s has p as a prefix /
-// suffix (empty p → 1), else 0. __fern_str_index_of(s, needle): first byte
-// offset where needle occurs (empty needle → 0), or -1. Arg order matches the
-// hand-written helpers (s=param0, p/needle=param1); both params read-only →
-// borrowed. Semantics validated against the asm bodies they replace.
-pub function rt_src_str_search(): string {
-    return "function __fern_str_starts_with(s: string, p: string): i32 { var lp: i32 = p.len(); if (lp > s.len()) { return 0; } var i: i32 = 0; while (i < lp) { if (s[i] != p[i]) { return 0; } i = i + 1; } return 1; } function __fern_str_ends_with(s: string, p: string): i32 { var ls: i32 = s.len(); var lp: i32 = p.len(); if (lp > ls) { return 0; } var off: i32 = ls - lp; var i: i32 = 0; while (i < lp) { if (s[off + i] != p[i]) { return 0; } i = i + 1; } return 1; } function __fern_str_index_of(s: string, needle: string): i32 { var ls: i32 = s.len(); var ln: i32 = needle.len(); if (ln == 0) { return 0; } if (ln > ls) { return 0 - 1; } var last: i32 = ls - ln; var i: i32 = 0; while (i <= last) { var j: i32 = 0; var ok: i32 = 1; while (j < ln) { if (s[i + j] != needle[j]) { ok = 0; j = ln; } else { j = j + 1; } } if (ok == 1) { return i; } i = i + 1; } return 0 - 1; }";
-}
-
 pub function rt_src_arr_i32_max(): string {
     return "function __fern_arr_i32_max(xs: i32[]): i32 { var m: i32 = xs[0]; var i: i32 = 1; while (i < xs.len()) { if (xs[i] > m) { m = xs[i]; } i = i + 1; } return m; }";
 }
@@ -3321,9 +3302,8 @@ pub function rt_src_str_lines(): string {
 // slice: a zero-copy view whose backing buffer the producer's exit sweep frees,
 // which was a deterministic wrong-answer UAF whenever the result crossed a
 // frame (#7393); the slice temp's 16/24-byte box is the cost of the idiom
-// until anonymous slice temps get a view-box reclaim. Style mirrors
-// rt_src_str_search — sentinel `go` flag driving the scan. Empty /
-// all-whitespace input → start==end → "".
+// until anonymous slice temps get a view-box reclaim. A sentinel `go` flag
+// drives the scan. Empty / all-whitespace input → start==end → "".
 pub function rt_src_str_trim(): string {
     return "function __fern_str_trim(s: string): string { var n: i32 = s.len(); var start: i32 = 0; var go: i32 = 1; while (go == 1) { if (start >= n) { go = 0; } else { var c: i32 = s[start]; if (c == 32 || c == 9 || c == 10 || c == 13 || c == 11 || c == 12) { start = start + 1; } else { go = 0; } } } var end: i32 = n; var go2: i32 = 1; while (go2 == 1) { if (end <= start) { go2 = 0; } else { var c2: i32 = s[end - 1]; if (c2 == 32 || c2 == 9 || c2 == 10 || c2 == 13 || c2 == 11 || c2 == 12) { end = end - 1; } else { go2 = 0; } } } return slice_unchecked(s, start, end) + \"\"; }";
 }
@@ -4493,10 +4473,6 @@ function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: Emi
         if (fa.field == "as_bytes") { return ty_array_i32(); }
         if (fa.field == "reverse") { return ty_string(); }
         if (fa.field == "first_byte" || fa.field == "last_byte") { return ty_i32(); }
-        if (fa.field == "contains") { return ty_bool(); }
-        if (fa.field == "starts_with") { return ty_bool(); }
-        if (fa.field == "ends_with") { return ty_bool(); }
-        if (fa.field == "index_of") { return ty_i32(); }
         if (fa.field == "trim") { return ty_string(); }
         if (fa.field == "to_ascii_upper") { return ty_string(); }
         if (fa.field == "to_ascii_lower") { return ty_string(); }
@@ -4610,7 +4586,6 @@ function builtin_i32_names(): string[] {
         "len",
         "read_int",
         "str_to_i32",
-        "str_index_of",
         // Raw-memory intrinsics (#2649 Tier-2 floor). Pointers are
         // machine words carried as i32; __raw_string is the one that
         // produces a typed string. The stores return i32 (the value
@@ -4800,9 +4775,6 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
     // — matches native (#4369). read_all_stdin stays a plain string.
     if (id.name == "read_line") { return ty_option(ty_string()); }
     if (util.index_of_str(builtin_string_names(), id.name) >= 0) { return ty_string(); }
-    if (id.name == "str_starts_with") { return ty_bool(); }
-    if (id.name == "str_ends_with") { return ty_bool(); }
-    if (id.name == "str_contains") { return ty_bool(); }
     if (id.name == "__raw_array") { return ty_array_i32(); }
     // Runtime-symbol spelling of the string comparison (#2649),
     // for helper sources whose strings are raw box pointers.
@@ -5323,12 +5295,6 @@ pub function runtime_need_deps(name: string): string[] {
         // when the need is seeded from all_runtime_need_roots instead.
         || name == "arr_i32_index_of_opt" || name == "arr_i32_min_max_opt"
         || name == "arrarr_free" || name == "strarrarr_free" || name == "optarrarr_free"
-        // str_search allocates nothing either. Its three bodies index bytes
-        // (`s[i]`), and a bounds-checked index branches to __fern_oob_abort
-        // (#8454) — which is emitted INSIDE the heap bundle, the same reason
-        // the array deep-free family is listed above. Without this edge the
-        // helper links with a dangling abort symbol.
-        || name == "str_search"
         || name == "poll") {
         // poll's __fern_poll allocates the transient pollfd[] via __fern_alloc.
         return heap;
@@ -6221,7 +6187,6 @@ function callgate_name_in(names: string[], name: string): boolean {
 // lower them, so this gate must admit them or valid self-host programs break.
 function emitter_call_names(): string[] {
     return [
-        "str_contains", "str_ends_with", "str_starts_with", "str_index_of",
         "str_repeat", "str_replace", "str_split", "str_trim",
         "str_to_i32", "str_to_lower", "str_to_upper",
         "i32_to_string", "int__int_to_string", "print_str"
@@ -6730,8 +6695,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         "__fn___fern_string_from_bytes", "__fn___fern_str_bytes",
         "__fn___fern_str_lines", "__fn___fern_str_split", "__fn___fern_str_repeat",
         "__fn___fern_str_replace", "__fn___fern_str_reverse", "__fn___fern_str_trim",
-        "__fn___fern_str_to_lower", "__fn___fern_str_to_upper", "__fn___fern_str_starts_with",
-        "__fn___fern_str_ends_with", "__fn___fern_str_index_of",
+        "__fn___fern_str_to_lower", "__fn___fern_str_to_upper",
         // The stdout/stderr leaves are Fern on BOTH register backends now (#2649),
         // so only the stack-ABI symbols exist; the register-ABI __fern_print_str /
         // __fern_print_int / __fern_eprint_str / __fern_putchar are gone.

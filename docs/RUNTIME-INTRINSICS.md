@@ -3,7 +3,7 @@
 This is the **implementation design** for the primitive floor sketched in
 `RUNTIME-IN-FERN.md` (§"The hard part: circularity and the primitive floor").
 The Tier-0/1 helpers — `i32_pow`, `i32_gcd`/`lcm`, the `arr_i32_*` reducers,
-`str_to_i32`, `str_cmp`, the `str_search` predicates, `str_eq`,
+`str_to_i32`, `str_cmp`, `str_eq`,
 `arr_str_join`, `str_trim`, `str_lines`, `str_bytes`
 — are now Fern runtime functions. (`str_chars` was one of them until #7231
 retired the op: `.chars()` is std/string's codepoint decoder, not a builtin.
