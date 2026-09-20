@@ -2145,18 +2145,18 @@ function signals(): i32 {
 function main(): i32 { return signals(); }
 `},
 	// The sockets, `sync` and the set-id builtins, which no other row reaches:
-	// a loopback listener, a connection, an accept, one send and its receive
-	// as a fresh u8[], the three closes, `sync` as a statement, and the
-	// set-id calls asking for root, which a host refuses or grants and the
-	// row counts either way.
+	// a loopback listener on an ephemeral port (a fixed one sits in TIME_WAIT
+	// for the leg that runs next), a connection, an accept, one send and its
+	// receive as a fresh u8[], the three closes, `sync` as a statement, and
+	// the set-id calls asking for root, which a host refuses or grants and
+	// the row counts either way.
 	{name: "os-floor-sockets-and-ids", atLeast: 2, nativeOnly: true, src: `
 function sockets(): i32 {
     var n: i32 = 0;
-    var port: i32 = 18479;
-    var listener: i32 = tcp_listen(port);
+    var listener: i32 = tcp_listen(0);
     if (listener >= 0) {
         var host_be: i32 = 127 | (1 << 24);
-        var c: i32 = tcp_connect(host_be, port);
+        var c: i32 = tcp_connect(host_be, tcp_local_port(listener));
         if (c >= 0) {
             var a: i32 = tcp_accept(listener);
             if (a >= 0) {

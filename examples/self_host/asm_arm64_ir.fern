@@ -2470,7 +2470,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
         s = s.need("tcp_connect");
         s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
         s = s.write("    bl __fn___fern_tcp_connect\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
-    } else if (o.kind_tag == 194) {  // tcp_send
+    } else if (o.kind_tag == 114) {  // tcp_send
         // [fd, str box] -> __fern_tcp_send(fd, s) -> bytes / -errno. No
         // allocation any more (the helper writes out of the string's own
         // buffer), so this needs the helper and not the heap runtime.
@@ -2487,7 +2487,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
         s = s.need("udp_send");
         s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
         s = s.write("    bl __fn___fern_udp_send\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
-    } else if (o.kind_tag == 195) {  // tcp_recv
+    } else if (o.kind_tag == 115) {  // tcp_recv
         // [fd, max] -> __fern_tcp_recv(fd, max) -> fresh u8[] box (#5714).
         // Allocates (calls __fern_alloc), so the heap runtime must be present.
         s = s.need("heap");
@@ -2495,7 +2495,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
         // max is on top but param[0] is fd, so swap before the call.
         s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
         s = s.write("    bl __fn___fern_tcp_recv\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
-    } else if (o.kind_tag == 196) {  // tcp_close
+    } else if (o.kind_tag == 116) {  // tcp_close
         // [fd] IS param[0] already, so the stack ABI needs no marshalling.
         // -> 0 / -errno. The need is marked (as x86-64 always did) because
         // the Fern helper is emitted need-gated, outside emit_rt_net.
