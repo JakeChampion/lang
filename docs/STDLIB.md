@@ -737,6 +737,11 @@ rule; `docs/ARRAY-ALGEBRA.md` §4 is why a wrong shape aborts.
 - `broadcast_shape(x, y)` — the shape two shapes broadcast to, aligned at
   their last axes (an extent of 1 stretches); `(a).broadcast_to(shape)` —
   metadata only, a stretched axis at stride 0
+- `(a).outer(b, f)` — `f` over every pair, shape `a.shape() ++ b.shape()`;
+  `(a).inner(b, init, mul, add)` — the last axis of `a` contracted against
+  the first of `b` (dot product, matrix product, matrix times vector), in
+  increasing index order; extents that differ abort. Both are recognized
+  by `fern -array-report`.
 - `(a).fold_all(init, f)` — every element in reading order
 - `(a).reduce_axis(axis, init, f)` — the fold along `axis` in increasing
   index order, one rank less; `(a).scan_axis(axis, init, f)` — the

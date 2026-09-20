@@ -173,21 +173,45 @@ function main(): i32 {
 	var bs: i32[] = ndarray.broadcast_shape([1, n], [n, 1]);
 	if (bs.len() != 2 || bs[0] != n || bs[1] != n) { return 147; }
 
+	// Products: outer is one result buffer over two broadcast views; inner
+	// contracts the last axis of the receiver against the first of the
+	// argument, in increasing index order along it, on a strided or
+	// reversed operand exactly as on a packed one.
+	var b11: i64 = __heap_bump_bytes();
+	var op2: ndarray.NdArray[i64] = rowv.outer(rowv, (x: i64, y: i64): i64 => x * y);
+	var d_op2: i64 = __heap_bump_bytes() - b11;
+	if (op2.rank() != 2 || op2.shape()[1] != n || !op2.is_packed() || op2.get([5, 3]) != 15 as i64) { return 150; }
+	if (counters && d_op2 < elem_bytes) { return 151; }
+	var dot: ndarray.NdArray[i64] = rowv.inner(rowv, 0 as i64, (x: i64, y: i64): i64 => x * y, (x: i64, y: i64): i64 => x + y);
+	if (dot.rank() != 0 || dot.get([]) != 85344 as i64) { return 152; }
+	var mv: ndarray.NdArray[i64] = a.inner(rowv, 0 as i64, (x: i64, y: i64): i64 => x * y, (x: i64, y: i64): i64 => x + y);
+	if (mv.rank() != 1 || mv.shape()[0] != n || mv.get([5]) != 730464 as i64) { return 153; }
+	var mmt: ndarray.NdArray[i64] = a.inner(t, 0 as i64, (x: i64, y: i64): i64 => x * y, (x: i64, y: i64): i64 => x + y);
+	if (mmt.rank() != 2 || mmt.shape()[0] != n || mmt.shape()[1] != n || mmt.get([1, 2]) != 996704 as i64 || mmt.get([1, 2]) != mmt.get([2, 1])) { return 154; }
+	var sl2: ndarray.NdArray[i64] = a.slice(0, 0, 1).slice(1, 0, 3);
+	var v3: ndarray.NdArray[i64] = rowv.slice(0, 0, 3);
+	var ord2: ndarray.NdArray[i64] = sl2.inner(v3, 0 as i64, (x: i64, y: i64): i64 => x + y, (acc: i64, q: i64): i64 => acc * (10 as i64) + q);
+	if (ord2.rank() != 1 || ord2.get([0]) != 24 as i64) { return 155; }
+	var ordr: ndarray.NdArray[i64] = sl2.inner(v3.reverse(0), 0 as i64, (x: i64, y: i64): i64 => x + y, (acc: i64, q: i64): i64 => acc * (10 as i64) + q);
+	if (ordr.get([0]) != 222 as i64) { return 156; }
+
 	// The keep-alive: every buffer measured above is still held here.
 	var live: i32 = t.rank() + rv.rank() + sl.rank() + se.rank() + pm.rank() + col.rank()
 		+ r2.rank() + r3.rank() + f1.len() + f2.len() + p.rank() + z.rank() + e.rank()
 		+ rvf.len() + both.rank() + m.rank() + zw.rank() + rows.rank() + ord.rank()
 		+ sc0.rank() + ordrv.rank() + scrv.rank() + one.rank() + rowv.rank() + wide.rank()
-		+ sub.rank() + colv.rank() + diff.rank() + scal.rank() + dbl.rank() + op.rank();
-	if (live != 3 * n * n + 42) { return 110; }
+		+ sub.rank() + colv.rank() + diff.rank() + scal.rank() + dbl.rank() + op.rank()
+		+ op2.rank() + dot.rank() + mv.rank() + mmt.rank() + ord2.rank() + ordr.rank();
+	if (live != 3 * n * n + 49) { return 110; }
 	return 0;
 }
 `
 
 // A shape that does not account for its storage, two shapes that do not
 // broadcast, a broadcast that would drop an axis, a negative extent, a
-// count that does not fit an i32, and an axis that is not one of the
-// handle's are each a derived-shape error, and
+// count that does not fit an i32, an axis that is not one of the handle's,
+// and a contraction whose two extents differ or whose operand has no axis
+// to contract are each a derived-shape error, and
 // docs/ARRAY-ALGEBRA.md §4 makes that an abort rather than a truncation.
 var ndarrayAbortSrcs = map[string]string{
 	"a shape that does not fit its storage": `import "std/ndarray";
@@ -244,6 +268,20 @@ function main(): i32 {
 	return ndarray.broadcast_shape([50000, 1], [1, 50000]).len();
 }
 `,
+	"inner over contracted extents that differ": `import "std/ndarray";
+function main(): i32 {
+	var a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5, 6], [2, 3]);
+	var v: ndarray.NdArray[i32] = ndarray.from_flat([1, 2], [2]);
+	return a.inner(v, 0, (x: i32, y: i32): i32 => x * y, (x: i32, y: i32): i32 => x + y).rank();
+}
+`,
+	"inner with a rank-0 operand": `import "std/ndarray";
+function main(): i32 {
+	var v: ndarray.NdArray[i32] = ndarray.from_flat([1, 2], [2]);
+	var s: ndarray.NdArray[i32] = ndarray.from_flat([3], []);
+	return v.inner(s, 0, (x: i32, y: i32): i32 => x * y, (x: i32, y: i32): i32 => x + y).rank();
+}
+`,
 	"reduce_axis over an axis the handle lacks": `import "std/ndarray";
 function main(): i32 {
 	var a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5, 6], [2, 3]);
@@ -255,7 +293,8 @@ function main(): i32 {
 // 1x = construction, 2x = transpose, 3x = the other metadata operations,
 // 4x = chains, 5x/6x = reshape (metadata / copy), 7x/8x = to_flat (no copy /
 // copy), 90-92 = packed, 93-96 = a reversed handle materialized, 10x = rank
-// 0 and empty, 12x = elementwise, 13x = along an axis, 14x = broadcasting.
+// 0 and empty, 12x = elementwise, 13x = along an axis, 14x = broadcasting,
+// 15x = products.
 func TestX86_64NdarrayStructuralOpsAreMetadata(t *testing.T) {
 	if _, code := compileAndRunX86_64FreeOn(t, ndarraySrc); code != 0 {
 		t.Errorf("ndarray on x86-64: got %d, want 0", code)
