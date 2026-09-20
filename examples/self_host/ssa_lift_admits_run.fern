@@ -1,0 +1,34 @@
+// examples/self_host/ssa_lift_admits_run.fern — the production lift's
+// admission census. It walks every registered IR op kind and prints the ones
+// ssa_lift.admits declines, with the stack effect ir.op_pops / ir.op_pushes
+// give the kind, then the registered and declined counts.
+//
+// The companion Go test (internal/e2eselfhost/self_host_ssa_lift_admits_test.go)
+// pins the report: a kind added to the registry reaches the register path
+// through the stack machine's arm for it unless its stack effect is unknown,
+// so a new line here is a kind whose pop count op_pops does not model.
+
+import "./ir";
+import "./ssa_lift";
+import "./util";
+
+function main(): i32 {
+    var id: i32 = 1;
+    var registered: i32 = 0;
+    var declined: i32 = 0;
+    var out: string = "";
+    while (id < 1024) {
+        var k: string = ir.kind_name(id);
+        if (k != "invalid") {
+            registered = registered + 1;
+            var o: ir.Op = ir.Op { decl: 0 - 1, kind_tag: id, i32_imm: 0, i64_imm: 0i64, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+            if (!ssa_lift.admits(o)) {
+                declined = declined + 1;
+                out = out + k + " pops=" + util.i32_to_string(ir.op_pops(o)) + " pushes=" + util.i32_to_string(ir.op_pushes(o)) + "\n";
+            }
+        }
+        id = id + 1;
+    }
+    write(out + "registered=" + util.i32_to_string(registered) + " declined=" + util.i32_to_string(declined) + "\n");
+    return 0;
+}

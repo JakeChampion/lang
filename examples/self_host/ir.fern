@@ -2900,6 +2900,7 @@ function pops0(t: i32): boolean {
     return t == 1 || t == 2 || t == 3 || t == 4 || t == 5 || t == 6      // const_*
         || t == 18                                                       // load_local
         || t == 79 || t == 80 || t == 315                                // ptr_width, heap_bump_bytes, heap_alloc_count
+        || t == 229                                                      // heap_mark
         || t == 117 || t == 119                                          // strbuf_reset, strbuf_take
         || t == 121                                                      // opt_none
         || t == 147                                                      // dyn_dispatch (args in locals)
@@ -2971,7 +2972,9 @@ function pops1_io(t: i32): boolean {
         || t == 286                                                      // proc_waitpid_nohang
         || t == 188 || t == 189 || t == 190 || t == 191 || t == 192      // timer_fd, wasm_*
         || t == 196 || t == 112 || t == 200 || t == 201 || t == 203     // tcp_close, tcp_pollable(112), tcp_listen/accept, open_file
-        || t == 320;                                                     // tcp_local_port
+        || t == 320                                                      // tcp_local_port
+        || t == 230                                                      // heap_release_to
+        || t == 316 || t == 317 || t == 318 || t == 319;                 // chroot, setuid, setgid, setgroups
 }
 
 function pops2_arith(t: i32): boolean {
