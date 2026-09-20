@@ -3117,13 +3117,21 @@ pub function (s: EmitState) mark_i32_lcm(): EmitState {
 // is never read, and a named local would only invite the reader to look for
 // where it is used.
 //
-// `a[start + i]` pays the ordinary per-access bounds check, which the raw
-// hand-asm load did not. That is deliberate and matches reverse / concat: the
-// helper reads through the same checked path user code does, and the indices
-// are provably in range, so the check is a predictable-branch cost rather than
-// a correctness one.
+// The elements move as one block rather than one at a time. An element loop
+// spelled `a[start + i]` reads through the checked path user code does, which
+// cost a bounds check and two sign extensions per element on top of the load
+// and the store: thirteen instructions to move eight bytes, and a quarter of
+// examples/bench's pvec_with, whose every write copies three trie nodes
+// (#9875). The four guards above establish the whole range before the copy
+// starts, so each element's own check only re-proved what they proved.
+//
+// `__memcpy` takes a byte count and `__raw_addr` a byte offset, both i32, so
+// a word array above 2^28 elements would overflow either one. The two loops
+// step in chunks of that many elements, which for every array anyone has is
+// one iteration and one compare. Advancing the pointers rather than indexing
+// from the base is what keeps each offset small.
 pub function rt_src_arr_slice(t: string): string {
-    return "function __fern_arr_slice(a: i32[], start: i32, end: i32): i32[] { var n: i32 = a.len(); var bad: i32 = 0; if (end < 0) { bad = 1; } if (end > n) { bad = 1; } if (start < 0) { bad = 1; } if (start > end) { bad = 1; } if (bad == 1) { bad = __syscall3(" + sysno(t, "exit") + ", 134, 0, 0); } var m: i32 = end - start; var p: i32 = __raw_arr_box(m); var i: i32 = 0; while (i < m) { __raw_store_ptr(p, i + 1, a[start + i]); i = i + 1; } return __raw_array(p); }";
+    return "function __fern_arr_slice(a: i32[], start: i32, end: i32): i32[] { var n: i32 = a.len(); var bad: i32 = 0; if (end < 0) { bad = 1; } if (end > n) { bad = 1; } if (start < 0) { bad = 1; } if (start > end) { bad = 1; } if (bad == 1) { bad = __syscall3(" + sysno(t, "exit") + ", 134, 0, 0); } var m: i32 = end - start; var p: i32 = __raw_arr_box(m); var dst: i32 = __raw_addr(p, 8); var src: i32 = __raw_addr(a, 8); var skip: i32 = start; while (skip > 0) { var cs: i32 = skip; if (cs > 134217728) { cs = 134217728; } src = __raw_addr(src, cs * 8); skip = skip - cs; } var left: i32 = m; while (left > 0) { var cc: i32 = left; if (cc > 134217728) { cc = 134217728; } __memcpy(dst, src, cc * 8); dst = __raw_addr(dst, cc * 8); src = __raw_addr(src, cc * 8); left = left - cc; } return __raw_array(p); }";
 }
 
 // rt_src_i32_pow is the Fern source for __fern_i32_pow(base, exp) = base^exp,
