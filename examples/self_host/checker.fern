@@ -3106,6 +3106,22 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
             if (!is_unknown(result)) {
               return result;
             }
+            // The arms disagree. Arms E031 reports carry no type, so the
+            // mismatch is not reported twice at the destination. Arms that
+            // merely differ in width have settled to the lambda's tag — the
+            // binding's annotation stamped on the block — all but the one
+            // that could not, and that arm is the block's type for the
+            // destination compare; reading the tag would pass the block as
+            // its own annotation.
+            if (parser.is_value_block_origin(lm.origin)) {
+              if (!vb_arms_compatible(bts, s)) { return t_unknown("value block arms disagree"); }
+              var tag: typeinfo.Type = s.resolve_type(lm.ret_type);
+              for bt in bts {
+                if (!is_unknown(bt) && !type_eq(bt, tag)) {
+                  return bt;
+                }
+              }
+            }
           }
         }
         // The tuple / struct / nested-pattern desugars carry the value in a
@@ -6754,6 +6770,22 @@ function mx_arm_compatible(a: typeinfo.Type, b: typeinfo.Type, unions: UnionSig[
 
 // mx_e031 emits one E031 if the collected arm types aren't all mutually
 // compatible. Skips when fewer than two arms or any arm is `unknown`.
+// vb_arms_compatible is whether a value block's arms pass the E031 rule. The
+// scope carries no enum declarations, so two variants of one enum read as
+// incompatible here — the block then stays untyped, as it did before.
+function vb_arms_compatible(types: typeinfo.Type[], s: Scope): boolean {
+  var no_enums: parser.EnumDecl[] = [];
+  for ty in types {
+    if (is_unknown(ty)) { return false; }
+  }
+  var j: i32 = 1;
+  while (j < types.len()) {
+    if (!mx_arm_compatible(types[0], types[j], s.unions.unions, no_enums)) { return false; }
+    j = j + 1;
+  }
+  return true;
+}
+
 function mx_e031(types: typeinfo.Type[], unions: UnionSig[], enums: parser.EnumDecl[], line: i32, col: i32): util.Diag[] {
   var out: util.Diag[] = [];
   if (types.len() < 2) {

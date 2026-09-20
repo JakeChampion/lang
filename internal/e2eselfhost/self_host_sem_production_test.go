@@ -605,6 +605,71 @@ function main(): i32 {
     for (k2, v2) in names { n = n + k2.len() * v2; }
     return (t % 100) + n;
 }`},
+	// A value block's IIFE carries `if_expr_rt`'s reading of its arms, and a
+	// unary arm read as the i32 default: `(!x)` labelled the block i32, the
+	// checker typed the enclosing array from that label, and the outer block's
+	// body inference came back untyped, so the module was refused for an
+	// array element of the wrong type. These three blocks sit inside another
+	// block's arm, where no binding annotation reaches them, so the arm's own
+	// reading is what types them: `!` is a boolean, a cast is its target, a
+	// negation is its operand.
+	{name: "value-if-arm-is-a-unary", atLeast: 1, noLeak: true, src: `
+function main(): i32 {
+    var big: i64 = 5000000000;
+    var flags: boolean[] = (if (big > 0) { [true, (if (big > 1) { (!false) } else { true })] } else { [false] });
+    var wide: u64[] = (if (flags[1]) { [(if (flags[0]) { (big as u64) } else { (7 as u64) })] } else { [1] });
+    var negs: i64[] = (if (flags[0]) { [(if (flags[1]) { -big } else { -(big + 1) })] } else { [2] });
+    return ((wide[0] % 1000) as i32) + ((negs[0] % 7) as i32) + (if (flags[1]) { 3 } else { 0 });
+}`},
+	// The binding's annotation types the value block bound to it. A `None`
+	// arm or a struct literal is as unguessable as a call, and the body
+	// inference has nothing either (a bare `None` is an Option of no known
+	// payload), so the block kept its i32 label and the module was refused.
+	// The stamp used to apply to a 64-bit annotation alone.
+	{name: "value-block-takes-its-bindings-type", atLeast: 1, noLeak: true, src: `
+struct Pt { x: i32, y: i32 }
+function main(): i32 {
+    var a: Option[i32] = (if (true) { None } else { None });
+    var b: Option[i32] = (if (false) { None } else { Some(5) });
+    var p: Pt = (if (true) { Pt { x: 1, y: 2 } } else { Pt { x: 3, y: 4 } });
+    var n: i32 = 0;
+    match (a) { Some(v) => { n = n + v; }, None => { n = n + 7; } }
+    match (b) { Some(v) => { n = n + v; }, None => { n = n + 70; } }
+    return n + p.x + p.y;
+}`},
+	// The checker types `Some(k)` as `Option` with no payload, and a union
+	// carrying no payloads counted as concrete, so a lambda annotated
+	// `Option[i32]` had its annotation overridden by the family name and
+	// its call site could not name a variant. A payload-less builtin generic
+	// is a family, not a type.
+	{name: "option-results-of-lambdas", atLeast: 3, noLeak: true, src: `
+function id[T](x: T): T { return x; }
+function main(): i32 {
+    function some_of(k: i32): Option[i32] { return id(Some(k)); }
+    var none_of: (i32) => Option[i32] = ((x: i32) => None);
+    var n: i32 = 0;
+    match (some_of(9)) { Some(v) => { n = n + v; }, None => { n = n + 1; } }
+    match (none_of(9)) { Some(v) => { n = n + v; }, None => { n = n + 20; } }
+    return n;
+}`},
+	// `return <lambda>` is desugared to a `$lamret$N` slot the lambda lift
+	// then boxes; the slot carried no type, so a capturing lambda returned
+	// from a local function left its binding unresolved. The slot is now
+	// declared as the enclosing declaration's return signature, the way a
+	// hand-written fn local is.
+	{name: "local-function-returns-a-capturing-lambda", atLeast: 3, noLeak: true, src: `
+function main(): i32 {
+    var acc: i32 = 3;
+    function mk(k: i32): (i32) => i32 { return ((x: i32) => acc + x + k); }
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        var f: (i32) => i32 = mk(i);
+        t = t + f(2) % 7;
+        i = i + 1;
+    }
+    return t % 100;
+}`},
 	{name: "map-delete-and-clear", atLeast: 4, noLeak: true, src: `
 function survivors(n: i32): i32 {
     var m: Map[i32, i32] = map_new(8);
