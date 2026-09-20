@@ -91,6 +91,15 @@ production harness assembles `-emit asm` text and never saw it. The
 framing now takes the substitution, and `emit-wasm-component` in the CLI
 test carries a typed-only row.
 
+The signature admission also moved four rows of the erased-wide array gate
+(`self_host_erased_wide_array_gate_test.go`): `array.map(xs, dbl)` at f64
+and the three `xs.map(…)` spellings at i64 were pinned as REFUSED on wasm,
+because the module fell to the AST wasm path, which the gate keeps such
+shapes off. They fell there only because the semantic lowering rejected
+the wide slot in the function value's signature; produced, they answer as
+the interpreter does on every target, so they join the fixed list and the
+refusal list goes with its test.
+
 ## Census
 
 | binary | whole | agree | diverge |
