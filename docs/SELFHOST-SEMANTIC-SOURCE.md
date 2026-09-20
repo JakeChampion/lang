@@ -286,13 +286,25 @@ Unsupported constructs refuse the whole function with a reason.
   caller owns — the box owns its payload, and the payload owns whatever it
   owns in turn. Each has exactly ONE instantiation, fixed by the builtin
   rather than by a call site, so none is a template.
+  A builtin whose result is `Result[void, IoError]` — `write_file`,
+  `create_dir_all`, `rename`, `chmod` and the rest of the outcome ops — names
+  it the same way (`outcome_contracts`, `fs_op_contracts`), the unit payload
+  being a box with nothing in its slot.
+  The OS floor the compiler itself never calls has contracts too
+  (`os_contracts`, `handle_metadata_contracts`): the process and host
+  queries, the directory, link and permission ops, `temp_dir`, `statfs`,
+  `subprocess` with its `ProcessResult` record, the sockets' connect, the
+  signal and process ops, and the handle metadata asked of the bare
+  descriptor like `close` — `stat`, `flags`, `seek`, the three syncs,
+  `write_some`, `truncate`. Every string and array argument is lent, a
+  scalar is a value, a fresh string or array is the caller's. `ssarc`
+  emits each as the stack IR op the AST lowering emits
+  (`os_query_site`, `fs_op_site`, `handle_metadata_site`);
+  `docs/rc-log/2026-09-20-the-os-floor-has-contracts.md` has the census
+  they moved.
   A declared generic enum is still refused. `map_new` and `cell_new` are the
   builtins that cannot join them: the destination type drives `Map`'s and
   `Cell`'s arguments, so one contract could not name the instantiation.
-  A builtin whose result is `Result[void, IoError]` — `write_file`,
-  `create_dir_all`, `remove_dir_all` — cannot either: `void` is a result
-  type here, not a value type, so the unit payload has no slot in the box
-  and no rule for what a `Ok(u)` arm binds.
 
   The box is a tag word and one payload word (`semrecords.layout_option`),
   not the shape pointer a declared enum's variant box carries, so its
