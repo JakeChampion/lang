@@ -352,6 +352,43 @@ function main(): i32 {
     return 7;
 }
 `},
+	// The OS floor the compiler itself never calls: the process and host
+	// queries, umask, and the handle ops (open, fstat, the open flags,
+	// isatty, close). None has a selection of its own in the register path;
+	// each runs through the stack machine's arm for it (flat_op), which is
+	// how every op with a known stack effect reaches this backend.
+	{name: "os_floor", allSSA: true, src: `
+import "std/i32";
+function probe_ids(): i32 {
+    var n: i32 = 0;
+    if (geteuid() < 1000000000) { n = n + 1; }
+    if (cpu_count() > 0) { n = n + 2; }
+    if (hostname().len() > 0) { n = n + 4; }
+    if (getcwd().len() > 0) { n = n + 8; }
+    if (uname_field(0).len() > 0) { n = n + 16; }
+    var old: i32 = umask(18);
+    if (umask(old) == 18) { n = n + 32; }
+    return n;
+}
+function probe_handle(path: string): i32 {
+    var n: i32 = 0;
+    match (open_reader(path)) {
+        Ok(r) => {
+            match (r.stat()) { Ok(st) => { n = n + 100; }, Err(e) => { n = n + 1000; } }
+            match (r.flags()) { Ok(f) => { n = n + 200; }, Err(e) => { n = n + 2000; } }
+            if (!r.isatty()) { n = n + 400; }
+            match (r.close()) { Some(e) => { n = n + 4000; }, None => { n = n + 800; } }
+        },
+        Err(e) => { n = n + 8000; },
+    }
+    return n;
+}
+function main(): i32 {
+    var n: i32 = probe_ids() + probe_handle("/dev/null") + probe_handle("/nonexistent/fern/ssa/os/floor");
+    print("os " + n.to_string() + "\n");
+    return n % 100;
+}
+`},
 	// The map ops and the byte kernels run through the stack machine's own
 	// arms between a push of the operands and a pop of the result, with the
 	// allocator treating each as a call. String and integer keys, insert,

@@ -104,13 +104,19 @@ emitted, in the order it was admitted:
   `map_hash_seed` as register-ABI calls; `raw_scratch`, `raw_environ` and the
   `arr_push` counters as `sym_addr`, a static symbol's address or the word
   at it; the width loads and stores as the box load and store at offset 0.
-- **The stack machine's own arm** (`flat_op`, 59): `memcpy`, `memset`,
-  `memchr`, the map ops and the byte-buffer builder are inline kernels or
-  calls with extra operands drawn from the IR op's fields. The instruction
-  carries the op's index; the emitter pushes the operands, runs the flat arm
-  for that exact op, and pops the result. The allocator counts a `flat_op`
-  as a call, so every value live across it is in its frame slot and the
-  arm's registers hold nothing.
+- **The stack machine's own arm** (`flat_op`, 59): every other op with a
+  known stack effect — `ir.op_pops` models it and it pushes one value — the
+  byte kernels, the map ops, the byte-buffer builder and the whole OS floor
+  (the process and host queries, the handle ops, the signal, socket and
+  timer ops). The instruction carries the op's index; the emitter pushes
+  the operands, runs `emit_stack_op` for that exact op, and pops the result,
+  so the op table the stack machine dispatches is the one the register path
+  falls back on and an op added to it reaches both emitters. The allocator
+  counts a `flat_op` as a call, so every value live across it is in its
+  frame slot and the arm's registers hold nothing. The one op this cannot
+  bridge is `dyn_dispatch`, whose arm reads its arguments from the frame
+  slots the lowering spilled them to; it still declines, and
+  `ssa_lift_admits_run.fern` is the census that says so.
 
 The lift's older arms for these ops lower to `build_func`'s layouts and
 went with it (see "What this retires").
@@ -159,6 +165,13 @@ not register pressure. The order to take that in:
 
 ## Gates
 
+- `internal/e2eselfhost/self_host_ssa_lift_admits_test.go` runs
+  `ssa_lift_admits_run.fern`, the lift's admission census over every
+  registered IR op kind, and pins the kinds it declines: `dyn_dispatch` and
+  the three kinds no lowering produces. A new op kind reaches the register
+  path through the stack machine's arm unless `ir.op_pops` does not model
+  it, and then it is a new line here rather than a silent decline on every
+  program that uses it.
 - `internal/e2eselfhost/self_host_ssa_backend_test.go` builds the CLI for
   the host, compiles each of its programs both ways for every target the
   host can run output for (its own ISA natively, the other through its qemu
@@ -225,6 +238,37 @@ path needs `build_func` any more. In order:
    machine on wasm, where there is not. `-backend flat` still names the stack
    machine on either native ISA, and a function the register path declines
    still falls back to it on its own.
+5. Every op the stack machine can emit, the register path can emit (2026-09-20,
+   through `emit_stack_op`): the compiler compiling itself was already
+   whole; the corpus sweep (the conformance cases, the coreutils, the
+   benches, the CLI examples and the stdlib tests: 863 programs that
+   compile, 95,072 functions) found 381 functions in 115 programs declining
+   for 58 OS-floor ops, on either ISA, and is down to the one `dyn_dispatch`
+   site (`docs/ssa-log/2026-09-20-every-op-through-the-stack-machines-arm.md`). What is left before the stack machine's function driver can go is
+   `dyn_dispatch` itself in the register path, and a corpus lane that holds
+   the decline count at zero.
+
+## The other backends
+
+The register path is the self-host's, and the self-host is what the native
+compiler is converging on (`docs/NATIVE-CONVERGENCE.md`), so the order is:
+
+- **The self-host's native ISAs first**, above. They are the compiler's own
+  output and the two the flip already took.
+- **wasm stays on the stack IR.** wasm IS a stack machine with locals: the
+  IR's `load_local` is `local.get`, its structured control flow is wasm's,
+  and there are no phis to fold and no registers to allocate — the engine
+  does that from the locals. What the register path bought the native ISAs
+  (0.69x and 0.92x the text) came from the trivial phis and the frame
+  traffic of a machine stack, neither of which wasm has, and native's
+  `wasmssa` was retired for the same reason (#9397). An optimisation wasm
+  should share lands in the IR layer (`ir.fern`, #6638), where all three
+  emitters read it.
+- **The native compiler gets no further SSA work.** `internal/codegen/{arm64ssa,x86_64ssa}`
+  stay opt-in behind `-backend ssa` as they are; the native default flip
+  (#9640) and a Darwin or Android arm of `arm64ssa` are native-only surface,
+  which the convergence policy counts as debt, and the backends themselves
+  are slated to go once the self-host bootstraps without them.
 
 ## The target
 
