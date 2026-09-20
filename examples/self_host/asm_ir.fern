@@ -2651,17 +2651,21 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // level (sound; the credited columns take a deep variant below instead).
     // Stack-arg ABI (box at 8(%rsp)); %rbx holds the box across the two nested
     // column calls (callee-saved, saved/restored; the column helpers preserve it).
+    // Need-gated with the rest of the map runtime: a program with no map
+    // carries none of the family.
+    if (s.has_need("maps")) {
     s = emit_ir_map_free_variant(s, "",     "arr_dec",      "arr_dec",      "mapfree");
     // The deep-release variants (#4353). Each frees a credited column per element
     // instead of shallow-dec'ing its buffer: a fresh-string column via
     // __fern_str_arr_free (box + data per element), a fresh one-dec-BOX column —
     // scalar-element arrays / all-scalar structs — via __fern_arrarr_free (one
-    // rc-guarded dec per element). Emitted ONLY on irlower-proven columns
+    // rc-guarded dec per element). Called ONLY on irlower-proven columns
     // (MAPVS: / MAPKS: / MAPVA:), where the map is the sole rc=1 owner of every
     // element, so the per-element free cannot dangle a live value.
     s = emit_ir_map_free_variant(s, "_vs",   "arr_dec",      "str_arr_free", "mapfvs");
     s = emit_ir_map_free_variant(s, "_ks",   "str_arr_free", "arr_dec",      "mapfks");
     s = emit_ir_map_free_variant(s, "_kvs",  "str_arr_free", "str_arr_free", "mapfkvs");
+    }
     // The box-column pair is need-gated: their bodies name __fn___fern_arrarr_free,
     // whose own body is need-gated too, and an uncalled forward reference would not
     // link. Seeded together at the call-op scan.
@@ -7938,6 +7942,12 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
     }
     if (name == "__fern_map_free_vf" || name == "__fern_map_free_ksvf") {
         s = s.need("heap"); s = s.need("maps"); s = s.need("map_free_vf");
+    }
+    // The shallow and string-column frees are emitted with the maps bundle, and
+    // a release reached without a map_new in the same unit — a produced
+    // callee's, or a drop helper's — has to pull that bundle in.
+    if (name == "__fern_map_free" || name == "__fern_map_free_vs" || name == "__fern_map_free_ks" || name == "__fern_map_free_kvs") {
+        s = s.need("heap"); s = s.need("maps");
     }
     if (name == "__fern_strarrarr_free") { s = s.need("heap"); s = s.need("strarrarr_free"); }
     if (name == "__fern_optarrarr_free") { s = s.need("heap"); s = s.need("optarrarr_free"); }

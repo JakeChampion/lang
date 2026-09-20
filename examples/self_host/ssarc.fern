@@ -2254,6 +2254,8 @@ function unshared_map(own r: irlower.LowerResult, f: ssasem.Func, slot: i32, box
     r = emit(r, ir.op_load_local(box));
     r = emit(r, ir.op_load_local(key));
     r = emit(r, ir.op_load_local(value));
+    // map_op reads the receiver's type off args[0] and nothing else of the
+    // instruction, so the result slot is a placeholder.
     r = map_op(r, ssa.SInst { kind_tag: ssasem.map_insert(), result: 0 - 1, args: [slot, key, value], imm: 0, str: "" }, f);
     r = emit(r, ir.op_store_local(box));
     r = emit(r, ir.op_load_local(index));

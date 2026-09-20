@@ -3628,6 +3628,12 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
     if (name == "__fern_map_free_vf" || name == "__fern_map_free_ksvf") {
         s = s.mark_heap(); s = s.need("maps"); s = s.need("map_free_vf");
     }
+    // The shallow and string-column frees are emitted with the maps bundle, and
+    // a release reached without a map_new in the same unit — a produced
+    // callee's, or a drop helper's — has to pull that bundle in.
+    if (name == "__fern_map_free" || name == "__fern_map_free_vs" || name == "__fern_map_free_ks" || name == "__fern_map_free_kvs") {
+        s = s.mark_heap(); s = s.need("maps");
+    }
     if (name == "__fern_strarrarr_free") { s = s.need("strarrarr_free"); }
     if (name == "__fern_optarrarr_free") { s = s.need("optarrarr_free"); }
     // __map_vals_struct_drop_<T>: the struct-VALUE column walk a reclaimable
@@ -6958,17 +6964,20 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     // one level (sound; a credited column takes a deep variant below instead).
     // Stack-arg ABI (box at [sp]); x19 holds the box across the nested arr_dec
     // calls (callee-saved; __fern_arr_dec uses no bl so x30 survives too, but
-    // both are saved for safety). x9 scratch.
+    // both are saved for safety). x9 scratch. Need-gated with the rest of the
+    // map runtime: a program with no map carries none of the family.
+    if (s.has_need("maps")) {
     s = emit_arm64_map_free_variant(s, "",     "arr_dec",      "arr_dec",      "mapfree");
     // The deep-release variants (#4353), the arm64 siblings of the x86-64 family:
     // a credited fresh-string column is freed per element via __fern_str_arr_free,
     // a credited fresh one-dec-BOX column (scalar-element array / all-scalar
-    // struct) via __fern_arrarr_free. Emitted only on irlower-proven columns
+    // struct) via __fern_arrarr_free. Called only on irlower-proven columns
     // (MAPVS: / MAPKS: / MAPVA:), where the map is the sole rc=1 owner of every
     // element.
     s = emit_arm64_map_free_variant(s, "_vs",   "arr_dec",      "str_arr_free", "mapfvs");
     s = emit_arm64_map_free_variant(s, "_ks",   "str_arr_free", "arr_dec",      "mapfks");
     s = emit_arm64_map_free_variant(s, "_kvs",  "str_arr_free", "str_arr_free", "mapfkvs");
+    }
     // Need-gated: these name __fn___fern_arrarr_free, whose own body is need-gated.
     if (s.has_need("map_free_va")) {
     s = emit_arm64_map_free_variant(s, "_va",   "arr_dec",      "arrarr_free",  "mapfva");
