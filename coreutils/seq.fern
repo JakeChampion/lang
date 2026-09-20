@@ -1198,7 +1198,7 @@ function field(spec: Spec, prefix: string, b: ld.Body): Option[string] {
   if (b.refused) {
     return None;
   }
-  return pad(spec, prefix, b.s, true);
+  return pad(spec, prefix, b.text(), true);
 }
 
 // %a: the significand in hex from lib/ld's model of the target's long

@@ -276,6 +276,49 @@ function test_whole_conversions(): test.TestOutcome {
     return test.assert_eq(d.to_fixed(d.strtold("0.1").v, 25), "0.1000000000000000055511151");
 }
 
+// `body(b)` — a Body's three pieces and the refusal, so a precision of
+// two billion is asserted as a count and never built.
+function body(b: ld.Body): string {
+    if (b.refused) {
+        return "refused";
+    }
+    return b.head + "|" + b.zeros.to_string() + "|" + b.tail;
+}
+
+// A precision wider than the value's digits is a zero COUNT in the
+// body: `%.2147483640e` of 1 is a two-gigabyte field, and printf writes
+// the run in blocks rather than building it (#9812). Every path that
+// used to pad the digit string is here: `%e` and `%f` of a value and of
+// zero, `%#g` in both styles, and the digit rounding, which only ever
+// shortens.
+function test_huge_precision_is_a_count(): test.TestOutcome {
+    var f: ld.Format = ld.x87();
+    var one: ld.Dec = f.strtold("1").v.dec();
+    var zero: ld.Dec = f.zero(false).dec();
+    var huge: i64 = 2147483640 as i64;
+    if (body(ld.sci(one, huge, false, false, 0 as i64)) != "1.|2147483640|e+00") { return test.fail("e of one"); }
+    if (body(ld.sci(zero, huge, false, true, 0 as i64)) != "0.|2147483640|E+00") { return test.fail("E of zero"); }
+    if (body(ld.fixed(one, huge, false, 0 as i64)) != "1.|2147483640|") { return test.fail("f of one"); }
+    if (body(ld.fixed(zero, huge, false, 0 as i64)) != "0.|2147483640|") { return test.fail("f of zero"); }
+    if (body(ld.general(one, huge, true, false, 0 as i64)) != "1.|2147483639|") { return test.fail("alt g of one"); }
+    if (body(ld.general(zero, huge, true, false, 0 as i64)) != "0.|2147483639|") { return test.fail("alt g of zero"); }
+    var tiny: ld.Dec = f.strtold("9.5367431640625e-07").v.dec();
+    if (body(ld.general(tiny, huge, true, false, 0 as i64)) != "9.5367431640625|2147483626|e-07") { return test.fail("alt g exponent style"); }
+    if (body(ld.general(one, huge, false, false, 0 as i64)) != "1|0|") { return test.fail("g strips instead"); }
+    var tenth: ld.Dec = f.strtold("0.125").v.dec();
+    if (body(ld.fixed(tenth, 5 as i64, false, 0 as i64)) != "0.125|2|") { return test.fail("f pads past the expansion"); }
+    if (body(ld.fixed(tenth, 2 as i64, false, 0 as i64)) != "0.12|0|") { return test.fail("f rounds"); }
+    if (body(ld.fixed(tenth, 0 as i64, false, 0 as i64)) != "0|0|") { return test.fail("f at no places"); }
+    if (body(ld.fixed(f.strtold("0.0004").v.dec(), 2 as i64, false, 0 as i64)) != "0.|2|") { return test.fail("f below the place"); }
+    if (body(ld.sci(tenth, 4 as i64, false, false, 0 as i64)) != "1.25|2|e-01") { return test.fail("e pads past the expansion"); }
+    if (body(ld.sci(f.strtold("9.99").v.dec(), 1 as i64, false, false, 0 as i64)) != "1.0|0|e+01") { return test.fail("e carries"); }
+    if (body(ld.sci(one, 2147483642 as i64, false, false, 0 as i64)) != "refused") { return test.fail("e past INT_MAX"); }
+    if (body(ld.fixed(one, 2147483645 as i64, false, 1 as i64)) != "refused") { return test.fail("f past INT_MAX with a sign"); }
+    var r: (string, boolean) = ld.round_digits("125", 5);
+    if (r.0 != "125" || r.1) { return test.fail("round_digits never pads"); }
+    return test.assert_eq(ld.fixed(tenth, 5 as i64, false, 0 as i64).text(), "0.12500");
+}
+
 // `pow10` is reached by multiplying, the way a C program reaches it, so
 // it is exact exactly as far as the significand allows.
 function test_pow10(): test.TestOutcome {
@@ -408,7 +451,7 @@ function fixed_via_expansion(f: ld.Format, v: ld.LD, prec: i32): string {
     if (v.neg) {
         sign = "-";
     }
-    return sign + ld.fixed(v.dec(), prec as i64, false, 0 as i64).s;
+    return sign + ld.fixed(v.dec(), prec as i64, false, 0 as i64).text();
 }
 
 function to_fixed_agrees_in(f: ld.Format, name: string): test.TestOutcome {
@@ -540,6 +583,7 @@ function main(): i32 {
     r = r.it("--round modes",                     test_round_modes);
     r = r.it("format digit limits",               test_format_digit_limits);
     r = r.it("to_fixed and to_g",                 test_whole_conversions);
+    r = r.it("huge precision is a count",         test_huge_precision_is_a_count);
     r = r.it("pow10 is reached by multiplying",   test_pow10);
     r = r.it("as_i64 is from_i64 inverted",       test_as_i64);
     r = r.it("word and exact paths agree",        test_word_and_exact_paths_agree);

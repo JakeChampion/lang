@@ -681,7 +681,7 @@ rather than diverging quietly (`expr` and `factor` want `libgmp10:arm64`
 in that sysroot too). This is a debug affordance for the #8513 class of
 bug and not a gate — under qemu the corpus runs an order of magnitude
 slower, and CI runs the same cases natively. Select the utility you are
-working on: printf's two cases that make GNU build a two-gigabyte field
+working on: printf's huge-precision cases, which make GNU build a two-gigabyte field,
 cost seconds natively and many minutes emulated.
 
 **Anything a utility reads off `long double` belongs in this module**,

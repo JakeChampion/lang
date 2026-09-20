@@ -1360,9 +1360,9 @@ function pow5_bits(k: i32): i32 {
 }
 
 // `round_digits(d, n)` — the first `n` digits of `d`, rounded half to
-// even on the exact tail and zero-padded when `d` is shorter. When the
-// rounding carries out of the top digit the result is one digit longer
-// (a 1 and n zeros) and the boolean says so.
+// even on the exact tail; all of `d` when it has no more than `n`. When
+// the rounding carries out of the top digit the result is one digit
+// longer (a 1 and n zeros) and the boolean says so.
 pub function round_digits(d: string, n: i32): (string, boolean) {
   if (n <= 0) {
     if (n < 0) {
@@ -1375,7 +1375,7 @@ pub function round_digits(d: string, n: i32): (string, boolean) {
     return ("", false);
   }
   if (n >= d.len()) {
-    return (d + "0".repeat(n - d.len()), false);
+    return (d, false);
   }
   var c: i32 = d[n] as i32;
   var up: boolean = false;
@@ -1422,15 +1422,28 @@ function has_nonzero(d: string, from: i32): boolean {
 }
 
 // ---- %e %f %g ----------------------------------------------------------------
-// `Body` — the characters of one conversion, or the refusal glibc
-// answers a field longer than INT_MAX bytes with: the directive prints
-// nothing and the stream carries an error. `extra` below is how many
-// bytes the caller puts in front (a sign, a radix), which counts toward
-// that limit the same way.
-pub struct Body { s: string, refused: boolean }
+// `Body` — the characters of one conversion in three pieces, so a
+// precision wider than the value's digits never has to be a string:
+// `head` is the digits with the point, `zeros` how many zeros pad the
+// fraction out to the precision, and `tail` the exponent. `refused` is
+// the refusal glibc answers a field longer than INT_MAX bytes with: the
+// directive prints nothing and the stream carries an error. `extra`
+// below is how many bytes the caller puts in front (a sign, a radix),
+// which counts toward that limit the same way.
+pub struct Body { head: string, zeros: i64, tail: string, refused: boolean }
 
 function refused(): Body {
-  return Body { s: "", refused: true };
+  return Body { head: "", zeros: 0 as i64, tail: "", refused: true };
+}
+
+function body(head: string, zeros: i64, tail: string): Body {
+  return Body { head: head, zeros: zeros, tail: tail, refused: false };
+}
+
+// `text(b)` — the body as one string, for a caller whose precision is
+// known to be small.
+pub function (b: Body) text(): string {
+  return b.head + "0".repeat(b.zeros as i32) + b.tail;
 }
 
 // The most fractional digits any value of any supported format has
@@ -1455,7 +1468,7 @@ pub function fixed(d: Dec, prec: i64, alt: boolean, extra: i64): Body {
     if (prec + 2 as i64 + extra >= overflow_len()) {
       return refused();
     }
-    return fixed_shape("", 0 - prec as i32, prec, alt);
+    return fixed_shape("", 0, prec, alt, prec);
   }
   var n: i64 = d.dp as i64 + prec;
   var whole: i64 = d.dp as i64;
@@ -1465,35 +1478,39 @@ pub function fixed(d: Dec, prec: i64, alt: boolean, extra: i64): Body {
   if (whole + prec + 1 as i64 + extra >= overflow_len()) {
     return refused();
   }
+  if (n >= d.digits.len() as i64) {
+    return fixed_shape(d.digits, d.dp, prec, alt, n - d.digits.len() as i64);
+  }
+  if (n < 0 as i64) {
+    return fixed_shape("", 0, prec, alt, prec);
+  }
   var rf: (string, boolean) = round_digits(d.digits, n as i32);
   var dp: i32 = d.dp;
   if (rf.1) {
     dp = dp + 1;
   }
-  if (n < 0 as i64) {
-    dp = 0 - prec as i32;
-  }
-  return fixed_shape(rf.0, dp, prec, alt);
+  return fixed_shape(rf.0, dp, prec, alt, 0 as i64);
 }
 
 // `digits` are the rounded digits with the decimal point `dp` digits in
-// (dp ≤ 0 puts leading zeros after the point); exactly `prec` follow it.
-function fixed_shape(digits: string, dp: i32, prec: i64, alt: boolean): Body {
-  var body: string = "";
+// (dp ≤ 0 puts leading zeros after the point), and `zeros` how many
+// more zeros make the fraction exactly `prec` long.
+function fixed_shape(digits: string, dp: i32, prec: i64, alt: boolean, zeros: i64): Body {
+  var head: string = "";
   if (dp >= 1) {
-    body = slice_unchecked(digits, 0, dp) + "";
+    head = slice_unchecked(digits, 0, dp) + "";
     if (prec > 0 as i64 || alt) {
-      body = body + ".";
+      head = head + ".";
     }
-    body = body + slice_unchecked(digits, dp, digits.len());
+    head = head + slice_unchecked(digits, dp, digits.len());
   } else {
-    body = "0";
+    head = "0";
     if (prec > 0 as i64 || alt) {
-      body = body + ".";
+      head = head + ".";
     }
-    body = body + "0".repeat(0 - dp) + digits;
+    head = head + "0".repeat(0 - dp) + digits;
   }
-  return Body { s: body, refused: false };
+  return body(head, zeros, "");
 }
 
 // The `e+NN` tail, at least two exponent digits.
@@ -1523,28 +1540,32 @@ pub function sci(d: Dec, prec: i64, alt: boolean, upper: boolean, extra: i64): B
     if (prec + 6 as i64 + extra >= overflow_len()) {
       return refused();
     }
-    return sci_shape("0".repeat(prec as i32 + 1), 0, prec, alt, upper);
+    return sci_shape("0", 0, prec, alt, upper, prec);
   }
   if (prec + 2 as i64 + extra + exp_suffix(d.dp - 1, false).len() as i64 >= overflow_len()) {
     return refused();
   }
-  var re: (string, boolean) = round_digits(d.digits, prec as i32 + 1);
+  var n: i64 = prec + 1 as i64;
+  if (n >= d.digits.len() as i64) {
+    return sci_shape(d.digits, d.dp - 1, prec, alt, upper, n - d.digits.len() as i64);
+  }
+  var re: (string, boolean) = round_digits(d.digits, n as i32);
   var xe: i32 = d.dp - 1;
   var de: string = re.0;
   if (re.1) {
     xe = xe + 1;
-    de = slice_unchecked(de, 0, prec as i32 + 1) + "";
+    de = slice_unchecked(de, 0, n as i32) + "";
   }
-  return sci_shape(de, xe, prec, alt, upper);
+  return sci_shape(de, xe, prec, alt, upper, 0 as i64);
 }
 
-function sci_shape(digits: string, x: i32, prec: i64, alt: boolean, upper: boolean): Body {
-  var body: string = slice_unchecked(digits, 0, 1) + "";
+function sci_shape(digits: string, x: i32, prec: i64, alt: boolean, upper: boolean, zeros: i64): Body {
+  var head: string = slice_unchecked(digits, 0, 1) + "";
   if (prec > 0 as i64 || alt) {
-    body = body + ".";
+    head = head + ".";
   }
-  body = body + slice_unchecked(digits, 1, digits.len()) + exp_suffix(x, upper);
-  return Body { s: body, refused: false };
+  head = head + slice_unchecked(digits, 1, digits.len());
+  return body(head, zeros, exp_suffix(x, upper));
 }
 
 // `general(d, prec, alt, upper, extra)` — the `%g` body: `prec`
@@ -1557,7 +1578,7 @@ pub function general(d: Dec, prec: i64, alt: boolean, upper: boolean, extra: i64
     pr = 1 as i64;
   }
   if (d.digits.len() == 0) {
-    return general_shape("0".repeat(pr as i32), 0, pr, alt, upper, false, extra);
+    return general_shape("0", 0, pr, alt, upper, false, extra);
   }
   var sig: i32 = d.digits.len();
   if (pr < sig as i64) {
@@ -1581,6 +1602,7 @@ pub function general(d: Dec, prec: i64, alt: boolean, upper: boolean, extra: i64
 // 999.5 is `1.e+03`.
 function general_shape(digits: string, x: i32, prec: i64, alt: boolean, upper: boolean, carried: boolean, extra: i64): Body {
   var pr: i32 = prec as i32;
+  var zeros: i64 = 0 as i64;
   if (x < 0 - 4 || x as i64 >= prec) {
     var mant: string = slice_unchecked(digits, 0, 1) + "";
     var frac: string = slice_unchecked(digits, 1, digits.len()) + "";
@@ -1590,14 +1612,14 @@ function general_shape(digits: string, x: i32, prec: i64, alt: boolean, upper: b
       if (prec - 1 as i64 + extra >= overflow_len()) {
         return refused();
       }
-      frac = frac + "0".repeat(pr - digits.len());
+      zeros = prec - digits.len() as i64;
     } else {
       frac = strip_zeros(frac);
     }
     if (frac.len() > 0 || alt) {
       mant = mant + "." + frac;
     }
-    return Body { s: mant + exp_suffix(x, upper), refused: false };
+    return body(mant, zeros, exp_suffix(x, upper));
   }
   var dp: i32 = x + 1;
   var ip: string = "0";
@@ -1618,16 +1640,16 @@ function general_shape(digits: string, x: i32, prec: i64, alt: boolean, upper: b
       return refused();
     }
     if (frac.len() < want) {
-      frac = frac + "0".repeat(want - frac.len());
+      zeros = (want - frac.len()) as i64;
     }
   } else {
     frac = strip_zeros(frac);
   }
-  var body: string = ip;
+  var head: string = ip;
   if (frac.len() > 0 || alt) {
-    body = body + "." + frac;
+    head = head + "." + frac;
   }
-  return Body { s: body, refused: false };
+  return body(head, zeros, "");
 }
 
 function strip_zeros(s: string): string {
@@ -1668,7 +1690,7 @@ pub function (f: Format) to_fixed(v: LD, prec: i32): string {
       }
     }
   }
-  return sign_of(v) + fixed(v.dec(), prec as i64, false, 0 as i64).s;
+  return sign_of(v) + fixed(v.dec(), prec as i64, false, 0 as i64).text();
 }
 
 // `m × 2^e × 10^prec` as the nearest whole number, ties to even, or u64
@@ -1778,7 +1800,7 @@ function fixed_u64(q: u64, prec: i32, neg: boolean): string {
 // `to_g(f, v)` — `printf("%Lg", v)`: six significant digits, exponent
 // form below -4 or from 6 up, trailing zeros dropped.
 pub function (f: Format) to_g(v: LD): string {
-  return sign_of(v) + general(v.dec(), 6 as i64, false, false, 0 as i64).s;
+  return sign_of(v) + general(v.dec(), 6 as i64, false, false, 0 as i64).text();
 }
 
 function sign_of(v: LD): string {
@@ -1808,18 +1830,14 @@ function sign_of(v: LD): string {
 // in hex, and a carry out of the top digit lifts the leading one — past
 // f it renormalises four binades up, which only a stored integer bit
 // can reach.
-// `HexBody` — a `%a` body in three pieces, so a precision wider than
-// the significand never has to be a string: `head` is the leading digit
-// with the point and the digits the value has, `zeros` is how many
-// zeros pad that out to the precision, and `tail` is the `p±N`.
-pub struct HexBody { head: string, zeros: i64, tail: string }
-
+// `hex_parts` is the same in the three pieces of a `Body`: the leading
+// digit with the point and the digits the value has, the zeros that pad
+// that out to the precision, and the `p±N`.
 pub function (f: Format) hex(v: LD, prec: i64, alt: boolean): string {
-  var b: HexBody = f.hex_parts(v, prec, alt);
-  return b.head + "0".repeat(b.zeros as i32) + b.tail;
+  return f.hex_parts(v, prec, alt).text();
 }
 
-pub function (f: Format) hex_parts(v: LD, prec: i64, alt: boolean): HexBody {
+pub function (f: Format) hex_parts(v: LD, prec: i64, alt: boolean): Body {
   var shift: i32 = hex_shift(f);
   var nd: i32 = shift / 4;
   var lead: i32 = 0;
@@ -1887,9 +1905,9 @@ pub function (f: Format) hex_parts(v: LD, prec: i64, alt: boolean): HexBody {
   if (prec > nd as i64) {
     zeros = prec - nd as i64;
   }
-  var body: string = string_from_bytes_unchecked([hex_char(lead) as u8]);
+  var head: string = string_from_bytes_unchecked([hex_char(lead) as u8]);
   if (digits.len() > 0 || zeros > 0 as i64 || alt) {
-    body = body + "." + digits;
+    head = head + "." + digits;
   }
   var ps: string = "p";
   if (pe < 0) {
@@ -1897,7 +1915,7 @@ pub function (f: Format) hex_parts(v: LD, prec: i64, alt: boolean): HexBody {
   } else {
     ps = ps + "+" + (pe as i64).to_string();
   }
-  return HexBody { head: body, zeros: zeros, tail: ps };
+  return body(head, zeros, ps);
 }
 
 // The four bits of the significand starting at bit `at`.
