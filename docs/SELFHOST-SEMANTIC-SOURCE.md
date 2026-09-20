@@ -497,10 +497,14 @@ Unsupported constructs refuse the whole function with a reason.
   refusal is unreachable in a module any backend lowers: removing the address
   form moved the census by nothing, measured on its own.
 
-  The box is one i32-shaped word, so it is a value and a parameter and never
-  an element or a declared field: releasing a container or a record walks its
-  slots by their declared types, and a function type names no captures for
-  that walk to reach. A function-typed RESULT is refused for the same reason.
+  The box is one i32-shaped word: a value, a parameter, a record field, a
+  variant field, an array or tuple element. Releasing the holder walks its
+  slots by their declared types, and a function type names no captures of its
+  own, so the walk matches the box's body address against the environments
+  the schema table names (`semsource.env_rows`, `ssarc.drop_captures`) and
+  releases the captures it finds. What stays refused is a function value
+  NESTED in a field — an array or tuple of them behind a record or variant
+  field — and a function-typed RESULT.
   A parameter or result of any other width is admitted: the call through a
   value carries the signature tag its type spells (`ssarc.signature_tag`, the
   spelling irlower's call sites carry), so wasm dispatches it through the

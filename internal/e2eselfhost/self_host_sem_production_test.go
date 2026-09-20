@@ -1943,4 +1943,44 @@ function main(): i32 {
     return pair.1;
 }
 `},
+	// A function value as a VARIANT field, the shape of std/async's
+	// `Future[T].Pending(i32, (i32) => Future[T])`: the variant takes a unit
+	// of the value and its release walks the captures, the same walk a record
+	// field takes (ssarc.drop_variant_fields drops a variant's fields as a
+	// record's). Nested in an array or tuple it stays refused, as for a
+	// record. `dropped` is a chain never run, so its closures are released by
+	// the walk alone; the AST lowering releases none of them (#9841), so the
+	// pin here is absolute.
+	{name: "closure-in-a-variant-field", atLeast: 4, noLeak: true, src: `
+enum Step {
+    Done(i32),
+    Next(i32, (i32) => Step),
+}
+function make(n: i32, k: i32): Step {
+    if (n <= 0) { return Done(k); }
+    return Next(n, (x: i32): Step => make(n - 1, k + x));
+}
+function run(s: Step): i32 {
+    var cur: Step = s;
+    var guard: i32 = 0;
+    while (guard < 100) {
+        match (cur) {
+            Done(v) => { return v; },
+            Next(w, f) => { cur = f(w); }
+        }
+        guard = guard + 1;
+    }
+    return -1;
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3) {
+        total = total + run(make(4, i));
+        i = i + 1;
+    }
+    var dropped: Step = make(2, 7);
+    return total;
+}
+`},
 }
