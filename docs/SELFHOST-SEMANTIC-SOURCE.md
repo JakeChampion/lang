@@ -530,11 +530,13 @@ Unsupported constructs refuse the whole function with a reason.
   (lent everywhere, owned nowhere) and one of maps (whose box a read could
   not retain) stay refused ("unsupported map shape").
 
-  A map's unit is LINEAR. Its box on the register backends is the raw
-  `{keys, vals}` pair that helper frees, with no reference count in it, so a
-  plan that would RETAIN one is refused ("map unit is not shared") — the one
-  rule in physical RC that reads the plan rather than the graph. Every ordinary
-  use moves: `m = m.insert(k, v)` leaves the receiver dead at the insert.
+  A map's unit is counted like any box's. The box carries the array header
+  on the register backends (`__fern_map_new` takes it from `__fern_arr_box`)
+  and the string box header on wasm, so a retain is the ordinary
+  `__fern_rc_inc`, and the free family releases one unit: a decrement while
+  the box is shared, and the columns and the block for the last. Every
+  ordinary use still moves: `m = m.insert(k, v)` leaves the receiver dead at
+  the insert.
 
   The vocabulary is `map_new(cap)`, `insert` (spelled `set` too, as the AST
   lowering admits both), `has`, `get_or`, `get` and `len`. An insert takes the receiver's

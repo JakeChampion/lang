@@ -160,8 +160,8 @@ function walked(t: typeinfo.Type): boolean {
 // sentinel and takes the ordinary path otherwise, which is what makes one
 // release symbol correct on both the register backends and wasm (whose slices
 // copy, so the result is an ordinary counted box).
-// A map is freed whole by one helper rather than released by a count: its box
-// is a raw {keys, vals} pair on the register backends, with no count to read.
+// A map's helper releases one unit of a counted box: a decrement while the
+// box is shared, and the columns and the block for the last unit.
 function release_name(t: typeinfo.Type): string {
     if (ssasem.is_view(t)) { return "__fern_str_view_free"; }
     if (ssasem.is_string(t)) { return "__fern_str_free"; }
@@ -497,8 +497,8 @@ function has_children(t: typeinfo.Type, f: ssasem.Func): boolean {
         for elem in tup.elements { if (ssasem.reference(elem)) { return true; } }
     }
     if (semtypes.is_cell(t)) { return ssasem.reference(semtypes.cell_elem(t)); }
-    // A map's own release walks its columns, and the uniqueness guard this
-    // answers would read a count its box does not carry.
+    // A map's own release reads the count and walks its columns, so no guard
+    // is emitted around it here.
     if (ssasem.is_map(t)) { return false; }
     if let typeinfo.TypeStruct(_) = t { return fields_have_children(record_fields(t, f)); }
     if let typeinfo.TypeUnion(_) = t {
@@ -1268,26 +1268,10 @@ function types_error(f: ssasem.Func): string {
     return "";
 }
 
-// A map box carries no reference count on the register backends — it is the
-// raw {keys, vals} pair __fern_map_free_ks frees — so a unit of one cannot be
-// shared: every unit the plan supplies has to be a MOVE. A retain would
-// increment a word that is not a count.
-function shared_map_error(f: ssasem.Func, p: ssaunits.Plan): string {
-    for step in p.steps {
-        for supply in step.supplies {
-            if (supply.mode != ssaunits.retain_unit()) { continue; }
-            if (ssasem.is_map(f.values[supply.value])) { return "map unit is not shared"; }
-        }
-    }
-    return "";
-}
-
 function validate(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irlower.StructTab): string {
     var why: string = ssaunits.verify(f, modes, p);
     if (why != "") { return why; }
     why = types_error(f);
-    if (why != "") { return why; }
-    why = shared_map_error(f, p);
     if (why != "") { return why; }
     // Keep this physical vocabulary closed when semantic analysis grows new
     // operations. Verification of a new operation does not implement its ABI.

@@ -558,6 +558,29 @@ function arr_deep_free_call(target: string): string {
 }
 
 
+// A map free releases ONE unit of the box. The box carries the array header
+// (`__fern_map_new` takes it from `__fern_arr_box`), so a shared box — rc above
+// 1 — is decremented and left whole, and only the last unit walks the
+// columns. `__fn___fern_arr_dec` does the decrement, the underflow count of a
+// dead box, and the block's return to its class.
+function map_free_shared_guard(s: asmcore.EmitState, box: string, lbl: string): asmcore.EmitState {
+    s = s.write("    cmpl $1, -8(" + box + ")\n");
+    s = s.write("    je .L" + lbl + "_last\n");
+    s = s.write("    pushq " + box + "\n");
+    s = s.write("    call __fn___fern_arr_dec\n");
+    s = s.write("    addq $8, %rsp\n");
+    s = s.write("    jmp .L" + lbl + "_ret\n");
+    s = s.write(".L" + lbl + "_last:\n");
+    return s;
+}
+
+function map_free_block(s: asmcore.EmitState, box: string): asmcore.EmitState {
+    s = s.write("    pushq " + box + "\n");
+    s = s.write("    call __fn___fern_arr_dec\n");
+    s = s.write("    addq $8, %rsp\n");
+    return s;
+}
+
 function emit_ir_map_free_variant(s: asmcore.EmitState, suffix: string, kfree: string, vfree: string, lbl: string): asmcore.EmitState {
     s = s.write("__fn___fern_map_free" + suffix + ":\n");
     s = s.write("    movq 8(%rsp), %rax\n");         // box
@@ -565,6 +588,7 @@ function emit_ir_map_free_variant(s: asmcore.EmitState, suffix: string, kfree: s
     s = s.write("    jz .L" + lbl + "_ret\n");
     s = s.write("    cmpq $0x10000, %rax\n");        // low-addr guard
     s = s.write("    jb .L" + lbl + "_ret\n");
+    s = map_free_shared_guard(s, "%rax", lbl);
     s = s.write("    pushq %rbx\n");                 // save callee-saved
     s = s.write("    movq %rax, %rbx\n");            // box
     s = s.write("    movq (%rbx), %rax\n");          // keys = box[0]
@@ -575,16 +599,7 @@ function emit_ir_map_free_variant(s: asmcore.EmitState, suffix: string, kfree: s
     s = s.write("    pushq %rax\n");
     s = s.write("    call __fn___fern_" + vfree + "\n");
     s = s.write("    addq $8, %rsp\n");
-    s = hev_free(s, "%rbx", "$2");
-    // Quarantine (rc_free_debug_on): the raw 16-byte box has no rc word to
-    // poison, so declining the push is the whole treatment — never recycled,
-    // never able to alias a later allocation.
-    if (!rc_free_debug_on()) {
-    s = s.write("    leaq __fern_freelist(%rip), %r8\n");
-    s = s.write("    movq 16(%r8), %rsi\n");         // freelist[2] (16-byte box = 2 words)
-    s = s.write("    movq %rsi, (%rbx)\n");          // *box = old head
-    s = s.write("    movq %rbx, 16(%r8)\n");         // freelist[2] = box
-    }
+    s = map_free_block(s, "%rbx");
     s = s.write("    movq %rbx, %rax\n");            // return box (caller drops)
     s = s.write("    popq %rbx\n");
     s = s.write(".L" + lbl + "_ret:\n");
@@ -606,6 +621,7 @@ function emit_ir_map_free_vf_variant(s: asmcore.EmitState, suffix: string, kfree
     s = s.write("    jz .L" + lbl + "_ret\n");
     s = s.write("    cmpq $0x10000, %rax\n");        // low-addr guard
     s = s.write("    jb .L" + lbl + "_ret\n");
+    s = map_free_shared_guard(s, "%rax", lbl);
     s = s.write("    pushq %rbx\n");
     s = s.write("    pushq %r12\n");
     s = s.write("    pushq %r13\n");
@@ -638,13 +654,7 @@ function emit_ir_map_free_vf_variant(s: asmcore.EmitState, suffix: string, kfree
     s = s.write("    pushq %r12\n");
     s = s.write("    call __fn___fern_arr_dec\n");
     s = s.write("    addq $8, %rsp\n");
-    s = hev_free(s, "%rbx", "$2");
-    if (!rc_free_debug_on()) {
-    s = s.write("    leaq __fern_freelist(%rip), %r8\n");
-    s = s.write("    movq 16(%r8), %rsi\n");         // freelist[2] (16-byte box = 2 words)
-    s = s.write("    movq %rsi, (%rbx)\n");          // *box = old head
-    s = s.write("    movq %rbx, 16(%r8)\n");         // freelist[2] = box
-    }
+    s = map_free_block(s, "%rbx");
     s = s.write("    movq %rbx, %rax\n");            // return box (caller drops)
     s = s.write("    popq %r14\n");
     s = s.write("    popq %r13\n");
@@ -2626,16 +2636,17 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     if (s.has_need("optarrarr_free")) {
     s = emit_ir_arr_deep_free_variant(s, "optarrarr_free", "oaf", optarrarr_elem());
     }
-    // __fern_map_free(box) — reclaim a FRESH, sole-owned map local (Perceus
-    // map-local slice). The self-host asm map box is a RAW 16-byte __fern_alloc(16)
-    // {keys@0, vals@8}; keys/vals are rc-headered __fern_arr_box buffers. Frees
-    // both buffers (rc-guarded, via __fn___fern_arr_dec — a no-op if aliased by an
-    // outstanding m.keys()/values() view) THEN returns the 16-byte box to the
-    // size-classed freelist (class 2). Called ONLY on compile-time-proven fresh,
-    // non-escaping, non-iterated map locals (irlower slot_is_reclaimable_map), so
-    // single-ownership of the box is guaranteed by the emit site. Null / low-addr
-    // guarded so a conditionally-declared (null) slot AND the precise-drop /
-    // exit-sweep double-call (the slot is zeroed after the free) are safe no-ops.
+    // __fern_map_free(box) — release one unit of a map. The box is a two-word
+    // {keys@0, vals@8} __fern_arr_box, so it carries a count: a shared box is
+    // decremented and left whole, and the last unit frees both column buffers
+    // (rc-guarded, via __fn___fern_arr_dec — a no-op if aliased by an
+    // outstanding m.keys()/values() view) THEN returns the box to its class.
+    // The AST lowering calls it only on compile-time-proven fresh, non-escaping,
+    // non-iterated map locals (irlower slot_is_reclaimable_map), whose count is
+    // always 1; the semantic lowering shares a box and releases it by count.
+    // Null / low-addr guarded so a conditionally-declared (null) slot AND the
+    // precise-drop / exit-sweep double-call (the slot is zeroed after the free)
+    // are safe no-ops.
     // In THIS variant both columns are shallow, so any boxes they hold leak one
     // level (sound; the credited columns take a deep variant below instead).
     // Stack-arg ABI (box at 8(%rsp)); %rbx holds the box across the two nested
@@ -3727,8 +3738,8 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq %rsp, %rbp\n");
     s = s.write("    pushq %rbx\n");
     s = s.write("    subq $8, %rsp\n");
-    s = s.write("    movq $16, %rdi\n");
-    s = s.write("    call __fern_alloc\n");        // mapbox
+    s = s.write("    movq $2, %rdi\n");
+    s = s.write("    call __fern_arr_box\n");      // mapbox: a counted two-word box
     s = s.write("    movq %rax, %rbx\n");
     s = s.write("    movq $0, %rdi\n");
     s = s.write("    call __fern_alloc_u8\n");      // empty keys

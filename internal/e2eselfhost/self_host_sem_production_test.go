@@ -1809,4 +1809,54 @@ function main(): i32 {
     }
     return t % 223;
 }`},
+	// A map's unit is counted. The box carried no count on the register
+	// backends, so a plan that retained one was refused ("map unit is not
+	// shared"): a template handing its map parameter back, a map read from
+	// two bindings, a map returned from a function that goes on reading it.
+	// The box now takes the array header, so a retain is the ordinary
+	// rc_inc and the free family releases one unit; the sanitizer leg reports
+	// every box released.
+	{name: "a-map-unit-is-shared", atLeast: 4, noLeak: true, src: `
+import "core/map";
+function id[T](x: T): T { return x; }
+function same(m: Map[i32, i32]): Map[i32, i32] { return m; }
+function total(m: Map[i32, i32], n: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) { t = t + m.get_or(i, 0); i = i + 1; }
+    return t;
+}
+function main(): i32 {
+    var acc: i32 = 0;
+    var r: i32 = 0;
+    while (r < 40) {
+        var m: Map[i32, i32] = map_new(8);
+        var i: i32 = 0;
+        while (i < 6) { m = m.insert(i, i * r); i = i + 1; }
+        var a: Map[i32, i32] = id(m);
+        var b: Map[i32, i32] = same(a);
+        acc = acc + total(a, 6) % 17 + total(b, 6) % 13 + total(m, 6) % 7;
+        r = r + 1;
+    }
+    return acc % 113;
+}`},
+	{name: "a-shared-string-map-releases-its-columns-once", atLeast: 2, noLeak: true, src: `
+import "core/map";
+function pick(c: boolean, a: Map[string, string], b: Map[string, string]): Map[string, string] { return if (c) { a } else { b }; }
+function main(): i32 {
+    var acc: i32 = 0;
+    var r: i32 = 0;
+    while (r < 30) {
+        var m: Map[string, string] = map_new(4);
+        var key: string = if (r % 2 == 0) { "even" } else { "odd" };
+        m = m.insert(key + "k", key + "v");
+        m = m.insert("x", "y");
+        var n: Map[string, string] = map_new(4);
+        n = n.insert("z", "w");
+        var p: Map[string, string] = pick(r % 2 == 0, m, n);
+        acc = acc + p.len() + m.len() + n.len() + p.get_or("x", "").len();
+        r = r + 1;
+    }
+    return acc % 101;
+}`},
 }
