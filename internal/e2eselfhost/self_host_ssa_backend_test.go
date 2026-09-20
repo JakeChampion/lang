@@ -138,6 +138,32 @@ function main(): i32 {
     return k & 255;
 }
 `},
+	// A labelled continue out of an inner loop that never exits: the inner
+	// loop's exit path is unreachable, thread_forwarding drops it, and the
+	// outer header's phis must lose the operand slot for that vanished
+	// predecessor rather than carry a value nothing defines (the allocator
+	// once indexed a block at -1 for it). count_up carries a parameter
+	// through a header phi, the entry operand with no defining instruction.
+	{name: "labelled_continue_defer", allSSA: true, src: `
+function count_up(i: i32, n: i32): i32 {
+    while (i < n) { i = i + 1; }
+    return i;
+}
+function main(): i32 {
+    var seen: i32 = 0;
+    var i: i32 = 0;
+    outer: while (i < 3) {
+        i = i + 1;
+        loop {
+            var items: i32[] = [0];
+            defer seen = seen * 3 + items[0];
+            items = [i];
+            continue outer;
+        }
+    }
+    return seen + count_up(4, 9);
+}
+`},
 	// A loop-invariant parameter carried through the header phi while the
 	// body calls out: the phi's back-edge operand is the phi itself, and the
 	// allocator once let a body temporary take its register, so the next
