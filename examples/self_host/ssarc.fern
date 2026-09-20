@@ -1844,7 +1844,14 @@ function instruction(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Pla
     if (ins.kind_tag == ssasem.call()) { r = call_site(r, ins); }
     // A verified copy already has its single operand on the stack.
     r = emit(r, ir.op_store_local(ins.result));
-    return took(r, p, ins);
+    return held(took(r, p, ins), p, ins);
+}
+
+// An element read the plan HOLDS retains what it read: the unit is the frame's
+// own from here (ssaunits.held_elements).
+function held(own r: irlower.LowerResult, p: ssaunits.Plan, ins: ssa.SInst): irlower.LowerResult {
+    if (ins.result >= p.held.len() || !p.held[ins.result]) { return r; }
+    return helper(r, ins.result, "__fern_rc_inc");
 }
 
 // A tuple read the plan admitted as a TAKE nulls the slot it read. The source
