@@ -18,7 +18,7 @@ closed for the nine fs leaves it measured:
   command and argv copies), `environ` (its entries were boxed at the raw
   environ length rather than copied), `random_bytes`, `tcp_recv`, `poll`,
   `termios_get` / `termios_set`, `setgroups`, `cpu_count`, `getgroups`.
-- **A NUL-terminated path copy boxed only on the error path.** Fourteen
+- **A NUL-terminated path copy boxed only on the error path.** Thirteen
   outcome leaves — `chdir`, `chroot`, `create_dir`, `remove_dir`,
   `create_link`, `create_symlink`, `rename`, `chmod`, `chmod_at`, `truncate`,
   `mknod`, `chown_at`, `set_file_times` — handed `pathz` to the `IoError` on
@@ -76,8 +76,12 @@ the first half of #9832 and unchanged here.
 
 `TestSelfHostSemanticProduction/os-floor-fresh-results-are-freed`: `getcwd`,
 `hostname`, `uname_field`, `environ`, `create_symlink` read back through
-`read_link` and on a missing directory, `truncate` of a written file,
-`termios_get` and `termios_set` on descriptor 0, and `subprocess` with
-arguments, three times inside a `temp_dir`. It is the first OS-floor row
-with `noLeak`: the sanitize leg pins the produced bodies at zero bytes held,
-where the earlier rows could only pin the relative figure.
+`read_link` and on a missing directory, `create_dir` and `remove_dir`,
+`create_link`, `rename`, `chmod`, `chmod_at`, `chown_at`, `set_file_times`
+and `chdir` on a present and a missing path, `truncate` of a written file,
+`termios_get` and `termios_set` on descriptor 0, `random_bytes`, `cpu_count`,
+`getgroups` and `subprocess` with arguments, three times inside a
+`temp_dir`. It is the first OS-floor row with `noLeak`: the sanitize leg
+pins the produced bodies at zero bytes held, where the earlier rows could
+only pin the relative figure, and the relative figure alone is blind to a
+helper that leaks its block on both lowerings.

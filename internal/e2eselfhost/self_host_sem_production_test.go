@@ -2260,7 +2260,21 @@ function main(): i32 {
 	// the typed lowering, which releases the results, frees everything. The
 	// AST lowering still never releases the fresh result, which the relative
 	// pin tolerates and this row records.
-	{name: "os-floor-fresh-results-are-freed", atLeast: 2, noLeak: true, nativeOnly: true, src: `
+	{name: "os-floor-fresh-results-are-freed", atLeast: 3, noLeak: true, nativeOnly: true, src: `
+function leaves(dir: string, p: string): i32 {
+    var n: i32 = 0;
+    match (create_dir(p + ".d", 493)) { Ok(_) => { n = n + 1; }, Err(_) => { n = n + 2; } }
+    match (remove_dir(p + ".d")) { Ok(_) => { n = n + 1; }, Err(_) => { n = n + 2; } }
+    match (create_link(p, p + ".h")) { Ok(_) => { n = n + 1; }, Err(_) => { n = n + 2; } }
+    match (rename(p + ".h", p + ".r")) { Ok(_) => { n = n + 1; }, Err(_) => { n = n + 2; } }
+    match (remove_file(p + ".r")) { Ok(_) => { n = n + 1; }, Err(_) => { n = n + 2; } }
+    match (chmod(p, 420)) { Ok(_) => { n = n + 1; }, Err(_) => { n = n + 2; } }
+    match (chmod_at(p, 420, true)) { Ok(_) => { n = n + 1; }, Err(_) => { n = n + 2; } }
+    match (chown_at(p, 0 - 1, 0 - 1, true)) { Ok(_) => { n = n + 1; }, Err(_) => { n = n + 2; } }
+    match (set_file_times(p, 1000i64, 0i64, 1000i64, 0i64, 0)) { Ok(_) => { n = n + 1; }, Err(_) => { n = n + 2; } }
+    match (chdir(dir)) { Ok(_) => { n = n + 1; }, Err(_) => { n = n + 2; } }
+    return n;
+}
 function each(dir: string): i32 {
     var n: i32 = 0;
     var cwd: string = getcwd();
@@ -2302,6 +2316,12 @@ function each(dir: string): i32 {
         },
         Err(_) => { n = n + 6; }
     }
+    n = n + leaves(dir, dir + "/f") + leaves(dir, dir + "/missing/f");
+    var rb: u8[] = random_bytes(24);
+    n = n + rb.len();
+    if (cpu_count() >= 0) { n = n + 1; }
+    var gs: i64[] = getgroups();
+    if (gs.len() >= 0) { n = n + 1; }
     var r: ProcessResult = subprocess("echo", ["hi", "there"], "");
     n = n + r.exit_code + r.stdout.len() + r.stderr.len();
     return n;
