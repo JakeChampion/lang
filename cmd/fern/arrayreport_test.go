@@ -61,3 +61,31 @@ func TestArrayReportCLIEmpty(t *testing.T) {
 		t.Errorf("want the empty-case line, got:\n%s", got)
 	}
 }
+
+// A std/ndarray product is reported as a recognized shape beside the
+// std/array pipelines, with the element functions the site was handed
+// (#9735, step 3).
+func TestArrayReportCLINdarrayProducts(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(src, []byte(`import "std/ndarray";
+function mul(x: i64, y: i64): i64 { return x * y; }
+function add(x: i64, y: i64): i64 { return x + y; }
+function main(): i32 {
+  var v: ndarray.NdArray[i64] = ndarray.from_flat([1 as i64, 2 as i64], [2]);
+  return v.inner(v, 0 as i64, mul, add).get([]) as i32;
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	if err := runArrayReport(src, &out); err != nil {
+		t.Fatalf("runArrayReport: %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{"no std/array pipelines", "std/ndarray products", "inner  mul, add"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("report does not mention %q:\n%s", want, got)
+		}
+	}
+}

@@ -144,15 +144,28 @@ therefore the representation: four fields the IR reads as any struct's,
 which is what lets a kernel take `data`, `shape`, `strides` and `offset`
 without a second description of them.
 
-Until phase 4 recognizes anything, `-array-report` reports nothing about
-these operations, and that is correct: nothing about them fuses or
-donates yet.
+`inner` and `outer` are the first shapes it recognizes (#9735, step 3).
+`fern -array-report` lists every site under `std/ndarray products`, with
+the element functions the site was handed, keyed on the
+`__method_ndarray__NdArray_` mangling that only std/ndarray's receiver
+methods get. That list is the kernel half's worklist: a site whose
+`mul` and `add` are multiplication and addition over `f64` is `dot_f64`
+in disguise, and one handed a closure that captures is not. Recognition
+only — every site still runs the scalar loop, nothing fuses, nothing
+donates, and `internal/ir/ndarray_shapes_test.go` pins that the
+recogniser changes no op.
 
 ## 7. Elementwise, and along an axis
 
-**Normative.** The first slice of #9735: the operations that read every
+**Normative.** The first slices of #9735: the operations that read every
 element, stated so that a kernel can replace any of them without a caller
-noticing. The list is closed the way §2's is.
+noticing. The list is closed the way §2's is. The two products are the
+APL ones: `outer` is `f` over every pair, and `inner` contracts the last
+axis of the receiver against the first axis of the argument, so the dot
+product of two vectors is a rank-0 handle, two matrices give their
+product, and a matrix and a vector give a vector. Both operands of
+`inner` must have rank at least 1 and the two contracted extents must be
+equal; anything else is a derived shape that is wrong and aborts.
 
 | operation | result | order | storage |
 | --- | --- | --- | --- |
@@ -161,6 +174,8 @@ noticing. The list is closed the way §2's is.
 | `fold_all(init, f)` | a scalar | reading order | none |
 | `reduce_axis(axis, init, f)` | `axis` dropped, one rank less | increasing index along `axis` | one packed buffer of `len() / shape[axis]` |
 | `scan_axis(axis, init, f)` | same shape, the running fold | increasing index along `axis` | one packed buffer of `len()` |
+| `outer(b, f)` | `a.shape() ++ b.shape()`, every pair | reading order of the result | one packed buffer of the result count |
+| `inner(b, init, mul, add)` | last axis of `a` against first of `b`: `a.shape()[:-1] ++ b.shape()[1:]` | increasing index along the contracted axis | one packed buffer of the result count |
 
 Three rules follow:
 
@@ -225,11 +240,11 @@ Four consequences:
 
 ## 9. What this does not decide
 
-- **Inner and outer products as recognized shapes, and the kernels**:
-  the rest of #9735. An outer product is already expressible as
-  `col.zip_with(row, mul)`; what is not decided is which such shapes the
-  compiler recognizes. §1 and §8 say what licenses an in-place
-  elementwise op; nothing here takes it.
+- **The kernels**: the rest of #9735. `inner` and `outer` are recognized
+  (§6) and lowered as the scalar loop; which of their sites a kernel
+  replaces, and how a site's element functions are proved to be the
+  arithmetic the kernel implements, is not decided here. §1 and §8 say
+  what licenses an in-place elementwise op; nothing here takes it.
 - **In-place through a handle.** The consuming-handle plus unique-storage
   rule in §1 is stated, not implemented; nothing in `std/ndarray` writes.
 - **Static shapes.** §4.

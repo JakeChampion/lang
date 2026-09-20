@@ -364,6 +364,12 @@ The same verdict is what E068 reports when a `fip` / `fbip` function's
 `map` is declined, so "why did this allocate under my space claim" and
 "why did this allocate" have one answer.
 
+The same report lists `std/ndarray`'s products, `inner` and `outer`,
+as recognized shapes (`ARRAY-SHAPES.md` §6): one line per site with the
+element functions it was handed, under a heading that says the lowering
+is still the scalar loop. Nothing about them fuses; the section is the
+worklist for the kernels of #9735.
+
 `FERN_ARRAY_REPORT=1` adds a histogram, in three sections: why each chain
 was not FUSED (#9731), where each stage's BUFFER came from (#9732), and
 where each chain STOPPED being one chain (#9730). Both sets are **closed** with stable tags, for the reason

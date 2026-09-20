@@ -615,9 +615,20 @@ func FormatArrayPipelineHistogram(p *Program) string {
 // decided, and a summary. docs/ARRAY-ALGEBRA.md §7 is why the rule is printed
 // rather than just the verdict.
 func FormatArrayPipelines(p *Program) string {
+	var b strings.Builder
+	formatArrayPipelinesInto(&b, p)
+	if shapes := FormatNdarrayShapes(p); shapes != "" {
+		b.WriteString("\n" + shapes)
+	}
+	b.WriteString(arrayReportCompilerNote)
+	return b.String()
+}
+
+func formatArrayPipelinesInto(b *strings.Builder, p *Program) {
 	pipes := RecognizeArrayPipelines(p)
 	if len(pipes) == 0 {
-		return "no std/array pipelines\n"
+		b.WriteString("no std/array pipelines\n")
+		return
 	}
 	posOf := make([]string, len(pipes))
 	posW := 0
@@ -629,36 +640,33 @@ func FormatArrayPipelines(p *Program) string {
 	}
 	verdicts := ArrayFusionVerdicts(p)
 	storage := ArrayStorageVerdicts(p)
-	var b strings.Builder
 	chained := 0
 	for i, pl := range pipes {
 		if len(pl.Stages) > 1 {
 			chained++
 		}
-		fmt.Fprintf(&b, "%-*s  %s\n", posW, posOf[i], pl.Shape())
+		fmt.Fprintf(b, "%-*s  %s\n", posW, posOf[i], pl.Shape())
 		// "Did it fuse?" is the first question #9732 asks, so it is answered
 		// per site rather than once at the bottom: a reader checking one
 		// expression should not have to know that the absence of a word means
 		// no.
-		fmt.Fprintf(&b, "%-*s    %s; %d stage(s) materialize unfused\n",
+		fmt.Fprintf(b, "%-*s    %s; %d stage(s) materialize unfused\n",
 			posW, "", verdicts[arrayPipelineKey(pl.Func, pl)], pl.Materializes())
 		if pl.Stop != RefusalNone {
-			fmt.Fprintf(&b, "%-*s    chain ends here: %s\n", posW, "", pl.Stop)
+			fmt.Fprintf(b, "%-*s    chain ends here: %s\n", posW, "", pl.Stop)
 		}
 		for _, s := range pl.Stages {
 			elem := s.Element
 			if elem == "" {
 				elem = "(element function not statically resolved)"
 			}
-			fmt.Fprintf(&b, "%-*s    %-10s %-12s %s\n", posW, "", s.Verb, s.Kind, elem)
+			fmt.Fprintf(b, "%-*s    %-10s %-12s %s\n", posW, "", s.Verb, s.Kind, elem)
 			// "Why did it allocate?" is #9732's second question, and it is
 			// asked per STAGE because that is where a buffer comes from.
-			fmt.Fprintf(&b, "%-*s      %s\n", posW, "", storage[arrayStageKey(pl.Func, s)])
+			fmt.Fprintf(b, "%-*s      %s\n", posW, "", storage[arrayStageKey(pl.Func, s)])
 		}
 	}
-	fmt.Fprintf(&b, "\n%d pipeline(s), %d with more than one stage\n", len(pipes), chained)
-	b.WriteString(arrayReportCompilerNote)
-	return b.String()
+	fmt.Fprintf(b, "\n%d pipeline(s), %d with more than one stage\n", len(pipes), chained)
 }
 
 // elementFuncStart returns the index at which the element function's push

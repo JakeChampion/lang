@@ -43,6 +43,19 @@
 // in increasing index order, which is what lets a float reduction along
 // an axis mean one thing on every backend (docs/ARRAY-ALGEBRA.md §3).
 //
+// # Products
+//
+// `outer(b, f)` is `f` over every pair, as a handle of shape
+// `a.shape() ++ b.shape()`: two broadcast views and one `zip_with`, so one
+// buffer. `inner(b, init, mul, add)` contracts the LAST axis of `a`
+// against the FIRST axis of `b` — the dot product of two vectors, the
+// matrix product of two matrices, a matrix times a vector — as a handle
+// of shape `a.shape()[:-1] ++ b.shape()[1:]`, each element the fold of
+// `mul` over the contracted axis in increasing index order. The two
+// contracted extents must be equal. The native compiler recognizes both
+// by identity (docs/ARRAY-SHAPES.md §6) and `fern -array-report` names
+// each site; the lowering is still the scalar loop below.
+//
 // # Broadcasting
 //
 // Two shapes broadcast when, aligned at their LAST axes, every pair of
@@ -396,6 +409,94 @@ pub function (a: NdArray[T]) zip_with[T, U, V](b: NdArray[U], f: (T, U) => V): N
     var i: i32 = 0;
     while (i < n) {
         out = out.append(f(x.data[addr_of(x, idx)], y.data[addr_of(y, idx)]));
+        idx = bump(idx, shape);
+        i = i + 1;
+    }
+    return from_flat(out, shape);
+}
+
+// `outer(b, f)` — `f` over every pair of elements, as a packed handle of
+// shape `a.shape() ++ b.shape()`: element `[i.., j..]` is
+// `f(a.get(i..), b.get(j..))`. Each operand is read through a broadcast
+// view, so one buffer is allocated.
+pub function (a: NdArray[T]) outer[T, U, V](b: NdArray[U], f: (T, U) => V): NdArray[V] {
+    var ra: i32 = a.shape.len();
+    var rb: i32 = b.shape.len();
+    var shape: i32[] = join(a.shape, b.shape);
+    check_shape(shape);
+    var x: NdArray[T] = NdArray { data: a.data, shape: join(a.shape, ones(rb)), strides: join(a.strides, zeros(rb)), offset: a.offset };
+    var y: NdArray[U] = NdArray { data: b.data, shape: join(ones(ra), b.shape), strides: join(zeros(ra), b.strides), offset: b.offset };
+    return x.zip_with(y, f);
+}
+
+// `x` followed by `y`.
+function join(x: i32[], y: i32[]): i32[] {
+    var out: i32[] = [];
+    var k: i32 = 0;
+    while (k < x.len()) {
+        out = out.append(x[k]);
+        k = k + 1;
+    }
+    k = 0;
+    while (k < y.len()) {
+        out = out.append(y[k]);
+        k = k + 1;
+    }
+    return out;
+}
+
+function ones(rank: i32): i32[] {
+    var out: i32[] = [];
+    var k: i32 = 0;
+    while (k < rank) {
+        out = out.append(1);
+        k = k + 1;
+    }
+    return out;
+}
+
+// The storage index of the leading `count` positions of `idx` read
+// against `a`'s axes from `from`.
+function base_of[T](a: NdArray[T], idx: i32[], idx_from: i32, axis_from: i32, count: i32): i32 {
+    var at: i32 = a.offset;
+    var k: i32 = 0;
+    while (k < count) {
+        at = at + idx[idx_from + k] * a.strides[axis_from + k];
+        k = k + 1;
+    }
+    return at;
+}
+
+// `inner(b, init, mul, add)` — the last axis of `a` contracted against
+// the first axis of `b`: a packed handle of shape
+// `a.shape()[:-1] ++ b.shape()[1:]` whose every element is
+// `add` folded from `init` over `mul(a[.., k], b[k, ..])` in increasing
+// `k`. The dot product of two vectors is a rank-0 handle; two matrices
+// give their product; a matrix and a vector give a vector. Both operands
+// must have rank at least 1 and the two contracted extents must be
+// equal; anything else aborts.
+pub function (a: NdArray[T]) inner[T, A](b: NdArray[T], init: A, mul: (T, T) => A, add: (A, A) => A): NdArray[A] {
+    var ra: i32 = a.shape.len();
+    var rb: i32 = b.shape.len();
+    if (ra < 1 || rb < 1 || a.shape[ra - 1] != b.shape[0]) { shape_error(); }
+    var n: i32 = a.shape[ra - 1];
+    var sa: i32 = a.strides[ra - 1];
+    var sb: i32 = b.strides[0];
+    var shape: i32[] = join(drop_axis(a.shape, ra - 1), drop_axis(b.shape, 0));
+    var out: A[] = [];
+    var total: i32 = count_of(shape);
+    var idx: i32[] = zeros(shape.len());
+    var i: i32 = 0;
+    while (i < total) {
+        var pa: i32 = base_of(a, idx, 0, 0, ra - 1);
+        var pb: i32 = base_of(b, idx, ra - 1, 1, rb - 1);
+        var acc: A = init;
+        var k: i32 = 0;
+        while (k < n) {
+            acc = add(acc, mul(a.data[pa + k * sa], b.data[pb + k * sb]));
+            k = k + 1;
+        }
+        out = out.append(acc);
         idx = bump(idx, shape);
         i = i + 1;
     }
