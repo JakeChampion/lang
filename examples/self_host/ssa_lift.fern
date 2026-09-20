@@ -150,8 +150,9 @@ pub function admits(op: ir.Op): boolean { return prod_kind(ir.kind_name(op.kind_
 
 // flat_arm_op reports whether `op` can run through the stack machine's own
 // arm (flat_op, 59): the arm pops what op_pops says, pushes one value, and
-// reads no frame slot. dyn_dispatch reads its arguments from the locals the
-// lowering spilled them to, and the register path keeps no such slots.
+// reads no frame slot. dyn_dispatch's arm reads its arguments from the
+// locals the lowering spilled them to, which the register path keeps no
+// slots for; the lift has an instruction of its own for it (60).
 function flat_arm_op(op: ir.Op): boolean {
     if (op.kind_tag == ir.kind_id("dyn_dispatch")) { return false; }
     return ir.op_pops(op) >= 0 && ir.op_pushes(op) == 1;
@@ -178,7 +179,7 @@ function prod_kind(k: string): boolean {
     var spine: string[] = ["const_i32", "const_i32_text", "const_i64",
         "int_extend", "int_wrap", "int_cast", "u32_wrap", "not",
         "load_local", "store_local", "tee_local", "drop", "return",
-        "block", "loop", "if", "else", "end", "br", "brif", "call_direct"];
+        "block", "loop", "if", "else", "end", "br", "brif", "call_direct", "dyn_dispatch"];
     for x in spine { if (x == k) { return true; } }
     return prod_mem_kind(k) || prod_float_kind(k);
 }
@@ -704,6 +705,21 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResu
         } else if (k == "call_direct") {
             var lv: LiftVals = lift_call_direct(op, nvals, stack, [], ok);
             nvals = lv.nvals; stack = lv.stack; cur_insts = splice(cur_insts, lv.insts); ok = lv.ok;
+        } else if (k == "dyn_dispatch") {
+            // The receiver and the arguments are the values of the argc
+            // consecutive slots from base_slot the lowering stored them to;
+            // the instruction carries them as operands and the op's index
+            // for its labels.
+            var dargs: i32[] = [];
+            var dk: i32 = 0;
+            while (dk < op.width) {
+                if (op.i32_imm + dk < 0 || op.i32_imm + dk >= slots.len()) { ok = false; }
+                else { dargs = dargs.append(slots[op.i32_imm + dk]); }
+                dk = dk + 1;
+            }
+            var dv: i32 = nvals; nvals = nvals + 1;
+            cur_insts = cur_insts.append(ssa.SInst { kind_tag: 60, result: dv, args: dargs, imm: i, str: op.str });
+            stack = stack.append(dv);
         } else if (k == "drop") {
             if (stack.len() < 1) { ok = false; } else { stack = drop_last(stack); }
         } else if (k == "return") {

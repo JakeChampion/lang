@@ -389,6 +389,42 @@ function main(): i32 {
     return n % 100;
 }
 `},
+	// `dyn Trait` dispatch: the receiver's shape word selects the arm, and
+	// the arguments are read from wherever the allocator put them, a
+	// register or a spill slot, rather than from the locals the stack
+	// machine's arm reads. A struct, an enum (matched per variant) and a
+	// primitive (unboxed at the call) receiver, and a two-argument method.
+	{name: "dyn_dispatch", allSSA: true, src: `
+import "std/i32";
+trait Shape {
+    function area(self: Self): i32;
+    function scaled(self: Self, k: i32): i32;
+}
+struct Square { side: i32 }
+impl Shape for Square {
+    function area(self: Self): i32 { return self.side * self.side; }
+    function scaled(self: Self, k: i32): i32 { return self.side * k; }
+}
+enum Blob { Round(i32), Flat }
+impl Shape for Blob {
+    function area(self: Self): i32 { match (self) { Round(r) => { return r * 3; }, Flat => { return 0; } } }
+    function scaled(self: Self, k: i32): i32 { return self.area() * k; }
+}
+impl Shape for i32 {
+    function area(self: Self): i32 { return self; }
+    function scaled(self: Self, k: i32): i32 { return self * k; }
+}
+function measure(s: dyn Shape, k: i32): i32 { return s.area() * 100 + s.scaled(k); }
+function main(): i32 {
+    var a: dyn Shape = Square { side: 3 };
+    var b: dyn Shape = Round(5);
+    var c: dyn Shape = Flat;
+    var d: dyn Shape = 7;
+    var total: i32 = measure(a, 2) + measure(b, 3) + measure(c, 4) + measure(d, 5);
+    print("dyn " + total.to_string() + "\n");
+    return total % 256;
+}
+`},
 	// The map ops and the byte kernels run through the stack machine's own
 	// arms between a push of the operands and a pop of the result, with the
 	// allocator treating each as a call. String and integer keys, insert,

@@ -6680,6 +6680,12 @@ pub function emit_const_agg_data_from(s: EmitState, first: i32): EmitState {
 // ShapeRefOut carries the updated state + the label a shape pointer leaqs.
 pub struct ShapeRefOut { state: EmitState, label: string }
 
+// DynArg is where a `dyn Trait` call's argument is read from: a register
+// when `reg` is set, else the frame slot at `off` from the frame pointer.
+// The stack machine names its locals this way and the register path its
+// value homes, so one dispatch chain serves both.
+pub struct DynArg { reg: string, off: i32 }
+
 // shape_ref resolves the label for an enum/struct SHAPE pointer (struct_make /
 // variant_is / struct_set_shape / dyn dispatch / downcast). On the whole-program
 // path (str_ns == "") a shape is interned as an ordinary string literal — the

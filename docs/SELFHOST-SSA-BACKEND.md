@@ -115,8 +115,15 @@ emitted, in the order it was admitted:
   counts a `flat_op` as a call, so every value live across it is in its
   frame slot and the arm's registers hold nothing. The one op this cannot
   bridge is `dyn_dispatch`, whose arm reads its arguments from the frame
-  slots the lowering spilled them to; it still declines, and
-  `ssa_lift_admits_run.fern` is the census that says so.
+  slots the lowering spilled them to.
+- **`dyn_dispatch`** (kind 60): the lift carries the values of the argc
+  slots the lowering stored the receiver and the arguments to, and the
+  emitter runs the same compare-branch chain as the stack machine
+  (`emit_dyn_dispatch_chain`) over a list of argument locations, a
+  register home or a spill slot, in place of the locals. The chain's own
+  scratch (rax, x0) is moved out of the way first when a value lives there.
+  `ssa_lift_admits_run.fern` is the census: every registered kind is
+  admitted except the three no lowering produces.
 
 The lift's older arms for these ops lower to `build_func`'s layouts and
 went with it (see "What this retires").
@@ -167,11 +174,11 @@ not register pressure. The order to take that in:
 
 - `internal/e2eselfhost/self_host_ssa_lift_admits_test.go` runs
   `ssa_lift_admits_run.fern`, the lift's admission census over every
-  registered IR op kind, and pins the kinds it declines: `dyn_dispatch` and
-  the three kinds no lowering produces. A new op kind reaches the register
-  path through the stack machine's arm unless `ir.op_pops` does not model
-  it, and then it is a new line here rather than a silent decline on every
-  program that uses it.
+  registered IR op kind, and pins the kinds it declines: the three kinds no
+  lowering produces. A new op kind reaches the register path through the
+  stack machine's arm unless `ir.op_pops` does not model it, and then it is
+  a new line here rather than a silent decline on every program that uses
+  it.
 - `internal/e2eselfhost/self_host_ssa_backend_test.go` builds the CLI for
   the host, compiles each of its programs both ways for every target the
   host can run output for (its own ISA natively, the other through its qemu
@@ -243,10 +250,11 @@ path needs `build_func` any more. In order:
    whole; the corpus sweep (the conformance cases, the coreutils, the
    benches, the CLI examples and the stdlib tests: 863 programs that
    compile, 95,072 functions) found 381 functions in 115 programs declining
-   for 58 OS-floor ops, on either ISA, and is down to the one `dyn_dispatch`
-   site (`docs/ssa-log/2026-09-20-every-op-through-the-stack-machines-arm.md`). What is left before the stack machine's function driver can go is
-   `dyn_dispatch` itself in the register path, and a corpus lane that holds
-   the decline count at zero.
+   for 58 OS-floor ops, on either ISA
+   (`docs/ssa-log/2026-09-20-every-op-through-the-stack-machines-arm.md`);
+   `dyn_dispatch` followed the same day, and the sweep declines nothing. What
+   is left before the stack machine's function driver can go is a corpus
+   lane that holds the decline count at zero.
 
 ## The other backends
 

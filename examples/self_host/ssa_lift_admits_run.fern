@@ -6,7 +6,8 @@
 // The companion Go test (internal/e2eselfhost/self_host_ssa_lift_admits_test.go)
 // pins the report: a kind added to the registry reaches the register path
 // through the stack machine's arm for it unless its stack effect is unknown,
-// so a new line here is a kind whose pop count op_pops does not model.
+// so a new line here is a kind whose pop count op_pops does not model. The
+// three kinds it lists are the ones no lowering produces.
 
 import "./ir";
 import "./ssa_lift";
