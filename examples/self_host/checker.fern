@@ -3116,10 +3116,13 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
             if (parser.is_value_block_origin(lm.origin)) {
               if (!vb_arms_compatible(bts, s)) { return t_unknown("value block arms disagree"); }
               var tag: typeinfo.Type = s.resolve_type(lm.ret_type);
-              for bt in bts {
-                if (!is_unknown(bt) && !type_eq(bt, tag)) {
-                  return bt;
+              var arms: ast.Expr[] = mx_body_result_exprs(lm.body);
+              var bi: i32 = 0;
+              while (bi < bts.len() && bi < arms.len()) {
+                if (!int_literal_tree(arms[bi]) && !is_unknown(bts[bi]) && !type_eq(bts[bi], tag)) {
+                  return bts[bi];
                 }
+                bi = bi + 1;
               }
             }
           }
@@ -6824,6 +6827,29 @@ function mx_body_result_types(body: ast.Stmt[], s: Scope): typeinfo.Type[] {
     ast.StmtReturn(r) => { return out.append(check_expr(r.value, cur)); },
     ast.StmtIf(f) => { return mx_if_branch_types(f, cur); },
     ast.StmtMatch(m) => { return mx_match_arm_types(m, cur); },
+    _ => { return out; }
+  }
+  return out;
+}
+
+// The arm expressions mx_body_result_types types, in the same order, for a
+// reader that needs the expression's shape as well as its type.
+function mx_body_result_exprs(body: ast.Stmt[]): ast.Expr[] {
+  var out: ast.Expr[] = [];
+  if (body.len() == 0) { return out; }
+  match (body[body.len() - 1]) {
+    ast.StmtReturn(r) => { return out.append(r.value); },
+    ast.StmtIf(f) => {
+      out = mx_body_result_exprs(f.then_body);
+      for e in mx_body_result_exprs(f.else_body) { out = out.append(e); }
+      return out;
+    },
+    ast.StmtMatch(m) => {
+      for arm in m.arms {
+        for e in mx_body_result_exprs(arm.body) { out = out.append(e); }
+      }
+      return out;
+    },
     _ => { return out; }
   }
   return out;
