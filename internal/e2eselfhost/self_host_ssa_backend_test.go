@@ -1370,7 +1370,9 @@ function main(): i32 {
 
 // A constant the binary ops alone read is an immediate operand on both ISAs
 // and is never materialised; one a division reads keeps its register. The
-// loop bound is under 4,096 so it is an immediate on arm64 too.
+// loop bound is under 4,096 so it is an immediate on arm64 too. A shift by a
+// literal takes the immediate-count form, so neither the count register nor
+// the mask a variable count needs appears.
 func TestSelfHostSSAConstantsAreImmediates(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
@@ -1379,7 +1381,7 @@ func TestSelfHostSSAConstantsAreImmediates(t *testing.T) {
     var sum: i64 = 0i64;
     var i: i64 = 0i64;
     while (i < 3000i64) { sum = sum + i; i = i + 1i64; }
-    return sum % 97i64;
+    return (sum % 97i64) + (sum >> 3i64);
 }
 function main(): i32 { return count() as i32; }
 `
@@ -1391,11 +1393,11 @@ function main(): i32 { return count() as i32; }
 		want, absent []*regexp.Regexp
 	}{
 		{"x86-64-linux",
-			[]*regexp.Regexp{regexp.MustCompile(`addq \$1, %r`), regexp.MustCompile(`cmpq \$3000, %r`), regexp.MustCompile(`mov[ql] \$97, %`)},
-			[]*regexp.Regexp{regexp.MustCompile(`mov[ql] \$3000, %`), regexp.MustCompile(`mov[ql] \$1, %`)}},
+			[]*regexp.Regexp{regexp.MustCompile(`addq \$1, %r`), regexp.MustCompile(`cmpq \$3000, %r`), regexp.MustCompile(`mov[ql] \$97, %`), regexp.MustCompile(`sarq \$3, %r`)},
+			[]*regexp.Regexp{regexp.MustCompile(`mov[ql] \$3000, %`), regexp.MustCompile(`mov[ql] \$1, %`), regexp.MustCompile(`sarq %cl`), regexp.MustCompile(`andl \$31, %ecx`)}},
 		{"arm64-linux",
-			[]*regexp.Regexp{regexp.MustCompile(`add x\d+, x\d+, #1\n`), regexp.MustCompile(`cmp x\d+, #3000\n`), regexp.MustCompile(`mov x\d+, #97\n`)},
-			[]*regexp.Regexp{regexp.MustCompile(`mov x\d+, #3000\n`), regexp.MustCompile(`mov x\d+, #1\n`)}},
+			[]*regexp.Regexp{regexp.MustCompile(`add x\d+, x\d+, #1\n`), regexp.MustCompile(`cmp x\d+, #3000\n`), regexp.MustCompile(`mov x\d+, #97\n`), regexp.MustCompile(`asr x\d+, x\d+, #3\n`)},
+			[]*regexp.Regexp{regexp.MustCompile(`mov x\d+, #3000\n`), regexp.MustCompile(`mov x\d+, #1\n`), regexp.MustCompile(`and x\d+, x\d+, #31\n`)}},
 	}
 	for _, c := range cases {
 		out := filepath.Join(dir, "count-"+c.target+".s")
