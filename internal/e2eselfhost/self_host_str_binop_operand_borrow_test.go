@@ -86,7 +86,7 @@ function main(): i32 {
 	// NEGATIVE: `return s` hands the parameter's own box back, so releasing the
 	// argument at the call site frees what the caller now holds. Exits 97 under a
 	// compiler that makes every bare ident a borrow.
-	{"str-identity-return-param-refused", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
+	{"str-identity-return-param-refused", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function keep(s: string): string { return s; }
 function round(pre: string): i32 {
     var t: string = keep(w(pre));
@@ -94,15 +94,15 @@ function round(pre: string): i32 {
     var p2: string = w("YYYYYYYY");
     var p3: string = w("XXXXXXXX");
     if (p1.len() + p2.len() + p3.len() < 0) { return 0; }
-    if (!t.starts_with("abcdefgh-a-wide")) { return 0 - 1; }
-    if (t.index_of("XXXX") >= 0) { return 0 - 2; }
+    if (!has_prefix(t, "abcdefgh-a-wide")) { return 0 - 1; }
+    if (has_sub(t, "XXXX")) { return 0 - 2; }
     return t.len();
 }
 function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
 	// NEGATIVE: the parameter is moved into a struct field that outlives the call.
 	// A struct-literal field value is not a borrow position and must not become one.
 	// Also exits 97 when admitted.
-	{"str-struct-stored-param-refused", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
+	{"str-struct-stored-param-refused", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 struct Hold { v: string }
 function stash(s: string): Hold { return Hold { v: s }; }
 function via(s: string): string { var h: Hold = stash(s); return h.v; }
@@ -112,15 +112,15 @@ function round(pre: string): i32 {
     var p2: string = w("YYYYYYYY");
     var p3: string = w("XXXXXXXX");
     if (p1.len() + p2.len() + p3.len() < 0) { return 0; }
-    if (!t.starts_with("abcdefgh-a-wide")) { return 0 - 1; }
-    if (t.index_of("XXXX") >= 0) { return 0 - 2; }
+    if (!has_prefix(t, "abcdefgh-a-wide")) { return 0 - 1; }
+    if (has_sub(t, "XXXX")) { return 0 - 2; }
     return t.len();
 }
 function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
 	// NEGATIVE: concat-read on one path, returned bare on the other. One escaping
 	// path is enough to refuse the parameter — the call site has no way to tell
 	// which path ran. Also exits 97 when admitted.
-	{"str-mixed-path-param-refused", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
+	{"str-mixed-path-param-refused", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function mixed(s: string, k: i32): string { if (k > 0) { return s + ""; } return s; }
 function round(pre: string): i32 {
     var t: string = mixed(w(pre), 0);
@@ -128,8 +128,8 @@ function round(pre: string): i32 {
     var p2: string = w("YYYYYYYY");
     var p3: string = w("XXXXXXXX");
     if (p1.len() + p2.len() + p3.len() < 0) { return 0; }
-    if (!t.starts_with("abcdefgh-a-wide")) { return 0 - 1; }
-    if (t.index_of("XXXX") >= 0) { return 0 - 2; }
+    if (!has_prefix(t, "abcdefgh-a-wide")) { return 0 - 1; }
+    if (has_sub(t, "XXXX")) { return 0 - 2; }
     return t.len();
 }
 function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},

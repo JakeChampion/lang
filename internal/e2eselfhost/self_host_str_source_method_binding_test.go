@@ -95,7 +95,7 @@ function main(): i32 {
 	// NEGATIVE: `return s` hands the RECEIVER's box back, so the binding is an alias
 	// and freeing it double-frees what `b` still owns. Admitting it (the SFRRECV
 	// test, which tolerates a receiver return) exits 99 here.
-	{"str-identity-return-method-binding-refused", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-string-dominates-0123456789"; }
+	{"str-identity-return-method-binding-refused", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-string-dominates-0123456789"; }
 function (s: string) same(): string { return s; }
 function round(pre: string): i32 {
     var b: string = w(pre);
@@ -104,8 +104,8 @@ function round(pre: string): i32 {
     var p2: string = w("YYYYYYYY");
     var p3: string = w("XXXXXXXX");
     if (p1.len() + p2.len() + p3.len() < 0) { return 0; }
-    if (!t.starts_with("abcdefgh-a-wide")) { return 0 - 1; }
-    if (t.index_of("XXXX") >= 0) { return 0 - 2; }
+    if (!has_prefix(t, "abcdefgh-a-wide")) { return 0 - 1; }
+    if (has_sub(t, "XXXX")) { return 0 - 2; }
     return t.len();
 }
 function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 113) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
@@ -113,7 +113,7 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
 	// is enough to refuse the whole method — a binding has no runtime discriminator
 	// to tell the two apart, which is exactly what separates this from SFRRECV's
 	// consuming-site release. Also exits 99 when admitted.
-	{"str-mixed-path-method-binding-refused", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-string-dominates-0123456789"; }
+	{"str-mixed-path-method-binding-refused", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-string-dominates-0123456789"; }
 function (s: string) maybe(k: i32): string { if (k > 0) { return s + "!"; } return s; }
 function round(pre: string): i32 {
     var b: string = w(pre);
@@ -122,8 +122,8 @@ function round(pre: string): i32 {
     var p2: string = w("YYYYYYYY");
     var p3: string = w("XXXXXXXX");
     if (p1.len() + p2.len() + p3.len() < 0) { return 0; }
-    if (!t.starts_with("abcdefgh-a-wide")) { return 0 - 1; }
-    if (t.index_of("XXXX") >= 0) { return 0 - 2; }
+    if (!has_prefix(t, "abcdefgh-a-wide")) { return 0 - 1; }
+    if (has_sub(t, "XXXX")) { return 0 - 2; }
     return t.len();
 }
 function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 113) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
@@ -131,7 +131,7 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
 	// different box. Correctness only: freeing an immortal view box is not currently
 	// observable, so unlike the two above this case does not fail when the rule is
 	// relaxed. It pins the contract, not a witnessed fault.
-	{"str-view-return-method-binding-refused", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-string-dominates-0123456789"; }
+	{"str-view-return-method-binding-refused", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-string-dominates-0123456789"; }
 function (s: string) rest(): string { return slice_unchecked(s, 2, s.len()); }
 function round(pre: string): i32 {
     var b: string = w(pre);
@@ -140,15 +140,15 @@ function round(pre: string): i32 {
     var p2: string = w("YYYYYYYY");
     var p3: string = w("XXXXXXXX");
     if (p1.len() + p2.len() + p3.len() < 0) { return 0; }
-    if (!t.starts_with("cdefgh-a-wide")) { return 0 - 1; }
-    if (t.index_of("XXXX") >= 0) { return 0 - 2; }
+    if (!has_prefix(t, "cdefgh-a-wide")) { return 0 - 1; }
+    if (has_sub(t, "XXXX")) { return 0 - 2; }
     return t.len();
 }
 function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 111) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
 	// NEGATIVE: a user type declaring a strictly-fresh `trim` must not license the
 	// string BUILTIN of that name, which returns a view. Same correctness-only
 	// standing as the case above.
-	{"str-builtin-name-collision-binding-refused", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-string-dominates-0123456789"; }
+	{"str-builtin-name-collision-binding-refused", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-string-dominates-0123456789"; }
 struct Box { v: string }
 function (x: Box) trim(): string { return x.v + ""; }
 function round(pre: string): i32 {
@@ -158,8 +158,8 @@ function round(pre: string): i32 {
     var p2: string = w("YYYYYYYY");
     var p3: string = w("XXXXXXXX");
     if (p1.len() + p2.len() + p3.len() < 0) { return 0; }
-    if (!t.starts_with("abcdefgh-a-wide")) { return 0 - 1; }
-    if (t.index_of("XXXX") >= 0) { return 0 - 2; }
+    if (!has_prefix(t, "abcdefgh-a-wide")) { return 0 - 1; }
+    if (has_sub(t, "XXXX")) { return 0 - 2; }
     return t.len();
 }
 function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 113) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},

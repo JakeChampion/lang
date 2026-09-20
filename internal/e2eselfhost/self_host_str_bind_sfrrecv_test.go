@@ -28,7 +28,7 @@ import (
 const strBindPrelude = `import "std/i32";
 import "std/i64";
 import "std/string";
-struct Holder { name: string }
+` + strProbeHelpers + `struct Holder { name: string }
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function (s: string) tail(n: i32): str {
     if (n <= 0) { return s; }
@@ -111,9 +111,9 @@ function main(): i32 {
     var p2: string = w("YYYYYYYY");
     var p3: string = w("XXXXXXXX");
     if (p1.len() + p2.len() + p3.len() < 0) { return 0; }
-    if (base.index_of("XXXX") >= 0) { return 0 - 1; }
-    if (!base.starts_with("abcdefgh-a-wide")) { return 0 - 2; }
-    if (!c.starts_with("abcdefgh-a-wide")) { return 0 - 3; }
+    if (has_sub(base, "XXXX")) { return 0 - 1; }
+    if (!has_prefix(base, "abcdefgh-a-wide")) { return 0 - 2; }
+    if (!has_prefix(c, "abcdefgh-a-wide")) { return 0 - 3; }
     return base.len() + c.len();
 }
 function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 212) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
@@ -137,8 +137,8 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
     var p1: string = w("ZZZZZZZZ");
     var p2: string = w("YYYYYYYY");
     if (p1.len() + p2.len() < 0) { return 0; }
-    if (!h.name.starts_with("abcdefgh-a-wide")) { return 0 - 2; }
-    if (!c.starts_with("abcdefgh-a-wide")) { return 0 - 3; }
+    if (!has_prefix(h.name, "abcdefgh-a-wide")) { return 0 - 2; }
+    if (!has_prefix(c, "abcdefgh-a-wide")) { return 0 - 3; }
     return h.name.len() + c.len();
 }
 function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 212) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
@@ -151,8 +151,8 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
     var p1: string = w("ZZZZZZZZ");
     var p2: string = w("YYYYYYYY");
     if (p1.len() + p2.len() < 0) { return 0; }
-    if (!base.starts_with("abcdefgh-a-wide")) { return 0 - 2; }
-    if (!c.starts_with("abcdefgh-a-wide")) { return 0 - 3; }
+    if (!has_prefix(base, "abcdefgh-a-wide")) { return 0 - 2; }
+    if (!has_prefix(c, "abcdefgh-a-wide")) { return 0 - 3; }
     return base.len() + c.len();
 }
 function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 212) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
@@ -165,8 +165,8 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
     var p1: string = w("ZZZZZZZZ");
     var p2: string = w("YYYYYYYY");
     if (p1.len() + p2.len() < 0) { return 0; }
-    if (!base.starts_with("abcdefgh-a-wide")) { return 0 - 2; }
-    if (!v.starts_with("a-wide-payload")) { return 0 - 3; }
+    if (!has_prefix(base, "abcdefgh-a-wide")) { return 0 - 2; }
+    if (!has_prefix(v, "a-wide-payload")) { return 0 - 3; }
     return base.len() + v.len();
 }
 function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 203) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
@@ -180,8 +180,8 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
     var base: string = "abcdefgh-a-static-literal-in-rodata-0123456789";
     var v: str = base.tail(2);
     var e: str = base.tail(9999);
-    if (!base.starts_with("abcdefgh")) { return 0 - 1; }
-    if (!v.starts_with("cdefgh")) { return 0 - 2; }
+    if (!has_prefix(base, "abcdefgh")) { return 0 - 1; }
+    if (!has_prefix(v, "cdefgh")) { return 0 - 2; }
     if (e.len() != 0) { return 0 - 3; }
     return v.len() + base.len();
 }
@@ -195,8 +195,8 @@ function main(): i32 { var i: i32 = 0; while (i < 4000) { var r: i32 = round(); 
     var total: i32 = 0;
     if (base.len() > 0) { var v: str = base.tail(2); total = total + v.len(); }
     if (base.len() > 0) { var v: str = h.name; total = total + v.len(); }
-    if (!base.starts_with("abcdefgh-a-wide")) { return 0 - 1; }
-    if (!h.name.starts_with("abcdefgh-a-wide")) { return 0 - 2; }
+    if (!has_prefix(base, "abcdefgh-a-wide")) { return 0 - 1; }
+    if (!has_prefix(h.name, "abcdefgh-a-wide")) { return 0 - 2; }
     return total;
 }
 function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 210) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
@@ -207,8 +207,8 @@ function round(pre: string): i32 {
     var r: string = mk(pre);
     var p1: string = w("ZZZZZZZZ");
     if (p1.len() < 0) { return 0; }
-    if (!r.starts_with("abcdefgh-a-wide")) { return 0 - 2; }
-    if (!r.ends_with("0123456789abcdef")) { return 0 - 3; }
+    if (!has_prefix(r, "abcdefgh-a-wide")) { return 0 - 2; }
+    if (!has_suffix(r, "0123456789abcdef")) { return 0 - 3; }
     return r.len();
 }
 function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 154) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},

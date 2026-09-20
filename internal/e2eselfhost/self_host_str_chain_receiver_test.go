@@ -32,7 +32,7 @@ import (
 const chainRecvPrelude = `import "std/i32";
 import "std/i64";
 import "std/string";
-function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
+` + strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function (s: string) tail(n: i32): str {
     if (n <= 0) { return s; }
     var sLen: i32 = s.len();
@@ -93,9 +93,9 @@ var strChainReceiverCases = []struct {
     var p2: string = w("YYYYYYYY");
     var p3: string = w("XXXXXXXX");
     if (p1.len() + p2.len() + p3.len() < 0) { return 0; }
-    if (base.index_of("XXXX") >= 0) { return 0 - 1; }
-    if (!base.starts_with("abcdefgh-a-wide")) { return 0 - 2; }
-    if (!c.starts_with("abcdefgh-a-wide")) { return 0 - 3; }
+    if (has_sub(base, "XXXX")) { return 0 - 1; }
+    if (!has_prefix(base, "abcdefgh-a-wide")) { return 0 - 2; }
+    if (!has_prefix(c, "abcdefgh-a-wide")) { return 0 - 3; }
     return base.len() + c.len();
 }
 function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 212) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
@@ -111,7 +111,7 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
     var p1: string = w("ZZZZZZZZ");
     var p2: string = w("YYYYYYYY");
     if (p1.len() + p2.len() < 0) { return 0; }
-    if (!base.starts_with("abcdefgh-a-wide")) { return 0 - 2; }
+    if (!has_prefix(base, "abcdefgh-a-wide")) { return 0 - 2; }
     if (c.len() != 0) { return 0 - 3; }
     return base.len();
 }
@@ -125,8 +125,8 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
     var p1: string = w("ZZZZZZZZ");
     var p2: string = w("YYYYYYYY");
     if (p1.len() + p2.len() < 0) { return 0; }
-    if (!base.starts_with("abcdefgh-a-wide")) { return 0 - 2; }
-    if (!c.starts_with("efgh-a-wide")) { return 0 - 3; }
+    if (!has_prefix(base, "abcdefgh-a-wide")) { return 0 - 2; }
+    if (!has_prefix(c, "efgh-a-wide")) { return 0 - 3; }
     return base.len() + c.len();
 }
 function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 4000) { var r: i32 = round(pre); if (r != 208) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},

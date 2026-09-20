@@ -40,7 +40,7 @@ import (
 // reclaimed its operand — which is what made the f-string case look like a
 // machinery bug until the explicit `.to_string()` reproduced it exactly.
 
-const interpCallPrelude = `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
+const interpCallPrelude = strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 `
 
 func interpCallHeap(body string, limit int) string {
@@ -104,13 +104,13 @@ var interpCallFaultCases = []struct {
     var p1: string = w("XXXXXXXX");
     var p2: string = w("YYYYYYYY");
     if (p1.len() + p2.len() < 0) { return 0; }
-    if (!base.starts_with("abcdefgh-")) { return 0 - 1; }
-    if (!named.starts_with("abcdefgh-")) { return 0 - 2; }
-    if (!fresh.starts_with("abcdefgh-")) { return 0 - 3; }
-    if (!interp.starts_with("abcdefgh-")) { return 0 - 4; }
-    if (base.index_of("XXXX") >= 0) { return 0 - 5; }
+    if (!has_prefix(base, "abcdefgh-")) { return 0 - 1; }
+    if (!has_prefix(named, "abcdefgh-")) { return 0 - 2; }
+    if (!has_prefix(fresh, "abcdefgh-")) { return 0 - 3; }
+    if (!has_prefix(interp, "abcdefgh-")) { return 0 - 4; }
+    if (has_sub(base, "XXXX")) { return 0 - 5; }
     if (named.len() != base.len()) { return 0 - 6; }
-    if (interp.index_of("|") < 0) { return 0 - 7; }
+    if (!has_sub(interp, "|")) { return 0 - 7; }
     return 3;
 }
 function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { if (round(pre) != 3) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`},
@@ -128,10 +128,10 @@ function round(pre: string): i32 {
     var t: string = mk(pre).to_string();
     var p1: string = w("XXXXXXXX");
     if (p1.len() < 0) { return 0; }
-    if (!s.starts_with("abcdefgh-")) { return 0 - 1; }
-    if (!t.starts_with("abcdefgh-")) { return 0 - 2; }
-    if (!h.name.starts_with("abcdefgh-")) { return 0 - 3; }
-    if (s.index_of("XXXX") >= 0) { return 0 - 4; }
+    if (!has_prefix(s, "abcdefgh-")) { return 0 - 1; }
+    if (!has_prefix(t, "abcdefgh-")) { return 0 - 2; }
+    if (!has_prefix(h.name, "abcdefgh-")) { return 0 - 3; }
+    if (has_sub(s, "XXXX")) { return 0 - 4; }
     return 3;
 }
 function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { if (round(pre) != 3) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`},
@@ -141,7 +141,7 @@ function round(pre: string): i32 {
     var s: string = mk(pre);
     var p1: string = w("XXXXXXXX");
     if (p1.len() < 0) { return 0; }
-    if (!s.starts_with("abcdefgh-")) { return 0 - 1; }
+    if (!has_prefix(s, "abcdefgh-")) { return 0 - 1; }
     return s.len() % 251;
 }
 function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; var want: i32 = round(pre); while (i < 2000) { if (round(pre) != want) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`},
