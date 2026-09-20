@@ -69,18 +69,22 @@ function shape_error(): void {
     exit(134);
 }
 
-// A shape is a list of non-negative extents; anything else aborts.
-function check_extents(shape: i32[]): void {
+// A shape is a list of non-negative extents whose product fits an i32,
+// since that product is an index into storage; anything else aborts.
+function check_shape(shape: i32[]): void {
+    var n: i32 = 1;
     var k: i32 = 0;
     while (k < shape.len()) {
         if (shape[k] < 0) { shape_error(); }
+        if (shape[k] != 0 && n > 2147483647 / shape[k]) { shape_error(); }
+        n = n * shape[k];
         k = k + 1;
     }
 }
 
 // The element count a shape describes; 1 for the rank-0 shape.
 function count_of(shape: i32[]): i32 {
-    check_extents(shape);
+    check_shape(shape);
     var n: i32 = 1;
     var k: i32 = 0;
     while (k < shape.len()) {
@@ -332,8 +336,8 @@ function same_shape(x: i32[], y: i32[]): boolean {
 // abort: both are derived, and docs/ARRAY-ALGEBRA.md §4 rules that out
 // as an error rather than a truncation.
 pub function broadcast_shape(x: i32[], y: i32[]): i32[] {
-    check_extents(x);
-    check_extents(y);
+    check_shape(x);
+    check_shape(y);
     var rank: i32 = x.len();
     if (y.len() > rank) { rank = y.len(); }
     var out: i32[] = zeros(rank);
@@ -352,6 +356,7 @@ pub function broadcast_shape(x: i32[], y: i32[]): i32[] {
         }
         k = k + 1;
     }
+    check_shape(out);
     return out;
 }
 
@@ -360,7 +365,7 @@ pub function broadcast_shape(x: i32[], y: i32[]): i32[] {
 // axis of `shape` it aligns with or has extent 1. A stretched axis gets
 // stride 0, so the same element is read along it. Metadata only.
 pub function (a: NdArray[T]) broadcast_to(shape: i32[]): NdArray[T] {
-    check_extents(shape);
+    check_shape(shape);
     var pad: i32 = shape.len() - a.shape.len();
     if (pad < 0) { shape_error(); }
     var strides: i32[] = zeros(shape.len());
