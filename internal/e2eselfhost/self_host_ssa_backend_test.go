@@ -1014,7 +1014,7 @@ func TestSelfHostSSADynDispatchArgumentInScratch(t *testing.T) {
 	for _, tg := range h.targets {
 		t.Run(tg.target, func(t *testing.T) {
 			asm := filepath.Join(dir, tg.target+".s")
-			h.compileWith(t, tg, path, asm, "-emit", "asm")
+			h.compileWith(t, tg, path, asm, "-backend", "ssa", "-emit", "asm")
 			text, err := os.ReadFile(asm)
 			if err != nil {
 				t.Fatal(err)
