@@ -1387,6 +1387,22 @@ function builtin_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: 
 // the way the declaration keyed its contract, and the way every backend labels
 // the body: <Type>.<method>. The receiver is argument 0, because the callee
 // declared it as parameter 0.
+// The element a tuple projection names, or -1 when `field` is not an index
+// into a tuple of `n` elements.
+function tuple_index(field: string, n: i32): i32 {
+    if (field.len() == 0 || field.len() > 4) { return 0 - 1; }
+    var at: i32 = 0;
+    var i: i32 = 0;
+    while (i < field.len()) {
+        var d: i32 = field[i] as i32 - 48;
+        if (d < 0 || d > 9) { return 0 - 1; }
+        at = at * 10 + d;
+        i = i + 1;
+    }
+    if (at >= n) { return 0 - 1; }
+    return at;
+}
+
 function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, statement: boolean, expected: typeinfo.Type): Value {
     // An insert hands its receiver back, so the receiver's shape is the
     // call's: the head of a literal's `map_new(n).insert(k, v)` chain names no
@@ -1410,6 +1426,16 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
             var fv: Value = define(s, ssasem.record_get(), [recv.id], fat, fa.field, fsig.field_types[fat]);
             if (!fv.s.ok) { return fv; }
             return indirect_call(c, fv.id, fv.s);
+        }
+    }
+    // A tuple ELEMENT of function type is the same shape one container over:
+    // `p.0(1)` is the element read and a call through what it holds.
+    if let typeinfo.TypeTuple(tup) = s.values[recv.id] {
+        var tat: i32 = tuple_index(fa.field, tup.elements.len());
+        if (tat >= 0 && ssasem.is_func(tup.elements[tat])) {
+            var tv: Value = define(s, ssasem.tuple_get(), [recv.id], tat, "", tup.elements[tat]);
+            if (!tv.s.ok) { return tv; }
+            return indirect_call(c, tv.id, tv.s);
         }
     }
     // A builtin's receiver names no declaration this boundary can hold a
