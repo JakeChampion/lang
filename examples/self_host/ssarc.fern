@@ -1598,13 +1598,6 @@ function tuple_kinds(t: typeinfo.Type): string {
 // declaration index is where wasm reads each field's store width; the register
 // backends store every field as 8 bytes, and every read takes its offset from
 // the field index alone.
-// The element width arr_slice copies by: 64 for an i64, u64 or f64 element,
-// 32 for every other, the split irlower.slice_elem_is_wide makes.
-function slice_width(elem: typeinfo.Type): i32 {
-    if (ssasem.is_wide(elem) || ssasem.is_float(elem)) { return 64; }
-    return 32;
-}
-
 function container(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, structs: irlower.StructTab): irlower.LowerResult {
     if (variant_op(ins.kind_tag)) { return variant(r, f, ins, structs); }
     if (ins.kind_tag == ssasem.array_new()) { return emit(r, arr_make_op(elem_type(f.values[ins.result]), ins.args.len())); }
@@ -1615,7 +1608,7 @@ function container(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, s
         return emit(r, ir.op_arr_len());
     }
     if (ins.kind_tag == ssasem.slice()) { return emit(r, ir.op_str_slice()); }
-    if (ins.kind_tag == ssasem.arr_slice()) { return emit(r, ir.op_arr_slice(slice_width(elem_type(f.values[ins.result])))); }
+    if (ins.kind_tag == ssasem.arr_slice()) { return emit(r, ir.op_arr_slice(elem_width(elem_type(f.values[ins.result])))); }
     if (ins.kind_tag == ssasem.str_bytes()) { return emit(r, ir.op_str_bytes()); }
     if (ins.kind_tag == ssasem.arr_sum()) { return emit(r, ir.op_call_direct("__fern_arr_i32_sum", 1)); }
     if (ins.kind_tag == ssasem.arr_product()) { return emit(r, ir.op_call_direct("__fern_arr_i32_product", 1)); }
@@ -2434,6 +2427,9 @@ function os_query_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     if (ins.str == "proc_waitpid") { return Lowered { found: true, r: emit(r, ir.op_proc_waitpid()) }; }
     if (ins.str == "proc_waitpid_nohang") { return Lowered { found: true, r: emit(r, ir.op_proc_waitpid_nohang()) }; }
     if (ins.str == "tcp_connect") { return Lowered { found: true, r: emit(r, ir.op_tcp_connect()) }; }
+    if (ins.str == "tcp_listen") { return Lowered { found: true, r: emit(r, ir.op_tcp_listen()) }; }
+    if (ins.str == "tcp_accept") { return Lowered { found: true, r: emit(r, ir.op_tcp_accept()) }; }
+    if (ins.str == "tcp_local_port") { return Lowered { found: true, r: emit(r, ir.op_tcp_local_port()) }; }
     if (ins.str == "signal_send") { return Lowered { found: true, r: emit(r, ir.op_signal_send()) }; }
     if (ins.str == "subprocess") { return Lowered { found: true, r: emit(r, ir.op_subprocess()) }; }
     return fs_op_site(r, ins);

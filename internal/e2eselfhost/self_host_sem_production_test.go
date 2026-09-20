@@ -2138,11 +2138,53 @@ function signals(): i32 {
         Err(_) => { n = n + 1; }
     }
     var fds: i32[] = [timer_fd(1)];
-    if (poll(fds, 2000) == 0) { n = n + 1; }
-    if (poll([], 0) < 0) { n = n + 1; }
+    if (poll(fds, 2000) > 0) { n = n + 1; }
+    if (poll([], 0) == 0) { n = n + 1; }
     return n;
 }
 function main(): i32 { return signals(); }
+`},
+	// The sockets, `sync` and the set-id builtins, which no other row reaches:
+	// a loopback listener, a connection, an accept, one send and its receive
+	// as a fresh u8[], the three closes, `sync` as a statement, and the
+	// set-id calls asking for root, which a host refuses or grants and the
+	// row counts either way.
+	{name: "os-floor-sockets-and-ids", atLeast: 2, nativeOnly: true, src: `
+function sockets(): i32 {
+    var n: i32 = 0;
+    var port: i32 = 18479;
+    var listener: i32 = tcp_listen(port);
+    if (listener >= 0) {
+        var host_be: i32 = 127 | (1 << 24);
+        var c: i32 = tcp_connect(host_be, port);
+        if (c >= 0) {
+            var a: i32 = tcp_accept(listener);
+            if (a >= 0) {
+                if (tcp_send(c, "ping") == 4) { n = n + 1; }
+                var got: u8[] = tcp_recv(a, 16);
+                if (got.len() == 4 && got[0] as i32 == 112) { n = n + 1; }
+                if (tcp_close(a) >= 0) { n = n + 1; }
+            }
+            if (tcp_close(c) >= 0) { n = n + 1; }
+        }
+        if (tcp_close(listener) >= 0) { n = n + 1; }
+    }
+    sync();
+    match (setuid(0i64)) {
+        Ok(_) => { n = n + 1; },
+        Err(_) => { n = n + 1; }
+    }
+    match (setgid(0i64)) {
+        Ok(_) => { n = n + 1; },
+        Err(_) => { n = n + 1; }
+    }
+    match (set_priority(priority())) {
+        Ok(_) => { n = n + 1; },
+        Err(_) => { n = n + 1; }
+    }
+    return n;
+}
+function main(): i32 { return sockets(); }
 `},
 	// The file-time, node, permission and directory ops over a temp_dir, and
 	// the terminal questions asked of a descriptor and of a handle. mknod
