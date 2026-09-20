@@ -1810,10 +1810,24 @@ function some_of(payload: ast.Expr, s: State): typeinfo.Type {
     return typeinfo.TypeUnion { name: "Option", args: [t] };
 }
 
-function direct_call(c: ast.ExprCall, contract: ssasem.Contract, s: State, statement: boolean): Value {
+function direct_call(c: ast.ExprCall, contract: ssasem.Contract, s: State, statement: boolean, expected: typeinfo.Type): Value {
     if (c.type_argc > 0 || c.args.len() != contract.params.len()) { return refused(s, "call arity"); }
     if (is_void(contract.result) && !statement) { return refused(s, "unsupported void call"); }
-    return invoke(c.args, contract, s);
+    return invoke(c.args, contract, s, destination_binding(contract, expected));
+}
+
+// What the call's destination says a template's variables are: `var m:
+// Map[i32, i32] = id(Map {})` names T through the result, and the literal
+// argument has no type of its own to bind it from. The arguments still bind
+// every variable left to right; this only types an argument whose parameter
+// would otherwise be produced at a bare variable, so an argument that names
+// its own type is unaffected and a destination the result cannot fit binds
+// nothing.
+function destination_binding(contract: ssasem.Contract, expected: typeinfo.Type): ssasem.Binding {
+    if (!semtypes.concrete(expected, false)) { return ssasem.unbound(); }
+    var b: ssasem.Binding = ssasem.bind_type(ssasem.unbound(), contract.result, expected);
+    if (!b.ok) { return ssasem.unbound(); }
+    return b;
 }
 
 // A call in statement position may return nothing: its value is void and
@@ -1870,7 +1884,7 @@ function qualified_call(e: ast.Expr, head: string, name: string, c: ast.ExprCall
     if (union_name(whole) == head && names_variant(s, whole, name)) { return variant(name, whole, c.args, s); }
     var at: i32 = ssasem.find_contract(s.contracts, head + "." + name);
     if (at < 0) { return refused(s, "call target has no semantic contract: " + head + "." + name); }
-    return direct_call(c, s.contracts[at], s, statement);
+    return direct_call(c, s.contracts[at], s, statement, expected);
 }
 
 // A call of a free name: a builtin with a shape of its own, the lambda
@@ -1887,7 +1901,7 @@ function free_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State, stateme
     if (body.len() > 0) { return closure(body, c, s); }
     var at: i32 = ssasem.find_contract(s.contracts, name);
     if (at < 0) { return variant_call(e, name, c, s, expected); }
-    return direct_call(c, s.contracts[at], s, statement);
+    return direct_call(c, s.contracts[at], s, statement, expected);
 }
 
 // Each argument is produced at the parameter's type and lent by the
@@ -1901,8 +1915,8 @@ function free_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State, stateme
 // bound. The instance is a body of its own, named by the types bound and
 // produced on this call's request, and the call names it rather than the
 // template.
-function invoke(args: ast.Expr[], contract: ssasem.Contract, s: State): Value {
-    return invoke_rest([], ssasem.unbound(), args, 0, contract, s);
+function invoke(args: ast.Expr[], contract: ssasem.Contract, s: State, seed: ssasem.Binding): Value {
+    return invoke_rest([], ssasem.unbound(), args, 0, contract, s, seed);
 }
 
 // A method on a GENERIC RECEIVER is the free generic the registration pass
@@ -1918,16 +1932,17 @@ function invoke_method(recv: Value, args: ast.Expr[], contract: ssasem.Contract,
     var bound: ssasem.Binding = ssasem.bind_type(ssasem.unbound(), contract.params[0], s.values[v.id]);
     if (!bound.ok) { return refused(s, bound.why); }
     if (!semtypes.equal(ssasem.substitute(contract.params[0], bound), s.values[v.id])) { return refused(s, "call receiver type"); }
-    return invoke_rest([v.id], bound, args, 1, contract, s);
+    return invoke_rest([v.id], bound, args, 1, contract, s, ssasem.unbound());
 }
 
 // The arguments from `base` onward, each produced at its parameter's type
 // under the bindings the earlier ones made.
-function invoke_rest(ids: i32[], bound: ssasem.Binding, args: ast.Expr[], base: i32, contract: ssasem.Contract, s: State): Value {
+function invoke_rest(ids: i32[], bound: ssasem.Binding, args: ast.Expr[], base: i32, contract: ssasem.Contract, s: State, seed: ssasem.Binding): Value {
     var i: i32 = 0;
     while (i < args.len()) {
         var at: i32 = base + i;
         var want: typeinfo.Type = ssasem.substitute(contract.params[at], bound);
+        if (!semtypes.concrete(want, false)) { want = ssasem.substitute(want, seed); }
         var v: Value = lend(expr(args[i], s, want), want, contract.modes[at], keeps(s, contract.name));
         s = v.s;
         if (!s.ok) { return v; }
