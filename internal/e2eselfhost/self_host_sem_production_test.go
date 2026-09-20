@@ -541,6 +541,30 @@ function main(): i32 {
     var u: string = "xyz" + "w";
     return v.len() + s.len() + u.len();
 }`},
+	// Two levels of value-position if, the inner arm a boolean call. The
+	// outer IIFE returns the CALL of the inner one, which the checker types
+	// from the inner declaration's tag — `if_expr_rt`'s concrete `i32` guess —
+	// so reading the checker first kept the guess and the outer body refused
+	// `declared i32, returns boolean`. A synthesised callee's contract is read
+	// before the checker now. Refused 3 of 7 before.
+	{name: "value-if-arm-is-a-value-if-of-a-call", atLeast: 7, src: `
+function gen(): boolean { return true; }
+function pick(n: i32): boolean { return n > 2; }
+function main(): i32 {
+    var v: boolean = (if (pick(3)) { (if (pick(1)) { gen() } else { pick(5) }) } else { pick(0) });
+    var w: boolean = (if (pick(3)) { (if (pick(4)) { gen() } else { false }) } else { false });
+    return (if (v) { 3 } else { 4 }) + (if (w) { 10 } else { 20 });
+}`},
+	// A hoisted lambda whose author annotation a bare literal adapts to: the
+	// checker verified `: u8` over `5`, and the annotation stands. It is the
+	// one shape where a synthesised-looking declaration's tag disagrees with
+	// its body's own type without being a guess, so the body must not win.
+	{name: "annotated-lambda-literal-body", atLeast: 3, src: `
+function apply(f: (i32) => u8, n: i32): u8 { return f(n); }
+function main(): i32 {
+    var r: u8 = apply(((x: i32): u8 => 5), 1);
+    return (r as i32) + 2;
+}`},
 	{name: "map-delete-and-clear", atLeast: 4, noLeak: true, src: `
 function survivors(n: i32): i32 {
     var m: Map[i32, i32] = map_new(8);

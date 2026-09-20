@@ -84,6 +84,31 @@ synthesised declaration returning the call of another now reads the
 callee's contract off the table, and the table is built until a pass adds
 nothing. +5 modules, and the reducer above goes from 4 of 8 to 8 of 8.
 
+## Two more, from review
+
+**The concrete guess masks the table.** A value-position `if` whose arm is
+another value-position `if` hoists to two declarations, the outer returning
+the CALL of the inner. `inferred_result` typed that call through the
+checker, which reads the callee's declaration: the inner's `i32` guess,
+concrete, taken — the contract table was consulted only for a callee whose
+tag could not resolve, which is the coarse `fn` and nothing else. So the
+two-level case the fixpoint was built for still refused. A synthesised
+callee's contract is now read FIRST, and while the callee has none the
+outer's result is unchecked rather than the tag, because a contract
+recorded from the guess on the first pass is never revisited — the
+fixpoint fills what is missing and corrects nothing. +7 modules on the
+census: **458 of 508**, 499 agree, 0 diverge.
+
+**Not every tag on a `__lam_N` is a guess.** A hoisted lambda keeps the
+`ret_type` it was written with, and an author's annotation reaches
+`result_type` under the same name as `if_expr_rt`'s reading. The checker
+refuses an annotation the body contradicts (E002), so the one shape where
+the two disagree without a guess is a bare numeric literal returned under a
+numeric annotation, which adapts; that shape keeps the annotation. The
+review's f64 example never reaches the boundary — a float in a signature
+is refused as a slot — but the rule is stated for the boundary it would
+reach.
+
 ## What is left
 
 230 refusals, of which 138 are `is a function value <f> builds` and 21 `no
