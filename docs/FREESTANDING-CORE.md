@@ -51,7 +51,7 @@ costs a silent failure on the first target that lacks it.
 | `args` | `args` | argv, which exists only because something exec'd you |
 | `random` | `random_bytes`, `random_i32` | entropy: a syscall or a host import, never computed |
 | `fs` | `read_file`, `write_file`, `open_reader`, … | a filesystem |
-| `fsmode` | `write_file_exec`, `access`, `chmod`, `umask` | permission bits on a filesystem entry, and the mask a creation keeps them through |
+| `fsmode` | `write_file_exec`, `access`, `chmod`, `chmod_at`, `umask` | permission bits on a filesystem entry, and the mask a creation keeps them through |
 | `fsinfo` | `statfs` | a filesystem with a size and a name-length limit, rather than files on one |
 | `fsnode` | `mknod` | a filesystem entry that is neither a file nor a directory: a FIFO, or a character or block device node |
 | `tty` | `window_size`, `set_window_size`, `termios_get`, `termios_set` | a terminal with a size and line settings, where `isatty` only asks whether there is one |
@@ -137,7 +137,8 @@ askable on a target that has no bits to answer it from, which is the failure
 **`chmod` is on `fsmode`, and it is the third face of the same property.**
 `write_file_exec` sets a permission bit on an entry it is CREATING, `access`
 reads the bits on one that exists, and `chmod` writes them on one that exists —
-the only builtin that can change the mode of something already there. A host
+the only builtin that can change the mode of something already there
+(`chmod_at` is the same write with a follow flag, and sits with it). A host
 with files and no permission model can do none of the three, so they belong
 together; putting `chmod` on `fs` would make the write expressible on a target
 with nothing to write it into. Neither WASI preview has permission bits at all,

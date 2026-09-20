@@ -1444,6 +1444,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"set_priority":                emitSetPriorityHelper,
 	"rename":                      emitRenameHelper,
 	"chmod":                       emitChmodHelper,
+	"chmod_at":                    emitChmodAtHelper,
 	"truncate":                    emitTruncateHelper,
 	"mknod":                       emitMknodHelper,
 	"chown_at":                    emitChownAtHelper,
@@ -4529,6 +4530,7 @@ var runtimeHelperDeps = map[string][]string{
 	"read_link":                       {"__fern_io_error", "__fern_rc_inc"},
 	"rename":                          {"__fern_io_error", "__fern_rc_inc"},
 	"chmod":                           {"__fern_io_error", "__fern_rc_inc"},
+	"chmod_at":                        {"__fern_io_error", "__fern_rc_inc"},
 	"signal_send":                     {"__fern_io_error"},
 	"set_process_group":               {"__fern_io_error"},
 	"set_priority":                    {"__fern_io_error"},
@@ -4636,6 +4638,7 @@ var heapUsingHelpers = map[string]bool{
 	"read_link":                       true,
 	"rename":                          true,
 	"chmod":                           true,
+	"chmod_at":                        true,
 	"signal_send":                     true,
 	"set_process_group":               true,
 	"set_priority":                    true,
@@ -7134,6 +7137,17 @@ func emitSsaResultBox(w func(string, ...any)) {
 // the SECOND one: `ln` and `link` both report the link they failed to
 // create, not the file it was to point at.
 func emitPathOpHelper(name, tag string, sysno, paths, scalars int, args func(w func(string, ...any))) func(func(string, ...any)) {
+	return emitPathOpHelperSys(name, tag, paths, scalars, func(w func(string, ...any)) {
+		args(w)
+		w("\tmov x8, #%d", sysno)
+		w("\tsvc #0")
+	})
+}
+
+// emitPathOpHelperSys is emitPathOpHelper with the syscall itself left to
+// `body`, for a helper whose syscall NUMBER depends on an argument. `body`
+// must leave the kernel's answer in x0.
+func emitPathOpHelperSys(name, tag string, paths, scalars int, body func(w func(string, ...any))) func(func(string, ...any)) {
 	return func(w func(string, ...any)) {
 		w("")
 		w("%s:", fnLabel(name))
@@ -7161,9 +7175,7 @@ func emitPathOpHelper(name, tag string, sysno, paths, scalars int, args func(w f
 		if paths == 2 {
 			emitSsaPathz(w, "x22", "x21", tag+"2")
 		}
-		args(w)
-		w("\tmov x8, #%d", sysno)
-		w("\tsvc #0")
+		body(w)
 		w("\ttbnz x0, #63, .Lssa_%s_err", tag)
 		emitSsaResultBox(w)
 		w("\tstr wzr, [x0]")     // tag = 0 (Ok)
@@ -7334,6 +7346,30 @@ func emitChmodHelper(w func(string, ...any)) {
 		w("\tneg x0, x0")
 		w("\tmov x1, x20")
 		w("\tand x2, x21, #4095")
+	})(w)
+}
+
+// emitChmodAtHelper writes chmod_at(path, mode, follow) -> Result[void,
+// IoError]: fchmodat(AT_FDCWD, path, mode) when follow, otherwise
+// fchmodat2(AT_FDCWD, path, mode, AT_SYMLINK_NOFOLLOW). The flag picks the
+// syscall NUMBER, which is why this helper issues its own: the older call
+// has no flags word. The kernel's answer to the flag on a symlink —
+// EOPNOTSUPP, or ENOSYS below fchmodat2 — passes through as the Err.
+func emitChmodAtHelper(w func(string, ...any)) {
+	emitPathOpHelperSys("chmod_at", "chma", 1, 2, func(w func(string, ...any)) {
+		w("\tmov x0, #100")
+		w("\tneg x0, x0") // AT_FDCWD
+		w("\tmov x1, x20")
+		w("\tand x2, x21, #4095") // mode
+		w("\tcbnz x22, .Lssa_chma_follow")
+		w("\tmov x3, #256") // AT_SYMLINK_NOFOLLOW
+		w("\tmov x8, #452") // fchmodat2
+		w("\tsvc #0")
+		w("\tb .Lssa_chma_done")
+		w(".Lssa_chma_follow:")
+		w("\tmov x8, #53") // fchmodat
+		w("\tsvc #0")
+		w(".Lssa_chma_done:")
 	})(w)
 }
 

@@ -167,6 +167,17 @@ func emitReadLinkHelper(w func(string, ...any)) {
 // they arrive in caller-saved registers and the NUL-termination is a call, so
 // they cross it on the frame. A helper never has both.
 func ssaPathOpHelper(name, tag string, sysno, paths, scalars int, args func(w func(string, ...any))) func(func(string, ...any)) {
+	return ssaPathOpHelperSys(name, tag, paths, scalars, func(w func(string, ...any)) {
+		args(w)
+		w("\tmov eax, %d", sysno)
+		w("\tsyscall")
+	})
+}
+
+// ssaPathOpHelperSys is ssaPathOpHelper with the syscall itself left to
+// `body`, for a helper whose syscall NUMBER depends on an argument. `body`
+// must leave the kernel's answer in rax.
+func ssaPathOpHelperSys(name, tag string, paths, scalars int, body func(w func(string, ...any))) func(func(string, ...any)) {
 	return func(w func(string, ...any)) {
 		w("")
 		w("%s:", fnLabel(name))
@@ -194,9 +205,7 @@ func ssaPathOpHelper(name, tag string, sysno, paths, scalars int, args func(w fu
 		for i, dst := range []string{"r13", "r14", "r15"}[:scalars] {
 			w("\tmov %s, [rsp + %d]", dst, 8*i)
 		}
-		args(w)
-		w("\tmov eax, %d", sysno)
-		w("\tsyscall")
+		body(w)
 		w("\ttest rax, rax")
 		w("\tjs .Lssa_%s_err", tag)
 		ssaOptionBox(w, 0, "")
@@ -309,14 +318,38 @@ func emitRenameHelper(w func(string, ...any)) {
 // creation, and this is not one — so the low twelve bits land verbatim.
 //
 // Linux's fchmodat takes three arguments, not four: the flags-taking form is
-// fchmodat2, and its one extra flag (AT_SYMLINK_NOFOLLOW) is EOPNOTSUPP here
-// anyway, so chmod follows a final symlink and has no flag to pass.
+// fchmodat2, which chmod_at below issues for its nofollow case.
 func emitChmodHelper(w func(string, ...any)) {
 	ssaPathOpHelper("chmod", "chmd", 268, 1, 1, func(w func(string, ...any)) {
 		ssaAtFdcwd(w, "edi")
 		w("\tmov rsi, r12")
 		w("\tmov edx, r13d")
 		w("\tand edx, 4095")
+	})(w)
+}
+
+// emitChmodAtHelper writes chmod_at(path, mode, follow) -> Result[(),
+// IoError]: fchmodat(AT_FDCWD, path, mode) when follow, otherwise
+// fchmodat2(AT_FDCWD, path, mode, AT_SYMLINK_NOFOLLOW). The flag picks the
+// syscall NUMBER, which is why this helper issues its own: the older call has
+// no flags word. The kernel's answer to the flag on a symlink — EOPNOTSUPP, or
+// ENOSYS below fchmodat2 — passes through as the Err.
+func emitChmodAtHelper(w func(string, ...any)) {
+	ssaPathOpHelperSys("chmod_at", "chma", 1, 2, func(w func(string, ...any)) {
+		ssaAtFdcwd(w, "edi")
+		w("\tmov rsi, r12")
+		w("\tmov edx, r13d") // mode
+		w("\tand edx, 4095")
+		w("\ttest r14, r14") // follow
+		w("\tjz .Lssa_chma_nofollow")
+		w("\tmov eax, 268") // fchmodat
+		w("\tsyscall")
+		w("\tjmp .Lssa_chma_done")
+		w(".Lssa_chma_nofollow:")
+		w("\tmov r10d, 256") // AT_SYMLINK_NOFOLLOW
+		w("\tmov eax, 452")  // fchmodat2
+		w("\tsyscall")
+		w(".Lssa_chma_done:")
 	})(w)
 }
 

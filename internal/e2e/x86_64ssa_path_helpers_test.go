@@ -66,9 +66,11 @@ const x86SSAPathQuerySrc = `function main(): i32 {
 `
 
 // The mutating family: create_dir, remove_dir, chdir, truncate, chmod,
-// create_link, rename, mknod and chown_at. mknod makes a FIFO, the one node
-// type an unprivileged process may create, and chown_at names the ids the file
-// already has, which any owner may set.
+// create_link, rename, mknod, chown_at and chmod_at. mknod makes a FIFO, the
+// one node type an unprivileged process may create, and chown_at names the ids
+// the file already has, which any owner may set. chmod_at's nofollow form on a
+// plain file is the same change as its follow form: the flag only matters at
+// a final symlink, and chmod_at_test.go has those.
 const x86SSAPathOpSrc = `function main(): i32 {
     var base: string = getcwd();
 
@@ -104,6 +106,12 @@ const x86SSAPathOpSrc = `function main(): i32 {
 
     match (chown_at(base + "/f", 0 - 1, 0 - 1, true)) { Ok(_) => {}, Err(e) => { return 80; } }
     match (chown_at(base + "/no-such-file", 0 - 1, 0 - 1, true)) { Ok(_) => { return 81; }, Err(e) => {} }
+
+    match (chmod_at(base + "/f", 420, true)) { Ok(_) => {}, Err(e) => { return 90; } }
+    match (stat(base + "/f")) { Ok(s) => { if (s.mode % 4096 != 420) { return 91; } }, Err(e) => { return 92; } }
+    match (chmod_at(base + "/f", 384, false)) { Ok(_) => {}, Err(e) => { return 93; } }
+    match (stat(base + "/f")) { Ok(s) => { if (s.mode % 4096 != 384) { return 94; } }, Err(e) => { return 95; } }
+    match (chmod_at(base + "/no-such-file", 420, false)) { Ok(_) => { return 96; }, Err(e) => {} }
     return 0;
 }
 `

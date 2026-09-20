@@ -343,6 +343,11 @@ var f64UnaryIntrinsic = map[string]string{
 
 var linuxOnlySysno = map[string]int{
 	"getrandom": sysGetrandom,
+	// fchmodat2: the flags-taking fchmodat, which `chmod_at` issues for
+	// its nofollow case. XNU's fchmodat takes the flag itself, so
+	// __fern_chmod_at branches on g.darwin rather than reaching this
+	// row there.
+	"fchmodat2": 452,
 	// utimensat: XNU has no such syscall at all — libc builds it out of
 	// setattrlistat(2) (BSD 524), which is what __fern_set_file_times
 	// issues inline on Darwin. So this row is Linux's alone rather than
@@ -652,7 +657,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.usesAccess || g.usesRemoveDirAll || g.usesCreateDirAll ||
 		g.usesCreateDir || g.usesChdir || g.usesChroot || g.usesRemoveDir || g.usesCreateLink ||
 		g.usesCreateSymlink || g.usesReadLink || g.usesStatfs ||
-		g.usesRename || g.usesChmod || g.usesSetFileTimes || g.usesTruncate ||
+		g.usesRename || g.usesChmod || g.usesChmodAt || g.usesSetFileTimes || g.usesTruncate ||
 		g.usesMknod || g.usesChownAt {
 		g.usesAlloc = true
 		g.usesMemcpy = true
@@ -684,7 +689,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.usesCreateLink || g.usesCreateSymlink || g.usesReadLink || g.usesTempDir ||
 		g.usesReadDir || g.usesReadDirAll || g.usesStat || g.usesLstat || g.usesStatfs || g.usesAccess ||
 		g.usesRemoveDirAll ||
-		g.usesRename || g.usesChmod || g.usesSetFileTimes || g.usesTruncate ||
+		g.usesRename || g.usesChmod || g.usesChmodAt || g.usesSetFileTimes || g.usesTruncate ||
 		g.usesMknod || g.usesChownAt || g.usesReaderWriter {
 		g.usesFree = true
 	}
@@ -1068,6 +1073,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesChmod {
 		g.emitChmodRuntime()
+	}
+	if g.usesChmodAt {
+		g.emitChmodAtRuntime()
 	}
 	if g.usesTruncate {
 		g.emitTruncateRuntime()
@@ -11475,6 +11483,16 @@ func (g *generator) emitRemoveFileRuntime() {
 //
 // (x0, x1) = the first path; (x2, x3) = the second, or x2 = the mode.
 func (g *generator) emitPathOpRuntime(name, tag, sysname string, paths, scalars int, args func()) {
+	g.emitPathOpRuntimeSys(name, tag, paths, scalars, func() {
+		args()
+		g.syscall(sysname)
+	})
+}
+
+// emitPathOpRuntimeSys is emitPathOpRuntime with the syscall itself left
+// to `body`, for a helper whose syscall NUMBER depends on an argument.
+// `body` must leave the kernel's answer in x0, Linux-shaped (-errno).
+func (g *generator) emitPathOpRuntimeSys(name, tag string, paths, scalars int, body func()) {
 	g.line("")
 	g.line(".global " + name)
 	g.typeDirective(name)
@@ -11508,8 +11526,7 @@ func (g *generator) emitPathOpRuntime(name, tag, sysname string, paths, scalars 
 		g.emitStrDataPtr2W("x23", "x25", "x26", 80)
 		g.emitNulTermPath2W("x23", "x23", "x26")
 	}
-	args()
-	g.syscall(sysname)
+	body()
 	g.emitFreeNulTermPath2W("x21", "x20")
 	if paths == 2 {
 		g.emitFreeNulTermPath2W("x23", "x26")
@@ -12007,6 +12024,40 @@ func (g *generator) emitChmodRuntime() {
 		g.emit("mov x1, x21")
 		g.emit("and x2, x24, #4095")
 		g.emit("mov x3, #0")
+	})
+}
+
+// emitChmodAtRuntime emits `__fern_chmod_at(path, mode, follow)`.
+//
+// Darwin: fchmodat(AT_FDCWD, path, mode, follow ? 0 : AT_SYMLINK_NOFOLLOW)
+// — XNU's fchmodat takes the flag itself and keeps a mode on a symlink,
+// so the nofollow form changes the link's own bits.
+//
+// Linux: fchmodat(AT_FDCWD, path, mode) when `follow`, otherwise
+// fchmodat2(AT_FDCWD, path, mode, AT_SYMLINK_NOFOLLOW). The flag picks
+// the syscall NUMBER there, which is why this helper issues its own: the
+// older call has no flags word. The kernel's answer to the flag on a
+// symlink — EOPNOTSUPP, or ENOSYS below fchmodat2 — passes through as
+// the Err.
+func (g *generator) emitChmodAtRuntime() {
+	g.emitPathOpRuntimeSys("__fern_chmod_at", "chma", 1, 2, func() {
+		// The scalars arrived in x24 (mode) and x23 (follow).
+		g.atFdcwd("x0")
+		g.emit("mov x1, x21")
+		g.emit("and x2, x24, #4095")
+		g.emit("mov x3, #%d", g.atSymlinkNofollow())
+		g.emit("cmp x23, #0")
+		g.emit("csel x3, xzr, x3, ne")
+		if g.darwin {
+			g.syscall("fchmodat")
+			return
+		}
+		g.emit("cbnz x23, .Lchma_follow")
+		g.syscall("fchmodat2")
+		g.emit("b .Lchma_done")
+		g.label(".Lchma_follow")
+		g.syscall("fchmodat")
+		g.label(".Lchma_done")
 	})
 }
 
@@ -15556,6 +15607,8 @@ type generator struct {
 	usesRename       bool
 	usesChmod        bool
 	usesSetFileTimes bool
+	// fchmodat / fchmodat2 over a path, a mode and a follow flag.
+	usesChmodAt bool
 	// truncate(2) over a path and a length.
 	usesTruncate bool
 	// mknodat(2) over a path, a mode and a major / minor pair.
@@ -20348,6 +20401,11 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// fchmodat on an entry that already exists.
 			target = "__fern_chmod"
 			g.usesChmod = true
+		case "chmod_at":
+			// chmod_at(path, mode, follow): Result[void, IoError] —
+			// fchmodat, or fchmodat2 with AT_SYMLINK_NOFOLLOW.
+			target = "__fern_chmod_at"
+			g.usesChmodAt = true
 		case "truncate":
 			// truncate(path, length): Result[void, IoError] —
 			// truncate(2) on an entry that already exists.

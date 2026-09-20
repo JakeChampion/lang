@@ -798,6 +798,13 @@ pub function op_mknod(): Op { return op0("mknod"); }
 // need. Refused on wasm, where neither preview records an owner on an entry
 // at all (capability `fsowner`).
 pub function op_chown_at(): Op { return op0("chown_at"); }
+// `chmod_at` takes [path, mode, follow] and pushes Result[void, IoError]:
+// `chmod` with `chown_at`'s follow flag. `follow` false asks for the LINK's
+// own mode bits — fchmodat2(AT_SYMLINK_NOFOLLOW) on Linux, where a symlink
+// has no mode and the kernel's EOPNOTSUPP (ENOSYS below fchmodat2) is the
+// Err; fchmodat with the flag on Darwin, where the link's bits change.
+// Refused on wasm exactly as `chmod` is (capability `fsmode`).
+pub function op_chmod_at(): Op { return op0("chmod_at"); }
 // `set_file_times` takes [path, atime_sec, atime_nsec, mtime_sec, mtime_nsec,
 // flags] — six operands, the widest op here — and pushes Result[void,
 // IoError]. Each timestamp is a whole second since the epoch plus a
@@ -2160,6 +2167,7 @@ function kind_id_len8(name: string): i32 {
     if (c == b'f' && name == "fd_flags") { return 307; }
     if (c == b'b') { return kind_id_len8_b(name); }
     if (c == b'c' && name == "chown_at") { return 275; }
+    if (c == b'c' && name == "chmod_at") { return 321; }
     if (c == b'f' && name == "f32_bits") { return 14; }
     if (c == b'f' && name == "f64_bits") { return 16; }
     if (c == b'h' && name == "hostname") { return 240; }
@@ -2803,6 +2811,7 @@ function kind_name_4(id: i32): string {
     if (id == 273) { return "truncate"; }
     if (id == 274) { return "mknod"; }
     if (id == 275) { return "chown_at"; }
+    if (id == 321) { return "chmod_at"; }
     if (id == 276) { return "window_size"; }
     if (id == 277) { return "chdir"; }
     if (id == 278) { return "signal_mask"; }
@@ -3051,6 +3060,7 @@ pub function op_pops(o: Op): i32 {
     if (t == 269) { return 6; }                       // set_file_times: path + two timespecs + flags
     if (t == 274) { return 4; }                       // mknod: path + mode + major + minor
     if (t == 275) { return 4; }                       // chown_at: path + uid + gid + follow
+    if (t == 321) { return 3; }                       // chmod_at: path + mode + follow
     // Variadic: the immediate is the count. arr_make / struct_make /
     // tuple_make pop their elements; call_direct pops its arguments.
     if (t == 87 || t == 138 || t == 142 || t == 149) { return o.i32_imm; }

@@ -8236,8 +8236,9 @@ pub function builtin_function_names(): string[] {
         // with nothing folded away
         "create_dir", "remove_dir", "create_link", "create_symlink", "read_link", "umask", "rename",
         // the metadata writes on an entry that already exists: its permission
-        // bits and its two timestamps
-        "chmod", "set_file_times",
+        // bits (with and without following a final symlink) and its two
+        // timestamps
+        "chmod", "chmod_at", "set_file_times",
         // and its LENGTH — truncate(2), which shrinks a file or extends it
         // with a hole
         "truncate",
