@@ -51,15 +51,17 @@ says it "emits NOTHING: the data pointer already IS the array value".
 ## The cap, and why there are two loops
 
 `__memcpy` takes an i32 byte count and `__raw_addr` an i32 byte offset, so a
-word array above 2^28 elements would overflow either one — a silent 2 GiB
-cliff where the element loop was good to 2^31. Strings do not have this
+word array of 2^28 elements or more would overflow either one — its byte
+count is 2^31 exactly, a silent 2 GiB cliff where the element loop was good
+to 2^31 elements. Strings do not have this
 problem because their length is a byte count already, so the cap coincides
 with the type's own limit; a word array's does not.
 
-So both the skip to `start` and the copy itself step in chunks of 2^28
-elements, advancing the pointers rather than indexing from the base, which is
-what keeps every offset in range. For every array anyone has this is one
-iteration and one compare.
+So both the skip to `start` and the copy itself step in chunks of 2^27
+elements, one GiB, advancing the pointers rather than indexing from the base,
+which is what keeps every offset in range. A chunk of 2^28 would be the
+broken size: 2^31 bytes, the very overflow the paragraph above is about. For
+every array anyone has this is one iteration and one compare.
 
 ## Measured
 
