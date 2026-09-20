@@ -100,6 +100,18 @@ function main(): i32 {
 	if (counters && d_p < elem_bytes) { return 91; }
 	if (!a.packed().is_packed()) { return 92; }
 
+	// A reversed handle is the one strided shape a transpose does not
+	// cover: negative strides and an offset at the far end, walked by the
+	// same odometer.
+	var b7: i64 = __heap_bump_bytes();
+	var rvf: i64[] = rv.to_flat();
+	var d_rvf: i64 = __heap_bump_bytes() - b7;
+	if (rvf.len() != n * n || rvf[0] != a.get([0, n - 1]) || rvf[n - 1] != a.get([0, 0])) { return 93; }
+	if (rvf[n] != a.get([1, n - 1]) || rvf[n * n - 1] != a.get([n - 1, 0])) { return 94; }
+	if (counters && d_rvf < elem_bytes) { return 95; }
+	var both: ndarray.NdArray[i64] = a.reverse(0).reverse(1).packed();
+	if (!both.is_packed() || both.get([0, 0]) != a.get([n - 1, n - 1]) || both.get([n - 1, n - 1]) != a.get([0, 0])) { return 96; }
+
 	var z: ndarray.NdArray[i64] = ndarray.from_flat([7 as i64], []);
 	if (z.rank() != 0 || z.len() != 1 || z.get([]) != 7 as i64) { return 100; }
 	var e: ndarray.NdArray[i64] = a.slice(0, 5, 5);
@@ -107,8 +119,9 @@ function main(): i32 {
 
 	// The keep-alive: every buffer measured above is still held here.
 	var live: i32 = t.rank() + rv.rank() + sl.rank() + se.rank() + pm.rank() + col.rank()
-		+ r2.rank() + r3.rank() + f1.len() + f2.len() + p.rank() + z.rank() + e.rank();
-	if (live != 2 * n * n + 16) { return 110; }
+		+ r2.rank() + r3.rank() + f1.len() + f2.len() + p.rank() + z.rank() + e.rank()
+		+ rvf.len() + both.rank();
+	if (live != 3 * n * n + 18) { return 110; }
 	return 0;
 }
 `
@@ -124,7 +137,8 @@ function main(): i32 {
 
 // 1x = construction, 2x = transpose, 3x = the other metadata operations,
 // 4x = chains, 5x/6x = reshape (metadata / copy), 7x/8x = to_flat (no copy /
-// copy), 9x = packed, 10x = rank 0 and empty.
+// copy), 90-92 = packed, 93-96 = a reversed handle materialized, 10x = rank
+// 0 and empty.
 func TestX86_64NdarrayStructuralOpsAreMetadata(t *testing.T) {
 	if _, code := compileAndRunX86_64FreeOn(t, ndarraySrc); code != 0 {
 		t.Errorf("ndarray on x86-64: got %d, want 0", code)
@@ -150,7 +164,10 @@ func TestWASMNdarrayStructuralOpsAreMetadata(t *testing.T) {
 	if got := runWasm(t, ndarraySrc); got != 0 {
 		t.Errorf("ndarray on wasm: got %d, want 0", got)
 	}
-	if got := runWasm(t, ndarrayShapeErrorSrc); got == 0 {
+	// `exit(134)` collapses to wasmtime's exit 1, and runWasm fails the test
+	// on any non-zero exit, so the abort is asserted the way the array
+	// bounds trap is.
+	if _, _, trapped := runWasmExpectingTrap(t, ndarrayShapeErrorSrc); !trapped {
 		t.Errorf("a shape that does not fit its storage on wasm: exit 0, want a failure")
 	}
 }
