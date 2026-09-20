@@ -2,13 +2,19 @@ package x86_64
 
 import "fmt"
 
-// AVX2 support: exactly the five VEX-encoded forms the vectorised
-// memchr/rmemchr/count_byte kernels need over a 256-bit ymm register —
-// vmovdqu (load), vpbroadcastb, vpcmpeqb, vpmovmskb and vzeroupper — rather
-// than the whole AVX2 vocabulary. AVX2 is inside the declared x86-64
-// baseline (Haswell-class 2013, same baseline that makes popcnt a hard
-// requirement rather than a fast path), so these need no CPU feature
-// detection.
+// AVX2 support: exactly the VEX-encoded forms the vectorised kernels need
+// over a 256-bit ymm register, rather than the whole AVX2 vocabulary. AVX2
+// is inside the declared x86-64 baseline (Haswell-class 2013, same baseline
+// that makes popcnt a hard requirement rather than a fast path), so these
+// need no CPU feature detection.
+//
+// Two groups, by domain. The byte-domain five serve the
+// memchr/rmemchr/count_byte search kernels: vmovdqu (load), vpbroadcastb,
+// vpcmpeqb, vpmovmskb and vzeroupper. The double-domain three serve the
+// scale_f64 arithmetic kernel: vmovupd (load and store), vmulpd and
+// vbroadcastsd. Keeping the float loads out of the integer-domain vmovdqu
+// is what avoids a bypass delay between the load and the multiply that
+// consumes it.
 //
 // emitVEX3 picks the shorter 2-byte VEX prefix (0xC5) over the 3-byte form
 // (0xC4) whenever the instruction allows it, matching what GNU as emits —
@@ -154,5 +160,75 @@ func (a *Assembler) vzeroupper(ops []Operand) error {
 		return fmt.Errorf("vzeroupper takes no operands")
 	}
 	a.emit(0xC5, 0xF8, 0x77)
+	return nil
+}
+
+// vMovupd encodes `vmovupd ymm, ymm/m256` (VEX.256.66.0F.WIG 10 /r) and
+// `vmovupd ymm/m256, ymm` (11 /r): the unaligned 32-byte double-precision
+// move, in both directions, since the scale kernel both loads and stores a
+// block. It is vmovdqu's float-domain twin — same bits moved, but naming
+// the double domain keeps a load from crossing domains into the vmulpd
+// that consumes it.
+func (a *Assembler) vMovupd(ops []Operand) error {
+	if len(ops) != 2 {
+		return fmt.Errorf("vmovupd expects ymm, ymm/m256 or ymm/m256, ymm")
+	}
+	dst, src := ops[0], ops[1]
+	// Store direction: the ymm source takes the ModRM.reg field and the
+	// opcode goes to 11, which is the only difference between the two.
+	if dst.kind == opMem && src.kind == opReg && src.size == 256 {
+		r, x, b := vexRXB(src.reg, dst)
+		a.emitVEX3(r, x, b, 0x01, false, 0, true, 0x01)
+		a.emit(0x11)
+		a.emitModRM(src.reg, dst)
+		return nil
+	}
+	if dst.kind != opReg || dst.size != 256 ||
+		!(src.kind == opMem || (src.kind == opReg && src.size == 256)) {
+		return fmt.Errorf("vmovupd expects ymm, ymm/m256 or ymm/m256, ymm")
+	}
+	r, x, b := vexRXB(dst.reg, src)
+	a.emitVEX3(r, x, b, 0x01, false, 0, true, 0x01)
+	a.emit(0x10)
+	a.emitModRM(dst.reg, src)
+	return nil
+}
+
+// vmulpd encodes the non-destructive 3-operand
+// `vmulpd ymm(dst), ymm(src1), ymm/m256(src2)` (VEX.256.66.0F.WIG 59 /r):
+// four double-precision multiplies, lane by lane. src1 is the VEX.vvvv
+// operand. Lane-parallel arithmetic reassociates nothing here — each lane
+// is one independent product, not a partial sum — which is the property
+// that let the scale kernel vectorise where a reduction may not
+// (docs/ARRAY-ALGEBRA.md §3).
+func (a *Assembler) vmulpd(ops []Operand) error {
+	if len(ops) != 3 || ops[0].kind != opReg || ops[0].size != 256 ||
+		ops[1].kind != opReg || ops[1].size != 256 ||
+		!(ops[2].kind == opMem || (ops[2].kind == opReg && ops[2].size == 256)) {
+		return fmt.Errorf("vmulpd expects ymm, ymm, ymm/m256")
+	}
+	dst, src1, src2 := ops[0], ops[1], ops[2]
+	r, x, b := vexRXB(dst.reg, src2)
+	a.emitVEX3(r, x, b, 0x01, false, src1.reg, true, 0x01)
+	a.emit(0x59)
+	a.emitModRM(dst.reg, src2)
+	return nil
+}
+
+// vbroadcastsd encodes `vbroadcastsd ymm, xmm` (VEX.256.66.0F38.W0 19 /r):
+// broadcast the low double of an xmm across all four lanes of a ymm — the
+// scalar-factor splat, vpbroadcastb's double-domain counterpart. The
+// register-source form is AVX2; AVX1 had only the m64 source, which is why
+// this needs the same baseline as the rest of the file rather than less.
+func (a *Assembler) vbroadcastsd(ops []Operand) error {
+	if len(ops) != 2 || ops[0].kind != opReg || ops[0].size != 256 ||
+		ops[1].kind != opReg || ops[1].size != 128 {
+		return fmt.Errorf("vbroadcastsd expects ymm, xmm")
+	}
+	dst, src := ops[0], ops[1]
+	r, x, b := vexRXB(dst.reg, src)
+	a.emitVEX3(r, x, b, 0x02, false, 0, true, 0x01)
+	a.emit(0x19)
+	a.emitModRM(dst.reg, src)
 	return nil
 }

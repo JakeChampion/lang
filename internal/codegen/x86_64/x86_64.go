@@ -11221,11 +11221,18 @@ func (g *generator) emitSumBytesRuntime() {
 // it allocates the result itself, header and all (cap@-12, rc=1@-8, len@-4,
 // like __fern_arr_push_grow's copy path), so the caller owns one fresh array.
 //
-// SCALAR (§3.4 step 1): one mulsd per element. The AVX2 body this wants is a
-// vmulpd over four lanes with a scalar tail, inside the declared baseline —
-// and since a multiply is elementwise, a vector body reassociates nothing,
-// which is the property that let this kernel go first (docs/ARRAY-ALGEBRA.md
-// §3). Same bits per element either way.
+// AVX2 (§3.4 step 3): vmulpd over four lanes, with a scalar tail for the
+// remainder. A multiply is elementwise, so the vector body reassociates
+// nothing — each lane is an independent product, not a partial sum — which
+// is the property that let this kernel vectorise where a reduction may not
+// (docs/ARRAY-ALGEBRA.md §3, AA-02). Every element gets the same bits from
+// either body, which is what lets the tail share the factor with the lanes.
+//
+// The loads and stores are vmovupd rather than vmovdqu: the same 32 bytes
+// either way, but naming the double domain keeps the load out of the
+// integer domain the multiply would then have to cross back from. Nothing
+// reads past the end — the vector body runs only while a whole block of
+// four remains, which is what `and edx, -4` fixes before the loop.
 //
 // System V: rdi = xs (data pointer), rsi = k as f64 bits — the operand stack
 // carries an f64 as its bit pattern, so no xmm register crosses the call.
@@ -11254,7 +11261,22 @@ func (g *generator) emitScaleF64Runtime() {
 	g.emit("mov dword ptr [rax - 8], 1")     // rc = 1
 	g.emit("mov dword ptr [rax - 4], r13d")  // len = n
 	g.emit("movq xmm1, r12")
+	g.emit("vbroadcastsd ymm1, xmm1") // k in all four lanes
 	g.emit("xor ecx, ecx")
+	g.emit("mov edx, r13d")
+	g.emit("and edx, -4") // whole blocks of four only
+	g.label(".Lscale_f64_vec")
+	g.emit("cmp ecx, edx")
+	g.emit("jae .Lscale_f64_tail")
+	g.emit("vmovupd ymm0, [rbx + rcx*8]")
+	g.emit("vmulpd ymm0, ymm0, ymm1")
+	g.emit("vmovupd [rax + rcx*8], ymm0")
+	g.emit("add ecx, 4")
+	g.emit("jmp .Lscale_f64_vec")
+	g.label(".Lscale_f64_tail")
+	// The tail is legacy SSE, and xmm1 still holds k in lane 0 after
+	// vzeroupper clears only the upper half.
+	g.emit("vzeroupper")
 	g.label(".Lscale_f64_loop")
 	g.emit("cmp ecx, r13d")
 	g.emit("jae .Lscale_f64_ret")
