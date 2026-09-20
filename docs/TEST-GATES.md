@@ -215,6 +215,19 @@ produces, and Fern requires every field of a literal. Adding the gate's 9 s to a
 self-host struct change buys back the CI round that finding it the other way
 costs.
 
+**A new `conformance/cases/` fixture must run
+`TestConformanceCensusHasARowPerFixture`.** Same shape again: it triggers on
+adding a fixture, not on what the fixture is about. Every runnable fixture
+needs a pinned verdict in `internal/e2e/testdata/conformance-leak-census.txt`,
+and a fixture with no row fails the census gate above for being unpinned
+rather than for leaking — so a clean fixture that tests something unrelated to
+rc still turns CI red. Regenerate with `FERN_LEAK_CENSUS_DUMP=1 go test
+./internal/e2e/ -run TestConformanceLeakCensusX86_64`, which prints the rows
+instead of comparing, and check the diff adds only your fixture: a row that
+moved is a leak that changed and wants its own look. The `sourcelint` guard is
+the cheap half at 0.01 s against the census gate's 14 s, and it is the one to
+put in a targeted set.
+
 **Delete `bin/fern` before building the after side.** `make selfhost-cli` is
 timestamp-driven and will happily reuse a `bin/fern` built from an older commit,
 while a fresh baseline worktree always builds a current one — so once `main` has
