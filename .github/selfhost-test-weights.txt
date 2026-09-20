@@ -149,8 +149,6 @@ TestSelfHostCryptoForkIRX86_64 15
 TestSelfHostCryptoIRWasm 20
 TestSelfHostCryptoIRX86_64 12
 TestSelfHostCryptoModuleIR 14
-TestSelfHostCsvEscapeIRWasm 2
-TestSelfHostCsvEscapeIRX86_64 2
 TestSelfHostDebugSymsFlag 9
 TestSelfHostDeclModifiersChecker 11
 TestSelfHostDeclModifiersIRX86_64 2
