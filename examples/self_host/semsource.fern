@@ -1283,7 +1283,7 @@ function map_delete(c: ast.ExprCall, recv: Value, s: State, t: typeinfo.Type): V
     if (!ssasem.narrow_map_value(ssasem.map_key(t)) || !ssasem.narrow_map_value(ssasem.map_value(t))) {
         return refused(s, "delete orphans a counted column: " + typeinfo.spelling(t));
     }
-    var k: Value = map_key_value(c.args[0], s, t);
+    var k: Value = map_key_value(c.args[0], s, t, false);
     s = k.s;
     if (!s.ok) { return k; }
     return define(s, ssasem.map_delete(), [recv.id, k.id], 0, "", ssasem.delete_result(t));
@@ -1302,19 +1302,22 @@ function map_column(s: State, recv: Value, kind: i32, elem: typeinfo.Type): Valu
     return define(s, kind, [recv.id], 0, "", typeinfo.TypeArray { elem: elem });
 }
 
-// The key's unit joins the map's key column, which releases it when the map
+// An INSERT's key joins the map's key column, which releases it when the map
 // is released — so a view, whose bytes belong to a source the map may outlive,
-// is refused here as it is at an array element.
-function map_key_value(e: ast.Expr, s: State, t: typeinfo.Type): Value {
+// is refused there as it is at an array element. A READ's key is hashed and
+// compared, and `operation_supplies` counts no unit for it, so a view is an
+// ordinary lend and takes the same retag a borrowed parameter offers.
+function map_key_value(e: ast.Expr, s: State, t: typeinfo.Type, stored: boolean): Value {
     var k: Value = expr(e, s, ssasem.map_key(t));
     if (!k.s.ok) { return k; }
+    if (!stored) { k = lend(k, ssasem.map_key(t), ssaunits.borrow_mode(), false); }
     if (ssasem.is_view(k.s.values[k.id])) { return refused(k.s, "view element escapes its source"); }
     if (!semtypes.equal(k.s.values[k.id], ssasem.map_key(t))) { return refused(k.s, "map key type"); }
     return k;
 }
 
 function map_write(c: ast.ExprCall, recv: Value, s: State, t: typeinfo.Type): Value {
-    var k: Value = map_key_value(c.args[0], s, t);
+    var k: Value = map_key_value(c.args[0], s, t, true);
     s = k.s;
     if (!s.ok) { return k; }
     var v: Value = expr(c.args[1], s, ssasem.map_value(t));
@@ -1327,7 +1330,7 @@ function map_write(c: ast.ExprCall, recv: Value, s: State, t: typeinfo.Type): Va
 // A lookup borrows the map and the key and answers a scalar the map goes on
 // owning: `has` takes the key alone, `get_or` a default of the value type.
 function map_read(c: ast.ExprCall, recv: Value, s: State, t: typeinfo.Type, kind: i32, result: typeinfo.Type): Value {
-    var k: Value = map_key_value(c.args[0], s, t);
+    var k: Value = map_key_value(c.args[0], s, t, false);
     s = k.s;
     if (!s.ok) { return k; }
     var ids: i32[] = [recv.id, k.id];
