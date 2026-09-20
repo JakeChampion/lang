@@ -65,7 +65,11 @@ passed whole and is unowned.
 | `view_walk` in the tail-recursion test | depth 2000, declined | depth 400000, a loop, `still=5 underflow=0` |
 | compiler's own sources | 8614 of 8614 | 8614 of 8614 |
 
-The refusal costs the compiler nothing and the fuzz census below.
+On the 512-program fernsmith census, x86-64, each program built on both legs
+and run: 451 of 508 whole before and after, 499 agree, 0 diverge, and the
+new refusal appears in no program's report. Fernsmith writes no view
+locals, so the rule costs the corpus nothing either; the loop above is the
+one measurement of what it refuses.
 
 ## Trap
 
