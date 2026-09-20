@@ -504,7 +504,10 @@ Unsupported constructs refuse the whole function with a reason.
   A parameter or result of any other width is admitted: the call through a
   value carries the signature tag its type spells (`ssarc.signature_tag`, the
   spelling irlower's call sites carry), so wasm dispatches it through the
-  funcref type the body was declared with.
+  funcref type the body was declared with. A void result is admitted too:
+  every backend hands one word back from a void body (wasm types a void
+  callee `(result i32)` like any other), so a `(K, V) => void` callback's
+  call stands in statement position like any void call.
 
 - The runtime INTRINSICS, typed as native's `FuncSigs` types them: the ten f64
   primitives `std/float` dispatches to and `__pow_f64`, the six bit counts, the
