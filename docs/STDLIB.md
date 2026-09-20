@@ -731,8 +731,12 @@ rule; `docs/ARRAY-ALGEBRA.md` §4 is why a wrong shape aborts.
   otherwise
 - `(a).packed()`, `(a).to_flat()` — a copy exactly when not
   `(a).is_packed()`
-- elementwise, in reading order, as a packed handle of the same shape:
-  `(a).map(f)`, `(a).zip_with(b, f)` (equal shapes, else abort)
+- elementwise, in reading order, as a packed handle: `(a).map(f)` (same
+  shape), `(a).zip_with(b, f)` (the shape the two broadcast to, else
+  abort)
+- `broadcast_shape(x, y)` — the shape two shapes broadcast to, aligned at
+  their last axes (an extent of 1 stretches); `(a).broadcast_to(shape)` —
+  metadata only, a stretched axis at stride 0
 - `(a).fold_all(init, f)` — every element in reading order
 - `(a).reduce_axis(axis, init, f)` — the fold along `axis` in increasing
   index order, one rank less; `(a).scan_axis(axis, init, f)` — the
