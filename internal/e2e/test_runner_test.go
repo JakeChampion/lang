@@ -4172,7 +4172,7 @@ func TestRunnerNdarrayExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/ndarray", "1..8", "# pass 8", "# fail 0"} {
+	for _, w := range []string{"# Suite: std/ndarray", "1..12", "# pass 12", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
