@@ -160,6 +160,27 @@ func miscFormCases() []formCase {
 	return out
 }
 
+// vexFormCases is the AVX2 vocabulary the byte kernels use: the five VEX
+// forms native's avx.go encodes and nothing else, each with a low and an
+// extended register so both halves of the prefix are checked.
+func vexFormCases() []formCase {
+	return []formCase{
+		{"vmovdqu (%rax,%rdx), %ymm0", "vmovdqu ymm0, [rax + rdx]"},
+		{"vmovdqu (%r8,%r9), %ymm3", "vmovdqu ymm3, [r8 + r9]"},
+		{"vmovdqu (%rdi), %ymm9", "vmovdqu ymm9, [rdi]"},
+		{"vmovdqu %ymm1, %ymm0", "vmovdqu ymm0, ymm1"},
+		{"vpbroadcastb %xmm1, %ymm1", "vpbroadcastb ymm1, xmm1"},
+		{"vpbroadcastb %xmm9, %ymm10", "vpbroadcastb ymm10, xmm9"},
+		{"vpcmpeqb %ymm1, %ymm0, %ymm0", "vpcmpeqb ymm0, ymm0, ymm1"},
+		{"vpcmpeqb %ymm9, %ymm10, %ymm11", "vpcmpeqb ymm11, ymm10, ymm9"},
+		{"vpcmpeqb (%rax,%rdx), %ymm1, %ymm0", "vpcmpeqb ymm0, ymm1, [rax + rdx]"},
+		{"vpmovmskb %ymm0, %eax", "vpmovmskb eax, ymm0"},
+		{"vpmovmskb %ymm0, %r9d", "vpmovmskb r9d, ymm0"},
+		{"vpmovmskb %ymm10, %r11d", "vpmovmskb r11d, ymm10"},
+		{"vzeroupper", "vzeroupper"},
+	}
+}
+
 // TestSelfHostX86FormsMatchNative is the gate. Every case is assembled by both
 // assemblers and byte-compared; a self-host refusal is a failure, not a skip,
 // because a refused line is an instruction that would have left the byte
@@ -170,6 +191,7 @@ func TestSelfHostX86FormsMatchNative(t *testing.T) {
 	cases = append(cases, shiftFormCases()...)
 	cases = append(cases, extendLeaFormCases()...)
 	cases = append(cases, miscFormCases()...)
+	cases = append(cases, vexFormCases()...)
 
 	// Anti-vacuity: if the builders stop producing cases the loop below is a
 	// no-op that reports success.

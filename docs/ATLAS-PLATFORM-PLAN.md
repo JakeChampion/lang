@@ -689,8 +689,8 @@ length at `[ptr-4]`. The op is the same op in all eight; nothing below it is.
 **`__ascii_run`, the second kernel.** Total across every backend, and — unlike
 `__memchr` — made total *before* any caller adopts it, which is the one
 process change the miscount above bought. Both kernels are vectorised on
-x86-64 native and self-host (SSE2), arm64 native, self-host and `-backend ssa`
-(NEON), and wasm native and self-host (v128); `-backend ssa` on x86-64 is the
+x86-64 native and self-host (AVX2 ahead of SSE2), arm64 native, self-host and
+`-backend ssa` (NEON), and wasm native and self-host (v128); `-backend ssa` on x86-64 is the
 eighth leg and came later, below. `__ascii_run`'s vector form is cheaper than
 `__memchr`'s on every target, and interestingly for two different reasons:
 
