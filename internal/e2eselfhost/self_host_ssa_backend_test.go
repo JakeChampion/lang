@@ -1157,18 +1157,6 @@ func TestSelfHostCLIBuildsForEveryNativeTarget(t *testing.T) {
 	}
 }
 
-// TestSelfHostSSADynDispatchArgumentInScratch pins the one branch of the
-// register path's dyn dispatch the behavioural gate cannot see firing: an
-// argument whose home is the chain's own scratch register. arg_from_call
-// hands the dispatch a value the call before it defined, so the allocator
-// gives it the return register, and the wrapper moves it out before the chain
-// reads the receiver's shape through that register. The listing shows the
-// move and the pushed copy on x86-64, the move and the reload on arm64. An
-// allocator change that stopped producing the shape would leave the branch
-// untested again, which this test refuses.
-// A constant the binary ops alone read is an immediate operand on both ISAs
-// and is never materialised; one a division reads keeps its register. The
-// loop bound is under 4,096 so it is an immediate on arm64 too.
 // A counted loop's two loop-carried values share registers with their
 // updates and the branch reaches the body without passing an empty block,
 // so the loop is the compare, its branch, the two adds and the back edge on
@@ -1211,8 +1199,10 @@ function main(): i32 { return (count(3000i64) % 97i64) as i32; }
 		if err != nil {
 			t.Fatal(err)
 		}
-		fn := string(asm[bytes.Index(asm, []byte("__fn_count:")):])
-		fn = fn[:strings.Index(fn, ".cfi_endproc")]
+		fn := functionListing(string(asm), "__fn_count")
+		if fn == "" {
+			t.Fatalf("%s: no __fn_count in the listing:\n%s", c.target, asm)
+		}
 		backs := c.back.FindAllStringSubmatchIndex(fn, -1)
 		if len(backs) == 0 {
 			t.Fatalf("%s: no back edge in count:\n%s", c.target, fn)
@@ -1239,6 +1229,79 @@ function main(): i32 { return (count(3000i64) % 97i64) as i32; }
 	}
 }
 
+// A result takes the register of an operand that dies at its definition,
+// and a branch whose false target is the next block falls through into it:
+// step's add lands in the product's register on both ISAs (b lives on in
+// both arms, so the subtraction still copies it first on x86-64, where sub
+// has two operands), and first_over's conditional break is one conditional
+// jump out of the loop, so the loop's only unconditional jump is its back
+// edge, where the break's false edge was a jump around a jump.
+func TestSelfHostSSAResultTakesDyingOperandRegister(t *testing.T) {
+	h := selfHostCLIForHost(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "step.fern")
+	prog := `function step(x: i64, y: i64): i64 {
+    var a: i64 = x * 3i64;
+    var b: i64 = a + y;
+    if (b > 100i64) { return b - 7i64; }
+    return b;
+}
+function first_over(n: i64): i64 {
+    var i: i64 = 0i64;
+    loop { if (i * i > n) { break; } i = i + 1i64; }
+    return i;
+}
+function main(): i32 { return (step(40i64, 2i64) + step(1i64, 2i64) + first_over(50i64)) as i32; }
+`
+	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		target  string
+		product *regexp.Regexp // the multiply; group 1 is its destination
+		add     string         // the add into that destination, with %s for it
+		jump    *regexp.Regexp // an unconditional jump
+	}{
+		{"x86-64-linux", regexp.MustCompile(`(?m)^\s+imulq \$3, %r\w+, (%r\w+)$`), `(?m)^\s+addq %%r\w+, %s$`, regexp.MustCompile(`(?m)^\s+jmp `)},
+		{"arm64-linux", regexp.MustCompile(`(?m)^\s+mul (x\d+), x\d+, x\d+$`), `(?m)^\s+add %[1]s, %[1]s, x\d+$`, regexp.MustCompile(`(?m)^\s+b \.`)},
+	}
+	for _, c := range cases {
+		out := filepath.Join(dir, "step-"+c.target+".s")
+		cmd := exec.Command(h.cli, "-target", c.target, "-backend", "ssa", "-emit", "asm", "-o", out, src, h.stdlib)
+		cmd.Env = append(os.Environ(), "FERN_SSA_REPORT=1")
+		report, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s: %v\n%s", c.target, err, report)
+		}
+		if strings.Contains(string(report), "FERN_SSA: step:") || strings.Contains(string(report), "FERN_SSA: first_over:") {
+			t.Fatalf("%s: a function was declined:\n%s", c.target, report)
+		}
+		asm, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fn := functionListing(string(asm), "__fn_step")
+		loop := functionListing(string(asm), "__fn_first_over")
+		if fn == "" || loop == "" {
+			t.Fatalf("%s: step or first_over is missing from the listing:\n%s", c.target, asm)
+		}
+		m := c.product.FindStringSubmatch(fn)
+		if m == nil {
+			t.Fatalf("%s: no multiply in step:\n%s", c.target, fn)
+		}
+		add := regexp.MustCompile(fmt.Sprintf(c.add, regexp.QuoteMeta(m[1])))
+		if !add.MatchString(fn) {
+			t.Errorf("%s: step's add does not land in the product's register %s:\n%s", c.target, m[1], fn)
+		}
+		if n := len(c.jump.FindAllString(loop, -1)); n != 1 {
+			t.Errorf("%s: first_over has %d unconditional jumps, want the back edge alone:\n%s", c.target, n, loop)
+		}
+	}
+}
+
+// A constant the binary ops alone read is an immediate operand on both ISAs
+// and is never materialised; one a division reads keeps its register. The
+// loop bound is under 4,096 so it is an immediate on arm64 too.
 func TestSelfHostSSAConstantsAreImmediates(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
@@ -1280,21 +1343,32 @@ function main(): i32 { return count() as i32; }
 		if err != nil {
 			t.Fatal(err)
 		}
-		fn := asm[bytes.Index(asm, []byte("__fn_count:")):]
-		fn = fn[:bytes.Index(fn, []byte(".cfi_endproc"))]
+		fn := functionListing(string(asm), "__fn_count")
+		if fn == "" {
+			t.Fatalf("%s: no __fn_count in the listing:\n%s", c.target, asm)
+		}
 		for _, re := range c.want {
-			if !re.Match(fn) {
+			if !re.MatchString(fn) {
 				t.Errorf("%s: count has no %s:\n%s", c.target, re, fn)
 			}
 		}
 		for _, re := range c.absent {
-			if re.Match(fn) {
+			if re.MatchString(fn) {
 				t.Errorf("%s: count still materialises %s:\n%s", c.target, re, fn)
 			}
 		}
 	}
 }
 
+// TestSelfHostSSADynDispatchArgumentInScratch pins the one branch of the
+// register path's dyn dispatch the behavioural gate cannot see firing: an
+// argument whose home is the chain's own scratch register. arg_from_call
+// hands the dispatch a value the call before it defined, so the allocator
+// gives it the return register, and the wrapper moves it out before the chain
+// reads the receiver's shape through that register. The listing shows the
+// move and the pushed copy on x86-64, the move and the reload on arm64. An
+// allocator change that stopped producing the shape would leave the branch
+// untested again, which this test refuses.
 func TestSelfHostSSADynDispatchArgumentInScratch(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	var src string

@@ -144,15 +144,18 @@ constant those ops alone read is an immediate operand and is never
 materialised (`ssa.imm_operands`: any i32 on x86-64, 0 to 4,095 on arm64
 for add, sub and the compares; a constant on the left swaps or flips the
 same way, and an op whose operands are both constants keeps them in
-registers). A phi's result shares a register with the operand that
-arrives from before it when that operand dies at the phi, and with a
-loop-carried operand whenever no use of the phi is reachable from the
-operand's definition without passing the header (`ssa.phi_mates`,
-`ssa.mate_interferes`), so `sum = sum + i` computes into `sum`'s register
-and the back edge moves nothing; a phi reads its operand on the edge,
-at the predecessor's terminator, not inside the header. Empty blocks
-holding only a branch are skipped by every edge into them and dropped, and
-a phi loses its slot for a dropped predecessor (`ssa.thread_forwarding`). Division,
+registers). A value defined by a phi, one of those ops or a unary takes
+the register of its phi mate or of an operand of its definition when that
+register is free or its holder dies at the definition, and a loop-carried
+operand takes its phi's register whenever no use of the phi is reachable
+from the operand's definition without passing the header
+(`ssa.phi_mates`, `ssa.mate_interferes`), so `sum = sum + i` computes into
+`sum`'s register and the back edge moves nothing; a phi reads its operand
+on the edge, at the predecessor's terminator, not inside the header, and
+a loop-carried operand's interval ends at that edge. Empty blocks holding
+only a branch are skipped by every edge into them and dropped, a phi loses
+its slot for a dropped predecessor (`ssa.thread_forwarding`), and a branch
+whose false target is the next block falls through into it. Division,
 the shifts and the table shared with the stack machine still go through
 x0/x1 (`%rax`/`%rcx`), as does every call result. The phis of one edge are
 parallel moves between homes (`ssa_parallel_moves`): one instruction per

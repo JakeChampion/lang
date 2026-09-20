@@ -973,44 +973,14 @@ function order_bucket(lo: i32, maxp: i32): i32 {
     return lo;
 }
 
-function extend_backedge_phi_intervals(f: SFunc, def_pos: i32[], total_pos: i32, hi: i32[]): i32[] {
-    // Back-edge fix: a phi operand not defined BEFORE the phi is a loop
-    // back-edge value, live from its definition through the back-edge and
-    // not just to the phi's (earlier) position. Extend its interval to the
-    // end so it can't share a register with values computed in the loop
-    // body. The phi itself is such an operand when a loop carries a value
-    // it never changes, and the register it lost to a body temporary was
-    // read again at the back edge.
-    var bj: i32 = 0;
-    var ppos: i32 = 0;
-    while (bj < f.blocks.len()) {
-        var b2: SBlock = f.blocks[bj];
-        var kk: i32 = 0;
-        while (kk < b2.insts.len()) {
-            var pin: SInst = b2.insts[kk];
-            if (pin.kind_tag == 8) {  // phi
-                var pa2: i32 = 0;
-                while (pa2 < pin.args.len()) {
-                    if (def_pos[pin.args[pa2]] >= ppos) { if (pin.args[pa2] >= 0 && pin.args[pa2] < hi.len() && total_pos > hi[pin.args[pa2]]) { hi = hi.with(pin.args[pa2], total_pos); } }
-                    pa2 = pa2 + 1;
-                }
-            }
-            ppos = ppos + 1;
-            kk = kk + 1;
-        }
-        ppos = ppos + 1;
-        bj = bj + 1;
-    }
-    return hi;
-}
-
 function extend_loop_invariant_intervals(f: SFunc, def_pos: i32[], hi: i32[]): i32[] {
     // Loop-invariant fix: a value defined BEFORE a loop header and used inside
     // the loop is live across the whole loop (re-read every iteration), so its
     // interval must reach the back-edge — otherwise the scan expires it at its
     // textual last use and a loop-body temp reuses its register, corrupting it
-    // on the next iteration. (The phi fix above covers loop-CARRIED values;
-    // this covers loop-INVARIANT ones.) Block start positions are recomputed
+    // on the next iteration. (A loop-CARRIED value is covered by the phi's
+    // read on the back edge; this covers loop-INVARIANT ones.) Block start
+    // positions are recomputed
     // with the same per-block stride (insts + one terminator slot); a
     // terminator targeting a block at or before its own block is a back-edge,
     // and the loop spans [header_start, terminator_pos].
@@ -1147,8 +1117,10 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
     var def_blk: i32[] = [];
     var call_def: i32[] = [];
     var reads_mate: boolean[] = [];
+    var def_a: i32[] = [];
+    var def_b: i32[] = [];
     i = 0;
-    while (i < f.nvals) { def_pos = def_pos.append(0 - 1); def_blk = def_blk.append(0 - 1); call_def = call_def.append(0); reads_mate = reads_mate.append(false); i = i + 1; }
+    while (i < f.nvals) { def_pos = def_pos.append(0 - 1); def_blk = def_blk.append(0 - 1); call_def = call_def.append(0); reads_mate = reads_mate.append(false); def_a = def_a.append(0 - 1); def_b = def_b.append(0 - 1); i = i + 1; }
     var blk_start: i32[] = [];
     var pos: i32 = 0;
     var bi: i32 = 0;
@@ -1162,7 +1134,11 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
             if (ins.result >= 0 && ins.result < def_pos.len()) {
                 def_pos = def_pos.with(ins.result, pos);
                 def_blk = def_blk.with(ins.result, bi);
-                if (ins.kind_tag == 8 || (ins.kind_tag == 9 && shares_operand_home(ins.str))) { reads_mate = reads_mate.with(ins.result, true); }
+                if (ins.kind_tag == 8 || ins.kind_tag == 10 || (ins.kind_tag == 9 && shares_operand_home(ins.str))) {
+                    reads_mate = reads_mate.with(ins.result, true);
+                    if (ins.kind_tag != 8 && ins.args.len() > 0) { def_a = def_a.with(ins.result, ins.args[0]); }
+                    if (ins.kind_tag != 8 && ins.args.len() > 1) { def_b = def_b.with(ins.result, ins.args[1]); }
+                }
             }
             var a: i32 = 0;
             while (a < ins.args.len() && ins.kind_tag != 8) {
@@ -1185,9 +1161,11 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
     var total_pos: i32 = pos;
     var at: i32[] = block_positions(f);
     // A phi reads its operand on the edge from the predecessor, at that
-    // block's terminator, not at its own position inside the header: read
-    // there, an operand arriving from before a loop would look live through
-    // the loop and be held for its whole span.
+    // block's terminator, not at its own position inside the header. Read
+    // there, an operand arriving from before a loop ends before the loop
+    // rather than looking live through it, and a loop-carried operand lives
+    // from its definition to the back edge it is read on, and no further:
+    // what follows the loop, calls included, is not on its interval.
     bi = 0;
     while (bi < f.blocks.len()) {
         var pb: SBlock = f.blocks[bi];
@@ -1217,7 +1195,6 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
     i = 0;
     while (i < no_home.len() && i < f.nvals) { if (no_home[i]) { hi = hi.with(i, 0 - 1); } i = i + 1; }
 
-    hi = extend_backedge_phi_intervals(f, def_pos, total_pos, hi);
     hi = extend_loop_invariant_intervals(f, def_pos, hi);
     var cum: i32[] = calls_before(calls, total_pos);
     var cum_abi: i32[] = calls_before(abi_cl, total_pos);
@@ -1256,41 +1233,49 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
         act_val = nv; act_hi = nh; act_reg = nr;
 
         var abi_ok: boolean = !spans_call(cum_abi, lo[v], hi[v]);
-        // A phi mate takes the mate's register when it can: free, or still
-        // held by the mate where the two do not interfere.
-        var h: i32 = mates.hint[v];
-        if (h >= 0 && reg_of[h] >= 0) {
+        // A value takes the register of its phi mate, or of an operand of
+        // its definition, when it can: the register is free, or its holder
+        // dies at this very definition and the emitter reads before it
+        // writes, or the holder is the phi this loop-carried value feeds and
+        // the two never live at once. First fit wins; the phi mate first.
+        var placed: boolean = false;
+        var cands: i32[] = [mates.hint[v], def_a[v], def_b[v]];
+        var ci: i32 = 0;
+        while (ci < cands.len() && !placed) {
+            var h: i32 = cands[ci];
+            ci = ci + 1;
+            if (h < 0 || reg_of[h] < 0) { continue; }
             var hr: i32 = reg_of[h];
-            if ((!spans_call(cum, lo[v], hi[v]) || hr >= nregs) && (hr != abi_reg || abi_ok)) {
-                var fi: i32 = index_of_reg(free, hr);
-                var fsi: i32 = index_of_reg(free_s, hr);
-                if (fi >= 0 || fsi >= 0) {
-                    if (fi >= 0) { free = remove_reg(free, hr); } else { free_s = remove_reg(free_s, hr); }
-                    reg_of = reg_of.with(v, hr);
-                    shared_with = shared_with.with(v, h);
-                    act_val = act_val.append(v); act_hi = act_hi.append(hi[v]); act_reg = act_reg.append(hr);
-                    oi = oi + 1;
-                    continue;
-                }
-                var ha: i32 = index_of_reg(act_val, h);
-                if (ha >= 0 && act_reg[ha] == hr) {
-                    var share: boolean = act_hi[ha] == lo[v] && reads_mate[v];
-                    if (!share && mates.carried[v]) { share = !mate_interferes(f, at, blk_start, h, v, def_blk[h], def_blk[v], def_pos[v]); }
-                    if (share) {
-                        var top: i32 = act_hi[ha];
-                        if (hi[v] > top) { top = hi[v]; }
-                        act_val = drop_active_at(act_val, ha);
-                        act_hi = drop_active_at(act_hi, ha);
-                        act_reg = drop_active_at(act_reg, ha);
-                        reg_of = reg_of.with(v, hr);
-                        shared_with = shared_with.with(v, h);
-                        act_val = act_val.append(v); act_hi = act_hi.append(top); act_reg = act_reg.append(hr);
-                        oi = oi + 1;
-                        continue;
-                    }
-                }
+            if ((spans_call(cum, lo[v], hi[v]) && hr < nregs) || (hr == abi_reg && !abi_ok)) { continue; }
+            var fi: i32 = index_of_reg(free, hr);
+            var fsi: i32 = index_of_reg(free_s, hr);
+            if (fi >= 0 || fsi >= 0) {
+                if (fi >= 0) { free = remove_reg(free, hr); } else { free_s = remove_reg(free_s, hr); }
+                reg_of = reg_of.with(v, hr);
+                shared_with = shared_with.with(v, h);
+                act_val = act_val.append(v); act_hi = act_hi.append(hi[v]); act_reg = act_reg.append(hr);
+                placed = true;
+                continue;
             }
+            var ha: i32 = index_of_reg(act_reg, hr);
+            if (ha < 0) { continue; }
+            var share: boolean = act_hi[ha] == lo[v] && reads_mate[v];
+            if (!share && h == mates.hint[v] && mates.carried[v] && act_val[ha] == h) {
+                share = !mate_interferes(f, at, blk_start, h, v, def_blk[h], def_blk[v], def_pos[v]);
+            }
+            if (!share) { continue; }
+            var top: i32 = act_hi[ha];
+            if (hi[v] > top) { top = hi[v]; }
+            var holder: i32 = act_val[ha];
+            act_val = drop_active_at(act_val, ha);
+            act_hi = drop_active_at(act_hi, ha);
+            act_reg = drop_active_at(act_reg, ha);
+            reg_of = reg_of.with(v, hr);
+            shared_with = shared_with.with(v, holder);
+            act_val = act_val.append(v); act_hi = act_hi.append(top); act_reg = act_reg.append(hr);
+            placed = true;
         }
+        if (placed) { oi = oi + 1; continue; }
         var pick: i32 = pick_caller_reg(free, abi_reg, call_def[v] == 1 && abi_ok, abi_ok);
         var from_caller: boolean = !spans_call(cum, lo[v], hi[v]) && pick >= 0;
         if (!from_caller && free_s.len() == 0) {
