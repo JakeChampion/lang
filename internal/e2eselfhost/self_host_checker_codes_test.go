@@ -803,6 +803,24 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"method-redeclared", "struct P { x: i32 }\nfunction (p: P) m(): i32 { return 1; }\nfunction (p: P) m(): i32 { return 2; }\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
 		{"free-and-method-same-name-ok", "struct P { x: i32 }\nfunction m(): i32 { return 1; }\nfunction (p: P) m(): i32 { return 2; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"return-mismatch", "function main(): i32 { var s: string = \"x\"; return s; }\n", []string{"E002"}},
+		// A written `return` inside a value block leaves the ENCLOSING function,
+		// so it is held to that function's type; only the tail of each arm is
+		// the block's value (#9828). The self-host checked every return in the
+		// block against the block's own tag, so the loop's return of a lambda
+		// went unreported and the binary returned a truncated box pointer.
+		{"return-inside-value-block", "function main(): i32 {\n    var k: i32 = 3;\n    var xs: i32[] = [1, 2, 3];\n    var f: (i32) => i32 = (if (k > 1) { for x in xs { if (x == 2) { return ((a: i32) => a + k + x); } } ((b: i32) => b) } else { ((y: i32) => y - k) });\n    return f(1);\n}\n", []string{"E002"}},
+		{"return-inside-value-block-clean", "function pick(c: boolean): i32 {\n    var v: i32 = (if (c) { var i: i32 = 0; while (i < 5) { i = i + 1; if (i == 3) { return 40; } } 1 } else { 2 });\n    return v + 100;\n}\nfunction main(): i32 { return pick(true); }\n", nil},
+		{"return-inside-match-expression-arm", "function f(n: i32): i32 {\n    var s: string = (match (n) { 0 => { \"zero\" }, _ => { if (n < 0) { return \"neg\"; } \"pos\" } });\n    return s.len();\n}\nfunction main(): i32 { return f(1); }\n", []string{"E002"}},
+		{"return-inside-value-block-of-void", "function g(c: boolean): void {\n    var v: i32 = (if (c) { return 3; 1 } else { 2 });\n}\nfunction main(): i32 { g(true); return 0; }\n", []string{"E002"}},
+		{"return-inside-nested-value-block", "function f(c: boolean, d: boolean): i32 {\n    var v: i32 = (if (c) { var w: i32 = (if (d) { return \"x\"; 1 } else { 2 }); w } else { 3 });\n    return v;\n}\nfunction main(): i32 { return f(true, true); }\n", []string{"E002"}},
+		// A value block in call-argument position is reached because the walk
+		// descends through an ordinary call (not_a_scope_root prunes only at a
+		// lambda and at a value block it has already taken).
+		{"return-inside-value-block-call-argument", "function g(n: i32): i32 { return n + 1; }\nfunction f(c: boolean): i32 {\n    return g((if (c) { return \"x\"; 1 } else { 2 }));\n}\nfunction main(): i32 { return f(true); }\n", []string{"E002"}},
+		// An else-if chain's arms are the tail of the else body, so their own
+		// tails stay the block's value while a written return in one is checked.
+		{"return-inside-else-if-arm", "function f(c: boolean, d: boolean): i32 {\n    var v: i32 = (if (c) { 1 } else if (d) { return \"x\"; 2 } else { 3 });\n    return v;\n}\nfunction main(): i32 { return f(false, true); }\n", []string{"E002"}},
+		{"return-inside-else-if-arm-clean", "function f(c: boolean, d: boolean): i32 {\n    var v: i32 = (if (c) { 1 } else if (d) { return 40; 2 } else { 3 });\n    return v + 100;\n}\nfunction main(): i32 { return f(false, true); }\n", nil},
 		{"return-mismatch-nested", "function f(): i32 { if (true) { return \"no\"; } return 1; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
 		{"return-ok", "function f(): string { var s: string = \"x\"; return s; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"struct-missing-field", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; return p.x; }\n", []string{"E005"}},

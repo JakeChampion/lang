@@ -5406,6 +5406,7 @@ function ret_diags(stmts: ast.Stmt[], s: Scope, ret_ty: typeinfo.Type, unions: U
   }
   var cur: Scope = s;
   for st in stmts {
+    out = util.append_diags(out, ret_diags_in_exprs(st, cur, ret_ty, unions, false));
     match (st) {
       ast.StmtReturn(r) => {
         // A bare `return;` parses to a `punct:;` placeholder value.
@@ -5457,6 +5458,94 @@ function ret_diags(stmts: ast.Stmt[], s: Scope, ret_ty: typeinfo.Type, unions: U
   return out;
 }
 
+// A written `return` inside a value block leaves the ENCLOSING function:
+// the block is an if- / match-expression desugar irlower inlines, so only
+// the tail of each arm is the block's value. ret_diags stops at a lambda,
+// and a value block's callee is one, so this walks the value blocks one
+// statement's own expressions hold (nested bodies are ret_diags' own
+// recursion) and checks every return but the arm tails against `ret_ty` —
+// the void form when `void` is set. An ordinary lambda is its own contract
+// (lret_expr) and is not entered.
+function ret_diags_in_exprs(st: ast.Stmt, cur: Scope, ret_ty: typeinfo.Type, unions: UnionSig[], is_void: boolean): util.Diag[] {
+  var out: util.Diag[] = [];
+  for e in stmt_exprs(st) {
+    out = astwalk.fold_expr_pruned(e, out, (x: ast.Expr, own a: util.Diag[]): util.Diag[] => {
+      match (x) {
+        ast.ExprCall(c) => {
+          if (parser.is_value_block(c)) { return util.append_diags(a, vb_ret_diags(parser.vb_body(c), cur, ret_ty, unions, is_void)); }
+          return a;
+        },
+        _ => { return a; }
+      }
+      return a;
+    }, not_a_scope_root);
+  }
+  return out;
+}
+
+// The expressions a statement holds directly; the bodies it encloses are
+// left to the caller's own recursion.
+function stmt_exprs(st: ast.Stmt): ast.Expr[] {
+  var out: ast.Expr[] = [];
+  match (st) {
+    ast.StmtVar(v) => { return out.append(v.init); },
+    ast.StmtReturn(r) => { return out.append(r.value); },
+    ast.StmtExpr(e) => { return out.append(e.value); },
+    ast.StmtAssign(a) => { return out.append(a.value); },
+    ast.StmtIf(i) => { return out.append(i.cond); },
+    ast.StmtWhile(w) => { return out.append(w.cond); },
+    ast.StmtFor(f) => { return out.append(f.iter); },
+    ast.StmtMatch(m) => {
+      out = out.append(m.scrutinee);
+      for arm in m.arms {
+        if (arm.has_guard) { out = out.append(arm.guard); }
+      }
+      return out;
+    },
+    _ => { return out; }
+  }
+  return out;
+}
+
+// The returns of a value block's body that leave the enclosing function:
+// every statement but the last is checked as the function's own, and the
+// last is the block's value when it is a return, or an if / match whose
+// arms end the same way — the tail rule iife_rewrite_arm_body lowers by.
+function vb_ret_diags(body: ast.Stmt[], s: Scope, ret_ty: typeinfo.Type, unions: UnionSig[], is_void: boolean): util.Diag[] {
+  var out: util.Diag[] = [];
+  if (body.len() == 0) { return out; }
+  var cur: Scope = s;
+  var i: i32 = 0;
+  while (i + 1 < body.len()) {
+    out = util.append_diags(out, stmt_ret_diags(body[i], cur, ret_ty, unions, is_void));
+    cur = bind_stmt(body[i], cur);
+    i = i + 1;
+  }
+  match (body[i]) {
+    ast.StmtReturn(_) => { return util.append_diags(out, ret_diags_in_exprs(body[i], cur, ret_ty, unions, is_void)); },
+    ast.StmtIf(f) => {
+      out = util.append_diags(out, ret_diags_in_exprs(body[i], cur, ret_ty, unions, is_void));
+      out = util.append_diags(out, vb_ret_diags(f.then_body, cur, ret_ty, unions, is_void));
+      return util.append_diags(out, vb_ret_diags(f.else_body, cur, ret_ty, unions, is_void));
+    },
+    ast.StmtMatch(m) => {
+      out = util.append_diags(out, ret_diags_in_exprs(body[i], cur, ret_ty, unions, is_void));
+      for arm in m.arms {
+        out = util.append_diags(out, vb_ret_diags(arm.body, annotate_arm_scope(arm, cur, check_expr(m.scrutinee, cur)), ret_ty, unions, is_void));
+      }
+      return out;
+    },
+    _ => { return util.append_diags(out, stmt_ret_diags(body[i], cur, ret_ty, unions, is_void)); }
+  }
+  return out;
+}
+
+function stmt_ret_diags(st: ast.Stmt, s: Scope, ret_ty: typeinfo.Type, unions: UnionSig[], is_void: boolean): util.Diag[] {
+  var one: ast.Stmt[] = [st];
+  if (is_void) { return void_ret_diags(one, s, unions); }
+  return ret_diags(one, s, ret_ty, unions);
+}
+
 // void_ret_diags is the `void`-return counterpart of ret_diags: a function
 // declared `: void` must not return a value, so every `return <expr>;` with
 // a real value is E002 (a bare `return;` is fine). Mirrors the Go checker,
@@ -5468,6 +5557,7 @@ function void_ret_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): util.D
   var out: util.Diag[] = [];
   var cur: Scope = s;
   for st in stmts {
+    out = util.append_diags(out, ret_diags_in_exprs(st, cur, t_void(), unions, true));
     match (st) {
       ast.StmtReturn(r) => {
         var bare: boolean = false;
