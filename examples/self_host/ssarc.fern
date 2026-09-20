@@ -1831,7 +1831,7 @@ function instruction(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Pla
     r = negation_zero(r, f, ins);
     if (ins.kind_tag == ssasem.with()) { r = with_update(r, f, p, ins, defer0); return emit(r, ir.op_store_local(ins.result)); }
     if (ssasem.is_cell_op(ins.kind_tag)) { return cell_site(r, f, ins); }
-    if (ssasem.is_function_op(ins.kind_tag)) { r = function_site(r, ins); return emit(r, ir.op_store_local(ins.result)); }
+    if (ssasem.is_function_op(ins.kind_tag)) { r = function_site(r, f, ins); return emit(r, ir.op_store_local(ins.result)); }
     if (ins.kind_tag == ssasem.arr_join()) { r = join_call(r, ins); return emit(r, ir.op_store_local(ins.result)); }
     if (ins.kind_tag == ssasem.append()) { r = append_push(r, f, p, ins, defer0); return emit(r, ir.op_store_local(ins.result)); }
     if (ins.kind_tag == 9 && (ssasem.saturating(ins.str) || ssasem.checked_arith(ins.str))) { r = overflow_binary(r, f, ins); return emit(r, ir.op_store_local(ins.result)); }
@@ -2155,10 +2155,10 @@ function cell_write(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst):
 // is the layout `irlower.lower_call_named` gives the same `__mkclo$` marker.
 // The call is environment-first — the box, the written arguments, then the
 // address out of slot 0, which is the order call_indirect pops them in — so a
-// body reaches its captures through the parameter it was hoisted with. Every
-// slot of the signature is one i32-shaped word, the semantic verifier refuses
-// a wide one, so the call needs no funcref signature tag.
-function function_site(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
+// body reaches its captures through the parameter it was hoisted with. The
+// call carries the signature tag the value's type spells, so wasm dispatches
+// a wide or float slot through the funcref type the body was declared with.
+function function_site(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
     if (ins.kind_tag == ssasem.closure_new()) {
         r = emit(r, ir.op_const_func(0, ins.str));
         for capture in ins.args { r = emit(r, ir.op_load_local(capture)); }
@@ -2168,7 +2168,29 @@ function function_site(own r: irlower.LowerResult, ins: ssa.SInst): irlower.Lowe
     r = emit(r, ir.op_load_local(ins.args[0]));
     r = emit(r, ir.op_const_i32(0));
     r = emit(r, ir.op_arr_get(32));
-    return emit(r, ir.op_call_indirect(ins.args.len()));
+    return emit(r, ir.op_call_indirect_sig(ins.args.len(), signature_tag(f.values[ins.args[0]])));
+}
+
+// The funcref signature tag a call through a value dispatches by: one width
+// char per slot, the environment word first, then `_` and the result — the
+// spelling irlower's call sites carry, so both name one funcref type on wasm.
+// An all-narrow signature carries no tag, as those sites carry none.
+function signature_tag(sig: typeinfo.Type): string {
+    var tag: string = "w";
+    for p in ssasem.func_params(sig) { tag = tag + width_char(p); }
+    tag = tag + "_" + width_char(ssasem.func_result(sig));
+    var i: i32 = 0;
+    while (i < tag.len()) {
+        if (tag[i] != b'w' && tag[i] != b'_') { return tag; }
+        i = i + 1;
+    }
+    return "";
+}
+
+function width_char(t: typeinfo.Type): string {
+    if (ssasem.is_wide(t)) { return "l"; }
+    if (ssasem.is_float(t)) { return "d"; }
+    return "w";
 }
 
 function call_site(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {

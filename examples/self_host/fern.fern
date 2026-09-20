@@ -2508,7 +2508,7 @@ function run(): i32 {
         } else if (shape == 16) {
             comp = watbin.component_full_io_fs_rw_args(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, true, true, sub)));
         } else {
-            comp = watbin.component_full(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error(full, true, false)));
+            comp = watbin.component_full(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, true, false, sub)));
         }
         out_asm = string_from_bytes_unchecked(to_u8(comp));
     } else {

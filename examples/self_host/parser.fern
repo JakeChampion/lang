@@ -9240,7 +9240,7 @@ function bind_unify(pattern: string, concrete: string, tparams: string[], binds:
 function lambda_ret_of(e: ast.Expr, env: MEnv, funcs: MFns): string {
     match (e) {
         ast.ExprLambda(lm) => {
-            if (lm.ret_type.len() > 0) { return lm.ret_type; }
+            if (lm.ret_type.len() > 0) { return fn_tag_spelling(lm.ret_type, lm.ret_fn_ret, lm.ret_fn_param_types); }
             var lenv: MEnv = env;
             var pi: i32 = 0;
             while (pi < lm.params.len()) {
