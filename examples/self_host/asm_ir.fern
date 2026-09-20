@@ -1896,7 +1896,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
     return s.any_need([
         "stat", "lstat", "statfs", "access", "read_file",
         "read_file_bytes", "remove_file", "create_dir_all", "create_dir",
-        "remove_dir", "create_link", "create_symlink", "rename", "chmod",
+        "remove_dir", "create_link", "create_symlink", "rename", "chmod", "chmod_at",
         "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times",
         "read_link", "chdir", "chroot", "setuid", "setgid", "setgroups", "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync",
         "umask", "write_file", "write_file_exec", "temp_dir", "read_dir", "read_dir_all",
@@ -1914,7 +1914,7 @@ function needs_io_error_shapes(s: asmcore.EmitState): boolean {
         "read_file", "read_file_bytes", "write_file", "write_file_exec",
         "remove_file", "stat", "lstat", "statfs", "access", "read_dir", "read_dir_all",
         "remove_dir_all", "temp_dir", "create_dir_all", "create_dir",
-        "remove_dir", "create_link", "create_symlink", "rename", "chmod",
+        "remove_dir", "create_link", "create_symlink", "rename", "chmod", "chmod_at",
         "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times",
         "read_link", "chdir", "chroot", "setuid", "setgid", "setgroups", "writer_truncate", "fd_fsync", "fd_fdatasync", "fd_syncfs"
     ]);
@@ -1930,7 +1930,7 @@ function needs_heap_runtime(s: asmcore.EmitState): boolean {
         "read_int", "read_all_stdin", "str_read_line", "strbuf", "buf", "reader",
         "write_file", "write_file_exec", "remove_dir_all", "temp_dir",
         "read_dir", "read_dir_all", "remove_file", "create_dir_all", "create_dir",
-        "remove_dir", "create_link", "create_symlink", "rename", "chmod",
+        "remove_dir", "create_link", "create_symlink", "rename", "chmod", "chmod_at",
         "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times",
         "read_link", "chdir", "chroot", "setuid", "setgid", "setgroups",
         "umask", "env", "environ", "getgroups", "stat", "lstat", "statfs",
@@ -6973,6 +6973,13 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
             s = s.write("    popq %rcx\n    popq %rdx\n    popq %rsi\n    popq %rdi\n");
             s = s.write("    pushq %rcx\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n    call __fn___fern_chown_at\n    addq $32, %rsp\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("chown_at");
+        } else if (o.kind_tag == 321) {  // chmod_at
+            // [pathbox][mode][follow] (follow on top) -> Result[void,
+            // IoError]. Three operands, reversed the way set_window_size's
+            // are: param[0] (path) lowest.
+            s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n");
+            s = s.write("    call __fn___fern_chmod_at\n    addq $24, %rsp\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("chmod_at");
         } else if (o.kind_tag == 273) {  // truncate
             // [pathbox][length] (length on top) -> Result[void, IoError].
             // Same reversal as chmod; the length is a full 64-bit word.
@@ -10394,6 +10401,7 @@ function emit_module_ir_unit_backend(mod: parser.Module, is_entry: boolean, glob
         if (s.has_need("create_symlink")) { fs_src = fs_src + " " + asmcore.rt_src_create_symlink("x86_64"); }
         if (s.has_need("rename")) { fs_src = fs_src + " " + asmcore.rt_src_rename("x86_64"); }
         if (s.has_need("chmod")) { fs_src = fs_src + " " + asmcore.rt_src_chmod("x86_64"); }
+        if (s.has_need("chmod_at")) { fs_src = fs_src + " " + asmcore.rt_src_chmod_at("x86_64"); }
         if (s.has_need("signal_send")) { fs_src = fs_src + " " + asmcore.rt_src_signal_send("x86_64"); }
         if (s.has_need("set_process_group")) { fs_src = fs_src + " " + asmcore.rt_src_set_process_group("x86_64"); }
         if (s.has_need("set_priority")) { fs_src = fs_src + " " + asmcore.rt_src_set_priority("x86_64"); }

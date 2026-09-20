@@ -216,7 +216,9 @@ var gatedBuiltins = map[string]string{
 	"umask": "fsmode",
 	// And `chmod` is the WRITE of it on an entry that already exists,
 	// where `write_file_exec` only sets a bit on one it is creating.
-	"chmod": "fsmode",
+	// `chmod_at` is the same write with a follow flag.
+	"chmod":    "fsmode",
+	"chmod_at": "fsmode",
 
 	// The process's own identity — the effective pair, the real pair,
 	// and the supplementary group set. A host with no users cannot

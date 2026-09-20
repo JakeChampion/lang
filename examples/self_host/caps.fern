@@ -89,6 +89,7 @@ pub function builtin_caps(): BuiltinCap[] {
         BuiltinCap { builtin: "read_link", capability: "fs" },
         BuiltinCap { builtin: "rename", capability: "fs" },
         BuiltinCap { builtin: "chmod", capability: "fs" },
+        BuiltinCap { builtin: "chmod_at", capability: "fs" },
         BuiltinCap { builtin: "set_file_times", capability: "fs" },
         BuiltinCap { builtin: "truncate", capability: "fs" },
         BuiltinCap { builtin: "mknod", capability: "fs" },

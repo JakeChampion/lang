@@ -2902,10 +2902,8 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// setuid, setgid and the sticky bit — and the rest are masked away
 	// here rather than reaching the kernel, which would answer EINVAL.
 	//
-	// A final symlink IS followed, which is what `chmod(1)` does: a
-	// symlink has no mode of its own to set on Linux, and
-	// `AT_SYMLINK_NOFOLLOW` answers EOPNOTSUPP there rather than doing
-	// something useful, so there is no correct nofollow form to offer.
+	// A final symlink IS followed, which is what `chmod(1)` does;
+	// `chmod_at` below is the form with the choice.
 	//
 	// `write_file_exec` is the creating sibling — it sets a bit on a
 	// file it is making. This is the only way to change the mode of
@@ -2914,6 +2912,31 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// docs/FREESTANDING-CORE.md.
 	c.info.FuncSigs["chmod"] = &ast.FuncType{
 		Params: []ast.Type{ast.StringType{}, ast.NumberType{Width: 32, Signed: true}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// chmod_at(path, mode, follow): Result[void, IoError] — `chmod` with
+	// the follow choice `chown_at` has. `follow` true is `chmod` exactly:
+	// fchmodat(AT_FDCWD, path, mode & 0o7777). False asks for the LINK's
+	// own bits — fchmodat2(AT_FDCWD, path, mode, AT_SYMLINK_NOFOLLOW) on
+	// Linux, fchmodat with the same flag on Darwin — which is what
+	// `chmod -h`, and every `-R` walk that meets a symlink it was not
+	// told to follow, ask for.
+	//
+	// The two kernels answer that differently and the builtin reports
+	// what it got. Darwin keeps a mode on a symlink, so the link's bits
+	// change. Linux has none: the kernel answers EOPNOTSUPP, and one too
+	// old for fchmodat2 (or qemu) ENOSYS, and either reaches the caller
+	// as the Err naming it rather than a silent Ok — GNU chmod prints
+	// "neither symbolic link … nor referent has been changed" from that
+	// very errno.
+	//
+	// Same capability as `chmod` (`fsmode`): it is the same property
+	// written, with one more way to name the entry.
+	c.info.FuncSigs["chmod_at"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.NumberType{Width: 32, Signed: true}, ast.BoolType{}},
 		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
 			ast.VoidType{},
 			ast.EnumType{Name: "IoError"},

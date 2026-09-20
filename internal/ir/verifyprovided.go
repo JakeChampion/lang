@@ -374,6 +374,7 @@ var providedSigs = map[string]providedSig{
 	"read_link":                       {2, rWord},
 	"rename":                          {4, rWord},
 	"chmod":                           {3, rWord},
+	"chmod_at":                        {4, rWord},
 	"set_file_times":                  {7, rWord},
 	"truncate":                        {3, rWord},
 	"sync":                            {0, rVoid},

@@ -500,6 +500,7 @@ pub function sysno(t: string, name: string): string {
         if (name == "readlinkat") { return "267"; }
         if (name == "renameat") { return "264"; }
         if (name == "fchmodat") { return "268"; }
+        if (name == "fchmodat2") { return "452"; }
         if (name == "truncate") { return "76"; }
         if (name == "ftruncate") { return "77"; }
         if (name == "fsync") { return "74"; }
@@ -666,6 +667,9 @@ pub function sysno(t: string, name: string): string {
     if (name == "ioctl") { return "29"; }
     if (name == "faccessat") { return "439"; }
     if (name == "fchmodat") { return "53"; }
+    // No Darwin row: XNU's fchmodat takes the flags word itself, so
+    // rt_src_chmod_at issues that one there.
+    if (name == "fchmodat2") { return "452"; }
     if (name == "truncate") { return "45"; }
     if (name == "ftruncate") { return "46"; }
     if (name == "fsync") { return "82"; }
@@ -2114,6 +2118,25 @@ pub function rt_src_read_link(t: string): string {
 // chmod(1) has. One __syscall4 therefore serves both.
 pub function rt_src_chmod(t: string): string {
     return "function __fern_chmod(path: string, mode: i32): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall4(" + sysno(t, "fchmodat") + ", " + at_fdcwd(t) + ", pathz, mode & 4095, 0); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } return Ok(()); }";
+}
+
+// rt_src_chmod_at backs `chmod_at(path, mode, follow)` (syscall-leaf) →
+// Result[void, IoError]: `chmod` with `chown_at`'s follow flag.
+//
+// Darwin: one fchmodat, whose fourth argument IS the flags word — 0 to
+// follow, AT_SYMLINK_NOFOLLOW to set the link's own bits, which XNU keeps.
+//
+// Linux: fchmodat has no flags word, so `follow` picks the SYSCALL —
+// fchmodat for true, fchmodat2 with AT_SYMLINK_NOFOLLOW for false. A symlink
+// has no mode on Linux, and the kernel's EOPNOTSUPP (ENOSYS below fchmodat2)
+// reaches the caller as the Err rather than a silent Ok.
+pub function rt_src_chmod_at(t: string): string {
+    var head: string = "function __fern_chmod_at(path: string, mode: i32, follow: boolean): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = 0; ";
+    var tail: string = " if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } return Ok(()); }";
+    if (t == "arm64-darwin") {
+        return head + "var fl: i32 = " + at_symlink_nofollow(t) + "; if (follow) { fl = 0; } rc = __syscall4(" + sysno(t, "fchmodat") + ", " + at_fdcwd(t) + ", pathz, mode & 4095, fl);" + tail;
+    }
+    return head + "if (follow) { rc = __syscall4(" + sysno(t, "fchmodat") + ", " + at_fdcwd(t) + ", pathz, mode & 4095, 0); } else { rc = __syscall4(" + sysno(t, "fchmodat2") + ", " + at_fdcwd(t) + ", pathz, mode & 4095, " + at_symlink_nofollow(t) + "); }" + tail;
 }
 
 // rt_src_truncate backs `truncate(path, length)` (syscall-leaf) →
@@ -4730,6 +4753,7 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
     if (id.name == "create_symlink") { return ty_option(ty_unknown()); }
     if (id.name == "rename") { return ty_option(ty_unknown()); }
     if (id.name == "chmod") { return ty_option(ty_unknown()); }
+    if (id.name == "chmod_at") { return ty_option(ty_unknown()); }
     if (id.name == "signal_send") { return ty_option(ty_unknown()); }
     if (id.name == "set_process_group") { return ty_option(ty_unknown()); }
     if (id.name == "set_priority") { return ty_option(ty_unknown()); }
@@ -6716,7 +6740,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         "__fn___fern_create_link", "__fn___fern_create_symlink",
         "__fn___fern_rename",
         "__fn___fern_read_link", "__fn___fern_umask",
-        "__fn___fern_chmod", "__fn___fern_set_file_times", "__fn___fern_truncate",
+        "__fn___fern_chmod", "__fn___fern_chmod_at", "__fn___fern_set_file_times", "__fn___fern_truncate",
         "__fn___fern_mknod", "__fn___fern_chown_at",
         "__fn___fern_window_size",
         "__fn___fern_env", "__fern_stat", "__fn___fern_stat", "__fn___fern_statfs", "__fn___fern_subprocess",

@@ -279,11 +279,12 @@ const (
 	// The filesystem-metadata primitives: renameat(2) 264,
 	// fchmodat(2) 268 and utimensat(2) 280. Linux's fchmodat takes
 	// THREE arguments, not four: the flags-taking form is fchmodat2
-	// (452), and the one flag it adds — AT_SYMLINK_NOFOLLOW — is
-	// EOPNOTSUPP here anyway, so `chmod` follows a final symlink and
-	// has no flag to pass.
+	// (452), which `chmod_at` issues for its nofollow case so the
+	// kernel's own answer — EOPNOTSUPP, since a symlink has no mode
+	// here — reaches the caller.
 	sysRenameat  = 264
 	sysFchmodat  = 268
+	sysFchmodat2 = 452
 	sysUtimensat = 280
 	// truncate(2) 76 — the PATH form. `open_appender` yields a writable
 	// descriptor to an existing file without emptying it, so the fd form
@@ -685,7 +686,7 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 		g.usesRemoveDirAll || g.usesRemoveFile || g.usesCreateDirAll || g.usesCreateDir ||
 		g.usesRemoveDir || g.usesCreateLink || g.usesCreateSymlink || g.usesTempDir ||
 		g.usesReadDir || g.usesReadDirAll || g.usesStat || g.usesLstat || g.usesAccess || g.usesReadLink ||
-		g.usesRename || g.usesChmod || g.usesSetFileTimes || g.usesTruncate ||
+		g.usesRename || g.usesChmod || g.usesChmodAt || g.usesSetFileTimes || g.usesTruncate ||
 		g.usesMknod || g.usesChownAt {
 		g.usesFree = true
 	}
@@ -1069,6 +1070,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	}
 	if g.usesChmod {
 		g.emitChmodRuntime()
+	}
+	if g.usesChmodAt {
+		g.emitChmodAtRuntime()
 	}
 	if g.usesTruncate {
 		g.emitTruncateRuntime()
@@ -1727,6 +1731,8 @@ type generator struct {
 	usesRename       bool
 	usesChmod        bool
 	usesSetFileTimes bool
+	// fchmodat / fchmodat2 over a path, a mode and a follow flag.
+	usesChmodAt bool
 	// truncate(2) over a path and a length.
 	usesTruncate bool
 	// mknodat(2) over a path, a mode and a major / minor pair.
@@ -2321,6 +2327,10 @@ func (g *generator) recordUse(target string) {
 		g.usesIoError = true
 	case "chmod":
 		g.usesChmod = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "chmod_at":
+		g.usesChmodAt = true
 		g.usesAlloc = true
 		g.usesIoError = true
 	case "truncate":
@@ -3984,6 +3994,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_rename"
 		case "chmod":
 			target = "__fern_chmod"
+		case "chmod_at":
+			target = "__fern_chmod_at"
 		case "truncate":
 			target = "__fern_truncate"
 		case "mknod":
@@ -15624,6 +15636,16 @@ func (g *generator) emitPathzCopy(dstReg, srcMem, scratchMem, tag string) {
 //
 // System V: rdi = first path string value, rsi = the second or the mode.
 func (g *generator) emitPathOpRuntime(name, tag string, sysno, paths, scalars int, args func()) {
+	g.emitPathOpRuntimeSys(name, tag, paths, scalars, func() {
+		args()
+		g.emitSyscall(sysno)
+	})
+}
+
+// emitPathOpRuntimeSys is emitPathOpRuntime with the syscall itself left
+// to `body`, for a helper whose syscall NUMBER depends on an argument.
+// `body` must leave the kernel's answer in rax.
+func (g *generator) emitPathOpRuntimeSys(name, tag string, paths, scalars int, body func()) {
 	g.line("")
 	g.line(".globl " + name)
 	g.line(".type " + name + ", @function")
@@ -15662,8 +15684,7 @@ func (g *generator) emitPathOpRuntime(name, tag string, sysno, paths, scalars in
 		g.emitPathzCopy("r14", "[rbp - 72]", "[rbp - 48]", tag+"2")
 		g.emit("mov [rbp - 88], r13")
 	}
-	args()
-	g.emitSyscall(sysno)
+	body()
 	g.emit("mov r15, rax")
 	g.emit("mov rdi, rbx")
 	g.emit("mov rsi, [rbp - 80]")
@@ -16128,6 +16149,31 @@ func (g *generator) emitChmodRuntime() {
 		g.emit("mov rsi, rbx")
 		g.emit("mov edx, [rbp - 72]") // mode
 		g.emit("and edx, 4095")
+	})
+}
+
+// emitChmodAtRuntime emits `__fern_chmod_at(path, mode, follow)` —
+// fchmodat(AT_FDCWD, path, mode) when `follow`, otherwise
+// fchmodat2(AT_FDCWD, path, mode, AT_SYMLINK_NOFOLLOW). The syscall
+// NUMBER is what the flag picks, which is why this helper issues its own
+// rather than taking one from the factory: Linux's fchmodat has no flags
+// word at all, and only the newer call carries the nofollow bit. The
+// kernel's answer to that bit on a symlink — EOPNOTSUPP, or ENOSYS below
+// fchmodat2 — is passed through as the Err.
+func (g *generator) emitChmodAtRuntime() {
+	g.emitPathOpRuntimeSys("__fern_chmod_at", "chma", 1, 2, func() {
+		g.emit("mov edi, -100") // AT_FDCWD
+		g.emit("mov rsi, rbx")
+		g.emit("mov edx, [rbp - 72]") // mode
+		g.emit("and edx, 4095")
+		g.emit("cmp dword ptr [rbp - 96], 0") // follow
+		g.emit("jz .Lchma_nofollow")
+		g.emitSyscall(sysFchmodat)
+		g.emit("jmp .Lchma_done")
+		g.label(".Lchma_nofollow")
+		g.emit("mov r10d, 256") // AT_SYMLINK_NOFOLLOW
+		g.emitSyscall(sysFchmodat2)
+		g.label(".Lchma_done")
 	})
 }
 

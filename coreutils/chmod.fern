@@ -353,26 +353,40 @@ function target_mode(t: Target, old: i32, is_dir: boolean): (i32, i32, boolean) 
   return (masked.mode, naive.mode, (masked.mode & mode.complement(naive.mode)) != 0);
 }
 
-// `follows` is whether the change lands on what the name points AT.
-// When it does not and the name is a symbolic link there is no call to
-// make: Linux has no mode on one, and GNU reads the ENOTSUP its
-// fchmodat(AT_SYMLINK_NOFOLLOW) answers as "not applied".
-function change_one(st0: St, s: Settings, t: Target, path: string, info: FileStat, is_link: boolean, follows: boolean): St {
+// `follows` is whether the change lands on what the name points AT. When
+// it does not and the name is a symbolic link (`link` is its own stat),
+// the change is the LINK's mode — `chmod_at` without following, which is
+// GNU's lchmod. Darwin keeps a mode on a symlink and changes it; Linux
+// keeps none and answers EOPNOTSUPP (ENOSYS below fchmodat2), which GNU
+// reports as "neither … has been changed" and does not count as a
+// failure.
+function change_one(st0: St, s: Settings, t: Target, path: string, info: FileStat, link: Option[FileStat], follows: boolean): St {
   var st: St = st0;
-  var old: i32 = info.mode as i32 & mode.all_bits();
-  var is_dir: boolean = filetype.is_dir(info.mode);
-  if (is_link && !follows) {
-    return say(st, s, "neither symbolic link " + gnu.quotea(path) + " nor referent has been changed\n");
+  var own: FileStat = info;
+  var on_link: boolean = false;
+  match (link) {
+    Some(l) => {
+      if (!follows) {
+        own = l;
+        on_link = true;
+      }
+    },
+    None => {}
   }
+  var old: i32 = own.mode as i32 & mode.all_bits();
+  var is_dir: boolean = filetype.is_dir(own.mode);
   var r: (i32, i32, boolean) = target_mode(t, old, is_dir);
   var wanted: i32 = r.0;
-  match (chmod(path, wanted)) {
+  match (chmod_at(path, wanted, !on_link)) {
     Ok(_) => {
       if (s.verbosity == v_all() || s.verbosity == v_changes() && wanted != old) {
         st = St { ...st, out: st.out.fwrite(describe(path, old, wanted)) };
       }
     },
     Err(e) => {
+      if (on_link && link_has_no_mode(e)) {
+        return say(st, s, "neither symbolic link " + gnu.quotea(path) + " nor referent has been changed\n");
+      }
       st = fail_quiet(st, s, "changing permissions of " + gnu.quotea(path) + ": " + gnu.io_error_text(e));
       return say(st, s, "failed to change mode of " + gnu.quotea(path) + " from " + mode.octal4(old) + " (" + mode.symbolic(old) + ") to " + mode.octal4(wanted) + " (" + mode.symbolic(wanted) + ")\n");
     }
@@ -383,6 +397,16 @@ function change_one(st0: St, s: Settings, t: Target, path: string, info: FileSta
     st = fail_loud(st, gnu.quotef(path) + ": new permissions are " + mode.symbolic(wanted) + ", not " + mode.symbolic(r.1));
   }
   return st;
+}
+
+// Whether a refused `chmod_at` on a symbolic link is the kernel saying a
+// link HAS no mode here — EOPNOTSUPP, or ENOSYS from a kernel without
+// fchmodat2 — rather than a failure to change one. An IoError carries the
+// strerror text rather than the number, so the text is what there is to
+// ask.
+function link_has_no_mode(e: IoError): boolean {
+  var text: string = gnu.io_error_text(e);
+  return text == "Operation not supported" || text == "Function not implemented";
 }
 
 function describe(path: string, old: i32, wanted: i32): string {
@@ -408,18 +432,23 @@ function process(st0: St, s: Settings, t: Target, path: string, top: boolean): S
   if (followed) {
     match (stat(path)) {
       Ok(info) => {
-        return visit(st, s, t, path, info, names_symlink(path), lands, top);
+        return visit(st, s, t, path, info, link_stat(path), lands, top);
       },
       Err(e) => {
         // A symlink whose target is not there is its own wording; every other
         // failure — a loop, a name too long, a component that is not a
-        // directory — is the plain one. `-h` does not complain about it at
-        // all, having nothing to dereference.
-        if (gnu.io_error_text(e) == "No such file or directory" && names_symlink(path)) {
-          if (s.deref == 0) {
-            return say(st, s, "neither symbolic link " + gnu.quotea(path) + " nor referent has been changed\n");
+        // directory — is the plain one. `-h` has nothing to dereference, so
+        // the change lands on the dangling link itself.
+        if (gnu.io_error_text(e) == "No such file or directory") {
+          match (link_stat(path)) {
+            Some(l) => {
+              if (s.deref == 0) {
+                return visit(st, s, t, path, l, Some(l), false, top);
+              }
+              return unreachable(st, s, path, "cannot operate on dangling symlink " + gnu.quotea(path));
+            },
+            None => {}
           }
-          return unreachable(st, s, path, "cannot operate on dangling symlink " + gnu.quotea(path));
         }
         return unreachable(st, s, path, "cannot access " + gnu.quotea(path) + ": " + gnu.io_error_text(e));
       }
@@ -427,19 +456,22 @@ function process(st0: St, s: Settings, t: Target, path: string, top: boolean): S
   }
   match (lstat(path)) {
     Ok(info) => {
-      if (filetype.is_link(info.mode) && s.deref == 1) {
+      if (!filetype.is_link(info.mode)) {
+        return visit(st, s, t, path, info, None, lands, top);
+      }
+      if (s.deref == 1) {
         // The walk did not follow it but the change does, so the mode
         // reported is the referent's.
         match (stat(path)) {
           Ok(target) => {
-            return visit(st, s, t, path, target, true, true, top);
+            return visit(st, s, t, path, target, Some(info), true, top);
           },
           Err(e) => {
             return unreachable(st, s, path, "cannot dereference " + gnu.quotea(path) + ": " + gnu.io_error_text(e));
           }
         }
       }
-      return visit(st, s, t, path, info, filetype.is_link(info.mode), lands, top);
+      return visit(st, s, t, path, info, Some(info), lands, top);
     },
     Err(e) => {
       return unreachable(st, s, path, "cannot access " + gnu.quotea(path) + ": " + gnu.io_error_text(e));
@@ -447,25 +479,32 @@ function process(st0: St, s: Settings, t: Target, path: string, top: boolean): S
   }
 }
 
-function names_symlink(path: string): boolean {
+// The link's own stat when `path` names a symbolic link, which is what a
+// change that does not follow it lands on.
+function link_stat(path: string): Option[FileStat] {
   match (lstat(path)) {
     Ok(info) => {
-      return filetype.is_link(info.mode);
+      if (filetype.is_link(info.mode)) {
+        return Some(info);
+      }
+      return None;
     },
     Err(_) => {
-      return false;
+      return None;
     }
   }
 }
 
-// One entry that was reached. The directory is chmod'ed BEFORE its children
-// are read, which is the order GNU's pre-order walk imposes.
-function visit(st0: St, s: Settings, t: Target, path: string, info: FileStat, is_link: boolean, follows: boolean, top: boolean): St {
+// One entry that was reached. `info` is what the walk saw — the referent's
+// stat when it followed the link — and `link` the link's own when the name
+// is one. The directory is chmod'ed BEFORE its children are read, which is
+// the order GNU's pre-order walk imposes.
+function visit(st0: St, s: Settings, t: Target, path: string, info: FileStat, link: Option[FileStat], follows: boolean, top: boolean): St {
   var st: St = st0;
   if (top && s.recursive && s.preserve_root && filetype.is_dir(info.mode) && is_root_dir(info)) {
     return refuse_root(st, path);
   }
-  st = change_one(st, s, t, path, info, is_link, follows);
+  st = change_one(st, s, t, path, info, link, follows);
   if (!s.recursive || !filetype.is_dir(info.mode)) {
     return st;
   }

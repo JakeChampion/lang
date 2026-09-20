@@ -144,7 +144,43 @@ func selfHostFsMetaSource(prefix string, withChmod bool) string {
         Ok(_) => { return 37; },
         Err(e) => { match (e) { NotFound(_) => {}, _ => { return 38; } } }
     }
-`, p("meta.txt"), p("missing.txt"), fsMetaModeSuid, fsMetaModePlain)
+
+    // chmod_at with follow=true is chmod, reaching THROUGH the symlink to
+    // meta.txt; with follow=false it asks for the link's own bits, which
+    // Linux keeps none of — the kernel's EOPNOTSUPP (ENOSYS below fchmodat2)
+    // reaches the caller as the Err, and neither the link nor meta.txt moves.
+    match (chmod_at(%[5]q, 292, true)) { Ok(_) => {}, Err(_) => { return 50; } }
+    match (stat(%[1]q)) { Ok(f) => { if ((f.mode & (4095 as u32)) != (292 as u32)) { return 51; } }, Err(_) => { return 52; } }
+    match (chmod_at(%[5]q, 256, false)) {
+        Ok(_) => { return 53; },
+        Err(e) => { match (e) {
+            Other(_, msg) => { if (msg != "Operation not supported" && msg != "Function not implemented") { return 54; } },
+            _ => { return 55; }
+        } }
+    }
+    match (stat(%[1]q)) { Ok(f) => { if ((f.mode & (4095 as u32)) != (292 as u32)) { return 56; } }, Err(_) => { return 57; } }
+    // ...and follow=false on a plain file is the same change as follow=true —
+    // there is no final symlink for the flag to stop at — where the kernel
+    // has fchmodat2, and an honest ENOSYS where it (or qemu) does not. Either
+    // way the follow form then lands the mode the tree check reads back.
+    match (chmod_at(%[1]q, 448, false)) {
+        Ok(_) => {
+            match (stat(%[1]q)) { Ok(f) => { if ((f.mode & (4095 as u32)) != (448 as u32)) { return 58; } }, Err(_) => { return 59; } }
+        },
+        Err(e) => { match (e) {
+            Other(_, msg) => {
+                if (msg != "Function not implemented") { return 60; }
+                match (stat(%[1]q)) { Ok(f) => { if ((f.mode & (4095 as u32)) != (292 as u32)) { return 61; } }, Err(_) => { return 62; } }
+            },
+            _ => { return 60; }
+        } }
+    }
+    match (chmod_at(%[1]q, %[4]d, true)) { Ok(_) => {}, Err(_) => { return 63; } }
+    match (chmod_at(%[2]q, 420, true)) {
+        Ok(_) => { return 64; },
+        Err(e) => { match (e) { NotFound(_) => {}, _ => { return 65; } } }
+    }
+`, p("meta.txt"), p("missing.txt"), fsMetaModeSuid, fsMetaModePlain, p("meta.link"))
 	}
 	src += fmt.Sprintf(`    // Bits 3 and 4 write the kernel's own clock reading (UTIME_NOW) into the
     // half they name; the value passed for that half is not read, and an
@@ -192,6 +228,13 @@ func selfHostFsMetaTree(t *testing.T, dir string, withChmod bool) {
 		t.Errorf("meta.link mtime = %d ns, want %d ns — the nofollow bit wrote through the link",
 			got, want)
 	}
+	if withChmod {
+		// Linux keeps every symlink at 0o777; the refused nofollow chmod_at
+		// must have left it there rather than reaching the target or the link.
+		if perm := li.Mode().Perm(); perm != 0o777 {
+			t.Errorf("meta.link mode = %o, want 777 — chmod_at follow=false changed a symlink on Linux", perm)
+		}
+	}
 }
 
 // TestSelfHostFsMetaIR is the x86-64 leg: the self-host driver emits the asm,
@@ -214,7 +257,7 @@ func TestSelfHostFsMetaIR(t *testing.T) {
 	if err != nil || len(asm) == 0 {
 		t.Fatalf("driver failed: %v", err)
 	}
-	for _, sym := range []string{"__fern_chmod", "__fern_set_file_times"} {
+	for _, sym := range []string{"__fern_chmod", "__fern_chmod_at", "__fern_set_file_times"} {
 		if !bytes.Contains(asm, []byte(sym)) {
 			t.Fatalf("%s did not reach the IR runtime path (absent from the asm)", sym)
 		}
@@ -250,7 +293,7 @@ func TestSelfHostFsMetaIRArm64(t *testing.T) {
 	if err != nil || len(asm) == 0 {
 		t.Fatalf("driver failed: %v", err)
 	}
-	for _, sym := range []string{"bl __fn___fern_chmod", "bl __fn___fern_set_file_times"} {
+	for _, sym := range []string{"bl __fn___fern_chmod\n", "bl __fn___fern_chmod_at", "bl __fn___fern_set_file_times"} {
 		if !bytes.Contains(asm, []byte(sym)) {
 			t.Fatalf("no `%s` in the emitted asm — it did not lower through the arm64 IR path", sym)
 		}

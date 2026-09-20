@@ -1206,6 +1206,7 @@ func New() *Interp {
 	i.Builtins["set_priority"] = &Builtin{Fn: builtinSetPriority}
 	i.Builtins["rename"] = &Builtin{Fn: builtinRename}
 	i.Builtins["chmod"] = &Builtin{Fn: builtinChmod}
+	i.Builtins["chmod_at"] = &Builtin{Fn: builtinChmodAt}
 	i.Builtins["truncate"] = &Builtin{Fn: builtinTruncate}
 	i.Builtins["mknod"] = &Builtin{Fn: builtinMknod}
 	i.Builtins["sync"] = &Builtin{Fn: builtinSync}
@@ -3538,6 +3539,29 @@ func builtinChmod(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("chmod: expected number mode, got %T", args[1])
 	}
 	return ioResult(string(path), syscall.Chmod(string(path), uint32(int(mode))&0o7777)), nil
+}
+
+// builtinChmodAt is `chmod` with a follow flag. `follow` false asks for
+// the symlink's own bits, which only Darwin has; Linux answers
+// EOPNOTSUPP (ENOSYS below fchmodat2) and that is the Err. The per-kernel
+// call lives in chmodat_linux.go / chmodat_darwin.go.
+func builtinChmodAt(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("chmod_at: expected 3 args, got %d", len(args))
+	}
+	path, ok := args[0].(String)
+	if !ok {
+		return nil, fmt.Errorf("chmod_at: expected string path, got %T", args[0])
+	}
+	mode, ok := args[1].(Number)
+	if !ok {
+		return nil, fmt.Errorf("chmod_at: expected number mode, got %T", args[1])
+	}
+	follow, ok := args[2].(Bool)
+	if !ok {
+		return nil, fmt.Errorf("chmod_at: expected bool follow, got %T", args[2])
+	}
+	return ioResult(string(path), chmodAt(string(path), uint32(int(mode))&0o7777, bool(follow))), nil
 }
 
 // builtinTruncate sets the length of an existing file — truncate(2).

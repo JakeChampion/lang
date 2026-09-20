@@ -80,6 +80,7 @@ var BuiltinCaps = map[string]string{
 	"read_link":        "fs",
 	"rename":           "fs",
 	"chmod":            "fs",
+	"chmod_at":         "fs",
 	"set_file_times":   "fs",
 	"truncate":         "fs",
 	// Creating a FIFO or a device node creates a filesystem entry, so the
