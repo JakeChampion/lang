@@ -14,9 +14,9 @@ func TestSelfHostCaptureContractRewritesX86_64(t *testing.T) {
 		{"elide first capture", "elide", `function f(n: i64, text: str): i32 { var cb = (): i32 => { assert(n > 0); return text.len(); }; return cb(); }`, "text:str;"},
 		{"elide all captures", "elide", `function f(n: i64): i32 { var cb = (): i32 => { assert(n > 0); return 7; }; return cb(); }`, ""},
 		{"elide keeps unknown", "elide", `function f[T](n: i64, opaque: T): i32 { var cb = (): i32 => { assert(n > 0); opaque; return 7; }; return cb(); }`, "opaque:unknown;"},
-		{"cell keeps width", "box", `function f(): i64 { var n: i64 = 7i64; var cb = (): i64 => n; return cb(); }`, "$cell$n:i64[];"},
-		{"cell keeps view", "box", `function f(text: str): i32 { var n: str = text; var cb = (): i32 => n.len(); return cb(); }`, "$cell$n:str[];"},
-		{"cell keeps callable", "box", `function f(): i64 { var n: () => i64 = source; var cb = (): i64 => n(); return cb(); } function source(): i64 { return 7i64; }`, "$cell$n:(() => i64)[];"},
+		{"cell keeps width", "box", `function f(): i64 { var n: i64 = 7i64; var cb = (): i64 => n; return cb(); }`, "$cell$n:Cell[i64];"},
+		{"cell keeps view", "box", `function f(text: str): i32 { var n: str = text; var cb = (): i32 => n.len(); return cb(); }`, "$cell$n:Cell[str];"},
+		{"cell keeps callable", "box", `function f(): i64 { var n: () => i64 = source; var cb = (): i64 => n(); return cb(); } function source(): i64 { return 7i64; }`, "$cell$n:Cell[(() => i64)];"},
 		{"substitution adds typed capture", "subst", `function f(n: f32, g: () => f32): f32 { var cb = (): f32 => g(); return cb(); }`, "n:f32;"},
 		{"missing injected contract declines", "missing", `function f(n: f32, g: () => f32): f32 { var cb = (): f32 => g(); return cb(); }`, "g:(() => f32);"},
 	}

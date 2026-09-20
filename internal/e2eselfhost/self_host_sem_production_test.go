@@ -1162,9 +1162,10 @@ function main(): i32 {
 	// mixed: the produced bodies are emitted beside AST-lowered ones, with
 	// ssarc.caller_sigs holding the two sides' release of a shared result
 	// together. It answers the same either way, which is the whole point.
-	// A whole-module fallback: the capture the closure writes is refused, and
-	// with it the module keeps the AST lowering whole rather than mixing.
-	{name: "capture-write", atLeast: 0, refuses: "the AST lowering stands", src: `
+	// The capture the closure writes is a Cell[i32] the closure and its creator
+	// share (#9320), so every body produces and the total is the same on both
+	// lowerings.
+	{name: "capture-write", atLeast: 3, src: `
 function apply(f: (i32) => i32, v: i32): i32 { return f(v); }
 function main(): i32 {
     var total: i32 = 0;
@@ -2302,6 +2303,55 @@ function main(): i32 {
 	// the typed lowering, which releases the results, frees everything. The
 	// AST lowering still never releases the fresh result, which the relative
 	// pin tolerates and this row records.
+	// A mutable capture is a Cell[T] on both lowerings (#9320): the scalars the
+	// closure writes (every scalar kind, not only i32 and boolean, which was
+	// all the box scan admitted and cost an i64 or f64 its writes), a string
+	// the creator rebinds under a closure that reads it, and a Cell[i64]
+	// parameter read in i64 arithmetic, which the AST lowering used to bail
+	// on, and a string the creator rebinds under a closure that ESCAPES, which
+	// the typed lowering used to read at its creation-time value. Both
+	// lowerings are pinned to the native answer, since before the change they
+	// agreed with each other on the wrong one.
+	{name: "a-capture-the-closure-writes-is-a-cell", atLeast: 7, want: "42|", astAnswers: "42|", noLeak: true, src: `
+function tally(): i32 {
+    var n: i32 = 0;
+    var wide: i64 = 100i64;
+    var ratio: f64 = 1.5;
+    var flag: boolean = false;
+    var byte: u8 = 250u8;
+    var bump = (k: i32): i32 => {
+        n = n + k;
+        wide = wide + (k as i64);
+        ratio = ratio * 2.0;
+        flag = !flag;
+        byte = byte + 3u8;
+        return n;
+    };
+    var a: i32 = bump(1);
+    var b: i32 = bump(2);
+    var t: i32 = 0;
+    if (flag) { t = 1000; }
+    return a + b + n + (wide as i32) + (ratio as i32) + t + (byte as i32);
+}
+function counter(c: Cell[i64]): i32 {
+    c.set(c.get() + 1i64);
+    return c.get() as i32;
+}
+function apply(f: () => i32): i32 { return f(); }
+function rebound(): i32 {
+    var s: string = "a";
+    var read = (): i32 => { return s.len(); };
+    var i: i32 = 0;
+    var n: i32 = 0;
+    while (i < 3) { s = s + "bb"; n = n + apply(read); i = i + 1; }
+    return n;
+}
+function main(): i32 {
+    var c: Cell[i64] = cell_new(4i64);
+    var k: i32 = counter(c) + counter(c);
+    return (tally() + k + rebound()) % 100;
+}
+`},
 	{name: "os-floor-fresh-results-are-freed", atLeast: 3, noLeak: true, nativeOnly: true, src: `
 function leaves(dir: string, p: string): i32 {
     var n: i32 = 0;
