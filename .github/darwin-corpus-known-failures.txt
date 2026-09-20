@@ -68,7 +68,6 @@ TestB2sumParity
 TestBracketParity
 TestChown
 TestCksumParity
-TestCommParity
 TestCpParity
 TestCpWalkOrder
 TestCsplit
@@ -81,7 +80,6 @@ TestDu
 TestFmtParity
 TestFoldParity
 TestGroupsParity
-TestHeadParity
 TestHostidParity
 TestIdParity
 TestLinkParity
@@ -96,7 +94,6 @@ TestMvParity
 TestNice
 TestNiceReadsTheNicenessItWasStartedAt
 TestNlParity
-TestNprocParity
 TestNumfmtParity
 TestOd
 TestPinkyParity

@@ -360,6 +360,14 @@ jobs:
           if comm -23 failed-now.txt failed-known.txt | grep -q .; then
             echo "### these FAILED and are not on the list:"
             comm -23 failed-now.txt failed-known.txt | sed 's/^/  /'
+            # The cases behind each regression, with the comparison that
+            # failed them: the artifact holds the whole log, but a job log
+            # anyone can read without downloading is what gets a regression
+            # diagnosed. Bounded per utility, so a wide one cannot flood it.
+            comm -23 failed-now.txt failed-known.txt | while read -r u; do
+              echo "### $u: its failing cases and what each compared"
+              grep -B 12 -E "^[[:space:]]*--- FAIL: $u/" corpus-darwin.log | head -240 || true
+            done
             comm -23 failed-now.txt failed-known.txt \
               | while read -r u; do echo "::error::$u fails on Darwin and is not in .github/darwin-corpus-known-failures.txt — a regression, not a line to add"; done
             exit 1
