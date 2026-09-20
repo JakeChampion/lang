@@ -204,3 +204,23 @@ function main(): i32 { return run([1 as i64]).len(); }`); err != nil {
 		t.Fatalf("with the pass off the claim was verified against it anyway: %v", err)
 	}
 }
+
+// E053 admits `xs.map(f)` on an `own` root by the METHOD NAME, and the IR only
+// recognizes std/array's map (TestUserDeclaredArrayMapIsNotTheAlgebra). Between
+// the two, a program that never imports std/array and declares its own `map`
+// would reach E068 with a call nothing counts, whatever that map allocates. So
+// a `map` that is not the algebra's is a site of its own.
+func TestFipUserDeclaredMapIsE068(t *testing.T) {
+	_, err := lowerPipelineErr(t, `function (xs: i64[]) map(f: (i64) => i64): i64[] { return [f(xs[0])]; }
+fip function dbl(x: i64): i64 { return x * (2 as i64); }
+fip function run(own xs: i64[]): i64[] { return xs.map((x: i64): i64 => dbl(x)); }
+function main(): i32 { return run([1 as i64]).len(); }`)
+	if err == nil {
+		t.Fatalf("a user-declared map was accepted under `fip` with nothing verifying it")
+	}
+	for _, want := range []string{"E068", "`fip` function \"run\"", "`map` that is not std/array's"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("E068 does not say %q:\n%s", want, err)
+		}
+	}
+}
