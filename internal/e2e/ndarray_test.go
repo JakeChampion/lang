@@ -185,8 +185,8 @@ function main(): i32 {
 `
 
 // A shape that does not account for its storage, two shapes that do not
-// broadcast, a broadcast that would drop an axis, and an axis that is not
-// one of the handle's are each a derived-shape error, and
+// broadcast, a broadcast that would drop an axis, a negative extent, and
+// an axis that is not one of the handle's are each a derived-shape error, and
 // docs/ARRAY-ALGEBRA.md §4 makes that an abort rather than a truncation.
 var ndarrayAbortSrcs = map[string]string{
 	"a shape that does not fit its storage": `import "std/ndarray";
@@ -213,6 +213,17 @@ function main(): i32 {
 function main(): i32 {
 	var a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5, 6], [2, 3]);
 	return a.broadcast_to([6]).rank();
+}
+`,
+	"broadcast_to a shape with a negative extent": `import "std/ndarray";
+function main(): i32 {
+	var a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3], [3]);
+	return a.broadcast_to([-1, 3]).rank();
+}
+`,
+	"broadcast_shape with a negative extent": `import "std/ndarray";
+function main(): i32 {
+	return ndarray.broadcast_shape([-2, 3], [1, 3]).len();
 }
 `,
 	"reduce_axis over an axis the handle lacks": `import "std/ndarray";
