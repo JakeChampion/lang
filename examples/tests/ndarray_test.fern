@@ -49,7 +49,13 @@ function test_permute_is_the_general_transpose(): test.TestOutcome {
 function test_reverse_flips_one_axis(): test.TestOutcome {
   var r: ndarray.NdArray[i32] = grid().reverse(1);
   if (r.get([0, 0]) != 3 || r.get([2, 3]) != 8) { return test.fail("reversed reads"); }
-  return test.assert_eq(r.reverse(1).get([0, 0]), 0);
+  if (r.reverse(1).get([0, 0]) != 0) { return test.fail("reversed twice"); }
+  // Materializing walks the negative stride from the far end.
+  var f: i32[] = r.to_flat();
+  if (f.len() != 12 || f[0] != 3 || f[3] != 0 || f[4] != 7 || f[11] != 8) { return test.fail("to_flat of a reverse"); }
+  var both: ndarray.NdArray[i32] = grid().reverse(0).reverse(1).packed();
+  if (!both.is_packed() || both.get([0, 0]) != 11) { return test.fail("packed of a double reverse"); }
+  return test.assert_eq(both.get([2, 3]), 0);
 }
 
 function test_slice_and_select_are_partial_views(): test.TestOutcome {
