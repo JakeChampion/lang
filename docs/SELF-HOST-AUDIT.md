@@ -1071,10 +1071,10 @@ appendix §6.)
   taken when no builtin claimed the call — which also re-homed a comment that
   had drifted 25 lines from its subject.
 
-  `regalloc_linear` went 155 -> 82. The two interval fixes read `def_pos` and
-  write only `hi`, so they lift out on a narrow interface
-  (`extend_backedge_phi_intervals`, `extend_loop_invariant_intervals`) with no
-  new struct. The row's `Interval` / `ActiveSet` sketch was not needed for
+  `regalloc_linear` went 155 -> 82. The interval fix reads `def_pos` and
+  writes only `hi`, so it lifts out on a narrow interface
+  (`extend_loop_invariant_intervals`; the back-edge one it had beside it is
+  now the phi's read on the edge) with no new struct. The row's `Interval` / `ActiveSet` sketch was not needed for
   that; the remaining parallel arrays are the scan's own working set and are
   local to 82 lines.
 

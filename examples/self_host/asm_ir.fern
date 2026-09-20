@@ -6147,6 +6147,13 @@ function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
     var fl: string = lp + util.i32_to_string(t.f);
     var stub: boolean = ssa_has_phis(f, fr, t.f);
     if (stub) { fl = lp + "e" + util.i32_to_string(blk.id) + "_" + util.i32_to_string(t.f); }
+    // When the false target is the next block and neither edge carries phi
+    // moves, branch on the condition itself and fall through.
+    if (!stub && t.f == next && !ssa_has_phis(f, fr, t.t)) {
+        var tl: string = lp + util.i32_to_string(t.t);
+        if (fu.n > 0) { return s.write("    " + ir_cmp_jcc(fu.tag, !fu.inverted) + " " + tl + "\n"); }
+        return s.write("    testq %r11, %r11\n    jnz " + tl + "\n");
+    }
     if (fu.n > 0) {
     s = s.write("    " + ir_cmp_jcc(fu.tag, fu.inverted) + " " + fl + "\n");
     } else {
