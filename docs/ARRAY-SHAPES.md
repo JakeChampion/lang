@@ -61,6 +61,7 @@ structural operation of this module.
 | `reverse(axis)` | stride negated, offset to the old last | same |
 | `slice(axis, lo, hi)` | extent narrowed, offset advanced | same |
 | `select(axis, i)` | one rank less, offset advanced | same |
+| `broadcast_to(shape)` | stretched axes at stride 0, leading axes added (§8) | same |
 | `reshape(shape)` | same reading order, new shape | same when `is_row_major()`, else a packed copy |
 | `packed()` | the same array, packed | itself when `is_packed()`, else a copy |
 | `to_flat()` | the reading order as a `T[]` | `data` itself when `is_packed()`, else a copy |
@@ -156,7 +157,7 @@ noticing. The list is closed the way §2's is.
 | operation | result | order | storage |
 | --- | --- | --- | --- |
 | `map(f)` | same shape | reading order | one packed buffer of `len()` |
-| `zip_with(b, f)` | same shape; `b` must have it | reading order | one packed buffer of `len()` |
+| `zip_with(b, f)` | the shape the two broadcast to (§8) | reading order | one packed buffer of that shape's count |
 | `fold_all(init, f)` | a scalar | reading order | none |
 | `reduce_axis(axis, init, f)` | `axis` dropped, one rank less | increasing index along `axis` | one packed buffer of `len() / shape[axis]` |
 | `scan_axis(axis, init, f)` | same shape, the running fold | increasing index along `axis` | one packed buffer of `len()` |
@@ -174,20 +175,61 @@ Three rules follow:
   shape with `axis` removed), so its allocation is the result, never a
   copy of the input. `internal/e2e/ndarray_test.go` bounds it under the
   element buffer where `map` is bounded above it.
-- **A shape mismatch aborts.** `zip_with` over two shapes is a derived
-  shape that is wrong (`ARRAY-ALGEBRA.md` §4), and takes the same status
-  an out-of-range index does (§5). Broadcasting is a separate rule that
-  has to be written before an operation may apply it, and none does.
+- **A shape mismatch aborts.** `zip_with` over two shapes that do not
+  broadcast (§8) is a derived shape that is wrong (`ARRAY-ALGEBRA.md`
+  §4), and takes the same status an out-of-range index does (§5).
 
 `map` and `zip_with` allocate their result even when the receiver is
 consumed and unique. §1's licence for the in-place form is stated and
 unimplemented; taking it is the kernel work, not this list's.
 
-## 8. What this does not decide
+## 8. Broadcasting
 
-- **Broadcasting, inner and outer products, and the kernels**: the rest
-  of #9735. §1 says what licenses an in-place elementwise op; nothing
-  here takes it.
+**Normative.** Two shapes broadcast when, aligned at their **last**
+axes, every pair of extents is equal or one of them is 1; the shorter
+shape is padded with leading 1s, and the result takes the larger extent
+at each axis. `broadcast_shape(x, y)` computes it and aborts when the
+shapes do not broadcast. So a rank-0 handle broadcasts against anything,
+a row `[n]` against a matrix `[m, n]`, and a column `[m, 1]` against it
+too; `[m, n]` against `[n, m]` (with `m != n`) is an error, and so is a
+row of the wrong length. This is the rule NumPy, Julia and Rust's
+`ndarray` share, and it is stated here because `ARRAY-ALGEBRA.md` §4
+requires the rule to exist before an operation may apply it.
+
+**Broadcasting is a view.** `broadcast_to(shape)` gives a stretched axis
+stride 0 and adds leading axes at stride 0, so the one element is read
+`n` times and nothing is copied — the same row in §2 as `transpose`.
+`zip_with` broadcasts its operands this way, so a row subtracted from a
+matrix, a scalar times a matrix, and the outer product of a column and
+a row are each one walk and one result buffer.
+
+Four consequences:
+
+- **A broadcast shape is still a shape**: its element count must fit an
+  `i32`, because that count indexes storage, and `broadcast_to` to a
+  shape whose count does not fit aborts like any other wrong shape even
+  though no storage of that size is ever allocated.
+- **A stretched handle is not row-major** (unless every stretched axis
+  has extent 1 or 0), so `reshape`, `packed()` and `to_flat()` copy it
+  into real storage, and the copy has the broadcast count. That is the
+  materialization rule of §3 applied, not a new one.
+- **A reduction along a stretched axis reads the same element `n`
+  times**, in increasing index order like any other; there is nothing to
+  special-case.
+- **Nothing writes through a stride of 0.** §1's in-place licence needs
+  the handle consumed and its storage unique; a broadcast handle shares
+  its storage with the handle it came from, and even after that one is
+  dropped a write through a stretched axis would land `n` times on one
+  element. A kernel that writes takes a packed handle, so the licence
+  reads: consumed, unique, and `is_packed()`.
+
+## 9. What this does not decide
+
+- **Inner and outer products as recognized shapes, and the kernels**:
+  the rest of #9735. An outer product is already expressible as
+  `col.zip_with(row, mul)`; what is not decided is which such shapes the
+  compiler recognizes. §1 and §8 say what licenses an in-place
+  elementwise op; nothing here takes it.
 - **In-place through a handle.** The consuming-handle plus unique-storage
   rule in §1 is stated, not implemented; nothing in `std/ndarray` writes.
 - **Static shapes.** §4.

@@ -26,9 +26,9 @@
 //
 // # Views and copies
 //
-// `transpose`, `permute`, `reverse`, `slice` and `select` change only the
-// metadata: they allocate a handle and two small index arrays, never an
-// element. `reshape` is metadata when the handle is row-major and a copy
+// `transpose`, `permute`, `reverse`, `slice`, `select` and `broadcast_to`
+// change only the metadata: they allocate a handle and two small index
+// arrays, never an element. `reshape` is metadata when the handle is row-major and a copy
 // otherwise; `packed` and `to_flat` copy exactly when the handle is not
 // packed. That is the whole materialization rule, and
 // internal/e2e/ndarray_test.go holds each operation to it with the
@@ -37,16 +37,25 @@
 // # Elementwise, and along an axis
 //
 // `map` and `zip_with` are elementwise over the reading order and produce
-// a packed handle of the same shape; `zip_with` requires equal shapes.
+// a packed handle; `zip_with` takes two handles whose shapes broadcast.
 // `fold_all` folds the reading order; `reduce_axis` folds along one axis
 // and drops it, `scan_axis` keeps it as the running prefix. Every fold is
 // in increasing index order, which is what lets a float reduction along
 // an axis mean one thing on every backend (docs/ARRAY-ALGEBRA.md §3).
 //
+// # Broadcasting
+//
+// Two shapes broadcast when, aligned at their LAST axes, every pair of
+// extents is equal or one of them is 1; the shorter shape is padded with
+// leading 1s. The result takes the larger extent at each axis. A rank-0
+// handle therefore broadcasts against anything, and a row `[n]` against
+// a matrix `[m, n]`. `broadcast_to` is metadata: a stretched axis gets
+// stride 0, so the one element is read `n` times and nothing is copied.
+//
 // # Errors
 //
 // A shape that does not fit its storage, an axis or index out of range,
-// a permutation that is not one, or two shapes that do not match aborts
+// a permutation that is not one, or two shapes that do not broadcast aborts
 // the program with the bounds rule's status (docs/ARRAY-BOUNDS.md, exit
 // 134): a derived shape that is wrong is a bug, and docs/ARRAY-ALGEBRA.md
 // §4 makes it an error rather than a truncation.
@@ -60,12 +69,25 @@ function shape_error(): void {
     exit(134);
 }
 
-// The element count a shape describes; 1 for the rank-0 shape.
-function count_of(shape: i32[]): i32 {
+// A shape is a list of non-negative extents whose product fits an i32,
+// since that product is an index into storage; anything else aborts.
+function check_shape(shape: i32[]): void {
     var n: i32 = 1;
     var k: i32 = 0;
     while (k < shape.len()) {
         if (shape[k] < 0) { shape_error(); }
+        if (shape[k] != 0 && n > 2147483647 / shape[k]) { shape_error(); }
+        n = n * shape[k];
+        k = k + 1;
+    }
+}
+
+// The element count a shape describes; 1 for the rank-0 shape.
+function count_of(shape: i32[]): i32 {
+    check_shape(shape);
+    var n: i32 = 1;
+    var k: i32 = 0;
+    while (k < shape.len()) {
         n = n * shape[k];
         k = k + 1;
     }
@@ -308,23 +330,76 @@ function same_shape(x: i32[], y: i32[]): boolean {
     return true;
 }
 
-// `zip_with(b, f)` — `f` over corresponding elements of two handles of
-// the SAME shape, as a packed handle of that shape. A shape mismatch
-// aborts: both shapes are derived, and docs/ARRAY-ALGEBRA.md §4 rules
-// that out as an error rather than a truncation. Broadcasting is a
-// separate rule and not this one.
+// `broadcast_shape(x, y)` — the shape two shapes broadcast to, aligned
+// at their last axes: each pair of extents must be equal or one of them
+// 1, and the result takes the larger. Two shapes that do not broadcast
+// abort: both are derived, and docs/ARRAY-ALGEBRA.md §4 rules that out
+// as an error rather than a truncation.
+pub function broadcast_shape(x: i32[], y: i32[]): i32[] {
+    check_shape(x);
+    check_shape(y);
+    var rank: i32 = x.len();
+    if (y.len() > rank) { rank = y.len(); }
+    var out: i32[] = zeros(rank);
+    var k: i32 = 0;
+    while (k < rank) {
+        var ex: i32 = 1;
+        var ey: i32 = 1;
+        if (k >= rank - x.len()) { ex = x[k - (rank - x.len())]; }
+        if (k >= rank - y.len()) { ey = y[k - (rank - y.len())]; }
+        if (ex == ey || ey == 1) {
+            out = out.with(k, ex);
+        } else if (ex == 1) {
+            out = out.with(k, ey);
+        } else {
+            shape_error();
+        }
+        k = k + 1;
+    }
+    check_shape(out);
+    return out;
+}
+
+// `broadcast_to(shape)` — `a` read as a handle of `shape`, which must be
+// what `a.shape()` broadcasts to: every axis of `a` matches the trailing
+// axis of `shape` it aligns with or has extent 1. A stretched axis gets
+// stride 0, so the same element is read along it. Metadata only.
+pub function (a: NdArray[T]) broadcast_to(shape: i32[]): NdArray[T] {
+    check_shape(shape);
+    var pad: i32 = shape.len() - a.shape.len();
+    if (pad < 0) { shape_error(); }
+    var strides: i32[] = zeros(shape.len());
+    var k: i32 = 0;
+    while (k < a.shape.len()) {
+        if (a.shape[k] == shape[pad + k]) {
+            strides = strides.with(pad + k, a.strides[k]);
+        } else if (a.shape[k] != 1) {
+            shape_error();
+        }
+        k = k + 1;
+    }
+    return NdArray { data: a.data, shape: shape, strides: strides, offset: a.offset };
+}
+
+// `zip_with(b, f)` — `f` over corresponding elements of two handles
+// whose shapes broadcast, as a packed handle of the broadcast shape.
+// Two shapes that do not broadcast abort.
 pub function (a: NdArray[T]) zip_with[T, U, V](b: NdArray[U], f: (T, U) => V): NdArray[V] {
-    if (!same_shape(a.shape, b.shape)) { shape_error(); }
+    var shape: i32[] = broadcast_shape(a.shape, b.shape);
+    var x: NdArray[T] = a;
+    var y: NdArray[U] = b;
+    if (!same_shape(a.shape, shape)) { x = a.broadcast_to(shape); }
+    if (!same_shape(b.shape, shape)) { y = b.broadcast_to(shape); }
     var out: V[] = [];
-    var n: i32 = a.len();
-    var idx: i32[] = zeros(a.shape.len());
+    var n: i32 = count_of(shape);
+    var idx: i32[] = zeros(shape.len());
     var i: i32 = 0;
     while (i < n) {
-        out = out.append(f(a.data[addr_of(a, idx)], b.data[addr_of(b, idx)]));
-        idx = bump(idx, a.shape);
+        out = out.append(f(x.data[addr_of(x, idx)], y.data[addr_of(y, idx)]));
+        idx = bump(idx, shape);
         i = i + 1;
     }
-    return from_flat(out, a.shape);
+    return from_flat(out, shape);
 }
 
 // `fold_all(init, f)` — every element folded in reading order.
