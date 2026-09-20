@@ -747,12 +747,18 @@ func (a *Assembler) Inst(in Inst) error {
 // dispatch encodes one instruction by mnemonic. Every arm takes the typed
 // operands; nothing below this point reads text.
 func (a *Assembler) dispatch(mnem string, ops []Operand) error {
-	// The five AVX2 VEX-encoded forms (avx.go): a fixed, narrow vocabulary
-	// kept out of the shared x86tbl tables, which assume legacy (non-VEX)
+	// The AVX2 VEX-encoded forms (avx.go): a fixed, narrow vocabulary kept
+	// out of the shared x86tbl tables, which assume legacy (non-VEX)
 	// encoding throughout.
 	switch mnem {
 	case "vmovdqu":
 		return a.vMovdqu(ops)
+	case "vmovupd":
+		return a.vMovupd(ops)
+	case "vmulpd":
+		return a.vmulpd(ops)
+	case "vbroadcastsd":
+		return a.vbroadcastsd(ops)
 	case "vpbroadcastb":
 		return a.vpbroadcastb(ops)
 	case "vpcmpeqb":

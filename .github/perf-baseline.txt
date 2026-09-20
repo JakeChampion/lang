@@ -43,8 +43,8 @@ x86_64/array_append.text	514
 x86_64/array_append.ir	57054322
 x86_64/array_index.text	495
 x86_64/array_index.ir	55407958
-x86_64/array_scale_f64.text	611
-x86_64/array_scale_f64.ir	115898403
+x86_64/array_scale_f64.text	621
+x86_64/array_scale_f64.ir	25810403
 x86_64/array_with.ir	70720297
 x86_64/array_with.text	609
 x86_64/ascii_scan.text	1192

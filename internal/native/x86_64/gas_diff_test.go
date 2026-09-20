@@ -132,16 +132,26 @@ func TestAssembleAgainstGNUAs(t *testing.T) {
 			"pcmpeqb xmm0, xmm1\npcmpeqw xmm2, xmm3\npcmpeqd xmm9, xmm1\n" +
 			"punpcklbw xmm1, xmm1\npunpcklwd xmm2, xmm2\npshufd xmm1, xmm2, 0\npshufd xmm5, xmm6, 27\n" +
 			"pmovmskb eax, xmm0\npmovmskb r10d, xmm11\npor xmm0, xmm1\npand xmm2, xmm3\npxor xmm4, xmm4\n",
-		// AVX2: the five VEX-encoded forms the memchr/rmemchr/count_byte
-		// kernels widen to over ymm, exercised on both the low (0..7) and
-		// extended (8..15) register ranges since the VEX prefix always
-		// carries the extension bits (avx.go).
+		// AVX2: the VEX-encoded forms the kernels widen to over ymm,
+		// exercised on both the low (0..7) and extended (8..15) register
+		// ranges since the VEX prefix always carries the extension bits
+		// (avx.go). Byte domain first, for the search kernels.
 		"avx2": "" +
 			"vmovdqu ymm0, [r8]\nvmovdqu ymm9, [rax]\nvmovdqu ymm5, [r12+r13*2+8]\n" +
 			"vpbroadcastb ymm1, xmm1\nvpbroadcastb ymm10, xmm11\n" +
 			"vpcmpeqb ymm0, ymm0, ymm1\nvpcmpeqb ymm9, ymm10, ymm11\n" +
 			"vpmovmskb eax, ymm0\nvpmovmskb r9d, ymm10\n" +
 			"vzeroupper\n",
+		// The double domain, for the scale_f64 arithmetic kernel. vmovupd
+		// is pinned in BOTH directions — the store form differs from the
+		// load only in the opcode and in which operand takes ModRM.reg,
+		// which is exactly the pair an encoder gets backwards silently.
+		"avx2_double": "" +
+			"vmovupd ymm0, [rbx]\nvmovupd ymm11, [r8+rcx*8]\nvmovupd ymm3, ymm4\n" +
+			"vmovupd [rax], ymm0\nvmovupd [r9+rdx*8+32], ymm12\n" +
+			"vmulpd ymm0, ymm0, ymm1\nvmulpd ymm10, ymm11, ymm12\n" +
+			"vmulpd ymm2, ymm3, [rsi]\nvmulpd ymm8, ymm9, [r13+8]\n" +
+			"vbroadcastsd ymm1, xmm1\nvbroadcastsd ymm14, xmm15\n",
 	}
 	for name, src := range cases {
 		t.Run(name, func(t *testing.T) {

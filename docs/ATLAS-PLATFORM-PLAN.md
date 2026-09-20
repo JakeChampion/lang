@@ -1075,6 +1075,63 @@ that has not been written. The arm64 and wasm rows are wall time, with the
 usual qemu caveat on the first and ~10 ms of wasmtime start-up inside both
 numbers of the second.
 
+**Step 3 begins on native x86-64**, and it is where this kernel stops being
+free. The AVX2 body is `vbroadcastsd` for the factor, then a loop of
+`vmulpd` / `vmovupd` over four lanes, `vzeroupper`, and the scalar loop as
+the tail for the remainder. Measured on `examples/bench/array_scale_f64`:
+
+| native x86-64 | scalar | AVX2 | |
+|---|---|---|---|
+| retired | 115.9M | 25.8M | 4.49x |
+| wall | 9.8 ms | 6.1 ms | 1.6x |
+
+Read both rows together, because they say different things. The
+instruction count beats the 4x the lane count allows, which is worth
+saying plainly rather than rounding to "four lanes, four times": the
+block is TWO instructions, not three, because `vmulpd` reads its second
+source straight from memory and the load needs no instruction of its own.
+So each block saves the scalar body's four multiplies AND its four loads.
+Wall time gains only 1.6x, because the benchmark moves 32 KiB in and
+32 KiB out per call and is bandwidth-bound well before it is issue-bound
+— the same reason §4's "the vector length is the INPUT" rule does not
+promise the ratio carries to wall clock. A kernel whose callers work out
+of cache will see more of the 4.49x than this benchmark does.
+
+Folding the load has one consequence a reader should not have to
+rediscover: the memory operand has to be the SECOND source, so the vector
+body multiplies the factor by the element rather than the element by the
+factor. x86 picks the first source when both are NaN, so the scalar tail
+is written the same way round — `movsd` the factor, then `mulsd` from
+memory — and the two bodies cannot disagree about which NaN a NaN times a
+NaN yields. The kernel's own corpus cannot see that difference (its
+equality treats any two NaNs as equal), which is exactly why it is worth
+a line here.
+
+**§3.3a cost, and the rule it corrects.** The last three kernels cost
+nothing at the assembler, and the section above predicted a fourth built
+from the same shapes would cost nothing again. This one cost three
+encodings — `vmovupd` in both directions, `vmulpd` and `vbroadcastsd` — and
+the prediction was not wrong so much as mis-stated. The debt is per
+INSTRUCTION SET **per domain**: every shape paid for so far was
+byte-domain, for the search kernels, and the first arithmetic kernel over
+doubles shares none of it. `vmovupd` is `vmovdqu` moving the same 32 bytes
+and is still a separate encoding, deliberately, because a float load out of
+the integer domain pays a bypass delay into the multiply that consumes it.
+So the corrected rule to carry to the ninth kernel: a kernel in a domain
+the assembler has already seen costs nothing; the first kernel in a NEW
+domain pays again, and the `f64` domain has now paid for x86-64 only.
+
+The store direction is worth one line of its own. It differs from the load
+only in the opcode and in which operand takes the ModRM.reg field, which is
+the kind of pair an encoder gets backwards without any test noticing, so
+both directions are pinned against GNU as rather than just the one the
+kernel happens to read first.
+
+The remaining seven legs are still scalar. arm64 is next and owes its own
+domain debt: `internal/native/arm64` has no register-offset FP load, which
+step 1 already worked around with an `add`, and the NEON set it carries is
+the byte-domain one.
+
 ### 3.5 Testing
 
 Per rule 5, each kernel ships with:
