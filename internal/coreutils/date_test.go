@@ -289,12 +289,14 @@ func dateCases(t *testing.T) []invocation {
 	add(invocation{name: "--rfc-3339=minutes", args: []string{"--rfc-3339=minutes"}})
 	add(invocation{name: "--rfc-3339=", args: []string{"--rfc-3339="}})
 	add(invocation{name: "--rfc-3339=n'x", args: []string{"--rfc-3339=n'x"}})
-	add(invocation{name: "-R -I", args: []string{"-R", "-I"}})
-	add(invocation{name: "-I -R", args: []string{"-I", "-R"}})
-	add(invocation{name: "-I -I", args: []string{"-I", "-I"}})
-	add(invocation{name: "-R then +FORMAT", args: []string{"-R", "+%F"}})
-	add(invocation{name: "+FORMAT then -R", args: []string{"+%F", "-R"}})
-	add(invocation{name: "--rfc-3339 then -I", args: []string{"--rfc-3339=date", "-I"}})
+	// The last format option wins and prints an instant, so these pin one:
+	// two runs a moment apart straddle a second, and did on CI.
+	add(invocation{name: "-R -I", args: []string{"-R", "-I", "-d", "2024-06-15 12:34:56"}})
+	add(invocation{name: "-I -R", args: []string{"-I", "-R", "-d", "2024-06-15 12:34:56"}})
+	add(invocation{name: "-I -I", args: []string{"-I", "-I", "-d", "2024-06-15 12:34:56"}})
+	add(invocation{name: "-R then +FORMAT", args: []string{"-R", "+%F", "-d", "2024-06-15 12:34:56"}})
+	add(invocation{name: "+FORMAT then -R", args: []string{"+%F", "-R", "-d", "2024-06-15 12:34:56"}})
+	add(invocation{name: "--rfc-3339 then -I", args: []string{"--rfc-3339=date", "-I", "-d", "2024-06-15 12:34:56"}})
 	add(invocation{name: "-R -x", args: []string{"-R", "-x"}})
 	add(invocation{name: "-R -I -x", args: []string{"-R", "-I", "-x"}})
 
