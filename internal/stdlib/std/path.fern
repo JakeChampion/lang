@@ -186,7 +186,8 @@ pub function path_clean(p: string): string {
                 }
                 // rooted with nothing to pop: drop (can't pass root)
             } else {
-                segs = segs.append(seg);
+                // Copied: the array holds the segment past `p`'s own lifetime.
+                segs = segs.append(seg + "");
             }
         }
     }

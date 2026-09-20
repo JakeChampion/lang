@@ -2434,6 +2434,59 @@ function main(): i32 {
     return n % 100;
 }
 `},
+	// A map READ's key is hashed and compared and no column takes a unit of
+	// it, so a `str` view is an ordinary lend there and takes the retag a
+	// borrowed string parameter offers. Only an INSERT's key joins the key
+	// column, where the map may outlive the bytes the view borrows, so only
+	// that one is refused.
+	{name: "a-view-is-a-map-read-key", atLeast: 50, noLeak: true, src: `
+import "core/map";
+import "std/string";
+function tally(text: string, m: Map[string, i32]): i32 {
+    var n: i32 = 0;
+    var i: i32 = 0;
+    while (i + 2 <= text.len()) {
+        var w: str = slice_unchecked(text, i, i + 2);
+        n = n + m.get_or(w, 0);
+        i = i + 2;
+    }
+    return n;
+}
+function main(): i32 {
+    var acc: i32 = 0;
+    var r: i32 = 0;
+    while (r < 20) {
+        var m: Map[string, i32] = map_new(8);
+        m = m.insert("ab", 3);
+        m = m.insert("cd", 5);
+        var text: string = "ab" + "cd" + "ef";
+        acc = acc + tally(text, m);
+        r = r + 1;
+    }
+    return acc % 113;
+}`},
+	// #9874: `replace` with no match used to hand back the haystack's own box,
+	// so the caller released a unit it never took. The argument has to be a
+	// temporary nobody else names — a second name on the box absorbs the
+	// extra release and hides the fault.
+	{name: "a-builtin-string-result-is-never-its-argument", atLeast: 59, noLeak: true, src: `
+import "std/string";
+function sq(s: string): string { return s.replace("Q", "Z"); }
+function words(n: i32): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < n) { out = out + " x"; i = i + 1; }
+    return out;
+}
+function main(): i32 {
+    var acc: i32 = 0;
+    var r: i32 = 0;
+    while (r < 20) {
+        acc = acc + sq(words(r % 4)).len() + sq(words(r % 3) + "Q").len();
+        r = r + 1;
+    }
+    return acc % 109;
+}`},
 }
 
 // semHeldElementSource sorts by length with the insertion sort's body: the
