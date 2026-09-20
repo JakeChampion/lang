@@ -1028,11 +1028,6 @@ pub function op_map_hash_seed(): Op { return op0("map_hash_seed"); }
 // has no separate zero-copy slice view, so as_bytes returns the same fresh
 // array (correct, just not zero-copy; mirrors the AST path).
 pub function op_str_bytes(): Op { return op0("str_bytes"); }
-// `str_starts_with` / `str_ends_with` pop [s, p] → i32 1/0 (whether `s` begins
-// / ends with `p`; empty `p` → 1). `str_index_of` pops [s, sub] → the first
-// byte index of `sub` in `s`, or -1 (empty `sub` → 0). All three are scalar,
-// allocation-free string predicates backed by the __fern_str_* search runtime;
-// `s.contains(sub)` lowers as `str_index_of(...) >= 0` (no dedicated op).
 // `str_to_upper` / `str_to_lower` pop [s] → a fresh string box that is `s` with
 // each ASCII letter cased up / down (non-letters copied verbatim). They allocate
 // the new char buffer + box, so they pull in the heap runtime; leak-only (no RC).
@@ -1055,9 +1050,6 @@ pub function op_str_replace(): Op { return op0("str_replace"); }
 // trailing empty segment dropped when s is empty or ends with a newline (so
 // "a\nb\n" is 2 lines, not 3 — matching Rust/Python). is_arr + is_strarr.
 pub function op_str_lines(): Op { return op0("str_lines"); }
-pub function op_str_starts_with(): Op { return op0("str_starts_with"); }
-pub function op_str_ends_with(): Op { return op0("str_ends_with"); }
-pub function op_str_index_of(): Op { return op0("str_index_of"); }
 // `str_split` pops [haystack, sep] → a fresh string[] of the segments of
 // `haystack` split on `sep`. An empty separator yields a single-element
 // `[haystack]`. Backs both the `s.split(sep)` method and the `str_split(s, sep)`
@@ -1913,7 +1905,7 @@ pub function op_return(): Op { return op0("return"); }
 // as a half-registered op. Retiring one therefore moves the last entry into its
 // slot rather than leaving a gap; the moved op's membership in every id-keyed
 // classifier below has to move with it, or it lands in the wrong emitter.
-pub function kind_count(): i32 { return 196; }
+pub function kind_count(): i32 { return 193; }
 
 // kind_id maps an op-kind tag to its stable integer id (0 = KIND_INVALID for
 // an unknown tag). The inverse of kind_name.
@@ -1927,9 +1919,11 @@ pub function kind_count(): i32 { return 196; }
 // ir_kind_run's sweep catches one filed under the wrong pair
 // (kind_id(kind_name(id)) != id). kind_name stays the ordered vocabulary.
 //
-// tcp_pollable is 112, not 197: it took the slot str_chars freed (#7231). The
-// 1..kind_count() sweep requires the id space to stay dense, and moving the
-// last entry into the hole beats renumbering every id above it.
+// tcp_pollable is 112, not 197: it took the slot str_chars freed (#7231), and
+// tcp_send / tcp_recv / tcp_close are 114..116, the slots the string search
+// predicates freed (#9848). The 1..kind_count() sweep requires the id space to
+// stay dense, and moving the last entry into the hole beats renumbering every
+// id above it.
 //
 // Extension tags beyond kind_count() (struct_copy=198 … buf_free=297): not
 // in the 1..kind_count() bijection sweep (ir_kind_run sweeps them separately
@@ -2245,8 +2239,8 @@ function kind_id_len8_t(name: string): i32 {
     if (name == "temp_dir") { return 174; }
     if (name == "truncate") { return 273; }
     if (name == "timer_fd") { return 188; }
-    if (name == "tcp_send") { return 194; }
-    if (name == "tcp_recv") { return 195; }
+    if (name == "tcp_send") { return 114; }
+    if (name == "tcp_recv") { return 115; }
     return 0;
 }
 
@@ -2314,7 +2308,7 @@ function kind_id_len9_t(name: string): i32 {
     if (name == "tee_local") { return 20; }
     if (name == "tuple_get") { return 143; }
     if (name == "tuple_set") { return 144; }
-    if (name == "tcp_close") { return 196; }
+    if (name == "tcp_close") { return 116; }
     return 0;
 }
 
@@ -2443,7 +2437,6 @@ function kind_id_len12_s(name: string): i32 {
     if (name == "set_priority") { return 283; }
     if (name == "str_to_upper") { return 106; }
     if (name == "str_to_lower") { return 107; }
-    if (name == "str_index_of") { return 116; }
     if (name == "strbuf_reset") { return 117; }
     return 0;
 }
@@ -2459,7 +2452,6 @@ function kind_id_len13(name: string): i32 {
     if (c == b'b' && name == "buf_push_byte") { return 294; }
     if (c == b'r' && name == "raw_store_ptr") { return 84; }
     if (c == b'r' && name == "rlimit_nofile") { return 272; }
-    if (c == b's' && name == "str_ends_with") { return 115; }
     if (c == b's' && name == "strbuf_append") { return 118; }
     if (c == b's' && name == "signal_ignore") { return 243; }
     return 0;
@@ -2488,7 +2480,6 @@ function kind_id_len15(name: string): i32 {
     if (c == b'm' && name == "mapiter_advance") { return 137; }
     if (c == b'r' && name == "read_file_bytes") { return 233; }
     if (c == b's' && name == "set_window_size") { return 314; }
-    if (c == b's' && name == "str_starts_with") { return 114; }
     if (c == b'w' && name == "write_file_exec") { return 226; }
     if (c == b'w' && name == "writer_truncate") { return 281; }
     return 0;
@@ -2654,9 +2645,9 @@ function kind_name_2(id: i32): string {
     if (id == 111) { return "str_replace"; }
     if (id == 112) { return "tcp_pollable"; }
     if (id == 113) { return "str_lines"; }
-    if (id == 114) { return "str_starts_with"; }
-    if (id == 115) { return "str_ends_with"; }
-    if (id == 116) { return "str_index_of"; }
+    if (id == 114) { return "tcp_send"; }
+    if (id == 115) { return "tcp_recv"; }
+    if (id == 116) { return "tcp_close"; }
     if (id == 117) { return "strbuf_reset"; }
     if (id == 118) { return "strbuf_append"; }
     if (id == 119) { return "strbuf_take"; }
@@ -2743,9 +2734,6 @@ function kind_name_4(id: i32): string {
     if (id == 191) { return "wasm_block"; }
     if (id == 192) { return "wasm_poll"; }
     if (id == 193) { return "tcp_connect"; }
-    if (id == 194) { return "tcp_send"; }
-    if (id == 195) { return "tcp_recv"; }
-    if (id == 196) { return "tcp_close"; }
     if (id == 198) { return "struct_copy"; }
     if (id == 199) { return "store_i64"; }
     if (id == 200) { return "tcp_listen"; }
@@ -2982,7 +2970,7 @@ function pops1_io(t: i32): boolean {
         || t == 185 || t == 210 || t == 212                              // random_bytes, arg_at, proc_waitpid
         || t == 286                                                      // proc_waitpid_nohang
         || t == 188 || t == 189 || t == 190 || t == 191 || t == 192      // timer_fd, wasm_*
-        || t == 196 || t == 112 || t == 200 || t == 201 || t == 203     // tcp_close, tcp_pollable(112), tcp_listen/accept, open_file
+        || t == 116 || t == 112 || t == 200 || t == 201 || t == 203     // tcp_close, tcp_pollable(112), tcp_listen/accept, open_file
         || t == 320                                                      // tcp_local_port
         || t == 230                                                      // heap_release_to
         || t == 316 || t == 317 || t == 318 || t == 319;                 // chroot, setuid, setgid, setgroups
@@ -3002,7 +2990,7 @@ function pops2_mem(t: i32): boolean {
         || t == 92 || t == 93 || t == 94 || t == 95 || t == 302 || t == 303  // arr_push*
         || t == 98 || t == 99 || t == 100 || t == 101                    // str_concat, str_eq, str_cmp, str_index
         || t == 105 || t == 108                                          // str_split, str_repeat
-        || t == 114 || t == 115 || t == 116 || t == 227                  // str_starts_with/ends_with/index_of, ascii_run
+        || t == 227                                                      // ascii_run
         || t == 235                                                      // count_byte
         || t == 309                                                      // crc32_cksum
         || t == 322                                                      // scale_f64
@@ -3021,7 +3009,7 @@ function pops2_io(t: i32): boolean {
         || t == 284                                                      // set_process_group (pid, pgid)
         || t == 311                                                      // fd_dup_onto (fd, newfd)
         || t == 178 || t == 187                                          // read_chunk, poll
-        || t == 193 || t == 194 || t == 195                              // tcp_connect, tcp_send, tcp_recv
+        || t == 193 || t == 114 || t == 115                              // tcp_connect, tcp_send, tcp_recv
         || t == 202 || t == 213 || t == 308                              // writer_write, proc_exec, write_some
         || t == 278;                                                     // signal_mask (how, mask)
 }
@@ -4795,9 +4783,7 @@ pub function is_str_op_kind(tag: i32): boolean {
     return tag == 97 || tag == 101 || tag == 102
         || tag == 104 || tag == 105 || tag == 106
         || tag == 107 || tag == 108 || tag == 109
-        || tag == 110 || tag == 111 || tag == 113
-        || tag == 114
-        || tag == 115 || tag == 116 || tag == 98
+        || tag == 110 || tag == 111 || tag == 113 || tag == 98
         || tag == 99 || tag == 100 || tag == 225 || tag == 227
         || tag == 234 || tag == 235 || tag == 245 || tag == 253
         || tag == 309 || tag == 322;

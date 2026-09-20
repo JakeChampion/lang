@@ -2138,11 +2138,53 @@ function signals(): i32 {
         Err(_) => { n = n + 1; }
     }
     var fds: i32[] = [timer_fd(1)];
-    if (poll(fds, 2000) == 0) { n = n + 1; }
-    if (poll([], 0) < 0) { n = n + 1; }
+    if (poll(fds, 2000) > 0) { n = n + 1; }
+    if (poll([], 0) == 0) { n = n + 1; }
     return n;
 }
 function main(): i32 { return signals(); }
+`},
+	// The sockets, `sync` and the set-id builtins, which no other row reaches:
+	// a loopback listener on an ephemeral port (a fixed one sits in TIME_WAIT
+	// for the leg that runs next), a connection, an accept, one send and its
+	// receive as a fresh u8[], the three closes, `sync` as a statement, and
+	// the set-id calls asking for root, which a host refuses or grants and
+	// the row counts either way.
+	{name: "os-floor-sockets-and-ids", atLeast: 2, nativeOnly: true, src: `
+function sockets(): i32 {
+    var n: i32 = 0;
+    var listener: i32 = tcp_listen(0);
+    if (listener >= 0) {
+        var host_be: i32 = 127 | (1 << 24);
+        var c: i32 = tcp_connect(host_be, tcp_local_port(listener));
+        if (c >= 0) {
+            var a: i32 = tcp_accept(listener);
+            if (a >= 0) {
+                if (tcp_send(c, "ping") == 4) { n = n + 1; }
+                var got: u8[] = tcp_recv(a, 16);
+                if (got.len() == 4 && got[0] as i32 == 112) { n = n + 1; }
+                if (tcp_close(a) >= 0) { n = n + 1; }
+            }
+            if (tcp_close(c) >= 0) { n = n + 1; }
+        }
+        if (tcp_close(listener) >= 0) { n = n + 1; }
+    }
+    sync();
+    match (setuid(0i64)) {
+        Ok(_) => { n = n + 1; },
+        Err(_) => { n = n + 1; }
+    }
+    match (setgid(0i64)) {
+        Ok(_) => { n = n + 1; },
+        Err(_) => { n = n + 1; }
+    }
+    match (set_priority(priority())) {
+        Ok(_) => { n = n + 1; },
+        Err(_) => { n = n + 1; }
+    }
+    return n;
+}
+function main(): i32 { return sockets(); }
 `},
 	// The file-time, node, permission and directory ops over a temp_dir, and
 	// the terminal questions asked of a descriptor and of a handle. mknod
@@ -2251,6 +2293,95 @@ function main(): i32 {
     var fl: f64[] = [1.5, 2.5, 3.5];
     var head: [f64] = fl[0:2];
     return total + mid[0] + mid.len() + (tail[1] as i32) + tail.len() + (head[1] as i32);
+}
+`},
+	// The OS-floor builtins that answer a fresh string, string array or
+	// record: their runtime helpers used to keep the scratch block each call
+	// filled (the 4 KiB path buffer, the 64 KiB drain buffers), so nothing
+	// could pin these at zero (#9832). The helpers own their scratch now, so
+	// the typed lowering, which releases the results, frees everything. The
+	// AST lowering still never releases the fresh result, which the relative
+	// pin tolerates and this row records.
+	{name: "os-floor-fresh-results-are-freed", atLeast: 3, noLeak: true, nativeOnly: true, src: `
+function leaves(dir: string, p: string): i32 {
+    var n: i32 = 0;
+    match (create_dir(p + ".d", 493)) { Ok(_) => { n = n + 1; }, Err(_) => { n = n + 2; } }
+    match (remove_dir(p + ".d")) { Ok(_) => { n = n + 1; }, Err(_) => { n = n + 2; } }
+    match (create_link(p, p + ".h")) { Ok(_) => { n = n + 1; }, Err(_) => { n = n + 2; } }
+    match (rename(p + ".h", p + ".r")) { Ok(_) => { n = n + 1; }, Err(_) => { n = n + 2; } }
+    match (remove_file(p + ".r")) { Ok(_) => { n = n + 1; }, Err(_) => { n = n + 2; } }
+    match (chmod(p, 420)) { Ok(_) => { n = n + 1; }, Err(_) => { n = n + 2; } }
+    match (chmod_at(p, 420, true)) { Ok(_) => { n = n + 1; }, Err(_) => { n = n + 2; } }
+    match (chown_at(p, 0 - 1, 0 - 1, true)) { Ok(_) => { n = n + 1; }, Err(_) => { n = n + 2; } }
+    match (set_file_times(p, 1000i64, 0i64, 1000i64, 0i64, 0)) { Ok(_) => { n = n + 1; }, Err(_) => { n = n + 2; } }
+    match (chdir(dir)) { Ok(_) => { n = n + 1; }, Err(_) => { n = n + 2; } }
+    return n;
+}
+function each(dir: string): i32 {
+    var n: i32 = 0;
+    var cwd: string = getcwd();
+    n = n + cwd.len() % 7;
+    var host: string = hostname();
+    n = n + host.len() % 7;
+    var sys: string = uname_field(0);
+    n = n + sys.len() % 7;
+    var env: string[] = environ();
+    n = n + env.len() % 7;
+    match (create_symlink("target", dir + "/lnk")) {
+        Ok(_) => {
+            match (read_link(dir + "/lnk")) {
+                Ok(t) => { n = n + t.len(); },
+                Err(_) => {}
+            }
+        },
+        Err(_) => { n = n + 1; }
+    }
+    match (create_symlink("target", dir + "/missing/lnk")) {
+        Ok(_) => {},
+        Err(_) => { n = n + 2; }
+    }
+    match (write_file(dir + "/f", "hello")) {
+        Ok(_) => {
+            match (truncate(dir + "/f", 3i64)) {
+                Ok(_) => { n = n + 3; },
+                Err(_) => {}
+            }
+        },
+        Err(_) => {}
+    }
+    match (termios_get(0)) {
+        Ok(words) => {
+            match (termios_set(0, 0, words)) {
+                Ok(_) => { n = n + 4; },
+                Err(_) => { n = n + 5; }
+            }
+        },
+        Err(_) => { n = n + 6; }
+    }
+    n = n + leaves(dir, dir + "/f") + leaves(dir, dir + "/missing/f");
+    var rb: u8[] = random_bytes(24);
+    n = n + rb.len();
+    if (cpu_count() >= 0) { n = n + 1; }
+    var gs: i64[] = getgroups();
+    if (gs.len() >= 0) { n = n + 1; }
+    var r: ProcessResult = subprocess("echo", ["hi", "there"], "");
+    n = n + r.exit_code + r.stdout.len() + r.stderr.len();
+    return n;
+}
+function main(): i32 {
+    var n: i32 = 0;
+    match (temp_dir("fernfresh")) {
+        Ok(d) => {
+            var i: i32 = 0;
+            while (i < 3) { n = n + each(d); i = i + 1; }
+            match (remove_dir_all(d)) {
+                Ok(_) => {},
+                Err(_) => {}
+            }
+        },
+        Err(_) => {}
+    }
+    return n % 100;
 }
 `},
 }

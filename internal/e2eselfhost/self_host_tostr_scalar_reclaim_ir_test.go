@@ -81,7 +81,7 @@ function main(): i32 {
 	// credit past the type test. A struct param whose user `to_string` returns an
 	// ALIAS of a field the receiver still owns is refused for the same reason the
 	// local-receiver case above is — the declared type is not a scalar.
-	{"tostr-param-user-method-uncredited", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
+	{"tostr-param-user-method-uncredited", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 struct Holder { name: string, tag: string }
 function (h: Holder) to_string(): string { return h.tag; }
 function shown(h: Holder): i32 { var s: string = h.to_string(); return s.len() % 251; }
@@ -92,8 +92,8 @@ function main(): i32 {
     while (i < 2000) {
         if (shown(keep) < 0) { return 96; }
         if (churn("QQQQQQQQ") < 0) { return 95; }
-        if (!keep.name.starts_with("aaaa-")) { return 97; }
-        if (!keep.tag.starts_with("bbbb-")) { return 97; }
+        if (!has_prefix(keep.name, "aaaa-")) { return 97; }
+        if (!has_prefix(keep.tag, "bbbb-")) { return 97; }
         i = i + 1;
     }
     if (__rc_underflow() != 0) { return 99; }

@@ -54,22 +54,6 @@ function main(): i32 {
     if (b2 - b1 >= 32768) { return 98; }
     return 0;
 }`, 0},
-	// A SCALAR-returning predicate on a fresh receiver: nothing survives the call at
-	// all, so the receiver is doubly dead.
-	{"str-fresh-receiver-predicate-released-flat", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
-function round(pre: string): i32 { if (w(pre).contains("wide")) { return 3; } return 5; }
-function churn(pre: string, n: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
-function main(): i32 {
-    var pre: string = "abcdefgh";
-    var a: i32 = churn(pre, 400);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var b: i32 = churn(pre, 400);
-    var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
-    if (a != b) { return 97; }
-    if (b2 - b1 >= 32768) { return 98; }
-    return 0;
-}`, 0},
 	// reverse allocates its own buffer, same as the case transforms.
 	{"str-fresh-receiver-reverse-released-flat", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function round(pre: string): i32 { var u: string = w(pre).reverse(); return u.len(); }
@@ -89,46 +73,46 @@ function main(): i32 {
 	// releasing the receiver leaves the result pointing at freed bytes. This is the
 	// case that makes str_borrowing_method essential here rather than merely
 	// conservative: it exits 97 under a compiler that releases the receiver anyway.
-	{"str-fresh-receiver-trim-view-refused", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
+	{"str-fresh-receiver-trim-view-refused", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function round(pre: string): i32 {
     var t: str = w(pre).trim();
     var p1: string = w("ZZZZZZZZ");
     var p2: string = w("YYYYYYYY");
     var p3: string = w("XXXXXXXX");
     if (p1.len() + p2.len() + p3.len() < 0) { return 0; }
-    if (t.index_of("XXXX") >= 0) { return 0 - 2; }
-    if (!t.starts_with("abcdefgh-a-wide")) { return 0 - 1; }
+    if (has_sub(t, "XXXX")) { return 0 - 2; }
+    if (!has_prefix(t, "abcdefgh-a-wide")) { return 0 - 1; }
     return t.len();
 }
 function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
 	// NEGATIVE: `.replace(a, b)` returns the receiver UNCHANGED when the needle is
 	// absent, so the result can be the receiver's own box. Also exits 97 when the
 	// receiver is released.
-	{"str-fresh-receiver-replace-identity-refused", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
+	{"str-fresh-receiver-replace-identity-refused", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function round(pre: string): i32 {
     var t: str = w(pre).replace("QQQQ", "R");
     var p1: string = w("ZZZZZZZZ");
     var p2: string = w("YYYYYYYY");
     var p3: string = w("XXXXXXXX");
     if (p1.len() + p2.len() + p3.len() < 0) { return 0; }
-    if (t.index_of("XXXX") >= 0) { return 0 - 2; }
-    if (!t.starts_with("abcdefgh-a-wide")) { return 0 - 1; }
+    if (has_sub(t, "XXXX")) { return 0 - 2; }
+    if (!has_prefix(t, "abcdefgh-a-wide")) { return 0 - 1; }
     return t.len();
 }
 function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
 	// A named local is not an anonymous temp, so it keeps its own scope-exit reclaim
 	// and the call site must not release it. Control: is_fresh_str_temp refuses it
 	// either way, and both the receiver and the copy stay readable afterwards.
-	{"str-named-local-receiver-untouched", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
+	{"str-named-local-receiver-untouched", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function round(pre: string): i32 {
     var b: string = w(pre);
     var t: string = b.to_ascii_upper();
     var p1: string = w("ZZZZZZZZ");
     var p2: string = w("YYYYYYYY");
     if (p1.len() + p2.len() < 0) { return 0; }
-    if (!b.starts_with("abcdefgh-a-wide")) { return 0 - 1; }
-    if (!t.starts_with("ABCDEFGH-A-WIDE")) { return 0 - 2; }
-    if (b.index_of("XXXX") >= 0 || t.index_of("XXXX") >= 0) { return 0 - 3; }
+    if (!has_prefix(b, "abcdefgh-a-wide")) { return 0 - 1; }
+    if (!has_prefix(t, "ABCDEFGH-A-WIDE")) { return 0 - 2; }
+    if (has_sub(b, "XXXX") || has_sub(t, "XXXX")) { return 0 - 3; }
     return b.len() + t.len();
 }
 function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 212) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},

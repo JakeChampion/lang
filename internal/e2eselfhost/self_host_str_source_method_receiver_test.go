@@ -91,7 +91,7 @@ function main(): i32 {
 	// frees what the caller now holds. body_unsafe_for refuses it — a bare ident is
 	// an escape — and the plain recv_borrow key is therefore absent. Exits 97 when
 	// admitted anyway.
-	{"str-identity-return-method-receiver-refused", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
+	{"str-identity-return-method-receiver-refused", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function (s: string) ident(): string { return s; }
 function round(pre: string): i32 {
     var t: str = w(pre).ident();
@@ -99,8 +99,8 @@ function round(pre: string): i32 {
     var p2: string = w("YYYYYYYY");
     var p3: string = w("XXXXXXXX");
     if (p1.len() + p2.len() + p3.len() < 0) { return 0; }
-    if (t.index_of("XXXX") >= 0) { return 0 - 2; }
-    if (!t.starts_with("abcdefgh-a-wide")) { return 0 - 1; }
+    if (has_sub(t, "XXXX")) { return 0 - 2; }
+    if (!has_prefix(t, "abcdefgh-a-wide")) { return 0 - 1; }
     return t.len();
 }
 function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
@@ -109,7 +109,7 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
 	// where the same view question was contract-only at the binding-credit and
 	// fresh-alloc-builtin sites. body_unsafe_for refuses it because a slice outside
 	// a borrow position is an escape.
-	{"str-view-return-method-receiver-refused", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
+	{"str-view-return-method-receiver-refused", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function (s: string) view(): string { return slice_unchecked(s, 2, s.len()); }
 function round(pre: string): i32 {
     var t: str = w(pre).view();
@@ -117,15 +117,15 @@ function round(pre: string): i32 {
     var p2: string = w("YYYYYYYY");
     var p3: string = w("XXXXXXXX");
     if (p1.len() + p2.len() + p3.len() < 0) { return 0; }
-    if (t.index_of("XXXX") >= 0) { return 0 - 2; }
-    if (!t.starts_with("cdefgh-a-wide")) { return 0 - 1; }
+    if (has_sub(t, "XXXX")) { return 0 - 2; }
+    if (!has_prefix(t, "cdefgh-a-wide")) { return 0 - 1; }
     return t.len();
 }
 function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 104) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
 	// NEGATIVE: the receiver is moved into a struct field inside the callee and read
 	// back out. Nothing about the RESULT gives this away — it is a fresh-looking
 	// string — so the escape check is what catches it. Also exits 97 when admitted.
-	{"str-receiver-stored-in-struct-refused", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
+	{"str-receiver-stored-in-struct-refused", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 struct Hold { v: string }
 function stash(s: string): Hold { return Hold { v: s }; }
 function (s: string) keeps(): string { var h: Hold = stash(s); return h.v; }
@@ -135,8 +135,8 @@ function round(pre: string): i32 {
     var p2: string = w("YYYYYYYY");
     var p3: string = w("XXXXXXXX");
     if (p1.len() + p2.len() + p3.len() < 0) { return 0; }
-    if (t.index_of("XXXX") >= 0) { return 0 - 2; }
-    if (!t.starts_with("abcdefgh-a-wide")) { return 0 - 1; }
+    if (has_sub(t, "XXXX")) { return 0 - 2; }
+    if (!has_prefix(t, "abcdefgh-a-wide")) { return 0 - 1; }
     return t.len();
 }
 function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},

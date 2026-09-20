@@ -1598,13 +1598,6 @@ function tuple_kinds(t: typeinfo.Type): string {
 // declaration index is where wasm reads each field's store width; the register
 // backends store every field as 8 bytes, and every read takes its offset from
 // the field index alone.
-// The element width arr_slice copies by: 64 for an i64, u64 or f64 element,
-// 32 for every other, the split irlower.slice_elem_is_wide makes.
-function slice_width(elem: typeinfo.Type): i32 {
-    if (ssasem.is_wide(elem) || ssasem.is_float(elem)) { return 64; }
-    return 32;
-}
-
 function container(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, structs: irlower.StructTab): irlower.LowerResult {
     if (variant_op(ins.kind_tag)) { return variant(r, f, ins, structs); }
     if (ins.kind_tag == ssasem.array_new()) { return emit(r, arr_make_op(elem_type(f.values[ins.result]), ins.args.len())); }
@@ -1615,7 +1608,7 @@ function container(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, s
         return emit(r, ir.op_arr_len());
     }
     if (ins.kind_tag == ssasem.slice()) { return emit(r, ir.op_str_slice()); }
-    if (ins.kind_tag == ssasem.arr_slice()) { return emit(r, ir.op_arr_slice(slice_width(elem_type(f.values[ins.result])))); }
+    if (ins.kind_tag == ssasem.arr_slice()) { return emit(r, ir.op_arr_slice(elem_width(elem_type(f.values[ins.result])))); }
     if (ins.kind_tag == ssasem.str_bytes()) { return emit(r, ir.op_str_bytes()); }
     if (ins.kind_tag == ssasem.arr_sum()) { return emit(r, ir.op_call_direct("__fern_arr_i32_sum", 1)); }
     if (ins.kind_tag == ssasem.arr_product()) { return emit(r, ir.op_call_direct("__fern_arr_i32_product", 1)); }
@@ -2434,6 +2427,9 @@ function os_query_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     if (ins.str == "proc_waitpid") { return Lowered { found: true, r: emit(r, ir.op_proc_waitpid()) }; }
     if (ins.str == "proc_waitpid_nohang") { return Lowered { found: true, r: emit(r, ir.op_proc_waitpid_nohang()) }; }
     if (ins.str == "tcp_connect") { return Lowered { found: true, r: emit(r, ir.op_tcp_connect()) }; }
+    if (ins.str == "tcp_listen") { return Lowered { found: true, r: emit(r, ir.op_tcp_listen()) }; }
+    if (ins.str == "tcp_accept") { return Lowered { found: true, r: emit(r, ir.op_tcp_accept()) }; }
+    if (ins.str == "tcp_local_port") { return Lowered { found: true, r: emit(r, ir.op_tcp_local_port()) }; }
     if (ins.str == "signal_send") { return Lowered { found: true, r: emit(r, ir.op_signal_send()) }; }
     if (ins.str == "subprocess") { return Lowered { found: true, r: emit(r, ir.op_subprocess()) }; }
     return fs_op_site(r, ins);
@@ -2452,6 +2448,7 @@ function fs_op_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     if (ins.str == "create_link") { return Lowered { found: true, r: emit(r, ir.op_create_link()) }; }
     if (ins.str == "create_symlink") { return Lowered { found: true, r: emit(r, ir.op_create_symlink()) }; }
     if (ins.str == "chown_at") { return Lowered { found: true, r: emit(r, ir.op_chown_at()) }; }
+    if (ins.str == "truncate") { return Lowered { found: true, r: emit(r, ir.op_truncate()) }; }
     return os_floor_site(r, ins);
 }
 
@@ -2471,6 +2468,9 @@ function os_floor_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     if (ins.str == "poll") { return Lowered { found: true, r: emit(r, ir.op_poll()) }; }
     if (ins.str == "timer_fd") { return Lowered { found: true, r: emit(r, ir.op_timer_fd()) }; }
     if (ins.str == "window_size") { return Lowered { found: true, r: emit(r, ir.op_window_size()) }; }
+    if (ins.str == "set_window_size") { return Lowered { found: true, r: emit(r, ir.op_set_window_size()) }; }
+    if (ins.str == "termios_get") { return Lowered { found: true, r: emit(r, ir.op_termios_get()) }; }
+    if (ins.str == "termios_set") { return Lowered { found: true, r: emit(r, ir.op_termios_set()) }; }
     return os_floor_process_site(r, ins);
 }
 
@@ -2570,8 +2570,7 @@ function byte_scan_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
 }
 
 // The string methods the AST lowering emits an op for, keyed by receiver the
-// way their contracts are. `contains` has no op of its own on any backend: it
-// is `index_of(sub) >= 0`, which is how the AST path spells it too.
+// way their contracts are.
 function string_method_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     if (ins.str == "string.to_ascii_upper") { return Lowered { found: true, r: emit(r, ir.op_str_to_upper()) }; }
     if (ins.str == "string.to_ascii_lower") { return Lowered { found: true, r: emit(r, ir.op_str_to_lower()) }; }
@@ -2581,13 +2580,7 @@ function string_method_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered
     if (ins.str == "string.split") { return Lowered { found: true, r: emit(r, ir.op_str_split()) }; }
     if (ins.str == "string.repeat") { return Lowered { found: true, r: emit(r, ir.op_str_repeat()) }; }
     if (ins.str == "string.replace") { return Lowered { found: true, r: emit(r, ir.op_str_replace()) }; }
-    if (ins.str == "string.starts_with") { return Lowered { found: true, r: emit(r, ir.op_str_starts_with()) }; }
-    if (ins.str == "string.ends_with") { return Lowered { found: true, r: emit(r, ir.op_str_ends_with()) }; }
-    if (ins.str == "string.index_of") { return Lowered { found: true, r: emit(r, ir.op_str_index_of()) }; }
-    if (ins.str != "string.contains") { return Lowered { found: false, r: r }; }
-    r = emit(r, ir.op_str_index_of());
-    r = emit(r, ir.op_const_i32(0));
-    return Lowered { found: true, r: emit(r, ir.op_bin("ge_s", 0, false)) };
+    return Lowered { found: false, r: r };
 }
 
 // A name no half owns is a runtime helper with a symbol of its own, which a

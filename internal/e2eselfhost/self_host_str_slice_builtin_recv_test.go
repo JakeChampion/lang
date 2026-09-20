@@ -10,7 +10,7 @@ import (
 )
 
 // strSliceBuiltinRecvCases pin the release of a SLICE receiver at a string
-// BUILTIN method — `base[4:base.len()].starts_with(..)`.
+// BUILTIN method — `base[4:base.len()].to_ascii_upper()`.
 //
 // lower_str_method already stashed and drained a fresh receiver, but its gate was
 // is_fresh_str_temp, which refuses a slice (a slice aliases its source's bytes,
@@ -47,7 +47,7 @@ import (
 const sliceBuiltinPrelude = `import "std/i32";
 import "std/i64";
 import "std/string";
-function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
+` + strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 `
 
 // sliceBuiltinHeap wraps a `round` body in the churn/heap-delta harness. 4096 is
@@ -76,11 +76,6 @@ var strSliceBuiltinRecvCases = []struct {
 	src  string
 	want int
 }{
-	// A scalar predicate: reads the bytes, returns a boolean, keeps nothing.
-	{"str-slice-recv-builtin-starts-with-flat", sliceBuiltinHeap(`    if (slice_unchecked(base, 4, base.len()).starts_with("efgh")) { return 1; }
-    return 0;`), 0},
-	// index_of returns a position, and takes the same path contains does.
-	{"str-slice-recv-builtin-index-of-flat", sliceBuiltinHeap(`    return slice_unchecked(base, 4, base.len()).index_of("wide");`), 0},
 	// A TRANSFORM rather than a predicate: to_ascii_upper allocates a new buffer,
 	// so the receiver is dead on a different code path through the same stash.
 	{"str-slice-recv-builtin-upper-flat", sliceBuiltinHeap(`    return slice_unchecked(base, 4, base.len()).to_ascii_upper().len();`), 0},
@@ -93,9 +88,9 @@ var strSliceBuiltinRecvCases = []struct {
     var p1: string = w("XXXXXXXX");
     var p2: string = w("YYYYYYYY");
     if (p1.len() + p2.len() < 0) { return 0; }
-    if (t.index_of("XXXX") >= 0) { return 0 - 1; }
-    if (!t.starts_with("efgh-a-wide")) { return 0 - 2; }
-    if (!base.starts_with("abcdefgh-a-wide")) { return 0 - 3; }
+    if (has_sub(t, "XXXX")) { return 0 - 1; }
+    if (!has_prefix(t, "efgh-a-wide")) { return 0 - 2; }
+    if (!has_prefix(base, "abcdefgh-a-wide")) { return 0 - 3; }
     return t.len();
 }
 function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 3000) { var r: i32 = round(pre); if (r != 102) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
@@ -109,7 +104,7 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
     if (p1.len() + p2.len() < 0) { return 0; }
     if (parts.len() < 2) { return 0 - 1; }
     if (parts[0] != "efgh") { return 0 - 2; }
-    if (!base.starts_with("abcdefgh-a-wide")) { return 0 - 3; }
+    if (!has_prefix(base, "abcdefgh-a-wide")) { return 0 - 3; }
     return parts.len();
 }
 function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 18) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
@@ -119,16 +114,14 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
 	// both wrong in kind and inert in practice.
 	{"str-slice-recv-builtin-source-live", sliceBuiltinPrelude + `function round(pre: string): i32 {
     var base: string = w(pre);
-    var hit: boolean = slice_unchecked(base, 4, base.len()).starts_with("efgh");
     var up: string = slice_unchecked(base, 4, base.len()).to_ascii_upper();
     var p1: string = w("XXXXXXXX");
     var p2: string = w("YYYYYYYY");
     var p3: string = w("ZZZZZZZZ");
     if (p1.len() + p2.len() + p3.len() < 0) { return 0; }
-    if (!hit) { return 0 - 1; }
-    if (up.index_of("XXXX") >= 0) { return 0 - 2; }
-    if (!up.starts_with("EFGH-A-WIDE")) { return 0 - 3; }
-    if (!base.starts_with("abcdefgh-a-wide")) { return 0 - 4; }
+    if (has_sub(up, "XXXX")) { return 0 - 2; }
+    if (!has_prefix(up, "EFGH-A-WIDE")) { return 0 - 3; }
+    if (!has_prefix(base, "abcdefgh-a-wide")) { return 0 - 4; }
     return base.len() + up.len();
 }
 function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 3000) { var r: i32 = round(pre); if (r != 208) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},

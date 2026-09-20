@@ -863,6 +863,20 @@ pub function is_int_cmp_kind(id: i32): boolean {
     return id >= 35 && id <= 44;  // eq, ne, lt_s..ge_s, lt_u..ge_u
 }
 
+// flip_int_cmp_kind is the same comparison with its operands the other way
+// round; eq, ne and a non-comparison are their own flip.
+pub function flip_int_cmp_kind(id: i32): i32 {
+    if (id == 37) { return 39; }
+    if (id == 39) { return 37; }
+    if (id == 38) { return 40; }
+    if (id == 40) { return 38; }
+    if (id == 41) { return 43; }
+    if (id == 43) { return 41; }
+    if (id == 42) { return 44; }
+    if (id == 44) { return 42; }
+    return id;
+}
+
 // flag_branch_consumer gives the index of the `if` / `br_if` that consumes what
 // ops[i] pushes, reached over a run of `not`s alone, and -1 when anything else
 // consumes it. An op that answers >= 0 emits no value: a comparison leaves the
@@ -987,7 +1001,7 @@ pub function all_runtime_need_roots(): string[] {
         "read_file_bytes",
         "read_int", "sleep_ms", "sleep_ns", "str_bytes", "str_case", "str_cmp",
         "str_concat", "str_eq", "str_from_bytes", "str_lines", "str_print",
-        "str_read_line", "str_repeat", "str_replace", "str_reverse", "str_search",
+        "str_read_line", "str_repeat", "str_replace", "str_reverse",
         "optarrarr_free", "str_split", "str_to_i32", "str_trim", "strarrarr_free", "strbuf", "buf",
         // The platform helpers. These were absent for as long as the list
         // existed, which made the "closed set" claim above false: the

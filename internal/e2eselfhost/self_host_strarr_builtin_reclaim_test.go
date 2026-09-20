@@ -58,7 +58,7 @@ import (
 // witnesses; the half they rest on is the one the `SARR:` class already carries,
 // unchanged.
 
-const strArrBuiltinPrelude = `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
+const strArrBuiltinPrelude = strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 `
 
 // strArrBuiltinHeap wraps a `round` body in the churn/heap-delta harness, with
@@ -104,7 +104,7 @@ var strArrBuiltinHeapCases = []struct {
     var n: i32 = parts.len();
     if (parts[0] != "abcdefgh") { return 0 - 1; }
     if (parts[1] != "a") { return 0 - 2; }
-    if (!parts[n - 1].starts_with("0123")) { return 0 - 3; }
+    if (!has_prefix(parts[n - 1], "0123")) { return 0 - 3; }
     return n;`, 4096, 100000},
 	// Two builtin producers in one frame, so the sweep has to credit both slots
 	// rather than the first one it meets.
@@ -134,8 +134,8 @@ function main(): i32 {
     while (i < 300) {
         if (round(keep) != 2) { return 96; }
         if (churn("QQQQQQQQ") < 0) { return 95; }
-        if (!keep.xs[0].starts_with("aaaa-")) { return 97; }
-        if (!keep.xs[1].starts_with("bbbb-")) { return 97; }
+        if (!has_prefix(keep.xs[0], "aaaa-")) { return 97; }
+        if (!has_prefix(keep.xs[1], "bbbb-")) { return 97; }
         i = i + 1;
     }
     if (__rc_underflow() != 0) { return 99; }
@@ -200,7 +200,7 @@ function mixround(pre: string): i32 {
     var p1: string = w("XXXXXXXX");
     if (p1.len() < 0) { return 0; }
     if (parts[0] != "abcdefgh") { return 0 - 1; }
-    if (!parts[1].starts_with("MMMMMMMM-")) { return 0 - 2; }
+    if (!has_prefix(parts[1], "MMMMMMMM-")) { return 0 - 2; }
     if (parts[2] != "wide") { return 0 - 3; }
     return n;
 }
@@ -229,8 +229,8 @@ function main(): i32 {
     if (p1.len() + p2.len() < 0) { return 0; }
     if (n != 1) { return 0 - 1; }
     if (m != 1) { return 0 - 2; }
-    if (!base.starts_with("abcdefgh-a-wide")) { return 0 - 3; }
-    if (base.index_of("XXXX") >= 0) { return 0 - 4; }
+    if (!has_prefix(base, "abcdefgh-a-wide")) { return 0 - 3; }
+    if (has_sub(base, "XXXX")) { return 0 - 4; }
     return n;
 }
 function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { if (round(pre) != 1) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`},
@@ -271,8 +271,8 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
     if (p1.len() + p2.len() + p3.len() < 0) { return 0; }
     if (parts[0] != "abcdefgh") { return 0 - 1; }
     if (parts[1] != "a") { return 0 - 2; }
-    if (!parts[n - 1].starts_with("0123")) { return 0 - 3; }
-    if (parts[0].index_of("XXXX") >= 0) { return 0 - 4; }
+    if (!has_prefix(parts[n - 1], "0123")) { return 0 - 3; }
+    if (has_sub(parts[0], "XXXX")) { return 0 - 4; }
     if (ls.len() != 1) { return 0 - 5; }
     if (ls[0].len() != base.len()) { return 0 - 6; }
     if (first != 97) { return 0 - 7; }

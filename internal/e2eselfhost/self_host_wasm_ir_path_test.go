@@ -770,20 +770,6 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"split-param", `function nfields(s: string): i32 { return s.split(",").len(); } function main(): i32 { return nfields("a,b,c,d"); }`},
 		{"split-freecall", `function main(): i32 { var p = str_split("a,b,c", ","); return p.len(); }`},
 		{"split-direct-index", `function main(): i32 { return "one,two,three".split(",")[1].len(); }`},
-		// Scalar string search predicates → i32/boolean (op_str_starts_with /
-		// _ends_with / _index_of; contains = index_of >= 0). The wasm IR path
-		// emits the narrow str_predicate_helpers; the AST path gets them from the
-		// strcat_helpers bundle — results must agree.
-		{"starts-with-true", `function main(): i32 { var s = "hello"; if (s.starts_with("he")) { return 7; } return 0; }`},
-		{"starts-with-false", `function main(): i32 { var s = "hello"; if (s.starts_with("lo")) { return 7; } return 9; }`},
-		{"ends-with-true", `function main(): i32 { var s = "hello"; if (s.ends_with("lo")) { return 7; } return 0; }`},
-		{"ends-with-false", `function main(): i32 { var s = "hello"; if (s.ends_with("he")) { return 7; } return 9; }`},
-		{"index-of-hit", `function main(): i32 { var s = "abcdef"; return s.index_of("cd"); }`},
-		{"index-of-miss", `function main(): i32 { var s = "abcdef"; var r = s.index_of("zz"); if (r < 0) { return 42; } return 0; }`},
-		{"index-of-empty", `function main(): i32 { var s = "abc"; return s.index_of("") + 50; }`},
-		{"contains-true", `function main(): i32 { var s = "hello world"; if (s.contains("o w")) { return 7; } return 0; }`},
-		{"contains-false", `function main(): i32 { var s = "hello"; if (s.contains("xyz")) { return 7; } return 9; }`},
-		{"predicate-param", `function pre(s: string, p: string): i32 { if (s.starts_with(p)) { return 1; } return 0; } function main(): i32 { return pre("foobar", "foo") * 10 + pre("foobar", "bar"); }`},
 		// f-string interpolation (`f"...{expr}..."`) → desugared `+`-chain of
 		// literal parts and `(expr).to_string()`; AST and IR wasm paths must agree.
 		{"fstring-i32", `function main(): i32 { var n = 7; var s = f"n={n}!"; return s.len(); }`},
@@ -842,12 +828,6 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		// callee's registered return type, letting a later `match (o)` lower.
 		{"opt-fncall-if-expr", `function mkO(v: i32): Option[i32] { return Some(v); } function main(): i32 { var o = if (true) { mkO(7) } else { Some(0) }; match (o) { Some(n) => { return n; }, None => { return 0; } } return 0; }`},
 		{"result-fncall-if-expr", `function div(a: i32, b: i32): Result[i32, i32] { if (b == 0) { return Err(1); } return Ok(a / b); } function main(): i32 { var r = if (true) { div(20, 4) } else { Err(9) }; match (r) { Ok(n) => { return n; }, Err(e) => { return e; } } return 0; }`},
-		// NB: the str_starts_with / str_index_of FREE-function builtins exist on the
-		// x86-64 AST path but not the wasm AST path, so they can't use this wasm
-		// differential gate — the method forms above cover the IR predicate ops, and
-		// the free-call forms are validated on x86-64 (TestSelfHostAsmIRPath +
-		// TestSelfHostStrSplitIRPathX86_64).
-		//
 	}
 
 	for _, tc := range cases {

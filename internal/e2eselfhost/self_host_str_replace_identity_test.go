@@ -42,7 +42,7 @@ import (
 // liveness case below — exit 99 (rc underflow) on x86-64, a trap on wasm —
 // against a clean main and a clean fix.
 
-const strReplacePrelude = `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
+const strReplacePrelude = strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 `
 
 func strReplaceHeap(body string, limit int) string {
@@ -91,11 +91,11 @@ var strReplaceFaultCases = []struct {
     var p1: string = w("XXXXXXXX");
     var p2: string = w("YYYYYYYY");
     if (p1.len() + p2.len() < 0) { return 0; }
-    if (!base.starts_with("abcdefgh-a-wide")) { return 0 - 1; }
-    if (!same.starts_with("abcdefgh-a-wide")) { return 0 - 2; }
-    if (base.index_of("XXXX") >= 0) { return 0 - 3; }
+    if (!has_prefix(base, "abcdefgh-a-wide")) { return 0 - 1; }
+    if (!has_prefix(same, "abcdefgh-a-wide")) { return 0 - 2; }
+    if (has_sub(base, "XXXX")) { return 0 - 3; }
     if (same.len() != base.len()) { return 0 - 4; }
-    if (diff.index_of("NARROW") < 0) { return 0 - 5; }
+    if (!has_sub(diff, "NARROW")) { return 0 - 5; }
     if (diff.len() != base.len() + 2) { return 0 - 6; }
     return 3;
 }
@@ -106,7 +106,7 @@ function round(pre: string): i32 {
     var r: string = rep(pre);
     var p1: string = w("XXXXXXXX");
     if (p1.len() < 0) { return 0; }
-    if (r.index_of("NARROW") < 0) { return 0 - 1; }
+    if (!has_sub(r, "NARROW")) { return 0 - 1; }
     return r.len() % 251;
 }
 function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; var want: i32 = round(pre); while (i < 2000) { if (round(pre) != want) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`},
@@ -122,8 +122,8 @@ function main(): i32 {
     while (i < 2000) {
         if (rep(keep) < 0) { return 96; }
         if (churn("QQQQQQQQ") < 0) { return 95; }
-        if (!keep.name.starts_with("aaaa-")) { return 97; }
-        if (!keep.tag.starts_with("bbbb-")) { return 97; }
+        if (!has_prefix(keep.name, "aaaa-")) { return 97; }
+        if (!has_prefix(keep.tag, "bbbb-")) { return 97; }
         i = i + 1;
     }
     if (__rc_underflow() != 0) { return 99; }
