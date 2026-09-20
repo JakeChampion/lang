@@ -715,16 +715,11 @@ pub function normalize_f64(arr: f64[]): f64[] {
 
 // `scale_f64(arr, k)` — every element multiplied by the scalar `k`, returning a
 // new array of the same length (the input is untouched). `scale(arr, 0)` is the
-// zero vector; empty in, empty out.
+// zero vector; empty in, empty out. It is the `__scale_f64` kernel
+// (docs/ATLAS-PLATFORM-PLAN.md §3.4): one allocation and one multiply per
+// element, with nothing for a loop here to add.
 pub function scale_f64(arr: f64[], k: f64): f64[] {
-    var out: f64[] = [];
-    var n: i32 = arr.len();
-    var i: i32 = 0;
-    while (i < n) {
-        out = out.append(arr[i] * k);
-        i = i + 1;
-    }
-    return out;
+    return __scale_f64(arr, k);
 }
 
 // `add_f64(a, b)` — the element-wise sum `a[i] + b[i]`. On a length mismatch
