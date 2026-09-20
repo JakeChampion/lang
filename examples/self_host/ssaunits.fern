@@ -312,11 +312,67 @@ function owned_values(f: ssasem.Func, modes: i32[]): boolean[] {
         for ins in b.insts {
             var owns: boolean = false;
             if (ins.kind_tag == 6) { owns = modes[ins.imm] == counted_mode(); }
-            if (fresh_unit(ins.kind_tag)) { owns = ssasem.reference(f.values[ins.result]); }
+            if (ins.kind_tag != 8 && fresh_unit(ins.kind_tag)) { owns = ssasem.reference(f.values[ins.result]); }
             out = out.with(ins.result, owns);
         }
     }
+    return phi_ownership(f, out);
+}
+
+// A phi owns a unit unless every operand is lent whole: a borrowed parameter,
+// or another phi that is. Such a phi holds nothing its edges could supply --
+// asking them retains a view with a no-op and releases it with a free
+// (#9802), and retains a counted box for nothing. Any other operand makes the
+// phi owned as before: a projection of an owned record is anchored to its
+// root, and the retain the edge supplies is what keeps the child alive past
+// the root's release. To a fixpoint, since ownership reaches a phi through a
+// phi.
+function phi_ownership(f: ssasem.Func, owned: boolean[]): boolean[] {
+    var defs: ssa.SInst[] = definitions(f);
+    var out: boolean[] = owned;
+    for b in f.graph.blocks {
+        for ins in b.insts {
+            if (ins.kind_tag != 8 || !ssasem.reference(f.values[ins.result])) { continue; }
+            var lent: boolean = true;
+            for a in ins.args {
+                if (a < 0) { continue; }
+                if (defs[a].kind_tag == 8) { continue; }
+                if (defs[a].kind_tag == 6 && !out[a]) { continue; }
+                lent = false;
+            }
+            if (!lent) { out = out.with(ins.result, true); }
+        }
+    }
+    var grown: boolean = true;
+    while (grown) {
+        grown = false;
+        for b in f.graph.blocks {
+            for ins in b.insts {
+                if (ins.kind_tag != 8 || out[ins.result] || !ssasem.reference(f.values[ins.result])) { continue; }
+                for a in ins.args {
+                    if (a >= 0 && out[a]) { out = out.with(ins.result, true); grown = true; }
+                }
+            }
+        }
+    }
     return out;
+}
+
+// A view is lent, never retained: its box carries the immortal sentinel
+// rather than a count, so the retain the runtime would emit is a no-op while
+// the release that balances it frees the box (#9802). A supply that MOVES a
+// view is fine, the one unit changes hands; one that retains it, because the
+// value stays live past the step, would give back a unit nothing took: a
+// phi merging a live view with a fresh one released the live one from
+// under its holder. `ssarc`'s #9328 note is the same asymmetry at the call
+// bracket, which it restricts to arrays.
+function view_retain_error(f: ssasem.Func, steps: Step[]): string {
+    for s in steps {
+        for item in s.supplies {
+            if (item.mode == retain_unit() && ssasem.is_view(f.values[item.value])) { return "a view is lent, never retained"; }
+        }
+    }
+    return "";
 }
 function row(all: boolean[], bi: i32, n: i32): boolean[] {
     var out: boolean[] = [];
@@ -825,6 +881,8 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
         }
         bi = bi + 1;
     }
+    why = view_retain_error(f, steps);
+    if (why != "") { return bad(why); }
     var out: Plan = Plan { ok: true, why: "", steps: steps, owned: owned, grows: grows, grow_fields: grow_fields, takes: takes };
     why = verify(f, modes, out);
     if (why != "") { return bad(why); }

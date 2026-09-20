@@ -524,6 +524,23 @@ function main(): i32 {
     });
     return f(2);
 }`},
+	// A view local rebound in a loop, starting from a view that stays live:
+	// the phi merges the live view with a fresh one, and supplying the phi on
+	// the entry edge means RETAINING the live view, which on a view's immortal
+	// box is a no-op against a release that frees it. Produced, this read
+	// `s` after the loop had released it (a sanitizer use-after-free); the
+	// planner now refuses any plan that retains a view (#9802), and the AST
+	// lowering, which leaks the boxes but answers, stands.
+	{name: "view-loop-rebinds-a-live-view", atLeast: 0, refuses: "a view is lent, never retained", src: `
+function main(): i32 {
+    var t: string = "abcde" + "fghij";
+    var s: str = slice_unchecked(t, 0, 5);
+    var v: str = s;
+    var i: i32 = 0;
+    while (i < 3) { v = slice_unchecked(t, 5, 10); i = i + 1; }
+    var u: string = "xyz" + "w";
+    return v.len() + s.len() + u.len();
+}`},
 	{name: "map-delete-and-clear", atLeast: 4, noLeak: true, src: `
 function survivors(n: i32): i32 {
     var m: Map[i32, i32] = map_new(8);

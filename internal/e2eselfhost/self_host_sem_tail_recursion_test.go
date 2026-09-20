@@ -57,13 +57,14 @@ function shrink(t: string, n: i32): i32 {
     return shrink(slice_unchecked(t, 0, t.len() - 1), n + 1);
 }
 
-// A str parameter — a VIEW. The loop cannot carry one: every parameter
-// gains a phi, a reference-typed phi is owned, and the entry edge supplies it
-// by RETAINING, which on a view is a no-op while the matching release frees
-// the box. So the rewrite declines this shape, and the assertion is that the
-// caller's view survives the call with the over-release counter still at
-// zero. Before the decline this answered b=0 with an empty view and the
-// counter at one.
+// A str parameter — a VIEW, carried by the loop. Its phi merges the incoming
+// argument with the parameter passed whole, both borrowed, so the planner
+// leaves the phi unowned and the loop neither retains nor releases it
+// (#9802). The depth is past any stack, so a declined rewrite dies; and the
+// caller's view has to survive with the over-release counter at zero, which
+// is what the old rule broke: the entry edge retained the view with a no-op
+// and the exit released it with a free, answering still=0 with the counter
+// at one.
 function view_walk(s: str, i: i32): i32 {
     if (i == 0) { return s.len(); }
     return view_walk(s, i - 1);
@@ -84,7 +85,7 @@ function main(): i32 {
 
     var lent: string = "abcde" + "fghij";
     var peek: str = slice_unchecked(lent, 0, 5);
-    var vw: i32 = view_walk(peek, 2000);
+    var vw: i32 = view_walk(peek, 400000);
     // Churn the allocator, so a box the loop released would be reissued
     // before the read below.
     var churn: string[] = [];
