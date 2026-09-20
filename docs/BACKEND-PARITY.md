@@ -137,7 +137,10 @@ kernels has required AVX2 for as long as they have existed. `-backend ssa`'s
 byte kernels (`__fern_count_byte`, `__fern_memchr`, `__fern_rmemchr`,
 `__fern_ascii_run`) run the same 32-byte AVX2 main loops ahead of their
 16-byte SSE2 ones, and `OpClz` / `OpCtz` / `OpPopcount` lower to `lzcnt` /
-`tzcnt` / `popcnt`, so both backends sit at v3.
+`tzcnt` / `popcnt`, so both backends sit at v3. The self-host's x86-64
+emitter runs the same three tiers in its four byte kernels, through the five
+VEX forms its in-process assembler encodes (`x86_native.fern`), so its output
+sits at v3 too.
 
 x86-64-v3 is the standard name for the class that has it, and no real
 part carries AVX2 without v3's other bits. The AMD floor moves with it: Jaguar
