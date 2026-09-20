@@ -2038,6 +2038,31 @@ function x86_gas_xmm(tok: string): i32 {
     return v;
 }
 
+// x86_gas_ymm maps a ymm token (`%ymm0`, `ymm12`, …) to its number 0..15,
+// or -1.
+function x86_gas_ymm(tok: string): i32 {
+    var s: string = tok;
+    if (s.len() > 0 && s[0] == b'%') {
+        s = slice_unchecked(s, 1, s.len()) + "";
+    }
+    if (s.len() < 4) {
+        return 0 - 1;
+    }
+    if (s[0] != b'y' || s[1] != b'm' || s[2] != b'm') {
+        return 0 - 1;
+    }
+    var v: i32 = 0;
+    var i: i32 = 3;
+    while (i < s.len()) {
+        var c: i32 = s[i] as i32;
+        if (c >= 48 && c <= 57) {
+            v = v * 10 + (c - 48);
+        }
+        i = i + 1;
+    }
+    return v;
+}
+
 // Correctly-rounding decimal -> f64 (SH-004): round-to-nearest, ties to
 // even, bit-exact with strtod / the GNU-as path. Mirrored VERBATIM from
 // watbin.fern's parse_f64 machinery (pf64_*) — the assemblers are
@@ -3087,6 +3112,107 @@ function x86_gas_cc_code(cond: string): i32 {
 }
 // END GENERATED CONDITION TABLE
 
+// ---- AVX2: the five VEX-encoded forms the byte kernels use ----
+//
+// The same narrow vocabulary as native's avx.go — vmovdqu (load),
+// vpbroadcastb, vpcmpeqb, vpmovmskb and vzeroupper over a 256-bit ymm —
+// kept out of the shared x86tbl tables, which assume legacy encoding
+// throughout. AVX2 is inside the x86-64-v3 baseline, so nothing here is
+// guarded.
+
+// x86_vex appends the VEX prefix: the 2-byte form (C5) whenever it can
+// carry the instruction — the 0F map, W clear, neither X nor B needed —
+// which is what GNU as emits, and the 3-byte form (C4) otherwise. rex_r,
+// rex_x and rex_b are the REX bits the instruction would carry without VEX
+// and are stored inverted; vvvv is the second source register, inverted
+// too, 0 when unused.
+function x86_vex(own buf: i32[], rex_r: boolean, rex_x: boolean, rex_b: boolean, mmmmm: i32, w: boolean, vvvv: i32, l: boolean, pp: i32): i32[] {
+    var vinv: i32 = (15 - (vvvv & 15)) * 8;
+    var lbit: i32 = 0;
+    if (l) { lbit = 4; }
+    if (mmmmm == 1 && !w && !rex_x && !rex_b) {
+        var b2: i32 = (pp & 3) | lbit | vinv;
+        if (!rex_r) { b2 = b2 | 128; }
+        buf = buf.append(197);
+        return buf.append(b2);
+    }
+    var c2: i32 = mmmmm & 31;
+    if (!rex_r) { c2 = c2 | 128; }
+    if (!rex_x) { c2 = c2 | 64; }
+    if (!rex_b) { c2 = c2 | 32; }
+    var c3: i32 = (pp & 3) | lbit | vinv;
+    if (w) { c3 = c3 | 128; }
+    buf = buf.append(196);
+    buf = buf.append(c2);
+    return buf.append(c3);
+}
+
+// x86_gas_vex_rm emits one VEX instruction whose ModRM.rm is a memory
+// operand or a register: the prefix from the operand's REX bits, the
+// opcode, then the ModRM (+SIB+disp).
+function x86_gas_vex_rm(own a: X86Asm, mnem: string, mmmmm: i32, pp: i32, vvvv: i32, op: i32, reg: i32, rm: string): X86Asm {
+    if (x86_str_contains(rm, "(")) {
+        var m: GasMem = x86_gas_parse_mem(rm);
+        if (!x86_gas_mem_ok(m)) { return x86_gas_bad(a, mnem + " " + rm); }
+        var ix: boolean = false;
+        var bs: boolean = false;
+        if (!m.is_rip) {
+            if (m.has_index) { ix = m.index >= 8; }
+            bs = m.base >= 8;
+        }
+        a = X86Asm { ...a, code: x86_vex(a.code, reg >= 8, ix, bs, mmmmm, false, vvvv, true, pp) };
+        a = X86Asm { ...a, code: a.code.append(op) };
+        return x86_gas_membytes(a, reg, m, 0);
+    }
+    var rr: i32 = x86_gas_ymm(rm);
+    if (rr < 0) { return x86_gas_bad(a, mnem + " " + rm); }
+    a = X86Asm { ...a, code: x86_vex(a.code, reg >= 8, false, rr >= 8, mmmmm, false, vvvv, true, pp) };
+    a = X86Asm { ...a, code: a.code.append(op) };
+    return X86Asm { ...a, code: a.code.append(x86_modrm(3, reg, rr)) };
+}
+
+// x86_gas_vex_two: the two-operand AVX2 forms, AT&T `src, dst` —
+// `vmovdqu ymm/m256, %ymm` (VEX.256.F3.0F 6F /r), `vpbroadcastb %xmm,
+// %ymm` (VEX.256.66.0F38 78 /r) and `vpmovmskb %ymm, %r32` (VEX.256.66.0F
+// D7 /r). The store direction of vmovdqu and a 64-bit vpmovmskb
+// destination are not forms the kernels use, so they are refused.
+function x86_gas_vex_two(own a: X86Asm, mnem: string, src: string, dst: string): X86Asm {
+    if (mnem == "vmovdqu") {
+        var yd: i32 = x86_gas_ymm(dst);
+        if (yd < 0) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
+        return x86_gas_vex_rm(a, mnem, 1, 2, 0, 111, yd, src);
+    }
+    if (mnem == "vpbroadcastb") {
+        var bd: i32 = x86_gas_ymm(dst);
+        var bx: i32 = x86_gas_xmm(src);
+        if (bd < 0 || bx < 0) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
+        a = X86Asm { ...a, code: x86_vex(a.code, bd >= 8, false, bx >= 8, 2, false, 0, true, 1) };
+        a = X86Asm { ...a, code: a.code.append(120) };
+        return X86Asm { ...a, code: a.code.append(x86_modrm(3, bd, bx)) };
+    }
+    var rd: i32 = x86_gas_reg32(dst);
+    var ys: i32 = x86_gas_ymm(src);
+    if (rd < 0 || ys < 0) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
+    a = X86Asm { ...a, code: x86_vex(a.code, rd >= 8, false, ys >= 8, 1, false, 0, true, 1) };
+    a = X86Asm { ...a, code: a.code.append(215) };
+    return X86Asm { ...a, code: a.code.append(x86_modrm(3, rd, ys)) };
+}
+
+function x86_gas_is_vex_two(mnem: string): boolean {
+    return mnem == "vmovdqu" || mnem == "vpbroadcastb" || mnem == "vpmovmskb";
+}
+
+// x86_gas_vpcmpeqb: the three-operand `vpcmpeqb src2, %ymm_src1, %ymm_dst`
+// (VEX.256.66.0F 74 /r), src2 a ymm or memory; src1 rides in VEX.vvvv.
+function x86_gas_vpcmpeqb(own a: X86Asm, mnem: string, rest: string): X86Asm {
+    var ops: string[] = x86_gas_split_ops(rest);
+    if (ops.len() != 3) { return x86_gas_bad(a, mnem + " " + rest); }
+    var y1: i32 = x86_gas_ymm(ops[1]);
+    var yd: i32 = x86_gas_ymm(ops[2]);
+    if (y1 < 0 || yd < 0) { return x86_gas_bad(a, mnem + " " + rest); }
+    return x86_gas_vex_rm(a, mnem, 1, 1, y1, 116, yd, ops[0]);
+}
+
 // ---- fixed-byte mnemonics ----
 
 function x86_pack1(b0: i32): i32 { return 16777216 + b0; }
@@ -3854,6 +3980,10 @@ function x86_gas_pinsr(own a: X86Asm, mnem: string, rest: string): X86Asm {
 
 // x86_gas_emit assembles one instruction line (mnemonic + operand text).
 function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
+    // The AVX2 forms live outside the generated tables (VEX.128.0F 77 for
+    // vzeroupper; the rest below the operand split).
+    if (mnem == "vzeroupper" && rest.len() == 0) { return x86_gas_emit_packed(a, x86_pack3(197, 248, 119)); }
+    if (mnem == "vpcmpeqb") { return x86_gas_vpcmpeqb(a, mnem, rest); }
     // no-operand mnemonics (incl. the AT&T string ops) — fixed byte lists.
     if (rest.len() == 0) {
         var fx: i32 = x86_gas_fixed_op(mnem);
@@ -4042,6 +4172,7 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
     if (msz == 64) { return x86_gas_movq(a, src, dst); }
     if (msz >= 0) { return x86_gas_mov_rm(a, mnem, msz, src, dst); }
     if (x86_gas_is_movabs(mnem)) { a = X86Asm { ...a, code: x86_movabsq(a.code, x86_gas_reg(dst), x86_gas_atoi64(src)) }; return a; }
+    if (x86_gas_is_vex_two(mnem)) { return x86_gas_vex_two(a, mnem, src, dst); }
     // Packed 16-byte moves (both directions) and the 0F 10/11 move family.
     if (x86_gas_movdq_pfx(mnem) >= 0) { return x86_gas_movdq(a, mnem, src, dst); }
     var m10: i32 = x86_gas_mov10_pfx(mnem);
