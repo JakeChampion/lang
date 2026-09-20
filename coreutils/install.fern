@@ -649,18 +649,28 @@ struct StripOut { status: i32, out: io_buffered.BufWriter }
 // does and see whether it can be executed. What that leaves uncovered is
 // a program that IS executable and still fails to exec (ENOEXEC,
 // ETXTBSY), which lands on the abnormal-termination line instead.
+//
+// On Darwin GNU's posix_spawnp is gnulib's fork-and-exec replacement, and
+// a program it cannot start is the child exiting 127, which the parent
+// reports as the abnormal-termination line; nothing there names the
+// program. So the question is not asked first there: the fork below asks
+// it the way GNU does. Measured on the macos-15 lane against the 9.12
+// oracle: `--strip-program=/nosuch/prog` and `/bin/true`, which macOS does
+// not have, both print "strip process terminated abnormally".
 function run_strip(s: Scan, dest: string, o: io_buffered.BufWriter): StripOut {
   var w: io_buffered.BufWriter = o;
-  match (spawnable(s.strip_program)) {
-    Some(why) => {
-      var what: string = "cannot run strip program ";
-      if (s.strip_program == "strip") {
-        what = "cannot run ";
-      }
-      w = gnu.error_out(w, what + gnu.quotea(s.strip_program) + ": " + why);
-      return strip_failed(dest, w);
-    },
-    None => {}
+  if (target_os() != "darwin") {
+    match (spawnable(s.strip_program)) {
+      Some(why) => {
+        var what: string = "cannot run strip program ";
+        if (s.strip_program == "strip") {
+          what = "cannot run ";
+        }
+        w = gnu.error_out(w, what + gnu.quotea(s.strip_program) + ": " + why);
+        return strip_failed(dest, w);
+      },
+      None => {}
+    }
   }
   var pid: i32 = proc_fork();
   if (pid == 0) {
