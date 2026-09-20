@@ -140,6 +140,12 @@ function main(): i32 {
 	if (ord.get([0]) != 1002 as i64 || ord.get([1]) != (64065066 as i64)) { return 133; }
 	var sc0: ndarray.NdArray[i64] = t.scan_axis(0, 0 as i64, (acc: i64, x: i64): i64 => acc + x);
 	if (sc0.shape()[0] != n || sc0.get([3, 5]) != (5 * n * 4 + 6) as i64 || sc0.get([0, 5]) != a.get([5, 0])) { return 134; }
+	// A reversed handle is where index order and storage order disagree,
+	// so a kernel that walked storage would fold these backwards.
+	var ordrv: ndarray.NdArray[i64] = rv.slice(0, 0, 1).slice(1, 0, 3).reduce_axis(1, 0 as i64, (acc: i64, x: i64): i64 => acc * (1000 as i64) + x);
+	if (ordrv.get([0]) != (63062061 as i64)) { return 136; }
+	var scrv: ndarray.NdArray[i64] = rv.slice(1, 0, 3).scan_axis(1, 0 as i64, (acc: i64, x: i64): i64 => acc * (1000 as i64) + x);
+	if (scrv.get([1, 0]) != 127 as i64 || scrv.get([1, 2]) != (127126125 as i64)) { return 137; }
 	var one: ndarray.NdArray[i64] = rows.reduce_axis(0, 0 as i64, (acc: i64, x: i64): i64 => acc + x);
 	var total: i64 = a.fold_all(0 as i64, (acc: i64, x: i64): i64 => acc + x);
 	if (one.rank() != 0 || one.get([]) != total || total != ((n * n) as i64) * ((n * n - 1) as i64) / (2 as i64)) { return 135; }
@@ -148,8 +154,8 @@ function main(): i32 {
 	var live: i32 = t.rank() + rv.rank() + sl.rank() + se.rank() + pm.rank() + col.rank()
 		+ r2.rank() + r3.rank() + f1.len() + f2.len() + p.rank() + z.rank() + e.rank()
 		+ rvf.len() + both.rank() + m.rank() + zw.rank() + rows.rank() + ord.rank()
-		+ sc0.rank() + one.rank();
-	if (live != 3 * n * n + 26) { return 110; }
+		+ sc0.rank() + ordrv.rank() + scrv.rank() + one.rank();
+	if (live != 3 * n * n + 29) { return 110; }
 	return 0;
 }
 `
