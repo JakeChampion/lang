@@ -1133,7 +1133,7 @@ function drop_active_at(a: i32[], k: i32): i32[] {
 // register first, a callee-saved one when those are out, a slot last. The
 // lowest indices go first, so an emitter that saves the callee-saved
 // registers a function uses saves a dense prefix of them.
-pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, abi_fixed_by_div: boolean): i32[] {
+pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, abi_fixed_by_div: boolean, no_home: boolean[]): i32[] {
     var big: i32 = 2000000000;
     var lo: i32[] = [];
     var hi: i32[] = [];
@@ -1175,6 +1175,8 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
         bi = bi + 1;
     }
     var total_pos: i32 = pos;
+    i = 0;
+    while (i < no_home.len() && i < f.nvals) { if (no_home[i]) { hi = hi.with(i, 0 - 1); } i = i + 1; }
 
     hi = extend_backedge_phi_intervals(f, def_pos, total_pos, hi);
     hi = extend_loop_invariant_intervals(f, def_pos, hi);
@@ -1272,6 +1274,58 @@ function assign_spill_slots(hi: i32[], reg_of: i32[]): i32[] {
         i = i + 1;
     }
     return reg_of;
+}
+
+// Imms marks the integer constants an emitter reads as immediate operands and
+// never materialises: `is_imm[v]` says value v needs no home, `value[v]` is
+// the constant. A constant qualifies when it lies in lo..hi and every use is
+// a binary op reading it as the right operand of an op named in `right`, or
+// as the left operand of one named in `left` (the commutative ops and the
+// comparisons, which the emitter turns round); a use anywhere else keeps it
+// in a register, as does an op whose other operand is a constant too (the
+// optimiser's folds do not run here, so `0 + 1` reaches the emitter).
+pub struct Imms { is_imm: boolean[], value: i64[] }
+
+pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: string[], left: string[]): Imms {
+    var is_imm: boolean[] = [];
+    var konst: boolean[] = [];
+    var value: i64[] = [];
+    var i: i32 = 0;
+    while (i < f.nvals) { is_imm = is_imm.append(false); konst = konst.append(false); value = value.append(0i64); i = i + 1; }
+    for blk in f.blocks {
+        for ins in blk.insts {
+            if (ins.kind_tag != 1 && ins.kind_tag != 3) { continue; }
+            konst = konst.with(ins.result, true);
+            var c: i64 = ins.imm as i64;
+            if (ins.kind_tag == 3) { c = util.lit_to_i64(ins.str); }
+            if (c < lo || c > hi) { continue; }
+            is_imm = is_imm.with(ins.result, true);
+            value = value.with(ins.result, c);
+        }
+    }
+    for blk in f.blocks {
+        for ins in blk.insts {
+            var a: i32 = 0;
+            while (a < ins.args.len()) {
+                var v: i32 = ins.args[a];
+                if (v >= 0 && v < is_imm.len() && is_imm[v] && !imm_use(ins, a, konst, right, left)) { is_imm = is_imm.with(v, false); }
+                a = a + 1;
+            }
+        }
+        var t: STerm = blk.term;
+        if (t.kind_tag == 1 && t.value >= 0 && t.value < is_imm.len()) { is_imm = is_imm.with(t.value, false); }
+        if (t.kind_tag == 3 && t.cond >= 0 && t.cond < is_imm.len()) { is_imm = is_imm.with(t.cond, false); }
+    }
+    return Imms { is_imm: is_imm, value: value };
+}
+function imm_use(ins: SInst, a: i32, konst: boolean[], right: string[], left: string[]): boolean {
+    if (ins.kind_tag != 9 || ins.args.len() != 2) { return false; }
+    var other: i32 = ins.args[1 - a];
+    if (other < 0 || other >= konst.len() || konst[other]) { return false; }
+    var names: string[] = left;
+    if (a == 1) { names = right; }
+    for n in names { if (n == ins.str) { return true; } }
+    return false;
 }
 
 // use_counts is how many instruction operands and terminators read each

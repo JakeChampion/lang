@@ -139,7 +139,12 @@ add, subtract, multiply, and, or, xor and the compares compute into the
 home with only a spilled operand passing through a scratch
 (`ssa_bin_in_place`; on x86-64 the operands swap, or a comparison flips,
 when the right one lives in the destination), and a compare read only by
-its block's branch is consumed as flags straight from the homes. Division,
+its block's branch is consumed as flags straight from the homes. A
+constant those ops alone read is an immediate operand and is never
+materialised (`ssa.imm_operands`: any i32 on x86-64, 0 to 4,095 on arm64
+for add, sub and the compares; a constant on the left swaps or flips the
+same way, and an op whose operands are both constants keeps them in
+registers). Division,
 the shifts and the table shared with the stack machine still go through
 x0/x1 (`%rax`/`%rcx`), as does every call result. The phis of one edge are
 parallel moves between homes (`ssa_parallel_moves`): one instruction per
