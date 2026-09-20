@@ -2310,6 +2310,10 @@ function main(): i32 {
 			// accordingly: wrapped as plain stdout, this component carries a core
 			// import no instantiation argument satisfies and will not load.
 			{"map", "import \"core/map\";\nfunction main(): i32 { var m: Map[string, i32] = map_new(8); m = m.insert(\"a\", 1); if (!m.has(\"a\")) { return 1; } print(\"map ok\"); return 0; }\n", "map ok\n", true},
+			// A program only the semantic path produces (the AST lowering
+			// refuses a value block over an Option of an array): the no-I/O
+			// framing takes the substituted bodies like every other framing.
+			{"typed-only", "function picked(k: i32): i32 { var rows: i32[] = [k, k]; var some: i32[] = (match (Some(rows)) { Some(r) => r, None => [] }); return some.len(); }\nfunction main(): i32 { return picked(4) - 2; }\n", "", false},
 		} {
 			srcPath := filepath.Join(dir, "comp_"+c.name+".fern")
 			if err := os.WriteFile(srcPath, []byte(c.src), 0o644); err != nil {

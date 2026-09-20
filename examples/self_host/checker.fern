@@ -3115,7 +3115,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
             // its own annotation.
             if (parser.is_value_block_origin(lm.origin)) {
               if (!vb_arms_compatible(bts, s)) { return t_unknown("value block arms disagree"); }
-              var tag: typeinfo.Type = s.resolve_type(lm.ret_type);
+              var tag: typeinfo.Type = lambda_ret_type(lm, s);
               var arms: ast.Expr[] = mx_body_result_exprs(lm.body);
               var bi: i32 = 0;
               while (bi < bts.len() && bi < arms.len()) {
@@ -4094,7 +4094,7 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
       for param in lm.params {
         pts = pts.append(s.resolve_param(param));
       }
-      var rt: typeinfo.Type = s.resolve_type(lm.ret_type);
+      var rt: typeinfo.Type = lambda_ret_type(lm, s);
       // Walk the body for side-effect checks. The body's
       // returns are checked against the lambda's own
       // ret_type (when one is declared), not the enclosing
@@ -4158,7 +4158,7 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
           for param in lm.params {
             lpts = lpts.append(s.resolve_param(param));
           }
-          var lrt: typeinfo.Type = s.resolve_type(lm.ret_type);
+          var lrt: typeinfo.Type = lambda_ret_type(lm, s);
           init_scope = s.bind(v.name, t_func_own(lpts, lambda_owns(lm), lrt));
         },
         _ => {}
@@ -4435,7 +4435,7 @@ pub function bind_stmt(st: ast.Stmt, s: Scope): Scope {
           for param in lm.params {
             lpts = lpts.append(s.resolve_param(param));
           }
-          var lrt: typeinfo.Type = s.resolve_type(lm.ret_type);
+          var lrt: typeinfo.Type = lambda_ret_type(lm, s);
           init_scope = s.bind(v.name, t_func_own(lpts, lambda_owns(lm), lrt));
         },
         _ => {}
@@ -4498,6 +4498,15 @@ function func_ret_type(fd: parser.FuncDecl, struct_names: string[], union_names:
     return declared_callable_type(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types, fd.type_params, struct_names, union_names);
   }
   return type_from_name_erasing_tparams(fd.ret_type, fd.type_params, struct_names, union_names);
+}
+
+// A lambda's declared result, through the sidecars a function-valued result
+// is spelled in: the pair a declaration's `ret_fn_ret` carries.
+function lambda_ret_type(lm: ast.ExprLambda, s: Scope): typeinfo.Type {
+  if (lm.ret_fn_ret.len() > 0 && (lm.ret_type == "fn" || lm.ret_type == "fn[]")) {
+    return declared_callable_type(lm.ret_type, lm.ret_fn_ret, lm.ret_fn_param_types, s.tparams, s.structs.names, s.unions.names);
+  }
+  return s.resolve_type(lm.ret_type);
 }
 
 // var_declared_type resolves a StmtVar's annotation, re-entering the `str`
@@ -6474,7 +6483,7 @@ function lret_expr(e: ast.Expr, cur: Scope, unions: UnionSig[], self_name: strin
       for param in lm.params {
         pts = pts.append(cur.resolve_param(param));
       }
-      var rt: typeinfo.Type = cur.resolve_type(lm.ret_type);
+      var rt: typeinfo.Type = lambda_ret_type(lm, cur);
       var lsc: Scope = cur;
       if (self_name.len() > 0) {
         lsc = lsc.bind(self_name, t_func_own(pts, lambda_owns(lm), rt));
@@ -9841,7 +9850,7 @@ pub function lambda_body_scope(lm: ast.ExprLambda, s: Scope): Scope {
     lsc = lsc.bind(param.name, s.resolve_param(param));
   }
   if (lm.ret_type.len() > 0) {
-    return lsc.with_ret_type(s.resolve_type(lm.ret_type));
+    return lsc.with_ret_type(lambda_ret_type(lm, s));
   }
   return lsc.with_ret_type(t_unknown("no enclosing function"));
 }
@@ -10025,7 +10034,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
             for param in lm.params {
               fpts = fpts.append(cur.resolve_param(param));
             }
-            vsc = cur.bind(v.name, t_func_own(fpts, lambda_owns(lm), cur.resolve_type(lm.ret_type)));
+            vsc = cur.bind(v.name, t_func_own(fpts, lambda_owns(lm), lambda_ret_type(lm, cur)));
             cur = vsc;
           },
           _ => {
@@ -16395,7 +16404,7 @@ function annotate_lambda_expr(lm: ast.ExprLambda, s: Scope, self_name: string): 
   for param in lm.params {
     pts = pts.append(s.resolve_param(param));
   }
-  var rt: typeinfo.Type = s.resolve_type(lm.ret_type);
+  var rt: typeinfo.Type = lambda_ret_type(lm, s);
   var ls: Scope = Scope { ...s, loop_depth: 0, ret_type: rt };
   if (self_name.len() > 0) { ls = ls.bind(self_name, t_func_own(pts, lambda_owns(lm), rt)); }
   var i: i32 = 0;
@@ -16403,7 +16412,43 @@ function annotate_lambda_expr(lm: ast.ExprLambda, s: Scope, self_name: string): 
     ls = ls.bind(lm.params[i].name, pts[i]);
     i = i + 1;
   }
-  return ast.ExprLambda { ...lm, body: annotate_block(lm.body, ls), captures: captures, captures_known: true };
+  var ret: string = lm.ret_type;
+  if (ret.len() == 0) { ret = inferred_lambda_ret(lm, ls); }
+  return ast.ExprLambda { ...lm, ret_type: ret, body: annotate_block(lm.body, ls), captures: captures, captures_known: true };
+}
+
+// A lambda spelling no result is hoisted as a declaration spelling none, and
+// the signature table then types a call through its box as nothing. The
+// result its body returns is stamped as the declaration's spelling. Left
+// empty: a function-valued result, whose signature lives in sidecars a
+// spelling has no room for, and a bare literal, which adapts to the width of
+// whatever receives the lambda.
+function inferred_lambda_ret(lm: ast.ExprLambda, body_scope: Scope): string {
+  var (returned, at) = first_returned(lm.body, body_scope);
+  if (bare_return(returned) || int_literal_tree(returned)) { return ""; }
+  var t: typeinfo.Type = check_expr(returned, at);
+  if let typeinfo.TypeFloat(f) = t { if (f.polymorphic) { return ""; } }
+  if (is_unknown(t) || spells_function(t)) { return ""; }
+  return typeinfo.spelling(t);
+}
+
+function spells_function(t: typeinfo.Type): boolean {
+  match (t) {
+    typeinfo.TypeFunc(_) => { return true; },
+    typeinfo.TypeArray(a) => { return spells_function(a.elem); },
+    typeinfo.TypeTuple(tup) => {
+      for e in tup.elements { if (spells_function(e)) { return true; } }
+    },
+    typeinfo.TypeMap(m) => { return spells_function(m.key) || spells_function(m.value); },
+    typeinfo.TypeStruct(st) => {
+      for a in st.args { if (spells_function(a)) { return true; } }
+    },
+    typeinfo.TypeUnion(u) => {
+      for a in u.args { if (spells_function(a)) { return true; } }
+    },
+    _ => {}
+  }
+  return false;
 }
 
 // annotate_block rebuilds a statement list, threading scope statement-to-statement
