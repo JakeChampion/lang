@@ -44,9 +44,13 @@ tag was a guess the arms had nothing to do with. Stamped, the tag is what
 the parser's float settle reads: in `var x: f64 = if (c) { n } else { 2 }`
 the `2` settles to f64, the `n` arm stays i32, the mixed pair fell to the
 f64 tag and the E003 native reports was gone (`settle-value-if-i32-arm`).
-The fallback now reads the arm that did not settle — the first whose type
-is not the tag's — and stays untyped when the arms fail the E031 rule, so
-that mismatch is reported once, as native does.
+The fallback now reads the arm that did not settle — the first non-literal
+arm whose type is not the tag's, since an integer literal adapts to the
+binding's width and `var n: i64 = if (c) { 1234567890123 } else { 0 }` is
+two of them — and stays untyped when the arms fail the E031 rule, so that
+mismatch is reported once, as native does. The fixture corpus through the
+self-host compiler (`FERN_SELFHOST_FIXTURES=1`) is the gate that caught
+the literal case; the checker-codes table alone did not.
 
 ## A family is not a type
 
