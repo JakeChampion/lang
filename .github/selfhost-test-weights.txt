@@ -194,7 +194,6 @@ TestSelfHostErasedElemReturnX86_64 2
 TestSelfHostErasedWideArrayFixedWasm 3
 TestSelfHostErasedWideArrayGateBlindWasm 2
 TestSelfHostErasedWideArrayGateNarrowWasm 4
-TestSelfHostErasedWideArrayGateWasm 4
 TestSelfHostErrorTraitIRX86_64 2
 TestSelfHostF32ElemTagArm64 3
 TestSelfHostF32ElemTagWasm 3

@@ -2493,6 +2493,13 @@ pub function (s: LowerState) fn_value_sig(i: i32, with_env: boolean): string {
     return tag;
 }
 
+// A spelling naming an array of functions: the coarse `fn[]` tag, or the
+// rebuilt `((P) => R)[]`.
+function spells_fn_array(t: string): boolean {
+    if (t == "fn[]") { return true; }
+    return t.len() > 4 && slice_unchecked(t, t.len() - 3, t.len()) == ")[]" && util.contains(t, " => ");
+}
+
 // fn_value_ret returns the DECLARED return-type spelling of the fn-value named
 // `name`, or "" when it has none recorded. The width half of the same seed
 // fn_value_sig reads: lower_i64 needs it to tell an indirect call that genuinely
@@ -11597,6 +11604,14 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
     // to the hoisted `<fn>$clo(__env, params…)`.
     if (s.is_closure_local(cid.name)) {
         var clslot: i32 = s.slot_of(cid.name);
+        // A function array handed back through a value is dispatched by the
+        // destination's declared tag alone, and whether its elements are
+        // boxes or bare addresses is the callee's choice, which no slot
+        // records. The semantic path produces the shape; this lowering refuses
+        // it rather than guess one representation.
+        if (spells_fn_array(s.fn_value_ret(clslot))) {
+            return s.note_fail("call through the function value `" + cid.name + "` returns a function array").fail();
+        }
         var cls: LowerState = s.emit(ir.op_load_local(clslot));
         var cla: i32 = 0;
         while (cla < c.args.len()) {
@@ -74543,24 +74558,34 @@ function passthrough_array_arg(c: ast.ExprCall, mfuncs: MFuncs): i32 {
     return 0 - 1;
 }
 
-// passthrough_leads_to_array reports whether `e` is an array literal, or a chain
-// of passthrough calls ending in one.
+// passthrough_leads_to_array reports whether `e` is an array literal or a
+// value-position if/match (whose arms hold the literals), or a chain of
+// passthrough calls ending in one.
 function passthrough_leads_to_array(e: ast.Expr, mfuncs: MFuncs): boolean {
     match (e) {
         ast.ExprArray(_) => { return true; },
-        ast.ExprCall(c) => { return passthrough_array_arg(c, mfuncs) >= 0; },
+        ast.ExprCall(c) => { return is_value_iife(c) || passthrough_array_arg(c, mfuncs) >= 0; },
         _ => { return false; }
     }
     return false;
 }
 
-// passthrough_array_literal returns the array literal at the far end of such a
-// chain as a one-element list, or an empty one when there is none — the shape a
-// caller can `match` without a second walk.
+// A value-position if/match: the zero-parameter IIFE the desugar builds,
+// called with nothing.
+function is_value_iife(c: ast.ExprCall): boolean {
+    if let ast.ExprLambda(il) = c.callee { return c.args.len() == 0 && il.params.len() == 0; }
+    return false;
+}
+
+// passthrough_array_literal returns the array literal or value-position
+// if/match at the far end of such a chain as a one-element list, or an empty
+// one when there is none — the shape a caller can `match` without a second
+// walk.
 function passthrough_array_literal(e: ast.Expr, mfuncs: MFuncs): ast.Expr[] {
     match (e) {
         ast.ExprArray(_) => { return [e]; },
         ast.ExprCall(c) => {
+            if (is_value_iife(c)) { return [e]; }
             var i: i32 = passthrough_array_arg(c, mfuncs);
             if (i < 0) { return []; }
             return passthrough_array_literal(c.args[i], mfuncs);
@@ -74577,6 +74602,7 @@ function passthrough_rebuilt_with(e: ast.Expr, repl: ast.Expr, mfuncs: MFuncs): 
     match (e) {
         ast.ExprArray(_) => { return repl; },
         ast.ExprCall(c) => {
+            if (is_value_iife(c)) { return repl; }
             var i: i32 = passthrough_array_arg(c, mfuncs);
             if (i < 0) { return e; }
             var na: ast.Expr[] = [];
@@ -75757,6 +75783,14 @@ function iife_arm_arrays_boxed_elems(stmts: ast.Stmt[], fd: parser.FuncDecl, see
                                             pe = pe + 1;
                                         }
                                     },
+                                    // The nested if/match a passthrough forwards
+                                    // is the construct one level in, as above.
+                                    ast.ExprCall(pc) => {
+                                        if let ast.ExprLambda(pil) = pc.callee {
+                                            n = iife_arm_arrays_boxed_elems(pil.body, iife_scope_fd(fd, pil.body), n, names, structs, mfuncs);
+                                            if (n < 0) { return 0 - 1; }
+                                        }
+                                    },
                                     _ => { return 0 - 1; }
                                 }
                             },
@@ -75847,6 +75881,14 @@ function box_iife_arm_array_elems(stmts: ast.Stmt[], fd: parser.FuncDecl, funcs:
                                                 pj = pj + 1;
                                             }
                                             nv = passthrough_rebuilt_with(r.value, ast.ExprArray { ...parr2, elements: pnel }, mfuncs);
+                                        },
+                                        ast.ExprCall(pc2) => {
+                                            if let ast.ExprLambda(pil2) = pc2.callee {
+                                                var (pbs, pba) = box_iife_arm_array_elems(pil2.body, iife_scope_fd(fd, pil2.body), fs, ct, gfns, structs, mfuncs);
+                                                fs = pba.funcs; ct = pba.counter;
+                                                var plam: ast.Expr = ast.ExprLambda { ...pil2, body: pbs };
+                                                nv = passthrough_rebuilt_with(r.value, ast.ExprCall { callee: plam, args: pc2.args, line: pc2.line, col: pc2.col, type_argc: pc2.type_argc, ty: pc2.ty }, mfuncs);
+                                            }
                                         },
                                         _ => {}
                                     }

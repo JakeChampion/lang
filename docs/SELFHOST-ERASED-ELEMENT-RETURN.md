@@ -117,9 +117,10 @@ counts as a read. Too permissive here reopens a silent-miscompile class, so an
 unrecognised use is a read.
 
 Both edges are pinned, and neither test alone is enough:
-`TestSelfHostErasedWideArrayGateWasm` fails if the gate gets too narrow (the
-two-typevar `array.map` at `f64[]` must still refuse),
-`TestSelfHostErasedWideArrayGateBlindWasm` if it gets too wide.
+`TestSelfHostErasedWideArrayFixedWasm` fails if the gate gets too narrow (the
+two-typevar `array.map` at `f64[]` is among its rows, produced by the semantic
+lowering and asserted by value), `TestSelfHostErasedWideArrayGateBlindWasm` if
+it gets too wide.
 
 ## The same defect had two more return spellings
 

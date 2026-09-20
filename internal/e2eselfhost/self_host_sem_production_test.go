@@ -1728,6 +1728,94 @@ function main(): i32 {
     return total % 7;
 }
 `},
+	// A nested function naming a sibling nested function holds it in a
+	// captured slot, so the sibling is a function VALUE whose signature has
+	// an i64 parameter and an f64 result. Such a slot was refused ("function
+	// signature slot") on the grounds that the untagged indirect call
+	// describes every slot as one word; the call through the value now
+	// carries the signature tag irlower's call sites carry, so wasm
+	// dispatches it through the funcref type the body was declared with.
+	{name: "sibling-function-with-a-wide-signature", atLeast: 3, noLeak: true, src: `
+function main(): i32 {
+    function scale(k: i64): f64 { return (k as f64) / 4.0; }
+    function twice(n: i32): i32 { return (scale((n as i64) * 6i64) as i32) + (scale(9i64) as i32); }
+    var half: (i64) => i64 = (x: i64) => x / 2i64;
+    var via: (i32) => i32 = (n: i32) => (half((n as i64) * 5i64) as i32);
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 30) {
+        t = t + twice(i) + via(i);
+        i = i + 1;
+    }
+    return t % 251;
+}`},
+	// A nested function returning an array of functions is bound with the
+	// spelling its lambda carries, and that spelling flattened the result to
+	// the coarse tag (` + "`(i32) => fn[]`" + `), which the checker resolves to nothing:
+	// a sibling calling it, and the sibling's own slot, were left untyped.
+	// The binding now spells the full signature, and the checker reads a
+	// lambda's function-valued result through the same sidecars a
+	// declaration's carries. The AST lowering refuses the shape: whether the
+	// array a function value hands back holds boxes or bare addresses is the
+	// callee's choice, and it dispatched by the declared tag alone.
+	{name: "nested-function-returning-an-array-of-functions", atLeast: 3, want: "65|", noLeak: true, src: `
+function main(): i32 {
+    function make(k: i32): ((i32) => i32)[] { return [((a: i32) => a + k), ((b: i32) => b * k)]; }
+    function pick(n: i32): ((i32) => i32)[] { return make(n + 1); }
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 40) {
+        var fs: ((i32) => i32)[] = pick(i);
+        t = t + fs[0](i) % 13 + fs[1](2) % 7;
+        i = i + 1;
+    }
+    return t % 97;
+}`},
+	// A value block whose arm hands a capturing lambda to a template:
+	// the arm's lambda is hoisted with no spelled result, so the checker's
+	// signature table typed the closure the template forwards as nothing,
+	// and the block's declaration had no result. The annotate pass now
+	// stamps the result a lambda's body returns before the lift hoists it.
+	{name: "value-block-arm-is-a-template-call-over-a-capturing-lambda", atLeast: 3, noLeak: true, src: `
+function id[T](x: T): T { return x; }
+function main(): i32 {
+    var k: i32 = 3;
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 40) {
+        var c: boolean = i % 3 == 0;
+        var a: ((i32) => i32)[] = [(if (c) { id(((x: i32) => x + k)) } else { ((y: i32) => y - k) })];
+        t = t + a[0](i) % 17;
+        i = i + 1;
+    }
+    return t % 211;
+}`},
+	// A value block arm that hands a NESTED value block of lambda arrays to
+	// a template: the lift boxes the arrays every arm yields, and reached
+	// through a passthrough only an array literal, so the nested block's
+	// lambdas stayed raw addresses. The passthrough chain now ends at a
+	// value block as it ends at a literal, on the gate and the rewrite alike.
+	{name: "passthrough-forwards-a-nested-value-block-of-lambda-arrays", atLeast: 3, noLeak: true, src: `
+enum Color { Red, Green, Blue }
+function id[T](x: T): T { return x; }
+function choose(p: Color, k: i32): i32 {
+    var v1: ((i32) => i32)[] = (match (p) {
+        Red => [((a: i32) => a + k)],
+        Green => [id(((b: i32) => b * k))],
+        Blue => id((match (p) { Red => [((x: i32) => x)], Green => [((y: i32) => y - k)], Blue => [((z: i32) => 9 + k), ((w: i32) => w)] }))
+    });
+    return v1[0](4) + v1.len();
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 30) {
+        var p: Color = if (i % 3 == 0) { Red } else if (i % 3 == 1) { Green } else { Blue };
+        t = t + choose(p, i);
+        i = i + 1;
+    }
+    return t % 223;
+}`},
 	// The OS floor: the process and host queries. Each is a stack IR op of
 	// its own behind a contract (semsource.os_contracts), where the census
 	// over the corpus found 773 call sites refusing for the missing contract,

@@ -501,10 +501,10 @@ Unsupported constructs refuse the whole function with a reason.
   an element or a declared field: releasing a container or a record walks its
   slots by their declared types, and a function type names no captures for
   that walk to reach. A function-typed RESULT is refused for the same reason.
-  Every slot of the signature is that same word — a wide parameter or result
-  is refused ("function signature slot"), because the untagged
-  `call_indirect` this boundary emits describes each slot as one, and a
-  funcref type is structural on wasm.
+  A parameter or result of any other width is admitted: the call through a
+  value carries the signature tag its type spells (`ssarc.signature_tag`, the
+  spelling irlower's call sites carry), so wasm dispatches it through the
+  funcref type the body was declared with.
 
 - The runtime INTRINSICS, typed as native's `FuncSigs` types them: the ten f64
   primitives `std/float` dispatches to and `__pow_f64`, the six bit counts, the

@@ -119,10 +119,13 @@ to `all_tp_count == 1`.
 
 **The gate from step 1 is still load-bearing, and that is deliberate.** A
 two-typevar `map[T, U](xs: T[], f)` at a wide element type is NOT promoted, so
-it is still erased — and still refused rather than miscompiled.
-`TestSelfHostErasedWideArrayGateWasm` now pins exactly that case, so the gate
-cannot rot back into silence once the headline shapes work. Fixing part of a
-class is a reason to keep the guard for the rest of it, not to drop it.
+on the AST wasm path it is still erased, and the gate keeps it off that path.
+The semantic lowering produces the shape — the call through the function
+value carries its funcref signature since the wide slot was admitted — so
+`TestSelfHostErasedWideArrayFixedWasm` pins the case by value, and a module the
+semantic lowering does not produce still refuses rather than miscompiles.
+Fixing part of a class is a reason to keep the guard for the rest of it, not
+to drop it.
 
 ## The wider deferral gate this sits inside
 

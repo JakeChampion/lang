@@ -1431,19 +1431,19 @@ function instruction_error(ins: ssa.SInst, f: Func): string {
     return composite_error(ins, f, result);
 }
 
-// A function type is one word of code address, and the stack IR's untagged
-// indirect call describes every slot of a funcref as that word — so a wide
-// parameter or result has no place in a signature this vocabulary dispatches
-// through, and a function type inside another has no address to take.
+// A function type is one word of code address, and the call through one
+// carries the signature it dispatches by (`ssarc.signature_tag`), so a slot
+// may be any width. A function type inside another has no address to take,
+// and a void result no value to hold.
 function func_shape_error(fn: typeinfo.TypeFunc): string {
     if (!fn.params_known) { return "function type without a signature"; }
-    for p in fn.param_types { if (!narrow_word(p)) { return "function signature slot"; } }
-    if (is_void(fn.ret_type) || !narrow_word(fn.ret_type)) { return "function signature slot"; }
+    for p in fn.param_types { if (!signature_slot(p)) { return "function signature slot"; } }
+    if (is_void(fn.ret_type) || !signature_slot(fn.ret_type)) { return "function signature slot"; }
     return "";
 }
 
-function narrow_word(t: typeinfo.Type): boolean {
-    if (is_func(t) || is_wide(t) || is_float(t) || nests_func(t)) { return false; }
+function signature_slot(t: typeinfo.Type): boolean {
+    if (is_func(t) || nests_func(t)) { return false; }
     return semtypes.concrete(t, false);
 }
 
