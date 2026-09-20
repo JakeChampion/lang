@@ -1033,6 +1033,48 @@ a sub-vector path, and its absence is invisible to a correctness suite and to
 any benchmark whose input is one long buffer. State the caller's length
 distribution before claiming a kernel is done.
 
+**`__scale_f64(xs, k)`, the eighth kernel and the first over an array** (#9735
+step 4). Every element of an `f64[]` multiplied by one scalar into a fresh
+array of the same length. It is the first kernel with a buffer OUT: it
+allocates its own result, header and all, so the language needed no
+sized-array primitive before it could be called. It went first among the array
+candidates because a float reduction may not be reassociated
+(`ARRAY-ALGEBRA.md` §3, AA-02), which forbids a lane-parallel `dot_f64` as
+things stand, while an elementwise multiply has nothing to reassociate;
+`ARRAY-SHAPES.md` §9 records the choice.
+
+Step 1 landed scalar on all eight backends in one PR (#9868), the ordering
+above followed to the letter for the first time: nothing here is vectorised
+yet, and the intrinsic was total before anything depended on it. The one
+assembler note is arm64's, on both the native and the self-host body:
+`internal/native/arm64` has no register-offset form for `d` registers, so the
+element address is formed with an `add` and the load is base-register. That is
+§3.3a's rule — stay inside what the assembler encodes — and the first
+encoding step 3 will want.
+
+Step 2 is `std/array`'s `scale_f64`, and like `count_byte`'s it is TOTAL: the
+wrapper simply *is* the intrinsic, since with no cursor and no early exit
+there is no shape where a loop and the kernel differ. Measured on
+`examples/bench/array_scale_f64` (4,000 rounds over a 4,096-element f64[],
+32 KiB, the string kernels' haystack footprint), the append loop it replaced
+against the scalar kernel:
+
+| tier | append loop | scalar kernel | |
+|---|---|---|---|
+| native x86-64 (retired) | 1,432M | 116M | 12.4x |
+| native arm64 (qemu) | 868 ms | 121 ms | 7.2x |
+| native wasm (wasmtime) | 155 ms | 18 ms | 8.6x |
+| self-host x86-64 (retired) | 1,569M | 149M | 10.6x |
+
+Read the ratio for what it is: a SCALAR kernel against a loop that appended
+one element at a time through the growth path, so the win is the allocation
+and the per-element call overhead, not lane parallelism. That is the floor
+step 3 starts from, and it is why the ordering measures adoption before
+vectorising — the 12x here would otherwise be credited to the vector body
+that has not been written. The arm64 and wasm rows are wall time, with the
+usual qemu caveat on the first and ~10 ms of wasmtime start-up inside both
+numbers of the second.
+
 ### 3.5 Testing
 
 Per rule 5, each kernel ships with:
