@@ -670,6 +670,27 @@ function main(): i32 {
     }
     return t % 100;
 }`},
+	// A literal argument of a template has no type of its own: `id([])` is
+	// produced at the bare variable T, so the array literal was refused for
+	// an unresolved type and the map literal for naming no destination. The
+	// call's destination names T through the result, so the binding it
+	// implies types such an argument; an argument naming its own type still
+	// binds the variable itself, left to right. The instance is `id[i32[]]`
+	// and its result is reclaimed whole.
+	{name: "literal-argument-typed-from-the-destination", atLeast: 2, noLeak: true, src: `
+function id[T](x: T): T { return x; }
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) {
+        var xs: i32[] = id([]);
+        var ys: i32[] = id([i, i + 1]);
+        var fs: ((i32) => i32)[] = id([((x: i32) => x + i)]);
+        t = t + xs.len() + ys[1] + (fs[0])(2);
+        i = i + 1;
+    }
+    return t % 97;
+}`},
 	{name: "map-delete-and-clear", atLeast: 4, noLeak: true, src: `
 function survivors(n: i32): i32 {
     var m: Map[i32, i32] = map_new(8);
