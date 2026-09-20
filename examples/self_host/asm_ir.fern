@@ -5615,6 +5615,9 @@ function ssa_push_operand(reg_of: i32[], v: i32, s: asmcore.EmitState): asmcore.
 // ever a home, so both survive a destination that IS the operand's register —
 // the usual case once a result and its operand share one — and the
 // destination is written after the last read of the operand.
+//
+// rc_inc's read of the count carries the sanitizer's poison check, as its
+// stub's does; is_unique's stub has none, so neither does this.
 function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
     s = helper_call_needs(ins.str, s);
     s = ssa_read(reg_of, ins.args[0], "%r11", s);
@@ -5632,7 +5635,8 @@ function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
         return ssa_store(reg_of, ins.result, d, s);
     }
     s = s.write(guard);
-    s = s.write("    movl " + rc + ", %ecx\n    testl %ecx, %ecx\n    js " + done + "\n");
+    s = s.write("    movl " + rc + ", %ecx\n" + san_poison_check("%ecx"));
+    s = s.write("    testl %ecx, %ecx\n    js " + done + "\n");
     s = s.write("    addl $1, %ecx\n    movl %ecx, " + rc + "\n");
     s = s.write(done + ":\n");
     // rc_inc hands the pointer back; a result with no home stores nothing.
