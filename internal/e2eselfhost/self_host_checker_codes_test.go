@@ -2648,6 +2648,13 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		// `s[i].to_upper()` and `to_upper_char(cp)` indistinguishable. The cast
 		// itself stays legal, and the last case pins that: making char distinct
 		// must not turn `n as char` / `c as i32` into E033.
+		// `.map` on an `own` array is admitted by E053 like `.with` (#9733):
+		// whether it is written through the donor is E068's question, on
+		// both compilers. A borrowed receiver has no donor and stays E053.
+		// Here rather than in the codes table because std/array has to be
+		// in scope for the call to be a method call at all.
+		{"e053-map-on-an-own-array", "import \"std/array\";\nfip function f(own xs: i64[]): i64[] { return xs.map((x: i64): i64 => x); }\nfunction main(): i32 { return f([1 as i64]).len(); }\n"},
+		{"e053-map-on-a-borrowed-array", "import \"std/array\";\nfip function f(xs: i64[]): i64[] { return xs.map((x: i64): i64 => x); }\nfunction main(): i32 { return f([1 as i64]).len(); }\n"},
 		{"char-not-from-int-literal", "function main(): i32 { var c: char = 65; return 0; }\n"},
 		{"char-not-to-i32-return", "function f(c: char): i32 { return c; }\nfunction main(): i32 { return 0; }\n"},
 		{"char-not-from-i32-return", "function f(n: i32): char { return n; }\nfunction main(): i32 { return 0; }\n"},

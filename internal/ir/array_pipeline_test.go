@@ -29,6 +29,17 @@ import (
 
 func lowerPipelineSrc(t *testing.T, src string) *ir.Program {
 	t.Helper()
+	ip, err := lowerPipelineErr(t, src)
+	if err != nil {
+		t.Fatalf("lower: %v", err)
+	}
+	return ip
+}
+
+// lowerPipelineErr is lowerPipelineSrc returning LowerWith's error instead
+// of failing on it, for the E068 cases whose subject is that error.
+func lowerPipelineErr(t *testing.T, src string) (*ir.Program, error) {
+	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fern")
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
@@ -47,11 +58,7 @@ func lowerPipelineSrc(t *testing.T, src string) *ir.Program {
 	prev := ast.RcFreeEnabled
 	ast.RcFreeEnabled = true
 	defer func() { ast.RcFreeEnabled = prev }()
-	ip, err := ir.LowerWith(prog, info, 8)
-	if err != nil {
-		t.Fatalf("lower: %v", err)
-	}
-	return ip
+	return ir.LowerWith(prog, info, 8)
 }
 
 // shapesIn returns the recognized pipelines in `fn`, as their rendered
@@ -386,5 +393,31 @@ function main(): i32 { return run([1 as i64, 2 as i64]) as i32; }`)
 		if !strings.Contains(got, want) {
 			t.Errorf("histogram does not mention %q:\n%s", want, got)
 		}
+	}
+}
+
+// `__method_Array_map` is the mangling of ANY receiver method on arrays. A
+// program that never imports std/array may declare its own `map`, and nothing
+// about that function is the algebra's: recognizing it would hand the fusion
+// and in-place passes a body they would rewrite into std/array's semantics.
+// The passes rewrote exactly that before the verb table was derived from the
+// program, so this pins all three readers at once.
+func TestUserDeclaredArrayMapIsNotTheAlgebra(t *testing.T) {
+	p := lowerPipelineSrc(t, `function (xs: i64[]) map(f: (i64) => i64): i64[] { return []; }
+function dbl(x: i64): i64 { return x * (2 as i64); }
+function run(own xs: i64[]): i64[] { return xs.map((x: i64): i64 => dbl(x)); }
+function chain(xs: i64[]): i64[] { return xs.map((x: i64): i64 => dbl(x)).map((x: i64): i64 => dbl(x)); }
+function main(): i32 { return run([1 as i64]).len() + chain([1 as i64]).len(); }`)
+	if got := ir.RecognizeArrayPipelines(p); len(got) != 0 {
+		t.Errorf("recognized %d pipelines over a user-declared map, want 0: %+v", len(got), got)
+	}
+	if n := ir.FuseArrayPipelines(p, 8); n != 0 {
+		t.Errorf("fused %d chains over a user-declared map, want 0", n)
+	}
+	if n := ir.MapOwnedArrayInPlace(p, 8); n != 0 {
+		t.Errorf("rewrote %d user-declared maps in place, want 0", n)
+	}
+	if got := callsIn(t, p, "run", "__method_Array_map"); len(got) != 1 {
+		t.Errorf("run's call to its own map is gone: %v", got)
 	}
 }

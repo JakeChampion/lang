@@ -124,6 +124,14 @@ pub function fresh_alloc_what(o: ir.Op): string {
     if (t == 98) { return "string concatenation"; }
     if (t == 76) { return "heap allocation"; }
     if (t == 77) { return "byte-buffer allocation"; }
+    // A std/array `map` E053 admitted on an `own` receiver (#9733). Native
+    // writes it through the donor when R7 of docs/REUSE-CONTRACT.md holds and
+    // counts the ones it declines; this compiler has no in-place map at all,
+    // so every one it emits builds a fresh array by append and is counted as
+    // such, with the reason — the honest half of "which compiler checks what".
+    if (t == ir.kind_id("call_direct") && util.str_has_prefix(o.str, "__arrm_map__")) {
+        return "`map` materialized by the combinator: the self-hosted compiler has no in-place map (R7 is native-only until the reuse port)";
+    }
     return "";
 }
 

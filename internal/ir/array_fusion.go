@@ -102,16 +102,13 @@ func FuseArrayPipelines(prog *Program, ptrW int) int {
 		return 0
 	}
 	n := 0
-	effectful := effectfulFuncs(prog)
+	cx := newArrayContext(prog)
 	for _, fn := range prog.Funcs {
-		// std/array's own bodies are left alone: a combinator implemented in
-		// terms of another is the library's business, and rewriting `map`
-		// into a loop over itself is not what this is for.
-		if _, isStdlibBody := arrayVerbOf(fn.Name); isStdlibBody {
+		if cx.isStdlibBody(fn) {
 			continue
 		}
 		for {
-			p, ok := planFusion(fn, effectful)
+			p, ok := planFusion(fn, cx)
 			if !ok {
 				break
 			}
@@ -207,13 +204,13 @@ func effectfulFuncs(prog *Program) map[string]bool {
 // target to answer.
 func ArrayFusionVerdicts(prog *Program) map[string]FusionVerdict {
 	out := map[string]FusionVerdict{}
-	effectful := effectfulFuncs(prog)
+	cx := newArrayContext(prog)
 	for _, fn := range prog.Funcs {
-		if _, isStdlibBody := arrayVerbOf(fn.Name); isStdlibBody {
+		if cx.isStdlibBody(fn) {
 			continue
 		}
-		for _, pl := range recognizeInFunc(fn) {
-			_, v := planOne(fn, pl, effectful)
+		for _, pl := range recognizeInFunc(fn, cx) {
+			_, v := planOne(fn, pl, cx)
 			out[arrayPipelineKey(fn.Name, pl)] = v
 		}
 	}
@@ -227,16 +224,16 @@ func arrayPipelineKey(fnName string, pl ArrayPipeline) string {
 
 // planFusion finds the first fusible chain in fn, or reports that there is
 // none. One at a time, because emitting shifts every later op index.
-func planFusion(fn *Func, effectful map[string]bool) (fusedPipeline, bool) {
-	for _, pl := range recognizeInFunc(fn) {
-		if p, v := planOne(fn, pl, effectful); v.Why == FusionFused {
+func planFusion(fn *Func, cx arrayContext) (fusedPipeline, bool) {
+	for _, pl := range recognizeInFunc(fn, cx) {
+		if p, v := planOne(fn, pl, cx); v.Why == FusionFused {
 			return p, true
 		}
 	}
 	return fusedPipeline{}, false
 }
 
-func planOne(fn *Func, pl ArrayPipeline, effectful map[string]bool) (fusedPipeline, FusionVerdict) {
+func planOne(fn *Func, pl ArrayPipeline, cx arrayContext) (fusedPipeline, FusionVerdict) {
 	if len(pl.Stages) < 2 {
 		return fusedPipeline{}, FusionVerdict{Why: FusionSingleStage}
 	}
@@ -255,7 +252,7 @@ func planOne(fn *Func, pl ArrayPipeline, effectful map[string]bool) (fusedPipeli
 		stages = append(stages, fusedStage{verb: s.Verb})
 	}
 
-	calls := collectArrayCalls(fn)
+	calls := collectArrayCalls(fn, cx)
 	byOp := map[int]arrayCall{}
 	for _, c := range calls {
 		byOp[c.op] = c
@@ -269,7 +266,7 @@ func planOne(fn *Func, pl ArrayPipeline, effectful map[string]bool) (fusedPipeli
 		if !ok || c.fnSlot < 0 || c.element == "" {
 			return fusedPipeline{}, FusionVerdict{Why: FusionElementFunctionUnresolved, Stage: i, Verb: s.Verb}
 		}
-		if effectful[c.element] {
+		if cx.effectful[c.element] {
 			return fusedPipeline{}, FusionVerdict{
 				Why: FusionElementFunctionEffectful, Stage: i, Verb: s.Verb, Element: c.element}
 		}

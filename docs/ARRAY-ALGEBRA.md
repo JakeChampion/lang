@@ -264,14 +264,29 @@ work and more honest, and it is the right thing to reach for once the
 would mean designing a protocol against a guess.
 
 **A stdlib function the algebra recognizes acquires a space contract.**
-`ARRAY-PIPELINE-BASELINE-2026-09.md` §4 recorded that `fip` cannot reach
-the combinators at all — `E053` rejects the call to `map` before `E068`
-is ever consulted, because `std/array` carries no annotation — so "the
-space-contract system and the combinator library are disconnected
+`ARRAY-PIPELINE-BASELINE-2026-09.md` §4 recorded that `fip` could not
+reach the combinators at all — `E053` rejected the call to `map` before
+`E068` was ever consulted, because `std/array` carries no annotation — so
+"the space-contract system and the combinator library are disconnected
 today, and 'fusion makes `map` allocation-free' would not by itself
 connect them." Connecting them is part of recognizing an operator, not a
-follow-up: an operator in the algebra is annotated, or it is not in the
-algebra.
+follow-up, and the connection is not an annotation on `std/array`: `map`
+as written allocates, and its contract is conditional on the call site
+(an `own` receiver, a capture-free element function). So the contract is
+carried by the CALLER's claim and verified at the IR: E053 admits
+`xs.map(f)` on an `own` receiver, and E068 counts a `map` that R7 does
+not write through its donor, naming the taint (#9733). An operator joins
+the algebra when its IR verdict is what E068 reads — that is what
+"annotated" means for a combinator whose contract depends on how it is
+called.
+
+**Recognition is of the resolved callee, not of the mangled name.**
+`__method_Array_<verb>` is the mangling of any receiver method on arrays;
+a program that never imports `std/array` may declare its own `map` and it
+is not the algebra's. The IR derives the verb table per program: the free
+function `array__<verb>` (a prefix modload reserves) and the method
+spelling only where its body delegates to that free function, which is
+what `std/array`'s wrappers do and what a user's method cannot.
 
 ## 7. Diagnostics
 
@@ -324,15 +339,25 @@ fold       reduction    __closure_lambda_2
   no buffer: a reduction produces a value
 ```
 
-The verdicts are read off the IR, not asserted: whether a combinator
-consumes its array is `Func.ParamConsumed`, and whether the element shape
-survives a stage is the two stages' parameter types. That matters because
-the answer today is the SAME for every std/array combinator — they all
-borrow — and a hardcoded sentence would go on being printed after the fact
-it describes stopped being true. `shape-change` and `reused` cannot fire
-until one of them takes an `own` array; a test in
-`internal/ir/array_storage_test.go` fails when that happens, so the report
-gains its new cases deliberately rather than by accident.
+The verdicts come from the planner that performs R7's in-place rewrite
+(`docs/REUSE-CONTRACT.md`, #9733), so `reused` is printed exactly where the
+pass writes through the `own` parameter and every refusal names the taint
+that declined it — `receiver-not-own-param`, `element-fn-captures`,
+`shape-change`, and the rest of the closed set in
+`internal/ir/array_storage.go`. A hardcoded sentence would go on being
+printed after the fact it describes stopped being true, which is what the
+report did about `map` for the day between R7 landing and its verdicts
+being read here. `internal/ir/array_storage_test.go` pins one verdict per
+taint.
+
+```
+map        elementwise  __closure_lambda_1
+  donated buffer: written through the `own` parameter (R7)
+```
+
+The same verdict is what E068 reports when a `fip` / `fbip` function's
+`map` is declined, so "why did this allocate under my space claim" and
+"why did this allocate" have one answer.
 
 `FERN_ARRAY_REPORT=1` adds a histogram, in three sections: why each chain
 was not FUSED (#9731), where each stage's BUFFER came from (#9732), and

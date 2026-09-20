@@ -205,8 +205,18 @@ Two things worth having measured rather than assumed:
 
 ### 4. `fip` cannot reach the combinators at all — E053, not E068
 
-#9728 asks whether `fip` on the third pipeline passes E068. It cannot get that
-far:
+**Superseded by #9733's second half.** E053 now admits `xs.map(f)` on an
+`own` receiver and E068 verifies R7 wrote it through the donor, so `fip
+function via_map_own(own xs)` passes on the native compiler and allocates
+nothing (`internal/e2e/array_inplace_fip_test.go`). The example file keeps
+`via_map_own` unannotated because `scripts/array-pipeline-baseline` builds it
+with BOTH compilers, and the self-hosted one — which has no in-place map —
+refuses the claim with an E068 naming that, which is the honest half of the
+contract rather than a defect. (Its wasm route does not get that far over an
+`i64` element: #9838.) What follows is what was found before.
+
+#9728 asks whether `fip` on the third pipeline passes E068. It could not get
+that far when this was measured:
 
 ```
 error[E053]: `fip` function "via_map_own" may not call method "map" (not proven allocation-free)
@@ -305,9 +315,12 @@ is the one gap this round leaves open.
    of `docs/REUSE-CONTRACT.md` to fire on. That answered #9733's first
    question — it needed a NEW shape rather than falling out of the existing
    pairing — and R7 is that shape. `map_own` now allocates nothing.
-4. **Does `fip` pass E068 on that pipeline?** The question cannot be reached.
-   E053 rejects the call to `map` first, because `std/array` carries no space
-   annotation. The hand-written `own` loop does pass E068 and does measure zero.
+4. **Does `fip` pass E068 on that pipeline?** It could not be reached when
+   this was measured — E053 rejected the call to `map` first, because
+   `std/array` carries no space annotation — and now it does, on the native
+   compiler: the claim is verified against R7's verdict rather than against
+   an annotation on the library (§4 above, #9733). The hand-written `own`
+   loop passed E068 and measured zero throughout.
 5. **Do the two compilers agree?** On answers, yes — every variant of every
    program, once #9743 was fixed; before it, two of the three did not compile
    under the self-hosted compiler at all. On cost, no: instruction counts differ

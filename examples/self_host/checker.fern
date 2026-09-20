@@ -13113,8 +13113,10 @@ function e044_diags(efn: parser.FuncDecl, struct_names: string[], union_names: s
 // subset. Default-deny: anything not proven heap-neutral is rejected.
 // Allowed: scalars, arithmetic/comparison/logic, field & index reads, control
 // flow, (re)binding locals, `recv.with(i, v)` / index writes rooted at an
-// `own` array parameter (the COW unique-in-place branch), calls to other
-// `fip` functions and the whitelisted non-allocating builtin method (`len`).
+// `own` array parameter (the COW unique-in-place branch), `recv.map(f)` rooted
+// at one (the in-place map, R7 of docs/REUSE-CONTRACT.md, which E068 verifies),
+// calls to other `fip` functions and the whitelisted non-allocating builtin
+// method (`len`).
 // Rejected: array / tuple / struct literals, payload-carrying enum variant
 // construction, string concatenation (incl. the f-string `+`-chain desugar),
 // calls to non-`fip` functions, any other method call, indirect calls, and
@@ -13249,6 +13251,13 @@ function e053_at_node(n: ast.Expr, fx: E053Ctx, cur: Scope, own out: util.Diag[]
             }
           }
           if (fa.field == "with" && root_own) {
+            return out;
+          }
+          // `recv.map(f)` on an `own` array is admitted as native admits it
+          // (#9733): the in-place map is an IR fact, so irfipverify's E068
+          // owns the verdict — and on this compiler, which has no in-place
+          // map, that verdict is a refusal naming the reason.
+          if (fa.field == "map" && root_own) {
             return out;
           }
           if (fa.field == "len") {

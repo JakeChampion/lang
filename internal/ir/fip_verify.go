@@ -35,6 +35,7 @@ package ir
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/jakechampion/lang/internal/ast"
@@ -49,13 +50,18 @@ func errfCode(pos ast.Position, code, format string, args ...any) error {
 	return fmt.Errorf("%s: %s: %s", pos, code, fmt.Sprintf(format, args...))
 }
 
-// verifyFipAllocs checks a just-lowered `fip` / `fbip` function's ops
-// against its allocation budget (see the package comment above). Returns
-// an E068 error naming the function, every offending site's position,
-// and the count vs the allowance. Called by lowerFunc immediately after
-// body emission, before any later pass reshapes the op stream.
-func verifyFipAllocs(fn *ast.FuncDecl, out *Func) error {
-	if !fn.Fip && !fn.Fbip {
+// verifyFipClaims checks every just-lowered `fip` / `fbip` function against
+// its allocation budget, once the whole program is lowered. lowered[i] is
+// prog.Funcs[i]'s lowering, nil for a body-less import.
+func verifyFipClaims(prog *ast.Program, lowered []*Func) error {
+	claimed := false
+	for _, fn := range prog.Funcs {
+		if fn.Fip || fn.Fbip {
+			claimed = true
+			break
+		}
+	}
+	if !claimed {
 		return nil
 	}
 	// The verification is defined against the DEFAULT lowering: with the
@@ -64,6 +70,39 @@ func verifyFipAllocs(fn *ast.FuncDecl, out *Func) error {
 	// is deliberately off, so every constructor would read "fresh" and the
 	// claim cannot be meaningfully verified — skip instead of mis-reporting.
 	if !ast.RcFreeEnabled || !ast.RcReuseEnabled {
+		return nil
+	}
+	funcs := make([]*Func, 0, len(lowered))
+	for _, f := range lowered {
+		if f != nil {
+			funcs = append(funcs, f)
+		}
+	}
+	cx := newArrayContext(&Program{Funcs: funcs})
+	for i, fn := range prog.Funcs {
+		if lowered[i] == nil {
+			continue
+		}
+		if err := verifyFipAllocs(fn, lowered[i], cx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// verifyFipAllocs checks one lowered `fip` / `fbip` function's ops against
+// its allocation budget (see the package comment above). Returns an E068
+// error naming the function, every offending site's position, and the
+// count vs the allowance.
+//
+// A std/array `map` the checker admitted (E053 lets one through on an
+// `own` receiver) is a site here too: it is allocation-free exactly when R7
+// of docs/REUSE-CONTRACT.md writes it through the donor, and `inPlaceVerdict`
+// is the same answer the pass acts on, so a `map` it declines is counted
+// as fresh with the rule that declined it — the stage-naming diagnostic
+// #9733 asks for.
+func verifyFipAllocs(fn *ast.FuncDecl, out *Func, cx arrayContext) error {
+	if !fn.Fip && !fn.Fbip {
 		return nil
 	}
 	labels := ctorSiteLabels(fn)
@@ -84,11 +123,30 @@ func verifyFipAllocs(fn *ast.FuncDecl, out *Func) error {
 		case OpStrConcat:
 			what = "string concatenation"
 		case OpMakeClosure:
+			// A closure capturing nothing is a plain function value: the
+			// battery's InlineZeroCaptureClosures turns it into a static
+			// cell before any backend emits it, so it allocates nothing.
+			// It is also the element function R7 admits.
+			if op.I32 == 0 {
+				continue
+			}
 			what = "closure construction"
 		default:
 			continue
 		}
 		sites = append(sites, fmt.Sprintf("%s at %s", what, op.Pos))
+	}
+	// With the in-place pass switched off (a debug configuration, like the
+	// reuse flags above) no `map` is written through its donor, so the claim
+	// is verified against machinery that is deliberately absent; skip the
+	// sites rather than report every one.
+	if os.Getenv("FERN_NO_ARRAY_INPLACE") != "1" {
+		for _, c := range collectArrayCalls(out, cx) {
+			if _, why := inPlaceVerdict(out, c, cx); why != StorageReused {
+				sites = append(sites, fmt.Sprintf("`%s` at %s materialized by the combinator: %s",
+					c.verb, out.Ops[c.op].Pos, why.Reason()))
+			}
+		}
 	}
 	if len(sites) <= fn.FipAllowance {
 		return nil
@@ -100,7 +158,7 @@ func verifyFipAllocs(fn *ast.FuncDecl, out *Func) error {
 	// One remedy for every tier now that the checker admits the constructor
 	// shape everywhere (#9602): a site here is an un-paired construction the
 	// author can pair or grade, in a bare `fip` exactly as in an `fbip`.
-	remedy := "pair each construction with a dead uniquely-owned donor of the same shape, or grade the claim (`" + kw + "(n)`)"
+	remedy := "pair each construction with a dead uniquely-owned donor of the same shape, hand a `map` an `own` array and a capture-free element function (R7), or grade the claim (`" + kw + "(n)`)"
 	return errfCode(fn.P, "E068",
 		"`%s` function %q allocates: %d un-reused allocation site(s) exceed the allowance of %d: %s — %s (run `fern explain E068`)",
 		kw, fn.Name, len(sites), fn.FipAllowance, strings.Join(sites, "; "), remedy)

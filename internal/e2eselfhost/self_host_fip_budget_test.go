@@ -67,6 +67,18 @@ function make(n: i32): State {
 }
 function main(): i32 { return make(3).count; }
 `
+	// `xs.map(f)` on an `own` array passes E053 on both compilers (#9733).
+	// Native writes it through the donor (R7) and the claim holds there;
+	// this compiler has no in-place map, so its E068 says so rather than
+	// letting an annotation it cannot honour read as a guarantee. The
+	// element is i32 so the same source reaches E068 on the wasm leg too:
+	// the wasm route refuses a combinator handed a function over a 64-bit
+	// element before any claim is examined (#9838).
+	fipOwnedMapSrc = `import "std/array";
+fip function dbl(x: i32): i32 { return x * 2; }
+fip function twice(own xs: i32[]): i32[] { return xs.map((x: i32): i32 => dbl(x)); }
+function main(): i32 { return twice([1, 2]).len(); }
+`
 )
 
 func TestSelfHostCompilePathEnforcesFipBudget(t *testing.T) {
@@ -105,6 +117,7 @@ func TestSelfHostCompilePathEnforcesFipBudget(t *testing.T) {
 			for _, tc := range []struct{ name, src, kw string }{
 				{"unpaired fbip", fipUnpairedFbipSrc, "`fbip` function"},
 				{"unpaired fip", fipUnpairedFipSrc, "`fip` function"},
+				{"owned map without an in-place shape", fipOwnedMapSrc, "no in-place map"},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					out, code := compile(t, target, tc.src)
