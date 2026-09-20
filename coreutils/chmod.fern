@@ -359,22 +359,23 @@ function target_mode(t: Target, old: i32, is_dir: boolean): (i32, i32, boolean) 
 // GNU's lchmod. Darwin keeps a mode on a symlink and changes it; Linux
 // keeps none and answers EOPNOTSUPP (ENOSYS below fchmodat2), which GNU
 // reports as "neither … has been changed" and does not count as a
-// failure.
+// failure. The mode REPORTED is `info`, what the walk stat'ed: a
+// command-line link is followed by the walk whatever the change lands
+// on, so `-hv` on one prints the referent's old mode on Darwin, as GNU's
+// fts entry does.
 function change_one(st0: St, s: Settings, t: Target, path: string, info: FileStat, link: Option[FileStat], follows: boolean): St {
   var st: St = st0;
-  var own: FileStat = info;
   var on_link: boolean = false;
   match (link) {
-    Some(l) => {
+    Some(_) => {
       if (!follows) {
-        own = l;
         on_link = true;
       }
     },
     None => {}
   }
-  var old: i32 = own.mode as i32 & mode.all_bits();
-  var is_dir: boolean = filetype.is_dir(own.mode);
+  var old: i32 = info.mode as i32 & mode.all_bits();
+  var is_dir: boolean = filetype.is_dir(info.mode);
   var r: (i32, i32, boolean) = target_mode(t, old, is_dir);
   var wanted: i32 = r.0;
   match (chmod_at(path, wanted, !on_link)) {
