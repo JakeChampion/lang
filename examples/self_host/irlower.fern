@@ -7794,8 +7794,7 @@ pub function expr_is_str(e: ast.Expr, s: LowerState): boolean {
                     // The string-returning str_* free builtins (transform family) —
                     // the free-function spelling of `.to_upper()` / `.trim()` /
                     // `.repeat()` / `.replace()`, each yielding a fresh string box.
-                    // (str_contains/index_of/starts_with/ends_with return bool/i32;
-                    // str_split is string[], tracked in expr_is_strarr.)
+                    // (str_split is string[], tracked in expr_is_strarr.)
                     if (cid.name == "str_to_upper" || cid.name == "str_to_lower"
                             || cid.name == "str_trim" || cid.name == "str_repeat"
                             || cid.name == "str_replace") { return true; }
@@ -11056,9 +11055,6 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
 // the name isn't one. Lets the free-call and method-call forms share one lowerer.
 pub function str_free_call_field(name: string): string {
     if (name == "str_split") { return "split"; }
-    if (name == "str_starts_with") { return "starts_with"; }
-    if (name == "str_ends_with") { return "ends_with"; }
-    if (name == "str_index_of") { return "index_of"; }
     // The transform + remaining-predicate free-function spellings: the same
     // ops as the `.<field>()` method forms (lower_str_method), differing only
     // in that the receiver is the first positional arg. Arity is recovered via
@@ -11070,26 +11066,24 @@ pub function str_free_call_field(name: string): string {
     if (name == "str_trim") { return "trim"; }
     if (name == "str_repeat") { return "repeat"; }
     if (name == "str_replace") { return "replace"; }
-    if (name == "str_contains") { return "contains"; }
     return "";
 }
 
 // is_str_builtin_method reports whether `field` names a string builtin method the
 // IR path lowers directly: the 0-arg transforms `to_upper` / `to_lower` (→ fresh
-// string), `split` (→ string[]), and the scalar predicates starts_with /
-// ends_with / index_of / contains. The caller checks arity (str_method_argc) +
-// that the receiver is a string before dispatching to lower_str_method.
+// string) and `split` (→ string[]). The search predicates are not here: they
+// are std/string's methods, whose one-byte needle reaches `__memchr`. The
+// caller checks arity (str_method_argc) + that the receiver is a string before
+// dispatching to lower_str_method.
 pub function is_str_builtin_method(field: string): boolean {
     return field == "to_ascii_upper" || field == "to_ascii_lower" || field == "trim"
         || field == "reverse" || field == "repeat" || field == "replace"
         || field == "lines"
-        || field == "split"
-        || field == "starts_with" || field == "ends_with" || field == "index_of"
-        || field == "contains";
+        || field == "split";
 }
 
 // str_method_argc gives the argument count of a string builtin method: the case
-// transforms are 0-arg; everything else (split + predicates) is 1-arg.
+// transforms are 0-arg; everything else is 1-arg.
 pub function str_method_argc(field: string): i32 {
     if (field == "to_ascii_upper" || field == "to_ascii_lower" || field == "trim" || field == "reverse" || field == "lines") { return 0; }
     if (field == "replace") { return 2; }
@@ -11098,10 +11092,9 @@ pub function str_method_argc(field: string): i32 {
 
 // lower_str_method lowers a string builtin method `recv.<field>(args…)`: it
 // lowers the receiver, then (for the 1-arg forms) the argument, then emits the
-// field's op. `to_upper` / `to_lower` → a fresh cased string; `split` → string[];
-// the search predicates → scalar (`contains` is `index_of(...) >= 0`). Kept out
-// of lower_expr's giant FieldAccess arm to stay under the self-host backend's
-// oversized-function threshold (#2720).
+// field's op. `to_upper` / `to_lower` → a fresh cased string; `split` →
+// string[]. Kept out of lower_expr's giant FieldAccess arm to stay under the
+// self-host backend's oversized-function threshold (#2720).
 pub function lower_str_method(field: string, recv: ast.Expr, args: ast.Expr[], s: LowerState): LowerState {
     var p: LowerState = lower_expr(recv, s);
     if (!p.ok) { return p; }
@@ -11160,14 +11153,7 @@ pub function lower_str_method(field: string, recv: ast.Expr, args: ast.Expr[], s
         return p.emit(ir.op_str_replace());
     }
     if (field == "repeat") { return free_stashed_recv(p.emit(ir.op_str_repeat()), rslots, rview); }
-    if (field == "split") { return p.emit(ir.op_str_split()); }
-    if (field == "starts_with") { return free_stashed_recv(p.emit(ir.op_str_starts_with()), rslots, rview); }
-    if (field == "ends_with") { return free_stashed_recv(p.emit(ir.op_str_ends_with()), rslots, rview); }
-    if (field == "index_of") { return free_stashed_recv(p.emit(ir.op_str_index_of()), rslots, rview); }
-    // contains: index_of(sub) >= 0
-    p = p.emit(ir.op_str_index_of());
-    p = p.emit(ir.op_const_i32(0));
-    return free_stashed_recv(p.emit(ir.op_bin("ge_s", 0, false)), rslots, rview);
+    return p.emit(ir.op_str_split());
 }
 
 // lower_arr_str_join lowers `xs.join(sep)` on a string[] receiver to a call of the
@@ -12792,11 +12778,10 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         if (lstr) { return free_parked_view_after(ls.emit(ir.op_str_len()), lvst.slot); }
         return ls.emit(ir.op_arr_len());
     }
-    // String builtin free calls — `str_split(s, sep)` and the
-    // predicates `str_starts_with` / `str_ends_with` /
-    // `str_index_of(s, x)` — are the same ops as the `.split` /
-    // `.starts_with` / … method forms, so they route through
-    // lower_str_method (field = the name minus its `str_` prefix).
+    // String builtin free calls — `str_split(s, sep)` and the transforms —
+    // are the same ops as the `.split` / `.trim` / … method forms, so they
+    // route through lower_str_method (field = the name minus its `str_`
+    // prefix).
     var sfreef: string = str_free_call_field(cid.name);
     if (sfreef != "" && c.args.len() == str_method_argc(sfreef) + 1) {
         // Free-call form: receiver is the first positional arg, the
@@ -30428,9 +30413,7 @@ function emit_struct_tuple_field_drops(se: LowerState, slot: i32, sty: string): 
 // both can return a VIEW of the receiver, which is a lasting alias.
 function str_borrowing_method(field: string): boolean {
     return field == "len" || field == "to_ascii_upper" || field == "to_ascii_lower"
-        || field == "reverse" || field == "repeat"
-        || field == "starts_with" || field == "ends_with"
-        || field == "contains" || field == "index_of";
+        || field == "reverse" || field == "repeat";
 }
 
 // str_method_recv_borrows extends str_borrowing_method's carve-out from the

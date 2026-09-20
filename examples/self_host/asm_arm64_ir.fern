@@ -721,17 +721,6 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.mark_str_lines();
         s = s.write("    bl __fn___fern_str_lines\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n"); return s;
     }
-    if (o.kind_tag == 114 || o.kind_tag == 115 || o.kind_tag == 116) {  // str_starts_with, str_ends_with, str_index_of
-        // operand stack [s, p] (p top); the str_search predicates are now Fern
-        // runtime functions (#2649) called via the __fn_ stack convention —
-        // re-push so s=param[0] at [x29,#16] and p=param[1] at [x29,#32]. Body
-        // from asm_arm64.emit_runtime's (now Fern) str_search block.
-        var pfn: string = "__fn___fern_str_starts_with";
-        if (o.kind_tag == 115) { pfn = "__fn___fern_str_ends_with"; }  // str_ends_with
-        if (o.kind_tag == 116) { pfn = "__fn___fern_str_index_of"; }  // str_index_of
-        s = s.mark_str_search();
-        s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl " + pfn + "\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n"); return s;
-    }
     if (o.kind_tag == 98) {  // str_concat
         // operand stack [A, B] (B on top); __fern_str_concat is a Fern runtime
         // function now (#2649): __fn_ stack convention — A=param[0] at [x29,#16],
@@ -5325,7 +5314,7 @@ function emit_rt_io_and_string(s: asmcore.EmitState): asmcore.EmitState {
     }
     // __fern_str_to_upper / __fern_str_to_lower — Fern runtime functions (#2649)
     // via the raw-memory intrinsics; both gated on the single str_case need (the
-    // shared body serves arm64 AST + IR). Un-bundled from str_search.
+    // shared body serves arm64 AST + IR).
     if (s.has_need("str_case")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_to_upper(), s.struct_decls, s);
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_to_lower(), s.struct_decls, s);
@@ -5341,38 +5330,6 @@ function emit_rt_io_and_string(s: asmcore.EmitState): asmcore.EmitState {
     // `strb w1, [sp, #-16]!` hazard of #6083: the in-process assembler has no
     // byte-store encoder for that pre-index writeback, so it dropped the `!`, left sp
     // unchanged, and the paired `add sp, sp, #16` then raised sp by 16.
-    // String search helpers. See asm.fern.
-    if (s.has_need("str_search")) {
-        // __fern_str_starts_with / _ends_with / _index_of are now Fern runtime
-        // functions (#2649): see asmcore.rt_src_str_search, called via the __fn_
-        // stack convention. The single body serves both arm64 AST + IR (shared
-        // emit_runtime). (str_to_* below stay hand-written — they copy bytes into
-        // a fresh buffer, a Tier-2 op needing the raw-memory primitives.) str_trim
-        // is also Fern now (rt_src_str_trim) but gated on its own str_trim need,
-        // emitted in the migrated-helpers section below — a zero-copy slice, so it
-        // no longer belongs to the str_search bundle.
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_search(), s.struct_decls, s);
-        // str_to_upper / str_to_lower are now Fern too (rt_src_str_to_upper/_lower
-        // via the raw-memory intrinsics) but gated on their own str_case need,
-        // emitted in the migrated-helpers section — no longer in this str_search
-        // bundle. The single shared body serves both arm64 AST + IR.
-        // __fern_str_repeat is now a Fern runtime function (#2649): see
-        // asmcore.rt_src_str_repeat, emitted (need-gated on str_repeat) in the
-        // migrated-helpers section via the raw-memory intrinsics. The single
-        // shared body serves both arm64 AST + IR. No longer in this bundle.
-        // __fern_str_replace is now a Fern runtime function (#2649): see
-        // asmcore.rt_src_str_replace, emitted (need-gated on str_replace) in the
-        // migrated-helpers section via the raw-memory intrinsics. The single
-        // shared body serves both arm64 AST + IR. No longer in this bundle.
-        // __fern_chr is now a Fern runtime function (#2649) — the single shared
-        // __fn___fern_chr body is emitted above via emit_runtime_fern_fn (the
-        // raw-memory intrinsics), replacing both this register-ABI body and the
-        // former stack-ABI IR wrapper.
-        // __fern_str_split is now a Fern runtime function (#2649): see
-        // asmcore.rt_src_str_split, emitted (need-gated on str_split) in the
-        // migrated-helpers section via .append() + string slices. The single
-        // shared body serves both arm64 AST + IR. No longer in this bundle.
-    }
     // Pre-intern "FileStat" so the __fern_stat runtime helper (emitted
     // after this pool, inside the needs_heap block) can reference its
     // shape-name label. The helper's own add_string_lit dedups to this

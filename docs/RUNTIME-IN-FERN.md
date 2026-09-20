@@ -1128,9 +1128,8 @@ the call site (unchanged), only the two reduce loops move to Fern.
 **don't allocate**. Every remaining helper breaks at least one of those, which
 is what the next phase has to confront:
 
-- **IR-path-integrated** — `str_to_i32`, `i32_to_string`, `chr`, `str_cmp`,
-  `str_search`/`str_starts_with`/`str_index_of` are emitted *and* called on the
-  self-host IR path too (via register-ABI calls or `__fn___fern_*` stack
+- **IR-path-integrated** — `str_to_i32`, `i32_to_string`, `chr`, `str_cmp`
+  are emitted *and* called on the self-host IR path too (via register-ABI calls or `__fn___fern_*` stack
   wrappers in `emit_ir_runtime` / `asm_arm64`'s runtime). Migrating one means
   reconciling the IR call convention, not just the AST call site.
 - **Helper-to-helper** — `str_eq` is called by `__fern_map_set` and

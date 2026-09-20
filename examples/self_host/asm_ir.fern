@@ -29,11 +29,6 @@ import "./ircore";
 import "./ssa";
 import "./ssa_lift";
 
-// (The hand-written emit_ir_str_search was removed in #2649: the
-// __fern_str_starts_with / _ends_with / _index_of predicates are now Fern
-// runtime functions, emitted via emit_ir_runtime_fern_fn(asmcore.rt_src_str_search)
-// in emit_module_ir_unit's entry block.)
-
 // __fern_str_to_upper / _to_lower were hand-written here through #2649; they are
 // now Fern runtime functions (asmcore.rt_src_str_to_upper/_lower) lowered through
 // the IR pipeline via emit_ir_runtime_fern_fn in the entry block — each copies `s`
@@ -4544,7 +4539,7 @@ function ir_f2u_sat_rax(width: i32, lb: string, d: string): string {
 // emit_str_op emits one string operand-stack op (the bodies factored out of
 // emit_function_via_ir's dispatch — see ir.is_str_op_kind). Each pops its box
 // operand(s), calls the matching __fern_str_* runtime, and pushes the result;
-// the mark_* needs pull in the helper bodies (emit_ir_runtime / emit_ir_str_search).
+// the mark_* needs pull in the helper bodies (emit_ir_runtime).
 // emit_mismatch_x86 emits the __mismatch kernel (#8791): operand stack
 // [a box, ao, b box, bo, n] (n on top) -> the offset of the first byte where
 // a[ao..ao+n) and b[bo..bo+n) differ, or the clamped n when they are equal.
@@ -5057,16 +5052,6 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         // mark_str_lines pulls in its arr_push + heap deps.
         s = s.write("    call __fn___fern_str_lines\n    addq $8, %rsp\n    pushq %rax\n");
         s = s.mark_str_lines(); return s;
-    }
-    if (o.kind_tag == 114 || o.kind_tag == 115 || o.kind_tag == 116) {  // str_starts_with, str_ends_with, str_index_of
-        // operand stack [s box, p box] (p on top); the str_search predicates are
-        // now Fern runtime functions (#2649) called via the __fn_ stack
-        // convention — re-push so s=param[0] at +16 and p=param[1] at +24.
-        var pfn: string = "__fn___fern_str_starts_with";
-        if (o.kind_tag == 115) { pfn = "__fn___fern_str_ends_with"; }  // str_ends_with
-        if (o.kind_tag == 116) { pfn = "__fn___fern_str_index_of"; }  // str_index_of
-        s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n    call " + pfn + "\n    addq $16, %rsp\n    pushq %rax\n");
-        s = s.mark_str_search(); return s;
     }
     if (o.kind_tag == 98) {  // str_concat
         // operand stack: [box A, box B] (B on top). __fern_str_concat is a Fern
@@ -8909,7 +8894,7 @@ function emit_ir_runtime_fern_fn(src: string, all_structs: irlower.StructTab, s:
     // s.split("\n")) land in string_lits AFTER the main .rodata pool was emitted
     // (this runs in the entry block, past the pool), so flush any NEW ones here in
     // their own .rodata block then return to .text. A literal-free helper (the
-    // str_search / str_eq / str_cmp / str_to_i32 / str_trim bodies) adds none, so
+    // str_eq / str_cmp / str_to_i32 / str_trim bodies) adds none, so
     // this is a no-op for them. Mirrors the AST emit_runtime_fern_fn flush.
     var vsigs: irverify.NameIndex = irlower.fn_sig_index(fns);
     var lit0: i32 = s.string_lits.len();
@@ -10190,14 +10175,6 @@ function emit_module_ir_unit_backend(mod: parser.Module, is_entry: boolean, glob
     if (any_ccall_need(s)) {
         s = s.write("    .text\n");
         s = emit_ccall_shims(s);
-    }
-    // String search predicates (starts_with / ends_with / index_of) are now
-    // Fern runtime functions (#2649): allocation-free + self-contained, lowered
-    // through the IR pipeline via emit_ir_runtime_fern_fn (entry-only, .text;
-    // emit_ir_runtime above left us in .bss). emit_runtime_globls .globl's them.
-    if (s.has_need("str_search")) {
-        s = s.write("    .text\n");
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_search(), all_structs, s);
     }
     // __fern_str_eq (#2649): string equality, also called by the map / arr_str
     // helpers (the map_set→str_eq edge that motivated the issue). Hand-written

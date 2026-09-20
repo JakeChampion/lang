@@ -987,7 +987,7 @@ pub function all_runtime_need_roots(): string[] {
         "read_file_bytes",
         "read_int", "sleep_ms", "sleep_ns", "str_bytes", "str_case", "str_cmp",
         "str_concat", "str_eq", "str_from_bytes", "str_lines", "str_print",
-        "str_read_line", "str_repeat", "str_replace", "str_reverse", "str_search",
+        "str_read_line", "str_repeat", "str_replace", "str_reverse",
         "optarrarr_free", "str_split", "str_to_i32", "str_trim", "strarrarr_free", "strbuf", "buf",
         // The platform helpers. These were absent for as long as the list
         // existed, which made the "closed set" claim above false: the

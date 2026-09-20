@@ -17,7 +17,7 @@ import (
 //
 // Each case defines a free function that shadows a builtin and returns a value
 // the builtin form could never produce (the repro `len` over an enum reads 0
-// via op_arr_len; `chr`/`str_index_of` would route to the string runtime).
+// via op_arr_len; `chr` would route to the string runtime).
 // Routing-pinned to "ir", oracle-checked against the interpreter.
 type userFnShadowCase struct {
 	name string
@@ -41,11 +41,6 @@ function main(): i32 {
 	{"chr-i32", `
 function chr(n: i32): i32 { return n * 2; }
 function main(): i32 { return chr(21); }   // 42`},
-	// A str_* free-call sibling (`str_index_of`): the builtin would route to
-	// lower_str_method expecting a string receiver.
-	{"str_index_of-i32", `
-function str_index_of(a: i32, b: i32): i32 { return a - b; }
-function main(): i32 { return str_index_of(50, 8); }`},
 }
 
 func TestSelfHostUserFnShadowsBuiltinIRX86_64(t *testing.T) {

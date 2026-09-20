@@ -3780,7 +3780,7 @@ function builtin_contracts(): ssasem.Contract[] {
 }
 
 // The string methods the AST lowering emits an OP for rather than a call —
-// `is_str_builtin_method`'s twelve. Each is keyed by its receiver the way a
+// `is_str_builtin_method`'s eight. Each is keyed by its receiver the way a
 // declared method is, `string.trim`, so a text receiver finds it through the
 // owner method_call already derives. A module that DECLARES one of these wins:
 // contracts() keeps the declaration and drops the builtin, which is the same
@@ -3788,8 +3788,7 @@ function builtin_contracts(): ssasem.Contract[] {
 //
 // The receiver is LENT — every one reads its bytes and keeps none of them —
 // and the four that answer text hand back a fresh string of the caller's own,
-// as `split` hands back a fresh array of fresh strings. The predicates answer
-// a scalar, which owns nothing.
+// as `split` hands back a fresh array of fresh strings.
 function string_method_contracts(): ssasem.Contract[] {
     var lent: i32[] = [ssaunits.borrow_mode()];
     var two: i32[] = [ssaunits.borrow_mode(), ssaunits.borrow_mode()];
@@ -3801,12 +3800,8 @@ function string_method_contracts(): ssasem.Contract[] {
     out = out.append(ssasem.Contract { name: "string.lines", params: [t_string()], modes: lent, result: typeinfo.TypeArray { elem: t_string() } });
     out = out.append(ssasem.Contract { name: "string.split", params: [t_string(), t_string()], modes: two, result: typeinfo.TypeArray { elem: t_string() } });
     out = out.append(ssasem.Contract { name: "string.repeat", params: [t_string(), t_i32()], modes: [ssaunits.borrow_mode(), ssaunits.value_mode()], result: t_string() });
-    out = out.append(ssasem.Contract { name: "string.replace", params: [t_string(), t_string(), t_string()],
+    return out.append(ssasem.Contract { name: "string.replace", params: [t_string(), t_string(), t_string()],
         modes: [ssaunits.borrow_mode(), ssaunits.borrow_mode(), ssaunits.borrow_mode()], result: t_string() });
-    out = out.append(ssasem.Contract { name: "string.starts_with", params: [t_string(), t_string()], modes: two, result: t_bool() });
-    out = out.append(ssasem.Contract { name: "string.ends_with", params: [t_string(), t_string()], modes: two, result: t_bool() });
-    out = out.append(ssasem.Contract { name: "string.contains", params: [t_string(), t_string()], modes: two, result: t_bool() });
-    return out.append(ssasem.Contract { name: "string.index_of", params: [t_string(), t_string()], modes: two, result: t_i32() });
 }
 
 // The runtime intrinsics, typed as native's FuncSigs types them. Every one is
