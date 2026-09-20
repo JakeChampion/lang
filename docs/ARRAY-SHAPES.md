@@ -242,11 +242,11 @@ Four consequences:
 
 - **The kernels**: the rest of #9735. The first one exists, `__scale_f64`,
   the elementwise multiply over an `f64[]` that `std/array`'s `scale_f64`
-  will wrap: it is scalar on all eight backends (`ATLAS-PLATFORM-PLAN.md`
-  §3.4's step 1), allocates its own result so no sized-array primitive
-  was needed, and was chosen over the dot product because a reduction
-  may not reassociate (`ARRAY-ALGEBRA.md` §3) while a multiply has
-  nothing to reassociate. `inner` and `outer` are recognized (§6) and
+  now is: scalar on all eight backends (`ATLAS-PLATFORM-PLAN.md` §3.4's
+  steps 1 and 2, with the measurement), allocating its own result so no
+  sized-array primitive was needed, and chosen over the dot product
+  because a reduction may not reassociate (`ARRAY-ALGEBRA.md` §3) while a
+  multiply has nothing to reassociate. `inner` and `outer` are recognized (§6) and
   lowered as the scalar loop; which of their sites a kernel replaces,
   and how a site's element functions are proved to be the arithmetic the
   kernel implements, is not decided here. §1 and §8 say what licenses an
