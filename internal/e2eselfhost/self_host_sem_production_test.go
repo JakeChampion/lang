@@ -489,6 +489,41 @@ function main(): i32 {
     }
     return t % 7;
 }`},
+	// A value-position if/match is hoisted to a `__lam_N` body whose result
+	// tag is if_expr_rt's reading of the first arm's SYNTAX: a call, a record
+	// literal or a nested match all read "i32". The checker never verified the
+	// tag, so the semantic source refused every such body whose arm was not an
+	// i32 ("return type: declared i32, returns boolean") and the caller with
+	// it ("holds a semantic value of i32"). A synthesised declaration's body
+	// is the authority for its result now. Produced 0 of 4 before.
+	{name: "value-if-arm-is-a-call", atLeast: 4, src: `
+struct Xyz { n: i32, valid: boolean }
+function gen(): boolean { return true; }
+function mk(n: i32): Xyz { return Xyz { n: n, valid: true }; }
+function main(): i32 {
+    var v: boolean = (if (true) { gen() } else { false });
+    var x: Xyz = (if (v) { mk(3) } else { Xyz { n: 4, valid: false } });
+    return x.n;
+}`},
+	// A match-expression whose FIRST arm is itself a match-expression, both
+	// yielding unannotated lambdas. Each hoists to a `$iife` body declaring
+	// the coarse `fn` tag with no contract, so the result is read off the
+	// body: the inner one returns a lambda, whose result the checker now
+	// infers from its body, and the outer one returns the CALL of the inner,
+	// which nothing but the contract table can type — so the table is built
+	// to a fixpoint. Refused 4 of 8 before, `unresolved result type: declared
+	// fn`, and the caller with it.
+	{name: "value-match-first-arm-is-a-match-of-lambdas", atLeast: 8, noLeak: true, src: `
+enum Status { Active, Inactive, Pending }
+function main(): i32 {
+    var v0: Status = Pending;
+    var f: (i32) => i32 = (match (v0) {
+        Active => (match (v0) { Active => ((d: i32) => d), Inactive => ((e: i32) => e - 1), Pending => ((g: i32) => g + 1) }),
+        Inactive => ((c: i32) => c * 2),
+        Pending => ((h: i32) => h + 40)
+    });
+    return f(2);
+}`},
 	{name: "map-delete-and-clear", atLeast: 4, noLeak: true, src: `
 function survivors(n: i32): i32 {
     var m: Map[i32, i32] = map_new(8);
