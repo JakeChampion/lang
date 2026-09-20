@@ -5,33 +5,33 @@ import "./astwalk";
 import "./util";
 import "./typeinfo";
 
-// cell_name is the storage a mutated capture is rewritten to. The `$` prefix
-// cannot collide with a user ident, which is what lets a consumer tell a
-// by-reference capture cell from a caller's plain array once the lift has
-// turned both into array parameters (#6185): the MODE is carried in the name,
-// because a ParamDecl carries no mode beyond `own` and a cell is neither owned
-// nor borrowed.
+// cell_name is the storage a mutated capture is rewritten to: a `Cell[T]`
+// the closure and the frame that built it share, so a write on either side
+// is an in-place `set` the other reads. The `$` prefix cannot collide with a
+// user ident.
 pub function cell_name(name: string): string { return "$cell$" + name; }
 
-// is_cell_name reports whether `n` names one. The single rule every consumer
-// asks — irlower's `.with` gate and the semantic boundary's refusal — so the
-// producer of the spelling and its readers cannot drift.
-pub function is_cell_name(n: string): boolean {
-    return util.str_has_prefix(n, "$cell$");
+function cell_read(name: string, line: i32, col: i32): ast.Expr {
+    var cell: ast.Expr = ast.ExprIdent { name: cell_name(name), line: line, col: col, ty: "" };
+    return ast.ExprCall { callee: ast.ExprFieldAccess { obj: cell, field: "get", line: line, col: col, ty: "" }, args: [], line: line, col: col, type_argc: 0, ty: "" };
+}
+
+function cell_type(elem: typeinfo.Type): typeinfo.Type {
+    return typeinfo.TypeStruct { name: "Cell", args: [elem] };
 }
 
 pub function site_key(name: string, line: i32, col: i32): string {
     return name + "@" + util.i32_to_string(line) + ":" + util.i32_to_string(col);
 }
 
-// box_rewrite_expr rewrites every READ of a boxed var `x` to `$cell$x[0]`,
+// box_rewrite_expr rewrites every READ of a boxed var `x` to `$cell$x.get()`,
 // recursing all expression forms (including into lambda bodies). The decl name
 // and assign target are handled by box_rewrite_stmt, not here.
 pub function box_rewrite_expr(e: ast.Expr, boxed: string[], btypes: string[], bsites: string[], bound: string[]): ast.Expr {
     match (e) {
         ast.ExprIdent(id) => {
             if (util.index_of_str(boxed, id.name) >= 0 && util.index_of_str(bound, id.name) < 0) {
-                return ast.ExprIndex { array: ast.ExprIdent { name: cell_name(id.name), line: id.line, col: id.col, ty: "" }, index: ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: id.line, col: id.col }, unchecked: false, ty: "" };
+                return cell_read(id.name, id.line, id.col);
             }
             return e;
         },
@@ -77,7 +77,7 @@ pub function box_rewrite_expr(e: ast.Expr, boxed: string[], btypes: string[], bs
                 caps = [];
                 for cap in lm.captures {
                     if (util.has_str(boxed, cap.name) && !util.has_str(bound, cap.name)) {
-                        caps = caps.append(ast.TypedBinding { name: cell_name(cap.name), ty: typeinfo.TypeArray { elem: cap.ty } });
+                        caps = caps.append(ast.TypedBinding { name: cell_name(cap.name), ty: cell_type(cap.ty) });
                     } else { caps = caps.append(cap); }
                 }
             }
@@ -110,7 +110,7 @@ pub function box_rewrite_expr(e: ast.Expr, boxed: string[], btypes: string[], bs
 }
 
 // box_rewrite_stmt rewrites one statement: a boxed var's decl wraps its init in
-// a cell, a boxed assign becomes an in-place `.with`, everything else recurses.
+// a cell, a boxed assign becomes the cell's `set`, everything else recurses.
 function box_rewrite_stmt(st: ast.Stmt, boxed: string[], btypes: string[], bsites: string[], bound: string[]): ast.Stmt {
     match (st) {
         ast.StmtVar(v) => {
@@ -123,18 +123,17 @@ function box_rewrite_stmt(st: ast.Stmt, boxed: string[], btypes: string[], bsite
             if (bxi >= 0 && site_key(v.name, v.line, v.col) != bsites[bxi]) { bxi = 0 - 1; }
             if (bxi >= 0 && util.index_of_str(bound, v.name) >= 0) { bxi = 0 - 1; }
             if (bxi >= 0) {
-                var cell: ast.Expr = ast.ExprArray { elements: [box_rewrite_expr(v.init, boxed, btypes, bsites, bound)], elem_ty: btypes[bxi], line: 0, col: 0 };
-                return ast.StmtVar { name: cell_name(v.name), type_name: btypes[bxi] + "[]", init: cell, line: v.line, col: v.col, is_str: false, fn_ret: "", fn_param_types: "" };
+                var cell: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "cell_new", line: v.line, col: v.col, ty: "" }, args: [box_rewrite_expr(v.init, boxed, btypes, bsites, bound)], line: v.line, col: v.col, type_argc: 0, ty: "" };
+                return ast.StmtVar { name: cell_name(v.name), type_name: "Cell[" + btypes[bxi] + "]", init: cell, line: v.line, col: v.col, is_str: false, fn_ret: "", fn_param_types: "" };
             }
             return ast.StmtVar { name: v.name, type_name: v.type_name, init: box_rewrite_expr(v.init, boxed, btypes, bsites, bound), line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types };
         },
         ast.StmtAssign(a) => {
             if (util.index_of_str(boxed, a.target) >= 0 && util.index_of_str(bound, a.target) < 0) {
-                // x = v  ->  $cell$x = $cell$x.with(0, v)   (receiver stays the raw cell ident)
-                var cnm: string = cell_name(a.target);
-                var recv: ast.Expr = ast.ExprIdent { name: cnm, line: a.target_line, col: a.target_col, ty: "" };
-                var wcall: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: recv, field: "with", line: a.line, col: a.col, ty: "" }, args: [ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: a.line, col: a.col }, box_rewrite_expr(a.value, boxed, btypes, bsites, bound)], line: a.line, col: a.col, type_argc: 0, ty: "" };
-                return ast.StmtAssign { target: cnm, value: wcall, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col };
+                // x = v  ->  $cell$x.set(v)
+                var recv: ast.Expr = ast.ExprIdent { name: cell_name(a.target), line: a.target_line, col: a.target_col, ty: "" };
+                var scall: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: recv, field: "set", line: a.line, col: a.col, ty: "" }, args: [box_rewrite_expr(a.value, boxed, btypes, bsites, bound)], line: a.line, col: a.col, type_argc: 0, ty: "" };
+                return ast.StmtExpr { value: scall, line: a.line };
             }
             return ast.StmtAssign { target: a.target, value: box_rewrite_expr(a.value, boxed, btypes, bsites, bound), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col };
         },

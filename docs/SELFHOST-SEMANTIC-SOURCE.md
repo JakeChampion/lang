@@ -1484,30 +1484,30 @@ With a real control, four defects showed, and three of them were one cause:
   `narrowing_cast_of_expression`, `int_byte_swap` and `u64_field_array_with` —
   the last two through a `17179869191 as u64` and a `72623859790382856 as u64`
   that had been silently zeroed.
-- **A write back through a mutable CAPTURE is not reproducible here**, and is
-  refused rather than produced wrong (#9320). `capturebox` rewrites a mutated
-  captured local into a one-element ARRAY and its write into
-  `$cell$x = $cell$x.with(0, v)`; the creator sees that write only because
-  nothing on either side takes a count, so `__fern_arr_cow_inplace`'s `rc == 1`
-  arm mutates the shared buffer. This boundary retains the receiver to supply
-  the update's unit, which makes that test fail and sends the write into a
-  copy nobody else reads. The fix is the box carrying a `Cell[T]`, whose write
-  is in place on both paths and whose whole vocabulary this boundary already
-  produces.
+- **A mutable capture is a `Cell[T]`**, on both lowerings (#9320). `capturebox`
+  rewrites a captured local the closure or its creator reassigns into
+  `var $cell$x: Cell[T] = cell_new(init)`, every read into `$cell$x.get()` and
+  every write into `$cell$x.set(v)`, and the lambda captures the cell. The
+  box is the one-element array box a cell already is, so nothing changed in
+  the representation; what changed is that the write is the cell's in-place
+  `set`, which both paths lower as the element store (releasing what the slot
+  held), rather than an array `.with` whose in-place arm depended on a count
+  that happened to be one. The boundary's earlier refusal of the write
+  (`replacement of a capture`, 643 declarations across the corpus, since a
+  refused `for_each` callback keeps the whole test file on the AST lowering)
+  is gone with the spelling. The capture the CLOSURE writes is a scalar by
+  E049, and every scalar is boxed at its own type: the box scan used to admit
+  only `i32` and `boolean` there, so an `i64` or `f64` the lambda wrote was
+  captured by value and the writes were lost, on both lowerings.
 
-  **What is refused is the WRITE, not the cell**, and getting that wrong cost a
-  suite. Refusing the cell — every frame that declares one and every lifted
-  body that takes one — is sound and took `cap_loop` and its five siblings out
-  of the executable fixture, which had been producing them correctly all along.
-  They write the cell in the frame that CREATED it, where the box is its own at
-  the write and either arm of the uniqueness test gives the right answer; only
-  a write from a body that did not create it depends on the aliasing. So
-  `State.foreign` records the values naming storage this frame did not create —
-  a mutated capture's cell arriving as a parameter, and a projection of a
-  lifted body's environment record, which is the same write reached through the
-  other closure shape — and `assign` refuses a replacement of a binding holding
-  one. `capturebox.is_cell_name` is the single rule both paths ask for the
-  spelling now; irlower's duplicate of it is gone.
+  `State.foreign` still records the values naming storage this frame did not
+  create — a projection of a lifted body's environment record — and `assign`
+  refuses a replacement of a binding holding one; a mutated capture never
+  reaches it. The earlier reading that a creator's write was sound because
+  "the box is its own at the write" was wrong for a closure that ESCAPES:
+  the creator's `.with` then went into a copy the environment never saw, and
+  the produced program read the creation-time value (103 for native's 104
+  on a rebound string). The cell's `set` closes that too.
 
 ### The wide tuple element: the biggest leaf was a construction site
 

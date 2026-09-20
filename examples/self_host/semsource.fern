@@ -4,7 +4,6 @@
 import "./ast";
 import "./astwalk";
 import "./parser";
-import "./capturebox";
 import "./checker";
 import "./typeinfo";
 import "./semtypes";
@@ -2177,17 +2176,9 @@ function declare(st: ast.Stmt, v: ast.StmtVar, s: State): State {
 }
 
 // Replacing a binding that holds a value this frame did not create is a write
-// back through a CAPTURE, and the AST lowering means something by it that this
-// boundary cannot reproduce. `capturebox` rewrites a mutated captured local
-// into a one-element array and its write into `$cell$x = $cell$x.with(0, v)`;
-// the frame that CREATED the box sees that write only because nothing on
-// either side takes a count of it, so `__fern_arr_cow_inplace`'s `rc == 1` arm
-// mutates the shared buffer rather than copying. This boundary retains the
-// receiver to supply the update's unit, which makes that test fail and lands
-// the write in a copy nobody else reads. So the write is refused, while the
-// creating frame — whose box IS its own at the write — keeps producing.
-// The fix is the capture box carrying a `Cell[T]`, whose write is in place on
-// both paths (#9320).
+// back through a CAPTURE read out of the environment, which no frame owns a
+// unit of. A mutated capture never reaches here: `capturebox` rewrites it into
+// a `Cell[T]` whose write is the cell's `set`.
 function assign(a: ast.StmtAssign, s: State): State {
     var old: i32 = lookup(s, a.target);
     if (old < 0) { return fail(s, "replacement of an unbound name"); }
@@ -3127,12 +3118,6 @@ function parameters(fd: parser.FuncDecl, s: State): State {
         var m: i32 = decl_param_mode(fd, at, ty);
         if (ssasem.is_func(ty) && m == ssaunits.counted_mode()) { return fail(s, "owning function parameter"); }
         var p: Value = define(s, 6, [], at, "", ty);
-        // A mutated capture's cell arrives as a parameter of the lifted body,
-        // and its box belongs to the frame that built it — reading it here is
-        // ordinary, writing back through it is what `assign` refuses.
-        if (capturebox.is_cell_name(names[at])) {
-            p = Value { s: State { ...p.s, foreign: p.s.foreign.append(p.id) }, id: p.id };
-        }
         s = bind(State { ...p.s, modes: p.s.modes.append(m) }, names[at], p.id);
         at = at + 1;
     }
