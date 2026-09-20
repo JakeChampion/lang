@@ -417,7 +417,12 @@ Unsupported constructs refuse the whole function with a reason.
   `str` is refused ("view result escapes its source"): the caller's model has
   no anchor for a result to its argument. A view as an array element — an
   array literal's, or `.append`'s — is refused too ("view element escapes its
-  source"): the array may outlive the source. The checker's borrowed-argument
+  source"): the array may outlive the source. A map INSERT's key is the same
+  position — it joins the key column, which releases it when the map is
+  released — and is refused for the same reason. A map READ's key is not:
+  `get_or`, `has` and `delete` hash and compare it and `operation_supplies`
+  counts no unit for it, so a view there is an ordinary lend and takes the
+  retag a borrowed `string` parameter offers. The checker's borrowed-argument
   carve-out lets `xs.append(slice_unchecked(s, a, b))` through today — the
   escaping position docs/STR-VIEW-CONTRACT.md's decision hands to #8635 —
   and this boundary refuses it rather than inheriting the hole. The

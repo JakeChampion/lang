@@ -154,10 +154,11 @@ function __cli_long(s: CliSpec, opts: Map[string, string], argv: string[], i: i3
   var body: str = slice_unchecked(a, 2, a.len());
   var eq: i32 = body.index_of("=");
   var name: str = body;
-  var inline_val: str = "";
+  // The value joins `opts`, which outlives this token, so it is copied.
+  var inline_val: string = "";
   if (eq >= 0) {
     name = slice_unchecked(body, 0, eq);
-    inline_val = slice_unchecked(body, eq + 1, body.len());
+    inline_val = slice_unchecked(body, eq + 1, body.len()) + "";
   }
   match (__cli_find_long(s, name)) {
     Some(f) => {
@@ -199,7 +200,7 @@ function __cli_cluster(s: CliSpec, opts: Map[string, string], argv: string[], i:
           // A valued option consumes the token tail.
           var glued: str = slice_unchecked(cluster, j + 1, cluster.len());
           if (glued.len() > 0) {
-            return CliStep { opts: opts.insert(f.long, glued), next: i + 1, error: "" };
+            return CliStep { opts: opts.insert(f.long, glued + ""), next: i + 1, error: "" };
           }
           if (i + 1 < argv.len()) {
             return CliStep { opts: opts.insert(f.long, argv[i + 1]), next: i + 2, error: "" };
