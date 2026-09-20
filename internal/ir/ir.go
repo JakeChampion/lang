@@ -3216,6 +3216,16 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 	if err != nil {
 		return nil, err
 	}
+	// `fip` / `fbip` verify-and-enable (plan E2', fip_verify.go): check the
+	// ops just emitted against each annotation's allocation budget — every
+	// fresh (un-reuse-paired) allocation beyond the graded allowance is an
+	// E068 error. Runs on the raw per-function streams, before any later
+	// pass reshapes them, and is read-only over the emitted result. Whole
+	// program rather than per function because a `map` site's verdict (R7)
+	// reads what the element function reaches.
+	if err := verifyFipClaims(prog, lowered); err != nil {
+		return nil, err
+	}
 	for i, fn := range prog.Funcs {
 		// Body-less `@import` functions are extern WASM-component imports, not
 		// defined functions: record their signature in out.Externs and skip
@@ -6259,14 +6269,6 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 	// and every table is final.
 	if RcPlanHook != nil {
 		RcPlanHook(fn.Name, b.dumpRcPlan())
-	}
-	// `fip` / `fbip` verify-and-enable (plan E2', fip_verify.go): check the
-	// ops just emitted against the annotation's allocation budget — every
-	// fresh (un-reuse-paired) allocation beyond the graded allowance is an
-	// E068 error. Runs on the raw per-function stream, before any later
-	// pass reshapes it, and is read-only over the emitted result.
-	if err := verifyFipAllocs(fn, out); err != nil {
-		return nil, err
 	}
 	return out, nil
 }

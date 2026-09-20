@@ -2,40 +2,51 @@ package ir_test
 
 import (
 	"strconv"
-	"strings"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/ir"
 )
 
 // "Why did it allocate?" — #9732's second question, answered per stage.
 //
-// The verdicts are read off the IR rather than asserted: whether a combinator
-// consumes its array is `Func.ParamConsumed`, and whether the element shape
-// survives is the two stages' parameter types. That matters because the answer
-// today is the same for every std/array combinator, and a hardcoded sentence
-// would go on being printed after the fact it describes stopped being true.
+// The verdicts come from the planner that performs R7's in-place rewrite
+// (docs/REUSE-CONTRACT.md), so the report says `reused` exactly where the
+// pass writes through the donor and names the declining rule everywhere
+// else. A hardcoded sentence would go on being printed after the fact it
+// describes stopped being true, which is what the report said about `map`
+// for the day between #9797 landing R7 and this reading its verdicts.
 
 func storageOf(t *testing.T, p *ir.Program, fn string) []ir.ArrayStorage {
 	t.Helper()
-	verdicts := ir.ArrayFusionVerdicts(p)
+	verdicts := ir.ArrayStorageVerdicts(p)
 	var out []ir.ArrayStorage
 	for _, pl := range ir.RecognizeArrayPipelines(p) {
 		if pl.Func != fn {
 			continue
 		}
-		fused := verdicts[pl.Func+"#"+strconv.Itoa(pl.Stages[0].Op)].Why == ir.FusionFused
-		for i := range pl.Stages {
-			out = append(out, ir.ArrayStageStorage(p, pl, i, fused))
+		for _, s := range pl.Stages {
+			out = append(out, verdicts[pl.Func+"#"+strconv.Itoa(s.Op)])
 		}
 	}
 	return out
 }
 
-// A chain the pass declines: its stages really do materialize, and the reason
-// is the combinator's signature rather than anything about the caller.
-func TestMaterializingStageBlamesTheBorrowedArray(t *testing.T) {
+func wantStorage(t *testing.T, got, want []ir.ArrayStorage) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("got %d stage verdicts %v, want %d", len(got), got, len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("stage %d: %q, want %q", i, got[i].Tag(), want[i].Tag())
+		}
+	}
+}
+
+// A chain the fusion pass declines whose receiver is a field read: its stages
+// really do materialize, and the reason is that no `own` parameter licenses
+// writing through the array.
+func TestMaterializingStageBlamesTheUnownedReceiver(t *testing.T) {
 	p := lowerPipelineSrc(t, `import "std/array";
 struct Box { xs: i64[] }
 function run(b: Box): i64 {
@@ -43,16 +54,7 @@ function run(b: Box): i64 {
              .fold(0 as i64, (p: i64, q: i64): i64 => p + q);
 }
 function main(): i32 { return run(Box { xs: [1 as i64] }) as i32; }`)
-	got := storageOf(t, p, "run")
-	want := []ir.ArrayStorage{ir.StorageBorrowedDonor, ir.StorageScalar}
-	if len(got) != len(want) {
-		t.Fatalf("got %d stage verdicts, want %d", len(got), len(want))
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("stage %d: %q, want %q", i, got[i].Tag(), want[i].Tag())
-		}
-	}
+	wantStorage(t, storageOf(t, p, "run"), []ir.ArrayStorage{ir.StorageReceiverNotOwnedParam, ir.StorageScalar})
 }
 
 // A fused chain materializes nothing — except that its reduction never did,
@@ -64,46 +66,49 @@ function run(xs: i64[]): i64 {
            .fold(0 as i64, (p: i64, q: i64): i64 => p + q);
 }
 function main(): i32 { return run([1 as i64]) as i32; }`)
-	got := storageOf(t, p, "run")
-	want := []ir.ArrayStorage{ir.StorageFused, ir.StorageScalar}
-	if len(got) != len(want) {
-		t.Fatalf("got %d stage verdicts, want %d", len(got), len(want))
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("stage %d: %q, want %q", i, got[i].Tag(), want[i].Tag())
-		}
-	}
+	wantStorage(t, storageOf(t, p, "run"), []ir.ArrayStorage{ir.StorageFused, ir.StorageScalar})
 }
 
-// The canary. `shape-change` and `reused` cannot fire today because every
-// std/array combinator BORROWS its array, so the ownership check answers
-// first and nothing reaches them. That is a property of the stdlib, not of
-// this pass — and if it changes, the report starts having more to say and
-// this test is where someone finds out.
-func TestNoStdArrayCombinatorConsumesItsArray(t *testing.T) {
-	p := lowerPipelineSrc(t, `import "std/array";
-function run(xs: i64[]): i64 {
-  return xs.map((x: i64): i64 => x + (1 as i64))
-           .filter((x: i64): boolean => x > (0 as i64))
-           .fold(0 as i64, (a: i64, b: i64): i64 => a + b);
+// The R7 shape reports the donation the pass performs.
+func TestOwnedMapReportsTheDonatedBuffer(t *testing.T) {
+	p := lowerPipelineSrc(t, inPlacePrelude+inPlaceChain)
+	wantStorage(t, storageOf(t, p, "run"), []ir.ArrayStorage{ir.StorageReused})
 }
-function main(): i32 { return run([1 as i64]) as i32; }`)
-	for _, fn := range p.Funcs {
-		if !strings.HasPrefix(fn.Name, "array__") || len(fn.ParamConsumed) == 0 {
-			continue
-		}
-		if len(fn.Params) == 0 {
-			continue
-		}
-		if _, isArr := fn.Params[0].Type.(ast.ArrayType); !isArr {
-			continue
-		}
-		if fn.ParamConsumed[0] {
-			t.Errorf("%s now CONSUMES its array parameter. A stage feeding it can donate "+
-				"its buffer, so ArrayStageStorage reaches shape-change/reused for the "+
-				"first time — check the report says something useful there rather than "+
-				"falling through", fn.Name)
+
+// Each R7 refusal is its own row, so the histogram is the checklist for
+// widening the shape rather than one undifferentiated "fresh".
+func TestEachInPlaceRefusalHasItsOwnVerdict(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		src  string
+		want ir.ArrayStorage
+	}{
+		{"borrowed receiver", `import "std/array";
+function dbl(x: i64): i64 { return x * (2 as i64); }
+function run(xs: i64[]): i64[] { return xs.map((x: i64): i64 => dbl(x)); }
+function main(): i32 { return run([1 as i64]).len(); }`, ir.StorageReceiverNotOwnedParam},
+		{"capturing element function", `import "std/array";
+function run(own xs: i64[], k: i64): i64[] { return xs.map((x: i64): i64 => x + k); }
+function main(): i32 { return run([1 as i64], 2 as i64).len(); }`, ir.StorageElementFunctionCaptures},
+		{"effectful element function", `import "std/array";
+function noisy(x: i64): i64 { print("x"); return x; }
+function run(own xs: i64[]): i64[] { return xs.map((x: i64): i64 => noisy(x)); }
+function main(): i32 { return run([1 as i64]).len(); }`, ir.StorageElementFunctionEffectful},
+		{"type-changing map", `import "std/array";
+function narrow(x: i64): i32 { return x as i32; }
+function run(own xs: i64[]): i32[] { return xs.map((x: i64): i32 => narrow(x)); }
+function main(): i32 { return run([1 as i64]).len(); }`, ir.StorageShapeChange},
+		{"narrow elements", `import "std/array";
+function run(own xs: i32[]): i32[] { return xs.map((x: i32): i32 => x * 2); }
+function main(): i32 { return run([1]).len(); }`, ir.StorageElementWidthUnsupported},
+		{"an operator with no in-place shape", `import "std/array";
+function run(own xs: i64[]): i64[] { return xs.filter((x: i64): boolean => x > (0 as i64)); }
+function main(): i32 { return run([1 as i64]).len(); }`, ir.StorageNoInPlaceShape},
+	} {
+		p := lowerPipelineSrc(t, tc.src)
+		got := storageOf(t, p, "run")
+		if len(got) != 1 || got[0] != tc.want {
+			t.Errorf("%s: verdicts %v, want [%s]", tc.name, got, tc.want.Tag())
 		}
 	}
 }
@@ -114,15 +119,15 @@ function main(): i32 { return run([1 as i64]) as i32; }`)
 func TestArrayStorageTagsAreDistinct(t *testing.T) {
 	seen := map[string]bool{}
 	for _, s := range ir.AllArrayStorage {
-		if s.Tag() == "unknown" && s != ir.StorageUnknown {
+		if s.Tag() == "unknown" {
 			t.Errorf("verdict %d has no tag", int(s))
 		}
 		if seen[s.Tag()] {
 			t.Errorf("tag %q is shared by two verdicts", s.Tag())
 		}
 		seen[s.Tag()] = true
-		if s.String() == "" {
-			t.Errorf("verdict %q has a tag but no prose", s.Tag())
+		if s.Reason() == "" || s.Reason() == "unknown" {
+			t.Errorf("verdict %q has a tag but no reason", s.Tag())
 		}
 	}
 }

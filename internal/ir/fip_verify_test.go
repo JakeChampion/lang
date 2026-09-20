@@ -251,3 +251,18 @@ fip(1) function make(n: i32): State {
 }
 function main(): i32 { return make(3).count; }`)
 }
+
+// A closure capturing nothing is a plain function value, not an allocation:
+// the battery's InlineZeroCaptureClosures turns it into a static cell before
+// any backend emits it. So a `fip(1)` body whose one fresh site is the struct
+// holding such a closure verifies — the closure is not a second site — and
+// the same body with a CAPTURING closure is two sites and refused. Pinned on
+// a shape that has nothing to do with std/array, because the skip is general.
+func TestFipVerifyZeroCaptureClosureIsNotASite(t *testing.T) {
+	wantLowerOK(t, "zero-capture closure in a struct", `struct S { f: (i32) => i32 }
+fip(1) function mk(): S { return S { f: (x: i32): i32 => x + 1 }; }
+function main(): i32 { return mk().f(1); }`)
+	wantE068(t, "capturing closure in a struct", `struct S { f: (i32) => i32 }
+fip(1) function mk(k: i32): S { return S { f: (x: i32): i32 => x + k }; }
+function main(): i32 { return mk(1).f(1); }`)
+}

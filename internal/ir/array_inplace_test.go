@@ -1,6 +1,7 @@
 package ir_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/ir"
@@ -121,5 +122,105 @@ func TestInPlaceOffSwitch(t *testing.T) {
 	_, n := inPlaceCount(t, inPlacePrelude+inPlaceChain)
 	if n != 0 {
 		t.Fatalf("rewrote %d maps with the off switch set, want 0", n)
+	}
+}
+
+// `fip` reaches the combinator (#9733's third acceptance line). E053 admits
+// `xs.map(f)` on an `own` receiver the way it admits constructors — the
+// checker cannot tell which `map` R7 writes through its donor — and E068
+// counts the ones the planner declines, naming the stage and the rule. The
+// positive is what makes the space contract reachable from array code at all;
+// the negatives are what keep it a contract rather than a hope.
+
+func TestFipOwnedMapPassesE068(t *testing.T) {
+	if _, err := lowerPipelineErr(t, `import "std/array";
+fip function dbl(x: i64): i64 { return x * (2 as i64); }
+fip function run(own xs: i64[]): i64[] { return xs.map((x: i64): i64 => dbl(x)); }
+function main(): i32 { return run([1 as i64]).len(); }`); err != nil {
+		t.Fatalf("a `fip` map R7 writes in place was refused: %v", err)
+	}
+}
+
+func TestFbipOwnedMapPassesE068(t *testing.T) {
+	if _, err := lowerPipelineErr(t, `import "std/array";
+fip function dbl(x: i64): i64 { return x * (2 as i64); }
+fbip function run(own xs: i64[]): i64[] { return xs.map((x: i64): i64 => dbl(x)); }
+function main(): i32 { return run([1 as i64]).len(); }`); err != nil {
+		t.Fatalf("an `fbip` map R7 writes in place was refused: %v", err)
+	}
+}
+
+// A declined `map` is an E068 that names the call, the function, and the R7
+// rule — not a bare count.
+func TestFipDeclinedMapIsE068NamingTheRule(t *testing.T) {
+	for _, tc := range []struct{ name, src, rule string }{
+		{"capture", `import "std/array";
+fip function run(own xs: i64[], k: i64): i64[] { return xs.map((x: i64): i64 => x + k); }
+function main(): i32 { return run([1 as i64], 2 as i64).len(); }`, "captures"},
+		{"type change", `import "std/array";
+fip function narrow(x: i64): i32 { return x as i32; }
+fip function run(own xs: i64[]): i32[] { return xs.map((x: i64): i32 => narrow(x)); }
+function main(): i32 { return run([1 as i64]).len(); }`, "changes the element type"},
+		{"field receiver of an own struct", `import "std/array";
+struct S { xs: i64[] }
+fip function run(own s: S): i64[] { return s.xs.map((x: i64): i64 => x); }
+function main(): i32 { return run(S { xs: [1 as i64] }).len(); }`, "not an `own` parameter"},
+	} {
+		_, err := lowerPipelineErr(t, tc.src)
+		if err == nil {
+			t.Errorf("%s: a `map` R7 declines was accepted under `fip`", tc.name)
+			continue
+		}
+		msg := err.Error()
+		for _, want := range []string{"E068", "`fip` function \"run\"", "`map` at", tc.rule} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("%s: E068 does not say %q:\n%s", tc.name, want, msg)
+			}
+		}
+	}
+}
+
+// A graded claim buys the declined `map` exactly as it buys a fresh
+// constructor: the site is one un-reused allocation site, whatever it
+// allocates at run time. (A capturing element function would be a second
+// site — the closure — so the declined shape here changes the element type.)
+func TestGradedFipCountsADeclinedMap(t *testing.T) {
+	if _, err := lowerPipelineErr(t, `import "std/array";
+fip function narrow(x: i64): i32 { return x as i32; }
+fip(1) function run(own xs: i64[]): i32[] { return xs.map((x: i64): i32 => narrow(x)); }
+function main(): i32 { return run([1 as i64]).len(); }`); err != nil {
+		t.Fatalf("fip(1) did not cover one declined map: %v", err)
+	}
+}
+
+// The off switch disables the verification along with the machinery it
+// verifies, the stance verifyFipAllocs already takes for the reuse flags.
+func TestFipMapVerificationSkippedWithInPlaceOff(t *testing.T) {
+	t.Setenv("FERN_NO_ARRAY_INPLACE", "1")
+	if _, err := lowerPipelineErr(t, `import "std/array";
+fip function narrow(x: i64): i32 { return x as i32; }
+fip function run(own xs: i64[]): i32[] { return xs.map((x: i64): i32 => narrow(x)); }
+function main(): i32 { return run([1 as i64]).len(); }`); err != nil {
+		t.Fatalf("with the pass off the claim was verified against it anyway: %v", err)
+	}
+}
+
+// E053 admits `xs.map(f)` on an `own` root by the METHOD NAME, and the IR only
+// recognizes std/array's map (TestUserDeclaredArrayMapIsNotTheAlgebra). Between
+// the two, a program that never imports std/array and declares its own `map`
+// would reach E068 with a call nothing counts, whatever that map allocates. So
+// a `map` that is not the algebra's is a site of its own.
+func TestFipUserDeclaredMapIsE068(t *testing.T) {
+	_, err := lowerPipelineErr(t, `function (xs: i64[]) map(f: (i64) => i64): i64[] { return [f(xs[0])]; }
+fip function dbl(x: i64): i64 { return x * (2 as i64); }
+fip function run(own xs: i64[]): i64[] { return xs.map((x: i64): i64 => dbl(x)); }
+function main(): i32 { return run([1 as i64]).len(); }`)
+	if err == nil {
+		t.Fatalf("a user-declared map was accepted under `fip` with nothing verifying it")
+	}
+	for _, want := range []string{"E068", "`fip` function \"run\"", "`map` that is not std/array's"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("E068 does not say %q:\n%s", want, err)
+		}
 	}
 }

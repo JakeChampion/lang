@@ -252,7 +252,59 @@ var arrayVerbs = map[string]struct {
 	"scan":   {"scan", stagePrefix, cardSame},
 }
 
-// arrayVerbOf returns the verb a callee names, or "" when it names none.
+// arrayContext is what recognizing and rewriting a program's pipelines needs
+// to know about the whole program: which callees ARE std/array's combinators,
+// and which functions can reach an observable effect.
+//
+// The verb table is derived per program rather than read off each name.
+// `array__<verb>` is std/array's free function and nothing else can mangle to
+// it (modload reserves the stdlib prefixes first). `__method_Array_<verb>` is
+// the mangling of ANY receiver method on arrays, a user's included: std/array
+// declares its whole surface that way, but so does `function (xs: i64[])
+// map(...)` in a program that never imports it, and a pass keyed on that name
+// alone rewrote such a program's own `map` into an elementwise loop. So the
+// method spelling counts only when its body delegates to the free function —
+// what std/array's one-line wrappers do, and what a user's cannot (E006 admits
+// one claimant per array-method name, so a program with std/array in scope
+// declares no second `map`).
+type arrayContext struct {
+	verbs     map[string]string // callee -> verb
+	effectful map[string]bool
+}
+
+func newArrayContext(prog *Program) arrayContext {
+	verbs := map[string]string{}
+	for _, fn := range prog.Funcs {
+		if v, ok := arrayVerbOf(fn.Name); ok && strings.HasPrefix(fn.Name, "array__") {
+			verbs[fn.Name] = v
+		}
+	}
+	for _, fn := range prog.Funcs {
+		v, ok := arrayVerbOf(fn.Name)
+		if !ok || !strings.HasPrefix(fn.Name, "__method_Array_") {
+			continue
+		}
+		for _, op := range fn.Ops {
+			if op.Kind == OpCallDirect && verbs[op.Str] == v {
+				verbs[fn.Name] = v
+				break
+			}
+		}
+	}
+	return arrayContext{verbs: verbs, effectful: effectfulFuncs(prog)}
+}
+
+// isStdlibBody reports whether fn is one of std/array's own combinator
+// bodies, which every pass leaves alone: a combinator implemented in terms of
+// another is the library's business, and rewriting `map` into a loop over
+// itself is not what any of them is for.
+func (cx arrayContext) isStdlibBody(fn *Func) bool {
+	return cx.verbs[fn.Name] != ""
+}
+
+// arrayVerbOf returns the verb a callee's NAME has the shape of, or "" when it
+// has none. Only newArrayContext consults it; everything else asks the
+// context, which also knows whether the name is std/array's.
 func arrayVerbOf(callee string) (string, bool) {
 	var base string
 	switch {
@@ -292,17 +344,17 @@ func isReclaimCallee(op Op) bool {
 // program, longest first within a function, in a deterministic order.
 func RecognizeArrayPipelines(p *Program) []ArrayPipeline {
 	var out []ArrayPipeline
+	cx := newArrayContext(p)
 	for _, fn := range p.Funcs {
 		// std/array's own bodies are skipped. The method forms are one-line
 		// delegates — `(xs: T[]) map(f) { return map(xs, f); }` — so each is
 		// a recognized call inside a recognized function, and reporting them
 		// would bury a user's three-stage chain under one entry per stdlib
-		// wrapper their program happened to instantiate. A combinator
-		// implemented in terms of another is the library's business.
-		if _, isStdlibBody := arrayVerbOf(fn.Name); isStdlibBody {
+		// wrapper their program happened to instantiate.
+		if cx.isStdlibBody(fn) {
 			continue
 		}
-		out = append(out, recognizeInFunc(fn)...)
+		out = append(out, recognizeInFunc(fn, cx)...)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].Func != out[j].Func {
@@ -330,8 +382,8 @@ type arrayCall struct {
 	fnSlot int32
 }
 
-func recognizeInFunc(fn *Func) []ArrayPipeline {
-	calls := collectArrayCalls(fn)
+func recognizeInFunc(fn *Func, cx arrayContext) []ArrayPipeline {
+	calls := collectArrayCalls(fn, cx)
 	if len(calls) == 0 {
 		return nil
 	}
@@ -404,7 +456,7 @@ func recognizeInFunc(fn *Func) []ArrayPipeline {
 // call; the callback is parked in a slot of its own and loaded last, so the
 // first load in that window is the receiver and the last is the callback.
 // The result is the first slot stored after the call.
-func collectArrayCalls(fn *Func) []arrayCall {
+func collectArrayCalls(fn *Func, cx arrayContext) []arrayCall {
 	var out []arrayCall
 	// closureOf records which lambda a slot was last given, so a callback
 	// parked in a slot can be named.
@@ -422,8 +474,8 @@ func collectArrayCalls(fn *Func) []arrayCall {
 		if op.Kind != OpCallDirect {
 			continue
 		}
-		verb, ok := arrayVerbOf(op.Str)
-		if !ok || op.Runtime {
+		verb := cx.verbs[op.Str]
+		if verb == "" || op.Runtime {
 			windowStart = i + 1
 			continue
 		}
@@ -518,6 +570,7 @@ const arrayReportCompilerNote = "This is the NATIVE compiler's plan. " +
 func FormatArrayPipelineHistogram(p *Program) string {
 	pipes := RecognizeArrayPipelines(p)
 	verdicts := ArrayFusionVerdicts(p)
+	storage := ArrayStorageVerdicts(p)
 	counts := map[ArrayRefusal]int{}
 	fusionCounts := map[FusionRefusal]int{}
 	storageCounts := map[ArrayStorage]int{}
@@ -534,8 +587,8 @@ func FormatArrayPipelineHistogram(p *Program) string {
 		if v.Why == FusionFused {
 			fused++
 		}
-		for si := range pl.Stages {
-			storageCounts[ArrayStageStorage(p, pl, si, v.Why == FusionFused)]++
+		for _, s := range pl.Stages {
+			storageCounts[storage[arrayStageKey(pl.Func, s)]]++
 		}
 	}
 	var b strings.Builder
@@ -575,6 +628,7 @@ func FormatArrayPipelines(p *Program) string {
 		}
 	}
 	verdicts := ArrayFusionVerdicts(p)
+	storage := ArrayStorageVerdicts(p)
 	var b strings.Builder
 	chained := 0
 	for i, pl := range pipes {
@@ -591,8 +645,7 @@ func FormatArrayPipelines(p *Program) string {
 		if pl.Stop != RefusalNone {
 			fmt.Fprintf(&b, "%-*s    chain ends here: %s\n", posW, "", pl.Stop)
 		}
-		fused := verdicts[arrayPipelineKey(pl.Func, pl)].Why == FusionFused
-		for si, s := range pl.Stages {
+		for _, s := range pl.Stages {
 			elem := s.Element
 			if elem == "" {
 				elem = "(element function not statically resolved)"
@@ -600,8 +653,7 @@ func FormatArrayPipelines(p *Program) string {
 			fmt.Fprintf(&b, "%-*s    %-10s %-12s %s\n", posW, "", s.Verb, s.Kind, elem)
 			// "Why did it allocate?" is #9732's second question, and it is
 			// asked per STAGE because that is where a buffer comes from.
-			fmt.Fprintf(&b, "%-*s      %s\n", posW, "",
-				ArrayStageStorage(p, pl, si, fused))
+			fmt.Fprintf(&b, "%-*s      %s\n", posW, "", storage[arrayStageKey(pl.Func, s)])
 		}
 	}
 	fmt.Fprintf(&b, "\n%d pipeline(s), %d with more than one stage\n", len(pipes), chained)
