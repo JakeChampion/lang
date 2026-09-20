@@ -169,11 +169,30 @@ function lambda_capture(s: St): i32 {
     var r: St = a.emit(2);
     return r.ctrl + f();
 }
+// An ENCLOSING call already holds the value (#9879). The name reaches pair's
+// first argument before emitf runs, so the textually last read inside emitf is
+// not the last use: the operand is on the stack, waiting for pair.
+function held_by_enclosing(s: St): i32 {
+    var a: St = s.emit(1);
+    return pair(a, emitf(a, 2));
+}
+// Same shape written as a method chain, which is what std/ndarray's
+// zip_with over a reversed view desugars to.
+function held_by_enclosing_method(s: St): i32 {
+    var a: St = s.emit(1);
+    return pair(a, a.emit(2));
+}
+// The enclosing call names it only once, so the death stands.
+function enclosing_names_once(s: St): i32 {
+    var a: St = s.emit(1);
+    return pair(mk(), emitf(a, 2));
+}
 function main(): i32 { return chain(mk(), 1).ctrl + param_last(mk()) + read_after(mk()) +
     alias_init(mk()) + rename_chain(mk()) + rename_twice(mk()) + rename_literal(1) +
     des_rebind(mk()) + var_rebind(mk()) + des_reads_after(mk()) + des_gap(mk()) +
     nested_in_loop(mk(), 2).ctrl + nested_twice(mk(), 2).ctrl +
-    in_loop_live(mk(), 2) + in_loop(mk(), 2).ctrl + twice_in_call(mk()) + lambda_capture(mk()); }`
+    in_loop_live(mk(), 2) + in_loop(mk(), 2).ctrl + twice_in_call(mk()) + lambda_capture(mk()) +
+    held_by_enclosing(mk()) + held_by_enclosing_method(mk()) + enclosing_names_once(mk()); }`
 
 	prog, err := parser.Parse(src)
 	if err != nil {
@@ -210,6 +229,13 @@ function main(): i32 { return chain(mk(), 1).ctrl + param_last(mk()) + read_afte
 		"in_loop":        "s",
 		"twice_in_call":  "s",
 		"lambda_capture": "s",
+		// `s` still dies at its own call; `a` does not, because pair has
+		// already taken it (#9879). Without the gate `a` was marked dead here
+		// and the callee stole a field out from under the pending call.
+		"held_by_enclosing":        "s",
+		"held_by_enclosing_method": "s",
+		// Nothing encloses `a` that also names it, so the death stands.
+		"enclosing_names_once": "a,s",
 	}
 	seen := map[string]bool{}
 	for _, fn := range prog.Funcs {
