@@ -1917,6 +1917,17 @@ template reading had been hiding. Both are one field and one branch
 holds the three shapes and fails at 0 of 3 without the first fix and 1 of 5
 without the second.
 
+`parser.clone_struct_method` had the same field. It clones a generic struct's
+method per receiver instantiation (`OrdMap[i32, i32].insert` out of
+`insert[K: cmp.Ord, V]` on `OrdMap[K, V]`) with `type_params` emptied and, until
+2026-09-20, `type_param_count` copied from the method — so every method that
+redeclares its receiver's variables read as a template, and every caller of
+one, transitively, refused as `call target was refused: uninstantiated
+generic`. That was the whole of the `uninstantiated generic` root the corpus
+census counted (117 sites: the ordmap, ordset, pmap, pset and set tests and
+benches). The production suite's `generic-struct-method-redeclares-receiver-
+vars` and `ordmap-bounded-method-clones` rows hold it.
+
 Measured on the 4-core x86-64 container, all three compilers built from the
 same sources by `bin/fern-selfhost`:
 

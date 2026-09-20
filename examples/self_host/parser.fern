@@ -12075,7 +12075,7 @@ function clone_struct_method(m: FuncDecl, base: string, key: string, gstructs: S
     var rsrc: string = replace_struct_ident(m.ret_type, bare_base, base);
     var rt: string = to_concrete_struct_ty(subst_ty(rsrc, tparams, cts), base, mang, gstructs);
     var notp: string[] = [];
-    return FuncDecl { ...m, receiver_type: mang, type_params: notp, params: nparams, ret_type: rt, ret_fn_ret: subst_ty(m.ret_fn_ret, tparams, cts), ret_fn_param_types: subst_ty_list(m.ret_fn_param_types, tparams, cts), body: retarget_self_lit_stmts(subst_stmts(m.body, tparams, cts), base, mang), bound_traits: [] };
+    return FuncDecl { ...m, receiver_type: mang, type_params: notp, type_param_count: 0, params: nparams, ret_type: rt, ret_fn_ret: subst_ty(m.ret_fn_ret, tparams, cts), ret_fn_param_types: subst_ty_list(m.ret_fn_param_types, tparams, cts), body: retarget_self_lit_stmts(subst_stmts(m.body, tparams, cts), base, mang), bound_traits: [] };
 }
 
 // monomorphize_structs clones every generic struct (and its methods) per
