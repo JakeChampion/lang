@@ -1107,19 +1107,32 @@ NaN yields. The kernel's own corpus cannot see that difference (its
 equality treats any two NaNs as equal), which is exactly why it is worth
 a line here.
 
-**§3.3a cost, and the rule it corrects.** The last three kernels cost
-nothing at the assembler, and the section above predicted a fourth built
-from the same shapes would cost nothing again. This one cost three
-encodings — `vmovupd` in both directions, `vmulpd` and `vbroadcastsd` — and
-the prediction was not wrong so much as mis-stated. The debt is per
-INSTRUCTION SET **per domain**: every shape paid for so far was
-byte-domain, for the search kernels, and the first arithmetic kernel over
-doubles shares none of it. `vmovupd` is `vmovdqu` moving the same 32 bytes
-and is still a separate encoding, deliberately, because a float load out of
-the integer domain pays a bypass delay into the multiply that consumes it.
-So the corrected rule to carry to the ninth kernel: a kernel in a domain
-the assembler has already seen costs nothing; the first kernel in a NEW
-domain pays again, and the `f64` domain has now paid for x86-64 only.
+**§3.3a cost, and what it actually depends on.** The last three kernels
+cost nothing at the assembler, and the section above predicted a fourth
+built from the same shapes would cost nothing again. On x86-64 this one
+cost three encodings — `vmovupd` in both directions, `vmulpd` and
+`vbroadcastsd`. `vmovupd` is `vmovdqu` moving the same 32 bytes and is
+still a separate encoding, deliberately, because a float load out of the
+integer domain pays a bypass delay into the multiply that consumes it.
+
+On arm64 it cost **nothing**: `fmul` over `.2d`, `ld1` / `st1` over `.2d`
+and `dup` from a general register were all already there. So the debt is
+not per domain as a law. It depends on how each assembler was BUILT.
+`internal/native/x86_64/avx.go` is a hand-written list of exactly the
+forms the search kernels needed, five VEX shapes, all byte-domain — so a
+new domain pays per form. `internal/native/arm64` is generated from
+`internal/native/arm64tbl`, whose tables carry whole instruction CLASSES:
+`VecFP3` is every lane-wise three-register FP op (`fadd`, `fsub`, `fmul`,
+`fdiv`, `fmax`, `fmin`, the compares) across `2s`/`4s`/`2d`, so the double
+domain arrived complete the day that table did.
+
+The rule to carry to the ninth kernel is therefore about the TABLE, not
+the kernel: an assembler built per class has already paid for everything
+in the classes it carries; one built per instruction pays again for every
+shape. Check which kind you are standing in front of before pricing the
+work — and check the generated tables, not just the hand-written
+dispatch, which is what made this section overstate the arm64 cost when
+the x86-64 leg landed.
 
 The store direction is worth one line of its own. It differs from the load
 only in the opcode and in which operand takes the ModRM.reg field, which is
@@ -1127,10 +1140,26 @@ the kind of pair an encoder gets backwards without any test noticing, so
 both directions are pinned against GNU as rather than just the one the
 kernel happens to read first.
 
-The remaining seven legs are still scalar. arm64 is next and owes its own
-domain debt: `internal/native/arm64` has no register-offset FP load, which
-step 1 already worked around with an `add`, and the NEON set it carries is
-the byte-domain one.
+**arm64 followed, and paid nothing at the assembler.** The body is `dup`
+for the factor, then `ld1` / `fmul` / `st1` over a `.2d` pair, with the
+scalar loop as the tail for an odd length. Two lanes, not x86-64's four: a
+NEON vector is 128 bits, so the ceiling here is half. `dup` fills both
+lanes from the general register the factor already arrives in, and `d1` is
+`v1`'s low half, so one instruction serves the vector body and the tail
+both. Both bodies read the element first and the factor second, so unlike
+x86-64 — where folding the load forced the operands to swap — nothing had
+to be done to keep them agreeing about NaN.
+
+Measured on `examples/bench/array_scale_f64` under qemu-aarch64, harness
+floor included: **119 ms → 92 ms, 1.29x**. Read that as a floor and not
+as the hardware ratio, for the reason every qemu row in this section
+carries: qemu charges far more for one NEON instruction than hardware
+does, so it systematically understates a vector kernel. The
+architecture-independent claim is the instruction count, one `fmul` and
+one load/store pair per two elements where the scalar body ran two of
+each.
+
+The remaining six legs are still scalar.
 
 ### 3.5 Testing
 
