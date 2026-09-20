@@ -2851,26 +2851,47 @@ function coarse_fn_tag_without_contract(fd: parser.FuncDecl): boolean {
 function inferred_result(fd: parser.FuncDecl, scope: checker.Scope, b: ssasem.Binding, contracts: ssasem.Contract[]): typeinfo.Type {
     var (returned, at) = checker.first_returned(fd.body, scope);
     if (checker.bare_return(returned)) { return t_void(); }
-    var ty: typeinfo.Type = resolved(checker.expr_type(returned, at), generic_decl(fd, scope), scope, b);
-    if (semtypes.concrete(ty, true)) { return ty; }
-    return called_synthesised_result(returned, contracts, ty);
+    if (calls_synthesised(returned)) { return called_synthesised_result(returned, contracts); }
+    return resolved(checker.expr_type(returned, at), generic_decl(fd, scope), scope, b);
+}
+
+function calls_synthesised(e: ast.Expr): boolean {
+    if let ast.ExprCall(c) = e {
+        if let ast.ExprIdent(id) = c.callee { return synthesised_name(id.name); }
+    }
+    return false;
 }
 
 // A synthesised declaration returning the CALL of another — a value-position
-// if/match whose arm is itself one — has nothing the checker can type: the
-// callee's declaration carries the coarse tag, and the checker types a call
-// from the declaration. The contract table has what the callee's body says,
-// once the callee has one; `contracts` builds the table to a fixpoint so the
-// inner declaration's contract is there when the outer one is read.
-function called_synthesised_result(e: ast.Expr, contracts: ssasem.Contract[], fallback: typeinfo.Type): typeinfo.Type {
+// if/match whose arm is itself one — is typed off the callee's CONTRACT, not
+// off the checker: the checker types a call from the callee's declaration,
+// and a synthesised declaration's tag is the guess this table exists to
+// correct, whether it reads as the coarse `fn` or as a concrete `i32`. The
+// contract is the callee's body's answer; `contracts` builds the table to a
+// fixpoint so the inner declaration's is there when the outer one is read,
+// and until it is, the result is UNCHECKED rather than the checker's guess:
+// a contract recorded from the guess on the first pass would never be
+// revisited, since the fixpoint only fills what is missing.
+function called_synthesised_result(e: ast.Expr, contracts: ssasem.Contract[]): typeinfo.Type {
     if let ast.ExprCall(c) = e {
         if let ast.ExprIdent(id) = c.callee {
-            if (!synthesised_name(id.name)) { return fallback; }
             var at: i32 = ssasem.find_contract(contracts, id.name);
             if (at >= 0) { return contracts[at].result; }
         }
     }
-    return fallback;
+    return typeinfo.unchecked();
+}
+
+// Whether a declared result the body seems to contradict is an annotation
+// the checker verified rather than a guess. A hoisted lambda keeps whatever
+// its `ret_type` was, the author's annotation and `if_expr_rt`'s reading
+// alike, and the checker refuses an annotation the body contradicts (E002)
+// — except for a bare numeric literal, which adapts to the annotation it is
+// returned under. So a literal returned under a numeric tag is the one shape
+// where the tag stands over the literal's own default type.
+function literal_adapts(returned: ast.Expr, declared: typeinfo.Type): boolean {
+    if let ast.ExprNumber(_) = returned { return ssasem.is_integer(declared) || ssasem.is_float(declared); }
+    return false;
 }
 
 // A declaration the lowering synthesised: a lambda `irlower` lifted to a
@@ -2887,11 +2908,17 @@ function synthesised_name(name: string): boolean {
 
 function result_type(fd: parser.FuncDecl, scope: checker.Scope, b: ssasem.Binding, contracts: ssasem.Contract[]): typeinfo.Type {
     if (fd.ret_type.len() == 0) { return inferred_result(fd, scope, b, contracts); }
-    if (synthesised(fd)) {
-        var body: typeinfo.Type = inferred_result(fd, scope, b, contracts);
-        if (semtypes.concrete(body, true) && !is_void(body)) { return body; }
-    }
     var declared: typeinfo.Type = resolved(scope.ret_type, generic_decl(fd, scope), scope, b);
+    if (synthesised(fd)) {
+        var (returned, _) = checker.first_returned(fd.body, scope);
+        if (!literal_adapts(returned, declared)) {
+            var body: typeinfo.Type = inferred_result(fd, scope, b, contracts);
+            if (semtypes.concrete(body, true) && !is_void(body)) { return body; }
+            // A body returning a synthesised call has no answer until that
+            // callee's contract lands; the tag is not the answer meanwhile.
+            if (calls_synthesised(returned)) { return body; }
+        }
+    }
     // A coarse fn tag with no contract has nothing for the checker to resolve,
     // so the declaration is refused for an unresolved result type — but the
     // body still says what it returns, and that is the same inference an
