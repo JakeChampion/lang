@@ -913,6 +913,20 @@ function inst_is_call(k: i32): boolean {
     return k >= 19 && k <= 27;
 }
 
+// rc_inlined names a call both register-path emitters render at the site
+// rather than calling: the two rc primitives whose whole body is a guard
+// chain over the count word. `__fern_rc_dec` is NOT one of them — it maps to
+// the array release, which frees.
+//
+// The allocator still counts these positions as calls (inst_is_call), so a
+// value is still spilled across one. Not counting them was measured and did
+// not pay: it frees six caller-saved registers to more values at once, and
+// over examples/bench that came out between 0.5% worse and unchanged.
+pub function rc_inlined(ins: SInst): boolean {
+    if (ins.kind_tag != 11 || ins.args.len() != 1) { return false; }
+    return ins.str == "__fern_rc_is_unique" || ins.str == "__fern_rc_inc";
+}
+
 // calls_before counts, for every position p, the calls at positions below
 // p; spans_call reads two entries. The scan over the call list it replaces
 // ran once per value, which on a function with thousands of calls and tens

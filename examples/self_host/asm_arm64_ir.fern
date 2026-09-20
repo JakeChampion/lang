@@ -200,9 +200,16 @@ function emit_ir_cond_jump(r: irlower.LowerResult, i: i32, tgt: string, s: asmco
 function ir_shift_imm_asm(tag: i32, width: i32, prev: ir.Op): string {
     if (tag != 31 && tag != 32 && tag != 33) { return ""; }
     if (!ir.const_i32_readable(prev)) { return ""; }
-    var k: i32 = ir.const_i32_value(prev) & 31;
-    if (width == 64) { k = ir.const_i32_value(prev) & 63; }
-    var imm: string = " x0, x0, #" + util.i32_to_string(k) + "\n";
+    return shift_imm_asm(tag, width, ir.const_i32_value(prev) as i64, "x0", "x0");
+}
+
+// shift_imm_asm is one shift of `a` by a known count into `d`, the mask folded
+// into the immediate at the operand's width. The register path reads the count
+// from the allocator's immediate table, the stack machine from the op before.
+function shift_imm_asm(tag: i32, width: i32, count: i64, d: string, a: string): string {
+    var k: i32 = (count as i32) & 31;
+    if (width == 64) { k = (count as i32) & 63; }
+    var imm: string = " " + d + ", " + a + ", #" + util.i32_to_string(k) + "\n";
     if (tag == 31) { return "    lsl" + imm; }
     if (tag == 32) { return "    asr" + imm; }
     return "    lsr" + imm;
@@ -980,6 +987,10 @@ function ssa_read(reg_of: i32[], v: i32, scratch: string, s: asmcore.EmitState):
 function ssa_direct_bin(tag: i32): boolean {
     return tag == 21 || tag == 22 || tag == 23 || tag == 28 || tag == 29 || tag == 30 || ircore.is_int_cmp_kind(tag);
 }
+// A shift computes in the destination too, but only with the count known: the
+// variable-count form masks the count in place, which would write an operand's
+// home.
+function ssa_shift_tag(tag: i32): boolean { return tag == 31 || tag == 32 || tag == 33; }
 // ssa_bin3_asm is one three-operand integer op: `op d, a, b`, or the compare
 // of a and b with the condition set into d.
 function ssa_bin3_asm(tag: i32, d: string, a: string, b: string): string {
@@ -995,7 +1006,7 @@ function ssa_bin3_asm(tag: i32, d: string, a: string, b: string): string {
 // round, may be a 12-bit immediate rather than a register: add, sub and the
 // compares. mul has no immediate form and the logical ops take bitmask
 // immediates, which a 12-bit range does not describe.
-function ssa_imm_right(): string[] { return ["add", "sub", "eq", "ne", "lt_s", "le_s", "gt_s", "ge_s", "lt_u", "le_u", "gt_u", "ge_u"]; }
+function ssa_imm_right(): string[] { return ["add", "sub", "eq", "ne", "lt_s", "le_s", "gt_s", "ge_s", "lt_u", "le_u", "gt_u", "ge_u", "shl", "shr_s", "shr_u"]; }
 function ssa_imm_left(): string[] { return ["add", "eq", "ne", "lt_s", "le_s", "gt_s", "ge_s", "lt_u", "le_u", "gt_u", "ge_u"]; }
 // ssa_rhs is a right operand as the instruction reads it: the immediate for a
 // constant that has none, otherwise its home or the scratch; ssa_read_rhs
@@ -1016,10 +1027,14 @@ function ssa_bin_in_place(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmcor
     var tag: i32 = ir.kind_id(ins.str);
     var a: i32 = ins.args[0];
     var b: i32 = ins.args[1];
-    if (fr.imm.is_imm[a]) { tag = ircore.flip_int_cmp_kind(tag); a = ins.args[1]; b = ins.args[0]; }
+    if (fr.imm.is_imm[a] && !ssa_shift_tag(tag)) { tag = ircore.flip_int_cmp_kind(tag); a = ins.args[1]; b = ins.args[0]; }
     var dh: string = ssa_dst(reg_of, ins.result);
     s = ssa_read(reg_of, a, "x4", s);
     s = ssa_read_rhs(fr, reg_of, b, "x5", s);
+    if (ssa_shift_tag(tag)) {
+        s = s.write(shift_imm_asm(tag, ins.imm, fr.imm.value[b], dh, ssa_src(reg_of, a, "x4")));
+        return ssa_store(reg_of, ins.result, dh, s);
+    }
     s = s.write(ssa_bin3_asm(tag, dh, ssa_src(reg_of, a, "x4"), ssa_rhs(fr, reg_of, b, "x5")));
     return ssa_store(reg_of, ins.result, dh, s);
 }
@@ -1230,10 +1245,39 @@ function ssa_push_operand(reg_of: i32[], v: i32, pushed: i32, s: asmcore.EmitSta
     return s.write("    str x4, [sp, #-16]!\n");
 }
 
+// ssa_rc_prim renders one rc primitive inline, in the instructions its stub
+// uses. x5 holds the floor and then the count, x6 the 0/1; neither is a home
+// (those are x0 and x9 upward), so both survive a destination that IS the
+// operand's register, and the destination is written after the last read of
+// it. ssa.rc_inlined says which calls come here and why.
+function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
+    s = helper_call_needs(ins.str, s);
+    s = ssa_read(reg_of, ins.args[0], "x4", s);
+    var p: string = ssa_src(reg_of, ins.args[0], "x4");
+    var done: string = lp + "rc" + util.i32_to_string(ins.result);
+    var guard: string = "    tbnz " + p + ", #0, " + done + "\n"
+        + "    mov x5, #0x10000\n    cmp " + p + ", x5\n    blo " + done + "\n";
+    if (ins.str == "__fern_rc_is_unique") {
+        var d: string = ssa_dst(reg_of, ins.result);
+        s = s.write("    mov x6, #0\n" + guard);
+        s = s.write("    ldur w5, [" + p + ", #-8]\n    cmp w5, #1\n    bne " + done + "\n");
+        s = s.write("    mov x6, #1\n" + done + ":\n");
+        s = s.write("    mov " + d + ", x6\n");
+        return ssa_store(reg_of, ins.result, d, s);
+    }
+    s = s.write(guard);
+    s = s.write("    ldur w5, [" + p + ", #-8]\n    tbnz w5, #31, " + done + "\n");
+    s = s.write("    add w5, w5, #1\n    stur w5, [" + p + ", #-8]\n");
+    s = s.write(done + ":\n");
+    // rc_inc hands the pointer back; a result with no home stores nothing.
+    return ssa_store(reg_of, ins.result, p, s);
+}
+
 // ssa_call emits one call as the stack machine leaves it: the arguments pushed
 // in IR order for a runtime helper and reversed for a user function (arg0 on
 // top), the callee, the caller-side pop, and x0 stored.
-function ssa_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
+    if (ssa.rc_inlined(ins)) { return ssa_rc_prim(ins, reg_of, lp, s); }
     s = ssa_x0_forget(s);
     var argc: i32 = ins.args.len();
     var helper: boolean = ircore.is_fern_helper(ins.str);
@@ -1589,7 +1633,7 @@ function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asm
 
 function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: irlower.LowerResult, s: asmcore.EmitState): asmcore.EmitState {
     var k: i32 = ins.kind_tag;
-    if (k == 11) { return ssa_call(ins, reg_of, s); }
+    if (k == 11) { return ssa_call(ins, reg_of, lp, s); }
     if (k == 59) { return ssa_flat_op(ins, reg_of, lp, r, s); }
     if (k == 60) { return ssa_dyn_dispatch(ins, reg_of, lp, s); }
     if (k == 51) { return ssa_str_view(ins, reg_of, ssa_view_off(fr, ins.result), s); }
@@ -1610,6 +1654,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
     else if (k == 4) { s = s.write("    ldr " + d + ", =" + util.i64_to_string(util.parse_f64_bits(ins.str)) + "\n"); }
     else if (k == 7) { s = ssa_load(reg_of, ins.args[0], d, s); }
     else if (k == 9 && ssa_direct_bin(ir.kind_id(ins.str))) { return ssa_bin_in_place(ins, reg_of, fr, s); }
+    else if (k == 9 && ssa_shift_tag(ir.kind_id(ins.str)) && fr.imm.is_imm[ins.args[1]]) { return ssa_bin_in_place(ins, reg_of, fr, s); }
     else if (k == 9) {
         d = "x4";
         s = ssa_load(reg_of, ins.args[0], "x4", s);

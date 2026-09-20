@@ -4172,9 +4172,16 @@ function emit_ir_cond_jump(r: irlower.LowerResult, i: i32, tgt: string, s: asmco
 function ir_shift_imm_asm(tag: i32, width: i32, prev: ir.Op): string {
     if (tag != 31 && tag != 32 && tag != 33) { return ""; }
     if (!ir.const_i32_readable(prev)) { return ""; }
-    var k: i32 = ir.const_i32_value(prev) & 31;
-    if (width == 64) { k = ir.const_i32_value(prev) & 63; }
-    var imm: string = " $" + util.i32_to_string(k) + ", %rax\n";
+    return shift_imm_asm(tag, width, ir.const_i32_value(prev) as i64, "%rax");
+}
+
+// shift_imm_asm is one shift by a known count into `d`, the mask folded into
+// the immediate at the operand's width. The register path reads the count from
+// the allocator's immediate table, the stack machine from the op before it.
+function shift_imm_asm(tag: i32, width: i32, count: i64, d: string): string {
+    var k: i32 = (count as i32) & 31;
+    if (width == 64) { k = (count as i32) & 63; }
+    var imm: string = " $" + util.i32_to_string(k) + ", " + d + "\n";
     if (tag == 31) { return "    shlq" + imm; }
     if (tag == 32) { return "    sarq" + imm; }
     return "    shrq" + imm;
@@ -5286,13 +5293,16 @@ function ssa_read(reg_of: i32[], v: i32, scratch: string, s: asmcore.EmitState):
 function ssa_direct_bin(tag: i32): boolean {
     return tag == 21 || tag == 22 || tag == 23 || tag == 28 || tag == 29 || tag == 30 || ircore.is_int_cmp_kind(tag);
 }
+// A shift computes in the destination too, but only with the count known: the
+// variable-count form reads %cl, which is not where an operand lives.
+function ssa_shift_tag(tag: i32): boolean { return tag == 31 || tag == 32 || tag == 33; }
 function ssa_commutative(tag: i32): boolean {
     return tag == 21 || tag == 23 || tag == 28 || tag == 29 || tag == 30 || tag == 35 || tag == 36;
 }
 // The ops whose right operand, or whose left operand when it can be turned
 // round, may be an imm32 rather than a register: the two-operand forms and
 // the compares. A shift count is %cl and a division's divisor a register.
-function ssa_imm_right(): string[] { return ["add", "sub", "mul", "and", "or", "xor", "eq", "ne", "lt_s", "le_s", "gt_s", "ge_s", "lt_u", "le_u", "gt_u", "ge_u"]; }
+function ssa_imm_right(): string[] { return ["add", "sub", "mul", "and", "or", "xor", "eq", "ne", "lt_s", "le_s", "gt_s", "ge_s", "lt_u", "le_u", "gt_u", "ge_u", "shl", "shr_s", "shr_u"]; }
 function ssa_imm_left(): string[] { return ["add", "mul", "and", "or", "xor", "eq", "ne", "lt_s", "le_s", "gt_s", "ge_s", "lt_u", "le_u", "gt_u", "ge_u"]; }
 // ssa_rhs is a right operand as the instruction reads it: the immediate for a
 // constant that has none, otherwise its home or the scratch; ssa_read_rhs
@@ -5318,7 +5328,7 @@ function ssa_bin_in_place(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmcor
     var a: i32 = ins.args[0];
     var b: i32 = ins.args[1];
     var dh: string = ssa_dst(reg_of, ins.result);
-    var swap: boolean = fr.imm.is_imm[a];
+    var swap: boolean = fr.imm.is_imm[a] && !ssa_shift_tag(tag);
     if (!swap && !fr.imm.is_imm[b] && ssa_src(reg_of, b, "%rcx") == dh) {
         if (ssa_commutative(tag) || ircore.flip_int_cmp_kind(tag) != tag) { swap = true; } else { dh = "%r11"; }
     }
@@ -5330,7 +5340,8 @@ function ssa_bin_in_place(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmcor
     }
     s = ssa_read_rhs(fr, reg_of, b, "%rcx", s);
     s = ssa_load(reg_of, a, dh, s);
-    s = s.write(ir_bin_asm(tag, ins.imm, dh, ssa_rhs(fr, reg_of, b, "%rcx")));
+    if (ssa_shift_tag(tag)) { s = s.write(shift_imm_asm(tag, ins.imm, fr.imm.value[b], dh)); }
+    else { s = s.write(ir_bin_asm(tag, ins.imm, dh, ssa_rhs(fr, reg_of, b, "%rcx"))); }
     return ssa_store(reg_of, ins.result, dh, s);
 }
 // ssa_r32 and ssa_r8 are the 32-bit and 8-bit names of a 64-bit register.
@@ -5594,10 +5605,49 @@ function ssa_push_operand(reg_of: i32[], v: i32, s: asmcore.EmitState): asmcore.
     return s.write("    pushq " + ssa_reg(reg_of[v]) + "\n");
 }
 
+// ssa_rc_prim renders one rc primitive inline, in the instructions its stub
+// uses. Both skip a tagged pointer and anything below the heap floor, which
+// is also every null. is_unique needs no test for a static sentinel's
+// negative count, since a negative count never compares equal to one; rc_inc
+// needs one, because it would otherwise increment it.
+//
+// The count is read into %rdx and the 0/1 built in %rcx, neither of which is
+// ever a home, so both survive a destination that IS the operand's register —
+// the usual case once a result and its operand share one — and the
+// destination is written after the last read of the operand.
+//
+// rc_inc's read of the count carries the sanitizer's poison check, as its
+// stub's does; is_unique's stub has none, so neither does this.
+function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
+    s = helper_call_needs(ins.str, s);
+    s = ssa_read(reg_of, ins.args[0], "%r11", s);
+    var p: string = ssa_src(reg_of, ins.args[0], "%r11");
+    var done: string = lp + "rc" + util.i32_to_string(ins.result);
+    var rc: string = "-8(" + p + ")";
+    var guard: string = "    testb $1, " + ssa_r8(p) + "\n    jnz " + done + "\n"
+        + "    cmpq $0x10000, " + p + "\n    jb " + done + "\n";
+    if (ins.str == "__fern_rc_is_unique") {
+        var d: string = ssa_dst(reg_of, ins.result);
+        s = s.write("    xorl %ecx, %ecx\n" + guard);
+        s = s.write("    movl " + rc + ", %edx\n    cmpl $1, %edx\n    jne " + done + "\n");
+        s = s.write("    movl $1, %ecx\n" + done + ":\n");
+        s = s.write("    movq %rcx, " + d + "\n");
+        return ssa_store(reg_of, ins.result, d, s);
+    }
+    s = s.write(guard);
+    s = s.write("    movl " + rc + ", %ecx\n" + san_poison_check("%ecx"));
+    s = s.write("    testl %ecx, %ecx\n    js " + done + "\n");
+    s = s.write("    addl $1, %ecx\n    movl %ecx, " + rc + "\n");
+    s = s.write(done + ":\n");
+    // rc_inc hands the pointer back; a result with no home stores nothing.
+    return ssa_store(reg_of, ins.result, p, s);
+}
+
 // ssa_call emits one call as the stack machine leaves it: the arguments pushed
 // in IR order for a runtime helper and reversed for a user function (arg0 on
 // top), the callee, the caller-side pop, and %rax stored.
-function ssa_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
+    if (ssa.rc_inlined(ins)) { return ssa_rc_prim(ins, reg_of, lp, s); }
     s = ssa_x0_forget(s);
     var argc: i32 = ins.args.len();
     var helper: boolean = ircore.is_fern_helper(ins.str);
@@ -6003,7 +6053,7 @@ function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asm
 
 function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: irlower.LowerResult, s: asmcore.EmitState): asmcore.EmitState {
     var k: i32 = ins.kind_tag;
-    if (k == 11) { return ssa_call(ins, reg_of, s); }
+    if (k == 11) { return ssa_call(ins, reg_of, lp, s); }
     if (k == 59) { return ssa_flat_op(ins, reg_of, lp, r, s); }
     if (k == 60) { return ssa_dyn_dispatch(ins, reg_of, lp, s); }
     if (k == 51) { return ssa_str_view(ins, reg_of, ssa_view_off(fr, ins.result), s); }
@@ -6025,6 +6075,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
     else if (k == 4) { s = s.write("    movabsq $" + util.i64_to_string(util.parse_f64_bits(ins.str)) + ", " + d + "\n"); }
     else if (k == 7) { s = ssa_load(reg_of, ins.args[0], d, s); }
     else if (k == 9 && ssa_direct_bin(ir.kind_id(ins.str))) { return ssa_bin_in_place(ins, reg_of, fr, s); }
+    else if (k == 9 && ssa_shift_tag(ir.kind_id(ins.str)) && fr.imm.is_imm[ins.args[1]]) { return ssa_bin_in_place(ins, reg_of, fr, s); }
     else if (k == 9) {
         // idiv is hardwired to %rdx:%rax, so the guarded divisions work there
         // and the allocator is told they clobber it; everything else works in
