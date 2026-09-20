@@ -2,6 +2,7 @@
 import "./ssa";
 import "./ssasem";
 import "./ssadeps";
+import "./ssalive";
 import "./semrecords";
 import "./semtypes";
 import "./typeinfo";
@@ -724,7 +725,7 @@ function units_analysis(f: ssasem.Func, a: ssasem.Analysis, units: Units): ssase
     var any: boolean = false;
     for h in units.held { if (h) { any = true; } }
     if (!any) { return ssasem.Analysis { ...a, dependencies: units.deps }; }
-    var flow = ssadeps.analyze(f.graph, units.deps);
+    var flow: ssalive.Flow = ssadeps.analyze(f.graph, units.deps);
     return ssasem.Analysis { ...a, ok: flow.ok, why: flow.why, dependencies: units.deps, flow: flow };
 }
 
@@ -739,7 +740,8 @@ function retainable_element(f: ssasem.Func, defs: ssa.SInst[], w: i32): boolean 
 // The element reads anchored to `s` that are still in hand once `s` is
 // supplied: past the operation at (`bi`, `pos`), or into block `si` when `s`
 // goes out along an edge.
-function outliving(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], own out: boolean[], s: i32, bi: i32, pos: i32, si: i32): boolean[] {
+function outliving(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], held: boolean[], s: i32, bi: i32, pos: i32, si: i32): boolean[] {
+    var out: boolean[] = held;
     var w: i32 = 0;
     while (w < f.graph.nvals) {
         if (w != s && !out[w] && retainable_element(f, defs, w) && reads(a, w, s)) {

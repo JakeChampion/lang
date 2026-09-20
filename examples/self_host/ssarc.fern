@@ -1844,7 +1844,8 @@ function instruction(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Pla
     if (ins.kind_tag == ssasem.call()) { r = call_site(r, ins); }
     // A verified copy already has its single operand on the stack.
     r = emit(r, ir.op_store_local(ins.result));
-    return held(took(r, p, ins), p, ins);
+    r = took(r, p, ins);
+    return held(r, p, ins);
 }
 
 // An element read the plan HOLDS retains what it read: the unit is the frame's
