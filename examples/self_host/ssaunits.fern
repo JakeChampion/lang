@@ -322,20 +322,30 @@ function owned_values(f: ssasem.Func, modes: i32[]): boolean[] {
     return phi_ownership(f, out);
 }
 
-// A phi owns a unit unless every operand is lent whole: a borrowed parameter,
-// or another phi that is. Such a phi holds nothing its edges could supply --
-// asking them retains a view with a no-op and releases it with a free
-// (#9802), and retains a counted box for nothing. Any other operand makes the
-// phi owned as before: a projection of an owned record is anchored to its
-// root, and the retain the edge supplies is what keeps the child alive past
-// the root's release. To a fixpoint, since ownership reaches a phi through a
-// phi.
+// A phi of VIEWS owns nothing, whatever its operands are: no unit of a view
+// exists to take, so asking an edge to supply one retains it with a no-op and
+// releases it with a free (#9802). `ssasem.view_phi_anchors` gives the merge
+// its operands' sources instead, and a use of the merge is a use of those, so
+// the lifetime guard holds them past its last read and its availability check
+// refuses the merge outright where they cannot be named there (#9877).
+//
+// Any other phi owns a unit unless every operand is lent whole: a borrowed
+// parameter, or another phi that is. Such a phi holds nothing its edges could
+// supply either, and asking them retains a counted box for nothing. Any other
+// operand makes the phi owned as before: a projection of an owned record is
+// anchored to its root, and the retain the edge supplies is what keeps the
+// child alive past the root's release. To a fixpoint, since ownership reaches
+// a phi through a phi.
+function phi_owner_candidate(f: ssasem.Func, ins: ssa.SInst): boolean {
+    return ins.kind_tag == 8 && ssasem.reference(f.values[ins.result]) && !ssasem.is_view(f.values[ins.result]);
+}
+
 function phi_ownership(f: ssasem.Func, owned: boolean[]): boolean[] {
     var defs: ssa.SInst[] = definitions(f);
     var out: boolean[] = owned;
     for b in f.graph.blocks {
         for ins in b.insts {
-            if (ins.kind_tag != 8 || !ssasem.reference(f.values[ins.result])) { continue; }
+            if (!phi_owner_candidate(f, ins)) { continue; }
             var lent: boolean = true;
             for a in ins.args {
                 if (a < 0) { continue; }
@@ -351,7 +361,7 @@ function phi_ownership(f: ssasem.Func, owned: boolean[]): boolean[] {
         grown = false;
         for b in f.graph.blocks {
             for ins in b.insts {
-                if (ins.kind_tag != 8 || out[ins.result] || !ssasem.reference(f.values[ins.result])) { continue; }
+                if (!phi_owner_candidate(f, ins) || out[ins.result]) { continue; }
                 for a in ins.args {
                     if (a >= 0 && out[a]) { out = out.with(ins.result, true); grown = true; }
                 }

@@ -546,14 +546,16 @@ function main(): i32 {
     });
     return f(2);
 }`},
-	// A view local rebound in a loop, starting from a view that stays live:
-	// the phi merges the live view with a fresh one, and supplying the phi on
-	// the entry edge means RETAINING the live view, which on a view's immortal
-	// box is a no-op against a release that frees it. Produced, this read
-	// `s` after the loop had released it (a sanitizer use-after-free); the
-	// planner now refuses any plan that retains a view (#9802), and the AST
-	// lowering, which leaks the boxes but answers, stands.
-	{name: "view-loop-rebinds-a-live-view", atLeast: 0, refuses: "a view is lent, never retained", src: `
+	// A view local rebound in a loop, starting from a view that stays live.
+	// The phi merges the live view with a fresh one; while it owned a unit,
+	// its entry edge RETAINED the live view — a no-op on a view's immortal box
+	// — against a release that frees it, so the produced body read `s` after
+	// the loop had freed it. #9802 refused every plan that retains a view
+	// rather than emit that. A view phi owns nothing now and carries its
+	// operands' sources as anchors instead (#9877), so `s`'s box outlives its
+	// last read and the shape produces: 0 bytes held against the AST
+	// lowering's 96.
+	{name: "view-loop-rebinds-a-live-view", atLeast: 1, noLeak: true, src: `
 function main(): i32 {
     var t: string = "abcde" + "fghij";
     var s: str = slice_unchecked(t, 0, 5);
@@ -2496,6 +2498,40 @@ function main(): i32 {
     }
     print("over-releases " + __rc_underflow_count().to_string());
     return acc % 109;
+}`},
+	// A `str` assigned in more than one place is a phi of views, which owns
+	// nothing: no unit of a view exists to take, so an edge asked to supply
+	// one retains it with a no-op and frees it with the release that balances
+	// (#9802). The merge is anchored to its operands' SOURCES instead
+	// (#9877) — never to an operand, which is defined in one predecessor and
+	// does not dominate the reads after the merge. `spec_of` merges across a
+	// branch, `longest` carries the merge around a loop.
+	{name: "a-str-assigned-twice-is-a-phi-of-views", atLeast: 58, noLeak: true, src: `
+import "std/string";
+function spec_of(fmt: string, i: i32, n: i32): i32 {
+    var spec: str = "";
+    if (i < n) { spec = slice_unchecked(fmt, i, n); }
+    return spec.len();
+}
+function longest(text: string, w: i32): i32 {
+    var best: str = "";
+    var i: i32 = 0;
+    while (i + w <= text.len()) {
+        var win: str = slice_unchecked(text, i, i + w);
+        if (win.index_of("x") >= 0) { best = win; }
+        i = i + 1;
+    }
+    return best.len();
+}
+function main(): i32 {
+    var acc: i32 = 0;
+    var r: i32 = 0;
+    while (r < 20) {
+        var s: string = "abxcd" + "ef";
+        acc = acc + spec_of(s, r % 4, 5) + longest(s, r % 3 + 1);
+        r = r + 1;
+    }
+    return acc % 97;
 }`},
 }
 

@@ -413,6 +413,13 @@ Unsupported constructs refuse the whole function with a reason.
   in the standard library on a `string` receiver, so a text receiver now
   resolves `string.<m>` contracts the way a struct's does.
 
+  A `str` assigned in more than one place merges at a phi, which owns nothing:
+  no unit of a view exists to take. The merge carries the UNION of its
+  operands' anchors instead — their sources, never the operands, which live in
+  one predecessor each and do not dominate the reads after the merge (#9877).
+  A source that cannot be named where the merge is read, such as one created
+  inside the loop that carries the merge, refuses the function.
+
   What a view may NOT do is escape its source. A function whose result is
   `str` is refused ("view result escapes its source"): the caller's model has
   no anchor for a result to its argument. A view as an array element — an
