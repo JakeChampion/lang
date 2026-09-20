@@ -586,7 +586,7 @@ function scan_words(x: i32, f: string): i32 {
     function ve(n: i32, own a: string[]): string[] { return a.append(f); }
     return fold_own(["a"], ve).len();
 }
-function refused_wide_sig(f: (i64) => i64, n: i64): i64 { return f(n); }
+function wide_sig(f: (i64) => i64, n: i64): i64 { return f(n); }
 function fn_result_named(): (i32) => i32 { return twice_it; }
 function refused_fn_element(n: i32): i32 { var fs: ((i32) => i32)[] = [twice_it]; return fs.len(); }
 

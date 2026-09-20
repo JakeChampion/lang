@@ -2340,7 +2340,16 @@ func scan_words {
     ret v6
 }
 
-refused produced graph fails semantic verification: function signature slot
+modes 2 1 result i64
+v0:((i64) => i64) v1:i64 v2:i64
+func wide_sig {
+  b0:
+    v0 = param 0
+    v1 = param 1
+    v2 = call_value v0 v1
+    ret v2
+}
+
 modes result ((i32) => i32)
 v0:((i32) => i32)
 func fn_result_named {
