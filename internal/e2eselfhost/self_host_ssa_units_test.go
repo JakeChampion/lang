@@ -76,6 +76,26 @@ graph = ssa.SFunc { name: "concat", nparams: 1, nvals: 3, entry: 7, takes_env: f
 ] };
 `
 
+// An element read that is still in hand when its array is written: the read
+// takes a unit of its own, so the array moves into the write and the tuple
+// built afterwards takes both without a retain.
+const unitHeld = `
+var pt: typeinfo.Type = typeinfo.TypeTuple { elements: [sa, st] };
+params = [sa, st, i32t]; types = [sa, st, i32t, st, sa, pt]; result = pt; modes = [3, 3, 1];
+graph = ssa.SFunc { name: "held", nparams: 3, nvals: 6, entry: 7, takes_env: false, blocks: [
+    ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1), inst(6, 2, [], 2), inst(ssasem.array_get(), 3, [0, 2], 0), inst(ssasem.with(), 4, [0, 2, 1], 0), inst(ssasem.tuple_new(), 5, [4, 3], 0)], term: ret(5) }
+] };
+`
+
+// The same read dying at the write that consumes its array: it stays a
+// borrow, retained into the slot, and the array still moves.
+const unitHeldDies = `
+params = [sa, i32t]; types = [sa, i32t, st, sa]; result = sa; modes = [3, 1];
+graph = ssa.SFunc { name: "dies", nparams: 2, nvals: 4, entry: 7, takes_env: false, blocks: [
+    ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1), inst(ssasem.array_get(), 2, [0, 1], 0), inst(ssasem.with(), 3, [0, 1, 2], 0)], term: ret(3) }
+] };
+`
+
 type unitCase struct{ name, setup, check, mutate, want string }
 
 func unitCases() []unitCase {
@@ -139,6 +159,19 @@ if (!supply(second, 0, 0, 1, ssaunits.retain_unit()) || !drops(second, [])) { re
 		{"changed-call-contract", unitCall, "", `f = ssasem.Func { ...f, calls: [contract("g", [sa, sa], [2, 2], sa)] };`, "unit supply arity"},
 		{"call-contract-mode", unitCall, "", `f = ssasem.Func { ...f, calls: [contract("g", [sa, sa], [1, 3], sa)] };`, "reference parameter mode"},
 		{"dropped-call-contract", unitCall, "", `f = ssasem.Func { ...f, calls: [] };`, "missing call contract"},
+		{"held-element", unitHeld, `
+if (!p.held[3] || p.held[4]) { return 35; }
+var w = find(p, 7, 4, 0 - 1);
+if (!supply(w, 0, 0, 0, ssaunits.move_unit()) || !supply(w, 1, 1, 2, ssaunits.move_unit()) || !drops(w, [])) { return 36; }
+var t = find(p, 7, 5, 0 - 1);
+if (!supply(t, 0, 4, 0, ssaunits.move_unit()) || !supply(t, 1, 3, 1, ssaunits.move_unit()) || !drops(t, [])) { return 37; }
+`, "", ""},
+		{"element-read-dies-first", unitHeldDies, `
+if (p.held[2]) { return 38; }
+var w = find(p, 7, 3, 0 - 1);
+if (!supply(w, 0, 0, 0, ssaunits.move_unit()) || !supply(w, 1, 2, 2, ssaunits.retain_unit()) || !drops(w, [])) { return 39; }
+`, "", ""},
+		{"changed-hold", unitHeld, "", `p = ssaunits.Plan { ...p, held: p.held.with(3, false) };`, "element hold disagrees with the plan"},
 		{"string-units", unitString, `
 var s = find(p, 7, 2, 0 - 1);
 if (s.supplies.len() != 0 || !drops(s, [1, 2])) { return 28; }

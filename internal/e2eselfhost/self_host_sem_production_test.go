@@ -292,6 +292,11 @@ var semProductionPrograms = []struct {
 	nativeOnly bool
 	src        string
 }{
+	// An element read into a local that stays live across a `.with` on its
+	// array: the insertion sort's shape. The read takes a unit of its own, so
+	// the array moves into the write and is written in place rather than
+	// copied (#9849); TestSelfHostSemanticAllocationParity pins the count.
+	{name: "element-read-outlives-the-array-write", atLeast: 2, noLeak: true, src: semHeldElementSource},
 	// A lambda the SOURCE wrote, with an explicit callable return annotation.
 	// parse_type_name coarsens that annotation to the tag "fn" and the lambda
 	// parse discarded the contract, so e_lambda_at built every source lambda
@@ -2248,4 +2253,101 @@ function main(): i32 {
     return total + mid[0] + mid.len() + (tail[1] as i32) + tail.len() + (head[1] as i32);
 }
 `},
+}
+
+// semHeldElementSource sorts by length with the insertion sort's body: the
+// element read into `v` is live across the inner loop's `.with`.
+const semHeldElementSource = `
+import "std/string";
+
+function ins(own a: string[], lo: i32, hi: i32): string[] {
+    var i: i32 = lo + 1;
+    while (i < hi) {
+        var v: string = a[i];
+        var j: i32 = i - 1;
+        var moving: boolean = j >= lo;
+        while (moving) {
+            if (a[j].len() > v.len()) {
+                a = a.with(j + 1, a[j]);
+                j = j - 1;
+                moving = j >= lo;
+            } else {
+                moving = false;
+            }
+        }
+        a = a.with(j + 1, v);
+        i = i + 1;
+    }
+    return a;
+}
+
+function main(): i32 {
+    var xs: string[] = ["ccc", "a", "bb", "dddd", "", "ee", "ffffff", "g"];
+    var n: i32 = xs.len();
+    xs = ins(xs, 0, n);
+    var out: string = "";
+    for x in xs { out = out + x + "|"; }
+    print(out);
+    return xs[7].len();
+}
+`
+
+// TestSelfHostSemanticAllocationParity pins the produced bodies' allocation
+// count against the AST lowering's on shapes where a unit decision is what
+// decides between writing a buffer in place and copying it. The answer cannot
+// see a copy and the leak pins see only what is never released, so this is
+// the check that a buffer moved rather than being retained and duplicated.
+func TestSelfHostSemanticAllocationParity(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("the CLI driver takes host filesystem paths as argv")
+	}
+	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "fern.fern")
+	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
+	for _, prog := range []struct{ name, src string }{
+		{"element-read-outlives-the-array-write", semHeldElementSource},
+	} {
+		t.Run(prog.name, func(t *testing.T) {
+			src := filepath.Join(t.TempDir(), "main.fern")
+			if err := os.WriteFile(src, []byte(prog.src), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			base := semAllocations(t, fernBin, stdlibRoot, src, false)
+			got := semAllocations(t, fernBin, stdlibRoot, src, true)
+			if got > base {
+				t.Fatalf("the produced bodies allocated %d times where the AST lowering allocates %d", got, base)
+			}
+		})
+	}
+}
+
+// semAllocations compiles the program under FERN_LEAKCHECK on x86-64 with the
+// semantic path on or off and answers the run's allocation count.
+func semAllocations(t *testing.T, fernBin, stdlibRoot, src string, sem bool) int64 {
+	t.Helper()
+	out := filepath.Join(t.TempDir(), "prog")
+	cmd := exec.Command(fernBin, "-target", "x86-64-linux", src, stdlibRoot, "-o", out)
+	cmd.Env = append(os.Environ(), "FERN_LEAKCHECK=1")
+	if sem {
+		cmd.Env = append(cmd.Env, "FERN_SEM_IR=1")
+	} else {
+		cmd.Env = append(cmd.Env, "FERN_SEM_IR=")
+	}
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("compile (sem=%v): %v\n%s", sem, err, output)
+	}
+	if err := os.Chmod(out, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	output, _ := exec.Command(out).CombinedOutput()
+	var allocs, frees, live int64
+	if _, err := fmtSscan(leakSummaryLine(string(output)), &allocs, &frees, &live); err != nil {
+		t.Fatalf("no leakcheck summary (sem=%v): %v\n%s", sem, err, output)
+	}
+	return allocs
 }
