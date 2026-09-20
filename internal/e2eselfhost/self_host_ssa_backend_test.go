@@ -138,6 +138,32 @@ function main(): i32 {
     return k & 255;
 }
 `},
+	// A labelled continue out of an inner loop that never exits: the inner
+	// loop's exit path is unreachable, thread_forwarding drops it, and the
+	// outer header's phis must lose the operand slot for that vanished
+	// predecessor rather than carry a value nothing defines (the allocator
+	// once indexed a block at -1 for it). count_up carries a parameter
+	// through a header phi, the entry operand with no defining instruction.
+	{name: "labelled_continue_defer", allSSA: true, src: `
+function count_up(i: i32, n: i32): i32 {
+    while (i < n) { i = i + 1; }
+    return i;
+}
+function main(): i32 {
+    var seen: i32 = 0;
+    var i: i32 = 0;
+    outer: while (i < 3) {
+        i = i + 1;
+        loop {
+            var items: i32[] = [0];
+            defer seen = seen * 3 + items[0];
+            items = [i];
+            continue outer;
+        }
+    }
+    return seen + count_up(4, 9);
+}
+`},
 	// A loop-invariant parameter carried through the header phi while the
 	// body calls out: the phi's back-edge operand is the phi itself, and the
 	// allocator once let a body temporary take its register, so the next
@@ -602,6 +628,106 @@ function main(): i32 {
     return mix(0, 0i64, 0u32) % 100;
 }
 `},
+	// The loop-carried phi pairs the allocator coalesces, in every shape
+	// where sharing one register would be wrong: the phi's old value read
+	// after its operand is defined, on a latch exit and inside a nested
+	// loop; a swap of two carried values; several back edges into one
+	// header; an exit that reads both; and an update the two-operand forms
+	// cannot compute in place.
+	{name: "carried_pairs", allSSA: true, src: `
+import "std/i32";
+function old_after_latch(n: i32): i32 {
+    var sum: i32 = 0;
+    var i: i32 = 0;
+    var old: i32 = 0;
+    while (true) {
+        old = sum;
+        sum = sum + i * 3;
+        i = i + 1;
+        if (i > n) { break; }
+    }
+    return old * 1000 + sum;
+}
+function swap(n: i32): i32 {
+    var a: i32 = 1;
+    var b: i32 = 2;
+    var i: i32 = 0;
+    while (i < n) { var t: i32 = a; a = b; b = t; i = i + 1; }
+    return a * 10 + b;
+}
+function inner_reads_outer(n: i32): i32 {
+    var acc: i32 = 1;
+    var o: i32 = 0;
+    while (o < n) {
+        var k: i32 = 0;
+        var step: i32 = 0;
+        while (k < 3) { step = step + acc + k; k = k + 1; }
+        acc = step;
+        o = o + 1;
+    }
+    return acc;
+}
+function two_latches(n: i32): i32 {
+    var s: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        i = i + 1;
+        if (i % 3 == 0) { s = s + 100; continue; }
+        s = s + i;
+    }
+    return s;
+}
+function exit_reads_both(n: i32): i32 {
+    var s: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        var next: i32 = s + i;
+        if (next > 50) { return next * 7 + s; }
+        s = next;
+        i = i + 1;
+    }
+    return s;
+}
+function shifted(n: i32): i32 {
+    var x: i32 = 1;
+    var i: i32 = 0;
+    while (i < n) { x = ((x << 1) | 1) % 1000003; x = x / 3 + x; i = i + 1; }
+    return x;
+}
+function main(): i32 {
+    print(old_after_latch(5).to_string());
+    print(swap(3).to_string());
+    print(swap(4).to_string());
+    print(inner_reads_outer(4).to_string());
+    print(two_latches(10).to_string());
+    print(exit_reads_both(20).to_string());
+    print(exit_reads_both(5).to_string());
+    print(shifted(40).to_string());
+    return two_latches(7) % 100;
+}
+`},
+	// Blocks that hold nothing but a branch: empty arms, a dead arm, a loop
+	// never entered, a body with nothing live. The emitter sends every edge
+	// past them and drops the ones nothing reaches; the phis of the loops
+	// keep their edges.
+	{name: "empty_blocks", allSSA: true, src: `
+function empties(n: i32): i32 {
+    var k: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        if (i % 2 == 0) { } else { }
+        if (i > 3) { var dead: i32 = i * 9; }
+        while (k > 100) { k = k - 1000; }
+        k = k + i;
+        i = i + 1;
+    }
+    var j: i32 = 0;
+    while (j < n) { var unused: i32 = j * 2; j = j + 1; }
+    if (n > 2) { } else { k = k + 7; }
+    return k + j;
+}
+function main(): i32 { return empties(6) * 3 + empties(1); }
+`},
 }
 
 // ssaBackendTarget is one target this host can run output for: the target
@@ -1043,6 +1169,76 @@ func TestSelfHostCLIBuildsForEveryNativeTarget(t *testing.T) {
 // A constant the binary ops alone read is an immediate operand on both ISAs
 // and is never materialised; one a division reads keeps its register. The
 // loop bound is under 4,096 so it is an immediate on arm64 too.
+// A counted loop's two loop-carried values share registers with their
+// updates and the branch reaches the body without passing an empty block,
+// so the loop is the compare, its branch, the two adds and the back edge on
+// both ISAs: no copy in the loop, and no jump but the back edge.
+func TestSelfHostSSALoopIsFiveInstructions(t *testing.T) {
+	h := selfHostCLIForHost(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "count.fern")
+	prog := `function count(n: i64): i64 {
+    var sum: i64 = 0i64;
+    var i: i64 = 0i64;
+    while (i < n) { sum = sum + i; i = i + 1i64; }
+    return sum;
+}
+function main(): i32 { return (count(3000i64) % 97i64) as i32; }
+`
+	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		target string
+		back   *regexp.Regexp
+		move   *regexp.Regexp
+	}{
+		{"x86-64-linux", regexp.MustCompile(`(?m)^\s+jmp (\.Lssa_count_\d+)\n`), regexp.MustCompile(`(?m)^\s+movq %r\w+, %r\w+$`)},
+		{"arm64-linux", regexp.MustCompile(`(?m)^\s+b (\.Lssa_count_\d+)\n`), regexp.MustCompile(`(?m)^\s+mov x\d+, x\d+$`)},
+	}
+	for _, c := range cases {
+		out := filepath.Join(dir, "count-"+c.target+".s")
+		cmd := exec.Command(h.cli, "-target", c.target, "-backend", "ssa", "-emit", "asm", "-o", out, src, h.stdlib)
+		cmd.Env = append(os.Environ(), "FERN_SSA_REPORT=1")
+		report, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s: %v\n%s", c.target, err, report)
+		}
+		if strings.Contains(string(report), "FERN_SSA: count:") {
+			t.Fatalf("%s: count was declined:\n%s", c.target, report)
+		}
+		asm, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fn := string(asm[bytes.Index(asm, []byte("__fn_count:")):])
+		fn = fn[:strings.Index(fn, ".cfi_endproc")]
+		backs := c.back.FindAllStringSubmatchIndex(fn, -1)
+		if len(backs) == 0 {
+			t.Fatalf("%s: no back edge in count:\n%s", c.target, fn)
+		}
+		last := backs[len(backs)-1]
+		label := fn[last[2]:last[3]]
+		head := strings.Index(fn, "\n"+label+":\n")
+		if head < 0 {
+			t.Fatalf("%s: the back edge's label %s is not in count:\n%s", c.target, label, fn)
+		}
+		loop := fn[head:last[1]]
+		var insts []string
+		for _, line := range strings.Split(loop, "\n") {
+			if strings.HasPrefix(line, "    ") && !strings.HasPrefix(strings.TrimSpace(line), ".") {
+				insts = append(insts, strings.TrimSpace(line))
+			}
+		}
+		if len(insts) != 5 {
+			t.Errorf("%s: the loop of count is %d instructions, want 5:\n%s", c.target, len(insts), loop)
+		}
+		if c.move.MatchString(loop) {
+			t.Errorf("%s: the loop of count still copies between registers:\n%s", c.target, loop)
+		}
+	}
+}
+
 func TestSelfHostSSAConstantsAreImmediates(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
