@@ -3636,7 +3636,7 @@ function main(): i32 {
     var built = semsource.build_module(mod);
     var bodies: irlower.LowerResult[] = [];
     var helpers: irlower.LowerResult[] = [];
-    var skipped: irlower.LowerResult = irlower.LowerResult { ok: false, why: "", ops: [], n_locals: 0, n_params: 0, erased_wide: false, arr_slots: [], i64_slots: [], f64_slots: [], str_slots: [], alias_incs: [], name: "", result_kind: irlower.result_from_decl() };
+    var skipped: irlower.LowerResult = irlower.LowerResult { ok: false, why: "", ops: [], n_locals: 0, n_params: 0, erased_wide: false, superseded: false, arr_slots: [], i64_slots: [], f64_slots: [], str_slots: [], alias_incs: [], name: "", result_kind: irlower.result_from_decl() };
     // Every body is planned before any is lowered, as semlower does: a
     // caller's bracket reads the fields its callees' plans may grow (grows),
     // and the AST-lowered main reads the same through the regrown registries.

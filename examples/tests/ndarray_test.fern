@@ -1,0 +1,163 @@
+import "std/test";
+import "std/ndarray" as ndarray;
+
+// examples/tests/ndarray_test.fern — pure-Fern coverage of std/ndarray:
+// every structural operation against the flat construction it was built
+// from, the row-major and packed predicates that decide when `reshape`
+// and `to_flat` copy, the edges (rank 0, an empty axis), and the
+// elementwise and along-an-axis operations. What the
+// counters prove — that the metadata operations move no elements — is
+// internal/e2e/ndarray_test.go's, which can read them.
+
+function build(n: i32): i32[] {
+  var xs: i32[] = [];
+  var i: i32 = 0;
+  while (i < n) {
+    xs = xs.append(i);
+    i = i + 1;
+  }
+  return xs;
+}
+
+function grid(): ndarray.NdArray[i32] {
+  return ndarray.from_flat(build(12), [3, 4]);
+}
+
+function test_from_flat_indexes_row_major(): test.TestOutcome {
+  var a: ndarray.NdArray[i32] = grid();
+  if (a.rank() != 2 || a.len() != 12) { return test.fail("rank or len"); }
+  if (a.shape()[0] != 3 || a.shape()[1] != 4) { return test.fail("shape"); }
+  if (a.strides()[0] != 4 || a.strides()[1] != 1) { return test.fail("strides"); }
+  if (a.get([2, 1]) != 9) { return test.fail("get"); }
+  return test.assert_true(a.is_row_major() && a.is_packed());
+}
+
+function test_transpose_swaps_indices(): test.TestOutcome {
+  var t: ndarray.NdArray[i32] = grid().transpose();
+  if (t.shape()[0] != 4 || t.shape()[1] != 3) { return test.fail("shape"); }
+  if (t.get([1, 2]) != 9) { return test.fail("get"); }
+  if (t.is_row_major()) { return test.fail("a transpose is not row-major"); }
+  return test.assert_eq(t.transpose().get([2, 1]), 9);
+}
+
+function test_permute_is_the_general_transpose(): test.TestOutcome {
+  var a: ndarray.NdArray[i32] = ndarray.from_flat(build(24), [2, 3, 4]);
+  var p: ndarray.NdArray[i32] = a.permute([2, 0, 1]);
+  if (p.shape()[0] != 4 || p.shape()[1] != 2 || p.shape()[2] != 3) { return test.fail("shape"); }
+  return test.assert_eq(p.get([3, 1, 2]), a.get([1, 2, 3]));
+}
+
+function test_reverse_flips_one_axis(): test.TestOutcome {
+  var r: ndarray.NdArray[i32] = grid().reverse(1);
+  if (r.get([0, 0]) != 3 || r.get([2, 3]) != 8) { return test.fail("reversed reads"); }
+  if (r.reverse(1).get([0, 0]) != 0) { return test.fail("reversed twice"); }
+  // Materializing walks the negative stride from the far end.
+  var f: i32[] = r.to_flat();
+  if (f.len() != 12 || f[0] != 3 || f[3] != 0 || f[4] != 7 || f[11] != 8) { return test.fail("to_flat of a reverse"); }
+  var both: ndarray.NdArray[i32] = grid().reverse(0).reverse(1).packed();
+  if (!both.is_packed() || both.get([0, 0]) != 11) { return test.fail("packed of a double reverse"); }
+  return test.assert_eq(both.get([2, 3]), 0);
+}
+
+function test_slice_and_select_are_partial_views(): test.TestOutcome {
+  var a: ndarray.NdArray[i32] = grid();
+  var s: ndarray.NdArray[i32] = a.slice(1, 1, 3);
+  if (s.shape()[1] != 2 || s.get([2, 1]) != 10) { return test.fail("slice"); }
+  var row: ndarray.NdArray[i32] = a.select(0, 2);
+  if (row.rank() != 1 || row.get([3]) != 11) { return test.fail("select a row"); }
+  var col: ndarray.NdArray[i32] = a.select(1, 1);
+  if (col.rank() != 1 || col.get([2]) != 9) { return test.fail("select a column"); }
+  return test.assert_eq(a.transpose().select(0, 1).get([2]), 9);
+}
+
+function test_reshape_keeps_reading_order(): test.TestOutcome {
+  var a: ndarray.NdArray[i32] = grid();
+  var flat: ndarray.NdArray[i32] = a.reshape([12]);
+  if (flat.get([5]) != 5) { return test.fail("row-major reshape"); }
+  var t: ndarray.NdArray[i32] = a.transpose().reshape([12]);
+  return test.assert_eq(t.get([1]), 4);
+}
+
+function test_to_flat_and_packed(): test.TestOutcome {
+  var a: ndarray.NdArray[i32] = grid();
+  var t: ndarray.NdArray[i32] = a.transpose();
+  var f: i32[] = t.to_flat();
+  if (f.len() != 12 || f[0] != 0 || f[1] != 4 || f[11] != 11) { return test.fail("to_flat of a transpose"); }
+  if (t.is_packed()) { return test.fail("a transpose is not packed"); }
+  var p: ndarray.NdArray[i32] = t.packed();
+  if (!p.is_packed() || p.get([1, 2]) != 9) { return test.fail("packed"); }
+  return test.assert_eq(a.to_flat()[7], 7);
+}
+
+function test_rank_zero_and_empty(): test.TestOutcome {
+  var z: ndarray.NdArray[i32] = ndarray.from_flat([7], []);
+  if (z.rank() != 0 || z.len() != 1 || z.get([]) != 7) { return test.fail("rank 0"); }
+  var e: ndarray.NdArray[i32] = grid().slice(0, 1, 1);
+  if (e.len() != 0 || e.to_flat().len() != 0) { return test.fail("empty axis"); }
+  return test.assert_eq(e.shape()[0], 0);
+}
+
+function add(acc: i32, x: i32): i32 {
+  return acc + x;
+}
+
+function test_map_and_zip_with_are_elementwise(): test.TestOutcome {
+  var a: ndarray.NdArray[i32] = grid();
+  var m: ndarray.NdArray[i32] = a.transpose().map((x: i32): i32 => x * 2);
+  if (m.shape()[0] != 4 || !m.is_packed() || m.get([1, 2]) != 18) { return test.fail("map of a transpose"); }
+  var z: ndarray.NdArray[i32] = a.zip_with(a.map((x: i32): i32 => x * 3), (x: i32, y: i32): i32 => y - x);
+  if (z.get([2, 3]) != 22) { return test.fail("zip_with"); }
+  return test.assert_eq(a.zip_with(a.reverse(1), add).get([0, 0]), 3);
+}
+
+function test_fold_all_reads_in_order(): test.TestOutcome {
+  var a: ndarray.NdArray[i32] = grid();
+  if (a.fold_all(0, add) != 66) { return test.fail("sum"); }
+  var digits: ndarray.NdArray[i32] = a.slice(0, 0, 1).slice(1, 1, 4);
+  return test.assert_eq(digits.transpose().fold_all(0, (acc: i32, x: i32): i32 => acc * 10 + x), 123);
+}
+
+function test_reduce_axis_drops_the_axis(): test.TestOutcome {
+  var a: ndarray.NdArray[i32] = grid();
+  var rows: ndarray.NdArray[i32] = a.reduce_axis(1, 0, add);
+  if (rows.rank() != 1 || rows.shape()[0] != 3 || rows.get([2]) != 38) { return test.fail("along axis 1"); }
+  var cols: ndarray.NdArray[i32] = a.reduce_axis(0, 0, add);
+  if (cols.shape()[0] != 4 || cols.get([1]) != 15) { return test.fail("along axis 0"); }
+  // Increasing index order along the axis, on a strided handle too.
+  var ordered: ndarray.NdArray[i32] = a.transpose().reduce_axis(0, 0, (acc: i32, x: i32): i32 => acc * 100 + x);
+  if (ordered.get([1]) != 4050607) { return test.fail("order along the axis"); }
+  // A reversed handle reads its axis against storage order.
+  var backwards: ndarray.NdArray[i32] = a.reverse(1).reduce_axis(1, 0, (acc: i32, x: i32): i32 => acc * 10 + x);
+  if (backwards.get([0]) != 3210) { return test.fail("order along a reversed axis"); }
+  var one: ndarray.NdArray[i32] = rows.reduce_axis(0, 0, add);
+  return test.assert_true(one.rank() == 0 && one.get([]) == 66);
+}
+
+function test_scan_axis_keeps_the_axis(): test.TestOutcome {
+  var a: ndarray.NdArray[i32] = grid();
+  var s: ndarray.NdArray[i32] = a.scan_axis(1, 0, add);
+  if (s.shape()[0] != 3 || s.shape()[1] != 4 || !s.is_packed()) { return test.fail("shape"); }
+  if (s.get([1, 0]) != 4 || s.get([1, 3]) != 22) { return test.fail("prefix along axis 1"); }
+  var s0: ndarray.NdArray[i32] = a.transpose().scan_axis(0, 0, add);
+  if (s0.get([3, 2]) != 38) { return test.fail("prefix along axis 0 of a transpose"); }
+  var sr: ndarray.NdArray[i32] = a.reverse(1).scan_axis(1, 0, (acc: i32, x: i32): i32 => acc * 10 + x);
+  return test.assert_eq(sr.get([0, 2]), 321);
+}
+
+function main(): i32 {
+  var r: test.TestRunner = test.test_new("std/ndarray");
+  r = r.it("from_flat indexes row-major",        test_from_flat_indexes_row_major);
+  r = r.it("transpose swaps indices",            test_transpose_swaps_indices);
+  r = r.it("permute is the general transpose",   test_permute_is_the_general_transpose);
+  r = r.it("reverse flips one axis",             test_reverse_flips_one_axis);
+  r = r.it("slice and select are partial views", test_slice_and_select_are_partial_views);
+  r = r.it("reshape keeps reading order",        test_reshape_keeps_reading_order);
+  r = r.it("to_flat and packed",                 test_to_flat_and_packed);
+  r = r.it("rank zero and empty",                test_rank_zero_and_empty);
+  r = r.it("map and zip_with are elementwise",   test_map_and_zip_with_are_elementwise);
+  r = r.it("fold_all reads in order",            test_fold_all_reads_in_order);
+  r = r.it("reduce_axis drops the axis",         test_reduce_axis_drops_the_axis);
+  r = r.it("scan_axis keeps the axis",           test_scan_axis_keeps_the_axis);
+  r.finish();
+  return 0;
+}

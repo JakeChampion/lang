@@ -712,6 +712,32 @@ caches its size, so `len()` is O(1).
 `difference`, `is_subset` / `equals`, `filter` / `fold` / `for_each`.
 `pset_new()`, `pset_of(xs)`.
 
+### `std/ndarray`
+
+A multidimensional array as a counted handle over flat storage:
+`NdArray[T]` is `{ data: T[], shape, strides, offset }`, strides in
+elements, and every structural operation is metadata over the same
+storage. `docs/ARRAY-SHAPES.md` has the decisions and the materialization
+rule; `docs/ARRAY-ALGEBRA.md` §4 is why a wrong shape aborts.
+
+- `from_flat(data, shape)` — shares `data`; the shape must account for
+  every element (`[]` is a rank-0 scalar)
+- `(a).shape()`, `(a).strides()`, `(a).rank()`, `(a).len()` (elements),
+  `(a).get(idx)` (a full index; out of range aborts)
+- metadata only: `(a).transpose()`, `(a).permute(axes)`,
+  `(a).reverse(axis)`, `(a).slice(axis, lo, hi)`, `(a).select(axis, i)`
+  (the partial index, one rank less)
+- `(a).reshape(shape)` — metadata when `(a).is_row_major()`, a copy
+  otherwise
+- `(a).packed()`, `(a).to_flat()` — a copy exactly when not
+  `(a).is_packed()`
+- elementwise, in reading order, as a packed handle of the same shape:
+  `(a).map(f)`, `(a).zip_with(b, f)` (equal shapes, else abort)
+- `(a).fold_all(init, f)` — every element in reading order
+- `(a).reduce_axis(axis, init, f)` — the fold along `axis` in increasing
+  index order, one rank less; `(a).scan_axis(axis, init, f)` — the
+  running fold, same shape
+
 ### `std/pvec`
 
 A persistent vector with structural sharing: `PVec[T]`, a 32-way

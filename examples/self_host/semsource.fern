@@ -702,13 +702,28 @@ function slice_bound(t: SliceTree, left: i32, op: string, right: i32, sink: i32)
 // not. Every failing test leaves for one `None` block, so the whole check is
 // a decision tree with two sinks and the result joins as a single phi. The
 // length is read once and each bound evaluated once, before any test runs.
+// `xs[lo:hi]` on an array is a fresh copy of the window, the source's own
+// type, bounds-checked by the runtime rather than by a test here (the AST
+// lowering traps the same way). The elements are copied as bare words, so an
+// array whose elements own something is refused: the copy would alias them.
+function array_slice(sl: ast.ExprSlice, src: Value, elem: typeinfo.Type, s: State): Value {
+    if (ssasem.reference(elem)) { return refused(s, "unsupported slice source: " + typeinfo.spelling(s.values[src.id])); }
+    var lo: Value = expr(sl.start, s, t_i32());
+    s = lo.s;
+    if (!s.ok) { return lo; }
+    var hi: Value = define(s, ssasem.length(), [src.id], 0, "", t_i32());
+    if (!sl.open_end) { hi = expr(sl.end, s, t_i32()); }
+    s = hi.s;
+    if (!s.ok) { return hi; }
+    if (!is_i32(s.values[lo.id]) || !is_i32(s.values[hi.id])) { return refused(s, "slice bound type"); }
+    return define(s, ssasem.arr_slice(), [src.id, lo.id, hi.id], 0, "", s.values[src.id]);
+}
+
 function slice_expr(e: ast.Expr, sl: ast.ExprSlice, s: State): Value {
     var src: Value = expr(sl.array, s, typeinfo.unchecked());
     s = src.s;
     if (!s.ok) { return src; }
-    // An array's slice is a bare view rather than an Option, and the window it
-    // hands back is a second reference to the source's buffer, which is a kind
-    // this vocabulary does not have.
+    if let typeinfo.TypeArray(a) = s.values[src.id] { return array_slice(sl, src, a.elem, s); }
     if (!ssasem.is_text(s.values[src.id])) { return refused(s, "unsupported slice source: " + typeinfo.spelling(s.values[src.id])); }
     var whole: typeinfo.Type = checked(e, s);
     var layout: i32 = union_layout(s, union_name(whole));
@@ -1433,7 +1448,7 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
         if (fat >= 0 && ssasem.is_func(fsig.field_types[fat])) {
             var fv: Value = define(s, ssasem.record_get(), [recv.id], fat, fa.field, fsig.field_types[fat]);
             if (!fv.s.ok) { return fv; }
-            return indirect_call(c, fv.id, fv.s);
+            return indirect_call(c, fv.id, fv.s, statement);
         }
     }
     // A tuple ELEMENT of function type is the same shape one container over:
@@ -1443,7 +1458,7 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
         if (tat >= 0 && ssasem.is_func(tup.elements[tat])) {
             var tv: Value = define(s, ssasem.tuple_get(), [recv.id], tat, "", tup.elements[tat]);
             if (!tv.s.ok) { return tv; }
-            return indirect_call(c, tv.id, tv.s);
+            return indirect_call(c, tv.id, tv.s, statement);
         }
     }
     // A builtin's receiver names no declaration this boundary can hold a
@@ -1580,11 +1595,11 @@ function keeps(s: State, callee: string): boolean {
 // function's own, the way a direct call's is, and the box itself is lent: it
 // is the environment the body reads its captures out of. No body is in hand
 // to ask whether it keeps a lent view, so every view is handed as a copy.
-function indirect_call(c: ast.ExprCall, callee: i32, s: State): Value {
+function indirect_call(c: ast.ExprCall, callee: i32, s: State, statement: boolean): Value {
     var params: typeinfo.Type[] = ssasem.func_params(s.values[callee]);
     var result: typeinfo.Type = ssasem.func_result(s.values[callee]);
     if (c.type_argc > 0 || c.args.len() != params.len()) { return refused(s, "call arity"); }
-    if (is_void(result)) { return refused(s, "unsupported void call"); }
+    if (is_void(result) && !statement) { return refused(s, "unsupported void call"); }
     var ids: i32[] = [callee];
     var i: i32 = 0;
     while (i < c.args.len()) {
@@ -1600,8 +1615,8 @@ function indirect_call(c: ast.ExprCall, callee: i32, s: State): Value {
 
 // A name bound in this body holds a VALUE, not a declaration: a function value
 // is called through the address it holds, and nothing else is a callee.
-function bound_call(c: ast.ExprCall, bound: i32, s: State): Value {
-    if (ssasem.is_func(s.values[bound])) { return indirect_call(c, bound, s); }
+function bound_call(c: ast.ExprCall, bound: i32, s: State, statement: boolean): Value {
+    if (ssasem.is_func(s.values[bound])) { return indirect_call(c, bound, s, statement); }
     return refused(s, "unsupported call target");
 }
 
@@ -1851,7 +1866,7 @@ function call(e: ast.Expr, c: ast.ExprCall, s: State, statement: boolean, expect
     var name: string = "";
     if let ast.ExprIdent(id) = c.callee { name = id.name; }
     var bound: i32 = lookup(s, name);
-    if (bound >= 0) { return bound_call(c, bound, s); }
+    if (bound >= 0) { return bound_call(c, bound, s, statement); }
     if (name == "") {
         // A callee that is neither a bare name nor a field is still callable
         // when it EVALUATES to a function value -- an element read out of an
@@ -1861,7 +1876,7 @@ function call(e: ast.Expr, c: ast.ExprCall, s: State, statement: boolean, expect
         if (ssasem.is_func(cty)) {
             var cv: Value = expr(c.callee, s, typeinfo.unchecked());
             if (!cv.s.ok) { return cv; }
-            return indirect_call(c, cv.id, cv.s);
+            return indirect_call(c, cv.id, cv.s, statement);
         }
         return refused(s, "unsupported call target: callee is neither a name nor a field");
     }
@@ -3581,10 +3596,9 @@ function contracts(mod: parser.Module, scopes: checker.Scope[]): ssasem.Contract
 // table so they cannot drift.
 //
 // The handle metadata surface — stat, flags, seek, the partial write, the
-// truncation and the three fd syncs — is asked of the bare descriptor like
-// close, and hands back a fresh Result or Option box. dup_onto, the terminal
-// questions and window_size have no contract here yet and refuse where they
-// stand.
+// truncation, the three fd syncs, isatty, dup_onto and the window size — is
+// asked of the bare descriptor like close, and hands back a fresh Result or
+// Option box.
 function handle_contracts(): ssasem.Contract[] {
     var value: i32[] = [ssaunits.value_mode()];
     var path: i32[] = [ssaunits.borrow_mode()];
@@ -3629,8 +3643,11 @@ function handle_metadata_contracts(reader: typeinfo.Type, writer: typeinfo.Type,
         out = out.append(ssasem.Contract { name: o + ".fsync", params: [h], modes: [v], result: io_error });
         out = out.append(ssasem.Contract { name: o + ".fdatasync", params: [h], modes: [v], result: io_error });
         out = out.append(ssasem.Contract { name: o + ".syncfs", params: [h], modes: [v], result: io_error });
+        out = out.append(ssasem.Contract { name: o + ".isatty", params: [h], modes: [v], result: t_bool() });
+        out = out.append(ssasem.Contract { name: o + ".dup_onto", params: [h, t_i32()], modes: [v, v], result: io_error });
         i = i + 1;
     }
+    out = out.append(ssasem.Contract { name: "Reader.window_size", params: [reader], modes: [v], result: t_io_result(typeinfo.TypeStruct { name: "WinSize", args: [] }) });
     out = out.append(ssasem.Contract { name: "Writer.write_some", params: [writer, t_string()], modes: [v, ssaunits.borrow_mode()], result: t_io_result(t_i64()) });
     return out.append(ssasem.Contract { name: "Writer.truncate", params: [writer, t_i64()], modes: [v, v], result: io_error });
 }
@@ -3666,7 +3683,49 @@ function os_contracts(): ssasem.Contract[] {
         ssasem.Contract { name: "statfs", params: [t_string()], modes: [b], result: t_io_result(typeinfo.TypeStruct { name: "FsStat", args: [] }) }
     ];
     for c in fs_op_contracts(done, strs) { out = out.append(c); }
+    for c in os_floor_contracts(done, strs) { out = out.append(c); }
     return out;
+}
+
+// The rest of the OS floor: the process, signal, group, socket and clock
+// builtins, and the wasm pollables. Every path and array is lent, every
+// scalar a value; a fresh array is the caller's and a Result box owns its
+// parts. `sync` returns nothing and stands only as a statement.
+function os_floor_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Contract[] {
+    var v: i32 = ssaunits.value_mode();
+    var b: i32 = ssaunits.borrow_mode();
+    var gids: typeinfo.Type = typeinfo.TypeArray { elem: t_i64() };
+    var fds: typeinfo.Type = typeinfo.TypeArray { elem: t_i32() };
+    var win: typeinfo.Type = t_io_result(typeinfo.TypeStruct { name: "WinSize", args: [] });
+    return [
+        ssasem.Contract { name: "set_file_times", params: [t_string(), t_i64(), t_i64(), t_i64(), t_i64(), t_i32()], modes: [b, v, v, v, v, v], result: done },
+        ssasem.Contract { name: "mknod", params: [t_string(), t_i32(), t_i32(), t_i32()], modes: [b, v, v, v], result: done },
+        ssasem.Contract { name: "chmod_at", params: [t_string(), t_i32(), t_bool()], modes: [b, v, v], result: done },
+        ssasem.Contract { name: "chdir", params: [t_string()], modes: [b], result: done },
+        ssasem.Contract { name: "chroot", params: [t_string()], modes: [b], result: done },
+        ssasem.Contract { name: "set_process_group", params: [t_i32(), t_i32()], modes: [v, v], result: done },
+        ssasem.Contract { name: "setgroups", params: [gids], modes: [b], result: done },
+        ssasem.Contract { name: "getgroups", params: [], modes: [], result: gids },
+        ssasem.Contract { name: "priority", params: [], modes: [], result: t_i32() },
+        ssasem.Contract { name: "sync", params: [], modes: [], result: t_void() },
+        ssasem.Contract { name: "poll", params: [fds, t_i32()], modes: [b, v], result: t_i32() },
+        ssasem.Contract { name: "timer_fd", params: [t_i32()], modes: [v], result: t_i32() },
+        ssasem.Contract { name: "tcp_send", params: [t_i32(), t_string()], modes: [v, b], result: t_i32() },
+        ssasem.Contract { name: "tcp_recv", params: [t_i32(), t_i32()], modes: [v, v], result: typeinfo.TypeArray { elem: t_u8() } },
+        ssasem.Contract { name: "signal_ignore", params: [t_i32()], modes: [v], result: t_i32() },
+        ssasem.Contract { name: "signal_default", params: [t_i32()], modes: [v], result: t_i32() },
+        ssasem.Contract { name: "signal_disposition", params: [t_i32()], modes: [v], result: t_i32() },
+        ssasem.Contract { name: "signal_mask", params: [t_i32(), t_i64()], modes: [v, v], result: t_i64() },
+        ssasem.Contract { name: "proc_exec", params: [t_string(), strs], modes: [b, b], result: t_i32() },
+        ssasem.Contract { name: "proc_exec_as", params: [t_string(), strs, strs], modes: [b, b, b], result: t_i32() },
+        ssasem.Contract { name: "wasm_timer_pollable", params: [t_i64()], modes: [v], result: t_i32() },
+        ssasem.Contract { name: "wasm_pollable_drop", params: [t_i32()], modes: [v], result: t_i32() },
+        ssasem.Contract { name: "window_size", params: [t_i32()], modes: [v], result: win },
+        ssasem.Contract { name: "tcp_close", params: [t_i32()], modes: [v], result: t_i32() },
+        ssasem.Contract { name: "setuid", params: [t_i64()], modes: [v], result: done },
+        ssasem.Contract { name: "setgid", params: [t_i64()], modes: [v], result: done },
+        ssasem.Contract { name: "set_priority", params: [t_i32()], modes: [v], result: done }
+    ];
 }
 
 function fs_op_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Contract[] {

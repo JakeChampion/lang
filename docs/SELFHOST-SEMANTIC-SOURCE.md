@@ -350,6 +350,13 @@ Unsupported constructs refuse the whole function with a reason.
   replaces. A slice owns its box and borrows the source's bytes, so it is a
   projection anchored to its source and is released by the view helper
   rather than the ordinary string free.
+- The ARRAY slice, `xs[lo:hi]` on an array of scalars, which the checker
+  types `[T]` and the runtime copies into a fresh array (`arr_slice`, 4- or
+  8-byte elements by the element width). `ssasem.arr_slice` produces it as an
+  owned value of the source's type with the bounds left to the runtime, as
+  the AST lowering leaves them; an open end reads the source's length. An
+  array whose elements own something is refused: the runtime copies the words
+  without a retain, so the copy would alias them.
 - The CHECKED slice, `s[a:b]`, which the checker types `Option[str]`. The
   window is admitted when `0 <= a <= b <= len` and neither end lands inside a
   codepoint, and the expression answers `None` when it is not. Every test that
@@ -497,14 +504,21 @@ Unsupported constructs refuse the whole function with a reason.
   refusal is unreachable in a module any backend lowers: removing the address
   form moved the census by nothing, measured on its own.
 
-  The box is one i32-shaped word, so it is a value and a parameter and never
-  an element or a declared field: releasing a container or a record walks its
-  slots by their declared types, and a function type names no captures for
-  that walk to reach. A function-typed RESULT is refused for the same reason.
+  The box is one i32-shaped word: a value, a parameter, a record field, a
+  variant field, an array or tuple element. Releasing the holder walks its
+  slots by their declared types, and a function type names no captures of its
+  own, so the walk matches the box's body address against the environments
+  the schema table names (`semsource.env_rows`, `ssarc.drop_captures`) and
+  releases the captures it finds. What stays refused is a function value
+  NESTED in a field — an array or tuple of them behind a record or variant
+  field — and a function-typed RESULT.
   A parameter or result of any other width is admitted: the call through a
   value carries the signature tag its type spells (`ssarc.signature_tag`, the
   spelling irlower's call sites carry), so wasm dispatches it through the
-  funcref type the body was declared with.
+  funcref type the body was declared with. A void result is admitted too:
+  every backend hands one word back from a void body (wasm types a void
+  callee `(result i32)` like any other), so a `(K, V) => void` callback's
+  call stands in statement position like any void call.
 
 - The runtime INTRINSICS, typed as native's `FuncSigs` types them: the ten f64
   primitives `std/float` dispatches to and `__pow_f64`, the six bit counts, the
@@ -625,6 +639,13 @@ Unsupported constructs refuse the whole function with a reason.
   own entry reports produced when every instance it was asked for did, and a
   template no produced body reaches is "uninstantiated generic". No produced
   value carries a variable: `ssasem.schema_error` refuses one as unresolved.
+  In a module produced whole a template's erased body is SUPERSEDED
+  (`irlower.LowerResult.superseded`): nothing calls it, since every produced
+  caller calls an instance, so no emit writes it and no gate judges it — the
+  AST lowering of an erased `__arrm_map__i64` clone carried the wasm route's
+  only `erased_wide` verdict and declined the module (#9838). Under the
+  bisect knobs an AST-lowered caller may still call the template, so there
+  its AST lowering stands.
 
 Refused, each with its own reason: calls of the remaining builtins, a void
 call in expression position, an operator or a literal at the pointer width,
@@ -1916,6 +1937,17 @@ template reading had been hiding. Both are one field and one branch
 (`clone_bg`, `subst_ty`); the production suite's `generic-clones` program
 holds the three shapes and fails at 0 of 3 without the first fix and 1 of 5
 without the second.
+
+`parser.clone_struct_method` had the same field. It clones a generic struct's
+method per receiver instantiation (`OrdMap[i32, i32].insert` out of
+`insert[K: cmp.Ord, V]` on `OrdMap[K, V]`) with `type_params` emptied and, until
+2026-09-20, `type_param_count` copied from the method — so every method that
+redeclares its receiver's variables read as a template, and every caller of
+one, transitively, refused as `call target was refused: uninstantiated
+generic`. That was the whole of the `uninstantiated generic` root the corpus
+census counted (117 sites: the ordmap, ordset, pmap, pset and set tests and
+benches). The production suite's `generic-struct-method-redeclares-receiver-
+vars` and `ordmap-bounded-method-clones` rows hold it.
 
 Measured on the 4-core x86-64 container, all three compilers built from the
 same sources by `bin/fern-selfhost`:

@@ -2015,4 +2015,237 @@ function main(): i32 {
     return p.exit_code + p.stdout.len();
 }
 `},
+	// A generic struct's method that redeclares the receiver's own variables
+	// (`insert[K: cmp.Ord, V]` on `OrdMap[K, V]`) is cloned per receiver
+	// instantiation by parser.monomorphize_structs. The clone is concrete, so
+	// it is an ordinary declaration here, not a template nothing instantiates.
+	{name: "generic-struct-method-redeclares-receiver-vars", atLeast: 2, src: `
+struct Pair[T] { a: T, b: T }
+function (p: Pair[T]) put[T](v: T): Pair[T] { return Pair { a: p.b, b: v }; }
+function main(): i32 {
+    var p: Pair[i32] = Pair { a: 1, b: 2 };
+    p = p.put(7);
+    return p.a * 10 + p.b;
+}
+`},
+	// The same shape through the standard library: every ordmap method with a
+	// bounded key is that clone, and the tree under it is produced with it.
+	{name: "ordmap-bounded-method-clones", atLeast: 69, src: `
+import "std/ordmap";
+function main(): i32 {
+    var m: ordmap.OrdMap[i32, i32] = ordmap.ordmap_new();
+    m = m.insert(3, 4);
+    m = m.insert(3, 5);
+    m = m.insert(9, 1);
+    return m.get_or(3, 0) * 10 + m.len();
+}
+`},
+	// A function value whose call yields nothing: the callback of a for_each.
+	// Its result is the one word every void body hands back, so the type is
+	// admitted and the call stands in statement position like any void call.
+	// The value reaches the call every way a function value can: a parameter,
+	// a local, a record field, a tuple element, a lambda and a bare name (the
+	// lift's trampoline for a void target calls it as a statement).
+	{name: "void-callback", atLeast: 7, src: `
+function each(xs: string[], f: (string) => void): void {
+    for x in xs { f(x); }
+}
+function show(x: string): void { print(x); }
+struct Visitor { hit: (string) => void }
+function main(): i32 {
+    each(["a", "b"], show);
+    each(["c"], (x: string): void => { print(x + "!"); });
+    var v: Visitor = Visitor { hit: show };
+    v.hit("d");
+    var g: (string) => void = show;
+    g("e");
+    var pair: ((string) => void, i32) = (show, 1);
+    pair.0("f");
+    return pair.1;
+}
+`},
+	// A function value as a VARIANT field, the shape of std/async's
+	// `Future[T].Pending(i32, (i32) => Future[T])`: the variant takes a unit
+	// of the value and its release walks the captures, the same walk a record
+	// field takes (ssarc.drop_variant_fields drops a variant's fields as a
+	// record's). Nested in an array or tuple it stays refused, as for a
+	// record. `dropped` is a chain never run, so its closures are released by
+	// the walk alone; the AST lowering releases none of them (#9841), so the
+	// pin here is absolute.
+	{name: "closure-in-a-variant-field", atLeast: 4, noLeak: true, src: `
+enum Step {
+    Done(i32),
+    Next(i32, (i32) => Step),
+}
+function make(n: i32, k: i32): Step {
+    if (n <= 0) { return Done(k); }
+    return Next(n, (x: i32): Step => make(n - 1, k + x));
+}
+function run(s: Step): i32 {
+    var cur: Step = s;
+    var guard: i32 = 0;
+    while (guard < 100) {
+        match (cur) {
+            Done(v) => { return v; },
+            Next(w, f) => { cur = f(w); }
+        }
+        guard = guard + 1;
+    }
+    return -1;
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3) {
+        total = total + run(make(4, i));
+        i = i + 1;
+    }
+    var dropped: Step = make(2, 7);
+    return total;
+}
+`},
+	// The rest of the OS floor (semsource.os_floor_contracts): the signal,
+	// priority, group and process-group builtins, chroot, poll over a
+	// timerfd. Each arm counts whichever way the host answers, so the count
+	// is the same in a container and on a developer machine, and the pin is
+	// that both lowerings answer alike and the produced bodies free no less.
+	{name: "os-floor-signals-and-process", atLeast: 2, nativeOnly: true, src: `
+function signals(): i32 {
+    var n: i32 = 0;
+    if (signal_ignore(2) >= 0) { n = n + 1; }
+    if (signal_disposition(2) >= 0) { n = n + 1; }
+    if (signal_default(2) >= 0) { n = n + 1; }
+    var was: i64 = signal_mask(0, 0i64);
+    if (was >= 0i64) { n = n + 1; }
+    if (priority() > -21) { n = n + 1; }
+    var gs: i64[] = getgroups();
+    if (gs.len() >= 0) { n = n + 1; }
+    match (setgroups(gs)) {
+        Ok(_) => { n = n + 1; },
+        Err(_) => { n = n + 1; }
+    }
+    match (set_process_group(0, 0)) {
+        Ok(_) => { n = n + 1; },
+        Err(_) => { n = n + 1; }
+    }
+    match (chroot("/")) {
+        Ok(_) => { n = n + 1; },
+        Err(_) => { n = n + 1; }
+    }
+    var fds: i32[] = [timer_fd(1)];
+    if (poll(fds, 2000) == 0) { n = n + 1; }
+    if (poll([], 0) < 0) { n = n + 1; }
+    return n;
+}
+function main(): i32 { return signals(); }
+`},
+	// The file-time, node, permission and directory ops over a temp_dir, and
+	// the terminal questions asked of a descriptor and of a handle. mknod
+	// makes a FIFO, the one node an unprivileged caller may create.
+	{name: "os-floor-times-nodes-terminal", atLeast: 3, nativeOnly: true, src: `
+function files(dir: string): i32 {
+    var n: i32 = 0;
+    var f: string = dir + "/f";
+    match (write_file(f, "x")) {
+        Ok(_) => { n = n + 1; },
+        Err(_) => {}
+    }
+    match (chmod_at(f, 420, false)) {
+        Ok(_) => { n = n + 1; },
+        Err(_) => {}
+    }
+    match (set_file_times(f, 1000000i64, 0i64, 2000000i64, 0i64, 0)) {
+        Ok(_) => { n = n + 1; },
+        Err(_) => {}
+    }
+    match (stat(f)) {
+        Ok(st) => { if (st.mtime == 2000000i64) { n = n + 1; } },
+        Err(_) => {}
+    }
+    match (mknod(dir + "/fifo", 4096 + 420, 0, 0)) {
+        Ok(_) => { n = n + 1; },
+        Err(_) => {}
+    }
+    match (chdir(dir)) {
+        Ok(_) => { n = n + 1; },
+        Err(_) => {}
+    }
+    match (remove_file("fifo")) {
+        Ok(_) => { n = n + 1; },
+        Err(_) => {}
+    }
+    match (remove_file("f")) {
+        Ok(_) => { n = n + 1; },
+        Err(_) => {}
+    }
+    return n;
+}
+function terminal(): i32 {
+    var n: i32 = 0;
+    match (window_size(1)) {
+        Ok(w) => { if (w.rows >= 0i64) { n = n + 1; } },
+        Err(_) => { n = n + 1; }
+    }
+    var r: Reader = stdin();
+    if (!r.isatty()) { n = n + 1; }
+    match (r.window_size()) {
+        Ok(w) => { if (w.cols >= 0i64) { n = n + 1; } },
+        Err(_) => { n = n + 1; }
+    }
+    match (open_reader("/dev/null")) {
+        Ok(h) => {
+            match (h.dup_onto(19)) {
+                Some(_) => {},
+                None => { n = n + 1; }
+            }
+        },
+        Err(_) => {}
+    }
+    return n;
+}
+function main(): i32 {
+    var n: i32 = 0;
+    match (temp_dir("fernsem")) {
+        Ok(d) => {
+            n = n + files(d);
+            match (remove_dir(d)) {
+                Ok(_) => {},
+                Err(_) => {}
+            }
+        },
+        Err(_) => {}
+    }
+    return n + terminal();
+}
+`},
+	// `xs[lo:hi]` on an array of scalars: the checker types it `[T]`, the
+	// runtime copies the window into a fresh array (arr_slice), and the typed
+	// lowering produces it as an owned value of the source's type, bounds
+	// left to the runtime as the AST lowering leaves them. An open end reads
+	// the source's length. Every element width the copy distinguishes is
+	// here: u8 and i32 (4-byte on wasm), i64 and f64 (8-byte). The slices
+	// handed straight to `sum` are the ones the AST lowering never releases
+	// (#9843), so the pin is absolute.
+	{name: "array-slice-of-scalars", atLeast: 2, noLeak: true, src: `
+function sum(xs: [u8]): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < xs.len()) { t = t + (xs[i] as i32); i = i + 1; }
+    return t;
+}
+function main(): i32 {
+    var bytes: u8[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while (i + 3 <= 10) { total = total + sum(bytes[i:i + 3]); i = i + 3; }
+    total = total + sum(bytes[i:]);
+    var words: i32[] = [10, 20, 30, 40];
+    var mid: [i32] = words[1:3];
+    var wide: i64[] = [100i64, 200i64, 300i64];
+    var tail: [i64] = wide[1:];
+    var fl: f64[] = [1.5, 2.5, 3.5];
+    var head: [f64] = fl[0:2];
+    return total + mid[0] + mid.len() + (tail[1] as i32) + tail.len() + (head[1] as i32);
+}
+`},
 }

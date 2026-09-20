@@ -223,6 +223,11 @@ all of which a strided-view model wants — the liveness taint stops
 being a proxy for aliasing, and the dynamic uniqueness check will not
 catch it because a view holds no count.
 
+`docs/ARRAY-SHAPES.md` (#9734) takes the precondition below as its first
+decision: the multidimensional value is a counted handle over its
+storage, never a `[T]` view, so nothing strided ever holds a reference
+the guard cannot count.
+
 So #9734 does not inherit a solution. It inherits a **precondition**:
 before `[T]` gains any way to outlive the frame it was taken in, either
 views take an RC reference (paying for what they currently get free), or

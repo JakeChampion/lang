@@ -14,7 +14,7 @@ import "./util";
 
 function empty(why: string): irlower.LowerResult {
     return irlower.LowerResult { ok: false, why: why, ops: [], n_locals: 0,
-        n_params: 0, erased_wide: false, arr_slots: [], i64_slots: [],
+        n_params: 0, erased_wide: false, superseded: false, arr_slots: [], i64_slots: [],
         f64_slots: [], str_slots: [], alias_incs: [], name: "", result_kind: irlower.result_i32() };
 }
 
@@ -1315,7 +1315,7 @@ function container_op(k: i32): boolean {
     return kind_in([ssasem.array_new(), ssasem.tuple_new(), ssasem.record_new(),
         ssasem.array_get(), ssasem.tuple_get(), ssasem.record_get(),
         ssasem.length(), ssasem.append(), ssasem.with(), ssasem.slice(), ssasem.str_index(),
-        ssasem.str_bytes(), ssasem.arr_sum(), ssasem.arr_product(), ssasem.arr_join()], k)
+        ssasem.str_bytes(), ssasem.arr_sum(), ssasem.arr_product(), ssasem.arr_join(), ssasem.arr_slice()], k)
         || variant_op(k) || ssasem.is_cell_op(k) || ssasem.is_map_op(k);
 }
 
@@ -1598,6 +1598,13 @@ function tuple_kinds(t: typeinfo.Type): string {
 // declaration index is where wasm reads each field's store width; the register
 // backends store every field as 8 bytes, and every read takes its offset from
 // the field index alone.
+// The element width arr_slice copies by: 64 for an i64, u64 or f64 element,
+// 32 for every other, the split irlower.slice_elem_is_wide makes.
+function slice_width(elem: typeinfo.Type): i32 {
+    if (ssasem.is_wide(elem) || ssasem.is_float(elem)) { return 64; }
+    return 32;
+}
+
 function container(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, structs: irlower.StructTab): irlower.LowerResult {
     if (variant_op(ins.kind_tag)) { return variant(r, f, ins, structs); }
     if (ins.kind_tag == ssasem.array_new()) { return emit(r, arr_make_op(elem_type(f.values[ins.result]), ins.args.len())); }
@@ -1608,6 +1615,7 @@ function container(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, s
         return emit(r, ir.op_arr_len());
     }
     if (ins.kind_tag == ssasem.slice()) { return emit(r, ir.op_str_slice()); }
+    if (ins.kind_tag == ssasem.arr_slice()) { return emit(r, ir.op_arr_slice(slice_width(elem_type(f.values[ins.result])))); }
     if (ins.kind_tag == ssasem.str_bytes()) { return emit(r, ir.op_str_bytes()); }
     if (ins.kind_tag == ssasem.arr_sum()) { return emit(r, ir.op_call_direct("__fern_arr_i32_sum", 1)); }
     if (ins.kind_tag == ssasem.arr_product()) { return emit(r, ir.op_call_direct("__fern_arr_i32_product", 1)); }
@@ -2333,13 +2341,18 @@ function handle_metadata_site(own r: irlower.LowerResult, ins: ssa.SInst): Lower
     if (op == "fsync") { return Lowered { found: true, r: emit(r, ir.op_fd_fsync()) }; }
     if (op == "fdatasync") { return Lowered { found: true, r: emit(r, ir.op_fd_fdatasync()) }; }
     if (op == "syncfs") { return Lowered { found: true, r: emit(r, ir.op_fd_syncfs()) }; }
+    // A handle is its descriptor, so these are the free ops with the receiver
+    // as the first operand, as the AST lowering emits them.
+    if (op == "isatty") { return Lowered { found: true, r: emit(r, ir.op_isatty()) }; }
+    if (op == "dup_onto") { return Lowered { found: true, r: emit(r, ir.op_fd_dup_onto()) }; }
+    if (op == "window_size") { return Lowered { found: true, r: emit(r, ir.op_window_size()) }; }
     return Lowered { found: false, r: r };
 }
 
 // handle_method is the method half of a `Reader.` or `Writer.` metadata
 // contract name, "" for any other name.
 function handle_method(name: string): string {
-    var methods: string[] = ["stat", "flags", "seek", "fsync", "fdatasync", "syncfs"];
+    var methods: string[] = ["stat", "flags", "seek", "fsync", "fdatasync", "syncfs", "isatty", "dup_onto", "window_size"];
     for m in methods { if (name == "Reader." + m || name == "Writer." + m) { return m; } }
     return "";
 }
@@ -2431,6 +2444,43 @@ function fs_op_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     if (ins.str == "create_link") { return Lowered { found: true, r: emit(r, ir.op_create_link()) }; }
     if (ins.str == "create_symlink") { return Lowered { found: true, r: emit(r, ir.op_create_symlink()) }; }
     if (ins.str == "chown_at") { return Lowered { found: true, r: emit(r, ir.op_chown_at()) }; }
+    return os_floor_site(r, ins);
+}
+
+// The rest of the OS floor (semsource.os_floor_contracts), each the op the
+// AST lowering emits; `sync` pushes the dummy every statement op pushes.
+function os_floor_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
+    if (ins.str == "set_file_times") { return Lowered { found: true, r: emit(r, ir.op_set_file_times()) }; }
+    if (ins.str == "mknod") { return Lowered { found: true, r: emit(r, ir.op_mknod()) }; }
+    if (ins.str == "chmod_at") { return Lowered { found: true, r: emit(r, ir.op_chmod_at()) }; }
+    if (ins.str == "chdir") { return Lowered { found: true, r: emit(r, ir.op_chdir()) }; }
+    if (ins.str == "chroot") { return Lowered { found: true, r: emit(r, ir.op_chroot()) }; }
+    if (ins.str == "set_process_group") { return Lowered { found: true, r: emit(r, ir.op_set_process_group()) }; }
+    if (ins.str == "setgroups") { return Lowered { found: true, r: emit(r, ir.op_setgroups()) }; }
+    if (ins.str == "getgroups") { return Lowered { found: true, r: emit(r, ir.op_getgroups()) }; }
+    if (ins.str == "priority") { return Lowered { found: true, r: emit(r, ir.op_priority()) }; }
+    if (ins.str == "sync") { return Lowered { found: true, r: emit(r, ir.op_sync()) }; }
+    if (ins.str == "poll") { return Lowered { found: true, r: emit(r, ir.op_poll()) }; }
+    if (ins.str == "timer_fd") { return Lowered { found: true, r: emit(r, ir.op_timer_fd()) }; }
+    if (ins.str == "window_size") { return Lowered { found: true, r: emit(r, ir.op_window_size()) }; }
+    return os_floor_process_site(r, ins);
+}
+
+function os_floor_process_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
+    if (ins.str == "tcp_send") { return Lowered { found: true, r: emit(r, ir.op_tcp_send()) }; }
+    if (ins.str == "tcp_recv") { return Lowered { found: true, r: emit(r, ir.op_tcp_recv()) }; }
+    if (ins.str == "tcp_close") { return Lowered { found: true, r: emit(r, ir.op_tcp_close()) }; }
+    if (ins.str == "setuid") { return Lowered { found: true, r: emit(r, ir.op_setuid()) }; }
+    if (ins.str == "setgid") { return Lowered { found: true, r: emit(r, ir.op_setgid()) }; }
+    if (ins.str == "set_priority") { return Lowered { found: true, r: emit(r, ir.op_set_priority()) }; }
+    if (ins.str == "signal_ignore") { return Lowered { found: true, r: emit(r, ir.op_signal_ignore()) }; }
+    if (ins.str == "signal_default") { return Lowered { found: true, r: emit(r, ir.op_signal_default()) }; }
+    if (ins.str == "signal_disposition") { return Lowered { found: true, r: emit(r, ir.op_signal_disposition()) }; }
+    if (ins.str == "signal_mask") { return Lowered { found: true, r: emit(r, ir.op_signal_mask()) }; }
+    if (ins.str == "proc_exec") { return Lowered { found: true, r: emit(r, ir.op_proc_exec()) }; }
+    if (ins.str == "proc_exec_as") { return Lowered { found: true, r: emit(r, ir.op_proc_exec_as()) }; }
+    if (ins.str == "wasm_timer_pollable") { return Lowered { found: true, r: emit(r, ir.op_wasm_timer_pollable()) }; }
+    if (ins.str == "wasm_pollable_drop") { return Lowered { found: true, r: emit(r, ir.op_wasm_pollable_drop()) }; }
     return builder_builtin_site(r, ins);
 }
 

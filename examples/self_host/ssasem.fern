@@ -117,6 +117,10 @@ pub function str_bytes(): i32 { return 0 - 36; }
 pub function arr_sum(): i32 { return 0 - 37; }
 pub function arr_product(): i32 { return 0 - 38; }
 pub function arr_join(): i32 { return 0 - 39; }
+// `xs[lo:hi]` on an array of scalars: a fresh array holding a copy of the
+// window, bounds-checked by the runtime. An array whose elements own something
+// is not admitted, since the runtime copies the words without a retain.
+pub function arr_slice(): i32 { return 0 - 40; }
 
 function failed(why: string): Analysis {
     return Analysis { ok: false, why: why, dependencies: [], flow: ssalive.Flow { ok: false, why: why, live_in: [], live_out: [] } };
@@ -713,6 +717,20 @@ function slice_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     return "";
 }
 
+// A copy of a window of an array of scalars, the same type as its source and
+// owned whole: no element of it is a reference, so the raw word copy the
+// runtime makes owes nothing to the source.
+function arr_slice_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 3) { return "slice arity"; }
+    var src: typeinfo.Type = f.values[ins.args[0]];
+    if (!semtypes.equal(src, result)) { return "slice container type"; }
+    if let typeinfo.TypeArray(a) = src {
+        if (reference(a.elem)) { return "slice container type"; }
+    } else { return "slice container type"; }
+    if (!is_i32(f.values[ins.args[1]]) || !is_i32(f.values[ins.args[2]])) { return "slice bound type"; }
+    return "";
+}
+
 // One byte of a string, handed back as a u8 — the type the checker gives the
 // expression, so a binding or an operator over it needs no reconciliation. The
 // receiver is read the way a length's is, and the result owns nothing and
@@ -731,7 +749,7 @@ function str_index_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string
 // bytes, and the cell and map vocabularies.
 function is_builtin_op(kind: i32): boolean {
     return kind == length() || kind == append() || kind == with() || kind == slice() || kind == str_index()
-        || kind == str_bytes() || is_arr_helper_op(kind) || is_cell_op(kind) || is_map_op(kind);
+        || kind == str_bytes() || kind == arr_slice() || is_arr_helper_op(kind) || is_cell_op(kind) || is_map_op(kind);
 }
 
 pub function is_arr_helper_op(kind: i32): boolean {
@@ -783,6 +801,7 @@ function builtin_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.kind_tag == arr_sum() || ins.kind_tag == arr_product()) { return arr_reduce_error(ins, f, result); }
     if (ins.kind_tag == length()) { return length_error(ins, f, result); }
     if (ins.kind_tag == slice()) { return slice_error(ins, f, result); }
+    if (ins.kind_tag == arr_slice()) { return arr_slice_error(ins, f, result); }
     if (ins.kind_tag == str_index()) { return str_index_error(ins, f, result); }
     if (ins.kind_tag == str_bytes()) { return str_bytes_error(ins, f, result); }
     if (ins.kind_tag == with()) { return with_error(ins, f, result); }
@@ -1433,12 +1452,13 @@ function instruction_error(ins: ssa.SInst, f: Func): string {
 
 // A function type is one word of code address, and the call through one
 // carries the signature it dispatches by (`ssarc.signature_tag`), so a slot
-// may be any width. A function type inside another has no address to take,
-// and a void result no value to hold.
+// may be any width. A function type inside another has no address to take.
+// A void result is a word like any other: every backend hands one back from
+// a void body, so the call stands in statement position like any void call.
 function func_shape_error(fn: typeinfo.TypeFunc): string {
     if (!fn.params_known) { return "function type without a signature"; }
     for p in fn.param_types { if (!signature_slot(p)) { return "function signature slot"; } }
-    if (is_void(fn.ret_type) || !signature_slot(fn.ret_type)) { return "function signature slot"; }
+    if (!is_void(fn.ret_type) && !signature_slot(fn.ret_type)) { return "function signature slot"; }
     return "";
 }
 
@@ -1488,9 +1508,12 @@ function field_placement_error(f: Func): string {
             return "function value is not a field";
         }
     }
+    // A variant's field is released by the same walk (`ssarc.drop_variant_fields`
+    // selects the variant and drops its fields as a record's), so it holds a
+    // function value under the same rule: directly, never nested.
     for e in f.enums {
         for v in e.variants {
-            for field in v.fields { if (holds_func(field.ty)) { return "function value is not a field"; } }
+            for field in v.fields { if (holds_func(field.ty) && !is_func(field.ty)) { return "function value is not a field"; } }
         }
     }
     return "";
