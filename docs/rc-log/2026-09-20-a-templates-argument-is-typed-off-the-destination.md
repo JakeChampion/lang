@@ -24,7 +24,10 @@ binds nothing and the argument is refused as it was. The instance the call
 requests is the one the argument's type names, so `id[i32[]]` is what
 `id([])` under an `i32[]` binding produces.
 
-The three array seeds produce whole. The map seeds move one leaf deeper,
+Fifteen more programs produce whole, not three: the array literals were
+the visible leaf, and a literal handed to a template sat behind the "is a
+function value … builds" consequences of a dozen others. The map seeds
+move one leaf deeper,
 to a real limit: `id$$map$i32$i32: map unit is not shared`. The instance
 returns its parameter, a map, and a map box carries no reference count on
 the register backends — a unit of one is only ever moved
@@ -38,6 +41,6 @@ change's.
 | binary | whole | agree | diverge |
 |---|---|---|---|
 | main after #9825 | 476 / 509 | 500 | 0 |
-| this change | CENSUS_WHOLE / 509 | CENSUS_AGREE | CENSUS_DIVERGE |
+| this change | 491 / 509 | 500 | 0 |
 
 The compiler's own sources produce whole (8625 of 8625).
