@@ -1,8 +1,11 @@
 package e2eselfhost
 
 import (
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/ast"
 )
 
 // --- The use-after-free quarantine (the native RcFreeDebug port) -------------
@@ -22,7 +25,12 @@ import (
 // This was the sanitizer's one behavioural gap versus native (#5545); the
 // remaining gap is the missing backtrace under the report.
 
-const uafPoisonDec = "2129656526" // ast.RcPoison, as the emitted decimal
+// uafPoisonDec is ast.RcPoison as the emitted decimal, derived rather than
+// written out: the self-host cannot import the Go constant, so the assertions
+// below are what hold its literal equal to native's. They were not equal —
+// the emitter carried 0x7EEFFACE, one digit from the constant every comment
+// named, so the two compilers quarantined with different words (#9883).
+var uafPoisonDec = strconv.Itoa(ast.RcPoison)
 
 // uafSelfHostIncSrc retains a block the runtime has already freed: the first
 // __rc_dec reclaims the rc==1 buffer (this runtime's __rc_dec maps to the

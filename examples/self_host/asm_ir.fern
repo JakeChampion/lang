@@ -366,7 +366,8 @@ function sanitize_on(): boolean {
 // FERN_RC_FREE_DEBUG, or implied by FERN_SANITIZE (ast.ApplySanitize parity;
 // the native RcFreeDebug port, closing the first gap listed above). Under it
 // NOTHING is recycled: every free site writes ast.RcPoison (0x7EEDFACE) over
-// the rc word where the block has one and declines its freelist push — a
+// the rc word where the block has one, through rc_poison() below, and
+// declines its freelist push — a
 // recycled block would overwrite its own poison — so __fern_alloc just keeps
 // bumping, and the rc helpers die with a named report the moment a stale
 // reference touches a poisoned block. A quarantined block still counts as a
@@ -398,8 +399,16 @@ function fused_marker(): i32 {
     return 1934589965;   // 0x734F800D
 }
 
+// rc_poison is the decimal of ast.RcPoison (0x7EEDFACE), the marker a
+// quarantined block carries in its rc word. The self-host cannot import the
+// Go constant, so the two are pinned equal by a test rather than by a shared
+// declaration (#9883); the literal used to be 0x7EEFFACE, one digit off, so
+// the two compilers quarantined with different words while four comments
+// said they matched.
+function rc_poison(): string { return "2129525454"; }
+
 function quarantine_rc(addr: string): string {
-    if (rc_free_debug_on()) { return "    movl $2129656526, " + addr + "\n"; }
+    if (rc_free_debug_on()) { return "    movl $" + rc_poison() + ", " + addr + "\n"; }
     return "    movl $0, " + addr + "\n";
 }
 
@@ -408,7 +417,7 @@ function quarantine_rc(addr: string): string {
 // it; only this explicit compare sees it. The abort never returns, so a bare
 // je needs no live-side label.
 function san_poison_check(reg: string): string {
-    if (rc_free_debug_on()) { return "    cmpl $2129656526, " + reg + "\n    je __fern_san_abort_uaf\n"; }
+    if (rc_free_debug_on()) { return "    cmpl $" + rc_poison() + ", " + reg + "\n    je __fern_san_abort_uaf\n"; }
     return "";
 }
 
@@ -2776,7 +2785,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     if (rc_free_debug_on()) {
         // Quarantine: the mispaired donor is freed here, so it gets the same
         // poison-and-decline every other free path applies.
-        s = s.write("    movl $2129656526, -8(%rax)\n");
+        s = s.write("    movl $" + rc_poison() + ", -8(%rax)\n");
     } else {
     s = s.write("    leaq __fern_freelist(%rip), %r8\n");
     s = s.write("    movq (%r8,%rdx,8), %rsi\n");    // old head

@@ -1396,8 +1396,10 @@ function main(): i32 {
 }
 
 // rcPoisonWord is the value a freed block's count is overwritten with, which
-// the sanitizer's check compares against (asm_ir.san_poison_check).
-const rcPoisonWord = "2129656526"
+// the sanitizer's check compares against (asm_ir.san_poison_check). It is
+// ast.RcPoison, and uafPoisonDec derives the same value from the same
+// constant.
+var rcPoisonWord = uafPoisonDec
 
 // A constant the binary ops alone read is an immediate operand on both ISAs
 // and is never materialised; one a division reads keeps its register. The
