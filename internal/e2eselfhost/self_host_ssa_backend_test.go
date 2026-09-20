@@ -389,6 +389,48 @@ function main(): i32 {
     return n % 100;
 }
 `},
+	// `dyn Trait` dispatch: the receiver's shape word selects the arm, and
+	// the arguments are read from wherever the allocator put them, a
+	// register or a spill slot, rather than from the locals the stack
+	// machine's arm reads. A struct, an enum (matched per variant) and a
+	// primitive (unboxed at the call) receiver, a two-argument method, and
+	// an argument a call defines at the instruction before the dispatch, so
+	// its home is the return register the chain uses as scratch
+	// (TestSelfHostSSADynDispatchArgumentInScratch pins that it is).
+	{name: "dyn_dispatch", allSSA: true, src: `
+import "std/i32";
+trait Shape {
+    function area(self: Self): i32;
+    function scaled(self: Self, k: i32): i32;
+}
+struct Square { side: i32 }
+impl Shape for Square {
+    function area(self: Self): i32 { return self.side * self.side; }
+    function scaled(self: Self, k: i32): i32 { return self.side * k; }
+}
+enum Blob { Round(i32), Flat }
+impl Shape for Blob {
+    function area(self: Self): i32 { match (self) { Round(r) => { return r * 3; }, Flat => { return 0; } } }
+    function scaled(self: Self, k: i32): i32 { return self.area() * k; }
+}
+impl Shape for i32 {
+    function area(self: Self): i32 { return self; }
+    function scaled(self: Self, k: i32): i32 { return self * k; }
+}
+function measure(s: dyn Shape, k: i32): i32 { return s.area() * 100 + s.scaled(k); }
+@noinline
+function bump(n: i32): i32 { return n + 1; }
+function arg_from_call(s: dyn Shape, n: i32): i32 { return s.scaled(bump(n)); }
+function main(): i32 {
+    var a: dyn Shape = Square { side: 3 };
+    var b: dyn Shape = Round(5);
+    var c: dyn Shape = Flat;
+    var d: dyn Shape = 7;
+    var total: i32 = measure(a, 2) + measure(b, 3) + measure(c, 4) + measure(d, 5) + arg_from_call(a, 1);
+    print("dyn " + total.to_string() + "\n");
+    return total % 256;
+}
+`},
 	// The map ops and the byte kernels run through the stack machine's own
 	// arms between a push of the operands and a pop of the result, with the
 	// allocator treating each as a call. String and integer keys, insert,
@@ -942,4 +984,67 @@ func TestSelfHostCLIBuildsForEveryNativeTarget(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestSelfHostSSADynDispatchArgumentInScratch pins the one branch of the
+// register path's dyn dispatch the behavioural gate cannot see firing: an
+// argument whose home is the chain's own scratch register. arg_from_call
+// hands the dispatch a value the call before it defined, so the allocator
+// gives it the return register, and the wrapper moves it out before the chain
+// reads the receiver's shape through that register. The listing shows the
+// move and the pushed copy on x86-64, the move and the reload on arm64. An
+// allocator change that stopped producing the shape would leave the branch
+// untested again, which this test refuses.
+func TestSelfHostSSADynDispatchArgumentInScratch(t *testing.T) {
+	h := selfHostCLIForHost(t)
+	var src string
+	for _, p := range ssaBackendPrograms {
+		if p.name == "dyn_dispatch" {
+			src = p.src
+		}
+	}
+	if src == "" {
+		t.Fatal("the dyn_dispatch program is gone from ssaBackendPrograms")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "dyn.fern")
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, tg := range h.targets {
+		t.Run(tg.target, func(t *testing.T) {
+			asm := filepath.Join(dir, tg.target+".s")
+			h.compileWith(t, tg, path, asm, "-backend", "ssa", "-emit", "asm")
+			text, err := os.ReadFile(asm)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fn := functionListing(string(text), "__fn_arg_from_call")
+			move, use := "    movq %rax, %r11\n", "    pushq %r11\n"
+			if strings.HasPrefix(tg.target, "arm64") {
+				move, use = "    mov x4, x0\n", "    mov x0, x4\n"
+			}
+			i := strings.Index(fn, move)
+			if i < 0 {
+				t.Fatalf("arg_from_call never moves the call result out of the chain's scratch register:\n%s", fn)
+			}
+			if !strings.Contains(fn[i:], use) || !strings.Contains(fn[i:], "dynend") {
+				t.Fatalf("the moved argument is not what the dispatch chain reads:\n%s", fn)
+			}
+		})
+	}
+}
+
+// functionListing is the text of one function in an emitted listing: from
+// its label to the next function label.
+func functionListing(text, label string) string {
+	start := strings.Index(text, label+":\n")
+	if start < 0 {
+		return ""
+	}
+	rest := text[start+len(label)+2:]
+	if end := strings.Index(rest, "\n__fn_"); end >= 0 {
+		return rest[:end]
+	}
+	return rest
 }

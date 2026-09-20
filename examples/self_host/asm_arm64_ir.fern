@@ -972,7 +972,7 @@ function ssa_funary_known(what: string): boolean {
 function ssa_inst_known(ins: ssa.SInst): boolean {
     var k: i32 = ins.kind_tag;
     if (k == 10) { return ssa_unary_known(ins.str); }
-    if (k >= 40 && k <= 59) { return true; }
+    if (k >= 40 && k <= 60) { return true; }
     return k == 1 || k == 3 || k == 4 || k == 6 || k == 7 || k == 8 || k == 9 || k == 11;
 }
 
@@ -1520,6 +1520,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
     var k: i32 = ins.kind_tag;
     if (k == 11) { return ssa_call(ins, reg_of, s); }
     if (k == 59) { return ssa_flat_op(ins, reg_of, lp, r, s); }
+    if (k == 60) { return ssa_dyn_dispatch(ins, reg_of, lp, s); }
     if (k == 51) { return ssa_str_view(ins, reg_of, ssa_view_off(fr, ins.result), s); }
     if (k >= 40 && k <= 44) { return ssa_mem_inst(ins, reg_of, s); }
     if (k >= 45 && k <= 48) { return ssa_addr_inst(ins, reg_of, s); }
@@ -3068,6 +3069,32 @@ function emit_arm64_op_memset(i: i32, lp: string, s: asmcore.EmitState): asmcore
     return s.write("    mov x0, #0\n    str x0, [sp, #-16]!\n");
 }
 
+// ssa_dyn_dispatch runs the dyn dispatch chain on the register path, each
+// argument read from its home: a register, or its spill slot at its
+// x29-relative offset, which the arms' pushes do not move. x0 is the chain's
+// own scratch, so a value living there moves to x4 first; the allocator
+// counts the instruction as a call, so nothing live across it is in a
+// caller-saved register.
+function ssa_dyn_dispatch(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
+    s = ssa_x0_forget(s);
+    var args: asmcore.DynArg[] = [];
+    var moved: boolean = false;
+    for v in ins.args {
+        if (reg_of[v] >= 0) {
+            var home: string = ssa_reg(reg_of[v]);
+            if (home == "x0") {
+                if (!moved) { s = s.write("    mov x4, x0\n"); moved = true; }
+                home = "x4";
+            }
+            args = args.append(asmcore.DynArg { reg: home, off: 0 });
+        } else {
+            args = args.append(asmcore.DynArg { reg: "", off: ssa_slot_off(ssa.spill_slot(reg_of[v])) - s.ssa_save });
+        }
+    }
+    s = emit_dyn_dispatch_chain(ins.str, args, ins.imm, lp, s);
+    return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
+}
+
 // ssa_flat_op runs the stack machine's own arm for op `o` (the byte kernels,
 // the map ops, the byte-buffer builder) between a push of the operands and a
 // pop of the result. The allocator treats the op as a call, so the arm's
@@ -3659,16 +3686,36 @@ function emit_arm64_op_call_direct(o: ir.Op, s: asmcore.EmitState): asmcore.Emit
     return s;
 }
 
+// dyn_arg_load loads a `dyn Trait` call's argument into `reg`: from its
+// register, or from its frame slot relative to x29, which no push moves.
+function dyn_arg_load(s: asmcore.EmitState, reg: string, a: asmcore.DynArg): asmcore.EmitState {
+    if (a.reg.len() > 0) {
+        if (a.reg == reg) { return s; }
+        return s.write("    mov " + reg + ", " + a.reg + "\n");
+    }
+    return fr_ldr(s, reg, a.off);
+}
+
 function emit_arm64_op_dyn_dispatch(o: ir.Op, i: i32, lp: string, s: asmcore.EmitState): asmcore.EmitState {
-    // `dyn Trait` method call. Receiver (arg0) + args are in argc
-    // consecutive locals from base_slot. Read the receiver's shape
-    // pointer (x1) and dispatch to the matching `<Type>.<method>` — a
-    // compare-branch chain over every module method named o.str with a
-    // struct receiver, mirroring asm_arm64.fern. Each matched arm pushes
-    // the argc locals (arg0/receiver on top, the arm64 ABI) and calls.
-    var dbase: i32 = o.i32_imm;
-    var dargc: i32 = o.width;
-    s = fr_ldr(s, "x0", 0 - 8 * (dbase + 1));
+    // `dyn Trait` method call on the stack machine: the receiver (arg0) and
+    // the arguments are in argc consecutive locals from base_slot.
+    var args: asmcore.DynArg[] = [];
+    var k: i32 = 0;
+    while (k < o.width) { args = args.append(asmcore.DynArg { reg: "", off: 0 - 8 * (o.i32_imm + k + 1) }); k = k + 1; }
+    s = emit_dyn_dispatch_chain(o.str, args, i, lp, s);
+    return s.write("    str x0, [sp, #-16]!\n");
+}
+
+// emit_dyn_dispatch_chain is a `dyn Trait` method call: it reads the
+// receiver's shape pointer (x1) and dispatches to the matching
+// `<Type>.<method>` through a compare-branch chain over every module method
+// named `method` with a struct receiver, mirroring asm_arm64.fern. Each
+// matched arm pushes the arguments (arg0/receiver on top, the arm64 ABI)
+// from where `args` says they are, calls, and leaves the result in x0. x1
+// and x2 are scratch.
+function emit_dyn_dispatch_chain(method: string, args: asmcore.DynArg[], i: i32, lp: string, s: asmcore.EmitState): asmcore.EmitState {
+    var dargc: i32 = args.len();
+    s = dyn_arg_load(s, "x0", args[0]);
     s = s.write("    ldr x1, [x0]\n");
     var dend: string = lp + "dynend" + util.i32_to_string(i);
     var dfi: i32 = 0;
@@ -3679,9 +3726,9 @@ function emit_arm64_op_dyn_dispatch(o: ir.Op, i: i32, lp: string, s: asmcore.Emi
         // Dispatch arms: struct receivers (value carries its shape) AND
         // primitive/string receivers (value heap-boxed at coercion —
         // docs/DYN-TRAITS.md §4.2.3). A primitive arm UNBOXES: the receiver
-        // local holds the box pointer, so arg0 is reloaded from box+8.
+        // holds the box pointer, so arg0 is reloaded from box+8.
         var dprim: boolean = dfd.receiver_type.len() > 0 && asmcore.is_prim_recv_name(ddbn, s);
-        if (irlower.dyn_arm_matches(dfd, o.str, s.funcs) && dfd.receiver_type.len() > 0
+        if (irlower.dyn_arm_matches(dfd, method, s.funcs) && dfd.receiver_type.len() > 0
                 && (asmcore.is_struct_decl_name(ddbn, s) || dprim)) {
             var dbn: string = ddbn;
             var dlit: asmcore.ShapeRefOut = asmcore.shape_ref(s, dbn);
@@ -3694,18 +3741,17 @@ function emit_arm64_op_dyn_dispatch(o: ir.Op, i: i32, lp: string, s: asmcore.Emi
             while (dk >= 0) {
                 if (dk == 0 && dprim) {
                     // arg0 is the receiver: unbox the value from box+8.
-                    s = fr_ldr(s, "x0", 0 - 8 * (dbase + 1));
+                    s = dyn_arg_load(s, "x0", args[0]);
                     s = s.write("    ldr x0, [x0, #8]\n");
                     s = s.write("    str x0, [sp, #-16]!\n");
                 } else {
-                    s = fr_ldr(s, "x0", 0 - 8 * (dbase + dk + 1));
+                    s = dyn_arg_load(s, "x0", args[dk]);
                     s = s.write("    str x0, [sp, #-16]!\n");
                 }
                 dk = dk - 1;
             }
             s = s.write("    bl __fn_" + asmcore.sanitize_label(dbn + "." + dfd.name) + "\n");
             s = s.write("    add sp, sp, #" + util.i32_to_string(dargc * 16) + "\n");
-            s = s.write("    str x0, [sp, #-16]!\n");
             s = s.write("    b " + dend + "\n");
             s = s.write(dnext + ":\n");
             darmn = darmn + 1;
@@ -3722,7 +3768,7 @@ function emit_arm64_op_dyn_dispatch(o: ir.Op, i: i32, lp: string, s: asmcore.Emi
         // excludes an array method's `T[]` receiver (base_type_name
         // strips the `[]`, which would otherwise mis-read as an
         // enum — #2766). Mirrors the x86 asm_ir arm.
-        if (irlower.dyn_arm_matches(dfd, o.str, s.funcs) && dfd.receiver_type.len() > 0
+        if (irlower.dyn_arm_matches(dfd, method, s.funcs) && dfd.receiver_type.len() > 0
                 && !asmcore.recv_is_array(dfd.receiver_type)
                 && irlower.decl_is_enum(s.struct_decls, ddbn)) {
             var dehit: string = lp + "dynehit" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
@@ -3742,13 +3788,12 @@ function emit_arm64_op_dyn_dispatch(o: ir.Op, i: i32, lp: string, s: asmcore.Emi
             s = s.write(dehit + ":\n");
             var dek: i32 = dargc - 1;
             while (dek >= 0) {
-                s = fr_ldr(s, "x0", 0 - 8 * (dbase + dek + 1));
+                s = dyn_arg_load(s, "x0", args[dek]);
                 s = s.write("    str x0, [sp, #-16]!\n");
                 dek = dek - 1;
             }
             s = s.write("    bl __fn_" + asmcore.sanitize_label(ddbn + "." + dfd.name) + "\n");
             s = s.write("    add sp, sp, #" + util.i32_to_string(dargc * 16) + "\n");
-            s = s.write("    str x0, [sp, #-16]!\n");
             s = s.write("    b " + dend + "\n");
             s = s.write(denext + ":\n");
             darmn = darmn + 1;
@@ -3759,7 +3804,6 @@ function emit_arm64_op_dyn_dispatch(o: ir.Op, i: i32, lp: string, s: asmcore.Emi
     // (exit 134, like __fern_oob_abort) rather than answer 0.
     s = s.write("    mov x8, #93\n    mov x0, #134\n    svc #0\n");
     s = s.write(dend + ":\n");
-
     return s;
 }
 
