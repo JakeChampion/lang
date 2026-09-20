@@ -1489,9 +1489,12 @@ function field_placement_error(f: Func): string {
             return "function value is not a field";
         }
     }
+    // A variant's field is released by the same walk (`ssarc.drop_variant_fields`
+    // selects the variant and drops its fields as a record's), so it holds a
+    // function value under the same rule: directly, never nested.
     for e in f.enums {
         for v in e.variants {
-            for field in v.fields { if (holds_func(field.ty)) { return "function value is not a field"; } }
+            for field in v.fields { if (holds_func(field.ty) && !is_func(field.ty)) { return "function value is not a field"; } }
         }
     }
     return "";
