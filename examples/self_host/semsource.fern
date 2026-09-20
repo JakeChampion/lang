@@ -3580,9 +3580,11 @@ function contracts(mod: parser.Module, scopes: checker.Scope[]): ssasem.Contract
 // also where irlower's `opt_ret_type` reads them — the three copies name one
 // table so they cannot drift.
 //
-// The handle METADATA surface (stat / seek / flags / truncate / isatty /
-// dup_onto, the four terminal questions and the three fd syncs) has no
-// contract here yet and refuses where it stands.
+// The handle metadata surface — stat, flags, seek, the partial write, the
+// truncation and the three fd syncs — is asked of the bare descriptor like
+// close, and hands back a fresh Result or Option box. dup_onto, the terminal
+// questions and window_size have no contract here yet and refuse where they
+// stand.
 function handle_contracts(): ssasem.Contract[] {
     var value: i32[] = [ssaunits.value_mode()];
     var path: i32[] = [ssaunits.borrow_mode()];
@@ -3590,7 +3592,8 @@ function handle_contracts(): ssasem.Contract[] {
     var reader: typeinfo.Type = t_handle("Reader");
     var writer: typeinfo.Type = t_handle("Writer");
     var io_error: typeinfo.Type = t_option(typeinfo.TypeUnion { name: "IoError", args: [] });
-    return [
+    var out: ssasem.Contract[] = handle_metadata_contracts(reader, writer, io_error);
+    var opens: ssasem.Contract[] = [
         ssasem.Contract { name: "stdin", params: [], modes: [], result: reader },
         ssasem.Contract { name: "stdout", params: [], modes: [], result: writer },
         ssasem.Contract { name: "stderr", params: [], modes: [], result: writer },
@@ -3605,6 +3608,81 @@ function handle_contracts(): ssasem.Contract[] {
         ssasem.Contract { name: "Reader.close", params: [reader], modes: value, result: io_error },
         ssasem.Contract { name: "Writer.close", params: [writer], modes: value, result: io_error },
         ssasem.Contract { name: "Writer.write", params: [writer, t_string()], modes: [ssaunits.value_mode(), ssaunits.borrow_mode()], result: io_error }
+    ];
+    for c in opens { out = out.append(c); }
+    return out;
+}
+
+function handle_metadata_contracts(reader: typeinfo.Type, writer: typeinfo.Type, io_error: typeinfo.Type): ssasem.Contract[] {
+    var v: i32 = ssaunits.value_mode();
+    var seek: typeinfo.Type[] = [t_i64(), t_i32()];
+    var out: ssasem.Contract[] = [];
+    var handles: typeinfo.Type[] = [reader, writer];
+    var owners: string[] = ["Reader", "Writer"];
+    var i: i32 = 0;
+    while (i < 2) {
+        var h: typeinfo.Type = handles[i];
+        var o: string = owners[i];
+        out = out.append(ssasem.Contract { name: o + ".stat", params: [h], modes: [v], result: t_io_result(t_file_stat()) });
+        out = out.append(ssasem.Contract { name: o + ".flags", params: [h], modes: [v], result: t_io_result(t_i64()) });
+        out = out.append(ssasem.Contract { name: o + ".seek", params: [h, seek[0], seek[1]], modes: [v, v, v], result: t_io_result(t_i64()) });
+        out = out.append(ssasem.Contract { name: o + ".fsync", params: [h], modes: [v], result: io_error });
+        out = out.append(ssasem.Contract { name: o + ".fdatasync", params: [h], modes: [v], result: io_error });
+        out = out.append(ssasem.Contract { name: o + ".syncfs", params: [h], modes: [v], result: io_error });
+        i = i + 1;
+    }
+    out = out.append(ssasem.Contract { name: "Writer.write_some", params: [writer, t_string()], modes: [v, ssaunits.borrow_mode()], result: t_io_result(t_i64()) });
+    return out.append(ssasem.Contract { name: "Writer.truncate", params: [writer, t_i64()], modes: [v, v], result: io_error });
+}
+
+// The OS floor the compiler itself never calls: the process and host
+// queries, the directory, link and permission ops, the process ops and the
+// TCP connect. Every string and array is lent, since each op reads its bytes
+// and keeps none; every scalar is a value; a fresh string or array is the
+// caller's, and a Result or record box owns every part of itself.
+function os_contracts(): ssasem.Contract[] {
+    var v: i32 = ssaunits.value_mode();
+    var b: i32 = ssaunits.borrow_mode();
+    var done: typeinfo.Type = t_io_result(t_void());
+    var strs: typeinfo.Type = typeinfo.TypeArray { elem: t_string() };
+    var out: ssasem.Contract[] = [
+        ssasem.Contract { name: "getcwd", params: [], modes: [], result: t_string() },
+        ssasem.Contract { name: "hostname", params: [], modes: [], result: t_string() },
+        ssasem.Contract { name: "cpu_count", params: [], modes: [], result: t_i32() },
+        ssasem.Contract { name: "geteuid", params: [], modes: [], result: t_u32() },
+        ssasem.Contract { name: "getegid", params: [], modes: [], result: t_u32() },
+        ssasem.Contract { name: "getuid", params: [], modes: [], result: t_u32() },
+        ssasem.Contract { name: "getgid", params: [], modes: [], result: t_u32() },
+        ssasem.Contract { name: "environ", params: [], modes: [], result: strs },
+        ssasem.Contract { name: "proc_fork", params: [], modes: [], result: t_i32() },
+        ssasem.Contract { name: "isatty", params: [t_i32()], modes: [v], result: t_bool() },
+        ssasem.Contract { name: "uname_field", params: [t_i32()], modes: [v], result: t_string() },
+        ssasem.Contract { name: "umask", params: [t_i32()], modes: [v], result: t_i32() },
+        ssasem.Contract { name: "proc_waitpid", params: [t_i32()], modes: [v], result: t_i32() },
+        ssasem.Contract { name: "proc_waitpid_nohang", params: [t_i32()], modes: [v], result: t_i32() },
+        ssasem.Contract { name: "temp_dir", params: [t_string()], modes: [b], result: t_io_result(t_string()) },
+        ssasem.Contract { name: "read_link", params: [t_string()], modes: [b], result: t_io_result(t_string()) },
+        ssasem.Contract { name: "remove_dir", params: [t_string()], modes: [b], result: done },
+        ssasem.Contract { name: "statfs", params: [t_string()], modes: [b], result: t_io_result(typeinfo.TypeStruct { name: "FsStat", args: [] }) }
+    ];
+    for c in fs_op_contracts(done, strs) { out = out.append(c); }
+    return out;
+}
+
+function fs_op_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Contract[] {
+    var v: i32 = ssaunits.value_mode();
+    var b: i32 = ssaunits.borrow_mode();
+    return [
+        ssasem.Contract { name: "create_dir", params: [t_string(), t_i32()], modes: [b, v], result: done },
+        ssasem.Contract { name: "chmod", params: [t_string(), t_i32()], modes: [b, v], result: done },
+        ssasem.Contract { name: "access", params: [t_string(), t_i32()], modes: [b, v], result: done },
+        ssasem.Contract { name: "rename", params: [t_string(), t_string()], modes: [b, b], result: done },
+        ssasem.Contract { name: "create_link", params: [t_string(), t_string()], modes: [b, b], result: done },
+        ssasem.Contract { name: "create_symlink", params: [t_string(), t_string()], modes: [b, b], result: done },
+        ssasem.Contract { name: "tcp_connect", params: [t_i32(), t_i32()], modes: [v, v], result: t_i32() },
+        ssasem.Contract { name: "signal_send", params: [t_i32(), t_i32()], modes: [v, v], result: done },
+        ssasem.Contract { name: "chown_at", params: [t_string(), t_i32(), t_i32(), t_bool()], modes: [b, v, v, v], result: done },
+        ssasem.Contract { name: "subprocess", params: [t_string(), strs, t_string()], modes: [b, b, b], result: typeinfo.TypeStruct { name: "ProcessResult", args: [] } }
     ];
 }
 
@@ -3633,6 +3711,7 @@ function t_file_stat(): typeinfo.Type {
 function builtin_contracts(): ssasem.Contract[] {
     var out: ssasem.Contract[] = union_result_contracts();
     for c in handle_contracts() { out = out.append(c); }
+    for c in os_contracts() { out = out.append(c); }
     for c in value_contracts() { out = out.append(c); }
     for c in string_contracts() { out = out.append(c); }
     for c in builder_contracts() { out = out.append(c); }

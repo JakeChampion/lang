@@ -49,6 +49,9 @@ func TestSelfHostSemanticProduction(t *testing.T) {
 			}
 			for _, target := range []string{"x86-64-linux", "x86-64-sanitize", "arm64-linux", "wasm32-wasi"} {
 				t.Run(target, func(t *testing.T) {
+					if prog.nativeOnly && target == "wasm32-wasi" {
+						t.Skip("the program reaches builtins the wasi profile does not grant")
+					}
 					if prog.want != "" {
 						semRefusedByAST(t, fernBin, stdlibRoot, src, target)
 						got, report, leak := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, true, "", prog.stdin)
@@ -273,7 +276,11 @@ var semProductionPrograms = []struct {
 	// stdin is fed to every run of this program, so a body that reads it
 	// answers the same thing on each leg.
 	stdin string
-	src   string
+	// nativeOnly leaves the wasm leg out: the program reaches builtins the
+	// wasi profile does not grant (the user and process ids, the permission
+	// bits, subprocess), which E066 refuses at compile time on both legs.
+	nativeOnly bool
+	src        string
 }{
 	// A lambda the SOURCE wrote, with an explicit callable return annotation.
 	// parse_type_name coarsens that annotation to the tag "fn" and the lambda
@@ -1809,4 +1816,82 @@ function main(): i32 {
     }
     return t % 223;
 }`},
+	// The OS floor: the process and host queries. Each is a stack IR op of
+	// its own behind a contract (semsource.os_contracts), where the census
+	// over the corpus found 773 call sites refusing for the missing contract,
+	// most of them in the coreutils. A fresh string or array is the caller's
+	// and a scalar owns nothing; the pin is that the produced bodies free no
+	// less than the AST lowering, which leaks several of these results (#9832).
+	{name: "os-floor-queries", atLeast: 2, nativeOnly: true, src: `
+function queries(): i32 {
+    var n: i32 = 0;
+    if (getcwd().len() > 0) { n = n + 1; }
+    if (hostname().len() > 0) { n = n + 2; }
+    if (cpu_count() > 0) { n = n + 4; }
+    if ((geteuid() as i64) >= 0) { n = n + 8; }
+    if (uname_field(0).len() > 0) { n = n + 16; }
+    if (isatty(1) || !isatty(1)) { n = n + 32; }
+    var old: i32 = umask(18);
+    if (umask(old) == 18) { n = n + 64; }
+    if (environ().len() > 0) { n = n + 128; }
+    return n;
+}
+function main(): i32 { return queries(); }
+`},
+	// The handle metadata surface, asked of the bare descriptor like close:
+	// fstat, the open flags, lseek. Each hands back a fresh Result box the
+	// caller owns. /dev/null is not preopened under wasmtime, so on that leg
+	// both lowerings take the Err arm and still agree.
+	{name: "os-floor-handles", atLeast: 2, src: `
+function handles(path: string): i32 {
+    var n: i32 = 0;
+    match (open_reader(path)) {
+        Ok(r) => {
+            match (r.stat()) { Ok(st) => { n = n + 1; }, Err(e) => { n = n + 1000; } }
+            match (r.flags()) { Ok(f) => { n = n + 2; }, Err(e) => { n = n + 2000; } }
+            match (r.seek(0, 0)) { Ok(off) => { n = n + 4; }, Err(e) => { n = n + 4000; } }
+            match (r.close()) { Some(e) => { n = n + 8000; }, None => { n = n + 8; } }
+        },
+        Err(e) => { n = n + 16000; },
+    }
+    return n;
+}
+function main(): i32 { return handles("/dev/null") % 256; }
+`},
+	// The directory, link and permission ops over a directory temp_dir hands
+	// back, and statfs on it; every path is lent and every outcome a fresh
+	// Result box. access and chmod are fsmode, which wasi does not grant.
+	{name: "os-floor-files", atLeast: 2, nativeOnly: true, src: `
+function files(dir: string): i32 {
+    var n: i32 = 0;
+    var sub: string = dir + "/d";
+    match (create_dir(sub, 448)) { Ok(u) => { n = n + 1; }, Err(e) => { n = n + 1000; } }
+    match (access(sub, 0)) { Ok(u) => { n = n + 2; }, Err(e) => { n = n + 2000; } }
+    match (rename(sub, dir + "/e")) { Ok(u) => { n = n + 4; }, Err(e) => { n = n + 4000; } }
+    match (create_symlink(dir + "/e", dir + "/l")) { Ok(u) => { n = n + 8; }, Err(e) => { n = n + 8000; } }
+    match (read_link(dir + "/l")) { Ok(t) => { if (t.len() > 0) { n = n + 16; } }, Err(e) => { n = n + 16000; } }
+    match (chmod(dir + "/e", 493)) { Ok(u) => { n = n + 32; }, Err(e) => { n = n + 32000; } }
+    match (statfs(dir)) { Ok(fs) => { n = n + 64; }, Err(e) => { n = n + 64000; } }
+    match (remove_file(dir + "/l")) { Ok(u) => { n = n + 128; }, Err(e) => { n = n + 128000; } }
+    match (remove_dir(dir + "/e")) { Ok(u) => { n = n + 256; }, Err(e) => { n = n + 256000; } }
+    return n;
+}
+function main(): i32 {
+    var n: i32 = 0;
+    match (temp_dir("fernsem")) {
+        Ok(d) => { n = files(d); match (remove_dir(d)) { Ok(u) => { }, Err(e) => { n = n + 7; } } },
+        Err(e) => { n = 5; },
+    }
+    return n % 256;
+}
+`},
+	// subprocess hands back a record the caller owns, its two strings among
+	// the parts a release walks; the arguments are lent.
+	{name: "os-floor-subprocess", atLeast: 1, nativeOnly: true, src: `
+function main(): i32 {
+    var p: ProcessResult = subprocess("/bin/echo", ["hi"], "");
+    print(p.stdout);
+    return p.exit_code + p.stdout.len();
+}
+`},
 }
