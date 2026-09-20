@@ -330,8 +330,11 @@ func printfCases(t *testing.T) []invocation {
 		{name: "precision at int max", args: []string{"%.2147483647d", "1"}},
 		{name: "precision one under int max", args: []string{"%.2147483646d", "1"}},
 		{name: "precision far too large", args: []string{"%.99999999999d", "1"}},
-		{name: "e precision refused", args: []string{"%.2147483640e", "1"}},
-		{name: "a precision refused", args: []string{"%.2147483640a", "1"}},
+		// Just under the limit is a two-gigabyte field, which both
+		// sides write as a run of zeros (#9812).
+		{name: "e precision just under", args: []string{"%.2147483640e", "1"}},
+		{name: "f precision just under", args: []string{"%.2147483640f", "1"}},
+		{name: "a precision just under", args: []string{"%.2147483640a", "1"}},
 		{name: "g precision is fine", args: []string{"%.2147483640g", "1"}},
 		{name: "star width at int max", args: []string{"%*d", "2147483647", "1"}},
 		{name: "star width at int min", args: []string{"%*d", "-2147483648", "1"}},

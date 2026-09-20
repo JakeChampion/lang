@@ -1531,15 +1531,16 @@ func readTreeInto(t *testing.T, root, prefix string, groups map[[2]uint64]int, o
 //
 // Five minutes, because the huge-format cases are SLOW as well as
 // occasionally endless and only waiting tells them apart. The slowest single
-// run in a full corpus sweep is OURS, not the reference's: `printf
-// '%.2147483640e' 1` takes 31.6s under coreutils/printf.fern against GNU
-// 9.12's 7.5s on the same input (macOS arm64, #9812). `numfmt
-// --format=%02000000000.0f 1000` is 2.3s and the ordinary case is
-// milliseconds.
+// run in a full corpus sweep is the reference's: `printf '%.2147483640e' 1`
+// is a two-gigabyte field GNU 9.12 builds in memory, 7.5s on macOS arm64
+// and about 40s on a loaded 4-core Linux container, where
+// coreutils/printf.fern writes it as a counted run of zeros in milliseconds
+// (#9812). `numfmt --format=%02000000000.0f 1000` is 2.3s and the ordinary
+// case is milliseconds.
 //
-// So the headroom that matters is over 31.6s, not over the millisecond
-// cases: a minute is 1.9x, which a slower runner closes, and cutting a case
-// that PASSES is the one thing a bound must not do. Five minutes is ~9x, and
+// So the headroom that matters is over that 40s, not over the millisecond
+// cases: a minute is 1.5x, which a slower runner closes, and cutting a case
+// that PASSES is the one thing a bound must not do. Five minutes is 7x, and
 // still turns a lane-length stall into a named divergence.
 const corpusRunLimit = 5 * time.Minute
 

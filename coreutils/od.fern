@@ -778,7 +778,7 @@ function ftoa(f: ld.Format, v: ld.LD): string {
   var bound: i32 = prec_bound(f);
   var s: string = "";
   while (prec <= bound) {
-    s = sign + ld.general(d, prec as i64, false, false, 0 as i64).s;
+    s = sign + ld.general(d, prec as i64, false, false, 0 as i64).text();
     if (f.strtold(s).v.eq(v)) {
       return s;
     }
