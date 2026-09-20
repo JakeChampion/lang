@@ -639,6 +639,13 @@ Unsupported constructs refuse the whole function with a reason.
   own entry reports produced when every instance it was asked for did, and a
   template no produced body reaches is "uninstantiated generic". No produced
   value carries a variable: `ssasem.schema_error` refuses one as unresolved.
+  In a module produced whole a template's erased body is SUPERSEDED
+  (`irlower.LowerResult.superseded`): nothing calls it, since every produced
+  caller calls an instance, so no emit writes it and no gate judges it — the
+  AST lowering of an erased `__arrm_map__i64` clone carried the wasm route's
+  only `erased_wide` verdict and declined the module (#9838). Under the
+  bisect knobs an AST-lowered caller may still call the template, so there
+  its AST lowering stands.
 
 Refused, each with its own reason: calls of the remaining builtins, a void
 call in expression position, an operator or a literal at the pointer width,

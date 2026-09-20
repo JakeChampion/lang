@@ -116,6 +116,35 @@ function main(): i32 {
     if (w[2] != 6i64) { return 2; }
     return 11;
 }`},
+	// A wide ELEMENT under the method spelling (#9838). The worklist's
+	// `__arrm_map__i64` clone keeps `U` erased, so the semantic lowering
+	// declines it as a template and produces the instance beside it; the AST
+	// lowering of the erased clone then carried the module's only erased_wide
+	// verdict, and the wasm route declined a module nothing calls that body
+	// from. A superseded template has no emitted body and no verdict.
+	{"map_method_i64_elem_named", `import "std/array";
+function dbl(x: i64): i64 { return x * (2 as i64); }
+function twice(own xs: i64[]): i64[] { return xs.map(dbl); }
+function main(): i32 { return twice([3 as i64, 5 as i64]).len() + 40; }`}, // 42
+	{"map_method_i64_elem_lambda", `import "std/array";
+function main(): i32 {
+    var xs: i64[] = [3 as i64, 5 as i64];
+    var ys: i64[] = xs.map((x: i64): i64 => x * (2 as i64));
+    return (ys[0] + ys[1]) as i32;
+}`}, // 16
+	{"map_method_i64_elem_narrow_result", `import "std/array";
+function main(): i32 {
+    var xs: i64[] = [3 as i64, 5 as i64];
+    var ys: i32[] = xs.map((x: i64): i32 => (x as i32) + 1);
+    return ys[0] * 10 + ys[1];
+}`}, // 46
+	{"map_method_f64_elem_named", `import "std/array";
+function dbl(x: f64): f64 { return x * 2.0; }
+function main(): i32 {
+    var xs: f64[] = [1.5, 2.25];
+    var ys: f64[] = xs.map(dbl);
+    return (ys[1] * 10.0) as i32;
+}`}, // 45
 }
 
 // erasedWideArrayAllowCases must STILL lower: the gate keys on a wide ELEMENT,

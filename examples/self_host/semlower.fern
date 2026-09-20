@@ -140,7 +140,17 @@ function report(what: string, why: string): i32 {
 // guards against cannot arise.
 function declined(why: string): irlower.LowerResult {
     return irlower.LowerResult { ok: false, why: why, ops: [], n_locals: 0, n_params: 0,
-        erased_wide: false, arr_slots: [], i64_slots: [], f64_slots: [], str_slots: [],
+        erased_wide: false, superseded: false, arr_slots: [], i64_slots: [], f64_slots: [], str_slots: [],
+        alias_incs: [], name: "", result_kind: irlower.result_from_decl() };
+}
+
+// The entry for a template whose instances stand for it: a body of no ops
+// the emit skips (irlower.LowerResult.superseded), in place of the AST
+// lowering of the erased body, whose wasm verdict (erased_wide) would
+// otherwise decline a module nothing in it calls that body from (#9838).
+function superseded(): irlower.LowerResult {
+    return irlower.LowerResult { ok: true, why: "", ops: [], n_locals: 0, n_params: 0,
+        erased_wide: false, superseded: true, arr_slots: [], i64_slots: [], f64_slots: [], str_slots: [],
         alias_incs: [], name: "", result_kind: irlower.result_from_decl() };
 }
 
@@ -556,6 +566,16 @@ pub function substitution(mod: parser.Module, structs: irlower.StructTab, base: 
         + util.i32_to_string(mod.funcs.len()) + " declarations and "
         + util.i32_to_string(instances.len()) + " of "
         + util.i32_to_string(built.instances.len()) + " instances");
+    // A module produced whole calls no template's erased body: every caller
+    // is produced and calls an instance. Under the bisect knobs an AST-lowered
+    // caller may still call it, so there the AST lowering stands.
+    if (n == mod.funcs.len() && sem_ir_only() == "" && sem_ir_skip() == "") {
+        var i2: i32 = 0;
+        while (i2 < mod.funcs.len()) {
+            if (!bodies[i2].ok && built.decls[i2].template) { bodies = bodies.with(i2, superseded()); }
+            i2 = i2 + 1;
+        }
+    }
     // The declaration-less bodies are deduped by symbol and conflict-checked
     // here, where the rule lives, so the emit path's tail is a plain append.
     var extra: irlower.LowerResult[] = ssarc.merge_helpers(instances, helpers);

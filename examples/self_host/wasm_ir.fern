@@ -4980,7 +4980,9 @@ pub function emit_functions_view(ns: string, mod: parser.Module, cache: irlower.
         //
         // Skipping it is the other half of bringing the extern bridge onto the IR
         // path: the bridge supplies the definition, so the lowering must not.
-        if (mod.funcs[fi].import_iface.len() == 0) {
+        // A template the substitution superseded has no body of its own here
+        // either: its instances are on the cache tail.
+        if (mod.funcs[fi].import_iface.len() == 0 && !cache[fi].superseded) {
             parts = parts.append(emit_function_ir(ns, cache[fi], mod.funcs[fi], str_vals, cagg_vals, all_structs, ft, all_funcs, vsigs));
         }
         fi = fi + 1;
