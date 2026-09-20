@@ -731,6 +731,12 @@ rule; `docs/ARRAY-ALGEBRA.md` §4 is why a wrong shape aborts.
   otherwise
 - `(a).packed()`, `(a).to_flat()` — a copy exactly when not
   `(a).is_packed()`
+- elementwise, in reading order, as a packed handle of the same shape:
+  `(a).map(f)`, `(a).zip_with(b, f)` (equal shapes, else abort)
+- `(a).fold_all(init, f)` — every element in reading order
+- `(a).reduce_axis(axis, init, f)` — the fold along `axis` in increasing
+  index order, one rank less; `(a).scan_axis(axis, init, f)` — the
+  running fold, same shape
 
 ### `std/pvec`
 

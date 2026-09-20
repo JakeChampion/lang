@@ -147,11 +147,47 @@ Until phase 4 recognizes anything, `-array-report` reports nothing about
 these operations, and that is correct: nothing about them fuses or
 donates yet.
 
-## 7. What this does not decide
+## 7. Elementwise, and along an axis
 
-- **Elementwise and reductions over handles**, broadcasting, and the
-  kernels: #9735. §1 says what licenses an in-place elementwise op; the
-  op itself is not here.
+**Normative.** The first slice of #9735: the operations that read every
+element, stated so that a kernel can replace any of them without a caller
+noticing. The list is closed the way §2's is.
+
+| operation | result | order | storage |
+| --- | --- | --- | --- |
+| `map(f)` | same shape | reading order | one packed buffer of `len()` |
+| `zip_with(b, f)` | same shape; `b` must have it | reading order | one packed buffer of `len()` |
+| `fold_all(init, f)` | a scalar | reading order | none |
+| `reduce_axis(axis, init, f)` | `axis` dropped, one rank less | increasing index along `axis` | one packed buffer of `len() / shape[axis]` |
+| `scan_axis(axis, init, f)` | same shape, the running fold | increasing index along `axis` | one packed buffer of `len()` |
+
+Three rules follow:
+
+- **Every fold is in increasing index order**, along the axis or through
+  the reading order, on a strided handle exactly as on a packed one. This
+  is `ARRAY-ALGEBRA.md` §3 (AA-02) carried to the handle: a float
+  reduction along an axis means one thing on every backend, and a kernel
+  that reassociates it is wrong, not fast. The e2e gate holds it with an
+  order-sensitive fold over a transpose.
+- **`reduce_axis` is lane-sized.** It walks the input once in reading
+  order and keeps one accumulator per lane (the row-major position in the
+  shape with `axis` removed), so its allocation is the result, never a
+  copy of the input. `internal/e2e/ndarray_test.go` bounds it under the
+  element buffer where `map` is bounded above it.
+- **A shape mismatch aborts.** `zip_with` over two shapes is a derived
+  shape that is wrong (`ARRAY-ALGEBRA.md` §4), and takes the same status
+  an out-of-range index does (§5). Broadcasting is a separate rule that
+  has to be written before an operation may apply it, and none does.
+
+`map` and `zip_with` allocate their result even when the receiver is
+consumed and unique. §1's licence for the in-place form is stated and
+unimplemented; taking it is the kernel work, not this list's.
+
+## 8. What this does not decide
+
+- **Broadcasting, inner and outer products, and the kernels**: the rest
+  of #9735. §1 says what licenses an in-place elementwise op; nothing
+  here takes it.
 - **In-place through a handle.** The consuming-handle plus unique-storage
   rule in §1 is stated, not implemented; nothing in `std/ndarray` writes.
 - **Static shapes.** §4.
