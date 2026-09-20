@@ -1230,10 +1230,39 @@ function ssa_push_operand(reg_of: i32[], v: i32, pushed: i32, s: asmcore.EmitSta
     return s.write("    str x4, [sp, #-16]!\n");
 }
 
+// ssa_rc_prim renders one rc primitive inline, in the instructions its stub
+// uses. x5 holds the floor and then the count, x6 the 0/1; neither is a home
+// (those are x0 and x9 upward), so both survive a destination that IS the
+// operand's register, and the destination is written after the last read of
+// it. ssa.rc_inlined says which calls come here and why.
+function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
+    s = helper_call_needs(ins.str, s);
+    s = ssa_read(reg_of, ins.args[0], "x4", s);
+    var p: string = ssa_src(reg_of, ins.args[0], "x4");
+    var done: string = lp + "rc" + util.i32_to_string(ins.result);
+    var guard: string = "    tbnz " + p + ", #0, " + done + "\n"
+        + "    mov x5, #0x10000\n    cmp " + p + ", x5\n    blo " + done + "\n";
+    if (ins.str == "__fern_rc_is_unique") {
+        var d: string = ssa_dst(reg_of, ins.result);
+        s = s.write("    mov x6, #0\n" + guard);
+        s = s.write("    ldur w5, [" + p + ", #-8]\n    cmp w5, #1\n    bne " + done + "\n");
+        s = s.write("    mov x6, #1\n" + done + ":\n");
+        s = s.write("    mov " + d + ", x6\n");
+        return ssa_store(reg_of, ins.result, d, s);
+    }
+    s = s.write(guard);
+    s = s.write("    ldur w5, [" + p + ", #-8]\n    tbnz w5, #31, " + done + "\n");
+    s = s.write("    add w5, w5, #1\n    stur w5, [" + p + ", #-8]\n");
+    s = s.write(done + ":\n");
+    // rc_inc hands the pointer back; a result with no home stores nothing.
+    return ssa_store(reg_of, ins.result, p, s);
+}
+
 // ssa_call emits one call as the stack machine leaves it: the arguments pushed
 // in IR order for a runtime helper and reversed for a user function (arg0 on
 // top), the callee, the caller-side pop, and x0 stored.
-function ssa_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
+    if (ssa.rc_inlined(ins)) { return ssa_rc_prim(ins, reg_of, lp, s); }
     s = ssa_x0_forget(s);
     var argc: i32 = ins.args.len();
     var helper: boolean = ircore.is_fern_helper(ins.str);
@@ -1589,7 +1618,7 @@ function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asm
 
 function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: irlower.LowerResult, s: asmcore.EmitState): asmcore.EmitState {
     var k: i32 = ins.kind_tag;
-    if (k == 11) { return ssa_call(ins, reg_of, s); }
+    if (k == 11) { return ssa_call(ins, reg_of, lp, s); }
     if (k == 59) { return ssa_flat_op(ins, reg_of, lp, r, s); }
     if (k == 60) { return ssa_dyn_dispatch(ins, reg_of, lp, s); }
     if (k == 51) { return ssa_str_view(ins, reg_of, ssa_view_off(fr, ins.result), s); }

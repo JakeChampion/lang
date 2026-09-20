@@ -1299,6 +1299,75 @@ function main(): i32 { return (step(40i64, 2i64) + step(1i64, 2i64) + first_over
 	}
 }
 
+// The two rc primitives whose body is a guard chain over the count word are
+// rendered at their call sites, not called: put tests uniqueness twice and
+// retains once, so its listing carries three guard chains and calls neither
+// stub. `__fern_rc_dec` is not one of them — in the self-host it maps to the
+// array release, which frees — so the slice call put also makes stays.
+func TestSelfHostSSARcPrimitivesAreInline(t *testing.T) {
+	h := selfHostCLIForHost(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "blk.fern")
+	prog := `struct Blk { buf: i32[], note: string, n: i32 }
+function (b: Blk) put(i: i32, v: i32): Blk { return Blk { ...b, buf: b.buf.with(i, v) }; }
+function main(): i32 {
+    var b: Blk = Blk { buf: [0, 0, 0, 0], note: "a refcounted field the update carries", n: 0 };
+    var i: i32 = 0;
+    while (i < 4) { b = b.put(i, i + 1); i = i + 1; }
+    return b.buf[3];
+}
+`
+	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		target string
+		floor  *regexp.Regexp // the heap-floor test that opens each chain
+		count  *regexp.Regexp // the read of the count word
+		absent []string       // the stub calls the chains replace
+	}{
+		{"x86-64-linux",
+			regexp.MustCompile(`(?m)^\s+cmpq \$0x10000, %r\w+$`),
+			regexp.MustCompile(`(?m)^\s+movl -8\(%r\w+\), %e\w+$`),
+			[]string{"call __fn___fern_rc_is_unique", "call __fn___fern_rc_inc"}},
+		{"arm64-linux",
+			regexp.MustCompile(`(?m)^\s+mov x5, #0x10000$`),
+			regexp.MustCompile(`(?m)^\s+ldur w5, \[x\d+, #-8\]$`),
+			[]string{"bl __fn___fern_rc_is_unique", "bl __fn___fern_rc_inc"}},
+	}
+	for _, c := range cases {
+		out := filepath.Join(dir, "blk-"+c.target+".s")
+		cmd := exec.Command(h.cli, "-target", c.target, "-backend", "ssa", "-emit", "asm", "-o", out, src, h.stdlib)
+		cmd.Env = append(os.Environ(), "FERN_SSA_REPORT=1")
+		report, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s: %v\n%s", c.target, err, report)
+		}
+		if strings.Contains(string(report), "FERN_SSA: Blk__put:") {
+			t.Fatalf("%s: put was declined:\n%s", c.target, report)
+		}
+		asm, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fn := functionListing(string(asm), "__fn_Blk__put")
+		if fn == "" {
+			t.Fatalf("%s: no __fn_Blk__put in the listing:\n%s", c.target, asm)
+		}
+		if n := len(c.floor.FindAllString(fn, -1)); n < 3 {
+			t.Errorf("%s: put has %d inline rc chains, want its two uniqueness tests and its retain:\n%s", c.target, n, fn)
+		}
+		if !c.count.MatchString(fn) {
+			t.Errorf("%s: put reads no count word:\n%s", c.target, fn)
+		}
+		for _, call := range c.absent {
+			if strings.Contains(fn, call) {
+				t.Errorf("%s: put still calls the stub (%s):\n%s", c.target, call, fn)
+			}
+		}
+	}
+}
+
 // A constant the binary ops alone read is an immediate operand on both ISAs
 // and is never materialised; one a division reads keeps its register. The
 // loop bound is under 4,096 so it is an immediate on arm64 too.
