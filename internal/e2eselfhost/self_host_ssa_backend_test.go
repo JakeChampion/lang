@@ -726,7 +726,10 @@ func TestSelfHostSSABackendAgreesWithStackMachine(t *testing.T) {
 				}
 				flat := filepath.Join(dir, p.name+".flat")
 				ssa := filepath.Join(dir, p.name+".ssa")
-				h.compileWith(t, tg, src, flat)
+				// The register path is the default on both native ISAs, so the
+				// stack machine has to be asked for by name or the differential
+				// compares the register path with itself.
+				h.compileWith(t, tg, src, flat, "-backend", "flat")
 				report := h.compileWith(t, tg, src, ssa, "-backend", "ssa")
 
 				emitted, total, declined := ssaTally(t, report)
