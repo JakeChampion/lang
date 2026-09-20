@@ -27,6 +27,13 @@ and a token with no quote in it takes the no-match path: the typed lowering
 faulted with `fern-sanitizer: use-after-free (touched a quarantined block)`
 where native and the AST lowering answered.
 
+wasm keeps a SECOND body for the same builtin: a hand-written WAT
+`$__fern_str_replace` in `wasm_ir.fern`, reached through the same op, with the
+same two `return $h` early paths. The register backends' fix says nothing about
+it, and the leak pins that caught the fault engage only on the sanitize leg, so
+it stayed silent — 25 over-releases on the typed leg of a probe whose AST leg
+reported none, counted by `__rc_underflow_count()`.
+
 **Three producers handed a view to a container that outlives its source.**
 `path_clean` appended a window onto `p` to the segment array; `__cli_long` and
 `__cli_cluster` put a window onto `argv[i]` into the options map. The array case
@@ -42,11 +49,13 @@ borrowed string parameter gets — before the type check.
 
 `rt_src_str_replace` emits `__fern_str_dup` beside the replace body and copies
 on both early returns, so a string-returning builtin always hands back a box the
-caller owns. Teaching the boundary that this one builtin may alias an argument
+caller owns. `wasm_ir.str_replace_helper` gets the same pair: a WAT
+`$__fern_str_dup` that copies through `$__fern_str_box`, called from both. Teaching the boundary that this one builtin may alias an argument
 is not expressible: whether the result aliases is a run-time property of the
 input, so no static contract covers both paths. An audit of every `rt_src_*`
 helper that returns a `string` or an array found this the only one that returned
-one of its own parameters.
+one of its own parameters — and that family is the register backends' emitting
+helpers alone, which is why the wasm body needed finding separately.
 
 The three producers copy (`+ ""`), which is what the checker rule #8635 stages
 will demand of them.
@@ -71,7 +80,8 @@ The `replace` fault on its own, with the argument a temporary nobody else names
 |---|---|---|
 | native, interpreted and compiled | 9 | 9 |
 | self-host, AST lowering | 9 | 9 |
-| self-host, typed lowering | **segmentation fault** | 9, 0 B held |
+| self-host, typed lowering, x86-64 | **segmentation fault** | 9, 0 B held |
+| self-host, typed lowering, wasm32 | 9, **25 over-releases** | 9, 0 over-releases |
 
 Corpus census (the conformance cases, coreutils, `examples/bench`,
 `examples/cli`, `examples/tests` and the compiler; 865 seeds), both legs run
@@ -94,9 +104,11 @@ and the `closure_capture_shared_cell` conformance case (106).
   `noLeak` on the sanitize leg. It reported `view element escapes its source`
   and produced nothing before.
 - `TestSelfHostSemanticProduction/a-builtin-string-result-is-never-its-argument`:
-  `replace` on both the matching and the no-match path with a temporary
-  argument. The relative pin is what catches this one — the typed leg faulted
-  where the AST leg answered.
+  `replace` on the matching path and on BOTH early paths, with a temporary
+  argument, printing `__rc_underflow_count()` rather than leaving the fault to
+  the leak pins, which engage only on the sanitize leg. The relative pin is what
+  catches it: the typed leg faulted on x86-64, and counted 25 over-releases on
+  wasm, where the AST leg did neither.
 
 ## Traps
 
@@ -105,6 +117,16 @@ and the `closure_capture_shared_cell` conformance case (106).
   (`view element escapes its source`, `map value type`, `a view is lent, never
   retained`, and a use-after-free that is not a refusal at all). Reading the
   histogram's top line as one fix would have closed one program.
+- **An audit of the shared helper sources misses a backend's own body.** The
+  first audit here read every `rt_src_*` helper and concluded `replace` was the
+  only one that returned a parameter. That was true and still incomplete: wasm
+  hand-writes its own WAT for this builtin, outside the sources being audited.
+  A builtin's implementations are per backend, so a per-builtin audit has to
+  start from the op.
+- **A leak pin that engages on one leg proves nothing about the others.** The
+  sanitize leg is x86-64 only, so the wasm double release passed the same test
+  that caught the x86-64 one. What makes it visible on every leg is putting the
+  over-release count in the program's output.
 - **The remaining two are a different problem.** `std/format` and
   `examples/cli/fold` bind a `str` assigned in more than one place, which makes
   a phi of views the planner has no anchor for. #9877 has the measurement,
