@@ -238,3 +238,25 @@ fip function f(own s: S): i32[] { return s.xs.with(0, 1).with(1, 2); }`)
 	wantE053(t, "chain rooted at a non-with call", `fip function pick(own a: i32[]): i32[] { return a; }
 fip function f(own b: i32[]): i32[] { return pick(b).with(0, 1); }`)
 }
+
+// `recv.map(f)` on an `own` array is admitted the way `.with` is (#9733):
+// whether the result is written through the donor is an IR fact — the
+// receiver has to be the consumed parameter itself and `f` capture-free and
+// effect-free — so the checker admits the shape and E068 counts the `map`
+// R7 declines. The claim still follows ownership: a borrowed receiver has
+// no donor and stays E053.
+func TestFipMapOnOwnReceiver(t *testing.T) {
+	const decl = "function (xs: i64[]) map(f: (i64) => i64): i64[] { return xs; }\n"
+	wantNoErr(t, "map on an own array", decl+
+		`fip function run(own xs: i64[]): i64[] { return xs.map((x: i64): i64 => x); }`)
+	wantNoErr(t, "fbip map on an own array", decl+
+		`fbip function run(own xs: i64[]): i64[] { return xs.map((x: i64): i64 => x); }`)
+	// The element function is inside the claim: what it calls must be `fip`.
+	wantE053(t, "map whose element function calls outside the claim", decl+
+		`function g(x: i64): i64 { return x; }
+fip function run(own xs: i64[]): i64[] { return xs.map((x: i64): i64 => g(x)); }`)
+	wantE053(t, "map on a borrowed array", decl+
+		`fip function run(xs: i64[]): i64[] { return xs.map((x: i64): i64 => x); }`)
+	wantE053(t, "chained map on an own array", decl+
+		`fip function run(own xs: i64[]): i64[] { return xs.map((x: i64): i64 => x).map((x: i64): i64 => x); }`)
+}

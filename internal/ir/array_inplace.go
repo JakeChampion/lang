@@ -48,13 +48,13 @@ func MapOwnedArrayInPlace(prog *Program, ptrW int) int {
 		return 0
 	}
 	n := 0
-	effectful := effectfulFuncs(prog)
+	cx := newArrayContext(prog)
 	for _, fn := range prog.Funcs {
-		if _, isStdlibBody := arrayVerbOf(fn.Name); isStdlibBody {
+		if cx.isStdlibBody(fn) {
 			continue
 		}
 		for {
-			p, ok := planInPlaceMap(fn, effectful)
+			p, ok := planInPlaceMap(fn, cx)
 			if !ok {
 				break
 			}
@@ -74,58 +74,74 @@ type inPlaceMap struct {
 	elemType    ast.Type
 }
 
-func planInPlaceMap(fn *Func, effectful map[string]bool) (inPlaceMap, bool) {
-	for _, c := range collectArrayCalls(fn) {
-		if c.verb != "map" {
-			continue
+func planInPlaceMap(fn *Func, cx arrayContext) (inPlaceMap, bool) {
+	for _, c := range collectArrayCalls(fn, cx) {
+		if p, why := inPlaceVerdict(fn, c, cx); why == StorageReused {
+			return p, true
 		}
-		// §1's purity boundary, for the same reason fusion has one: the
-		// element function runs in a different order relative to the donor's
-		// storage than it did, so it must not be able to observe that.
-		if c.fnSlot < 0 || c.element == "" || effectful[c.element] {
-			continue
-		}
-		// And it must capture nothing. An element function that closes over
-		// the donor would read, mid-loop, elements this has already
-		// overwritten — `xs.map(x => x + xs[0])` is the shape — where the
-		// original semantics give every element the ORIGINAL `xs[0]`.
-		//
-		// The runtime guard happens to cover it: a capture holds a reference,
-		// so the donor is not unique and `__fern_arr_cow_inplace` copies. But
-		// resting a soundness property on a refcount is the wrong way round
-		// when a static check says it outright, and the shape that reaches
-		// here today is declined only because capturing changes the RC
-		// epilogue this pass matches on — an accident, not a rule.
-		if !elementFunctionCapturesNothing(fn, c) {
-			continue
-		}
-		if c.recv < 0 || !ownedParamSlot(fn, c.recv) {
-			continue
-		}
-		width, elemT, ok := elemWidthOf(fn.Ops[c.op])
-		if !ok {
-			continue
-		}
-		// Same SHAPE only. A `map` that changes the element type needs a
-		// buffer of a different size, so the donor's is the wrong one — the
-		// case docs/REUSE-CONTRACT.md calls an incompatible shape.
-		if !sameElementTypeMap(fn, c, elemT) {
-			continue
-		}
-		first, ok := rangeStart(fn, c)
-		if !ok {
-			continue
-		}
-		last, ok := inPlaceRangeEnd(fn, c)
-		if !ok {
-			continue
-		}
-		return inPlaceMap{
-			first: first, last: last, recvSlot: c.recv,
-			fnSlot: c.fnSlot, elemBytes: width, elemType: elemT,
-		}, true
 	}
 	return inPlaceMap{}, false
+}
+
+// inPlaceVerdict decides one combinator call: the rewrite when every R7
+// condition holds, or the first condition that does not. The report and the
+// `fip` verifier read the same answer the pass acts on, so neither can claim
+// a reuse the other did not perform.
+func inPlaceVerdict(fn *Func, c arrayCall, cx arrayContext) (inPlaceMap, ArrayStorage) {
+	if c.verb != "map" {
+		return inPlaceMap{}, StorageNoInPlaceShape
+	}
+	// The licence comes first: a local is not enough, the donor has to be one
+	// the caller has already let go of, and a parameter's `own` is where that
+	// is recorded.
+	if c.recv < 0 || !ownedParamSlot(fn, c.recv) {
+		return inPlaceMap{}, StorageReceiverNotOwnedParam
+	}
+	// §1's purity boundary, for the same reason fusion has one: the element
+	// function runs in a different order relative to the donor's storage than
+	// it did, so it must not be able to observe that.
+	if c.fnSlot < 0 || c.element == "" {
+		return inPlaceMap{}, StorageElementFunctionUnresolved
+	}
+	if cx.effectful[c.element] {
+		return inPlaceMap{}, StorageElementFunctionEffectful
+	}
+	// And it must capture nothing. An element function that closes over the
+	// donor would read, mid-loop, elements this has already overwritten —
+	// `xs.map(x => x + xs[0])` is the shape — where the original semantics
+	// give every element the ORIGINAL `xs[0]`.
+	//
+	// The runtime guard happens to cover it: a capture holds a reference, so
+	// the donor is not unique and `__fern_arr_cow_inplace` copies. But resting
+	// a soundness property on a refcount is the wrong way round when a static
+	// check says it outright, and the shape that reaches here today is
+	// declined only because capturing changes the RC epilogue this pass
+	// matches on — an accident, not a rule.
+	if !elementFunctionCapturesNothing(fn, c) {
+		return inPlaceMap{}, StorageElementFunctionCaptures
+	}
+	width, elemT, ok := elemWidthOf(fn.Ops[c.op])
+	if !ok {
+		return inPlaceMap{}, StorageElementWidthUnsupported
+	}
+	// Same SHAPE only. A `map` that changes the element type needs a buffer
+	// of a different size, so the donor's is the wrong one — the case
+	// docs/REUSE-CONTRACT.md calls an incompatible shape.
+	if !sameElementTypeMap(fn, c, elemT) {
+		return inPlaceMap{}, StorageShapeChange
+	}
+	first, ok := rangeStart(fn, c)
+	if !ok {
+		return inPlaceMap{}, StorageDonorNotReleasedHere
+	}
+	last, ok := inPlaceRangeEnd(fn, c)
+	if !ok {
+		return inPlaceMap{}, StorageDonorNotReleasedHere
+	}
+	return inPlaceMap{
+		first: first, last: last, recvSlot: c.recv,
+		fnSlot: c.fnSlot, elemBytes: width, elemType: elemT,
+	}, StorageReused
 }
 
 // elementFunctionCapturesNothing reports whether the element function was

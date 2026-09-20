@@ -205,15 +205,37 @@ a soundness property on a refcount is the wrong way round.
 **Taints**: a borrowed receiver; any capture; a type-changing
 `map`; an element function that can reach the world; a donor
 whose decrement is not in the epilogue. `FERN_NO_ARRAY_INPLACE=1`
-turns the shape off.
+turns the shape off. Each taint is a row of `fern -array-report`'s
+buffer verdicts (`receiver-not-own-param`, `element-fn-captures`,
+…), read from the same planner that performs the rewrite.
 
-Locked by: `internal/ir/array_inplace_test.go` (the rewrite, and
-one refusal per condition above),
-`internal/e2e/array_inplace_test.go` (the same answers as a
-hand-written loop, four backends),
+**Visibility.** `fip` / `fbip` reach the shape: E053 admits
+`xs.map(f)` on an `own` receiver the way it admits constructors
+(the checker cannot tell which `map` R7 writes through its
+donor), and E068 counts a `map` the planner declines as one
+un-reused site, naming the call and the taint — so `fip function
+twice(own xs: i64[]): i64[] { return xs.map(f); }` is a checked
+space contract, and a capturing `f` or a type-changing `map`
+under the same annotation is refused by name. The element
+function is inside the claim: what it calls must be `fip`. On the
+SELF-HOST compiler the shape does not exist yet (the E4 reuse
+port), and its E068 says so rather than accepting the annotation:
+its checker admits the same call, its verifier counts every
+`map` it emits as fresh, with the reason.
+
+Locked by: `internal/ir/array_inplace_test.go` (the rewrite, one
+refusal per condition above, and E068 passing on the shape and
+naming the rule where it declines),
+`internal/ir/array_storage_test.go` (one report verdict per
+taint), `internal/e2e/array_inplace_test.go` (the same answers
+as a hand-written loop, four backends),
+`internal/e2e/array_inplace_fip_test.go` (the annotated function
+allocates nothing across 200 maps on every backend, and a donor
+still held by an alias is copied rather than mutated),
 `internal/e2e/array_pipeline_baseline_test.go` (pipeline 3
 reaches the hand-written loop's zero, with the borrowed control
-still paying its copy).
+still paying its copy), `internal/e2eselfhost` (the self-host
+checker admits the call and its E068 refuses the claim).
 
 ### M — the move family (pair cancellation)
 
@@ -289,7 +311,7 @@ the nine `emitAliasInc` call sites is gated on `moveSites`
 ## Contract for the self-host port
 
 `SELFHOST-PERCEUS-REUSE.md` ports the selection analyses; this
-doc defines the behavior bar: for each shape R1–R6/M above, the
+doc defines the behavior bar: for each shape R1–R7/M above, the
 self-host compiler must (a) fire on the same test patterns
 (the Go test files named per-shape are the executable spec) and
 (b) never fire where native doesn't (the taints are part of the

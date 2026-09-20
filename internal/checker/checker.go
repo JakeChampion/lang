@@ -10633,6 +10633,16 @@ func (c *checker) checkFipFunctions(prog *ast.Program) {
 					if x.Method.Field == "with" && len(x.Args) > 0 && own[fipRootIdent(x.Args[0])] {
 						return true
 					}
+					// `recv.map(f)` on an `own` array is the in-place map
+					// (R7, docs/REUSE-CONTRACT.md): the result is written
+					// through the donor when the receiver is the consumed
+					// parameter itself and `f` is capture-free and reaches
+					// no effect. Those are IR facts, so the checker admits
+					// the shape the way it admits constructors (#9602) and
+					// E068 counts the `map` R7 declines, naming the rule.
+					if x.Method.Field == "map" && len(x.Args) > 0 && own[fipRootIdent(x.Args[0])] {
+						return true
+					}
 					if !fipNonAllocMethods[x.Method.Field] {
 						c.errfCode(x.Pos(), "E053", "`%s` function %q may not call method %q (not proven allocation-free)", kw, fn.Name, x.Method.Field)
 					}

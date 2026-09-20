@@ -25,8 +25,12 @@
 //
 // `with_own` is annotated `fip`, so the native compiler's E068 pass is
 // asserting the space claim at compile time rather than the measurement
-// asserting it after the fact. `map_own` is deliberately NOT annotated: what
-// happens when it is belongs in the report, not in a file that has to compile.
+// asserting it after the fact. `map_own` is NOT annotated, and could be on the
+// native compiler (internal/e2e/array_inplace_fip_test.go is that program):
+// scripts/array-pipeline-baseline builds this file with both compilers, and
+// the self-hosted one has no in-place map, so it refuses the claim with an
+// E068 saying so — which is the checked contract working, not a file that
+// should be made to compile around it.
 import "core/cmp";
 import "std/bench";
 import "std/string";
@@ -53,9 +57,9 @@ function build_input(n: i32): i64[] {
   return xs;
 }
 
-// The combinator spelling. `own` licenses the callee to consume `xs`, but
-// `std/array`'s `map` builds its result from `[]` and appends, so there is no
-// construction site for the donor's box to be paired with.
+// The combinator spelling. `own` licenses the callee to consume `xs`, and R7
+// writes the result through its buffer; `std/array`'s `map` itself builds its
+// result from `[]` and appends, which is what the off build measures.
 function via_map_own(own xs: i64[]): i64[] {
   return xs.map((x: i64): i64 => elem_f(x));
 }
