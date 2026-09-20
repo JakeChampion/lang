@@ -1370,6 +1370,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_rmemchr":            emitRmemchrHelper,
 	"__fern_count_byte":         emitCountByteHelper,
 	"__fern_sum_bytes":          emitSumBytesHelper,
+	"__fern_scale_f64":          emitScaleF64Helper,
 	"__fern_crc32_cksum":        emitCrc32CksumHelper,
 	"__fern_ascii_run":          emitAsciiRunHelper,
 	"__arr_idx":                 emitArrIdxHelperN("__arr_idx", 2),    // stride 4 (i32)
@@ -4596,6 +4597,7 @@ var heapUsingHelpers = map[string]bool{
 	"__fern_arr_push_grow_str":        true,
 	"__fern_arr_push_grow_move_ptr":   true,
 	"__fern_arr_push_grow_move_str":   true,
+	"__fern_scale_f64":                true,
 	"__alloc_u8":                      true,
 	"__alloc":                         true,
 	"__alloc_reuse":                   true,
@@ -6039,6 +6041,46 @@ func emitSumBytesHelper(w func(string, ...any)) {
 	w("\tb .Lssa_sum_bytes_loop")
 	w(".Lssa_sum_bytes_ret:")
 	w("\tmov w0, w4")
+	w("\tret")
+}
+
+// emitScaleF64Helper writes __fern_scale_f64(xs, k) -> a fresh f64 array of
+// xs's length, element i = xs[i] * k, header written here (cap@-12, rc=1@-8,
+// len@-4) so the caller owns one fresh array. SCALAR (§3.4 step 1): one fmul
+// per element; elementwise, so a vector body reassociates nothing.
+//
+// x0 = xs, x1 = k as f64 bits (the SSA GP convention), result in x0. The
+// allocation goes through the preserving trampoline, which changes only x16,
+// so xs and k stay in x0 / x1 across it.
+func emitScaleF64Helper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_scale_f64"))
+	w("\tldur w2, [x0, #-4]") // n
+	w("\tlsl w16, w2, #3")
+	w("\tadd w16, w16, #16") // allocSize = header + n * 8
+	emitAllocPresCall(w)
+	w("\tadd x16, x16, #16")    // data = base + header
+	w("\tstur w2, [x16, #-12]") // cap = n
+	w("\tmov w3, #1")
+	w("\tstur w3, [x16, #-8]") // rc = 1
+	w("\tstur w2, [x16, #-4]") // len = n
+	w("\tfmov d1, x1")
+	w("\tmov x3, #0")
+	w(".Lssa_scale_f64_loop:")
+	w("\tcmp w3, w2")
+	w("\tb.hs .Lssa_scale_f64_ret")
+	// Base-register FP loads only: internal/native/arm64 has no register-
+	// offset form for d registers yet, and §3.3a's rule is to stay inside
+	// what the assembler encodes rather than assume it.
+	w("\tadd x4, x0, x3, lsl #3")
+	w("\tldr d0, [x4]")
+	w("\tfmul d0, d0, d1")
+	w("\tadd x5, x16, x3, lsl #3")
+	w("\tstr d0, [x5]")
+	w("\tadd x3, x3, #1")
+	w("\tb .Lssa_scale_f64_loop")
+	w(".Lssa_scale_f64_ret:")
+	w("\tmov x0, x16")
 	w("\tret")
 }
 

@@ -829,6 +829,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesSumBytes {
 		g.emitSumBytesRuntime()
 	}
+	if g.usesScaleF64 {
+		g.emitScaleF64Runtime()
+	}
 	if g.usesCrc32Cksum {
 		g.emitCrc32CksumRuntime()
 	}
@@ -5263,6 +5266,55 @@ func (g *generator) emitSumBytesRuntime() {
 	g.emit("ldp x29, x30, [sp], #48")
 	g.emit("ret")
 	g.sizeDirective("__fern_sum_bytes")
+}
+
+// emitScaleF64Runtime emits `__fern_scale_f64(xs, k) -> out` (arm64 mirror of
+// the x86-64 helper): a fresh f64 array of xs's length whose element i is
+// `xs[i] * k`, header written here (cap@-12, rc=1@-8, len@-4) so the caller
+// owns one fresh array. SCALAR (§3.4 step 1): one fmul per element; the NEON
+// body is fmul over 2 lanes, and elementwise, so it reassociates nothing.
+//
+// AAPCS64: x0 = xs, x1 = k as f64 bits (the operand stack's form). Returns the
+// new data pointer in x0. x19 / x20 / x21 hold xs, k and n across the
+// allocation.
+func (g *generator) emitScaleF64Runtime() {
+	g.line("")
+	g.line(".global __fern_scale_f64")
+	g.typeDirective("__fern_scale_f64")
+	g.label("__fern_scale_f64")
+	g.emit("stp x29, x30, [sp, #-48]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("str x21, [sp, #32]")
+	g.emit("mov x19, x0")         // xs
+	g.emit("mov x20, x1")         // k bits
+	g.emit("ldur w21, [x0, #-4]") // n
+	g.emit("lsl x0, x21, #3")
+	g.emit("add x0, x0, #16") // allocSize = header + n * 8
+	g.emit("bl __fern_alloc")
+	g.emit("add x0, x0, #16")      // data = base + header
+	g.emit("stur w21, [x0, #-12]") // cap = n
+	g.emit("mov w2, #1")
+	g.emit("stur w2, [x0, #-8]")  // rc = 1
+	g.emit("stur w21, [x0, #-4]") // len = n
+	g.emit("fmov d1, x20")
+	g.emit("mov x3, #0")
+	g.label(".Lscale_f64_loop")
+	g.emit("cmp w3, w21")
+	g.emit("b.hs .Lscale_f64_ret")
+	g.emit("add x4, x19, x3, lsl #3")
+	g.emit("ldr d0, [x4]")
+	g.emit("fmul d0, d0, d1")
+	g.emit("add x5, x0, x3, lsl #3")
+	g.emit("str d0, [x5]")
+	g.emit("add x3, x3, #1")
+	g.emit("b .Lscale_f64_loop")
+	g.label(".Lscale_f64_ret")
+	g.emit("ldr x21, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #48")
+	g.emit("ret")
+	g.sizeDirective("__fern_scale_f64")
 }
 
 // emitAsciiRunRuntime emits `__fern_ascii_run(s, from) -> i32`: the index of
@@ -15120,6 +15172,8 @@ type generator struct {
 	usesCountByte bool
 	// usesSumBytes gates the byte-sum reduction kernel (__fern_sum_bytes).
 	usesSumBytes bool
+	// usesScaleF64 gates the f64 scaling kernel (__fern_scale_f64).
+	usesScaleF64 bool
 	// usesCrc32Cksum gates the carry-less CRC fold (__fern_crc32_cksum).
 	usesCrc32Cksum bool
 	// crc32StepSeq numbers the CRC step's inner label, emitted more than
@@ -19685,6 +19739,9 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesCountByte = true
 		case "__fern_sum_bytes":
 			g.usesSumBytes = true
+		case "__fern_scale_f64":
+			g.usesScaleF64 = true
+			g.usesAlloc = true // the result is a fresh buffer
 		case "__fern_ascii_run":
 			g.usesAsciiRun = true
 		case "__fern_heap_bump_bytes":

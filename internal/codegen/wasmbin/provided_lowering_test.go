@@ -63,6 +63,7 @@ var providedNeverReachesCodegen = map[string]bool{
 	// helpers, which this table does list and wasmbin does implement.
 	"__memchr": true, "__rmemchr": true, "__count_byte": true,
 	"__sum_bytes":     true,
+	"__scale_f64":     true,
 	"__crc32_cksum":   true,
 	"__mismatch":      true,
 	"__map_hash_seed": true, "__heap_bump_bytes": true, "__heap_alloc_count": true,

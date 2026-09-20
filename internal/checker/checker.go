@@ -1678,6 +1678,21 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		},
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
+	// __scale_f64(xs, k) → f64[]: every element of `xs` multiplied by `k`, as
+	// a fresh array of the same length. The eighth fused kernel
+	// (docs/ATLAS-PLATFORM-PLAN.md §3.3) and the first over an ARRAY rather
+	// than a string, with a buffer out rather than a scalar: it allocates
+	// its own result, so no sized-array primitive is needed to call it.
+	// Elementwise, so a vector body reassociates nothing
+	// (docs/ARRAY-ALGEBRA.md §3), which is what makes it the first numeric
+	// helper a kernel may replace. std/array's scale_f64 is the wrapper.
+	c.info.FuncSigs["__scale_f64"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.ArrayType{Elem: ast.FloatType{Width: 64}},
+			ast.FloatType{Width: 64},
+		},
+		Result: ast.ArrayType{Elem: ast.FloatType{Width: 64}},
+	}
 	// __crc32_cksum(crc, s) → i32: `s` folded into the running CRC-32 that
 	// cksum(1) prints — polynomial 0x04C11DB7, MSB first, no reflection, and
 	// no final complement (std/hash's Cksum does the length fold and the

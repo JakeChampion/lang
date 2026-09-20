@@ -4854,6 +4854,39 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.write(c_done + ":\n    pushq %r10\n");
         return s;
     }
+    if (o.kind_tag == 322) {  // scale_f64
+        // operand stack [xs, k bits] -> the data pointer of a fresh f64
+        // array of xs's length whose element i is xs[i] * k.
+        //
+        // SCALAR (§3.4 step 1): one mulsd per element. Elementwise, so the
+        // SSE2 body this wants (mulpd over two lanes) reassociates nothing;
+        // the ordering rule still puts the scalar lowering in every backend
+        // first.
+        //
+        // The result comes from __fern_arr_box(n), which writes the rc
+        // header and len = n; this backend's arrays keep len at [arr] and
+        // element i at [arr + 8 + i*8]. Both operands are spilled around
+        // that call, since it clobbers the caller-saved set. The float
+        // arrives as its bit pattern and moves into %xmm1 with movq.
+        var flo: asmcore.LabelOut = asmcore.fresh_label(s);
+        var sf_loop: string = flo.name;
+        var flo2: asmcore.LabelOut = asmcore.fresh_label(flo.state);
+        var sf_done: string = flo2.name;
+        s = flo2.state;
+        s = s.write("    popq %rcx\n    popq %rax\n");
+        s = s.write("    pushq %rax\n    pushq %rcx\n");
+        s = s.write("    movq (%rax), %rdi\n    call __fern_arr_box\n");
+        s = s.write("    popq %rcx\n    popq %rsi\n");
+        s = s.write("    movq %rcx, %xmm1\n    xorq %rdx, %rdx\n");
+        s = s.write(sf_loop + ":\n");
+        s = s.write("    cmpq (%rsi), %rdx\n    jge " + sf_done + "\n");
+        s = s.write("    leaq 8(%rsi,%rdx,8), %r8\n    movsd (%r8), %xmm0\n    mulsd %xmm1, %xmm0\n");
+        s = s.write("    leaq 8(%rax,%rdx,8), %r9\n    movsd %xmm0, (%r9)\n");
+        s = s.write("    addq $1, %rdx\n    jmp " + sf_loop + "\n");
+        s = s.write(sf_done + ":\n    pushq %rax\n");
+        s = s.need("heap");
+        return s;
+    }
     if (o.kind_tag == 253) {  // sum_bytes
         // operand stack [box] -> every byte of the string added into a
         // 32-bit accumulator that wraps.

@@ -396,6 +396,7 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
     if (module_uses_mismatch(cache)) { out = out.append("@uses_mismatch"); }
     if (module_uses_count_byte(cache)) { out = out.append("@uses_count_byte"); }
     if (module_uses_sum_bytes(cache)) { out = out.append("@uses_sum_bytes"); }
+    if (module_uses_scale_f64(cache)) { out = out.append("@uses_scale_f64"); }
     if (module_uses_crc32_cksum(cache)) { out = out.append("@uses_crc32_cksum"); }
     if (module_uses_ascii_run(cache)) { out = out.append("@uses_ascii_run"); }
     if (module_uses_str_to_i32(cache)) { out = out.append("@uses_str_to_i32"); }
@@ -749,6 +750,14 @@ pub function module_uses_count_byte(cache: irlower.LowerResult[]): boolean {
 pub function module_uses_sum_bytes(cache: irlower.LowerResult[]): boolean {
     function is_sum_bytes(o: ir.Op): boolean { return o.kind_tag == 253; }  // sum_bytes
     return any_op(cache, is_sum_bytes);
+}
+
+// module_uses_scale_f64 gates $__fern_scale_f64, the f64 scaling kernel of
+// ATLAS-PLATFORM-PLAN §3.3 (the eighth, and the first over an array). Same
+// shape as module_uses_memchr above.
+pub function module_uses_scale_f64(cache: irlower.LowerResult[]): boolean {
+    function is_scale_f64(o: ir.Op): boolean { return o.kind_tag == 322; }  // scale_f64
+    return any_op(cache, is_scale_f64);
 }
 
 // module_uses_crc32_cksum gates $__fern_crc32_cksum, the CRC-32 fold of
@@ -4707,6 +4716,11 @@ function emit_str_op_wat(o: ir.Op): string {
         // memchr's reason: the body loops over its own locals.
         return "    call $__fern_sum_bytes\n";
     }
+    if (o.kind_tag == 322) {  // scale_f64
+        // stack: xs, k -> the data pointer of a fresh f64 array, xs scaled
+        // by k. A call for memchr's reason.
+        return "    call $__fern_scale_f64\n";
+    }
     if (o.kind_tag == 309) {  // crc32_cksum
         // stack: crc, s -> the incoming CRC-32 with s's bytes folded in.
         // The operands are already in that order, which is the helper's
@@ -6754,6 +6768,35 @@ pub function sum_bytes_helper(): string {
     o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
     o = o + "      (br $c)))\n";
     o = o + "    (local.get $sum))\n";
+    return o;
+}
+
+// scale_f64_helper emits $__fern_scale_f64(xs, k) -> the data pointer of a
+// fresh f64 array of xs's length whose element i is xs[i] * k
+// (ATLAS-PLATFORM-PLAN §3.3, eighth kernel; the first over an array and the
+// first with a buffer out).
+//
+// SCALAR (§3.4 step 1): one f64.mul per element. Elementwise, so the v128
+// body this wants (f64x2.mul over two lanes) reassociates nothing.
+//
+// The result comes from $__fern_arr_box, whose block keeps len at [a],
+// cap at [a+4] and element i at [a + 8 + i*8]; both are set to n here, the
+// way $__fern_random_bytes sets them for the array it fills.
+pub function scale_f64_helper(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_scale_f64 (param $a i32) (param $k f64) (result i32)\n";
+    o = o + "    (local $n i32) (local $o i32) (local $i i32)\n";
+    o = o + "    (local.set $n (i32.load (local.get $a)))\n";
+    o = o + "    (local.set $o (call $__fern_arr_box (i32.mul (local.get $n) (i32.const 8))))\n";
+    o = o + "    (i32.store (local.get $o) (local.get $n))\n";
+    o = o + "    (i32.store (i32.add (local.get $o) (i32.const 4)) (local.get $n))\n";
+    o = o + "    (block $d (loop $c\n";
+    o = o + "      (br_if $d (i32.ge_u (local.get $i) (local.get $n)))\n";
+    o = o + "      (f64.store (i32.add (i32.add (local.get $o) (i32.const 8)) (i32.mul (local.get $i) (i32.const 8)))\n";
+    o = o + "        (f64.mul (f64.load (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $i) (i32.const 8)))) (local.get $k)))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $c)))\n";
+    o = o + "    (local.get $o))\n";
     return o;
 }
 
@@ -10462,6 +10505,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     if (need(needs, "@uses_mismatch")) { parts = parts.append(mismatch_helper()); }
     if (need(needs, "@uses_count_byte")) { parts = parts.append(count_byte_helper()); }
     if (need(needs, "@uses_sum_bytes")) { parts = parts.append(sum_bytes_helper()); }
+    if (need(needs, "@uses_scale_f64")) { parts = parts.append(scale_f64_helper()); }
     if (need(needs, "@uses_crc32_cksum")) { parts = parts.append(crc32_cksum_helper()); }
     if (need(needs, "@uses_ascii_run")) { parts = parts.append(ascii_run_helper()); }
     // $__fern_str_split (+ its private $__fern_arr_push) for the IR path.

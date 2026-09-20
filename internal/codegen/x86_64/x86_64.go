@@ -815,6 +815,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesSumBytes {
 		g.emitSumBytesRuntime()
 	}
+	if g.usesScaleF64 {
+		g.emitScaleF64Runtime()
+	}
 	if g.usesCrc32Cksum {
 		g.emitCrc32CksumRuntime()
 	}
@@ -1297,6 +1300,8 @@ type generator struct {
 	usesCountByte bool
 	// usesSumBytes gates the byte-sum reduction kernel (__fern_sum_bytes).
 	usesSumBytes bool
+	// usesScaleF64 gates the f64 scaling kernel (__fern_scale_f64).
+	usesScaleF64 bool
 	// usesCrc32Cksum gates the carry-less CRC fold (__fern_crc32_cksum).
 	usesCrc32Cksum bool
 	// crc32StepSeq numbers the CRC step's inner label, which is emitted
@@ -1908,6 +1913,9 @@ func (g *generator) recordUse(target string) {
 		g.usesCountByte = true
 	case "__fern_sum_bytes":
 		g.usesSumBytes = true
+	case "__fern_scale_f64":
+		g.usesScaleF64 = true
+		g.usesAlloc = true // the result is a fresh buffer
 	case "__fern_crc32_cksum":
 		g.usesCrc32Cksum = true
 	case "__fern_heap_bump_bytes":
@@ -11205,6 +11213,64 @@ func (g *generator) emitSumBytesRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_sum_bytes, .-__fern_sum_bytes")
+}
+
+// emitScaleF64Runtime emits `__fern_scale_f64(xs, k) -> out`: a fresh f64
+// array of xs's length whose element i is `xs[i] * k`. The eighth fused
+// kernel (docs/ATLAS-PLATFORM-PLAN.md §3.3), and the first with a buffer out:
+// it allocates the result itself, header and all (cap@-12, rc=1@-8, len@-4,
+// like __fern_arr_push_grow's copy path), so the caller owns one fresh array.
+//
+// SCALAR (§3.4 step 1): one mulsd per element. The AVX2 body this wants is a
+// vmulpd over four lanes with a scalar tail, inside the declared baseline —
+// and since a multiply is elementwise, a vector body reassociates nothing,
+// which is the property that let this kernel go first (docs/ARRAY-ALGEBRA.md
+// §3). Same bits per element either way.
+//
+// System V: rdi = xs (data pointer), rsi = k as f64 bits — the operand stack
+// carries an f64 as its bit pattern, so no xmm register crosses the call.
+// Returns the new data pointer in rax. rbx / r12 / r13 hold xs, k and n
+// across the allocation.
+func (g *generator) emitScaleF64Runtime() {
+	g.line("")
+	g.line(".globl __fern_scale_f64")
+	g.line(".type __fern_scale_f64, @function")
+	g.label("__fern_scale_f64")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("push r12")
+	g.emit("push r13")
+	g.emit("sub rsp, 8")                    // 16-align for the __fern_alloc call
+	g.emit("mov rbx, rdi")                  // xs
+	g.emit("mov r12, rsi")                  // k bits
+	g.emit("mov r13d, dword ptr [rdi - 4]") // n, zero-extended
+	g.emit("mov rdi, r13")
+	g.emit("shl rdi, 3")
+	g.emit("add rdi, 16") // allocSize = header + n * 8
+	g.emit("call __fern_alloc")
+	g.emit("add rax, 16")                    // data = base + header
+	g.emit("mov dword ptr [rax - 12], r13d") // cap = n
+	g.emit("mov dword ptr [rax - 8], 1")     // rc = 1
+	g.emit("mov dword ptr [rax - 4], r13d")  // len = n
+	g.emit("movq xmm1, r12")
+	g.emit("xor ecx, ecx")
+	g.label(".Lscale_f64_loop")
+	g.emit("cmp ecx, r13d")
+	g.emit("jae .Lscale_f64_ret")
+	g.emit("movsd xmm0, qword ptr [rbx + rcx*8]")
+	g.emit("mulsd xmm0, xmm1")
+	g.emit("movsd qword ptr [rax + rcx*8], xmm0")
+	g.emit("add ecx, 1")
+	g.emit("jmp .Lscale_f64_loop")
+	g.label(".Lscale_f64_ret")
+	g.emit("add rsp, 8")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_scale_f64, .-__fern_scale_f64")
 }
 
 // emitStrcmpRuntime emits `__fern_strcmp(a, b)` — returns 0
