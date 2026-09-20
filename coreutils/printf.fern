@@ -598,7 +598,7 @@ function none(): i64 {
 // `Field` — one conversion laid out for `pad`. `prefix` is the sign or
 // radix, which a `0` flag pads AFTER; `head` and `tail` sandwich the
 // `zeros` a precision wider than the digits calls for — for an integer
-// the digits are all `tail`, for `%a` the exponent is.
+// the digits are all `tail`, for `%e` and `%a` the exponent is.
 struct Field { prefix: string, head: string, zeros: i64, tail: string }
 
 function plain(body: string): Field {
@@ -823,7 +823,7 @@ function emit_body(p: Pf, spec: Spec, prefix: string, b: ld.Body): Pf {
   if (b.refused) {
     return Pf { ...p, werr: true };
   }
-  return pad(p, spec, signed(prefix, b.s), true);
+  return pad(p, spec, Field { prefix: prefix, head: b.head, zeros: b.zeros, tail: b.tail }, true);
 }
 
 // %a: the significand in hex from lib/ld's model of the target's long
@@ -833,10 +833,10 @@ function emit_body(p: Pf, spec: Spec, prefix: string, b: ld.Body): Pf {
 // and the `0x` this function adds.
 function fmt_hex_float(p: Pf, spec: Spec, v: ld.LD, prefix: string, upper: boolean): Pf {
   var radix: string = "0x";
-  var b: ld.HexBody = p.ldbl.hex_parts(v, spec.prec, spec.hash);
+  var b: ld.Body = p.ldbl.hex_parts(v, spec.prec, spec.hash);
   if (upper) {
     radix = "0X";
-    b = ld.HexBody { ...b, head: b.head.to_upper(), tail: b.tail.to_upper() };
+    b = ld.Body { ...b, head: b.head.to_upper(), tail: b.tail.to_upper() };
   }
   return pad(p, spec, Field { prefix: prefix + radix, head: b.head, zeros: b.zeros, tail: b.tail }, true);
 }
