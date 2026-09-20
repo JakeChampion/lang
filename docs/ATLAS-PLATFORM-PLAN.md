@@ -1077,23 +1077,35 @@ numbers of the second.
 
 **Step 3 begins on native x86-64**, and it is where this kernel stops being
 free. The AVX2 body is `vbroadcastsd` for the factor, then a loop of
-`vmovupd` / `vmulpd` / `vmovupd` over four lanes, `vzeroupper`, and the
-existing scalar loop as the tail for the remainder. Measured on
-`examples/bench/array_scale_f64`:
+`vmulpd` / `vmovupd` over four lanes, `vzeroupper`, and the scalar loop as
+the tail for the remainder. Measured on `examples/bench/array_scale_f64`:
 
 | native x86-64 | scalar | AVX2 | |
 |---|---|---|---|
-| retired | 115.9M | 29.9M | 3.88x |
-| wall | 9.8 ms | 6.0 ms | 1.6x |
+| retired | 115.9M | 25.8M | 4.49x |
+| wall | 9.8 ms | 6.1 ms | 1.6x |
 
-Read both rows together, because they say different things. The instruction
-count lands within 3% of the 4x the lane count allows, so the body is doing
-what a four-lane body should. Wall time gains only 1.6x, because the
-benchmark moves 32 KiB in and 32 KiB out per call and is bandwidth-bound
-well before it is issue-bound — the same reason §4's "the vector length is
-the INPUT" rule does not promise the ratio carries to wall clock. A kernel
-whose callers work out of cache will see more of the 3.88x than this
-benchmark does.
+Read both rows together, because they say different things. The
+instruction count beats the 4x the lane count allows, which is worth
+saying plainly rather than rounding to "four lanes, four times": the
+block is TWO instructions, not three, because `vmulpd` reads its second
+source straight from memory and the load needs no instruction of its own.
+So each block saves the scalar body's four multiplies AND its four loads.
+Wall time gains only 1.6x, because the benchmark moves 32 KiB in and
+32 KiB out per call and is bandwidth-bound well before it is issue-bound
+— the same reason §4's "the vector length is the INPUT" rule does not
+promise the ratio carries to wall clock. A kernel whose callers work out
+of cache will see more of the 4.49x than this benchmark does.
+
+Folding the load has one consequence a reader should not have to
+rediscover: the memory operand has to be the SECOND source, so the vector
+body multiplies the factor by the element rather than the element by the
+factor. x86 picks the first source when both are NaN, so the scalar tail
+is written the same way round — `movsd` the factor, then `mulsd` from
+memory — and the two bodies cannot disagree about which NaN a NaN times a
+NaN yields. The kernel's own corpus cannot see that difference (its
+equality treats any two NaNs as equal), which is exactly why it is worth
+a line here.
 
 **§3.3a cost, and the rule it corrects.** The last three kernels cost
 nothing at the assembler, and the section above predicted a fourth built
