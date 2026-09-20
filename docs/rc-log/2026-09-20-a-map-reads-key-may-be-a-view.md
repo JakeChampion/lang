@@ -73,6 +73,20 @@ The `replace` fault on its own, with the argument a temporary nobody else names
 | self-host, AST lowering | 9 | 9 |
 | self-host, typed lowering | **segmentation fault** | 9, 0 B held |
 
+Corpus census (the conformance cases, coreutils, `examples/bench`,
+`examples/cli`, `examples/tests` and the compiler; 865 seeds), both legs run
+here with the same script:
+
+| | before | after |
+|---|---|---|
+| programs produced whole | 811 of 865 | 819 of 865 |
+| declarations produced | 81,410 of 87,203 | 83,189 of 87,203 |
+
+Eight programs go from nothing to whole, and none regresses. Three are the ones
+above; the other five reach the same two fixes through their own vocabulary —
+`ordmap_test` (338), `pmap_test` (337), `pvec_test` (227), `bench_test` (212)
+and the `closure_capture_shared_cell` conformance case (106).
+
 ## What gates it
 
 - `TestSelfHostSemanticProduction/a-view-is-a-map-read-key`: a `Map[string, i32]`
