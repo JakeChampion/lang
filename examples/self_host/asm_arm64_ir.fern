@@ -513,6 +513,38 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.write(c_done + ":\n    str x7, [sp, #-16]!\n");
         return s;
     }
+    if (o.kind_tag == 322) {  // scale_f64
+        // operand stack [xs, k bits] -> the data pointer of a fresh f64
+        // array of xs's length whose element i is xs[i] * k.
+        //
+        // SCALAR (§3.4 step 1): one fmul per element. Elementwise, so the
+        // NEON body this wants (fmul over two lanes) reassociates nothing;
+        // the ordering rule still puts the scalar lowering in every backend
+        // first.
+        //
+        // __fern_arr_box(n) writes the rc header and len = n and clobbers
+        // only x0-x2; this backend's arrays keep len at [arr] and element i
+        // at [arr + (i+1)*8]. Base-register FP loads only: the address is
+        // formed with an add, which is the form arm64_native encodes.
+        var flo: asmcore.LabelOut = asmcore.fresh_label(s);
+        var sf_loop: string = flo.name;
+        var flo2: asmcore.LabelOut = asmcore.fresh_label(flo.state);
+        var sf_done: string = flo2.name;
+        s = flo2.state;
+        s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+        s = s.write("    stp x0, x1, [sp, #-16]!\n");
+        s = s.write("    ldr x0, [x0]\n    bl __fern_arr_box\n");
+        s = s.write("    ldp x2, x1, [sp], #16\n");
+        s = s.write("    fmov d1, x1\n    mov x3, #0\n    ldr x4, [x2]\n");
+        s = s.write(sf_loop + ":\n");
+        s = s.write("    cmp x3, x4\n    b.ge " + sf_done + "\n");
+        s = s.write("    add x5, x3, #1\n    add x6, x2, x5, lsl #3\n    ldr d0, [x6]\n");
+        s = s.write("    fmul d0, d0, d1\n    add x7, x0, x5, lsl #3\n    str d0, [x7]\n");
+        s = s.write("    add x3, x3, #1\n    b " + sf_loop + "\n");
+        s = s.write(sf_done + ":\n    str x0, [sp, #-16]!\n");
+        s = s.mark_heap();
+        return s;
+    }
     if (o.kind_tag == 253) {  // sum_bytes
         // operand stack [box] -> every byte of the string added into a
         // 32-bit accumulator that wraps.

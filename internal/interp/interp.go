@@ -1043,6 +1043,33 @@ func New() *Interp {
 		}
 		return Number(int32(sum)), nil
 	}}
+	// __scale_f64(xs, k): every element of the f64[] multiplied by k, as a
+	// fresh array. The oracle for the eighth fused kernel
+	// (docs/ATLAS-PLATFORM-PLAN.md §3.3), the first over an array: each
+	// product is one IEEE multiply, so a vector body owes exactly these
+	// bits and nothing about the order it produces them in matters.
+	i.Builtins["__scale_f64"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("__scale_f64: expected 2 args, got %d", len(args))
+		}
+		xs, ok := args[0].(Array)
+		if !ok {
+			return nil, fmt.Errorf("__scale_f64: expected an array, got %T", args[0])
+		}
+		k, ok := args[1].(Float)
+		if !ok {
+			return nil, fmt.Errorf("__scale_f64: expected an f64 factor, got %T", args[1])
+		}
+		out := newArray(len(xs.E))
+		for j, e := range xs.E {
+			f, ok := e.(Float)
+			if !ok {
+				return nil, fmt.Errorf("__scale_f64: element %d is %T, not f64", j, e)
+			}
+			out.E[j] = Float{V: f.V * k.V, Width: 64}
+		}
+		return out, nil
+	}}
 	// __crc32_cksum(crc, s): `s` folded into the running CRC-32 cksum(1)
 	// prints. The oracle for the seventh fused kernel
 	// (docs/ATLAS-PLATFORM-PLAN.md §3.3), and the first CARRIED one — the

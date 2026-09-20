@@ -15210,6 +15210,23 @@ func (b *builder) callBody(n *ast.Call) error {
 			return nil
 		}
 	}
+	// __scale_f64(xs, k) — the same runtime-helper-call shape over an ARRAY:
+	// the array is one operand slot (its data pointer) on every backend, and
+	// the f64 travels as the bit pattern the operand stack already holds it
+	// in. The result is a fresh rc=1 buffer (rcResultOwned), so the caller's
+	// scope exit releases it like any other array it built.
+	if id.Name == "__scale_f64" && len(n.Args) == 2 {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			for _, a := range n.Args {
+				if err := b.expr(a); err != nil {
+					return err
+				}
+			}
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_scale_f64", Width: ResAddr, I32: 2,
+				Ext: &OpExt{ArgTypes: []ast.Type{ast.ArrayType{Elem: ast.FloatType{Width: 64}}, ast.FloatType{Width: 64}}}})
+			return nil
+		}
+	}
 	// __crc32_cksum(crc, s) — the same runtime-helper-call shape. The scalar
 	// operand comes FIRST here, so ArgTypes leads with a number and the
 	// string's two-slot expansion on arm64 and wasm lands second; a backend
