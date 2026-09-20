@@ -28,10 +28,10 @@ import (
 // and compares `__ascii_run` against it, so the corpus sweeps exhaustively with
 // no Go-side expectation list to keep in step.
 //
-// The sweep runs length 0..40 with the high byte at every position and the scan
-// starting before / at / after it — two full 16-byte vector blocks plus a
-// partial tail either side, so every block boundary a vector body can get wrong
-// is swept on every backend.
+// The sweep runs length 0..72 with the high byte at every position and the scan
+// starting before / at / after it — two full 32-byte vector blocks, a 16-byte
+// one and a partial tail, so every hand-over a vector body can get wrong is
+// swept on every backend.
 //
 // A failure returns a small distinct code rather than a count, so the exit
 // status says WHICH shape disagreed. 42 means every comparison matched.
@@ -46,7 +46,7 @@ const asciiRunIRProg = `function ref(s: string, from: i32): i32 {
 }
 function main(): i32 {
     var n: i32 = 0;
-    while (n <= 40) {
+    while (n <= 72) {
         var base: string = "";
         var k: i32 = 0;
         while (k < n) { base = base + "a"; k = k + 1; }

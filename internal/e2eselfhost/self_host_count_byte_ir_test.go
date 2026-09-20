@@ -27,8 +27,8 @@ import (
 // implementation in Fern and compares `__count_byte` against it, so the corpus
 // sweeps exhaustively with no Go-side expectation list to keep in step.
 //
-// Lengths 0..40 — two full 16-byte blocks plus a partial tail either side, so
-// the boundaries a vector body will later have are already covered.
+// Lengths 0..72 — two full 32-byte blocks, a 16-byte one and a partial tail,
+// so every boundary between the vector tiers and the scalar tail is crossed.
 //
 // A failure returns a small distinct code rather than a count, so the exit
 // status says WHICH shape disagreed. 42 means every comparison matched.
@@ -45,7 +45,7 @@ const countByteIRProg = `function ref(s: string, b: i32): i32 {
 }
 function main(): i32 {
     var n: i32 = 0;
-    while (n <= 40) {
+    while (n <= 72) {
         var base: string = "";
         var k: i32 = 0;
         while (k < n) { base = base + "a"; k = k + 1; }

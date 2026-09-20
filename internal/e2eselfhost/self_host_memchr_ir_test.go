@@ -31,11 +31,11 @@ import (
 // written in Fern and compares `__memchr` against it, so the corpus can be
 // swept exhaustively without a Go-side expectation list to keep in step.
 //
-// The sweep runs length 0..40 with the needle at every position and the scan
-// starting before / at / after it. That range covers two full 16-byte vector
-// blocks plus a partial tail on either side, so every block boundary a vector
-// body can get wrong — a needle split across two loads, a hit in the tail, a
-// `from` landing mid-block — is swept on every backend.
+// The sweep runs length 0..72 with the needle at every position and the scan
+// starting before / at / after it. That range covers two full 32-byte vector
+// blocks, a 16-byte one and a partial tail, so every boundary a vector body
+// can get wrong — the hand-over from one tier to the next, a hit in the
+// tail, a `from` landing mid-block — is swept on every backend.
 //
 // A failure returns a small distinct code rather than a count, so the exit
 // status says WHICH shape disagreed. 42 means every comparison matched.
@@ -52,7 +52,7 @@ const memchrIRProg = `function ref(s: string, b: i32, from: i32): i32 {
 }
 function main(): i32 {
     var n: i32 = 0;
-    while (n <= 40) {
+    while (n <= 72) {
         var base: string = "";
         var k: i32 = 0;
         while (k < n) { base = base + "a"; k = k + 1; }
