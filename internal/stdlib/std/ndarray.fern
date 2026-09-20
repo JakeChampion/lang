@@ -1,0 +1,289 @@
+// std/ndarray — a multidimensional array as a counted handle over flat
+// storage: shape, strides and offset, with the structural operations as
+// metadata (#9734, phase 3 of #9727).
+//
+//   import "std/ndarray";
+//   var a: ndarray.NdArray[i64] = ndarray.from_flat(xs, [64, 64]);
+//   var t: ndarray.NdArray[i64] = a.transpose();   // no element moves
+//   t.get([3, 5]) == a.get([5, 3]);
+//   var r: ndarray.NdArray[i64] = t.reshape([4096]); // copies: t is not row-major
+//
+// # The representation
+//
+//   NdArray { data, shape, strides, offset }
+//
+// `data` is the flat storage, an ordinary owned `T[]`; `shape` the extent
+// of each axis; `strides` the distance in ELEMENTS between neighbours
+// along each axis (negative after `reverse`); `offset` the element
+// `data[offset]` that index `[0, 0, …]` reads. Element `idx` lives at
+// `offset + sum(idx[k] * strides[k])`.
+//
+// The handle is a value that OWNS a count on `data` — it is not a `[T]`
+// view. docs/ARRAY-SHAPES.md says why: a structural result is stored and
+// returned, and Fern's views are non-escaping by decision
+// (docs/STR-VIEW-CONTRACT.md §5), so the thing that shares storage has to
+// hold a reference the reuse guards can count.
+//
+// # Views and copies
+//
+// `transpose`, `permute`, `reverse`, `slice` and `select` change only the
+// metadata: they allocate a handle and two small index arrays, never an
+// element. `reshape` is metadata when the handle is row-major and a copy
+// otherwise; `packed` and `to_flat` copy exactly when the handle is not
+// packed. That is the whole materialization rule, and
+// internal/e2e/ndarray_test.go holds each operation to it with the
+// allocation counters.
+//
+// # Errors
+//
+// A shape that does not fit its storage, an axis or index out of range,
+// or a permutation that is not one aborts the program with the bounds
+// rule's status (docs/ARRAY-BOUNDS.md, exit 134): a derived shape that is
+// wrong is a bug, and docs/ARRAY-ALGEBRA.md §4 makes it an error rather
+// than a truncation.
+
+// The handle. Construct one through `from_flat`; every field is an
+// implementation detail.
+pub struct NdArray[T] { data: T[], shape: i32[], strides: i32[], offset: i32 }
+
+// A precondition failed: the same trap an out-of-range index takes.
+function shape_error(): void {
+    exit(134);
+}
+
+// The element count a shape describes; 1 for the rank-0 shape.
+function count_of(shape: i32[]): i32 {
+    var n: i32 = 1;
+    var k: i32 = 0;
+    while (k < shape.len()) {
+        if (shape[k] < 0) { shape_error(); }
+        n = n * shape[k];
+        k = k + 1;
+    }
+    return n;
+}
+
+// Row-major strides: the last axis is contiguous.
+function row_major(shape: i32[]): i32[] {
+    var out: i32[] = [];
+    var k: i32 = 0;
+    while (k < shape.len()) {
+        out = out.append(0);
+        k = k + 1;
+    }
+    var s: i32 = 1;
+    k = shape.len() - 1;
+    while (k >= 0) {
+        out = out.with(k, s);
+        s = s * shape[k];
+        k = k - 1;
+    }
+    return out;
+}
+
+// `from_flat(data, shape)` — the array whose row-major reading is `data`.
+// `data` is shared, not copied. The shape must account for every element
+// of `data`; `[]` is a rank-0 scalar over a one-element `data`.
+pub function from_flat[T](data: T[], shape: i32[]): NdArray[T] {
+    if (count_of(shape) != data.len()) { shape_error(); }
+    return NdArray { data: data, shape: shape, strides: row_major(shape), offset: 0 };
+}
+
+pub function (a: NdArray[T]) shape(): i32[] {
+    return a.shape;
+}
+
+pub function (a: NdArray[T]) strides(): i32[] {
+    return a.strides;
+}
+
+pub function (a: NdArray[T]) rank(): i32 {
+    return a.shape.len();
+}
+
+// The element count.
+pub function (a: NdArray[T]) len(): i32 {
+    return count_of(a.shape);
+}
+
+// `is_row_major()` — the strides are the row-major ones for the shape,
+// so `reshape` needs no copy. An axis of extent 1 has no neighbour along
+// it and its stride does not count.
+pub function (a: NdArray[T]) is_row_major(): boolean {
+    var rm: i32[] = row_major(a.shape);
+    var k: i32 = 0;
+    while (k < a.shape.len()) {
+        if (a.shape[k] != 1 && a.strides[k] != rm[k]) { return false; }
+        k = k + 1;
+    }
+    return true;
+}
+
+// `is_packed()` — row-major from element 0 with nothing else in the
+// storage: `data` IS the row-major reading, so `to_flat` needs no copy.
+pub function (a: NdArray[T]) is_packed(): boolean {
+    return a.is_row_major() && a.offset == 0 && a.data.len() == a.len();
+}
+
+// The storage index of `idx`, checking the rank and every bound.
+function addr[T](a: NdArray[T], idx: i32[]): i32 {
+    if (idx.len() != a.shape.len()) { shape_error(); }
+    var at: i32 = a.offset;
+    var k: i32 = 0;
+    while (k < idx.len()) {
+        if (idx[k] < 0 || idx[k] >= a.shape[k]) { shape_error(); }
+        at = at + idx[k] * a.strides[k];
+        k = k + 1;
+    }
+    return at;
+}
+
+// `get(idx)` — the element at a full index. A rank-0 array is read with
+// `get([])`.
+pub function (a: NdArray[T]) get(idx: i32[]): T {
+    return a.data[addr(a, idx)];
+}
+
+function check_axis[T](a: NdArray[T], axis: i32): void {
+    if (axis < 0 || axis >= a.shape.len()) { shape_error(); }
+}
+
+// `transpose()` — the axes in reverse order. Metadata only.
+pub function (a: NdArray[T]) transpose(): NdArray[T] {
+    var axes: i32[] = [];
+    var k: i32 = a.shape.len() - 1;
+    while (k >= 0) {
+        axes = axes.append(k);
+        k = k - 1;
+    }
+    return a.permute(axes);
+}
+
+// `permute(axes)` — axis `k` of the result is axis `axes[k]` of `a`.
+// `axes` must be a permutation of `0 .. rank - 1`. Metadata only.
+pub function (a: NdArray[T]) permute(axes: i32[]): NdArray[T] {
+    if (axes.len() != a.shape.len()) { shape_error(); }
+    var seen: boolean[] = [];
+    var shape: i32[] = [];
+    var strides: i32[] = [];
+    var k: i32 = 0;
+    while (k < axes.len()) {
+        seen = seen.append(false);
+        k = k + 1;
+    }
+    k = 0;
+    while (k < axes.len()) {
+        check_axis(a, axes[k]);
+        if (seen[axes[k]]) { shape_error(); }
+        seen = seen.with(axes[k], true);
+        shape = shape.append(a.shape[axes[k]]);
+        strides = strides.append(a.strides[axes[k]]);
+        k = k + 1;
+    }
+    return NdArray { data: a.data, shape: shape, strides: strides, offset: a.offset };
+}
+
+// `reverse(axis)` — the elements along `axis` in the opposite order: the
+// stride flips sign and the offset moves to the old last element.
+// Metadata only.
+pub function (a: NdArray[T]) reverse(axis: i32): NdArray[T] {
+    check_axis(a, axis);
+    var n: i32 = a.shape[axis];
+    var s: i32 = a.strides[axis];
+    var offset: i32 = a.offset;
+    if (n > 0) { offset = offset + (n - 1) * s; }
+    return NdArray { data: a.data, shape: a.shape, strides: a.strides.with(axis, 0 - s), offset: offset };
+}
+
+// `slice(axis, lo, hi)` — the half-open range `[lo, hi)` along `axis`,
+// with `0 <= lo <= hi <= extent`; the other axes are unchanged. Metadata
+// only.
+pub function (a: NdArray[T]) slice(axis: i32, lo: i32, hi: i32): NdArray[T] {
+    check_axis(a, axis);
+    if (lo < 0 || lo > hi || hi > a.shape[axis]) { shape_error(); }
+    var offset: i32 = a.offset + lo * a.strides[axis];
+    return NdArray { data: a.data, shape: a.shape.with(axis, hi - lo), strides: a.strides, offset: offset };
+}
+
+// `select(axis, i)` — the partial index: position `i` along `axis`, as an
+// array of one rank less. Metadata only.
+pub function (a: NdArray[T]) select(axis: i32, i: i32): NdArray[T] {
+    check_axis(a, axis);
+    if (i < 0 || i >= a.shape[axis]) { shape_error(); }
+    var shape: i32[] = [];
+    var strides: i32[] = [];
+    var k: i32 = 0;
+    while (k < a.shape.len()) {
+        if (k != axis) {
+            shape = shape.append(a.shape[k]);
+            strides = strides.append(a.strides[k]);
+        }
+        k = k + 1;
+    }
+    return NdArray { data: a.data, shape: shape, strides: strides, offset: a.offset + i * a.strides[axis] };
+}
+
+// `reshape(shape)` — the same elements, in row-major reading order, under
+// a shape of the same count. Metadata when `a.is_row_major()`; otherwise
+// the elements are copied into packed storage first, which is the one
+// structural operation whose cost depends on what came before it — ask
+// `is_row_major()` when that matters.
+pub function (a: NdArray[T]) reshape(shape: i32[]): NdArray[T] {
+    if (count_of(shape) != a.len()) { shape_error(); }
+    if (a.is_row_major()) {
+        return NdArray { data: a.data, shape: shape, strides: row_major(shape), offset: a.offset };
+    }
+    return from_flat(copy_flat(a), shape);
+}
+
+// `packed()` — `a` itself when it is packed, otherwise a fresh packed
+// copy with the same shape.
+pub function (a: NdArray[T]) packed(): NdArray[T] {
+    if (a.is_packed()) { return a; }
+    return from_flat(copy_flat(a), a.shape);
+}
+
+// `to_flat()` — the elements in row-major reading order: the storage
+// itself when `a` is packed, otherwise a fresh copy.
+pub function (a: NdArray[T]) to_flat(): T[] {
+    if (a.is_packed()) { return a.data; }
+    return copy_flat(a);
+}
+
+// The row-major reading of `a`, walked with an odometer over the shape.
+function copy_flat[T](a: NdArray[T]): T[] {
+    var out: T[] = [];
+    var n: i32 = a.len();
+    if (n == 0) { return out; }
+    var idx: i32[] = [];
+    var k: i32 = 0;
+    while (k < a.shape.len()) {
+        idx = idx.append(0);
+        k = k + 1;
+    }
+    var i: i32 = 0;
+    while (i < n) {
+        out = out.append(a.data[addr(a, idx)]);
+        idx = bump(idx, a.shape);
+        i = i + 1;
+    }
+    return out;
+}
+
+// The next index in row-major order: the last axis moves fastest. `idx`
+// is consumed so the writes land in place; borrowed, every step would
+// copy it. Each write is the self-reassign `idx = idx.with(..)` rather
+// than a `return idx.with(..)`: with a second `.with` on the receiver in
+// another branch the return form copies (#9844).
+function bump(own idx: i32[], shape: i32[]): i32[] {
+    var k: i32 = shape.len() - 1;
+    while (k >= 0) {
+        if (idx[k] + 1 < shape[k]) {
+            idx = idx.with(k, idx[k] + 1);
+            return idx;
+        }
+        idx = idx.with(k, 0);
+        k = k - 1;
+    }
+    return idx;
+}

@@ -4159,6 +4159,26 @@ func runPersistentSuite(t *testing.T, path, suite, persistCase string, n int) {
 	}
 }
 
+// `examples/tests/ndarray_test.fern` covers std/ndarray — the counted
+// strided handle of docs/ARRAY-SHAPES.md: every structural operation
+// against the flat construction, the row-major / packed predicates, rank
+// 0 and an empty axis. The counters half (that the metadata operations
+// move no elements) is internal/e2e/ndarray_test.go's. Passing suite ->
+// exit 0.
+func TestRunnerNdarrayExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/ndarray_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/ndarray", "1..8", "# pass 8", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/unicode_test.fern` covers std/unicode — simple
 // (1:1) case mapping across ASCII / Latin-1 / Greek / Cyrillic, the
 // code-point helpers, the simple-mapping caveat (ß unchanged),
