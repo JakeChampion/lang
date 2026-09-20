@@ -810,8 +810,9 @@ pub struct LowerFrame {
     // clones instead of mutating in place (map_clone_insert_sites_of, #7235).
     map_clone_sites: string[],
     // borrowed_names: the ARRAY/MAP names this function does not OWN — a
-    // param that is neither `own`, inferred-moved, nor a `$cell$` capture cell,
-    // or a local bound from a field read whose source is still live (#6158).
+    // param that is neither `own` nor inferred-moved (a mutated capture's
+    // `Cell[T]` is not an array and never enters), or a local bound from a
+    // field read whose source is still live (#6158).
     // ONLY the `.with` self-reassign consults it; see borrowed_names_of for why
     // it is not folded into aliased_names.
     borrowed_names: string[],
@@ -3853,13 +3854,36 @@ pub function (s: LowerState) mark_cell(i: i32, t: string): LowerState {
 // low half. Spelling it once is what is_float_array_type_name (#6175) does for
 // the array-name form, for the same reason.
 pub function (s: LowerState) mark_cell_elem(slot: i32, elem: string): LowerState {
-    var out: LowerState = s.mark_cell(slot, elem);
+    return s.mark_array_slot_from_type(slot, elem + "[]").mark_cell(slot, elem);
+}
+
+// mark_array_slot_from_type marks `slot` as the array its declared SPELLING
+// names, element kind included, for a slot whose element no initialiser can
+// tell: a cell read as its one-element array. A scalar `f32` lowers to a wasm
+// f64, so both float spellings take the 8-byte-stride column; is_f32arr is
+// the dispatch overlay beside it.
+pub function (s: LowerState) mark_array_slot_from_type(slot: i32, ty: string): LowerState {
+    if (!is_array_type_name(ty) || ty.len() < 3) { return s; }
+    var out: LowerState = s.mark_arr(slot, true);
+    var elem: string = slice_unchecked(ty, 0, ty.len() - 2) + "";
+    if (elem == "u32") { return out.mark_u32(slot, true); }
+    if (elem == "boolean") { return out.mark_boolarr(slot, true); }
+    if (is_subword_array_type(ty)) { return out; }
+    if (is_float_array_type_name(ty)) {
+        out = out.mark_f64arr(slot, true);
+        if (elem == "f32") { out = out.mark_f32arr(slot, true); }
+        return out;
+    }
+    if (elem == "i64" || elem == "u64") {
+        out = out.mark_i64arr(slot, true);
+        if (elem == "u64") { out = out.mark_u64(slot, true); }
+        return out;
+    }
     if (elem == "string") { return out.mark_strarr(slot, true); }
-    if (elem == "i64" || elem == "u64") { return out.mark_i64arr(slot, true); }
-    // A scalar `f32` lowers to a wasm f64, so both float spellings occupy the
-    // 8-byte-stride column. is_f64arr is the WIDTH driver; is_f32arr is a
-    // dispatch-only overlay no cell path sets.
-    if (elem == "f64" || elem == "f32" || elem == "float") { return out.mark_f64arr(slot, true); }
+    if (elem == "fn") { return out.mark_closurearr(slot, true); }
+    if (is_struct_array_field_type(s.frame.structs, ty) || is_enum_array_field_type(s.frame.structs, ty)) { return out.mark_struct_type(slot, elem); }
+    if (is_array_type_name(elem)) { return out.mark_arrarr(slot, true).mark_arrarr_elem(slot, arrarr_elem_kind_of_type(ty)); }
+    if (util.is_tuple_type_name(elem)) { return out.mark_arrarr_elem(slot, elem); }
     return out;
 }
 
@@ -4015,7 +4039,7 @@ function map_key_int_evidence(k: ast.Expr, s: LowerState): boolean {
         ast.ExprCall(kc) => { return is_int_irtag(kc.ty); },
         // An ELEMENT key `xs[i]`. Written by hand it is rare, but the lift pass
         // makes it the common shape: a mutable local a closure captures is boxed
-        // into a one-element cell and every read rewritten to `$cell$x[0]`, so an
+        // into a cell, whose reads this lowering desugars to `$cell$x[0]`, so an
         // integer key SPELLED as a bare ident reaches here as an index (#8090).
         ast.ExprIndex(kix) => {
             if (is_int_irtag(kix.ty)) { return true; }
@@ -22636,6 +22660,20 @@ match (v.init) {
 }
 
 function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
+    // `var c: Cell[T] = cell_new(init)` is the one-element array
+    // `var c: T[] = [init]` with the cell marks on top: the array
+    // classification reads the element from the annotation and the
+    // initialiser as it does for any array binding, so the cell's element
+    // columns are a `T[]` slot's.
+    var celt: string = cell_elem_of_type_name(v.type_name);
+    if (celt != "" && is_cell_new_call(v.init)) {
+        var cinit: ast.Expr = v.init;
+        if let ast.ExprCall(cc) = v.init { cinit = cc.args[0]; }
+        var arr: ast.StmtVar = ast.StmtVar { ...v, type_name: celt + "[]", init: ast.ExprArray { elements: [cinit], elem_ty: celt, line: v.line, col: v.col } };
+        var bound: LowerState = lower_stmt_var(arr, s);
+        if (!bound.ok) { return bound; }
+        return bound.mark_cell(bound.slot_of(v.name), celt);
+    }
     // Type ascription `var x = E as T` (#2669): the `as` is a zero-cost
     // annotation, so this is `var x: T = E`. ascription_rebind returns
     // that rewritten binding (operand as init, T as the annotation) so
@@ -28688,13 +28726,12 @@ function arr_slot_shallow_release_ok(s: LowerState, slot: i32): boolean {
 
 // slot_holds_scalar_elems: the array in slot `i` stores by-value elements, so a
 // copy of its buffer duplicates no reference and an overwritten element owes no
-// release. `char[]` records "char" as its element type and is one. A capture
-// cell (`$cell$x`, the one-element box a closure and its owner share) is not:
-// every write to it must reach the other holder, so it never copies.
+// release. `char[]` records "char" as its element type and is one. A cell is
+// not: every write to it must reach every holder, so it never copies.
 function slot_holds_scalar_elems(s: LowerState, i: i32): boolean {
     if (i < 0 || i >= s.locals.len()) { return false; }
     var li: LocalInfo = s.locals[i];
-    if (li.is_cell || capturebox.is_cell_name(li.slot_name)) { return false; }
+    if (li.is_cell) { return false; }
     if (!li.is_arr || li.is_strarr || li.is_arrarr || li.is_closurearr || li.is_fnarr) { return false; }
     var tags: string = li.opt_type + li.arrarr_elem + li.fnarr_elem + li.map_type;
     return tags.len() == 0 && (li.struct_type.len() == 0 || li.struct_type == "char");
@@ -35163,19 +35200,12 @@ function borrowed_rebinds(stmts: ast.Stmt[], acc: string[], top: boolean): strin
 //
 // `own` params are excluded: the caller TRANSFERRED the buffer, so the in-place
 // store is the point of the annotation.
-//
-// A `$cell$` param is excluded too, and is the one param that is neither owned
-// nor borrowed: it is a mutable capture's shared cell, handed to the lifted body
-// as a plain array param (#5301), and writing THROUGH it is the by-reference
-// capture semantics. Nothing in ParamDecl distinguishes it from a caller's
-// array, so box_rewrite_stmt names it (#6185).
 function borrowed_names_of(fn: parser.FuncDecl, own_names: string[]): string[] {
     var a: string[] = borrowed_field_bindings(fn.body, []);
     var i: i32 = 0;
     while (i < fn.params.len()) {
         if (is_array_type_name(fn.params[i].type_name)
-            && util.index_of_str(own_names, fn.params[i].name) < 0
-            && !capturebox.is_cell_name(fn.params[i].name)) {
+            && util.index_of_str(own_names, fn.params[i].name) < 0) {
             a = push_str_unique(a, fn.params[i].name);
         }
         i = i + 1;
@@ -59676,7 +59706,72 @@ function emit_trmc_leaf(e: ast.Expr, fn: parser.FuncDecl, ctx: TrmcCtx, sin: Low
 }
 
 // lower_func lowers a whole function's body. Params take slots 0..n-1.
+// The AST lowering reads a cell as slot 0 of the one-element array it is:
+// `c.get()` on a local or parameter declared `Cell[T]` becomes `c[0]` before
+// any analysis or type predicate reads the body, so the element kind the
+// slot carries is what every reader sees, exactly as for an index. A name
+// declared both as a cell and as something else in one body is left to the
+// per-site desugar, which reads the slot.
+function cell_reads_as_index(fn: parser.FuncDecl): ast.Stmt[] {
+    var cells: string[] = [];
+    var others: string[] = [];
+    for p in fn.params {
+        if (is_cell_type_name(p.type_name)) { cells = push_str_unique(cells, p.name); }
+        else { others = push_str_unique(others, p.name); }
+    }
+    for st in fn.body {
+        cells = astwalk.fold_stmt_nodes(st, cells, cell_decl_of, no_expr_strs, astwalk.descend_all);
+        others = astwalk.fold_stmt_nodes(st, others, non_cell_decl_of, no_expr_strs, astwalk.descend_all);
+    }
+    var names: string[] = [];
+    for c in cells { if (util.index_of_str(others, c) < 0) { names = names.append(c); } }
+    if (names.len() == 0) { return fn.body; }
+    var read = (e: ast.Expr): ast.Expr => {
+        if let ast.ExprCall(c) = e {
+            if (c.args.len() != 0) { return e; }
+            if let ast.ExprFieldAccess(fa) = c.callee {
+                if (fa.field != "get") { return e; }
+                if let ast.ExprIdent(id) = fa.obj {
+                    if (util.index_of_str(names, id.name) < 0) { return e; }
+                    var zero: ast.Expr = ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: c.line, col: c.col };
+                    return ast.ExprIndex { array: fa.obj, index: zero, unchecked: true, ty: "" };
+                }
+            }
+        }
+        return e;
+    };
+    return astwalk.map_stmts(fn.body, read);
+}
+
+function is_cell_new_call(e: ast.Expr): boolean {
+    if let ast.ExprCall(c) = e {
+        if let ast.ExprIdent(ci) = c.callee { return ci.name == "cell_new" && c.args.len() == 1; }
+    }
+    return false;
+}
+
+function cell_decl_of(st: ast.Stmt, own acc: string[]): string[] {
+    if let ast.StmtVar(v) = st {
+        if (is_cell_type_name(v.type_name) || (v.type_name.len() == 0 && is_cell_new_call(v.init))) { return push_str_unique(acc, v.name); }
+    }
+    return acc;
+}
+
+function non_cell_decl_of(st: ast.Stmt, own acc: string[]): string[] {
+    match (st) {
+        ast.StmtVar(v) => {
+            if (is_cell_type_name(v.type_name) || (v.type_name.len() == 0 && is_cell_new_call(v.init))) { return acc; }
+            return append_all(acc, astwalk.collect_bound_stmt(st, no_names()));
+        },
+        ast.StmtFor(_) => { return append_all(acc, astwalk.collect_bound_stmt(st, no_names())); },
+        ast.StmtMatch(_) => { return append_all(acc, astwalk.collect_bound_stmt(st, no_names())); },
+        _ => { return acc; }
+    }
+    return acc;
+}
+
 pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for_wasm: boolean): LowerResult {
+    fn = parser.FuncDecl { ...fn, body: cell_reads_as_index(fn) };
     // #4380 lever 3: mark in-bounds `arr[i]` reads (a `while (i < arr.len())`
     // guard proves them) so the ExprIndex lowering emits op_arr_get_nc. Runs
     // here — after every AST transform — so no later pass clobbers the flag.
@@ -60332,6 +60427,14 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     var dalias: DeadAliases = dead_alias_of(fn.body, asg_targets, fn_moves_all.names, da_bp, is_scalar_type_name(fn.ret_type));
     var persistent_ops: ir.OpBuffer = ir.op_buffer();
     var s: LowerState = LowerState { ops: persistent_ops, locals: locals0, ctrl: 0, loop_blk: noloop, frame: LowerFrame { ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, clo_base: clo_owner_name(fn), cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dalias.sites, dead_alias_bp: da_bp, spread_sites: spread_sites_of(fn.body, structs, []), type_params: fn.type_params, strarr_sources: string_array_sources_of(fn), structs: structs, reclaimable_names: reclaim, aliased_names: aliased, map_clone_sites: map_clone_insert_sites_of(fn.body), borrowed_names: borrowed, try_cleanup: tclean, defer_slots: [], defer_guard: "", append_inplace: append_inplace_names_of(fn), field_append_inplace: field_append_inplace_sites_of(fn), grow_sole: grow_sole_exempt_names_of(fn), grow_alias: grow_alias_names_of(fn), own_params: own_names, cur_key: struct_ret_key(fn), n_params: names.len(), fail_why: "", moved_names: fn_moves_top.names, moved_elided: [], move_sites: fn_moves_top.sites, fld_bases: field_move_bases_of(fn, sg), own_lift_sites: own_lift_retain_sites_of(fn, sg, structs) }, xblock_pending: [], optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
+    // A `Cell[T]` PARAM takes the element-width columns a `var c: Cell[T]`
+    // local gets from its annotation, so its `get` reads at the element's
+    // width rather than as an i32.
+    var cpi: i32 = 0;
+    while (cpi < s.frame.n_params) {
+        if (s.locals[cpi].is_cell) { s = s.mark_cell_elem(cpi, s.locals[cpi].cell_elem); }
+        cpi = cpi + 1;
+    }
     // Consumed-threaded array params (ownflag_name): allocate and zero each flag
     // before any body op, in parameter order, so slot numbering is deterministic.
     // A declared `own` param is excluded — the caller moved its reference in.
@@ -76878,18 +76981,18 @@ function lift_inline_closures(fd: parser.FuncDecl, gfns: string[], structs: Stru
 // must share the write with the enclosing scope (scalar captures are mutable
 // by-reference — the closures-as-counters feature). The IR path captures by
 // VALUE (the env box holds the capture's value), so the write is lost. Fix:
-// before lifting, rewrite each captured-AND-mutated local into a 1-element
-// array CELL, so the existing array-pointer capture is by-reference:
-//   var x = E         ->  var $cell$x: T[] = [E]
-//   <read x>          ->  $cell$x[0]
-//   x = v             ->  $cell$x = $cell$x.with(0, v)   (in-place arr_set)
-// The lambda then captures the cell pointer (its contract records `T[]`,
-// try_lift_binding passes the pointer); its in-place `.with` mutates the shared
-// cell. Two rules select what boxes:
-//   1. #2850: an i32/boolean capture the CLOSURE body writes (cell `i32[]`).
+// before lifting, rewrite each captured-AND-mutated local into a `Cell[T]`,
+// so the capture is the shared box's pointer and by-reference on both sides:
+//   var x = E         ->  var $cell$x: Cell[T] = cell_new(E)
+//   <read x>          ->  $cell$x.get()
+//   x = v             ->  $cell$x.set(v)
+// The lambda then captures the cell (its contract records `Cell[T]`,
+// try_lift_binding passes the pointer); `set` stores into the shared box in
+// place. Two rules select what boxes:
+//   1. #2850: a capture the CLOSURE body writes, a scalar by E049.
 //   2. #5394: a capture of an ESCAPING binding (returned / used as a value —
 //      the make_closure env-box path, which snapshots at creation) that the
-//      ENCLOSING body reassigns — any capturable type, cell `<ct>[]`. The env
+//      ENCLOSING body reassigns — any capturable type. The env
 //      then snapshots the cell POINTER, so a later outer reassignment stores
 //      through the shared cell and the escaped closure reads the live value,
 //      matching the interpreter (the oracle per #2896). Directly-called
@@ -77639,9 +77742,9 @@ function box_scan_stmts(stmts: ast.Stmt[], fd: parser.FuncDecl, structs: StructT
             while (ci < caps.len()) {
                 var cn: string = caps[ci];
                 var ct: string = lambda_capture_type(lam, cn);
-                if ((ct == "i32" || ct == "boolean") && util.index_of_str(wtargets, cn) >= 0 && util.index_of_str(boxed, cn) < 0) {
+                if (ct.len() > 0 && util.index_of_str(wtargets, cn) >= 0 && util.index_of_str(boxed, cn) < 0) {
                     boxed = boxed.append(cn);
-                    btypes = btypes.append("i32");
+                    btypes = btypes.append(ct);
                 } else if (esc && ct.len() > 0 && util.index_of_str(otargets, cn) >= 0
                         && util.index_of_str(dvars, cn) >= 0 && util.index_of_str(boxed, cn) < 0) {
                     boxed = boxed.append(cn);
@@ -77656,8 +77759,8 @@ function box_scan_stmts(stmts: ast.Stmt[], fd: parser.FuncDecl, structs: StructT
 }
 
 // box_apply_lambda applies the two boxing clauses to one lambda's captures:
-// #2850 (an i32/boolean the LAMBDA body writes) and #5394 (any type the OUTER
-// body reassigns, for an escaping binding). Shared by the statement-shape path
+// #2850 (a capture the LAMBDA body writes, a scalar by E049) and #5394 (any
+// type the OUTER body reassigns, for an escaping binding). Shared by the statement-shape path
 // and the operand-position path so the two cannot drift.
 function box_apply_lambda(lam: ast.ExprLambda, esc: boolean, fd: parser.FuncDecl, structs: StructTab, mfuncs: MFuncs, otargets: string[], dvars: string[], acc: BoxScan): BoxScan {
     var boxed: string[] = acc.names;
@@ -77668,9 +77771,9 @@ function box_apply_lambda(lam: ast.ExprLambda, esc: boolean, fd: parser.FuncDecl
     while (ci < caps.len()) {
         var cn: string = caps[ci];
         var ct: string = lambda_capture_type(lam, cn);
-        if ((ct == "i32" || ct == "boolean") && util.index_of_str(wtargets, cn) >= 0 && util.index_of_str(boxed, cn) < 0) {
+        if (ct.len() > 0 && util.index_of_str(wtargets, cn) >= 0 && util.index_of_str(boxed, cn) < 0) {
             boxed = boxed.append(cn);
-            btypes = btypes.append("i32");
+            btypes = btypes.append(ct);
         } else if (esc && ct.len() > 0 && util.index_of_str(otargets, cn) >= 0
                 && util.index_of_str(dvars, cn) >= 0 && util.index_of_str(boxed, cn) < 0) {
             boxed = boxed.append(cn);

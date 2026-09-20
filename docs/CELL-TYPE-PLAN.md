@@ -181,6 +181,18 @@ The **slot's** RC depends on `T`:
 reference-typed-but-cyclic `T` would need a cycle collector, which is
 exactly what we're refusing to build.)
 
+### The capture box (self-host)
+
+A mutable closure capture is a `Cell[T]` the self-host builds itself
+(`capturebox`, `$cell$x`): the creating frame binds `cell_new(init)` and
+owns that unit until its scope ends, the closure's environment holds a
+second unit taken when the closure is built and released with it, and every
+write on either side is `set`, which releases the element the slot held and
+stores the supplied one. The element is a scalar when the closure writes it
+(E049) and any capturable type when only the creator does; E057 does not
+apply, since the box is not a `cell_new` the user wrote and E049 already
+closes the cycle it guards against.
+
 ## 5. How this unblocks §3a
 
 With `Cell[T]` in place, the array-as-cell idioms migrate to a real type:
