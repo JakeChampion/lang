@@ -200,9 +200,19 @@ function concrete_struct(s: typeinfo.TypeStruct): boolean {
 
 function concrete_named(t: typeinfo.Type): boolean {
     if let typeinfo.TypeStruct(s) = t { return concrete_struct(s); }
-    if let typeinfo.TypeUnion(u) = t { return u.name.len() > 0 && concrete_payloads(u.args); }
+    if let typeinfo.TypeUnion(u) = t { return concrete_union(u); }
     if let typeinfo.TypeFunc(f) = t { return f.params_known && concrete_list(f.param_types) && concrete(f.ret_type, true); }
     return false;
+}
+
+// The checker types a constructor call by its family alone — `Some(1)` is
+// `Option`, not `Option[i32]` — so a builtin generic missing its payloads
+// names a family, not a type.
+function concrete_union(u: typeinfo.TypeUnion): boolean {
+    if (u.name.len() == 0) { return false; }
+    if (u.name == "Option" && u.args.len() != 1) { return false; }
+    if (u.name == "Result" && u.args.len() != 2) { return false; }
+    return concrete_payloads(u.args);
 }
 
 function concrete_list(ts: typeinfo.Type[]): boolean {

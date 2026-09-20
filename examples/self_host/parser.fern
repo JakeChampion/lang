@@ -2756,6 +2756,13 @@ function if_expr_rt(e: ast.Expr): string {
             if (irt_is_cmp(b.op)) { return "boolean"; }
             return wider_rt(if_expr_rt(b.left), if_expr_rt(b.right));
         },
+        // `!x` is a boolean whatever x is, a cast names its target, and a
+        // negation has its operand's width — the same reading mono_infer gives.
+        ast.ExprUnary(u) => {
+            if (u.op == "!") { return "boolean"; }
+            if (is_cast_op(u.op)) { return slice_unchecked(u.op, 3, u.op.len()) + ""; }
+            return if_expr_rt(u.operand);
+        },
         _ => { return "i32"; }
     }
 }
@@ -16080,12 +16087,12 @@ function stamp_lambda_ret(e: ast.Expr, fn_ret: string): ast.Expr {
 // never revisits the lambda, so nothing downstream recovers the width and the
 // module bails off the IR path.
 //
-// A 64-bit annotation on the binding is the authority the guess lacks, and
-// outranks it the same way stamp_lambda_ret's does. Only a WIDENING is applied:
-// the IIFE's value is an 8-byte slot either way, so the tag only has to stop
-// contradicting the body, and a non-64-bit annotation is left to the guess
-// rather than overwritten with a spelling (`Option[i32]`, a struct name) the
-// tag was never meant to carry.
+// The binding's annotation is the authority the guess lacks, and outranks it
+// the same way stamp_lambda_ret's does: the block's value IS the binding's, so
+// the checker holds the arms to that type either way, and a `None` arm or a
+// struct literal is as unguessable as a call. A coarse fn tag is left alone —
+// its signature lives in sidecars the lambda has none of — and so is a
+// spelling naming a type variable, which the instantiation substitutes later.
 function stamp_value_block_ret(e: ast.Expr, decl_ty: string): ast.Expr {
     // `var xs: i64[] = [ <value block>, … ]` — the annotation names the ELEMENT
     // type, so each element gets the same treatment the scalar binding gets.
@@ -16108,14 +16115,13 @@ function stamp_value_block_ret(e: ast.Expr, decl_ty: string): ast.Expr {
             _ => { return e; }
         }
     }
-    if (decl_ty != "i64" && decl_ty != "u64") { return e; }
+    if (decl_ty.len() == 0 || is_coarse_fn_tag(decl_ty) || collect_tvars(decl_ty, []).len() > 0) { return e; }
     match (e) {
         ast.ExprCall(c) => {
             if (c.args.len() != 0) { return e; }
             match (c.callee) {
                 ast.ExprLambda(lm) => {
-                    if (lm.params.len() != 0) { return e; }
-                    if (lm.ret_type == "i64" || lm.ret_type == "u64") { return e; }
+                    if (lm.params.len() != 0 || lm.ret_type == decl_ty) { return e; }
                     var nl: ast.Expr = ast.ExprLambda { ...lm, ret_type: decl_ty };
                     return ast.ExprCall { callee: nl, args: c.args, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
                 },

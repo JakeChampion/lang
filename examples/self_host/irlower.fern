@@ -73312,6 +73312,26 @@ function lift_expr_walk(e: ast.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
 // bare lambda returns, so this fires on none of them and leaves the self-compile
 // byte-identical.
 struct DesugarRet { body: ast.Stmt[], counter: i32 }
+
+// RetSig is a declaration's return signature as the parser spells it: the
+// coarse tag plus the sidecars a callable result carries. It is what the
+// `$lamret$N` slot is declared as, so the checker types the slot the way it
+// types a `var f: (P) => R` local, and the lambda bound to it gets the
+// result type the signature names when it spells none of its own.
+struct RetSig { tag: string, fn_ret: string, fn_ptys: string }
+
+function ret_sig_of(tag: string, fn_ret: string, fn_ptys: string): RetSig {
+    if (!parser.is_coarse_fn_tag(tag)) { return RetSig { tag: "", fn_ret: "", fn_ptys: "" }; }
+    return RetSig { tag: tag, fn_ret: fn_ret, fn_ptys: fn_ptys };
+}
+
+function lamret_slot(rn: string, value: ast.Expr, sig: RetSig, line: i32, col: i32): ast.Stmt {
+    var init: ast.Expr = value;
+    if let ast.ExprLambda(lm) = value {
+        if (lm.ret_type.len() == 0 && sig.fn_ret.len() > 0 && !parser.is_coarse_fn_tag(sig.fn_ret)) { init = ast.ExprLambda { ...lm, ret_type: sig.fn_ret }; }
+    }
+    return ast.StmtVar { name: rn, type_name: sig.tag, init: init, line: line, col: col, is_str: false, fn_ret: sig.fn_ret, fn_param_types: sig.fn_ptys };
+}
 // contract_spelling is how returned_lambda_contract names one type. It goes
 // through fn_tag_spelling because a parameter or result that is ITSELF callable
 // carries the same coarse tag with its own sidecars beside it. Recording the
@@ -73384,7 +73404,7 @@ function returned_lambda_contract(body: ast.Stmt[]): (string, string) {
     return ("", "");
 }
 
-function desugar_lambda_returns(body: ast.Stmt[], counter: i32): DesugarRet {
+function desugar_lambda_returns(body: ast.Stmt[], counter: i32, sig: RetSig): DesugarRet {
     var out: ast.Stmt[] = [];
     var c: i32 = counter;
     var i: i32 = 0;
@@ -73396,29 +73416,29 @@ function desugar_lambda_returns(body: ast.Stmt[], counter: i32): DesugarRet {
                 if (islam) {
                     var rn: string = "$lamret$" + util.i32_to_string(c);
                     c = c + 1;
-                    out = out.append(ast.StmtVar { name: rn, type_name: "", init: r.value, line: r.line, col: r.col, is_str: false, fn_ret: "", fn_param_types: "" });
+                    out = out.append(lamret_slot(rn, r.value, sig, r.line, r.col));
                     out = out.append(ast.StmtReturn { value: ast.ExprIdent { name: rn, line: r.line, col: r.col, ty: "" }, line: r.line, col: r.col });
                 } else {
                     out = out.append(body[i]);
                 }
             },
             ast.StmtIf(f) => {
-                var td: DesugarRet = desugar_lambda_returns(f.then_body, c); c = td.counter;
-                var ed: DesugarRet = desugar_lambda_returns(f.else_body, c); c = ed.counter;
+                var td: DesugarRet = desugar_lambda_returns(f.then_body, c, sig); c = td.counter;
+                var ed: DesugarRet = desugar_lambda_returns(f.else_body, c, sig); c = ed.counter;
                 out = out.append(ast.StmtIf { ...f, cond: f.cond, then_body: td.body, else_body: ed.body });
             },
             ast.StmtWhile(w) => {
-                var wd: DesugarRet = desugar_lambda_returns(w.body, c); c = wd.counter;
+                var wd: DesugarRet = desugar_lambda_returns(w.body, c, sig); c = wd.counter;
                 out = out.append(ast.StmtWhile { cond: w.cond, body: wd.body, label: w.label, line: 0, is_loop: w.is_loop });
             },
             ast.StmtFor(fo) => {
-                var fod: DesugarRet = desugar_lambda_returns(fo.body, c); c = fod.counter;
+                var fod: DesugarRet = desugar_lambda_returns(fo.body, c, sig); c = fod.counter;
                 out = out.append(ast.StmtFor { var_name: fo.var_name, iter: fo.iter, body: fod.body, label: fo.label, line: 0 });
             },
             ast.StmtMatch(m) => {
                 var narms: ast.MatchArm[] = [];
                 for arm in m.arms {
-                    var ad: DesugarRet = desugar_lambda_returns(arm.body, c); c = ad.counter;
+                    var ad: DesugarRet = desugar_lambda_returns(arm.body, c, sig); c = ad.counter;
                     narms = narms.append(ast.MatchArm { pattern: arm.pattern, body: ad.body, line: arm.line, col: arm.col, guard: arm.guard, has_guard: arm.has_guard, alt_cont: false });
                 }
                 out = out.append(ast.StmtMatch { ...m, scrutinee: m.scrutinee, arms: narms });
@@ -73440,7 +73460,7 @@ function desugar_lambda_returns(body: ast.Stmt[], counter: i32): DesugarRet {
 // over the source functions cannot have seen — see unwrap_sole_iife_return, its
 // only caller. Returns `body` unchanged when nothing is rewritten, so an
 // unaffected function serializes byte-identically.
-function desugar_nontail_lambda_returns(body: ast.Stmt[]): ast.Stmt[] {
+function desugar_nontail_lambda_returns(body: ast.Stmt[], sig: RetSig): ast.Stmt[] {
     var n: i32 = body.len();
     if (n == 0) { return body; }
     var tail_is_lam_ret: boolean = false;
@@ -73458,7 +73478,7 @@ function desugar_nontail_lambda_returns(body: ast.Stmt[]): ast.Stmt[] {
     var head: ast.Stmt[] = [];
     var i: i32 = 0;
     while (i < upto) { head = head.append(body[i]); i = i + 1; }
-    var hd: DesugarRet = desugar_lambda_returns(head, 0);
+    var hd: DesugarRet = desugar_lambda_returns(head, 0, sig);
     if (hd.counter == 0) { return body; }
     var nb: ast.Stmt[] = hd.body;
     if (tail_is_lam_ret) { nb = nb.append(body[n - 1]); }
@@ -73771,7 +73791,7 @@ function try_lift_binding(body: ast.Stmt[], idx: i32, fname: string, lam: ast.Ex
     var lname: string = "__lam_" + util.i32_to_string(acc.counter);
     var notp: string[] = [];
     var lbody: ast.Stmt[] = lam.body;
-    if (lam.origin == parser.ORIGIN_NESTED_FN) { lbody = desugar_lambda_returns(lbody, 0).body; }
+    if (lam.origin == parser.ORIGIN_NESTED_FN) { lbody = desugar_lambda_returns(lbody, 0, ret_sig_of(lam.ret_type, lam.ret_fn_ret, lam.ret_fn_param_types)).body; }
     var newfn: parser.FuncDecl = parser.FuncDecl { name: lname, receiver_name: "", receiver_type: "", type_params: notp, params: lparams, ret_type: lam.ret_type, body: lbody, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false };
     var capargs: ast.Expr[] = [];
     var ca: i32 = 0;
@@ -75893,7 +75913,7 @@ function hoist_value_iife(lam: ast.ExprLambda, fd: parser.FuncDecl, funcs: parse
     // instead, one per arm. The lifted `__lam_N` / `$cloN` bodies drained onto
     // the worklist do NOT get this (#5281), which is why it is applied here
     // rather than at the drain.
-    var dlr: DesugarRet = desugar_lambda_returns(lam.body, 0);
+    var dlr: DesugarRet = desugar_lambda_returns(lam.body, 0, ret_sig_of(lam.ret_type, lam.ret_fn_ret, lam.ret_fn_param_types));
     // e_lambda_origin gives a synthesised IIFE an empty sidecar pair, so for an
     // if/match-expression arm the contract has to come from the arm itself.
     var fnret: string = lam.ret_fn_ret;
@@ -77864,7 +77884,7 @@ function unwrap_sole_iife_return(fd: parser.FuncDecl): parser.FuncDecl {
                             // the tail return (desugar_nontail_lambda_returns).
                             // Without it an arm lambda asked for a `<fd>$clo`
                             // nothing built.
-                            return parser.FuncDecl { ...fd, body: desugar_nontail_lambda_returns(lam.body) };
+                            return parser.FuncDecl { ...fd, body: desugar_nontail_lambda_returns(lam.body, ret_sig_of(lam.ret_type, lam.ret_fn_ret, lam.ret_fn_param_types)) };
                         },
                         _ => { return fd; }
                     }
@@ -77984,7 +78004,7 @@ pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]):
         // Resolve each deferred read at its registration site before cleanup
         // expansion moves it across lexical scopes and shadowing declarations.
         wf = parser.lower_defers_func(resolved.func);
-        var wdlr: DesugarRet = desugar_lambda_returns(wf.body, 0);
+        var wdlr: DesugarRet = desugar_lambda_returns(wf.body, 0, ret_sig_of(wf.ret_type, wf.ret_fn_ret, wf.ret_fn_param_types));
         if (wdlr.counter != 0) {
             wf = parser.FuncDecl { ...wf, body: wdlr.body };
         }
