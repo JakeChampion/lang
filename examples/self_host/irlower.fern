@@ -75228,17 +75228,20 @@ function lift_arg_is_passthrough_fn_value(arg: ast.Expr, mfuncs: MFuncs): boolea
 
 // array_elem_is_env_boxed reports whether an ARRAY-literal element already
 // arrives as an env box, which puts the whole literal on the env-first dispatch
-// ABI (#5071): a capturing lambda (box [funcval, caps…]); a value-position
-// `if`/`match`, whose hoist yields a box for either kind of arm lambda (#6256);
-// and a generic passthrough call handing either straight back (`id(<lambda>)`,
+// ABI (#5071): any lambda (a capturing one boxes as [funcval, caps…], a
+// non-capturing one as a `$wrap` trampoline, since a bare fn pointer is not a
+// value the semantic source can produce); a value-position `if`/`match`,
+// whose hoist yields a box for either kind of arm lambda (#6256); and a
+// generic passthrough call handing either straight back (`id(<lambda>)`,
 // `pick(c, <iife>, …)`), whose boxing at the erased-generic parameter is
 // unconditional.
 //
-// A NON-capturing lambda element on its own is absent by design: an array of
-// only those keeps the bare fn-pointer representation and its plain dispatch.
+// This is the one place that answers the question, and `ilc_expr_at`'s
+// ExprArray arm boxes exactly what it says: an arm classified as a plain
+// fn-pointer array whose elements are boxes is a SIGSEGV at the call.
 function array_elem_is_env_boxed(e: ast.Expr, fd: parser.FuncDecl, structs: StructTab, mfuncs: MFuncs): boolean {
     match (e) {
-        ast.ExprLambda(lam) => { return lambda_captures(lam, fd).len() > 0; },
+        ast.ExprLambda(_) => { return true; },
         ast.ExprCall(c) => {
             match (c.callee) {
                 ast.ExprLambda(il) => {
@@ -76131,9 +76134,10 @@ function ilc_expr_at(e: ast.Expr, acc: InlineCloAcc, fd: parser.FuncDecl, gfns: 
             // try_fn_field_value (capturing → [funcval, caps…]; no-capture → a
             // `$wrap` env-taking trampoline → [funcval]) so all elements are
             // env boxes — the same uniform-env-box treatment the tuple /
-            // struct-field cases already apply. An all-non-capturing lambda
-            // array (no capturing element) keeps the bare fn-pointer + plain-
-            // dispatch representation unchanged.
+            // struct-field cases already apply. Every lambda element counts,
+            // capturing or not: a bare fn pointer is not a value the semantic
+            // source can produce (`semsource.ident` refuses the address), so
+            // an all-non-capturing lambda array boxes too.
             // An ELEMENT that is a value-position if/match counts too (#6256):
             // its arms hold the lambdas, and hoist_value_iife turns any such
             // IIFE into a call yielding a box — capturing or not — so the array
@@ -76144,12 +76148,6 @@ function ilc_expr_at(e: ast.Expr, acc: InlineCloAcc, fd: parser.FuncDecl, gfns: 
             var sc: i32 = 0;
             while (sc < arr.elements.len()) {
                 if (array_elem_is_env_boxed(arr.elements[sc], fd, structs, mfuncs)) { has_cap_lam = true; }
-                // Any lambda element at all, not just a capturing one. A bare
-                // fn pointer is not a value the semantic source can produce --
-                // `semsource.ident` refuses the address -- so an
-                // all-non-capturing array used to put its whole function on
-                // the AST lowering.
-                match (arr.elements[sc]) { ast.ExprLambda(_) => { has_cap_lam = true; }, _ => {} }
                 sc = sc + 1;
             }
             // Bound names in this function's scope (params + body binders): a
