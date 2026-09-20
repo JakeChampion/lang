@@ -961,15 +961,21 @@ function main(): i32 {
     var u32Imm = ssasem.Func { ...u32Text, graph: ssa.SFunc { ...wideK,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(1, 0, [], 7)], term: ret(0) }] } };
     if (ssaunits.plan(u32Imm, []).why != "constant needs its literal text") { return 102; }
-    // A map's box is the raw {keys, vals} pair __fern_map_free_ks frees, with
-    // no reference count in it, so a unit of one is LINEAR: the graph below
-    // returns a borrowed map, which the return supplies by retaining.
+    // A map's box carries a count, so a unit of one is shared like any
+    // box's: the graph below returns a borrowed map, which the return
+    // supplies by retaining it.
     var mapTy: typeinfo.Type = typeinfo.TypeMap { key: strTy, value: i32ty };
     var mapFunc = ssasem.Func { envs: [], graph: g, values: [mapTy], params: [mapTy], result: mapTy,
         records: [], enums: [], calls: [] };
     var mapPlan = ssaunits.plan(mapFunc, [2]);
     if (!mapPlan.ok) { eprint(mapPlan.why); return 137; }
-    if (!refused(ssarc.lower(mapFunc, [2], mapPlan, irlower.struct_tab_empty(), []), "map unit is not shared")) { return 138; }
+    var mapLowered = ssarc.lower(mapFunc, [2], mapPlan, irlower.struct_tab_empty(), []);
+    if (!mapLowered.ok) { eprint(mapLowered.why); return 138; }
+    var sawMapRetain: boolean = false;
+    for o in mapLowered.ops {
+        if (o.str == "__fern_rc_inc") { sawMapRetain = true; }
+    }
+    if (!sawMapRetain) { return 138; }
     // The same graph over an OWNED map moves that unit, and the map is freed
     // by its own helper rather than released by a count.
     var ownMapPlan = ssaunits.plan(mapFunc, [3]);
@@ -1060,12 +1066,17 @@ function main(): i32 {
     if (!intInsertPlan.ok) { eprint(intInsertPlan.why); return 174; }
     var intInsertLowered = ssarc.lower(intInsert, [3, 1, 1], intInsertPlan, irlower.struct_tab_empty(), []);
     if (!intInsertLowered.ok) { eprint(intInsertLowered.why); return 175; }
+    // The insert runs behind the copy-on-write gate: an owned receiver over
+    // scalar columns retains nothing, and the copy arm's releases are of
+    // the snapshots it took.
     var sawIntSet: boolean = false;
+    var sawIntGate: boolean = false;
     for o in intInsertLowered.ops {
         if (o.kind_tag == 125 && o.i32_imm == 1 && (o.width / 2) % 2 == 0) { sawIntSet = true; }
-        if (o.str == "__fern_rc_inc" || o.str == "__fern_rc_dec") { return 176; }
+        if (o.str == "__fern_rc_is_unique") { sawIntGate = true; }
+        if (o.str == "__fern_rc_inc") { return 176; }
     }
-    if (!sawIntSet) { return 177; }
+    if (!sawIntSet || !sawIntGate) { return 177; }
     // The length borrows the map: the op reads it and the owned map is still
     // freed by its own helper on the way out.
     var lenMapGraph = ssa.SFunc { name: "map_len", nparams: 1, nvals: 2, entry: 7, takes_env: false,

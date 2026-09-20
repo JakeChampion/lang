@@ -160,8 +160,8 @@ function walked(t: typeinfo.Type): boolean {
 // sentinel and takes the ordinary path otherwise, which is what makes one
 // release symbol correct on both the register backends and wasm (whose slices
 // copy, so the result is an ordinary counted box).
-// A map is freed whole by one helper rather than released by a count: its box
-// is a raw {keys, vals} pair on the register backends, with no count to read.
+// A map's helper releases one unit of a counted box: a decrement while the
+// box is shared, and the columns and the block for the last unit.
 function release_name(t: typeinfo.Type): string {
     if (ssasem.is_view(t)) { return "__fern_str_view_free"; }
     if (ssasem.is_string(t)) { return "__fern_str_free"; }
@@ -304,6 +304,11 @@ function steal(own r: irlower.LowerResult, f: ssasem.Func, v: i32, unique: i32):
 // behind it, and growing it in place would rewrite what the container still
 // holds. A with has no non-consuming helper to fall back on, so it defers
 // only where the plan admitted the field.
+//
+// A map mutation never defers. Its receiver's retain is what makes a map
+// the frame still reads count as shared, and `unshared_map` then copies:
+// `var n = m.insert(k, v)` leaves `m` as it was, which is the value the
+// checker's E055 promises for every collection operation.
 function deferred_retain(f: ssasem.Func, p: ssaunits.Plan, step: ssaunits.Step, ins: ssa.SInst): boolean {
     if (ins.kind_tag != ssasem.append() && ins.kind_tag != ssasem.with()) { return false; }
     if (p.grows[ins.result] < 0 && (ins.kind_tag == ssasem.with() || ins.args[0] >= f.graph.nparams)) { return false; }
@@ -497,8 +502,8 @@ function has_children(t: typeinfo.Type, f: ssasem.Func): boolean {
         for elem in tup.elements { if (ssasem.reference(elem)) { return true; } }
     }
     if (semtypes.is_cell(t)) { return ssasem.reference(semtypes.cell_elem(t)); }
-    // A map's own release walks its columns, and the uniqueness guard this
-    // answers would read a count its box does not carry.
+    // A map's own release reads the count and walks its columns, so no guard
+    // is emitted around it here.
     if (ssasem.is_map(t)) { return false; }
     if let typeinfo.TypeStruct(_) = t { return fields_have_children(record_fields(t, f)); }
     if let typeinfo.TypeUnion(_) = t {
@@ -1268,26 +1273,10 @@ function types_error(f: ssasem.Func): string {
     return "";
 }
 
-// A map box carries no reference count on the register backends — it is the
-// raw {keys, vals} pair __fern_map_free_ks frees — so a unit of one cannot be
-// shared: every unit the plan supplies has to be a MOVE. A retain would
-// increment a word that is not a count.
-function shared_map_error(f: ssasem.Func, p: ssaunits.Plan): string {
-    for step in p.steps {
-        for supply in step.supplies {
-            if (supply.mode != ssaunits.retain_unit()) { continue; }
-            if (ssasem.is_map(f.values[supply.value])) { return "map unit is not shared"; }
-        }
-    }
-    return "";
-}
-
 function validate(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irlower.StructTab): string {
     var why: string = ssaunits.verify(f, modes, p);
     if (why != "") { return why; }
     why = types_error(f);
-    if (why != "") { return why; }
-    why = shared_map_error(f, p);
     if (why != "") { return why; }
     // Keep this physical vocabulary closed when semantic analysis grows new
     // operations. Verification of a new operation does not implement its ABI.
@@ -1840,6 +1829,7 @@ function instruction(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Pla
     if (ins.kind_tag == ssasem.with()) { r = with_update(r, f, p, ins, defer0); return emit(r, ir.op_store_local(ins.result)); }
     if (ssasem.is_cell_op(ins.kind_tag)) { return cell_site(r, f, ins); }
     if (ssasem.is_function_op(ins.kind_tag)) { r = function_site(r, f, ins); return emit(r, ir.op_store_local(ins.result)); }
+    if (ins.kind_tag == ssasem.map_insert() || ins.kind_tag == ssasem.map_delete()) { r = map_mutation(r, f, ins); return emit(r, ir.op_store_local(ins.result)); }
     if (ins.kind_tag == ssasem.arr_join()) { r = join_call(r, ins); return emit(r, ir.op_store_local(ins.result)); }
     if (ins.kind_tag == ssasem.append()) { r = append_push(r, f, p, ins, defer0); return emit(r, ir.op_store_local(ins.result)); }
     if (ins.kind_tag == 9 && (ssasem.saturating(ins.str) || ssasem.checked_arith(ins.str))) { r = overflow_binary(r, f, ins); return emit(r, ir.op_store_local(ins.result)); }
@@ -2199,6 +2189,94 @@ function width_char(t: typeinfo.Type): string {
     if (ssasem.is_wide(t)) { return "l"; }
     if (ssasem.is_float(t)) { return "d"; }
     return "w";
+}
+
+// A consuming map mutation — an insert or a `without` — runs on a box this
+// frame is the only holder of. A map's unit is counted, so the receiver's box
+// may be shared with another binding or frame, and a mutation in place would
+// show through every holder; when it is shared, the frame takes a fresh box
+// with the same entries first, the copy-on-write native's runtime makes.
+// The copy is `map_new` and one insert per entry over plain snapshots of the
+// two columns, supplying each entry's units as the typed insert takes them —
+// a string key's and a counted value's — since the register runtimes retain
+// nothing on an insert. The snapshots hold no units and are released
+// shallow; the shared box loses this frame's unit, which cannot be its last.
+function map_mutation(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
+    var box: i32 = scratch_base(f);
+    r = reserve(r, box + 1);
+    r = unshared_map(r, f, ins.args[0], box);
+    r = emit(r, ir.op_load_local(box));
+    var i: i32 = 1;
+    while (i < ins.args.len()) {
+        r = emit(r, ir.op_load_local(ins.args[i]));
+        i = i + 1;
+    }
+    return map_op(r, ins, f);
+}
+
+function unshared_map(own r: irlower.LowerResult, f: ssasem.Func, slot: i32, box: i32): irlower.LowerResult {
+    var t: typeinfo.Type = f.values[slot];
+    var kkind: i32 = map_key_kind(t);
+    var vkind: i32 = map_value_kind(t);
+    var keys: i32 = box + 1;
+    var vals: i32 = box + 2;
+    var index: i32 = box + 3;
+    var key: i32 = box + 4;
+    var value: i32 = box + 5;
+    r = reserve(r, value + 1);
+    r = emit(r, ir.op_load_local(slot));
+    r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
+    r = emit(r, ir.op_if(0));
+    r = emit(r, ir.op_load_local(slot));
+    r = emit(r, ir.op_store_local(box));
+    r = emit(r, ir.op_else());
+    r = emit(r, ir.op_load_local(slot));
+    r = emit(r, ir.op_map_len());
+    r = emit(r, ir.op_map_new(kkind, ""));
+    r = emit(r, ir.op_store_local(box));
+    r = emit(r, ir.op_load_local(slot));
+    r = emit(r, ir.op_map_keys(0));
+    r = emit(r, ir.op_store_local(keys));
+    r = emit(r, ir.op_load_local(slot));
+    r = emit(r, ir.op_map_values(0, 0));
+    r = emit(r, ir.op_store_local(vals));
+    r = emit(r, ir.op_const_i32(0));
+    r = emit(r, ir.op_store_local(index));
+    r = emit(r, ir.op_block(0));
+    r = emit(r, ir.op_loop(0));
+    r = emit(r, ir.op_load_local(index));
+    r = emit(r, ir.op_load_local(keys));
+    r = emit(r, ir.op_arr_len());
+    r = emit(r, ir.op_bin("ge_s", 0, false));
+    r = emit(r, ir.op_brif(1));
+    r = emit(r, ir.op_load_local(keys));
+    r = emit(r, ir.op_load_local(index));
+    r = emit(r, ir.op_arr_get_nc(32));
+    r = emit(r, ir.op_store_local(key));
+    r = emit(r, ir.op_load_local(vals));
+    r = emit(r, ir.op_load_local(index));
+    r = emit(r, ir.op_arr_get_nc(32));
+    r = emit(r, ir.op_store_local(value));
+    if (kkind == 0) { r = helper(r, key, "__fern_rc_inc"); }
+    if (vkind != 0) { r = helper(r, value, "__fern_rc_inc"); }
+    r = emit(r, ir.op_load_local(box));
+    r = emit(r, ir.op_load_local(key));
+    r = emit(r, ir.op_load_local(value));
+    // map_op reads the receiver's type off args[0] and nothing else of the
+    // instruction, so the result slot is a placeholder.
+    r = map_op(r, ssa.SInst { kind_tag: ssasem.map_insert(), result: 0 - 1, args: [slot, key, value], imm: 0, str: "" }, f);
+    r = emit(r, ir.op_store_local(box));
+    r = emit(r, ir.op_load_local(index));
+    r = emit(r, ir.op_const_i32(1));
+    r = emit(r, ir.op_bin("add", 0, false));
+    r = emit(r, ir.op_store_local(index));
+    r = emit(r, ir.op_br(0));
+    r = emit(r, ir.op_end());
+    r = emit(r, ir.op_end());
+    r = helper(r, keys, "__fern_rc_dec");
+    r = helper(r, vals, "__fern_rc_dec");
+    r = helper(r, slot, "__fern_rc_dec");
+    return emit(r, ir.op_end());
 }
 
 function call_site(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
