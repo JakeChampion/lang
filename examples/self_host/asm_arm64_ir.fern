@@ -945,6 +945,40 @@ function ssa_src(reg_of: i32[], v: i32, scratch: string): string {
     if (reg_of[v] >= 0) { return ssa_reg(reg_of[v]); }
     return scratch;
 }
+// ssa_read brings a spilled operand into `scratch`, so ssa_src names where it
+// is; a register-homed operand is read from its home and needs nothing.
+function ssa_read(reg_of: i32[], v: i32, scratch: string, s: asmcore.EmitState): asmcore.EmitState {
+    if (reg_of[v] >= 0) { return s; }
+    return ssa_load(reg_of, v, scratch, s);
+}
+// The integer ops with a three-operand form, which compute into the result's
+// home straight from the operands' homes; division, remainder and the shifts
+// keep the scratch path for their extra instructions.
+function ssa_direct_bin(tag: i32): boolean {
+    return tag == 21 || tag == 22 || tag == 23 || tag == 28 || tag == 29 || tag == 30 || ircore.is_int_cmp_kind(tag);
+}
+// ssa_bin3_asm is one three-operand integer op: `op d, a, b`, or the compare
+// of a and b with the condition set into d.
+function ssa_bin3_asm(tag: i32, d: string, a: string, b: string): string {
+    if (tag == 21) { return "    add " + d + ", " + a + ", " + b + "\n"; }
+    if (tag == 22) { return "    sub " + d + ", " + a + ", " + b + "\n"; }
+    if (tag == 23) { return "    mul " + d + ", " + a + ", " + b + "\n"; }
+    if (tag == 28) { return "    and " + d + ", " + a + ", " + b + "\n"; }
+    if (tag == 29) { return "    orr " + d + ", " + a + ", " + b + "\n"; }
+    if (tag == 30) { return "    eor " + d + ", " + a + ", " + b + "\n"; }
+    return "    cmp " + a + ", " + b + "\n    cset " + d + ", " + ir_cmp_cond(tag, true) + "\n";
+}
+// ssa_bin_in_place emits a three-operand integer op into the result's home,
+// each operand read from its own; a spilled operand is read through x4 or x5.
+function ssa_bin_in_place(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+    var a: i32 = ins.args[0];
+    var b: i32 = ins.args[1];
+    var dh: string = ssa_dst(reg_of, ins.result);
+    s = ssa_read(reg_of, a, "x4", s);
+    s = ssa_read(reg_of, b, "x5", s);
+    s = s.write(ssa_bin3_asm(ir.kind_id(ins.str), dh, ssa_src(reg_of, a, "x4"), ssa_src(reg_of, b, "x5")));
+    return ssa_store(reg_of, ins.result, dh, s);
+}
 // ssa_wreg is the 32-bit name of an x register.
 function ssa_wreg(x: string): string {
     match (x[1:]) { Some(n) => { return "w" + n; }, None => { return "w0"; } }
@@ -988,16 +1022,6 @@ function ssa_unsupported(f: ssa.SFunc): string {
         if (blk.term.kind_tag > 3) { return "ssa terminator " + ssa.term_name(blk.term.kind_tag); }
     }
     return "";
-}
-
-function ssa_max_phis(f: ssa.SFunc): i32 {
-    var most: i32 = 0;
-    for blk in f.blocks {
-        var n: i32 = 0;
-        for ins in blk.insts { if (ins.kind_tag == 8) { n = n + 1; } }
-        if (n > most) { most = n; }
-    }
-    return most;
 }
 
 // ssa_block_index maps a block id to its position in f.blocks (-1 for an id
@@ -1385,10 +1409,10 @@ function ssa_str_view(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.E
     return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
 }
 
-// SsaFrame is the frame below the values: the phi stage words after the
-// values, then three words per frame-resident string view. ssa_view_off is
-// the offset of a view's lowest word, the base the view kernel writes at.
-struct SsaFrame { nspill: i32, nstage: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave: i32, epilogue: string }
+// SsaFrame is the frame below the values: three words per frame-resident
+// string view after the values. ssa_view_off is the offset of a view's lowest
+// word, the base the view kernel writes at.
+struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave: i32, epilogue: string }
 
 // SsaFuse is a block's compare consumed as flags by its branch: `n` trailing
 // instructions (the compare, and the `not` between it and the branch when
@@ -1422,7 +1446,7 @@ function ssa_fuse(fr: SsaFrame, blk: ssa.SBlock): SsaFuse {
 }
 
 function ssa_view_off(fr: SsaFrame, v: i32): i32 {
-    var first: i32 = fr.nspill + fr.nstage + 3 * fr.views[v];
+    var first: i32 = fr.nspill + 3 * fr.views[v];
     return 0 - 8 * (first + 3) - fr.nsave;
 }
 
@@ -1537,6 +1561,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
     else if (k == 3) { s = ssa_const_reg(ins.str, d, s); }
     else if (k == 4) { s = s.write("    ldr " + d + ", =" + util.i64_to_string(util.parse_f64_bits(ins.str)) + "\n"); }
     else if (k == 7) { s = ssa_load(reg_of, ins.args[0], d, s); }
+    else if (k == 9 && ssa_direct_bin(ir.kind_id(ins.str))) { return ssa_bin_in_place(ins, reg_of, s); }
     else if (k == 9) {
         d = "x4";
         s = ssa_load(reg_of, ins.args[0], "x4", s);
@@ -1552,9 +1577,8 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
 }
 
 // ssa_phi_moves emits the copies of the edge from block `pred` into block
-// `succ`: each of succ's phis takes its operand for pred. With more than one
-// phi the sources are staged in the frame first, so two phis that swap a pair
-// of values read both before writing either.
+// `succ`: each of succ's phis takes its operand for pred. A phi whose operand
+// already sits in its home, or which nothing reads, moves nothing.
 function ssa_phi_moves(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], pred: i32, succ: i32, s: asmcore.EmitState): asmcore.EmitState {
     s = ssa_x0_forget(s);
     var ti: i32 = ssa_block_at(fr, succ);
@@ -1564,25 +1588,68 @@ function ssa_phi_moves(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], pred: i32, suc
     var srcs: i32[] = [];
     var dsts: i32[] = [];
     for ins in tb.insts {
-        if (ins.kind_tag == 8) { srcs = srcs.append(ins.args[sl]); dsts = dsts.append(ins.result); }
+        if (ins.kind_tag == 8 && reg_of[ins.result] != 0 - 1 && reg_of[ins.args[sl]] != reg_of[ins.result]) {
+            srcs = srcs.append(ins.args[sl]);
+            dsts = dsts.append(ins.result);
+        }
     }
-    if (srcs.len() == 1) {
-        s = ssa_load(reg_of, srcs[0], "x4", s);
-        return ssa_store(reg_of, dsts[0], "x4", s);
-    }
-    var k: i32 = 0;
-    while (k < srcs.len()) {
-        s = ssa_load(reg_of, srcs[k], "x4", s);
-        s = ssa_fr_str(s, "x4", ssa_slot_off(fr.nspill + k), 0);
-        k = k + 1;
-    }
-    k = 0;
-    while (k < srcs.len()) {
-        s = ssa_fr_ldr(s, "x4", ssa_slot_off(fr.nspill + k), 0);
-        s = ssa_store(reg_of, dsts[k], "x4", s);
-        k = k + 1;
+    return ssa_parallel_moves(reg_of, srcs, dsts, s);
+}
+
+// The moves of one edge are parallel: every source is read before any
+// destination it names is written. A move whose destination no pending move
+// still reads goes first, in one instruction between two homes, or two through
+// x4 between two slots. When every pending destination is still read, the
+// moves form a cycle: one source location is parked in x4 and every move
+// reading it takes it from there, which frees that location to be written.
+function ssa_parallel_moves(reg_of: i32[], srcs: i32[], dsts: i32[], s: asmcore.EmitState): asmcore.EmitState {
+    var done: boolean[] = [];
+    for src in srcs { done = done.append(false); }
+    // The location parked in the scratch, when `parking`; a location is a
+    // register number or a spill code, so the flag says whether one is held.
+    var parking: boolean = false;
+    var parked: i32 = 0;
+    var left: i32 = srcs.len();
+    while (left > 0) {
+        var progressed: boolean = false;
+        var i: i32 = 0;
+        while (i < srcs.len()) {
+            if (!done[i] && !ssa_move_blocked(reg_of, srcs, dsts, done, i, parking, parked)) {
+                if (parking && reg_of[srcs[i]] == parked) { s = ssa_store(reg_of, dsts[i], "x4", s); }
+                else { s = ssa_move(reg_of, srcs[i], dsts[i], s); }
+                done = done.with(i, true);
+                left = left - 1;
+                progressed = true;
+            }
+            i = i + 1;
+        }
+        if (!progressed) {
+            var j: i32 = 0;
+            while (done[j]) { j = j + 1; }
+            s = ssa_load(reg_of, srcs[j], "x4", s);
+            parking = true;
+            parked = reg_of[srcs[j]];
+        }
     }
     return s;
+}
+// A move is blocked while another pending move still reads its destination's
+// location from that location rather than from the parked copy.
+function ssa_move_blocked(reg_of: i32[], srcs: i32[], dsts: i32[], done: boolean[], i: i32, parking: boolean, parked: i32): boolean {
+    var k: i32 = 0;
+    while (k < srcs.len()) {
+        if (k != i && !done[k] && reg_of[srcs[k]] == reg_of[dsts[i]] && !(parking && reg_of[srcs[k]] == parked)) { return true; }
+        k = k + 1;
+    }
+    return false;
+}
+// ssa_move copies one value between homes: one instruction when either side
+// is a register, two through x4 between two slots.
+function ssa_move(reg_of: i32[], src: i32, dst: i32, s: asmcore.EmitState): asmcore.EmitState {
+    if (reg_of[src] >= 0) { return ssa_store(reg_of, dst, ssa_reg(reg_of[src]), s); }
+    if (reg_of[dst] >= 0) { return ssa_load(reg_of, src, ssa_reg(reg_of[dst]), s); }
+    s = ssa_load(reg_of, src, "x4", s);
+    return ssa_store(reg_of, dst, "x4", s);
 }
 
 function ssa_epilogue(): string {
@@ -1676,8 +1743,8 @@ function emit_ssa_function_arm64(lifted: ssa.SFunc, label_name: string, r: irlow
     var save: i32 = ssa_save_bytes(saved);
     s = s.write(ssa_save_asm(saved));
     var views: i32[] = ssa_view_slots(f);
-    var fr: SsaFrame = SsaFrame { nspill: ssa.spill_count(reg_of), nstage: ssa_max_phis(f), views: views, blk_pos: ssa_block_index(f), uses: ssa.use_counts(f), nsave: save, epilogue: ssa_epilogue_for(saved) };
-    var frame: i32 = (fr.nspill + fr.nstage + 3 * ssa_view_count(views)) * 8;
+    var fr: SsaFrame = SsaFrame { nspill: ssa.spill_count(reg_of), views: views, blk_pos: ssa_block_index(f), uses: ssa.use_counts(f), nsave: save, epilogue: ssa_epilogue_for(saved) };
+    var frame: i32 = (fr.nspill + 3 * ssa_view_count(views)) * 8;
     if (frame % 16 != 0) { frame = frame + 8; }
     if (frame > 0) { s = fr_sub_imm(s, "sp", "sp", frame); }
     s = asmcore.EmitState { ...s, ssa_frame: frame + save, ssa_save: save };
@@ -1697,9 +1764,9 @@ function emit_ssa_function_arm64(lifted: ssa.SFunc, label_name: string, r: irlow
             ii = ii + 1;
         }
         if (fu.n > 0) {
-    s = ssa_load(reg_of, fu.a, "x4", s);
-        s = ssa_load(reg_of, fu.b, "x5", s);
-        s = s.write("    cmp x4, x5\n");
+            s = ssa_read(reg_of, fu.a, "x4", s);
+            s = ssa_read(reg_of, fu.b, "x5", s);
+            s = s.write("    cmp " + ssa_src(reg_of, fu.a, "x4") + ", " + ssa_src(reg_of, fu.b, "x5") + "\n");
         }
         s = ssa_term(f, fr, blk, reg_of, lp, next, fu, s);
         bi = bi + 1;

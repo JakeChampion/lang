@@ -134,11 +134,18 @@ Values live in seven caller-saved registers or in frame slots numbered over
 the spilled values, addressed from sp on arm64; a value live across a call
 is spilled, so a loop that calls out keeps its loop-carried values in
 memory. An instruction the emitter selects itself writes into its result's
-home and reads operands from theirs (`ssa_dst`, `ssa_src`); one selected
-from the table shared with the stack machine goes through x0/x1
-(`%rax`/`%rcx`), as does every call result. A compare read only by its
-block's branch is consumed as flags. Two or more phis on one edge stage
-through the frame. The optimiser's passes do not run. On the compiler
+home and reads operands from theirs (`ssa_dst`, `ssa_src`): the integer
+add, subtract, multiply, and, or, xor and the compares compute into the
+home with only a spilled operand passing through a scratch
+(`ssa_bin_in_place`; on x86-64 the operands swap, or a comparison flips,
+when the right one lives in the destination), and a compare read only by
+its block's branch is consumed as flags straight from the homes. Division,
+the shifts and the table shared with the stack machine still go through
+x0/x1 (`%rax`/`%rcx`), as does every call result. The phis of one edge are
+parallel moves between homes (`ssa_parallel_moves`): one instruction per
+move, a cycle broken by parking one location in the scratch, and no move at
+all for a phi whose operand already sits in its home. The optimiser's
+passes do not run. On the compiler
 compiling itself the SSA text is 1.12x the flat text (4.71M against 4.21M
 instructions, arm64); the numbers of each step are in
 `docs/ssa-log/2026-09-17-selfhost-ssa-backend-whole-compiler.md`. What

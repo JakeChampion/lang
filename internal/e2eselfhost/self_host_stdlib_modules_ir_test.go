@@ -127,8 +127,8 @@ function main(): i32 {
 }`},
 	// std/ndarray (#9734): a generic struct holding a `T[]` and two `i32[]`,
 	// whose receiver methods rebuild it with the storage shared. Each row is
-	// a metadata operation read back against the flat construction, then a
-	// copy through `to_flat`.
+	// a metadata operation read back against the flat construction, a
+	// copy through `to_flat`, then the elementwise and axis combinators.
 	{"ndarray", `import "std/ndarray";
 function main(): i32 {
     var xs: i32[] = [];
@@ -143,6 +143,9 @@ function main(): i32 {
     if (t.reshape([12]).get([1]) != 4) { return 5; }
     var f: i32[] = t.to_flat();
     if (f.len() != 12 || f[1] != 4 || t.is_row_major() || !a.is_packed()) { return 6; }
+    if (t.map((x: i32): i32 => x * 2).get([1, 2]) != 18) { return 7; }
+    if (a.reduce_axis(1, 0, (acc: i32, x: i32): i32 => acc + x).get([2]) != 38) { return 8; }
+    if (a.scan_axis(0, 0, (acc: i32, x: i32): i32 => acc + x).get([2, 1]) != 15) { return 9; }
     return 42;
 }`},
 	{"pmap", `import "std/pmap";

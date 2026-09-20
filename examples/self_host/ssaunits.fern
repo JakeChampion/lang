@@ -2,6 +2,7 @@
 import "./ssa";
 import "./ssasem";
 import "./ssadeps";
+import "./ssalive";
 import "./semrecords";
 import "./semtypes";
 import "./typeinfo";
@@ -37,7 +38,9 @@ pub struct Step { block: i32, point: i32, target: i32, supplies: Supply[], drops
 // `grows` names, at an append's or a with's result, the record value whose
 // field buffer the operation may grow or write IN PLACE (field_grow_root), or
 // -1; `grow_fields` holds that field's index at the same position.
-pub struct Plan { ok: boolean, why: string, steps: Step[], owned: boolean[], grows: i32[], grow_fields: i32[], takes: i32[] }
+// `held` marks an element read that takes a unit of its own at the read
+// (held_elements); the physical lowering retains what it read.
+pub struct Plan { ok: boolean, why: string, steps: Step[], owned: boolean[], grows: i32[], grow_fields: i32[], takes: i32[], held: boolean[] }
 struct Ledger { ok: boolean, why: string, bits: boolean[] }
 
 // A callee parameter whose buffer the callee may grow in place: `field` is the
@@ -129,7 +132,7 @@ pub function grow_table(keys: string[], funcs: ssasem.Func[], plans: Plan[]): Gr
     return table;
 }
 
-function bad(why: string): Plan { return Plan { ok: false, why: why, steps: [], owned: [], grows: [], grow_fields: [], takes: [] }; }
+function bad(why: string): Plan { return Plan { ok: false, why: why, steps: [], owned: [], grows: [], grow_fields: [], takes: [], held: [] }; }
 pub function refused(why: string): Plan { return bad(why); }
 function rejected(why: string): Ledger { return Ledger { ok: false, why: why, bits: [] }; }
 function step(block: i32, point: i32, target: i32): Step { return Step { block: block, point: point, target: target, supplies: [], drops: [], hand_roots: [], hand_fields: [] }; }
@@ -698,18 +701,92 @@ function tuple_takes(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs:
 // out of — the source is released in the same step, and leaving the dependency
 // would read every later use of the element as a borrow outliving its
 // container.
-struct Units { owned: boolean[], deps: i32[][], takes: i32[] }
+struct Units { owned: boolean[], deps: i32[][], takes: i32[], held: boolean[] }
 
 function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa.SInst[]): Units {
     var owned: boolean[] = base;
     var takes: i32[] = tuple_takes(f, a, base, defs);
+    var held: boolean[] = held_elements(f, a, base, defs);
     var deps: i32[][] = a.dependencies;
     var i: i32 = 0;
     while (i < takes.len()) {
-        if (takes[i] >= 0) { owned = owned.with(i, true); deps = deps.with(i, []); }
+        if (takes[i] >= 0 || held[i]) { owned = owned.with(i, true); deps = deps.with(i, []); }
         i = i + 1;
     }
-    return Units { owned: owned, deps: deps, takes: takes };
+    return Units { owned: owned, deps: deps, takes: takes, held: held };
+}
+
+// The analysis the plan and its replay read once the takes and holds are in:
+// the reads that became units of their own anchor nothing. A hold shortens a
+// chain that is still live, so the flow is derived again over the new chains
+// and the array a held read came from dies where its own uses end; a take's
+// source dies at the read, so a take alone leaves the flow as it was.
+function units_analysis(f: ssasem.Func, a: ssasem.Analysis, units: Units): ssasem.Analysis {
+    var any: boolean = false;
+    for h in units.held { if (h) { any = true; } }
+    if (!any) { return ssasem.Analysis { ...a, dependencies: units.deps }; }
+    var flow: ssalive.Flow = ssadeps.analyze(f.graph, units.deps);
+    return ssasem.Analysis { ...a, ok: flow.ok, why: flow.why, dependencies: units.deps, flow: flow };
+}
+
+// An element read of a type the frame can hold a unit of: a view is lent,
+// never retained, and a scalar has no unit.
+function retainable_element(f: ssasem.Func, defs: ssa.SInst[], w: i32): boolean {
+    if (defs[w].kind_tag != ssasem.array_get()) { return false; }
+    var t: typeinfo.Type = f.values[w];
+    return ssasem.reference(t) && !ssasem.is_view(t);
+}
+
+// The element reads anchored to `s` that are still in hand once `s` is
+// supplied: past the operation at (`bi`, `pos`), or into block `si` when `s`
+// goes out along an edge.
+function outliving(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], held: boolean[], s: i32, bi: i32, pos: i32, si: i32): boolean[] {
+    var out: boolean[] = held;
+    var w: i32 = 0;
+    while (w < f.graph.nvals) {
+        if (w != s && !out[w] && retainable_element(f, defs, w) && reads(a, w, s)) {
+            var live: boolean = false;
+            if (si >= 0) { live = a.flow.live_in[si * f.graph.nvals + w]; } else { live = used_after(f, a, bi, pos, w); }
+            if (live) { out = out.with(w, true); }
+        }
+        w = w + 1;
+    }
+    return out;
+}
+
+// An element read that outlives a consuming use of its array takes a unit of
+// its own at the read: retained there, released when it dies, anchored to
+// nothing. As a borrow it kept the array alive past the use, so a `.with` or
+// an append there retained the array instead of moving it and copied the
+// whole buffer (#9849). A read that dies before any such use stays a borrow
+// and costs nothing.
+function held_elements(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[]): boolean[] {
+    var out: boolean[] = bits(f.graph.nvals);
+    var bi: i32 = 0;
+    while (bi < f.graph.blocks.len()) {
+        var b: ssa.SBlock = f.graph.blocks[bi];
+        var pos: i32 = 0;
+        while (pos < b.insts.len()) {
+            var ins: ssa.SInst = b.insts[pos];
+            if (ins.kind_tag != 6 && ins.kind_tag != 8) {
+                var supplies: Supply[] = operation_supplies(f, ins);
+                for got in supplies {
+                    if (owned[got.value]) { out = outliving(f, a, defs, out, got.value, bi, pos, 0 - 1); }
+                }
+            }
+            pos = pos + 1;
+        }
+        var targets: i32[] = successors(b);
+        for target in targets {
+            var si: i32 = block_index(f.graph, target);
+            var along: Supply[] = edge_supplies(f, b, target, owned);
+            for got in along {
+                if (owned[got.value]) { out = outliving(f, a, defs, out, got.value, bi, 0, si); }
+            }
+        }
+        bi = bi + 1;
+    }
+    return out;
 }
 
 // The record whose field buffer the append or with at (`bi`, `pos`) may grow
@@ -820,7 +897,8 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
     var units: Units = units_of(f, owned, analysis, defs);
     owned = units.owned;
     var takes: i32[] = units.takes;
-    analysis = ssasem.Analysis { ...analysis, dependencies: units.deps };
+    analysis = units_analysis(f, analysis, units);
+    if (!analysis.ok) { return bad(analysis.why); }
     var grows: i32[] = [];
     var grow_fields: i32[] = [];
     var vi0: i32 = 0;
@@ -883,7 +961,7 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
     }
     why = view_retain_error(f, steps);
     if (why != "") { return bad(why); }
-    var out: Plan = Plan { ok: true, why: "", steps: steps, owned: owned, grows: grows, grow_fields: grow_fields, takes: takes };
+    var out: Plan = Plan { ok: true, why: "", steps: steps, owned: owned, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held };
     why = verify(f, modes, out);
     if (why != "") { return bad(why); }
     return out;
@@ -1088,7 +1166,9 @@ pub function verify(f: ssasem.Func, modes: i32[], p: Plan): string {
     var units: Units = units_of(f, owned_values(f, modes), analysis, definitions(f));
     var owned: boolean[] = units.owned;
     if (!same_takes(units.takes, p.takes)) { return "tuple take disagrees with the plan"; }
-    analysis = ssasem.Analysis { ...analysis, dependencies: units.deps };
+    if (!same_bits(units.held, p.held)) { return "element hold disagrees with the plan"; }
+    analysis = units_analysis(f, analysis, units);
+    if (!analysis.ok) { return analysis.why; }
     var reachable: boolean[] = ssadeps.reachable_blocks(f.graph);
     var count: i32 = 0;
     var bi: i32 = 0;

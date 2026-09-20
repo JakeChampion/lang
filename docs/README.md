@@ -59,6 +59,7 @@ so explicitly.
 | `PRELUDE-TO-MODULES.md` | [record] | Prelude → explicit `std/`/`core/` imports migration — complete (#1561). |
 | `POST-PRELUDE-CLEANUP.md` | [record] | Post-migration cleanup checklist — done (item 5 consciously deferred). |
 | `MODULE-PACKAGES-RESEARCH.md` | [research] | Third-party package/dependency-management survey. |
+| `NETWORKING-RESEARCH-2026-09.md` | [research] | HTTP and networking survey behind the networking plan: server performance leaders, API ergonomics, TLS/DNS/QUIC/io_uring, niche languages and deterministic simulation, security and conformance, operations, deployment seams; sourced, with unverified claims marked. |
 
 ## Compiler architecture, roadmap & backend parity
 
