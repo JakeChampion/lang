@@ -176,10 +176,12 @@ var iifeFnArmCases = []struct {
 	{"arm-array-named-local-foreach-over-name", "function main(): i32 { var v1: i32 = 3i32; var ys: ((i32) => i32)[] = [((z: i32) => (z + 1i32))]; var xs: ((i32) => i32)[] = (if (true) { [((x: i32) => (x + v1))] } else { ys }); var t: i32 = 0i32; for f in ys { t = t + f(1i32); } return (xs[0i32](1i32) + t) & 63i32; }", 6},
 	{"arm-array-named-local-append-to-name", "function main(): i32 { var v1: i32 = 3i32; var ys: ((i32) => i32)[] = [((z: i32) => (z + 1i32))]; var ws: ((i32) => i32)[] = ys.append(((q: i32) => (q + 5i32))); var xs: ((i32) => i32)[] = (if (true) { [((x: i32) => (x + v1))] } else { ys }); return (xs[0i32](1i32) + ws[1i32](1i32)) & 63i32; }", 10},
 
-	// Regression guards for the two representations the rewrite must not touch:
-	// an all-no-capture arm array keeps its bare `__lam_N` pointers, and an
-	// all-bare-fn-name one keeps the #3574 fn-pointer-array classification.
-	{"arm-array-nocapture-unchanged", "function main(): i32 { var xs: ((i32) => i32)[] = (if (true) { [((x: i32) => (x + 3i32))] } else { [((y: i32) => y)] }); return xs[0i32](1i32) & 63i32; }", 4},
+	// An all-no-capture arm array boxes its lambdas like any other lambda
+	// array, and the binding it yields has to be classified env-first to
+	// match: boxed elements under plain fn-pointer dispatch SIGSEGV at the
+	// call. An all-bare-fn-name arm array keeps the #3574 fn-pointer-array
+	// classification.
+	{"arm-array-nocapture", "function main(): i32 { var xs: ((i32) => i32)[] = (if (true) { [((x: i32) => (x + 3i32))] } else { [((y: i32) => y)] }); return xs[0i32](1i32) & 63i32; }", 4},
 	{"arm-array-bare-fnnames-unchanged", "function inc(x: i32): i32 { return x + 1i32; } function dbl(x: i32): i32 { return x * 2i32; } function main(): i32 { var xs: ((i32) => i32)[] = (if (true) { [inc] } else { [dbl] }); return xs[0i32](41i32) & 63i32; }", 42},
 	// The IIFE is not the whole value but sits INSIDE one — an array element, a
 	// struct field, a call argument. try_fn_field_value owns every such position
