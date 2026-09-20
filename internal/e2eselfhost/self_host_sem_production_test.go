@@ -2104,4 +2104,118 @@ function main(): i32 {
     return total;
 }
 `},
+	// The rest of the OS floor (semsource.os_floor_contracts): the signal,
+	// priority, group and process-group builtins, chroot, poll over a
+	// timerfd. Each arm counts whichever way the host answers, so the count
+	// is the same in a container and on a developer machine, and the pin is
+	// that both lowerings answer alike and the produced bodies free no less.
+	{name: "os-floor-signals-and-process", atLeast: 2, nativeOnly: true, src: `
+function signals(): i32 {
+    var n: i32 = 0;
+    if (signal_ignore(2) >= 0) { n = n + 1; }
+    if (signal_disposition(2) >= 0) { n = n + 1; }
+    if (signal_default(2) >= 0) { n = n + 1; }
+    var was: i64 = signal_mask(0, 0i64);
+    if (was >= 0i64) { n = n + 1; }
+    if (priority() > -21) { n = n + 1; }
+    var gs: i64[] = getgroups();
+    if (gs.len() >= 0) { n = n + 1; }
+    match (setgroups(gs)) {
+        Ok(_) => { n = n + 1; },
+        Err(_) => { n = n + 1; }
+    }
+    match (set_process_group(0, 0)) {
+        Ok(_) => { n = n + 1; },
+        Err(_) => { n = n + 1; }
+    }
+    match (chroot("/")) {
+        Ok(_) => { n = n + 1; },
+        Err(_) => { n = n + 1; }
+    }
+    var fds: i32[] = [timer_fd(1)];
+    if (poll(fds, 2000) == 0) { n = n + 1; }
+    if (poll([], 0) < 0) { n = n + 1; }
+    return n;
+}
+function main(): i32 { return signals(); }
+`},
+	// The file-time, node, permission and directory ops over a temp_dir, and
+	// the terminal questions asked of a descriptor and of a handle. mknod
+	// makes a FIFO, the one node an unprivileged caller may create.
+	{name: "os-floor-times-nodes-terminal", atLeast: 3, nativeOnly: true, src: `
+function files(dir: string): i32 {
+    var n: i32 = 0;
+    var f: string = dir + "/f";
+    match (write_file(f, "x")) {
+        Ok(_) => { n = n + 1; },
+        Err(_) => {}
+    }
+    match (chmod_at(f, 420, false)) {
+        Ok(_) => { n = n + 1; },
+        Err(_) => {}
+    }
+    match (set_file_times(f, 1000000i64, 0i64, 2000000i64, 0i64, 0)) {
+        Ok(_) => { n = n + 1; },
+        Err(_) => {}
+    }
+    match (stat(f)) {
+        Ok(st) => { if (st.mtime == 2000000i64) { n = n + 1; } },
+        Err(_) => {}
+    }
+    match (mknod(dir + "/fifo", 4096 + 420, 0, 0)) {
+        Ok(_) => { n = n + 1; },
+        Err(_) => {}
+    }
+    match (chdir(dir)) {
+        Ok(_) => { n = n + 1; },
+        Err(_) => {}
+    }
+    match (remove_file("fifo")) {
+        Ok(_) => { n = n + 1; },
+        Err(_) => {}
+    }
+    match (remove_file("f")) {
+        Ok(_) => { n = n + 1; },
+        Err(_) => {}
+    }
+    return n;
+}
+function terminal(): i32 {
+    var n: i32 = 0;
+    match (window_size(1)) {
+        Ok(w) => { if (w.rows >= 0i64) { n = n + 1; } },
+        Err(_) => { n = n + 1; }
+    }
+    var r: Reader = stdin();
+    if (!r.isatty()) { n = n + 1; }
+    match (r.window_size()) {
+        Ok(w) => { if (w.cols >= 0i64) { n = n + 1; } },
+        Err(_) => { n = n + 1; }
+    }
+    match (open_reader("/dev/null")) {
+        Ok(h) => {
+            match (h.dup_onto(19)) {
+                Some(_) => {},
+                None => { n = n + 1; }
+            }
+        },
+        Err(_) => {}
+    }
+    return n;
+}
+function main(): i32 {
+    var n: i32 = 0;
+    match (temp_dir("fernsem")) {
+        Ok(d) => {
+            n = n + files(d);
+            match (remove_dir(d)) {
+                Ok(_) => {},
+                Err(_) => {}
+            }
+        },
+        Err(_) => {}
+    }
+    return n + terminal();
+}
+`},
 }
