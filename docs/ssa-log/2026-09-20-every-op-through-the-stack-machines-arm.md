@@ -49,10 +49,13 @@ the three kinds (`load`, `store`, `call_closure_direct`) nothing produces.
 The refactor moves no byte where nothing was bridged: the compiler before
 and the compiler after emit identical `-emit asm` text for every program of
 `examples/bench`, `examples/tests`, `examples/cli` and the coreutils that had
-no declined function, on both ISAs (PURITY_RESULT). The programs whose text
+no declined function, on both ISAs: 231 of the 339 identical on each, the
+one refusal the same both ways. The programs whose text
 moved are exactly the ones that had one — their bridged functions are now
 register-allocated around the flat arm — and each runs to the same stdout
-and exit status as before.
+and exit status as before. The compiler compiling itself is the same check
+at scale: the `-emit asm` of `fern.fern` through the register path is
+byte-identical, old compiler against new, on arm64 (3,516,957 lines).
 
 ## What it does not claim
 
