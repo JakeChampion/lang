@@ -2620,6 +2620,26 @@ function iterate_array(fo: ast.StmtFor, s: State): State {
     var text: boolean = ssasem.is_text(s.values[it.id]);
     var elem: typeinfo.Type = element_type(s.values[it.id]);
     if (text) { elem = t_u8(); }
+    // `for (k, v) in m` walks the map's two columns in step: each is
+    // snapshotted into a fresh array the frame owns, the key column is what
+    // the index runs over, and the value read beside each key is the value
+    // column's element at the same index. The runtime hands both columns
+    // back in the same order, which is what pairs them.
+    var vals: i32 = 0 - 1;
+    var vtype: typeinfo.Type = typeinfo.unchecked();
+    if (ssasem.is_map(s.values[it.id])) {
+        var m: typeinfo.Type = s.values[it.id];
+        if (!ssasem.is_supported_map(m)) { return fail(s, "unsupported iterable: " + typeinfo.spelling(m)); }
+        var keys: Value = map_column(s, it, ssasem.map_keys(), ssasem.map_key(m));
+        if (!keys.s.ok) { return keys.s; }
+        var values: Value = map_column(keys.s, it, ssasem.map_values(), ssasem.map_value(m));
+        if (!values.s.ok) { return values.s; }
+        s = values.s;
+        it = keys;
+        vals = values.id;
+        vtype = ssasem.map_value(m);
+        elem = ssasem.map_key(m);
+    }
     if (!semtypes.concrete(elem, false)) { return fail(s, "unsupported iterable: " + typeinfo.spelling(s.values[it.id])); }
     var before: i32 = s.names.len();
     var outer: checker.Scope = s.scope;
@@ -2661,7 +2681,12 @@ function iterate_array(fo: ast.StmtFor, s: State): State {
     // destructures the element the way a declaration does.
     var inner: checker.Scope = checker.for_body_scope(fo, scope);
     var body_state: State = bind(item.s, fo.var_name, item.id);
-    if (util.contains(fo.var_name, ",")) { body_state = destructure_tuple(fo.var_name, item.id, item.s, inner); }
+    if (vals >= 0) {
+        var names: string[] = checker.split_pattern_names(fo.var_name);
+        if (names.len() != 2) { return fail(s, "unsupported loop binding"); }
+        var vitem: Value = define(item.s, ssasem.array_get(), [vals, step.id], 0, "", vtype);
+        body_state = bind(bind(vitem.s, names[0], item.id), names[1], vitem.id);
+    } else if (util.contains(fo.var_name, ",")) { body_state = destructure_tuple(fo.var_name, item.id, item.s, inner); }
     if (!body_state.ok) { return body_state; }
     body_state = State { ...body_state, scope: inner };
     var latch: Arm = finish_arm(fo.body, body_state, header, count, scope);

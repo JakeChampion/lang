@@ -1645,7 +1645,7 @@ function bind_tuple_destr_names(out: Scope, names: string[], whole: typeinfo.Typ
 // split_pattern_names splits a destructure's comma-joined encoding on
 // TOP-LEVEL commas, so a nested position `(b,c)` stays one entry — the split
 // bind_names does not make, which is why it mis-bound `(b` and `c)`.
-function split_pattern_names(encoded: string): string[] {
+pub function split_pattern_names(encoded: string): string[] {
   var out: string[] = [];
   var start: i32 = 0;
   var depth: i32 = 0;
