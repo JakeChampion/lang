@@ -69,17 +69,13 @@ function main(): i32 {
     var ys: f64[] = array.drop(xs, 2);
     return (ys[0] * 10.0) as i32;
 }`}, // 45
-}
-
-// erasedWideArrayRefuseCases check the GATE still refuses after the promotion landed.
-// The promotion is guarded to single-typevar generics, so a two-typevar
-// `map[T, U](xs: T[], f)` at a wide element type is still erased — and must
-// still be REFUSED rather than miscompiled. Without a case here the gate could
-// rot silently and this class would go back to returning wrong numbers.
-var erasedWideArrayRefuseCases = []struct {
-	name string
-	src  string
-}{
+	// The two-typevar `map[T, U](xs: T[], f)` at a wide element and the
+	// array-method spelling `xs.map(f)` (#6287), whose `U` stays erased on the
+	// RESULT side. These were the refusal rows — the AST wasm path miscompiled
+	// them to a 4-byte stride — until the semantic lowering admitted a wide
+	// slot in a function value's signature: the call through the value now
+	// carries its funcref signature tag, so the instance is produced at the
+	// concrete element and answers as the interpreter does.
 	{"map_f64_two_typevars", `import "std/array";
 function dbl(x: f64): f64 { return x * 2.0; }
 function main(): i32 {
@@ -195,8 +191,8 @@ function main(): i32 {
 
 // TestSelfHostErasedWideArrayGateBlindWasm pins the other edge of the gate: a
 // callee that only asks its erased array for `.len()` must still lower and run.
-// Paired with TestSelfHostErasedWideArrayGateWasm — that test fails if the gate
-// gets too narrow, this one if it gets too wide, and neither alone is enough.
+// The fixed cases above fail if the gate gets too narrow, this one if it gets
+// too wide, and neither alone is enough.
 func TestSelfHostErasedWideArrayGateBlindWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping erased-wide element-blind wasm cases")
@@ -233,41 +229,6 @@ func TestSelfHostErasedWideArrayGateBlindWasm(t *testing.T) {
 			}
 			if got := rcmd.ProcessState.ExitCode(); got != want {
 				t.Errorf("%s = %d, want %d (interp oracle)", tc.name, got, want)
-			}
-		})
-	}
-}
-
-// TestSelfHostErasedWideArrayGateWasm asserts a wide-element instantiation of a
-// `T[]`-param generic is REFUSED on the wasm IR path rather than miscompiled.
-func TestSelfHostErasedWideArrayGateWasm(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	// fern.fern — the real CLI — because these programs `import "std/array"`, and
-	// a driver without a loader silently ignores the import and then reports a
-	// verdict about a broken program (the warning in docs/TEST-GATES.md's
-	// path-probe note).
-	copySelfHostDriver(t, dir, "fern.fern")
-	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
-	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
-	if err != nil {
-		t.Fatalf("abs stdlib root: %v", err)
-	}
-
-	for _, tc := range erasedWideArrayRefuseCases {
-		t.Run(tc.name, func(t *testing.T) {
-			proj := t.TempDir()
-			mainPath := filepath.Join(proj, "main.fern")
-			if err := os.WriteFile(mainPath, []byte(tc.src), 0o644); err != nil {
-				t.Fatalf("write main.fern: %v", err)
-			}
-			outWat := filepath.Join(proj, "out.wat")
-			cmd := runX86_64Bin(runner, fernBin, "-target", "wasm32-wasi", "-emit", "asm", mainPath, stdlibRoot, "-o", outWat)
-			var stderr strings.Builder
-			cmd.Stderr = &stderr
-			_ = cmd.Run()
-			if !strings.Contains(stderr.String(), "not IR-eligible") {
-				t.Errorf("%s: wanted a refusal naming IR-ineligibility, got stderr %q — a wide-element T[] generic must NOT reach the wasm IR path (it miscompiles to a 4-byte stride)", tc.name, stderr.String())
 			}
 		})
 	}
