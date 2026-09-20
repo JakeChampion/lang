@@ -59,4 +59,15 @@ pins can see a copy.
 
 ## Census
 
-The compiler's own sources produce whole (8678 of 8678).
+| binary | whole | declarations |
+|---|---|---|
+| an array slice is a fresh array (#9842) | 804 / 864 | 80,685 of 86,902 |
+| a map's unit is counted (#9837, taken in from main) and this rule | 811 / 864 | 81,369 of 86,925 |
+
+The seven programs and the declarations between the two rows are #9837's
+`map unit is not shared` root going from 13 sites to 0; the hold refuses
+nothing and admits nothing, and no program's compile status changed. The
+compiler's own sources produce whole (8678 of 8678). Across `examples/bench`
+the hold changes no count but `sort_strings`'s and adds 42,000 instructions
+to each of the two `utf8_ingest` benches, a retain on a read that outlives a
+consuming use of its array there.
