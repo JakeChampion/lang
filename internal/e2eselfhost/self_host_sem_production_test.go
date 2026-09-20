@@ -584,6 +584,27 @@ function main(): i32 {
     }
     return t % 7;
 }`},
+	// `for (k, v) in m` walks the map's two columns in step: each is
+	// snapshotted into a fresh array the frame owns, and the value read
+	// beside each key is the value column's element at the same index. The
+	// deleted key must not come back, and a string key column is walked
+	// through the string dec. The AST lowering leaks its snapshots (168 bytes
+	// here); produced, the loop is reclaimed whole. Refused as
+	// `unsupported iterable: Map[i32, i32]` before.
+	{name: "map-iteration-both-columns", atLeast: 3, noLeak: true, src: `
+import "core/map";
+import "std/string";
+function main(): i32 {
+    var m: Map[i32, i32] = Map { 1: 10, 2: 20, 3: 30 };
+    m = m.insert(4, 40);
+    var (m2, had) = m.without(2);
+    var t: i32 = 0;
+    for (k, v) in m2 { t = t + k * v; }
+    var names: Map[string, i32] = Map { "a": 1, "bb": 2 };
+    var n: i32 = 0;
+    for (k2, v2) in names { n = n + k2.len() * v2; }
+    return (t % 100) + n;
+}`},
 	{name: "map-delete-and-clear", atLeast: 4, noLeak: true, src: `
 function survivors(n: i32): i32 {
     var m: Map[i32, i32] = map_new(8);
