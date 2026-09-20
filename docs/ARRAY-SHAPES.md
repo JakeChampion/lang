@@ -203,8 +203,12 @@ stride 0 and adds leading axes at stride 0, so the one element is read
 matrix, a scalar times a matrix, and the outer product of a column and
 a row are each one walk and one result buffer.
 
-Three consequences:
+Four consequences:
 
+- **A broadcast shape is still a shape**: its element count must fit an
+  `i32`, because that count indexes storage, and `broadcast_to` to a
+  shape whose count does not fit aborts like any other wrong shape even
+  though no storage of that size is ever allocated.
 - **A stretched handle is not row-major** (unless every stretched axis
   has extent 1 or 0), so `reshape`, `packed()` and `to_flat()` copy it
   into real storage, and the copy has the broadcast count. That is the
