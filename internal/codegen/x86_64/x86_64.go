@@ -11228,11 +11228,18 @@ func (g *generator) emitSumBytesRuntime() {
 // (docs/ARRAY-ALGEBRA.md §3, AA-02). Every element gets the same bits from
 // either body, which is what lets the tail share the factor with the lanes.
 //
-// The loads and stores are vmovupd rather than vmovdqu: the same 32 bytes
-// either way, but naming the double domain keeps the load out of the
-// integer domain the multiply would then have to cross back from. Nothing
-// reads past the end — the vector body runs only while a whole block of
-// four remains, which is what `and edx, -4` fixes before the loop.
+// The store is vmovupd rather than vmovdqu: the same 32 bytes either way,
+// but naming the double domain keeps it out of the integer domain the
+// multiply works in. The load does not need an instruction at all —
+// vmulpd reads its second source from memory — so a block is two
+// instructions, not three. Nothing reads past the end: the vector body
+// runs only while a whole block of four remains, which is what
+// `and edx, -4` fixes before the loop.
+//
+// Both bodies multiply k BY the element rather than the other way round,
+// which is forced in the vector body (the folded operand has to be the
+// second source) and matched in the tail so the two cannot disagree about
+// which NaN a NaN times a NaN yields.
 //
 // System V: rdi = xs (data pointer), rsi = k as f64 bits — the operand stack
 // carries an f64 as its bit pattern, so no xmm register crosses the call.
@@ -11268,8 +11275,7 @@ func (g *generator) emitScaleF64Runtime() {
 	g.label(".Lscale_f64_vec")
 	g.emit("cmp ecx, edx")
 	g.emit("jae .Lscale_f64_tail")
-	g.emit("vmovupd ymm0, [rbx + rcx*8]")
-	g.emit("vmulpd ymm0, ymm0, ymm1")
+	g.emit("vmulpd ymm0, ymm1, [rbx + rcx*8]")
 	g.emit("vmovupd [rax + rcx*8], ymm0")
 	g.emit("add ecx, 4")
 	g.emit("jmp .Lscale_f64_vec")
@@ -11280,8 +11286,8 @@ func (g *generator) emitScaleF64Runtime() {
 	g.label(".Lscale_f64_loop")
 	g.emit("cmp ecx, r13d")
 	g.emit("jae .Lscale_f64_ret")
-	g.emit("movsd xmm0, qword ptr [rbx + rcx*8]")
-	g.emit("mulsd xmm0, xmm1")
+	g.emit("movsd xmm0, xmm1")
+	g.emit("mulsd xmm0, qword ptr [rbx + rcx*8]")
 	g.emit("movsd qword ptr [rax + rcx*8], xmm0")
 	g.emit("add ecx, 1")
 	g.emit("jmp .Lscale_f64_loop")
