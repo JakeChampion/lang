@@ -2737,6 +2737,29 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
     // answers are actual counts rather than sentinels: an out-of-range byte
     // counts 0 because nothing can equal it, an empty string counts 0
     // because it has no bytes.
+    // `__scale_f64(xs, k)` — every element of the f64[] times k, as a fresh
+    // array: the oracle for the eighth kernel and the first over an array.
+    // Each product is one IEEE multiply, so a vector body owes these bits.
+    if (name == "__scale_f64") {
+        if (args.len() != 2) { return v_err("__scale_f64: expected 2 args (xs, k)"); }
+        if let VArr(xa) = args[0] {
+            if let VFloat(kf) = args[1] {
+                var sout: Value[] = [];
+                var sidx: i32 = 0;
+                while (sidx < xa.elements.len()) {
+                    if let VFloat(ef) = xa.elements[sidx] {
+                        sout = sout.append(v_float(ef.v * kf.v));
+                    } else {
+                        return v_err("__scale_f64: elements must be f64");
+                    }
+                    sidx = sidx + 1;
+                }
+                return v_arr_of(sout, "f64");
+            }
+            return v_err("__scale_f64: k must be an f64");
+        }
+        return v_err("__scale_f64: first arg must be an array");
+    }
     if (name == "__memchr" || name == "__count_byte" || name == "__sum_bytes") {
         var cb: boolean = name == "__count_byte";
         var sb: boolean = name == "__sum_bytes";

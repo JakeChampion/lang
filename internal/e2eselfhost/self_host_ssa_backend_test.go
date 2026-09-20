@@ -560,6 +560,48 @@ function main(): i32 {
     return 3;
 }
 `},
+	// A constant every use of which is a binary op's operand is an immediate
+	// and never materialised: on either side of the commutative ops and the
+	// compares, on the right of a subtraction, in a branch's fused compare,
+	// negative, at i32 wrap, and for arm64 on either side of its 12-bit
+	// range. A constant a division or a shift reads, or one above imm32,
+	// keeps its register.
+	{name: "immediates", allSSA: true, src: `
+import "std/i32";
+function mix(x: i32, y: i64, u: u32): i32 {
+    var a: i32 = x + 7;
+    var b: i32 = 7 - x;
+    var c: i32 = x - 7;
+    var d: i32 = 3 * x;
+    var e: i32 = x & 255;
+    var f: i32 = 4096 | x;
+    var g: i32 = x ^ -1;
+    var h: i32 = x * 1000003;
+    var w: i32 = x + 2147483647;
+    var k: i32 = 0;
+    if (x < 10) { k = k + 1; }
+    if (10 < x) { k = k + 2; }
+    if (x == -1) { k = k + 4; }
+    if (-1 != x) { k = k + 8; }
+    if (y >= 3000000i64) { k = k + 16; }
+    if (3000000i64 > y) { k = k + 32; }
+    if (u < 4000000000u32) { k = k + 64; }
+    if (u > 100u32) { k = k + 128; }
+    if (5000i64 - y < 0i64) { k = k + 256; }
+    var m: i64 = (y + 5000i64) * 3i64 - (y % 7i64) + (y >> 2i64);
+    var q: i32 = a + b + c + d + e + f + g + h + w + k + (x % 7) + (x / 3) + (m as i32);
+    var i: i32 = 0;
+    while (i < 3000) { q = q + 1; i = i + 1; }
+    return q;
+}
+function main(): i32 {
+    print(mix(5, 10i64, 3u32).to_string());
+    print(mix(-1, 3000001i64, 4000000000u32).to_string());
+    print(mix(2147483647, -5000i64, 200u32).to_string());
+    print(mix(11, 5000i64, 100u32).to_string());
+    return mix(0, 0i64, 0u32) % 100;
+}
+`},
 }
 
 // ssaBackendTarget is one target this host can run output for: the target
@@ -998,6 +1040,65 @@ func TestSelfHostCLIBuildsForEveryNativeTarget(t *testing.T) {
 // move and the pushed copy on x86-64, the move and the reload on arm64. An
 // allocator change that stopped producing the shape would leave the branch
 // untested again, which this test refuses.
+// A constant the binary ops alone read is an immediate operand on both ISAs
+// and is never materialised; one a division reads keeps its register. The
+// loop bound is under 4,096 so it is an immediate on arm64 too.
+func TestSelfHostSSAConstantsAreImmediates(t *testing.T) {
+	h := selfHostCLIForHost(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "count.fern")
+	prog := `function count(): i64 {
+    var sum: i64 = 0i64;
+    var i: i64 = 0i64;
+    while (i < 3000i64) { sum = sum + i; i = i + 1i64; }
+    return sum % 97i64;
+}
+function main(): i32 { return count() as i32; }
+`
+	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		target       string
+		want, absent []*regexp.Regexp
+	}{
+		{"x86-64-linux",
+			[]*regexp.Regexp{regexp.MustCompile(`addq \$1, %r`), regexp.MustCompile(`cmpq \$3000, %r`), regexp.MustCompile(`mov[ql] \$97, %`)},
+			[]*regexp.Regexp{regexp.MustCompile(`mov[ql] \$3000, %`), regexp.MustCompile(`mov[ql] \$1, %`)}},
+		{"arm64-linux",
+			[]*regexp.Regexp{regexp.MustCompile(`add x\d+, x\d+, #1\n`), regexp.MustCompile(`cmp x\d+, #3000\n`), regexp.MustCompile(`mov x\d+, #97\n`)},
+			[]*regexp.Regexp{regexp.MustCompile(`mov x\d+, #3000\n`), regexp.MustCompile(`mov x\d+, #1\n`)}},
+	}
+	for _, c := range cases {
+		out := filepath.Join(dir, "count-"+c.target+".s")
+		cmd := exec.Command(h.cli, "-target", c.target, "-backend", "ssa", "-emit", "asm", "-o", out, src, h.stdlib)
+		cmd.Env = append(os.Environ(), "FERN_SSA_REPORT=1")
+		report, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s: %v\n%s", c.target, err, report)
+		}
+		if strings.Contains(string(report), "FERN_SSA: count:") {
+			t.Fatalf("%s: count was declined:\n%s", c.target, report)
+		}
+		asm, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fn := asm[bytes.Index(asm, []byte("__fn_count:")):]
+		fn = fn[:bytes.Index(fn, []byte(".cfi_endproc"))]
+		for _, re := range c.want {
+			if !re.Match(fn) {
+				t.Errorf("%s: count has no %s:\n%s", c.target, re, fn)
+			}
+		}
+		for _, re := range c.absent {
+			if re.Match(fn) {
+				t.Errorf("%s: count still materialises %s:\n%s", c.target, re, fn)
+			}
+		}
+	}
+}
+
 func TestSelfHostSSADynDispatchArgumentInScratch(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	var src string

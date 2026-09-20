@@ -513,6 +513,38 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.write(c_done + ":\n    str x7, [sp, #-16]!\n");
         return s;
     }
+    if (o.kind_tag == 322) {  // scale_f64
+        // operand stack [xs, k bits] -> the data pointer of a fresh f64
+        // array of xs's length whose element i is xs[i] * k.
+        //
+        // SCALAR (§3.4 step 1): one fmul per element. Elementwise, so the
+        // NEON body this wants (fmul over two lanes) reassociates nothing;
+        // the ordering rule still puts the scalar lowering in every backend
+        // first.
+        //
+        // __fern_arr_box(n) writes the rc header and len = n and clobbers
+        // only x0-x2; this backend's arrays keep len at [arr] and element i
+        // at [arr + (i+1)*8]. Base-register FP loads only: the address is
+        // formed with an add, which is the form arm64_native encodes.
+        var flo: asmcore.LabelOut = asmcore.fresh_label(s);
+        var sf_loop: string = flo.name;
+        var flo2: asmcore.LabelOut = asmcore.fresh_label(flo.state);
+        var sf_done: string = flo2.name;
+        s = flo2.state;
+        s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+        s = s.write("    stp x0, x1, [sp, #-16]!\n");
+        s = s.write("    ldr x0, [x0]\n    bl __fern_arr_box\n");
+        s = s.write("    ldp x2, x1, [sp], #16\n");
+        s = s.write("    fmov d1, x1\n    mov x3, #0\n    ldr x4, [x2]\n");
+        s = s.write(sf_loop + ":\n");
+        s = s.write("    cmp x3, x4\n    b.ge " + sf_done + "\n");
+        s = s.write("    add x5, x3, #1\n    add x6, x2, x5, lsl #3\n    ldr d0, [x6]\n");
+        s = s.write("    fmul d0, d0, d1\n    add x7, x0, x5, lsl #3\n    str d0, [x7]\n");
+        s = s.write("    add x3, x3, #1\n    b " + sf_loop + "\n");
+        s = s.write(sf_done + ":\n    str x0, [sp, #-16]!\n");
+        s = s.mark_heap();
+        return s;
+    }
     if (o.kind_tag == 253) {  // sum_bytes
         // operand stack [box] -> every byte of the string added into a
         // 32-bit accumulator that wraps.
@@ -957,15 +989,36 @@ function ssa_bin3_asm(tag: i32, d: string, a: string, b: string): string {
     if (tag == 30) { return "    eor " + d + ", " + a + ", " + b + "\n"; }
     return "    cmp " + a + ", " + b + "\n    cset " + d + ", " + ir_cmp_cond(tag, true) + "\n";
 }
+// The ops whose right operand, or whose left operand when it can be turned
+// round, may be a 12-bit immediate rather than a register: add, sub and the
+// compares. mul has no immediate form and the logical ops take bitmask
+// immediates, which a 12-bit range does not describe.
+function ssa_imm_right(): string[] { return ["add", "sub", "eq", "ne", "lt_s", "le_s", "gt_s", "ge_s", "lt_u", "le_u", "gt_u", "ge_u"]; }
+function ssa_imm_left(): string[] { return ["add", "eq", "ne", "lt_s", "le_s", "gt_s", "ge_s", "lt_u", "le_u", "gt_u", "ge_u"]; }
+// ssa_rhs is a right operand as the instruction reads it: the immediate for a
+// constant that has none, otherwise its home or the scratch; ssa_read_rhs
+// fills the scratch only when there is a spilled value to fill it with.
+function ssa_rhs(fr: SsaFrame, reg_of: i32[], v: i32, scratch: string): string {
+    if (fr.imm.is_imm[v]) { return "#" + util.i64_to_string(fr.imm.value[v]); }
+    return ssa_src(reg_of, v, scratch);
+}
+function ssa_read_rhs(fr: SsaFrame, reg_of: i32[], v: i32, scratch: string, s: asmcore.EmitState): asmcore.EmitState {
+    if (fr.imm.is_imm[v]) { return s; }
+    return ssa_read(reg_of, v, scratch, s);
+}
 // ssa_bin_in_place emits a three-operand integer op into the result's home,
-// each operand read from its own; a spilled operand is read through x4 or x5.
-function ssa_bin_in_place(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+// each operand read from its own or as an immediate; a spilled operand is
+// read through x4 or x5. A constant on the left is only ever one the op can
+// take on the right, so the operands swap and a comparison flips.
+function ssa_bin_in_place(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmcore.EmitState): asmcore.EmitState {
+    var tag: i32 = ir.kind_id(ins.str);
     var a: i32 = ins.args[0];
     var b: i32 = ins.args[1];
+    if (fr.imm.is_imm[a]) { tag = ircore.flip_int_cmp_kind(tag); a = ins.args[1]; b = ins.args[0]; }
     var dh: string = ssa_dst(reg_of, ins.result);
     s = ssa_read(reg_of, a, "x4", s);
-    s = ssa_read(reg_of, b, "x5", s);
-    s = s.write(ssa_bin3_asm(ir.kind_id(ins.str), dh, ssa_src(reg_of, a, "x4"), ssa_src(reg_of, b, "x5")));
+    s = ssa_read_rhs(fr, reg_of, b, "x5", s);
+    s = s.write(ssa_bin3_asm(tag, dh, ssa_src(reg_of, a, "x4"), ssa_rhs(fr, reg_of, b, "x5")));
     return ssa_store(reg_of, ins.result, dh, s);
 }
 // ssa_wreg is the 32-bit name of an x register.
@@ -1401,7 +1454,7 @@ function ssa_str_view(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.E
 // SsaFrame is the frame below the values: three words per frame-resident
 // string view after the values. ssa_view_off is the offset of a view's lowest
 // word, the base the view kernel writes at.
-struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave: i32, epilogue: string }
+struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave: i32, epilogue: string, imm: ssa.Imms }
 
 // SsaFuse is a block's compare consumed as flags by its branch: `n` trailing
 // instructions (the compare, and the `not` between it and the branch when
@@ -1431,6 +1484,9 @@ function ssa_fuse(fr: SsaFrame, blk: ssa.SBlock): SsaFuse {
         inverted = true;
     }
     if (cmp.kind_tag != 9 || !ircore.is_int_cmp_kind(ir.kind_id(cmp.str))) { return ssa_no_fuse(); }
+    if (fr.imm.is_imm[cmp.args[0]]) {
+        return SsaFuse { n: n, tag: ircore.flip_int_cmp_kind(ir.kind_id(cmp.str)), inverted: inverted, a: cmp.args[1], b: cmp.args[0] };
+    }
     return SsaFuse { n: n, tag: ir.kind_id(cmp.str), inverted: inverted, a: cmp.args[0], b: cmp.args[1] };
 }
 
@@ -1545,12 +1601,13 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
     if (k >= 52 && k <= 55) { return ssa_raw_inst(ins, reg_of, s); }
     if (k == 56) { return ssa_call_ind(ins, reg_of, s); }
     if (k == 57) { return ssa_agg_lit(ins, reg_of, s); }
+    if ((k == 1 || k == 3) && fr.imm.is_imm[ins.result]) { return s; }
     var d: string = ssa_dst(reg_of, ins.result);
     if (k == 1) { s = ssa_const_reg(util.i32_to_string(ins.imm), d, s); }
     else if (k == 3) { s = ssa_const_reg(ins.str, d, s); }
     else if (k == 4) { s = s.write("    ldr " + d + ", =" + util.i64_to_string(util.parse_f64_bits(ins.str)) + "\n"); }
     else if (k == 7) { s = ssa_load(reg_of, ins.args[0], d, s); }
-    else if (k == 9 && ssa_direct_bin(ir.kind_id(ins.str))) { return ssa_bin_in_place(ins, reg_of, s); }
+    else if (k == 9 && ssa_direct_bin(ir.kind_id(ins.str))) { return ssa_bin_in_place(ins, reg_of, fr, s); }
     else if (k == 9) {
         d = "x4";
         s = ssa_load(reg_of, ins.args[0], "x4", s);
@@ -1724,7 +1781,8 @@ function ssa_load_params(f: ssa.SFunc, reg_of: i32[], s: asmcore.EmitState): asm
 // sees them.
 function emit_ssa_function_arm64(lifted: ssa.SFunc, label_name: string, r: irlower.LowerResult, s: asmcore.EmitState): asmcore.EmitState {
     var f: ssa.SFunc = ssa.prune_dead(ssa.prune_trivial_phis(lifted));
-    var reg_of: i32[] = ssa.regalloc_linear(f, ssa_nregs(), ssa_nsaved(), 0, false);
+    var imm: ssa.Imms = ssa.imm_operands(f, 0i64, 4095i64, ssa_imm_right(), ssa_imm_left());
+    var reg_of: i32[] = ssa.regalloc_linear(f, ssa_nregs(), ssa_nsaved(), 0, false, imm.is_imm);
     var lp: string = ".Lssa_" + asmcore.sanitize_label(label_name) + "_";
     s = s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n");
     s = s.write("    .cfi_startproc\n    stp x29, x30, [sp, #-16]!\n    .cfi_def_cfa_offset 16\n    .cfi_offset x29, -16\n    .cfi_offset x30, -8\n    mov x29, sp\n    .cfi_def_cfa_register x29\n");
@@ -1732,7 +1790,7 @@ function emit_ssa_function_arm64(lifted: ssa.SFunc, label_name: string, r: irlow
     var save: i32 = ssa_save_bytes(saved);
     s = s.write(ssa_save_asm(saved));
     var views: i32[] = ssa_view_slots(f);
-    var fr: SsaFrame = SsaFrame { nspill: ssa.spill_count(reg_of), views: views, blk_pos: ssa_block_index(f), uses: ssa.use_counts(f), nsave: save, epilogue: ssa_epilogue_for(saved) };
+    var fr: SsaFrame = SsaFrame { nspill: ssa.spill_count(reg_of), views: views, blk_pos: ssa_block_index(f), uses: ssa.use_counts(f), nsave: save, epilogue: ssa_epilogue_for(saved), imm: imm };
     var frame: i32 = (fr.nspill + 3 * ssa_view_count(views)) * 8;
     if (frame % 16 != 0) { frame = frame + 8; }
     if (frame > 0) { s = fr_sub_imm(s, "sp", "sp", frame); }
@@ -1754,8 +1812,8 @@ function emit_ssa_function_arm64(lifted: ssa.SFunc, label_name: string, r: irlow
         }
         if (fu.n > 0) {
             s = ssa_read(reg_of, fu.a, "x4", s);
-            s = ssa_read(reg_of, fu.b, "x5", s);
-            s = s.write("    cmp " + ssa_src(reg_of, fu.a, "x4") + ", " + ssa_src(reg_of, fu.b, "x5") + "\n");
+            s = ssa_read_rhs(fr, reg_of, fu.b, "x5", s);
+            s = s.write("    cmp " + ssa_src(reg_of, fu.a, "x4") + ", " + ssa_rhs(fr, reg_of, fu.b, "x5") + "\n");
         }
         s = ssa_term(f, fr, blk, reg_of, lp, next, fu, s);
         bi = bi + 1;

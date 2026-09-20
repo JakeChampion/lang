@@ -13088,6 +13088,7 @@ function is_byte_kernel_call(name: string, argc: i32): boolean {
     if (name == "__crc32_cksum") { return argc == 2; }
     if (name == "__sum_bytes") { return argc == 1; }
     if (name == "__mismatch") { return argc == 5; }
+    if (name == "__scale_f64") { return argc == 2; }
     return false;
 }
 
@@ -13109,6 +13110,9 @@ function is_byte_kernel_call(name: string, argc: i32): boolean {
 //   __crc32_cksum(crc, s)      → the incoming crc with s's bytes folded in.
 //                                 The only one whose string is NOT operand 0,
 //                                 and the only one that CARRIES state in.
+//   __scale_f64(xs, k)          → a fresh f64[] of xs scaled by k. The only
+//                                 one over an ARRAY, and the only one whose
+//                                 result is a buffer rather than a scalar.
 function lower_call_byte_kernel(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState): LowerState {
     var k: LowerState = s;
     var i: i32 = 0;
@@ -13123,6 +13127,7 @@ function lower_call_byte_kernel(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerSta
     if (cid.name == "__sum_bytes") { return k.emit(ir.op_sum_bytes()); }
     if (cid.name == "__ascii_run") { return k.emit(ir.op_ascii_run()); }
     if (cid.name == "__crc32_cksum") { return k.emit(ir.op_crc32_cksum()); }
+    if (cid.name == "__scale_f64") { return k.emit(ir.op_scale_f64()); }
     return k.emit(ir.op_mismatch());
 }
 
@@ -66775,7 +66780,7 @@ function borrow_reg_record(key: string, flags: string): string {
 // name: the escape walks see no receiver type, so the name alone must settle
 // it.
 function copying_builtin_keys(funcs: parser.FuncDecl[]): string[] {
-    var keys: string[] = ["print", "write", "eprint", "strbuf_append", "buf_push", "buf_push_range", "__memchr", "__rmemchr", "__ascii_run", "__count_byte", "__sum_bytes", "__mismatch", "__crc32_cksum"];
+    var keys: string[] = ["print", "write", "eprint", "strbuf_append", "buf_push", "buf_push_range", "__memchr", "__rmemchr", "__ascii_run", "__count_byte", "__sum_bytes", "__mismatch", "__crc32_cksum", "__scale_f64"];
     var has_write: boolean = false;
     var has_write_some: boolean = false;
     for fn in funcs {

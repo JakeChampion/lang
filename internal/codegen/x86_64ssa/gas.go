@@ -2358,6 +2358,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_ascii_run":                emitAsciiRunHelper,
 	"__fern_count_byte":               emitCountByteHelper,
 	"__fern_sum_bytes":                emitSumBytesHelper,
+	"__fern_scale_f64":                emitScaleF64Helper,
 	"__fern_crc32_cksum":              emitCrc32CksumHelper,
 	"__alloc_u8":                      emitAllocU8Helper,
 	"string_from_bytes_unchecked":     emitStringFromBytesHelper,
@@ -2533,6 +2534,7 @@ var heapUsingHelpers = map[string]bool{
 	"__slice_make":                true,
 	"__str_concat":                true,
 	"__alloc_u8":                  true,
+	"__fern_scale_f64":            true,
 	"string_from_bytes_unchecked": true, "__str_slice": true,
 	"__fern_arr_push_grow":       true,
 	"__fern_arr_cow_inplace":     true,
@@ -2649,6 +2651,9 @@ var runtimeHelperDeps = map[string][]string{
 	"__alloc_reuse":                   {"__free", "__alloc"},
 	"__fern_str_append":               {"__str_concat", "__fern_str_dec"},
 	"__alloc_u8":                      {"__alloc"},
+	"__fern_scale_f64":                {"__alloc"},
+	"proc_exec_as":                    {"__alloc"},
+	"proc_exec":                       {"__alloc"},
 	"__fern_map_hash_seed":            {"random_i32"},
 	"remove_dir_all":                  {"__fern_io_error"},
 	"__method_Reader_close":           {"__fern_io_error"},
@@ -4181,6 +4186,46 @@ func emitSumBytesHelper(w func(string, ...any)) {
 	w("\tadd edx, 1")
 	w("\tjmp .Lssa_sum_bytes_loop")
 	w(".Lssa_sum_bytes_ret:")
+	w("\tret")
+}
+
+// emitScaleF64Helper writes __fern_scale_f64(xs, k) -> a fresh f64 array of
+// xs's length, element i = xs[i] * k, header written here (cap@-12, rc=1@-8,
+// len@-4) so the caller owns one fresh array. SCALAR (§3.4 step 1): one mulsd
+// per element; elementwise, so a vector body reassociates nothing.
+//
+// rdi = xs, rsi = k as f64 bits (the SSA GP convention), result in rax.
+func emitScaleF64Helper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_scale_f64"))
+	w("\tpush rbx")
+	w("\tpush r12")
+	w("\tpush r13")                        // three pushes past the return address: 16-aligned for the call
+	w("\tmov rbx, rdi")                    // xs
+	w("\tmov r12, rsi")                    // k bits
+	w("\tmov r13d, %s", memRef("rdi", -4)) // n
+	w("\tmov rdi, r13")
+	w("\tshl rdi, 3")
+	w("\tadd rdi, 16") // allocSize = header + n * 8
+	w("\tcall %s", fnLabel("__alloc"))
+	w("\tadd rax, 16")                    // data
+	w("\tmov dword ptr [rax - 12], r13d") // cap = n
+	w("\tmov dword ptr [rax - 8], 1")     // rc = 1
+	w("\tmov dword ptr [rax - 4], r13d")  // len = n
+	w("\tmovq xmm1, r12")
+	w("\txor ecx, ecx")
+	w(".Lssa_scale_f64_loop:")
+	w("\tcmp ecx, r13d")
+	w("\tjae .Lssa_scale_f64_ret")
+	w("\tmovsd xmm0, qword ptr [rbx + rcx*8]")
+	w("\tmulsd xmm0, xmm1")
+	w("\tmovsd qword ptr [rax + rcx*8], xmm0")
+	w("\tadd ecx, 1")
+	w("\tjmp .Lssa_scale_f64_loop")
+	w(".Lssa_scale_f64_ret:")
+	w("\tpop r13")
+	w("\tpop r12")
+	w("\tpop rbx")
 	w("\tret")
 }
 

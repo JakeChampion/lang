@@ -343,6 +343,10 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_str_len")
 					needs.add("__fern_str_byte")
 					needs.add("__fern_sum_bytes")
+				case "__fern_scale_f64":
+					// The f64 scaling kernel allocates its result.
+					needs.add("__fern_alloc")
+					needs.add("__fern_scale_f64")
 				case "__fern_crc32_cksum":
 					// The CRC fold. Bit-at-a-time here: wasm has no
 					// carry-less multiply, so there is nothing for the
@@ -1609,6 +1613,12 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildSumBytesBody,
+	},
+	"__fern_scale_f64": {
+		// (xs, k) → the data pointer of a fresh f64 array, xs scaled by k.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeF64},
+		results: []byte{encode.ValtypeI32},
+		body:    buildScaleF64Body,
 	},
 	"__fern_crc32_cksum": {
 		// (crc, data, len) → i32, the running CRC with the bytes folded in.
@@ -5552,6 +5562,96 @@ func buildCrc32CksumBody(idxs map[string]uint32) []byte {
 
 	body = inst.InstLocalGet(body, lCrc)
 	locals := inst.PutLocalsOneGroup(nil, 4, encode.ValtypeI32) // $n, $i, $crc, $k
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildScaleF64Body assembles wasm bytes for __fern_scale_f64: a fresh f64
+// array of xs's length whose element i is `xs[i] * k`. The eighth fused
+// kernel (docs/ATLAS-PLATFORM-PLAN.md §3.3), the first over an array and the
+// first with a buffer out: the header (cap@-12, rc=1@-8, len@-4) is written
+// here, the way __fern_arr_push_grow's copy path writes it, so the caller
+// owns one fresh array.
+//
+// SCALAR (§3.4 step 1): one f64.mul per element. The v128 body is f64x2.mul
+// over two lanes with a scalar tail, and internal/wasm/simd has no float
+// arithmetic yet — §3.3a's rule lands the encoding against wasm-tools first.
+//
+// Locals after the two params: $n (2), $out (3), $i (4).
+func buildScaleF64Body(idxs map[string]uint32) []byte {
+	alloc := idxs["__fern_alloc"]
+	const (
+		pXs  = 0
+		pK   = 1
+		lN   = 2
+		lOut = 3
+		lI   = 4
+	)
+	var body []byte
+	// n = mem[xs - 4]
+	body = inst.InstLocalGet(body, pXs)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalSet(body, lN)
+	// out = __fern_alloc(16 + n * 8) + 16
+	body = inst.InstLocalGet(body, lN)
+	body = inst.InstI32Const(body, 3)
+	body = numeric.InstI32Shl(body)
+	body = inst.InstI32Const(body, 16)
+	body = numeric.InstI32Add(body)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstI32Const(body, 16)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, lOut)
+	// mem[out - 12] = n (cap); mem[out - 8] = 1 (rc); mem[out - 4] = n (len)
+	body = inst.InstLocalGet(body, lOut)
+	body = inst.InstI32Const(body, 12)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstLocalGet(body, lN)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, lOut)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstI32Const(body, 1)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, lOut)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstLocalGet(body, lN)
+	body = memory.InstI32Store(body, 2, 0)
+	// for i in 0..n: mem[out + i*8] = mem[xs + i*8] * k
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstLocalGet(body, lN)
+	body = numeric.InstI32GeU(body)
+	body = inst.InstBrIf(body, 1)
+	// address of out[i]
+	body = inst.InstLocalGet(body, lOut)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstI32Const(body, 3)
+	body = numeric.InstI32Shl(body)
+	body = numeric.InstI32Add(body)
+	// xs[i] * k
+	body = inst.InstLocalGet(body, pXs)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstI32Const(body, 3)
+	body = numeric.InstI32Shl(body)
+	body = numeric.InstI32Add(body)
+	body = memory.InstF64Load(body, 3, 0)
+	body = inst.InstLocalGet(body, pK)
+	body = numeric.InstF64Mul(body)
+	body = memory.InstF64Store(body, 3, 0)
+	// i++
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, lI)
+	body = inst.InstBr(body, 0)
+	body = inst.InstEnd(body)
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, lOut)
+	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 

@@ -4652,6 +4652,12 @@ function builtin_i32_names(): string[] {
         // a single operand — it has no byte to compare and no cursor,
         // so an empty string is its one degenerate case and sums to 0.
         "__sum_bytes",
+        // __scale_f64(xs, k): a fresh f64[] of xs scaled by k
+        // (ATLAS-PLATFORM-PLAN §3.3, eighth kernel). The first over an
+        // ARRAY, and the first whose answer is a buffer rather than a
+        // word: the op allocates it, so the value pushed is a data
+        // pointer with an rc header behind it, like any array literal's.
+        "__scale_f64",
         // __crc32_cksum(crc, s): the incoming CRC-32 with s's bytes
         // folded in — poly 0x04C11DB7, MSB first, unreflected, no
         // final complement (#9128). i32 like its five siblings, and

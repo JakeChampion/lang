@@ -117,6 +117,7 @@ var rcResultOwned = map[string]bool{
 	// The counted allocators themselves.
 	"__fern_alloc_rc1": true, // rc=1 at base+0, payload size at base+4
 	"__alloc_u8":       true, // cap@-12, rc=1@-8, len@-4, payload zeroed
+	"__fern_scale_f64": true, // cap@-12, rc=1@-8, len@-4, the scaled f64 copy
 
 	// String production. Each is three-way — empty, inline-packed (<=7
 	// bytes), or an rc1 heap copy — and "owned" is the right answer for
