@@ -1325,15 +1325,18 @@ function main(): i32 {
 		floor  *regexp.Regexp // the heap-floor test that opens each chain
 		count  *regexp.Regexp // the read of the count word
 		absent []string       // the stub calls the chains replace
+		poison bool           // whether this backend's stubs carry the sanitizer check
 	}{
 		{"x86-64-linux",
 			regexp.MustCompile(`(?m)^\s+cmpq \$0x10000, %r\w+$`),
 			regexp.MustCompile(`(?m)^\s+movl -8\(%r\w+\), %e\w+$`),
-			[]string{"call __fn___fern_rc_is_unique", "call __fn___fern_rc_inc"}},
+			[]string{"call __fn___fern_rc_is_unique", "call __fn___fern_rc_inc"},
+			true},
 		{"arm64-linux",
 			regexp.MustCompile(`(?m)^\s+mov x5, #0x10000$`),
 			regexp.MustCompile(`(?m)^\s+ldur w5, \[x\d+, #-8\]$`),
-			[]string{"bl __fn___fern_rc_is_unique", "bl __fn___fern_rc_inc"}},
+			[]string{"bl __fn___fern_rc_is_unique", "bl __fn___fern_rc_inc"},
+			false},
 	}
 	for _, c := range cases {
 		out := filepath.Join(dir, "blk-"+c.target+".s")
@@ -1365,8 +1368,36 @@ function main(): i32 {
 				t.Errorf("%s: put still calls the stub (%s):\n%s", c.target, call, fn)
 			}
 		}
+		// rc_inc's stub reads the count through the sanitizer's poison check,
+		// so the inline form does too, or a use after free stops being caught
+		// wherever the call used to be. Only x86-64 has the check at all: the
+		// arm64 emitter carries no poison comparison on any rc path (#9882).
+		if !c.poison {
+			continue
+		}
+		poison := filepath.Join(dir, "blk-poison-"+c.target+".s")
+		pc := exec.Command(h.cli, "-target", c.target, "-backend", "ssa", "-emit", "asm", "-o", poison, src, h.stdlib)
+		pc.Env = append(os.Environ(), "FERN_RC_FREE_DEBUG=1")
+		if out, err := pc.CombinedOutput(); err != nil {
+			t.Fatalf("%s: %v\n%s", c.target, err, out)
+		}
+		pasm, err := os.ReadFile(poison)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pfn := functionListing(string(pasm), "__fn_Blk__put")
+		if !strings.Contains(pfn, rcPoisonWord) {
+			t.Errorf("%s: put's inline retain drops the poison check under FERN_RC_FREE_DEBUG:\n%s", c.target, pfn)
+		}
+		if strings.Contains(fn, rcPoisonWord) {
+			t.Errorf("%s: put carries the poison check with the flag off:\n%s", c.target, fn)
+		}
 	}
 }
+
+// rcPoisonWord is the value a freed block's count is overwritten with, which
+// the sanitizer's check compares against (asm_ir.san_poison_check).
+const rcPoisonWord = "2129656526"
 
 // A constant the binary ops alone read is an immediate operand on both ISAs
 // and is never materialised; one a division reads keeps its register. The
