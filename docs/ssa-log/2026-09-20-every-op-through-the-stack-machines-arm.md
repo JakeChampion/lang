@@ -66,3 +66,22 @@ not that each bridged arm is right under the register path; the SSA backend
 gate's `os_floor` program covers the process and host queries, `umask` and
 the handle ops both ways on both ISAs, and the corpus differential is the
 measurement for the rest.
+
+## Addendum, the same day: `dyn_dispatch`
+
+The one op the flat arm could not carry has an instruction of its own (kind
+60). The lift emits it with the values of the argc slots the lowering stored
+the receiver and the arguments to, and both emitters' dispatch arms became a
+chain over argument LOCATIONS — `asmcore.DynArg`, a register or a
+frame-pointer-relative slot — that the stack machine feeds its locals and the
+register path its value homes. A value living in the chain's own scratch
+(rax, x0) moves to r11 or x4 first; on arm64 a spill slot is addressed from
+x29, which the arms' pushes do not move. The chain leaves the result in the
+return register and the stack machine pushes it once after the join, where
+each arm pushed it before, so the flat text of a dyn call is a few
+instructions shorter.
+
+Measured on the same corpus: 0 declined functions on either ISA. The
+conformance case and the SSA backend gate's `dyn_dispatch` program (a
+struct, an enum and a primitive receiver, a two-argument method) run to the
+same answer through the register path and the stack machine on both ISAs.
