@@ -56,7 +56,7 @@ const STDLIB_GROUPS = [
     "table", "textwrap", "unicode", "utf8"]],
   ["Data & encoding", ["base32", "base64", "crypto", "csv", "hash", "hex",
     "json", "semver", "url", "uuid"]],
-  ["Collections & errors", ["array", "error", "iter", "map", "option",
+  ["Collections & errors", ["array", "error", "iter", "map", "ndarray", "option",
     "result", "set", "sort", "ordmap", "ordset", "pmap", "pset", "pvec"]],
   ["Traits", ["cmp", "convert", "mem", "num"]],
   ["Numbers", ["bigint", "float", "i32", "i64", "int", "math", "rand", "u32",
