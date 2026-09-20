@@ -702,13 +702,28 @@ function slice_bound(t: SliceTree, left: i32, op: string, right: i32, sink: i32)
 // not. Every failing test leaves for one `None` block, so the whole check is
 // a decision tree with two sinks and the result joins as a single phi. The
 // length is read once and each bound evaluated once, before any test runs.
+// `xs[lo:hi]` on an array is a fresh copy of the window, the source's own
+// type, bounds-checked by the runtime rather than by a test here (the AST
+// lowering traps the same way). The elements are copied as bare words, so an
+// array whose elements own something is refused: the copy would alias them.
+function array_slice(sl: ast.ExprSlice, src: Value, elem: typeinfo.Type, s: State): Value {
+    if (ssasem.reference(elem)) { return refused(s, "unsupported slice source: " + typeinfo.spelling(s.values[src.id])); }
+    var lo: Value = expr(sl.start, s, t_i32());
+    s = lo.s;
+    if (!s.ok) { return lo; }
+    var hi: Value = define(s, ssasem.length(), [src.id], 0, "", t_i32());
+    if (!sl.open_end) { hi = expr(sl.end, s, t_i32()); }
+    s = hi.s;
+    if (!s.ok) { return hi; }
+    if (!is_i32(s.values[lo.id]) || !is_i32(s.values[hi.id])) { return refused(s, "slice bound type"); }
+    return define(s, ssasem.arr_slice(), [src.id, lo.id, hi.id], 0, "", s.values[src.id]);
+}
+
 function slice_expr(e: ast.Expr, sl: ast.ExprSlice, s: State): Value {
     var src: Value = expr(sl.array, s, typeinfo.unchecked());
     s = src.s;
     if (!s.ok) { return src; }
-    // An array's slice is a bare view rather than an Option, and the window it
-    // hands back is a second reference to the source's buffer, which is a kind
-    // this vocabulary does not have.
+    if let typeinfo.TypeArray(a) = s.values[src.id] { return array_slice(sl, src, a.elem, s); }
     if (!ssasem.is_text(s.values[src.id])) { return refused(s, "unsupported slice source: " + typeinfo.spelling(s.values[src.id])); }
     var whole: typeinfo.Type = checked(e, s);
     var layout: i32 = union_layout(s, union_name(whole));

@@ -350,6 +350,13 @@ Unsupported constructs refuse the whole function with a reason.
   replaces. A slice owns its box and borrows the source's bytes, so it is a
   projection anchored to its source and is released by the view helper
   rather than the ordinary string free.
+- The ARRAY slice, `xs[lo:hi]` on an array of scalars, which the checker
+  types `[T]` and the runtime copies into a fresh array (`arr_slice`, 4- or
+  8-byte elements by the element width). `ssasem.arr_slice` produces it as an
+  owned value of the source's type with the bounds left to the runtime, as
+  the AST lowering leaves them; an open end reads the source's length. An
+  array whose elements own something is refused: the runtime copies the words
+  without a retain, so the copy would alias them.
 - The CHECKED slice, `s[a:b]`, which the checker types `Option[str]`. The
   window is admitted when `0 <= a <= b <= len` and neither end lands inside a
   codepoint, and the expression answers `None` when it is not. Every test that

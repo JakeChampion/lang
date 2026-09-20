@@ -2097,4 +2097,34 @@ function main(): i32 {
     return n + terminal();
 }
 `},
+	// `xs[lo:hi]` on an array of scalars: the checker types it `[T]`, the
+	// runtime copies the window into a fresh array (arr_slice), and the typed
+	// lowering produces it as an owned value of the source's type, bounds
+	// left to the runtime as the AST lowering leaves them. An open end reads
+	// the source's length. Every element width the copy distinguishes is
+	// here: u8 and i32 (4-byte on wasm), i64 and f64 (8-byte). The slices
+	// handed straight to `sum` are the ones the AST lowering never releases
+	// (#9843), so the pin is absolute.
+	{name: "array-slice-of-scalars", atLeast: 2, noLeak: true, src: `
+function sum(xs: [u8]): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < xs.len()) { t = t + (xs[i] as i32); i = i + 1; }
+    return t;
+}
+function main(): i32 {
+    var bytes: u8[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while (i + 3 <= 10) { total = total + sum(bytes[i:i + 3]); i = i + 3; }
+    total = total + sum(bytes[i:]);
+    var words: i32[] = [10, 20, 30, 40];
+    var mid: [i32] = words[1:3];
+    var wide: i64[] = [100i64, 200i64, 300i64];
+    var tail: [i64] = wide[1:];
+    var fl: f64[] = [1.5, 2.5, 3.5];
+    var head: [f64] = fl[0:2];
+    return total + mid[0] + mid.len() + (tail[1] as i32) + tail.len() + (head[1] as i32);
+}
+`},
 }
