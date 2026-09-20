@@ -1119,8 +1119,9 @@ On arm64 it cost **nothing**: `fmul` over `.2d`, `ld1` / `st1` over `.2d`
 and `dup` from a general register were all already there. So the debt is
 not per domain as a law. It depends on how each assembler was BUILT.
 `internal/native/x86_64/avx.go` is a hand-written list of exactly the
-forms the search kernels needed, five VEX shapes, all byte-domain — so a
-new domain pays per form. `internal/native/arm64` is generated from
+forms its kernels have asked for: five VEX shapes, all byte-domain, until
+this one added its three — so a new domain pays per form, and the file
+grows by the kernel. `internal/native/arm64` is generated from
 `internal/native/arm64tbl`, whose tables carry whole instruction CLASSES:
 `VecFP3` is every lane-wise three-register FP op (`fadd`, `fsub`, `fmul`,
 `fdiv`, `fmax`, `fmin`, the compares) across `2s`/`4s`/`2d`, so the double
