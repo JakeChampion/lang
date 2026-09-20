@@ -28,6 +28,12 @@ succeeds. Copying only anchor sets also keeps every phi out of every dependency
 row, which is what lets a loop-carried view read as anchored to what it entered
 the loop with rather than as a cycle.
 
+A PARAMETER operand is the exception, and it has to be: it has no anchor row of
+its own, so copying rows alone leaves the merge holding nothing. It is defined
+in the entry block, so naming it costs no availability, and when it is counted
+(`own v: str`) it is the lifetime the merge must hold. Every other rootless
+operand is a string constant, which is immortal and has nothing to hold.
+
 Two rows then need reclosing, since `ssadeps.verify` demands the full
 transitive closure: the phi's own set, and the chain of a window taken FROM a
 phi, which named the phi before the phi had any anchor.
@@ -74,6 +80,20 @@ The denominator grows by the 16 declarations this change adds to the compiler.
   A loop-carried view of a source born in the same loop has no dominating
   anchor to name, which is the honest answer rather than a refusal spelling.
 
+## The counted view parameter
+
+`own v: str` is admitted end to end and `owned_values` marks it owned, so a
+merge that takes it on one edge has to hold it. Anchoring rows alone did not:
+`v` was dead at the edge and the frame released it in the ENTRY block, before
+the loop whose header phi still names it.
+
+That release is not observable from the program. The backend has the view's
+bytes in registers by then and the box it frees is the header, so the answer is
+right, the x86-64 sanitizer touches nothing quarantined and wasm's
+`__rc_underflow_count()` stays 0 — on three targets, before and after. The
+placement is the whole of the defect, so the gate reads the produced body
+rather than running it.
+
 ## Traps
 
 - **The guard that refuses is not the bug.** `view_retain_error` was correct at
@@ -83,6 +103,14 @@ The denominator grows by the 16 declarations this change adds to the compiler.
   anchored a phi to its operands, which reads naturally and fails on every
   merge: the operand lives in one predecessor. Anchor sets compose; operands
   do not.
+- **A rule stated as universal has to be checked against every operand
+  category.** "A view phi owns nothing, whatever its operands are" is right,
+  and it silently moved a counted parameter's release earlier, because the
+  mechanism replacing the unit covered projections and not roots.
+- **A defect need not be observable to be real.** Nothing this repository runs
+  distinguished the two placements: same answer, same sanitizer, same
+  over-release count, on every target. A test that reads the emitted body is
+  what pins it.
 - **A closure invariant outlives the pass that established it.** Chains walked
   from single parents are closed for free, so nothing reclosed them. Adding one
   non-chain row broke that silently for every value that had named it, and the

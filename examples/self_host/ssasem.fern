@@ -1752,8 +1752,8 @@ function anchored(anchors: i32[], value: i32): boolean {
     return false;
 }
 
-// A phi of VIEWS is anchored to what its operands are anchored to, never to an
-// operand itself. The merged view's bytes belong to one of the sources behind
+// A phi of VIEWS is anchored to what its operands are anchored to, or to a
+// PARAMETER operand, which is its own source. The merged view's bytes belong to one of the sources behind
 // it, and an operand defined in a single predecessor does not dominate the uses
 // after the merge, so naming the operand fails availability where naming its
 // source succeeds. Copying only anchor SETS also keeps every phi out of every
@@ -1761,8 +1761,21 @@ function anchored(anchors: i32[], value: i32): boolean {
 // from a window of itself -- read as anchored to what it entered the loop with
 // rather than as a cycle. To a fixpoint, since a view reaches a phi through a
 // phi.
+function parameter_values(f: Func): boolean[] {
+    var out: boolean[] = [];
+    var i: i32 = 0;
+    while (i < f.graph.nvals) { out = out.append(false); i = i + 1; }
+    for b in f.graph.blocks {
+        for ins in b.insts {
+            if (ins.kind_tag == 6 && ins.result >= 0) { out = out.with(ins.result, true); }
+        }
+    }
+    return out;
+}
+
 function view_phi_anchors(f: Func, derived: i32[][]): i32[][] {
     var out: i32[][] = derived;
+    var params: boolean[] = parameter_values(f);
     var grown: boolean = true;
     while (grown) {
         grown = false;
@@ -1771,7 +1784,15 @@ function view_phi_anchors(f: Func, derived: i32[][]): i32[][] {
                 if (ins.kind_tag != 8 || !is_view(f.values[ins.result])) { continue; }
                 for a in ins.args {
                     if (a < 0) { continue; }
-                    for dep in out[a] {
+                    // A PARAMETER operand has no anchor row of its own and is
+                    // the source: naming it is what holds it past the merge's
+                    // reads, which matters when it is counted (`own`), and it
+                    // is defined in the entry block, so it dominates them.
+                    // Every other rootless operand is a string constant, which
+                    // is immortal and has no lifetime to hold.
+                    var from: i32[] = out[a];
+                    if (from.len() == 0 && params[a]) { from = [a]; }
+                    for dep in from {
                         if (dep != ins.result && !anchored(out[ins.result], dep)) {
                             out = out.with(ins.result, out[ins.result].append(dep));
                             grown = true;

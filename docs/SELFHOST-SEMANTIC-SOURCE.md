@@ -417,6 +417,9 @@ Unsupported constructs refuse the whole function with a reason.
   no unit of a view exists to take. The merge carries the UNION of its
   operands' anchors instead — their sources, never the operands, which live in
   one predecessor each and do not dominate the reads after the merge (#9877).
+  A PARAMETER operand is named directly: it has no anchor row of its own, it is
+  defined in the entry block so it dominates every read, and a counted
+  (`own str`) one is the lifetime the merge has to hold.
   A source that cannot be named where the merge is read, such as one created
   inside the loop that carries the merge, refuses the function.
 
