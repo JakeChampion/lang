@@ -2465,13 +2465,22 @@ function main(): i32 {
     }
     return acc % 113;
 }`},
-	// #9874: `replace` with no match used to hand back the haystack's own box,
-	// so the caller released a unit it never took. The argument has to be a
-	// temporary nobody else names — a second name on the box absorbs the
-	// extra release and hides the fault.
-	{name: "a-builtin-string-result-is-never-its-argument", atLeast: 59, noLeak: true, src: `
+	// #9874: `replace` used to hand back the haystack's own box on both its
+	// early paths, so the caller released a unit it never took. The argument
+	// has to be a temporary nobody else names — a second name on the box
+	// absorbs the extra release and hides the fault. Both early paths are
+	// here: `blank` takes the empty-needle one, `sq` the no-match one.
+	//
+	// The over-release COUNT is printed rather than left to the leak pins,
+	// which engage only on the sanitize leg. wasm keeps its own hand-written
+	// WAT body for this builtin, so the register legs' fix says nothing about
+	// it: before the wasm half of the fix this program printed 25 over-releases
+	// on the typed leg against its own AST leg's 0.
+	{name: "a-builtin-string-result-is-never-its-argument", atLeast: 113, noLeak: true, src: `
 import "std/string";
+import "std/io";
 function sq(s: string): string { return s.replace("Q", "Z"); }
+function blank(s: string): string { return s.replace("", "Z"); }
 function words(n: i32): string {
     var out: string = "";
     var i: i32 = 0;
@@ -2482,9 +2491,10 @@ function main(): i32 {
     var acc: i32 = 0;
     var r: i32 = 0;
     while (r < 20) {
-        acc = acc + sq(words(r % 4)).len() + sq(words(r % 3) + "Q").len();
+        acc = acc + sq(words(r % 4)).len() + sq(words(r % 3) + "Q").len() + blank(words(r % 2)).len();
         r = r + 1;
     }
+    print("over-releases " + __rc_underflow_count().to_string());
     return acc % 109;
 }`},
 }

@@ -7058,16 +7058,31 @@ pub function str_lines_helper(): string {
     return o;
 }
 // str_replace_helper emits the IR-path $__fern_str_replace(h, old, new) — every
-// non-overlapping occurrence of `old` in `h` replaced by `new` (empty `old` / no
-// match → `h` unchanged). Two-pass (count, then exact-size build into a fresh
-// $__fern_str_box), matching the register backends' __fern_str_replace. wasm's
-// AST path has no replace, so this is IR-only. Gated on module_uses_str_replace.
+// non-overlapping occurrence of `old` in `h` replaced by `new` — beside
+// $__fern_str_dup, which it returns on the empty-`old` and no-match paths: the
+// result is a box the caller owns, so handing back `h` would have the caller
+// release what the argument's owner still holds (#9874). Two-pass (count, then
+// exact-size build into a fresh $__fern_str_box), matching the register
+// backends' __fern_str_replace. wasm's AST path has no replace, so this is
+// IR-only. Gated on module_uses_str_replace.
 pub function str_replace_helper(): string {
     var o: string = "";
+    o = o + "  (func $__fern_str_dup (param $h i32) (result i32)\n";
+    o = o + "    (local $n i32) (local $p i32) (local $i i32)\n";
+    o = o + "    (local.set $n (i32.load (local.get $h)))\n";
+    o = o + "    (local.set $p (call $__fern_str_box (i32.add (i32.const 4) (local.get $n))))\n";
+    o = o + "    (i32.store (local.get $p) (local.get $n))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $dd (loop $cd\n";
+    o = o + "      (br_if $dd (i32.ge_s (local.get $i) (local.get $n)))\n";
+    o = o + "      (i32.store8 (i32.add (i32.add (local.get $p) (i32.const 4)) (local.get $i)) (i32.load8_u (i32.add (i32.add (local.get $h) (i32.const 4)) (local.get $i))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $cd)))\n";
+    o = o + "    (local.get $p))\n";
     o = o + "  (func $__fern_str_replace (param $h i32) (param $old i32) (param $new i32) (result i32)\n";
     o = o + "    (local $lh i32) (local $lo i32) (local $ln i32) (local $cnt i32) (local $i i32) (local $j i32) (local $match i32) (local $total i32) (local $p i32) (local $w i32)\n";
     o = o + "    (local.set $lo (i32.load (local.get $old)))\n";
-    o = o + "    (if (i32.eqz (local.get $lo)) (then (return (local.get $h))))\n";
+    o = o + "    (if (i32.eqz (local.get $lo)) (then (return (call $__fern_str_dup (local.get $h)))))\n";
     o = o + "    (local.set $lh (i32.load (local.get $h)))\n";
     o = o + "    (local.set $ln (i32.load (local.get $new)))\n";
     o = o + "    (local.set $cnt (i32.const 0))\n";
@@ -7083,7 +7098,7 @@ pub function str_replace_helper(): string {
     o = o + "        (br $cm)))\n";
     o = o + "      (if (local.get $match) (then (local.set $cnt (i32.add (local.get $cnt) (i32.const 1))) (local.set $i (i32.add (local.get $i) (local.get $lo)))) (else (local.set $i (i32.add (local.get $i) (i32.const 1)))))\n";
     o = o + "      (br $cc)))\n";
-    o = o + "    (if (i32.eqz (local.get $cnt)) (then (return (local.get $h))))\n";
+    o = o + "    (if (i32.eqz (local.get $cnt)) (then (return (call $__fern_str_dup (local.get $h)))))\n";
     o = o + "    (local.set $total (i32.add (local.get $lh) (i32.mul (local.get $cnt) (i32.sub (local.get $ln) (local.get $lo)))))\n";
     o = o + "    (local.set $p (call $__fern_str_box (i32.add (i32.const 4) (local.get $total))))\n";
     o = o + "    (i32.store (local.get $p) (local.get $total))\n";
