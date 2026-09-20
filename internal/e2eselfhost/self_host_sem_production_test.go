@@ -1732,8 +1732,8 @@ function main(): i32 {
 	// its own behind a contract (semsource.os_contracts), where the census
 	// over the corpus found 773 call sites refusing for the missing contract,
 	// most of them in the coreutils. A fresh string or array is the caller's
-	// and a scalar owns nothing, so the produced bodies release exactly what
-	// the AST lowering does.
+	// and a scalar owns nothing; the pin is that the produced bodies free no
+	// less than the AST lowering, which leaks several of these results (#9832).
 	{name: "os-floor-queries", atLeast: 2, nativeOnly: true, src: `
 function queries(): i32 {
     var n: i32 = 0;
