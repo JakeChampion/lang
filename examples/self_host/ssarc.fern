@@ -2448,6 +2448,7 @@ function fs_op_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     if (ins.str == "create_link") { return Lowered { found: true, r: emit(r, ir.op_create_link()) }; }
     if (ins.str == "create_symlink") { return Lowered { found: true, r: emit(r, ir.op_create_symlink()) }; }
     if (ins.str == "chown_at") { return Lowered { found: true, r: emit(r, ir.op_chown_at()) }; }
+    if (ins.str == "truncate") { return Lowered { found: true, r: emit(r, ir.op_truncate()) }; }
     return os_floor_site(r, ins);
 }
 
@@ -2467,6 +2468,9 @@ function os_floor_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     if (ins.str == "poll") { return Lowered { found: true, r: emit(r, ir.op_poll()) }; }
     if (ins.str == "timer_fd") { return Lowered { found: true, r: emit(r, ir.op_timer_fd()) }; }
     if (ins.str == "window_size") { return Lowered { found: true, r: emit(r, ir.op_window_size()) }; }
+    if (ins.str == "set_window_size") { return Lowered { found: true, r: emit(r, ir.op_set_window_size()) }; }
+    if (ins.str == "termios_get") { return Lowered { found: true, r: emit(r, ir.op_termios_get()) }; }
+    if (ins.str == "termios_set") { return Lowered { found: true, r: emit(r, ir.op_termios_set()) }; }
     return os_floor_process_site(r, ins);
 }
 
