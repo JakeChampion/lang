@@ -7492,6 +7492,90 @@ func (b *builder) computeBorrowedAliases() {
 		b.rc.borrowSources[x] = true
 		return true
 	})
+	// Match-binding alias (#9923): `var y = c`, where c is a match ARM
+	// BINDING. The same shape as the borrowed-parameter leg above and the
+	// same failure: a binding is bound WITHOUT an inc (bindingSlotScoped
+	// hands the arm a borrow), so it is not an owned rc local and neither of
+	// the legs above claims it — the Var lowering emitted the transfer inc,
+	// and the exit sweep skipped the dec because an alias is never
+	// freeEligible. One reference leaked per arm execution, which for a
+	// drain loop is the whole payload every iteration.
+	//
+	// The cancellation is sound for the parameter leg's reason, with the
+	// SCRUTINEE in the caller's place: it owns the payload across the whole
+	// arm, and the only release the arm can emit is the fresh-call reclaim
+	// at the join, which runs after the body. So y reads through a reference
+	// that is already held and needs none of its own.
+	//
+	// The source must be a binding and NOTHING else: matchBindingTypes is
+	// keyed by name over the whole function, so a local or parameter of the
+	// same name would make `var y = c` ambiguous, and leg one already owns
+	// the owned-local case.
+	matchBindingSrc := map[string]bool{}
+	for name := range b.matchBindingTypes() {
+		if name == "" || name == "_" || localNames[name] || borrowedParam[name] {
+			continue
+		}
+		matchBindingSrc[name] = true
+	}
+	for _, p := range b.fn.Params {
+		delete(matchBindingSrc, p.Name)
+	}
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		v, ok := n.(*ast.Var)
+		if !ok || v.Init == nil {
+			return true
+		}
+		src, ok := v.Init.(*ast.Ident)
+		if !ok || !matchBindingSrc[src.Name] {
+			return true
+		}
+		y, x := v.Name, src.Name
+		// The BINDING's type, not exprType's answer for the init. A binding
+		// is not in scope while this analysis runs, so exprType reads nil on
+		// it and needsRcIncOnAlias would answer false for every shape here —
+		// the inc it is being asked about is emitted later, from the arm,
+		// where the binding IS in scope. Asking a predicate before its
+		// operand exists is what left #8003's boxed half unfixed too.
+		bt := b.matchBindingTypes()[x]
+		if bt == nil {
+			return true
+		}
+		if b.rc.borrowedAlias[y] || b.rc.borrowSources[y] || b.rc.borrowSources[x] {
+			return true
+		}
+		if !b.isOwnedRcLocal(y) {
+			return true
+		}
+		if reassigned[x] || reassigned[y] || scrutinee[x] || scrutinee[y] {
+			return true
+		}
+		if b.rc.movedLocals[x] || b.rc.movedLocals[y] {
+			return true
+		}
+		if b.rc.arraySetConsumed[x] || b.rc.arraySetConsumed[y] {
+			return true
+		}
+		if !b.localNameUnique(y) {
+			return true
+		}
+		if !rcIncOnAliasType(bt) || b.isOwnedContainerRead(v.Init) {
+			return true
+		}
+		// The weaker reading, not bindingConfinedToArm's: y may hand the
+		// pointer on to a local that takes a count of its own, which is
+		// what `chunk = kept` does. The predicate refuses an escape whose
+		// inc is SKIPPED — a move site, an owned-container read — and those
+		// are the ones that would leave the destination holding an
+		// uncounted reference after the scrutinee's drop.
+		if !b.bindingReleasableInArm(b.fn.Body, y, bt) || !b.aliasReturnsConfined(y) {
+			return true
+		}
+		b.rc.borrowedAlias[y] = true
+		b.rc.borrowedAliasSites[v] = true
+		b.rc.borrowSources[x] = true
+		return true
+	})
 	// For-in element borrow (#6888): the desugar's per-iteration element
 	// binding `var y = __foreach_iter_N[__foreach_idx_N]`
 	// (ast.DesugarForEachArray) reads an element the iterand array owns.
