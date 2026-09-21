@@ -33,7 +33,7 @@ pub struct Request { key: string, name: string, binding: ssasem.Binding }
 // Every declaration in order, then every instance the declarations reached.
 // `contracts` is the module's contract table, by declaration key: what a
 // caller of a declaration reads, whether or not the declaration produced.
-pub struct Built { decls: Produced[], instances: Produced[], contracts: ssasem.Contract[] }
+pub struct Built { decls: Produced[], instances: Produced[], contracts: ssasem.Contract[], names: string[] }
 
 // Environments are the values of the bindings visible at loop entry, in
 // binding order, captured where a body leaves the loop.
@@ -4274,28 +4274,38 @@ function infer_rows(all: Produced[], names: string[]): ownership.Escapes[] {
     return rows;
 }
 
-// Whether every declaration in the module reached the typed pipeline. A mode
-// this pass infers is invisible to the AST lowering, which reads `own` off the
-// declaration and nothing else — so in a MIXED module an AST-lowered caller
-// hands a borrowed argument to a callee that now releases one, and the count
-// goes under. That is a segfault building the compiler and a wrong answer on
-// `field-append`, both of which `internal/e2eselfhost` reports and neither of
-// which the fixpoint or the fixtures would.
-//
-// A declared `own` is safe in a mixed module precisely because it is a SOURCE
-// fact both lowerings see. Until the AST half reads these rows too, the
-// inference applies only where it owns every body — which is most programs,
-// and grows on its own as the typed pipeline's reach does.
-function wholly_produced(all: Produced[]): boolean {
-    for p in all {
-        if (!p.ok && !p.template && !p.bodyless) { return false; }
+// TEMPORARY bisect knob, mirroring FERN_SEM_IR_SKIP: keep only the first N
+// rows, so a binary search over N names the function whose counted parameter
+// breaks the build.
+function own_limit(): i32 {
+    match (env("FERN_OWN_LIMIT")) {
+        Some(v) => { return util.digits_to_i32(v); },
+        None => { return 0 - 1; }
     }
-    return true;
+}
+
+function own_report(): boolean {
+    match (env("FERN_OWN_REPORT")) {
+        Some(_) => { return true; },
+        None => { return false; }
+    }
+}
+
+function capped(rows: ownership.Escapes[]): ownership.Escapes[] {
+    if (own_report()) {
+        var j: i32 = 0;
+        while (j < rows.len()) { eprint("OWNROW " + util.i32_to_string(j) + " " + rows[j].name + "\n"); j = j + 1; }
+    }
+    var n: i32 = own_limit();
+    if (n < 0) { return rows; }
+    var out: ownership.Escapes[] = [];
+    var i: i32 = 0;
+    while (i < rows.len() && i < n) { out = out.append(rows[i]); i = i + 1; }
+    return out;
 }
 
 function infer_ownership(all: Produced[], names: string[], table: ssasem.Contract[]): Inferred {
-    if (!wholly_produced(all)) { return Inferred { all: all, table: table }; }
-    var rows: ownership.Escapes[] = infer_rows(all, names);
+    var rows: ownership.Escapes[] = capped(infer_rows(all, names));
     var out: Produced[] = [];
     var i: i32 = 0;
     while (i < all.len()) {
@@ -4337,9 +4347,6 @@ pub function build_module(mod: parser.Module): Built {
         at = at + 1;
     }
     var all: Produced[] = close_module(util.append_all(decls, instances), names);
-    var inferred: Inferred = infer_ownership(all, names, table);
-    all = inferred.all;
-    table = inferred.table;
     decls = [];
     instances = [];
     i = 0;
@@ -4352,5 +4359,51 @@ pub function build_module(mod: parser.Module): Built {
         if (decls[i].template) { decls = decls.with(i, template_verdict(names[i], instances)); }
         i = i + 1;
     }
-    return Built { decls: decls, instances: instances, contracts: table };
+    return Built { decls: decls, instances: instances, contracts: table, names: names };
+}
+
+// The same module with every consumed parameter counted. Kept OUT of
+// `build_module` because only the caller knows whether the inference is safe
+// to use: a mode inferred here is invisible to the AST lowering, so it holds
+// only where the typed pipeline lowers every body of the module. `semlower`
+// is the layer that knows that — it is what `prune` decides — so it asks for
+// this and checks the answer still lowers whole before keeping it.
+pub function with_inferred_modes(b: Built): Built {
+    var all: Produced[] = util.append_all(b.decls, b.instances);
+    var inferred: Inferred = infer_ownership(all, b.names, b.contracts);
+    var decls: Produced[] = [];
+    var instances: Produced[] = [];
+    var i: i32 = 0;
+    while (i < inferred.all.len()) {
+        if (i < b.decls.len()) { decls = decls.append(inferred.all[i]); }
+        else { instances = instances.append(inferred.all[i]); }
+        i = i + 1;
+    }
+    return Built { decls: decls, instances: instances, contracts: inferred.table, names: b.names };
+}
+
+// Whether any parameter changed hands, so the caller can skip a second
+// lowering that would produce the same bodies.
+pub function modes_differ(a: Built, b: Built): boolean {
+    var i: i32 = 0;
+    while (i < a.decls.len() && i < b.decls.len()) {
+        if (!same_bits_i32(a.decls[i].modes, b.decls[i].modes)) { return true; }
+        i = i + 1;
+    }
+    i = 0;
+    while (i < a.instances.len() && i < b.instances.len()) {
+        if (!same_bits_i32(a.instances[i].modes, b.instances[i].modes)) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+function same_bits_i32(a: i32[], b: i32[]): boolean {
+    if (a.len() != b.len()) { return false; }
+    var i: i32 = 0;
+    while (i < a.len()) {
+        if (a[i] != b[i]) { return false; }
+        i = i + 1;
+    }
+    return true;
 }
