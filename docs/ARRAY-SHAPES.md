@@ -173,13 +173,13 @@ run:6:51  map    over strided    __closure_lambda_1 [element-fn-captures]  -> el
 The first of those is `dot_f64` in disguise; the second is not, and says
 why. `over` is the receiver's layout and `->` the site's verdict; both
 are below, and the element functions in the brackets are what this part
-of the section is about. The bar is `ATLAS-PLATFORM-PLAN.md` §3's: a kernel is one IR op
-whose whole vector lifetime stays inside its own emitted sequence, so a
-call to an element function is an op boundary and nothing survives it. A
-kernel can only take an element function it can INLINE, which means one
-primitive operation over the operands. `x * y`, `x * 2.0` and `-x` all
-are — a unary is emitted as readily as a binary — while a body with two
-operations or a call is not.
+of the section is about. The bar is `ATLAS-PLATFORM-PLAN.md` §3's: a
+kernel is one IR op whose whole vector lifetime stays inside its own
+emitted sequence, so a call to an element function is an op boundary and
+nothing survives it. A kernel can only take an element function it can
+INLINE, which means one primitive operation over the operands. `x * y`,
+`x * 2.0` and `-x` all are — a unary is emitted as readily as a binary —
+while a body with two operations or a call is not.
 
 The name a primitive is printed under is the operation a kernel would
 have to emit, not the source's spelling: `x < y` over `u64` prints
