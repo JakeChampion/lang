@@ -111,6 +111,12 @@ function supported_leaf(t: typeinfo.Type): boolean {
 // its element.
 function supported_nominal(t: typeinfo.Type, f: ssasem.Func): boolean {
     if (semtypes.is_cell(t)) { return walkable(semtypes.cell_elem(t), f); }
+    // A map cursor has no record layout to find: its block is the map's address
+    // and an index, and what it answers is the map's columns, so the two
+    // element types are what has to be emittable.
+    if (semtypes.is_map_iter(t)) {
+        return walkable(semtypes.map_iter_key(t), f) && walkable(semtypes.map_iter_value(t), f);
+    }
     if let typeinfo.TypeStruct(r) = t { return (r.args.len() == 0 || semtypes.is_env(t)) && semrecords.find(f.records, t) >= 0; }
     if let typeinfo.TypeUnion(_) = t { return semrecords.find_enum(f.enums, t) >= 0; }
     return false;
@@ -1318,7 +1324,7 @@ function container_op(k: i32): boolean {
         ssasem.array_get(), ssasem.tuple_get(), ssasem.record_get(),
         ssasem.length(), ssasem.append(), ssasem.with(), ssasem.slice(), ssasem.str_index(),
         ssasem.str_bytes(), ssasem.arr_sum(), ssasem.arr_product(), ssasem.arr_join(), ssasem.arr_slice()], k)
-        || variant_op(k) || ssasem.is_cell_op(k) || ssasem.is_map_op(k);
+        || variant_op(k) || ssasem.is_cell_op(k) || ssasem.is_map_op(k) || ssasem.is_map_iter_op(k);
 }
 
 function variant_op(k: i32): boolean {
@@ -1833,6 +1839,7 @@ function instruction(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Pla
     r = negation_zero(r, f, ins);
     if (ins.kind_tag == ssasem.with()) { r = with_update(r, f, p, ins, defer0); return emit(r, ir.op_store_local(ins.result)); }
     if (ssasem.is_cell_op(ins.kind_tag)) { return cell_site(r, f, ins); }
+    if (ssasem.is_map_iter_op(ins.kind_tag)) { return map_iter_site(r, f, ins); }
     if (ssasem.is_function_op(ins.kind_tag)) { r = function_site(r, f, ins); return emit(r, ir.op_store_local(ins.result)); }
     if (ins.kind_tag == ssasem.map_insert() || ins.kind_tag == ssasem.map_delete()) { r = map_mutation(r, f, ins); return emit(r, ir.op_store_local(ins.result)); }
     if (ins.kind_tag == ssasem.arr_join()) { r = join_call(r, ins); return emit(r, ir.op_store_local(ins.result)); }
@@ -2128,6 +2135,35 @@ function with_field(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan
     r = emit(r, ir.op_load_local(ins.args[2]));
     r = emit(r, arr_set_op(elem));
     return emit(r, ir.op_load_local(res));
+}
+
+// The cursor cluster. `map_iter` is the only allocation of the five: a bare
+// block holding the map's address and an index, which is why nothing here
+// retains or releases. `key` and `value` load the map's own column element at
+// the cursor, so the value is the map's and stays borrowed. `advance` moves
+// the index in place and leaves the dummy the statement stores.
+//
+// Both width flags are 0 here, and neither is a narrowing choice: an admitted
+// map's value column is never 8 bytes. `ssasem.narrow_map_value` takes an
+// integer only when it is NOT wide, and `counted_map_value`'s three shapes
+// (a string, a string array, a box) are none of them wide either, so the
+// i64 widekind `op_map_iter` spells is as unreachable as the float one, and
+// `op_mapiter_value`'s wide flag with it. The wasm accessors are the only
+// readers of either.
+function map_iter_site(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
+    r = emit(r, ir.op_load_local(ins.args[0]));
+    if (ins.kind_tag == ssasem.map_iter()) {
+        r = emit(r, ir.op_map_iter(0));
+    } else if (ins.kind_tag == ssasem.mapiter_has_next()) {
+        r = emit(r, ir.op_mapiter_has_next());
+    } else if (ins.kind_tag == ssasem.mapiter_key()) {
+        r = emit(r, ir.op_mapiter_key());
+    } else if (ins.kind_tag == ssasem.mapiter_value()) {
+        r = emit(r, ir.op_mapiter_value(false));
+    } else {
+        r = emit(r, ir.op_mapiter_advance());
+    }
+    return emit(r, ir.op_store_local(ins.result));
 }
 
 // A cell is a one-element array box shared by every holder, built over the

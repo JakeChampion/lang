@@ -412,6 +412,14 @@ function is_map_ref(r: parser.TypeRef): boolean {
   return r.base == "Map" && r.args.len() == 2;
 }
 
+// `MapIter[K, V]` resolves CARRYING its key and value for the same reason
+// `Cell[T]` carries its element: the cursor's `key()` and `value()` answer
+// those two types, and an argless spelling names no columns to read. The
+// argless form still resolves below, where every other reserved builtin does.
+function is_map_iter_ref(r: parser.TypeRef): boolean {
+  return r.base == "MapIter" && r.args.len() == 2;
+}
+
 function is_wide_map_ref(r: parser.TypeRef): boolean {
   return r.base == "Map" && r.args.len() > 2;
 }
@@ -4754,6 +4762,8 @@ function type_from_ref_names(r: parser.TypeRef, struct_names: string[], union_na
     return t_map(type_from_ref_names(r.args[0], struct_names, union_names), type_from_ref_names(r.args[1], struct_names, union_names));
   } else if (is_cell_ref(r)) {
     return t_struct_g("Cell", [type_from_ref_names(r.args[0], struct_names, union_names)]);
+  } else if (is_map_iter_ref(r)) {
+    return t_struct_g("MapIter", [type_from_ref_names(r.args[0], struct_names, union_names), type_from_ref_names(r.args[1], struct_names, union_names)]);
   } else if (is_wide_map_ref(r)) {
     // A (never-emitted) 3+ arg `Map[K, A, B]`: the value is "everything after
     // the first comma" — the trailing args re-joined and resolved as one name

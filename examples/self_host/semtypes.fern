@@ -193,6 +193,52 @@ pub function is_handle(t: typeinfo.Type): boolean {
     return false;
 }
 
+// `MapIter[K, V]` — the map cursor. It wears a record's nominal like a handle
+// does, but it holds an ADDRESS rather than a descriptor: a bare 16-byte block
+// over the map's own storage. No rc header, so the frame counts nothing and
+// releases nothing; every read through it reads the map, so it is lent for as
+// long as the map lives.
+pub function is_map_iter(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeStruct(s) = t { return s.name == "MapIter" && s.args.len() == 2; }
+    return false;
+}
+
+// A cursor inside a type, through every constructor that can carry one out of
+// a frame: an array element, a tuple element, a cell's element, a map's key or
+// value, and a union's argument. A result carries the cursor out of the frame
+// whose map it reads, and a container result carries it just as far as the
+// cursor itself does.
+//
+// Two shapes are deliberately not here. A cursor in a RECORD FIELD is refused
+// by the schema walk, which has no layout to record for one. `dyn Trait`
+// carries no type argument at all, so there is nothing to walk. Neither is a
+// gap this predicate is papering over — both refuse before a body is produced.
+pub function holds_map_iter(t: typeinfo.Type): boolean {
+    if (is_map_iter(t)) { return true; }
+    if let typeinfo.TypeArray(a) = t { return holds_map_iter(a.elem); }
+    if let typeinfo.TypeTuple(tup) = t {
+        for e in tup.elements { if (holds_map_iter(e)) { return true; } }
+        return false;
+    }
+    if (is_cell(t)) { return holds_map_iter(cell_elem(t)); }
+    if let typeinfo.TypeMap(m) = t { return holds_map_iter(m.key) || holds_map_iter(m.value); }
+    if let typeinfo.TypeUnion(u) = t {
+        for a in u.args { if (holds_map_iter(a)) { return true; } }
+        return false;
+    }
+    return false;
+}
+
+// The key and value a cursor answers, read off the nominal's arguments.
+pub function map_iter_key(t: typeinfo.Type): typeinfo.Type {
+    if let typeinfo.TypeStruct(s) = t { if (s.args.len() == 2) { return s.args[0]; } }
+    return typeinfo.unchecked();
+}
+pub function map_iter_value(t: typeinfo.Type): typeinfo.Type {
+    if let typeinfo.TypeStruct(s) = t { if (s.args.len() == 2) { return s.args[1]; } }
+    return typeinfo.unchecked();
+}
+
 function concrete_struct(s: typeinfo.TypeStruct): boolean {
     if (s.name == "Cell") { return s.args.len() == 1 && concrete(s.args[0], false); }
     return s.name.len() > 0 && concrete_list(s.args);

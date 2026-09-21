@@ -1359,6 +1359,36 @@ floor on the win and not a ceiling. It is the largest margin any kernel in
 this document has shown, because it is the only one whose baseline was
 paying for a closure.
 
+**The factor does not have to be written in the source.** Step 4's first slice
+read a literal out of the element function's body, which left the spelling a
+reader reaches for as soon as the factor has a name — `var k: f64 = 2.5;
+xs.map((x: f64): f64 => x * k)` — running the scalar loop and paying the
+indirect call. It reaches the kernel too, and costs nothing to emit: closure
+conversion pushes each captured value immediately before the build that packs
+it, so deleting the build leaves the factor standing exactly where the kernel
+wants its second operand. The captured shape emits no constant at all.
+
+Measured the same way — 300 rounds over a 20,000-element `f64[]`, one source
+built twice differing only by `FERN_NO_SCALE_KERNEL`:
+
+| | best of 7 |
+| --- | --- |
+| `xs.map(x => x * k)`, k captured, scalar | 41.2 ms |
+| the same source, kernel | 2.3 ms |
+| | **17.91x** |
+
+The same margin as the literal factor, which is the expected result: the
+kernel and the baseline are both unchanged, and the captured shape sheds an
+env allocation per round on top.
+
+What a capture may NOT be is the other half of the rule, and one case is worth
+naming because it is invisible in the source: **assigning the captured
+variable anywhere in the enclosing function boxes it**, so the closure captures
+a cell rather than a value — the push carries an rc.inc and the body reads
+through an indirection. That declines, and has to: the kernel wants the value,
+and deleting an inc whose matching release left with the closure would
+unbalance the refcounts.
+
 The pass runs LAST of the three that rewrite an array combinator — after
 fusion (#9731) and after R7's in-place map (#9733). R7 allocates nothing at
 all, and that is a contract `fip`/E068 checks, so a kernel putting a fresh
