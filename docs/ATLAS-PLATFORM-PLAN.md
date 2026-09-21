@@ -1151,14 +1151,20 @@ both. Both bodies read the element first and the factor second, so unlike
 x86-64 — where folding the load forced the operands to swap — nothing had
 to be done to keep them agreeing about NaN.
 
-Measured on `examples/bench/array_scale_f64` under qemu-aarch64, harness
-floor included: **119 ms → 92 ms, 1.29x**. Read that as a floor and not
-as the hardware ratio, for the reason every qemu row in this section
-carries: qemu charges far more for one NEON instruction than hardware
-does, so it systematically understates a vector kernel. The
-architecture-independent claim is the instruction count, one `fmul` and
-one load/store pair per two elements where the scalar body ran two of
-each.
+Measured on `examples/bench/array_scale_f64`:
+
+| native arm64 | scalar | NEON | |
+|---|---|---|---|
+| retired | 148.5M | 74.8M | 1.99x |
+| wall (qemu) | 119 ms | 92 ms | 1.29x |
+
+These two rows are the best evidence in this section for the qemu caveat
+every other arm64 figure here carries, because they are the same commit
+measured two ways. The instruction count halves — 1.99x against a lane
+count of 2, which is the whole of what two lanes can give — while qemu's
+wall clock shows 1.29x, because it charges far more for one NEON
+instruction than hardware does. Quote the retired row when comparing
+backends; the wall row is a floor.
 
 The remaining six legs are still scalar.
 
