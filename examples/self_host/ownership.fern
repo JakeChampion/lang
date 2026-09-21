@@ -154,6 +154,44 @@ function instruction_carried(out: boolean[], f: ssasem.Func, a: ssasem.Analysis,
     return next;
 }
 
+// The values a callee may keep a borrow of. A slot the callee does NOT count
+// is lent, and nothing here can see what the callee does with what it was
+// lent: `hands_out` models a call result as a FRESH unit, which severs the
+// result's dependency on the argument, so a callee that puts a lent value in
+// the thing it returns is invisible from the caller.
+//
+// That is only a leak while the caller borrows the container too. Once the
+// caller OWNS it, the caller also drops it — and the drop frees a box the
+// result still points at. `semsource.stmt` is the shape: every arm destructures
+// `st` and hands a payload on (`declare(st, v, s)`, `discard(e.value, s)`)
+// before the frame's drop of `st` runs, which segfaulted the compiler at
+// `semtypes.numeric_equal` reading a null type.
+//
+// So a parameter with a value of its own in a lent slot is not counted. The
+// container stays borrowed, nobody drops it, and the callee's borrow stays
+// good — which is what happened before this pass existed.
+function lent_values(out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[]): boolean[] {
+    var next: boolean[] = out;
+    var i: i32 = 0;
+    while (i < ins.args.len()) {
+        if (ssasem.reference(f.values[ins.args[i]]) && !consumed(rows, ins.str, i)) { next = carry(next, a, ins.args[i]); }
+        i = i + 1;
+    }
+    return next;
+}
+
+function lent_out(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[]): boolean[] {
+    var out: boolean[] = [];
+    var i: i32 = 0;
+    while (i < f.graph.nvals) { out = out.append(false); i = i + 1; }
+    for b in f.graph.blocks {
+        for ins in b.insts {
+            if (ins.kind_tag == ssasem.call()) { out = lent_values(out, f, a, ins, rows); }
+        }
+    }
+    return out;
+}
+
 // The values this frame lets out, under the current round's answers.
 function carried_values(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[]): boolean[] {
     var out: boolean[] = [];
@@ -176,10 +214,11 @@ pub function escaping(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[]): bool
     // A function this boundary cannot analyse keeps every declared mode.
     if (!a.ok) { return all_true(f.params.len()); }
     var carried: boolean[] = carried_values(f, a, rows);
+    var lent: boolean[] = lent_out(f, a, rows);
     var out: boolean[] = [];
     var i: i32 = 0;
     while (i < f.params.len()) {
-        out = out.append(i < carried.len() && carried[i]);
+        out = out.append(i < carried.len() && carried[i] && !(i < lent.len() && lent[i]));
         i = i + 1;
     }
     return out;
