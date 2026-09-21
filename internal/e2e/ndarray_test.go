@@ -195,6 +195,48 @@ function main(): i32 {
 	var ordr: ndarray.NdArray[i64] = sl2.inner(v3.reverse(0), 0 as i64, (x: i64, y: i64): i64 => x + y, (acc: i64, q: i64): i64 => acc * (10 as i64) + q);
 	if (ordr.get([0]) != 222 as i64) { return 156; }
 
+	// By rank: the frame splits off the leading axes, every cell is a view
+	// (so peeling costs no element copy), and the results reassemble under
+	// frame ++ cell-result shape.
+	var b12: i64 = __heap_bump_bytes();
+	var sums: ndarray.NdArray[i64] = a.map_rank(1, (row: ndarray.NdArray[i64]): ndarray.NdArray[i64] =>
+		ndarray.from_flat([row.fold_all(0 as i64, (acc: i64, x: i64): i64 => acc + x)], []));
+	var d_mr: i64 = __heap_bump_bytes() - b12;
+	if (sums.rank() != 1 || sums.shape()[0] != n) { return 160; }
+	// Same answer as reducing the same axis away, which is the identity a
+	// rank-1 cell fold has to satisfy.
+	if (sums.get([3]) != rows.get([3])) { return 161; }
+	if (counters && d_mr >= elem_bytes) { return 162; }
+	// A cell result wider than one element: the cell axis comes back, so
+	// the result has the frame's rank plus the cell result's.
+	var pair: ndarray.NdArray[i64] = a.map_rank(1, (row: ndarray.NdArray[i64]): ndarray.NdArray[i64] =>
+		ndarray.from_flat([row.get([0]), row.get([1])], [2]));
+	if (pair.rank() != 2 || pair.shape()[0] != n || pair.shape()[1] != 2) { return 163; }
+	if (pair.get([5, 1]) != a.get([5, 1])) { return 164; }
+	// k == rank is one cell, the whole handle; k == 0 gives every element
+	// its own rank-0 cell. Neither is special-cased in the implementation.
+	var whole: ndarray.NdArray[i64] = a.map_rank(2, (c: ndarray.NdArray[i64]): ndarray.NdArray[i64] =>
+		ndarray.from_flat([c.fold_all(0 as i64, (acc: i64, x: i64): i64 => acc + x)], []));
+	if (whole.rank() != 0 || whole.get([]) != total) { return 165; }
+	var each: ndarray.NdArray[i64] = a.map_rank(0, (c: ndarray.NdArray[i64]): ndarray.NdArray[i64] =>
+		ndarray.from_flat([c.get([]) * (3 as i64)], []));
+	if (each.rank() != 2 || each.get([5, 3]) != a.get([5, 3]) * (3 as i64)) { return 166; }
+	// A reversed FRAME axis: the cells must arrive in index order, not in
+	// storage order. Axis 0 is the frame here, so a walk that enumerated
+	// cells in storage order would hand back the input's last row first and
+	// these assertions would fail. Reversing the cell axis instead proves
+	// nothing, since it permutes within a cell and leaves the cell order
+	// alone.
+	var rfr: ndarray.NdArray[i64] = a.reverse(0);
+	var rvr: ndarray.NdArray[i64] = rfr.map_rank(1, (row: ndarray.NdArray[i64]): ndarray.NdArray[i64] =>
+		ndarray.from_flat([row.get([0])], []));
+	if (rvr.get([0]) != rfr.get([0, 0]) || rvr.get([1]) != rfr.get([1, 0])) { return 167; }
+	// No cells: f never runs, so there is no cell result shape to learn
+	// and the result is the empty handle of the frame's shape.
+	var none: ndarray.NdArray[i64] = ndarray.from_flat([] as i64[], [0, 3]).map_rank(1,
+		(row: ndarray.NdArray[i64]): ndarray.NdArray[i64] => ndarray.from_flat([row.get([0])], []));
+	if (none.rank() != 1 || none.shape()[0] != 0 || none.len() != 0) { return 168; }
+
 	// The keep-alive: every buffer measured above is still held here.
 	var live: i32 = t.rank() + rv.rank() + sl.rank() + se.rank() + pm.rank() + col.rank()
 		+ r2.rank() + r3.rank() + f1.len() + f2.len() + p.rank() + z.rank() + e.rank()
@@ -288,13 +330,34 @@ function main(): i32 {
 	return a.reduce_axis(2, 0, (acc: i32, x: i32): i32 => acc + x).rank();
 }
 `,
+	"map_rank at a rank the handle lacks": `import "std/ndarray";
+function main(): i32 {
+	var a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5, 6], [2, 3]);
+	return a.map_rank(3, (c: ndarray.NdArray[i32]): ndarray.NdArray[i32] => c).rank();
+}
+`,
+	// The two cell results have the SAME element count and different
+	// shapes, so the assembled buffer still fits frame ++ first-cell-shape
+	// and from_flat's count check passes. Only map_rank's own same-shape
+	// check catches this one -- with that check removed the program runs
+	// to completion, which is how the case was chosen.
+	"map_rank whose cells return different shapes": `import "std/ndarray";
+function ragged(c: ndarray.NdArray[i32]): ndarray.NdArray[i32] {
+	if (c.get([0]) == 1) { return ndarray.from_flat([9, 9], [1, 2]); }
+	return ndarray.from_flat([9, 9], [2, 1]);
+}
+function main(): i32 {
+	var a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5, 6], [2, 3]);
+	return a.map_rank(1, ragged).rank();
+}
+`,
 }
 
 // 1x = construction, 2x = transpose, 3x = the other metadata operations,
 // 4x = chains, 5x/6x = reshape (metadata / copy), 7x/8x = to_flat (no copy /
 // copy), 90-92 = packed, 93-96 = a reversed handle materialized, 10x = rank
 // 0 and empty, 12x = elementwise, 13x = along an axis, 14x = broadcasting,
-// 15x = products.
+// 15x = products, 16x = by rank.
 func TestX86_64NdarrayStructuralOpsAreMetadata(t *testing.T) {
 	if _, code := compileAndRunX86_64FreeOn(t, ndarraySrc); code != 0 {
 		t.Errorf("ndarray on x86-64: got %d, want 0", code)
@@ -339,8 +402,12 @@ func TestInterpNdarrayValuesCorrect(t *testing.T) {
 		t.Errorf("ndarray on interp: got %d, want 0", got)
 	}
 	for name, src := range ndarrayAbortSrcs {
-		if got := runInterpExit(t, src); got == 0 {
-			t.Errorf("%s on interp: exit 0, want a failure", name)
+		// 134 exactly, as the three compiled backends demand. Accepting any
+		// nonzero exit here made this leg blind to a case whose SUCCESS
+		// value is also nonzero — a rank, say — which is how the ragged
+		// map_rank case slipped through while it was still returning 3.
+		if got := runInterpExit(t, src); got != 134 {
+			t.Errorf("%s on interp: exit %d, want the bounds abort 134", name, got)
 		}
 	}
 }

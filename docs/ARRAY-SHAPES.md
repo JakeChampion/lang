@@ -176,6 +176,7 @@ equal; anything else is a derived shape that is wrong and aborts.
 | `scan_axis(axis, init, f)` | same shape, the running fold | increasing index along `axis` | one packed buffer of `len()` |
 | `outer(b, f)` | `a.shape() ++ b.shape()`, every pair | reading order of the result | one packed buffer of the result count |
 | `inner(b, init, mul, add)` | last axis of `a` against first of `b`: `a.shape()[:-1] ++ b.shape()[1:]` | increasing index along the contracted axis | one packed buffer of the result count |
+| `map_rank(k, f)` | `frame ++ f's result shape`, the frame being the leading `rank - k` axes; the empty handle of shape `frame` when there are no cells | cells in increasing index order, each cell's result read in reading order | one packed buffer of the result count |
 
 Three rules follow:
 
