@@ -1,0 +1,80 @@
+# 2026-09-21 — a map cursor reads the columns it points at
+
+`Map[K, V].iter` was the largest remaining typed-path refusal after the format
+family: `unsupported call target: Map[string, JsonValue].iter`, 27 refusals in
+`examples/tests/json_roundtrip_test` alone, and it held that file (244
+declarations) and `conformance/cases/audit_std_json` (82) entirely to the AST
+lowering.
+
+## What the cursor is
+
+Read off the emitters rather than inferred — `ir.fern`'s op cluster and
+`asm_ir.fern`'s x86-64 arm:
+
+- `map_iter` is the only allocation of the five: `__fern_alloc(16)`, a bare
+  block holding `[map_ptr@0, cursor@8]`. **No rc header.**
+- `mapiter_key` and `mapiter_value` are raw loads of `keys[cursor]` and
+  `values[cursor]` — no retain. The element stays the map's.
+- `mapiter_has_next` reads `cursor < keys.len`.
+- `mapiter_advance` bumps the stored index in place and leaves a dummy.
+
+So the cursor is an address the frame never counts, never retains and never
+releases, and every read through it is a read of the map's own storage.
+
+## The shape that made it fit
+
+#9562 sized this as blocked: "the semantic path cannot describe the iterator as
+a unit the frame owns while the box has no header to release: `ssarc` would emit
+a release the runtime cannot service", and concluded the box needs an rc header
+on all three backends first.
+
+That is true of a contract that OWNS the cursor. This one lends it. The cursor
+joins `unit_free` beside a stream handle, so no release is ever planned and the
+missing header is not in the way. What it does need is the map kept alive, and
+that is `ssasem.projects`: the cursor is a projection of its map, and `key` and
+`value` are projections of the cursor, so the existing anchor chain keeps the
+map live for exactly as long as any read through it can happen. #9562's own
+closing note asks for that — "anchor the iterator to the map the way a string
+view is anchored to its source" — and it is the machinery the view leaves
+already built.
+
+The one edit outside the ownership story is the checker's: `MapIter[K, V]`
+resolved through the argless reserved-builtin arm and lost its arguments, so a
+binding declared `MapIter[string, i32]` held a semantic value of a different
+type. It resolves carrying its two arguments now, exactly as `Cell[T]` carries
+its element and for the same reason — `key()` and `value()` answer those types,
+and an argless spelling names no columns.
+
+## Measured
+
+x86-64, `FERN_SANITIZE=1` + `FERN_LEAKCHECK=1`, native x86-64 as the oracle.
+
+| program | before | after | AST leg holds | typed holds |
+|---|---|---|---|---|
+| `examples/tests/json_roundtrip_test` | 0 of 244 | 244 of 244 | 182,512 B in 2921 blocks | 192 B in 12 |
+| `conformance/cases/audit_std_json` | 0 of 82 | 82 of 82 | 7,200 B in 133 | 16 B in 1 |
+
+Both answer identically on the typed path, the AST leg and native, and the
+conformance case matches its `expected.stdout`.
+
+The bytes the typed leg still holds are the cursor blocks themselves, one 16-byte
+`__fern_alloc` per `iter()` — 12 cursors and 1 cursor respectively. That is
+#9562, which this does not fix and does not worsen: the AST leg holds the same
+blocks, and on the test program below both legs hold exactly 848 bytes for the
+same 53 cursors.
+
+`conformance/cases/map_iter_struct_value` (70 declarations) does NOT come with
+this one. Its cursor produces; the file still refuses on
+`unsupported map shape: Map[Sku, Item]`, a struct-keyed map, which is the
+`unsupported map shape` leaf and a different root.
+
+## Trap
+
+**A refusal that names one thing can be several in a row.** The cursor took five
+separate gates before it produced, each reported as a different sentence and
+each needing its own answer: the call target, the binding's declared type
+(the checker arm above), `unsupported record type` (the schema walk wanted a
+field list the cursor has none of), `unsupported counted-unit type` and
+`unsupported physical RC value type` (both type gates that admit a nominal only
+by finding its record layout). Reading the first refusal as the size of the job
+would have under-scoped it by four.

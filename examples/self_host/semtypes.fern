@@ -193,6 +193,26 @@ pub function is_handle(t: typeinfo.Type): boolean {
     return false;
 }
 
+// `MapIter[K, V]` — the map cursor. It wears a record's nominal like a handle
+// does, but it holds an ADDRESS rather than a descriptor: a bare 16-byte block
+// over the map's own storage. No rc header, so the frame counts nothing and
+// releases nothing; every read through it reads the map, so it is lent for as
+// long as the map lives.
+pub function is_map_iter(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeStruct(s) = t { return s.name == "MapIter" && s.args.len() == 2; }
+    return false;
+}
+
+// The key and value a cursor answers, read off the nominal's arguments.
+pub function map_iter_key(t: typeinfo.Type): typeinfo.Type {
+    if let typeinfo.TypeStruct(s) = t { if (s.args.len() == 2) { return s.args[0]; } }
+    return typeinfo.unchecked();
+}
+pub function map_iter_value(t: typeinfo.Type): typeinfo.Type {
+    if let typeinfo.TypeStruct(s) = t { if (s.args.len() == 2) { return s.args[1]; } }
+    return typeinfo.unchecked();
+}
+
 function concrete_struct(s: typeinfo.TypeStruct): boolean {
     if (s.name == "Cell") { return s.args.len() == 1 && concrete(s.args[0], false); }
     return s.name.len() > 0 && concrete_list(s.args);

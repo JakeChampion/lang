@@ -161,12 +161,16 @@ function supported_tuple(tup: typeinfo.TypeTuple, f: ssasem.Func): boolean {
 }
 // The types this pass plans no unit for: the scalars, and the stream handles,
 // which are a descriptor and so one of them.
+// The types that carry no unit at all: the scalars, a stream handle, which is
+// its descriptor, and a map cursor, whose block has no rc header. The cursor
+// still has to outlive nothing and be outlived by its map, which the anchor on
+// `ssasem.projects` states rather than the ledger.
 function unit_free(t: typeinfo.Type): boolean {
     if let typeinfo.TypeI32(_) = t { return true; }
     if let typeinfo.TypeBool(_) = t { return true; }
     if let typeinfo.TypeFloat(_) = t { return true; }
     if let typeinfo.TypeVoid(_) = t { return true; }
-    return semtypes.is_handle(t);
+    return semtypes.is_handle(t) || semtypes.is_map_iter(t);
 }
 function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
     if (unit_free(t)) { return true; }
