@@ -41,6 +41,14 @@ Corpus census (865 seeds), both legs run here with the same script:
 
 No program regresses, and none produces less.
 
+The refusal family itself is gone: `unresolved type of binding` went from 14
+sites across 5 programs to none. Only one of those programs becomes whole,
+because the other four stop on a different leaf — three map-iteration
+conformance cases now reach `unsupported call target: Map[K, V].iter`, and
+`option_combinators_test` reaches the literal below. A refusal family closing
+and a program producing are not the same measurement, and the census counts the
+second.
+
 ## What is still refused
 
 `examples/tests/option_combinators_test` stops one function short, at

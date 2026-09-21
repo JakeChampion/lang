@@ -6,9 +6,14 @@ wasm, on either lowering. **The mechanism is not.** `type_to_irtag` still yields
 back to an untyped 4-byte read of it, so every shape the call-site binding does
 not reach still answers silent wrong values with exit 0 and no diagnostic. What
 closes is one shape at a time, as `gc_bind_param` learns to unify it: an array
-element, a tuple element, and (#9485) a callable's parameter. Nine
-`unresolved type of binding` refusals remain in the corpus, and #9488 is the
-same hazard one layer down, in the backend rather than the checker.
+element, a tuple element, and (#9485) a callable's parameter. No
+`unresolved type of binding` refusal remains in the corpus: an unannotated
+binding of a call takes the call's own result type now, which is the one the
+instance settles, so the checker never has to reach it. That closes the
+REFUSALS, not the mechanism — the hazard is a shape the call-site binding does
+not reach, and a binding is only one of the places a type var arrives
+unresolved. #9488 is the same hazard one layer down, in the backend rather than
+the checker.
 
 #9489 is the question this raises and does not answer: whether an empty tag
 should be a REFUSAL on the AST path, which would convert the whole class from a
