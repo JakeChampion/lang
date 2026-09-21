@@ -210,7 +210,7 @@ function test_map_rank_maps_every_cell(): test.TestOutcome {
   var a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5, 6], [2, 3]);
   // Rank-1 cells: one row each, folded to a scalar. Same answer as reducing
   // that axis away, which is the identity a rank-1 cell fold has to satisfy.
-  var sums: ndarray.NdArray[i32] = a.map_rank(1, row_sum);
+  var sums: ndarray.NdArray[i32] = a.map_rank(1, sum_cell);
   var reduced: ndarray.NdArray[i32] = a.reduce_axis(1, 0, add);
   if (sums.rank() != 1 || sums.shape()[0] != 2) { return test.fail("map_rank frame shape"); }
   if (sums.get([0]) != reduced.get([0]) || sums.get([1]) != reduced.get([1])) { return test.fail("map_rank agrees with reduce_axis"); }
@@ -219,7 +219,7 @@ function test_map_rank_maps_every_cell(): test.TestOutcome {
   if (pairs.rank() != 2 || pairs.shape()[1] != 2 || pairs.get([1, 0]) != 4) { return test.fail("map_rank cell result shape"); }
   // k == rank is one cell, the whole handle; k == 0 gives every element its
   // own rank-0 cell. Neither is special-cased.
-  var whole: ndarray.NdArray[i32] = a.map_rank(2, cell_sum);
+  var whole: ndarray.NdArray[i32] = a.map_rank(2, sum_cell);
   if (whole.rank() != 0 || whole.get([]) != 21) { return test.fail("map_rank at k == rank"); }
   var each: ndarray.NdArray[i32] = a.map_rank(0, triple);
   if (each.rank() != 2 || each.get([1, 2]) != 18) { return test.fail("map_rank at k == 0"); }
@@ -234,10 +234,7 @@ function test_map_rank_maps_every_cell(): test.TestOutcome {
   return test.assert_eq(none.rank() * 100 + none.shape()[0] * 10 + none.len(), 100);
 }
 
-function row_sum(c: ndarray.NdArray[i32]): ndarray.NdArray[i32] {
-  return ndarray.from_flat([c.fold_all(0, add)], []);
-}
-function cell_sum(c: ndarray.NdArray[i32]): ndarray.NdArray[i32] {
+function sum_cell(c: ndarray.NdArray[i32]): ndarray.NdArray[i32] {
   return ndarray.from_flat([c.fold_all(0, add)], []);
 }
 function first_two(c: ndarray.NdArray[i32]): ndarray.NdArray[i32] {
