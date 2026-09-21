@@ -1266,7 +1266,9 @@ function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
         return ssa_store(reg_of, ins.result, d, s);
     }
     s = s.write(guard);
-    s = s.write("    ldur w5, [" + p + ", #-8]\n    tbnz w5, #31, " + done + "\n");
+    s = s.write("    ldur w5, [" + p + ", #-8]\n");
+    s = s.write(san_poison_check("w5", "w6", done + "sl"));
+    s = s.write("    tbnz w5, #31, " + done + "\n");
     s = s.write("    add w5, w5, #1\n    stur w5, [" + p + ", #-8]\n");
     s = s.write(done + ":\n");
     // rc_inc hands the pointer back; a result with no home stores nothing.
@@ -5488,6 +5490,13 @@ function emit_lc_report(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(".Llc_f:\n    .ascii \" frees=\"\n");
     s = s.write(".Llc_l:\n    .ascii \" live_bytes=\"\n");
     s = s.write(".Llc_nl:\n    .ascii \"\\n\"\n");
+    if (sanitize_on()) {
+        // The texts must match the native backends' byte-for-byte: a
+        // `fern-sanitizer:` line must not tell you which compiler built it.
+        s = s.write(".Lsan_leak:\n    .ascii \"fern-sanitizer: leak \"\n");
+        s = s.write(".Lsan_bytesin:\n    .ascii \" bytes in \"\n");
+        s = s.write(".Lsan_blocks:\n    .ascii \" blocks\"\n");
+    }
     s = s.write("    .text\n");
     s = s.write("    .globl __fern_lc_report\n");
     s = s.write("__fern_lc_report:\n");
@@ -5525,6 +5534,49 @@ function emit_lc_report(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    add x1, x1, :lo12:.Llc_nl\n");
     s = s.write("    mov x2, #1\n");
     s = s.write("    bl .Llc_write\n");
+    if (sanitize_on()) {
+        // Sanitizer leak VERDICT, after the summary. Only a POSITIVE balance
+        // is a leak: zero is clean, and a negative one is an over-free, which
+        // the over-release report names at the offending dec — calling that a
+        // leak would be wrong twice over.
+        s = s.write("    adrp x9, __fern_lc_alloc_bytes\n");
+        s = s.write("    add x9, x9, :lo12:__fern_lc_alloc_bytes\n");
+        // x10 carries live_bytes across the writes: the two local subroutines
+        // touch x0..x8 only, and x19 is the caller's parked exit code.
+        s = s.write("    ldr x10, [x9]\n");
+        s = s.write("    adrp x9, __fern_lc_free_bytes\n");
+        s = s.write("    add x9, x9, :lo12:__fern_lc_free_bytes\n");
+        s = s.write("    ldr x9, [x9]\n");
+        s = s.write("    subs x10, x10, x9\n");     // live_bytes
+        s = s.write("    b.le .Lsan_leak_done\n");
+        s = s.write("    adrp x1, .Lsan_leak\n");
+        s = s.write("    add x1, x1, :lo12:.Lsan_leak\n");
+        s = s.write("    mov x2, #21\n");
+        s = s.write("    bl .Llc_write\n");
+        s = s.write("    mov x0, x10\n");
+        s = s.write("    bl .Llc_wrnum\n");
+        s = s.write("    adrp x1, .Lsan_bytesin\n");
+        s = s.write("    add x1, x1, :lo12:.Lsan_bytesin\n");
+        s = s.write("    mov x2, #10\n");
+        s = s.write("    bl .Llc_write\n");
+        s = s.write("    adrp x9, __fern_lc_alloc_count\n");
+        s = s.write("    add x9, x9, :lo12:__fern_lc_alloc_count\n");
+        s = s.write("    ldr x0, [x9]\n");
+        s = s.write("    adrp x9, __fern_lc_free_count\n");
+        s = s.write("    add x9, x9, :lo12:__fern_lc_free_count\n");
+        s = s.write("    ldr x9, [x9]\n");
+        s = s.write("    sub x0, x0, x9\n");
+        s = s.write("    bl .Llc_wrnum\n");
+        s = s.write("    adrp x1, .Lsan_blocks\n");
+        s = s.write("    add x1, x1, :lo12:.Lsan_blocks\n");
+        s = s.write("    mov x2, #7\n");
+        s = s.write("    bl .Llc_write\n");
+        s = s.write("    adrp x1, .Llc_nl\n");
+        s = s.write("    add x1, x1, :lo12:.Llc_nl\n");
+        s = s.write("    mov x2, #1\n");
+        s = s.write("    bl .Llc_write\n");
+        s = s.write(".Lsan_leak_done:\n");
+    }
     s = s.write("    ldp x29, x30, [sp], #16\n");
     s = s.write("    ret\n");
     // .Llc_write(x1 = buf, x2 = len): one write(2) to stderr. Leaf — no bl
@@ -5569,17 +5621,155 @@ function emit_lc_report(s: asmcore.EmitState): asmcore.EmitState {
     return s;
 }
 
+// sanitize_on — FERN_SANITIZE read at emit time (the compiler process), the
+// arm64 port of ast.SanitizeEnabled and the sibling of asm_ir.sanitize_on.
+// One opt-in over the heap detectors, so you can reach for it before knowing
+// which check will fire: the leak census (leak_check_on below folds it in),
+// the rc over-release report, and the use-after-free quarantine.
+//
+// One gap versus the native arm64 backend, a declared subset rather than
+// silently-different behaviour:
+//
+//   - No backtrace under either report. Native routes through __fern_report,
+//     which walks the frame-pointer chain; there is no such helper here, so
+//     the message is the whole diagnostic.
+//
+// It deliberately does NOT imply FERN_RC_TRACE: per-heap-event output is a
+// probe you point at a reduced repro, not a standing mode.
+function sanitize_on(): boolean {
+    match (env("FERN_SANITIZE")) {
+        Some(_) => { return true; },
+        None => { return false; }
+    }
+}
+
+// rc_free_debug_on reports whether the use-after-free QUARANTINE is on —
+// FERN_RC_FREE_DEBUG, or implied by FERN_SANITIZE (ast.ApplySanitize parity).
+// Under it NOTHING is recycled: every free site writes ast.RcPoison over the
+// rc word where the block has one and declines its freelist push — a recycled
+// block would overwrite its own poison — so __fern_alloc just keeps bumping,
+// and the rc helpers die with a named report the moment a stale reference
+// touches a poisoned block. A quarantined block still counts as a FREE for the
+// census, so the two detectors compose instead of every correct free reading
+// as a leak.
+function rc_free_debug_on(): boolean {
+    if (sanitize_on()) { return true; }
+    match (env("FERN_RC_FREE_DEBUG")) {
+        Some(_) => { return true; },
+        None => { return false; }
+    }
+}
+
+// rc_poison is ast.RcPoison (0x7EEDFACE), the marker a quarantined block
+// carries in its rc word. The self-host cannot import the Go constant, so the
+// two are pinned equal by a test rather than by a shared declaration (#9883);
+// asm_ir.rc_poison is the x86-64 spelling of the same number.
+function rc_poison(): i32 { return 2129525454; }
+
+// rc_poison_into materialises rc_poison() in a w-register. Two halves because
+// no 32-bit move immediate reaches this value in one.
+function rc_poison_into(w: string): string {
+    var v: i32 = rc_poison();
+    return "    movz " + w + ", #" + util.i32_to_string(v & 65535) + "\n"
+        + "    movk " + w + ", #" + util.i32_to_string((v >> 16) & 65535) + ", lsl #16\n";
+}
+
+// quarantine_rc: the rc-word store a free path writes as it releases the block
+// — ast.RcPoison under the quarantine (nothing pushes the block, so the poison
+// survives to the next toucher), the defensive 0 otherwise. `addr` is the
+// store's addressing text and `w` a w-register the site is free to clobber.
+function quarantine_rc(addr: string, w: string): string {
+    if (rc_free_debug_on()) { return rc_poison_into(w) + "    stur " + w + ", " + addr + "\n"; }
+    return "    stur wzr, " + addr + "\n";
+}
+
+// san_poison_check: the UAF trap after an rc-word load. `rc` holds the word,
+// `w` is a clobberable w-register and `live` the site's "not poisoned, carry
+// on" continuation. ast.RcPoison is a large POSITIVE value precisely so the
+// immortal (bit 31) guard cannot swallow it; only this explicit compare sees
+// it. The abort never returns, so the `bl` is free to clobber x30 — and it is
+// a `bl` rather than a conditional branch to the symbol because
+// __fern_san_abort_uaf is emitted in the ENTRY unit while these rc helpers go
+// into ordinary generated code, so the edge has to survive as an extern.
+function san_poison_check(rc: string, w: string, live: string): string {
+    if (!rc_free_debug_on()) { return ""; }
+    return rc_poison_into(w)
+        + "    cmp " + rc + ", " + w + "\n"
+        + "    b.ne " + live + "\n"
+        + "    bl __fern_san_abort_uaf\n"
+        + live + ":\n";
+}
+
+// san_underflow_abort emits the fatal report that follows an
+// __fern_rc_underflow bump under FERN_SANITIZE, so an over-release dies AT the
+// offending dec instead of only incrementing a counter that nothing reads
+// until the run is over. Empty when the flag is off, which is what keeps an
+// ordinary build's asm byte-identical to one from a compiler without the mode.
+function san_underflow_abort(): string {
+    if (sanitize_on()) { return "    bl __fern_san_abort\n"; }
+    return "";
+}
+
+// emit_san_abort emits __fern_san_abort — one write(2) of the over-release
+// diagnostic and exit 124 (ExitSanitizer). The text matches the native
+// backends' byte-for-byte: a `fern-sanitizer:` line must not tell you which
+// compiler produced the binary. Never returns, so it is free to clobber:
+// every caller is a dec that has already established it is over-releasing.
+function emit_san_abort(s: asmcore.EmitState): asmcore.EmitState {
+    if (!sanitize_on()) { return s; }
+    s = s.write("    .section .rodata\n");
+    s = s.write(".Lsan_df:\n    .ascii \"fern-sanitizer: rc over-release (double free)\\n\"\n");
+    s = s.write("    .text\n");
+    s = s.write("    .globl __fern_san_abort\n");
+    s = s.write("__fern_san_abort:\n");
+    s = s.write("    adrp x1, .Lsan_df\n");
+    s = s.write("    add x1, x1, :lo12:.Lsan_df\n");
+    s = s.write("    mov x2, #46\n");
+    s = s.write("    mov x0, #2\n");
+    s = s.write("    mov x8, #64\n");
+    s = s.write("    svc #0\n");
+    s = s.write("    mov x0, #124\n");
+    s = s.write("    mov x8, #93\n");
+    s = s.write("    svc #0\n");
+    return s;
+}
+
+// emit_san_uaf_abort emits __fern_san_abort_uaf — the quarantine's fatal
+// report. Self-contained (its own write(2) + exit 124 rather than the census
+// writer) so FERN_RC_FREE_DEBUG works standalone, without leakcheck. .globl
+// because the rc helpers that branch here are emitted into ORDINARY generated
+// code, which under -per-module-emit-all lands in a different unit from this.
+function emit_san_uaf_abort(s: asmcore.EmitState): asmcore.EmitState {
+    if (!rc_free_debug_on()) { return s; }
+    s = s.write("    .section .rodata\n");
+    s = s.write(".Lsan_uaf:\n    .ascii \"fern-sanitizer: use-after-free (touched a quarantined block)\\n\"\n");
+    s = s.write("    .text\n");
+    s = s.write("    .globl __fern_san_abort_uaf\n");
+    s = s.write("__fern_san_abort_uaf:\n");
+    s = s.write("    adrp x1, .Lsan_uaf\n");
+    s = s.write("    add x1, x1, :lo12:.Lsan_uaf\n");
+    s = s.write("    mov x2, #61\n");
+    s = s.write("    mov x0, #2\n");
+    s = s.write("    mov x8, #64\n");
+    s = s.write("    svc #0\n");
+    s = s.write("    mov x0, #124\n");
+    s = s.write("    mov x8, #93\n");
+    s = s.write("    svc #0\n");
+    return s;
+}
+
 // leak_check_on — FERN_LEAKCHECK read at emit time (the compiler process),
-// the arm64 half of the census (#5362; the x86 self-host precedent). It is
-// deliberately NOT folded with FERN_SANITIZE the way the x86 backend folds
-// it: this backend has no over-release trap and no quarantine, so a
-// "sanitize" build that only printed a census would misreport what it
-// checks. The census counts at 8-byte-word granularity on both sides —
+// the arm64 half of the census (#5362; the x86 self-host precedent), folded
+// with FERN_SANITIZE as the x86 backend folds it. The fold is only honest
+// because this backend also carries the over-release report and the
+// quarantine: a "sanitize" build that printed a census alone would misreport
+// what it checks. The census counts at 8-byte-word granularity on both sides —
 // __fern_alloc's rounded request and each free site's own class index are
 // the same number for the same block — so a block's alloc and eventual free
 // cancel exactly. The large tier's further capacity round-up is deliberately
 // NOT counted: the free side never sees it.
 function leak_check_on(): boolean {
+    if (sanitize_on()) { return true; }
     match (env("FERN_LEAKCHECK")) {
         Some(_) => { return true; },
         None => { return false; }
@@ -5651,7 +5841,8 @@ function lc_bump_free_words(s: asmcore.EmitState, words: string, t1: string, t2:
 // __fern_alloc pops from, `ptr` naming the block and `words` its class. The
 // same stores __fn___fern_str_free's data-buffer arm makes, with the fused
 // arm's large-tier branch; neither block carries an rc word, so there is no rc
-// to clear first. `ptr` and `words` must avoid x1..x4, which __fern_large_push
+// to clear first — and none to poison, so declining the push is the whole
+// quarantine treatment for both. `ptr` and `words` must avoid x1..x4, which __fern_large_push
 // clobbers; x3 / x9 / x10 are this helper's own scratch. `lbl` distinguishes
 // one call site's labels from another's.
 function buf_block_free(s: asmcore.EmitState, ptr: string, words: string, lbl: string): asmcore.EmitState {
@@ -5659,11 +5850,13 @@ function buf_block_free(s: asmcore.EmitState, ptr: string, words: string, lbl: s
     s = s.write("    cmp " + words + ", x9\n");
     s = s.write("    b.hs ." + lbl + "_large\n");
     s = lc_bump_free_words(s, words, "x3", "x10");
+    if (!rc_free_debug_on()) {
     s = s.write("    adrp x3, __fern_freelist\n");
     s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
     s = s.write("    ldr x10, [x3, " + words + ", lsl #3]\n");
     s = s.write("    str x10, [" + ptr + "]\n");
     s = s.write("    str " + ptr + ", [x3, " + words + ", lsl #3]\n");
+    }
     s = s.write("    b ." + lbl + "_done\n");
     s = s.write("." + lbl + "_large:\n");
     s = s.write("    mov x1, " + ptr + "\n");
@@ -6631,6 +6824,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    cmp x0, x9\n");
     s = s.write("    blo .Lshrcinc_ret\n");        // low-address guard
     s = s.write("    ldur w1, [x0, #-8]\n");       // rc
+    s = s.write(san_poison_check("w1", "w9", ".Lshrcinc_live"));
     s = s.write("    tbnz w1, #31, .Lshrcinc_ret\n");  // static sentinel
     s = s.write("    add w1, w1, #1\n");
     s = s.write("    stur w1, [x0, #-8]\n");
@@ -6644,6 +6838,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    cmp x0, x9\n");
     s = s.write("    blo .Lshrcdec_ret\n");
     s = s.write("    ldur w1, [x0, #-8]\n");
+    s = s.write(san_poison_check("w1", "w9", ".Lshrcdec_live"));
     s = s.write("    tbnz w1, #31, .Lshrcdec_ret\n");  // static sentinel
     s = s.write("    cmp w1, #0\n");
     s = s.write("    bgt .Lshrcdec_dec\n");        // rc > 0: normal
@@ -6653,6 +6848,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    ldr w11, [x10]\n");
     s = s.write("    add w11, w11, #1\n");
     s = s.write("    str w11, [x10]\n");
+    s = s.write(san_underflow_abort());
     s = s.write(".Lshrcdec_dec:\n");
     s = s.write("    sub w1, w1, #1\n");
     s = s.write("    stur w1, [x0, #-8]\n");
@@ -6690,6 +6886,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    cmp x0, x9\n");
     s = s.write("    blo .Laie_ret\n");
     s = s.write("    ldur w1, [x0, #-8]\n");        // rc
+    s = s.write(san_poison_check("w1", "w9", ".Laie_live"));
     s = s.write("    tbnz w1, #31, .Laie_ret\n");   // immortal buffer: its elements are too
     s = s.write("    stp x19, x30, [sp, #-16]!\n");
     s = s.write("    stp x20, x21, [sp, #-16]!\n");
@@ -6734,14 +6931,18 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    mov x9, #0x10000\n");
     s = s.write("    cmp x3, x9\n");
     s = s.write("    bhs .Lsarelo_fresh\n");       // oversize tier: leak
-    s = s.write("    stur wzr, [x0, #-8]\n");      // clear rc (freed marker)
+    // Quarantine (rc_free_debug_on): the mispaired donor is freed here, so it
+    // gets the same poison-and-decline every other free path applies.
+    s = s.write(quarantine_rc("[x0, #-8]", "w6"));  // release the rc word
     s = s.write("    sub x4, x0, #16\n");          // block base
     s = lc_bump_free_words(s, "x3", "x2", "x9");
+    if (!rc_free_debug_on()) {
     s = s.write("    adrp x5, __fern_freelist\n");
     s = s.write("    add x5, x5, :lo12:__fern_freelist\n");
     s = s.write("    ldr x6, [x5, x3, lsl #3]\n"); // old head
     s = s.write("    str x6, [x4]\n");             // *base = head
     s = s.write("    str x4, [x5, x3, lsl #3]\n"); // freelist[words] = base
+    }
     s = s.write(".Lsarelo_fresh:\n");
     s = s.write("    ldr x0, [sp]\n");             // slots = arr_box cap
     // TAIL-branch (not bl): arr_box returns straight to OUR caller with
@@ -6777,6 +6978,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    cmp x1, x9\n");               // old < 0x10000? (low-addr / SSO)
     s = s.write("    blo .Lsd_ret\n");
     s = s.write("    ldur w3, [x1, #-8]\n");       // old rc
+    s = s.write(san_poison_check("w3", "w9", ".Lsd_live"));
     s = s.write("    tbnz w3, #31, .Lsd_ret\n");   // static sentinel (rc<0)
     s = s.write("    cmp w3, #1\n");
     s = s.write("    bne .Lsd_ret\n");             // shared/other — leave (defensive)
@@ -6785,14 +6987,16 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    mov x9, #0x10000\n");         // freelist class cap (65536)
     s = s.write("    cmp x4, x9\n");
     s = s.write("    bhs .Lsd_large\n");           // large tier -> recycle via __fern_large_push
-    s = s.write("    stur wzr, [x1, #-8]\n");      // mark freed (clear rc)
+    s = s.write(quarantine_rc("[x1, #-8]", "w9"));  // release the rc word
     s = s.write("    sub x5, x1, #16\n");          // base = old - 16
     s = lc_bump_free_words(s, "x4", "x2", "x3");
+    if (!rc_free_debug_on()) {
     s = s.write("    adrp x6, __fern_freelist\n");
     s = s.write("    add x6, x6, :lo12:__fern_freelist\n");
     s = s.write("    ldr x9, [x6, x4, lsl #3]\n"); // old head
     s = s.write("    str x9, [x5]\n");             // *base = old head
     s = s.write("    str x5, [x6, x4, lsl #3]\n"); // freelist[idx] = base
+    }
     s = s.write(".Lsd_ret:\n");
     s = s.write("    ret\n");                      // x0 = new
     // Large tier (#3425): recycle the >=512 KiB old box (base = old-16, bytes =
@@ -6800,7 +7004,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     // terminal, so TAIL-branch: __fern_large_push preserves x0 (= new, the
     // return value) and its ret returns to snapshot_dec's caller (x30 untouched).
     s = s.write(".Lsd_large:\n");
-    s = s.write("    stur wzr, [x1, #-8]\n");      // mark freed (x1 = old)
+    s = s.write(quarantine_rc("[x1, #-8]", "w9"));  // release the rc word (x1 = old)
     s = s.write("    lsl x2, x4, #3\n");           // bytes = idx*8
     s = s.write("    sub x1, x1, #16\n");          // base = old-16
     s = s.write("    b __fern_large_push\n");      // tail: rets to caller, x0 = new preserved
@@ -6828,6 +7032,11 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     // before the class rounding below mutates x2. Placed after the >1 GiB
     // test: that block is dropped, i.e. a leak, not a free.
     s = lc_bump_free_add(s, "x2", "x3", "x4");
+    // Quarantine (rc_free_debug_on): the large tier's single choke point —
+    // one decline covers every >=512 KiB free, including the arms that
+    // tail-branch here. Callers with an rc word have already poisoned it at
+    // their own rc store, and recycling the block would overwrite that poison.
+    if (!rc_free_debug_on()) {
     s = s.write("    mov x3, #1\n");
     s = s.write("    lsl x3, x3, #19\n");           // 512 KiB
     s = s.write("    sub x3, x3, #1\n");            // 512 KiB - 1
@@ -6838,6 +7047,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    ldr x4, [x3, x2, lsl #3]\n");  // old head
     s = s.write("    str x4, [x1]\n");              // *base = old head
     s = s.write("    str x1, [x3, x2, lsl #3]\n");  // heads[class] = base
+    }
     s = s.write(".Llpush_ret:\n");
     s = s.write("    ret\n");
     s = s.write("__fn___fern_arr_dec:\n");
@@ -6847,6 +7057,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    cmp x0, x9\n");
     s = s.write("    blo .Larrdec_ret\n");
     s = s.write("    ldur w1, [x0, #-8]\n");      // rc
+    s = s.write(san_poison_check("w1", "w9", ".Larrdec_live"));
     s = s.write("    tbnz w1, #31, .Larrdec_ret\n");   // static sentinel
     s = s.write("    cmp w1, #1\n");
     s = s.write("    beq .Larrdec_free\n");
@@ -6856,13 +7067,14 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    ldr w3, [x2]\n");
     s = s.write("    add w3, w3, #1\n");
     s = s.write("    str w3, [x2]\n");
+    s = s.write(san_underflow_abort());
     s = s.write("    b .Larrdec_ret\n");
     s = s.write(".Larrdec_dec:\n");
     s = s.write("    sub w1, w1, #1\n");
     s = s.write("    stur w1, [x0, #-8]\n");
     s = s.write("    b .Larrdec_ret\n");
     s = s.write(".Larrdec_free:\n");
-    s = s.write("    stur wzr, [x0, #-8]\n");      // clear rc
+    s = s.write(quarantine_rc("[x0, #-8]", "w9"));  // release the rc word
     s = s.write("    ldur x1, [x0, #-16]\n");      // cap
     s = s.write("    add x1, x1, #3\n");           // idx = cap + 3
     s = s.write("    mov x9, #0x10000\n");         // freelist class cap (65536)
@@ -6870,11 +7082,13 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    bhs .Larrdec_large\n");
     s = s.write("    sub x2, x0, #16\n");          // base = data - 16
     s = lc_bump_free_words(s, "x1", "x3", "x9");
+    if (!rc_free_debug_on()) {
     s = s.write("    adrp x3, __fern_freelist\n");
     s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
     s = s.write("    ldr x9, [x3, x1, lsl #3]\n"); // old head
     s = s.write("    str x9, [x2]\n");             // *base = old head
     s = s.write("    str x2, [x3, x1, lsl #3]\n"); // freelist[idx] = base
+    }
     s = s.write(".Larrdec_ret:\n");
     s = s.write("    ret\n");
     // Large tier (#3425): recycle the >=512 KiB array block (base=data-16, bytes
@@ -6904,6 +7118,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     // rc==0 is a double-free, caught by __fern_rc_underflow (matching arr_dec)
     // rather than corrupting the heap. w4 holds rc across the free (x1/x2 = data/len).
     s = s.write("    ldur w4, [x0, #-8]\n");       // rc
+    s = s.write(san_poison_check("w4", "w10", ".Lstrfree_live"));
     s = s.write("    tbnz w4, #31, .Lstrfree_ret\n");  // negative = immortal -> skip
     s = s.write("    cmp w4, #1\n");
     s = s.write("    bgt .Lstrfree_dec\n");        // rc>1 -> dec, keep
@@ -6943,22 +7158,28 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    cmp x2, x9\n");               // large tier (>=65536) -> leak buffer
     s = s.write("    bhs .Lstrfree_box\n");
     s = lc_bump_free_words(s, "x2", "x3", "x10");
+    // Quarantine (rc_free_debug_on): the DATA buffer carries no rc word, so
+    // declining the push is the whole treatment for it.
+    if (!rc_free_debug_on()) {
     s = s.write("    adrp x3, __fern_freelist\n");
     s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
     s = s.write("    ldr x10, [x3, x2, lsl #3]\n");   // old head of class `words`
     s = s.write("    str x10, [x1]\n");            // *data = old head
     s = s.write("    str x1, [x3, x2, lsl #3]\n"); // freelist[words] = data
+    }
     s = s.write(".Lstrfree_box:\n");
     // The rc-headered block is base = box-8 (24 bytes = class 3). Clear rc first
     // (defensive vs a re-free reading a live rc), then push base onto freelist[3].
-    s = s.write("    stur wzr, [x0, #-8]\n");      // rc = 0
+    s = s.write(quarantine_rc("[x0, #-8]", "w10"));  // release the rc word
     s = s.write("    sub x1, x0, #8\n");           // base = box-8
     s = lc_bump_free_add(s, "#24", "x3", "x10");
+    if (!rc_free_debug_on()) {
     s = s.write("    adrp x3, __fern_freelist\n");
     s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
     s = s.write("    ldr x10, [x3, #24]\n");       // freelist[3] (24-byte block = 3 words)
     s = s.write("    str x10, [x1]\n");            // *base = old head
     s = s.write("    str x1, [x3, #24]\n");        // freelist[3] = base
+    }
     s = s.write("    b .Lstrfree_ret\n");
     // Fused block (#7351): base = box-8 = data-24, size = the 24-byte header plus
     // the buffer, so class = 3 + ceil(len/8) words. len is the LOGICAL length; a
@@ -6973,16 +7194,18 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    add x2, x2, #7\n");           // words = ceil(len/8) + 3
     s = s.write("    lsr x2, x2, #3\n");
     s = s.write("    add x2, x2, #3\n");
-    s = s.write("    stur wzr, [x0, #-8]\n");      // rc = 0
+    s = s.write(quarantine_rc("[x0, #-8]", "w10"));  // release the rc word
     s = s.write("    sub x1, x0, #8\n");           // base = box-8
     s = s.write("    cmp x2, x9\n");               // large tier (>=65536 words)
     s = s.write("    bhs .Lstrfree_fused_large\n");
     s = lc_bump_free_words(s, "x2", "x3", "x10");
+    if (!rc_free_debug_on()) {
     s = s.write("    adrp x3, __fern_freelist\n");
     s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
     s = s.write("    ldr x10, [x3, x2, lsl #3]\n");   // old head of class `words`
     s = s.write("    str x10, [x1]\n");            // *base = old head
     s = s.write("    str x1, [x3, x2, lsl #3]\n"); // freelist[words] = base
+    }
     s = s.write("    b .Lstrfree_ret\n");
     // Tail-branch to __fern_large_push (x1 = base, x2 = bytes), as .Larrdec_large
     // does: x30 flows through, and the census bump lives INSIDE that helper, so
@@ -7000,6 +7223,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    ldr w3, [x2]\n");
     s = s.write("    add w3, w3, #1\n");
     s = s.write("    str w3, [x2]\n");
+    s = s.write(san_underflow_abort());
     s = s.write(".Lstrfree_ret:\n");
     s = s.write("    ret\n");
     // __fern_str_view_free(box) — release a string result that may be a zero-copy
@@ -7022,6 +7246,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    cmp x0, x9\n");
     s = s.write("    blo .Lstrvfree_ret\n");       // low-addr guard
     s = s.write("    ldur w4, [x0, #-8]\n");       // rc
+    s = s.write(san_poison_check("w4", "w10", ".Lstrvfree_live"));
     s = s.write("    tbnz w4, #31, .Lstrvfree_view\n");  // negative = immortal -> the view case
     s = s.write("    b __fn___fern_str_free\n");   // otherwise: the ordinary rc-aware release
     s = s.write(".Lstrvfree_view:\n");
@@ -7036,13 +7261,15 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    ldr x12, [x12]\n");
     s = s.write("    cmp x1, x12\n");              // base >= heap_end -> not our arena, skip
     s = s.write("    bhs .Lstrvfree_ret\n");
-    s = s.write("    stur wzr, [x0, #-8]\n");      // rc = 0 (defensive vs a re-free)
+    s = s.write(quarantine_rc("[x0, #-8]", "w10"));  // release the rc word (defensive vs a re-free)
     s = lc_bump_free_add(s, "#24", "x3", "x10");
+    if (!rc_free_debug_on()) {
     s = s.write("    adrp x3, __fern_freelist\n");
     s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
     s = s.write("    ldr x10, [x3, #24]\n");       // freelist[3] (24-byte block = 3 words)
     s = s.write("    str x10, [x1]\n");            // *base = old head
     s = s.write("    str x1, [x3, #24]\n");        // freelist[3] = base
+    }
     s = s.write(".Lstrvfree_ret:\n");
     s = s.write("    ret\n");
     // __fern_str_arr_free(arr) — string[] ELEMENT reclaim (#4355), the arm64
@@ -7167,6 +7394,7 @@ function emit_arm64_arr_deep_free_variant(s: asmcore.EmitState, sym: string, lbl
     s = s.write("    cmp x0, x9\n");
     s = s.write("    blo .L" + lbl + "_ret\n");     // low-addr guard
     s = s.write("    ldur w1, [x0, #-8]\n");        // rc
+    s = s.write(san_poison_check("w1", "w10", ".L" + lbl + "_sanlive"));
     s = s.write("    tbnz w1, #31, .L" + lbl + "_ret\n"); // negative = immortal -> skip
     s = s.write("    cmp w1, #1\n");
     s = s.write("    bgt .L" + lbl + "_dec\n");     // rc>1 -> dec, keep
@@ -7186,7 +7414,7 @@ function emit_arm64_arr_deep_free_variant(s: asmcore.EmitState, sym: string, lbl
     s = s.write("    b .L" + lbl + "_loop\n");
     s = s.write(".L" + lbl + "_freebuf:\n");
     // buffer free: __fn___fern_arr_dec's rc==1 path (base=arr-16, class=cap+3).
-    s = s.write("    stur wzr, [x19, #-8]\n");      // rc = 0 (defensive vs re-free)
+    s = s.write(quarantine_rc("[x19, #-8]", "w10"));  // release the rc word (defensive vs re-free)
     s = s.write("    ldur x1, [x19, #-16]\n");      // cap
     s = s.write("    add x1, x1, #3\n");            // class = cap + 3 words
     s = s.write("    mov x9, #0x10000\n");
@@ -7194,11 +7422,13 @@ function emit_arm64_arr_deep_free_variant(s: asmcore.EmitState, sym: string, lbl
     s = s.write("    bhs .L" + lbl + "_large\n");   // large tier -> __fern_large_push
     s = s.write("    sub x2, x19, #16\n");          // base = arr - 16
     s = lc_bump_free_words(s, "x1", "x3", "x9");
+    if (!rc_free_debug_on()) {
     s = s.write("    adrp x3, __fern_freelist\n");
     s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
     s = s.write("    ldr x9, [x3, x1, lsl #3]\n");  // old head
     s = s.write("    str x9, [x2]\n");              // *base = old head
     s = s.write("    str x2, [x3, x1, lsl #3]\n");  // freelist[class] = base
+    }
     s = s.write(".L" + lbl + "_pop:\n");
     s = s.write("    ldp x20, x21, [sp], #16\n");
     s = s.write("    ldp x19, x30, [sp], #16\n");
@@ -7213,6 +7443,7 @@ function emit_arm64_arr_deep_free_variant(s: asmcore.EmitState, sym: string, lbl
     s = s.write("    ldr w3, [x2]\n");
     s = s.write("    add w3, w3, #1\n");
     s = s.write("    str w3, [x2]\n");
+    s = s.write(san_underflow_abort());
     s = s.write(".L" + lbl + "_ret:\n");
     s = s.write("    ret\n");
     // Large tier (#3425): recycle the >=512 KiB outer buffer (base = arr-16,
@@ -7934,6 +8165,12 @@ function emit_rt_heap(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
     // __fern_lc_report in every program under FERN_LEAKCHECK, and a heap-free
     // program must still link. Emits nothing when the flag is off.
     s = emit_lc_report(s);
+    // The UAF quarantine's fatal report. Self-contained — its own write(2) +
+    // exit(124) rather than the census writer — so FERN_RC_FREE_DEBUG works
+    // standalone, without leakcheck. Entry-only, like the census above, and
+    // silent when the flag is off so an ordinary build's asm is unchanged.
+    s = emit_san_uaf_abort(s);
+    s = emit_san_abort(s);
     // Map runtime (string-keyed, 8-byte values). Mirror of asm.fern's
     // x86-64 runtime. A Map is a 16-byte box [keys: string[] @0,
     // values: T[] @8]; linear scan + str_eq; set/get grow via
@@ -8358,6 +8595,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         // when capacity fits; rc == 1 / the bit-31 immortal sentinel keep
         // the in-place fast path.
         s = s.write("    ldur x2, [x19, #-8]\n");   // rc word
+        s = s.write(san_poison_check("w2", "w10", ".Larr_push_sanlive"));
         s = s.write("    cmp x2, #1\n");
         s = s.write("    b.eq .Larr_push_rc_ok\n");
         s = s.write("    tbnz x2, #31, .Larr_push_rc_ok\n");
@@ -8467,6 +8705,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write("    cmp x19, x9\n");              // grew: free the dead old box
         s = s.write("    blo .Lapo_ret\n");            // low-addr / SSO sentinel
         s = s.write("    ldur w1, [x19, #-8]\n");      // old rc
+        s = s.write(san_poison_check("w1", "w10", ".Lapo_live"));
         s = s.write("    tbnz w1, #31, .Lapo_ret\n");  // static sentinel (rc<0)
         s = s.write("    cmp w1, #1\n");
         s = s.write("    bne .Lapo_ret\n");            // not sole owner — leave (defensive)
@@ -8475,14 +8714,16 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write("    mov x9, #0x10000\n");         // freelist class cap (65536)
         s = s.write("    cmp x1, x9\n");
         s = s.write("    bhs .Lapo_large\n");          // large tier -> recycle via __fern_large_push
-        s = s.write("    stur wzr, [x19, #-8]\n");     // mark freed (clear rc)
+        s = s.write(quarantine_rc("[x19, #-8]", "w10"));  // release the rc word
         s = s.write("    sub x2, x19, #16\n");         // old box base
         s = lc_bump_free_words(s, "x1", "x3", "x9");
+        if (!rc_free_debug_on()) {
         s = s.write("    adrp x3, __fern_freelist\n");
         s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
         s = s.write("    ldr x9, [x3, x1, lsl #3]\n"); // old head
         s = s.write("    str x9, [x2]\n");             // *base = old head
         s = s.write("    str x2, [x3, x1, lsl #3]\n"); // freelist[idx] = base
+        }
         s = s.write(".Lapo_ret:\n");
         s = s.write("    ldp x19, x20, [sp], #16\n");
         s = s.write("    ldp x29, x30, [sp], #16\n");
@@ -8491,7 +8732,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         // old-16, bytes = idx*8) instead of leaking. x30 is saved in the frame
         // (restored at .Lapo_ret) so the bl is safe; large_push preserves x0 (= new).
         s = s.write(".Lapo_large:\n");
-        s = s.write("    stur wzr, [x19, #-8]\n");     // mark freed (clear rc)
+        s = s.write(quarantine_rc("[x19, #-8]", "w10"));  // release the rc word
         s = s.write("    lsl x2, x1, #3\n");           // bytes = idx*8
         s = s.write("    sub x1, x19, #16\n");         // base = old-16
         s = s.write("    bl __fern_large_push\n");

@@ -1821,7 +1821,13 @@ function captures(c: ast.ExprCall, s: State, types: typeinfo.Type[]): Captured {
 // call is written against.
 function variant_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State, expected: typeinfo.Type): Value {
     var whole: typeinfo.Type = literal_union(e, s, expected);
-    if (!names_variant(s, whole, name) && name == "Some" && c.args.len() == 1) { whole = some_of(c.args[0], s); }
+    // A destination that names the union but settles nothing in it is no more
+    // use than none at all: `and[U](other: Option[U])` binds U from this very
+    // argument, so `Option[U]` names Some without saying what Some holds, and
+    // the payload is the only thing that can say.
+    if ((!names_variant(s, whole, name) || !semtypes.concrete(whole, false)) && name == "Some" && c.args.len() == 1) {
+        whole = some_of(c.args[0], s);
+    }
     if (names_variant(s, whole, name)) { return variant(name, whole, c.args, s); }
     return refused(s, "call target has no semantic contract: " + name);
 }

@@ -1204,6 +1204,35 @@ after it. Ahead of an `end` (0x0b) wasmtime rejects the module; ahead of a
 confirmed by execution, not read off a table. That is pinned by bytes in
 the package's own test and against wasm-tools in CI.
 
+**Both `-backend ssa` legs followed in one PR**, which the other kernels' legs
+never did, and the reason is the whole finding: they render GAS text that the
+SAME in-tree assemblers encode — `internal/native/x86_64` for `x86_64ssa`,
+`internal/native/arm64` for `arm64ssa` — so §3.3a's prerequisite was already
+paid for both by the two native legs above. Nothing was owed, and the work was
+the emitter body alone. The bodies are their native twins' verbatim, retargeted
+to the SSA helper conventions (`rdi`/`rsi` in and `rax` out on x86-64; `x0`/`x1`
+in, `x16` the allocation's data pointer, `x0` out on arm64), including the
+`dup`-instead-of-`fmov` substitution and the x86-64 NaN operand order.
+
+| `-backend ssa` | scalar | vector | |
+|---|---|---|---|
+| x86-64 retired | 115.9M | 25.8M | 4.49x |
+| arm64 wall (qemu) | 119 ms | 93 ms | 1.28x |
+
+Both match their native twins to within noise, which is the expected result
+and worth recording as such: the kernel is a leaf that touches no allocated
+register, so register allocation has nothing to do differently with it. Each
+leg costs 10 static instructions (x86-64 544 → 554, arm64 512 → 522) for the
+vector prologue and block.
+
+A measurement note for whoever vectorises the ninth kernel here:
+`scripts/perf-bench` has no `-backend ssa` lane, so no baseline row moves and
+these numbers were taken by hand with the same method the script uses
+(callgrind for the retired count, `-backend ssa` added to the build). The qemu
+row carries the same floor caveat as every other arm64 wall figure in this
+section; the native twin's retired count of 1.99x is the architecture-independent
+claim for two lanes, and there is no reason for this leg to differ.
+
 **Self-host x86-64 was next, and paid nothing at the assembler either** — the
 fourth leg in a row whose cost the §3.3a rule above predicted correctly once
 the whole table was read rather than the entries the kernel expected.
@@ -1233,7 +1262,8 @@ compiler and counted with callgrind:
 it lands on the same figure native arm64's NEON body did for the same reason
 — the ratio follows the lane count, not the instruction set.
 
-The remaining two legs are still scalar.
+The remaining two legs — self-host arm64 and self-host wasm — are
+still scalar.
 
 ### 3.5 Testing
 
