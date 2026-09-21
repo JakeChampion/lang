@@ -13,9 +13,13 @@
 // ENCODING SHAPE. Every vector instruction is the prefix byte 0xFD
 // followed by a *uleb128* sub-opcode. The uleb matters: sub-opcodes below
 // 128 are one byte, and the ones at or above it are two (i16x8.bitmask is
-// 132 → 0x84 0x01, not 0x84). Writing the sub-opcode as a raw byte
-// produces a module that decodes as a DIFFERENT instruction rather than
-// failing, which is why the boundary is pinned on both sides in the tests.
+// 132 → 0x84 0x01, not 0x84). A raw byte is not a shorter spelling of the
+// same number: 132 and 242 alike have the uleb continuation bit set, so the
+// decoder reads the NEXT instruction's first byte as part of the sub-opcode.
+// What that yields depends on the byte that follows — usually a malformed
+// module, but where those bytes complete a different valid sub-opcode, an
+// instruction that validates and computes the wrong thing. The second
+// outcome is the silent one, so the boundary is pinned on both sides.
 //
 // The set here is the byte-vector core the string kernels need — load /
 // store, the splats, integer equality, the bitwise ops, and the
@@ -85,7 +89,9 @@ func InstI64x2Splat(buf []byte) []byte { return put(buf, 18) }
 // vector ops this package carries: everything above it is byte-domain,
 // added for the string kernels. `f64x2.mul` is also the clearest example
 // of this file's uleb hazard — 242 is above 127, so it encodes as two
-// bytes, and written as a raw one it would decode as `f32x4.pmin`.
+// bytes. Written as a raw 0xf2 it swallows whatever byte follows: ahead of
+// an `end` (0x0b) the module is rejected, but ahead of a 0x00 it becomes
+// sub-opcode 114, `i8x16.sub_sat_s`, which validates and runs.
 
 // InstF64x2Splat encodes `f64x2.splat` — the f64 on the stack copied into
 // both lanes.

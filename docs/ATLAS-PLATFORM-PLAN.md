@@ -558,9 +558,11 @@ caught the old baseline's violation.
 
 The wasm gap also has a sharper failure mode than the native two, worth
 recording because it shaped that PR's tests. Vector sub-opcodes are uleb128,
-and the space is dense: encode `i16x8.bitmask` (132) as a raw byte and you get
-`f32x4.pmin` — a *valid* instruction. The module still validates and still
-runs. Nothing short of an external assembler can tell you which instruction you
+and the space is dense. Encode `i16x8.bitmask` (132) as a raw byte and 0x84's
+continuation bit makes the decoder read the next instruction's first byte as
+part of the sub-opcode — which is a malformed module on most streams, and on
+some an instruction that validates and runs while computing something else.
+Nothing short of an external assembler can tell you which instruction you
 actually emitted, which is why `internal/wasm/simd` is pinned against
 `wasm-tools` and not against a table someone typed.
 
@@ -1195,9 +1197,11 @@ forms on x86-64, two here, and nothing on arm64, entirely according to how
 each assembler was built rather than to anything about the kernel.
 
 `f64x2.mul` is worth one line of its own. Its sub-opcode is 242, past the
-one-byte uleb boundary, so it encodes as two bytes; written as a raw one
-it decodes as `f32x4.pmin`, which is a VALID instruction, so the module
-would load and quietly compute something else. That is pinned by bytes in
+one-byte uleb boundary, so it encodes as two bytes. A raw 0xf2 is not the
+same bytes minus one: its continuation bit is set, so it absorbs the byte
+after it. Ahead of an `end` (0x0b) wasmtime rejects the module; ahead of a
+0x00 it is sub-opcode 114, `i8x16.sub_sat_s`, which validates and runs —
+confirmed by execution, not read off a table. That is pinned by bytes in
 the package's own test and against wasm-tools in CI.
 
 The remaining five legs are still scalar.
