@@ -1505,6 +1505,16 @@ function narrow_mask(from: typeinfo.Type, to: typeinfo.Type): string {
     return "i32";
 }
 
+// Out of a float: the truncation, and then the u8 mask. The conversions below
+// answer at 32 or 64 bits, so a u8 destination needs the narrowing the integer
+// wrap applies for the same destination — without it `300.7 as u8` keeps 300
+// where the AST lowering and native both answer 44.
+function out_of_float(own r: irlower.LowerResult, to: typeinfo.Type): irlower.LowerResult {
+    r = emit(r, from_f64(to));
+    if (!ssasem.is_u8(to)) { return r; }
+    return emit(r, ir.op_int_cast("u8"));
+}
+
 // Out of the f64: a truncation toward zero at the destination's width and
 // signedness. The signed forms clamp at the signed maximum, which is the wrong
 // answer for a destination that has no sign bit.
@@ -1533,7 +1543,7 @@ function cast(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlow
     if (ssasem.is_usize(from) && ssasem.reference(to)) { return r; }
     if (ssasem.reference(from) && ssasem.is_usize(to)) { return r; }
     if (ssasem.is_float(to)) { return into_float(r, from, to); }
-    if (ssasem.is_float(from)) { return emit(r, from_f64(to)); }
+    if (ssasem.is_float(from)) { return out_of_float(r, to); }
     if (ssasem.is_usize(from)) { return from_address(r, to); }
     if (ssasem.is_usize(to)) { return into_address(r, from); }
     if (ssasem.is_wide(to)) {

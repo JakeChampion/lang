@@ -1372,8 +1372,8 @@ pub function cast_admits(from: typeinfo.Type, to: typeinfo.Type): boolean {
     if (is_usize(to)) { return converts_as_integer(from); }
     if (converts_as_integer(from) && converts_as_integer(to)) { return true; }
     if (is_float(from) && is_float(to)) { return true; }
-    if (is_float(to)) { return is_integer(from) && !is_u8(from); }
-    if (is_float(from)) { return is_integer(to) && !is_u8(to); }
+    if (is_float(to)) { return is_integer(from); }
+    if (is_float(from)) { return is_integer(to); }
     return false;
 }
 
