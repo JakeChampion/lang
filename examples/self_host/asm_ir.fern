@@ -400,11 +400,9 @@ function fused_marker(): i32 {
 }
 
 // rc_poison is the decimal of ast.RcPoison (0x7EEDFACE), the marker a
-// quarantined block carries in its rc word. The self-host cannot import the
-// Go constant, so the two are pinned equal by a test rather than by a shared
-// declaration (#9883); the literal used to be 0x7EEFFACE, one digit off, so
-// the two compilers quarantined with different words while four comments
-// said they matched.
+// quarantined block carries in its rc word. Never hand-write the literal at a
+// use site: the self-host cannot import the Go constant, so the quarantine
+// contract test is the only thing holding the two equal (#9883).
 function rc_poison(): string { return "2129525454"; }
 
 function quarantine_rc(addr: string): string {
