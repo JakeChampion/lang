@@ -1900,8 +1900,11 @@ function type_head(obj: ast.Expr, s: State): string {
         if (lookup(s, id.name) >= 0) { return ""; }
         // A VARIANT names a value, not a type. `Shape.Circle(1)` is a
         // qualified path and `Empty.to_string()` is a method call on the
-        // payloadless literal, and only the enum's own name tells them apart:
-        // a variant carries its owner, so it is never the head.
+        // payloadless literal; they are the same shape in the tree, and the
+        // enum owner on the sig this name resolves to is what separates them.
+        // The lookup answers whichever declaration registered first, so a name
+        // a plain struct and a variant share resolves by order — the checker
+        // refuses that program before this reads it, which is #9900.
         var sig: checker.StructSig = checker.struct_sig(s.scope, id.name);
         if (sig.name.len() > 0) {
             if (sig.enum_owner.len() > 0) { return ""; }
