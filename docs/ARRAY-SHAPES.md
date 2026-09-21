@@ -173,8 +173,14 @@ why. The bar is `ATLAS-PLATFORM-PLAN.md` §3's: a kernel is one IR op
 whose whole vector lifetime stays inside its own emitted sequence, so a
 call to an element function is an op boundary and nothing survives it. A
 kernel can only take an element function it can INLINE, which means one
-primitive operation over the operands — `x * y` and `x * 2.0` both are,
-a body with two operations or a call is not.
+primitive operation over the operands. `x * y`, `x * 2.0` and `-x` all
+are — a unary is emitted as readily as a binary — while a body with two
+operations or a call is not.
+
+The name a primitive is printed under is the operation a kernel would
+have to emit, not the source's spelling: `x < y` over `u64` prints
+`u64 lt`, because the IR's `OpLtS` carries `Unsigned` and the
+instruction is `lt_u`.
 
 The refusals are a **closed set with stable tags**, for the reason
 `FusionRefusal`'s are: they are the coverage checklist for widening the
@@ -188,7 +194,7 @@ kernels, and a checklist of free text cannot be tallied.
 | `element-fn-captures` | a lambda closed over something, and a kernel has nowhere to put it |
 | `element-fn-calls` | the body calls something, and a call is an op boundary |
 | `element-fn-not-one-op` | the body is more than one operation, or applies none |
-| `element-fn-not-arithmetic` | the body's one operation is not arithmetic a kernel emits — integer division and remainder are out, because both trap on a zero divisor and a kernel that hoisted one would move the trap |
+| `element-fn-not-arithmetic` | the body's one operation is not arithmetic a kernel emits inline. Two absences are deliberate: INTEGER division and remainder, because both trap on a zero divisor and a kernel that hoisted one would move the trap (float division stays, which does not trap); and conversions, because they change the element type, which makes the stage a different shape rather than a kernel over this one |
 
 Recognition and this verdict both change nothing. **A verdict of
 `primitive` says the element function is not what stands in the way, not

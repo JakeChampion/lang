@@ -95,7 +95,7 @@ func (r NdarrayElementRefusal) String() string {
 	case NdarrayElementNotOneOp:
 		return "the body is more than one operation, so inlining it is not what a kernel does"
 	case NdarrayElementNotArithmetic:
-		return "the body's one operation is not arithmetic a kernel emits"
+		return "the body's one operation is not arithmetic a kernel emits inline — integer division and remainder trap, and a conversion changes the element type"
 	}
 	return "no reason recorded"
 }
@@ -116,16 +116,25 @@ func (v NdarrayKernelVerdict) String() string {
 }
 
 // ndarrayPrimitiveOps is the arithmetic a kernel emits inline, mapped to how
-// the report names it. Division and remainder are absent for the reason
+// the report names it. Unary operations belong here as much as binary ones:
+// a kernel emits `fneg` the way it emits `fmul`, and the bit-count trio is
+// already an Atlas intrinsic on both baselines.
+//
+// INTEGER division and remainder are the deliberate absences, for the reason
 // rotate.go's purity list leaves them out: both trap on a zero divisor, so a
-// kernel that hoisted one would move a trap.
+// kernel that hoisted one would move a trap. Float division stays, which does
+// not trap. Conversions are absent for a different reason — they change the
+// element type, and a stage that changes it is a different shape rather than
+// a kernel over this one.
 var ndarrayPrimitiveOps = map[OpKind]string{
 	OpAdd: "add", OpSub: "sub", OpMul: "mul",
 	OpAnd: "and", OpOr: "or", OpXor: "xor",
 	OpShl: "shl", OpShrS: "shr",
 	OpEq: "eq", OpNe: "ne", OpLtS: "lt", OpLeS: "le", OpGtS: "gt", OpGeS: "ge",
+	OpNot: "not", OpClz: "clz", OpCtz: "ctz", OpPopcount: "popcount",
 	OpFAdd: "add", OpFSub: "sub", OpFMul: "mul", OpFDiv: "div",
 	OpFEq: "eq", OpFNe: "ne", OpFLt: "lt", OpFLe: "le", OpFGt: "gt", OpFGe: "ge",
+	OpFNeg: "neg",
 }
 
 // ndarrayFloatOps is which of those read float operands, which is how the
@@ -133,6 +142,7 @@ var ndarrayPrimitiveOps = map[OpKind]string{
 var ndarrayFloatOps = map[OpKind]bool{
 	OpFAdd: true, OpFSub: true, OpFMul: true, OpFDiv: true,
 	OpFEq: true, OpFNe: true, OpFLt: true, OpFLe: true, OpFGt: true, OpFGe: true,
+	OpFNeg: true,
 }
 
 // NdarrayKernelVerdicts classifies each element function a recognized site
@@ -215,13 +225,19 @@ func ndarrayClassifyBody(fn *Func) NdarrayKernelVerdict {
 	return NdarrayKernelVerdict{Why: NdarrayElementPrimitive, Op: ndarrayOperandType(*applied) + " " + name}
 }
 
-// ndarrayOperandType names the width the operation reads. Width zero means
-// 32 the way it does everywhere else in the IR.
+// ndarrayOperandType names the operands the operation reads. Width zero means
+// 32 the way it does everywhere else in the IR, and Unsigned selects the `_u`
+// variant of a comparison or a shift — `x < y` over `u64` is an OpLtS that a
+// kernel has to emit as `lt_u`, so calling it `i64 lt` would name an
+// instruction the site does not want.
 func ndarrayOperandType(op Op) string {
 	var b strings.Builder
-	if ndarrayFloatOps[op.Kind] {
+	switch {
+	case ndarrayFloatOps[op.Kind]:
 		b.WriteString("f")
-	} else {
+	case op.Unsigned:
+		b.WriteString("u")
+	default:
 		b.WriteString("i")
 	}
 	if op.Width == 64 {

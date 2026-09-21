@@ -22,7 +22,9 @@ function twice(x: f64): f64 { return (x + x) * 2.0; }
 function loud(x: f64): f64 { print("x"); return x; }
 function ident(x: f64): f64 { return x; }
 function neg(x: f64): f64 { return -x; }
-function run(a: ndarray.NdArray[f64], b: ndarray.NdArray[f64]): f64 {
+function third(x: i64): i64 { return x / 3; }
+function ult(x: u64, y: u64): boolean { return x < y; }
+function run(a: ndarray.NdArray[f64], b: ndarray.NdArray[f64], m: ndarray.NdArray[i64], u: ndarray.NdArray[u64]): f64 {
   var d: ndarray.NdArray[f64] = a.inner(b, 0.0, fmul, fadd);
   var s: ndarray.NdArray[f64] = a.map(scale);
   var t: ndarray.NdArray[f64] = a.map(twice);
@@ -31,11 +33,15 @@ function run(a: ndarray.NdArray[f64], b: ndarray.NdArray[f64]): f64 {
   var n: ndarray.NdArray[f64] = a.map(neg);
   var f: f64 = 7.0;
   var c: ndarray.NdArray[f64] = a.map((x: f64): f64 => x * f);
-  return d.get([]) + s.get([0]) + t.get([0]) + l.get([0]) + i.get([0]) + n.get([0]) + c.get([0]);
+  var h: ndarray.NdArray[i64] = m.map(third);
+  var q: ndarray.NdArray[boolean] = u.zip_with(u, ult);
+  return d.get([]) + s.get([0]) + t.get([0]) + l.get([0]) + i.get([0]) + n.get([0]) + c.get([0]) + (h.get([0]) as f64) + (if (q.get([0])) { 1.0 } else { 0.0 });
 }
 function main(): i32 {
   var a: ndarray.NdArray[f64] = ndarray.from_flat([1.0, 2.0], [2]);
-  return run(a, a) as i32;
+  var m: ndarray.NdArray[i64] = ndarray.from_flat([1 as i64, 2 as i64], [2]);
+  var u: ndarray.NdArray[u64] = ndarray.from_flat([1u64, 2u64], [2]);
+  return run(a, a, m, u) as i32;
 }`
 
 func elementVerdicts(t *testing.T) []ir.NdarrayKernelVerdict {
@@ -81,8 +87,10 @@ func TestNdarrayElementRefusals(t *testing.T) {
 		{3, "twice, two operations", ir.NdarrayElementNotOneOp, ""},
 		{4, "loud, which calls print", ir.NdarrayElementCalls, ""},
 		{5, "ident, which applies nothing", ir.NdarrayElementNotOneOp, ""},
-		{6, "neg, one operation a kernel does not emit", ir.NdarrayElementNotArithmetic, ""},
+		{6, "neg, a unary a kernel emits as readily as a multiply", ir.NdarrayElementPrimitive, "f64 neg"},
 		{7, "a lambda over a captured factor", ir.NdarrayElementCaptures, ""},
+		{8, "third, an integer divide, which traps on zero", ir.NdarrayElementNotArithmetic, ""},
+		{9, "ult, an unsigned compare", ir.NdarrayElementPrimitive, "u64 lt"},
 	} {
 		if tc.at >= len(got) {
 			t.Fatalf("run has %d element functions, want at least %d: %+v", len(got), tc.at+1, got)
@@ -139,7 +147,7 @@ func TestNdarrayElementRefusalTagsAreDistinct(t *testing.T) {
 func TestNdarrayElementHistogramCountsEveryReasonAtZero(t *testing.T) {
 	p := lowerPipelineSrc(t, elementSrc)
 	got := ir.FormatNdarrayElementHistogram(p)
-	if !strings.Contains(got, "std/ndarray element functions (#9735): 8, 3 a kernel could inline") {
+	if !strings.Contains(got, "std/ndarray element functions (#9735): 10, 5 a kernel could inline") {
 		t.Errorf("histogram total is not the one this fixture has:\n%s", got)
 	}
 	for _, want := range []string{
@@ -162,5 +170,22 @@ func TestNdarrayElementHistogramIsEmptyWithoutSites(t *testing.T) {
 	p := lowerPipelineSrc(t, `function main(): i32 { return 0; }`)
 	if got := ir.FormatNdarrayElementHistogram(p); got != "" {
 		t.Errorf("histogram over a program with no algebra = %q, want nothing", got)
+	}
+}
+
+// `x < y` over `u64` is an OpLtS carrying Unsigned, and a kernel has to emit
+// it as `lt_u`. Naming it `i64 lt` would name an instruction the site does
+// not want, which is the kind of wrong entry the worklist exists to not
+// have. Nothing else in the fixture reads Unsigned, so this is its own pin.
+func TestNdarrayUnsignedOperationIsNamedUnsigned(t *testing.T) {
+	got := elementVerdicts(t)
+	last := got[len(got)-1]
+	if last.Why != ir.NdarrayElementPrimitive || last.Op != "u64 lt" {
+		t.Errorf("the unsigned compare = %+v, want the primitive u64 lt", last)
+	}
+	for _, v := range got {
+		if strings.HasPrefix(v.Op, "i") && strings.HasSuffix(v.Op, " lt") {
+			t.Errorf("a compare is named %q; the fixture has no signed one, so Unsigned was dropped", v.Op)
+		}
 	}
 }
