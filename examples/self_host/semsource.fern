@@ -1180,10 +1180,17 @@ function type_detail(t: typeinfo.Type): string {
 }
 
 function cast(e: ast.Expr, u: ast.ExprUnary, s: State): Value {
-    var operand: Value = expr(u.operand, s, typeinfo.unchecked());
+    // An ASCRIPTION names the operand's own type, so it is a destination the
+    // way a binding's annotation is: a literal that cannot name its own type
+    // takes it from here, and the cast itself lowers to nothing.
+    var ty: typeinfo.Type = checked(e, s);
+    var ascribes: boolean = semtypes.concrete(ty, false) && ssasem.cast_ascribes(ty);
+    var want: typeinfo.Type = typeinfo.unchecked();
+    if (ascribes) { want = ty; }
+    var operand: Value = expr(u.operand, s, want);
     s = operand.s;
     if (!s.ok) { return operand; }
-    var ty: typeinfo.Type = checked(e, s);
+    if (ascribes && semtypes.equal(s.values[operand.id], ty)) { return operand; }
     if (!ssasem.cast_admits(s.values[operand.id], ty)) {
         return refused(s, "cast contract: " + typeinfo.spelling(s.values[operand.id]) + " as " + typeinfo.spelling(ty));
     }
