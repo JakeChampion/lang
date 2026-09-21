@@ -909,6 +909,34 @@ function main(): i32 {
     match (opt) { Some(v) => { seen = v; }, None => { seen = 1; } }
     return total(empty) + total(held) + total([6, 7] as i32[]) + widen(260) + seen;
 }`},
+	// std/array writes its surface as FREE functions named
+	// `__method_Array_<field>` taking the receiver first, which the checker
+	// resolves for `xs.<field>(...)` and the bundler prefixes with the module.
+	// `folded_method` keyed only the OTHER spelling of the same surface — the
+	// `(xs: T[]) <field>` receiver form the registration pass folds to
+	// `__arrm_<field>` — so every one of std/array's helpers refused
+	// `unsupported call target`, taking its whole module down.
+	//
+	// The lookup is a suffix match for the same reason the checker's
+	// `has_array_method` is one: the contract's name ends with the convention
+	// name rather than being it.
+	//
+	// `examples/tests/array_combinators_test` went 0 of 211 to 211 of 211 on
+	// this, on one call to `join_with_last`.
+	{name: "an-array-helper-is-a-free-function", atLeast: 54, noLeak: true, src: `
+import "std/array" as array;
+
+function main(): i32 {
+    var words: string[] = ["a", "b", "c"];
+    var joined: string = words.join_with_last(", ", " and ");
+    var ns: i32[] = [3, 1, 4, 1, 5];
+    var sums: i32[] = ns.cumsum();
+    var pos: boolean = ns.every_positive();
+    print(joined);
+    var last: i32 = sums[sums.len() - 1];
+    if (!pos) { return 0; }
+    return joined.len() + last;
+}`},
 	// Two levels of value-position if, the inner arm a boolean call. The
 	// outer IIFE returns the CALL of the inner one, which the checker types
 	// from the inner declaration's tag — `if_expr_rt`'s concrete `i32` guess —

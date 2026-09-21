@@ -1437,6 +1437,24 @@ function map_read(c: ast.ExprCall, recv: Value, s: State, t: typeinfo.Type, kind
     return define(s, kind, ids, 0, "", result);
 }
 
+// The same array surface declared the other way round: std/array writes its
+// methods as FREE functions named `__method_Array_<field>` with the receiver
+// as the first parameter, which the checker resolves for `xs.<field>(...)`.
+// The bundler prefixes the module, so the contract's name ENDS with the
+// convention name rather than being it — the suffix match the checker's own
+// `has_array_method` does, for the same reason.
+function array_module_method(contracts: ssasem.Contract[], field: string): i32 {
+    var target: string = "__method_Array_" + field;
+    var i: i32 = 0;
+    while (i < contracts.len()) {
+        var nm: string = contracts[i].name;
+        if (nm == target) { return i; }
+        if (nm.len() > target.len() && slice_unchecked(nm, nm.len() - target.len(), nm.len()) == target) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
 // `xs.first()` where `first` is declared `(xs: T[]) first()`: the registration
 // pass folded it into the free generic `__arrm_first[T]`, and this is the call
 // to that template with the receiver at argument 0. `__mapm_` is the map
@@ -1455,6 +1473,7 @@ function folded_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s:
     // variables on the template, and nothing here binds them.
     if (prefix == "") { return primitive_method(c, fa, recv, s, statement); }
     var at: i32 = ssasem.find_contract(s.contracts, prefix + fa.field);
+    if (at < 0 && prefix == "__arrm_") { at = array_module_method(s.contracts, fa.field); }
     if (at < 0) { return primitive_method(c, fa, recv, s, statement); }
     var contract: ssasem.Contract = s.contracts[at];
     if (c.args.len() + 1 != contract.params.len()) { return refused(s, "call arity"); }
