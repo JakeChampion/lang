@@ -296,15 +296,6 @@ func RecognizeNdarrayLayouts(p *Program) []NdarrayLayoutSite {
 	return out
 }
 
-// NdarrayReceiverLayouts is the layout of the receiver at every std/ndarray
-// call in fn, keyed by op index. The algebra recogniser reads it too: §6 says
-// a reduction along the last axis walks contiguous storage and one along any
-// other axis strides, and that is only the whole question when the storage IS
-// contiguous — a strided receiver strides along every axis.
-func NdarrayReceiverLayouts(p *Program, fn *Func) map[int]NdarrayLayout {
-	return ndarrayReceiverLayouts(fn, NewCallShapes(p), buildFuncSigs(p))
-}
-
 // ndarrayReceiverLayouts runs the layout analysis over one function.
 //
 // Slots are flow-INSENSITIVE: a slot's layout is the meet of every layout
