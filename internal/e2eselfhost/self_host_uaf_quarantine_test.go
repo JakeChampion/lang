@@ -27,9 +27,8 @@ import (
 
 // uafPoisonDec is ast.RcPoison as the emitted decimal, derived rather than
 // written out: the self-host cannot import the Go constant, so the assertions
-// below are what hold its literal equal to native's. They were not equal —
-// the emitter carried 0x7EEFFACE, one digit from the constant every comment
-// named, so the two compilers quarantined with different words (#9883).
+// below — not a literal the emitter can silently agree with — are what hold
+// its word equal to native's (#9883).
 var uafPoisonDec = strconv.Itoa(ast.RcPoison)
 
 // uafSelfHostIncSrc retains a block the runtime has already freed: the first
