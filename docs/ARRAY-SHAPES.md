@@ -156,26 +156,30 @@ computed. A guessed axis would be worse than none: a reduction along the
 last axis walks contiguous storage and one along any other axis strides,
 so the two plan differently.
 
-§2's structural operations are deliberately absent. They move no
-elements, so there is nothing for a kernel to replace.
+§2's structural operations are deliberately absent from that worklist.
+They move no elements, so there is nothing for a kernel to replace — but
+they decide what the operations BELOW them cost, which is the layout
+analysis further down this section.
 
 That list is the kernel half's worklist, and it answers the worklist's
 own question rather than leaving the reader to go and look: each element
 function is printed with what a kernel could do with it.
 
 ```
-run:5:60  inner  mul [f64 mul], add [f64 add]
-run:6:44  map    __closure_lambda_1 [element-fn-captures]
+run:5:87  inner  over packed     mul [f64 mul], add [f64 add]  -> kernel-candidate
+run:6:51  map    over strided    __closure_lambda_1 [element-fn-captures]  -> element-not-primitive
 ```
 
 The first of those is `dot_f64` in disguise; the second is not, and says
-why. The bar is `ATLAS-PLATFORM-PLAN.md` §3's: a kernel is one IR op
-whose whole vector lifetime stays inside its own emitted sequence, so a
-call to an element function is an op boundary and nothing survives it. A
-kernel can only take an element function it can INLINE, which means one
-primitive operation over the operands. `x * y`, `x * 2.0` and `-x` all
-are — a unary is emitted as readily as a binary — while a body with two
-operations or a call is not.
+why. `over` is the receiver's layout and `->` the site's verdict; both
+are below, and the element functions in the brackets are what this part
+of the section is about. The bar is `ATLAS-PLATFORM-PLAN.md` §3's: a
+kernel is one IR op whose whole vector lifetime stays inside its own
+emitted sequence, so a call to an element function is an op boundary and
+nothing survives it. A kernel can only take an element function it can
+INLINE, which means one primitive operation over the operands. `x * y`,
+`x * 2.0` and `-x` all are — a unary is emitted as readily as a binary —
+while a body with two operations or a call is not.
 
 The name a primitive is printed under is the operation a kernel would
 have to emit, not the source's spelling: `x < y` over `u64` prints
@@ -202,9 +206,9 @@ not sufficient, because an axis verb also has to say which elements it
 walks.
 
 ```
-algebra:11:60  reduce_axis(axis 1)  add [i64 add]  -> kernel-candidate
-algebra:13:48  map_rank(rank 1)     sum_cell [element-fn-calls]  -> element-not-primitive
-algebra:14:60  reduce_axis(axis ?)  add [i64 add]  -> axis-not-literal
+algebra:11:60  reduce_axis(axis 1)  over unknown    add [i64 add]  -> kernel-candidate
+algebra:13:48  map_rank(rank 1)     over unknown    sum_cell [element-fn-calls]  -> element-not-primitive
+algebra:14:60  reduce_axis(axis ?)  over unknown    add [i64 add]  -> axis-not-literal
 ```
 
 The third of those is the one a per-element reading cannot see: its
@@ -212,7 +216,9 @@ element function is primitive, and only the site-level question declines
 it. `axis-not-literal` is its own row for the reason the axis is read at
 all — a reduction along the last axis walks contiguous storage and one
 along any other axis strides, so a kernel cannot be selected without
-knowing which.
+knowing which. The axis is half of that question: the last axis of a
+STRIDED handle is not contiguous either, and the layout below is the
+other half. Each site's line carries both.
 
 The site verdicts are a closed set too, and their tally sits beside the
 element one under `FERN_ARRAY_REPORT=1`.
@@ -222,6 +228,93 @@ element one under `FERN_ARRAY_REPORT=1`.
 | `kernel-candidate` | nothing this pass can see would make a planner decline the site |
 | `element-not-primitive` | an element function is not one a kernel can inline, per the table above |
 | `axis-not-literal` | the axis is not a literal, so which elements the kernel would walk is not known here |
+
+### What a handle's layout is, and where it is proved
+
+**Normative.** §2's last three rows — `reshape`, `packed()`, `to_flat()`
+— branch at RUN TIME on `is_row_major()` / `is_packed()`. So two
+textually identical calls cost different amounts:
+
+```
+var a = nd.from_flat(xs, s);   var f1 = a.to_flat();        // free
+var t = a.transpose();         var f2 = t.to_flat();        // O(n)
+```
+
+Both lower to the same op with the same callee. That is the avoidable
+O(n) copy #9734 says concise array code must not conceal, sitting inside
+the IR unremarked — and §8's licence for an in-place elementwise kernel
+needs the same fact from the other direction, since it reads "consumed,
+unique, and `is_packed()`" and a planner can take it only where the third
+conjunct is decided before the program runs.
+
+Both predicates are decided by the metadata, and the metadata is decided
+by the chain of operations that built the handle — every one of which §2
+names. So **the layout is a property the IR carries**, derived from
+provenance: `internal/ir/ndarray_layout.go`, printed per site by
+`fern -array-report`.
+
+| layout | what it asserts |
+| --- | --- |
+| `packed` | `is_packed()` is provably true, so all three of §2's branching rows take their free arm |
+| `row-major` | `is_row_major()` is provably true and `is_packed()` is not proven, so `reshape` is metadata and `to_flat()` may copy |
+| `strided` | the provenance WAS followed, to a §2 metadata operation that preserves neither predicate |
+| `unknown` | the provenance was not followed: a parameter, a struct field, the result of a call this pass does not model |
+
+`strided` and `unknown` both claim nothing, and are separate rows
+because they fail for different reasons — which is what makes the tally
+a coverage checklist rather than a count.
+
+The transfer functions are §2's table and §7's, read forwards, and each
+is the operation's own code:
+
+- `from_flat` aborts unless `count_of(shape) == data.len()`, then takes
+  the row-major strides at offset 0 — all three conjuncts, so **packed**.
+- the metadata operations (`transpose`, `permute`, `reverse`, `slice`,
+  `select`, `broadcast_to`) keep `data` and perturb the strides, the
+  offset or both, so **strided**. None preserves a predicate in a way
+  that survives an unknown rank, and §4 makes the rank a run-time
+  property.
+- `reshape` is **row-major** whichever branch it takes: the metadata
+  branch writes `row_major(shape)` outright and the copying branch is a
+  `from_flat`. It is **packed** as well from a packed receiver, whose
+  offset is 0 and whose storage holds exactly the count the new shape
+  must have.
+- `packed()` is **packed** from anything: it returns the receiver when it
+  is packed and a `from_flat` copy otherwise.
+- every operation of §7 that returns a handle returns `from_flat` of a
+  buffer it just filled, so **packed**. `fold_all` returns a scalar and
+  `to_flat` a `T[]`, so neither produces a layout.
+
+Slots are **flow-insensitive**: a slot's layout is the meet of every
+layout stored into it anywhere in the function, and a parameter claims
+nothing. A slot holding a packed handle on one branch and a transposed
+one on the other therefore reads `strided` at both. That costs precision
+and needs no reasoning about which store reaches which load, so the
+answer is correct whatever the control flow does. Two stores are not
+counted: a constant, which is the null the lowering writes into a slot it
+has moved the handle out of and which no handle ever is; and anything
+reached after the operand stack stopped being tracked, which claims
+`unknown`.
+
+Each storage-sensitive site then carries a verdict, closed and tagged
+like the kernel sets above, tallied under `FERN_ARRAY_REPORT=1`:
+
+| tag | what it means |
+| --- | --- |
+| `metadata` | the receiver's layout proves the free branch, so no element moves |
+| `not-proven-packed` | `to_flat()` or `packed()` on a receiver not proven packed, so the call may copy |
+| `not-proven-row-major` | `reshape()` on a receiver not proven row-major, so the call may copy |
+
+```
+main:5:10  to_flat  over packed     -> metadata
+main:5:27  to_flat  over strided    -> not-proven-packed
+```
+
+**This changes nothing.** `metadata` says the copy is provably absent,
+not that anything was removed; the call still runs `std/ndarray`'s own
+branch and takes its free arm at run time, exactly as before. What is new
+is that the answer exists before the program does, which is what §8's
+in-place licence and #9735's kernels need and could not ask for.
 
 Recognition and both verdicts change nothing. **A verdict of `primitive`
 says the element function is not what stands in the way, and
@@ -333,6 +426,12 @@ Four consequences:
   what licenses an in-place elementwise op; nothing here takes it.
 - **In-place through a handle.** The consuming-handle plus unique-storage
   rule in §1 is stated, not implemented; nothing in `std/ndarray` writes.
+  §6's layout analysis decides the `is_packed()` conjunct §8 adds to it,
+  and decides nothing else: "consumed" and "unique" are the reuse passes'
+  and the run-time guard's, not this one's.
+- **Acting on a layout.** A `metadata` verdict licenses a rewrite —
+  dropping the run-time branch, or selecting a contiguous kernel over a
+  strided walk — and nothing takes it. The analysis reports; §6 says so.
 - **Static shapes.** §4.
 - **The self-host.** `std/ndarray` compiles under the self-host where its
   element type does: a combinator handed a function over a 64-bit element

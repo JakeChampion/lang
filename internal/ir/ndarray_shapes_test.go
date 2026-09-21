@@ -110,8 +110,8 @@ func TestArrayReportListsNdarrayProducts(t *testing.T) {
 		"no std/array pipelines",
 		"std/ndarray operations, recognized by identity and lowered as the scalar loop:",
 		"run:5:",
-		"inner  mul [i64 mul], add [i64 add]",
-		"outer  __closure_lambda",
+		"inner  over unknown    mul [i64 mul], add [i64 add]",
+		"outer  over unknown    __closure_lambda",
 		"This is the NATIVE compiler's plan.",
 	} {
 		if !strings.Contains(got, want) {
@@ -219,13 +219,13 @@ func TestNdarrayReportNamesTheAxisOrSaysItIsUnread(t *testing.T) {
 	p := lowerPipelineSrc(t, algebraSrc)
 	got := ir.FormatArrayPipelines(p)
 	for _, want := range []string{
-		"map                  dbl",
-		"zip_with             add",
-		"fold_all             add",
-		"reduce_axis(axis 1)  add",
-		"scan_axis(axis 0)    add",
-		"map_rank(rank 1)     sum_cell",
-		"reduce_axis(axis ?)  add",
+		"map                  over unknown    dbl",
+		"zip_with             over unknown    add",
+		"fold_all             over unknown    add",
+		"reduce_axis(axis 1)  over unknown    add",
+		"scan_axis(axis 0)    over unknown    add",
+		"map_rank(rank 1)     over unknown    sum_cell",
+		"reduce_axis(axis ?)  over unknown    add",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("report does not mention %q:\n%s", want, got)

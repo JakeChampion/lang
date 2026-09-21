@@ -269,6 +269,19 @@ func TestSelfHostCrossValidationX86_64(t *testing.T) {
 		{"enum-match", `enum C { A, B } function main(): i32 { var c: C = C.A; match (c) { C.A => { return 3; }, C.B => { return 4; } } }`, 3},
 		{"i64-arith", `function main(): i32 { var n: i64 = 5000000000; return (n % 97) as i32; }`, 73},
 		{"f64-arith", `function main(): i32 { var f: f64 = 2.5; var g: f64 = 1.5; return (f + g) as i32; }`, 4},
+		// A float truncated into an UNSIGNED destination saturates, so a
+		// negative source answers 0 rather than its two's-complement bits
+		// (#9912). #9937 gave the two compiled legs that rule; interp.fern
+		// still picked the SIGNED truncation for u8, u32 and u64 alike, so
+		// it disagreed with the output of the compiler it ships beside —
+		// which is the divergence class this suite exists to catch, and the
+		// reason these rows are here rather than only in the u8 fixture.
+		{"f64-to-u8-neg", `function main(): i32 { var f: f64 = 0.0 - 1.0; var u: u8 = f as u8; return u as i32; }`, 0},
+		{"f64-to-u8-wrap", `function main(): i32 { var f: f64 = 300.7; var u: u8 = f as u8; return u as i32; }`, 44},
+		{"f64-to-u32-neg", `function main(): i32 { var f: f64 = 0.0 - 300.0; var u: u32 = f as u32; return (u as i32) & 255; }`, 0},
+		{"f64-to-u32-big", `function main(): i32 { var f: f64 = 10000000000.0; var u: u32 = f as u32; return (u as i32) & 255; }`, 255},
+		{"f64-to-u64-neg", `function main(): i32 { var f: f64 = 0.0 - 1.0; var u: u64 = f as u64; return (u as i32) & 255; }`, 0},
+		{"f64-to-u64-high", `function main(): i32 { var f: f64 = 10000000000000000000.0; var u: u64 = f as u64; return (u as i32) & 255; }`, 0},
 		{"forward-declared-call", `function outer(n: i32): i32 { return inner(n) + 1; } function inner(n: i32): i32 { return n * 2; } function main(): i32 { return outer(20); }`, 41},
 		// ---- Option / Result (#5990) ------------------------------------
 		// The four builtin constructors are declared nowhere a program can

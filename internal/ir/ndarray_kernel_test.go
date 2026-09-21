@@ -281,9 +281,9 @@ func TestNdarraySiteHistogramAndReportLine(t *testing.T) {
 	}
 	report := ir.FormatNdarrayShapes(p)
 	for _, want := range []string{
-		"add [i64 add]  -> kernel-candidate",
-		"sum_cell [element-fn-calls]  -> element-not-primitive",
-		"reduce_axis(axis ?)  add [i64 add]  -> axis-not-literal",
+		"over unknown    add [i64 add]  -> kernel-candidate",
+		"over unknown    sum_cell [element-fn-calls]  -> element-not-primitive",
+		"reduce_axis(axis ?)  over unknown    add [i64 add]  -> axis-not-literal",
 	} {
 		if !strings.Contains(report, want) {
 			t.Errorf("report line does not carry %q:\n%s", want, report)
