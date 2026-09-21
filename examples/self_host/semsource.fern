@@ -4150,14 +4150,36 @@ function same_bits(a: boolean[], b: boolean[]): boolean {
     return true;
 }
 
+// The shapes the inference may hand over: a box this frame can reclaim whole
+// and whose deep drop the backends already wire — an enum or a record.
+//
+// A bare string or array parameter is deliberately NOT one, which is native's
+// first rung (`ownedByDefaultShapeIn`) and not an oversight: measured, moving
+// those to the counted convention costs 4.9% on `ascii_scan` and 2.5% on
+// `utf8_ingest_validated` and wins nothing, because a byte kernel reads its
+// argument and hands back an index. Arrays and strings are still reclaimed —
+// as the CHILDREN of an admitted box, which is where a vector node's buffer
+// sits.
+//
+// A cell, a map, a stream handle and a closure environment are excluded for
+// the reasons `ssaunits` already gives them: the frame is not their only
+// holder, or the box is one nothing can state a mode for.
+function owned_shape(t: typeinfo.Type): boolean {
+    if (semtypes.is_cell(t) || semtypes.is_handle(t) || semtypes.is_env(t)) { return false; }
+    if (ssasem.is_map(t) || ssasem.is_view(t)) { return false; }
+    if let typeinfo.TypeUnion(_) = t { return true; }
+    if let typeinfo.TypeStruct(_) = t { return true; }
+    return false;
+}
+
 // A declared `own` stays counted whatever the analysis says: it carries the
 // checker's affine discipline (E050) and a call site may already rely on it.
-// Everything else follows the inference — a consumed reference parameter is
-// counted, a read one borrows.
+// Everything else follows the inference — a consumed enum or record parameter
+// is counted, a read one borrows.
 function inferred_mode(old: i32, t: typeinfo.Type, consumed: boolean): i32 {
     if (!reference(t)) { return old; }
     if (old == ssaunits.counted_mode()) { return old; }
-    if (consumed) { return ssaunits.counted_mode(); }
+    if (consumed && owned_shape(t)) { return ssaunits.counted_mode(); }
     return old;
 }
 
