@@ -744,6 +744,57 @@ function main(): i32 {
     while (it.has_next()) { total = total + it.value(); it.advance(); }
     return total;
 }`},
+	// A type variable that only a CONSTRAINT mentions. `nth[T, I: Iterator[T]]`
+	// and `last[T, I: Iterator[T]]` return `Option[T]`, and `to_array` returns
+	// `T[]`, but no parameter spells T — it is the impl the bound resolved to
+	// that says what it is (`impl Iterator[i32] for Range`,
+	// `impl[T] Iterator[T] for ArrayIter[T]`). The parser dropped a bound's
+	// type arguments outside `-fmt`, so the monomorphiser built the instance
+	// with T still free and every reader downstream saw `Option[unknown]`:
+	// `unbound type variable`, 0 of 13. It is the root of the whole cascade in
+	// `examples/tests/iter_test` (175 declarations) and
+	// `iter_combinators_test` (151), both of which produce whole with it.
+	//
+	// Both impl shapes are covered deliberately: `Range` writes its element
+	// concretely, while `ArrayIter[T]` writes it in the impl's OWN parameter,
+	// so only the second exercises matching the impl's `for` type against the
+	// concrete one. `words` pins a string element, so a wrong binding cannot
+	// pass as i32.
+	{name: "a-type-variable-only-a-constraint-mentions", atLeast: 13, noLeak: true, src: `
+import "core/iter" as iter;
+
+function tail(xs: i32[]): i32 {
+    match (iter.last(iter.of(xs))) {
+        Some(v) => { return v; },
+        None => { return 0 - 1; },
+    }
+}
+
+function pick(n: i32): i32 {
+    match (iter.nth(iter.range(0, 20), n)) {
+        Some(v) => { return v; },
+        None => { return 0 - 1; },
+    }
+}
+
+function words(ws: string[]): i32 {
+    var out: string[] = iter.to_array(iter.of(ws));
+    var sum: i32 = 0;
+    for w in out { sum = sum + w.len(); }
+    return sum;
+}
+
+function main(): i32 {
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) {
+        total = total + pick(i % 20);
+        total = total + tail([i, i + 1, i + 2]);
+        total = total + words(["ab", "cde", "f"]);
+        i = i + 1;
+    }
+    return total % 1000;
+}`},
 	// Two levels of value-position if, the inner arm a boolean call. The
 	// outer IIFE returns the CALL of the inner one, which the checker types
 	// from the inner declaration's tag — `if_expr_rt`'s concrete `i32` guess —
