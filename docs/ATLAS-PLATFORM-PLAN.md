@@ -1166,7 +1166,41 @@ wall clock shows 1.29x, because it charges far more for one NEON
 instruction than hardware does. Quote the retired row when comparing
 backends; the wall row is a floor.
 
-The remaining six legs are still scalar.
+**native wasm followed, and paid two encodings.** `f64x2.splat` for the
+factor, `v128.load` / `f64x2.mul` / `v128.store` over a pair, and the
+scalar loop as the tail. Two lanes, like arm64: a v128 is 128 bits. The
+splat is recomputed per iteration rather than hoisted, which is
+`__fern_count_byte`'s choice for its reason — a hoisted one needs a v128
+local and the locals vector here holds a single i32 group — against a JIT
+that will sink a loop-invariant splat anyway.
+
+Measured on `examples/bench/array_scale_f64` under wasmtime, five runs each:
+
+| native wasm | scalar | v128 | |
+|---|---|---|---|
+| wall, floor included | 17.5 ms | 12.8 ms | 1.37x |
+| wall, floor subtracted | 10.6 ms | 5.9 ms | **1.80x** |
+
+The floor is wasmtime's own start-up, 6.9 ms measured on a program that
+returns a constant, and it matters here in a way it does not on the native
+legs: it is more than half the scalar time, so quoting the unadjusted
+ratio would understate a two-lane body by a quarter. Subtract it and the
+kernel lands at 1.80x against a ceiling of 2.
+
+The two encodings are `internal/wasm/simd`'s first float ops — everything
+above them is byte-domain, added for the string kernels. That package is a
+hand-written list, so this is the per-instruction case of the rule above,
+and it behaved exactly as that rule predicts: the same kernel paid three
+forms on x86-64, two here, and nothing on arm64, entirely according to how
+each assembler was built rather than to anything about the kernel.
+
+`f64x2.mul` is worth one line of its own. Its sub-opcode is 242, past the
+one-byte uleb boundary, so it encodes as two bytes; written as a raw one
+it decodes as `f32x4.pmin`, which is a VALID instruction, so the module
+would load and quietly compute something else. That is pinned by bytes in
+the package's own test and against wasm-tools in CI.
+
+The remaining five legs are still scalar.
 
 ### 3.5 Testing
 
