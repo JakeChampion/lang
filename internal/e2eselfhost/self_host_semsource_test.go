@@ -651,10 +651,11 @@ function built(n: i32): string {
 function addr_as_text(p: usize): string { return p as string; }
 function addr_as_bytes(p: usize): u8[] { return p as u8[]; }
 function text_as_addr(s: string): usize { return s as usize; }
-// The byte is the one integer width cast_admits keeps out of the float domain,
-// so this is what a refused cast looks like now that both directions of the
-// address reinterpretation are admitted.
-function refused_byte_as_float(b: u8): f64 { return b as f64; }
+// The ADDRESS is what cast_admits keeps out of the float domain — it reaches
+// one through the 64-bit integer the source writes — so this is what a refused
+// cast looks like now that both directions of the address reinterpretation are
+// admitted, and now that the byte converts like every other integer width.
+function refused_address_as_float(h: usize): f64 { return h as f64; }
 function handle_sum(h: usize, k: usize): usize { return h + k; }
 function handle_narrow(h: usize): i32 { return h as i32; }
 function handle_byte(h: usize): u8 { return h as u8; }
