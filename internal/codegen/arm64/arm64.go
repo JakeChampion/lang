@@ -5271,8 +5271,17 @@ func (g *generator) emitSumBytesRuntime() {
 // emitScaleF64Runtime emits `__fern_scale_f64(xs, k) -> out` (arm64 mirror of
 // the x86-64 helper): a fresh f64 array of xs's length whose element i is
 // `xs[i] * k`, header written here (cap@-12, rc=1@-8, len@-4) so the caller
-// owns one fresh array. SCALAR (§3.4 step 1): one fmul per element; the NEON
-// body is fmul over 2 lanes, and elementwise, so it reassociates nothing.
+// owns one fresh array.
+//
+// NEON (§3.4 step 3): `fmul` over a `.2d` pair, with the scalar loop as the
+// tail for an odd length. A multiply is elementwise, so the vector body
+// reassociates nothing — each lane is an independent product, not a partial
+// sum (docs/ARRAY-ALGEBRA.md §3, AA-02). Two lanes, not x86-64's four: a NEON
+// vector is 128 bits.
+//
+// Both bodies read the element first and the factor second, so they cannot
+// disagree about which NaN a NaN times a NaN yields. `and x6, x21, #-2` fixes
+// the vector bound before the loop, so nothing reads past the end.
 //
 // AAPCS64: x0 = xs, x1 = k as f64 bits (the operand stack's form). Returns the
 // new data pointer in x0. x19 / x20 / x21 hold xs, k and n across the
@@ -5297,8 +5306,21 @@ func (g *generator) emitScaleF64Runtime() {
 	g.emit("mov w2, #1")
 	g.emit("stur w2, [x0, #-8]")  // rc = 1
 	g.emit("stur w21, [x0, #-4]") // len = n
-	g.emit("fmov d1, x20")
+	// dup fills both lanes, and d1 IS v1's low half, so the scalar tail
+	// reads the factor from the same instruction the vector body does.
+	g.emit("dup v1.2d, x20")
 	g.emit("mov x3, #0")
+	g.emit("and x6, x21, #-2") // whole pairs only
+	g.label(".Lscale_f64_vec")
+	g.emit("cmp w3, w6")
+	g.emit("b.hs .Lscale_f64_loop")
+	g.emit("add x4, x19, x3, lsl #3")
+	g.emit("ld1 {v0.2d}, [x4]")
+	g.emit("fmul v0.2d, v0.2d, v1.2d")
+	g.emit("add x5, x0, x3, lsl #3")
+	g.emit("st1 {v0.2d}, [x5]")
+	g.emit("add x3, x3, #2")
+	g.emit("b .Lscale_f64_vec")
 	g.label(".Lscale_f64_loop")
 	g.emit("cmp w3, w21")
 	g.emit("b.hs .Lscale_f64_ret")
