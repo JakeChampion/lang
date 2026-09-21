@@ -119,9 +119,30 @@ function listed_leaf(): string {
     return "";
 }
 
+// The build whose stages this report describes. Production widens the declared
+// parameter modes (semsource.with_inferred_modes) and lowers under those, so a
+// census read off the declared ones describes a convention no build runs —
+// ssaunits.plan and ssarc.lower both read modes, and a body only the widened
+// modes refuse would not appear at all.
+//
+// The refusal half is unaffected either way: semsource appends a mode and
+// hands it back while it builds a body, never branching on it, so `ok` / `why`
+// are the same whichever answer the inference reaches.
+//
+// semlower keeps the widening only when the module still lowers WHOLE under
+// it, and this report does not re-derive that: it describes the widened
+// pipeline, and its own `lowered` against `produced` is the condition, so a
+// body that refuses under the widening is shown rather than hidden.
+function measured_build(merged: parser.Module): semsource.Built {
+    var built: semsource.Built = semsource.build_module(merged);
+    var widened: semsource.Built = semsource.with_inferred_modes(built);
+    if (!semsource.modes_differ(built, widened)) { return built; }
+    return widened;
+}
+
 function report(merged: parser.Module, tab: irlower.StructTab): void {
     var listed: string = listed_leaf();
-    var built: semsource.Built = semsource.build_module(merged);
+    var built: semsource.Built = measured_build(merged);
     var total: i32 = built.decls.len();
     var n_produced: i32 = 0;
     var n_planned: i32 = 0;
