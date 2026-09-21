@@ -2584,6 +2584,38 @@ function main(): i32 {
     if (Held { xs: [1.5, 2.5] }.render() != "[1.5,2.5]") { return 2; }
     return acc % 101;
 }`},
+	{name: "a-composite-compares-through-its-own-method", atLeast: 53, noLeak: true, src: `
+import "core/cmp";
+@derive(cmp.Eq, cmp.Ord)
+struct Point { x: i32, y: string }
+@derive(cmp.Eq, cmp.Ord)
+enum Shape { Dot, Line(i32), Box(i32, string) }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 20) {
+        var a: Point = Point { x: 2, y: "hi" };
+        var b: Point = Point { x: 2, y: "hi" };
+        var c: Point = Point { x: 2, y: "hj" };
+        if (!(a == b)) { return 1; }
+        if (a == c) { return 2; }
+        if (!(a != c)) { return 3; }
+        if (!(a < c)) { return 4; }
+        if (a < b) { return 5; }
+        if (!(a <= b)) { return 6; }
+        if (!(c > a)) { return 7; }
+        if (!(a >= b)) { return 8; }
+        if (!(Box(2, "a") == Box(2, "a"))) { return 9; }
+        if (Box(2, "a") == Box(2, "b")) { return 10; }
+        if (!(Box(2, "a") < Box(2, "b"))) { return 11; }
+        if (!(Line(1) < Box(0, ""))) { return 12; }
+        if (!(Dot == Dot)) { return 13; }
+        if (Dot == Line(0)) { return 14; }
+        acc = acc + 1;
+        i = i + 1;
+    }
+    return acc + 22;
+}`},
 }
 
 // semHeldElementSource sorts by length with the insertion sort's body: the

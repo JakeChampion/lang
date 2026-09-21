@@ -1018,7 +1018,15 @@ function binary(e: ast.Expr, b: ast.ExprBinary, s: State, expected: typeinfo.Typ
     if (b.op == "&&" || b.op == "||") { return logical(b, s); }
     var want: typeinfo.Type = operand_width(e, b, s, expected);
     var left: Value = address_widen(expr(b.left, s, want), want);
-    var right: Value = address_widen(expr(b.right, left.s, want), want);
+    s = left.s;
+    if (!s.ok) { return left; }
+    // The left operand decides whether this is a composite comparison, and the
+    // decision is taken before the RIGHT one is produced: the method call
+    // produces it, and producing it here too would give the call two values for
+    // one expression.
+    var key: string = composite_key(b.op, s.values[left.id], s);
+    if (key != "") { return composite_compare(b, left, key, s); }
+    var right: Value = address_widen(expr(b.right, s, want), want);
     s = right.s;
     if (!s.ok) { return right; }
     right = shift_count(b.op, right, s.values[left.id]);
@@ -1026,6 +1034,54 @@ function binary(e: ast.Expr, b: ast.ExprBinary, s: State, expected: typeinfo.Typ
     var ty: typeinfo.Type = ssasem.binary_result(b.op, s.values[left.id], s.values[right.id]);
     if (!semtypes.concrete(ty, false)) { return refused(s, "operator contract: " + typeinfo.spelling(s.values[left.id]) + " " + b.op + " " + typeinfo.spelling(s.values[right.id])); }
     return define(s, 9, [left.id, right.id], 0, b.op, ty);
+}
+
+// A struct or an enum compares STRUCTURALLY, through the method its `@derive`
+// or its own `impl` supplies: `a == b` is `a.eq(b)` and an ordering is
+// `a.cmp(b) <op> 0`. Without that the integer dispatch would compare the two
+// BOX ADDRESSES, so two equal values would read as different and an ordering
+// would read allocation order — the same desugar the native checker applies.
+//
+// The key is read off the left operand's produced TYPE, so a comparison of
+// scalars costs one name test and no lookup. A nominal type with no such
+// method falls through to the operator refusal, which names the type rather
+// than a contract the program never asked for.
+function composite_key(op: string, left: typeinfo.Type, s: State): string {
+    var verb: string = comparison_verb(op);
+    if (verb == "") { return ""; }
+    var owner: string = struct_name(left);
+    if (owner == "") { owner = union_name(left); }
+    if (owner == "") { return ""; }
+    var key: string = owner + "." + verb;
+    if (ssasem.find_contract(s.contracts, key) < 0) { return ""; }
+    return key;
+}
+
+// The method a comparison goes through: the two equalities read `eq` and the
+// four orderings read `cmp`. Every other operator reads neither.
+function comparison_verb(op: string): string {
+    if (op == "==" || op == "!=") { return "eq"; }
+    if (op == "<" || op == "<=" || op == ">" || op == ">=") { return "cmp"; }
+    return "";
+}
+
+// The receiver is the value in hand and the right operand is still written, so
+// this is `invoke_method`'s shape exactly. `cmp` answers -1, 0 or 1, so the
+// ordering the source wrote holds against a zero this emits.
+function composite_compare(b: ast.ExprBinary, left: Value, key: string, s: State): Value {
+    var contract: ssasem.Contract = s.contracts[ssasem.find_contract(s.contracts, key)];
+    if (contract.params.len() != 2) { return refused(s, "call arity"); }
+    var call: Value = invoke_method(left, [b.right], contract, s);
+    s = call.s;
+    if (!s.ok) { return call; }
+    if (comparison_verb(b.op) == "eq") {
+        if (!semtypes.equal(s.values[call.id], t_bool())) { return refused(s, "operator contract: " + key + " answers " + typeinfo.spelling(s.values[call.id])); }
+        if (b.op == "==") { return call; }
+        return define(s, 10, [call.id], 0, "!", t_bool());
+    }
+    if (!ssasem.is_integer(s.values[call.id])) { return refused(s, "operator contract: " + key + " answers " + typeinfo.spelling(s.values[call.id])); }
+    var zero: Value = define(s, 1, [], 0, "", s.values[call.id]);
+    return define(zero.s, 9, [call.id, zero.id], 0, b.op, t_bool());
 }
 
 // A shift count is masked to the value's width, so a count of another integer
