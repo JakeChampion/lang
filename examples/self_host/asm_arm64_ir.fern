@@ -7032,6 +7032,11 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     // before the class rounding below mutates x2. Placed after the >1 GiB
     // test: that block is dropped, i.e. a leak, not a free.
     s = lc_bump_free_add(s, "x2", "x3", "x4");
+    // Quarantine (rc_free_debug_on): the large tier's single choke point —
+    // one decline covers every >=512 KiB free, including the arms that
+    // tail-branch here. Callers with an rc word have already poisoned it at
+    // their own rc store, and recycling the block would overwrite that poison.
+    if (!rc_free_debug_on()) {
     s = s.write("    mov x3, #1\n");
     s = s.write("    lsl x3, x3, #19\n");           // 512 KiB
     s = s.write("    sub x3, x3, #1\n");            // 512 KiB - 1
@@ -7042,6 +7047,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    ldr x4, [x3, x2, lsl #3]\n");  // old head
     s = s.write("    str x4, [x1]\n");              // *base = old head
     s = s.write("    str x1, [x3, x2, lsl #3]\n");  // heads[class] = base
+    }
     s = s.write(".Llpush_ret:\n");
     s = s.write("    ret\n");
     s = s.write("__fn___fern_arr_dec:\n");

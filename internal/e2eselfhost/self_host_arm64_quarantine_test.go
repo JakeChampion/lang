@@ -136,6 +136,17 @@ func TestSelfHostUafQuarantineAsmContractArm64(t *testing.T) {
 	if mustMatch(t, `add x[356], x[356], :lo12:__fern_freelist`, on) {
 		t.Error("flag-on asm still pushes onto a freelist — a recycled block would overwrite its own poison")
 	}
+	// The large tier is the same hazard one size class up, and it has its own
+	// choke point: every >=512 KiB free tail-branches to __fern_large_push, so
+	// the decline lives in that body rather than at each arm. x3 is the push's
+	// freelist address and x1 the allocator's own pop, as in the small tier —
+	// matching on the bare symbol would also hit the arena checkpoint's copy.
+	if strings.Contains(on, "add x3, x3, :lo12:__fern_large_freelist") {
+		t.Error("flag-on asm still pushes onto the large freelist — a recycled >=512 KiB block would overwrite its own poison")
+	}
+	if !strings.Contains(on, "add x1, x1, :lo12:__fern_large_freelist") {
+		t.Error("flag-on asm lost __fern_alloc's large-tier pop")
+	}
 	if !strings.Contains(on, "add x1, x1, :lo12:__fern_freelist") {
 		t.Error("flag-on asm lost __fern_alloc's pop — the allocator must still consult (empty) freelists")
 	}
@@ -151,6 +162,9 @@ func TestSelfHostUafQuarantineAsmContractArm64(t *testing.T) {
 	}
 	if !mustMatch(t, `add x[356], x[356], :lo12:__fern_freelist`, off) {
 		t.Error("flag-off asm has no freelist pushes — the ordinary allocator lost its recycling")
+	}
+	if !strings.Contains(off, "add x3, x3, :lo12:__fern_large_freelist") {
+		t.Error("flag-off asm has no large-tier recycling — the >=512 KiB blocks would leak")
 	}
 }
 
