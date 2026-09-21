@@ -65,6 +65,20 @@ native, and the two conformance cases match their `expected.stdout`. The
 compiler's own sources go from 8755 of 8755 to 8756 of 8756 — the one added
 declaration is the helper this change introduces.
 
+## What this does not reach
+
+`examples/cli/fold`'s `fold_line` still refuses on the same rule: its
+`var rest: str = line;` is a retag of a borrowed `string` PARAMETER, rebound in
+a loop, and a borrow has no unit to move. Closing that one means making the
+retag a rename outright — the operand's unit becomes the retag's, so the edge
+retains the COUNTED string rather than the view — which is a change to
+`ssaunits`' ownership model. 74 declarations, and the next step of this story.
+
+On the corpus census (864 seeds, both legs run against snapshot binaries built
+on this change's own base) the three format programs are the only files that
+move: 831 produced whole before and 834 after, 76,254 of 78,627 declarations
+before and 76,758 after. +504 is exactly 238 + 136 + 130.
+
 ## Trap
 
 **The AST leg is not turned off by `FERN_SEM_IR_SKIP=1`.** That variable is a
