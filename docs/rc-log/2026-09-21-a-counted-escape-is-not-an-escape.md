@@ -80,6 +80,16 @@ the issue also priced: rewriting the scrutinee onto a temp first (self-host's
 `hoist_call_scrutinees`) reaches the same reclaim at one extra allocation per
 round — 1400 becomes 1600 on the same reduction.
 
+## The model this rests on was already in the tree
+
+`docs/rc-log/2026-08-30-iter-adapter-pair-form-payload.md` fixed the sibling
+shape `cur = t.1` and states the accounting outright: "the tuple owns the fresh
+iterator at rc 1, `cur = t.1` retains it to 2, and the deep drop takes it to 1
+held by cur. A SHALLOW free would leave it at 2 and still leak." That shape only
+ever reclaimed because `t.1` is a FIELD ACCESS, which the confinement walk
+already excused. A bare ident in the same position was not, which is the whole
+of the difference.
+
 ## Gates
 
 `internal/e2e/rc_escaping_match_payload_test.go` runs the pair-form shape, the
@@ -92,6 +102,21 @@ the release a use-after-free. It is now
 `TestPairFormPayloadReleasedWhenEscapeIsCounted`, asserting the release: its own
 program, run rather than read, is balanced at 5/5 and reads `kept[0..2]` back as
 1/2/3 after the loop.
+
+`TestMatchBindingRebindOverRetains` pinned this defect DELIBERATELY —
+`docs/rc-log/2026-08-30-match-binding-rebind-overretain.md`, rc 2 and 3 unpaired
+where 1 and 0 are correct — and now reads 1 / 0. Its own diagnosis was right
+("the arm-end release is ABSENT when the binding is assigned out, while the
+alias-inc is still emitted"); the repair it sketched, suppressing the inc, was
+the wrong half, because the inc is what makes the destination an owner. It is
+now `TestMatchBindingRebindOwnsOnce`, in
+`internal/e2e/match_binding_rebind_test.go`.
+
+That entry also expected the conformance leak census to improve with the fix.
+**It does not.** Regenerated over all 518 fixtures, every row is unchanged — so
+the corpus does not exercise an assigned-out match binding anywhere, and the
+census is as blind to this shape as it is to the serve loop. Two gaps in one
+gate, both worth a fixture.
 
 ## What it does not reach
 
