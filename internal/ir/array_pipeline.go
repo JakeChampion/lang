@@ -609,6 +609,7 @@ func FormatArrayPipelineHistogram(p *Program) string {
 	}
 	b.WriteString(FormatNdarrayElementHistogram(p))
 	b.WriteString(FormatNdarraySiteHistogram(p))
+	b.WriteString(FormatNdarrayLayoutHistogram(p))
 	return b.String()
 }
 
@@ -621,6 +622,9 @@ func FormatArrayPipelines(p *Program) string {
 	formatArrayPipelinesInto(&b, p)
 	if shapes := FormatNdarrayShapes(p); shapes != "" {
 		b.WriteString("\n" + shapes)
+	}
+	if layouts := FormatNdarrayLayouts(p); layouts != "" {
+		b.WriteString("\n" + layouts)
 	}
 	b.WriteString(arrayReportCompilerNote)
 	return b.String()
