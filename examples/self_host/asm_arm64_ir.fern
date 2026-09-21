@@ -1591,24 +1591,6 @@ function ssa_raw_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
     return s.write("    strb " + ssa_wreg(c) + ", [" + a + ", " + b + "]\n");
 }
 
-// AggPack is a constant aggregate's `<shape label>|<w0>,<w1>,..` text for
-// asmcore.add_const_agg, with the state the shape interning left.
-struct AggPack { state: asmcore.EmitState, text: string }
-
-function ssa_agg_pack(packed: string, s: asmcore.EmitState): AggPack {
-    var kshp: asmcore.ShapeRefOut = asmcore.shape_ref(s, ir.const_struct_type(packed));
-    s = kshp.state;
-    var text: string = kshp.label + "|";
-    var kvals: string[] = ir.const_struct_values(packed);
-    var kv: i32 = 0;
-    while (kv < kvals.len()) {
-        if (kv > 0) { text = text + ","; }
-        text = text + kvals[kv];
-        kv = kv + 1;
-    }
-    return AggPack { state: s, text: text };
-}
-
 // ssa_call_ind is the stack machine's call through a function value: the
 // arguments pushed with the first on top, the target in x9, which nothing
 // live can occupy at a call.
@@ -1626,10 +1608,11 @@ function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
     return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
 }
 
-// ssa_agg_lit is the address of a static record or variant box the lowering
-// folded whole (ir.const_struct_*), interned as the flat arm interns it.
+// ssa_agg_lit is the address of a static record, variant or capture-free
+// function-value box the lowering folded whole (ir.const_struct_* /
+// ir.const_closure), interned as the flat arm interns it.
 function ssa_agg_lit(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
-    var pk: AggPack = ssa_agg_pack(ins.str, s);
+    var pk: asmcore.ConstAggPack = asmcore.const_agg_pack(s, ins.str);
     s = pk.state;
     var kout: asmcore.ConstAggOut = asmcore.add_const_agg(s, pk.text);
     s = kout.state;
@@ -3693,24 +3676,17 @@ function emit_arm64_op_const_struct(o: ir.Op, s: asmcore.EmitState): asmcore.Emi
     // register backends).
     //
     // This needed a data relocation in the in-process arm64 assembler
-    // first: a block's first word is the shape POINTER, a
-    // `.quad <label>`, and arm64_gas_data_directive used to run every
-    // `.quad` operand through arm64_gas_atoi64 — so `.quad .S0`
-    // assembled to ZERO, nulling the shape word and making every `match`
-    // on the constant fall through (four union fixtures returned 0
-    // instead of their value). arm64_gas_numeric_tok now separates a
-    // number from a symbol, and arm64_gas_link resolves the queued slot.
-    var kshp: asmcore.ShapeRefOut = asmcore.shape_ref(s, ir.const_struct_type(o.str));
-    s = kshp.state;
-    var kpack: string = kshp.label + "|";
-    var kvals: string[] = ir.const_struct_values(o.str);
-    var kv: i32 = 0;
-    while (kv < kvals.len()) {
-        if (kv > 0) { kpack = kpack + ","; }
-        kpack = kpack + kvals[kv];
-        kv = kv + 1;
-    }
-    var kout: asmcore.ConstAggOut = asmcore.add_const_agg(s, kpack);
+    // first: a block's first word is a LABEL, a `.quad <label>`, and
+    // arm64_gas_data_directive used to run every `.quad` operand through
+    // arm64_gas_atoi64 — so `.quad .S0` assembled to ZERO, nulling the
+    // shape word and making every `match` on the constant fall through
+    // (four union fixtures returned 0 instead of their value).
+    // arm64_gas_numeric_tok now separates a number from a symbol, and
+    // arm64_gas_link resolves the queued slot. A capture-free function
+    // value's block (#9839) reaches the same path with `__fn_<body>`.
+    var pk: asmcore.ConstAggPack = asmcore.const_agg_pack(s, o.str);
+    s = pk.state;
+    var kout: asmcore.ConstAggOut = asmcore.add_const_agg(s, pk.text);
     s = kout.state;
     var klbl: string = asmcore.const_agg_label(s, kout.idx);
     s = s.write("    adrp x0, " + klbl + "\n");

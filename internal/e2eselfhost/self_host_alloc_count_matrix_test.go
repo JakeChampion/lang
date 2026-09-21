@@ -136,6 +136,24 @@ function main(): i32 {
     return t % 97;
 }
 `},
+		// A CAPTURE-FREE function value (#9839). Native folds it to a static
+		// cell before emit (InlineZeroCaptureClosures), so the only block it
+		// costs is the struct box that holds it; the self-host built the
+		// environment on the heap per evaluation, one block that native never
+		// paid for, and now folds it the same way. The value is re-made every
+		// round rather than hoisted, so the cell measures the construction and
+		// not a loop-invariant.
+		{name: "capture_free_fn_value", rounds: rounds, src: `struct H { f: (i32) => i32 }
+function dbl(x: i32): i32 { return x * 2; }
+function round(i: i32): i32 { var h: H = H { f: dbl }; return h.f(i); }
+function main(): i32 {
+    var t: i32 = 0;
+    var r: i32 = 0;
+    while (r < 100) { t = t + round(r); r = r + 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return t % 97;
+}
+`},
 		// The composite #7351 was scoped from: one array field and one string
 		// field in the same box.
 		{name: "arr_and_str_heap", rounds: rounds, src: `struct P { xs: i32[], s: string }

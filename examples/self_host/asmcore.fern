@@ -5198,11 +5198,11 @@ pub function count_locals_in_stmt(stmt: ast.Stmt): i32 {
 pub struct ConstAggOut { state: EmitState, idx: i32 }
 
 // add_const_agg interns one STATIC AGGREGATE CONSTANT (#6149) and returns its
-// index. `packed` is `<shape label>|<w0>,<w1>,…` — the shape's already-resolved
-// assembler label followed by the decl-ordered field words as source text. The
-// label is resolved by the caller (at op-emit time, through shape_ref) rather
-// than stored as a type name, because the data block is written at the END of
-// the unit, after shape interning has closed.
+// index. `packed` is `<word-0 label>|<w1>,<w2>,…` — the already-resolved
+// assembler label for the block's first word followed by the decl-ordered field
+// words as source text. The label is resolved by the caller (at op-emit time,
+// through const_agg_pack) rather than stored as a type name, because the data
+// block is written at the END of the unit, after shape interning has closed.
 //
 // Deduped by exact content, like add_string_lit: two `TypeI32 { is_char: false,
 // width: 32, unsigned: false }` sites share ONE block, which is the whole point
@@ -5245,6 +5245,34 @@ pub function str_box_label(s: EmitState, idx: i32): string {
 pub function const_agg_label(s: EmitState, idx: i32): string {
     if (s.str_ns.len() == 0) { return ".K" + util.i32_to_string(idx); }
     return ".K" + s.str_ns + "_" + util.i32_to_string(idx);
+}
+
+// ConstAggPack is a constant box's add_const_agg text plus the state the word-0
+// interning left.
+pub struct ConstAggPack { state: EmitState, text: string }
+
+// const_agg_pack turns an `ir.op_const_struct` / `ir.op_const_closure` payload
+// into that text. A RECORD's block is `__fern_arr_box(nf+1)` laid out flat — its
+// shape pointer in word 0, the fields after it — and a CAPTURE-FREE function
+// value's (#9839) is the one-element ARRAY box `arr_make(1, 32)` builds, whose
+// word 0 is the LENGTH and whose sole element is the body's address. Shared by
+// both register backends and by each one's flat and register arms, so no copy
+// of it can drift from another.
+pub function const_agg_pack(s: EmitState, packed: string): ConstAggPack {
+    var body: string = ir.const_struct_fn_body(packed);
+    if (body.len() > 0) {
+        return ConstAggPack { state: s, text: "1|__fn_" + sanitize_label(body) };
+    }
+    var shp: ShapeRefOut = shape_ref(s, ir.const_struct_type(packed));
+    var text: string = shp.label + "|";
+    var vals: string[] = ir.const_struct_values(packed);
+    var i: i32 = 0;
+    while (i < vals.len()) {
+        if (i > 0) { text = text + ","; }
+        text = text + vals[i];
+        i = i + 1;
+    }
+    return ConstAggPack { state: shp.state, text: text };
 }
 
 pub struct StringLitOut { state: EmitState, idx: i32 }
@@ -6624,8 +6652,9 @@ pub function emit_str_box_data_from(s: EmitState, first: i32): EmitState {
 // data-8) and identical directives here.
 //
 // Each block reproduces exactly what `__fern_arr_box(nf+1)` plus the field
-// stores would have produced, with ONE difference: the rc word is -1, the
-// immortal sentinel every rc entry point already skips. `__fern_rc_inc` and
+// stores would have produced — for a capture-free function value (#9839), what
+// `const_func` plus a one-element `arr_make` would have — with ONE difference:
+// the rc word is -1, the immortal sentinel every rc entry point already skips. `__fern_rc_inc` and
 // `__fern_arr_dec` return early on a negative rc, `__fern_str_free` likewise,
 // and `__fern_rc_is_unique` answers 0 — so a shared constant is never freed,
 // never refcounted, and never reused in place. The cap word is still written so

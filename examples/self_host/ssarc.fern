@@ -2227,6 +2227,9 @@ function cell_write(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst):
 // a wide or float slot through the funcref type the body was declared with.
 function function_site(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
     if (ins.kind_tag == ssasem.closure_new()) {
+        // Capturing nothing, every word of the box is known at compile time, so
+        // it is one static block rather than a fresh box per evaluation (#9839).
+        if (ins.args.len() == 0) { return emit(r, ir.op_const_closure(ins.str)); }
         r = emit(r, ir.op_const_func(0, ins.str));
         for capture in ins.args { r = emit(r, ir.op_load_local(capture)); }
         return emit(r, ir.op_arr_make(ins.args.len() + 1, 32));

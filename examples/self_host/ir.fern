@@ -1637,6 +1637,33 @@ pub function const_struct_values(packed: string): string[] {
     if (start < packed.len()) { out = out.append(slice_unchecked(packed, start, packed.len()) + ""); }
     return out;
 }
+
+// op_const_closure is const_struct's function-value case: a CAPTURE-FREE
+// function value is a box whose only word is the body's address, and that word
+// is known at compile time, so the box is static data like any other constant
+// one. Native folds the same value with InlineZeroCaptureClosures; before this
+// existed the self-host built it with const_func + arr_make, one heap box per
+// evaluation, and the fip verifier charged the claim for an "array literal" the
+// author never wrote (#9839).
+//
+// The type half carries the sentinel `&fn:<body>` in place of a struct name —
+// neither character can occur in one, so no shape collides with it — and the
+// value list is empty. A record constant's word 0 is its shape pointer and a
+// closure box's is its body address, so ONE block layout serves both: the
+// backends read the body back with const_struct_fn_body and write its address
+// (its funcref index on wasm) where the shape pointer would go.
+pub function op_const_closure(body: string): Op {
+    return op_const_struct("&fn:" + body, 0, "");
+}
+
+// const_struct_fn_body names the body a const_closure box holds, or "" for an
+// ordinary record constant. The one reader of the sentinel, so the three
+// backends cannot disagree about it.
+pub function const_struct_fn_body(packed: string): string {
+    var t: string = const_struct_type(packed);
+    if (t.len() <= 4 || slice_unchecked(t, 0, 4) != "&fn:") { return ""; }
+    return slice_unchecked(t, 4, t.len()) + "";
+}
 // struct_copy pops [src box] and pushes a FRESH box that is a shallow, word-for-
 // word copy of src (the same shape ptr @0 + all `nfields` field slots). It is the
 // compact lowering of a functional struct-update's base copy: `T { ...base, f: v }`

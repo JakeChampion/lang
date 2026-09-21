@@ -579,6 +579,11 @@ pub function const_agg_values(cache: irlower.LowerResult[]): string[] {
 // ([type_id@0, f_i@8+i*8]). Always 8-aligned, so laying the blocks end to end
 // keeps every one of them aligned and leaves fl_base aligned too.
 pub function const_agg_block_bytes(packed: string): i32 {
+    // A capture-free function value's box (#9839) is an ARRAY box — the wasm
+    // layout is [len@0][cap@4][elems@8] with a 4-byte i32 stride, where a
+    // record's is [type_id@0][f_i@8+i*8]. One 8-byte slot holds its single
+    // element either way, so the block is one value long.
+    if (ir.const_struct_fn_body(packed).len() > 0) { return 24; }
     return 16 + ir.const_struct_values(packed).len() * 8;
 }
 
@@ -3390,6 +3395,14 @@ pub function fn_value_table(cache: irlower.LowerResult[]): string[] {
         while (i < r.ops.len()) {
             if (r.ops[i].kind_tag == 6 && util.index_of_str(out, r.ops[i].str) < 0) {  // const_func
                 out = out.append(r.ops[i].str);
+            }
+            // A capture-free function value's box holds the same address, in
+            // static data rather than on the heap (#9839) — its body is
+            // address-taken exactly as a const_func's is, so the funcref table
+            // owes it a slot and const_agg_data reads the index back from here.
+            if (r.ops[i].kind_tag == 218) {  // const_struct / const_closure
+                var cfb: string = ir.const_struct_fn_body(r.ops[i].str);
+                if (cfb.len() > 0 && util.index_of_str(out, cfb) < 0) { out = out.append(cfb); }
             }
             // A struct/enum-keyed map (op_map_new kind 2) takes the derived
             // hash/eq via call_indirect, so they are address-taken too — add
@@ -9865,28 +9878,41 @@ pub function le32_escape(n: i32): string {
 
 // const_agg_data lays out the aggregate constants (#6149) as data segments, one
 // whole BLOCK each: the [rc][bsz] header $__fern_str_box would have written,
-// then the [type_id@0, f_i@8+i*8] payload struct_make would have stored — so a
-// constant is byte-identical to the box it replaces, except that its rc word is
-// the immortal sentinel rather than 1.
+// then the [type_id@0, f_i@8+i*8] payload struct_make would have stored — or,
+// for a capture-free function value (#9839), the [len@0][cap@4][funcref@8]
+// payload const_func plus a one-element arr_make would have — so a constant is
+// byte-identical to the box it replaces, except that its rc word is the
+// immortal sentinel rather than 1.
 //
 // Fields are written as full 8-byte slots (sign-extended) even though the
 // admission is i32-width and struct_get reads only the low four: the slot IS
 // eight bytes, and leaving the high half unwritten would be the one difference
 // between a constant and an allocated box that a future wide-field read could
 // see.
-function const_agg_data(sv: string[], cv: string[], structs: irlower.StructTab): string {
+function const_agg_data(sv: string[], cv: string[], structs: irlower.StructTab, fn_table: string[]): string {
     var parts: string[] = [];
     var i: i32 = 0;
     while (i < cv.len()) {
         var vals: string[] = ir.const_struct_values(cv[i]);
-        var body: string = le32_escape(0 - 1) + le32_escape(const_agg_block_bytes(cv[i]))
-            + le32_escape(struct_type_id(structs, ir.const_struct_type(cv[i]))) + le32_escape(0);
-        var vi: i32 = 0;
-        while (vi < vals.len()) {
-            var w: i32 = util.lit_to_i32(vals[vi]);
-            body = body + le32_escape(w);
-            if (w < 0) { body = body + le32_escape(0 - 1); } else { body = body + le32_escape(0); }
-            vi = vi + 1;
+        var body: string = le32_escape(0 - 1) + le32_escape(const_agg_block_bytes(cv[i]));
+        var fnbody: string = ir.const_struct_fn_body(cv[i]);
+        if (fnbody.len() > 0) {
+            // A capture-free function value (#9839): a one-element array box
+            // holding the body's funcref index. The index is ABSOLUTE in the
+            // linked table — a `const_func` op emits one relative to
+            // $__fn_base<ns>, but a data segment holds bytes and has no base to
+            // add, and the merged table is in hand here.
+            body = body + le32_escape(1) + le32_escape(1)
+                + le32_escape(util.index_of_str(fn_table, fnbody)) + le32_escape(0);
+        } else {
+            body = body + le32_escape(struct_type_id(structs, ir.const_struct_type(cv[i]))) + le32_escape(0);
+            var vi: i32 = 0;
+            while (vi < vals.len()) {
+                var w: i32 = util.lit_to_i32(vals[vi]);
+                body = body + le32_escape(w);
+                if (w < 0) { body = body + le32_escape(0 - 1); } else { body = body + le32_escape(0); }
+                vi = vi + 1;
+            }
         }
         parts = parts.append("  (data (i32.const " + util.i32_to_string(const_agg_offset(sv, cv, i)) + ") \"" + body + "\")\n");
         i = i + 1;
@@ -10317,7 +10343,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
             kbi = kbi + 1;
         }
     }
-    parts = parts.append(const_agg_data(sv, cv, stab));
+    parts = parts.append(const_agg_data(sv, cv, stab, unit_fns(units)));
     // Census counters (#5362): outside the heap gate — the mode-0 report and
     // any mode's bump sites reference them, and a heap-free mode-0 program
     // still reports zeros. Empty when FERN_LEAKCHECK is off.
