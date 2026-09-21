@@ -1898,7 +1898,15 @@ function call(e: ast.Expr, c: ast.ExprCall, s: State, statement: boolean, expect
 function type_head(obj: ast.Expr, s: State): string {
     if let ast.ExprIdent(id) = obj {
         if (lookup(s, id.name) >= 0) { return ""; }
-        if (checker.struct_sig(s.scope, id.name).name.len() > 0) { return id.name; }
+        // A VARIANT names a value, not a type. `Shape.Circle(1)` is a
+        // qualified path and `Empty.to_string()` is a method call on the
+        // payloadless literal, and only the enum's own name tells them apart:
+        // a variant carries its owner, so it is never the head.
+        var sig: checker.StructSig = checker.struct_sig(s.scope, id.name);
+        if (sig.name.len() > 0) {
+            if (sig.enum_owner.len() > 0) { return ""; }
+            return id.name;
+        }
         if (union_variants(s, id.name).len() > 0 || builtin_union_layout(id.name) != 0) { return id.name; }
     }
     return "";
