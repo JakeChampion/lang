@@ -24,12 +24,18 @@ import (
 // # Why this is a swap and not a loop
 //
 // The replaced range builds a closure, parks it, loads it, calls `map`, and
-// releases it. The kernel needs none of that: the constant is read out of the
-// element function's body at compile time, so the whole range collapses to
-// the constant and the runtime call. Taking the release with the build is
-// what keeps the refcounts balanced — this pass runs after RC insertion, so
-// it may not leave a built closure unreleased or a release with nothing to
-// release.
+// releases it. The kernel needs none of that: the whole range collapses to
+// the factor and the runtime call. Taking the release with the build is what
+// keeps the refcounts balanced — this pass runs after RC insertion, so it may
+// not leave a built closure unreleased or a release with nothing to release.
+//
+// The factor comes from one of two places. A literal is read out of the
+// element function's body at compile time and emitted as a constant. A
+// CAPTURED factor — `var k: f64 = 2.5; xs.map((x: f64): f64 => x * k)`, the
+// spelling a reader reaches for as soon as the factor has a name — is already
+// on the stack: closure conversion pushes each captured value immediately
+// before the build that packs it, so deleting the build leaves the value
+// standing exactly where the kernel wants it and nothing is emitted at all.
 //
 // The receiver is untouched, and does not need to be: `map` borrows it and
 // `__fern_scale_f64` borrows it (`copyingBuiltinArgs`), and both answer a
@@ -37,6 +43,11 @@ import (
 // construction rather than by re-analysis.
 //
 // # What it does not take
+//
+// A capture the kernel cannot reduce to one scalar factor: two of them, one
+// the body does more than multiply by, or one the enclosing function assigns
+// anywhere — which boxes the variable, so the closure captures a CELL whose
+// push carries an rc.inc and whose contents are read through an indirection.
 //
 // It runs after `MapOwnedArrayInPlace`, so an `own` receiver has already
 // become R7's in-place loop and this never sees it. That order is deliberate:
@@ -75,10 +86,14 @@ func ScaleF64Maps(prog *Program) int {
 	return n
 }
 
-// scaleF64Map is one recognized `map` over f64 by a constant.
+// scaleF64Map is one recognized `map` over f64 by a scalar factor.
 type scaleF64Map struct {
 	first, last int     // op range to replace, inclusive
 	k           float64 // the constant the element function multiplies by
+	// captured says the factor is not a constant but the closure's single
+	// captured value, which the ops before `first` already pushed. The
+	// replacement then emits no constant and leaves that push standing.
+	captured bool
 }
 
 func planScaleF64Map(byName map[string]*Func, fn *Func, cx arrayContext) (scaleF64Map, bool) {
@@ -129,6 +144,23 @@ func scaleF64Verdict(byName map[string]*Func, fn *Func, c arrayCall) (scaleF64Ma
 	if !ok {
 		return scaleF64Map{}, false
 	}
+	// Where the replaced range opens. For a constant factor that is the
+	// element function's build; for a captured one it is the push of the
+	// captured value, which the replacement keeps.
+	open, captured := first, false
+	if op := fn.Ops[first]; op.Kind == OpMakeClosure && op.I32 != 0 {
+		// More than one capture cannot be a single scalar factor, and a
+		// capture that is not the factor would change per element while the
+		// kernel takes one scalar.
+		if !capturedF64Factor(byName, name, op) {
+			return scaleF64Map{}, false
+		}
+		s, ok := capturedFactorPush(fn, first)
+		if !ok {
+			return scaleF64Map{}, false
+		}
+		open, captured = s, true
+	}
 	// The receiver has to be pushed BEFORE the range opens, because the
 	// replacement leaves it where it is and pushes only the factor. Nothing
 	// about the element function's position guarantees that: a closure bound
@@ -139,20 +171,89 @@ func scaleF64Verdict(byName map[string]*Func, fn *Func, c arrayCall) (scaleF64Ma
 	// The operand stack says it exactly. Between the range opening and the
 	// call, the only thing pushed may be the element function itself — one
 	// value. Two means the receiver is in there too.
-	if !scalePushesOnlyTheElement(fn, first, c.op) {
+	if !scalePushesOnlyTheElement(fn, open, c.op) {
 		return scaleF64Map{}, false
 	}
-	// A capture could make the factor differ per element, and the kernel
-	// takes one scalar. The runtime guard R7 leans on does not exist here —
-	// there is nothing to guard — so this is a static requirement.
-	if op := fn.Ops[first]; op.Kind == OpMakeClosure && op.I32 != 0 {
-		return scaleF64Map{}, false
+	if captured {
+		return scaleF64Map{first: first, last: scaleRangeEnd(fn, c), captured: true}, true
 	}
 	k, ok := constantF64Factor(byName, name)
 	if !ok {
 		return scaleF64Map{}, false
 	}
 	return scaleF64Map{first: first, last: scaleRangeEnd(fn, c), k: k}, true
+}
+
+// capturedF64Factor reads `x * k` out of a closure body whose k is its single
+// captured value, and reports whether the body is exactly that.
+//
+// Closure conversion appends a synthetic `__env` parameter, so the capture is
+// read as `__env + offset` and loaded at the capture's own width. With one
+// capture there is one field, at offset 0, and an `f.load` of width 64 over it
+// is what makes the captured value an f64 rather than an i64 of the same size
+// — the env block records only byte sizes.
+//
+// The element and the capture may be multiplied in either order: IEEE-754
+// multiplication is commutative bit for bit, NaN and signed zero included.
+func capturedF64Factor(byName map[string]*Func, name string, closure Op) bool {
+	if closure.I32 != 1 {
+		return false
+	}
+	fn := byName[name]
+	if fn == nil || len(fn.Params) < 2 {
+		return false
+	}
+	env := int32(len(fn.Params) - 1)
+	body := make([]Op, 0, 8)
+	for _, op := range fn.Ops {
+		if op.Kind != OpLine {
+			body = append(body, op)
+		}
+	}
+	// The capture read, as four ops, and the element read as one. They differ
+	// only in which comes first.
+	capture := func(at int) bool {
+		return at+3 < len(body) &&
+			body[at].Kind == OpLoadLocal && body[at].I32 == env &&
+			body[at+1].Kind == OpConstI32 && body[at+1].I32 == 0 &&
+			body[at+2].Kind == OpAdd &&
+			body[at+3].Kind == OpFLoad && body[at+3].Width == 64
+	}
+	element := func(at int) bool {
+		return at < len(body) &&
+			body[at].Kind == OpLoadLocal && body[at].I32 >= 0 && body[at].I32 < env
+	}
+	var tail int
+	switch {
+	case element(0) && capture(1):
+		tail = 5
+	case capture(0) && element(4):
+		tail = 5
+	default:
+		return false
+	}
+	return len(body) == tail+2 &&
+		body[tail].Kind == OpFMul && body[tail].Width == 64 &&
+		body[tail+1].Kind == OpReturn
+}
+
+// capturedFactorPush names the op that pushes the single captured value.
+// `ast.MakeClosure` evaluates captures in declaration order immediately before
+// the op that consumes them, and a scalar capture is a plain variable read, so
+// that is one `local.load`. Anything else declines rather than being decoded:
+// an f64 needs no inc, so a push that is more than a load is not the shape
+// this recognises.
+func capturedFactorPush(fn *Func, closure int) (int, bool) {
+	for i := closure - 1; i >= 0; i-- {
+		if fn.Ops[i].Kind == OpLine {
+			continue
+		}
+		if fn.Ops[i].Kind == OpLoadLocal {
+			return i, true
+		}
+		return 0, false
+	}
+	return 0, false
 }
 
 // constantF64Factor reads `x * k` out of the element function's body and
@@ -221,6 +322,13 @@ func constantF64Factor(byName map[string]*Func, name string) (float64, bool) {
 // started. That one value is the element function, which is what makes the
 // range safe to delete: the receiver is already on the stack beneath it and
 // the replacement puts the factor in the element function's place.
+//
+// A captured factor opens the span at its own push rather than at the closure
+// build, and the sum is the same one value — the build consumes the capture
+// and answers the closure. So the guard reads a capturing closure bound to a
+// VARIABLE the same way it reads a non-capturing one: the receiver push falls
+// inside the span, the sum is two, and the site declines. Without it that
+// shape rewrites into `operand stack underflow`.
 //
 // It reuses flatten.go's opStackEffect, so an op the table does not model
 // declines the site rather than being counted as nothing.
@@ -297,15 +405,18 @@ func scaleRangeEnd(fn *Func, c arrayCall) int {
 	return c.op
 }
 
-// emitScaleF64Map replaces the range with the constant and the kernel call.
-// The receiver is already on the stack: it was pushed before the range opened
-// and the range never touched it.
+// emitScaleF64Map replaces the range with the factor and the kernel call. The
+// receiver is already on the stack: it was pushed before the range opened and
+// the range never touched it. A captured factor is already on the stack too —
+// the closure build consumed it, and deleting the build leaves it standing
+// where the kernel wants it — so only a constant factor is emitted here.
 func emitScaleF64Map(fn *Func, p scaleF64Map) {
-	out := []Op{
-		{Kind: OpConstF64, F64: p.k},
-		{Kind: OpCallDirect, Runtime: true, Str: "__fern_scale_f64", Width: ResAddr, I32: 2,
-			Ext: &OpExt{ArgTypes: []ast.Type{ast.ArrayType{Elem: f64Type}, f64Type}}},
+	out := make([]Op, 0, 2)
+	if !p.captured {
+		out = append(out, Op{Kind: OpConstF64, F64: p.k})
 	}
+	out = append(out, Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_scale_f64", Width: ResAddr, I32: 2,
+		Ext: &OpExt{ArgTypes: []ast.Type{ast.ArrayType{Elem: f64Type}, f64Type}}})
 	next := make([]Op, 0, len(fn.Ops))
 	next = append(next, fn.Ops[:p.first]...)
 	next = append(next, out...)

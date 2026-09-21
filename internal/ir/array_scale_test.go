@@ -142,12 +142,6 @@ func TestScaleKernelDeclines(t *testing.T) {
 		why  string
 		body string
 	}{
-		{"the factor is captured rather than constant", `function main(): i32 {
-  var k: f64 = 2.0;
-  var xs: f64[] = [1.0];
-  var ys: f64[] = xs.map((x: f64): f64 => x * k);
-  return ys[0] as i32;
-}`},
 		{"the factor is the element itself", `function main(): i32 {
   var xs: f64[] = [1.0];
   var ys: f64[] = xs.map((x: f64): f64 => x * x);
@@ -205,6 +199,153 @@ function main(): i32 {
 	}
 }
 
+// The factor does not have to be written in the source. A closure whose one
+// capture IS the factor reaches the kernel too, and that is the spelling a
+// reader writes as soon as the factor has a name:
+//
+//	var k: f64 = 2.5;
+//	xs.map((x: f64): f64 => x * k)
+//
+// Closure conversion pushes the captured value immediately before the build
+// that consumes it, so deleting the build from there leaves the factor
+// standing exactly where the kernel wants it. Nothing is emitted in its
+// place, which is why these assert the ABSENCE of a constant: a rewrite that
+// emitted one as well would push two operands for a two-operand call.
+func TestScaleKernelTakesACapturedFactor(t *testing.T) {
+	p, n := scaleProgram(t, `function main(): i32 {
+  var k: f64 = 2.5;
+  var xs: f64[] = [1.0, 2.0, 3.0];
+  var ys: f64[] = xs.map((x: f64): f64 => x * k);
+  return (ys[0] + ys[2]) as i32;
+}`)
+	if n != 1 {
+		t.Fatalf("rewrote %d sites for a captured factor, want 1", n)
+	}
+	ops := mainOps(t, p)
+	var sawKernel bool
+	for i, op := range ops {
+		if op.Kind != ir.OpCallDirect || op.Str != "__fern_scale_f64" {
+			continue
+		}
+		sawKernel = true
+		// The two operands: the receiver and the captured value, in that
+		// order, both already on the stack.
+		if prev := ops[i-1]; prev.Kind != ir.OpLoadLocal {
+			t.Errorf("the operand before the kernel is %+v, want the captured value's load", prev)
+		}
+		if prev := ops[i-2]; prev.Kind != ir.OpLoadLocal {
+			t.Errorf("the operand two before the kernel is %+v, want the receiver's load", prev)
+		}
+	}
+	if !sawKernel {
+		t.Errorf("no __fern_scale_f64 call after a rewrite that reported one")
+	}
+	for _, op := range ops {
+		if op.Kind == ir.OpMakeClosure {
+			t.Errorf("the closure is still built, so its capture is packed into an env nothing reads")
+		}
+		if op.Kind == ir.OpCallDirect && op.Str == "__drop_closure_value" {
+			t.Errorf("a closure release survived with no closure to release")
+		}
+	}
+}
+
+// The capture is a parameter as readily as a local, which is the shape a
+// scaling helper has: the factor comes in from the caller and the whole
+// function body is the kernel.
+func TestScaleKernelTakesACapturedParameter(t *testing.T) {
+	_, n := scaleProgram(t, `function scale_all(xs: f64[], k: f64): f64[] { return xs.map((x: f64): f64 => x * k); }
+function main(): i32 {
+  return scale_all([1.0, 2.0], 3.0)[0] as i32;
+}`)
+	if n != 1 {
+		t.Errorf("rewrote %d sites where the factor is a parameter, want 1", n)
+	}
+}
+
+// `k * x` and `x * k` are the same computation bit for bit — IEEE-754
+// multiplication commutes, NaN and signed zero included — so the operand
+// order does not decide the site.
+func TestScaleKernelTakesACapturedFactorOnEitherSide(t *testing.T) {
+	_, n := scaleProgram(t, `function main(): i32 {
+  var k: f64 = 2.5;
+  var xs: f64[] = [1.0];
+  var ys: f64[] = xs.map((x: f64): f64 => k * x);
+  return ys[0] as i32;
+}`)
+	if n != 1 {
+		t.Errorf("rewrote %d sites for `k * x`, want 1", n)
+	}
+}
+
+// What a capture may not be. The kernel takes one scalar factor for the whole
+// array, so anything that could differ per element, or that is read at a
+// width the env block does not pin as f64, declines.
+func TestScaleKernelDeclinesCaptures(t *testing.T) {
+	for _, tc := range []struct {
+		why  string
+		body string
+	}{
+		{"two values are captured", `function main(): i32 {
+  var k: f64 = 2.0;
+  var j: f64 = 3.0;
+  var xs: f64[] = [1.0];
+  var ys: f64[] = xs.map((x: f64): f64 => x * k * j);
+  return ys[0] as i32;
+}`},
+		{"the capture is added rather than multiplied", `function main(): i32 {
+  var k: f64 = 2.0;
+  var xs: f64[] = [1.0];
+  var ys: f64[] = xs.map((x: f64): f64 => x + k);
+  return ys[0] as i32;
+}`},
+		{"the capture is negated before the multiply", `function main(): i32 {
+  var k: f64 = 2.0;
+  var xs: f64[] = [1.0];
+  var ys: f64[] = xs.map((x: f64): f64 => x * (0.0 - k));
+  return ys[0] as i32;
+}`},
+		{"the capture is multiplied by itself rather than the element", `function main(): i32 {
+  var k: f64 = 2.0;
+  var xs: f64[] = [1.0];
+  var ys: f64[] = xs.map((x: f64): f64 => k * k);
+  return ys[0] as i32;
+}`},
+		{"the capture is the array, not a scalar", `function main(): i32 {
+  var ks: f64[] = [2.0];
+  var xs: f64[] = [1.0];
+  var ys: f64[] = xs.map((x: f64): f64 => x * ks[0]);
+  return ys[0] as i32;
+}`},
+		{"a capturing closure is bound to a variable", `function main(): i32 {
+  var k: f64 = 2.0;
+  var f: (f64) => f64 = (x: f64): f64 => x * k;
+  var xs: f64[] = [1.0];
+  var ys: f64[] = xs.map(f);
+  return ys[0] as i32;
+}`},
+		// Assigning the variable anywhere in the function boxes it, and the
+		// closure then captures the BOX: the push carries an rc.inc and the
+		// body reads through the cell. Both halves of the reading decline
+		// that independently, and both are load-bearing — the kernel wants
+		// the value, and deleting an inc whose matching release went with
+		// the closure would unbalance the refcounts.
+		{"the captured variable is assigned after the map", `function main(): i32 {
+  var k: f64 = 2.0;
+  var xs: f64[] = [1.0];
+  var ys: f64[] = xs.map((x: f64): f64 => x * k);
+  k = 100.0;
+  return (ys[0] + k) as i32;
+}`},
+	} {
+		// scaleProgram verifies, so a rewrite that took one of these and
+		// broke the op stream fails before the count is read.
+		if _, n := scaleProgram(t, tc.body); n != 0 {
+			t.Errorf("rewrote %d sites where %s; want none", n, tc.why)
+		}
+	}
+}
+
 // The off switch, for the reason fusion and R7 have one.
 func TestScaleKernelOffSwitch(t *testing.T) {
 	t.Setenv("FERN_NO_SCALE_KERNEL", "1")
@@ -227,12 +368,18 @@ function scale_neg(xs: f64[]): f64[] { return xs.map((x: f64): f64 => x * -1.5);
 function scale_zero(xs: f64[]): f64[] { return xs.map((x: f64): f64 => x * 0.0); }
 function half(x: f64): f64 { return x * 0.5; }
 function scale_named(xs: f64[]): f64[] { return xs.map(half); }
+function scale_cap(xs: f64[], k: f64): f64[] { return xs.map((x: f64): f64 => x * k); }
+function scale_cap_local(xs: f64[]): f64[] {
+  var k: f64 = -0.75;
+  return xs.map((x: f64): f64 => k * x);
+}
 function main(): i32 {
   var xs: f64[] = [1.0, 2.0];
-  return (scale2(xs)[0] + scale_neg(xs)[0] + scale_zero(xs)[0] + scale_named(xs)[0]) as i32;
+  return (scale2(xs)[0] + scale_neg(xs)[0] + scale_zero(xs)[0] + scale_named(xs)[0] +
+    scale_cap(xs, 3.0)[0] + scale_cap_local(xs)[0]) as i32;
 }`)
-	if n != 4 {
-		t.Errorf("rewrote %d of the four shapes the e2e suite compares, want 4 — "+
+	if n != 6 {
+		t.Errorf("rewrote %d of the six shapes the e2e suite compares, want 6 — "+
 			"a shape that stopped rewriting makes that suite compare the scalar loop with itself", n)
 	}
 }

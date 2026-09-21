@@ -29,6 +29,28 @@ function scale_zero(xs: f64[]): f64[] { return xs.map((x: f64): f64 => x * 0.0);
 function half(x: f64): f64 { return x * 0.5; }
 function scale_named(xs: f64[]): f64[] { return xs.map(half); }
 
+// The factor as a CAPTURED value rather than a literal. The closure's one
+// capture is the factor, so the kernel reads it where the closure build left
+// it and no constant is emitted at all. The local one is written k * x, which
+// also covers the commuted operand order.
+function scale_cap(xs: f64[], k: f64): f64[] { return xs.map((x: f64): f64 => x * k); }
+function scale_cap_local(xs: f64[]): f64[] {
+	var k: f64 = -0.75;
+	return xs.map((x: f64): f64 => k * x);
+}
+
+// Assigning the captured variable boxes it, so the closure captures a CELL
+// and the pass DECLINES. Here to prove that shape still runs and still
+// answers what the loop answers -- and that it sees the value the variable
+// held when the map ran, not the one it holds afterwards.
+function scale_cap_boxed(xs: f64[]): f64[] {
+	var k: f64 = 2.0;
+	var out: f64[] = xs.map((x: f64): f64 => x * k);
+	k = 100.0;
+	if (k != 100.0) { return []; }
+	return out;
+}
+
 // A closure bound to a variable, which the pass DECLINES -- its build sits
 // before the receiver is evaluated, so the range that would cancel it would
 // take the receiver with it. Here to prove the declined shape still runs,
@@ -84,6 +106,9 @@ function main(): i32 {
 		if (!same(scale_zero(xs), loop_scale(xs, 0.0))) { return 50 + n; }
 		if (!same(scale_named(xs), loop_scale(xs, 0.5))) { return 70 + n; }
 		if (!same(scale_bound(xs), loop_scale(xs, 2.0))) { return 110 + n; }
+		if (!same(scale_cap(xs, 3.0), loop_scale(xs, 3.0))) { return 130 + n; }
+		if (!same(scale_cap_local(xs), loop_scale(xs, -0.75))) { return 150 + n; }
+		if (!same(scale_cap_boxed(xs), loop_scale(xs, 2.0))) { return 170 + n; }
 		n = n + 1;
 	}
 
@@ -107,7 +132,9 @@ function main(): i32 {
 // 1x/3x/5x/7x = the length at which a scaled shape disagreed with the loop,
 // for the doubling, the negative factor, the zero factor and the named
 // element function; 9x = the result-shape and borrowed-receiver checks;
-// 11x = the variable-bound shape the pass declines, which still has to run.
+// 11x = the variable-bound shape the pass declines, which still has to run;
+// 13x/15x = the captured factor, as a parameter and as a local in the
+// commuted operand order; 17x = the boxed capture the pass declines.
 func TestArm64ScaleKernelMatchesTheLoop(t *testing.T) {
 	if _, code := compileAndRunArm64FreeOn(t, arrayScaleKernelSrc); code != 0 {
 		t.Errorf("scale kernel on arm64: got %d, want 0", code)
