@@ -258,7 +258,7 @@ provenance: `internal/ir/ndarray_layout.go`, printed per site by
 | `packed` | `is_packed()` is provably true, so all three of §2's branching rows take their free arm |
 | `row-major` | `is_row_major()` is provably true and `is_packed()` is not proven, so `reshape` is metadata and `to_flat()` may copy |
 | `strided` | the provenance WAS followed, to a §2 metadata operation that preserves neither predicate |
-| `unknown` | the provenance was not followed: a parameter, a struct field, the result of a call this pass does not model |
+| `unknown` | the provenance was not followed: a parameter, a struct field, a call whose callee the summary below does not settle |
 
 `strided` and `unknown` both claim nothing, and are separate rows
 because they fail for different reasons — which is what makes the tally
@@ -295,6 +295,24 @@ counted: a constant, which is the null the lowering writes into a slot it
 has moved the handle out of and which no handle ever is; and anything
 reached after the operand stack stopped being tracked, which claims
 `unknown`.
+
+A CALL is followed when the callee's own returns settle it. A function
+whose every return is a handle of one layout is a producer of that
+layout, exactly as `packed()` is, so a program that builds its handles in
+a helper reads the same as one that inlines them. The summary is the
+**meet** over the function's returns, so a helper returning a packed
+handle on one arm and a transposed one on the other claims `strided`, not
+the arm a given call site took. A recursive function reads `unknown`: the
+cycle is cut rather than followed, which is what bounds the summary. So
+is a function whose declared result is not a handle, and one the program
+does not define.
+
+What a return summary cannot reach is the other direction. A receiver
+that is its own function's **parameter** claims nothing, because layouts
+would have to travel from callers into callees, and they do not. Over
+`examples/tests/ndarray_test.fern` that is the whole remainder: 14 of 43
+reported rows read `unknown` before the summary and 1 after, and the one
+is a parameter.
 
 Each storage-sensitive site then carries a verdict, closed and tagged
 like the kernel sets above, tallied under `FERN_ARRAY_REPORT=1`:

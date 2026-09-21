@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/jakechampion/lang/internal/ast"
 )
 
 // What the layout of an std/ndarray handle is at a site, derived from where
@@ -135,26 +137,29 @@ func ndarrayLayoutMeet(a, b NdarrayLayout) NdarrayLayout {
 //   - every operation of §7 that returns a handle returns `from_flat` of a
 //     buffer it just filled. `fold_all` returns a scalar and `to_flat` a
 //     `T[]`, so neither is here.
-func ndarrayLayoutOfCall(callee string, recv NdarrayLayout) (NdarrayLayout, bool) {
+func ndarrayLayoutOfCall(c *ndarrayLayoutCtx, callee string, recv NdarrayLayout) (NdarrayLayout, bool) {
 	if strings.HasPrefix(callee, ndarrayFromFlatPrefix) {
 		return NdarrayLayoutPacked, true
 	}
-	verb, ok := ndarrayVerbOfAny(callee)
-	if !ok {
-		return NdarrayLayoutUnknown, false
-	}
-	switch verb {
-	case "transpose", "permute", "reverse", "slice", "select", "broadcast_to":
-		return NdarrayLayoutStrided, true
-	case "reshape":
-		if recv.ProvesPacked() {
+	if verb, isNd := ndarrayVerbOfAny(callee); isNd {
+		switch verb {
+		case "transpose", "permute", "reverse", "slice", "select", "broadcast_to":
+			return NdarrayLayoutStrided, true
+		case "reshape":
+			if recv.ProvesPacked() {
+				return NdarrayLayoutPacked, true
+			}
+			return NdarrayLayoutRowMajor, true
+		case "packed":
+			return NdarrayLayoutPacked, true
+		case "map", "zip_with", "outer", "inner", "reduce_axis", "scan_axis", "map_rank":
 			return NdarrayLayoutPacked, true
 		}
-		return NdarrayLayoutRowMajor, true
-	case "packed":
-		return NdarrayLayoutPacked, true
-	case "map", "zip_with", "outer", "inner", "reduce_axis", "scan_axis", "map_rank":
-		return NdarrayLayoutPacked, true
+	}
+	// Not one of std/ndarray's own operations. A user function is still a
+	// producer when every handle it returns has the same layout.
+	if l := c.returnSummary(callee); l != NdarrayLayoutUnknown {
+		return l, true
 	}
 	return NdarrayLayoutUnknown, false
 }
@@ -182,6 +187,104 @@ var ndarrayStorageSensitive = map[string]NdarrayLayout{
 	"to_flat": NdarrayLayoutPacked,
 	"packed":  NdarrayLayoutPacked,
 	"reshape": NdarrayLayoutRowMajor,
+}
+
+// What a CALL to a user function yields (#9734 follow-up). The analysis above
+// follows provenance within one function and claims nothing at a call
+// boundary, which is its main imprecision: over
+// `examples/tests/ndarray_test.fern` 14 of 43 reported rows read `unknown`,
+// and 13 of those are receivers bound from a helper — almost all one `grid()`
+// whose body is a single `return ndarray.from_flat(...)`.
+//
+// A function whose every return is a handle of one layout is a producer of
+// that layout, exactly as `packed()` is. That is what this summarises. The
+// 14th row is a receiver that is its own function's PARAMETER, which a return
+// summary cannot reach: that direction needs layouts pushed from callers into
+// callees, and is not this.
+
+// ndarrayHandleStruct is std/ndarray's own handle, under the module prefix
+// modload reserves — a user's own `NdArray` mangles without it and is not
+// this module's, the boundary docs/ARRAY-SHAPES.md §6 sets.
+const ndarrayHandleStruct = "ndarray__NdArray"
+
+// isNdarrayHandleType reports whether a function's result IS a handle.
+//
+// This bounds the work, and only that: it is what stops the eager settling
+// below from walking every function in the program to learn that an `i32`
+// returns no layout. A walk of one would already answer Unknown — the value
+// on the stack at an `i32` return is an `i32` — so removing this changes no
+// verdict, and no test can tell. Do not read it as a guard against a case
+// that exists.
+func isNdarrayHandleType(t ast.Type) bool {
+	name := ""
+	switch st := t.(type) {
+	case ast.StructType:
+		name = st.Name
+	case *ast.StructType:
+		name = st.Name
+	default:
+		return false
+	}
+	return name == ndarrayHandleStruct || strings.HasPrefix(name, ndarrayHandleStruct+"__")
+}
+
+// ndarrayLayoutCtx is what the walk needs beyond the function it is walking:
+// the call shapes, the signature table, and the per-function return
+// summaries.
+type ndarrayLayoutCtx struct {
+	shapes *CallShapes
+	sigs   map[string]funcSig
+	byName map[string]*Func
+	// summary is each function's settled return layout, and inFlight the
+	// ones being computed. A cycle reads Unknown rather than recursing, so
+	// a recursive function claims nothing and the walk terminates.
+	summary  map[string]NdarrayLayout
+	inFlight map[string]bool
+}
+
+// newNdarrayLayoutCtx indexes p and settles every summary up front.
+//
+// Eagerly, in p.Funcs order, because a summary reached through a cycle
+// depends on which end of the cycle was computed first: settling them all
+// once, in the program's own order, is what keeps two readers of this context
+// from disagreeing about the same recursive function.
+func newNdarrayLayoutCtx(p *Program) *ndarrayLayoutCtx {
+	c := &ndarrayLayoutCtx{
+		shapes:   NewCallShapes(p),
+		sigs:     buildFuncSigs(p),
+		byName:   make(map[string]*Func, len(p.Funcs)),
+		summary:  map[string]NdarrayLayout{},
+		inFlight: map[string]bool{},
+	}
+	for _, fn := range p.Funcs {
+		c.byName[fn.Name] = fn
+	}
+	for _, fn := range p.Funcs {
+		c.returnSummary(fn.Name)
+	}
+	return c
+}
+
+// returnSummary is the layout every handle `name` returns has, or Unknown
+// when the program does not define it, when it does not return a handle, or
+// when its returns disagree.
+func (c *ndarrayLayoutCtx) returnSummary(name string) NdarrayLayout {
+	if l, settled := c.summary[name]; settled {
+		return l
+	}
+	fn := c.byName[name]
+	if fn == nil || c.inFlight[name] {
+		return NdarrayLayoutUnknown
+	}
+	if !isNdarrayHandleType(fn.ReturnType) {
+		c.summary[name] = NdarrayLayoutUnknown
+		return NdarrayLayoutUnknown
+	}
+	c.inFlight[name] = true
+	_, ret := ndarrayReceiverLayouts(fn, c)
+	delete(c.inFlight, name)
+	c.summary[name] = ret
+	return ret
 }
 
 // NdarrayCopyVerdict is whether a storage-sensitive site is known to move no
@@ -250,14 +353,13 @@ type NdarrayLayoutSite struct {
 // RecognizeNdarrayLayouts finds every storage-sensitive call in the program,
 // in a deterministic order, with what the pass proved about its receiver.
 func RecognizeNdarrayLayouts(p *Program) []NdarrayLayoutSite {
-	sigs := buildFuncSigs(p)
-	shapes := NewCallShapes(p)
+	c := newNdarrayLayoutCtx(p)
 	var out []NdarrayLayoutSite
 	for _, fn := range p.Funcs {
 		if isNdarrayBody(fn) {
 			continue
 		}
-		recv := ndarrayReceiverLayouts(fn, shapes, sigs)
+		recv, _ := ndarrayReceiverLayouts(fn, c)
 		for i, op := range fn.Ops {
 			if op.Kind != OpCallDirect || op.Runtime {
 				continue
@@ -309,7 +411,7 @@ func RecognizeNdarrayLayouts(p *Program) []NdarrayLayoutSite {
 // control-flow op or an unresolved call empties it, and a pop from an empty
 // stack yields Unknown, so what is tracked is always a suffix of what is
 // really there.
-func ndarrayReceiverLayouts(fn *Func, shapes *CallShapes, sigs map[string]funcSig) map[int]NdarrayLayout {
+func ndarrayReceiverLayouts(fn *Func, c *ndarrayLayoutCtx) (map[int]NdarrayLayout, NdarrayLayout) {
 	// Each round starts every slot at the weakest layout and can only
 	// strengthen one, so a slot moves at most three times and the whole map
 	// settles within three rounds per slot plus the one that confirms it.
@@ -319,15 +421,16 @@ func ndarrayReceiverLayouts(fn *Func, shapes *CallShapes, sigs map[string]funcSi
 	rounds := 3*(len(fn.Params)+len(fn.Locals)+len(fn.ScratchTypes)) + 2
 	slots := map[int32]NdarrayLayout{}
 	var recv map[int]NdarrayLayout
+	var ret NdarrayLayout
 	for round := 0; round < rounds; round++ {
 		next := map[int32]NdarrayLayout{}
-		recv = ndarrayLayoutWalk(fn, shapes, sigs, slots, next)
+		recv, ret = ndarrayLayoutWalk(fn, c, slots, next)
 		if ndarrayLayoutsEqual(slots, next) {
-			return recv
+			return recv, ret
 		}
 		slots = next
 	}
-	return ndarrayLayoutWalk(fn, shapes, sigs, map[int32]NdarrayLayout{}, map[int32]NdarrayLayout{})
+	return ndarrayLayoutWalk(fn, c, map[int32]NdarrayLayout{}, map[int32]NdarrayLayout{})
 }
 
 func ndarrayLayoutsEqual(a, b map[int32]NdarrayLayout) bool {
@@ -344,9 +447,13 @@ func ndarrayLayoutsEqual(a, b map[int32]NdarrayLayout) bool {
 
 // ndarrayLayoutWalk is one pass: it reads slot layouts from `in`, records the
 // layouts stored into each slot in `out`, and returns the receiver layout at
-// every std/ndarray call it could resolve.
-func ndarrayLayoutWalk(fn *Func, shapes *CallShapes, sigs map[string]funcSig, in, out map[int32]NdarrayLayout) map[int]NdarrayLayout {
+// every std/ndarray call it could resolve, together with the layout every
+// handle the function returns has — the meet over its `return` sites, which
+// is what a caller may assume.
+func ndarrayLayoutWalk(fn *Func, c *ndarrayLayoutCtx, in, out map[int32]NdarrayLayout) (map[int]NdarrayLayout, NdarrayLayout) {
 	recv := map[int]NdarrayLayout{}
+	ret := NdarrayLayoutUnknown
+	sawReturn := false
 	stack := []ndarrayVal{}
 	// A parameter's layout is whatever the caller had, which this pass does
 	// not follow across a call boundary.
@@ -398,6 +505,14 @@ func ndarrayLayoutWalk(fn *Func, shapes *CallShapes, sigs map[string]funcSig, in
 			// Pass-through: a retained handle is the same handle.
 			push(pop(1), 1)
 			continue
+		case OpReturn:
+			v := pop(1)
+			if sawReturn {
+				ret = ndarrayLayoutMeet(ret, v.layout)
+			} else {
+				ret, sawReturn = v.layout, true
+			}
+			continue
 		case OpLoadLocal:
 			if op.Width == WidthString {
 				push(ndarrayVal{}, 2)
@@ -418,7 +533,7 @@ func ndarrayLayoutWalk(fn *Func, shapes *CallShapes, sigs map[string]funcSig, in
 			}
 			continue
 		}
-		pops, pushes, ok := ndarrayStackEffect(op, shapes, sigs)
+		pops, pushes, ok := ndarrayStackEffect(op, c)
 		if !ok {
 			// A control-flow op, or a call whose shape is not known here.
 			// What is on the real stack is no longer known, so track
@@ -431,7 +546,7 @@ func ndarrayLayoutWalk(fn *Func, shapes *CallShapes, sigs map[string]funcSig, in
 			if _, isNd := ndarrayVerbOfAny(op.Str); isNd && !op.Runtime {
 				recv[i] = at.layout
 			}
-			l, produces := ndarrayLayoutOfCall(op.Str, at.layout)
+			l, produces := ndarrayLayoutOfCall(c, op.Str, at.layout)
 			if !produces || op.Runtime {
 				l = NdarrayLayoutUnknown
 			}
@@ -441,7 +556,7 @@ func ndarrayLayoutWalk(fn *Func, shapes *CallShapes, sigs map[string]funcSig, in
 		pop(pops)
 		push(ndarrayVal{}, pushes)
 	}
-	return recv
+	return recv, ret
 }
 
 // ndarrayVal is one entry of the tracked operand stack.
@@ -464,13 +579,13 @@ func isCallShaped(op Op) bool {
 // and the only one that covers the runtime helpers the lowering threads
 // between a call and the store of its result — `__fern_arr_dec` sits there,
 // and giving up on it would lose the handle that is still on the stack.
-func ndarrayStackEffect(op Op, shapes *CallShapes, sigs map[string]funcSig) (pops, pushes int, ok bool) {
+func ndarrayStackEffect(op Op, c *ndarrayLayoutCtx) (pops, pushes int, ok bool) {
 	if isCallShaped(op) {
-		args, bail := shapes.ArgSlots(op)
+		args, bail := c.shapes.ArgSlots(op)
 		if bail != "" {
 			return 0, 0, false
 		}
-		results, bail := shapes.ResultSlots(op)
+		results, bail := c.shapes.ResultSlots(op)
 		if bail != "" {
 			return 0, 0, false
 		}
@@ -479,7 +594,7 @@ func ndarrayStackEffect(op Op, shapes *CallShapes, sigs map[string]funcSig) (pop
 		}
 		return args, results, true
 	}
-	return opStackEffect(op, sigs)
+	return opStackEffect(op, c.sigs)
 }
 
 // FormatNdarrayLayouts renders the storage-sensitive calls, or "" when the
