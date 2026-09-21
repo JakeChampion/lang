@@ -75,13 +75,35 @@ this one. Its cursor produces; the file still refuses on
 `unsupported map shape: Map[Sku, Item]`, a struct-keyed map, which is the
 `unsupported map shape` leaf and a different root.
 
+## The shape the anchor does not cover
+
+An anchor keeps the map live for as long as a read through the cursor can
+happen INSIDE the frame that holds both. A returned cursor leaves that frame,
+and the columns it points at are the ones the frame is about to release. So
+`build` refuses a cursor result, exactly as it already refuses a view result
+and for the same reason — `cursor result escapes its map`.
+
+That refusal replaced a compiler CRASH: before it, `return m.iter()` from a
+function declared `MapIter[K, V]` took the self-host down with `fern: array
+index out of range` and a backtrace. A construct that does not lower is a
+diagnostic, never a backtrace.
+
+Native compiles the same program and answers 0 where the AST lowering answers
+7: it reclaims the map at the producer's exit and the caller reads a freed
+column header, which reports empty rather than faulting. The AST leg answers
+only because `irlower`'s `map_has_explicit_iter` never reclaims a frame map
+that has an explicit `iter()` — correct by leaking. One shape, two wrong
+behaviours, and nothing in either checker refuses to write it: #9920.
+
 ## A branch that cannot run
 
-`op_map_iter` spells a third widekind for a float value column and the first cut
-of `value_widekind` mirrored it. It is unreachable: `ssasem.is_supported_map`
-keeps a float value column out of the semantic path entirely, which is the same
-gate wasm's own deferral of that case would otherwise meet. Deleted rather than
-left as code that cannot execute.
+`op_map_iter` spells widekinds for an 8-byte value column and the first cut of
+`value_widekind` mirrored them. BOTH are unreachable, not just the float one:
+`ssasem.narrow_map_value` takes an integer only when it is not wide, and
+`counted_map_value`'s three shapes — a string, a string array, a box — are none
+of them wide either, so an admitted map's value column is never 8 bytes. The
+helper could only ever answer 0, so it is gone and the call sites pass 0 and
+false with the reason recorded where they are.
 
 Removing it changed the compiler binary, which invalidated a census already
 half-run against the previous one. Restarted rather than reasoned about: a
