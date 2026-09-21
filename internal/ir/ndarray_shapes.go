@@ -300,6 +300,7 @@ func FormatNdarrayShapes(p *Program) string {
 			verbW = len(verbOf[i])
 		}
 	}
+	recv := ndarrayShapeReceivers(p, shapes)
 	var b strings.Builder
 	b.WriteString("std/ndarray operations, recognized by identity and lowered as the scalar loop:\n")
 	for i, s := range shapes {
@@ -312,8 +313,32 @@ func FormatNdarrayShapes(p *Program) string {
 			}
 			elems[k] = fmt.Sprintf("%s [%s]", name, verdicts[k])
 		}
-		fmt.Fprintf(&b, "%-*s  %-*s  %s  -> %s\n", posW, posOf[i], verbW, verbOf[i],
-			strings.Join(elems, ", "), NdarraySiteVerdict(p, s).Tag())
+		fmt.Fprintf(&b, "%-*s  %-*s  over %-9s  %s  -> %s\n", posW, posOf[i], verbW, verbOf[i],
+			recv[i].Tag(), strings.Join(elems, ", "), NdarraySiteVerdict(p, s).Tag())
 	}
 	return b.String()
+}
+
+// ndarrayShapeReceivers is the layout of each recognized site's receiver, in
+// the sites' own order. A site walks its receiver's storage, so whether that
+// storage is contiguous is half of the question the axis answers the other
+// half of: a reduction along the last axis of a PACKED handle walks
+// contiguous storage, and the same reduction over a strided one does not.
+func ndarrayShapeReceivers(p *Program, shapes []NdarrayShape) []NdarrayLayout {
+	out := make([]NdarrayLayout, len(shapes))
+	sigs := buildFuncSigs(p)
+	cs := NewCallShapes(p)
+	byFunc := map[string]map[int]NdarrayLayout{}
+	for _, fn := range p.Funcs {
+		if isNdarrayBody(fn) {
+			continue
+		}
+		byFunc[fn.Name] = ndarrayReceiverLayouts(fn, cs, sigs)
+	}
+	for i, s := range shapes {
+		if m, ok := byFunc[s.Func]; ok {
+			out[i] = m[s.Op]
+		}
+	}
+	return out
 }

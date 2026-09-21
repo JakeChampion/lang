@@ -83,7 +83,7 @@ function main(): i32 {
 		t.Fatalf("runArrayReport: %v", err)
 	}
 	got := out.String()
-	for _, want := range []string{"no std/array pipelines", "std/ndarray operations", "inner  mul [i64 mul], add [i64 add]"} {
+	for _, want := range []string{"no std/array pipelines", "std/ndarray operations", "inner  over packed     mul [i64 mul], add [i64 add]"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("report does not mention %q:\n%s", want, got)
 		}
@@ -108,7 +108,43 @@ function main(): i32 {
 	if err := runArrayReport(src, &out); err != nil {
 		t.Fatalf("runArrayReport: %v", err)
 	}
-	if got := out.String(); !strings.Contains(got, "reduce_axis(axis 1)  add") {
-		t.Errorf("report does not name the axis the reduction walks:\n%s", got)
+	if got := out.String(); !strings.Contains(got, "reduce_axis(axis 1)  over packed     add") {
+		t.Errorf("report does not name the axis the reduction walks, over the layout it walks:\n%s", got)
+	}
+}
+
+// `fern -array-report` names, per storage-sensitive site, what the receiver
+// is proved to be and whether that is enough for the call to move no
+// elements (#9734). The two to_flat calls below are the same call on
+// receivers the IR cannot otherwise tell apart, and one of them is free.
+func TestArrayReportCLINdarrayLayouts(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(src, []byte(`import "std/ndarray";
+function main(): i32 {
+  var a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5, 6], [2, 3]);
+  var t: ndarray.NdArray[i32] = a.transpose();
+  return a.to_flat()[0] + t.to_flat()[0];
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	t.Setenv("FERN_ARRAY_REPORT", "1")
+	if err := runArrayReport(src, &out); err != nil {
+		t.Fatalf("runArrayReport: %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{
+		"std/ndarray storage-sensitive operations, and what their receiver is proved to be:",
+		"to_flat  over packed     -> metadata",
+		"to_flat  over strided    -> not-proven-packed",
+		"std/ndarray storage-sensitive operations (#9734): 2, 1 proved to move no elements",
+		"  not-proven-row-major       0",
+		"their receivers' layouts:",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("report does not carry %q:\n%s", want, got)
+		}
 	}
 }
