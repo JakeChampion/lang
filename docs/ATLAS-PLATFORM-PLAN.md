@@ -1233,7 +1233,45 @@ row carries the same floor caveat as every other arm64 wall figure in this
 section; the native twin's retired count of 1.99x is the architecture-independent
 claim for two lanes, and there is no reason for this leg to differ.
 
-The remaining three legs — the self-host backends — are still scalar.
+**Self-host wasm was the eighth and last, and it is the one that DID owe its
+assembler** — the counterweight to the three legs before it. `watbin.fern`'s
+`simd_opcode` is a hand-written list and held four entries: no store, no float
+lane, and nothing past 127. So `v128.store` (11), `f64x2.splat` (20) and
+`f64x2.mul` (242) landed with the body, and the memarg test that was spelled
+`op == "v128.load"` at two sites became a `simd_has_memarg` predicate, since
+the store carries one too.
+
+242 is the first entry in that table needing two uleb bytes, which makes the
+hazard §3.3a records live here rather than hypothetical. The guard is a
+disassembly case, not a byte pin: `TestSelfHostWasmBinary` now runs a
+five-element `__scale_f64` through `wasm-tools print` and asserts
+`f64x2.splat` / `v128.load` / `f64x2.mul` / `v128.store` came back. A module
+that validates and runs proves nothing about WHICH instruction was emitted;
+only the disassembly does.
+
+| self-host wasm | scalar | v128 | |
+|---|---|---|---|
+| wall, floor included | 21.4 ms | 13.7 ms | 1.56x |
+| wall, floor subtracted | 14.6 ms | 6.9 ms | **2.12x** |
+
+The floor is wasmtime's own start-up, 6.8 ms on a program returning a
+constant, and it is half the vector time here, so the unadjusted ratio
+understates the body badly.
+
+2.12x is ABOVE the two-lane ceiling, and that is real rather than noise: the
+scalar loop computes two addresses per ELEMENT — two `i32.add` and an
+`i32.mul` for the load, the same three for the store — while the vector loop
+computes two per PAIR. So the body sheds the address arithmetic at the same
+rate it sheds the multiply, which is the same reason native x86-64 beat its
+four-lane ceiling at 4.49x. Where a kernel's per-element overhead is not just
+the arithmetic, the lane count is a floor on the win rather than a ceiling.
+
+**Step 3 is complete: all eight backends are vectorised.** The §3.3a ledger
+for this kernel reads three encodings on native x86-64, none on native arm64,
+two on native wasm, none on either `-backend ssa` leg, none on self-host
+x86-64, none on self-host arm64, three on self-host wasm. Every one of those
+is explained by how the assembler was BUILT — generated from class tables, or
+typed out per instruction — and by nothing about the kernel.
 
 ### 3.5 Testing
 

@@ -120,7 +120,7 @@ selfhost/arm64-linux/utf8_ingest_unchecked.emit	10660
 selfhost/arm64-linux/utf8_ingest_validated.emit	11230
 selfhost/wasm32-wasi/array_append.emit	417
 selfhost/wasm32-wasi/array_index.emit	430
-selfhost/wasm32-wasi/array_scale_f64.emit	2716
+selfhost/wasm32-wasi/array_scale_f64.emit	2724
 selfhost/wasm32-wasi/array_with.emit	507
 selfhost/wasm32-wasi/ascii_scan.emit	3486
 selfhost/wasm32-wasi/call_overhead.emit	180

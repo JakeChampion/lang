@@ -963,27 +963,39 @@ function sat_trunc_opcode(op: string): i32 {
 // another VALID instruction. Encode i16x8.bitmask (132) as a raw byte and
 // 0x84's continuation bit makes the decoder swallow the next instruction's
 // first byte too — a malformed module on most streams, and on some one that
-// validates, runs, and computes nonsense. All four below happen to be < 128
-// and so are one byte each, but
-// that is luck, not a rule, which is why simd_opcode returns the index and
-// leb_u32 writes it.
+// validates, runs, and computes nonsense. That stopped being hypothetical when
+// the scale_f64 kernel added f64x2.mul at 242: every other entry below is
+// under 128 and so writes as one byte, and it is the first that does not.
+// Which is why simd_opcode returns the INDEX and leb_u32 writes it, rather
+// than the table storing bytes.
 //
-// v128.load is the only one carrying a memarg. Its natural alignment is 4
+// v128.load and v128.store are the ones carrying a memarg. Its natural
+// alignment is 4
 // (16 bytes), but a kernel cursor is arbitrary, and an alignment hint LARGER
 // than the access is a VALIDATION error where a smaller one is always legal —
 // so simd_load_align answers 0 rather than reusing memarg_align's natural one.
 function simd_opcode(op: string): i32 {
     if (op == "v128.load") { return 0; }
+    if (op == "v128.store") { return 11; }
     if (op == "i8x16.splat") { return 15; }
+    if (op == "f64x2.splat") { return 20; }
     if (op == "i8x16.eq") { return 35; }
     if (op == "i8x16.bitmask") { return 100; }
+    if (op == "f64x2.mul") { return 242; }
     return 0 - 1;
+}
+
+// simd_has_memarg says whether a SIMD op carries the (align, offset) pair
+// after its sub-opcode. Only the plain load and store do among the ops here.
+function simd_has_memarg(op: string): boolean {
+    return op == "v128.load" || op == "v128.store";
 }
 
 // simd_arity gives how many stack operands a SIMD op takes, so enc_instr can
 // encode them post-order without a per-op branch.
 function simd_arity(op: string): i32 {
-    if (op == "i8x16.eq") { return 2; }
+    // v128.store takes the address then the value, like the scalar stores.
+    if (op == "i8x16.eq" || op == "f64x2.mul" || op == "v128.store") { return 2; }
     return 1;
 }
 
@@ -1266,7 +1278,7 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
         }
         out = out.append(253);   // 0xFD
         out = leb_u32(out, sop);
-        if (op == "v128.load") {
+        if (simd_has_memarg(op)) {
             out = leb_u32(out, 0);   // align: see simd_opcode's note
             out = leb_u32(out, 0);   // offset
         }
@@ -1441,10 +1453,10 @@ function enc_flat_body(instrs: SExpr[], lnames: string[], fnames: string[], gnam
                 out = leb_u32(out, 0);
             } else if (sop >= 0) {
                 // Fixed-width SIMD: `0xFD idx` (operands already on the stack in
-                // the flat form), plus v128.load's memarg.
+                // the flat form), plus the load/store memarg.
                 out = out.append(253);   // 0xFD
                 out = leb_u32(out, sop);
-                if (op == "v128.load") {
+                if (simd_has_memarg(op)) {
                     out = leb_u32(out, 0);
                     out = leb_u32(out, 0);
                 }
