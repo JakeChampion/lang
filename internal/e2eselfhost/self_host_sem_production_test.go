@@ -700,13 +700,6 @@ function main(): i32 {
 	// Native answers 0 on this shape where the AST leg answers 7, filed
 	// separately; the case here is the refusal, not the divergence.
 	//
-	// A CONTAINER carries the cursor exactly as far, and an array of them was
-	// produced while only the top-level shape was refused, so both forms the
-	// AST leg can compile are here: the cursor itself and an array of them.
-	// `array_new` is no projection, so the container has no anchor edge to the
-	// map at all. A TUPLE holding a cursor is refused the same way and is not
-	// in the row, because the AST leg declines that shape outright ("module is
-	// not IR-eligible") and a differential row needs an oracle that runs.
 	{name: "a-cursor-result-escapes-its-map", atLeast: 0, refuses: "cursor result escapes its map", src: `
 import "core/map";
 
@@ -716,6 +709,28 @@ function make_cursor(): MapIter[string, i32] {
     return m.iter();
 }
 
+function main(): i32 {
+    var it: MapIter[string, i32] = make_cursor();
+    var total: i32 = 0;
+    while (it.has_next()) { total = total + it.value(); it.advance(); }
+    return total;
+}`},
+	// A CONTAINER carries the cursor exactly as far, and this is its OWN row on
+	// purpose. Put beside the bare form, the container proves nothing: the bare
+	// refusal alone satisfies the `refuses` substring, `atLeast: 0` sets no
+	// floor, and the container shape ANSWERS when it is wrongly produced, so
+	// the differential stays green too — a row holding both would pass with the
+	// container walk deleted. Alone, the refusal line appears only while
+	// `semtypes.holds_map_iter` recurses, so losing the walk turns this red.
+	//
+	// The container is the worse of the two shapes: `array_new` is no
+	// projection, so the array has no anchor edge to the map at all. A TUPLE
+	// holding a cursor is refused identically and is in no row, because the AST
+	// leg declines that shape outright ("module is not IR-eligible") and a
+	// differential row needs an oracle that runs.
+	{name: "a-container-of-cursors-escapes-too", atLeast: 0, refuses: "cursor result escapes its map", src: `
+import "core/map";
+
 function make_cursors(): MapIter[string, i32][] {
     var m: Map[string, i32] = map_new(4);
     m = m.insert("b", 5);
@@ -723,12 +738,10 @@ function make_cursors(): MapIter[string, i32][] {
 }
 
 function main(): i32 {
-    var it: MapIter[string, i32] = make_cursor();
+    var cs: MapIter[string, i32][] = make_cursors();
+    var it: MapIter[string, i32] = cs[0];
     var total: i32 = 0;
     while (it.has_next()) { total = total + it.value(); it.advance(); }
-    var cs: MapIter[string, i32][] = make_cursors();
-    var second: MapIter[string, i32] = cs[0];
-    while (second.has_next()) { total = total + second.value(); second.advance(); }
     return total;
 }`},
 	// Two levels of value-position if, the inner arm a boolean call. The

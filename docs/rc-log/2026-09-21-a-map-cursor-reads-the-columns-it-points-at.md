@@ -96,10 +96,29 @@ refusal read only the result's own type, so `MapIter[K, V][]` was produced —
 two of two declarations, answering — while the bare form was refused. The
 container is worse than the bare one: `array_new` is no projection, so the
 array has no anchor edge to the map at all. The refusal walks the whole result
-shape now. A tuple holding a cursor is refused the same way, and is the one
-form with no differential row, because the AST leg declines it outright
+shape now — array element, tuple element, cell element, map key and value, and
+a union's argument. A tuple holding a cursor is refused the same way, and is
+the one form with no differential row, because the AST leg declines it outright
 ("module is not IR-eligible") and a differential row needs an oracle that
 runs.
+
+`Option[MapIter[K, V]]` was already refused before the union arm went in — but
+as `missing nested record schema`, because the schema walk has no layout to
+record for a cursor. Refused by the wrong gate is the same shape as the AST
+leg answering "correct by leaking": right today, for a reason that is not the
+rule. The union arm makes the refusal name its own reason.
+
+## A test that could not fail
+
+The container form first went into the bare form's row, where it proved
+nothing. The `refuses` check is a substring match on the report, and the bare
+refusal satisfies it on its own; `atLeast: 0` sets no floor; and the container
+shape ANSWERS when it is wrongly produced, so the differential stays green too.
+Deleting the container walk would have left every check in that row passing.
+
+It is its own row now, and that was verified the only way worth trusting:
+reverting `holds_map_iter` to the top-level `is_map_iter` turns the container
+row RED on all four targets while the bare row stays green.
 
 Native compiles the same program and answers 0 where the AST lowering answers
 7: it reclaims the map at the producer's exit and the caller reads a freed
