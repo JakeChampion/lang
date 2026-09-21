@@ -291,12 +291,11 @@ function main(): i32 {
 	}
 }
 
-// A handle that arrives from a call is `unknown`, not `strided`: this pass
-// does not follow provenance across a function boundary, and says so rather
-// than guessing. The whole of `examples/tests/ndarray_test.fern` builds its
-// handles in a `grid()` helper, which is why its sites read `unknown` where
-// the same expressions inline read `packed`.
-func TestAHandleFromACallIsUnknown(t *testing.T) {
+// A handle from a helper reads what the helper returns, so the spelling a
+// program happens to use stops mattering: `examples/tests/ndarray_test.fern`
+// builds every handle in a `grid()` whose body is one `from_flat`, and its
+// sites now read `packed` exactly as the inline spelling does.
+func TestAHandleFromAHelperTakesTheHelpersLayout(t *testing.T) {
 	p := lowerPipelineSrc(t, `import "std/ndarray";
 function grid(): ndarray.NdArray[i32] { return ndarray.from_flat([1, 2, 3, 4], [2, 2]); }
 function run(): i32 { return grid().to_flat()[0]; }
@@ -307,10 +306,73 @@ function main(): i32 { return run() + inlined(); }`)
 	if len(viaCall) != 1 || len(inline) != 1 {
 		t.Fatalf("found %d and %d sites, want 1 each: %+v %+v", len(viaCall), len(inline), viaCall, inline)
 	}
-	if viaCall[0].Receiver != ir.NdarrayLayoutUnknown {
-		t.Errorf("a handle returned by a helper = %s, want unknown", viaCall[0].Receiver.Tag())
+	if viaCall[0].Receiver != ir.NdarrayLayoutPacked || viaCall[0].Verdict != ir.NdarrayCopyMetadata {
+		t.Errorf("a handle returned by a helper = %s / %s, want packed / metadata",
+			viaCall[0].Receiver.Tag(), viaCall[0].Verdict.Tag())
 	}
-	if inline[0].Receiver != ir.NdarrayLayoutPacked {
-		t.Errorf("the same expression inline = %s, want packed", inline[0].Receiver.Tag())
+	if inline[0].Receiver != viaCall[0].Receiver {
+		t.Errorf("the helper reads %s where the same expression inline reads %s; the two should agree",
+			viaCall[0].Receiver.Tag(), inline[0].Receiver.Tag())
+	}
+}
+
+// A helper's layout is the MEET of its returns, so two returns that disagree
+// claim nothing — the summary may not pick the arm a caller happens to want.
+func TestAHelperWhoseReturnsDisagreeClaimsNothing(t *testing.T) {
+	p := lowerPipelineSrc(t, `import "std/ndarray";
+function pick(flip: boolean, a: ndarray.NdArray[i32]): ndarray.NdArray[i32] {
+  if (flip) { return ndarray.from_flat([1, 2, 3, 4], [2, 2]); }
+  return a.transpose();
+}
+function run(a: ndarray.NdArray[i32]): i32 { return pick(true, a).to_flat()[0]; }
+function main(): i32 { return run(ndarray.from_flat([1, 2, 3, 4], [2, 2])); }`)
+	got := layoutSites(t, p, "run")
+	if len(got) != 1 {
+		t.Fatalf("found %d sites in run, want 1: %+v", len(got), got)
+	}
+	// packed on one arm and strided on the other meet at strided: the
+	// weaker of the two, never the arm the call site took.
+	if got[0].Receiver != ir.NdarrayLayoutStrided {
+		t.Errorf("a helper returning packed on one arm and strided on the other = %s, want strided",
+			got[0].Receiver.Tag())
+	}
+	if got[0].Verdict != ir.NdarrayCopyNotProvenPacked {
+		t.Errorf("verdict = %s, want not-proven-packed", got[0].Verdict.Tag())
+	}
+}
+
+// A helper that returns a transpose is a strided producer, so the layout
+// travels rather than only `packed` doing so.
+func TestAHelperCanReturnAStridedHandle(t *testing.T) {
+	p := lowerPipelineSrc(t, `import "std/ndarray";
+function flip(a: ndarray.NdArray[i32]): ndarray.NdArray[i32] { return a.transpose(); }
+function run(a: ndarray.NdArray[i32]): i32 { return flip(a).to_flat()[0]; }
+function main(): i32 { return run(ndarray.from_flat([1, 2, 3, 4], [2, 2])); }`)
+	got := layoutSites(t, p, "run")
+	if len(got) != 1 {
+		t.Fatalf("found %d sites in run, want 1: %+v", len(got), got)
+	}
+	if got[0].Receiver != ir.NdarrayLayoutStrided {
+		t.Errorf("a helper returning a transpose = %s, want strided", got[0].Receiver.Tag())
+	}
+}
+
+// A recursive helper claims nothing and does not hang: the cycle reads
+// Unknown rather than recursing, which is what bounds the summary.
+func TestARecursiveHelperClaimsNothing(t *testing.T) {
+	p := lowerPipelineSrc(t, `import "std/ndarray";
+function grow(n: i32, a: ndarray.NdArray[i32]): ndarray.NdArray[i32] {
+  if (n <= 0) { return a; }
+  return grow(n - 1, a.transpose());
+}
+function run(a: ndarray.NdArray[i32]): i32 { return grow(3, a).to_flat()[0]; }
+function main(): i32 { return run(ndarray.from_flat([1, 2, 3, 4], [2, 2])); }`)
+	got := layoutSites(t, p, "run")
+	if len(got) != 1 {
+		t.Fatalf("found %d sites in run, want 1: %+v", len(got), got)
+	}
+	if got[0].Receiver.ProvesPacked() {
+		t.Errorf("a recursive helper claimed %s; it returns its own parameter on one arm and may be anything",
+			got[0].Receiver.Tag())
 	}
 }

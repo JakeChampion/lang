@@ -326,14 +326,13 @@ func FormatNdarrayShapes(p *Program) string {
 // contiguous storage, and the same reduction over a strided one does not.
 func ndarrayShapeReceivers(p *Program, shapes []NdarrayShape) []NdarrayLayout {
 	out := make([]NdarrayLayout, len(shapes))
-	sigs := buildFuncSigs(p)
-	cs := NewCallShapes(p)
+	c := newNdarrayLayoutCtx(p)
 	byFunc := map[string]map[int]NdarrayLayout{}
 	for _, fn := range p.Funcs {
 		if isNdarrayBody(fn) {
 			continue
 		}
-		byFunc[fn.Name] = ndarrayReceiverLayouts(fn, cs, sigs)
+		byFunc[fn.Name], _ = ndarrayReceiverLayouts(fn, c)
 	}
 	for i, s := range shapes {
 		if m, ok := byFunc[s.Func]; ok {
