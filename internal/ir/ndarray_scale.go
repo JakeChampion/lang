@@ -238,6 +238,13 @@ const ndarrayDropGlue = "__drop_struct_ndarray__NdArray__"
 func emitNdarrayScale(fn *Func, p ndarrayScaleMap, ptrW int) {
 	base := int32(len(fn.Params)) + int32(len(fn.Locals)) + int32(len(fn.ScratchTypes))
 	recv, factor, scaled := base, base+1, base+2
+	// `ptr` holds a full pointer on the 64-bit targets, and is declared i32
+	// anyway: ScratchTypes selects a slot's CLASS — integer or float — and
+	// the backend sizes it from what is stored, which is why every other
+	// pointer stash in this package declares the same (array_fusion.go's
+	// boxBase, array_inplace.go's buf). Widening it to match the target is
+	// not a correction: it would diverge from those for no gain and is
+	// unverified on wasm32.
 	ptr := ast.NumberType{Width: 32, Signed: true}
 	fn.ScratchTypes = append(fn.ScratchTypes, ptr, f64Type, ptr)
 
