@@ -66,7 +66,10 @@ same 53 cursors.
 On the corpus census (864 seeds, both legs against snapshot binaries built on
 this change's own base) five files move and +329 is exactly their sum: 834
 produced whole before and 839 after, 76,758 of 78,627 declarations before and
-77,087 after. Beyond the two above, three one-declaration conformance cases were
+77,087 after. The census was run twice more after the escape refusals landed,
+since each touched compiler sources; all 865 reports are byte-identical across
+the two runs, so no corpus program returns a cursor and the refusal costs the
+corpus nothing. Beyond the two above, three one-declaration conformance cases were
 blocked on the same root — `map_iter_unannotated`, `map_str_iter` and
 `map_struct_value_field`.
 
