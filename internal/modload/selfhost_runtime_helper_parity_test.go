@@ -38,8 +38,12 @@ func selfHostHelperRows(t *testing.T) []string {
 		t.Fatalf("no is_runtime_helper_name body found in %s — the extraction pattern has gone stale, "+
 			"which would make this test vacuous", selfHostFlattenSrc)
 	}
+	// Strip comments first, as the caps parity test's registry extraction does:
+	// a quoted name inside a comment in the predicate's body would otherwise
+	// read as a row and fail this test with a mismatch that names nothing real.
+	body := regexp.MustCompile(`(?m)//.*$`).ReplaceAllString(m[1], "")
 	var out []string
-	for _, lit := range regexp.MustCompile(`"([^"]*)"`).FindAllStringSubmatch(m[1], -1) {
+	for _, lit := range regexp.MustCompile(`"([^"]*)"`).FindAllStringSubmatch(body, -1) {
 		out = append(out, lit[1])
 	}
 	sort.Strings(out)
