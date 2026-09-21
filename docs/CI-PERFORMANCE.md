@@ -150,8 +150,9 @@ that for the larger of the two.
 
 Both long poles turned out to be one package. Step-level timings from
 [35638612903](https://github.com/JakeChampion/lang/actions/runs/35638612903):
-`internal/coreutils` is **14m40s of the 15m07s** `test-units` job on aarch64,
-and the same corpus is **17.4 of the 20.3 minutes** of the macOS job. Every
+`internal/coreutils` is **14m40s of the 15m08s** `go test (units)` step on
+aarch64 (the job around it is 15m39s), and the same corpus is **17.4 of the
+20.3 minutes** of the macOS job. Every
 other package in the units lane finishes inside its shadow — `internal/ir`
 4m38s, `internal/ssa` 4m17s, `internal/printer` 3m43s, and the remaining
 73 packages 0.29 minutes between them. So one package was the critical path of
@@ -225,17 +226,22 @@ The spread is 3.4-4.6 minutes of test time against a 14m40s serial package, and
 the partition held on the runners as it did in simulation. What it did to the
 lane it came out of:
 
-| | before | after |
+Both metrics for both columns, because the job wall includes checkout and
+toolchain while the step is the testing, and a table that mixed them would be
+worth nothing as a record. Before is run
+[35638612903](https://github.com/JakeChampion/lang/actions/runs/35638612903).
+
+| | before job / `go test (units)` | after job / `go test (units)` |
 | --- | ---: | ---: |
-| `test-units` aarch64 | 15m07s | **4.9m** |
-| `test-units` x86_64 | 11m36s | **7.9m** |
+| `test-units` aarch64 | 15m39s / 15m08s | **4m54s / 4m31s** |
+| `test-units` x86_64 | 12m19s / 11m38s | **7m56s / 7m30s** |
 
 The aarch64 leg lands where the arithmetic said it would — `internal/ir` at
-4m38s is now its bound. The x86_64 leg does not: at 7.9 minutes it is still well
-above that, so something other than `internal/coreutils` dominates there. The
-profile behind the shard weights was taken on an aarch64-class machine, so it
-does not say what. That is the next thing to measure in this lane, not a number
-to assume.
+4m38s is now its bound, and the step is 4m31s. The x86_64 leg does not: its step
+is 7m30s, still well above that, so something other than `internal/coreutils`
+dominates there. The profile behind the shard weights was taken on an
+aarch64-class machine, so it does not say what. That is the next thing to
+measure in this lane, not a number to assume.
 
 The lane is `test-coreutils.yml` rather than a matrix inside the units lane,
 because `scripts/unit-test-packages` already drops a package that has a workflow
