@@ -1246,10 +1246,12 @@ function ssa_push_operand(reg_of: i32[], v: i32, pushed: i32, s: asmcore.EmitSta
 }
 
 // ssa_rc_prim renders one rc primitive inline, in the instructions its stub
-// uses. x5 holds the floor and then the count, x6 the 0/1; neither is a home
-// (those are x0 and x9 upward), so both survive a destination that IS the
-// operand's register, and the destination is written after the last read of
-// it. ssa.rc_inlined says which calls come here and why.
+// uses. x5 holds the floor and then the count, x6 the 0/1, and x7 the poison
+// the sanitizer compares against; none is a home (those are x0 and x9 upward),
+// so all survive a destination that IS the operand's register, and the
+// destination is written after the last read of it. Every read of the count
+// carries the poison check, the uniqueness test no less than the retain
+// (#9889). ssa.rc_inlined says which calls come here and why.
 function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
     s = helper_call_needs(ins.str, s);
     s = ssa_read(reg_of, ins.args[0], "x4", s);
