@@ -563,6 +563,48 @@ function main(): i32 {
     var u: string = "xyz" + "w";
     return v.len() + s.len() + u.len();
 }`},
+	// The same phi as the row above, with a LITERAL on the entry edge rather
+	// than a live view — the `var spec: str = ""; … spec = slice_unchecked(…)`
+	// that `std/format`'s two refused functions are both built on. Produced as
+	// a `string` and retagged by `widen`, the literal is a borrow, and the
+	// phi could only be supplied on that edge by retaining a view; a literal
+	// carries the same immortal rc a view's box does, so producing it at the
+	// destination's own type makes the edge a move. 0 of 4 before, and the AST
+	// lowering strands every view box it makes (3240 bytes in 135 blocks).
+	{name: "a-string-literal-is-already-a-view", atLeast: 4, noLeak: true, src: `
+function span(fmt: string, take: boolean): i32 {
+    var spec: str = "";
+    if (take) { spec = slice_unchecked(fmt, 1, 4); }
+    var sum: i32 = spec.len();
+    var k: i32 = 0;
+    while (k < spec.len()) { sum = sum + (spec[k] as i32); k = k + 1; }
+    return sum;
+}
+
+function rounds(fmt: string, n: i32): i32 {
+    var out: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        var spec: str = "";
+        if (i % 3 != 0) { spec = slice_unchecked(fmt, 0, i % 5); }
+        out = out + spec.len();
+        i = i + 1;
+    }
+    return out;
+}
+
+function width(s: str): i32 { return s.len(); }
+
+function main(): i32 {
+    var fmt: string = "abcdefgh" + "ijkl";
+    var many: str[] = ["", "ab", "cde"];
+    var total: i32 = span(fmt, true) + span(fmt, false) + rounds(fmt, 200);
+    total = total + width("wxyz");
+    for m in many { total = total + m.len(); }
+    var last: str = "";
+    if (total > 0) { last = slice_unchecked(fmt, 2, 6); }
+    return total + last.len();
+}`},
 	// Two levels of value-position if, the inner arm a boolean call. The
 	// outer IIFE returns the CALL of the inner one, which the checker types
 	// from the inner declaration's tag — `if_expr_rt`'s concrete `i32` guess —
