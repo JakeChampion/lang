@@ -11,7 +11,7 @@ import (
 )
 
 // ci.yml starts lint independently and calls ci-suite.yml after lane selection.
-// Pin complete lane coverage, a single full-suite lock, unchanged
+// Pin complete lane coverage, the two full-suite queue lanes, unchanged
 // required lint checks, and lossless queuing of ready PR suites.
 
 const ciFile = "ci.yml"
@@ -248,6 +248,14 @@ func TestCICallsEveryLane(t *testing.T) {
 // order; it forbids `cancel-in-progress: true`, which is why a newer push to a
 // PR is superseded by reap-stale-runs.yml rather than here.
 //
+// There are TWO such queues, split on the parity of the pull request number,
+// because the runner ceiling fits two suites and one suite leaves half of it
+// idle (docs/CI-PERFORMANCE.md). Both halves are checked: a group that stops
+// varying per PR collapses them into one lane and restores the wait this split
+// removed, and a digit dropped from the parity test sends nine PRs in ten to
+// the same lane while the other idles — neither failure shows up as anything
+// but a slow queue.
+//
 // actionlint does not know the key yet, so .github/actionlint.yaml ignores
 // that one message for this one file; the ignore is pinned too, because
 // dropping it would fail the lint lane on every pull request.
@@ -274,9 +282,37 @@ func TestCIQueuesPullRequests(t *testing.T) {
 		t.Errorf("%s: cancel-in-progress is %q; it must be `false` — `queue: max` forbids "+
 			"`true`, and a cancelled run here is another pull request's turn taken", ciSuiteFile, got)
 	}
-	if !strings.Contains(conc, "github.event_name == 'pull_request' && 'pr-ci'") {
-		t.Errorf("%s: pull requests do not share the one `pr-ci` group — the group name is "+
-			"what serialises them", ciSuiteFile)
+	if !strings.Contains(conc, "github.event_name == 'pull_request'") ||
+		!strings.Contains(conc, "format('pr-ci-{0}'") {
+		t.Errorf("%s: pull requests do not land in a `pr-ci-` group — the group name is what "+
+			"queues them", ciSuiteFile)
+	}
+	for _, lane := range []string{"'even'", "'odd'"} {
+		if !strings.Contains(conc, lane) {
+			t.Errorf("%s: the PR group never names lane %s, so every pull request queues in "+
+				"one lane and half the runner pool stays idle", ciSuiteFile, lane)
+		}
+	}
+	// The lane is the parity of the PR number, so the digits tested must be
+	// exactly the even ones: a missing digit quietly sends that tenth of pull
+	// requests to the wrong lane, an extra one unbalances the split the other way.
+	parity := regexp.MustCompile(`endsWith\(format\('\{0\}', github\.event\.pull_request\.number\), '(\d)'\)`)
+	var digits []string
+	for _, m := range parity.FindAllStringSubmatch(conc, -1) {
+		digits = append(digits, m[1])
+	}
+	sort.Strings(digits)
+	if got := strings.Join(digits, ""); got != "02468" {
+		t.Errorf("%s: the PR lane is chosen on digits %q, not the even digits 02468 — "+
+			"expressions have no `%%`, so every even digit needs its own endsWith term",
+			ciSuiteFile, got)
+	}
+	// `inputs` in a called workflow's `concurrency` cannot be verified offline, and
+	// an expression that evaluates to empty would put every PR in one lane silently.
+	if strings.Contains(conc, "inputs.") {
+		t.Errorf("%s: the PR group reads `inputs`; if a called workflow's concurrency key "+
+			"cannot see it the group collapses to one lane with nothing reporting it",
+			ciSuiteFile)
 	}
 	if !strings.Contains(conc, "github.run_id") {
 		t.Errorf("%s: a workflow_dispatch has no per-run group, so a manual run would wait "+

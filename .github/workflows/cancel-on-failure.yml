@@ -2,9 +2,10 @@ name: Cancel siblings on failure
 
 # Called from ci.yml, once per lane, when that lane concludes `failure` on a
 # pull request: cancel the rest of the run. The PR is already not merging, and
-# every lane still running holds the PR-wide lock (ci.yml) that the next pull
-# request in the queue is waiting on — so the saving is the lock, and the pool
-# behind it, not the minutes; the red signal itself arrives no sooner.
+# every lane still running holds one of the PR queue's two slots (ci.yml) that
+# the next pull request in that lane is waiting on — so the saving is the slot,
+# and the pool behind it, not the minutes; the red signal itself arrives no
+# sooner.
 #
 # The cost is that you see the FIRST failing lane, not all of them. That is
 # the opposite of the `fail-fast: false` every matrix here carries
