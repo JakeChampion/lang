@@ -16515,11 +16515,18 @@ function lower_expr_unary(u: ast.ExprUnary, s: LowerState): LowerState {
         if (expr_is_f64(u.operand, s)) {
             var fc: LowerState = lower_expr(u.operand, s);
             if (!fc.ok) { return fc; }
-            // `f64 as u32` truncates UNSIGNED (#4332): the signed
-            // f64_to_i32 clamps at INT32_MAX, so 3e9 as u32 read as
-            // 2147483647 instead of 3000000000. Native saturates over
-            // the full u32 range (fcvtzu / trunc_sat_f64_u).
-            if (cty == "u32") { fc = fc.emit(ir.op_f64_to_u32()); }
+            // A float truncates UNSIGNED into an unsigned destination
+            // (#4332): the signed f64_to_i32 clamps at INT32_MAX, so
+            // 3e9 as u32 read as 2147483647 instead of 3000000000.
+            // Native saturates over the full u32 range (fcvtzu /
+            // trunc_sat_f64_u).
+            //
+            // The u8 destination takes the same op (#9912). It is the
+            // signedness of the DESTINATION that picks the conversion,
+            // not its width: the signed clamp out of a negative lands at
+            // INT32_MIN, and the int_cast below reads that clamp's low
+            // byte, so `-1.0 as u8` answered 255 where native answers 0.
+            if (cty == "u32" || cty == "u8") { fc = fc.emit(ir.op_f64_to_u32()); }
             else { fc = fc.emit(ir.op_f64_to_i32()); }
             return fc.emit(ir.op_int_cast(cty));
         }
