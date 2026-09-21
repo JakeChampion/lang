@@ -446,7 +446,17 @@ function main(): i32 {
         return 0;
     }
 
-    var fns: ir.LoweredFn[] = irlower.lower_module(mod.funcs, stab);
+    // Lowered the way the BACKENDS lower, for the reason `-clocensus` above
+    // gives: lift_lambdas hoists every lambda to a top-level function, and a
+    // module lowered without it bails on each one. `-dump` has no bail-
+    // tolerant path — a bailed `main` is exit 200 and no output at all — so
+    // before this it could not show the ops of any function containing a
+    // lambda, which is the case its own doc comment describes it as for.
+    // Lifting a lambda-free module returns it unchanged, so nothing that
+    // already dumped moves.
+    var lifted: parser.Module = irlower.lift_lambdas(mod);
+    var fns: ir.LoweredFn[] = irlower.lower_module(
+        lifted.funcs, irlower.struct_tab(parser.inject_builtin_enums(lifted.structs)));
 
     // `-slots` (#6639 slice 1.5): print each lowered function's per-slot value
     // kinds and declared return type — the facts LowerState knows and the op
