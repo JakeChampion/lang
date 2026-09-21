@@ -5,7 +5,7 @@ name: Reap stale runs
 #
 # cancel-on-merge.yml already reaps the first class the moment a PR closes.
 # The second class is THIS workflow's, on the `synchronize` event: ci.yml's
-# PR queue runs with `cancel-in-progress: false` (GitHub allows nothing else
+# PR queues run with `cancel-in-progress: false` (GitHub allows nothing else
 # beside `queue: max`), so a newer push to a pull request does not supersede
 # its older run by itself — the older run would finish, holding the PR-wide
 # lock for a commit nobody will merge. Every push to a PR therefore fires one
@@ -90,8 +90,9 @@ jobs:
             // spared if its SHA is live in either. The first snapshot alone
             // loses a push that lands mid-job: its fresh run is already listed
             // while the PR still reads at its old head, so the live run looks
-            // superseded and gets reaped — and with ci.yml serialising pull
-            // requests, a reaped live run is a whole CI round lost. The
+            // superseded and gets reaped — and with ci.yml queueing pull
+            // requests two at a time, a reaped live run is a whole CI round
+            // lost. The
             // snapshot after the listing sees every head a listed run can
             // have been created for. cancel-on-merge.yml documents the same
             // trap from the other side.

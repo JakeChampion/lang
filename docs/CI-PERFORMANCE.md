@@ -59,10 +59,100 @@ changing the entry does not drain it. Inspect that backlog after the new
 full-coverage main run is established, preserving active validation during
 any one-time cleanup.
 
+
+## Second measurement: September 21, 2026 — the queue, and what bounds it
+
+100 `ci.yml` pull-request runs over 19.5 h, 25 `ci-main.yml` runs over 14.6 h,
+and job-level timings for ten complete suites. Method as above: queue delay is
+the earliest `Full suite` job `started_at` minus the run's `created_at`; skipped
+jobs and jobs with no `runner_id` are excluded; macOS jobs are counted apart
+because they draw on a separate, much smaller pool.
+
+One full suite is 61-65 Ubuntu runner jobs plus one macOS job, ~330 Ubuntu
+job-minutes, and executes in 16.6-24.0 minutes (median 20.6). It peaks at 36-38
+concurrent Ubuntu jobs but averages only ~20 across that span, because the
+fan-out ramps and then decays.
+
+| Run | Event | Queue delay (min) | Suite execution (min) | Ubuntu jobs | Ubuntu job-minutes |
+| --- | --- | ---: | ---: | ---: | ---: |
+| [35564879012](https://github.com/JakeChampion/lang/actions/runs/35564879012) | main | 0.1 | 16.7 | 65 | 322 |
+| [35566511671](https://github.com/JakeChampion/lang/actions/runs/35566511671) | main | 0.2 | 16.6 | 65 | 313 |
+| [35606626750](https://github.com/JakeChampion/lang/actions/runs/35606626750) | PR | 24.1 | 18.4 | 61 | 329 |
+| [35613806204](https://github.com/JakeChampion/lang/actions/runs/35613806204) | PR | 18.3 | 19.9 | 64 | 327 |
+| [35622498890](https://github.com/JakeChampion/lang/actions/runs/35622498890) | PR | 11.8 | 22.2 | 64 | 351 |
+| [35624238793](https://github.com/JakeChampion/lang/actions/runs/35624238793) | PR | 18.5 | 20.6 | 64 | 326 |
+| [35626267621](https://github.com/JakeChampion/lang/actions/runs/35626267621) | main | 0.5 | 24.0 | 65 | 352 |
+| [35626378245](https://github.com/JakeChampion/lang/actions/runs/35626378245) | PR | 19.1 | 21.6 | 61 | 327 |
+| [35634344508](https://github.com/JakeChampion/lang/actions/runs/35634344508) | PR | 0.5 | 23.2 | 64 | 346 |
+| [35638612903](https://github.com/JakeChampion/lang/actions/runs/35638612903) | PR | 6.8 | 20.7 | 64 | 342 |
+
+A PR spent about as long waiting as testing: median queue delay 18.3 minutes
+against a 20.6-minute suite, and 0.5 minutes only when it found the queue empty.
+End to end, successful PR runs ran 18.6 minutes at best, median 32.8, p90 49.7,
+maximum 72.5. The queue was contended most of the time: 2 or more PR runs were
+alive for 62% of the sampled minutes, 3 or more for 22%, at most 5.
+
+### The ceiling is ~37 concurrent Ubuntu jobs, and it is the real constraint
+
+The repository is public, so standard runners cost nothing and minutes are not
+the scarce resource. Concurrent job slots are. A main suite running alone gets
+its 38 jobs picked up almost immediately — median wait 0.07 min, maximum 1.35.
+Main runs outside the PR queue, so one of them overlapping a PR suite measures
+what two concurrent suites actually do. Per minute, jobs running in each and
+jobs queued in each:
+
+| Time (UTC) | PR running | main running | Sum | PR queued | main queued |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 16:33 | 37 | 0 | 37 | 2 | 45 |
+| 16:34 | 29 | 7 | 36 | 16 | 38 |
+| 16:37 | 14 | 22 | 36 | 15 | 15 |
+| 16:41 | 17 | 20 | 37 | 7 | 0 |
+| 16:45 | 16 | 21 | 37 | 0 | 4 |
+| 16:47 | 12 | 19 | 31 | 0 | 0 |
+
+The sum held flat at 35-37 for fourteen minutes while BOTH runs had jobs
+queued. That is an account-wide ceiling, not a coincidence of two ramps, and it
+matches the 40 concurrent standard jobs a Pro account allows once lint, the
+reapers and `check-sources` are also drawing on it. It has not been confirmed
+against the billing settings; the number here is inferred from queueing
+behaviour alone.
+
+Both suites still finished inside 25 minutes — against ~41 serialized — at the
+cost of stretching the main suite from its solo 16.6 to 24.0 minutes. Day-level
+pool utilisation is only ~40-50%.
+
+### Why the queue widened to two, and no further
+
+Serializing pull requests did not conserve the scarce resource; it idled it in
+every suite's ramp and tail while the next PR waited 18 minutes. The queue was
+also only half enforced: main bypasses it, and at ~1.7 main runs an hour of ~23
+minutes each, a main suite is live roughly 65% of the wall clock, so a PR rarely
+held the pool alone anyway.
+
+Two lanes (`pr-ci-even` / `pr-ci-odd`, split on the parity of the PR number)
+fill that slack. Expected effect: queue delay ~18 down to ~3-5 minutes, suite
+execution 20.6 up to ~25-27, net PR round ~39 down to ~30.
+
+A third lane was rejected. Once the ceiling is the binding constraint, more
+admitted suites add no throughput — two already pinned the pool for fourteen
+straight minutes — and the observed queue depth of 5 would put five suites'
+325 jobs against ~37 slots, stretching every tail and losing FIFO fairness: a
+docs-only PR would sit behind four compiler suites.
+
+The queue policy is not where the remaining win is. 330 job-minutes packed into
+a 21-minute span with a peak of 38 and a mean of 20 is a spiky fan-out, and the
+long poles are the single macOS job (~20 min, drawing on a separate ~5-slot
+pool) and `test-units` (15-18.5 min per arch leg). Flattening those shortens the
+suite and raises utilisation under any admission policy.
+
 ## Next measurements
 
-Separate setup/build/test time on the critical selfhost shards, identify
-duplicated builds, and measure available CPU use before increasing concurrency.
-Profile slow tests and generated programs before changing the compiler.
-Keep meaningful target and semantic coverage, and compare observed before/after
-runs rather than extrapolating a numeric speedup from the queue policy alone.
+Confirm the concurrent-job ceiling against the account's billing settings
+rather than inferring it from queueing. Separate setup/build/test time on the
+critical selfhost shards and identify duplicated builds. Measure the two long
+poles named above — the macOS job and each `test-units` arch leg — since
+flattening the fan-out, not admitting more suites, is what raises utilisation
+now. Profile slow tests and generated programs before changing the compiler.
+Compare observed before/after runs rather than extrapolating a numeric speedup
+from the queue policy alone: the two-lane figures above are projections from one
+overlap measurement until post-merge runs confirm them.
