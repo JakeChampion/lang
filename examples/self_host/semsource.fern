@@ -4184,6 +4184,7 @@ function inferred_mode(old: i32, t: typeinfo.Type, consumed: boolean): i32 {
 }
 
 function inferred_contract(c: ssasem.Contract, rows: ownership.Escapes[]): ssasem.Contract {
+    if (ownership.find(rows, c.name) < 0) { return c; }
     var modes: i32[] = c.modes;
     var i: i32 = 0;
     while (i < modes.len() && i < c.params.len()) {
@@ -4203,27 +4204,48 @@ function inferred_table(table: ssasem.Contract[], rows: ownership.Escapes[]): ss
 // calls through; both are rewritten from the same rows, so the definition side
 // and the call site read one answer.
 function inferred_produced(p: Produced, name: string, rows: ownership.Escapes[]): Produced {
+    var calls0: ssasem.Contract[] = [];
+    for c in p.func.calls { calls0 = calls0.append(inferred_contract(c, rows)); }
+    if (ownership.find(rows, name) < 0) {
+        return Produced { ...p, func: ssasem.Func { ...p.func, calls: calls0 } };
+    }
     var modes: i32[] = p.modes;
     var i: i32 = 0;
     while (i < modes.len() && i < p.func.params.len()) {
         modes = modes.with(i, inferred_mode(modes[i], p.func.params[i], ownership.consumed(rows, name, i)));
         i = i + 1;
     }
-    var calls: ssasem.Contract[] = [];
-    for c in p.func.calls { calls = calls.append(inferred_contract(c, rows)); }
-    return Produced { ...p, modes: modes, func: ssasem.Func { ...p.func, calls: calls } };
+    return Produced { ...p, modes: modes, func: ssasem.Func { ...p.func, calls: calls0 } };
 }
 
 // The greatest fixpoint: every reference parameter starts consumed and is
 // demoted once a round finds no use that carries it out. Bounded by the bits
 // it can clear, since a round only ever removes them — the bound below is a
 // belt on that, not the reason it stops.
+// A closure BODY keeps every mode it declared. The units its arguments carry
+// are read off the function TYPE the box hands out, and `ssasem.closure_type`
+// builds that type from these same modes — so inferring one counted rewrites
+// the type and every call through the box stops matching it ("closure
+// signature", on all 8771 declarations of the compiler's own parser). The
+// environment parameter could not be counted in any case: `ssaunits` refuses a
+// closure that consumes its environment, since nothing can state that promise.
+function closure_body_produced(p: Produced): boolean {
+    if (p.func.params.len() == 0) { return false; }
+    return semtypes.is_env(p.func.params[0]);
+}
+
 function infer_rows(all: Produced[], names: string[]): ownership.Escapes[] {
+    var taken: string[] = [];
+    var k: i32 = 0;
+    while (k < all.len()) {
+        if (all[k].ok) { taken = ownership.address_taken(all[k].func, taken); }
+        k = k + 1;
+    }
     var rows: ownership.Escapes[] = [];
     var analyses: ssasem.Analysis[] = [];
     var i: i32 = 0;
     while (i < all.len() && i < names.len()) {
-        if (all[i].ok && !all[i].template) {
+        if (all[i].ok && !all[i].template && !closure_body_produced(all[i]) && !ownership.names_has(taken, names[i])) {
             rows = rows.append(ownership.Escapes { name: names[i], bits: seed_bits(all[i].func.params.len()) });
             analyses = analyses.append(ssasem.analyze(all[i].func));
         } else {
@@ -4238,7 +4260,7 @@ function infer_rows(all: Produced[], names: string[]): ownership.Escapes[] {
         i = 0;
         while (i < all.len() && i < names.len()) {
             var at: i32 = ownership.find(rows, names[i]);
-            if (all[i].ok && !all[i].template && at >= 0) {
+            if (all[i].ok && !all[i].template && at >= 0 && !closure_body_produced(all[i])) {
                 var next: boolean[] = ownership.escaping(all[i].func, analyses[i], rows);
                 if (!same_bits(rows[at].bits, next)) {
                     rows = rows.with(at, ownership.Escapes { name: names[i], bits: next });
@@ -4252,7 +4274,27 @@ function infer_rows(all: Produced[], names: string[]): ownership.Escapes[] {
     return rows;
 }
 
+// Whether every declaration in the module reached the typed pipeline. A mode
+// this pass infers is invisible to the AST lowering, which reads `own` off the
+// declaration and nothing else — so in a MIXED module an AST-lowered caller
+// hands a borrowed argument to a callee that now releases one, and the count
+// goes under. That is a segfault building the compiler and a wrong answer on
+// `field-append`, both of which `internal/e2eselfhost` reports and neither of
+// which the fixpoint or the fixtures would.
+//
+// A declared `own` is safe in a mixed module precisely because it is a SOURCE
+// fact both lowerings see. Until the AST half reads these rows too, the
+// inference applies only where it owns every body — which is most programs,
+// and grows on its own as the typed pipeline's reach does.
+function wholly_produced(all: Produced[]): boolean {
+    for p in all {
+        if (!p.ok && !p.template && !p.bodyless) { return false; }
+    }
+    return true;
+}
+
 function infer_ownership(all: Produced[], names: string[], table: ssasem.Contract[]): Inferred {
+    if (!wholly_produced(all)) { return Inferred { all: all, table: table }; }
     var rows: ownership.Escapes[] = infer_rows(all, names);
     var out: Produced[] = [];
     var i: i32 = 0;

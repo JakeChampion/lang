@@ -40,14 +40,39 @@ pub function find(rows: Escapes[], name: string): i32 {
     return 0 - 1;
 }
 
-// Whether parameter `at` of `name` is consumed. A symbol with no row — a
-// template, a body this boundary declined, a builtin — answers "yes", which
-// keeps its declared mode in force rather than inventing one.
+// Whether parameter `at` of `name` is consumed, for the ANALYSIS: a symbol
+// with no row — a template, a body this boundary declined, a builtin, a
+// closure — answers "yes", so an operand handed to one is read as leaving the
+// frame. That is the conservative direction here, and only here: a caller
+// deciding what to REWRITE must ask `find` first, because "no row" means
+// "this symbol keeps the mode it declared", not "count it".
 pub function consumed(rows: Escapes[], name: string, at: i32): boolean {
     var i: i32 = find(rows, name);
     if (i < 0) { return true; }
     if (at < 0 || at >= rows[i].bits.len()) { return true; }
     return rows[i].bits[at];
+}
+
+// The bodies any function VALUE names. A counted parameter is spelled in the
+// type `ssasem.closure_type` builds, and that type is what every call through
+// the box is checked against — so inferring one counted on a body someone
+// takes the address of rewrites the type out from under its call sites
+// ("closure signature"). Native has the same rung for the opposite reason:
+// `OpCallIndirect` has no callee name, so no retain is emitted there at all.
+// Either way the answer is that such a body keeps the modes it declared.
+pub function address_taken(f: ssasem.Func, seen: string[]): string[] {
+    var out: string[] = seen;
+    for b in f.graph.blocks {
+        for ins in b.insts {
+            if (ins.kind_tag == ssasem.closure_new() && ins.str != "") { out = out.append(ins.str); }
+        }
+    }
+    return out;
+}
+
+pub function names_has(xs: string[], name: string): boolean {
+    for x in xs { if (x == name) { return true; } }
+    return false;
 }
 
 function all_true(n: i32): boolean[] {
