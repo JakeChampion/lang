@@ -43,12 +43,17 @@ const (
 	// StorageDonorNotReleasedHere — the donor's release is not in the call's
 	// epilogue, so it is not dead at the call.
 	StorageDonorNotReleasedHere
+	// StorageScaleKernel — the stage is gone and a kernel wrote the buffer
+	// instead of the scalar loop (#9735). Appended rather than grouped with
+	// StorageReused so the existing values keep their numbers.
+	StorageScaleKernel
 )
 
 // AllArrayStorage is every verdict, so a histogram prints a row per reason
 // even at zero.
 var AllArrayStorage = []ArrayStorage{
-	StorageFused, StorageScalar, StorageReused, StorageNoInPlaceShape,
+	StorageFused, StorageScalar, StorageReused, StorageScaleKernel,
+	StorageNoInPlaceShape,
 	StorageReceiverNotOwnedParam, StorageElementFunctionUnresolved,
 	StorageElementFunctionEffectful, StorageElementFunctionCaptures,
 	StorageElementWidthUnsupported, StorageShapeChange, StorageDonorNotReleasedHere,
@@ -79,6 +84,8 @@ func (s ArrayStorage) Tag() string {
 		return "shape-change"
 	case StorageDonorNotReleasedHere:
 		return "donor-not-released-here"
+	case StorageScaleKernel:
+		return "scale-kernel"
 	}
 	return "unknown"
 }
@@ -110,6 +117,8 @@ func (s ArrayStorage) Reason() string {
 		return "the stage changes the element type, so the donor is the wrong shape"
 	case StorageDonorNotReleasedHere:
 		return "the donor's release is not in the call's epilogue, so it is not dead here"
+	case StorageScaleKernel:
+		return "__fern_scale_f64 replaced the map, so the kernel wrote it rather than the scalar loop (#9735)"
 	}
 	return "unknown"
 }
@@ -134,6 +143,10 @@ func ArrayStorageVerdicts(prog *Program) map[string]ArrayStorage {
 	out := map[string]ArrayStorage{}
 	cx := newArrayContext(prog)
 	fusion := ArrayFusionVerdicts(prog)
+	byName := make(map[string]*Func, len(prog.Funcs))
+	for _, fn := range prog.Funcs {
+		byName[fn.Name] = fn
+	}
 	for _, fn := range prog.Funcs {
 		if cx.isStdlibBody(fn) {
 			continue
@@ -151,8 +164,28 @@ func ArrayStorageVerdicts(prog *Program) map[string]ArrayStorage {
 				default:
 					v = StorageNoInPlaceShape
 					for _, c := range calls {
-						if c.op == s.Op {
-							_, v = inPlaceVerdict(fn, c, cx)
+						if c.op != s.Op {
+							continue
+						}
+						_, v = inPlaceVerdict(fn, c, cx)
+						// The battery runs the scale kernel AFTER R7, so a
+						// stage R7 donates is never the kernel's; one it
+						// declines may be. Asking scaleF64Verdict rather
+						// than re-deriving is what keeps the report from
+						// claiming a rewrite the pass did not perform.
+						//
+						// The StorageReused arm decides nothing TODAY: R7
+						// takes 8-byte integer elements and the kernel takes
+						// f64, so no stage is both. It is here so that
+						// widening either one does not silently report a
+						// donated buffer — which allocates nothing — as a
+						// kernel's, which allocates one.
+						// TestR7AndTheScaleKernelTakeDisjointStages fails if
+						// that disjointness ends.
+						if v != StorageReused {
+							if _, taken := scaleF64Verdict(byName, fn, c); taken {
+								v = StorageScaleKernel
+							}
 						}
 					}
 				}

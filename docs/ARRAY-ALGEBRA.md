@@ -364,6 +364,30 @@ The same verdict is what E068 reports when a `fip` / `fbip` function's
 `map` is declined, so "why did this allocate under my space claim" and
 "why did this allocate" have one answer.
 
+A stage the SCALE KERNEL took says so instead (#9735). It is a buffer
+the kernel wrote rather than the scalar loop, so it is a storage verdict
+like the others rather than a section of its own:
+
+```
+map        elementwise  __closure_lambda_1
+  fresh buffer: __fern_scale_f64 replaced the map, so the kernel wrote it
+  rather than the scalar loop (#9735)
+```
+
+The two planners take disjoint stages today, so the report never has to
+choose between them: R7 only takes 8-byte integer elements, and the
+kernel only takes f64, so no site can earn both verdicts. The report
+still asks R7 first and keeps `reused` when it answers — the battery runs
+R7 first, and a donated buffer is the stronger answer, since it allocates
+nothing where the kernel allocates one — but that gate decides nothing
+that is reachable. `TestR7AndTheScaleKernelTakeDisjointStages` pins the
+disjointness from both sides; if either planner widens, it fails, and the
+ordering has to be read again for real. Both verdicts come from the
+planner that performs the rewrite — `scaleF64Verdict` here, as
+`inPlaceVerdict` above — so neither can claim a rewrite the pass did not
+perform, and a test holds the count of stages reported as the kernel's to
+the number of sites the pass rewrites.
+
 The same report lists `std/ndarray`'s algebra — `ARRAY-SHAPES.md` §7's
 eight operations, the ones handed a function — as recognized shapes
 (`ARRAY-SHAPES.md` §6): one line per site with the element functions it
