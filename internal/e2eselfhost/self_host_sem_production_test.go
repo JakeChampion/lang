@@ -821,14 +821,12 @@ function main(): i32 {
 	// `bind_unify` already descends into a bracketed spelling; only the gate
 	// was wrong.
 	//
-	// What this row pins is that the module COMPILES AND ANSWERS, not that it
-	// produces: the typed path still refuses all of it (0 of 28) behind the
-	// `calls a function value of N arguments` mixing rule, which is a separate
-	// leaf. So `atLeast` is 0 deliberately and there is no `noLeak` — both legs
-	// hold the same 1232 bytes here, because the typed leg IS the AST leg on
-	// this program. Before the fix the harness cannot get past the compile at
-	// all, which is what makes the row fail.
-	{name: "a-callbacks-return-pins-the-methods-own-variable", atLeast: 0, src: `
+	// Clearing that left the module compiling but refusing all 28 of its
+	// declarations, behind the callable-slot spelling the struct
+	// monomorphiser did not mangle. With both closed it produces whole and
+	// reclaims whole, `live_bytes=0` against the 1232 bytes the AST leg
+	// strands.
+	{name: "a-callbacks-return-pins-the-methods-own-variable", atLeast: 28, noLeak: true, src: `
 import "std/ndarray" as ndarray;
 
 function sum_cell(c: ndarray.NdArray[i32]): ndarray.NdArray[i32] {
@@ -839,6 +837,40 @@ function main(): i32 {
     var a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5, 6], [2, 3]);
     var sums: ndarray.NdArray[i32] = a.map_rank(1, sum_cell);
     return sums.get([1]);
+}`},
+	// The struct monomorphiser mangled every type spelling on a declaration —
+	// parameters, return, receiver, struct fields — but not the two a CALLABLE
+	// parameter carries separately. `ms_func` rebuilt each ParamDecl with
+	// `fn_ret` and `fn_param_types` copied through verbatim, so a clone of
+	// `through[T, U](f: (Slot[T]) => Slot[U])` kept `Slot[i32]` where every
+	// other position said `Slot__i32`. Resolving that spelling dropped the
+	// argument, the callable's parameter typed as the bare `Slot`, and the
+	// call of `f` refused `call argument type` — taking the whole module with
+	// it. `mg_ty` now covers both, at every site the pass rewrites a
+	// declaration, a lambda, a `var`, or a struct field.
+	//
+	// Both callback shapes are here deliberately: a named function and a
+	// lambda reach the slot by different routes, and `U = string` over
+	// `T = i32` means a spelling that lost its argument cannot pass as the
+	// receiver's own.
+	{name: "a-callback-slot-keeps-its-instantiation", atLeast: 5, noLeak: true, src: `
+struct Slot[T] { v: T }
+
+function (s: Slot[T]) through[T, U](f: (Slot[T]) => Slot[U]): Slot[U] {
+    return f(s);
+}
+
+function label(s: Slot[i32]): Slot[string] {
+    if (s.v > 5) { return Slot[string] { v: "big" }; }
+    return Slot[string] { v: "small" };
+}
+
+function main(): i32 {
+    var a: Slot[i32] = Slot[i32] { v: 7 };
+    var b: Slot[string] = a.through(label);
+    var c: Slot[string] = a.through((s: Slot[i32]): Slot[string] => Slot[string] { v: "lam" });
+    print(b.v + "/" + c.v);
+    return b.v.len();
 }`},
 	// Two levels of value-position if, the inner arm a boolean call. The
 	// outer IIFE returns the CALL of the inner one, which the checker types

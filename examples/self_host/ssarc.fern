@@ -1522,12 +1522,19 @@ function out_of_float(own r: irlower.LowerResult, to: typeinfo.Type): irlower.Lo
 }
 
 // Out of the f64: a truncation toward zero at the destination's width and
-// signedness. The signed forms clamp at the signed maximum, which is the wrong
-// answer for a destination that has no sign bit.
+// signedness. The signed forms clamp at the signed maximum, and at the signed
+// MINIMUM out of a negative, which is the wrong answer for a destination that
+// has no sign bit: out_of_float's u8 mask then reads that clamp's low byte,
+// so `-1.0 as u8` answered 255 rather than native's 0 (#9912).
+//
+// Signedness comes from the destination, not from its width — the narrow
+// unsigned types share the u32's conversion, exactly as native picks
+// `Unsigned: !dstInt.IsSigned()` and then canonicalises to the destination's
+// representation.
 function from_f64(to: typeinfo.Type): ir.Op {
     if (ssasem.is_u64(to)) { return ir.op_f64_to_u64(); }
     if (ssasem.is_wide(to)) { return ir.op_f64_to_i64(); }
-    if (ssasem.is_u32(to)) { return ir.op_f64_to_u32(); }
+    if (ssasem.is_unsigned_int(to)) { return ir.op_f64_to_u32(); }
     return ir.op_f64_to_i32();
 }
 
