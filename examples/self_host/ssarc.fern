@@ -263,10 +263,12 @@ function definition(f: ssasem.Func, v: i32): ssa.SInst {
     return f.graph.blocks[0].insts[0];
 }
 
-// A stolen supply: when the record the value projects has no other holder,
-// the field is nulled and the value's unit is the callee's; otherwise the
-// value is retained, as `append_field` does around its push. The scratch
-// slot holds the record's answer; nothing reads it past this supply.
+// A stolen unit: when the box the value projects has no other holder, the
+// slot is nulled and the value's unit is the taker's; otherwise the value is
+// retained, as `append_field` does around its push. A record's field and an
+// enum's payload are the same slot to this, since both read through
+// `op_struct_get`. The scratch slot holds the box's answer; nothing reads it
+// past this point.
 function steal(own r: irlower.LowerResult, f: ssasem.Func, v: i32, unique: i32): irlower.LowerResult {
     var get: ssa.SInst = definition(f, v);
     r = reserve(r, unique + 1);
@@ -1838,6 +1840,7 @@ function instruction(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Pla
     // A verified copy already has its single operand on the stack.
     r = emit(r, ir.op_store_local(ins.result));
     r = took(r, p, ins);
+    r = took_payload(r, f, p, ins);
     return held(r, p, ins);
 }
 
@@ -1868,6 +1871,18 @@ function took(own r: irlower.LowerResult, p: ssaunits.Plan, ins: ssa.SInst): irl
     r = emit(r, ir.op_load_local(ins.args[0]));
     r = emit(r, ir.op_const_i32(0));
     return emit(r, ir.op_tuple_set(p.takes[ins.result]));
+}
+
+// A variant read the plan admitted as a payload TAKE moves the payload out of
+// the box when nobody else holds the box, and retains it as a borrow did when
+// somebody does: `steal`'s shape at the READ rather than at a call's supply,
+// so every consuming use downstream sees a unit of the frame's own. The box
+// dies at this read, so its own drop runs in this same step — walking past
+// the slot the take emptied, then releasing the box itself
+// (ssaunits.payload_root).
+function took_payload(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): irlower.LowerResult {
+    if (ins.result >= p.payloads.len() || !p.payloads[ins.result]) { return r; }
+    return steal(r, f, ins.result, scratch_base(f));
 }
 
 // The received unit's box when it is the only one and a fresh sole-owned copy
