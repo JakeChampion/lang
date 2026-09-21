@@ -11814,9 +11814,9 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         if (!ms3.ok) { return ms3; }
         return ms3.emit(ir.op_memset());
     }
-    // __free(ptr, size): a no-op under the bump/leak heap (core/map's
-    // grow path). Lower both args (no side effects), emit op_free,
-    // which discards them and pushes dummy 0 (statement-position).
+    // __free(ptr, size): core/map's grow path returning a raw block.
+    // Lower both args (no side effects), emit op_free, which pushes the
+    // block onto its size class and leaves a dummy 0 (statement-position).
     if (cid.name == "__free" && c.args.len() == 2) {
         var fr: LowerState = lower_expr(c.args[0], s);
         if (!fr.ok) { return fr; }
