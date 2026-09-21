@@ -305,4 +305,60 @@ func TestSelfHostIRLowerRoundTrip(t *testing.T) {
 			t.Errorf("dump op count = %d, want 2", code)
 		}
 	})
+
+	// A function containing a LAMBDA dumps too (#9928). It did not: the dump
+	// path lowered the raw module, where every lambda-bearing function bails,
+	// and its only answer to a bailed `main` is exit 200 with no output at
+	// all — so the tool built for reading op streams could not read the one
+	// construct whose lowering is least obvious.
+	//
+	// The assertions are structural rather than a golden stream on purpose.
+	// What this pins is that the lift happens; the exact ops around a lambda
+	// are the lowering's business, and a golden here would break on every
+	// unrelated change to it.
+	t.Run("dump-lifts-lambdas", func(t *testing.T) {
+		// A capture-free lambda passed as a call argument. `__method_Array_map`
+		// is defined locally rather than imported: arr_method_fns_of collects
+		// any free `__method_Array_*` in the module, so this resolves the
+		// receiver method without pulling in std/array.
+		const src = "function __method_Array_map(arr: f64[], f: (f64) => f64): f64[] {\n" +
+			"    var out: f64[] = [];\n" +
+			"    var i: i32 = 0;\n" +
+			"    while (i < arr.len()) { out = out.append(f(arr[i])); i = i + 1; }\n" +
+			"    return out;\n" +
+			"}\n" +
+			"function main(): i32 {\n" +
+			"    var xs: f64[] = [1.0, 2.0];\n" +
+			"    var ys: f64[] = xs.map((x: f64): f64 => x * 2.0);\n" +
+			"    return ys[0] as i32;\n" +
+			"}\n"
+
+		cmd := exec.Command(bin, "-dump")
+		cmd.Stdin = strings.NewReader(src)
+		out, _ := cmd.Output()
+		got, code := string(out), cmd.ProcessState.ExitCode()
+
+		// 200 is the bail this fixes: `main` lowered !ok, nothing printed.
+		if code == 200 {
+			t.Fatalf("-dump exited 200 on a lambda-bearing program: main bailed, "+
+				"so the dumped module was not lifted. Output: %q", got)
+		}
+		if got == "" {
+			t.Fatalf("-dump printed nothing (exit %d)", code)
+		}
+		// The lambda reached the call as a function value, which is what the
+		// lift produces and what a raw lowering never gets to.
+		if !strings.Contains(got, "const_func") {
+			t.Errorf("no const_func in the dumped stream, so the lambda did not "+
+				"reach the call as a function value:\n%s", got)
+		}
+		if !strings.Contains(got, "call_direct __method_Array_map/2") {
+			t.Errorf("no map call in the dumped stream:\n%s", got)
+		}
+		// The exit code is ops.len() in the dump modes, so it doubles as a
+		// guard against a stream that printed only a line or two.
+		if code < 10 {
+			t.Errorf("dumped %d ops, want a real stream:\n%s", code, got)
+		}
+	})
 }
