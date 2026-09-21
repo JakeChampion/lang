@@ -305,3 +305,44 @@ function main(): i32 {
 		t.Errorf("reduce_axis(-1) reports axis %d, want it unread", got[0].Axis)
 	}
 }
+
+// A computed axis beside a literal init of the SAME width is the shape that
+// catches a recogniser reading "the first integer literal": over an i32
+// array, `a.reduce_axis(k, 0, add)` puts the init's `0` where a scan looking
+// for a literal finds it first, and reporting that as axis 0 is the
+// wrong-axis case the report must never produce. The literal-axis site
+// beside it has to keep reading 1.
+const i32AxisSrc = `import "std/ndarray";
+function add(x: i32, y: i32): i32 { return x + y; }
+function run(a: ndarray.NdArray[i32], k: i32): i32 {
+  var computed: ndarray.NdArray[i32] = a.reduce_axis(k, 0, add);
+  var written: ndarray.NdArray[i32] = a.reduce_axis(1, 0, add);
+  var scanned: ndarray.NdArray[i32] = a.scan_axis(k, 0, add);
+  return computed.get([0]) + written.get([0]) + scanned.get([0, 0]);
+}
+function main(): i32 {
+  var a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4], [2, 2]);
+  return run(a, 0);
+}`
+
+func TestNdarrayComputedAxisIsNotReadFromTheInit(t *testing.T) {
+	p := lowerPipelineSrc(t, i32AxisSrc)
+	var got []ir.NdarrayShape
+	for _, s := range ir.RecognizeNdarrayShapes(p) {
+		if s.Func == "run" {
+			got = append(got, s)
+		}
+	}
+	if len(got) != 3 {
+		t.Fatalf("run's sites = %+v, want three", got)
+	}
+	if got[0].Axis != ir.NdarrayAxisUnknown {
+		t.Errorf("reduce_axis(k, 0, add) reports axis %d; the 0 it read is the init, and the axis is k", got[0].Axis)
+	}
+	if got[1].Axis != 1 {
+		t.Errorf("reduce_axis(1, 0, add) reports axis %d, want 1", got[1].Axis)
+	}
+	if got[2].Axis != ir.NdarrayAxisUnknown {
+		t.Errorf("scan_axis(k, 0, add) reports axis %d; it shares reduce_axis's signature and its answer", got[2].Axis)
+	}
+}
