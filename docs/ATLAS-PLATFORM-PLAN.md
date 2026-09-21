@@ -1334,6 +1334,37 @@ x86-64, none on self-host arm64, three on self-host wasm. Every one of those
 is explained by how the assembler was BUILT — generated from class tables, or
 typed out per instruction — and by nothing about the kernel.
 
+**Step 4: the shape reaches the kernel without the wrapper being written.**
+A kernel wrapped by a stdlib function only helps the caller who reaches for
+that function. `xs.map((x: f64): f64 => x * 2.0)` is the same computation
+spelled the way a reader writes it first, and it ran the scalar loop —
+worse than the scalar loop, in fact, since `map` pays an indirect call per
+element. `internal/ir/array_scale.go` rewrites that shape to the kernel:
+the constant is read out of the element function's body at compile time and
+the closure never exists.
+
+Measured on x86-64, 300 rounds over a 20,000-element `f64[]`, the same
+source built twice and differing only by `FERN_NO_SCALE_KERNEL`:
+
+| | best of 7 |
+| --- | --- |
+| `xs.map(x => x * k)`, scalar | 39.1 ms |
+| the same source, kernel | 2.3 ms |
+| | **17.18x** |
+
+Far above the 4.49x the same kernel wins against a hand-written scalar loop,
+and for the reason the paragraph above gives: the baseline here sheds an
+indirect call per element as well as the arithmetic, so the lane count is a
+floor on the win and not a ceiling. It is the largest margin any kernel in
+this document has shown, because it is the only one whose baseline was
+paying for a closure.
+
+The pass runs LAST of the three that rewrite an array combinator — after
+fusion (#9731) and after R7's in-place map (#9733). R7 allocates nothing at
+all, and that is a contract `fip`/E068 checks, so a kernel putting a fresh
+buffer back would break a claim a program is allowed to make. A vectorised
+copy does not beat no copy.
+
 ### 3.5 Testing
 
 Per rule 5, each kernel ships with:
