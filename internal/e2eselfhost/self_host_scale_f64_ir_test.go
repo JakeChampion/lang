@@ -127,15 +127,17 @@ func runScaleF64IR(t *testing.T, target string) int {
 // emit, or "" for one still lowering scalar by design.
 //
 // x86-64 is SSE2 over two doubles — this assembler has no VEX surface, so it
-// does not get the four lanes the native emitter uses.
+// does not get the four lanes the native emitter uses. arm64 is NEON over a
+// .2d pair.
 //
 // Every other target answers "" so the contract holds by default rather than
-// by omission: a target named here is one whose leg is vectorised, and §3.4
-// step 3 is going one backend at a time. arm64 gets "fmul v0.2d" when its leg
-// lands, and this test starts guarding it then.
+// by omission: a target named here is one whose leg is vectorised.
 func scaleF64VectorMnemonic(target string) string {
-	if target == "x86-64-linux" {
+	switch target {
+	case "x86-64-linux":
 		return "mulpd"
+	case "arm64-linux":
+		return "fmul v0.2d"
 	}
 	return ""
 }

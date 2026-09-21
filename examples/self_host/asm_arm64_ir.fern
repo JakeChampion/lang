@@ -524,25 +524,49 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         // operand stack [xs, k bits] -> the data pointer of a fresh f64
         // array of xs's length whose element i is xs[i] * k.
         //
-        // SCALAR (§3.4 step 1): one fmul per element. Elementwise, so the
-        // NEON body this wants (fmul over two lanes) reassociates nothing;
-        // the ordering rule still puts the scalar lowering in every backend
-        // first.
+        // NEON (§3.4 step 3): fmul over a .2d pair, with the scalar loop as
+        // the tail for an odd length. Elementwise, so the lanes reassociate
+        // nothing (ARRAY-ALGEBRA.md §3, AA-02).
+        //
+        // arm64_native owed nothing for this, which is not what §3.4's note
+        // on self-host assemblers would have predicted: that note was written
+        // when this file's whole SIMD surface was cnt/addv, and the string
+        // kernels had to add ld1/cmeq/cmlt/shrn/dup by hand. It has since been
+        // regenerated from cmd/arm64tblgen, so fmul arrives as part of the
+        // three-register lane-wise FP class across 2s/4s/2d, ld1/st1 take
+        // every lane arrangement, and dup's mask admits all four sizes. The
+        // self-host assembler still needs checking separately; it just now
+        // answers the same way its native twin does.
+        //
+        // `dup v1.2d, x1` replaces the scalar `fmov d1, x1` rather than
+        // adding to it: d1 IS v1's low half, so one instruction serves the
+        // vector body and the tail both.
         //
         // __fern_arr_box(n) writes the rc header and len = n and clobbers
         // only x0-x2; this backend's arrays keep len at [arr] and element i
-        // at [arr + (i+1)*8]. Base-register FP loads only: the address is
-        // formed with an add, which is the form arm64_native encodes.
+        // at [arr + (i+1)*8], which is why the cursor is biased by one before
+        // it is scaled. Base-register FP accesses only: the address is formed
+        // with an add, which is the form arm64_native encodes.
         var flo: asmcore.LabelOut = asmcore.fresh_label(s);
         var sf_loop: string = flo.name;
         var flo2: asmcore.LabelOut = asmcore.fresh_label(flo.state);
         var sf_done: string = flo2.name;
-        s = flo2.state;
+        var flo3: asmcore.LabelOut = asmcore.fresh_label(flo2.state);
+        var sf_vec: string = flo3.name;
+        s = flo3.state;
         s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
         s = s.write("    stp x0, x1, [sp, #-16]!\n");
         s = s.write("    ldr x0, [x0]\n    bl __fern_arr_box\n");
         s = s.write("    ldp x2, x1, [sp], #16\n");
-        s = s.write("    fmov d1, x1\n    mov x3, #0\n    ldr x4, [x2]\n");
+        s = s.write("    dup v1.2d, x1\n    mov x3, #0\n    ldr x4, [x2]\n");
+        // Whole pairs only, so the vector body cannot run past the last
+        // element; the tail picks up the odd one.
+        s = s.write("    and x8, x4, #-2\n");
+        s = s.write(sf_vec + ":\n");
+        s = s.write("    cmp x3, x8\n    b.ge " + sf_loop + "\n");
+        s = s.write("    add x5, x3, #1\n    add x6, x2, x5, lsl #3\n    ld1 {v0.2d}, [x6]\n");
+        s = s.write("    fmul v0.2d, v0.2d, v1.2d\n    add x7, x0, x5, lsl #3\n    st1 {v0.2d}, [x7]\n");
+        s = s.write("    add x3, x3, #2\n    b " + sf_vec + "\n");
         s = s.write(sf_loop + ":\n");
         s = s.write("    cmp x3, x4\n    b.ge " + sf_done + "\n");
         s = s.write("    add x5, x3, #1\n    add x6, x2, x5, lsl #3\n    ldr d0, [x6]\n");
