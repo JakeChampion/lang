@@ -140,9 +140,9 @@ function main(): i32 {
 }`, 4},
 }
 
-// payloadTakeCensus holds a run's leakcheck summary to the case's contract:
-// balanced at live 0, and no more allocations than the bound.
-func payloadTakeCensus(t *testing.T, name, stderr string, maxAllocs int64) {
+// censusWithin holds a run's leakcheck summary to a case's contract: balanced
+// at live 0, and no more allocations than the bound.
+func censusWithin(t *testing.T, name, stderr string, maxAllocs int64) {
 	t.Helper()
 	summary := leakSummaryLine(stderr)
 	if summary == "" {
@@ -153,21 +153,21 @@ func payloadTakeCensus(t *testing.T, name, stderr string, maxAllocs int64) {
 		t.Fatalf("%s: parse %q: %v", name, summary, err)
 	}
 	if allocs != frees || live != 0 {
-		t.Errorf("%s: %s — a nulled payload slot must be walked past, not released twice or leaked", name, summary)
+		t.Errorf("%s: %s — every block the run takes must come back, and none twice", name, summary)
 	}
 	if allocs > maxAllocs {
-		t.Errorf("%s: %s — allocs above %d: the payload is being borrowed and copied rather than taken", name, summary, maxAllocs)
+		t.Errorf("%s: %s — allocs above %d: a buffer is being copied where it should be updated in place", name, summary, maxAllocs)
 	}
 }
 
-// payloadTakeRun compiles src for target through the production CLI with the
+// selfHostCLIRun compiles src for target through the production CLI with the
 // leak census on, runs it, and hands back the exit code and the run's stderr.
 //
-// The CLI rather than `asm_ir_run.fern`, because the take lives in the typed
-// semantic pipeline (ssaunits + ssarc) and that driver has no leg through it:
-// the same program compiled there keeps the AST lowering's allocation count
-// whichever way this change goes.
-func payloadTakeRun(t *testing.T, fernBin, stdlibRoot, src, target string) (int, string) {
+// The CLI rather than `asm_ir_run.fern`, because what these cases measure
+// lives in the typed semantic pipeline (semsource + ssaunits + ssarc) and that
+// driver has no leg through it: the same program compiled there keeps the AST
+// lowering's allocation count whichever way the pipeline goes.
+func selfHostCLIRun(t *testing.T, fernBin, stdlibRoot, src, target string) (int, string) {
 	t.Helper()
 	dir := t.TempDir()
 	in := filepath.Join(dir, "main.fern")
@@ -232,11 +232,11 @@ func TestSelfHostPayloadTakeIR(t *testing.T) {
 			}
 			for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 				t.Run(target, func(t *testing.T) {
-					exit, stderr := payloadTakeRun(t, fernBin, stdlibRoot, tc.src, target)
+					exit, stderr := selfHostCLIRun(t, fernBin, stdlibRoot, tc.src, target)
 					if exit != 0 {
 						t.Fatalf("exit = %d, want 0 (interp oracle)\n%s", exit, stderr)
 					}
-					payloadTakeCensus(t, tc.name, stderr, tc.maxAllocs)
+					censusWithin(t, tc.name, stderr, tc.maxAllocs)
 				})
 			}
 		})

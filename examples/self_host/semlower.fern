@@ -495,6 +495,50 @@ function rows_of(mod: parser.Module, built: semsource.Built, structs: irlower.St
 // `base` is the pre-`append_dyn` registry set the emitters read; the rows
 // caller_sigs rewrites are returned in the Sub, and the emit and the AST
 // lowering of what is left both read them.
+struct Inference { built: semsource.Built, rows: Rows }
+
+// Whether the typed pipeline lowers EVERY body of this module. A template's
+// erased body is not one — its instances stand for it — and neither is a
+// declaration with no body here.
+function lowers_whole_module(built: semsource.Built, r: Rows): boolean {
+    var i: i32 = 0;
+    while (i < r.keep.len()) {
+        if (!r.keep[i]) {
+            if (i >= built.decls.len()) { return false; }
+            if (!built.decls[i].template && !built.decls[i].bodyless) { return false; }
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// The ownership inference, applied only where it is sound to.
+//
+// A mode `semsource.with_inferred_modes` infers is invisible to the AST
+// lowering, which reads `own` off the declaration and nothing else. In a MIXED
+// module an AST-lowered caller therefore hands a borrowed argument to a callee
+// that now releases one, and the count goes under — a segfault building the
+// compiler, and `field-append` answering 3 where it answers 199. A declared
+// `own` is safe there precisely because it is a source fact both lowerings
+// read.
+//
+// So the inference runs only when this pass lowers the whole module, which is
+// what `prune` has just decided. The second lowering is what that costs, and
+// it is never paid where it would hurt: a module with anything left to the AST
+// lowering fails the test on the FIRST pass and never reaches here. The second
+// pass is checked as well as the first — a mode can refuse a plan
+// (`ssaunits.mode_error`), and a module that stops lowering whole under the
+// inference keeps the modes it declared.
+function inferred_pass(mod: parser.Module, built: semsource.Built, r: Rows, structs: irlower.StructTab): Inference {
+    var same: Inference = Inference { built: built, rows: r };
+    if (!lowers_whole_module(built, r)) { return same; }
+    var widened: semsource.Built = semsource.with_inferred_modes(built);
+    if (!semsource.modes_differ(built, widened)) { return same; }
+    var r2: Rows = prune(rows_of(mod, widened, structs), mod, widened);
+    if (!lowers_whole_module(widened, r2)) { return same; }
+    return Inference { built: widened, rows: r2 };
+}
+
 pub function substitution(mod: parser.Module, structs: irlower.StructTab, base: irlower.FnSigs): ircore.Sub {
     if (!sem_ir_on()) { return ircore.no_sub(); }
     var built: semsource.Built = semsource.build_module(mod);
@@ -503,6 +547,9 @@ pub function substitution(mod: parser.Module, structs: irlower.StructTab, base: 
     util.arr_push_cliff_report("sem:lowered", 0);
     var r: Rows = prune(rows, mod, built);
     util.arr_push_cliff_report("sem:pruned", 0);
+    var inf: Inference = inferred_pass(mod, built, r, structs);
+    built = inf.built;
+    r = inf.rows;
     var sigs: irlower.FnSigs = base;
     var helpers: irlower.LowerResult[] = [];
     var bodies: irlower.LowerResult[] = [];

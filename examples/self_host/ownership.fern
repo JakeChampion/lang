@@ -1,0 +1,225 @@
+// Ownership inference: which of a function's reference parameters it CONSUMES.
+//
+// A consumed parameter is counted — the caller hands over a unit and the
+// callee releases it, so a reader reclaims its argument when it holds the last
+// reference. A parameter the frame only reads stays borrowed, because the
+// retain and the release would cancel: a balanced pair on a value that cannot
+// outlive the call moves rc traffic and nothing else. This is Koka's borrow
+// inference and native's `paramVerdict` ladder
+// (docs/OWNERSHIP-INFERENCE-PLAN.md, sub-slice 2d).
+//
+// Both halves are needed together. Counting every reference parameter with no
+// inference is slower on nine of the twenty-nine bench programs and faster on
+// none — 1.901x on `ordmap_insert`, 1.079x on `enum_match`, whose `weigh`
+// never lets its argument leave the frame
+// (docs/rc-log/2026-09-21-owned-by-default-alone-is-a-regression.md).
+//
+// The analysis reads the PRODUCED graphs rather than the declarations.
+// `semsource` never branches on a parameter's mode while it builds a body — it
+// appends the mode and hands it back untouched — so the graph is the same
+// whichever answer this reaches, and an escape is far easier to see on the
+// typed IR than on the AST.
+//
+// It is a GREATEST fixpoint: every reference parameter starts escaping and is
+// demoted once a round finds no escaping use. A least fixpoint would answer
+// "borrowed" for every recursive traversal, since the only use that carries
+// the parameter out is the recursive call whose own slot is counted only if
+// the parameter is — the cycle never starts from below.
+import "./ssa";
+import "./ssasem";
+
+// One row per produced symbol: whether each parameter leaves the frame.
+pub struct Escapes { name: string, bits: boolean[] }
+
+pub function find(rows: Escapes[], name: string): i32 {
+    var i: i32 = 0;
+    while (i < rows.len()) {
+        if (rows[i].name == name) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// Whether parameter `at` of `name` is consumed, for the ANALYSIS: a symbol
+// with no row — a template, a body this boundary declined, a builtin, a
+// closure — answers "yes", so an operand handed to one is read as leaving the
+// frame. That is the conservative direction here, and only here: a caller
+// deciding what to REWRITE must ask `find` first, because "no row" means
+// "this symbol keeps the mode it declared", not "count it".
+pub function consumed(rows: Escapes[], name: string, at: i32): boolean {
+    var i: i32 = find(rows, name);
+    if (i < 0) { return true; }
+    if (at < 0 || at >= rows[i].bits.len()) { return true; }
+    return rows[i].bits[at];
+}
+
+// The bodies any function VALUE names. A counted parameter is spelled in the
+// type `ssasem.closure_type` builds, and that type is what every call through
+// the box is checked against — so inferring one counted on a body someone
+// takes the address of rewrites the type out from under its call sites
+// ("closure signature"). Native has the same rung for the opposite reason:
+// `OpCallIndirect` has no callee name, so no retain is emitted there at all.
+// Either way the answer is that such a body keeps the modes it declared.
+pub function address_taken(f: ssasem.Func, seen: string[]): string[] {
+    var out: string[] = seen;
+    for b in f.graph.blocks {
+        for ins in b.insts {
+            if (ins.kind_tag == ssasem.closure_new() && ins.str != "") { out = out.append(ins.str); }
+        }
+    }
+    return out;
+}
+
+pub function names_has(xs: string[], name: string): boolean {
+    for x in xs { if (x == name) { return true; } }
+    return false;
+}
+
+function all_true(n: i32): boolean[] {
+    var out: boolean[] = [];
+    var i: i32 = 0;
+    while (i < n) { out = out.append(true); i = i + 1; }
+    return out;
+}
+
+// The operations that put a value somewhere this frame does not control: a
+// container or box built here and handed back, and a store into a cell or a
+// map the frame may not be the only holder of. An `append` or a `with` answers
+// a NEW container holding the stored value, so the value goes out with it —
+// the receiver does not, which is why those two are read operand by operand
+// below rather than whole.
+function builds_out(kind: i32): boolean {
+    return kind == ssasem.array_new() || kind == ssasem.tuple_new() || kind == ssasem.record_new()
+        || kind == ssasem.variant_new() || kind == ssasem.closure_new() || kind == ssasem.cell_new()
+        || kind == ssasem.cell_set() || kind == ssasem.map_insert();
+}
+
+// A store whose RECEIVER is operand 0 and whose stored value is every operand
+// after it: the receiver is consumed by the operation, not carried out of the
+// frame, and counting it here is what would make every `a = a.with(i, x)` on a
+// parameter look like an escape.
+function stores_after_receiver(kind: i32): boolean {
+    return kind == ssasem.append() || kind == ssasem.with();
+}
+
+// Mark `v` and everything it is anchored to. A projection's chain is already
+// transitive in `dependencies`, so one pass over it reaches the root.
+function carry(out: boolean[], a: ssasem.Analysis, v: i32): boolean[] {
+    if (v < 0 || v >= out.len()) { return out; }
+    var next: boolean[] = out.with(v, true);
+    for dep in a.dependencies[v] {
+        if (dep >= 0 && dep < next.len()) { next = next.with(dep, true); }
+    }
+    return next;
+}
+
+// The operands a direct call consumes: the slots its callee's contract counts.
+// The contract's own modes are stale by construction here — they are what this
+// analysis is computing — so the CURRENT round's answer is read instead, which
+// is what makes the fixpoint close over a call graph rather than a tree.
+function call_carried(out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[]): boolean[] {
+    var next: boolean[] = out;
+    var i: i32 = 0;
+    while (i < ins.args.len()) {
+        if (ssasem.reference(f.values[ins.args[i]]) && consumed(rows, ins.str, i)) { next = carry(next, a, ins.args[i]); }
+        i = i + 1;
+    }
+    return next;
+}
+
+// A call THROUGH a function value reads its slots off the type the box hands
+// out, and this boundary has no declaration to consult for it, so every
+// reference operand is taken as consumed.
+function indirect_carried(out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst): boolean[] {
+    var next: boolean[] = out;
+    for arg in ins.args { if (ssasem.reference(f.values[arg])) { next = carry(next, a, arg); } }
+    return next;
+}
+
+function instruction_carried(out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[]): boolean[] {
+    if (ins.kind_tag == ssasem.call()) { return call_carried(out, f, a, ins, rows); }
+    if (ins.kind_tag == ssasem.call_value()) { return indirect_carried(out, f, a, ins); }
+    var next: boolean[] = out;
+    if (builds_out(ins.kind_tag)) {
+        for arg in ins.args { if (ssasem.reference(f.values[arg])) { next = carry(next, a, arg); } }
+        return next;
+    }
+    if (stores_after_receiver(ins.kind_tag)) {
+        var i: i32 = 1;
+        while (i < ins.args.len()) {
+            if (ssasem.reference(f.values[ins.args[i]])) { next = carry(next, a, ins.args[i]); }
+            i = i + 1;
+        }
+    }
+    return next;
+}
+
+// The values a callee may keep a borrow of. A slot the callee does NOT count
+// is lent, and nothing here can see what the callee does with what it was
+// lent: `hands_out` models a call result as a FRESH unit, which severs the
+// result's dependency on the argument, so a callee that puts a lent value in
+// the thing it returns is invisible from the caller.
+//
+// That is only a leak while the caller borrows the container too. Once the
+// caller OWNS it, the caller also drops it — and the drop frees a box the
+// result still points at. `semsource.stmt` is the shape: every arm destructures
+// `st` and hands a payload on (`declare(st, v, s)`, `discard(e.value, s)`)
+// before the frame's drop of `st` runs, which segfaulted the compiler at
+// `semtypes.numeric_equal` reading a null type.
+//
+// So a parameter with a value of its own in a lent slot is not counted. The
+// container stays borrowed, nobody drops it, and the callee's borrow stays
+// good — which is what happened before this pass existed.
+function lent_values(out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[]): boolean[] {
+    var next: boolean[] = out;
+    var i: i32 = 0;
+    while (i < ins.args.len()) {
+        if (ssasem.reference(f.values[ins.args[i]]) && !consumed(rows, ins.str, i)) { next = carry(next, a, ins.args[i]); }
+        i = i + 1;
+    }
+    return next;
+}
+
+function lent_out(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[]): boolean[] {
+    var out: boolean[] = [];
+    var i: i32 = 0;
+    while (i < f.graph.nvals) { out = out.append(false); i = i + 1; }
+    for b in f.graph.blocks {
+        for ins in b.insts {
+            if (ins.kind_tag == ssasem.call()) { out = lent_values(out, f, a, ins, rows); }
+        }
+    }
+    return out;
+}
+
+// The values this frame lets out, under the current round's answers.
+function carried_values(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[]): boolean[] {
+    var out: boolean[] = [];
+    var i: i32 = 0;
+    while (i < f.graph.nvals) { out = out.append(false); i = i + 1; }
+    for b in f.graph.blocks {
+        for ins in b.insts { out = instruction_carried(out, f, a, ins, rows); }
+        if (b.term.kind_tag == 1 && b.term.value >= 0) { out = carry(out, a, b.term.value); }
+    }
+    return out;
+}
+
+// Parameter `i` is value `i` — `ssasem`'s parameter instruction pins
+// `result == imm` — so the carried set is read off its own slot.
+//
+// The analysis is the caller's to hold rather than this function's to make:
+// it does not depend on `rows`, and remaking it every round cost 23% of the
+// whole compiler's build time when it was made here.
+pub function escaping(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[]): boolean[] {
+    // A function this boundary cannot analyse keeps every declared mode.
+    if (!a.ok) { return all_true(f.params.len()); }
+    var carried: boolean[] = carried_values(f, a, rows);
+    var lent: boolean[] = lent_out(f, a, rows);
+    var out: boolean[] = [];
+    var i: i32 = 0;
+    while (i < f.params.len()) {
+        out = out.append(i < carried.len() && carried[i] && !(i < lent.len() && lent[i]));
+        i = i + 1;
+    }
+    return out;
+}

@@ -18031,6 +18031,16 @@ func (b *builder) consumingReuseCtor(arm *ast.MatchArm, et ast.EnumType) *ast.Ca
 	if !ok || cenum != et.Name || payloadCount == 0 {
 		return nil
 	}
+	// A pair-form return constructs no box: it leaves a (tag, payload) pair in
+	// registers, so there is no reuse token, and the arm's box release and its
+	// shared-branch payload retains — which the pairing hands to that token —
+	// would be emitted nowhere at all (#9901). Asked without the defer
+	// condition the return itself carries, so the analysis and the lowering
+	// cannot disagree; a deferred function boxes its return and merely loses
+	// the reuse.
+	if b.thisIsPair && isPairFormReturnExpr(ret.Value, b.pairVariants, b.pairForm) {
+		return nil
+	}
 	// The enum must be uniform-box-sized (every variant the same box) for the
 	// matched box to fit the constructed variant — the same gate the shallow
 	// free uses.
