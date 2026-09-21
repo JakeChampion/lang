@@ -2100,11 +2100,22 @@ function zero_value(e: ast.Expr, s: State, expected: typeinfo.Type): Value {
     return define(s, ssasem.zero(), [], 0, "", ty);
 }
 
+// A literal's box is `.rodata` under the immortal rc, which is what a view's
+// box is too, so the destination's spelling is the only thing a `str` slot
+// needs. Producing it as a `string` and letting `widen` retag it leaves the
+// literal BORROWED, and a `str` binding that a slice later rebinds is a phi
+// with a unit to hand on: the borrowed edge could only supply it by retaining
+// a view, which `ssaunits.plan` refuses.
+function string_literal(st: ast.ExprString, s: State, expected: typeinfo.Type): Value {
+    if (ssasem.is_view(expected)) { return define(s, 5, [], 0, st.value, expected); }
+    return define(s, 5, [], 0, st.value, t_string());
+}
+
 function produce(e: ast.Expr, s: State, expected: typeinfo.Type): Value {
     match (e) {
         ast.ExprNumber(n) => { return number(n, s, expected); },
         ast.ExprBool(b) => { return define(s, 2, [], boolean_value(b.value), "", t_bool()); },
-        ast.ExprString(st) => { return define(s, 5, [], 0, st.value, t_string()); },
+        ast.ExprString(st) => { return string_literal(st, s, expected); },
         ast.ExprIdent(id) => { return ident(e, id, s, expected); },
         ast.ExprStructLit(sl) => { return record(e, sl, s); },
         ast.ExprArray(a) => { return array(e, a, s, expected); },

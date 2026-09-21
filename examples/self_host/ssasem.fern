@@ -445,7 +445,7 @@ function constant_error(ins: ssa.SInst, result: typeinfo.Type): string {
     if (ins.kind_tag == 1 && is_float(result)) { return float_constant_error(ins); }
     if (ins.kind_tag == 1) { return integer_constant_error(ins, result); }
     if (ins.kind_tag == 2 && (!is_bool(result) || (ins.imm != 0 && ins.imm != 1))) { return "boolean constant type or value"; }
-    if (ins.kind_tag == 5 && !is_string(result)) { return "string constant type"; }
+    if (ins.kind_tag == 5 && !is_text(result)) { return "string constant type"; }
     return "";
 }
 
