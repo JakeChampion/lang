@@ -34,6 +34,10 @@ func OptimizeProgram(prog *Program, ptrW int32) {
 	// the others loses a site to it — R7's is the stronger claim, since it
 	// allocates nothing at all (#9735).
 	ScaleF64Maps(prog)
+	// The same kernel for the ndarray shape, gated on the receiver's layout
+	// being PACKED — over a strided handle the walk is not contiguous and the
+	// kernel would read the wrong elements (#9735, #9734's layout analysis).
+	ScaleF64NdarrayMaps(prog, int(ptrW))
 	// Tail-call optimisation: `OpCallDirect <self> ; OpReturn` becomes a
 	// parameter rebind plus `OpBr` back to the entry, so a self-recursive
 	// function runs in O(1) stack instead of growing one frame per call.

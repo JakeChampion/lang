@@ -340,11 +340,24 @@ in-place licence and #9735's kernels need and could not ask for.
 Recognition and both verdicts change nothing. **A verdict of `primitive`
 says the element function is not what stands in the way, and
 `kernel-candidate` says nothing this pass can see would make a planner
-decline the site — neither says that the site lowers to a kernel** — no
-kernel exists for any verb yet.
-Every site still runs the scalar loop, nothing fuses, nothing donates,
-and `internal/ir/ndarray_shapes_test.go` pins that the recogniser
-changes no op.
+decline the site — neither says that the site lowers to a kernel.**
+`internal/ir/ndarray_shapes_test.go` pins that the recogniser changes no
+op, and the layout analysis below changes none either.
+
+One verb now has a kernel. `map` by a scalar `f64` factor over a handle
+the layout analysis proves **packed** becomes
+
+```
+from_flat(__fern_scale_f64(a.data, k), a.shape)
+```
+
+— `internal/ir/ndarray_scale.go`, the std/array kernel of #9735 reached
+through a shape. Packed is what licenses it: `data` IS the reading order,
+so the kernel reads the elements the scalar walk would have visited. Over
+a strided handle the same rewrite computes DIFFERENT numbers rather than
+the same ones faster, which is why the gate is the proof and not the
+verb. Everything else still runs the scalar loop, and nothing fuses or
+donates on this side.
 
 ## 7. Elementwise, and along an axis
 
@@ -440,11 +453,13 @@ Four consequences:
   with the measurements), allocating its own result so no
   sized-array primitive was needed, and chosen over the dot product
   because a reduction may not reassociate (`ARRAY-ALGEBRA.md` §3) while a
-  multiply has nothing to reassociate. `inner` and `outer` are recognized
-  (§6) and lowered as the scalar loop; which of their sites a kernel
-  replaces, and how a site's element functions are proved to be the
-  arithmetic the kernel implements, is not decided here. §1 and §8 say
-  what licenses an in-place elementwise op; nothing here takes it.
+  multiply has nothing to reassociate. The same kernel now reaches the
+  ndarray `map` of that shape over a packed receiver (§6). `inner` and
+  `outer` are recognized (§6) and still lowered as the scalar loop; which
+  of THEIR sites a kernel replaces, and how a site's element functions are
+  proved to be the arithmetic the kernel implements, is not decided here.
+  §1 and §8 say what licenses an in-place elementwise op; nothing here
+  takes it — the ndarray kernel allocates its own result.
 - **In-place through a handle.** The consuming-handle plus unique-storage
   rule in §1 is stated, not implemented; nothing in `std/ndarray` writes.
   §6's layout analysis decides the `is_packed()` conjunct §8 adds to it,
