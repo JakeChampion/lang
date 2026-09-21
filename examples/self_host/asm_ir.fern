@@ -5624,8 +5624,10 @@ function ssa_push_operand(reg_of: i32[], v: i32, s: asmcore.EmitState): asmcore.
 // the usual case once a result and its operand share one — and the
 // destination is written after the last read of the operand.
 //
-// rc_inc's read of the count carries the sanitizer's poison check, as its
-// stub's does; is_unique's stub has none, so neither does this.
+// Every read of the count carries the sanitizer's poison check, as its stub's
+// does — the uniqueness test no less than the retain. A stale reference that
+// lands on the test rather than the retain would otherwise answer "not
+// unique" and go unreported (#9889).
 function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
     s = helper_call_needs(ins.str, s);
     s = ssa_read(reg_of, ins.args[0], "%r11", s);
