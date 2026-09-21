@@ -303,10 +303,12 @@ func coreutilsShardLane(t *testing.T, root string) lane {
 		t.Fatalf("%s no longer lists the whole internal/coreutils package; a test that does "+
 			"not match a narrower pattern would run in no shard, and therefore nowhere", file)
 	}
-	if !strings.Contains(src, "ls coreutils/*.fern") {
+	if !strings.Contains(src, `find coreutils -maxdepth 1 -name '*.fern'`) {
 		t.Fatalf("%s no longer derives its utility list from coreutils/*.fern; an enumerated "+
 			"list goes stale silently, and a utility missing from it is never compiled by "+
-			"the self-host leg in any shard", file)
+			"the self-host leg in any shard. `find` specifically: a bare glob that matches "+
+			"nothing expands to the literal pattern and reaches the -run alternation as a "+
+			"stray `*` rather than tripping the lane's empty check", file)
 	}
 	if !strings.Contains(src, "scripts/shard-tests") {
 		t.Fatalf("%s no longer partitions with scripts/shard-tests, which is what guarantees "+
