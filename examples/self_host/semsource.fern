@@ -2170,11 +2170,33 @@ function declare(st: ast.Stmt, v: ast.StmtVar, s: State): State {
     var after: checker.Scope = checker.bind_stmt(st, s.scope);
     var ty: typeinfo.Type = bound_type(s, v.name, after);
     if (!semtypes.concrete(ty, false)) { ty = closure_slot_type(v.init, s.contracts); }
+    // A CALL names its own result, in the contract the call reads to produce
+    // itself, so an unannotated binding of one needs no type from the checker:
+    // `var m = s.map(f)` on a generic receiver is the shape the checker leaves
+    // unsettled, and the instance the call resolves is what settles it. The
+    // initializer is produced once either way; this arm produces it with no
+    // expectation and takes the value's type as the binding's.
+    if (!semtypes.concrete(ty, false) && is_call(v.init)) { return declare_from_call(v, s, after); }
     if (!semtypes.concrete(ty, false)) { return fail(s, "unresolved type of binding " + v.name + ": " + type_detail(ty)); }
     var init: Value = expr(v.init, s, ty);
     s = init.s;
     if (!s.ok) { return s; }
     if (!semtypes.equal(s.values[init.id], ty)) { return fail(s, mismatch(v.name, ty, s.values[init.id])); }
+    return State { ...bind(s, v.name, init.id), scope: after };
+}
+
+function is_call(e: ast.Expr): boolean {
+    if let ast.ExprCall(_) = e { return true; }
+    return false;
+}
+
+function declare_from_call(v: ast.StmtVar, s: State, after: checker.Scope): State {
+    var init: Value = expr(v.init, s, typeinfo.unchecked());
+    s = init.s;
+    if (!s.ok) { return s; }
+    if (!semtypes.concrete(s.values[init.id], false)) {
+        return fail(s, "unresolved type of binding " + v.name + ": " + type_detail(s.values[init.id]));
+    }
     return State { ...bind(s, v.name, init.id), scope: after };
 }
 

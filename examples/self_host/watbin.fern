@@ -960,9 +960,11 @@ function sat_trunc_opcode(op: string): i32 {
 // These are what the fused vector kernels of ATLAS-PLATFORM-PLAN §3 need, and
 // §3.3a's rule is why they are pinned against wasm-tools rather than typed from
 // a table: the sub-opcode space is DENSE uleb128, so a wrong byte is very often
-// another VALID instruction. Encode i16x8.bitmask (132) as a raw byte and you
-// get f32x4.pmin — the module still validates, still runs, and computes
-// nonsense. All four below happen to be < 128 and so are one byte each, but
+// another VALID instruction. Encode i16x8.bitmask (132) as a raw byte and
+// 0x84's continuation bit makes the decoder swallow the next instruction's
+// first byte too — a malformed module on most streams, and on some one that
+// validates, runs, and computes nonsense. All four below happen to be < 128
+// and so are one byte each, but
 // that is luck, not a rule, which is why simd_opcode returns the index and
 // leb_u32 writes it.
 //

@@ -13,15 +13,26 @@
 // ENCODING SHAPE. Every vector instruction is the prefix byte 0xFD
 // followed by a *uleb128* sub-opcode. The uleb matters: sub-opcodes below
 // 128 are one byte, and the ones at or above it are two (i16x8.bitmask is
-// 132 → 0x84 0x01, not 0x84). Writing the sub-opcode as a raw byte
-// produces a module that decodes as a DIFFERENT instruction rather than
-// failing, which is why the boundary is pinned on both sides in the tests.
+// 132 → 0x84 0x01, not 0x84). A raw byte is not a shorter spelling of the
+// same number: 132 and 242 alike have the uleb continuation bit set, so the
+// decoder reads the NEXT instruction's first byte as part of the sub-opcode.
+// What that yields depends on the byte that follows — usually a malformed
+// module, but where those bytes complete a different valid sub-opcode, an
+// instruction that validates and computes the wrong thing. The second
+// outcome is the silent one, so the boundary is pinned on both sides.
 //
 // The set here is the byte-vector core the string kernels need — load /
 // store, the splats, integer equality, the bitwise ops, and the
-// lane-predicate reductions (any_true / all_true / bitmask). The lane
-// widths beyond i8x16 are included where they are the same table row;
-// they also make the uleb boundary observable.
+// lane-predicate reductions (any_true / all_true / bitmask) — plus the
+// f64x2 splat and multiply the scale_f64 kernel added. The lane widths
+// beyond i8x16 are included where they are the same table row; they also
+// make the uleb boundary observable.
+//
+// This is a hand-written list of the forms kernels have asked for, not a
+// generated table, so each new domain pays per instruction. That is the
+// distinction docs/ATLAS-PLATFORM-PLAN.md §3.4 draws against
+// internal/native/arm64, whose generated tables carry whole classes and
+// so owed nothing for the same kernel.
 package simd
 
 import "github.com/jakechampion/lang/internal/wasm/leb128"
@@ -71,6 +82,23 @@ func InstI8x16Splat(buf []byte) []byte { return put(buf, 15) }
 func InstI16x8Splat(buf []byte) []byte { return put(buf, 16) }
 func InstI32x4Splat(buf []byte) []byte { return put(buf, 17) }
 func InstI64x2Splat(buf []byte) []byte { return put(buf, 18) }
+
+// ---- Float lanes (20, 242) ----
+//
+// The double-lane pair the scale_f64 kernel needs, and the first float
+// vector ops this package carries: everything above it is byte-domain,
+// added for the string kernels. `f64x2.mul` is also the clearest example
+// of this file's uleb hazard — 242 is above 127, so it encodes as two
+// bytes. Written as a raw 0xf2 it swallows whatever byte follows: ahead of
+// an `end` (0x0b) the module is rejected, but ahead of a 0x00 it becomes
+// sub-opcode 114, `i8x16.sub_sat_s`, which validates and runs.
+
+// InstF64x2Splat encodes `f64x2.splat` — the f64 on the stack copied into
+// both lanes.
+func InstF64x2Splat(buf []byte) []byte { return put(buf, 20) }
+
+// InstF64x2Mul encodes `f64x2.mul` — lane-wise multiply of two v128s.
+func InstF64x2Mul(buf []byte) []byte { return put(buf, 242) }
 
 // ---- Integer compares ----
 //

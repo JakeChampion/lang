@@ -101,6 +101,22 @@ func vecCases() []vecCase {
 				return inst.InstDrop(simd.InstI64x2Splat(inst.InstI64Const(b, 0)))
 			},
 		},
+		{
+			name: "f64x2.splat",
+			wat:  "f64.const 0\nf64x2.splat\ndrop\n",
+			enc: func(b []byte) []byte {
+				return inst.InstDrop(simd.InstF64x2Splat(inst.InstF64Const(b, 0)))
+			},
+		},
+		// 242, so the sub-opcode is two uleb bytes. Written as a raw one
+		// it absorbs the byte that follows, which in some streams is a
+		// rejected module and in others a different valid instruction —
+		// the second is what this case exists to refuse.
+		{
+			name: "f64x2.mul",
+			wat:  watLoad + watLoad + "f64x2.mul\ndrop\n",
+			enc:  binary(simd.InstF64x2Mul),
+		},
 	}
 	cases = append(cases,
 		b("i8x16.eq", simd.InstI8x16Eq),
@@ -151,6 +167,12 @@ func TestVectorOpcodes(t *testing.T) {
 		{"i16x8.splat", simd.InstI16x8Splat(nil), []byte{0xfd, 0x10}},
 		{"i32x4.splat", simd.InstI32x4Splat(nil), []byte{0xfd, 0x11}},
 		{"i64x2.splat", simd.InstI64x2Splat(nil), []byte{0xfd, 0x12}},
+		{"f64x2.splat", simd.InstF64x2Splat(nil), []byte{0xfd, 0x14}},
+		// 242 is past the one-byte uleb boundary, so two bytes. A raw
+		// 0xf2 has the continuation bit set and absorbs the byte after it:
+		// 0xf2 0x00 is sub-opcode 114, i8x16.sub_sat_s, which runs. That
+		// is why this is pinned rather than left to the module failing.
+		{"f64x2.mul", simd.InstF64x2Mul(nil), []byte{0xfd, 0xf2, 0x01}},
 		{"i8x16.eq", simd.InstI8x16Eq(nil), []byte{0xfd, 0x23}},
 		{"i8x16.ne", simd.InstI8x16Ne(nil), []byte{0xfd, 0x24}},
 		{"i8x16.lt_u", simd.InstI8x16LtU(nil), []byte{0xfd, 0x26}},
@@ -171,8 +193,10 @@ func TestVectorOpcodes(t *testing.T) {
 		// THE ULEB BOUNDARY. Sub-opcode 127 would be one byte and 128 is
 		// two; every entry below is on the far side of it. Emitting the
 		// sub-opcode as a raw byte instead of a uleb would turn
-		// i16x8.bitmask (132) into 0xfd 0x84 — which is not invalid, it is
-		// f32x4.pmin. Silent, so it is pinned on both sides.
+		// i16x8.bitmask (132) into 0xfd 0x84, and 0x84's continuation bit
+		// makes the decoder read the next instruction's first byte as part
+		// of the sub-opcode. Which failure that is depends on what follows,
+		// and one of them is silent, so it is pinned on both sides.
 		{"i16x8.all_true", simd.InstI16x8AllTrue(nil), []byte{0xfd, 0x83, 0x01}},
 		{"i16x8.bitmask", simd.InstI16x8Bitmask(nil), []byte{0xfd, 0x84, 0x01}},
 		{"i32x4.all_true", simd.InstI32x4AllTrue(nil), []byte{0xfd, 0xa3, 0x01}},
