@@ -144,16 +144,6 @@ func scaleF64Verdict(byName map[string]*Func, fn *Func, c arrayCall) (scaleF64Ma
 	if !ok {
 		return scaleF64Map{}, false
 	}
-	// The receiver has to be pushed BEFORE the range opens, because the
-	// replacement leaves it where it is and pushes only the factor. Nothing
-	// about the element function's position guarantees that: a closure bound
-	// to a variable is built at its `var`, which is before the receiver is
-	// evaluated, so a range opening there would delete the receiver push and
-	// land the kernel on an empty stack.
-	//
-	// The operand stack says it exactly. Between the range opening and the
-	// call, the only thing pushed may be the element function itself — one
-	// value. Two means the receiver is in there too.
 	// Where the replaced range opens. For a constant factor that is the
 	// element function's build; for a captured one it is the push of the
 	// captured value, which the replacement keeps.
@@ -171,6 +161,16 @@ func scaleF64Verdict(byName map[string]*Func, fn *Func, c arrayCall) (scaleF64Ma
 		}
 		open, captured = s, true
 	}
+	// The receiver has to be pushed BEFORE the range opens, because the
+	// replacement leaves it where it is and pushes only the factor. Nothing
+	// about the element function's position guarantees that: a closure bound
+	// to a variable is built at its `var`, which is before the receiver is
+	// evaluated, so a range opening there would delete the receiver push and
+	// land the kernel on an empty stack.
+	//
+	// The operand stack says it exactly. Between the range opening and the
+	// call, the only thing pushed may be the element function itself — one
+	// value. Two means the receiver is in there too.
 	if !scalePushesOnlyTheElement(fn, open, c.op) {
 		return scaleF64Map{}, false
 	}
