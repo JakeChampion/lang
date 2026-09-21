@@ -83,7 +83,7 @@ function main(): i32 {
 		t.Fatalf("runArrayReport: %v", err)
 	}
 	got := out.String()
-	for _, want := range []string{"no std/array pipelines", "std/ndarray operations", "inner  mul, add"} {
+	for _, want := range []string{"no std/array pipelines", "std/ndarray operations", "inner  mul [i64 mul], add [i64 add]"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("report does not mention %q:\n%s", want, got)
 		}
