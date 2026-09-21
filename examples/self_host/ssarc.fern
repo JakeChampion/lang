@@ -1619,6 +1619,15 @@ function tuple_kinds(t: typeinfo.Type): string {
     return out;
 }
 
+// The window copy the runtime hands back aliases every element pointer it
+// copied, so a counted element is retained once per slot — the same retain
+// `sole_owned_base` makes over the same copy.
+function arr_slice(own r: irlower.LowerResult, elem: typeinfo.Type): irlower.LowerResult {
+    r = emit(r, ir.op_arr_slice(elem_width(elem)));
+    if (!ssasem.reference(elem)) { return r; }
+    return emit(r, ir.op_call_direct("__fern_arr_inc_elems", 1));
+}
+
 // A record box is named by its declaration, a variant box by its variant. The
 // declaration index is where wasm reads each field's store width; the register
 // backends store every field as 8 bytes, and every read takes its offset from
@@ -1633,7 +1642,7 @@ function container(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, s
         return emit(r, ir.op_arr_len());
     }
     if (ins.kind_tag == ssasem.slice()) { return emit(r, ir.op_str_slice()); }
-    if (ins.kind_tag == ssasem.arr_slice()) { return emit(r, ir.op_arr_slice(elem_width(elem_type(f.values[ins.result])))); }
+    if (ins.kind_tag == ssasem.arr_slice()) { return arr_slice(r, elem_type(f.values[ins.result])); }
     if (ins.kind_tag == ssasem.str_bytes()) { return emit(r, ir.op_str_bytes()); }
     if (ins.kind_tag == ssasem.arr_sum()) { return emit(r, ir.op_call_direct("__fern_arr_i32_sum", 1)); }
     if (ins.kind_tag == ssasem.arr_product()) { return emit(r, ir.op_call_direct("__fern_arr_i32_product", 1)); }
