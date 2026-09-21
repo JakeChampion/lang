@@ -50,8 +50,10 @@ func TestSelfHostMapMemsetFreeIRProbeX86_64(t *testing.T) {
 	}
 	report := string(out)
 
-	// The __memset / __free users — must flip to "ir" now that both intrinsics lower.
-	for _, fn := range []string{"map__map_new_impl", "map____map_grow", "map____map_clear_impl"} {
+	// The __memset / __free users — must flip to "ir" now that both intrinsics
+	// lower. Named bare rather than `map__…`: core/map's helpers keep their
+	// names in the bundle under both compilers since #9608.
+	for _, fn := range []string{"map_new_impl", "__map_grow", "__map_clear_impl"} {
 		if !strings.Contains(report, fn+": ir") {
 			t.Errorf("%s did not route ir after __memset + __free lowering.\nreport:\n%s", fn, report)
 		}

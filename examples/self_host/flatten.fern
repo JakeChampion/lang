@@ -55,9 +55,9 @@ import "./astwalk";
 // TestOutcome). The self-host compiler's own modules sidestep this by
 // always qualifying (`ast.ExprIdent`), so this only widens what
 // downstream code can spell, never changing existing resolution.
-// declnames_mangled is the precomputed `prefix + "__" + declnames[i]` parallel to
-// declnames, so a bare own-decl reference resolves to a SHARED string instance
-// (like ivar_mangled) instead of re-concatenating `prefix + "__" + name` on every
+// declnames_mangled is the precomputed mangled_name(prefix, declnames[i])
+// parallel to declnames, so a bare own-decl reference resolves to a SHARED
+// string instance (like ivar_mangled) instead of re-deriving the name on every
 // occurrence. This reduces the allocation the mangle pass performs at its dominant
 // churn site (#4394 lever 1 names mangle_bare as such a site — see
 // docs/SELFHOST-SYMBOL-INTERNING.md); the emitted bytes are unchanged.
@@ -122,13 +122,45 @@ function declname_index_of(name: string, ctx: RewriteCtx): i32 {
     return 0 - 1;
 }
 
-// build_mangled_names precomputes `prefix + "__" + names[i]` for each name — the
-// shared mangled instances a bare own-decl reference resolves to.
+// is_runtime_helper_name reports whether a decl keeps its BARE name in the
+// bundle instead of taking its module's `<mod>__` prefix — native's
+// `modload.isRuntimeHelperName`, which `internal/e2eselfhost` pins entry for
+// entry.
+//
+// `core/map`'s helpers are the whole set. The language has no generic method on
+// a generic struct, so the Map surface is declared as concrete `_impl`
+// functions and every backend routes `map_new` / `__method_Map_get` onto them
+// through one alias table (`ir.CodegenAliases`) — which can only name a
+// function ONE way, so the two compilers have to agree about the symbol. They
+// did not: `map.__map_pow2_ceil` resolved here and nowhere else (#9608).
+//
+// Native also exempts `__method_*`; this does not, and the difference is
+// deliberate. The self-host resolves an auto-discovered `__method_Array_<f>`
+// by SUFFIX over both the bare and the `<mod>__`-mangled spelling (checker's
+// `am_prefix` family), so exempting it would move every stdlib method's symbol
+// for no gain here. That is a divergence to close when something needs it, not
+// a side effect to take now.
+pub function is_runtime_helper_name(name: string): boolean {
+    if (name == "map_new_impl") { return true; }
+    if (name.len() >= 6 && slice_unchecked(name, 0, 6) == "__map_") { return true; }
+    if (name.len() >= 10 && slice_unchecked(name, 0, 10) == "__mapiter_") { return true; }
+    return false;
+}
+
+// mangled_name is `prefix + "__" + name`, or `name` itself for a runtime
+// helper — how a DECL is renamed, and how a bare reference to one resolves.
+pub function mangled_name(prefix: string, name: string): string {
+    if (is_runtime_helper_name(name)) { return name; }
+    return prefix + "__" + name;
+}
+
+// build_mangled_names precomputes mangled_name(prefix, names[i]) for each name
+// — the shared mangled instances a bare own-decl reference resolves to.
 function build_mangled_names(prefix: string, names: string[]): string[] {
     var out: string[] = [];
     var i: i32 = 0;
     while (i < names.len()) {
-        out = out.append(prefix + "__" + names[i]);
+        out = out.append(mangled_name(prefix, names[i]));
         i = i + 1;
     }
     return out;
@@ -335,8 +367,8 @@ function module_ids(imports: LoadedModule[]): string[] {
 // mangle_bare maps a bare reference name to its own-module mangled
 // form when it names one of this module's top-level decls.
 function mangle_bare(name: string, ctx: RewriteCtx): string {
-    // Own decl → its precomputed shared mangled instance (declnames_mangled is
-    // `prefix + "__" + declnames[i]`), avoiding a fresh concat per occurrence.
+    // Own decl → its precomputed shared mangled instance, avoiding a fresh
+    // concat per occurrence.
     var di: i32 = declname_index_of(name, ctx);
     if (di >= 0 && di < ctx.declnames_mangled.len()) { return ctx.declnames_mangled[di]; }
     // A bare reference to one of this module's imported enum variants
@@ -503,6 +535,12 @@ pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
                 ast.ExprIdent(id) => {
                     if (is_in(id.name, ctx.modnames)) {
                         // Alias-aware: `io.foo` -> `io_buffered__foo`.
+                        // `prefix + "__"` and NOT mangled_name: native mangles a
+                        // qualified reference blindly, so `map.__map_pow2_ceil`
+                        // resolves under neither compiler while the bare
+                        // spelling resolves under both. A runtime helper is not
+                        // public API, and matching native exactly is worth more
+                        // here than opening a spelling only this compiler takes.
                         var mangled: string = lookup_reexport(resolve_prefix(id.name, ctx) + "__" + fa.field, ctx);
                         // `ty: ""` and not `id.ty`: the result names a module-qualified
                         // FUNCTION, so the module ident's own tag says nothing about it.
