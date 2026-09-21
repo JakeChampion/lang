@@ -129,6 +129,19 @@ func scaleF64Verdict(byName map[string]*Func, fn *Func, c arrayCall) (scaleF64Ma
 	if !ok {
 		return scaleF64Map{}, false
 	}
+	// The receiver has to be pushed BEFORE the range opens, because the
+	// replacement leaves it where it is and pushes only the factor. Nothing
+	// about the element function's position guarantees that: a closure bound
+	// to a variable is built at its `var`, which is before the receiver is
+	// evaluated, so a range opening there would delete the receiver push and
+	// land the kernel on an empty stack.
+	//
+	// The operand stack says it exactly. Between the range opening and the
+	// call, the only thing pushed may be the element function itself — one
+	// value. Two means the receiver is in there too.
+	if !scalePushesOnlyTheElement(fn, first, c.op) {
+		return scaleF64Map{}, false
+	}
 	// A capture could make the factor differ per element, and the kernel
 	// takes one scalar. The runtime guard R7 leans on does not exist here —
 	// there is nothing to guard — so this is a static requirement.
@@ -201,6 +214,31 @@ func constantF64Factor(byName map[string]*Func, name string) (float64, bool) {
 		}
 	}
 	return k, sawReturn
+}
+
+// scalePushesOnlyTheElement reports whether the span from the range's opening
+// to the call pushes exactly one value and never reads below where it
+// started. That one value is the element function, which is what makes the
+// range safe to delete: the receiver is already on the stack beneath it and
+// the replacement puts the factor in the element function's place.
+//
+// It reuses flatten.go's opStackEffect, so an op the table does not model
+// declines the site rather than being counted as nothing.
+func scalePushesOnlyTheElement(fn *Func, first, call int) bool {
+	depth := 0
+	for k := first; k < call; k++ {
+		pops, pushes, ok := ndarrayOpEffect(fn.Ops[k])
+		if !ok {
+			return false
+		}
+		if depth -= pops; depth < 0 {
+			// Reads a value pushed before the range, so deleting the range
+			// would take something the call still needs.
+			return false
+		}
+		depth += pushes
+	}
+	return depth == 1
 }
 
 // scaleElement names the element function and says where the replaced range
