@@ -1424,6 +1424,14 @@ function reinterprets(from: typeinfo.Type, to: typeinfo.Type): boolean {
 // wrap for the address. The floats are not here: the address reaches one
 // through the 64-bit integer the source writes, and a direct conversion would
 // need the same pairing again in the float domain.
+// Whether `e as T` names a DESTINATION rather than a conversion. The
+// conversion vocabulary converts to an integer, a char or a float and to
+// nothing else, so any other target is the operand's own type written down —
+// an ascription, which is the identity.
+pub function cast_ascribes(to: typeinfo.Type): boolean {
+    return !converts_as_integer(to) && !is_float(to);
+}
+
 pub function cast_admits(from: typeinfo.Type, to: typeinfo.Type): boolean {
     if (reinterprets(from, to)) { return true; }
     if (is_usize(from)) { return converts_as_integer(to); }

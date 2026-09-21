@@ -872,6 +872,43 @@ function main(): i32 {
     print(b.v + "/" + c.v);
     return b.v.len();
 }`},
+	// `e as T` reaches `semsource.cast` as a unary naming T, and the operand
+	// was evaluated with no destination at all — so `[] as i32[]` asked an
+	// empty literal to name its own type and refused `unresolved array literal
+	// type`, although T was in hand two lines down. Supplying it was not
+	// enough on its own: `cast_admits` covers the usize/reference
+	// reinterpretation and the numeric conversions and nothing else, so the
+	// identity `i32[] as i32[]` refused on the cast contract instead.
+	//
+	// One rule answers both. A target the conversion vocabulary does not
+	// convert TO is an ASCRIPTION — T is the operand's own type written down —
+	// so T is the operand's destination, and a value already at T passes
+	// through unchanged. A numeric target stays a conversion, which is what
+	// `widen` pins: 260 as u8 is still 4, not 260.
+	//
+	// One such line held `examples/tests/ndarray_test` at 0 of 254: the
+	// refusal left an AST-built function value behind, and
+	// `semlower.ast_value_call` then refused the runner's `it` for calling a
+	// value of matching arity, taking every test in the file with it (#9940).
+	{name: "an-ascription-names-a-destination", atLeast: 3, noLeak: true, src: `
+function total(xs: i32[]): i32 {
+    var s: i32 = 0;
+    for x in xs { s = s + x; }
+    return s;
+}
+
+function widen(n: i32): i32 {
+    return (n as u8) as i32;
+}
+
+function main(): i32 {
+    var empty: i32[] = [] as i32[];
+    var held: i32[] = [4, 5] as i32[];
+    var opt: Option[i32] = None as Option[i32];
+    var seen: i32 = 0;
+    match (opt) { Some(v) => { seen = v; }, None => { seen = 1; } }
+    return total(empty) + total(held) + total([6, 7] as i32[]) + widen(260) + seen;
+}`},
 	// Two levels of value-position if, the inner arm a boolean call. The
 	// outer IIFE returns the CALL of the inner one, which the checker types
 	// from the inner declaration's tag — `if_expr_rt`'s concrete `i32` guess —
