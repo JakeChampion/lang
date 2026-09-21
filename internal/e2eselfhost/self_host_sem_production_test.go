@@ -795,6 +795,51 @@ function main(): i32 {
     }
     return total % 1000;
 }`},
+	// A generic-struct method whose receiver is a CALL RESULT. `map[T, U]`
+	// declares type parameters of its own, so it is folded into the free
+	// generic `__smm_<Base>_map` and the method is DROPPED; `mono_expr`
+	// rewrites `recv.map(f)` onto the fold, gated on the receiver's inferred
+	// spelling being a bracketed instantiation. `recv_method_ret_of` answered
+	// with the chained method's DECLARED return — `NdArray[T]`, the receiver's
+	// own `[i32]` never substituted in — so the gate failed, the call kept a
+	// method spelling whose declaration had been dropped, and the module did
+	// not build on EITHER leg: `call to unknown symbol
+	// ndarray__NdArray__i32.map`. Binding the receiver to a name first was
+	// enough to compile it, which is what pinned the cause (#9927).
+	{name: "a-chained-receiver-keeps-its-instantiation", atLeast: 20, noLeak: true, src: `
+import "std/ndarray" as ndarray;
+
+function main(): i32 {
+    var a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4], [2, 2]);
+    var m: ndarray.NdArray[i32] = a.transpose().map((x: i32): i32 => x * 2);
+    return m.get([1, 1]);
+}`},
+	// The sibling root, one layer in. `map_rank[T, U](k: i32, f: (NdArray[T])
+	// => NdArray[U])` pins U only inside the callback's BRACKETED return, and
+	// `infer_inst` gated its fn-return recovery on the return BEING a bare
+	// type parameter — so U never bound and this module did not build either.
+	// `bind_unify` already descends into a bracketed spelling; only the gate
+	// was wrong.
+	//
+	// What this row pins is that the module COMPILES AND ANSWERS, not that it
+	// produces: the typed path still refuses all of it (0 of 28) behind the
+	// `calls a function value of N arguments` mixing rule, which is a separate
+	// leaf. So `atLeast` is 0 deliberately and there is no `noLeak` — both legs
+	// hold the same 1232 bytes here, because the typed leg IS the AST leg on
+	// this program. Before the fix the harness cannot get past the compile at
+	// all, which is what makes the row fail.
+	{name: "a-callbacks-return-pins-the-methods-own-variable", atLeast: 0, src: `
+import "std/ndarray" as ndarray;
+
+function sum_cell(c: ndarray.NdArray[i32]): ndarray.NdArray[i32] {
+    return ndarray.from_flat([c.fold_all(0, (acc: i32, x: i32): i32 => acc + x)], []);
+}
+
+function main(): i32 {
+    var a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5, 6], [2, 3]);
+    var sums: ndarray.NdArray[i32] = a.map_rank(1, sum_cell);
+    return sums.get([1]);
+}`},
 	// Two levels of value-position if, the inner arm a boolean call. The
 	// outer IIFE returns the CALL of the inner one, which the checker types
 	// from the inner declaration's tag — `if_expr_rt`'s concrete `i32` guess —
