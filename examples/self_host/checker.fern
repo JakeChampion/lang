@@ -4810,7 +4810,14 @@ function type_from_ref_names(r: parser.TypeRef, struct_names: string[], union_na
     }
     for uname in union_names {
       if (uname == r.base) {
-        return t_union(r.base);
+        // Same for a generic ENUM, and for the same reason: a spelling that
+        // drops the argument names the GENERIC, which the enum monomorphiser
+        // has dropped by the time anything reads it back.
+        var uinst: typeinfo.Type[] = [];
+        for arg in r.args {
+          uinst = uinst.append(type_from_ref_names(arg, struct_names, union_names));
+        }
+        return t_union_g(r.base, uinst);
       }
     }
   }

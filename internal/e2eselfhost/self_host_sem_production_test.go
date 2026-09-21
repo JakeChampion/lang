@@ -937,6 +937,42 @@ function main(): i32 {
     if (!pos) { return 0; }
     return joined.len() + last;
 }`},
+	// A generic ENUM's type arguments were dropped where the generic STRUCT
+	// arm right beside them kept theirs: `type_from_ref_names` answered
+	// `t_union(r.base)` for `Box[i32]`, so the checker typed it as the bare
+	// `Box`. Anything reading that spelling back names the GENERIC, which the
+	// enum monomorphiser has dropped by then — here the return `inferred_
+	// lambda_ret` stamps on a hoisted closure, which reached semsource as
+	// `unresolved result type: declared Box` and took the whole module with
+	// it through `call target has no semantic contract: <fn>$clo0`.
+	//
+	// The struct arm's own comment already gives the reason to carry them,
+	// and the reserved-enum arm above carries them too; the user enum was the
+	// one shape left name-only. Assignability still ignores union args, so it
+	// is checker-behaviour-neutral in the same way those are.
+	//
+	// `examples/tests/sim_driver_test` went 0 of 180 to 180 of 180 on this —
+	// std/sim's `__pend[T](tok, next: async.Future[T])` returns
+	// `Pending(tok, (woken: i32) => next)`, which is this program with more
+	// around it.
+	{name: "a-generic-enum-keeps-its-arguments", atLeast: 3, noLeak: true, src: `
+enum Box[T] {
+    Now(T),
+    Later(i32, (i32) => Box[T])
+}
+
+function hold[T](tok: i32, next: Box[T]): Box[T] {
+    return Later(tok, (w: i32) => next);
+}
+
+function main(): i32 {
+    var b: Box[i32] = hold(3, Now(7));
+    match (b) {
+        Now(v) => { return v; },
+        Later(t, k) => { return t + 100; }
+    }
+    return 0;
+}`},
 	// Two levels of value-position if, the inner arm a boolean call. The
 	// outer IIFE returns the CALL of the inner one, which the checker types
 	// from the inner declaration's tag — `if_expr_rt`'s concrete `i32` guess —
