@@ -374,13 +374,19 @@ map        elementwise  __closure_lambda_1
   rather than the scalar loop (#9735)
 ```
 
-R7 is asked first, because the battery runs it first and a donated
-buffer is the stronger answer — it allocates nothing, where the kernel
-allocates one. So `reused` wins over `scale-kernel` wherever both would
-apply. Both verdicts come from the planner that performs the rewrite —
-`scaleF64Verdict` here, as `inPlaceVerdict` above — so neither can claim
-a rewrite the pass did not perform, and a test holds the count of stages
-reported as the kernel's to the number of sites the pass rewrites.
+The two planners take disjoint stages today, so the report never has to
+choose between them: R7 only takes 8-byte integer elements, and the
+kernel only takes f64, so no site can earn both verdicts. The report
+still asks R7 first and keeps `reused` when it answers — the battery runs
+R7 first, and a donated buffer is the stronger answer, since it allocates
+nothing where the kernel allocates one — but that gate decides nothing
+that is reachable. `TestR7AndTheScaleKernelTakeDisjointStages` pins the
+disjointness from both sides; if either planner widens, it fails, and the
+ordering has to be read again for real. Both verdicts come from the
+planner that performs the rewrite — `scaleF64Verdict` here, as
+`inPlaceVerdict` above — so neither can claim a rewrite the pass did not
+perform, and a test holds the count of stages reported as the kernel's to
+the number of sites the pass rewrites.
 
 The same report lists `std/ndarray`'s algebra — `ARRAY-SHAPES.md` §7's
 eight operations, the ones handed a function — as recognized shapes

@@ -77,20 +77,61 @@ function main(): i32 {
 	}
 }
 
-// R7 runs first and keeps what it takes: a donated buffer is reported as
-// donated, never as the kernel's.
-func TestArrayReportPrefersR7OverTheKernel(t *testing.T) {
-	got := storageTags(t, `function dbl(x: i64): i64 { return x * (2 as i64); }
+// R7 and the kernel take DISJOINT stages today, so the precedence between
+// them is unexercised — R7 wants 8-byte integer elements and the kernel wants
+// f64, and no stage is both.
+//
+// The earlier version of this test claimed to pin the precedence and could
+// not fail on it: its fixture was an `own i64[]` map, which the kernel
+// declines on type whatever the ordering gate says. Removing the gate left it
+// passing. Found by the review on #9921.
+//
+// So this pins the disjointness instead, from both sides. If either planner
+// widens — R7 to f64, or the kernel to integers — this fails and the ordering
+// gate in ArrayStorageVerdicts has to be re-read, because it would start
+// deciding something.
+func TestR7AndTheScaleKernelTakeDisjointStages(t *testing.T) {
+	const ownI64 = `import "std/array";
+function dbl(x: i64): i64 { return x * (2 as i64); }
 function twice(own xs: i64[]): i64[] { return xs.map((x: i64): i64 => dbl(x)); }
 function main(): i32 {
   var ys: i64[] = twice([1 as i64, 2 as i64]);
   return ys[0] as i32;
-}`)
-	if got["reused"] != 1 {
-		t.Fatalf("%d stages reported reused, want 1 — this test no longer sets up the precedence it tests: %v", got["reused"], got)
+}`
+	const ownF64 = `import "std/array";
+function twice(own xs: f64[]): f64[] { return xs.map((x: f64): f64 => x * 2.0); }
+function main(): i32 {
+  var ys: f64[] = twice([1.0, 2.0]);
+  return ys[0] as i32;
+}`
+
+	// R7's side: it takes the i64 stage, and the kernel does not.
+	p := lowerPipelineSrc(t, ownI64)
+	tags := map[string]int{}
+	for _, v := range ir.ArrayStorageVerdicts(p) {
+		tags[v.Tag()]++
 	}
-	if got["scale-kernel"] != 0 {
-		t.Errorf("%d stages reported scale-kernel over a donated buffer, want 0", got["scale-kernel"])
+	if tags["reused"] != 1 {
+		t.Errorf("R7 reports %d reused stages over an own i64 map, want 1: %v", tags["reused"], tags)
+	}
+	if n := ir.ScaleF64Maps(lowerPipelineSrc(t, ownI64)); n != 0 {
+		t.Errorf("the kernel took %d stages of an own i64 map, want 0 — the domains are no longer disjoint", n)
+	}
+
+	// The kernel's side: it takes the f64 stage, and R7 does not.
+	q := lowerPipelineSrc(t, ownF64)
+	tags = map[string]int{}
+	for _, v := range ir.ArrayStorageVerdicts(q) {
+		tags[v.Tag()]++
+	}
+	if tags["scale-kernel"] != 1 {
+		t.Errorf("the kernel reports %d stages over an own f64 map, want 1: %v", tags["scale-kernel"], tags)
+	}
+	if tags["reused"] != 0 {
+		t.Errorf("R7 reports %d reused stages over an own f64 map, want 0 — the domains are no longer disjoint", tags["reused"])
+	}
+	if n := ir.MapOwnedArrayInPlace(lowerPipelineSrc(t, ownF64), 8); n != 0 {
+		t.Errorf("R7 took %d stages of an own f64 map, want 0 — the domains are no longer disjoint", n)
 	}
 }
 
