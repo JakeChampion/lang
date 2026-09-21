@@ -353,10 +353,15 @@ func TestSelfHostIRLowerRoundTrip(t *testing.T) {
 			t.Fatalf("-dump -lifted printed nothing (exit %d)", code)
 		}
 		// The lambda reached the call as a function value, which is what the
-		// lift produces and what a raw lowering never gets to.
-		if !strings.Contains(got, "const_func") {
-			t.Errorf("no const_func in the dumped stream, so the lambda did not "+
-				"reach the call as a function value:\n%s", got)
+		// lift produces and what a raw lowering never gets to. Either spelling
+		// counts: this lambda captures nothing, so its box is a compile-time
+		// constant and lowers to `const_closure` rather than to `const_func`
+		// plus a one-element `arr_make` (#9839). What is being asserted is that
+		// a function value reached the call, not which of the two forms carries
+		// it — a capturing lambda in the same position still takes the second.
+		if !strings.Contains(got, "const_func") && !strings.Contains(got, "const_closure") {
+			t.Errorf("no const_func or const_closure in the dumped stream, so the lambda "+
+				"did not reach the call as a function value:\n%s", got)
 		}
 		if !strings.Contains(got, "call_direct __method_Array_map/2") {
 			t.Errorf("no map call in the dumped stream:\n%s", got)
