@@ -88,6 +88,16 @@ function declared `MapIter[K, V]` took the self-host down with `fern: array
 index out of range` and a backtrace. A construct that does not lower is a
 diagnostic, never a backtrace.
 
+**A container carries the cursor exactly as far**, and the first cut of the
+refusal read only the result's own type, so `MapIter[K, V][]` was produced —
+two of two declarations, answering — while the bare form was refused. The
+container is worse than the bare one: `array_new` is no projection, so the
+array has no anchor edge to the map at all. The refusal walks the whole result
+shape now. A tuple holding a cursor is refused the same way, and is the one
+form with no differential row, because the AST leg declines it outright
+("module is not IR-eligible") and a differential row needs an oracle that
+runs.
+
 Native compiles the same program and answers 0 where the AST lowering answers
 7: it reclaims the map at the producer's exit and the caller reads a freed
 column header, which reports empty rather than faulting. The AST leg answers

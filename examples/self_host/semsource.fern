@@ -3565,8 +3565,10 @@ function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Cont
     if (ssasem.is_view(s.result)) { return refuse("view result escapes its source"); }
     // A cursor escapes the same way, and worse: it is anchored to a map this
     // frame may own, so a returned one outlives the columns it reads. The
-    // anchor keeps the map live only within the frame that holds it.
-    if (semtypes.is_map_iter(s.result)) { return refuse("cursor result escapes its map"); }
+    // anchor keeps the map live only within the frame that holds it, and a
+    // container carries the cursor exactly as far, so the whole result shape
+    // is what has to be clear of one.
+    if (semtypes.holds_map_iter(s.result)) { return refuse("cursor result escapes its map"); }
     s = parameters(fd, s);
     s = stmts(fd.body, s);
     return complete(fd, s, name);

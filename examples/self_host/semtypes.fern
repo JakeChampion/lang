@@ -203,6 +203,23 @@ pub function is_map_iter(t: typeinfo.Type): boolean {
     return false;
 }
 
+// A cursor ANYWHERE inside a type. A result carries one out of the frame whose
+// map it reads, and a container result carries it just as far as the cursor
+// itself does: `MapIter[K, V][]` and a tuple holding one both leave the map
+// behind. The walk is the type's own shape, so it does not depend on the
+// record schema refusing a cursor field separately.
+pub function holds_map_iter(t: typeinfo.Type): boolean {
+    if (is_map_iter(t)) { return true; }
+    if let typeinfo.TypeArray(a) = t { return holds_map_iter(a.elem); }
+    if let typeinfo.TypeTuple(tup) = t {
+        for e in tup.elements { if (holds_map_iter(e)) { return true; } }
+        return false;
+    }
+    if (is_cell(t)) { return holds_map_iter(cell_elem(t)); }
+    if let typeinfo.TypeMap(m) = t { return holds_map_iter(m.key) || holds_map_iter(m.value); }
+    return false;
+}
+
 // The key and value a cursor answers, read off the nominal's arguments.
 pub function map_iter_key(t: typeinfo.Type): typeinfo.Type {
     if let typeinfo.TypeStruct(s) = t { if (s.args.len() == 2) { return s.args[0]; } }
