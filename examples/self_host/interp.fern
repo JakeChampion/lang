@@ -1323,6 +1323,31 @@ function eval_binary(op: string, lv: Value, rv: Value): Value {
     return v_err("unknown binary op: " + op);
 }
 
+// f64_trunc_u32 truncates a float toward zero into the 32-bit UNSIGNED range,
+// returning the pattern in the i32 carrier a VUint holds. Saturating, which is
+// what the compiled paths emit (f64_to_u32: fcvtzu / i32.trunc_sat_f64_u): a
+// negative source and NaN answer 0 rather than their two's-complement bits, and
+// a source at or above 2^32 answers u32::MAX. Signed truncation read as
+// unsigned gave `-1.0 as u32` 4294967295 and `1e10 as u32` 0 (#9912).
+function f64_trunc_u32(v: f64): i32 {
+    if (v >= 4294967296.0) { return 0 - 1; }
+    if (v >= 0.0) { return (v as i64) as i32; }
+    return 0;
+}
+
+// f64_trunc_u64 is f64_trunc_u32's 64-bit twin, returning the pattern as an
+// i64. The band [2^63, 2^64) cannot go through `as i64` — that saturates at
+// i64::MAX — so it is converted below 2^63 and the top bit is put back.
+function f64_trunc_u64(v: f64): i64 {
+    if (v >= 18446744073709551616.0) { return ((0 as u64) - (1 as u64)) as i64; }
+    if (v >= 9223372036854775808.0) {
+        var q: i64 = (v - 9223372036854775808.0) as i64;
+        return ((q as u64) | ((1 as u64) << (63 as u64))) as i64;
+    }
+    if (v >= 0.0) { return v as i64; }
+    return 0;
+}
+
 // eval_unary applies a unary operator to an already-evaluated
 // operand. Pure in (op, ov) — extracted from eval_expr's ExprUnary
 // arm, mirroring eval_binary (SH-048).
@@ -1352,16 +1377,18 @@ function eval_unary(op: string, ov: Value): Value {
     // `as u8` / `as byte` truncate to the low 8 bits at runtime (native masks
     // the value, e.g. `(255 + 1) as u8 == 0`) — the interp previously returned
     // the operand unchanged, so a u8 cast was a no-op (#4348 item 3, cast
-    // slice). u8 is the only sub-i32 integer type in the language, so this is
-    // the whole runtime-truncation surface. (An out-of-range u8 *literal* is a
-    // separate compile-time E047, not a runtime concern here.)
+    // slice). A FLOAT source saturates into the unsigned range before that mask
+    // (f64_trunc_u32), so `-1.0 as u8` is 0 and not the 255 its two's-complement
+    // low byte gives. u8 is the only sub-i32 integer type in the language, so
+    // this is the whole runtime-truncation surface. (An out-of-range u8
+    // *literal* is a separate compile-time E047, not a runtime concern here.)
     if (op == "as_u8" || op == "as_byte") {
         match (ov) {
             VInt(i) => { return v_int(i.v & 255); },
             VInt64(i) => { return v_int((unpack_i64(i) & 255) as i32); },
             VUint(u) => { return v_int(u.v & 255); },
-            VFloat(f) => { return v_int((f.v as i32) & 255); },
-            VFloat32(f) => { return v_int((f.v as i32) & 255); },
+            VFloat(f) => { return v_int(f64_trunc_u32(f.v) & 255); },
+            VFloat32(f) => { return v_int(f64_trunc_u32(f.v) & 255); },
             _ => { return v_err("`as` integer cast operand not numeric"); }
         }
     }
@@ -1379,16 +1406,17 @@ function eval_unary(op: string, ov: Value): Value {
             _ => { return v_err("`as` integer cast operand not numeric"); }
         }
     }
-    // `as u32` is the same 32-bit narrowing but tags the pattern unsigned
-    // (a float truncates through i64 first so a value above i32.max keeps
-    // its low 32 bits, matching native's cvttsd2si + 32-bit mask).
+    // `as u32` is the same 32-bit narrowing but tags the pattern unsigned. A
+    // float source is the unsigned SATURATING truncation instead (see
+    // f64_trunc_u32), since an unsigned destination has no sign bit for a
+    // negative source to wrap into.
     if (op == "as_u32") {
         match (ov) {
             VInt(i) => { return v_uint(i.v); },
             VInt64(i) => { return v_uint(i.lo); },
             VUint(u) => { return ov; },
-            VFloat(f) => { return v_uint((f.v as i64) as i32); },
-            VFloat32(f) => { return v_uint((f.v as i64) as i32); },
+            VFloat(f) => { return v_uint(f64_trunc_u32(f.v)); },
+            VFloat32(f) => { return v_uint(f64_trunc_u32(f.v)); },
             _ => { return v_err("`as` integer cast operand not numeric"); }
         }
     }
@@ -1404,8 +1432,8 @@ function eval_unary(op: string, ov: Value): Value {
             VInt(i) => { if (uns) { return v_uint64(i.v as i64); } return v_int(i.v); },
             VInt64(i) => { return v_wide(unpack_i64(i), uns); },
             VUint(u) => { if (uns) { return v_uint64(uint_zext(u.v)); } return box_i64(uint_zext(u.v)); },
-            VFloat(f) => { return v_wide(f.v as i64, uns); },
-            VFloat32(f) => { return v_wide(f.v as i64, uns); },
+            VFloat(f) => { if (uns) { return v_wide(f64_trunc_u64(f.v), uns); } return v_wide(f.v as i64, uns); },
+            VFloat32(f) => { if (uns) { return v_wide(f64_trunc_u64(f.v), uns); } return v_wide(f.v as i64, uns); },
             _ => { return v_err("`as` integer cast operand not numeric"); }
         }
     }
