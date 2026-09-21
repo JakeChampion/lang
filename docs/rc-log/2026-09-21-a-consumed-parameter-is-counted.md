@@ -138,6 +138,16 @@ inc/dec for a container whose payload goes to a lent slot.
   analysis fits there and why both sides read one table by construction —
   native maintains that agreement by convention across `paramOwnedByDefault`
   and `calleeParamOwnedByDefault`.
+- **A reader's mode is not census-observable.** Counting a parameter the body
+  only reads costs a retain and a release per call and allocates exactly what
+  borrowing allocates, so no allocation bound can tell the two apart — the
+  reader case pins correctness and reclamation, not the mode. That cost is
+  what the bench corpus reads, and it is how rung 1 was found. The mode itself
+  is legible in the emitted code: a counted reference parameter carries the
+  callee's release, so `__sem_drop_<T>` is called inside the callee and a
+  borrowed one has no such call. `modes-in-the-emitted-code` asserts both
+  directions from one compilation, so the marker is proven present before its
+  absence is read as an answer.
 - **A test that passes either way is not a gate.** The receiver case took three
   attempts. `Holder { tag: h.tag, items: h.items.with(at, v) }` allocates 32
   either way, because `projection_root` already admits a borrowed parameter as

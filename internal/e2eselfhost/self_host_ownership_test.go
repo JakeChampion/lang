@@ -1,7 +1,9 @@
 package e2eselfhost
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -13,11 +15,13 @@ import (
 // into a cell or a map, or passed to a slot its callee counts. Everything else
 // borrows, because the caller's retain and the callee's release would cancel.
 //
-// What each case measures is the allocation census, because that is what the
-// two conventions differ on. A borrowed parameter cannot be reclaimed by the
-// frame that reads it, so a rebuild through one copies its buffer on every
-// update; a counted one arrives uniquely held and the update lands in place.
-// Correctness is the exit code, checked against the interpreter first.
+// What each CONSUMING case measures is the allocation census, because that is
+// what the two conventions differ on there. A borrowed parameter cannot be
+// reclaimed by the frame that reads it, so a rebuild through one copies its
+// buffer on every update; a counted one arrives uniquely held and the update
+// lands in place. Correctness is the exit code, checked against the
+// interpreter first. A reader allocates the same either way, so its mode is
+// read off the emitted code instead (modes-in-the-emitted-code).
 //
 // The `NO own` in the consuming cases is the point. Every one of these shapes
 // reclaimed only when the stdlib or the program spelled `own` before this;
@@ -108,7 +112,11 @@ function main(): i32 {
 	// `weigh` never lets its argument leave the frame — the string payload is
 	// only measured — so counting it would add a retain and a release per call
 	// and reclaim nothing that the caller's own temp path does not already.
-	// The census pins that the caller still reclaims each fresh argument.
+	//
+	// What this case pins is that the caller still reclaims each fresh
+	// argument: no leak, no over-release. It does NOT pin the mode, because
+	// the two conventions allocate identically for a reader. The mode itself
+	// is asserted from the emitted code, in modes-in-the-emitted-code below.
 	{"reader-parameter-stays-borrowed", `enum Node { Leaf(i32), Label(string), Empty }
 @noinline
 function weigh(n: Node): i32 {
@@ -177,5 +185,101 @@ func TestSelfHostOwnershipInference(t *testing.T) {
 				})
 			}
 		})
+	}
+	t.Run("modes-in-the-emitted-code", func(t *testing.T) {
+		assertInferredModes(t, runner, fernBin, stdlibRoot)
+	})
+}
+
+// A reader's mode is not census-observable: a parameter the callee only reads
+// costs a retain and a release per call and reclaims nothing, so counting it
+// wrongly changes the instruction count and nothing the allocation census can
+// see. (That cost is what the bench corpus reads — it is how the type rung was
+// found, at 1.049x on `ascii_scan`.) The mode itself is legible in the emitted
+// code instead: a COUNTED reference parameter carries the callee's release, so
+// its drop function is called inside the callee; a borrowed one is not.
+//
+// Both directions are asserted from ONE compilation, so the marker is proven
+// present before its absence is read as an answer: `hands_back` returns its
+// parameter and must drop, `reads_only` must not.
+const inferredModesProgram = `enum Node { Leaf(i32), Label(string), Empty }
+@noinline
+function reads_only(n: Node): i32 {
+    match (n) { Leaf(v) => { return v * 2; }, Label(s) => { return s.len(); }, Empty => { return 0; } }
+}
+@noinline
+function hands_back(n: Node, v: i32): Node {
+    match (n) { Leaf(_) => { return Leaf(v); }, Label(s) => { return Label(s); }, Empty => { return n; } }
+}
+@noinline
+function make(k: i32): Node {
+    if (k % 3 == 0) { return Leaf(k); }
+    if (k % 3 == 1) { return Label("a" + "bc"); }
+    return Empty;
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while (i < 6) { total = total + reads_only(make(i)); i = i + 1; }
+    var n: Node = hands_back(make(1), 5);
+    if (total != 12) { return 1; }
+    if (reads_only(n) != 3) { return 2; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}
+`
+
+// asmWholeFunc returns the emitted body of `__fn_<name>` in full, from its
+// label to the next function label. The package's asmFuncBody stops at the
+// first `ret`, which is a window these multi-arm bodies leave through early.
+func asmWholeFunc(asm, name string) (string, bool) {
+	lines := strings.Split(asm, "\n")
+	start := -1
+	for i, l := range lines {
+		if l == "__fn_"+name+":" {
+			start = i + 1
+			break
+		}
+	}
+	if start < 0 {
+		return "", false
+	}
+	for i := start; i < len(lines); i++ {
+		if strings.HasPrefix(lines[i], "__fn_") && strings.HasSuffix(lines[i], ":") {
+			return strings.Join(lines[start:i], "\n"), true
+		}
+	}
+	return strings.Join(lines[start:], "\n"), true
+}
+
+func assertInferredModes(t *testing.T, runner []string, fernBin, stdlibRoot string) {
+	t.Helper()
+	proj := t.TempDir()
+	mainPath := filepath.Join(proj, "main.fern")
+	if err := os.WriteFile(mainPath, []byte(inferredModesProgram), 0o644); err != nil {
+		t.Fatalf("write main.fern: %v", err)
+	}
+	asmPath := filepath.Join(proj, "out.s")
+	if out, err := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", "-emit", "asm", mainPath, stdlibRoot, "-o", asmPath).CombinedOutput(); err != nil {
+		t.Fatalf("compile: %v (%s)", err, out)
+	}
+	asm, err := os.ReadFile(asmPath)
+	if err != nil {
+		t.Fatalf("read asm: %v", err)
+	}
+	const drop = "__sem_drop_Node"
+	back, ok := asmWholeFunc(string(asm), "hands_back")
+	if !ok {
+		t.Fatal("no __fn_hands_back in the emitted code")
+	}
+	if !strings.Contains(back, drop) {
+		t.Fatalf("hands_back does not call %s — the marker this reads is gone, so the reader assertion below proves nothing", drop)
+	}
+	reader, ok := asmWholeFunc(string(asm), "reads_only")
+	if !ok {
+		t.Fatal("no __fn_reads_only in the emitted code")
+	}
+	if strings.Contains(reader, drop) {
+		t.Errorf("reads_only calls %s: a parameter the body only reads was inferred COUNTED, which costs a retain and a release per call and reclaims nothing", drop)
 	}
 }
