@@ -965,6 +965,14 @@ pub function scale_f64_maps_module(mod: parser.Module): parser.Module {
     return parser.Module { ...mod, funcs: out };
 }
 
+// Every shape test below is spelled `if let` rather than `match`, and that is
+// deliberate: a `_ =>` arm is a match that does not enumerate its cases, so a
+// parser node added later is silently swallowed instead of caught. The census
+// gate holds the tree's arm count to a three-arm headroom for exactly that
+// reason. This pass discriminates ONE shape at each step and has nothing to
+// say about the rest, which is what `if let` spells without an arm at all, so
+// it adds none.
+
 // ScaleFactor is scale_lambda_factor's answer: the factor expression as the
 // author wrote it, and whether the lambda was the one shape that has one.
 struct ScaleFactor { ok: boolean, k: ast.Expr }
@@ -973,27 +981,18 @@ struct ScaleFactor { ok: boolean, k: ast.Expr }
 // astwalk.map_expr has already rewritten the children, so a chained
 // `xs.map(f).map(g)` has its inner call rewritten when the outer one is seen.
 function scale_map_call(e: ast.Expr): ast.Expr {
-    match (e) {
-        ast.ExprCall(c) => {
-            if (c.args.len() != 2) { return e; }
-            match (c.callee) {
-                ast.ExprIdent(id) => {
-                    if (!util.str_has_prefix(id.name, "__arrm_map__")) { return e; }
-                    match (c.args[1]) {
-                        ast.ExprLambda(lm) => {
-                            var got: ScaleFactor = scale_lambda_factor(lm);
-                            if (!got.ok) { return e; }
-                            return ast.ExprCall { ...c, type_argc: 0,
-                                callee: ast.ExprIdent { name: "__scale_f64", line: id.line, col: id.col, ty: "" },
-                                args: [c.args[0], got.k] };
-                        },
-                        _ => { return e; },
-                    }
-                },
-                _ => { return e; },
+    if let ast.ExprCall(c) = e {
+        if (c.args.len() != 2) { return e; }
+        if let ast.ExprIdent(id) = c.callee {
+            if (!util.str_has_prefix(id.name, "__arrm_map__")) { return e; }
+            if let ast.ExprLambda(lm) = c.args[1] {
+                var got: ScaleFactor = scale_lambda_factor(lm);
+                if (!got.ok) { return e; }
+                return ast.ExprCall { ...c, type_argc: 0,
+                    callee: ast.ExprIdent { name: "__scale_f64", line: id.line, col: id.col, ty: "" },
+                    args: [c.args[0], got.k] };
             }
-        },
-        _ => { return e; },
+        }
     }
     return e;
 }
@@ -1016,45 +1015,32 @@ function scale_lambda_factor(lm: ast.ExprLambda): ScaleFactor {
     if (lm.params.len() != 1) { return no; }
     if (lm.params[0].type_name != "f64" || lm.ret_type != "f64") { return no; }
     if (lm.body.len() != 1) { return no; }
-    match (lm.body[0]) {
-        ast.StmtReturn(r) => {
-            match (r.value) {
-                ast.ExprBinary(b) => {
-                    if (b.op != "*") { return no; }
-                    if (scale_is_param(b.left, lm.params[0].name) && scale_is_f64_literal(b.right)) {
-                        return ScaleFactor { ok: true, k: b.right };
-                    }
-                    if (scale_is_param(b.right, lm.params[0].name) && scale_is_f64_literal(b.left)) {
-                        return ScaleFactor { ok: true, k: b.left };
-                    }
-                    return no;
-                },
-                _ => { return no; },
+    if let ast.StmtReturn(r) = lm.body[0] {
+        if let ast.ExprBinary(b) = r.value {
+            if (b.op != "*") { return no; }
+            if (scale_is_param(b.left, lm.params[0].name) && scale_is_f64_literal(b.right)) {
+                return ScaleFactor { ok: true, k: b.right };
             }
-        },
-        _ => { return no; },
+            if (scale_is_param(b.right, lm.params[0].name) && scale_is_f64_literal(b.left)) {
+                return ScaleFactor { ok: true, k: b.left };
+            }
+        }
     }
     return no;
 }
 
 // scale_is_param reports whether `e` reads the lambda's one parameter.
 function scale_is_param(e: ast.Expr, name: string): boolean {
-    match (e) {
-        ast.ExprIdent(id) => { return id.name == name; },
-        _ => { return false; },
-    }
+    if let ast.ExprIdent(id) = e { return id.name == name; }
     return false;
 }
 
 // scale_is_f64_literal reports whether `e` is a float literal, or one negated.
 function scale_is_f64_literal(e: ast.Expr): boolean {
-    match (e) {
-        ast.ExprNumber(n) => { return n.is_float; },
-        ast.ExprUnary(u) => {
-            if (u.op != "-") { return false; }
-            return scale_is_f64_literal(u.operand);
-        },
-        _ => { return false; },
+    if let ast.ExprNumber(n) = e { return n.is_float; }
+    if let ast.ExprUnary(u) = e {
+        if (u.op != "-") { return false; }
+        return scale_is_f64_literal(u.operand);
     }
     return false;
 }
