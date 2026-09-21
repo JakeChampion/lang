@@ -63,10 +63,30 @@ The bytes the typed leg still holds are the cursor blocks themselves, one 16-byt
 blocks, and on the test program below both legs hold exactly 848 bytes for the
 same 53 cursors.
 
+On the corpus census (864 seeds, both legs against snapshot binaries built on
+this change's own base) five files move and +329 is exactly their sum: 834
+produced whole before and 839 after, 76,758 of 78,627 declarations before and
+77,087 after. Beyond the two above, three one-declaration conformance cases were
+blocked on the same root — `map_iter_unannotated`, `map_str_iter` and
+`map_struct_value_field`.
+
 `conformance/cases/map_iter_struct_value` (70 declarations) does NOT come with
 this one. Its cursor produces; the file still refuses on
 `unsupported map shape: Map[Sku, Item]`, a struct-keyed map, which is the
 `unsupported map shape` leaf and a different root.
+
+## A branch that cannot run
+
+`op_map_iter` spells a third widekind for a float value column and the first cut
+of `value_widekind` mirrored it. It is unreachable: `ssasem.is_supported_map`
+keeps a float value column out of the semantic path entirely, which is the same
+gate wasm's own deferral of that case would otherwise meet. Deleted rather than
+left as code that cannot execute.
+
+Removing it changed the compiler binary, which invalidated a census already
+half-run against the previous one. Restarted rather than reasoned about: a
+census is a headline number, and "an unreachable branch cannot matter" is the
+kind of claim that has been wrong twice in this log.
 
 ## Trap
 
