@@ -1371,11 +1371,13 @@ function main(): i32 {
 				t.Errorf("%s: put still calls the stub (%s):\n%s", c.target, call, fn)
 			}
 		}
-		// rc_inc's stub reads the count through the sanitizer's poison check,
-		// so the inline form must too, or a use after free goes uncaught at
-		// every site the call was replaced at. Both backends carry it; the
-		// spelling differs because arm64 needs two halves to materialise
-		// ast.RcPoison and compares registers rather than an immediate.
+		// Each rc stub reads the count through the sanitizer's poison check, so
+		// every inline form must too, or a use after free goes uncaught at the
+		// sites the calls were replaced at. That is one check per chain — both
+		// uniqueness tests and the retain — not merely one somewhere in the
+		// function (#9889). The spelling differs because arm64 needs two halves
+		// to materialise ast.RcPoison and compares registers rather than an
+		// immediate.
 		poison := filepath.Join(dir, "blk-poison-"+c.target+".s")
 		pc := exec.Command(h.cli, "-target", c.target, "-backend", "ssa", "-emit", "asm", "-o", poison, src, h.stdlib)
 		pc.Env = append(os.Environ(), "FERN_RC_FREE_DEBUG=1")
@@ -1387,11 +1389,22 @@ function main(): i32 {
 			t.Fatal(err)
 		}
 		pfn := functionListing(string(pasm), "__fn_Blk__put")
-		if !c.poison.MatchString(pfn) {
-			t.Errorf("%s: put's inline retain drops the poison check under FERN_RC_FREE_DEBUG:\n%s", c.target, pfn)
+		chains := len(c.floor.FindAllString(pfn, -1))
+		if got := len(c.poison.FindAllString(pfn, -1)); got != chains {
+			t.Errorf("%s: put has %d inline rc chains but %d poison checks under FERN_RC_FREE_DEBUG — a chain that reads a count without checking it is a use after free the sanitizer misses:\n%s",
+				c.target, chains, got, pfn)
 		}
 		if c.poison.MatchString(fn) {
 			t.Errorf("%s: put carries the poison check with the flag off:\n%s", c.target, fn)
+		}
+		// The out-of-line stub the inline form replaces carries it too: a
+		// function the lift declines still calls it.
+		stub := functionListing(string(pasm), "__fn___fern_rc_is_unique")
+		if stub == "" {
+			t.Fatalf("%s: no __fn___fern_rc_is_unique in the flag-on listing", c.target)
+		}
+		if !c.poison.MatchString(stub) {
+			t.Errorf("%s: the uniqueness stub reads the count without the poison check:\n%s", c.target, stub)
 		}
 	}
 }

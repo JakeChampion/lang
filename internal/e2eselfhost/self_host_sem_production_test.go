@@ -2542,6 +2542,27 @@ function main(): i32 {
     while (i < 20) { acc = acc + both(); i = i + 1; }
     return acc % 107;
 }`},
+	// A VARIANT names a value, not a type. `Shape.Circle(1)` is a qualified
+	// path and `Empty.to_string()` is a method call on the payloadless
+	// literal, and the two are the same shape in the tree — `<ident>.<name>`
+	// — so only the enum owner tells them apart. Reading the variant as a
+	// type head sent the method call down the qualified-path arm, which asked
+	// the contract table for `Empty.to_string` and found nothing. Every other
+	// spelling of the same call already worked: a binding of the variant, an
+	// annotated binding, and a payloaded `Circle(1).to_string()`.
+	{name: "a-variant-is-a-value-not-a-type-head", atLeast: 110, noLeak: true, src: `
+import "core/cmp";
+@derive(cmp.Eq, cmp.Display, cmp.Ord)
+enum Shape { Circle(i32), Square(i32), Empty }
+function direct(): string { return Empty.to_string(); }
+function qualified(): string { return Shape.Circle(1).to_string(); }
+function bound(): string { var e: Shape = Empty; return e.to_string(); }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 20) { acc = acc + direct().len() + qualified().len() + bound().len(); i = i + 1; }
+    return acc % 101;
+}`},
 }
 
 // semHeldElementSource sorts by length with the insertion sort's body: the

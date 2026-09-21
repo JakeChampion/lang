@@ -106,6 +106,12 @@ func runScaleF64IR(t *testing.T, target string) int {
 	if len(progAsm) == 0 {
 		t.Fatal("self-host emitter produced 0 bytes")
 	}
+	// A leg that fell back to one multiply per element still returns 42, so
+	// the exit code cannot see the difference (§3.4: a backend that HAS the
+	// op but lowers it scalar is silent). Name the lane-wise multiply.
+	if want := scaleF64VectorMnemonic(target); want != "" && !strings.Contains(string(progAsm), want) {
+		t.Errorf("emitted %s assembly does not contain %q: the kernel is lowering scalar again", target, want)
+	}
 	progBin := buildBin(t, linkGcc, progDir, "scale_f64_ir", progAsm)
 
 	args := append(append([]string{}, runPrefix...), progBin)
@@ -115,6 +121,25 @@ func runScaleF64IR(t *testing.T, target string) int {
 		t.Fatal("program did not exit normally")
 	}
 	return cmd.ProcessState.ExitCode()
+}
+
+// scaleF64VectorMnemonic names the lane-wise multiply a vectorised leg must
+// emit, or "" for one still lowering scalar by design.
+//
+// x86-64 is SSE2 over two doubles — this assembler has no VEX surface, so it
+// does not get the four lanes the native emitter uses. arm64 is NEON over a
+// .2d pair.
+//
+// Every other target answers "" so the contract holds by default rather than
+// by omission: a target named here is one whose leg is vectorised.
+func scaleF64VectorMnemonic(target string) string {
+	switch target {
+	case "x86-64-linux":
+		return "mulpd"
+	case "arm64-linux":
+		return "fmul v0.2d"
+	}
+	return ""
 }
 
 func TestSelfHostScaleF64IRX86_64(t *testing.T) {
