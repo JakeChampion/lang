@@ -6933,7 +6933,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    bhs .Lsarelo_fresh\n");       // oversize tier: leak
     // Quarantine (rc_free_debug_on): the mispaired donor is freed here, so it
     // gets the same poison-and-decline every other free path applies.
-    s = s.write(quarantine_rc("[x0, #-8]", "w6"));  // clear rc (freed marker)
+    s = s.write(quarantine_rc("[x0, #-8]", "w6"));  // release the rc word
     s = s.write("    sub x4, x0, #16\n");          // block base
     s = lc_bump_free_words(s, "x3", "x2", "x9");
     if (!rc_free_debug_on()) {
@@ -6987,7 +6987,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    mov x9, #0x10000\n");         // freelist class cap (65536)
     s = s.write("    cmp x4, x9\n");
     s = s.write("    bhs .Lsd_large\n");           // large tier -> recycle via __fern_large_push
-    s = s.write(quarantine_rc("[x1, #-8]", "w9"));  // mark freed (clear rc)
+    s = s.write(quarantine_rc("[x1, #-8]", "w9"));  // release the rc word
     s = s.write("    sub x5, x1, #16\n");          // base = old - 16
     s = lc_bump_free_words(s, "x4", "x2", "x3");
     if (!rc_free_debug_on()) {
@@ -7004,7 +7004,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     // terminal, so TAIL-branch: __fern_large_push preserves x0 (= new, the
     // return value) and its ret returns to snapshot_dec's caller (x30 untouched).
     s = s.write(".Lsd_large:\n");
-    s = s.write(quarantine_rc("[x1, #-8]", "w9"));  // mark freed (x1 = old)
+    s = s.write(quarantine_rc("[x1, #-8]", "w9"));  // release the rc word (x1 = old)
     s = s.write("    lsl x2, x4, #3\n");           // bytes = idx*8
     s = s.write("    sub x1, x1, #16\n");          // base = old-16
     s = s.write("    b __fern_large_push\n");      // tail: rets to caller, x0 = new preserved
@@ -7074,7 +7074,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    stur w1, [x0, #-8]\n");
     s = s.write("    b .Larrdec_ret\n");
     s = s.write(".Larrdec_free:\n");
-    s = s.write(quarantine_rc("[x0, #-8]", "w9"));  // clear rc
+    s = s.write(quarantine_rc("[x0, #-8]", "w9"));  // release the rc word
     s = s.write("    ldur x1, [x0, #-16]\n");      // cap
     s = s.write("    add x1, x1, #3\n");           // idx = cap + 3
     s = s.write("    mov x9, #0x10000\n");         // freelist class cap (65536)
@@ -7170,7 +7170,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(".Lstrfree_box:\n");
     // The rc-headered block is base = box-8 (24 bytes = class 3). Clear rc first
     // (defensive vs a re-free reading a live rc), then push base onto freelist[3].
-    s = s.write(quarantine_rc("[x0, #-8]", "w10"));  // rc = 0
+    s = s.write(quarantine_rc("[x0, #-8]", "w10"));  // release the rc word
     s = s.write("    sub x1, x0, #8\n");           // base = box-8
     s = lc_bump_free_add(s, "#24", "x3", "x10");
     if (!rc_free_debug_on()) {
@@ -7194,7 +7194,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    add x2, x2, #7\n");           // words = ceil(len/8) + 3
     s = s.write("    lsr x2, x2, #3\n");
     s = s.write("    add x2, x2, #3\n");
-    s = s.write(quarantine_rc("[x0, #-8]", "w10"));  // rc = 0
+    s = s.write(quarantine_rc("[x0, #-8]", "w10"));  // release the rc word
     s = s.write("    sub x1, x0, #8\n");           // base = box-8
     s = s.write("    cmp x2, x9\n");               // large tier (>=65536 words)
     s = s.write("    bhs .Lstrfree_fused_large\n");
@@ -7261,7 +7261,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    ldr x12, [x12]\n");
     s = s.write("    cmp x1, x12\n");              // base >= heap_end -> not our arena, skip
     s = s.write("    bhs .Lstrvfree_ret\n");
-    s = s.write(quarantine_rc("[x0, #-8]", "w10"));  // rc = 0 (defensive vs a re-free)
+    s = s.write(quarantine_rc("[x0, #-8]", "w10"));  // release the rc word (defensive vs a re-free)
     s = lc_bump_free_add(s, "#24", "x3", "x10");
     if (!rc_free_debug_on()) {
     s = s.write("    adrp x3, __fern_freelist\n");
@@ -7414,7 +7414,7 @@ function emit_arm64_arr_deep_free_variant(s: asmcore.EmitState, sym: string, lbl
     s = s.write("    b .L" + lbl + "_loop\n");
     s = s.write(".L" + lbl + "_freebuf:\n");
     // buffer free: __fn___fern_arr_dec's rc==1 path (base=arr-16, class=cap+3).
-    s = s.write(quarantine_rc("[x19, #-8]", "w10"));  // rc = 0 (defensive vs re-free)
+    s = s.write(quarantine_rc("[x19, #-8]", "w10"));  // release the rc word (defensive vs re-free)
     s = s.write("    ldur x1, [x19, #-16]\n");      // cap
     s = s.write("    add x1, x1, #3\n");            // class = cap + 3 words
     s = s.write("    mov x9, #0x10000\n");
@@ -8714,7 +8714,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write("    mov x9, #0x10000\n");         // freelist class cap (65536)
         s = s.write("    cmp x1, x9\n");
         s = s.write("    bhs .Lapo_large\n");          // large tier -> recycle via __fern_large_push
-        s = s.write(quarantine_rc("[x19, #-8]", "w10"));  // mark freed (clear rc)
+        s = s.write(quarantine_rc("[x19, #-8]", "w10"));  // release the rc word
         s = s.write("    sub x2, x19, #16\n");         // old box base
         s = lc_bump_free_words(s, "x1", "x3", "x9");
         if (!rc_free_debug_on()) {
@@ -8732,7 +8732,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         // old-16, bytes = idx*8) instead of leaking. x30 is saved in the frame
         // (restored at .Lapo_ret) so the bl is safe; large_push preserves x0 (= new).
         s = s.write(".Lapo_large:\n");
-        s = s.write(quarantine_rc("[x19, #-8]", "w10"));  // mark freed (clear rc)
+        s = s.write(quarantine_rc("[x19, #-8]", "w10"));  // release the rc word
         s = s.write("    lsl x2, x1, #3\n");           // bytes = idx*8
         s = s.write("    sub x1, x19, #16\n");         // base = old-16
         s = s.write("    bl __fern_large_push\n");

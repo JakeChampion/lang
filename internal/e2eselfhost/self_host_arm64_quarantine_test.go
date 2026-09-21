@@ -43,13 +43,17 @@ func mustMatch(t *testing.T, pat, asm string) bool {
 
 // armQuarantineSrc churns strings, a string[] and an array, so str_free,
 // str_arr_free and arr_dec are all emitted alongside the always-present rc
-// helpers — every body the quarantine has to reach.
+// helpers — every body the quarantine has to reach. The 600 KB block puts a
+// real >=512 KiB free in the module too, so the large tier is scanned at a
+// call site and not only in __fern_large_push's own body.
 const armQuarantineSrc = `import "std/string";
 function mk(a: string): string { return a + "!"; }
 function main(): i32 {
     var xs: string[] = [mk("x"), mk("y")];
     var s: string = mk("ab");
     var n: i32[] = [1, 2, 3];
+    var big: u8[] = __alloc_u8(600000);
+    __rc_dec(big);
     return xs.len() + s.len() + n[0];
 }`
 
