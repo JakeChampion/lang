@@ -28,6 +28,12 @@ func OptimizeProgram(prog *Program, ptrW int32) {
 	// Storage selection, after fusion has removed the chains whose results
 	// never needed storage at all (#9733).
 	MapOwnedArrayInPlace(prog, int(ptrW))
+	// The scale kernel takes what is left: a single-stage `map` by a
+	// constant that fusion declined as a chain of one and R7 declined
+	// because its receiver is not donated. Last of the three so neither of
+	// the others loses a site to it — R7's is the stronger claim, since it
+	// allocates nothing at all (#9735).
+	ScaleF64Maps(prog)
 	// Tail-call optimisation: `OpCallDirect <self> ; OpReturn` becomes a
 	// parameter rebind plus `OpBr` back to the entry, so a self-recursive
 	// function runs in O(1) stack instead of growing one frame per call.
