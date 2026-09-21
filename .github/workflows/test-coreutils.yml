@@ -180,12 +180,17 @@ jobs:
       # bucket and make it the floor; no shard count below it would help.
       #
       # BOTH LISTS ARE DERIVED. The top-level list comes from `go test -list`
-      # and the utility list from coreutils/*.fern — the same glob
+      # and the utility list from coreutils/*.fern — the same set
       # TestSelfHostCoreutilsCoverage holds the corpus registry to — so a test
       # or a utility added to the tree lands in some shard without anyone
       # adding it anywhere. scripts/shard-tests partitions the live list and
       # assigns every name to exactly one bucket, so the weights file can only
       # unbalance a shard, never drop a case.
+      #
+      # `find` rather than a bare glob, and not only because shellcheck asks
+      # (SC2012): a glob that matches nothing expands to the literal pattern,
+      # which would reach the -run alternation as a stray `*` instead of
+      # tripping the empty check below. find yields nothing, which does.
       - name: go test (coreutils corpus, shard ${{ matrix.shard }})
         run: |
           set -euo pipefail
@@ -198,7 +203,8 @@ jobs:
               scripts/shard-tests "${{ matrix.shard }}" "$NSHARD" "$W"
           )
           mapfile -t UTILS < <(
-            ls coreutils/*.fern | sed "s|coreutils/||; s|\.fern\$||; s|^|$GIANT/|" | sort |
+            find coreutils -maxdepth 1 -name '*.fern' |
+              sed "s|.*/||; s|\.fern\$||; s|^|$GIANT/|" | sort |
               scripts/shard-tests "${{ matrix.shard }}" "$NSHARD" "$W" |
               sed "s|^$GIANT/||"
           )
