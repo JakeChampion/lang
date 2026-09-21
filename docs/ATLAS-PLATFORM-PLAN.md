@@ -1233,6 +1233,67 @@ row carries the same floor caveat as every other arm64 wall figure in this
 section; the native twin's retired count of 1.99x is the architecture-independent
 claim for two lanes, and there is no reason for this leg to differ.
 
+**Self-host x86-64 was next, and paid nothing at the assembler either** — the
+fourth leg in a row whose cost the §3.3a rule above predicted correctly once
+the whole table was read rather than the entries the kernel expected.
+`x86_native.fern`'s `x86_gas_sse_fp_op` already carried `mulpd` and
+`unpcklpd`, and `movupd` was already in the `mov10` family in both
+directions. The packed-DOUBLE domain arrived with the scalar float table, not
+with a kernel — the opposite of the same file's packed-BYTE surface, which
+the string kernels had to add instruction by instruction.
+
+Two lanes, not native x86-64's four: this assembler has no VEX surface at
+all, so the body is SSE2 and an xmm is 128 bits. `unpcklpd %xmm1, %xmm1`
+splats the factor by interleaving the low halves of its two operands, which
+against itself copies lane 0 into lane 1 — so one instruction serves the
+vector body and the scalar tail both, the same economy `dup` gives on arm64.
+Both bodies multiply the element by the factor in that operand order, so
+neither has to be rewritten to keep them agreeing about NaN.
+
+Measured on `examples/bench/array_scale_f64`, compiled by the self-hosted
+compiler and counted with callgrind:
+
+| self-host x86-64 | scalar | SSE2 | |
+|---|---|---|---|
+| retired | 148.4M | 74.7M | **1.99x** |
+| emitted lines | 3,218 | 3,230 | +12 |
+
+1.99x against a lane count of 2 is the whole of what two lanes can give, and
+it lands on the same figure native arm64's NEON body did for the same reason
+— the ratio follows the lane count, not the instruction set.
+
+**Self-host arm64 followed, and this is where the self-host assembler note
+above stops predicting correctly.** That note was written when
+`arm64_native.fern`'s entire SIMD surface was `cnt`/`addv` and the string
+kernels had to add `ld1` / `cmeq` / `cmlt` / `shrn` / `dup` by hand. The file
+has since been regenerated from `cmd/arm64tblgen` — the same generator behind
+`internal/native/arm64tbl` — so `fmul` arrives as part of the three-register
+lane-wise FP class across `2s`/`4s`/`2d`, `ld1` and `st1` take every lane
+arrangement, and `dup`'s size mask admits all four widths. This leg owed
+nothing.
+
+The rule survives with its outcome inverted: a self-host backend still has an
+assembler of its own and still needs checking separately — it just now answers
+the same way its native twin does, because it is built the same way. Which is
+the §3.3a rule restated: what an assembler owes depends on how it was BUILT,
+and a hand-written list that gets regenerated stops charging per instruction.
+
+The body is `dup v1.2d, x1` for the factor, then `ld1` / `fmul v0.2d` / `st1`
+over a pair, with the scalar loop as the tail. `dup` replaces the scalar
+`fmov d1, x1` rather than adding to it, since `d1` is `v1`'s low half.
+
+| self-host arm64 | scalar | NEON | |
+|---|---|---|---|
+| wall (qemu) | 122 ms | 98 ms | 1.24x |
+| emitted lines | 3,410 | 3,421 | +11 |
+
+Only the wall figure is available here — there is no callgrind for an
+aarch64 binary on an x86-64 host — so read it as the floor every other qemu
+number in this section is, not as the hardware ratio. Its native and
+`-backend ssa` twins measured 1.29x and 1.28x on the same clock against a
+retired count of 1.99x, and nothing about this leg's body differs from
+theirs.
+
 **Self-host wasm was the eighth and last, and it is the one that DID owe its
 assembler** — the counterweight to the three legs before it. `watbin.fern`'s
 `simd_opcode` is a hand-written list and held four entries: no store, no float
