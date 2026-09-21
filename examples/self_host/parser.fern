@@ -11797,6 +11797,12 @@ function strip_struct_base(ty: string): string {
 // an array suffix and nested generic arguments, recording each
 // instantiation it discovers. Non-generic types pass through unchanged.
 function mg_ty(ty: string, gstructs: StructDecl[], ins: Insts): TyIns {
+    // A callable's parameter list spells a consuming slot `own T`, and the
+    // type sits behind the mode.
+    if (ty.len() > 4 && slice_unchecked(ty, 0, 4) == "own ") {
+        var o: TyIns = mg_ty(slice_unchecked(ty, 4, ty.len()) + "", gstructs, ins);
+        return TyIns { ty: "own " + o.ty, mins: o.mins };
+    }
     if (type_ends_arr(ty)) {
         var r: TyIns = mg_ty(slice_unchecked(ty, 0, ty.len() - 2), gstructs, ins);
         return TyIns { ty: r.ty + "[]", mins: r.mins };
@@ -11864,14 +11870,50 @@ function mg_ty(ty: string, gstructs: StructDecl[], ins: Insts): TyIns {
     return TyIns { ty: ty, mins: ins };
 }
 
+// mg_ty_list is mg_ty over the comma-separated list a callable's
+// `fn_param_types` holds, threading the instantiation accumulator so a generic
+// struct named ONLY inside a callable's signature is still registered.
+function mg_ty_list(list: string, gstructs: StructDecl[], ins: Insts): TyIns {
+    if (list.len() == 0) { return TyIns { ty: "", mins: ins }; }
+    var parts: string[] = split_top_commas(list);
+    var cur: Insts = ins;
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < parts.len()) {
+        var r: TyIns = mg_ty(parts[i], gstructs, cur);
+        cur = r.mins;
+        if (i > 0) { out = out + ","; }
+        out = out + r.ty;
+        i = i + 1;
+    }
+    return TyIns { ty: out, mins: cur };
+}
+
 // to_concrete_struct_ty resolves a method's substituted type string to
 // the concrete clone name: a bare base (`Box`, from a @derive method's
 // `other: Box` param) becomes the mangled name directly; an arg form
 // (`Box[i32]`, from a parametric `impl[T]`) goes through mg_ty.
 function to_concrete_struct_ty(ty: string, base: string, mang: string, gstructs: StructDecl[]): string {
+    if (ty.len() > 4 && slice_unchecked(ty, 0, 4) == "own ") {
+        return "own " + to_concrete_struct_ty(slice_unchecked(ty, 4, ty.len()) + "", base, mang, gstructs);
+    }
     if (ty == base) { return mang; }
     var fresh: Insts = Insts { inames: [], itypes: [], iargs: [] };
     return mg_ty(ty, gstructs, fresh).ty;
+}
+
+// to_concrete_struct_ty over a callable's comma-separated parameter list.
+function to_concrete_struct_ty_list(list: string, base: string, mang: string, gstructs: StructDecl[]): string {
+    if (list.len() == 0) { return ""; }
+    var parts: string[] = split_top_commas(list);
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < parts.len()) {
+        if (i > 0) { out = out + ","; }
+        out = out + to_concrete_struct_ty(parts[i], base, mang, gstructs);
+        i = i + 1;
+    }
+    return out;
 }
 
 // infer_lit_key infers the concrete instantiation key for a struct
@@ -12015,7 +12057,11 @@ function ms_expr(e: ast.Expr, env: MEnv, gstructs: StructDecl[], funcs: MFns, in
             while (pi < lm.params.len()) {
                 var pt: TyIns = mg_ty(lm.params[pi].type_name, gstructs, pcur);
                 pcur = pt.mins;
-                nparams = nparams.append(ast.ParamDecl { name: lm.params[pi].name, type_name: pt.ty, is_str: lm.params[pi].is_str, own: lm.params[pi].own, has_default: lm.params[pi].has_default, default_value: lm.params[pi].default_value, ret_arr: lm.params[pi].ret_arr, fn_ret: lm.params[pi].fn_ret, fn_param_dyn: lm.params[pi].fn_param_dyn, fn_param_types: lm.params[pi].fn_param_types });
+                var pr: TyIns = mg_ty(lm.params[pi].fn_ret, gstructs, pcur);
+                pcur = pr.mins;
+                var pl: TyIns = mg_ty_list(lm.params[pi].fn_param_types, gstructs, pcur);
+                pcur = pl.mins;
+                nparams = nparams.append(ast.ParamDecl { ...lm.params[pi], type_name: pt.ty, fn_ret: pr.ty, fn_param_types: pl.ty });
                 pi = pi + 1;
             }
             return RExpr { rexpr: ast.ExprLambda { ...lm, params: nparams, ret_type: rt.ty, body: bodyr.rstmts, use_infer: false }, rins: pcur };
@@ -12096,7 +12142,9 @@ function ms_stmt(st: ast.Stmt, env: MEnv, gstructs: StructDecl[], funcs: MFns, i
             // generic-struct annotation takes its instantiation from that
             // annotation: rewrite it to `Box__Inner.default()`.
             var ninit: ast.Expr = retype_struct_lit(retype_assoc_ctor(iv.rexpr, ta.ty, gstructs), ta.ty, gstructs);
-            return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: ta.ty, init: ninit, line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }, renv: env.ebind(v.name, ta.ty), rins2: ta.mins };
+            var vr: TyIns = mg_ty(v.fn_ret, gstructs, ta.mins);
+            var vl: TyIns = mg_ty_list(v.fn_param_types, gstructs, vr.mins);
+            return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: ta.ty, init: ninit, line: v.line, col: v.col, is_str: v.is_str, fn_ret: vr.ty, fn_param_types: vl.ty }, renv: env.ebind(v.name, ta.ty), rins2: vl.mins };
         },
         ast.StmtReturn(r) => {
             var rv: RExpr = ms_expr(r.value, env, gstructs, funcs, ins);
@@ -12180,17 +12228,25 @@ function ms_func(fn: FuncDecl, gstructs: StructDecl[], funcs: MFns, ins: Insts):
     while (i < fn.params.len()) {
         var pt: TyIns = mg_ty(fn.params[i].type_name, gstructs, cur);
         cur = pt.mins;
-        nparams = nparams.append(ast.ParamDecl { name: fn.params[i].name, type_name: pt.ty, is_str: fn.params[i].is_str, own: fn.params[i].own, has_default: fn.params[i].has_default, default_value: fn.params[i].default_value, ret_arr: fn.params[i].ret_arr, fn_ret: fn.params[i].fn_ret, fn_param_dyn: fn.params[i].fn_param_dyn, fn_param_types: fn.params[i].fn_param_types });
+        var pr: TyIns = mg_ty(fn.params[i].fn_ret, gstructs, cur);
+        cur = pr.mins;
+        var pl: TyIns = mg_ty_list(fn.params[i].fn_param_types, gstructs, cur);
+        cur = pl.mins;
+        nparams = nparams.append(ast.ParamDecl { ...fn.params[i], type_name: pt.ty, fn_ret: pr.ty, fn_param_types: pl.ty });
         i = i + 1;
     }
     var rt: TyIns = mg_ty(fn.ret_type, gstructs, cur);
     cur = rt.mins;
+    var rfr: TyIns = mg_ty(fn.ret_fn_ret, gstructs, rt.mins);
+    cur = rfr.mins;
+    var rfl: TyIns = mg_ty_list(fn.ret_fn_param_types, gstructs, cur);
+    cur = rfl.mins;
     var rcv: TyIns = mg_ty(fn.receiver_type, gstructs, cur);
     cur = rcv.mins;
     var br: RStmts = ms_stmts(fn.body, env_from_decl(fn), gstructs, funcs, cur, rt.ty);
     cur = br.rins3;
     return FRes {
-        ffn: FuncDecl { ...fn, receiver_type: rcv.ty, params: nparams, ret_type: rt.ty, body: br.rstmts },
+        ffn: FuncDecl { ...fn, receiver_type: rcv.ty, params: nparams, ret_type: rt.ty, ret_fn_ret: rfr.ty, ret_fn_param_types: rfl.ty, body: br.rstmts },
         fins: cur
     };
 }
@@ -12231,13 +12287,13 @@ function clone_struct_method(m: FuncDecl, base: string, key: string, gstructs: S
     while (i < m.params.len()) {
         var psrc: string = replace_struct_ident(m.params[i].type_name, bare_base, base);
         var pt: string = to_concrete_struct_ty(subst_ty(psrc, tparams, cts), base, mang, gstructs);
-        nparams = nparams.append(ast.ParamDecl { name: m.params[i].name, type_name: pt, is_str: m.params[i].is_str, own: m.params[i].own, has_default: m.params[i].has_default, default_value: m.params[i].default_value, ret_arr: m.params[i].ret_arr, fn_ret: subst_ty(m.params[i].fn_ret, tparams, cts), fn_param_dyn: m.params[i].fn_param_dyn, fn_param_types: subst_ty_list(m.params[i].fn_param_types, tparams, cts) });
+        nparams = nparams.append(ast.ParamDecl { ...m.params[i], type_name: pt, fn_ret: to_concrete_struct_ty(subst_ty(m.params[i].fn_ret, tparams, cts), base, mang, gstructs), fn_param_types: to_concrete_struct_ty_list(subst_ty_list(m.params[i].fn_param_types, tparams, cts), base, mang, gstructs) });
         i = i + 1;
     }
     var rsrc: string = replace_struct_ident(m.ret_type, bare_base, base);
     var rt: string = to_concrete_struct_ty(subst_ty(rsrc, tparams, cts), base, mang, gstructs);
     var notp: string[] = [];
-    return FuncDecl { ...m, receiver_type: mang, type_params: notp, type_param_count: 0, params: nparams, ret_type: rt, ret_fn_ret: subst_ty(m.ret_fn_ret, tparams, cts), ret_fn_param_types: subst_ty_list(m.ret_fn_param_types, tparams, cts), body: retarget_self_lit_stmts(subst_stmts(m.body, tparams, cts), base, mang), bound_traits: [] };
+    return FuncDecl { ...m, receiver_type: mang, type_params: notp, type_param_count: 0, params: nparams, ret_type: rt, ret_fn_ret: to_concrete_struct_ty(subst_ty(m.ret_fn_ret, tparams, cts), base, mang, gstructs), ret_fn_param_types: to_concrete_struct_ty_list(subst_ty_list(m.ret_fn_param_types, tparams, cts), base, mang, gstructs), body: retarget_self_lit_stmts(subst_stmts(m.body, tparams, cts), base, mang), bound_traits: [] };
 }
 
 // monomorphize_structs clones every generic struct (and its methods) per
@@ -12266,8 +12322,10 @@ pub function monomorphize_structs(mod: Module): Module {
             var fj: i32 = 0;
             while (fj < sd.fields.len()) {
                 var ft: TyIns = mg_ty(sd.fields[fj].type_name, gstructs, ins);
-                ins = ft.mins;
-                nf = nf.append(StructFieldDecl { name: sd.fields[fj].name, type_name: ft.ty, fn_ret: sd.fields[fj].fn_ret, fn_param_types: sd.fields[fj].fn_param_types });
+                var ffr: TyIns = mg_ty(sd.fields[fj].fn_ret, gstructs, ft.mins);
+                var ffl: TyIns = mg_ty_list(sd.fields[fj].fn_param_types, gstructs, ffr.mins);
+                ins = ffl.mins;
+                nf = nf.append(StructFieldDecl { name: sd.fields[fj].name, type_name: ft.ty, fn_ret: ffr.ty, fn_param_types: ffl.ty });
                 fj = fj + 1;
             }
             nstructs = nstructs.append(StructDecl { name: sd.name, fields: nf, type_params: [], derives: sd.derives, line: sd.line, col: sd.col, enum_owner: sd.enum_owner, must_consume: sd.must_consume, variant_field_names: sd.variant_field_names , is_pub: sd.is_pub , is_package: false });
@@ -12336,8 +12394,10 @@ pub function monomorphize_structs(mod: Module): Module {
             while (cfi < gd.fields.len()) {
                 var subbed: string = subst_ty(gd.fields[cfi].type_name, gd.type_params, cts);
                 var ft2: TyIns = mg_ty(subbed, gstructs, ins);
-                ins = ft2.mins;
-                cf = cf.append(StructFieldDecl { name: gd.fields[cfi].name, type_name: ft2.ty, fn_ret: subst_ty(gd.fields[cfi].fn_ret, gd.type_params, cts), fn_param_types: subst_ty_list(gd.fields[cfi].fn_param_types, gd.type_params, cts) });
+                var gfr: TyIns = mg_ty(subst_ty(gd.fields[cfi].fn_ret, gd.type_params, cts), gstructs, ft2.mins);
+                var gfl: TyIns = mg_ty_list(subst_ty_list(gd.fields[cfi].fn_param_types, gd.type_params, cts), gstructs, gfr.mins);
+                ins = gfl.mins;
+                cf = cf.append(StructFieldDecl { name: gd.fields[cfi].name, type_name: ft2.ty, fn_ret: gfr.ty, fn_param_types: gfl.ty });
                 cfi = cfi + 1;
             }
             nstructs = nstructs.append(StructDecl { name: mang, fields: cf, type_params: [], derives: gd.derives, line: gd.line, col: gd.col, enum_owner: gd.enum_owner, must_consume: gd.must_consume, variant_field_names: gd.variant_field_names , is_pub: true , is_package: false });
