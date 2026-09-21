@@ -60,6 +60,15 @@ the three new declarations and still produces whole.
   one type-union match instead, and needs no second pass.
 - **Deciding after both operands are produced is too late.** The natural place
   looks like the existing refusal — by then both types are in hand. But the
-  rewrite calls a method whose argument is the right operand, so the right
-  operand must not have been produced yet: a value produced twice for one
-  expression is the shape that sank #9877.
+  rewrite calls a method whose ARGUMENT is the right operand, and the call
+  produces its own arguments, so a right operand already produced would be
+  produced a second time. The operand is an arbitrary expression: `f(x) == g(y)`
+  would call `g` twice, and the first result's box would be built and then left
+  for the planner to drop.
+- **A generic struct reaches this already concrete.** `struct_name` answers ""
+  for a `TypeStruct` carrying type arguments, which reads like `Box[i32] == …`
+  falling through to the operator refusal. It does not: `monomorphize_structs`
+  clones the instantiation into a nullary `Box__i32` before this boundary sees
+  it, so the bare-name lookup is what every reachable comparison needs. Both a
+  direct `Box[i32] == Box[i32]` and one inside a generic `same[T](a: Box[T],
+  b: Box[T])` produce whole and answer what native answers.
