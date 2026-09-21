@@ -371,14 +371,16 @@ was handed and, for `reduce_axis`, `scan_axis` and `map_rank`, the axis
 or cell rank it was given, under a heading that says the lowering is
 still the scalar loop. Each element function carries what a kernel could
 do with it — the primitive it is, or the closed refusal that says why it
-is not one (`ARRAY-SHAPES.md` §6 has the table). Nothing about them
+is not one — and each line ends with whether the whole site is a kernel
+candidate (`ARRAY-SHAPES.md` §6 has both tables). Nothing about them
 fuses; the section is the worklist for the kernels of #9735.
 
 `FERN_ARRAY_REPORT=1` adds a histogram, in four sections: why each chain
 was not FUSED (#9731), where each stage's BUFFER came from (#9732),
-where each chain STOPPED being one chain (#9730), and what a kernel
-could do with each `std/ndarray` ELEMENT FUNCTION (#9735). The last is
-printed only when the program has such a site. Every set is **closed** with stable tags, for the reason
+where each chain STOPPED being one chain (#9730), and — two sections —
+what a kernel could do with each `std/ndarray` ELEMENT FUNCTION and
+whether a planner could take each SITE (#9735). The last two are printed
+only when the program has such a site. Every set is **closed** with stable tags, for the reason
 `FERN_SSA_REPORT` is: the set of things declined is the coverage checklist
 for widening the algebra, and a tally of free-text strings cannot be
 counted. Every reason prints a row even at zero, so a reason that stops

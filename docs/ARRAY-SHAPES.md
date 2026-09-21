@@ -196,9 +196,30 @@ kernels, and a checklist of free text cannot be tallied.
 | `element-fn-not-one-op` | the body is more than one operation, or applies none |
 | `element-fn-not-arithmetic` | the body's one operation is not arithmetic a kernel emits inline. Two absences are deliberate: INTEGER division and remainder, because both trap on a zero divisor and a kernel that hoisted one would move the trap (float division stays, which does not trap); and conversions, because they change the element type, which makes the stage a different shape rather than a kernel over this one |
 
-Recognition and this verdict both change nothing. **A verdict of
-`primitive` says the element function is not what stands in the way, not
-that the site lowers to a kernel** — no kernel exists for any verb yet.
+Each line then carries the SITE's verdict, which is the question a
+planner actually asks: every element function primitive is necessary and
+not sufficient, because an axis verb also has to say which elements it
+walks.
+
+```
+algebra:11:60  reduce_axis(axis 1)  add [i64 add]  -> kernel-candidate
+algebra:13:48  map_rank(rank 1)     sum_cell [element-fn-calls]  -> element-not-primitive
+algebra:14:60  reduce_axis(axis ?)  add [i64 add]  -> axis-not-literal
+```
+
+The third of those is the one a per-element reading cannot see: its
+element function is primitive, and only the site-level question declines
+it. `axis-not-literal` is its own row for the reason the axis is read at
+all — a reduction along the last axis walks contiguous storage and one
+along any other axis strides, so a kernel cannot be selected without
+knowing which. Its tally is beside the element one under
+`FERN_ARRAY_REPORT=1`.
+
+Recognition and both verdicts change nothing. **A verdict of `primitive`
+says the element function is not what stands in the way, and
+`kernel-candidate` says nothing this pass can see would make a planner
+decline the site — neither says that the site lowers to a kernel** — no
+kernel exists for any verb yet.
 Every site still runs the scalar loop, nothing fuses, nothing donates,
 and `internal/ir/ndarray_shapes_test.go` pins that the recogniser
 changes no op.

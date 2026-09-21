@@ -1,6 +1,7 @@
 package ir_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -187,5 +188,112 @@ func TestNdarrayUnsignedOperationIsNamedUnsigned(t *testing.T) {
 		if strings.HasPrefix(v.Op, "i") && strings.HasSuffix(v.Op, " lt") {
 			t.Errorf("a compare is named %q; the fixture has no signed one, so Unsigned was dropped", v.Op)
 		}
+	}
+}
+
+// Whether a whole site is a kernel candidate, which is the question a
+// planner asks. Every element function primitive is necessary but not
+// sufficient: an axis verb also has to say which elements it walks.
+
+func siteVerdicts(t *testing.T, src, fn string) map[string]ir.NdarraySiteRefusal {
+	t.Helper()
+	p := lowerPipelineSrc(t, src)
+	out := map[string]ir.NdarraySiteRefusal{}
+	for _, s := range ir.RecognizeNdarrayShapes(p) {
+		if s.Func == fn {
+			out[fmt.Sprintf("%s:%d", s.Verb, s.Line)] = ir.NdarraySiteVerdict(p, s)
+		}
+	}
+	return out
+}
+
+func TestNdarraySiteVerdictNeedsEveryElementAndTheAxis(t *testing.T) {
+	got := siteVerdicts(t, algebraSrc, "algebra")
+	for _, tc := range []struct {
+		site string
+		want ir.NdarraySiteRefusal
+		why  string
+	}{
+		{"map:8", ir.NdarraySiteCandidate, "a primitive element function and no axis argument"},
+		{"fold_all:10", ir.NdarraySiteCandidate, "a primitive element function and no axis argument"},
+		{"reduce_axis:11", ir.NdarraySiteCandidate, "a primitive element function and a literal axis"},
+		{"map_rank:13", ir.NdarraySiteElementNotPrimitive, "its cell function calls out"},
+		{"reduce_axis:14", ir.NdarraySiteAxisNotLiteral, "the element function is fine and the axis is computed"},
+	} {
+		v, ok := got[tc.site]
+		if !ok {
+			t.Fatalf("no site %s among %v", tc.site, got)
+		}
+		if v != tc.want {
+			t.Errorf("%s = %s, want %s (%s)", tc.site, v.Tag(), tc.want.Tag(), tc.why)
+		}
+	}
+}
+
+// The axis refusal is the one that a per-element reading cannot reach: that
+// site's element function IS primitive, and only the site-level question
+// declines it.
+func TestNdarrayAxisRefusalIsNotAnElementRefusal(t *testing.T) {
+	p := lowerPipelineSrc(t, algebraSrc)
+	for _, s := range ir.RecognizeNdarrayShapes(p) {
+		if s.Func != "algebra" || s.Line != 14 {
+			continue
+		}
+		for _, v := range ir.NdarrayKernelVerdicts(p, s) {
+			if v.Why != ir.NdarrayElementPrimitive {
+				t.Fatalf("the computed-axis site's element function = %s, so this test no longer isolates the axis", v.Why.Tag())
+			}
+		}
+		if got := ir.NdarraySiteVerdict(p, s); got != ir.NdarraySiteAxisNotLiteral {
+			t.Errorf("the computed-axis site = %s, want axis-not-literal", got.Tag())
+		}
+		return
+	}
+	t.Fatal("algebraSrc no longer has a site on line 14")
+}
+
+func TestNdarraySiteRefusalTagsAreDistinct(t *testing.T) {
+	seen := map[string]bool{}
+	all := append([]ir.NdarraySiteRefusal{ir.NdarraySiteCandidate}, ir.AllNdarraySiteRefusals...)
+	for _, r := range all {
+		tag := r.Tag()
+		if tag == "unknown" || seen[tag] {
+			t.Errorf("site refusal %d has the tag %q, which is unusable", int(r), tag)
+		}
+		seen[tag] = true
+		if s := r.String(); s == "" || s == "no reason recorded" {
+			t.Errorf("site refusal %q has no reason clause", tag)
+		}
+	}
+}
+
+func TestNdarraySiteHistogramAndReportLine(t *testing.T) {
+	p := lowerPipelineSrc(t, algebraSrc)
+	hist := ir.FormatNdarraySiteHistogram(p)
+	for _, want := range []string{
+		"std/ndarray sites (#9735): 8, 6 a kernel could be planned against",
+		"element-not-primitive      1",
+		"axis-not-literal           1",
+	} {
+		if !strings.Contains(hist, want) {
+			t.Errorf("site histogram does not carry %q:\n%s", want, hist)
+		}
+	}
+	report := ir.FormatNdarrayShapes(p)
+	for _, want := range []string{
+		"add [i64 add]  -> kernel-candidate",
+		"sum_cell [element-fn-calls]  -> element-not-primitive",
+		"reduce_axis(axis ?)  add [i64 add]  -> axis-not-literal",
+	} {
+		if !strings.Contains(report, want) {
+			t.Errorf("report line does not carry %q:\n%s", want, report)
+		}
+	}
+}
+
+func TestNdarraySiteHistogramIsEmptyWithoutSites(t *testing.T) {
+	p := lowerPipelineSrc(t, `function main(): i32 { return 0; }`)
+	if got := ir.FormatNdarraySiteHistogram(p); got != "" {
+		t.Errorf("site histogram over a program with no algebra = %q, want nothing", got)
 	}
 }

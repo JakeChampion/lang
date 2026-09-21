@@ -275,3 +275,97 @@ func FormatNdarrayElementHistogram(p *Program) string {
 	}
 	return b.String()
 }
+
+// Whether a whole site is a kernel candidate, which is the question a kernel
+// planner asks — the element-function verdicts above answer it for one
+// argument at a time, and a site is only replaceable when every answer is
+// yes AND the site's own shape is one a kernel can be planned against.
+//
+// STILL NOTHING ACTS. `NdarraySiteCandidate` says a planner would not have to
+// decline this site for any reason this pass can see; no kernel exists for
+// any verb yet, so every candidate still runs the scalar loop.
+
+// NdarraySiteRefusal is why a recognized site is not a kernel candidate, or
+// NdarraySiteCandidate when it is. Closed and tagged, like the element set.
+type NdarraySiteRefusal int
+
+const (
+	NdarraySiteCandidate NdarraySiteRefusal = iota
+	NdarraySiteElementNotPrimitive
+	NdarraySiteAxisNotLiteral
+)
+
+// AllNdarraySiteRefusals is every reason a site is not a candidate, so the
+// report prints a row per reason even at zero.
+var AllNdarraySiteRefusals = []NdarraySiteRefusal{
+	NdarraySiteElementNotPrimitive,
+	NdarraySiteAxisNotLiteral,
+}
+
+// Tag is the stable one-word name a histogram counts under.
+func (r NdarraySiteRefusal) Tag() string {
+	switch r {
+	case NdarraySiteCandidate:
+		return "kernel-candidate"
+	case NdarraySiteElementNotPrimitive:
+		return "element-not-primitive"
+	case NdarraySiteAxisNotLiteral:
+		return "axis-not-literal"
+	}
+	return "unknown"
+}
+
+// String is the reason clause, without a verdict in front of it.
+func (r NdarraySiteRefusal) String() string {
+	switch r {
+	case NdarraySiteCandidate:
+		return "nothing this pass can see would make a planner decline it"
+	case NdarraySiteElementNotPrimitive:
+		return "an element function is not one a kernel can inline"
+	case NdarraySiteAxisNotLiteral:
+		return "the axis is not a literal, so which elements the kernel would walk is not known here"
+	}
+	return "no reason recorded"
+}
+
+// NdarraySiteVerdict answers whether a planner could take the whole site.
+//
+// The axis matters for the same reason the recogniser reads it at all: a
+// reduction along the last axis walks contiguous storage and one along any
+// other axis strides, so a kernel cannot be selected without knowing which.
+// A verb that takes no axis argument is never declined for the axis.
+func NdarraySiteVerdict(p *Program, s NdarrayShape) NdarraySiteRefusal {
+	for _, v := range NdarrayKernelVerdicts(p, s) {
+		if v.Why != NdarrayElementPrimitive {
+			return NdarraySiteElementNotPrimitive
+		}
+	}
+	if ndarrayShapeVerbs[s.Verb].arg != "" && s.Axis == NdarrayAxisUnknown {
+		return NdarraySiteAxisNotLiteral
+	}
+	return NdarraySiteCandidate
+}
+
+// FormatNdarraySiteHistogram tallies the recognized sites by whether a
+// planner could take them, or "" when the program has none.
+func FormatNdarraySiteHistogram(p *Program) string {
+	shapes := RecognizeNdarrayShapes(p)
+	if len(shapes) == 0 {
+		return ""
+	}
+	counts := map[NdarraySiteRefusal]int{}
+	candidates := 0
+	for _, s := range shapes {
+		v := NdarraySiteVerdict(p, s)
+		counts[v]++
+		if v == NdarraySiteCandidate {
+			candidates++
+		}
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "std/ndarray sites (#9735): %d, %d a kernel could be planned against\n", len(shapes), candidates)
+	for _, r := range AllNdarraySiteRefusals {
+		fmt.Fprintf(&b, "  %-26s %d\n", r.Tag(), counts[r])
+	}
+	return b.String()
+}

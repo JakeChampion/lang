@@ -312,7 +312,8 @@ func FormatNdarrayShapes(p *Program) string {
 			}
 			elems[k] = fmt.Sprintf("%s [%s]", name, verdicts[k])
 		}
-		fmt.Fprintf(&b, "%-*s  %-*s  %s\n", posW, posOf[i], verbW, verbOf[i], strings.Join(elems, ", "))
+		fmt.Fprintf(&b, "%-*s  %-*s  %s  -> %s\n", posW, posOf[i], verbW, verbOf[i],
+			strings.Join(elems, ", "), NdarraySiteVerdict(p, s).Tag())
 	}
 	return b.String()
 }
