@@ -6,7 +6,8 @@
 // eval preserves the program's value, now including multi-function programs
 // and recursion. With `-dump`, prints `main`'s lowered op stream instead
 // (`-dump-fn <name>` for any other function). A `main` outside the lowered
-// subset makes lowering bail -> exit 200.
+// subset makes lowering bail -> exit 200, and a lambda puts it outside that
+// subset, so add `-lifted` to lower what the backends lower and see it.
 //
 // `-verify` / `-verifystack` / `-verifyfip` / `-verifyrc`: run the IR verifiers over
 // every lowered function and report, exiting 1 when anything is found.
@@ -341,6 +342,8 @@ function main(): i32 {
     var want_vrc: boolean = false;
     var want_slots: boolean = false;
     var want_clocensus: boolean = false;
+    // `-lifted` applies to `-dump` / `-slots`: lower what the backends lower.
+    var want_lifted: boolean = false;
     // `-dump-fn <name>` dumps that function's op stream instead of `main`'s.
     // The verifiers report per function, so the follow-up question is always
     // "show me the ops of the one it named".
@@ -360,6 +363,7 @@ function main(): i32 {
         if (av[ai] == "-verifyrc") { want_vrc = true; }
         if (av[ai] == "-slots") { want_slots = true; }
         if (av[ai] == "-clocensus") { want_clocensus = true; }
+        if (av[ai] == "-lifted") { want_lifted = true; }
         ai = ai + 1;
     }
 
@@ -446,17 +450,32 @@ function main(): i32 {
         return 0;
     }
 
-    // Lowered the way the BACKENDS lower, for the reason `-clocensus` above
-    // gives: lift_lambdas hoists every lambda to a top-level function, and a
-    // module lowered without it bails on each one. `-dump` has no bail-
-    // tolerant path — a bailed `main` is exit 200 and no output at all — so
-    // before this it could not show the ops of any function containing a
-    // lambda, which is the case its own doc comment describes it as for.
-    // Lifting a lambda-free module returns it unchanged, so nothing that
-    // already dumped moves.
-    var lifted: parser.Module = irlower.lift_lambdas(mod);
-    var fns: ir.LoweredFn[] = irlower.lower_module(
-        lifted.funcs, irlower.struct_tab(parser.inject_builtin_enums(lifted.structs)));
+    // `-lifted` lowers the module the BACKENDS lower -- lift_lambdas over an
+    // enum-injected struct table, exactly as `-clocensus` does -- instead of
+    // the raw one. `-dump` and `-slots` read it.
+    //
+    // It is a SEPARATE mode rather than the default, and that is the whole of
+    // what this flag is for. A lambda does not survive to the IR: lift_lambdas
+    // hoists it to a top-level function, and a module lowered without that
+    // bails on every function containing one. `-dump` has no bail-tolerant
+    // path -- a bailed `main` is exit 200 and no output -- so without `-lifted`
+    // there is no way to see the ops of a function that contains a lambda,
+    // which is the shape whose lowering is least obvious.
+    //
+    // The default stays RAW because it is pinned, and rightly:
+    // TestSelfHostMoveOnConstructionIRX86_64 counts the incs this driver
+    // emits through `-dump-fn`, and its table says a closure-capture row would
+    // "pin a property of the driver rather than of the compiler" -- true only
+    // while the driver does not lift. Lifting is also not the no-op it looks
+    // like on a lambda-free module: lift_lambdas fills default arguments,
+    // infers fn-value locals and ensures capture types first, and those move
+    // that gate's counts on a program with no lambda in it at all.
+    var fns: ir.LoweredFn[] = irlower.lower_module(mod.funcs, stab);
+    if (want_lifted) {
+        var lmod: parser.Module = irlower.lift_lambdas(mod);
+        fns = irlower.lower_module(
+            lmod.funcs, irlower.struct_tab(parser.inject_builtin_enums(lmod.structs)));
+    }
 
     // `-slots` (#6639 slice 1.5): print each lowered function's per-slot value
     // kinds and declared return type — the facts LowerState knows and the op
