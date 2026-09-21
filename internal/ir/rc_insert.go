@@ -445,13 +445,11 @@ func (b *builder) ownedCallResultType(e ast.Expr) (ast.Type, bool) {
 //     function returning a heap-boxed enum; pair-form / builtin / variant-
 //     constructor callees are excluded there, so the value is always a real
 //     box this lowering stores in ptrSlot and dispatches on via OpMatchTag);
-//   - every NAMED arm binding is non-pointer, so no pointer payload is
-//     extracted into a binding that would outlive (and alias) the freed box.
-//     The drop here is DEEP (__drop_enum_<Name> releases payloads), so a
-//     surviving binding dangles rather than merely leaking — this refusal is a
-//     soundness requirement, not the conservatism the self-host's shallow-dec
-//     sibling was widened out of. A `_` position is exempt: it extracts
-//     nothing;
+//   - no NAMED arm binding lets a pointer payload out of the arm UNCOUNTED
+//     (bindingReleasableInAll). The drop here is DEEP (__drop_enum_<Name>
+//     releases payloads), so a surviving reference that never took a count of
+//     its own dangles rather than merely leaking. A `_` position is exempt: it
+//     extracts nothing;
 //   - for the expression form, the RESULT is non-pointer too (`resultType`;
 //     pass nil for the statement form, which yields no value).
 //
@@ -489,13 +487,13 @@ func (b *builder) reclaimableMatchScrutinee(tag ast.Expr, bindingNames [][]strin
 			if name == "_" {
 				continue
 			}
-			// A NAMED pointer binding the arm cannot let escape is dead by the
-			// time the join frees the box, which is the same property `_` has
-			// syntactically — proven here instead. Without this the whole match
-			// was refused, so `match (mk()) { Ok(s) => { … } }` over a fresh
-			// call leaked the box AND its payload every iteration; the reclaim
-			// is a deep drop, so admitting the arm releases both.
-			if name != "" && a < len(armRegions) && b.bindingConfinedInAll(armRegions[a], name, bt) {
+			// A NAMED pointer binding the arm lets escape only under a
+			// counted alias is safe for the same reason `_` is: the deep drop
+			// releases the box's reference, and every reference still standing
+			// is one the arm paid for. Without this the whole match was
+			// refused, so `match (mk()) { Ok(s) => { … } }` over a fresh call
+			// leaked the box AND its payload every iteration.
+			if name != "" && a < len(armRegions) && b.bindingReleasableInAll(armRegions[a], name, bt) {
 				continue
 			}
 			return ast.EnumType{}, false
@@ -520,6 +518,25 @@ func (b *builder) bindingConfinedInAll(region []ast.Node, name string, bt ast.Ty
 			continue
 		}
 		if !b.bindingConfinedToArm(n, name, bt) {
+			return false
+		}
+	}
+	return true
+}
+
+// bindingReleasableInAll is bindingConfinedInAll over the weaker per-node
+// question bindingReleasableInArm asks. A guard counts the same as a body: an
+// alias it takes is balanced by the join's drop whichever arm ends up running,
+// since that drop is emitted once for the whole match.
+func (b *builder) bindingReleasableInAll(region []ast.Node, name string, bt ast.Type) bool {
+	if len(region) == 0 {
+		return false
+	}
+	for _, n := range region {
+		if n == nil {
+			continue
+		}
+		if !b.bindingReleasableInArm(n, name, bt) {
 			return false
 		}
 	}
@@ -594,8 +611,9 @@ func (b *builder) emitMapGetScrutineeReclaim(slot int32, plan mapGetReboxPlan) {
 //     "an aliased return is rc>=2 via the return-transfer inc, and the free is
 //     is_unique-gated"; with no box there is no such inc to lean on, so the
 //     payload's freshness has to be proven outright;
-//   - the binding is CONFINED to its arm (bindingConfinedToArm), so the
-//     pointer cannot outlive the release.
+//   - the binding lets no UNCOUNTED reference out of the arm
+//     (bindingReleasableInArm), so anything that outlives the release holds a
+//     count of its own.
 //
 // The release itself is emitOwnedSlotDrop — the same type-directed deep drop
 // the loop-var reinit path uses — so a struct payload routes through its
@@ -607,7 +625,7 @@ func (b *builder) reclaimablePairFormPayload(tag ast.Expr, bt ast.Type, body ast
 	if _, ok := b.freshPairFormEnumResultType(tag); !ok {
 		return false
 	}
-	return b.bindingConfinedToArm(body, name, bt)
+	return b.bindingReleasableInArm(body, name, bt)
 }
 
 // freshPairFormEnumResultType reports the enum type of a call whose PAIR-FORM
@@ -679,6 +697,31 @@ func (b *builder) freshPairFormEnumResultType(e ast.Expr) (ast.Type, bool) {
 // inside the arm errs the same safe way: its uses are attributed to the
 // binding, so anything the shadow does with the name suppresses the release.
 func (b *builder) bindingConfinedToArm(body ast.Node, name string, bt ast.Type) bool {
+	return b.bindingUsesExcused(body, name, bt, false)
+}
+
+// bindingReleasableInArm is the weaker question the two match-scrutinee
+// reclaims actually need: not that the arm keeps NO reference to `name`, but
+// that it keeps no UNCOUNTED one.
+//
+// `outer = c` copies the pointer into a local under the alias inc the assign
+// lowering emits for a pointer-shaped ident (needsRcIncOnAlias), so the
+// destination holds a reference of its own and the release the join emits
+// takes the payload from 2 to the 1 that destination owns. Treating that as an
+// escape stranded one fresh payload per match — the shape `match (f()) {
+// Some(c) => { outer = c; } }`, which is tcp_serve's per-request recv buffer
+// (#8003).
+//
+// bindingConfinedToArm keeps the strict reading: the borrow analysis behind it
+// is deciding whether a local is a pure view of another value, and a counted
+// copy is exactly the thing that disqualifies one.
+func (b *builder) bindingReleasableInArm(body ast.Node, name string, bt ast.Type) bool {
+	return b.bindingUsesExcused(body, name, bt, true)
+}
+
+// bindingUsesExcused is the shared walk. `countedAliasOK` admits the alias
+// sites of bindingReleasableInArm on top of the read shapes both callers take.
+func (b *builder) bindingUsesExcused(body ast.Node, name string, bt ast.Type, countedAliasOK bool) bool {
 	if body == nil {
 		return false
 	}
@@ -715,6 +758,16 @@ func (b *builder) bindingConfinedToArm(body ast.Node, name string, bt ast.Type) 
 			if id, ok := x.Array.(*ast.Ident); ok && id.Name == name {
 				excused[id] = true
 			}
+		case *ast.Assign:
+			// Only a LOCAL destination: a field or element store has its own
+			// lowering and its own retain rules. A self-assign (`c = c`) nets
+			// its inc against its own overwrite-dec, so it leaves no counted
+			// reference behind and stays unexcused.
+			tgt, toLocal := x.Target.(*ast.Ident)
+			if id, ok := x.Value.(*ast.Ident); ok && id.Name == name &&
+				countedAliasOK && toLocal && tgt.Name != name && b.assignTakesAliasInc(x, bt) {
+				excused[id] = true
+			}
 		case *ast.Call:
 			for i, a := range x.Args {
 				id, ok := a.(*ast.Ident)
@@ -736,6 +789,19 @@ func (b *builder) bindingConfinedToArm(body ast.Node, name string, bt ast.Type) 
 		return true
 	})
 	return confined
+}
+
+// assignTakesAliasInc reports whether an assignment's lowering will retain its
+// ident RHS. It mirrors the emitting condition in assign()'s *ast.Ident-target
+// case one for one — a move site and a read out of a fresh owned container
+// each skip the inc, and a site that skips it leaves an UNCOUNTED reference
+// behind, which is the escape bindingReleasableInArm must still refuse.
+//
+// `bt` is the alias source's type, which the callers hold and exprType cannot
+// supply: the scrutinee reclaim runs before the arm's bindings are in scope.
+func (b *builder) assignTakesAliasInc(n *ast.Assign, bt ast.Type) bool {
+	return rcIncOnAliasType(bt) && !b.rc.moveSites[n] &&
+		!b.isOwnedContainerRead(n.Value)
 }
 
 // nestedMatchConfines reports whether a match over an ident scrutinee of type

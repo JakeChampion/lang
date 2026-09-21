@@ -5989,7 +5989,15 @@ func needsRcIncOnAlias(e ast.Expr, b *builder) bool {
 	default:
 		return false
 	}
-	t := b.exprType(e)
+	return rcIncOnAliasType(b.exprType(e))
+}
+
+// rcIncOnAliasType is needsRcIncOnAlias' type half, split out for the callers
+// that already know the operand's type and cannot get it from exprType — a
+// match-arm binding is not in scope yet when the scrutinee reclaim asks about
+// its arm (bindingUsesExcused), so exprType on the ident reads nil there while
+// the arm's own BindingTypes entry has the answer.
+func rcIncOnAliasType(t ast.Type) bool {
 	if _, isArr := t.(ast.ArrayType); isArr {
 		return true
 	}

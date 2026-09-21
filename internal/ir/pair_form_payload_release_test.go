@@ -127,9 +127,24 @@ function main(): i32 {
 	}
 }
 
-// The binding escapes the arm, so the release must NOT happen: dropping here
-// would free a buffer the caller still holds. A leak is the safe direction.
-func TestPairFormPayloadKeptWhenBindingEscapes(t *testing.T) {
+// The binding escapes into a local, and the release HAPPENS: `kept = a` is an
+// alias site, so it incs what it reads, and the arm is releasing the reference
+// the callee handed over, not the one `kept` now holds. The payload comes out
+// of the arm at rc 1 with `kept` owning it.
+//
+// This asserted the opposite until #8003. Refusing every escape was sufficient
+// for safety but far from necessary, and the shape it refused is the ordinary
+// one — read a value out of a match, keep it — so a fresh payload was
+// abandoned per match, which is tcp_serve's per-request recv buffer and the
+// unbounded growth behind it. The escapes that are genuinely unowned (a
+// return, a re-wrap into a constructor, a callee that hands the argument back)
+// are still refused, by the three tests around this one.
+//
+// This test reads the op stream, so it cannot see whether the counts actually
+// balance: internal/e2e's TestEscapingMatchPayloadIsReclaimed runs this shape
+// on x86-64, arm64 and wasm and asserts allocs == frees with a zero
+// __rc_underflow_count().
+func TestPairFormPayloadReleasedWhenEscapeIsCounted(t *testing.T) {
 	ip := lowerForTest(t, pairPayloadSrc+`
 function main(): i32 {
     var kept: i32[] = [];
@@ -142,14 +157,15 @@ function main(): i32 {
 	if !ip.PairForm["mk"] {
 		t.Fatal("mk is not pair-form; this test no longer covers the pair-form path")
 	}
-	if releasesBoundPayload(funcByName(ip, "main"), "__fern_arr_dec") {
-		t.Error("main: `kept = a` lets the payload outlive the arm, but the arm releases it anyway — a use-after-free")
+	if !releasesBoundPayload(funcByName(ip, "main"), "__fern_arr_dec") {
+		t.Error("main: `kept = a` retains what it reads, so the arm must give back the reference the callee handed over — without it every match strands a fresh payload")
 	}
 }
 
-// A `return` of the binding is the other escape, and it is what makes the
-// whitelist in bindingConfinedToArm worth having: the name appears in a
-// position the walk does not recognise, so the release is declined.
+// A `return` of the binding is the escape that stays refused, and it is what
+// makes the whitelist in bindingUsesExcused worth having: the name appears in
+// a position the walk does not recognise — one that takes no count of its own
+// — so the release is declined.
 func TestPairFormPayloadKeptWhenBindingReturned(t *testing.T) {
 	ip := lowerForTest(t, pairPayloadSrc+`
 function keepit(n: i32): i32[] {
