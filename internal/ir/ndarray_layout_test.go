@@ -357,22 +357,36 @@ function main(): i32 { return run(ndarray.from_flat([1, 2, 3, 4], [2, 2])); }`)
 	}
 }
 
-// A recursive helper claims nothing and does not hang: the cycle reads
-// Unknown rather than recursing, which is what bounds the summary.
-func TestARecursiveHelperClaimsNothing(t *testing.T) {
+// A recursive helper's summary is the meet of its base arm and its cut
+// recursive arm, and the cut claims nothing rather than assuming the answer
+// it is in the middle of computing.
+//
+// The fixture is built so that BOTH halves are observable. The base arm is a
+// `from_flat`, so it is packed rather than a parameter's `unknown` that would
+// swallow everything under the meet; and the recursive arm is a `reshape`,
+// whose result depends on what the cut yields — `reshape` of a packed handle
+// is packed, of anything else row-major. So the expected `row-major` here
+// fails if the summary is not consulted at all (it reads `unknown`), and
+// fails again if the cut optimistically assumes packed (it reads `packed`).
+// An earlier version of this test asked only `!ProvesPacked()` over a
+// parameter-based fixture and could not fail in either case.
+func TestARecursiveHelpersCutClaimsNothing(t *testing.T) {
 	p := lowerPipelineSrc(t, `import "std/ndarray";
-function grow(n: i32, a: ndarray.NdArray[i32]): ndarray.NdArray[i32] {
-  if (n <= 0) { return a; }
-  return grow(n - 1, a.transpose());
+function grow(n: i32): ndarray.NdArray[i32] {
+  if (n <= 0) { return ndarray.from_flat([1, 2, 3, 4], [4]); }
+  return grow(n - 1).reshape([4]);
 }
-function run(a: ndarray.NdArray[i32]): i32 { return grow(3, a).to_flat()[0]; }
-function main(): i32 { return run(ndarray.from_flat([1, 2, 3, 4], [2, 2])); }`)
+function run(): i32 { return grow(3).to_flat()[0]; }
+function main(): i32 { return run(); }`)
 	got := layoutSites(t, p, "run")
 	if len(got) != 1 {
 		t.Fatalf("found %d sites in run, want 1: %+v", len(got), got)
 	}
-	if got[0].Receiver.ProvesPacked() {
-		t.Errorf("a recursive helper claimed %s; it returns its own parameter on one arm and may be anything",
+	if got[0].Receiver != ir.NdarrayLayoutRowMajor {
+		t.Errorf("a recursive helper = %s, want row-major: packed on the base arm meets row-major on the cut recursive arm",
 			got[0].Receiver.Tag())
+	}
+	if got[0].Verdict != ir.NdarrayCopyNotProvenPacked {
+		t.Errorf("verdict = %s, want not-proven-packed", got[0].Verdict.Tag())
 	}
 }
