@@ -2497,6 +2497,32 @@ function main(): i32 {
     print("over-releases " + __rc_underflow_count().to_string());
     return acc % 109;
 }`},
+	// An unannotated binding of a CALL takes its type from the call, not from
+	// the checker: `var m = s.map(f)` on a generic receiver is a shape the
+	// checker leaves `not yet checked`, and the instance the call resolves is
+	// what settles it. Every declaration here refused before, through the
+	// binding, so `std/result`'s whole combinator surface stood on the AST
+	// lowering.
+	{name: "an-unannotated-binding-takes-its-call-s-type", atLeast: 61, noLeak: true, src: `
+import "std/option";
+import "std/result";
+function mapped(): i32 {
+    var s: Option[i32] = Some(5);
+    var m = s.map((x: i32): i32 => { return x * 2; });
+    return m.unwrap_or(0);
+}
+function chained(): i32 {
+    var r: Result[i32, string] = Ok(7);
+    var d = r.map((x: i32): i32 => { return x + 1; });
+    var e = d.map_err((m: string): string => { return m + "!"; });
+    return e.unwrap_or(0);
+}
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 20) { acc = acc + mapped() + chained(); i = i + 1; }
+    return acc % 113;
+}`},
 }
 
 // semHeldElementSource sorts by length with the insertion sort's body: the
