@@ -1059,6 +1059,16 @@ pub function lift_lambdas_view(mod: parser.Module, view: parser.FuncDecl[]): par
     // The scale kernel runs BEFORE the lift, which is the whole reason it can
     // be this simple: a recognized element function is still a lambda here,
     // so its body is in hand and nothing has to be looked up by name.
+    //
+    // This reaches the NATIVE / asm routes only, and the limit is structural
+    // rather than an omission. Those call this after module_with_builtins, so
+    // the module arrives monomorphised and the map is the free call the pass
+    // matches. The wasm route does neither: wasm_ir.lift_lambdas goes straight
+    // to irlower, bypassing this function, and it lifts BEFORE monomorphising
+    // (wasm_ir_run.fern lifts at 80 and monomorphises at 107). So hooking the
+    // wasm funnel would not help either -- pre-mono there is no
+    // `__arrm_map__<elem>` call to recognise. Giving wasm the kernel means
+    // running this pass post-mono on that route, which is its own change.
     var lifted: parser.Module = irlower.lift_lambdas_view(scale_f64_maps_module(mod), view);
     return parser.Module { funcs: lifted.funcs, structs: parser.inject_builtin_enums(lifted.structs), aliases: lifted.aliases, imports: lifted.imports, top_stmts: lifted.top_stmts, enums: lifted.enums, resources: lifted.resources, exports: lifted.exports, impls: lifted.impls, trait_reqs: lifted.trait_reqs, trait_decls: lifted.trait_decls };
 }
