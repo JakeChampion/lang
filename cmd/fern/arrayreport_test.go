@@ -83,9 +83,32 @@ function main(): i32 {
 		t.Fatalf("runArrayReport: %v", err)
 	}
 	got := out.String()
-	for _, want := range []string{"no std/array pipelines", "std/ndarray products", "inner  mul, add"} {
+	for _, want := range []string{"no std/array pipelines", "std/ndarray operations", "inner  mul [i64 mul], add [i64 add]"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("report does not mention %q:\n%s", want, got)
 		}
+	}
+}
+
+// An axis-parameterized site carries the axis it walks, so the report says
+// which elements an operation touches and not only which operation it is.
+func TestArrayReportCLINdarrayAxis(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(src, []byte(`import "std/ndarray";
+function add(x: i64, y: i64): i64 { return x + y; }
+function main(): i32 {
+  var m: ndarray.NdArray[i64] = ndarray.from_flat([1 as i64, 2 as i64, 3 as i64, 4 as i64], [2, 2]);
+  return m.reduce_axis(1, 0 as i64, add).get([0]) as i32;
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	if err := runArrayReport(src, &out); err != nil {
+		t.Fatalf("runArrayReport: %v", err)
+	}
+	if got := out.String(); !strings.Contains(got, "reduce_axis(axis 1)  add") {
+		t.Errorf("report does not name the axis the reduction walks:\n%s", got)
 	}
 }

@@ -219,8 +219,16 @@ gate for closing them.
   `match (__om_find(m.root, k))` in `get` / `get_or` is never released** — 5
   of the 7 blocks `examples/tests/ordmap_test.fern` still shows. `__om_find`
   returns it with the transfer inc, and `reclaimableMatchScrutinee` refuses a
-  scrutinee whose arms bind pointers. The i32-valued twin of the same program
-  is clean.
+  scrutinee whose arms let a pointer out of the arm UNCOUNTED — a counted
+  alias into a local is admitted since #8003, a `return` of the binding is
+  not. The i32-valued twin of the same program is clean.
+
+  The block counts in this list predate that change and several others. Both
+  suites re-measured on x86-64 with `FERN_LEAKCHECK=1`: `ordmap_test.fern` is
+  25446 / 25442, four live blocks rather than seven, and `pvec_test.fern` is
+  balanced at 28403 with none. Those totals are unattributed, and identical
+  before and after #8003, so the entries below name shapes that may already be
+  narrower than they read.
 - **A fresh temp passed to a POINTER-returning method whose parameter reaches
   a self-recursive callee is not reclaimed** — `s.concat(v.slice(0, 2))`, 2
   of the 4 blocks in `examples/tests/pvec_test.fern`. The per-position admission asks

@@ -1294,7 +1294,106 @@ number in this section is, not as the hardware ratio. Its native and
 retired count of 1.99x, and nothing about this leg's body differs from
 theirs.
 
-The remaining leg — self-host wasm — is still scalar.
+**Self-host wasm was the eighth and last, and it is the one that DID owe its
+assembler** — the counterweight to the three legs before it. `watbin.fern`'s
+`simd_opcode` is a hand-written list and held four entries: no store, no float
+lane, and nothing past 127. So `v128.store` (11), `f64x2.splat` (20) and
+`f64x2.mul` (242) landed with the body, and the memarg test that was spelled
+`op == "v128.load"` at two sites became a `simd_has_memarg` predicate, since
+the store carries one too.
+
+242 is the first entry in that table needing two uleb bytes, which makes the
+hazard §3.3a records live here rather than hypothetical. The guard is a
+disassembly case, not a byte pin: `TestSelfHostWasmBinary` now runs a
+five-element `__scale_f64` through `wasm-tools print` and asserts
+`f64x2.splat` / `v128.load` / `f64x2.mul` / `v128.store` came back. A module
+that validates and runs proves nothing about WHICH instruction was emitted;
+only the disassembly does.
+
+| self-host wasm | scalar | v128 | |
+|---|---|---|---|
+| wall, floor included | 21.4 ms | 13.7 ms | 1.56x |
+| wall, floor subtracted | 14.6 ms | 6.9 ms | **2.12x** |
+
+The floor is wasmtime's own start-up, 6.8 ms on a program returning a
+constant, and it is half the vector time here, so the unadjusted ratio
+understates the body badly.
+
+2.12x is ABOVE the two-lane ceiling, and that is real rather than noise: the
+scalar loop computes two addresses per ELEMENT — two `i32.add` and an
+`i32.mul` for the load, the same three for the store — while the vector loop
+computes two per PAIR. So the body sheds the address arithmetic at the same
+rate it sheds the multiply, which is the same reason native x86-64 beat its
+four-lane ceiling at 4.49x. Where a kernel's per-element overhead is not just
+the arithmetic, the lane count is a floor on the win rather than a ceiling.
+
+**Step 3 is complete: all eight backends are vectorised.** The §3.3a ledger
+for this kernel reads three encodings on native x86-64, none on native arm64,
+two on native wasm, none on either `-backend ssa` leg, none on self-host
+x86-64, none on self-host arm64, three on self-host wasm. Every one of those
+is explained by how the assembler was BUILT — generated from class tables, or
+typed out per instruction — and by nothing about the kernel.
+
+**Step 4: the shape reaches the kernel without the wrapper being written.**
+A kernel wrapped by a stdlib function only helps the caller who reaches for
+that function. `xs.map((x: f64): f64 => x * 2.0)` is the same computation
+spelled the way a reader writes it first, and it ran the scalar loop —
+worse than the scalar loop, in fact, since `map` pays an indirect call per
+element. `internal/ir/array_scale.go` rewrites that shape to the kernel:
+the constant is read out of the element function's body at compile time and
+the closure never exists.
+
+Measured on x86-64, 300 rounds over a 20,000-element `f64[]`, the same
+source built twice and differing only by `FERN_NO_SCALE_KERNEL`:
+
+| | best of 7 |
+| --- | --- |
+| `xs.map(x => x * k)`, scalar | 39.1 ms |
+| the same source, kernel | 2.3 ms |
+| | **17.18x** |
+
+Far above the 4.49x the same kernel wins against a hand-written scalar loop,
+and for the reason the paragraph above gives: the baseline here sheds an
+indirect call per element as well as the arithmetic, so the lane count is a
+floor on the win and not a ceiling. It is the largest margin any kernel in
+this document has shown, because it is the only one whose baseline was
+paying for a closure.
+
+**The factor does not have to be written in the source.** Step 4's first slice
+read a literal out of the element function's body, which left the spelling a
+reader reaches for as soon as the factor has a name — `var k: f64 = 2.5;
+xs.map((x: f64): f64 => x * k)` — running the scalar loop and paying the
+indirect call. It reaches the kernel too, and costs nothing to emit: closure
+conversion pushes each captured value immediately before the build that packs
+it, so deleting the build leaves the factor standing exactly where the kernel
+wants its second operand. The captured shape emits no constant at all.
+
+Measured the same way — 300 rounds over a 20,000-element `f64[]`, one source
+built twice differing only by `FERN_NO_SCALE_KERNEL`:
+
+| | best of 7 |
+| --- | --- |
+| `xs.map(x => x * k)`, k captured, scalar | 41.2 ms |
+| the same source, kernel | 2.3 ms |
+| | **17.91x** |
+
+The same margin as the literal factor, which is the expected result: the
+kernel and the baseline are both unchanged, and the captured shape sheds an
+env allocation per round on top.
+
+What a capture may NOT be is the other half of the rule, and one case is worth
+naming because it is invisible in the source: **assigning the captured
+variable anywhere in the enclosing function boxes it**, so the closure captures
+a cell rather than a value — the push carries an rc.inc and the body reads
+through an indirection. That declines, and has to: the kernel wants the value,
+and deleting an inc whose matching release left with the closure would
+unbalance the refcounts.
+
+The pass runs LAST of the three that rewrite an array combinator — after
+fusion (#9731) and after R7's in-place map (#9733). R7 allocates nothing at
+all, and that is a contract `fip`/E068 checks, so a kernel putting a fresh
+buffer back would break a claim a program is allowed to make. A vectorised
+copy does not beat no copy.
 
 ### 3.5 Testing
 

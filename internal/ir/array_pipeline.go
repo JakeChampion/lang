@@ -607,6 +607,8 @@ func FormatArrayPipelineHistogram(p *Program) string {
 	for _, r := range allRefusals {
 		fmt.Fprintf(&b, "  %-26s %d\n", r.Tag(), counts[r])
 	}
+	b.WriteString(FormatNdarrayElementHistogram(p))
+	b.WriteString(FormatNdarraySiteHistogram(p))
 	return b.String()
 }
 

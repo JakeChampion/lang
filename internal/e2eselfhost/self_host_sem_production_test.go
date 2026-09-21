@@ -563,6 +563,187 @@ function main(): i32 {
     var u: string = "xyz" + "w";
     return v.len() + s.len() + u.len();
 }`},
+	// The same phi as the row above, with a LITERAL on the entry edge rather
+	// than a live view — the `var spec: str = ""; … spec = slice_unchecked(…)`
+	// that `std/format`'s two refused functions are both built on. Produced as
+	// a `string` and retagged by `widen`, the literal is a borrow, and the
+	// phi could only be supplied on that edge by retaining a view; a literal
+	// carries the same immortal rc a view's box does, so producing it at the
+	// destination's own type makes the edge a move. 0 of 4 before, and the AST
+	// lowering strands every view box it makes (3240 bytes in 135 blocks).
+	{name: "a-string-literal-is-already-a-view", atLeast: 4, noLeak: true, src: `
+function span(fmt: string, take: boolean): i32 {
+    var spec: str = "";
+    if (take) { spec = slice_unchecked(fmt, 1, 4); }
+    var sum: i32 = spec.len();
+    var k: i32 = 0;
+    while (k < spec.len()) { sum = sum + (spec[k] as i32); k = k + 1; }
+    return sum;
+}
+
+function rounds(fmt: string, n: i32): i32 {
+    var out: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        var spec: str = "";
+        if (i % 3 != 0) { spec = slice_unchecked(fmt, 0, i % 5); }
+        out = out + spec.len();
+        i = i + 1;
+    }
+    return out;
+}
+
+function width(s: str): i32 { return s.len(); }
+
+function main(): i32 {
+    var fmt: string = "abcdefgh" + "ijkl";
+    var many: str[] = ["", "ab", "cde"];
+    var total: i32 = span(fmt, true) + span(fmt, false) + rounds(fmt, 200);
+    total = total + width("wxyz");
+    for m in many { total = total + m.len(); }
+    var last: str = "";
+    if (total > 0) { last = slice_unchecked(fmt, 2, 6); }
+    return total + last.len();
+}`},
+	// The map cursor: `m.iter()` and its four methods. `map_iter` is the only
+	// allocation of the five and its block carries no rc header, so the frame
+	// counts nothing and frees nothing; `key` and `value` read the map's own
+	// columns at the cursor and take no unit of what they answer. Refused
+	// whole before (`unsupported call target: Map[string, i32].iter`), which
+	// held `examples/tests/json_roundtrip_test` and
+	// `conformance/cases/audit_std_json` entirely to the AST lowering.
+	//
+	// Both key-column layouts are covered: `mapiter_key` loads a string key
+	// through the counted column and a narrow-integer key through the raw one,
+	// and only the second exercises the load `is_supported_map` admits beside
+	// the string case. Nothing in the moving corpus rows is integer-keyed.
+	//
+	// No noLeak: both legs hold one 16-byte block per cursor and the typed leg
+	// holds exactly the same bytes the AST leg does, which is what the
+	// comparison against the AST oracle pins.
+	{name: "a-map-cursor-reads-the-columns-it-points-at", atLeast: 6, src: `
+import "core/map";
+
+function sum_values(m: Map[string, i32]): i32 {
+    var total: i32 = 0;
+    var it: MapIter[string, i32] = m.iter();
+    while (it.has_next()) {
+        total = total + it.value() + it.key().len();
+        it.advance();
+    }
+    return total;
+}
+
+function longest(m: Map[string, string]): i32 {
+    var best: i32 = 0;
+    var it: MapIter[string, string] = m.iter();
+    while (it.has_next()) {
+        var v: string = it.value();
+        if (v.len() > best) { best = v.len(); }
+        it.advance();
+    }
+    return best;
+}
+
+function rounds(m: Map[string, i32], n: i32): i32 {
+    var out: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        var it: MapIter[string, i32] = m.iter();
+        while (it.has_next()) { out = out + it.value(); it.advance(); }
+        i = i + 1;
+    }
+    return out;
+}
+
+function narrow_keys(m: Map[i32, i32]): i32 {
+    var total: i32 = 0;
+    var it: MapIter[i32, i32] = m.iter();
+    while (it.has_next()) { total = total + it.key() * it.value(); it.advance(); }
+    return total;
+}
+
+function narrow_key_str_value(m: Map[i32, string]): i32 {
+    var total: i32 = 0;
+    var it: MapIter[i32, string] = m.iter();
+    while (it.has_next()) { total = total + it.key() + it.value().len(); it.advance(); }
+    return total;
+}
+
+function main(): i32 {
+    var m: Map[string, i32] = map_new(8);
+    m = m.insert("aa", 1);
+    m = m.insert("bbb", 2);
+    m = m.insert("cccc", 4);
+    var t: Map[string, string] = map_new(4);
+    t = t.insert("k", "vvvvv");
+    t = t.insert("kk", "vv");
+    var empty: Map[string, i32] = map_new(4);
+    var a: Map[i32, i32] = map_new(4);
+    a = a.insert(2, 5);
+    a = a.insert(3, 7);
+    var b: Map[i32, string] = map_new(4);
+    b = b.insert(10, "xyz");
+    b = b.insert(20, "pq");
+    return sum_values(m) + longest(t) + rounds(m, 50) + sum_values(empty)
+        + narrow_keys(a) + narrow_key_str_value(b);
+}`},
+	// A cursor RETURNED over a map the frame owns. The anchor keeps the map
+	// live for as long as a read through the cursor can happen inside the
+	// frame, and a return takes the cursor out of it, so the columns it points
+	// at are the ones this frame is about to release. Refused, and the AST
+	// lowering — which sidesteps the class by never reclaiming a frame map
+	// that has an explicit `iter()` — stands and answers.
+	//
+	// Before the refusal this crashed the compiler outright ("array index out
+	// of range"), so the row pins a diagnostic where there was a backtrace.
+	// Native answers 0 on this shape where the AST leg answers 7, filed
+	// separately; the case here is the refusal, not the divergence.
+	//
+	{name: "a-cursor-result-escapes-its-map", atLeast: 0, refuses: "cursor result escapes its map", src: `
+import "core/map";
+
+function make_cursor(): MapIter[string, i32] {
+    var m: Map[string, i32] = map_new(4);
+    m = m.insert("a", 7);
+    return m.iter();
+}
+
+function main(): i32 {
+    var it: MapIter[string, i32] = make_cursor();
+    var total: i32 = 0;
+    while (it.has_next()) { total = total + it.value(); it.advance(); }
+    return total;
+}`},
+	// A CONTAINER carries the cursor exactly as far, and this is its OWN row on
+	// purpose. Put beside the bare form, the container proves nothing: the bare
+	// refusal alone satisfies the `refuses` substring, `atLeast: 0` sets no
+	// floor, and the container shape ANSWERS when it is wrongly produced, so
+	// the differential stays green too — a row holding both would pass with the
+	// container walk deleted. Alone, the refusal line appears only while
+	// `semtypes.holds_map_iter` recurses, so losing the walk turns this red.
+	//
+	// The container is the worse of the two shapes: `array_new` is no
+	// projection, so the array has no anchor edge to the map at all. A TUPLE
+	// holding a cursor is refused identically and is in no row, because the AST
+	// leg declines that shape outright ("module is not IR-eligible") and a
+	// differential row needs an oracle that runs.
+	{name: "a-container-of-cursors-escapes-too", atLeast: 0, refuses: "cursor result escapes its map", src: `
+import "core/map";
+
+function make_cursors(): MapIter[string, i32][] {
+    var m: Map[string, i32] = map_new(4);
+    m = m.insert("b", 5);
+    return [m.iter()];
+}
+
+function main(): i32 {
+    var cs: MapIter[string, i32][] = make_cursors();
+    var it: MapIter[string, i32] = cs[0];
+    var total: i32 = 0;
+    while (it.has_next()) { total = total + it.value(); it.advance(); }
+    return total;
+}`},
 	// Two levels of value-position if, the inner arm a boolean call. The
 	// outer IIFE returns the CALL of the inner one, which the checker types
 	// from the inner declaration's tag — `if_expr_rt`'s concrete `i32` guess —
@@ -2583,6 +2764,68 @@ function main(): i32 {
     if (Bag { items: [1, 2, 3], names: ["a", "b"] }.to_json() != "{\"items\":[1,2,3],\"names\":[\"a\",\"b\"]}") { return 1; }
     if (Held { xs: [1.5, 2.5] }.render() != "[1.5,2.5]") { return 2; }
     return acc % 101;
+}`},
+	{name: "a-composite-compares-through-its-own-method", atLeast: 59, noLeak: true, src: `
+import "core/cmp";
+@derive(cmp.Eq, cmp.Ord)
+struct Point { x: i32, y: string }
+@derive(cmp.Eq, cmp.Ord)
+enum Shape { Dot, Line(i32), Box(i32, string) }
+@derive(cmp.Eq, cmp.Ord)
+struct Holder[T] { v: T }
+function same[T](a: Holder[T], b: Holder[T]): boolean { return a == b; }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 20) {
+        var a: Point = Point { x: 2, y: "hi" };
+        var b: Point = Point { x: 2, y: "hi" };
+        var c: Point = Point { x: 2, y: "hj" };
+        if (!(a == b)) { return 1; }
+        if (a == c) { return 2; }
+        if (!(a != c)) { return 3; }
+        if (!(a < c)) { return 4; }
+        if (a < b) { return 5; }
+        if (!(a <= b)) { return 6; }
+        if (!(c > a)) { return 7; }
+        if (!(a >= b)) { return 8; }
+        if (!(Box(2, "a") == Box(2, "a"))) { return 9; }
+        if (Box(2, "a") == Box(2, "b")) { return 10; }
+        if (!(Box(2, "a") < Box(2, "b"))) { return 11; }
+        if (!(Line(1) < Box(0, ""))) { return 12; }
+        if (!(Dot == Dot)) { return 13; }
+        if (Dot == Line(0)) { return 14; }
+        var p: Holder[i32] = Holder { v: 1 };
+        var q: Holder[i32] = Holder { v: 2 };
+        var r: Holder[string] = Holder { v: "a" };
+        if (!same(p, Holder { v: 1 })) { return 15; }
+        if (same(p, q)) { return 16; }
+        if (!(p < q)) { return 17; }
+        if (!same(r, Holder { v: "a" })) { return 18; }
+        acc = acc + 1;
+        i = i + 1;
+    }
+    return acc + 22;
+}`},
+	{name: "a-u8-converts-to-and-from-a-float", atLeast: 1, noLeak: true, src: `
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 256) {
+        var b: u8 = i as u8;
+        var f: f64 = b as f64;
+        if ((f as u8) != b) { return 1; }
+        if ((f as i32) != i) { return 2; }
+        acc = acc + ((f as i32) & 1);
+        i = i + 1;
+    }
+    if ((300.7 as u8) != 44u8) { return 3; }
+    if ((255.9 as u8) != 255u8) { return 4; }
+    if ((0.5 as u8) != 0u8) { return 5; }
+    var w: u8 = 200u8;
+    if ((w as f64) * 2.0 != 400.0) { return 6; }
+    if ((w as f32) != 200.0) { return 7; }
+    return acc;
 }`},
 }
 

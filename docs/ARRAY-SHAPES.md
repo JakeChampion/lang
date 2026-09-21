@@ -144,16 +144,93 @@ therefore the representation: four fields the IR reads as any struct's,
 which is what lets a kernel take `data`, `shape`, `strides` and `offset`
 without a second description of them.
 
-`inner` and `outer` are the first shapes it recognizes (#9735, step 3).
-`fern -array-report` lists every site under `std/ndarray products`, with
-the element functions the site was handed, keyed on the
-`__method_ndarray__NdArray_` mangling that only std/ndarray's receiver
-methods get. That list is the kernel half's worklist: a site whose
-`mul` and `add` are multiplication and addition over `f64` is `dot_f64`
-in disguise, and one handed a closure that captures is not. Recognition
-only — every site still runs the scalar loop, nothing fuses, nothing
-donates, and `internal/ir/ndarray_shapes_test.go` pins that the
-recogniser changes no op.
+**What it recognizes is §7's closed list**: the eight operations that are
+handed a function. `fern -array-report` lists every site under
+`std/ndarray operations`, with the element functions the site was handed,
+keyed on the `__method_ndarray__NdArray_` mangling that only
+std/ndarray's receiver methods get. The three axis-parameterized verbs
+also carry the argument that says which elements they walk —
+`reduce_axis(axis 1)`, `scan_axis(axis 0)`, `map_rank(rank 2)` — read
+only where it is written as a literal, and printed `axis ?` where it is
+computed. A guessed axis would be worse than none: a reduction along the
+last axis walks contiguous storage and one along any other axis strides,
+so the two plan differently.
+
+§2's structural operations are deliberately absent. They move no
+elements, so there is nothing for a kernel to replace.
+
+That list is the kernel half's worklist, and it answers the worklist's
+own question rather than leaving the reader to go and look: each element
+function is printed with what a kernel could do with it.
+
+```
+run:5:60  inner  mul [f64 mul], add [f64 add]
+run:6:44  map    __closure_lambda_1 [element-fn-captures]
+```
+
+The first of those is `dot_f64` in disguise; the second is not, and says
+why. The bar is `ATLAS-PLATFORM-PLAN.md` §3's: a kernel is one IR op
+whose whole vector lifetime stays inside its own emitted sequence, so a
+call to an element function is an op boundary and nothing survives it. A
+kernel can only take an element function it can INLINE, which means one
+primitive operation over the operands. `x * y`, `x * 2.0` and `-x` all
+are — a unary is emitted as readily as a binary — while a body with two
+operations or a call is not.
+
+The name a primitive is printed under is the operation a kernel would
+have to emit, not the source's spelling: `x < y` over `u64` prints
+`u64 lt`, because the IR's `OpLtS` carries `Unsigned` and the
+instruction is `lt_u`.
+
+The refusals are a **closed set with stable tags**, for the reason
+`FusionRefusal`'s are: they are the coverage checklist for widening the
+kernels, and a checklist of free text cannot be tallied.
+`FERN_ARRAY_REPORT=1` prints the tally, a row per reason even at zero.
+
+| tag | what it means |
+| --- | --- |
+| `element-fn-unresolved` | the lowering did not park the function where the recogniser could name it |
+| `element-fn-not-in-program` | named, but the program does not hold that function |
+| `element-fn-captures` | a lambda closed over something, and a kernel has nowhere to put it |
+| `element-fn-calls` | the body calls something, and a call is an op boundary |
+| `element-fn-not-one-op` | the body is more than one operation, or applies none |
+| `element-fn-not-arithmetic` | the body's one operation is not arithmetic a kernel emits inline. Two absences are deliberate: INTEGER division and remainder, because both trap on a zero divisor and a kernel that hoisted one would move the trap (float division stays, which does not trap); and conversions, because they change the element type, which makes the stage a different shape rather than a kernel over this one |
+
+Each line then carries the SITE's verdict, which is the question a
+planner actually asks: every element function primitive is necessary and
+not sufficient, because an axis verb also has to say which elements it
+walks.
+
+```
+algebra:11:60  reduce_axis(axis 1)  add [i64 add]  -> kernel-candidate
+algebra:13:48  map_rank(rank 1)     sum_cell [element-fn-calls]  -> element-not-primitive
+algebra:14:60  reduce_axis(axis ?)  add [i64 add]  -> axis-not-literal
+```
+
+The third of those is the one a per-element reading cannot see: its
+element function is primitive, and only the site-level question declines
+it. `axis-not-literal` is its own row for the reason the axis is read at
+all — a reduction along the last axis walks contiguous storage and one
+along any other axis strides, so a kernel cannot be selected without
+knowing which.
+
+The site verdicts are a closed set too, and their tally sits beside the
+element one under `FERN_ARRAY_REPORT=1`.
+
+| tag | what it means |
+| --- | --- |
+| `kernel-candidate` | nothing this pass can see would make a planner decline the site |
+| `element-not-primitive` | an element function is not one a kernel can inline, per the table above |
+| `axis-not-literal` | the axis is not a literal, so which elements the kernel would walk is not known here |
+
+Recognition and both verdicts change nothing. **A verdict of `primitive`
+says the element function is not what stands in the way, and
+`kernel-candidate` says nothing this pass can see would make a planner
+decline the site — neither says that the site lowers to a kernel** — no
+kernel exists for any verb yet.
+Every site still runs the scalar loop, nothing fuses, nothing donates,
+and `internal/ir/ndarray_shapes_test.go` pins that the recogniser
+changes no op.
 
 ## 7. Elementwise, and along an axis
 
@@ -176,6 +253,7 @@ equal; anything else is a derived shape that is wrong and aborts.
 | `scan_axis(axis, init, f)` | same shape, the running fold | increasing index along `axis` | one packed buffer of `len()` |
 | `outer(b, f)` | `a.shape() ++ b.shape()`, every pair | reading order of the result | one packed buffer of the result count |
 | `inner(b, init, mul, add)` | last axis of `a` against first of `b`: `a.shape()[:-1] ++ b.shape()[1:]` | increasing index along the contracted axis | one packed buffer of the result count |
+| `map_rank(k, f)` | `frame ++ f's result shape`, the frame being the leading `rank - k` axes; the empty handle of shape `frame` when there are no cells | cells in increasing index order, each cell's result read in reading order | one packed buffer of the result count |
 
 Three rules follow:
 
@@ -242,8 +320,10 @@ Four consequences:
 
 - **The kernels**: the rest of #9735. The first one exists, `__scale_f64`,
   the elementwise multiply over an `f64[]` that `std/array`'s `scale_f64`
-  now is: scalar on all eight backends (`ATLAS-PLATFORM-PLAN.md` §3.4's
-  steps 1 and 2, with the measurement), allocating its own result so no
+  now is: vectorised on all eight backends, and reached by
+  `xs.map((x: f64): f64 => x * k)` without the wrapper being written, for a
+  literal k or a captured one (`ATLAS-PLATFORM-PLAN.md` §3.4's four steps,
+  with the measurements), allocating its own result so no
   sized-array primitive was needed, and chosen over the dot product
   because a reduction may not reassociate (`ARRAY-ALGEBRA.md` §3) while a
   multiply has nothing to reassociate. `inner` and `outer` are recognized

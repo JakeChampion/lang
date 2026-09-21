@@ -6776,8 +6776,20 @@ pub function sum_bytes_helper(): string {
 // (ATLAS-PLATFORM-PLAN §3.3, eighth kernel; the first over an array and the
 // first with a buffer out).
 //
-// SCALAR (§3.4 step 1): one f64.mul per element. Elementwise, so the v128
-// body this wants (f64x2.mul over two lanes) reassociates nothing.
+// v128 (§3.4 step 3): f64x2.mul over a pair, with the scalar loop as the tail
+// for an odd length. Elementwise, so the lanes reassociate nothing
+// (ARRAY-ALGEBRA.md §3, AA-02).
+//
+// This leg DID owe its assembler, unlike the three before it: watbin.fern's
+// simd_opcode is a hand-written list, and it held four entries — none of them
+// a store, a float lane, or a sub-opcode past 127. So v128.store (11),
+// f64x2.splat (20) and f64x2.mul (242) landed with this body, and 242 is the
+// first entry here that needs two uleb bytes.
+//
+// The splat is hoisted into a v128 local rather than recomputed per iteration,
+// which is $__fern_count_byte's shape directly below and cheap here for the
+// same reason: this emitter writes its own locals list, so a v128 local costs
+// one declaration.
 //
 // The result comes from $__fern_arr_box, whose block keeps len at [a],
 // cap at [a+4] and element i at [a + 8 + i*8]; both are set to n here, the
@@ -6785,11 +6797,21 @@ pub function sum_bytes_helper(): string {
 pub function scale_f64_helper(): string {
     var o: string = "";
     o = o + "  (func $__fern_scale_f64 (param $a i32) (param $k f64) (result i32)\n";
-    o = o + "    (local $n i32) (local $o i32) (local $i i32)\n";
+    o = o + "    (local $n i32) (local $o i32) (local $i i32) (local $pairs i32) (local $kk v128)\n";
     o = o + "    (local.set $n (i32.load (local.get $a)))\n";
     o = o + "    (local.set $o (call $__fern_arr_box (i32.mul (local.get $n) (i32.const 8))))\n";
     o = o + "    (i32.store (local.get $o) (local.get $n))\n";
     o = o + "    (i32.store (i32.add (local.get $o) (i32.const 4)) (local.get $n))\n";
+    o = o + "    (local.set $kk (f64x2.splat (local.get $k)))\n";
+    // Whole pairs only, so the vector body cannot read or write past the last
+    // element; the tail below picks up the odd one.
+    o = o + "    (local.set $pairs (i32.and (local.get $n) (i32.const -2)))\n";
+    o = o + "    (block $vd (loop $vc\n";
+    o = o + "      (br_if $vd (i32.ge_u (local.get $i) (local.get $pairs)))\n";
+    o = o + "      (v128.store (i32.add (i32.add (local.get $o) (i32.const 8)) (i32.mul (local.get $i) (i32.const 8)))\n";
+    o = o + "        (f64x2.mul (v128.load (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $i) (i32.const 8)))) (local.get $kk)))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 2)))\n";
+    o = o + "      (br $vc)))\n";
     o = o + "    (block $d (loop $c\n";
     o = o + "      (br_if $d (i32.ge_u (local.get $i) (local.get $n)))\n";
     o = o + "      (f64.store (i32.add (i32.add (local.get $o) (i32.const 8)) (i32.mul (local.get $i) (i32.const 8)))\n";

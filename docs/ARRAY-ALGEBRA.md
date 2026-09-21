@@ -364,15 +364,47 @@ The same verdict is what E068 reports when a `fip` / `fbip` function's
 `map` is declined, so "why did this allocate under my space claim" and
 "why did this allocate" have one answer.
 
-The same report lists `std/ndarray`'s products, `inner` and `outer`,
-as recognized shapes (`ARRAY-SHAPES.md` §6): one line per site with the
-element functions it was handed, under a heading that says the lowering
-is still the scalar loop. Nothing about them fuses; the section is the
-worklist for the kernels of #9735.
+A stage the SCALE KERNEL took says so instead (#9735). It is a buffer
+the kernel wrote rather than the scalar loop, so it is a storage verdict
+like the others rather than a section of its own:
 
-`FERN_ARRAY_REPORT=1` adds a histogram, in three sections: why each chain
-was not FUSED (#9731), where each stage's BUFFER came from (#9732), and
-where each chain STOPPED being one chain (#9730). Both sets are **closed** with stable tags, for the reason
+```
+map        elementwise  __closure_lambda_1
+  fresh buffer: __fern_scale_f64 replaced the map, so the kernel wrote it
+  rather than the scalar loop (#9735)
+```
+
+The two planners take disjoint stages today, so the report never has to
+choose between them: R7 only takes 8-byte integer elements, and the
+kernel only takes f64, so no site can earn both verdicts. The report
+still asks R7 first and keeps `reused` when it answers — the battery runs
+R7 first, and a donated buffer is the stronger answer, since it allocates
+nothing where the kernel allocates one — but that gate decides nothing
+that is reachable. `TestR7AndTheScaleKernelTakeDisjointStages` pins the
+disjointness from both sides; if either planner widens, it fails, and the
+ordering has to be read again for real. Both verdicts come from the
+planner that performs the rewrite — `scaleF64Verdict` here, as
+`inPlaceVerdict` above — so neither can claim a rewrite the pass did not
+perform, and a test holds the count of stages reported as the kernel's to
+the number of sites the pass rewrites.
+
+The same report lists `std/ndarray`'s algebra — `ARRAY-SHAPES.md` §7's
+eight operations, the ones handed a function — as recognized shapes
+(`ARRAY-SHAPES.md` §6): one line per site with the element functions it
+was handed and, for `reduce_axis`, `scan_axis` and `map_rank`, the axis
+or cell rank it was given, under a heading that says the lowering is
+still the scalar loop. Each element function carries what a kernel could
+do with it — the primitive it is, or the closed refusal that says why it
+is not one — and each line ends with whether the whole site is a kernel
+candidate (`ARRAY-SHAPES.md` §6 has both tables). Nothing about them
+fuses; the section is the worklist for the kernels of #9735.
+
+`FERN_ARRAY_REPORT=1` adds a histogram, in five sections: why each chain
+was not FUSED (#9731), where each stage's BUFFER came from (#9732),
+where each chain STOPPED being one chain (#9730), what a kernel could do
+with each `std/ndarray` ELEMENT FUNCTION, and whether a planner could
+take each `std/ndarray` SITE (#9735 for both). The last two are printed
+only when the program has such a site. Every set is **closed** with stable tags, for the reason
 `FERN_SSA_REPORT` is: the set of things declined is the coverage checklist
 for widening the algebra, and a tally of free-text strings cannot be
 counted. Every reason prints a row even at zero, so a reason that stops

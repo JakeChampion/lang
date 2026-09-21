@@ -149,6 +149,10 @@ func TestSelfHostWasmBinary(t *testing.T) {
 		{"memchr-v128", "function main(): i32 { var s: string = \"aaaaaaaaaaaaaaaaaaaa*aaa\"; return __memchr(s, 42, 0) + 22; }", 42},
 		{"memchr-v128-miss", "function main(): i32 { var s: string = \"aaaaaaaaaaaaaaaaaaaaaaaa\"; return __memchr(s, 42, 0) + 43; }", 42},
 		{"ascii-run-v128", "function main(): i32 { var s: string = \"aaaaaaaaaaaaaaaaaaaaaaaa\"; return __ascii_run(s, 0) + 18; }", 42},
+		// __scale_f64 is the one case reaching a sub-opcode past the one-byte
+		// uleb boundary (f64x2.mul is 242), and the one reaching v128.store.
+		// Five elements, so the vector body runs twice and the tail once.
+		{"scale-f64-v128", "function main(): i32 { var xs: f64[] = [1.0, 2.0, 3.0, 4.0, 5.0]; var ys: f64[] = __scale_f64(xs, 2.0); return (ys[0] + ys[4]) as i32 + 30; }", 42},
 		// random_i32(): a single i32 of randomness. Used in self-cancelling
 		// arithmetic so the result is deterministic (42) while still
 		// exercising the builtin's call + helper emission end-to-end.
@@ -267,6 +271,11 @@ var wantSIMDMnemonics = map[string][]string{
 	"memchr-v128":      {"i8x16.splat", "v128.load", "i8x16.eq", "i8x16.bitmask", "i32.ctz"},
 	"memchr-v128-miss": {"i8x16.splat", "v128.load", "i8x16.eq", "i8x16.bitmask", "i32.ctz"},
 	"ascii-run-v128":   {"v128.load", "i8x16.bitmask", "i32.ctz"},
+	// f64x2.mul is 242, the first entry in watbin's table needing two uleb
+	// bytes. Written as a raw 0xf2 it would swallow the next instruction's
+	// first byte, so the disassembly is what proves the width is right — the
+	// module validating does not.
+	"scale-f64-v128": {"f64x2.splat", "v128.load", "f64x2.mul", "v128.store"},
 }
 
 // asmReadFileDriver is the assembler's entry point: read the target WAT
