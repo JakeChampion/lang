@@ -821,14 +821,12 @@ function main(): i32 {
 	// `bind_unify` already descends into a bracketed spelling; only the gate
 	// was wrong.
 	//
-	// What this row pins is that the module COMPILES AND ANSWERS, not that it
-	// produces: the typed path still refuses all of it (0 of 28) behind the
-	// `calls a function value of N arguments` mixing rule, which is a separate
-	// leaf. So `atLeast` is 0 deliberately and there is no `noLeak` — both legs
-	// hold the same 1232 bytes here, because the typed leg IS the AST leg on
-	// this program. Before the fix the harness cannot get past the compile at
-	// all, which is what makes the row fail.
-	{name: "a-callbacks-return-pins-the-methods-own-variable", atLeast: 0, src: `
+	// Clearing that left the module compiling but refusing all 28 of its
+	// declarations, behind the callable-slot spelling the struct
+	// monomorphiser did not mangle. With both closed it produces whole and
+	// reclaims whole, `live_bytes=0` against the 1232 bytes the AST leg
+	// strands.
+	{name: "a-callbacks-return-pins-the-methods-own-variable", atLeast: 28, noLeak: true, src: `
 import "std/ndarray" as ndarray;
 
 function sum_cell(c: ndarray.NdArray[i32]): ndarray.NdArray[i32] {

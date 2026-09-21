@@ -92,3 +92,9 @@ argument cannot pass as the receiver's own.
 That the row can FAIL was checked rather than assumed: with `parser.fern`
 reverted and the rest of the branch in place it goes red on all four targets,
 on the produced count AND on `noLeak`.
+
+`a-callbacks-return-pins-the-methods-own-variable`, added one change earlier
+with `atLeast: 0` because the typed path then refused all 28 of its
+declarations, produces **28 of 28** now and reclaims whole against the 1232
+bytes the AST leg strands. Its floor and its `noLeak` move with it, and the
+paragraph explaining why it claimed nothing goes with them.
