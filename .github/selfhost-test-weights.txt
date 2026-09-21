@@ -466,6 +466,7 @@ TestSelfHostSSAUnitsIRArm64 3
 TestSelfHostSSAUnitsIRWasm 3
 TestSelfHostSSAUnitsIRX86_64 3
 TestSelfHostSelfrefStructIRX86_64 2
+TestSelfHostSemanticHandleTty 23
 TestSelfHostSemanticProduction 3
 TestSelfHostSemanticSourceCensusLoadsTheStdlib 11
 TestSelfHostSemanticSourcePrint 6
