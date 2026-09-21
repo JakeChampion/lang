@@ -149,7 +149,7 @@ selfhost/wasm32-wasi/utf8_ingest_unchecked.emit	8939
 selfhost/wasm32-wasi/utf8_ingest_validated.emit	9378
 selfhost/x86-64-linux/array_append.emit	800
 selfhost/x86-64-linux/array_index.emit	780
-selfhost/x86-64-linux/array_scale_f64.emit	3144
+selfhost/x86-64-linux/array_scale_f64.emit	3230
 selfhost/x86-64-linux/array_with.emit	972
 selfhost/x86-64-linux/ascii_scan.emit	4858
 selfhost/x86-64-linux/call_overhead.emit	200
