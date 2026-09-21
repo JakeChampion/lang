@@ -605,6 +605,63 @@ function main(): i32 {
     if (total > 0) { last = slice_unchecked(fmt, 2, 6); }
     return total + last.len();
 }`},
+	// The map cursor: `m.iter()` and its four methods. `map_iter` is the only
+	// allocation of the five and its block carries no rc header, so the frame
+	// counts nothing and frees nothing; `key` and `value` read the map's own
+	// columns at the cursor and take no unit of what they answer. Refused
+	// whole before (`unsupported call target: Map[string, i32].iter`), which
+	// held `examples/tests/json_roundtrip_test` and
+	// `conformance/cases/audit_std_json` entirely to the AST lowering.
+	//
+	// No noLeak: both legs hold one 16-byte block per cursor — 53 here — and
+	// the typed leg holds exactly the same bytes the AST leg does, which is
+	// what the comparison against the AST oracle pins.
+	{name: "a-map-cursor-reads-the-columns-it-points-at", atLeast: 4, src: `
+import "core/map";
+
+function sum_values(m: Map[string, i32]): i32 {
+    var total: i32 = 0;
+    var it: MapIter[string, i32] = m.iter();
+    while (it.has_next()) {
+        total = total + it.value() + it.key().len();
+        it.advance();
+    }
+    return total;
+}
+
+function longest(m: Map[string, string]): i32 {
+    var best: i32 = 0;
+    var it: MapIter[string, string] = m.iter();
+    while (it.has_next()) {
+        var v: string = it.value();
+        if (v.len() > best) { best = v.len(); }
+        it.advance();
+    }
+    return best;
+}
+
+function rounds(m: Map[string, i32], n: i32): i32 {
+    var out: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        var it: MapIter[string, i32] = m.iter();
+        while (it.has_next()) { out = out + it.value(); it.advance(); }
+        i = i + 1;
+    }
+    return out;
+}
+
+function main(): i32 {
+    var m: Map[string, i32] = map_new(8);
+    m = m.insert("aa", 1);
+    m = m.insert("bbb", 2);
+    m = m.insert("cccc", 4);
+    var t: Map[string, string] = map_new(4);
+    t = t.insert("k", "vvvvv");
+    t = t.insert("kk", "vv");
+    var empty: Map[string, i32] = map_new(4);
+    return sum_values(m) + longest(t) + rounds(m, 50) + sum_values(empty);
+}`},
 	// Two levels of value-position if, the inner arm a boolean call. The
 	// outer IIFE returns the CALL of the inner one, which the checker types
 	// from the inner declaration's tag — `if_expr_rt`'s concrete `i32` guess —

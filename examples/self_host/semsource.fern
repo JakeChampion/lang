@@ -1327,6 +1327,35 @@ function map_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: St
     if (fa.field == "values" && c.args.len() == 0) { return map_column(s, recv, ssasem.map_values(), ssasem.map_value(t)); }
     if (fa.field == "without" && c.args.len() == 1) { return map_delete(c, recv, s, t); }
     if (fa.field == "cleared" && c.args.len() == 0) { return define(s, ssasem.map_cleared(), [], 0, "", t); }
+    if (fa.field == "iter" && c.args.len() == 0) { return map_cursor(s, recv, t); }
+    return refused(s, "unsupported call target: " + typeinfo.spelling(t) + "." + fa.field);
+}
+
+// `m.iter()` — the cursor over m. It is a block of its own, but it holds the
+// map's address and an index and nothing else, so it reads the map's storage
+// for as long as it lives and the frame neither counts it nor frees it.
+function map_cursor(s: State, recv: Value, t: typeinfo.Type): Value {
+    var cursor: typeinfo.Type = typeinfo.TypeStruct {
+        name: "MapIter",
+        args: [ssasem.map_key(t), ssasem.map_value(t)],
+    };
+    return define(s, ssasem.map_iter(), [recv.id], 0, "", cursor);
+}
+
+// The cursor's four. `key` and `value` read the map's own columns at the
+// cursor and take no unit of what they answer, so the value is borrowed for
+// as long as the map holds it; `advance` moves the cursor in place and
+// answers nothing, so it stands only as a statement.
+function map_iter_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: State, statement: boolean): Value {
+    var t: typeinfo.Type = s.values[recv.id];
+    if (c.args.len() != 0) { return refused(s, "call arity"); }
+    if (fa.field == "has_next") { return define(s, ssasem.mapiter_has_next(), [recv.id], 0, "", t_bool()); }
+    if (fa.field == "key") { return define(s, ssasem.mapiter_key(), [recv.id], 0, "", semtypes.map_iter_key(t)); }
+    if (fa.field == "value") { return define(s, ssasem.mapiter_value(), [recv.id], 0, "", semtypes.map_iter_value(t)); }
+    if (fa.field == "advance") {
+        if (!statement) { return refused(s, "unsupported void call"); }
+        return define(s, ssasem.mapiter_advance(), [recv.id], 0, "", t_void());
+    }
     return refused(s, "unsupported call target: " + typeinfo.spelling(t) + "." + fa.field);
 }
 
@@ -1448,6 +1477,7 @@ function builtin_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: 
     if (c.type_argc > 0) { return refused(s, "unsupported call target"); }
     if (semtypes.is_cell(s.values[recv.id])) { return cell_method(c, fa, recv, s, statement); }
     if (ssasem.is_map(s.values[recv.id])) { return map_method(c, fa, recv, s); }
+    if (semtypes.is_map_iter(s.values[recv.id])) { return map_iter_method(c, fa, recv, s, statement); }
     if (fa.field == "len" && c.args.len() == 0) { return builtin_length(recv, s); }
     if ((fa.field == "bytes" || fa.field == "as_bytes") && c.args.len() == 0 && ssasem.is_text(s.values[recv.id])) {
         return define(s, ssasem.str_bytes(), [recv.id], 0, "", typeinfo.TypeArray { elem: t_u8() });
@@ -3294,6 +3324,14 @@ function schema_of(t: typeinfo.Type, s: State, out: Schemas): Schemas {
         return out;
     }
     if (semtypes.is_cell(t)) { return schema_of(semtypes.cell_elem(t), s, out); }
+    // A map cursor has no layout of its own to record either — its block is the
+    // map's address and an index — but the columns it reads do, so the walk
+    // goes through to its key and value.
+    if (semtypes.is_map_iter(t)) {
+        out = schema_of(semtypes.map_iter_key(t), s, out);
+        if (!out.ok) { return out; }
+        return schema_of(semtypes.map_iter_value(t), s, out);
+    }
     if let typeinfo.TypeMap(m) = t {
         out = schema_of(m.key, s, out);
         if (!out.ok) { return out; }
