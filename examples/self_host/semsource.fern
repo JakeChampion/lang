@@ -11,6 +11,7 @@ import "./semrecords";
 import "./ssa";
 import "./ssasem";
 import "./ssaunits";
+import "./ownership";
 import "./util";
 
 // One body's production. A TEMPLATE declaration — one spelling type variables
@@ -4130,6 +4131,118 @@ function instance_limit(): i32 { return 16384; }
 // build_module pairs every declaration with its checked scope, in declaration
 // order, then produces every instance those bodies request, to a fixpoint over
 // the instances' own requests. Refusals are per body and propagate to callers.
+struct Inferred { all: Produced[], table: ssasem.Contract[] }
+
+function seed_bits(n: i32): boolean[] {
+    var out: boolean[] = [];
+    var i: i32 = 0;
+    while (i < n) { out = out.append(true); i = i + 1; }
+    return out;
+}
+
+function same_bits(a: boolean[], b: boolean[]): boolean {
+    if (a.len() != b.len()) { return false; }
+    var i: i32 = 0;
+    while (i < a.len()) {
+        if (a[i] != b[i]) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// A declared `own` stays counted whatever the analysis says: it carries the
+// checker's affine discipline (E050) and a call site may already rely on it.
+// Everything else follows the inference — a consumed reference parameter is
+// counted, a read one borrows.
+function inferred_mode(old: i32, t: typeinfo.Type, consumed: boolean): i32 {
+    if (!reference(t)) { return old; }
+    if (old == ssaunits.counted_mode()) { return old; }
+    if (consumed) { return ssaunits.counted_mode(); }
+    return old;
+}
+
+function inferred_contract(c: ssasem.Contract, rows: ownership.Escapes[]): ssasem.Contract {
+    var modes: i32[] = c.modes;
+    var i: i32 = 0;
+    while (i < modes.len() && i < c.params.len()) {
+        modes = modes.with(i, inferred_mode(modes[i], c.params[i], ownership.consumed(rows, c.name, i)));
+        i = i + 1;
+    }
+    return ssasem.Contract { ...c, modes: modes };
+}
+
+function inferred_table(table: ssasem.Contract[], rows: ownership.Escapes[]): ssasem.Contract[] {
+    var out: ssasem.Contract[] = [];
+    for c in table { out = out.append(inferred_contract(c, rows)); }
+    return out;
+}
+
+// A produced body carries its own modes and a copy of every callee contract it
+// calls through; both are rewritten from the same rows, so the definition side
+// and the call site read one answer.
+function inferred_produced(p: Produced, name: string, rows: ownership.Escapes[]): Produced {
+    var modes: i32[] = p.modes;
+    var i: i32 = 0;
+    while (i < modes.len() && i < p.func.params.len()) {
+        modes = modes.with(i, inferred_mode(modes[i], p.func.params[i], ownership.consumed(rows, name, i)));
+        i = i + 1;
+    }
+    var calls: ssasem.Contract[] = [];
+    for c in p.func.calls { calls = calls.append(inferred_contract(c, rows)); }
+    return Produced { ...p, modes: modes, func: ssasem.Func { ...p.func, calls: calls } };
+}
+
+// The greatest fixpoint: every reference parameter starts consumed and is
+// demoted once a round finds no use that carries it out. Bounded by the bits
+// it can clear, since a round only ever removes them — the bound below is a
+// belt on that, not the reason it stops.
+function infer_rows(all: Produced[], names: string[]): ownership.Escapes[] {
+    var rows: ownership.Escapes[] = [];
+    var analyses: ssasem.Analysis[] = [];
+    var i: i32 = 0;
+    while (i < all.len() && i < names.len()) {
+        if (all[i].ok && !all[i].template) {
+            rows = rows.append(ownership.Escapes { name: names[i], bits: seed_bits(all[i].func.params.len()) });
+            analyses = analyses.append(ssasem.analyze(all[i].func));
+        } else {
+            analyses = analyses.append(ssasem.refused_analysis("not produced"));
+        }
+        i = i + 1;
+    }
+    var changed: boolean = true;
+    var round: i32 = 0;
+    while (changed && round <= all.len() + 1) {
+        changed = false;
+        i = 0;
+        while (i < all.len() && i < names.len()) {
+            var at: i32 = ownership.find(rows, names[i]);
+            if (all[i].ok && !all[i].template && at >= 0) {
+                var next: boolean[] = ownership.escaping(all[i].func, analyses[i], rows);
+                if (!same_bits(rows[at].bits, next)) {
+                    rows = rows.with(at, ownership.Escapes { name: names[i], bits: next });
+                    changed = true;
+                }
+            }
+            i = i + 1;
+        }
+        round = round + 1;
+    }
+    return rows;
+}
+
+function infer_ownership(all: Produced[], names: string[], table: ssasem.Contract[]): Inferred {
+    var rows: ownership.Escapes[] = infer_rows(all, names);
+    var out: Produced[] = [];
+    var i: i32 = 0;
+    while (i < all.len()) {
+        var name: string = "";
+        if (i < names.len()) { name = names[i]; }
+        out = out.append(inferred_produced(all[i], name, rows));
+        i = i + 1;
+    }
+    return Inferred { all: out, table: inferred_table(table, rows) };
+}
+
 pub function build_module(mod: parser.Module): Built {
     var scopes: checker.Scope[] = checker.module_scopes(mod);
     var table: ssasem.Contract[] = contracts(mod, scopes);
@@ -4160,6 +4273,9 @@ pub function build_module(mod: parser.Module): Built {
         at = at + 1;
     }
     var all: Produced[] = close_module(util.append_all(decls, instances), names);
+    var inferred: Inferred = infer_ownership(all, names, table);
+    all = inferred.all;
+    table = inferred.table;
     decls = [];
     instances = [];
     i = 0;

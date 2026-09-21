@@ -122,6 +122,10 @@ pub function arr_join(): i32 { return 0 - 39; }
 // is not admitted, since the runtime copies the words without a retain.
 pub function arr_slice(): i32 { return 0 - 40; }
 
+// A refused analysis, for a caller holding one slot per function and none to
+// put where a body was never produced.
+pub function refused_analysis(why: string): Analysis { return failed(why); }
+
 function failed(why: string): Analysis {
     return Analysis { ok: false, why: why, dependencies: [], flow: ssalive.Flow { ok: false, why: why, live_in: [], live_out: [] } };
 }
