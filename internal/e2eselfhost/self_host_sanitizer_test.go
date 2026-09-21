@@ -128,15 +128,16 @@ func TestSelfHostSanitizeLeakVerdictX86_64(t *testing.T) {
 	}
 	bytes, _ := strconv.Atoi(m[1])
 	blocks, _ := strconv.Atoi(m[2])
-	// Three 60-byte requests, none reclaimed. The exact byte total
+	// Three 60-byte requests, one of them reclaimed. The exact byte total
 	// depends on this runtime's allocation granularity, so assert the
 	// block count (which does not) and that the byte figure is a
 	// consistent multiple rather than pinning a granularity the
 	// allocator is free to change.
-	if blocks != 3 {
-		t.Errorf("verdict says %d blocks, want 3", blocks)
+	if blocks != 2 {
+		t.Errorf("verdict says %d blocks, want 2 (the same count native's "+
+			"TestX86_64SanitizeLeakVerdict reads for this program)", blocks)
 	}
-	if bytes < 3*60 || bytes%blocks != 0 {
+	if bytes < 2*60 || bytes%blocks != 0 {
 		t.Errorf("verdict says %d bytes across %d blocks, want a consistent per-block size >= 60", bytes, blocks)
 	}
 	// The verdict must agree with the summary it follows.
