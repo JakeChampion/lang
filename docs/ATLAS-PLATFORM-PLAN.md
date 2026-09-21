@@ -1389,6 +1389,36 @@ through an indirection. That declines, and has to: the kernel wants the value,
 and deleting an inc whose matching release left with the closure would
 unbalance the refcounts.
 
+**The self-host reaches the kernel from `map` too, by a different route**
+(#9932). Its emitters lower one function at a time, so there is no
+whole-program IR to hook the way native's battery does; the rewrite is an
+AST pass in `ircore.lift_lambdas_view`, which sits after monomorphisation
+and before lambda lifting — the call has folded to `__arrm_map__<elem>`
+and the element function is still a lambda with its body in hand.
+
+| | best of 7 |
+| --- | --- |
+| self-host, scalar map | 49.1 ms |
+| self-host, kernel | 2.5 ms |
+| | **19.64x** |
+
+Above native's 17.18x, and that is a WORSE baseline rather than a faster
+program: in absolute terms the self-host is slower on both sides (39.1 ms
+and 2.3 ms on native for the same shape), because its scalar `map` pays an
+indirect call through the closure env box and reaches elements through the
+`__arr_idx_8` helper, and its kernel body is SSE2 two-lane where native's
+is AVX2 four-lane. A bigger baseline over a slightly worse kernel gives a
+bigger ratio. Read it as what the pass removes from the self-host's own
+scalar path.
+
+Native and self-host also decline different things, and the difference is
+structural. Native takes a captured factor (#9924); the self-host has no
+such shape to take, because its closure env box is an `i32[]` and
+`box_wide_captures` puts every f64 capture behind a 1-element cell. The
+self-host's wasm route gets nothing yet — it lifts before it
+monomorphises, so the call the pass matches does not exist at that point
+(#9933).
+
 The pass runs LAST of the three that rewrite an array combinator — after
 fusion (#9731) and after R7's in-place map (#9733). R7 allocates nothing at
 all, and that is a contract `fip`/E068 checks, so a kernel putting a fresh
