@@ -2362,13 +2362,17 @@ function handle_metadata_site(own r: irlower.LowerResult, ins: ssa.SInst): Lower
     if (op == "isatty") { return Lowered { found: true, r: emit(r, ir.op_isatty()) }; }
     if (op == "dup_onto") { return Lowered { found: true, r: emit(r, ir.op_fd_dup_onto()) }; }
     if (op == "window_size") { return Lowered { found: true, r: emit(r, ir.op_window_size()) }; }
+    if (op == "set_window_size") { return Lowered { found: true, r: emit(r, ir.op_set_window_size()) }; }
+    if (op == "termios_get") { return Lowered { found: true, r: emit(r, ir.op_termios_get()) }; }
+    if (op == "termios_set") { return Lowered { found: true, r: emit(r, ir.op_termios_set()) }; }
     return Lowered { found: false, r: r };
 }
 
 // handle_method is the method half of a `Reader.` or `Writer.` metadata
 // contract name, "" for any other name.
 function handle_method(name: string): string {
-    var methods: string[] = ["stat", "flags", "seek", "fsync", "fdatasync", "syncfs", "isatty", "dup_onto", "window_size"];
+    var methods: string[] = ["stat", "flags", "seek", "fsync", "fdatasync", "syncfs", "isatty", "dup_onto", "window_size",
+        "set_window_size", "termios_get", "termios_set"];
     for m in methods { if (name == "Reader." + m || name == "Writer." + m) { return m; } }
     return "";
 }

@@ -3675,6 +3675,15 @@ function handle_metadata_contracts(reader: typeinfo.Type, writer: typeinfo.Type,
         i = i + 1;
     }
     out = out.append(ssasem.Contract { name: "Reader.window_size", params: [reader], modes: [v], result: t_io_result(typeinfo.TypeStruct { name: "WinSize", args: [] }) });
+    // The terminal's own three, Reader-only the way native registers them. The
+    // termios record crosses as `i64[]` in the kernel's own words: `termios_get`
+    // answers a fresh one the caller owns, and `termios_set` reads its bytes and
+    // keeps none, so that array is lent.
+    var termios: typeinfo.Type = typeinfo.TypeArray { elem: t_i64() };
+    var done: typeinfo.Type = t_io_result(t_void());
+    out = out.append(ssasem.Contract { name: "Reader.set_window_size", params: [reader, t_i32(), t_i32()], modes: [v, v, v], result: done });
+    out = out.append(ssasem.Contract { name: "Reader.termios_get", params: [reader], modes: [v], result: t_io_result(termios) });
+    out = out.append(ssasem.Contract { name: "Reader.termios_set", params: [reader, t_i32(), termios], modes: [v, v, ssaunits.borrow_mode()], result: done });
     out = out.append(ssasem.Contract { name: "Writer.write_some", params: [writer, t_string()], modes: [v, ssaunits.borrow_mode()], result: t_io_result(t_i64()) });
     return out.append(ssasem.Contract { name: "Writer.truncate", params: [writer, t_i64()], modes: [v, v], result: io_error });
 }
