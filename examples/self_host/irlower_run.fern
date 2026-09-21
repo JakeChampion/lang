@@ -211,6 +211,10 @@ function clo_sole_store(ops: ir.Op[], slot: i32, k_store: i32, k_tee: i32): i32 
 // operand-stack walk, so the provable figure this yields is a floor.
 function clo_flat_box(ops: ir.Op[], m: i32, k_make: i32, k_load: i32, k_func: i32): boolean {
     if (m < 0) { return false; }
+    // A CAPTURE-FREE value is the same box with no captures at all, folded to
+    // a static block (#9839). It names one target with even less to read than
+    // the flat shape below, so it belongs to the same bucket.
+    if (ops[m].kind_tag == ir.kind_id("const_struct") && ir.const_struct_fn_body(ops[m].str).len() > 0) { return true; }
     if (ops[m].kind_tag != k_make || ops[m].width != 32) { return false; }
     var k: i32 = ops[m].i32_imm;
     if (k < 1 || m - k < 0) { return false; }
@@ -231,11 +235,12 @@ function clo_flat_box(ops: ir.Op[], m: i32, k_make: i32, k_load: i32, k_func: i3
 // devirtualising rewrite would need to resolve it:
 //
 //   env_local a box built in this same function, single-assigned to the slot,
-//             by the flat `const_func <fn> ; load_local … ; arr_make` shape:
-//             one named target, decidable with no analysis beyond the op
-//             stream. Expected to be near zero, and that is not a measurement
-//             error — try_lift_binding already direct-calls a lambda that is
-//             only ever called, so a site in this bucket is one that escaped it
+//             by the flat `const_func <fn> ; load_local … ; arr_make` shape or
+//             by the capture-free `const_closure` constant: one named target,
+//             decidable with no analysis beyond the op stream. Expected to be
+//             near zero, and that is not a measurement error —
+//             try_lift_binding already direct-calls a lambda that is only ever
+//             called, so a site in this bucket is one that escaped it
 //   env_call  a box single-assigned from an adjacent `call_direct`: a
 //             closure-RETURNING callee, resolvable by looking at that one
 //             function's returns

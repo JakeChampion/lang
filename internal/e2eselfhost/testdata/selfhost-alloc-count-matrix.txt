@@ -18,4 +18,5 @@ bare_str_sso         0   1   native keeps a 2-byte result inline (single-word x8
 str_field_sso        1   2   struct box on both; the self-host's extra block is the same inline-form gap
 bare_str_heap        1   1   above the inline threshold: one block per heap string on both sides
 str_field_heap       2   2   struct box + one string block
+capture_free_fn_value 1  1   the struct box alone: native folds a capture-free function value to a static cell before emit, and the self-host now does too (#9839)
 arr_and_str_heap     3   3   struct box + array buffer + one string block

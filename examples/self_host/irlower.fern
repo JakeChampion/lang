@@ -11593,6 +11593,10 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
     // eligible. The capture args are plain idents → load_local.
     if (cid.name.len() > 8 && slice_unchecked(cid.name, 0, 8) == "__mkclo$") {
         var clonm: str = slice_unchecked(cid.name, 8, cid.name.len());
+        // No captures — the `$wrapN` trampoline case, and every bare fn-name
+        // value — means every word of the box is known here, so it is static
+        // data rather than a fresh box per evaluation (#9839).
+        if (c.args.len() == 0) { return s.emit(ir.op_const_closure(clonm)); }
         var mks: LowerState = s.emit(ir.op_const_func(0, clonm));
         for arg in c.args {
             mks = lower_expr(arg, mks);
@@ -15854,6 +15858,9 @@ function lower_expr_lambda(lam: ast.ExprLambda, s: LowerState): LowerState {
         return s.note_fail("lambda: no lifted `" + clo + "` for the escaping closure").fail();
     }
     var caps: string[] = closure_captures(lam, s);
+    // Capturing nothing, the box is a compile-time constant — one static block
+    // for every evaluation of this lambda, as native folds it (#9839).
+    if (caps.len() == 0) { return s.emit(ir.op_const_closure(clo)); }
     var cs: LowerState = s.emit(ir.op_const_func(0, clo));
     var ci: i32 = 0;
     while (ci < caps.len()) {

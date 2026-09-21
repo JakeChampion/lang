@@ -161,6 +161,11 @@ of them:
 | `env_other` | 8 | points-to analysis |
 | `env_local` | 2 | nothing — the op stream names the target |
 
+(`env_local` covers the capture-free `const_closure` constant as well as the
+flat `const_func … arr_make` shape it was defined around: since #9839 a value
+that captures nothing is one static block, which names its target with less to
+read, not more.)
+
 Two findings decide it.
 
 **The locally decidable case is already handled.** `env_local` is 2 because
