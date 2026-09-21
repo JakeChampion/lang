@@ -6046,8 +6046,17 @@ func emitSumBytesHelper(w func(string, ...any)) {
 
 // emitScaleF64Helper writes __fern_scale_f64(xs, k) -> a fresh f64 array of
 // xs's length, element i = xs[i] * k, header written here (cap@-12, rc=1@-8,
-// len@-4) so the caller owns one fresh array. SCALAR (§3.4 step 1): one fmul
-// per element; elementwise, so a vector body reassociates nothing.
+// len@-4) so the caller owns one fresh array.
+//
+// NEON (§3.4 step 3), the same body as the stack-machine emitter in
+// internal/codegen/arm64: `fmul v0.2d` over a pair of doubles with a scalar
+// tail for an odd length. A multiply is elementwise, so the lanes reassociate
+// nothing (docs/ARRAY-ALGEBRA.md §3, AA-02). The assembler owes nothing here
+// either: internal/native/arm64tbl generates DUP/LD1/ST1 and the VecFP3 class
+// as whole tables, so 2d forms were encodable before anything asked for them.
+//
+// `dup v1.2d, x1` replaces the scalar `fmov d1, x1` rather than adding to it:
+// d1 IS v1's low half, so the one instruction serves both bodies.
 //
 // x0 = xs, x1 = k as f64 bits (the SSA GP convention), result in x0. The
 // allocation goes through the preserving trampoline, which changes only x16,
@@ -6064,8 +6073,19 @@ func emitScaleF64Helper(w func(string, ...any)) {
 	w("\tmov w3, #1")
 	w("\tstur w3, [x16, #-8]") // rc = 1
 	w("\tstur w2, [x16, #-4]") // len = n
-	w("\tfmov d1, x1")
+	w("\tdup v1.2d, x1")       // k in both lanes; d1 is v1's low half
 	w("\tmov x3, #0")
+	w("\tand x6, x2, #-2") // whole pairs only
+	w(".Lssa_scale_f64_vec:")
+	w("\tcmp w3, w6")
+	w("\tb.hs .Lssa_scale_f64_loop")
+	w("\tadd x4, x0, x3, lsl #3")
+	w("\tld1 {v0.2d}, [x4]")
+	w("\tfmul v0.2d, v0.2d, v1.2d")
+	w("\tadd x5, x16, x3, lsl #3")
+	w("\tst1 {v0.2d}, [x5]")
+	w("\tadd x3, x3, #2")
+	w("\tb .Lssa_scale_f64_vec")
 	w(".Lssa_scale_f64_loop:")
 	w("\tcmp w3, w2")
 	w("\tb.hs .Lssa_scale_f64_ret")
