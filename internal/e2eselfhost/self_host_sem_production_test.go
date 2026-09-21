@@ -2584,12 +2584,15 @@ function main(): i32 {
     if (Held { xs: [1.5, 2.5] }.render() != "[1.5,2.5]") { return 2; }
     return acc % 101;
 }`},
-	{name: "a-composite-compares-through-its-own-method", atLeast: 53, noLeak: true, src: `
+	{name: "a-composite-compares-through-its-own-method", atLeast: 59, noLeak: true, src: `
 import "core/cmp";
 @derive(cmp.Eq, cmp.Ord)
 struct Point { x: i32, y: string }
 @derive(cmp.Eq, cmp.Ord)
 enum Shape { Dot, Line(i32), Box(i32, string) }
+@derive(cmp.Eq, cmp.Ord)
+struct Holder[T] { v: T }
+function same[T](a: Holder[T], b: Holder[T]): boolean { return a == b; }
 function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
@@ -2611,6 +2614,13 @@ function main(): i32 {
         if (!(Line(1) < Box(0, ""))) { return 12; }
         if (!(Dot == Dot)) { return 13; }
         if (Dot == Line(0)) { return 14; }
+        var p: Holder[i32] = Holder { v: 1 };
+        var q: Holder[i32] = Holder { v: 2 };
+        var r: Holder[string] = Holder { v: "a" };
+        if (!same(p, Holder { v: 1 })) { return 15; }
+        if (same(p, q)) { return 16; }
+        if (!(p < q)) { return 17; }
+        if (!same(r, Holder { v: "a" })) { return 18; }
         acc = acc + 1;
         i = i + 1;
     }
