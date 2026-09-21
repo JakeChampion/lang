@@ -4274,38 +4274,8 @@ function infer_rows(all: Produced[], names: string[]): ownership.Escapes[] {
     return rows;
 }
 
-// TEMPORARY bisect knob, mirroring FERN_SEM_IR_SKIP: keep only the first N
-// rows, so a binary search over N names the function whose counted parameter
-// breaks the build.
-function own_limit(): i32 {
-    match (env("FERN_OWN_LIMIT")) {
-        Some(v) => { return util.digits_to_i32(v); },
-        None => { return 0 - 1; }
-    }
-}
-
-function own_report(): boolean {
-    match (env("FERN_OWN_REPORT")) {
-        Some(_) => { return true; },
-        None => { return false; }
-    }
-}
-
-function capped(rows: ownership.Escapes[]): ownership.Escapes[] {
-    if (own_report()) {
-        var j: i32 = 0;
-        while (j < rows.len()) { eprint("OWNROW " + util.i32_to_string(j) + " " + rows[j].name + "\n"); j = j + 1; }
-    }
-    var n: i32 = own_limit();
-    if (n < 0) { return rows; }
-    var out: ownership.Escapes[] = [];
-    var i: i32 = 0;
-    while (i < rows.len() && i < n) { out = out.append(rows[i]); i = i + 1; }
-    return out;
-}
-
 function infer_ownership(all: Produced[], names: string[], table: ssasem.Contract[]): Inferred {
-    var rows: ownership.Escapes[] = capped(infer_rows(all, names));
+    var rows: ownership.Escapes[] = infer_rows(all, names);
     var out: Produced[] = [];
     var i: i32 = 0;
     while (i < all.len()) {
