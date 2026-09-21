@@ -4191,8 +4191,18 @@ func emitSumBytesHelper(w func(string, ...any)) {
 
 // emitScaleF64Helper writes __fern_scale_f64(xs, k) -> a fresh f64 array of
 // xs's length, element i = xs[i] * k, header written here (cap@-12, rc=1@-8,
-// len@-4) so the caller owns one fresh array. SCALAR (§3.4 step 1): one mulsd
-// per element; elementwise, so a vector body reassociates nothing.
+// len@-4) so the caller owns one fresh array.
+//
+// AVX2 (§3.4 step 3), the same body as the stack-machine emitter in
+// internal/codegen/x86_64: vmulpd over four lanes with a scalar tail for the
+// remainder. A multiply is elementwise, so the lanes reassociate nothing
+// (docs/ARRAY-ALGEBRA.md §3, AA-02). This leg owes the assembler nothing —
+// internal/native/x86_64 gained vmovupd / vmulpd / vbroadcastsd when the
+// stack-machine emitter vectorised, and both emitters feed that one encoder.
+//
+// Both bodies multiply k BY the element: the vector body has no choice (the
+// folded memory operand is the second source), and the tail matches it so the
+// two cannot disagree about which NaN a NaN times a NaN yields.
 //
 // rdi = xs, rsi = k as f64 bits (the SSA GP convention), result in rax.
 func emitScaleF64Helper(w func(string, ...any)) {
@@ -4213,12 +4223,26 @@ func emitScaleF64Helper(w func(string, ...any)) {
 	w("\tmov dword ptr [rax - 8], 1")     // rc = 1
 	w("\tmov dword ptr [rax - 4], r13d")  // len = n
 	w("\tmovq xmm1, r12")
+	w("\tvbroadcastsd ymm1, xmm1") // k in all four lanes
 	w("\txor ecx, ecx")
+	w("\tmov edx, r13d")
+	w("\tand edx, -4") // whole blocks of four only
+	w(".Lssa_scale_f64_vec:")
+	w("\tcmp ecx, edx")
+	w("\tjae .Lssa_scale_f64_tail")
+	w("\tvmulpd ymm0, ymm1, [rbx + rcx*8]")
+	w("\tvmovupd [rax + rcx*8], ymm0")
+	w("\tadd ecx, 4")
+	w("\tjmp .Lssa_scale_f64_vec")
+	w(".Lssa_scale_f64_tail:")
+	// vzeroupper clears only the upper half, so xmm1 still holds k for the
+	// legacy-SSE tail.
+	w("\tvzeroupper")
 	w(".Lssa_scale_f64_loop:")
 	w("\tcmp ecx, r13d")
 	w("\tjae .Lssa_scale_f64_ret")
-	w("\tmovsd xmm0, qword ptr [rbx + rcx*8]")
-	w("\tmulsd xmm0, xmm1")
+	w("\tmovsd xmm0, xmm1")
+	w("\tmulsd xmm0, qword ptr [rbx + rcx*8]")
 	w("\tmovsd qword ptr [rax + rcx*8], xmm0")
 	w("\tadd ecx, 1")
 	w("\tjmp .Lssa_scale_f64_loop")
