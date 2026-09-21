@@ -1,9 +1,19 @@
 name: Full suite
 
-# One full PR suite at a time, called by ci.yml. Moving the lock
-# here keeps expensive lanes serialized without blocking other PRs linting.
-# Keep main/manual invocations outside this queue: main has its own outer
-# latest-pending lock, and reacquiring that lock here would deadlock.
+# Two full PR suites at a time, called by ci.yml. Keeping the queue here rather
+# than in ci.yml leaves lint and lane selection outside it, so a waiting PR
+# still gets those checks. Keep main/manual invocations outside this queue:
+# main has its own outer latest-pending lock, and reacquiring that lock here
+# would deadlock.
+#
+# TWO lanes, not one, and not three. The account's standard-runner ceiling is
+# ~37 concurrent Ubuntu jobs; one suite is ~330 job-minutes over ~21 minutes,
+# peaking at 36-38 jobs but averaging only ~20, so a single suite leaves half
+# the pool idle across its ramp and tail while the next PR waits. Measurements,
+# including the two-suite overlap that pinned the pool flat at 36-37, are in
+# docs/CI-PERFORMANCE.md. Two suites fill that slack: the pair completes in
+# ~25 minutes against ~41 serialized. A third lane adds no throughput once the
+# ceiling is the binding constraint — it only stretches every suite's tail.
 on:
   workflow_call:
     inputs:
@@ -17,9 +27,28 @@ permissions:
   actions: read
   pull-requests: read
 
+# GitHub has no "at most N running per group", so the two lanes are two groups
+# and a pull request picks one by the parity of its number. Expressions have no
+# arithmetic — no `%` — hence the five `endsWith` terms rather than a modulo;
+# `inputs` is deliberately not used here, because whether a called workflow's
+# `concurrency` may read it is not something this repo can verify offline, and
+# an expression that silently evaluates to empty would collapse both lanes back
+# into one without saying so.
+#
+# Parity of the PR NUMBER, not of the run, so every run for one pull request
+# picks the same lane: a re-push then queues behind the predecessor that
+# reap-stale-runs.yml is cancelling, inheriting the slot it frees, instead of
+# waiting on a stranger in the other lane.
 concurrency:
   group: >-
-    ${{ (github.event_name == 'pull_request' && 'pr-ci')
+    ${{ (github.event_name == 'pull_request'
+          && format('pr-ci-{0}',
+               (endsWith(format('{0}', github.event.pull_request.number), '0')
+                 || endsWith(format('{0}', github.event.pull_request.number), '2')
+                 || endsWith(format('{0}', github.event.pull_request.number), '4')
+                 || endsWith(format('{0}', github.event.pull_request.number), '6')
+                 || endsWith(format('{0}', github.event.pull_request.number), '8'))
+               && 'even' || 'odd'))
      || format('ci-run-{0}', github.run_id) }}
   cancel-in-progress: false
   queue: max

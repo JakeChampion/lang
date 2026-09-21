@@ -507,11 +507,12 @@ function intrinsic_result(name: string, argc: i32): typeinfo.Type {
   // The rc helpers core/map calls by name to claim and release the cells it
   // copies, typed as native types them so the two checkers agree. What the
   // self-host EMITS is not uniform: only __fern_rc_inc is a real call that
-  // answers its pointer. The 2-arg dec pair lowers to op_free and
-  // __fern_str_dec to a bare op_const_i32(0) that does not even lower its
-  // argument — no-ops in safe-leak mode, each pushing a dummy 0 (irlower,
-  // the __fern_arr_dec / __fern_str_dec arms). core/map calls those three in
-  // statement position, so nothing may rely on the usize they declare.
+  // answers its pointer. The 2-arg dec pair drops both arguments and
+  // __fern_str_dec does not even lower its one — no-ops still, each pushing a
+  // dummy 0 (irlower, the __fern_arr_dec / __fern_str_dec arms), because the
+  // element deep-drop their stride selects has no self-host equivalent.
+  // core/map calls those three in statement position, so nothing may rely on
+  // the usize they declare.
   if (argc == 1 && name == "__fern_rc_inc") { return t_usize(); }
   if (argc == 1 && name == "__fern_str_dec") { return t_usize(); }
   if (argc == 2 && name == "__fern_arr_dec") { return t_usize(); }

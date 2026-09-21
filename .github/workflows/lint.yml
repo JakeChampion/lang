@@ -64,12 +64,12 @@ name: Lint
 # no extra signal.
 
 # Called from ci.yml rather than triggered: that is the one workflow a pull
-# request or a push to main launches. It holds the PR-wide lock (one pull
-# request's suite at a time) and cancels the rest of the run when a lane goes
-# red. This lane has no path filter there, deliberately: it is the one gate a
-# doc-only pull request still reports, so a PR never shows no checks at all.
-# `workflow_dispatch` stays so the lane can be run on its own, outside that
-# lock.
+# request or a push to main launches. Lint runs OUTSIDE the PR queue's two
+# slots, so it reports while a suite is still waiting for one, and the rest of
+# the run is cancelled when a lane goes red. This lane has no path filter
+# there, deliberately: it is the one gate a doc-only pull request still
+# reports, so a PR never shows no checks at all. `workflow_dispatch` stays so
+# the lane can be run on its own.
 on:
   workflow_call:
   workflow_dispatch:

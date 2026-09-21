@@ -23,11 +23,11 @@ name: macOS arm64
 # reruns.
 
 # Called from ci.yml rather than triggered: that is the one workflow a pull
-# request or a push to main launches. It holds the PR-wide lock (one pull
-# request's suite at a time), decides from the changed files whether this lane
-# runs — the lane's path filter lives in its lane table — and cancels the rest
-# of the run when a lane goes red. `workflow_dispatch` stays so the lane can
-# be run on its own, outside that lock.
+# request or a push to main launches. It holds one of the PR queue's two slots
+# (two pull requests' suites run at once), decides from the changed files
+# whether this lane runs — the lane's path filter lives in its lane table —
+# and cancels the rest of the run when a lane goes red. `workflow_dispatch`
+# stays so the lane can be run on its own, outside that queue.
 on:
   workflow_call:
   workflow_dispatch:
@@ -35,10 +35,10 @@ on:
 jobs:
   test-arm64-darwin:
     runs-on: macos-15
-    # A hung step here holds the repository's single CI lock, because ci.yml
-    # queues one PR at a time: without this the job runs to GitHub's 360-minute
-    # default and every open PR waits behind it. Round five wedged inside the
-    # corpus at 03:19 and was still "in progress" ninety minutes later.
+    # A hung step here holds one of the PR queue's two slots: without this the
+    # job runs to GitHub's 360-minute default and half the queue waits behind
+    # it. Round five wedged inside the corpus at 03:19 and was still "in
+    # progress" ninety minutes later.
     timeout-minutes: 110
     # Pinned to the SAME version test-units.yml pins, and that lane says why:
     # "so every utility here answers to one version". A second lane holding a
