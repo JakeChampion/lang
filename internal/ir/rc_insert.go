@@ -712,9 +712,17 @@ func (b *builder) bindingConfinedToArm(body ast.Node, name string, bt ast.Type) 
 // Some(c) => { outer = c; } }`, which is tcp_serve's per-request recv buffer
 // (#8003).
 //
-// bindingConfinedToArm keeps the strict reading: the borrow analysis behind it
-// is deciding whether a local is a pure view of another value, and a counted
-// copy is exactly the thing that disqualifies one.
+// The same question serves the borrow-alias CANCELLATION in rc_analysis, where
+// it is asked of a `var y = c` over a match binding (#9923): y takes no count
+// of its own, so what it hands on must take one. Refusing to take a count and
+// refusing to give one back need the same fact — every escape is counted —
+// which is why one predicate answers both.
+//
+// bindingConfinedToArm's own callers keep the strict reading. The for-in and
+// borrowed-parameter legs decide the same cancellation over a source whose
+// release is NOT the arm's to see, and neither has been measured against a
+// counted escape; widening them is their own change, not a consequence of
+// this one.
 func (b *builder) bindingReleasableInArm(body ast.Node, name string, bt ast.Type) bool {
 	return b.bindingUsesExcused(body, name, bt, true)
 }
@@ -756,6 +764,17 @@ func (b *builder) bindingUsesExcused(body ast.Node, name string, bt ast.Type, co
 			}
 		case *ast.Index:
 			if id, ok := x.Array.(*ast.Ident); ok && id.Name == name {
+				excused[id] = true
+			}
+		case *ast.Var:
+			// `var y = c` whose inc the borrow-alias analysis CANCELLED
+			// (#9923). y then holds no count of its own and its exit dec is
+			// elided with the inc, so it leaves no reference behind at all —
+			// the same property `_` has, established by the cancellation
+			// rather than syntactically. An uncancelled var init stays
+			// unexcused: there the inc is real and nothing here balances it.
+			if id, ok := x.Init.(*ast.Ident); ok && id.Name == name &&
+				countedAliasOK && b.rc.borrowedAliasSites[x] {
 				excused[id] = true
 			}
 		case *ast.Assign:
