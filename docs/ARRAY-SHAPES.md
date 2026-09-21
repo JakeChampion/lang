@@ -320,8 +320,10 @@ Four consequences:
 
 - **The kernels**: the rest of #9735. The first one exists, `__scale_f64`,
   the elementwise multiply over an `f64[]` that `std/array`'s `scale_f64`
-  now is: scalar on all eight backends (`ATLAS-PLATFORM-PLAN.md` §3.4's
-  steps 1 and 2, with the measurement), allocating its own result so no
+  now is: vectorised on all eight backends, and reached by
+  `xs.map((x: f64): f64 => x * k)` without the wrapper being written, for a
+  literal k or a captured one (`ATLAS-PLATFORM-PLAN.md` §3.4's four steps,
+  with the measurements), allocating its own result so no
   sized-array primitive was needed, and chosen over the dot product
   because a reduction may not reassociate (`ARRAY-ALGEBRA.md` §3) while a
   multiply has nothing to reassociate. `inner` and `outer` are recognized
