@@ -404,6 +404,31 @@ analysis, which is independent, pure, and de-risks the design.
   high-water on wasm), and the self-host escaping-binding cases flipped
   from rejected-leak to freed-box + moved payload.
 
+  **Self-host port — DONE (2026-09-21, #9891).** `examples/self_host/ownership.fern`
+  answers which parameters a function consumes, `semsource.with_inferred_modes`
+  rewrites the contracts from it, and `semlower.inferred_pass` applies it. Slice
+  2 and sub-slice 2d had to land TOGETHER there: the blanket form is slower on
+  nine of the twenty-nine bench programs and faster on none (1.901x on
+  `ordmap_insert`), because the self-host's widened shape is native's end state
+  without its optimisation rather than a narrow first step.
+
+  Three things differ from native, all forced by the self-host's architecture:
+  the analysis reads the PRODUCED graphs rather than the AST, since `semsource`
+  never branches on a mode while it builds a body; it lives in
+  `semsource.contracts`' existing fixpoint, which is the one table both the
+  definition side and every call site read, so they cannot disagree by
+  construction; and it applies only where the typed pipeline lowers the WHOLE
+  module, because an inferred mode is invisible to the AST lowering and a mixed
+  module then over-releases. Native's `addressTakenFuncs` rung is needed there
+  too, for the mirror-image reason — a counted parameter is spelled in the type
+  `ssasem.closure_type` builds, so inferring one on a body a function value
+  names rewrites the type out from under its call sites.
+
+  `pvec_with` 681,006,132 retired instructions to 219,077,188 against native's
+  184,540,118 (3.69x to 1.187x), `record_update` 0.769x, `map_probe_chain`
+  0.885x, twenty-six rows unchanged, none slower, compile time at parity. Full
+  account and the traps: `docs/rc-log/2026-09-21-a-consumed-parameter-is-counted.md`.
+
   **Remaining sub-slices (optional, later):** admit array/string/
   non-uniform-payload enums and string-containing structs/tuples into
   owned-by-default (more reclaim coverage; borrow inference already skips
