@@ -314,6 +314,21 @@ func coreutilsShardLane(t *testing.T, root string) lane {
 		t.Fatalf("%s no longer partitions with scripts/shard-tests, which is what guarantees "+
 			"every listed name lands in exactly one bucket", file)
 	}
+	// `-run` is a REGEXP and a utility name is not an identifier: coreutils/[.fern
+	// is in the catalogue, and its bare name opens an unterminated character class
+	// that makes the whole alternation invalid, so the shard holding it exits at
+	// regexp parse having run nothing. Both lists are escaped, and both patterns
+	// are compiled before either runs.
+	if !strings.Contains(src, "re_escape") {
+		t.Fatalf("%s joins derived names into a -run alternation without escaping them; "+
+			"coreutils/[.fern alone makes that pattern an invalid regexp and its shard "+
+			"red start to finish", file)
+	}
+	if !strings.Contains(src, `go test -list "$pat"`) {
+		t.Fatalf("%s no longer compiles its -run patterns before using them; a metacharacter "+
+			"name added to the tree later would surface as a shard-wide failure rather than "+
+			"as the pattern that is wrong", file)
+	}
 	return lane{name: file + " (shards)", pkgs: []string{"internal/coreutils"}, all: true}
 }
 
