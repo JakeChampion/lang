@@ -306,17 +306,23 @@ func TestSelfHostIRLowerRoundTrip(t *testing.T) {
 		}
 	})
 
-	// A function containing a LAMBDA dumps too (#9928). It did not: the dump
-	// path lowered the raw module, where every lambda-bearing function bails,
-	// and its only answer to a bailed `main` is exit 200 with no output at
-	// all — so the tool built for reading op streams could not read the one
-	// construct whose lowering is least obvious.
+	// `-dump -lifted` shows the ops of a function containing a LAMBDA (#9928).
+	// Nothing could: a lambda does not survive to the IR, lift_lambdas hoists
+	// it to a top-level function, and a module lowered without that bails on
+	// every function containing one — which `-dump` answers with exit 200 and
+	// no output at all.
+	//
+	// It is a separate mode rather than a change to `-dump`, because the raw
+	// lowering is pinned: TestSelfHostMoveOnConstructionIRX86_64 counts incs
+	// through `-dump-fn`, and lifting moves its counts even on a program with
+	// no lambda in it — lift_lambdas fills defaults and infers fn-value locals
+	// before it hoists anything.
 	//
 	// The assertions are structural rather than a golden stream on purpose.
 	// What this pins is that the lift happens; the exact ops around a lambda
 	// are the lowering's business, and a golden here would break on every
 	// unrelated change to it.
-	t.Run("dump-lifts-lambdas", func(t *testing.T) {
+	t.Run("dump-lifted-shows-lambdas", func(t *testing.T) {
 		// A capture-free lambda passed as a call argument. `__method_Array_map`
 		// is defined locally rather than imported: arr_method_fns_of collects
 		// any free `__method_Array_*` in the module, so this resolves the
@@ -333,18 +339,18 @@ func TestSelfHostIRLowerRoundTrip(t *testing.T) {
 			"    return ys[0] as i32;\n" +
 			"}\n"
 
-		cmd := exec.Command(bin, "-dump")
+		cmd := exec.Command(bin, "-dump", "-lifted")
 		cmd.Stdin = strings.NewReader(src)
 		out, _ := cmd.Output()
 		got, code := string(out), cmd.ProcessState.ExitCode()
 
 		// 200 is the bail this fixes: `main` lowered !ok, nothing printed.
 		if code == 200 {
-			t.Fatalf("-dump exited 200 on a lambda-bearing program: main bailed, "+
-				"so the dumped module was not lifted. Output: %q", got)
+			t.Fatalf("-dump -lifted exited 200 on a lambda-bearing program: main "+
+				"bailed, so the dumped module was not lifted. Output: %q", got)
 		}
 		if got == "" {
-			t.Fatalf("-dump printed nothing (exit %d)", code)
+			t.Fatalf("-dump -lifted printed nothing (exit %d)", code)
 		}
 		// The lambda reached the call as a function value, which is what the
 		// lift produces and what a raw lowering never gets to.
