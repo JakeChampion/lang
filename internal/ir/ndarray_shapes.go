@@ -41,11 +41,9 @@ type NdarrayShape struct {
 	Verb string
 	// Callee is the mangled, monomorphised name the call targets.
 	Callee string
-	// Elements names the element functions the call was handed, in
-	// argument order — most take one, `inner` takes `mul` then `add`.
-	// An entry is empty when the lowering did not park that function in a
-	// slot the recogniser could follow.
-	Elements []string
+	// Elements are the element functions the call was handed, in argument
+	// order — most take one, `inner` takes `mul` then `add`.
+	Elements []NdarrayElementFn
 	// Axis is the leading integer argument of the axis-parameterized
 	// verbs: the axis `reduce_axis` and `scan_axis` walk, the cell rank
 	// `map_rank` maps over. NdarrayAxisUnknown when the argument is
@@ -53,6 +51,16 @@ type NdarrayShape struct {
 	Axis int32
 	// Op is the index of the call in the function's op stream.
 	Op int
+}
+
+// NdarrayElementFn is an element function as the recogniser found it at a
+// site. Name is empty when the lowering did not park the function in a slot
+// the recogniser could follow, and Captures is how many values a lambda
+// closed over — nothing a kernel can inline closes over anything, which is
+// why the count is carried rather than re-derived from the body.
+type NdarrayElementFn struct {
+	Name     string
+	Captures int
 }
 
 // ndarrayVerb is the shape of one operation: how many element functions it
@@ -93,6 +101,17 @@ func ndarrayVerbOf(callee string) (string, bool) {
 	return base, true
 }
 
+// ndarrayElementFnOf reads a pushed function value. A lambda's I32 is its
+// capture count; a named function's is its table index, and it captures
+// nothing.
+func ndarrayElementFnOf(op Op) NdarrayElementFn {
+	e := NdarrayElementFn{Name: op.Str}
+	if op.Kind == OpMakeClosure {
+		e.Captures = int(op.I32)
+	}
+	return e
+}
+
 // isNdarrayBody reports whether fn is std/ndarray's own code, which the
 // recogniser skips the way the pipeline recogniser skips std/array's.
 func isNdarrayBody(fn *Func) bool {
@@ -128,12 +147,12 @@ func RecognizeNdarrayShapes(p *Program) []NdarrayShape {
 // previous call, in stack order, which is argument order.
 func ndarrayShapesInFunc(fn *Func) []NdarrayShape {
 	var out []NdarrayShape
-	closureOf := map[int32]string{}
+	closureOf := map[int32]NdarrayElementFn{}
 	windowStart := 0
 	for i, op := range fn.Ops {
 		if op.Kind == OpMakeClosure || op.Kind == OpConstFunc {
 			if i+1 < len(fn.Ops) && fn.Ops[i+1].Kind == OpStoreLocal {
-				closureOf[fn.Ops[i+1].I32] = op.Str
+				closureOf[fn.Ops[i+1].I32] = ndarrayElementFnOf(op)
 			}
 			continue
 		}
@@ -145,23 +164,23 @@ func ndarrayShapesInFunc(fn *Func) []NdarrayShape {
 			windowStart = i + 1
 			continue
 		}
-		var loaded []string
+		var loaded []NdarrayElementFn
 		for k := windowStart; k < i; k++ {
 			switch fn.Ops[k].Kind {
 			case OpMakeClosure, OpConstFunc:
 				if k+1 < i && fn.Ops[k+1].Kind == OpStoreLocal {
 					continue
 				}
-				loaded = append(loaded, fn.Ops[k].Str)
+				loaded = append(loaded, ndarrayElementFnOf(fn.Ops[k]))
 			case OpLoadLocal:
-				if name, isClosure := closureOf[fn.Ops[k].I32]; isClosure {
-					loaded = append(loaded, name)
+				if e, isClosure := closureOf[fn.Ops[k].I32]; isClosure {
+					loaded = append(loaded, e)
 				}
 			}
 		}
 		spec := ndarrayShapeVerbs[verb]
 		want := spec.elements
-		elements := make([]string, want)
+		elements := make([]NdarrayElementFn, want)
 		// The element functions are the LAST `want` function values loaded
 		// before the call; an earlier one belonged to some other operand.
 		if len(loaded) > want {
@@ -284,12 +303,14 @@ func FormatNdarrayShapes(p *Program) string {
 	var b strings.Builder
 	b.WriteString("std/ndarray operations, recognized by identity and lowered as the scalar loop:\n")
 	for i, s := range shapes {
+		verdicts := NdarrayKernelVerdicts(p, s)
 		elems := make([]string, len(s.Elements))
 		for k, e := range s.Elements {
-			if e == "" {
-				e = "(element function not statically resolved)"
+			name := e.Name
+			if name == "" {
+				name = "?"
 			}
-			elems[k] = e
+			elems[k] = fmt.Sprintf("%s [%s]", name, verdicts[k])
 		}
 		fmt.Fprintf(&b, "%-*s  %-*s  %s\n", posW, posOf[i], verbW, verbOf[i], strings.Join(elems, ", "))
 	}

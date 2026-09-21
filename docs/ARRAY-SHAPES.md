@@ -159,12 +159,43 @@ so the two plan differently.
 §2's structural operations are deliberately absent. They move no
 elements, so there is nothing for a kernel to replace.
 
-That list is the kernel half's worklist: a site whose `mul` and `add` are
-multiplication and addition over `f64` is `dot_f64` in disguise, and one
-handed a closure that captures is not. Recognition only — every site
-still runs the scalar loop, nothing fuses, nothing donates, and
-`internal/ir/ndarray_shapes_test.go` pins that the recogniser changes no
-op.
+That list is the kernel half's worklist, and it answers the worklist's
+own question rather than leaving the reader to go and look: each element
+function is printed with what a kernel could do with it.
+
+```
+run:5:60  inner  mul [f64 mul], add [f64 add]
+run:6:44  map    __closure_lambda_1 [element-fn-captures]
+```
+
+The first of those is `dot_f64` in disguise; the second is not, and says
+why. The bar is `ATLAS-PLATFORM-PLAN.md` §3's: a kernel is one IR op
+whose whole vector lifetime stays inside its own emitted sequence, so a
+call to an element function is an op boundary and nothing survives it. A
+kernel can only take an element function it can INLINE, which means one
+primitive operation over the operands — `x * y` and `x * 2.0` both are,
+a body with two operations or a call is not.
+
+The refusals are a **closed set with stable tags**, for the reason
+`FusionRefusal`'s are: they are the coverage checklist for widening the
+kernels, and a checklist of free text cannot be tallied.
+`FERN_ARRAY_REPORT=1` prints the tally, a row per reason even at zero.
+
+| tag | what it means |
+| --- | --- |
+| `element-fn-unresolved` | the lowering did not park the function where the recogniser could name it |
+| `element-fn-not-in-program` | named, but the program does not hold that function |
+| `element-fn-captures` | a lambda closed over something, and a kernel has nowhere to put it |
+| `element-fn-calls` | the body calls something, and a call is an op boundary |
+| `element-fn-not-one-op` | the body is more than one operation, or applies none |
+| `element-fn-not-arithmetic` | the body's one operation is not arithmetic a kernel emits — integer division and remainder are out, because both trap on a zero divisor and a kernel that hoisted one would move the trap |
+
+Recognition and this verdict both change nothing. **A verdict of
+`primitive` says the element function is not what stands in the way, not
+that the site lowers to a kernel** — no kernel exists for any verb yet.
+Every site still runs the scalar loop, nothing fuses, nothing donates,
+and `internal/ir/ndarray_shapes_test.go` pins that the recogniser
+changes no op.
 
 ## 7. Elementwise, and along an axis
 

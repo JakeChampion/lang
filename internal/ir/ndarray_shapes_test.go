@@ -44,11 +44,11 @@ func TestRecognizesInnerAndOuter(t *testing.T) {
 	if got[0].Line != 5 || got[1].Line != 6 {
 		t.Errorf("lines %d, %d; want 5 and 6", got[0].Line, got[1].Line)
 	}
-	if len(got[0].Elements) != 2 || got[0].Elements[0] != "mul" || got[0].Elements[1] != "add" {
-		t.Errorf("inner's element functions = %q, want [mul add]", got[0].Elements)
+	if len(got[0].Elements) != 2 || got[0].Elements[0].Name != "mul" || got[0].Elements[1].Name != "add" {
+		t.Errorf("inner's element functions = %+v, want [mul add]", got[0].Elements)
 	}
-	if len(got[1].Elements) != 1 || !strings.HasPrefix(got[1].Elements[0], "__closure_lambda") {
-		t.Errorf("outer's element function = %q, want the lambda", got[1].Elements)
+	if len(got[1].Elements) != 1 || !strings.HasPrefix(got[1].Elements[0].Name, "__closure_lambda") {
+		t.Errorf("outer's element function = %+v, want the lambda", got[1].Elements)
 	}
 	if !strings.HasPrefix(got[0].Callee, "__method_ndarray__NdArray_inner") {
 		t.Errorf("inner's callee = %q", got[0].Callee)
@@ -110,7 +110,7 @@ func TestArrayReportListsNdarrayProducts(t *testing.T) {
 		"no std/array pipelines",
 		"std/ndarray operations, recognized by identity and lowered as the scalar loop:",
 		"run:5:",
-		"inner  mul, add",
+		"inner  mul [i64 mul], add [i64 add]",
 		"outer  __closure_lambda",
 		"This is the NATIVE compiler's plan.",
 	} {
@@ -169,12 +169,12 @@ func TestRecognizesTheWholeNdarrayAlgebra(t *testing.T) {
 		if got[i].Verb != w {
 			t.Errorf("site %d is %q, want %q", i, got[i].Verb, w)
 		}
-		if len(got[i].Elements) != 1 || got[i].Elements[0] == "" {
-			t.Errorf("site %d (%s) element functions = %q, want one resolved name", i, w, got[i].Elements)
+		if len(got[i].Elements) != 1 || got[i].Elements[0].Name == "" {
+			t.Errorf("site %d (%s) element functions = %+v, want one resolved name", i, w, got[i].Elements)
 		}
 	}
-	if got[0].Elements[0] != "dbl" || got[5].Elements[0] != "sum_cell" {
-		t.Errorf("map got %q and map_rank got %q; want dbl and sum_cell", got[0].Elements[0], got[5].Elements[0])
+	if got[0].Elements[0].Name != "dbl" || got[5].Elements[0].Name != "sum_cell" {
+		t.Errorf("map got %q and map_rank got %q; want dbl and sum_cell", got[0].Elements[0].Name, got[5].Elements[0].Name)
 	}
 }
 
