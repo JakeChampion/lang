@@ -46,12 +46,11 @@ const sanSelfHostCleanSrc = `function main(): i32 {
     return 1;
 }`
 
-// sanSelfHostLeakSrc: three raw allocations, none reclaimed. `__free` is
-// a documented no-op in this runtime (irlower.fern: "a no-op under the
-// bump/leak heap"), so unlike the native leg NOTHING here is freed and
-// the census says so — which is the census being accurate about the
-// runtime it is measuring, not a divergence to hide. Exit code 42
-// passes through the report untouched.
+// sanSelfHostLeakSrc: three raw allocations, one of them freed — the same
+// program, and now the same verdict, as native's sanLeakSrc. `__free` used to
+// be a no-op here, so this leg read 3 blocks where native read 2; it returns
+// the block to its size class now, and the two agree. Exit code 42 passes
+// through the report untouched.
 const sanSelfHostLeakSrc = `function main(): i32 {
     var a: usize = __alloc(60);
     var b: usize = __alloc(60);
@@ -68,10 +67,9 @@ const sanSelfHostLeakSrc = `function main(): i32 {
 // poisons its rc word; the second dec then touches a quarantined block
 // and dies with the use-after-free report. (Native's plain __fern_rc_dec
 // never frees, so the same source there leaves rc at 0 and reports the
-// over-release text instead — an intrinsic-semantics difference like the
-// __free-is-a-no-op one above, not a diagnostic divergence: both texts
-// are byte-identical across backends, and each fires for the mechanism
-// that actually happened in its runtime.)
+// over-release text instead — an intrinsic-semantics difference, not a
+// diagnostic divergence: both texts are byte-identical across backends, and
+// each fires for the mechanism that actually happened in its runtime.)
 const sanSelfHostDoubleFreeSrc = `function main(): i32 {
     var a: u8[] = __alloc_u8(16);
     __rc_dec(a);
