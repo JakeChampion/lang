@@ -206,8 +206,36 @@ unmeasured test counts 1:
 Four balances to within a second of even. Six is worth 12% for 50% more runner
 slots and stops at 3.85 regardless, because `TestPrintfParity` is a 2m48s floor
 that only splitting its own subtests would lower — not worth the selector
-complexity yet. So: **four shards**, ~3.5 minutes of real test time each, which
-puts `internal/ir` (4m38s) back as the units lane's bound.
+complexity yet. So: **four shards**.
+
+### Measured on CI
+
+Run [35655544770](https://github.com/JakeChampion/lang/actions/runs/35655544770),
+the first with the lane in place. The test step is the two `go test` invocations;
+the job also pays checkout, toolchain and the oracle cache restore.
+
+| shard | x86_64 job / test step | aarch64 job / test step |
+| --- | ---: | ---: |
+| 0 | 3.7m / 3.4m | 4.0m / 3.7m |
+| 1 | 4.8m / 4.4m | 4.2m / 3.9m |
+| 2 | 5.1m / 4.6m | 4.7m / 4.2m |
+| 3 | 4.7m / 4.3m | 4.3m / 4.0m |
+
+The spread is 3.4-4.6 minutes of test time against a 14m40s serial package, and
+the partition held on the runners as it did in simulation. What it did to the
+lane it came out of:
+
+| | before | after |
+| --- | ---: | ---: |
+| `test-units` aarch64 | 15m07s | **4.9m** |
+| `test-units` x86_64 | 11m36s | **7.9m** |
+
+The aarch64 leg lands where the arithmetic said it would — `internal/ir` at
+4m38s is now its bound. The x86_64 leg does not: at 7.9 minutes it is still well
+above that, so something other than `internal/coreutils` dominates there. The
+profile behind the shard weights was taken on an aarch64-class machine, so it
+does not say what. That is the next thing to measure in this lane, not a number
+to assume.
 
 The lane is `test-coreutils.yml` rather than a matrix inside the units lane,
 because `scripts/unit-test-packages` already drops a package that has a workflow
@@ -229,9 +257,13 @@ shards and identify duplicated builds. Consider splitting `TestPrintfParity`'s
 subtests if the coreutils shards ever need to go below its 2m48s floor. Profile
 slow tests and generated programs before changing the compiler.
 
-Compare observed before/after runs rather than extrapolating: the two-lane
-figures are projections from one overlap measurement, and the coreutils shard
-timings were measured on a 4-core container rather than a CI runner, so both
-want post-merge confirmation. Refresh `.github/coreutils-test-weights.txt` from
-real runs when the spread drifts — the rules the self-host table follows are in
+Find what dominates `test-units` on x86_64, where the leg sits at 7.9 minutes
+against the 4m38s `internal/ir` bound the aarch64 leg reached.
+
+Compare observed before/after runs rather than extrapolating. The coreutils
+shard timings above are now measured on CI; the two-lane figures are still
+projections from one overlap measurement, and both lanes were observed running
+concurrently for the first time on 2026-09-21 without the per-round latency
+being sampled. Refresh `.github/coreutils-test-weights.txt` from real runs when
+the spread drifts — the rules the self-host table follows are in
 `docs/CI-WEIGHT-REFRESH.md`.
