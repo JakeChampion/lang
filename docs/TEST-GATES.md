@@ -612,7 +612,12 @@ Worth knowing so you do not assume coverage you do not have:
    still named in the regex, still weighted at 900s in
    `.github/selfhost-test-weights.txt` (#6310). `make testnames` now fails on
    a name in `.github/` that resolves to no test; when you retire a test, run
-   it before assuming the workflows followed.
+   it before assuming the workflows followed. It does NOT guard a name you type
+   at the command line, and a long runtime does not rule one out: `-run 'A|B|C'`
+   where `C` does not exist runs two suites, takes as long as two suites take,
+   and prints one `ok` line naming neither, so `C` reads as green. Before
+   quoting a suite as green, run it with `-v` and read its `--- PASS` line, or
+   grep the package for the name.
 9. **A wrong shard WEIGHT fails the shard, and only by timeout.** An entry that
    badly understates a test pushes its bucket past the shard `-test.timeout`
    (28 minutes, tracking the 30-minute job budget), so an unrelated PR goes red
