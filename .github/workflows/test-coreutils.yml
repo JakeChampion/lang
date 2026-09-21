@@ -223,10 +223,38 @@ jobs:
           # so the lane names tests that did not fail and never names the wall
           # it hit. A shard measures ~3.5 minutes; 20m is well over five times
           # that.
-          TOP_PAT="^($(IFS='|'; echo "${TOPS[*]}"))\$"
+          # `-run` IS A REGEXP, and a utility is not an identifier: the
+          # catalogue contains `[`, whose bare name opens an unterminated
+          # character class and makes the whole alternation an invalid RE2.
+          # go test then exits at regexp parse having run NOTHING, so the
+          # shard is red start to finish rather than subtly wrong. Escape
+          # every derived name — both lists, not just the utilities: the
+          # top-level half is safe only because Go test names happen to be
+          # identifiers, and that is luck rather than a guarantee.
+          # shellcheck disable=SC2016 # `$(` and `$)` are metacharacters in the
+          # character class, not a command substitution: the quotes are single
+          # precisely so the shell leaves the sed script alone.
+          re_escape() { sed 's/[][\.*^$(){}?+|]/\\&/g'; }
+          join_alt() { (IFS='|'; echo "$*"); }
+
+          mapfile -t TOPS_RE < <(printf '%s\n' "${TOPS[@]}" | re_escape)
+          mapfile -t UTILS_RE < <(printf '%s\n' "${UTILS[@]}" | re_escape)
+          TOP_PAT="^($(join_alt "${TOPS_RE[@]}"))\$"
+          UTIL_PAT="^$GIANT\$/^($(join_alt "${UTILS_RE[@]}"))\$"
+
+          # Compile both before running either. `go test -list` parses the
+          # pattern and lists rather than runs, so a metacharacter added to
+          # the tree later fails HERE, naming the pattern, instead of inside
+          # a shard that reports a regexp error as a test failure.
+          for pat in "$TOP_PAT" "$UTIL_PAT"; do
+            if ! go test -list "$pat" ./internal/coreutils/ >/dev/null 2>&1; then
+              echo "::error::shard ${{ matrix.shard }}/$NSHARD built an invalid -run pattern: $pat" >&2
+              exit 1
+            fi
+          done
+
           gotestsum --format pkgname-and-test-fails -- -timeout 20m \
             -run "$TOP_PAT" ./internal/coreutils/
 
-          UTIL_PAT="^$GIANT\$/^($(IFS='|'; echo "${UTILS[*]}"))\$"
           gotestsum --format pkgname-and-test-fails -- -timeout 20m \
             -run "$UTIL_PAT" ./internal/coreutils/
