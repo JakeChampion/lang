@@ -316,7 +316,8 @@ func TestSelfHostSanitizeLeakVerdictArm64(t *testing.T) {
 		t.Fatalf("no leak verdict line in stderr: %q", stderr)
 	}
 	blocks, _ := strconv.Atoi(m[2])
-	if blocks != 3 {
-		t.Errorf("verdict says %d blocks, want 3", blocks)
+	if blocks != 2 {
+		t.Errorf("verdict says %d blocks, want 2 (the same count native's "+
+			"TestX86_64SanitizeLeakVerdict reads for this program)", blocks)
 	}
 }

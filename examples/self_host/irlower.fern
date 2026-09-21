@@ -11814,9 +11814,9 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         if (!ms3.ok) { return ms3; }
         return ms3.emit(ir.op_memset());
     }
-    // __free(ptr, size): a no-op under the bump/leak heap (core/map's
-    // grow path). Lower both args (no side effects), emit op_free,
-    // which discards them and pushes dummy 0 (statement-position).
+    // __free(ptr, size): core/map's grow path returning a raw block.
+    // Lower both args (no side effects), emit op_free, which pushes the
+    // block onto its size class and leaves a dummy 0 (statement-position).
     if (cid.name == "__free" && c.args.len() == 2) {
         var fr: LowerState = lower_expr(c.args[0], s);
         if (!fr.ok) { return fr; }
@@ -11825,21 +11825,20 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         return fr.emit(ir.op_free());
     }
     // __fern_arr_dec(v, stride) / __fern_drop_arr_ptr(v, stride):
-    // core/map's value-release helpers. The self-host backends keep
-    // these NO-OPS (safe-leak mode — the array rc-header layout
-    // migration that would wire in real frees isn't done; the native
-    // backend does real RC, goal #2 ports it). Lower as a no-op that
-    // consumes both args and pushes a dummy 0 (reusing op_free's
-    // pop-2/push-0). This matches asm.fern's documented no-op and
-    // avoids the stack-arg-helper ABI: a generic call_direct would
-    // mis-pass the 2 args to the 1-slot __fn___fern_arr_dec. Flips
-    // __map_dec_value (the last core/map bail) to ir. #2691 stage 3.
+    // core/map's value-release helpers, still NO-OPS here — the element
+    // deep-drop the stride selects has no self-host equivalent, so these
+    // leak what they are handed rather than releasing the wrong thing.
+    // Spelled as two drops and a dummy 0 rather than op_free: `v` is an
+    // rc-headered array box and `stride` is an element width, so the pair
+    // is not a (block, size) free, and op_free now performs one.
     if ((cid.name == "__fern_arr_dec" || cid.name == "__fern_drop_arr_ptr") && c.args.len() == 2) {
         var rd: LowerState = lower_expr(c.args[0], s);
         if (!rd.ok) { return rd; }
         rd = lower_expr(c.args[1], rd);
         if (!rd.ok) { return rd; }
-        return rd.emit(ir.op_free());
+        rd = rd.emit(ir.op_drop());
+        rd = rd.emit(ir.op_drop());
+        return rd.emit(ir.op_const_i32(0));
     }
     // __fern_str_dec(s): core/map's string-value release, which
     // __map_dec_value runs on the value an overwrite displaces (#8421).
@@ -16515,11 +16514,18 @@ function lower_expr_unary(u: ast.ExprUnary, s: LowerState): LowerState {
         if (expr_is_f64(u.operand, s)) {
             var fc: LowerState = lower_expr(u.operand, s);
             if (!fc.ok) { return fc; }
-            // `f64 as u32` truncates UNSIGNED (#4332): the signed
-            // f64_to_i32 clamps at INT32_MAX, so 3e9 as u32 read as
-            // 2147483647 instead of 3000000000. Native saturates over
-            // the full u32 range (fcvtzu / trunc_sat_f64_u).
-            if (cty == "u32") { fc = fc.emit(ir.op_f64_to_u32()); }
+            // A float truncates UNSIGNED into an unsigned destination
+            // (#4332): the signed f64_to_i32 clamps at INT32_MAX, so
+            // 3e9 as u32 read as 2147483647 instead of 3000000000.
+            // Native saturates over the full u32 range (fcvtzu /
+            // trunc_sat_f64_u).
+            //
+            // The u8 destination takes the same op (#9912). It is the
+            // signedness of the DESTINATION that picks the conversion,
+            // not its width: the signed clamp out of a negative lands at
+            // INT32_MIN, and the int_cast below reads that clamp's low
+            // byte, so `-1.0 as u8` answered 255 where native answers 0.
+            if (cty == "u32" || cty == "u8") { fc = fc.emit(ir.op_f64_to_u32()); }
             else { fc = fc.emit(ir.op_f64_to_i32()); }
             return fc.emit(ir.op_int_cast(cty));
         }

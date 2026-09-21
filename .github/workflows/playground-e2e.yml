@@ -21,11 +21,11 @@ name: Playground E2E
 # with fresh random seeds to catch drift Playwright wouldn't.
 
 # Called from ci.yml rather than triggered: that is the one workflow a pull
-# request or a push to main launches. It holds the PR-wide lock (one pull
-# request's suite at a time), decides from the changed files whether this lane
-# runs — the lane's path filter lives in its lane table — and cancels the rest
-# of the run when a lane goes red. `workflow_dispatch` stays so the lane can
-# be run on its own, outside that lock.
+# request or a push to main launches. It holds one of the PR queue's two slots
+# (two pull requests' suites run at once), decides from the changed files
+# whether this lane runs — the lane's path filter lives in its lane table —
+# and cancels the rest of the run when a lane goes red. `workflow_dispatch`
+# stays so the lane can be run on its own, outside that queue.
 on:
   workflow_call:
   workflow_dispatch:
