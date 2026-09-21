@@ -166,12 +166,14 @@ own question rather than leaving the reader to go and look: each element
 function is printed with what a kernel could do with it.
 
 ```
-run:5:60  inner  mul [f64 mul], add [f64 add]
-run:6:44  map    __closure_lambda_1 [element-fn-captures]
+run:5:87  inner  over packed     mul [f64 mul], add [f64 add]  -> kernel-candidate
+run:6:51  map    over strided    __closure_lambda_1 [element-fn-captures]  -> element-not-primitive
 ```
 
 The first of those is `dot_f64` in disguise; the second is not, and says
-why. The bar is `ATLAS-PLATFORM-PLAN.md` §3's: a kernel is one IR op
+why. `over` is the receiver's layout and `->` the site's verdict; both
+are below, and the element functions in the brackets are what this part
+of the section is about. The bar is `ATLAS-PLATFORM-PLAN.md` §3's: a kernel is one IR op
 whose whole vector lifetime stays inside its own emitted sequence, so a
 call to an element function is an op boundary and nothing survives it. A
 kernel can only take an element function it can INLINE, which means one
@@ -204,9 +206,9 @@ not sufficient, because an axis verb also has to say which elements it
 walks.
 
 ```
-algebra:11:60  reduce_axis(axis 1)  add [i64 add]  -> kernel-candidate
-algebra:13:48  map_rank(rank 1)     sum_cell [element-fn-calls]  -> element-not-primitive
-algebra:14:60  reduce_axis(axis ?)  add [i64 add]  -> axis-not-literal
+algebra:11:60  reduce_axis(axis 1)  over unknown    add [i64 add]  -> kernel-candidate
+algebra:13:48  map_rank(rank 1)     over unknown    sum_cell [element-fn-calls]  -> element-not-primitive
+algebra:14:60  reduce_axis(axis ?)  over unknown    add [i64 add]  -> axis-not-literal
 ```
 
 The third of those is the one a per-element reading cannot see: its
@@ -304,8 +306,8 @@ like the kernel sets above, tallied under `FERN_ARRAY_REPORT=1`:
 | `not-proven-row-major` | `reshape()` on a receiver not proven row-major, so the call may copy |
 
 ```
-main:5:20  to_flat  over packed     -> metadata
-main:5:38  to_flat  over strided    -> not-proven-packed
+main:5:10  to_flat  over packed     -> metadata
+main:5:27  to_flat  over strided    -> not-proven-packed
 ```
 
 **This changes nothing.** `metadata` says the copy is provably absent,
