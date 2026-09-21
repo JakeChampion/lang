@@ -34,7 +34,7 @@ x86-64, `FERN_SANITIZE=1` + `FERN_LEAKCHECK=1`, native x86-64 as the oracle.
 
 | program | before | after | typed held |
 |---|---|---|---|
-| a struct and a three-shape enum over all six operators | 0 of 53 | 53 of 53 | 0 B |
+| a struct, a three-shape enum and a generic struct over all six operators | 0 of 59 | 59 of 59 | 0 B |
 | `conformance/cases/derive_multi_payload` | 0 of 140 | 140 of 140 | 0 B |
 
 Each answers what native answers, on x86-64 and arm64, and the two lowerings
@@ -69,6 +69,8 @@ the three new declarations and still produces whole.
   for a `TypeStruct` carrying type arguments, which reads like `Box[i32] == …`
   falling through to the operator refusal. It does not: `monomorphize_structs`
   clones the instantiation into a nullary `Box__i32` before this boundary sees
-  it, so the bare-name lookup is what every reachable comparison needs. Both a
-  direct `Box[i32] == Box[i32]` and one inside a generic `same[T](a: Box[T],
-  b: Box[T])` produce whole and answer what native answers.
+  it, so the bare-name lookup is what every reachable comparison needs. The
+  refusal on the pre-fix tree names the mangled type, which is the evidence:
+  `same__i32: operator contract: Holder__i32 == Holder__i32`. Both a direct
+  `Box[i32] == Box[i32]` and one inside a generic `same[T](a: Box[T], b: Box[T])`
+  produce whole and answer what native answers.
