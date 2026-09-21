@@ -16,12 +16,14 @@ import (
 // --- Projecting a pointer field out of a match binding, and its reclaim ------
 //
 // This is the leak the `core/iter` adapters actually hit, and it is NOT
-// the match-binding over-retain pinned in
-// match_binding_overretain_test.go. The two have different signatures:
+// the assigned-out match binding pinned in match_binding_rebind_test.go.
+// The two have different signatures:
 //
-//	Some(v) => cur = v      cur's payload ends at refcount 2
-//	Some(t) => cur = t.1    cur's payload ends at 1 (correct), and the
-//	                        PROJECTED ARRAY still leaks, one per call
+//	Some(v) => cur = v      cur's payload ends at refcount 1 (#8003; it
+//	                        ended at 2 while the arm-end release was
+//	                        refused for an assigned-out binding)
+//	Some(t) => cur = t.1    cur's payload ends at 1, and the PROJECTED
+//	                        ARRAY still leaks, one per call
 //
 // `filter`, `map` and `enumerate` are all written on the second shape —
 // `cur = t.1` inside a match arm, where `t` is the (value, next-iterator)

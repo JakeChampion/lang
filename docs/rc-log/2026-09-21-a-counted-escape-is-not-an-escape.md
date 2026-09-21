@@ -103,13 +103,13 @@ the release a use-after-free. It is now
 program, run rather than read, is balanced at 5/5 and reads `kept[0..2]` back as
 1/2/3 after the loop.
 
-`TestMatchBindingRebindOverRetains` pinned this defect DELIBERATELY —
+`TestMatchBindingRebindOverRetainsX86_64` pinned this defect DELIBERATELY —
 `docs/rc-log/2026-08-30-match-binding-rebind-overretain.md`, rc 2 and 3 unpaired
 where 1 and 0 are correct — and now reads 1 / 0. Its own diagnosis was right
 ("the arm-end release is ABSENT when the binding is assigned out, while the
 alias-inc is still emitted"); the repair it sketched, suppressing the inc, was
 the wrong half, because the inc is what makes the destination an owner. It is
-now `TestMatchBindingRebindOwnsOnce`, in
+now `TestMatchBindingRebindOwnsOnceX86_64`, in
 `internal/e2e/match_binding_rebind_test.go`.
 
 That entry also expected the conformance leak census to improve with the fix.
