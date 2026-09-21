@@ -829,14 +829,16 @@ function main(): i32 {
     if (cast_masks(u8ty, i32ty) != "") { return 77; }
     if (cast_masks(u8ty, u8ty) != "") { return 78; }
     if (cast_masks(i32ty, i32ty) != "") { return 79; }
-    // Into and out of the f64 is a real conversion and never a mask; a
-    // reference is not a cast operand at all, and neither is the byte for the
-    // float, whose convert has no opcode at that width.
+    // Into a float is a real conversion and never a mask; a reference is not a
+    // cast operand at all. OUT of a float into a byte is the one direction that
+    // is both: the conversion answers at 32 bits, so the byte takes the same
+    // mask the integer narrowing takes.
     var f64ty2: typeinfo.Type = typeinfo.TypeFloat { width: 64, polymorphic: false };
     if (cast_masks(i32ty, f64ty2) != "") { return 80; }
     if (cast_masks(f64ty2, i32ty) != "") { return 81; }
     if (cast_masks(strTy, i32ty) != "plan:cast operand type") { return 82; }
-    if (cast_masks(u8ty, f64ty2) != "plan:cast operand type") { return 114; }
+    if (cast_masks(u8ty, f64ty2) != "") { return 114; }
+    if (cast_masks(f64ty2, u8ty) != "u8") { return 193; }
     // A byte's constant is pushed with no mask, so it has to be in range here.
     var kGraph = ssa.SFunc { name: "k", nparams: 0, nvals: 1, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(1, 0, [], 255)], term: ret(0) }] };
