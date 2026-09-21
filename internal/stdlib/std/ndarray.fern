@@ -56,6 +56,15 @@
 // by identity (docs/ARRAY-SHAPES.md §6) and `fern -array-report` names
 // each site; the lowering is still the scalar loop below.
 //
+// # By rank
+//
+// `map_rank(k, f)` applies `f` to every rank-`k` CELL: the shape splits at
+// `rank - k` into a leading FRAME and the cell, and the result is
+// `frame ++ f's result shape`. Cells are views, so nothing is copied on
+// the way in, and every cell result must have the same shape. With no
+// cells the result is the empty handle of shape `frame`, since `f` never
+// ran to say what a cell result looks like.
+//
 // # Broadcasting
 //
 // Two shapes broadcast when, aligned at their LAST axes, every pair of
@@ -598,6 +607,82 @@ pub function (a: NdArray[T]) scan_axis[T, A](axis: i32, init: A, f: (A, T) => A)
         i = i + 1;
     }
     return from_flat(out, a.shape);
+}
+
+// `map_rank(k, f)` — `f` applied to every rank-`k` CELL of `a`. The shape
+// splits at `rank - k`: the leading axes are the FRAME, the trailing `k`
+// are the cell, and the result is the cells' results reassembled under
+// `frame ++ f's result shape`. APL's rank operator, without the glyph
+// (#9735 step 5).
+//
+// `k == rank` is one cell, the whole handle; `k == 0` makes every element
+// its own rank-0 cell, which is `map` with the element boxed. Neither is
+// special-cased — they fall out of the split.
+//
+// Each cell is a VIEW, peeled by selecting the frame's leading axis once
+// per frame axis, so no element is copied on the way in. What `f` returns
+// is read in row-major order, so a cell result that is not packed costs
+// its own copy and nothing else does.
+//
+// Every cell's result must have the SAME shape — the frame cannot be
+// joined to a ragged set of cells — and one that differs from the first
+// aborts, per the error rule above.
+//
+// With NO cells, some frame extent being 0, `f` never runs and there is
+// no cell result shape to learn, so the result is the empty handle of
+// shape `frame` rather than of `frame ++ something`. That is the one
+// place the result's RANK depends on the input's extents rather than on
+// its shape alone.
+pub function (a: NdArray[T]) map_rank[T, U](k: i32, f: (NdArray[T]) => NdArray[U]): NdArray[U] {
+    if (k < 0 || k > a.shape.len()) { shape_error(); }
+    var fr: i32 = a.shape.len() - k;
+    var frame: i32[] = [];
+    var j: i32 = 0;
+    while (j < fr) {
+        frame = frame.append(a.shape[j]);
+        j = j + 1;
+    }
+    var cells: i32 = count_of(frame);
+    var out: U[] = [];
+    var cshape: i32[] = [];
+    var idx: i32[] = zeros(fr);
+    var i: i32 = 0;
+    while (i < cells) {
+        // Selecting axis 0 drops it, so `fr` selections leave the rank-k
+        // cell at this frame index.
+        var cell: NdArray[T] = a;
+        var d: i32 = 0;
+        while (d < fr) {
+            cell = cell.select(0, idx[d]);
+            d = d + 1;
+        }
+        var r: NdArray[U] = f(cell);
+        if (i == 0) {
+            cshape = r.shape();
+        } else {
+            if (!same_shape(r.shape(), cshape)) { shape_error(); }
+        }
+        var flat: U[] = r.to_flat();
+        var m: i32 = 0;
+        while (m < flat.len()) {
+            out = out.append(flat[m]);
+            m = m + 1;
+        }
+        idx = bump(idx, frame);
+        i = i + 1;
+    }
+    var rshape: i32[] = [];
+    j = 0;
+    while (j < frame.len()) {
+        rshape = rshape.append(frame[j]);
+        j = j + 1;
+    }
+    j = 0;
+    while (j < cshape.len()) {
+        rshape = rshape.append(cshape[j]);
+        j = j + 1;
+    }
+    return from_flat(out, rshape);
 }
 
 // The row-major reading of `a`, walked with an odometer over the shape.
