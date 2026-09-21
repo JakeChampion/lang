@@ -364,10 +364,12 @@ The same verdict is what E068 reports when a `fip` / `fbip` function's
 `map` is declined, so "why did this allocate under my space claim" and
 "why did this allocate" have one answer.
 
-The same report lists `std/ndarray`'s products, `inner` and `outer`,
-as recognized shapes (`ARRAY-SHAPES.md` §6): one line per site with the
-element functions it was handed, under a heading that says the lowering
-is still the scalar loop. Nothing about them fuses; the section is the
+The same report lists `std/ndarray`'s algebra — `ARRAY-SHAPES.md` §7's
+eight operations, the ones handed a function — as recognized shapes
+(`ARRAY-SHAPES.md` §6): one line per site with the element functions it
+was handed and, for `reduce_axis`, `scan_axis` and `map_rank`, the axis
+or cell rank it was given, under a heading that says the lowering is
+still the scalar loop. Nothing about them fuses; the section is the
 worklist for the kernels of #9735.
 
 `FERN_ARRAY_REPORT=1` adds a histogram, in three sections: why each chain
