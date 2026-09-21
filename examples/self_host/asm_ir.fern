@@ -2363,6 +2363,38 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     }
     s = s.write(".Llpush_ret:\n");
     s = s.write("    ret\n");
+    // __fern_raw_free(%rdi = block, %rsi = bytes) — the return path for a block
+    // `__fern_alloc` handed out raw, with no rc header: core/map's buffers, and
+    // whatever else reaches the `__free` builtin. The block's own first word is
+    // the freelist link, so a block too small to hold one is dropped, exactly as
+    // the allocator's classing assumes. Same two tiers as __fern_alloc, so a
+    // freed block satisfies the next request of its class.
+    s = s.write("__fern_raw_free:\n");
+    s = s.write("    testq %rdi, %rdi\n");
+    s = s.write("    jz .Lrawfree_ret\n");
+    s = s.write("    addq $7, %rsi\n");
+    s = s.write("    andq $-8, %rsi\n");
+    s = s.write("    cmpq $8, %rsi\n");
+    s = s.write("    jb .Lrawfree_ret\n");
+    s = s.write("    movq %rsi, %rcx\n");
+    s = s.write("    shrq $3, %rcx\n");
+    s = s.write("    cmpq $65536, %rcx\n");
+    s = s.write("    jae .Lrawfree_large\n");
+    s = hev_free(s, "%rdi", "%rcx");
+    // Quarantine: with the detector on nothing is recycled, so a freed block
+    // cannot come back under a fresh allocation and overwrite the evidence.
+    if (!rc_free_debug_on()) {
+    s = s.write("    leaq __fern_freelist(%rip), %r8\n");
+    s = s.write("    movq (%r8,%rcx,8), %rdx\n");
+    s = s.write("    movq %rdx, (%rdi)\n");
+    s = s.write("    movq %rdi, (%r8,%rcx,8)\n");
+    }
+    s = s.write(".Lrawfree_ret:\n");
+    s = s.write("    ret\n");
+    s = s.write(".Lrawfree_large:\n");
+    s = s.write("    movq %rdi, %r8\n");
+    s = s.write("    call __fern_large_push\n");
+    s = s.write("    ret\n");
     s = s.write("__fn___fern_arr_dec:\n");
     s = s.write("    movq 8(%rsp), %rax\n");
     s = s.write("    testq %rax, %rax\n");
@@ -6611,8 +6643,9 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
         // stosb, AL), push dummy 0. n on top, then byte, then dst.
         s = s.write(ir_memset_asm());
     } else if (o.kind_tag == 78) {  // free
-        // [ptr, size] -> no-op under the bump/leak heap; drop both, push dummy 0.
-        s = s.write("    popq %rax\n    popq %rax\n    pushq $0\n");
+        // [ptr, size] -> return the raw block to its size class; push dummy 0.
+        s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_raw_free\n    pushq $0\n");
+        s = s.need("heap");
     } else if (o.kind_tag == 69) {  // load_i32
         // [addr] -> sign-extended 4-byte load (matches __fn___load_i32).
         s = s.write("    popq %rax\n    movslq (%rax), %rax\n    pushq %rax\n");

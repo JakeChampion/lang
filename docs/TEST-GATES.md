@@ -14,9 +14,12 @@ single filter both events read (`TestGateLanesRunOnMain`,
 rebase-merged: each commit lands on a main its own CI never saw, so a coupling
 between two individually-green PRs exists only in the combination.
 
-Pull requests take one queue (`pr-ci`, `queue: max`, first in first out): at
-most one PR's suite runs at a time and its lanes run in parallel inside that
-run. Main runs take their own (`ci-main`), keyed on the ref and never
+Pull requests take two queues (`pr-ci-even` / `pr-ci-odd`, `queue: max`, first
+in first out, chosen by the parity of the PR number): at most two PRs' suites
+run at a time and each one's lanes run in parallel inside its run. Two rather
+than one because the runner ceiling fits two and one leaves half of it idle;
+`docs/CI-PERFORMANCE.md` has the measurements. Main runs take their own
+(`ci-main`), keyed on the ref and never
 cancelled, so every merge gets a full, attributable run and a burst queues
 rather than losing one. Keying main on `github.sha` would give each merge its
 own group and an uncancellable run ahead of every open PR (#8124), which
