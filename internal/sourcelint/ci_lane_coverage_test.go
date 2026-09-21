@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -170,6 +171,7 @@ func buildLanes(t *testing.T, root string) []lane {
 		wholePackageLane(t, root, "test-fernsmith.yml", "./internal/fernsmith/...", "internal/fernsmith"),
 		e2eCatchAllLane(t, root),
 		selfHostShardLane(t, root),
+		coreutilsShardLane(t, root),
 	}
 	for pkg, files := range selectorLanes {
 		for _, f := range files {
@@ -280,6 +282,83 @@ func selfHostShardLane(t *testing.T, root string) lane {
 		pkgs:    []string{"internal/e2eselfhost"},
 		all:     true,
 		exclude: regexp.MustCompile("^(" + alt + ")$"),
+	}
+}
+
+// coreutilsShardLane models test-coreutils.yml, which runs the whole of
+// internal/coreutils across four shards in two invocations each: whole
+// top-level tests in one, its slice of TestSelfHostCoreutilsParity's subtests
+// in the other. The union is the whole package, so the lane is modelled as
+// covering it entirely — but only because BOTH lists are derived, which is
+// what this pins. An enumerated list is a list that goes stale silently, and
+// a narrowed `-test.list` prefix is what dropped seven tests in #8471.
+//
+// TestCoreutilsShardCountMatchesTheMatrix pins the other half: a partition
+// into more buckets than the matrix runs drops a whole shard's tests.
+func coreutilsShardLane(t *testing.T, root string) lane {
+	t.Helper()
+	const file = "test-coreutils.yml"
+	src := readWorkflow(t, root, file)
+	if !strings.Contains(src, `go test -list '.' ./internal/coreutils/`) {
+		t.Fatalf("%s no longer lists the whole internal/coreutils package; a test that does "+
+			"not match a narrower pattern would run in no shard, and therefore nowhere", file)
+	}
+	if !strings.Contains(src, "ls coreutils/*.fern") {
+		t.Fatalf("%s no longer derives its utility list from coreutils/*.fern; an enumerated "+
+			"list goes stale silently, and a utility missing from it is never compiled by "+
+			"the self-host leg in any shard", file)
+	}
+	if !strings.Contains(src, "scripts/shard-tests") {
+		t.Fatalf("%s no longer partitions with scripts/shard-tests, which is what guarantees "+
+			"every listed name lands in exactly one bucket", file)
+	}
+	return lane{name: file + " (shards)", pkgs: []string{"internal/coreutils"}, all: true}
+}
+
+// TestCoreutilsShardCountMatchesTheMatrix pins NSHARD against the matrix.
+//
+// The partition is into NSHARD buckets and the matrix runs one job per listed
+// shard, so the two disagreeing is a silent hole rather than an error: with
+// NSHARD=5 and a four-entry matrix, every name LPT assigns to bucket 4 is
+// selected by no job, reported by nothing, and simply never runs.
+func TestCoreutilsShardCountMatchesTheMatrix(t *testing.T) {
+	src := workflowSource(t, "test-coreutils.yml")
+	m := regexp.MustCompile(`(?m)^\s+NSHARD:\s*"(\d+)"`).FindStringSubmatch(src)
+	if m == nil {
+		t.Fatal("test-coreutils.yml sets no NSHARD; the shard jobs would partition into an empty count")
+	}
+	n, err := strconv.Atoi(m[1])
+	if err != nil {
+		t.Fatalf("parse NSHARD %q: %v", m[1], err)
+	}
+	sm := regexp.MustCompile(`(?m)^\s+shard:\s*\[([^\]]*)\]`).FindStringSubmatch(src)
+	if sm == nil {
+		t.Fatal("test-coreutils.yml has no `shard:` matrix axis")
+	}
+	var shards []int
+	for _, f := range strings.Split(sm[1], ",") {
+		f = strings.TrimSpace(f)
+		if f == "" {
+			continue
+		}
+		v, err := strconv.Atoi(f)
+		if err != nil {
+			t.Fatalf("parse shard index %q: %v", f, err)
+		}
+		shards = append(shards, v)
+	}
+	if len(shards) != n {
+		t.Errorf("test-coreutils.yml partitions into NSHARD=%d buckets but its matrix runs %d shards %v — "+
+			"every test the partition assigns to a bucket no job runs is selected by nothing and never runs",
+			n, len(shards), shards)
+	}
+	sort.Ints(shards)
+	for i, got := range shards {
+		if got != i {
+			t.Errorf("test-coreutils.yml's shard matrix is %v, which is not 0..%d — scripts/shard-tests "+
+				"numbers buckets from zero and a gap is a bucket nothing runs", shards, n-1)
+			break
+		}
 	}
 }
 

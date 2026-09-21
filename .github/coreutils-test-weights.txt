@@ -1,0 +1,147 @@
+# Measured weights for the internal/coreutils shards, in seconds.
+#
+# `TestName seconds` per line; `#` comments and blanks ignored. A name with no
+# entry weighs 1, so this file steers BALANCE only — it can never drop a test
+# or run one twice, because scripts/shard-tests partitions the live list and
+# every listed name lands in exactly one bucket. A stale weight costs an
+# unevenly filled shard, nothing more.
+#
+# Two lists, partitioned separately, because `go test -run` splits its pattern
+# on `/` before applying each part to a level: `^(TestCatParity|TestX/cat)$` is
+# not a valid mixed selector, so a shard selects whole top-level tests in one
+# invocation and its slice of TestSelfHostCoreutilsParity in another.
+#
+# Weight-1 entries are omitted — the partitioner already defaults to one.
+# Source: a full `go test -v ./internal/coreutils/` run, 2026-09-21. Refresh
+# with the same method when the spread drifts; see docs/CI-WEIGHT-REFRESH.md
+# for the multi-run rules the self-host table follows.
+
+# Top-level tests (all but the sharded giant).
+TestPrintfParity 169
+TestMulticallParity 96
+TestNumfmtParity 26
+TestSelfHostUniqLongOptionWithSameFieldCountStructs 24
+TestTimeout 19
+TestTailParity 18
+TestMktempRetryExhaustion 10
+TestDateParity 9
+TestDDProgress 7
+TestMulticallDispatch 6
+TestSleepParity 6
+TestExprRegexDifferential 5
+TestTeeParity 5
+TestSplitParity 5
+TestStty 4
+TestFactorParity 3
+TestCsplit 3
+TestMvParity 3
+TestPrParity 3
+TestDir 3
+TestVdir 3
+TestLs 2
+TestMkdir 2
+TestSeqParity 2
+TestStat 2
+TestCpParity 2
+TestMd5sumParity 2
+TestOd 2
+TestBracketParity 2
+TestMkfifoParity 2
+TestTouchParity 2
+TestDu 2
+TestB2sumParity 2
+TestTouchTimestamps 2
+TestChmodParity 2
+TestSortParity 2
+TestLnParity 2
+TestInstallParity 2
+TestEnv 2
+TestExprParity 2
+TestFmtParity 2
+TestDf 2
+TestLongDoubleModelPerTarget 2
+TestArchParity 2
+TestShufParity 2
+TestTestParity 2
+TestDircolorsParity 2
+
+# Utilities, the subtest slice of TestSelfHostCoreutilsParity.
+TestSelfHostCoreutilsParity/tail 19
+TestSelfHostCoreutilsParity/sort 18
+TestSelfHostCoreutilsParity/cksum 17
+TestSelfHostCoreutilsParity/sha224sum 17
+TestSelfHostCoreutilsParity/md5sum 17
+TestSelfHostCoreutilsParity/sha256sum 17
+TestSelfHostCoreutilsParity/sha384sum 17
+TestSelfHostCoreutilsParity/sha1sum 17
+TestSelfHostCoreutilsParity/sha512sum 17
+TestSelfHostCoreutilsParity/b2sum 17
+TestSelfHostCoreutilsParity/vdir 6
+TestSelfHostCoreutilsParity/ls 6
+TestSelfHostCoreutilsParity/dir 6
+TestSelfHostCoreutilsParity/date 5
+TestSelfHostCoreutilsParity/touch 4
+TestSelfHostCoreutilsParity/pr 3
+TestSelfHostCoreutilsParity/du 3
+TestSelfHostCoreutilsParity/ptx 3
+TestSelfHostCoreutilsParity/install 3
+TestSelfHostCoreutilsParity/cp 3
+TestSelfHostCoreutilsParity/od 3
+TestSelfHostCoreutilsParity/mv 3
+TestSelfHostCoreutilsParity/numfmt 3
+TestSelfHostCoreutilsParity/stat 3
+TestSelfHostCoreutilsParity/seq 3
+TestSelfHostCoreutilsParity/csplit 3
+TestSelfHostCoreutilsParity/join 3
+TestSelfHostCoreutilsParity/printf 2
+TestSelfHostCoreutilsParity/who 2
+TestSelfHostCoreutilsParity/uptime 2
+TestSelfHostCoreutilsParity/expr 2
+TestSelfHostCoreutilsParity/df 2
+TestSelfHostCoreutilsParity/nl 2
+TestSelfHostCoreutilsParity/timeout 2
+TestSelfHostCoreutilsParity/pinky 2
+TestSelfHostCoreutilsParity/ln 2
+TestSelfHostCoreutilsParity/uniq 2
+TestSelfHostCoreutilsParity/tac 2
+TestSelfHostCoreutilsParity/cut 2
+TestSelfHostCoreutilsParity/env 2
+TestSelfHostCoreutilsParity/stty 2
+TestSelfHostCoreutilsParity/split 2
+TestSelfHostCoreutilsParity/dd 2
+TestSelfHostCoreutilsParity/chgrp 2
+TestSelfHostCoreutilsParity/chown 2
+TestSelfHostCoreutilsParity/chroot 2
+TestSelfHostCoreutilsParity/dircolors 2
+TestSelfHostCoreutilsParity/rm 2
+TestSelfHostCoreutilsParity/shred 2
+TestSelfHostCoreutilsParity/wc 2
+TestSelfHostCoreutilsParity/factor 2
+TestSelfHostCoreutilsParity/tr 2
+TestSelfHostCoreutilsParity/chmod 2
+TestSelfHostCoreutilsParity/head 2
+TestSelfHostCoreutilsParity/comm 2
+TestSelfHostCoreutilsParity/sleep 2
+TestSelfHostCoreutilsParity/shuf 2
+TestSelfHostCoreutilsParity/id 2
+TestSelfHostCoreutilsParity/truncate 2
+TestSelfHostCoreutilsParity/fmt 2
+TestSelfHostCoreutilsParity/groups 2
+TestSelfHostCoreutilsParity/kill 2
+TestSelfHostCoreutilsParity/mkdir 2
+TestSelfHostCoreutilsParity/test 2
+TestSelfHostCoreutilsParity/base32 2
+TestSelfHostCoreutilsParity/pathchk 2
+TestSelfHostCoreutilsParity/tsort 2
+TestSelfHostCoreutilsParity/basenc 2
+TestSelfHostCoreutilsParity/expand 2
+TestSelfHostCoreutilsParity/[ 2
+TestSelfHostCoreutilsParity/nice 2
+TestSelfHostCoreutilsParity/fold 2
+TestSelfHostCoreutilsParity/paste 2
+TestSelfHostCoreutilsParity/base64 2
+TestSelfHostCoreutilsParity/hostid 2
+TestSelfHostCoreutilsParity/mknod 2
+TestSelfHostCoreutilsParity/nohup 2
+TestSelfHostCoreutilsParity/nproc 2
+TestSelfHostCoreutilsParity/realpath 2

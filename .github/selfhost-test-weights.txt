@@ -3,7 +3,7 @@
 # Each measured entry uses ceil(max observed active time); lowering requires
 # two distinct runs. Unobserved entries retain their previous weights.
 # Tests absent from this file have weight 1. All registered tests are still
-# assigned exactly once by scripts/selfhost-shard-tests.
+# assigned exactly once by scripts/shard-tests.
 #
 # Validation and omitted weight-one rows: docs/CI-SHARD-REBALANCE.md.
 TestSelfHostAddDifferentialX86_64 36

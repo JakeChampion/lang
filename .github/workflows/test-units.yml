@@ -42,8 +42,6 @@ jobs:
           - { runner: ubuntu-24.04-arm, host: aarch64 }
     name: test-units-${{ matrix.host }}
     runs-on: ${{ matrix.runner }}
-    env:
-      GNU_COREUTILS_VERSION: "9.12"
     steps:
       - uses: actions/checkout@v7
       # THE REPO'S ONE Go-BUILD-CACHE PRODUCER. Every other job in every
@@ -147,108 +145,6 @@ jobs:
           if command -v llvm-mc >/dev/null 2>&1; then
             llvm-mc --version | head -2
           fi
-      # The WHOLE GNU coreutils catalogue, built, because the runner image's
-      # own is not the version the corpus is held to: ubuntu-24.04 ships 9.4
-      # and docs/COREUTILS.md pins the oracle to 9.12. Installing only the
-      # handful of binaries the image lacks leaves every other utility
-      # answering from /usr/bin, which costs about two thousand cases across
-      # sixty utilities, each reporting a version difference as Fern's bug.
-      #
-      # It also supplies what Debian and Ubuntu leave out. Their coreutils
-      # package builds neither `uptime` nor `kill`, and the /usr/bin copies of
-      # both belong to PROCPS -- different programs, with different options
-      # and different output. `chroot` is a third: Debian builds it but
-      # installs it to /usr/sbin, which is not a directory gnuCandidates()
-      # searches. `arch` is a fourth, and needs naming in
-      # --enable-install-program because coreutils lists it in
-      # no_install__progs -- `make install` places every other program and
-      # never it.
-      #
-      # `make` in full rather than the named targets: a named target skips
-      # the gnulib header generation the build depends on and dies on a
-      # missing stdckdint.h. FORCE_UNSAFE_CONFIGURE because coreutils'
-      # configure refuses to run as a user it thinks might be root.
-      #
-      # Cached, because the build is the only slow part of this step: about
-      # three minutes cold, seconds warm.
-      - name: Cache the GNU coreutils oracle
-        id: gnu-oracles
-        uses: actions/cache@v6
-        with:
-          path: ~/gnu-coreutils
-          key: gnu-coreutils-full-${{ env.GNU_COREUTILS_VERSION }}-${{ matrix.host }}
-      - name: Build the GNU coreutils oracle
-        if: steps.gnu-oracles.outputs.cache-hit != 'true'
-        run: |
-          set -euo pipefail
-          ver="$GNU_COREUTILS_VERSION"
-          work="$(mktemp -d)"
-          cd "$work"
-          curl -fsSLO "https://ftp.gnu.org/gnu/coreutils/coreutils-$ver.tar.xz"
-          tar xf "coreutils-$ver.tar.xz"
-          cd "coreutils-$ver"
-          FORCE_UNSAFE_CONFIGURE=1 ./configure --quiet --disable-nls --without-selinux \
-            --enable-install-program=arch,kill,uptime
-          make -j"$(nproc)"
-          make install prefix="$HOME/gnu-coreutils"
-          rm -rf "$HOME/gnu-coreutils/share" "$HOME/gnu-coreutils/libexec"
-          cd /
-          rm -rf "$work"
-      # A SKIP IS A MISSING DEPENDENCY, NOT A PASS. Without this a cache that
-      # restored an empty or half-written directory would leave a corpus with
-      # no reference, and the failure would name the utility rather than this
-      # step -- the same missing oracle reported as a hundred unrelated bugs.
-      #
-      # The list is DERIVED from coreutils/*.fern rather than written out: a
-      # utility added to the tree is one this check must cover, and an
-      # enumerated list is a list that goes stale silently.
-      #
-      # `chcon` and `runcon` are the two exceptions and come from /usr/bin.
-      # They need SELinux, the build above configures --without-selinux, and
-      # from 9.9 configure omits both rather than building gnulib stubs, so
-      # the tree holds neither. Ubuntu's are real ones against the same
-      # library the corpus compared them with before this step widened.
-      - name: Assert the oracle is GNU coreutils, and point the corpus at it
-        run: |
-          set -euo pipefail
-          bindir="$HOME/gnu-coreutils/bin"
-          missing=""
-          checked=0
-          for f in coreutils/*.fern; do
-            util="$(basename "$f" .fern)"
-            dir="$bindir"
-            case "$util" in chcon|runcon) dir=/usr/bin ;; esac
-            probe="$dir/$util"
-            # test(1) answers no --version: POSIX reserves every argument for
-            # the expression, so only `[` -- built from the same source, one
-            # name over -- can vouch for it.
-            if [ "$util" = "test" ]; then probe="$dir/["; fi
-            if [ ! -x "$probe" ]; then
-              missing="$missing $util"
-              continue
-            fi
-            # `dd` is the one utility whose version line omits the word GNU:
-            # it says `dd (coreutils) 9.12`. Both spellings are the package's.
-            # Read into a variable rather than piping into grep: `head -1`
-            # closes the pipe on a program that has more to write, and under
-            # `set -o pipefail` that SIGPIPE is the pipeline's status, so a
-            # present oracle would report as a missing one.
-            line="$("$probe" --version 2>/dev/null | head -1 || true)"
-            case "$line" in
-              *"(GNU coreutils)"* | *"(coreutils)"*) checked=$((checked + 1)) ;;
-              *) missing="$missing $util" ;;
-            esac
-          done
-          if [ -n "$missing" ]; then
-            echo "::error::no GNU coreutils oracle for:$missing"
-            exit 1
-          fi
-          echo "$checked utilities have a GNU oracle"
-          "$bindir/yes" --version | head -1
-          # The built tree FIRST. /usr/bin is appended, not prepended: the
-          # harness takes the first directory that holds the utility, so the
-          # image's 9.4 ahead of this one would shadow the whole catalogue.
-          echo "FERN_GNU_COREUTILS=$HOME/gnu-coreutils/bin:/usr/bin" >> "$GITHUB_ENV"
       - name: go test (units)
         # internal/e2eharness's arm64 native-link parity gate runs ONLY here, so
         # a t.Skip would cover nothing: Arm64Tooling turns it into a failure.
@@ -285,14 +181,12 @@ jobs:
         #
         # `go list` cannot go stale, so the fifth round does not happen.
         #
-        # -timeout is set EXPLICITLY because internal/coreutils is a
-        # ten-minute test binary in a lane whose other packages are seconds:
-        # it compiles all ~70 utilities twice — once with the native compiler,
-        # once with the self-host one — and runs both corpora. go test's
-        # default timeout is also ten minutes, and a binary that default kills
-        # reports whichever cases were in flight as failures with no output
-        # and an unknown elapsed, so the lane names tests that did not fail
-        # and never names the wall it hit.
+        # -timeout is set EXPLICITLY rather than left to go test's ten-minute
+        # default: a binary that default kills reports whichever cases were in
+        # flight as failures with no output and an unknown elapsed, so the lane
+        # names tests that did not fail and never names the wall it hit. The
+        # longest package here is now internal/ir at ~4m40s, since
+        # internal/coreutils moved to test-coreutils.yml.
         run: |
           # shellcheck disable=SC2046 # the package list is deliberately word-split
           gotestsum --format pkgname-and-test-fails -- -timeout 25m \

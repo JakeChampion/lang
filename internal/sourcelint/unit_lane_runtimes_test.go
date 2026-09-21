@@ -84,13 +84,10 @@ func TestArm64RunTestsFallBackToNative(t *testing.T) {
 
 // TestUnitLaneSetsAnExplicitTestTimeout pins the lane's -timeout.
 //
-// internal/coreutils compiles all ~70 utilities twice — once with the native
-// compiler, once with the self-host one — and runs both corpora, which is a
-// ten-minute test binary. go test's default timeout is also ten minutes, so
-// without an explicit one the broadest package in the lane runs against a
-// timeout nobody chose. A binary the timeout kills reports the cases that were in
-// flight as failures with NO output and an unknown elapsed: the lane names
-// tests that did not fail and never names the timeout.
+// go test's default timeout is ten minutes, and a binary it kills reports the
+// cases that were in flight as failures with NO output and an unknown elapsed:
+// the lane names tests that did not fail and never names the timeout. So the
+// lane chooses its own rather than inheriting that default.
 func TestUnitLaneSetsAnExplicitTestTimeout(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "test-units.yml"))
 	if err != nil {
@@ -98,18 +95,59 @@ func TestUnitLaneSetsAnExplicitTestTimeout(t *testing.T) {
 	}
 	m := regexp.MustCompile(`gotestsum --format pkgname-and-test-fails -- -timeout (\d+)m`).FindStringSubmatch(string(b))
 	if m == nil {
-		t.Fatal("the units lane's gotestsum line passes no -timeout, so internal/coreutils — a ten-minute test " +
-			"binary — runs against go test's ten-minute default and reports the cases in flight when it is killed " +
-			"as failures with no output")
+		t.Fatal("the units lane's gotestsum line passes no -timeout, so its longest package runs against " +
+			"go test's ten-minute default and reports the cases in flight when it is killed as failures " +
+			"with no output")
 	}
 	mins, err := strconv.Atoi(m[1])
 	if err != nil {
 		t.Fatalf("parse the lane's -timeout %q: %v", m[1], err)
 	}
-	// internal/coreutils measures ~10m; anything under twice that is one
-	// utility's worth of growth away from being killed again.
+	// internal/ir, the longest package left after internal/coreutils moved to
+	// its own lane, measures ~4m40s. The margin is deliberately generous: the
+	// lane runs 77 packages and the bound is on the slowest, not the sum.
 	if mins < 20 {
-		t.Errorf("the units lane's -timeout is %dm, which leaves internal/coreutils (~10m) under two times its "+
-			"own runtime of headroom", mins)
+		t.Errorf("the units lane's -timeout is %dm, which leaves too little headroom above internal/ir (~4m40s) "+
+			"for the lane's other 76 packages to grow into", mins)
+	}
+}
+
+// TestCoreutilsLaneRequestsWasmtime is the units lane's wasmtime gate, for the
+// lane internal/coreutils moved to. internal/coreutils/wasm_test.go opens with
+// `exec.LookPath("wasmtime")` and t.Skip()s without it, and a skipped test
+// reports ok (#8472) — so the install is what makes that case real, and
+// requesting it arms setup-fern's preflight to fail the job when it is absent.
+func TestCoreutilsLaneRequestsWasmtime(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "test-coreutils.yml"))
+	if err != nil {
+		t.Fatalf("read test-coreutils.yml: %v", err)
+	}
+	src := string(b)
+	if !strings.Contains(src, "./.github/actions/setup-fern") {
+		t.Fatal("test-coreutils.yml no longer uses setup-fern — if the lane's shape changed, update this gate with it")
+	}
+	if !regexp.MustCompile(`(?m)^\s+wasmtime:\s*true\s*$`).MatchString(src) {
+		t.Error("test-coreutils.yml does not pass `wasmtime: true` to setup-fern, so " +
+			"internal/coreutils/wasm_test.go t.Skip()s and the lane reports ok having run no module (#8472)")
+	}
+}
+
+// TestCoreutilsLaneHasTheGNUOracle pins the reference the whole corpus is
+// compared against. Every parity case asks a GNU binary what the answer is, so
+// without the built 9.12 oracle the lane either fails wholesale against the
+// image's 9.4 or — worse — reports version differences as Fern's bugs. The
+// build moved here with the package; the units lane no longer needs it.
+func TestCoreutilsLaneHasTheGNUOracle(t *testing.T) {
+	src := workflowSource(t, "test-coreutils.yml")
+	for _, want := range []string{"GNU_COREUTILS_VERSION", "FERN_GNU_COREUTILS", "gnu-coreutils-full-"} {
+		if !strings.Contains(src, want) {
+			t.Errorf("test-coreutils.yml no longer mentions %s; the corpus would be compared against "+
+				"whatever coreutils the runner image ships (9.4) rather than the pinned oracle", want)
+		}
+	}
+	units := workflowSource(t, "test-units.yml")
+	if strings.Contains(units, "GNU_COREUTILS_VERSION") {
+		t.Error("test-units.yml still builds the GNU coreutils oracle, but no package it runs uses it — " +
+			"the build moved to test-coreutils.yml with internal/coreutils")
 	}
 }

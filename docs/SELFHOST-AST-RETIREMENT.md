@@ -290,7 +290,7 @@ The control is not optional. Six of the ten failing parents are wasm and two are
 arm64-under-qemu, and CLAUDE.md warns qemu legs are the flaky part of a local
 sweep — without the control, a pre-existing local failure is indistinguishable
 from a fallback dependent. Measured on shard 0 of 8
-(`scripts/selfhost-shard-tests 0 8`, 137 tests / 1020 subtests):
+(`scripts/shard-tests 0 8`, 137 tests / 1020 subtests):
 
 | run | pass | fail |
 |---|---:|---:|

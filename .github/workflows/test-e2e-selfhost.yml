@@ -87,7 +87,7 @@ name: Test e2e self-host
 # near-empty shards are just wasted runner slots delaying the x86
 # fan-out under the account-wide concurrent-job cap).
 #
-# SHARDED by weighted LPT partition (scripts/selfhost-shard-tests): the
+# SHARDED by weighted LPT partition (scripts/shard-tests): the
 # sorted `-test.list '^TestSelfHost'` union of both prebuilt binaries is
 # split into NSHARD buckets by a greedy longest-processing-time-first
 # assignment, weighted by .github/selfhost-test-weights.txt (default
@@ -1153,7 +1153,7 @@ jobs:
           # self-host tests OUT of internal/e2e, which has its own lanes.
           mapfile -t SH_ALL < <("$SH_BIN" -test.list '^Test' | grep '^Test' | grep -vE "^(${ISOLATED_DRIVER_TESTS}|${QUARANTINED_TESTS}|${OWN_JOB_TESTS})\$" | sort)
           mapfile -t RES_ALL < <("$E2E_BIN" -test.list '^TestSelfHost' | grep '^TestSelfHost' | grep -vE "^(${ISOLATED_DRIVER_TESTS}|${QUARANTINED_TESTS}|${OWN_JOB_TESTS})\$" | sort)
-          mapfile -t MINE < <(printf '%s\n' "${SH_ALL[@]}" "${RES_ALL[@]}" | sort | scripts/selfhost-shard-tests "$SHARD" "$NSHARD" .github/selfhost-test-weights.txt)
+          mapfile -t MINE < <(printf '%s\n' "${SH_ALL[@]}" "${RES_ALL[@]}" | sort | scripts/shard-tests "$SHARD" "$NSHARD" .github/selfhost-test-weights.txt)
           SEL_SH=()
           SEL_RES=()
           for t in "${MINE[@]}"; do

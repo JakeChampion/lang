@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-# selfhost-shard-tests — deterministic duration-weighted test partition.
+# shard-tests — deterministic duration-weighted test partition.
 #
-# Usage: selfhost-shard-tests SHARD NSHARD [WEIGHTS_FILE] < test-list
+# Not specific to any one suite: it partitions whatever test names it is given.
+# Three lanes use it — test-e2e-selfhost, test-e2e-other and test-coreutils.
+#
+# Usage: shard-tests SHARD NSHARD [WEIGHTS_FILE] < test-list
 #
 # Reads one test name per line on stdin, assigns every test to one of
 # NSHARD buckets with a greedy LPT (longest-processing-time-first)
@@ -25,8 +28,8 @@
 
 set -euo pipefail
 
-SHARD="${1:?usage: selfhost-shard-tests SHARD NSHARD [WEIGHTS_FILE]}"
-NSHARD="${2:?usage: selfhost-shard-tests SHARD NSHARD [WEIGHTS_FILE]}"
+SHARD="${1:?usage: shard-tests SHARD NSHARD [WEIGHTS_FILE]}"
+NSHARD="${2:?usage: shard-tests SHARD NSHARD [WEIGHTS_FILE]}"
 WEIGHTS="${3:-$(dirname "$0")/../.github/selfhost-test-weights.txt}"
 
 if [ ! -f "$WEIGHTS" ]; then
