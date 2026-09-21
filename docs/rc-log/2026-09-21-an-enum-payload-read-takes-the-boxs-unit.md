@@ -58,12 +58,14 @@ record: the box is a unit of this frame's own, it does not leave the block, and
 after the read it is reached only through reads of its other slots.
 `ssarc.took_payload` then renders `steal`'s body at the read — `is_unique` on
 the box, null the payload slot when the answer is yes, retain the payload when
-it is no. This is native's `emitOwnedConsumingArmDrop`, instruction for
-instruction.
+it is no. That is native's `emitOwnedConsumingArmDrop` in shape, not in
+instructions: native shallow-frees the box on the unique arm with an explicit
+`__fern_box_free`, where this leans on the box's own drop instead.
 
-The box's own drop runs in the same step, since the read is its last use, and it
-is already `is_unique`-gated and null-guarded: it walks past the emptied slot
-and releases the box. No separate shallow free is needed.
+That drop runs in the same step, since the read is its last use, and it is
+already `is_unique`-gated and null-guarded: it walks past the emptied slot and
+releases the box. So the two arms balance the same way native's do, with one
+fewer emitted call.
 
 Unlike a tuple take, the source is not required to be a box this frame
 allocated (`takeable_root`). A tuple take nulls without asking; this one pays
