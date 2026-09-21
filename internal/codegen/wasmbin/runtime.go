@@ -5572,19 +5572,31 @@ func buildCrc32CksumBody(idxs map[string]uint32) []byte {
 // here, the way __fern_arr_push_grow's copy path writes it, so the caller
 // owns one fresh array.
 //
-// SCALAR (§3.4 step 1): one f64.mul per element. The v128 body is f64x2.mul
-// over two lanes with a scalar tail, and internal/wasm/simd has no float
-// arithmetic yet — §3.3a's rule lands the encoding against wasm-tools first.
+// v128 (§3.4 step 3): `f64x2.mul` over a pair, with the scalar loop as the
+// tail for an odd length. A multiply is elementwise, so the vector body
+// reassociates nothing (docs/ARRAY-ALGEBRA.md §3, AA-02). Two lanes, like
+// arm64 and unlike x86-64's four: a v128 is 128 bits.
 //
-// Locals after the two params: $n (2), $out (3), $i (4).
+// The splat is recomputed per iteration rather than hoisted, which is
+// __fern_count_byte's choice above and for its reason: a hoisted one needs a
+// v128 local, and the locals vector here has a single i32 group. It is two
+// instructions against a wasmtime JIT that will sink a loop-invariant splat
+// anyway.
+//
+// `n & -2` fixes the vector bound before the loop, so nothing reads past the
+// end, and both bodies multiply the element by the factor in that order, so
+// they cannot disagree about which NaN a NaN times a NaN yields.
+//
+// Locals after the two params: $n (2), $out (3), $i (4), $pairs (5).
 func buildScaleF64Body(idxs map[string]uint32) []byte {
 	alloc := idxs["__fern_alloc"]
 	const (
-		pXs  = 0
-		pK   = 1
-		lN   = 2
-		lOut = 3
-		lI   = 4
+		pXs    = 0
+		pK     = 1
+		lN     = 2
+		lOut   = 3
+		lI     = 4
+		lPairs = 5
 	)
 	var body []byte
 	// n = mem[xs - 4]
@@ -5619,7 +5631,44 @@ func buildScaleF64Body(idxs map[string]uint32) []byte {
 	body = numeric.InstI32Sub(body)
 	body = inst.InstLocalGet(body, lN)
 	body = memory.InstI32Store(body, 2, 0)
-	// for i in 0..n: mem[out + i*8] = mem[xs + i*8] * k
+	// pairs = n & -2 — whole v128 blocks only
+	body = inst.InstLocalGet(body, lN)
+	body = inst.InstI32Const(body, -2)
+	body = numeric.InstI32And(body)
+	body = inst.InstLocalSet(body, lPairs)
+	// for i in 0..pairs step 2: out[i..i+2] = xs[i..i+2] * splat(k)
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstLocalGet(body, lPairs)
+	body = numeric.InstI32GeU(body)
+	body = inst.InstBrIf(body, 1)
+	// address of out[i]
+	body = inst.InstLocalGet(body, lOut)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstI32Const(body, 3)
+	body = numeric.InstI32Shl(body)
+	body = numeric.InstI32Add(body)
+	// xs[i..i+2] * splat(k)
+	body = inst.InstLocalGet(body, pXs)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstI32Const(body, 3)
+	body = numeric.InstI32Shl(body)
+	body = numeric.InstI32Add(body)
+	body = simd.InstV128Load(body, 3, 0)
+	body = inst.InstLocalGet(body, pK)
+	body = simd.InstF64x2Splat(body)
+	body = simd.InstF64x2Mul(body)
+	body = simd.InstV128Store(body, 3, 0)
+	// i += 2
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstI32Const(body, 2)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, lI)
+	body = inst.InstBr(body, 0)
+	body = inst.InstEnd(body)
+	body = inst.InstEnd(body)
+	// the odd element, if any
 	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
 	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
 	body = inst.InstLocalGet(body, lI)
@@ -5651,7 +5700,7 @@ func buildScaleF64Body(idxs map[string]uint32) []byte {
 	body = inst.InstEnd(body)
 	body = inst.InstEnd(body)
 	body = inst.InstLocalGet(body, lOut)
-	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32)
+	locals := inst.PutLocalsOneGroup(nil, 4, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 

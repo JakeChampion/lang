@@ -19,9 +19,16 @@
 //
 // The set here is the byte-vector core the string kernels need — load /
 // store, the splats, integer equality, the bitwise ops, and the
-// lane-predicate reductions (any_true / all_true / bitmask). The lane
-// widths beyond i8x16 are included where they are the same table row;
-// they also make the uleb boundary observable.
+// lane-predicate reductions (any_true / all_true / bitmask) — plus the
+// f64x2 splat and multiply the scale_f64 kernel added. The lane widths
+// beyond i8x16 are included where they are the same table row; they also
+// make the uleb boundary observable.
+//
+// This is a hand-written list of the forms kernels have asked for, not a
+// generated table, so each new domain pays per instruction. That is the
+// distinction docs/ATLAS-PLATFORM-PLAN.md §3.4 draws against
+// internal/native/arm64, whose generated tables carry whole classes and
+// so owed nothing for the same kernel.
 package simd
 
 import "github.com/jakechampion/lang/internal/wasm/leb128"
@@ -71,6 +78,21 @@ func InstI8x16Splat(buf []byte) []byte { return put(buf, 15) }
 func InstI16x8Splat(buf []byte) []byte { return put(buf, 16) }
 func InstI32x4Splat(buf []byte) []byte { return put(buf, 17) }
 func InstI64x2Splat(buf []byte) []byte { return put(buf, 18) }
+
+// ---- Float lanes (20, 242) ----
+//
+// The double-lane pair the scale_f64 kernel needs, and the first float
+// vector ops this package carries: everything above it is byte-domain,
+// added for the string kernels. `f64x2.mul` is also the clearest example
+// of this file's uleb hazard — 242 is above 127, so it encodes as two
+// bytes, and written as a raw one it would decode as `f32x4.pmin`.
+
+// InstF64x2Splat encodes `f64x2.splat` — the f64 on the stack copied into
+// both lanes.
+func InstF64x2Splat(buf []byte) []byte { return put(buf, 20) }
+
+// InstF64x2Mul encodes `f64x2.mul` — lane-wise multiply of two v128s.
+func InstF64x2Mul(buf []byte) []byte { return put(buf, 242) }
 
 // ---- Integer compares ----
 //

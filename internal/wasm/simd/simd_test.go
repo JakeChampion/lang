@@ -101,6 +101,21 @@ func vecCases() []vecCase {
 				return inst.InstDrop(simd.InstI64x2Splat(inst.InstI64Const(b, 0)))
 			},
 		},
+		{
+			name: "f64x2.splat",
+			wat:  "f64.const 0\nf64x2.splat\ndrop\n",
+			enc: func(b []byte) []byte {
+				return inst.InstDrop(simd.InstF64x2Splat(inst.InstF64Const(b, 0)))
+			},
+		},
+		// 242, so the sub-opcode is two uleb bytes. Written as a raw one
+		// this decodes as f32x4.pmin and the module still loads, which is
+		// the failure this case exists to refuse.
+		{
+			name: "f64x2.mul",
+			wat:  watLoad + watLoad + "f64x2.mul\ndrop\n",
+			enc:  binary(simd.InstF64x2Mul),
+		},
 	}
 	cases = append(cases,
 		b("i8x16.eq", simd.InstI8x16Eq),
@@ -151,6 +166,11 @@ func TestVectorOpcodes(t *testing.T) {
 		{"i16x8.splat", simd.InstI16x8Splat(nil), []byte{0xfd, 0x10}},
 		{"i32x4.splat", simd.InstI32x4Splat(nil), []byte{0xfd, 0x11}},
 		{"i64x2.splat", simd.InstI64x2Splat(nil), []byte{0xfd, 0x12}},
+		{"f64x2.splat", simd.InstF64x2Splat(nil), []byte{0xfd, 0x14}},
+		// 242 is past the one-byte uleb boundary, so two bytes. A raw
+		// 0xf2 would decode as f32x4.pmin — a valid instruction, which is
+		// why this is pinned rather than left to the module simply failing.
+		{"f64x2.mul", simd.InstF64x2Mul(nil), []byte{0xfd, 0xf2, 0x01}},
 		{"i8x16.eq", simd.InstI8x16Eq(nil), []byte{0xfd, 0x23}},
 		{"i8x16.ne", simd.InstI8x16Ne(nil), []byte{0xfd, 0x24}},
 		{"i8x16.lt_u", simd.InstI8x16LtU(nil), []byte{0xfd, 0x26}},
