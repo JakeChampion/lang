@@ -53,14 +53,18 @@ func TestSelfHostMapAllocPtrWidthIRProbeX86_64(t *testing.T) {
 	// Functions that compose ONLY alloc / ptr_width / load_* / store_* / memcpy —
 	// these must flip to "ir" now that __alloc + __ptr_width lower. (Each line is
 	// "<fn>: ir" or "<fn>: BAIL <reasons>".)
+	//
+	// Bare names, not `map____map_*`: core/map's helpers keep their names in
+	// the bundle under both compilers since #9608, so the alias table every
+	// backend routes `map_new` / `__method_Map_get` through can name them.
 	mustIR := []string{
-		"map____map_lookup",
-		"map____map_get_impl",
-		"map____map_get_or_impl",
-		"map____map_set_impl",
-		"map____map_clone",
-		"map____map_values_impl",
-		"map____map_iter_impl",
+		"__map_lookup",
+		"__map_get_impl",
+		"__map_get_or_impl",
+		"__map_set_impl",
+		"__map_clone",
+		"__map_values_impl",
+		"__map_iter_impl",
 	}
 	for _, fn := range mustIR {
 		if !strings.Contains(report, fn+": ir") {

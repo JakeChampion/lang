@@ -361,6 +361,23 @@ sites. `ast.Program.LoadedStdlibPaths` records what was loaded, so a module
 pulled in twice (directly + transitively) dedupes rather than redeclaring its
 methods.
 
+**`core/map`'s runtime helpers are the other exception.** `map_new_impl`,
+`__map_*` and `__mapiter_*` keep their bare names in the bundle under BOTH
+compilers — `modload.isRuntimeHelperName` and `flatten.is_runtime_helper_name`
+— because the Map surface is declared as concrete `_impl` functions (the
+language has no generic method on a generic struct) and every backend routes
+`map_new` / `__method_Map_get` onto them through one alias table,
+`ir.CodegenAliases`, which can only name a function one way. The self-host
+mangled them to `map____map_*` until #9608, which is why it could not reach
+`core/map` at all. The two predicates are pinned against each other by
+`internal/modload`'s parity test; native exempts `__method_*` as well and the
+self-host deliberately does not, which that test states.
+
+A qualified reference to one (`map.__map_pow2_ceil`) resolves under NEITHER
+compiler: both mangle a qualified reference without consulting the exemption,
+so the name they build does not exist. A runtime helper is reached by its bare
+name or not at all.
+
 **Enum variant names are the exception to the mangling**, and the checker
 scopes them instead. `enum Kind { Text }` keeps a bare `Text` in the merged
 program, so the checker resolves a bare variant reference only among the enums
