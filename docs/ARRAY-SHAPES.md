@@ -212,8 +212,16 @@ element function is primitive, and only the site-level question declines
 it. `axis-not-literal` is its own row for the reason the axis is read at
 all — a reduction along the last axis walks contiguous storage and one
 along any other axis strides, so a kernel cannot be selected without
-knowing which. Its tally is beside the element one under
-`FERN_ARRAY_REPORT=1`.
+knowing which.
+
+The site verdicts are a closed set too, and their tally sits beside the
+element one under `FERN_ARRAY_REPORT=1`.
+
+| tag | what it means |
+| --- | --- |
+| `kernel-candidate` | nothing this pass can see would make a planner decline the site |
+| `element-not-primitive` | an element function is not one a kernel can inline, per the table above |
+| `axis-not-literal` | the axis is not a literal, so which elements the kernel would walk is not known here |
 
 Recognition and both verdicts change nothing. **A verdict of `primitive`
 says the element function is not what stands in the way, and
