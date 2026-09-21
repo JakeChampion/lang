@@ -143,7 +143,7 @@ census is a headline number, and "an unreachable branch cannot matter" is the
 kind of claim that has been wrong twice in this log.
 
 All thirteen local gates are green on the committed tree, the whole-compiler one
-at 747 s. Eight subtests skip and none of them is this change's: seven are the
+at 772 s. Eight subtests skip and none of them is this change's: seven are the
 `os-floor-*` rows the harness skips on wasi, whose builtins that profile does
 not grant, and the eighth is `Stage2FixpointArm64/self`, which the workflow
 deliberately leaves behind `FERN_STAGE2_SELF=1`.
