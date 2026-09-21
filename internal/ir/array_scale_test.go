@@ -15,7 +15,16 @@ func scaleProgram(t *testing.T, body string) (*ir.Program, int) {
 	t.Helper()
 	p := lowerPipelineSrc(t, `import "std/array";
 `+body)
-	return p, ir.ScaleF64Maps(p)
+	n := ir.ScaleF64Maps(p)
+	// A range replacement that takes one op too many leaves a well-formed
+	// LOOKING op stream that reads a value nobody pushed, and every
+	// behavioural test still passes because the shape it broke is one they
+	// do not write. The verifier is what notices, so every case here goes
+	// through it whether it rewrote or declined.
+	if problems, _, _ := ir.Verify(p); len(problems) != 0 {
+		t.Fatalf("the program does not verify after %d rewrites: %v", n, problems)
+	}
+	return p, n
 }
 
 // The op stream a taken site leaves: the receiver push the range never
@@ -250,5 +259,46 @@ func TestScaleKernelTakesAChainedReceiver(t *testing.T) {
 	}
 	if kernels != 2 {
 		t.Errorf("%d kernel calls after two rewrites, want 2", kernels)
+	}
+}
+
+// A closure bound to a variable is built at its `var`, which is before the
+// receiver is evaluated. A range opening at that build would delete the
+// receiver push and land the kernel on an empty stack, leaving the
+// closure's own release behind with nothing to release — a malformed op
+// stream that survives the whole battery and that no behavioural test
+// notices, because none of them writes this shape.
+//
+// Found by the review on #9917.
+func TestScaleKernelDeclinesAVariableBoundElement(t *testing.T) {
+	for _, tc := range []struct {
+		why  string
+		body string
+	}{
+		{"the closure is bound to a variable", `function main(): i32 {
+  var f: (f64) => f64 = (x: f64): f64 => x * 2.0;
+  var xs: f64[] = [1.0, 2.0];
+  var ys: f64[] = xs.map(f);
+  return ys[0] as i32;
+}`},
+		{"the bound closure is also called directly", `function main(): i32 {
+  var f: (f64) => f64 = (x: f64): f64 => x * 2.0;
+  var xs: f64[] = [1.0, 2.0];
+  var ys: f64[] = xs.map(f);
+  return (ys[0] + f(5.0)) as i32;
+}`},
+		{"the binding is reassigned before the call", `function main(): i32 {
+  var f: (f64) => f64 = (x: f64): f64 => x * 2.0;
+  f = (x: f64): f64 => x * 3.0;
+  var xs: f64[] = [1.0, 2.0];
+  var ys: f64[] = xs.map(f);
+  return ys[0] as i32;
+}`},
+	} {
+		// scaleProgram verifies the program, so a rewrite that broke the op
+		// stream fails here before the count is even read.
+		if _, n := scaleProgram(t, tc.body); n != 0 {
+			t.Errorf("rewrote %d sites where %s; want none", n, tc.why)
+		}
 	}
 }

@@ -29,6 +29,15 @@ function scale_zero(xs: f64[]): f64[] { return xs.map((x: f64): f64 => x * 0.0);
 function half(x: f64): f64 { return x * 0.5; }
 function scale_named(xs: f64[]): f64[] { return xs.map(half); }
 
+// A closure bound to a variable, which the pass DECLINES -- its build sits
+// before the receiver is evaluated, so the range that would cancel it would
+// take the receiver with it. Here to prove the declined shape still runs,
+// and still answers what the loop answers.
+function scale_bound(xs: f64[]): f64[] {
+	var f: (f64) => f64 = (x: f64): f64 => x * 2.0;
+	return xs.map(f);
+}
+
 // The same transform written as a loop. It is not a map at all, so nothing
 // rewrites it and it stays a real control.
 function loop_scale(xs: f64[], k: f64): f64[] {
@@ -74,6 +83,7 @@ function main(): i32 {
 		if (!same(scale_neg(xs), loop_scale(xs, -1.5))) { return 30 + n; }
 		if (!same(scale_zero(xs), loop_scale(xs, 0.0))) { return 50 + n; }
 		if (!same(scale_named(xs), loop_scale(xs, 0.5))) { return 70 + n; }
+		if (!same(scale_bound(xs), loop_scale(xs, 2.0))) { return 110 + n; }
 		n = n + 1;
 	}
 
@@ -96,7 +106,8 @@ function main(): i32 {
 
 // 1x/3x/5x/7x = the length at which a scaled shape disagreed with the loop,
 // for the doubling, the negative factor, the zero factor and the named
-// element function; 9x = the result-shape and borrowed-receiver checks.
+// element function; 9x = the result-shape and borrowed-receiver checks;
+// 11x = the variable-bound shape the pass declines, which still has to run.
 func TestArm64ScaleKernelMatchesTheLoop(t *testing.T) {
 	if _, code := compileAndRunArm64FreeOn(t, arrayScaleKernelSrc); code != 0 {
 		t.Errorf("scale kernel on arm64: got %d, want 0", code)
