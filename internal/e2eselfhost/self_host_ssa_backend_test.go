@@ -15,6 +15,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/jakechampion/lang/internal/ast"
 )
 
 // The self-host `-backend ssa` (docs/SELFHOST-SSA-BACKEND.md): each function
@@ -1325,18 +1327,19 @@ function main(): i32 {
 		floor  *regexp.Regexp // the heap-floor test that opens each chain
 		count  *regexp.Regexp // the read of the count word
 		absent []string       // the stub calls the chains replace
-		poison bool           // whether this backend's stubs carry the sanitizer check
+		poison *regexp.Regexp // this backend's spelling of the sanitizer check
 	}{
 		{"x86-64-linux",
 			regexp.MustCompile(`(?m)^\s+cmpq \$0x10000, %r\w+$`),
 			regexp.MustCompile(`(?m)^\s+movl -8\(%r\w+\), %e\w+$`),
 			[]string{"call __fn___fern_rc_is_unique", "call __fn___fern_rc_inc"},
-			true},
+			regexp.MustCompile(`cmpl \$` + rcPoisonWord + `, %e\w+`)},
 		{"arm64-linux",
 			regexp.MustCompile(`(?m)^\s+mov x5, #0x10000$`),
 			regexp.MustCompile(`(?m)^\s+ldur w5, \[x\d+, #-8\]$`),
 			[]string{"bl __fn___fern_rc_is_unique", "bl __fn___fern_rc_inc"},
-			false},
+			regexp.MustCompile(fmt.Sprintf(`movz w\d+, #%d\n\s+movk w\d+, #%d, lsl #16`,
+				ast.RcPoison&0xffff, (ast.RcPoison>>16)&0xffff))},
 	}
 	for _, c := range cases {
 		out := filepath.Join(dir, "blk-"+c.target+".s")
@@ -1369,12 +1372,10 @@ function main(): i32 {
 			}
 		}
 		// rc_inc's stub reads the count through the sanitizer's poison check,
-		// so the inline form does too, or a use after free stops being caught
-		// wherever the call used to be. Only x86-64 has the check at all: the
-		// arm64 emitter carries no poison comparison on any rc path (#9882).
-		if !c.poison {
-			continue
-		}
+		// so the inline form must too, or a use after free goes uncaught at
+		// every site the call was replaced at. Both backends carry it; the
+		// spelling differs because arm64 needs two halves to materialise
+		// ast.RcPoison and compares registers rather than an immediate.
 		poison := filepath.Join(dir, "blk-poison-"+c.target+".s")
 		pc := exec.Command(h.cli, "-target", c.target, "-backend", "ssa", "-emit", "asm", "-o", poison, src, h.stdlib)
 		pc.Env = append(os.Environ(), "FERN_RC_FREE_DEBUG=1")
@@ -1386,10 +1387,10 @@ function main(): i32 {
 			t.Fatal(err)
 		}
 		pfn := functionListing(string(pasm), "__fn_Blk__put")
-		if !strings.Contains(pfn, rcPoisonWord) {
+		if !c.poison.MatchString(pfn) {
 			t.Errorf("%s: put's inline retain drops the poison check under FERN_RC_FREE_DEBUG:\n%s", c.target, pfn)
 		}
-		if strings.Contains(fn, rcPoisonWord) {
+		if c.poison.MatchString(fn) {
 			t.Errorf("%s: put carries the poison check with the flag off:\n%s", c.target, fn)
 		}
 	}
