@@ -1204,7 +1204,36 @@ after it. Ahead of an `end` (0x0b) wasmtime rejects the module; ahead of a
 confirmed by execution, not read off a table. That is pinned by bytes in
 the package's own test and against wasm-tools in CI.
 
-The remaining five legs are still scalar.
+**Self-host x86-64 was next, and paid nothing at the assembler either** — the
+fourth leg in a row whose cost the §3.3a rule above predicted correctly once
+the whole table was read rather than the entries the kernel expected.
+`x86_native.fern`'s `x86_gas_sse_fp_op` already carried `mulpd` and
+`unpcklpd`, and `movupd` was already in the `mov10` family in both
+directions. The packed-DOUBLE domain arrived with the scalar float table, not
+with a kernel — the opposite of the same file's packed-BYTE surface, which
+the string kernels had to add instruction by instruction.
+
+Two lanes, not native x86-64's four: this assembler has no VEX surface at
+all, so the body is SSE2 and an xmm is 128 bits. `unpcklpd %xmm1, %xmm1`
+splats the factor by interleaving the low halves of its two operands, which
+against itself copies lane 0 into lane 1 — so one instruction serves the
+vector body and the scalar tail both, the same economy `dup` gives on arm64.
+Both bodies multiply the element by the factor in that operand order, so
+neither has to be rewritten to keep them agreeing about NaN.
+
+Measured on `examples/bench/array_scale_f64`, compiled by the self-hosted
+compiler and counted with callgrind:
+
+| self-host x86-64 | scalar | SSE2 | |
+|---|---|---|---|
+| retired | 148.4M | 74.7M | **1.99x** |
+| emitted lines | 3,218 | 3,230 | +12 |
+
+1.99x against a lane count of 2 is the whole of what two lanes can give, and
+it lands on the same figure native arm64's NEON body did for the same reason
+— the ratio follows the lane count, not the instruction set.
+
+The remaining two legs are still scalar.
 
 ### 3.5 Testing
 
