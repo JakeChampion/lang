@@ -802,7 +802,12 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
         // keep their name (dispatched by receiver type) but the
         // receiver type itself is rewritten. bound_traits carries
         // through untouched: those are TRAIT names, and the trait
-        // namespace is not rewritten (see mangle_impls).
+        // namespace is not rewritten (see mangle_impls). A bound's type
+        // ARGUMENTS ride along in the same spelling, so one written over a
+        // module-local type (`I: Iterator[Foo]`) does not match the impl's
+        // mangled `mod__Foo` and pins nothing — the variable stays erased,
+        // as it was before clone_bg pinned any. A VARIABLE argument, which
+        // is the shape that matters, names no module.
         var new_name: string = fd.name;
         if (fd.receiver_type == "") {
             new_name = mangle_bare(fd.name, ctx);
@@ -890,6 +895,7 @@ function mangle_impls(impls: parser.ImplInfo[], ctx: RewriteCtx): parser.ImplInf
             bounds: im.bounds,
             method_names: im.method_names,
             trait_spelling: im.trait_spelling,
+            trait_ref: rewrite_type_name(im.trait_ref, ctx),
             assoc_names: im.assoc_names,
             assoc_values: mangled_vals
         });
