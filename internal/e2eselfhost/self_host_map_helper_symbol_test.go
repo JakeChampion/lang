@@ -48,27 +48,33 @@ func TestSelfHostMapHelpersKeepBareNames(t *testing.T) {
 	selfHostBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 	nativeBin := buildFernCLIBin(t)
 
-	// compile returns the exit code of a native compile, which is 0 only when
-	// the program both typed and linked.
-	nativeRun := func(t *testing.T, src string) (int, string) {
+	// nativeRun compiles with the fern CLI and, when that succeeds, runs the
+	// result. `compiled` is the COMPILE's verdict and `exit` the program's —
+	// kept apart deliberately. Folding a compile failure into the exit code
+	// makes a refusal indistinguishable from a program that exited non-zero,
+	// and the refusal canary below would then fire on neither.
+	nativeRun := func(t *testing.T, src string) (compiled bool, exit int, out string) {
 		t.Helper()
 		caseDir := t.TempDir()
 		srcPath := filepath.Join(caseDir, "main.fern")
 		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		out := filepath.Join(caseDir, "prog")
-		build := exec.Command(nativeBin, "-target", "x86-64-linux", "-o", out, srcPath, stdlibRoot)
+		binPath := filepath.Join(caseDir, "prog")
+		build := exec.Command(nativeBin, "-target", "x86-64-linux", "-o", binPath, srcPath, stdlibRoot)
 		if b, err := build.CombinedOutput(); err != nil {
-			return -1, string(b)
+			return false, 0, string(b)
 		}
-		run := exec.Command(out)
+		run := exec.Command(binPath)
 		_ = run.Run()
-		return run.ProcessState.ExitCode(), ""
+		return true, run.ProcessState.ExitCode(), ""
 	}
 
 	t.Run("the bare spelling runs on both", func(t *testing.T) {
-		natExit, natErr := nativeRun(t, mapHelperBareSrc)
+		natOK, natExit, natErr := nativeRun(t, mapHelperBareSrc)
+		if !natOK {
+			t.Fatalf("native refused the bare spelling, which it is supposed to accept:\n%s", natErr)
+		}
 		if natExit != 8 {
 			t.Fatalf("native: exit %d, want 8 (__map_pow2_ceil(5))\n%s", natExit, natErr)
 		}
@@ -86,7 +92,11 @@ func TestSelfHostMapHelpersKeepBareNames(t *testing.T) {
 	// rewrite builds does not exist. Asserting only "self-host refuses" would
 	// pass against a compiler that refused the whole program.
 	t.Run("the qualified spelling is refused by both", func(t *testing.T) {
-		if exit, _ := nativeRun(t, mapHelperQualifiedSrc); exit == 0 {
+		// The COMPILE is what has to fail. Reading the run's exit code instead
+		// would leave this silent forever: `__map_pow2_ceil(5)` exits 8, so a
+		// native that started accepting the qualified spelling would answer 8
+		// and never 0.
+		if compiled, _, _ := nativeRun(t, mapHelperQualifiedSrc); compiled {
 			t.Error("native compiled map.__map_pow2_ceil; the self-host note about matching it is now stale")
 		}
 		caseDir := t.TempDir()
