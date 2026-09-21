@@ -236,8 +236,13 @@ type ndarrayLayoutCtx struct {
 	sigs   map[string]funcSig
 	byName map[string]*Func
 	// summary is each function's settled return layout, and inFlight the
-	// ones being computed. A cycle reads Unknown rather than recursing, so
-	// a recursive function claims nothing and the walk terminates.
+	// ones being computed. The arm that reaches a cycle reads Unknown
+	// rather than recursing, which is what terminates the walk.
+	//
+	// That is the CUT claiming nothing, not the function: a recursive
+	// function still settles at the meet over its arms, so one whose base
+	// arm is a `from_flat` and whose recursive arm is a `reshape` reads
+	// row-major.
 	summary  map[string]NdarrayLayout
 	inFlight map[string]bool
 }

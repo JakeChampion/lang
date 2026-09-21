@@ -302,10 +302,13 @@ layout, exactly as `packed()` is, so a program that builds its handles in
 a helper reads the same as one that inlines them. The summary is the
 **meet** over the function's returns, so a helper returning a packed
 handle on one arm and a transposed one on the other claims `strided`, not
-the arm a given call site took. A recursive function reads `unknown`: the
-cycle is cut rather than followed, which is what bounds the summary. So
-is a function whose declared result is not a handle, and one the program
-does not define.
+the arm a given call site took. A recursive function has its cycle **cut**
+rather than followed: the arm reaching it reads `unknown`, which is what
+bounds the summary. The function itself is not thereby nothing — it
+still settles at the meet over its arms, so one whose base arm is a
+`from_flat` and whose recursive arm is a `reshape` reads `row-major`. A
+function whose declared result is not a handle reads `unknown`, and so
+does one the program does not define.
 
 What a return summary cannot reach is the other direction. A receiver
 that is its own function's **parameter** claims nothing, because layouts
