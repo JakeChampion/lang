@@ -9150,6 +9150,16 @@ function sanitize_key(s: string): string {
 // (`T[]` vs `i32[]` ⊢ T=i32), and a same-base composite of equal arity
 // (`Map[K, V]` vs `Map[i32, string]` ⊢ K=i32, V=string). First binding
 // for a variable wins (so a later opaque argument can't clobber it).
+// Whether a type SPELLING mentions any of `tparams`. The structural form of
+// `tp_index`, which answers only for a spelling that IS one of them.
+function spelling_mentions_tparam(name: string, tparams: string[]): boolean {
+    if (name.len() == 0) { return false; }
+    for v in collect_tvars(name, []) {
+        if (tp_index(v, tparams) >= 0) { return true; }
+    }
+    return false;
+}
+
 function bind_unify(pattern: string, concrete: string, tparams: string[], binds: MEnv): MEnv {
     if (tp_index(pattern, tparams) >= 0) {
         if (binds.elook(pattern).len() == 0 && concrete.len() > 0) {
@@ -9299,7 +9309,12 @@ function infer_inst(fd: FuncDecl, args: ast.Expr[], env: MEnv, funcs: MFns): str
             // (`key: (T) => K`) is invisible to the type_name unify above —
             // the coarse "fn" tag carries no args. Recover it from the
             // closure argument's own return type (kept in fd.params[i].fn_ret).
-            if (fd.params[i].type_name == "fn" && tp_index(fd.params[i].fn_ret, fd.type_params) >= 0) {
+            //
+            // The variable need not BE the whole return: `map_rank[T, U](k: i32,
+            // f: (NdArray[T]) => NdArray[U])` carries U inside a bracketed
+            // spelling, and `bind_unify` descends into one — it was only ever
+            // the gate that demanded the return be a bare variable (#9927).
+            if (fd.params[i].type_name == "fn" && spelling_mentions_tparam(fd.params[i].fn_ret, fd.type_params)) {
                 var lr: string = lambda_ret_of(args[i], env, funcs);
                 if (lr.len() > 0) {
                     binds = bind_unify(fd.params[i].fn_ret, lr, fd.type_params, binds);
@@ -9758,8 +9773,38 @@ function recv_method_ret_of(cfa: ast.ExprFieldAccess, env: MEnv, funcs: MFns): s
     var rvt: string = mono_infer(cfa.obj, env, funcs);
     if (rvt.len() == 0) { return ""; }
     var mrt: string = assoc_ret_of(funcs.decls, rvt, cfa.field);
+    if (mrt.len() == 0) { mrt = generic_recv_ret_of(funcs.decls, rvt, cfa.field); }
     if (looks_type_var(mrt)) { return ""; }
     return mrt;
+}
+
+// The same return, for a receiver whose INSTANTIATION the declaration does not
+// spell. `assoc_ret_of` compares the receiver spelling exactly, so a method
+// declared `(a: NdArray[T]) transpose(): NdArray[T]` matches no `NdArray[i32]`
+// receiver at all — and this pass runs before struct monomorphisation, so the
+// concrete method does not exist yet either. Matching on the base and carrying
+// the receiver's own arguments into the return is what a CHAINED call needs:
+// `a.transpose()` is `NdArray[i32]`, and only that concrete form can key the
+// `__smm_` fold a method with its own type params was hoisted into. Left as
+// `NdArray[T]` the fold's key never resolved, the call kept a method spelling
+// whose declaration had been dropped, and the module failed to build (#9927).
+function generic_recv_ret_of(funcs: FuncDecl[], tyname: string, method: string): string {
+    var recv: TypeRef = parse_type_ref(tyname);
+    if (recv.args.len() == 0) { return ""; }
+    var base: string = util.base_type_name(tyname);
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        if (funcs[i].name == method && funcs[i].receiver_type.len() > 0
+            && util.base_type_name(funcs[i].receiver_type) == base) {
+            var ns: string[] = [];
+            var ts: string[] = [];
+            let (n2, t2) = ref_bind(parse_type_ref(funcs[i].receiver_type), recv, [], ns, ts);
+            if (n2.len() == 0) { return ""; }
+            return subst_ty(funcs[i].ret_type, n2, t2);
+        }
+        i = i + 1;
+    }
+    return "";
 }
 
 // stamped_scalar reads the checker's tag off a call the walk could not type
