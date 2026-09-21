@@ -170,7 +170,7 @@ func ndarrayShapesInFunc(fn *Func) []NdarrayShape {
 		copy(elements[want-len(loaded):], loaded)
 		axis := NdarrayAxisUnknown
 		if spec.arg != "" {
-			axis = ndarrayAxisArg(fn.Ops, windowStart, i)
+			axis = ndarrayAxisArg(fn, windowStart, i)
 		}
 		out = append(out, NdarrayShape{
 			Func: fn.Name, Line: op.Pos.Line, Col: op.Pos.Col,
@@ -182,52 +182,63 @@ func ndarrayShapesInFunc(fn *Func) []NdarrayShape {
 }
 
 // ndarrayAxisArg reads the leading integer argument of an axis-parameterized
-// verb out of the window since the previous call.
+// verb: the axis `reduce_axis` and `scan_axis` walk, the cell rank `map_rank`
+// maps over.
 //
-// There is no operand-stack model here, so what it looks for is the run of
-// operand pushes that reaches the call — the argument list. Anything that
-// CONSUMES a value ends an expression and therefore ends the run, which is
-// what keeps a literal belonging to some other operand out of it: the offset
-// of a field receiver is followed by the `add` that applies it, and the `0`
-// and `1` of a written `-1` are followed by the `sub` that combines them.
-// The axis is the first integer literal in the run that is not immediately
-// parked in a slot.
+// It simulates the operand stack over the window since the previous call,
+// which is what it takes to name the argument rather than guess at it. The
+// first integer literal in the window is NOT the axis in three shapes that
+// all occur: a field receiver pushes its offset first (`bx.a.reduce_axis`), a
+// written negative pushes the two halves a `sub` combines, and — the one that
+// matters most — a COMPUTED axis leaves the init literal as the first one
+// (`a.reduce_axis(k, 0, add)` over an i32 array reads the init's 0 as axis 0,
+// which is the wrong-axis case this must never produce).
 //
-// A literal the run does not reach is NdarrayAxisUnknown, and so is an axis
-// computed at run time. That is the safe direction: an axis the report does
-// not know is a site the kernel half looks at, and a wrong one is a site it
-// silently mis-plans.
-func ndarrayAxisArg(ops []Op, start, call int) int32 {
-	from := start
+// The simulation reuses flatten.go's opStackEffect, so an op it does not
+// model makes this bail rather than miscount, and the argument count on the
+// call op then has to match the simulated depth. What is left is the call's
+// operand list, in order: the receiver, then the arguments. The axis is the
+// second, and it is a literal only when a bare OpConstI32 produced it.
+func ndarrayAxisArg(fn *Func, start, call int) int32 {
+	// Each entry is the index of the op that pushed that operand; a value
+	// already on the stack when the window opened is not one of ours and
+	// is recorded as -1.
+	stack := []int{}
 	for k := start; k < call; k++ {
-		if !ndarrayPassesOperands(ops[k].Kind) {
-			from = k + 1
+		pops, pushes, ok := ndarrayOpEffect(fn.Ops[k])
+		if !ok {
+			return NdarrayAxisUnknown
+		}
+		for ; pops > 0; pops-- {
+			if len(stack) == 0 {
+				break // consumed a value from before the window
+			}
+			stack = stack[:len(stack)-1]
+		}
+		for ; pushes > 0; pushes-- {
+			stack = append(stack, k)
 		}
 	}
-	for k := from; k < call; k++ {
-		if ops[k].Kind != OpConstI32 {
-			continue
-		}
-		if k+1 < call && ops[k+1].Kind == OpStoreLocal {
-			continue // a slot's initialiser, not this call's argument
-		}
-		return ops[k].I32
+	argc := int(fn.Ops[call].I32)
+	if argc < 2 || len(stack) < argc {
+		return NdarrayAxisUnknown
 	}
-	return NdarrayAxisUnknown
+	axis := fn.Ops[stack[len(stack)-argc+1]]
+	if axis.Kind != OpConstI32 {
+		return NdarrayAxisUnknown
+	}
+	return axis.I32
 }
 
-// ndarrayPassesOperands reports whether an op leaves the operands already
-// pushed for this call alone: the pushes themselves, the store/load pair a
-// closure is parked through, line markers, and the refcount ops and field
-// loads that pass a value straight through.
-func ndarrayPassesOperands(k OpKind) bool {
-	switch k {
-	case OpConstI32, OpConstI64, OpConstF32, OpConstF64, OpConstStr,
-		OpConstFunc, OpMakeClosure, OpLoadLocal, OpStoreLocal,
-		OpLoad, OpLine, OpRcInc, OpRcDec:
-		return true
+// ndarrayOpEffect is opStackEffect with the two refcount ops filled in. Both
+// are pass-through — flatten.go says so on the arm that declines them, and
+// declines them only to keep its own decisions byte-identical.
+func ndarrayOpEffect(op Op) (pops, pushes int, ok bool) {
+	switch op.Kind {
+	case OpRcInc, OpRcDec:
+		return 1, 1, true
 	}
-	return false
+	return opStackEffect(op, nil)
 }
 
 // FormatNdarrayShapes renders the recognized operations, or "" when there
