@@ -1233,7 +1233,39 @@ row carries the same floor caveat as every other arm64 wall figure in this
 section; the native twin's retired count of 1.99x is the architecture-independent
 claim for two lanes, and there is no reason for this leg to differ.
 
-The remaining three legs — the self-host backends — are still scalar.
+**Self-host arm64 followed, and this is where the self-host assembler note
+above stops predicting correctly.** That note was written when
+`arm64_native.fern`'s entire SIMD surface was `cnt`/`addv` and the string
+kernels had to add `ld1` / `cmeq` / `cmlt` / `shrn` / `dup` by hand. The file
+has since been regenerated from `cmd/arm64tblgen` — the same generator behind
+`internal/native/arm64tbl` — so `fmul` arrives as part of the three-register
+lane-wise FP class across `2s`/`4s`/`2d`, `ld1` and `st1` take every lane
+arrangement, and `dup`'s size mask admits all four widths. This leg owed
+nothing.
+
+The rule survives with its outcome inverted: a self-host backend still has an
+assembler of its own and still needs checking separately — it just now answers
+the same way its native twin does, because it is built the same way. Which is
+the §3.3a rule restated: what an assembler owes depends on how it was BUILT,
+and a hand-written list that gets regenerated stops charging per instruction.
+
+The body is `dup v1.2d, x1` for the factor, then `ld1` / `fmul v0.2d` / `st1`
+over a pair, with the scalar loop as the tail. `dup` replaces the scalar
+`fmov d1, x1` rather than adding to it, since `d1` is `v1`'s low half.
+
+| self-host arm64 | scalar | NEON | |
+|---|---|---|---|
+| wall (qemu) | 122 ms | 98 ms | 1.24x |
+| emitted lines | 3,410 | 3,421 | +11 |
+
+Only the wall figure is available here — there is no callgrind for an
+aarch64 binary on an x86-64 host — so read it as the floor every other qemu
+number in this section is, not as the hardware ratio. Its native and
+`-backend ssa` twins measured 1.29x and 1.28x on the same clock against a
+retired count of 1.99x, and nothing about this leg's body differs from
+theirs.
+
+The remaining leg — self-host wasm — is still scalar.
 
 ### 3.5 Testing
 

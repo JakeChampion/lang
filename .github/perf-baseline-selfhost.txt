@@ -91,7 +91,7 @@
 
 selfhost/arm64-linux/array_append.emit	987
 selfhost/arm64-linux/array_index.emit	967
-selfhost/arm64-linux/array_scale_f64.emit	3275
+selfhost/arm64-linux/array_scale_f64.emit	3421
 selfhost/arm64-linux/array_with.emit	1169
 selfhost/arm64-linux/ascii_scan.emit	5522
 selfhost/arm64-linux/call_overhead.emit	241
