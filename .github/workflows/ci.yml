@@ -54,6 +54,7 @@ jobs:
           LANES: |
             {
               "test-units":            { "paths-ignore": ["docs/**", "*.md"] },
+              "test-coreutils":        { "paths-ignore": ["docs/**", "*.md"] },
               "test-e2e-x86_64":       { "paths-ignore": ["docs/**", "*.md"] },
               "test-e2e-arm64":        { "paths-ignore": ["docs/**", "*.md"] },
               "test-e2e-wasm":         { "paths-ignore": ["docs/**", "*.md"] },

@@ -49,6 +49,7 @@ func TestUnitLaneCoversEveryNonSlowPackage(t *testing.T) {
 		"e2e":         "test-e2e-{arm64,x86_64,wasm,other}",
 		"e2eselfhost": "test-e2e-selfhost",
 		"fernsmith":   "test-fernsmith",
+		"coreutils":   "test-coreutils",
 	}
 	for _, pkg := range excluded {
 		pkg = strings.TrimSpace(pkg)

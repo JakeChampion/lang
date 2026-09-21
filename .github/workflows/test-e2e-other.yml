@@ -113,7 +113,7 @@ jobs:
         # 25m. Splitting it would spend a runner slot to fix a problem it does
         # not have.
         #
-        # The partition is scripts/selfhost-shard-tests, the same greedy LPT
+        # The partition is scripts/shard-tests, the same greedy LPT
         # the self-host lane uses — it reads names on stdin and is not
         # specific to that suite. No weights file is passed, so every test
         # weighs 1 and the partition is a balanced split by count, which is
@@ -134,7 +134,7 @@ jobs:
               grep -E '^Test' |
               grep -vE "$CATCH_ALL_SKIP" |
               sort |
-              scripts/selfhost-shard-tests "${{ matrix.shard }}" "${{ matrix.nshard }}"
+              scripts/shard-tests "${{ matrix.shard }}" "${{ matrix.nshard }}"
           )
           if [ ${#MINE[@]} -eq 0 ]; then
             echo "no tests for shard ${{ matrix.shard }}/${{ matrix.nshard }} — the list or the filter is wrong" >&2

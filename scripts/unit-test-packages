@@ -9,6 +9,9 @@
 #   internal/e2e          split into test-e2e-{arm64,x86_64,wasm,other}
 #   internal/e2eselfhost  test-e2e-selfhost (sharded; >90 min unsharded)
 #   internal/fernsmith    test-fernsmith (fuzz corpus + generator, ~60s)
+#   internal/coreutils    test-coreutils (sharded; ~14m40s unsharded, which
+#                         was the critical path of the entire CI suite —
+#                         docs/CI-PERFORMANCE.md)
 #
 # internal/e2eharness is NOT excluded, though it once was, on the grounds
 # that it had "no tests of its own worth a lane". It has 22, including the
@@ -37,4 +40,4 @@ set -euo pipefail
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.."
 
 go list ./internal/... ./cmd/... |
-  grep -vE '/internal/(e2e|e2eselfhost|fernsmith)(/|$)'
+  grep -vE '/internal/(e2e|e2eselfhost|fernsmith|coreutils)(/|$)'

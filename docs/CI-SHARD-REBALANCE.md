@@ -240,7 +240,7 @@ outcome artifacts, full job logs and reports under
 the analysis workspace, not files shipped in this repository. Public source
 inputs are the run links above, their `warm-test-binaries-x86_64` and
 `shard-outcome-*` artifacts, and the revision's
-[`scripts/selfhost-shard-tests`](../scripts/selfhost-shard-tests) and
+[`scripts/shard-tests`](../scripts/shard-tests) and
 [`scripts/ci-test-weights`](../scripts/ci-test-weights). Artifacts have limited
 retention; the table records the verified observations. The refresh procedure
 is documented in [CI-WEIGHT-REFRESH.md](CI-WEIGHT-REFRESH.md).

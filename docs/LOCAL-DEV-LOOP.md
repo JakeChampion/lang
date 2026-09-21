@@ -204,7 +204,7 @@ in `internal/e2eharness` (each package re-binds the harness names via its
 
 **`internal/e2eselfhost` unsharded exceeds 90 MINUTES** (measured 2026-07-28):
 `-timeout 90m` still panicked with tests queued (`TestSelfHostStdTestE2EArm64`
-16 s in). Shard it with `scripts/selfhost-shard-tests SHARD NSHARD < test-list`,
+16 s in). Shard it with `scripts/shard-tests SHARD NSHARD < test-list`,
 the same duration-weighted LPT partition CI uses.
 
 **A `-run` filter does not save you from the DEFAULT 10 m timeout**, so pass

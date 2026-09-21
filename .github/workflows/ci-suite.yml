@@ -61,6 +61,12 @@ jobs:
     uses: ./.github/workflows/test-units.yml
     secrets: inherit
 
+  test-coreutils:
+    name: Test coreutils
+    if: fromJSON(inputs.lanes)['test-coreutils']
+    uses: ./.github/workflows/test-coreutils.yml
+    secrets: inherit
+
   test-e2e-x86_64:
     name: Test e2e x86_64
     if: fromJSON(inputs.lanes)['test-e2e-x86_64']
@@ -173,6 +179,17 @@ jobs:
     uses: ./.github/workflows/cancel-on-failure.yml
     with:
       lane: Test units
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+
+  reap-test-coreutils:
+    needs: [test-coreutils]
+    if: ${{ !cancelled() && needs.test-coreutils.result == 'failure' && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/cancel-on-failure.yml
+    with:
+      lane: Test coreutils
     permissions:
       actions: write
       contents: read

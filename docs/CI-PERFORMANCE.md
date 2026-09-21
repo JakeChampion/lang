@@ -143,16 +143,95 @@ The queue policy is not where the remaining win is. 330 job-minutes packed into
 a 21-minute span with a peak of 38 and a mean of 20 is a spiky fan-out, and the
 long poles are the single macOS job (~20 min, drawing on a separate ~5-slot
 pool) and `test-units` (15-18.5 min per arch leg). Flattening those shortens the
-suite and raises utilisation under any admission policy.
+suite and raises utilisation under any admission policy. The next section does
+that for the larger of the two.
+
+## Third change: shard the coreutils corpus
+
+Both long poles turned out to be one package. Step-level timings from
+[35638612903](https://github.com/JakeChampion/lang/actions/runs/35638612903):
+`internal/coreutils` is **14m40s of the 15m07s** `test-units` job on aarch64,
+and the same corpus is **17.4 of the 20.3 minutes** of the macOS job. Every
+other package in the units lane finishes inside its shadow — `internal/ir`
+4m38s, `internal/ssa` 4m17s, `internal/printer` 3m43s, and the remaining
+73 packages 0.29 minutes between them. So one package was the critical path of
+the entire suite, on two lanes at once.
+
+Whether sharding helps depends on the fixed cost a shard repays. Measured by
+selecting 1, 5 and 10 utilities from a single test process:
+
+| utilities selected | wall |
+| --- | ---: |
+| 1 | 24.3 s |
+| 5 | 62.5 s |
+| 10 | 73.9 s |
+
+Fixed cost is ~15-20 s — the native compiler, the multicall dispatcher and the
+self-host compiler, each built once per process. Against 14m40s that is ~2%, so
+shards are nearly free. (The per-utility increments are not linear because
+`go test` already runs subtests in parallel and the utilities differ in cost;
+what mattered here was only the intercept.)
+
+A full `go test -v ./internal/coreutils/` run gives the shape, 13m45s over 253
+top-level tests:
+
+| top-level test | time | subtests | largest subtest |
+| --- | ---: | ---: | ---: |
+| `TestSelfHostCoreutilsParity` | 5m44s | 106 | 18.8 s |
+| `TestPrintfParity` | 2m48s | 338 | 40.6 s |
+| `TestMulticallParity` | 1m35s | 106 | 17.4 s |
+| 250 others | ~3m36s | | |
+
+`TestSelfHostCoreutilsParity` is one top-level test holding all 106 utilities,
+so partitioning top-level names alone would pin 5m44s whole into one bucket and
+make it the floor — no shard count below it would help. It is therefore sharded
+by SUBTEST, which it takes well: its utilities are strikingly even (`tail` 19 s,
+`sort` 17 s, `cksum` 17 s, the SHA family 16-17 s each).
+
+`go test -run` splits its pattern on `/` before applying each part to a nesting
+level, so `^(TestCatParity|TestSelfHostCoreutilsParity/cat)$` is not a valid
+mixed selector — the split lands mid-alternation. A shard therefore makes two
+invocations: whole top-level tests in one, its slice of the giant in the other.
+
+Simulating the partition over the live lists, in weight units where an
+unmeasured test counts 1:
+
+| shards | per-shard | max |
+| ---: | --- | ---: |
+| 2 | 8.77, 8.75 | 8.77 |
+| 3 | 5.85, 5.83, 5.83 | 5.85 |
+| 4 | 4.38, 4.38, 4.38, 4.37 | 4.38 |
+| 6 | 3.85, 2.73 x5 | 3.85 |
+
+Four balances to within a second of even. Six is worth 12% for 50% more runner
+slots and stops at 3.85 regardless, because `TestPrintfParity` is a 2m48s floor
+that only splitting its own subtests would lower — not worth the selector
+complexity yet. So: **four shards**, ~3.5 minutes of real test time each, which
+puts `internal/ir` (4m38s) back as the units lane's bound.
+
+The lane is `test-coreutils.yml` rather than a matrix inside the units lane,
+because `scripts/unit-test-packages` already drops a package that has a workflow
+of its own; coreutils is the fourth. The GNU 9.12 oracle build moves with it,
+since no other package in the units lane uses it.
+
+macOS is deliberately NOT sharded here. Its corpus runs `-skip '^TestSelfHost'`,
+so it excludes the 5m44s giant entirely and its 17.4 minutes are the parity side;
+and macOS draws on a separate ~5-slot pool where each suite takes one job, so
+three shards against two admitted suites would want six. It needs its own
+analysis.
 
 ## Next measurements
 
 Confirm the concurrent-job ceiling against the account's billing settings
-rather than inferring it from queueing. Separate setup/build/test time on the
-critical selfhost shards and identify duplicated builds. Measure the two long
-poles named above — the macOS job and each `test-units` arch leg — since
-flattening the fan-out, not admitting more suites, is what raises utilisation
-now. Profile slow tests and generated programs before changing the compiler.
-Compare observed before/after runs rather than extrapolating a numeric speedup
-from the queue policy alone: the two-lane figures above are projections from one
-overlap measurement until post-merge runs confirm them.
+rather than inferring it from queueing. Shard the macOS corpus, against that
+lane's own ~5-slot pool. Separate setup/build/test time on the critical selfhost
+shards and identify duplicated builds. Consider splitting `TestPrintfParity`'s
+subtests if the coreutils shards ever need to go below its 2m48s floor. Profile
+slow tests and generated programs before changing the compiler.
+
+Compare observed before/after runs rather than extrapolating: the two-lane
+figures are projections from one overlap measurement, and the coreutils shard
+timings were measured on a 4-core container rather than a CI runner, so both
+want post-merge confirmation. Refresh `.github/coreutils-test-weights.txt` from
+real runs when the spread drifts — the rules the self-host table follows are in
+`docs/CI-WEIGHT-REFRESH.md`.

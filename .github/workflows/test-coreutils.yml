@@ -1,0 +1,226 @@
+name: Test coreutils
+
+# The GNU-parity corpus for coreutils/, split off from test-units.yml and
+# sharded.
+#
+# It is one package, and it was the critical path of the whole suite: 14m40s
+# of a 15m07s units job, with every other package in that lane finishing
+# inside its shadow (internal/ir, the next largest, is 4m38s). Measurements
+# and the shard arithmetic are in docs/CI-PERFORMANCE.md.
+#
+# Its own lane rather than a matrix inside the units lane, because that is
+# what scripts/unit-test-packages already does with the three other slow
+# packages: a package with a workflow of its own comes off the units lane's
+# derived list, and the list stays derived.
+#
+# FOUR SHARDS. A measured partition balances to within a second of even
+# across four, and the sum is ~13.7 minutes of test time, so each shard is
+# ~3.5 minutes against a ~15s fixed cost per test process. Six shards were
+# measured too and reach only 3.85 against four's 4.38 in weight units — a
+# 12% gain for 50% more runner slots, on a pool the PR queue is already
+# sized against (docs/CI-PERFORMANCE.md). The floor is TestPrintfParity,
+# 2m48s in one top-level test with a 40.6s subtest inside it; going below
+# four shards' balance means splitting that test's own subtests, which is
+# not worth the selector complexity yet.
+
+# Called from ci.yml rather than triggered: that is the one workflow a pull
+# request or a push to main launches. It holds one of the PR queue's two slots
+# (two pull requests' suites run at once), decides from the changed files
+# whether this lane runs — the lane's path filter lives in its lane table —
+# and cancels the rest of the run when a lane goes red. `workflow_dispatch`
+# stays so the lane can be run on its own, outside that queue.
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        host: [x86_64, aarch64]
+        shard: [0, 1, 2, 3]
+        include:
+          - { host: x86_64,  runner: ubuntu-latest }
+          - { host: aarch64, runner: ubuntu-24.04-arm }
+    name: test-coreutils-${{ matrix.host }}-shard${{ matrix.shard }}
+    runs-on: ${{ matrix.runner }}
+    env:
+      GNU_COREUTILS_VERSION: "9.12"
+      NSHARD: "4"
+    steps:
+      - uses: actions/checkout@v7
+      - name: Cache day stamp
+        id: day
+        run: echo "stamp=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+      # wasmtime because internal/coreutils/wasm_test.go opens with
+      # `exec.LookPath("wasmtime")` and t.Skip()s without it, and a skipped
+      # test reports ok (#8472). Requesting it also arms setup-fern's
+      # preflight, which fails the JOB when a requested tool is missing.
+      #
+      # No qemu here: nothing in this package looks one up. The units lane
+      # keeps its own, for the arm64 execution tests in internal/native and
+      # internal/codegen that do.
+      - uses: ./.github/actions/setup-fern
+        with:
+          build-cache-key: ${{ steps.day.outputs.stamp }}
+          wasmtime: true
+      # The WHOLE GNU coreutils catalogue, built, because the runner image's
+      # own is not the version the corpus is held to: ubuntu-24.04 ships 9.4
+      # and docs/COREUTILS.md pins the oracle to 9.12. Installing only the
+      # handful of binaries the image lacks leaves every other utility
+      # answering from /usr/bin, which costs about two thousand cases across
+      # sixty utilities, each reporting a version difference as Fern's bug.
+      #
+      # It also supplies what Debian and Ubuntu leave out. Their coreutils
+      # package builds neither `uptime` nor `kill`, and the /usr/bin copies of
+      # both belong to PROCPS -- different programs, with different options
+      # and different output. `chroot` is a third: Debian builds it but
+      # installs it to /usr/sbin, which is not a directory gnuCandidates()
+      # searches. `arch` is a fourth, and needs naming in
+      # --enable-install-program because coreutils lists it in
+      # no_install__progs -- `make install` places every other program and
+      # never it.
+      #
+      # `make` in full rather than the named targets: a named target skips
+      # the gnulib header generation the build depends on and dies on a
+      # missing stdckdint.h. FORCE_UNSAFE_CONFIGURE because coreutils'
+      # configure refuses to run as a user it thinks might be root.
+      #
+      # Cached, because the build is the only slow part of this step: about
+      # three minutes cold, seconds warm.
+      - name: Cache the GNU coreutils oracle
+        id: gnu-oracles
+        uses: actions/cache@v6
+        with:
+          path: ~/gnu-coreutils
+          key: gnu-coreutils-full-${{ env.GNU_COREUTILS_VERSION }}-${{ matrix.host }}
+      - name: Build the GNU coreutils oracle
+        if: steps.gnu-oracles.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          ver="$GNU_COREUTILS_VERSION"
+          work="$(mktemp -d)"
+          cd "$work"
+          curl -fsSLO "https://ftp.gnu.org/gnu/coreutils/coreutils-$ver.tar.xz"
+          tar xf "coreutils-$ver.tar.xz"
+          cd "coreutils-$ver"
+          FORCE_UNSAFE_CONFIGURE=1 ./configure --quiet --disable-nls --without-selinux \
+            --enable-install-program=arch,kill,uptime
+          make -j"$(nproc)"
+          make install prefix="$HOME/gnu-coreutils"
+          rm -rf "$HOME/gnu-coreutils/share" "$HOME/gnu-coreutils/libexec"
+          cd /
+          rm -rf "$work"
+      # A SKIP IS A MISSING DEPENDENCY, NOT A PASS. Without this a cache that
+      # restored an empty or half-written directory would leave a corpus with
+      # no reference, and the failure would name the utility rather than this
+      # step -- the same missing oracle reported as a hundred unrelated bugs.
+      #
+      # The list is DERIVED from coreutils/*.fern rather than written out: a
+      # utility added to the tree is one this check must cover, and an
+      # enumerated list is a list that goes stale silently.
+      #
+      # `chcon` and `runcon` are the two exceptions and come from /usr/bin.
+      # They need SELinux, the build above configures --without-selinux, and
+      # from 9.9 configure omits both rather than building gnulib stubs, so
+      # the tree holds neither. Ubuntu's are real ones against the same
+      # library the corpus compared them with before this step widened.
+      - name: Assert the oracle is GNU coreutils, and point the corpus at it
+        run: |
+          set -euo pipefail
+          bindir="$HOME/gnu-coreutils/bin"
+          missing=""
+          checked=0
+          for f in coreutils/*.fern; do
+            util="$(basename "$f" .fern)"
+            dir="$bindir"
+            case "$util" in chcon|runcon) dir=/usr/bin ;; esac
+            probe="$dir/$util"
+            # test(1) answers no --version: POSIX reserves every argument for
+            # the expression, so only `[` -- built from the same source, one
+            # name over -- can vouch for it.
+            if [ "$util" = "test" ]; then probe="$dir/["; fi
+            if [ ! -x "$probe" ]; then
+              missing="$missing $util"
+              continue
+            fi
+            # `dd` is the one utility whose version line omits the word GNU:
+            # it says `dd (coreutils) 9.12`. Both spellings are the package's.
+            # Read into a variable rather than piping into grep: `head -1`
+            # closes the pipe on a program that has more to write, and under
+            # `set -o pipefail` that SIGPIPE is the pipeline's status, so a
+            # present oracle would report as a missing one.
+            line="$("$probe" --version 2>/dev/null | head -1 || true)"
+            case "$line" in
+              *"(GNU coreutils)"* | *"(coreutils)"*) checked=$((checked + 1)) ;;
+              *) missing="$missing $util" ;;
+            esac
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::no GNU coreutils oracle for:$missing"
+            exit 1
+          fi
+          echo "$checked utilities have a GNU oracle"
+          "$bindir/yes" --version | head -1
+          # The built tree FIRST. /usr/bin is appended, not prepended: the
+          # harness takes the first directory that holds the utility, so the
+          # image's 9.4 ahead of this one would shadow the whole catalogue.
+          echo "FERN_GNU_COREUTILS=$HOME/gnu-coreutils/bin:/usr/bin" >> "$GITHUB_ENV"
+      # TWO INVOCATIONS, and the reason is `go test -run` itself: it splits
+      # its pattern on `/` and applies each part to one nesting level, so
+      # `^(TestCatParity|TestSelfHostCoreutilsParity/cat)$` is not a valid
+      # mixed selector — the split lands mid-alternation and leaves two
+      # broken regexps. Whole top-level tests therefore go in one call and
+      # this shard's slice of the sharded giant in another.
+      #
+      # TestSelfHostCoreutilsParity is sharded by SUBTEST because it is one
+      # top-level test holding all 106 utilities, 5m44s of the package's
+      # 13m45s. Partitioning top-level names alone would pin it whole to one
+      # bucket and make it the floor; no shard count below it would help.
+      #
+      # BOTH LISTS ARE DERIVED. The top-level list comes from `go test -list`
+      # and the utility list from coreutils/*.fern — the same glob
+      # TestSelfHostCoreutilsCoverage holds the corpus registry to — so a test
+      # or a utility added to the tree lands in some shard without anyone
+      # adding it anywhere. scripts/shard-tests partitions the live list and
+      # assigns every name to exactly one bucket, so the weights file can only
+      # unbalance a shard, never drop a case.
+      - name: go test (coreutils corpus, shard ${{ matrix.shard }})
+        run: |
+          set -euo pipefail
+          GIANT=TestSelfHostCoreutilsParity
+          W=.github/coreutils-test-weights.txt
+
+          mapfile -t TOPS < <(
+            go test -list '.' ./internal/coreutils/ |
+              grep -E '^Test' | grep -v "^$GIANT\$" | sort |
+              scripts/shard-tests "${{ matrix.shard }}" "$NSHARD" "$W"
+          )
+          mapfile -t UTILS < <(
+            ls coreutils/*.fern | sed "s|coreutils/||; s|\.fern\$||; s|^|$GIANT/|" | sort |
+              scripts/shard-tests "${{ matrix.shard }}" "$NSHARD" "$W" |
+              sed "s|^$GIANT/||"
+          )
+          # An empty half means the list or the partition is wrong, not that
+          # this shard has no work: with 4 shards over 252 tests and 106
+          # utilities, neither can legitimately come back empty.
+          if [ ${#TOPS[@]} -eq 0 ] || [ ${#UTILS[@]} -eq 0 ]; then
+            echo "::error::shard ${{ matrix.shard }}/$NSHARD got ${#TOPS[@]} tests and ${#UTILS[@]} utilities; the list or the filter is wrong" >&2
+            exit 1
+          fi
+          echo "shard ${{ matrix.shard }}/$NSHARD: ${#TOPS[@]} top-level tests, ${#UTILS[@]} utilities"
+
+          # -timeout explicitly, for the reason the units lane set one: go
+          # test's default is ten minutes and a binary it kills reports the
+          # cases in flight as failures with no output and an unknown elapsed,
+          # so the lane names tests that did not fail and never names the wall
+          # it hit. A shard measures ~3.5 minutes; 20m is well over five times
+          # that.
+          TOP_PAT="^($(IFS='|'; echo "${TOPS[*]}"))\$"
+          gotestsum --format pkgname-and-test-fails -- -timeout 20m \
+            -run "$TOP_PAT" ./internal/coreutils/
+
+          UTIL_PAT="^$GIANT\$/^($(IFS='|'; echo "${UTILS[*]}"))\$"
+          gotestsum --format pkgname-and-test-fails -- -timeout 20m \
+            -run "$UTIL_PAT" ./internal/coreutils/

@@ -7,7 +7,7 @@
 #   ci-test-weights refresh WEIGHTS RUN_DIR RUN_DIR... # measured replacement
 #
 # WHY THIS EXISTS (#6823, second occurrence of #5914). The self-host shards are
-# partitioned by scripts/selfhost-shard-tests using the declared weights in
+# partitioned by scripts/shard-tests using the declared weights in
 # .github/selfhost-test-weights.txt. Nothing measured whether those weights were
 # true, so a badly wrong one pushed its shard past the job timeout and failed it
 # for real: TestSelfHostInterpDriverX86_64 sat at 7 while costing ~166 s (#5914),
