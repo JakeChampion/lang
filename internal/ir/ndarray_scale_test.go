@@ -110,3 +110,30 @@ function main(): i32 { return run() as i32; }`)
 		t.Errorf("op count moved with no rewrite: %d -> %d", before, after)
 	}
 }
+
+// A NAMED element function, which reaches the call by a different route and
+// leaves by one too: it is pushed straight from its `const_func` and never
+// parked, so the replaced range ends at the call rather than past a closure
+// release. A range end that overshot would delete an op the call still needs
+// and hand the verifier a stack imbalance, which is why this shape is pinned
+// separately rather than assumed to follow from the lambda one.
+func TestNdarrayScaleTakesANamedElementFunction(t *testing.T) {
+	p := lowerPipelineSrc(t, `import "std/ndarray";
+function half(x: f64): f64 { return x * 0.5; }
+function run(): f64 {
+  var a: ndarray.NdArray[f64] = ndarray.from_flat([1.0, 2.0, 3.0, 4.0], [2, 2]);
+  var m: ndarray.NdArray[f64] = a.map(half);
+  return m.get([0, 0]);
+}
+function main(): i32 { return run() as i32; }`)
+	if n := ir.ScaleF64NdarrayMaps(p, 8); n != 1 {
+		t.Fatalf("rewrote %d sites for a named element function, want 1", n)
+	}
+	calls := ndScaleCalls(p, "run")
+	if hasCall(calls, "__method_ndarray__NdArray_map__") {
+		t.Errorf("the scalar map survived: %v", calls)
+	}
+	if !hasCall(calls, "__fern_scale_f64") || !hasCall(calls, "ndarray__from_flat__f64") {
+		t.Errorf("kernel or handle rebuild missing: %v", calls)
+	}
+}

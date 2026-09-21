@@ -49,11 +49,21 @@ function main(): i32 {
   if (h.get([0, 1]) != 4.0) { return 40; }
   if (h.get([1, 1]) != 12.0) { return 41; }
 
+  // A NAMED element function, which reaches the call from its const_func
+  // without being parked, so the replaced range ends at the call rather than
+  // past a closure release. Executed rather than only inspected: a range end
+  // that overshoots deletes an op the call still needs, and only running it
+  // shows that.
+  var n: ndarray.NdArray[f64] = ndarray.from_flat([2.0, 4.0, 6.0], [3]).map(half);
+  if (n.get([0]) != 1.0 || n.get([2]) != 3.0) { return 60; }
+
   // Every result read once more at the end, so nothing above is released
   // early and measured as free.
   if (m.get([0, 1]) != 5.0 || c.get([1]) != 6.0 || s.get([0, 0]) != 10.0) { return 50; }
   return 0;
 }
+
+function half(x: f64): f64 { return x * 0.5; }
 
 function grid(): ndarray.NdArray[f64] {
   return ndarray.from_flat([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0], [2, 4]);
