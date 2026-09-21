@@ -280,7 +280,11 @@ func emitNdarrayScale(fn *Func, p ndarrayScaleMap, ptrW int) {
 
 	// Drop the handle `map` would have consumed.
 	add(Op{Kind: OpLoadLocal, I32: recv})
-	add(Op{Kind: OpCallDirect, Str: ndarrayDropGlue + p.elem, Width: ResAddr, I32: 1})
+	// Spelled as the lowering spells it: the drop helpers are emitted with no
+	// result width, and a call that differs from the one the rest of the
+	// program makes to the same function is a difference someone has to
+	// explain later.
+	add(Op{Kind: OpCallDirect, Str: ndarrayDropGlue + p.elem, I32: 1})
 	add(Op{Kind: OpDrop})
 
 	next := make([]Op, 0, len(fn.Ops)+len(out))
