@@ -4431,8 +4431,8 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         // then push a dummy 0. wasm sibling of rep stosb / the arm64 byte loop.
         parts = parts.append("    memory.fill\n    i32.const 0\n");
     } else if (o.kind_tag == 78) {  // free
-        // stack: ptr, size -> no-op under the bump heap; drop both, push dummy 0.
-        parts = parts.append("    drop\n    drop\n    i32.const 0\n");
+        // stack: ptr, size -> return the raw block to its size class, push dummy 0.
+        parts = parts.append("    call $__fern_raw_free\n    i32.const 0\n");
     } else if (o.kind_tag == 69 || o.kind_tag == 71) {  // load_i32, load_ptr
         // stack: addr -> 4-byte load (ptr is i32-width on wasm32).
         parts = parts.append("    i32.load\n");
@@ -9384,6 +9384,23 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32, lfl
     o = o + "    (local.set $cls (i32.shr_u (i32.and (i32.add (local.get $bytes) (i32.const 524287)) (i32.const -524288)) (i32.const 19)))\n";
     o = o + "    (i32.store (i32.add (local.get $base) (i32.const 4)) (i32.load (i32.add (i32.const " + lflb + ") (i32.mul (local.get $cls) (i32.const 4)))))\n";
     o = o + "    (i32.store (i32.add (i32.const " + lflb + ") (i32.mul (local.get $cls) (i32.const 4))) (local.get $base)))\n";
+    // $__fern_raw_free(base, bytes): the return path for a block $__fern_alloc
+    // handed out raw, with no rc header — core/map's buffers, and whatever else
+    // reaches the `__free` builtin. The successor is parked in the bsz slot at
+    // base+4, as every other wasm push does, so a block too small to hold one is
+    // dropped; the allocator's classing assumes exactly that.
+    o = o + "  (func $__fern_raw_free (param $base i32) (param $bytes i32)\n";
+    o = o + "    (local $cls i32)\n";
+    o = o + "    (if (i32.eqz (local.get $base)) (then (return)))\n";
+    o = o + "    (local.set $bytes (i32.and (i32.add (local.get $bytes) (i32.const 7)) (i32.const -8)))\n";
+    o = o + "    (if (i32.lt_u (local.get $bytes) (i32.const 8)) (then (return)))\n";
+    o = o + lc_bump_free("(local.get $bytes)");
+    o = o + "    (local.set $cls (i32.shr_u (local.get $bytes) (i32.const 3)))\n";
+    o = o + "    (if (i32.lt_u (local.get $cls) (i32.const " + flc + ")) (then\n";
+    o = o + "      (i32.store (i32.add (local.get $base) (i32.const 4)) (i32.load (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4)))))\n";
+    o = o + "      (i32.store (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4))) (local.get $base))\n";
+    o = o + "      (return)))\n";
+    o = o + "    (call $__fern_large_push (local.get $base) (local.get $bytes)))\n";
     // $__fern_arr_box(eb) -> a: allocate an rc-headered array block and
     // return the DATA pointer `a`. Block layout: [rc@0][bsz@4][len@8]
     // [cap@12][elems@16..]; a = base+8, so the rc word sits at [a-8]

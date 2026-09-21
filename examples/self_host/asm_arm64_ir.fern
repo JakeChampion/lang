@@ -2141,8 +2141,9 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
     } else if (o.kind_tag == 75) {  // memset
         s = emit_arm64_op_memset(i, lp, s);
     } else if (o.kind_tag == 78) {  // free
-        // [ptr, size] -> no-op under bump/leak heap; drop both, push dummy 0.
-        s = s.write("    ldr x0, [sp], #16\n    ldr x0, [sp], #16\n    mov x0, #0\n    str x0, [sp, #-16]!\n");
+        // [ptr, size] -> return the raw block to its size class; push dummy 0.
+        s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_raw_free\n    mov x0, #0\n    str x0, [sp, #-16]!\n");
+        s = s.need("heap");
     } else if (o.kind_tag == 69) {  // load_i32
         // [addr] -> sign-extended 4-byte load.
         s = s.write("    ldr x0, [sp], #16\n    ldrsw x0, [x0]\n    str x0, [sp, #-16]!\n");
@@ -7081,6 +7082,23 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    str x1, [x3, x2, lsl #3]\n");  // heads[class] = base
     }
     s = s.write(".Llpush_ret:\n");
+    s = s.write("    ret\n");
+    // __fern_raw_free(x0 = block, x1 = bytes) — the return path for a block
+    // `__fern_alloc` handed out raw, with no rc header: core/map's buffers, and
+    // whatever else reaches the `__free` builtin. The block's own first word is
+    // the freelist link, so one too small to hold it is dropped, exactly as the
+    // allocator's classing assumes. buf_block_free carries both tiers, and its
+    // large arm calls out, so this frame saves the link register.
+    s = s.write("__fern_raw_free:\n");
+    s = s.write("    stp x29, x30, [sp, #-16]!\n");
+    s = s.write("    mov x29, sp\n");
+    s = s.write("    cbz x0, .Lrawfree_done\n");
+    s = s.write("    add x1, x1, #7\n");
+    s = s.write("    lsr x5, x1, #3\n");
+    s = s.write("    cbz x5, .Lrawfree_done\n");
+    s = buf_block_free(s, "x0", "x5", "Lrawfree_b");
+    s = s.write(".Lrawfree_done:\n");
+    s = s.write("    ldp x29, x30, [sp], #16\n");
     s = s.write("    ret\n");
     s = s.write("__fn___fern_arr_dec:\n");
     s = s.write("    ldr x0, [sp]\n");
