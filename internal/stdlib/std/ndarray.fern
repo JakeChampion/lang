@@ -671,18 +671,7 @@ pub function (a: NdArray[T]) map_rank[T, U](k: i32, f: (NdArray[T]) => NdArray[U
         idx = bump(idx, frame);
         i = i + 1;
     }
-    var rshape: i32[] = [];
-    j = 0;
-    while (j < frame.len()) {
-        rshape = rshape.append(frame[j]);
-        j = j + 1;
-    }
-    j = 0;
-    while (j < cshape.len()) {
-        rshape = rshape.append(cshape[j]);
-        j = j + 1;
-    }
-    return from_flat(out, rshape);
+    return from_flat(out, join(frame, cshape));
 }
 
 // The row-major reading of `a`, walked with an odometer over the shape.

@@ -203,6 +203,53 @@ function test_inner_contracts_last_against_first(): test.TestOutcome {
   return test.assert_eq(ordered.get([]), 3333);
 }
 
+// map_rank splits the shape at rank - k: the leading axes are the frame, the
+// trailing k the cell. Cells are views and arrive in increasing index order,
+// and the results reassemble under frame ++ the cell result's shape.
+function test_map_rank_maps_every_cell(): test.TestOutcome {
+  var a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5, 6], [2, 3]);
+  // Rank-1 cells: one row each, folded to a scalar. Same answer as reducing
+  // that axis away, which is the identity a rank-1 cell fold has to satisfy.
+  var sums: ndarray.NdArray[i32] = a.map_rank(1, row_sum);
+  var reduced: ndarray.NdArray[i32] = a.reduce_axis(1, 0, add);
+  if (sums.rank() != 1 || sums.shape()[0] != 2) { return test.fail("map_rank frame shape"); }
+  if (sums.get([0]) != reduced.get([0]) || sums.get([1]) != reduced.get([1])) { return test.fail("map_rank agrees with reduce_axis"); }
+  // A cell result wider than one element brings its axis back.
+  var pairs: ndarray.NdArray[i32] = a.map_rank(1, first_two);
+  if (pairs.rank() != 2 || pairs.shape()[1] != 2 || pairs.get([1, 0]) != 4) { return test.fail("map_rank cell result shape"); }
+  // k == rank is one cell, the whole handle; k == 0 gives every element its
+  // own rank-0 cell. Neither is special-cased.
+  var whole: ndarray.NdArray[i32] = a.map_rank(2, cell_sum);
+  if (whole.rank() != 0 || whole.get([]) != 21) { return test.fail("map_rank at k == rank"); }
+  var each: ndarray.NdArray[i32] = a.map_rank(0, triple);
+  if (each.rank() != 2 || each.get([1, 2]) != 18) { return test.fail("map_rank at k == 0"); }
+  // A reversed FRAME axis: cells must arrive in index order, not storage
+  // order, so the first result is the reversed handle's first row.
+  var rfr: ndarray.NdArray[i32] = a.reverse(0);
+  var rvr: ndarray.NdArray[i32] = rfr.map_rank(1, first_one);
+  if (rvr.get([0]) != 4 || rvr.get([1]) != 1) { return test.fail("map_rank walks cells in index order"); }
+  // No cells: f never runs, so there is no cell result shape to learn and
+  // the result is the empty handle of the frame's shape.
+  var none: ndarray.NdArray[i32] = ndarray.from_flat([] as i32[], [0, 3]).map_rank(1, first_one);
+  return test.assert_eq(none.rank() * 100 + none.shape()[0] * 10 + none.len(), 100);
+}
+
+function row_sum(c: ndarray.NdArray[i32]): ndarray.NdArray[i32] {
+  return ndarray.from_flat([c.fold_all(0, add)], []);
+}
+function cell_sum(c: ndarray.NdArray[i32]): ndarray.NdArray[i32] {
+  return ndarray.from_flat([c.fold_all(0, add)], []);
+}
+function first_two(c: ndarray.NdArray[i32]): ndarray.NdArray[i32] {
+  return ndarray.from_flat([c.get([0]), c.get([1])], [2]);
+}
+function first_one(c: ndarray.NdArray[i32]): ndarray.NdArray[i32] {
+  return ndarray.from_flat([c.get([0])], []);
+}
+function triple(c: ndarray.NdArray[i32]): ndarray.NdArray[i32] {
+  return ndarray.from_flat([c.get([]) * 3], []);
+}
+
 function main(): i32 {
   var r: test.TestRunner = test.test_new("std/ndarray");
   r = r.it("from_flat indexes row-major",        test_from_flat_indexes_row_major);
@@ -221,6 +268,7 @@ function main(): i32 {
   r = r.it("zip_with broadcasts",                test_zip_with_broadcasts);
   r = r.it("outer pairs every element",          test_outer_pairs_every_element);
   r = r.it("inner contracts last against first", test_inner_contracts_last_against_first);
+  r = r.it("map_rank maps every rank-k cell",    test_map_rank_maps_every_cell);
   r.finish();
   return 0;
 }

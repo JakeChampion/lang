@@ -221,11 +221,16 @@ function main(): i32 {
 	var each: ndarray.NdArray[i64] = a.map_rank(0, (c: ndarray.NdArray[i64]): ndarray.NdArray[i64] =>
 		ndarray.from_flat([c.get([]) * (3 as i64)], []));
 	if (each.rank() != 2 || each.get([5, 3]) != a.get([5, 3]) * (3 as i64)) { return 166; }
-	// A reversed frame axis: the cells must arrive in index order, not in
-	// storage order, or the first row of the result is the last of the input.
-	var rvr: ndarray.NdArray[i64] = rv.map_rank(1, (row: ndarray.NdArray[i64]): ndarray.NdArray[i64] =>
+	// A reversed FRAME axis: the cells must arrive in index order, not in
+	// storage order. Axis 0 is the frame here, so a walk that enumerated
+	// cells in storage order would hand back the input's last row first and
+	// these assertions would fail. Reversing the cell axis instead proves
+	// nothing, since it permutes within a cell and leaves the cell order
+	// alone.
+	var rfr: ndarray.NdArray[i64] = a.reverse(0);
+	var rvr: ndarray.NdArray[i64] = rfr.map_rank(1, (row: ndarray.NdArray[i64]): ndarray.NdArray[i64] =>
 		ndarray.from_flat([row.get([0])], []));
-	if (rvr.get([0]) != rv.get([0, 0]) || rvr.get([1]) != rv.get([1, 0])) { return 167; }
+	if (rvr.get([0]) != rfr.get([0, 0]) || rvr.get([1]) != rfr.get([1, 0])) { return 167; }
 	// No cells: f never runs, so there is no cell result shape to learn
 	// and the result is the empty handle of the frame's shape.
 	var none: ndarray.NdArray[i64] = ndarray.from_flat([] as i64[], [0, 3]).map_rank(1,

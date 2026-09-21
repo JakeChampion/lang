@@ -746,6 +746,14 @@ rule; `docs/ARRAY-ALGEBRA.md` §4 is why a wrong shape aborts.
 - `(a).reduce_axis(axis, init, f)` — the fold along `axis` in increasing
   index order, one rank less; `(a).scan_axis(axis, init, f)` — the
   running fold, same shape
+- `(a).map_rank(k, f)` — `f` over every rank-`k` CELL, the shape splitting
+  at `rank - k` into a leading frame and the cell, as a handle of
+  `frame ++ f's result shape`. Cells are views, so peeling them copies no
+  element, and they arrive in increasing index order. Every cell result
+  must have the same shape; one that differs aborts. With no cells — some
+  frame extent is 0 — `f` never runs and the result is the empty handle of
+  shape `frame`, which is the one place the result's rank depends on the
+  input's extents rather than on its shape alone.
 
 ### `std/pvec`
 
