@@ -7346,8 +7346,10 @@ function parse_type_param_list(p: Par): (TpList, Par) {
             // Consume `Trait (+ Trait)*`, each possibly `mod.Trait` and
             // each possibly carrying generic args (`Iterator[i32]`).
             // Accumulate the trait name(s) into this_bounds (a `+`-joined
-            // list; base name only for a generic-arg bound) so the checker
-            // can test conformance of the call-site type argument (#4842).
+            // list, each AS WRITTEN) so the checker can test conformance of
+            // the call-site type argument (#4842) and recover a type variable
+            // the bound alone mentions. A reader wanting the erased
+            // monomorphisation key takes the base name of each entry.
             var go: boolean = true;
             while (go && !p.at_end()) {
                 var tname: string = "";
@@ -7364,11 +7366,6 @@ function parse_type_param_list(p: Par): (TpList, Par) {
                 if (p.peek_punct() == "[") {
                     var depth: i32 = 0;
                     var bgo: boolean = true;
-                    // `-fmt` (Par.verbatim) keeps the args: dropping them turns
-                    // `I: Iterator[i32]` into `I: Iterator`, a weaker bound the
-                    // checker then rejects at the call site. Every other reader
-                    // wants the base name alone (the erased key the
-                    // monomorphiser and E040 use), so only verbatim rebuilds it.
                     var bargs: string = "";
                     while (bgo && !p.at_end()) {
                         var bpk: string = p.peek_punct();
@@ -7387,7 +7384,7 @@ function parse_type_param_list(p: Par): (TpList, Par) {
                             p = p.advance();
                         }
                     }
-                    if (p.verbatim) { tname = tname + bargs; }
+                    tname = tname + bargs;
                 }
                 if (tname.len() > 0) {
                     if (this_bounds.len() > 0) { this_bounds = this_bounds + "+"; }
@@ -10908,11 +10905,111 @@ function retarget_self_lit_stmts(stmts: ast.Stmt[], base: string, mang: string):
     return out;
 }
 
+// bound_substitutions extends the instantiation (tparams -> cts) with the type
+// variables a BOUND pins. For each bounded parameter already bound to a
+// concrete type, the impl of the bound's trait for that type gives the trait's
+// own arguments, and those line up with what the bound wrote at each position.
+// A parametric impl (`impl[T] Iterator[T] for ArrayIter[T]`) writes them in its
+// own parameters, so its `for` type is matched against the concrete one first.
+function bound_substitutions(fd: FuncDecl, tparams: string[], cts: string[], impls: ImplInfo[]): (string[], string[]) {
+    var ns: string[] = tparams;
+    var ts: string[] = cts;
+    var k: i32 = 0;
+    while (k < tparams.len() && k < fd.bound_traits.len() && k < cts.len()) {
+        for entry in split_plus_bounds(fd.bound_traits[k]) {
+            let (n2, t2) = bound_entry_substitutions(entry, cts[k], impls, ns, ts);
+            ns = n2;
+            ts = t2;
+        }
+        k = k + 1;
+    }
+    return (ns, ts);
+}
+
+// One bound entry (`Iterator[T]`) against the concrete type its parameter took.
+function bound_entry_substitutions(entry: string, concrete: string, impls: ImplInfo[], names: string[], types: string[]): (string[], string[]) {
+    var bref: TypeRef = parse_type_ref(entry);
+    if (bref.args.len() == 0) { return (names, types); }
+    var tr_name: string = util.base_type_name(entry);
+    var cref: TypeRef = parse_type_ref(concrete);
+    for im in impls {
+        if (im.trait_name != tr_name) { continue; }
+        if (util.base_type_name(im.impl_type) != util.base_type_name(concrete)) { continue; }
+        var iref: TypeRef = parse_type_ref(im.trait_ref);
+        if (iref.args.len() != bref.args.len()) { continue; }
+        // The impl's own parameters, read off its `for` type.
+        var pn: string[] = [];
+        var pt: string[] = [];
+        let (pn2, pt2) = ref_bind(parse_type_ref(im.impl_type), cref, im.all_type_params, pn, pt);
+        var ns: string[] = names;
+        var ts: string[] = types;
+        var j: i32 = 0;
+        while (j < bref.args.len()) {
+            var got: string = subst_ty(render_type_ref(iref.args[j]), pn2, pt2);
+            let (n3, t3) = ref_bind(bref.args[j], parse_type_ref(got), [], ns, ts);
+            ns = n3;
+            ts = t3;
+            j = j + 1;
+        }
+        return (ns, ts);
+    }
+    return (names, types);
+}
+
+// ref_bind matches a type-variable PATTERN against a concrete spelling,
+// recording each variable the pattern's leaves name. A leaf binds when it is
+// one of `vars`, or — for a function's own erased parameters, which no list
+// records — when it spells like one. A shape that does not line up contributes
+// nothing; first binding wins, so an outer round is never overwritten.
+function ref_bind(pattern: TypeRef, actual: TypeRef, vars: string[], names: string[], types: string[]): (string[], string[]) {
+    var ns: string[] = names;
+    var ts: string[] = types;
+    if (pattern.array_depth > 0) {
+        if (actual.array_depth != pattern.array_depth) { return (ns, ts); }
+        return ref_bind(elem_type_ref(pattern), elem_type_ref(actual), vars, ns, ts);
+    }
+    if (pattern.args.len() == 0) {
+        var leaf: string = pattern.base;
+        var binds: boolean = util.index_of_str(vars, leaf) >= 0;
+        if (vars.len() == 0) { binds = looks_type_var(leaf); }
+        if (binds && tp_index(leaf, ns) < 0) {
+            ns = ns.append(leaf);
+            ts = ts.append(render_type_ref(actual));
+        }
+        return (ns, ts);
+    }
+    if (pattern.base != actual.base || pattern.args.len() != actual.args.len()) { return (ns, ts); }
+    var i: i32 = 0;
+    while (i < pattern.args.len()) {
+        let (n2, t2) = ref_bind(pattern.args[i], actual.args[i], vars, ns, ts);
+        ns = n2;
+        ts = t2;
+        i = i + 1;
+    }
+    return (ns, ts);
+}
+
+// split_plus_bounds splits a `+`-joined bound spelling into its entries, each
+// AS WRITTEN — `Iterator[T] + Clone` gives both, type arguments intact.
+pub function split_plus_bounds(bound: string): string[] {
+    var out: string[] = [];
+    var start: i32 = 0;
+    var i: i32 = 0;
+    while (i <= bound.len()) {
+        if (i == bound.len() || bound[i] == b'+') {
+            if (i > start) { out = out.append(slice_unchecked(bound, start, i) + ""); }
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
 // clone_bg builds the `f__<key>` clone of bounded-generic func `fd`,
 // substituting each type variable with its concrete type (the `__`-
 // joined `key`, split back into per-parameter pieces) across params +
 // return + body annotations.
-function clone_bg(fd: FuncDecl, key: string): FuncDecl {
+function clone_bg(fd: FuncDecl, key: string, impls: ImplInfo[]): FuncDecl {
     var tparams: string[] = fd.type_params;
     // A single type parameter's key IS the one concrete type, verbatim —
     // never split it. A multi-param key is joined by infer_inst with ';'
@@ -10922,6 +11019,16 @@ function clone_bg(fd: FuncDecl, key: string): FuncDecl {
     // split it into the wrong arity and bound `I` to the bogus "iter".
     var cts: string[] = [key];
     if (tparams.len() != 1) { cts = split_inst_key(key); }
+    // A type variable that no PARAMETER spells — the T of
+    // `nth[T, I: Iterator[T]](it: I, n: i32): Option[T]`, which lives only in
+    // the bound and the return — is absent from the key, because the key is
+    // what the arguments pinned. What says what it is, is the IMPL the bound
+    // resolved to: `impl Iterator[i32] for Range` reads T off position 0.
+    // Without it the clone keeps a `T` naming nothing, so its return resolves
+    // to `Option[unknown]` and every reader downstream is left guessing.
+    let (btp, bct) = bound_substitutions(fd, tparams, cts, impls);
+    tparams = btp;
+    cts = bct;
     var nparams: ast.ParamDecl[] = [];
     var i: i32 = 0;
     while (i < fd.params.len()) {
@@ -11537,7 +11644,7 @@ pub function monomorphize_module(mod: Module): Module {
         done = done.iadd(nm, ct);
         var gi: i32 = bg_find(fns, nm);
         if (gi >= 0) {
-            var cl: FuncDecl = clone_bg(funcs[gi], ct);
+            var cl: FuncDecl = clone_bg(funcs[gi], ct, mod.impls);
             // Rewrite the clone's body so any bounded-generic calls it
             // makes resolve too (and enqueue their instantiations).
             var cenv: MEnv = env_from_params(cl.params);
@@ -12162,7 +12269,7 @@ pub function monomorphize_structs(mod: Module): Module {
         if (idx < 0) {
             var bgi: i32 = bg_find(sfns, base);
             if (bgi >= 0 && !has_func_named(mod.funcs, nfuncs, base + "__" + sanitize_key(key))) {
-                var bcl: FuncDecl = clone_bg(sfns.decls[bgi], key);
+                var bcl: FuncDecl = clone_bg(sfns.decls[bgi], key, mod.impls);
                 var bcr: RStmts = mono_stmts(bcl.body, env_from_params(bcl.params), sfns, ins, bcl.ret_type);
                 ins = bcr.rins3;
                 var bfr: FRes = ms_func(FuncDecl { ...bcl, body: bcr.rstmts }, gstructs, sfns, ins);
@@ -17336,7 +17443,10 @@ pub struct TraitDefault { trait_name: string, method: FuncDecl }
 // the BOUNDED ones. The two differ for `impl[T] Trait for Box[T]`, whose T
 // drives no monomorphisation but is what an associated-type binding
 // (`type Ok = T;`) is written in — see assoc_binding_for.
-pub struct ImplInfo { trait_name: string, impl_type: string, type_params: string[], all_type_params: string[], bounds: string[], method_names: string[], trait_spelling: string, assoc_names: string[], assoc_values: string[] }
+// trait_ref is the trait reference with its type ARGUMENTS intact
+// (`Iterator[i32]`), which is what says what a generic trait was implemented
+// AT. `trait_name` has them stripped, so the two cannot be folded together.
+pub struct ImplInfo { trait_name: string, impl_type: string, type_params: string[], all_type_params: string[], bounds: string[], method_names: string[], trait_spelling: string, trait_ref: string, assoc_names: string[], assoc_values: string[] }
 
 // MethodClaim is claim_method_name's answer: the (possibly renamed) function,
 // and the claim table extended with the key it took.
@@ -20062,7 +20172,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
                 funcs = funcs.append(im_cl.fn);
                 mi = mi + 1;
             }
-            impl_infos = impl_infos.append(ImplInfo { trait_name: imr_trait_name, impl_type: imr_impl_type, type_params: imr_type_params, all_type_params: imr_decl.type_params, bounds: imr_bounds, method_names: imr_method_names, trait_spelling: imr_trait_spelling, assoc_names: imr_decl.assoc_names, assoc_values: imr_decl.assoc_values });
+            impl_infos = impl_infos.append(ImplInfo { trait_name: imr_trait_name, impl_type: imr_impl_type, type_params: imr_type_params, all_type_params: imr_decl.type_params, bounds: imr_bounds, method_names: imr_method_names, trait_spelling: imr_trait_spelling, trait_ref: imr_decl.trait_ref, assoc_names: imr_decl.assoc_names, assoc_values: imr_decl.assoc_values });
             continue;
         }
         // `resource Name;` — a top-level WIT resource-handle declaration (P5).

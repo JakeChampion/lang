@@ -2124,20 +2124,13 @@ function e021_bound_call_diag(pbound: string, at: typeinfo.Type, s: Scope, ln: i
   if (!e021_type_known(cty, at, s)) {
     return out;
   }
-  var start: i32 = 0;
-  var i: i32 = 0;
-  while (i <= pbound.len()) {
-    if (i == pbound.len() || pbound[i] == b'+') {
-      if (i > start) {
-        var tr: str = slice_unchecked(pbound, start, i);
-        var tidx: i32 = e021_trait_idx(tr, s.trait_reqs);
-        if (tidx >= 0 && !e021_conforms(s, tr, cty)) {
-          out = out.append(dg_at("E021", "type argument " + cty + " does not implement trait " + tr, ln, cl));
-        }
-      }
-      start = i + 1;
+  for entry in parser.split_plus_bounds(pbound) {
+    // The bound carries its type arguments as written; the trait is the base.
+    var tr: string = util.base_type_name(entry);
+    var tidx: i32 = e021_trait_idx(tr, s.trait_reqs);
+    if (tidx >= 0 && !e021_conforms(s, tr, cty)) {
+      out = out.append(dg_at("E021", "type argument " + cty + " does not implement trait " + tr, ln, cl));
     }
-    i = i + 1;
   }
   return out;
 }
@@ -8666,24 +8659,16 @@ function tp_assoc_req(s: Scope, tname: string, field: string): AssocHit {
 
 // tp_bound_traits lists the traits bounding type parameter `tname` in scope:
 // the `+`-joined spelling split into names, empty for an unbounded or unknown
-// parameter.
+// parameter. A bound carries its type arguments as written (`Iterator[T]`);
+// what names the trait is the base, so each entry is stripped to it.
 function tp_bound_traits(s: Scope, tname: string): string[] {
   var out: string[] = [];
   var k: i32 = util.index_of_str(s.tparams, tname);
   if (k < 0 || k >= s.tbounds.len()) {
     return out;
   }
-  var bound: string = s.tbounds[k];
-  var start: i32 = 0;
-  var i: i32 = 0;
-  while (i <= bound.len()) {
-    if (i == bound.len() || bound[i] == b'+') {
-      if (i > start) {
-        out = out.append(slice_unchecked(bound, start, i) + "");
-      }
-      start = i + 1;
-    }
-    i = i + 1;
+  for entry in parser.split_plus_bounds(s.tbounds[k]) {
+    out = out.append(util.base_type_name(entry));
   }
   return out;
 }
@@ -8788,7 +8773,7 @@ function assoc_func_impls(impls: parser.ImplInfo[], funcs: parser.FuncDecl[]): p
   for fd in funcs {
     if (fd.receiver_name.len() == 0 && fd.receiver_type.len() > 0) {
       var noargs: string[] = [];
-      out = out.append(parser.ImplInfo { trait_name: "", impl_type: util.base_type_name(fd.receiver_type), type_params: noargs, all_type_params: noargs, bounds: noargs, method_names: [fd.name], trait_spelling: "", assoc_names: noargs, assoc_values: noargs });
+      out = out.append(parser.ImplInfo { trait_name: "", impl_type: util.base_type_name(fd.receiver_type), type_params: noargs, all_type_params: noargs, bounds: noargs, method_names: [fd.name], trait_spelling: "", trait_ref: "", assoc_names: noargs, assoc_values: noargs });
     }
   }
   return out;
