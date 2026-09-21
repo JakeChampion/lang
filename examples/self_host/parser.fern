@@ -10618,6 +10618,16 @@ function env_from_params(params: ast.ParamDecl[]): MEnv {
     return e;
 }
 
+// env_from_decl is env_from_params plus the RECEIVER a method reads by name.
+// A body says `self.items.to_json()`, and with `self` unbound mono_infer
+// answers "" for it, so mono_expr's `__arrm_` fold never fires and the call
+// survives as an un-instantiated `T[].to_json`.
+function env_from_decl(fd: FuncDecl): MEnv {
+    var e: MEnv = env_from_params(fd.params);
+    if (fd.receiver_name.len() == 0) { return e; }
+    return e.ebind(fd.receiver_name, fd.receiver_type);
+}
+
 // subst_ty replaces every type variable in `tparams` with its concrete
 // type from `cts` (same index), handling a bare variable (`T` → i32),
 // the array form (`T[]` → i32[]), and a composite of any base
@@ -11504,7 +11514,7 @@ pub function monomorphize_module(mod: Module): Module {
         if (is_bg_template(fd) || is_gstruct_method(fd, mod.structs)) {
             rewritten = rewritten.append(fd);
         } else {
-            var env: MEnv = env_from_params(fd.params);
+            var env: MEnv = env_from_decl(fd);
             var rb: RStmts = mono_stmts(fd.body, env, fns, ins, fd.ret_type);
             ins = rb.rins3;
             rewritten = rewritten.append(FuncDecl { ...fd, body: rb.rstmts });
@@ -12025,7 +12035,7 @@ function ms_func(fn: FuncDecl, gstructs: StructDecl[], funcs: MFns, ins: Insts):
     cur = rt.mins;
     var rcv: TyIns = mg_ty(fn.receiver_type, gstructs, cur);
     cur = rcv.mins;
-    var br: RStmts = ms_stmts(fn.body, env_from_params(fn.params), gstructs, funcs, cur, rt.ty);
+    var br: RStmts = ms_stmts(fn.body, env_from_decl(fn), gstructs, funcs, cur, rt.ty);
     cur = br.rins3;
     return FRes {
         ffn: FuncDecl { ...fn, receiver_type: rcv.ty, params: nparams, ret_type: rt.ty, body: br.rstmts },
@@ -12184,8 +12194,7 @@ pub function monomorphize_structs(mod: Module): Module {
                 var mm: FuncDecl = mod.funcs[mi];
                 if (mm.receiver_type.len() > 0 && strip_struct_base(mm.receiver_type) == base) {
                     var clm: FuncDecl = clone_struct_method(mm, base, key, gstructs);
-                    var menv: MEnv = env_from_params(clm.params);
-                    if (clm.receiver_name.len() > 0) { menv = menv.ebind(clm.receiver_name, clm.receiver_type); }
+                    var menv: MEnv = env_from_decl(clm);
                     var mr: RStmts = mono_stmts(clm.body, menv, sfns, ins, clm.ret_type);
                     ins = mr.rins3;
                     var br2: RStmts = ms_stmts(mr.rstmts, menv, gstructs, sfns, ins, clm.ret_type);

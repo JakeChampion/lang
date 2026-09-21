@@ -2563,6 +2563,27 @@ function main(): i32 {
     while (i < 20) { acc = acc + direct().len() + qualified().len() + bound().len(); i = i + 1; }
     return acc % 101;
 }`},
+	{name: "a-method-reads-its-receiver-by-name", atLeast: 121, noLeak: true, src: `
+import "std/json";
+@derive(json.Json)
+struct Bag { items: i32[], names: string[] }
+struct Held { xs: f64[] }
+function (self: Held) render(): string { return self.xs.to_json(); }
+function loose(b: Bag): string { return b.items.to_json(); }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 20) {
+        var bag: Bag = Bag { items: [1, 2, 3], names: ["a", "b"] };
+        var h: Held = Held { xs: [1.5, 2.5] };
+        var nums: i32[] = [10, 20];
+        acc = acc + bag.to_json().len() + h.render().len() + loose(bag).len() + nums.to_json().len();
+        i = i + 1;
+    }
+    if (Bag { items: [1, 2, 3], names: ["a", "b"] }.to_json() != "{\"items\":[1,2,3],\"names\":[\"a\",\"b\"]}") { return 1; }
+    if (Held { xs: [1.5, 2.5] }.render() != "[1.5,2.5]") { return 2; }
+    return acc % 101;
+}`},
 }
 
 // semHeldElementSource sorts by length with the insertion sort's body: the
