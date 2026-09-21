@@ -2626,6 +2626,26 @@ function main(): i32 {
     }
     return acc + 22;
 }`},
+	{name: "a-u8-converts-to-and-from-a-float", atLeast: 1, noLeak: true, src: `
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 256) {
+        var b: u8 = i as u8;
+        var f: f64 = b as f64;
+        if ((f as u8) != b) { return 1; }
+        if ((f as i32) != i) { return 2; }
+        acc = acc + ((f as i32) & 1);
+        i = i + 1;
+    }
+    if ((300.7 as u8) != 44u8) { return 3; }
+    if ((255.9 as u8) != 255u8) { return 4; }
+    if ((0.5 as u8) != 0u8) { return 5; }
+    var w: u8 = 200u8;
+    if ((w as f64) * 2.0 != 400.0) { return 6; }
+    if ((w as f32) != 200.0) { return 7; }
+    return acc;
+}`},
 }
 
 // semHeldElementSource sorts by length with the insertion sort's body: the
