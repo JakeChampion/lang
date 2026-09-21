@@ -67,6 +67,25 @@ zero that no longer exists — exactly what the x86-64 leg already documents on
 contract (the bump arms call the report, the report body carries the native
 text, both vanish with the flag) rather than a run, and says why.
 
+## The large tier declines at its own choke point
+
+The small-tier sites each decline their own push, but a >=512 KiB block does
+not reach one: `arr_dec`, `snapshot_dec`, `arr_push_owned` and the fused string
+free all tail-branch to `__fern_large_push`, so the decline has to live in that
+body or it does not happen at all. x86-64 puts it there and says so; the first
+cut of this port guarded the callers and left the helper recycling, which
+poisoned each large block and then handed it straight back — the poison
+overwritten by the next allocation out of that class, and the quarantine
+unsound for exactly the blocks big enough to matter.
+
+The census bump stays outside the decline, as on x86-64: a quarantined block is
+still a free, and counting it is what lets the two detectors compose.
+
+The asm contract matches on the push's own address register (`x3`) and asserts
+`__fern_alloc`'s pop (`x1`) survives, because the bare symbol also appears in
+the arena checkpoint's copy and in the allocator itself — a match on the symbol
+alone fails against code that is doing nothing wrong.
+
 ## Gates
 
 `internal/e2eselfhost/self_host_arm64_quarantine_test.go`. Note the filename:
