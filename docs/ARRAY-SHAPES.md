@@ -144,16 +144,27 @@ therefore the representation: four fields the IR reads as any struct's,
 which is what lets a kernel take `data`, `shape`, `strides` and `offset`
 without a second description of them.
 
-`inner` and `outer` are the first shapes it recognizes (#9735, step 3).
-`fern -array-report` lists every site under `std/ndarray products`, with
-the element functions the site was handed, keyed on the
-`__method_ndarray__NdArray_` mangling that only std/ndarray's receiver
-methods get. That list is the kernel half's worklist: a site whose
-`mul` and `add` are multiplication and addition over `f64` is `dot_f64`
-in disguise, and one handed a closure that captures is not. Recognition
-only — every site still runs the scalar loop, nothing fuses, nothing
-donates, and `internal/ir/ndarray_shapes_test.go` pins that the
-recogniser changes no op.
+**What it recognizes is §7's closed list**: the eight operations that are
+handed a function. `fern -array-report` lists every site under
+`std/ndarray operations`, with the element functions the site was handed,
+keyed on the `__method_ndarray__NdArray_` mangling that only
+std/ndarray's receiver methods get. The three axis-parameterized verbs
+also carry the argument that says which elements they walk —
+`reduce_axis(axis 1)`, `scan_axis(axis 0)`, `map_rank(rank 2)` — read
+only where it is written as a literal, and printed `axis ?` where it is
+computed. A guessed axis would be worse than none: a reduction along the
+last axis walks contiguous storage and one along any other axis strides,
+so the two plan differently.
+
+§2's structural operations are deliberately absent. They move no
+elements, so there is nothing for a kernel to replace.
+
+That list is the kernel half's worklist: a site whose `mul` and `add` are
+multiplication and addition over `f64` is `dot_f64` in disguise, and one
+handed a closure that captures is not. Recognition only — every site
+still runs the scalar loop, nothing fuses, nothing donates, and
+`internal/ir/ndarray_shapes_test.go` pins that the recogniser changes no
+op.
 
 ## 7. Elementwise, and along an axis
 
