@@ -200,9 +200,10 @@ func ndarrayShapesInFunc(fn *Func) []NdarrayShape {
 // operand list, in order: the receiver, then the arguments. The axis is the
 // second, and it is a literal only when a bare OpConstI32 produced it.
 func ndarrayAxisArg(fn *Func, start, call int) int32 {
-	// Each entry is the index of the op that pushed that operand; a value
-	// already on the stack when the window opened is not one of ours and
-	// is recorded as -1.
+	// Each entry is the index of the op that pushed that operand. A value
+	// already on the stack when the window opened has no entry — it was
+	// pushed before the walk began — so a pop that runs out of entries
+	// consumed one of those and simply stops.
 	stack := []int{}
 	for k := start; k < call; k++ {
 		pops, pushes, ok := ndarrayOpEffect(fn.Ops[k])
@@ -219,11 +220,19 @@ func ndarrayAxisArg(fn *Func, start, call int) int32 {
 			stack = append(stack, k)
 		}
 	}
+	// The call takes the top argc operands: the receiver, then the
+	// arguments in order, so the axis is the second. An operand the window
+	// did not push is deeper than every one it did, which is why a chained
+	// receiver still reads — `a.transpose().reduce_axis(0, …)` leaves the
+	// transpose's result on the stack and the window holds only the three
+	// arguments, so the one missing operand is necessarily the receiver.
+	// Two missing puts the axis itself out of reach.
 	argc := int(fn.Ops[call].I32)
-	if argc < 2 || len(stack) < argc {
+	at := len(stack) - argc + 1
+	if argc < 2 || at < 0 || at >= len(stack) {
 		return NdarrayAxisUnknown
 	}
-	axis := fn.Ops[stack[len(stack)-argc+1]]
+	axis := fn.Ops[stack[at]]
 	if axis.Kind != OpConstI32 {
 		return NdarrayAxisUnknown
 	}

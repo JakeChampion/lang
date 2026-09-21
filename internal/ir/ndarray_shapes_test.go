@@ -346,3 +346,51 @@ func TestNdarrayComputedAxisIsNotReadFromTheInit(t *testing.T) {
 		t.Errorf("scan_axis(k, 0, add) reports axis %d; it shares reduce_axis's signature and its answer", got[2].Axis)
 	}
 }
+
+// A receiver that is the previous call's result never reaches a local, so
+// the window holds only the arguments and the simulated stack is one operand
+// short. That one is necessarily the receiver — everything the window pushed
+// sits above it — so a literal axis still reads. `a.transpose().reduce_axis`
+// is the repo's own idiom (`examples/tests/ndarray_test.fern`), and blanking
+// it would lose exactly the contiguous-versus-strided fact the axis is
+// reported for.
+const chainedSrc = `import "std/ndarray";
+function add(x: i64, y: i64): i64 { return x + y; }
+function run(a: ndarray.NdArray[i64]): i64 {
+  var t: i64 = a.transpose().reduce_axis(0, 0 as i64, add).get([0]);
+  var c: i64 = a.reduce_axis(1, 0 as i64, add).scan_axis(0, 0 as i64, add).get([0]);
+  return t + c;
+}
+function main(): i32 {
+  var a: ndarray.NdArray[i64] = ndarray.from_flat([1 as i64, 2 as i64, 3 as i64, 4 as i64], [2, 2]);
+  return run(a) as i32;
+}`
+
+func TestNdarrayAxisReadsThroughAChainedReceiver(t *testing.T) {
+	p := lowerPipelineSrc(t, chainedSrc)
+	var got []ir.NdarrayShape
+	for _, s := range ir.RecognizeNdarrayShapes(p) {
+		if s.Func == "run" {
+			got = append(got, s)
+		}
+	}
+	for _, tc := range []struct {
+		at   int
+		verb string
+		want int32
+	}{
+		{0, "reduce_axis", 0}, // on a.transpose()
+		{1, "reduce_axis", 1}, // on a local, for contrast
+		{2, "scan_axis", 0},   // on the reduce_axis above it
+	} {
+		if tc.at >= len(got) {
+			t.Fatalf("run has %d sites, want at least %d: %+v", len(got), tc.at+1, got)
+		}
+		if got[tc.at].Verb != tc.verb {
+			t.Fatalf("site %d is %q, want %q", tc.at, got[tc.at].Verb, tc.verb)
+		}
+		if got[tc.at].Axis != tc.want {
+			t.Errorf("%s at site %d reports axis %d, want %d", tc.verb, tc.at, got[tc.at].Axis, tc.want)
+		}
+	}
+}
