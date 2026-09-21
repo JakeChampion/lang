@@ -25,22 +25,26 @@ arithmetic** but deliberately **under-specify** the edge cases:
 ### Float-to-int conversion is saturating
 
 `f as i32` / `i64` / `u32` / `u64` / `u8` (and the f32 sources)
-**saturate**, identically on every backend:
+**saturate**, identically on every backend. The conversion runs at 32 or
+64 bits — the destination's own width, or 32 where the destination is
+narrower than that — and takes the DESTINATION's signedness:
 
 - `NaN` → `0`
-- a value above the destination's max → its max (`INT_MAX`, or the
+- a value above the conversion's max → that max (`INT_MAX`, or the
   all-ones `UINT_MAX` for the unsigned types)
-- a value below the destination's min → its min (`INT_MIN`, or `0`
+- a value below the conversion's min → that min (`INT_MIN`, or `0`
   for the unsigned types)
 - everything in range → truncated toward zero, as before
 
-The signedness of the conversion is the DESTINATION's, at every width. A
-sub-i32 destination saturates at 32 bits and the result is then narrowed
-to the destination's width, so `300.7 as u8` is 44 — the low byte of the
-in-range 300 — while `-1.0 as u8` is 0, because the clamp happens before
-the narrowing can see it. Picking the conversion's signedness by WIDTH
-instead is what made the self-host answer 255 there (#9912); `u8` is
-named in the list above for that reason.
+A destination narrower than the conversion is then narrowed to its own
+width, and that narrowing is a MASK, not a second clamp. So `300.7 as u8`
+is 44 — the low byte of an in-range 300, not u8's own maximum of 255 —
+while `-1.0 as u8` is 0, because the clamp has already happened and the
+mask has nothing left to take.
+
+Picking the conversion's signedness by WIDTH rather than by the
+destination is what made the self-host answer 255 for that negative
+(#9912); `u8` is named in the list above for that reason.
 
 This matches wasm's `trunc_sat_*` ops and arm64's `fcvtz*`; the
 interpreter and x86-64 clamp explicitly to the same contract (x86's
