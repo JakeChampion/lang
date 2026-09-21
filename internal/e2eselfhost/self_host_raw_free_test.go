@@ -49,6 +49,10 @@ var rawFreeCases = []struct {
 	// A recycled block must still be usable: write through it after the free
 	// and read the value back, so a push that corrupted the block's own words
 	// past the link shows up as a wrong answer rather than a quiet leak.
+	//
+	// This one is a GUARD, not a bound: without the change there is no push to
+	// corrupt anything, so it answers 0 either way. It earns its place only
+	// once op_free pushes.
 	{"a-recycled-block-still-stores", `function main(): i32 {
     var i: i32 = 0;
     var acc: i32 = 0;
