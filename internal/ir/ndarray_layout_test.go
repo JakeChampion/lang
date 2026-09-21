@@ -265,3 +265,52 @@ function main(): i32 {
 		}
 	}
 }
+
+// §7's operations each return `from_flat` of a buffer they just filled, so
+// their results are packed and the to_flat after one is free. The program's
+// own assertion is the cross-check: `examples/tests/ndarray_test.fern` asks
+// `m.is_packed()` at run time where `m` is the result of a map, and this is
+// the same fact proved before it runs.
+func TestAnAlgebraResultIsPacked(t *testing.T) {
+	p := lowerPipelineSrc(t, `import "std/ndarray";
+function dbl(x: i64): i64 { return x * (2 as i64); }
+function run(a: ndarray.NdArray[i64]): i64 {
+  var m: ndarray.NdArray[i64] = a.transpose().map(dbl);
+  return m.to_flat()[0];
+}
+function main(): i32 {
+  return run(ndarray.from_flat([1 as i64, 2 as i64, 3 as i64, 4 as i64], [2, 2])) as i32;
+}`)
+	got := layoutSites(t, p, "run")
+	if len(got) != 1 {
+		t.Fatalf("found %d sites in run, want 1: %+v", len(got), got)
+	}
+	if got[0].Receiver != ir.NdarrayLayoutPacked || got[0].Verdict != ir.NdarrayCopyMetadata {
+		t.Errorf("to_flat of a map over a STRIDED receiver = %s / %s, want packed / metadata: the map allocates its own packed result",
+			got[0].Receiver.Tag(), got[0].Verdict.Tag())
+	}
+}
+
+// A handle that arrives from a call is `unknown`, not `strided`: this pass
+// does not follow provenance across a function boundary, and says so rather
+// than guessing. The whole of `examples/tests/ndarray_test.fern` builds its
+// handles in a `grid()` helper, which is why its sites read `unknown` where
+// the same expressions inline read `packed`.
+func TestAHandleFromACallIsUnknown(t *testing.T) {
+	p := lowerPipelineSrc(t, `import "std/ndarray";
+function grid(): ndarray.NdArray[i32] { return ndarray.from_flat([1, 2, 3, 4], [2, 2]); }
+function run(): i32 { return grid().to_flat()[0]; }
+function inlined(): i32 { return ndarray.from_flat([1, 2, 3, 4], [2, 2]).to_flat()[0]; }
+function main(): i32 { return run() + inlined(); }`)
+	viaCall := layoutSites(t, p, "run")
+	inline := layoutSites(t, p, "inlined")
+	if len(viaCall) != 1 || len(inline) != 1 {
+		t.Fatalf("found %d and %d sites, want 1 each: %+v %+v", len(viaCall), len(inline), viaCall, inline)
+	}
+	if viaCall[0].Receiver != ir.NdarrayLayoutUnknown {
+		t.Errorf("a handle returned by a helper = %s, want unknown", viaCall[0].Receiver.Tag())
+	}
+	if inline[0].Receiver != ir.NdarrayLayoutPacked {
+		t.Errorf("the same expression inline = %s, want packed", inline[0].Receiver.Tag())
+	}
+}
