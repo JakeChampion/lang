@@ -2523,6 +2523,25 @@ function main(): i32 {
     while (i < 20) { acc = acc + mapped() + chained(); i = i + 1; }
     return acc % 113;
 }`},
+	// A destination that names the union but settles nothing in it is no more
+	// use than none at all. `Option.and` is `and[U](other: Option[U])`, so the
+	// parameter binds U from this very argument: `Option[U]` names `Some`
+	// without saying what `Some` holds, and only the payload can say. The
+	// checker does not settle it either, since it infers the literal from the
+	// same parameter.
+	{name: "a-variant-literal-types-itself-where-the-parameter-cannot", atLeast: 52, noLeak: true, src: `
+import "std/option";
+function both(): i32 {
+    var s: Option[i32] = Some(5);
+    var other: Option[i32] = Some(9);
+    return s.and(Some(9)).unwrap_or(0) + s.and(other).unwrap_or(0);
+}
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 20) { acc = acc + both(); i = i + 1; }
+    return acc % 107;
+}`},
 }
 
 // semHeldElementSource sorts by length with the insertion sort's body: the
