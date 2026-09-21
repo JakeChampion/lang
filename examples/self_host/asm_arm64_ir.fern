@@ -1246,10 +1246,12 @@ function ssa_push_operand(reg_of: i32[], v: i32, pushed: i32, s: asmcore.EmitSta
 }
 
 // ssa_rc_prim renders one rc primitive inline, in the instructions its stub
-// uses. x5 holds the floor and then the count, x6 the 0/1; neither is a home
-// (those are x0 and x9 upward), so both survive a destination that IS the
-// operand's register, and the destination is written after the last read of
-// it. ssa.rc_inlined says which calls come here and why.
+// uses. x5 holds the floor and then the count, x6 the 0/1, and x7 the poison
+// the sanitizer compares against; none is a home (those are x0 and x9 upward),
+// so all survive a destination that IS the operand's register, and the
+// destination is written after the last read of it. Every read of the count
+// carries the poison check, the uniqueness test no less than the retain
+// (#9889). ssa.rc_inlined says which calls come here and why.
 function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
     s = helper_call_needs(ins.str, s);
     s = ssa_read(reg_of, ins.args[0], "x4", s);
@@ -1260,7 +1262,12 @@ function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
     if (ins.str == "__fern_rc_is_unique") {
         var d: string = ssa_dst(reg_of, ins.result);
         s = s.write("    mov x6, #0\n" + guard);
-        s = s.write("    ldur w5, [" + p + ", #-8]\n    cmp w5, #1\n    bne " + done + "\n");
+        // w7 rather than the arm's own x4/x5/x6: p, the count and the 0/1
+        // answer hold all three across the compare, and x7 is not in the home
+        // pool (x0, x9..x15, x19..x28), so the check can borrow it.
+        s = s.write("    ldur w5, [" + p + ", #-8]\n");
+        s = s.write(san_poison_check("w5", "w7", done + "us"));
+        s = s.write("    cmp w5, #1\n    bne " + done + "\n");
         s = s.write("    mov x6, #1\n" + done + ":\n");
         s = s.write("    mov " + d + ", x6\n");
         return ssa_store(reg_of, ins.result, d, s);
@@ -6865,6 +6872,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    cmp x2, x9\n");
     s = s.write("    blo .Lshuniq_ret\n");
     s = s.write("    ldur w3, [x2, #-8]\n");      // rc
+    s = s.write(san_poison_check("w3", "w9", ".Lshuniq_live"));
     s = s.write("    tbnz w3, #31, .Lshuniq_ret\n");   // sentinel => immortal
     s = s.write("    cmp w3, #1\n");
     s = s.write("    bne .Lshuniq_ret\n");

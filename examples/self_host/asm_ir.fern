@@ -2701,6 +2701,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    cmpq $0x10000, %rcx\n");
     s = s.write("    jb .Lshuniq_ret\n");
     s = s.write("    movl -8(%rcx), %edx\n");
+    s = s.write(san_poison_check("%edx"));
     s = s.write("    testl %edx, %edx\n");
     s = s.write("    js .Lshuniq_ret\n");
     s = s.write("    cmpl $1, %edx\n");
@@ -5623,8 +5624,10 @@ function ssa_push_operand(reg_of: i32[], v: i32, s: asmcore.EmitState): asmcore.
 // the usual case once a result and its operand share one — and the
 // destination is written after the last read of the operand.
 //
-// rc_inc's read of the count carries the sanitizer's poison check, as its
-// stub's does; is_unique's stub has none, so neither does this.
+// Every read of the count carries the sanitizer's poison check, as its stub's
+// does — the uniqueness test no less than the retain. A stale reference that
+// lands on the test rather than the retain would otherwise answer "not
+// unique" and go unreported (#9889).
 function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
     s = helper_call_needs(ins.str, s);
     s = ssa_read(reg_of, ins.args[0], "%r11", s);
@@ -5636,7 +5639,9 @@ function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
     if (ins.str == "__fern_rc_is_unique") {
         var d: string = ssa_dst(reg_of, ins.result);
         s = s.write("    xorl %ecx, %ecx\n" + guard);
-        s = s.write("    movl " + rc + ", %edx\n    cmpl $1, %edx\n    jne " + done + "\n");
+        s = s.write("    movl " + rc + ", %edx\n");
+        s = s.write(san_poison_check("%edx"));
+        s = s.write("    cmpl $1, %edx\n    jne " + done + "\n");
         s = s.write("    movl $1, %ecx\n" + done + ":\n");
         s = s.write("    movq %rcx, " + d + "\n");
         return ssa_store(reg_of, ins.result, d, s);
