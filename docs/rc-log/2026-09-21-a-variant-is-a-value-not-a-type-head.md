@@ -18,9 +18,14 @@ binding of the variant, an annotated binding, and a payloaded
 ## The fix
 
 A variant carries its enum owner, so the owner is what separates the two
-readings: a declared struct with an `enum_owner` is a value constructor and
-never a type head. The enum's own name still is one, which is what makes
-`Shape.Circle(1)` a qualified path.
+readings: the sig a bare name resolves to is a value constructor when it
+carries one, and not a type head. The enum's own name still is one, which is
+what makes `Shape.Circle(1)` a qualified path.
+
+That lookup answers whichever declaration registered first, so a name shared by
+a plain struct and a variant resolves by declaration order. The corner is not
+reachable: the self-host's checker refuses such a program before this reads it,
+which is its own divergence from native (#9900).
 
 ## Measured
 
