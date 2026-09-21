@@ -2142,30 +2142,28 @@ function with_field(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan
 // retains or releases. `key` and `value` load the map's own column element at
 // the cursor, so the value is the map's and stays borrowed. `advance` moves
 // the index in place and leaves the dummy the statement stores.
+//
+// Both width flags are 0 here, and neither is a narrowing choice: an admitted
+// map's value column is never 8 bytes. `ssasem.narrow_map_value` takes an
+// integer only when it is NOT wide, and `counted_map_value`'s three shapes
+// (a string, a string array, a box) are none of them wide either, so the
+// i64 widekind `op_map_iter` spells is as unreachable as the float one, and
+// `op_mapiter_value`'s wide flag with it. The wasm accessors are the only
+// readers of either.
 function map_iter_site(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
     r = emit(r, ir.op_load_local(ins.args[0]));
     if (ins.kind_tag == ssasem.map_iter()) {
-        r = emit(r, ir.op_map_iter(value_widekind(semtypes.map_iter_value(f.values[ins.result]))));
+        r = emit(r, ir.op_map_iter(0));
     } else if (ins.kind_tag == ssasem.mapiter_has_next()) {
         r = emit(r, ir.op_mapiter_has_next());
     } else if (ins.kind_tag == ssasem.mapiter_key()) {
         r = emit(r, ir.op_mapiter_key());
     } else if (ins.kind_tag == ssasem.mapiter_value()) {
-        r = emit(r, ir.op_mapiter_value(ssasem.is_wide(f.values[ins.result])));
+        r = emit(r, ir.op_mapiter_value(false));
     } else {
         r = emit(r, ir.op_mapiter_advance());
     }
     return emit(r, ir.op_store_local(ins.result));
-}
-
-// The value column's width, as `op_map_iter` spells it. Only the wasm
-// accessors read it. The op also spells 2 for a float column, which cannot
-// arise here: `ssasem.is_supported_map` keeps a float value out of the
-// semantic path entirely, and that is the same gate wasm's own deferral of
-// the float case would otherwise meet.
-function value_widekind(v: typeinfo.Type): i32 {
-    if (ssasem.is_wide(v)) { return 1; }
-    return 0;
 }
 
 // A cell is a one-element array box shared by every holder, built over the

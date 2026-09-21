@@ -613,10 +613,15 @@ function main(): i32 {
 	// held `examples/tests/json_roundtrip_test` and
 	// `conformance/cases/audit_std_json` entirely to the AST lowering.
 	//
-	// No noLeak: both legs hold one 16-byte block per cursor — 53 here — and
-	// the typed leg holds exactly the same bytes the AST leg does, which is
-	// what the comparison against the AST oracle pins.
-	{name: "a-map-cursor-reads-the-columns-it-points-at", atLeast: 4, src: `
+	// Both key-column layouts are covered: `mapiter_key` loads a string key
+	// through the counted column and a narrow-integer key through the raw one,
+	// and only the second exercises the load `is_supported_map` admits beside
+	// the string case. Nothing in the moving corpus rows is integer-keyed.
+	//
+	// No noLeak: both legs hold one 16-byte block per cursor and the typed leg
+	// holds exactly the same bytes the AST leg does, which is what the
+	// comparison against the AST oracle pins.
+	{name: "a-map-cursor-reads-the-columns-it-points-at", atLeast: 6, src: `
 import "core/map";
 
 function sum_values(m: Map[string, i32]): i32 {
@@ -651,6 +656,20 @@ function rounds(m: Map[string, i32], n: i32): i32 {
     return out;
 }
 
+function narrow_keys(m: Map[i32, i32]): i32 {
+    var total: i32 = 0;
+    var it: MapIter[i32, i32] = m.iter();
+    while (it.has_next()) { total = total + it.key() * it.value(); it.advance(); }
+    return total;
+}
+
+function narrow_key_str_value(m: Map[i32, string]): i32 {
+    var total: i32 = 0;
+    var it: MapIter[i32, string] = m.iter();
+    while (it.has_next()) { total = total + it.key() + it.value().len(); it.advance(); }
+    return total;
+}
+
 function main(): i32 {
     var m: Map[string, i32] = map_new(8);
     m = m.insert("aa", 1);
@@ -660,7 +679,40 @@ function main(): i32 {
     t = t.insert("k", "vvvvv");
     t = t.insert("kk", "vv");
     var empty: Map[string, i32] = map_new(4);
-    return sum_values(m) + longest(t) + rounds(m, 50) + sum_values(empty);
+    var a: Map[i32, i32] = map_new(4);
+    a = a.insert(2, 5);
+    a = a.insert(3, 7);
+    var b: Map[i32, string] = map_new(4);
+    b = b.insert(10, "xyz");
+    b = b.insert(20, "pq");
+    return sum_values(m) + longest(t) + rounds(m, 50) + sum_values(empty)
+        + narrow_keys(a) + narrow_key_str_value(b);
+}`},
+	// A cursor RETURNED over a map the frame owns. The anchor keeps the map
+	// live for as long as a read through the cursor can happen inside the
+	// frame, and a return takes the cursor out of it, so the columns it points
+	// at are the ones this frame is about to release. Refused, and the AST
+	// lowering — which sidesteps the class by never reclaiming a frame map
+	// that has an explicit `iter()` — stands and answers.
+	//
+	// Before the refusal this crashed the compiler outright ("array index out
+	// of range"), so the row pins a diagnostic where there was a backtrace.
+	// Native answers 0 on this shape where the AST leg answers 7, filed
+	// separately; the case here is the refusal, not the divergence.
+	{name: "a-cursor-result-escapes-its-map", atLeast: 0, refuses: "cursor result escapes its map", src: `
+import "core/map";
+
+function make_cursor(): MapIter[string, i32] {
+    var m: Map[string, i32] = map_new(4);
+    m = m.insert("a", 7);
+    return m.iter();
+}
+
+function main(): i32 {
+    var it: MapIter[string, i32] = make_cursor();
+    var total: i32 = 0;
+    while (it.has_next()) { total = total + it.value(); it.advance(); }
+    return total;
 }`},
 	// Two levels of value-position if, the inner arm a boolean call. The
 	// outer IIFE returns the CALL of the inner one, which the checker types
