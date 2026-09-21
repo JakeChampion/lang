@@ -11,6 +11,7 @@ import "./semrecords";
 import "./ssa";
 import "./ssasem";
 import "./ssaunits";
+import "./ownership";
 import "./util";
 
 // One body's production. A TEMPLATE declaration — one spelling type variables
@@ -32,7 +33,7 @@ pub struct Request { key: string, name: string, binding: ssasem.Binding }
 // Every declaration in order, then every instance the declarations reached.
 // `contracts` is the module's contract table, by declaration key: what a
 // caller of a declaration reads, whether or not the declaration produced.
-pub struct Built { decls: Produced[], instances: Produced[], contracts: ssasem.Contract[] }
+pub struct Built { decls: Produced[], instances: Produced[], contracts: ssasem.Contract[], names: string[] }
 
 // Environments are the values of the bindings visible at loop entry, in
 // binding order, captured where a body leaves the loop.
@@ -4250,6 +4251,162 @@ function instance_limit(): i32 { return 16384; }
 // build_module pairs every declaration with its checked scope, in declaration
 // order, then produces every instance those bodies request, to a fixpoint over
 // the instances' own requests. Refusals are per body and propagate to callers.
+struct Inferred { all: Produced[], table: ssasem.Contract[] }
+
+function seed_bits(n: i32): boolean[] {
+    var out: boolean[] = [];
+    var i: i32 = 0;
+    while (i < n) { out = out.append(true); i = i + 1; }
+    return out;
+}
+
+function same_bits(a: boolean[], b: boolean[]): boolean {
+    if (a.len() != b.len()) { return false; }
+    var i: i32 = 0;
+    while (i < a.len()) {
+        if (a[i] != b[i]) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// The shapes the inference may hand over: a box this frame can reclaim whole
+// and whose deep drop the backends already wire — an enum or a record.
+//
+// A bare string or array parameter is deliberately NOT one, which is native's
+// first rung (`ownedByDefaultShapeIn`) and not an oversight: measured, moving
+// those to the counted convention costs 4.9% on `ascii_scan` and 2.5% on
+// `utf8_ingest_validated` and wins nothing, because a byte kernel reads its
+// argument and hands back an index. Arrays and strings are still reclaimed —
+// as the CHILDREN of an admitted box, which is where a vector node's buffer
+// sits.
+//
+// A cell, a map, a stream handle and a closure environment are excluded for
+// the reasons `ssaunits` already gives them: the frame is not their only
+// holder, or the box is one nothing can state a mode for.
+function owned_shape(t: typeinfo.Type): boolean {
+    if (semtypes.is_cell(t) || semtypes.is_handle(t) || semtypes.is_env(t)) { return false; }
+    if (ssasem.is_map(t) || ssasem.is_view(t)) { return false; }
+    if let typeinfo.TypeUnion(_) = t { return true; }
+    if let typeinfo.TypeStruct(_) = t { return true; }
+    return false;
+}
+
+// A declared `own` stays counted whatever the analysis says: it carries the
+// checker's affine discipline (E050) and a call site may already rely on it.
+// Everything else follows the inference — a consumed enum or record parameter
+// is counted, a read one borrows.
+function inferred_mode(old: i32, t: typeinfo.Type, consumed: boolean): i32 {
+    if (!reference(t)) { return old; }
+    if (old == ssaunits.counted_mode()) { return old; }
+    if (consumed && owned_shape(t)) { return ssaunits.counted_mode(); }
+    return old;
+}
+
+function inferred_contract(c: ssasem.Contract, rows: ownership.Escapes[]): ssasem.Contract {
+    if (ownership.find(rows, c.name) < 0) { return c; }
+    var modes: i32[] = c.modes;
+    var i: i32 = 0;
+    while (i < modes.len() && i < c.params.len()) {
+        modes = modes.with(i, inferred_mode(modes[i], c.params[i], ownership.consumed(rows, c.name, i)));
+        i = i + 1;
+    }
+    return ssasem.Contract { ...c, modes: modes };
+}
+
+function inferred_table(table: ssasem.Contract[], rows: ownership.Escapes[]): ssasem.Contract[] {
+    var out: ssasem.Contract[] = [];
+    for c in table { out = out.append(inferred_contract(c, rows)); }
+    return out;
+}
+
+// A produced body carries its own modes and a copy of every callee contract it
+// calls through; both are rewritten from the same rows, so the definition side
+// and the call site read one answer.
+function inferred_produced(p: Produced, name: string, rows: ownership.Escapes[]): Produced {
+    var calls0: ssasem.Contract[] = [];
+    for c in p.func.calls { calls0 = calls0.append(inferred_contract(c, rows)); }
+    if (ownership.find(rows, name) < 0) {
+        return Produced { ...p, func: ssasem.Func { ...p.func, calls: calls0 } };
+    }
+    var modes: i32[] = p.modes;
+    var i: i32 = 0;
+    while (i < modes.len() && i < p.func.params.len()) {
+        modes = modes.with(i, inferred_mode(modes[i], p.func.params[i], ownership.consumed(rows, name, i)));
+        i = i + 1;
+    }
+    return Produced { ...p, modes: modes, func: ssasem.Func { ...p.func, calls: calls0 } };
+}
+
+// The greatest fixpoint: every reference parameter starts consumed and is
+// demoted once a round finds no use that carries it out. Bounded by the bits
+// it can clear, since a round only ever removes them — the bound below is a
+// belt on that, not the reason it stops.
+// A closure BODY keeps every mode it declared. The units its arguments carry
+// are read off the function TYPE the box hands out, and `ssasem.closure_type`
+// builds that type from these same modes — so inferring one counted rewrites
+// the type and every call through the box stops matching it ("closure
+// signature", on all 8771 declarations of the compiler's own parser). The
+// environment parameter could not be counted in any case: `ssaunits` refuses a
+// closure that consumes its environment, since nothing can state that promise.
+function closure_body_produced(p: Produced): boolean {
+    if (p.func.params.len() == 0) { return false; }
+    return semtypes.is_env(p.func.params[0]);
+}
+
+function infer_rows(all: Produced[], names: string[]): ownership.Escapes[] {
+    var taken: string[] = [];
+    var k: i32 = 0;
+    while (k < all.len()) {
+        if (all[k].ok) { taken = ownership.address_taken(all[k].func, taken); }
+        k = k + 1;
+    }
+    var rows: ownership.Escapes[] = [];
+    var analyses: ssasem.Analysis[] = [];
+    var i: i32 = 0;
+    while (i < all.len() && i < names.len()) {
+        if (all[i].ok && !all[i].template && !closure_body_produced(all[i]) && !ownership.names_has(taken, names[i])) {
+            rows = rows.append(ownership.Escapes { name: names[i], bits: seed_bits(all[i].func.params.len()) });
+            analyses = analyses.append(ssasem.analyze(all[i].func));
+        } else {
+            analyses = analyses.append(ssasem.refused_analysis("not produced"));
+        }
+        i = i + 1;
+    }
+    var changed: boolean = true;
+    var round: i32 = 0;
+    while (changed && round <= all.len() + 1) {
+        changed = false;
+        i = 0;
+        while (i < all.len() && i < names.len()) {
+            var at: i32 = ownership.find(rows, names[i]);
+            if (all[i].ok && !all[i].template && at >= 0 && !closure_body_produced(all[i])) {
+                var next: boolean[] = ownership.escaping(all[i].func, analyses[i], rows);
+                if (!same_bits(rows[at].bits, next)) {
+                    rows = rows.with(at, ownership.Escapes { name: names[i], bits: next });
+                    changed = true;
+                }
+            }
+            i = i + 1;
+        }
+        round = round + 1;
+    }
+    return rows;
+}
+
+function infer_ownership(all: Produced[], names: string[], table: ssasem.Contract[]): Inferred {
+    var rows: ownership.Escapes[] = infer_rows(all, names);
+    var out: Produced[] = [];
+    var i: i32 = 0;
+    while (i < all.len()) {
+        var name: string = "";
+        if (i < names.len()) { name = names[i]; }
+        out = out.append(inferred_produced(all[i], name, rows));
+        i = i + 1;
+    }
+    return Inferred { all: out, table: inferred_table(table, rows) };
+}
+
 pub function build_module(mod: parser.Module): Built {
     var scopes: checker.Scope[] = checker.module_scopes(mod);
     var table: ssasem.Contract[] = contracts(mod, scopes);
@@ -4292,5 +4449,51 @@ pub function build_module(mod: parser.Module): Built {
         if (decls[i].template) { decls = decls.with(i, template_verdict(names[i], instances)); }
         i = i + 1;
     }
-    return Built { decls: decls, instances: instances, contracts: table };
+    return Built { decls: decls, instances: instances, contracts: table, names: names };
+}
+
+// The same module with every consumed parameter counted. Kept OUT of
+// `build_module` because only the caller knows whether the inference is safe
+// to use: a mode inferred here is invisible to the AST lowering, so it holds
+// only where the typed pipeline lowers every body of the module. `semlower`
+// is the layer that knows that — it is what `prune` decides — so it asks for
+// this and checks the answer still lowers whole before keeping it.
+pub function with_inferred_modes(b: Built): Built {
+    var all: Produced[] = util.append_all(b.decls, b.instances);
+    var inferred: Inferred = infer_ownership(all, b.names, b.contracts);
+    var decls: Produced[] = [];
+    var instances: Produced[] = [];
+    var i: i32 = 0;
+    while (i < inferred.all.len()) {
+        if (i < b.decls.len()) { decls = decls.append(inferred.all[i]); }
+        else { instances = instances.append(inferred.all[i]); }
+        i = i + 1;
+    }
+    return Built { decls: decls, instances: instances, contracts: inferred.table, names: b.names };
+}
+
+// Whether any parameter changed hands, so the caller can skip a second
+// lowering that would produce the same bodies.
+pub function modes_differ(a: Built, b: Built): boolean {
+    var i: i32 = 0;
+    while (i < a.decls.len() && i < b.decls.len()) {
+        if (!same_bits_i32(a.decls[i].modes, b.decls[i].modes)) { return true; }
+        i = i + 1;
+    }
+    i = 0;
+    while (i < a.instances.len() && i < b.instances.len()) {
+        if (!same_bits_i32(a.instances[i].modes, b.instances[i].modes)) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+function same_bits_i32(a: i32[], b: i32[]): boolean {
+    if (a.len() != b.len()) { return false; }
+    var i: i32 = 0;
+    while (i < a.len()) {
+        if (a[i] != b[i]) { return false; }
+        i = i + 1;
+    }
+    return true;
 }
