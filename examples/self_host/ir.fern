@@ -4621,6 +4621,15 @@ pub function render_op(o: Op): string {
     if (o.kind_tag == 140) { return "struct_set " + util.i32_to_string(o.i32_imm); }
     if (o.kind_tag == 198) { return "struct_copy " + util.i32_to_string(o.i32_imm); }
     if (o.kind_tag == 145) { return "variant_is " + o.str; }
+    if (o.kind_tag == 218) {
+        // One op, two constants: a record's shape and fields, or a
+        // capture-free function value's body (#9839). Printed apart, because
+        // a bare `const_struct` in a dump cannot be told from the other and
+        // a reader chasing a function value would not find it.
+        var cfb: string = const_struct_fn_body(o.str);
+        if (cfb.len() > 0) { return "const_closure " + cfb; }
+        return "const_struct " + const_struct_type(o.str) + "/" + util.i32_to_string(o.i32_imm);
+    }
     if (o.kind_tag == 142) { return "tuple_make " + util.i32_to_string(o.i32_imm); }
     if (o.kind_tag == 143) { return "tuple_get " + util.i32_to_string(o.i32_imm); }
     return kind_name(o.kind_tag);
