@@ -50,17 +50,27 @@ func semanticEnumCases() []struct{ name, change, want string } {
 
 func unitEnumCases() []unitCase {
 	return []unitCase{
+		// A BORROWED scrutinee is nobody's to move out of: the caller still
+		// names the box, so the projection stays a borrow and the frame holds
+		// no unit of the payload.
 		{"enum-borrowed-match", semanticEnum + "modes = [2];", `
+if (p.payloads[2]) { return 49; }
 if (!drops(find(p, 27, 1, 0 - 1), [6])) { return 50; }
 if (!drops(find(p, 17, ssaunits.return_point(), 0 - 1), [])) { return 51; }
 `, "", ""},
-		// The projection borrows the counted scrutinee, so its last read
-		// through the projection is where the scrutinee's unit is released.
+		// A COUNTED scrutinee read no further is taken from: the projection
+		// moves the payload out under a runtime uniqueness test, so the box
+		// dies at the read rather than at the last read through the
+		// projection, and the payload is released at its own last use. The
+		// arm that never projects releases the box on its edge as before.
 		{"enum-counted-match", semanticEnum + "modes = [3];", `
-if (!drops(find(p, 17, 2, 0 - 1), [0])) { return 52; }
-if (!drops(find(p, 7, ssaunits.edge_point(), 27), [0])) { return 53; }
+if (!p.payloads[2]) { return 52; }
+if (!drops(find(p, 17, 0, 0 - 1), [0])) { return 53; }
+if (!drops(find(p, 17, 2, 0 - 1), [2])) { return 54; }
+if (!drops(find(p, 7, ssaunits.edge_point(), 27), [0])) { return 55; }
 `, "", ""},
-		{"enum-leaked-counted-match", semanticEnum + "modes = [3];", "", `var s = find(p, 17, 2, 0 - 1); p = replace(p, ssaunits.Step { ...s, drops: [] });`, "counted unit leaks at return"},
+		{"enum-leaked-counted-match", semanticEnum + "modes = [3];", "", `var s = find(p, 17, 0, 0 - 1); p = replace(p, ssaunits.Step { ...s, drops: [] });`, "counted unit leaks at return"},
+		{"changed-payload-take", semanticEnum + "modes = [3];", "", `p = ssaunits.Plan { ...p, payloads: p.payloads.with(2, false) };`, "payload take disagrees with the plan"},
 		{"enum-construction-supply", semanticEnum + `modes = [2];
 types = types.with(5, ia).append(i32t);
 var b = graph.blocks[2];
