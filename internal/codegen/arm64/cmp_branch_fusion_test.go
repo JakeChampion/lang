@@ -135,3 +135,48 @@ func TestNotBranchFusionShape(t *testing.T) {
 		t.Errorf("while-loop guard did not fuse (`cset` present):\n%s", body)
 	}
 }
+
+// The index helper's common path is straight-line: the bounds check is a
+// compare and a branch to an abort that sits after the function's ret, as
+// does the inline-string arm, which rejoins at the address add.
+func TestIndexHelperColdArmsFollowTheEpilogue(t *testing.T) {
+	asm := compile(t, `@noinline function f(s: string, a: i32[], i: i32): i32 {
+  return (s[i] as i32) + a[i];
+}
+function main(): i32 { var a: i32[] = [1, 2]; return f("ab", a, 1); }`, Options{})
+	body := fnBody(t, asm, "f")
+	ret := strings.Index(body, "\tret\n")
+	if ret < 0 {
+		t.Fatalf("no ret in body:\n%s", body)
+	}
+	hot, cold := body[:ret], body[ret:]
+	for _, want := range []string{"cmp w0, w", "b.hs .Loob_", "add x0, x1, x0, lsl #2"} {
+		if !strings.Contains(hot, want) {
+			t.Errorf("hot path lacks %q:\n%s", want, hot)
+		}
+	}
+	for _, bad := range []string{"__fern_report", "__fern_str_idx_scratch", "\tb .Lstridx"} {
+		if strings.Contains(hot, bad) {
+			t.Errorf("hot path still carries %q:\n%s", bad, hot)
+		}
+		if !strings.Contains(cold, bad) {
+			t.Errorf("cold section lacks %q:\n%s", bad, cold)
+		}
+	}
+	if !strings.Contains(hot, ".cfi_remember_state") || !strings.Contains(cold, ".cfi_restore_state") {
+		t.Errorf("cold arms do not restore the frame's CFI rule:\n%s", cold)
+	}
+}
+
+// A function with no cold arm has nothing to restore, so its epilogue
+// carries neither CFI directive.
+func TestEpilogueWithoutColdArmsCarriesNoCFIState(t *testing.T) {
+	asm := compile(t, `@noinline function f(a: i32, b: i32): i32 { return a * b + 1; }
+function main(): i32 { return f(2, 3); }`, Options{})
+	body := fnBody(t, asm, "f")
+	for _, bad := range []string{".cfi_remember_state", ".cfi_restore_state"} {
+		if strings.Contains(body, bad) {
+			t.Errorf("a cold-less function carries %s:\n%s", bad, body)
+		}
+	}
+}

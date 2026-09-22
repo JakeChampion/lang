@@ -2028,27 +2028,138 @@ then writes the index load straight to `ecx`, and P8 now sees a reload
 through the compare-and-branch pairs a chain leaves between a store and
 its reload.
 
+The second slice is the index itself. After the first, `magcompare` in
+`sort -n` still paid eight instructions to read one byte: the SSO tag test
+and its branch, the length load, the bounds compare and its branch, the
+address `lea`, a `jmp` over the inline-string arm, then the load. The
+helper's common path is now straight-line: the bounds check is one compare
+against the length in memory and a branch to an abort that sits after the
+function's `ret`, the inline-string arm sits there too and rejoins at the
+`lea` with `scratch + 1` in the base register, and P13 folds the `lea`
+into the load that follows it. That is five instructions for the byte, and
+three for an array element. The same slice lets P8 see a reload through
+the register loads a compare needs, P11 see a dead reload through a fused
+increment, and P14 take a binary operation's right operand from its frame
+slot (`cmp eax, dword ptr [rbp-16]`) instead of loading it into rcx first.
+
 Instructions retired under callgrind, one build of each utility from the
-same tree before and after, outputs byte-identical on every row:
+same tree at each step, outputs byte-identical on every row:
 
-| workload | before (Ir) | after (Ir) | change |
+| workload | before (Ir) | after slice 1 | after slice 2 | change |
+|---|---:|---:|---:|---:|
+| `sort` 100k lines | 577,720,322 | 542,819,828 | 515,346,655 | -10.8% |
+| `sort -n` 100k numbers | 1,949,987,576 | 1,586,532,461 | 1,393,923,126 | -28.5% |
+| `sort -k2,2n` 100k lines | 2,125,121,727 | 1,703,001,250 | 1,499,262,993 | -29.5% |
+| `fmt` 1.1 MB of prose | 473,948,933 | 425,377,262 | 383,432,551 | -19.1% |
+| `cat -A` 3 MB | 142,710,846 | 114,794,139 | 94,250,442 | -34.0% |
+| `cat -n` 3 MB | 47,520,260 | 44,179,989 | 43,784,925 | -7.9% |
+| `ptx` 300 kB of prose | 955,048,228 | 853,437,426 | 770,658,577 | -19.3% |
+| `wc -w` 4.5 MB | 274,461,474 | 239,241,002 | 208,398,983 | -24.1% |
+
+Those rows are `-O -g` builds, which carry every peephole except the ones
+a statement boundary's `.loc` directive blocks (#10016); the release build
+without `-g` sits 1–3% lower on each and moves by the same fractions.
+
+The third slice is the condition an inlined predicate leaves behind.
+`wc`'s `if (is_print(b))` reaches the backend as the callee's
+`b >= 32 && b < 127` in the lowering's value form — a typed `if` that
+pushes a 0/1 — because the builder's branch chains only see a condition
+that is spelled with `&&` at the call site. `ir.ChainConditions` runs
+after inlining and rewrites any `&&` / `||` / `!` value that an `if` or a
+`br_if` consumes into the same chain, finding the value's extent by
+simulating the operand stack. Release builds, outputs identical:
+
+| workload | after slice 2 (Ir) | after slice 3 | change |
 |---|---:|---:|---:|
-| `sort` 100k lines | 577,720,322 | 542,819,828 | -6.0% |
-| `sort -n` 100k numbers | 1,949,987,576 | 1,586,532,461 | -18.6% |
-| `sort -k2,2n` 100k lines | 2,125,121,727 | 1,703,001,250 | -19.9% |
-| `fmt` 1.1 MB of prose | 473,948,933 | 425,377,262 | -10.2% |
-| `cat -A` 3 MB | 142,710,846 | 114,794,139 | -19.6% |
-| `cat -n` 3 MB | 47,520,260 | 44,179,989 | -7.0% |
-| `ptx` 300 kB of prose | 955,048,228 | 853,437,426 | -10.6% |
-| `wc -w` 4.5 MB | 274,461,474 | 239,241,002 | -12.8% |
+| `sort -n` 100k numbers | 1,365,438,158 | 1,326,683,955 | -2.8% |
+| `sort -k2,2n` 100k lines | 1,466,846,688 | 1,400,641,173 | -4.5% |
+| `fmt` 1.1 MB of prose | 373,086,326 | 361,039,845 | -3.2% |
+| `ptx` 300 kB of prose | 768,177,949 | 748,726,899 | -2.5% |
+| `wc -w` 4.5 MB | 203,820,844 | 180,557,068 | -11.4% |
 
-What the per-byte path still pays, from `magcompare` in `sort -n` after
-the change: the SSO tag dispatch on every index (a `test`, a branch, the
-length load, the bounds compare and its branch, the address `lea`, and a
-`jmp` over the inline-string arm before the byte load — eight instructions
-for one byte), the reload of a local the chain compared a moment ago from
-the same register, and the reload P10 leaves after a fused increment when
-the next statement is itself a store. Each is the next slice.
+Against the tree before any of the three, the release build of `wc -w`
+retires 32% fewer instructions, `sort -n` 31%, `cat -A` 29%, `ptx` 21%,
+`fmt` 22%.
+
+The fourth slice is the call. A call with more than two arguments saved
+each one on the operand stack and popped them back into their registers
+in front of the call — nine instructions around `cmp_bytes`'s call into
+`__fern_mismatch`. P15 pairs each push with the pop in the mirror position
+and writes the materialisation to that register directly; the window it
+needs is 18 lines, so `peepWindow` grew from 10. Release builds, outputs
+identical: `sort` 512,307,985 → 471,663,517 (-7.9%), `sort -k2,2n` -2.2%,
+`sort -n` -1.5%, `fmt` -1.3%, `ptx` -0.9%. `cat -A` went the other way,
+96,428,023 → 98,239,652, with every changed line in its hot function
+shorter: the driver's assembler pads every branch that would cross a
+32-byte line with NOPs (the Skylake JCC erratum, `relax.go`'s
+`branchPad`), and where the padding lands is layout luck. The same two
+listings assembled by GNU `as`, which pads nothing, retire 93,060,668 and
+91,689,024. The executed padding is 6–7% of `cat -A`'s instructions and
+its own issue (#10017).
+
+The fifth is the reload P10 leaves when the statement it fused ends a
+block: `add qword ptr [i], 1 / mov rax, [i] / jmp .LblkEnd_9` is what
+`i = i + 1; continue;` and every `if` arm ending in an assignment left,
+and the accumulator is dead on every edge into a scope label, so P16
+drops the load before a jump to one. Release builds, outputs identical:
+`cat -A` 98,239,652 → 95,330,849 (-3.0%), `wc -w` -2.5%, `ptx` -1.2%,
+`sort` -1.2%.
+
+The sixth is the bounds check the parser had already proven away. Its
+len-bounded loop pass marks `s[i]` in `while (i < s.len())` as in range,
+and the IR honoured the mark for arrays only; a string index now takes
+`__str_idx_nc`, the same SSO dispatch without the compare against the
+length. `wc -w` 176,079,326 → 162,147,106 (-7.9%); the other rows' scan
+loops are bounded by something other than the string's own length and
+do not qualify. The arm64 backend carries the same index-helper layout
+as the second slice — the abort and the inline-string arm after the
+epilogue, one compare and a `b.hs` on the common path — measured only
+by its shape here, since this container runs arm64 under qemu. The pass also accepts the bound captured in a variable —
+`var n = s.len(); … while (i < n)`, which `tr` writes seven times —
+when nothing between the capture and the loop, or in the body, assigns
+or re-binds either name.
+
+A scan loop's `var c = s[i]; if (c >= 48 && c <= 57)` body is eleven
+instructions per byte after all three, from twenty-seven. What it still
+pays is the stack machine itself: every local is a frame slot, so the
+induction variable is stored and reloaded on each iteration, and the byte
+is stored to its slot before the chain compares it from the register. That
+is the register allocation the SSA backend does (`docs/SSA-DECISION.md`),
+not another peephole.
+
+### ptx's column format, 2026-09-22, Linux x86-64 (GNU coreutils 9.12)
+
+#9083's item 3, the restructure rather than the primitive. `render_dumb`
+built each output line in a `u8[]` of the line width — `spaces(width)`
+copied to bytes, every field written into it one bounds-checked `.with`
+per byte, then `rtrim_bytes` copying it back out through a string and a
+slice — and the writer got the string plus its newline. The line is now
+streamed straight into the writer's buffer: `layout` walks the fields in
+line order once to prove every write lands past the one before it and
+inside the width, then once more emitting each piece behind its gap of
+spaces, with trailing spaces held back until a non-space byte follows
+them, which is the trim the whole line used to get. A layout the check
+refuses — any piece that would start before the end of the one before
+it, or run past the width; a truncation marker whose position clamps at
+zero and overlaps the field it marks is the common one — takes the byte
+buffer as before, in the write order that path was defined with. The truncation marker is written
+before its field in the streaming order, since that is where it sits in
+the line.
+
+Outputs are identical to the previous build across 87 invocations — the
+default, `-G -O -T -A -r -R -f -w -g -W -F -S`, `--format=roff`, `-i`
+and `-o` with real lists, and their combinations, over three inputs —
+and `TestPtxParity` passes under both compilers. Release builds under
+callgrind and hyperfine, a 4-core container, 20 runs:
+
+| workload | before (Ir) | after (Ir) | before (ms) | after (ms) | gnu (ms) |
+|---|---:|---:|---:|---:|---:|
+| `ptx` 300 kB of prose | 731,629,742 | 555,371,349 | 110.8 | 88.4 | 31.2 |
+| `ptx` 120k words | 2,405,170,749 | 1,793,939,852 | 276.5 | 209.8 | 44.6 |
+
+What remains on the words row is `word_at`'s binary searches (12.5%),
+`norm` (7.7%), `key_less` (6.6%) and the sort (5.4%): the per-read cost
+of #8822 again, over ~17 probes per field cut.
 
 ### ls, 2026-09-14, Linux x86-64 (GNU coreutils 9.4, uutils 0.0.24)
 

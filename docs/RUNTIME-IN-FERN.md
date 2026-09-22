@@ -950,8 +950,12 @@ machinery) are infrastructure, not migration targets.
 `poll` has since moved too — the second `__syscall5` consumer, and the one that
 shows why the primitive was needed: x86-64 calls three-argument `poll(2)` while
 arm64 Linux has only `ppoll`, which takes five and wants a `timespec` instead of
-a millisecond count. Darwin has neither in reach and answers -1, as its hand-asm
-did.
+a millisecond count. Darwin now uses `kqueue` and six-argument `kevent` through
+the same Fern runtime floor (#9853). Its temporary event lists share one owned
+buffer, and every wait closes its kqueue. Native Apple Silicon execution tests
+cover pipe and TCP readiness, timeout/error paths, duplicate descriptors,
+descriptor cleanup and balanced allocation counts. A persistent worker-owned
+reactor remains a separate P0 step.
 
 `__syscall5` **has since landed**, with `sleep_ms` as its first consumer — the
 leaf whose two targets disagree on the call itself, not just the number: Linux

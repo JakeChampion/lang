@@ -40,7 +40,7 @@ function main(): i32 { return f(1, 2); }`)
 	body := fnBody(t, asm, "f")
 
 	// The fused form: a `cmp` immediately followed by a conditional jump.
-	if !regexp.MustCompile(`(?m)^\s*cmp e?ax, e?cx\n\s*jge \.LifElse`).MatchString(body) {
+	if !regexp.MustCompile(`(?m)^\s*cmp e?ax, (e?cx|dword ptr \[rbp-16\])\n\s*jge \.LifElse`).MatchString(body) {
 		t.Errorf("expected fused `cmp; jge` for `if (a < b)`, got:\n%s", body)
 	}
 	// The un-fused materialisation must be gone from this function.
@@ -73,7 +73,7 @@ func TestCmpBranchFusionNegation(t *testing.T) {
 	asm := compile(t, `@noinline function f(a: i32, b: i32): i32 { if (!(a < b)) { return 1; } return 2; }
 function main(): i32 { return f(1, 2); }`)
 	body := fnBody(t, asm, "f")
-	if !regexp.MustCompile(`(?m)^\s*cmp e?ax, e?cx\n\s*jl \.LifElse`).MatchString(body) {
+	if !regexp.MustCompile(`(?m)^\s*cmp e?ax, (e?cx|dword ptr \[rbp-16\])\n\s*jl \.LifElse`).MatchString(body) {
 		t.Errorf("expected fused `cmp; jl` for `if (!(a < b))`, got:\n%s", body)
 	}
 }

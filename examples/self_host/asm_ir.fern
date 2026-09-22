@@ -5764,7 +5764,7 @@ function ssa_host_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asm
             s = ssa_push_operand(reg_of, ins.args[i], s);
             i = i + 1;
         }
-        var regs: string[] = ["%rdi", "%rsi", "%rdx", "%r10", "%r8"];
+        var regs: string[] = ["%rdi", "%rsi", "%rdx", "%r10", "%r8", "%r9"];
         var a: i32 = ins.args.len() - 2;
         while (a >= 0) { s = s.write("    popq " + regs[a] + "\n"); a = a - 1; }
         s = s.write("    popq %rax\n    syscall\n");

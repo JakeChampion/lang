@@ -722,10 +722,10 @@ func (s *stackChecker) call(i int, op Op) bool {
 		s.push(kinds...)
 		return true
 
-	case OpCallClosureDirect:
-		s.pop(i, op.Kind, kInt) // env pointer
-		s.popN(i, op.Kind, args, kUnknown)
 	default:
+		// A direct closure call's env pointer is the last of its
+		// arguments: the defunctionalised count and the hoisted target's
+		// parameter list both include it, as the backends read them.
 		s.popN(i, op.Kind, args, kUnknown)
 	}
 

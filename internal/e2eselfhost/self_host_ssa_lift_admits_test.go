@@ -1,9 +1,6 @@
 package e2eselfhost
 
-import (
-	"os/exec"
-	"testing"
-)
+import "testing"
 
 // TestSelfHostSSALiftAdmitsEveryOp pins the production lift's admission
 // census (examples/self_host/ssa_lift_admits_run.fern): every registered IR
@@ -14,22 +11,20 @@ import (
 // that uses it, which is what this gate exists to refuse.
 func TestSelfHostSSALiftAdmitsEveryOp(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	if len(runner) != 0 {
-		t.Skip("ssa_lift_admits_run driver runs natively; skipping under an exec runner")
-	}
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "ssa_lift_admits_run.fern")
 	bin := buildSelfHostBin(t, gcc, dir, "ssa_lift_admits_run.fern", "ssa_lift_admits_run")
 
 	// load, store and call_closure_direct are registered kinds no lowering
 	// produces and no backend has an arm for; they stay unmodelled in
-	// op_pops, so the lift cannot bridge them either.
+	// op_pops, so the lift cannot bridge them either. syscall6 adds one
+	// registered and admitted kind, with seven inputs and one result.
 	const want = "load pops=-1 pushes=1\n" +
 		"store pops=-1 pushes=1\n" +
 		"call_closure_direct pops=-1 pushes=1\n" +
-		"registered=306 declined=3\n"
+		"registered=307 declined=3\n"
 
-	cmd := exec.Command(bin)
+	cmd := runX86_64Bin(runner, bin)
 	out, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("ssa_lift_admits_run: %v\n%s", err, out)

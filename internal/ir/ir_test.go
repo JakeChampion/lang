@@ -3166,3 +3166,31 @@ func TestLowerConditionKeepsIfUnderCoverage(t *testing.T) {
 		})
 	}
 }
+
+// The parser's len-bounded loop pass marks `s[i]` in `while (i < s.len())`
+// Unchecked, and a string index honours it with the no-check helper.
+func TestLowerStringIndexElidesProvenBounds(t *testing.T) {
+	p := lowerSource(t, `function f(s: string): i32 {
+		var t: i32 = 0;
+		var i: i32 = 0;
+		while (i < s.len()) { t = t + (s[i] as i32); i = i + 1; }
+		return t;
+	}`)
+	nc, checked := 0, 0
+	for _, fn := range p.Funcs {
+		if fn.Name != "f" {
+			continue
+		}
+		for _, op := range fn.Ops {
+			if op.Kind == OpCallDirect && op.Str == "__str_idx_nc" {
+				nc++
+			}
+			if op.Kind == OpCallDirect && op.Str == "__str_idx" {
+				checked++
+			}
+		}
+	}
+	if nc != 1 || checked != 0 {
+		t.Errorf("want one __str_idx_nc and no __str_idx, got %d and %d:\n%s", nc, checked, p)
+	}
+}

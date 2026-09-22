@@ -2162,6 +2162,7 @@ var arrIdxInline = map[string]struct {
 	slice   bool
 }{
 	"__str_idx":       {0, true, false}, // single-word string, byte stride
+	"__str_idx_nc":    {0, false, false},
 	"__arr_idx":       {2, true, false}, // stride 4 (i32)
 	"__arr_idx_1":     {0, true, false}, // stride 1 (byte array)
 	"__arr_idx_8":     {3, true, false}, // stride 8 (i64 / pointer)
@@ -2336,6 +2337,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__arr_idx_16":                    emitArrIdxHelperN("__arr_idx_16", 4),
 	"__arr_idx_16_nc":                 emitArrIdxHelperNChecked("__arr_idx_16_nc", 4, false),
 	"__str_idx":                       emitArrIdxHelperN("__str_idx", 0),
+	"__str_idx_nc":                    emitArrIdxHelperNChecked("__str_idx_nc", 0, false),
 	"__slice_idx":                     emitSliceIdxHelper("__slice_idx", 2),
 	"__slice_idx_1":                   emitSliceIdxHelper("__slice_idx_1", 0),
 	"__slice_idx_8":                   emitSliceIdxHelper("__slice_idx_8", 3),

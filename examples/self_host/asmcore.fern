@@ -556,6 +556,8 @@ pub function sysno(t: string, name: string): string {
         if (name == "getdents") { return "344"; }
         if (name == "accept") { return "30"; }
         if (name == "select") { return "93"; }
+        if (name == "kqueue") { return "362"; }
+        if (name == "kevent") { return "363"; }
         if (name == "wait4") { return "7"; }
         if (name == "socket") { return "97"; }
         if (name == "bind") { return "104"; }
@@ -1190,14 +1192,11 @@ pub function rt_src_sleep_ns(t: string): string {
 // arm64 Linux has only ppoll, which takes five and wants a `timespec` rather
 // than a millisecond count — so a non-negative timeout is written into
 // __fern_scratch and a negative one passes NULL, which is ppoll's "block
-// forever". Darwin has neither in a form this reaches, and the hand-asm simply
-// answered -1; that is preserved rather than quietly changed.
+// forever". Darwin uses kqueue through the six-argument syscall floor.
 pub function rt_src_poll(t: string): string {
     var call: string = "";
     if (t == "arm64-darwin") {
-        // No poll on this target — the hand-asm returned -1 before doing any
-        // work, so nothing below it can run.
-        return "function __fern_poll(fds: i32[], timeout_ms: i32): i32 { return 0 - 1; }";
+        return rt_src_poll_kqueue(t);
     }
     if (t == "x86_64") {
         call = "__syscall3(" + sysno(t, "poll") + ", buf, n, timeout_ms);";
@@ -1205,6 +1204,38 @@ pub function rt_src_poll(t: string): string {
         call = "var tmo: i32 = 0; if (timeout_ms >= 0) { var ts: i32 = __raw_scratch(16); __raw_store_ptr(ts, 0, timeout_ms / 1000); __raw_store_ptr(ts, 1, (timeout_ms % 1000) * 1000000); tmo = ts; } __syscall5(" + sysno(t, "ppoll") + ", buf, n, tmo, 0, 0);";
     }
     return "function __fern_poll(fds: i32[], timeout_ms: i32): i32 { var n: i32 = fds.len(); if (n <= 0) { return 0 - 1; } var buf: i32 = __raw_alloc(n * 8); var i: i32 = 0; while (i < n) { __raw_store_ptr(buf, i, fds[i]); __raw_store8(buf, i * 8 + 4, 1); __raw_store8(buf, i * 8 + 5, 0); __raw_store8(buf, i * 8 + 6, 0); __raw_store8(buf, i * 8 + 7, 0); i = i + 1; } " + call + " var buf_own: string = __raw_string(buf, n * 8); var hit: i32 = 0 - 1; var j: i32 = 0; while (j < n) { if (hit < 0) { if ((__raw_load8(buf, j * 8 + 6) & 1) != 0) { hit = j; } } j = j + 1; } return hit; }";
+}
+
+// Darwin kevent records are 32 bytes: ident at 0, filter/flags at 8/10,
+// fflags at 12, data at 16 and udata at 24. One owned allocation holds both
+// lists. Stamp its string owner after the final raw read so every exit frees
+// it, and close the kqueue even when registration or waiting fails.
+// The packed word 4325375 is filter=-1 (EVFILT_READ), flags=65
+// (EV_ADD | EV_RECEIPT), fflags=0. Receipts separate registration errors from
+// readiness; otherwise an invalid fd can hide another fd that is ready.
+// EV_ERROR is bit 14 of flags, hence bit 6 at byte offset 11.
+// Register backwards: kqueue coalesces duplicate descriptors, keeping the
+// last udata. Reversing makes that the lowest caller index, as poll requires.
+function rt_src_poll_kqueue(t: string): string {
+    return "function __fern_poll(fds: i32[], timeout_ms: i32): i32 { "
+        + "var n: i32 = fds.len(); if (n <= 0 || n > 33554431) { return 0 - 1; } "
+        + "var count: i32 = 0; for fd in fds { if (fd >= 0) { count = count + 1; } } if (count == 0) { return 0 - 1; } "
+        + "var kq: i32 = __syscall3(" + sysno(t, "kqueue") + ", 0, 0, 0); if (kq < 0) { return 0 - 1; } "
+        + "var buf: i32 = __raw_alloc(count * 64); var events: i32 = __raw_addr(buf, count * 32); "
+        + "var i: i32 = n - 1; var c: i32 = 0; while (i >= 0) { if (fds[i] >= 0) { "
+        + "__raw_store_ptr(buf, c * 4, fds[i]); __raw_store_ptr(buf, c * 4 + 1, 4325375); "
+        + "__raw_store_ptr(buf, c * 4 + 2, 0); __raw_store_ptr(buf, c * 4 + 3, i); c = c + 1; } i = i - 1; } "
+        + "var ts: i32 = __raw_scratch(16); __raw_store_ptr(ts, 0, 0); __raw_store_ptr(ts, 1, 0); "
+        + "var receipts: i32 = __syscall6(" + sysno(t, "kevent") + ", kq, buf, count, events, count, ts); "
+        + "var valid: i32 = 0; var r: i32 = 0; var wait_ms: i32 = timeout_ms; while (r < receipts) { "
+        + "if (__raw_load_ptr(events, r * 4 + 2) == 0) { valid = valid + 1; } else { wait_ms = 0; } r = r + 1; } "
+        + "var got: i32 = 0; if (valid > 0) { var tmo: i32 = 0; if (wait_ms >= 0) { "
+        + "__raw_store_ptr(ts, 0, wait_ms / 1000); __raw_store_ptr(ts, 1, (wait_ms % 1000) * 1000000); tmo = ts; } "
+        + "got = __syscall6(" + sysno(t, "kevent") + ", kq, 0, 0, events, count, tmo); } "
+        + "__syscall3(" + sysno(t, "close") + ", kq, 0, 0); var hit: i32 = 0 - 1; var j: i32 = 0; "
+        + "while (j < got) { if ((__raw_load8(events, j * 32 + 11) & 64) == 0) { "
+        + "var idx: i32 = __raw_load_ptr(events, j * 4 + 3); if (hit < 0 || idx < hit) { hit = idx; } } j = j + 1; } "
+        + "var buf_own: string = __raw_string(buf, count * 64); return hit; }";
 }
 
 // rt_src_proc_waitpid backs `proc_waitpid(pid)` (#2649, syscall-leaf) — reap a
@@ -4652,6 +4683,7 @@ function builtin_i32_names(): string[] {
         "__syscall3",
         "__syscall4",
         "__syscall5",
+        "__syscall6",
         "__raw_environ",
         // Fixed static scratch buffer for syscall leaves (timespec /
         // stat) — reused, never freed. Returns the buffer ptr as i32.

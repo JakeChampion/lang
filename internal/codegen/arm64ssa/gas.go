@@ -1365,6 +1365,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_map_hash_seed":      emitMapHashSeedHelper,
 	"__alloc_reuse":             emitAllocReuseHelper,
 	"__str_idx":                 emitStrIdxHelper,
+	"__str_idx_nc":              emitArrIdxHelperNChecked("__str_idx_nc", 0, false),
 	"__fern_memchr":             emitMemchrHelper,
 	"__fern_mismatch":           emitMismatchHelper,
 	"__fern_rmemchr":            emitRmemchrHelper,
@@ -10820,6 +10821,7 @@ var arrIdxInline = map[string]struct {
 	slice   bool
 }{
 	"__str_idx":       {0, true, false}, // single-word string, byte stride
+	"__str_idx_nc":    {0, false, false},
 	"__arr_idx":       {2, true, false}, // stride 4 (i32)
 	"__arr_idx_1":     {0, true, false}, // stride 1 (byte array)
 	"__arr_idx_8":     {3, true, false}, // stride 8 (i64 / pointer)

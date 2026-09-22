@@ -27,7 +27,9 @@ function main(): i32 {
 	lines := strings.Split(asm, "\n")
 	leas := 0
 	for i, l := range lines {
-		if strings.TrimSpace(l) != "lea rax, [rax + rcx*4]" {
+		// The scaled address: the helper's `lea`, or the load P13 folded
+		// it into.
+		if !strings.HasSuffix(strings.TrimSpace(l), "[rax + rcx*4]") {
 			continue
 		}
 		leas++
@@ -47,7 +49,7 @@ function main(): i32 {
 		}
 	}
 	if leas == 0 {
-		t.Fatalf("no scaled index lea found; asm:\n%s", asm)
+		t.Fatalf("no scaled index address found; asm:\n%s", asm)
 	}
 }
 
