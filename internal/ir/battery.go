@@ -80,6 +80,9 @@ func OptimizeFunctions(prog *Program) {
 	ChainConditions(prog)
 	// FuseTee folds store+reload into OpTeeLocal.
 	FuseTee(prog)
+	// An in-loop `a = a.with(i, v)` asks whether `a` is its own once, before
+	// the loop, rather than on every write. Reads the tee'd shape.
+	HoistUniquenessGuards(prog)
 	// DCE precedes FlattenBranches because flattening requires the
 	// then-arm's last op before its OpEnd to BE the return: a dead tail
 	// after that return disqualifies the arm, so sweeping first is what
