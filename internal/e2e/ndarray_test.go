@@ -186,6 +186,28 @@ function main(): i32 {
 	var total: i64 = a.fold_all(0 as i64, (acc: i64, x: i64): i64 => acc + x);
 	if (one.rank() != 0 || one.get([]) != total || total != ((n * n) as i64) * ((n * n - 1) as i64) / (2 as i64)) { return 135; }
 
+	// The axis folds' PACKED arm: three counters enumerate data[0..n) and the
+	// lane is h * inner + l, so neither addr_of nor lane_of nor bump runs.
+	// Every order-sensitive axis case above is over a strided or reversed
+	// handle, and the one packed reduce_axis adds, which is commutative, so
+	// nothing else here pins this arm's order or its lane arithmetic.
+	var ax: ndarray.NdArray[i64] = ndarray.from_flat([1 as i64, 2 as i64, 3 as i64, 4 as i64, 5 as i64, 6 as i64], [2, 3]);
+	if (!ax.is_packed()) { return 138; }
+	// Along the LAST axis, inner == 1, so a lane is a contiguous run.
+	var axl: ndarray.NdArray[i64] = ax.reduce_axis(1, 0 as i64, (acc: i64, x: i64): i64 => acc * (10 as i64) + x);
+	if (axl.rank() != 1 || axl.get([0]) != 123 as i64 || axl.get([1]) != 456 as i64) { return 138; }
+	// Along axis 0, inner == 3, so consecutive elements belong to DIFFERENT
+	// lanes — which is the half of the lane arithmetic the last axis cannot
+	// exercise. Every lane is checked.
+	var axf: ndarray.NdArray[i64] = ax.reduce_axis(0, 0 as i64, (acc: i64, x: i64): i64 => acc * (10 as i64) + x);
+	if (axf.rank() != 1 || axf.get([0]) != 14 as i64 || axf.get([1]) != 25 as i64 || axf.get([2]) != 36 as i64) { return 138; }
+	// scan_axis writes in reading order, so its output position is pinned as
+	// well as its lane, on both a strided axis and the contiguous one.
+	var axs: ndarray.NdArray[i64] = ax.scan_axis(0, 0 as i64, (acc: i64, x: i64): i64 => acc * (10 as i64) + x);
+	if (axs.rank() != 2 || axs.get([0, 2]) != 3 as i64 || axs.get([1, 0]) != 14 as i64 || axs.get([1, 2]) != 36 as i64) { return 139; }
+	var axs1: ndarray.NdArray[i64] = ax.scan_axis(1, 0 as i64, (acc: i64, x: i64): i64 => acc * (10 as i64) + x);
+	if (axs1.get([0, 0]) != 1 as i64 || axs1.get([0, 2]) != 123 as i64 || axs1.get([1, 1]) != 45 as i64) { return 139; }
+
 	// Broadcasting: a stretched axis is stride 0, so broadcast_to is
 	// metadata, and zip_with over a row, a column and a scalar allocates
 	// the one result buffer.

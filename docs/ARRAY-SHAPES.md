@@ -394,9 +394,13 @@ Three rules follow:
   that reassociates it is wrong, not fast. A packed handle takes a
   DIRECT-INDEX walk rather than the odometer — element `i` of the reading
   order is `data[i]` when `data` is the reading order — and owes the same
-  order by the same rule. `map`, `fold_all` and `zip_with` take it;
-  the axis verbs walk per lane rather than in reading order and still
-  run the odometer. `zip_with` asks the predicate of BOTH operands and
+  order by the same rule. `map`, `fold_all`, `zip_with`, `reduce_axis` and
+  `scan_axis` all take it; `map_rank` still runs the odometer. The axis
+  folds walk in reading order like the rest (see the next rule), so what
+  they need on top is the LANE: with `inner` the product of the extents
+  after `axis` and `outer` the product before it, three counters enumerate
+  the reading order and the lane is `h * inner + l`, which costs the same
+  whichever axis is named. `zip_with` asks the predicate of BOTH operands and
   asks it AFTER broadcasting, which needs no separation of the broadcast
   case: §2's rule means an operand whose reading order a broadcast
   changed already fails it. The e2e gate holds both arms with an
@@ -404,7 +408,11 @@ Three rules follow:
   the prepending broadcast of §2 that stays packed; a commutative `add`
   cannot tell them apart, which is why the fold that
   guards this multiplies by ten, and why the packed `zip_with` case pins
-  every position under an element function that is not symmetric.
+  every position under an element function that is not symmetric. The
+  packed axis folds are pinned on two axes, not one: along the last axis
+  a lane is a contiguous run, so only a fold along an earlier axis — where
+  consecutive elements belong to DIFFERENT lanes — can catch the lane
+  arithmetic being wrong.
 - **`reduce_axis` is lane-sized.** It walks the input once in reading
   order and keeps one accumulator per lane (the row-major position in the
   shape with `axis` removed), so its allocation is the result, never a
