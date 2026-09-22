@@ -130,10 +130,6 @@ compiled program's speed and hands its text to a separate assembler; the
 self-host's headline metric includes assembling the text. Price a port against
 this figure before building it.
 
-The same arithmetic run backwards is why the peephole is worth investing in:
-`peephole_push_pop` costs ~1,100 Ir per line to run and saves ~21,425 for each
-line it deletes.
-
 This is what made it practical to run all 335 fixtures through the self-host
 compiler:
 

@@ -82,6 +82,57 @@ The unwind test lost its flat leg, `-backend flat` is pinned refused on the
 native ISAs and accepted on wasm, and the tests that read `.Lir_` labels
 as "went through the IR" read `.Lssa_`.
 
+## The peepholes went with it
+
+`peephole_push_pop` (x86-64) and `peephole_push_pop_arm64` were text
+post-passes over the stack machine's output: every op pushed its result and
+the next op popped it, and the passes folded the adjacent pair into the move
+it was, then grew rules for the constant-into-ALU and argument-setup shapes
+around it (P1–P7). The register path never round-trips an operand through
+the stack, so on its output there was almost nothing left to fold — the
+compiler's own source, with and without the pass:
+
+| | without | with |
+|---|---|---|
+| x86-64-linux | 3,242,794 lines | 3,242,604 (190 fewer) |
+| arm64-linux | 3,190,957 lines | 3,188,217 (2,740 fewer) |
+
+Both passes are deleted (1,490 lines), with asmcore's byte scanners that
+only they read and the `TestSelfHostPeepholePushPop*` postcondition tests.
+The residual pairs are the flat-op bridge's own push-then-pop around an
+`emit_stack_op` arm; if they are ever worth removing, the fix is in the
+bridge, not a scanner over the text.
+
+The shape gates that pinned the peepholes' rewrites
+(`TestSelfHostConstOperandReachesImmediateForm*`,
+`TestSelfHostConstZeroExtendedFormX86_64`,
+`TestSelfHostI64ConstantTakesMovzFormArm64`) now pin the register path's
+own instruction selection for the same programs — the immediate operand,
+its width refusals, the constant forms — with the register left open in
+each pattern. The P5/P6/P7 gates (operand-stack round trips around a call
+or a store) had no subject left and are gone. Two selection gaps the
+rewrite exposed are fixed:
+
+- x86-64 materialised a constant into any register but `%r11` as `movq $K,
+  %reg`, so `2147483648` became a ten-byte movabs where `movl $K, %e..`
+  (five bytes, zero-extending) holds it, and `0` was never the self-xor.
+  `ssa_const_reg` now applies the one set of forms to every register.
+- `ssa.imm_operands` refused BOTH operands of a two-constant op as
+  immediates, so `0i64 - 5i64` — how Fern spells a negative literal — cost
+  two moves and a register subtraction on both ISAs. The right operand is
+  now the immediate and the left keeps the register.
+
+One gap is recorded, not fixed: arm64 P4 accepted a multiple of 4096 up to
+`0xFFF000` as an add/sub/cmp immediate (imm12's shifted form) and
+`ssa.imm_operands` takes one `lo..hi` range for every op, so `x - 4096` is
+a `mov` and a register subtract. A per-op predicate in `imm_operands` is
+the shape of the fix; the gate pins the boundary at 4095 meanwhile.
+
+The arm64 sysno assertions (`TestSelfHostSignalDispositionIRArm64`,
+`TestSelfHostPollIRArm64`) read `mov x0, #N` followed by its push, the
+stack machine's operand shape; they now read the number materialised in
+whichever register the allocator chose and that register pushed.
+
 ## Found on the way
 
 The `floats` differential program called `f32_bits` on an f64. Native
