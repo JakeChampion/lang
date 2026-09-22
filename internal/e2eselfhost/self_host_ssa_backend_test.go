@@ -317,7 +317,7 @@ function convs(n: i32, u: u32, w: i64, v: u64): i64 {
 function bits(x: f64): i64 {
     var b: i64 = f64_bits(x);
     var y: f64 = f64_from_bits(b + 1);
-    var h: i32 = f32_bits(y);
+    var h: i32 = f32_bits(y as f32);
     var zf: f32 = f32_from_bits(h);
     var z: f64 = zf as f64;
     return b + (z as i64) + (h as i64) % 7;
