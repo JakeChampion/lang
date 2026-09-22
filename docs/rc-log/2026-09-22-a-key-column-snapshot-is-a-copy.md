@@ -109,3 +109,38 @@ with no `use-after-free` on stderr.
 
 That it can FAIL was checked rather than assumed: with `irlower.fern` reverted
 it reports `exit = 124, want 24` and the sanitizer line.
+
+
+## Both columns, and the raw alias is gone
+
+Review on #9965 found the values branch of the same function carrying the same
+bug, and checking it turned up a third instance one arm further along. The
+function classified three shapes and got two of them wrong:
+
+| column | was | is |
+| --- | --- | --- |
+| string key, i32 value, string value | 2 / 0 / 2 | unchanged |
+| struct or enum key | **1** | 2 |
+| record, union, array, tuple value | **1** | 2 |
+| i64 / u64 / f64 / u8 / u32 / bool value | **1** | 0 |
+
+Flag 1 — a raw alias of the map's live buffer — is no longer emitted for any
+value column, and the rule that replaces it is simpler than the enumeration it
+replaces: a snapshot always COPIES, and what it copies decides only whether each
+element is also retained. A pointer column retains (2), a cell column does not
+(0). The op's own widekind, not this flag, is what makes an 8-byte cell copy
+whole.
+
+Both new arms abort under the sanitizer before the fix and answer correctly
+after: a `Map[i32, Coord]` read through `values()` and a `Map[i32, i64]` read
+the same way each gave 124 with `use-after-free`, where the interpreter answers
+24.
+
+## What this is NOT
+
+A map keyed by any integer other than `i32` is a different bug and this does not
+touch it. `map_key_kind_of` matches the literal spelling `Map[i32,` and hands
+every other integer key the STRING key kind, so the runtime dereferences the
+key's value: `Map[u8, i32]` and `Map[u32, i32]` segfault and `Map[i64, i32]`
+answers wrong, all three without any `keys()` or `values()` call at all. #9973,
+pre-existing on merged main.
