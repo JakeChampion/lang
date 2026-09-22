@@ -307,6 +307,31 @@ function main(): i32 {
 	var none: ndarray.NdArray[i64] = ndarray.from_flat([] as i64[], [0, 3]).map_rank(1,
 		(row: ndarray.NdArray[i64]): ndarray.NdArray[i64] => ndarray.from_flat([row.get([0])], []));
 	if (none.rank() != 1 || none.shape()[0] != 0 || none.len() != 0) { return 168; }
+	// A packed cell is the handle with its offset moved to i * csize, so the
+	// two terms of that offset need a shape where both are non-trivial. Every
+	// map_rank case above has either a rank-1 frame or a single-element cell,
+	// never both a multi-axis frame and a cell wider than one element. Rank 3
+	// at k = 1 has frame [2,2] and cell [2], and pins each cell's contents in
+	// order as well as the order the cells arrive in.
+	var mr3: ndarray.NdArray[i64] = ndarray.from_flat(
+		[1 as i64, 2 as i64, 3 as i64, 4 as i64, 5 as i64, 6 as i64, 7 as i64, 8 as i64], [2, 2, 2]);
+	var mr3c: ndarray.NdArray[i64] = mr3.map_rank(1, (c: ndarray.NdArray[i64]): ndarray.NdArray[i64] =>
+		ndarray.from_flat([c.get([0]) * (10 as i64) + c.get([1])], []));
+	if (mr3c.rank() != 2 || mr3c.get([0, 0]) != 12 as i64 || mr3c.get([0, 1]) != 34 as i64) { return 169; }
+	if (mr3c.get([1, 0]) != 56 as i64 || mr3c.get([1, 1]) != 78 as i64) { return 169; }
+	// A packed handle can carry a non-canonical stride on an extent-1 axis:
+	// is_row_major skips those (§2), so reversing one leaves the handle
+	// packed. Elements never step along such an axis, so every read agrees —
+	// but strides() is public, and the cell the select chain produced kept
+	// a.strides verbatim. The direct build has to slice, not recompute.
+	var mrs: ndarray.NdArray[i64] = ndarray.from_flat(
+		[1 as i64, 2 as i64, 3 as i64, 4 as i64], [2, 2, 1]).reverse(2);
+	if (!mrs.is_packed()) { return 170; }
+	var mrsc: ndarray.NdArray[i64] = mrs.map_rank(1, (c: ndarray.NdArray[i64]): ndarray.NdArray[i64] =>
+		ndarray.from_flat([(c.strides()[0]) as i64, c.get([0])], [2]));
+	if (mrsc.rank() != 3 || mrsc.get([0, 0, 0]) != (0 as i64) - (1 as i64)) { return 170; }
+	if (mrsc.get([0, 0, 1]) != 1 as i64 || mrsc.get([1, 1, 1]) != 4 as i64) { return 170; }
+	if (mrsc.get([1, 1, 0]) != (0 as i64) - (1 as i64)) { return 170; }
 
 	// The keep-alive: every buffer measured above is still held here.
 	var live: i32 = t.rank() + rv.rank() + sl.rank() + se.rank() + pm.rank() + col.rank()
