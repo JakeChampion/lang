@@ -1852,11 +1852,19 @@ pub function strerror_text(t: string, i: i32): string {
     return strerror_texts()[i];
 }
 
+// strerror_unknown_prefix is what precedes the number for an errno past the
+// table, on register target t. Darwin's carries a colon — Apple's Libc builds
+// it in string/FreeBSD/strerror.c's __errstr, as UPREFIX then ": ".
+pub function strerror_unknown_prefix(t: string): string {
+    if (t == "arm64-darwin") { return "Unknown error: "; }
+    return "Unknown error ";
+}
+
 // strerror_unknown_src is the runtime-sub-language tail that returns
-// `Other(path, "Unknown error N")` for an errno past the table — glibc's
-// spelling: count the digits, then write them in from the end.
-function strerror_unknown_src(): string {
-    var pfx: string = "Unknown error ";
+// `Other(path, "Unknown error N")` for an errno past the table: count the
+// digits, then write them in from the end.
+function strerror_unknown_src(t: string): string {
+    var pfx: string = strerror_unknown_prefix(t);
     var plen: string = util.i32_to_string(pfx.len());
     var src: string = "var ndig: i32 = 1; var tt: i32 = e; while (tt >= 10) { ndig = ndig + 1; tt = tt / 10; } var total: i32 = " + plen + " + ndig; var buf: i32 = __raw_alloc(total);";
     var k: i32 = 0;
@@ -1910,7 +1918,7 @@ pub function rt_src_io_error(t: string): string {
         }
         i = i + 1;
     }
-    return src + " " + strerror_unknown_src() + " }";
+    return src + " " + strerror_unknown_src(t) + " }";
 }
 
 // rt_src_utf8_valid is read_file's strict D9 well-formedness scan (#5714),

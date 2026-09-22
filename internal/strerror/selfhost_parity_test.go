@@ -98,6 +98,22 @@ func TestSelfHostTableMatches(t *testing.T) {
 	}
 }
 
+// TestSelfHostUnknownPrefixMatches pins the self-host's unknown-errno
+// prefix pair, which is the one piece of the table that is not a row.
+func TestSelfHostUnknownPrefixMatches(t *testing.T) {
+	src := readSelfHost(t)
+	m := regexp.MustCompile(`(?s)pub function strerror_unknown_prefix\(t: string\): string \{.*?if \(t == "arm64-darwin"\) \{ return "([^"]*)"; \}\s*return "([^"]*)";`).FindStringSubmatch(src)
+	if m == nil {
+		t.Fatalf("no strerror_unknown_prefix() found in %s — the extraction pattern has gone stale, which would make this test vacuous", selfHostSrc)
+	}
+	if m[1] != DarwinUnknownPrefix {
+		t.Errorf("the self-host says %q on darwin, Go says %q", m[1], DarwinUnknownPrefix)
+	}
+	if m[2] != UnknownPrefix {
+		t.Errorf("the self-host says %q off darwin, Go says %q", m[2], UnknownPrefix)
+	}
+}
+
 // TestSelfHostWasiErrorCodesMatch pins the preview-2 error-code
 // translation the self-host wasm emitter bakes into
 // $__fern_build_io_error_p2.

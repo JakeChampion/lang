@@ -165,12 +165,26 @@ var Table = []Entry{
 }
 
 // UnknownPrefix precedes the number in the text for an errno outside
-// Table; the runtimes build that text from it at run time.
-const UnknownPrefix = "Unknown error "
+// Table; the runtimes build that text from it at run time. This is
+// glibc's spelling — Darwin's is DarwinUnknownPrefix, which carries a
+// colon (Apple's Libc builds it in string/FreeBSD/strerror.c's
+// __errstr, as UPREFIX then ": " then the digits).
+const (
+	UnknownPrefix       = "Unknown error "
+	DarwinUnknownPrefix = "Unknown error: "
+)
 
-// Unknown is the text for an errno outside Table, glibc's spelling.
-func Unknown(errno int) string {
-	return UnknownPrefix + strconv.Itoa(errno)
+// UnknownPrefixFor is the prefix on os.
+func UnknownPrefixFor(os string) string {
+	if os == Darwin {
+		return DarwinUnknownPrefix
+	}
+	return UnknownPrefix
+}
+
+// Unknown is the text os gives for an errno outside Table.
+func Unknown(os string, errno int) string {
+	return UnknownPrefixFor(os) + strconv.Itoa(errno)
 }
 
 // Text is strerror(errno) on os.
@@ -180,7 +194,7 @@ func Text(os string, errno int) string {
 			return e.TextFor(os)
 		}
 	}
-	return Unknown(errno)
+	return Unknown(os, errno)
 }
 
 // Number is the errno named name on os, or 0 when os has none.

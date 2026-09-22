@@ -140,6 +140,9 @@ func TestTextAndDense(t *testing.T) {
 	if got := Text(Linux, 999); got != "Unknown error 999" {
 		t.Errorf("Text(linux, 999) = %q", got)
 	}
+	if got := Text(Darwin, 999); got != "Unknown error: 999" {
+		t.Errorf("Text(darwin, 999) = %q — Darwin's unknown-errno text carries a colon", got)
+	}
 	if got := Text(Linux, 0); got != "Unknown error 0" {
 		t.Errorf("Text(linux, 0) = %q — errno 0 must not match an entry that has no Linux number", got)
 	}
@@ -148,7 +151,7 @@ func TestTextAndDense(t *testing.T) {
 		for n, text := range dense {
 			if want := Text(os, n); text != "" && text != want {
 				t.Errorf("Dense(%s)[%d] = %q, Text = %q", os, n, text, want)
-			} else if text == "" && !strings.HasPrefix(want, "Unknown error ") {
+			} else if text == "" && !strings.HasPrefix(want, "Unknown error") {
 				t.Errorf("Dense(%s)[%d] is empty but Text = %q", os, n, want)
 			}
 		}
