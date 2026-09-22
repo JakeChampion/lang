@@ -48,7 +48,7 @@ function ts_op_method(op: string): string {
 }
 
 // ts_op_is_arithmetic reports whether `op` dispatches to a method that
-// ts_arith_kept resolves by receiver, so its root is worth qualifying.
+// ts_recv_kept resolves by receiver, so its root is worth qualifying.
 //
 // True for the arithmetic operators and false for the comparisons. The
 // comparisons are not worth qualifying: measured on a minimal std/string
@@ -59,13 +59,13 @@ function ts_op_is_arithmetic(op: string): boolean {
     return op == "+" || op == "-" || op == "*" || op == "/" || op == "%";
 }
 
-// ts_recv_tag is the type an operator's root is qualified by: the type of the
-// OPERAND, which is what ts_arith_kept matches against a method's
-// receiver_type. Not the type of the whole expression — those differ exactly
-// where a composite operator overload does not return Self, and `a * b` whose
-// `mul` returns f64 would look for `f64|mul` while the method that implements
-// it is `V.mul`. Every failing case of that shape is a scalar-returning
-// overload.
+// ts_recv_tag is the type a receiver-qualified root is qualified by — an
+// operator's operand, or a display argument: the type of that OPERAND, which
+// is what ts_recv_kept matches against a method's receiver_type. Not the type
+// of the whole expression — those differ exactly where a composite operator
+// overload does not return Self, and `a * b` whose `mul` returns f64 would
+// look for `f64|mul` while the method that implements it is `V.mul`. Every
+// failing case of that shape is a scalar-returning overload.
 //
 // "" for the forms annotate_module does not stamp, and under a driver that
 // never runs it at all (asm_load_run, asm_modload_run) — the caller falls back
@@ -93,13 +93,57 @@ function ts_qualified_root(tag: string, method: string): string {
     return tag + "|" + method;
 }
 
-// ts_arith_method reports whether `name` is one of the six methods the
-// arithmetic operators dispatch to — the only names ts_kept_name resolves by
-// receiver. Every other function matches exactly as it did before qualification
-// existed, which is what bounds this change to what was measured.
-function ts_arith_method(name: string): boolean {
+// ts_recv_rooted reports whether `name` is a method ts_kept_name resolves by
+// receiver: the six the arithmetic operators dispatch to, and the `to_string` a
+// display argument dispatches to. Every other function matches exactly as it
+// did before qualification existed, which is what bounds this to what was
+// measured.
+function ts_recv_rooted(name: string): boolean {
     return name == "add" || name == "sub" || name == "mul"
-        || name == "div" || name == "rem" || name == "neg";
+        || name == "div" || name == "rem" || name == "neg"
+        || name == "to_string";
+}
+
+// ts_display_root contributes the `to_string` a `print` / `write` / `eprint`
+// argument dispatches to. irlower's display_arg rewrites that argument to
+// `<arg>.to_string()` AFTER this pass, so the method is reached by a call site
+// the source never spells — the same shape as a Drop finalizer or a derived
+// method, and without a root here it is pruned and the pre-codegen Display gate
+// refuses a program native compiles (#9989).
+//
+// Qualified by the argument's stamped type where there is one, so the root
+// keeps that type's `to_string` rather than every type's, and bare — over-
+// keeping, sound — under a driver that does not annotate, which is the same
+// fallback the operator roots take. A string argument passes through
+// unrewritten and needs no root at all; its literal forms are recognised
+// syntactically, ts_recv_tag carrying no tag for them.
+function ts_display_root(c: ast.ExprCall, own acc: string[]): string[] {
+    if (c.args.len() != 1) { return acc; }
+    match (c.callee) {
+        ast.ExprIdent(id) => {
+            if (id.name != "print" && id.name != "write" && id.name != "eprint") { return acc; }
+            var r: string = ts_display_root_name(c.args[0]);
+            if (r.len() == 0) { return acc; }
+            return acc.append(r);
+        },
+        _ => { return acc; }
+    }
+    return acc;
+}
+
+// ts_display_root_name is the root above, or "" when the argument needs none.
+function ts_display_root_name(arg: ast.Expr): string {
+    match (arg) {
+        ast.ExprString(_) => { return ""; },
+        ast.ExprFString(_) => { return ""; },
+        _ => {
+            var tag: string = util.base_type_name(ts_recv_tag(arg));
+            if (tag == "string") { return ""; }
+            if (tag.len() > 0) { return ts_qualified_root(tag, "to_string"); }
+            return "to_string";
+        }
+    }
+    return "";
 }
 
 // ts_name_of contributes the names ONE node could reference; astwalk's fold
@@ -139,7 +183,7 @@ function ts_name_of(e: ast.Expr, own acc: string[]): string[] {
         ast.ExprNumber(_) => { return acc; },
         ast.ExprString(_) => { return acc; },
         ast.ExprBool(_) => { return acc; },
-        ast.ExprCall(_) => { return acc; },
+        ast.ExprCall(c) => { return ts_display_root(c, acc); },
         ast.ExprArray(_) => { return acc; },
         ast.ExprTuple(_) => { return acc; },
         ast.ExprMapLit(_) => { return acc; },
@@ -216,18 +260,18 @@ function ts_interposed_method_name(name: string): string {
     return slice_unchecked(name, last_dot + 1, name.len()) + "";
 }
 
-// ts_arith_kept resolves the six arithmetic methods BY RECEIVER, which is the
-// half of the operator over-approximation worth removing: a bare `add` root
-// keeps `add` for every type in the program, and on a minimal std/string
-// program that is 24 functions — 12 of them core/bigint's `BigInt.add` / `sub`
-// / `negate` and the `__bi_*` helpers behind them, reached by nothing the
-// program does (§4f).
+// ts_recv_kept resolves a method BY RECEIVER, which is the half of an
+// over-approximated root worth removing: a bare `add` root keeps `add` for
+// every type in the program, and on a minimal std/string program that is 24
+// functions — 12 of them core/bigint's `BigInt.add` / `sub` / `negate` and the
+// `__bi_*` helpers behind them, reached by nothing the program does (§4f). The
+// six arithmetic methods and `to_string` are the names rooted this way.
 //
 // A receiver spelled as the decl's OWN type parameter is a template no concrete
 // tag can name — monomorph instantiates it after this pass — so it is kept
 // rather than resolved. `base_type_name` strips the argument list, so
 // `impl Add for Box[T]` resolves on `Box`, which is the tag a struct carries.
-function ts_arith_kept(fd: parser.FuncDecl, refs: RefSet): boolean {
+function ts_recv_kept(fd: parser.FuncDecl, refs: RefSet): boolean {
     if (fd.receiver_type.len() == 0) { return false; }
     var base: string = util.base_type_name(fd.receiver_type);
     if (base.len() == 0) { return false; }
@@ -282,14 +326,14 @@ function refset_add(rs: RefSet, name: string): RefSet {
 // ts_kept_name reports whether `fd` is reachable: by exact name, by the method
 // name an array-method helper dispatches from, by the one an interposed method
 // was renamed away from — each a name the syntax spells where the FUNCTION does
-// not — or, for an arithmetic method only, by its receiver type.
+// not — or, for a receiver-rooted method only, by its receiver type.
 function ts_kept_name(fd: parser.FuncDecl, refs: RefSet): boolean {
     if (refset_has(refs, fd.name)) { return true; }
     var m: string = ts_array_method_name(fd.name);
     if (m.len() > 0 && refset_has(refs, m)) { return true; }
     var im: string = ts_interposed_method_name(fd.name);
     if (im.len() > 0 && refset_has(refs, im)) { return true; }
-    return ts_arith_method(fd.name) && ts_arith_kept(fd, refs);
+    return ts_recv_rooted(fd.name) && ts_recv_kept(fd, refs);
 }
 
 // treeshake returns `mod` with `mod.funcs` pruned to those reachable, by name,
