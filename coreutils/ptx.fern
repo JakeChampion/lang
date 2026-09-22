@@ -317,7 +317,7 @@ struct Words { starts: i32[], ends: i32[] }
 
 struct Lines { starts: i32[], ends: i32[], ref_end: i32[], text: i32[], nums: i32[] }
 
-struct Occ { key: string, kw_start: i32, kw_end: i32, ctx_start: i32, ctx_end: i32, ref: string }
+struct Occ { kw_start: i32, kw_end: i32, ctx_start: i32, ctx_end: i32, ref: string }
 
 // `word_at(w, p)` — the word STRICTLY containing `p` (start < p < end),
 // or (-1, -1). A cut landing there is moved out of the word; a cut on a
@@ -620,21 +620,31 @@ function line_of(l: Lines, p: i32): i32 {
 // ---- sorting ----------------------------------------------------------------
 // Byte order over the keyword, folded when -f asks, and ties left in
 // input order — a bottom-up stable merge over indices.
-function key_less(a: string, b: string): boolean {
-  var n: i32 = a.len();
-  if (b.len() < n) {
-    n = b.len();
+// The sort key is the keyword, and the keyword is a span of the one
+// buffer, so the comparison reads it there. Materialising it cost a
+// string per occurrence whose only use was this, and -f cost a second
+// one; folding a byte at a time as they are compared is the same order.
+function key_less(buf: string, a_start: i32, a_end: i32, b_start: i32, b_end: i32, fold: boolean): boolean {
+  var an: i32 = a_end - a_start;
+  var bn: i32 = b_end - b_start;
+  var n: i32 = an;
+  if (bn < n) {
+    n = bn;
   }
   var i: i32 = 0;
   while (i < n) {
-    var x: i32 = a[i] as i32;
-    var y: i32 = b[i] as i32;
+    var x: i32 = buf[a_start + i] as i32;
+    var y: i32 = buf[b_start + i] as i32;
+    if (fold) {
+      x = upper(x);
+      y = upper(y);
+    }
     if (x != y) {
       return x < y;
     }
     i = i + 1;
   }
-  return a.len() < b.len();
+  return an < bn;
 }
 
 function scratch(n: i32): i32[] {
@@ -647,7 +657,7 @@ function scratch(n: i32): i32[] {
   return out;
 }
 
-function sort_occs(occs: Occ[]): i32[] {
+function sort_occs(buf: string, occs: Occ[], fold: boolean): i32[] {
   var n: i32 = occs.len();
   var src: i32[] = scratch(n);
   var i: i32 = 0;
@@ -675,7 +685,7 @@ function sort_occs(occs: Occ[]): i32[] {
       var a: i32 = start;
       var b: i32 = mid;
       while (a < mid && b < end) {
-        if (key_less(occs[src[b]].key, occs[src[a]].key)) {
+        if (key_less(buf, occs[src[b]].kw_start, occs[src[b]].kw_end, occs[src[a]].kw_start, occs[src[a]].kw_end, fold)) {
           dst = dst.with(at, src[b]);
           b = b + 1;
         } else {
@@ -708,42 +718,68 @@ function sort_occs(occs: Occ[]): i32[] {
 // A context is copied with every whitespace byte turned into one space;
 // nothing else changes, so a NUL or a high byte reaches the output as
 // it stood in the file.
+// The span copied in one `__memcpy`, then only the bytes that have to
+// change written back. Every context of every occurrence comes through
+// here, and almost none of them holds a whitespace byte that is not
+// already a space, so the common case is the copy alone.
 function norm(buf: string, a: i32, b: i32): string {
-  var out: u8[] = [];
-  var i: i32 = a;
-  while (i < b) {
-    var c: i32 = buf[i] as i32;
-    if (is_space(c)) {
-      out = out.append(32 as u8);
-    } else {
-      out = out.append(c as u8);
+  // cut_fields hands this an INVERTED span when a field has no room —
+  // the byte loop this replaced ran zero times and answered the empty
+  // string, where slice_unchecked refuses a > b outright.
+  if (b <= a) {
+    return "";
+  }
+  // Almost every span holds no whitespace byte that is not already a
+  // space, and then the answer IS the span: one copy, no byte array.
+  var j: i32 = a;
+  while (j < b) {
+    var ch: i32 = buf[j] as i32;
+    if (ch != 32 && is_space(ch)) {
+      break;
+    }
+    j = j + 1;
+  }
+  if (j >= b) {
+    return slice_unchecked(buf, a, b) + "";
+  }
+  var out: u8[] = slice_unchecked(buf, a, b).bytes();
+  var n: i32 = out.len();
+  var i: i32 = j - a;
+  while (i < n) {
+    var c: i32 = out[i] as i32;
+    if (c != 32 && is_space(c)) {
+      out = out.with(i, 32 as u8);
     }
     i = i + 1;
   }
   return bytes_to_string(out);
 }
 
+// `norm` maps every whitespace byte to a space and a space is itself
+// whitespace, so trimming the SOURCE span picks exactly the bytes
+// trimming norm's output would. Doing it first is one string per field
+// rather than two.
+function norm_trim(buf: string, a: i32, b: i32): string {
+  var i: i32 = a;
+  while (i < b && is_space(buf[i] as i32)) {
+    i = i + 1;
+  }
+  var j: i32 = b;
+  while (j > i && is_space(buf[j - 1] as i32)) {
+    j = j - 1;
+  }
+  return norm(buf, i, j);
+}
+
 // The keyword begins the keyafter field, so only its tail is trimmed:
 // a -W that matches whitespace makes the keyword itself a blank, and
 // GNU prints it.
-function rtrim(s: string): string {
-  var b: i32 = s.len();
-  while (b > 0 && is_space(s[b - 1] as i32)) {
-    b = b - 1;
+function norm_rtrim(buf: string, a: i32, b: i32): string {
+  var j: i32 = b;
+  while (j > a && is_space(buf[j - 1] as i32)) {
+    j = j - 1;
   }
-  return slice_unchecked(s, 0, b) + "";
-}
-
-function trim(s: string): string {
-  var a: i32 = 0;
-  while (a < s.len() && is_space(s[a] as i32)) {
-    a = a + 1;
-  }
-  var b: i32 = s.len();
-  while (b > a && is_space(s[b - 1] as i32)) {
-    b = b - 1;
-  }
-  return slice_unchecked(s, a, b) + "";
+  return norm(buf, a, j);
 }
 
 function has_text(buf: string, a: i32, b: i32): boolean {
@@ -779,7 +815,7 @@ function cut_fields(buf: string, o: Occ, w: Words, g: Geom, maxword: i32): Field
       }
     }
   }
-  var ka: string = rtrim(norm(buf, o.kw_start, ka_end));
+  var ka: string = norm_rtrim(buf, o.kw_start, ka_end);
 
   // before: the last bef_max bytes of what precedes the keyword, moved
   // forward out of a word.
@@ -799,7 +835,7 @@ function cut_fields(buf: string, o: Occ, w: Words, g: Geom, maxword: i32): Field
       bef_start = wb.1;
     }
   }
-  var before: string = trim(norm(buf, bef_start, bsrc_end));
+  var before: string = norm_trim(buf, bef_start, bsrc_end);
 
   // tail: what keyafter left behind, cut at what the before field left
   // of the left half.
@@ -827,7 +863,7 @@ function cut_fields(buf: string, o: Occ, w: Words, g: Geom, maxword: i32): Field
         t_end = wt.0;
       }
     }
-    tail = trim(norm(buf, t_start, t_end));
+    tail = norm_trim(buf, t_start, t_end);
     if (tail.len() > 0 && has_text(buf, t_end, o.ctx_end)) {
       tail_flag = true;
     }
@@ -855,7 +891,7 @@ function cut_fields(buf: string, o: Occ, w: Words, g: Geom, maxword: i32): Field
         h = wh.1;
       }
     }
-    head = trim(norm(buf, h, bef_start));
+    head = norm_trim(buf, h, bef_start);
     if (head.len() > room) {
       head_flag = true;
       var h_end: i32 = bef_start;
@@ -870,7 +906,7 @@ function cut_fields(buf: string, o: Occ, w: Words, g: Geom, maxword: i32): Field
       if (wh2.0 >= 0) {
         h = wh2.1;
       }
-      head = trim(norm(buf, h, h_end));
+      head = norm_trim(buf, h, h_end);
       if (head.len() > room) {
         head = "";
       }
@@ -958,13 +994,10 @@ function spaces(n: i32): string {
 // is a build rather than a set of absolute columns.
 function render_dumb(f: Fields, ref: string, g: Geom, opts: Opts): string {
   var t: i32 = g.tlen;
-  var line: u8[] = [];
   var width: i32 = g.refw + 2 * g.col_half + 4 * g.gap + 4 * t + 8 + f.tail.len() + f.before.len() + f.keyafter.len() + f.head.len() + ref.len();
-  var i: i32 = 0;
-  while (i < width) {
-    line = line.append(32 as u8);
-    i = i + 1;
-  }
+  // One `repeat` and one `__memcpy` rather than `width` appends: this
+  // runs once per output line, so the per-byte cost was the format's.
+  var line: u8[] = spaces(width).bytes();
   var base: i32 = 0;
   if (g.refs_left) {
     base = g.refw;
@@ -1031,13 +1064,7 @@ function rtrim_bytes(line: u8[]): string {
   while (n > 0 && line[n - 1] as i32 == 32) {
     n = n - 1;
   }
-  var out: u8[] = [];
-  var i: i32 = 0;
-  while (i < n) {
-    out = out.append(line[i]);
-    i = i + 1;
-  }
-  return bytes_to_string(out);
+  return slice_unchecked(bytes_to_string(line), 0, n) + "";
 }
 
 function render_roff(f: Fields, ref: string, g: Geom, opts: Opts): string {
@@ -1317,7 +1344,6 @@ pub function main(): i32 {
       while (k < words.starts.len() && words.ends[k] <= ce) {
         var ws: i32 = words.starts[k];
         var we: i32 = words.ends[k];
-        var kw: string = slice_unchecked(buf, ws, we) + "";
         var keep: boolean = true;
         if (o.input_ref) {
           var lr: i32 = line_of(lines, ws);
@@ -1325,17 +1351,16 @@ pub function main(): i32 {
             keep = false;
           }
         }
-        if (o.have_ignore && in_list(ignore, kw, o.fold)) {
-          keep = false;
-        }
-        if (o.have_only && !in_list(only, kw, o.fold)) {
-          keep = false;
+        if (o.have_ignore || o.have_only) {
+          var kw: string = slice_unchecked(buf, ws, we) + "";
+          if (o.have_ignore && in_list(ignore, kw, o.fold)) {
+            keep = false;
+          }
+          if (o.have_only && !in_list(only, kw, o.fold)) {
+            keep = false;
+          }
         }
         if (keep) {
-          var key: string = kw;
-          if (o.fold) {
-            key = fold_case(kw);
-          }
           var refv: string = "";
           var li: i32 = line_of(lines, ws);
           if (o.auto_ref) {
@@ -1346,7 +1371,7 @@ pub function main(): i32 {
           if (refv.len() > maxref) {
             maxref = refv.len();
           }
-          occs = occs.append(Occ { key: key, kw_start: ws, kw_end: we, ctx_start: start, ctx_end: ce, ref: refv });
+          occs = occs.append(Occ { kw_start: ws, kw_end: we, ctx_start: start, ctx_end: ce, ref: refv });
         }
         k = k + 1;
       }
@@ -1379,7 +1404,7 @@ pub function main(): i32 {
     geom = Geom { ...geom, ka_max: half - 2 * tlen - 1, bef_max: max0(half - gap), tail_base: half - 2 * gap - 1, head_base: gap - 1, room_adj: 1 };
   }
 
-  var order: i32[] = sort_occs(occs);
+  var order: i32[] = sort_occs(buf, occs, o.fold);
   var j: i32 = 0;
   while (j < order.len()) {
     var oc: Occ = occs[order[j]];
