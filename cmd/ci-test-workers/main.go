@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,6 +17,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,9 +25,9 @@ import (
 )
 
 type config struct {
-	binary, output, pattern string
-	workers, cpus           int
-	timeout                 time.Duration
+	binary, output, pattern, weights string
+	workers, cpus                    int
+	timeout                          time.Duration
 }
 
 type result struct {
@@ -55,6 +57,7 @@ func main() {
 	flag.StringVar(&c.binary, "binary", "", "absolute path of a compiled Go test binary")
 	flag.StringVar(&c.output, "output", "", "new directory for inventories and test JSON")
 	flag.StringVar(&c.pattern, "run", "", "top-level test selection regular expression")
+	flag.StringVar(&c.weights, "weights", "", "optional `TestName seconds` file; tests are assigned longest-first to the least-loaded worker")
 	flag.IntVar(&c.workers, "workers", 2, "number of isolated processes")
 	flag.IntVar(&c.cpus, "cpus", runtime.GOMAXPROCS(0), "total CPU budget")
 	flag.DurationVar(&c.timeout, "timeout", 10*time.Minute, "test timeout per worker")
@@ -67,19 +70,82 @@ func main() {
 	}
 }
 
-func inventory(output []byte, workers int) ([][]string, error) {
+// readWeights parses a `TestName seconds` file, the format of
+// .github/selfhost-test-weights.txt: one row per test, `#` comments and blank
+// lines ignored. A test absent from the file weighs 1.
+func readWeights(path string) (map[string]float64, error) {
+	weights := map[string]float64{}
+	if path == "" {
+		return weights, nil
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			return nil, fmt.Errorf("weights %s: want `TestName seconds`, got %q", path, line)
+		}
+		w, err := strconv.ParseFloat(fields[1], 64)
+		if err != nil || w <= 0 {
+			return nil, fmt.Errorf("weights %s: %q is not a positive duration", path, line)
+		}
+		weights[fields[0]] = w
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return weights, nil
+}
+
+// inventory assigns every listed test to exactly one worker by the same
+// greedy longest-processing-time-first partition as scripts/shard-tests:
+// heaviest first, ties by name, each to the least-loaded worker (lowest index
+// on a tie). With no weights every test weighs 1, which is a round-robin over
+// the sorted names.
+func inventory(output []byte, workers int, weights map[string]float64) ([][]string, error) {
 	names := strings.Fields(string(output))
 	if workers < 1 || len(names) < workers {
 		return nil, fmt.Errorf("%d tests cannot fill %d workers", len(names), workers)
 	}
-	groups := make([][]string, workers)
 	seen := make(map[string]bool)
-	for i, name := range names {
+	for _, name := range names {
 		if !token.IsIdentifier(name) || !strings.HasPrefix(name, "Test") || seen[name] {
 			return nil, fmt.Errorf("invalid or duplicate test name %q", name)
 		}
 		seen[name] = true
-		groups[i%workers] = append(groups[i%workers], name)
+	}
+	weight := func(name string) float64 {
+		if w, ok := weights[name]; ok {
+			return w
+		}
+		return 1
+	}
+	sort.SliceStable(names, func(i, j int) bool {
+		wi, wj := weight(names[i]), weight(names[j])
+		if wi != wj {
+			return wi > wj
+		}
+		return names[i] < names[j]
+	})
+	groups := make([][]string, workers)
+	load := make([]float64, workers)
+	for _, name := range names {
+		least := 0
+		for i := 1; i < workers; i++ {
+			if load[i] < load[least] {
+				least = i
+			}
+		}
+		groups[least] = append(groups[least], name)
+		load[least] += weight(name)
 	}
 	return groups, nil
 }
@@ -174,7 +240,11 @@ func run(ctx context.Context, c config, output io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("list tests: %w", err)
 	}
-	groups, err := inventory(listed, c.workers)
+	weights, err := readWeights(c.weights)
+	if err != nil {
+		return err
+	}
+	groups, err := inventory(listed, c.workers, weights)
 	if err != nil {
 		return err
 	}

@@ -22,6 +22,7 @@ func TestInventory(t *testing.T) {
 		want        [][]string
 	}{
 		{"balanced", "TestA\nTestB\nTestC\n", 2, [][]string{{"TestA", "TestC"}, {"TestB"}}},
+		{"unsorted listing", "TestC\nTestA\nTestB\n", 2, [][]string{{"TestA", "TestC"}, {"TestB"}}},
 		{"unicode", "Testα\nTestβ\n", 1, [][]string{{"Testα", "Testβ"}}},
 		{"empty", "", 1, nil},
 		{"too few", "TestA", 2, nil},
@@ -32,7 +33,7 @@ func TestInventory(t *testing.T) {
 		{"zero workers", "TestA", 0, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := inventory([]byte(tc.input), tc.workers)
+			got, err := inventory([]byte(tc.input), tc.workers, nil)
 			if (err != nil) != (tc.want == nil) || !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("inventory = %v, %v; want %v", got, err, tc.want)
 			}
@@ -43,6 +44,48 @@ func TestInventory(t *testing.T) {
 		if pattern.MatchString(name) {
 			t.Errorf("pattern unexpectedly matches %q", name)
 		}
+	}
+}
+
+// Weighted assignment is longest-first to the least-loaded worker, so two
+// heavy tests never share a worker while a light one runs alone.
+func TestInventoryWeighted(t *testing.T) {
+	weights := map[string]float64{"TestSlow": 100, "TestAlsoSlow": 90, "TestMid": 10}
+	got, err := inventory([]byte("TestA\nTestSlow\nTestB\nTestAlsoSlow\nTestMid\n"), 2, weights)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{{"TestSlow", "TestA"}, {"TestAlsoSlow", "TestMid", "TestB"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("inventory = %v, want %v", got, want)
+	}
+}
+
+func TestReadWeights(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "weights.txt")
+	if err := os.WriteFile(path, []byte("# comment\n\nTestA 12\n  TestB 0.5 \n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readWeights(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := map[string]float64{"TestA": 12, "TestB": 0.5}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("readWeights = %v, want %v", got, want)
+	}
+	for _, bad := range []string{"TestA\n", "TestA x\n", "TestA -1\n", "TestA 1 2\n"} {
+		if err := os.WriteFile(path, []byte(bad), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := readWeights(path); err == nil {
+			t.Errorf("accepted malformed weights row %q", strings.TrimSpace(bad))
+		}
+	}
+	if _, err := readWeights(filepath.Join(t.TempDir(), "missing")); err == nil {
+		t.Error("accepted a missing weights file")
+	}
+	if got, err := readWeights(""); err != nil || len(got) != 0 {
+		t.Errorf("no path: got %v, %v", got, err)
 	}
 }
 

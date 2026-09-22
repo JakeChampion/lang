@@ -273,3 +273,99 @@ concurrently for the first time on 2026-09-21 without the per-round latency
 being sampled. Refresh `.github/coreutils-test-weights.txt` from real runs when
 the spread drifts — the rules the self-host table follows are in
 `docs/CI-WEIGHT-REFRESH.md`.
+
+## Fourth change: the self-host lane's barrier, and two workers per shard
+
+Job-level timings for the two newest complete runs on 2026-09-22, read the way
+the second measurement was: `created_at` of each job against the run's, the
+runner `started_at`, and the step durations.
+
+| Run | Event | Suite wall (min) | Ubuntu jobs | Ubuntu job-minutes |
+| --- | --- | ---: | ---: | ---: |
+| [35708985176](https://github.com/JakeChampion/lang/actions/runs/35708985176) | PR | 35.2 | 93 | 381 |
+| [35708878302](https://github.com/JakeChampion/lang/actions/runs/35708878302) | main | 33.8 | 93 | 390 |
+
+The critical path was the same in both, and it was not the tests:
+
+1. `changes`, 1.2 min for ~10 s of work (queue).
+2. Every independent job is created at 1.2 min. The three `warm` jobs the
+   self-host shards depended on were created then too, but each waited 8-14
+   minutes for a runner behind the sixty other jobs the run had just created,
+   and did 45 s of work when it got one: the whole warm set is five drivers in
+   45 s, ~9 s each, and fern.fern, the whole compiler, links in 16-19 s. The
+   workflow's own comments still priced a driver at 50-70 s and fern.fern at
+   ~236 s, which is the cost the barrier was built to avoid.
+3. The twelve x86 shards, `arm64-permodule-wholecompiler` and
+   `semantic-wholecompiler` are created only when the last `warm` job finishes,
+   at 16.9 and 17.3 min.
+4. The shards run 6.2-11.1 minutes of tests each, in one serial process on a
+   four-core runner, and the last one ends at 31-33 min.
+5. `verify`, a 0.2 min job, waits 1.3 min for a runner.
+
+So a 35-minute run spent its first seventeen minutes not having created the
+jobs that end it, and the shard partition was stale on top: shard 3 held three
+tests of 116, 115 and 92 s, the first two weighted 15 and 13 in the file. With
+the weights refreshed from these two runs the twelve shards balance to 481-541
+s of observed test time each, against 373-666 s.
+
+What changed, in the order it matters:
+
+- **No `warm` jobs and no `needs: warm`.** Every job builds the drivers it uses
+  on its own runner; the closure-keyed disk cache builds each at most once per
+  job. The shards, the two whole-compiler jobs and `driver-sizes` are created
+  at run start with everything else.
+- **Two worker processes per x86 shard**, through `cmd/ci-test-workers` with a
+  new `-weights` flag that assigns tests by the same duration-weighted LPT the
+  shards are cut with. The `cli` job runs its ten isolated tests the same way:
+  its two heaviest, 227 s and 212 s, ran back to back. Each process gets half
+  the runner's CPUs and, through `FERN_BUILD_MEM_BUDGET_MB`, half its
+  driver-build RAM budget.
+- **The `cli` job no longer measures fern.fern's size and `driver-sizes` no
+  longer unions four reports.** `driver-sizes` links every driver the baseline
+  names, ~2 minutes, and compares the set once. It depends on nothing.
+- **`test-e2e-wasm` lost its `build` jobs.** They were the same barrier one
+  lane over: the test jobs were created at 6.7 and 10.8 min for ~30 s of
+  compile.
+- **`test-e2e-other` runs two workers per shard.** Its aarch64 leg was a single
+  15-minute serial process, the longest job outside the self-host lane.
+- **The seven `diff-selfhost-*` jobs are three**, one per target, each running
+  the AST and the semantic leg. Four of the seven were 0.6-3 minute jobs paying
+  ~40 s of setup each.
+- **`TestSelfHostSemanticWholeCompilerX86_64` overlaps its phases**: the
+  driver's emits run beside the gen1 self-build, and gen1's emits beside each
+  other. Its job was 13.3-14.2 minutes of serial emits.
+- **The x86 shards lost `continue-on-error`.** Six of six sampled runs had all
+  twelve shards succeed; a reclaimed runner now reads as a failed shard, which
+  is what `verify` reported for it anyway.
+
+### The concurrent-job ceiling, confirmed
+
+The account is GitHub Pro. GitHub's published limits for standard hosted
+runners are 40 concurrent jobs for Pro (20 Free, 60 Team, 500 Enterprise),
+with at most 5 macOS jobs at once on every plan below Enterprise, and the
+macOS 5 is shared with larger runners. Public repositories are not treated
+differently. GitHub Support can raise the number on request. The 36-37
+observed in the second measurement is that 40 less lint, the reapers and
+`check-sources`.
+
+That ceiling is why the lane changes above remove jobs and barriers rather
+than adding shards: with two pull requests and a main push in flight, ~180
+jobs compete for 40 slots, so a job created late is a job that waits, and a
+job that idles its runner is a slot the next suite does not get.
+
+### What was found and not fixed here
+
+The `diff-selfhost-wasm` jobs have been green while running nothing: the two
+wasm differential legs skip without wasmtime and the job never installed it.
+Run with it, five seeds trap in the self-host wasm module where the
+interpreter runs clean (#9995). That is an emitter fix, not a workflow one; the
+job keeps its shape and its comment says why.
+
+### Next measurements
+
+Compare the first runs on this shape against the table above: suite wall,
+shard wall, and whether two workers hold a shard's driver builds inside the
+runner's RAM. The macOS job (14-18 min, 12-15 of it the coreutils corpus in
+one process on a 3-core runner) is the next long pole once the Linux side is
+under it; its own ~5-slot pool is what bounds sharding it. `changes` costs 1.2
+minutes at the front of every run for a listing call.

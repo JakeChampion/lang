@@ -9,16 +9,18 @@
 # `success`; anything else is reported and fails the run.
 #
 # WHY THIS EXISTS — a shard cannot be trusted to report its own death.
-# The x86 self-host shards carry `continue-on-error` because the runner pool
-# intermittently reclaims them mid-run (exit 143, "runner received a shutdown
-# signal", no test failure). But `continue-on-error` cannot tell a reclaim from
-# an assertion failure, so it absorbed BOTH: a real regression on any
-# `TestSelfHost*X86_64` test turned no lane red, because those tests `t.Skip`
-# on aarch64 (they need `qemu-x86_64`, which that lane does not install) and
-# were tolerated on the lane where they actually run. #5901 shipped exactly
-# that way — a `dedupe_weak_defs` regression segfaulted the self-host-compiled
-# interpreter on any integer literal, failing 100 of 104 subtests in
-# TestSelfHostInterpDriverX86_64, with every lane green.
+# The x86 self-host shards used to carry `continue-on-error` because the
+# runner pool intermittently reclaimed them mid-run (exit 143, "runner
+# received a shutdown signal", no test failure). But `continue-on-error`
+# cannot tell a reclaim from an assertion failure, so it absorbed BOTH: a real
+# regression on any `TestSelfHost*X86_64` test turned no lane red, because
+# those tests `t.Skip` on aarch64 (they need `qemu-x86_64`, which that lane
+# does not install) and were tolerated on the lane where they actually run.
+# #5901 shipped exactly that way — a `dedupe_weak_defs` regression segfaulted
+# the self-host-compiled interpreter on any integer literal, failing 100 of
+# 104 subtests in TestSelfHostInterpDriverX86_64, with every lane green. The
+# flag is gone now that the shards are short enough not to be reclaimed; this
+# script stays as the off-machine check that every shard REPORTED.
 #
 # The fix has to run OFF the shard's machine. A reclaimed runner is gone: no
 # later step on it executes, not even `if: always()`, so no in-job guard can

@@ -10,21 +10,14 @@ name: Test e2e wasm
 # binaries per arch; running both lanes guarantees the same .wat
 # emission validates byte-for-byte under both wasmtime ABIs.
 #
-# COMPILE-ONCE / RUNNER PREEMPTION (#4577). The lane was repeatedly killed
-# by runner-pool preemption ("The runner has received a shutdown signal" /
-# exit 143), always landing ~2.5-3 min into the run — i.e. during the
-# `internal/e2e` PACKAGE COMPILE, before a single test reported. This is the
-# same infrastructure preemption `test-e2e-selfhost.yml` documents at length
-# (RUNNER PREEMPTION): short jobs survive, long jobs get reclaimed. A retry
-# can't help — a runner reclaim kills the whole job, not a trappable step
-# exit code. The lever that works is the selfhost workflow's own playbook
-# (option 1): compile the test binary ONCE in a short `build` job (short jobs
-# are never reclaimed) and run the wasm slice from the prebuilt binary in the
-# `test` job. That removes the ~2.5-min compile — precisely the observed kill
-# window — from the long job. Unlike the selfhost x86 shards this lane is NOT
-# `continue-on-error`: there is no strict twin re-running the identical set
-# (the aarch64 wasm job runs the same tests but with its own toolchain), so
-# the redness stays load-bearing.
+# The test binary is compiled in the test job itself. It used to come from a
+# separate `build` job (#4577, when runner preemption was killing long jobs
+# mid-compile), but a `needs:` edge defers the test jobs' creation until the
+# build job has been queued, run and uploaded, and under the account-wide
+# concurrent-job ceiling that wait ran 5-10 minutes for ~30 s of compile.
+# Preemption has not been observed since the shards were shortened. This lane
+# is NOT `continue-on-error`: the aarch64 job runs the same tests with its own
+# toolchain rather than as a strict twin, so the redness stays load-bearing.
 
 # Called from ci.yml rather than triggered: that is the one workflow a pull
 # request or a push to main launches. It holds one of the PR queue's two slots
@@ -37,32 +30,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  # Compile the internal/e2e test binary ONCE per arch (short job — never
-  # reclaimed by the runner pool). No wasmtime needed here: this only builds.
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { runner: ubuntu-latest,    host: x86_64  }
-          - { runner: ubuntu-24.04-arm, host: aarch64 }
-    name: build-e2e-wasm-${{ matrix.host }}
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup-fern
-      - name: compile test binary (go test -c)
-        run: go test -c -o e2e.test ./internal/e2e/
-      - uses: actions/upload-artifact@v7
-        with:
-          name: e2e-wasm-test-${{ matrix.host }}
-          path: e2e.test
-          retention-days: 1
-          if-no-files-found: error
-
   test:
-    needs: build
     strategy:
       fail-fast: false
       matrix:
@@ -73,20 +41,16 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7 # for the ../../examples + ../../internal/stdlib data files the tests read
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
         with:
           wasmtime: "true"
-      - uses: actions/download-artifact@v8
-        with:
-          name: e2e-wasm-test-${{ matrix.host }}
-      # Run the wasm slice from the PREBUILT binary — the compile that used to
-      # be the preemption window now lives in the short `build` job above.
-      # `^Test(WASM|Wasm)` matches both wasm_e2e_test.go (TestWASM* — uppercase)
-      # and wasm_preview2_test.go (TestWasmPreview2* — mixed case). gotestsum's
-      # `--raw-command` runs the prebuilt binary through `go tool test2json`; the
-      # `standard-verbose` format still streams RUN/PASS/FAIL live so a preempted
-      # run shows the in-flight test, while adding gotestsum's end-of-run summary.
+      # Compiled here rather than in a build job the test jobs wait on: a
+      # `needs:` edge defers the test jobs' creation until the build job has
+      # been queued, run and uploaded, and under the account-wide concurrent-
+      # job ceiling that queue wait ran 5-10 minutes for ~30 s of compile.
+      - name: compile test binary (go test -c)
+        run: go test -c -o e2e.test ./internal/e2e/
       - name: go test (wasm e2e, prebuilt)
         run: |
           set -euo pipefail

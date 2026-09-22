@@ -15,37 +15,34 @@
 #
 # tracked-artifact: fern.fern
 #
-# HOW THIS IS MEASURED. Nothing extra is built. Every driver here is linked by
-# the `warm` / `cli` jobs of test-e2e-selfhost.yml on their own account;
-# TestSelfHostWarmStockDriver stats each one it warms into
-# FERN_DRIVER_SIZE_REPORT, and the job compares that report against this file.
-# The emit and the link are in-process pure Go, so a given commit yields the
-# same byte count on any runner — a difference here is a real change in the
+# HOW THIS IS MEASURED. The `driver-sizes` job of test-e2e-selfhost.yml reads
+# the driver names out of this file, links every one of them
+# (TestSelfHostWarmStockDriver, ~2 minutes for the set), stats each into
+# FERN_DRIVER_SIZE_REPORT, and compares that report against this file. The
+# emit and the link are in-process pure Go, so a given commit yields the same
+# byte count on any runner — a difference here is a real change in the
 # compiler's output, not runner noise.
 #
 # ENFORCED, IN BOTH DIRECTIONS. Drift past FERN_SIZE_TOLERANCE_PERCENT (5% by
-# default) is a job-summary line plus a warning annotation in whichever job
-# linked the driver, and a FAILED `driver-sizes` job. That leaf compares the
-# UNION of every measuring job's report and is the only place the fifteen are
-# weighed as a set; the per-job checks stay advisory because their jobs gate the
-# test shards, and a measurement step must not hold the lane. A SHRINK is
-# flagged too: an un-updated baseline after a win silently raises the ceiling
-# the next regression is measured against, which is how 16% of growth went
-# unnoticed for eight days — and, in the other direction, how a 3.0 MB win was
-# never recorded either (#7519).
+# default) is a job-summary line, a warning annotation and a FAILED
+# `driver-sizes` job. A SHRINK is flagged too: an un-updated baseline after a
+# win silently raises the ceiling the next regression is measured against,
+# which is how 16% of growth went unnoticed for eight days — and, in the other
+# direction, how a 3.0 MB win was never recorded either (#7519).
 #
 # A DRIVER THAT WENT UNMEASURED FAILS TOO. `driver-sizes` sets
 # FERN_SIZE_REPORT_COMPLETE=1, so a name in this file that reached no report is
-# a finding instead of a row nobody notices is absent. Every measuring job links
-# a disjoint set and used to check only that set, so a five-row table ending in
-# "every driver is within 5% of its baseline" was indistinguishable from a
-# fifteen-row one — which is how the drivers grew 2.3x with the gate green.
+# a finding instead of a row nobody notices is absent. The job used to union
+# four per-job slices, each of which checked only the drivers it linked, so a
+# five-row table ending in "every driver is within 5% of its baseline" was
+# indistinguishable from a fifteen-row one — which is how the drivers grew 2.3x
+# with the gate green.
 #
 # WHEN A NUMBER MOVES ON PURPOSE, update it in the same PR — the job summary
 # prints the corrected lines ready to paste. Keep the reason in the PR, not
 # here; this file is a set of current facts.
 #
-# x86-64. The `warm` and `cli` jobs are x86-only (the aarch64 lane skips the x86
+# x86-64. The `driver-sizes` job is x86-only (the aarch64 lane skips the x86
 # driver builds), so there is one architecture to baseline and no per-arch split.
 #
 # REFRESHED after #6928 (.bss laid out last, so the ELF writer's zero-fill
