@@ -802,3 +802,34 @@ func TestInlineSizeIgnoresLineMarkers(t *testing.T) {
 		t.Fatalf("the markers kept a tiny leaf from inlining; %d calls survived:\n%s", got, p)
 	}
 }
+
+// An @inline hint holds over the unit ceiling: a hinted callee that is
+// neither tiny nor call-free still splices, its own call carried along.
+func TestInlineHintHoldsOverUnitCeiling(t *testing.T) {
+	p := lowerSource(t, `function bump(x: i32): i32 { return x + 1; }
+		@inline function big(x: i32): i32 {
+			var a: i32 = bump(x);
+			a = a * 3 + 1; a = a * 5 + 2; a = a * 7 + 3; a = a * 11 + 4;
+			a = a * 13 + 5; a = a * 17 + 6; a = a * 19 + 7;
+			return a;
+		}
+		function main(): i32 {
+		`+padStmts(4000)+`
+			return big(7) + acc;
+		}`)
+	if got := programOps(p); got <= inlineMaxUnitOps {
+		t.Fatalf("padding produced %d ops, at or under the %d ceiling", got, inlineMaxUnitOps)
+	}
+	big := findFunc(p, "big")
+	if codeOps(big.Ops) <= inlineTinyLeafOps || isCallFree(big) {
+		t.Fatalf("big must be over the tiny cap and carry a call for this to test anything:\n%s", p)
+	}
+	Inline(p)
+	main := findFunc(p, "main")
+	if got := countCallDirect(main.Ops, "big"); got != 0 {
+		t.Fatalf("the hinted callee was not inlined over the ceiling; %d calls survived", got)
+	}
+	if got := countCallDirect(main.Ops, "bump"); got != 1 {
+		t.Errorf("the spliced body's own call should survive as a call; found %d", got)
+	}
+}

@@ -257,12 +257,13 @@ type inlineMode struct {
 
 // admits reports whether fn may be a candidate at all under this mode.
 // The general mode takes whatever isInlineable passed; the tiny-leaf mode
-// additionally requires a call-free body within inlineTinyLeafOps — and
-// applies that size test itself, since isInlineable waives its own cap for
-// an @inline hint and this mode's bounds are what make it safe over the
-// ceiling.
+// additionally requires a call-free body within inlineTinyLeafOps, and
+// applies that size test itself. An @inline hint is honoured in both: the
+// programmer asked, and over the ceiling the one pass the mode runs is
+// what bounds it — a hinted body's own calls are spliced in as calls and
+// stay that way.
 func (m *inlineMode) admits(fn *Func) bool {
-	if !m.tinyLeaf {
+	if !m.tinyLeaf || fn.InlineHint == ast.InlineHintAlways {
 		return true
 	}
 	return codeOps(fn.Ops) <= inlineTinyLeafOps && isCallFree(fn)
@@ -270,12 +271,13 @@ func (m *inlineMode) admits(fn *Func) bool {
 
 // allows applies the per-call-site policy. Under the general mode that is
 // siteAllows; under the tiny-leaf mode candidacy has already bounded the
-// body, so all that is left per site is the budget.
+// body, so all that is left per site is the budget, which an @inline hint
+// is not charged against.
 func (m *inlineMode) allows(cand inlineCandidate, loopDepth int, constArgs bool) bool {
 	if !m.tinyLeaf {
 		return siteAllows(cand, loopDepth, constArgs)
 	}
-	return len(cand.body) <= m.budget
+	return cand.fn.InlineHint == ast.InlineHintAlways || len(cand.body) <= m.budget
 }
 
 // spend records a splice against the budget. A no-op under the general
