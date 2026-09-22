@@ -225,7 +225,7 @@ func coreFixtures(op OpKind, mnemonic string) []coreFixture {
 	case OpMakeClosure, OpMakeEnv:
 		return []coreFixture{{op: Op{Kind: op, I32: 3}, varN: 3}}
 
-	case OpCallDirect, OpCallDirectPair, OpCallClosureDirect:
+	case OpCallDirect, OpCallDirectPair:
 		var out []coreFixture
 		for _, sh := range shapes {
 			args := []ast.Type{sh.t}
@@ -233,6 +233,24 @@ func coreFixtures(op OpKind, mnemonic string) []coreFixture {
 				label:    sh.name + " argument and result",
 				op:       Op{Kind: op, Str: "g", I32: 1, Ext: &OpExt{ArgTypes: args}},
 				known:    map[string]*Func{"g": {Name: "g", Params: []ast.Param{{Type: sh.t}}, ReturnType: sh.t}},
+				argTypes: args,
+				rType:    sh.t,
+			})
+		}
+		return out
+
+	case OpCallClosureDirect:
+		// The environment pointer is counted with the arguments: I32 and
+		// the hoisted target's parameter list both include it, as
+		// Defunctionalise emits them.
+		var out []coreFixture
+		env := ast.NumberType{Width: 32}
+		for _, sh := range shapes {
+			args := []ast.Type{sh.t}
+			out = append(out, coreFixture{
+				label:    sh.name + " argument and result",
+				op:       Op{Kind: op, Str: "g", I32: 2, Ext: &OpExt{ArgTypes: []ast.Type{sh.t, env}}},
+				known:    map[string]*Func{"g": {Name: "g", Params: []ast.Param{{Type: sh.t}, {Type: env}}, ReturnType: sh.t}},
 				argTypes: args,
 				rType:    sh.t,
 			})

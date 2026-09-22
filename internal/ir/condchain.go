@@ -116,19 +116,30 @@ func chainOneCondition(ops []Op, sigs map[string]funcSig, shapes *CallShapes) ([
 func chainStackEffect(op Op, sigs map[string]funcSig, shapes *CallShapes) (pops, pushes int, ok bool) {
 	switch op.Kind {
 	case OpCallDirect, OpCallDirectPair, OpCallClosureDirect, OpCallIndirect, OpCallDyn:
-		args, bail := shapes.ArgSlots(op)
-		if bail != "" {
-			return 0, 0, false
+		var args int
+		if op.Kind == OpCallDyn {
+			// A dyn call's I32 is the method's vtable slot, not an
+			// argument count: the arguments are the receiver-first
+			// signature's, less the receiver, which sits below them as
+			// its own word with the vtable word above (stackChecker.call).
+			sig := op.Sig()
+			if sig == nil || len(sig.Params) == 0 || anyErased(sig.Params) {
+				return 0, 0, false
+			}
+			args = shapes.slotCount(sig.Params[1:]) + 2
+		} else {
+			var bail string
+			args, bail = shapes.ArgSlots(op)
+			if bail != "" {
+				return 0, 0, false
+			}
+			if op.Kind == OpCallIndirect {
+				args++ // the closure pair on top of the arguments
+			}
 		}
 		results, bail := shapes.ResultSlots(op)
 		if bail != "" {
 			return 0, 0, false
-		}
-		switch op.Kind {
-		case OpCallIndirect, OpCallClosureDirect:
-			args++ // the table index / the env pointer
-		case OpCallDyn:
-			args += 2 // the receiver and the vtable word
 		}
 		return args, results, true
 	}
