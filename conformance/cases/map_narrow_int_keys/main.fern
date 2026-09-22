@@ -36,8 +36,17 @@ function main(): i32 {
     for k in wide.keys() { ksum = ksum + (k as i32) + wide.get_or(k, "").len(); }
     if (ksum != 261) { return 7; }
 
+    // An f32 key is the other non-pointer that fits the 4-byte column, and it
+    // took the string column with the rest: interpreted and native both answer
+    // this, the self-host segfaulted on it.
+    var fk: Map[f32, i32] = map_new(2);
+    var n: i32 = 0;
+    while (n < 6) { fk = fk.insert((n as f32) + 0.5, n); n = n + 1; }
+    if (fk.len() != 6) { return 8; }
+    if (fk.get_or(2.5, 0) != 2) { return 9; }
+
     match (small.get(6 as u8)) {
         Some(v) => { return v + 30; },
-        None => { return 8; }
+        None => { return 10; }
     }
 }
