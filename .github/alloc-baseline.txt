@@ -40,9 +40,16 @@
 # self-host compiler. Keys stay arch-namespaced anyway, so adding that arch
 # later does not renumber this one.
 #
-# ADVISORY, IN BOTH DIRECTIONS — see scripts/ci-check-perf. When a number moves
-# on purpose, update it in the same PR; the job summary prints the corrected
-# lines ready to paste. Keep the reason in the PR, not here.
+# ADVISORY AT THE TOLERANCE, FATAL AT A CEILING. The 1% above stays a
+# significance threshold: a move past it is a warning, in both directions.
+# perf.yml additionally sets FERN_CI_PERF_GATE_MAX_DRIFT=10 on this comparison
+# alone, so drift past 10% FAILS. Two different jobs, deliberately: this pair
+# sat 82% behind main for six days because a warning was the only consequence
+# (#9963), while it also moves a few tenths of a percent from unrelated merges
+# in a couple of hours — so a fatal 1% would fail PRs for drift they did not
+# cause. When a number moves on purpose, update it in the same PR; the job
+# summary prints the corrected lines ready to paste. Keep the reason in the PR,
+# not here.
 
 x86_64/checker.allocs	85384567
 x86_64/checker.frees	74976404

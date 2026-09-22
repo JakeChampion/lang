@@ -1466,6 +1466,9 @@ source without rebuilding measures nothing:
 | `reduce_axis`, last axis | 235.1 ms | 59.0 ms | **3.98x** | one `addr_of`, one `lane_of`, one `bump` |
 | `reduce_axis`, axis 0 | 235.6 ms | 55.5 ms | **4.24x** | one `addr_of`, one `lane_of`, one `bump` |
 | `scan_axis`, last axis | 296.1 ms | 111.3 ms | **2.66x** | one `addr_of`, one `lane_of`, one `bump` |
+| `map_rank`, frame rank 1 | 113.6 ms | 85.4 ms | **1.33x** | one `select`, one `bump`, per CELL |
+| `map_rank`, frame rank 2 | 149.8 ms | 89.4 ms | **1.68x** | two `select`, one `bump`, per CELL |
+| `map_rank`, frame rank 3 | 193.2 ms | 87.2 ms | **2.22x** | three `select`, one `bump`, per CELL |
 
 `fold_all` gains the largest ratio because it allocates nothing: the
 odometer is a larger share of what is left. `map` lands at 71.3 ms against
@@ -1489,9 +1492,20 @@ does not: 3.98x against 4.24x. The odometer work being shed — `addr_of`,
 that replaces it is `h * inner + l` either way. What the axis changes is
 which elements share a lane, not the price of finding out.
 
-`scan_axis` gains least of the five because it appends a result per
-element, so the allocation is a larger share of what remains — the same
+`scan_axis` gains least of the element walkers because it appends a result
+per element, so the allocation is a larger share of what remains — the same
 reason `map` (2.97x) trails `fold_all` (4.28x).
+
+**`map_rank` is measured per CELL, not per element**, and its rows are the
+only ones here whose ratio is a function of the input's RANK. It peels cells
+rather than walking elements, so what it sheds is a chain of `select` calls
+— one per frame axis, each allocating a shape and a strides array — replaced
+by one handle whose shape and strides are built once and whose offset is the
+only thing that varies. The old path costs about 38 ms more per frame axis
+over these 320,000 cells; the new path is flat at 85-89 ms whichever rank it
+is given, and that flatness is the result, more than any single ratio. A
+deeper frame therefore gains more, and no frame at all (`k == rank`, one
+cell) gains nothing.
 
 Both arms owe §7's increasing reading order, and `add` cannot tell them
 apart. `examples/tests/ndarray_test.fern` therefore folds

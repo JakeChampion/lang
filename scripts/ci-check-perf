@@ -14,10 +14,23 @@
 # (scripts/ci-check-driver-sizes); this is the speed half, deliberately the
 # same shape so there is one thing to learn rather than two.
 #
-# WARN, DO NOT FAIL (for now). Findings are a job-summary line plus a warning
-# annotation; the exit status is 0. Set FERN_CI_PERF_GATE_STRICT=1 to make them
-# fatal — deliberately a one-variable escalation, the same lever the size gate
-# uses.
+# WARN BY DEFAULT. Findings are a job-summary line plus a warning annotation;
+# the exit status is 0. FERN_CI_PERF_GATE_STRICT=1 makes them fatal —
+# deliberately a one-variable escalation, the same lever the size gate uses.
+#
+# FERN_CI_PERF_GATE_MAX_DRIFT=N is the other escalation, and it is the one
+# perf.yml uses — on the SELF-HOST ALLOCATION comparison and nowhere else. It
+# fails when the WORST absolute drift exceeds N%, whatever the tolerances say,
+# and it is separate from STRICT on purpose: the tolerance is a significance
+# threshold, and making a 1% one fatal fails PRs for drift they did not cause,
+# because that pair moves a few tenths of a percent from unrelated merges in a
+# couple of hours. A ceiling an order of magnitude above it leaves the fine
+# signal advisory and still cannot be ignored — which is the failure #9963
+# recorded: 82% for six days, warned every run.
+#
+# Both escalations, and their independence from the tolerance, are pinned by
+# tools/perf-gate-selftest.mjs, which runs this script as a subprocess and
+# checks real exit statuses. Before it, nothing tested this comparator at all.
 #
 # BOTH DIRECTIONS. A win is reported too. Leaving the baseline high after an
 # improvement means the next regression is measured against a ceiling nobody
@@ -113,6 +126,8 @@ routed="$(awk -v B="$BASELINE" -v deftol="$TOLERANCE" -v label="$LABEL" '
 
     nfind = 0
     nunbased = 0
+    worst = 0
+    worstm = ""
     for (i = 1; i <= n; i++) {
       m = order[i]
       if (!(m in base)) {
@@ -121,6 +136,8 @@ routed="$(awk -v B="$BASELINE" -v deftol="$TOLERANCE" -v label="$LABEL" '
         continue
       }
       delta = 100 * (measured[m] - base[m]) / base[m]
+      mag = delta < 0 ? -delta : delta
+      if (mag > worst) { worst = mag; worstm = m }
       t = tol[m]
       if (delta > t) {
         nfind++
@@ -164,16 +181,26 @@ routed="$(awk -v B="$BASELINE" -v deftol="$TOLERANCE" -v label="$LABEL" '
     if (nfind == 0 && nunbased == 0 && nmissing == 0)
       printf "SUMMARY\tEvery metric is within tolerance of its baseline.\n"
     printf "FINDINGS\t%d\n", nfind + nunbased + nmissing
+    printf "MAXDRIFT\t%.4f\t%s\n", worst, worstm
+    printf "MISSINGCOUNT\t%d\n", nmissing
   }
 ' "$REPORT")"
 
 findings=0
+maxdrift=0
+maxdrift_metric=""
+nmissing=0
 while IFS=$'\t' read -r tag rest; do
   if [ "$tag" = SUMMARY ]; then
     printf '%s\n' "$rest"
     if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then printf '%s\n' "$rest" >>"$GITHUB_STEP_SUMMARY"; fi
   elif [ "$tag" = FINDINGS ]; then
     findings="$rest"
+  elif [ "$tag" = MAXDRIFT ]; then
+    maxdrift="${rest%%	*}"
+    maxdrift_metric="${rest#*	}"
+  elif [ "$tag" = MISSINGCOUNT ]; then
+    nmissing="$rest"
   fi
 done < <(printf '%s\n' "$routed")
 
@@ -185,6 +212,33 @@ while IFS=$'\t' read -r tag title msg; do
     printf 'WARNING: %s: %s\n' "$title" "$msg"
   fi
 done < <(printf '%s\n' "$routed")
+
+# THE CEILING, separate from the tolerance on purpose. The tolerance is a
+# SIGNIFICANCE threshold — 1% on metrics that repeat to the digit — and making
+# it fatal on a busy repo fails PRs for drift they did not cause: the self-host
+# allocation pair moved +0.32% in two hours of unrelated merges (#9963), so a
+# fatal 1% would red-light roughly every sixth PR and hand its author someone
+# else's re-bank. A ceiling an order of magnitude above it leaves the fine
+# signal advisory and still cannot be ignored, which is the failure #9963
+# actually recorded: 82% for six days, warned every run.
+if [ -n "${FERN_CI_PERF_GATE_MAX_DRIFT:-}" ] &&
+  awk -v a="$maxdrift" -v b="$FERN_CI_PERF_GATE_MAX_DRIFT" 'BEGIN { exit !(a > b) }'; then
+  echo "ci-check-perf: $maxdrift_metric drifted ${maxdrift}% against a ceiling of ${FERN_CI_PERF_GATE_MAX_DRIFT}% (FERN_CI_PERF_GATE_MAX_DRIFT) — re-bank the baseline in the PR that moved it" >&2
+  exit 1
+fi
+
+# A VANISHED METRIC IS NOT ZERO DRIFT. The ceiling above reads drift, which is
+# computed only over metrics present on both sides — so a baselined row the
+# report stopped carrying contributes nothing to it, and a lane promising it
+# cannot be ignored would ignore a dropped, renamed or silently-failed
+# benchmark. Where a ceiling is set, a MISSING row is fatal on the same
+# grounds. UNBASELINED is deliberately NOT: a metric with no baseline entry is
+# how a new benchmark arrives, and failing on it would make adding one
+# impossible.
+if [ -n "${FERN_CI_PERF_GATE_MAX_DRIFT:-}" ] && [ "$nmissing" -gt 0 ]; then
+  echo "ci-check-perf: $nmissing baselined metric(s) were not measured, and a drift ceiling is set — a row that vanished cannot be read as no regression" >&2
+  exit 1
+fi
 
 if [ "${FERN_CI_PERF_GATE_STRICT:-0}" = "1" ] && [ "$findings" -gt 0 ]; then
   echo "ci-check-perf: $findings finding(s) and FERN_CI_PERF_GATE_STRICT=1" >&2
