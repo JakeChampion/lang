@@ -4522,6 +4522,14 @@ pub function changed_rows(a: Built, b: Built): boolean[] {
     return out;
 }
 
+// Whether the inference moved anything at all, which is what decides between
+// the declared module and the widened one. Lives here rather than in each
+// caller because `semlower` and the census both ask it of the same array.
+pub function any_row_changed(changed: boolean[]): boolean {
+    for c in changed { if (c) { return true; } }
+    return false;
+}
+
 // A row moved when its own modes changed, or when any contract it calls did:
 // `inferred_produced` rewrites every row's `func.calls` whether or not that
 // row's own parameters moved, and a caller's brackets read the callee's modes.

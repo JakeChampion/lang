@@ -136,7 +136,7 @@ function listed_leaf(): string {
 function measured_build(merged: parser.Module): semsource.Built {
     var built: semsource.Built = semsource.build_module(merged);
     var widened: semsource.Built = semsource.with_inferred_modes(built);
-    if (!semsource.modes_differ(built, widened)) { return built; }
+    if (!semsource.any_row_changed(semsource.changed_rows(built, widened))) { return built; }
     return widened;
 }
 

@@ -467,11 +467,6 @@ function produced_at(built: semsource.Built, mod: parser.Module, i: i32): semsou
     return built.instances[i - mod.funcs.len()];
 }
 
-function any_changed(changed: boolean[]): boolean {
-    for c in changed { if (c) { return true; } }
-    return false;
-}
-
 // No rows to take back: what the FIRST lowering of a module is handed, and
 // what makes `rows_of` compute every plan and every body.
 function no_reuse(): Rows {
@@ -599,7 +594,7 @@ function inferred_pass(mod: parser.Module, built: semsource.Built, r: Rows, stru
     if (!lowers_whole_module(built, r)) { return same; }
     var widened: semsource.Built = semsource.with_inferred_modes(built);
     var changed: boolean[] = semsource.changed_rows(built, widened);
-    if (!any_changed(changed)) { return same; }
+    if (!semsource.any_row_changed(changed)) { return same; }
     var r2: Rows = prune(rows_of(mod, widened, structs, r, changed), mod, widened);
     if (!lowers_whole_module(widened, r2)) { return same; }
     return Inference { built: widened, rows: r2 };
