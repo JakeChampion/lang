@@ -1872,6 +1872,56 @@ and reaching cksum's non-reflected CRC from that reflected instruction is an
 Ranking the three on this host, which is the honest summary: uutils (folding)
 9.8 ms, GNU (generic table) 35.7 ms, Fern (slicing-by-8) 199.7 ms.
 
+### fmt, 2026-09-22, Linux x86-64 (GNU coreutils 9.12, uutils 0.0.24)
+
+`fmt` was quadratic in the size of a PARAGRAPH (#9983): 40 000 lines with no
+blank line between them took 22 s against GNU's 14 ms, and a 4 MB file did
+not finish. The chooser was not the cause — its inner walk stops at the
+width — the reader was: the paragraph's words lived on the `Para` record,
+which the `State` record held while `feed` appended a line's words to them,
+so the array was shared at every line's first append and copied whole. The
+words are a field of `State` now, `feed` takes the state by ownership, and
+the append happens inside the rebuild of that record
+(`words: scan_body(s.words, …)`), which is the one shape the compiler moves
+rather than copies — an `own` parameter's fields read into locals are still
+held by the parameter until scope exit, so the plain `var words = p.words`
+move-out idiom does not reach it. 40 000 lines is 63 ms natively and 68 ms
+under the self-host build, both linear, both byte-identical to before.
+
+The bench gained the shape, and the corpus a 100 000-line paragraph under a
+five-second bound (the old build takes 42 s on it), laid out from 36-column
+words so the layout is forced and GNU's 997-word window cannot move a break.
+Both compilers, a 4-core container with nothing else on it, ≥20 runs:
+
+| utility | workload | fern (ms) | fern-sh (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern | gnu / fern-sh | uutils / fern-sh |
+|---|---|---|---|---|---|---|---|---|---|
+| `fmt` | fmt (default) of a 40 MiB file | 1922.99 ± 39.82 | 1851.52 ± 61.15 | 420.58 ± 18.97 | 462.98 ± 40.35 | 0.22× | 0.24× | 0.23× | 0.25× |
+| `fmt` | fmt -w 40 of a 40 MiB file | 1758.44 ± 59.04 | 1727.67 ± 38.72 | 392.03 ± 16.50 | 522.29 ± 54.43 | 0.22× | 0.30× | 0.23× | 0.30× |
+| `fmt` | fmt -s -w 40 of a 40 MiB file | 1744.30 ± 54.19 | 1736.51 ± 35.33 | 388.53 ± 14.06 | 527.29 ± 33.48 | 0.22× | 0.30× | 0.22× | 0.30× |
+| `fmt` | fmt -u -w 40 of a 40 MiB file | 1754.28 ± 46.65 | 1693.43 ± 43.17 | 394.45 ± 17.68 | 489.13 ± 23.59 | 0.22× | 0.28× | 0.23× | 0.29× |
+| `fmt` | fmt (default) of a 38 MiB wrapped file | 2033.05 ± 59.15 | 1928.09 ± 49.87 | 469.86 ± 25.29 | 574.59 ± 29.69 | 0.23× | 0.28× | 0.24× | 0.30× |
+| `fmt` | fmt -c -w 60 of a 38 MiB wrapped file | 1929.42 ± 44.53 | 1835.30 ± 54.24 | 435.78 ± 20.60 | 586.28 ± 26.48 | 0.23× | 0.30× | 0.24× | 0.32× |
+| `fmt` | fmt -p "" -w 40 of a 38 MiB wrapped file | 1721.31 ± 58.36 | 1639.67 ± 51.50 | 398.08 ± 16.45 | 664.59 ± 20.61 | 0.23× | 0.39× | 0.24× | 0.41× |
+| `fmt` | fmt (default) from a pipe | 1928.67 ± 52.25 | 1831.50 ± 32.02 | 535.83 ± 29.21 | 504.60 ± 17.97 | 0.28× | 0.26× | 0.29× | 0.28× |
+| `fmt` | fmt (default) of one 200k-line paragraph | 315.10 ± 21.29 | 345.60 ± 14.11 | 56.41 ± 7.35 | 157.53 ± 9.15 | 0.18× | 0.50× | 0.16× | 0.46× |
+
+**fmt does not meet requirement 2.** The last row was "did not finish"
+before and is 0.18x now; the prose rows are where they were, 0.22x, and the
+self-host build is level with native on every one, so this is not an rc
+gap. Under callgrind on 2 MB of prose the chooser is 48% of the
+instructions at ~1 450 per word, the word reader 13% and the classifier
+10%: the chooser's inner turn reads four tables and each indexed read is
+8–10 instructions here where C's is one, which is #8822's x86-64 emitter
+and not a shape in `fmt.fern`.
+
+Two reference facts the corpus now pins, because both were wrong in this
+tree's own comments until the 9.12 oracle said otherwise: **GNU 9.12 lets a
+line reach WIDTH columns exactly** (`fmt -w 20` keeps a 20-column line
+whole) where 9.4 held it to WIDTH-1, and the chooser here matched 9.12 all
+along. And the bench's uutils column was silently absent on a host with
+Debian's rust-coreutils 0.0.24, whose `--list` refusal it read as the list
+of names; that is fixed in the same change.
+
 ### ls, 2026-09-14, Linux x86-64 (GNU coreutils 9.4, uutils 0.0.24)
 
 The same 4-core container, so read the columns against each other. The
