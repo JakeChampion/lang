@@ -3533,6 +3533,28 @@ function main(): i32 {
     return (c as i32) - 78;
 }
 `},
+	// Operator overloading on a struct: `a + b` is `a.add(b)` and `-a` is
+	// `a.neg()`, the desugar the native checker applies and the AST lowering
+	// mirrors (#2706). The semantic source dispatched only the comparisons
+	// that way and refused every arithmetic operator on a nominal operand
+	// with `operator contract: V + V` (conformance/cases/op_overload_nested,
+	// #9550). The nested form leaves two intermediate records live across the
+	// outer call, which the leak pin covers.
+	{name: "arithmetic-operators-on-a-struct", atLeast: 5, noLeak: true, src: `
+struct V { x: i32 }
+function (a: V) add(b: V): V { return V { x: a.x + b.x }; }
+function (a: V) sub(b: V): V { return V { x: a.x - b.x }; }
+function (a: V) mul(b: V): V { return V { x: a.x * b.x }; }
+function (a: V) neg(): V { return V { x: 0 - a.x }; }
+
+function main(): i32 {
+    var a: V = V { x: 5 };
+    var b: V = V { x: 3 };
+    var d: V = (a + b) * (a - b);
+    var e: V = -(a - b);
+    return d.x + e.x + 28;
+}
+`},
 }
 
 // semHeldElementSource sorts by length with the insertion sort's body: the

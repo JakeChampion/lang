@@ -1028,6 +1028,8 @@ function binary(e: ast.Expr, b: ast.ExprBinary, s: State, expected: typeinfo.Typ
     // one expression.
     var key: string = composite_key(b.op, s.values[left.id], s);
     if (key != "") { return composite_compare(b, left, key, s); }
+    var arith: string = nominal_method_key(arithmetic_verb(b.op), s.values[left.id], s);
+    if (arith != "") { return operator_method(left, [b.right], arith, s); }
     var right: Value = address_widen(expr(b.right, s, want), want);
     s = right.s;
     if (!s.ok) { return right; }
@@ -1049,14 +1051,37 @@ function binary(e: ast.Expr, b: ast.ExprBinary, s: State, expected: typeinfo.Typ
 // method falls through to the operator refusal, which names the type rather
 // than a contract the program never asked for.
 function composite_key(op: string, left: typeinfo.Type, s: State): string {
-    var verb: string = comparison_verb(op);
+    return nominal_method_key(comparison_verb(op), left, s);
+}
+
+// The contract key of the method `verb` on a struct or enum type, or "" when
+// the operand is not nominal or the type supplies no such method.
+function nominal_method_key(verb: string, t: typeinfo.Type, s: State): string {
     if (verb == "") { return ""; }
-    var owner: string = struct_name(left);
-    if (owner == "") { owner = union_name(left); }
+    var owner: string = struct_name(t);
+    if (owner == "") { owner = union_name(t); }
     if (owner == "") { return ""; }
     var key: string = owner + "." + verb;
     if (ssasem.find_contract(s.contracts, key) < 0) { return ""; }
     return key;
+}
+
+// An arithmetic operator on a struct or an enum is the method its `impl`
+// supplies: `a + b` is `a.add(b)` and `-a` is `a.neg()`, the desugar the
+// native checker applies (#2706). The result is whatever the method answers.
+function arithmetic_verb(op: string): string {
+    if (op == "+") { return "add"; }
+    if (op == "-") { return "sub"; }
+    if (op == "*") { return "mul"; }
+    if (op == "/") { return "div"; }
+    if (op == "%") { return "rem"; }
+    return "";
+}
+
+function operator_method(recv: Value, args: ast.Expr[], key: string, s: State): Value {
+    var contract: ssasem.Contract = s.contracts[ssasem.find_contract(s.contracts, key)];
+    if (args.len() + 1 != contract.params.len()) { return refused(s, "call arity"); }
+    return invoke_method(recv, args, contract, s);
 }
 
 // The method a comparison goes through: the two equalities read `eq` and the
@@ -1105,6 +1130,10 @@ function unary(e: ast.Expr, u: ast.ExprUnary, s: State, expected: typeinfo.Type)
     var operand: Value = expr(u.operand, s, want);
     s = operand.s;
     if (!s.ok) { return operand; }
+    if (u.op == "-") {
+        var neg: string = nominal_method_key("neg", s.values[operand.id], s);
+        if (neg != "") { return operator_method(operand, [], neg, s); }
+    }
     var ty: typeinfo.Type = ssasem.unary_result(u.op, s.values[operand.id]);
     if (!semtypes.concrete(ty, false)) { return refused(s, "operator contract: " + u.op + " " + typeinfo.spelling(s.values[operand.id])); }
     return define(s, 10, [operand.id], 0, u.op, ty);
