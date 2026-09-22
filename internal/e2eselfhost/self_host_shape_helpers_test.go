@@ -3,6 +3,7 @@ package e2eselfhost
 import (
 	"regexp"
 	"strings"
+	"testing"
 )
 
 // Shape helpers for the emitted-text gates. The register path leaves the
@@ -54,4 +55,44 @@ func rcIncSites(asm string) int {
 // (label `_rcuniq<N>`) alike.
 func rcIsUniqueSites(asm string) int {
 	return strings.Count(asm, "call __fn___fern_rc_is_unique") + strings.Count(asm, "bl __fn___fern_rc_is_unique") + len(rcIsUniqueInlineRe.FindAllString(asm, -1))
+}
+
+// shapeCase is one program with, per function, the line patterns its body
+// must match and the ones it must not.
+type shapeCase struct {
+	name string
+	src  string
+	want int
+	// fn -> patterns that must match the body
+	has map[string][]string
+	// fn -> patterns that must not
+	lacks map[string][]string
+}
+
+func runShapeCases(t *testing.T, emit func(t *testing.T, src string) string, run func(t *testing.T, name, asm string) int, cases []shapeCase) {
+	t.Helper()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			asm := emit(t, tc.src)
+			for fn, pats := range tc.has {
+				body := shapeFnBody(t, asm, fn)
+				for _, p := range pats {
+					if !matchShape(body, p) {
+						t.Errorf("%s: no line matches %q:\n%s", fn, p, body)
+					}
+				}
+			}
+			for fn, pats := range tc.lacks {
+				body := shapeFnBody(t, asm, fn)
+				for _, p := range pats {
+					if matchShape(body, p) {
+						t.Errorf("%s: still carries %q:\n%s", fn, p, body)
+					}
+				}
+			}
+			if got := run(t, tc.name, asm); got != tc.want {
+				t.Errorf("exit = %d, want %d", got, tc.want)
+			}
+		})
+	}
 }

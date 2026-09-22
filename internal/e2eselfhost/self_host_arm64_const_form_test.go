@@ -80,7 +80,9 @@ func runArm64ShapeCases(t *testing.T, cases []shapeCase) {
 // an immediate and never materialise it first. Width is the rule's whole
 // risk, so the refusals are pinned too: a literal past 4095 goes through a
 // register, by one MOVZ up to 65535 and the literal pool beyond, and still
-// computes the right answer.
+// computes the right answer. 4096 is pinned at the boundary on purpose: it
+// is the first value imm12 cannot hold unshifted, and the one the shifted
+// form (recorded as a gap in the ssa-log entry) would take first.
 func TestSelfHostConstOperandReachesImmediateFormArm64(t *testing.T) {
 	runArm64ShapeCases(t, []shapeCase{
 		{
@@ -107,15 +109,18 @@ function main(): i32 {
 		},
 		{
 			name: "refused-widths",
-			src: `function odd(x: i32): i32 { return x + 4097; }
+			src: `function page(x: i32): i32 { return x + 4096; }
+function odd(x: i32): i32 { return x + 4097; }
 function wide(x: i64): i64 { return x + 70000i64; }
-function main(): i32 { return odd(1) - 4000 + ((wide(1i64) % 100i64) as i32); }`,
-			want: 98 + 1,
+function main(): i32 { return page(1) - 4000 + odd(1) - 4090 + ((wide(1i64) % 100i64) as i32); }`,
+			want: 97 + 8 + 1,
 			has: map[string][]string{
+				"page": {`\n    mov (x[0-9]+), #4096\n    add (x[0-9]+), \2, \1\n`},
 				"odd":  {`\n    mov (x[0-9]+), #4097\n    add (x[0-9]+), \2, \1\n`},
 				"wide": {`\n    ldr (x[0-9]+), =70000\n    add (x[0-9]+), \2, \1\n`},
 			},
 			lacks: map[string][]string{
+				"page": {`add x[0-9]+, x[0-9]+, #4096`, `str x[0-9]+, \[sp, #-16\]!`},
 				"odd":  {`add x[0-9]+, x[0-9]+, #4097`, `str x[0-9]+, \[sp, #-16\]!`},
 				"wide": {`add x[0-9]+, x[0-9]+, #70000`, `mov x[0-9]+, #70000`, `str x[0-9]+, \[sp, #-16\]!`},
 			},

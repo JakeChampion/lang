@@ -85,46 +85,6 @@ func shapeFnBody(t *testing.T, asm, name string) string {
 	return m[1]
 }
 
-// shapeCase is one program with, per function, the line patterns its body
-// must match and the ones it must not.
-type shapeCase struct {
-	name string
-	src  string
-	want int
-	// fn -> patterns that must match the body
-	has map[string][]string
-	// fn -> patterns that must not
-	lacks map[string][]string
-}
-
-func runShapeCases(t *testing.T, emit func(t *testing.T, src string) string, run func(t *testing.T, name, asm string) int, cases []shapeCase) {
-	t.Helper()
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			asm := emit(t, tc.src)
-			for fn, pats := range tc.has {
-				body := shapeFnBody(t, asm, fn)
-				for _, p := range pats {
-					if !matchShape(body, p) {
-						t.Errorf("%s: no line matches %q:\n%s", fn, p, body)
-					}
-				}
-			}
-			for fn, pats := range tc.lacks {
-				body := shapeFnBody(t, asm, fn)
-				for _, p := range pats {
-					if matchShape(body, p) {
-						t.Errorf("%s: still carries %q:\n%s", fn, p, body)
-					}
-				}
-			}
-			if got := run(t, tc.name, asm); got != tc.want {
-				t.Errorf("exit = %d, want %d", got, tc.want)
-			}
-		})
-	}
-}
-
 func runX86ShapeCases(t *testing.T, cases []shapeCase) {
 	t.Helper()
 	emit, run := x86ShapeHarness(t)
