@@ -2382,6 +2382,46 @@ work in 329 ms of CPU. What remains on the Fern side is the merge itself
 and the comparison's call overhead, `sort_lines` and `compare_at` being
 65% of the instructions — #8822's codegen, not the utility.
 
+### The uniqueness test hoisted out of `.with` loops, 2026-09-22 (native compiler)
+
+`tr`'s translate loop was 35 instructions a byte, and a third of them
+were `a = a.with(i, v)` asking on every iteration whether `a` is its own
+— the `rc.is_unique` test that guards the copy-on-write. Inside a loop
+that answer cannot change after the first write: the copy arm leaves the
+local holding a fresh buffer, and a body that only reads the array's
+elements, takes its length and writes back through the same sites never
+gives it a second owner. `HoistUniquenessGuards` (`internal/ir`) now
+moves the whole guard to just before the `loop` when every iteration
+reaches the write, and where a write sits under a condition or past the
+loop's exit test (a rotated `while`), keeps the guard at the site behind
+a flag: cleared before the loop, set by the first write that runs the
+guard, read by every later one. The lazy form is what keeps a loop that
+rarely writes — `cat -n`'s carry into the next line number — from paying
+a per-entry test it never needed: 0.6% there, against 16% off `tr`.
+
+Release builds under callgrind, 300k lines of seq text unless named
+(the `fmt` and `ptx` rows are their prose inputs), pass off against on:
+
+| workload | before (Ir) | after | change |
+|---|---:|---:|---:|
+| `tr 0-9 a-j` | 72,179,880 | 60,244,729 | -16.5% |
+| `tr -d 0-4` | 59,743,417 | 57,641,768 | -3.5% |
+| `tr -s 0-9` | 72,554,066 | 68,852,435 | -5.1% |
+| `seq -w 1 300000` | 10,931,325 | 8,955,058 | -18.1% |
+| `sort -n` 100k numbers | 394,407,015 | 392,071,948 | -0.6% |
+| `cat -n` | 128,151,458 | 128,923,257 | +0.6% |
+| `base64` | 207,722,184 | 208,978,317 | +0.6% |
+| `cat -A`, `wc -w`, `nl`, `tac`, `od -t x1`, `fmt`, `ptx` | | | ±0.0% |
+
+`tr 0-9 a-j` and `tr -d 0-4` are 11% and 17% faster in wall clock. The
+two rows that grew are loops entered once per line that write once or
+never, paying the one flag store and, on the first write, the guard they
+always paid. Value semantics are pinned end to end on x86-64, arm64 and
+wasm (`TestX86_64WithGuardHoistKeepsValueSemantics` and its siblings): a
+buffer another name holds is copied before the first write, a loop that
+never writes keeps the alias, a loop that never runs leaves the value as
+it found it.
+
 ### ls, 2026-09-14, Linux x86-64 (GNU coreutils 9.4, uutils 0.0.24)
 
 The same 4-core container, so read the columns against each other. The
