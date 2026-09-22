@@ -104,7 +104,7 @@ function process_context(): string {
 
 // ---- the operand ------------------------------------------------------------
 function is_blank_byte(c: i32): boolean {
-  return c == 32 || c == 9 || c == 10 || c == 11 || c == 12 || c == 13;
+  return c == 32 || c >= 9 && c <= 13;
 }
 
 // The operand as a uid, on gnulib's terms: leading blanks, an optional

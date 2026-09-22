@@ -67,22 +67,25 @@
 #
 # Re-seeded from two independent complete runs that agreed on this set
 # byte-for-byte: 35356807225 and 35372825718, 1887 failures over 19913 tests.
+#
+# Ten left when the errno WORDING was fixed (#9964): b2sum, cksum, dd, fmt,
+# fold, mkfifo, nl, shuf, split and truncate. Each of them names an errno in
+# a diagnostic of its own — most of them EOVERFLOW or ERANGE, which the
+# Darwin libc words differently — and comparing glibc's words against a
+# Darwin GNU was their whole divergence. Removed on the lane's own evidence:
+# run 35687742755 warned for exactly these ten, and the round went from 1887
+# failures to 1647.
 
-TestB2sumParity
 TestBracketParity
 TestChown
-TestCksumParity
 TestCpParity
 TestCpWalkOrder
 TestCsplit
-TestDD
 TestDateParity
 TestDf
 TestDir
 TestDircolorsParity
 TestDu
-TestFmtParity
-TestFoldParity
 TestGroupsParity
 TestHostidParity
 TestIdParity
@@ -91,13 +94,11 @@ TestLnParity
 TestLognameParity
 TestLs
 TestMkdir
-TestMkfifoParity
 TestMknodParity
 TestMktempRetryExhaustion
 TestMvParity
 TestNice
 TestNiceReadsTheNicenessItWasStartedAt
-TestNlParity
 TestNumfmtParity
 TestOd
 TestPinkyParity
@@ -110,15 +111,12 @@ TestRmdirParity
 TestRunconParity
 TestSeqParity
 TestShred
-TestShufParity
 TestSortParity
-TestSplitParity
 TestStat
 TestStty
 TestSyncParity
 TestTailParity
 TestTestParity
-TestTruncateParity
 TestTtyParity
 TestUniqParity
 TestUptime
