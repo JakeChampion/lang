@@ -157,6 +157,17 @@ function test_broadcast_to_is_a_view(): test.TestOutcome {
   if (wide.rank() != 2 || wide.strides()[0] != 0 || wide.strides()[1] != 1) { return test.fail("stretched axis"); }
   if (wide.get([0, 3]) != 3 || wide.get([2, 3]) != 3 || wide.get([2, 0]) != 0) { return test.fail("reads"); }
   if (wide.is_row_major() || wide.is_packed()) { return test.fail("a stretched handle is not row-major"); }
+  // A broadcast that only PREPENDS extent-1 axes gives the handle no new
+  // elements and leaves the reading order alone, so it stays packed and takes
+  // the direct-index walk. Both walks are checked order-sensitively here: the
+  // fold reads 0,1,2,3 in that order, and the map keeps each element's index.
+  var lifted: ndarray.NdArray[i32] = row.broadcast_to([1, 4]);
+  if (!lifted.is_packed()) { return test.fail("a prepended axis keeps a handle packed"); }
+  if (lifted.fold_all(0, (acc: i32, x: i32): i32 => acc * 10 + x) != 123) {
+    return test.fail("prepended-axis fold order");
+  }
+  var lm: i32[] = lifted.map((x: i32): i32 => x + 1).to_flat();
+  if (lm.len() != 4 || lm[0] != 1 || lm[3] != 4) { return test.fail("prepended-axis map order"); }
   var f: i32[] = wide.to_flat();
   if (f.len() != 12 || f[4] != 0 || f[11] != 3) { return test.fail("to_flat"); }
   if (wide.transpose().get([3, 1]) != 3) { return test.fail("transpose of a broadcast"); }
