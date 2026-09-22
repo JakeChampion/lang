@@ -599,7 +599,7 @@ func ndarrayStackEffect(op Op, c *ndarrayLayoutCtx) (pops, pushes int, ok bool) 
 		}
 		return args, results, true
 	}
-	return opStackEffect(op, c.sigs)
+	return opStackEffect(op, c.sigs, stringSlots(c.shapes.twoWordStr))
 }
 
 // FormatNdarrayLayouts renders the storage-sensitive calls, or "" when the

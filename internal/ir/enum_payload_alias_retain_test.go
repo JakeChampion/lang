@@ -29,11 +29,13 @@ function table(): Unit[] {
 // retainsPayloadAfterLoad reports whether the ops between the LAST element
 // load and the enum construction that consumes it contain a retain. Anchoring
 // on that window rather than counting the whole function keeps the assertion
-// about this payload and indifferent to unrelated rc traffic elsewhere.
+// about this payload and indifferent to unrelated rc traffic elsewhere. The
+// load may be the checked helper or its `_nc` twin: the loop bound proves the
+// index in range, and that elision must not move the retain.
 func retainsPayloadAfterLoad(fn *ir.Func, loadName string, construct func(ir.Op) bool) bool {
 	lastLoad := -1
 	for i, op := range fn.Ops {
-		if op.Kind == ir.OpCallDirect && op.Str == loadName {
+		if op.Kind == ir.OpCallDirect && (op.Str == loadName || op.Str == loadName+"_nc") {
 			lastLoad = i
 		}
 	}

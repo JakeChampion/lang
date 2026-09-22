@@ -75,6 +75,9 @@ func OptimizeProgram(prog *Program, ptrW int32) {
 // inlines a helper into its sole caller and culls the original would
 // remove the very function a later lookup asks for.
 func OptimizeFunctions(prog *Program) {
+	// A condition that inlining has just exposed — `if (is_digit(c))` now
+	// carrying the callee's `&&` — becomes a chain of branches.
+	ChainConditions(prog)
 	// FuseTee folds store+reload into OpTeeLocal.
 	FuseTee(prog)
 	// DCE precedes FlattenBranches because flattening requires the

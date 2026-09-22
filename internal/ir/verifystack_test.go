@@ -259,3 +259,34 @@ func TestVerifyStackSkipsRatherThanGuesses(t *testing.T) {
 		t.Errorf("a skipped function still reported problems:%s", FormatProblems(problems, 5))
 	}
 }
+
+// A direct closure call's argument count includes its env pointer, so the
+// checker pops exactly that many: a defunctionalised program must verify
+// clean, on both word widths.
+func TestVerifyStackCountsClosureDirectEnvOnce(t *testing.T) {
+	for _, ptrW := range []int{8, 4} {
+		p := lowerSourceWith(t, `function makeAdder(n: i32): (i32) => i32 {
+	function add(x: i32): i32 { return x + n; }
+	return add;
+}
+function main(): i32 {
+	var f = makeAdder(7);
+	if (f(35) > 3 && f(1) > 0) { return 1; }
+	return f(2);
+}`, ptrW)
+		Inline(p)
+		Defunctionalise(p, int32(ptrW))
+		known := map[string]*Func{}
+		for _, f := range p.Funcs {
+			known[f.Name] = f
+		}
+		main := findFunc(p, "main")
+		if countOps(main, OpCallClosureDirect) == 0 {
+			t.Fatalf("ptrW=%d: main was not defunctionalised:\n%s", ptrW, p)
+		}
+		problems, bail := verifyStack(main, known, map[string]*ExternFunc{}, ptrW)
+		if bail != "" || len(problems) != 0 {
+			t.Errorf("ptrW=%d: main does not verify: bail=%q problems=%v\n%s", ptrW, bail, problems, p)
+		}
+	}
+}

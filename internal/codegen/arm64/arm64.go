@@ -4385,50 +4385,32 @@ func (g *generator) emitStrAppendRangeRuntime() {
 	g.line(".ltorg")
 }
 
-// emitArrBoundsCheck emits the array index bounds check shared by
-// every `__arr_idx*` variant: with the element index in x0 and the
-// array base in x1, the length prefix at [base-4] is compared and
-// an out-of-range index aborts the process with exit code 134 (the
-// same trap the string-slice helper uses, and what wasm's
-// `unreachable` produces under wasmtime). A single unsigned compare
-// catches both a negative index (huge as unsigned) and index >=
-// len. x2 is scratch.
-func (g *generator) emitArrBoundsCheck() {
-	ok := g.freshLabel("arr_ok")
-	g.emit("ldur w2, [x1, #-4]") // len prefix
-	g.emit("cmp w0, w2")
-	g.emit("b.lo %s", ok) // unsigned idx < len → in bounds
-	g.emitAbort("__fern_msg_arr_oob")
-	g.label(ok)
+// coldLabel and coldEmit append to the current function's out-of-line
+// arms, which flushCold emits after the epilogue.
+func (g *generator) coldLabel(name string) { g.cold = append(g.cold, name+":") }
+func (g *generator) coldEmit(format string, args ...any) {
+	g.cold = append(g.cold, "\t"+fmt.Sprintf(format, args...))
+}
+func (g *generator) flushCold() {
+	for _, l := range g.cold {
+		g.put(l)
+	}
+	g.cold = g.cold[:0]
 }
 
-// emitStrBoundsCheckAgainst is emitArrBoundsCheck for a string, with
-// the length already in lenW and the byte index in w0. A single
-// unsigned compare catches a negative index (huge as unsigned) too.
-//
-// The caller supplies the length because the only place it is cheap to
-// know is inside the __str_idx tag dispatch, which has already decided
-// whether this is a heap or an inline string. Decoding it again here
-// would repeat that test and emit a second SSO decode per index.
-func (g *generator) emitStrBoundsCheckAgainst(lenW string) {
-	ok := g.freshLabel("str_ok")
-	g.emit("cmp w0, %s", lenW)
-	g.emit("b.lo %s", ok) // unsigned idx < len → in bounds
-	g.emitAbort("__fern_msg_str_slice")
-	g.label(ok)
-}
-
-// emitSliceBoundsCheck is emitArrBoundsCheck for a slice: the
-// length lives in the slice header at [slice+8] (the 8-byte
-// data_ptr is at [slice+0]), so it must be read before the helper
-// overwrites x1 with the data pointer. x2 is scratch.
-func (g *generator) emitSliceBoundsCheck() {
-	ok := g.freshLabel("slice_ok")
-	g.emit("ldur w2, [x1, #8]") // len at [slice+8] (after 8-byte data_ptr)
-	g.emit("cmp w0, w2")
-	g.emit("b.lo %s", ok)
-	g.emitAbort("__fern_msg_slice_oob")
-	g.label(ok)
+// coldAbort is emitAbort into the cold section.
+func (g *generator) coldAbort(label string) {
+	text, code := AbortMsg(label)
+	if g.darwin {
+		g.coldEmit("adrp x1, %s@PAGE", label)
+		g.coldEmit("add x1, x1, %s@PAGEOFF", label)
+	} else {
+		g.coldEmit("adrp x1, %s", label)
+		g.coldEmit("add x1, x1, :lo12:%s", label)
+	}
+	g.coldEmit("mov x2, #%d", len(text))
+	g.coldEmit("mov x0, #%d", code)
+	g.coldEmit("b __fern_report")
 }
 
 // emitInlineIdxHelper inlines a `__str_idx` / `__arr_idx` /
@@ -4436,59 +4418,74 @@ func (g *generator) emitSliceBoundsCheck() {
 // (`base + index * stride`). The IR walker follows the helper
 // call with an OpLoad / OpLoadByte that reads from x0.
 //
+// The common path is straight-line: the bounds check is a compare
+// against the length and a branch to an out-of-line abort, and an inline
+// string's arm sits out of line too, rejoining at the address add with
+// the base register pointing at its spilled bytes. An out-of-range index
+// aborts with exit code 134 (the same trap the string-slice helper uses,
+// and what wasm's `unreachable` produces under wasmtime); a single
+// unsigned compare catches both a negative index (huge as unsigned) and
+// index >= len.
+//
 // arm64-specific: we can use `add x0, x1, x0, lsl #N` where N
 // is the log2 stride. AArch64 supports an LSL shift amount in
 // the operand-2 position — folds the multiply into the add.
 func (g *generator) emitInlineIdxHelper(name string) error {
 	// Bounds-check elision (#4380 lever 3): a `_nc` suffix names the same
-	// address compute minus the len-load + compare + trap. Strip it and
-	// remember to skip emitArrBoundsCheck for the array cases below.
+	// address compute minus the compare and the abort.
 	checked := true
 	if strings.HasSuffix(name, "_nc") {
 		checked = false
 		name = strings.TrimSuffix(name, "_nc")
 	}
-	arrBounds := func() {
-		if checked {
-			g.emitArrBoundsCheck()
+	// bounds emits the check of the index in w0 against the length in
+	// lenW, loaded by `load` when that is not empty.
+	bounds := func(load, lenW, msg string) {
+		if !checked {
+			return
 		}
+		oob := g.freshLabel("oob")
+		if load != "" {
+			g.emit("%s", load)
+		}
+		g.emit("cmp w0, %s", lenW)
+		g.emit("b.hs %s", oob)
+		g.coldLabel(oob)
+		g.coldAbort(msg)
 	}
 	if name == "__str_idx" && ast.UseTwoWordStrings(8) {
 		// Two-word ABI: stack on entry is [data, len, idx],
 		// top = idx. Pop idx → x0, len → x1, data → x2.
 		// Top-bit-tagged inline check on len.
 		g.usesStrIdx = true
-		id := g.labelN
-		g.labelN++
-		inlineLbl := fmt.Sprintf(".Lstridx2w_inline_%d", id)
-		doneLbl := fmt.Sprintf(".Lstridx2w_done_%d", id)
+		inline := g.freshLabel("stridx2w_inline")
+		join := g.freshLabel("stridx2w_join")
 		g.emit("ldr x0, [sp], #%d", slotBytes) // idx
 		g.emit("mov w0, w0")                   // zero-extend i32 index (see below, #4377)
 		g.emit("ldr x1, [sp], #%d", slotBytes) // len
 		g.emit("ldr x2, [sp], #%d", slotBytes) // data
-		g.emit("tbnz x1, #63, %s", inlineLbl)
+		g.emit("tbnz x1, #63, %s", inline)
 		// Heap form: byte address = data + idx, and the low 32 bits of
 		// the len word are the byte length.
-		if checked {
-			g.emitStrBoundsCheckAgainst("w1")
-		}
+		bounds("", "w1", "__fern_msg_str_slice")
+		g.label(join)
 		g.emit("add x0, x2, x0")
-		g.emit("b %s", doneLbl)
-		g.label(inlineLbl)
-		// Inline form: spill (data, len) at the 16-byte
-		// .bss scratch slot. Bytes 0..7 from `data`, bytes
-		// 8..14 from `len`'s low 56 bits. Result address =
-		// scratch + idx.
+		// Inline form: spill (data, len) at the 16-byte .bss scratch
+		// slot — bytes 0..7 from `data`, bytes 8..14 from `len`'s low 56
+		// bits — and rejoin with the scratch as the base. The length
+		// nibble sits at bits 56..59.
+		g.coldLabel(inline)
 		if checked {
-			// Inline form: the length nibble sits at bits 56..59.
-			g.emit("ubfx x3, x1, #56, #4")
-			g.emitStrBoundsCheckAgainst("w3")
+			oob := g.freshLabel("oob")
+			g.coldEmit("ubfx x3, x1, #56, #4")
+			g.coldEmit("cmp w0, w3")
+			g.coldEmit("b.hs %s", oob)
+			g.coldSpill2w(join)
+			g.coldLabel(oob)
+			g.coldAbort("__fern_msg_str_slice")
+		} else {
+			g.coldSpill2w(join)
 		}
-		g.adrpAdd("x3", "__fern_str_idx_scratch")
-		g.emit("str x2, [x3]")     // data bytes at scratch[0..7]
-		g.emit("str x1, [x3, #8]") // len bytes at scratch[8..15]
-		g.emit("add x0, x3, x0")
-		g.label(doneLbl)
 		g.push()
 		return nil
 	}
@@ -4504,69 +4501,66 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 	case "__str_idx":
 		// SSO-aware byte indexing. Heap strings (LSB=0): byte
 		// address = base + idx. Inline strings (LSB=1): spill
-		// the value to the global .bss scratch slot and return
-		// `&scratch[1 + idx]`. Single shared scratch slot, OK
-		// because the immediate OpLoadByte that follows
+		// the value to the global .bss scratch slot and rejoin
+		// with `&scratch[1]` as the base. Single shared scratch
+		// slot, OK because the immediate OpLoadByte that follows
 		// consumes the address before the next __str_idx fires.
 		g.usesStrIdx = true
-		id := g.labelN
-		g.labelN++
-		inlineLbl := fmt.Sprintf(".Lstridx_inline_%d", id)
-		doneLbl := fmt.Sprintf(".Lstridx_done_%d", id)
-		g.emit("tbnz x1, #0, %s", inlineLbl)
+		inline := g.freshLabel("stridx_inline")
+		join := g.freshLabel("stridx_join")
+		g.emit("tbnz x1, #0, %s", inline)
 		// Heap form: the 4-byte length prefix sits just below the data.
-		if checked {
-			g.emit("ldur w2, [x1, #-4]")
-			g.emitStrBoundsCheckAgainst("w2")
-		}
+		bounds("ldur w2, [x1, #-4]", "w2", "__fern_msg_str_slice")
+		g.label(join)
 		g.emit("add x0, x1, x0")
-		g.emit("b %s", doneLbl)
-		g.label(inlineLbl)
+		g.coldLabel(inline)
 		if checked {
 			// Inline form: length in bits 1..3 of the value.
-			g.emit("ubfx x2, x1, #1, #3")
-			g.emitStrBoundsCheckAgainst("w2")
+			oob := g.freshLabel("oob")
+			g.coldEmit("ubfx x2, x1, #1, #3")
+			g.coldEmit("cmp w0, w2")
+			g.coldEmit("b.hs %s", oob)
+			g.coldSpill1w(join)
+			g.coldLabel(oob)
+			g.coldAbort("__fern_msg_str_slice")
+		} else {
+			g.coldSpill1w(join)
 		}
-		g.adrpAdd("x2", "__fern_str_idx_scratch")
-		g.emit("str x1, [x2]")
-		g.emit("add x0, x2, x0")
-		g.emit("add x0, x0, #1")
-		g.label(doneLbl)
 	case "__arr_idx_1":
 		// Stride-1 byte-array indexing: byte address = base +
 		// idx. Split from $__str_idx so the string helper can
 		// own the SSO inline-spill dispatch without forcing
 		// byte arrays through the same `tbnz` check.
-		arrBounds()
+		bounds("ldur w2, [x1, #-4]", "w2", "__fern_msg_arr_oob")
 		g.emit("add x0, x1, x0")
 	case "__arr_idx":
-		arrBounds()
+		bounds("ldur w2, [x1, #-4]", "w2", "__fern_msg_arr_oob")
 		g.emit("add x0, x1, x0, lsl #2")
 	case "__arr_idx_8":
-		arrBounds()
+		bounds("ldur w2, [x1, #-4]", "w2", "__fern_msg_arr_oob")
 		g.emit("add x0, x1, x0, lsl #3")
 	case "__arr_idx_16":
 		// 16-byte stride — two-word `string[]` element load.
-		arrBounds()
+		bounds("ldur w2, [x1, #-4]", "w2", "__fern_msg_arr_oob")
 		g.emit("add x0, x1, x0, lsl #4")
 	// Slice indexing first bounds-checks `i` against the slice
-	// header's len (at [slice+4]), then dereferences its 32-bit
+	// header's len (at [slice+8]), then dereferences its 8-byte
 	// data_ptr field (at [slice+0]) and does the same
 	// stride-shifted add as the array helpers.
 	case "__slice_idx_1":
-		g.emitSliceBoundsCheck()
+		bounds("ldur w2, [x1, #8]", "w2", "__fern_msg_slice_oob")
 		g.emit("ldr x1, [x1]") // data_ptr (8-byte pointer)
 		g.emit("add x0, x1, x0")
 	case "__slice_idx":
-		g.emitSliceBoundsCheck()
+		bounds("ldur w2, [x1, #8]", "w2", "__fern_msg_slice_oob")
 		g.emit("ldr x1, [x1]")
 		g.emit("add x0, x1, x0, lsl #2")
 	case "__slice_idx_8":
-		g.emitSliceBoundsCheck()
+		bounds("ldur w2, [x1, #8]", "w2", "__fern_msg_slice_oob")
 		g.emit("ldr x1, [x1]")
 		g.emit("add x0, x1, x0, lsl #3")
 	case "__slice_idx_16":
-		g.emitSliceBoundsCheck()
+		bounds("ldur w2, [x1, #8]", "w2", "__fern_msg_slice_oob")
 		g.emit("ldr x1, [x1]")
 		g.emit("add x0, x1, x0, lsl #4")
 	default:
@@ -4574,6 +4568,38 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 	}
 	g.push()
 	return nil
+}
+
+// coldSpill1w is the single-word inline string's arm: spill the value to
+// the scratch slot and rejoin at `join` with x1 pointing at the data
+// bytes, which start one past the tag byte.
+func (g *generator) coldSpill1w(join string) {
+	g.coldAdrpAdd("x2", "__fern_str_idx_scratch")
+	g.coldEmit("str x1, [x2]")
+	g.coldEmit("add x1, x2, #1")
+	g.coldEmit("b %s", join)
+}
+
+// coldSpill2w is the two-word inline string's arm: data bytes at
+// scratch[0..7], the len word at scratch[8..15], and x2 rejoins as the
+// base.
+func (g *generator) coldSpill2w(join string) {
+	g.coldAdrpAdd("x3", "__fern_str_idx_scratch")
+	g.coldEmit("str x2, [x3]")
+	g.coldEmit("str x1, [x3, #8]")
+	g.coldEmit("mov x2, x3")
+	g.coldEmit("b %s", join)
+}
+
+// coldAdrpAdd is adrpAdd into the cold section.
+func (g *generator) coldAdrpAdd(reg, sym string) {
+	if g.darwin {
+		g.coldEmit("adrp %s, %s@PAGE", reg, sym)
+		g.coldEmit("add %s, %s, %s@PAGEOFF", reg, reg, sym)
+	} else {
+		g.coldEmit("adrp %s, %s", reg, sym)
+		g.coldEmit("add %s, %s, :lo12:%s", reg, reg, sym)
+	}
 }
 
 // emitStrcmpRuntime emits `__fern_strcmp(a, b)` — equality
@@ -15304,6 +15330,10 @@ type generator struct {
 	// strings to the `__fern_str_idx_scratch` .bss slot. Set
 	// lazily on first emit in emitInlineIdxHelper; gates the
 	// .bss reservation.
+	// cold holds the current function's out-of-line arms — a bounds check's
+	// abort, an index's inline-string arm — emitted after its epilogue so the
+	// common path falls through without a branch over them.
+	cold       []string
 	usesStrIdx bool
 	// enumSentinelTags collects unique tag values referenced by
 	// payloadless-variant constructions. One .rodata symbol per
@@ -16957,11 +16987,20 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	// checks the balance on the emitted text instead.
 	g.label(retLabel)
 	g.emit("mov sp, x29")
+	if len(g.cold) > 0 {
+		g.emit(".cfi_remember_state")
+	}
 	g.emit("ldp x29, x30, [sp], #16")
 	// Back to the CIE's initial rule. sp+0, not sp+8 as on x86-64: there
 	// is no return address on the stack here once the pair is popped.
 	g.emit(".cfi_def_cfa sp, 0")
 	g.emit("ret")
+	// The cold arms run with the frame still up, so they unwind by the
+	// rule the epilogue just left.
+	if len(g.cold) > 0 {
+		g.emit(".cfi_restore_state")
+		g.flushCold()
+	}
 	g.emit(".cfi_endproc")
 	g.sizeDirective(sym)
 	g.line(".ltorg")
@@ -17754,12 +17793,26 @@ func (g *generator) condBranchFarCC(fireCC, skipCC, target string) {
 }
 
 // condBranchReachInstrs is the largest function body, in instructions, for
-// which a direct conditional branch is unconditionally safe. b.cond / cbz /
-// tbz reach ±1MB = ±262144 instructions, so any branch inside a body no larger
+// which a direct `b.cond` / `cbz` is unconditionally safe. They reach
+// ±1MB = ±262144 instructions, so any such branch inside a body no larger
 // than that reaches any label in it whichever way it points. The margin below
 // the architectural limit costs nothing: only two functions in the self-host
 // compiler come anywhere near it.
 const condBranchReachInstrs = 200000
+
+// testBranchReachInstrs is the same bound for `tbz` / `tbnz`, whose 14-bit
+// offset reaches only ±32KB = ±8192 instructions. An index helper's
+// inline-string test is one of these, and its arm sits after the epilogue,
+// so a body over this size can put the two out of reach of each other.
+const testBranchReachInstrs = 8000
+
+// branchReach is the direct reach of a conditional branch mnemonic.
+func branchReach(mnem string) int {
+	if mnem == "tbz" || mnem == "tbnz" {
+		return testBranchReachInstrs
+	}
+	return condBranchReachInstrs
+}
 
 // invertCC maps an AArch64 condition code to its inverse.
 var invertCC = map[string]string{
@@ -17821,7 +17874,7 @@ func countInstrs(text []byte) int {
 // distances: there is no per-op instruction-count estimate to get wrong, and a
 // long function pays the trampoline only where the distance demands it.
 func (g *generator) reachCheckCondBranches(start int) {
-	if countInstrs(g.out.Bytes()[start:]) <= condBranchReachInstrs {
+	if countInstrs(g.out.Bytes()[start:]) <= testBranchReachInstrs {
 		return
 	}
 	body := append([]byte(nil), g.out.Bytes()[start:]...)
@@ -17841,8 +17894,8 @@ func (g *generator) reachCheckCondBranches(start int) {
 }
 
 // expandFarCondBranches rewrites the reach-limited conditional branches in one
-// function's emitted text whose target is more than `condBranchReachInstrs`
-// instructions away into a trampoline: the inverted test over a short forward
+// function's emitted text whose target is beyond the mnemonic's reach into a
+// trampoline: the inverted test over a short forward
 // skip, then an unconditional `b` to the real target.
 //
 //	b.eq  L    =>    b.ne .LbrFar_N / b L / .LbrFar_N:
@@ -17878,7 +17931,7 @@ func (g *generator) expandFarCondBranches(body []byte) ([]byte, bool) {
 			out.Write(line)
 			continue
 		}
-		if tgt, known := labelAt[target]; known && abs(tgt-at[i]) <= condBranchReachInstrs {
+		if tgt, known := labelAt[target]; known && abs(tgt-at[i]) <= branchReach(mnem) {
 			out.Write(line)
 			continue
 		}
@@ -20052,7 +20105,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			target = "__mapiter_value_impl"
 		case "__method_MapIter_advance":
 			target = "__mapiter_advance_impl"
-		case "__str_idx", "__arr_idx", "__arr_idx_1", "__arr_idx_8", "__arr_idx_16",
+		case "__str_idx", "__str_idx_nc", "__arr_idx", "__arr_idx_1", "__arr_idx_8", "__arr_idx_16",
 			"__arr_idx_nc", "__arr_idx_1_nc", "__arr_idx_8_nc", "__arr_idx_16_nc",
 			"__slice_idx", "__slice_idx_1", "__slice_idx_8", "__slice_idx_16":
 			// IR-side bounds-check stubs the lang runtime

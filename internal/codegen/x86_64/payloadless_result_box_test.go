@@ -35,6 +35,7 @@ func TestPayloadlessResultBoxArmsZeroTheirPayloadSlot(t *testing.T) {
 	for _, p := range probes {
 		g := &generator{syscalls: map[int]bool{}}
 		p.emit(g)
+		g.flushPeep()
 		asm := g.out.String()
 		for _, sym := range p.syms {
 			body := helperBody(t, asm, sym)

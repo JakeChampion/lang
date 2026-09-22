@@ -1447,6 +1447,10 @@ type generator struct {
 	usesSignalDispositionRead bool
 	usesAsBytes               bool
 	usesReadLine              bool
+	// cold holds the current function's out-of-line arms — a bounds check's
+	// abort, an index's inline-string arm — emitted after its epilogue so the
+	// common path falls through without a jump over them.
+	cold []string
 	// usesStrIdx tracks whether any code emits the SSO-aware
 	// inlined __str_idx helper, which spills inline-tagged
 	// strings to the .bss `__fern_str_idx_scratch` slot before
@@ -2753,9 +2757,18 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	// here naturally and exits cleanly.
 	g.label(retLabel)
 	g.emit("mov rsp, rbp")
+	if len(g.cold) > 0 {
+		g.emit(".cfi_remember_state")
+	}
 	g.emit("pop rbp")
 	g.emit(".cfi_def_cfa rsp, 8")
 	g.emit("ret")
+	// The cold arms run with the frame still up, so they unwind by the
+	// rule the epilogue just left.
+	if len(g.cold) > 0 {
+		g.emit(".cfi_restore_state")
+		g.flushCold()
+	}
 	g.emit(".cfi_endproc")
 	g.line(fmt.Sprintf(".size %s, .-%s", sym, sym))
 	return nil
@@ -4107,7 +4120,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_stdout"
 		case "stderr":
 			target = "__fern_stderr"
-		case "__str_idx", "__arr_idx", "__arr_idx_1", "__arr_idx_8",
+		case "__str_idx", "__str_idx_nc", "__arr_idx", "__arr_idx_1", "__arr_idx_8",
 			"__arr_idx_nc", "__arr_idx_1_nc", "__arr_idx_8_nc",
 			"__slice_idx", "__slice_idx_1", "__slice_idx_8":
 			// IR-side bounds-check stubs the lang runtime
@@ -5412,11 +5425,11 @@ func (g *generator) emit(s string) {
 
 // peepWindow is how many recently emitted logical lines are held back from
 // `out` so the streaming peephole can rewrite the tail in place. The longest
-// pattern is P6's, which spans a materialisation, its copy, the other
-// arguments' materialisations and the call; 10 covers the shapes that occur
+// pattern is P15's, a call whose five arguments are materialised, pushed,
+// and popped back into their registers; 18 covers the shapes that occur
 // while bounding held memory to O(1) — crucial because a self-host `.s` is
 // hundreds of MB and a whole-text post-pass would spike RAM.
-const peepWindow = 10
+const peepWindow = 18
 
 // put appends one logical output line (without its trailing newline) to the
 // peephole window, applies the safe local rewrites at the tail, then flushes
@@ -5552,6 +5565,27 @@ func (g *generator) peepholeTail() bool {
 		}
 	}
 
+	// P15 — call arguments materialised into their registers. A call with
+	// more arguments than P5 and P6 cover saves each one on the operand
+	// stack and pops them back in register order at the end:
+	//
+	//   mov rax, [a] / push rax / mov rax, [b] / push rax / mov rax, [c]
+	//     / mov rdx, rax / pop rsi / pop rdi / sub rsp, 8 / call f
+	//   =>  mov rdi, [a] / mov rsi, [b] / mov rdx, [c] / sub rsp, 8 / call f
+	//
+	// Each push pairs with the pop in the mirror position, so its
+	// materialisation is written to that pop's register instead. Sound
+	// when every materialisation is a pure register write that reads
+	// neither rax (the previous argument, no longer there) nor a register
+	// an earlier one now writes; rax itself is dead at the call, as P6
+	// argues.
+	if n >= 6 && strings.HasPrefix(w[n-1], "\tcall ") {
+		if lines, from, ok := foldArgPushes(w[:n-1]); ok {
+			g.peepWin = append(append(w[:from], lines...), w[n-1])
+			return true
+		}
+	}
+
 	// P6 — materialise straight into the argument register. Every value
 	// bound for an argument is computed into the accumulator first and then
 	// copied, because the operand stack has nowhere else to put it:
@@ -5641,29 +5675,68 @@ func (g *generator) peepholeTail() bool {
 		}
 	}
 
-	// P8 again, through a compare and its branch. A stored value tested and
-	// branched on before its reload:
+	// P8 again, through a compare and its branch. A value stored or loaded,
+	// tested and branched on, then reloaded from the same slot:
 	//
 	//   mov [rbp-N], rax / cmp eax, K / jb L / mov rax, [rbp-N]
 	//     =>  mov [rbp-N], rax / cmp eax, K / jb L
+	//   mov rax, [rbp-N] / mov rcx, [rbp-M] / cmp eax, ecx / jne L / mov rax, [rbp-N]
+	//     =>  mov rax, [rbp-N] / mov rcx, [rbp-M] / cmp eax, ecx / jne L
 	//
-	// The compare reads the accumulator without writing it, and the reload
-	// is only reached along the fall-through edge, on which rax still holds
-	// what was stored. Any path that takes the branch never executes the
-	// reload, so nothing can miss its value. `&&` conditions lower to
-	// chains of exactly this shape.
-	if n >= 4 && isFrameLoadToAcc(w[n-1]) {
+	// Between the two, only lines that neither write the accumulator nor
+	// write memory: a compare or test, a conditional jump, a load into
+	// another register. The reload is only reached along the fall-through
+	// edge, on which rax still holds the slot's value. Any path that takes a
+	// branch never executes the reload, so nothing can miss it. `&&`
+	// conditions lower to chains of exactly this shape.
+	if n >= 3 && isFrameLoadToAcc(w[n-1]) {
 		k := n - 2
-		for k >= 1 && isCompareOrCondJump(w[k]) {
+		for k >= 1 && (isCompareOrCondJump(w[k]) || isLoadIntoOtherReg(w[k])) {
 			k--
 		}
 		if k < n-2 {
-			if slot, ok := matchStoreFromAcc(w[k]); ok {
+			slot, ok := matchStoreFromAcc(w[k])
+			if !ok && isFrameLoadToAcc(w[k]) {
+				slot, ok = w[k][len("\tmov rax, "):], true
+			}
+			if ok {
 				if reg, ok := matchLoadFromSlot(w[n-1], slot); ok && reg == "rax" {
 					g.peepWin = w[:n-1]
 					return true
 				}
 			}
+		}
+	}
+
+	// P13 — index address folded into the load it feeds. An index helper
+	// ends in the scaled `lea` and the element load follows it:
+	//
+	//   lea rax, [rax + rcx*4] / mov eax, [rax]   =>  mov eax, [rax + rcx*4]
+	//
+	// Only a load that overwrites the accumulator qualifies (rax, or eax
+	// whose write zero-extends), since the biased address is dead exactly
+	// then. `lea` sets no flags, so none are lost.
+	if n >= 2 {
+		if line, ok := foldLeaIntoLoad(w[n-2], w[n-1]); ok {
+			g.peepWin = append(w[:n-2], line)
+			return true
+		}
+	}
+
+	// P14 — frame slot as the ALU operand. A binary operation on two
+	// locals loads both, P5 having already sent the right operand straight
+	// to rcx; the ALU form takes that slot from memory instead:
+	//
+	//   mov rcx, [rbp-N] / cmp eax, ecx   =>  cmp eax, dword ptr [rbp-N]
+	//   mov rcx, [rbp-N] / add rax, rcx   =>  add rax, qword ptr [rbp-N]
+	//
+	// The 32-bit form reads the slot's low four bytes, which is what ecx
+	// held. Dropping the write to rcx is sound for P4's reason: every
+	// consumer of rcx in this backend writes it before reading it.
+	if n >= 2 {
+		if line, ok := foldSlotIntoAlu(w[n-2], w[n-1]); ok {
+			g.peepWin = append(w[:n-2], line)
+			return true
 		}
 	}
 
@@ -5727,15 +5800,36 @@ func (g *generator) peepholeTail() bool {
 	// Sound because the deletion only changes the FALL-THROUGH path, which
 	// reaches the overwriter. A path that branches to one of the intervening
 	// labels never executed the load, so nothing can depend on its value.
+	// A memory-destination ALU op with a literal (P10's output) neither
+	// reads nor writes the accumulator, so the walk looks through it too:
+	// two fused increments in a row leave the first one's reload dead.
 	if n >= 2 && writesAccBeforeReading(w[n-1]) {
 		k := n - 2
-		for k >= 0 && isAsmLabel(w[k]) {
+		for k >= 0 && (isAsmLabel(w[k]) || isMemDstAluImm(w[k])) {
 			k--
 		}
 		if k >= 0 && isFrameLoadToAcc(w[k]) {
 			g.peepWin = append(w[:k], w[k+1:]...)
 			return true
 		}
+	}
+
+	// P16 — dead reload before a scope jump. P10 leaves a statement's
+	// reload behind, and when the statement ends its block the next line is
+	// the jump out of it:
+	//
+	//   add qword ptr [rbp-N], 1 / mov rax, [rbp-N] / jmp .LblkEnd_3
+	//     =>  add qword ptr [rbp-N], 1 / jmp .LblkEnd_3
+	//
+	// The accumulator is dead at every IR scope boundary: a value that
+	// outlives an op is on the operand stack or in a slot, and the code a
+	// scope label leads to reads neither the flags nor rax from the edge
+	// that jumped there. The scope labels are the ones OpBr, OpElse and
+	// OpEnd emit; a jump anywhere else — the epilogue, or the join inside a
+	// runtime shape — is not one, and rax may be the value it carries.
+	if n >= 2 && isScopeJump(w[n-1]) && isFrameLoadToAcc(w[n-2]) {
+		g.peepWin = append(w[:n-2], w[n-1])
+		return true
 	}
 
 	// P2 — dead jump: `jmp L` immediately followed by the label `L:` is a
@@ -6094,6 +6188,85 @@ func foldStackedMaterialise(l0, op, mv, pop, next string) ([]string, bool) {
 	return []string{"\tmov " + restore + ", rax", line}, true
 }
 
+// foldArgPushes recognises P15's shape in w, the lines before a call, and
+// returns the replacement for w[from:].
+func foldArgPushes(w []string) ([]string, int, bool) {
+	k := len(w) - 1
+	var tail []string
+	if k >= 0 {
+		if _, ok := matchRspDelta(w[k], "sub"); ok {
+			tail = []string{w[k]}
+			k--
+		}
+	}
+	// The pops, read backwards from the call: pops[len-1] is the first
+	// pop line, which restores the last push.
+	var pops []string
+	for k >= 0 {
+		reg, ok := matchPopDst(w[k])
+		if !ok || !isArgReg(reg) {
+			break
+		}
+		pops = append(pops, reg)
+		k--
+	}
+	if len(pops) == 0 || k < 1 {
+		return nil, 0, false
+	}
+	last, ok := matchMovFromAcc(w[k])
+	if !ok || !isArgReg(last.name) {
+		return nil, 0, false
+	}
+	k--
+	// The last argument's materialisation, then the pairs above it.
+	type arg struct {
+		op   string
+		reg  string
+		nar  bool
+		from int
+	}
+	args := []arg{{op: w[k], reg: last.name, nar: last.narrow, from: k}}
+	k--
+	for i := range pops {
+		if k < 1 || w[k] != "\tpush rax" {
+			return nil, 0, false
+		}
+		args = append(args, arg{op: w[k-1], reg: pops[len(pops)-1-i], from: k - 1})
+		k -= 2
+	}
+	// Emit in source order: the outermost push first.
+	var lines []string
+	var written []string
+	for i := len(args) - 1; i >= 0; i-- {
+		a := args[i]
+		if readsReg(a.op, "rax") {
+			return nil, 0, false
+		}
+		for _, r := range written {
+			if readsReg(a.op, r) {
+				return nil, 0, false
+			}
+		}
+		line, ok := renameAccDest(a.op, a.reg, a.nar)
+		if !ok {
+			return nil, 0, false
+		}
+		lines = append(lines, line)
+		written = append(written, a.reg)
+	}
+	return append(lines, tail...), args[len(args)-1].from, true
+}
+
+// isArgReg reports whether reg is one of the System V integer argument
+// registers.
+func isArgReg(reg string) bool {
+	switch reg {
+	case "rdi", "rsi", "rdx", "rcx", "r8", "r9":
+		return true
+	}
+	return false
+}
+
 // isArgSetupNotTouchingAcc reports whether a line is one of the few things
 // that legitimately sit between an argument's copy out of the accumulator and
 // the call that consumes it, and that provably neither read nor write it.
@@ -6279,6 +6452,85 @@ func renameAccDest(op, dst string, narrow bool) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// foldLeaIntoLoad recognises P13's pair and returns the load with the
+// `lea`'s operand as its own.
+func foldLeaIntoLoad(lea, load string) (string, bool) {
+	const leaPfx = "\tlea rax, [rax + rcx"
+	if !strings.HasPrefix(lea, leaPfx) || !strings.HasSuffix(lea, "]") {
+		return "", false
+	}
+	addr := lea[len("\tlea rax, "):]
+	for _, pfx := range [...]string{"\tmov rax, ", "\tmov eax, ", "\tmovzx eax, ", "\tmovsx eax, ", "\tmovsxd rax, "} {
+		if strings.HasPrefix(load, pfx) && strings.HasSuffix(load, "[rax]") {
+			return load[:len(load)-len("[rax]")] + addr, true
+		}
+	}
+	return "", false
+}
+
+// foldSlotIntoAlu recognises P14's pair and returns the ALU line with the
+// frame slot as its source operand.
+func foldSlotIntoAlu(load, alu string) (string, bool) {
+	const loadPfx = "\tmov rcx, [rbp-"
+	if !strings.HasPrefix(load, loadPfx) || !strings.HasSuffix(load, "]") ||
+		strings.ContainsAny(load[len(loadPfx):], " +-") {
+		return "", false
+	}
+	slot := load[len("\tmov rcx, "):]
+	for _, m := range [...]string{"cmp", "add", "sub", "and", "or", "xor", "imul"} {
+		switch alu {
+		case "\t" + m + " eax, ecx":
+			return "\t" + m + " eax, dword ptr " + slot, true
+		case "\t" + m + " rax, rcx":
+			return "\t" + m + " rax, qword ptr " + slot, true
+		}
+	}
+	return "", false
+}
+
+// isLoadIntoOtherReg reports whether a line is `mov <r64>, <src>` into a
+// register other than the accumulator or rsp, with a source that is a
+// frame slot or a register: a line that writes neither rax nor memory.
+func isLoadIntoOtherReg(line string) bool {
+	const pfx = "\tmov "
+	if !strings.HasPrefix(line, pfx) {
+		return false
+	}
+	i := strings.Index(line, ", ")
+	if i < 0 {
+		return false
+	}
+	reg, src := line[len(pfx):i], line[i+2:]
+	if reg == "rax" || reg == "rsp" || reg32(reg) == reg {
+		return false
+	}
+	return strings.HasPrefix(src, "[rbp-") || reg32(src) != src
+}
+
+// isMemDstAluImm reports whether a line is a memory-destination ALU op on a
+// frame slot with a literal operand — P10's output, which touches neither
+// the accumulator nor the flags anyone reads.
+func isMemDstAluImm(line string) bool {
+	for _, m := range [...]string{"add", "sub", "and", "or", "xor"} {
+		if strings.HasPrefix(line, "\t"+m+" qword ptr [rbp-") {
+			return true
+		}
+	}
+	return false
+}
+
+// isScopeJump reports whether a line is an unconditional jump to one of
+// the labels that open and close IR scopes (see irScope): a block's end, a
+// loop's top or end, an if's else or end.
+func isScopeJump(line string) bool {
+	for _, pfx := range [...]string{"\tjmp .LblkEnd_", "\tjmp .LloopTop_", "\tjmp .LloopEnd_", "\tjmp .LifEnd_", "\tjmp .LifElse_"} {
+		if strings.HasPrefix(line, pfx) {
+			return true
+		}
+	}
+	return false
 }
 
 // isCompareOrCondJump reports whether a line is a compare, a test, or a
@@ -6474,51 +6726,15 @@ func (g *generator) emitMakeClosureOrEnv(op ir.Op) error {
 	return nil
 }
 
-// emitArrBoundsCheck emits the array index bounds check shared by
-// every `__arr_idx*` variant: with the array base in rax and the
-// element index in rcx, the length prefix at [rax-4] is compared
-// and an out-of-range index aborts with exit code 134 (matching the
-// string-slice trap and wasm's `unreachable`). A single unsigned
-// compare catches a negative index (huge as unsigned) and index >=
-// len; rdx is scratch.
-func (g *generator) emitArrBoundsCheck() {
-	ok := g.freshLabel(".Larr_ok")
-	g.emit("mov edx, [rax - 4]") // len prefix
-	g.emit("cmp ecx, edx")
-	g.emit(fmt.Sprintf("jb %s", ok)) // unsigned idx < len → in bounds
-	g.emitAbort("__fern_msg_arr_oob")
-	g.label(ok)
-}
-
-// emitStrBoundsCheckAgainst is emitArrBoundsCheck for a string, with
-// the length already in lenReg and the byte index in rcx. An
-// out-of-range index aborts with exit code 134; a single unsigned
-// compare catches a negative index (huge as unsigned) too.
-//
-// The caller supplies the length because the only place it is cheap to
-// know is inside the __str_idx tag dispatch, which has already decided
-// whether this is a heap or an inline string. Calling emitStrLen here
-// instead would repeat that tag test and emit a second SSO decode per
-// index — a redundant branch, and one the LICM parity gate counts.
-func (g *generator) emitStrBoundsCheckAgainst(lenReg string) {
-	ok := g.freshLabel(".Lstr_ok")
-	g.emit(fmt.Sprintf("cmp ecx, %s", lenReg))
-	g.emit(fmt.Sprintf("jb %s", ok)) // unsigned idx < len → in bounds
-	g.emitAbort("__fern_msg_str_slice")
-	g.label(ok)
-}
-
-// emitSliceBoundsCheck is emitArrBoundsCheck for a slice: the len
-// is in the slice header at [rax+8] (8-byte data_ptr at [rax+0]),
-// read before the helper overwrites rax with the data pointer. rdx
-// is scratch.
-func (g *generator) emitSliceBoundsCheck() {
-	ok := g.freshLabel(".Lslice_ok")
-	g.emit("mov edx, [rax + 8]") // len at [slice+8] (after 8-byte data_ptr)
-	g.emit("cmp ecx, edx")
-	g.emit(fmt.Sprintf("jb %s", ok))
-	g.emitAbort("__fern_msg_slice_oob")
-	g.label(ok)
+// coldLabel and coldEmit append to the current function's out-of-line
+// arms, which flushCold emits after the epilogue.
+func (g *generator) coldLabel(name string) { g.cold = append(g.cold, name+":") }
+func (g *generator) coldEmit(s string)     { g.cold = append(g.cold, "\t"+s) }
+func (g *generator) flushCold() {
+	for _, l := range g.cold {
+		g.put(l)
+	}
+	g.cold = g.cold[:0]
 }
 
 // emitInlineIdxHelper inlines a `__str_idx` / `__arr_idx` /
@@ -6530,21 +6746,36 @@ func (g *generator) emitSliceBoundsCheck() {
 // the `_nc` suffix). Subsequent OpLoad / OpStore consumes
 // the address in rax.
 //
+// The common path is straight-line: the bounds check is one compare
+// against the length in memory and a branch to an out-of-line abort, and
+// an inline string's arm sits out of line too, rejoining just before the
+// address `lea`. A load that follows the `lea` then folds it into its own
+// addressing (P13).
+//
 // x86-64 has a `lea base + idx*scale` addressing form
 // directly for scale 1/2/4/8 — strictly faster than
 // arm64's `add rN, rN, rN, lsl #M` for the same job.
 func (g *generator) emitInlineIdxHelper(name string) error {
 	// Bounds-check elision (#4380 lever 3): a `_nc` suffix names the same
-	// address compute minus the len-load + compare + trap. Strip it and
-	// remember to skip emitArrBoundsCheck for the array cases below.
+	// address compute minus the compare and the abort.
 	checked := true
 	if strings.HasSuffix(name, "_nc") {
 		checked = false
 		name = strings.TrimSuffix(name, "_nc")
 	}
-	arrBounds := func() {
-		if checked {
-			g.emitArrBoundsCheck()
+	// bounds emits the check of the index in ecx against a length operand:
+	// a single unsigned compare catches a negative index (huge as unsigned)
+	// too. An out-of-range index aborts with exit code 134.
+	bounds := func(length, msg string) {
+		if !checked {
+			return
+		}
+		oob := g.freshLabel("oob")
+		g.emit("cmp ecx, " + length)
+		g.emit("jae " + oob)
+		g.coldLabel(oob)
+		for _, l := range abortLines(msg) {
+			g.coldEmit(l)
 		}
 	}
 	// Pop in the order the OpCallDirect dispatch would
@@ -6573,59 +6804,65 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 		// consumes the address before the next call, so there
 		// is no observable race even in `a[i] + b[j]` shapes.
 		//
-		// The bounds check is emitted in each arm of this dispatch: the heap
-		// length is the 4-byte prefix, the inline length is in the tag
-		// byte, and the tag test that tells them apart is already here.
+		// The inline arm leaves `scratch + 1` in rax and rejoins at the
+		// `lea`, so both arms share the one address compute. Its bounds
+		// check reads the length from the tag byte.
 		g.usesStrIdx = true
-		id := g.labelCounter
-		g.labelCounter++
+		inline := g.freshLabel("stridx_inline")
+		join := g.freshLabel("stridx_join")
 		g.emit("test rax, 1")
-		g.emit(fmt.Sprintf("jnz .Lstridx_inline_%d", id))
-		if checked {
-			g.emit("mov edx, [rax - 4]")
-			g.emitStrBoundsCheckAgainst("edx")
-		}
+		g.emit("jnz " + inline)
+		bounds("[rax - 4]", "__fern_msg_str_slice")
+		g.label(join)
 		g.emit("lea rax, [rax + rcx]")
-		g.emit(fmt.Sprintf("jmp .Lstridx_done_%d", id))
-		g.label(fmt.Sprintf(".Lstridx_inline_%d", id))
+
+		g.coldLabel(inline)
 		if checked {
-			g.emit("mov edx, eax")
-			g.emit("shr edx, 1")
-			g.emit("and edx, 7")
-			g.emitStrBoundsCheckAgainst("edx")
+			oob := g.freshLabel("oob")
+			g.coldEmit("mov edx, eax")
+			g.coldEmit("shr edx, 1")
+			g.coldEmit("and edx, 7")
+			g.coldEmit("cmp ecx, edx")
+			g.coldEmit("jae " + oob)
+			g.coldEmit("mov [rip + __fern_str_idx_scratch], rax")
+			g.coldEmit("lea rax, [rip + __fern_str_idx_scratch + 1]")
+			g.coldEmit("jmp " + join)
+			g.coldLabel(oob)
+			for _, l := range abortLines("__fern_msg_str_slice") {
+				g.coldEmit(l)
+			}
+		} else {
+			g.coldEmit("mov [rip + __fern_str_idx_scratch], rax")
+			g.coldEmit("lea rax, [rip + __fern_str_idx_scratch + 1]")
+			g.coldEmit("jmp " + join)
 		}
-		g.emit("mov [rip + __fern_str_idx_scratch], rax")
-		g.emit("lea rax, [rip + __fern_str_idx_scratch]")
-		g.emit("add rax, rcx")
-		g.emit("add rax, 1")
-		g.label(fmt.Sprintf(".Lstridx_done_%d", id))
 	case "__arr_idx_1":
 		// Stride-1 byte-array indexing: byte address = base +
 		// idx. Split from __str_idx so the string helper can
 		// own the SSO inline-spill dispatch without forcing
 		// byte arrays through the same `test rax, 1` check.
-		arrBounds()
+		bounds("[rax - 4]", "__fern_msg_arr_oob")
 		g.emit("lea rax, [rax + rcx]")
 	case "__arr_idx":
-		arrBounds()
+		bounds("[rax - 4]", "__fern_msg_arr_oob")
 		g.emit("lea rax, [rax + rcx*4]")
 	case "__arr_idx_8":
-		arrBounds()
+		bounds("[rax - 4]", "__fern_msg_arr_oob")
 		g.emit("lea rax, [rax + rcx*8]")
 	// Slice indexing first bounds-checks `i` against the slice
 	// header's len (at [slice+8]), then dereferences its data_ptr
 	// field (8-byte pointer at [slice+0]). After the deref it's the
 	// same stride-add shape as the array helpers.
 	case "__slice_idx_1":
-		g.emitSliceBoundsCheck()
+		bounds("[rax + 8]", "__fern_msg_slice_oob")
 		g.emit("mov rax, [rax]") // data_ptr (8-byte pointer)
-		g.emit("add rax, rcx")
+		g.emit("lea rax, [rax + rcx]")
 	case "__slice_idx":
-		g.emitSliceBoundsCheck()
+		bounds("[rax + 8]", "__fern_msg_slice_oob")
 		g.emit("mov rax, [rax]")
 		g.emit("lea rax, [rax + rcx*4]")
 	case "__slice_idx_8":
-		g.emitSliceBoundsCheck()
+		bounds("[rax + 8]", "__fern_msg_slice_oob")
 		g.emit("mov rax, [rax]")
 		g.emit("lea rax, [rax + rcx*8]")
 	default:
@@ -7162,11 +7399,21 @@ func AbortMsg(label string) (text string, code int) {
 // (which writes to stderr, then exit_group). Replaces a bare, silent
 // `mov edi, code; syscall` so the failure names its cause (#5538).
 func (g *generator) emitAbort(label string) {
+	for _, l := range abortLines(label) {
+		g.emit(l)
+	}
+}
+
+// abortLines is the tail call into __fern_report that reports the message
+// `label` names and exits with its code.
+func abortLines(label string) []string {
 	text, code := AbortMsg(label)
-	g.emit(fmt.Sprintf("lea rsi, [rip + %s]", label))
-	g.emit(fmt.Sprintf("mov edx, %d", len(text)))
-	g.emit(fmt.Sprintf("mov edi, %d", code))
-	g.emit("jmp __fern_report")
+	return []string{
+		fmt.Sprintf("lea rsi, [rip + %s]", label),
+		fmt.Sprintf("mov edx, %d", len(text)),
+		fmt.Sprintf("mov edi, %d", code),
+		"jmp __fern_report",
+	}
 }
 
 // emitAbortRuntime emits __fern_report — write(2, msg, len) then

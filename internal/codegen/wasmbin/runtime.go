@@ -1100,6 +1100,9 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					// string-key path.
 					needs.add("__fern_str_len")
 					needs.add("__str_idx")
+				case "__str_idx_nc":
+					needs.add("__fern_str_len")
+					needs.add("__str_idx_nc")
 				case "__arr_idx":
 					// (base, i) → byte address of element i
 					// in a 4-byte-stride array. Length prefix
@@ -2982,6 +2985,13 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		// inline strings spills (data, len) to fixed scratch and
 		// returns scratch + i so the caller's OpLoadByte reads
 		// the correct content byte.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildStrIdxBody,
+	},
+	// The elided form keeps the check here: the SSO dispatch is the cost
+	// of a string index on this backend, not the compare.
+	"__str_idx_nc": {
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildStrIdxBody,

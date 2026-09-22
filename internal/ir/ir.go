@@ -11131,7 +11131,11 @@ func (b *builder) expr(e ast.Expr) error {
 			}
 		}
 		if n.IsString {
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__str_idx", Width: ResAddr, I32: 2})
+			helper := "__str_idx"
+			if n.Unchecked {
+				helper = "__str_idx_nc"
+			}
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: helper, Width: ResAddr, I32: 2})
 			b.emit(Op{Kind: OpLoadByte})
 		} else if n.IsSlice {
 			// Slice-index variants per stride: __slice_idx_1
@@ -11166,11 +11170,12 @@ func (b *builder) expr(e ast.Expr) error {
 				helper = "__arr_idx_16"
 			}
 			// Bounds-check elision (#4380 lever 3): a caller that has
-			// statically proven the index in range (currently the
-			// ForEach desugar's synthetic `iter[idx]`) sets n.Unchecked,
-			// routing to the `_nc` ("no check") helper variant — the same
-			// address compute minus the len-load + compare + trap. Only
-			// the array path honours it; string/slice keep their checks.
+			// statically proven the index in range (the ForEach desugar's
+			// synthetic `iter[idx]`, the parser's len-bounded loop pass)
+			// sets n.Unchecked, routing to the `_nc` ("no check") helper
+			// variant — the same address compute minus the len-load +
+			// compare + trap. Arrays and strings honour it; slices keep
+			// their checks.
 			if n.Unchecked {
 				helper = helper + "_nc"
 			}
