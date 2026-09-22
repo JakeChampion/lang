@@ -73009,9 +73009,24 @@ function map_kv_elem_flag(mty: string, field: string): i32 {
         if (map_key_eqfn(mty) != "") { return 2; }
         return 1;
     }
-    if (map_value_of(mty) == "i32") { return 0; }
-    if (map_value_of(mty) == "string") { return 2; }
-    return 1;
+    // The VALUE column's half of the same bug, and the raw alias leaves it
+    // entirely: a snapshot always COPIES, and only what it copies decides
+    // whether each element is also retained.
+    //
+    // A column of POINTERS — a record, a union, an array, a tuple, a string —
+    // is counted per entry, so it takes the retaining snapshot (2): the helper
+    // copies the buffer and rc-incs each element whatever the elements are.
+    // `map_value_is_ptr` is the classifier op_map_set's valptr bit already
+    // uses. A column of raw CELLS is copied without counting (0) — rc-incing an
+    // i64 or an f64 would read its bytes as an address — and the op's own
+    // widekind, not this flag, is what makes an 8-byte cell copy whole.
+    //
+    // Flag 1 handed the frame a RAW ALIAS of the map's live values buffer,
+    // which it then released. Both arms aborted under the sanitizer: a record
+    // column and an i64 column alike answered 124 where the interpreter
+    // answers 24.
+    if (map_value_is_ptr(map_value_of(mty))) { return 2; }
+    return 0;
 }
 
 pub function map_value_of(typestr: string): string {
