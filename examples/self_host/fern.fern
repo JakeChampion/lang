@@ -37,10 +37,12 @@
 //
 // Codegen routes through the IR path (asm_ir / asm_arm64_ir / wasm_ir,
 // each IR-or-error per #3457) for every target. Register allocation per
-// function (`-backend ssa`) is the DEFAULT on arm64 and available on
-// x86-64; `-backend flat` names the stack machine, which is the default
-// everywhere else. A function outside the register path's subset falls back
-// to the stack machine on its own. See docs/SELFHOST-SSA-BACKEND.md.
+// function (`-backend ssa`) is the DEFAULT on both native ISAs, arm64 and
+// x86-64; `-backend flat` names the stack machine, which is the default on
+// wasm, where there is no register path. A function outside the register
+// path's subset falls back to the stack machine on its own — and no corpus
+// program has one (the fixture legs hold that at zero).
+// See docs/SELFHOST-SSA-BACKEND.md.
 //
 // It is a drop-in-shaped replacement for cmd/fern: one binary hosting
 // both the x86-64 (asm_ir.fern) and arm64 (asm_arm64.fern) emitters,
