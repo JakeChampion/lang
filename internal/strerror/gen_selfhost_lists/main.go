@@ -14,9 +14,10 @@ import (
 )
 
 func main() {
-	var texts, linux, darwin, wasi, codes []string
+	var texts, darwinTexts, linux, darwin, wasi, codes []string
 	for _, e := range strerror.Table {
 		texts = append(texts, strconv.Quote(e.Text))
+		darwinTexts = append(darwinTexts, strconv.Quote(e.TextFor(strerror.Darwin)))
 		linux = append(linux, strconv.Itoa(e.Linux))
 		darwin = append(darwin, strconv.Itoa(e.Darwin))
 		wasi = append(wasi, strconv.Itoa(e.Wasi))
@@ -25,6 +26,7 @@ func main() {
 		codes = append(codes, strconv.Itoa(strerror.Number(strerror.Wasi, ec.Errno)))
 	}
 	fmt.Printf("pub function strerror_texts(): string[] {\n    return [%s];\n}\n", strings.Join(texts, ", "))
+	fmt.Printf("pub function strerror_texts_darwin(): string[] {\n    return [%s];\n}\n", strings.Join(darwinTexts, ", "))
 	fmt.Printf("pub function strerror_linux(): i32[] {\n    return [%s];\n}\n", strings.Join(linux, ", "))
 	fmt.Printf("pub function strerror_darwin(): i32[] {\n    return [%s];\n}\n", strings.Join(darwin, ", "))
 	fmt.Printf("pub function strerror_wasi(): i32[] {\n    return [%s];\n}\n", strings.Join(wasi, ", "))

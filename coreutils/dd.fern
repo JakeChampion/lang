@@ -312,7 +312,7 @@ function has_sign(v: string): boolean {
 function bad_number(v: string, status: i32): void {
   var msg: string = "invalid number: " + gnu.quote(v);
   if (status == num_over()) {
-    msg = msg + ": Value too large for defined data type";
+    msg = msg + ": " + gnu.eoverflow_text();
   }
   gnu.error(msg);
   exit(1);

@@ -380,7 +380,7 @@ function scan_u64(text: string, from: i32): Scan {
 function range_fatal(text: string, over: boolean): void {
   var msg: string = "invalid input range: " + gnu.quote(text);
   if (over) {
-    msg = msg + ": Value too large for defined data type";
+    msg = msg + ": " + gnu.eoverflow_text();
   }
   gnu.error(msg);
   exit(1);

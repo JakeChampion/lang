@@ -6,9 +6,13 @@
 // Each entry carries the errno's number on each OS the runtime issues
 // syscalls to. Linux and Darwin number their errnos differently and
 // WASI preview 1 differently again, so the table is keyed by name and
-// resolved per target; the text is glibc's even on Darwin, where the
-// libc wording differs for a few (EBUSY, EXDEV, ENXIO, EOVERFLOW,
-// EDQUOT, ETIMEDOUT, ...).
+// resolved per target.
+//
+// The WORDING is resolved per target too. Text is glibc's; darwinText
+// overrides the sixteen errnos whose Darwin libc message differs. A C
+// program prints strerror(3) verbatim, so a Darwin build that said
+// "Invalid cross-device link" where the platform says "Cross-device
+// link" would diverge from every other binary on the machine.
 //
 // The three asm backends emit the table as a compare ladder over
 // `.rodata` literals, wasm as a ladder over data-segment literals, the
@@ -21,7 +25,8 @@ import "strconv"
 
 // Entry is one errno: its C name, glibc's strerror text, and its number
 // on each OS. A zero number means the OS has no separate errno of that
-// name (EOPNOTSUPP is ENOTSUP's alias on Linux and WASI).
+// name (EOPNOTSUPP is ENOTSUP's alias on Linux and WASI). Text is the
+// wording everywhere except the Darwin errnos darwinText overrides.
 type Entry struct {
 	Name   string
 	Text   string
@@ -49,6 +54,39 @@ func (e Entry) Number(os string) int {
 		return e.Wasi
 	}
 	return 0
+}
+
+// darwinText is the Darwin libc's wording for the errnos whose message
+// is not glibc's, checked against the host by TestTextMatchesHostLibc:
+// an entry missing here whose wording differs fails that test, so the
+// list cannot silently fall behind a platform.
+var darwinText = map[string]string{
+	"ENXIO":         "Device not configured",
+	"EBUSY":         "Resource busy",
+	"EXDEV":         "Cross-device link",
+	"ENODEV":        "Operation not supported by device",
+	"ERANGE":        "Result too large",
+	"EAFNOSUPPORT":  "Address family not supported by protocol family",
+	"EADDRNOTAVAIL": "Can't assign requested address",
+	"EISCONN":       "Socket is already connected",
+	"ENOTCONN":      "Socket is not connected",
+	"ETIMEDOUT":     "Operation timed out",
+	"EDQUOT":        "Disc quota exceeded",
+	"ESTALE":        "Stale NFS file handle",
+	"EOVERFLOW":     "Value too large to be stored in data type",
+	"EILSEQ":        "Illegal byte sequence",
+	"EOPNOTSUPP":    "Operation not supported on socket",
+	"EOWNERDEAD":    "Previous owner died",
+}
+
+// TextFor is the errno's strerror text on os.
+func (e Entry) TextFor(os string) string {
+	if os == Darwin {
+		if t, ok := darwinText[e.Name]; ok {
+			return t
+		}
+	}
+	return e.Text
 }
 
 // Table lists every errno the runtime's syscalls (open / read / write /
@@ -139,7 +177,7 @@ func Unknown(errno int) string {
 func Text(os string, errno int) string {
 	for _, e := range Table {
 		if n := e.Number(os); n != 0 && n == errno {
-			return e.Text
+			return e.TextFor(os)
 		}
 	}
 	return Unknown(errno)
@@ -169,7 +207,7 @@ func Dense(os string) []string {
 	out := make([]string, max+1)
 	for _, e := range Table {
 		if n := e.Number(os); n != 0 {
-			out[n] = e.Text
+			out[n] = e.TextFor(os)
 		}
 	}
 	return out

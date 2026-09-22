@@ -60,12 +60,13 @@ func fernInts(t *testing.T, src, name string) []int {
 	return out
 }
 
-// TestSelfHostTableMatches pins the four parallel lists to Table, row
+// TestSelfHostTableMatches pins the five parallel lists to Table, row
 // for row and in order: the self-host generates its ladder by index, so
 // a row out of place pairs a text with the wrong number.
 func TestSelfHostTableMatches(t *testing.T) {
 	src := readSelfHost(t)
 	texts := fernStrings(t, src, "strerror_texts")
+	darwinTexts := fernStrings(t, src, "strerror_texts_darwin")
 	lists := map[string][]int{
 		Linux:  fernInts(t, src, "strerror_linux"),
 		Darwin: fernInts(t, src, "strerror_darwin"),
@@ -73,6 +74,9 @@ func TestSelfHostTableMatches(t *testing.T) {
 	}
 	if len(texts) != len(Table) {
 		t.Fatalf("strerror_texts() has %d rows, Table has %d — regenerate with `go run ./internal/strerror/gen_selfhost_lists`", len(texts), len(Table))
+	}
+	if len(darwinTexts) != len(Table) {
+		t.Fatalf("strerror_texts_darwin() has %d rows, Table has %d — regenerate with `go run ./internal/strerror/gen_selfhost_lists`", len(darwinTexts), len(Table))
 	}
 	for os, nums := range lists {
 		if len(nums) != len(Table) {
@@ -82,6 +86,9 @@ func TestSelfHostTableMatches(t *testing.T) {
 	for i, e := range Table {
 		if texts[i] != e.Text {
 			t.Errorf("row %d (%s): the self-host says %q, Table says %q", i, e.Name, texts[i], e.Text)
+		}
+		if want := e.TextFor(Darwin); darwinTexts[i] != want {
+			t.Errorf("row %d (%s) on darwin: the self-host says %q, Table says %q", i, e.Name, darwinTexts[i], want)
 		}
 		for os, nums := range lists {
 			if nums[i] != e.Number(os) {

@@ -332,7 +332,7 @@ function parse_size(text: string): Size {
   }
   var p: Parsed = parse_len(rest);
   if (p.status == st_overflow()) {
-    gnu.error("Invalid number: " + gnu.quote(rest) + ": Value too large for defined data type");
+    gnu.error("Invalid number: " + gnu.quote(rest) + ": " + gnu.eoverflow_text());
     exit(1);
   }
   if (p.status == st_invalid()) {
