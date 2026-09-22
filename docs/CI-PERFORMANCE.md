@@ -414,6 +414,55 @@ one process on a 3-core runner) is the next long pole once the Linux side is
 under it; its own ~5-slot pool is what bounds sharding it. `changes` costs 1.2
 minutes at the front of every run for a listing call.
 
+## Fifth change: a superseded pull request run is cancelled server-side
+
+### What the pool was doing during one PR run
+
+Run 35733713188 (#10003's final run, 13:28-14:01 UTC) never reached the
+ceiling on its own: its jobs peaked at 25 running, on a pool of 40. The rest
+of the pool, per the run listing for the same half hour:
+
+| Holding slots alongside it | Slots and duration |
+| --- | --- |
+| `CI main` for 95c7867 | ~60 jobs, 13:04-13:46 (42 min, itself starved) |
+| the other lane's PR suite (#9990) | ~60 jobs, 13:32-13:56 |
+| two runs a push had superseded (35733119494, 35733509031) | their jobs kept running until 13:36, 8 and 4 minutes after the push that made them obsolete |
+| Pullfrog review runs | four dispatches of 15-35 min, one slot each |
+
+The superseded runs are the part this repository controls. They were
+cancelled by `reap-stale-runs.yml`, which needs a runner of its own to act and
+queues for it behind the very jobs it is meant to free. Over its last 31
+successful `pull_request` runs the sweep took a median 0.9 min from trigger to
+completion, p90 7.5, maximum 14.7. The `changes` and `Lint` jobs of the
+measured run, ten seconds of work each, waited 6 minutes for a slot at
+13:28-13:34, which is exactly the window in which the two superseded runs
+were still executing.
+
+### The change
+
+`ci.yml` carries a concurrency group per pull request with
+`cancel-in-progress` on for `pull_request` events only. A push then cancels
+the previous run the moment it lands, server-side, and nothing waits for a
+runner to do it. The suite FIFO is untouched: it stays on `ci-suite.yml`,
+where `queue: max` forbids `cancel-in-progress`, so the two groups nest (one
+run per PR on the outside, two suites at a time on the inside). A main
+validation and a dispatch get a run-unique group and are never cancelled.
+`reap-stale-runs.yml` no longer triggers on `synchronize`; it remains the
+backstop for closed pull requests and the quiet-hours cron.
+
+### Not done: skipping a main run whose tree a PR run already passed
+
+A rebase merge of a branch that is level with main produces the same tree
+the PR run tested, so the main validation of that push would re-run the same
+tests on the same tree. Measured on the last 40 merged pull requests: 9 had
+the merge commit's tree equal to the PR head's tree, 31 did not, because main
+moved between the PR's last push and its merge (branches here are rarely
+brought level before merging, and `auto-rebase-prs.yml` rebases them
+afterwards). A tree-hash skip would remove about one main run in five; the
+per-run `changes` filter and `ci-main.yml`'s coalescing already remove more,
+and the skip would need the PR run to have run every lane. Not worth its
+own machinery at that rate.
+
 ## Multi-core test execution: what parallelism can and cannot buy
 
 Measured 2026-09-22 on the 4-core container (Xeon 2.10 GHz, a 14 GB cgroup),

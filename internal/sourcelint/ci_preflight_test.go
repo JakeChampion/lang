@@ -6,8 +6,21 @@ import (
 )
 
 func TestCILintRunsOutsideTheFullSuiteQueue(t *testing.T) {
-	if _, ok := topLevelBlock(workflowSource(t, ciFile), "concurrency"); ok {
-		t.Fatal("root CI must not queue lint behind a full compiler suite")
+	// The root group supersedes a pull request's own earlier run and nothing
+	// else: no queue across pull requests, or lint would wait behind a full
+	// compiler suite, and no cancellation of a main validation.
+	conc, ok := topLevelBlock(workflowSource(t, ciFile), "concurrency")
+	if !ok {
+		t.Fatal("root CI has no concurrency group: a superseded PR run would hold runner slots until a reaper reaches it")
+	}
+	if !strings.Contains(conc, "github.event.pull_request.number") || !strings.Contains(conc, "github.run_id") {
+		t.Errorf("root CI's group must be per pull request, with a run-unique fallback for main and dispatch: %q", conc)
+	}
+	if !strings.Contains(conc, "cancel-in-progress: ${{ github.event_name == 'pull_request' }}") {
+		t.Errorf("root CI must cancel only a pull request's superseded run, never a main validation: %q", conc)
+	}
+	if strings.Contains(conc, "queue:") {
+		t.Errorf("root CI must not queue lint behind a full compiler suite; the suite FIFO belongs to %s", ciSuiteFile)
 	}
 	rootJobs := workflowJobs(t, ciFile)
 	allowed := map[string]bool{"changes": true, "lint": true, "suite": true, "reap-lint": true}

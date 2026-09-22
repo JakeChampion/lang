@@ -18,6 +18,16 @@ permissions:
   actions: read
   pull-requests: read
 
+# One live run per pull request. A push supersedes the previous run the moment
+# it lands, server-side, so its jobs stop holding runner slots while a reaper
+# waits for one of its own. Only a pull request run cancels: a main validation
+# (ci-main.yml calling this) or a dispatch gets a group of its own and runs to
+# completion. The suite FIFO stays on ci-suite.yml, whose `queue: max` rules
+# out cancel-in-progress there.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('ci-pr-{0}', github.event.pull_request.number) || format('ci-run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # Which lanes this change reaches. One API listing, no checkout; ~10 s.
   changes:

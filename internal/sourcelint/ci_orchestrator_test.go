@@ -188,7 +188,9 @@ func TestCIIsTheOnlyPullRequestLane(t *testing.T) {
 			t.Errorf("%s is a called lane that also triggers on push: main would run it "+
 				"twice, once on its own and once inside %s", wf, ciFile)
 		}
-		if _, ok := topLevelBlock(src, "concurrency"); ok && wf != ciSuiteFile {
+		// ci.yml's group is per pull request, and run-unique when it is called
+		// for main; ci_preflight_test.go pins that shape.
+		if _, ok := topLevelBlock(src, "concurrency"); ok && wf != ciSuiteFile && wf != ciFile {
 			t.Errorf("%s is a called lane with a workflow-level concurrency group. The "+
 				"suite lock belongs to %s; a lane must not acquire another lock", wf, ciSuiteFile)
 		}
