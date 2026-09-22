@@ -102,6 +102,11 @@ func TestSelfHostWasmUnsupportedBuiltins(t *testing.T) {
 			mustSay: "__syscall3",
 		},
 		{
+			name:    "syscall6",
+			src:     `function main(): i32 { return __syscall6(1, 1, 0, 0, 0, 0, 0); }` + "\n",
+			mustSay: "__syscall6",
+		},
+		{
 			name:    "raw_alloc",
 			src:     `function main(): i32 { var p: i32 = __raw_alloc(64); return 0; }` + "\n",
 			mustSay: "__raw_alloc",

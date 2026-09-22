@@ -1713,7 +1713,7 @@ function is_raw_floor_builtin(name: string): boolean {
     if (name == "__raw_alloc" || name == "__raw_store8" || name == "__raw_load8") { return true; }
     if (name == "__raw_string" || name == "__raw_scratch" || name == "__raw_environ") { return true; }
     if (name == "__raw_addr" || name == "__raw_arr_box") { return true; }
-    return name == "__syscall3" || name == "__syscall4" || name == "__syscall5";
+    return name == "__syscall3" || name == "__syscall4" || name == "__syscall5" || name == "__syscall6";
 }
 
 // wasm_unsupported_builtin returns the name of the first builtin the module
