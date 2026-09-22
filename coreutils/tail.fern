@@ -232,7 +232,7 @@ function plain_of(value: string, what: string, max: u64): u64 {
     exit(1);
   }
   if (r.1 != 0 || r.0 > max) {
-    gnu.error(what + ": " + gnu.quote(value) + ": Value too large for defined data type");
+    gnu.error(what + ": " + gnu.quote(value) + ": " + gnu.eoverflow_text());
     exit(1);
   }
   return r.0;
@@ -243,7 +243,7 @@ function plain_of(value: string, what: string, max: u64): u64 {
 // the too-large diagnostic because the flag covers only the ceiling.
 function quiet_max_of(value: string, what: string): u64 {
   if (value.len() > 0 && value[0] as i32 == 45) {
-    gnu.error(what + ": " + gnu.quote(value) + ": Value too large for defined data type");
+    gnu.error(what + ": " + gnu.quote(value) + ": " + gnu.eoverflow_text());
     exit(1);
   }
   var r: (u64, i32) = gnu.parse_number(value);

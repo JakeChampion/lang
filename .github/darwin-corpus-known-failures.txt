@@ -54,12 +54,16 @@
 # surfaced at once and read as regressions (#9721 and #9740 both hit that).
 #
 # They are pre-existing divergences, and the proof is in the source rather
-# than in a log: internal/strerror carries ONE message text per errno across
-# all three platforms, so EOVERFLOW is "Value too large for defined data
-# type" — Linux's wording — on Darwin too, which is exactly what seq's cases
-# diff on; utmpx is unimplemented, so who, users and uptime print nothing at
-# all; and the non-UTF-8 filename fixtures cannot be created on APFS. #9714
-# owns all of it.
+# than in a log: utmpx is unimplemented, so who, users and uptime print
+# nothing at all, and the non-UTF-8 filename fixtures cannot be created on
+# APFS. #9714 owns all of it.
+#
+# The errno WORDING was a third such cause and is now fixed: both copies of
+# the strerror text — internal/strerror for the runtime's IoError.Other, and
+# coreutils/lib/gnu.fern for the errnos a utility names itself — carry the
+# Darwin libc's words on a Darwin build. Whichever of the names below were
+# failing on that alone now pass, and the lane reports a listed utility that
+# passes as a warning; each one it names leaves this file.
 #
 # Re-seeded from two independent complete runs that agreed on this set
 # byte-for-byte: 35356807225 and 35372825718, 1887 failures over 19913 tests.

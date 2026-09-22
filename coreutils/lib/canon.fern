@@ -40,6 +40,7 @@
 // count would be wrong.
 import "std/string";
 import "std/array";
+import "./gnu";
 
 // The three modes, in the order they are strict.
 pub function existing(): i32 {
@@ -173,7 +174,7 @@ pub function canonicalize(name: string, mode: i32, logical: boolean): Result[str
       } else if (!logical) {
         // EINVAL is `this is not a symbolic link`, which is the
         // ordinary case and not a fault.
-        ok = text_of(err) == "Invalid argument";
+        ok = gnu.io_error_text(err) == "Invalid argument";
       } else if (rest.len() > 0) {
         // Nothing was read, so nothing is known about a component
         // with more of the name after it; the last one is asked
@@ -189,7 +190,7 @@ pub function canonicalize(name: string, mode: i32, logical: boolean): Result[str
           }
         }
       }
-      if (!ok && mode == all_but_last() && text_of(err) == enoent_text() && all_slashes(rest)) {
+      if (!ok && mode == all_but_last() && gnu.io_error_text(err) == enoent_text() && all_slashes(rest)) {
         ok = true;
       }
     }
@@ -201,42 +202,13 @@ pub function canonicalize(name: string, mode: i32, logical: boolean): Result[str
 }
 
 // The strerror text for ELOOP. The walk decides a cycle for itself, so
-// there is no errno from the kernel to carry; `lib/gnu.fern` maps the
-// IoError kinds the runtime names to their strerror text the same way.
+// there is no errno from the kernel to carry.
 function eloop_text(): string {
   return "Too many levels of symbolic links";
 }
 
 function enoent_text(): string {
   return "No such file or directory";
-}
-
-// An IoError's strerror text, which is the only thing there is to ask
-// it: the runtime carries the text rather than the number.
-function text_of(e: IoError): string {
-  match (e) {
-    NotFound(_) => {
-      return enoent_text();
-    },
-    PermissionDenied(_) => {
-      return "Permission denied";
-    },
-    AlreadyExists(_) => {
-      return "File exists";
-    },
-    InvalidUtf8(_) => {
-      return "Invalid or incomplete multibyte or wide character";
-    },
-    Interrupted => {
-      return "Interrupted system call";
-    },
-    Unsupported => {
-      return "Operation not supported";
-    },
-    Other(_, msg) => {
-      return msg;
-    }
-  }
 }
 
 // `relative(p, from)` — `p` written relative to `from`, both absolute

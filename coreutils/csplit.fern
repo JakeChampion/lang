@@ -532,15 +532,15 @@ function digits_value(s: string): i32 {
     exit(1);
   }
   if (over) {
-    gnu.error(bad + ": Value too large for defined data type");
+    gnu.error(bad + ": " + gnu.eoverflow_text());
     exit(1);
   }
   if (neg && v > 0 as i64) {
-    gnu.error(bad + ": Value too large for defined data type");
+    gnu.error(bad + ": " + gnu.eoverflow_text());
     exit(1);
   }
   if (v > 2147483647 as i64) {
-    gnu.error(bad + ": Value too large for defined data type");
+    gnu.error(bad + ": " + gnu.eoverflow_text());
     exit(1);
   }
   return v as i32;

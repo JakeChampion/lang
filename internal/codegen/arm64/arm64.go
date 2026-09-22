@@ -10557,8 +10557,8 @@ func (g *generator) emitIoErrorMessage(errW, msgX string, scratchEnd int) {
 	g.emit("mov w2, w4")
 	g.emit("cbnz w2, .Lioe_itoa")
 	g.adrpAdd("x2", ".Lioe_unknown_prefix")
-	g.emit("add x2, x2, #%d", len(strerror.UnknownPrefix))
-	g.emit("mov w3, #%d", len(strerror.UnknownPrefix))
+	g.emit("add x2, x2, #%d", len(strerror.UnknownPrefixFor(g.targetOS())))
+	g.emit("mov w3, #%d", len(strerror.UnknownPrefixFor(g.targetOS())))
 	g.label(".Lioe_prefix")
 	g.emit("sub x2, x2, #1")
 	g.emit("sub x1, x1, #1")
@@ -10614,7 +10614,7 @@ func (g *generator) emitIoErrorRodata() {
 		g.line("\t.asciz " + escapeForGAS(text))
 	}
 	g.label(".Lioe_unknown_prefix")
-	g.line("\t.asciz " + escapeForGAS(strerror.UnknownPrefix))
+	g.line("\t.asciz " + escapeForGAS(strerror.UnknownPrefixFor(g.targetOS())))
 	g.line(".text")
 	g.line(".ltorg")
 }

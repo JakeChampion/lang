@@ -68,7 +68,7 @@ function errno_rmdir_non_empty(text: string): boolean {
 }
 
 function errno_may_be_non_empty(text: string): boolean {
-  return text == "Permission denied" || text == "Operation not permitted" || text == "Read-only file system" || text == "File exists" || text == "Device or resource busy";
+  return text == "Permission denied" || text == "Operation not permitted" || text == "Read-only file system" || text == "File exists" || text == gnu.ebusy_text();
 }
 
 // Whether `dir` has entries. A directory that cannot be read is treated

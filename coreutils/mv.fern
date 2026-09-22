@@ -483,9 +483,11 @@ function replace_dest(cfg: Cfg, m: Move, s: StatInfo, d: StatInfo, o: io_buffere
 // ---- the cross-device fallback ---------------------------------------------
 // `is_exdev(text)` — the rename could not happen because the two names
 // are on different filesystems. Matched on the strerror text, as the
-// other two errnos this file reads are.
+// other two errnos this file reads are, so the text has to be the one
+// the HOST libc gives: Darwin words EXDEV differently, and a comparison
+// against glibc's words there would take the fallback off entirely.
 function is_exdev(text: string): boolean {
-  return text == "Invalid cross-device link";
+  return text == gnu.exdev_text();
 }
 
 // The diagnostic for a destination that is in the way and will not go.

@@ -1752,7 +1752,7 @@ function parse_old_offset(s: string): (u64, boolean) {
   // An offset that parses and does not fit ends the program, rather
   // than falling back to the operand being a file name.
   if (over) {
-    gnu.error(gnu.quotef(s) + ": Numerical result out of range");
+    gnu.error(gnu.quotef(s) + ": " + gnu.erange_text());
     exit(1);
   }
   return (v, true);

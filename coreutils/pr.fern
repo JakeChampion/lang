@@ -488,10 +488,10 @@ function num_fault(v: i64, ok: boolean, min: i64): i32 {
 
 function num_text(status: i32): string {
   if (status == 2) {
-    return ": Numerical result out of range";
+    return ": " + gnu.erange_text();
   }
   if (status == 3) {
-    return ": Value too large for defined data type";
+    return ": " + gnu.eoverflow_text();
   }
   return "";
 }

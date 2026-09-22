@@ -1358,7 +1358,7 @@ function need_limited(s: string, limit: u64): u64 {
     exit(1);
   }
   if (r.2 || r.0 > limit) {
-    gnu.error("invalid integer argument: " + gnu.quote(s) + ": Value too large for defined data type");
+    gnu.error("invalid integer argument: " + gnu.quote(s) + ": " + gnu.eoverflow_text());
     exit(1);
   }
   return r.0;
@@ -1530,7 +1530,7 @@ function speed_value(tok: string, value: string): i64 {
 function line_value(value: string): i64 {
   var n: u64 = need_limited(value, u64_max());
   if (n > 255 as u64) {
-    gnu.error("invalid line discipline " + gnu.quote(value) + ": Value too large for defined data type");
+    gnu.error("invalid line discipline " + gnu.quote(value) + ": " + gnu.eoverflow_text());
   }
   return (n % (256 as u64)) as i64;
 }

@@ -84,6 +84,15 @@ jobs:
         run: |
           gotestsum --format standard-verbose -- -run '^(TestSetFileTimesDarwin.*|TestInterpFsMetaPrimitives)$' ./internal/interp/ ./internal/e2e/
 
+      # internal/strerror checks its table against the HOST libc, so the
+      # Darwin half of that check only means anything on this runner. Every
+      # other lane is Linux, where the sixteen Darwin overrides are unread
+      # data — exactly the shape that goes stale without anyone noticing.
+      - name: go test (Darwin errno table)
+        if: steps.gate.outputs.signed != 'true'
+        run: |
+          gotestsum --format standard-verbose -- ./internal/strerror/
+
       # THE COREUTILS CORPUS HAD NO DARWIN ORACLE UNTIL THIS STEP (#9645).
       # Every utility in `coreutils/` is held to byte-for-byte GNU parity, and
       # that was checked on Linux only — both the thirteen explicit

@@ -60,12 +60,13 @@ func fernInts(t *testing.T, src, name string) []int {
 	return out
 }
 
-// TestSelfHostTableMatches pins the four parallel lists to Table, row
+// TestSelfHostTableMatches pins the five parallel lists to Table, row
 // for row and in order: the self-host generates its ladder by index, so
 // a row out of place pairs a text with the wrong number.
 func TestSelfHostTableMatches(t *testing.T) {
 	src := readSelfHost(t)
 	texts := fernStrings(t, src, "strerror_texts")
+	darwinTexts := fernStrings(t, src, "strerror_texts_darwin")
 	lists := map[string][]int{
 		Linux:  fernInts(t, src, "strerror_linux"),
 		Darwin: fernInts(t, src, "strerror_darwin"),
@@ -73,6 +74,9 @@ func TestSelfHostTableMatches(t *testing.T) {
 	}
 	if len(texts) != len(Table) {
 		t.Fatalf("strerror_texts() has %d rows, Table has %d — regenerate with `go run ./internal/strerror/gen_selfhost_lists`", len(texts), len(Table))
+	}
+	if len(darwinTexts) != len(Table) {
+		t.Fatalf("strerror_texts_darwin() has %d rows, Table has %d — regenerate with `go run ./internal/strerror/gen_selfhost_lists`", len(darwinTexts), len(Table))
 	}
 	for os, nums := range lists {
 		if len(nums) != len(Table) {
@@ -83,11 +87,43 @@ func TestSelfHostTableMatches(t *testing.T) {
 		if texts[i] != e.Text {
 			t.Errorf("row %d (%s): the self-host says %q, Table says %q", i, e.Name, texts[i], e.Text)
 		}
+		if want := e.TextFor(Darwin); darwinTexts[i] != want {
+			t.Errorf("row %d (%s) on darwin: the self-host says %q, Table says %q", i, e.Name, darwinTexts[i], want)
+		}
 		for os, nums := range lists {
 			if nums[i] != e.Number(os) {
 				t.Errorf("row %d (%s) on %s: the self-host says %d, Table says %d", i, e.Name, os, nums[i], e.Number(os))
 			}
 		}
+	}
+}
+
+// TestSelfHostUnknownPrefixMatches pins the self-host's unknown-errno
+// prefix pair, which is the one piece of the table that is not a row.
+func TestSelfHostUnknownPrefixMatches(t *testing.T) {
+	src := readSelfHost(t)
+	m := regexp.MustCompile(`(?s)pub function strerror_unknown_prefix\(t: string\): string \{.*?if \(t == "arm64-darwin"\) \{ return "([^"]*)"; \}\s*return "([^"]*)";`).FindStringSubmatch(src)
+	if m == nil {
+		t.Fatalf("no strerror_unknown_prefix() found in %s — the extraction pattern has gone stale, which would make this test vacuous", selfHostSrc)
+	}
+	if m[1] != DarwinUnknownPrefix {
+		t.Errorf("the self-host says %q on darwin, Go says %q", m[1], DarwinUnknownPrefix)
+	}
+	if m[2] != UnknownPrefix {
+		t.Errorf("the self-host says %q off darwin, Go says %q", m[2], UnknownPrefix)
+	}
+
+	// The literals above are only half of it: a caller that ignored the
+	// target would pass them both and still match. These pin the WIRING —
+	// that the prefix reaches the emitted runtime from the target rather
+	// than from a constant. Textual, because this test reads the Fern
+	// source as data and cannot run it; the end-to-end proof is the
+	// arm64-darwin binary itself, which the macOS lane builds.
+	if !regexp.MustCompile(`var pfx: string = strerror_unknown_prefix\(t\);`).MatchString(src) {
+		t.Error("strerror_unknown_src does not take its prefix from strerror_unknown_prefix(t) — the per-target prefix is not reaching the emitted runtime")
+	}
+	if !regexp.MustCompile(`strerror_unknown_src\(t\)`).MatchString(src) {
+		t.Error("rt_src_io_error does not thread its target into strerror_unknown_src — every target would get one prefix")
 	}
 }
 

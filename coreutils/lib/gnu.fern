@@ -238,11 +238,64 @@ pub function is_option(a: string): boolean {
   return a.len() >= 2 && a[0] as i32 == 45;
 }
 
+// ---- errno wording ---------------------------------------------------------
+//
+// GNU prints `strerror(3)`, so the words belong to the host libc, and
+// sixteen errnos read differently on Darwin. These are the six a
+// utility spells out in a diagnostic of its own — the runtime's own
+// `IoError.Other` gets the same treatment from `internal/strerror`, and
+// `internal/coreutils/strerror_parity_test.go` pins these against that
+// table so the two lists cannot drift apart.
+//
+// An errno whose wording is the same on both platforms needs no helper
+// and has none: `"Permission denied"` is written where it is meant.
+pub function erange_text(): string {
+  if (target_os() == "darwin") {
+    return "Result too large";
+  }
+  return "Numerical result out of range";
+}
+
+pub function eoverflow_text(): string {
+  if (target_os() == "darwin") {
+    return "Value too large to be stored in data type";
+  }
+  return "Value too large for defined data type";
+}
+
+pub function eilseq_text(): string {
+  if (target_os() == "darwin") {
+    return "Illegal byte sequence";
+  }
+  return "Invalid or incomplete multibyte or wide character";
+}
+
+pub function exdev_text(): string {
+  if (target_os() == "darwin") {
+    return "Cross-device link";
+  }
+  return "Invalid cross-device link";
+}
+
+pub function ebusy_text(): string {
+  if (target_os() == "darwin") {
+    return "Resource busy";
+  }
+  return "Device or resource busy";
+}
+
+pub function edquot_text(): string {
+  if (target_os() == "darwin") {
+    return "Disc quota exceeded";
+  }
+  return "Disk quota exceeded";
+}
+
 // `io_error_text(e)` — the strerror text GNU prints for an IoError.
 //
 // The kinds the runtime names carry no message of their own, so the
 // mapping is by errno text; `Other` carries the runtime's own string,
-// which is glibc's strerror text for the errno on every backend
+// which is the host libc's strerror text for the errno on every backend
 // (internal/strerror).
 pub function io_error_text(e: IoError): string {
   match (e) {
@@ -256,7 +309,7 @@ pub function io_error_text(e: IoError): string {
       return "File exists";
     },
     InvalidUtf8(_) => {
-      return "Invalid or incomplete multibyte or wide character";
+      return eilseq_text();
     },
     Interrupted => {
       return "Interrupted system call";
@@ -2083,6 +2136,10 @@ pub struct Exec { path: string, errno: i32 }
 // `exec_errno_text(n)` — strerror for the numbers that arrive as raw errnos
 // rather than inside an IoError: execve's, and sigaction's refusal. Anything
 // else is reported by number, which is better than a wrong name.
+//
+// The NUMBER is the host's, and the two platforms agree on only some of
+// them: ENAMETOOLONG and ELOOP sit at 36 and 40 on Linux and at 63 and 62
+// on Darwin, so they are asked for by name below rather than written in.
 pub function exec_errno_text(n: i32): string {
   if (n == 2) {
     return "No such file or directory";
@@ -2102,11 +2159,34 @@ pub function exec_errno_text(n: i32): string {
   if (n == 22) {
     return "Invalid argument";
   }
-  if (n == 36) {
+  if (n == enametoolong_errno()) {
     return "File name too long";
   }
-  if (n == 40) {
+  if (n == eloop_errno()) {
     return "Too many levels of symbolic links";
+  }
+  return unknown_errno_text(n);
+}
+
+pub function enametoolong_errno(): i32 {
+  if (target_os() == "darwin") {
+    return 63;
+  }
+  return 36;
+}
+
+pub function eloop_errno(): i32 {
+  if (target_os() == "darwin") {
+    return 62;
+  }
+  return 40;
+}
+
+// What the host libc answers for an errno it has no name for. Darwin's
+// carries a colon; glibc's does not.
+pub function unknown_errno_text(n: i32): string {
+  if (target_os() == "darwin") {
+    return "Unknown error: " + n.to_string();
   }
   return "Unknown error " + n.to_string();
 }

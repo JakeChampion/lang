@@ -253,18 +253,18 @@ function suffix_length_operand(value: string): i32 {
   var r: (u64, i32) = gnu.parse_number(value);
   if (gnu.count_malformed(r.1)) {
     if (negated_number(value)) {
-      gnu.error("invalid suffix length: " + gnu.quote(value) + ": Value too large for defined data type");
+      gnu.error("invalid suffix length: " + gnu.quote(value) + ": " + gnu.eoverflow_text());
       exit(1);
     }
     gnu.error("invalid suffix length: " + gnu.quote(value));
     exit(1);
   }
   if (gnu.count_overflow(r.1)) {
-    gnu.error("invalid suffix length: " + gnu.quote(value) + ": Value too large for defined data type");
+    gnu.error("invalid suffix length: " + gnu.quote(value) + ": " + gnu.eoverflow_text());
     exit(1);
   }
   if (r.0 > 1000000 as u64) {
-    gnu.error("invalid suffix length: " + gnu.quote(value) + ": Value too large for defined data type");
+    gnu.error("invalid suffix length: " + gnu.quote(value) + ": " + gnu.eoverflow_text());
     exit(1);
   }
   return r.0 as i32;

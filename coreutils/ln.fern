@@ -195,7 +195,7 @@ function same_entry(cfg: Cfg, src: string, dest: string): boolean {
 // The errnos a hard link's destination alone explains, which are the ones
 // whose diagnostic does NOT name the target.
 function hard_link_no_arrow(text: string): boolean {
-  return text == "File exists" || text == "No space left on device" || text == "Read-only file system" || text == "Disk quota exceeded";
+  return text == "File exists" || text == "No space left on device" || text == "Read-only file system" || text == gnu.edquot_text();
 }
 
 // The whole `failed to create …` line for a failed link, arrow and all.

@@ -129,11 +129,11 @@ function width_of(text: string): u64 {
     exit(1);
   }
   if (over || value > width_max()) {
-    gnu.error("invalid number of columns: " + gnu.quote(text) + ": Numerical result out of range");
+    gnu.error("invalid number of columns: " + gnu.quote(text) + ": " + gnu.erange_text());
     exit(1);
   }
   if (value == 0 as u64) {
-    gnu.error("invalid number of columns: " + gnu.quote(text) + ": Numerical result out of range");
+    gnu.error("invalid number of columns: " + gnu.quote(text) + ": " + gnu.erange_text());
     exit(1);
   }
   return value;
