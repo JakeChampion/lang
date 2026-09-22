@@ -4689,6 +4689,10 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// docs/ASSOCIATED-TYPES.md.
 	c.resolveProjections(prog)
 
+	// Every written `Map[K, V]` gets its key type validated now that
+	// conformance has recorded each type's derived impls.
+	c.validateMapKeyTypes(prog)
+
 	// Validate that every trait named in a function's type-parameter
 	// bounds actually exists. Catches typos / unknown traits before
 	// the deferred-dispatch path silently fails to resolve. See
@@ -8054,6 +8058,99 @@ func (c *checker) validateKnownTypes(prog *ast.Program) {
 	for _, impl := range prog.Impls {
 		params := typeParamSet(impl.TypeParams)
 		c.checkTypeKnown(impl.Type, params, impl.P)
+	}
+}
+
+// validateMapKeyTypes reports E045 for every WRITTEN `Map[K, V]` whose key
+// type cannot be a map key — a parameter, return type, field, enum payload,
+// impl type or `var` annotation, at any nesting depth. The map-literal paths
+// check the key they INFER; without this, the annotated spelling of the same
+// program (`var m: Map[f64, i32] = map_new(2)`) was never asked, and reached
+// codegen (#10009).
+//
+// It runs after the conformance pass because mapKeyTypeError consults
+// typeImplsEqAndHash, which reads c.info.Impls — empty at validateKnownTypes
+// time, so a derived struct key would be rejected there.
+func (c *checker) validateMapKeyTypes(prog *ast.Program) {
+	for _, fn := range prog.Funcs {
+		if fn.Receiver != nil {
+			c.checkMapKeyTypes(fn.Receiver.Type, fn.P)
+		}
+		for i := range fn.Params {
+			c.checkMapKeyTypes(fn.Params[i].Type, paramPos(fn.Params[i], fn.P))
+		}
+		c.checkMapKeyTypes(fn.ReturnType, fn.P)
+		if fn.Body == nil {
+			continue
+		}
+		ast.Walk(fn.Body, func(n ast.Node) bool {
+			// A `var` initialised by a NON-EMPTY map literal is
+			// left to the literal's own check, which reports at
+			// the offending key rather than at the annotation. An
+			// empty `Map {}` has no key to report at, so the
+			// annotation is the only place the error can land.
+			if v, ok := n.(*ast.Var); ok {
+				if lit, isLit := v.Init.(*ast.MapLit); isLit && len(lit.Entries) > 0 {
+					return true
+				}
+			}
+			forEachDeclaredType(n, func(t *ast.Type, pos ast.Position) {
+				if *t != nil {
+					c.checkMapKeyTypes(*t, pos)
+				}
+			})
+			return true
+		})
+	}
+	for _, sd := range prog.Structs {
+		for i := range sd.Fields {
+			c.checkMapKeyTypes(sd.Fields[i].Type, paramPos(sd.Fields[i], sd.P))
+		}
+	}
+	for _, ed := range prog.Enums {
+		for i := range ed.Variants {
+			for j := range ed.Variants[i].Payloads {
+				c.checkMapKeyTypes(ed.Variants[i].Payloads[j], ed.Variants[i].P)
+			}
+		}
+	}
+	for _, impl := range prog.Impls {
+		c.checkMapKeyTypes(impl.Type, impl.P)
+	}
+}
+
+// checkMapKeyTypes walks a resolved type tree and reports E045 for each
+// `Map[K, V]` whose K is not a usable key. Composite types recurse, so a
+// `Map[f64, i32][]` field or a `(string, Map[f64, i32])` parameter is
+// reached too.
+func (c *checker) checkMapKeyTypes(t ast.Type, pos ast.Position) {
+	switch x := t.(type) {
+	case ast.StructType:
+		if x.Name == "Map" && len(x.Args) == 2 {
+			if msg := c.mapKeyTypeError(x.Args[0]); msg != "" {
+				c.errfCode(pos, "E045", "%s", msg)
+			}
+		}
+		for _, a := range x.Args {
+			c.checkMapKeyTypes(a, pos)
+		}
+	case ast.EnumType:
+		for _, a := range x.Args {
+			c.checkMapKeyTypes(a, pos)
+		}
+	case ast.ArrayType:
+		c.checkMapKeyTypes(x.Elem, pos)
+	case ast.SliceType:
+		c.checkMapKeyTypes(x.Elem, pos)
+	case ast.TupleType:
+		for _, e := range x.Elems {
+			c.checkMapKeyTypes(e, pos)
+		}
+	case *ast.FuncType:
+		for _, p := range x.Params {
+			c.checkMapKeyTypes(p, pos)
+		}
+		c.checkMapKeyTypes(x.Result, pos)
 	}
 }
 
@@ -18764,24 +18861,6 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 		// `var m: Map[string, i64] = Map { "a": 1234567890123 };`
 		// keeps its inferred `Map[string, i32]` shape and
 		// the assignable check rejects.
-		// A destination-typed map (`var m: Map[K, V] = map_new(8)`,
-		// function arg, etc.) validates its annotated key type here so
-		// a bad struct/enum key (no Eq + Hash) errors cleanly instead
-		// of dangling at codegen as a missing `__method_<K>_hash`
-		// (#2671). A MapLit destination is skipped — the MapLit's own
-		// checkExpr validates its (possibly inferred) key type, so this
-		// would double-report. Only struct/enum keys are gated; scalar
-		// / string / tuple keys keep their existing treatment.
-		if hn.Name == "Map" && len(hn.Args) == 2 {
-			if _, isLit := e.(*ast.MapLit); !isLit {
-				switch hn.Args[0].(type) {
-				case ast.StructType, ast.EnumType:
-					if msg := c.mapKeyTypeError(hn.Args[0]); msg != "" {
-						c.errfCode(e.Pos(), "E045", "%s", msg)
-					}
-				}
-			}
-		}
 		if ml, ok := e.(*ast.MapLit); ok && hn.Name == "Map" && len(hn.Args) == 2 {
 			for _, ent := range ml.Entries {
 				c.settleNumeric(ent.Key, hn.Args[0])
