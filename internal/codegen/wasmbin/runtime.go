@@ -447,6 +447,7 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					// cabi_realloc so the host can lower the returned
 					// list<u32> of ready indices into our memory.
 					needs.add("__fern_alloc")
+					needs.add("__free")
 					needs.add("cabi_realloc")
 					needs.add("__fern_wasm_poll")
 				case "__fern_sqrt_f64":
@@ -978,6 +979,7 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					// which makes the composer wire the io/poll instance (classify.go).
 					needs.add("poll")
 					needs.add("__fern_alloc")
+					needs.add("__free")
 					needs.add("cabi_realloc")
 					needs.add("__fern_wasm_poll")
 				case "isatty":

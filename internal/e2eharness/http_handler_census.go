@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -80,8 +81,19 @@ func RunHTTPHandlerCensus(t *testing.T, command *exec.Cmd, rounds int) string {
 			t.Logf("server output: %s", &out)
 		}
 	}()
+	httpHandlerCensusRequests(t, listener.Addr().String(), rounds)
+	err = cmd.Wait()
+	waited = true
+	if err != nil {
+		t.Fatalf("bounded HTTP server: %v\n%s", err, &out)
+	}
+	return out.String()
+}
+
+func httpHandlerCensusRequests(t *testing.T, addr string, rounds int) {
+	t.Helper()
 	for i := 0; i < rounds; i++ {
-		conn, err := net.DialTimeout("tcp4", listener.Addr().String(), 5*time.Second)
+		conn, err := net.DialTimeout("tcp4", addr, 5*time.Second)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -105,10 +117,69 @@ func RunHTTPHandlerCensus(t *testing.T, command *exec.Cmd, rounds int) string {
 			t.Fatalf("request %d: status=%d proto=%s length=%d body=%q error=%v", i, resp.StatusCode, resp.Proto, resp.ContentLength, body, err)
 		}
 	}
+}
+
+func WasiHTTPHandlerCensusSource(t *testing.T, root string, rounds int) string {
+	t.Helper()
+	src := HTTPHandlerCensusSource(t, root, rounds)
+	const original = "    return __serve_loop(3, (req: HttpRequest, plat: Platform): HttpResponse => census_handle(req, plat), 10000);"
+	if strings.Count(src, original) != 1 {
+		t.Fatal("bounded HTTP entry changed")
+	}
+	const entry = `    var listener: i32 = tcp_listen(0);
+    if (listener < 0) { return 90; }
+    var port: i32 = tcp_local_port(listener);
+    if (port <= 0) { return 91; }
+    print(int.int_to_string(port));
+    var result: i32 = __serve_loop(listener, (req: HttpRequest, plat: Platform): HttpResponse => census_handle(req, plat), 10000);
+    if (tcp_close(listener) != 0) { return 92; }
+    return result;`
+	return strings.Replace(src, original, entry, 1)
+}
+
+func RunWasiHTTPHandlerCensus(t *testing.T, component string, rounds int) string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "wasmtime", "run", "-S", "inherit-network", component)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waited := false
+	defer func() {
+		if !waited {
+			cancel()
+			_ = cmd.Wait()
+			t.Logf("server stderr: %s", &stderr)
+		}
+	}()
+	reader := bufio.NewReader(stdout)
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatalf("server port: %v", err)
+	}
+	port, err := strconv.Atoi(strings.TrimSpace(line))
+	if err != nil || port <= 0 || port > 65535 {
+		t.Fatalf("invalid server port %q: %v", line, err)
+	}
+	httpHandlerCensusRequests(t, fmt.Sprintf("127.0.0.1:%d", port), rounds)
+	rest, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bytes.TrimSpace(rest)) != 0 {
+		t.Fatalf("unexpected server stdout: %s", rest)
+	}
 	err = cmd.Wait()
 	waited = true
 	if err != nil {
-		t.Fatalf("bounded HTTP server: %v\n%s", err, &out)
+		t.Fatalf("bounded WASI server: %v\n%s", err, &stderr)
 	}
-	return out.String()
+	return stderr.String()
 }

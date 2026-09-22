@@ -3325,6 +3325,8 @@ func buildWasmPollableDropBody(idxs map[string]uint32) []byte {
 // Locals (param 0 = arr):
 //
 //	1: $retptr (8-byte return area)
+//	2: $count (returned ready indices)
+//	3: $index (preserved across storage reclamation)
 func buildWasmPollBody(idxs map[string]uint32) []byte {
 	alloc := idxs["__fern_alloc"]
 	poll := idxs["wasi_io_poll_poll"]
@@ -3344,7 +3346,8 @@ func buildWasmPollBody(idxs map[string]uint32) []byte {
 	// count = i32.load(retptr+4)
 	body = inst.InstLocalGet(body, 1)
 	body = memory.InstI32Load(body, 2, 4)
-	// if count != 0 { return ready[0] } else { return -1 }
+	body = inst.InstLocalTee(body, 2)
+	// Save the result before freeing the host-owned result list.
 	body = inst.InstIfStart(body, encode.ValtypeI32)
 	body = inst.InstLocalGet(body, 1)
 	body = memory.InstI32Load(body, 2, 0) // data ptr @ retptr+0
@@ -3352,7 +3355,21 @@ func buildWasmPollBody(idxs map[string]uint32) []byte {
 	body = inst.InstElse(body)
 	body = inst.InstI32Const(body, -1)
 	body = inst.InstEnd(body)
-	locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)
+	body = inst.InstLocalSet(body, 3)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 1)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Mul(body)
+	body = inst.InstCall(body, idxs["__free"])
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstI32Const(body, 8)
+	body = inst.InstCall(body, idxs["__free"])
+	body = inst.InstLocalGet(body, 3)
+	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
