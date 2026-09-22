@@ -69,7 +69,7 @@ func TestSelfHostFnValueEnumScrutineeIRX86_64(t *testing.T) {
 			if len(asm) == 0 {
 				t.Fatalf("%s: self-host compiler emitted 0 bytes", tc.name)
 			}
-			if tc.wantIR && !strings.Contains(string(asm), ".Lir_") {
+			if tc.wantIR && !strings.Contains(string(asm), ".Lssa_") {
 				t.Fatalf("%s: emitted asm has no IR-path labels — the fn-value enum scrutinee did not lower through the IR", tc.name)
 			}
 			bin := buildBin(t, gcc, dir, tc.name, string(asm))

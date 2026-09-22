@@ -155,7 +155,7 @@ func TestSelfHostLambdaFnSidecarX86_64(t *testing.T) {
 				}
 			}
 			asm := string(runDriverFile(t, runner, driverBin, filepath.Join(progDir, "main.fern")))
-			if !strings.Contains(asm, ".Lir") {
+			if !strings.Contains(asm, ".Lssa_") {
 				t.Fatal("program did not route through the IR path")
 			}
 			bin := buildBin(t, gcc, progDir, "lambda_fn_sidecar", asm)

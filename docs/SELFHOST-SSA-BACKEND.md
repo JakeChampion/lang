@@ -2,8 +2,10 @@
 
 Status: landed 2026-09-16 for arm64 (`arm64-linux`, `arm64-darwin`,
 `arm64-android`) and x86-64 (`x86-64-linux`), opt-in; since 2026-09-17 every
-function of the compiler compiling itself goes through it. Owner: compiler /
-self-host. This is the self-host
+function of the compiler compiling itself goes through it; the default on
+both native ISAs since 2026-09-18; **the only emitter on them since
+2026-09-22**, when the stack machine's per-function driver was deleted.
+Owner: compiler / self-host. This is the self-host
 half of #4112, the register-allocating SSA backend track; the native half is
 `internal/codegen/arm64ssa` and `x86_64ssa` behind the same flag spelling. The
 measurements are in `docs/ssa-log/` (the entries whose names carry
@@ -12,11 +14,12 @@ measurements are in `docs/ssa-log/` (the entries whose names carry
 ## What it is
 
 The self-hosted compiler lowers every function to the stack IR (`irlower`,
-or the semantic lowering's `ssarc` when `FERN_SEM_IR` produces the module)
-and the flat backends instruction-select that stream onto a machine stack:
-every value is pushed, every operand popped. `-backend ssa` puts a second
-emitter beside the flat one inside each native backend, `asm_arm64_ir.fern`
-and `asm_ir.fern`. For each lowered function it:
+or the semantic lowering's `ssarc` when `FERN_SEM_IR` produces the module).
+On wasm the backend instruction-selects that stream onto the machine's own
+stack and locals. On the native ISAs the register path in `asm_arm64_ir.fern`
+and `asm_ir.fern` is the emitter — the stack machine that used to stand
+beside it, pushing every value and popping every operand, is gone. For each
+lowered function it:
 
 1. lifts the ops to SSA with `ssa_lift.lift_from_ir_prod`, which admits the
    integer spine (constants, locals, the integer operators, `not`, the width
@@ -25,50 +28,47 @@ and `asm_ir.fern`. For each lowered function it:
    and a store at an offset, the bounds-checked element read and store of a
    length-prefixed box, the bounds-checked byte of a string, the address of a
    function, a shape or a string literal, the rc-headered allocation, and
-   the two ways the stack machine calls the runtime), and bails on anything
-   else, naming the op;
+   the two ways the runtime is called), and bails on anything else, naming
+   the op;
 2. drops what nothing reads (`ssa.prune_dead`), which is most of the zeros
    the lift gives declared locals and most of the loop-header phis;
 3. allocates registers with `ssa.regalloc_linear` over the caller-saved
    temporaries (x9 to x15 on arm64; rsi, rdi and r8 to r11 on x86-64);
-4. emits the function on the stack machine's own conventions: the same
-   frame record, parameters read from the caller's slots (`[x29, #16 + 16*i]`,
-   `16 + 8*i(%rbp)`), the result in x0 or %rax, calls made by pushing the
-   arguments the way the stack machine leaves them and calling the same
-   `__fn_*` and runtime symbols. Each op is selected from the flat backend's
-   own table (`ir_bin_asm`, `ir_div_guarded`), so the two emitters cannot
-   disagree about an operator.
+4. emits the function on the conventions the stack machine established:
+   the same frame record, parameters read from the caller's slots
+   (`[x29, #16 + 16*i]`, `16 + 8*i(%rbp)`), the result in x0 or %rax, calls
+   made by pushing the arguments and calling the same `__fn_*` and runtime
+   symbols. Each op is selected from the same instruction table
+   (`ir_bin_asm`, `ir_div_guarded`, the literal-divisor forms on x86-64).
 
-A function the lift or the emitter declines is emitted by the stack machine
-as before. Nothing about the module changes for it. `FERN_SSA_REPORT=1`
-prints one line per declined function on stderr, `FERN_SSA: <name>: <op>`,
-and a module tally, `FERN_SSA: module: N of M functions through the SSA
-backend, K declined`. The op name is the IR kind that stopped the lift, so
-the report's histogram is the coverage checklist. `FERN_SSA_ONLY` and
-`FERN_SSA_SKIP` are comma-separated name prefixes: ONLY admits the functions
-one of them matches, SKIP excludes them, and a declined function keeps the
-stack machine, so a wrong answer or a slow compile on a whole program is
-walked in on by halving the emitted set. Under the report a function whose
-lift or emit took over 200 ms prints both times with its op and slot counts.
-`-backend flat` names the stack machine, as on native, so a comparison can
-ask for the baseline by name; it is byte-identical to omitting the flag.
+A function the lift or the emitter cannot take is a **refusal** naming the
+function and the op (`ircore.ssa_refuse`, exit 3), never a fall-through:
+there is no other emitter. Every op the lowering produces has an arm, so
+that refusal is a compiler bug report. `FERN_SSA_REPORT=1` prints, on
+stderr, one line per function whose lift or emit took over 200 ms, with both
+times and its op and slot counts; nothing about the emitted program changes
+with it. `-backend ssa` names the register path explicitly and is
+byte-identical to omitting the flag; `-backend flat` is refused on the native
+ISAs and names wasm's one emitter.
 
 ## Why per function, and why the stack ABI
 
 Native's `-backend ssa` replaces the whole program's emitter and carries its
-own copies of the runtime helpers. The self-host does not need to: the stack
+own copies of the runtime helpers. The self-host did not need to: the stack
 IR already contains every reference-count operation as a call to a runtime
-helper, and the flat backend's helper bodies are emitted from the same needs
-table whichever emitter marked them (`helper_call_needs`). An SSA-emitted
-function therefore keeps the memory model of the stack-machine function beside
-it, and the two can call each other because the argument convention is the
-same. That is what makes the mixing sound, where the semantic lowering's
-mixed modules were not: there the two halves disagreed about ownership, here
-they only disagree about where a temporary lives.
+helper, and the helper bodies are emitted from the same needs table whichever
+emitter marked them (`helper_call_needs`). An SSA-emitted function therefore
+kept the memory model of the stack-machine function beside it, and the two
+could call each other because the argument convention was the same. That is
+what made the mixing sound while both emitters existed, where the semantic
+lowering's mixed modules were not: there the two halves disagreed about
+ownership, here they only disagreed about where a temporary lives.
 
-The per-function granularity is what makes the track measurable from its
-first day. The whole examples corpus builds and runs with the flag on, and
-the tally says how much of each program the new emitter produced.
+The per-function granularity is what made the track measurable from its
+first day: the whole examples corpus built and ran with the flag on, and a
+tally said how much of each program the new emitter produced. With the stack
+machine gone the granularity is still per function, and the ABI it
+established is now simply the ABI.
 
 ## What the lift admits, and what declines
 
@@ -109,13 +109,14 @@ emitted, in the order it was admitted:
   byte kernels, the map ops, the byte-buffer builder and the whole OS floor
   (the process and host queries, the handle ops, the signal, socket and
   timer ops). The instruction carries the op's index; the emitter pushes
-  the operands, runs `emit_stack_op` for that exact op, and pops the result,
-  so the op table the stack machine dispatches is the one the register path
-  falls back on and an op added to it reaches both emitters. The allocator
-  counts a `flat_op` as a call, so every value live across it is in its
-  frame slot and the arm's registers hold nothing. The one op this cannot
-  bridge is `dyn_dispatch`, whose arm reads its arguments from the frame
-  slots the lowering spilled them to.
+  the operands, runs `emit_stack_op` for that exact op, and pops the result.
+  `emit_stack_op` is what survives of the stack machine: an op table with
+  one arm per op the lift has no instruction of its own for, and a refusal
+  (`ircore.flat_arm_missing`) for an op that reaches it without one. The
+  allocator counts a `flat_op` as a call, so every value live across it is
+  in its frame slot and the arm's registers hold nothing. The one op this
+  cannot bridge is `dyn_dispatch`, whose arm reads its arguments from the
+  frame slots the lowering spilled them to.
 - **`dyn_dispatch`** (kind 60): the lift carries the values of the argc
   slots the lowering stored the receiver and the arguments to, and the
   emitter runs the same compare-branch chain as the stack machine
@@ -199,17 +200,14 @@ not register pressure. The order to take that in:
   `ssa_lift_admits_run.fern`, the lift's admission census over every
   registered IR op kind, and pins the kinds it declines: the three kinds no
   lowering produces. A new op kind reaches the register path through the
-  stack machine's arm unless `ir.op_pops` does not model it, and then it is
-  a new line here rather than a silent decline on every program that uses
-  it.
+  flat-op arm unless `ir.op_pops` does not model it, and then it is a new
+  line here rather than a refusal on every program that uses it.
 - `internal/e2eselfhost/self_host_ssa_backend_test.go` builds the CLI for
-  the host, compiles each of its programs both ways for every target the
-  host can run output for (its own ISA natively, the other through its qemu
-  user emulator when present), runs both and compares stdout and exit status. A program the
-  lift admits whole must report no declined function; the mixed program pins
-  the functions that must go through the backend. It also pins the refusal
-  for other targets and that a second `-o` to one path replaces the
-  executable.
+  the host, compiles each of its programs with it and with the native
+  compiler for every target the host can run output for (its own ISA
+  natively, the other through its qemu user emulator when present), runs
+  both and compares stdout and exit status. It also pins the `-backend`
+  refusals and that a second `-o` to one path replaces the executable.
 - `internal/e2eselfhost/self_host_ssa_loop_tail_label_test.go` reaches the
   same invariant from the SOURCE end: a self-tail-recursive function whose
   body ends in a `return`, compiled through the register path for both ISAs
@@ -218,11 +216,12 @@ not register pressure. The order to take that in:
   distinct blocks or functions whose `asmcore.sanitize_label` spellings
   collide, which `repeated_block_id` cannot see. It carries over the
   read_file and frontend-bundle listings too.
-- The whole examples corpus, built both ways and run, is the measurement
-  in the ssa-log entries; `.github` has no lane for it yet. That lane is
-  shaped like `internal/e2e/arm64_ssa_differential_test.go`.
-- `scripts/selfhost-emit-hashes` does not reach this backend; a purity sweep
-  of it needs `-backend ssa` added to that script's SSA mode.
+- The fixture legs (`internal/e2e/fixture_selfhost_test.go`) are the corpus:
+  every program through the register path on both ISAs, against the
+  expected output. A function the lift cannot take fails the compile there,
+  naming the op.
+- `scripts/selfhost-emit-hashes` hashes what this emitter produces, since
+  it is the only one.
 - `ssa.repeated_block_id` is checked in each backend's `ssa_try_function`
   before emit: the emitters write one `.Lssa_<fn>_<id>:` label per entry in
   `f.blocks`, so two entries carrying one id spell one label twice and the
@@ -265,9 +264,9 @@ path needs `build_func` any more. In order:
    (`docs/ssa-log/2026-09-18-x86-64-meets-every-flip-condition.md`).
    **Taken on both native ISAs** — arm64 in #9672, x86-64 after it: omitting
    `-backend` selects the register path wherever there is one, and the stack
-   machine on wasm, where there is not. `-backend flat` still names the stack
-   machine on either native ISA, and a function the register path declines
-   still falls back to it on its own.
+   machine on wasm, where there is not. Until step 7 `-backend flat` still
+   named the stack machine on either native ISA, and a function the register
+   path declined fell back to it on its own.
 5. Every op the stack machine can emit, the register path can emit (2026-09-20,
    through `emit_stack_op`): the compiler compiling itself was already
    whole; the corpus sweep (the conformance cases, the coreutils, the
@@ -277,24 +276,22 @@ path needs `build_func` any more. In order:
    (`docs/ssa-log/2026-09-20-every-op-through-the-stack-machines-arm.md`);
    `dyn_dispatch` followed the same day, and the sweep declines nothing.
 6. Done: the corpus lane. The fixture legs
-   (`internal/e2e/fixture_selfhost_test.go`, x86-64 and arm64) compile every
-   program under `FERN_SSA_REPORT=1` and require each module's tally to read
-   `0 declined`, so the number the hand sweep measured is now held there. It
-   rides the compile the legs already do; a second pass over the corpus costs
-   about fifteen minutes per ISA and buys nothing. Re-measured before wiring
-   it: 866 modules on each ISA, every one `0 declined`.
-
-   Two shapes of this check are vacuous and both are pinned against synthetic
-   reports by `TestSSACoverageProblems`, because a corpus where nothing
-   declines exercises only the passing path. An empty report satisfies "no
-   tally says non-zero", and the per-function decline line is
-   `FERN_SSA: <fn>: <why>` — it contains no such word as "declined", so a
-   check grepping for one matches nothing however far coverage regresses.
-
-   What is left is the deletion itself: the stack machine's per-function
-   driver (`emit_function_via_ir` and what only it reaches) on the two native
-   ISAs. Its per-OP emitter stays either way — the register path's `flat_op`
-   arm runs `emit_stack_op`, so the op table is shared, not superseded.
+   (`internal/e2e/fixture_selfhost_test.go`, x86-64 and arm64) compiled every
+   program under `FERN_SSA_REPORT=1` and required each module's tally to
+   read `0 declined`, holding the number the hand sweep measured: 866
+   modules on each ISA, every one `0 declined`.
+7. Done (2026-09-22): the deletion. The stack machine's per-function driver
+   on both native ISAs — the prologue, the local slots, the op-index labels,
+   the epilogue — and every arm of its op table for an op the lift lowers
+   itself are gone, with the `-backend flat` spelling on those ISAs, the
+   `FERN_SSA_ONLY` / `FERN_SSA_SKIP` bisect knobs (a declined function has
+   nowhere to go), the module tally and the corpus coverage gate that read
+   it (a decline is now a compile failure the legs report on their own).
+   What stays is `emit_stack_op` as the flat-op arm's table, and the x86-64
+   literal-divisor forms, which moved onto the register path's division
+   (`ssa.Imms.konst`) rather than going with the driver that reached them.
+   `docs/ssa-log/2026-09-22-the-stack-machines-function-driver-is-gone.md`
+   has the numbers.
 
 ## The other backends
 
@@ -303,7 +300,8 @@ compiler is converging on (`docs/NATIVE-CONVERGENCE.md`), so the order is:
 
 - **The self-host's native ISAs first**, above. They are the compiler's own
   output and the two the flip already took.
-- **wasm stays on the stack IR.** wasm IS a stack machine with locals: the
+- **wasm stays on the stack IR**, and `-backend flat` names its emitter.
+  wasm IS a stack machine with locals: the
   IR's `load_local` is `local.get`, its structured control flow is wasm's,
   and there are no phis to fold and no registers to allocate — the engine
   does that from the locals. What the register path bought the native ISAs

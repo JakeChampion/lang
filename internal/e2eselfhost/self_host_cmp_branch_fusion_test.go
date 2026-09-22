@@ -171,7 +171,7 @@ func TestSelfHostCmpBranchFusion(t *testing.T) {
 	shape := []struct {
 		name string
 		src  string
-		// want are substrings the fused function must contain; dead are the
+		// want are patterns the fused function must match; dead are the
 		// materialisation's instructions, which must be gone from it.
 		wantX86, deadX86 []string
 		wantArm, deadArm []string
@@ -179,9 +179,9 @@ func TestSelfHostCmpBranchFusion(t *testing.T) {
 		{
 			name:    "signed",
 			src:     "function f(a: i32, b: i32): i32 { if (a < b) { return 1; } return 2; }\nfunction main(): i32 { return f(1, 2); }",
-			wantX86: []string{"cmpq %rcx, %rax\n    jge "},
-			deadX86: []string{"setl", "movzbq %al"},
-			wantArm: []string{"cmp x0, x1\n    b.ge "},
+			wantX86: []string{`cmpq %r[a-z0-9]+, %r[a-z0-9]+\n    jge `},
+			deadX86: []string{"setl", "movzbq"},
+			wantArm: []string{`cmp x[0-9]+, x[0-9]+\n    b.ge `},
 			deadArm: []string{"cset"},
 		},
 		{
@@ -189,9 +189,9 @@ func TestSelfHostCmpBranchFusion(t *testing.T) {
 			// the sign boundary, and a wrong pick silently miscompiles.
 			name:    "unsigned",
 			src:     "function f(a: u64, b: u64): i32 { if (a < b) { return 1; } return 2; }\nfunction main(): i32 { return f(1, 2); }",
-			wantX86: []string{"cmpq %rcx, %rax\n    jae "},
-			deadX86: []string{"setb", "movzbq %al"},
-			wantArm: []string{"cmp x0, x1\n    b.hs "},
+			wantX86: []string{`cmpq %r[a-z0-9]+, %r[a-z0-9]+\n    jae `},
+			deadX86: []string{"setb", "movzbq"},
+			wantArm: []string{`cmp x[0-9]+, x[0-9]+\n    b.hs `},
 			deadArm: []string{"cset"},
 		},
 		{
@@ -199,10 +199,10 @@ func TestSelfHostCmpBranchFusion(t *testing.T) {
 			// nothing and the branch inverts its own zero test.
 			name:    "not-only",
 			src:     "function f(a: boolean): i32 { if (!a) { return 1; } return 2; }\nfunction main(): i32 { return f(false); }",
-			wantX86: []string{"testq %rax, %rax\n    jnz "},
-			deadX86: []string{"setz", "movzbq %al"},
-			wantArm: []string{"cbnz x0, "},
-			deadArm: []string{"cset x0, eq"},
+			wantX86: []string{`testq %r[a-z0-9]+, %r[a-z0-9]+\n    jnz `},
+			deadX86: []string{"setz", "movzbq"},
+			wantArm: []string{`cbnz x[0-9]+, `},
+			deadArm: []string{"cset"},
 		},
 		{
 			// The loop guard from #8425's reproduction: `while (i < n)` reaches
@@ -210,9 +210,9 @@ func TestSelfHostCmpBranchFusion(t *testing.T) {
 			// see through it to the comparison.
 			name:    "loop-guard",
 			src:     "function f(n: i32): i32 { var i: i32 = 0; var c: i32 = 0; while (i < n) { c = c + 2; i = i + 1; } return c; }\nfunction main(): i32 { return f(3); }",
-			wantX86: []string{"cmpq %rcx, %rax\n    jge "},
+			wantX86: []string{`cmpq %r[a-z0-9]+, %r[a-z0-9]+\n    jge `},
 			deadX86: []string{"setl", "setz"},
-			wantArm: []string{"cmp x0, x1\n    b.ge "},
+			wantArm: []string{`cmp x[0-9]+, x[0-9]+\n    b.ge `},
 			deadArm: []string{"cset"},
 		},
 	}
@@ -222,12 +222,12 @@ func TestSelfHostCmpBranchFusion(t *testing.T) {
 			t.Run("shape-"+sc.name, func(t *testing.T) {
 				body := fusedFnBody(t, emit(t, "x86-64-linux", sc.src), "f")
 				for _, w := range sc.wantX86 {
-					if !strings.Contains(body, w) {
+					if !matchShape(body, w) {
 						t.Errorf("missing fused %q in:\n%s", w, body)
 					}
 				}
 				for _, d := range sc.deadX86 {
-					if strings.Contains(body, d) {
+					if matchShape(body, d) {
 						t.Errorf("un-fused %q still emitted in:\n%s", d, body)
 					}
 				}
@@ -271,12 +271,12 @@ func TestSelfHostCmpBranchFusion(t *testing.T) {
 			t.Run("shape-"+sc.name, func(t *testing.T) {
 				body := fusedFnBody(t, emit(t, "arm64-linux", sc.src), "f")
 				for _, w := range sc.wantArm {
-					if !strings.Contains(body, w) {
+					if !matchShape(body, w) {
 						t.Errorf("missing fused %q in:\n%s", w, body)
 					}
 				}
 				for _, d := range sc.deadArm {
-					if strings.Contains(body, d) {
+					if matchShape(body, d) {
 						t.Errorf("un-fused %q still emitted in:\n%s", d, body)
 					}
 				}

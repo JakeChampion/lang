@@ -15,7 +15,7 @@ import (
 // compiled cleanly into wrong binaries. The gate now runs ahead of the IR
 // branch (mirroring the arm64 driver's ordering): ill-typed input exits 1
 // with a diagnostic and emits nothing, and valid input still routes through
-// the IR fast-path (the .Lir label marker).
+// the IR fast-path (the .Lssa_ label marker).
 func TestSelfHostIRCheckGate(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -107,10 +107,10 @@ func TestSelfHostIRCheckGate(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("driver exited %d (stderr %q), want 0", code, errOut)
 		}
-		// `.Lir` is the x86 IR emitter's label prefix; its presence proves the
+		// `.Lssa_` is the x86 IR emitter's label prefix; its presence proves the
 		// module still takes the IR fast-path with the gate ahead of it.
-		if !bytes.Contains(out, []byte(".Lir")) {
-			t.Fatal("emitted asm has no .Lir marker — valid module no longer routes through the IR path")
+		if !bytes.Contains(out, []byte(".Lssa_")) {
+			t.Fatal("emitted asm has no .Lssa_ label — valid module no longer emits through the register path")
 		}
 		progBin := buildBin(t, gcc, dir, "gate_ok", string(out))
 		var cmd *exec.Cmd

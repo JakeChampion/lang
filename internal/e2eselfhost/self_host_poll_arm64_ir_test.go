@@ -1,6 +1,7 @@
 package e2eselfhost
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -46,21 +47,17 @@ func TestSelfHostPollIRArm64(t *testing.T) {
 	if !strings.Contains(string(asm), "bl __fn___fern_poll") {
 		t.Error("poll not dispatched on arm64 (poll(fds,0) did not lower to the __fn___fern_poll helper call)")
 	}
-	if !strings.Contains(string(asm), "mov x0, #73") {
+	if !regexp.MustCompile(`\n    mov x[0-9]+, #73\n`).MatchString(string(asm)) {
 		t.Error("the ppoll(2) number (73) was not baked into the Fern helper source")
 	}
 	// __syscall5 marshals six registers (five args + the number) and traps.
-	// Only the TAIL of that run is a fixed shape. Each argument's push reaches
-	// its pop across register-only lines, so peephole_push_pop_arm64 reroutes
-	// the value through a `mov` ahead of the run and drops the pop — P1 for the
-	// innermost pair, P7 for the rest — until it reaches the number, whose pop
-	// it refuses: darwinize keys the Mach-O rewrite off that `ldr x8`, so the
-	// last argument pop, the number load and the trap are what must survive.
+	// The number's pop is the fixed tail of that run: darwinize keys the
+	// Mach-O rewrite off that `ldr x8`, so the last argument pop, the number
+	// load and the trap are what must survive.
 	if !strings.Contains(string(asm), "ldr x0, [sp], #16\n    ldr x8, [sp], #16\n    svc #0\n") {
 		t.Error("__syscall5 did not emit the arm64 argument pop + number + svc sequence ppoll needs")
 	}
-	// Every argument register is still written before the trap, whether the
-	// peephole rerouted its pop into a `mov` or left the pop standing.
+	// Every argument register is written before the trap.
 	for _, reg := range []string{"x1", "x2", "x3", "x4"} {
 		if !strings.Contains(string(asm), "mov "+reg+", ") && !strings.Contains(string(asm), "ldr "+reg+", [sp], #16") {
 			t.Errorf("a __syscall5 argument never reaches %s", reg)

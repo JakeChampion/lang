@@ -227,10 +227,16 @@ to accommodate a migration would discard exactly the signal they exist to give.
 
 ### First instalment on that precondition: the push/pop peephole
 
-`asm_ir.peephole_push_pop` folds an adjacent `pushq`/`popq` into the move it
+This section is history: the peephole and the stack machine whose output it
+folded are both gone (`docs/ssa-log/2026-09-22-the-stack-machines-function-driver-is-gone.md`).
+The register path never round-trips an operand through the stack, so the pass
+had nothing left to fold — 190 lines of 3.24 M on x86-64, 2,740 of 3.19 M on
+arm64 — and was deleted with it. The figures below are the stack machine's.
+
+`asm_ir.peephole_push_pop` folded an adjacent `pushq`/`popq` into the move it
 actually is, removing **20% of the emitted lines** on the compiler's own source
-(1,860,341 → 1,484,006) for 1.3% of compile time. It is a post-pass over the
-emitted text rather than a change to instruction selection, so it needs no
+(1,860,341 → 1,484,006) for 1.3% of compile time. It was a post-pass over the
+emitted text rather than a change to instruction selection, so it needed no
 clobber analysis: `popq Y` reads what the line above it just pushed, which makes
 the pair `Y := X` whatever either line was *meant* for.
 

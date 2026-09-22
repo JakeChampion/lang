@@ -119,12 +119,6 @@ pub struct EmitState {
     // flushed as one data block per entry alongside the string pool. See
     // add_const_agg.
     const_aggs: string[],
-    // ssa_backend selects the register-allocating SSA emit for each function
-    // whose lowered ops the lift admits (docs/SELFHOST-SSA-BACKEND.md); the
-    // rest take the stack-machine emit. The two counters are the module tally.
-    ssa_backend: boolean,
-    ssa_emitted: i32,
-    ssa_declined: i32,
     // ssa_frame is the byte size of the SSA function being emitted, 0 outside
     // one; the arm64 emitter addresses that function's frame slots from sp.
     // ssa_save is the part of it holding the callee-saved registers the
@@ -181,9 +175,6 @@ pub function new_state(): EmitState {
         str_ns: "",
         shape_lits: [],
         const_aggs: [],
-        ssa_backend: false,
-        ssa_emitted: 0,
-        ssa_declined: 0,
         ssa_frame: 0,
         ssa_save: 0,
         ssa_x0: 0 - 1
@@ -6682,8 +6673,7 @@ pub function check_undefined_calls(mod: parser.Module): util.Diag[] {
 // ---------------------------------------------------------------------------
 // Shared GAS text emission — what the x86-64 and arm64 IR backends emit
 // IDENTICALLY: the literal / constant / shape label names, the `.data` blocks
-// behind them, the runtime `.globl` export list, and the byte scanners both
-// peepholes run over their own output. None of it is instruction selection, and
+// behind them, and the runtime `.globl` export list. None of it is instruction selection, and
 // keeping it in one backend is what let the pre-#3457 emitter twins drift.
 // wasm does not use any of it (its own linear-memory layout replaces the lot).
 // ---------------------------------------------------------------------------
@@ -6765,9 +6755,8 @@ pub function emit_const_agg_data_from(s: EmitState, first: i32): EmitState {
 pub struct ShapeRefOut { state: EmitState, label: string }
 
 // DynArg is where a `dyn Trait` call's argument is read from: a register
-// when `reg` is set, else the frame slot at `off` from the frame pointer.
-// The stack machine names its locals this way and the register path its
-// value homes, so one dispatch chain serves both.
+// when `reg` is set, else the frame slot at `off` from the frame pointer —
+// a value's home under the register path.
 pub struct DynArg { reg: string, off: i32 }
 
 // shape_ref resolves the label for an enum/struct SHAPE pointer (struct_make /
@@ -6983,33 +6972,6 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
 // locals + re-passed — the RC-miscount blocker fixed in step 1). The bundle is a
 // SINGLE param rather than 23 individual params so flat's arm64 stack frame stays
 // within `stur`'s ±256 offset range (23 params overflowed it).
-// pp_at reports whether the bytes at `lo` (bounded by `hi`) are `lit`.
-//
-// Byte-at-a-time rather than `asm[lo:lo+k] == lit`: a slice comparison
-// allocates, and this runs twice per emitted line. Going through slices here
-// cost a minute of system time on the compiler's own source, all of it arena
-// growth for temporaries the comparison drops immediately.
-pub function pp_at(asm: string, lo: i32, hi: i32, lit: string): boolean {
-    var m: i32 = lit.len();
-    if (lo + m > hi) { return false; }
-    var k: i32 = 0;
-    while (k < m) {
-        if (asm[lo + k] != lit[k]) { return false; }
-        k = k + 1;
-    }
-    return true;
-}
-
-// pp_eq_bytes reports whether asm[a:a_end] and asm[b:b_end] hold the same bytes.
-pub function pp_eq_bytes(asm: string, a: i32, a_end: i32, b: i32, b_end: i32): boolean {
-    if (a_end - a != b_end - b) { return false; }
-    var k: i32 = 0;
-    while (a + k < a_end) {
-        if (asm[a + k] != asm[b + k]) { return false; }
-        k = k + 1;
-    }
-    return true;
-}
 
 // ---- RC emission directives (#7736) -----------------------------------------
 //

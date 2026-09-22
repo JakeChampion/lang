@@ -18,7 +18,7 @@ import (
 // and resolved "", so the arms stayed un-mangled and the match read the wrong
 // variant (0 instead of 42). me_scrutinee_type now returns a tuple element's
 // type spelling (me_tuple_elem_type, depth-aware split), so these shapes lower
-// on the IR path (.Lir_ witness) with the native value. Var-extracted tuple
+// on the IR path (.Lssa_ witness) with the native value. Var-extracted tuple
 // elements and named-field scrutinees already worked; kept as regressions.
 func TestSelfHostTupleEnumScrutineeIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -68,7 +68,7 @@ func TestSelfHostTupleEnumScrutineeIRX86_64(t *testing.T) {
 			if len(asm) == 0 {
 				t.Fatalf("%s: self-host compiler emitted 0 bytes", tc.name)
 			}
-			if !strings.Contains(string(asm), ".Lir_") {
+			if !strings.Contains(string(asm), ".Lssa_") {
 				t.Fatalf("%s: emitted asm has no IR-path labels — the tuple-enum scrutinee did not lower through the IR", tc.name)
 			}
 			bin := buildBin(t, gcc, dir, tc.name, string(asm))

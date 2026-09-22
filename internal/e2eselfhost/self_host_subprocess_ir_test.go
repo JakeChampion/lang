@@ -114,10 +114,11 @@ func TestSelfHostSubprocessIRArm64(t *testing.T) {
 		t.Error("the hand-written arm64 __fn___fern_subprocess body is still emitted (.Lsp_ccmd present)")
 	}
 	// The syscall numbers arrive as ordinary pushed operands popped into x8, so
-	// each shows as `mov x0, #N` at the call site rather than `mov x8, #N`.
-	for _, want := range []string{"mov x0, #59", "mov x0, #24", "mov x0, #221", "mov x0, #260", "mov x0, #220"} {
-		if !strings.Contains(asm, want) {
-			t.Errorf("emitted arm64 asm missing %q", want)
+	// each is materialised in a register of the allocator's choosing rather
+	// than written to x8 directly.
+	for _, want := range []string{"59", "24", "221", "260", "220"} {
+		if !arm64Imm(asm, want) {
+			t.Errorf("emitted arm64 asm does not materialise the syscall number %s", want)
 		}
 	}
 	cmd := runArm64Bin(qemu, buildBinArm64(t, arm64gcc, dir, "subprocess_prog", asm))

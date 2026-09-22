@@ -19,34 +19,28 @@ import (
 	"github.com/jakechampion/lang/internal/ast"
 )
 
-// The self-host `-backend ssa` (docs/SELFHOST-SSA-BACKEND.md): each function
-// the production lift admits is emitted from SSA form with registers, the rest
-// by the stack machine, in one module. These tests build the self-host CLI for
-// this host once, compile each program both ways for every target the host can
-// run output for (its own ISA natively, the other under its qemu user emulator
-// when present), run both, and compare stdout and exit status. FERN_SSA_REPORT=1
-// gives the per-module tally and a line per declined function, so a program
-// can also pin WHICH functions the backend emitted: a program the lift admits
-// whole must report no declined function, or the coverage has silently
-// narrowed and the differential is comparing the stack machine with itself.
+// The self-host register path (docs/SELFHOST-SSA-BACKEND.md): every function
+// is lifted to SSA form and emitted with registers; it is the only emitter on
+// the native ISAs, so a function it cannot take is a compile error, never a
+// fall-through. These tests build the self-host CLI for this host once,
+// compile each program with it and with the native compiler for every target
+// the host can run output for (its own ISA natively, the other under its qemu
+// user emulator when present), run both, and compare stdout and exit status.
+// Each program is a shape the register path once got wrong or emits specially,
+// named in the comment above it.
 
 // ssaBackendProgram is one differential case.
 type ssaBackendProgram struct {
 	name string
 	src  string
-	// allSSA requires every function of the module to go through the SSA
-	// backend (the tally reads "N of N ... 0 declined").
-	allSSA bool
-	// viaSSA names functions that must not appear among the declined lines.
-	viaSSA []string
 }
 
 var ssaBackendPrograms = []ssaBackendProgram{
-	{name: "fact", allSSA: true, src: `
+	{name: "fact", src: `
 function fact(n: i32): i32 { if (n <= 1) { return 1; } return n * fact(n - 1); }
 function main(): i32 { return fact(5) - 100; }
 `},
-	{name: "fib_swap", allSSA: true, src: `
+	{name: "fib_swap", src: `
 function fib(n: i32): i32 {
     var a: i32 = 0;
     var b: i32 = 1;
@@ -56,7 +50,7 @@ function fib(n: i32): i32 {
 }
 function main(): i32 { return fib(10) % 256; }
 `},
-	{name: "wide_and_casts", allSSA: true, src: `
+	{name: "wide_and_casts", src: `
 function mix(x: i64, y: i64): i64 { return (x * y) / 7 + (x % 5) - (y << 3); }
 function narrow(v: i64): i32 { return (v as i32) & 255; }
 function shifts(a: i32, k: i32): i32 { return ((a << k) | (a >> 1)) ^ (((a as u32) >> 2) as i32); }
@@ -74,7 +68,7 @@ function main(): i32 {
 	// the donor's with struct_set_shape, since neither box arrives carrying it.
 	// That op bailed the production lift, and it was 116 of the 117 functions
 	// the self-build declined — every one of them a reuse site like this.
-	{name: "reuse_cross_type_shape", allSSA: true, src: `
+	{name: "reuse_cross_type_shape", src: `
 struct P { x: i32, y: i32 }
 struct Q { a: i32, b: i32 }
 function f(): i32 {
@@ -91,7 +85,7 @@ function main(): i32 { return f(); }
 	// uninitialised cursor, so it is not a single global's word -- it goes
 	// through the flat op, which re-emits the stack machine's own sequence.
 	// The check is ordering only, so both builds print the same thing.
-	{name: "heap_bump_bytes", allSSA: true, src: `
+	{name: "heap_bump_bytes", src: `
 function report(): i32 {
     var before: i64 = __heap_bump_bytes();
     var xs: i32[] = [];
@@ -105,7 +99,7 @@ function report(): i32 {
 }
 function main(): i32 { return report(); }
 `},
-	{name: "control_flow", allSSA: true, src: `
+	{name: "control_flow", src: `
 function first_square_over(limit: i32): i32 {
     var i: i32 = 0;
     while (i < 1000) {
@@ -146,7 +140,7 @@ function main(): i32 {
 	// predecessor rather than carry a value nothing defines (the allocator
 	// once indexed a block at -1 for it). count_up carries a parameter
 	// through a header phi, the entry operand with no defining instruction.
-	{name: "labelled_continue_defer", allSSA: true, src: `
+	{name: "labelled_continue_defer", src: `
 function count_up(i: i32, n: i32): i32 {
     while (i < n) { i = i + 1; }
     return i;
@@ -171,7 +165,7 @@ function main(): i32 {
 	// allocator once let a body temporary take its register, so the next
 	// iteration compared against garbage (borrowed_forward_lifetime returned
 	// 11, the bit sieve counted no primes).
-	{name: "invariant_through_phi", allSSA: true, src: `
+	{name: "invariant_through_phi", src: `
 @noinline
 function step(x: i32, i: i32): i32 { return x + i; }
 function forward(x: i32, rounds: i32): i32 {
@@ -192,7 +186,7 @@ function main(): i32 { return (forward(3, 10) + count_bits(1431655765, 31) * 10)
 	// The box layouts: records, arrays, tuples, Option boxes, enum variants,
 	// string literals and bytes, each lifted onto the flat backend's layout
 	// (ssa.fern kinds 40 to 48) rather than through a runtime call.
-	{name: "boxes", allSSA: true, src: `
+	{name: "boxes", src: `
 struct P { x: i32, y: i32 }
 enum Shape { Dot(i32), Line(i32, i32), Empty }
 function mk(a: i32, b: i32): P { return P { x: a, y: b }; }
@@ -220,7 +214,7 @@ function main(): i32 {
 	// The runtime calls the stack machine makes for string and array ops: the
 	// Fern-compiled helpers on the stack ABI (concat, equality, ordering) and
 	// the register-ABI routines (array push).
-	{name: "runtime_calls", viaSSA: []string{"join", "same", "before", "grow", "mid", "main"}, src: `
+	{name: "runtime_calls", src: `
 function join(a: string, b: string): string { return a + b; }
 function same(a: string, b: string): boolean { return a == b; }
 function before(a: string, b: string): boolean { return a < b; }
@@ -244,7 +238,7 @@ function main(): i32 {
 	// value both sit in registers at the runtime call, and on x86-64 the
 	// argument registers are among the allocatable ones, so the call must
 	// read both homes before it writes either.
-	{name: "byte_sieve", viaSSA: []string{"sieve", "count", "main"}, src: `
+	{name: "byte_sieve", src: `
 function sieve(n: i32): boolean[] {
     var s: boolean[] = [];
     for i in 0..(n + 1) { s = s.append(true); }
@@ -270,7 +264,7 @@ function main(): i32 { return count(sieve(1000)); }
 	// std/json's array parser ends its loop body in a return, so the block
 	// holding the return reaches the loop's end live and terminated; the lift
 	// must append it, or the if before it branches to a label nothing defines.
-	{name: "json_array", viaSSA: []string{"json____json_p_array", "json____json_p_value"}, src: `
+	{name: "json_array", src: `
 import "core/cmp";
 import "std/json";
 function main(): i32 {
@@ -287,7 +281,7 @@ function main(): i32 {
 	// f32 and i64 reinterprets, and the transcendentals the runtime supplies.
 	// A value is its bit pattern in an integer register, as on the stack
 	// machine.
-	{name: "floats", viaSSA: []string{"area", "hyp", "classify", "rounding", "convs", "bits", "neg", "widen", "signs", "trans", "main"}, src: `
+	{name: "floats", src: `
 import "std/float";
 function area(r: f64): f64 { return 3.141592653589793 * r * r; }
 function hyp(a: f64, b: f64): f64 { return (a * a + b * b).sqrt(); }
@@ -352,7 +346,7 @@ function main(): i32 {
 	// operand; exit as the raw syscall. Whole, so the helper bodies and the
 	// byte kernels they use go through the backend on every target,
 	// including the Darwin rewrite of the syscall number register.
-	{name: "host_calls", allSSA: true, src: `
+	{name: "host_calls", src: `
 import "std/i32";
 function probe_env(): i32 {
     var n: i32 = 0;
@@ -385,7 +379,7 @@ function main(): i32 {
 	// isatty, close). None has a selection of its own in the register path;
 	// each runs through the stack machine's arm for it (flat_op), which is
 	// how every op with a known stack effect reaches this backend.
-	{name: "os_floor", allSSA: true, src: `
+	{name: "os_floor", src: `
 import "std/i32";
 function probe_ids(): i32 {
     var n: i32 = 0;
@@ -425,7 +419,7 @@ function main(): i32 {
 	// an argument a call defines at the instruction before the dispatch, so
 	// its home is the return register the chain uses as scratch
 	// (TestSelfHostSSADynDispatchArgumentInScratch pins that it is).
-	{name: "dyn_dispatch", allSSA: true, src: `
+	{name: "dyn_dispatch", src: `
 import "std/i32";
 trait Shape {
     function area(self: Self): i32;
@@ -463,7 +457,7 @@ function main(): i32 {
 	// arms between a push of the operands and a pop of the result, with the
 	// allocator treating each as a call. String and integer keys, insert,
 	// lookup with a default, membership, the key and value snapshots.
-	{name: "maps", allSSA: true, src: `
+	{name: "maps", src: `
 import "core/map";
 import "std/i32";
 function build(n: i32): Map[string, i32] {
@@ -491,7 +485,7 @@ function main(): i32 {
 	// register home and must survive there. The map's own functions are
 	// pinned with the program: the lookup on a collision node is where a
 	// clobbered key address surfaced.
-	{name: "folded_aggregates", viaSSA: []string{"main", "pmap__PMap__Coarse__i32__get_or", "pmap____hm_find__Coarse__i32", "pmap__PMap__Coarse__i32__insert"}, src: `
+	{name: "folded_aggregates", src: `
 import "std/pmap" as pmap;
 import "std/option";
 import "std/i32";
@@ -513,7 +507,7 @@ function main(): i32 {
 	// lines, case, trim, replace, bytes, count), through the stack machine's
 	// own arm with the operand count the IR verifier gives each, and the bit
 	// counts at both widths.
-	{name: "strings", allSSA: true, src: `
+	{name: "strings", src: `
 import "std/string";
 import "std/i32";
 import "std/i64";
@@ -545,7 +539,7 @@ function main(): i32 {
 	// kernel makes the second read reuse the difference. With lo of 0 the
 	// wrong value equals the right one, so a case has to slice from further
 	// in to see it.
-	{name: "slice_bound_reuse", viaSSA: []string{"tail", "main"}, src: `
+	{name: "slice_bound_reuse", src: `
 function tail(s: string, lo: i32, hi: i32): i32 {
     var v: str = slice_unchecked(s, lo, hi);
     var x: i32 = hi + 1;
@@ -560,7 +554,7 @@ function main(): i32 {
 	// generic function (ordmap's fold), lowers to a loop whose body reaches
 	// the loop's end alive: control continues after the loop in the
 	// enclosing scope, and the lift gives it a block to continue in.
-	{name: "loop_fallthrough", allSSA: true, src: `
+	{name: "loop_fallthrough", src: `
 import "std/ordmap" as ordmap;
 import "core/cmp";
 function main(): i32 {
@@ -571,10 +565,10 @@ function main(): i32 {
     return (total + m.len()) % 251;
 }
 `},
-	// A mixed module: main and the string helpers keep the stack machine, the
-	// integer functions go through the SSA backend, and both call each other
-	// through the shared stack ABI.
-	{name: "mixed_module", viaSSA: []string{"sum_to", "gcd", "eight"}, src: `
+	// Integer functions beside string-heavy ones, calling each other through
+	// the shared stack ABI: the shape a module had when the register path
+	// still left the string helpers to the stack machine.
+	{name: "mixed_module", src: `
 import "std/i32";
 function sum_to(n: i32): i32 { var s: i32 = 0; var i: i32 = 1; while (i <= n) { s = s + i; i = i + 1; } return s; }
 function gcd(a: i32, b: i32): i32 { while (b != 0) { var t: i32 = b; b = a % b; a = t; } return a; }
@@ -592,9 +586,10 @@ function main(): i32 {
 	// and never materialised: on either side of the commutative ops and the
 	// compares, on the right of a subtraction, in a branch's fused compare,
 	// negative, at i32 wrap, and for arm64 on either side of its 12-bit
-	// range. A constant a division or a shift reads, or one above imm32,
-	// keeps its register.
-	{name: "immediates", allSSA: true, src: `
+	// range. A constant a shift reads, or one above imm32, keeps its
+	// register; one a division reads keeps its register on arm64 and feeds
+	// the literal-divisor forms on x86-64.
+	{name: "immediates", src: `
 import "std/i32";
 function mix(x: i32, y: i64, u: u32): i32 {
     var a: i32 = x + 7;
@@ -636,7 +631,7 @@ function main(): i32 {
 	// loop; a swap of two carried values; several back edges into one
 	// header; an exit that reads both; and an update the two-operand forms
 	// cannot compute in place.
-	{name: "carried_pairs", allSSA: true, src: `
+	{name: "carried_pairs", src: `
 import "std/i32";
 function old_after_latch(n: i32): i32 {
     var sum: i32 = 0;
@@ -712,7 +707,7 @@ function main(): i32 {
 	// never entered, a body with nothing live. The emitter sends every edge
 	// past them and drops the ones nothing reaches; the phis of the loops
 	// keep their edges.
-	{name: "empty_blocks", allSSA: true, src: `
+	{name: "empty_blocks", src: `
 function empties(n: i32): i32 {
     var k: i32 = 0;
     var i: i32 = 0;
@@ -739,10 +734,12 @@ type ssaBackendTarget struct {
 	runner []string
 }
 
-// ssaBackendHost is the self-host CLI built for this host, the targets whose
+// ssaBackendHost is the self-host CLI built for this host, the native
+// compiler it was built with (the differential's oracle), the targets whose
 // output this host can run, and the stdlib root.
 type ssaBackendHost struct {
 	cli     string
+	native  string
 	targets []ssaBackendTarget
 	stdlib  string
 }
@@ -819,7 +816,7 @@ func selfHostCLIForHost(t *testing.T) ssaBackendHost {
 			ssaHostErr = fmt.Sprintf("building the self-host CLI for %s: %v\n%s", cliTarget, err, out)
 			return
 		}
-		ssaHost = ssaBackendHost{cli: cli, targets: targets, stdlib: stdlib}
+		ssaHost = ssaBackendHost{cli: cli, native: fern, targets: targets, stdlib: stdlib}
 	})
 	if ssaHostErr != "" {
 		t.Fatal(ssaHostErr)
@@ -830,20 +827,23 @@ func selfHostCLIForHost(t *testing.T) ssaBackendHost {
 	return ssaHost
 }
 
-// compileWith runs the CLI on src for the target, with the extra flags, and
-// returns the CLI's stderr (the SSA report lives there).
-func (h ssaBackendHost) compileWith(t *testing.T, tg ssaBackendTarget, src, out string, extra ...string) string {
+// compileWith runs the CLI on src for the target, with the extra flags.
+func (h ssaBackendHost) compileWith(t *testing.T, tg ssaBackendTarget, src, out string, extra ...string) {
 	t.Helper()
 	args := append([]string{"-target", tg.target}, extra...)
 	args = append(args, "-o", out, src, h.stdlib)
-	cmd := exec.Command(h.cli, args...)
-	cmd.Env = append(os.Environ(), "FERN_SSA_REPORT=1")
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("self-host CLI %v: %v\n%s", args, err, stderr.String())
+	if out, err := exec.Command(h.cli, args...).CombinedOutput(); err != nil {
+		t.Fatalf("self-host CLI %v: %v\n%s", args, err, out)
 	}
-	return stderr.String()
+}
+
+// compileNative runs the native compiler on src for the target.
+func (h ssaBackendHost) compileNative(t *testing.T, tg ssaBackendTarget, src, out string) {
+	t.Helper()
+	args := []string{"-target", tg.target, "-o", out, src}
+	if out, err := exec.Command(h.native, args...).CombinedOutput(); err != nil {
+		t.Fatalf("native fern %v: %v\n%s", args, err, out)
+	}
 }
 
 // runProduced runs a binary the CLI produced and returns its stdout and exit
@@ -867,22 +867,11 @@ func (h ssaBackendHost) runProduced(t *testing.T, tg ssaBackendTarget, bin strin
 	return stdout.String(), cmd.ProcessState.ExitCode()
 }
 
-var ssaTallyRe = regexp.MustCompile(`FERN_SSA: module: (\d+) of (\d+) functions through the SSA backend, (\d+) declined`)
-
-// ssaTally reads the module tally out of the CLI's report.
-func ssaTally(t *testing.T, report string) (emitted, total, declined int) {
-	t.Helper()
-	m := ssaTallyRe.FindStringSubmatch(report)
-	if m == nil {
-		t.Fatalf("no FERN_SSA module tally in the report:\n%s", report)
-	}
-	emitted, _ = strconv.Atoi(m[1])
-	total, _ = strconv.Atoi(m[2])
-	declined, _ = strconv.Atoi(m[3])
-	return
-}
-
-func TestSelfHostSSABackendAgreesWithStackMachine(t *testing.T) {
+// The oracle is the native compiler's build of the same program: the stack
+// machine that used to stand on the other side of this differential is gone,
+// and native's emitters are the reference the self-host converges on
+// (docs/NATIVE-CONVERGENCE.md).
+func TestSelfHostSSABackendAgreesWithNative(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	for _, tg := range h.targets {
 		tg := tg
@@ -894,44 +883,29 @@ func TestSelfHostSSABackendAgreesWithStackMachine(t *testing.T) {
 				if err := os.WriteFile(src, []byte(p.src), 0o644); err != nil {
 					t.Fatal(err)
 				}
-				flat := filepath.Join(dir, p.name+".flat")
+				native := filepath.Join(dir, p.name+".native")
 				ssa := filepath.Join(dir, p.name+".ssa")
-				// The register path is the default on both native ISAs, so the
-				// stack machine has to be asked for by name or the differential
-				// compares the register path with itself.
-				h.compileWith(t, tg, src, flat, "-backend", "flat")
-				report := h.compileWith(t, tg, src, ssa, "-backend", "ssa")
+				h.compileNative(t, tg, src, native)
+				h.compileWith(t, tg, src, ssa)
 
-				emitted, total, declined := ssaTally(t, report)
-				if emitted == 0 {
-					t.Errorf("the SSA backend emitted no function of %s:\n%s", p.name, report)
-				}
-				if p.allSSA && (declined != 0 || emitted != total) {
-					t.Errorf("%s: want every function through the SSA backend, got %d of %d with %d declined:\n%s", p.name, emitted, total, declined, report)
-				}
-				for _, fn := range p.viaSSA {
-					if strings.Contains(report, "FERN_SSA: "+fn+": ") {
-						t.Errorf("%s: %s was declined by the SSA backend:\n%s", p.name, fn, report)
-					}
-				}
-
-				flatOut, flatExit := h.runProduced(t, tg, flat)
+				nativeOut, nativeExit := h.runProduced(t, tg, native)
 				ssaOut, ssaExit := h.runProduced(t, tg, ssa)
-				if flatExit != ssaExit {
-					t.Errorf("%s: exit %d through the stack machine, %d through the SSA backend", p.name, flatExit, ssaExit)
+				if nativeExit != ssaExit {
+					t.Errorf("%s: exit %d through native, %d through the self-host register path", p.name, nativeExit, ssaExit)
 				}
-				if flatOut != ssaOut {
-					t.Errorf("%s: stdout differs\n--- stack machine\n%s\n--- SSA backend\n%s", p.name, flatOut, ssaOut)
+				if nativeOut != ssaOut {
+					t.Errorf("%s: stdout differs\n--- native\n%s\n--- self-host register path\n%s", p.name, nativeOut, ssaOut)
 				}
 			})
 		}
 	}
 }
 
-// The backend exists for the two native ISAs; another target is refused with
-// the targets it is available for, as native's `-backend ssa` refuses wasm.
-// `-backend flat` names the stack machine, as it does on native, and a name
-// nothing implements is an error rather than a fall-through.
+// Each target has one emitter and `-backend` may only name it: `ssa` on the
+// two native ISAs, refused for wasm with the targets it is available for, as
+// native's `-backend ssa` refuses wasm; `flat` on wasm, refused on the native
+// ISAs now that their stack machine is gone; and a name nothing implements is
+// an error rather than a fall-through.
 func TestSelfHostSSABackendRefusesOtherTargets(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
@@ -953,43 +927,40 @@ func TestSelfHostSSABackendRefusesOtherTargets(t *testing.T) {
 	if !strings.Contains(string(out), "unknown -backend: nope") {
 		t.Errorf("unknown backend not reported: %s", out)
 	}
-	// Omitting -backend selects the target's default emitter, which is the
-	// register path wherever there is one — both native ISAs, since #9683 put
-	// x86-64's output under its stack machine's as arm64's already was — and
-	// the stack machine where there is not. Naming the default explicitly must
-	// reproduce it byte for byte, and naming the other one must not.
-	//
-	// h.targets is native-only, so the loop covers the register-path half. The
-	// other half is wasm below, where the default must be the stack machine
-	// that `-backend ssa` was just refused for.
+	// Omitting -backend selects the target's emitter, and naming it must
+	// reproduce that byte for byte. h.targets is native-only, so the loop
+	// covers the register path; wasm is below.
 	for _, tg := range h.targets {
-		want, other := "ssa", "flat"
 		base := strings.ReplaceAll(tg.target, "-", "_")
 		h.compileWith(t, tg, src, filepath.Join(dir, base+"_dflt"))
-		h.compileWith(t, tg, src, filepath.Join(dir, base+"_want"), "-backend", want)
-		h.compileWith(t, tg, src, filepath.Join(dir, base+"_other"), "-backend", other)
+		h.compileWith(t, tg, src, filepath.Join(dir, base+"_ssa"), "-backend", "ssa")
 		dflt, err := os.ReadFile(filepath.Join(dir, base+"_dflt"))
 		if err != nil {
 			t.Fatal(err)
 		}
-		named, err := os.ReadFile(filepath.Join(dir, base+"_want"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		notIt, err := os.ReadFile(filepath.Join(dir, base+"_other"))
+		named, err := os.ReadFile(filepath.Join(dir, base+"_ssa"))
 		if err != nil {
 			t.Fatal(err)
 		}
 		if !bytes.Equal(dflt, named) {
-			t.Errorf("%s: -backend %s differs from the default emitter, which it is", tg.target, want)
+			t.Errorf("%s: -backend ssa differs from the default emitter, which it is", tg.target)
 		}
-		if bytes.Equal(dflt, notIt) {
-			t.Errorf("%s: -backend %s matches the default emitter, so the default is not %s", tg.target, other, want)
+		// The stack machine's function emitter is gone from the native ISAs,
+		// so the name is refused rather than mapped onto the register path: a
+		// script asking for the stack machine by name would otherwise compare
+		// the register path with itself.
+		out, err := exec.Command(h.cli, "-target", tg.target, "-backend", "flat", "-o", filepath.Join(dir, base+"_flat"), src, h.stdlib).CombinedOutput()
+		if err == nil {
+			t.Fatalf("%s: -backend flat was accepted", tg.target)
+		}
+		if !strings.Contains(string(out), "-backend flat is not available for -target "+tg.target) {
+			t.Errorf("%s: refusal does not name the target: %s", tg.target, out)
 		}
 	}
-	// A target with no register path defaults to the stack machine. Without
-	// this the rule is only half-pinned: the refusal above says `-backend ssa`
-	// is unavailable for wasm, not that omitting it lands on flat.
+	// wasm has no register path, so the stack machine is its emitter and
+	// `flat` names it. Without this the rule is only half-pinned: the refusal
+	// above says `-backend ssa` is unavailable for wasm, not that omitting it
+	// lands on flat.
 	wasmDflt := filepath.Join(dir, "wasm_dflt")
 	wasmFlat := filepath.Join(dir, "wasm_flat")
 	for _, a := range [][]string{{"-o", wasmDflt}, {"-backend", "flat", "-o", wasmFlat}} {
@@ -1057,13 +1028,9 @@ func TestSelfHostSSAFrameIsSizedBySpills(t *testing.T) {
 	for _, c := range cases {
 		out := filepath.Join(dir, "wide-"+c.target+".s")
 		cmd := exec.Command(h.cli, "-target", c.target, "-backend", "ssa", "-emit", "asm", "-o", out, src, h.stdlib)
-		cmd.Env = append(os.Environ(), "FERN_SSA_REPORT=1")
 		report, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("%s: %v\n%s", c.target, err, report)
-		}
-		if strings.Contains(string(report), "FERN_SSA: wide:") {
-			t.Fatalf("%s: wide was declined:\n%s", c.target, report)
 		}
 		asm, err := os.ReadFile(out)
 		if err != nil {
@@ -1189,13 +1156,9 @@ function main(): i32 { return (count(3000i64) % 97i64) as i32; }
 	for _, c := range cases {
 		out := filepath.Join(dir, "count-"+c.target+".s")
 		cmd := exec.Command(h.cli, "-target", c.target, "-backend", "ssa", "-emit", "asm", "-o", out, src, h.stdlib)
-		cmd.Env = append(os.Environ(), "FERN_SSA_REPORT=1")
 		report, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("%s: %v\n%s", c.target, err, report)
-		}
-		if strings.Contains(string(report), "FERN_SSA: count:") {
-			t.Fatalf("%s: count was declined:\n%s", c.target, report)
 		}
 		asm, err := os.ReadFile(out)
 		if err != nil {
@@ -1270,13 +1233,9 @@ function main(): i32 { return (step(40i64, 2i64) + step(1i64, 2i64) + first_over
 	for _, c := range cases {
 		out := filepath.Join(dir, "step-"+c.target+".s")
 		cmd := exec.Command(h.cli, "-target", c.target, "-backend", "ssa", "-emit", "asm", "-o", out, src, h.stdlib)
-		cmd.Env = append(os.Environ(), "FERN_SSA_REPORT=1")
 		report, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("%s: %v\n%s", c.target, err, report)
-		}
-		if strings.Contains(string(report), "FERN_SSA: step:") || strings.Contains(string(report), "FERN_SSA: first_over:") {
-			t.Fatalf("%s: a function was declined:\n%s", c.target, report)
 		}
 		asm, err := os.ReadFile(out)
 		if err != nil {
@@ -1344,13 +1303,9 @@ function main(): i32 {
 	for _, c := range cases {
 		out := filepath.Join(dir, "blk-"+c.target+".s")
 		cmd := exec.Command(h.cli, "-target", c.target, "-backend", "ssa", "-emit", "asm", "-o", out, src, h.stdlib)
-		cmd.Env = append(os.Environ(), "FERN_SSA_REPORT=1")
 		report, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("%s: %v\n%s", c.target, err, report)
-		}
-		if strings.Contains(string(report), "FERN_SSA: Blk__put:") {
-			t.Fatalf("%s: put was declined:\n%s", c.target, report)
 		}
 		asm, err := os.ReadFile(out)
 		if err != nil {
@@ -1416,7 +1371,8 @@ function main(): i32 {
 var rcPoisonWord = uafPoisonDec
 
 // A constant the binary ops alone read is an immediate operand on both ISAs
-// and is never materialised; one a division reads keeps its register. The
+// and is never materialised; one a division reads keeps its register on
+// arm64 and is read by the literal-divisor forms on x86-64. The
 // loop bound is under 4,096 so it is an immediate on arm64 too. A shift by a
 // literal takes the immediate-count form, so neither the count register nor
 // the mask a variable count needs appears.
@@ -1439,9 +1395,13 @@ function main(): i32 { return count() as i32; }
 		target       string
 		want, absent []*regexp.Regexp
 	}{
+		// On x86-64 the constant divisor is not materialised either: the
+		// literal-divisor form (ir_div_const) reads it from the table, so the
+		// i64 remainder is the unguarded divide with the 97 loaded by that
+		// form itself, and the two guards a run-time divisor needs are gone.
 		{"x86-64-linux",
-			[]*regexp.Regexp{regexp.MustCompile(`addq \$1, %r`), regexp.MustCompile(`cmpq \$3000, %r`), regexp.MustCompile(`mov[ql] \$97, %`), regexp.MustCompile(`sarq \$3, %r`)},
-			[]*regexp.Regexp{regexp.MustCompile(`mov[ql] \$3000, %`), regexp.MustCompile(`mov[ql] \$1, %`), regexp.MustCompile(`sarq %cl`), regexp.MustCompile(`andl \$31, %ecx`)}},
+			[]*regexp.Regexp{regexp.MustCompile(`addq \$1, %r`), regexp.MustCompile(`cmpq \$3000, %r`), regexp.MustCompile(`movabsq \$97, %rcx`), regexp.MustCompile(`sarq \$3, %r`)},
+			[]*regexp.Regexp{regexp.MustCompile(`mov[ql] \$3000, %`), regexp.MustCompile(`mov[ql] \$1, %`), regexp.MustCompile(`mov[ql] \$97, %`), regexp.MustCompile(`testq %rcx`), regexp.MustCompile(`cmpq \$-1`), regexp.MustCompile(`sarq %cl`), regexp.MustCompile(`andl \$31, %ecx`)}},
 		{"arm64-linux",
 			[]*regexp.Regexp{regexp.MustCompile(`add x\d+, x\d+, #1\n`), regexp.MustCompile(`cmp x\d+, #3000\n`), regexp.MustCompile(`mov x\d+, #97\n`), regexp.MustCompile(`asr x\d+, x\d+, #3\n`)},
 			[]*regexp.Regexp{regexp.MustCompile(`mov x\d+, #3000\n`), regexp.MustCompile(`mov x\d+, #1\n`), regexp.MustCompile(`and x\d+, x\d+, #31\n`)}},
@@ -1449,13 +1409,9 @@ function main(): i32 { return count() as i32; }
 	for _, c := range cases {
 		out := filepath.Join(dir, "count-"+c.target+".s")
 		cmd := exec.Command(h.cli, "-target", c.target, "-backend", "ssa", "-emit", "asm", "-o", out, src, h.stdlib)
-		cmd.Env = append(os.Environ(), "FERN_SSA_REPORT=1")
 		report, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("%s: %v\n%s", c.target, err, report)
-		}
-		if strings.Contains(string(report), "FERN_SSA: count:") {
-			t.Fatalf("%s: count was declined:\n%s", c.target, report)
 		}
 		asm, err := os.ReadFile(out)
 		if err != nil {

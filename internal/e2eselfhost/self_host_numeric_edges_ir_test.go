@@ -109,7 +109,7 @@ func TestSelfHostNumericEdgesIRX86_64(t *testing.T) {
 // native (`lsl w0`), wasm (`i32.shl`), and the fixed x86 IR path. The div and
 // f64 cases are included too: arm64's sdiv/fcvtzs are non-trapping/saturating in
 // hardware, so they pin that the shared irlower stream stays arm64-clean.
-// Routing is pinned by the arm64 IR emitter's `.Lira_` label marker. CI-gated
+// Routing is pinned by the arm64 IR emitter's `.Lssa_` label marker. CI-gated
 // arm64 (qemu).
 func TestSelfHostNumericEdgesIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
@@ -132,11 +132,11 @@ func TestSelfHostNumericEdgesIRArm64(t *testing.T) {
 			if err != nil || len(asm) == 0 {
 				t.Fatalf("%s: driver failed (%d bytes, err %v)", tc.name, len(asm), err)
 			}
-			// `.Lira_` is the arm64 IR emitter's per-function label prefix
+			// `.Lssa_` is the arm64 IR emitter's per-function label prefix
 			// (asm_arm64_ir); its presence proves the module routed through the
 			// IR path.
-			if !strings.Contains(string(asm), ".Lira_") {
-				t.Fatalf("%s: arm64 asm has no .Lira_ marker — module did not lower through the IR", tc.name)
+			if !strings.Contains(string(asm), ".Lssa_") {
+				t.Fatalf("%s: arm64 asm has no .Lssa_ marker — module did not lower through the IR", tc.name)
 			}
 			bin := buildBinArm64(t, arm64gcc, dir, "numedge_"+tc.name, string(asm))
 			run := runArm64Bin(qemu, bin)

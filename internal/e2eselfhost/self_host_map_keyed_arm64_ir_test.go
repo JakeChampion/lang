@@ -135,11 +135,11 @@ func TestSelfHostMapKeyedArm64IR(t *testing.T) {
 			if err != nil || len(out) == 0 {
 				t.Fatalf("%s: arm64 driver failed (%d bytes, err %v)", tc.name, len(out), err)
 			}
-			// `.Lira_` is the arm64 IR emitter's per-function label prefix; its
+			// `.Lssa_` is the arm64 IR emitter's per-function label prefix; its
 			// presence proves the module routed through asm_arm64_ir rather than
 			// erroring out to an empty emit.
-			if !strings.Contains(string(out), ".Lira_") {
-				t.Fatalf("%s: arm64 asm has no .Lira_ marker", tc.name)
+			if !strings.Contains(string(out), ".Lssa_") {
+				t.Fatalf("%s: arm64 asm has no .Lssa_ marker", tc.name)
 			}
 			bin := buildBinArm64(t, arm64gcc, dir, "mapkeyed_"+tc.name, string(out))
 			run := runArm64Bin(qemu, bin)

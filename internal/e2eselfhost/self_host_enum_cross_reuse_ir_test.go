@@ -140,7 +140,7 @@ func TestSelfHostEnumCrossReuseFiresX86_64(t *testing.T) {
 	// (sole-owner donors only), so it is pinned structurally here and at scale
 	// by the self-compile fixpoints.
 	asm := string(runCapture(t, gcc, runner, driverBin, []byte(enumCrossReuseFiresDeadDonor)))
-	if !strings.Contains(asm, "call __fn___fern_rc_is_unique") {
+	if rcIsUniqueSites(asm) == 0 {
 		t.Error("enum-cross reuse site emitted no __fern_rc_is_unique guard")
 	}
 	if !strings.Contains(asm, "call __fn___fern_alloc_reuse") {

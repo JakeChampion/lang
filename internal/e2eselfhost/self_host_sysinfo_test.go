@@ -180,16 +180,16 @@ func TestSelfHostSysinfoIRArm64Darwin(t *testing.T) {
 	// because a Fern body passes its syscall number as a value where the
 	// two hand-written bodies above write `mov x16` literally — so their
 	// absence is the Linux body having reached this target.
-	for _, want := range []string{"mov x0, #463", "mov x0, #92", "mov x0, #50"} {
-		if !strings.Contains(text, want) {
-			t.Errorf("arm64-darwin emit is missing %q — getcwd's darwin body did not reach it", want)
+	for _, want := range []string{"463", "92", "50"} {
+		if !arm64Imm(text, want) {
+			t.Errorf("arm64-darwin emit does not materialise %s — getcwd's darwin body did not reach it", want)
 		}
 	}
 	// BSD 296 is `vm_pressure_monitor`, which the darwin getcwd row used
 	// to name (#9131). It fills nothing, and it copies an int OUT through
 	// its third argument, so it also writes four bytes wherever the
 	// caller last left one — the corruption in #9722.
-	if strings.Contains(text, "mov x0, #296") {
+	if arm64Imm(text, "296") {
 		t.Error("arm64-darwin emit issues BSD 296 (vm_pressure_monitor), which is not getcwd")
 	}
 }
