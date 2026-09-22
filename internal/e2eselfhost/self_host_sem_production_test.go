@@ -715,9 +715,9 @@ function main(): i32 {
 }`},
 	// `use v <- f(args)` writes its continuation with an untyped parameter,
 	// and the trampoline the lift built from it declared none, so the typed
-	// producer refused it ("unresolved result type"). The checker's annotate
-	// pass stamps the callee's callback parameter type on the binding now.
-	// One continuation captures nothing (a `$wrap` trampoline), one captures
+	// producer refused it ("unresolved result type"). checker.pretype_module
+	// stamps the callee's callback parameter type on the binding ahead of
+	// both checking and annotation. One continuation captures nothing (a `$wrap` trampoline), one captures
 	// its caller's parameter (a `$clo` body), and the string binding is
 	// released. A callee that is a function-typed LOCAL is stamped the same
 	// way, but such a local's type nests a function type and the producer
