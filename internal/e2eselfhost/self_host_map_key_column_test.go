@@ -12,13 +12,17 @@ import (
 // the integer key column is REFUSED wherever it is reached, rather than
 // lowered against a column it does not fit.
 //
-// An `i64` / `u64` / `f64` / `usize` key has nowhere to live: the integer
-// column is a 4-byte cell on wasm, and the string column reads a key's VALUE
-// as an address — which is how `Map[f64, V]` segfaulted before #9973. The
-// lowering refuses them instead, and this is the test that the refusal covers
-// every surface rather than the one that was written first: the gate began
-// life on the map METHODS alone, where a program that only constructs or only
-// iterates such a map still lowered silently (caught in review).
+// An `i64` / `u64` / `usize` key has nowhere to live: the integer column is a
+// 4-byte cell on wasm, and the string column reads a key's VALUE as an
+// address — which is how these segfaulted before #9973. The lowering refuses
+// them instead, and this is the test that the refusal covers every surface
+// rather than the one that was written first: the gate began life on the map
+// METHODS alone, where a program that only constructs or only iterates such a
+// map still lowered silently (caught in review).
+//
+// Float keys are not among the cases. They have no column either, but E045
+// refuses them in both checkers now (#10009), so the interpreter oracle below
+// rejects such a program and there is no lowering decision left to pin.
 //
 // Each case isolates one surface. The three parameter cases pass a bare
 // `map_new(2)` rather than a binding, so the construction gate cannot fire
@@ -66,11 +70,7 @@ function total(m: Map[u64, i32]): i32 {
 function main(): i32 { return total(map_new(2)); }
 `, false, 7},
 	{"method-on-a-parameter", `import "core/map";
-function total(m: Map[f64, i32]): i32 { return m.len() + 7; }
-function main(): i32 { return total(map_new(2)); }
-`, false, 7},
-	{"f32-read-of-a-parameter", `import "core/map";
-function total(m: Map[f32, i32]): i32 { return m.get_or(2.5, 0) + 7; }
+function total(m: Map[usize, i32]): i32 { return m.len() + 7; }
 function main(): i32 { return total(map_new(2)); }
 `, false, 7},
 	// The control: the same iteration over a key that DOES fit the column.
@@ -129,8 +129,9 @@ func TestSelfHostMapKeyWithNoColumnRefusesEverySurface(t *testing.T) {
 // narrowMapKeyCases are the keys that DO fit the integer column, each read
 // back through the shapes a key column is consumed by.
 //
-// `f32` is NOT here: it is refused, for the reason map_key_has_no_column
-// records — neither compiler gets an f32 key to the cell as an i32 on wasm
+// `f32` is NOT here: it fits the cell by width, but E045 refuses every float
+// key in both checkers now (#10009) — and it had to be refused somewhere,
+// because neither compiler gets an f32 key to the cell as an i32 on wasm
 // (#10008), so admitting it would make acceptance depend on the target.
 var narrowMapKeyCases = []struct {
 	name   string
@@ -163,9 +164,9 @@ function main(): i32 {
 // refusal: the keys that DO fit the column have to answer what the
 // interpreter answers, not merely lower.
 //
-// Every one of these segfaulted before #9973 — `map_key_kind_of` asked whether
-// the type was spelled `Map[i32,`, so a `u8`, `u32` or `f32` key took the
-// STRING column and the insert path read the key's VALUE as an address. A
+// Both of these segfaulted before #9973 — `map_key_kind_of` asked whether the
+// type was spelled `Map[i32,`, so a `u8` or `u32` key took the STRING column
+// and the insert path read the key's VALUE as an address. A
 // refusal test alone cannot catch that coming back: a gate that refused these
 // too would pass it. This runs them.
 func TestSelfHostNarrowMapKeyAnswersX86_64(t *testing.T) {

@@ -73043,30 +73043,23 @@ pub function is_fn_payload_spelling(t: string): boolean {
     return t[j] == b'=' && t[j + 1] == b'>';
 }
 
-// map_key_has_no_column names the scalar keys the integer key column cannot
-// take. The string column is not an alternative for any of them: it reads a
-// key's VALUE as an address, which is how they segfaulted before #9973. So the
-// lowering refuses them, at every surface that reaches a map — its
-// construction, its methods, and both shapes of loop over it.
+// map_key_has_no_column names the integer keys too WIDE for the key column:
+// it is a 4-byte cell on wasm and op_map_keys has no width to select, so
+// admitting one would narrow the key silently (#10005). The string column is
+// not an alternative — it reads a key's VALUE as an address, which is how
+// these segfaulted before #9973 — so the lowering refuses them, at every
+// surface that reaches a map: its construction, its methods, and both shapes
+// of loop over it.
 //
-// Two different reasons, and it is worth knowing which:
+// Loud is the direction to be wrong in: native and the interpreter answer
+// these programs on the register targets, so this is a gap to close rather
+// than a rule of the language.
 //
-//   i64 / u64 / f64 / usize are too WIDE. The column is a 4-byte cell on wasm
-//   and op_map_keys has no width to select, so admitting one would narrow the
-//   key silently (#10005).
-//
-//   f32 FITS the width and still does not reach the cell as an i32. Admitted
-//   briefly, it emitted a module wasmtime rejects — `f64.const 2.5` handed
-//   straight to a call whose key parameter is i32, because the insert path
-//   converts and the read path does not. Native has the same gap from the
-//   other side (#10008), and what float key EQUALITY should even mean is open
-//   (#10007), so this is a decision before it is a lowering.
-//
-// Loud is the direction to be wrong in for both: native and the interpreter
-// answer these programs on the register targets, so each is a gap to close
-// rather than a rule of the language.
+// FLOAT keys are not listed. They have no column either, but E045 refuses
+// them in both checkers ahead of codegen now (#10009), and every coded
+// diagnostic gates a build — so one cannot reach here to be refused.
 pub function map_key_has_no_column(kt: string): boolean {
-    return kt == "i64" || kt == "u64" || kt == "f64" || kt == "usize" || kt == "f32";
+    return kt == "i64" || kt == "u64" || kt == "usize";
 }
 
 // map_key_kind_of returns the key COLUMN a Map type uses: 1 for an integer
