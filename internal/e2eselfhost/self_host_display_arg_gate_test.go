@@ -86,10 +86,36 @@ func TestSelfHostDisplayArgGate(t *testing.T) {
 			[]string{"E038", "eprint"},
 		},
 		// A scalar with no to_string in scope: native raises E038 here too.
+		//
+		// What the message SAYS is the pin. The generic text asks for a
+		// `to_string` method or `@derive(cmp.Display)` and names the import
+		// that enables them — and none of it helps, because display_arg
+		// rewrites a struct and nothing else, so no import makes this
+		// compile. `import "core/cmp"; print(7)` is the shape that showed it:
+		// native prints 7, and the self-host named an import the source
+		// already had (#9945). The message now says what is true and names a
+		// spelling that works on both compilers.
 		{
 			"write-i32",
 			"function main(): i32 {\n    var n: i32 = 5;\n    write(n);\n    return 0;\n}\n",
-			[]string{"E038", "i32"},
+			[]string{"E038", "no Display path for i32", "write(x.to_string())"},
+		},
+		// The same for the other primitives, and with the import the old text
+		// asked for already present.
+		{
+			"print-i32-with-cmp-imported",
+			"import \"core/cmp\";\nfunction main(): i32 {\n    print(7);\n    return 0;\n}\n",
+			[]string{"E038", "no Display path for i32", "print(x.to_string())"},
+		},
+		{
+			"print-boolean",
+			"function main(): i32 {\n    var b: boolean = true;\n    print(b);\n    return 0;\n}\n",
+			[]string{"E038", "no Display path for boolean"},
+		},
+		{
+			"print-f64",
+			"function main(): i32 {\n    var v: f64 = 1.5;\n    print(v);\n    return 0;\n}\n",
+			[]string{"E038", "no Display path for f64"},
 		},
 		// A primitive receiver that declares its own to_string. Native calls
 		// the method; the self-host would call the builtin formatter, so it
