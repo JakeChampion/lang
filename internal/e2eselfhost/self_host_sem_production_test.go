@@ -77,6 +77,9 @@ func TestSelfHostSemanticProduction(t *testing.T) {
 					if prog.skip == "" && prog.refuses != "" && !strings.Contains(report, prog.refuses) {
 						t.Fatalf("FERN_SEM_IR did not report %q:\n%s", prog.refuses, report)
 					}
+					if prog.reportLacks != "" && strings.Contains(report, prog.reportLacks) {
+						t.Fatalf("FERN_SEM_IR reported %q, which this case pins as cleared:\n%s", prog.reportLacks, report)
+					}
 					if prog.skip != "" {
 						mixed, mixedReport, mixedLeak := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, true, prog.skip, prog.stdin)
 						if mixed != base {
@@ -265,6 +268,11 @@ var semProductionPrograms = []struct {
 	// leg it is a line the plain report must carry: the refusal that drops
 	// the whole module to the AST lowering.
 	refuses string
+	// reportLacks, when set, is a line the report must NOT carry: a refusal a
+	// fix CLEARED on a module that still refuses for another reason, so the
+	// production tally cannot observe it. `refuses` names what still stands;
+	// this names what may not come back.
+	reportLacks string
 	// want, when set, is the answer ("<exit>|<stdout>") of a program the AST
 	// lowering REFUSES and the semantic lowering produces whole, confirmed
 	// against the native compiler; the AST leg is asserted to refuse it
@@ -353,6 +361,39 @@ function main(): i32 {
     var p: ((i32) => Slot[i32], i32) = (((b: i32): Slot[i32] => slot_of(b)), 4);
     var q: ((Slot[i32]) => i32, Slot[i32]) = (((s: Slot[i32]): i32 => s.v), Slot[i32] { v: 7 });
     return take(p) + unwrap(q);
+}
+`},
+	// The lambda half of the same fix, which the row above cannot observe:
+	// both its lambdas return a plain struct, so ExprLambda's callable-result
+	// sidecar stays empty. #9954's own repro is the shape that fills it — a
+	// lambda whose declared result is `(i32) => Slot[i32]` — and it still
+	// refuses as a whole, because a function type nested in a function type is
+	// a slot `ssasem.signature_slot` declines by design. What the mangling
+	// clears is the OTHER refusal the module carried: `outer: return type:
+	// declared ((i32) => ((i32) => Slot__i32)), returns ((i32) => ((i32) =>
+	// Slot))`, the sidecar the `...lm` spread copied verbatim meeting the
+	// signature ms_func had already mangled. So the pins are the refusal that
+	// stands and the one that may not come back.
+	{
+		name:        "a-lambda-declaring-a-callable-result-over-a-generic-struct",
+		refuses:     "function signature slot",
+		reportLacks: "outer: return type:",
+		src: `
+struct Slot[T] { v: T }
+
+function slot_of(n: i32): Slot[i32] {
+    return Slot[i32] { v: n };
+}
+
+function outer(): (i32) => (i32) => Slot[i32] {
+    return (a: i32): (i32) => Slot[i32] => ((b: i32): Slot[i32] => slot_of(a + b));
+}
+
+function main(): i32 {
+    var f: (i32) => (i32) => Slot[i32] = outer();
+    var g: (i32) => Slot[i32] = f(10);
+    var s: Slot[i32] = g(5);
+    return s.v;
 }
 `},
 	// An if-expression desugars to an IIFE whose ret_type if_expr_rt reads off
