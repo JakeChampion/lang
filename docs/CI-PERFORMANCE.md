@@ -450,6 +450,65 @@ validation and a dispatch get a run-unique group and are never cancelled.
 `reap-stale-runs.yml` no longer triggers on `synchronize`; it remains the
 backstop for closed pull requests and the quiet-hours cron.
 
+Measured on the first push after it merged (#10021, 17:01:17 UTC): the
+superseded run was cancelled at 17:01:24, seven seconds later, with no runner
+involved. The first main validation after the merge (run 35755577198) ran
+its suite normally; the fallback group's prefix differs from ci-suite.yml's
+on purpose, because an identical one has the suite request the group its own
+run holds and GitHub cancels that as a deadlock, which a PR run cannot show.
+
+### Whether the two-lane queue is still needed
+
+Yes. A suite on an otherwise empty pool (run 35745901102) is 323 job-minutes
+over an 18.6-minute wall, a mean of 17 slots in use out of 40: it holds 35-36
+running for its first four minutes, is under 25 by minute seven with nothing
+waiting, and spends its last five minutes on a handful of jobs. A second
+suite fills that decay; a third would put about 180 jobs against 40 slots at
+fan-out and stretch every suite without adding throughput. Removing the queue
+would be worse still: of the 100 completed pull-request runs before 16:18 UTC
+on 2026-09-22, 72 were cancelled as superseded and 28 succeeded. A run
+waiting in the queue costs nothing when its push is superseded, where a run
+that had fanned out would have spent slots on work that is discarded.
+
+## Sixth change: the fernsmith shrink sweep runs its seeds in parallel
+
+`TestGenBytesShrinkIsMonotonicAndValid` under `RUN_SHRINK_PROPERTY=1` is
+nearly the whole fernsmith lane. It was parallel across its three entry
+points only, so it ran three-wide on a four-core runner. Each (entry point,
+seed) pair is now a parallel subtest (#10021).
+
+| | before | after |
+| --- | ---: | ---: |
+| local four-core box, the sweep test alone | 472 s | 386 s |
+| `test-fernsmith-x86_64` test step (runs 35733713188, 35757937523) | 587 s | 559 s |
+| `test-fernsmith-aarch64` test step | 375 s | 329 s |
+
+The runner gained a fraction of what the local box did: the x86_64 runner's
+fourth vCPU is worth much less than a core to this CPU-bound sweep. The
+lane's floor is now the per-seed type-check cost itself.
+
+### Measured and left alone
+
+- Per-job setup (checkout, toolchain, `go test -c`) is 29 of the 328
+  job-minutes of a suite, a mean of 28 s per job. Merging small jobs would
+  not repay the longer critical path it creates.
+- `test-e2e-selfhost-x86_64-shard0` is 11 minutes because
+  `TestSelfHostAssumeEligibleByteIdenticalX86_64` is 503 s of it: 346 s in
+  the checked per-process route (83 driver processes, each paying a ~10 s
+  parse floor) and 123 s in emit-all. The per-process route is the thing
+  under test, so that cost is the guarantee's.
+- `test-units-x86_64` is bounded by three serial packages, `internal/ir`
+  (392 s), `internal/ssa` (351 s) and `internal/printer` (349 s), which
+  run concurrently with each other. None can take `t.Parallel`: `ir`'s
+  tests alone write the `internal/ast` package globals 143 times.
+- The failure reaper (`cancel-on-failure.yml`) waits for a runner like the
+  stale-run reaper did: on run 35749155333 the failing shard finished at
+  16:13:07, its lane concluded at 16:15:58, and the reaper was still queued
+  minutes later. Test jobs keep a read-only token by a pinned decision
+  (`TestCILintRunsOutsideTheFullSuiteQueue`), so an in-job cancel step is
+  not available; the cost is bounded by the lane's own tail.
+
+
 ### Not done: skipping a main run whose tree a PR run already passed
 
 A rebase merge of a branch that is level with main produces the same tree
