@@ -39295,18 +39295,44 @@ function map_decl_type(stmts: ast.Stmt[], name: string, want_key: boolean): stri
 // question — an array literal whose every element is a literal or a
 // registered fresh-string producer (`str_fresh`), so the column sole-owns the
 // buffer AND every string in it. Every predicate here is purely syntactic.
-function map_arg_binding_is_fresh(e: ast.Expr, kind: string, str_fresh: string[]): boolean {
+function map_arg_binding_is_fresh(e: ast.Expr, kind: string, str_fresh: string[], structs: StructTab): boolean {
     if (kind == "s") { return str_local_binding_is_fresh(e); }
     if (kind == "a") { return tuple_strarr_elem_fresh(e, str_fresh); }
     match (e) {
         ast.ExprArray(_) => { return true; },
         ast.ExprStructLit(sl) => { return !sl.has_base; },
+        // A variant construction is a fresh box exactly as a struct literal is
+        // (#9966). It reads as an ordinary call, so only the struct table tells
+        // `Tag.TagLo(i)` and bare `Line(7)` from a function returning an enum,
+        // whose result the callee may still hold: variant_enum_owner answers for
+        // a name the table declares as a variant and "" for anything else.
+        ast.ExprCall(c) => { return call_is_variant_construction(c, structs); },
+        // A bare unit variant carries no payload and takes no call.
+        ast.ExprIdent(id) => { return variant_enum_owner(structs, id.name) != ""; },
         _ => { return false; },
     }
     return false;
 }
 
-function map_insert_chain_arg_fresh(e: ast.Expr, argidx: i32, kind: string, str_fresh: string[]): boolean {
+// call_is_variant_construction: `c` constructs an enum variant — `Line(7)`
+// naming the variant directly, or `Enum.Variant(args)` qualifying it. A
+// qualified form asks the table for a variant of that name declared by that
+// enum, since two enums may declare the same variant name.
+function call_is_variant_construction(c: ast.ExprCall, structs: StructTab): boolean {
+    match (c.callee) {
+        ast.ExprIdent(id) => { return variant_enum_owner(structs, id.name) != ""; },
+        ast.ExprFieldAccess(fa) => {
+            match (fa.obj) {
+                ast.ExprIdent(oid) => { return variant_decl_index(structs, fa.field, oid.name) >= 0; },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+function map_insert_chain_arg_fresh(e: ast.Expr, argidx: i32, kind: string, str_fresh: string[], structs: StructTab): boolean {
     match (e) {
         ast.ExprCall(c) => {
             match (c.callee) {
@@ -39314,8 +39340,8 @@ function map_insert_chain_arg_fresh(e: ast.Expr, argidx: i32, kind: string, str_
                 ast.ExprFieldAccess(fa) => {
                     if (fa.field == "insert") {
                         if (c.args.len() < 2) { return false; }
-                        if (!map_arg_binding_is_fresh(c.args[argidx], kind, str_fresh)) { return false; }
-                        return map_insert_chain_arg_fresh(fa.obj, argidx, kind, str_fresh);
+                        if (!map_arg_binding_is_fresh(c.args[argidx], kind, str_fresh, structs)) { return false; }
+                        return map_insert_chain_arg_fresh(fa.obj, argidx, kind, str_fresh, structs);
                     }
                     return false;
                 },
@@ -39345,15 +39371,15 @@ function map_expr_root_ident(e: ast.Expr): string {
 
 // map_expr_sets_unfresh_arg: does `e` contain a `name.set(k,v)` / `name.insert(k,v)`
 // (receiver-chain rooted at `name`) whose arg at `argidx` is NOT fresh for `kind`?
-function map_expr_sets_unfresh_arg(e: ast.Expr, name: string, argidx: i32, kind: string, str_fresh: string[]): boolean {
+function map_expr_sets_unfresh_arg(e: ast.Expr, name: string, argidx: i32, kind: string, str_fresh: string[], structs: StructTab): boolean {
     match (e) {
         ast.ExprCall(c) => {
             match (c.callee) {
                 ast.ExprFieldAccess(fa) => {
                     if ((fa.field == "set" || fa.field == "insert") && map_expr_root_ident(fa.obj) == name) {
-                        if (c.args.len() >= 2 && !map_arg_binding_is_fresh(c.args[argidx], kind, str_fresh)) { return true; }
+                        if (c.args.len() >= 2 && !map_arg_binding_is_fresh(c.args[argidx], kind, str_fresh, structs)) { return true; }
                     }
-                    return map_expr_sets_unfresh_arg(fa.obj, name, argidx, kind, str_fresh);
+                    return map_expr_sets_unfresh_arg(fa.obj, name, argidx, kind, str_fresh, structs);
                 },
                 _ => { return false; }
             }
@@ -39365,17 +39391,17 @@ function map_expr_sets_unfresh_arg(e: ast.Expr, name: string, argidx: i32, kind:
 
 // map_no_unfresh_set_arg: no statement in `stmts` sets a non-fresh arg at
 // `argidx` on map `name` (recursing nested blocks). Reads (m.get/has/len) ignored.
-function map_no_unfresh_set_arg(stmts: ast.Stmt[], name: string, argidx: i32, kind: string, str_fresh: string[]): boolean {
+function map_no_unfresh_set_arg(stmts: ast.Stmt[], name: string, argidx: i32, kind: string, str_fresh: string[], structs: StructTab): boolean {
     for stmt in stmts {
         match (stmt) {
-            ast.StmtExpr(e) => { if (map_expr_sets_unfresh_arg(e.value, name, argidx, kind, str_fresh)) { return false; } },
-            ast.StmtVar(v) => { if (map_expr_sets_unfresh_arg(v.init, name, argidx, kind, str_fresh)) { return false; } },
-            ast.StmtAssign(a) => { if (map_expr_sets_unfresh_arg(a.value, name, argidx, kind, str_fresh)) { return false; } },
-            ast.StmtIf(f) => { if (!map_no_unfresh_set_arg(f.then_body, name, argidx, kind, str_fresh) || !map_no_unfresh_set_arg(f.else_body, name, argidx, kind, str_fresh)) { return false; } },
-            ast.StmtWhile(w) => { if (!map_no_unfresh_set_arg(w.body, name, argidx, kind, str_fresh)) { return false; } },
-            ast.StmtFor(fo) => { if (!map_no_unfresh_set_arg(fo.body, name, argidx, kind, str_fresh)) { return false; } },
+            ast.StmtExpr(e) => { if (map_expr_sets_unfresh_arg(e.value, name, argidx, kind, str_fresh, structs)) { return false; } },
+            ast.StmtVar(v) => { if (map_expr_sets_unfresh_arg(v.init, name, argidx, kind, str_fresh, structs)) { return false; } },
+            ast.StmtAssign(a) => { if (map_expr_sets_unfresh_arg(a.value, name, argidx, kind, str_fresh, structs)) { return false; } },
+            ast.StmtIf(f) => { if (!map_no_unfresh_set_arg(f.then_body, name, argidx, kind, str_fresh, structs) || !map_no_unfresh_set_arg(f.else_body, name, argidx, kind, str_fresh, structs)) { return false; } },
+            ast.StmtWhile(w) => { if (!map_no_unfresh_set_arg(w.body, name, argidx, kind, str_fresh, structs)) { return false; } },
+            ast.StmtFor(fo) => { if (!map_no_unfresh_set_arg(fo.body, name, argidx, kind, str_fresh, structs)) { return false; } },
             ast.StmtMatch(m) => {
-                for arm in m.arms { if (!map_no_unfresh_set_arg(arm.body, name, argidx, kind, str_fresh)) { return false; } }
+                for arm in m.arms { if (!map_no_unfresh_set_arg(arm.body, name, argidx, kind, str_fresh, structs)) { return false; } }
             },
             _ => {}
         }
@@ -39388,19 +39414,19 @@ function map_no_unfresh_set_arg(stmts: ast.Stmt[], name: string, argidx: i32, ki
 // fresh strings, AND no later set/insert on it uses a non-fresh value (resp. key)
 // — so the map is the sole rc=1 owner of every value (resp. key) box and that
 // column can be deep-freed. argidx 1 = value column, 0 = key column.
-function map_str_value_reclaimable(stmts: ast.Stmt[], name: string): boolean {
+function map_str_value_reclaimable(stmts: ast.Stmt[], name: string, structs: StructTab): boolean {
     if (map_decl_type(stmts, name, false) != "string") { return false; }
-    return map_column_args_fresh(stmts, name, 1, "s", []);
+    return map_column_args_fresh(stmts, name, 1, "s", [], structs);
 }
-function map_str_key_reclaimable(stmts: ast.Stmt[], name: string): boolean {
+function map_str_key_reclaimable(stmts: ast.Stmt[], name: string, structs: StructTab): boolean {
     if (map_decl_type(stmts, name, true) != "string") { return false; }
-    return map_column_args_fresh(stmts, name, 0, "s", []);
+    return map_column_args_fresh(stmts, name, 0, "s", [], structs);
 }
 // map_column_args_fresh: every value the init chain and every later set /
 // insert put in column `argidx` of map `name` is fresh for `kind`.
-function map_column_args_fresh(stmts: ast.Stmt[], name: string, argidx: i32, kind: string, str_fresh: string[]): boolean {
-    if (!map_no_unfresh_set_arg(stmts, name, argidx, kind, str_fresh)) { return false; }
-    return map_init_chain_arg_ok(stmts, name, argidx, kind, str_fresh);
+function map_column_args_fresh(stmts: ast.Stmt[], name: string, argidx: i32, kind: string, str_fresh: string[], structs: StructTab): boolean {
+    if (!map_no_unfresh_set_arg(stmts, name, argidx, kind, str_fresh, structs)) { return false; }
+    return map_init_chain_arg_ok(stmts, name, argidx, kind, str_fresh, structs);
 }
 
 // --- #4353 item 3: BOX-VALUE column deep-release for a reclaimable map --------
@@ -39462,20 +39488,62 @@ function map_box_value_reclaimable(stmts: ast.Stmt[], name: string, structs: Str
     if (!map_val_box_column_ok(vt, structs)) { return false; }
     var kind: string = "b";
     if (vt == "string[]") { kind = "a"; }
-    return map_column_args_fresh(stmts, name, 1, kind, str_fresh);
+    return map_column_args_fresh(stmts, name, 1, kind, str_fresh, structs);
 }
-function map_init_chain_arg_ok(stmts: ast.Stmt[], name: string, argidx: i32, kind: string, str_fresh: string[]): boolean {
+
+// --- #9966: BOX-KEY column deep-release for a reclaimable map ----------------
+// The key column had exactly one deep release, MAPKS: for a fresh-string
+// column. A struct- or enum-keyed map therefore fell to the shallow `arr_dec`
+// in the kfree position and stranded every key box: `Map[Coord, i32]` measured
+// 2304 bytes over four rounds of twelve inserts on x86-64, against 0 for the
+// same program keyed by i32.
+//
+// map_key_box_column_ok: the map free reclaims a `kt` key column in FULL —
+// one __fern_arr_dec per key releases an all-scalar struct or enum box, which
+// is what __fern_arrarr_free's element walk does. A key whose own fields are
+// counted needs a walk before those decs, which this credit does not claim.
+function map_key_box_column_ok(kt: string, structs: StructTab): boolean {
+    return struct_fields_all_scalar(structs, kt) || enum_variants_all_scalar(structs, kt);
+}
+
+// enum_variants_all_scalar: `ety` names a declared enum whose every variant's
+// every payload field is a non-pointer scalar, so one dec is a box's whole
+// release. An unknown / generic name reads false — the safe direction, which
+// keeps the shallow free.
+function enum_variants_all_scalar(structs: StructTab, ety: string): boolean {
+    var vi: i32 = stab_enum_first(structs, ety);
+    if (vi < 0) { return false; }
+    while (vi >= 0) {
+        if (structs.decls[vi].type_params.len() > 0) { return false; }
+        for fld in structs.decls[vi].fields {
+            if (map_value_is_ptr(fld.type_name)) { return false; }
+        }
+        vi = stab_enum_next(structs, vi, ety);
+    }
+    return true;
+}
+
+// map_box_key_reclaimable: the KEY twin of map_box_value_reclaimable — column 0
+// rather than column 1. The register backends never retain a key on insert, so
+// the column holds a unit only where the key was FRESH; that is exactly what
+// map_column_args_fresh proves, and it is what makes the per-key dec sound.
+function map_box_key_reclaimable(stmts: ast.Stmt[], name: string, structs: StructTab, str_fresh: string[]): boolean {
+    var kt: string = map_decl_type(stmts, name, true);
+    if (!map_key_box_column_ok(kt, structs)) { return false; }
+    return map_column_args_fresh(stmts, name, 0, "b", str_fresh, structs);
+}
+function map_init_chain_arg_ok(stmts: ast.Stmt[], name: string, argidx: i32, kind: string, str_fresh: string[], structs: StructTab): boolean {
     for stmt in stmts {
         match (stmt) {
-            ast.StmtVar(v) => { if (v.name == name) { return map_insert_chain_arg_fresh(v.init, argidx, kind, str_fresh); } },
+            ast.StmtVar(v) => { if (v.name == name) { return map_insert_chain_arg_fresh(v.init, argidx, kind, str_fresh, structs); } },
             ast.StmtIf(f) => {
-                if (stmts_declare(f.then_body, name)) { return map_init_chain_arg_ok(f.then_body, name, argidx, kind, str_fresh); }
-                if (stmts_declare(f.else_body, name)) { return map_init_chain_arg_ok(f.else_body, name, argidx, kind, str_fresh); }
+                if (stmts_declare(f.then_body, name)) { return map_init_chain_arg_ok(f.then_body, name, argidx, kind, str_fresh, structs); }
+                if (stmts_declare(f.else_body, name)) { return map_init_chain_arg_ok(f.else_body, name, argidx, kind, str_fresh, structs); }
             },
-            ast.StmtWhile(w) => { if (stmts_declare(w.body, name)) { return map_init_chain_arg_ok(w.body, name, argidx, kind, str_fresh); } },
-            ast.StmtFor(fo) => { if (stmts_declare(fo.body, name)) { return map_init_chain_arg_ok(fo.body, name, argidx, kind, str_fresh); } },
+            ast.StmtWhile(w) => { if (stmts_declare(w.body, name)) { return map_init_chain_arg_ok(w.body, name, argidx, kind, str_fresh, structs); } },
+            ast.StmtFor(fo) => { if (stmts_declare(fo.body, name)) { return map_init_chain_arg_ok(fo.body, name, argidx, kind, str_fresh, structs); } },
             ast.StmtMatch(m) => {
-                for arm in m.arms { if (stmts_declare(arm.body, name)) { return map_init_chain_arg_ok(arm.body, name, argidx, kind, str_fresh); } }
+                for arm in m.arms { if (stmts_declare(arm.body, name)) { return map_init_chain_arg_ok(arm.body, name, argidx, kind, str_fresh, structs); } }
             },
             _ => {}
         }
@@ -48969,6 +49037,7 @@ function emit_map_buffers_free(s: LowerState, slot: i32): LowerState {
     var mvs: boolean = slot_credit_at(s, slot, "MAPVS:");
     var mks: boolean = slot_credit_at(s, slot, "MAPKS:");
     var mva: boolean = slot_credit_at(s, slot, "MAPVA:");
+    var mka: boolean = slot_credit_at(s, slot, "MAPKA:");
     // A string[] column walks each value through __fern_str_arr_free (the
     // _vsa variants); a struct column with rc fields walks each value box's
     // own fields first and the one-dec free below then takes the boxes.
@@ -48979,7 +49048,18 @@ function emit_map_buffers_free(s: LowerState, slot: i32): LowerState {
         var vdt: string = map_val_struct_deep_type(mvt, s.frame.structs);
         if (vdt != "") { st = st.emit(ir.op_call_direct("__map_vals_struct_drop_" + vdt, 1)); }
     }
-    if (mks && mvs) {
+    // MAPKA: and MAPKS: cannot both hold — the declared key type is a string or
+    // it is a box — so the key credit picks at most one prefix, and the value
+    // credit at most one suffix.
+    if (mka && mvs) {
+        st = st.emit(ir.op_call_direct("__fern_map_free_kavs", 1));
+    } else if (mka && vsa) {
+        st = st.emit(ir.op_call_direct("__fern_map_free_kavsa", 1));
+    } else if (mka && mva) {
+        st = st.emit(ir.op_call_direct("__fern_map_free_kava", 1));
+    } else if (mka) {
+        st = st.emit(ir.op_call_direct("__fern_map_free_ka", 1));
+    } else if (mks && mvs) {
         st = st.emit(ir.op_call_direct("__fern_map_free_kvs", 1));
     } else if (mks && vsa) {
         st = st.emit(ir.op_call_direct("__fern_map_free_ksvsa", 1));
@@ -80880,10 +80960,10 @@ while (mi < maps.len()) {
         // of each fresh value / key box. A clone shares those elements
         // uncounted with the box it superseded, which is why every release in
         // the group but m's own sweep is the shallow free (map_alias_holder_sites).
-        if (map_str_value_reclaimable(body, mapnm)) {
+        if (map_str_value_reclaimable(body, mapnm, structs)) {
             out = out.append("MAPVS:" + maps[mi]);
         }
-        if (map_str_key_reclaimable(body, mapnm)) {
+        if (map_str_key_reclaimable(body, mapnm, structs)) {
             out = out.append("MAPKS:" + maps[mi]);
         }
         // #4353 item 3: an ARRAY- or STRUCT-valued column whose every value is
@@ -80891,6 +80971,12 @@ while (mi < maps.len()) {
         // Mutually exclusive with MAPVS: by the declared value type.
         if (map_box_value_reclaimable(body, mapnm, structs, str_fresh)) {
             out = out.append("MAPVA:" + maps[mi]);
+        }
+        // #9966: a struct- or enum-KEY column whose every key is a fresh
+        // literal — released per key via the __fern_map_free_ka* members.
+        // Mutually exclusive with MAPKS: by the declared key type.
+        if (map_box_key_reclaimable(body, mapnm, structs, str_fresh)) {
+            out = out.append("MAPKA:" + maps[mi]);
         }
     }
     mi = mi + 1;

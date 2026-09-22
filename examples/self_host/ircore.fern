@@ -160,6 +160,13 @@ pub function is_fern_helper(name: string): boolean {
         || name == "__fern_map_free_ksva"
         || name == "__fern_map_free_vsa"
         || name == "__fern_map_free_ksvsa"
+        // #9966: the BOX-KEY siblings — the key column freed via
+        // __fern_arrarr_free for an all-scalar struct or enum key, the value
+        // column as its own suffix says.
+        || name == "__fern_map_free_ka"
+        || name == "__fern_map_free_kavs"
+        || name == "__fern_map_free_kava"
+        || name == "__fern_map_free_kavsa"
         // The column-of-boxes pair (box, release): the runtime walks the value
         // column calling the release the semantic lowering names for the
         // value type. wasm_helper_symbol routes both to $__fern_map_release_vf.
