@@ -951,11 +951,18 @@ function wasm_helper_symbol(name: string): string {
     // $__fern_map_release already releases it, and the credit is a no-op here.
     if (name == "__fern_map_free_va") { return "$__fern_map_release"; }
     if (name == "__fern_map_free_ksva") { return "$__fern_map_release"; }
+    // #9966: the box-KEY members are register-only too. On wasm the key column
+    // is rc-managed per insert like the value column, so $__fern_map_release
+    // already releases it and the MAPKA: credit is a no-op distinction here.
+    if (name == "__fern_map_free_ka") { return "$__fern_map_release"; }
+    if (name == "__fern_map_free_kavs") { return "$__fern_map_release"; }
+    if (name == "__fern_map_free_kava") { return "$__fern_map_release"; }
     // A string[] VALUE column: the release's value walk must free each value's
     // strings as well as its buffer ($__fern_arr_dec_ptr per value), which the
     // flat per-value $__fern_arr_dec of $__fern_map_release does not.
     if (name == "__fern_map_free_vsa") { return "$__fern_map_release_vsa"; }
     if (name == "__fern_map_free_ksvsa") { return "$__fern_map_release_vsa"; }
+    if (name == "__fern_map_free_kavsa") { return "$__fern_map_release_vsa"; }
     // A column of boxes: the release's value walk calls the function whose
     // table slot the caller passes as the second argument.
     if (name == "__fern_map_free_vf") { return "$__fern_map_release_vf"; }
@@ -1533,7 +1540,8 @@ pub function module_calls_optarrarr_free(cache: irlower.LowerResult[]): boolean 
 // free — gates the $__fern_map_release_vsa body.
 pub function module_calls_map_free_vsa(cache: irlower.LowerResult[]): boolean {
     return module_calls_direct(cache, "__fern_map_free_vsa")
-        || module_calls_direct(cache, "__fern_map_free_ksvsa");
+        || module_calls_direct(cache, "__fern_map_free_ksvsa")
+        || module_calls_direct(cache, "__fern_map_free_kavsa");
 }
 
 // module_calls_map_free_vf: any function frees a map whose value column is
@@ -8847,8 +8855,12 @@ pub function map_helpers(): string {
     // word read from input — now reclaims.) i32 keys (kis 0) carry no rc.
     // EXCEPTION ($kconsume): a FRESH key temp has no source local to sweep, so the
     // map TAKES its single ref (no inc) and release's dec balances it — the key-
-    // column twin of $vconsume (#4353 wasm bug 2). kconsume implies a string key.
-    o = o + "        (if (i32.and (i32.eq (local.get $kis) (i32.const 1)) (i32.eqz (local.get $kconsume))) (then (drop (call $__fern_rc_inc (local.get $k)))))\n";
+    // column twin of $vconsume (#4353 wasm bug 2).
+    // Any COUNTED key column owes this, not the string one alone: a struct or
+    // enum key (kis 2) is a box exactly as a string key is, and leaving it
+    // uncounted stranded one key box per map (#9966). kis 0 is the integer
+    // column, which holds no unit.
+    o = o + "        (if (i32.and (i32.ne (local.get $kis) (i32.const 0)) (i32.eqz (local.get $kconsume))) (then (drop (call $__fern_rc_inc (local.get $k)))))\n";
     o = o + "        (i32.store (i32.add (local.get $vals) (i32.mul (local.get $slot) (i32.const 4))) (local.get $v))\n";
     // Perceus map value construction-inc: a NEW string-valued entry retains its
     // value (the map co-owns it alongside the source) so $__fern_map_release
@@ -9064,9 +9076,12 @@ pub function map_release_func(suffix: string, vfree: string): string {
     o = o + "    (local $i i32) (local $cap i32) (local $keys i32) (local $used i32) (local $vals i32)\n";
     o = o + "    (if (i32.eqz (local.get $box)) (then (return (local.get $box))))\n";
     o = o + "    (if (i32.eq (i32.load (i32.sub (local.get $box) (i32.const 8))) (i32.const 1)) (then\n";
-    // String-keyed map (kis@[box+20]==1): release each occupied slot's key
-    // (construction-inc'd on insert) before freeing the keys buffer.
-    o = o + "      (if (i32.eq (i32.load (i32.add (local.get $box) (i32.const 20))) (i32.const 1)) (then\n";
+    // COUNTED-key map (kis@[box+20] non-zero): release each occupied slot's key
+    // (construction-inc'd on insert) before freeing the keys buffer. Both
+    // counted kinds take it — a string key (1) and a struct / enum key (2),
+    // whose box is owed the same release (#9966). kis 0 is the integer column,
+    // which holds no unit and whose buffer free below is its whole release.
+    o = o + "      (if (i32.ne (i32.load (i32.add (local.get $box) (i32.const 20))) (i32.const 0)) (then\n";
     o = o + "        (local.set $cap (i32.load (i32.add (local.get $box) (i32.const 4))))\n";
     o = o + "        (local.set $keys (i32.load (i32.add (local.get $box) (i32.const 8))))\n";
     o = o + "        (local.set $used (i32.load (i32.add (local.get $box) (i32.const 16))))\n";

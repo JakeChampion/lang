@@ -1091,8 +1091,9 @@ pub function op_map_new(keykind: i32, fns: string): Op { return Op { decl: 0 - 1
 // `eqfn` is the symbol of the key type's derived equality function
 // (`__fn_<K>__eq`) for a struct/enum key, or "" for a scalar/string key.
 // The x86-64 linear-scan runtime dispatches struct keys through it
-// (passed in %r8); wasm ignores it (its hash map still only supports
-// scalar/string keys — struct keys there are a separate slice). #2671.
+// (passed in %r8); wasm carries the derived hash and eq as funcref-table
+// slots on the map box instead ($__fern_map_new_struct, kis 2), so it takes
+// them from op_map_new rather than from here. #2671.
 // `width` carries per-insert flags as bits. Bits 0/1 are the wasm-only
 // fresh-consume flags (bit 0 = `vconsume`, bit 1 = `kconsume`): a set bit means
 // the inserted VALUE (resp. KEY) is a FRESH pointer temp with no other owner,
@@ -1108,10 +1109,12 @@ pub function op_map_new(keykind: i32, fns: string): Op { return Op { decl: 0 - 1
 // columns snapshot with per-element retain), so no keys()/values() read aliases
 // the raw column buffers — the map is the SOLE owner of its keys[]/vals[]
 // buffers and the register map_set's grow path may free the superseded buffer
-// (__fern_arr_push_owned) instead of leaking it. i64/f64/struct/generic
-// columns keep owncols=0 (their reads still raw-alias — irlower's
-// map_kv_elem_flag 1). wasm ignores bit 2 (its map already frees old buffers
-// on grow).
+// (__fern_arr_push_owned) instead of leaking it. A column whose reads still
+// raw-alias keeps owncols=0 — irlower's map_kv_elem_flag 1, which is an
+// i64/f64/generic column, and a struct or enum VALUE column. A struct or enum
+// KEY column snapshots with per-element retain like a string one (#9962/#9965),
+// so it does not hold owncols back. wasm ignores bit 2 (its map already frees
+// old buffers on grow).
 // Bit 3 = `vretain` (#6880): the inserted VALUE is an ALIASED array — a local,
 // a param, a struct field, an element — so the register __fern_map_set, which
 // stores the pointer with no rc-inc of its own, must retain it. Without the
