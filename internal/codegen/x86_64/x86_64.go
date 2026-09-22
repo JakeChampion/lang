@@ -2757,10 +2757,16 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	// here naturally and exits cleanly.
 	g.label(retLabel)
 	g.emit("mov rsp, rbp")
+	g.emit(".cfi_remember_state")
 	g.emit("pop rbp")
 	g.emit(".cfi_def_cfa rsp, 8")
 	g.emit("ret")
-	g.flushCold()
+	// The cold arms run with the frame still up, so they unwind by the
+	// rule the epilogue just left.
+	if len(g.cold) > 0 {
+		g.emit(".cfi_restore_state")
+		g.flushCold()
+	}
 	g.emit(".cfi_endproc")
 	g.line(fmt.Sprintf(".size %s, .-%s", sym, sym))
 	return nil

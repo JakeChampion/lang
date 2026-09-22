@@ -253,6 +253,11 @@ function main(): i32 { var a: i32[] = [1, 2]; return f("ab", a, 1); }`)
 	if strings.Contains(hot, "\tlea rax, [rax + rcx") {
 		t.Errorf("an index lea survived unfused:\n%s", hot)
 	}
+	// The cold arms sit past the epilogue's `.cfi_def_cfa rsp, 8`, so they
+	// restore the frame's rule, remembered before the frame was dropped.
+	if !strings.Contains(hot, ".cfi_remember_state") || !strings.HasPrefix(strings.TrimSpace(cold[len("\tret\n"):]), ".cfi_restore_state") {
+		t.Errorf("cold arms do not restore the frame's CFI rule:\n%s", cold)
+	}
 }
 
 func TestFoldSlotIntoAlu(t *testing.T) {
