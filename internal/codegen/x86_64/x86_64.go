@@ -5417,11 +5417,11 @@ func (g *generator) emit(s string) {
 
 // peepWindow is how many recently emitted logical lines are held back from
 // `out` so the streaming peephole can rewrite the tail in place. The longest
-// pattern is P6's, which spans a materialisation, its copy, the other
-// arguments' materialisations and the call; 10 covers the shapes that occur
+// pattern is P15's, a call whose five arguments are materialised, pushed,
+// and popped back into their registers; 18 covers the shapes that occur
 // while bounding held memory to O(1) — crucial because a self-host `.s` is
 // hundreds of MB and a whole-text post-pass would spike RAM.
-const peepWindow = 10
+const peepWindow = 18
 
 // put appends one logical output line (without its trailing newline) to the
 // peephole window, applies the safe local rewrites at the tail, then flushes
@@ -5553,6 +5553,27 @@ func (g *generator) peepholeTail() bool {
 		if lines, ok := foldStackedMaterialise(w[n-5], w[n-4], w[n-3], w[n-2], w[n-1]); ok {
 			tail := w[n-1] // read before append overwrites the matched slots
 			g.peepWin = append(append(w[:n-5], lines...), tail)
+			return true
+		}
+	}
+
+	// P15 — call arguments materialised into their registers. A call with
+	// more arguments than P5 and P6 cover saves each one on the operand
+	// stack and pops them back in register order at the end:
+	//
+	//   mov rax, [a] / push rax / mov rax, [b] / push rax / mov rax, [c]
+	//     / mov rdx, rax / pop rsi / pop rdi / sub rsp, 8 / call f
+	//   =>  mov rdi, [a] / mov rsi, [b] / mov rdx, [c] / sub rsp, 8 / call f
+	//
+	// Each push pairs with the pop in the mirror position, so its
+	// materialisation is written to that pop's register instead. Sound
+	// when every materialisation is a pure register write that reads
+	// neither rax (the previous argument, no longer there) nor a register
+	// an earlier one now writes; rax itself is dead at the call, as P6
+	// argues.
+	if n >= 6 && strings.HasPrefix(w[n-1], "\tcall ") {
+		if lines, from, ok := foldArgPushes(w[:n-1]); ok {
+			g.peepWin = append(append(w[:from], lines...), w[n-1])
 			return true
 		}
 	}
@@ -6139,6 +6160,85 @@ func foldStackedMaterialise(l0, op, mv, pop, next string) ([]string, bool) {
 		return nil, false
 	}
 	return []string{"\tmov " + restore + ", rax", line}, true
+}
+
+// foldArgPushes recognises P15's shape in w, the lines before a call, and
+// returns the replacement for w[from:].
+func foldArgPushes(w []string) ([]string, int, bool) {
+	k := len(w) - 1
+	var tail []string
+	if k >= 0 {
+		if _, ok := matchRspDelta(w[k], "sub"); ok {
+			tail = []string{w[k]}
+			k--
+		}
+	}
+	// The pops, read backwards from the call: pops[len-1] is the first
+	// pop line, which restores the last push.
+	var pops []string
+	for k >= 0 {
+		reg, ok := matchPopDst(w[k])
+		if !ok || !isArgReg(reg) {
+			break
+		}
+		pops = append(pops, reg)
+		k--
+	}
+	if len(pops) == 0 || k < 1 {
+		return nil, 0, false
+	}
+	last, ok := matchMovFromAcc(w[k])
+	if !ok || !isArgReg(last.name) {
+		return nil, 0, false
+	}
+	k--
+	// The last argument's materialisation, then the pairs above it.
+	type arg struct {
+		op   string
+		reg  string
+		nar  bool
+		from int
+	}
+	args := []arg{{op: w[k], reg: last.name, nar: last.narrow, from: k}}
+	k--
+	for i := range pops {
+		if k < 1 || w[k] != "\tpush rax" {
+			return nil, 0, false
+		}
+		args = append(args, arg{op: w[k-1], reg: pops[len(pops)-1-i], from: k - 1})
+		k -= 2
+	}
+	// Emit in source order: the outermost push first.
+	var lines []string
+	var written []string
+	for i := len(args) - 1; i >= 0; i-- {
+		a := args[i]
+		if readsReg(a.op, "rax") {
+			return nil, 0, false
+		}
+		for _, r := range written {
+			if readsReg(a.op, r) {
+				return nil, 0, false
+			}
+		}
+		line, ok := renameAccDest(a.op, a.reg, a.nar)
+		if !ok {
+			return nil, 0, false
+		}
+		lines = append(lines, line)
+		written = append(written, a.reg)
+	}
+	return append(lines, tail...), args[len(args)-1].from, true
+}
+
+// isArgReg reports whether reg is one of the System V integer argument
+// registers.
+func isArgReg(reg string) bool {
+	switch reg {
+	case "rdi", "rsi", "rdx", "rcx", "r8", "r9":
+		return true
+	}
+	return false
 }
 
 // isArgSetupNotTouchingAcc reports whether a line is one of the few things
