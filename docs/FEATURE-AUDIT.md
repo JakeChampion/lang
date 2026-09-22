@@ -2821,11 +2821,12 @@ cloned enums + variant structs into the returned `Module` (the generic originals
 are dropped). The instantiation key is inferred from a `var`/param/return
 annotation or, for a payloaded variant, the argument types unified against the
 variant's field types — exactly the way the struct pass infers a literal's key.
-Scope: a simple-nominal key (primitive / string / bare struct); a composite key
-(`Opt[Box[i32]]`) is left untouched (it keeps its pre-existing behaviour rather
-than dangling). The enum's methods and derives clone per instantiation as a
-struct's do, and a method with a type parameter of its own folds into a free
-generic first (2026-09-22, `docs/rc-log/`). Coverage: `TestSelfHostGenericEnum{IRX86_64,WasmIR}` —
+Scope: a simple-nominal key (primitive / string / bare struct); an enum with any
+composite-key use (`Opt[(i32, i32)]`) is left out of the pass entirely, erased
+as before, since a clone beside the generic original mis-dispatches on the AST
+lowering. The enum's methods and derives clone per instantiation as a struct's
+do, and a method with a type parameter of its own folds into a free generic
+first (2026-09-22, `docs/rc-log/`). Coverage: `TestSelfHostGenericEnum{IRX86_64,WasmIR}` —
 i32 payload, string-payload method dispatch, unit variant, construction-only, and
 **two distinct instantiations coexisting** (`Opt[i32]` + `Opt[string]`) — all
 routing `ir` and oracle-checked against the native interpreter. Self-host

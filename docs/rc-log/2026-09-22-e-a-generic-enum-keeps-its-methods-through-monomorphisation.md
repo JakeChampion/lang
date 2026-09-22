@@ -28,13 +28,20 @@ one. A method with a type parameter of its own — `pair[U](other: Box[U, E])`
 — folds into the free generic `__smm_Box_pair` before any of this, exactly as
 a struct's does; `is_generic_method_own_tps` admits an enum receiver now.
 
-An enum used only at a composite key (`Opt[(i32, i32)]`) is never
-instantiated by the pass and keeps its declaration, so it has to keep its
-methods too: phase 1 holds every generic enum's methods aside, rewritten as
-any function is, and phase 3 gives back those whose enum was not dropped. A
-held method's own `Opt[T]` spelling would otherwise key a clone `Opt__T` and
-drop the enum from under that composite-key use, so `genum_key_from_anno`
-refuses a key naming one of the enum's own type parameters.
+An enum with a use the pass cannot key — `Opt[(i32, i32)]`, a tuple
+argument with no clone name — is left out of the pass entirely
+(`me_mono_enums`), declaration, variants and methods erased as before. The
+alternative, its clones beside the generic original, compiled but answered
+wrong: the AST lowering dispatches an enum's methods by name, and
+`a.get_or(9)` on the `Opt__i32` clone answered 0 with the erased `get_or`
+also in the module. This also closes a pre-existing hole: the same mix for
+a method-less enum dropped the generic `Opt` for its `Opt[i32]` use and left
+the composite annotation dangling on main. An enum the pass admits but
+nothing instantiates keeps its methods too: phase 1 holds every admitted
+enum's methods aside and phase 3 gives back those whose enum was not
+dropped, and `genum_key_from_anno` refuses a key naming one of the enum's
+own type parameters, which a held method's `Opt[T]` spelling would
+otherwise be.
 
 That fold left one gap: `b.pair(Full(9))` has to settle `U` from `Full(9)`,
 and `mono_infer` has no type for a bare variant construction. `variant_arg_binds`
