@@ -88,7 +88,7 @@ pub struct TakeResult { doc: string, cursor: i32 }
 // is_space matches Go's unicode.IsSpace for the ASCII range, which is all
 // TrimSpace can see here: comment text is raw source bytes.
 function is_space(b: i32): boolean {
-    return b == 32 || b == 9 || b == 10 || b == 11 || b == 12 || b == 13;
+    return b == 32 || b >= 9 && b <= 13;
 }
 
 // own copies a `str` view into an owned string. A `str` coerces into a string
