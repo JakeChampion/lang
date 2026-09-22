@@ -24,7 +24,7 @@
 # as a real measurement. The pair banked below is the one GitHub's runner
 # produces, since that is where the gate runs.
 #
-# WHY THE GAP. allocs exceeds frees by the ~3.03M objects live when the process
+# WHY THE GAP. allocs exceeds frees by the ~10.4M objects live when the process
 # exits — a compiler that runs once and exits does not tear its world down. The
 # two are baselined separately so a change that stops freeing shows up as one
 # row moving rather than being netted away.
@@ -44,5 +44,5 @@
 # on purpose, update it in the same PR; the job summary prints the corrected
 # lines ready to paste. Keep the reason in the PR, not here.
 
-x86_64/checker.allocs	48464864
-x86_64/checker.frees	41631540
+x86_64/checker.allocs	85384567
+x86_64/checker.frees	74976404

@@ -55,6 +55,10 @@ struct Rows {
     // indirect call; `prune` reads it against the values the AST lowering
     // builds.
     called: typeinfo.Type[][],
+    // Each row's unit plan, kept so a second lowering can take the plan back
+    // rather than computing it again for a row the ownership inference did not
+    // move (#9969).
+    plans: ssaunits.Plan[],
 }
 
 // sem_ir_on reports whether the semantic lowering runs: it does unless
@@ -108,6 +112,22 @@ function sem_ir_skip(): string {
     match (env("FERN_SEM_IR_SKIP")) {
         Some(v) => { return v; },
         None => { return ""; }
+    }
+}
+
+// sem_reuse_on reports whether the second lowering the ownership inference
+// asks for takes back the rows the inference did not move, instead of planning
+// and lowering every row again (#9969).
+//
+// `FERN_SEM_REUSE=` is the off column, spelled the way `sem_ir_on` spells
+// its own: set-but-empty re-lowers everything. It is what
+// TestSelfHostInferredReuseIsIdentical compares the reuse against, and the
+// reason the reuse can be held to byte equality rather than argued for — a
+// fast path with no slow path to check is a fast path nothing checks.
+function sem_reuse_on(): boolean {
+    match (env("FERN_SEM_REUSE")) {
+        Some(v) => { return v.len() > 0; },
+        None => { return true; }
     }
 }
 
@@ -447,12 +467,37 @@ function produced_at(built: semsource.Built, mod: parser.Module, i: i32): semsou
     return built.instances[i - mod.funcs.len()];
 }
 
+// No rows to take back: what the FIRST lowering of a module is handed, and
+// what makes `rows_of` compute every plan and every body.
+function no_reuse(): Rows {
+    return Rows { body: [], n1: [], n2: [], keep: [], grows: [], called: [], plans: [] };
+}
+
+// Whether row `i` can be taken from `prev` unchanged. `changed` is
+// `semsource.changed_rows` over the two module productions, in this same
+// order, so a row is reusable exactly where the inference moved neither its
+// own modes nor a contract it calls. An empty `prev` reuses nothing, which is
+// what the first lowering passes.
+function row_reusable(prev: Rows, changed: boolean[], i: i32): boolean {
+    if (!sem_reuse_on()) { return false; }
+    if (i >= prev.plans.len() || i >= prev.body.len() || i >= changed.len()) { return false; }
+    return !changed[i];
+}
+
 // rows_of produces every body once and records the symbols each defines: every
 // plan first, then the callee table the brackets read, then every body.
-function rows_of(mod: parser.Module, built: semsource.Built, structs: irlower.StructTab): Rows {
+//
+// `prev` / `changed` let a second lowering take back the rows the ownership
+// inference did not move. A plan is a function of its row's graph and modes
+// alone, so an unmoved row's plan comes straight back. A BODY also reads the
+// module's grow table, but only through the callees it names
+// (`ssarc.bracketed`), so it comes back when those callees' rows agree —
+// which they need not, since a moved row can grow a callee's mask and change
+// how every caller of it brackets.
+function rows_of(mod: parser.Module, built: semsource.Built, structs: irlower.StructTab, prev: Rows, changed: boolean[]): Rows {
     var only: string = sem_ir_only();
     var skip: string = sem_ir_skip();
-    var r: Rows = Rows { body: [], n1: [], n2: [], keep: [], grows: [], called: [] };
+    var r: Rows = no_reuse();
     var plans: ssaunits.Plan[] = [];
     var keys: string[] = [];
     var funcs: ssasem.Func[] = [];
@@ -460,31 +505,46 @@ function rows_of(mod: parser.Module, built: semsource.Built, structs: irlower.St
     while (i < mod.funcs.len()) {
         var fd: parser.FuncDecl = mod.funcs[i];
         var plan: ssaunits.Plan = ssaunits.refused("not selected");
-        if (selected(only, skip, fd.name)) { plan = produced_plan(built.decls[i], fd.name); }
+        if (row_reusable(prev, changed, i)) { plan = prev.plans[i]; }
+        else if (selected(only, skip, fd.name)) { plan = produced_plan(built.decls[i], fd.name); }
         plans = plans.append(plan);
         keys = keys.append(call_key(fd));
         funcs = funcs.append(built.decls[i].func);
         r = Rows { ...r, n1: r.n1.append(fd.name), n2: r.n2.append(call_key(fd)), called: r.called.append(called_values(built.decls[i].func)) };
         i = i + 1;
     }
+    var at: i32 = mod.funcs.len();
     for p in built.instances {
         // An instance is named after the template it came from, so the bisect
         // knob reaches it through the same prefix test.
         var plan: ssaunits.Plan = ssaunits.refused("not selected");
-        if (selected(only, skip, p.func.graph.name)) { plan = produced_plan(p, p.func.graph.name); }
+        if (row_reusable(prev, changed, at)) { plan = prev.plans[at]; }
+        else if (selected(only, skip, p.func.graph.name)) { plan = produced_plan(p, p.func.graph.name); }
         plans = plans.append(plan);
         keys = keys.append(p.func.graph.name);
         funcs = funcs.append(p.func);
         r = Rows { ...r, n1: r.n1.append(p.func.graph.name), n2: r.n2.append(""), called: r.called.append(called_values(p.func)) };
+        at = at + 1;
     }
-    r = Rows { ...r, grows: ssaunits.grow_table(keys, funcs, plans) };
+    r = Rows { ...r, grows: ssaunits.grow_table(keys, funcs, plans), plans: plans };
     i = 0;
     while (i < plans.len()) {
-        var body: irlower.LowerResult = produced_body(produced_at(built, mod, i), plans[i], structs, r.grows, r.n1[i]);
+        var body: irlower.LowerResult = reused_or_lowered(built, mod, structs, r, prev, changed, i);
         r = Rows { ...r, body: r.body.append(body), keep: r.keep.append(body.ok) };
         i = i + 1;
     }
     return r;
+}
+
+// Row `i`'s body: `prev`'s where the inference moved neither the row nor the
+// grow mask of any callee it names, freshly lowered otherwise.
+function reused_or_lowered(built: semsource.Built, mod: parser.Module, structs: irlower.StructTab, r: Rows, prev: Rows, changed: boolean[], i: i32): irlower.LowerResult {
+    var p: semsource.Produced = produced_at(built, mod, i);
+    if (row_reusable(prev, changed, i)
+        && ssaunits.grow_rows_agree(prev.grows, r.grows, ssasem.called_names(p.func))) {
+        return prev.body[i];
+    }
+    return produced_body(p, r.plans[i], structs, r.grows, r.n1[i]);
 }
 
 // substitution produces every function this boundary admits and hands the
@@ -533,8 +593,9 @@ function inferred_pass(mod: parser.Module, built: semsource.Built, r: Rows, stru
     var same: Inference = Inference { built: built, rows: r };
     if (!lowers_whole_module(built, r)) { return same; }
     var widened: semsource.Built = semsource.with_inferred_modes(built);
-    if (!semsource.modes_differ(built, widened)) { return same; }
-    var r2: Rows = prune(rows_of(mod, widened, structs), mod, widened);
+    var changed: boolean[] = semsource.changed_rows(built, widened);
+    if (!semsource.any_row_changed(changed)) { return same; }
+    var r2: Rows = prune(rows_of(mod, widened, structs, r, changed), mod, widened);
     if (!lowers_whole_module(widened, r2)) { return same; }
     return Inference { built: widened, rows: r2 };
 }
@@ -543,7 +604,7 @@ pub function substitution(mod: parser.Module, structs: irlower.StructTab, base: 
     if (!sem_ir_on()) { return ircore.no_sub(); }
     var built: semsource.Built = semsource.build_module(mod);
     util.arr_push_cliff_report("sem:built", 0);
-    var rows: Rows = rows_of(mod, built, structs);
+    var rows: Rows = rows_of(mod, built, structs, no_reuse(), []);
     util.arr_push_cliff_report("sem:lowered", 0);
     var r: Rows = prune(rows, mod, built);
     util.arr_push_cliff_report("sem:pruned", 0);

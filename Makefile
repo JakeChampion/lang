@@ -120,9 +120,17 @@ freeze:
 # the Fern fixtures that only exist as Go string literals are not in it, so a
 # field added to a struct they name is clean here and red on every self-host
 # shard (#9805). It type-checks them in 9 s.
+#
+# The driver gate answers the other half the first line cannot, and it is the
+# same shape a third time: the 47 examples/self_host/*_run.fern drivers import
+# the compiler's modules but are not in fern.fern's tree, so a deleted function
+# one of them still calls is clean here and red wherever its test builds it
+# (#9969 deleted semsource.modes_differ with semsource_census_run still calling
+# it, and four internal/e2eselfhost tests went red for it in CI).
 check-sources: bin/fern
 	./bin/fern -check examples/self_host/fern.fern
 	./tools/stdlib_check.sh
+	./tools/selfhost_driver_check.sh
 	go test ./internal/e2eselfhost/ -run 'TestSelfHostFeatureCensus$$|TestSelfHostFixtureSourcesCheck$$' -count=1
 
 # Build the SELF-HOST compiler to a native binary for THIS host, so self-host

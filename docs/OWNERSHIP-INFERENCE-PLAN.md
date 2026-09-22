@@ -424,6 +424,21 @@ analysis, which is independent, pure, and de-risks the design.
   `ssasem.closure_type` builds, so inferring one on a body a function value
   names rewrites the type out from under its call sites.
 
+  **What applying it costs, and what that cost was (#9969).** An inferred mode
+  can only be read off a lowering, so applying it means lowering the module a
+  second time. That second lowering was whole-module, keyed off a predicate
+  that answered only whether SOME parameter had moved — so every declaration
+  the inference left alone was planned, RC'd and verified twice, which is
+  +8.92% of the self-compile's allocation and +19.26% of `lexer.fern`'s.
+  `semlower.rows_of` now takes a row's plan and body back from the first
+  lowering where the inference moved neither the row's own modes nor a contract
+  it calls, and where the grow rows of the callees it names agree — the last
+  clause because a moved row can widen a callee's mask, and keeping a caller's
+  body then drops a bracket. `FERN_SEM_REUSE=` re-lowers everything, which is
+  what `TestSelfHostInferredReuseIsIdentical` compares the reuse against.
+  Measurement and the trace that found it:
+  `docs/rc-log/2026-09-22-the-inference-re-lowered-rows-it-did-not-move.md`.
+
   `pvec_with` 681,006,132 retired instructions to 219,077,188 against native's
   184,540,118 (3.69x to 1.187x), `record_update` 0.769x, `map_probe_chain`
   0.885x, twenty-six rows unchanged, none slower, compile time at parity. Full
