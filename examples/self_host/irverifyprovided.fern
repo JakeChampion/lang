@@ -91,7 +91,6 @@ pub function provided_names(): string[] {
         "__fern_map_free_kavsa",
         "__fern_map_free_vf",
         "__fern_map_free_ksvf",
-        "__fern_map_delete_rel",
         "__fern_map_free_kf",
         "__fern_map_free_kfvs",
         "__fern_map_free_kfvsa",
