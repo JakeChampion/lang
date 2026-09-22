@@ -11616,22 +11616,16 @@ func (g *generator) emitCrc32Step() {
 // emitSumBytesRuntime emits `__fern_sum_bytes(s) -> i32`: every byte of `s`
 // added into a 32-bit accumulator that wraps.
 //
-// SCALAR (docs/ATLAS-PLATFORM-PLAN.md §3.4 step 1). The SSE2 sequence this
-// wants is psadbw against a zero register plus paddq, both already inside the
-// declared baseline and both already encodable by internal/native/x86tbl, so
-// this body is the one in the family whose vectorisation costs no assembler
-// work — but §3.4's ordering puts the scalar lowering in all eight backends
-// first, and this is that step.
-//
-// `movzx` is the whole of the sign question: a byte is unsigned, so 0xff
-// contributes 255. The accumulate is a 32-bit `add`, so the wrap the builtin
-// promises is the register width rather than anything this body does.
+// The main loop is SSE2: psadbw against a zero register sums each 8-byte
+// half of a 16-byte block into a 64-bit lane, and paddq keeps the two lanes
+// running, so a block costs three instructions and no lane can wrap before
+// the string runs out. The fold adds the two lanes once; the low 32 bits of
+// that total are the wrapped sum the builtin promises. The scalar tail takes
+// the final 0..15 bytes, and the whole string when it is shorter than a
+// block — `movzx` there is the sign question, a byte being unsigned.
 //
 // rdi = string. Frame: 16 bytes of emitStrDataPtr scratch, since the operand
 // may be an inline SSO string that has to be spilled to get an address.
-//
-// No cursor and no byte operand, so there is no clamp and no range guard: an
-// empty string sums to 0 because it has no bytes.
 func (g *generator) emitSumBytesRuntime() {
 	g.line("")
 	g.line(".globl __fern_sum_bytes")
@@ -11642,14 +11636,30 @@ func (g *generator) emitSumBytesRuntime() {
 	g.emit("sub rsp, 16")
 	g.emitStrLen("ecx", "rdi") // ecx = len
 	g.emitStrDataPtr("rdi", "rdi", "[rbp - 16]")
-	g.emit("xor eax, eax") // running sum
-	g.emit("xor edx, edx") // cursor, as an INDEX
+	g.emit("mov r9d, ecx")
+	g.emit("add r9, rdi")     // end = data + len
+	g.emit("pxor xmm2, xmm2") // running lane sums
+	g.emit("pxor xmm3, xmm3") // the zero psadbw subtracts
+	g.label(".Lsum_bytes_vec")
+	g.emit("mov rax, r9")
+	g.emit("sub rax, rdi")
+	g.emit("cmp rax, 16")
+	g.emit("jl .Lsum_bytes_fold")
+	g.emit("movdqu xmm0, [rdi]")
+	g.emit("psadbw xmm0, xmm3")
+	g.emit("paddq xmm2, xmm0")
+	g.emit("add rdi, 16")
+	g.emit("jmp .Lsum_bytes_vec")
+	g.label(".Lsum_bytes_fold")
+	g.emit("pshufd xmm1, xmm2, 0xee")
+	g.emit("paddq xmm2, xmm1")
+	g.emit("movd eax, xmm2")
 	g.label(".Lsum_bytes_scan")
-	g.emit("cmp edx, ecx")
+	g.emit("cmp rdi, r9")
 	g.emit("jge .Lsum_bytes_ret")
-	g.emit("movzx r8d, byte ptr [rdi + rdx]")
+	g.emit("movzx r8d, byte ptr [rdi]")
 	g.emit("add eax, r8d")
-	g.emit("add edx, 1")
+	g.emit("add rdi, 1")
 	g.emit("jmp .Lsum_bytes_scan")
 	g.label(".Lsum_bytes_ret")
 	g.emit("mov rsp, rbp")
