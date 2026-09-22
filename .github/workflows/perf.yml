@@ -171,10 +171,39 @@ jobs:
           FERN_ALLOC_PEAK_RSS: "0"
         run: scripts/selfhost-alloc-bench "${{ runner.temp }}/alloc-report.txt"
 
+      # THE ONE PERF LANE WITH A CEILING. #9963: the baseline sat 82% behind
+      # main for six days, the comparator warning correctly on every run into a
+      # channel nobody was required to read — so a 1% tolerance was measured
+      # against a figure 82% away and could not report anything smaller. A lane
+      # whose whole value is catching allocation growth, that cannot go red,
+      # does not catch it.
+      #
+      # NOT plain FERN_CI_PERF_GATE_STRICT, and the difference is measured.
+      # Strict makes the 1% TOLERANCE fatal, and this pair drifted +0.32% in two
+      # hours of unrelated merges while #9972 sat in CI: fatal at 1% red-lights
+      # roughly every sixth PR and hands its author a re-bank for drift they did
+      # not cause, which is the complaint 9217a114 already wrote down. The
+      # tolerance stays a significance threshold; the CEILING is what cannot be
+      # ignored. An order of magnitude above the tolerance is wide enough that
+      # only a real move reaches it and narrow enough that 82% never happens
+      # again.
+      #
+      # A ceiling is affordable on this job for the reason the driver-size gate
+      # gives (#7519): it is a leaf. Nothing `needs:` the Perf jobs, so a red
+      # alloc gate blocks the merge and holds no other job — and every step here
+      # is `!cancelled()` with `always()` on the upload, so a finding still
+      # leaves the report recorded and uploaded rather than hiding the numbers
+      # it is complaining about.
+      #
+      # These two metrics can carry a ceiling where the instruction-count lanes
+      # cannot: they count heap events the compiler performed rather than time
+      # it took, so they repeat to the digit on one checkout and spread five
+      # counts end to end across paths.
       - name: Compare the allocation against the baseline
         if: ${{ !cancelled() }}
         env:
           FERN_PERF_GATE_LABEL: self-host allocation
+          FERN_CI_PERF_GATE_MAX_DRIFT: "10"
         run: scripts/ci-check-perf .github/alloc-baseline.txt "${{ runner.temp }}/alloc-report.txt"
 
       # One lane label per metric, unchanged: the note blocks are keyed by them.
