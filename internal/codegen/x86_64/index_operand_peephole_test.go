@@ -345,3 +345,16 @@ func TestPeepholeMaterialisesCallArgumentsDirectly(t *testing.T) {
 		t.Error("a pop into rbx was taken for an argument restore")
 	}
 }
+
+func TestPeepholeDropsReloadBeforeScopeJump(t *testing.T) {
+	got := runPeephole("\tadd qword ptr [rbp-24], 1", "\tmov rax, [rbp-24]", "\tjmp .LblkEnd_9")
+	if !sameLines(got, "\tadd qword ptr [rbp-24], 1", "\tjmp .LblkEnd_9") {
+		t.Errorf("got %q", got)
+	}
+	for _, jump := range []string{"\tjmp .Lret_main_0", "\tjmp .Lstrlen_done_4", "\tjmp __fern_report", "\tjl .LblkEnd_9"} {
+		in := []string{"\tmov rax, [rbp-24]", jump}
+		if got := runPeephole(in...); !sameLines(got, in...) {
+			t.Errorf("load before %q was dropped: %q", jump, got)
+		}
+	}
+}
