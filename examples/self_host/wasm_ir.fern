@@ -3436,8 +3436,8 @@ pub function fn_value_table(cache: irlower.LowerResult[]): string[] {
             // A map_set into a column of boxes names the value release the
             // runtime calls through the table on an overwrite, and one into a
             // keyed column the key release it calls on a discarded key.
-            if (r.ops[i].kind_tag == 125) {
-                var msyms: string[] = ir.map_set_symbols(r.ops[i]);
+            if (r.ops[i].kind_tag == 125 || r.ops[i].kind_tag == 130) {
+                var msyms: string[] = ir.map_op_symbols(r.ops[i]);
                 if (msyms[1] != "" && util.index_of_str(out, msyms[1]) < 0) { out = out.append(msyms[1]); }
                 if (msyms[2] != "" && util.index_of_str(out, msyms[2]) < 0) { out = out.append(msyms[2]); }
             }
@@ -3632,7 +3632,7 @@ function is_map_op_kind(tag: i32): boolean {
 // returns once per arm rather than returning the first chunk -- doing the
 // latter type-checks cleanly and silently drops the rest of the instructions,
 // which surfaces only as a wasm validation error far from the cause.
-function emit_map_op_wat(o: ir.Op): string {
+function emit_map_op_wat(o: ir.Op, cx: WasmOpCtx): string {
     var parts: string[] = [];
     if (o.kind_tag == 133) {  // map_iter
         // m.iter() -> a 12-byte iterator box [keys@0, vals@4, cursor@8].
@@ -3716,7 +3716,10 @@ function emit_map_op_wat(o: ir.Op): string {
         // keykind imm — used by the register backends — is unneeded here).
         // The tuple-destructure that consumes `.without`'s result reads
         // element i at offset i*4, matching $__fern_map_delete's box. #2933.
-        parts = parts.append("    call $__fern_map_delete\n");
+        // The releases the removed entry is owed are named as map_set names
+        // them: `vdeep` / `vf` for the value column, `kdeep` / `kf` for a
+        // keyed column, from the op's vkind bits and its packed symbols.
+        parts = parts.append(map_delete_releases_wat(o, cx) + "    call $__fern_map_delete\n");
         return util.str_join_chunks(parts);
     }
     if (o.kind_tag == 129) {  // map_get_or
@@ -4310,7 +4313,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         // the stack in param order.
         parts = parts.append("    call $__fern_writer_truncate\n");
     } else if (is_map_op_kind(o.kind_tag)) {
-        parts = parts.append(emit_map_op_wat(o));
+        parts = parts.append(emit_map_op_wat(o, cx));
     } else if (o.kind_tag == 181) {  // sleep_ms
         // sleep_ms(ms): block for ms milliseconds, then push a dummy i32 the
         // statement drops (sleep_ms is void). wasm has no sleep syscall, so the
@@ -8991,11 +8994,32 @@ pub function map_helpers(): string {
     // and offset 8 (IR element 1), so the one shared helper satisfies either
     // destructure — the unread slot is ignored by the other path. Payload is 12
     // bytes (the IR element 1 ends at offset 12).
-    o = o + "  (func $__fern_map_delete (param $box i32) (param $k i32) (result i32)\n";
+    // The removed entry's key and value are released before the slot is
+    // tombstoned (#9970): the release walk visits live slots only, so this is
+    // the one place the entry's units are given back. The key under the box's
+    // kis, through `kf` when `kdeep` is 2 (a keyed column's own release) and
+    // the shallow dec otherwise; the value under vis, through `vf` / the deep
+    // string-array dec / the shallow dec as `vdeep` says, exactly as an
+    // overwrite in $__fern_map_set releases the value it supersedes. A slot
+    // whose units are gone can be reclaimed by a later insert without a second
+    // release.
+    o = o + "  (func $__fern_map_delete (param $box i32) (param $k i32) (param $vdeep i32) (param $vf i32) (param $kdeep i32) (param $kf i32) (result i32)\n";
     o = o + "    (local $idx i32) (local $existed i32) (local $tup i32)\n";
-    o = o + "    (local $ord i32) (local $oi i32) (local $n i32)\n";
+    o = o + "    (local $ord i32) (local $oi i32) (local $n i32) (local $gone i32)\n";
     o = o + "    (local.set $idx (call $__fern_map_find (local.get $box) (local.get $k)))\n";
     o = o + "    (if (i32.ge_s (local.get $idx) (i32.const 0)) (then\n";
+    o = o + "      (if (i32.ne (i32.load (i32.add (local.get $box) (i32.const 20))) (i32.const 0)) (then\n";
+    o = o + "        (local.set $gone (i32.load (i32.add (i32.load (i32.add (local.get $box) (i32.const 8))) (i32.mul (local.get $idx) (i32.const 4)))))\n";
+    o = o + "        (if (i32.eq (local.get $kdeep) (i32.const 2))\n";
+    o = o + "          (then (drop (call_indirect (type $fn1) (local.get $gone) (local.get $kf))))\n";
+    o = o + "          (else (drop (call $__fern_arr_dec (local.get $gone)))))))\n";
+    o = o + "      (if (i32.load (i32.add (local.get $box) (i32.const 28))) (then\n";
+    o = o + "        (local.set $gone (i32.load (i32.add (i32.load (i32.add (local.get $box) (i32.const 12))) (i32.mul (local.get $idx) (i32.const 4)))))\n";
+    o = o + "        (if (i32.eq (local.get $vdeep) (i32.const 2))\n";
+    o = o + "          (then (drop (call_indirect (type $fn1) (local.get $gone) (local.get $vf))))\n";
+    o = o + "          (else (if (local.get $vdeep)\n";
+    o = o + "            (then (drop (call $__fern_arr_dec_ptr (local.get $gone))))\n";
+    o = o + "            (else (drop (call $__fern_arr_dec (local.get $gone)))))))))\n";
     o = o + "      (i32.store (i32.add (i32.load (i32.add (local.get $box) (i32.const 16))) (i32.mul (local.get $idx) (i32.const 4))) (i32.const 2))\n";
     // Remove the slot from the order column by moving the LAST entry into its
     // place — core/map's delete, which is why the two disagreed (#8839). The
@@ -13785,7 +13809,7 @@ function emit_wasm_map_set(o: ir.Op, cx: WasmOpCtx, parts: string[]): string[] {
     // for the same purpose.
     // A keyed column (keykind 2) names the key release the same way, called
     // through its slot on a discarded consumed key (kdeep 2, the slot in kf).
-    var syms: string[] = ir.map_set_symbols(o);
+    var syms: string[] = ir.map_op_symbols(o);
     var vdeep: string = "0";
     var vf: string = "    i32.const 0\n";
     if (map_set_vkind3(o)) {
@@ -13801,6 +13825,26 @@ function emit_wasm_map_set(o: ir.Op, cx: WasmOpCtx, parts: string[]): string[] {
     parts = parts.append("    i32.const " + vis + "\n    i32.const " + vcons + "\n    i32.const " + kcons + "\n    i32.const " + vdeep + "\n" + vf + "    i32.const " + kdeep + "\n" + kf + "    call $__fern_map_set\n");
 
     return parts;
+}
+
+// map_delete_releases_wat pushes the four release operands $__fern_map_delete
+// takes after the map and the key: `vdeep` and `vf` as map_set spells them,
+// then `kdeep` and `kf` for a keyed column.
+function map_delete_releases_wat(o: ir.Op, cx: WasmOpCtx): string {
+    var syms: string[] = ir.map_op_symbols(o);
+    var vdeep: string = "0";
+    var vf: string = "    i32.const 0\n";
+    if ((o.width / 16) % 2 == 1 && (o.width / 32) % 2 == 1) {
+        vdeep = "2";
+        vf = fn_slot_push(cx, syms[1]);
+    } else if ((o.width / 32) % 2 == 1) { vdeep = "1"; }
+    var kdeep: string = "0";
+    var kf: string = "    i32.const 0\n";
+    if (o.i32_imm == 2 && syms[2] != "") {
+        kdeep = "2";
+        kf = fn_slot_push(cx, syms[2]);
+    }
+    return "    i32.const " + vdeep + "\n" + vf + "    i32.const " + kdeep + "\n" + kf;
 }
 
 // fn_slot_push pushes the funcref-table slot of the function `name` spells.

@@ -22,7 +22,7 @@ const selfHostSemWasmDiffKnownFile = "selfhost-diff-semantic-wasm-known-divergen
 
 // selfHostSemWasmDiffMinWholeRatio is the floor on seeds whose module produced
 // every declaration, the wasm twin of selfHostSemDiffMinWholeRatio.
-const selfHostSemWasmDiffMinWholeRatio = 0.10
+const selfHostSemWasmDiffMinWholeRatio = 0.75
 
 // selfHostWasmDiffMinRunRatio is this leg's own floor on seeds that compiled
 // and produced a COMPARABLE answer, lower than selfHostDiffMinRunRatio because

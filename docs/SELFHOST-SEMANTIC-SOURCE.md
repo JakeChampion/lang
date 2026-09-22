@@ -595,7 +595,10 @@ Unsupported constructs refuse the whole function with a reason.
   column's entry into it without a retain, so over a counted column the
   lowering retains the payload on a hit, and the box owns one unit of it as
   any Option this frame drops does. `without`
-  takes the receiver's unit and answers the map and a flag; `cleared` is a
+  takes the receiver's unit and answers the map and a flag, releasing the
+  removed entry's key and value through the columns' releases on the way
+  (`__fern_map_delete_rel` on the register backends; wasm's delete reads the
+  box's own column kinds); `cleared` is a
   fresh empty map; `keys` and `values` answer fresh arrays snapshotted from the
   columns, which is also how `for (k, v) in m` walks a map: the key column is
   what the loop indexes and the value column's element beside each key is the

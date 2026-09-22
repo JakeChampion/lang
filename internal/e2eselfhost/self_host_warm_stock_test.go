@@ -98,13 +98,10 @@ func TestSelfHostDriverSizeReport(t *testing.T) {
 
 // TestSelfHostWarmStockDriver compiles each self-host driver named in the
 // comma-separated FERN_WARM_DRIVER env var (e.g. "asm_run.fern,asm_ir_run.fern")
-// into the disk cache. For every driver it populates BOTH the emitted-asm cache
-// (cachedSelfHostAsm — the expensive ~50-70s Go x86-64 emit) and the linked-
-// binary cache (cachedLink), so tests building the driver (buildSelfHostBin, or
-// cachedSelfHostAsm + cachedLink directly) hit both the emit and the link. CI's
-// parallel `warm` jobs each set FERN_WARM_DRIVER +
-// FERN_SELFHOST_BUILD_CACHE and run this, off the critical path, and the test
-// shards restore the result (see .github/workflows/test-e2e-selfhost.yml).
+// into the disk cache (FERN_SELFHOST_BUILD_CACHE), records each linked size
+// and smoke-runs it. Two CI jobs run it (.github/workflows/test-e2e-selfhost.yml):
+// `cli` builds fern.fern once for the isolated driver tests that follow in the
+// same job, and `driver-sizes` builds every baselined driver for the size gate.
 // Locally, with FERN_WARM_DRIVER unset, the test is a no-op skip.
 func TestSelfHostWarmStockDriver(t *testing.T) {
 	list := os.Getenv("FERN_WARM_DRIVER")

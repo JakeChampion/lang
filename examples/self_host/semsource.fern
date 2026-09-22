@@ -1369,13 +1369,10 @@ function map_iter_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, 
 
 // A delete finds the entry by comparing the key — it does not keep it — and
 // hands the map back inside a fresh tuple with whether it was there. The
-// removal is a swap with the last entry and a shrink of both columns, with no
-// release of what it took out, so a column the map owns a unit of per entry
-// would be orphaned; those are refused rather than described as removed.
+// removal releases the entry's key and value through the releases the
+// physical lowering names for the columns, so a column the map owns a unit of
+// per entry gives that unit back with the entry (#9970).
 function map_delete(c: ast.ExprCall, recv: Value, s: State, t: typeinfo.Type): Value {
-    if (!ssasem.narrow_map_value(ssasem.map_key(t)) || !ssasem.narrow_map_value(ssasem.map_value(t))) {
-        return refused(s, "delete orphans a counted column: " + typeinfo.spelling(t));
-    }
     var k: Value = map_key_value(c.args[0], s, t, false);
     s = k.s;
     if (!s.ok) { return k; }

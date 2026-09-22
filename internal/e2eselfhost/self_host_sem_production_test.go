@@ -1363,6 +1363,43 @@ function boxes(): i32 {
 }
 function main(): i32 { return boxes() % 100; }
 `},
+	// `without` over a counted column releases the removed entry's key and
+	// value (#9970): a string key, a string value, and a keyed column over a
+	// column of boxes, each read back after the delete and re-inserted once.
+	{name: "map-delete-releases-the-entry", atLeast: 3, noLeak: true, src: `
+import "core/map";
+import "core/cmp";
+@derive(cmp.Eq, cmp.Hash)
+struct Coord { a: i32, b: i32 }
+struct Box { n: i32, tag: string }
+function by_string(): i32 {
+    var m: Map[string, i32] = map_new(2);
+    m = m.insert("a" + "x", 1);
+    m = m.insert("b" + "y", 2);
+    var (m2, gone) = m.without("ax");
+    if (!gone) { return 0 - 1; }
+    m2 = m2.insert("a" + "x", 3);
+    return m2.len() * 10 + m2.get_or("ax", 0);
+}
+function by_value(): i32 {
+    var m: Map[i32, string] = map_new(2);
+    m = m.insert(1, "one" + "!");
+    m = m.insert(2, "two" + "!");
+    var (m2, gone) = m.without(1);
+    if (!gone) { return 0 - 1; }
+    return m2.get_or(2, "").len();
+}
+function by_key(): i32 {
+    var m: Map[Coord, Box] = map_new(2);
+    var i: i32 = 0;
+    while (i < 5) { m = m.insert(Coord { a: i, b: i }, Box { n: i, tag: "t" + "!" }); i = i + 1; }
+    var (m2, gone) = m.without(Coord { a: 2, b: 2 });
+    if (!gone) { return 0 - 1; }
+    if (m2.has(Coord { a: 2, b: 2 })) { return 0 - 2; }
+    return m2.len() + m2.get_or(Coord { a: 4, b: 4 }, Box { n: 0, tag: "" }).n;
+}
+function main(): i32 { return by_string() + by_value() + by_key(); }
+`},
 	{name: "map-delete-and-clear", atLeast: 4, noLeak: true, src: `
 function survivors(n: i32): i32 {
     var m: Map[i32, i32] = map_new(8);

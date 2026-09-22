@@ -44,7 +44,7 @@ func runStdinExit(t *testing.T, runner []string, bin, src string) int {
 // shared core of the six IR-eligibility probe tests, which previously each
 // compiled a bespoke self-host probe binary. The compile + link are content-
 // addressed (cachedSelfHostAsm / CachedLink), so the driver builds at most once
-// per shard and is served from the warmed disk cache when present. Building via
+// per shard and is served from the disk cache when present. Building via
 // CachedLink (not BuildSelfHostBin) keeps the binary out of the shared source
 // tree.
 func EligBits(t *testing.T, progs []string, weights []int) int {

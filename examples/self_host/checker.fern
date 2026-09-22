@@ -528,6 +528,81 @@ function builtin_result_type(recv: typeinfo.Type, name: string, is_method: boole
   return free_builtin_result(name, argc);
 }
 
+// free_builtin_params answers a free builtin's PARAMETER types, beside the
+// result free_builtin_result already answers. The second half of the pair
+// reports whether `name` is a free builtin at all: an empty list is a real
+// signature here (`__ptr_width()`), so the length cannot carry membership.
+//
+// Without these nothing checked a free builtin's arguments. `f32_bits(y)` on
+// an f64 compiled and reinterpreted the low 32 bits of the double's pattern,
+// where native refuses it with E038 — the self-host checker accepting what
+// native refuses, which docs/NATIVE-CONVERGENCE.md calls the dangerous
+// direction (#9987). Typing the RESULT is what makes such a call infer at all,
+// so the silence covered exactly the names typed here and no others.
+//
+// Kept in the order free_builtin_result states them, so the two read as one
+// signature split across two functions.
+function free_builtin_params(name: string): (typeinfo.Type[], boolean) {
+  if (name == "string_from_bytes_unchecked") { return ([t_array(t_u8())], true); }
+  if (name == "f64_bits") { return ([t_float()], true); }
+  if (name == "f64_from_bits") { return ([t_i64()], true); }
+  if (name == "f32_bits") { return ([t_f32()], true); }
+  if (name == "f32_from_bits") { return ([t_i32()], true); }
+  return intrinsic_params(name);
+}
+
+// The intrinsics' parameters, mirroring intrinsic_result entry for entry. The
+// bit counts split by operand width where the result table does not need to:
+// the width is the whole reason there is one name per width, and it is the
+// parameter that carries it.
+function intrinsic_params(name: string): (typeinfo.Type[], boolean) {
+  if (is_f64_primitive(name)) { return ([t_float()], true); }
+  if (name == "__pow_f64") { return ([t_float(), t_float()], true); }
+  if (name == "__clz32" || name == "__ctz32" || name == "__popcount32") { return ([t_u32()], true); }
+  if (name == "__clz64" || name == "__ctz64" || name == "__popcount64") { return ([t_u64()], true); }
+  if (name == "__alloc") { return ([t_i32()], true); }
+  if (name == "__alloc_u8") { return ([t_i32()], true); }
+  if (name == "__free") { return ([t_usize(), t_i32()], true); }
+  if (name == "__ptr_width") { return ([], true); }
+  if (name == "__map_hash_seed") { return ([], true); }
+  if (name == "__heap_bump_bytes") { return ([], true); }
+  if (name == "__heap_alloc_count") { return ([], true); }
+  if (name == "__heap_mark") { return ([], true); }
+  if (name == "__heap_release_to") { return ([t_i64()], true); }
+  if (name == "__memcpy") { return ([t_usize(), t_usize(), t_i32()], true); }
+  if (name == "__memset") { return ([t_usize(), t_i32(), t_i32()], true); }
+  if (name == "__load_u8" || name == "__load_i32" || name == "__load_i64" || name == "__load_ptr") { return ([t_usize()], true); }
+  if (name == "__store_i32") { return ([t_usize(), t_i32()], true); }
+  if (name == "__store_i64") { return ([t_usize(), t_i64()], true); }
+  if (name == "__store_ptr") { return ([t_usize(), t_usize()], true); }
+  if (name == "__mismatch") { return ([t_string(), t_i32(), t_string(), t_i32(), t_i32()], true); }
+  if (name == "__sum_bytes") { return ([t_string()], true); }
+  if (name == "__scale_f64") { return ([t_array(t_float()), t_float()], true); }
+  if (name == "__ascii_run") { return ([t_string(), t_i32()], true); }
+  if (name == "__count_byte") { return ([t_string(), t_i32()], true); }
+  if (name == "__crc32_cksum") { return ([t_i32(), t_string()], true); }
+  if (name == "__memchr" || name == "__rmemchr") { return ([t_string(), t_i32(), t_i32()], true); }
+  if (name == "__fern_rc_inc") { return ([t_usize()], true); }
+  if (name == "__fern_str_dec") { return ([t_string()], true); }
+  if (name == "__fern_arr_dec") { return ([t_usize(), t_i32()], true); }
+  if (name == "__fern_drop_arr_ptr") { return ([t_usize(), t_i32()], true); }
+  return ([], false);
+}
+
+// free_builtin_sig is the callable a free builtin denotes, so a call to one is
+// argument-checked by the same callable_arg_diags a call to a declared
+// function goes through — one E038 rule rather than a second copy of it.
+//
+// The result is read back out of free_builtin_result rather than restated,
+// keyed on the parameter count this table declares, so a signature cannot
+// disagree with itself. Unknown for every name that is not a free builtin,
+// which is callable_arg_diags' signal to check nothing.
+function free_builtin_sig(name: string): typeinfo.Type {
+  var (params, known) = free_builtin_params(name);
+  if (!known) { return t_unknown("not a free builtin"); }
+  return t_func(params, free_builtin_result(name, params.len()));
+}
+
 // type_debug renders a Type to a compact, unambiguous debug spelling — the Type
 // analogue of asmcore's ty_tag. Recursive over the composite variants so the
 // full decoded shape (array element, tuple elements, map key/value, and the
@@ -9173,13 +9248,20 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
             }
           }
         }
-        // E004 (#7311): free-builtin arity. These have no FuncSig, so the
-        // rule above never sees them, and a wrong count used to fall
-        // through to IR lowering and surface as the whole-function #9053
-        // ineligibility hint; native reports E004 at the call. Expected
-        // counts mirror native's builtin signatures. Only when no user
-        // function shadows the name.
+        // The free builtins, which have no FuncSig for the rule above to
+        // read. Only when no user function shadows the name.
         if (sig.name.len() == 0) {
+          // One the self-host TYPES carries a full signature, so its call
+          // goes through the same callable_arg_diags a declared function's
+          // does: E038 on a parameter, E004 on the count (#9987).
+          out = util.append_diags(out, callable_arg_diags(c, free_builtin_sig(id.name), s));
+          // The arity of what is left — the builtins whose parameters are
+          // deliberately not fixed. `print` / `write` / `eprint` take any
+          // Display type, which the pre-codegen gate in asmcore decides, so
+          // typing them `string` here would refuse a struct carrying its own
+          // `to_string`. A wrong count on one of these used to fall through
+          // to IR lowering and surface as the whole-function #9053
+          // ineligibility hint; native reports E004 at the call (#7311).
           var bexp: i32 = 0 - 1;
           if (id.name == "print" || id.name == "eprint") { bexp = 1; }
           if (id.name == "slice_unchecked") { bexp = 3; }
