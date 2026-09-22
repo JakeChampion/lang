@@ -1425,6 +1425,54 @@ all, and that is a contract `fip`/E068 checks, so a kernel putting a fresh
 buffer back would break a claim a program is allowed to make. A vectorised
 copy does not beat no copy.
 
+**The same kernel reaches `std/ndarray`'s `map` over a PACKED handle**
+(#9955). Packed means `data` IS the reading order (`ARRAY-SHAPES.md` §2), so
+the odometer walk visits `data[0..n)` in order and the kernel computes the
+same buffer; the site becomes `from_flat(__fern_scale_f64(a.data, k),
+a.shape)`. Over a STRIDED receiver the same rewrite computes DIFFERENT
+numbers rather than the same ones faster, which is why the site is gated on
+the layout analysis of #9734 rather than on the verb.
+
+Measured on x86-64, 300 rounds over a 20,000-element handle shaped
+[200, 100] — the same round and element counts as the `std/array` rows above,
+one source built twice differing only by `FERN_NO_SCALE_KERNEL`:
+
+| | best of 7 |
+| --- | --- |
+| `h.map(x => x * k)`, packed, scalar | 71.3 ms |
+| the same source, kernel | 2.7 ms |
+| | **26.27x** |
+
+**That figure is deflated on purpose, and the first version of it was
+misleading.** Measured against the walk as it stood before the same change
+set, the scalar side was 213.3 ms and the kernel read 79.79x. The kernel did
+not get slower — 2.7 ms either way. The BASELINE got honest: std/ndarray's
+walk ran the full odometer (`addr_of` over the strides plus `bump`) on a
+packed handle, where element `i` of the reading order is just `data[i]`.
+Removing that is the packed-walk fast path below, and it takes the same
+scalar map from 213.3 ms to 71.3 ms. Reporting 79.79x would have been
+crediting the kernel with work the walk should never have been doing.
+
+**The packed walk itself** (`std/ndarray`'s `map` and `fold_all`), measured
+the same way with two compilers built either side of the change — the stdlib
+is embedded in the compiler binary, so reverting the source without
+rebuilding measures nothing:
+
+| | odometer | packed | |
+| --- | --- | --- | --- |
+| `map` | 212.1 ms | 71.3 ms | **2.97x** |
+| `fold_all` | 182.1 ms | 42.6 ms | **4.28x** |
+
+`fold_all` gains more because it allocates nothing: the odometer is a larger
+share of what is left. `map` lands at 71.3 ms against `std/array`'s own
+`xs.map(x => x * k)` at 74.5 ms on the same host — parity, which is the
+expected result once the two walks do the same work.
+
+Both arms owe §7's increasing reading order, and `add` cannot tell them
+apart. `examples/tests/ndarray_test.fern` therefore folds
+order-sensitively over a packed handle as well as a strided one; reversing
+the packed walk turns that assertion from 1234 into 4321.
+
 ### 3.5 Testing
 
 Per rule 5, each kernel ships with:

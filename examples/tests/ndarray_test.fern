@@ -114,7 +114,14 @@ function test_fold_all_reads_in_order(): test.TestOutcome {
   var a: ndarray.NdArray[i32] = grid();
   if (a.fold_all(0, add) != 66) { return test.fail("sum"); }
   var digits: ndarray.NdArray[i32] = a.slice(0, 0, 1).slice(1, 1, 4);
-  return test.assert_eq(digits.transpose().fold_all(0, (acc: i32, x: i32): i32 => acc * 10 + x), 123);
+  if (digits.transpose().fold_all(0, (acc: i32, x: i32): i32 => acc * 10 + x) != 123) {
+    return test.fail("strided fold order");
+  }
+  // The same order-sensitive fold over a PACKED handle, which takes the
+  // direct-index walk rather than the odometer. Both arms owe §7's increasing
+  // reading order, and `add` above cannot tell them apart — it is commutative.
+  var packed: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4], [2, 2]);
+  return test.assert_eq(packed.fold_all(0, (acc: i32, x: i32): i32 => acc * 10 + x), 1234);
 }
 
 function test_reduce_axis_drops_the_axis(): test.TestOutcome {
