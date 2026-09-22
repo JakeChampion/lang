@@ -12,8 +12,11 @@ import (
 // garbage in bits 32..63 (which a materialised-constant index can — a runtime
 // 32-bit ALU op would have zeroed them, but a folded constant load does not),
 // the bounds check passes yet the scaled address is wild → out-of-bounds read.
-// The `mov ecx, ecx` zeroes the upper 32 bits so the address matches the
-// checked 32-bit index. Regression guard for the emitter fix.
+// A 32-bit write to `ecx` zeroes the upper 32 bits so the address matches
+// the checked 32-bit index: the helper's own `mov ecx, ecx`, or after the
+// peephole the index materialised straight into `ecx`. Whichever form
+// survives, the last write of the index register before the scaled `lea`
+// must be 32 bits wide. Regression guard for the emitter fix.
 func TestArrayIndexZeroExtendsIndex(t *testing.T) {
 	asm := compile(t, `
 function main(): i32 {
@@ -21,7 +24,26 @@ function main(): i32 {
     var i: i32 = 1;
     return a[i];
 }`)
-	if !strings.Contains(asm, "mov ecx, ecx") {
-		t.Errorf("array index must zero-extend the i32 index (mov ecx, ecx) before the scaled lea; asm:\n%s", asm)
+	lines := strings.Split(asm, "\n")
+	leas := 0
+	for i, l := range lines {
+		if strings.TrimSpace(l) != "lea rax, [rax + rcx*4]" {
+			continue
+		}
+		leas++
+		last := ""
+		for k := i - 1; k >= 0; k-- {
+			t := strings.TrimSpace(lines[k])
+			if strings.HasPrefix(t, "mov rcx, ") || strings.HasPrefix(t, "mov ecx, ") || strings.HasPrefix(t, "pop rcx") {
+				last = t
+				break
+			}
+		}
+		if !strings.HasPrefix(last, "mov ecx, ") {
+			t.Errorf("the index register's last write before the scaled lea is %q; want a 32-bit write of ecx so the upper half is zero; asm:\n%s", last, asm)
+		}
+	}
+	if leas == 0 {
+		t.Fatalf("no scaled index lea found; asm:\n%s", asm)
 	}
 }

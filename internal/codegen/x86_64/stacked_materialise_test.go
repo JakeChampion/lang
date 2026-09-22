@@ -36,6 +36,19 @@ func TestFoldStackedMaterialiseRestoreIntoAcc(t *testing.T) {
 		{"zero extension", "\tmovzx eax, byte ptr [rbp-8]", "\tmov rcx, rax", "\tmovzx ecx, byte ptr [rbp-8]"},
 		{"extended register name", "\tmov eax, 7", "\tmov r8, rax", "\tmov r8d, 7"},
 
+		// A 32-bit copy out of the accumulator (P12's output) writes the
+		// 32-bit name: a 64-bit load narrows to a load of the same low bytes,
+		// which zero-extends as the copy did.
+		{"32-bit copy narrows a 64-bit load", "\tmov rax, [rbp-8]", "\tmov ecx, eax", "\tmov ecx, [rbp-8]"},
+		{"32-bit copy of a constant", "\tmov eax, 5", "\tmov esi, eax", "\tmov esi, 5"},
+		{"32-bit copy of a zero extension", "\tmovzx eax, byte ptr [rbp-8]", "\tmov ecx, eax", "\tmovzx ecx, byte ptr [rbp-8]"},
+		{"32-bit copy into an extended register", "\tmov rax, [rbp-8]", "\tmov r8d, eax", "\tmov r8d, [rbp-8]"},
+		// An address or a sign extension to 64 bits has no 32-bit form that
+		// keeps the value the copy took.
+		{"32-bit copy refuses an address", "\tlea rax, [rip + .Lc0]", "\tmov ecx, eax", ""},
+		{"32-bit copy refuses a 64-bit sign extension", "\tmovsxd rax, dword ptr [rbp-8]", "\tmov ecx, eax", ""},
+		{"32-bit copy into eax itself is not a move out", "\tmov eax, 5", "\tmov eax, eax", ""},
+
 		// An rsp-relative operand means something different once the push is
 		// gone — rsp differs by 8 between the two forms.
 		{"rsp-relative source is refused", "\tmov rax, [rsp+8]", "\tmov rcx, rax", ""},
