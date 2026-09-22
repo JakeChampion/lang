@@ -3435,6 +3435,35 @@ function main(): i32 {
     return bound();
 }
 `},
+	// keys() and values() over narrow scalar columns. The runtime snapshot
+	// bit-copies a column of i32-shaped cells into a fresh array, which is as
+	// true of a `u8`, `u32` or `boolean` column as of the `i32` one
+	// ssasem.retained_column admitted alone; the rest were refused as an
+	// alias of the map's own elements, which is the refusal that kept
+	// conformance/cases/map_narrow_int_keys on the AST lowering (#9550). The
+	// AST lowering is the oracle here: native materialises a `u8` column at
+	// the wrong stride (#10000), so its answer is not the one to pin.
+	{name: "narrow-scalar-columns-snapshot", atLeast: 1, noLeak: true, src: `
+import "core/map";
+
+function main(): i32 {
+    var m: Map[u8, i32] = map_new(2);
+    var i: i32 = 0;
+    while (i < 12) { m = m.insert(i as u8, i * 2); i = i + 1; }
+    var ks: u8[] = m.keys();
+    var s: i32 = 0;
+    for k in ks { s = s + (k as i32); }
+    var w: Map[i32, u8] = map_new(2);
+    i = 0;
+    while (i < 12) { w = w.insert(i, (i * 2) as u8); i = i + 1; }
+    for v in w.values() { s = s + (v as i32); }
+    var b: Map[i32, boolean] = map_new(2);
+    i = 0;
+    while (i < 12) { b = b.insert(i, i % 3 == 0); i = i + 1; }
+    for f in b.values() { if (f) { s = s + 10; } }
+    return s - 200;
+}
+`},
 }
 
 // semHeldElementSource sorts by length with the insertion sort's body: the
