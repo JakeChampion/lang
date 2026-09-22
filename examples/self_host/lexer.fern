@@ -75,7 +75,7 @@ function is_digit(b: i32): boolean { return b >= 48 && b <= 57; }
 function is_alpha(b: i32): boolean {
     return (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95;
 }
-function is_alnum(b: i32): boolean { return is_digit(b) || is_alpha(b); }
+pub function is_alnum(b: i32): boolean { return is_digit(b) || is_alpha(b); }
 function is_hex_digit(b: i32): boolean {
     return (b >= 48 && b <= 57) || (b >= 97 && b <= 102) || (b >= 65 && b <= 70);
 }

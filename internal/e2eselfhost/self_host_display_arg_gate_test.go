@@ -1,67 +1,56 @@
 package e2eselfhost
 
 import (
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-// TestSelfHostDisplayArgGate pins #5742 on the file-based x86 driver.
+// TestSelfHostDisplayArgGate pins the Display spine (docs/TRAITS.md §3a) on
+// the file-based x86 driver.
 //
 // `print` / `write` / `eprint` hand their argument to a string-only runtime
-// helper that reads it as a `(ptr, len)` box. The self-host had no gate on the
-// argument's type and no equivalent of native's Display spine (#2696, the
+// helper that reads it as a `(ptr, len)` box. Before the gate (#5742) the
+// self-host had no equivalent of native's Display spine (#2696, the
 // `case "print", "write", "eprint"` block in internal/checker/checker.go), so
-// two shapes compiled and ran with no diagnostic at all:
+// `write(bs)` for a `u8[]` wrote ZERO bytes and `write(q)` for a struct wrote
+// its own raw memory — silent wrong answers on programs the compiler
+// accepted, the direction docs/NATIVE-CONVERGENCE.md calls the dangerous one.
 //
-//   - `write(bs)` for a `u8[]` emitted a binary that wrote ZERO bytes. That is
-//     how the issue was found: a fixture's decode half simply vanished from the
-//     output while the encode half printed, so it read as a content mismatch
-//     rather than a type error.
-//   - `write(q)` for a struct carrying a `to_string` printed the struct's own
-//     raw memory — the LENGTH read out of a field, so `Q { a: 7, b: 9 }` wrote
-//     7 bytes of `Q \0 \0 \0 \0 \0 \0`. Native prints the `to_string()` result
-//     for that same program.
-//
-// Both are silent wrong answers on programs the compiler accepted, which is
-// the direction docs/NATIVE-CONVERGENCE.md calls out as the dangerous one: a
-// self-host checker LESS strict than native lets bad programs through.
-//
-// The self-host now implements the Display rewrite too: an argument that is
-// not already a string is lowered as `arg.to_string()` (irlower's display_arg),
-// and the gate rejects only a type with no `to_string(): string` at all. So the
-// struct case above compiles and prints `HELLO`, as it does under native.
-//
-// One shape stays refused where native accepts it: a PRIMITIVE receiver
-// carrying its own `to_string`. The self-host resolves `.to_string()` on a
-// primitive to its built-in formatter rather than the declared method, so
-// rewriting would print the builtin's answer instead of the reader's — a
-// silent wrong answer in place of a loud one. The diagnostic says so.
+// The self-host checker now does what native's does, at the same point: an
+// argument whose type resolves `to_string(): string` is rewritten to
+// `arg.to_string()` (checker.display_rewrite, in annotate_module), and one
+// whose type does not is refused with native's E038 text
+// (checker.display_arg_diags). This driver runs no checker gate of its own;
+// the emitter enters the annotate pass before its pre-codegen check, and that
+// check (asmcore.display_arg_errs) refuses what the checker left unrewritten
+// in the same words, so the rejects below read as native's do. A scalar
+// resolves it through the stdlib method the import closure brings in —
+// `core/cmp` pulls std/i32, std/i64, std/u32, std/u64 and std/float and
+// carries the boolean and u8 impls — so `print(7)` compiles with the import
+// and is refused without it, as it is on native (#9945). A program's own
+// `to_string` on a primitive is the method called, as on native: the lowering
+// no longer bypasses a declared method for the built-in formatter.
 //
 // The accept cases are the real risk: they pin that the gate never rejects a
-// valid program, and that an accepted one still runs and prints.
+// valid program, and that an accepted one runs and prints what native prints.
 func TestSelfHostDisplayArgGate(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 
+	// compile lays the program and its stdlib closure out the way the
+	// file-based driver loads them and runs the driver on it.
 	compile := func(t *testing.T, src string) ([]byte, []byte, int, string) {
 		t.Helper()
-		dir := t.TempDir()
-		bsrc, err := os.ReadFile("../../examples/self_host/builtins.fern")
-		if err != nil {
-			t.Fatalf("read builtins.fern: %v", err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, "builtins.fern"), bsrc, 0o644); err != nil {
-			t.Fatalf("write builtins.fern: %v", err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, "main.fern"), []byte(src), 0o644); err != nil {
-			t.Fatalf("write main.fern: %v", err)
-		}
+		dir := writeSourceModloadProject(t, src)
 		out, errOut, code := runDriverAllowFail(t, runner, driverBin, "", filepath.Join(dir, "main.fern"))
 		return out, errOut, code, dir
 	}
 
+	// native's E038 text, which display_arg_diags reproduces word for word.
+	noDisplay := func(fn, ty string) string {
+		return "argument 1 to " + fn + ": " + ty + " does not implement `Display` (no `to_string(): string` in scope)"
+	}
 	rejects := []struct {
 		name string
 		src  string
@@ -72,59 +61,42 @@ func TestSelfHostDisplayArgGate(t *testing.T) {
 		{
 			"write-u8-array",
 			"function main(): i32 {\n    var b: u8[] = [72 as u8, 105 as u8];\n    write(b);\n    return 0;\n}\n",
-			[]string{"E038", "write"},
+			[]string{"E038", noDisplay("write", "u8[]")},
 		},
 		// print and eprint share the helper, so they shared the hole.
 		{
 			"print-u8-array",
 			"function main(): i32 {\n    var b: u8[] = [72 as u8, 105 as u8];\n    print(b);\n    return 0;\n}\n",
-			[]string{"E038", "print"},
+			[]string{"E038", noDisplay("print", "u8[]")},
 		},
 		{
 			"eprint-u8-array",
 			"function main(): i32 {\n    var b: u8[] = [72 as u8, 105 as u8];\n    eprint(b);\n    return 0;\n}\n",
-			[]string{"E038", "eprint"},
+			[]string{"E038", noDisplay("eprint", "u8[]")},
 		},
-		// A scalar with no to_string in scope: native raises E038 here too.
-		//
-		// What the message SAYS is the pin. The generic text asks for a
-		// `to_string` method or `@derive(cmp.Display)` and names the import
-		// that enables them — and none of it helps, because display_arg
-		// rewrites a struct and nothing else, so no import makes this
-		// compile. `import "core/cmp"; print(7)` is the shape that showed it:
-		// native prints 7, and the self-host named an import the source
-		// already had (#9945). The message now says what is true and names a
-		// spelling that works on both compilers.
+		// A scalar with no to_string in scope: native raises E038 here too,
+		// naming the import that brings the method in.
 		{
 			"write-i32",
 			"function main(): i32 {\n    var n: i32 = 5;\n    write(n);\n    return 0;\n}\n",
-			[]string{"E038", "no Display path for i32", "write(x.to_string())"},
-		},
-		// The same for the other primitives, and with the import the old text
-		// asked for already present.
-		{
-			"print-i32-with-cmp-imported",
-			"import \"core/cmp\";\nfunction main(): i32 {\n    print(7);\n    return 0;\n}\n",
-			[]string{"E038", "no Display path for i32", "print(x.to_string())"},
+			[]string{"E038", noDisplay("write", "i32"), "`import \"core/cmp\";`"},
 		},
 		{
 			"print-boolean",
 			"function main(): i32 {\n    var b: boolean = true;\n    print(b);\n    return 0;\n}\n",
-			[]string{"E038", "no Display path for boolean"},
+			[]string{"E038", noDisplay("print", "boolean")},
 		},
 		{
 			"print-f64",
 			"function main(): i32 {\n    var v: f64 = 1.5;\n    print(v);\n    return 0;\n}\n",
-			[]string{"E038", "no Display path for f64"},
+			[]string{"E038", noDisplay("print", "f64")},
 		},
-		// A primitive receiver that declares its own to_string. Native calls
-		// the method; the self-host would call the builtin formatter, so it
-		// refuses rather than print a different answer than the one written.
+		// An array stays refused with the import: nothing gives `i32[]` a
+		// to_string.
 		{
-			"print-i32-with-shadowing-to-string",
-			"function (n: i32) to_string(): string { return \"SHADOW\"; }\n" +
-				"function main(): i32 {\n    print(5);\n    return 0;\n}\n",
-			[]string{"E038", "built-in formatter"},
+			"print-i32-array-with-cmp-imported",
+			"import \"core/cmp\";\nfunction main(): i32 {\n    var xs: i32[] = [1, 2];\n    print(xs);\n    return 0;\n}\n",
+			[]string{"E038", noDisplay("print", "i32[]")},
 		},
 		// Nested in a branch: bare expression statements were hitting
 		// check_stmt's `_ =>` catch-all and never being visited, so the walk
@@ -132,7 +104,7 @@ func TestSelfHostDisplayArgGate(t *testing.T) {
 		{
 			"nested-in-if",
 			"function main(): i32 {\n    var b: u8[] = [1 as u8];\n    if (b.len() > 0) { write(b); }\n    return 0;\n}\n",
-			[]string{"E038", "write"},
+			[]string{"E038", noDisplay("write", "u8[]")},
 		},
 	}
 
@@ -174,26 +146,58 @@ function main(): i32 {
     return 0;
 }
 `
-	t.Run("accept", func(t *testing.T) {
-		asm, errOut, code, dir := compile(t, acceptSrc)
-		if code != 0 {
-			t.Fatalf("driver exited %d (stderr %q), want 0 (accept)", code, errOut)
-		}
-		bin := buildBin(t, gcc, dir, "accept", string(asm))
-		var cmd *exec.Cmd
-		if len(runner) == 0 {
-			cmd = exec.Command(bin)
-		} else {
-			cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...)
-		}
-		out, exit := runBin(cmd, "")
-		if exit != 0 {
-			t.Errorf("program exited %d, want 0 (stdout %q)", exit, out)
-		}
-		if want := "litlocloc-catlabQ!Q!done\n"; out != want {
-			t.Errorf("stdout = %q, want %q", out, want)
-		}
-	})
+	// Every primitive `print` accepts on native, with the import that brings
+	// its `to_string` into scope: the stdlib method for the integers and f64,
+	// core/cmp's own impls for boolean and u8, and a literal and an arithmetic
+	// result beside the locals. The expected text is what native prints.
+	const primitivesSrc = `import "core/cmp";
+function main(): i32 {
+    var a: i32 = 7; var b: i64 = 7i64; var c: u32 = 7 as u32; var d: u64 = 7 as u64;
+    var e: f64 = 1.5; var f: boolean = true; var g: u8 = 65 as u8;
+    print(a); print(b); print(c); print(d); print(e); print(f); print(g);
+    print(7); print(1 + 2);
+    write(a); write("|"); eprint(a);
+    return 0;
+}
+`
+	// A program's own to_string on a primitive is the method the call
+	// dispatches to, on native and here — not the built-in formatter.
+	const shadowSrc = `function (n: i32) to_string(): string { return "SHADOW"; }
+function main(): i32 {
+    print(5);
+    var m: i32 = 6; print(m.to_string());
+    return 0;
+}
+`
+	accepts := []struct {
+		name, src, want string
+	}{
+		{"accept", acceptSrc, "litlocloc-catlabQ!Q!done\n"},
+		{"accept-primitives", primitivesSrc, "7\n7\n7\n7\n1.5\ntrue\n65\n7\n3\n7|"},
+		{"accept-shadowing-to-string", shadowSrc, "SHADOW\nSHADOW\n"},
+	}
+	for _, tc := range accepts {
+		t.Run(tc.name, func(t *testing.T) {
+			asm, errOut, code, dir := compile(t, tc.src)
+			if code != 0 {
+				t.Fatalf("driver exited %d (stderr %q), want 0 (accept)", code, errOut)
+			}
+			bin := buildBin(t, gcc, dir, tc.name, string(asm))
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(bin)
+			} else {
+				cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...)
+			}
+			out, exit := runBin(cmd, "")
+			if exit != 0 {
+				t.Errorf("program exited %d, want 0 (stdout %q)", exit, out)
+			}
+			if out != tc.want {
+				t.Errorf("stdout = %q, want %q", out, tc.want)
+			}
+		})
+	}
 
 	// A stdlib-importing program is the false-positive case that matters
 	// most: its call sites are mangled, and the argument's type has to

@@ -147,7 +147,7 @@ function round(i: i32): i32 {
     if (v != i + i + 2) { return 0 - 50; }
     return (t + v + junk) % 101;
 }` + spreadCarryElemsMain},
-	// The compiler's ensure_capture_types_parts shape: a view module built from
+	// The compiler's ensure_annotated_parts shape: a view module built from
 	// boxes borrowed out of the caller's modules through two `for` bindings,
 	// then a spread over the first module with those arrays as overrides. Every
 	// carry of the type counts, so the copy earned the deep release — and freed

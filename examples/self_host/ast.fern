@@ -266,6 +266,33 @@ pub function expr_line(e: Expr): i32 {
     return 0;
 }
 
+// expr_ty is the result-type tag the checker's annotate pass stamped on `e`,
+// or "" for a node that carries none (a literal, an aggregate, a lambda) and
+// for one the pass has not visited.
+pub function expr_ty(e: Expr): string {
+    match (e) {
+        ExprNumber(n) => { return ""; },
+        ExprIdent(id) => { return id.ty; },
+        ExprString(st) => { return ""; },
+        ExprBool(b) => { return ""; },
+        ExprBinary(b) => { return b.ty; },
+        ExprUnary(u) => { return u.ty; },
+        ExprCall(c) => { return c.ty; },
+        ExprArray(al) => { return ""; },
+        ExprTuple(tl) => { return ""; },
+        ExprIndex(ix) => { return ix.ty; },
+        ExprSlice(sl) => { return sl.ty; },
+        ExprStructLit(st) => { return ""; },
+        ExprFieldAccess(fa) => { return fa.ty; },
+        ExprLambda(lm) => { return ""; },
+        ExprMapLit(ml) => { return ""; },
+        ExprFString(fs) => { return ""; },
+        ExprUnknown(uk) => { return ""; },
+        ExprZero(z) => { return ""; }
+    }
+    return "";
+}
+
 pub function expr_col(e: Expr): i32 {
     match (e) {
         ExprNumber(n) => { return n.col; },
