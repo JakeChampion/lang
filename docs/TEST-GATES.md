@@ -73,6 +73,17 @@ both native compiler families and WebAssembly; the self-host legs require
 complete semantic lowering. The decimal parser must reject overflow before
 multiplication, so the later body limit never sees a wrapped length.
 
+## Native compatibility poll storage
+
+`TestPollScratchReclaimed` checks the Go bootstrap compiler's flat and SSA
+poll helpers on x86-64 Linux and ARM64 Linux.
+`TestArm64DarwinNativePollScratch` covers the flat Darwin helper on Apple
+Silicon. Each exercises empty, negative and invalid descriptors, a timeout,
+readiness and first-index selection. Repeated calls must balance allocations
+and frees, leave zero live bytes and produce no RC underflow. These gates
+cover temporary poll buffers; they do not establish leak freedom for a whole
+HTTP server or replace the persistent-reactor work in #9853.
+
 ## Generated digest sources
 
 The lint lane runs `make digest-check` on every PR and main push. It compares

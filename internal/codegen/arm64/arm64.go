@@ -9250,8 +9250,8 @@ func (g *generator) emitRandomBytesRuntime() {
 // each, calls ppoll(2) (#73 — arm64 has no bare `poll`), and returns
 // the INDEX of the first readable fd, or -1 on timeout / none.
 // `timeout_ms` < 0 blocks indefinitely (NULL timespec); >= 0 builds a
-// timespec. On Darwin the readiness path (kqueue) is not yet ported,
-// so the helper returns -1 (no readiness).
+// timespec. Darwin uses kqueue. Both paths release their temporary kernel
+// buffers before returning.
 func (g *generator) emitPollRuntime() {
 	const pollin = 1 // POLLIN
 	g.line("")
@@ -9268,6 +9268,7 @@ func (g *generator) emitPollRuntime() {
 	g.emit("stp x19, x20, [sp, #16]") // x19 = nfds, x20 = fds ptr
 	g.emit("stp x21, x22, [sp, #32]") // x21 = pollfd buf, x22 = loop i
 	g.emit("stp x23, xzr, [sp, #48]") // x23 = timeout_ms
+	g.emit("mov x21, #0")             // no scratch on the empty-set path
 	// timespec scratch lives at [x29, #64..79].
 	g.emit("mov x20, x0") // fds ptr
 	g.emit("mov x23, x1") // timeout_ms
@@ -9328,6 +9329,13 @@ func (g *generator) emitPollRuntime() {
 	g.label(".Lpoll_none")
 	g.emit("mov x0, #-1")
 	g.label(".Lpoll_ret")
+	g.emit("mov x23, x0") // result survives the free call
+	g.emit("cbz x21, .Lpoll_reclaimed")
+	g.emit("mov x0, x21")
+	g.emit("lsl x1, x19, #3")
+	g.emit("bl __fern_free")
+	g.label(".Lpoll_reclaimed")
+	g.emit("mov x0, x23")
 	g.emit("ldp x19, x20, [sp, #16]")
 	g.emit("ldp x21, x22, [sp, #32]")
 	g.emit("ldr x23, [sp, #48]")
@@ -9409,6 +9417,8 @@ func (g *generator) emitPollRuntimeKqueue() {
 	g.emit("stp x21, x22, [sp, #32]") // x21 = changelist, x22 = loop i
 	g.emit("stp x23, x24, [sp, #48]") // x23 = timeout_ms, x24 = kq fd
 	g.emit("stp x25, x26, [sp, #64]") // x25 = eventlist, x26 = nchanges
+	g.emit("mov x21, #0")             // no buffers on the empty-set path
+	g.emit("mov x25, #0")
 	g.emit("mov x20, x0")
 	g.emit("mov x23, x1")
 	g.emitArrayLen("w19", "x20")
@@ -9524,6 +9534,16 @@ func (g *generator) emitPollRuntimeKqueue() {
 	g.label(".Lkq_none")
 	g.emit("mov x0, #-1")
 	g.label(".Lkq_ret")
+	g.emit("mov x23, x0") // preserve readiness across both frees
+	g.emit("cbz x21, .Lkq_reclaimed")
+	g.emit("mov x0, x21")
+	g.emit("lsl x1, x19, #5")
+	g.emit("bl __fern_free")
+	g.emit("mov x0, x25")
+	g.emit("lsl x1, x19, #5")
+	g.emit("bl __fern_free")
+	g.label(".Lkq_reclaimed")
+	g.emit("mov x0, x23")
 	g.emit("ldp x19, x20, [sp, #16]")
 	g.emit("ldp x21, x22, [sp, #32]")
 	g.emit("ldp x23, x24, [sp, #48]")
@@ -19989,6 +20009,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			target = "__fern_poll"
 			g.usesPoll = true
 			g.usesAlloc = true
+			g.usesFree = true
 		case "timer_fd":
 			target = "__fern_timer_fd"
 			g.usesTimerFd = true

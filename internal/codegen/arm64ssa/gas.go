@@ -4400,19 +4400,12 @@ func emitPollHelper(w func(string, ...any)) {
 	w("\tmov x20, x0")          // fds ptr
 	w("\tmov x23, x1")          // timeout_ms
 	w("\tldur w19, [x20, #-4]") // nfds
+	w("\tmov x21, #0")
 	w("\tcmp w19, #0")
 	w("\tb.le .Lssa_poll_none")
-	// Bump-allocate the transient pollfd[]: nfds * 8 bytes.
-	w("\tadrp x3, %s", heapPtrSym)
-	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
-	w("\tldr x4, [x3]")
-	w("\tadd x4, x4, #15")
-	w("\tand x4, x4, #-16")
-	w("\tlsl x5, x19, #3")
-	w("\tadd x6, x4, x5")
-	w("\tstr x6, [x3]")
-	emitHeapGuardCall(w)
-	w("\tmov x21, x4") // pollfd buf
+	w("\tlsl x0, x19, #3")
+	w("\tbl %s", fnLabel("__alloc"))
+	w("\tmov x21, x0") // pollfd buf
 	// Marshal: pollfd[i] = { fd = fds[i], events = POLLIN, revents = 0 }.
 	w("\tmov x22, #0")
 	w(".Lssa_poll_fill:")
@@ -4464,6 +4457,13 @@ func emitPollHelper(w func(string, ...any)) {
 	w(".Lssa_poll_none:")
 	w("\tmov x0, #-1")
 	w(".Lssa_poll_ret:")
+	w("\tmov x23, x0")
+	w("\tcbz x21, .Lssa_poll_restore")
+	w("\tmov x0, x21")
+	w("\tlsl x1, x19, #3")
+	w("\tbl %s", fnLabel("__free"))
+	w(".Lssa_poll_restore:")
+	w("\tmov x0, x23")
 	w("\tldr x23, [sp, #48]")
 	w("\tldp x21, x22, [sp, #32]")
 	w("\tldp x19, x20, [sp, #16]")
@@ -4475,6 +4475,7 @@ func emitPollHelper(w func(string, ...any)) {
 // another must have that callee emitted too, since the module never references
 // it directly. Transitively closed by referencedRuntimeHelpers.
 var runtimeHelperDeps = map[string][]string{
+	"poll":                            {"__alloc", "__free"},
 	"__str_eq":                        {"__fern_mismatch"},
 	"__str_ord":                       {"__fern_mismatch"},
 	"__fern_str_append":               {"__str_concat", "__fern_str_dec"},
