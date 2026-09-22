@@ -73043,23 +73043,29 @@ pub function is_fn_payload_spelling(t: string): boolean {
     return t[j] == b'=' && t[j + 1] == b'>';
 }
 
-// map_key_has_no_column names the integer keys too WIDE for the key column:
-// it is a 4-byte cell on wasm and op_map_keys has no width to select, so
-// admitting one would narrow the key silently (#10005). The string column is
-// not an alternative — it reads a key's VALUE as an address, which is how
-// these segfaulted before #9973 — so the lowering refuses them, at every
-// surface that reaches a map: its construction, its methods, and both shapes
-// of loop over it.
+// map_key_has_no_column names the scalar keys the integer key column cannot
+// take. The string column is not an alternative for any of them: it reads a
+// key's VALUE as an address, which is how they segfaulted before #9973. So the
+// lowering refuses them, at every surface that reaches a map — its
+// construction, its methods, and both shapes of loop over it.
+//
+// i64 / u64 / usize are too WIDE: the column is a 4-byte cell on wasm and
+// op_map_keys has no width to select, so admitting one would narrow the key
+// silently (#10005).
 //
 // Loud is the direction to be wrong in: native and the interpreter answer
 // these programs on the register targets, so this is a gap to close rather
 // than a rule of the language.
 //
-// FLOAT keys are not listed. They have no column either, but E045 refuses
-// them in both checkers ahead of codegen now (#10009), and every coded
-// diagnostic gates a build — so one cannot reach here to be refused.
+// FLOAT keys are listed even though E045 refuses every written float-key
+// spelling in both checkers now (#10009), because a written spelling is not
+// the only way one arrives: the self-host runs no diagnostic pass over a
+// MONOMORPHISED clone, so `build(2.5, 7)` through a `Map[T, i32]`-returning
+// generic reaches here with no diagnostic behind it (#10018). Native
+// re-checks its instantiations and reports; until the self-host does, this
+// is the only thing standing between that program and the string column.
 pub function map_key_has_no_column(kt: string): boolean {
-    return kt == "i64" || kt == "u64" || kt == "usize";
+    return kt == "i64" || kt == "u64" || kt == "f64" || kt == "usize" || kt == "f32";
 }
 
 // map_key_kind_of returns the key COLUMN a Map type uses: 1 for an integer

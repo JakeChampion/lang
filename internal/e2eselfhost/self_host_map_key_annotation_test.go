@@ -123,4 +123,16 @@ function main(): i32 { var m: Map[string, i32] = map_new(2); return take(m); }
 function take[T](m: Map[T, i32]): i32 { return 0; }
 function main(): i32 { return 0; }
 `, false},
+	{"lambda-parameter", `import "core/map";
+function main(): i32 {
+    var f = (m: Map[f64, i32]): i32 => { return 0; };
+    return 0;
+}
+`, true},
+	{"lambda-return-type", `import "core/map";
+function main(): i32 {
+    var f = (n: i32): Map[f64, i32] => { return map_new(2); };
+    return 0;
+}
+`, true},
 }

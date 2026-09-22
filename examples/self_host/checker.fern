@@ -13005,6 +13005,22 @@ function annot_of_stmt(st: ast.Stmt, own acc: Annot[]): Annot[] {
   return acc;
 }
 
+// lambda_annots collects only the LAMBDA parameter / return annotations a
+// body holds. collect_annots gathers the statement `var` annotations too, and
+// those are reported by stmts_assign_diags, which is where the init is in
+// scope — it decides whether a map literal has a key of its own to report at.
+function lambda_annots(stmts: ast.Stmt[]): Annot[] {
+  var acc: Annot[] = [];
+  for stmt in stmts {
+    acc = astwalk.fold_stmt_nodes(stmt, acc, annot_keep_acc, annot_of_expr, astwalk.descend_all);
+  }
+  return acc;
+}
+
+function annot_keep_acc(st: ast.Stmt, own acc: Annot[]): Annot[] {
+  return acc;
+}
+
 function annot_of_expr(e: ast.Expr, own acc: Annot[]): Annot[] {
   match (e) {
     ast.ExprLambda(lm) => {
@@ -15464,6 +15480,9 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
       body_diags = util.append_diags(body_diags, e045_annot_diags(param.type_name, xfn.line, xfn.col, xsc));
     }
     body_diags = util.append_diags(body_diags, e045_annot_diags(xfn.ret_type, xfn.line, xfn.col, xsc));
+    for an in lambda_annots(xfn.body) {
+      body_diags = util.append_diags(body_diags, e045_annot_diags(an.type_name, an.line, an.col, xsc));
+    }
     if (xfn.fip || xfn.fbip) {
       body_diags = util.append_diags(body_diags, e053_diags(xfn, fip_names, fbip_names, e053_variants, xsc));
     }

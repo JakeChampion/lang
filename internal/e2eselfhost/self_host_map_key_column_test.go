@@ -20,9 +20,13 @@ import (
 // METHODS alone, where a program that only constructs or only iterates such a
 // map still lowered silently (caught in review).
 //
-// Float keys are not among the cases. They have no column either, but E045
-// refuses them in both checkers now (#10009), so the interpreter oracle below
-// rejects such a program and there is no lowering decision left to pin.
+// Float keys are not among these cases: E045 refuses every WRITTEN float-key
+// spelling in both checkers now (#10009), so the interpreter oracle below
+// rejects such a program and there is no lowering decision left to pin. The
+// one road a float key still travels — a monomorphised clone, which the
+// self-host runs no diagnostic pass over — is
+// TestSelfHostMonomorphisedFloatKeyStillRefusesToLower, which needs no
+// oracle because native refuses the program outright.
 //
 // Each case isolates one surface. The three parameter cases pass a bare
 // `map_new(2)` rather than a binding, so the construction gate cannot fire
@@ -216,5 +220,63 @@ func TestSelfHostNarrowMapKeyAnswersX86_64(t *testing.T) {
 				t.Fatalf("self-host answered %d, interpreter says %d", code, tc.oracle)
 			}
 		})
+	}
+}
+
+// monomorphisedFloatKeySrc has no float key written anywhere: `build(2.5, 7)`
+// instantiates a `Map[T, i32]`-returning generic at T = f64.
+const monomorphisedFloatKeySrc = `import "core/map";
+function build[T](k: T, v: i32): Map[T, i32] {
+    var m: Map[T, i32] = map_new(2);
+    return m.insert(k, v);
+}
+function main(): i32 { return build(2.5, 7).get_or(2.5, 0); }
+`
+
+// TestSelfHostMonomorphisedFloatKeyStillRefusesToLower pins the float half of
+// map_key_has_no_column, which nothing else does now that E045 refuses every
+// written float-key spelling (#10009).
+//
+// This program writes none. Native re-checks its instantiations and reports
+// E045 on the monomorphised copy; the self-host runs no diagnostic pass over
+// an instantiated clone, so it reaches the lowering with nothing behind it
+// (#10018). map_key_kind_of would then answer 0 for the f64 key — the STRING
+// column, which reads a key's VALUE as an address: the #9973 segfault by
+// another road. The lowering refusal is the only thing in the way, which is
+// why deleting it was wrong, and why this test exists.
+//
+// It takes no interpreter oracle. The other cases have one to prove they are
+// well-formed programs refused for their key; this one native refuses
+// outright, and that refusal is half of what is asserted.
+func TestSelfHostMonomorphisedFloatKeyStillRefusesToLower(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("self-host driver runs natively only")
+	}
+	dir := copySelfHostTree(t)
+	driver := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "alr")
+	root, err := filepath.Abs("../../internal/stdlib")
+	if err != nil {
+		t.Fatalf("abs stdlib root: %v", err)
+	}
+	entry := filepath.Join(dir, "monomorphised_float_key.fern")
+	if err := os.WriteFile(entry, []byte(monomorphisedFloatKeySrc), 0o644); err != nil {
+		t.Fatalf("write entry: %v", err)
+	}
+
+	// Half one: native still catches it, so the gap below is the self-host's
+	// alone. The whole pipeline is what is run, not checker.Check — the
+	// diagnostic arrives with MONOMORPHISATION, which is precisely the pass
+	// the self-host does not have. When #10018 closes, this stays green.
+	if _, code := runFixtureInterp(t, entry, ""); code == 0 {
+		t.Errorf("native ran a program with a monomorphised f64 map key; it reported E045 when this " +
+			"test was written, so either the instantiation re-check regressed or the rule moved")
+	}
+
+	// Half two: the self-host lowering refuses it with no diagnostic behind it.
+	route, _ := exec.Command(driver, entry, root, "-decide").Output()
+	if got := strings.TrimSpace(string(route)); got != "ast" {
+		t.Errorf("-decide = %q, want \"ast\": the self-host checker does not see this f64 key (#10018), "+
+			"so lowering it puts the key's VALUE through the string column as an address", got)
 	}
 }
