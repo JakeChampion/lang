@@ -152,7 +152,7 @@ is the place to wait, not your terminal.
 
 **PR CI is one run, and one PR at a time.** `ci.yml` calls every lane and holds
 one FIFO queue: a PR's lanes run in parallel, PRs wait their turn, and a push
-to a PR cancels its older run (`reap-stale-runs.yml`). Wait time is queue
+to a PR cancels its older run the moment it lands. Wait time is queue
 position, not runner scarcity.
 
 **One red lane cancels the rest.** When a lane concludes `failure` the rest of
