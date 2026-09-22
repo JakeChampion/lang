@@ -31,6 +31,17 @@ var noColumnMapKeyCases = []struct {
 	wantIR bool
 	oracle int
 }{
+	// Construction ALONE, with no method on the map and no loop over it — the
+	// only shape that isolates the construction gate. `construct-and-insert`
+	// below does not: its `.insert` trips the method gate, so that row stays
+	// green with the construction gate deleted (caught in review, by deleting
+	// it). This one routes `ir` without it.
+	{"construct-only", `import "core/map";
+function main(): i32 {
+    var m: Map[i64, i32] = map_new(2);
+    return 7;
+}
+`, false, 7},
 	{"construct-and-insert", `import "core/map";
 function main(): i32 {
     var m: Map[i64, i32] = map_new(2);
