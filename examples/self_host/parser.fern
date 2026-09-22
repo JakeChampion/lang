@@ -1706,6 +1706,13 @@ function map_key_kind_of_expr(e: ast.Expr): i32 {
     match (e) {
         ast.ExprNumber(_) => { return 1; },
         ast.ExprString(_) => { return 0; },
+        // A boolean is a non-pointer scalar, so it lives in the INTEGER key
+        // column like an i32 — same reason u8 and u32 do (#9973). Without
+        // this arm `Map { true: 1 }` fell to -1, took the string constructor,
+        // and the runtime read the raw 0/1 as a string pointer: a segfault on
+        // the first lookup that misses, which is the #6207 shape this walk
+        // exists to prevent.
+        ast.ExprBool(_) => { return 1; },
         ast.ExprBinary(b) => { return map_key_kind_of_expr(b.left); },
         ast.ExprUnary(u) => {
             // An `as <type>` cast (op "as_<type>") is DECISIVE on its target,

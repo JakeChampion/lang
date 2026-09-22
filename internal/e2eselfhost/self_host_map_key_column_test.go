@@ -131,7 +131,10 @@ func TestSelfHostMapKeyWithNoColumnRefusesEverySurface(t *testing.T) {
 }
 
 // narrowMapKeyCases are the keys that DO fit the integer column, each read
-// back through the shapes a key column is consumed by.
+// back through the shapes a key column is consumed by — including a LOOKUP
+// THAT MISSES, which is where a key in the wrong column dies: a hit can
+// answer correctly on the string column by pointer-identity luck, a miss
+// dereferences the key.
 //
 // `f32` is NOT here: it fits the cell by width, but E045 refuses every float
 // key in both checkers now (#10009) — and it had to be refused somewhere,
@@ -162,6 +165,39 @@ function main(): i32 {
     return s + m.len();
 }
 `, 144},
+	// A boolean is a non-pointer scalar, so it belongs in the integer column
+	// too. The LITERAL spelling is the one that matters here: the key-kind
+	// walk had no ExprBool arm, so `Map { true: 5 }` took the string
+	// constructor and the first lookup that MISSES read the raw 0/1 as a
+	// pointer — SIGSEGV. A hit answered correctly by pointer-identity luck,
+	// which is why the miss and the `has` are what this row asserts.
+	{"boolean-literal", `import "core/map";
+function main(): i32 {
+    var m = Map { true: 5, false: 9 };
+    var s: i32 = m.get_or(true, 0) + m.get_or(false, 0);
+    if (m.has(true)) { s = s + 1; }
+    if (!m.has(false)) { s = s + 100; }
+    return s + m.len();
+}
+`, 17},
+	// The annotated spellings, which took the integer column already — here
+	// so a fix to the literal path cannot regress them unnoticed.
+	{"boolean-annotated", `import "core/map";
+function main(): i32 {
+    var m: Map[boolean, i32] = map_new(2);
+    m = m.insert(true, 5);
+    m = m.insert(false, 9);
+    var s: i32 = m.get_or(true, 0) + m.get_or(false, 0);
+    if (m.has(true)) { s = s + 1; }
+    return s + m.len();
+}
+`, 17},
+	{"boolean-annotated-literal", `import "core/map";
+function main(): i32 {
+    var m: Map[boolean, i32] = Map { true: 5, false: 9 };
+    return m.get_or(false, 0) + m.get_or(true, 0) + m.len();
+}
+`, 16},
 }
 
 // TestSelfHostNarrowMapKeyAnswersX86_64 is the other half of the wide-key
