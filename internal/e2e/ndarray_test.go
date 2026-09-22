@@ -127,6 +127,26 @@ function main(): i32 {
 	var zw: ndarray.NdArray[i64] = a.zip_with(t, (x: i64, y: i64): i64 => x - y);
 	if (zw.get([3, 5]) != a.get([3, 5]) - a.get([5, 3]) || zw.get([7, 7]) != 0 as i64) { return 122; }
 
+	// The PACKED arm of map and fold_all, which walks data[0..n) directly
+	// instead of the odometer. Nothing else in this fixture reaches it
+	// under a discriminating assertion: the map above has a transposed
+	// receiver, and the only packed fold_all here adds, which is
+	// commutative and cannot tell the two walks apart. Element order is
+	// therefore asserted three ways — a multiply-by-ten fold, and the
+	// index each mapped element lands at.
+	var pk: ndarray.NdArray[i64] = ndarray.from_flat([1 as i64, 2 as i64, 3 as i64, 4 as i64], [2, 2]);
+	if (!pk.is_packed()) { return 123; }
+	if (pk.fold_all(0 as i64, (acc: i64, x: i64): i64 => acc * (10 as i64) + x) != 1234 as i64) { return 124; }
+	var pmm: ndarray.NdArray[i64] = pk.map((x: i64): i64 => x * (10 as i64));
+	if (!pmm.is_packed() || pmm.get([0, 0]) != 10 as i64 || pmm.get([0, 1]) != 20 as i64) { return 125; }
+	if (pmm.get([1, 0]) != 30 as i64 || pmm.get([1, 1]) != 40 as i64) { return 125; }
+	// A broadcast that only prepends extent-1 axes adds no elements and
+	// leaves the reading order alone, so the handle stays packed (§2) and
+	// takes the same walk at a rank the odometer would have grown.
+	var pkl: ndarray.NdArray[i64] = pk.broadcast_to([1, 2, 2]);
+	if (!pkl.is_packed()) { return 126; }
+	if (pkl.fold_all(0 as i64, (acc: i64, x: i64): i64 => acc * (10 as i64) + x) != 1234 as i64) { return 127; }
+
 	// Along an axis: the result is lane-sized, never buffer-sized, and
 	// every lane folds in increasing index order — the order-sensitive
 	// fold is what a float reduction relies on (docs/ARRAY-ALGEBRA.md §3).
