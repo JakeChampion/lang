@@ -83,49 +83,40 @@ jobs:
           # unseen: this lane was green while the only tests that
           # could catch it never ran anywhere in CI.
           wasmtime: "true"
-      - name: go test (e2e — non-backend-specific, shard ${{ matrix.shard }}/${{ matrix.nshard }})
-        # `-skip` (Go 1.20+) is the negation lever the `-run`
-        # alternation lacks. Anything not matching the listed
-        # prefixes runs here, so adding a new uncategorised test
-        # is automatically gated on this lane.
+      - name: build native test runners
+        run: |
+          go test -c -o "$RUNNER_TEMP/e2e-other.test" ./internal/e2e/
+          go build -o "$RUNNER_TEMP/ci-test-workers" ./cmd/ci-test-workers
+      - name: go test (e2e — non-backend-specific, shard ${{ matrix.shard }}/${{ matrix.nshard }}, two workers)
         # SHARDED, RATHER THAN GIVEN A THIRD TIMEOUT. The ceiling here was
-        # raised twice for the same reason. It started with no explicit
-        # `-timeout` at all, so it inherited Go's 10m default — a number
-        # nobody chose — and at 7,347 tests it ran ~9m40s against it, so the
-        # first change to add ~1% anywhere in the compiler hit the wall and
-        # reported as four failed tests with conclusion "unknown" rather than
-        # as a timeout. 18m matched the arm64 e2e lane. THE SAME THING
-        # HAPPENED AGAIN at 18m: the lane reached 7,851 tests and 15m55s
-        # locally, a compiler change worth -98,265 IR ops added 7.6s (+0.8%),
-        # and CI timed out at 18m00.0s — a slow runner draw had already taken
-        # it to 16m58s while green, so the headroom was ~1 minute against a
-        # 1.5x spread. Hence 25m, and the note left here that whoever met it a
-        # third time should shard rather than raise.
+        # raised twice — the lane inherited Go's 10m default, then 18m, and
+        # each time a ~1% compiler change or a slow runner draw hit the wall
+        # — so the third time it was sharded. The lane is a catch-all with no
+        # owner and keeps accreting (7,631 to 7,851 tests in a matter of
+        # hours), so the headroom has to come from splitting, not from the
+        # number.
         #
-        # This is that. The x86 leg was ~21 minutes against 25m — about a
-        # minute of headroom again on a slow draw — and the lane is a
-        # catch-all with no owner, so it will keep accreting: it grew 7,631 to
-        # 7,851 tests in a matter of hours. Two x86 shards put each at ~11
-        # min, which is headroom that a year of accretion cannot eat.
+        # TWO WORKERS PER SHARD. The selection runs as two isolated processes
+        # through cmd/ci-test-workers (docs/CI-NATIVE-TEST-WORKERS.md: 1.6x on
+        # this package's arm64 selection), each with half the runner's CPUs.
+        # Process isolation is what the package needs — tests here mutate
+        # compiler globals, so `t.Parallel` is not an option — and one serial
+        # test process leaves most of a four-core runner idle. That is why the
+        # aarch64 leg stays ONE shard: the workers take it from ~15 to ~9
+        # minutes without spending a second runner slot on job setup.
         #
-        # ONE SHARD ON aarch64, because sharding is for the ceiling, not for
-        # speed: that leg runs the same set in ~10 min and is nowhere near
-        # 25m. Splitting it would spend a runner slot to fix a problem it does
-        # not have.
-        #
-        # The partition is scripts/shard-tests, the same greedy LPT
-        # the self-host lane uses — it reads names on stdin and is not
-        # specific to that suite. No weights file is passed, so every test
-        # weighs 1 and the partition is a balanced split by count, which is
-        # right for ~1,564 mostly-sub-second tests with no dominating outlier.
-        # A weights file can be added later without touching this.
+        # The partition is scripts/shard-tests, the same greedy LPT the
+        # self-host lane uses — it reads names on stdin and is not specific to
+        # that suite. No weights file is passed, so every test weighs 1 and
+        # the partition is a balanced split by count, which is right for
+        # mostly-sub-second tests with no dominating outlier.
         #
         # SELECTION IS STILL BY NEGATION. `go test -list` enumerates the whole
         # package and CATCH_ALL_SKIP removes the lanes that have a workflow of
         # their own, so a new uncategorised test is still gated here
         # automatically — it lands in the list, and therefore in some shard,
         # without anyone adding it anywhere. That property is why this lane
-        # uses `-skip` rather than an `-run` allowlist, and sharding must not
+        # selects by exclusion rather than an allowlist, and sharding must not
         # cost it.
         run: |
           set -euo pipefail
@@ -142,6 +133,10 @@ jobs:
           fi
           echo "shard ${{ matrix.shard }}/${{ matrix.nshard }}: ${#MINE[@]} tests"
           PAT="^($(IFS='|'; echo "${MINE[*]}"))\$"
-          gotestsum --format pkgname-and-test-fails -- -timeout 25m \
-            -run "$PAT" \
-            ./internal/e2e/
+          # The tests read ../../examples and ../../internal/stdlib, so the
+          # binary runs from the package directory.
+          cd internal/e2e
+          "$RUNNER_TEMP/ci-test-workers" \
+            -binary "$RUNNER_TEMP/e2e-other.test" \
+            -output "$RUNNER_TEMP/other-test-results" \
+            -workers 2 -timeout 25m -run "$PAT"

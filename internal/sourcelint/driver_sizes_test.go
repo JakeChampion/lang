@@ -401,20 +401,19 @@ func TestSelfHostWorkflowExportsDriverSizeReport(t *testing.T) {
 	if exports == 0 {
 		t.Error("no job exports FERN_DRIVER_SIZE_REPORT, so nothing records a driver size")
 	}
-	// One check per measuring job — a job that measures without checking
-	// records nothing — plus exactly one more over the union of their reports.
-	// Every measuring job links a disjoint set, so its own check compares a
-	// slice; only the aggregate weighs the fifteen baselined drivers as a set.
-	if checks != exports+1 {
+	// ONE measuring job, which is also the one that checks: the driver-sizes
+	// job links every baselined driver itself, so the fifteen are weighed as
+	// a set in the job that measured them. A second measuring job would be a
+	// slice again — five rows reading as the whole table is how the drivers
+	// grew 2.3x with the gate green (#7519).
+	if exports != 1 || checks != 1 {
 		t.Errorf("%d job(s) export FERN_DRIVER_SIZE_REPORT and %d invoke ci-check-driver-sizes — "+
-			"want one check per measuring job plus one aggregate check over the union (#7519)", exports, checks)
+			"want exactly one of each, both in the driver-sizes job (#7519)", exports, checks)
 	}
-	// The aggregate is the only enforcing copy, and it is worth nothing without
-	// both variables: COMPLETE turns an unmeasured driver into a finding,
-	// STRICT turns findings into a failed job. Asserted on the `env:` spelling
-	// so prose about them elsewhere in the file does not satisfy this, and
-	// WITHIN the driver-sizes block so they cannot drift onto one of the
-	// advisory per-job steps, where they would be counted and discarded.
+	// The check is worth nothing without both variables: COMPLETE turns an
+	// unmeasured driver into a finding, STRICT turns findings into a failed
+	// job. Asserted on the `env:` spelling so prose about them elsewhere in
+	// the file does not satisfy this, and WITHIN the driver-sizes block.
 	job := driverSizesJob(t, src)
 	for _, want := range []struct{ needle, why string }{
 		{`FERN_SIZE_REPORT_COMPLETE: "1"`, "a baselined driver that reached no report would go unnoticed"},

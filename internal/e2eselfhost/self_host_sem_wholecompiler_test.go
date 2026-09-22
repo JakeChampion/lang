@@ -2,11 +2,13 @@ package e2eselfhost
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -36,6 +38,15 @@ import (
 // four AST emits by both compilers about 2.5 minutes, the semantic emit of
 // the whole tree 2m47s by the driver and 4m34s at 4.4 GB by gen1. It runs in
 // a job of its own (OWN_JOB_TESTS), not in a shard.
+//
+// The phases overlap where nothing orders them, under the harness's RAM
+// reservation (withBuildMemoryMB) so the overlap fits the host: the gen1
+// self-build reserves gen1BuildMB and each whole-tree emit wholeTreeEmitMB,
+// so on a 16 GB runner two whole-tree emits run side by side but neither
+// runs beside the self-build. The single-module emits are unreserved and
+// overlap anything. The self-build starts first and each compiler's semantic
+// emit is queued ahead of its AST ones, so the longest steps hold the slots
+// while the short ones fill in.
 func TestSelfHostSemanticWholeCompilerX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -54,46 +65,115 @@ func TestSelfHostSemanticWholeCompilerX86_64(t *testing.T) {
 	driver := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 	entry := filepath.Join(tree, "fern.fern")
 	work := t.TempDir()
-
 	gen1 := filepath.Join(work, "fern-gen1")
-	report := semSelfBuild(t, driver, entry, stdlibRoot, gen1)
+
+	// One emit each, keyed by compiler and module; "fern" is the whole tree
+	// with the AST lowering and "sem" the whole tree through the semantic one.
+	type emitKey struct{ compiler, module string }
+	emitted := map[emitKey][]byte{}
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	var firstErr error
+	fail := func(err error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+	emit := func(compiler, tag, module string) {
+		wg.Go(func() {
+			src, semantic, reserve := filepath.Join(tree, module+".fern"), false, 0
+			switch module {
+			case "sem":
+				src, semantic, reserve = entry, true, wholeTreeEmitMB
+			case "fern":
+				reserve = wholeTreeEmitMB
+			}
+			var asm []byte
+			err := withBuildMemoryMB(reserve, func() (err error) {
+				asm, err = emitAsm(compiler, src, stdlibRoot, filepath.Join(work, module+"-"+tag+".s"), semantic)
+				return err
+			})
+			if err != nil {
+				fail(err)
+				return
+			}
+			mu.Lock()
+			emitted[emitKey{tag, module}] = asm
+			mu.Unlock()
+		})
+	}
+	modules := []string{"lexer", "parser", "checker", "fern"}
+
+	var report string
+	wg.Go(func() {
+		err := withBuildMemoryMB(gen1BuildMB, func() (err error) {
+			report, err = semSelfBuild(driver, entry, stdlibRoot, gen1)
+			return err
+		})
+		if err != nil {
+			fail(err)
+		}
+	})
+	emit(driver, "driver", "sem")
+	for _, m := range modules {
+		emit(driver, "driver", m)
+	}
+	wg.Wait()
+	if firstErr != nil {
+		t.Fatal(firstErr)
+	}
 	produced, total := semTally(t, report)
 	if produced != total {
 		t.Fatalf("gen1 produced %d of %d declarations; every refusal is a body the AST lowering emits into a mixed module:\n%s",
 			produced, total, report)
 	}
 
-	for _, m := range []string{"lexer", "parser", "checker", "fern"} {
-		src := filepath.Join(tree, m+".fern")
-		want := emitAsm(t, driver, src, stdlibRoot, filepath.Join(work, m+"-driver.s"), false)
-		got := emitAsm(t, gen1, src, stdlibRoot, filepath.Join(work, m+"-gen1.s"), false)
-		if !bytes.Equal(got, want) {
+	emit(gen1, "gen1", "sem")
+	for _, m := range modules {
+		emit(gen1, "gen1", m)
+	}
+	wg.Wait()
+	if firstErr != nil {
+		t.Fatal(firstErr)
+	}
+
+	for _, m := range modules {
+		if got, want := emitted[emitKey{"gen1", m}], emitted[emitKey{"driver", m}]; !bytes.Equal(got, want) {
 			t.Fatalf("gen1 compiles %s.fern differently from the AST-lowered driver (%d bytes against %d)", m, len(got), len(want))
 		}
 	}
-
-	want := emitAsm(t, driver, entry, stdlibRoot, filepath.Join(work, "fern-driver-sem.s"), true)
-	got := emitAsm(t, gen1, entry, stdlibRoot, filepath.Join(work, "fern-gen1-sem.s"), true)
-	if !bytes.Equal(got, want) {
+	if got, want := emitted[emitKey{"gen1", "sem"}], emitted[emitKey{"driver", "sem"}]; !bytes.Equal(got, want) {
 		t.Fatalf("gen1 compiles the whole tree through the semantic path differently from the driver (%d bytes against %d): the fixpoint does not hold", len(got), len(want))
 	}
 }
 
+// RAM reservations for the steps above, from their measured peak RSS on
+// 2026-09-22 (4-core x86-64 container): the gen1 self-build was killed at
+// 8.2 GB by a 14 GB cgroup while a whole-tree emit ran beside it, the
+// whole-tree AST emit peaks 5.3 GB and the semantic one 4.2 GB; a module emit
+// stays under 0.5 GB. The margins are what keep the self-build from sharing
+// a 16 GB host's budget with a whole-tree emit while two emits still fit.
+const (
+	gen1BuildMB     = 9500
+	wholeTreeEmitMB = 6000
+)
+
 // semSelfBuild compiles entry to a linked x86-64 binary at out through the
 // semantic lowering, and returns the compiler's report.
-func semSelfBuild(t *testing.T, compiler, entry, stdlibRoot, out string) string {
-	t.Helper()
+func semSelfBuild(compiler, entry, stdlibRoot, out string) (string, error) {
 	cmd := exec.Command(compiler, "-target", "x86-64-linux", "-o", out, entry, stdlibRoot)
 	cmd.Env = append(os.Environ(), "FERN_SEM_IR=1", "FERN_SEM_IR_REPORT=1")
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("%s building %s through the semantic lowering: %v\n%s", filepath.Base(compiler), filepath.Base(entry), err, stderr.String())
+		return "", fmt.Errorf("%s building %s through the semantic lowering: %v\n%s", filepath.Base(compiler), filepath.Base(entry), err, stderr.String())
 	}
 	if err := os.Chmod(out, 0o755); err != nil {
-		t.Fatal(err)
+		return "", err
 	}
-	return stderr.String()
+	return stderr.String(), nil
 }
 
 var semTallyLine = regexp.MustCompile(`module: produced (\d+) of (\d+) declarations`)
@@ -117,22 +197,21 @@ func semTally(t *testing.T, report string) (int, int) {
 // emitAsm compiles src to x86-64 assembly text with the semantic lowering
 // off (the two compilers compared on the lowering they both carry) or on
 // (the fixpoint).
-func emitAsm(t *testing.T, compiler, src, stdlibRoot, out string, semantic bool) []byte {
-	t.Helper()
+func emitAsm(compiler, src, stdlibRoot, out string, semantic bool) ([]byte, error) {
 	cmd := exec.Command(compiler, "-target", "x86-64-linux", "-emit", "asm", src, stdlibRoot, "-o", out)
 	cmd.Env = append(os.Environ(), "FERN_SEM_IR=")
 	if semantic {
 		cmd.Env = append(cmd.Env, "FERN_SEM_IR=1")
 	}
 	if msg, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("%s on %s: %v\n%s", filepath.Base(compiler), filepath.Base(src), err, msg)
+		return nil, fmt.Errorf("%s on %s: %v\n%s", filepath.Base(compiler), filepath.Base(src), err, msg)
 	}
 	asm, err := os.ReadFile(out)
 	if err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
 	if len(asm) == 0 {
-		t.Fatalf("%s emitted nothing for %s", filepath.Base(compiler), filepath.Base(src))
+		return nil, fmt.Errorf("%s emitted nothing for %s", filepath.Base(compiler), filepath.Base(src))
 	}
-	return asm
+	return asm, nil
 }
