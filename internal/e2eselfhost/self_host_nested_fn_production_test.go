@@ -141,8 +141,8 @@ func TestSelfHostNestedFnProductionRunsX86_64(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 		asm := string(runDriverFile(t, runner, driverBin, entry))
-		if !strings.Contains(asm, ".Lir") {
-			t.Fatalf("%s did not route through the IR path", name)
+		if !strings.Contains(asm, ".Lssa_") {
+			t.Fatalf("%s did not emit through the register path", name)
 		}
 		bin := buildBin(t, gcc, progDir, "nested_fn_"+name, asm)
 		_, exit := runBin(binCmd(runner, bin), "")

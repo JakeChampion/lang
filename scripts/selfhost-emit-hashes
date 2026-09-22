@@ -12,11 +12,7 @@
 # not emitted `.s` text: the default path runs a plain `-o` build, so the
 # in-process assembler is inside what is being compared. That matters for a
 # change to the assembler itself, where an asm-text hash would be invariant by
-# construction and prove nothing. (`--ssa` builds every case with
-# `-backend ssa`, the register-allocating emitter, and hashes the same
-# artifact. Since the register path became the default on both native ISAs,
-# that is also what the DEFAULT sweep emits for them, so `--ssa` differs from
-# it only on wasm, which has no register path and is unaffected by the flag.)
+# construction and prove nothing.
 #
 # This exists because the compiler's own type system cannot catch the mistakes
 # a mechanical refactor makes. Whole families of values here share one type —
@@ -27,7 +23,7 @@
 # structurally blind to a stable miscompile. Comparing emitted bytes over a
 # broad corpus is the check that actually bites.
 #
-#   usage: scripts/selfhost-emit-hashes [--ssa] <compiler-binary> <output-file>
+#   usage: scripts/selfhost-emit-hashes <compiler-binary> <output-file>
 #
 #   make selfhost-cli
 #   cp bin/fern-selfhost /tmp/before          # on the base commit
@@ -43,23 +39,13 @@
 # run, not from this comment. Fixtures the
 # compiler refuses are recorded as FAILED rather than skipped, so a refactor
 # that changes WHICH programs compile shows up as a diff too.
-#
-# --ssa builds every native case with `-backend ssa` (docs/SELFHOST-SSA-BACKEND.md)
-# instead of the stack machine. That backend declines a function it cannot
-# lift and emits it flat, so every case builds; a purity sweep of it is this
-# script's default sweep with the flag. wasm has no SSA backend and is skipped.
 
 set -u
 
-SSA=0
-if [ "${1:-}" = "--ssa" ]; then
-    SSA=1
-    shift
-fi
 BIN="${1:-}"
 OUT="${2:-}"
 if [ -z "$BIN" ] || [ -z "$OUT" ]; then
-    echo "usage: $0 [--ssa] <compiler-binary> <output-file>" >&2
+    echo "usage: $0 <compiler-binary> <output-file>" >&2
     exit 2
 fi
 if [ ! -x "$BIN" ]; then
@@ -82,13 +68,7 @@ trap 'rm -rf "$TMP"' EXIT
 for f in $(find "$CASES" -name '*.fern' | sort); do
     for tgt in x86-64-linux arm64-linux wasm32-wasi; do
         o="$TMP/out"
-        if [ "$SSA" -eq 1 ] && [ "$tgt" = wasm32-wasi ]; then
-            continue
-        fi
-        backend=""
-        if [ "$SSA" -eq 1 ]; then backend="-backend ssa"; fi
-        # shellcheck disable=SC2086
-        if "$BIN" $backend -target "$tgt" "$f" "$STD" -o "$o" >/dev/null 2>&1 && [ -s "$o" ]; then
+        if "$BIN" -target "$tgt" "$f" "$STD" -o "$o" >/dev/null 2>&1 && [ -s "$o" ]; then
             printf '%s  %s  %s\n' "$(sha256sum < "$o" | cut -d' ' -f1)" "$tgt" "${f#"$CASES"/}" >> "$OUT"
         else
             printf 'FAILED%058d  %s  %s\n' 0 "$tgt" "${f#"$CASES"/}" >> "$OUT"
@@ -109,7 +89,7 @@ echo "$(wc -l < "$OUT") rows written to $OUT ($ok emitted, $bad refused)"
 if [ "$ok" -lt 1 ]; then
     echo "$0: no row emitted — the comparison would be between placeholders" >&2
     echo "  and would call any refactor pure." >&2
-    echo "  Check that $BIN runs, that the -target spellings above are ones it" >&2
-    echo "  accepts, and under --ssa that it accepts -backend ssa." >&2
+    echo "  Check that $BIN runs and that the -target spellings above are ones it" >&2
+    echo "  accepts." >&2
     exit 1
 fi

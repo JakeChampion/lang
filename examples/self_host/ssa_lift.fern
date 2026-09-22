@@ -4,7 +4,7 @@
 // `-backend ssa` (docs/SELFHOST-SSA-BACKEND.md): each lowered function's ops
 // become one SFunc that `ssa.prune_dead`, `ssa.regalloc_linear` and the
 // per-ISA emitters in `asm_arm64_ir.fern` and `asm_ir.fern` turn into code
-// on the stack machine's own frame, ABI and runtime.
+// on the frame, ABI and runtime the stack machine this replaced used.
 //
 // What comes out is spelled onto the flat backends' layouts, never a layout
 // of its own: a record field is a load at (i+1)*8 behind the shape word, an
@@ -24,7 +24,8 @@
 // scope exit and loop header, and the structured scopes (`block` / `loop` /
 // `if` / `else` / `end`, `br` / `brif`) are tracked on an explicit scope
 // stack. An op the lift cannot admit sets `ok=false` and names itself in
-// `bail`, and the backend emits that function on the stack machine.
+// `bail`, and the backend refuses the function naming it: every op the
+// lowering produces has an arm, so a bail is a compiler bug (ircore.ssa_refuse).
 
 import "./ir";
 import "./ssa";
