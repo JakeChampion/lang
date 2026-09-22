@@ -1,0 +1,169 @@
+# 2026-09-22 — the stack machine's function driver is gone
+
+`docs/SELFHOST-SSA-BACKEND.md`'s retirement order ended at "the deletion
+itself": the stack machine's per-function driver on both native ISAs, kept
+as the fall-back for a function the register path declined, after the
+corpus lane had held the decline count at zero on 866 modules per ISA. This
+entry is that deletion.
+
+## What changed
+
+On arm64 and x86-64 the register path is the only emitter. Each backend's
+`emit_function_via_ir_named` verifies the lowered ops and hands them to
+`emit_ssa_function`; a function the lift or the emitter cannot take is a
+refusal naming the function and the op (`ircore.ssa_refuse`, exit 3), where
+it used to fall back to the stack machine. Gone with the driver:
+
+- the stack machine's prologue, zero-initialised local slots, parameter
+  copy, op-index labels (`.Lir_*` / `.Lira_*`) and epilogue, on both ISAs;
+- every arm of `emit_stack_op` for an op the lift lowers itself — the
+  spine, the box layouts, the host floor, the f64 ops, the string ops the
+  lift makes stack-ABI calls — 119 of the 218 arms on x86-64 and 116 of
+  215 on arm64, plus the six lifted string ops in each `emit_str_op`. What
+  stays is one arm per op the register path bridges through `ssa_flat_op`
+  (the OS floor, the map ops, the byte kernels, the byte-buffer builder),
+  and a refusal (`ircore.flat_arm_missing`) for an op that reaches the
+  table without one, where the old catch-all emitted a binary op;
+- the helpers only those arms reached: the cond-jump and flag-branch
+  scanners (`emit_ir_cond_jump`, `ircore.flag_branch`,
+  `ircore.flag_branch_consumer`, `ircore.br_target`), the shift-by-previous-
+  constant readers, the constant pushers, and the per-op emitters for
+  calls, dispatch, constructions and conversions;
+- `-backend flat` on the native ISAs (refused, naming the retirement; it
+  still names wasm's one emitter), the `FERN_SSA_ONLY` / `FERN_SSA_SKIP`
+  bisect knobs (a declined function has nowhere to go), the
+  `ssa_backend` / `ssa_emitted` / `ssa_declined` fields and the module
+  tally they fed, and the corpus coverage gate and `TestSSACoverageProblems`
+  that read the tally: a decline is now a compile failure the fixture legs
+  report on their own. `FERN_SSA_REPORT=1` keeps the one line it still has
+  a use for, the function whose lift or emit took over 200 ms.
+
+2,453 lines leave `examples/self_host/`, 161 arrive.
+
+## The one thing the driver had that the register path did not
+
+The x86-64 stack machine lowered a divide by a literal (`ir_div_const`: a
+power of two is a shift with the round-toward-zero bias, an i32 divisor
+neither zero nor a power of two the multiply-high reciprocal, an i64 one
+the unguarded divide) and the register path did not: its division arm kept
+every divisor in a register and ran the guarded `idiv`. Deleting the driver
+would have deleted the only copy. It moved instead: `ssa.Imms` now says
+which values are integer constants at all (`konst`) and what each is worth,
+the four div/rem kinds are immediate-operand consumers on x86-64 so the
+constant is never materialised, and `ssa_binary` renders `ir_div_const` for
+a constant divisor. `TestSelfHostConstDivisorShapesX86_64` pins the shapes
+through the `asm_ir_run` driver, which now emits through the register path.
+
+## Purity
+
+The compiler compiling itself, `-emit asm` of `fern.fern`, the compiler
+built from the parent commit against the compiler built from this one:
+
+| | old | new |
+|---|---|---|
+| arm64-linux | 3,188,217 lines | **byte-identical** |
+| x86-64-linux | 3,241,459 lines | 3,240,057 lines, 272 functions differ |
+
+Every differing x86-64 function is a divide by a literal now taking the
+literal-divisor form (`util__i32_to_string`'s `/ 10` and `% 10` are the
+first two), which is the change above and nothing else: the driver
+deletion itself moved no byte on either ISA. The same three small programs
+run to native's stdout and exit status on both ISAs.
+
+## Gates
+
+`TestSelfHostSSABackendAgreesWithStackMachine` compared the register path
+with the stack machine; with one side gone it is
+`TestSelfHostSSABackendAgreesWithNative`, the same programs compiled by the
+native compiler for the other side, on both ISAs. `TestSelfHostSSAConstants
+AreImmediates` pinned the divisor 97 in a register on x86-64; it now pins
+the literal-divisor form loading it and the two run-time guards absent.
+The unwind test lost its flat leg, `-backend flat` is pinned refused on the
+native ISAs and accepted on wasm, and the tests that read `.Lir_` labels
+as "went through the IR" read `.Lssa_`.
+
+## The peepholes went with it
+
+`peephole_push_pop` (x86-64) and `peephole_push_pop_arm64` were text
+post-passes over the stack machine's output: every op pushed its result and
+the next op popped it, and the passes folded the adjacent pair into the move
+it was, then grew rules for the constant-into-ALU and argument-setup shapes
+around it (P1–P7). The register path never round-trips an operand through
+the stack, so on its output there was almost nothing left to fold — the
+compiler's own source, with and without the pass:
+
+| | without | with |
+|---|---|---|
+| x86-64-linux | 3,242,794 lines | 3,242,604 (190 fewer) |
+| arm64-linux | 3,190,957 lines | 3,188,217 (2,740 fewer) |
+
+Both passes are deleted (1,490 lines), with asmcore's byte scanners that
+only they read and the `TestSelfHostPeepholePushPop*` postcondition tests.
+The residual pairs are the flat-op bridge's own push-then-pop around an
+`emit_stack_op` arm; if they are ever worth removing, the fix is in the
+bridge, not a scanner over the text.
+
+The shape gates that pinned the peepholes' rewrites
+(`TestSelfHostConstOperandReachesImmediateForm*`,
+`TestSelfHostConstZeroExtendedFormX86_64`,
+`TestSelfHostI64ConstantTakesMovzFormArm64`) now pin the register path's
+own instruction selection for the same programs — the immediate operand,
+its width refusals, the constant forms — with the register left open in
+each pattern. The P5/P6/P7 gates (operand-stack round trips around a call
+or a store) had no subject left and are gone. Two selection gaps the
+rewrite exposed are fixed:
+
+- x86-64 materialised a constant into any register but `%r11` as `movq $K,
+  %reg`, so `2147483648` became a ten-byte movabs where `movl $K, %e..`
+  (five bytes, zero-extending) holds it, and `0` was never the self-xor.
+  `ssa_const_reg` now applies the one set of forms to every register.
+- `ssa.imm_operands` refused BOTH operands of a two-constant op as
+  immediates, so `0i64 - 5i64` — how Fern spells a negative literal — cost
+  two moves and a register subtraction on both ISAs. The right operand is
+  now the immediate and the left keeps the register.
+
+One gap is recorded, not fixed: arm64 P4 accepted a multiple of 4096 up to
+`0xFFF000` as an add/sub/cmp immediate (imm12's shifted form) and
+`ssa.imm_operands` takes one `lo..hi` range for every op, so `x - 4096` is
+a `mov` and a register subtract. A per-op predicate in `imm_operands` is
+the shape of the fix; the gate pins the boundary at 4095 meanwhile.
+
+The arm64 sysno assertions (`TestSelfHostSignalDispositionIRArm64`,
+`TestSelfHostPollIRArm64`, the subprocess, fork, exec, sysinfo and
+darwinized-helper tests) read `mov x0, #N` followed by its push, the stack
+machine's operand shape; they now read the number materialised in whichever
+register the allocator chose (`arm64Imm`, `pushedImm`).
+
+## What the driver's tests were really pinning
+
+`asm_ir_run`, the driver most of `internal/e2eselfhost` emits through, went
+through the stack machine until this change, so every shape gate written
+against it pinned the stack machine's output even after the register path
+became the CLI's default. Re-reading them against the register path found
+one selection gap and one blind spot in the gates themselves:
+
+- **`if (!flag)` was not fused.** `ssa_fuse` read a `not` over a compare as
+  the inverted compare, but a `not` over a plain boolean was materialised
+  (`test; setz; movzbq` / `cmp #0; cset eq`) and then tested again by the
+  branch. It now fuses as the value test with the edges swapped (`fu.tag`
+  0), on both ISAs — `TestSelfHostCmpBranchFusion`'s not-only shape.
+- **The rc primitives are inline.** `rc_inc` and `rc_is_unique` are
+  rendered at the site (`ssa_rc_prim`), so a gate counting
+  `call __fn___fern_rc_inc` saw zero retains where the code had one. The
+  inline forms' labels now name the primitive (`_rcinc<N>`, `_rcuniq<N>`),
+  and `rcIncSites` / `rcIsUniqueSites` count calls and inline forms alike.
+
+The literal-pool range fixture (`TestSelfHostArm64LitPoolRange`) dropped
+from past the LDR reach to 4,847 words: its 76,000 constants were bound to
+locals nothing read, which the stack machine stored and the register path
+does not emit. Each constant is now read through a parameter the fold cannot
+see.
+
+## Found on the way
+
+The `floats` differential program called `f32_bits` on an f64. Native
+refuses that (E038, argument 1: expected f32) and the self-host accepts it:
+`checker.fern` types the four float-bits builtins' results
+(`free_builtin_result`) and never their parameters, so a bare-ident call of
+one is not argument-checked. The program is corrected to `f32_bits(y as
+f32)`; the checker gap is #9987, the next fix.

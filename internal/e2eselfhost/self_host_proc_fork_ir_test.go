@@ -116,11 +116,17 @@ func TestSelfHostProcForkIRArm64(t *testing.T) {
 			}
 			// Both are Fern since #2649, so both carry the stack-ABI prefix and
 			// both syscall numbers arrive as ordinary pushed operands popped into
-			// x8 — hence `mov x0, #N` rather than `mov x8, #N`. clone is the
-			// five-argument __syscall5 form; wait4 is __syscall4.
-			for _, want := range []string{"bl __fn___fern_proc_fork", "bl __fn___fern_proc_waitpid", "mov x0, #220", "mov x0, #260"} {
+			// x8 — hence a MOVZ into a register of the allocator's choosing rather
+			// than `mov x8, #N`. clone is the five-argument __syscall5 form; wait4
+			// is __syscall4.
+			for _, want := range []string{"bl __fn___fern_proc_fork", "bl __fn___fern_proc_waitpid"} {
 				if !strings.Contains(asm, want) {
 					t.Errorf("emitted arm64 asm missing %q", want)
+				}
+			}
+			for _, want := range []string{"220", "260"} {
+				if !arm64Imm(asm, want) {
+					t.Errorf("emitted arm64 asm does not materialise the syscall number %s", want)
 				}
 			}
 			cmd := runArm64Bin(qemu, buildBinArm64(t, arm64gcc, dir, "procfork_"+tc.name, asm))

@@ -3,6 +3,7 @@ package e2eselfhost
 import (
 	"bytes"
 	"os/exec"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -24,7 +25,9 @@ import (
 // convert, double) native emitFConvertI64 uses; u32 is zero-extended into the
 // 64-bit source first. Each case asserts the emitted asm reached the expected
 // instruction sequence — so a fix that merely changes the answer cannot pass by
-// accident — then runs it against the interpreter oracle.
+// accident — then runs it against the interpreter oracle. The expectations are
+// regular expressions over the register path's listing, where the source
+// register is whichever the allocator chose.
 func TestSelfHostIntToF64X86_64IR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
@@ -40,16 +43,16 @@ func TestSelfHostIntToF64X86_64IR(t *testing.T) {
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
-			if !strings.Contains(string(asm), ".Lir_") {
-				t.Fatalf("%s did not lower through the IR (no .Lir_ labels)", tc.name)
+			if !strings.Contains(string(asm), ".Lssa_") {
+				t.Fatalf("%s did not lower through the IR (no .Lssa_ labels)", tc.name)
 			}
 			for _, want := range tc.x86Want {
-				if !strings.Contains(string(asm), want) {
+				if !regexp.MustCompile(want).Match(asm) {
 					t.Errorf("%s: emitted asm lacks %q — the width/signedness is not reaching instruction selection", tc.name, want)
 				}
 			}
 			for _, avoid := range tc.x86Avoid {
-				if strings.Contains(string(asm), avoid) {
+				if regexp.MustCompile(avoid).Match(asm) {
 					t.Errorf("%s: emitted asm contains %q — the conversion took the wrong signedness", tc.name, avoid)
 				}
 			}
@@ -71,8 +74,8 @@ func TestSelfHostIntToF64X86_64IR(t *testing.T) {
 
 // TestSelfHostIntToF64Arm64IR — CI-gated arm64 counterpart. arm64 has both
 // conversions, so the u64 case is one instruction (ucvtf) rather than x86's
-// halving sequence, but the bug was identical: an unconditional `scvtf d0, x0`
-// read u64::MAX as -1.0.
+// halving sequence, but the bug was identical: an unconditional `scvtf` read
+// u64::MAX as -1.0. The register path converts through its x4 scratch.
 func TestSelfHostIntToF64Arm64IR(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -131,7 +134,7 @@ func intToF64Cases() []struct {
     var threshold: f64 = 10000000000000000000.0f64;
     if (f > threshold) { return 0; }
     return 1;
-}`, []string{"shrq $1, %rcx", "addsd %xmm0, %xmm0"}, nil, []string{"ucvtf d0, x0"}},
+}`, []string{`shrq \$1, %rcx`, `addsd %xmm0, %xmm0`}, nil, []string{"ucvtf d0, x4"}},
 		// A u64 BELOW 2^63 must still take the plain signed convert — the
 		// halving path is only for the values it cannot express.
 		{"u64-below-2p63", `function main(): i32 {
@@ -139,7 +142,7 @@ func intToF64Cases() []struct {
     var f: f64 = u as f64;
     if (f > 9000000000000000000.0f64) { return 0; }
     return 1;
-}`, []string{"cvtsi2sd"}, nil, []string{"ucvtf d0, x0"}},
+}`, []string{`cvtsi2sd`}, nil, []string{"ucvtf d0, x4"}},
 		// u32 with bit 31 set: zero-extended into the 64-bit source, so the
 		// signed convert is exact.
 		{"u32-roundtrips-through-f64", `function main(): i32 {
@@ -148,18 +151,18 @@ func intToF64Cases() []struct {
     var back: u32 = f as u32;
     if (back == u) { return 0; }
     return 1;
-}`, []string{"movl %eax, %eax\n    cvtsi2sd %rax, %xmm0"}, nil, []string{"ucvtf d0, w0"}},
+}`, []string{`movl %[a-z0-9]+, %[a-z0-9]+\n\s+cvtsi2sd %[a-z0-9]+, %xmm0`}, nil, []string{"ucvtf d0, w4"}},
 		{"negative-i32-stays-signed", `function main(): i32 {
     var n: i32 = 0 - 5;
     var f: f64 = n as f64;
     if (f < 0.0) { return 0; }
     return 1;
-}`, []string{"cvtsi2sd %rax, %xmm0"}, []string{"movl %eax, %eax\n    cvtsi2sd"}, []string{"scvtf d0, x0"}},
+}`, []string{`cvtsi2sd %[a-z0-9]+, %xmm0`}, []string{`movl %[a-z0-9]+, %[a-z0-9]+\n\s+cvtsi2sd`}, []string{"scvtf d0, x4"}},
 		{"negative-i64-stays-signed", `function main(): i32 {
     var n: i64 = 0 - 5000000000;
     var f: f64 = n as f64;
     if (f < 0.0) { return 0; }
     return 1;
-}`, []string{"cvtsi2sd %rax, %xmm0"}, []string{"shrq $1, %rcx"}, []string{"scvtf d0, x0"}},
+}`, []string{`cvtsi2sd %[a-z0-9]+, %xmm0`}, []string{`shrq \$1, %rcx`}, []string{"scvtf d0, x4"}},
 	}
 }

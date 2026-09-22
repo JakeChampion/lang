@@ -19,7 +19,7 @@ import (
 // the argument (me_expr's ExprCall arm + func_param_type_at). The QUALIFIED
 // form `get(Opt.Non)` pins the same `expected` in me_expr's ExprFieldAccess
 // arm — the delta this test's `qualified-unit-variant-arg` case guards. All
-// cases lower via the IR path (.Lir_ witness) and compute the native value;
+// cases lower via the IR path (.Lssa_ witness) and compute the native value;
 // non-generic enums, annotated-var binds, and payload-bearing variant args are
 // kept as regressions.
 func TestSelfHostGenericEnumUnitArgIRX86_64(t *testing.T) {
@@ -75,7 +75,7 @@ func TestSelfHostGenericEnumUnitArgIRX86_64(t *testing.T) {
 			if len(asm) == 0 {
 				t.Fatalf("%s: self-host compiler emitted 0 bytes", tc.name)
 			}
-			if !strings.Contains(string(asm), ".Lir_") {
+			if !strings.Contains(string(asm), ".Lssa_") {
 				t.Fatalf("%s: emitted asm has no IR-path labels — the generic-enum unit-variant arg did not lower through the IR", tc.name)
 			}
 			bin := buildBin(t, gcc, dir, tc.name, string(asm))

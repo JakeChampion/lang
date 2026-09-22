@@ -16,7 +16,7 @@ import (
 // to, a capturing lambda in a struct fn FIELD miscompiled (silent wrong values:
 // native 20 read back as 4). The binding resolves from the scrutinee's Option /
 // Result type spelling (opt_payload_type), so these shapes lower via the IR
-// path (asserted via the .Lir_ label witness) and compute the native values,
+// path (asserted via the .Lssa_ label witness) and compute the native values,
 // including a `string` payload whose captured var must dispatch `.len()`
 // correctly. USER-ENUM variant payloads resolve via the enum decls threaded
 // into the lift pass (#5155); a CALL scrutinee (`match (pop(i)) { … }`)
@@ -97,7 +97,7 @@ func TestSelfHostMatchPayloadCaptureIRX86_64(t *testing.T) {
 			if len(asm) == 0 {
 				t.Fatalf("%s: self-host compiler emitted 0 bytes", tc.name)
 			}
-			if !strings.Contains(string(asm), ".Lir_") {
+			if !strings.Contains(string(asm), ".Lssa_") {
 				t.Fatalf("%s: emitted asm has no IR-path labels — the payload capture did not lower through the IR", tc.name)
 			}
 			bin := buildBin(t, gcc, dir, tc.name, string(asm))

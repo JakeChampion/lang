@@ -18,7 +18,7 @@ import (
 // arg to a symbol-safe key, `Insts.iargs` threads the ORIGINAL spelling so the
 // clone's field gets the real fn type (coarsened to "fn" + fn_ret, the parser's
 // shape), and the IR match-arm binding marks it a closure local — so the chain
-// computes the native value on the IR path (`.Lir_` asserted).
+// computes the native value on the IR path (`.Lssa_` asserted).
 //
 // The INLINE construct-and-match shape (`match (Has(f))`, no annotation) is
 // covered too (#5298 follow-up): the StmtVar lambda encoding carries the full
@@ -86,7 +86,7 @@ func TestSelfHostFnKeyEnumIRX86_64(t *testing.T) {
 			if len(asm) == 0 {
 				t.Fatalf("%s: self-host compiler emitted 0 bytes", tc.name)
 			}
-			if !strings.Contains(string(asm), ".Lir_") {
+			if !strings.Contains(string(asm), ".Lssa_") {
 				t.Fatalf("%s: emitted asm has no IR-path labels — the fn-keyed enum did not lower through the IR", tc.name)
 			}
 			bin := buildBin(t, gcc, dir, tc.name, string(asm))

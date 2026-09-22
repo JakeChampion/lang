@@ -112,12 +112,11 @@ func emitSSAAsmASTLeg(t *testing.T, fernBin, stdlibRoot, src, target string) []b
 	if len(asm) == 0 {
 		t.Fatalf("emit %s asm: empty listing", target)
 	}
-	// A function the lift declines is emitted by the stack machine instead,
-	// under `.Lir_*` / `.Lira_*` labels — no `.Lssa_walk_*` at all, and the
-	// duplicate-label assertions below would hold over an assembly that never
-	// took the path they are about.
+	// The function's own labels are what the duplicate-label assertions below
+	// are about; without them they would hold over a listing that never took
+	// the path (a renamed function, a program that refused before emit).
 	if !strings.Contains(string(asm), ".Lssa_walk_") {
-		t.Fatalf("emit %s asm: walk was not emitted from SSA; the register path declined it", target)
+		t.Fatalf("emit %s asm: no .Lssa_walk_ label in the listing", target)
 	}
 	return asm
 }

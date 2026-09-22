@@ -1491,14 +1491,18 @@ function assign_spill_slots(hi: i32[], reg_of: i32[]): i32[] {
 }
 
 // Imms marks the integer constants an emitter reads as immediate operands and
-// never materialises: `is_imm[v]` says value v needs no home, `value[v]` is
-// the constant. A constant qualifies when it lies in lo..hi and every use is
-// a binary op reading it as the right operand of an op named in `right`, or
-// as the left operand of one named in `left` (the commutative ops and the
-// comparisons, which the emitter turns round); a use anywhere else keeps it
-// in a register, as does an op whose other operand is a constant too (the
-// optimiser's folds do not run here, so `0 + 1` reaches the emitter).
-pub struct Imms { is_imm: boolean[], value: i64[] }
+// never materialises: `is_imm[v]` says value v needs no home. A constant
+// qualifies when it lies in lo..hi and every use is a binary op reading it as
+// the right operand of an op named in `right`, or as the left operand of one
+// named in `left` (the commutative ops and the comparisons, which the emitter
+// turns round); a use anywhere else keeps it in a register. When both
+// operands are constants (the optimiser's folds do not run here, so
+// `0i64 - 5i64` reaches the emitter) only the right one is an immediate, so
+// the op still has a register to compute in. `konst[v]` says v is an integer
+// constant at all and `value[v]` is its value, whether or not it is an
+// immediate, for an arm that specialises on a constant it still reads from a
+// register (the x86-64 literal-divisor forms).
+pub struct Imms { is_imm: boolean[], konst: boolean[], value: i64[] }
 
 pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: string[], left: string[]): Imms {
     var is_imm: boolean[] = [];
@@ -1512,9 +1516,9 @@ pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: string[], left: str
             konst = konst.with(ins.result, true);
             var c: i64 = ins.imm as i64;
             if (ins.kind_tag == 3) { c = util.lit_to_i64(ins.str); }
+            value = value.with(ins.result, c);
             if (c < lo || c > hi) { continue; }
             is_imm = is_imm.with(ins.result, true);
-            value = value.with(ins.result, c);
         }
     }
     for blk in f.blocks {
@@ -1530,12 +1534,13 @@ pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: string[], left: str
         if (t.kind_tag == 1 && t.value >= 0 && t.value < is_imm.len()) { is_imm = is_imm.with(t.value, false); }
         if (t.kind_tag == 3 && t.cond >= 0 && t.cond < is_imm.len()) { is_imm = is_imm.with(t.cond, false); }
     }
-    return Imms { is_imm: is_imm, value: value };
+    return Imms { is_imm: is_imm, konst: konst, value: value };
 }
 function imm_use(ins: SInst, a: i32, konst: boolean[], right: string[], left: string[]): boolean {
     if (ins.kind_tag != 9 || ins.args.len() != 2) { return false; }
     var other: i32 = ins.args[1 - a];
-    if (other < 0 || other >= konst.len() || konst[other]) { return false; }
+    if (other < 0 || other >= konst.len()) { return false; }
+    if (a == 0 && konst[other]) { return false; }
     var names: string[] = left;
     if (a == 1) { names = right; }
     for n in names { if (n == ins.str) { return true; } }

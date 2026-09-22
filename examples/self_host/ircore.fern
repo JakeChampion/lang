@@ -15,8 +15,8 @@
 //   * the helper-name map — is_fern_helper / ir_helper_symbol and the
 //     `__struct_drop_<T>` / `__field_reclaim_<T>` name<->type pair, plus the
 //     C-call classifier;
-//   * label naming and control-flow resolution — br_target, str_lit_label,
-//     str_box_label, and the compare-and-branch run flag_branch resolves;
+//   * label naming — str_lit_label, str_box_label — and the comparison
+//     classifiers the register path's compare-and-branch fusion reads;
 //   * the AST pre-passes each backend runs before it emits — lift_lambdas and
 //     script_normalized;
 //   * wp_fn_sigs, the whole-program lowering side-tables every emit path
@@ -172,6 +172,12 @@ pub function is_fern_helper(name: string): boolean {
         // value type. wasm_helper_symbol routes both to $__fern_map_release_vf.
         || name == "__fern_map_free_vf"
         || name == "__fern_map_free_ksvf"
+        // The keyed-column members (#9962): (box, key release), and for a
+        // column of boxes beside it (box, key release, value release).
+        || name == "__fern_map_free_kf"
+        || name == "__fern_map_free_kfvs"
+        || name == "__fern_map_free_kfvsa"
+        || name == "__fern_map_free_kfvf"
         || name == "__fern_rc_is_unique"
         // element retain ahead of an un-share copy: one rc_inc per element of
         // a pointer-element array, so the copy and the original both hold a
@@ -461,9 +467,9 @@ pub function strict_ir_on(): boolean {
     }
 }
 
-// ssa_report_on reports whether FERN_SSA_REPORT asks for a line per function
-// the SSA backend declines and a tally per module, on stderr. Nothing about the
-// emitted program changes with it.
+// ssa_report_on reports whether FERN_SSA_REPORT asks for a line on stderr per
+// function whose lift or emit took over 200 ms. Nothing about the emitted
+// program changes with it.
 pub function ssa_report_on(): boolean {
     match (env("FERN_SSA_REPORT")) {
         Some(v) => { return v.len() > 0; },
@@ -471,35 +477,25 @@ pub function ssa_report_on(): boolean {
     }
 }
 
-// ssa_selected reports whether the SSA backend may emit the function `name`
-// under the bisect knobs: FERN_SSA_ONLY, a comma-separated list of name
-// prefixes of which one must match, and FERN_SSA_SKIP, the same list read as
-// an exclusion. Both empty (or unset) selects every function. A declined
-// function keeps the stack machine, so halving the emitted set with these
-// is how a wrong answer or a slow compile is walked in on.
-pub function ssa_selected(name: string): boolean {
-    var only: string = env_or_empty("FERN_SSA_ONLY");
-    var skip: string = env_or_empty("FERN_SSA_SKIP");
-    if (only.len() > 0 && !has_prefix_in(only, name)) { return false; }
-    return !(skip.len() > 0 && has_prefix_in(skip, name));
+// ssa_refuse reports a function the register path cannot emit, and exits.
+// `why` is the IR op kind the lift bailed on, or the SSA instruction the
+// emitter has no selection for. The register path is the only emitter on the
+// native ISAs, so this is a compiler bug naming its site, never a program the
+// backend does not cover.
+pub function ssa_refuse(name: string, why: string): i32 {
+    eprint("error: internal: " + name + " did not lift to SSA: " + why + " — the register path is the only native emitter and every op the lowering produces must reach it\n");
+    exit(3);
+    return 0;
 }
 
-function env_or_empty(key: string): string {
-    match (env(key)) {
-        Some(v) => { return v; },
-        None => { return ""; }
-    }
-}
-
-function has_prefix_in(list: string, name: string): boolean {
-    var at: i32 = 0;
-    var field: string = irlower.csv_nth(list, at);
-    while (field.len() > 0) {
-        if (util.str_has_prefix(name, field)) { return true; }
-        at = at + 1;
-        field = irlower.csv_nth(list, at);
-    }
-    return false;
+// flat_arm_missing reports an op the register path bridged onto the machine
+// stack (ssa_flat_op) that the op table has no arm for, and exits. The lift
+// bridges any op with a known stack effect, so a new op kind whose pop count
+// ir.op_pops models lands here until its arm is written.
+pub function flat_arm_missing(o: ir.Op): i32 {
+    eprint("error: internal: no stack-machine arm for op " + ir.kind_name(o.kind_tag) + " — the register path bridges it through emit_stack_op, which has no arm for it\n");
+    exit(3);
+    return 0;
 }
 
 // strict_ir_refuse reports an IR bail as a hard error and exits. Called only when
@@ -511,8 +507,7 @@ pub function strict_ir_refuse(what: string): i32 {
 }
 
 // ssa_block_id_collision reports an SSA lift that returned two blocks carrying
-// one id, and exits. Declining the function instead would hide a compiler
-// defect behind a silent fall-through to the stack machine (#9688).
+// one id, and exits (#9688).
 pub function ssa_block_id_collision(name: string, id: i32): i32 {
     eprint("error: internal: the SSA lift returned block " + util.i32_to_string(id) + " twice in " + name + " — one `.Lssa_` label would be written twice; this is a compiler bug (#9688)\n");
     exit(3);
@@ -836,33 +831,15 @@ function calls_only_known(fd: parser.FuncDecl, mod: parser.Module, known: string
     return true;
 }
 
-// br_target resolves a `br d` / `br_if d` at op index `i` to its label: a
-// loop scope -> its header label (the loop op's index); a block/if scope ->
-// the label at its matching `end`. Uses irlower's nesting scanners — no
-// threaded scope-stack state (a self-host-robust formulation; the earlier
-// grow-and-overwrite string[] scope arrays mis-ran under the self-hosted
-// compiler).
-pub function br_target(ops: ir.Op[], lp: string, i: i32, d: i32): string {
-    var op: i32 = ir.enclosing_opener(ops, i, d);
-    // No enclosing opener at depth `d` (an unbalanced op stream): resolve to the
-    // function-boundary label rather than indexing ops[-1] (an OOB read whose
-    // garbage `kind` would fabricate a bogus, possibly-dangling target). The
-    // boundary label is defined at the epilogue (see emit_function_via_ir).
-    if (op < 0) { return lp + util.i32_to_string(ops.len()); }
-    if (ops[op].kind_tag == 153) { return lp + util.i32_to_string(op); }  // loop
-    return lp + util.i32_to_string(ir.find_matching_end(ops, op + 1));
-}
-
 // ---- compare-and-branch fusion --------------------------------------------
 //
-// The stack IR has no flags: a comparison pushes 0/1, `not` pops that and
-// pushes its inverse, and `if` / `br_if` pops the result and tests it again. On
-// a flags machine the comparison sets the flags the branch reads, so the whole
-// run is one compare and one conditional jump. These two scans resolve the run
-// over the op stream; which mnemonic comes out is the backend's (#4378, #8194).
-//
-// Sound because the IR is single-use: what a comparison pushes is popped by the
-// op that follows it, so the branch is the run's only consumer.
+// The stack IR has no flags: a comparison pushes 0/1 and `if` / `br_if` pops
+// the result and tests it again. On a flags machine the comparison sets the
+// flags the branch reads, so the register path fuses a compare read only by
+// its block's branch into one compare and one conditional jump (ssa_fuse in
+// each backend); which mnemonic comes out is the backend's (#4378, #8194).
+// These two classify the comparisons that fuse and turn one round when its
+// operands swap.
 
 // is_int_cmp_kind reports whether `id` is an integer comparison — eq, ne and
 // the signed/unsigned orderings. Float compares are excluded: NaN breaks the
@@ -884,38 +861,6 @@ pub function flip_int_cmp_kind(id: i32): i32 {
     if (id == 42) { return 44; }
     if (id == 44) { return 42; }
     return id;
-}
-
-// flag_branch_consumer gives the index of the `if` / `br_if` that consumes what
-// ops[i] pushes, reached over a run of `not`s alone, and -1 when anything else
-// consumes it. An op that answers >= 0 emits no value: a comparison leaves the
-// flags set, a `not` emits nothing at all, and the branch emits the jump.
-pub function flag_branch_consumer(ops: ir.Op[], i: i32): i32 {
-    var j: i32 = i + 1;
-    while (j < ops.len() && ops[j].kind_tag == 34) { j = j + 1; }  // not
-    if (j >= ops.len()) { return 0 - 1; }
-    if (ops[j].kind_tag == 154 || ops[j].kind_tag == 158) { return j; }  // if, br_if
-    return 0 - 1;
-}
-
-// FlagBranch resolves an `if` / `br_if` back to the op producing its condition.
-// `producer` is that op's index (-1 when the branch opens the stream), `nots`
-// how many `not`s sit between the two, and `when_true` whether the jump is
-// taken when the producer's value is non-zero: `br_if` jumps when the condition
-// holds and `if` jumps to its else when it does not, and each `not` flips that.
-pub struct FlagBranch {
-    producer: i32,
-    nots: i32,
-    when_true: boolean,
-}
-
-pub function flag_branch(ops: ir.Op[], j: i32): FlagBranch {
-    var k: i32 = j - 1;
-    var nots: i32 = 0;
-    while (k >= 0 && ops[k].kind_tag == 34) { nots = nots + 1; k = k - 1; }  // not
-    var wt: boolean = (ops[j].kind_tag == 158);  // br_if
-    if (nots % 2 == 1) { wt = !wt; }
-    return FlagBranch { producer: k, nots: nots, when_true: wt };
 }
 
 // lift_lambdas re-exports irlower's lambda-lift pre-pass so the dispatch sites
@@ -1139,8 +1084,9 @@ pub function all_runtime_need_roots(): string[] {
         // helpers below, and the same reason nothing noticed — only a
         // library-only caller finds out, which is now a fixture
         // (TestSelfHostPerModuleArm64MapDeleteLinks).
-        "map_delete", "map_free_va", "map_free_vsa", "map_free_vf", "map_hash_seed", "map_vfree",
+        "map_delete", "map_delete_rel", "map_free_va", "map_free_vsa", "map_free_vf", "map_hash_seed", "map_vfree",
         "map_free_ka", "map_free_kavs", "map_free_kava", "map_free_kavsa",
+        "map_free_kf", "map_free_kfvs", "map_free_kfvsa", "map_free_kfvf",
         "chdir", "chroot", "setuid", "setgid", "setgroups",
         "signal_mask", "signal_disposition",
         "print_int", "proc_exec", "proc_exec_as", "proc_fork", "proc_waitpid", "proc_waitpid_nohang", "putchar", "random_bytes", "random_i32", "read_file",

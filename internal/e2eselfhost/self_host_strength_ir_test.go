@@ -112,32 +112,32 @@ func TestSelfHostStrengthShiftImmediateShape(t *testing.T) {
 
 	for _, tc := range []struct {
 		target  string
-		want    string // the immediate-form shift the multiply must become
+		want    string // the immediate-form shift the multiply must become (a pattern)
 		unwant  []string
 		extra   []string
 		backend string
 	}{
 		{
 			target:  "x86-64-linux",
-			want:    "shlq $3, %rax",
-			unwant:  []string{"imulq", "andl $31, %ecx"},
+			want:    `shlq \$3, %r[a-z0-9]+`,
+			unwant:  []string{"imulq", "andl \\$31"},
 			backend: "asm_ir.fern",
 		},
 		{
 			target:  "arm64-linux",
-			want:    "lsl x0, x0, #3",
-			unwant:  []string{"mul x0, x0, x1", "and x1, x1, #31"},
+			want:    `lsl x[0-9]+, x[0-9]+, #3`,
+			unwant:  []string{`mul x[0-9]+, x[0-9]+, x[0-9]+`, `and x[0-9]+, x[0-9]+, #31`},
 			extra:   []string{"-target", "arm64-linux"},
 			backend: "asm_arm64_ir.fern",
 		},
 	} {
 		t.Run(tc.target, func(t *testing.T) {
 			asm := string(runCapture(t, gcc, runner, driverBin, src, tc.extra...))
-			if !strings.Contains(asm, tc.want) {
+			if !matchShape(asm, tc.want) {
 				t.Errorf("%s emitted no %q for `x * 8`:\n%s", tc.backend, tc.want, asm)
 			}
 			for _, u := range tc.unwant {
-				if strings.Contains(asm, u) {
+				if matchShape(asm, u) {
 					t.Errorf("%s still emits %q for `x * 8`; the strength rewrite\n"+
 						"or the constant-shift-count selection is not firing:\n%s", tc.backend, u, asm)
 				}

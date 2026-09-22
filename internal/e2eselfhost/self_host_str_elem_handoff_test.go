@@ -98,7 +98,7 @@ func TestSelfHostStrElemHandoffX86_64(t *testing.T) {
 	if len(asm) == 0 {
 		t.Fatal("self-host compiler emitted 0 bytes")
 	}
-	if n := strings.Count(emittedFn(t, string(asm), "bind_names"), "call __fn___fern_rc_inc"); n != 1 {
+	if n := rcIncSites(emittedFn(t, string(asm), "bind_names")); n != 1 {
 		t.Errorf("bind_names carries %d retain(s), want exactly one: the element handed to bind", n)
 	}
 	bin := buildBin(t, gcc, dir, "str_elem_handoff", string(asm))

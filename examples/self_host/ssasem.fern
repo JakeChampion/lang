@@ -322,14 +322,44 @@ pub function map_value(t: typeinfo.Type): typeinfo.Type {
     return typeinfo.unchecked();
 }
 
-// The map shapes this boundary admits: a string or narrow integer KEY column
-// over a value column the runtime's free family releases — a narrow scalar
-// column freed whole, or a counted column walked entry by entry. A string key
-// column is walked through the string dec; an integer one is freed whole.
+// The map shapes this boundary admits: a string, narrow integer or keyed KEY
+// column over a value column the runtime's free family releases — a narrow
+// scalar column freed whole, or a counted column walked entry by entry. A
+// string key column is walked through the string dec, a keyed one through the
+// function the physical lowering names for the key type; an integer one is
+// freed whole.
 pub function is_supported_map(t: typeinfo.Type): boolean {
     if (!is_map(t)) { return false; }
-    if (!is_string(map_key(t)) && !narrow_map_value(map_key(t))) { return false; }
+    if (!is_string(map_key(t)) && !narrow_map_value(map_key(t)) && !keyed_map_key(map_key(t))) { return false; }
     return narrow_map_value(map_value(t)) || counted_map_value(map_value(t));
+}
+
+// A key column of boxes: a record or a union the runtime hashes and compares
+// through the key type's derived `hash` and `eq` — the checker admits no
+// other nominal as a map key — and owns one unit of per entry. A generic
+// instance is spelled with its arguments, which the derived methods are not
+// named by here, so only an argument-free nominal is admitted.
+pub function keyed_map_key(k: typeinfo.Type): boolean {
+    if (semtypes.is_handle(k) || semtypes.is_map_iter(k) || semtypes.is_env(k) || semtypes.is_cell(k)) { return false; }
+    if let typeinfo.TypeStruct(r) = k { return r.args.len() == 0; }
+    if let typeinfo.TypeUnion(u) = k { return u.args.len() == 0; }
+    return false;
+}
+
+// The nominal a keyed column's derived methods hang off: `K.hash` and `K.eq`
+// are the receiver methods `@derive(cmp.Eq, cmp.Hash)` synthesises on it.
+pub function keyed_map_key_name(k: typeinfo.Type): string {
+    if let typeinfo.TypeStruct(r) = k { return r.name; }
+    if let typeinfo.TypeUnion(u) = k { return u.name; }
+    return "";
+}
+
+// A column whose snapshot is a fresh array owning one unit of every element:
+// a string column and a column of boxes are copied with a per-element retain,
+// and an i32 column holds no references. Every other element — a wide
+// scalar, a function value, a map — would come back aliasing the map's own.
+pub function retained_column(elem: typeinfo.Type): boolean {
+    return is_string(elem) || is_i32(elem) || keyed_map_key(elem) || counted_map_value(elem);
 }
 
 // A value column the map releases by freeing the buffer alone.
@@ -922,15 +952,13 @@ function map_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
 
 // A delete borrows the key to find the entry and hands the map back inside a
 // tuple with whether it was there. The runtime removes the entry by moving the
-// last one into the hole and shrinking both columns; it never releases what it
-// removed, so a column the map owns a unit of per entry would be orphaned by
-// the removal. Only the columns a map releases by freeing the buffer alone are
-// admitted.
+// last one into the hole and shrinking both columns, and releasing the
+// removed entry's key and value through the columns' releases, so every
+// supported map shape is admitted.
 function map_delete_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.args.len() != 2) { return "map delete arity"; }
     var m: typeinfo.Type = f.values[ins.args[0]];
     if (!is_supported_map(m)) { return "map delete type"; }
-    if (!narrow_map_value(map_key(m)) || !narrow_map_value(map_value(m))) { return "map delete column"; }
     if (!semtypes.equal(delete_result(m), result)) { return "map delete result"; }
     return map_operand_error(m, f.values[ins.args[1]], map_value(m));
 }
@@ -950,16 +978,16 @@ function map_cleared_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): stri
 }
 
 // A column snapshot borrows the map and answers an array of that column's
-// element type. Only a string column (copied with a per-element retain) and an
-// i32 column (which holds no references) are admitted: every other element
-// type comes back aliasing the map's own, which no result type here can say.
+// element type. Only a column `retained_column` names is admitted: every
+// other element type comes back aliasing the map's own, which no result type
+// here can say.
 function map_column_error(ins: ssa.SInst, f: Func, result: typeinfo.Type, keys: boolean): string {
     if (ins.args.len() != 1) { return "map column arity"; }
     var m: typeinfo.Type = f.values[ins.args[0]];
     if (!is_supported_map(m)) { return "map column type"; }
     var elem: typeinfo.Type = map_value(m);
     if (keys) { elem = map_key(m); }
-    if (!is_string(elem) && !is_i32(elem)) { return "map column element"; }
+    if (!retained_column(elem)) { return "map column element"; }
     if (!semtypes.equal(typeinfo.TypeArray { elem: elem }, result)) { return "map column result"; }
     return "";
 }

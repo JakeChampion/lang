@@ -1,6 +1,9 @@
 package coreutils
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func init() {
 	registerCorpus("seq", seqCases)
@@ -285,12 +288,15 @@ func seqCases(t *testing.T) []invocation {
 		{name: "format width beyond an int", args: []string{"-f", "%9999999999g", "1"}},
 		{name: "format width one past an int", args: []string{"-f", "%2147483648g", "1"}},
 		// GNU coreutils 9.12 does not terminate on this one on macOS, where
-		// 9.4 returned at once. corpusRunLimit is what stops that hanging
-		// the package; it needs nothing here. Measured against 9.12 on
-		// macOS arm64: the two WIDTH forms above are refused at once,
-		// `%.9999999999g` aborts, and `%.1000000000g` answers -- the
-		// precision one past an int is the only one that never returns.
-		{name: "format precision past an int", args: []string{"-f", "%.2147483648g", "1"}},
+		// 9.4 returned at once (on Linux, 9.4 and 9.12 both refuse it in
+		// milliseconds). Measured against 9.12 on macOS arm64: the two WIDTH
+		// forms above are refused at once, `%.9999999999g` aborts, and
+		// `%.1000000000g` answers -- the precision one past an int is the
+		// only one that never returns. The bound keeps that at ten seconds
+		// of the macOS lane instead of corpusRunLimit's five minutes; the
+		// outcome is "did not finish" either way, so the recorded divergence
+		// does not change.
+		{name: "format precision past an int", args: []string{"-f", "%.2147483648g", "1"}, timeout: 10 * time.Second},
 		{name: "format two long modifiers", args: []string{"-f", "%LLg", "1.5"}},
 		{name: "format h modifier", args: []string{"-f", "%hg", "1.5"}},
 		{name: "format q modifier", args: []string{"-f", "%qg", "1.5"}},

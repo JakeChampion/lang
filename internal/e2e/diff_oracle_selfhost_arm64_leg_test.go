@@ -27,7 +27,7 @@ const selfHostSemArm64DiffKnownFile = "selfhost-diff-semantic-arm64-known-diverg
 // and a ratchet in the same way. It is read off the same generator and the
 // same lowering, so the two track each other; the target only decides which
 // backend emits what the lowering produced.
-const selfHostSemArm64DiffMinWholeRatio = 0.10
+const selfHostSemArm64DiffMinWholeRatio = 0.75
 
 // TestDifferential_SelfHostArm64 is the x86-64 oracle's sibling against the
 // self-host ARM64 backend (#7967).

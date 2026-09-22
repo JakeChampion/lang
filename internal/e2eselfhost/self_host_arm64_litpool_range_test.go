@@ -23,24 +23,33 @@ import (
 // it was measuring nothing. The margin is wider now, and the test logs its word
 // count on success so the drift is visible before it becomes a failure rather
 // than after.
+//
+// Every constant is READ, through an operand the fold cannot see (`p | K` on
+// a parameter), and the sum is what the function returns. A constant bound to
+// a local and never read is dead, and the register path emits nothing for it
+// — the stack machine stored every one, and a fixture of dead locals dropped
+// to 4,847 words the day the driver went through the register path.
 func litPoolFixture(nFuncs, nVars int) (src string, wantExit int) {
 	var b strings.Builder
 	sum := 0
 	for f := 0; f < nFuncs; f++ {
 		// `pool_fnN`, not `fN`: `f32` and `f64` are type keywords, and a
 		// function so named is a parse error rather than a link failure.
-		fmt.Fprintf(&b, "function pool_fn%d(): i32 {\n", f)
+		fmt.Fprintf(&b, "function pool_fn%d(p: i32): i32 {\n    var s = 0;\n", f)
+		acc := 0
 		for i := 0; i < nVars; i++ {
 			// Each constant is distinct so the assembler cannot dedupe the
 			// pool down to a handful of entries.
-			fmt.Fprintf(&b, "    var v%d = %d;\n", i, 1000000+f*nVars+i)
+			k := 1000000 + f*nVars + i
+			fmt.Fprintf(&b, "    s = s + (p | %d);\n", k)
+			acc += 1 | k
 		}
-		b.WriteString("    return v0 % 7;\n}\n\n")
-		sum += (1000000 + f*nVars) % 7
+		b.WriteString("    return s % 7;\n}\n\n")
+		sum += acc % 7
 	}
 	b.WriteString("function main(): i32 {\n    var s = 0;\n")
 	for f := 0; f < nFuncs; f++ {
-		fmt.Fprintf(&b, "    s = s + pool_fn%d();\n", f)
+		fmt.Fprintf(&b, "    s = s + pool_fn%d(1);\n", f)
 	}
 	b.WriteString("    return s % 251;\n}\n")
 	return b.String(), sum % 251

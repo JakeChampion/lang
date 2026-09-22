@@ -3,6 +3,7 @@ package e2eselfhost
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -233,23 +234,22 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 	if !strings.Contains(asm, "__fern_scratch: .skip 256") {
 		t.Error("the __fern_scratch .bss slot is missing — stat has nowhere to land")
 	}
-	if !strings.Contains(asm, "adrp x0, __fern_scratch\n    add x0, x0, :lo12:__fern_scratch\n") {
+	if !matchShape(asm, `\n    adrp (x[0-9]+), __fern_scratch\n    add \1, \1, :lo12:__fern_scratch\n`) {
 		t.Error("__raw_scratch did not emit the arm64 scratch-buffer address")
 	}
 	if !strings.Contains(asm, "__fern_envp: .quad 0") {
 		t.Error("the __fern_envp .bss slot went with the hand-asm __fern_env")
 	}
-	if !strings.Contains(asm, "adrp x0, __fern_envp\n    add x0, x0, :lo12:__fern_envp\n    ldr x0, [x0]\n") {
+	if !matchShape(asm, `\n    adrp (x[0-9]+), __fern_envp\n    add \1, \1, :lo12:__fern_envp\n    ldr \1, \[\1\]\n`) {
 		t.Error("__raw_environ did not emit the arm64 envp load")
 	}
 	// write_file's O_CREAT mode arg makes it the __syscall4 user; its number
-	// load uses the same darwinize marker as __syscall3's. The argument pops
-	// mostly fold: each push reaches its pop across register-only lines, so the
-	// peephole reroutes the value through a `mov` ahead of the run (P7) and
-	// only the last argument's pop and the number's survive. The mode argument
-	// in x3 is what __syscall3 does not have, so it is what distinguishes this
-	// marshal from that one.
-	if !strings.Contains(asm, "    mov x3, x0\n    ldr x0, [sp], #16\n    ldr x8, [sp], #16\n    svc #0\n") {
+	// load uses the same darwinize marker as __syscall3's. The arguments and
+	// the number are pushed and popped into x0..x3 and x8 (the last argument
+	// may instead move into x3 from wherever the allocator left it); the mode
+	// argument in x3 is what __syscall3 does not have, so it is what
+	// distinguishes this marshal from that one.
+	if !matchShape(asm, `\n    (?:mov x3, x[0-9]+|ldr x3, \[sp\], #16)\n    ldr x2, \[sp\], #16\n    ldr x1, \[sp\], #16\n    ldr x0, \[sp\], #16\n    ldr x8, \[sp\], #16\n    svc #0\n`) {
 		t.Error("__syscall4 did not emit the arm64 four-argument marshal + number + svc sequence")
 	}
 	// The __syscall3 op's number load. darwinize rewrites exactly this line to
@@ -409,7 +409,7 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 	for _, c := range []struct{ what, imm string }{
 		{"O_RDONLY|O_DIRECTORY", "1048576"},
 	} {
-		if !strings.Contains(asm, "ldr x0, ="+c.imm+"\n") {
+		if !matchShape(asm, `\n    ldr x[0-9]+, =`+c.imm+`\n`) {
 			t.Errorf("the Darwin %s constant (%s) was not baked into the helper source", c.what, c.imm)
 		}
 	}
@@ -435,10 +435,10 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 			t.Errorf("%s not defined — the Fern helper did not lower for Darwin", sym)
 			continue
 		}
-		if !strings.Contains(body, "    mov x0, #4\n    str x0, [sp, #-16]!\n") {
+		if !matchShape(body, pushedImm("4")) {
 			t.Errorf("%s does not push Darwin's write number (4)", sym)
 		}
-		if strings.Contains(body, "    mov x0, #64\n    str x0, [sp, #-16]!\n") {
+		if matchShape(body, pushedImm("64")) {
 			t.Errorf("%s pushes Linux's write number (64) in Mach-O output", sym)
 		}
 		if strings.Contains(asm, "\n"+strings.TrimPrefix(sym, "__fn_")+":") {
@@ -466,10 +466,10 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 			t.Errorf("%s not defined — the Fern helper did not lower for Darwin", sym)
 			continue
 		}
-		if !strings.Contains(body, "    mov x0, #3\n    str x0, [sp, #-16]!\n") {
+		if !matchShape(body, pushedImm("3")) {
 			t.Errorf("%s does not push Darwin's read number (3)", sym)
 		}
-		if strings.Contains(body, "    mov x0, #63\n    str x0, [sp, #-16]!\n") {
+		if matchShape(body, pushedImm("63")) {
 			t.Errorf("%s pushes Linux's read number (63) in Mach-O output", sym)
 		}
 		if strings.Contains(asm, "\n"+strings.TrimPrefix(sym, "__fn_")+":") {
@@ -486,10 +486,10 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		if body == "" {
 			t.Errorf("%s not defined — the Fern helper did not lower for Darwin", sym)
 		} else {
-			if !strings.Contains(body, "    mov x0, #6\n    str x0, [sp, #-16]!\n") {
+			if !matchShape(body, pushedImm("6")) {
 				t.Errorf("%s does not push Darwin's close number (6)", sym)
 			}
-			if strings.Contains(body, "    mov x0, #57\n    str x0, [sp, #-16]!\n") {
+			if matchShape(body, pushedImm("57")) {
 				t.Errorf("%s pushes Linux's close number (57) in Mach-O output", sym)
 			}
 		}
@@ -556,35 +556,42 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 	}
 	// clone is Linux-only. If the Fern body were selected for Darwin, 220 would
 	// arrive as a pushed operand the way every other migrated number does.
-	if strings.Contains(asm, "    mov x0, #220\n    str x0, [sp, #-16]!\n") {
+	if arm64Imm(asm, "220") {
 		t.Error("Darwin proc_fork pushed Linux's clone number (220) in Mach-O output")
 	}
 	if !strings.Contains(asm, "    mrs x9, cntvct_el0\n    mrs x10, cntfrq_el0\n") {
 		t.Error("Darwin monotonic_ns is not reading the architectural counter")
 	}
-	if strings.Contains(asm, "mov x8, #113") || strings.Contains(asm, "mov x0, #113\n    str x0, [sp, #-16]!") {
+	if strings.Contains(asm, "mov x8, #113") || arm64Imm(asm, "113") {
 		t.Error("a clock issued Linux's clock_gettime (113) in Mach-O output")
 	}
 	// The exit NUMBER is a pushed operand, so a wrong asmcore.sysno row is
 	// invisible everywhere else: darwinize never sees it (it rewrites `mov x8`,
 	// not a stack push), and the Linux leg would stay green. Pin the pair —
 	// Darwin's exit is 1, and 93 (Linux's) must not be what gets pushed.
-	if !strings.Contains(asm, "    mov x0, #1\n    str x0, [sp, #-16]!\n    mov x0, #134\n") {
-		t.Error("arr_slice's trap does not push Darwin's exit number (1) ahead of status 134")
+	if !matchShape(asm, `\n    mov x[0-9]+, #1\n    mov x[0-9]+, #134\n`) {
+		t.Error("arr_slice's trap does not materialise Darwin's exit number (1) ahead of status 134")
 	}
-	if strings.Contains(asm, "    mov x0, #93\n    str x0, [sp, #-16]!\n    mov x0, #134\n") {
+	if matchShape(asm, `\n    mov x[0-9]+, #93\n    mov x[0-9]+, #134\n`) {
 		t.Error("arr_slice's trap pushes Linux's exit number (93) in Mach-O output")
 	}
 }
 
 // hasBakedImm reports whether imm reaches the emitted text as an immediate:
-// materialised by `mov x0, #N`, or folded by the peephole's P4 into the add,
-// sub or cmp that consumed it. Frame arithmetic on sp never matches.
+// materialised by a MOVZ, or selected into an add, sub or cmp, in whichever
+// register the allocator chose.
 func hasBakedImm(asm, imm string) bool {
-	for _, form := range []string{"mov x0, #", "add x0, x0, #", "sub x0, x0, #", "cmp x0, #"} {
-		if strings.Contains(asm, form+imm+"\n") {
+	n := regexp.QuoteMeta(imm)
+	for _, form := range []string{`mov x[0-9]+, #` + n, `add x[0-9]+, x[0-9]+, #` + n, `sub x[0-9]+, x[0-9]+, #` + n, `cmp x[0-9]+, #` + n} {
+		if regexp.MustCompile(`\n\s+` + form + `\n`).MatchString(asm) {
 			return true
 		}
 	}
 	return false
+}
+
+// pushedImm is the shape of a syscall number on its way to x8: materialised
+// in some register and that register pushed for the __syscallN helper.
+func pushedImm(n string) string {
+	return `\n    mov (x[0-9]+), #` + regexp.QuoteMeta(n) + `\n(?:.*\n)*?    str \1, \[sp, #-16\]!\n`
 }
