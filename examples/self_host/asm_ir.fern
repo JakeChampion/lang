@@ -8041,21 +8041,49 @@ function emit_ir_op_map(o: ir.Op, i: i32, lp: string, s: asmcore.EmitState): asm
         if (o.str != "") { s = s.write("    leaq __fn_" + asmcore.sanitize_label(o.str) + "(%rip), %r8\n"); } else { s = s.write("    xorq %r8, %r8\n"); }
         s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rdx\n    call __fern_map_has\n    pushq %rax\n");
     } else if (o.kind_tag == 130) {  // map_delete
-        // [map, key] -> __fn___fern_map_delete(map, key, keykind, eqfn) ->
-        // the (map, existed) tuple box. The helper is Fern now (#2649), so
-        // this is the stack ABI: arguments pushed in REVERSE, leaving arg0
-        // (the map) on top, and the caller drops all four slots after.
-        s = s.need("map_delete");
-        s = s.write("    popq %rsi\n    popq %rdi\n");
-        if (o.str != "") { s = s.write("    leaq __fn_" + asmcore.sanitize_label(o.str) + "(%rip), %rax\n"); } else { s = s.write("    xorq %rax, %rax\n"); }
-        s = s.write("    pushq %rax\n");
-        s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rax\n    pushq %rax\n");
-        s = s.write("    pushq %rsi\n    pushq %rdi\n");
-        s = s.write("    call __fn___fern_map_delete\n    addq $32, %rsp\n    pushq %rax\n");
+        s = emit_ir_op_map_delete(o, s);
     } else if (o.kind_tag == 129) {  // map_get_or
         s = emit_ir_op_map_get_or(o, i, lp, s);
     }
     return emit_ir_op_map_read(o, i, lp, s);
+}
+
+// [map, key] -> __fn___fern_map_delete(map, key, keykind, eqfn) -> the
+// (map, existed) tuple box. The helper is Fern (#2649), so this is the stack
+// ABI: arguments pushed in REVERSE, leaving arg0 (the map) on top, and the
+// caller drops every slot after. A delete that releases what it removes
+// (#9970) takes __fern_map_delete_rel instead, with the key-free flag, the
+// value kind and the two releases behind the four — the key's and the value's
+// as ir.map_op_symbols splits them, 0 where the op names none.
+function emit_ir_op_map_delete(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+    var syms: string[] = ir.map_op_symbols(o);
+    var rel: boolean = ir.map_delete_releases(o);
+    s = s.need("map_delete");
+    if (rel) { s = s.need("map_delete_rel"); }
+    s = s.write("    popq %rsi\n    popq %rdi\n");
+    var argc: i32 = 4;
+    if (rel) {
+        argc = 8;
+        s = map_fn_address_rax(s, syms[1]);
+        s = s.write("    pushq %rax\n");
+        if (o.i32_imm == 2) { s = map_fn_address_rax(s, syms[2]); } else { s = s.write("    xorq %rax, %rax\n"); }
+        s = s.write("    pushq %rax\n");
+        s = s.write("    movq $" + util.i32_to_string((o.width / 16) % 4) + ", %rax\n    pushq %rax\n");
+        s = s.write("    movq $" + util.i32_to_string((o.width / 2) % 2) + ", %rax\n    pushq %rax\n");
+    }
+    if (o.i32_imm == 2) { s = map_fn_address_rax(s, syms[0]); } else { s = s.write("    xorq %rax, %rax\n"); }
+    s = s.write("    pushq %rax\n");
+    s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rax\n    pushq %rax\n");
+    s = s.write("    pushq %rsi\n    pushq %rdi\n");
+    if (rel) { s = s.write("    call __fn___fern_map_delete_rel\n"); } else { s = s.write("    call __fn___fern_map_delete\n"); }
+    return s.write("    addq $" + util.i32_to_string(argc * 8) + ", %rsp\n    pushq %rax\n");
+}
+
+// map_fn_address_rax loads the address of the Fern function `name` spells
+// into %rax, or 0 when it spells none.
+function map_fn_address_rax(s: asmcore.EmitState, name: string): asmcore.EmitState {
+    if (name == "") { return s.write("    xorq %rax, %rax\n"); }
+    return s.write("    leaq __fn_" + asmcore.sanitize_label(name) + "(%rip), %rax\n");
 }
 
 function emit_ir_op_map_read(o: ir.Op, i: i32, lp: string, s: asmcore.EmitState): asmcore.EmitState {
@@ -8116,7 +8144,7 @@ function emit_ir_op_map_set(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     // overwrite calls on the value it supersedes; %r11 = the key release of a
     // keyed column, which the overwrite calls on a consumed key it discards
     // (#9962); 0 where the op names none. ir.map_set_symbols splits the three.
-    var syms: string[] = ir.map_set_symbols(o);
+    var syms: string[] = ir.map_op_symbols(o);
     if (o.i32_imm == 2 && syms[0] != "") { s = s.write("    leaq __fn_" + asmcore.sanitize_label(syms[0]) + "(%rip), %r8\n"); } else { s = s.write("    xorq %r8, %r8\n"); }
     if (syms[1] != "") { s = s.write("    leaq __fn_" + asmcore.sanitize_label(syms[1]) + "(%rip), %r10\n"); } else { s = s.write("    xorq %r10, %r10\n"); }
     if (o.i32_imm == 2 && syms[2] != "") { s = s.write("    leaq __fn_" + asmcore.sanitize_label(syms[2]) + "(%rip), %r11\n"); } else { s = s.write("    xorq %r11, %r11\n"); }
@@ -10518,6 +10546,12 @@ function emit_module_ir_unit_backend(mod: parser.Module, is_entry: boolean, glob
     if (s.has_need("map_delete")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_map_delete(), all_structs, s);
+    }
+    // The releasing delete (#9970) on its own need: only a map that owns its
+    // columns calls it, and its body names the string-array free.
+    if (s.has_need("map_delete_rel")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_map_delete_rel(), all_structs, s);
     }
     // ASCII case transforms (to_upper / to_lower) — heap-dependent, so the heap
     // runtime is already present; emitted on their own str_case need.

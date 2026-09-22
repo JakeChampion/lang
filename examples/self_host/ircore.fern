@@ -1145,7 +1145,7 @@ pub function all_runtime_need_roots(): string[] {
         // helpers below, and the same reason nothing noticed — only a
         // library-only caller finds out, which is now a fixture
         // (TestSelfHostPerModuleArm64MapDeleteLinks).
-        "map_delete", "map_free_va", "map_free_vsa", "map_free_vf", "map_hash_seed", "map_vfree",
+        "map_delete", "map_delete_rel", "map_free_va", "map_free_vsa", "map_free_vf", "map_hash_seed", "map_vfree",
         "map_free_ka", "map_free_kavs", "map_free_kava", "map_free_kavsa",
         "map_free_kf", "map_free_kfvs", "map_free_kfvsa", "map_free_kfvf",
         "chdir", "chroot", "setuid", "setgid", "setgroups",

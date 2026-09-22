@@ -320,8 +320,25 @@ pub function rt_src_map_find(): string {
 // a map iterates in insertion order, so a shift-down here and a swap-with-last
 // there made the same program print its keys differently on the two compilers
 // (#8839).
+//
+// The tuple carries the removed key and value at words 2 and 3 (zero when the
+// key was absent), where only __fern_map_delete_rel reads them: the entry is
+// overwritten by the swap, so this is the one place it is still in hand.
 pub function rt_src_map_delete(): string {
-    return "function __fern_map_delete(mapbox: i32, key: i32, keykind: i32, eqfn: i32): i32 { var keys: i32 = __raw_load_ptr(mapbox, 0); var found: i32 = __fern_map_find(keys, key, keykind, eqfn); var existed: i32 = 0; if (found >= 0) { var ks: i32 = __raw_load_ptr(mapbox, 0); var m: i32 = __raw_load_ptr(ks, 0); __raw_store_ptr(ks, found + 1, __raw_load_ptr(ks, m)); __raw_store_ptr(ks, 0, m - 1); var vs: i32 = __raw_load_ptr(mapbox, 1); __raw_store_ptr(vs, found + 1, __raw_load_ptr(vs, m)); __raw_store_ptr(vs, 0, m - 1); existed = 1; } var r: i32 = __raw_arr_box(2); __raw_store_ptr(r, 0, mapbox); __raw_store_ptr(r, 1, existed); return r; }";
+    return "function __fern_map_delete(mapbox: i32, key: i32, keykind: i32, eqfn: i32): i32 { var keys: i32 = __raw_load_ptr(mapbox, 0); var found: i32 = __fern_map_find(keys, key, keykind, eqfn); var existed: i32 = 0; var gone_k: i32 = 0; var gone_v: i32 = 0; if (found >= 0) { var ks: i32 = __raw_load_ptr(mapbox, 0); var m: i32 = __raw_load_ptr(ks, 0); gone_k = __raw_load_ptr(ks, found + 1); __raw_store_ptr(ks, found + 1, __raw_load_ptr(ks, m)); __raw_store_ptr(ks, 0, m - 1); var vs: i32 = __raw_load_ptr(mapbox, 1); gone_v = __raw_load_ptr(vs, found + 1); __raw_store_ptr(vs, found + 1, __raw_load_ptr(vs, m)); __raw_store_ptr(vs, 0, m - 1); existed = 1; } var r: i32 = __raw_arr_box(4); __raw_store_ptr(r, 0, mapbox); __raw_store_ptr(r, 1, existed); __raw_store_ptr(r, 2, gone_k); __raw_store_ptr(r, 3, gone_v); return r; }";
+}
+
+// rt_src_map_delete_rel (#9970): __fern_map_delete, then the release of what
+// it removed, for a map that owns one unit of every entry — the typed path's.
+// `kfree` says the key column is owned: a string key (keykind 0) takes
+// __fern_str_free and a keyed column's box (keykind 2) the release `krel`
+// addresses, or the shallow dec when the op site passed none. `vkind` is
+// op_map_set's: 1 a string, 2 a string array, 3 a box released through
+// `vrel`. `krel` and `vrel` are bare code addresses, declared i32 for the
+// reason `eqfn` is. The tuple comes back with words 2 and 3 still set; the
+// caller reads the map and the flag alone.
+pub function rt_src_map_delete_rel(): string {
+    return "function __fern_map_delete_rel(mapbox: i32, key: i32, keykind: i32, eqfn: i32, kfree: i32, vkind: i32, krel: i32, vrel: i32): i32 { var r: i32 = __fern_map_delete(mapbox, key, keykind, eqfn); if (__raw_load_ptr(r, 1) == 1) { var k: i32 = __raw_load_ptr(r, 2); var v: i32 = __raw_load_ptr(r, 3); if (kfree == 1) { if (keykind == 0) { __fern_str_free(k); } else if (keykind == 2) { if (krel != 0) { krel(k); } else { __fern_arr_dec(k); } } } if (vkind == 1) { __fern_str_free(v); } else if (vkind == 2) { __fern_str_arr_free(v); } else if (vkind == 3) { vrel(v); } } return r; }";
 }
 
 pub function (s: EmitState) mark_str_eq(): EmitState {
@@ -5384,6 +5401,12 @@ pub function runtime_need_deps(name: string): string[] {
         // the whole maps bundle behind it.
         var dmd: string[] = ["maps"];
         return dmd;
+    }
+    if (name == "map_delete_rel") {
+        // The releasing delete (#9970) calls __fern_map_delete, and the
+        // string, string-array and shallow frees, which ride the heap bundle.
+        var dmr: string[] = ["map_delete", "heap"];
+        return dmr;
     }
     if (name == "maps") {
         // The bundle's shared __fern_map_find calls __fern_str_eq (string-key
