@@ -16170,6 +16170,11 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		delete(c.info.IntrinsicCalls, n)
 		callExpected := c.expectedType
 		c.expectedType = nil
+		// The type-argument list the SOURCE wrote, kept because a method
+		// dispatch below replaces n.TypeArgs with the RECEIVER's arguments —
+		// after which nothing else can tell the two apart, and a written list
+		// read as the receiver's names the wrong parameters (#9896).
+		var writtenTypeArgs []ast.Type
 		// Display spine (#2696): `print` / `write` / `eprint` accept any
 		// `T: Display`, not just `string`. When the sole argument isn't
 		// already a string, rewrite it to `arg.to_string()` (the same
@@ -16648,6 +16653,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					// i32 when the registered sig uses
 					// ParamType("K") / ParamType("V").
 					if st, ok := tt.(ast.StructType); ok && len(st.Args) > 0 {
+						writtenTypeArgs = takeWrittenTypeArgs(n, writtenTypeArgs)
 						n.TypeArgs = st.Args
 					}
 					// Array's `Args` is just the single Elem
@@ -16657,11 +16663,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					// the IR layer (emitArrayPush) — no per-
 					// stride dispatch required here.
 					if at, ok := tt.(ast.ArrayType); ok {
+						writtenTypeArgs = takeWrittenTypeArgs(n, writtenTypeArgs)
 						n.TypeArgs = []ast.Type{at.Elem}
 					}
 					// Slice mirrors Array: single-element type
 					// param flows through TypeArgs.
 					if sl, ok := tt.(ast.SliceType); ok {
+						writtenTypeArgs = takeWrittenTypeArgs(n, writtenTypeArgs)
 						n.TypeArgs = []ast.Type{sl.Elem}
 					}
 					// Wide-V Map: `m.values()` is intercepted by
@@ -16807,20 +16815,34 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 						c.errfCode(n.P, "E040", "%s expects %d type argument(s), got %d",
 							display, len(fn.TypeParams), len(n.TypeArgs))
 					}
-					// A SHORT list the source wrote on a method call names the
-					// METHOD's own type params, which sit after the receiver's
-					// in fn.TypeParams. Binding it from the front instead named
-					// the receiver's — so `r.and[i32](..)` on a
-					// `Result[i32, string]` pinned T, left U exactly as unbound
-					// as before, and E040 went on naming a remedy it then
-					// refused (#9896). A full list still means the whole list,
-					// receiver params first, which is what a call that spells
-					// every one of them already relies on.
-					offset := 0
-					if n.Method != nil && n.TypeArgsWritten && tooFew {
-						offset = len(fn.TypeParams) - len(n.TypeArgs)
+					// Two lists can arrive in n.TypeArgs and they name
+					// different parameters: the RECEIVER's arguments, which a
+					// method dispatch stamps there, and the list the source
+					// WROTE. They are the same list unless that dispatch
+					// replaced it — which is exactly what writtenTypeArgs
+					// records.
+					recvArgs, written := n.TypeArgs, writtenTypeArgs
+					if written == nil && n.TypeArgsWritten {
+						recvArgs, written = nil, n.TypeArgs
 					}
-					for i, ta := range n.TypeArgs {
+					// The receiver's arguments are the LEADING parameters.
+					for i, ta := range recvArgs {
+						if i < len(fn.TypeParams) {
+							sub[fn.TypeParams[i]] = ta
+						}
+					}
+					// A SHORT written list on a method call names the METHOD's
+					// own parameters, which sit after the receiver's. Read from
+					// the front it named the receiver's instead — so
+					// `r.and[i32](..)` on a `Result[i32, string]` pinned T,
+					// left U exactly as unbound as before, and E040 went on
+					// naming a remedy it then refused (#9896). A full list
+					// still means the whole list, receiver parameters first.
+					offset := 0
+					if n.Method != nil && len(written) < len(fn.TypeParams) {
+						offset = len(fn.TypeParams) - len(written)
+					}
+					for i, ta := range written {
 						if offset+i < len(fn.TypeParams) {
 							sub[fn.TypeParams[offset+i]] = ta
 						}
@@ -18310,6 +18332,17 @@ func (c *checker) stampStructTypeArgs(e ast.Expr, dst ast.Type) {
 			call.TypeArgs = dStruct.Args
 		}
 	}
+}
+
+// takeWrittenTypeArgs snapshots a call's parser-filled type arguments before a
+// method dispatch overwrites them with the receiver's. Idempotent: the first
+// snapshot wins, so a call that hits more than one of the overwrite sites keeps
+// what the source actually wrote.
+func takeWrittenTypeArgs(n *ast.Call, prior []ast.Type) []ast.Type {
+	if prior != nil || !n.TypeArgsWritten || len(n.TypeArgs) == 0 {
+		return prior
+	}
+	return append([]ast.Type(nil), n.TypeArgs...)
 }
 
 // destEnumArgs returns the type arguments a destination supplies for enum
