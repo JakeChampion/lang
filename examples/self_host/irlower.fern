@@ -22588,9 +22588,15 @@ match (v.init) {
         match (mc.callee) {
             ast.ExprIdent(mcid) => {
                 if ((mcid.name == "map_new" || mcid.name == "map_new_i32") && v.type_name.len() >= 5 && slice_unchecked(v.type_name, 0, 4) == "Map[") {
-                    var inner: str = slice_unchecked(v.type_name, 4, v.type_name.len());
-                    if (inner.len() >= 4 && slice_unchecked(inner, 0, 4) == "i32,") { sb = sb.mark_map_type(slot, "i32"); }
-                    else if (inner.len() >= 7 && slice_unchecked(inner, 0, 7) == "string,") { sb = sb.mark_map_type(slot, "string"); }
+                    // The legacy shorthand tag, asked for the same way the rest
+                    // of the lowering asks: an integer key is the integer
+                    // column whatever it is spelled. The annotated-constructor
+                    // arm marks the slot with the full `Map[K, V]` afterwards
+                    // and wins, so this only decides what a path that does not
+                    // reach that arm sees — where a `u8` key used to see
+                    // nothing at all.
+                    if (map_key_kind_of(v.type_name) == 1) { sb = sb.mark_map_type(slot, "i32"); }
+                    else if (map_key_of(v.type_name) == "string") { sb = sb.mark_map_type(slot, "string"); }
                 }
                 // `var t = f()` where f returns a tuple: record its
                 // element tags so a later `t.N` recovers each type. An
@@ -23168,7 +23174,6 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
                 ast.ExprIdent(mnid) => {
                     if ((mnid.name == "map_new" || mnid.name == "map_new_i32") && mnc.args.len() == 1 && v.type_name.len() >= 5 && slice_unchecked(v.type_name, 0, 4) == "Map[") {
                         var kkind: i32 = 0 - 1;
-                        var ktag: string = "";
                         var kt2: string = map_key_of(v.type_name);
                         // The same question map_key_kind_of answers everywhere
                         // else, rather than a third hand-rolled reading of the
@@ -23179,19 +23184,19 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
                         // while its inserts used the integer column — which on
                         // wasm, where the constructor picks the box layout, is
                         // a map that answers nothing it was given (#9973).
-                        if (map_key_kind_of(v.type_name) == 1) { kkind = 1; ktag = kt2; }
-                        else if (kt2 == "string") { kkind = 0; ktag = "string"; }
+                        if (map_key_kind_of(v.type_name) == 1) { kkind = 1; }
+                        else if (kt2 == "string") { kkind = 0; }
                         else if (map_key_eqfn(v.type_name) != "") {
                             // Struct/enum key: kind 2, dispatched by the key's
                             // derived hash/eq (the wasm hash map threads their
                             // funcref indices in; x86 ignores them). #2671.
-                            kkind = 2; ktag = map_key_of(v.type_name);
+                            kkind = 2;
                         }
                         if (kkind >= 0) {
                             var mns: LowerState = lower_expr(mnc.args[0], s);
                             if (!mns.ok) { return mns; }
                             var mnfns: string = "";
-                            if (kkind == 2) { mnfns = ktag + ".hash|" + ktag + ".eq"; }
+                            if (kkind == 2) { mnfns = kt2 + ".hash|" + kt2 + ".eq"; }
                             mns = mns.emit(ir.op_map_new(kkind, mnfns));
                             var mnsb: LowerState = mns.add_local(v.name);
                             mnsb = mnsb.mark_reclaim_site(mnsb.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
