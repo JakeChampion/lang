@@ -127,6 +127,55 @@ function main(): i32 { return apply(7, (x: i32) => x + 1); }`,
 	}
 }
 
+// The remedy E040 names has to WORK. A method on a generic receiver carries
+// the receiver's type parameters ahead of its own in one list, and a written
+// `[i32]` bound that list from the front — so the advised `.pair[i32](...)`
+// pinned the RECEIVER's first parameter, left the method's own as unbound as
+// before, and the same E040 came back (#9896). A short written list now names
+// the method's own parameters; a full one still means the whole list.
+//
+// The inference half is here too: `Full(9)` pins the payload's T and says
+// nothing about E, so without the destination it answered with a bare `Box`
+// that bound U nowhere — E040 on a call that needs no annotation at all.
+func TestMethodTypeArgsNameTheMethodsOwnParams(t *testing.T) {
+	const decls = `enum Box[T, E] { Full(T), Blank(E) }
+function (b: Box[T, E]) pair[U](other: Box[U, E]): Box[U, E] { return other; }
+function take(b: Box[i32, string]): i32 {
+    match (b) {
+        Full(n) => { return n; },
+        Blank(s) => { return s.len(); }
+    }
+}
+`
+	ok := []string{
+		// Inference alone: the parameter's `Box[U, E]` has E settled from the
+		// receiver, so the payload settles U.
+		`function main(): i32 { var b: Box[i32, string] = Full(5); return take(b.pair(Full(9))); }`,
+		// The spelling E040 advises.
+		`function main(): i32 { var b: Box[i32, string] = Full(5); return take(b.pair[i32](Full(9))); }`,
+		// A full list still means the whole list, receiver parameters first.
+		`function main(): i32 { var b: Box[i32, string] = Full(5); return take(b.pair[i32, string, i32](Full(9))); }`,
+	}
+	for _, src := range ok {
+		if err := checkSource(t, decls+src); err != nil {
+			t.Errorf("should type-check, got: %v\nsrc: %s", err, src)
+		}
+	}
+	// A short list still has to be CHECKED against the argument: naming the
+	// method's own parameter is not the same as ignoring it. And the report
+	// names what the parameter came to MEAN — `Box[string, string]`, the
+	// written U with E from the receiver — rather than the declared
+	// `Box[U, E]`, which says nothing about why this argument was refused.
+	badSrc := `function main(): i32 { var b: Box[i32, string] = Full(5); return take(b.pair[string](Full(9))); }`
+	err := checkSource(t, decls+badSrc)
+	if err == nil {
+		t.Fatalf("a written type argument the argument contradicts should not type-check")
+	}
+	if !strings.Contains(err.Error(), "expected Box[string, string], got Box[i32, string]") {
+		t.Errorf("error %q does not name the substituted parameter type", err.Error())
+	}
+}
+
 // E040 at a call site must name a spelling the user can write (#6796). A
 // method call reaches the check rewritten onto `__method_<Type>_<method>`,
 // and the diagnostic used to advise `__method_Holder_make[i32](...)` — a
@@ -7374,7 +7423,10 @@ function main(): i32 {
     var r: Map[string, i32] = apply(a, bump);
     return 0;
 }`)
-		if err == nil || !strings.Contains(err.Error(), "expected (T) => T") {
+		// The report names the parameter as argument 1 pinned it —
+		// `(Map[i32, i32]) => Map[i32, i32]` — rather than the declared
+		// `(T) => T`, which is the half that says why these two conflict.
+		if err == nil || !strings.Contains(err.Error(), "expected (Map[i32, i32]) => Map[i32, i32]") {
 			t.Fatalf("Map[i32, i32] and Map[string, i32] must still conflict, got %v", err)
 		}
 	})
