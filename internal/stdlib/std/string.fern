@@ -59,31 +59,26 @@ pub function (s: string) to_string(): string {
     return s;
 }
 
-// `s.repeat(n)` — `n` copies of s concatenated. `n <= 0`
-// returns empty; `n == 1` returns a fresh independent copy
-// of s (the `+` lowering allocates). Quadratic on large n
-// because each `+` allocates a fresh buffer; if a benchmark
-// shows that's a real bottleneck, drop to a single-pass
-// memcpy via a `__memcpy` shim.
+// `s.repeat(n)` — `n` copies of s concatenated. `n <= 0` returns empty.
+// Built by doubling, so the cost is log₂(n) bulk copies rather than a
+// `.with` per byte (#9974); `out = out + s` per copy would recopy the
+// growing prefix each step (#4379). The length ceiling is `+`'s: a
+// product past i32 wraps negative at the doubling that reaches it, and
+// that concat refuses the allocation size.
 pub function (s: string) repeat(n: i32): string {
     if (n <= 0) { return ""; }
     var sl: i32 = s.len();
     if (sl == 0) { return ""; }
-    // Fill one exact-size (sl·n) buffer instead of `out = out + s`,
-    // which recopied the growing prefix each step (O((sl·n)²) — #4379).
-    var buf: u8[] = __alloc_u8(sl * n);
-    var pos: i32 = 0;
-    var k: i32 = 0;
-    while (k < n) {
-        var j: i32 = 0;
-        while (j < sl) {
-            buf = buf.with(pos, s[j] as u8);
-            pos = pos + 1;
-            j = j + 1;
-        }
-        k = k + 1;
+    var total: i64 = (sl as i64) * (n as i64);
+    var out: string = s;
+    while ((out.len() as i64) * (2 as i64) <= total) {
+        out = out + out;
     }
-    return string_from_bytes_unchecked(buf);
+    var rem: i32 = (total - (out.len() as i64)) as i32;
+    if (rem > 0) {
+        out = out + slice_unchecked(out, 0, rem);
+    }
+    return out;
 }
 
 // `s.starts_with(prefix)` / `s.ends_with(suffix)` /
