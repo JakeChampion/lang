@@ -16170,6 +16170,11 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		delete(c.info.IntrinsicCalls, n)
 		callExpected := c.expectedType
 		c.expectedType = nil
+		// The type-argument list the SOURCE wrote, kept because a method
+		// dispatch below replaces n.TypeArgs with the RECEIVER's arguments —
+		// after which nothing else can tell the two apart, and a written list
+		// read as the receiver's names the wrong parameters (#9896).
+		var writtenTypeArgs []ast.Type
 		// Display spine (#2696): `print` / `write` / `eprint` accept any
 		// `T: Display`, not just `string`. When the sole argument isn't
 		// already a string, rewrite it to `arg.to_string()` (the same
@@ -16447,12 +16452,51 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				if ed != nil && len(ed.TypeParams) > 0 {
 					args := make([]ast.Type, len(ed.TypeParams))
 					complete := true
+					// A variant fixes only the parameters its payload names:
+					// `Ok(9)` names T and says nothing about E. The rest come
+					// from where the value is going, so a destination naming
+					// this same enum fills them — its CONCRETE positions only,
+					// since a destination inside a generic signature
+					// (`other: Result[U, E]` with E already substituted) has a
+					// type parameter of its own in the position the payload
+					// was meant to pin (#9896).
+					//
+					// Not when the destination WIDENS what the payload pinned,
+					// though: `Ok(n)` with an i32 `n` returned as
+					// `Result[i64, i32]` pins T = i32 from the payload while
+					// the destination says i64, and the widening that settles
+					// that runs downstream of here — reached only because the
+					// type is still INCOMPLETE. Completing it would answer
+					// `Result[i32, i32]` and take the widening away.
+					//
+					// Only a numeric disagreement is left alone. Any other one
+					// is a type error, and it is REPORTED by completing: the
+					// payload's own binding is kept, so `Box[i32, string]` meets
+					// the `Box[string, string]` the call wants and the mismatch
+					// is named.
+					destArgs := destEnumArgs(callExpected, vr.enumName, len(ed.TypeParams))
+					for i, p := range ed.TypeParams {
+						pinned, ok := sub[p]
+						if !ok || destArgs == nil {
+							continue
+						}
+						if numericType(pinned) && numericType(destArgs[i]) && !ast.Equal(pinned, destArgs[i]) {
+							destArgs = nil
+						}
+					}
 					for i, p := range ed.TypeParams {
 						if v, ok := sub[p]; ok {
 							args[i] = v
-						} else {
-							complete = false
+							continue
 						}
+						if destArgs != nil {
+							if _, isParam := destArgs[i].(ast.ParamType); !isParam {
+								args[i] = destArgs[i]
+								sub[p] = destArgs[i]
+								continue
+							}
+						}
+						complete = false
 					}
 					if !complete {
 						// Couldn't fill in every parameter from
@@ -16632,6 +16676,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					// i32 when the registered sig uses
 					// ParamType("K") / ParamType("V").
 					if st, ok := tt.(ast.StructType); ok && len(st.Args) > 0 {
+						writtenTypeArgs = takeWrittenTypeArgs(n, writtenTypeArgs)
 						n.TypeArgs = st.Args
 					}
 					// Array's `Args` is just the single Elem
@@ -16641,11 +16686,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					// the IR layer (emitArrayPush) — no per-
 					// stride dispatch required here.
 					if at, ok := tt.(ast.ArrayType); ok {
+						writtenTypeArgs = takeWrittenTypeArgs(n, writtenTypeArgs)
 						n.TypeArgs = []ast.Type{at.Elem}
 					}
 					// Slice mirrors Array: single-element type
 					// param flows through TypeArgs.
 					if sl, ok := tt.(ast.SliceType); ok {
+						writtenTypeArgs = takeWrittenTypeArgs(n, writtenTypeArgs)
 						n.TypeArgs = []ast.Type{sl.Elem}
 					}
 					// Wide-V Map: `m.values()` is intercepted by
@@ -16784,16 +16831,51 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					// method-level params are inferred from the arguments
 					// below. The "could not infer" check afterwards still
 					// catches a param that nothing binds.
-					tooMany := len(n.TypeArgs) > len(fn.TypeParams)
-					tooFew := len(n.TypeArgs) < len(fn.TypeParams)
+					// Two lists can arrive in n.TypeArgs and they name
+					// different parameters: the RECEIVER's arguments, which a
+					// method dispatch stamps there, and the list the source
+					// WROTE. They are the same list unless that dispatch
+					// replaced it — which is exactly what writtenTypeArgs
+					// records.
+					recvArgs, written := n.TypeArgs, writtenTypeArgs
+					if written == nil && n.TypeArgsWritten {
+						recvArgs, written = nil, n.TypeArgs
+					}
+					// Arity is the WRITTEN list's when the source wrote one:
+					// on a struct receiver n.TypeArgs is the stamp by now, so
+					// counting it measures the receiver's parameters and a
+					// surplus written argument went unreported.
+					count := len(n.TypeArgs)
+					if written != nil {
+						count = len(written)
+					}
+					tooMany := count > len(fn.TypeParams)
+					tooFew := count < len(fn.TypeParams)
 					if tooMany || (tooFew && n.Method == nil) {
 						display, _ := callSiteName(fn)
 						c.errfCode(n.P, "E040", "%s expects %d type argument(s), got %d",
-							display, len(fn.TypeParams), len(n.TypeArgs))
+							display, len(fn.TypeParams), count)
 					}
-					for i, tp := range fn.TypeParams {
-						if i < len(n.TypeArgs) {
-							sub[tp] = n.TypeArgs[i]
+					// The receiver's arguments are the LEADING parameters.
+					for i, ta := range recvArgs {
+						if i < len(fn.TypeParams) {
+							sub[fn.TypeParams[i]] = ta
+						}
+					}
+					// A SHORT written list on a method call names the METHOD's
+					// own parameters, which sit after the receiver's. Read from
+					// the front it named the receiver's instead — so
+					// `r.and[i32](..)` on a `Result[i32, string]` pinned T,
+					// left U exactly as unbound as before, and E040 went on
+					// naming a remedy it then refused (#9896). A full list
+					// still means the whole list, receiver parameters first.
+					offset := 0
+					if n.Method != nil && len(written) < len(fn.TypeParams) {
+						offset = len(fn.TypeParams) - len(written)
+					}
+					for i, ta := range written {
+						if offset+i < len(fn.TypeParams) {
+							sub[fn.TypeParams[offset+i]] = ta
 						}
 					}
 				}
@@ -16848,6 +16930,17 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 						pt = substituteType(pt, sub)
 					}
 					if c.monomorphCloneEnumName(pt) != "" {
+						c.expectedType = pt
+					} else if _, isEnum := pt.(ast.EnumType); isEnum && sub != nil {
+						// A generic callee's enum parameter, with what the
+						// receiver already pinned substituted in
+						// (`and[U](other: Result[U, E])` on a
+						// `Result[i32, string]` receiver is `Result[U, string]`).
+						// The variant constructor needs it: `Ok(9)` pins the
+						// payload's T and nothing else, and without a
+						// destination for E it answers with a bare `Result`
+						// that binds U nowhere — E040 on a program the
+						// language accepts (#9896).
 						c.expectedType = pt
 					}
 				}
@@ -16931,7 +17024,12 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				own := i < len(calleeOwnFlags) && calleeOwnFlags[i]
 				if sub != nil {
 					if !c.unifyArrayArg(&n.Args[i], expected, at, sub, own) {
-						c.errArgMismatch(n, i, recvIsArg0, expected, at)
+						// Report what the parameter came to MEAN here, not how
+						// it was declared: `Box[U, E]` says nothing to a reader
+						// who wrote `.pair[string]` on a `Box[i32, string]`,
+						// where the parameter is `Box[string, string]`. What
+						// inference has not pinned stays as its own name.
+						c.errArgMismatch(n, i, recvIsArg0, substituteType(expected, sub), at)
 					}
 				} else if !c.argOK(&n.Args[i], expected, at, own) {
 					c.errArgMismatch(n, i, recvIsArg0, expected, at)
@@ -18265,6 +18363,38 @@ func (c *checker) stampStructTypeArgs(e ast.Expr, dst ast.Type) {
 			call.TypeArgs = dStruct.Args
 		}
 	}
+}
+
+// takeWrittenTypeArgs snapshots a call's parser-filled type arguments before a
+// method dispatch overwrites them with the receiver's. Idempotent: the first
+// snapshot wins, so a call that hits more than one of the overwrite sites keeps
+// what the source actually wrote.
+func takeWrittenTypeArgs(n *ast.Call, prior []ast.Type) []ast.Type {
+	if prior != nil || !n.TypeArgsWritten || len(n.TypeArgs) == 0 {
+		return prior
+	}
+	return append([]ast.Type(nil), n.TypeArgs...)
+}
+
+// numericType reports whether `t` is an integer or float type — the pair a
+// widening can settle between.
+func numericType(t ast.Type) bool {
+	switch t.(type) {
+	case ast.NumberType, ast.FloatType:
+		return true
+	}
+	return false
+}
+
+// destEnumArgs returns the type arguments a destination supplies for enum
+// `name`, or nil when the destination is some other type, names no arguments,
+// or names the wrong number of them.
+func destEnumArgs(dst ast.Type, name string, want int) []ast.Type {
+	et, ok := dst.(ast.EnumType)
+	if !ok || et.Name != name || len(et.Args) != want {
+		return nil
+	}
+	return et.Args
 }
 
 // refineCallTypeArgsFromDest pushes the destination type's
