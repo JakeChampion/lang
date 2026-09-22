@@ -6248,9 +6248,11 @@ func reg64(r32 string) string {
 //
 // `narrow` means the copy took only the low 32 bits of the accumulator, so
 // the rewrite writes the 32-bit name of dst: a 64-bit load becomes a 32-bit
-// load of the same low bytes, and a 32-bit write already zero-extends. An
-// address (`lea`) or a sign extension to 64 bits has no 32-bit form that
-// keeps the value, so those refuse.
+// load of the same low bytes, and a 32-bit write already zero-extends. A
+// sign extension to 64 bits has no 32-bit-destination form, so it refuses.
+// An address (`lea`) refuses too, by choice: `lea edi, [rip + L]` would
+// keep the low bits the copy took, but this emitter never means an address
+// truncated to 32 bits, so the shape is left alone rather than folded.
 func renameAccDest(op, dst string, narrow bool) (string, bool) {
 	if op == "\txor eax, eax" {
 		d := reg32(dst)
