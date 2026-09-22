@@ -38,7 +38,7 @@ func TestSelfHostFrontendBundleX86_64(t *testing.T) {
 	t.Logf("merged frontend asm: %d bytes", len(mergedAsm))
 
 	// #4442 / #4440 root-cause guard: verify the label-integrity invariant #4446
-	// established (every `.Lir_*` / `.Lira_*` control-flow label is defined before
+	// established (every `.Lssa_*` / `.Lssa_*` control-flow label is defined before
 	// it is referenced) holds across the WHOLE merged multi-module emit — 425
 	// functions from lexer+parser+util+main flattened into one translation unit,
 	// the largest self-host IR emit in the suite. #4446 fixed and gated the

@@ -68,12 +68,12 @@ func TestSelfHostConstFuncGen2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mmc1 compile self failed: %v", err)
 	}
-	if !strings.Contains(string(stage2Asm), ".Lir") {
-		t.Fatal("stage-2 asm has no .Lir labels — gen 2 is not IR-built, so the merged bundle is being refused again")
+	if !strings.Contains(string(stage2Asm), ".Lssa_") {
+		t.Fatal("stage-2 asm has no .Lssa_ labels — gen 2 is not IR-built, so the merged bundle is being refused again")
 	}
 	mmc2 := buildBin(t, gcc, dir, "cfg_mmc2", string(stage2Asm))
 
-	// The `.Lir` label count is the emitter discriminator: the IR emitter emits
+	// The `.Lssa_` label count is the emitter discriminator: the IR emitter emits
 	// them, the AST emitter emits none. Equal counts mean the two generations
 	// agree on routing; the control's row is what proves the fn-value is the
 	// trigger rather than the harness.
@@ -100,17 +100,17 @@ func TestSelfHostConstFuncGen2(t *testing.T) {
 			n1 := lirLabelCount(t, mmc1, prog)
 			n2 := lirLabelCount(t, mmc2, prog)
 			if n1 == 0 {
-				t.Fatalf("gen 1 emitted no .Lir labels — the program did not take the IR path at all")
+				t.Fatalf("gen 1 emitted no .Lssa_ labels — the program did not take the IR path at all")
 			}
 			if n1 != n2 {
-				t.Errorf("gen 1 emitted %d .Lir labels, gen 2 emitted %d: the IR-built compiler disagrees about IR eligibility (#5649)", n1, n2)
+				t.Errorf("gen 1 emitted %d .Lssa_ labels, gen 2 emitted %d: the IR-built compiler disagrees about IR eligibility (#5649)", n1, n2)
 			}
 		})
 	}
 }
 
 // lirLabelCount compiles prog with the given self-host compiler binary and
-// returns how many `.Lir` labels the emitted asm carries.
+// returns how many `.Lssa_` labels the emitted asm carries.
 func lirLabelCount(t *testing.T, compiler, prog string) int {
 	t.Helper()
 	asm, err := exec.Command(compiler, prog).Output()
@@ -120,5 +120,5 @@ func lirLabelCount(t *testing.T, compiler, prog string) int {
 	if len(asm) == 0 {
 		t.Fatalf("%s emitted 0 bytes for %s", filepath.Base(compiler), filepath.Base(prog))
 	}
-	return strings.Count(string(asm), ".Lir")
+	return strings.Count(string(asm), ".Lssa_")
 }

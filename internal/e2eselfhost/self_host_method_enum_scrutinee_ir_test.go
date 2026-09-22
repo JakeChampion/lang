@@ -17,7 +17,7 @@ import (
 // the arms stayed un-mangled against the concrete enum: the match read the
 // wrong variant and returned the wrong arm (0 instead of 42). me_scrutinee_
 // type now resolves a method call's return type from the receiver's type +
-// the method's declared return, so these shapes lower on the IR path (.Lir_
+// the method's declared return, so these shapes lower on the IR path (.Lssa_
 // witness) with the native value. Free-function scrutinees and var-bound
 // method results already worked; kept as regressions.
 func TestSelfHostMethodEnumScrutineeIRX86_64(t *testing.T) {
@@ -65,7 +65,7 @@ func TestSelfHostMethodEnumScrutineeIRX86_64(t *testing.T) {
 			if len(asm) == 0 {
 				t.Fatalf("%s: self-host compiler emitted 0 bytes", tc.name)
 			}
-			if !strings.Contains(string(asm), ".Lir_") {
+			if !strings.Contains(string(asm), ".Lssa_") {
 				t.Fatalf("%s: emitted asm has no IR-path labels — the method-enum scrutinee did not lower through the IR", tc.name)
 			}
 			bin := buildBin(t, gcc, dir, tc.name, string(asm))

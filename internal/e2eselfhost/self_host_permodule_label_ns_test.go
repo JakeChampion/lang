@@ -49,7 +49,7 @@ function main(): i32 {
 `
 
 // labelDef matches an assembly label DEFINITION at the start of a line — both
-// the `.L…`/`.S…` unit-local pools and the `.Lir_…` control-flow labels, since a
+// the `.L…`/`.S…` unit-local pools and the `.Lssa_…` control-flow labels, since a
 // duplicate of any of them is equally fatal.
 var labelDef = regexp.MustCompile(`(?m)^(\.[A-Za-z_][A-Za-z0-9_$]*):`)
 

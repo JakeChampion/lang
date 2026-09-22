@@ -11,13 +11,13 @@ import (
 	"testing"
 )
 
-// localLabelRe matches a self-host control-flow label — the x86-64 `.Lir_*`
-// emitter (asm_ir.fern) and the arm64 `.Lira_*` emitter (asm_arm64_ir.fern).
+// localLabelRe matches a self-host control-flow label — the x86-64 `.Lssa_*`
+// emitter (asm_ir.fern) and the arm64 `.Lssa_*` emitter (asm_arm64_ir.fern).
 var localLabelRe = regexp.MustCompile(`\.Lira?_[A-Za-z0-9_.$]+`)
 
-// assertNoDanglingLocalLabels fails if the emitted asm references a `.Lir_*` /
-// `.Lira_*` control-flow label it never defines — the exact dangling-label link
-// failure of issue #4442 (`undefined reference to .Lir_main_13`), caught here as
+// assertNoDanglingLocalLabels fails if the emitted asm references a `.Lssa_*` /
+// `.Lssa_*` control-flow label it never defines — the exact dangling-label link
+// failure of issue #4442 (`undefined reference to .Lssa_main_13`), caught here as
 // a clear test error naming the label instead of a downstream gcc/ld crash. A
 // definition is a line `<label>:`; every other occurrence is a reference.
 func assertNoDanglingLocalLabels(t *testing.T, ctx string, asm []byte) {
@@ -27,7 +27,7 @@ func assertNoDanglingLocalLabels(t *testing.T, ctx string, asm []byte) {
 	}
 }
 
-// danglingLocalLabels returns the `.Lir_*` / `.Lira?_*` labels `asm` references
+// danglingLocalLabels returns the `.Lssa_*` / `.Lira?_*` labels `asm` references
 // without defining, sorted.
 //
 // The character class has to admit `$`: a capturing lambda is hoisted to
@@ -58,7 +58,7 @@ func danglingLocalLabels(asm []byte) []string {
 }
 
 // blockLabelRe matches a self-host per-block label — the stack machine's
-// `.Lir_*` (asm_ir.fern) and `.Lira_*` (asm_arm64_ir.fern), and the register
+// `.Lssa_*` (asm_ir.fern) and `.Lssa_*` (asm_arm64_ir.fern), and the register
 // path's `.Lssa_*` (both emitters).
 var blockLabelRe = regexp.MustCompile(`\.L(?:ira?|ssa)_[A-Za-z0-9_.$]+`)
 

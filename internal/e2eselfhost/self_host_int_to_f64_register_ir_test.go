@@ -40,8 +40,8 @@ func TestSelfHostIntToF64X86_64IR(t *testing.T) {
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
-			if !strings.Contains(string(asm), ".Lir_") {
-				t.Fatalf("%s did not lower through the IR (no .Lir_ labels)", tc.name)
+			if !strings.Contains(string(asm), ".Lssa_") {
+				t.Fatalf("%s did not lower through the IR (no .Lssa_ labels)", tc.name)
 			}
 			for _, want := range tc.x86Want {
 				if !strings.Contains(string(asm), want) {

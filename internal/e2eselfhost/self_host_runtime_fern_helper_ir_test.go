@@ -56,28 +56,28 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
 		},
 		{
 			// str_trim — migrated on the IR path too (the AST + IR str_trim both
-			// became Fern). The old hand-written IR body's local labels (.Lir_trim_*)
+			// became Fern). The old hand-written IR body's local labels (.Lssa_trim_*)
 			// must be gone.
 			"str_trim",
 			`function main(): i32 { return "  hi ".trim().len(); }`,
 			"__fn___fern_str_trim",
-			[]string{"\n__fern_str_trim:", ".Lir_trim_front", ".Ltrim_front"},
+			[]string{"\n__fern_str_trim:", ".Lssa_trim_front", ".Ltrim_front"},
 		},
 		{
 			// str_lines — migrated on the IR path too. The old hand-written IR body
-			// (__fern_str_lines: / .Lir_lines_box) must be gone.
+			// (__fern_str_lines: / .Lssa_lines_box) must be gone.
 			"str_lines",
 			`function main(): i32 { return "a\nb\n".lines().len(); }`,
 			"__fn___fern_str_lines",
-			[]string{"\n__fern_str_lines:", ".Lir_lines_box"},
+			[]string{"\n__fern_str_lines:", ".Lssa_lines_box"},
 		},
 		{
 			// str_bytes — migrated on the IR path too. The old hand-written IR body
-			// (__fern_str_bytes: / .Lir_bytes_loop) must be gone.
+			// (__fern_str_bytes: / .Lssa_bytes_loop) must be gone.
 			"str_bytes",
 			`function main(): i32 { return "abc".bytes().len(); }`,
 			"__fn___fern_str_bytes",
-			[]string{"\n__fern_str_bytes:", ".Lir_bytes_loop"},
+			[]string{"\n__fern_str_bytes:", ".Lssa_bytes_loop"},
 		},
 		{
 			// chr — first Tier-2 helper via the raw-memory intrinsics (#2649). The IR
@@ -109,63 +109,63 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
 		},
 		{
 			// str_to_upper — migrated on the IR path too. The old hand-written IR
-			// body (__fern_str_to_upper: / .Lir_upper_loop) must be gone.
+			// body (__fern_str_to_upper: / .Lssa_upper_loop) must be gone.
 			"str_to_upper",
 			`function main(): i32 { return "aB".to_ascii_upper()[0] as i32; }`,
 			"__fn___fern_str_to_upper",
-			[]string{"\n__fern_str_to_upper:", ".Lir_upper_loop"},
+			[]string{"\n__fern_str_to_upper:", ".Lssa_upper_loop"},
 		},
 		{
 			// str_to_lower — the lower-case sibling on the IR path.
 			"str_to_lower",
 			`function main(): i32 { return "Ab".to_ascii_lower()[0] as i32; }`,
 			"__fn___fern_str_to_lower",
-			[]string{"\n__fern_str_to_lower:", ".Lir_lower_loop"},
+			[]string{"\n__fern_str_to_lower:", ".Lssa_lower_loop"},
 		},
 		{
 			// str_repeat — migrated on the IR path too (#2649). The old hand-written
-			// IR body (__fern_str_repeat: / .Lir_rep_outer) must be gone; the
+			// IR body (__fern_str_repeat: / .Lssa_rep_outer) must be gone; the
 			// op_str_repeat handler now calls __fn___fern_str_repeat via the stack ABI.
 			"str_repeat",
 			`function main(): i32 { return "ab".repeat(3).len(); }`,
 			"__fn___fern_str_repeat",
-			[]string{"\n__fern_str_repeat:", ".Lir_rep_outer"},
+			[]string{"\n__fern_str_repeat:", ".Lssa_rep_outer"},
 		},
 		{
 			// str_reverse — migrated on the IR path too (#2649). The old hand-written
-			// IR body (__fern_str_reverse: / .Lir_str_rev_loop) must be gone; the
+			// IR body (__fern_str_reverse: / .Lssa_str_rev_loop) must be gone; the
 			// op_str_reverse handler now calls __fn___fern_str_reverse via the stack ABI.
 			"str_reverse",
 			`function main(): i32 { return "abc".reverse()[0] as i32; }`,
 			"__fn___fern_str_reverse",
-			[]string{"\n__fern_str_reverse:", ".Lir_str_rev_loop"},
+			[]string{"\n__fern_str_reverse:", ".Lssa_str_rev_loop"},
 		},
 		{
 			// str_replace — migrated on the IR path too (#2649). The old hand-written
-			// IR body (__fern_str_replace: / .Lir_repl_walk) must be gone; the
+			// IR body (__fern_str_replace: / .Lssa_repl_walk) must be gone; the
 			// op_str_replace handler now calls __fn___fern_str_replace via the stack ABI.
 			"str_replace",
 			`function main(): i32 { return "a.b".replace(".", "-").len(); }`,
 			"__fn___fern_str_replace",
-			[]string{"\n__fern_str_replace:", ".Lir_repl_walk"},
+			[]string{"\n__fern_str_replace:", ".Lssa_repl_walk"},
 		},
 		{
 			// string_from_bytes_unchecked — migrated on the IR path too (#2649). The old
-			// hand-written IR body (__fern_string_from_bytes: / .Lir_sfb_loop) must
+			// hand-written IR body (__fern_string_from_bytes: / .Lssa_sfb_loop) must
 			// be gone; op_str_from_bytes now calls __fn___fern_string_from_bytes.
 			"string_from_bytes_unchecked",
 			`function main(): i32 { var b: u8[] = [104 as u8, 105 as u8]; return string_from_bytes_unchecked(b).len(); }`,
 			"__fn___fern_string_from_bytes",
-			[]string{"\n__fern_string_from_bytes:", ".Lir_sfb_loop"},
+			[]string{"\n__fern_string_from_bytes:", ".Lssa_sfb_loop"},
 		},
 		{
 			// str_split — migrated on the IR path too (#2649). The old hand-written
-			// IR body (__fern_str_split: / .Lir_split_cl) must be gone; op_str_split
+			// IR body (__fern_str_split: / .Lssa_split_cl) must be gone; op_str_split
 			// now calls __fn___fern_str_split via the stack ABI.
 			"str_split",
 			`function main(): i32 { return "a,b,c".split(",").len(); }`,
 			"__fn___fern_str_split",
-			[]string{"\n__fern_str_split:", ".Lir_split_cl"},
+			[]string{"\n__fern_str_split:", ".Lssa_split_cl"},
 		},
 		{
 			// random_bytes — the first syscall-leaf migrated to Fern (#2649),

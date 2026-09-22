@@ -52,8 +52,8 @@ func TestSelfHostHttpHandlerRoutesIRX86_64(t *testing.T) {
 	if len(asm) == 0 {
 		t.Fatal("self-host compiler emitted 0 bytes for the HTTP handler program")
 	}
-	if !strings.Contains(asm, ".Lir") {
-		t.Fatal("no .Lir labels — the program did not lower through the IR")
+	if !strings.Contains(asm, ".Lssa_") {
+		t.Fatal("no .Lssa_ labels — the program did not lower through the IR")
 	}
 	// buildBin fails the test on a link error, which is the point: an undefined
 	// __fern_* or a doubly-defined __fern_shp_* both surface here.
@@ -95,7 +95,7 @@ function main(): i32 {
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes for -target arm64")
 			}
-			if !strings.Contains(asm, ".Lir") {
+			if !strings.Contains(asm, ".Lssa_") {
 				t.Error("did not lower through the arm64 IR path, which " +
 					"carries no function budget, so an over-budget program should still " +
 					"reach it (#3457)")
@@ -131,7 +131,7 @@ function main(): i32 {
 }
 `
 		asm, progDir := compileSourceModload(t, runner, driverBin, src)
-		if !strings.Contains(asm, ".Lir") {
+		if !strings.Contains(asm, ".Lssa_") {
 			t.Error("http-parse did not lower through the IR: with the rescue's gate removed, " +
 				"every over-budget program in the window routes per-module IR (#3457)")
 		}
@@ -172,7 +172,7 @@ function main(): i32 {
 }
 `, port)
 		asm, progDir := compileSourceModload(t, runner, driverBin, src)
-		if !strings.Contains(asm, ".Lir") {
+		if !strings.Contains(asm, ".Lssa_") {
 			t.Fatal("raw-socket program did not route through the IR path")
 		}
 		bin := buildBin(t, gcc, progDir, "raw_socket", asm)
@@ -242,7 +242,7 @@ function main(): i32 {
 `, port)
 
 	asm, progDir := compileSourceModload(t, runner, driverBin, src)
-	if !strings.Contains(asm, ".Lir") {
+	if !strings.Contains(asm, ".Lssa_") {
 		t.Fatal("handler program did not route through the IR path")
 	}
 	bin := buildBin(t, gcc, progDir, "http_serve", asm)

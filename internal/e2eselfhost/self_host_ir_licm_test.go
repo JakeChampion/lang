@@ -175,7 +175,7 @@ func asmLenShape(asm string, marker func(string) bool, loopTop func(string) (str
 
 // selfHostLenShape reads the self-host x86-64 backend's listing: a length is
 // the `movq 8(%rax), %rax` that follows the box pop, and a loop runs from a
-// `.Lir_` label to the `jmp` back to it. Labels are only loop tops when a jump
+// `.Lssa_` label to the `jmp` back to it. Labels are only loop tops when a jump
 // later in the function targets them, so every label is opened on sight and
 // closed by its back edge; a forward-only label simply never closes, which is
 // why the set is cleared at each function.
@@ -184,10 +184,10 @@ func selfHostLenShape(asm string) (outside, inside int) {
 	seen := map[string]bool{}
 	for _, raw := range strings.Split(asm, "\n") {
 		line := strings.TrimSpace(raw)
-		if strings.HasPrefix(line, ".Lir_") && strings.HasSuffix(line, ":") {
+		if strings.HasPrefix(line, ".Lssa_") && strings.HasSuffix(line, ":") {
 			seen[strings.TrimSuffix(line, ":")] = true
 		}
-		if strings.HasPrefix(line, "jmp .Lir_") && seen[strings.TrimPrefix(line, "jmp ")] {
+		if strings.HasPrefix(line, "jmp .Lssa_") && seen[strings.TrimPrefix(line, "jmp ")] {
 			backEdge[strings.TrimPrefix(line, "jmp ")] = true
 		}
 	}
@@ -195,7 +195,7 @@ func selfHostLenShape(asm string) (outside, inside int) {
 		func(l string) bool { return l == "movq 8(%rax), %rax" },
 		func(l string) (string, bool) {
 			label := strings.TrimSuffix(l, ":")
-			return label, strings.HasPrefix(l, ".Lir_") && strings.HasSuffix(l, ":") && backEdge[label]
+			return label, strings.HasPrefix(l, ".Lssa_") && strings.HasSuffix(l, ":") && backEdge[label]
 		},
 		func(l, label string) bool { return l == "jmp "+label })
 }
