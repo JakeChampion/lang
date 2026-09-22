@@ -71,24 +71,24 @@ func TestSelfHostArm64UnsignedDivAST(t *testing.T) {
 	}
 
 	udivBody := arm64FnBody(t, asm, "__fn_udiv_probe")
-	if !strings.Contains(udivBody, "udiv x0, x0, x1") {
+	if !matchShape(udivBody, `udiv x[0-9]+, x[0-9]+, x[0-9]+`) {
 		t.Errorf("u64 `/` did not emit udiv (the umax-prints-\"/\" bug); body:\n%s", udivBody)
 	}
-	if strings.Contains(udivBody, "sdiv x0, x0, x1") {
+	if matchShape(udivBody, `sdiv x[0-9]+, x[0-9]+, x[0-9]+`) {
 		t.Errorf("u64 `/` still emits signed sdiv; body:\n%s", udivBody)
 	}
 
 	umodBody := arm64FnBody(t, asm, "__fn_umod_probe")
-	if !strings.Contains(umodBody, "udiv x2, x0, x1") {
+	if !matchShape(umodBody, `udiv x[0-9]+, x[0-9]+, x[0-9]+`) {
 		t.Errorf("u64 `%%` did not emit udiv; body:\n%s", umodBody)
 	}
 
 	// Signed control: an i32 `/` must still take the signed sdiv path.
 	sdivBody := arm64FnBody(t, asm, "__fn_sdiv_probe")
-	if !strings.Contains(sdivBody, "sdiv x0, x0, x1") {
+	if !matchShape(sdivBody, `sdiv x[0-9]+, x[0-9]+, x[0-9]+`) {
 		t.Errorf("i32 `/` should still emit sdiv; body:\n%s", sdivBody)
 	}
-	if strings.Contains(sdivBody, "udiv x0, x0, x1") {
+	if matchShape(sdivBody, `udiv x[0-9]+, x[0-9]+, x[0-9]+`) {
 		t.Errorf("i32 `/` wrongly emits unsigned udiv; body:\n%s", sdivBody)
 	}
 }

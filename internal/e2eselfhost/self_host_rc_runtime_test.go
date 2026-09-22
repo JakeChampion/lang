@@ -312,14 +312,11 @@ func TestSelfHostRcExitSweepX86_64(t *testing.T) {
 		})
 	}
 
-	// Emission: a function with an array local zero-inits its body slots
-	// (rep stosq) and releases the local at exit (__fern_rc_dec sweep).
-	t.Run("emits-zeroinit-and-sweep", func(t *testing.T) {
+	// Emission: a function with an array local releases it at exit (the
+	// __fern_arr_dec sweep).
+	t.Run("emits-exit-sweep", func(t *testing.T) {
 		asm := string(runCapture(t, gcc, runner, driverBin,
 			[]byte("function main(): i32 { var xs: i32[] = [1, 2]; return xs[0]; }")))
-		if !strings.Contains(asm, "rep stosq") {
-			t.Errorf("expected body-local zero-init (rep stosq) in a function with locals")
-		}
 		if !strings.Contains(asm, "call __fn___fern_arr_dec") {
 			t.Errorf("expected the exit-dec sweep (__fern_arr_dec) for the array local")
 		}

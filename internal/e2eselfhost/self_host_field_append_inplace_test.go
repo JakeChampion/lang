@@ -1260,7 +1260,7 @@ function main(): i32 { var s: St = St { names: ["a", "b"], n: 0 }; s = s.put("c"
 			asm := string(runCaptureStrictIR(t, gcc, runner, driverBin, []byte(tc.src), "-ir"))
 			body := asmFuncBody(t, asm, tc.label)
 			if tc.with {
-				gotClone := !strings.Contains(body, "call __fn___fern_rc_is_unique")
+				gotClone := rcIsUniqueSites(body) == 0
 				if gotClone != tc.wantClone {
 					t.Errorf("%s: value-form .with = %v, want %v; body:\n%s", tc.name, gotClone, tc.wantClone, body)
 				}
