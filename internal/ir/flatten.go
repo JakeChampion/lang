@@ -68,12 +68,22 @@ func FlattenBranches(prog *Program) {
 		ptrW = 4
 	}
 	sigs := buildFuncSigs(prog)
+	ss := stringSlots(prog.TwoWordStr)
 	for _, fn := range prog.Funcs {
-		fn.Ops = flattenOps(fn.Ops, fn.ReturnType, ptrW, sigs)
+		fn.Ops = flattenOps(fn.Ops, fn.ReturnType, ptrW, sigs, ss)
 	}
 }
 
-func flattenOps(ops []Op, retType ast.Type, ptrW int, sigs map[string]funcSig) []Op {
+// stringSlots is how many operand-stack entries a string occupies: two
+// (data, len) under the two-word ABI, one otherwise.
+func stringSlots(twoWordStr bool) int {
+	if twoWordStr {
+		return 2
+	}
+	return 1
+}
+
+func flattenOps(ops []Op, retType ast.Type, ptrW int, sigs map[string]funcSig, ss int) []Op {
 	out := make([]Op, 0, len(ops))
 	depth := int32(0)
 	// dataDepth tracks the operand stack depth at the current
@@ -119,7 +129,7 @@ func flattenOps(ops []Op, retType ast.Type, ptrW int, sigs map[string]funcSig) [
 			depth--
 		}
 		if dataDepthValid {
-			d, ok := simulateOpEffect(op, dataDepth, sigs)
+			d, ok := simulateOpEffect(op, dataDepth, sigs, ss)
 			if !ok {
 				dataDepthValid = false
 			} else {
@@ -188,8 +198,8 @@ func buildFuncSigs(prog *Program) map[string]funcSig {
 // only touches the data stack because the caller already tracks
 // control-flow depth separately (`depth`) and the flatten gate
 // fires only at depth==0.
-func simulateOpEffect(op Op, dataDepth int, sigs map[string]funcSig) (int, bool) {
-	pops, pushes, ok := opStackEffect(op, sigs)
+func simulateOpEffect(op Op, dataDepth int, sigs map[string]funcSig, ss int) (int, bool) {
+	pops, pushes, ok := opStackEffect(op, sigs, ss)
 	if !ok {
 		return 0, false
 	}
@@ -210,8 +220,8 @@ func simulateOpEffect(op Op, dataDepth int, sigs map[string]funcSig) (int, bool)
 // ok=false — the caller skips data-stack updates past them. The
 // switch covers every op kind the IR emits; unrecognised kinds
 // fall through to ok=false (defensive — adding a new op shouldn't
-// silently miscount).
-func opStackEffect(op Op, sigs map[string]funcSig) (pops int, pushes int, ok bool) {
+// silently miscount). ss is what a string occupies (stringSlots).
+func opStackEffect(op Op, sigs map[string]funcSig, ss int) (pops int, pushes int, ok bool) {
 	switch op.Kind {
 	// Zero-effect markers: the source-line marker (native -g) emits no
 	// code at all, the coverage counter bump (-cover) emits one
@@ -231,21 +241,20 @@ func opStackEffect(op Op, sigs map[string]funcSig) (pops int, pushes int, ok boo
 		return 1, 1, true
 	// Locals.
 	case OpLoadLocal:
-		// Two-word string reads push (data, len) — same shape
-		// as a heap pointer + extra len word — but the IR
+		// A string read pushes what a string occupies — the IR
 		// surfaces that via WidthString. Default reads push 1.
 		if op.Width == WidthString {
-			return 0, 2, true
+			return 0, ss, true
 		}
 		return 0, 1, true
 	case OpStoreLocal:
 		if op.Width == WidthString {
-			return 2, 0, true
+			return ss, 0, true
 		}
 		return 1, 0, true
 	case OpTeeLocal:
 		if op.Width == WidthString {
-			return 2, 2, true
+			return ss, ss, true
 		}
 		return 1, 1, true
 	// Binary arithmetic / comparison.
@@ -261,12 +270,12 @@ func opStackEffect(op Op, sigs map[string]funcSig) (pops int, pushes int, ok boo
 		// loads stay 1→1 even when Width=WidthPtr because both
 		// arm64 and wasm read a single pointer-sized value.
 		if op.Width == WidthString {
-			return 1, 2, true
+			return 1, ss, true
 		}
 		return 1, 1, true
 	case OpStore, OpFStore, OpStoreI8:
 		if op.Width == WidthString {
-			return 3, 0, true
+			return 1 + ss, 0, true
 		}
 		return 2, 0, true
 	case OpAlloc:
@@ -277,20 +286,18 @@ func opStackEffect(op Op, sigs map[string]funcSig) (pops int, pushes int, ok boo
 		// (the three-way i32); OpStrConcat returns a new (data, len)
 		// pair via multi-value wasm.
 		if op.Kind == OpStrConcat {
-			return 4, 2, true
+			return 2 * ss, ss, true
 		}
-		return 4, 1, true
+		return 2 * ss, 1, true
 	case OpStrLen:
-		return 2, 1, true
+		return ss, 1, true
 	case OpEnumSentinel:
 		return 0, 1, true
 	case OpMatchTag:
 		return 1, 1, true
 	case OpDrop:
-		// Width=WidthString drops two i32 slots (data + len);
-		// every other Drop kind pops a single value.
 		if op.Width == WidthString {
-			return 2, 0, true
+			return ss, 0, true
 		}
 		return 1, 0, true
 	// Pair-return makers.
