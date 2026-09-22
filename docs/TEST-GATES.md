@@ -104,7 +104,7 @@ what caught it.
 A case that asserts only an exit code cannot show a shape **stayed on the IR
 path**: a per-function bail can reach the same answer by another route, so the
 case passes on the commit the fix has not landed on. No asm-label witness
-separates the two either — a module that bailed still emits `.Lir_*` labels for
+separates the two either — a module that bailed still emits `.Lssa_*` labels for
 the functions that did lower.
 
 Use `runCaptureStrictIR` instead of `runCapture` when that is the point (#6602).

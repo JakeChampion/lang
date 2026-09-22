@@ -11,12 +11,12 @@ import (
 	"testing"
 )
 
-// localLabelRe matches a self-host control-flow label — the x86-64 `.Lssa_*`
-// emitter (asm_ir.fern) and the arm64 `.Lssa_*` emitter (asm_arm64_ir.fern).
-var localLabelRe = regexp.MustCompile(`\.Lira?_[A-Za-z0-9_.$]+`)
+// localLabelRe matches a self-host control-flow label: the register path's
+// `.Lssa_<fn>_<block>` on both ISAs.
+var localLabelRe = regexp.MustCompile(`\.Lssa_[A-Za-z0-9_.$]+`)
 
-// assertNoDanglingLocalLabels fails if the emitted asm references a `.Lssa_*` /
-// `.Lssa_*` control-flow label it never defines — the exact dangling-label link
+// assertNoDanglingLocalLabels fails if the emitted asm references a `.Lssa_*`
+// control-flow label it never defines — the exact dangling-label link
 // failure of issue #4442 (`undefined reference to .Lssa_main_13`), caught here as
 // a clear test error naming the label instead of a downstream gcc/ld crash. A
 // definition is a line `<label>:`; every other occurrence is a reference.
@@ -27,8 +27,8 @@ func assertNoDanglingLocalLabels(t *testing.T, ctx string, asm []byte) {
 	}
 }
 
-// danglingLocalLabels returns the `.Lssa_*` / `.Lira?_*` labels `asm` references
-// without defining, sorted.
+// danglingLocalLabels returns the `.Lssa_*` labels `asm` references without
+// defining, sorted.
 //
 // The character class has to admit `$`: a capturing lambda is hoisted to
 // `<fn>$cloN` (irlower.fern:54733) and its labels carry that name. Excluding it
@@ -57,10 +57,9 @@ func danglingLocalLabels(asm []byte) []string {
 	return dangling
 }
 
-// blockLabelRe matches a self-host per-block label — the stack machine's
-// `.Lssa_*` (asm_ir.fern) and `.Lssa_*` (asm_arm64_ir.fern), and the register
-// path's `.Lssa_*` (both emitters).
-var blockLabelRe = regexp.MustCompile(`\.L(?:ira?|ssa)_[A-Za-z0-9_.$]+`)
+// blockLabelRe matches a self-host per-block label, the register path's
+// `.Lssa_*` on both emitters.
+var blockLabelRe = regexp.MustCompile(`\.Lssa_[A-Za-z0-9_.$]+`)
 
 // assertNoDuplicateLocalLabels fails if the emitted asm DEFINES one per-block
 // label twice — gas's "symbol `.Lssa_ssarc__walkable_22' is already defined"

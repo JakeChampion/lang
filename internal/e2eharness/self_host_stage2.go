@@ -38,7 +38,7 @@ func RunCapture(t *testing.T, gcc string, runner []string, bin string, stdin []b
 // Plain RunCapture cannot express that: it asserts the answer, and a bail can
 // reach the same answer by another route, so the case passes on the commit the
 // fix has not landed on and pins nothing (#6602). An asm-label witness does not
-// separate them either — a module that bailed still emits `.Lir_*` labels for
+// separate them either — a module that bailed still emits `.Lssa_*` labels for
 // the functions that did lower.
 func RunCaptureStrictIR(t *testing.T, gcc string, runner []string, bin string, stdin []byte, extraArgs ...string) []byte {
 	t.Helper()
