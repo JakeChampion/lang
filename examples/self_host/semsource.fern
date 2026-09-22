@@ -4498,20 +4498,55 @@ pub function with_inferred_modes(b: Built): Built {
     return Built { decls: decls, instances: instances, contracts: inferred.table, names: b.names };
 }
 
-// Whether any parameter changed hands, so the caller can skip a second
-// lowering that would produce the same bodies.
-pub function modes_differ(a: Built, b: Built): boolean {
+// Which rows the inference moved, in the order `semlower.rows_of` walks them:
+// every declaration, then every instance. All false means no parameter changed
+// hands and the second lowering would produce the same bodies throughout.
+//
+// Per row rather than per module, because a row the inference did not move
+// keeps its body: `ssaunits.plan` reads a declaration's own modes and the
+// contracts of what it calls, so a row where both are identical plans and
+// lowers identically. Answering only "somewhere" made the caller re-lower
+// everywhere (#9969).
+pub function changed_rows(a: Built, b: Built): boolean[] {
+    var out: boolean[] = [];
     var i: i32 = 0;
     while (i < a.decls.len() && i < b.decls.len()) {
-        if (!same_bits_i32(a.decls[i].modes, b.decls[i].modes)) { return true; }
+        out = out.append(produced_moved(a.decls[i], b.decls[i]));
         i = i + 1;
     }
     i = 0;
     while (i < a.instances.len() && i < b.instances.len()) {
-        if (!same_bits_i32(a.instances[i].modes, b.instances[i].modes)) { return true; }
+        out = out.append(produced_moved(a.instances[i], b.instances[i]));
         i = i + 1;
     }
+    return out;
+}
+
+// Whether the inference moved anything at all, which is what decides between
+// the declared module and the widened one. Lives here rather than in each
+// caller because `semlower` and the census both ask it of the same array.
+pub function any_row_changed(changed: boolean[]): boolean {
+    for c in changed { if (c) { return true; } }
     return false;
+}
+
+// A row moved when its own modes changed, or when any contract it calls did:
+// `inferred_produced` rewrites every row's `func.calls` whether or not that
+// row's own parameters moved, and a caller's brackets read the callee's modes.
+function produced_moved(a: Produced, b: Produced): boolean {
+    if (!same_bits_i32(a.modes, b.modes)) { return true; }
+    return !same_call_modes(a.func.calls, b.func.calls);
+}
+
+function same_call_modes(a: ssasem.Contract[], b: ssasem.Contract[]): boolean {
+    if (a.len() != b.len()) { return false; }
+    var i: i32 = 0;
+    while (i < a.len()) {
+        if (a[i].name != b[i].name) { return false; }
+        if (!same_bits_i32(a[i].modes, b[i].modes)) { return false; }
+        i = i + 1;
+    }
+    return true;
 }
 
 function same_bits_i32(a: i32[], b: i32[]): boolean {
