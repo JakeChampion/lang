@@ -23166,11 +23166,20 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
             match (mnc.callee) {
                 ast.ExprIdent(mnid) => {
                     if ((mnid.name == "map_new" || mnid.name == "map_new_i32") && mnc.args.len() == 1 && v.type_name.len() >= 5 && slice_unchecked(v.type_name, 0, 4) == "Map[") {
-                        var inner2: str = slice_unchecked(v.type_name, 4, v.type_name.len());
                         var kkind: i32 = 0 - 1;
                         var ktag: string = "";
-                        if (inner2.len() >= 4 && slice_unchecked(inner2, 0, 4) == "i32,") { kkind = 1; ktag = "i32"; }
-                        else if (inner2.len() >= 7 && slice_unchecked(inner2, 0, 7) == "string,") { kkind = 0; ktag = "string"; }
+                        var kt2: string = map_key_of(v.type_name);
+                        // The same question map_key_kind_of answers everywhere
+                        // else, rather than a third hand-rolled reading of the
+                        // spelling: an INTEGER key takes the integer column. A
+                        // `u8` / `u32` key matched neither of the two literal
+                        // prefixes this used to test, so it fell through with
+                        // kkind -1 and the map was CONSTRUCTED string-keyed
+                        // while its inserts used the integer column — which on
+                        // wasm, where the constructor picks the box layout, is
+                        // a map that answers nothing it was given (#9973).
+                        if (map_key_kind_of(v.type_name) == 1) { kkind = 1; ktag = kt2; }
+                        else if (kt2 == "string") { kkind = 0; ktag = "string"; }
                         else if (map_key_eqfn(v.type_name) != "") {
                             // Struct/enum key: kind 2, dispatched by the key's
                             // derived hash/eq (the wasm hash map threads their
