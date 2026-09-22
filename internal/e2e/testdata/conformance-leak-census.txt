@@ -250,6 +250,7 @@ enum_consume_rebind_alias                            0
 enum_payload                                         0
 enum_payload_aliases_container                       35
 enum_reuse_churn                                     0
+enum_shares_a_struct_name                            0
 enum_str                                             0
 enum_u64_payload_unsigned_shift                      0
 eq_struct_enum                                       0
