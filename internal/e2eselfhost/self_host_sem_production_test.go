@@ -323,6 +323,38 @@ function main(): i32 {
     return f(42);
 }
 `},
+	// A generic struct named INSIDE a callable spelling. mg_ty understood an
+	// `own` prefix, an array suffix, a tuple and a bracketed `Base[args]` — and
+	// not a callable, so `(i32) => Slot[i32]` was read as the base
+	// `(i32) => Slot` and handed back with the instantiation unmangled. The
+	// tuple element is what carries a whole signature to mg_ty (a var or
+	// parameter annotation is coarsened to the "fn" tag plus sidecars, which
+	// were mangled already), and the callable's parameter and result positions
+	// are separate arms of the rebuild, so both are here. Produces 0 of 6
+	// without it: `main` refuses on the tuple element type, `take` and `unwrap`
+	// on a binding whose declared `Slot__i32` meets a semantic value of `Slot`.
+	{name: "generic-struct-inside-a-callable-spelling", atLeast: 6, src: `
+struct Slot[T] { v: T }
+
+function slot_of(n: i32): Slot[i32] { return Slot[i32] { v: n }; }
+
+function take(p: ((i32) => Slot[i32], i32)): i32 {
+    var f: (i32) => Slot[i32] = p.0;
+    var s: Slot[i32] = f(p.1);
+    return s.v;
+}
+
+function unwrap(q: ((Slot[i32]) => i32, Slot[i32])): i32 {
+    var g: (Slot[i32]) => i32 = q.0;
+    return g(q.1);
+}
+
+function main(): i32 {
+    var p: ((i32) => Slot[i32], i32) = (((b: i32): Slot[i32] => slot_of(b)), 4);
+    var q: ((Slot[i32]) => i32, Slot[i32]) = (((s: Slot[i32]): i32 => s.v), Slot[i32] { v: 7 });
+    return take(p) + unwrap(q);
+}
+`},
 	// An if-expression desugars to an IIFE whose ret_type if_expr_rt reads off
 	// the then-branch, and for a boolean branch it tagged it "bool" — a spelling
 	// the language does not have. The checker rejects `bool` as a type name (it
