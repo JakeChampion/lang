@@ -1,0 +1,108 @@
+// coreutils/lib/radix.fern — a stable LSD radix sort on one 64-bit word
+// per element, for a sort whose comparison has a word that orders the
+// way it does wherever the word separates two elements: the caller
+// sorts the runs of equal words with the whole comparison afterwards.
+// The histograms are a fixed cost of some twenty million instructions,
+// so below `threshold` elements a merge alone is cheaper and a caller
+// sorts those without a word.
+pub function threshold(): i32 {
+  return 16384;
+}
+
+// `bytes_word(text, lo, hi)` — the first eight bytes of `text[lo..hi)`,
+// big-endian and zero-padded, which orders as a byte comparison does:
+// a shorter span with the same bytes is the smaller, and a padded zero
+// can only tie with a real one, which the caller's comparison settles.
+pub function bytes_word(text: string, lo: i32, hi: i32): i64 {
+  if (hi - lo >= 8) {
+    return text[lo] as i64 << 56 as i64 | text[lo + 1] as i64 << 48 as i64 | text[lo + 2] as i64 << 40 as i64 | text[lo + 3] as i64 << 32 as i64 | text[lo + 4] as i64 << 24 as i64 | text[lo + 5] as i64 << 16 as i64 | text[lo + 6] as i64 << 8 as i64 | text[lo + 7] as i64;
+  }
+  var w: i64 = 0 as i64;
+  var b: i32 = 0;
+  while (b < 8) {
+    var x: i32 = 0;
+    if (lo + b < hi) {
+      x = text[lo + b] as i32;
+    }
+    w = w << 8 as i64 | x as i64;
+    b = b + 1;
+  }
+  return w;
+}
+
+// `by_word(idx, words, n, signed, rev)` — `idx`, a permutation of
+// 0..n-1, reordered by the words it indexes, ascending, equal words
+// keeping their order: four passes of sixteen bits from the low end,
+// their histograms taken in one walk over the words, then a placement
+// for each pass whose digit is not the same on every word — which the
+// high digits of small numbers and short spans are. A reversed order
+// takes each digit's complement, and the top digit of a signed word has
+// its sign flipped so that the negative words bucket first.
+pub function by_word(own idx: i64[], words: i64[], n: i32, signed: boolean, rev: boolean): i64[] {
+  var flip: i32 = 0;
+  if (rev) {
+    flip = 65535;
+  }
+  var counts: i32[] = [];
+  var z: i32 = 0;
+  while (z < 262144) {
+    counts = counts.append(0);
+    z = z + 1;
+  }
+  var i: i32 = 0;
+  while (i < n) {
+    var w: i64 = words[idx[i] as i32];
+    var d0: i32 = (w & 65535 as i64) as i32 ^ flip;
+    var d1: i32 = 65536 + (w >> 16 as i64 & 65535 as i64) as i32 ^ flip;
+    var d2: i32 = 131072 + (w >> 32 as i64 & 65535 as i64) as i32 ^ flip;
+    var d3: i32 = 196608 + (w >> 48 as i64 & 65535 as i64) as i32 ^ flip;
+    counts = counts.with(d0, counts[d0] + 1);
+    counts = counts.with(d1, counts[d1] + 1);
+    counts = counts.with(d2, counts[d2] + 1);
+    counts = counts.with(d3, counts[d3] + 1);
+    i = i + 1;
+  }
+  var tmp: i64[] = [];
+  var t: i32 = 0;
+  while (t < n) {
+    tmp = tmp.append(0 as i64);
+    t = t + 1;
+  }
+  var shift: i32 = 0;
+  while (shift < 64) {
+    var sh: i64 = shift as i64;
+    var base: i32 = shift / 16 * 65536;
+    var first: i32 = base + (words[idx[0] as i32] >> sh & 65535 as i64) as i32 ^ flip;
+    if (counts[first] < n) {
+      // The signed top digit buckets in the order its sign flip gives,
+      // so its counts are summed in that order too.
+      var sflip: i32 = 0;
+      if (signed && shift == 48) {
+        sflip = 32768;
+      }
+      var sum: i32 = 0;
+      var b: i32 = 0;
+      while (b < 65536) {
+        var slot: i32 = base + (b ^ sflip);
+        var cnt: i32 = counts[slot];
+        counts = counts.with(slot, sum);
+        sum = sum + cnt;
+        b = b + 1;
+      }
+      var j: i32 = 0;
+      while (j < n) {
+        var v: i64 = idx[j];
+        var dj: i32 = base + (words[v as i32] >> sh & 65535 as i64) as i32 ^ flip;
+        var at: i32 = counts[dj];
+        tmp = tmp.with(at, v);
+        counts = counts.with(dj, at + 1);
+        j = j + 1;
+      }
+      var swap: i64[] = idx;
+      idx = tmp;
+      tmp = swap;
+    }
+    shift = shift + 16;
+  }
+  return idx;
+}

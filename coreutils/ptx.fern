@@ -35,6 +35,7 @@ import "std/array";
 import "std/io_buffered";
 import "./lib/gnu";
 import "./lib/bre";
+import "./lib/radix";
 
 // ---- options ---------------------------------------------------------------
 // Declared in GNU's order: the ambiguity list prints its candidates in
@@ -631,11 +632,13 @@ function line_of(l: Lines, p: i32): i32 {
 
 // ---- sorting ----------------------------------------------------------------
 // Byte order over the keyword, folded when -f asks, and ties left in
-// input order — a bottom-up stable merge over indices.
+// input order. The keyword's first eight bytes order the occurrences
+// with a radix sort, and only the runs of equal words go through a
+// bottom-up stable merge over indices that reads the whole keyword.
 // The sort key is the keyword, and the keyword is a span of the one
 // buffer, so the comparison reads it there. Materialising it cost a
 // string per occurrence whose only use was this, and -f cost a second
-// one; folding a byte at a time as they are compared is the same order.
+// one; folding the buffer once is the same order.
 // Whether span a orders before span b in `kbuf`, the buffer with case
 // already folded when -f asked for it: the mismatch kernel finds the
 // first differing byte of the common span, and the shorter span wins a
@@ -677,71 +680,122 @@ function scratch(n: i32): i32[] {
   return out;
 }
 
+function scratch64(n: i32): i64[] {
+  var out: i64[] = [];
+  var i: i32 = 0;
+  while (i < n) {
+    out = out.append(i as i64);
+    i = i + 1;
+  }
+  return out;
+}
+
 function sort_occs(buf: string, occs: Occ[], fold: boolean): i32[] {
   var n: i32 = occs.len();
-  var src: i32[] = scratch(n);
   var ks: i32[] = scratch(n);
   var ke: i32[] = scratch(n);
   var i: i32 = 0;
   while (i < n) {
-    src = src.with(i, i);
     ks = ks.with(i, occs[i].kw_start);
     ke = ke.with(i, occs[i].kw_end);
     i = i + 1;
-  }
-  if (n < 2) {
-    return src;
   }
   var kbuf: string = buf;
   if (fold) {
     kbuf = fold_buf(buf);
   }
-  var dst: i32[] = scratch(n);
-  var width: i32 = 1;
-  while (width < n) {
-    var start: i32 = 0;
-    var at: i32 = 0;
-    while (start < n) {
-      var mid: i32 = start + width;
-      if (mid > n) {
-        mid = n;
+  // The keyword's first eight bytes, as a word.
+  var words: i64[] = [];
+  if (n >= radix.threshold()) {
+    var k: i32 = 0;
+    while (k < n) {
+      words = words.append(radix.bytes_word(kbuf, ks[k], ke[k]));
+      k = k + 1;
+    }
+  }
+  var src: i64[] = scratch64(n);
+  if (words.len() > 0) {
+    src = radix.by_word(src, words, n, false, false);
+  }
+  var dst: i64[] = scratch64(n);
+  var lo: i32 = 0;
+  while (lo < n) {
+    var hi: i32 = n;
+    if (words.len() > 0) {
+      var w: i64 = words[src[lo] as i32];
+      hi = lo + 1;
+      while (hi < n && words[src[hi] as i32] == w) {
+        hi = hi + 1;
       }
-      var end: i32 = mid + width;
-      if (end > n) {
-        end = n;
-      }
-      var a: i32 = start;
-      var b: i32 = mid;
-      while (a < mid && b < end) {
-        var ib: i32 = src[b];
-        var ia: i32 = src[a];
-        if (key_less(kbuf, ks[ib], ke[ib], ks[ia], ke[ia])) {
-          dst = dst.with(at, src[b]);
-          b = b + 1;
-        } else {
+    }
+    // A bottom-up merge of src[lo..hi), the two buffers alternating;
+    // an odd number of passes leaves the run in dst, and it is copied
+    // back so src holds every run.
+    var passes: i32 = 0;
+    var width: i32 = 1;
+    while (width < hi - lo) {
+      var start: i32 = lo;
+      var at: i32 = lo;
+      while (start < hi) {
+        var mid: i32 = start + width;
+        if (mid > hi) {
+          mid = hi;
+        }
+        var end: i32 = mid + width;
+        if (end > hi) {
+          end = hi;
+        }
+        var a: i32 = start;
+        var b: i32 = mid;
+        while (a < mid && b < end) {
+          var ib: i32 = src[b] as i32;
+          var ia: i32 = src[a] as i32;
+          if (key_less(kbuf, ks[ib], ke[ib], ks[ia], ke[ia])) {
+            dst = dst.with(at, src[b]);
+            b = b + 1;
+          } else {
+            dst = dst.with(at, src[a]);
+            a = a + 1;
+          }
+          at = at + 1;
+        }
+        while (a < mid) {
           dst = dst.with(at, src[a]);
           a = a + 1;
+          at = at + 1;
         }
-        at = at + 1;
+        while (b < end) {
+          dst = dst.with(at, src[b]);
+          b = b + 1;
+          at = at + 1;
+        }
+        start = end;
       }
-      while (a < mid) {
-        dst = dst.with(at, src[a]);
-        a = a + 1;
-        at = at + 1;
-      }
-      while (b < end) {
-        dst = dst.with(at, src[b]);
-        b = b + 1;
-        at = at + 1;
-      }
-      start = end;
+      var swap: i64[] = src;
+      src = dst;
+      dst = swap;
+      passes = passes + 1;
+      width = width * 2;
     }
-    var swap: i32[] = src;
-    src = dst;
-    dst = swap;
-    width = width * 2;
+    if (passes % 2 == 1) {
+      var swap2: i64[] = src;
+      src = dst;
+      dst = swap2;
+      var c: i32 = lo;
+      while (c < hi) {
+        src = src.with(c, dst[c]);
+        c = c + 1;
+      }
+    }
+    lo = hi;
   }
-  return src;
+  var out: i32[] = scratch(n);
+  var o: i32 = 0;
+  while (o < n) {
+    out = out.with(o, src[o] as i32);
+    o = o + 1;
+  }
+  return out;
 }
 
 // ---- field text -------------------------------------------------------------

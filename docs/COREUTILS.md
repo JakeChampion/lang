@@ -2539,21 +2539,28 @@ writer and the paragraph through every word.
 Every sort row paid n log n calls of the comparison, at about 70
 instructions a call plus the merge's own 80, and the one-word numeric
 key had only made the call cheaper. Now the first comparison's word,
-where it has one, orders the lines with an LSD radix sort — four
-sixteen-bit passes, their histograms taken in one walk, a pass whose
-digit is the same on every word skipped — and the merge with the whole
-comparison runs only inside the runs of equal words. A plain numeric
-key's word is its `numeric_key`; a byte comparison's is its first eight
-bytes, big-endian and zero-padded, which orders as the byte comparison
-does wherever it separates two lines (a shorter line with the same
-bytes is the smaller, and a padded zero can only tie a real one, which
-the run's merge settles); a folded comparison's is those bytes folded.
-A reversed order takes each digit's complement, and a signed word's top
-digit has its sign flipped. A first key that is general or human
-numeric, month, version, random or ignoring bytes has no word and the
-merge runs over everything, as before. The output loop pushes each line
-straight into the writer's builder instead of slicing it into a string
-and concatenating the terminator.
+where it has one, orders the lines with an LSD radix sort
+(`coreutils/lib/radix.fern`: four sixteen-bit passes, their histograms
+taken in one walk, a pass whose digit is the same on every word
+skipped) and the merge with the whole comparison runs only inside the
+runs of equal words. A plain numeric key's word is its `numeric_key`; a
+byte comparison's is its first eight bytes, big-endian and zero-padded,
+which orders as the byte comparison does wherever it separates two
+lines (a shorter line with the same bytes is the smaller, and a padded
+zero can only tie a real one, which the run's merge settles); a folded
+comparison's is those bytes folded. A reversed order takes each digit's
+complement, and a signed word's top digit has its sign flipped. A first
+key that is general or human numeric, month, version, random or
+ignoring bytes has no word and the merge runs over everything, as
+before; so does any input under 16384 lines, since the histograms are a
+fixed twenty million instructions that a ten-line sort must not pay.
+The output loop pushes each line straight into the writer's builder
+instead of slicing it into a string and concatenating the terminator.
+ptx's occurrence sort takes the same word over the keyword, which on
+the 120k-word list (every keyword `wordNNNNNN`, so the first eight
+bytes tie a hundred at a time) is 126 → 119 ms; an eleven-bit,
+six-pass variant with a second word over bytes 8..15 was tried for it
+and cost more than the merge it replaced.
 
 Release builds, this container, 15 runs each; GNU runs its merges on
 every core, which is why its user time is above its wall time:
@@ -2575,7 +2582,9 @@ Under callgrind `sort -n` is 914 M instructions against 2,087 M, and
 reading, splitting and writing the lines. The corpus gains the word
 ties: lines whose first eight bytes are equal, lines shorter than eight
 that prefix a longer one, folded case beyond the eighth byte, and the
-same under -r, -f, -s, -u, -k and the orderings that have no word.
+same under -r, -f, -s, -u, -k and the orderings that have no word — at
+a size below the threshold and at 20000 lines, and for ptx 20000
+distinct keywords.
 
 ### ls, 2026-09-14, Linux x86-64 (GNU coreutils 9.4, uutils 0.0.24)
 

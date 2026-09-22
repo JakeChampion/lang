@@ -34,6 +34,7 @@ import "std/crypto";
 import "./lib/gnu";
 import "./lib/vercmp";
 import "./lib/ld";
+import "./lib/radix";
 
 // The exit status of a usage error and of any other failure; gnulib's
 // exit_failure, which sort sets to 2. A `-c` mismatch is 1, and so is
@@ -1419,10 +1420,13 @@ function sort_lines(c: Conf, text: string, lines: i64[]): i64[] {
   // The first comparison's word, where it has one, orders the lines
   // with a radix sort; only the runs of equal words are left for the
   // merge below, which compares the way `compare_at` does.
-  var words: i64[] = line_words(c, text, lines, nkeys, spans, n);
+  var words: i64[] = [];
+  if (n >= radix.threshold()) {
+    words = line_words(c, text, lines, nkeys, spans, n);
+  }
   var src: i64[] = index_of(n);
   if (words.len() > 0) {
-    src = radix_sort(src, words, n, word_signed(c), word_reversed(c));
+    src = radix.by_word(src, words, n, word_signed(c), word_reversed(c));
   }
   var dst: i64[] = index_of(n);
   var lo: i32 = 0;
@@ -1516,14 +1520,11 @@ function sort_lines(c: Conf, text: string, lines: i64[]): i64[] {
 // `line_words(c, text, lines, nkeys, spans, n)` — one word per line
 // that orders the way the first comparison does, or nothing when that
 // comparison has no such word. A plain numeric key's word is its
-// numeric_key. A byte comparison's — the first key's span, or the line
-// itself without keys — is its first eight bytes, big-endian and
-// zero-padded, which orders as the byte comparison does: a shorter
-// span with the same bytes is the smaller, and a padded zero can only
-// tie with a real one, which the whole comparison settles. A folded
-// comparison's word is those bytes folded. Two lines with equal words
-// are ordered by the whole comparison afterwards, so the word has only
-// to agree with it wherever it separates them.
+// numeric_key; a byte comparison's — the first key's span, or the line
+// itself without keys — is radix's `bytes_word` of it, and a folded
+// comparison's is those bytes folded. Two lines with equal words are
+// ordered by the whole comparison afterwards, so the word has only to
+// agree with it wherever it separates them.
 function line_words(c: Conf, text: string, lines: i64[], nkeys: i64[], spans: i64[], n: i32): i64[] {
   var fold: boolean = false;
   var numeric: boolean = false;
@@ -1556,17 +1557,14 @@ function line_words(c: Conf, text: string, lines: i64[], nkeys: i64[], spans: i6
     var lo: i32 = (sp >> 32 as i64) as i32;
     var hi: i32 = lo + (sp & 4294967295 as i64) as i32;
     var w: i64 = 0 as i64;
-    if (!fold && hi - lo >= 8) {
-      w = text[lo] as i64 << 56 as i64 | text[lo + 1] as i64 << 48 as i64 | text[lo + 2] as i64 << 40 as i64 | text[lo + 3] as i64 << 32 as i64 | text[lo + 4] as i64 << 24 as i64 | text[lo + 5] as i64 << 16 as i64 | text[lo + 6] as i64 << 8 as i64 | text[lo + 7] as i64;
+    if (!fold) {
+      w = radix.bytes_word(text, lo, hi);
     } else {
       var b: i32 = 0;
       while (b < 8) {
         var x: i32 = 0;
         if (lo + b < hi) {
-          x = text[lo + b] as i32;
-          if (fold) {
-            x = fold_up(x);
-          }
+          x = fold_up(text[lo + b] as i32);
         }
         w = w << 8 as i64 | x as i64;
         b = b + 1;
@@ -1589,78 +1587,6 @@ function word_reversed(c: Conf): boolean {
     return c.keys[0].reverse;
   }
   return c.reverse;
-}
-
-// `radix_sort(idx, words, n, signed, rev)` — `idx` reordered by the
-// words it indexes, ascending, equal words keeping their order: four
-// passes of sixteen bits from the low end, their counts all taken in
-// one walk over the words, then a placement for each pass whose digit
-// is not the same on every word — which the high digits of small
-// numbers and short lines are. A reversed order takes each digit's
-// complement, and the top digit of a signed word has its sign flipped
-// so that the negative words bucket first.
-function radix_sort(own idx: i64[], words: i64[], n: i32, signed: boolean, rev: boolean): i64[] {
-  var flip: i32 = 0;
-  if (rev) {
-    flip = 65535;
-  }
-  var counts: i32[] = [];
-  var z: i32 = 0;
-  while (z < 262144) {
-    counts = counts.append(0);
-    z = z + 1;
-  }
-  var i: i32 = 0;
-  while (i < n) {
-    var w: i64 = words[idx[i] as i32];
-    var d0: i32 = (w & 65535 as i64) as i32 ^ flip;
-    var d1: i32 = 65536 + (w >> 16 as i64 & 65535 as i64) as i32 ^ flip;
-    var d2: i32 = 131072 + (w >> 32 as i64 & 65535 as i64) as i32 ^ flip;
-    var d3: i32 = 196608 + (w >> 48 as i64 & 65535 as i64) as i32 ^ flip;
-    counts = counts.with(d0, counts[d0] + 1);
-    counts = counts.with(d1, counts[d1] + 1);
-    counts = counts.with(d2, counts[d2] + 1);
-    counts = counts.with(d3, counts[d3] + 1);
-    i = i + 1;
-  }
-  var tmp: i64[] = index_of(n);
-  var shift: i32 = 0;
-  while (shift < 64) {
-    var sh: i64 = shift as i64;
-    var base: i32 = shift / 16 * 65536;
-    var first: i32 = base + (words[idx[0] as i32] >> sh & 65535 as i64) as i32 ^ flip;
-    if (counts[first] < n) {
-      // The signed top digit buckets in the order its sign flip gives,
-      // so its counts are summed in that order too.
-      var sflip: i32 = 0;
-      if (signed && shift == 48) {
-        sflip = 32768;
-      }
-      var sum: i32 = 0;
-      var b: i32 = 0;
-      while (b < 65536) {
-        var slot: i32 = base + (b ^ sflip);
-        var cnt: i32 = counts[slot];
-        counts = counts.with(slot, sum);
-        sum = sum + cnt;
-        b = b + 1;
-      }
-      var j: i32 = 0;
-      while (j < n) {
-        var v: i64 = idx[j];
-        var dj: i32 = base + (words[v as i32] >> sh & 65535 as i64) as i32 ^ flip;
-        var at: i32 = counts[dj];
-        tmp = tmp.with(at, v);
-        counts = counts.with(dj, at + 1);
-        j = j + 1;
-      }
-      var swap: i64[] = idx;
-      idx = tmp;
-      tmp = swap;
-    }
-    shift = shift + 16;
-  }
-  return idx;
 }
 
 // A merge buffer holding 0..n-1: the indices a keyed sort starts from,

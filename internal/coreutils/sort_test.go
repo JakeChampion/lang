@@ -1,6 +1,7 @@
 package coreutils
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -52,6 +53,28 @@ func sortCases(t *testing.T) []invocation {
 	wordkeys := catFile(t, dir, "wordkeys", "abcdefgh1\nabcdefgh0\nabcdefg\nabcdefgh\nabcdefgh\nABCDEFGHz\nABCDEFGHA\nabcdefgH\n"+
 		"abcdefgh\x00\nabcdefgh\x01\nab\n\nb\nB\n\x80\n\xff\n\x00\nabcdefghijk\nabcdefghIJK\nAbcdefghijk\n"+
 		"x 1\nx 2\nx 10\ny 1\nx 1\n")
+	// The same tie shapes at a size the radix sort takes: 20000 lines,
+	// each an eight-byte prefix shared by fifty lines and a tail that
+	// differs, some lines the bare prefix, some in upper case, and the
+	// second field a number shared by many lines with a fourteen-digit
+	// run in some.
+	var wide strings.Builder
+	for i := 0; i < 20000; i++ {
+		pre := fmt.Sprintf("k%07d", i%400)
+		switch i % 5 {
+		case 0:
+			fmt.Fprintf(&wide, "%s %d\n", pre, (i*7919)%1000-500)
+		case 1:
+			fmt.Fprintf(&wide, "%s\n", pre)
+		case 2:
+			fmt.Fprintf(&wide, "%s %d\n", strings.ToUpper(pre), 12345678901234+i%3)
+		case 3:
+			fmt.Fprintf(&wide, "%sx%d 0\n", pre, i)
+		default:
+			fmt.Fprintf(&wide, "%s\t-%d\n", pre[:6], i%97)
+		}
+	}
+	wideKeys := catFile(t, dir, "widekeys", wide.String())
 	dupes := catFile(t, dir, "dupes", "a\na\nb\nb\nb\nc\n")
 	fields := catFile(t, dir, "fields", "b 2 x\na 3 y\nc 1 z\n")
 	colons := catFile(t, dir, "colons", "b:2:x\na:3:y\nc:1:z\n")
@@ -150,6 +173,18 @@ func sortCases(t *testing.T) []invocation {
 		{name: "word ties by folded field", args: []string{"-k1,1f", wordkeys}},
 		{name: "word ties dictionary order", args: []string{"-d", wordkeys}},
 		{name: "word ties ignoring nonprinting", args: []string{"-i", wordkeys}},
+		{name: "wide word ties", args: []string{wideKeys}},
+		{name: "wide word ties reversed", args: []string{"-r", wideKeys}},
+		{name: "wide word ties folded", args: []string{"-f", wideKeys}},
+		{name: "wide word ties stable", args: []string{"-s", wideKeys}},
+		{name: "wide word ties unique", args: []string{"-u", wideKeys}},
+		{name: "wide word ties by field", args: []string{"-k1,1", wideKeys}},
+		{name: "wide word ties by folded field then number", args: []string{"-k1,1f", "-k2n", wideKeys}},
+		{name: "wide numeric second field", args: []string{"-k2,2n", wideKeys}},
+		{name: "wide numeric second field reversed", args: []string{"-k2,2nr", wideKeys}},
+		{name: "wide numeric second field stable", args: []string{"-s", "-k2,2n", wideKeys}},
+		{name: "wide numeric whole line", args: []string{"-n", wideKeys}},
+		{name: "wide general numeric", args: []string{"-k2,2g", wideKeys}},
 		{name: "numeric long", args: []string{"--numeric-sort", nums}},
 		{name: "numeric signs", args: []string{"-n"}, stdin: "  -1\n  +1\n 0\n1e2\n.5\n-.5\n0.0\n-0\n"},
 		{name: "numeric leading zeros", args: []string{"-n"}, stdin: "007\n7\n0007.0\n"},
