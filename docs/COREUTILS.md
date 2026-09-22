@@ -2422,6 +2422,50 @@ buffer another name holds is copied before the first write, a loop that
 never writes keeps the alias, a loop that never runs leaves the value as
 it found it.
 
+### ptx's roff and TeX lines, keys and cuts, 2026-09-22 (GNU coreutils 9.12)
+
+`ptx -G` (traditional, which is the roff format) and `-O` were 0.10x
+GNU, and callgrind put half of the 4.3 G instructions in `roff_body`
+appending its output a byte at a time — 14 M `str_append` calls for
+120k words — and the roff line then concatenated once more before it
+was pushed. Both formats now stream into the writer the way the dumb
+format already did: `roff_field` pushes the runs between the quotes it
+doubles, `tex_quote` the runs between the specials it escapes, and the
+line is pieces behind a macro name.
+
+The sort and the cuts were the rest. `key_less` walked both keywords a
+byte at a time through `upper` on every comparison; it is now one
+`__mismatch` over a buffer folded once when -f asks, with the key spans
+in two flat arrays beside the merge. `word_at` searched all 120k words
+from scratch for a cut point that is always within a half line of the
+keyword whose index the occurrence loop already had, so each occurrence
+carries that index and the search walks a few words from it, and its
+pair became one packed i64 rather than a heap cell a call. `norm`
+rescanned every field for whitespace to turn into spaces; the buffer is
+normalised once and a field is a slice of it, the cut positions being
+the same in both.
+
+| ptx -G, 120k words | Ir |
+|---|---:|
+| before | 4,279,051,953 |
+| roff and TeX streamed | 1,770,449,485 |
+| keys by mismatch, word_at packed | 1,551,666,107 |
+| word_at from the keyword, buffer normalised once | 1,193,604,391 |
+
+| workload | before | after | gnu 9.12 |
+|---|---:|---:|---:|
+| `ptx -G` 120k words | 532 ms | 138 ms | 58 ms |
+| `ptx` 120k words | 193 ms | 124 ms | 45 ms |
+| `ptx -T` 120k words | 237 ms | 148 ms | 54 ms |
+| `ptx` 300 kB of prose | 88 ms | 68 ms | 30 ms |
+
+Byte-identical to the previous build over 14 option sets on three
+inputs, and to GNU 9.12 on the two inputs that carry no equal keywords
+(the prose file's are ordered by GNU's pointer tie-break, recorded under
+Known divergences). What remains is spread thin: the merge, the
+mismatch, the per-occurrence `Fields` record and its six strings, and
+the sentence scan.
+
 ### ls, 2026-09-14, Linux x86-64 (GNU coreutils 9.4, uutils 0.0.24)
 
 The same 4-core container, so read the columns against each other. The
