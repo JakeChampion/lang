@@ -39311,7 +39311,10 @@ function map_arg_binding_is_fresh(e: ast.Expr, kind: string, str_fresh: string[]
         // PARAM shadowing a variant name — which the checker allows — cannot be
         // mistaken for one: lexical.resolve_func has already rewritten every
         // binding use to its `$binding$N$` symbol, so a bare ident that still
-        // spells a variant IS the constructor.
+        // spells a variant IS the constructor. Nor can a module-level name
+        // reach here: a `var` beside `main` is check_top_level_stmts' P001, and
+        // a script's top_stmts are folded into the synthesised main before the
+        // resolve runs, so they are rewritten as locals like any other.
         ast.ExprIdent(id) => { return variant_enum_owner(structs, id.name) != ""; },
         _ => { return false; },
     }
