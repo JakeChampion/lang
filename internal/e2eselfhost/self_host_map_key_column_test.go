@@ -131,10 +131,14 @@ func TestSelfHostMapKeyWithNoColumnRefusesEverySurface(t *testing.T) {
 }
 
 // narrowMapKeyCases are the keys that DO fit the integer column, each read
-// back through the shapes a key column is consumed by — including a LOOKUP
-// THAT MISSES, which is where a key in the wrong column dies: a hit can
-// answer correctly on the string column by pointer-identity luck, a miss
-// dereferences the key.
+// back through the shapes a key column is consumed by — including a lookup
+// for a key that is ABSENT, which no other case here covers.
+//
+// A key in the wrong column does not fail quietly: the string runtime reads
+// its VALUE as an address, so the process dies. Which way it dies is not
+// fixed — the pre-fix compiler SIGSEGVs on both boolean rows here, and a
+// reviewer running the same revert saw one of them spin instead — so the
+// failure below reports whatever the OS said rather than naming a signal.
 //
 // `f32` is NOT here: it fits the cell by width, but E045 refuses every float
 // key in both checkers now (#10009) — and it had to be refused somewhere,
@@ -166,11 +170,13 @@ function main(): i32 {
 }
 `, 144},
 	// A boolean is a non-pointer scalar, so it belongs in the integer column
-	// too. The LITERAL spelling is the one that matters here: the key-kind
-	// walk had no ExprBool arm, so `Map { true: 5 }` took the string
-	// constructor and the first lookup that MISSES read the raw 0/1 as a
-	// pointer — SIGSEGV. A hit answered correctly by pointer-identity luck,
-	// which is why the miss and the `has` are what this row asserts.
+	// too. The LITERAL spelling is the one that matters: the key-kind walk
+	// had no ExprBool arm, so a bool-keyed literal took the string
+	// constructor and the raw 0/1 went in as a pointer.
+	//
+	// Two rows because they fail for different reasons. This one never looks
+	// up an absent key — inserting `false`, the raw 0, is what kills it, so
+	// it catches the regression at CONSTRUCTION.
 	{"boolean-literal", `import "core/map";
 function main(): i32 {
     var m = Map { true: 5, false: 9 };
@@ -180,6 +186,17 @@ function main(): i32 {
     return s + m.len();
 }
 `, 17},
+	// And this one inserts only `true`, so `get_or(false, 0)` and `has(false)`
+	// are genuine MISSES — the read side of the same bug, which a row whose
+	// every lookup is a hit cannot distinguish from pointer-identity luck.
+	{"boolean-literal-absent-key", `import "core/map";
+function main(): i32 {
+    var m = Map { true: 5 };
+    var s: i32 = m.get_or(true, 0) + m.get_or(false, 0);
+    if (!m.has(false)) { s = s + 100; }
+    return s + m.len();
+}
+`, 106},
 	// The annotated spellings, which took the integer column already — here
 	// so a fix to the literal path cannot regress them unnoticed.
 	{"boolean-annotated", `import "core/map";
