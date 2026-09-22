@@ -2192,7 +2192,19 @@ function e045_map_key_msgs(t: typeinfo.Type, s: Scope): string[] {
   var out: string[] = [];
   match (t) {
     typeinfo.TypeMap(mt) => {
-      var msg: string = map_key_type_error(s, mt.key);
+      // A TUPLE key is carved out: map_key_type_error refuses one, so
+      // `Map { (1, 2): 5 }` is E045, but the interpreter supports a tuple key
+      // (TestInterpMapCompositeKeys gates it) and the annotated spelling is
+      // accepted everywhere today. Compiled it answers the DEFAULT instead,
+      // silently — three answers for one type, filed as #10020. Applying the
+      // rule here would refuse the spelling the interpreter supports.
+      var is_tuple_key: boolean = false;
+      match (mt.key) {
+        typeinfo.TypeTuple(_) => { is_tuple_key = true; },
+        _ => {}
+      }
+      var msg: string = "";
+      if (!is_tuple_key) { msg = map_key_type_error(s, mt.key); }
       if (msg != "") { out = out.append(msg); }
       out = util.append_all(out, e045_map_key_msgs(mt.key, s));
       out = util.append_all(out, e045_map_key_msgs(mt.value, s));

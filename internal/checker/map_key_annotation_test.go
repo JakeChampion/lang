@@ -11,8 +11,7 @@ import (
 //
 // Only the map-literal paths validated a key type, so every one of the
 // rejecting rows below was accepted and reached codegen — where a float key
-// segfaulted the self-host (#9973) and a tuple key silently answered the
-// wrong value (#10009).
+// segfaulted the self-host (#9973).
 var mapKeyAnnotationCases = []struct{ name, src, want string }{
 	{
 		"var annotation",
@@ -69,14 +68,17 @@ function main(): i32 { var m: Map[f64, i32] = Map {}; return 0; }`,
 		"map key type f64 is not yet supported",
 	},
 	{
-		// A tuple key type-checked and then silently answered the wrong
-		// value: inserting at (1, 2) and reading the same pair back gave
-		// the default, not 7.
+		// A tuple key is deliberately NOT refused here: the interpreter
+		// supports one and TestInterpMapCompositeKeys gates it, while the
+		// map-literal rule refuses it and the compiled backends answer the
+		// default. isTupleKey carries the reasoning; #10020 owns the
+		// decision. This row exists so that carve-out is pinned rather
+		// than rediscovered by a red corpus.
 		"tuple key",
 		`import "core/map";
 function take(m: Map[(i32, i32), i32]): i32 { return 0; }
 function main(): i32 { return 0; }`,
-		"map key type (i32, i32) is not yet supported",
+		"",
 	},
 	{
 		"struct key without the derives",
