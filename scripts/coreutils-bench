@@ -400,11 +400,24 @@ for u in "$@"; do
     hyperfine "${runopt[@]}" -i "${shellopt[@]}" --export-json "$json" \
       "${cmds[@]}" >/dev/null 2>&1 || {
       echo "coreutils-bench: hyperfine failed for $u: $label" >&2; exit 1; }
+    # An implementation that exits differently from GNU on the same workload
+    # did not do the work — uutils 0.0.24's ptx answers `GNU extensions not
+    # implemented yet` and exits 1 in two milliseconds — so its cell names
+    # the exit status rather than timing the refusal. GNU is the reference
+    # because a non-zero exit can be the workload's own answer: `false`
+    # exits 1 everywhere, and that agreement is what the comparison keeps.
     python3 - "$json" "$u" "$label" ${incomplete[@]+"${incomplete[@]}"} <<'PY'
 import json, sys
 path, util, label = sys.argv[1:4]
 d = json.load(open(path))
 d["util"], d["label"], d["incomplete"] = util, label, sys.argv[4:]
+codes = {r["command"]: sorted(set(r.get("exit_codes") or [])) for r in d["results"]}
+refused = {}
+if "gnu" in codes:
+    for impl, c in codes.items():
+        if impl != "gnu" and c != codes["gnu"]:
+            refused[impl] = c[0] if len(c) == 1 else c
+d["refused"] = refused
 json.dump(d, open(path, "w"))
 PY
     jsons+=("$json")
@@ -428,8 +441,9 @@ for path in sys.argv[1:]:
     d = json.load(open(path))
     by = {r["command"]: r for r in d["results"]}
     inc = set(d.get("incomplete", []))
+    ref = d.get("refused", {})
     present |= set(by) | inc
-    rows.append((d["util"], d["label"], by, inc))
+    rows.append((d["util"], d["label"], by, inc, ref))
 
 impls = [i for i in ORDER if i in present]
 
@@ -444,9 +458,11 @@ for fern in ("fern", "selfhost"):
 if "fern" in impls and "selfhost" in impls:
     ratios.append(("fern", "selfhost"))
 
-def ms(by, inc, impl):
+def ms(by, inc, ref, impl):
     if impl in inc:
         return "did not finish"
+    if impl in ref:
+        return f"exit {ref[impl]}"
     r = by.get(impl)
     if not r:
         return "—"
@@ -454,19 +470,19 @@ def ms(by, inc, impl):
     n = len(r.get("times") or [])
     return cell if n >= 20 or n == 0 else f"{cell} ({n} runs)"
 
-def ratio(by, a, b):
+def ratio(by, ref, a, b):
     ra, rb = by.get(a), by.get(b)
-    return f'{ra["mean"]/rb["mean"]:.2f}×' if ra and rb else "—"
+    return f'{ra["mean"]/rb["mean"]:.2f}×' if ra and rb and a not in ref and b not in ref else "—"
 
 hdr = (["utility", "workload"]
        + [f"{DISPLAY[i]} (ms)" for i in impls]
        + [f"{DISPLAY[a]} / {DISPLAY[b]}" for a, b in ratios])
 print("| " + " | ".join(hdr) + " |")
 print("|" + "|".join("---" for _ in hdr) + "|")
-for util, label, by, inc in rows:
+for util, label, by, inc, ref in rows:
     cells = ([f"`{util}`", label]
-             + [ms(by, inc, i) for i in impls]
-             + [ratio(by, a, b) for a, b in ratios])
+             + [ms(by, inc, ref, i) for i in impls]
+             + [ratio(by, ref, a, b) for a, b in ratios])
     print("| " + " | ".join(cells) + " |")
 PY
 )
