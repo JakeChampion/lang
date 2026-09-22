@@ -8,6 +8,7 @@ import (
 )
 
 func TestArm64DarwinHTTPContentLength(t *testing.T) {
+	// buildAndRunDarwin requires exit 0; only adapt the shared probe's pass sentinel.
 	src := strings.Replace(e2eharness.HTTPContentLengthProbe(), "return 42;", "return 0;", 1)
 	buildAndRunDarwin(t, t.TempDir(), src)
 }
