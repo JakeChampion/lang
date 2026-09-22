@@ -113,11 +113,33 @@ function main(): i32 {
     return 0;
 }
 `, true},
-	// Deliberately accepted by both: the interpreter supports a tuple key and
-	// TestInterpMapCompositeKeys gates it. See isTupleKey / #10020.
+	// Accepted by both on purpose: the interpreter compares a tuple or array
+	// key by value and TestInterpMapCompositeKeys gates it, while the
+	// compiled backends answer the default. See isStructurallyKeyedByValue
+	// and #10020.
 	{"tuple-key", `import "core/map";
 function take(m: Map[(i32, i32), i32]): i32 { return 0; }
 function main(): i32 { return 0; }
+`, false},
+	{"array-key", `import "core/map";
+function take(m: Map[i32[], i32]): i32 { return 0; }
+function main(): i32 { return 0; }
+`, false},
+	// Not carve-outs: boolean and str keys WORK, interpreted and compiled
+	// alike, and both rules refused them until that was measured.
+	{"boolean-key", `import "core/map";
+function main(): i32 {
+    var m: Map[boolean, i32] = map_new(8);
+    m = m.insert(true, 5);
+    return m.get_or(true, 0);
+}
+`, false},
+	{"borrowed-string-key", `import "core/map";
+function main(): i32 {
+    var m: Map[str, i32] = map_new(8);
+    m = m.insert("ab", 5);
+    return m.get_or("ab", 0);
+}
 `, false},
 	{"struct-key-with-the-derives", `import "core/map";
 import "core/cmp";

@@ -5928,15 +5928,21 @@ func (c *checker) typeImplsEqAndHash(typeName string) bool {
 
 // mapKeyTypeError returns an E045 message describing why `k` cannot be
 // a Map key, or "" if it is a usable key. Usable keys are integers,
-// strings, and struct/enum types that implement both Eq and Hash
-// (#2671). A struct/enum that lacks the derives gets a message
-// pointing at the fix; other composite types (tuple / array / slice /
-// float) keep the historical "not yet supported" wording. A type
-// parameter or polymorphic literal passes — it is resolved later (per
-// monomorph instantiation) and re-checked then.
+// strings (owned or borrowed), booleans, and struct/enum types that
+// implement both Eq and Hash (#2671). A struct/enum that lacks the
+// derives gets a message pointing at the fix; other composite types
+// (tuple / array / slice / float) keep the historical "not yet
+// supported" wording. A type parameter or polymorphic literal passes —
+// it is resolved later (per monomorph instantiation) and re-checked then.
+//
+// `str` and `boolean` are here because both work: a Map keyed by either
+// inserts and reads back correctly under the interpreter AND compiled.
+// The rule refused them until this was measured, which only ever showed
+// up in the literal spelling — `Map { true: 1 }` was E045 while the
+// annotated `Map[boolean, i32]` was accepted and ran.
 func (c *checker) mapKeyTypeError(k ast.Type) string {
 	switch kt := k.(type) {
-	case ast.NumberType, ast.StringType, ast.ParamType:
+	case ast.NumberType, ast.StringType, ast.StrType, ast.BoolType, ast.ParamType:
 		return ""
 	case ast.StructType:
 		if c.typeImplsEqAndHash(kt.Name) {
@@ -8127,7 +8133,7 @@ func (c *checker) validateMapKeyTypes(prog *ast.Program) {
 func (c *checker) checkMapKeyTypes(t ast.Type, mod string, pos ast.Position) {
 	switch x := t.(type) {
 	case ast.StructType:
-		if x.Name == "Map" && len(x.Args) == 2 && !isTupleKey(x.Args[0]) {
+		if x.Name == "Map" && len(x.Args) == 2 && !isStructurallyKeyedByValue(x.Args[0]) {
 			if msg := c.mapKeyTypeError(x.Args[0]); msg != "" {
 				c.report(mod, pos, "E045", msg)
 			}
@@ -8155,23 +8161,26 @@ func (c *checker) checkMapKeyTypes(t ast.Type, mod string, pos ast.Position) {
 	}
 }
 
-// isTupleKey carves a tuple key out of the annotation rule, which is the one
-// key type where the literal verdict and the annotated one genuinely differ
-// today and neither is obviously the bug.
+// isStructurallyKeyedByValue names the key types the INTERPRETER compares by
+// value and no compiled backend dispatches: a tuple, an array, a slice.
+// They are carved out of the annotation rule because all three answers for
+// them differ and none is obviously the bug (#10020):
 //
-// mapKeyTypeError refuses a tuple, so `Map { (1, 2): 5 }` is E045. The
-// interpreter supports one — TestInterpMapCompositeKeys gates insert / get /
-// has over tuple keys by value — so the annotated `Map[(i32, i32), i32]` is
-// accepted, and answers correctly there. Compiled it answers the DEFAULT
-// instead, silently, because a tuple has no nominal type to hang Eq / Hash
-// on. Three different answers for one type, filed as #10020.
+//	Map { (1, 2): 5 }            E045
+//	Map[(i32, i32), i32]         accepted; answers 5 interpreted, 0 compiled
+//	Map[i32[], i32]              accepted; answers 5 interpreted, 0 compiled
 //
-// Applying the rule here would refuse the spelling the interpreter supports,
-// so it does not. Reconciling the three is that issue's decision, not this
-// rule's to make by accident.
-func isTupleKey(k ast.Type) bool {
-	_, ok := k.(ast.TupleType)
-	return ok
+// TestInterpMapCompositeKeys gates the interpreter's answer deliberately, so
+// applying the rule here would refuse a spelling the language supports.
+// Reconciling the three is that issue's decision, not this rule's to make by
+// accident — and the fix that matters is on the compiled side, where the
+// wrong answer is silent.
+func isStructurallyKeyedByValue(k ast.Type) bool {
+	switch k.(type) {
+	case ast.TupleType, ast.ArrayType, ast.SliceType:
+		return true
+	}
+	return false
 }
 
 // checkTypeKnown walks a resolved type tree and reports E064 for each
