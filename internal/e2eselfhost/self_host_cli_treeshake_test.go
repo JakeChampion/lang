@@ -346,3 +346,90 @@ function main(): i32 {
 		t.Errorf("operator-overload program exited %d, want 0", code)
 	}
 }
+
+// TestSelfHostTreeshakeKeepsDisplayToStringX86_64 pins the third root the walk
+// cannot discover for itself, and the one that reached users.
+//
+// `write(q)` for a struct is lowered to `write(q.to_string())` by irlower's
+// display_arg, AFTER the prune runs — so the source never spells the method and
+// the walk dropped it. Through the CLI, which is the only compile path that
+// treeshakes unconditionally, the pre-codegen Display gate then refused the
+// program for having no `to_string` at all, three lines under the one it has
+// (#9989). Native compiles it and prints `Q!`.
+//
+// Nothing caught it because TestSelfHostDisplayArgGate drives the self-host
+// through buildModloadDriverX86, which does not prune: the same compiler
+// sources accepted the program there and refused it here. This case is the
+// missing CLI leg.
+//
+// The root is qualified by the argument's type, so it keeps THIS struct's
+// `to_string` and not every type's — the std/i32, std/i64 and core/bigint
+// methods below are all in the import closure and all dropped. The program
+// deliberately spells no `.to_string()` of its own: an explicit call puts the
+// bare name in the reachable set and would keep all of them regardless, which
+// would make the second half of this test prove nothing.
+func TestSelfHostTreeshakeKeepsDisplayToStringX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("file-loading CLI test runs only natively (argv paths)")
+	}
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "fern.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
+	stdlib, err := filepath.Abs(filepath.Join("..", "stdlib"))
+	if err != nil {
+		t.Fatalf("stdlib path: %v", err)
+	}
+
+	const src = `import "std/i32";
+import "std/i64";
+
+struct Q { a: i32 }
+function (q: Q) to_string(): string { return "Q!"; }
+
+function main(): i32 {
+    var q: Q = Q { a: 7 };
+    write(q);
+    return 0;
+}
+`
+	prog := filepath.Join(dir, "ts_display_prog.fern")
+	if err := os.WriteFile(prog, []byte(src), 0o644); err != nil {
+		t.Fatalf("write program: %v", err)
+	}
+	asmPath := filepath.Join(dir, "ts_display_prog.s")
+	if out, err := exec.Command(driverBin, "-target", "x86-64-linux", "-emit", "asm", prog, stdlib, "-o", asmPath).CombinedOutput(); err != nil {
+		t.Fatalf("self-host compile failed: %v\n%s", err, out)
+	}
+	asmBytes, err := os.ReadFile(asmPath)
+	if err != nil {
+		t.Fatalf("read asm: %v", err)
+	}
+	asm := string(asmBytes)
+
+	if !strings.Contains(asm, "\n__fn_Q__to_string:") {
+		t.Errorf("__fn_Q__to_string is not emitted: the prune dropped the method the display lowering calls")
+	}
+	for _, dead := range []string{
+		"__fn_i32__to_string",
+		"__fn_i64__to_string",
+		"__fn_bigint__BigInt__to_string",
+	} {
+		if strings.Contains(asm, "\n"+dead+":") {
+			t.Errorf("%s is emitted, but nothing in the program displays that type — the display root was not qualified", dead)
+		}
+	}
+
+	bin := buildBin(t, gcc, dir, "ts_display_prog", asm)
+	run := exec.Command(bin)
+	out, err := run.Output()
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if got := string(out); got != "Q!" {
+		t.Errorf("program printed %q, want %q — the display rewrite reached the wrong method", got, "Q!")
+	}
+	if code := run.ProcessState.ExitCode(); code != 0 {
+		t.Errorf("display program exited %d, want 0", code)
+	}
+}
