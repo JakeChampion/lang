@@ -39307,7 +39307,11 @@ function map_arg_binding_is_fresh(e: ast.Expr, kind: string, str_fresh: string[]
         // whose result the callee may still hold: variant_enum_owner answers for
         // a name the table declares as a variant and "" for anything else.
         ast.ExprCall(c) => { return call_is_variant_construction(c, structs); },
-        // A bare unit variant carries no payload and takes no call.
+        // A bare unit variant carries no payload and takes no call. A LOCAL or
+        // PARAM shadowing a variant name — which the checker allows — cannot be
+        // mistaken for one: lexical.resolve_func has already rewritten every
+        // binding use to its `$binding$N$` symbol, so a bare ident that still
+        // spells a variant IS the constructor.
         ast.ExprIdent(id) => { return variant_enum_owner(structs, id.name) != ""; },
         _ => { return false; },
     }

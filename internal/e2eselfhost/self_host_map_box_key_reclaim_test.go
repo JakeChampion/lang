@@ -150,6 +150,35 @@ function main(): i32 {
     if (bad != 0) { return 88; }
     return 0;
 }`},
+	// A key whose NAME shadows a unit variant is a read of the BINDING, not a
+	// construction — a shadow the checker allows (checker.fern's ctor_shadowed)
+	// — so the frame still owns that box and the credit must be declined. The
+	// freshness predicate answers variant names out of the struct table with no
+	// shadow test of its own; what makes that safe is lexical.resolve_func,
+	// which rewrites every binding use to `$binding$N$TagNil` before lowering
+	// sees it, so the name never reaches the table. This pins that: were the
+	// credit issued, the map would deep-release a key the frame releases again
+	// and __rc_underflow() would read non-zero (exit 99).
+	{"shadowed-variant-name-excluded", `import "core/map";
+import "core/cmp";
+
+@derive(cmp.Eq, cmp.Hash)
+enum Tag { TagLo(i32), TagNil }
+
+function main(): i32 {
+    var bad: i32 = 0;
+    var r: i32 = 0;
+    while (r < 500) {
+        var TagNil: Tag = Tag.TagLo(r);
+        var m: Map[Tag, i32] = map_new(2);
+        m = m.insert(TagNil, 7);
+        if (m.get_or(TagNil, 0) != 7) { bad = 1; }
+        r = r + 1;
+    }
+    if (__rc_underflow() != 0) { return 99; }
+    if (bad != 0) { return 88; }
+    return 0;
+}`},
 	// An ALIASED key excludes the credit: the key comes from a local the frame
 	// still owns, so map_column_args_fresh reads false, no MAPKA: is issued and
 	// the key column keeps the shallow free. The local must survive the map.
