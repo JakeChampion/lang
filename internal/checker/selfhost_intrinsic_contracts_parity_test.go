@@ -291,8 +291,8 @@ func selfHostSection(t *testing.T, file string, re *regexp.Regexp) string {
 // parameters without a result cannot occur, because free_builtin_sig reads the
 // result table for its own return type.
 func TestSelfHostParameterisesEveryTypedBuiltin(t *testing.T) {
-	typed := selfHostTypedBuiltins(t, `(?s)function free_builtin_result\(.*?\n// The builtin results a call carries`)
-	parameterised := selfHostTypedBuiltins(t, `(?s)function free_builtin_params\(.*?\n// type_debug renders a Type`)
+	typed := selfHostTypedBuiltins(t, `(?s)function free_builtin_result\(.*?\n// The builtin results a call carries`, false)
+	parameterised := selfHostTypedBuiltins(t, `(?s)function free_builtin_params\(.*?\n// type_debug renders a Type`, true)
 	if len(typed) == 0 || len(parameterised) == 0 {
 		t.Fatal("one of the two builtin tables read empty — this test would pass on anything")
 	}
@@ -314,14 +314,30 @@ func TestSelfHostParameterisesEveryTypedBuiltin(t *testing.T) {
 // the `__` intrinsics and the four float-bits builtins alike, which is why it
 // does not share selfHostTypedIntrinsics' `__` prefix filter.
 //
+// `members` reads only the rows that CLAIM the name, which the parameter table
+// marks with the `true` half of its answer. Without it a row reading
+// `return ([], false)` — the table's way of saying "not a free builtin" —
+// would count as covering the name it tests, so the gate would pass on exactly
+// the shape it exists to catch. The result table has no such half, so it is
+// read whole.
+//
 // A family the table matches with a predicate rather than one name at a time
 // (`is_f64_primitive(name)`) contributes the names that predicate lists, so
 // covering ten builtins in one line reads as covering ten builtins. Without
 // this the reader of the table and the reader of this gate would disagree
 // about what it says.
-func selfHostTypedBuiltins(t *testing.T, section string) map[string]bool {
+func selfHostTypedBuiltins(t *testing.T, section string, members bool) map[string]bool {
 	t.Helper()
 	body := selfHostSection(t, "checker.fern", regexp.MustCompile(section))
+	if members {
+		var claiming []string
+		for _, line := range strings.Split(body, "\n") {
+			if strings.Contains(line, ", true)") {
+				claiming = append(claiming, line)
+			}
+		}
+		body = strings.Join(claiming, "\n")
+	}
 	out := map[string]bool{}
 	harvest := func(src string) {
 		for _, m := range regexp.MustCompile(`"([A-Za-z_][A-Za-z0-9_]*)"`).FindAllStringSubmatch(src, -1) {
