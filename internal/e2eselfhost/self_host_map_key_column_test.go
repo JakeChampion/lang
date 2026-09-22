@@ -12,13 +12,21 @@ import (
 // the integer key column is REFUSED wherever it is reached, rather than
 // lowered against a column it does not fit.
 //
-// An `i64` / `u64` / `f64` / `usize` key has nowhere to live: the integer
-// column is a 4-byte cell on wasm, and the string column reads a key's VALUE
-// as an address — which is how `Map[f64, V]` segfaulted before #9973. The
-// lowering refuses them instead, and this is the test that the refusal covers
-// every surface rather than the one that was written first: the gate began
-// life on the map METHODS alone, where a program that only constructs or only
-// iterates such a map still lowered silently (caught in review).
+// An `i64` / `u64` / `usize` key has nowhere to live: the integer column is a
+// 4-byte cell on wasm, and the string column reads a key's VALUE as an
+// address — which is how these segfaulted before #9973. The lowering refuses
+// them instead, and this is the test that the refusal covers every surface
+// rather than the one that was written first: the gate began life on the map
+// METHODS alone, where a program that only constructs or only iterates such a
+// map still lowered silently (caught in review).
+//
+// Float keys are not among these cases: E045 refuses every WRITTEN float-key
+// spelling in both checkers now (#10009), so the interpreter oracle below
+// rejects such a program and there is no lowering decision left to pin. The
+// one road a float key still travels — a monomorphised clone, which the
+// self-host runs no diagnostic pass over — is
+// TestSelfHostMonomorphisedFloatKeyStillRefusesToLower, which needs no
+// oracle because native refuses the program outright.
 //
 // Each case isolates one surface. The three parameter cases pass a bare
 // `map_new(2)` rather than a binding, so the construction gate cannot fire
@@ -66,11 +74,7 @@ function total(m: Map[u64, i32]): i32 {
 function main(): i32 { return total(map_new(2)); }
 `, false, 7},
 	{"method-on-a-parameter", `import "core/map";
-function total(m: Map[f64, i32]): i32 { return m.len() + 7; }
-function main(): i32 { return total(map_new(2)); }
-`, false, 7},
-	{"f32-read-of-a-parameter", `import "core/map";
-function total(m: Map[f32, i32]): i32 { return m.get_or(2.5, 0) + 7; }
+function total(m: Map[usize, i32]): i32 { return m.len() + 7; }
 function main(): i32 { return total(map_new(2)); }
 `, false, 7},
 	// The control: the same iteration over a key that DOES fit the column.
@@ -127,10 +131,18 @@ func TestSelfHostMapKeyWithNoColumnRefusesEverySurface(t *testing.T) {
 }
 
 // narrowMapKeyCases are the keys that DO fit the integer column, each read
-// back through the shapes a key column is consumed by.
+// back through the shapes a key column is consumed by — including a lookup
+// for a key that is ABSENT, which no other case here covers.
 //
-// `f32` is NOT here: it is refused, for the reason map_key_has_no_column
-// records — neither compiler gets an f32 key to the cell as an i32 on wasm
+// A key in the wrong column does not fail quietly: the string runtime reads
+// its VALUE as an address, so the process dies. Which way it dies is not
+// fixed — the pre-fix compiler SIGSEGVs on both boolean rows here, and a
+// reviewer running the same revert saw one of them spin instead — so the
+// failure below reports whatever the OS said rather than naming a signal.
+//
+// `f32` is NOT here: it fits the cell by width, but E045 refuses every float
+// key in both checkers now (#10009) — and it had to be refused somewhere,
+// because neither compiler gets an f32 key to the cell as an i32 on wasm
 // (#10008), so admitting it would make acceptance depend on the target.
 var narrowMapKeyCases = []struct {
 	name   string
@@ -157,15 +169,61 @@ function main(): i32 {
     return s + m.len();
 }
 `, 144},
+	// A boolean is a non-pointer scalar, so it belongs in the integer column
+	// too. The LITERAL spelling is the one that matters: the key-kind walk
+	// had no ExprBool arm, so a bool-keyed literal took the string
+	// constructor and the raw 0/1 went in as a pointer.
+	//
+	// Two rows because they fail for different reasons. This one never looks
+	// up an absent key — inserting `false`, the raw 0, is what kills it, so
+	// it catches the regression at CONSTRUCTION.
+	{"boolean-literal", `import "core/map";
+function main(): i32 {
+    var m = Map { true: 5, false: 9 };
+    var s: i32 = m.get_or(true, 0) + m.get_or(false, 0);
+    if (m.has(true)) { s = s + 1; }
+    if (!m.has(false)) { s = s + 100; }
+    return s + m.len();
+}
+`, 17},
+	// And this one inserts only `true`, so `get_or(false, 0)` and `has(false)`
+	// are genuine MISSES — the read side of the same bug, which a row whose
+	// every lookup is a hit cannot distinguish from pointer-identity luck.
+	{"boolean-literal-absent-key", `import "core/map";
+function main(): i32 {
+    var m = Map { true: 5 };
+    var s: i32 = m.get_or(true, 0) + m.get_or(false, 0);
+    if (!m.has(false)) { s = s + 100; }
+    return s + m.len();
+}
+`, 106},
+	// The annotated spellings, which took the integer column already — here
+	// so a fix to the literal path cannot regress them unnoticed.
+	{"boolean-annotated", `import "core/map";
+function main(): i32 {
+    var m: Map[boolean, i32] = map_new(2);
+    m = m.insert(true, 5);
+    m = m.insert(false, 9);
+    var s: i32 = m.get_or(true, 0) + m.get_or(false, 0);
+    if (m.has(true)) { s = s + 1; }
+    return s + m.len();
+}
+`, 17},
+	{"boolean-annotated-literal", `import "core/map";
+function main(): i32 {
+    var m: Map[boolean, i32] = Map { true: 5, false: 9 };
+    return m.get_or(false, 0) + m.get_or(true, 0) + m.len();
+}
+`, 16},
 }
 
 // TestSelfHostNarrowMapKeyAnswersX86_64 is the other half of the wide-key
 // refusal: the keys that DO fit the column have to answer what the
 // interpreter answers, not merely lower.
 //
-// Every one of these segfaulted before #9973 — `map_key_kind_of` asked whether
-// the type was spelled `Map[i32,`, so a `u8`, `u32` or `f32` key took the
-// STRING column and the insert path read the key's VALUE as an address. A
+// Both of these segfaulted before #9973 — `map_key_kind_of` asked whether the
+// type was spelled `Map[i32,`, so a `u8` or `u32` key took the STRING column
+// and the insert path read the key's VALUE as an address. A
 // refusal test alone cannot catch that coming back: a gate that refused these
 // too would pass it. This runs them.
 func TestSelfHostNarrowMapKeyAnswersX86_64(t *testing.T) {
@@ -215,5 +273,63 @@ func TestSelfHostNarrowMapKeyAnswersX86_64(t *testing.T) {
 				t.Fatalf("self-host answered %d, interpreter says %d", code, tc.oracle)
 			}
 		})
+	}
+}
+
+// monomorphisedFloatKeySrc has no float key written anywhere: `build(2.5, 7)`
+// instantiates a `Map[T, i32]`-returning generic at T = f64.
+const monomorphisedFloatKeySrc = `import "core/map";
+function build[T](k: T, v: i32): Map[T, i32] {
+    var m: Map[T, i32] = map_new(2);
+    return m.insert(k, v);
+}
+function main(): i32 { return build(2.5, 7).get_or(2.5, 0); }
+`
+
+// TestSelfHostMonomorphisedFloatKeyStillRefusesToLower pins the float half of
+// map_key_has_no_column, which nothing else does now that E045 refuses every
+// written float-key spelling (#10009).
+//
+// This program writes none. Native re-checks its instantiations and reports
+// E045 on the monomorphised copy; the self-host runs no diagnostic pass over
+// an instantiated clone, so it reaches the lowering with nothing behind it
+// (#10018). map_key_kind_of would then answer 0 for the f64 key — the STRING
+// column, which reads a key's VALUE as an address: the #9973 segfault by
+// another road. The lowering refusal is the only thing in the way, which is
+// why deleting it was wrong, and why this test exists.
+//
+// It takes no interpreter oracle. The other cases have one to prove they are
+// well-formed programs refused for their key; this one native refuses
+// outright, and that refusal is half of what is asserted.
+func TestSelfHostMonomorphisedFloatKeyStillRefusesToLower(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("self-host driver runs natively only")
+	}
+	dir := copySelfHostTree(t)
+	driver := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "alr")
+	root, err := filepath.Abs("../../internal/stdlib")
+	if err != nil {
+		t.Fatalf("abs stdlib root: %v", err)
+	}
+	entry := filepath.Join(dir, "monomorphised_float_key.fern")
+	if err := os.WriteFile(entry, []byte(monomorphisedFloatKeySrc), 0o644); err != nil {
+		t.Fatalf("write entry: %v", err)
+	}
+
+	// Half one: native still catches it, so the gap below is the self-host's
+	// alone. The whole pipeline is what is run, not checker.Check — the
+	// diagnostic arrives with MONOMORPHISATION, which is precisely the pass
+	// the self-host does not have. When #10018 closes, this stays green.
+	if _, code := runFixtureInterp(t, entry, ""); code == 0 {
+		t.Errorf("native ran a program with a monomorphised f64 map key; it reported E045 when this " +
+			"test was written, so either the instantiation re-check regressed or the rule moved")
+	}
+
+	// Half two: the self-host lowering refuses it with no diagnostic behind it.
+	route, _ := exec.Command(driver, entry, root, "-decide").Output()
+	if got := strings.TrimSpace(string(route)); got != "ast" {
+		t.Errorf("-decide = %q, want \"ast\": the self-host checker does not see this f64 key (#10018), "+
+			"so lowering it puts the key's VALUE through the string column as an address", got)
 	}
 }

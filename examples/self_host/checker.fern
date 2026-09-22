@@ -2141,7 +2141,8 @@ function conforms_by_impl_or_derive(s: Scope, tyname: string, tr: string): boole
 // composite key; the lowering builds a kind-2 map from the key's derived
 // hash/eq now, so the restriction it named is gone.
 function map_key_type_error(s: Scope, kt: typeinfo.Type): string {
-  if (is_unknown(kt) || is_integer(kt) || type_eq(kt, t_string())) { return ""; }
+  if (is_unknown(kt) || is_integer(kt) || type_eq(kt, t_string()) || type_eq(kt, t_str())) { return ""; }
+  if let typeinfo.TypeBool(_) = kt { return ""; }
   var kn: string = "";
   var kw: string = "";
   match (kt) {
@@ -2156,14 +2157,6 @@ function map_key_type_error(s: Scope, kt: typeinfo.Type): string {
   return "map key type " + type_label(kt) + " is not yet supported — use i32, string, or a struct/enum with `@derive(cmp.Eq, cmp.Hash)`, which requires `import \"core/cmp\";`";
 }
 
-// map_key_dest_diag emits E045 when a DESTINATION type is `Map[K, V]` whose
-// K is a struct or enum missing Eq + Hash. The map-literal path checks its own
-// (possibly inferred) key at the first `.insert`; this is the annotated half —
-// `var m: Map[Has, i32] = map_new(8)` names the key without a literal to infer
-// it from, so nothing else looks at it and the module reaches codegen calling a
-// `hash` method the derive never synthesised (#2671). Only struct / enum keys
-// are gated, matching native: a scalar, string or type-parameter key is either
-// already usable or resolved later.
 // mlit_is_desugared reports whether `e` is a map LITERAL as the parser leaves
 // it: an `.insert(k, v)` chain bottoming out at the `map_new` / `map_new_i32`
 // base. The literal's own key check (the first insert, above) reports E045 for
@@ -2188,22 +2181,63 @@ function mlit_is_desugared(e: ast.Expr): boolean {
   return false;
 }
 
-function map_key_dest_diag(declared: typeinfo.Type, line: i32, col: i32, s: Scope): util.Diag[] {
-  var out: util.Diag[] = [];
-  match (declared) {
+// e045_map_key_msgs collects the E045 message for every `Map[K, V]` inside one
+// WRITTEN type, at any nesting depth — so a `Map[f64, i32][]` field or a
+// `(string, Map[f64, i32])` parameter is reached as well as the bare form.
+//
+// The map-literal path checks the key it INFERS from the first `.insert`.
+// A `Map[K, V]` written as an annotation has no literal to infer from, so
+// without this nothing asked, and `var m: Map[f64, i32] = map_new(2)` reached
+// codegen with a key no backend has a column for (#10009).
+function e045_map_key_msgs(t: typeinfo.Type, s: Scope): string[] {
+  var out: string[] = [];
+  match (t) {
     typeinfo.TypeMap(mt) => {
-      var gated: boolean = false;
-      match (mt.key) {
-        typeinfo.TypeStruct(_) => { gated = true; },
-        typeinfo.TypeUnion(ku) => { gated = ku.name != "Option" && ku.name != "Result"; },
-        _ => {}
-      }
-      if (gated) {
-        var msg: string = map_key_type_error(s, mt.key);
-        if (msg != "") { out = out.append(dg_at("E045", msg, line, col)); }
-      }
+      // A key the interpreter compares BY VALUE and no compiled backend
+      // dispatches — a tuple, an array, a slice — is carved out. All three
+      // answers differ and none is obviously the bug: `Map { (1, 2): 5 }` is
+      // E045, the annotated spelling is accepted and answers correctly
+      // interpreted, and compiled it answers the DEFAULT, silently.
+      // TestInterpMapCompositeKeys gates the interpreter's answer, so
+      // applying the rule here would refuse a spelling the language
+      // supports. Filed as #10020; the fix that matters is on the compiled
+      // side, where the wrong answer is silent.
+      var by_value_key: boolean = false;
+      if let typeinfo.TypeTuple(_) = mt.key { by_value_key = true; }
+      if let typeinfo.TypeArray(_) = mt.key { by_value_key = true; }
+      var msg: string = "";
+      if (!by_value_key) { msg = map_key_type_error(s, mt.key); }
+      if (msg != "") { out = out.append(msg); }
+      out = util.append_all(out, e045_map_key_msgs(mt.key, s));
+      out = util.append_all(out, e045_map_key_msgs(mt.value, s));
+    },
+    typeinfo.TypeArray(a) => { out = util.append_all(out, e045_map_key_msgs(a.elem, s)); },
+    typeinfo.TypeTuple(tup) => {
+      for elem in tup.elements { out = util.append_all(out, e045_map_key_msgs(elem, s)); }
+    },
+    typeinfo.TypeStruct(st) => {
+      for arg in st.args { out = util.append_all(out, e045_map_key_msgs(arg, s)); }
+    },
+    typeinfo.TypeUnion(u) => {
+      for arg in u.args { out = util.append_all(out, e045_map_key_msgs(arg, s)); }
+    },
+    typeinfo.TypeFunc(f) => {
+      for pt in f.param_types { out = util.append_all(out, e045_map_key_msgs(pt, s)); }
+      out = util.append_all(out, e045_map_key_msgs(f.ret_type, s));
     },
     _ => {}
+  }
+  return out;
+}
+
+// e045_annot_diags reports the annotation-form E045 for one written spelling,
+// anchored where the caller says. An empty / un-annotated spelling emits
+// nothing, and a spelling naming no map emits nothing.
+function e045_annot_diags(type_name: string, line: i32, col: i32, s: Scope): util.Diag[] {
+  var out: util.Diag[] = [];
+  if (type_name.len() == 0) { return out; }
+  for msg in e045_map_key_msgs(s.resolve_type(type_name), s) {
+    out = out.append(dg_at("E045", msg, line, col));
   }
   return out;
 }
@@ -10809,7 +10843,7 @@ function stmts_assign_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): ut
           var declared: typeinfo.Type = var_declared_type(v, cur);
           var initt: typeinfo.Type = check_expr(v.init, cur);
           if (!mlit_is_desugared(v.init)) {
-            out = util.append_diags(out, map_key_dest_diag(declared, expr_line(v.init), expr_col(v.init), cur));
+            out = util.append_diags(out, e045_annot_diags(v.type_name, expr_line(v.init), expr_col(v.init), cur));
           }
           // E047: the annotation names the type every literal in the init is
           // read at, so one the type cannot hold is a range error rather than
@@ -13104,6 +13138,22 @@ function annot_of_stmt(st: ast.Stmt, own acc: Annot[]): Annot[] {
     ast.StmtVar(v) => { return acc.append(Annot { type_name: v.type_name, line: v.line, col: v.col }); },
     _ => { return acc; }
   }
+  return acc;
+}
+
+// lambda_annots collects only the LAMBDA parameter / return annotations a
+// body holds. collect_annots gathers the statement `var` annotations too, and
+// those are reported by stmts_assign_diags, which is where the init is in
+// scope — it decides whether a map literal has a key of its own to report at.
+function lambda_annots(stmts: ast.Stmt[]): Annot[] {
+  var acc: Annot[] = [];
+  for stmt in stmts {
+    acc = astwalk.fold_stmt_nodes(stmt, acc, annot_keep_acc, annot_of_expr, astwalk.descend_all);
+  }
+  return acc;
+}
+
+function annot_keep_acc(st: ast.Stmt, own acc: Annot[]): Annot[] {
   return acc;
 }
 
@@ -15563,6 +15613,13 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
   }
   for xfn in mod.funcs {
     var xsc: Scope = build_func_scope(xfn, st, stt, ut, methods, import_paths);
+    for param in xfn.params {
+      body_diags = util.append_diags(body_diags, e045_annot_diags(param.type_name, xfn.line, xfn.col, xsc));
+    }
+    body_diags = util.append_diags(body_diags, e045_annot_diags(xfn.ret_type, xfn.line, xfn.col, xsc));
+    for an in lambda_annots(xfn.body) {
+      body_diags = util.append_diags(body_diags, e045_annot_diags(an.type_name, an.line, an.col, xsc));
+    }
     if (xfn.fip || xfn.fbip) {
       body_diags = util.append_diags(body_diags, e053_diags(xfn, fip_names, fbip_names, e053_variants, xsc));
     }
@@ -15570,6 +15627,15 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
       body_diags = util.append_diags(body_diags, e065_diags(xfn, str_ret_names, e065_sums, e065_ix, xsc).diags);
     }
     body_diags = util.append_diags(body_diags, e032_stmts(xfn.body, e032_lastfn, xsc));
+  }
+  // E045 on a struct FIELD's annotation. Unlike E064 / E057 this needs no
+  // non-generic scoping: a type-parameter key resolves to unknown, which
+  // map_key_type_error accepts.
+  var fld_scope: Scope = new_scope_full(st, stt, ut, methods, import_paths).with_impls(mod.impls, mod.trait_reqs);
+  for esd in mod.structs {
+    for field in esd.fields {
+      body_diags = util.append_diags(body_diags, e045_annot_diags(field.type_name, esd.line, esd.col, fld_scope));
+    }
   }
   for esd in mod.structs {
     if (esd.type_params.len() == 0 && esd.enum_owner.len() == 0) {
@@ -16688,7 +16754,7 @@ function annotate_expr(e: ast.Expr, s: Scope): ast.Expr {
     },
     ast.ExprCall(c) => {
       var nargs: ast.Expr[] = [];
-      for arg in c.args {
+      for arg in use_typed_args(c, s) {
         nargs = nargs.append(annotate_expr(arg, s));
       }
       nargs = display_rewrite(c, nargs, s);
@@ -16737,6 +16803,51 @@ function annotate_expr(e: ast.Expr, s: Scope): ast.Expr {
     }
   }
   return e;
+}
+
+// `use v <- f(args)` writes its continuation with an untyped parameter that
+// the callee's callback parameter types (the E032 rule). The type is stamped
+// on the lambda before it is annotated, so its body reads a typed binding
+// and the trampoline the lift builds from it declares a typed parameter.
+// A callback parameter of function type has no spelling to stamp, and the
+// binding stays as written.
+function use_typed_args(c: ast.ExprCall, s: Scope): ast.Expr[] {
+  if (c.args.len() == 0) { return c.args; }
+  var last: i32 = c.args.len() - 1;
+  if let ast.ExprLambda(lm) = c.args[last] {
+    if (!lm.use_infer || lm.params.len() == 0 || lm.params[0].type_name.len() > 0) { return c.args; }
+    var bind: string = use_binding_spelling(c.callee, s);
+    if (bind.len() == 0) { return c.args; }
+    var params: ast.ParamDecl[] = [ast.ParamDecl { ...lm.params[0], type_name: bind, is_str: bind == "str" }];
+    var i: i32 = 1;
+    while (i < lm.params.len()) { params = params.append(lm.params[i]); i = i + 1; }
+    return c.args.with(last, ast.ExprLambda { ...lm, params: params });
+  }
+  return c.args;
+}
+
+// The spelling of the first parameter of the callee's trailing callback
+// parameter: from the module signature, else from a function-typed local.
+function use_binding_spelling(callee: ast.Expr, s: Scope): string {
+  var name: string = "";
+  if let ast.ExprIdent(id) = callee { name = id.name; }
+  if (name.len() == 0) { return ""; }
+  var trailing: typeinfo.Type = t_unknown("no callee");
+  var sig: FuncSig = s.lookup_sig(name);
+  if (sig.name.len() > 0) {
+    if (sig.param_types.len() > 0) { trailing = sig.param_types[sig.param_types.len() - 1]; }
+  } else {
+    if let typeinfo.TypeFunc(ft) = s.lookup(name) {
+      if (ft.param_types.len() > 0) { trailing = ft.param_types[ft.param_types.len() - 1]; }
+    }
+  }
+  if let typeinfo.TypeFunc(cb) = trailing {
+    if (cb.param_types.len() == 0) { return ""; }
+    var first: typeinfo.Type = cb.param_types[0];
+    if (is_unknown(first) || spells_function(first)) { return ""; }
+    return typeinfo.spelling(first);
+  }
+  return "";
 }
 
 // Capture contracts are resolved where the lambda is defined, including

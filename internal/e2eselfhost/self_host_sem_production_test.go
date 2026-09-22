@@ -713,6 +713,92 @@ function main(): i32 {
     match (b) { Sm(p) => { x = x + p.0 + p.1; }, Nn => { } }
     return x;
 }`},
+	// `use v <- f(args)` writes its continuation with an untyped parameter,
+	// and the trampoline the lift built from it declared none, so the typed
+	// producer refused it ("unresolved result type"). The checker's annotate
+	// pass stamps the callee's callback parameter type on the binding now.
+	// One continuation captures nothing (a `$wrap` trampoline), one captures
+	// its caller's parameter (a `$clo` body), and the string binding is
+	// released. A callee that is a function-typed LOCAL is stamped the same
+	// way, but such a local's type nests a function type and the producer
+	// refuses that slot outright, so no row can reach it yet.
+	{name: "use-binding-takes-the-callee-parameter-type", atLeast: 5, noLeak: true, src: `
+import "core/cmp";
+
+function with_name(n: i32, k: (string) => i32): i32 { return k("name-" + n.to_string()); }
+
+function plain(i: i32): i32 {
+    use s <- with_name(i);
+    return s.len() * 2;
+}
+
+function capturing(i: i32): i32 {
+    use s <- with_name(i);
+    return s.len() + i % 3;
+}
+
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) {
+        t = t + plain(i) + capturing(i);
+        i = i + 1;
+    }
+    return t % 97;
+}`},
+	// A lambda returned from inside a lambda. The lift hoists the outer body
+	// to a declaration of its own, and the pre-worklist rewrite that turns a
+	// source function's ` + "`return <lambda>`" + ` into a boxed slot never
+	// reached it, so the inner lambda stayed a bare function address, which the
+	// producer refuses as a closure value. The worklist rewrites a lifted
+	// body's capture-free tail lambda the same way now; a capturing one stays
+	// with the escaping-closure hoist (#5281). The boxes each call builds are
+	// released.
+	{name: "lambda-returns-a-lambda-from-a-lambda", atLeast: 5, noLeak: true, src: `
+function main(): i32 {
+    var mk = (): ((i32) => i32) => { return (x: i32): i32 => x * 2; };
+    var mk2 = (): (i32) => i32 => { return (x: i32): i32 => x + 3; };
+    var f = mk();
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) {
+        t = t + f(i) + mk2()(i);
+        i = i + 1;
+    }
+    return t % 97;
+}`},
+	// A lifted body whose capture-free tail takes the slot rewrite now has
+	// every ` + "`return <lambda>`" + ` rewritten, a CAPTURING one in a branch
+	// included; that is the corridor #5281 miscompiled in silently, so the
+	// branch return is pinned here on every leg.
+	{name: "capturing-lambda-returned-from-a-branch-of-a-lambda", atLeast: 4, noLeak: true, src: `
+function main(): i32 {
+    var pick = (flag: boolean, n: i32): (i32) => i32 => {
+        if (flag) { return (x: i32): i32 => x + n; }
+        return (x: i32): i32 => x * 2;
+    };
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) {
+        t = t + pick(i % 2 == 0, i)(3);
+        i = i + 1;
+    }
+    return t % 97;
+}
+`},
+	// A block-bodied lambda with no result annotation whose body binds through
+	// ` + "`use`" + `, and one whose block yields a tail value.
+	{name: "block-bodied-lambda-with-a-use-binding", atLeast: 4, noLeak: true, src: `
+function give(x: i32, cb: (i32) => i32): i32 { return cb(x); }
+
+function main(): i32 {
+    var bound = (): i32 => {
+        use n <- give(41);
+        return n + 1;
+    };
+    var tail = (x: i32) => { var y: i32 = x + 1; y * 2 };
+    return bound() + tail(3);
+}`},
 	{name: "value-match-first-arm-is-a-match-of-lambdas", atLeast: 8, noLeak: true, src: `
 enum Status { Active, Inactive, Pending }
 function main(): i32 {
@@ -2193,6 +2279,100 @@ function labelled(): string {
 }
 function main(): i32 {
     return snapshot()[0] * 10 + labelled().len();
+}
+`},
+	// The temp kept to the types with a literal zero, and a function with a
+	// defer returning a record, a tuple, a variant or a Result stayed on the
+	// AST lowering: declared at an untyped 0, the temp was an i32 slot, so
+	// "replacement type does not match its binding", and a returned Err had
+	// no expected type to name its variant through. The temp now starts at
+	// the zero of the return type, like a lifted binding. The value a return
+	// hands back is bound beside the local it came from until the cleanup
+	// runs (two_defers replaces both), and the sanitizer leg holds the boxes
+	// to zero over 200 rounds.
+	{name: "defer-return-temp-at-a-type-with-no-literal-zero", atLeast: 7, noLeak: true, src: `
+struct P { a: i32, s: string }
+enum Shape { Dot, Box(i32) }
+function record(n: i32): P {
+    var p: P = P { a: n, s: "p" };
+    defer p = P { a: 0, s: "" };
+    return p;
+}
+function pair(n: i32): (i32, string) {
+    var t: (i32, string) = (n, "one");
+    defer t = (0, "");
+    return t;
+}
+function variant(n: i32): Shape {
+    var s: Shape = Shape.Dot;
+    defer s = Shape.Box(n);
+    if (n % 2 == 0) { return Shape.Box(n); }
+    return s;
+}
+function maybe(n: i32): Option[P] {
+    var log: i32 = 0;
+    defer log = log + 1;
+    if (n < 0) { return None; }
+    return Some(P { a: n, s: "m" });
+}
+function risky(fail: boolean): Result[i32, i32] {
+    var code: i32 = 0;
+    errdefer { code = code + 7; }
+    if (fail) { return Err(code + 1); }
+    return Ok(50);
+}
+function two_defers(n: i32): P {
+    var p: P = P { a: n, s: "x" };
+    defer { p = P { a: 0, s: "" }; }
+    var q: P = p;
+    defer q = P { a: 5, s: "q" };
+    return P { a: p.a + q.a, s: p.s + q.s };
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) {
+        var pr: (i32, string) = pair(i);
+        t = t + record(i).a + pr.0 + pr.1.len();
+        match (variant(i)) { Shape.Dot => { t = t + 1; }, Shape.Box(v) => { t = t + v; } }
+        match (maybe(i - 100)) { Some(p) => { t = t + p.a + p.s.len(); }, None => { t = t + 2; } }
+        match (risky(i % 3 == 0)) { Ok(v) => { t = t + v; }, Err(e) => { t = t + e; } }
+        t = t + two_defers(i).s.len();
+        i = i + 1;
+    }
+    return t % 97;
+}
+`},
+	// A function-typed return with a defer: the temp is a fn slot started at
+	// its zero, and the lambda a return hands it is boxed at the assignment.
+	// Both legs bind the temp a closure local from its annotation, so the
+	// caller dispatches the box env-first; through_local returns a box a
+	// declaration built, capturing and plain return one at the return.
+	{name: "defer-in-a-closure-factory", atLeast: 7, noLeak: true, src: `
+function capturing(k: i32): (i32) => i32 {
+    var seen: i32 = 0;
+    defer seen = seen + 1;
+    return (x: i32): i32 => x + k;
+}
+function through_local(k: i32): (i32) => i32 {
+    var f: (i32) => i32 = (x: i32): i32 => x * k;
+    var seen: i32 = 0;
+    defer seen = seen + 1;
+    return f;
+}
+function plain(): (i32) => i32 {
+    var n: i32 = 0;
+    defer n = 1;
+    return (x: i32): i32 => x + 4;
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) {
+        t = t + capturing(i)(1) + plain()(i) + through_local(i)(2);
+        i = i + 1;
+    }
+    return t % 97;
 }
 `},
 	// A function value handed back across a call boundary: the frame that
