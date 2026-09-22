@@ -139,7 +139,9 @@ function main(): i32 { return apply(7, (x: i32) => x + 1); }`,
 // that bound U nowhere — E040 on a call that needs no annotation at all.
 func TestMethodTypeArgsNameTheMethodsOwnParams(t *testing.T) {
 	const decls = `enum Box[T, E] { Full(T), Blank(E) }
+struct Pair[T, E] { a: T, b: E }
 function (b: Box[T, E]) pair[U](other: Box[U, E]): Box[U, E] { return other; }
+function (p: Pair[T, E]) pick[U](x: U): U { return x; }
 function take(b: Box[i32, string]): i32 {
     match (b) {
         Full(n) => { return n; },
@@ -155,6 +157,14 @@ function take(b: Box[i32, string]): i32 {
 		`function main(): i32 { var b: Box[i32, string] = Full(5); return take(b.pair[i32](Full(9))); }`,
 		// A full list still means the whole list, receiver parameters first.
 		`function main(): i32 { var b: Box[i32, string] = Full(5); return take(b.pair[i32, string, i32](Full(9))); }`,
+		// A STRUCT receiver reaches the same rule by a different route: its
+		// dispatch replaces the call's type arguments with the receiver's
+		// before any of this runs, so the written list has to be read from
+		// what the source wrote rather than from what is left there.
+		`function main(): i32 { var p: Pair[i32, string] = Pair[i32, string] { a: 1, b: "x" }; return p.pick[i32](5); }`,
+		// And with nothing written, the receiver's arguments still name the
+		// leading parameters.
+		`function main(): i32 { var p: Pair[i32, string] = Pair[i32, string] { a: 1, b: "x" }; return p.pick(5); }`,
 	}
 	for _, src := range ok {
 		if err := checkSource(t, decls+src); err != nil {
