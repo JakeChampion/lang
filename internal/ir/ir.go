@@ -12869,8 +12869,7 @@ func (b *builder) sigResultFor(c *ast.Call, name string) (ast.Type, bool) {
 	if !ok || sig == nil {
 		return nil, false
 	}
-	if len(c.TypeArgs) >= 2 &&
-		(strings.HasPrefix(name, "__method_Map_") || strings.HasPrefix(name, "__method_MapIter_")) {
+	if len(c.TypeArgs) >= 2 && isMapCallName(name) {
 		return substituteTypeParamsDeep(sig.Result, []string{"K", "V"}, c.TypeArgs[:2]), true
 	}
 	return sig.Result, true
@@ -14071,6 +14070,12 @@ func mapKeyKindTag(t ast.Type, ptrW int) int32 {
 		return 2
 	}
 	return 0
+}
+
+// isMapCallName reports whether a call's TypeArgs are a map's [K, V]
+// rather than the call's own type arguments.
+func isMapCallName(name string) bool {
+	return strings.HasPrefix(name, "__method_Map_") || strings.HasPrefix(name, "__method_MapIter_")
 }
 
 // mapKeyTagChecked and mapKeyKindTagChecked are the builder's way of asking
@@ -15642,8 +15647,16 @@ func (b *builder) callBody(n *ast.Call) error {
 	// `has` boolean, `get` when V is i32-scalar,
 	// `get_or` when V is i32-scalar) flow through
 	// emitStringKMapCall when only K needs boxing.
-	needBoxK := len(n.TypeArgs) >= 1 && (isStringForBoxing(n.TypeArgs[0], b.ptrW) || b.mapKeyKindTagChecked(n.TypeArgs[0]) == 2)
-	needBoxV := len(n.TypeArgs) >= 2 && (isWideScalar(n.TypeArgs[1]) || isStringForBoxing(n.TypeArgs[1], b.ptrW))
+	// Only a Map or MapIter call carries [K, V] in TypeArgs; on any other
+	// generic call they are that call's own type arguments, and reading
+	// TypeArgs[0] as a key asks what column `i32[]` hashes in for an
+	// `id[T](x: T)` instantiated at an array. Every consumer of these three
+	// switches on one of those names, so outside them they were already
+	// dead — but mapKeyKindTagChecked records the key it was handed, so the
+	// unguarded question refused a program with no map in it (#10020).
+	mapCall := isMapCallName(id.Name)
+	needBoxK := mapCall && len(n.TypeArgs) >= 1 && (isStringForBoxing(n.TypeArgs[0], b.ptrW) || b.mapKeyKindTagChecked(n.TypeArgs[0]) == 2)
+	needBoxV := mapCall && len(n.TypeArgs) >= 2 && (isWideScalar(n.TypeArgs[1]) || isStringForBoxing(n.TypeArgs[1], b.ptrW))
 	// keyKind3: a struct/enum key dispatched through its derived
 	// hash/eq (see emitMapCall). The key is a raw pointer (never
 	// boxed — needBoxK is false), so the boxing helpers handle it as
@@ -15656,7 +15669,7 @@ func (b *builder) callBody(n *ast.Call) error {
 	// leak, no corruption — tracked as a follow-up). See #2671. A string
 	// value is unaffected: its release is in __map_dec_value, which the
 	// set reaches whatever the key kind is (#8421).
-	keyKind3 := len(n.TypeArgs) >= 1 && b.mapKeyKindTagChecked(n.TypeArgs[0]) == 3
+	keyKind3 := mapCall && len(n.TypeArgs) >= 1 && b.mapKeyKindTagChecked(n.TypeArgs[0]) == 3
 	if id.Name == "__method_Map_set" && len(n.Args) == 3 && len(n.TypeArgs) >= 1 {
 		var vType ast.Type
 		if len(n.TypeArgs) >= 2 {
