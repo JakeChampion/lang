@@ -2081,6 +2081,22 @@ Against the tree before any of the three, the release build of `wc -w`
 retires 32% fewer instructions, `sort -n` 31%, `cat -A` 29%, `ptx` 21%,
 `fmt` 22%.
 
+The fourth slice is the call. A call with more than two arguments saved
+each one on the operand stack and popped them back into their registers
+in front of the call — nine instructions around `cmp_bytes`'s call into
+`__fern_mismatch`. P15 pairs each push with the pop in the mirror position
+and writes the materialisation to that register directly; the window it
+needs is 18 lines, so `peepWindow` grew from 10. Release builds, outputs
+identical: `sort` 512,307,985 → 471,663,517 (-7.9%), `sort -k2,2n` -2.2%,
+`sort -n` -1.5%, `fmt` -1.3%, `ptx` -0.9%. `cat -A` went the other way,
+96,428,023 → 98,239,652, with every changed line in its hot function
+shorter: the driver's assembler pads every branch that would cross a
+32-byte line with NOPs (the Skylake JCC erratum, `relax.go`'s
+`branchPad`), and where the padding lands is layout luck. The same two
+listings assembled by GNU `as`, which pads nothing, retire 93,060,668 and
+91,689,024. The executed padding is 6–7% of `cat -A`'s instructions and
+its own issue (#10017).
+
 A scan loop's `var c = s[i]; if (c >= 48 && c <= 57)` body is eleven
 instructions per byte after all three, from twenty-seven. What it still
 pays is the stack machine itself: every local is a frame slot, so the

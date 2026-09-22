@@ -284,3 +284,64 @@ func TestFoldSlotIntoAlu(t *testing.T) {
 		}
 	}
 }
+
+func TestPeepholeMaterialisesCallArgumentsDirectly(t *testing.T) {
+	got := runPeephole(
+		"\tmov rax, [rbp-8]",
+		"\tpush rax",
+		"\tmov rax, [rbp-16]",
+		"\tpush rax",
+		"\tmov rax, [rbp-8]",
+		"\tpush rax",
+		"\tmov rax, [rbp-32]",
+		"\tpush rax",
+		"\tmov rax, [rbp-64]",
+		"\tmov r8, rax",
+		"\tpop rcx",
+		"\tpop rdx",
+		"\tpop rsi",
+		"\tpop rdi",
+		"\tsub rsp, 8",
+		"\tcall __fern_mismatch",
+	)
+	want := []string{
+		"\tmov rdi, [rbp-8]",
+		"\tmov rsi, [rbp-16]",
+		"\tmov rdx, [rbp-8]",
+		"\tmov rcx, [rbp-32]",
+		"\tmov r8, [rbp-64]",
+		"\tsub rsp, 8",
+		"\tcall __fern_mismatch",
+	}
+	if !sameLines(got, want...) {
+		t.Errorf("got %q\nwant %q", got, want)
+	}
+
+	// A materialisation that reads rax was reading the previous argument,
+	// which the rewrite no longer leaves there.
+	in := []string{
+		"\tmov rax, [rbp-8]",
+		"\tpush rax",
+		"\tmov rax, [rax + 8]",
+		"\tmov rsi, rax",
+		"\tpop rdi",
+		"\tcall __fn_f",
+	}
+	got = runPeephole(in...)
+	if strings.Contains(strings.Join(got, "\n"), "mov rsi, [rax + 8]") && !strings.Contains(strings.Join(got, "\n"), "mov rax, [rbp-8]") {
+		t.Errorf("an argument reading the previous one was renamed: %q", got)
+	}
+	// A pop into a register that is not an argument register is not a
+	// call's argument restore.
+	in = []string{
+		"\tmov rax, [rbp-8]",
+		"\tpush rax",
+		"\tmov rax, [rbp-16]",
+		"\tmov rsi, rax",
+		"\tpop rbx",
+		"\tcall __fn_f",
+	}
+	if _, _, ok := foldArgPushes(in[:len(in)-1]); ok {
+		t.Error("a pop into rbx was taken for an argument restore")
+	}
+}
