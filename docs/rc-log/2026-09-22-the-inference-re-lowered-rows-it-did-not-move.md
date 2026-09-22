@@ -96,6 +96,16 @@ byte. Whole-module rather than a grep for a helper name, because a dropped
 bracket is an absence and a grep for an absence is what misses it. Both sides
 are checked non-empty first: two empty emissions compare equal.
 
+**Which of the five actually carries it: only `checker.fern`.** Measured by
+deleting the grow-rows clause from the reuse predicate and re-running — that
+module fails (13,939,274 bytes reused against 13,902,051 re-lowered, first
+difference inside `__fn_call_through_fn_value`) and the other four still pass.
+So the clause is load-bearing, the gate does catch its removal, and the
+justification originally written beside `ssarc.fern` — that its call density
+loads the grow-mask dependency — was false. A negative control is the only
+thing that could have said so: every one of the five passes when the code is
+right, which is exactly the shape that hides a case proving nothing.
+
 Measured beyond the gate: the self-host compiler built from this tree and from
 `origin/main` emit byte-identical assembly for all ten of lexer, parser,
 checker, irlower, ssarc, ssaunits, semsource, semlower, ssa_lift and asm_ir.

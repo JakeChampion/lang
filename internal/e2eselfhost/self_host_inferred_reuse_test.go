@@ -18,15 +18,21 @@ import (
 // all and cannot exercise this. They are also the modules the self-compile is
 // made of, which is where the saving is worth having.
 var inferredReuseModules = []string{
-	// The two the diagnosis was measured on, smallest first so a failure is
-	// cheapest to read.
+	// lexer.fern is where the diagnosis was measured and the cheapest failure
+	// to read, so it goes first.
 	"lexer.fern",
+	// checker.fern is the module that carries this gate. Measured by deleting
+	// the grow-rows clause from the reuse predicate and re-running: only this
+	// module fails (13,939,274 bytes reused against 13,902,051 re-lowered,
+	// first difference inside __fn_call_through_fn_value), and the other four
+	// still pass. So the clause is load-bearing and this is what bears it — do
+	// not drop this row to make the gate faster.
 	"checker.fern",
-	// A module whose declarations call each other heavily, so the grow-mask
-	// dependency below is actually loaded: the reuse must notice a callee whose
-	// mask moved even where the caller's own modes did not.
+	// The remaining three catch a divergence anywhere else in the reuse, and
+	// none of them exercises the grow-rows clause: each still passed with it
+	// deleted. ssarc / ssaunits are where the analyses that were running twice
+	// live, and semsource is where the reuse predicate itself is built.
 	"ssarc.fern",
-	// Where the analyses that were running twice live.
 	"ssaunits.fern",
 	"semsource.fern",
 }
