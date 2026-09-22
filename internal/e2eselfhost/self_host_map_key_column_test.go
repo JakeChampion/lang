@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// TestSelfHostWideMapKeyRefusesEverySurface pins that a map key too wide for
+// TestSelfHostMapKeyWithNoColumnRefusesEverySurface pins that a map key too wide for
 // the integer key column is REFUSED wherever it is reached, rather than
 // lowered against a column it does not fit.
 //
@@ -25,7 +25,7 @@ import (
 // first and mask the one under test. The i32 control proves the cases are
 // refused for their KEY and not for their shape — without it, a gate that
 // refused every map would pass this test.
-var wideMapKeyCases = []struct {
+var noColumnMapKeyCases = []struct {
 	name   string
 	src    string
 	wantIR bool
@@ -58,6 +58,10 @@ function main(): i32 { return total(map_new(2)); }
 function total(m: Map[f64, i32]): i32 { return m.len() + 7; }
 function main(): i32 { return total(map_new(2)); }
 `, false, 7},
+	{"f32-read-of-a-parameter", `import "core/map";
+function total(m: Map[f32, i32]): i32 { return m.get_or(2.5, 0) + 7; }
+function main(): i32 { return total(map_new(2)); }
+`, false, 7},
 	// The control: the same iteration over a key that DOES fit the column.
 	{"pair-iteration-of-an-i32-parameter", `import "core/map";
 function total(m: Map[i32, i32]): i32 {
@@ -69,7 +73,7 @@ function main(): i32 { return total(map_new(2)); }
 `, true, 7},
 }
 
-func TestSelfHostWideMapKeyRefusesEverySurface(t *testing.T) {
+func TestSelfHostMapKeyWithNoColumnRefusesEverySurface(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
 		t.Skip("self-host driver runs natively only")
@@ -81,7 +85,7 @@ func TestSelfHostWideMapKeyRefusesEverySurface(t *testing.T) {
 		t.Fatalf("abs stdlib root: %v", err)
 	}
 
-	for _, tc := range wideMapKeyCases {
+	for _, tc := range noColumnMapKeyCases {
 		t.Run(tc.name, func(t *testing.T) {
 			entry := filepath.Join(dir, "wide_map_key_"+strings.ReplaceAll(tc.name, "-", "_")+".fern")
 			if err := os.WriteFile(entry, []byte(tc.src), 0o644); err != nil {
@@ -114,11 +118,9 @@ func TestSelfHostWideMapKeyRefusesEverySurface(t *testing.T) {
 // narrowMapKeyCases are the keys that DO fit the integer column, each read
 // back through the shapes a key column is consumed by.
 //
-// `f32` is here rather than in conformance/cases/map_narrow_int_keys because
-// native's wasm backend emits an invalid module for an f32-keyed map
-// ("expected i32, found f32" — #10008), so a corpus case covering it would
-// fail on a leg that has nothing to do with this fix. The self-host answers
-// it, and this is where that can be said.
+// `f32` is NOT here: it is refused, for the reason map_key_has_no_column
+// records — neither compiler gets an f32 key to the cell as an i32 on wasm
+// (#10008), so admitting it would make acceptance depend on the target.
 var narrowMapKeyCases = []struct {
 	name   string
 	src    string
@@ -144,14 +146,6 @@ function main(): i32 {
     return s + m.len();
 }
 `, 144},
-	{"f32", `import "core/map";
-function main(): i32 {
-    var m: Map[f32, i32] = map_new(2);
-    var i: i32 = 0;
-    while (i < 6) { m = m.insert((i as f32) + 0.5, i); i = i + 1; }
-    return m.len() * 10 + m.get_or(2.5, 0);
-}
-`, 62},
 }
 
 // TestSelfHostNarrowMapKeyAnswersX86_64 is the other half of the wide-key

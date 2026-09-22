@@ -7,11 +7,11 @@ import "core/map";
 // is read back through the shapes a key column is consumed by — len, has, get,
 // pair iteration, and the keys column itself.
 //
-// An `f32` key belongs to this fix too and is NOT here: native's wasm backend
-// emits an invalid module for one ("expected i32, found f32"), which is its
-// own bug (#10008) and would fail this case on a leg that has nothing to do
-// with the key column. TestSelfHostNarrowMapKeyAnswersX86_64 covers it where
-// it can be answered.
+// An `f32` key is NOT here and is not admitted at all: neither compiler gets
+// one to the key cell as an i32 on wasm, so the self-host refuses it rather
+// than accept on one target and emit a module wasmtime rejects on another
+// (#10008). TestSelfHostMapKeyWithNoColumnRefusesEverySurface pins that
+// refusal.
 //
 // The keys() column is read on the `u32` map rather than the `u8` one because
 // a u8 COLUMN is a separate native bug: `__map_column`'s 4-byte destStride
