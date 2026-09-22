@@ -19,7 +19,9 @@ import (
 
 // repeatPastCeilingSrc multiplies a 16-byte string by 268435455 copies:
 // 16 * 268435455 == 4294967280, which is -16 as i32. `repeat` guards `n <= 0`
-// and an empty receiver, so nothing upstream of the multiply catches it.
+// and an empty receiver, so nothing upstream of the product catches it; it
+// builds by doubling, and the doubling that would cross 2 GiB is the concat
+// that refuses the size.
 const repeatPastCeilingSrc = `import "std/string";
 function main(): i32 {
 	var s: string = "0123456789abcdef";

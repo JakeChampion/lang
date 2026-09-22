@@ -198,10 +198,13 @@ echo "coreutils-bench: uutils: ${uu_multicall:-${uu:-none — the column is drop
 # program 'kill'`, which the old probe did not recognise, so it linked the
 # name anyway and TIMED THE ERROR PATH — reporting `kill` as 7.6x faster than
 # a uutils that has no `kill` at all. An older uutils without `--list` falls
-# back to the probe below.
+# back to the probe below: Debian's 0.0.24 answers `--list` with its refusal
+# ON STDOUT and exits 1, so the answer counts only when the exit status says
+# it is one — taken as a list, the refusal named no utility and dropped the
+# whole column.
 uu_list=""
 if [ -n "$uu_multicall" ]; then
-  uu_list=$("$uu_multicall" --list 2>/dev/null || true)
+  uu_list=$("$uu_multicall" --list 2>/dev/null) || uu_list=""
 fi
 
 # uutils_bin UTIL — the uutils binary for UTIL, or nothing.

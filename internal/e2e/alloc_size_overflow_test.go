@@ -24,10 +24,9 @@ import (
 // Both are now a named abort — `fern: allocation size out of range`, exit
 // 134 — which is what every other size failure in the runtime does.
 //
-// Neither case needs the multi-GB allocation the report assumed. `repeat`
-// trips on the wrapped length before anything is copied, and the concat case
-// reaches 2 GiB by DOUBLING (each step a memcpy, not a byte loop), so both
-// run in seconds.
+// Neither case needs the multi-GB allocation the report assumed: both reach
+// 2 GiB by DOUBLING (each step a memcpy, not a byte loop) — `repeat` is
+// built that way — so both run in seconds.
 func TestAllocSizeOverflowAborts(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping allocation-size e2e in -short mode")
@@ -58,10 +57,11 @@ function main(): i32 {
 	})
 }
 
-// A size that wraps to a small non-negative value is NOT caught here — the
-// allocation succeeds at the wrapped size and the copy is then stopped by the
-// element bounds check instead. Pinned so the two outcomes stay distinct: this
-// one is safe, and its message names the check that actually caught it.
+// A product that wraps to a small non-negative value in i32 — the case a
+// wrapped-size allocation would NOT refuse — is caught before the product is
+// ever formed: `repeat` doubles its way up, and the doubling that would cross
+// 2 GiB is a concat whose combined length wraps negative. Pinned so the
+// product's own arithmetic never becomes the check.
 func TestAllocSizeWrappingToZeroStillAborts(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping allocation-size e2e in -short mode")
@@ -73,7 +73,7 @@ function main(): i32 {
   var r: string = s.repeat(1073741824);
   return r.len();
 }
-`, "array index out of range")
+`, "allocation size out of range")
 }
 
 // A large-but-representable allocation still succeeds — the guard rejects an

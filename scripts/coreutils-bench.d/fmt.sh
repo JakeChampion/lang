@@ -23,6 +23,16 @@ with open(sys.argv[1], "w") as f:
             f.write(line + "\n")
         f.write("\n")
 ' "$wrapped"
+# One paragraph of 200 000 lines: the shape where the per-line work is
+# what counts, since every word of the file is in one chooser run and
+# the reader appends to one word array for the whole file (#9983).
+tall="$out/fmt-tall.txt"
+[ -f "$tall" ] || python3 -c '
+import sys
+with open(sys.argv[1], "w") as f:
+    for i in range(200000):
+        f.write("line %d of text\n" % i)
+' "$tall"
 printf 'fmt (default) of a 40 MiB file\ty\t{} %s > /dev/null\n' "$prose"
 printf 'fmt -w 40 of a 40 MiB file\ty\t{} -w 40 %s > /dev/null\n' "$prose"
 printf 'fmt -s -w 40 of a 40 MiB file\ty\t{} -s -w 40 %s > /dev/null\n' "$prose"
@@ -31,3 +41,4 @@ printf 'fmt (default) of a 38 MiB wrapped file\ty\t{} %s > /dev/null\n' "$wrappe
 printf 'fmt -c -w 60 of a 38 MiB wrapped file\ty\t{} -c -w 60 %s > /dev/null\n' "$wrapped"
 printf 'fmt -p "" -w 40 of a 38 MiB wrapped file\ty\t{} -p "" -w 40 %s > /dev/null\n' "$wrapped"
 printf 'fmt (default) from a pipe\ty\tcat %s | {} > /dev/null\n' "$prose"
+printf 'fmt (default) of one 200k-line paragraph\ty\t{} %s > /dev/null\n' "$tall"

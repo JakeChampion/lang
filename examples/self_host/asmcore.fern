@@ -3330,7 +3330,7 @@ pub function rt_src_str_lines(): string {
 // until anonymous slice temps get a view-box reclaim. A sentinel `go` flag
 // drives the scan. Empty / all-whitespace input → start==end → "".
 pub function rt_src_str_trim(): string {
-    return "function __fern_str_trim(s: string): string { var n: i32 = s.len(); var start: i32 = 0; var go: i32 = 1; while (go == 1) { if (start >= n) { go = 0; } else { var c: i32 = s[start]; if (c == 32 || c == 9 || c == 10 || c == 13 || c == 11 || c == 12) { start = start + 1; } else { go = 0; } } } var end: i32 = n; var go2: i32 = 1; while (go2 == 1) { if (end <= start) { go2 = 0; } else { var c2: i32 = s[end - 1]; if (c2 == 32 || c2 == 9 || c2 == 10 || c2 == 13 || c2 == 11 || c2 == 12) { end = end - 1; } else { go2 = 0; } } } return slice_unchecked(s, start, end) + \"\"; }";
+    return "function __fern_str_trim(s: string): string { var n: i32 = s.len(); var start: i32 = 0; var go: i32 = 1; while (go == 1) { if (start >= n) { go = 0; } else { var c: i32 = s[start]; if (c == 32 || c >= 9 && c <= 13) { start = start + 1; } else { go = 0; } } } var end: i32 = n; var go2: i32 = 1; while (go2 == 1) { if (end <= start) { go2 = 0; } else { var c2: i32 = s[end - 1]; if (c2 == 32 || c2 >= 9 && c2 <= 13) { end = end - 1; } else { go2 = 0; } } } return slice_unchecked(s, start, end) + \"\"; }";
 }
 
 pub function match_payload_type(scrut: ast.Expr, s: EmitState): Ty {
@@ -5863,6 +5863,33 @@ function display_arg_errs(e: ast.Expr, fname: string, st: EmitState): util.Diag[
                                 + id.name + ": " + an + " has a `to_string(): string`, but the"
                                 + " self-hosted compiler dispatches `.to_string()` on a primitive to its"
                                 + " built-in formatter, so that method would not be called", line: id.line, col: id.col }];
+                        }
+                        if (is_prim_recv_name(an, st)) {
+                            // A PRIMITIVE with no to_string of its own. The
+                            // generic text below asks for a `to_string` method
+                            // or `@derive(cmp.Display)` and names the import
+                            // that enables it — none of which helps HERE,
+                            // because irlower's display_arg rewrites a STRUCT
+                            // and nothing else, so no import makes this
+                            // compile. Naming the remedy the compiler will not
+                            // honour reads as a mistake in the program rather
+                            // than a gap in the compiler (#9945).
+                            //
+                            // Native refuses the same program without the
+                            // import and accepts it with one, because its
+                            // Display spine resolves whatever `to_string` is in
+                            // scope — `core/cmp` pulls std/i32, std/i64,
+                            // std/u32, std/u64 and std/float — so the message
+                            // says "with the import" rather than claiming
+                            // native formats a primitive on its own.
+                            return [util.Diag { code: "E038", message: "in fn '" + fname + "': argument 1 to "
+                                + id.name + ": the self-hosted compiler has no Display path for " + an
+                                + " yet — `" + id.name + "` stringifies a string, or a struct carrying its own"
+                                + " `to_string(): string`, and a primitive is neither. Stringify at the call"
+                                + " site instead: `" + id.name + "(x.to_string())`, with the module that"
+                                + " provides it imported. Native reaches that same `to_string`, so with the"
+                                + " import the implicit form compiles there and not here",
+                                line: id.line, col: id.col }];
                         }
                         return [util.Diag { code: "E038", message: "in fn '" + fname + "': argument 1 to "
                             + id.name + ": " + util.demangle(an)

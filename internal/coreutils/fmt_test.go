@@ -1,10 +1,12 @@
 package coreutils
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fmtFile writes `content` under `dir` as `name` and returns its path.
@@ -61,6 +63,18 @@ func fmtCases(t *testing.T) []invocation {
 	}
 	d := filepath.Join(dir, "d")
 	big := fmtFile(t, dir, "big", strings.Repeat("alpha beta gamma delta epsilon zeta eta theta\n\n", 20000))
+	// One paragraph of 100 000 lines, a word to each. The layout is forced —
+	// two 36-column words fill a line and a third cannot — so GNU's 997-word
+	// window lays it out exactly as the whole-paragraph chooser does, and the
+	// case measures the reader instead: the paragraph's words are appended
+	// to once per LINE, and a copy there made this shape quadratic (#9983,
+	// 22 s at 40 000 lines against GNU's 14 ms). The bound is what turns
+	// that regression into a named divergence rather than a lane stall.
+	var tall strings.Builder
+	for i := 0; i < 100000; i++ {
+		fmt.Fprintf(&tall, "w%035d\n", i)
+	}
+	oneParagraph := fmtFile(t, dir, "tall", tall.String())
 	// 900 one-character words: long enough to exercise the chooser over a
 	// whole paragraph and short enough to stay inside GNU's own word
 	// buffer, which holds 997 (see docs/COREUTILS.md).
@@ -409,6 +423,22 @@ func fmtCases(t *testing.T) []invocation {
 		{name: "a line longer than one read block", args: []string{"-w", "140"}, stdin: strings.Repeat(strings.Repeat("z", 100)+" ", 650) + "end\n"},
 		{name: "a single word longer than one read block", args: []string{"-w", "40"}, stdin: strings.Repeat("z", 70000) + "\n"},
 		{name: "many short paragraphs", args: []string{"-w", "30"}, stdin: strings.Repeat("aaa bbb ccc ddd eee\n\n", 10000)},
+		{name: "one paragraph of a hundred thousand lines", args: []string{oneParagraph}, timeout: 5 * time.Second},
+		{name: "one paragraph of a hundred thousand lines narrow", args: []string{"-w", "38", oneParagraph}, timeout: 5 * time.Second},
+
+		// The width is inclusive under 9.12: a line may reach WIDTH columns
+		// exactly, whatever fills it — words, an indent, a prefix — where 9.4
+		// held it to WIDTH-1.
+		{name: "a line at the width", args: []string{"-w", "20"}, stdin: "aaaaaaaaa bbbbbbbbbb\n"},
+		{name: "a line one under the width", args: []string{"-w", "20"}, stdin: "aaaaaaaaa bbbbbbbbb\n"},
+		{name: "an indented line at the width", args: []string{"-w", "20"}, stdin: "  aaaaaaa bbbbbbbbbb\n"},
+		{name: "an indented line one under the width", args: []string{"-w", "20"}, stdin: "  aaaaaaa bbbbbbbbb\n"},
+		{name: "a prefixed line at the width", args: []string{"-p", "# ", "-w", "20"}, stdin: "# aaaaaaa bbbbbbbbbb\n"},
+		{name: "a prefixed line one under the width", args: []string{"-p", "# ", "-w", "20"}, stdin: "# aaaaaaa bbbbbbbbb\n"},
+		{name: "a crown line at the width", args: []string{"-c", "-w", "20"}, stdin: "  aaaaaaa bbbbbbbbbb\n aaaaaaaa bbbbbbbbbb\n"},
+		{name: "a line at the default width", args: []string{}, stdin: strings.Repeat("a", 37) + " " + strings.Repeat("b", 37) + "\n"},
+		{name: "a line one under the default width", args: []string{}, stdin: strings.Repeat("a", 37) + " " + strings.Repeat("b", 36) + "\n"},
+		{name: "width three over one-letter words", args: []string{"-w", "3"}, stdin: "a b c\n"},
 	}
 }
 
