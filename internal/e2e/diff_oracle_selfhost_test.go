@@ -150,9 +150,14 @@ func TestDifferential_SelfHostSemanticX86_64(t *testing.T) {
 const selfHostSemDiffKnownFile = "selfhost-diff-semantic-x86_64-known-divergences.txt"
 
 // selfHostSemDiffMinWholeRatio is the floor on seeds whose module produced
-// every declaration. Measured 2026-09-16 over seeds 0..63: 8 of 64 (0.12); the floor is a
-// ratchet to raise as the leaves in docs/SELFHOST-SEMANTIC-SOURCE.md close.
-const selfHostSemDiffMinWholeRatio = 0.10
+// every declaration. Measured 2026-09-22 over seeds 0..63: 62 of 64 (0.97),
+// and over seeds 1000..1063: 63 of 64 (0.98); every miss is a seed that does
+// not compile at all (E042 on a generated `?`), which the ratio counts against
+// the lowering as the 2026-09-16 figure of 8 of 64 (0.12) did. The floor is a
+// ratchet to raise as the leaves in docs/SELFHOST-SEMANTIC-SOURCE.md close,
+// and it stands well under the measurement because a window is 64 seeds and
+// the non-compiling share moves with the generator.
+const selfHostSemDiffMinWholeRatio = 0.75
 
 func testDifferentialSelfHostX86_64(t *testing.T, semantic bool) {
 	requireSelfHostDiffLeg(t)
