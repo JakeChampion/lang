@@ -171,6 +171,20 @@ function take(b: Box[i32, string]): i32 {
 			t.Errorf("should type-check, got: %v\nsrc: %s", err, src)
 		}
 	}
+	// The destination fills what the payload left OPEN — it does not overrule
+	// what the payload pinned. `Ok(n)` with an i32 `n` returned as
+	// `Result[i64, i32]` pins T = i32 from the payload while the destination
+	// says i64, and the widening that settles that runs downstream of the
+	// constructor, reached only while the type is still incomplete. Completing
+	// it from the contradicting destination answered `Result[i32, i32]` and
+	// turned the return into a type error (the interp oracle of
+	// TestSelfHostOptMakeI64IRWasm, which is where this showed up).
+	widening := `function g(n: i32): Result[i64, i32] { return Ok(n); }
+function main(): i32 { match (g(40)) { Ok(v) => { return (v / 8) as i32; }, Err(e) => { return e; } } }`
+	if err := checkSource(t, widening); err != nil {
+		t.Errorf("an i32 payload widening to its destination's i64 should type-check, got: %v", err)
+	}
+
 	// A short list still has to be CHECKED against the argument: naming the
 	// method's own parameter is not the same as ignoring it. And the report
 	// names what the parameter came to MEAN — `Box[string, string]`, the
@@ -183,6 +197,18 @@ function take(b: Box[i32, string]): i32 {
 	}
 	if !strings.Contains(err.Error(), "expected Box[string, string], got Box[i32, string]") {
 		t.Errorf("error %q does not name the substituted parameter type", err.Error())
+	}
+	// It has to stay a refusal when the mistyped value has a destination that
+	// accepts it: completing the constructor from the destination is what
+	// surfaces the contradiction, and the numeric-widening exception above must
+	// not swallow this one.
+	annotated := `function main(): i32 {
+    var b: Box[i32, string] = Full(5);
+    var x: Box[string, string] = b.pair[string](Full(9));
+    match (x) { Full(s) => { return s.len(); }, Blank(e) => { return e.len(); } }
+}`
+	if err := checkSource(t, decls+annotated); err == nil {
+		t.Errorf("an i32 payload reaching a Box[string, string] should not type-check")
 	}
 	// Arity is the WRITTEN list's on both receivers. A struct receiver's stamp
 	// has replaced n.TypeArgs by the time the check runs, so counting that

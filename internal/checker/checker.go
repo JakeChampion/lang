@@ -16460,7 +16460,30 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					// (`other: Result[U, E]` with E already substituted) has a
 					// type parameter of its own in the position the payload
 					// was meant to pin (#9896).
+					//
+					// Not when the destination WIDENS what the payload pinned,
+					// though: `Ok(n)` with an i32 `n` returned as
+					// `Result[i64, i32]` pins T = i32 from the payload while
+					// the destination says i64, and the widening that settles
+					// that runs downstream of here — reached only because the
+					// type is still INCOMPLETE. Completing it would answer
+					// `Result[i32, i32]` and take the widening away.
+					//
+					// Only a numeric disagreement is left alone. Any other one
+					// is a type error, and it is REPORTED by completing: the
+					// payload's own binding is kept, so `Box[i32, string]` meets
+					// the `Box[string, string]` the call wants and the mismatch
+					// is named.
 					destArgs := destEnumArgs(callExpected, vr.enumName, len(ed.TypeParams))
+					for i, p := range ed.TypeParams {
+						pinned, ok := sub[p]
+						if !ok || destArgs == nil {
+							continue
+						}
+						if numericType(pinned) && numericType(destArgs[i]) && !ast.Equal(pinned, destArgs[i]) {
+							destArgs = nil
+						}
+					}
 					for i, p := range ed.TypeParams {
 						if v, ok := sub[p]; ok {
 							args[i] = v
@@ -18351,6 +18374,16 @@ func takeWrittenTypeArgs(n *ast.Call, prior []ast.Type) []ast.Type {
 		return prior
 	}
 	return append([]ast.Type(nil), n.TypeArgs...)
+}
+
+// numericType reports whether `t` is an integer or float type — the pair a
+// widening can settle between.
+func numericType(t ast.Type) bool {
+	switch t.(type) {
+	case ast.NumberType, ast.FloatType:
+		return true
+	}
+	return false
 }
 
 // destEnumArgs returns the type arguments a destination supplies for enum
