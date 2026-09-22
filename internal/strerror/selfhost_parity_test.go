@@ -112,6 +112,19 @@ func TestSelfHostUnknownPrefixMatches(t *testing.T) {
 	if m[2] != UnknownPrefix {
 		t.Errorf("the self-host says %q off darwin, Go says %q", m[2], UnknownPrefix)
 	}
+
+	// The literals above are only half of it: a caller that ignored the
+	// target would pass them both and still match. These pin the WIRING —
+	// that the prefix reaches the emitted runtime from the target rather
+	// than from a constant. Textual, because this test reads the Fern
+	// source as data and cannot run it; the end-to-end proof is the
+	// arm64-darwin binary itself, which the macOS lane builds.
+	if !regexp.MustCompile(`var pfx: string = strerror_unknown_prefix\(t\);`).MatchString(src) {
+		t.Error("strerror_unknown_src does not take its prefix from strerror_unknown_prefix(t) — the per-target prefix is not reaching the emitted runtime")
+	}
+	if !regexp.MustCompile(`strerror_unknown_src\(t\)`).MatchString(src) {
+		t.Error("rt_src_io_error does not thread its target into strerror_unknown_src — every target would get one prefix")
+	}
 }
 
 // TestSelfHostWasiErrorCodesMatch pins the preview-2 error-code
