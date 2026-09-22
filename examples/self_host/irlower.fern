@@ -4563,13 +4563,22 @@ pub function (s: LowerState) mark_arrarr_elem(i: i32, kind: string): LowerState 
 // or "" if `name` isn't a known enum variant. Lets the IR path recover a
 // freshly-constructed variant's enum type for `<Enum>.<method>` dispatch.
 //
-// FIRST match wins, and variant decls are keyed by the BARE name, so this
-// cannot answer for a name two enums both declare. Anywhere the enum is
-// already known — a qualified `Enum.Variant` — use variant_decl_index.
+// The table is keyed by the BARE name and a plain struct may share one with a
+// variant, so the walk skips the entries that are not variants rather than
+// reading the first entry's owner: `struct Empty` declared above
+// `enum Shape { Square(i32), Empty }` otherwise masked the variant and
+// `Empty.to_string()` dispatched to a nonexistent `Empty.to_string` (#9900).
+//
+// FIRST VARIANT match wins, so this still cannot answer for a name two enums
+// both declare. Anywhere the enum is already known — a qualified
+// `Enum.Variant` — use variant_decl_index.
 pub function variant_enum_owner(structs: StructTab, name: string): string {
     var i: i32 = stab_first(structs, name);
-    if (i < 0) { return ""; }
-    return structs.decls[i].enum_owner;
+    while (i >= 0) {
+        if (structs.decls[i].enum_owner != "") { return structs.decls[i].enum_owner; }
+        i = stab_next(structs, i, name);
+    }
+    return "";
 }
 
 // variant_decl_index returns the index in `structs` of the variant `name`
@@ -6364,6 +6373,21 @@ pub function is_builtin_variant_pattern(structs: StructTab, name: string, scrut_
 
 pub function decl_field_count(structs: StructTab, struct_name: string): i32 {
     return decl_at_field_count(structs, stab_first(structs, struct_name));
+}
+
+// unit_decl_index returns the index of the first decl named `name` that carries
+// NO fields, or -1. The table is keyed by the bare name and a plain struct may
+// share one with a unit variant, so reading only the first entry answered with
+// whichever was declared first: `struct Empty { n: i32 }` above
+// `enum Shape { Square(i32), Empty }` reported one field, and the variant value
+// the program meant was lowered as a function pointer instead (#9900).
+pub function unit_decl_index(structs: StructTab, name: string): i32 {
+    var i: i32 = stab_first(structs, name);
+    while (i >= 0) {
+        if (structs.decls[i].fields.len() == 0) { return i; }
+        i = stab_next(structs, i, name);
+    }
+    return 0 - 1;
 }
 
 // iife_lambda_composite_struct_type recovers the STRUCT / NOMINAL-ENUM result type
@@ -16872,8 +16896,9 @@ function lower_expr_ident(id: ast.ExprIdent, s: LowerState): LowerState {
     // so ownership is what separates them. The other order built an
     // Option box for `enum E { …, None }`, which then matched no
     // variant index at all.
-    if (decl_is_struct(s.frame.structs, id.name) && decl_field_count(s.frame.structs, id.name) == 0) {
-        return s.emit(ir.op_struct_make(id.name, 0, decl_index_of(s.frame.structs, id.name)));
+    var unit: i32 = unit_decl_index(s.frame.structs, id.name);
+    if (unit >= 0) {
+        return s.emit(ir.op_struct_make(id.name, 0, unit));
     }
     // The empty Option `None` → a payloadless box with tag 1.
     if (id.name == "None") { return s.emit(ir.op_opt_none()); }

@@ -1149,7 +1149,13 @@ pub struct MethodSig { name: string, receiver_type: string, param_types: typeinf
 // does not. A `type X = A | B` alias is never marked, which is the right
 // answer for it: native refuses `?` on one exactly as it refuses an unmarked
 // enum.
-pub struct UnionSig { name: string, variants: string[], is_try: boolean }
+// is_enum separates the two ways a union reaches this table, which decides
+// where a variant's PAYLOAD lives: an `enum` owns a backing struct per
+// payload-bearing variant (`StructSig.enum_owner` names the enum), while a
+// `type U = P | Q` alias's variant IS a declared struct. The struct table is
+// keyed by the bare name alone, so without this a plain struct sharing a
+// payloadless variant's name is read as that variant's payload (#9900).
+pub struct UnionSig { name: string, variants: string[], is_try: boolean, is_enum: boolean }
 
 // A flat name → type map plus the function signature table
 // plus the struct-decl table plus the union-alias table.
@@ -1763,18 +1769,46 @@ function is_nopayload_builtin_variant(name: string): boolean {
   return false;
 }
 
-// union_of_variant returns the name of the first declared enum/union in scope
-// that lists `name` as a variant, or "" when none does. Used by check_expr to
-// type a bare no-payload enum variant used as a value (#4346 piece 2).
-function union_of_variant(name: string, unions: UnionTable): string {
+// union_sig_of_variant returns the first declared enum/union in scope that
+// lists `name` as a variant, or the empty sig when none does.
+function union_sig_of_variant(name: string, unions: UnionTable): UnionSig {
   var e: i32 = unions.head[sig_name_bucket(name)];
   while (e >= 0) {
     if (unions.vnames[e] == name) {
-      return unions.unions[unions.vowner[e]].name;
+      return unions.unions[unions.vowner[e]];
     }
     e = unions.next[e];
   }
-  return "";
+  var empty_v: string[] = [];
+  return UnionSig { name: "", variants: empty_v, is_try: false, is_enum: false };
+}
+
+// union_of_variant returns the NAME of that union, or "" when none declares
+// `name`. Used by check_expr to type a bare no-payload enum variant used as a
+// value (#4346 piece 2).
+function union_of_variant(name: string, unions: UnionTable): string {
+  return union_sig_of_variant(name, unions).name;
+}
+
+// variant_carries_payload reports whether the bare variant `name` needs a
+// constructor call (`A(5)`) rather than standing as a value. The payload is a
+// struct sig either way, but WHICH one depends on how the variant was declared:
+// an enum variant's payload is a struct the enum owns, so it is looked up
+// through that owner, while a union alias's variant IS a declared struct.
+//
+// Asking the struct table by name alone gets this wrong when a plain struct
+// shares a payloadless variant's name (#9900): the table is keyed by the bare
+// name, so the two share a bucket and the answer is whichever registered first
+// — the struct, declared first, reading its own fields as the variant's
+// payload. Scoping the enum case to the owner keeps the two namespaces apart
+// the way native's `info.Structs` and `variantOf` are.
+function variant_carries_payload(s: Scope, name: string): boolean {
+  var owner: UnionSig = union_sig_of_variant(name, s.unions);
+  if (owner.is_enum) {
+    var vs: StructSig = s.lookup_owned_struct(name, owner.name);
+    return vs.enum_owner == owner.name && vs.field_names.len() > 0;
+  }
+  return s.lookup_struct(name).field_names.len() > 0;
 }
 
 // is_resolvable_value reports whether a bare identifier in VALUE position
@@ -2791,7 +2825,7 @@ function (s: Scope) lookup_union(name: string): UnionSig {
   }
   // Sentinel: empty name signals "no such union".
   var empty_v: string[] = [];
-  return UnionSig { name: "", variants: empty_v, is_try: false };
+  return UnionSig { name: "", variants: empty_v, is_try: false, is_enum: false };
 }
 
 // try_able_union answers whether `?` accepts an operand of this union type.
@@ -3677,13 +3711,13 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
       // shadows (handled above by the successful lookup). Payload
       // variants reach the checker as calls (`Some(3)`) / struct
       // literals and carry a backing struct with an `__ev` field, so we
-      // resolve ONLY when the variant's struct has ZERO fields — exactly
-      // a unit (no-payload) variant like `Red` under
-      // `enum Color { Red, Green }`. Builtin Option/Result variants
-      // aren't registered as unions here, so they stay unknown (their
-      // generic payloads are a separate slice).
+      // resolve ONLY when the variant carries no payload — exactly a
+      // unit variant like `Red` under `enum Color { Red, Green }`.
+      // Builtin Option/Result variants aren't registered as unions here,
+      // so they stay unknown (their generic payloads are a separate
+      // slice).
       var un: string = union_of_variant(id.name, s.unions);
-      if (un.len() > 0 && s.lookup_struct(id.name).field_names.len() == 0) {
+      if (un.len() > 0 && !variant_carries_payload(s, id.name)) {
         return t_union(un);
       }
       // Builtin no-payload variants (`None`, `JNull`, the IoError set)
@@ -5094,7 +5128,7 @@ function collect_union_sigs(aliases: parser.TypeAlias[], struct_names: string[])
       k = k + 1;
     }
     if (!dup) {
-      out = out.append(UnionSig { name: a.name, variants: a.variants, is_try: false });
+      out = out.append(UnionSig { name: a.name, variants: a.variants, is_try: false, is_enum: false });
     }
   }
   return out;
@@ -9958,9 +9992,9 @@ function call_diags_ident(id: ast.ExprIdent, s: Scope, out: util.Diag[]): util.D
   // (`type U = P | Q`, P a struct) or an enum variant with a payload
   // (`A(i32)`) used as a value WITHOUT calling its constructor. Both
   // are registered as a union variant whose backing struct has >= 1
-  // field, so `variant_in_unions` is true and the struct has fields;
-  // a nullary variant has no backing fields and stays a valid bare
-  // value. The constructor CALL form (`P(...)` / `A(5)`) is an
+  // field, so `variant_in_unions` is true and variant_carries_payload
+  // finds those fields; a nullary variant has none and stays a valid
+  // bare value. The constructor CALL form (`P(...)` / `A(5)`) is an
   // ExprCall callee handled elsewhere, so it isn't flagged. Mirrors
   // the Go checker ("variant X expects a payload; call it as X(...)").
   // Checked before E001 — these names DO resolve (as variants), so
@@ -9973,7 +10007,7 @@ function call_diags_ident(id: ast.ExprIdent, s: Scope, out: util.Diag[]): util.D
   // no lookup at all, so it needs the shadowing test spelled out. The
   // sibling rules already gate on exactly this (the qualified-ref
   // detection and vref_expr's ambiguity rule). #6658.
-  if (is_unknown(s.lookup(id.name)) && variant_in_unions(id.name, s.unions) && s.lookup_struct(id.name).field_names.len() > 0) {
+  if (is_unknown(s.lookup(id.name)) && variant_in_unions(id.name, s.unions) && variant_carries_payload(s, id.name)) {
     out = out.append(dg_at("E036", "variant " + id.name + " expects a payload; call it as " + id.name + "(...)", id.line, id.col));
   } else if (!is_resolvable_value(id.name, s)) {
     // E001: a bare identifier in VALUE position that resolves to
@@ -14965,7 +14999,7 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
   // no enum decls, so this is inert on the bundle; it enables
   // exhaustiveness for user / corpus enum matches.
   for ed in mod.enums {
-    unions = unions.append(UnionSig { name: ed.name, variants: ed.variant_names, is_try: ed.try_marker });
+    unions = unions.append(UnionSig { name: ed.name, variants: ed.variant_names, is_try: ed.try_marker, is_enum: true });
   }
   var well_typed: boolean = true;
   if (!validate_union_sigs(unions, struct_names)) {
@@ -15380,7 +15414,7 @@ function module_env(mod: parser.Module): ModuleEnv {
   }
   var unions: UnionSig[] = collect_union_sigs(mod.aliases, struct_names);
   for ed in mod.enums {
-    unions = unions.append(UnionSig { name: ed.name, variants: ed.variant_names, is_try: ed.try_marker });
+    unions = unions.append(UnionSig { name: ed.name, variants: ed.variant_names, is_try: ed.try_marker, is_enum: true });
   }
   var union_names: string[] = union_sig_names(unions);
   var sigs: FuncSig[] = collect_func_sigs(mod.funcs, struct_names, union_names);
@@ -16395,7 +16429,7 @@ function build_module_tables(mod: parser.Module): ModuleTables {
   }
   var unions: UnionSig[] = collect_union_sigs(mod.aliases, struct_names);
   for ed in mod.enums {
-    unions = unions.append(UnionSig { name: ed.name, variants: ed.variant_names, is_try: ed.try_marker });
+    unions = unions.append(UnionSig { name: ed.name, variants: ed.variant_names, is_try: ed.try_marker, is_enum: true });
   }
   var union_names: string[] = union_sig_names(unions);
   var sigs: FuncSig[] = collect_func_sigs(mod.funcs, struct_names, union_names);
