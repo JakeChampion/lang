@@ -25325,8 +25325,10 @@ function lower_stmt_for(fr: ast.StmtFor, s: LowerState): LowerState {
     // it is explicitly released (__fern_rc_dec) right after the loop — flat,
     // and a body that mutates the map iterates the entry-time snapshot
     // (matching native) instead of a buffer the map may grow-free from under
-    // it. A string/other column (flag 1) stays a register-backend BORROW of
-    // the map's internal array (no inc, no post-loop free — slice 3).
+    // it. A counted column (flag 2) is a retaining snapshot, deep-released
+    // after the loop; only a flag-1 column — a KEY column alone now, and only
+    // one whose key type this layer cannot classify — stays a register-backend
+    // BORROW of the map's internal array (no inc, no post-loop free — slice 3).
     // `mki_method` is "" unless fr.iter is a keys()/values() call on a map
     // local.
     if (!for_var_comma) {
@@ -25582,7 +25584,8 @@ function lower_stmt_for(fr: ast.StmtFor, s: LowerState): LowerState {
     // are emitted explicitly so they don't need the mark. Per column
     // (#4353): a scalar i32 column (elem flag 0) is a fresh rc=1 SNAPSHOT
     // on every backend and is explicitly released right after the loop;
-    // a string/other column (flag 1) stays a register-backend BORROW of
+    // a counted column (flag 2) is a retaining snapshot, deep-released after
+    // the loop; only a flag-1 KEY column stays a register-backend BORROW of
     // the map's internal array (no inc, no post-loop free — slice 3).
     var mslot: i32 = 0 - 1;
     match (fr.iter) {
@@ -25686,21 +25689,26 @@ function lower_stmt_for(fr: ast.StmtFor, s: LowerState): LowerState {
         fm = fm.emit(ir.op_end()).exit_loop();
         // Release the SNAPSHOT columns (flag 0 — scalar i32, a fresh rc=1
         // copy on every backend) right after the loop; `break` exits land
-        // here too. Borrowed columns (flag 1) are the map's own buffers and
-        // must NOT be dec'd. An early `return` in the body skips this — a
+        // here too. A borrowed column (flag 1, a KEY column only now) is the
+        // map's own buffer and must NOT be dec'd. An early `return` in the body skips this — a
         // bounded, sound leak, like every non-swept hidden temp.
         if (mkv_kflag == 0) {
             fm = fm.release_zero(ksslot, "__fern_rc_dec", "map-iter-snapshot");
         }
-        // String KEY column (flag 2, #4353 slice 3): deep-release the retaining
-        // snapshot (__fern_str_arr_free — per-element rc-aware free + buffer).
+        // COUNTED KEY column (flag 2, #4353 slice 3): deep-release the
+        // retaining snapshot (__fern_str_arr_free — per-element rc-aware free +
+        // buffer). A string column and a keyed struct/enum one both take it;
+        // the per-element free reads the count, not the shape.
         if (mkv_kflag == 2) {
             fm = fm.release_zero(ksslot, "__fern_str_arr_free", "map-iter-snapshot");
         }
         if (mkv_vflag == 0) {
             fm = fm.release_zero(vsslot, "__fern_rc_dec", "map-iter-snapshot");
         }
-        // String VALUE column (flag 2): same deep-release.
+        // COUNTED VALUE column (flag 2): same deep-release. A value column is
+        // never flag 1 now, so every pointer column lands here rather than
+        // being borrowed — which took a struct-valued for-in from 8000 bytes
+        // leaked to 0.
         if (mkv_vflag == 2) {
             fm = fm.release_zero(vsslot, "__fern_str_arr_free", "map-iter-snapshot");
         }
@@ -39511,9 +39519,11 @@ function expr_calls_map_method(e: ast.Expr, name: string, methods: string[]): bo
 }
 
 // map_has_col_alias_read: does the body read `name`'s column BUFFERS — a
-// keys() / values() (a raw alias on a flag-1 column, map_kv_elem_flag), an
-// iter(), or a for-in over the map? A map with none is its buffers' sole
-// holder, so a grow may free the superseded buffer (the "MAPOWN:" credit).
+// keys() / values(), an iter(), or a for-in over the map? A map with none is
+// its buffers' sole holder, so a grow may free the superseded buffer (the
+// "MAPOWN:" credit). Conservative about the snapshot: a keys() on a flag-1 key
+// column really does alias the buffer, and the rest are counted here anyway
+// because iteration hands out the map's own slots whatever the flags say.
 function map_has_col_alias_read(stmts: ast.Stmt[], name: string): boolean {
     return map_stmts_call_method(stmts, name, ["iter", "keys", "values"], true);
 }
@@ -72949,19 +72959,23 @@ function map_value_is_ptr(vt: string): boolean {
 }
 
 // map_owncols (#4353 layer 0, general case — #5335): BOTH of the map's declared
-// "Map[K, V]" columns read back as SNAPSHOTS (map_kv_elem_flag != 1: an i32
-// column snapshot-copies via __fern_map_snapshot_col, a string column snapshots
+// "Map[K, V]" columns read back as SNAPSHOTS (map_kv_elem_flag != 1: a scalar
+// column snapshot-copies via __fern_map_snapshot_col, a counted one snapshots
 // with per-element retain via __fern_map_snapshot_col_str), so no keys()/values()
 // read can alias the raw keys@0/vals@8 buffers and the map is therefore their
 // sole owner — op_map_set may free the superseded buffer on a grow
 // (__fern_arr_push_owned) instead of leaking it. Defined IN TERMS OF
-// map_kv_elem_flag so the "owned ⇒ every read snapshots" invariant is structural:
-// i64/u64/f64 and struct/generic/unparseable ("Map[K, V]", "") columns are flag 1
-// (raw-buffer alias reads) and stay on the leak-only push — freeing their
-// superseded buffer would dangle a live `var vs = m.values()`. (A boolean
+// map_kv_elem_flag so the "owned ⇒ every read snapshots" invariant is
+// structural.
+//
+// Only a KEY column can hold this back now: a value column is never flag 1, so
+// what decides is whether the key is an i32, a string or a keyed struct/enum.
+// An i64 / u64 / u8 / u32 or unparseable ("Map[K, V]", "") KEY column is flag 1
+// — a raw-buffer alias read — and stays on the leak-only push, since freeing its
+// superseded buffer would dangle a live `var ks = m.keys()`. (A boolean
 // annotation normalizes to i32 in the type tag before reaching here, so
 // Map[i32, boolean] IS owned — consistently, its reads see the same normalized
-// tag and snapshot.)
+// tag and snapshot. A non-i32 integer key is worse than un-owned: #9973.)
 function map_owncols(mty: string): boolean {
     return map_kv_elem_flag(mty, "keys") != 1 && map_kv_elem_flag(mty, "values") != 1;
 }
