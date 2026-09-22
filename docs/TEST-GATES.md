@@ -61,6 +61,18 @@ the helper closes each temporary kqueue. It runs under the macOS lane's
 `TestSelfHostArm64Darwin.*` selector. This is the compatibility `poll` helper;
 P0's persistent worker-owned reactor remains separate work.
 
+## HTTP Content-Length parsing
+
+`TestHttpContentLength*`, `TestArm64DarwinHTTPContentLength`,
+`TestSelfHostHTTPContentLength` and `TestSelfHostArm64DarwinHTTPContentLength`
+exercise the public request parser against an unbounded decimal oracle.
+The corpus includes lengths that wrap to zero or small positive i32 values,
+leading zeros, incomplete bodies, duplicate Content-Length, Transfer-Encoding,
+and acceptance/rejection at the body limit. It runs in the interpreter,
+both native compiler families and WebAssembly; the self-host legs require
+complete semantic lowering. The decimal parser must reject overflow before
+multiplication, so the later body limit never sees a wrapped length.
+
 ## Generated digest sources
 
 The lint lane runs `make digest-check` on every PR and main push. It compares
