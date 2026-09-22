@@ -95,10 +95,12 @@ function main(): i32 { var m: Map[f64, i32] = Map { 1.5: 7 }; return 0; }
 function take(m: Map[f32, i32]): i32 { return 0; }
 function main(): i32 { return 0; }
 `, true},
+	// Deliberately accepted by both: the interpreter supports a tuple key and
+	// TestInterpMapCompositeKeys gates it. See isTupleKey / #10020.
 	{"tuple-key", `import "core/map";
 function take(m: Map[(i32, i32), i32]): i32 { return 0; }
 function main(): i32 { return 0; }
-`, true},
+`, false},
 	{"struct-key-without-the-derives", `import "core/map";
 struct K { a: i32 }
 function take(m: Map[K, i32]): i32 { return 0; }

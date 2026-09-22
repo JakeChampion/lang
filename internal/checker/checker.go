@@ -8073,13 +8073,14 @@ func (c *checker) validateKnownTypes(prog *ast.Program) {
 // time, so a derived struct key would be rejected there.
 func (c *checker) validateMapKeyTypes(prog *ast.Program) {
 	for _, fn := range prog.Funcs {
+		mod := fn.BodyModule()
 		if fn.Receiver != nil {
-			c.checkMapKeyTypes(fn.Receiver.Type, fn.P)
+			c.checkMapKeyTypes(fn.Receiver.Type, mod, fn.P)
 		}
 		for i := range fn.Params {
-			c.checkMapKeyTypes(fn.Params[i].Type, paramPos(fn.Params[i], fn.P))
+			c.checkMapKeyTypes(fn.Params[i].Type, mod, paramPos(fn.Params[i], fn.P))
 		}
-		c.checkMapKeyTypes(fn.ReturnType, fn.P)
+		c.checkMapKeyTypes(fn.ReturnType, mod, fn.P)
 		if fn.Body == nil {
 			continue
 		}
@@ -8096,7 +8097,7 @@ func (c *checker) validateMapKeyTypes(prog *ast.Program) {
 			}
 			forEachDeclaredType(n, func(t *ast.Type, pos ast.Position) {
 				if *t != nil {
-					c.checkMapKeyTypes(*t, pos)
+					c.checkMapKeyTypes(*t, mod, pos)
 				}
 			})
 			return true
@@ -8104,18 +8105,18 @@ func (c *checker) validateMapKeyTypes(prog *ast.Program) {
 	}
 	for _, sd := range prog.Structs {
 		for i := range sd.Fields {
-			c.checkMapKeyTypes(sd.Fields[i].Type, paramPos(sd.Fields[i], sd.P))
+			c.checkMapKeyTypes(sd.Fields[i].Type, sd.SourceModule, paramPos(sd.Fields[i], sd.P))
 		}
 	}
 	for _, ed := range prog.Enums {
 		for i := range ed.Variants {
 			for j := range ed.Variants[i].Payloads {
-				c.checkMapKeyTypes(ed.Variants[i].Payloads[j], ed.Variants[i].P)
+				c.checkMapKeyTypes(ed.Variants[i].Payloads[j], ed.SourceModule, ed.Variants[i].P)
 			}
 		}
 	}
 	for _, impl := range prog.Impls {
-		c.checkMapKeyTypes(impl.Type, impl.P)
+		c.checkMapKeyTypes(impl.Type, impl.SourceModule, impl.P)
 	}
 }
 
@@ -8123,35 +8124,54 @@ func (c *checker) validateMapKeyTypes(prog *ast.Program) {
 // `Map[K, V]` whose K is not a usable key. Composite types recurse, so a
 // `Map[f64, i32][]` field or a `(string, Map[f64, i32])` parameter is
 // reached too.
-func (c *checker) checkMapKeyTypes(t ast.Type, pos ast.Position) {
+func (c *checker) checkMapKeyTypes(t ast.Type, mod string, pos ast.Position) {
 	switch x := t.(type) {
 	case ast.StructType:
-		if x.Name == "Map" && len(x.Args) == 2 {
+		if x.Name == "Map" && len(x.Args) == 2 && !isTupleKey(x.Args[0]) {
 			if msg := c.mapKeyTypeError(x.Args[0]); msg != "" {
-				c.errfCode(pos, "E045", "%s", msg)
+				c.report(mod, pos, "E045", msg)
 			}
 		}
 		for _, a := range x.Args {
-			c.checkMapKeyTypes(a, pos)
+			c.checkMapKeyTypes(a, mod, pos)
 		}
 	case ast.EnumType:
 		for _, a := range x.Args {
-			c.checkMapKeyTypes(a, pos)
+			c.checkMapKeyTypes(a, mod, pos)
 		}
 	case ast.ArrayType:
-		c.checkMapKeyTypes(x.Elem, pos)
+		c.checkMapKeyTypes(x.Elem, mod, pos)
 	case ast.SliceType:
-		c.checkMapKeyTypes(x.Elem, pos)
+		c.checkMapKeyTypes(x.Elem, mod, pos)
 	case ast.TupleType:
 		for _, e := range x.Elems {
-			c.checkMapKeyTypes(e, pos)
+			c.checkMapKeyTypes(e, mod, pos)
 		}
 	case *ast.FuncType:
 		for _, p := range x.Params {
-			c.checkMapKeyTypes(p, pos)
+			c.checkMapKeyTypes(p, mod, pos)
 		}
-		c.checkMapKeyTypes(x.Result, pos)
+		c.checkMapKeyTypes(x.Result, mod, pos)
 	}
+}
+
+// isTupleKey carves a tuple key out of the annotation rule, which is the one
+// key type where the literal verdict and the annotated one genuinely differ
+// today and neither is obviously the bug.
+//
+// mapKeyTypeError refuses a tuple, so `Map { (1, 2): 5 }` is E045. The
+// interpreter supports one — TestInterpMapCompositeKeys gates insert / get /
+// has over tuple keys by value — so the annotated `Map[(i32, i32), i32]` is
+// accepted, and answers correctly there. Compiled it answers the DEFAULT
+// instead, silently, because a tuple has no nominal type to hang Eq / Hash
+// on. Three different answers for one type, filed as #10020.
+//
+// Applying the rule here would refuse the spelling the interpreter supports,
+// so it does not. Reconciling the three is that issue's decision, not this
+// rule's to make by accident.
+func isTupleKey(k ast.Type) bool {
+	_, ok := k.(ast.TupleType)
+	return ok
 }
 
 // checkTypeKnown walks a resolved type tree and reports E064 for each
