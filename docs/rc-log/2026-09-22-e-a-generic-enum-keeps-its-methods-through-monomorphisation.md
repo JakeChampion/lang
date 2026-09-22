@@ -90,7 +90,10 @@ enum over a string payload, a method, a method with its own parameter and
 and Err receivers, 200 rounds, 51 of 51, 1000 allocs and 1000 frees where the
 AST lowering frees none. Both answer what the AST lowering and the interpreter
 answer. `TestSelfHostGenericEnumIR{X86_64,WasmIR}` carry the two
-new monomorphiser shapes under the size bound that proves the IR route.
+new monomorphiser shapes under the size bound that proves the IR route, and
+`TestSelfHostBuiltinUnionPayload{X86_64,Arm64,Wasm}` pin the string payload
+through `Result.and` and `Option.and` under the churn gate, 1000 rounds flat,
+with the interpreter as the oracle.
 
 ## Traps
 
