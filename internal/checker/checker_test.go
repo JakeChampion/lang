@@ -184,6 +184,25 @@ function take(b: Box[i32, string]): i32 {
 	if !strings.Contains(err.Error(), "expected Box[string, string], got Box[i32, string]") {
 		t.Errorf("error %q does not name the substituted parameter type", err.Error())
 	}
+	// Arity is the WRITTEN list's on both receivers. A struct receiver's stamp
+	// has replaced n.TypeArgs by the time the check runs, so counting that
+	// measured the receiver's parameters and a surplus argument went
+	// unreported — on the enum receiver, which keeps its written list, the
+	// same call was refused.
+	surplus := []string{
+		`function main(): i32 { var p: Pair[i32, string] = Pair[i32, string] { a: 1, b: "x" }; return p.pick[i32, string, i32, f64](5); }`,
+		`function main(): i32 { var b: Box[i32, string] = Full(5); return take(b.pair[i32, string, i32, f64](Full(9))); }`,
+	}
+	for _, src := range surplus {
+		err := checkSource(t, decls+src)
+		if err == nil {
+			t.Errorf("a surplus type argument should not type-check\nsrc: %s", src)
+			continue
+		}
+		if !strings.Contains(err.Error(), "expects 3 type argument(s), got 4") {
+			t.Errorf("error %q does not report the written list's arity\nsrc: %s", err.Error(), src)
+		}
+	}
 }
 
 // E040 at a call site must name a spelling the user can write (#6796). A

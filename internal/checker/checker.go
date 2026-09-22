@@ -16808,13 +16808,6 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					// method-level params are inferred from the arguments
 					// below. The "could not infer" check afterwards still
 					// catches a param that nothing binds.
-					tooMany := len(n.TypeArgs) > len(fn.TypeParams)
-					tooFew := len(n.TypeArgs) < len(fn.TypeParams)
-					if tooMany || (tooFew && n.Method == nil) {
-						display, _ := callSiteName(fn)
-						c.errfCode(n.P, "E040", "%s expects %d type argument(s), got %d",
-							display, len(fn.TypeParams), len(n.TypeArgs))
-					}
 					// Two lists can arrive in n.TypeArgs and they name
 					// different parameters: the RECEIVER's arguments, which a
 					// method dispatch stamps there, and the list the source
@@ -16824,6 +16817,21 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					recvArgs, written := n.TypeArgs, writtenTypeArgs
 					if written == nil && n.TypeArgsWritten {
 						recvArgs, written = nil, n.TypeArgs
+					}
+					// Arity is the WRITTEN list's when the source wrote one:
+					// on a struct receiver n.TypeArgs is the stamp by now, so
+					// counting it measures the receiver's parameters and a
+					// surplus written argument went unreported.
+					count := len(n.TypeArgs)
+					if written != nil {
+						count = len(written)
+					}
+					tooMany := count > len(fn.TypeParams)
+					tooFew := count < len(fn.TypeParams)
+					if tooMany || (tooFew && n.Method == nil) {
+						display, _ := callSiteName(fn)
+						c.errfCode(n.P, "E040", "%s expects %d type argument(s), got %d",
+							display, len(fn.TypeParams), count)
 					}
 					// The receiver's arguments are the LEADING parameters.
 					for i, ta := range recvArgs {
