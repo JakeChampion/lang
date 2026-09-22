@@ -1120,35 +1120,40 @@ func TestGenBytesShrinkIsMonotonicAndValid(t *testing.T) {
 	if os.Getenv("RUN_SHRINK_PROPERTY") == "1" {
 		seeds = sweepN(t, 24)
 	}
+	// Seeds are independent, so each is a parallel subtest: the sweep is
+	// CPU-bound and three entry points alone leave a core idle.
 	for _, g := range gens {
 		t.Run(g.name, func(t *testing.T) {
 			t.Parallel()
 			for seed := uint64(0); seed < seeds; seed++ {
-				r := rand.New(rand.NewPCG(seed, 0x5eed))
-				corpus := randBytes(r, 192)
+				t.Run(fmt.Sprintf("seed=%d", seed), func(t *testing.T) {
+					t.Parallel()
+					r := rand.New(rand.NewPCG(seed, 0x5eed))
+					corpus := randBytes(r, 192)
 
-				// prev is the program from the NEXT-larger corpus, so each
-				// step asserts against its immediate neighbour rather than a
-				// distant sample — a single uphill step is enough to break
-				// convergence.
-				prevSrc := g.gen(corpus)
-				prevNodes, err := astNodeCount(t, prevSrc)
-				if err != nil {
-					t.Fatalf("seed=%d: full corpus does not type-check:\n%s\nerr: %v", seed, prevSrc, err)
-				}
-				for n := len(corpus) - 1; n >= 0; n-- {
-					src := g.gen(corpus[:n])
-					nodes, err := astNodeCount(t, src)
+					// prev is the program from the NEXT-larger corpus, so each
+					// step asserts against its immediate neighbour rather than a
+					// distant sample — a single uphill step is enough to break
+					// convergence.
+					prevSrc := g.gen(corpus)
+					prevNodes, err := astNodeCount(t, prevSrc)
 					if err != nil {
-						t.Fatalf("seed=%d: truncating to %d bytes produced a program that does not type-check — the shrinker would hand back a non-compiling repro\nsrc:\n%s\nerr: %v",
-							seed, n, src, err)
+						t.Fatalf("full corpus does not type-check:\n%s\nerr: %v", prevSrc, err)
 					}
-					if nodes > prevNodes {
-						t.Fatalf("seed=%d: truncating to %d bytes GREW the program (%d AST nodes > %d) — the shrinker can walk uphill from here\nsmaller corpus produced:\n%s\nlarger corpus produced:\n%s",
-							seed, n, nodes, prevNodes, src, prevSrc)
+					for n := len(corpus) - 1; n >= 0; n-- {
+						src := g.gen(corpus[:n])
+						nodes, err := astNodeCount(t, src)
+						if err != nil {
+							t.Fatalf("truncating to %d bytes produced a program that does not type-check — the shrinker would hand back a non-compiling repro\nsrc:\n%s\nerr: %v",
+								n, src, err)
+						}
+						if nodes > prevNodes {
+							t.Fatalf("truncating to %d bytes GREW the program (%d AST nodes > %d) — the shrinker can walk uphill from here\nsmaller corpus produced:\n%s\nlarger corpus produced:\n%s",
+								n, nodes, prevNodes, src, prevSrc)
+						}
+						prevSrc, prevNodes = src, nodes
 					}
-					prevSrc, prevNodes = src, nodes
-				}
+				})
 			}
 		})
 	}

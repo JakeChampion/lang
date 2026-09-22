@@ -2006,6 +2006,50 @@ along. And the bench's uutils column was silently absent on a host with
 Debian's rust-coreutils 0.0.24, whose `--list` refusal it read as the list
 of names; that is fixed in the same change.
 
+### Conditions as branch chains, 2026-09-22, Linux x86-64 (native compiler)
+
+The first slice of #8822, the x86-64 emitter's per-byte cost. Two shapes
+sat in every scan loop. A statement's `&&` or `||` condition lowered to a
+typed `if` that materialised the boolean (`setcc`, `movzx`, a push on each
+arm, a pop and a second `test` for the branch that consumed it) — eleven
+instructions where two compare-and-branch pairs do. And a string or array
+index saved the base on the operand stack while the index was loaded,
+copied to `rcx` and zero-extended, then restored it — six instructions
+where two loads do.
+
+The condition is now lowered in `internal/ir`, so every backend gets it:
+`if`, `while` and `for` conditions go through `condBr`, which turns `&&`,
+`||` and `!` into a chain of `br_if`s (a block where the operator's own
+value is what is branched on), and each backend already fuses a comparison
+with the branch that follows it. A coverage build keeps the expression
+form, whose arms carry the `&&` / `||` counters. The index shape is the
+x86-64 peephole: P12 folds the zero-extending copy into a 32-bit move, P5
+then writes the index load straight to `ecx`, and P8 now sees a reload
+through the compare-and-branch pairs a chain leaves between a store and
+its reload.
+
+Instructions retired under callgrind, one build of each utility from the
+same tree before and after, outputs byte-identical on every row:
+
+| workload | before (Ir) | after (Ir) | change |
+|---|---:|---:|---:|
+| `sort` 100k lines | 577,720,322 | 542,819,828 | -6.0% |
+| `sort -n` 100k numbers | 1,949,987,576 | 1,586,532,461 | -18.6% |
+| `sort -k2,2n` 100k lines | 2,125,121,727 | 1,703,001,250 | -19.9% |
+| `fmt` 1.1 MB of prose | 473,948,933 | 425,377,262 | -10.2% |
+| `cat -A` 3 MB | 142,710,846 | 114,794,139 | -19.6% |
+| `cat -n` 3 MB | 47,520,260 | 44,179,989 | -7.0% |
+| `ptx` 300 kB of prose | 955,048,228 | 853,437,426 | -10.6% |
+| `wc -w` 4.5 MB | 274,461,474 | 239,241,002 | -12.8% |
+
+What the per-byte path still pays, from `magcompare` in `sort -n` after
+the change: the SSO tag dispatch on every index (a `test`, a branch, the
+length load, the bounds compare and its branch, the address `lea`, and a
+`jmp` over the inline-string arm before the byte load — eight instructions
+for one byte), the reload of a local the chain compared a moment ago from
+the same register, and the reload P10 leaves after a fused increment when
+the next statement is itself a store. Each is the next slice.
+
 ### ls, 2026-09-14, Linux x86-64 (GNU coreutils 9.4, uutils 0.0.24)
 
 The same 4-core container, so read the columns against each other. The
