@@ -338,6 +338,50 @@ What changed, in the order it matters:
   twelve shards succeed; a reclaimed runner now reads as a failed shard, which
   is what `verify` reported for it anyway.
 
+### Observed on the first run of this shape
+
+Run [35724456242](https://github.com/JakeChampion/lang/actions/runs/35724456242),
+the pull request's own run on its final head, under the usual contention (a
+main run and the other PR lane both live).
+
+| | before (35708985176) | after |
+| --- | ---: | ---: |
+| Ubuntu runner jobs | 65 | 62 |
+| Ubuntu job-minutes | 381 | 340 |
+| self-host shards created at | 16.9 min | 1.3 min |
+| self-host shard wall | 7.0-11.8 min | 6.7-10.4 min |
+| `test-e2e-other` aarch64 / x86 shards | 15.1 / 8.9, 12.0 min | 9.9 / 8.9, 6.2 min |
+| `semantic-wholecompiler` | 14.2 min | 12.2 min |
+| `cli-driver-tests` | 10.2 min | 6.2 min |
+| suite execution (first job start to last job end) | 34.0 min | 30.3 min |
+| queue wait before the suite | 0.5 min | 28.4 min |
+
+The barrier is gone and the job-minutes fell 11%, and the suite still ran 30
+minutes, because the shards spent 13-20 minutes queued for a runner after
+being created: with three suites live, ~180 jobs share the 40 slots, and a
+job created at minute 1 gets its runner when one frees. The self-host shard
+walls moved only ~10% because two workers take a cold shard from 625 s to
+~400 s on a four-core box (measured below) and the CI shards are each ~6
+minutes of that already. What the run does show is the shape: every job
+is created at run start, so nothing in the lane waits on anything but the
+pool. The 28-minute wait before the suite is the PR FIFO, which the second
+measurement covers.
+
+The same run's macOS job was 14.9 minutes, 769 s of it the coreutils corpus
+step. The per-case log of main run 35708878302 (the corpus took 911 s there)
+puts 300 s of that on one case: `seq -f "%.2147483648g" 1`, whose GNU 9.12
+oracle never returns on macOS and ran to the harness's five-minute limit on
+every run before #10003. The case now carries a ten-second bound of its own
+(the outcome, "did not finish", is unchanged, so the Darwin ledger does not
+move). Measured on #10003's own run 35733713188: `TestSeqParity` 307 s to
+18 s, the corpus step 701 s, and the job 896 s again, the same as before,
+because the rest of the corpus took 678 s where run 35724456242 had it at
+462 s and run 35708878302 at 604 s, on the same code. The macOS runner's
+speed varies by that much between runs (`go vet` 22 s and 31 s, the
+self-host native step 55 s and 82 s, on the two runs above), so a change of
+a minute or two in that job is below the noise, and the 200 s
+`TestMulticallParity` is the largest item left in the corpus.
+
 ### The concurrent-job ceiling, confirmed
 
 The account is GitHub Pro. GitHub's published limits for standard hosted
