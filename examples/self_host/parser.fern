@@ -9286,60 +9286,14 @@ function lambda_ret_of(e: ast.Expr, env: MEnv, funcs: MFns): string {
 // infer_inst infers the concrete instantiation of `fd`'s type
 // parameters from a call's arguments and returns them joined by `__` in
 // declaration order (e.g. `i32`, or `i32__string` for `Map[K, V]`).
-// Every argument contributes its bindings via bind_unify (so
-// `assert_eq(x.to_upper(), "Y")` still resolves via the literal second
-// argument when the first is opaque, and `Map[K, V]` recovers both K
-// and V from a single map argument). A type parameter that surfaces only
-// as a fn-param's RETURN (`sort_key[T, K: Ord](xs, key: (T) => K)`) is
-// bound from that argument's `lambda_ret_of` — otherwise `K` stays
-// unbound, the key is "", and the whole template is dropped (an
-// undefined-reference link error). Returns "" if any type parameter is
-// left unbound — the call then stays generic.
+// Every argument contributes its bindings (so `assert_eq(x.to_upper(), "Y")`
+// still resolves via the literal second argument when the first is opaque, and
+// `Map[K, V]` recovers both K and V from a single map argument) —
+// full_ret_binds is where they are collected. Returns "" if any type parameter
+// is left unbound: the key is "", and the call stays the generic template.
 function infer_inst(fd: FuncDecl, args: ast.Expr[], env: MEnv, funcs: MFns): string {
     if (fd.type_params.len() == 0) { return ""; }
-    var binds: MEnv = MEnv { mnames: [], mtypes: [] };
-    var i: i32 = 0;
-    while (i < fd.params.len()) {
-        if (i < args.len()) {
-            var ct: string = mono_infer(args[i], env, funcs);
-            if (ct.len() > 0) {
-                binds = bind_unify(fd.params[i].type_name, ct, fd.type_params, binds);
-            }
-            // A type param appearing ONLY in a fn-param's return position
-            // (`key: (T) => K`) is invisible to the type_name unify above —
-            // the coarse "fn" tag carries no args. Recover it from the
-            // closure argument's own return type (kept in fd.params[i].fn_ret).
-            //
-            // The variable need not BE the whole return: `map_rank[T, U](k: i32,
-            // f: (NdArray[T]) => NdArray[U])` carries U inside a bracketed
-            // spelling, and `bind_unify` descends into one — it was only ever
-            // the gate that demanded the return be a bare variable (#9927).
-            if (fd.params[i].type_name == "fn" && spelling_mentions_tparam(fd.params[i].fn_ret, fd.type_params)) {
-                var lr: string = lambda_ret_of(args[i], env, funcs);
-                if (lr.len() > 0) {
-                    binds = bind_unify(fd.params[i].fn_ret, lr, fd.type_params, binds);
-                }
-            }
-            // The fn-param's ARGUMENT positions, the sibling of the return
-            // clause above: `filter[T, I: Iterator[T]]` reaches T only through
-            // `keep: (T) => boolean`, so without this the promoted T never
-            // binds and the call stays a template. full_ret_binds has carried
-            // the same clause since #7765; this is the instantiation half.
-            if (fd.params[i].type_name == "fn") {
-                var fpts: string[] = split_top_commas(fd.params[i].fn_param_types);
-                var lpts: string[] = lambda_param_types_of(args[i], env, funcs);
-                var q: i32 = 0;
-                while (q < fpts.len()) {
-                    if (q < lpts.len() && lpts[q].len() > 0 && tp_index(fpts[q], fd.type_params) >= 0) {
-                        binds = bind_unify(fpts[q], lpts[q], fd.type_params, binds);
-                    }
-                    q = q + 1;
-                }
-            }
-        }
-        i = i + 1;
-    }
-    return binds_to_key(fd.type_params, binds);
+    return binds_to_key(fd.type_params, full_ret_binds(fd, args, env, funcs, fd.type_params));
 }
 
 // binds_to_key joins a resolved binding env into the ';'-separated
@@ -9375,39 +9329,7 @@ function binds_to_key(tparams: string[], binds: MEnv): string {
 // still incomplete (the call then stays generic, as before).
 function infer_inst_ret(fd: FuncDecl, args: ast.Expr[], expected_ret: string, env: MEnv, funcs: MFns): string {
     if (fd.type_params.len() == 0) { return ""; }
-    var binds: MEnv = MEnv { mnames: [], mtypes: [] };
-    var i: i32 = 0;
-    while (i < fd.params.len()) {
-        if (i < args.len()) {
-            var ct: string = mono_infer(args[i], env, funcs);
-            if (ct.len() > 0) {
-                binds = bind_unify(fd.params[i].type_name, ct, fd.type_params, binds);
-            }
-            if (fd.params[i].type_name == "fn" && tp_index(fd.params[i].fn_ret, fd.type_params) >= 0) {
-                var lr: string = lambda_ret_of(args[i], env, funcs);
-                if (lr.len() > 0) {
-                    binds = bind_unify(fd.params[i].fn_ret, lr, fd.type_params, binds);
-                }
-            }
-            // The fn-param's ARGUMENT positions, the sibling of the return
-            // clause above: `filter[T, I: Iterator[T]]` reaches T only through
-            // `keep: (T) => boolean`, so without this the promoted T never
-            // binds and the call stays a template. full_ret_binds has carried
-            // the same clause since #7765; this is the instantiation half.
-            if (fd.params[i].type_name == "fn") {
-                var fpts: string[] = split_top_commas(fd.params[i].fn_param_types);
-                var lpts: string[] = lambda_param_types_of(args[i], env, funcs);
-                var q: i32 = 0;
-                while (q < fpts.len()) {
-                    if (q < lpts.len() && lpts[q].len() > 0 && tp_index(fpts[q], fd.type_params) >= 0) {
-                        binds = bind_unify(fpts[q], lpts[q], fd.type_params, binds);
-                    }
-                    q = q + 1;
-                }
-            }
-        }
-        i = i + 1;
-    }
+    var binds: MEnv = full_ret_binds(fd, args, env, funcs, fd.type_params);
     if (expected_ret.len() > 0) {
         binds = bind_unify(fd.ret_type, expected_ret, fd.type_params, binds);
     }
@@ -9527,6 +9449,26 @@ function func_param_types_of(decls: FuncDecl[], name: string): string[] {
     return out;
 }
 
+// full_ret_binds unifies each argument against the parameter it is passed to,
+// recording what that pins down about `vars`. Every caller of the generic
+// instantiation machinery binds through this one loop: infer_inst keys a call
+// from it, infer_inst_ret adds the call-site annotation on top, and the
+// residual-substitution pass asks it directly.
+//
+// Three things contribute, and a type param can be reachable through only one
+// of them:
+//
+//   - the parameter's own type (`xs: T[]` against an `i32[]` argument);
+//   - a fn-param's RESULT (`key: (T) => K`), read off the closure argument;
+//   - a fn-param's ARGUMENT positions (`keep: (T) => boolean`) —
+//     `filter[T, I: Iterator[T]]` reaches T only there, so without this clause
+//     T survived as a residual and a downstream generic monomorphised at the
+//     type PARAMETER itself (`unknown symbol T.cmp`).
+//
+// Both fn-param clauses gate on the variable being MENTIONED by the spelling,
+// not on it being the whole of it: `map_rank[T, U](f: (NdArray[T]) => NdArray[U])`
+// carries each inside a bracketed spelling, and bind_unify descends into one
+// (#9927).
 function full_ret_binds(fd: FuncDecl, args: ast.Expr[], env: MEnv, funcs: MFns, vars: string[]): MEnv {
     var binds: MEnv = MEnv { mnames: [], mtypes: [] };
     var i: i32 = 0;
@@ -9536,27 +9478,18 @@ function full_ret_binds(fd: FuncDecl, args: ast.Expr[], env: MEnv, funcs: MFns, 
             if (ct.len() > 0) {
                 binds = bind_unify(fd.params[i].type_name, ct, vars, binds);
             }
-            if (fd.params[i].type_name == "fn" && tp_index(fd.params[i].fn_ret, vars) >= 0) {
+            if (fd.params[i].type_name == "fn" && spelling_mentions_tparam(fd.params[i].fn_ret, vars)) {
                 var lr: string = lambda_ret_of(args[i], env, funcs);
                 if (lr.len() > 0) {
                     binds = bind_unify(fd.params[i].fn_ret, lr, vars, binds);
                 }
             }
-            // The same for a residual var in the fn-param's ARGUMENT position
-            // (`keep: (T) => boolean`). `filter[T, I: Iterator[T]]` reaches T
-            // only there, so it survived the bounded-only substitution as a
-            // residual, found no binding here, and the caller kept `T[]` as the
-            // element type — a downstream generic then monomorphised at the
-            // type PARAMETER itself (`unknown symbol T.cmp`). The RETURN
-            // sibling directly above exists for exactly this reason; map's U
-            // comes back through it, which is why map chains resolved and
-            // filter chains did not.
             if (fd.params[i].type_name == "fn") {
                 var fpts: string[] = split_top_commas(fd.params[i].fn_param_types);
                 var lpts: string[] = lambda_param_types_of(args[i], env, funcs);
                 var q: i32 = 0;
                 while (q < fpts.len()) {
-                    if (q < lpts.len() && lpts[q].len() > 0 && tp_index(fpts[q], vars) >= 0) {
+                    if (q < lpts.len() && lpts[q].len() > 0 && spelling_mentions_tparam(fpts[q], vars)) {
                         binds = bind_unify(fpts[q], lpts[q], vars, binds);
                     }
                     q = q + 1;
@@ -11794,8 +11727,9 @@ function strip_struct_base(ty: string): string {
 
 // mg_ty mangles a generic-struct reference inside a type string to its
 // monomorphised clone name (`Box[i32]` -> `Box__i32`), recursing through
-// an array suffix and nested generic arguments, recording each
-// instantiation it discovers. Non-generic types pass through unchanged.
+// an array suffix, a tuple element, a callable's parameters and result, and
+// nested generic arguments, recording each instantiation it discovers.
+// Non-generic types pass through unchanged.
 function mg_ty(ty: string, gstructs: StructDecl[], ins: Insts): TyIns {
     // A callable's parameter list spells a consuming slot `own T`, and the
     // type sits behind the mode.
@@ -11806,6 +11740,38 @@ function mg_ty(ty: string, gstructs: StructDecl[], ins: Insts): TyIns {
     if (type_ends_arr(ty)) {
         var r: TyIns = mg_ty(slice_unchecked(ty, 0, ty.len() - 2), gstructs, ins);
         return TyIns { ty: r.ty + "[]", mins: r.mins };
+    }
+    // A callable spelling `(P, Q) => R`: the generic struct can sit in any of
+    // the parameters or in the result, and the bracket arm below would read
+    // `(i32) => Slot[i32]` as the base `(i32) => Slot` and hand it back
+    // unmangled. A GROUPED callable — `((i32) => i32)`, what an array of
+    // functions peels to — parses as a one-element tuple and belongs to the
+    // arm after this one, which keeps the parens that distinguish it.
+    // Rebuilding canonicalises the spelling, so a signature that mangles to
+    // itself is handed back verbatim rather than respelled.
+    if (ty.len() > 0 && ty[0] == b'(' && util.contains(ty, "=>")) {
+        var fref: TypeRef = parse_type_ref(ty);
+        if (fref.is_fn && fref.array_depth == 0) {
+            var fcur: Insts = ins;
+            var fout: string = "";
+            var fchanged: boolean = false;
+            var fi: i32 = 0;
+            while (fi + 1 < fref.args.len()) {
+                var psp: string = render_type_ref(fref.args[fi]);
+                var pm: TyIns = mg_ty(psp, gstructs, fcur);
+                fcur = pm.mins;
+                if (pm.ty != psp) { fchanged = true; }
+                if (fi > 0) { fout = fout + ", "; }
+                fout = fout + pm.ty;
+                fi = fi + 1;
+            }
+            var rsp: string = render_type_ref(fref.args[fref.args.len() - 1]);
+            var rm: TyIns = mg_ty(rsp, gstructs, fcur);
+            fcur = rm.mins;
+            if (rm.ty != rsp) { fchanged = true; }
+            if (!fchanged) { return TyIns { ty: ty, mins: fcur }; }
+            return TyIns { ty: "(" + fout + ") => " + rm.ty, mins: fcur };
+        }
     }
     if (util.is_tuple_type_name(ty) && slice_unchecked(ty, ty.len() - 1, ty.len()) == ")") {
         var tps: string[] = split_top_commas(slice_unchecked(ty, 1, ty.len() - 1));
@@ -12064,7 +12030,13 @@ function ms_expr(e: ast.Expr, env: MEnv, gstructs: StructDecl[], funcs: MFns, in
                 nparams = nparams.append(ast.ParamDecl { ...lm.params[pi], type_name: pt.ty, fn_ret: pr.ty, fn_param_types: pl.ty });
                 pi = pi + 1;
             }
-            return RExpr { rexpr: ast.ExprLambda { ...lm, params: nparams, ret_type: rt.ty, body: bodyr.rstmts, use_infer: false }, rins: pcur };
+            // The lambda's own callable RESULT lives in the same sidecar pair
+            // FuncDecl carries, and the `...lm` spread would copy it verbatim.
+            var lrr: TyIns = mg_ty(lm.ret_fn_ret, gstructs, pcur);
+            pcur = lrr.mins;
+            var lrl: TyIns = mg_ty_list(lm.ret_fn_param_types, gstructs, pcur);
+            pcur = lrl.mins;
+            return RExpr { rexpr: ast.ExprLambda { ...lm, params: nparams, ret_type: rt.ty, ret_fn_ret: lrr.ty, ret_fn_param_types: lrl.ty, body: bodyr.rstmts, use_infer: false }, rins: pcur };
         },
         _ => { return RExpr { rexpr: e, rins: ins }; }
     }
