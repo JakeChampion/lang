@@ -2534,6 +2534,49 @@ instructions against 336 M before: each flush re-lays the lines after
 its split (14% more words through `choose`) and the reader carries the
 writer and the paragraph through every word.
 
+### sort's word radix, 2026-09-22 (GNU coreutils 9.12)
+
+Every sort row paid n log n calls of the comparison, at about 70
+instructions a call plus the merge's own 80, and the one-word numeric
+key had only made the call cheaper. Now the first comparison's word,
+where it has one, orders the lines with an LSD radix sort — four
+sixteen-bit passes, their histograms taken in one walk, a pass whose
+digit is the same on every word skipped — and the merge with the whole
+comparison runs only inside the runs of equal words. A plain numeric
+key's word is its `numeric_key`; a byte comparison's is its first eight
+bytes, big-endian and zero-padded, which orders as the byte comparison
+does wherever it separates two lines (a shorter line with the same
+bytes is the smaller, and a padded zero can only tie a real one, which
+the run's merge settles); a folded comparison's is those bytes folded.
+A reversed order takes each digit's complement, and a signed word's top
+digit has its sign flipped. A first key that is general or human
+numeric, month, version, random or ignoring bytes has no word and the
+merge runs over everything, as before. The output loop pushes each line
+straight into the writer's builder instead of slicing it into a string
+and concatenating the terminator.
+
+Release builds, this container, 15 runs each; GNU runs its merges on
+every core, which is why its user time is above its wall time:
+
+| workload | before | after | gnu 9.12 |
+|---|---:|---:|---:|
+| `sort` 500k lines | 308 ms | 122 ms | 105 ms |
+| `sort -n` 500k numbers | 300 ms | 152 ms | 156 ms |
+| `sort -k2,2n` 500k lines | 401 ms | 191 ms | 153 ms |
+| `sort -k1,1` 500k lines | 615 ms | 171 ms | 112 ms |
+| `sort -u` 500k lines | 312 ms | 126 ms | 115 ms |
+| `sort -r` 500k lines | 295 ms | 115 ms | 100 ms |
+| `sort -s` 500k lines | 309 ms | 120 ms | 107 ms |
+| `sort` a sorted 500k-line file | 154 ms | 97 ms | 46 ms |
+
+Under callgrind `sort -n` is 914 M instructions against 2,087 M, and
+`sort` 688 M against 1,203 M; what remains is the radix's own bookkeeping
+(a third), the numeric key or the word for every line (a sixth), and
+reading, splitting and writing the lines. The corpus gains the word
+ties: lines whose first eight bytes are equal, lines shorter than eight
+that prefix a longer one, folded case beyond the eighth byte, and the
+same under -r, -f, -s, -u, -k and the orderings that have no word.
+
 ### ls, 2026-09-14, Linux x86-64 (GNU coreutils 9.4, uutils 0.0.24)
 
 The same 4-core container, so read the columns against each other. The

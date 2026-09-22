@@ -1407,72 +1407,100 @@ function sort_lines(c: Conf, text: string, lines: i64[]): i64[] {
   if (n < 2) {
     return lines;
   }
-  // With keys, the elements sorted are line INDICES, so the key spans
-  // found once per line can be read by index at each comparison; without
-  // keys there is nothing to look up and the packed lines sort as they
-  // are. One merge serves both; `keyed` picks the comparison.
+  // The elements sorted are line INDICES, so the key spans and words
+  // found once per line can be read by index at each comparison.
   var keyed: boolean = c.keys.len() > 0;
   var spans: i64[] = [];
   var nkeys: i64[] = [];
-  var src: i64[] = lines;
   if (keyed) {
     spans = key_spans(c, text, lines);
     nkeys = numeric_keys(c, text, spans, n);
-    src = index_of(n);
+  }
+  // The first comparison's word, where it has one, orders the lines
+  // with a radix sort; only the runs of equal words are left for the
+  // merge below, which compares the way `compare_at` does.
+  var words: i64[] = line_words(c, text, lines, nkeys, spans, n);
+  var src: i64[] = index_of(n);
+  if (words.len() > 0) {
+    src = radix_sort(src, words, n, word_signed(c), word_reversed(c));
   }
   var dst: i64[] = index_of(n);
-  var width: i32 = 1;
-  while (width < n) {
-    var start: i32 = 0;
-    var at: i32 = 0;
-    while (start < n) {
-      var mid: i32 = start + width;
-      if (mid > n) {
-        mid = n;
+  var lo: i32 = 0;
+  while (lo < n) {
+    var hi: i32 = n;
+    if (words.len() > 0) {
+      var w: i64 = words[src[lo] as i32];
+      hi = lo + 1;
+      while (hi < n && words[src[hi] as i32] == w) {
+        hi = hi + 1;
       }
-      var end: i32 = mid + width;
-      if (end > n) {
-        end = n;
-      }
-      var a: i32 = start;
-      var b: i32 = mid;
-      while (a < mid && b < end) {
-        var la: i64 = src[a];
-        var lb: i64 = src[b];
-        var d: i32 = 0;
-        if (keyed) {
-          d = compare_at(c, text, lines, spans, nkeys, n, lb as i32, la as i32);
-        } else {
-          d = compare(c, text, lb, la);
-        }
-        if (d < 0) {
-          dst = dst.with(at, lb);
-          b = b + 1;
-        } else {
-          dst = dst.with(at, la);
-          a = a + 1;
-        }
-        at = at + 1;
-      }
-      while (a < mid) {
-        dst = dst.with(at, src[a]);
-        a = a + 1;
-        at = at + 1;
-      }
-      while (b < end) {
-        dst = dst.with(at, src[b]);
-        b = b + 1;
-        at = at + 1;
-      }
-      start = end;
     }
-    var swap: i64[] = src;
-    src = dst;
-    dst = swap;
-    width = width * 2;
-  }
-  if (!keyed) {
-    return src;
+    // A bottom-up merge of src[lo..hi), the two buffers alternating;
+    // an odd number of passes leaves the run in dst, and it is copied
+    // back so src holds every run.
+    var passes: i32 = 0;
+    var width: i32 = 1;
+    while (width < hi - lo) {
+      var start: i32 = lo;
+      var at: i32 = lo;
+      while (start < hi) {
+        var mid: i32 = start + width;
+        if (mid > hi) {
+          mid = hi;
+        }
+        var end: i32 = mid + width;
+        if (end > hi) {
+          end = hi;
+        }
+        var a: i32 = start;
+        var b: i32 = mid;
+        while (a < mid && b < end) {
+          var la: i64 = src[a];
+          var lb: i64 = src[b];
+          var d: i32 = 0;
+          if (keyed) {
+            d = compare_at(c, text, lines, spans, nkeys, n, lb as i32, la as i32);
+          } else {
+            d = compare(c, text, lines[lb as i32], lines[la as i32]);
+          }
+          if (d < 0) {
+            dst = dst.with(at, lb);
+            b = b + 1;
+          } else {
+            dst = dst.with(at, la);
+            a = a + 1;
+          }
+          at = at + 1;
+        }
+        while (a < mid) {
+          dst = dst.with(at, src[a]);
+          a = a + 1;
+          at = at + 1;
+        }
+        while (b < end) {
+          dst = dst.with(at, src[b]);
+          b = b + 1;
+          at = at + 1;
+        }
+        start = end;
+      }
+      var swap: i64[] = src;
+      src = dst;
+      dst = swap;
+      passes = passes + 1;
+      width = width * 2;
+    }
+    if (passes % 2 == 1) {
+      var swap2: i64[] = src;
+      src = dst;
+      dst = swap2;
+      var k: i32 = lo;
+      while (k < hi) {
+        src = src.with(k, dst[k]);
+        k = k + 1;
+      }
+    }
+    lo = hi;
   }
   var out: i64[] = [];
   var i: i32 = 0;
@@ -1481,6 +1509,158 @@ function sort_lines(c: Conf, text: string, lines: i64[]): i64[] {
     i = i + 1;
   }
   return out;
+}
+
+// ---- the word sort ----------------------------------------------------------
+//
+// `line_words(c, text, lines, nkeys, spans, n)` — one word per line
+// that orders the way the first comparison does, or nothing when that
+// comparison has no such word. A plain numeric key's word is its
+// numeric_key. A byte comparison's — the first key's span, or the line
+// itself without keys — is its first eight bytes, big-endian and
+// zero-padded, which orders as the byte comparison does: a shorter
+// span with the same bytes is the smaller, and a padded zero can only
+// tie with a real one, which the whole comparison settles. A folded
+// comparison's word is those bytes folded. Two lines with equal words
+// are ordered by the whole comparison afterwards, so the word has only
+// to agree with it wherever it separates them.
+function line_words(c: Conf, text: string, lines: i64[], nkeys: i64[], spans: i64[], n: i32): i64[] {
+  var fold: boolean = false;
+  var numeric: boolean = false;
+  if (c.keys.len() > 0) {
+    var k: Key = c.keys[0];
+    if (plain_numeric(k)) {
+      numeric = true;
+    } else if (k.numeric || k.general || k.human || k.random || k.month || k.version || k.ignore != ignore_none()) {
+      return [];
+    } else {
+      fold = k.translate;
+    }
+  }
+  if (numeric) {
+    var out: i64[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+      out = out.append(nkeys[i]);
+      i = i + 1;
+    }
+    return out;
+  }
+  var out2: i64[] = [];
+  var j: i32 = 0;
+  while (j < n) {
+    var sp: i64 = lines[j];
+    if (c.keys.len() > 0) {
+      sp = spans[j];
+    }
+    var lo: i32 = (sp >> 32 as i64) as i32;
+    var hi: i32 = lo + (sp & 4294967295 as i64) as i32;
+    var w: i64 = 0 as i64;
+    if (!fold && hi - lo >= 8) {
+      w = text[lo] as i64 << 56 as i64 | text[lo + 1] as i64 << 48 as i64 | text[lo + 2] as i64 << 40 as i64 | text[lo + 3] as i64 << 32 as i64 | text[lo + 4] as i64 << 24 as i64 | text[lo + 5] as i64 << 16 as i64 | text[lo + 6] as i64 << 8 as i64 | text[lo + 7] as i64;
+    } else {
+      var b: i32 = 0;
+      while (b < 8) {
+        var x: i32 = 0;
+        if (lo + b < hi) {
+          x = text[lo + b] as i32;
+          if (fold) {
+            x = fold_up(x);
+          }
+        }
+        w = w << 8 as i64 | x as i64;
+        b = b + 1;
+      }
+    }
+    out2 = out2.append(w);
+    j = j + 1;
+  }
+  return out2;
+}
+
+// Whether the words order as signed numbers (a numeric key) rather than
+// as unsigned bytes, and whether the first comparison is reversed.
+function word_signed(c: Conf): boolean {
+  return c.keys.len() > 0 && plain_numeric(c.keys[0]);
+}
+
+function word_reversed(c: Conf): boolean {
+  if (c.keys.len() > 0) {
+    return c.keys[0].reverse;
+  }
+  return c.reverse;
+}
+
+// `radix_sort(idx, words, n, signed, rev)` — `idx` reordered by the
+// words it indexes, ascending, equal words keeping their order: four
+// passes of sixteen bits from the low end, their counts all taken in
+// one walk over the words, then a placement for each pass whose digit
+// is not the same on every word — which the high digits of small
+// numbers and short lines are. A reversed order takes each digit's
+// complement, and the top digit of a signed word has its sign flipped
+// so that the negative words bucket first.
+function radix_sort(own idx: i64[], words: i64[], n: i32, signed: boolean, rev: boolean): i64[] {
+  var flip: i32 = 0;
+  if (rev) {
+    flip = 65535;
+  }
+  var counts: i32[] = [];
+  var z: i32 = 0;
+  while (z < 262144) {
+    counts = counts.append(0);
+    z = z + 1;
+  }
+  var i: i32 = 0;
+  while (i < n) {
+    var w: i64 = words[idx[i] as i32];
+    var d0: i32 = (w & 65535 as i64) as i32 ^ flip;
+    var d1: i32 = 65536 + (w >> 16 as i64 & 65535 as i64) as i32 ^ flip;
+    var d2: i32 = 131072 + (w >> 32 as i64 & 65535 as i64) as i32 ^ flip;
+    var d3: i32 = 196608 + (w >> 48 as i64 & 65535 as i64) as i32 ^ flip;
+    counts = counts.with(d0, counts[d0] + 1);
+    counts = counts.with(d1, counts[d1] + 1);
+    counts = counts.with(d2, counts[d2] + 1);
+    counts = counts.with(d3, counts[d3] + 1);
+    i = i + 1;
+  }
+  var tmp: i64[] = index_of(n);
+  var shift: i32 = 0;
+  while (shift < 64) {
+    var sh: i64 = shift as i64;
+    var base: i32 = shift / 16 * 65536;
+    var first: i32 = base + (words[idx[0] as i32] >> sh & 65535 as i64) as i32 ^ flip;
+    if (counts[first] < n) {
+      // The signed top digit buckets in the order its sign flip gives,
+      // so its counts are summed in that order too.
+      var sflip: i32 = 0;
+      if (signed && shift == 48) {
+        sflip = 32768;
+      }
+      var sum: i32 = 0;
+      var b: i32 = 0;
+      while (b < 65536) {
+        var slot: i32 = base + (b ^ sflip);
+        var cnt: i32 = counts[slot];
+        counts = counts.with(slot, sum);
+        sum = sum + cnt;
+        b = b + 1;
+      }
+      var j: i32 = 0;
+      while (j < n) {
+        var v: i64 = idx[j];
+        var dj: i32 = base + (words[v as i32] >> sh & 65535 as i64) as i32 ^ flip;
+        var at: i32 = counts[dj];
+        tmp = tmp.with(at, v);
+        counts = counts.with(dj, at + 1);
+        j = j + 1;
+      }
+      var swap: i64[] = idx;
+      idx = tmp;
+      tmp = swap;
+    }
+    shift = shift + 16;
+  }
+  return idx;
 }
 
 // A merge buffer holding 0..n-1: the indices a keyed sort starts from,
@@ -1595,6 +1775,23 @@ function out_die(o: Out, stage: string, e: IoError): void {
 
 function out_put(o: Out, s: string): Out {
   var w: io_buffered.BufWriter = o.w.write_string(s);
+  match (w.error()) {
+    Some(e) => {
+      out_die(o, "write failed", e);
+    },
+    None => {}
+  }
+  return Out { ...o, w: w };
+}
+
+// `out_line(o, text, lo, hi, term)` — the line `text[lo..hi)` and its
+// terminator, pushed straight into the writer's builder rather than
+// sliced into a string first.
+function out_line(o: Out, text: string, lo: i32, hi: i32, term: i32): Out {
+  var h: usize = o.w.handle();
+  buf_push_range(h, text, lo, hi);
+  buf_push_byte(h, term);
+  var w: io_buffered.BufWriter = o.w.settle();
   match (w.error()) {
     Some(e) => {
       out_die(o, "write failed", e);
@@ -2731,7 +2928,6 @@ function run(a0: Args): i32 {
   }
 
   var out: Out = out_open(a.outfile, !a.have_out);
-  var tstr: string = term_string(term);
   var prev: i64 = 0 as i64;
   var have_prev: boolean = false;
   i = 0;
@@ -2746,7 +2942,7 @@ function run(a0: Args): i32 {
       if (c.debug) {
         out = debug_line(out, c, all, at, at + line_len(v));
       } else {
-        out = out_put(out, slice_unchecked(all, at, at + line_len(v)) + tstr);
+        out = out_line(out, all, at, at + line_len(v), term);
       }
       prev = v;
       have_prev = true;
