@@ -73022,10 +73022,24 @@ pub function is_fn_payload_spelling(t: string): boolean {
     return t[j] == b'=' && t[j + 1] == b'>';
 }
 
-// map_key_kind_of returns 1 for an i32-keyed Map type, 0 for string-keyed
-// ("Map[i32, V]" / "Map[string, V]").
+// map_key_kind_of returns the key COLUMN a Map type uses: 1 for an integer
+// key, 0 for a string one. (A struct / enum key is kind 2, decided by its
+// derived equality at the call site rather than here.)
+//
+// The question is whether the key is a POINTER, which is what the string
+// column's runtime assumes — not whether it is spelled `i32`. Asking for the
+// literal `Map[i32,` prefix sent every other integer key to the string column,
+// where the insert path read the key's VALUE as an address and dereferenced
+// it: `Map[u8, V]` and `Map[u32, V]` segfaulted on a program the interpreter
+// answers correctly (#9973).
+//
+// The WIDE integers stay out. An i64 / u64 key needs an 8-byte key column,
+// which op_map_keys has no width parameter for, and admitting one here would
+// trade a loud IR-ineligibility refusal for a silently narrowed key. They are
+// refused as they were, which is the direction to be wrong in.
 pub function map_key_kind_of(typestr: string): i32 {
-    if (typestr.len() >= 8 && slice_unchecked(typestr, 0, 8) == "Map[i32,") { return 1; }
+    var kt: string = map_key_of(typestr);
+    if (kt == "i32" || kt == "u8" || kt == "u32") { return 1; }
     return 0;
 }
 

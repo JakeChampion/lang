@@ -1,0 +1,43 @@
+import "core/map";
+// An integer key that is not spelled `i32`. map_key_kind_of asked for the
+// literal `Map[i32,` prefix, so a `u8` or `u32` key took the STRING column and
+// the self-host's insert path read the key's VALUE as an address: this program
+// segfaulted where the interpreter answered it (#9973). Both maps are grown
+// past their initial capacity so the rehash walks the key column too, and each
+// is read back through the shapes a key column is consumed by — len, has, get,
+// pair iteration, and the keys column itself.
+//
+// The keys() column is read on the `u32` map rather than the `u8` one because
+// a u8 COLUMN is a separate native bug: `__map_column`'s 4-byte destStride
+// writes into a 1-byte-stride `u8[]`, so native answers 3 where every other
+// leg answers 66 — on values() as much as keys(), and with no self-host
+// involvement. That is #10000, and its own case covers it.
+function main(): i32 {
+    var small: Map[u8, i32] = map_new(2);
+    var i: i32 = 0;
+    while (i < 12) { small = small.insert(i as u8, i * 2); i = i + 1; }
+    if (small.len() != 12) { return 1; }
+    if (!small.has(11 as u8)) { return 2; }
+    if (small.has(12 as u8)) { return 3; }
+
+    var wide: Map[u32, string] = map_new(2);
+    var j: i32 = 0;
+    while (j < 9) { wide = wide.insert((j * 7) as u32, "v"); j = j + 1; }
+    if (wide.len() != 9) { return 4; }
+    if (wide.has(1 as u32)) { return 5; }
+
+    // The u8 key column, read one entry at a time through pair iteration.
+    var sum: i32 = 0;
+    for (k, v) in small { sum = sum + (k as i32) + v; }
+    if (sum != 198) { return 6; }
+
+    // The u32 key column, read as a materialised keys() array.
+    var ksum: i32 = 0;
+    for k in wide.keys() { ksum = ksum + (k as i32) + wide.get_or(k, "").len(); }
+    if (ksum != 261) { return 7; }
+
+    match (small.get(6 as u8)) {
+        Some(v) => { return v + 30; },
+        None => { return 8; }
+    }
+}
