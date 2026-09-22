@@ -20052,7 +20052,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			target = "__mapiter_value_impl"
 		case "__method_MapIter_advance":
 			target = "__mapiter_advance_impl"
-		case "__str_idx", "__arr_idx", "__arr_idx_1", "__arr_idx_8", "__arr_idx_16",
+		case "__str_idx", "__str_idx_nc", "__arr_idx", "__arr_idx_1", "__arr_idx_8", "__arr_idx_16",
 			"__arr_idx_nc", "__arr_idx_1_nc", "__arr_idx_8_nc", "__arr_idx_16_nc",
 			"__slice_idx", "__slice_idx_1", "__slice_idx_8", "__slice_idx_16":
 			// IR-side bounds-check stubs the lang runtime

@@ -4112,7 +4112,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_stdout"
 		case "stderr":
 			target = "__fern_stderr"
-		case "__str_idx", "__arr_idx", "__arr_idx_1", "__arr_idx_8",
+		case "__str_idx", "__str_idx_nc", "__arr_idx", "__arr_idx_1", "__arr_idx_8",
 			"__arr_idx_nc", "__arr_idx_1_nc", "__arr_idx_8_nc",
 			"__slice_idx", "__slice_idx_1", "__slice_idx_8":
 			// IR-side bounds-check stubs the lang runtime

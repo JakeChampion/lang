@@ -545,7 +545,7 @@ var rcInert = map[string]bool{
 	"__slice_idx_1": true, "__slice_idx_4": true, "__slice_idx_8": true,
 	"__slice_make": true, "__slice_range": true, "__store_i32": true,
 	"__store_i64": true, "__store_ptr": true, "__str_concat": true,
-	"__str_eq": true, "__str_idx": true, "__str_ord": true,
+	"__str_eq": true, "__str_idx": true, "__str_idx_nc": true, "__str_ord": true,
 	"__str_slice": true,
 }
 

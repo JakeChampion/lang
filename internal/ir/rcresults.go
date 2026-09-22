@@ -430,7 +430,7 @@ var rcResultBorrow = map[string]bool{
 	// spills to a fixed scratch region and returns an address into
 	// THAT, which is borrowed from neither operand — but it is not
 	// owned either, and nothing may release it.
-	"__str_idx": true,
+	"__str_idx": true, "__str_idx_nc": true,
 
 	// A pointer read out of memory: reachable from the container rather
 	// than identical to it. `ssa.UnitsOf` and `ownership_returns.go`

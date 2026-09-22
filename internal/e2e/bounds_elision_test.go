@@ -44,6 +44,13 @@ var boundsElisionCases = []struct {
 	// synthetic idx/len, both elided.
 	{"nested",
 		`function main(): i32 { var xs: i32[] = [1, 2, 3]; var t: i32 = 0; for a in xs { for b in xs { t = t + a * b; } } return t; }`, 36},
+	// A string in the len-bounded loop idiom — the `__str_idx_nc` variant,
+	// on a heap string and on an inline (SSO) one, whose byte address comes
+	// from the scratch spill rather than the data pointer.
+	{"string-bytes",
+		`function main(): i32 { var s: string = "abcdefghijkl"; var t: i32 = 0; var i: i32 = 0; while (i < s.len()) { t = t + (s[i] as i32) - 96; i = i + 1; } return t; }`, 78},
+	{"inline-string-bytes",
+		`function main(): i32 { var s: string = "abc"; var t: i32 = 0; var i: i32 = 0; while (i < s.len()) { t = t + (s[i] as i32) - 96; i = i + 1; } return t; }`, 6},
 }
 
 // TestX86_64BoundsElisionCorrect runs each case through the x86-64 native
@@ -107,6 +114,13 @@ func TestX86_64BoundsElisionEmitted(t *testing.T) {
 	keptAsm := compileToX86Asm(t, keptSrc)
 	if n := strings.Count(mainBody(keptAsm), "mov edi, 134"); n == 0 {
 		t.Errorf("variable-bounded while-index loop dropped its bounds-check trap; want it kept (guard is not syntactically i < xs.len())")
+	}
+	// A string in the same idiom drops its check too (the SSO dispatch
+	// stays: it is how the byte address is found, not a check).
+	strSrc := `function main(): i32 { var s: string = "abcd"; var t: i32 = 0; var i: i32 = 0; while (i < s.len()) { t = t + (s[i] as i32); i = i + 1; } return t; }`
+	strAsm := compileToX86Asm(t, strSrc)
+	if n := strings.Count(mainBody(strAsm), "mov edi, 134"); n != 0 {
+		t.Errorf("len-guarded string index loop kept %d bounds-check trap(s); want 0\n%s", n, mainBody(strAsm))
 	}
 }
 
