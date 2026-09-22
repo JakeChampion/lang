@@ -609,16 +609,27 @@ function emit_ir_map_free_variant(s: asmcore.EmitState, suffix: string, kfree: s
     return s;
 }
 
-// emit_ir_map_free_vf_variant emits __fern_map_free<suffix>(box, release):
-// the `_vf` members of the map free family, whose value column holds boxes
-// of a shape only the caller knows. Every non-null value is handed to
-// `release` (a stack-ABI Fern function of one argument), then the value
-// buffer is freed shallow, the keys as `kfree` says, and the box goes back
-// to its freelist. %rbx/%r12/%r13/%r14 hold the box, the values, the
-// release and the index across the calls.
-function emit_ir_map_free_vf_variant(s: asmcore.EmitState, suffix: string, kfree: string, lbl: string): asmcore.EmitState {
+// emit_ir_map_free_fn_variant emits the members of the map free family whose
+// column of boxes holds a shape only the caller knows: `__fern_map_free<suffix>`
+// takes the box, then the key's release when `krel`, then the value's when
+// `vrel` — each a stack-ABI Fern function of one argument, pushed in that
+// order so the last sits on top. Every non-null entry of a walked column is
+// handed to its release, then the columns are freed as `kfree` / `vfree` say
+// (shallow for a walked column) and the box goes back to its freelist.
+// %rbx/%r12/%r13/%r14 hold the box, the column, the release and the index
+// across the calls.
+function emit_ir_map_free_fn_variant(s: asmcore.EmitState, suffix: string, krel: boolean, kfree: string, vrel: boolean, vfree: string, lbl: string): asmcore.EmitState {
+    var nargs: i32 = 1;
+    if (krel) { nargs = nargs + 1; }
+    if (vrel) { nargs = nargs + 1; }
+    // The arguments as seen after the four saves below: the box is the
+    // deepest, the value release (when passed) on top, the key release
+    // (when passed) directly under it.
+    var vrel_at: i32 = 40;
+    var krel_at: i32 = 40;
+    if (vrel) { krel_at = 48; }
     s = s.write("__fn___fern_map_free" + suffix + ":\n");
-    s = s.write("    movq 16(%rsp), %rax\n");        // box (the arguments sit in push order: release on top)
+    s = s.write("    movq " + util.i32_to_string(8 * nargs) + "(%rsp), %rax\n");   // box
     s = s.write("    testq %rax, %rax\n");
     s = s.write("    jz .L" + lbl + "_ret\n");
     s = s.write("    cmpq $0x10000, %rax\n");        // low-addr guard
@@ -629,32 +640,15 @@ function emit_ir_map_free_vf_variant(s: asmcore.EmitState, suffix: string, kfree
     s = s.write("    pushq %r13\n");
     s = s.write("    pushq %r14\n");
     s = s.write("    movq %rax, %rbx\n");            // box
-    s = s.write("    movq 40(%rsp), %r13\n");        // release, above the four saves and the return address
-    s = s.write("    movq 8(%rbx), %r12\n");         // vals = box[8]
-    s = s.write("    cmpq $0x10000, %r12\n");
-    s = s.write("    jb .L" + lbl + "_cols\n");
-    s = s.write("    xorq %r14, %r14\n");            // i = 0
-    s = s.write(".L" + lbl + "_loop:\n");
-    s = s.write("    cmpq (%r12), %r14\n");          // i >= len -> done
-    s = s.write("    jge .L" + lbl + "_cols\n");
-    s = s.write("    movq %r14, %rcx\n");
-    s = s.write("    incq %rcx\n");
-    s = s.write("    movq (%r12,%rcx,8), %rdi\n");   // value = vals[(i+1)*8]
-    s = s.write("    cmpq $0x10000, %rdi\n");
-    s = s.write("    jb .L" + lbl + "_next\n");
-    s = s.write("    pushq %rdi\n");
-    s = s.write("    call *%r13\n");
-    s = s.write("    addq $8, %rsp\n");
-    s = s.write(".L" + lbl + "_next:\n");
-    s = s.write("    incq %r14\n");
-    s = s.write("    jmp .L" + lbl + "_loop\n");
-    s = s.write(".L" + lbl + "_cols:\n");
+    if (krel) { s = map_free_column_walk(s, 0, krel_at, lbl + "k"); }
+    if (vrel) { s = map_free_column_walk(s, 8, vrel_at, lbl + "v"); }
     s = s.write("    movq (%rbx), %rax\n");          // keys = box[0]
     s = s.write("    pushq %rax\n");
     s = s.write("    call __fn___fern_" + kfree + "\n");
     s = s.write("    addq $8, %rsp\n");
-    s = s.write("    pushq %r12\n");
-    s = s.write("    call __fn___fern_arr_dec\n");
+    s = s.write("    movq 8(%rbx), %rax\n");         // vals = box[8]
+    s = s.write("    pushq %rax\n");
+    s = s.write("    call __fn___fern_" + vfree + "\n");
     s = s.write("    addq $8, %rsp\n");
     s = map_free_block(s, "%rbx");
     s = s.write("    movq %rbx, %rax\n");            // return box (caller drops)
@@ -664,6 +658,34 @@ function emit_ir_map_free_vf_variant(s: asmcore.EmitState, suffix: string, kfree
     s = s.write("    popq %rbx\n");
     s = s.write(".L" + lbl + "_ret:\n");
     s = s.write("    ret\n");
+    return s;
+}
+
+// map_free_column_walk hands every non-null element of the column at
+// `col_off` in the box (%rbx) to the release at `rel_at`(%rsp). The column
+// pointer and the release ride %r12 and %r13, the index %r14, and the element
+// is pushed as the one stack argument.
+function map_free_column_walk(s: asmcore.EmitState, col_off: i32, rel_at: i32, lbl: string): asmcore.EmitState {
+    s = s.write("    movq " + util.i32_to_string(rel_at) + "(%rsp), %r13\n");   // release
+    s = s.write("    movq " + util.i32_to_string(col_off) + "(%rbx), %r12\n");  // column
+    s = s.write("    cmpq $0x10000, %r12\n");
+    s = s.write("    jb .L" + lbl + "_done\n");
+    s = s.write("    xorq %r14, %r14\n");            // i = 0
+    s = s.write(".L" + lbl + "_loop:\n");
+    s = s.write("    cmpq (%r12), %r14\n");          // i >= len -> done
+    s = s.write("    jge .L" + lbl + "_done\n");
+    s = s.write("    movq %r14, %rcx\n");
+    s = s.write("    incq %rcx\n");
+    s = s.write("    movq (%r12,%rcx,8), %rdi\n");   // element = col[(i+1)*8]
+    s = s.write("    cmpq $0x10000, %rdi\n");
+    s = s.write("    jb .L" + lbl + "_next\n");
+    s = s.write("    pushq %rdi\n");
+    s = s.write("    call *%r13\n");
+    s = s.write("    addq $8, %rsp\n");
+    s = s.write(".L" + lbl + "_next:\n");
+    s = s.write("    incq %r14\n");
+    s = s.write("    jmp .L" + lbl + "_loop\n");
+    s = s.write(".L" + lbl + "_done:\n");
     return s;
 }
 
@@ -2737,8 +2759,24 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // A column of boxes: each value is released by the function the caller
     // passes, then the column buffer is freed shallow.
     if (s.has_need("map_free_vf")) {
-    s = emit_ir_map_free_vf_variant(s, "_vf",   "arr_dec",      "mapfvf");
-    s = emit_ir_map_free_vf_variant(s, "_ksvf", "str_arr_free", "mapfksvf");
+    s = emit_ir_map_free_fn_variant(s, "_vf",   false, "arr_dec",      true, "arr_dec", "mapfvf");
+    s = emit_ir_map_free_fn_variant(s, "_ksvf", false, "str_arr_free", true, "arr_dec", "mapfksvf");
+    }
+    // A KEYED column (#9962): each key is released by the function the caller
+    // passes, the value column as its own suffix says — the `_kfvf` member
+    // takes the value's release as a third argument. Need-gated one by one:
+    // `_kfvsa` names __fn___fern_strarrarr_free, whose body is need-gated too.
+    if (s.has_need("map_free_kf")) {
+    s = emit_ir_map_free_fn_variant(s, "_kf",    true, "arr_dec", false, "arr_dec",        "mapfkf");
+    }
+    if (s.has_need("map_free_kfvs")) {
+    s = emit_ir_map_free_fn_variant(s, "_kfvs",  true, "arr_dec", false, "str_arr_free",   "mapfkfvs");
+    }
+    if (s.has_need("map_free_kfvsa")) {
+    s = emit_ir_map_free_fn_variant(s, "_kfvsa", true, "arr_dec", false, "strarrarr_free", "mapfkfvsa");
+    }
+    if (s.has_need("map_free_kfvf")) {
+    s = emit_ir_map_free_fn_variant(s, "_kfvf",  true, "arr_dec", true,  "arr_dec",        "mapfkfvf");
     }
     // __fern_rc_is_unique(ptr) -> i32 — 1 iff a live heap object with rc == 1.
     // Gates the struct/enum-array field-drop's element walk (walk + free the
@@ -3917,10 +3955,13 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // key, e.g. word-count `m.set(word, n)`, otherwise leaks one key box per
     // overwrite); bit 1 is reloaded at .Lms_append to pick the reclaim-on-grow
     // __fern_arr_push_owned over the leak-only __fern_arr_push.
-    // %r10 (the value release of a column of boxes, vkind 3) is saved beside
-    // the flag bits; the pair keeps the frame 16-byte aligned for the inner calls.
+    // %r10 (the value release of a column of boxes, vkind 3), %r11 (the key
+    // release of a keyed column) and the key kind are saved beside the flag
+    // bits; the four keep the frame 16-byte aligned for the inner calls.
     s = s.write("    pushq %r9\n");                 // saved flag bits @ -40(%rbp)
     s = s.write("    pushq %r10\n");                // saved value release @ -48(%rbp)
+    s = s.write("    pushq %r11\n");                // saved key release @ -56(%rbp)
+    s = s.write("    pushq %rcx\n");                // saved key kind @ -64(%rbp)
     s = s.write("    movq %rdi, %r12\n");          // mapbox
     s = s.write("    movq %rsi, %r13\n");          // key
     s = s.write("    movq %rdx, %r14\n");          // val
@@ -3983,16 +4024,30 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    incq %rdx\n");
     s = s.write("    movq %r14, (%rax,%rdx,8)\n");  // values[i+1] = val
     // Overwrite keeps the EXISTING key; the incoming key %r13 is discarded. When
-    // it is a fresh sole-owned temp (kconsume), free it via the rc-aware
-    // __fern_str_free (a literal's .rodata data / an aliased rc>1 key are handled
-    // safely by str_free's guards) so a recurring computed key doesn't leak. An
-    // aliased key (kconsume 0) is left untouched — its source local's sweep owns
-    // it. str_free preserves %r12/%r13, so the mapbox return is intact.
+    // it is a fresh sole-owned temp (kconsume), free it — a string key via the
+    // rc-aware __fern_str_free (a literal's .rodata data / an aliased rc>1 key
+    // are handled safely by str_free's guards), a keyed column's box via the
+    // key release the op site passed, or the shallow dec when it passed none —
+    // so a recurring computed key doesn't leak. An aliased key (kconsume 0) is
+    // left untouched — its source local's sweep owns it. Every release here
+    // preserves %r12/%r13, so the mapbox return is intact.
     s = s.write("    movq -40(%rbp), %rax\n");      // reload flag bits
     s = s.write("    testq $1, %rax\n");            // bit 0 = kconsume
     s = s.write("    jz .Lms_found_nokf\n");
     s = s.write("    pushq %r13\n");                // discarded fresh key
+    s = s.write("    cmpq $2, -64(%rbp)\n");        // keyed column?
+    s = s.write("    jne .Lms_found_kstr\n");
+    s = s.write("    movq -56(%rbp), %r11\n");      // the key release
+    s = s.write("    testq %r11, %r11\n");
+    s = s.write("    jz .Lms_found_kbox\n");
+    s = s.write("    call *%r11\n");
+    s = s.write("    jmp .Lms_found_kfdone\n");
+    s = s.write(".Lms_found_kbox:\n");
+    s = s.write("    call __fn___fern_arr_dec\n");
+    s = s.write("    jmp .Lms_found_kfdone\n");
+    s = s.write(".Lms_found_kstr:\n");
     s = s.write("    call __fn___fern_str_free\n");
+    s = s.write(".Lms_found_kfdone:\n");
     s = s.write("    addq $8, %rsp\n");
     s = s.write(".Lms_found_nokf:\n");
     s = s.write("    jmp .Lms_ret\n");
@@ -4030,7 +4085,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq %rax, 8(%r12)\n");
     s = s.write(".Lms_ret:\n");
     s = s.write("    movq %r12, %rax\n");
-    s = s.write("    addq $16, %rsp\n");            // discard saved value release + flag bits
+    s = s.write("    addq $32, %rsp\n");            // discard the saved key kind, releases and flag bits
     s = s.write("    popq %r14\n");
     s = s.write("    popq %r13\n");
     s = s.write("    popq %r12\n");
@@ -8054,14 +8109,17 @@ function emit_ir_op_map_set(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movq (%rsp), %rax\n    pushq %rax\n    call __fn___fern_rc_inc\n    addq $8, %rsp\n");
     }
     s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n");
-    // %r8 = derived eq fn for a struct/enum key (o.str = "K.eq"), or
-    // 0 for a scalar/string key. __fern_map_set dispatches struct
-    // keys through it (call *) instead of i32/string compare. #2671.
-    // %r10 = the value release for a column of boxes (vkind 3, o.str names
-    // it), which the overwrite calls on the value it supersedes; 0 otherwise.
-    var vkind3: boolean = (o.width / 16) % 2 == 1 && (o.width / 32) % 2 == 1;
-    if (o.i32_imm == 2 && o.str != "") { s = s.write("    leaq __fn_" + asmcore.sanitize_label(o.str) + "(%rip), %r8\n"); } else { s = s.write("    xorq %r8, %r8\n"); }
-    if (vkind3) { s = s.write("    leaq __fn_" + asmcore.sanitize_label(o.str) + "(%rip), %r10\n"); } else { s = s.write("    xorq %r10, %r10\n"); }
+    // %r8 = derived eq fn for a struct/enum key ("K.eq"), or 0 for a
+    // scalar/string key. __fern_map_set dispatches struct keys through it
+    // (call *) instead of i32/string compare. #2671.
+    // %r10 = the value release for a column of boxes (vkind 3), which the
+    // overwrite calls on the value it supersedes; %r11 = the key release of a
+    // keyed column, which the overwrite calls on a consumed key it discards
+    // (#9962); 0 where the op names none. ir.map_set_symbols splits the three.
+    var syms: string[] = ir.map_set_symbols(o);
+    if (o.i32_imm == 2 && syms[0] != "") { s = s.write("    leaq __fn_" + asmcore.sanitize_label(syms[0]) + "(%rip), %r8\n"); } else { s = s.write("    xorq %r8, %r8\n"); }
+    if (syms[1] != "") { s = s.write("    leaq __fn_" + asmcore.sanitize_label(syms[1]) + "(%rip), %r10\n"); } else { s = s.write("    xorq %r10, %r10\n"); }
+    if (o.i32_imm == 2 && syms[2] != "") { s = s.write("    leaq __fn_" + asmcore.sanitize_label(syms[2]) + "(%rip), %r11\n"); } else { s = s.write("    xorq %r11, %r11\n"); }
     // %r9 = per-insert flag bits:
     //   bit 0 = kconsume: the KEY arg is a fresh sole-owned string temp
     //     (o.width bit 1, set by irlower's is_fresh_str_temp). map_set
@@ -8252,6 +8310,20 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
     }
     if (name == "__fern_map_free_vf" || name == "__fern_map_free_ksvf") {
         s = s.need("heap"); s = s.need("maps"); s = s.need("map_free_vf");
+    }
+    // The keyed-column members (#9962), each its own body; _kfvsa frees its
+    // value column through __fern_strarrarr_free on top of its own walk.
+    if (name == "__fern_map_free_kf") {
+        s = s.need("heap"); s = s.need("maps"); s = s.need("map_free_kf");
+    }
+    if (name == "__fern_map_free_kfvs") {
+        s = s.need("heap"); s = s.need("maps"); s = s.need("map_free_kfvs");
+    }
+    if (name == "__fern_map_free_kfvsa") {
+        s = s.need("heap"); s = s.need("maps"); s = s.need("strarrarr_free"); s = s.need("map_free_kfvsa");
+    }
+    if (name == "__fern_map_free_kfvf") {
+        s = s.need("heap"); s = s.need("maps"); s = s.need("map_free_kfvf");
     }
     // The shallow and string-column frees are emitted with the maps bundle, and
     // a release reached without a map_new in the same unit — a produced

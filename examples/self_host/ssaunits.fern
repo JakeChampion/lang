@@ -208,6 +208,7 @@ function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
     // itself is a value this pass plans.
     if (ssasem.is_map(t)) {
         if (!ssasem.is_supported_map(t)) { return false; }
+        if (ssasem.keyed_map_key(ssasem.map_key(t)) && !supported(ssasem.map_key(t), f)) { return false; }
         return !ssasem.boxed_map_value(ssasem.map_value(t)) || supported(ssasem.map_value(t), f);
     }
     if let typeinfo.TypeStruct(_) = t { return semrecords.find(f.records, t) >= 0; }

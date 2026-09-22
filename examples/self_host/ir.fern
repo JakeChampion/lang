@@ -1094,6 +1094,12 @@ pub function op_map_new(keykind: i32, fns: string): Op { return Op { decl: 0 - 1
 // (passed in %r8); wasm carries the derived hash and eq as funcref-table
 // slots on the map box instead ($__fern_map_new_struct, kis 2), so it takes
 // them from op_map_new rather than from here. #2671.
+// `str` carries up to THREE symbols, pipe-joined as `eq|vrel|krel`: the
+// derived equality, the release of one VALUE of a column of boxes (vkind 3)
+// and the release of one KEY of a keyed column (keykind 2), each "" where the
+// map has none. `map_set_symbols` splits them, and a bare name with no pipe
+// reads as the one symbol the op's kinds call for — the value release of a
+// column of boxes, else the eq of a keyed map (#9962).
 // `width` carries per-insert flags as bits. Bits 0/1 are the wasm-only
 // fresh-consume flags (bit 0 = `vconsume`, bit 1 = `kconsume`): a set bit means
 // the inserted VALUE (resp. KEY) is a FRESH pointer temp with no other owner,
@@ -1139,6 +1145,45 @@ pub function op_map_new(keykind: i32, fns: string): Op { return Op { decl: 0 - 1
 // i32-celled $__fern_map_set can't hold an 8-byte value directly: widekind 1
 // (i64/u64) routes to $__fern_map_set_w64 (an 8-byte cell boxed into the i32
 // column); widekind 2 (f64) is still refused via wasm_ir_deferrals_ok. #5253.
+// map_set_symbols answers an op_map_set's [eq, vrel, krel] (see op_map_set).
+pub function map_set_symbols(o: Op): string[] {
+    var parts: string[] = split_pipes(o.str);
+    if (parts.len() >= 3) { return [parts[0], parts[1], parts[2]]; }
+    var vkind3: boolean = (o.width / 16) % 2 == 1 && (o.width / 32) % 2 == 1;
+    if (parts.len() == 2) {
+        if (o.i32_imm == 2) { return [parts[0], parts[1], ""]; }
+        return ["", parts[0], parts[1]];
+    }
+    if (vkind3) { return ["", o.str, ""]; }
+    if (o.i32_imm == 2) { return [o.str, "", ""]; }
+    return ["", "", ""];
+}
+
+// map_set_packed joins the three symbols of an op_map_set the way
+// map_set_symbols reads them back: a lone eq or a lone value release stays
+// bare, and all three fields are written otherwise, so a name is never taken
+// for another slot's.
+pub function map_set_packed(eq: string, vrel: string, krel: string): string {
+    if (vrel == "" && krel == "") { return eq; }
+    if (eq == "" && krel == "") { return vrel; }
+    return eq + "|" + vrel + "|" + krel;
+}
+
+function split_pipes(s: string): string[] {
+    var out: string[] = [];
+    var start: i32 = 0;
+    var i: i32 = 0;
+    while (i < s.len()) {
+        if (s[i] == 124) {   // '|'
+            out = out.append(slice_unchecked(s, start, i) + "");
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    if (out.len() == 0) { return []; }
+    return out.append(slice_unchecked(s, start, s.len()) + "");
+}
+
 pub function op_map_set(keykind: i32, valptr: boolean, vconsume: boolean, kconsume: boolean, owncols: boolean, vretain: boolean, eqfn: string, widekind: i32, vkind: i32): Op {
     var w: i32 = 0;
     if (vconsume) { w = w + 1; }

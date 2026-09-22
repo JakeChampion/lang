@@ -1280,6 +1280,89 @@ function main(): i32 {
     }
     return t % 97;
 }`},
+	// A struct- or enum-KEYED map (#9962): a column of boxes the map owns one
+	// unit of per entry, probed through the key's derived hash and eq. The
+	// AST lowering cannot read a field off a key it iterates straight out of
+	// `keys()`, so the last row is a `want` row, its answer confirmed against
+	// the interpreter.
+	{name: "keyed-map-probes", atLeast: 3, noLeak: true, src: `
+import "core/map";
+import "core/cmp";
+@derive(cmp.Eq, cmp.Hash)
+struct Name { first: string, rank: i32 }
+@derive(cmp.Eq, cmp.Hash)
+enum Tag { A(i32), B, C(string) }
+function names(): i32 {
+    var m: Map[Name, i32] = map_new(8);
+    m = m.insert(Name { first: "ada", rank: 1 }, 10);
+    m = m.insert(Name { first: "bob", rank: 2 }, 20);
+    if (m.get_or(Name { first: "a" + "da", rank: 1 }, 0 - 1) != 10) { return 1; }
+    if (!m.has(Name { first: "ada", rank: 1 })) { return 2; }
+    m = m.insert(Name { first: "ada", rank: 1 }, 99);
+    if (m.len() != 2) { return 3; }
+    return m.get_or(Name { first: "ada", rank: 1 }, 0 - 1) - 90;
+}
+function tags(): i32 {
+    var em: Map[Tag, i32] = map_new(8);
+    em = em.insert(A(1), 1);
+    em = em.insert(B, 2);
+    em = em.insert(C("x" + "y"), 3);
+    if (em.get_or(C("xy"), 0) != 3) { return 1; }
+    if (em.get_or(A(2), 0 - 1) != 0 - 1) { return 2; }
+    var total: i32 = 0;
+    for (k, v) in em { total = total + v; }
+    match (em.get(A(1))) { Some(v) => { if (v != 1) { return 3; } }, None => { return 4; } }
+    return total;
+}
+function main(): i32 { return names() * 10 + tags(); }
+`},
+	// A keyed map's key column read back through keys(): the retaining
+	// snapshot, walked after the map is gone.
+	{name: "keyed-map-keys-outlive-the-map", atLeast: 2, noLeak: true, src: `
+import "core/map";
+import "core/cmp";
+@derive(cmp.Eq, cmp.Hash)
+struct Coord { a: i32, b: i32 }
+function ranks(): i32 {
+    var ks: Coord[] = [];
+    {
+        var m: Map[Coord, i32] = map_new(2);
+        var i: i32 = 0;
+        while (i < 6) { m = m.insert(Coord { a: i, b: i * 2 }, i); i = i + 1; }
+        ks = m.keys();
+    }
+    var t: i32 = 0;
+    for k in ks { t = t + k.b; }
+    return t;
+}
+function main(): i32 { return ranks() - 3; }
+`},
+	// A keyed map over a column of BOXES, shared and written through: the
+	// insert finds the box aliased and rebuilds it, retaining every key and
+	// value the copy names, so both maps release cleanly. `_kfvf` takes the
+	// key's release and the value's.
+	{name: "keyed-map-of-boxes-shared", atLeast: 2, want: "28|", noLeak: true, src: `
+import "core/map";
+import "core/cmp";
+@derive(cmp.Eq, cmp.Hash)
+struct Coord { a: i32, b: i32 }
+struct Box { n: i32, tag: string }
+function boxes(): i32 {
+    var m: Map[Coord, Box] = map_new(4);
+    var i: i32 = 0;
+    while (i < 20) { m = m.insert(Coord { a: i, b: i * 2 }, Box { n: i * 10, tag: "v" }); i = i + 1; }
+    m = m.insert(Coord { a: 7, b: 14 }, Box { n: 777, tag: "w" });
+    if (m.len() != 20) { return 1; }
+    var shared: Map[Coord, Box] = m;
+    m = m.insert(Coord { a: 99, b: 0 }, Box { n: 1, tag: "z" });
+    if (shared.len() != 20 || m.len() != 21) { return 2; }
+    var t: i32 = 0;
+    match (m.get(Coord { a: 7, b: 14 })) { Some(c) => { t = c.n + c.tag.len(); }, None => { return 3; } }
+    for k in shared.keys() { t = t + k.b % 3; }
+    return t + shared.get_or(Coord { a: 3, b: 6 }, Box { n: 0, tag: "" }).n;
+}
+function main(): i32 { return boxes() % 100; }
+`},
 	{name: "map-delete-and-clear", atLeast: 4, noLeak: true, src: `
 function survivors(n: i32): i32 {
     var m: Map[i32, i32] = map_new(8);

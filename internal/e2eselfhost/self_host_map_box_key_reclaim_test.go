@@ -230,30 +230,36 @@ func runMapBoxKeyReclaim(t *testing.T, runner []string, target string) {
 	copySelfHostDriver(t, dir, "fern.fern")
 	fernBin := buildSelfHostBin(t, hostGcc, dir, "fern.fern", "fern")
 
-	for _, p := range mapBoxKeyReclaimPrograms {
-		t.Run(p.name, func(t *testing.T) {
-			work := t.TempDir()
-			src := filepath.Join(work, "main.fern")
-			if err := os.WriteFile(src, []byte(p.src), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			bin := filepath.Join(work, "prog")
-			cmd := exec.Command(fernBin, "-target", target, src, stdlibRoot, "-o", bin)
-			var cerr strings.Builder
-			cmd.Stderr = &cerr
-			if err := cmd.Run(); err != nil {
-				t.Fatalf("compile for %s: %v\n%s", target, err, cerr.String())
-			}
-			if err := os.Chmod(bin, 0o755); err != nil {
-				t.Fatal(err)
-			}
-			stderr, code := hevRun(t, runner, bin)
-			if code != 0 {
-				t.Fatalf("%s/%s exited %d, want 0 "+
-					"(1 = the key column still leaks; 88 = a key read back wrong or a count is off; "+
-					"99 = over-release, a per-key dec on a key the map did not own)\n%s",
-					target, p.name, code, strings.TrimSpace(stderr))
-			}
-		})
+	// Both lowerings, named: the typed path admits a keyed map since #9962 and
+	// is the default, so a run with the environment alone would measure only
+	// it and the AST-path credit this test was written for would go untested.
+	for _, leg := range []struct{ name, env string }{{"ast", "FERN_SEM_IR="}, {"typed", "FERN_SEM_IR=1"}} {
+		for _, p := range mapBoxKeyReclaimPrograms {
+			t.Run(leg.name+"/"+p.name, func(t *testing.T) {
+				work := t.TempDir()
+				src := filepath.Join(work, "main.fern")
+				if err := os.WriteFile(src, []byte(p.src), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				bin := filepath.Join(work, "prog")
+				cmd := exec.Command(fernBin, "-target", target, src, stdlibRoot, "-o", bin)
+				cmd.Env = append(os.Environ(), leg.env)
+				var cerr strings.Builder
+				cmd.Stderr = &cerr
+				if err := cmd.Run(); err != nil {
+					t.Fatalf("compile for %s: %v\n%s", target, err, cerr.String())
+				}
+				if err := os.Chmod(bin, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				stderr, code := hevRun(t, runner, bin)
+				if code != 0 {
+					t.Fatalf("%s/%s/%s exited %d, want 0 "+
+						"(1 = the key column still leaks; 88 = a key read back wrong or a count is off; "+
+						"99 = over-release, a per-key dec on a key the map did not own)\n%s",
+						target, leg.name, p.name, code, strings.TrimSpace(stderr))
+				}
+			})
+		}
 	}
 }
