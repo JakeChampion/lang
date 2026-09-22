@@ -8,25 +8,18 @@ import (
 	"testing"
 )
 
-// TestSelfHostArm64UnsignedDivAST pins the arm64 AST backend's signed-vs-
-// unsigned division selection. asm_arm64.fern's ExprBinary emitter used to
-// emit a bare `sdiv` for every `/` and `%`, regardless of operand type — so a
-// u64 value with bit 63 set (e.g. umax() = (0 as u64) - (1 as u64)) divided as
-// a negative i64: 18446744073709551615 / 10 gave 0 instead of the unsigned
-// quotient, and `__int_to_string_u64`'s digit loop printed a single "/"
-// (= '0' + (-1 % 10)). The x86 AST backend (asm.fern emit_divmod) and the
-// arm64 IR path (ir_bin_asm div_u) already picked udiv from the operand tags;
-// this is the arm64 AST sibling.
+// TestSelfHostArm64UnsignedDivIR pins the arm64 emitter's signed-vs-unsigned
+// division selection: a u64 `/` and `%` take `udiv` and a signed i32 `/`
+// keeps `sdiv`, read off the operand types. The bug it guards printed a
+// single "/" for umax() = (0 as u64) - (1 as u64): a bare `sdiv` for every
+// division treated a u64 with bit 63 set as a negative i64, so
+// 18446744073709551615 / 10 gave 0 and the digit loop produced '0' + (-1 % 10).
 //
-// The bug is AST-path-only: a small program routes the IR path (which already
-// emitted udiv), so it surfaces only once a program is large enough to bail to
-// the AST emitter — which is why importing std/test (dragging the whole runner
-// over the IR budget) is what exposed it in the u64 std-test. This test forces
-// the AST path the same way and asserts the emitted aarch64 for a u64 `/` / `%`
-// is `udiv`, and that a signed i32 `/` still uses `sdiv`. It is a pure emission
-// check (the driver runs on the x86 host and prints aarch64 asm), so it needs
-// no qemu and runs on every x86 CI lane.
-func TestSelfHostArm64UnsignedDivAST(t *testing.T) {
+// The program imports std/test so that it routes through the per-module
+// driver (asm_load_run.fern) the way the u64 std-test that exposed the bug
+// did. It is a pure emission check (the driver runs on the x86 host and
+// prints aarch64 asm), so it needs no qemu and runs on every x86 CI lane.
+func TestSelfHostArm64UnsignedDivIR(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
 	if len(x86runner) != 0 {
 		t.Skip("needs a native x86 host to run the aarch64-emitting driver")

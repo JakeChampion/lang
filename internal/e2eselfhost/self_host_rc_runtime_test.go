@@ -254,11 +254,11 @@ func TestSelfHostRcReassignX86_64(t *testing.T) {
 // Phase 1d (cont.): the function-exit dec sweep releases every array
 // LOCAL at each return / fall-through (borrowed params are skipped); an
 // array returned to the caller is retained so it survives the sweep,
-// and body-local slots are zero-inited so a skipped `var` is a no-op.
-// With free off this is observably a no-op on values; we check
+// and a `var` on a path not taken is never released, since it was never
+// bound. With free off this is observably a no-op on values; we check
 // value-correctness across calls (incl. returning an array and passing
 // a borrowed array), a clean over-release detector, and the emission of
-// the zero-init + the release sweep. Mirrors
+// the release sweep. Mirrors
 // docs/RC-PERCEUS-SELF-HOST-PORT.md Phase 1d.
 func TestSelfHostRcExitSweepX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -287,8 +287,8 @@ func TestSelfHostRcExitSweepX86_64(t *testing.T) {
 		// call balances inc (alias) against the exit sweep, so the
 		// over-release detector stays 0.
 		{"exit-sweep-no-underflow", "function f(): i32 { var xs: i32[] = [1, 2]; var ys = xs; return ys[0]; } function main(): i32 { var a = f(); var b = f(); var c = f(); return __rc_underflow(); }", 0},
-		// An array local declared inside a not-taken branch: the
-		// zero-inited slot makes the exit sweep a no-op (no spurious
+		// An array local declared inside a not-taken branch is never
+		// bound, so the exit sweep has nothing to release (no spurious
 		// release), detector clean.
 		{"branch-local-zeroinit", "function main(): i32 { var xs: i32[] = [5, 6]; if (xs[0] > 100) { var ys: i32[] = [1, 2]; return ys[0]; } return xs[1] + __rc_underflow(); }", 6},
 	}
@@ -403,8 +403,8 @@ func TestSelfHostRcMoveOnReturnX86_64(t *testing.T) {
 }
 
 // Phase 1d arm64 parity: the array inc/dec wiring (alias retain,
-// reassign-inc + dec-on-overwrite, function-exit release sweep with
-// zero-init + array-return retain) mirrored into asm_arm64.fern. Run
+// reassign-inc + dec-on-overwrite, function-exit release sweep +
+// array-return retain) on the arm64 emitter. Run
 // under qemu-aarch64. Value-correctness (free off → RC is a no-op on
 // values) + a clean over-release detector across the lifecycle.
 func TestSelfHostRcArm64(t *testing.T) {

@@ -56,7 +56,7 @@ TestSelfHostArm64LoadStore 2
 TestSelfHostArm64ModloadNativeBuild 14
 TestSelfHostArm64NativeMmcMatchesCrossHost 79
 TestSelfHostArm64OffsetPairGas 2
-TestSelfHostArm64UnsignedDivAST 2
+TestSelfHostArm64UnsignedDivIR 2
 TestSelfHostArrLenCallIRX86_64 2
 TestSelfHostArrOwnedRetReleaseIRArm64 2
 TestSelfHostArrOwnedRetReleaseIRX86_64 2
