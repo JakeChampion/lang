@@ -1872,6 +1872,90 @@ and reaching cksum's non-reflected CRC from that reflected instruction is an
 Ranking the three on this host, which is the honest summary: uutils (folding)
 9.8 ms, GNU (generic table) 35.7 ms, Fern (slicing-by-8) 199.7 ms.
 
+### Audit of the open perf issues, 2026-09-22, Linux x86-64 (GNU coreutils 9.12, uutils 0.0.24)
+
+Every utility an open perf issue names, against the pinned oracle rather
+than the container's 9.4: a locally built GNU 9.12, Debian's uutils 0.0.24,
+both compilers with #9991's `repeat` in the tree, `-O`, a 4-core container.
+The `od`, `sort` and `tsort` rows ran with nothing else on the machine; `seq`
+through `expr` overlapped a corpus run, so read those within ±15%. Ratios
+above 1 mean Fern is faster; `fern-sh` is the self-host compiler's build.
+
+| utility | workload | fern (ms) | fern-sh (ms) | gnu (ms) | uutils (ms) | gnu / fern | gnu / fern-sh |
+|---|---|---:|---:|---:|---:|---:|---:|
+| `seq` | `seq 1 1000000` | 3.86 | 7.13 | 8.17 | 434 | 2.12× | 1.15× |
+| `seq` | `seq -w 1 1000000` | 3.90 | 7.83 | 228 | 440 | 58× | 29× |
+| `seq` | `seq 0 0.001 1000` | 3.87 | 7.82 | 211 | 508 | 55× | 27× |
+| `seq` | `seq 1 2 1000000` | 2.41 | 7.69 | 5.09 | 225 | 2.11× | 0.66× |
+| `seq` | `seq 1000000 -1 1` | 45.5 | 50.0 | 211 | 438 | 4.64× | 4.23× |
+| `dircolors` | a 200k-entry config | 47.0 | 45.2 | 35.8 | 102 | 0.76× | 0.79× |
+| `dircolors` | `--print-ls-colors` a 200k-entry config | 44.4 | 50.2 | 53.9 | 118 | 1.21× | 1.07× |
+| `numfmt` | 200k lines from stdin | 168 | 120 | 87.3 | 128 | 0.52× | 0.73× |
+| `numfmt` | 5000 operands | 5.69 | 5.14 | 3.45 | 8.53 | 0.61× | 0.67× |
+| `cat` | a 62 MiB file | 5.11 | 4.69 | 1.99 | 3.39 | 0.39× | 0.42× |
+| `cat` | `-n` a 62 MiB file | 371 | 483 | 178 | 1792 | 0.48× | 0.37× |
+| `cat` | `-A` a 62 MiB file | 312 | 347 | 96.1 | 1959 | 0.31× | 0.28× |
+| `join` | two 1M-line files | 512 | 529 | 348 | 258 | 0.68× | 0.66× |
+| `join` | `-v1` two 1M-line files | 430 | 422 | 268 | 209 | 0.62× | 0.63× |
+| `sum` | a 62 MiB file | 156 | 239 | 130 | 62.2 | 0.84× | 0.54× |
+| `sum` | `-s` a 62 MiB file | 40.8 | 34.6 | 17.0 | 20.5 | 0.42× | 0.49× |
+| `expr` | `:` anchored class over 4000 bytes | 4.64 | 3.83 | 1.30 | 2.29 | 0.28× | 0.34× |
+| `expr` | `:` counts a 4000-byte match | 1.96 | 1.72 | 1.63 | 2.30 | 0.83× | 0.95× |
+| `od` | `-t x1` of a 62 MiB file | 929 | 1060 | 7512 | 6624 | 8.09× | 7.08× |
+| `od` | `-t x8` of a 62 MiB file | 797 | 791 | 1232 | 2163 | 1.55× | 1.56× |
+| `od` | `-t f8` of a 1 MiB file | 4015 | 3342 | 171 | 81.7 | 0.04× | 0.05× |
+| `ptx` | 120k words | 373 | 323 | 42.9 | exit 1 | 0.12× | 0.13× |
+| `ptx` | `-G` 120k words | 560 | 585 | 58.6 | 188 | 0.10× | 0.10× |
+| `ptx` | `-W` a regexp alphabet | 877 | 1742 | 230 | exit 1 | 0.26× | 0.13× |
+| `ptx` | prose with sentences | 173 | 153 | 32.7 | exit 1 | 0.19× | 0.21× |
+| `tsort` | a 100k-edge DAG from a file | 54.3 | 34195 | 102 | 563 | 1.88× | 0.00× |
+
+Reading it against the issues:
+
+- **`seq` (#8530) is 2–58x faster than GNU natively and 1.15–29x under the
+  self-host**; the issue's "40x slower" is stale, and the one loss is the
+  self-host build of `seq 1 2 1000000` at 0.66x, which is startup-sized.
+- **`cat` of a plain file is 0.39x** and no issue tracks it. GNU 9.12's
+  `cat` to `/dev/null` is 2 ms for 62 MiB, which is not a read of the file
+  — it is a `copy_file_range` / skip path (#9309) — so this row is measuring
+  a primitive Fern does not have rather than its copy loop, and the
+  workload should write somewhere that forces a real copy before the
+  number is believed.
+- **uutils 0.0.24's `ptx` refuses every GNU-extension row** (`GNU extensions
+  not implemented yet`, exit 1, in two milliseconds), and the bench used to
+  time that refusal as the work; a cell now says `exit 1` where an
+  implementation's exit status differs from GNU's on the same workload.
+  `ptx` itself was also silently absent from every earlier run — its
+  workload file built the prose with `yes | head` under the script's
+  `pipefail`, and the SIGPIPE ended the sourcing before a row was measured.
+- **The self-host build is within ±25% of native on every row but four**:
+  `seq`'s startup rows, `sum` over 62 MiB (the digest byte loop),
+  `ptx -W` (`lib/bre.fern` under the self-host, 0.50x) and `tsort` (630x,
+  the association-list map, #9608). After #9931's borrow inference the
+  self-host column is no longer broadly 2x.
+
+**`sort`, the same day, after finding each line's key spans once.** The
+audit's worst row was `sort -k2,2n` at 0.06x: `keycompare` located the key
+in both lines on every comparison, and at this compiler's cost per byte
+read that walk was 59% of the run (`limfield` 40%, `begfield` 19%). With
+keys the spans are now found once per line and the merge sorts line indices
+against them; without keys the packed lines sort as before, because the
+index indirection alone cost the unkeyed sort 15%. Same machine, same run:
+
+| workload | fern before | fern after | fern-sh after | gnu | uutils | gnu / fern |
+|---|---:|---:|---:|---:|---:|---:|
+| `sort` 500k lines | 386 | 395 | 339 | 101 | 101 | 0.26× |
+| `sort -n` 500k numbers | 1173 | 1327 | 1106 | 154 | 207 | 0.12× |
+| `sort -k2,2n` 500k lines | 2688 | 1323 | 1114 | 158 | 230 | 0.12× |
+| `sort -k1,1` 500k lines | 1102 | 785 | 722 | 116 | 153 | 0.15× |
+| `sort -u` 500k lines | 395 | 400 | 363 | 116 | 113 | 0.29× |
+| `sort -c` a sorted 500k-line file | 33.0 | 32.7 | 26.7 | 10.2 | 19.2 | 0.31× |
+| `sort -m` two sorted files | 142 | 144 | 144 | 40.3 | 89.1 | 0.28× |
+
+What remains on the numeric rows is the number comparison itself
+(`magcompare` 35%, `numcompare` 18% of `-k2,2n`), per comparison by design,
+and on every row the per-byte cost of `cmp_bytes` — #8822.
+
 ### fmt, 2026-09-22, Linux x86-64 (GNU coreutils 9.12, uutils 0.0.24)
 
 `fmt` was quadratic in the size of a PARAGRAPH (#9983): 40 000 lines with no

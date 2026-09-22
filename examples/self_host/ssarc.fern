@@ -176,48 +176,84 @@ function release_name(t: typeinfo.Type): string {
 }
 
 // A string key column takes a `_ks` member, which walks the keys through the
-// string dec; an integer one is freed whole. Which member of either depends on
-// the value column, whose entries the map owns when they are counted. The
-// string and string-array members are the AST path's, so the deep frees they
-// reach are the ones the runtime already provides; the `_vf` members take the
-// value's release as a second argument and call it on every entry.
+// string dec; a keyed column a `_kf` member, which walks them through the
+// key's release, passed as the second argument; an integer one is freed
+// whole. Which member of any depends on the value column, whose entries the
+// map owns when they are counted. The string and string-array members are the
+// AST path's, so the deep frees they reach are the ones the runtime already
+// provides; the `_vf` members take the value's release as a further argument
+// and call it on every entry.
 function map_release_name(t: typeinfo.Type): string {
     var v: typeinfo.Type = ssasem.map_value(t);
     var ks: boolean = ssasem.is_string(ssasem.map_key(t));
+    var kf: boolean = ssasem.keyed_map_key(ssasem.map_key(t));
     if (ssasem.is_string(v)) {
+        if (kf) { return "__fern_map_free_kfvs"; }
         if (ks) { return "__fern_map_free_kvs"; }
         return "__fern_map_free_vs";
     }
     if (ssasem.is_string_array(v)) {
+        if (kf) { return "__fern_map_free_kfvsa"; }
         if (ks) { return "__fern_map_free_ksvsa"; }
         return "__fern_map_free_vsa";
     }
     if (ssasem.boxed_map_value(v)) {
+        if (kf) { return "__fern_map_free_kfvf"; }
         if (ks) { return "__fern_map_free_ksvf"; }
         return "__fern_map_free_vf";
     }
+    if (kf) { return "__fern_map_free_kf"; }
     if (ks) { return "__fern_map_free_ks"; }
     return "__fern_map_free";
 }
 
-// The one release of a unit in `slot`. A map of boxes hands its release the
-// function that releases one value, so the runtime can walk a column whose
-// shape it does not know.
+// The one release of a unit in `slot`. A map with a keyed column hands its
+// release the function that releases one key, and a map of boxes the one
+// that releases one value — the key's first, the value's on top — so the
+// runtime can walk a column whose shape it does not know.
 function release(own r: irlower.LowerResult, slot: i32, t: typeinfo.Type): irlower.LowerResult {
-    if (ssasem.is_map(t) && ssasem.boxed_map_value(ssasem.map_value(t))) {
-        r = emit(r, ir.op_load_local(slot));
-        r = emit(r, ir.op_const_func(0, release_helper_name(ssasem.map_value(t))));
-        r = emit(r, ir.op_call_direct(release_name(t), 2));
-        return emit(r, ir.op_drop());
-    }
-    return helper(r, slot, release_name(t));
+    var fns: string[] = map_release_fns(t);
+    if (fns.len() == 0) { return helper(r, slot, release_name(t)); }
+    r = emit(r, ir.op_load_local(slot));
+    for fn in fns { r = emit(r, ir.op_const_func(0, fn)); }
+    r = emit(r, ir.op_call_direct(release_name(t), fns.len() + 1));
+    return emit(r, ir.op_drop());
+}
+
+// The per-type releases a map's free is handed after the box: the key's for
+// a keyed column, then the value's for a column of boxes.
+function map_release_fns(t: typeinfo.Type): string[] {
+    var out: string[] = [];
+    if (!ssasem.is_map(t)) { return out; }
+    if (ssasem.keyed_map_key(ssasem.map_key(t))) { out = out.append(release_helper_name(ssasem.map_key(t))); }
+    if (ssasem.boxed_map_value(ssasem.map_value(t))) { out = out.append(release_helper_name(ssasem.map_value(t))); }
+    return out;
 }
 
 // The runtime's key kind: 0 a string column, whose unit the insert hands over
-// for the column to hold, and 1 an integer column, which holds no unit.
+// for the column to hold, 1 an integer column, which holds no unit, and 2 a
+// keyed column of boxes, hashed and compared through the key type's derived
+// methods and owning one unit per entry as a string column does.
 function map_key_kind(t: typeinfo.Type): i32 {
     if (ssasem.is_string(ssasem.map_key(t))) { return 0; }
+    if (ssasem.keyed_map_key(ssasem.map_key(t))) { return 2; }
     return 1;
+}
+
+// The derived equality a keyed column's probes compare through, named as the
+// AST lowering names it — the receiver method `K.eq`, which the backends
+// spell `__fn_K__eq` — and "" for any other key.
+function map_key_eq(t: typeinfo.Type): string {
+    if (!ssasem.keyed_map_key(ssasem.map_key(t))) { return ""; }
+    return ssasem.keyed_map_key_name(ssasem.map_key(t)) + ".eq";
+}
+
+// The pair a keyed map's construction carries, `K.hash|K.eq`: wasm stores
+// their table slots on the box and dispatches every probe through them.
+function map_key_fns(t: typeinfo.Type): string {
+    if (!ssasem.keyed_map_key(ssasem.map_key(t))) { return ""; }
+    var k: string = ssasem.keyed_map_key_name(ssasem.map_key(t));
+    return k + ".hash|" + k + ".eq";
 }
 
 // The runtime's value-column kind: 0 the map owns nothing in it, 1 a string
@@ -1171,8 +1207,8 @@ function release_helper(t: typeinfo.Type, f: ssasem.Func): irlower.LowerResult {
     return r;
 }
 
-// The value types of the columns of boxes this function's values and schema
-// fields name, each once.
+// The element types of the columns of boxes this function's values and schema
+// fields name — a keyed key column's and a boxed value column's — each once.
 function boxed_columns(f: ssasem.Func): typeinfo.Type[] {
     var out: typeinfo.Type[] = [];
     var names: string[] = [];
@@ -1180,12 +1216,16 @@ function boxed_columns(f: ssasem.Func): typeinfo.Type[] {
     for rec in f.records { for field in rec.fields { all = all.append(field.ty); } }
     for e in f.enums { for v in e.variants { for field in v.fields { all = all.append(field.ty); } } }
     for t in all {
-        if (!ssasem.is_map(t) || !ssasem.boxed_map_value(ssasem.map_value(t))) { continue; }
-        var v: typeinfo.Type = ssasem.map_value(t);
-        var name: string = release_helper_name(v);
-        if (util.index_of_str(names, name) >= 0) { continue; }
-        names = names.append(name);
-        out = out.append(v);
+        if (!ssasem.is_map(t)) { continue; }
+        var cols: typeinfo.Type[] = [];
+        if (ssasem.keyed_map_key(ssasem.map_key(t))) { cols = cols.append(ssasem.map_key(t)); }
+        if (ssasem.boxed_map_value(ssasem.map_value(t))) { cols = cols.append(ssasem.map_value(t)); }
+        for v in cols {
+            var name: string = release_helper_name(v);
+            if (util.index_of_str(names, name) >= 0) { continue; }
+            names = names.append(name);
+            out = out.append(v);
+        }
     }
     return out;
 }
@@ -1653,21 +1693,23 @@ function container(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, s
     return field_get(r, f, ins);
 }
 
-// The map ops at the shapes this boundary admits: a string key column (keykind
-// 0, no derived equality symbol) over a narrow scalar or a counted value
-// column, both narrow in the runtime's width sense (widekind 0). An insert is
-// handed the key's unit, which `kconsume` tells the runtime to hold rather than
-// retain and to release when an overwrite supersedes it, and the value's unit
-// too when the column is counted — `valptr` + `vconsume` for the store, and
-// `vkind` for the release an overwrite owes what it supersedes. `owncols` makes
-// the map the sole owner of both column buffers, so a grow frees the buffer it
-// replaced instead of leaking it.
+// The map ops at the shapes this boundary admits: a string, integer or keyed
+// key column (keykind 0, 1 or 2 — the keyed one probed through the key's
+// derived equality) over a narrow scalar or a counted value column, both
+// narrow in the runtime's width sense (widekind 0). An insert is handed a
+// counted key's unit, which `kconsume` tells the runtime to hold rather than
+// retain and to release when an overwrite supersedes it — through the key's
+// own release for a keyed column, which the op names beside the value's — and
+// the value's unit too when the column is counted: `valptr` + `vconsume` for
+// the store, and `vkind` for the release an overwrite owes what it supersedes.
+// `owncols` makes the map the sole owner of both column buffers, so a grow
+// frees the buffer it replaced instead of leaking it.
 //
 // A read of a counted column RETAINS what it answers. The plan gives the
 // result a unit of its own because the value may be the column's or the
 // caller's default, and only a retain gives one owner to both.
 function map_op(own r: irlower.LowerResult, ins: ssa.SInst, f: ssasem.Func): irlower.LowerResult {
-    if (ins.kind_tag == ssasem.map_new()) { return emit(r, ir.op_map_new(map_key_kind(f.values[ins.result]), "")); }
+    if (ins.kind_tag == ssasem.map_new()) { return emit(r, ir.op_map_new(map_key_kind(f.values[ins.result]), map_key_fns(f.values[ins.result]))); }
     if (ins.kind_tag == ssasem.map_len()) { return emit(r, ir.op_map_len()); }
     // A clear reads nothing from the receiver — this runtime's map box is the
     // two columns and no capacity beside them, so an empty box of the same key
@@ -1675,33 +1717,37 @@ function map_op(own r: irlower.LowerResult, ins: ssa.SInst, f: ssasem.Func): irl
     // a hint every backend discards.
     if (ins.kind_tag == ssasem.map_cleared()) {
         r = emit(r, ir.op_const_i32(8));
-        return emit(r, ir.op_map_new(map_key_kind(f.values[ins.result]), ""));
+        return emit(r, ir.op_map_new(map_key_kind(f.values[ins.result]), map_key_fns(f.values[ins.result])));
     }
     var t: typeinfo.Type = f.values[ins.args[0]];
     var kkind: i32 = map_key_kind(t);
     var vkind: i32 = map_value_kind(t);
+    var eq: string = map_key_eq(t);
     if (ins.kind_tag == ssasem.map_insert()) {
-        var fn: string = "";
-        if (vkind == 3) { fn = release_helper_name(ssasem.map_value(t)); }
-        return emit(r, ir.op_map_set(kkind, vkind != 0, vkind != 0, kkind == 0, true, false, fn, 0, vkind));
+        var vrel: string = "";
+        var krel: string = "";
+        if (vkind == 3) { vrel = release_helper_name(ssasem.map_value(t)); }
+        if (kkind == 2) { krel = release_helper_name(ssasem.map_key(t)); }
+        return emit(r, ir.op_map_set(kkind, vkind != 0, vkind != 0, kkind != 1, true, false, ir.map_set_packed(eq, vrel, krel), 0, vkind));
     }
-    if (ins.kind_tag == ssasem.map_has()) { return emit(r, ir.op_map_has(kkind, "")); }
-    if (ins.kind_tag == ssasem.map_get()) { return map_get(r, ins, kkind, vkind != 0); }
+    if (ins.kind_tag == ssasem.map_has()) { return emit(r, ir.op_map_has(kkind, eq)); }
+    if (ins.kind_tag == ssasem.map_get()) { return map_get(r, ins, kkind, eq, vkind != 0); }
     if (ins.kind_tag == ssasem.map_keys()) { return emit(r, ir.op_map_keys(column_flag(ssasem.map_key(t)))); }
     if (ins.kind_tag == ssasem.map_values()) { return emit(r, ir.op_map_values(column_flag(ssasem.map_value(t)), 0)); }
-    if (ins.kind_tag == ssasem.map_delete()) { return emit(r, ir.op_map_delete(kkind, "")); }
-    r = emit(r, ir.op_map_get_or(kkind, "", 0));
+    if (ins.kind_tag == ssasem.map_delete()) { return emit(r, ir.op_map_delete(kkind, eq)); }
+    r = emit(r, ir.op_map_get_or(kkind, eq, 0));
     if (vkind == 0) { return r; }
     return emit(r, ir.op_call_direct("__fern_rc_inc", 1));
 }
 
-// The runtime's column-snapshot flag: 2 copies a STRING column with a
-// per-element retain, 0 a column of i32 that holds no references. The raw
-// alias (1) every other element type would take is unreachable — semsource
-// refuses those columns rather than hand the frame elements the map still
-// owns — so the widekind that would go with a wide column is 0 here too.
+// The runtime's column-snapshot flag: 2 copies a column of references — a
+// string column, a keyed column, a column of boxes — with a per-element
+// retain, 0 a column of i32 that holds no references. The raw alias (1) every
+// other element type would take is unreachable — semsource refuses those
+// columns rather than hand the frame elements the map still owns — so the
+// widekind that would go with a wide column is 0 here too.
 function column_flag(elem: typeinfo.Type): i32 {
-    if (ssasem.is_string(elem)) { return 2; }
+    if (ssasem.reference(elem)) { return 2; }
     return 0;
 }
 
@@ -1709,8 +1755,8 @@ function column_flag(elem: typeinfo.Type): i32 {
 // copies out of the column without a retain, so a hit on a counted column
 // retains the payload here: the box then owns one unit of it, as any Option
 // this frame drops is expected to.
-function map_get(own r: irlower.LowerResult, ins: ssa.SInst, kkind: i32, counted: boolean): irlower.LowerResult {
-    r = emit(r, ir.op_map_get(kkind, "", 0));
+function map_get(own r: irlower.LowerResult, ins: ssa.SInst, kkind: i32, eq: string, counted: boolean): irlower.LowerResult {
+    r = emit(r, ir.op_map_get(kkind, eq, 0));
     if (!counted) { return r; }
     r = emit(r, ir.op_store_local(ins.result));
     r = emit(r, ir.op_load_local(ins.result));
@@ -2313,7 +2359,7 @@ function unshared_map(own r: irlower.LowerResult, f: ssasem.Func, slot: i32, box
     r = emit(r, ir.op_else());
     r = emit(r, ir.op_load_local(slot));
     r = emit(r, ir.op_map_len());
-    r = emit(r, ir.op_map_new(kkind, ""));
+    r = emit(r, ir.op_map_new(kkind, map_key_fns(t)));
     r = emit(r, ir.op_store_local(box));
     r = emit(r, ir.op_load_local(slot));
     r = emit(r, ir.op_map_keys(0));
@@ -2338,7 +2384,7 @@ function unshared_map(own r: irlower.LowerResult, f: ssasem.Func, slot: i32, box
     r = emit(r, ir.op_load_local(index));
     r = emit(r, ir.op_arr_get_nc(32));
     r = emit(r, ir.op_store_local(value));
-    if (kkind == 0) { r = helper(r, key, "__fern_rc_inc"); }
+    if (kkind != 1) { r = helper(r, key, "__fern_rc_inc"); }
     if (vkind != 0) { r = helper(r, value, "__fern_rc_inc"); }
     r = emit(r, ir.op_load_local(box));
     r = emit(r, ir.op_load_local(key));

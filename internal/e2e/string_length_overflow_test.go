@@ -109,10 +109,9 @@ func assertLenOverflowAbort(t *testing.T, backend, out string, code int, wantMsg
 // program still aborts, it just names its cause differently depending on which
 // native built it.
 // concatPastCeilingSrc builds one ~1.07 GiB string and concatenates it with
-// itself: 2147483680 bytes total, 33 past the i32 ceiling. `repeat` cannot
-// build the operand (it aborts on its own product, and its byte-at-a-time fill
-// would take hours at this size), so the string comes from a zero-filled
-// buffer.
+// itself: 2147483680 bytes total, 33 past the i32 ceiling. The operand comes
+// from a zero-filled buffer rather than `repeat` so that the concat is the
+// first length arithmetic the program does.
 const concatPastCeilingSrc = `function main(): i32 {
 	var n: i32 = 1073741840;
 	var bs: u8[] = __alloc_u8(n);

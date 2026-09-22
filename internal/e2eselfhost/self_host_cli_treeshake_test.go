@@ -205,17 +205,25 @@ func TestSelfHostTreeshakeKeepsDerivedMethodsX86_64(t *testing.T) {
 		t.Fatalf("stdlib path: %v", err)
 	}
 
-	// `hash` is never spelled here; only the map lowering asks for it.
+	// `hash` is never spelled here; only the map lowering asks for it. The
+	// enum's derives ride its variants' declarations while the methods take
+	// the ENUM as receiver, so `Tag.hash` is the case a root by the variant's
+	// own name misses.
 	const src = `import "core/map";
 import "core/cmp";
 
 @derive(cmp.Eq, cmp.Hash)
 struct Sku { code: i32 }
 
+@derive(cmp.Eq, cmp.Hash)
+enum Tag { A(i32), B }
+
 function main(): i32 {
     var m: Map[Sku, i32] = map_new(8);
     m = m.insert(Sku { code: 5 }, 7);
-    return m.get_or(Sku { code: 5 }, 0) - 7;
+    var t: Map[Tag, i32] = map_new(8);
+    t = t.insert(A(1), 2);
+    return m.get_or(Sku { code: 5 }, 0) - 7 + t.get_or(A(1), 0) - 2;
 }
 `
 	prog := filepath.Join(dir, "ts_derive_prog.fern")
@@ -231,8 +239,10 @@ function main(): i32 {
 		t.Fatalf("read asm: %v", err)
 	}
 	asm := string(asmBytes)
-	if !strings.Contains(asm, "\n__fn_Sku__hash:") {
-		t.Errorf("__fn_Sku__hash is not emitted: the prune dropped a @derive'd method the map lowering calls")
+	for _, sym := range []string{"__fn_Sku__hash", "__fn_Tag__hash"} {
+		if !strings.Contains(asm, "\n"+sym+":") {
+			t.Errorf("%s is not emitted: the prune dropped a @derive'd method the map lowering calls", sym)
+		}
 	}
 
 	// Every function the artifact calls must be one it defines. This is the

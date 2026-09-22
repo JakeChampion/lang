@@ -1169,26 +1169,51 @@ function general_numcompare(text: string, a0: i32, a1: i32, b0: i32, b1: i32): i
   return 0;
 }
 
-// Every key in turn; the first that separates the two lines decides,
-// reversed when that key was.
+// How key `k` orders the two spans, reversed when the key was.
+function key_ordered(c: Conf, k: Key, text: string, sa: i64, sb: i64): i32 {
+  var a0: i32 = (sa >> 32 as i64) as i32;
+  var b0: i32 = (sb >> 32 as i64) as i32;
+  var d: i32 = key_diff(c, k, text, a0, a0 + (sa & 4294967295 as i64) as i32, b0, b0 + (sb & 4294967295 as i64) as i32);
+  if (d != 0 && k.reverse) {
+    return 0 - d;
+  }
+  return d;
+}
+
+// Every key in turn; the first that separates the two lines decides.
 function keycompare(c: Conf, text: string, alo: i32, ahi: i32, blo: i32, bhi: i32): i32 {
   var i: i32 = 0;
   while (i < c.keys.len()) {
     var k: Key = c.keys[i];
-    var sa: i64 = key_span(text, alo, ahi, k, c.tab);
-    var sb: i64 = key_span(text, blo, bhi, k, c.tab);
-    var a0: i32 = (sa >> 32 as i64) as i32;
-    var b0: i32 = (sb >> 32 as i64) as i32;
-    var d: i32 = key_diff(c, k, text, a0, a0 + (sa & 4294967295 as i64) as i32, b0, b0 + (sb & 4294967295 as i64) as i32);
+    var d: i32 = key_ordered(c, k, text, key_span(text, alo, ahi, k, c.tab), key_span(text, blo, bhi, k, c.tab));
     if (d != 0) {
-      if (k.reverse) {
-        return 0 - d;
-      }
       return d;
     }
     i = i + 1;
   }
   return 0;
+}
+
+// The key spans found once per line: `spans[k * n + i]` is line i's span
+// under key k. Locating a key is a byte walk over the line, and the sort
+// compares each line log n times, so the walk is done once and a
+// comparison reads two words.
+function key_spans(c: Conf, text: string, lines: i64[]): i64[] {
+  var n: i32 = lines.len();
+  var out: i64[] = [];
+  var ki: i32 = 0;
+  while (ki < c.keys.len()) {
+    var k: Key = c.keys[ki];
+    var i: i32 = 0;
+    while (i < n) {
+      var l: i64 = lines[i];
+      var lo: i32 = (l >> 32 as i64) as i32;
+      out = out.append(key_span(text, lo, lo + (l & 4294967295 as i64) as i32, k, c.tab));
+      i = i + 1;
+    }
+    ki = ki + 1;
+  }
+  return out;
 }
 
 // The whole comparison: the keys, then the line itself unless -u or -s
@@ -1203,6 +1228,38 @@ function compare(c: Conf, text: string, a: i64, b: i64): i32 {
     var d: i32 = keycompare(c, text, alo, ahi, blo, bhi);
     if (d != 0 || c.unique || c.stable) {
       return d;
+    }
+  }
+  var r: i32 = cmp_bytes(text, alo, ahi, blo, bhi);
+  if (c.reverse) {
+    return 0 - r;
+  }
+  return r;
+}
+
+// compare for the sort: lines `ia` and `ib` of `lines`, their keys read
+// out of `spans`. The same decision as compare, written out again rather
+// than shared, because this runs n log n times and nothing here is
+// inlined: a call is most of what a comparison of two short lines costs.
+function compare_at(c: Conf, text: string, lines: i64[], spans: i64[], n: i32, ia: i32, ib: i32): i32 {
+  var a: i64 = lines[ia];
+  var b: i64 = lines[ib];
+  var alo: i32 = (a >> 32 as i64) as i32;
+  var ahi: i32 = alo + (a & 4294967295 as i64) as i32;
+  var blo: i32 = (b >> 32 as i64) as i32;
+  var bhi: i32 = blo + (b & 4294967295 as i64) as i32;
+  var nk: i32 = c.keys.len();
+  if (nk > 0) {
+    var i: i32 = 0;
+    while (i < nk) {
+      var d: i32 = key_ordered(c, c.keys[i], text, spans[i * n + ia], spans[i * n + ib]);
+      if (d != 0) {
+        return d;
+      }
+      i = i + 1;
+    }
+    if (c.unique || c.stable) {
+      return 0;
     }
   }
   var r: i32 = cmp_bytes(text, alo, ahi, blo, bhi);
@@ -1260,8 +1317,18 @@ function sort_lines(c: Conf, text: string, lines: i64[]): i64[] {
   if (n < 2) {
     return lines;
   }
+  // With keys, the elements sorted are line INDICES, so the key spans
+  // found once per line can be read by index at each comparison; without
+  // keys there is nothing to look up and the packed lines sort as they
+  // are. One merge serves both; `keyed` picks the comparison.
+  var keyed: boolean = c.keys.len() > 0;
+  var spans: i64[] = [];
   var src: i64[] = lines;
-  var dst: i64[] = scratch_of(n);
+  if (keyed) {
+    spans = key_spans(c, text, lines);
+    src = index_of(n);
+  }
+  var dst: i64[] = index_of(n);
   var width: i32 = 1;
   while (width < n) {
     var start: i32 = 0;
@@ -1280,7 +1347,13 @@ function sort_lines(c: Conf, text: string, lines: i64[]): i64[] {
       while (a < mid && b < end) {
         var la: i64 = src[a];
         var lb: i64 = src[b];
-        if (compare(c, text, lb, la) < 0) {
+        var d: i32 = 0;
+        if (keyed) {
+          d = compare_at(c, text, lines, spans, n, lb as i32, la as i32);
+        } else {
+          d = compare(c, text, lb, la);
+        }
+        if (d < 0) {
           dst = dst.with(at, lb);
           b = b + 1;
         } else {
@@ -1306,17 +1379,27 @@ function sort_lines(c: Conf, text: string, lines: i64[]): i64[] {
     dst = swap;
     width = width * 2;
   }
-  return src;
-}
-
-// The second buffer the merge writes into. The two buffers alternate
-// rather than each pass allocating one, and they are always distinct,
-// so no pass ever reads a slot it has already overwritten.
-function scratch_of(n: i32): i64[] {
+  if (!keyed) {
+    return src;
+  }
   var out: i64[] = [];
   var i: i32 = 0;
   while (i < n) {
-    out = out.append(0 as i64);
+    out = out.append(lines[src[i] as i32]);
+    i = i + 1;
+  }
+  return out;
+}
+
+// A merge buffer holding 0..n-1: the indices a keyed sort starts from,
+// and the second buffer either sort writes into. The two alternate rather
+// than each pass allocating one, and they are always distinct, so no
+// pass ever reads a slot it has already overwritten.
+function index_of(n: i32): i64[] {
+  var out: i64[] = [];
+  var i: i32 = 0;
+  while (i < n) {
+    out = out.append(i as i64);
     i = i + 1;
   }
   return out;

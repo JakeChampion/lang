@@ -336,12 +336,19 @@ pub function treeshake(mod: parser.Module): parser.Module {
     // to update a copy of them here — where the cost of over-keeping is a
     // hand-written method on a derive-carrying struct surviving, and the cost of
     // under-keeping is a dangling symbol at link time.
+    //
+    // An enum's derives ride its variants' declarations, and the methods they
+    // synthesise take the ENUM as their receiver, so a variant roots the
+    // methods of its owner: `Tag.hash` on `@derive(cmp.Hash) enum Tag` was
+    // shaken away whenever nothing else in the program spelled a `.hash()`.
     var si: i32 = 0;
     while (si < mod.structs.len()) {
         if (mod.structs[si].derives.len() > 0) {
+            var owner: string = mod.structs[si].name;
+            if (mod.structs[si].enum_owner.len() > 0) { owner = mod.structs[si].enum_owner; }
             var fj: i32 = 0;
             while (fj < mod.funcs.len()) {
-                if (mod.funcs[fj].receiver_type == mod.structs[si].name) {
+                if (mod.funcs[fj].receiver_type == owner) {
                     refs = refs.append(mod.funcs[fj].name);
                 }
                 fj = fj + 1;
