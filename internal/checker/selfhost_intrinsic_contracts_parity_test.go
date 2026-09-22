@@ -274,3 +274,64 @@ func selfHostSection(t *testing.T, file string, re *regexp.Regexp) string {
 	}
 	return body
 }
+
+// TestSelfHostParameterisesEveryTypedBuiltin pins the invariant #9987 broke:
+// a free builtin whose RESULT the self-host checker types must also carry its
+// PARAMETER types.
+//
+// The two halves are not independent. Typing the result is what makes a call
+// to one infer at all, and an inferred call with no parameters to check
+// against is accepted whatever it is handed — `f32_bits(y)` on an f64
+// compiled and reinterpreted the low 32 bits of the double, where native
+// refuses it with E038. A builtin the self-host types neither way is not this
+// gate's business: it reports the #4451 "unregistered builtin" bail instead,
+// which is a different gap and a loud one.
+//
+// So the direction checked is one-way. Result without parameters fails;
+// parameters without a result cannot occur, because free_builtin_sig reads the
+// result table for its own return type.
+func TestSelfHostParameterisesEveryTypedBuiltin(t *testing.T) {
+	typed := selfHostTypedBuiltins(t, `(?s)function free_builtin_result\(.*?\n// The builtin results a call carries`)
+	parameterised := selfHostTypedBuiltins(t, `(?s)function free_builtin_params\(.*?\n// type_debug renders a Type`)
+	if len(typed) == 0 || len(parameterised) == 0 {
+		t.Fatal("one of the two builtin tables read empty — this test would pass on anything")
+	}
+	var unchecked []string
+	for n := range typed {
+		if !parameterised[n] {
+			unchecked = append(unchecked, n)
+		}
+	}
+	sort.Strings(unchecked)
+	if len(unchecked) > 0 {
+		t.Errorf("%d builtin(s) whose result examples/self_host/checker.fern types and whose parameters it "+
+			"does not: %s\nA call to one of these infers, so nothing refuses a wrong argument and the "+
+			"self-host accepts what native rejects.", len(unchecked), strings.Join(unchecked, ", "))
+	}
+}
+
+// selfHostTypedBuiltins reads every builtin name one table's section spells —
+// the `__` intrinsics and the four float-bits builtins alike, which is why it
+// does not share selfHostTypedIntrinsics' `__` prefix filter.
+//
+// A family the table matches with a predicate rather than one name at a time
+// (`is_f64_primitive(name)`) contributes the names that predicate lists, so
+// covering ten builtins in one line reads as covering ten builtins. Without
+// this the reader of the table and the reader of this gate would disagree
+// about what it says.
+func selfHostTypedBuiltins(t *testing.T, section string) map[string]bool {
+	t.Helper()
+	body := selfHostSection(t, "checker.fern", regexp.MustCompile(section))
+	out := map[string]bool{}
+	harvest := func(src string) {
+		for _, m := range regexp.MustCompile(`"([A-Za-z_][A-Za-z0-9_]*)"`).FindAllStringSubmatch(src, -1) {
+			out[m[1]] = true
+		}
+	}
+	harvest(body)
+	for _, m := range regexp.MustCompile(`(is_[a-z0-9_]+)\(name\)`).FindAllStringSubmatch(body, -1) {
+		harvest(selfHostSection(t, "checker.fern",
+			regexp.MustCompile(`(?s)function `+m[1]+`\(name: string\): boolean \{.*?\n\}`)))
+	}
+	return out
+}
