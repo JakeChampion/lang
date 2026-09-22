@@ -234,23 +234,22 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 	if !strings.Contains(asm, "__fern_scratch: .skip 256") {
 		t.Error("the __fern_scratch .bss slot is missing — stat has nowhere to land")
 	}
-	if !strings.Contains(asm, "adrp x0, __fern_scratch\n    add x0, x0, :lo12:__fern_scratch\n") {
+	if !matchShape(asm, `\n    adrp (x[0-9]+), __fern_scratch\n    add \1, \1, :lo12:__fern_scratch\n`) {
 		t.Error("__raw_scratch did not emit the arm64 scratch-buffer address")
 	}
 	if !strings.Contains(asm, "__fern_envp: .quad 0") {
 		t.Error("the __fern_envp .bss slot went with the hand-asm __fern_env")
 	}
-	if !strings.Contains(asm, "adrp x0, __fern_envp\n    add x0, x0, :lo12:__fern_envp\n    ldr x0, [x0]\n") {
+	if !matchShape(asm, `\n    adrp (x[0-9]+), __fern_envp\n    add \1, \1, :lo12:__fern_envp\n    ldr \1, \[\1\]\n`) {
 		t.Error("__raw_environ did not emit the arm64 envp load")
 	}
 	// write_file's O_CREAT mode arg makes it the __syscall4 user; its number
-	// load uses the same darwinize marker as __syscall3's. The argument pops
-	// mostly fold: each push reaches its pop across register-only lines, so the
-	// peephole reroutes the value through a `mov` ahead of the run (P7) and
-	// only the last argument's pop and the number's survive. The mode argument
-	// in x3 is what __syscall3 does not have, so it is what distinguishes this
-	// marshal from that one.
-	if !strings.Contains(asm, "    mov x3, x0\n    ldr x0, [sp], #16\n    ldr x8, [sp], #16\n    svc #0\n") {
+	// load uses the same darwinize marker as __syscall3's. The arguments and
+	// the number are pushed and popped into x0..x3 and x8 (the last argument
+	// may instead move into x3 from wherever the allocator left it); the mode
+	// argument in x3 is what __syscall3 does not have, so it is what
+	// distinguishes this marshal from that one.
+	if !matchShape(asm, `\n    (?:mov x3, x[0-9]+|ldr x3, \[sp\], #16)\n    ldr x2, \[sp\], #16\n    ldr x1, \[sp\], #16\n    ldr x0, \[sp\], #16\n    ldr x8, \[sp\], #16\n    svc #0\n`) {
 		t.Error("__syscall4 did not emit the arm64 four-argument marshal + number + svc sequence")
 	}
 	// The __syscall3 op's number load. darwinize rewrites exactly this line to
