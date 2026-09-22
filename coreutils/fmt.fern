@@ -114,8 +114,17 @@ function tab_width(): i32 {
   return 8;
 }
 
-// The widest line fmt will aim for: MAXCHARS / 2, above which the
-// output would be unreadable anyway.
+// GNU's word buffer: the words of a paragraph are laid out 998 at a
+// time, or as many as fit 5000 bytes of word text, and the widest line
+// it will aim for is half that buffer. `chunk` is the flush.
+function buffer_words(): i32 {
+  return 998;
+}
+
+function buffer_bytes(): i32 {
+  return 5000;
+}
+
 function max_width_limit(): i32 {
   return 2500;
 }
@@ -165,6 +174,16 @@ function ragged_cost(n: i32): i64 {
 
 function cost_infinity(): i64 {
   return 4611686018427387904 as i64;
+}
+
+// The credit a line further along the buffer gets when the flush picks
+// where to re-enter, and the cost the search for it starts from.
+function line_credit(): i64 {
+  return 9 as i64;
+}
+
+function cost_max(): i64 {
+  return 9223372036854775807 as i64;
 }
 
 // ---- words ------------------------------------------------------------------
@@ -268,14 +287,17 @@ function push_spacing(h: usize, col: i32, n: i32, tabs: boolean): void {
 //
 // The words are on the driver's `State` rather than here, so that `feed`
 // can append to them inside its rebuild of that record (see `feed`).
-struct Para { open: boolean, pending: boolean, first_indent: i32, other_indent: i32, p_indent: i32, sticky: i32 }
+// `last_len` is the column the paragraph's last written line ended at,
+// which the first line laid out after a `chunk` is costed against; it is
+// 0 until a flush has written something.
+struct Para { open: boolean, pending: boolean, first_indent: i32, other_indent: i32, p_indent: i32, sticky: i32, last_len: i32 }
 
 function para_new(): Para {
-  return Para { open: false, pending: false, first_indent: 0, other_indent: 0, p_indent: 0, sticky: 0 };
+  return Para { open: false, pending: false, first_indent: 0, other_indent: 0, p_indent: 0, sticky: 0, last_len: 0 };
 }
 
 function para_reset(p: Para): Para {
-  return Para { ...p, open: false, pending: false, first_indent: 0, other_indent: 0, p_indent: 0 };
+  return Para { ...p, open: false, pending: false, first_indent: 0, other_indent: 0, p_indent: 0, last_len: 0 };
 }
 
 // `base_cost(ws, s)` — what starting a line at word `s` costs, over and
@@ -309,15 +331,19 @@ function base_cost(ws: Word[], s: i32): i64 {
   return c;
 }
 
-// `choose(ws, p, st, lead)` — for each word, the word that starts the
-// next line. A backward dynamic program: a line costs its squared
-// distance from the goal plus, when the line after it is not the last,
-// half the squared difference between the two; the last line of a
-// paragraph is free, which is what lets it run to the width. The three
-// tables are filled BACKWARDS and read by index arithmetic rather than
-// rewritten in place, because rewriting an array element copies it.
-function choose(ws: Word[], p: Para, st: Settings, lead: i32): i32[] {
-  var n: i32 = ws.len();
+// `Plan` — a layout: for each line, the word that starts the next one,
+// and what the line cost.
+struct Plan { breaks: i32[], costs: i64[] }
+
+// `choose(ws, n, p, st, lead)` — the layout of the first `n` words. A
+// backward dynamic program: a line costs its squared distance from the
+// goal plus, when the line after it is not the last, half the squared
+// difference between the two; the last line is free, which is what lets
+// it run to the width. The first line is also costed against the line
+// a flush last wrote. The three tables are filled BACKWARDS and read by
+// index arithmetic rather than rewritten in place, because rewriting an
+// array element copies it.
+function choose(ws: Word[], n: i32, p: Para, st: Settings, lead: i32): Plan {
   var maxw: i32 = st.max_width - lead;
   var goal: i32 = st.goal - lead;
   // What word `w` adds to a line it continues: its space and its length,
@@ -332,11 +358,18 @@ function choose(ws: Word[], p: Para, st: Settings, lead: i32): i32[] {
   var rbest: i64[] = [];
   var rnxt: i32[] = [];
   var rllen: i32[] = [];
+  var first_indent: i32 = p.first_indent;
+  var other_indent: i32 = p.other_indent;
+  var last_len: i32 = p.last_len;
   var s: i32 = n - 1;
   while (s >= 0) {
-    var ln: i32 = p.other_indent + ws[s].length;
+    var ln: i32 = other_indent + ws[s].length;
+    // The line a flush last wrote, which only the first line is costed
+    // against; 0 when there is none.
+    var rag: i32 = 0;
     if (s == 0) {
-      ln = p.first_indent + ws[s].length;
+      ln = first_indent + ws[s].length;
+      rag = last_len;
     }
     var w: i32 = s + 1;
     var bcost: i64 = cost_infinity();
@@ -352,6 +385,9 @@ function choose(ws: Word[], p: Para, st: Settings, lead: i32): i32[] {
           c = c + ragged_cost(ln - rllen[ri]);
         }
         rest = rbest[ri];
+      }
+      if (rag > 0) {
+        c = c + ragged_cost(ln + lead - rag);
       }
       if (c + rest < bcost) {
         bcost = c + rest;
@@ -373,19 +409,24 @@ function choose(ws: Word[], p: Para, st: Settings, lead: i32): i32[] {
     s = s - 1;
   }
   var breaks: i32[] = [];
+  var costs: i64[] = [];
   var i: i32 = 0;
   while (i < n) {
     var j: i32 = rnxt[n - 1 - i];
+    var after: i64 = 0 as i64;
+    if (j != n) {
+      after = rbest[n - 1 - j];
+    }
     breaks = breaks.append(j);
+    costs = costs.append(rbest[n - 1 - i] - after);
     i = j;
   }
-  return breaks;
+  return Plan { breaks: breaks, costs: costs };
 }
 
-// `emit(o, ws, p, st)` — the paragraph, one line per chosen break.
-function emit(o0: Out, ws: Word[], p: Para, st: Settings): Out {
-  var lead: i32 = p.p_indent + st.prefix_out.len();
-  var breaks: i32[] = choose(ws, p, st, lead);
+// `emit(o, ws, p, st, breaks, upto)` — the lines of a layout that start
+// before word `upto`, and the column the last of them ended at.
+function emit(o0: Out, ws: Word[], p: Para, st: Settings, breaks: i32[], upto: i32): (Out, i32) {
   var col: i32 = o0.col;
   var tabs: boolean = o0.tabs;
   var w: io_buffered.BufWriter = o0.w;
@@ -393,7 +434,8 @@ function emit(o0: Out, ws: Word[], p: Para, st: Settings): Out {
   var i: i32 = 0;
   var b: i32 = 0;
   var first: boolean = true;
-  while (i < ws.len()) {
+  var last: i32 = 0;
+  while (i < upto) {
     var j: i32 = breaks[b];
     b = b + 1;
     if (st.prefix.len() > 0 || st.prefix_lead > 0) {
@@ -421,13 +463,80 @@ function emit(o0: Out, ws: Word[], p: Para, st: Settings): Out {
       col = col + wd.length;
       k = k + 1;
     }
+    last = col;
     buf_push_byte(h, 10);
     col = 0;
     w = gnu.settle(w);
     first = false;
     i = j;
   }
-  return Out { w: w, col: col, tabs: tabs };
+  return (Out { w: w, col: col, tabs: tabs }, last);
+}
+
+// `chunk(o, p, ws, n, st, col)` — GNU's flush of a full word buffer. The
+// first `n` words are laid out as if the paragraph ended there, the
+// lines before the cheapest line start after the first are written —
+// each line further along gets a small credit — and the words from that
+// line on stay as the paragraph's start, `ws[n..]` behind them. `col` is
+// the input column the reader stands at, which under -c or -t becomes
+// the continuation indent, as the reader's column would at a line end.
+function chunk(o0: Out, p0: Para, ws: Word[], n: i32, st: Settings, col: i32): (Out, Para, Word[]) {
+  var lead: i32 = p0.p_indent + st.prefix_out.len();
+  var first: i32 = p0.first_indent + lead;
+  var other: i32 = first;
+  if (st.split) {
+    other = first;
+  } else if (st.crown) {
+    other = col;
+  } else if (st.tagged) {
+    other = p0.other_indent + lead;
+    if (p0.pending) {
+      other = p0.sticky;
+    }
+    if (col != first) {
+      other = col;
+    } else if (other == first) {
+      other = 0;
+      if (first == 0) {
+        other = 3;
+      }
+    }
+  }
+  var p: Para = Para { ...p0, other_indent: other - lead, sticky: other };
+  var plan: Plan = choose(ws, n, p, st, lead);
+  var split: i32 = n;
+  var best: i64 = cost_max();
+  var b: i32 = 1;
+  var w: i32 = plan.breaks[0];
+  while (w != n) {
+    if (plan.costs[b] < best) {
+      split = w;
+      best = plan.costs[b];
+    }
+    if (best <= cost_max() - line_credit()) {
+      best = best + line_credit();
+    }
+    w = plan.breaks[b];
+    b = b + 1;
+  }
+  var e: (Out, i32) = emit(o0, ws, p, st, plan.breaks, split);
+  var held: Word[] = [];
+  var k: i32 = split;
+  while (k < ws.len()) {
+    held = held.append(ws[k]);
+    k = k + 1;
+  }
+  return (e.0, Para { ...p, last_len: e.1 }, held);
+}
+
+function held_bytes(ws: Word[]): i32 {
+  var n: i32 = 0;
+  var k: i32 = 0;
+  while (k < ws.len()) {
+    n = n + ws[k].length;
+    k = k + 1;
+  }
+  return n;
 }
 
 function flush_para(o0: Out, p0: Para, words: Word[], st: Settings): (Out, Para) {
@@ -435,6 +544,9 @@ function flush_para(o0: Out, p0: Para, words: Word[], st: Settings): (Out, Para)
   var o: Out = o0;
   if (!p.open) {
     return (o, p);
+  }
+  if (p.pending && !st.tagged) {
+    p = Para { ...p, other_indent: p.first_indent };
   }
   if (p.pending && st.tagged) {
     // The continuation indent of a one-line tagged paragraph is the last
@@ -459,7 +571,10 @@ function flush_para(o0: Out, p0: Para, words: Word[], st: Settings): (Out, Para)
     var ws: Word[] = words;
     var last: Word = ws[ws.len() - 1];
     ws = ws.with(ws.len() - 1, Word { ...last, sentence: true });
-    o = emit(o, ws, p, st);
+    var lead: i32 = p.p_indent + st.prefix_out.len();
+    var plan: Plan = choose(ws, ws.len(), p, st, lead);
+    var e: (Out, i32) = emit(o, ws, p, st, plan.breaks, ws.len());
+    o = e.0;
   }
   return (o, para_reset(p));
 }
@@ -586,12 +701,27 @@ function scan_head(line: string, st: Settings, tabs0: boolean): (Head, boolean) 
 // `scan_body(line, at, col, tabs)` — the words of a line and the columns
 // between them, which is where a tab's width is decided: it reaches the
 // next stop from the column it stands in, in the INPUT.
-// `scan_body(out, line, at, col0, uniform)` — the line's words appended
-// to the paragraph's. The blanks between two words are the input's,
-// unless -u replaces them with one — two after a sentence; a line
-// boundary is always one blank, or two after a sentence. Whether the
-// line carried a tab is the caller's one `__memchr`.
-function scan_body(own out: Word[], line: string, at: i32, col0: i32, uniform: boolean): Word[] {
+// `scan_body(s, line, at, col0)` — the line's words appended to the
+// paragraph's. The state comes in owned and its words are read out and
+// then dropped from it, which leaves the array with one holder so that
+// it grows in place; a flush between two words rewrites the writer and
+// the paragraph, which is why the whole state comes through here.
+// The blanks between two words are the input's, unless -u replaces them
+// with one — two after a sentence; a line boundary is always one blank,
+// or two after a sentence. Whether the line carried a tab is the
+// caller's one `__memchr`.
+// GNU's word buffer is filled along the way: the 999th word flushes the
+// 998 before it, and the byte that would not fit flushes the words that
+// did — with nothing held, the bytes go out as they are and the word
+// goes on from there.
+function scan_body(own s: State, line: string, at: i32, col0: i32): State {
+  var st: Settings = s.st;
+  var o: Out = s.o;
+  var p: Para = s.p;
+  var bytes: i32 = s.bytes;
+  var uniform: boolean = st.uniform;
+  var out: Word[] = s.words;
+  s = State { ...s, words: [] };
   var i: i32 = at;
   var col: i32 = col0;
   var n: i32 = line.len();
@@ -605,6 +735,7 @@ function scan_body(own out: Word[], line: string, at: i32, col0: i32, uniform: b
     while (j < n && !is_blank_byte(line[j] as i32)) {
       j = j + 1;
     }
+    var wcol: i32 = col;
     col = col + (j - i);
     var lo: i32 = i;
     i = j;
@@ -632,23 +763,44 @@ function scan_body(own out: Word[], line: string, at: i32, col0: i32, uniform: b
     } else {
       space = out[out.len() - 1].gap;
     }
+    while (bytes + (j - lo) > buffer_bytes()) {
+      if (out.len() == 0) {
+        buf_push_range(o.w.handle(), line, lo, lo + buffer_bytes());
+        lo = lo + buffer_bytes();
+      } else {
+        var m: i32 = out.len();
+        var c: (Out, Para, Word[]) = chunk(o, p, out, m, st, wcol);
+        o = c.0;
+        p = c.1;
+        out = c.2;
+        bytes = held_bytes(out);
+      }
+    }
     var wd: Word = classify(line, lo, j, space, sp, i >= n);
     prev_sentence = wd.sentence;
     first = false;
     out = out.append(wd);
+    bytes = bytes + wd.length;
+    if (out.len() > buffer_words()) {
+      var c1: (Out, Para, Word[]) = chunk(o, p, out, buffer_words(), st, col);
+      o = c1.0;
+      p = c1.1;
+      out = c1.2;
+      bytes = held_bytes(out);
+    }
   }
-  return out;
+  return State { ...s, o: o, p: p, words: out, bytes: bytes };
 }
 
 // ---- the driver -------------------------------------------------------------
-struct State { o: Out, p: Para, words: Word[], st: Settings, ok: boolean }
+// `bytes` is how much word text the paragraph holds, GNU's buffer fill.
+struct State { o: Out, p: Para, words: Word[], bytes: i32, st: Settings, ok: boolean }
 
 // `feed(s, line, term)` — one input line. The state comes in by ownership
-// and goes back out rebuilt, with the words appended to inside that
-// rebuild — `words: scan_body(s.words, …)` — which is the shape that
-// moves the array into `scan_body` with no other holder, so it grows in
-// place. Read out of the record first, it is shared with the record and
-// the append copies it, once per line: quadratic in the paragraph.
+// and is passed on to `scan_body` the same way, rebuilt IN PLACE first:
+// a fresh record built from `s` while `s` still stands shares the words
+// with it, and the append then copies them, once per line — quadratic
+// in the paragraph.
 function feed(own s: State, line: string, term: boolean): State {
   var st: Settings = s.st;
   var r: (Head, boolean) = scan_head(line, st, s.o.tabs);
@@ -671,7 +823,7 @@ function feed(own s: State, line: string, term: boolean): State {
     if (term) {
       buf_push_byte(h0, 10);
     }
-    return State { ...s, o: Out { ...o0, w: gnu.settle(o0.w), col: 0 }, p: f0.1, words: [] };
+    return State { ...s, o: Out { ...o0, w: gnu.settle(o0.w), col: 0 }, p: f0.1, words: [], bytes: 0 };
   }
   if (h.kind == 1) {
     var f1: (Out, Para) = flush_para(o, s.p, s.words, st);
@@ -680,7 +832,7 @@ function feed(own s: State, line: string, term: boolean): State {
     // unmatched line, so an unterminated one ends the output without a
     // newline of its own.
     if (!term && (st.prefix.len() > 0 || st.prefix_lead > 0) && !h.pfx) {
-      return State { ...s, o: Out { ...o1, w: gnu.settle(o1.w), col: 0 }, p: f1.1, words: [] };
+      return State { ...s, o: Out { ...o1, w: gnu.settle(o1.w), col: 0 }, p: f1.1, words: [], bytes: 0 };
     }
     var h1: usize = o1.w.handle();
     if (h.pfx) {
@@ -688,7 +840,7 @@ function feed(own s: State, line: string, term: boolean): State {
       buf_push(h1, st.prefix_out);
     }
     buf_push_byte(h1, 10);
-    return State { ...s, o: Out { ...o1, w: gnu.settle(o1.w), col: 0 }, p: f1.1, words: [] };
+    return State { ...s, o: Out { ...o1, w: gnu.settle(o1.w), col: 0 }, p: f1.1, words: [], bytes: 0 };
   }
   var p: Para = s.p;
   var flush: boolean = st.split && p.open;
@@ -709,7 +861,7 @@ function feed(own s: State, line: string, term: boolean): State {
     var f: (Out, Para) = flush_para(o, p, s.words, st);
     o = f.0;
     p = f.1;
-    s = State { ...s, words: [] };
+    s = State { ...s, words: [], bytes: 0 };
   }
   if (!p.open) {
     p = Para { ...p, first_indent: h.indent, other_indent: h.indent, p_indent: h.p_indent, pending: st.crown || st.tagged, open: true };
@@ -717,7 +869,8 @@ function feed(own s: State, line: string, term: boolean): State {
   if (!o.tabs && __memchr(line, 9, h.at) >= 0) {
     o = Out { ...o, tabs: true };
   }
-  return State { ...s, o: o, p: p, words: scan_body(s.words, line, h.at, h.col, st.uniform) };
+  s = State { ...s, o: o, p: p };
+  return scan_body(s, line, h.at, h.col);
 }
 
 // ---- options ----------------------------------------------------------------
@@ -883,7 +1036,7 @@ pub function main(): i32 {
 // boundary, so one is flushed at the end of each; a line may span two
 // read blocks, so `carry` holds the part that has no terminator yet.
 function run(files: string[], st: Settings): i32 {
-  var s: State = State { o: Out { w: gnu.out_with(block_size()), col: 0, tabs: false }, p: para_new(), words: [], st: st, ok: true };
+  var s: State = State { o: Out { w: gnu.out_with(block_size()), col: 0, tabs: false }, p: para_new(), words: [], bytes: 0, st: st, ok: true };
 
   var used_stdin: boolean = false;
   var fi: i32 = 0;
@@ -953,7 +1106,7 @@ function run(files: string[], st: Settings): i32 {
         r.close();
       }
       var f: (Out, Para) = flush_para(s.o, s.p, s.words, s.st);
-      s = State { ...s, o: f.0, p: f.1, words: [] };
+      s = State { ...s, o: f.0, p: f.1, words: [], bytes: 0 };
     }
   }
 
