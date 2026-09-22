@@ -1595,7 +1595,7 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
     var at: i32 = ssasem.find_contract(s.contracts, key);
     if (at < 0) { return refused(s, "call target has no semantic contract: " + key); }
     var contract: ssasem.Contract = s.contracts[at];
-    if (c.type_argc > 0 || c.args.len() + 1 != contract.params.len()) { return refused(s, "call arity"); }
+    if (c.args.len() + 1 != contract.params.len()) { return refused(s, "call arity"); }
     if (is_void(contract.result) && !statement) { return refused(s, "unsupported void call"); }
     // A method on a generic receiver is a template the receiver instantiates.
     if (ssasem.contract_variables(contract).len() > 0) { return invoke_method(recv, c.args, contract, s); }
@@ -1711,7 +1711,7 @@ function keeps(s: State, callee: string): boolean {
 function indirect_call(c: ast.ExprCall, callee: i32, s: State, statement: boolean): Value {
     var params: typeinfo.Type[] = ssasem.func_params(s.values[callee]);
     var result: typeinfo.Type = ssasem.func_result(s.values[callee]);
-    if (c.type_argc > 0 || c.args.len() != params.len()) { return refused(s, "call arity"); }
+    if (c.args.len() != params.len()) { return refused(s, "call arity"); }
     if (is_void(result) && !statement) { return refused(s, "unsupported void call"); }
     var ids: i32[] = [callee];
     var i: i32 = 0;
@@ -1961,7 +1961,7 @@ function settled_union(whole: typeinfo.Type, name: string, args: ast.Expr[], s: 
 }
 
 function direct_call(c: ast.ExprCall, contract: ssasem.Contract, s: State, statement: boolean, expected: typeinfo.Type): Value {
-    if (c.type_argc > 0 || c.args.len() != contract.params.len()) { return refused(s, "call arity"); }
+    if (c.args.len() != contract.params.len()) { return refused(s, "call arity"); }
     if (is_void(contract.result) && !statement) { return refused(s, "unsupported void call"); }
     return invoke(c.args, contract, s, destination_binding(contract, expected));
 }

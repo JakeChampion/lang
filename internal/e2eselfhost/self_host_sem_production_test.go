@@ -3464,6 +3464,23 @@ function main(): i32 {
     return s - 200;
 }
 `},
+	// Explicit type arguments at a call. The parser erases them from the
+	// argument list and keeps only their count (`type_argc`, which E040 checks
+	// against the declaration), and the instantiation is inferred from the
+	// arguments and the destination exactly as it is without them; the three
+	// call paths refused any count above zero as a `call arity`, which is what
+	// kept conformance/cases/trailing_commas on the AST lowering (#9550). A
+	// variable the arguments and destination leave unbound is still refused,
+	// as `unbound type variable`.
+	{name: "explicit-type-arguments-at-a-call", atLeast: 2, noLeak: true, src: `
+function pick[T](xs: T[], i: i32): T { return xs[i]; }
+
+function main(): i32 {
+    var xs: i64[] = [1, 2, 3];
+    var ys: i32[] = [4, 5, 6];
+    return (pick[i64](xs, 1) as i32) + pick[i32](ys, 2,) + 34;
+}
+`},
 }
 
 // semHeldElementSource sorts by length with the insertion sort's body: the
