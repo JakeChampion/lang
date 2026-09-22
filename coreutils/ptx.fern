@@ -986,63 +986,141 @@ function spaces(n: i32): string {
   return " ".repeat(n);
 }
 
-// The column format. The line is built left to right: the reference
-// when it is on the left, the tail at one gap in, the before field
-// ending at `half`, the keyafter one gap later, and the head ending one
-// half-line after that. An empty before field that still needs a
-// truncation flag pushes everything after it right, which is why this
-// is a build rather than a set of absolute columns.
-function render_dumb(f: Fields, ref: string, g: Geom, opts: Opts): string {
+// The column format, written straight into the output buffer. The line
+// is laid out left to right: the reference when it is on the left, the
+// tail at one gap in, the before field ending at the column half, the
+// keyword-and-after starting a gap past it, and the head ending at the
+// second column half; each may carry the truncation marker beside it.
+//
+// `layout` walks the fields once per mode. The check pass proves every
+// write lands past the one before it and inside the width, which is
+// what lets the emit pass stream the pieces with their gaps into the
+// writer and hold back trailing spaces — the rtrim the whole line got
+// before — until a non-space byte follows them. A layout the check
+// refuses goes through the byte buffer the format was defined with.
+const BLANKS: string = "                                                                ";
+
+struct Line { h: usize, width: i32, mode: i32, cursor: i32, pending: i32, emitted: i32, e2: i32, ok: boolean, buf: u8[] }
+
+function push_spaces(h: usize, count: i32): void {
+  var n: i32 = count;
+  while (n > 0) {
+    var k: i32 = n;
+    if (k > BLANKS.len()) {
+      k = BLANKS.len();
+    }
+    buf_push_range(h, BLANKS, 0, k);
+    n = n - k;
+  }
+}
+
+function put(own l: Line, at: i32, s: string): Line {
+  var p: i32 = at;
+  if (p < 0) {
+    p = 0;
+  }
+  var n: i32 = s.len();
+  if (l.mode == 0) {
+    if (p < l.cursor || p + n > l.width) {
+      return Line { ...l, ok: false };
+    }
+    return Line { ...l, cursor: p + n };
+  }
+  if (l.mode == 2) {
+    return Line { ...l, buf: put_at(l.buf, p, s) };
+  }
+  var pending: i32 = l.pending + (p - l.cursor);
+  var body: i32 = n;
+  while (body > 0 && s[body - 1] as i32 == 32) {
+    body = body - 1;
+  }
+  var emitted: i32 = l.emitted;
+  if (body > 0) {
+    push_spaces(l.h, pending);
+    buf_push_range(l.h, s, 0, body);
+    emitted = emitted + pending + body;
+    pending = n - body;
+  } else {
+    pending = pending + n;
+  }
+  return Line { ...l, cursor: p + n, pending: pending, emitted: emitted };
+}
+
+// A field with the marker that precedes it in the line. The buffer path
+// keeps the order the format was defined with, field then marker over
+// it, because the two overlap once the marker's position clamps at 0;
+// the other modes take them in line order.
+function put_marked(own l: Line, at: i32, s: string, mark_at: i32, mark: string, flag: boolean): Line {
+  if (l.mode == 2) {
+    l = put(l, at, s);
+    if (flag) {
+      l = put(l, mark_at, mark);
+    }
+    return l;
+  }
+  if (flag) {
+    l = put(l, mark_at, mark);
+  }
+  return put(l, at, s);
+}
+
+function layout(own l0: Line, f: Fields, ref: string, g: Geom, opts: Opts): Line {
   var t: i32 = g.tlen;
-  var width: i32 = g.refw + 2 * g.col_half + 4 * g.gap + 4 * t + 8 + f.tail.len() + f.before.len() + f.keyafter.len() + f.head.len() + ref.len();
-  // One `repeat` and one `__memcpy` rather than `width` appends: this
-  // runs once per output line, so the per-byte cost was the format's.
-  var line: u8[] = spaces(width).bytes();
+  var l: Line = l0;
   var base: i32 = 0;
   if (g.refs_left) {
     base = g.refw;
-    line = put_at(line, 0, ref);
+    l = put(l, 0, ref);
   } else if (opts.right_ref) {
     base = 0 - g.gap;
   }
-  line = put_at(line, base + g.gap, f.tail);
+  l = put(l, base + g.gap, f.tail);
   if (f.tail_flag) {
-    line = put_at(line, base + g.gap + f.tail.len(), opts.trunc);
+    l = put(l, base + g.gap + f.tail.len(), opts.trunc);
   }
   var e: i32 = base + g.col_half;
   var shift: i32 = 0;
   if (f.before.len() > 0) {
-    line = put_at(line, e - f.before.len(), f.before);
-    if (f.before_flag) {
-      line = put_at(line, e - f.before.len() - t, opts.trunc);
-    }
+    l = put_marked(l, e - f.before.len(), f.before, e - f.before.len() - t, opts.trunc, f.before_flag);
   } else {
     if (f.before_flag) {
-      line = put_at(line, e + 1 - t, opts.trunc);
+      l = put(l, e + 1 - t, opts.trunc);
       shift = 1;
     }
     shift = shift + f.blank_pad;
   }
   var p: i32 = base + g.col_half + shift + g.gap;
-  line = put_at(line, p, f.keyafter);
+  l = put(l, p, f.keyafter);
   if (f.keyafter_flag) {
-    line = put_at(line, p + f.keyafter.len(), opts.trunc);
+    l = put(l, p + f.keyafter.len(), opts.trunc);
   }
   var e2: i32 = p + g.col_half;
   if (f.head.len() > 0) {
-    line = put_at(line, e2 - f.head.len(), f.head);
-    if (f.head_flag) {
-      line = put_at(line, e2 - f.head.len() - t, opts.trunc);
-    }
+    l = put_marked(l, e2 - f.head.len(), f.head, e2 - f.head.len() - t, opts.trunc, f.head_flag);
   }
-  var out: string = rtrim_bytes(line);
+  return Line { ...l, e2: e2 };
+}
+
+function render_dumb(h: usize, f: Fields, ref: string, g: Geom, opts: Opts): void {
+  var t: i32 = g.tlen;
+  var width: i32 = g.refw + 2 * g.col_half + 4 * g.gap + 4 * t + 8 + f.tail.len() + f.before.len() + f.keyafter.len() + f.head.len() + ref.len();
+  var l: Line = layout(Line { h: h, width: width, mode: 0, cursor: 0, pending: 0, emitted: 0, e2: 0, ok: true, buf: [] }, f, ref, g, opts);
+  if (l.ok) {
+    l = layout(Line { ...l, mode: 1, cursor: 0 }, f, ref, g, opts);
+  } else {
+    l = layout(Line { ...l, mode: 2, cursor: 0, buf: spaces(width).bytes() }, f, ref, g, opts);
+    var out: string = rtrim_bytes(l.buf);
+    buf_push(h, out);
+    l = Line { ...l, emitted: out.len() };
+  }
   if (opts.right_ref && g.has_ref) {
-    if (out.len() < e2) {
-      out = out + spaces(e2 - out.len());
+    if (l.emitted < l.e2) {
+      push_spaces(h, l.e2 - l.emitted);
     }
-    out = out + spaces(g.gap) + ref;
+    push_spaces(h, g.gap);
+    buf_push(h, ref);
   }
-  return out;
+  buf_push_byte(h, 10);
 }
 
 function put_at(own line: u8[], at: i32, s: string): u8[] {
@@ -1405,6 +1483,7 @@ pub function main(): i32 {
   }
 
   var order: i32[] = sort_occs(buf, occs, o.fold);
+  var h: usize = w.handle();
   var j: i32 = 0;
   while (j < order.len()) {
     var oc: Occ = occs[order[j]];
@@ -1418,7 +1497,8 @@ pub function main(): i32 {
     } else if (o.format == 2) {
       w = gnu.put(w, render_tex(f, oc.ref, geom, o) + "\n");
     } else {
-      w = gnu.put(w, render_dumb(f, refv2, geom, o) + "\n");
+      render_dumb(h, f, refv2, geom, o);
+      w = gnu.settle(w);
     }
     j = j + 1;
   }
