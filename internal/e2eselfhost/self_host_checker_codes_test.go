@@ -398,6 +398,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"target-os-mismatch-e003", "function main(): i32 { var n: i32 = target_os(); return n; }\n", []string{"E003"}},
 		{"target-os-arity-e004", "function main(): i32 { var os: string = target_os(1); return 0; }\n", []string{"E004"}},
 		{"builtins-correct-arity-clean", "function main(): i32 { print(\"a\"); var s: string = \"abc\"; return s.len() + s.as_bytes().len(); }\n", nil},
+		// The Display spine (docs/TRAITS.md §3a): a `print` / `write` /
+		// `eprint` argument whose type resolves no `to_string` is E038, on
+		// both compilers; a struct carrying its own is accepted (#9945).
+		{"display-i32-without-to-string-e038", "function main(): i32 { print(7); return 0; }\n", []string{"E038"}},
+		{"display-u8-array-e038", "function main(): i32 { var b: u8[] = [72 as u8]; write(b); return 0; }\n", []string{"E038"}},
+		{"display-f64-without-to-string-e038", "function main(): i32 { var v: f64 = 1.5; eprint(v); return 0; }\n", []string{"E038"}},
+		{"display-struct-with-to-string-clean", "struct Q { a: i32 }\nfunction (q: Q) to_string(): string { return \"Q\"; }\nfunction main(): i32 { print(Q { a: 1 }); return 0; }\n", nil},
+		{"display-i32-with-own-to-string-clean", "function (n: i32) to_string(): string { return \"n\"; }\nfunction main(): i32 { print(5); return 0; }\n", nil},
 		// User generic-struct instantiation (#4346 piece 2): a `Box[i32]`
 		// annotation resolves to the name-only struct `Box`, and constructing
 		// `Box { v: 3 }` type-checks (the opaque generic field `v: T` accepts any

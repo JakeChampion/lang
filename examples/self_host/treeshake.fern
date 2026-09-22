@@ -30,6 +30,7 @@
 
 import "./ast";
 import "./astwalk";
+import "./lexer";
 import "./parser";
 import "./util";
 
@@ -93,57 +94,28 @@ function ts_qualified_root(tag: string, method: string): string {
     return tag + "|" + method;
 }
 
+// ts_named_tag reports a tag that is one bare name — a struct, enum or scalar
+// — as opposed to "" or a composite spelling.
+function ts_named_tag(tag: string): boolean {
+    if (tag.len() == 0) { return false; }
+    var i: i32 = 0;
+    while (i < tag.len()) {
+        if (!lexer.is_alnum(tag[i] as i32)) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
 // ts_recv_rooted reports whether `name` is a method ts_kept_name resolves by
-// receiver: the six the arithmetic operators dispatch to, and the `to_string` a
-// display argument dispatches to. Every other function matches exactly as it
+// receiver: the six the arithmetic operators dispatch to, and `to_string`,
+// which the checker's Display rewrite calls on a `print` / `write` / `eprint`
+// argument. Every other function matches exactly as it
 // did before qualification existed, which is what bounds this to what was
 // measured.
 function ts_recv_rooted(name: string): boolean {
     return name == "add" || name == "sub" || name == "mul"
         || name == "div" || name == "rem" || name == "neg"
         || name == "to_string";
-}
-
-// ts_display_root contributes the `to_string` a `print` / `write` / `eprint`
-// argument dispatches to. irlower's display_arg rewrites that argument to
-// `<arg>.to_string()` AFTER this pass, so the method is reached by a call site
-// the source never spells — the same shape as a Drop finalizer or a derived
-// method, and without a root here it is pruned and the pre-codegen Display gate
-// refuses a program native compiles (#9989).
-//
-// Qualified by the argument's stamped type where there is one, so the root
-// keeps that type's `to_string` rather than every type's, and bare — over-
-// keeping, sound — under a driver that does not annotate, which is the same
-// fallback the operator roots take. A string argument passes through
-// unrewritten and needs no root at all; its literal forms are recognised
-// syntactically, ts_recv_tag carrying no tag for them.
-function ts_display_root(c: ast.ExprCall, own acc: string[]): string[] {
-    if (c.args.len() != 1) { return acc; }
-    match (c.callee) {
-        ast.ExprIdent(id) => {
-            if (id.name != "print" && id.name != "write" && id.name != "eprint") { return acc; }
-            var r: string = ts_display_root_name(c.args[0]);
-            if (r.len() == 0) { return acc; }
-            return acc.append(r);
-        },
-        _ => { return acc; }
-    }
-    return acc;
-}
-
-// ts_display_root_name is the root above, or "" when the argument needs none.
-function ts_display_root_name(arg: ast.Expr): string {
-    match (arg) {
-        ast.ExprString(_) => { return ""; },
-        ast.ExprFString(_) => { return ""; },
-        _ => {
-            var tag: string = util.base_type_name(ts_recv_tag(arg));
-            if (tag == "string") { return ""; }
-            if (tag.len() > 0) { return ts_qualified_root(tag, "to_string"); }
-            return "to_string";
-        }
-    }
-    return "";
 }
 
 // ts_name_of contributes the names ONE node could reference; astwalk's fold
@@ -179,11 +151,23 @@ function ts_name_of(e: ast.Expr, own acc: string[]): string[] {
         // without this the helper looks unreachable and gets pruned, bailing
         // the whole module (the IR path then fails on `i32.<m>`).
         // `ts_array_method_name` matches those helpers against this bare `<m>`.
-        ast.ExprFieldAccess(fa) => { return acc.append(fa.field); },
+        //
+        // A receiver-rooted method (ts_recv_rooted) whose receiver carries a
+        // stamped named type contributes the qualified root instead, so
+        // `q.to_string()` — the call the checker's Display rewrite spells for
+        // `print(q)` — keeps Q's method and not every type's. A receiver with no
+        // stamp, or a composite one (`dyn Display`, `Map[…]`), stays bare.
+        ast.ExprFieldAccess(fa) => {
+            if (ts_recv_rooted(fa.field)) {
+                var ft: string = util.base_type_name(ts_recv_tag(fa.obj));
+                if (ts_named_tag(ft)) { return acc.append(ts_qualified_root(ft, fa.field)); }
+            }
+            return acc.append(fa.field);
+        },
         ast.ExprNumber(_) => { return acc; },
         ast.ExprString(_) => { return acc; },
         ast.ExprBool(_) => { return acc; },
-        ast.ExprCall(c) => { return ts_display_root(c, acc); },
+        ast.ExprCall(_) => { return acc; },
         ast.ExprArray(_) => { return acc; },
         ast.ExprTuple(_) => { return acc; },
         ast.ExprMapLit(_) => { return acc; },

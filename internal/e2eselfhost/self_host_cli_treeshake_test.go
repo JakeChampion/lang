@@ -357,27 +357,22 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostTreeshakeKeepsDisplayToStringX86_64 pins the third root the walk
-// cannot discover for itself, and the one that reached users.
+// TestSelfHostTreeshakeKeepsDisplayToStringX86_64 pins that the prune keeps
+// the `to_string` a displayed value dispatches to, and only that one.
 //
-// `write(q)` for a struct is lowered to `write(q.to_string())` by irlower's
-// display_arg, AFTER the prune runs — so the source never spells the method and
-// the walk dropped it. Through the CLI, which is the only compile path that
-// treeshakes unconditionally, the pre-codegen Display gate then refused the
-// program for having no `to_string` at all, three lines under the one it has
-// (#9989). Native compiles it and prints `Q!`.
+// The checker rewrites `write(q)` to `write(q.to_string())` in its annotate
+// pass (docs/TRAITS.md §3a), so the source never spells the method. The CLI
+// — the one compile path that treeshakes unconditionally — used to prune
+// before annotating, so the walk saw no call to `Q.to_string` and dropped it,
+// and the pre-codegen Display gate then refused the program for having no
+// `to_string` at all, three lines under the one it has (#9989). Native
+// compiles it and prints `Q!`. The shake now runs on the annotated module.
 //
-// Nothing caught it because TestSelfHostDisplayArgGate drives the self-host
-// through buildModloadDriverX86, which does not prune: the same compiler
-// sources accepted the program there and refused it here. This case is the
-// missing CLI leg.
-//
-// The root is qualified by the argument's type, so it keeps THIS struct's
-// `to_string` and not every type's — the std/i32, std/i64 and core/bigint
-// methods below are all in the import closure and all dropped. The program
-// deliberately spells no `.to_string()` of its own: an explicit call puts the
-// bare name in the reachable set and would keep all of them regardless, which
-// would make the second half of this test prove nothing.
+// The root is qualified by the receiver's stamped type, so it keeps THIS
+// struct's `to_string` and not every type's — the std/i32, std/i64 and
+// core/bigint methods below are all in the import closure and all dropped.
+// The program deliberately spells no `.to_string()` of its own on an
+// unstamped receiver: a bare name in the reachable set keeps all of them.
 func TestSelfHostTreeshakeKeepsDisplayToStringX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {

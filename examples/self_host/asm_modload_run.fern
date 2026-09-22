@@ -26,6 +26,7 @@ import "./util";
 import "./lexer";
 import "./parser";
 import "./flatten";
+import "./checker";
 import "./asm_arm64_ir";
 import "./asm_ir";
 import "./irlower";
@@ -1138,7 +1139,7 @@ function main(): i32 {
                 var anfuncs: i32 = ircore.lift_lambdas(amwb).funcs.len();
                 if (anfuncs > 512 || force_spawned) {
                     if (anfuncs < single_process_max && !force_spawned) {
-                        var ashaken: parser.Module = treeshake.treeshake(merged);
+                        var ashaken: parser.Module = treeshake.treeshake(checker.annotate_module(merged));
                         var areach: string[] = [];
                         var ari: i32 = 0;
                         while (ari < ashaken.funcs.len()) { areach = areach.append(ashaken.funcs[ari].name); ari = ari + 1; }
@@ -1198,7 +1199,7 @@ function main(): i32 {
             var nfuncs: i32 = ircore.lift_lambdas(mwb).funcs.len();
             if (nfuncs > 512 || force_spawned) {
                 if (nfuncs < single_process_max && !force_spawned) {
-                    var shaken: parser.Module = treeshake.treeshake(merged);
+                    var shaken: parser.Module = treeshake.treeshake(checker.annotate_module(merged));
                     var reach: string[] = [];
                     var ri: i32 = 0;
                     while (ri < shaken.funcs.len()) { reach = reach.append(shaken.funcs[ri].name); ri = ri + 1; }

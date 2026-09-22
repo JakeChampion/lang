@@ -53,6 +53,15 @@ function prune_to_reachable(mod: parser.Module, reach: string[]): parser.Module 
     return parser.Module { funcs: kept, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls };
 }
 
+// shaken_program prunes an annotated module to what main reaches when `prune`
+// is set, and returns it unchanged otherwise. Callers annotate first: the
+// checker's Display rewrite is what roots a `to_string` method a `print(x)`
+// call reaches (docs/TRAITS.md §3a).
+function shaken_program(typed: parser.Module, prune: boolean): parser.Module {
+    if (!prune) { return typed; }
+    return treeshake.treeshake(typed);
+}
+
 // emit_per_module_concat compiles a program's modules SEPARATELY (per-module IR
 // units) and concatenates them into one linkable asm stream, routing a program
 // that overflows the merged 512-function IR budget through the IR path anyway
@@ -351,42 +360,43 @@ function main(): i32 {
     // A program with no stdlib imports (the bootstrap self-compile, root == "")
     // is left exactly as before.
     //
-    // The prune lands in `shaken` rather than over `merged`, because the build
-    // gate below has to read the module AS WRITTEN — the same ordering
-    // fern.fern states for its own gates. The prune drops mod.funcs while
-    // leaving mod.impls whole, so an empty `impl Trait for T { }` whose adopted
-    // method is unreachable reads to the checker as a missing method (#8885).
-    var shaken: parser.Module = merged;
-    if ((do_treeshake || root.len() > 0) && !no_treeshake) { shaken = treeshake.treeshake(merged); }
+    // The prune runs on the ANNOTATED module and after the build gate, in the
+    // order fern.fern uses. The gate has to read the module as written: the
+    // prune drops mod.funcs while leaving mod.impls whole, so an empty
+    // `impl Trait for T { }` whose adopted method is unreachable reads to the
+    // checker as a missing method (#8885). And the annotate pass has to run
+    // first because it is what roots a Display method: `print(q)` becomes
+    // `q.to_string()` there (docs/TRAITS.md §3a), and the prune keeps
+    // `Q.to_string` only once that call exists.
+    var prune: boolean = (do_treeshake || root.len() > 0) && !no_treeshake;
 
     // `-decide`: print the path the merged module routes through (ir / ast) —
-    // the same all_eligible decision emit_module makes — and stop. Annotates
-    // first (typed-IR #5531): emit_module receives the annotate_module'd tree
-    // (line below), and some functions are IR-eligible ONLY once the checker's
-    // types are stamped (e.g. a `f().N` tuple-element read whose element is a
-    // struct, resolved via expr_tuple_elem_tag's c.ty read). Without annotating
-    // here `-decide` under-reported those as "ast", diverging from what
-    // emit_module actually does. ircore.script_normalized closes the other half
-    // of that divergence: a script's `main` is synthesised inside the emit, so
-    // judging the raw module reported "ast" for a program that in fact lowers IR.
+    // the same all_eligible decision emit_module makes — and stop. Judged on the
+    // module emit_module receives (annotated, then pruned): some functions are
+    // IR-eligible ONLY once the checker's types are stamped (e.g. a `f().N`
+    // tuple-element read whose element is a struct, resolved via
+    // expr_tuple_elem_tag's c.ty read), so judging the raw module under-reported
+    // those as "ast". ircore.script_normalized closes the other half of that
+    // divergence: a script's `main` is synthesised inside the emit, so judging
+    // the raw module reported "ast" for a program that in fact lowers IR.
     if (do_decide) {
-        var dm: parser.Module = ircore.lift_lambdas(parser.module_with_builtins(checker.annotate_module(shaken)));
+        var dm: parser.Module = ircore.lift_lambdas(parser.module_with_builtins(shaken_program(checker.annotate_module(merged), prune)));
         if (ircore.all_eligible(ircore.script_normalized(dm))) { print("ir\n"); } else { print("ast\n"); }
         return 0;
     }
 
     // `-ir-probe`: report the IR-eligibility frontier of the whole loaded
     // program and stop — no codegen, no checker gate. Runs the SAME
-    // module_with_builtins pipeline `-decide` and emit_module route on
-    // (monomorphise + builtin-enum injection), so the frontier reflects the
-    // module codegen actually sees. Without it the probe scanned the RAW
+    // annotate + prune + module_with_builtins pipeline `-decide` and emit_module
+    // route on (monomorphise + builtin-enum injection), so the frontier reflects
+    // the module codegen actually sees. Without it the probe scanned the RAW
     // merged module, whose un-instantiated bounded-generic TEMPLATES
     // (core/cmp's min[T:Ord] etc.) are still present — their `a.cmp(b)` on a
     // type-param receiver bails, so the probe reported `module: AST` for a
     // program that in fact routes IR once monomorphise drops those templates
     // (#4374). Lambda-lifted last, matching what the emitter routes on.
     if (probe) {
-        var lifted: parser.Module = ircore.lift_lambdas(parser.module_with_builtins(shaken));
+        var lifted: parser.Module = ircore.lift_lambdas(parser.module_with_builtins(shaken_program(checker.annotate_module(merged), prune)));
         if (probe_start >= 0) {
             write(ircore.eligibility_report_range(lifted, probe_start, probe_count));
         } else {
@@ -405,14 +415,13 @@ function main(): i32 {
         eprint(util.format_diags(gated));
         return 1;
     }
-    merged = shaken;
 
     // typed-IR (#5531): stamp each call expression with its checker-inferred
     // result type so the IR lowering READS the type instead of re-deriving it
     // (docs/TYPED-IR-REWRITE.md). Runs after the checker (its Scope resolves the
     // types) and before emit_module's eligible-module IR routing, which is what
     // reads c.ty. A no-op on drivers that skip it (asm_ir_run leaves ty "").
-    merged = checker.annotate_module(merged);
+    merged = shaken_program(checker.annotate_module(merged), prune);
 
     if (target == "arm64-linux") {
         // IR-or-error (#3457 slice 5): the arm64 leg has no fallback either.

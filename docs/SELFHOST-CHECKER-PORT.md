@@ -1716,3 +1716,49 @@ three-way matrix the issue asked for: one program per code through native
 agree. A row that is still exempt carries the issue that owns it, and goes RED
 if the build starts refusing it — so an exemption cannot outlive its cause, and
 one cannot come back unowned.
+
+## 2026-09-22 — the Display spine moves into the checker (#9945)
+
+`print(7)` compiled on native with `import "core/cmp";` and was refused by the
+self-host with an E038 that named no remedy the compiler would honour. The
+self-host's half of docs/TRAITS.md §3a lived in the wrong two places: the
+pre-codegen check in `asmcore.display_arg_errs` admitted only a named struct
+carrying a `to_string`, and the rewrite to `arg.to_string()` happened in
+`irlower.display_arg` during lowering, where a primitive receiver's
+`.to_string()` always meant the built-in formatter. `treeshake` carried a
+special case (`ts_display_root`) to keep a `to_string` alive for a `print(x)`
+that had not been rewritten yet.
+
+Now the checker does what native's does, at the same point:
+
+- `checker.display_rewrite` (in `annotate_module`) rewrites the one argument of
+  `print` / `write` / `eprint` to `arg.to_string()` when the type resolves the
+  method — a declared receiver method, or an `impl Display` / `@derive` — and
+  `checker.display_arg_diags` (in `check_module`) refuses one that does not,
+  in native's words. A `string` argument passes through; unknown, erased and
+  `dyn` types are left alone.
+- `irlower.display_arg` and `treeshake.ts_display_root` are gone. The lowering
+  dispatches `n.to_string()` on a primitive to a declared method when one is
+  registered and to the built-in formatter otherwise, so a program's own
+  `to_string` on `i32` is what `print(5)` calls, as on native.
+- `asmcore.display_arg_errs` is a backstop for a module that never went
+  through the checker. It refuses whatever the annotate pass left unrewritten,
+  reading the checker's stamped label so it says `u8[]` where native does, and
+  both native emitters enter `checker.ensure_annotated` ahead of it.
+
+Three ordering bugs came out of moving the rewrite:
+
+| where | what was wrong | fix |
+|---|---|---|
+| `asm_load_run`, `playground_run`, `asm_modload_run` reach set | tree-shaking ran before annotating, so the `to_string` a `print(q)` reaches was pruned as unreferenced | annotate, then shake — the order `fern.fern` already used |
+| `checker.ensure_annotated_parts` | a per-module unit was annotated only when it had an unchecked capture, so `print(a)` in `main` reached the string helper as a raw `i32` | a unit with an unrewritten display call is annotated too, against the whole-program view |
+| per-module unit emit (`asm_ir.emit_module_ir_unit_flat`, arm64 twin) | a unit never passes `emit_module_or_error`'s check, so `print(xs)` on an over-budget program compiled to a raw pointer write | `asmcore.display_errs_module` runs the Display question alone on each unit, answered from the checker's stamps (a unit is lambda-lifted and calls into siblings, so the full check does not apply to it) |
+
+### Gate
+
+`TestSelfHostDisplayArgGate` on the file-based driver: eight rejects with
+native's text (a `u8[]`, a scalar without the import, an `i32[]` with it, one
+nested in a branch), and three accept programs run to native's output — every
+primitive with `core/cmp` imported, a struct with its own `to_string`, and a
+program shadowing `i32.to_string`. `TestSelfHostCheckerCodesX86_64` carries
+the E038 rows for `-check`.

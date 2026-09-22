@@ -234,10 +234,13 @@ function run(): i32 {
 
     // Tree-shaking is required here rather than an optimisation: the
     // overlay hands the loader every stdlib module the program's imports reach,
-    // and without the shake the emitted module carries all of them.
-    merged = treeshake.treeshake(merged);
+    // and without the shake the emitted module carries all of them. It runs on
+    // the annotated module, as in fern.fern: the checker's Display rewrite
+    // (`print(q)` to `q.to_string()`, docs/TRAITS.md §3a) is what roots the
+    // method the shake would otherwise drop.
     merged = constfold.fold_module(merged);
     merged = checker.annotate_module(merged);
+    merged = treeshake.treeshake(merged);
 
     var out: string = wasm_ir.emit_module_mode_or_error(parser.module_with_builtins(merged), false, false);
     write(out);

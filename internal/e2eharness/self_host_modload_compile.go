@@ -159,6 +159,17 @@ func fillSelfHostImports(t *testing.T, progDir string, files map[string]string) 
 // hand-picked module or two. Returns the emitted asm and the program dir.
 func CompileSourceModload(t *testing.T, runner []string, driverBin, entrySrc string, extraArgs ...string) (asm string, progDir string) {
 	t.Helper()
+	progDir = WriteSourceModloadProject(t, entrySrc)
+	return string(RunDriverFile(t, runner, driverBin, filepath.Join(progDir, "main.fern"), extraArgs...)), progDir
+}
+
+// WriteSourceModloadProject lays out the program CompileSourceModload
+// compiles — main.fern, builtins.fern and the flat transitive stdlib closure —
+// in a fresh temp dir and returns it, for a caller that runs the driver itself
+// (one that expects a refusal, say). A program with no imports gets only the
+// entry and builtins.
+func WriteSourceModloadProject(t *testing.T, entrySrc string) (progDir string) {
+	t.Helper()
 	const entryPath = "/__fern_source__/main.fern"
 	_, srcs, err := modload.LoadSource(entrySrc)
 	if err != nil {
@@ -189,5 +200,5 @@ func CompileSourceModload(t *testing.T, runner []string, driverBin, entrySrc str
 	if err := os.WriteFile(filepath.Join(progDir, "main.fern"), []byte(entrySrc), 0o644); err != nil {
 		t.Fatalf("write main.fern: %v", err)
 	}
-	return string(RunDriverFile(t, runner, driverBin, filepath.Join(progDir, "main.fern"), extraArgs...)), progDir
+	return progDir
 }
