@@ -86,6 +86,8 @@ allocations and frees, leave zero live bytes and produce no RC underflow. These 
 cover temporary poll buffers; they do not establish leak freedom for a whole
 HTTP server or replace the persistent-reactor work in #9853.
 
+## WASI socket lifecycles
+
 `TestWasiSocketErrorTableParity` pins all socket error discriminants to the
 vendored WIT and the self-host table. `TestWasiSocketErrorReturns` executes
 the bootstrap runtime's conversion and error-return sequence; the self-host
