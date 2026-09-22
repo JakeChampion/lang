@@ -3092,3 +3092,67 @@ function build(): i32 {
 		}
 	}
 }
+
+// A short-circuit condition on a statement lowers to a chain of branches, one
+// per operand, rather than to a materialised boolean that a second branch
+// tests: `if (a && b)` is two exits past the body, `while (a || b)` two
+// entries into it, and `!` only flips which outcome each operand exits on.
+func TestLowerConditionShortCircuitBranches(t *testing.T) {
+	cases := []struct {
+		name, src string
+		brIfs     int
+	}{
+		{"if and", `function f(a: i32, b: i32): i32 { if (a > 0 && b > 0) { return 1; } return 2; }`, 2},
+		{"if or", `function f(a: i32, b: i32): i32 { if (a > 0 || b > 0) { return 1; } return 2; }`, 2},
+		{"if not and", `function f(a: i32, b: i32): i32 { if (!(a > 0 && b > 0)) { return 1; } return 2; }`, 2},
+		{"if and else", `function f(a: i32, b: i32): i32 { if (a > 0 && b > 0) { return 1; } else { return 2; } }`, 2},
+		// A cheap loop condition is rotated: two branches in the guard and
+		// two in the bottom test.
+		{"while and", `function f(a: i32, b: i32): i32 { var i: i32 = 0; while (i < a && i < b) { i = i + 1; } return i; }`, 4},
+		{"for or", `function f(a: i32, b: i32): i32 { var n: i32 = 0; for (var i: i32 = 0; i < a || i < b; i = i + 1) { n = n + 1; } return n; }`, 4},
+		{"three operands", `function f(a: i32, b: i32, c: i32): i32 { if (a > 0 && b > 0 && c > 0) { return 1; } return 2; }`, 3},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p := lowerSource(t, c.src)
+			if hasOp(p, "f", OpIf) || hasOp(p, "f", OpElse) {
+				t.Errorf("condition materialised through if/else:\n%s", p)
+			}
+			n := 0
+			for _, fn := range p.Funcs {
+				if fn.Name != "f" {
+					continue
+				}
+				for _, op := range fn.Ops {
+					if op.Kind == OpBrIf {
+						n++
+					}
+				}
+			}
+			if n != c.brIfs {
+				t.Errorf("want %d conditional branches, got %d:\n%s", c.brIfs, n, p)
+			}
+		})
+	}
+}
+
+// A coverage build keeps the expression form, whose arms carry the branch
+// counters that `fern -cover` reports for `&&` and `||`.
+func TestLowerConditionKeepsIfUnderCoverage(t *testing.T) {
+	src := `function f(a: i32, b: i32): i32 { if (a > 0 && b > 0) { return 1; } return 2; }`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	p, err := LowerWith(prog, info, 8, CoverPoints())
+	if err != nil {
+		t.Fatalf("lower: %v", err)
+	}
+	mustContainOp(t, p, "f", OpIf)
+	mustContainOp(t, p, "f", OpElse)
+	mustContainOp(t, p, "f", OpCoverPoint)
+}
