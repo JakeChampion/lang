@@ -140,6 +140,13 @@ and allowing valid readiness alongside failed registrations. Bootstrap flat
 and SSA helpers also reclaim their temporary poll storage on every path.
 Persistent worker-owned reactors remain separate P0 work.
 
+Both WebAssembly compilers implement compatibility `poll` timeouts by adding
+an owned monotonic-clock timer to the borrowed pollable list. A timer-only
+result returns `-1`; a negative timeout creates no timer. Milliseconds are
+widened before conversion to nanoseconds, and each call releases the temporary
+list, returned indices, return area and timer. Direct `wasm_poll` remains an
+indefinite wait.
+
 ## CPU baseline
 
 Fern emits **static binaries with no runtime CPU dispatch**, so every

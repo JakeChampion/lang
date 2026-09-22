@@ -91,14 +91,17 @@ HTTP server or replace the persistent-reactor work in #9853.
 `TestWasmPollGuestStorage` and `TestSelfHostWasmPollGuestStorage` exercise
 32 calls per host case through the production poll helpers and allocator.
 Cases include empty results, first-ready indices zero and one, multiple
-returned indices, and timeout-only readiness. The self-host finite-wait
+returned indices, and timeout-only readiness. Both compilers' finite-wait
 cases require exactly one drop of the created timer, including handle zero;
 caller pollables remain borrowed. Repeated calls must stop growing the heap.
 `TestWasmPollLifecycleCensus` and `TestSelfHostWasmPollLifecycleCensus` also
 run real timer polls and require balanced allocation counts with zero live
 bytes. Both direct `wasm_poll` and compatibility `poll` are covered.
-Bootstrap compatibility `poll` still ignores its timeout argument; these
-storage gates do not claim timeout parity.
+Host fixtures check the exact timer duration at zero, finite and maximum
+`i32` milliseconds, with negative timeouts creating no timer.
+`TestWasmPollDeadlines` and `TestSelfHostWasmPollDeadlines` run real ready,
+pending and empty pollable lists. They require correct deadline results,
+monotonic lower bounds, and zero live heap storage after 32 waits.
 
 ## HTTP handler ownership through semantic lowering
 

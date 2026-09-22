@@ -49,11 +49,55 @@ func WasiPollCensusProbe(expr string) string {
 }`
 }
 
+// WasiPollDeadlineCases exercise actual timers, including an empty finite wait.
+// Monotonic measurements reject premature returns; the runner's process bound
+// catches waiting for the pending sixty-second timer instead of the deadline.
+func WasiPollDeadlineCases() []struct{ Name, Source string } {
+	var cases []struct{ Name, Source string }
+	for _, tc := range []struct {
+		name      string
+		duration  int64
+		ms, want  int
+		minimumNS int64
+		empty     bool
+	}{
+		{"zero", 60000000000, 0, -1, 0, false},
+		{"finite", 60000000000, 5, -1, 5000000, false},
+		{"empty-finite", 0, 5, -1, 5000000, true},
+		{"ready", 1000000, 5000, 0, 1000000, false},
+		{"indefinite", 1000000, -1, 0, 1000000, false},
+	} {
+		setup := fmt.Sprintf("var duration: i64 = %d; var p: i32 = wasm_timer_pollable(duration); var ps: i32[] = [p];", tc.duration)
+		cleanup := "wasm_pollable_drop(p);"
+		if tc.empty {
+			setup, cleanup = "var ps: i32[] = [];", ""
+		}
+		src := fmt.Sprintf(`function main(): i32 {
+    var i: i32 = 0;
+    while (i < 32) {
+        var before: i64 = monotonic_ns();
+        %s
+        var result: i32 = poll(ps, %d);
+        var elapsed: i64 = monotonic_ns() - before;
+        %s
+        if (result != %d) { return 1; }
+        var minimum: i64 = %d;
+        if (elapsed < minimum) { return 2; }
+        i = i + 1;
+    }
+    return 0;
+}`, setup, tc.ms, cleanup, tc.want, tc.minimumNS)
+		cases = append(cases, struct{ Name, Source string }{tc.name, src})
+	}
+	return cases
+}
+
 // CheckWasiPollStorage substitutes only host imports. Guest polling, canonical
 // allocation, and reclamation remain production code. It checks returned list
 // ordering, empty results, and ownership of the optional finite-wait timer.
-func CheckWasiPollStorage(t *testing.T, modulePath string, finite bool) {
+func CheckWasiPollStorage(t *testing.T, modulePath string, timeoutMS int) {
 	t.Helper()
+	finite := timeoutMS >= 0
 	for _, tool := range []string{"wasm-tools", "wasmtime"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			t.Skip(tool + " not on PATH")
@@ -100,6 +144,7 @@ func CheckWasiPollStorage(t *testing.T, modulePath string, finite bool) {
     (i32.store offset=4 (local.get 2) (local.get $count))`
 		case strings.HasPrefix(m[1], "wasi:clocks/monotonic-clock@") && m[2] == "subscribe-duration":
 			body = `(if (global.get $ph_owned) (then unreachable))
+    (if (i64.ne (local.get 0) (global.get $ph_duration)) (then unreachable))
     (global.set $ph_owned (i32.const 1)) (global.get $ph_handle)`
 		case strings.HasSuffix(m[2], "[resource-drop]pollable"):
 			body = `(if (i32.or (i32.eqz (global.get $ph_owned)) (i32.ne (local.get 0) (global.get $ph_handle))) (then unreachable))
@@ -119,6 +164,7 @@ func CheckWasiPollStorage(t *testing.T, modulePath string, finite bool) {
   (global $ph_handle (mut i32) (i32.const 0))
   (global $ph_owned (mut i32) (i32.const 0))
   (global $ph_finite i32 (i32.const %d))
+  (global $ph_duration i64 (i64.const %d))
   (func $ph_alloc (param $n i32) (result i32)
     (call %s (i32.const 0) (i32.const 0) (i32.const 4) (local.get $n)))
   (func (export "poll_probe") (param $mode i32) (param $handle i32) (result i32)
@@ -128,7 +174,7 @@ func CheckWasiPollStorage(t *testing.T, modulePath string, finite bool) {
     (local.set $result (call %s))
     (if (global.get $ph_owned) (then unreachable))
     (local.get $result))
-`, finiteValue, alloc[1], main[1])
+`, finiteValue, int64(timeoutMS)*1000000, alloc[1], main[1])
 	end := strings.LastIndex(wat, ")")
 	path := filepath.Join(t.TempDir(), "poll-host.wat")
 	if err := os.WriteFile(path, []byte(wat[:end]+probe+")"), 0o644); err != nil {

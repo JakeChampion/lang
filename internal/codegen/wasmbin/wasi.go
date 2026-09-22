@@ -1953,7 +1953,7 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			in.add("wasi_poll_oneoff")
 		}
 	}
-	if helpers.set["__fern_wasm_timer_pollable"] {
+	if helpers.set["__fern_wasm_timer_pollable"] || helpers.set["poll"] {
 		// Preview-2-only: the timer pollable comes from
 		// monotonic-clock.subscribe-duration.
 		in.add("wasi_clocks_subscribe_duration")
@@ -1966,7 +1966,7 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 		// Preview-2-only: multiplex a list of pollables.
 		in.add("wasi_io_poll_poll")
 	}
-	if helpers.set["__fern_wasm_pollable_drop"] {
+	if helpers.set["__fern_wasm_pollable_drop"] || helpers.set["poll"] {
 		// Preview-2-only: drop a consumed pollable handle.
 		in.add("wasi_io_pollable_drop")
 	}
