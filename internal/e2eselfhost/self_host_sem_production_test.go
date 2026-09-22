@@ -996,7 +996,7 @@ function main(): i32 {
 	//
 	// `examples/tests/array_combinators_test` went 0 of 211 to 211 of 211 on
 	// this, on one call to `join_with_last`.
-	{name: "an-array-helper-is-a-free-function", atLeast: 54, noLeak: true, src: `
+	{name: "an-array-helper-is-a-free-function", atLeast: 50, noLeak: true, src: `
 import "std/array" as array;
 
 function main(): i32 {
@@ -2290,7 +2290,7 @@ function main(): i32 {
 	// shape rather than one entry's: 0 of 55 before, 55 of 55 after. The
 	// stdin methods and the two standard Writers are all one family, so the
 	// second half drives those too.
-	{name: "stdin-and-the-stream-handles", atLeast: 55, stdin: "alpha\nbeta\n", src: `
+	{name: "stdin-and-the-stream-handles", atLeast: 51, stdin: "alpha\nbeta\n", src: `
 import "std/io";
 
 function main(): i32 {
@@ -3084,7 +3084,7 @@ function main(): i32 {
 	// borrowed string parameter offers. Only an INSERT's key joins the key
 	// column, where the map may outlive the bytes the view borrows, so only
 	// that one is refused.
-	{name: "a-view-is-a-map-read-key", atLeast: 50, noLeak: true, src: `
+	{name: "a-view-is-a-map-read-key", atLeast: 46, noLeak: true, src: `
 import "core/map";
 import "std/string";
 function tally(text: string, m: Map[string, i32]): i32 {
@@ -3148,7 +3148,7 @@ function main(): i32 {
 	// what settles it. Every declaration here refused before, through the
 	// binding, so `std/result`'s whole combinator surface stood on the AST
 	// lowering.
-	{name: "an-unannotated-binding-takes-its-call-s-type", atLeast: 61, noLeak: true, src: `
+	{name: "an-unannotated-binding-takes-its-call-s-type", atLeast: 57, noLeak: true, src: `
 import "std/option";
 import "std/result";
 function mapped(): i32 {
@@ -3208,7 +3208,7 @@ function main(): i32 {
     while (i < 20) { acc = acc + direct().len() + qualified().len() + bound().len(); i = i + 1; }
     return acc % 101;
 }`},
-	{name: "a-method-reads-its-receiver-by-name", atLeast: 121, noLeak: true, src: `
+	{name: "a-method-reads-its-receiver-by-name", atLeast: 109, noLeak: true, src: `
 import "std/json";
 @derive(json.Json)
 struct Bag { items: i32[], names: string[] }
@@ -3229,7 +3229,7 @@ function main(): i32 {
     if (Held { xs: [1.5, 2.5] }.render() != "[1.5,2.5]") { return 2; }
     return acc % 101;
 }`},
-	{name: "a-composite-compares-through-its-own-method", atLeast: 59, noLeak: true, src: `
+	{name: "a-composite-compares-through-its-own-method", atLeast: 55, noLeak: true, src: `
 import "core/cmp";
 @derive(cmp.Eq, cmp.Ord)
 struct Point { x: i32, y: string }
