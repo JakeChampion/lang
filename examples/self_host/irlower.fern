@@ -12234,9 +12234,10 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
     // and the self-host's own eprint are the same two writes (#8410 — the
     // joined temp was a fresh box per call that nothing released).
     //
-    // `write` and `print` take any Display type and stringify through
-    // display_arg; `print_str` is the internal string-only spelling and
-    // takes its argument as it stands.
+    // `write` and `print` take any Display type, and the checker's annotate
+    // pass has already rewritten a non-string argument to `arg.to_string()`
+    // (checker.display_rewrite, docs/TRAITS.md §3a), so each lowers its one
+    // argument as it stands; `print_str` is the internal string-only spelling.
     if (cid.name == "print_str" && c.args.len() == 1) {
         var pss: LowerState = lower_expr(c.args[0], s);
         if (!pss.ok) { return pss; }
