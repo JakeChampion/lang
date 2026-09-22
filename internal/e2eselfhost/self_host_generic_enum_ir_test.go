@@ -129,6 +129,27 @@ function main(): i32 {
     var p: Pair[i32, string] = P(5, "hi");
     match (p) { P(a, b) => { return a + b.len(); }, Z => { return 0; } }
 }`, 7},
+	// A method declared on the generic enum is cloned per instantiation with
+	// its receiver re-pointed at the clone, so `or_else` dispatches on
+	// `Opt__i32` and `Opt__string` alike. 5 + 7 + "abc".len() == 15.
+	{"method_per_instantiation", `enum Opt[T] { Sm(T), Nn }
+function (o: Opt[T]) or_else(d: T): T { match (o) { Sm(x) => { return x; }, Nn => { return d; } } }
+function main(): i32 {
+    var a: Opt[i32] = Sm(5);
+    var b: Opt[i32] = Nn;
+    var c: Opt[string] = Sm("abc");
+    return a.or_else(0) + b.or_else(7) + c.or_else("").len();
+}`, 15},
+	// A method with a type parameter of its own folds into a free generic
+	// before the pass, keyed by the receiver's arguments and its own; the
+	// payload of the variant argument (`Full(9)`) is what settles U.
+	{"method_own_type_param", `enum Box[T, E] { Full(T), Blank(E) }
+function (b: Box[T, E]) pair[U](other: Box[U, E]): Box[U, E] { return other; }
+function take(b: Box[i32, string]): i32 { match (b) { Full(n) => { return n; }, Blank(s) => { return s.len(); } } }
+function main(): i32 {
+    var b: Box[i32, string] = Full(5);
+    return take(b.pair(Full(9))) + take(b.pair(Full(2)));
+}`, 11},
 }
 
 // TestSelfHostGenericEnumIRX86_64 builds the self-host asm_run driver and runs
