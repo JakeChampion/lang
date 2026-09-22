@@ -13,6 +13,29 @@ import (
 	"time"
 )
 
+// WasiSocketStorageProbe repeats a complete operation, preserving its result
+// while checking that the guest heap stops growing after the first iteration.
+// The host fault fixture runs the same loop at every failure stage.
+func WasiSocketStorageProbe(expr string) string {
+	return `function main(): i32 {
+    var i: i32 = 0;
+    var stable: i64 = 0;
+    var result: i32 = 0;
+    while (i < 32) {
+        var allocations: i64 = __heap_alloc_count();
+        var h: i32 = ` + expr + `;
+        result = h;
+        if (h >= 0) { result = tcp_close(h); }
+        var used: i64 = __heap_bump_bytes();
+        if (i == 0) { stable = used; }
+        if (used != stable) { return -1000; }
+        if (__heap_alloc_count() - allocations != 1) { return -1001; }
+        i = i + 1;
+    }
+    return result;
+}`
+}
+
 // CheckWasiSocketReclaim replaces only host imports in a compiled core module.
 // The production socket bodies and allocator still execute. Host resources are
 // tracked independently; dropping an unowned handle or a parent before its

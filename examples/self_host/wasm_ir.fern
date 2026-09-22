@@ -1007,7 +1007,9 @@ pub function module_allocates(cache: irlower.LowerResult[]): boolean {
     // scalar-capture closure allocates nothing an op reports, and its
     // `__fern_rc_underflow_count()` then called a function the module never
     // emitted ("unknown func $__fern_rc_underflow_count").
-    function needs_heap(o: ir.Op): boolean { return ir.op_needs_heap(o); }
+    // WASI close returns the owned connection record to the raw freelist,
+    // including in a separately emitted function that does not allocate.
+    function needs_heap(o: ir.Op): boolean { return o.kind_tag == 116 || ir.op_needs_heap(o); }
     if (any_op(cache, needs_heap)) { return true; }
     // String programs need the heap too: $__fern_strcat allocates via
     // $__fern_str_box, and strcat_helpers references it even for a str_eq-only
@@ -2889,11 +2891,13 @@ pub function network_handle_func(): string {
 pub function tcp_connect_func(): string {
     var o: string = "";
     o = o + "  (func $__fern_tcp_connect (param $host i32) (param $port i32) (result i32)\n";
-    o = o + "    (local $sock i32) (local $ret i32) (local $st i32) (local $p i32)\n";
+    o = o + "    (local $sock i32) (local $ret i32) (local $st i32) (local $e i32) (local $p i32)\n";
     o = o + "    (local.set $ret (call $__fern_alloc (i32.const 16)))\n";
     o = o + "    (call $__fern_wasi_create_tcp_socket (i32.const 0) (local.get $ret))\n";
     o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
-    o = o + "      (return (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))))\n";
+    o = o + "      (local.set $e (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))\n";
+    o = o + "      (call $__fern_raw_free (local.get $ret) (i32.const 16))\n";
+    o = o + "      (return (local.get $e))))\n";
     o = o + "    (local.set $sock (i32.load offset=4 (local.get $ret)))\n";
     o = o + "    (call $__fern_wasi_tcp_start_connect (local.get $sock) (call $__fern_network_handle)\n";
     o = o + "      (i32.const 0) (local.get $port)\n";
@@ -2905,15 +2909,19 @@ pub function tcp_connect_func(): string {
     o = o + "      (local.get $ret))\n";
     o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
     o = o + "      (call $__fern_wasi_tcp_socket_drop (local.get $sock))\n";
-    o = o + "      (return (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))))\n";
+    o = o + "      (local.set $e (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))\n";
+    o = o + "      (call $__fern_raw_free (local.get $ret) (i32.const 16))\n";
+    o = o + "      (return (local.get $e))))\n";
     o = o + "    (local.set $p (call $__fern_wasi_tcp_subscribe (local.get $sock)))\n";
     o = o + "    (call $__fern_wasi_pollable_block (local.get $p))\n";
     o = o + "    (call $__fern_wasi_pollable_drop (local.get $p))\n";
     o = o + "    (call $__fern_wasi_tcp_finish_connect (local.get $sock) (local.get $ret))\n";
     o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
     o = o + "      (call $__fern_wasi_tcp_socket_drop (local.get $sock))\n";
-    o = o + "      (return (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))))\n";
-    o = o + "    (local.set $st (call $__fern_alloc (i32.const 16)))\n";
+    o = o + "      (local.set $e (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))\n";
+    o = o + "      (call $__fern_raw_free (local.get $ret) (i32.const 16))\n";
+    o = o + "      (return (local.get $e))))\n";
+    o = o + "    (local.set $st (local.get $ret))\n";
     o = o + "    (i32.store (local.get $st) (local.get $sock))\n";
     o = o + "    (i32.store offset=4 (local.get $st) (i32.load offset=4 (local.get $ret)))\n";
     o = o + "    (i32.store offset=8 (local.get $st) (i32.load offset=8 (local.get $ret)))\n";
@@ -2946,11 +2954,13 @@ pub function wasi_sockets_server_imports(): string {
 pub function tcp_listen_func(): string {
     var o: string = "";
     o = o + "  (func $__fern_tcp_listen (param $port i32) (result i32)\n";
-    o = o + "    (local $sock i32) (local $ret i32) (local $st i32)\n";
+    o = o + "    (local $sock i32) (local $ret i32) (local $st i32) (local $e i32)\n";
     o = o + "    (local.set $ret (call $__fern_alloc (i32.const 16)))\n";
     o = o + "    (call $__fern_wasi_create_tcp_socket (i32.const 0) (local.get $ret))\n";
     o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
-    o = o + "      (return (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))))\n";
+    o = o + "      (local.set $e (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))\n";
+    o = o + "      (call $__fern_raw_free (local.get $ret) (i32.const 16))\n";
+    o = o + "      (return (local.get $e))))\n";
     o = o + "    (local.set $sock (i32.load offset=4 (local.get $ret)))\n";
     o = o + "    (call $__fern_wasi_tcp_start_bind (local.get $sock) (call $__fern_network_handle)\n";
     o = o + "      (i32.const 0) (local.get $port)\n";
@@ -2959,20 +2969,28 @@ pub function tcp_listen_func(): string {
     o = o + "      (local.get $ret))\n";
     o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
     o = o + "      (call $__fern_wasi_tcp_socket_drop (local.get $sock))\n";
-    o = o + "      (return (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))))\n";
+    o = o + "      (local.set $e (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))\n";
+    o = o + "      (call $__fern_raw_free (local.get $ret) (i32.const 16))\n";
+    o = o + "      (return (local.get $e))))\n";
     o = o + "    (call $__fern_wasi_tcp_finish_bind (local.get $sock) (local.get $ret))\n";
     o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
     o = o + "      (call $__fern_wasi_tcp_socket_drop (local.get $sock))\n";
-    o = o + "      (return (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))))\n";
+    o = o + "      (local.set $e (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))\n";
+    o = o + "      (call $__fern_raw_free (local.get $ret) (i32.const 16))\n";
+    o = o + "      (return (local.get $e))))\n";
     o = o + "    (call $__fern_wasi_tcp_start_listen (local.get $sock) (local.get $ret))\n";
     o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
     o = o + "      (call $__fern_wasi_tcp_socket_drop (local.get $sock))\n";
-    o = o + "      (return (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))))\n";
+    o = o + "      (local.set $e (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))\n";
+    o = o + "      (call $__fern_raw_free (local.get $ret) (i32.const 16))\n";
+    o = o + "      (return (local.get $e))))\n";
     o = o + "    (call $__fern_wasi_tcp_finish_listen (local.get $sock) (local.get $ret))\n";
     o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
     o = o + "      (call $__fern_wasi_tcp_socket_drop (local.get $sock))\n";
-    o = o + "      (return (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))))\n";
-    o = o + "    (local.set $st (call $__fern_alloc (i32.const 16)))\n";
+    o = o + "      (local.set $e (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))\n";
+    o = o + "      (call $__fern_raw_free (local.get $ret) (i32.const 16))\n";
+    o = o + "      (return (local.get $e))))\n";
+    o = o + "    (local.set $st (local.get $ret))\n";
     o = o + "    (i32.store (local.get $st) (local.get $sock))\n";
     o = o + "    (i32.store offset=4 (local.get $st) (i32.const 0))\n";
     o = o + "    (i32.store offset=8 (local.get $st) (i32.const 0))\n";
@@ -2993,7 +3011,7 @@ pub function tcp_listen_func(): string {
 pub function tcp_accept_func(): string {
     var o: string = "";
     o = o + "  (func $__fern_tcp_accept (param $l i32) (result i32)\n";
-    o = o + "    (local $sock i32) (local $p i32) (local $ret i32) (local $st i32)\n";
+    o = o + "    (local $sock i32) (local $p i32) (local $ret i32) (local $st i32) (local $e i32)\n";
     o = o + "    (local.set $sock (i32.load (local.get $l)))\n";
     o = o + "    (local.set $p (call $__fern_wasi_tcp_subscribe (local.get $sock)))\n";
     o = o + "    (call $__fern_wasi_pollable_block (local.get $p))\n";
@@ -3001,8 +3019,10 @@ pub function tcp_accept_func(): string {
     o = o + "    (local.set $ret (call $__fern_alloc (i32.const 16)))\n";
     o = o + "    (call $__fern_wasi_tcp_accept (local.get $sock) (local.get $ret))\n";
     o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
-    o = o + "      (return (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))))\n";
-    o = o + "    (local.set $st (call $__fern_alloc (i32.const 16)))\n";
+    o = o + "      (local.set $e (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))\n";
+    o = o + "      (call $__fern_raw_free (local.get $ret) (i32.const 16))\n";
+    o = o + "      (return (local.get $e))))\n";
+    o = o + "    (local.set $st (local.get $ret))\n";
     o = o + "    (i32.store (local.get $st) (i32.load offset=4 (local.get $ret)))\n";
     o = o + "    (i32.store offset=4 (local.get $st) (i32.load offset=8 (local.get $ret)))\n";
     o = o + "    (i32.store offset=8 (local.get $st) (i32.load offset=12 (local.get $ret)))\n";
@@ -3299,6 +3319,7 @@ pub function tcp_close_func(): string {
     o = o + "      (call $__fern_wasi_input_stream_drop (i32.load offset=4 (local.get $c)))\n";
     o = o + "      (call $__fern_wasi_output_stream_drop (i32.load offset=8 (local.get $c)))))\n";
     o = o + "    (call $__fern_wasi_tcp_socket_drop (i32.load (local.get $c)))\n";
+    o = o + "    (call $__fern_raw_free (local.get $c) (i32.const 16))\n";
     o = o + "    (i32.const 0))\n";
     return o;
 }

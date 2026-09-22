@@ -108,6 +108,15 @@ extend that host stub through `tcp_close`: listener, connect and accept must
 release all owned resources, including valid handle zero. A separate presence
 word distinguishes absent listener streams from live connection streams.
 
+`TestWasmSocketGuestStorage` and `TestSelfHostWasmSocketGuestStorage`
+repeat each TCP success/failure case 32 times. After the first operation,
+the heap high-water mark must stay flat. Each operation allocates one
+return area, reused as the successful connection record and released by
+close, or released immediately on error. Host resources still pass the
+same ownership checks. The self-host gate also validates a close-only
+module so reclamation does not depend on a constructor pulling in the heap.
+These tests do not establish reclamation for UDP or stream-I/O scratch.
+
 ## Generated digest sources
 
 The lint lane runs `make digest-check` on every PR and main push. It compares

@@ -839,6 +839,7 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__build_io_error")
 					needs.add("__fern_temp_dir")
 				case "__fern_tcp_listen":
+					needs.add("__free")
 					// (port) → i32 — heap pointer to a 16-byte
 					// listener struct (sock, 0, 0), or -errno
 					// on failure. Pulls in the __network_handle
@@ -849,12 +850,14 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__network_handle")
 					needs.add("__fern_tcp_listen")
 				case "__fern_tcp_accept":
+					needs.add("__free")
 					// (listener) → i32 — heap pointer to a
 					// 16-byte connection struct (sock, instream,
 					// outstream), or -errno on failure.
 					needs.add("__fern_alloc")
 					needs.add("__fern_tcp_accept")
 				case "__fern_tcp_connect":
+					needs.add("__free")
 					// (host_be, port) → i32 — outbound client; same
 					// 16-byte connection struct as accept. Needs the
 					// network accessor (like tcp_listen).
@@ -889,8 +892,9 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_str_byte")
 					needs.add("__fern_tcp_send")
 				case "__fern_tcp_close":
+					needs.add("__free")
 					// (conn) → i32 (always 0). Drops the
-					// streams (if non-zero) before the parent
+					// streams (if present) before the parent
 					// tcp-socket to satisfy the canonical-ABI
 					// resource-has-children rule.
 					needs.add("__fern_tcp_close")

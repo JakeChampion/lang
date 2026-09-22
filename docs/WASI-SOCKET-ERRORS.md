@@ -48,3 +48,11 @@ streams with handle zero, then drops the socket unconditionally. This private
 layout is shared by both compilers and does not change the integer API.
 Close fault tests cover listeners, outbound connections and accepted connections
 with zero and nonzero handles, including setup failures before close.
+
+Listen, connect and accept reuse their 16-byte canonical return area as the
+successful socket record. Close returns it to the allocator after dropping
+the resources. A setup error saves its errno before freeing the return area:
+the freelist can overwrite the former error payload. Repeated fault probes
+check one allocation per operation and a flat heap high-water mark after
+warmup. UDP and stream-I/O scratch, and the worker's network capability,
+remain separate work.

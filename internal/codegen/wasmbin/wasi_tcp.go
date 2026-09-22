@@ -115,6 +115,11 @@ func buildNetworkHandleBody(idxs map[string]uint32) []byte {
 //
 // Stack on entry: empty. Stack on exit: function has returned.
 func emitErrnoNegReturn(body []byte, retptrLocal uint32, idxs map[string]uint32) []byte {
+	return emitErrnoNegReturnReclaim(body, retptrLocal, 0, idxs)
+}
+
+// Save the errno on the operand stack before free overwrites the return area.
+func emitErrnoNegReturnReclaim(body []byte, retptrLocal uint32, size int32, idxs map[string]uint32) []byte {
 	body = inst.InstI32Const(body, 0)
 	body = inst.InstLocalGet(body, retptrLocal)
 	body = inst.InstI32Const(body, 4)
@@ -122,6 +127,11 @@ func emitErrnoNegReturn(body []byte, retptrLocal uint32, idxs map[string]uint32)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstCall(body, idxs["__fern_wasi_socket_errno"])
 	body = numeric.InstI32Sub(body)
+	if size != 0 {
+		body = inst.InstLocalGet(body, retptrLocal)
+		body = inst.InstI32Const(body, size)
+		body = inst.InstCall(body, idxs["__free"])
+	}
 	body = inst.InstReturn(body)
 	return body
 }
@@ -167,15 +177,12 @@ func buildTcpListenBody(idxs map[string]uint32) []byte {
 	fail := func(body []byte) []byte {
 		body = inst.InstLocalGet(body, 1)
 		body = inst.InstCall(body, idxs["wasi_sockets_tcp_socket_drop"])
-		return emitErrnoNegReturn(body, 2, idxs)
+		return emitErrnoNegReturnReclaim(body, 2, 16, idxs)
 	}
 
 	var body []byte
 
-	// retptr = alloc(16). 8 would do for the create / bind /
-	// listen retptrs, but the bump allocator rounds up to 4 and
-	// 16 leaves headroom if a future expansion of the result
-	// variant grows the payload.
+	// The 16-byte return area becomes the owned record after successful setup.
 	body = inst.InstI32Const(body, 16)
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalSet(body, 2)
@@ -188,7 +195,7 @@ func buildTcpListenBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 2)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = emitErrnoNegReturn(body, 2, idxs)
+	body = emitErrnoNegReturnReclaim(body, 2, 16, idxs)
 	body = inst.InstEnd(body)
 	// $sock = mem[retptr + 4]
 	body = inst.InstLocalGet(body, 2)
@@ -252,9 +259,8 @@ func buildTcpListenBody(idxs map[string]uint32) []byte {
 	body = fail(body)
 	body = inst.InstEnd(body)
 
-	// Allocate the 16-byte listener struct: (sock, 0, 0).
-	body = inst.InstI32Const(body, 16)
-	body = inst.InstCall(body, alloc)
+	// Reuse the 16-byte return area as the owned socket record.
+	body = inst.InstLocalGet(body, 2)
 	body = inst.InstLocalTee(body, 3)
 	body = inst.InstLocalGet(body, 1) // $sock
 	body = memory.InstI32Store(body, 2, 0)
@@ -320,7 +326,7 @@ func buildTcpConnectBody(idxs map[string]uint32) []byte {
 	fail := func(body []byte) []byte {
 		body = inst.InstLocalGet(body, 2)
 		body = inst.InstCall(body, idxs["wasi_sockets_tcp_socket_drop"])
-		return emitErrnoNegReturn(body, 3, idxs)
+		return emitErrnoNegReturnReclaim(body, 3, 16, idxs)
 	}
 
 	var body []byte
@@ -337,7 +343,7 @@ func buildTcpConnectBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 3)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = emitErrnoNegReturn(body, 3, idxs)
+	body = emitErrnoNegReturnReclaim(body, 3, 16, idxs)
 	body = inst.InstEnd(body)
 	// $sock = mem[retptr + 4].
 	body = inst.InstLocalGet(body, 3)
@@ -389,11 +395,10 @@ func buildTcpConnectBody(idxs map[string]uint32) []byte {
 	body = fail(body)
 	body = inst.InstEnd(body)
 
-	// Allocate the 16-byte connection struct: (sock, input, output).
+	// Reuse the 16-byte return area as the owned socket record.
 	// finish-connect's Ok payload is tuple<input @ retptr+4,
 	// output @ retptr+8>.
-	body = inst.InstI32Const(body, 16)
-	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalGet(body, 3)
 	body = inst.InstLocalTee(body, 4)
 	body = inst.InstLocalGet(body, 2) // $sock
 	body = memory.InstI32Store(body, 2, 0)
@@ -551,7 +556,7 @@ func buildTcpAcceptBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 3)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = emitErrnoNegReturn(body, 3, idxs)
+	body = emitErrnoNegReturnReclaim(body, 3, 16, idxs)
 	body = inst.InstEnd(body)
 
 	// Ok payload at retptr+4: (tcp-socket, input-stream, output-stream).
@@ -571,9 +576,8 @@ func buildTcpAcceptBody(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load(body, 2, 0)
 	body = inst.InstLocalSet(body, 6) // $outstream
 
-	// Allocate 16-byte connection struct: (newsock, instream, outstream).
-	body = inst.InstI32Const(body, 16)
-	body = inst.InstCall(body, alloc)
+	// Reuse the 16-byte return area as the owned socket record.
+	body = inst.InstLocalGet(body, 3)
 	body = inst.InstLocalTee(body, 7)
 	body = inst.InstLocalGet(body, 4)
 	body = memory.InstI32Store(body, 2, 0)
@@ -842,6 +846,9 @@ func buildTcpCloseBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 0)
 	body = memory.InstI32Load(body, 2, 0)
 	body = inst.InstCall(body, idxs["wasi_sockets_tcp_socket_drop"])
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstCall(body, idxs["__free"])
 	body = inst.InstI32Const(body, 0)
 	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 0, encode.ValtypeI32), body)
 }
