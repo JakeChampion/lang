@@ -2038,24 +2038,25 @@ function's `ret`, the inline-string arm sits there too and rejoins at the
 `lea` with `scratch + 1` in the base register, and P13 folds the `lea`
 into the load that follows it. That is five instructions for the byte, and
 three for an array element. The same slice lets P8 see a reload through
-the register loads a compare needs, and P11 see a dead reload through a
-fused increment.
+the register loads a compare needs, P11 see a dead reload through a fused
+increment, and P14 take a binary operation's right operand from its frame
+slot (`cmp eax, dword ptr [rbp-16]`) instead of loading it into rcx first.
 
 Instructions retired under callgrind, one build of each utility from the
 same tree at each step, outputs byte-identical on every row:
 
 | workload | before (Ir) | after slice 1 | after slice 2 | change |
 |---|---:|---:|---:|---:|
-| `sort` 100k lines | 577,720,322 | 542,819,828 | 530,464,775 | -8.2% |
-| `sort -n` 100k numbers | 1,949,987,576 | 1,586,532,461 | 1,454,793,061 | -25.4% |
-| `sort -k2,2n` 100k lines | 2,125,121,727 | 1,703,001,250 | 1,564,743,210 | -26.4% |
-| `fmt` 1.1 MB of prose | 473,948,933 | 425,377,262 | 407,448,730 | -14.0% |
-| `cat -A` 3 MB | 142,710,846 | 114,794,139 | 97,433,028 | -31.7% |
-| `cat -n` 3 MB | 47,520,260 | 44,179,989 | 43,795,128 | -7.8% |
-| `ptx` 300 kB of prose | 955,048,228 | 853,437,426 | 798,790,398 | -16.4% |
-| `wc -w` 4.5 MB | 274,461,474 | 239,241,002 | 230,186,558 | -16.1% |
+| `sort` 100k lines | 577,720,322 | 542,819,828 | 515,346,655 | -10.8% |
+| `sort -n` 100k numbers | 1,949,987,576 | 1,586,532,461 | 1,393,923,126 | -28.5% |
+| `sort -k2,2n` 100k lines | 2,125,121,727 | 1,703,001,250 | 1,499,262,993 | -29.5% |
+| `fmt` 1.1 MB of prose | 473,948,933 | 425,377,262 | 383,432,551 | -19.1% |
+| `cat -A` 3 MB | 142,710,846 | 114,794,139 | 94,250,442 | -34.0% |
+| `cat -n` 3 MB | 47,520,260 | 44,179,989 | 43,784,925 | -7.9% |
+| `ptx` 300 kB of prose | 955,048,228 | 853,437,426 | 770,658,577 | -19.3% |
+| `wc -w` 4.5 MB | 274,461,474 | 239,241,002 | 208,398,983 | -24.1% |
 
-A scan loop's `var c = s[i]; if (c >= 48 && c <= 57)` body is twelve
+A scan loop's `var c = s[i]; if (c >= 48 && c <= 57)` body is eleven
 instructions per byte after both, from twenty-seven. What it still pays is
 the stack machine itself: every local is a frame slot, so the induction
 variable is stored and reloaded on each iteration, and the byte is stored

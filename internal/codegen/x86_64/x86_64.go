@@ -5694,6 +5694,23 @@ func (g *generator) peepholeTail() bool {
 		}
 	}
 
+	// P14 — frame slot as the ALU operand. A binary operation on two
+	// locals loads both, P5 having already sent the right operand straight
+	// to rcx; the ALU form takes that slot from memory instead:
+	//
+	//   mov rcx, [rbp-N] / cmp eax, ecx   =>  cmp eax, dword ptr [rbp-N]
+	//   mov rcx, [rbp-N] / add rax, rcx   =>  add rax, qword ptr [rbp-N]
+	//
+	// The 32-bit form reads the slot's low four bytes, which is what ecx
+	// held. Dropping the write to rcx is sound for P4's reason: every
+	// consumer of rcx in this backend writes it before reading it.
+	if n >= 2 {
+		if line, ok := foldSlotIntoAlu(w[n-2], w[n-1]); ok {
+			g.peepWin = append(w[:n-2], line)
+			return true
+		}
+	}
+
 	// P9 — literal shift count. A shift's count travels in cl, so a
 	// constant count is materialised into the counter register first —
 	// P5 having already collapsed its own push/pop pair:
@@ -6322,6 +6339,26 @@ func foldLeaIntoLoad(lea, load string) (string, bool) {
 	for _, pfx := range [...]string{"\tmov rax, ", "\tmov eax, ", "\tmovzx eax, ", "\tmovsx eax, ", "\tmovsxd rax, "} {
 		if strings.HasPrefix(load, pfx) && strings.HasSuffix(load, "[rax]") {
 			return load[:len(load)-len("[rax]")] + addr, true
+		}
+	}
+	return "", false
+}
+
+// foldSlotIntoAlu recognises P14's pair and returns the ALU line with the
+// frame slot as its source operand.
+func foldSlotIntoAlu(load, alu string) (string, bool) {
+	const loadPfx = "\tmov rcx, [rbp-"
+	if !strings.HasPrefix(load, loadPfx) || !strings.HasSuffix(load, "]") ||
+		strings.ContainsAny(load[len(loadPfx):], " +-") {
+		return "", false
+	}
+	slot := load[len("\tmov rcx, "):]
+	for _, m := range [...]string{"cmp", "add", "sub", "and", "or", "xor", "imul"} {
+		switch alu {
+		case "\t" + m + " eax, ecx":
+			return "\t" + m + " eax, dword ptr " + slot, true
+		case "\t" + m + " rax, rcx":
+			return "\t" + m + " rax, qword ptr " + slot, true
 		}
 	}
 	return "", false

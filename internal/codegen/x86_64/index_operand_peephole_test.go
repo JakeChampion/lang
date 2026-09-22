@@ -173,7 +173,18 @@ func TestPeepholeDropsReloadAfterLoadCompareAndBranch(t *testing.T) {
 		"\tjne .L1",
 		"\tmov rax, [rbp-64]",
 	)
-	if !sameLines(got, "\tmov rax, [rbp-64]", "\tmov rcx, [rbp-72]", "\tcmp eax, ecx", "\tjne .L1") {
+	// P14 has folded the right operand's load into the compare.
+	if !sameLines(got, "\tmov rax, [rbp-64]", "\tcmp eax, dword ptr [rbp-72]", "\tjne .L1") {
+		t.Errorf("got %q", got)
+	}
+	got = runPeephole(
+		"\tmov rax, [rbp-64]",
+		"\tmov rcx, rdx",
+		"\tcmp eax, ecx",
+		"\tjne .L1",
+		"\tmov rax, [rbp-64]",
+	)
+	if !sameLines(got, "\tmov rax, [rbp-64]", "\tmov rcx, rdx", "\tcmp eax, ecx", "\tjne .L1") {
 		t.Errorf("got %q", got)
 	}
 	decline := [][]string{
@@ -241,5 +252,35 @@ function main(): i32 { var a: i32[] = [1, 2]; return f("ab", a, 1); }`)
 	}
 	if strings.Contains(hot, "\tlea rax, [rax + rcx") {
 		t.Errorf("an index lea survived unfused:\n%s", hot)
+	}
+}
+
+func TestFoldSlotIntoAlu(t *testing.T) {
+	cases := []struct{ load, alu, want string }{
+		{"\tmov rcx, [rbp-16]", "\tcmp eax, ecx", "\tcmp eax, dword ptr [rbp-16]"},
+		{"\tmov rcx, [rbp-16]", "\tcmp rax, rcx", "\tcmp rax, qword ptr [rbp-16]"},
+		{"\tmov rcx, [rbp-16]", "\tadd rax, rcx", "\tadd rax, qword ptr [rbp-16]"},
+		{"\tmov rcx, [rbp-16]", "\tsub eax, ecx", "\tsub eax, dword ptr [rbp-16]"},
+		{"\tmov rcx, [rbp-16]", "\timul rax, rcx", "\timul rax, qword ptr [rbp-16]"},
+	}
+	for _, c := range cases {
+		got, ok := foldSlotIntoAlu(c.load, c.alu)
+		if !ok || got != c.want {
+			t.Errorf("foldSlotIntoAlu(%q, %q) = %q, %v; want %q", c.load, c.alu, got, ok, c.want)
+		}
+	}
+	decline := []struct{ load, alu, why string }{
+		{"\tmov rcx, [rbp-16]", "\tshl rax, cl", "a shift count is not an operand"},
+		{"\tmov rcx, [rbp-16]", "\tcmp ecx, eax", "the slot is the left operand"},
+		{"\tmov rcx, [rbp-16]", "\tmov [rax], ecx", "a store reads rcx as data"},
+		{"\tmov rcx, [rax]", "\tcmp eax, ecx", "not a frame slot"},
+		{"\tmov rcx, [rbp-16 + rdx]", "\tcmp eax, ecx", "not a plain slot"},
+		{"\tmov rdx, [rbp-16]", "\tcmp eax, ecx", "a different register"},
+		{"\tmov rcx, [rbp-16]", "\tdiv rcx", "a divisor is read by an instruction with no memory form here"},
+	}
+	for _, c := range decline {
+		if got, ok := foldSlotIntoAlu(c.load, c.alu); ok {
+			t.Errorf("folded %q / %q to %q; should decline: %s", c.load, c.alu, got, c.why)
+		}
 	}
 }
