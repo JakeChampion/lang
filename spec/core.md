@@ -214,7 +214,7 @@ behind is its block type's shape, which `end` restores.
 | `call` | `A… → R` | `I32`, `Str`, `ArgTypes` | `Str` names the callee, `I32` counts arguments — not slots. |
 | `call_indirect` | `A… i → R` | `I32`, `Sig` | Table index on top. `Sig` is the static signature of the function-typed value dispatched through. |
 | `call_dyn` | `i A… i → R` | `I32`, `Sig` | Receiver data below the arguments, vtable word on top; `I32` is the method's slot in the vtable. `docs/DYN-TRAITS.md` §4.2.1. |
-| `call_closure_direct` | `A… i → R` | `I32`, `Str`, `ArgTypes` | Environment pointer on top. The defunctionalised form of a `call_indirect` whose receiver was provably monomorphic. |
+| `call_closure_direct` | `A… i → R` | `I32`, `Str`, `ArgTypes` | Environment pointer on top, and counted by `I32` with the arguments, as the hoisted target's parameter list counts it. The defunctionalised form of a `call_indirect` whose receiver was provably monomorphic. |
 | `call_direct_pair` | `A… → i i` | `I32`, `Str`, `ArgTypes` | The callee returns a `(tag, payload)` pair in registers. |
 
 A callee that the program does not define — a builtin, or a runtime

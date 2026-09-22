@@ -1,6 +1,10 @@
 package ir
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/jakechampion/lang/internal/ast"
+)
 
 // optimised lowers src at the native pointer width and runs the whole
 // battery, which is where ChainConditions sees the shapes inlining leaves.
@@ -177,5 +181,53 @@ func TestChainConditionsRewritesOps(t *testing.T) {
 	)...)
 	if _, ok := chainOneCondition(ops, nil, NewCallShapes(&Program{})); ok {
 		t.Error("a value above another stack entry was rewritten")
+	}
+}
+
+// The stack simulation counts a call's operands the way the backends do:
+// a dyn call's I32 is its vtable slot, so the arguments come from the
+// receiver-first signature, with the receiver word below them and the
+// vtable word above; a direct closure call's count already includes the
+// env pointer; an indirect call has the closure pair on top of its
+// arguments. The verifier is the reference for each.
+func TestChainStackEffectCountsEveryCallShape(t *testing.T) {
+	i32 := ast.NumberType{Width: 32}
+	shapes := NewCallShapes(&Program{})
+	dyn := Op{Kind: OpCallDyn, I32: 3, Ext: &OpExt{Sig: &ast.FuncType{Params: []ast.Type{i32, i32, i32}, Result: i32}}}
+	if pops, pushes, ok := chainStackEffect(dyn, nil, shapes); !ok || pops != 4 || pushes != 1 {
+		t.Errorf("dyn call with two arguments: got (%d, %d, %v), want (4, 1, true): receiver, two args, vtable", pops, pushes, ok)
+	}
+	slotless := Op{Kind: OpCallDyn, I32: 0}
+	if _, _, ok := chainStackEffect(slotless, nil, shapes); ok {
+		t.Error("a dyn call without a signature was counted as taking nothing")
+	}
+
+	for _, ptrW := range []int{8, 4} {
+		p := lowerSourceWith(t, `function makeAdder(n: i32): (i32) => i32 {
+	function add(x: i32): i32 { return x + n; }
+	return add;
+}
+function main(): i32 {
+	var f = makeAdder(7);
+	return f(35);
+}`, ptrW)
+		Inline(p)
+		Defunctionalise(p, int32(ptrW))
+		sigs := buildFuncSigs(p)
+		shapes := NewCallShapes(p)
+		found := false
+		for _, op := range findFunc(p, "main").Ops {
+			if op.Kind != OpCallClosureDirect {
+				continue
+			}
+			found = true
+			pops, pushes, ok := chainStackEffect(op, sigs, shapes)
+			if !ok || pops != int(op.I32) || pushes != 1 {
+				t.Errorf("ptrW=%d: direct closure call with argc %d: got (%d, %d, %v), want (%d, 1, true)", ptrW, op.I32, pops, pushes, ok, op.I32)
+			}
+		}
+		if !found {
+			t.Fatalf("ptrW=%d: main was not defunctionalised:\n%s", ptrW, p)
+		}
 	}
 }
