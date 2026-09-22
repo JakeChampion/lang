@@ -367,12 +367,13 @@ is created at run start, so nothing in the lane waits on anything but the
 pool. The 28-minute wait before the suite is the PR FIFO, which the second
 measurement covers.
 
-The same run's macOS job was 14.9 minutes, 911 s of it the coreutils corpus,
-and 300 s of that one case: `seq -f "%.2147483648g" 1`, whose GNU 9.12 oracle
-never returns on macOS and ran to the harness's five-minute limit on every
-run. The case now carries a ten-second bound of its own (the outcome, "did
-not finish", is unchanged, so the Darwin ledger does not move), which takes
-~5 minutes off that job.
+The same run's macOS job was 14.9 minutes, 769 s of it the coreutils corpus
+step. The per-case log of main run 35708878302 (the corpus took 911 s there)
+puts 300 s of that on one case: `seq -f "%.2147483648g" 1`, whose GNU 9.12
+oracle never returns on macOS and ran to the harness's five-minute limit on
+every run before #10003. The case now carries a ten-second bound of its own
+(the outcome, "did not finish", is unchanged, so the Darwin ledger does not
+move), which takes ~5 minutes off that job.
 
 ### The concurrent-job ceiling, confirmed
 
