@@ -54,9 +54,10 @@ func TestSelfHostMapKeyAnnotationDifferentialX86_64(t *testing.T) {
 }
 
 // mapKeyAnnotationRows covers each position a `Map[K, V]` annotation can
-// appear in, with a key both checkers must refuse and — in the last four
-// rows — keys both must accept, so a rule that over-reaches is as red as one
-// that under-reaches.
+// appear in. The rejecting rows come first and the ACCEPTING ones last, which
+// is the half that matters as much: refusing a key the language supports is
+// the same bug pointed the other way, and this PR shipped one (a tuple key —
+// see #10020) until the corpus was made to say so.
 var mapKeyAnnotationRows = []struct {
 	name     string
 	src      string
@@ -95,17 +96,29 @@ function main(): i32 { var m: Map[f64, i32] = Map { 1.5: 7 }; return 0; }
 function take(m: Map[f32, i32]): i32 { return 0; }
 function main(): i32 { return 0; }
 `, true},
+	{"struct-key-without-the-derives", `import "core/map";
+struct K { a: i32 }
+function take(m: Map[K, i32]): i32 { return 0; }
+function main(): i32 { return 0; }
+`, true},
+	{"lambda-parameter", `import "core/map";
+function main(): i32 {
+    var f = (m: Map[f64, i32]): i32 => { return 0; };
+    return 0;
+}
+`, true},
+	{"lambda-return-type", `import "core/map";
+function main(): i32 {
+    var f = (n: i32): Map[f64, i32] => { return map_new(2); };
+    return 0;
+}
+`, true},
 	// Deliberately accepted by both: the interpreter supports a tuple key and
 	// TestInterpMapCompositeKeys gates it. See isTupleKey / #10020.
 	{"tuple-key", `import "core/map";
 function take(m: Map[(i32, i32), i32]): i32 { return 0; }
 function main(): i32 { return 0; }
 `, false},
-	{"struct-key-without-the-derives", `import "core/map";
-struct K { a: i32 }
-function take(m: Map[K, i32]): i32 { return 0; }
-function main(): i32 { return 0; }
-`, true},
 	{"struct-key-with-the-derives", `import "core/map";
 import "core/cmp";
 @derive(cmp.Eq, cmp.Hash)
@@ -125,16 +138,4 @@ function main(): i32 { var m: Map[string, i32] = map_new(2); return take(m); }
 function take[T](m: Map[T, i32]): i32 { return 0; }
 function main(): i32 { return 0; }
 `, false},
-	{"lambda-parameter", `import "core/map";
-function main(): i32 {
-    var f = (m: Map[f64, i32]): i32 => { return 0; };
-    return 0;
-}
-`, true},
-	{"lambda-return-type", `import "core/map";
-function main(): i32 {
-    var f = (n: i32): Map[f64, i32] => { return map_new(2); };
-    return 0;
-}
-`, true},
 }
