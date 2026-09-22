@@ -1931,25 +1931,33 @@ function captures(c: ast.ExprCall, s: State, types: typeinfo.Type[]): Captured {
 // A name with no contract may still be a variant constructor of the enum the
 // call is written against.
 function variant_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State, expected: typeinfo.Type): Value {
-    var whole: typeinfo.Type = literal_union(e, s, expected);
-    // A destination that names the union but settles nothing in it is no more
-    // use than none at all: `and[U](other: Option[U])` binds U from this very
-    // argument, so `Option[U]` names Some without saying what Some holds, and
-    // the payload is the only thing that can say.
-    if ((!names_variant(s, whole, name) || !semtypes.concrete(whole, false)) && name == "Some" && c.args.len() == 1) {
-        whole = some_of(c.args[0], s);
-    }
+    var whole: typeinfo.Type = settled_union(literal_union(e, s, expected), name, c.args, s);
     if (names_variant(s, whole, name)) { return variant(name, whole, c.args, s); }
     return refused(s, "call target has no semantic contract: " + name);
 }
 
-// A `Some` with no destination to name its Option — a match scrutinee, a
-// binding with no annotation — is the Option of its payload's own type, as
-// the checker infers it for the binding.
-function some_of(payload: ast.Expr, s: State): typeinfo.Type {
-    var t: typeinfo.Type = checked(payload, s);
-    if (!semtypes.concrete(t, false)) { return typeinfo.unchecked(); }
-    return typeinfo.TypeUnion { name: "Option", args: [t] };
+// A destination that names a builtin union but settles nothing in it is no
+// more use than none at all: `and[U](other: Result[U, E])` binds U from this
+// very argument, so `Result[U, string]` names Ok without saying what Ok holds,
+// and the payload is the only thing that can say. Each payload's checked type
+// binds the variable its field spells. A `Some` with no destination at all —
+// a match scrutinee, a binding with no annotation — is the Option of its
+// payload's own type, as the checker infers it for the binding.
+function settled_union(whole: typeinfo.Type, name: string, args: ast.Expr[], s: State): typeinfo.Type {
+    if (names_variant(s, whole, name) && semtypes.concrete(whole, false)) { return whole; }
+    var pattern: typeinfo.Type = whole;
+    if (name == "Some" && !names_variant(s, whole, name)) { pattern = typeinfo.TypeUnion { name: "Option", args: [typeinfo.TypeErased { name: "$payload" }] }; }
+    var shape: Payloads = builtin_payloads(pattern, name);
+    if (!shape.found || shape.types.len() != args.len()) { return whole; }
+    var b: ssasem.Binding = ssasem.unbound();
+    var i: i32 = 0;
+    while (i < args.len()) {
+        var t: typeinfo.Type = checked(args[i], s);
+        if (semtypes.concrete(t, false)) { b = ssasem.bind_type(b, shape.types[i], t); }
+        i = i + 1;
+    }
+    if (!b.ok) { return whole; }
+    return ssasem.substitute(pattern, b);
 }
 
 function direct_call(c: ast.ExprCall, contract: ssasem.Contract, s: State, statement: boolean, expected: typeinfo.Type): Value {

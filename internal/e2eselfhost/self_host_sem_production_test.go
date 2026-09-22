@@ -608,6 +608,111 @@ function main(): i32 {
 	// which nothing but the contract table can type — so the table is built
 	// to a fixpoint. Refused 4 of 8 before, `unresolved result type: declared
 	// fn`, and the caller with it.
+	// A generic enum that declares a method. monomorphize_enums skipped any
+	// enum with one, so the enum stayed generic and enum_entry refused its
+	// every use ("variant field type"). The methods clone per instantiation
+	// now, the derived ones included, and a method with a type parameter of
+	// its own folds into a free generic the way a struct's does, with the
+	// variant argument's payload settling that parameter.
+	{name: "generic-enum-methods-clone-per-instantiation", atLeast: 6, noLeak: true, src: `
+import "core/cmp";
+
+@derive(cmp.Eq)
+enum Opt[T] { Sm(T), Nn }
+
+function (o: Opt[T]) or_else(d: T): T { match (o) { Sm(x) => { return x; }, Nn => { return d; } } }
+function (o: Opt[T]) swap[U](other: Opt[U]): Opt[U] { match (o) { Sm(x) => { return other; }, Nn => { return Nn; } } }
+
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) {
+        var s: Opt[string] = Sm("round " + i.to_string());
+        var n: Opt[i32] = s.swap(Sm(i));
+        var e: Opt[string] = Nn;
+        if (s == e) { t = t + 100; }
+        if (s == s.swap(Sm("round " + i.to_string()))) { t = t + 1; }
+        t = t + n.or_else(1) + s.or_else("").len();
+        i = i + 1;
+    }
+    return t % 97;
+}`},
+	// A builtin union's literal takes its type arguments from the destination,
+	// and `and[U](other: Result[U, E])` binds U from this very argument: the
+	// destination `Result[U, string]` named Ok without saying what it held, so
+	// the literal was refused ("unsupported variant literal"). The payload
+	// settles it now, for Ok and Err as it already did for Some. The payload is
+	// an i32 because the AST lowering, the oracle here, misreads a string one
+	// through the erased U and answers differently on each leg (#10014).
+	{name: "builtin-union-payload-settles-the-literal", atLeast: 1, noLeak: true, src: `
+import "std/result";
+
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) {
+        var r: Result[i32, string] = Ok(i);
+        var s: Result[i32, string] = r.and(Ok(i + 1));
+        var e: Result[i32, string] = Err("no");
+        var f: Result[i32, string] = e.and(Ok(i + 2));
+        t = t + s.unwrap_or(0) + f.unwrap_or(9);
+        i = i + 1;
+    }
+    return t % 7;
+}`},
+	// A generic enum with a method that is only ever used at a composite key.
+	// A tuple key has no clone name, so the enum is left out of the pass with
+	// its method beside it. Nothing produces; the row pins that the module
+	// still compiles and answers on every leg.
+	{name: "generic-enum-method-at-a-composite-key", atLeast: 0, src: `
+enum Opt[T] { Sm(T), Nn }
+
+function (o: Opt[T]) get_or(d: T): T {
+    var t: Opt[T] = o;
+    match (t) { Sm(x) => { return x; }, Nn => { return d; } }
+}
+
+function main(): i32 {
+    var o: Opt[(i32, i32)] = Sm((3, 4));
+    var n: Opt[(i32, i32)] = Nn;
+    var p: (i32, i32) = o.get_or((0, 0));
+    var q: (i32, i32) = n.get_or((1, 1));
+    return p.0 + p.1 + q.0 + q.1;
+}`},
+	// The same enum used at a simple key AND a composite key in one module. A
+	// clone beside the generic original is unsound on the AST lowering, which
+	// dispatches an enum's methods by name (`a.get_or(9)` answered 0 with both
+	// in the module), so one unkeyable use keeps the whole enum out of the pass.
+	// Before, the pass dropped the generic `Opt` for the `Opt[i32]` use and the
+	// `Opt[(i32, i32)]` annotation dangled, with or without a method.
+	{name: "generic-enum-at-a-simple-and-a-composite-key", atLeast: 0, src: `
+enum Opt[T] { Sm(T), Nn }
+
+function (o: Opt[T]) get_or(d: T): T {
+    match (o) { Sm(x) => { return x; }, Nn => { return d; } }
+}
+
+function main(): i32 {
+    var a: Opt[i32] = Sm(3);
+    var b: Opt[(i32, i32)] = Sm((1, 2));
+    var n: Opt[i32] = Nn;
+    var p: (i32, i32) = b.get_or((5, 5));
+    return a.get_or(9) * 10 + n.get_or(4) + p.0 + p.1;
+}`},
+	// The method-less form of the mix, which dangled on main: the pass dropped
+	// the generic `Opt` for the `Opt[i32]` use and `Sm((1, 2))` then named a
+	// variant no declaration held (E001 from the checker).
+	{name: "generic-enum-at-a-simple-and-a-composite-key-without-methods", atLeast: 0, src: `
+enum Opt[T] { Sm(T), Nn }
+
+function main(): i32 {
+    var a: Opt[i32] = Sm(3);
+    var b: Opt[(i32, i32)] = Sm((1, 2));
+    var x: i32 = 0;
+    match (a) { Sm(n) => { x = n; }, Nn => { x = 0; } }
+    match (b) { Sm(p) => { x = x + p.0 + p.1; }, Nn => { } }
+    return x;
+}`},
 	{name: "value-match-first-arm-is-a-match-of-lambdas", atLeast: 8, noLeak: true, src: `
 enum Status { Active, Inactive, Pending }
 function main(): i32 {
