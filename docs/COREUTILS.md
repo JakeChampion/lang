@@ -2347,6 +2347,41 @@ parameter holds a second reference, so copy-on-write fires); `own` on
 the parameter is what makes it write in place, and it is worth knowing
 before reaching for that shape again.
 
+### sum -s on x86-64, 2026-09-22 (GNU coreutils 9.12)
+
+`sum -s` of 62 MiB was 0.25x GNU on x86-64 and 0.41x under the self-host
+build, and the whole run was `__fern_sum_bytes`: the x86-64 body was the
+scalar byte loop §3.4 of `docs/ATLAS-PLATFORM-PLAN.md` ships first, where
+arm64's had already moved to `uaddlp` / `uadalp`. The x86-64 body now sums
+sixteen bytes a step with `psadbw` against a zero register and `paddq` — the
+SSE2 pair the scalar body's own comment named, and both already in the
+native assembler, which has no VEX forms for the AVX2 equivalents. 3 MB of
+text: 3.2 ms → 0.83 ms, GNU 1.9 ms. Byte-identical to GNU 9.12 at every
+length straddling a block and on 3 MB of text and of random bytes.
+
+### sort -n's one-word key, 2026-09-22 (GNU coreutils 9.12)
+
+`sort -n` of 500k numbers was 0.15x GNU: `magcompare` and `numcompare`
+walked both numbers' digits on every one of the n log n comparisons, at
+this compiler's cost per byte read, and were half the run. Each line's
+`-n` key is now summarised once into one i64 — the sign, the count of
+integer digits past leading zeros, and the first fourteen of those digits,
+laid out so a plain comparison of two words agrees with `numcompare`
+whenever they differ; equal words (a fraction, digits past fourteen, a
+magnitude of zero) leave the answer to `numcompare` as before. The
+comparison also now reads the byte spans only when it reaches the
+last-resort byte compare. 100k numbers under callgrind: 1.28 G
+instructions → 394 M; 500k numbers, wall clock:
+
+| workload | before | after | gnu 9.12 (wall / user) |
+|---|---:|---:|---:|
+| `sort -n` 500k numbers | 883 ms | 339 ms | 174 ms / 329 ms |
+
+GNU's wall clock there is its threads: single-threaded it does the same
+work in 329 ms of CPU. What remains on the Fern side is the merge itself
+and the comparison's call overhead, `sort_lines` and `compare_at` being
+65% of the instructions — #8822's codegen, not the utility.
+
 ### ls, 2026-09-14, Linux x86-64 (GNU coreutils 9.4, uutils 0.0.24)
 
 The same 4-core container, so read the columns against each other. The
