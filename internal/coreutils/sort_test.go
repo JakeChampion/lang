@@ -46,6 +46,12 @@ func sortCases(t *testing.T) []invocation {
 		strings.Repeat("9", 40000)+"\n"+strings.Repeat("8", 40000)+"\n"+strings.Repeat("9", 32767)+"\n"+
 		"1"+strings.Repeat("0", 32766)+"\n1"+strings.Repeat("0", 32767)+"\n-"+strings.Repeat("9", 40000)+"\n-"+strings.Repeat("8", 40000)+"\n"+
 		"b 5\na -5\nc 0\nd 0.5\ne x\nf 12345678901234567\ng 12345678901234568\n")
+	// Lines whose first eight bytes tie, and ones shorter than eight that
+	// are a prefix of a longer line: the byte word orders only what it
+	// separates, and the rest is the whole comparison.
+	wordkeys := catFile(t, dir, "wordkeys", "abcdefgh1\nabcdefgh0\nabcdefg\nabcdefgh\nabcdefgh\nABCDEFGHz\nABCDEFGHA\nabcdefgH\n"+
+		"abcdefgh\x00\nabcdefgh\x01\nab\n\nb\nB\n\x80\n\xff\n\x00\nabcdefghijk\nabcdefghIJK\nAbcdefghijk\n"+
+		"x 1\nx 2\nx 10\ny 1\nx 1\n")
 	dupes := catFile(t, dir, "dupes", "a\na\nb\nb\nb\nc\n")
 	fields := catFile(t, dir, "fields", "b 2 x\na 3 y\nc 1 z\n")
 	colons := catFile(t, dir, "colons", "b:2:x\na:3:y\nc:1:z\n")
@@ -132,6 +138,18 @@ func sortCases(t *testing.T) []invocation {
 		{name: "numeric key shapes reversed field", args: []string{"-k2,2nr", numkeys}},
 		{name: "numeric key shapes then bytes", args: []string{"-k2n", "-k1,1", numkeys}},
 		{name: "numeric key shapes ignoring blanks", args: []string{"-bn", numkeys}},
+		{name: "word ties", args: []string{wordkeys}},
+		{name: "word ties reversed", args: []string{"-r", wordkeys}},
+		{name: "word ties folded", args: []string{"-f", wordkeys}},
+		{name: "word ties folded reversed", args: []string{"-fr", wordkeys}},
+		{name: "word ties stable", args: []string{"-s", wordkeys}},
+		{name: "word ties unique", args: []string{"-u", wordkeys}},
+		{name: "word ties unique folded", args: []string{"-uf", wordkeys}},
+		{name: "word ties by field", args: []string{"-k1,1", wordkeys}},
+		{name: "word ties by field reversed then number", args: []string{"-k1,1r", "-k2n", wordkeys}},
+		{name: "word ties by folded field", args: []string{"-k1,1f", wordkeys}},
+		{name: "word ties dictionary order", args: []string{"-d", wordkeys}},
+		{name: "word ties ignoring nonprinting", args: []string{"-i", wordkeys}},
 		{name: "numeric long", args: []string{"--numeric-sort", nums}},
 		{name: "numeric signs", args: []string{"-n"}, stdin: "  -1\n  +1\n 0\n1e2\n.5\n-.5\n0.0\n-0\n"},
 		{name: "numeric leading zeros", args: []string{"-n"}, stdin: "007\n7\n0007.0\n"},
