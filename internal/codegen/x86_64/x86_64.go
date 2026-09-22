@@ -13149,16 +13149,21 @@ func (g *generator) emitTcpListenRuntime() {
 	g.emit("mov edx, 16")
 	g.emitSyscall(sysBind)
 	g.emit("test eax, eax")
-	g.emit("js .Ltcp_lst_err")
+	g.emit("js .Ltcp_lst_close")
 	// listen(fd, 128)
 	g.emit("mov edi, ebx")
 	g.emit("mov esi, 128")
 	g.emitSyscall(sysListen)
 	g.emit("test eax, eax")
-	g.emit("js .Ltcp_lst_err")
+	g.emit("js .Ltcp_lst_close")
 	// Return listener fd.
 	g.emit("mov eax, ebx")
 	g.emit("jmp .Ltcp_lst_done")
+	g.label(".Ltcp_lst_close")
+	g.emit("mov r12d, eax") // preserve the setup errno across close
+	g.emit("mov edi, ebx")
+	g.emitSyscall(sysClose)
+	g.emit("mov eax, r12d")
 	g.label(".Ltcp_lst_err")
 	// On failure rax already holds -errno from the failing syscall.
 	g.label(".Ltcp_lst_done")
@@ -13212,9 +13217,14 @@ func (g *generator) emitTcpConnectRuntime() {
 	g.emit("mov edx, 16")
 	g.emitSyscall(sysConnect)
 	g.emit("test eax, eax")
-	g.emit("js .Ltcp_con_err")
+	g.emit("js .Ltcp_con_close")
 	g.emit("mov eax, ebx") // return fd
 	g.emit("jmp .Ltcp_con_done")
+	g.label(".Ltcp_con_close")
+	g.emit("mov r12d, eax") // preserve the setup errno across close
+	g.emit("mov edi, ebx")
+	g.emitSyscall(sysClose)
+	g.emit("mov eax, r12d")
 	g.label(".Ltcp_con_err")
 	// rax holds -errno from the failing syscall.
 	g.label(".Ltcp_con_done")

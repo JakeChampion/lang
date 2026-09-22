@@ -6240,15 +6240,20 @@ func (g *generator) emitTcpListenRuntime() {
 	g.syscall("bind")
 	g.emit("add sp, sp, #16") // pop sockaddr_in
 	g.emit("cmp x0, #0")
-	g.emit("blt .Ltcp_lst_err")
+	g.emit("blt .Ltcp_lst_close")
 	// listen(fd, 128)
 	g.emit("mov x0, x20")
 	g.emit("mov x1, #128")
 	g.syscall("listen")
 	g.emit("cmp x0, #0")
-	g.emit("blt .Ltcp_lst_err")
+	g.emit("blt .Ltcp_lst_close")
 	g.emit("mov x0, x20") // return fd
 	g.emit("b .Ltcp_lst_done")
+	g.label(".Ltcp_lst_close")
+	g.emit("mov x19, x0") // preserve the setup errno across close
+	g.emit("mov x0, x20")
+	g.syscall("close")
+	g.emit("mov x0, x19")
 	g.label(".Ltcp_lst_err")
 	// x0 holds -errno from the failed syscall.
 	g.label(".Ltcp_lst_done")
@@ -6297,9 +6302,14 @@ func (g *generator) emitTcpConnectRuntime() {
 	g.syscall("connect")
 	g.emit("add sp, sp, #16")
 	g.emit("cmp x0, #0")
-	g.emit("blt .Ltcp_con_err")
+	g.emit("blt .Ltcp_con_close")
 	g.emit("mov x0, x21") // return fd
 	g.emit("b .Ltcp_con_done")
+	g.label(".Ltcp_con_close")
+	g.emit("mov x19, x0") // preserve the setup errno across close
+	g.emit("mov x0, x21")
+	g.syscall("close")
+	g.emit("mov x0, x19")
 	g.label(".Ltcp_con_err")
 	// x0 holds -errno from the failed syscall.
 	g.label(".Ltcp_con_done")

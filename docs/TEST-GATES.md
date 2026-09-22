@@ -159,6 +159,21 @@ limits must return empty arrays without calling the host. The corresponding
 `TCPRecvLifecycleCensus` tests read real loopback data through EOF, including
 payloads crossing a read-buffer boundary, and require zero live Fern heap bytes.
 
+## Native socket setup ownership
+
+`TestNativeSocketSetupReclaimsDescriptors` and its `TestSelfHost` twin
+exercise failed binds and connects on x86-64 and ARM64 Linux, including QEMU.
+The `Arm64DarwinSocketSetupReclaimsDescriptors` tests cover native Darwin.
+Bootstrap tests run both flat and SSA backends on Linux; self-host tests
+compile through the production driver with strict IR enabled.
+
+Each probe repeats a setup failure 32 times and requires the kernel to reuse
+the next available descriptor, including descriptor zero. It also checks
+the original errno. A separate probe exhausts a bounded descriptor limit
+and verifies that socket-creation failure leaves existing listeners open.
+These are descriptor ownership checks, not throughput or heap-allocation
+measurements. Listen failure cleanup is not fault-injected by these probes.
+
 ## Generated digest sources
 
 The lint lane runs `make digest-check` on every PR and main push. It compares

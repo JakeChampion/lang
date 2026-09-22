@@ -33,14 +33,21 @@ func emitTcpListenHelper(w func(string, ...any)) {
 	w("\tmov eax, 49") // bind
 	w("\tsyscall")
 	w("\ttest rax, rax")
-	w("\tjs .Lssa_tcpl_ret")
+	w("\tjs .Lssa_tcpl_close")
 	w("\tmov edi, ebx")
 	w("\tmov esi, 128")
 	w("\tmov eax, 50") // listen
 	w("\tsyscall")
 	w("\ttest rax, rax")
-	w("\tjs .Lssa_tcpl_ret")
+	w("\tjs .Lssa_tcpl_close")
 	w("\tmov eax, ebx")
+	w("\tjmp .Lssa_tcpl_ret")
+	w(".Lssa_tcpl_close:")
+	w("\tmov qword ptr [rsp], rax") // sockaddr is dead; preserve errno
+	w("\tmov edi, ebx")
+	w("\tmov eax, 3") // close
+	w("\tsyscall")
+	w("\tmov rax, qword ptr [rsp]")
 	w(".Lssa_tcpl_ret:")
 	w("\tadd rsp, 16")
 	w("\tpop rbx")
@@ -76,8 +83,15 @@ func emitTcpConnectHelper(w func(string, ...any)) {
 	w("\tmov eax, 42") // connect
 	w("\tsyscall")
 	w("\ttest rax, rax")
-	w("\tjs .Lssa_tcpc_ret")
+	w("\tjs .Lssa_tcpc_close")
 	w("\tmov eax, ebx")
+	w("\tjmp .Lssa_tcpc_ret")
+	w(".Lssa_tcpc_close:")
+	w("\tmov qword ptr [rsp], rax") // sockaddr is dead; preserve errno
+	w("\tmov edi, ebx")
+	w("\tmov eax, 3") // close
+	w("\tsyscall")
+	w("\tmov rax, qword ptr [rsp]")
 	w(".Lssa_tcpc_ret:")
 	w("\tadd rsp, 16")
 	w("\tpop rbx")
