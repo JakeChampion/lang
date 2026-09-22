@@ -884,6 +884,7 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__alloc_u8")
 					needs.add("__fern_tcp_recv")
 				case "__fern_tcp_send":
+					needs.add("__free")
 					// (conn, data) → i32 — bytes sent, -1 on
 					// failure. SSO-normalizes the input string
 					// so inline-form data flows through the

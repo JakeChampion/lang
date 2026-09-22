@@ -73,3 +73,10 @@ payload forms; real loopback tests verify payload bytes and zero live guest
 bytes. Stream I/O scratch and worker-owned network capabilities remain pending.
 The self-host test gives the external Preview 1 adapter separate stack pages;
 its persistent stacks are outside the Fern heap census, not reclaimed by UDP.
+
+TCP send releases its return area and any temporary inline-string spill after
+the final host read, including empty sends and mid-stream errors. The return
+area holds the full twelve-byte `result<_, stream-error>` layout. A
+`last-operation-failed` payload owns an `io/error` resource, which send drops
+even when its handle is zero; `closed` owns no error resource. The public
+integer result remains the byte count or `-1`. Receive cleanup remains pending.

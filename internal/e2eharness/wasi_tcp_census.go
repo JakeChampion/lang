@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"os/exec"
 	"regexp"
@@ -107,6 +108,61 @@ func WasiUDPCensusProbe(t *testing.T, data string) (string, func()) {
     }
     return 0;
 }`, conn.LocalAddr().(*net.UDPAddr).Port, data, len(data))
+	return src, func() {
+		t.Helper()
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func WasiTCPSendCensusProbe(t *testing.T, data string) (string, func()) {
+	t.Helper()
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { listener.Close() })
+	if err := listener.(*net.TCPListener).SetDeadline(time.Now().Add(30 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		for i := 0; i < 32; i++ {
+			conn, err := listener.Accept()
+			if err != nil {
+				done <- err
+				return
+			}
+			if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+				conn.Close()
+				done <- err
+				return
+			}
+			got, err := io.ReadAll(io.LimitReader(conn, int64(len(data)+1)))
+			conn.Close()
+			if err != nil {
+				done <- err
+				return
+			}
+			if string(got) != data {
+				done <- fmt.Errorf("connection %d: got %q, want %q", i, got, data)
+				return
+			}
+		}
+		done <- nil
+	}()
+	src := fmt.Sprintf(`function main(): i32 {
+    var i: i32 = 0;
+    while (i < 32) {
+        var c: i32 = tcp_connect(127 + 16777216, %d);
+        if (c < 0) { return 1; }
+        if (tcp_send(c, %q) != %d) { return 2; }
+        if (tcp_close(c) != 0) { return 3; }
+        i = i + 1;
+    }
+    return 0;
+}`, listener.Addr().(*net.TCPAddr).Port, data, len(data))
 	return src, func() {
 		t.Helper()
 		if err := <-done; err != nil {

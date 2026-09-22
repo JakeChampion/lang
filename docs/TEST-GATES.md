@@ -141,6 +141,14 @@ The self-host census composes its Preview 1 adapter with
 stay outside the Fern allocator census. This does not measure total linear
 memory or remove the adapter's stack overhead.
 
+`TestWasmTCPSendGuestStorage` and `TestSelfHostWasmTCPSendGuestStorage`
+cover empty, inline, heap and chunked sends with bounded heap growth. A host
+stub reads every submitted byte and returns success, closed, or an owned error
+resource with handle zero/nonzero, including failures after the first chunk.
+Owned errors must be dropped exactly once. `TestWasmTCPSendLifecycleCensus`
+and `TestSelfHostWasmTCPSendLifecycleCensus` verify complete real TCP payloads
+over 32 connections and require zero live Fern heap bytes after close.
+
 ## Generated digest sources
 
 The lint lane runs `make digest-check` on every PR and main push. It compares

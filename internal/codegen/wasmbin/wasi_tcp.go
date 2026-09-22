@@ -723,7 +723,7 @@ func buildTcpRecvBody(idxs map[string]uint32) []byte {
 // Locals (after the three params):
 //
 //	3: $stream    — output-stream handle (mem[$conn + 8])
-//	4: $retptr    — 4-byte retptr scratch (disc-only variant)
+//	4: $retptr    — 12-byte result<_, stream-error> return area
 //	5: $buf       — SSO-normalized data buffer
 //	6: $byte_len  — decoded byte length of the data string
 //	7: $i_norm    — emitStrNormalize loop counter
@@ -732,6 +732,12 @@ func buildTcpRecvBody(idxs map[string]uint32) []byte {
 func buildTcpSendBody(idxs map[string]uint32) []byte {
 	alloc := idxs["__fern_alloc"]
 	blockingWrite := idxs["wasi_blocking_write_and_flush_p2"]
+	reclaim := func(body []byte) []byte {
+		body = emitStrNormalizeFree(body, idxs, 2, 5, 6)
+		body = inst.InstLocalGet(body, 4)
+		body = inst.InstI32Const(body, 12)
+		return inst.InstCall(body, idxs["__free"])
+	}
 
 	var body []byte
 
@@ -749,10 +755,9 @@ func buildTcpSendBody(idxs map[string]uint32) []byte {
 	// address so blocking-write-and-flush would read garbage.
 	body = emitStrNormalize(body, idxs, 1, 2, 5, 6, 7)
 
-	// $retptr = alloc(4) — result<_, stream-error> flattens to a
-	// single disc byte; payload on Err is the stream-error
-	// resource (we ignore it).
-	body = inst.InstI32Const(body, 4)
+	// result<_, stream-error>: outer tag at 0, error tag at 4 and
+	// last-operation-failed's owned error handle at 8.
+	body = inst.InstI32Const(body, 12)
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalSet(body, 4)
 
@@ -796,6 +801,8 @@ func buildTcpSendBody(idxs map[string]uint32) []byte {
 		body = memory.InstI32Load8U(body, 0, 0)
 		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 		{
+			body = emitStreamErrorDrop(body, idxs, 4)
+			body = reclaim(body)
 			body = inst.InstI32Const(body, -1)
 			body = inst.InstReturn(body)
 		}
@@ -814,10 +821,24 @@ func buildTcpSendBody(idxs map[string]uint32) []byte {
 	// Return $byte_len (the requested length, which equals the
 	// bytes actually written when the loop drained without error).
 	body = inst.InstLocalGet(body, 6)
+	body = reclaim(body)
 
 	// 7 i32 locals after the 3 params.
 	locals := inst.PutLocalsOneGroup(nil, 7, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// Called only for the Err arm. Closed (tag 1) owns nothing; tag 0 owns an
+// io/error resource whose handle may itself be zero.
+func emitStreamErrorDrop(body []byte, idxs map[string]uint32, ret uint32) []byte {
+	body = inst.InstLocalGet(body, ret)
+	body = memory.InstI32Load8U(body, 0, 4)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, ret)
+	body = memory.InstI32Load(body, 2, 8)
+	body = inst.InstCall(body, idxs["wasi_io_error_drop"])
+	return inst.InstEnd(body)
 }
 
 // buildTcpCloseBody assembles __fern_tcp_close.

@@ -65,6 +65,10 @@ func WasiUDPStorageProbe(host, data string) string {
 }`, host, data, host, data)
 }
 
+func WasiStreamSendStorageProbe(data string) string {
+	return strings.ReplaceAll(WasiUDPStorageProbe("127.0.0.1", data), "udp_send(host, 1, data)", "tcp_send(0, data)")
+}
+
 // CheckWasiSocketReclaim replaces only host imports in a compiled core module.
 // The production socket bodies and allocator still execute. Host resources are
 // tracked independently; dropping an unowned handle or a parent before its
@@ -72,6 +76,10 @@ func WasiUDPStorageProbe(host, data string) string {
 func CheckWasiSocketReclaim(t *testing.T, modulePath, operation string) {
 	t.Helper()
 	invalidHost := operation == "udp-invalid"
+	emptySend, chunkedSend := operation == "send-empty", operation == "send-chunked"
+	if emptySend || chunkedSend {
+		operation = "send"
+	}
 	if invalidHost {
 		operation = "udp"
 	}
@@ -107,7 +115,7 @@ func CheckWasiSocketReclaim(t *testing.T, modulePath, operation string) {
 	if seen == 0 || strings.Contains(wat, "(import ") {
 		t.Fatal("unhandled core import syntax")
 	}
-	steps := map[string]int{"listen": 5, "connect": 3, "accept": 1, "port": 1, "udp": 6}[operation]
+	steps := map[string]int{"listen": 5, "connect": 3, "accept": 1, "port": 1, "udp": 6, "send": 2}[operation]
 	if steps == 0 {
 		t.Fatal("unknown socket operation")
 	}
@@ -134,6 +142,18 @@ func CheckWasiSocketReclaim(t *testing.T, modulePath, operation string) {
 		steps, socket, streams = 0, 0, 0
 		successFailure = "(i32.ne (local.get $result) (i32.const -28))"
 	}
+	errorResult := -29
+	if operation == "send" {
+		socket, streams = 0, 0
+		successFailure = "(i32.ne (local.get $result) (i32.const 1))"
+		errorResult = -1
+		if emptySend {
+			steps = 0
+		}
+		if chunkedSend {
+			steps = 4
+		}
+	}
 	borrowedListener := ""
 	if operation == "accept" || operation == "port" {
 		// A borrowed listener record at address zero, with host handle 42.
@@ -148,6 +168,8 @@ func CheckWasiSocketReclaim(t *testing.T, modulePath, operation string) {
   (global $fh_in (mut i32) (i32.const 0))
   (global $fh_out (mut i32) (i32.const 0))
   (global $fh_poll (mut i32) (i32.const 0))
+  (global $fh_error (mut i32) (i32.const 0))
+  (global $fh_writes (mut i32) (i32.const 0))
   (func (export "fault_probe") (param $step i32) (param $handle i32) (result i32)
     (local $result i32)
     (global.set $fh_fail (local.get $step))
@@ -155,15 +177,16 @@ func CheckWasiSocketReclaim(t *testing.T, modulePath, operation string) {
     %s
     (local.set $result (call %s))
     (if (local.get $step) (then
-      (if (i32.ne (local.get $result) (i32.const -29)) (then (return (i32.const 1)))))
+      (if (i32.ne (local.get $result) (i32.const %d)) (then (return (i32.const 1)))))
     (else
       (if %s (then (return (i32.const 2))))))
     (if (i32.ne (global.get $fh_socket) (select (i32.const 0) (i32.const %d) (local.get $step))) (then (return (i32.const 3))))
     (if (i32.ne (global.get $fh_in) (select (i32.const 0) (i32.const %d) (local.get $step))) (then (return (i32.const 4))))
     (if (i32.ne (global.get $fh_out) (select (i32.const 0) (i32.const %d) (local.get $step))) (then (return (i32.const 5))))
     (if (global.get $fh_poll) (then (return (i32.const 6))))
+    (if (global.get $fh_error) (then (return (i32.const 7))))
     (i32.const 0))
-`, borrowedListener, export[1], successFailure, socket, streams, streams)
+`, borrowedListener, export[1], errorResult, successFailure, socket, streams, streams)
 	end := strings.LastIndex(wat, ")")
 	path := filepath.Join(t.TempDir(), "socket-faults.wat")
 	if err := os.WriteFile(path, []byte(wat[:end]+probe+")"), 0o644); err != nil {
@@ -183,7 +206,7 @@ func CheckWasiSocketReclaim(t *testing.T, modulePath, operation string) {
 					t.Fatal(err)
 				}
 				if strings.TrimSpace(string(got)) != "0" {
-					t.Errorf("fault probe returned %q (1=result, 2=success, 3=socket, 4=input, 5=output, 6=pollable)", got)
+					t.Errorf("fault probe returned %q (1=result, 2=success, 3=socket, 4=input, 5=output, 6=pollable, 7=error resource)", got)
 				}
 			})
 		}
@@ -197,6 +220,8 @@ func socketHostBody(operation, moduleName, name string) string {
 	if strings.Contains(name, "[resource-drop]") {
 		kind := ""
 		switch {
+		case strings.HasSuffix(name, "]error"):
+			kind = "error"
 		case strings.HasSuffix(name, "tcp-socket"), strings.HasSuffix(name, "udp-socket"):
 			kind = "socket"
 		case strings.HasSuffix(name, "input-stream"), strings.HasSuffix(name, "incoming-datagram-stream"):
@@ -220,6 +245,24 @@ func socketHostBody(operation, moduleName, name string) string {
 	}
 	if strings.HasSuffix(name, "pollable.block") {
 		return "(if (i32.eqz (global.get $fh_poll)) (then unreachable))"
+	}
+	if strings.HasSuffix(name, "output-stream.blocking-write-and-flush") {
+		return `(local $i i32) (local $fail i32)
+    (global.set $fh_writes (i32.add (global.get $fh_writes) (i32.const 1)))
+    (local.set $fail (i32.and (i32.ne (global.get $fh_fail) (i32.const 0))
+      (i32.or (i32.le_u (global.get $fh_fail) (i32.const 2)) (i32.eqz (i32.rem_u (global.get $fh_writes) (i32.const 2))))))
+    (if (i32.gt_u (local.get 2) (i32.const 4096)) (then unreachable))
+    (block $done (loop $bytes
+      (br_if $done (i32.ge_u (local.get $i) (local.get 2)))
+      (if (i32.ne (i32.load8_u (i32.add (local.get 1) (local.get $i))) (i32.const 120)) (then unreachable))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $bytes)))
+    (i32.store8 (local.get 3) (local.get $fail))
+    (if (local.get $fail) (then
+      (i32.store8 offset=4 (local.get 3) (i32.and (global.get $fh_fail) (i32.const 1)))
+      (if (i32.eqz (i32.and (global.get $fh_fail) (i32.const 1))) (then
+        (global.set $fh_error (i32.const 1))
+        (i32.store offset=8 (local.get 3) (global.get $fh_handle))))))`
 	}
 	phase, ret, own := 0, 1, ""
 	switch {

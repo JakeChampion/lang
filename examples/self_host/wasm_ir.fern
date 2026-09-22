@@ -3241,6 +3241,7 @@ pub function udp_send_func(): string {
 // needs no WIT change.
 pub function wasi_stream_io_imports(): string {
     var o: string = "";
+    o = o + "  (import \"wasi:io/error@0.2.0\" \"[resource-drop]error\" (func $__fern_wasi_io_error_drop (param i32)))\n";
     o = o + "  (import \"wasi:io/streams@0.2.0\" \"[method]output-stream.blocking-write-and-flush\" (func $__fern_wasi_stream_write (param i32 i32 i32 i32)))\n";
     o = o + "  (import \"wasi:io/streams@0.2.0\" \"[method]input-stream.blocking-read\" (func $__fern_wasi_stream_read (param i32 i64 i32)))\n";
     return o;
@@ -3272,9 +3273,14 @@ pub function tcp_send_func(): string {
     o = o + "        (call $__fern_wasi_stream_write (local.get $st)\n";
     o = o + "          (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $off))\n";
     o = o + "          (local.get $n) (local.get $ret))\n";
-    o = o + "        (if (i32.load8_u (local.get $ret)) (then (return (i32.const -1))))\n";
+    o = o + "        (if (i32.load8_u (local.get $ret)) (then\n";
+    o = o + "          (if (i32.eqz (i32.load8_u offset=4 (local.get $ret))) (then\n";
+    o = o + "            (call $__fern_wasi_io_error_drop (i32.load offset=8 (local.get $ret)))))\n";
+    o = o + "          (call $__fern_raw_free (local.get $ret) (i32.const 12))\n";
+    o = o + "          (return (i32.const -1))))\n";
     o = o + "        (local.set $off (i32.add (local.get $off) (local.get $n)))\n";
     o = o + "        (br $more)))\n";
+    o = o + "    (call $__fern_raw_free (local.get $ret) (i32.const 12))\n";
     o = o + "    (local.get $len))\n";
     return o;
 }
