@@ -1872,6 +1872,125 @@ and reaching cksum's non-reflected CRC from that reflected instruction is an
 Ranking the three on this host, which is the honest summary: uutils (folding)
 9.8 ms, GNU (generic table) 35.7 ms, Fern (slicing-by-8) 199.7 ms.
 
+### Both compilers, 2026-09-22, Linux x86-64 (GNU coreutils 9.12, uutils 0.0.24)
+
+The two-compiler bench over the fifteen utilities the 2026-09-22 codegen
+work touched or measured against — #10012 and #10023's tree (`cdfb15d`),
+both compilers `-O`, a 4-core container, twenty runs a cell, with the
+`od -t f8` row measured BEFORE the float path below was rewritten. Beside
+the 2026-09-17 run the self-host column is no longer broadly 2x: it is
+within 20% of native on most rows, and ahead on `sort -u`, `tr 0-9 a-j`
+and `tail -n 4000000`. Where it still trails by half — `wc` (0.46x),
+`uniq` over long lines (0.55x), `head -n -10` from a pipe (0.29x), `seq`
+(0.3–0.5x, startup) — the gap is the self-host's byte loop, #8822.
+
+
+| utility | workload | fern (ms) | fern-sh (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern | gnu / fern-sh | uutils / fern-sh | fern / fern-sh |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `sort` | sort 500k lines | 305.52 ± 14.40 | 303.64 ± 13.92 | 96.45 ± 4.95 | 97.20 ± 6.93 | 0.32× | 0.32× | 0.32× | 0.32× | 1.01× |
+| `sort` | sort -n 500k numbers | 960.76 ± 33.39 | 1029.83 ± 37.10 | 146.98 ± 5.82 | 193.45 ± 7.99 | 0.15× | 0.20× | 0.14× | 0.19× | 0.93× |
+| `sort` | sort -k2,2n 500k lines | 899.44 ± 39.08 | 1041.01 ± 40.76 | 163.06 ± 15.46 | 213.02 ± 10.49 | 0.18× | 0.24× | 0.16× | 0.20× | 0.86× |
+| `sort` | sort -k1,1 500k lines | 559.05 ± 35.38 | 614.94 ± 38.98 | 115.21 ± 11.60 | 147.30 ± 8.25 | 0.21× | 0.26× | 0.19× | 0.24× | 0.91× |
+| `sort` | sort -u 500k lines | 322.75 ± 16.02 | 313.33 ± 21.53 | 113.69 ± 9.32 | 116.45 ± 8.65 | 0.35× | 0.36× | 0.36× | 0.37× | 1.03× |
+| `sort` | sort -r 500k lines | 305.06 ± 12.36 | 301.14 ± 8.86 | 106.90 ± 7.95 | 101.33 ± 7.46 | 0.35× | 0.33× | 0.35× | 0.34× | 1.01× |
+| `sort` | sort -s 500k lines | 308.97 ± 18.61 | 307.18 ± 13.49 | 99.99 ± 4.35 | 101.73 ± 11.54 | 0.32× | 0.33× | 0.33× | 0.33× | 1.01× |
+| `sort` | sort 500k lines from a pipe | 306.91 ± 16.03 | 312.77 ± 20.98 | 111.13 ± 5.35 | 99.34 ± 6.35 | 0.36× | 0.32× | 0.36× | 0.32× | 0.98× |
+| `sort` | sort a sorted 500k-line file | 162.72 ± 14.59 | 148.39 ± 12.11 | 44.66 ± 3.78 | 41.67 ± 5.36 | 0.27× | 0.26× | 0.30× | 0.28× | 1.10× |
+| `sort` | sort -c a sorted 500k-line file | 29.15 ± 2.34 | 25.05 ± 3.28 | 9.53 ± 0.74 | 19.27 ± 2.77 | 0.33× | 0.66× | 0.38× | 0.77× | 1.16× |
+| `sort` | sort -m two sorted files | 131.65 ± 14.05 | 144.11 ± 13.68 | 39.63 ± 3.16 | 94.53 ± 7.24 | 0.30× | 0.72× | 0.28× | 0.66× | 0.91× |
+| `cat` | cat a 62 MiB file | 7.48 ± 1.21 | 7.75 ± 1.60 | 2.65 ± 1.23 | 3.89 ± 0.61 | 0.35× | 0.52× | 0.34× | 0.50× | 0.97× |
+| `cat` | cat two 62 MiB files | 12.11 ± 1.58 | 11.06 ± 1.60 | 3.40 ± 0.61 | 5.11 ± 0.78 | 0.28× | 0.42× | 0.31× | 0.46× | 1.10× |
+| `cat` | cat from a pipe | 11.55 ± 1.35 | 10.29 ± 1.19 | 4.17 ± 2.32 | 5.01 ± 1.18 | 0.36× | 0.43× | 0.41× | 0.49× | 1.12× |
+| `cat` | cat -n a 62 MiB file | 371.34 ± 23.74 | 497.77 ± 26.52 | 178.45 ± 4.06 | 1730.21 ± 24.15 | 0.48× | 4.66× | 0.36× | 3.48× | 0.75× |
+| `cat` | cat -s a 62 MiB file | 87.32 ± 3.66 | 129.52 ± 8.79 | 94.13 ± 7.15 | 1408.00 ± 32.04 | 1.08× | 16.13× | 0.73× | 10.87× | 0.67× |
+| `cat` | cat -A a 62 MiB file | 305.10 ± 13.57 | 353.35 ± 27.71 | 102.85 ± 8.00 | 2018.60 ± 32.12 | 0.34× | 6.62× | 0.29× | 5.71× | 0.86× |
+| `wc` | wc -l of a 62 MiB file | 10.08 ± 1.61 | 9.36 ± 1.62 | 8.37 ± 0.99 | 16.57 ± 1.76 | 0.83× | 1.64× | 0.89× | 1.77× | 1.08× |
+| `wc` | wc -c of a 62 MiB file | 0.30 ± 0.14 | 0.28 ± 0.10 | 1.57 ± 0.31 | 2.27 ± 0.39 | 5.31× | 7.68× | 5.54× | 8.01× | 1.04× |
+| `wc` | wc of a 62 MiB file | 190.44 ± 14.77 | 409.76 ± 14.62 | 84.84 ± 4.27 | 146.19 ± 10.09 | 0.45× | 0.77× | 0.21× | 0.36× | 0.46× |
+| `wc` | wc -w of a 62 MiB file | 191.77 ± 8.51 | 420.88 ± 20.77 | 87.36 ± 11.36 | 157.84 ± 5.78 | 0.46× | 0.82× | 0.21× | 0.38× | 0.46× |
+| `wc` | wc -L of a 62 MiB file | 195.52 ± 17.27 | 411.48 ± 18.81 | 85.64 ± 13.47 | 141.93 ± 7.23 | 0.44× | 0.73× | 0.21× | 0.34× | 0.48× |
+| `wc` | wc -l from a pipe | 17.16 ± 3.46 | 16.97 ± 3.75 | 18.49 ± 5.15 | 27.97 ± 3.84 | 1.08× | 1.63× | 1.09× | 1.65× | 1.01× |
+| `fmt` | fmt (default) of a 40 MiB file | 1713.74 ± 35.97 | 1907.91 ± 48.56 | 430.30 ± 18.10 | 464.38 ± 19.13 | 0.25× | 0.27× | 0.23× | 0.24× | 0.90× |
+| `fmt` | fmt -w 40 of a 40 MiB file | 1537.49 ± 30.40 | 1794.33 ± 50.16 | 418.15 ± 26.32 | 549.10 ± 53.08 | 0.27× | 0.36× | 0.23× | 0.31× | 0.86× |
+| `fmt` | fmt -s -w 40 of a 40 MiB file | 1531.34 ± 48.98 | 1784.80 ± 34.91 | 401.93 ± 19.28 | 538.96 ± 24.67 | 0.26× | 0.35× | 0.23× | 0.30× | 0.86× |
+| `fmt` | fmt -u -w 40 of a 40 MiB file | 1532.21 ± 48.91 | 1788.48 ± 49.77 | 400.59 ± 18.02 | 500.86 ± 24.39 | 0.26× | 0.33× | 0.22× | 0.28× | 0.86× |
+| `fmt` | fmt (default) of a 38 MiB wrapped file | 1820.47 ± 45.80 | 1991.73 ± 52.34 | 484.48 ± 19.36 | 585.36 ± 22.99 | 0.27× | 0.32× | 0.24× | 0.29× | 0.91× |
+| `fmt` | fmt -c -w 60 of a 38 MiB wrapped file | 1705.90 ± 45.28 | 1889.26 ± 49.21 | 449.03 ± 16.97 | 615.98 ± 38.22 | 0.26× | 0.36× | 0.24× | 0.33× | 0.90× |
+| `fmt` | fmt -p "" -w 40 of a 38 MiB wrapped file | 1450.23 ± 32.91 | 1701.57 ± 37.77 | 411.70 ± 31.35 | 700.64 ± 34.86 | 0.28× | 0.48× | 0.24× | 0.41× | 0.85× |
+| `fmt` | fmt (default) from a pipe | 1748.03 ± 68.44 | 1900.22 ± 38.53 | 539.15 ± 12.49 | 524.56 ± 23.06 | 0.31× | 0.30× | 0.28× | 0.28× | 0.92× |
+| `fmt` | fmt (default) of one 200k-line paragraph | 287.79 ± 21.25 | 357.69 ± 18.44 | 56.47 ± 6.50 | 162.19 ± 9.18 | 0.20× | 0.56× | 0.16× | 0.45× | 0.80× |
+| `ptx` | ptx 120k words | 198.65 ± 6.86 | 242.03 ± 6.28 | 42.21 ± 1.89 | exit 1 | 0.21× | — | 0.17× | — | 0.82× |
+| `ptx` | ptx -G 120k words | 512.07 ± 13.92 | 590.27 ± 23.07 | 57.93 ± 4.29 | 175.25 ± 6.03 | 0.11× | 0.34× | 0.10× | 0.30× | 0.87× |
+| `ptx` | ptx -O 120k words | 511.35 ± 10.28 | 594.64 ± 13.06 | 52.96 ± 4.67 | exit 1 | 0.10× | — | 0.09× | — | 0.86× |
+| `ptx` | ptx -T 120k words | 521.13 ± 18.34 | 590.74 ± 18.77 | 50.78 ± 5.23 | exit 1 | 0.10× | — | 0.09× | — | 0.88× |
+| `ptx` | ptx -W a regexp alphabet | 724.59 ± 37.99 | 1684.62 ± 24.28 | 225.96 ± 9.10 | exit 1 | 0.31× | — | 0.13× | — | 0.43× |
+| `ptx` | ptx prose with sentences | 87.69 ± 3.32 | 106.26 ± 15.13 | 29.41 ± 2.73 | exit 1 | 0.34× | — | 0.28× | — | 0.83× |
+| `ptx` | ptx -A prose | 135.63 ± 14.58 | 149.11 ± 6.49 | 37.90 ± 5.74 | exit 1 | 0.28× | — | 0.25× | — | 0.91× |
+| `ptx` | ptx from a pipe | 199.30 ± 4.84 | 251.30 ± 11.89 | 44.14 ± 3.75 | exit 1 | 0.22× | — | 0.18× | — | 0.79× |
+| `tr` | tr 0-9 a-j over a 62 MiB file | 192.85 ± 19.56 | 167.46 ± 5.07 | 41.71 ± 6.07 | 941.63 ± 26.59 | 0.22× | 4.88× | 0.25× | 5.62× | 1.15× |
+| `tr` | tr -d 0-4 over a 62 MiB file | 173.98 ± 16.07 | 200.86 ± 15.20 | 81.63 ± 3.22 | 430.98 ± 26.47 | 0.47× | 2.48× | 0.41× | 2.15× | 0.87× |
+| `tr` | tr -s 0-9 over a 62 MiB file | 199.07 ± 5.82 | 264.76 ± 21.67 | 524.62 ± 24.33 | 766.71 ± 24.58 | 2.64× | 3.85× | 1.98× | 2.90× | 0.75× |
+| `tr` | tr -cd digits over a 62 MiB file | 194.94 ± 16.48 | 214.95 ± 15.66 | 53.93 ± 3.80 | 580.24 ± 18.33 | 0.28× | 2.98× | 0.25× | 2.70× | 0.91× |
+| `tr` | tr from a pipe | 200.95 ± 19.66 | 188.04 ± 17.56 | 82.08 ± 9.05 | 1009.17 ± 28.01 | 0.41× | 5.02× | 0.44× | 5.37× | 1.07× |
+| `cut` | cut -f2 -d, of a 90 MiB table | 106.50 ± 12.31 | 122.42 ± 16.66 | 90.73 ± 3.27 | 86.37 ± 4.06 | 0.85× | 0.81× | 0.74× | 0.71× | 0.87× |
+| `cut` | cut -f1,3-5 -d, of a 90 MiB table | 130.51 ± 5.48 | 214.74 ± 10.35 | 198.08 ± 8.56 | 146.95 ± 14.63 | 1.52× | 1.13× | 0.92× | 0.68× | 0.61× |
+| `cut` | cut --complement -f2 -d, of a 90 MiB table | 132.90 ± 6.29 | 212.11 ± 10.83 | 193.71 ± 6.14 | 140.31 ± 6.34 | 1.46× | 1.06× | 0.91× | 0.66× | 0.63× |
+| `cut` | cut -s -f4 -d, of a 90 MiB table | 114.24 ± 6.14 | 145.60 ± 8.39 | 121.41 ± 7.84 | 111.51 ± 6.55 | 1.06× | 0.98× | 0.83× | 0.77× | 0.78× |
+| `cut` | cut -c1-10 of a 90 MiB table | 57.43 ± 4.03 | 74.35 ± 4.25 | 51.90 ± 4.60 | 58.50 ± 4.02 | 0.90× | 1.02× | 0.70× | 0.79× | 0.77× |
+| `cut` | cut -f2 -d, from a pipe | 116.03 ± 6.73 | 133.87 ± 9.96 | 98.52 ± 7.42 | 189.60 ± 11.51 | 0.85× | 1.63× | 0.74× | 1.42× | 0.87× |
+| `uniq` | uniq over 4M lines in groups of 4 | 126.32 ± 8.71 | 140.27 ± 16.68 | 123.64 ± 8.88 | 512.29 ± 24.08 | 0.98× | 4.06× | 0.88× | 3.65× | 0.90× |
+| `uniq` | uniq -c over 4M lines in groups of 4 | 148.96 ± 18.57 | 167.23 ± 17.60 | 141.49 ± 13.50 | 637.71 ± 22.60 | 0.95× | 4.28× | 0.85× | 3.81× | 0.89× |
+| `uniq` | uniq -d over 4M lines in groups of 4 | 129.95 ± 16.75 | 140.65 ± 12.55 | 126.84 ± 11.54 | 522.93 ± 27.36 | 0.98× | 4.02× | 0.90× | 3.72× | 0.92× |
+| `uniq` | uniq over 4M distinct lines | 114.41 ± 4.19 | 139.33 ± 5.11 | 121.50 ± 4.65 | 994.31 ± 24.27 | 1.06× | 8.69× | 0.87× | 7.14× | 0.82× |
+| `uniq` | uniq -u over 4M distinct lines | 120.43 ± 14.28 | 142.82 ± 12.94 | 130.54 ± 3.16 | 980.70 ± 24.27 | 1.08× | 8.14× | 0.91× | 6.87× | 0.84× |
+| `uniq` | uniq over 2M 44-byte distinct lines | 105.69 ± 9.55 | 191.93 ± 5.36 | 182.46 ± 9.19 | 645.06 ± 14.21 | 1.73× | 6.10× | 0.95× | 3.36× | 0.55× |
+| `uniq` | uniq -f1 -c over 4M lines | 261.98 ± 14.82 | 360.42 ± 20.45 | 220.09 ± 14.68 | 677.57 ± 20.60 | 0.84× | 2.59× | 0.61× | 1.88× | 0.73× |
+| `uniq` | uniq from a pipe | 135.93 ± 4.80 | 147.28 ± 6.44 | 215.16 ± 10.87 | 558.05 ± 17.66 | 1.58× | 4.11× | 1.46× | 3.79× | 0.92× |
+| `head` | head -n 10 of a 62 MiB file | 0.34 ± 0.14 | 0.32 ± 0.14 | 1.32 ± 0.40 | 2.27 ± 0.21 | 3.92× | 6.74× | 4.15× | 7.14× | 1.06× |
+| `head` | head -n 4000000 of a 62 MiB file | 4.42 ± 0.84 | 4.38 ± 0.62 | 22.85 ± 1.27 | 36.06 ± 1.92 | 5.17× | 8.15× | 5.22× | 8.23× | 1.01× |
+| `head` | head -c 32M of a 62 MiB file | 3.89 ± 0.54 | 3.81 ± 0.48 | 6.16 ± 0.54 | 2.79 ± 0.39 | 1.59× | 0.72× | 1.62× | 0.73× | 1.02× |
+| `head` | head -n 10 from a pipe | 1.44 ± 0.39 | 1.42 ± 0.39 | 1.46 ± 0.46 | 2.54 ± 0.49 | 1.02× | 1.77× | 1.03× | 1.78× | 1.01× |
+| `head` | head -n -10 of a 62 MiB file | 7.12 ± 0.83 | 6.56 ± 0.48 | 11.13 ± 1.24 | 3.29 ± 0.42 | 1.56× | 0.46× | 1.70× | 0.50× | 1.09× |
+| `head` | head -c -10 of a 62 MiB file | 7.46 ± 1.55 | 6.50 ± 0.69 | 11.40 ± 1.30 | 3.31 ± 0.65 | 1.53× | 0.44× | 1.75× | 0.51× | 1.15× |
+| `head` | head -n -10 from a pipe | 27.96 ± 1.47 | 95.38 ± 5.15 | 137.22 ± 5.86 | 1710.71 ± 27.99 | 4.91× | 61.18× | 1.44× | 17.94× | 0.29× |
+| `head` | head -c -10 from a pipe | 24.45 ± 1.50 | 19.32 ± 1.40 | 36.94 ± 3.82 | 13.94 ± 2.09 | 1.51× | 0.57× | 1.91× | 0.72× | 1.27× |
+| `tail` | tail -n 10 of a 62 MiB file | 0.30 ± 0.13 | 0.32 ± 0.11 | 1.30 ± 0.43 | 2.37 ± 0.50 | 4.29× | 7.84× | 4.01× | 7.32× | 0.93× |
+| `tail` | tail -n 4000000 of a 62 MiB file | 46.37 ± 1.95 | 39.43 ± 1.89 | 41.24 ± 1.36 | 27.27 ± 1.77 | 0.89× | 0.59× | 1.05× | 0.69× | 1.18× |
+| `tail` | tail -c 32M of a 62 MiB file | 5.37 ± 0.83 | 5.00 ± 0.74 | 6.18 ± 0.61 | 2.79 ± 0.50 | 1.15× | 0.52× | 1.24× | 0.56× | 1.07× |
+| `tail` | tail -n 10 from a pipe | 31.54 ± 2.60 | 31.01 ± 3.23 | 130.22 ± 7.43 | 31.74 ± 2.37 | 4.13× | 1.01× | 4.20× | 1.02× | 1.02× |
+| `tail` | tail -n +4000000 of a 62 MiB file | 9.48 ± 1.17 | 8.92 ± 0.89 | 42.08 ± 1.79 | 49.00 ± 2.21 | 4.44× | 5.17× | 4.72× | 5.50× | 1.06× |
+| `comm` | comm over 2M + 1M sorted lines | 187.28 ± 13.06 | 213.08 ± 6.27 | 149.66 ± 7.48 | 495.30 ± 22.72 | 0.80× | 2.64× | 0.70× | 2.32× | 0.88× |
+| `comm` | comm -12 over 2M + 1M sorted lines | 175.10 ± 12.22 | 188.30 ± 17.80 | 120.48 ± 6.20 | 289.07 ± 23.43 | 0.69× | 1.65× | 0.64× | 1.54× | 0.93× |
+| `comm` | comm --total over 2M + 1M sorted lines | 186.07 ± 6.00 | 214.33 ± 6.96 | 148.06 ± 5.51 | 480.57 ± 12.28 | 0.80× | 2.58× | 0.69× | 2.24× | 0.87× |
+| `comm` | comm of a 2M-line file with itself | 171.64 ± 5.43 | 205.44 ± 9.11 | 171.08 ± 6.18 | 513.46 ± 23.44 | 1.00× | 2.99× | 0.83× | 2.50× | 0.84× |
+| `comm` | comm -123 of a 2M-line file with itself | 142.90 ± 5.41 | 137.12 ± 3.31 | 134.41 ± 3.84 | 100.16 ± 8.55 | 0.94× | 0.70× | 0.98× | 0.73× | 1.04× |
+| `join` | join two 1M-line files | 465.07 ± 39.84 | 555.83 ± 26.01 | 345.34 ± 12.93 | 259.90 ± 15.92 | 0.74× | 0.56× | 0.62× | 0.47× | 0.84× |
+| `join` | join with half unpairable | 390.51 ± 12.87 | 454.76 ± 21.22 | 299.53 ± 7.88 | 222.13 ± 16.98 | 0.77× | 0.57× | 0.66× | 0.49× | 0.86× |
+| `join` | join -a1 -a2 two 1M-line files | 481.81 ± 32.09 | 601.07 ± 25.53 | 360.26 ± 10.24 | 238.26 ± 18.34 | 0.75× | 0.49× | 0.60× | 0.40× | 0.80× |
+| `join` | join -o 0,1.2,2.3 two 1M-line files | 402.39 ± 24.24 | 480.04 ± 17.10 | 301.77 ± 12.33 | 246.60 ± 9.20 | 0.75× | 0.61× | 0.63× | 0.51× | 0.84× |
+| `join` | join -v1 two 1M-line files | 373.34 ± 18.85 | 427.10 ± 22.25 | 277.08 ± 15.28 | 210.13 ± 5.22 | 0.74× | 0.56× | 0.65× | 0.49× | 0.87× |
+| `sum` | sum a 62 MiB file | 152.68 ± 13.89 | 242.49 ± 5.64 | 134.36 ± 2.39 | 63.00 ± 3.17 | 0.88× | 0.41× | 0.55× | 0.26× | 0.63× |
+| `sum` | sum -s a 62 MiB file | 58.07 ± 2.48 | 34.77 ± 2.69 | 14.29 ± 1.57 | 22.60 ± 1.68 | 0.25× | 0.39× | 0.41× | 0.65× | 1.67× |
+| `sum` | sum a 62 MiB file from a pipe | 156.01 ± 3.64 | 250.80 ± 5.51 | 151.43 ± 5.48 | 119.99 ± 3.76 | 0.97× | 0.77× | 0.60× | 0.48× | 0.62× |
+| `sum` | sum -s a 62 MiB file from a pipe | 68.79 ± 5.68 | 45.27 ± 4.05 | 25.91 ± 3.11 | 46.21 ± 4.83 | 0.38× | 0.67× | 0.57× | 1.02× | 1.52× |
+| `sum` | sum a small file | 0.27 ± 0.12 | 0.28 ± 0.12 | 1.30 ± 0.27 | 2.27 ± 0.48 | 4.78× | 8.34× | 4.59× | 8.00× | 0.96× |
+| `sum` | sum 500 small files | 3.75 ± 0.92 | 5.55 ± 1.22 | 4.16 ± 0.72 | 4.93 ± 0.76 | 1.11× | 1.31× | 0.75× | 0.89× | 0.68× |
+| `od` | od default of a 62 MiB file | 1006.02 ± 34.44 | 1384.84 ± 89.22 | 4276.90 ± 74.79 | 4383.06 ± 91.48 | 4.25× | 4.36× | 3.09× | 3.17× | 0.73× |
+| `od` | od -t x1 of a 62 MiB file | 881.37 ± 42.31 | 1089.60 ± 47.44 | 7654.12 ± 162.10 | 6730.85 ± 117.57 | 8.68× | 7.64× | 7.02× | 6.18× | 0.81× |
+| `od` | od -t x1 -w64 of a 62 MiB file | 650.54 ± 26.54 | 740.18 ± 33.26 | 7460.58 ± 134.18 | 5666.84 ± 887.64 | 11.47× | 8.71× | 10.08× | 7.66× | 0.88× |
+| `od` | od -t x8 of a 62 MiB file | 744.26 ± 33.63 | 782.41 ± 22.79 | 1245.66 ± 44.14 | 2181.77 ± 55.47 | 1.67× | 2.93× | 1.59× | 2.79× | 0.95× |
+| `od` | od -c of a 62 MiB file | 1169.34 ± 32.11 | 1575.50 ± 22.90 | 5439.63 ± 88.72 | 6309.63 ± 74.62 | 4.65× | 5.40× | 3.45× | 4.00× | 0.74× |
+| `od` | od -A n -t x1 of a 62 MiB file | 700.38 ± 29.54 | 860.43 ± 19.55 | 7635.88 ± 136.80 | 6545.27 ± 140.30 | 10.90× | 9.35× | 8.87× | 7.61× | 0.81× |
+| `od` | od -S 4 of a 62 MiB file | 198.00 ± 10.90 | 263.66 ± 14.91 | 228.64 ± 12.70 | 4438.92 ± 101.03 | 1.15× | 22.42× | 0.87× | 16.84× | 0.75× |
+| `od` | od -t f8 of a 1 MiB file | 3951.96 ± 86.86 (15 runs) | 3493.82 ± 125.98 (15 runs) | 181.16 ± 17.02 (15 runs) | 76.27 ± 3.32 (15 runs) | 0.05× | 0.02× | 0.05× | 0.02× | 1.13× |
+| `seq` | seq 1 1000000 | 4.00 ± 0.59 | 7.79 ± 1.67 | 9.00 ± 1.29 | 459.82 ± 30.82 | 2.25× | 114.85× | 1.16× | 59.00× | 0.51× |
+| `seq` | seq -s, 1 1000000 | 4.10 ± 1.08 | 8.23 ± 4.67 | 8.86 ± 0.79 | 292.86 ± 21.36 | 2.16× | 71.51× | 1.08× | 35.59× | 0.50× |
+| `seq` | seq -w 1 1000000 | 3.97 ± 0.54 | 8.21 ± 1.17 | 237.97 ± 12.23 | 469.19 ± 30.52 | 59.92× | 118.13× | 28.98× | 57.13× | 0.48× |
+| `seq` | seq 0 0.001 1000 | 3.92 ± 0.51 | 8.40 ± 1.45 | 216.44 ± 13.73 | 529.61 ± 31.97 | 55.23× | 135.15× | 25.76× | 63.03× | 0.47× |
+| `seq` | seq -f %.3f 0 0.001 1000 | 3.91 ± 0.56 | 9.21 ± 2.38 | 231.95 ± 28.74 | 508.96 ± 10.73 | 59.35× | 130.23× | 25.19× | 55.29× | 0.42× |
+| `seq` | seq 1 2 1000000 | 2.57 ± 0.45 | 8.06 ± 1.04 | 5.45 ± 0.63 | 242.03 ± 21.59 | 2.12× | 94.24× | 0.68× | 30.03× | 0.32× |
+| `seq` | seq 1000000 -1 1 | 38.23 ± 5.73 | 50.59 ± 6.96 | 224.38 ± 10.16 | 450.23 ± 19.68 | 5.87× | 11.78× | 4.44× | 8.90× | 0.76× |
+
 ### Audit of the open perf issues, 2026-09-22, Linux x86-64 (GNU coreutils 9.12, uutils 0.0.24)
 
 Every utility an open perf issue names, against the pinned oracle rather
@@ -2160,6 +2279,73 @@ callgrind and hyperfine, a 4-core container, 20 runs:
 What remains on the words row is `word_at`'s binary searches (12.5%),
 `norm` (7.7%), `key_less` (6.6%) and the sort (5.4%): the per-read cost
 of #8822 again, over ~17 probes per field cut.
+
+### od's floats, 2026-09-22, Linux x86-64 (GNU coreutils 9.12)
+
+`od -t f8` of the bench's 1 MiB file was 0.05x GNU: 3.95 s against 181 ms,
+30 µs a double, and the audit above had already named the cost — the
+long-double library's per-value formatting. `ftoa` followed gnulib's
+ftoastr to the letter, `%.*g` at rising precision until the text read
+back, and paid for it three times a value: `dec()` expanded the exact
+binary value to decimal through the bignum — for a double near 1e-259,
+as the seq text decodes to, that is a 300-digit `to_string` — then
+`general` rounded the expansion, then `strtold` parsed the candidate back
+through the bignum again. Callgrind put 55% of the run in
+`BigInt.to_string` and `__bi_mul_small` alone.
+
+The rewrite keeps GNU's rule exactly and changes how each candidate is
+found. `std/float`'s Dragonbox already produces the shortest decimal that
+reads back; `shortest_digits()` now hands it out as (significand,
+exponent), and its digit count is the first precision `%.*g` can succeed
+at, so the search starts there instead of at DBL_DIG. That alone is not
+the answer: the shortest decimal is NOT always what GNU prints. 2^-24's
+shortest decimal has 16 digits, but the 16-digit rounding of its exact
+value is a tie that rounds to even and does not read back, so GNU prints
+`5.9604644775390625e-08` where Dragonbox says `…063e-08`; 2^-25 is the
+same tie one precision later. Each candidate is therefore still the
+nearest p-digit decimal, ties to even, checked for read-back — but
+`lib/ld.fern`'s new `round_to` computes it from one product rather than
+an expansion: v × 10^s is m × 5^s × 2^(e+s), whose integer part is the
+digits, whose remainder against half the unit is the rounding, and whose
+remainder against half the format's gap is the read-back. The common
+case does not touch the bignum at all: the 128-bit power of ten that
+Dragonbox's own table holds (`pow10_hi` / `pow10_lo`, 10^k rounded up
+to 128 bits) puts m × 10^s within m units of its low bit, which decides
+all three questions unless the fraction lies within that error of a
+line — an exact tie, for one — and only then does the bignum run.
+
+Release builds, `od -t f8 rand64k.bin` (8192 doubles) under callgrind,
+outputs byte-identical to GNU 9.12 on every input tried: 1 MiB of random
+bytes and of seq text at `f8`, `f4`, `fH` and `fB`, and a crafted file of
+272 doubles at the ties, the `%g` style boundaries, both ends of the
+double's range and the subnormal boundary.
+
+| step | Ir | per double |
+|---|---:|---:|
+| before | 1,552,709,306 | 189,540 |
+| Dragonbox start + exact `round_to` through the bignum | 311,823,377 | 38,064 |
+| + the 128-bit fast path | 79,758,039 | 9,736 |
+| + `Format` hoisted into `Spec`, no borrowed-buffer `with`, no eager records | 68,761,326 | 8,394 |
+| + scalar Dragonbox helpers (a returned tuple is a heap cell) | 65,773,305 | 8,029 |
+
+Wall clock, hyperfine, same machine (GNU 9.12):
+
+| workload | before | after | gnu | gnu / fern |
+|---|---:|---:|---:|---:|
+| `od -t f8` 1 MiB of seq text (the bench row) | 3898 ms | 139 ms | 186 ms | 1.34× |
+| `od -t f8` 1 MiB of random bytes | — | 169 ms | 301 ms | 1.78× |
+| `od -t f4` 1 MiB of random bytes | — | 232 ms | 360 ms | 1.55× |
+
+Two things the profile left on the table, both compiler work rather than
+od's: the four table-word decodes a value cost 1.2k of the 8k
+instructions because the stack machine spills every loop iteration, and
+`__int_to_string_u64` divides by 100 with `div` — the backend does not
+strength-reduce division by a constant, which every utility that prints
+a number pays for. The renderer's byte-at-a-time `with` into a buffer
+passed as a plain parameter copied the whole buffer on every write (the
+parameter holds a second reference, so copy-on-write fires); `own` on
+the parameter is what makes it write in place, and it is worth knowing
+before reaching for that shape again.
 
 ### ls, 2026-09-14, Linux x86-64 (GNU coreutils 9.4, uutils 0.0.24)
 
