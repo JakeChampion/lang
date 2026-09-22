@@ -74,9 +74,9 @@ func TestSelfHostPerModuleLabelNS_X86_64(t *testing.T) {
 	}
 
 	// The case only guards the bug while it takes the per-module path. That
-	// path is the only producer of namespaced labels, so their presence is the
-	// route assertion.
-	if !strings.Contains(asm, ".L__entry_") {
+	// path is the only producer of namespaced labels, so the entry unit's
+	// namespaced string pool is the route assertion.
+	if !strings.Contains(asm, ".S__entry_") {
 		t.Fatal("no namespaced labels: the program no longer routes per-module (import set changed?) — pick one that does")
 	}
 
