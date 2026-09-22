@@ -755,8 +755,8 @@ loop). Promotion deliberately *excludes* a type param that appears only inside
 a **built-in** generic base — and `feeds_user_parametric` explicitly lists
 `Map[K, V]` as a non-match (`is_builtin_generic_base("Map")`). So the erased
 generic is **never monomorphised**: one shared body keeps the literal
-`Map[K,V]`, and `map_key_kind_of("Map[K,V]")` (which only matches the
-`"Map[i32,"` prefix) **defaults to string-key dispatch**. For an i32-keyed
+`Map[K,V]`, and `map_key_kind_of("Map[K,V]")` (whose key is the type VARIABLE
+`K`, which is no integer) **defaults to string-key dispatch**. For an i32-keyed
 map the integer key is then handed to the string path and dereferenced as a
 pointer → SIGSEGV; for a string-keyed map the default is *correct*, so it
 runs. core/map's verbs (`merge` / `extend` / `from` / `get_or_insert` /

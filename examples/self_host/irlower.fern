@@ -14306,11 +14306,12 @@ function lower_call_arr_firstlast(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: L
 // is the map type mtype. Split out of lower_call_method; the guard selecting it
 // stays there.
 function lower_call_map_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, mtype: string, s: LowerState): LowerState {
+    if (map_key_has_no_column(map_key_of(mtype))) { return s.fail(); }
     var mkk2: i32 = map_key_kind_of(mtype);
     var meqfn: string = map_key_eqfn(mtype);
     // #7001: a COMPOSITE (struct / enum) key is kind 2, dispatched by its
-    // derived hash/eq. map_key_kind_of only separates `Map[i32,` from
-    // everything else, so it answers 0 — STRING — for one, and a
+    // derived hash/eq. map_key_kind_of answers only the integer / string
+    // columns, so it answers 0 — STRING — for one, and a
     // `Map { … }` literal built itself string-keyed: __fern_str_eq then read
     // each key box as a string, taking its first field as a length, and keys
     // differing only past that field collapsed. meqfn was already right here;
@@ -21956,9 +21957,8 @@ function bind_var_slot(v: ast.StmtVar, s: LowerState, se: LowerState, vt: VarTyp
         // stays "" and a later `m.insert / .get_or / .has` emits key-kind
         // 0 (string) for an i32-key map — the i32 key is then dereferenced
         // as a string pointer and segfaults. Store the FULL `Map[K, V]`
-        // form map_key_kind_of expects (it keys on the `Map[i32,` prefix);
-        // form map_key_kind_of / map_value_of expect (the `Map[i32,`
-        // prefix drives the key dispatch, the `, V]` suffix the value).
+        // form map_key_kind_of / map_value_of expect: the key spelling
+        // drives the key dispatch, the `, V]` suffix the value.
         var umk: i32 = expr_map_kind(v.init, sb);
         if (umk >= 0) {
             var uktag: string = "string";
@@ -22587,9 +22587,15 @@ match (v.init) {
         match (mc.callee) {
             ast.ExprIdent(mcid) => {
                 if ((mcid.name == "map_new" || mcid.name == "map_new_i32") && v.type_name.len() >= 5 && slice_unchecked(v.type_name, 0, 4) == "Map[") {
-                    var inner: str = slice_unchecked(v.type_name, 4, v.type_name.len());
-                    if (inner.len() >= 4 && slice_unchecked(inner, 0, 4) == "i32,") { sb = sb.mark_map_type(slot, "i32"); }
-                    else if (inner.len() >= 7 && slice_unchecked(inner, 0, 7) == "string,") { sb = sb.mark_map_type(slot, "string"); }
+                    // The legacy shorthand tag, asked for the same way the rest
+                    // of the lowering asks: an integer key is the integer
+                    // column whatever it is spelled. The annotated-constructor
+                    // arm marks the slot with the full `Map[K, V]` afterwards
+                    // and wins, so this only decides what a path that does not
+                    // reach that arm sees — where a `u8` key used to see
+                    // nothing at all.
+                    if (map_key_kind_of(v.type_name) == 1) { sb = sb.mark_map_type(slot, "i32"); }
+                    else if (map_key_of(v.type_name) == "string") { sb = sb.mark_map_type(slot, "string"); }
                 }
                 // `var t = f()` where f returns a tuple: record its
                 // element tags so a later `t.N` recovers each type. An
@@ -23166,22 +23172,35 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
             match (mnc.callee) {
                 ast.ExprIdent(mnid) => {
                     if ((mnid.name == "map_new" || mnid.name == "map_new_i32") && mnc.args.len() == 1 && v.type_name.len() >= 5 && slice_unchecked(v.type_name, 0, 4) == "Map[") {
-                        var inner2: str = slice_unchecked(v.type_name, 4, v.type_name.len());
                         var kkind: i32 = 0 - 1;
-                        var ktag: string = "";
-                        if (inner2.len() >= 4 && slice_unchecked(inner2, 0, 4) == "i32,") { kkind = 1; ktag = "i32"; }
-                        else if (inner2.len() >= 7 && slice_unchecked(inner2, 0, 7) == "string,") { kkind = 0; ktag = "string"; }
+                        var kt2: string = map_key_of(v.type_name);
+                        // The same question map_key_kind_of answers everywhere
+                        // else, rather than a third hand-rolled reading of the
+                        // spelling: an INTEGER key takes the integer column. A
+                        // `u8` / `u32` key matched neither of the two literal
+                        // prefixes this used to test, so it fell through with
+                        // kkind -1 and the map was CONSTRUCTED string-keyed
+                        // while its inserts used the integer column — which on
+                        // wasm, where the constructor picks the box layout, is
+                        // a map that answers nothing it was given (#9973).
+                        // A key with no column refuses HERE too. Falling
+                        // through left the generic arm below to build a
+                        // string-keyed box for it, which is the silent half of
+                        // what the method gate refuses loudly.
+                        if (map_key_has_no_column(kt2)) { return s.fail(); }
+                        if (map_key_kind_of(v.type_name) == 1) { kkind = 1; }
+                        else if (kt2 == "string") { kkind = 0; }
                         else if (map_key_eqfn(v.type_name) != "") {
                             // Struct/enum key: kind 2, dispatched by the key's
                             // derived hash/eq (the wasm hash map threads their
                             // funcref indices in; x86 ignores them). #2671.
-                            kkind = 2; ktag = map_key_of(v.type_name);
+                            kkind = 2;
                         }
                         if (kkind >= 0) {
                             var mns: LowerState = lower_expr(mnc.args[0], s);
                             if (!mns.ok) { return mns; }
                             var mnfns: string = "";
-                            if (kkind == 2) { mnfns = ktag + ".hash|" + ktag + ".eq"; }
+                            if (kkind == 2) { mnfns = kt2 + ".hash|" + kt2 + ".eq"; }
                             mns = mns.emit(ir.op_map_new(kkind, mnfns));
                             var mnsb: LowerState = mns.add_local(v.name);
                             mnsb = mnsb.mark_reclaim_site(mnsb.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
@@ -25371,6 +25390,7 @@ function lower_stmt_for(fr: ast.StmtFor, s: LowerState): LowerState {
         }
         if (mki_method != "") {
             var mkimty: string = mki_mtype;
+            if (map_key_has_no_column(map_key_of(mkimty))) { return s.fail(); }
             // element type tag: keys -> key kind; values -> value type.
             var mki_elem_str: boolean = false;
             if (mki_method == "keys") { if (map_key_kind_of(mkimty) == 0) { mki_elem_str = true; } }
@@ -25597,7 +25617,8 @@ function lower_stmt_for(fr: ast.StmtFor, s: LowerState): LowerState {
     var kvparts: string[] = rc_fe_split_csv(fr.var_name);
     if (mslot >= 0 && s.map_type_of(mslot) != "" && kvparts.len() == 2) {
         var mty: string = s.map_type_of(mslot);
-        var kkind: i32 = map_key_kind_of(mty);   // 1 = i32 keys, 0 = string
+        if (map_key_has_no_column(map_key_of(mty))) { return s.fail(); }
+        var kkind: i32 = map_key_kind_of(mty);   // 1 for an integer key, 0 for a string one
         var vty: string = map_value_of(mty);
         var kname: string = kvparts[0];
         var vname: string = kvparts[1];
@@ -73022,10 +73043,47 @@ pub function is_fn_payload_spelling(t: string): boolean {
     return t[j] == b'=' && t[j + 1] == b'>';
 }
 
-// map_key_kind_of returns 1 for an i32-keyed Map type, 0 for string-keyed
-// ("Map[i32, V]" / "Map[string, V]").
+// map_key_has_no_column names the scalar keys the integer key column cannot
+// take. The string column is not an alternative for any of them: it reads a
+// key's VALUE as an address, which is how they segfaulted before #9973. So the
+// lowering refuses them, at every surface that reaches a map — its
+// construction, its methods, and both shapes of loop over it.
+//
+// Two different reasons, and it is worth knowing which:
+//
+//   i64 / u64 / f64 / usize are too WIDE. The column is a 4-byte cell on wasm
+//   and op_map_keys has no width to select, so admitting one would narrow the
+//   key silently (#10005).
+//
+//   f32 FITS the width and still does not reach the cell as an i32. Admitted
+//   briefly, it emitted a module wasmtime rejects — `f64.const 2.5` handed
+//   straight to a call whose key parameter is i32, because the insert path
+//   converts and the read path does not. Native has the same gap from the
+//   other side (#10008), and what float key EQUALITY should even mean is open
+//   (#10007), so this is a decision before it is a lowering.
+//
+// Loud is the direction to be wrong in for both: native and the interpreter
+// answer these programs on the register targets, so each is a gap to close
+// rather than a rule of the language.
+pub function map_key_has_no_column(kt: string): boolean {
+    return kt == "i64" || kt == "u64" || kt == "f64" || kt == "usize" || kt == "f32";
+}
+
+// map_key_kind_of returns the key COLUMN a Map type uses: 1 for an integer
+// key, 0 for a string one. (A struct / enum key is kind 2, decided by its
+// derived equality at the call site rather than here.)
+//
+// The question is whether the key is a POINTER, which is what the string
+// column's runtime assumes — not whether it is spelled `i32`. Asking for the
+// literal `Map[i32,` prefix sent `u8` and `u32` keys to the string column,
+// where the insert path read the key's VALUE as an address and dereferenced
+// it: those maps segfaulted on programs the interpreter answers correctly
+// (#9973).
+//
+// A key the column cannot take is refused before this is asked; see above.
 pub function map_key_kind_of(typestr: string): i32 {
-    if (typestr.len() >= 8 && slice_unchecked(typestr, 0, 8) == "Map[i32,") { return 1; }
+    var kt: string = map_key_of(typestr);
+    if (kt == "i32" || kt == "u8" || kt == "u32") { return 1; }
     return 0;
 }
 
