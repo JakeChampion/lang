@@ -429,6 +429,7 @@ pub function (a: NdArray[T]) zip_with[T, U, V](b: NdArray[U], f: (T, U) => V): N
     var y: NdArray[U] = b;
     if (!same_shape(a.shape, shape)) { x = a.broadcast_to(shape); }
     if (!same_shape(b.shape, shape)) { y = b.broadcast_to(shape); }
+    if (x.is_packed() && y.is_packed()) { return from_flat(packed_zip(x.data, y.data, f), shape); }
     var out: V[] = [];
     var n: i32 = count_of(shape);
     var idx: i32[] = zeros(shape.len());
@@ -439,6 +440,23 @@ pub function (a: NdArray[T]) zip_with[T, U, V](b: NdArray[U], f: (T, U) => V): N
         i = i + 1;
     }
     return from_flat(out, shape);
+}
+
+// Both operands packed means each `data` IS the reading order (§2), so the
+// odometer has nothing to compute: element `i` pairs `x[i]` with `y[i]`. The
+// gate is asked AFTER the broadcast step, which is sufficient on its own: a
+// broadcast that would change the reading order gives an axis of extent above
+// 1 a stride of 0 and so fails `is_packed`, while one that only prepends
+// extent-1 axes keeps it and leaves the order alone.
+function packed_zip[T, U, V](x: T[], y: U[], f: (T, U) => V): V[] {
+    var out: V[] = [];
+    var n: i32 = x.len();
+    var i: i32 = 0;
+    while (i < n) {
+        out = out.append(f(x[i], y[i]));
+        i = i + 1;
+    }
+    return out;
 }
 
 // `outer(b, f)` — `f` over every pair of elements, as a packed handle of
