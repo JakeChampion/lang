@@ -207,6 +207,19 @@ function main(): i32 {
 	if (axs.rank() != 2 || axs.get([0, 2]) != 3 as i64 || axs.get([1, 0]) != 14 as i64 || axs.get([1, 2]) != 36 as i64) { return 139; }
 	var axs1: ndarray.NdArray[i64] = ax.scan_axis(1, 0 as i64, (acc: i64, x: i64): i64 => acc * (10 as i64) + x);
 	if (axs1.get([0, 0]) != 1 as i64 || axs1.get([0, 2]) != 123 as i64 || axs1.get([1, 1]) != 45 as i64) { return 139; }
+	// Rank 3, folded along the MIDDLE axis, which is the only shape where
+	// both halves of the lane are live: at rank 2 one of outer and inner is
+	// 1, so h * inner + l and a dropped multiply agree on every lane, and
+	// neither case above can tell them apart. Here outer = inner = 2.
+	var ax3: ndarray.NdArray[i64] = ndarray.from_flat(
+		[1 as i64, 2 as i64, 3 as i64, 4 as i64, 5 as i64, 6 as i64, 7 as i64, 8 as i64], [2, 2, 2]);
+	if (!ax3.is_packed()) { return 138; }
+	var ax3r: ndarray.NdArray[i64] = ax3.reduce_axis(1, 0 as i64, (acc: i64, x: i64): i64 => acc * (10 as i64) + x);
+	if (ax3r.rank() != 2 || ax3r.get([0, 0]) != 13 as i64 || ax3r.get([0, 1]) != 24 as i64) { return 138; }
+	if (ax3r.get([1, 0]) != 57 as i64 || ax3r.get([1, 1]) != 68 as i64) { return 138; }
+	var ax3s: ndarray.NdArray[i64] = ax3.scan_axis(1, 0 as i64, (acc: i64, x: i64): i64 => acc * (10 as i64) + x);
+	if (ax3s.rank() != 3 || ax3s.get([0, 1, 0]) != 13 as i64 || ax3s.get([1, 0, 0]) != 5 as i64) { return 139; }
+	if (ax3s.get([1, 0, 1]) != 6 as i64 || ax3s.get([1, 1, 1]) != 68 as i64) { return 139; }
 
 	// Broadcasting: a stretched axis is stride 0, so broadcast_to is
 	// metadata, and zip_with over a row, a column and a scalar allocates
