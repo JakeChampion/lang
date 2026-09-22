@@ -3396,6 +3396,45 @@ function main(): i32 {
     if ((w as f32) != 200.0) { return 7; }
     return acc;
 }`},
+	// `use NAME <- CALL;` with no annotation on NAME. The parser appends the
+	// rest of the block as a callback lambda whose parameter carries no type,
+	// and the lift kept it that way, so the `$wrapN` body returned a value of
+	// no type and the declaration was refused. checker.pretype_module now
+	// stamps the parameter from the callee's callback slot (native
+	// inferUseParam), before anything is typed against it. Produces 0 of 3
+	// without the stamp.
+	{name: "use-binding-typed-from-its-callee", atLeast: 3, noLeak: true, src: `
+function with_doubled(n: i32, k: (i32) => i32): i32 { return k(n * 2); }
+
+function main(): i32 {
+    use v <- with_doubled(21);
+    return v;
+}
+`},
+	// The binding is a string, read through a method: the stamp carries the
+	// callee's spelling, not a scalar guess.
+	{name: "use-binding-is-a-string", atLeast: 3, noLeak: true, src: `
+function taker(f: (string) => i32): i32 { return f("hi"); }
+
+function main(): i32 {
+    use x <- taker();
+    return x.len() + 23;
+}
+`},
+	// The `use` sits inside an arrow lambda's block body (the shape
+	// conformance/cases/arrow_lambda_block_body pins), so the stamp runs in
+	// the lambda's own scope and the lifted body is typed twice over.
+	{name: "use-binding-inside-a-lambda", atLeast: 4, noLeak: true, src: `
+function give(x: i32, cb: (i32) => i32): i32 { return cb(x); }
+
+function main(): i32 {
+    var bound = (): i32 => {
+        use n <- give(41);
+        return n + 1;
+    };
+    return bound();
+}
+`},
 }
 
 // semHeldElementSource sorts by length with the insertion sort's body: the

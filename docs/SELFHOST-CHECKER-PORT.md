@@ -1797,3 +1797,40 @@ Empty.to_string`, and it now produces all 108 declarations.
 a literal and a call picking different declarations by their form, a
 struct-update literal, and a struct passed to a function. It runs on native,
 interp and wasm and through the self-host on all three of its legs.
+
+## 2026-09-22 — a `use` binding is typed from its callee (#9550's `$wrap0` leaf)
+
+`use NAME <- CALL;` desugars in the parser to CALL with the rest of the block
+appended as a callback lambda, and when the author writes no `: TYPE` the
+lambda's parameter carries none. Native fills it in `inferUseParam`: the
+callee's trailing parameter is the callback slot, and its first parameter is
+NAME's type. The self-host only *verified* that the inference had a signature
+to read (E032) and left the parameter untyped, so:
+
+- the checker typed NAME as unknown, and `var s: string = n;` under a `use`
+  passed where native reports E003;
+- the closure lift copied the untyped parameter into the `$wrapN` trampoline,
+  whose body then returned a value of no type, and semsource refused the
+  declaration with `unresolved result type: inferred from the first returned
+  value`. `conformance/cases/use_callback_bind` and `arrow_lambda_block_body`
+  were the two #9550 cases blocked on it.
+
+The value-block retype pass (`retype_value_blocks`, #8657) already ran ahead
+of both `check_module` and `annotate_module` with a scoped walk, which is the
+shape the stamp needs — the callee may be a fn-typed local (`var t = taker;
+use x <- t();`), which shadows a module function of the same name (#6302). It
+is now `pretype_module`, with two rules: a value-block local gets the type its
+arms assign, and an unannotated `use` binding gets the type its callee's
+callback slot spells (`use_binding_type`, value binding first, then the module
+signature). A type with no declaration spelling — a type parameter of a
+generic callee, which erases here — leaves the binding as written, so the
+E032 walk still sees and reports what it always did.
+
+### Gate
+
+`TestSelfHostCheckerCodesX86_64` gains three E003 rows (a mistyped read of the
+binding through a module callee, through a fn-typed local, and inside a
+lambda's block body); `TestSelfHostSemanticProduction` gains three rows that
+produce whole (an `i32` binding, a `string` binding read through a method, and
+a `use` inside an arrow lambda). Both blocked conformance cases now produce
+every declaration and answer 42 and 0 on the semantic path.
