@@ -73119,6 +73119,13 @@ function map_kv_elem_flag(mty: string, field: string): i32 {
     // which it then released. Both arms aborted under the sanitizer: a record
     // column and an i64 column alike answered 124 where the interpreter
     // answers 24.
+    // An UNPARSEABLE map spelling keeps the old answer. map_value_of returns ""
+    // for anything that is not a "Map[K, V]", and map_value_is_ptr reads "" as a
+    // pointer because it is not one of the scalar names — so claiming those
+    // elements are counted would retain whatever the column happens to hold.
+    // This layer cannot classify them, so it says nothing new about them; the
+    // generic-view hole stays exactly as wide as it was.
+    if (map_value_of(mty) == "") { return 1; }
     if (map_value_is_ptr(map_value_of(mty))) { return 2; }
     return 0;
 }
