@@ -118,4 +118,14 @@ func TestSelfHostArm64SysnoAgreesWithNative(t *testing.T) {
 			t.Errorf("arm64-linux `%s`: sysno says %d, this backend says %d", name, got, want)
 		}
 	}
+	// Darwin readiness calls have no Linux counterpart in the shared table.
+	// Compare against the constants used by the native kqueue emitter too.
+	for name, want := range map[string]int{"kqueue": darKqueue, "kevent": darKevent} {
+		got, ok := darwin[name]
+		if !ok {
+			t.Errorf("sysno has no arm64-darwin `%s` row", name)
+		} else if got != want {
+			t.Errorf("arm64-darwin `%s`: sysno says %d, this backend says %d", name, got, want)
+		}
+	}
 }

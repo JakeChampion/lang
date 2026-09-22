@@ -52,6 +52,15 @@ stable op ID alongside the existing registry.
 These tests prove the syscall floor needed by the networking runtime. They
 do not establish socket correctness, leak freedom or a performance result.
 
+`TestSelfHostArm64DarwinPoll` exercises the self-host kqueue helper with
+inherited pipes and a loopback TCP listener on Apple Silicon. It checks ready,
+timed-out, empty, negative, invalid and duplicate descriptors, the lowest
+ready index, and zero/infinite timeouts. Every case requires balanced
+`FERN_LEAKCHECK` counts and zero live bytes; descriptor reuse checks that
+the helper closes each temporary kqueue. It runs under the macOS lane's
+`TestSelfHostArm64Darwin.*` selector. This is the compatibility `poll` helper;
+P0's persistent worker-owned reactor remains separate work.
+
 ## Generated digest sources
 
 The lint lane runs `make digest-check` on every PR and main push. It compares
