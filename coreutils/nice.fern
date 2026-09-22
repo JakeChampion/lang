@@ -198,7 +198,7 @@ function parse_adjustment(v: string): Adj {
 
 // strtol's leading-blank set, which is isspace and not just a space.
 function is_blank(c: i32): boolean {
-  return c == 32 || c == 9 || c == 10 || c == 11 || c == 12 || c == 13;
+  return c == 32 || c >= 9 && c <= 13;
 }
 
 // The kernel's range. Clamping here rather than leaving it to

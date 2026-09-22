@@ -78,7 +78,13 @@ metadata:
   element count — `data` IS the reading order. The extent-1 skip above
   carries into it, so a `broadcast_to` that only PREPENDS extent-1 axes
   leaves a packed handle packed; one that stretches an axis gives that axis
-  a stride of 0 at extent greater than 1, and does not.
+  a stride of 0 at extent greater than 1, and does not. The same skip means
+  a packed handle may carry a NON-CANONICAL stride on an extent-1 axis —
+  `reverse` of such an axis negates its stride and moves nothing, so the
+  handle stays packed with a stride the row-major ones do not contain. No
+  element read steps along that axis, so values are unaffected; anything
+  deriving a view's strides must take them from the handle rather than
+  recompute them from the shape.
 
 ## 3. The materialization rule
 
@@ -395,7 +401,12 @@ Three rules follow:
   DIRECT-INDEX walk rather than the odometer — element `i` of the reading
   order is `data[i]` when `data` is the reading order — and owes the same
   order by the same rule. `map`, `fold_all`, `zip_with`, `reduce_axis` and
-  `scan_axis` all take it; `map_rank` still runs the odometer. The axis
+  `scan_axis` all take it. `map_rank` is the one verb that does not walk
+  elements at all — it peels CELLS — but it has the same shape of fast
+  path: a packed handle's cell at frame index `i` is that handle with its
+  offset moved to `i * csize`, the same shape and strides every time, so
+  it replaces a chain of `select` calls that each allocated a fresh pair.
+  The axis
   folds walk in reading order like the rest (see the next rule), so what
   they need on top is the LANE: with `inner` the product of the extents
   after `axis` and `outer` the product before it, three counters enumerate

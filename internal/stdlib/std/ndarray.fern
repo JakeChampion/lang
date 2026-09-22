@@ -780,15 +780,41 @@ pub function (a: NdArray[T]) map_rank[T, U](k: i32, f: (NdArray[T]) => NdArray[U
     var out: U[] = [];
     var cshape: i32[] = [];
     var idx: i32[] = zeros(fr);
+    // A packed handle's cells are contiguous runs in reading order, so the
+    // cell at frame index `i` is this handle with its offset moved to
+    // `i * csize` — the same shape and strides every time. Building those
+    // once and varying only the offset replaces a chain of `fr` selects,
+    // each of which allocated a fresh shape and strides pair.
+    //
+    // The strides are SLICED from `a`, not recomputed as the row-major ones
+    // for the cell shape: `is_row_major` skips extent-1 axes, so a packed
+    // handle may carry a non-canonical stride on one (reverse of an extent-1
+    // axis leaves it packed). No element read steps along such an axis, but
+    // `strides()` is public, and the chain this replaces exposed `a`'s value.
+    var packed: boolean = a.is_packed();
+    var cshape_in: i32[] = [];
+    var cstrides: i32[] = [];
+    var q: i32 = fr;
+    while (q < a.shape.len()) {
+        cshape_in = cshape_in.append(a.shape[q]);
+        cstrides = cstrides.append(a.strides[q]);
+        q = q + 1;
+    }
+    var csize: i32 = count_of(cshape_in);
     var i: i32 = 0;
     while (i < cells) {
         // Selecting axis 0 drops it, so `fr` selections leave the rank-k
         // cell at this frame index.
         var cell: NdArray[T] = a;
-        var d: i32 = 0;
-        while (d < fr) {
-            cell = cell.select(0, idx[d]);
-            d = d + 1;
+        if (packed) {
+            cell = NdArray { data: a.data, shape: cshape_in, strides: cstrides, offset: i * csize };
+        } else {
+            var d: i32 = 0;
+            while (d < fr) {
+                cell = cell.select(0, idx[d]);
+                d = d + 1;
+            }
+            idx = bump(idx, frame);
         }
         var r: NdArray[U] = f(cell);
         if (i == 0) {
@@ -802,7 +828,6 @@ pub function (a: NdArray[T]) map_rank[T, U](k: i32, f: (NdArray[T]) => NdArray[U
             out = out.append(flat[m]);
             m = m + 1;
         }
-        idx = bump(idx, frame);
         i = i + 1;
     }
     return from_flat(out, join(frame, cshape));
