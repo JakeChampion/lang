@@ -12,8 +12,11 @@ import (
 // garbage in bits 32..63 (which a materialised-constant index can — a runtime
 // 32-bit ALU op would have zeroed them, but a folded constant load does not),
 // the bounds check passes yet the scaled address is wild → out-of-bounds read.
-// The `mov ecx, ecx` zeroes the upper 32 bits so the address matches the
-// checked 32-bit index. Regression guard for the emitter fix.
+// A 32-bit write to `ecx` zeroes the upper 32 bits so the address matches
+// the checked 32-bit index: the helper's own `mov ecx, ecx`, or after the
+// peephole the index materialised straight into `ecx`. Whichever form
+// survives, the last write of the index register before the scaled `lea`
+// must be 32 bits wide. Regression guard for the emitter fix.
 func TestArrayIndexZeroExtendsIndex(t *testing.T) {
 	asm := compile(t, `
 function main(): i32 {
@@ -21,7 +24,56 @@ function main(): i32 {
     var i: i32 = 1;
     return a[i];
 }`)
-	if !strings.Contains(asm, "mov ecx, ecx") {
-		t.Errorf("array index must zero-extend the i32 index (mov ecx, ecx) before the scaled lea; asm:\n%s", asm)
+	lines := strings.Split(asm, "\n")
+	leas := 0
+	for i, l := range lines {
+		if strings.TrimSpace(l) != "lea rax, [rax + rcx*4]" {
+			continue
+		}
+		leas++
+		// The last write of the index register under any spelling — a
+		// mov, a pop, a sign extension, an address, an ALU op — must be
+		// a 32-bit one.
+		last := ""
+		for k := i - 1; k >= 0; k-- {
+			t := strings.TrimSpace(lines[k])
+			if writesIndexReg(t) {
+				last = t
+				break
+			}
+		}
+		if !strings.HasPrefix(last, "mov ecx, ") {
+			t.Errorf("the index register's last write before the scaled lea is %q; want a 32-bit write of ecx so the upper half is zero; asm:\n%s", last, asm)
+		}
 	}
+	if leas == 0 {
+		t.Fatalf("no scaled index lea found; asm:\n%s", asm)
+	}
+}
+
+// writesIndexReg reports whether an instruction's destination is rcx under
+// any of its names: the first operand is `rcx`, `ecx`, `cx` or `cl` and the
+// instruction is not a compare, which reads its first operand, or the
+// instruction is a pop into rcx.
+func writesIndexReg(insn string) bool {
+	if insn == "pop rcx" {
+		return true
+	}
+	sp := strings.IndexByte(insn, ' ')
+	if sp < 0 {
+		return false
+	}
+	switch insn[:sp] {
+	case "cmp", "test", "bt":
+		return false
+	}
+	dst := strings.TrimSuffix(strings.TrimSpace(insn[sp:]), ",")
+	if c := strings.IndexByte(dst, ','); c >= 0 {
+		dst = dst[:c]
+	}
+	switch dst {
+	case "rcx", "ecx", "cx", "cl":
+		return true
+	}
+	return false
 }

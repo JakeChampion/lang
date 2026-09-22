@@ -297,9 +297,10 @@ const freelistHeadsEnd = freelistHeadsAddr + freelistClasses*4
 const (
 	// closuresBase is the static OpConstFunc closure-pair pool:
 	// maxClosureCells 8-byte { fn_idx (i32 LE), env_ptr=0 (i32 LE) } cells,
-	// addressed as closuresBase + 8*tableIdx.
+	// addressed as closuresBase + 8*tableIdx. The self-hosted compiler
+	// alone interns more than 116 unique targets (its astwalk visitors).
 	closuresBase    = freelistHeadsEnd
-	maxClosureCells = 116
+	maxClosureCells = 256
 	closurePoolEnd  = closuresBase + 8*maxClosureCells
 
 	// twoOverPiBase is the Payne-Hanek 2/pi bit table __fern_sin_f64 /

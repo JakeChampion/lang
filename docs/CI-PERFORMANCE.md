@@ -414,6 +414,114 @@ one process on a 3-core runner) is the next long pole once the Linux side is
 under it; its own ~5-slot pool is what bounds sharding it. `changes` costs 1.2
 minutes at the front of every run for a listing call.
 
+## Fifth change: a superseded pull request run is cancelled server-side
+
+### What the pool was doing during one PR run
+
+Run 35733713188 (#10003's final run, 13:28-14:01 UTC) never reached the
+ceiling on its own: its jobs peaked at 25 running, on a pool of 40. The rest
+of the pool, per the run listing for the same half hour:
+
+| Holding slots alongside it | Slots and duration |
+| --- | --- |
+| `CI main` for 95c7867 | ~60 jobs, 13:04-13:46 (42 min, itself starved) |
+| the other lane's PR suite (#9990) | ~60 jobs, 13:32-13:56 |
+| two runs a push had superseded (35733119494, 35733509031) | their jobs kept running until 13:36, 8 and 4 minutes after the push that made them obsolete |
+| Pullfrog review runs | four dispatches of 15-35 min, one slot each |
+
+The superseded runs are the part this repository controls. They were
+cancelled by `reap-stale-runs.yml`, which needs a runner of its own to act and
+queues for it behind the very jobs it is meant to free. Over its last 31
+successful `pull_request` runs the sweep took a median 0.9 min from trigger to
+completion, p90 7.5, maximum 14.7. The `changes` and `Lint` jobs of the
+measured run, ten seconds of work each, waited 6 minutes for a slot at
+13:28-13:34, which is exactly the window in which the two superseded runs
+were still executing.
+
+### The change
+
+`ci.yml` carries a concurrency group per pull request with
+`cancel-in-progress` on for `pull_request` events only. A push then cancels
+the previous run the moment it lands, server-side, and nothing waits for a
+runner to do it. The suite FIFO is untouched: it stays on `ci-suite.yml`,
+where `queue: max` forbids `cancel-in-progress`, so the two groups nest (one
+run per PR on the outside, two suites at a time on the inside). A main
+validation and a dispatch get a run-unique group and are never cancelled.
+`reap-stale-runs.yml` no longer triggers on `synchronize`; it remains the
+backstop for closed pull requests and the quiet-hours cron.
+
+Measured on the first push after it merged (#10021, 17:01:17 UTC): the
+superseded run was cancelled at 17:01:24, seven seconds later, with no runner
+involved. The first main validation after the merge (run 35755577198) ran
+its suite normally; the fallback group's prefix differs from ci-suite.yml's
+on purpose, because an identical one has the suite request the group its own
+run holds and GitHub cancels that as a deadlock, which a PR run cannot show.
+
+### Whether the two-lane queue is still needed
+
+Yes. A suite on an otherwise empty pool (run 35745901102) is 323 job-minutes
+over an 18.6-minute wall, a mean of 17 slots in use out of 40: it holds 35-36
+running for its first four minutes, is under 25 by minute seven with nothing
+waiting, and spends its last five minutes on a handful of jobs. A second
+suite fills that decay; a third would put about 180 jobs against 40 slots at
+fan-out and stretch every suite without adding throughput. Removing the queue
+would be worse still: of the 100 completed pull-request runs before 16:18 UTC
+on 2026-09-22, 72 were cancelled as superseded and 28 succeeded. A run
+waiting in the queue costs nothing when its push is superseded, where a run
+that had fanned out would have spent slots on work that is discarded.
+
+## Sixth change: the fernsmith shrink sweep runs its seeds in parallel
+
+`TestGenBytesShrinkIsMonotonicAndValid` under `RUN_SHRINK_PROPERTY=1` is
+nearly the whole fernsmith lane. It was parallel across its three entry
+points only, so it ran three-wide on a four-core runner. Each (entry point,
+seed) pair is now a parallel subtest (#10021).
+
+| | before | after |
+| --- | ---: | ---: |
+| local four-core box, the sweep test alone | 472 s | 386 s |
+| `test-fernsmith-x86_64` test step (runs 35733713188, 35757937523) | 587 s | 559 s |
+| `test-fernsmith-aarch64` test step | 375 s | 329 s |
+
+The runner gained a fraction of what the local box did: the x86_64 runner's
+fourth vCPU is worth much less than a core to this CPU-bound sweep. The
+lane's floor is now the per-seed type-check cost itself.
+
+### Measured and left alone
+
+- Per-job setup (checkout, toolchain, `go test -c`) is 29 of the 328
+  job-minutes of a suite, a mean of 28 s per job. Merging small jobs would
+  not repay the longer critical path it creates.
+- `test-e2e-selfhost-x86_64-shard0` is 11 minutes because
+  `TestSelfHostAssumeEligibleByteIdenticalX86_64` is 503 s of it: 346 s in
+  the checked per-process route (83 driver processes, each paying a ~10 s
+  parse floor) and 123 s in emit-all. The per-process route is the thing
+  under test, so that cost is the guarantee's.
+- `test-units-x86_64` is bounded by three serial packages, `internal/ir`
+  (392 s), `internal/ssa` (351 s) and `internal/printer` (349 s), which
+  run concurrently with each other. None can take `t.Parallel`: `ir`'s
+  tests alone write the `internal/ast` package globals 143 times.
+- The failure reaper (`cancel-on-failure.yml`) waits for a runner like the
+  stale-run reaper did: on run 35749155333 the failing shard finished at
+  16:13:07, its lane concluded at 16:15:58, and the reaper was still queued
+  minutes later. Test jobs keep a read-only token by a pinned decision
+  (`TestCILintRunsOutsideTheFullSuiteQueue`), so an in-job cancel step is
+  not available; the cost is bounded by the lane's own tail.
+
+
+### Not done: skipping a main run whose tree a PR run already passed
+
+A rebase merge of a branch that is level with main produces the same tree
+the PR run tested, so the main validation of that push would re-run the same
+tests on the same tree. Measured on the last 40 merged pull requests: 9 had
+the merge commit's tree equal to the PR head's tree, 31 did not, because main
+moved between the PR's last push and its merge (branches here are rarely
+brought level before merging, and `auto-rebase-prs.yml` rebases them
+afterwards). A tree-hash skip would remove about one main run in five; the
+per-run `changes` filter and `ci-main.yml`'s coalescing already remove more,
+and the skip would need the PR run to have run every lane. Not worth its
+own machinery at that rate.
+
 ## Multi-core test execution: what parallelism can and cannot buy
 
 Measured 2026-09-22 on the 4-core container (Xeon 2.10 GHz, a 14 GB cgroup),

@@ -269,11 +269,12 @@ func TestPeepholeLooksThroughLabelsForDeadReloads(t *testing.T) {
 			t.Errorf("%d dead reload(s) still follow the fused increment of %s:\n%s", n, slot, body)
 		}
 	}
-	// The induction variable's two REAL reads survive: one to index bs[i], one
-	// for the loop compare. Counted so that a P11 which grew too eager — the
-	// failure mode on the other side of this rule — shows up as a missing read
-	// rather than as a miscompile someone has to debug.
-	if n := strings.Count(body, "mov rax, [rbp-16]"); n != 2 {
+	// The induction variable's two REAL reads survive: one to index bs[i]
+	// (read straight into the index register), one for the loop compare.
+	// Counted so that a P11 which grew too eager — the failure mode on the
+	// other side of this rule — shows up as a missing read rather than as a
+	// miscompile someone has to debug.
+	if n := strings.Count(body, ", [rbp-16]"); n != 2 {
 		t.Errorf("expected the induction variable's 2 real reads to survive, got %d:\n%s", n, body)
 	}
 }

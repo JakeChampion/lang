@@ -7189,6 +7189,78 @@ func (b *builder) brTo(target int32, cond bool) {
 	}
 }
 
+// branchChains reports whether a condition may lower to a chain of
+// branches. A coverage build keeps the `&&` / `||` expression form, whose
+// arms carry the branch counters.
+func (b *builder) branchChains() bool { return b.cover == nil }
+
+// isShortCircuit reports whether a condition is an `&&` or `||`, looking
+// through `!`.
+func isShortCircuit(e ast.Expr) bool {
+	for {
+		switch x := e.(type) {
+		case *ast.Unary:
+			if x.Op != "!" {
+				return false
+			}
+			e = x.Operand
+		case *ast.Binary:
+			return x.Op == "&&" || x.Op == "||"
+		default:
+			return false
+		}
+	}
+}
+
+// condBr emits a branch to the scope opened at depth `target` when cond
+// evaluates to `when`, falling through otherwise.
+//
+// `&&`, `||` and `!` become branch chains rather than materialised
+// booleans: `a && b` branching on false is a branch on each operand's
+// falsity in turn, and the backends fuse each comparison with its branch.
+// Branching on the operator's own value — `a && b` on true — needs a block
+// so the operand that decides early can skip the other's branch:
+//
+//	block
+//	  a; not; br_if 0     <- a false: `a && b` is false, fall through
+//	  b; br_if target+1   <- b true: `a && b` is true
+//	end
+func (b *builder) condBr(cond ast.Expr, target int32, when bool) error {
+	switch x := cond.(type) {
+	case *ast.Unary:
+		if x.Op == "!" {
+			return b.condBr(x.Operand, target, !when)
+		}
+	case *ast.Binary:
+		if b.branchChains() && (x.Op == "&&" || x.Op == "||") {
+			if (x.Op == "&&") != when {
+				if err := b.condBr(x.Left, target, when); err != nil {
+					return err
+				}
+				return b.condBr(x.Right, target, when)
+			}
+			b.openBlock(BlockTypeVoid)
+			skipD := b.depth
+			if err := b.condBr(x.Left, skipD, !when); err != nil {
+				return err
+			}
+			if err := b.condBr(x.Right, target, when); err != nil {
+				return err
+			}
+			b.closeScope()
+			return nil
+		}
+	}
+	if err := b.expr(cond); err != nil {
+		return err
+	}
+	if !when {
+		b.emit(Op{Kind: OpNot})
+	}
+	b.brTo(target, true)
+	return nil
+}
+
 // isLiteralMatch reports whether every arm of a `match` is a
 // literal pattern or the unguarded wildcard (i.e. no arm carries
 // a VariantName). Used to dispatch between the enum-match
@@ -8741,6 +8813,44 @@ func (b *builder) stmt(s ast.Stmt) error {
 			}
 		}
 	case *ast.If:
+		if b.branchChains() && isShortCircuit(n.Cond) {
+			// `if (a && b) X else Y` as blocks, so each operand branches
+			// straight past X instead of materialising the boolean:
+			//
+			//   block               <- else target (only with an else)
+			//     block             <- past-X target
+			//       a; not; br_if   <- condBr
+			//       b; not; br_if
+			//       X
+			//       br              <- over Y (only with an else)
+			//     end
+			//     Y
+			//   end
+			var outD int32
+			if n.Else != nil {
+				b.openBlock(BlockTypeVoid)
+				outD = b.depth
+			}
+			b.openBlock(BlockTypeVoid)
+			skipD := b.depth
+			if err := b.condBr(n.Cond, skipD, false); err != nil {
+				return err
+			}
+			if err := b.stmt(n.Then); err != nil {
+				return err
+			}
+			if n.Else != nil {
+				b.brTo(outD, false)
+			}
+			b.closeScope()
+			if n.Else != nil {
+				if err := b.stmt(n.Else); err != nil {
+					return err
+				}
+				b.closeScope()
+			}
+			break
+		}
 		taken := b.coverBranch(n.Pos())
 		if err := b.expr(n.Cond); err != nil {
 			return err
@@ -8780,11 +8890,9 @@ func (b *builder) stmt(s ast.Stmt) error {
 			// text costs nothing at runtime and changes no semantics.
 			b.openBlock(BlockTypeVoid)
 			breakD := b.depth
-			if err := b.expr(n.Cond); err != nil {
+			if err := b.condBr(n.Cond, breakD, false); err != nil {
 				return err
 			}
-			b.emit(Op{Kind: OpNot})
-			b.brTo(breakD, true)
 			b.openLoop(BlockTypeVoid)
 			loopD := b.depth
 			b.openBlock(BlockTypeVoid)
@@ -8804,12 +8912,12 @@ func (b *builder) stmt(s ast.Stmt) error {
 			b.breakStack = b.breakStack[:len(b.breakStack)-1]
 			b.contStack = b.contStack[:len(b.contStack)-1]
 			b.closeScope() // close continue-block
-			if err := b.expr(n.Cond); err != nil {
+			// The bottom test is the conditional back-edge.
+			if err := b.condBr(n.Cond, loopD, true); err != nil {
 				return err
 			}
-			b.brTo(loopD, true) // conditional back-edge
-			b.closeScope()      // close loop
-			b.closeScope()      // close break-block
+			b.closeScope() // close loop
+			b.closeScope() // close break-block
 			break
 		}
 		// `block` carries break, `loop` carries continue. The body sits
@@ -8823,11 +8931,9 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// once per iteration, true on the edge into the body. A `while`
 		// whose body never runs is the case line coverage cannot state.
 		taken := b.coverBranch(n.Pos())
-		if err := b.expr(n.Cond); err != nil {
+		if err := b.condBr(n.Cond, breakD, false); err != nil { // exit when cond is false
 			return err
 		}
-		b.emit(Op{Kind: OpNot}) // br_if exits when cond was false
-		b.brTo(breakD, true)
 		b.coverArm(taken, n.Pos()) // fell through the exit branch: body entered
 		b.breakStack = append(b.breakStack, breakD)
 		b.contStack = append(b.contStack, loopD)
@@ -8887,20 +8993,16 @@ func (b *builder) stmt(s ast.Stmt) error {
 			// Same rotation as `while`: guard once here, and the bottom test
 			// below doubles as the back edge. The step still runs between the
 			// continue target and that test, so `continue` reaches it.
-			if err := b.expr(n.Cond); err != nil {
+			if err := b.condBr(n.Cond, breakD, false); err != nil {
 				return err
 			}
-			b.emit(Op{Kind: OpNot})
-			b.brTo(breakD, true)
 		}
 		b.openLoop(BlockTypeVoid)
 		loopD := b.depth
 		if !rotate {
-			if err := b.expr(n.Cond); err != nil {
+			if err := b.condBr(n.Cond, breakD, false); err != nil {
 				return err
 			}
-			b.emit(Op{Kind: OpNot})
-			b.brTo(breakD, true)
 		}
 		b.openBlock(BlockTypeVoid)
 		contD := b.depth
@@ -8925,10 +9027,10 @@ func (b *builder) stmt(s ast.Stmt) error {
 			}
 		}
 		if rotate {
-			if err := b.expr(n.Cond); err != nil {
+			// The bottom test is the conditional back-edge.
+			if err := b.condBr(n.Cond, loopD, true); err != nil {
 				return err
 			}
-			b.brTo(loopD, true) // conditional back-edge
 		} else {
 			b.brTo(loopD, false)
 		}

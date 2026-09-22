@@ -5572,7 +5572,7 @@ func (g *generator) peepholeTail() bool {
 		}
 		if k >= 1 {
 			if reg, ok := matchMovFromAcc(w[k]); ok {
-				if line, ok := renameAccDest(w[k-1], reg); ok {
+				if line, ok := renameAccDest(w[k-1], reg.name, reg.narrow); ok {
 					rest := append([]string(nil), w[k+1:]...)
 					g.peepWin = append(append(w[:k-1], line), rest...)
 					return true
@@ -5618,6 +5618,51 @@ func (g *generator) peepholeTail() bool {
 					w[n-1] = "\tmov " + reg + ", rax"
 				}
 				return true
+			}
+		}
+	}
+
+	// P12 — zero-extending copy. The index helpers take their index as a
+	// 64-bit copy out of the accumulator and then clear its upper half:
+	//
+	//   mov rcx, rax / mov ecx, ecx   =>  mov ecx, eax
+	//
+	// A 32-bit write zero-extends into the whole register, so the one
+	// instruction leaves rcx exactly as the pair did. Checked before P5,
+	// which then sees a materialisation copied into a 32-bit register and
+	// writes it there directly.
+	if n >= 2 {
+		if reg, ok := matchMovFromAcc(w[n-2]); ok && !reg.narrow {
+			r32 := reg32(reg.name)
+			if w[n-1] == "\tmov "+r32+", "+r32 {
+				g.peepWin = append(w[:n-2], "\tmov "+r32+", eax")
+				return true
+			}
+		}
+	}
+
+	// P8 again, through a compare and its branch. A stored value tested and
+	// branched on before its reload:
+	//
+	//   mov [rbp-N], rax / cmp eax, K / jb L / mov rax, [rbp-N]
+	//     =>  mov [rbp-N], rax / cmp eax, K / jb L
+	//
+	// The compare reads the accumulator without writing it, and the reload
+	// is only reached along the fall-through edge, on which rax still holds
+	// what was stored. Any path that takes the branch never executes the
+	// reload, so nothing can miss its value. `&&` conditions lower to
+	// chains of exactly this shape.
+	if n >= 4 && isFrameLoadToAcc(w[n-1]) {
+		k := n - 2
+		for k >= 1 && isCompareOrCondJump(w[k]) {
+			k--
+		}
+		if k < n-2 {
+			if slot, ok := matchStoreFromAcc(w[k]); ok {
+				if reg, ok := matchLoadFromSlot(w[n-1], slot); ok && reg == "rax" {
+					g.peepWin = w[:n-1]
+					return true
+				}
 			}
 		}
 	}
@@ -6022,7 +6067,7 @@ func foldStackedMaterialise(l0, op, mv, pop, next string) ([]string, bool) {
 	}
 
 	if restore == "rax" {
-		line, ok := renameAccDest(op, reg)
+		line, ok := renameAccDest(op, reg.name, reg.narrow)
 		if !ok {
 			return nil, false
 		}
@@ -6039,10 +6084,10 @@ func foldStackedMaterialise(l0, op, mv, pop, next string) ([]string, bool) {
 	// The two destinations must differ, or the rewrite would order the
 	// writes the other way round; and the materialisation must not read the
 	// register the restore now writes before it runs.
-	if reg == restore || readsReg(op, restore) {
+	if reg.name == restore || readsReg(op, restore) {
 		return nil, false
 	}
-	line, ok := renameAccDest(op, reg)
+	line, ok := renameAccDest(op, reg.name, reg.narrow)
 	if !ok {
 		return nil, false
 	}
@@ -6120,24 +6165,69 @@ func readsReg(line, r64 string) bool {
 	return strings.Contains(src, r64) || strings.Contains(src, reg32(r64))
 }
 
-// matchMovFromAcc matches `mov <r64>, rax` — the copy out of the accumulator,
-// whether it was written as an argument setup or left behind by P1 collapsing
-// a push/pop pair. rax itself is excluded (the copy would be a no-op and the
-// rename meaningless) and so is rsp, which is not a value register.
-func matchMovFromAcc(line string) (string, bool) {
+// accCopy is a copy out of the accumulator: the 64-bit name of the register
+// written, and whether only the low 32 bits were copied (`mov ecx, eax`,
+// which zero-extends).
+type accCopy struct {
+	name   string
+	narrow bool
+}
+
+// matchMovFromAcc matches `mov <r64>, rax` or `mov <r32>, eax` — the copy
+// out of the accumulator, whether it was written as an argument setup or
+// left behind by P1 collapsing a push/pop pair. rax itself is excluded (the
+// copy would be a no-op and the rename meaningless) and so is rsp, which is
+// not a value register.
+func matchMovFromAcc(line string) (accCopy, bool) {
 	const pfx = "\tmov "
-	const sfx = ", rax"
-	if !strings.HasPrefix(line, pfx) || !strings.HasSuffix(line, sfx) {
-		return "", false
+	if !strings.HasPrefix(line, pfx) {
+		return accCopy{}, false
 	}
-	reg := line[len(pfx) : len(line)-len(sfx)]
+	var reg string
+	var narrow bool
+	switch {
+	case strings.HasSuffix(line, ", rax"):
+		reg = line[len(pfx) : len(line)-len(", rax")]
+	case strings.HasSuffix(line, ", eax"):
+		reg = reg64(line[len(pfx) : len(line)-len(", eax")])
+		narrow = true
+	default:
+		return accCopy{}, false
+	}
 	if reg == "rax" || reg == "rsp" || reg == "" || strings.ContainsAny(reg, " [],") {
-		return "", false
+		return accCopy{}, false
 	}
 	if reg32(reg) == reg { // not a known 64-bit register name
-		return "", false
+		return accCopy{}, false
 	}
-	return reg, true
+	return accCopy{name: reg, narrow: narrow}, true
+}
+
+// reg64 is the inverse of reg32: the 64-bit name of a 32-bit register name.
+// An unknown name passes through, so reg32 of the result then fails to
+// change it and the caller rejects it.
+func reg64(r32 string) string {
+	switch r32 {
+	case "eax":
+		return "rax"
+	case "ebx":
+		return "rbx"
+	case "ecx":
+		return "rcx"
+	case "edx":
+		return "rdx"
+	case "esi":
+		return "rsi"
+	case "edi":
+		return "rdi"
+	case "ebp":
+		return "rbp"
+	case "esp":
+		return "rsp"
+	case "r8d", "r9d", "r10d", "r11d", "r12d", "r13d", "r14d", "r15d":
+		return r32[:len(r32)-1]
+	}
+	return r32
 }
 
 // renameAccDest rewrites a materialisation whose destination is the
@@ -6155,7 +6245,15 @@ func matchMovFromAcc(line string) (string, bool) {
 // An operand that reads dst is fine: the read happens before the write within
 // the instruction, and the value it reads is the same one the original form
 // read.
-func renameAccDest(op, dst string) (string, bool) {
+//
+// `narrow` means the copy took only the low 32 bits of the accumulator, so
+// the rewrite writes the 32-bit name of dst: a 64-bit load becomes a 32-bit
+// load of the same low bytes, and a 32-bit write already zero-extends. A
+// sign extension to 64 bits has no 32-bit-destination form, so it refuses.
+// An address (`lea`) refuses too, by choice: `lea edi, [rip + L]` would
+// keep the low bits the copy took, but this emitter never means an address
+// truncated to 32 bits, so the shape is left alone rather than folded.
+func renameAccDest(op, dst string, narrow bool) (string, bool) {
 	if op == "\txor eax, eax" {
 		d := reg32(dst)
 		return "\txor " + d + ", " + d, true
@@ -6171,13 +6269,26 @@ func renameAccDest(op, dst string) (string, bool) {
 				return "", false
 			}
 			d := dst
-			if acc == "eax" {
+			if acc == "eax" || narrow {
+				if narrow && acc == "rax" && (m == "lea" || m == "movsxd") {
+					return "", false
+				}
 				d = reg32(dst)
 			}
 			return "\t" + m + " " + d + ", " + src, true
 		}
 	}
 	return "", false
+}
+
+// isCompareOrCondJump reports whether a line is a compare, a test, or a
+// conditional jump: the lines that read the accumulator and the flags
+// without writing a register.
+func isCompareOrCondJump(line string) bool {
+	if strings.HasPrefix(line, "\tcmp ") || strings.HasPrefix(line, "\ttest ") {
+		return true
+	}
+	return strings.HasPrefix(line, "\tj") && !strings.HasPrefix(line, "\tjmp ")
 }
 
 // captureSlotSize mirrors closureconv.captureSlotSize for
