@@ -704,10 +704,10 @@ function slice_bound(t: SliceTree, left: i32, op: string, right: i32, sink: i32)
 // length is read once and each bound evaluated once, before any test runs.
 // `xs[lo:hi]` on an array is a fresh copy of the window, the source's own
 // type, bounds-checked by the runtime rather than by a test here (the AST
-// lowering traps the same way). The elements are copied as bare words, so an
-// array whose elements own something is refused: the copy would alias them.
+// lowering traps the same way). The elements are copied as bare words, so a
+// counted element type is retained once per copied slot — the copy aliases
+// every one of them.
 function array_slice(sl: ast.ExprSlice, src: Value, elem: typeinfo.Type, s: State): Value {
-    if (ssasem.reference(elem)) { return refused(s, "unsupported slice source: " + typeinfo.spelling(s.values[src.id])); }
     var lo: Value = expr(sl.start, s, t_i32());
     s = lo.s;
     if (!s.ok) { return lo; }
