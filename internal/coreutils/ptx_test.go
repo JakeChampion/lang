@@ -1,6 +1,7 @@
 package coreutils
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -96,6 +97,20 @@ func ptxCases(t *testing.T) []invocation {
 	oddWords := ptxFile(t, dir, "odd", strings.TrimRight(odd.String(), " ")+"\n")
 	numbered := ptxFile(t, dir, "numbered",
 		"w01 w02 w03 w04 w05 w06 w07 w08 w09 w10 w11 w12 w13 w14 w15 w16\n")
+	// 20000 distinct keywords, above the radix sort's threshold, whose
+	// first eight bytes tie a hundred at a time; none are equal, so GNU's
+	// pointer tie-break among equal keywords (Known divergences) does not
+	// arise.
+	var many strings.Builder
+	for i := 0; i < 20000; i++ {
+		fmt.Fprintf(&many, "word%d", 100000+i*7%20000)
+		if i%10 == 9 {
+			many.WriteByte('\n')
+		} else {
+			many.WriteByte(' ')
+		}
+	}
+	manyWords := ptxFile(t, dir, "many", many.String())
 	longword := ptxFile(t, dir, "longword", "xx abcdefghijklmnopqrstuvwxyz yy\n")
 	// The head field is the piece of the geometry that cannot be
 	// guessed: its share is the widest keyword in the WHOLE input plus
@@ -264,6 +279,9 @@ func ptxCases(t *testing.T) []invocation {
 		{name: "even words traditional", args: []string{"-G", "-O", evenWords}},
 		{name: "odd words", args: []string{oddWords}},
 		{name: "odd words roff", args: []string{"-O", oddWords}},
+		{name: "many words", args: []string{manyWords}},
+		{name: "many words traditional", args: []string{"-G", manyWords}},
+		{name: "many words folded", args: []string{"-f", manyWords}},
 		{name: "numbered words", args: []string{numbered}},
 		{name: "numbered words narrow", args: []string{"-w", "40", numbered}},
 		{name: "numbered words gap 1", args: []string{"-g", "1", numbered}},
