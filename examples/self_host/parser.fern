@@ -11205,7 +11205,7 @@ pub function register_array_method_generics(mod: Module): Module {
 // monomorphize_module (receiver methods) and monomorphize_structs (Map is a
 // built-in, not a generic struct), so its `K` / `V` stay free vars. The body's
 // map ops then read the key-kind off the unsubstituted `Map[K, V]` type, where
-// map_key_kind_of (matching only the `Map[i32,` prefix) DEFAULTS to string —
+// map_key_kind_of (whose key is the type VARIABLE `K`, not an integer) DEFAULTS to string —
 // miscompiling an i32-keyed map (the integer key is dereferenced as a string
 // pointer → SIGSEGV). register_map_method_generics folds such a method into a
 // free generic `__mapm_<verb>[K, V](m: Map[K, V], args): R` (receiver as arg0,
