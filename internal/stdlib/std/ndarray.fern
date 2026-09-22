@@ -784,16 +784,22 @@ pub function (a: NdArray[T]) map_rank[T, U](k: i32, f: (NdArray[T]) => NdArray[U
     // cell at frame index `i` is this handle with its offset moved to
     // `i * csize` — the same shape and strides every time. Building those
     // once and varying only the offset replaces a chain of `fr` selects,
-    // each of which allocated a fresh shape and strides pair. The offset it
-    // produces is the one the chain produced, so `f` sees the same cell.
+    // each of which allocated a fresh shape and strides pair.
+    //
+    // The strides are SLICED from `a`, not recomputed as the row-major ones
+    // for the cell shape: `is_row_major` skips extent-1 axes, so a packed
+    // handle may carry a non-canonical stride on one (reverse of an extent-1
+    // axis leaves it packed). No element read steps along such an axis, but
+    // `strides()` is public, and the chain this replaces exposed `a`'s value.
     var packed: boolean = a.is_packed();
     var cshape_in: i32[] = [];
+    var cstrides: i32[] = [];
     var q: i32 = fr;
     while (q < a.shape.len()) {
         cshape_in = cshape_in.append(a.shape[q]);
+        cstrides = cstrides.append(a.strides[q]);
         q = q + 1;
     }
-    var cstrides: i32[] = row_major(cshape_in);
     var csize: i32 = count_of(cshape_in);
     var i: i32 = 0;
     while (i < cells) {

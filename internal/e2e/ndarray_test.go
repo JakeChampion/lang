@@ -319,6 +319,19 @@ function main(): i32 {
 		ndarray.from_flat([c.get([0]) * (10 as i64) + c.get([1])], []));
 	if (mr3c.rank() != 2 || mr3c.get([0, 0]) != 12 as i64 || mr3c.get([0, 1]) != 34 as i64) { return 169; }
 	if (mr3c.get([1, 0]) != 56 as i64 || mr3c.get([1, 1]) != 78 as i64) { return 169; }
+	// A packed handle can carry a non-canonical stride on an extent-1 axis:
+	// is_row_major skips those (§2), so reversing one leaves the handle
+	// packed. Elements never step along such an axis, so every read agrees —
+	// but strides() is public, and the cell the select chain produced kept
+	// a.strides verbatim. The direct build has to slice, not recompute.
+	var mrs: ndarray.NdArray[i64] = ndarray.from_flat(
+		[1 as i64, 2 as i64, 3 as i64, 4 as i64], [2, 2, 1]).reverse(2);
+	if (!mrs.is_packed()) { return 170; }
+	var mrsc: ndarray.NdArray[i64] = mrs.map_rank(1, (c: ndarray.NdArray[i64]): ndarray.NdArray[i64] =>
+		ndarray.from_flat([(c.strides()[0]) as i64, c.get([0])], [2]));
+	if (mrsc.rank() != 3 || mrsc.get([0, 0, 0]) != (0 as i64) - (1 as i64)) { return 170; }
+	if (mrsc.get([0, 0, 1]) != 1 as i64 || mrsc.get([1, 1, 1]) != 4 as i64) { return 170; }
+	if (mrsc.get([1, 1, 0]) != (0 as i64) - (1 as i64)) { return 170; }
 
 	// The keep-alive: every buffer measured above is still held here.
 	var live: i32 = t.rank() + rv.rank() + sl.rank() + se.rank() + pm.rank() + col.rank()
