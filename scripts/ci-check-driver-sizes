@@ -158,7 +158,7 @@ routed="$(awk -v B="$BASELINE" -v tol="$TOLERANCE" -v complete="$COMPLETE" '
     if (nmissing > 0) {
       printf "SUMMARY\tMISSING: %d of %d baselined driver(s) are in the baseline but were not measured — %s.\n", nmissing, bn, missing
       printf "SUMMARY\tNothing compared them, so their size is unknown on this commit. A driver whose link failed, one dropped from FERN_WARM_DRIVER, and a name that drifted from the baseline all land here.\n"
-      printf "ANNOTATE\t%d baselined driver(s) were not measured\t%s produced no size on this commit, so the comparison is incomplete; check the driver-sizes job's link step (#7519)\n", nmissing, missing
+      printf "ANNOTATE\t%d baselined driver(s) were not measured\t%s produced no size on this commit, so the comparison is incomplete; check the link step of the driver-sizes job (#7519)\n", nmissing, missing
     }
 
     nsug = 0
