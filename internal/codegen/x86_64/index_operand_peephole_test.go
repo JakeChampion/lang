@@ -376,3 +376,68 @@ function main(): i32 { return f(2, 3); }`)
 		}
 	}
 }
+
+// A `.loc` between a store and its reload is no obstacle: the rules look
+// through directives, and the directive stays in front of what follows it.
+func TestPeepholeLooksThroughDirectives(t *testing.T) {
+	got := runPeephole("\tmov [rbp-32], rax", "\t.loc 1 6 9", "\tmov rax, [rbp-32]")
+	if !sameLines(got, "\tmov [rbp-32], rax", "\t.loc 1 6 9") {
+		t.Errorf("got %q", got)
+	}
+	got = runPeephole("\tmov rax, [rbp-16]", "\t.loc 1 7 5", "\txor eax, eax")
+	if !sameLines(got, "\t.loc 1 7 5", "\txor eax, eax") {
+		t.Errorf("got %q", got)
+	}
+	// Directives do not use up the window: a five-argument call with a
+	// `.loc` before every argument still folds (P15's shape is 16 lines).
+	got = runPeephole(
+		"\t.loc 1 3 1", "\tmov rax, [rbp-8]", "\tpush rax",
+		"\t.loc 1 3 4", "\tmov rax, [rbp-16]", "\tpush rax",
+		"\t.loc 1 3 7", "\tmov rax, [rbp-8]", "\tpush rax",
+		"\t.loc 1 3 9", "\tmov rax, [rbp-32]", "\tpush rax",
+		"\t.loc 1 3 12", "\tmov rax, [rbp-64]", "\tmov r8, rax",
+		"\tpop rcx", "\tpop rdx", "\tpop rsi", "\tpop rdi", "\tsub rsp, 8", "\tcall __fern_mismatch",
+	)
+	if !sameLines(got, "\t.loc 1 3 1", "\t.loc 1 3 4", "\t.loc 1 3 7", "\t.loc 1 3 9", "\t.loc 1 3 12",
+		"\tmov rdi, [rbp-8]", "\tmov rsi, [rbp-16]", "\tmov rdx, [rbp-8]", "\tmov rcx, [rbp-32]", "\tmov r8, [rbp-64]",
+		"\tsub rsp, 8", "\tcall __fern_mismatch") {
+		t.Errorf("got %q", got)
+	}
+	// A directive ahead of the span stays where it was.
+	got = runPeephole("\t.cfi_def_cfa_register rbp", "\tpush rax", "\tpop rcx")
+	if !sameLines(got, "\t.cfi_def_cfa_register rbp", "\tmov rcx, rax") {
+		t.Errorf("got %q", got)
+	}
+}
+
+// A debug build emits the same instructions as a release build: only the
+// `.loc` rows and the file table differ (#10016).
+func TestDebugLinesDoNotChangeTheCode(t *testing.T) {
+	src := `@noinline function digits(s: string): i32 {
+  var n: i32 = 0;
+  var i: i32 = 0;
+  while (i < s.len()) {
+    var c = s[i];
+    if (c >= 48 && c <= 57) { n = n + 1; }
+    i = i + 1;
+  }
+  return n;
+}
+function main(): i32 { return digits("a1b22"); }`
+	plain := compileOpts(t, src, Options{})
+	debug := compileOpts(t, src, Options{DebugLines: true, DebugSource: "digits.fern"})
+	strip := func(asm string) string {
+		var out []string
+		for _, l := range strings.Split(asm, "\n") {
+			t := strings.TrimSpace(l)
+			if strings.HasPrefix(t, ".loc") || strings.HasPrefix(t, ".file") {
+				continue
+			}
+			out = append(out, l)
+		}
+		return strings.Join(out, "\n")
+	}
+	if a, b := strip(fnBody(t, plain, "digits")), strip(fnBody(t, debug, "digits")); a != b {
+		t.Errorf("the debug build's digits differs from the release build's:\n--- release ---\n%s\n--- debug ---\n%s", a, b)
+	}
+}

@@ -5446,11 +5446,24 @@ func (g *generator) put(s string) {
 	g.peepWin = append(g.peepWin, s)
 	for g.peepholeTail() {
 	}
-	for len(g.peepWin) > peepWindow {
+	// The window holds peepWindow instructions; a directive between them
+	// does not use up a place.
+	for g.windowInstrs() > peepWindow {
 		g.out.WriteString(g.peepWin[0])
 		g.out.WriteByte('\n')
 		g.peepWin = g.peepWin[1:]
 	}
+}
+
+// windowInstrs counts the window's instruction and label lines.
+func (g *generator) windowInstrs() int {
+	n := 0
+	for _, l := range g.peepWin {
+		if !isAsmDirective(l) {
+			n++
+		}
+	}
+	return n
 }
 
 // flushPeep drains the remaining window to `out`. Call once, right before
@@ -5474,7 +5487,78 @@ func (g *generator) flushPeep() {
 // terminates — every rule but P8's register form removes a line from a
 // window of at most peepWindow lines, and P8's register form rewrites a
 // load into a register move that no rule reproduces.
+//
+// A directive in the window — the `.loc` a `-g` build puts at every
+// statement, a `.cfi_*` row — emits no code and is no branch target, so
+// the rules look through it: they run over the window with the directives
+// taken out, and the directives that sat inside a rewritten span go back
+// in front of what replaced it. A `.loc` therefore still precedes the
+// first instruction of its statement, which is what the line table needs,
+// and a `-g` build carries every rewrite a release build does.
 func (g *generator) peepholeTail() bool {
+	full := g.peepWin
+	w, dirs := splitDirectives(full)
+	if dirs == nil {
+		return g.peepholeRules()
+	}
+	// The rules rewrite the window's backing array in place, so they get a
+	// copy and w stays as it was for the comparison below.
+	g.peepWin = append([]string(nil), w...)
+	changed := g.peepholeRules()
+	nw := g.peepWin
+	k := 0
+	for k < len(w) && k < len(nw) && w[k] == nw[k] {
+		k++
+	}
+	out := make([]string, 0, len(full))
+	for i := 0; i < k; i++ {
+		out = append(out, dirs[i]...)
+		out = append(out, w[i])
+	}
+	for i := k; i <= len(w); i++ {
+		out = append(out, dirs[i]...)
+	}
+	g.peepWin = append(out, nw[k:]...)
+	return changed
+}
+
+// splitDirectives separates a window into its instruction and label lines
+// and the directives that precede each of them: dirs[i] are the directives
+// before lines[i], dirs[len(lines)] the ones after the last line. dirs is
+// nil when the window holds no directive.
+func splitDirectives(win []string) (lines []string, dirs [][]string) {
+	any := false
+	for _, l := range win {
+		if isAsmDirective(l) {
+			any = true
+			break
+		}
+	}
+	if !any {
+		return win, nil
+	}
+	lines = make([]string, 0, len(win))
+	dirs = make([][]string, 1, len(win)+1)
+	for _, l := range win {
+		if isAsmDirective(l) {
+			dirs[len(lines)] = append(dirs[len(lines)], l)
+			continue
+		}
+		lines = append(lines, l)
+		dirs = append(dirs, nil)
+	}
+	return lines, dirs
+}
+
+// isAsmDirective reports whether a window line is an indented assembler
+// directive — `.loc`, `.cfi_*` — rather than an instruction or a label.
+func isAsmDirective(line string) bool {
+	return strings.HasPrefix(line, "\t.")
+}
+
+// peepholeRules is peepholeTail's rule set, run over a window that holds
+// no directives.
+func (g *generator) peepholeRules() bool {
 	w := g.peepWin
 	n := len(w)
 
