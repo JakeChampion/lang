@@ -26,6 +26,7 @@ import "./util";
 import "./lexer";
 import "./parser";
 import "./flatten";
+import "./checker";
 import "./asm_arm64_ir";
 import "./asm_ir";
 import "./irlower";
@@ -236,9 +237,9 @@ function dedupe_weak_defs(asm_text: string): string {
     return strbuf_take();
 }
 
-// prune_to_reachable keeps only `mod`'s funcs whose mangled name is in `reach`
-// (the reachable-name set derived from the treeshaked merged module). Both
-// flatten.bundle (the merged path) and flatten.bundle_per_module mangle a
+// prune_to_reachable keeps only `mod`'s funcs whose treeshake.reach_key is in
+// `reach` (the kept set of the treeshaked merged module, keyed the same way).
+// Both flatten.bundle (the merged path) and flatten.bundle_per_module mangle a
 // non-entry decl to `prefix__name`, so the names line up. Runs BEFORE
 // lift_lambdas, so a kept function's lifted lambdas (generated names, not in
 // `reach`) survive. Twin of asm_load_run's.
@@ -246,7 +247,7 @@ function prune_to_reachable(mod: parser.Module, reach: string[]): parser.Module 
     var kept: parser.FuncDecl[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        if (util.has_str(reach, mod.funcs[fi].name)) { kept = kept.append(mod.funcs[fi]); }
+        if (util.has_str(reach, treeshake.reach_key(mod.funcs[fi]))) { kept = kept.append(mod.funcs[fi]); }
         fi = fi + 1;
     }
     return parser.Module { funcs: kept, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls };
@@ -1138,10 +1139,10 @@ function main(): i32 {
                 var anfuncs: i32 = ircore.lift_lambdas(amwb).funcs.len();
                 if (anfuncs > 512 || force_spawned) {
                     if (anfuncs < single_process_max && !force_spawned) {
-                        var ashaken: parser.Module = treeshake.treeshake(merged);
+                        var ashaken: parser.Module = treeshake.treeshake(checker.annotate_module(merged));
                         var areach: string[] = [];
                         var ari: i32 = 0;
-                        while (ari < ashaken.funcs.len()) { areach = areach.append(ashaken.funcs[ari].name); ari = ari + 1; }
+                        while (ari < ashaken.funcs.len()) { areach = areach.append(treeshake.reach_key(ashaken.funcs[ari])); ari = ari + 1; }
                         var apmc: string = emit_per_module_concat(dir, entry, loaded, areach, "arm64-linux");
                         if (apmc.len() > 0) { write(apmc); return 0; }
                     } else {
@@ -1198,10 +1199,10 @@ function main(): i32 {
             var nfuncs: i32 = ircore.lift_lambdas(mwb).funcs.len();
             if (nfuncs > 512 || force_spawned) {
                 if (nfuncs < single_process_max && !force_spawned) {
-                    var shaken: parser.Module = treeshake.treeshake(merged);
+                    var shaken: parser.Module = treeshake.treeshake(checker.annotate_module(merged));
                     var reach: string[] = [];
                     var ri: i32 = 0;
-                    while (ri < shaken.funcs.len()) { reach = reach.append(shaken.funcs[ri].name); ri = ri + 1; }
+                    while (ri < shaken.funcs.len()) { reach = reach.append(treeshake.reach_key(shaken.funcs[ri])); ri = ri + 1; }
                     var pmc: string = emit_per_module_concat(dir, entry, loaded, reach, "x86-64-linux");
                     if (pmc.len() > 0) { write(pmc); return 0; }
                 } else {

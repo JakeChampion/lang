@@ -333,6 +333,9 @@ before reaching the string-only runtime helper. A type with no `to_string`
 in scope is rejected with a `Display`-specific diagnostic. This is a
 checker-stage rewrite only — the formatter still renders the source
 `print(x)` form, and every backend sees an ordinary `print(string)` call.
+The self-hosted compiler makes the same rewrite in `checker.annotate_module`
+and raises the same E038 in `check_module` (#9945;
+docs/SELFHOST-CHECKER-PORT.md, 2026-09-22).
 
 ## 4. Dispatch model
 

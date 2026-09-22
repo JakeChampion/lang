@@ -22,6 +22,7 @@
 
 import "./parser";
 import "./asmcore";
+import "./checker";
 import "./util";
 import "./ir";
 import "./irlower";
@@ -9105,15 +9106,18 @@ pub function emit_module_or_error_sub(mod: parser.Module, darwin: boolean, sub: 
         exit(1);
         return "";
     }
+    // The checked boundary first, as asm_ir.emit_module_or_error_sub: asmcore's
+    // Display gate reads the module the checker rewrote.
+    var tm: parser.Module = checker.ensure_annotated(mod);
     var s: asmcore.EmitState = asmcore.new_state();
-    s = asmcore.EmitState { ...s, struct_decls: irlower.struct_tab(mod.structs), funcs: mod.funcs };
-    var check_errs: util.Diag[] = asmcore.check_module(mod, s);
+    s = asmcore.EmitState { ...s, struct_decls: irlower.struct_tab(tm.structs), funcs: tm.funcs };
+    var check_errs: util.Diag[] = asmcore.check_module(tm, s);
     if (check_errs.len() > 0) {
         eprint(util.format_diags(check_errs));
         exit(1);
         return "";
     }
-    var g: string = emit_module_ir_gated_sub(ircore.lift_lambdas(mod), darwin, sub);
+    var g: string = emit_module_ir_gated_sub(ircore.lift_lambdas(tm), darwin, sub);
     if (g != "") { return g; }
     ircore.eprint_ir_ineligible();
     exit(1);
@@ -9200,6 +9204,13 @@ pub function emit_module_ir_unit_arm64_flat(mod: parser.Module, is_entry: boolea
     // struct_decls is the WHOLE-PROGRAM struct set so a function emitting an
     // imported struct's layout resolves it; str_ns namespaces this unit's pools.
     s = asmcore.EmitState { ...s, struct_decls: all_structs, funcs: mod.funcs, str_ns: str_ns };
+    // The Display gate for a unit, as asm_ir.emit_module_ir_unit_flat runs it.
+    var derrs: util.Diag[] = asmcore.display_errs_module(mod, s);
+    if (derrs.len() > 0) {
+        eprint(util.format_diags(derrs));
+        exit(1);
+        return "";
+    }
     if (is_entry) { s = s.write("    .globl _start\n"); }
     s = s.write("    .text\n");
     // The entry exports its shared runtime entry points (__fern_alloc /

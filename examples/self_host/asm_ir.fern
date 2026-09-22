@@ -21,6 +21,7 @@
 import "./lexer";
 import "./parser";
 import "./asmcore";
+import "./checker";
 import "./util";
 import "./ir";
 import "./irlower";
@@ -8328,15 +8329,20 @@ pub function emit_module_or_error_sub(mod: parser.Module, sub: ircore.Sub): stri
         exit(1);
         return "";
     }
+    // The checked boundary first: a raw driver's module reaches here without
+    // the annotate pass, and asmcore's Display gate has to read the module the
+    // checker rewrote (`print(q)` to `q.to_string()`, docs/TRAITS.md §3a) or
+    // it refuses every non-string argument.
+    var tm: parser.Module = checker.ensure_annotated(mod);
     var chk: asmcore.EmitState = asmcore.new_state();
-    chk = asmcore.EmitState { ...chk, struct_decls: irlower.struct_tab(mod.structs), funcs: mod.funcs };
-    var check_errs: util.Diag[] = asmcore.check_module(mod, chk);
+    chk = asmcore.EmitState { ...chk, struct_decls: irlower.struct_tab(tm.structs), funcs: tm.funcs };
+    var check_errs: util.Diag[] = asmcore.check_module(tm, chk);
     if (check_errs.len() > 0) {
         eprint(util.format_diags(check_errs));
         exit(1);
         return "";
     }
-    var lm: parser.Module = ircore.lift_lambdas(mod);
+    var lm: parser.Module = ircore.lift_lambdas(tm);
     var g: string = emit_module_ir_gated_sub(lm, [], sub);
     if (g != "") { return g; }
     ircore.eprint_ir_ineligible();
@@ -8403,6 +8409,15 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     // struct_decls is the WHOLE-PROGRAM struct set so a function emitting an
     // imported struct's layout (field offsets / sizes) resolves it.
     s = asmcore.EmitState { ...s, struct_decls: all_structs, funcs: mod.funcs, str_ns: str_ns };
+    // A unit never passes emit_module_or_error's check, so the Display gate
+    // runs here: a `print(xs)` nothing gives a `to_string` would otherwise hand
+    // the string-only runtime helper a raw pointer (#9945).
+    var derrs: util.Diag[] = asmcore.display_errs_module(mod, s);
+    if (derrs.len() > 0) {
+        eprint(util.format_diags(derrs));
+        exit(1);
+        return "";
+    }
     if (is_entry) { s = s.write("    .globl _start\n"); }
     s = s.write("    .text\n");
     // Per-module: the entry exports its shared runtime entry points so sibling

@@ -334,10 +334,7 @@ function main(): i32 { return 0; }`,
 // diagnostic at all: "says nothing" is a difference in what the reader is
 // told, and leaving it as a test SKIP would hide it. Listing it makes the
 // self-host port's remaining hint gaps enumerable from one place.
-var hintTextDivergences = map[string]string{
-	"E038 print needs Display/E038": "the self-host checker has no Display check on `print` yet, so it reports nothing here " +
-		"— its E038 sites are call-shape errors",
-}
+var hintTextDivergences = map[string]string{}
 
 // TestSelfHostCheckerHintTextDifferential is the message-TEXT half of the
 // checker differential, and the gap #7018 opened on: every existing gate

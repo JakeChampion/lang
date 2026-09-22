@@ -5828,37 +5828,36 @@ pub function parse_unknown_errors_module(mod: parser.Module): util.Diag[] {
     return unknown_errors_stmts(mod.top_stmts, "at top level", errs);
 }
 
-// has_to_string reports whether receiver-type name `rt` has a `to_string`
-// method declared in this unit. Used by the Display gate below; a bare
-// declaration is enough, because irlower dispatches the call by that name.
-function has_to_string(rt: string, st: EmitState): boolean {
-    if (rt.len() == 0) { return false; }
-    var i: i32 = 0;
-    while (i < st.funcs.len()) {
-        if (st.funcs[i].name == "to_string" && st.funcs[i].receiver_type.len() > 0
-                && util.base_type_name(st.funcs[i].receiver_type) == rt) { return true; }
-        i = i + 1;
-    }
-    return false;
-}
-
-// display_arg_errs gates the single argument of `print` / `write` /
-// `eprint` on its type — the self-host half of native's "Display spine"
-// (#2696, the `case "print", "write", "eprint"` block in
-// internal/checker/checker.go).
-//
-// The three builtins accept any `T: Display`, not just `string`: a string
-// passes through, anything else is stringified through the type's
-// `to_string` (irlower's display_arg does the rewrite), and only a type
-// with no `to_string` at all is an error. Without the gate the raw value
-// reaches the string-only runtime helper, which reads it as a `(ptr, len)`
-// box — a `u8[]` printed nothing and a struct printed its own raw bytes
-// with the length read out of a field, both silent wrong answers on
+// display_arg_errs is the pre-codegen guard behind the Display spine
+// (docs/TRAITS.md §3a): the checker rewrites a `print` / `write` / `eprint`
+// argument that resolves `to_string` into `arg.to_string()` and refuses one
+// that does not (checker.display_arg_diags), so a non-string argument reaching
+// the emitter means the module did not go through the checker — a raw IR
+// driver. It is refused here in the same words, because handing the raw value
+// to the string-only runtime helper reads it as a `(ptr, len)` box: a `u8[]`
+// printed nothing and a struct printed its own bytes, silent wrong answers on
 // programs the compiler accepted (#5742).
 //
-// A type the partial `Ty` union cannot model comes back unknown; those
-// are skipped rather than mis-flagged, the same discipline the E038 /
-// E003 argument passes already use.
+// A type the partial `Ty` union cannot model comes back unknown; those are
+// skipped rather than mis-flagged, the discipline the E038 / E003 argument
+// passes keep.
+// display_is_dyn reports a `dyn Trait` label.
+function display_is_dyn(label: string): boolean {
+    return label.len() >= 4 && slice_unchecked(label, 0, 4) == "dyn ";
+}
+
+// display_named reports whether a type label is a bare name (`Q`, `i32`,
+// `Color`) rather than a composite spelling (`u8[]`, `Option[i32]`).
+function display_named(label: string): boolean {
+    if (label.len() == 0) { return false; }
+    var i: i32 = 0;
+    while (i < label.len()) {
+        if (!lexer.is_alnum(label[i] as i32)) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
 function display_arg_errs(e: ast.Expr, fname: string, st: EmitState): util.Diag[] {
     match (e) {
         ast.ExprCall(c) => {
@@ -5866,59 +5865,29 @@ function display_arg_errs(e: ast.Expr, fname: string, st: EmitState): util.Diag[
                 ast.ExprIdent(id) => {
                     if ((id.name == "print" || id.name == "write" || id.name == "eprint")
                             && c.args.len() == 1) {
-                        var at: Ty = infer_expr_type(c.args[0], st);
-                        if (ty_is_unknown(at) || ty_is_string(at)) { return []; }
-                        var an: string = ty_friendly(at);
-                        // Accept only what irlower's display_arg will actually
-                        // rewrite: a NAMED STRUCT carrying a `to_string`. This gate
-                        // has to stay the narrower of the two — rejecting is loud,
-                        // whereas accepting something the lowering then leaves alone
-                        // hands the raw value to the string-only helper, which is
-                        // the #5742 silent wrong answer.
-                        if (ty_struct_name(at).len() > 0 && has_to_string(an, st)) { return []; }
-                        if (has_to_string(an, st) && is_prim_recv_name(an, st)) {
-                            // A PRIMITIVE receiver's `.to_string()` resolves to the
-                            // built-in formatter in irlower, never to a declared
-                            // method, so rewriting here would print the builtin's
-                            // answer instead of the one the reader wrote. Refuse
-                            // loudly rather than stringify the wrong way.
-                            return [util.Diag { code: "E038", message: "in fn '" + fname + "': argument 1 to "
-                                + id.name + ": " + an + " has a `to_string(): string`, but the"
-                                + " self-hosted compiler dispatches `.to_string()` on a primitive to its"
-                                + " built-in formatter, so that method would not be called", line: id.line, col: id.col }];
+                        // The checker's stamp is the verdict where there is one
+                        // (ast.expr_ty): an argument it rewrote is a call typed
+                        // `string`, and one it left alone with a concrete type is
+                        // what to refuse. A `dyn` receiver dispatches at run time,
+                        // and an erased or unknown type stamps "", so those fall to
+                        // this unit's own inference, which skips what it cannot
+                        // model.
+                        var an: string = util.demangle(ast.expr_ty(c.args[0]));
+                        if (an == "string" || display_is_dyn(an)) { return []; }
+                        if (an.len() == 0) {
+                            var at: Ty = infer_expr_type(c.args[0], st);
+                            if (ty_is_unknown(at) || ty_is_string(at)) { return []; }
+                            an = util.demangle(ty_friendly(at));
                         }
-                        if (is_prim_recv_name(an, st)) {
-                            // A PRIMITIVE with no to_string of its own. The
-                            // generic text below asks for a `to_string` method
-                            // or `@derive(cmp.Display)` and names the import
-                            // that enables it — none of which helps HERE,
-                            // because irlower's display_arg rewrites a STRUCT
-                            // and nothing else, so no import makes this
-                            // compile. Naming the remedy the compiler will not
-                            // honour reads as a mistake in the program rather
-                            // than a gap in the compiler (#9945).
-                            //
-                            // Native refuses the same program without the
-                            // import and accepts it with one, because its
-                            // Display spine resolves whatever `to_string` is in
-                            // scope — `core/cmp` pulls std/i32, std/i64,
-                            // std/u32, std/u64 and std/float — so the message
-                            // says "with the import" rather than claiming
-                            // native formats a primitive on its own.
-                            return [util.Diag { code: "E038", message: "in fn '" + fname + "': argument 1 to "
-                                + id.name + ": the self-hosted compiler has no Display path for " + an
-                                + " yet — `" + id.name + "` stringifies a string, or a struct carrying its own"
-                                + " `to_string(): string`, and a primitive is neither. Stringify at the call"
-                                + " site instead: `" + id.name + "(x.to_string())`, with the module that"
-                                + " provides it imported. Native reaches that same `to_string`, so with the"
-                                + " import the implicit form compiles there and not here",
-                                line: id.line, col: id.col }];
-                        }
+                        // Native's impl-for hint names a type only when it has
+                        // a name to give: nothing for an array or an Option.
+                        var tn: string = an;
+                        if (!display_named(an)) { tn = ""; }
                         return [util.Diag { code: "E038", message: "in fn '" + fname + "': argument 1 to "
-                            + id.name + ": " + util.demangle(an)
+                            + id.name + ": " + an
                             + " does not implement `Display` (no `to_string(): string` in scope)"
-                            + " — give " + util.demangle(an) + " a `to_string(): string` method, or "
-                            + util.derive_hint(an, "cmp.Display", "cmp.Display"), line: id.line, col: id.col }];
+                            + " — give " + an + " a `to_string(): string` method, or "
+                            + util.derive_hint(tn, "cmp.Display", "cmp.Display"), line: id.line, col: id.col }];
                     }
                     return [];
                 },
@@ -5928,6 +5897,36 @@ function display_arg_errs(e: ast.Expr, fname: string, st: EmitState): util.Diag[
         _ => { return []; }
     }
     return [];
+}
+
+// display_errs_module is the Display backstop for a per-module unit
+// (asm_ir.emit_module_ir_unit_flat and its arm64 twin). check_module's walk
+// never sees a unit — it is lambda-lifted already and its callees may live in
+// sibling units — so only the one question with a silent wrong answer is asked
+// of it, and answered from the checker's stamps, which need no local binding.
+pub function display_errs_module(mod: parser.Module, s: EmitState): util.Diag[] {
+    var out: util.Diag[] = [];
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var fd: parser.FuncDecl = mod.funcs[fi];
+        var ctx: DisplayCtx = DisplayCtx { st: s, fname: fd.name, diags: [] };
+        var si: i32 = 0;
+        while (si < fd.body.len()) { ctx = astwalk.fold_stmt(fd.body[si], ctx, display_fold); si = si + 1; }
+        out = util.append_diags(out, ctx.diags);
+        fi = fi + 1;
+    }
+    var tctx: DisplayCtx = DisplayCtx { st: s, fname: "main", diags: [] };
+    var ti: i32 = 0;
+    while (ti < mod.top_stmts.len()) { tctx = astwalk.fold_stmt(mod.top_stmts[ti], tctx, display_fold); ti = ti + 1; }
+    return util.append_diags(out, tctx.diags);
+}
+
+struct DisplayCtx { st: EmitState, fname: string, diags: util.Diag[] }
+
+function display_fold(e: ast.Expr, own acc: DisplayCtx): DisplayCtx {
+    var errs: util.Diag[] = display_arg_errs(e, acc.fname, acc.st);
+    if (errs.len() == 0) { return acc; }
+    return DisplayCtx { st: acc.st, fname: acc.fname, diags: util.append_diags(acc.diags, errs) };
 }
 
 pub function check_stmt(st: ast.Stmt, want: Ty, fname: string, ctx: CheckCtx): CheckCtx {

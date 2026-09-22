@@ -4764,29 +4764,6 @@ pub function dyn_arm_matches(fd: parser.FuncDecl, tag: string, funcs: parser.Fun
     return parser.dyn_arm_matches(fd, ir.dyn_dispatch_traits(tag), ir.dyn_dispatch_method(tag), funcs);
 }
 
-// display_arg wraps a `print` / `write` / `eprint` argument in `.to_string()`
-// when it is a STRUCT value — the lowering half of native's Display spine
-// (#2696), whose checker rewrites the same three builtins' sole argument.
-//
-// The test is "positively a struct", NOT "not provably a string". expr_is_str
-// is a conservative prover: it says false for a string it cannot trace, such as
-// a `m.get_or(k, d)` result or a call through a closure. Rewriting on its
-// negative answer wrapped those in `.to_string()`, which has an i32 fallback,
-// so the string's POINTER was formatted as a decimal — `write(g())` printed
-// "40" for "hi". A struct type recovered by expr_struct_type is the positive
-// signal, and every other shape lowers exactly as it did before.
-function display_arg(e: ast.Expr, line: i32, col: i32, s: LowerState): ast.Expr {
-    if (expr_struct_type(e, s).len() == 0) { return e; }
-    return ast.ExprCall {
-        callee: ast.ExprFieldAccess { obj: e, field: "to_string", line: line, col: col, ty: "" },
-        args: [],
-        line: line,
-        col: col,
-        type_argc: 0,
-        ty: "string"
-    };
-}
-
 // decl_is_enum reports whether `name` is a declared enum — i.e. some decl records
 // it as its enum_owner (the variants of `name` are stored in `structs` with
 // enum_owner == name). Precise (unlike the loose syntactic is_enum_like_name): it
@@ -12257,21 +12234,22 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
     // and the self-host's own eprint are the same two writes (#8410 — the
     // joined temp was a fresh box per call that nothing released).
     //
-    // `write` and `print` take any Display type and stringify through
-    // display_arg; `print_str` is the internal string-only spelling and
-    // takes its argument as it stands.
+    // `write` and `print` take any Display type, and the checker's annotate
+    // pass has already rewritten a non-string argument to `arg.to_string()`
+    // (checker.display_rewrite, docs/TRAITS.md §3a), so each lowers its one
+    // argument as it stands; `print_str` is the internal string-only spelling.
     if (cid.name == "print_str" && c.args.len() == 1) {
         var pss: LowerState = lower_expr(c.args[0], s);
         if (!pss.ok) { return pss; }
         return pss.emit(ir.op_print_str());
     }
     if (cid.name == "write" && c.args.len() == 1) {
-        var wss: LowerState = lower_expr(display_arg(c.args[0], c.line, c.col, s), s);
+        var wss: LowerState = lower_expr(c.args[0], s);
         if (!wss.ok) { return wss; }
         return wss.emit(ir.op_print_str());
     }
     if (cid.name == "print" && c.args.len() == 1) {
-        var prs: LowerState = lower_expr(display_arg(c.args[0], c.line, c.col, s), s);
+        var prs: LowerState = lower_expr(c.args[0], s);
         if (!prs.ok) { return prs; }
         prs = prs.emit(ir.op_print_str());
         prs = prs.emit(ir.op_drop());
@@ -12576,7 +12554,7 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
     // no newline). `eprint_int(n)` is its int companion: i32_to_string
     // then eprint_str (no third helper). Both lower to op_eprint_str.
     if (cid.name == "eprint" && c.args.len() == 1) {
-        var eps: LowerState = lower_expr(display_arg(c.args[0], c.line, c.col, s), s);
+        var eps: LowerState = lower_expr(c.args[0], s);
         if (!eps.ok) { return eps; }
         return eps.emit(ir.op_eprint_str());
     }
@@ -15316,6 +15294,15 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
     // returns "" for struct+enum, so those reach the method paths).
     if (fa.field == "to_string" && c.args.len() == 0) {
         if (expr_is_str(fa.obj, s)) { return lower_expr(fa.obj, s); }
+        // A `to_string` the module declares for the receiver's type wins over
+        // the built-in formatter, as on native: with std/i32 imported that is
+        // std/i32's method, and a program's own `function (n: i32)
+        // to_string()` is what `n.to_string()` calls rather than bypassed.
+        var dpt: string = expr_recv_prim_type(fa.obj, s);
+        if (expr_is_u32(fa.obj, s)) { dpt = "u32"; }
+        if (dpt.len() > 0 && sig_reg_has_exact(s.frame.sigs.str_ret_fns, dpt + ".to_string")) {
+            return lower_call_prim_method(c, fa, dpt, s);
+        }
         // A u32 VALUE expression — an `as u32` cast or u32
         // arithmetic/shift (expr_is_u32 is deliberately FALSE for a
         // u32-RETURNING call, which already resolves to the u32
@@ -41351,7 +41338,7 @@ function struct_counted_share_stmts(stmts: ast.Stmt[], name: string, structs: St
 // bare LOCAL array into which the body appended an element borrowed out of a
 // parameter's container — `for mod in mods { for fd in mod.funcs { funcs =
 // funcs.append(fd); } }` then `Module { ...mods[0], funcs: funcs, … }`
-// (checker.ensure_capture_types_parts). The append stored the box uncounted
+// (checker.ensure_annotated_parts). The append stored the box uncounted
 // (an element binding is a local, not the parameter struct_alias_ident_escapes
 // counts), so the array holds boxes the caller releases, and the deep walk
 // would free them under the caller — the emit-all fixpoint's gen1 read its
@@ -78293,7 +78280,7 @@ pub function prepare_lambda_parts(mods: parser.Module[]): parser.Module[] {
     for mod in mods {
         prepared = prepared.append(parser.infer_fnvalue_locals_module(parser.fill_default_args_module(mod)));
     }
-    return checker.ensure_capture_types_parts(prepared);
+    return checker.ensure_annotated_parts(prepared);
 }
 
 // lift_lambdas_view is lift_lambdas with an explicit whole-program SIGNATURE
@@ -78322,7 +78309,7 @@ pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]):
     // wasm_ir.lift_lambdas wrap this), so the eligibility probe and the emit see
     // the same rewritten module; the slice-B.1 lower_func registration then
     // resolves the call-result struct.
-    var mod: parser.Module = checker.ensure_capture_types(parser.infer_fnvalue_locals_module(parser.fill_default_args_module(raw_mod)));
+    var mod: parser.Module = checker.ensure_annotated(parser.infer_fnvalue_locals_module(parser.fill_default_args_module(raw_mod)));
     // sigs is the signature table every "what does this callee look like?" query
     // below reads. It is the whole-program view when one was threaded in, else
     // the module's own functions (identical to the pre-view behaviour).
