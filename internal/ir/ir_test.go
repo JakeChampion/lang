@@ -3137,22 +3137,32 @@ func TestLowerConditionShortCircuitBranches(t *testing.T) {
 }
 
 // A coverage build keeps the expression form, whose arms carry the branch
-// counters that `fern -cover` reports for `&&` and `||`.
+// counters that `fern -cover` reports for `&&` and `||`. The `if` case
+// pins the gate at the statement; the loop cases pin the one inside
+// condBr, which is the only gate a `while` or `for` condition passes.
 func TestLowerConditionKeepsIfUnderCoverage(t *testing.T) {
-	src := `function f(a: i32, b: i32): i32 { if (a > 0 && b > 0) { return 1; } return 2; }`
-	prog, err := parser.Parse(src)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
+	cases := []struct{ name, src string }{
+		{"if", `function f(a: i32, b: i32): i32 { if (a > 0 && b > 0) { return 1; } return 2; }`},
+		{"while", `function f(a: i32, b: i32): i32 { var i: i32 = 0; while (i < a && i < b) { i = i + 1; } return i; }`},
+		{"for", `function f(a: i32, b: i32): i32 { var n: i32 = 0; for (var i: i32 = 0; i < a || i < b; i = i + 1) { n = n + 1; } return n; }`},
 	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			prog, err := parser.Parse(c.src)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			info, err := checker.Check(prog)
+			if err != nil {
+				t.Fatalf("check: %v", err)
+			}
+			p, err := LowerWith(prog, info, 8, CoverPoints())
+			if err != nil {
+				t.Fatalf("lower: %v", err)
+			}
+			mustContainOp(t, p, "f", OpIf)
+			mustContainOp(t, p, "f", OpElse)
+			mustContainOp(t, p, "f", OpCoverPoint)
+		})
 	}
-	p, err := LowerWith(prog, info, 8, CoverPoints())
-	if err != nil {
-		t.Fatalf("lower: %v", err)
-	}
-	mustContainOp(t, p, "f", OpIf)
-	mustContainOp(t, p, "f", OpElse)
-	mustContainOp(t, p, "f", OpCoverPoint)
 }

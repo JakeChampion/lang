@@ -31,10 +31,13 @@ function main(): i32 {
 			continue
 		}
 		leas++
+		// The last write of the index register under any spelling — a
+		// mov, a pop, a sign extension, an address, an ALU op — must be
+		// a 32-bit one.
 		last := ""
 		for k := i - 1; k >= 0; k-- {
 			t := strings.TrimSpace(lines[k])
-			if strings.HasPrefix(t, "mov rcx, ") || strings.HasPrefix(t, "mov ecx, ") || strings.HasPrefix(t, "pop rcx") {
+			if writesIndexReg(t) {
 				last = t
 				break
 			}
@@ -46,4 +49,31 @@ function main(): i32 {
 	if leas == 0 {
 		t.Fatalf("no scaled index lea found; asm:\n%s", asm)
 	}
+}
+
+// writesIndexReg reports whether an instruction's destination is rcx under
+// any of its names: the first operand is `rcx`, `ecx`, `cx` or `cl` and the
+// instruction is not a compare, which reads its first operand, or the
+// instruction is a pop into rcx.
+func writesIndexReg(insn string) bool {
+	if insn == "pop rcx" {
+		return true
+	}
+	sp := strings.IndexByte(insn, ' ')
+	if sp < 0 {
+		return false
+	}
+	switch insn[:sp] {
+	case "cmp", "test", "bt":
+		return false
+	}
+	dst := strings.TrimSuffix(strings.TrimSpace(insn[sp:]), ",")
+	if c := strings.IndexByte(dst, ','); c >= 0 {
+		dst = dst[:c]
+	}
+	switch dst {
+	case "rcx", "ecx", "cx", "cl":
+		return true
+	}
+	return false
 }
