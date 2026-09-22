@@ -641,7 +641,9 @@ function main(): i32 {
 	// and `and[U](other: Result[U, E])` binds U from this very argument: the
 	// destination `Result[U, string]` named Ok without saying what it held, so
 	// the literal was refused ("unsupported variant literal"). The payload
-	// settles it now, for Ok and Err as it already did for Some.
+	// settles it now, for Ok and Err as it already did for Some. The payload is
+	// an i32 because the AST lowering, the oracle here, misreads a string one
+	// through the erased U and answers differently on each leg (#10014).
 	{name: "builtin-union-payload-settles-the-literal", atLeast: 1, noLeak: true, src: `
 import "std/result";
 
@@ -650,10 +652,10 @@ function main(): i32 {
     var i: i32 = 0;
     while (i < 200) {
         var r: Result[i32, string] = Ok(i);
-        var s: Result[string, string] = r.and(Ok("v" + "w"));
+        var s: Result[i32, string] = r.and(Ok(i + 1));
         var e: Result[i32, string] = Err("no");
-        var f: Result[string, string] = e.and(Ok("zzz"));
-        t = t + s.unwrap_or("").len() + f.unwrap_or("q").len();
+        var f: Result[i32, string] = e.and(Ok(i + 2));
+        t = t + s.unwrap_or(0) + f.unwrap_or(9);
         i = i + 1;
     }
     return t % 7;

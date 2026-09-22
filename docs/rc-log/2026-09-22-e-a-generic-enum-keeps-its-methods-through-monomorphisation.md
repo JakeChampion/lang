@@ -78,12 +78,20 @@ wasm leg (`TestSelfHostSemanticProduction`):
 `generic-enum-methods-clone-per-instantiation` — a `@derive(cmp.Eq)` generic
 enum over a string payload, a method, a method with its own parameter and
 `==` through the derived clone, 200 rounds, produced 110 of 110 — and
-`builtin-union-payload-settles-the-literal` — `Result.and(Ok("vw"))` on Ok and
-Err receivers, 200 rounds, 51 of 51. Both answer what the AST lowering and the
-interpreter answer. `TestSelfHostGenericEnumIR{X86_64,WasmIR}` carry the two
+`builtin-union-payload-settles-the-literal` — `Result.and(Ok(i + 1))` on Ok
+and Err receivers, 200 rounds, 51 of 51, 1000 allocs and 1000 frees where the
+AST lowering frees none. Both answer what the AST lowering and the interpreter
+answer. `TestSelfHostGenericEnumIR{X86_64,WasmIR}` carry the two
 new monomorphiser shapes under the size bound that proves the IR route.
 
 ## Traps
+
+The AST lowering, the production test's oracle, misreads a string payload
+through `and`'s erased `U`: `r.and(Ok("vw"))` exits 128 on x86-64 and 0 on
+arm64 where native, the interpreter and wasm say 2, and the answer moves with
+the allocator (#10014). A row over that shape has no AST answer to pin, so
+the row's payload is an i32, which the AST lowering answers correctly while
+still freeing nothing.
 
 A unit variant cannot settle a method's own parameter: `s.swap(Nn)` is E040 on
 native, and the self-host reports it as a module that is not IR-eligible rather
