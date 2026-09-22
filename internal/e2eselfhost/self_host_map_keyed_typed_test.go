@@ -22,10 +22,7 @@ import (
 // would fall to the AST lowering and the flat heap would say nothing about
 // this path. Each program is also checked to answer what the interpreter
 // answers.
-var mapKeyedTypedPrograms = []struct {
-	name string
-	src  string
-}{
+var mapKeyedTypedPrograms = []mapChurnProgram{
 	// A struct key carrying a STRING field, overwritten through a FRESH
 	// value-equal key: the map keeps its existing key and releases the one it
 	// discards through the key release op_map_set names — a shallow dec there
@@ -163,19 +160,19 @@ function main(): i32 {
 
 func TestSelfHostMapKeyedTypedX86_64(t *testing.T) {
 	_, runner := x86_64Tooling(t)
-	runMapKeyedTyped(t, runner, "x86-64-linux")
+	runMapChurnTyped(t, runner, "x86-64-linux", mapKeyedTypedPrograms)
 }
 
 func TestSelfHostMapKeyedTypedArm64(t *testing.T) {
 	_, qemu := arm64Tooling(t)
-	runMapKeyedTyped(t, []string{qemu}, "arm64-linux")
+	runMapChurnTyped(t, []string{qemu}, "arm64-linux", mapKeyedTypedPrograms)
 }
 
 func TestSelfHostMapKeyedTypedWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
 	}
-	runMapKeyedTyped(t, nil, "wasm32-wasi")
+	runMapChurnTyped(t, nil, "wasm32-wasi", mapKeyedTypedPrograms)
 }
 
 // semProducedWhole reads the production tally and reports whether every
@@ -185,11 +182,16 @@ func semProducedWhole(report string) bool {
 	return m != nil && m[1] == m[2] && m[3] == m[4]
 }
 
-// runMapKeyedTyped builds the self-host compiler once, then compiles each
+type mapChurnProgram struct {
+	name string
+	src  string
+}
+
+// runMapChurnTyped builds the self-host compiler once, then compiles each
 // program for `target` through the typed path with the report on, checks the
 // tally says the module was produced whole, and runs it: natively, under
 // qemu, or under wasmtime.
-func runMapKeyedTyped(t *testing.T, runner []string, target string) {
+func runMapChurnTyped(t *testing.T, runner []string, target string, programs []mapChurnProgram) {
 	hostGcc, hostRunner := x86_64Tooling(t)
 	if len(hostRunner) != 0 {
 		t.Skip("the CLI driver takes host filesystem paths as argv")
@@ -202,7 +204,7 @@ func runMapKeyedTyped(t *testing.T, runner []string, target string) {
 	copySelfHostDriver(t, dir, "fern.fern")
 	fernBin := buildSelfHostBin(t, hostGcc, dir, "fern.fern", "fern")
 
-	for _, p := range mapKeyedTypedPrograms {
+	for _, p := range programs {
 		t.Run(p.name, func(t *testing.T) {
 			work := t.TempDir()
 			src := filepath.Join(work, "main.fern")

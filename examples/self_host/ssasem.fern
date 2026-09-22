@@ -952,15 +952,13 @@ function map_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
 
 // A delete borrows the key to find the entry and hands the map back inside a
 // tuple with whether it was there. The runtime removes the entry by moving the
-// last one into the hole and shrinking both columns; it never releases what it
-// removed, so a column the map owns a unit of per entry would be orphaned by
-// the removal. Only the columns a map releases by freeing the buffer alone are
-// admitted.
+// last one into the hole and shrinking both columns, and releasing the
+// removed entry's key and value through the columns' releases, so every
+// supported map shape is admitted.
 function map_delete_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.args.len() != 2) { return "map delete arity"; }
     var m: typeinfo.Type = f.values[ins.args[0]];
     if (!is_supported_map(m)) { return "map delete type"; }
-    if (!narrow_map_value(map_key(m)) || !narrow_map_value(map_value(m))) { return "map delete column"; }
     if (!semtypes.equal(delete_result(m), result)) { return "map delete result"; }
     return map_operand_error(m, f.values[ins.args[1]], map_value(m));
 }
