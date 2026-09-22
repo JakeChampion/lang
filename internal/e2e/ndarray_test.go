@@ -138,7 +138,8 @@ function main(): i32 {
 	if (!pk.is_packed()) { return 123; }
 	if (pk.fold_all(0 as i64, (acc: i64, x: i64): i64 => acc * (10 as i64) + x) != 1234 as i64) { return 124; }
 	var pmm: ndarray.NdArray[i64] = pk.map((x: i64): i64 => x * (10 as i64));
-	if (!pmm.is_packed() || pmm.get([0, 0]) != 10 as i64 || pmm.get([1, 1]) != 40 as i64) { return 125; }
+	if (!pmm.is_packed() || pmm.get([0, 0]) != 10 as i64 || pmm.get([0, 1]) != 20 as i64) { return 125; }
+	if (pmm.get([1, 0]) != 30 as i64 || pmm.get([1, 1]) != 40 as i64) { return 125; }
 	// A broadcast that only prepends extent-1 axes adds no elements and
 	// leaves the reading order alone, so the handle stays packed (§2) and
 	// takes the same walk at a rank the odometer would have grown.
