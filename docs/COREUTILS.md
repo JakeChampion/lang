@@ -2506,6 +2506,34 @@ Release builds under callgrind, outputs byte-identical:
 `choose` keeps 23 pairs: a nested operation whose inner one already took
 `rdx`, a value stored to two slots, and the pushes around calls.
 
+### fmt's word buffer, 2026-09-22 (GNU coreutils 9.12)
+
+GNU fmt holds a paragraph in a buffer of 1000 words and 5000 bytes of
+word text. When the 999th word arrives it lays out the 998 before it as
+if the paragraph ended there, writes the lines up to the cheapest line
+start after the first (each line further along getting a credit of 9),
+and keeps the words from that line on as the paragraph's start; when the
+5001st byte arrives it does the same with the complete words, keeping the
+partial one, and with nothing complete held it writes the 5000 bytes as
+they are and the word goes on from there. The re-entered layout costs its
+first line against the length of the line last written, and under -c or
+-t takes the reader's own column as the continuation indent, so a flush
+inside a paragraph's first line can indent everything after the first
+line by the width of the text read so far.
+
+`fmt.fern` laid out the whole paragraph, which is a better layout and a
+different one from 999 words on — the whole of the prose bench input is
+one paragraph, so every line of it past the 124th differed. `scan_body`
+now fills the same buffer, `chunk` is the flush, and `choose` returns the
+line costs the split reads. The corpus holds paragraphs of 999, 2501 and
+3000 varied words under every mode, a byte-buffer flush mid-word, a word
+longer than the buffer with and without words before it, and the two
+single-line -c / -t flushes; the old build differs from GNU on all of
+them. The prose bench input is now byte-identical to GNU 9.12 at 385 M
+instructions against 336 M before: each flush re-lays the lines after
+its split (14% more words through `choose`) and the reader carries the
+writer and the paragraph through every word.
+
 ### ls, 2026-09-14, Linux x86-64 (GNU coreutils 9.4, uutils 0.0.24)
 
 The same 4-core container, so read the columns against each other. The
@@ -3253,15 +3281,6 @@ level it could not reach, exit 1 — the same shape an unreadable directory has,
 so it degrades rather than lying. #9078 and #9074 are the same `openat` /
 `fdopendir` / `fstatat` family, which `rm -r`, `ls -R`, `find` and `cp -r` all
 want too.
-
-**`fmt` formats a whole paragraph where GNU formats 997 words at a time.**
-GNU fills a fixed word buffer, lays out what it holds, and re-enters from the
-remainder, so a paragraph past that bound is laid out from state the re-entry
-leaves behind — 38 words come back as [36, 2] after a flush and as [35, 3] when
-they are a paragraph of their own, and nothing in the streams identifies which
-happened. `fmt.fern` formats the paragraph. The first divergence is 999
-one-character words at `-w 75`; nothing under 998 differs, and the corpus holds
-a 996-word paragraph and none above it.
 
 **`dircolors -p` prints GNU 9.12's database.** The text `-p` prints is a data
 file that changes between coreutils releases — the copyright year on its third
