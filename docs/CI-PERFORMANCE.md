@@ -373,7 +373,14 @@ puts 300 s of that on one case: `seq -f "%.2147483648g" 1`, whose GNU 9.12
 oracle never returns on macOS and ran to the harness's five-minute limit on
 every run before #10003. The case now carries a ten-second bound of its own
 (the outcome, "did not finish", is unchanged, so the Darwin ledger does not
-move), which takes ~5 minutes off that job.
+move). Measured on #10003's own run 35733713188: `TestSeqParity` 307 s to
+18 s, the corpus step 701 s, and the job 896 s again, the same as before,
+because the rest of the corpus took 678 s where run 35724456242 had it at
+462 s and run 35708878302 at 604 s, on the same code. The macOS runner's
+speed varies by that much between runs (`go vet` 22 s and 31 s, the
+self-host native step 55 s and 82 s, on the two runs above), so a change of
+a minute or two in that job is below the noise, and the 200 s
+`TestMulticallParity` is the largest item left in the corpus.
 
 ### The concurrent-job ceiling, confirmed
 
