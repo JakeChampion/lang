@@ -301,6 +301,7 @@ var providedSigs = map[string]providedSig{
 	"__str_concat":                    {4, rString},
 	"__str_eq":                        {4, rWord},
 	"__str_idx":                       {3, rWord},
+	"__str_idx_nc":                    {3, rWord},
 	"__str_slice":                     {4, rString},
 	"__trunc_f64":                     {-1, rFloat},
 	"args":                            {-1, rWord},

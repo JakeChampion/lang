@@ -2105,6 +2105,14 @@ drops the load before a jump to one. Release builds, outputs identical:
 `cat -A` 98,239,652 → 95,330,849 (-3.0%), `wc -w` -2.5%, `ptx` -1.2%,
 `sort` -1.2%.
 
+The sixth is the bounds check the parser had already proven away. Its
+len-bounded loop pass marks `s[i]` in `while (i < s.len())` as in range,
+and the IR honoured the mark for arrays only; a string index now takes
+`__str_idx_nc`, the same SSO dispatch without the compare against the
+length. `wc -w` 176,079,326 → 162,147,106 (-7.9%); the other rows' scan
+loops are bounded by something other than the string's own length and
+do not qualify.
+
 A scan loop's `var c = s[i]; if (c >= 48 && c <= 57)` body is eleven
 instructions per byte after all three, from twenty-seven. What it still
 pays is the stack machine itself: every local is a frame slot, so the

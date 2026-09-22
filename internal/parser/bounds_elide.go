@@ -17,8 +17,8 @@ import (
 // It runs right after desugarForEachProgram — before the checker — so it works
 // on plain `ast.Binary` conditions (the checker only rewrites `<` into a CmpCall
 // for non-primitive operands, and an array's `.len()` is always i32). No type
-// information is consulted: the IR honours Unchecked ONLY on the true array
-// path, so marking a string / slice / map index is a harmless no-op there.
+// information is consulted: the IR honours Unchecked on the array and string
+// paths, so marking a slice / map index is a harmless no-op there.
 //
 // An access is marked only when `0 <= i < len(arr)` is syntactically provable at
 // that point:
