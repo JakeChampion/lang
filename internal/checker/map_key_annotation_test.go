@@ -73,8 +73,10 @@ function main(): i32 { var m: Map[f64, i32] = Map {}; return 0; }`,
 		// refusing the annotation would take away a spelling the language
 		// supports. The map-literal rule still refuses it, and the compiled
 		// backends refuse to lower it rather than answering the default.
-		// ast.MapKeyDispatchable is the list all three consult; #10020 owns
-		// reconciling them. Pinned here so the carve-out is not
+		// ast.MapKeyDispatchable is the list this carve-out and the IR
+		// refusal share — the map-literal rule refuses through
+		// mapKeyTypeError's own switch and does not consult it. #10020
+		// owns reconciling all three. Pinned here so the carve-out is not
 		// rediscovered by a red corpus.
 		"tuple key",
 		`import "core/map";

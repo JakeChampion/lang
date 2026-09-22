@@ -1688,12 +1688,16 @@ var CodegenMu sync.Mutex
 // nowhere to hang those, and synthesising them structurally is the fix this
 // predicate stands in for.
 //
-// It lives here because both sides of the question need the same answer and
-// neither can import the other: the checker carves these out of its map-key
-// rule so it does not refuse what the interpreter supports, and the IR
-// refuses to lower them so the compiled build does not answer the default in
-// silence. Two copies of the list would drift, and the drift reintroduces
-// the miscompile.
+// It lives here because two packages need the same answer and only one
+// direction of import is possible: internal/ir imports internal/checker, so
+// the checker cannot reach into the IR. This is a leaf fact about a type's
+// shape either way, which is what this file already holds.
+//
+// The two that consult it are the checker's annotation carve-out — which
+// must not refuse what the interpreter supports — and the IR's refusal to
+// lower one, which stops the compiled build answering the default in
+// silence. A copy each would drift, and the drift reintroduces the
+// miscompile.
 func MapKeyDispatchable(t Type) bool {
 	switch t.(type) {
 	case TupleType, ArrayType, SliceType:

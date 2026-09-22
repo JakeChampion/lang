@@ -8173,7 +8173,8 @@ func (c *checker) checkMapKeyTypes(t ast.Type, mod string, pos ast.Position) {
 // — and TestInterpMapCompositeKeys gates the interpreter's answer
 // deliberately, so refusing the annotation here would take away a spelling
 // the language supports. The list is ast.MapKeyDispatchable's, shared with
-// the IR refusal that stops the compiled build answering the default.
+// the IR refusal that stops the compiled build answering the default — but
+// not with mapKeyTypeError, which refuses these through its own switch.
 func mapKeyCarvedOut(k ast.Type) bool {
 	return !ast.MapKeyDispatchable(k)
 }
