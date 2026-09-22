@@ -288,10 +288,10 @@ function number_option(value: string, what: string, min: i64, max: i64, min_rang
     return out;
   }
   if (range) {
-    gnu.error("invalid " + what + ": " + gnu.quote(value) + ": Numerical result out of range");
+    gnu.error("invalid " + what + ": " + gnu.quote(value) + ": " + gnu.erange_text());
     exit(1);
   }
-  gnu.error("invalid " + what + ": " + gnu.quote(value) + ": Value too large for defined data type");
+  gnu.error("invalid " + what + ": " + gnu.quote(value) + ": " + gnu.eoverflow_text());
   exit(1);
   return out;
 }

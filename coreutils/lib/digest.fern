@@ -1278,7 +1278,7 @@ pub function parse_bits_value(v: string): i32 {
       j = j + 1;
     }
     if (nd > 0 && j == v.len()) {
-      gnu.error("invalid length: " + gnu.quote(v) + ": Value too large for defined data type");
+      gnu.error("invalid length: " + gnu.quote(v) + ": " + gnu.eoverflow_text());
       exit(1);
     }
   }

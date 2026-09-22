@@ -49,7 +49,7 @@ lanes() {
 lint|0|0|whole-repo cheap gates (build, vet, gofmt, fmt, check-sources, deadcode, actionlint, testnames, freeze)|make lint-all
 units|0|1|the unit-test lane's packages, host-independent|go test -v $(scripts/unit-test-packages)
 wasm|0|60|wasm e2e under the pinned wasmtime + adapter — needs an x86-64 host, see note|go test -v ./internal/e2e/ -run 'TestWasm'
-macos-arm64|13|40|arm64-darwin native execution, both packages — this IS the CI lane's platform|go test -v -run TestArm64Darwin ./internal/e2e/ && go test -v -run TestSelfHostArm64Darwin ./internal/e2eselfhost/
+macos-arm64|13|49|arm64-darwin native execution, both packages, plus the errno table against this Mac's libc|go test -v -run TestArm64Darwin ./internal/e2e/ && go test -v -run TestSelfHostArm64Darwin ./internal/e2eselfhost/ && go test -v ./internal/strerror/
 EOF
 }
 

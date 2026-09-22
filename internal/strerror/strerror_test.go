@@ -33,20 +33,81 @@ func TestNumbersMatchHost(t *testing.T) {
 	}
 }
 
-// Go's Linux errno strings are glibc's text lower-cased, so on Linux
-// the wording itself can be checked against the host, not just the
-// numbers.
-func TestTextMatchesGlibc(t *testing.T) {
-	if runtime.GOOS != Linux {
-		t.Skipf("Go's %s errno strings are the host libc's wording, not glibc's; only the numbers are checked there", runtime.GOOS)
+// lowerFirst is Go's spelling of an errno string: the host libc's
+// message with only its first letter lowered, so internal capitals
+// ("Input/output error", "RPC struct is bad") survive.
+func lowerFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToLower(s[:1]) + s[1:]
+}
+
+// Go's errno strings are the host libc's own text, so the wording can
+// be checked against the host and not just the numbers — on Darwin as
+// well as on Linux, which is what makes darwinText's list of overrides
+// a measurement rather than a recollection.
+func TestTextMatchesHostLibc(t *testing.T) {
+	if runtime.GOOS != Linux && runtime.GOOS != Darwin {
+		t.Skipf("no host errno strings to compare against on %s", runtime.GOOS)
 	}
 	for _, e := range Table {
-		if e.Linux == 0 {
+		n := e.Number(runtime.GOOS)
+		if n == 0 {
 			continue
 		}
-		if got, want := syscall.Errno(e.Linux).Error(), strings.ToLower(e.Text); got != want {
-			t.Errorf("%s (%d): Table says %q, glibc says %q", e.Name, e.Linux, e.Text, got)
+		got, want := syscall.Errno(n).Error(), lowerFirst(e.TextFor(runtime.GOOS))
+		if got == want {
+			continue
 		}
+		if runtime.GOOS == Darwin {
+			if _, listed := darwinText[e.Name]; !listed {
+				t.Errorf("%s (%d): Table says %q, the Darwin libc says %q — add it to darwinText",
+					e.Name, n, e.Text, got)
+				continue
+			}
+		}
+		t.Errorf("%s (%d): Table says %q, the %s libc says %q", e.Name, n, e.TextFor(runtime.GOOS), runtime.GOOS, got)
+	}
+}
+
+// An override that no longer differs from Text is a row to delete, not
+// one to keep: it would read as a platform difference that is not there.
+func TestDarwinOverridesAreEntriesThatDiffer(t *testing.T) {
+	byName := map[string]Entry{}
+	for _, e := range Table {
+		byName[e.Name] = e
+	}
+	for name, text := range darwinText {
+		e, ok := byName[name]
+		if !ok {
+			t.Errorf("darwinText carries %s, which Table does not", name)
+			continue
+		}
+		if e.Darwin == 0 {
+			t.Errorf("darwinText carries %s, which has no Darwin number", name)
+		}
+		if text == e.Text {
+			t.Errorf("darwinText[%s] is the same as Table's text %q — delete the row", name, text)
+		}
+	}
+}
+
+// Dense and Text agree with the per-target wording, so a backend that
+// emits the table gets the same string the interpreter reports.
+func TestDenseCarriesTheDarwinWording(t *testing.T) {
+	linux, darwin := Dense(Linux), Dense(Darwin)
+	if got, want := linux[Number(Linux, "EXDEV")], "Invalid cross-device link"; got != want {
+		t.Errorf("Dense(linux) EXDEV = %q, want %q", got, want)
+	}
+	if got, want := darwin[Number(Darwin, "EXDEV")], "Cross-device link"; got != want {
+		t.Errorf("Dense(darwin) EXDEV = %q, want %q", got, want)
+	}
+	if got, want := Text(Darwin, Number(Darwin, "EOVERFLOW")), "Value too large to be stored in data type"; got != want {
+		t.Errorf("Text(darwin, EOVERFLOW) = %q, want %q", got, want)
+	}
+	if got, want := Text(Linux, Number(Linux, "EOVERFLOW")), "Value too large for defined data type"; got != want {
+		t.Errorf("Text(linux, EOVERFLOW) = %q, want %q", got, want)
 	}
 }
 
@@ -79,6 +140,9 @@ func TestTextAndDense(t *testing.T) {
 	if got := Text(Linux, 999); got != "Unknown error 999" {
 		t.Errorf("Text(linux, 999) = %q", got)
 	}
+	if got := Text(Darwin, 999); got != "Unknown error: 999" {
+		t.Errorf("Text(darwin, 999) = %q — Darwin's unknown-errno text carries a colon", got)
+	}
 	if got := Text(Linux, 0); got != "Unknown error 0" {
 		t.Errorf("Text(linux, 0) = %q — errno 0 must not match an entry that has no Linux number", got)
 	}
@@ -87,7 +151,7 @@ func TestTextAndDense(t *testing.T) {
 		for n, text := range dense {
 			if want := Text(os, n); text != "" && text != want {
 				t.Errorf("Dense(%s)[%d] = %q, Text = %q", os, n, text, want)
-			} else if text == "" && !strings.HasPrefix(want, "Unknown error ") {
+			} else if text == "" && !strings.HasPrefix(want, "Unknown error") {
 				t.Errorf("Dense(%s)[%d] is empty but Text = %q", os, n, want)
 			}
 		}

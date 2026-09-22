@@ -558,7 +558,7 @@ function verify_numeric(p: Pf, s: string, erange: boolean, end: i32): Pf {
     return Pf { ...diag(p, gnu.quote(s) + ": expected a numeric value"), status: 1 };
   }
   if (erange) {
-    return Pf { ...diag(p, gnu.quote(s) + ": Numerical result out of range"), status: 1 };
+    return Pf { ...diag(p, gnu.quote(s) + ": " + gnu.erange_text()), status: 1 };
   }
   if (end < s.len()) {
     return Pf { ...diag(p, gnu.quote(s) + ": value not completely converted"), status: 1 };

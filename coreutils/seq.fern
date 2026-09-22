@@ -1370,7 +1370,7 @@ function emit_term(o: io_buffered.BufWriter, b: Block, f: Fmt, v: ld.LD): Block 
 // int. Reported once, with the strerror text GNU prints.
 function write_overflow(o: io_buffered.BufWriter): void {
   gnu.finish(o);
-  gnu.error("write error: Value too large for defined data type");
+  gnu.error("write error: " + gnu.eoverflow_text());
   exit(1);
 }
 

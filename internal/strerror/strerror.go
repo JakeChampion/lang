@@ -6,9 +6,13 @@
 // Each entry carries the errno's number on each OS the runtime issues
 // syscalls to. Linux and Darwin number their errnos differently and
 // WASI preview 1 differently again, so the table is keyed by name and
-// resolved per target; the text is glibc's even on Darwin, where the
-// libc wording differs for a few (EBUSY, EXDEV, ENXIO, EOVERFLOW,
-// EDQUOT, ETIMEDOUT, ...).
+// resolved per target.
+//
+// The WORDING is resolved per target too. Text is glibc's; darwinText
+// overrides the sixteen errnos whose Darwin libc message differs. A C
+// program prints strerror(3) verbatim, so a Darwin build that said
+// "Invalid cross-device link" where the platform says "Cross-device
+// link" would diverge from every other binary on the machine.
 //
 // The three asm backends emit the table as a compare ladder over
 // `.rodata` literals, wasm as a ladder over data-segment literals, the
@@ -21,7 +25,8 @@ import "strconv"
 
 // Entry is one errno: its C name, glibc's strerror text, and its number
 // on each OS. A zero number means the OS has no separate errno of that
-// name (EOPNOTSUPP is ENOTSUP's alias on Linux and WASI).
+// name (EOPNOTSUPP is ENOTSUP's alias on Linux and WASI). Text is the
+// wording everywhere except the Darwin errnos darwinText overrides.
 type Entry struct {
 	Name   string
 	Text   string
@@ -49,6 +54,39 @@ func (e Entry) Number(os string) int {
 		return e.Wasi
 	}
 	return 0
+}
+
+// darwinText is the Darwin libc's wording for the errnos whose message
+// is not glibc's, checked against the host by TestTextMatchesHostLibc:
+// an entry missing here whose wording differs fails that test, so the
+// list cannot silently fall behind a platform.
+var darwinText = map[string]string{
+	"ENXIO":         "Device not configured",
+	"EBUSY":         "Resource busy",
+	"EXDEV":         "Cross-device link",
+	"ENODEV":        "Operation not supported by device",
+	"ERANGE":        "Result too large",
+	"EAFNOSUPPORT":  "Address family not supported by protocol family",
+	"EADDRNOTAVAIL": "Can't assign requested address",
+	"EISCONN":       "Socket is already connected",
+	"ENOTCONN":      "Socket is not connected",
+	"ETIMEDOUT":     "Operation timed out",
+	"EDQUOT":        "Disc quota exceeded",
+	"ESTALE":        "Stale NFS file handle",
+	"EOVERFLOW":     "Value too large to be stored in data type",
+	"EILSEQ":        "Illegal byte sequence",
+	"EOPNOTSUPP":    "Operation not supported on socket",
+	"EOWNERDEAD":    "Previous owner died",
+}
+
+// TextFor is the errno's strerror text on os.
+func (e Entry) TextFor(os string) string {
+	if os == Darwin {
+		if t, ok := darwinText[e.Name]; ok {
+			return t
+		}
+	}
+	return e.Text
 }
 
 // Table lists every errno the runtime's syscalls (open / read / write /
@@ -127,22 +165,36 @@ var Table = []Entry{
 }
 
 // UnknownPrefix precedes the number in the text for an errno outside
-// Table; the runtimes build that text from it at run time.
-const UnknownPrefix = "Unknown error "
+// Table; the runtimes build that text from it at run time. This is
+// glibc's spelling — Darwin's is DarwinUnknownPrefix, which carries a
+// colon (Apple's Libc builds it in string/FreeBSD/strerror.c's
+// __errstr, as UPREFIX then ": " then the digits).
+const (
+	UnknownPrefix       = "Unknown error "
+	DarwinUnknownPrefix = "Unknown error: "
+)
 
-// Unknown is the text for an errno outside Table, glibc's spelling.
-func Unknown(errno int) string {
-	return UnknownPrefix + strconv.Itoa(errno)
+// UnknownPrefixFor is the prefix on os.
+func UnknownPrefixFor(os string) string {
+	if os == Darwin {
+		return DarwinUnknownPrefix
+	}
+	return UnknownPrefix
+}
+
+// Unknown is the text os gives for an errno outside Table.
+func Unknown(os string, errno int) string {
+	return UnknownPrefixFor(os) + strconv.Itoa(errno)
 }
 
 // Text is strerror(errno) on os.
 func Text(os string, errno int) string {
 	for _, e := range Table {
 		if n := e.Number(os); n != 0 && n == errno {
-			return e.Text
+			return e.TextFor(os)
 		}
 	}
-	return Unknown(errno)
+	return Unknown(os, errno)
 }
 
 // Number is the errno named name on os, or 0 when os has none.
@@ -169,7 +221,7 @@ func Dense(os string) []string {
 	out := make([]string, max+1)
 	for _, e := range Table {
 		if n := e.Number(os); n != 0 {
-			out[n] = e.Text
+			out[n] = e.TextFor(os)
 		}
 	}
 	return out
