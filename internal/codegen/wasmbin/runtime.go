@@ -839,7 +839,7 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__build_io_error")
 					needs.add("__fern_temp_dir")
 				case "__fern_tcp_listen":
-					// (port) → i32 — heap pointer to a 12-byte
+					// (port) → i32 — heap pointer to a 16-byte
 					// listener struct (sock, 0, 0), or -errno
 					// on failure. Pulls in the __network_handle
 					// accessor that caches wasi:sockets/instance-
@@ -850,13 +850,13 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_tcp_listen")
 				case "__fern_tcp_accept":
 					// (listener) → i32 — heap pointer to a
-					// 12-byte connection struct (sock, instream,
+					// 16-byte connection struct (sock, instream,
 					// outstream), or -errno on failure.
 					needs.add("__fern_alloc")
 					needs.add("__fern_tcp_accept")
 				case "__fern_tcp_connect":
 					// (host_be, port) → i32 — outbound client; same
-					// 12-byte connection struct as accept. Needs the
+					// 16-byte connection struct as accept. Needs the
 					// network accessor (like tcp_listen).
 					needs.add("__fern_alloc")
 					needs.add("__network_handle")
@@ -2704,7 +2704,7 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		body:    buildNetworkHandleBody,
 	},
 	"__fern_tcp_listen": {
-		// (port: i32) → i32 — heap pointer to a 12-byte
+		// (port: i32) → i32 — heap pointer to a 16-byte
 		// listener struct (tcp-socket, 0, 0) on success;
 		// -errno on failure. See wasi_tcp.go.
 		params:  []byte{encode.ValtypeI32},
@@ -2712,7 +2712,7 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		body:    buildTcpListenBody,
 	},
 	"__fern_tcp_accept": {
-		// (listener: i32) → i32 — heap pointer to a 12-byte
+		// (listener: i32) → i32 — heap pointer to a 16-byte
 		// connection struct (tcp-socket, input-stream,
 		// output-stream); -errno on failure.
 		params:  []byte{encode.ValtypeI32},
@@ -2721,7 +2721,7 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 	},
 	"__fern_tcp_connect": {
 		// (host_be: i32, port: i32) → i32 — heap pointer to a
-		// 12-byte connection struct (tcp-socket, input-stream,
+		// 16-byte connection struct (tcp-socket, input-stream,
 		// output-stream), the same shape tcp_accept yields, or
 		// -errno on failure. The outbound client. See wasi_tcp.go.
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},

@@ -19,6 +19,8 @@ import (
 // children traps. Each setup phase can report unknown (error-code zero).
 func CheckWasiSocketReclaim(t *testing.T, modulePath, operation string) {
 	t.Helper()
+	closing := strings.HasSuffix(operation, "-close")
+	operation = strings.TrimSuffix(operation, "-close")
 	for _, tool := range []string{"wasm-tools", "wasmtime"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			t.Skip(tool + " not on PATH")
@@ -49,7 +51,7 @@ func CheckWasiSocketReclaim(t *testing.T, modulePath, operation string) {
 	if seen == 0 || strings.Contains(wat, "(import ") {
 		t.Fatal("unhandled core import syntax")
 	}
-	steps := map[string]int{"listen": 5, "connect": 3, "udp": 6}[operation]
+	steps := map[string]int{"listen": 5, "connect": 3, "accept": 1, "udp": 6}[operation]
 	if steps == 0 {
 		t.Fatal("unknown socket operation")
 	}
@@ -57,12 +59,23 @@ func CheckWasiSocketReclaim(t *testing.T, modulePath, operation string) {
 	// UDP sends are one-shot and release everything before returning.
 	socket, streams := 1, 0
 	successFailure := "(i32.le_s (local.get $result) (i32.const 0))"
-	if operation == "connect" {
+	if operation == "connect" || operation == "accept" {
 		streams = 1
 	}
 	if operation == "udp" {
 		socket = 0
 		successFailure = "(i32.ne (local.get $result) (i32.const 1))"
+	}
+	if closing {
+		socket, streams = 0, 0
+		successFailure = "(i32.ne (local.get $result) (i32.const 0))"
+	}
+	borrowedListener := ""
+	if operation == "accept" {
+		// A borrowed listener record at address zero, with host handle 42.
+		// The accepted socket gets a distinct handle (0 or 7) and owns its
+		// streams. The listener remains host-owned and must never be dropped.
+		borrowedListener = "(i32.store (i32.const 0) (i32.const 42))"
 	}
 	probe := fmt.Sprintf(`
   (global $fh_fail (mut i32) (i32.const 0))
@@ -75,6 +88,7 @@ func CheckWasiSocketReclaim(t *testing.T, modulePath, operation string) {
     (local $result i32)
     (global.set $fh_fail (local.get $step))
     (global.set $fh_handle (local.get $handle))
+    %s
     (local.set $result (call %s))
     (if (local.get $step) (then
       (if (i32.ne (local.get $result) (i32.const -29)) (then (return (i32.const 1)))))
@@ -85,7 +99,7 @@ func CheckWasiSocketReclaim(t *testing.T, modulePath, operation string) {
     (if (i32.ne (global.get $fh_out) (select (i32.const 0) (i32.const %d) (local.get $step))) (then (return (i32.const 5))))
     (if (global.get $fh_poll) (then (return (i32.const 6))))
     (i32.const 0))
-`, export[1], successFailure, socket, streams, streams)
+`, borrowedListener, export[1], successFailure, socket, streams, streams)
 	end := strings.LastIndex(wat, ")")
 	path := filepath.Join(t.TempDir(), "socket-faults.wat")
 	if err := os.WriteFile(path, []byte(wat[:end]+probe+")"), 0o644); err != nil {
@@ -153,6 +167,8 @@ func socketHostBody(operation, moduleName, name string) string {
 		phase = 3
 	case strings.HasSuffix(name, ".finish-connect"):
 		phase, own = 3, "streams"
+	case strings.HasSuffix(name, ".accept"):
+		phase, own = 1, "accepted"
 	case strings.HasSuffix(name, ".start-listen"):
 		phase = 4
 	case strings.HasSuffix(name, ".finish-listen"):
@@ -170,7 +186,13 @@ func socketHostBody(operation, moduleName, name string) string {
 	if own == "streams" {
 		own = "(global.set $fh_in (i32.const 1)) (global.set $fh_out (i32.const 1))"
 	}
+	if own == "accepted" {
+		own = "(global.set $fh_socket (i32.const 1)) (global.set $fh_in (i32.const 1)) (global.set $fh_out (i32.const 1))"
+	}
 	payload := fmt.Sprintf("(i32.store offset=4 (local.get %d) (global.get $fh_handle)) (i32.store offset=8 (local.get %d) (global.get $fh_handle))", ret, ret)
+	if operation == "accept" {
+		payload += fmt.Sprintf(" (i32.store offset=12 (local.get %d) (global.get $fh_handle))", ret)
+	}
 	if operation == "udp" && phase >= 5 {
 		payload = fmt.Sprintf("(i64.store offset=8 (local.get %d) (i64.const 1))", ret)
 	}

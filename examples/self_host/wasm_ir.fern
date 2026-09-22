@@ -2811,12 +2811,15 @@ pub function wasi_poll_import(): string {
 // list<u32> is written into an 8-byte return area: data ptr @ +0, count @ +4.
 // --- TCP outbound client (#4318 slice 1) -------------------------------------
 //
-// A Fern tcp "fd" is a POINTER to a 12-byte heap struct, the same shape native
+// A Fern tcp "fd" is a POINTER to a 16-byte heap struct, the same shape native
 // uses (internal/codegen/wasmbin/wasi_tcp.go) so the two stay swappable:
 //
 //     [0..3]  tcp-socket handle
 //     [4..7]  input-stream handle   (0 for listening sockets)
 //     [8..11] output-stream handle  (0 for listening sockets)
+//     [12..15] streams present: 0 for listeners, 1 for connections
+//
+// Resource handle 0 is valid. Only the presence word distinguishes absent streams.
 //
 // wasm has no file descriptors, so the i32 the language hands back is this
 // pointer; a negative value is -errno.
@@ -2872,7 +2875,7 @@ pub function network_handle_func(): string {
 // $__fern_tcp_connect(host_be, port) -> i32. The outbound client:
 // create-tcp-socket -> start-connect -> subscribe -> block (wait for the
 // connection to establish) -> drop the pollable -> finish-connect, yielding the
-// 12-byte struct above, or -errno.
+// 16-byte struct above, or -errno.
 //
 // host_be packs the IPv4 address a | b<<8 | c<<16 | d<<24 (the std/fetch `ipv4`
 // convention), unpacked here into the four octets of the ip-socket-address
@@ -2910,10 +2913,11 @@ pub function tcp_connect_func(): string {
     o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
     o = o + "      (call $__fern_wasi_tcp_socket_drop (local.get $sock))\n";
     o = o + "      (return (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))))\n";
-    o = o + "    (local.set $st (call $__fern_alloc (i32.const 12)))\n";
+    o = o + "    (local.set $st (call $__fern_alloc (i32.const 16)))\n";
     o = o + "    (i32.store (local.get $st) (local.get $sock))\n";
     o = o + "    (i32.store offset=4 (local.get $st) (i32.load offset=4 (local.get $ret)))\n";
     o = o + "    (i32.store offset=8 (local.get $st) (i32.load offset=8 (local.get $ret)))\n";
+    o = o + "    (i32.store offset=12 (local.get $st) (i32.const 1))\n";
     o = o + "    (local.get $st))\n";
     return o;
 }
@@ -2930,16 +2934,15 @@ pub function wasi_sockets_server_imports(): string {
     return o;
 }
 
-// $__fern_tcp_listen(port) -> 12-byte LISTENER struct pointer, or -errno.
+// $__fern_tcp_listen(port) -> 16-byte LISTENER struct pointer, or -errno.
 //
 // create-tcp-socket -> start-bind + finish-bind(0.0.0.0:port) -> start-listen +
 // finish-listen. start-bind takes the same 15-i32 flattening of
 // ip-socket-address that start-connect does (disc + 11 payload slots, of which
 // ipv4 uses port + 4 octets), here bound to 0.0.0.0.
 //
-// The struct's STREAM SLOTS STAY ZERO: a listener has no input/output stream
-// until it accepts. tcp_close already guards each drop on a non-zero handle for
-// exactly this case — passing 0 to a resource-drop import traps host-side.
+// A listener has no input/output streams. Its presence word stays zero, so
+// tcp_close skips the stream drops even when zero is a valid stream handle.
 pub function tcp_listen_func(): string {
     var o: string = "";
     o = o + "  (func $__fern_tcp_listen (param $port i32) (result i32)\n";
@@ -2969,15 +2972,16 @@ pub function tcp_listen_func(): string {
     o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
     o = o + "      (call $__fern_wasi_tcp_socket_drop (local.get $sock))\n";
     o = o + "      (return (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))))\n";
-    o = o + "    (local.set $st (call $__fern_alloc (i32.const 12)))\n";
+    o = o + "    (local.set $st (call $__fern_alloc (i32.const 16)))\n";
     o = o + "    (i32.store (local.get $st) (local.get $sock))\n";
     o = o + "    (i32.store offset=4 (local.get $st) (i32.const 0))\n";
     o = o + "    (i32.store offset=8 (local.get $st) (i32.const 0))\n";
+    o = o + "    (i32.store offset=12 (local.get $st) (i32.const 0))\n";
     o = o + "    (local.get $st))\n";
     return o;
 }
 
-// $__fern_tcp_accept(listener) -> a fresh 12-byte CONNECTION struct, or -errno.
+// $__fern_tcp_accept(listener) -> a fresh 16-byte CONNECTION struct, or -errno.
 //
 // subscribe + block FIRST: accept is non-blocking on wasi:sockets, so calling it
 // straight away just yields would-block.
@@ -2998,10 +3002,11 @@ pub function tcp_accept_func(): string {
     o = o + "    (call $__fern_wasi_tcp_accept (local.get $sock) (local.get $ret))\n";
     o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
     o = o + "      (return (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))))\n";
-    o = o + "    (local.set $st (call $__fern_alloc (i32.const 12)))\n";
+    o = o + "    (local.set $st (call $__fern_alloc (i32.const 16)))\n";
     o = o + "    (i32.store (local.get $st) (i32.load offset=4 (local.get $ret)))\n";
     o = o + "    (i32.store offset=4 (local.get $st) (i32.load offset=8 (local.get $ret)))\n";
     o = o + "    (i32.store offset=8 (local.get $st) (i32.load offset=12 (local.get $ret)))\n";
+    o = o + "    (i32.store offset=12 (local.get $st) (i32.const 1))\n";
     o = o + "    (local.get $st))\n";
     return o;
 }
@@ -3285,19 +3290,15 @@ pub function tcp_recv_func(): string {
 // the canonical-ABI layer, and the i32 return keeps the tcp_* surface uniform).
 //
 // Drop order matters: the streams are CHILDREN of the tcp-socket, and the
-// canonical ABI rejects a parent drop while children live. The stream slots are
-// 0 for listener structs, and passing 0 to a resource-drop import traps host-
-// side, so each drop is guarded on a non-zero handle.
+// canonical ABI rejects a parent drop while children live. The presence word
+// distinguishes listeners from connections without reserving a resource handle.
 pub function tcp_close_func(): string {
     var o: string = "";
     o = o + "  (func $__fern_tcp_close (param $c i32) (result i32)\n";
-    o = o + "    (local $h i32)\n";
-    o = o + "    (local.set $h (i32.load offset=4 (local.get $c)))\n";
-    o = o + "    (if (local.get $h) (then (call $__fern_wasi_input_stream_drop (local.get $h))))\n";
-    o = o + "    (local.set $h (i32.load offset=8 (local.get $c)))\n";
-    o = o + "    (if (local.get $h) (then (call $__fern_wasi_output_stream_drop (local.get $h))))\n";
-    o = o + "    (local.set $h (i32.load (local.get $c)))\n";
-    o = o + "    (if (local.get $h) (then (call $__fern_wasi_tcp_socket_drop (local.get $h))))\n";
+    o = o + "    (if (i32.load offset=12 (local.get $c)) (then\n";
+    o = o + "      (call $__fern_wasi_input_stream_drop (i32.load offset=4 (local.get $c)))\n";
+    o = o + "      (call $__fern_wasi_output_stream_drop (i32.load offset=8 (local.get $c)))))\n";
+    o = o + "    (call $__fern_wasi_tcp_socket_drop (i32.load (local.get $c)))\n";
     o = o + "    (i32.const 0))\n";
     return o;
 }
@@ -4374,11 +4375,11 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         // malformed host literal. All three args are on the stack (#4375).
         parts = parts.append("    call $__fern_udp_send\n");
     } else if (o.kind_tag == 193) {  // tcp_connect
-        // tcp_connect(host_be, port) -> 12-byte connection struct pointer,
+        // tcp_connect(host_be, port) -> 16-byte connection struct pointer,
         // or -errno. Both args are already on the stack (#4318).
         parts = parts.append("    call $__fern_tcp_connect\n");
     } else if (o.kind_tag == 200) {  // tcp_listen
-        // tcp_listen(port) -> 12-byte listener struct pointer, or -errno.
+        // tcp_listen(port) -> 16-byte listener struct pointer, or -errno.
         parts = parts.append("    call $__fern_tcp_listen\n");
     } else if (o.kind_tag == 201) {  // tcp_accept
         // tcp_accept(listener) -> a fresh connection struct, or -errno.

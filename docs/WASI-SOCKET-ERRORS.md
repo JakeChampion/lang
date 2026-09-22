@@ -40,3 +40,11 @@ They cover every listen/connect/UDP setup stage, both handle zero and a nonzero
 handle, UDP send failures, and successful ownership transfer. They measure host
 socket resources only. Guest-memory scratch reclamation and the worker-owned
 network capability remain separate P0 work.
+
+TCP listener and connection records use 16 bytes: socket, input stream, output
+stream, then a streams-present word. Listeners clear that word; connect and
+accept set it. Close uses this word to distinguish absent streams from live
+streams with handle zero, then drops the socket unconditionally. This private
+layout is shared by both compilers and does not change the integer API.
+Close fault tests cover listeners, outbound connections and accepted connections
+with zero and nonzero handles, including setup failures before close.

@@ -103,6 +103,11 @@ setup must transfer ownership, while UDP success and errors release their
 socket and streams. Child resources must be dropped before their parent and
 double drops trap. Guest-memory scratch reclamation is outside these gates.
 
+`TestWasmSocketCloseZeroHandles` and `TestSelfHostWasmSocketCloseZeroHandles`
+extend that host stub through `tcp_close`: listener, connect and accept must
+release all owned resources, including valid handle zero. A separate presence
+word distinguishes absent listener streams from live connection streams.
+
 ## Generated digest sources
 
 The lint lane runs `make digest-check` on every PR and main push. It compares
