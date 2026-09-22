@@ -364,6 +364,7 @@ function integer_literal(text: string): boolean {
 // function was refused for a WIDTH that was never the problem.
 function literal_type(suffix: string): typeinfo.Type {
     if (suffix == "u8") { return t_u8(); }
+    if (suffix == "char") { return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: true }; }
     if (suffix == "u32") { return t_u32(); }
     if (suffix == "i64") { return t_i64(); }
     if (suffix == "u64") { return t_u64(); }

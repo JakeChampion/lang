@@ -3506,6 +3506,33 @@ function main(): i32 {
     return sum + k;
 }
 `},
+	// Character literals. The lexer tags one with the type name `char` where
+	// an integer literal carries a numeric suffix, and semsource's literal_type
+	// knew no such suffix, so every module with a `'x'` was refused as an
+	// `unsupported literal width`; ssasem's verifier then refused the constant
+	// as an integer of no integer type (conformance/cases/char_byte_literals,
+	// #9550). A char is a 32-bit cell carrying a code point; it converts to and
+	// from every integer width, and compares as one.
+	{name: "char-literals", atLeast: 3, noLeak: true, src: `
+const NEWLINE: char = '\n';
+
+function upper_ascii(c: char): char {
+    var n: i32 = c as i32;
+    if (n >= 97 && n <= 122) { return (n - 32) as char; }
+    return c;
+}
+
+function main(): i32 {
+    var c: char = 'x';
+    if (upper_ascii(c) != 'X') { return 1; }
+    if (upper_ascii('Q') != 'Q') { return 2; }
+    if ((NEWLINE as i32) != 10) { return 3; }
+    if (('\u{1F600}' as i32) != 128512) { return 4; }
+    var back: char = 65 as char;
+    if (back != 'A') { return 5; }
+    return (c as i32) - 78;
+}
+`},
 }
 
 // semHeldElementSource sorts by length with the insertion sort's body: the
