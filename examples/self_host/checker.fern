@@ -9087,13 +9087,10 @@ function display_unjudged(t: typeinfo.Type): boolean {
 // name; "" otherwise.
 function display_call_name(c: ast.ExprCall, s: Scope): string {
   if (c.args.len() != 1) { return ""; }
-  match (c.callee) {
-    ast.ExprIdent(id) => {
-      if (id.name != "print" && id.name != "write" && id.name != "eprint") { return ""; }
-      if (s.lookup_sig(id.name).name.len() > 0) { return ""; }
-      return id.name;
-    },
-    _ => { return ""; }
+  if let ast.ExprIdent(id) = c.callee {
+    if (id.name != "print" && id.name != "write" && id.name != "eprint") { return ""; }
+    if (s.lookup_sig(id.name).name.len() > 0) { return ""; }
+    return id.name;
   }
   return "";
 }
@@ -16962,16 +16959,9 @@ function display_unrewritten(e: ast.Expr, own found: boolean): boolean {
     if (c.args.len() != 1) { return false; }
     if let ast.ExprIdent(id) = c.callee {
       if (id.name != "print" && id.name != "write" && id.name != "eprint") { return false; }
-      match (c.args[0]) {
-        ast.ExprString(_) => { return false; },
-        ast.ExprFString(_) => { return false; },
-        ast.ExprIdent(a) => { return a.ty != "string"; },
-        ast.ExprCall(a) => { return a.ty != "string"; },
-        ast.ExprFieldAccess(a) => { return a.ty != "string"; },
-        ast.ExprIndex(a) => { return a.ty != "string"; },
-        ast.ExprBinary(a) => { return a.ty != "string"; },
-        _ => { return true; }
-      }
+      if let ast.ExprString(_) = c.args[0] { return false; }
+      if let ast.ExprFString(_) = c.args[0] { return false; }
+      return ast.expr_ty(c.args[0]) != "string";
     }
   }
   return false;

@@ -68,22 +68,11 @@ function ts_op_is_arithmetic(op: string): boolean {
 // look for `f64|mul` while the method that implements it is `V.mul`. Every
 // failing case of that shape is a scalar-returning overload.
 //
-// "" for the forms annotate_module does not stamp, and under a driver that
-// never runs it at all (asm_load_run, asm_modload_run) — the caller falls back
-// to the bare root there, which over-keeps and stays sound.
+// "" for the forms annotate_module does not stamp — the caller falls back to
+// the bare root there, which over-keeps and stays sound.
 function ts_recv_tag(e: ast.Expr): string {
-    match (e) {
-        ast.ExprIdent(id) => { return id.ty; },
-        ast.ExprBinary(b) => { return b.ty; },
-        ast.ExprUnary(u) => { return u.ty; },
-        ast.ExprCall(c) => { return c.ty; },
-        ast.ExprIndex(ix) => { return ix.ty; },
-        ast.ExprSlice(sl) => { return sl.ty; },
-        ast.ExprFieldAccess(fa) => { return fa.ty; },
-        ast.ExprStructLit(lit) => { return lit.type_name; },
-        _ => { return ""; }
-    }
-    return "";
+    if let ast.ExprStructLit(lit) = e { return lit.type_name; }
+    return ast.expr_ty(e);
 }
 
 // ts_qualified_root builds the receiver-qualified root `<type tag>|<method>`.

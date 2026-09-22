@@ -5841,22 +5841,6 @@ pub function parse_unknown_errors_module(mod: parser.Module): util.Diag[] {
 // A type the partial `Ty` union cannot model comes back unknown; those are
 // skipped rather than mis-flagged, the discipline the E038 / E003 argument
 // passes keep.
-// display_stamp is the type label the annotate pass stamped on a `print`
-// argument — the checker's own spelling (`u8[]`, not asmcore's `array`) — or
-// "" on a module that never went through it.
-function display_stamp(e: ast.Expr): string {
-    match (e) {
-        ast.ExprIdent(x) => { return x.ty; },
-        ast.ExprCall(x) => { return x.ty; },
-        ast.ExprFieldAccess(x) => { return x.ty; },
-        ast.ExprIndex(x) => { return x.ty; },
-        ast.ExprBinary(x) => { return x.ty; },
-        ast.ExprUnary(x) => { return x.ty; },
-        _ => { return ""; }
-    }
-    return "";
-}
-
 // display_is_dyn reports a `dyn Trait` label.
 function display_is_dyn(label: string): boolean {
     return label.len() >= 4 && slice_unchecked(label, 0, 4) == "dyn ";
@@ -5881,13 +5865,14 @@ function display_arg_errs(e: ast.Expr, fname: string, st: EmitState): util.Diag[
                 ast.ExprIdent(id) => {
                     if ((id.name == "print" || id.name == "write" || id.name == "eprint")
                             && c.args.len() == 1) {
-                        // The checker's stamp is the verdict where there is one:
-                        // an argument it rewrote is a call typed `string`, and one
-                        // it left alone with a concrete type is what to refuse. A
-                        // `dyn` receiver dispatches at run time, and an erased or
-                        // unknown type stamps "", so those fall to this unit's own
-                        // inference, which skips what it cannot model.
-                        var an: string = util.demangle(display_stamp(c.args[0]));
+                        // The checker's stamp is the verdict where there is one
+                        // (ast.expr_ty): an argument it rewrote is a call typed
+                        // `string`, and one it left alone with a concrete type is
+                        // what to refuse. A `dyn` receiver dispatches at run time,
+                        // and an erased or unknown type stamps "", so those fall to
+                        // this unit's own inference, which skips what it cannot
+                        // model.
+                        var an: string = util.demangle(ast.expr_ty(c.args[0]));
                         if (an == "string" || display_is_dyn(an)) { return []; }
                         if (an.len() == 0) {
                             var at: Ty = infer_expr_type(c.args[0], st);
