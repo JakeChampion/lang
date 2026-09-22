@@ -13453,52 +13453,128 @@ function enum_self_ty(ty: string, name: string, recv: string): string {
     return ty;
 }
 
+// The generic enums with a use the pass cannot key: a spelling `Opt[(i32,
+// i32)]` whose argument has no clone name. Such an enum is left out of the
+// pass entirely, declaration, variants and methods erased as before, because
+// a clone beside the generic original is unsound on the AST lowering, which
+// dispatches an enum's methods by name. A spelling naming the enum's own type
+// parameters (`List[T]` inside `enum List[T]`, or in an erased generic) is
+// the declaration's own recursion, not a use.
+struct MeUses { enums: EnumDecl[], bases: string[] }
+
+function me_use_spelling(ty: string, own u: MeUses): MeUses {
+    var t: string = ty;
+    while (type_ends_arr(t)) { t = slice_unchecked(t, 0, t.len() - 2) + ""; }
+    var lb: i32 = first_bracket(t);
+    if (lb <= 0 || slice_unchecked(t, t.len() - 1, t.len()) != "]") { return u; }
+    var base: string = slice_unchecked(t, 0, lb) + "";
+    var parts: string[] = split_top_commas(slice_unchecked(t, lb + 1, t.len() - 1));
+    var gi: i32 = genum_index(u.enums, base);
+    if (gi >= 0 && !str_in(u.bases, base)) {
+        var own_param: boolean = false;
+        for p in parts { if (str_in(u.enums[gi].type_params, p)) { own_param = true; } }
+        if (!own_param && genum_key_from_anno(t, base, u.enums).len() == 0) { u = MeUses { ...u, bases: u.bases.append(base) }; }
+    }
+    for p in parts { u = me_use_spelling(p, u); }
+    return u;
+}
+
+function me_use_stmt(st: ast.Stmt, own u: MeUses): MeUses {
+    if let ast.StmtVar(v) = st {
+        u = me_use_spelling(v.type_name, u);
+        return me_use_spelling(v.fn_ret, u);
+    }
+    return u;
+}
+
+function me_use_expr(e: ast.Expr, own u: MeUses): MeUses {
+    if let ast.ExprLambda(lm) = e {
+        for p in lm.params {
+            u = me_use_spelling(p.type_name, u);
+            u = me_use_spelling(p.fn_ret, u);
+        }
+        return me_use_spelling(lm.ret_type, u);
+    }
+    return u;
+}
+
+function me_unkeyable_bases(mod: Module): string[] {
+    var u: MeUses = MeUses { enums: mod.enums, bases: [] };
+    for fd in mod.funcs {
+        for p in fd.params {
+            u = me_use_spelling(p.type_name, u);
+            u = me_use_spelling(p.fn_ret, u);
+        }
+        u = me_use_spelling(fd.ret_type, u);
+        for st in fd.body { u = astwalk.fold_stmt_nodes(st, u, me_use_stmt, me_use_expr, astwalk.descend_all); }
+    }
+    for st in mod.top_stmts { u = astwalk.fold_stmt_nodes(st, u, me_use_stmt, me_use_expr, astwalk.descend_all); }
+    for sd in mod.structs {
+        for f in sd.fields {
+            u = me_use_spelling(f.type_name, u);
+            u = me_use_spelling(f.fn_ret, u);
+        }
+    }
+    return u.bases;
+}
+
+// The enums the pass monomorphises: every generic one without an unkeyable
+// use. A non-generic enum passes through untouched either way.
+function me_mono_enums(mod: Module): EnumDecl[] {
+    var unkeyable: string[] = me_unkeyable_bases(mod);
+    var out: EnumDecl[] = [];
+    for ed in mod.enums { if (!str_in(unkeyable, ed.name)) { out = out.append(ed); } }
+    return out;
+}
+
 pub function monomorphize_enums(mod: Module): Module {
     // Nothing to do unless there is a monomorphisable generic enum.
+    var menums: EnumDecl[] = me_mono_enums(mod);
     var any: boolean = false;
     var ei: i32 = 0;
-    while (ei < mod.enums.len()) {
-        if (mod.enums[ei].type_params.len() > 0) { any = true; }
+    while (ei < menums.len()) {
+        if (menums[ei].type_params.len() > 0) { any = true; }
         ei = ei + 1;
     }
     if (!any) { return mod; }
+    var mmod: Module = Module { ...mod, enums: menums };
 
     var ins: Insts = Insts { inames: [], itypes: [], iargs: [] };
-    var efns: MFns = mfns_of(mod.funcs, mod.structs, mod.enums);
+    var efns: MFns = mfns_of(mod.funcs, mod.structs, menums);
 
     // Phase 1: rewrite references in every function (body + param/ret types)
     // and the top-level statements, accumulating instantiations.
     var nfuncs: FuncDecl[] = [];
     // A generic enum's methods are held aside: an instantiated enum gets
     // per-instantiation clones in phase 2 and these are dropped with its
-    // declaration; one never instantiated (used only at a composite key)
-    // keeps its declaration and gets them back in phase 3.
+    // declaration; one never instantiated keeps its declaration and gets
+    // them back in phase 3.
     var held: FuncDecl[] = [];
     var held_base: string[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
         var fn: FuncDecl = mod.funcs[fi];
         var owner: string = "";
-        if (fn.receiver_type.len() > 0 && genum_index(mod.enums, strip_struct_base(fn.receiver_type)) >= 0) { owner = strip_struct_base(fn.receiver_type); }
+        if (fn.receiver_type.len() > 0 && genum_index(menums, strip_struct_base(fn.receiver_type)) >= 0) { owner = strip_struct_base(fn.receiver_type); }
         var env: MEnv = me_env_from_params(fn.params);
         if (fn.receiver_name.len() > 0) { env = env.ebind(fn.receiver_name, fn.receiver_type); }
-        var rb: RStmts = me_stmts(fn.body, env, fn.ret_type, mod.enums, mod.structs, efns, ins);
+        var rb: RStmts = me_stmts(fn.body, env, fn.ret_type, menums, mod.structs, efns, ins);
         ins = rb.rins3;
-        ins = me_collect_anno(fn.ret_type, mod.enums, ins);
+        ins = me_collect_anno(fn.ret_type, menums, ins);
         var pj: i32 = 0;
         while (pj < fn.params.len()) {
-            ins = me_collect_anno(fn.params[pj].type_name, mod.enums, ins);
+            ins = me_collect_anno(fn.params[pj].type_name, menums, ins);
             pj = pj + 1;
         }
         var rfn: FuncDecl = FuncDecl { ...fn,
-            params: me_rewrite_params(fn.params, mod.enums),
-            ret_type: me_rewrite_ty(fn.ret_type, mod.enums), body: rb.rstmts };
+            params: me_rewrite_params(fn.params, menums),
+            ret_type: me_rewrite_ty(fn.ret_type, menums), body: rb.rstmts };
         if (owner.len() > 0) { held = held.append(rfn); held_base = held_base.append(owner); }
         else { nfuncs = nfuncs.append(rfn); }
         fi = fi + 1;
     }
     var topenv: MEnv = MEnv { mnames: [], mtypes: [] };
-    var tr: RStmts = me_stmts(mod.top_stmts, topenv, "", mod.enums, mod.structs, efns, ins);
+    var tr: RStmts = me_stmts(mod.top_stmts, topenv, "", menums, mod.structs, efns, ins);
     ins = tr.rins3;
 
     // Phase 1b: collect instantiations referenced by STRUCT FIELD types — a
@@ -13512,7 +13588,7 @@ pub function monomorphize_enums(mod: Module): Module {
         var sfd: StructFieldDecl[] = mod.structs[sfi].fields;
         var sfj: i32 = 0;
         while (sfj < sfd.len()) {
-            ins = me_collect_anno(sfd[sfj].type_name, mod.enums, ins);
+            ins = me_collect_anno(sfd[sfj].type_name, menums, ins);
             sfj = sfj + 1;
         }
         sfi = sfi + 1;
@@ -13521,16 +13597,17 @@ pub function monomorphize_enums(mod: Module): Module {
     // Phase 2: generate a concrete enum + variant structs per instantiation.
     var cl_enums: EnumDecl[] = [];
     var cl_structs: StructDecl[] = [];
-    // dropped_bases collects the generic enum names that were instantiated;
-    // their originals (+ variant structs) are removed from the passthrough.
+    // dropped collects the generic enum names that were instantiated; their
+    // originals (+ variant structs, + held methods) are removed from the
+    // passthrough.
     var dropped: string[] = [];
     var wi: i32 = 0;
     while (wi < ins.inames.len()) {
         var base: string = ins.inames[wi];
         var key: string = ins.itypes[wi];
-        var gidx: i32 = genum_index(mod.enums, base);
+        var gidx: i32 = genum_index(menums, base);
         if (gidx >= 0) {
-            var ed: EnumDecl = mod.enums[gidx];
+            var ed: EnumDecl = menums[gidx];
             // A single-type-param enum substitutes T with the ORIGINAL arg
             // spelling (`iargs`), not the mangled key: for a nominal / nested
             // clone the two coincide (`i32`, `Opt[i32]` → me_rewrite_ty gives
@@ -13561,7 +13638,7 @@ pub function monomorphize_enums(mod: Module): Module {
                         // it cloned (the enqueue extends this worklist). A plain
                         // payload (`i32`, a struct) passes through unchanged.
                         var subbed: string = subst_ty(vs.fields[fj2].type_name, ed.type_params, cts);
-                        ins = me_collect_anno(subbed, mod.enums, ins);
+                        ins = me_collect_anno(subbed, menums, ins);
                         // A fn-payload field carries its return spelling on fn_ret
                         // (`(i32) => Fut[T]` → fn_ret "Fut[T]"). Substitute + mangle
                         // it the same way as the payload type so the clone's field
@@ -13569,9 +13646,9 @@ pub function monomorphize_enums(mod: Module): Module {
                         // me_scrutinee_type recovers to rewrite a nested match's
                         // arms (#4722). Empty (non-fn) fn_ret stays empty.
                         var sub_ret: string = subst_ty(vs.fields[fj2].fn_ret, ed.type_params, cts);
-                        ins = me_collect_anno(sub_ret, mod.enums, ins);
-                        var f_ty: string = me_rewrite_ty(subbed, mod.enums);
-                        var f_ret: string = me_rewrite_ty(sub_ret, mod.enums);
+                        ins = me_collect_anno(sub_ret, menums, ins);
+                        var f_ty: string = me_rewrite_ty(subbed, menums);
+                        var f_ret: string = me_rewrite_ty(sub_ret, menums);
                         // A type-param substituted to a fn spelling (`T` → `(i32)
                         // => i32`, #5298) must be COARSENED to the parser's fn
                         // field shape — type_name "fn" with the result on fn_ret —
@@ -13580,8 +13657,8 @@ pub function monomorphize_enums(mod: Module): Module {
                         // eligibility, bailing the whole function).
                         var f_ptys: string = vs.fields[fj2].fn_param_types;
                         if (pk_is_fn_spelling(f_ty)) {
-                            f_ret = me_rewrite_ty(fn_spelling_ret(f_ty), mod.enums);
-                            ins = me_collect_anno(f_ret, mod.enums, ins);
+                            f_ret = me_rewrite_ty(fn_spelling_ret(f_ty), menums);
+                            ins = me_collect_anno(f_ret, menums, ins);
                             // The coarsening drops the parameter half too, so take
                             // it off the spelling before it goes (#5986).
                             f_ptys = fn_spelling_params(f_ty);
@@ -13599,7 +13676,7 @@ pub function monomorphize_enums(mod: Module): Module {
             while (mi < mod.funcs.len()) {
                 var mm: FuncDecl = mod.funcs[mi];
                 if (mm.receiver_type.len() > 0 && strip_struct_base(mm.receiver_type) == base) {
-                    var cm: FRes = clone_enum_method(mm, ed, cts, mname, mod, efns, ins);
+                    var cm: FRes = clone_enum_method(mm, ed, cts, mname, mmod, efns, ins);
                     ins = cm.fins;
                     nfuncs = nfuncs.append(cm.ffn);
                 }
@@ -13631,7 +13708,7 @@ pub function monomorphize_enums(mod: Module): Module {
             var rf: StructFieldDecl[] = [];
             var rfj: i32 = 0;
             while (rfj < sd.fields.len()) {
-                rf = rf.append(StructFieldDecl { name: sd.fields[rfj].name, type_name: me_rewrite_ty(sd.fields[rfj].type_name, mod.enums), fn_ret: me_rewrite_ty(sd.fields[rfj].fn_ret, mod.enums), fn_param_types: sd.fields[rfj].fn_param_types });
+                rf = rf.append(StructFieldDecl { name: sd.fields[rfj].name, type_name: me_rewrite_ty(sd.fields[rfj].type_name, menums), fn_ret: me_rewrite_ty(sd.fields[rfj].fn_ret, menums), fn_param_types: sd.fields[rfj].fn_param_types });
                 rfj = rfj + 1;
             }
             out_structs = out_structs.append(StructDecl { name: sd.name, fields: rf, type_params: sd.type_params, derives: sd.derives, line: sd.line, col: sd.col, enum_owner: sd.enum_owner, must_consume: sd.must_consume, variant_field_names: sd.variant_field_names , is_pub: sd.is_pub , is_package: false });

@@ -661,12 +661,9 @@ function main(): i32 {
     return t % 7;
 }`},
 	// A generic enum with a method that is only ever used at a composite key.
-	// The pass monomorphises nothing here (a tuple key has no clone name), so
-	// the enum keeps its declaration and must keep its method with it: phase 1
-	// holds every generic enum's methods aside and phase 3 gives back those
-	// whose enum was never instantiated. Nothing produces, since the composite
-	// key is not monomorphised; the row pins that the module still compiles
-	// and answers on every leg.
+	// A tuple key has no clone name, so the enum is left out of the pass with
+	// its method beside it. Nothing produces; the row pins that the module
+	// still compiles and answers on every leg.
 	{name: "generic-enum-method-at-a-composite-key", atLeast: 0, src: `
 enum Opt[T] { Sm(T), Nn }
 
@@ -681,6 +678,40 @@ function main(): i32 {
     var p: (i32, i32) = o.get_or((0, 0));
     var q: (i32, i32) = n.get_or((1, 1));
     return p.0 + p.1 + q.0 + q.1;
+}`},
+	// The same enum used at a simple key AND a composite key in one module. A
+	// clone beside the generic original is unsound on the AST lowering, which
+	// dispatches an enum's methods by name (`a.get_or(9)` answered 0 with both
+	// in the module), so one unkeyable use keeps the whole enum out of the pass.
+	// Before, the pass dropped the generic `Opt` for the `Opt[i32]` use and the
+	// `Opt[(i32, i32)]` annotation dangled, with or without a method.
+	{name: "generic-enum-at-a-simple-and-a-composite-key", atLeast: 0, src: `
+enum Opt[T] { Sm(T), Nn }
+
+function (o: Opt[T]) get_or(d: T): T {
+    match (o) { Sm(x) => { return x; }, Nn => { return d; } }
+}
+
+function main(): i32 {
+    var a: Opt[i32] = Sm(3);
+    var b: Opt[(i32, i32)] = Sm((1, 2));
+    var n: Opt[i32] = Nn;
+    var p: (i32, i32) = b.get_or((5, 5));
+    return a.get_or(9) * 10 + n.get_or(4) + p.0 + p.1;
+}`},
+	// The method-less form of the mix, which dangled on main: the pass dropped
+	// the generic `Opt` for the `Opt[i32]` use and `Sm((1, 2))` then named a
+	// variant no declaration held (E001 from the checker).
+	{name: "generic-enum-at-a-simple-and-a-composite-key-without-methods", atLeast: 0, src: `
+enum Opt[T] { Sm(T), Nn }
+
+function main(): i32 {
+    var a: Opt[i32] = Sm(3);
+    var b: Opt[(i32, i32)] = Sm((1, 2));
+    var x: i32 = 0;
+    match (a) { Sm(n) => { x = n; }, Nn => { x = 0; } }
+    match (b) { Sm(p) => { x = x + p.0 + p.1; }, Nn => { } }
+    return x;
 }`},
 	{name: "value-match-first-arm-is-a-match-of-lambdas", atLeast: 8, noLeak: true, src: `
 enum Status { Active, Inactive, Pending }
