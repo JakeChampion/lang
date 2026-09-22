@@ -363,3 +363,16 @@ func TestPeepholeDropsReloadBeforeScopeJump(t *testing.T) {
 		}
 	}
 }
+
+// A function with no cold arm has nothing to restore, so its epilogue
+// carries neither CFI directive.
+func TestEpilogueWithoutColdArmsCarriesNoCFIState(t *testing.T) {
+	asm := compile(t, `@noinline function f(a: i32, b: i32): i32 { return a * b + 1; }
+function main(): i32 { return f(2, 3); }`)
+	body := fnBody(t, asm, "f")
+	for _, bad := range []string{".cfi_remember_state", ".cfi_restore_state"} {
+		if strings.Contains(body, bad) {
+			t.Errorf("a cold-less function carries %s:\n%s", bad, body)
+		}
+	}
+}

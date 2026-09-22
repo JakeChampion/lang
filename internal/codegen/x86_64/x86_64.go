@@ -2757,7 +2757,9 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	// here naturally and exits cleanly.
 	g.label(retLabel)
 	g.emit("mov rsp, rbp")
-	g.emit(".cfi_remember_state")
+	if len(g.cold) > 0 {
+		g.emit(".cfi_remember_state")
+	}
 	g.emit("pop rbp")
 	g.emit(".cfi_def_cfa rsp, 8")
 	g.emit("ret")
