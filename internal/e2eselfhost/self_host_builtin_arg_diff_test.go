@@ -34,10 +34,17 @@ import (
 //
 // Each program calls one builtin with every argument deliberately mistyped, in
 // statement position so no destination type of the test's own invention can
-// colour the answer. The Go checker is the sole oracle and the whole code set
-// is compared, so this fails on a self-host false POSITIVE — a builtin given
-// the wrong parameter type in the new table — as loudly as on the silence it
-// was written for.
+// colour the answer. The Go checker is the sole oracle, and what is compared is
+// the whole DIAGNOSTIC — "argument 2: expected i32, got string" — not the code
+// set.
+//
+// The codes alone are not enough, and the difference is the accept-what-native-
+// rejects direction this exists to close. Type `__memchr`'s byte parameter
+// `string` by mistake and the self-host still rejects arguments 1 and 3 while
+// native rejects all three: both sides report E038, the sets match, and the one
+// argument the self-host now accepts is hidden behind its neighbours. Comparing
+// the messages pins WHICH argument each side flags and WHAT it expected there,
+// so a wrong parameter type in the table is a red gate in either direction.
 func TestSelfHostBuiltinArgDifferentialX86_64(t *testing.T) {
 	checkerBin, runner, dir := buildCheckerCodesBin(t)
 
@@ -50,11 +57,11 @@ func TestSelfHostBuiltinArgDifferentialX86_64(t *testing.T) {
 				cmd = exec.Command(runner[0], append(runner[1:], checkerBin)...)
 			}
 			cmd.Stdin = bytes.NewReader([]byte(tc.src))
-			got := driverCodes(runCheckerDriver(t, cmd, tc.name))
-			want := goCheckerCodes(t, dir, tc.src)
+			got := diagLines(driverDiags(runCheckerDriver(t, cmd, tc.name)))
+			want := diagLines(goCheckerDiags(t, dir, tc.src))
 			if !equalStrings(got, want) {
-				t.Errorf("%s: self-host codes %v disagree with the Go checker's %v\nsrc: %s",
-					tc.name, got, want, tc.src)
+				t.Errorf("%s: the two checkers disagree on this call's arguments.\nnative:    %s\nself-host: %s\nsrc: %s",
+					tc.name, joinOrNone(want), joinOrNone(got), tc.src)
 			}
 			// The oracle has to be saying something, or the row proves only
 			// that two compilers agree about a program neither objects to.
@@ -182,4 +189,16 @@ func selfHostFileSection(t *testing.T, file, pattern string) string {
 			"its new form rather than deleting the gate", file)
 	}
 	return body
+}
+
+// diagLines renders diagnostics as `CODE: MESSAGE`, sorted, for comparison
+// between the two checkers. Sorted because neither side promises an order, and
+// the question here is which argument each one flagged, not when.
+func diagLines(ds []driverDiag) []string {
+	var out []string
+	for _, d := range ds {
+		out = append(out, d.code+": "+d.msg)
+	}
+	sort.Strings(out)
+	return out
 }
