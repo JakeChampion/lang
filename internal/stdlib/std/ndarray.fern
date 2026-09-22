@@ -615,6 +615,82 @@ function lanes[A](count: i32, init: A): A[] {
     return accs;
 }
 
+// The axis's own row-major stride, and the number of lanes ahead of it:
+// the product of the extents after `axis`, and the product of those before.
+function extent_after(shape: i32[], axis: i32): i32 {
+    var s: i32 = 1;
+    var k: i32 = axis + 1;
+    while (k < shape.len()) {
+        s = s * shape[k];
+        k = k + 1;
+    }
+    return s;
+}
+
+function extent_before(shape: i32[], axis: i32): i32 {
+    var s: i32 = 1;
+    var k: i32 = 0;
+    while (k < axis) {
+        s = s * shape[k];
+        k = k + 1;
+    }
+    return s;
+}
+
+// The packed walks for the two axis folds. A packed handle's `data` IS the
+// reading order (§2), so three counters enumerate it directly — `h` over the
+// axes before `axis`, `t` along it, `l` over those after — with the storage
+// index advancing by one each step. The lane is `h * inner + l`, which is the
+// row-major position in the shape with `axis` dropped, so neither `addr_of`
+// nor `lane_of` nor `bump` is needed. `t` still increases for a fixed lane,
+// which is what keeps §7's increasing index order along the axis true here.
+function packed_reduce[T, A](data: T[], outer: i32, extent: i32, inner: i32, init: A, f: (A, T) => A): A[] {
+    var accs: A[] = lanes(outer * inner, init);
+    var i: i32 = 0;
+    var h: i32 = 0;
+    while (h < outer) {
+        var base: i32 = h * inner;
+        var t: i32 = 0;
+        while (t < extent) {
+            var l: i32 = 0;
+            while (l < inner) {
+                var lane: i32 = base + l;
+                accs = accs.with(lane, f(accs[lane], data[i]));
+                i = i + 1;
+                l = l + 1;
+            }
+            t = t + 1;
+        }
+        h = h + 1;
+    }
+    return accs;
+}
+
+function packed_scan[T, A](data: T[], outer: i32, extent: i32, inner: i32, init: A, f: (A, T) => A): A[] {
+    var accs: A[] = lanes(outer * inner, init);
+    var out: A[] = [];
+    var i: i32 = 0;
+    var h: i32 = 0;
+    while (h < outer) {
+        var base: i32 = h * inner;
+        var t: i32 = 0;
+        while (t < extent) {
+            var l: i32 = 0;
+            while (l < inner) {
+                var lane: i32 = base + l;
+                var acc: A = f(accs[lane], data[i]);
+                accs = accs.with(lane, acc);
+                out = out.append(acc);
+                i = i + 1;
+                l = l + 1;
+            }
+            t = t + 1;
+        }
+        h = h + 1;
+    }
+    return out;
+}
+
 // `reduce_axis(axis, init, f)` — the fold along `axis`, in increasing
 // index order, as a packed handle of one rank less: a rank-1 handle
 // reduces to a rank-0 one. Every lane is folded in one reading-order
@@ -623,6 +699,10 @@ pub function (a: NdArray[T]) reduce_axis[T, A](axis: i32, init: A, f: (A, T) => 
     check_axis(a, axis);
     var rshape: i32[] = drop_axis(a.shape, axis);
     var lane_strides: i32[] = row_major(rshape);
+    if (a.is_packed()) {
+        return from_flat(packed_reduce(a.data, extent_before(a.shape, axis), a.shape[axis],
+            extent_after(a.shape, axis), init, f), rshape);
+    }
     var accs: A[] = lanes(count_of(rshape), init);
     var n: i32 = a.len();
     var idx: i32[] = zeros(a.shape.len());
@@ -643,6 +723,10 @@ pub function (a: NdArray[T]) scan_axis[T, A](axis: i32, init: A, f: (A, T) => A)
     check_axis(a, axis);
     var rshape: i32[] = drop_axis(a.shape, axis);
     var lane_strides: i32[] = row_major(rshape);
+    if (a.is_packed()) {
+        return from_flat(packed_scan(a.data, extent_before(a.shape, axis), a.shape[axis],
+            extent_after(a.shape, axis), init, f), a.shape);
+    }
     var accs: A[] = lanes(count_of(rshape), init);
     var out: A[] = [];
     var n: i32 = a.len();

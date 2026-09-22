@@ -1463,6 +1463,9 @@ source without rebuilding measures nothing:
 | `map` | 212.1 ms | 71.3 ms | **2.97x** | one `addr_of`, one `bump` |
 | `fold_all` | 182.1 ms | 42.6 ms | **4.28x** | one `addr_of`, one `bump` |
 | `zip_with` | 295.4 ms | 82.3 ms | **3.59x** | two `addr_of`, one `bump` |
+| `reduce_axis`, last axis | 235.1 ms | 59.0 ms | **3.98x** | one `addr_of`, one `lane_of`, one `bump` |
+| `reduce_axis`, axis 0 | 235.6 ms | 55.5 ms | **4.24x** | one `addr_of`, one `lane_of`, one `bump` |
+| `scan_axis`, last axis | 296.1 ms | 111.3 ms | **2.66x** | one `addr_of`, one `lane_of`, one `bump` |
 
 `fold_all` gains the largest ratio because it allocates nothing: the
 odometer is a larger share of what is left. `map` lands at 71.3 ms against
@@ -1476,6 +1479,19 @@ independent readings of the same two costs — 23.7 ns/element for
 and `bump` 11.9 ns**. Agreeing to that tolerance from separate measurements
 is the check that these numbers are measuring the odometer and not something
 else about the two builds.
+
+**The axis folds' win does not depend on the axis**, which is the opposite
+of what this section predicted before it was measured. The reasoning was
+that a lane is a contiguous run along the last axis and a strided one along
+any earlier axis, so the fast path should pay off far more on the last. It
+does not: 3.98x against 4.24x. The odometer work being shed — `addr_of`,
+`lane_of`, `bump` — costs the same whichever axis is named, and the lane
+that replaces it is `h * inner + l` either way. What the axis changes is
+which elements share a lane, not the price of finding out.
+
+`scan_axis` gains least of the five because it appends a result per
+element, so the allocation is a larger share of what remains — the same
+reason `map` (2.97x) trails `fold_all` (4.28x).
 
 Both arms owe §7's increasing reading order, and `add` cannot tell them
 apart. `examples/tests/ndarray_test.fern` therefore folds
