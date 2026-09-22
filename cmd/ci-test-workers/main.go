@@ -25,9 +25,9 @@ import (
 )
 
 type config struct {
-	binary, output, pattern, weights string
-	workers, cpus                    int
-	timeout                          time.Duration
+	binary, output, pattern, weights, format string
+	workers, cpus                            int
+	timeout                                  time.Duration
 }
 
 type result struct {
@@ -58,6 +58,7 @@ func main() {
 	flag.StringVar(&c.output, "output", "", "new directory for inventories and test JSON")
 	flag.StringVar(&c.pattern, "run", "", "top-level test selection regular expression")
 	flag.StringVar(&c.weights, "weights", "", "optional `TestName seconds` file; tests are assigned longest-first to the least-loaded worker")
+	flag.StringVar(&c.format, "format", "pkgname-and-test-fails", "gotestsum console format for each worker; standard-verbose streams every test's RUN/PASS line, so a reclaimed runner's log still names the test in flight")
 	flag.IntVar(&c.workers, "workers", 2, "number of isolated processes")
 	flag.IntVar(&c.cpus, "cpus", runtime.GOMAXPROCS(0), "total CPU budget")
 	flag.DurationVar(&c.timeout, "timeout", 10*time.Minute, "test timeout per worker")
@@ -225,8 +226,8 @@ func verify(r io.Reader, expected []string) (map[string]string, error) {
 }
 
 func run(ctx context.Context, c config, output io.Writer) error {
-	if !filepath.IsAbs(c.binary) || c.output == "" || c.pattern == "" || c.workers < 1 || c.cpus < c.workers || c.timeout <= 0 {
-		return errors.New("require absolute binary, new output directory, run pattern, positive timeout and 1 <= workers <= cpus")
+	if !filepath.IsAbs(c.binary) || c.output == "" || c.pattern == "" || c.format == "" || c.workers < 1 || c.cpus < c.workers || c.timeout <= 0 {
+		return errors.New("require absolute binary, new output directory, run pattern, console format, positive timeout and 1 <= workers <= cpus")
 	}
 	if _, err := regexp.Compile(c.pattern); err != nil {
 		return err
@@ -309,7 +310,7 @@ func runTestStream(ctx context.Context, c config, names []string, cpus, worker i
 	test.Env = append(os.Environ(), "GOMAXPROCS="+strconv.Itoa(cpus))
 	test.Stdout, test.Stderr = writer, writer
 	isolate(test)
-	formatter := exec.CommandContext(ctx, "gotestsum", "--format", "pkgname-and-test-fails", "--jsonfile", path, "--raw-command", "--",
+	formatter := exec.CommandContext(ctx, "gotestsum", "--format", c.format, "--jsonfile", path, "--raw-command", "--",
 		"go", "tool", "test2json", "-t", "-p", fmt.Sprintf("worker-%d", worker))
 	formatter.Env = test.Env
 	formatter.Stdin = reader

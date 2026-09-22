@@ -144,7 +144,7 @@ func TestWorkerPipeline(t *testing.T) {
 	for _, mode := range []string{"pass", "fail", "crash"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Setenv("FERN_WORKER_FIXTURE", mode)
-			c := config{binary: binary, output: filepath.Join(t.TempDir(), "results"), pattern: "^TestWorkerFixture[AB]$", workers: 2, cpus: 2, timeout: time.Minute}
+			c := config{binary: binary, output: filepath.Join(t.TempDir(), "results"), pattern: "^TestWorkerFixture[AB]$", format: "standard-verbose", workers: 2, cpus: 2, timeout: time.Minute}
 			var console bytes.Buffer
 			err := run(context.Background(), c, &console)
 			if (err == nil) != (mode == "pass") {

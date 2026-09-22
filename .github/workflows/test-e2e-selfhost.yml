@@ -29,7 +29,9 @@ name: Test e2e self-host
 # half the runner's CPUs, assigned by the same duration-weighted LPT partition
 # that cut the shards. Process isolation is what the package needs — several
 # tests mutate compiler globals, so `t.Parallel` is not an option — and the
-# runner has four cores a single serial test process leaves mostly idle.
+# runner has four cores a single serial test process leaves mostly idle. Each
+# worker streams its RUN/PASS/FAIL lines (`-format standard-verbose`), so the
+# log of a runner that vanished mid-run still names the test in flight.
 # FERN_BUILD_MEM_BUDGET_MB halves each process's driver-build RAM budget so two
 # cold driver emits, one per worker, still fit the 16 GB runner.
 #
@@ -146,8 +148,32 @@ jobs:
           WEIGHTS="$PWD/.github/selfhost-test-weights.txt"
           echo "isolated driver tests: $ISOLATED_DRIVER_TESTS"
           cd internal/e2eselfhost
-          "$RUNNER_TEMP/ci-test-workers" -binary "$BIN" -output "$RUNNER_TEMP/cli-results" \
+          "$RUNNER_TEMP/ci-test-workers" -binary "$BIN" -output "$RUNNER_TEMP/cli-results" -format standard-verbose \
             -weights "$WEIGHTS" -workers 2 -timeout 18m -run "^($ISOLATED_DRIVER_TESTS)\$"
+      # These tests' weights steer the split above and no shard measures them,
+      # so their durations ride up to `verify`'s weight audit like a shard's.
+      - name: record the isolated tests' durations
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          mkdir -p shard-outcome
+          JSON=()
+          for j in "$RUNNER_TEMP"/cli-results/worker-*.jsonl; do
+            if [ -f "$j" ]; then JSON+=("$j"); fi
+          done
+          if [ ${#JSON[@]} -gt 0 ]; then
+            scripts/ci-test-weights extract "${JSON[@]}" > shard-outcome/cli.timings
+            echo "recorded durations for $(wc -l < shard-outcome/cli.timings) tests"
+          else
+            echo "no worker timing events: no durations to record"
+          fi
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: shard-outcome-cli
+          path: shard-outcome/
+          retention-days: 1
+          if-no-files-found: ignore
 
   # THE DRIVER SIZE GATE (#6826, #7519). Links every driver named in
   # .github/selfhost-driver-sizes.txt — the list is read from the baseline, so
@@ -458,12 +484,12 @@ jobs:
           workers() { if [ "$1" -ge 2 ]; then echo 2; else echo 1; fi; }
           if [ ${#SEL_SH[@]} -gt 0 ]; then
             PAT="^($(IFS='|'; echo "${SEL_SH[*]}"))\$"
-            ( cd internal/e2eselfhost && "$WORKERS" -binary "$SH_BIN" -output "$RUNNER_TEMP/shard-selfhost" \
+            ( cd internal/e2eselfhost && "$WORKERS" -binary "$SH_BIN" -output "$RUNNER_TEMP/shard-selfhost" -format standard-verbose \
                 -weights "$WEIGHTS" -workers "$(workers ${#SEL_SH[@]})" -timeout 28m -run "$PAT" )
           fi
           if [ ${#SEL_RES[@]} -gt 0 ]; then
             PAT="^($(IFS='|'; echo "${SEL_RES[*]}"))\$"
-            ( cd internal/e2e && "$WORKERS" -binary "$E2E_BIN" -output "$RUNNER_TEMP/shard-residual" \
+            ( cd internal/e2e && "$WORKERS" -binary "$E2E_BIN" -output "$RUNNER_TEMP/shard-residual" -format standard-verbose \
                 -weights "$WEIGHTS" -workers "$(workers ${#SEL_RES[@]})" -timeout 28m -run "$PAT" )
           fi
       # The outcome marker plus the per-test durations `verify` audits the
