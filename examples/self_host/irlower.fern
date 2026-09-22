@@ -6180,11 +6180,11 @@ pub function field_access_is_fnarr(e: ast.Expr, s: LowerState): boolean {
     }
 }
 
-// decl_index_of returns the index in `structs` of the FIRST decl named `name`,
-// or -1. Struct names are unique, so first-wins is exact for them; enum VARIANT
-// decls are keyed by their bare name, so two enums declaring one variant name
-// give two decls this cannot tell apart — resolve those through
-// variant_pattern_decl_index instead.
+// decl_index_of returns the index in `structs` of the decl named `name` in the
+// struct namespace — the plain struct when one carries the name, else the first
+// variant decl — or -1. Enum VARIANT decls are keyed by their bare name, so two
+// enums declaring one variant name give two decls this cannot tell apart;
+// resolve those through variant_pattern_decl_index instead.
 pub function decl_index_of(structs: StructTab, name: string): i32 {
     return stab_struct_first(structs, name);
 }

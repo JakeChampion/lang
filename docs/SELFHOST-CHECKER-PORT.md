@@ -1784,7 +1784,7 @@ to the other only when its own has no entry.
 |---|---|---|
 | checker | `Scope.lookup_struct`, `find_struct_sig` — the plain sig first | `Scope.lookup_variant`, `find_variant_sig` — a variant first; `lookup_owned_struct` when the enum is known. `variant_payload_struct`, `bind_variant_payloads`, the match-arm check and `payloadless_binder_diags` moved here |
 | irlower | `stab_struct_first` — the 23 by-name decl readers (`decl_field_index`, `decl_field_count`, `decl_index_of`, the `struct_fields_*` proofs, …) | `variant_decl_index` + `variant_enum_owner`, which a call-form constructor and the TRMC arm constructor now resolve through; `unit_decl_index` for a bare value |
-| semsource | `record_schema` | `type_head`: a name some enum declares as a variant is a value, so `Empty.to_string()` is a method call on the payloadless literal, not an associated call on a struct with no such contract |
+| semsource | `record_schema` | `type_head`: a name an enum or a union alias declares as a variant is a value, so `Empty.to_string()` is a method call on the payloadless literal, not an associated call on a struct with no such contract |
 
 The last row is what closes `struct_shares_a_variant_name` on the semantic
 path: its first refusal was `call target has no semantic contract:

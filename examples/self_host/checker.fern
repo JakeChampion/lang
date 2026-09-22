@@ -15655,9 +15655,9 @@ pub function struct_sig(s: Scope, name: string): StructSig {
   return s.lookup_struct(name);
 }
 
-// variant_owner_of is the enum that declares a variant named `name`, or ""
-// when no enum does — the receiver-position question: a bare name both a
-// struct and a variant carry is the variant's value, as native reads it.
+// variant_owner_of is the enum or union alias that declares a variant named
+// `name`, or "" when none does — the receiver-position question: a bare name
+// both a struct and a variant carry is the variant's value, as native reads it.
 pub function variant_owner_of(s: Scope, name: string): string {
   return union_of_variant(name, s.unions);
 }
