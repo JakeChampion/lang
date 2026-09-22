@@ -4689,6 +4689,10 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// docs/ASSOCIATED-TYPES.md.
 	c.resolveProjections(prog)
 
+	// Every written `Map[K, V]` gets its key type validated now that
+	// conformance has recorded each type's derived impls.
+	c.validateMapKeyTypes(prog)
+
 	// Validate that every trait named in a function's type-parameter
 	// bounds actually exists. Catches typos / unknown traits before
 	// the deferred-dispatch path silently fails to resolve. See
@@ -5924,15 +5928,21 @@ func (c *checker) typeImplsEqAndHash(typeName string) bool {
 
 // mapKeyTypeError returns an E045 message describing why `k` cannot be
 // a Map key, or "" if it is a usable key. Usable keys are integers,
-// strings, and struct/enum types that implement both Eq and Hash
-// (#2671). A struct/enum that lacks the derives gets a message
-// pointing at the fix; other composite types (tuple / array / slice /
-// float) keep the historical "not yet supported" wording. A type
-// parameter or polymorphic literal passes — it is resolved later (per
-// monomorph instantiation) and re-checked then.
+// strings (owned or borrowed), booleans, and struct/enum types that
+// implement both Eq and Hash (#2671). A struct/enum that lacks the
+// derives gets a message pointing at the fix; other composite types
+// (tuple / array / slice / float) keep the historical "not yet
+// supported" wording. A type parameter or polymorphic literal passes —
+// it is resolved later (per monomorph instantiation) and re-checked then.
+//
+// `str` and `boolean` are here because both work: a Map keyed by either
+// inserts and reads back correctly under the interpreter AND compiled.
+// The rule refused them until this was measured, which only ever showed
+// up in the literal spelling — `Map { true: 1 }` was E045 while the
+// annotated `Map[boolean, i32]` was accepted and ran.
 func (c *checker) mapKeyTypeError(k ast.Type) string {
 	switch kt := k.(type) {
-	case ast.NumberType, ast.StringType, ast.ParamType:
+	case ast.NumberType, ast.StringType, ast.StrType, ast.BoolType, ast.ParamType:
 		return ""
 	case ast.StructType:
 		if c.typeImplsEqAndHash(kt.Name) {
@@ -8055,6 +8065,122 @@ func (c *checker) validateKnownTypes(prog *ast.Program) {
 		params := typeParamSet(impl.TypeParams)
 		c.checkTypeKnown(impl.Type, params, impl.P)
 	}
+}
+
+// validateMapKeyTypes reports E045 for every WRITTEN `Map[K, V]` whose key
+// type cannot be a map key — a parameter, return type, field, enum payload,
+// impl type or `var` annotation, at any nesting depth. The map-literal paths
+// check the key they INFER; without this, the annotated spelling of the same
+// program (`var m: Map[f64, i32] = map_new(2)`) was never asked, and reached
+// codegen (#10009).
+//
+// It runs after the conformance pass because mapKeyTypeError consults
+// typeImplsEqAndHash, which reads c.info.Impls — empty at validateKnownTypes
+// time, so a derived struct key would be rejected there.
+func (c *checker) validateMapKeyTypes(prog *ast.Program) {
+	for _, fn := range prog.Funcs {
+		mod := fn.BodyModule()
+		if fn.Receiver != nil {
+			c.checkMapKeyTypes(fn.Receiver.Type, mod, fn.P)
+		}
+		for i := range fn.Params {
+			c.checkMapKeyTypes(fn.Params[i].Type, mod, paramPos(fn.Params[i], fn.P))
+		}
+		c.checkMapKeyTypes(fn.ReturnType, mod, fn.P)
+		if fn.Body == nil {
+			continue
+		}
+		ast.Walk(fn.Body, func(n ast.Node) bool {
+			// A `var` initialised by a NON-EMPTY map literal is
+			// left to the literal's own check, which reports at
+			// the offending key rather than at the annotation. An
+			// empty `Map {}` has no key to report at, so the
+			// annotation is the only place the error can land.
+			if v, ok := n.(*ast.Var); ok {
+				if lit, isLit := v.Init.(*ast.MapLit); isLit && len(lit.Entries) > 0 {
+					return true
+				}
+			}
+			forEachDeclaredType(n, func(t *ast.Type, pos ast.Position) {
+				if *t != nil {
+					c.checkMapKeyTypes(*t, mod, pos)
+				}
+			})
+			return true
+		})
+	}
+	for _, sd := range prog.Structs {
+		for i := range sd.Fields {
+			c.checkMapKeyTypes(sd.Fields[i].Type, sd.SourceModule, paramPos(sd.Fields[i], sd.P))
+		}
+	}
+	for _, ed := range prog.Enums {
+		for i := range ed.Variants {
+			for j := range ed.Variants[i].Payloads {
+				c.checkMapKeyTypes(ed.Variants[i].Payloads[j], ed.SourceModule, ed.Variants[i].P)
+			}
+		}
+	}
+	for _, impl := range prog.Impls {
+		c.checkMapKeyTypes(impl.Type, impl.SourceModule, impl.P)
+	}
+}
+
+// checkMapKeyTypes walks a resolved type tree and reports E045 for each
+// `Map[K, V]` whose K is not a usable key. Composite types recurse, so a
+// `Map[f64, i32][]` field or a `(string, Map[f64, i32])` parameter is
+// reached too.
+func (c *checker) checkMapKeyTypes(t ast.Type, mod string, pos ast.Position) {
+	switch x := t.(type) {
+	case ast.StructType:
+		if x.Name == "Map" && len(x.Args) == 2 && !isStructurallyKeyedByValue(x.Args[0]) {
+			if msg := c.mapKeyTypeError(x.Args[0]); msg != "" {
+				c.report(mod, pos, "E045", msg)
+			}
+		}
+		for _, a := range x.Args {
+			c.checkMapKeyTypes(a, mod, pos)
+		}
+	case ast.EnumType:
+		for _, a := range x.Args {
+			c.checkMapKeyTypes(a, mod, pos)
+		}
+	case ast.ArrayType:
+		c.checkMapKeyTypes(x.Elem, mod, pos)
+	case ast.SliceType:
+		c.checkMapKeyTypes(x.Elem, mod, pos)
+	case ast.TupleType:
+		for _, e := range x.Elems {
+			c.checkMapKeyTypes(e, mod, pos)
+		}
+	case *ast.FuncType:
+		for _, p := range x.Params {
+			c.checkMapKeyTypes(p, mod, pos)
+		}
+		c.checkMapKeyTypes(x.Result, mod, pos)
+	}
+}
+
+// isStructurallyKeyedByValue names the key types the INTERPRETER compares by
+// value and no compiled backend dispatches: a tuple, an array, a slice.
+// They are carved out of the annotation rule because all three answers for
+// them differ and none is obviously the bug (#10020):
+//
+//	Map { (1, 2): 5 }            E045
+//	Map[(i32, i32), i32]         accepted; answers 5 interpreted, 0 compiled
+//	Map[i32[], i32]              accepted; answers 5 interpreted, 0 compiled
+//
+// TestInterpMapCompositeKeys gates the interpreter's answer deliberately, so
+// applying the rule here would refuse a spelling the language supports.
+// Reconciling the three is that issue's decision, not this rule's to make by
+// accident — and the fix that matters is on the compiled side, where the
+// wrong answer is silent.
+func isStructurallyKeyedByValue(k ast.Type) bool {
+	switch k.(type) {
+	case ast.TupleType, ast.ArrayType, ast.SliceType:
+		return true
+	}
+	return false
 }
 
 // checkTypeKnown walks a resolved type tree and reports E064 for each
@@ -18764,24 +18890,6 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 		// `var m: Map[string, i64] = Map { "a": 1234567890123 };`
 		// keeps its inferred `Map[string, i32]` shape and
 		// the assignable check rejects.
-		// A destination-typed map (`var m: Map[K, V] = map_new(8)`,
-		// function arg, etc.) validates its annotated key type here so
-		// a bad struct/enum key (no Eq + Hash) errors cleanly instead
-		// of dangling at codegen as a missing `__method_<K>_hash`
-		// (#2671). A MapLit destination is skipped — the MapLit's own
-		// checkExpr validates its (possibly inferred) key type, so this
-		// would double-report. Only struct/enum keys are gated; scalar
-		// / string / tuple keys keep their existing treatment.
-		if hn.Name == "Map" && len(hn.Args) == 2 {
-			if _, isLit := e.(*ast.MapLit); !isLit {
-				switch hn.Args[0].(type) {
-				case ast.StructType, ast.EnumType:
-					if msg := c.mapKeyTypeError(hn.Args[0]); msg != "" {
-						c.errfCode(e.Pos(), "E045", "%s", msg)
-					}
-				}
-			}
-		}
 		if ml, ok := e.(*ast.MapLit); ok && hn.Name == "Map" && len(hn.Args) == 2 {
 			for _, ent := range ml.Entries {
 				c.settleNumeric(ent.Key, hn.Args[0])

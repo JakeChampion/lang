@@ -73053,22 +73053,21 @@ pub function is_fn_payload_spelling(t: string): boolean {
 // lowering refuses them, at every surface that reaches a map — its
 // construction, its methods, and both shapes of loop over it.
 //
-// Two different reasons, and it is worth knowing which:
+// i64 / u64 / usize are too WIDE: the column is a 4-byte cell on wasm and
+// op_map_keys has no width to select, so admitting one would narrow the key
+// silently (#10005).
 //
-//   i64 / u64 / f64 / usize are too WIDE. The column is a 4-byte cell on wasm
-//   and op_map_keys has no width to select, so admitting one would narrow the
-//   key silently (#10005).
+// Loud is the direction to be wrong in: native and the interpreter answer
+// these programs on the register targets, so this is a gap to close rather
+// than a rule of the language.
 //
-//   f32 FITS the width and still does not reach the cell as an i32. Admitted
-//   briefly, it emitted a module wasmtime rejects — `f64.const 2.5` handed
-//   straight to a call whose key parameter is i32, because the insert path
-//   converts and the read path does not. Native has the same gap from the
-//   other side (#10008), and what float key EQUALITY should even mean is open
-//   (#10007), so this is a decision before it is a lowering.
-//
-// Loud is the direction to be wrong in for both: native and the interpreter
-// answer these programs on the register targets, so each is a gap to close
-// rather than a rule of the language.
+// FLOAT keys are listed even though E045 refuses every written float-key
+// spelling in both checkers now (#10009), because a written spelling is not
+// the only way one arrives: the self-host runs no diagnostic pass over a
+// MONOMORPHISED clone, so `build(2.5, 7)` through a `Map[T, i32]`-returning
+// generic reaches here with no diagnostic behind it (#10018). Native
+// re-checks its instantiations and reports; until the self-host does, this
+// is the only thing standing between that program and the string column.
 pub function map_key_has_no_column(kt: string): boolean {
     return kt == "i64" || kt == "u64" || kt == "f64" || kt == "usize" || kt == "f32";
 }
