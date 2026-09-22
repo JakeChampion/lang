@@ -85,6 +85,18 @@ func TestElideLenBounded_Eligible(t *testing.T) {
 			while (i < a.len()) { if (s > 0) { s = s + a[i]; } i = i + 1; }
 			return s;
 		}`},
+		// The length captured in a variable of the same block.
+		{"captured_len", `function f(a: i32[]): i32 {
+			var n: i32 = a.len();
+			var s: i32 = 0; var i: i32 = 0;
+			while (i < n) { s = s + a[i]; i = i + 1; }
+			return s;
+		}`},
+		{"captured_len_free_fn", `function f(a: i32[]): i32 {
+			var n: i32 = len(a); var s: i32 = 0; var i: i32 = 0;
+			while (i < n) { s = s + a[i]; i = i + 1; }
+			return s;
+		}`},
 	}
 	for _, c := range cases {
 		wantElided(t, c.name, c.src)
@@ -93,6 +105,42 @@ func TestElideLenBounded_Eligible(t *testing.T) {
 
 func TestElideLenBounded_Ineligible(t *testing.T) {
 	cases := []struct{ name, src string }{
+		// A captured length the array outgrows, or that moves, is no bound.
+		{"captured_len_array_grows_before", `function f(a: i32[]): i32 {
+			var n: i32 = a.len(); a = a.append(0);
+			var s: i32 = 0; var i: i32 = 0;
+			while (i < n) { s = s + a[i]; i = i + 1; }
+			return s;
+		}`},
+		{"captured_len_reassigned_before", `function f(a: i32[]): i32 {
+			var n: i32 = a.len(); n = n + 1;
+			var s: i32 = 0; var i: i32 = 0;
+			while (i < n) { s = s + a[i]; i = i + 1; }
+			return s;
+		}`},
+		{"captured_len_reassigned_in_body", `function f(a: i32[]): i32 {
+			var n: i32 = a.len();
+			var s: i32 = 0; var i: i32 = 0;
+			while (i < n) { s = s + a[i]; n = n + 1; i = i + 1; }
+			return s;
+		}`},
+		{"captured_len_not_a_length", `function f(a: i32[]): i32 {
+			var n: i32 = a.len() + 1;
+			var s: i32 = 0; var i: i32 = 0;
+			while (i < n) { s = s + a[i]; i = i + 1; }
+			return s;
+		}`},
+		{"captured_len_declared_in_nested_block", `function f(a: i32[], k: i32): i32 {
+			var s: i32 = 0; var i: i32 = 0; var n: i32 = k;
+			if (k > 0) { var n: i32 = a.len(); s = n; }
+			while (i < n) { s = s + a[i]; i = i + 1; }
+			return s;
+		}`},
+		{"bound_is_a_parameter", `function f(a: i32[], n: i32): i32 {
+			var s: i32 = 0; var i: i32 = 0;
+			while (i < n) { s = s + a[i]; i = i + 1; }
+			return s;
+		}`},
 		{"le_bound", `function f(a: i32[]): i32 {
 			var s: i32 = 0; var i: i32 = 0;
 			while (i <= a.len()) { s = s + a[i]; i = i + 1; }
