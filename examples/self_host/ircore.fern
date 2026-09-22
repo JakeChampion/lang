@@ -172,6 +172,12 @@ pub function is_fern_helper(name: string): boolean {
         // value type. wasm_helper_symbol routes both to $__fern_map_release_vf.
         || name == "__fern_map_free_vf"
         || name == "__fern_map_free_ksvf"
+        // The keyed-column members (#9962): (box, key release), and for a
+        // column of boxes beside it (box, key release, value release).
+        || name == "__fern_map_free_kf"
+        || name == "__fern_map_free_kfvs"
+        || name == "__fern_map_free_kfvsa"
+        || name == "__fern_map_free_kfvf"
         || name == "__fern_rc_is_unique"
         // element retain ahead of an un-share copy: one rc_inc per element of
         // a pointer-element array, so the copy and the original both hold a
@@ -1080,6 +1086,7 @@ pub function all_runtime_need_roots(): string[] {
         // (TestSelfHostPerModuleArm64MapDeleteLinks).
         "map_delete", "map_free_va", "map_free_vsa", "map_free_vf", "map_hash_seed", "map_vfree",
         "map_free_ka", "map_free_kavs", "map_free_kava", "map_free_kavsa",
+        "map_free_kf", "map_free_kfvs", "map_free_kfvsa", "map_free_kfvf",
         "chdir", "chroot", "setuid", "setgid", "setgroups",
         "signal_mask", "signal_disposition",
         "print_int", "proc_exec", "proc_exec_as", "proc_fork", "proc_waitpid", "proc_waitpid_nohang", "putchar", "random_bytes", "random_i32", "read_file",

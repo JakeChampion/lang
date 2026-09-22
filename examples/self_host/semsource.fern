@@ -1383,13 +1383,14 @@ function map_delete(c: ast.ExprCall, recv: Value, s: State, t: typeinfo.Type): V
 }
 
 // A column snapshot answers a FRESH array whose ownership follows the column.
-// The runtime copies a string column with a per-element retain, so the array
-// owns its strings; an i32 column holds no references, so there is nothing to
-// own past the buffer. Every other element type is handed back as a raw alias
-// of the map's own elements — the frame would release what the map still
-// holds, so it is refused here rather than described as owned.
+// The runtime copies a string column or a column of boxes with a per-element
+// retain, so the array owns its elements; an i32 column holds no references,
+// so there is nothing to own past the buffer. Every other element type is
+// handed back as a raw alias of the map's own elements — the frame would
+// release what the map still holds, so it is refused here rather than
+// described as owned.
 function map_column(s: State, recv: Value, kind: i32, elem: typeinfo.Type): Value {
-    if (!ssasem.is_string(elem) && !ssasem.is_i32(elem)) {
+    if (!ssasem.retained_column(elem)) {
         return refused(s, "aliased column element: " + typeinfo.spelling(elem));
     }
     return define(s, kind, [recv.id], 0, "", typeinfo.TypeArray { elem: elem });
