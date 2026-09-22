@@ -24,8 +24,31 @@ assert.ok(fs.existsSync(script), "scripts/ci-check-perf must exist");
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "perf-gate-"));
 let n = 0;
 
-// baseline / report are `metric<TAB>value [tolerance]` bodies; env is merged
-// over the child's environment. Returns the exit status and combined output.
+// The variables that decide this comparator's verdict. They are stripped from
+// the child's environment so a case's answer comes from its own override and
+// nowhere else.
+//
+// Not hypothetical: a developer verifying the gate by hand exports exactly
+// these. With FERN_CI_PERF_GATE_STRICT or FERN_PERF_TOLERANCE_PERCENT set the
+// suite dies outright, which is survivable because it is loud. With
+// FERN_CI_PERF_GATE_MAX_DRIFT=25 it reported "18 cases pass" while the `none`
+// case — a 20% move with no ceiling — tested nothing, because 20 does not
+// breach 25. A suite that goes green for the wrong reason is worse than one
+// that fails, and this one exists to catch that shape elsewhere.
+const GATE_VARS = [
+  "FERN_CI_PERF_GATE_STRICT",
+  "FERN_CI_PERF_GATE_MAX_DRIFT",
+  "FERN_PERF_TOLERANCE_PERCENT",
+];
+
+function gateEnv(override) {
+  const e = { ...process.env };
+  for (const k of GATE_VARS) delete e[k];
+  return { ...e, ...override };
+}
+
+// baseline / report are `metric<TAB>value [tolerance]` bodies; env is the only
+// source of the gate variables. Returns the exit status and combined output.
 function check(baseline, report, env = {}) {
   const b = path.join(dir, `b${n}.txt`);
   const r = path.join(dir, `r${n}.txt`);
@@ -34,7 +57,7 @@ function check(baseline, report, env = {}) {
   fs.writeFileSync(r, report);
   const out = spawnSync(script, [b, r], {
     encoding: "utf8",
-    env: { ...process.env, ...env },
+    env: gateEnv(env),
   });
   assert.equal(out.error, undefined, `ci-check-perf failed to run: ${out.error}`);
   return { status: out.status, text: `${out.stdout}${out.stderr}` };
@@ -186,6 +209,52 @@ let cases = 0;
   assert.match(empty.text, /nothing was measured, so nothing was compared/, "an empty report must say nothing was measured");
   assert.match(empty.text, /ran blind/, "and must warn rather than pass quietly");
   assert.doesNotMatch(empty.text, /drifted/, "the ceiling must not fire on a drift computed from nothing");
+  cases++;
+}
+
+// A VANISHED METRIC under the ceiling. The ceiling reads drift, and drift is
+// computed only over metrics present on both sides — so without this a
+// baselined row the report stopped carrying contributes nothing to it, and the
+// lane's "cannot be ignored" promise would not cover a dropped, renamed or
+// silently-failed benchmark. Raised in review as an observation; pinned here
+// because the promise is what the PR claims.
+{
+  const vanished = check("m/a\t1000\nm/b\t2000\n", "m/a\t1000\n", { FERN_CI_PERF_GATE_MAX_DRIFT: "10" });
+  assert.equal(vanished.status, 1, "a baselined metric that stopped being measured must be fatal under a ceiling");
+  assert.match(vanished.text, /were not measured/, "and must say a row vanished rather than reporting drift");
+  cases++;
+
+  // Without a ceiling it stays advisory, which is every other perf lane.
+  const advisoryMissing = check("m/a\t1000\nm/b\t2000\n", "m/a\t1000\n");
+  assert.equal(advisoryMissing.status, 0, "without a ceiling a missing metric stays a warning");
+  assert.match(advisoryMissing.text, /MISSING: m\/b/, "and is still reported");
+  cases++;
+
+  // UNBASELINED must NOT be fatal even under a ceiling: a metric with no
+  // baseline entry is how a new benchmark arrives, and failing on it would
+  // make adding one impossible.
+  const newMetric = check("m/a\t1000\n", "m/a\t1000\nm/new\t5\n", { FERN_CI_PERF_GATE_MAX_DRIFT: "10" });
+  assert.equal(newMetric.status, 0, "adding a new metric must stay possible under a ceiling");
+  cases++;
+}
+
+// THE STRIPPING ITSELF. Everything above is only as good as the child not
+// inheriting a gate variable, and that insulation looks identical to a leak
+// from the outside: both print "N cases pass". So it gets a case that fails if
+// the filter is removed — set a ceiling of 1% in the AMBIENT environment and
+// assert a 20% move is still advisory, which is only true if the child never
+// saw it.
+{
+  const saved = process.env.FERN_CI_PERF_GATE_MAX_DRIFT;
+  process.env.FERN_CI_PERF_GATE_MAX_DRIFT = "1";
+  try {
+    const leaked = check("m/a\t1000\n", "m/a\t1200\n");
+    assert.equal(leaked.status, 0, "an ambient ceiling must not reach the child: the case's override is the only source");
+    assert.doesNotMatch(leaked.text, /drifted/, "and the ceiling must not fire from an ambient value");
+  } finally {
+    if (saved === undefined) delete process.env.FERN_CI_PERF_GATE_MAX_DRIFT;
+    else process.env.FERN_CI_PERF_GATE_MAX_DRIFT = saved;
+  }
   cases++;
 }
 
