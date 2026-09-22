@@ -705,7 +705,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   (frameless helper, arg at `[sp]`, ptr back in x0). Verified under
   qemu-aarch64: `TestSelfHostRcArm64` (alias / reassign / field-alias /
   return-array / borrowed-param / exit-sweep-no-underflow /
-  branch-local-zeroinit) + the array / array-method / string / map /
+  branch-local-unbound) + the array / array-method / string / map /
   json / struct / closure / generics / tuple / bytes suites + the
   byte-identical arm64 self-bootstrap (`TestSelfHostFixpointArm64` /
   `TestSelfHostStage2FixedPointArm64`). Both production asm backends now

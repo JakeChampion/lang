@@ -22,7 +22,7 @@ import (
 // The exit code alone does not say WHICH emitter produced the binary — the AST
 // fallback happens to get these right, so a green run was consistent with the
 // module never reaching the IR path. Each case therefore also asserts the
-// emitter's per-function label marker (`.Lir_` on x86-64, `.Lira_` on arm64).
+// emitter's per-function label marker (`.Lssa_` on x86-64, `.Lssa_` on arm64).
 // `result-option` / `nested-chain` are the two that really did fall back:
 // lower_try's payload whitelist rejected the bracketed `Option[i32]` because
 // is_enum_like_name declines any type containing `[`.
@@ -57,8 +57,8 @@ func TestSelfHostTryOptionPayloadIRX86_64(t *testing.T) {
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
-			if !strings.Contains(string(asm), ".Lir_") {
-				t.Fatalf("%s: did not lower through the IR (no .Lir_ labels)", tc.name)
+			if !strings.Contains(string(asm), ".Lssa_") {
+				t.Fatalf("%s: did not lower through the IR (no .Lssa_ labels)", tc.name)
 			}
 			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
 			var cmd *exec.Cmd
@@ -93,8 +93,8 @@ func TestSelfHostTryOptionPayloadIRArm64(t *testing.T) {
 			if len(asm) == 0 {
 				t.Fatal("self-host arm64 compiler emitted 0 bytes")
 			}
-			if !strings.Contains(string(asm), ".Lira_") {
-				t.Fatalf("%s: arm64 asm has no .Lira_ marker — module bailed to the AST path", tc.name)
+			if !strings.Contains(string(asm), ".Lssa_") {
+				t.Fatalf("%s: arm64 asm has no .Lssa_ marker — module bailed to the AST path", tc.name)
 			}
 			progBin := buildBinArm64(t, arm64gcc, dir, tc.name, string(asm))
 			cmd := runArm64Bin(qemu, progBin)

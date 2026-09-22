@@ -155,8 +155,8 @@ func TestSelfHostBoundsElideIRX86_64(t *testing.T) {
 			src := tc.main + "\n"
 			want := interpExit(t, interpBin, src)
 			asm := emit(src)
-			if !strings.Contains(asm, ".Lir_") {
-				t.Fatalf("%s: did not lower through the IR (no .Lir_ labels)", tc.name)
+			if !strings.Contains(asm, ".Lssa_") {
+				t.Fatalf("%s: did not lower through the IR (no .Lssa_ labels)", tc.name)
 			}
 			bin := buildBin(t, gcc, dir, "belide_"+tc.name, asm)
 			if code := runExit(t, bin); code != want {

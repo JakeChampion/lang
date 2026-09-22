@@ -19,10 +19,9 @@
 #     did not fit. Rebalance (.github/selfhost-test-weights.txt) or raise the
 #     budget. Measured 2026-08-07: x86_64 shard2 died at 20m17s against a
 #     20-minute budget and passed in 5m33s on re-run with identical content, so
-#     the margin is real but thin, and a warm-artifact miss (any
-#     examples/self_host change invalidates them) is enough to cross it.
+#     the margin is real but thin.
 #   * cancelled well inside the budget          -> runner reclaim, the case
-#     `continue-on-error` and the tolerate dial exist for. Re-run it.
+#     the tolerate dial exists for. Re-run it.
 #   * failed BEFORE the test step ran           -> setup failed, not the code:
 #     an action tarball GitHub would not serve, a toolchain install, a cache
 #     restore. Re-run it. Measured 2026-08-17: a codeload outage returning

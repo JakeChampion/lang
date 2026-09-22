@@ -104,7 +104,7 @@ func TestSelfHostEnumArrayFieldIRX86_64(t *testing.T) {
 // so asm_arm64.emit_module's own use_ir dispatch runs) is deliberate — only it
 // injects the builtin enums (module_with_builtins) that enum-eligibility needs;
 // the differential -ir driver bails every enum program. IR routing is
-// pinned by the arm64 IR emitter's `.Lira_` label marker rather than a size
+// pinned by the arm64 IR emitter's `.Lssa_` label marker rather than a size
 // bound (arm64's IR runtime is ~48-55 KB, close to the AST runtime size).
 func TestSelfHostEnumArrayFieldIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
@@ -120,11 +120,11 @@ func TestSelfHostEnumArrayFieldIRArm64(t *testing.T) {
 			if err != nil || len(asm) == 0 {
 				t.Fatalf("%s: driver failed (%d bytes, err %v)", tc.name, len(asm), err)
 			}
-			// `.Lira_` is the arm64 IR emitter's per-function label prefix
+			// `.Lssa_` is the arm64 IR emitter's per-function label prefix
 			// (asm_arm64_ir); its presence proves the module routed through the
 			// IR path.
-			if !strings.Contains(string(asm), ".Lira_") {
-				t.Fatalf("%s: arm64 asm has no .Lira_ marker — module did not lower through the IR", tc.name)
+			if !strings.Contains(string(asm), ".Lssa_") {
+				t.Fatalf("%s: arm64 asm has no .Lssa_ marker — module did not lower through the IR", tc.name)
 			}
 			bin := buildBinArm64(t, arm64gcc, dir, "eaf_"+tc.name, string(asm))
 			run := runArm64Bin(qemu, bin)

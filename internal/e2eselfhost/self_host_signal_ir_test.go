@@ -4,7 +4,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -173,14 +172,17 @@ func TestSelfHostSignalDispositionIRArm64(t *testing.T) {
 	// The number reaches the trap as a value pushed for __syscall4 rather than
 	// the `mov x8, #N` a reader (or darwinize) would look for, so a wrong
 	// sysno row is invisible everywhere but here and in the run below. Scope
-	// it to each helper's own body: `mov x0, #134` proves nothing file-wide.
+	// it to each helper's own body: `mov x9, #134` proves nothing file-wide.
+	// The allocator picks the register the number is materialised in, so the
+	// push is matched by the register the `mov` wrote.
+	pushed := `\n    mov (x[0-9]+), #134\n(?:.*\n)*?    str \1, \[sp, #-16\]!\n`
 	for _, sym := range []string{"__fn___fern_signal_ignore", "__fn___fern_signal_default"} {
 		body := extractFuncBody(asm, sym)
 		if body == "" {
 			t.Fatalf("%s not defined — the Fern helper did not lower for arm64", sym)
 		}
-		if !strings.Contains(body, "    mov x0, #134\n    str x0, [sp, #-16]!\n") {
-			t.Errorf("%s does not push Linux's rt_sigaction number (134)", sym)
+		if !matchShape(body, pushed) {
+			t.Errorf("%s does not push Linux's rt_sigaction number (134):\n%s", sym, body)
 		}
 	}
 

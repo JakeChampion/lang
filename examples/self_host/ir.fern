@@ -1097,7 +1097,7 @@ pub function op_map_new(keykind: i32, fns: string): Op { return Op { decl: 0 - 1
 // `str` carries up to THREE symbols, pipe-joined as `eq|vrel|krel`: the
 // derived equality, the release of one VALUE of a column of boxes (vkind 3)
 // and the release of one KEY of a keyed column (keykind 2), each "" where the
-// map has none. `map_set_symbols` splits them, and a bare name with no pipe
+// map has none. `map_op_symbols` splits them, and a bare name with no pipe
 // reads as the one symbol the op's kinds call for — the value release of a
 // column of boxes, else the eq of a keyed map (#9962).
 // `width` carries per-insert flags as bits. Bits 0/1 are the wasm-only
@@ -1145,8 +1145,9 @@ pub function op_map_new(keykind: i32, fns: string): Op { return Op { decl: 0 - 1
 // i32-celled $__fern_map_set can't hold an 8-byte value directly: widekind 1
 // (i64/u64) routes to $__fern_map_set_w64 (an 8-byte cell boxed into the i32
 // column); widekind 2 (f64) is still refused via wasm_ir_deferrals_ok. #5253.
-// map_set_symbols answers an op_map_set's [eq, vrel, krel] (see op_map_set).
-pub function map_set_symbols(o: Op): string[] {
+// map_op_symbols answers an op_map_set's or op_map_delete's [eq, vrel, krel]
+// (see op_map_set); both carry the key kind in i32_imm and vkind in width.
+pub function map_op_symbols(o: Op): string[] {
     var parts: string[] = split_pipes(o.str);
     if (parts.len() >= 3) { return [parts[0], parts[1], parts[2]]; }
     var vkind3: boolean = (o.width / 16) % 2 == 1 && (o.width / 32) % 2 == 1;
@@ -1159,11 +1160,11 @@ pub function map_set_symbols(o: Op): string[] {
     return ["", "", ""];
 }
 
-// map_set_packed joins the three symbols of an op_map_set the way
-// map_set_symbols reads them back: a lone eq or a lone value release stays
-// bare, and all three fields are written otherwise, so a name is never taken
-// for another slot's.
-pub function map_set_packed(eq: string, vrel: string, krel: string): string {
+// map_op_packed joins the three symbols of an op_map_set or op_map_delete
+// the way map_op_symbols reads them back: a lone eq or a lone value release
+// stays bare, and all three fields are written otherwise, so a name is never
+// taken for another slot's.
+pub function map_op_packed(eq: string, vrel: string, krel: string): string {
     if (vrel == "" && krel == "") { return eq; }
     if (eq == "" && krel == "") { return vrel; }
     return eq + "|" + vrel + "|" + krel;
@@ -1556,8 +1557,27 @@ pub function op_map_get_or(keykind: i32, eqfn: string, widekind: i32): Op {
 }
 // `map_delete` pops [map, key] → the map with that key removed (Fern's functional
 // `m.without(k)`); reuses the same `__fern_map_delete` runtime as the AST path.
-// Key kind in i32_imm.
-pub function op_map_delete(keykind: i32, eqfn: string): Op { return Op { decl: 0 - 1, kind_tag: 130, i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: eqfn }; }
+// Key kind in i32_imm. `kfree` says the map owns one unit of every key, so the
+// removed key is released — a string key through __fern_str_free, a keyed
+// column's box through the key release `str` names — and `vkind` is
+// op_map_set's: the removed value is released through the column's release
+// (#9970). The AST path passes neither: its maps own their columns only
+// under a credit this op does not read, so it keeps the release-nothing
+// delete. `str` is packed as op_map_set's `eq|vrel|krel`, and the register
+// backends route a delete that releases anything to __fern_map_delete_rel.
+// On wasm every map owns its columns per insert, so its delete releases
+// under the box's own kis/vis whatever `kfree` says.
+pub function op_map_delete(keykind: i32, syms: string, kfree: boolean, vkind: i32): Op {
+    var w: i32 = 0;
+    if (kfree) { w = w + 2; }
+    if (vkind == 1) { w = w + 16; }
+    if (vkind == 2) { w = w + 32; }
+    if (vkind == 3) { w = w + 48; }
+    return Op { decl: 0 - 1, kind_tag: 130, i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: w, unsigned: false, str: syms };
+}
+// map_delete_releases reports whether an op_map_delete releases anything it
+// removes — the register backends' switch to __fern_map_delete_rel.
+pub function map_delete_releases(o: Op): boolean { return o.width != 0; }
 // `map_keys` / `map_values` pop [map] → the array of live keys / values.
 // `i32_imm` is the ELEMENT-kind flag (#4353 counted-reads slice 1+2):
 //   0 = scalar (i32) column → the register backends (x86-64 / arm64) SNAPSHOT

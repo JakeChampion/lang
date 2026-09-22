@@ -159,7 +159,7 @@ func TestSelfHostRcAliasIncX86_64(t *testing.T) {
 	t.Run("emits-retain-at-alias", func(t *testing.T) {
 		asm := runCapture(t, gcc, runner, driverBin,
 			[]byte("function main(): i32 { var xs: i32[] = [1, 2]; var ys = xs; return ys[0] + xs[1]; }"))
-		if !strings.Contains(string(asm), "call __fn___fern_rc_inc") {
+		if rcIncSites(string(asm)) == 0 {
 			t.Errorf("expected a retain (__fern_rc_inc) at the live-source array alias; not found in emitted asm")
 		}
 	})
@@ -171,7 +171,7 @@ func TestSelfHostRcAliasIncX86_64(t *testing.T) {
 	t.Run("elides-retain-at-move-alias", func(t *testing.T) {
 		asm := runCapture(t, gcc, runner, driverBin,
 			[]byte("function main(): i32 { var xs: i32[] = [1, 2]; var ys = xs; return ys[0]; }"))
-		if strings.Contains(string(asm), "call __fn___fern_rc_inc") {
+		if rcIncSites(string(asm)) > 0 {
 			t.Errorf("expected NO retain at the move-alias (the source's last mention transfers); found __fern_rc_inc in emitted asm")
 		}
 	})
@@ -180,7 +180,7 @@ func TestSelfHostRcAliasIncX86_64(t *testing.T) {
 	t.Run("emits-retain-at-field-alias", func(t *testing.T) {
 		asm := runCapture(t, gcc, runner, driverBin,
 			[]byte("struct H { items: i32[] } function main(): i32 { var h: H = H { items: [1, 2] }; var y = h.items; return y[0]; }"))
-		if !strings.Contains(string(asm), "call __fn___fern_rc_inc") {
+		if rcIncSites(string(asm)) == 0 {
 			t.Errorf("expected a retain (__fern_rc_inc) at the struct-field array alias; not found in emitted asm")
 		}
 	})
@@ -242,7 +242,7 @@ func TestSelfHostRcReassignX86_64(t *testing.T) {
 	t.Run("emits-retain-and-release", func(t *testing.T) {
 		asm := string(runCapture(t, gcc, runner, driverBin,
 			[]byte("function main(): i32 { var xs: i32[] = [1, 2]; var ys: i32[] = [3, 4]; ys = xs; return ys[0]; }")))
-		if !strings.Contains(asm, "call __fn___fern_rc_inc") {
+		if rcIncSites(asm) == 0 {
 			t.Errorf("expected a retain (__fern_rc_inc) for the reassigned alias")
 		}
 		if !strings.Contains(asm, "call __fn___fern_arr_dec") {
@@ -254,11 +254,11 @@ func TestSelfHostRcReassignX86_64(t *testing.T) {
 // Phase 1d (cont.): the function-exit dec sweep releases every array
 // LOCAL at each return / fall-through (borrowed params are skipped); an
 // array returned to the caller is retained so it survives the sweep,
-// and body-local slots are zero-inited so a skipped `var` is a no-op.
-// With free off this is observably a no-op on values; we check
+// and a `var` on a path not taken is never released, since it was never
+// bound. With free off this is observably a no-op on values; we check
 // value-correctness across calls (incl. returning an array and passing
 // a borrowed array), a clean over-release detector, and the emission of
-// the zero-init + the release sweep. Mirrors
+// the release sweep. Mirrors
 // docs/RC-PERCEUS-SELF-HOST-PORT.md Phase 1d.
 func TestSelfHostRcExitSweepX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -287,10 +287,10 @@ func TestSelfHostRcExitSweepX86_64(t *testing.T) {
 		// call balances inc (alias) against the exit sweep, so the
 		// over-release detector stays 0.
 		{"exit-sweep-no-underflow", "function f(): i32 { var xs: i32[] = [1, 2]; var ys = xs; return ys[0]; } function main(): i32 { var a = f(); var b = f(); var c = f(); return __rc_underflow(); }", 0},
-		// An array local declared inside a not-taken branch: the
-		// zero-inited slot makes the exit sweep a no-op (no spurious
+		// An array local declared inside a not-taken branch is never
+		// bound, so the exit sweep has nothing to release (no spurious
 		// release), detector clean.
-		{"branch-local-zeroinit", "function main(): i32 { var xs: i32[] = [5, 6]; if (xs[0] > 100) { var ys: i32[] = [1, 2]; return ys[0]; } return xs[1] + __rc_underflow(); }", 6},
+		{"branch-local-unbound", "function main(): i32 { var xs: i32[] = [5, 6]; if (xs[0] > 100) { var ys: i32[] = [1, 2]; return ys[0]; } return xs[1] + __rc_underflow(); }", 6},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -312,14 +312,11 @@ func TestSelfHostRcExitSweepX86_64(t *testing.T) {
 		})
 	}
 
-	// Emission: a function with an array local zero-inits its body slots
-	// (rep stosq) and releases the local at exit (__fern_rc_dec sweep).
-	t.Run("emits-zeroinit-and-sweep", func(t *testing.T) {
+	// Emission: a function with an array local releases it at exit (the
+	// __fern_arr_dec sweep).
+	t.Run("emits-exit-sweep", func(t *testing.T) {
 		asm := string(runCapture(t, gcc, runner, driverBin,
 			[]byte("function main(): i32 { var xs: i32[] = [1, 2]; return xs[0]; }")))
-		if !strings.Contains(asm, "rep stosq") {
-			t.Errorf("expected body-local zero-init (rep stosq) in a function with locals")
-		}
 		if !strings.Contains(asm, "call __fn___fern_arr_dec") {
 			t.Errorf("expected the exit-dec sweep (__fern_arr_dec) for the array local")
 		}
@@ -392,22 +389,22 @@ func TestSelfHostRcMoveOnReturnX86_64(t *testing.T) {
 	t.Run("emits-no-inc-on-move", func(t *testing.T) {
 		asm := string(runCapture(t, gcc, runner, driverBin,
 			[]byte("function make(): i32[] { var xs: i32[] = [1, 2, 3]; return xs; } function main(): i32 { var ys = make(); return ys[0]; }")))
-		if strings.Contains(asm, "call __fn___fern_rc_inc") {
+		if rcIncSites(asm) > 0 {
 			t.Errorf("move-on-return should elide the retain inc, but found call __fn___fern_rc_inc")
 		}
 	})
 	t.Run("emits-inc-when-not-moved", func(t *testing.T) {
 		asm := string(runCapture(t, gcc, runner, driverBin,
 			[]byte("struct H { items: i32[] } function get(h: H): i32[] { return h.items; } function main(): i32 { var hh: H = H { items: [4, 5, 6] }; var ys = get(hh); return ys[0]; }")))
-		if !strings.Contains(asm, "call __fn___fern_rc_inc") {
+		if rcIncSites(asm) == 0 {
 			t.Errorf("returning a non-local array expression should still emit the retain inc")
 		}
 	})
 }
 
 // Phase 1d arm64 parity: the array inc/dec wiring (alias retain,
-// reassign-inc + dec-on-overwrite, function-exit release sweep with
-// zero-init + array-return retain) mirrored into asm_arm64.fern. Run
+// reassign-inc + dec-on-overwrite, function-exit release sweep +
+// array-return retain) on the arm64 emitter. Run
 // under qemu-aarch64. Value-correctness (free off → RC is a no-op on
 // values) + a clean over-release detector across the lifecycle.
 func TestSelfHostRcArm64(t *testing.T) {
@@ -428,7 +425,7 @@ func TestSelfHostRcArm64(t *testing.T) {
 		{"return-array", "function make(): i32[] { var xs: i32[] = [1, 2, 3]; return xs; } function main(): i32 { var ys = make(); return ys[0] + ys[2]; }", 4},
 		{"borrowed-param", "function sum2(a: i32[]): i32 { return a[0] + a[1]; } function main(): i32 { var xs: i32[] = [7, 8]; var r = sum2(xs); return r + xs[0] + __rc_underflow(); }", 22},
 		{"exit-sweep-no-underflow", "function f(): i32 { var xs: i32[] = [1, 2]; var ys = xs; return ys[0]; } function main(): i32 { var a = f(); var b = f(); var c = f(); return __rc_underflow(); }", 0},
-		{"branch-local-zeroinit", "function main(): i32 { var xs: i32[] = [5, 6]; if (xs[0] > 100) { var ys: i32[] = [1, 2]; return ys[0]; } return xs[1] + __rc_underflow(); }", 6},
+		{"branch-local-unbound", "function main(): i32 { var xs: i32[] = [5, 6]; if (xs[0] > 100) { var ys: i32[] = [1, 2]; return ys[0]; } return xs[1] + __rc_underflow(); }", 6},
 		// Cow-aware dec (Phase 3 prep): a self-append loop stays clean.
 		{"self-append-no-underflow", "function main(): i32 { var xs: i32[] = []; var i = 0; while (i < 20) { xs = xs.append(i); i = i + 1; } return __rc_underflow(); }", 0},
 		{"self-append-values", "function main(): i32 { var xs: i32[] = []; var i = 0; while (i < 20) { xs = xs.append(i * 2); i = i + 1; } return xs[19]; }", 38},
@@ -577,7 +574,7 @@ func TestSelfHostRcConstructX86_64(t *testing.T) {
 	t.Run("emits-retain-at-field-init", func(t *testing.T) {
 		asm := string(runCapture(t, gcc, runner, driverBin,
 			[]byte("struct H { items: i32[] } function main(): i32 { var xs: i32[] = [1, 2]; var h: H = H { items: xs }; return h.items[0] + xs[1]; }")))
-		if !strings.Contains(asm, "call __fn___fern_rc_inc") {
+		if rcIncSites(asm) == 0 {
 			t.Errorf("expected a retain (__fern_rc_inc) at the struct field init of an aliased local")
 		}
 	})
@@ -588,7 +585,7 @@ func TestSelfHostRcConstructX86_64(t *testing.T) {
 	t.Run("no-retain-when-the-field-init-moves", func(t *testing.T) {
 		asm := string(runCapture(t, gcc, runner, driverBin,
 			[]byte("struct H { items: i32[] } function main(): i32 { var xs: i32[] = [1, 2]; var h: H = H { items: xs }; return h.items[0]; }")))
-		if strings.Contains(asm, "call __fn___fern_rc_inc") {
+		if rcIncSites(asm) > 0 {
 			t.Errorf("a moved local needs no retain at the field init — the box takes over its reference (#6726)")
 		}
 	})
@@ -834,7 +831,7 @@ func TestSelfHostRcStructArrayFieldDropX86_64(t *testing.T) {
 		if !strings.Contains(asm, "call __fn___fern_arr_dec") {
 			t.Errorf("expected a struct-array field buffer drop (__fern_arr_dec) at struct reclamation; not found")
 		}
-		if !strings.Contains(asm, "call __fn___fern_rc_is_unique") {
+		if rcIsUniqueSites(asm) == 0 {
 			t.Errorf("expected the element-walk sole-owner gate (__fern_rc_is_unique) at the struct-array field drop; not found")
 		}
 	})

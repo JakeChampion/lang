@@ -31,7 +31,7 @@ func TestWorkerSignalEnvironment(t *testing.T) {
 		t.Setenv("FERN_WORKER_SIGNAL_"+sig.String(), strconv.FormatBool(signal.Ignored(sig)))
 	}
 	var console bytes.Buffer
-	c := config{binary: binary, output: filepath.Join(t.TempDir(), "results"), pattern: "^TestWorkerSignalFixture$", workers: 1, cpus: 1, timeout: time.Minute}
+	c := config{binary: binary, format: "standard-verbose", output: filepath.Join(t.TempDir(), "results"), pattern: "^TestWorkerSignalFixture$", workers: 1, cpus: 1, timeout: time.Minute}
 	if err := run(context.Background(), c, &console); err != nil {
 		t.Fatalf("worker changed signal environment: %v\n%s", err, &console)
 	}
@@ -70,7 +70,7 @@ func TestWorkerStreamExitStatus(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			var console bytes.Buffer
-			err := runTestStream(ctx, config{binary: binary, timeout: time.Second}, []string{"TestStreamFixture"}, 1, 0, path, &console)
+			err := runTestStream(ctx, config{binary: binary, format: "standard-verbose", timeout: time.Second}, []string{"TestStreamFixture"}, 1, 0, path, &console)
 			if (err != nil) != (code != 0) {
 				t.Fatalf("exit %d: run error = %v\n%s", code, err, &console)
 			}
@@ -98,7 +98,7 @@ func TestWorkerStreamCancellation(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		done <- runTestStream(ctx, config{binary: binary, timeout: time.Minute}, []string{"TestStreamFixture"}, 1, 0, filepath.Join(dir, "events.jsonl"), &bytes.Buffer{})
+		done <- runTestStream(ctx, config{binary: binary, format: "standard-verbose", timeout: time.Minute}, []string{"TestStreamFixture"}, 1, 0, filepath.Join(dir, "events.jsonl"), &bytes.Buffer{})
 	}()
 	tick := time.NewTicker(10 * time.Millisecond)
 	defer tick.Stop()

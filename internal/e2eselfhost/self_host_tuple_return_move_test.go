@@ -99,9 +99,9 @@ func TestSelfHostTupleReturnArrayElemMove(t *testing.T) {
 	}
 	// The guard is only meaningful on the IR path — assert the tuple-returning
 	// functions actually lowered there (an AST bail would pass vacuously).
-	for _, fn := range []string{".Lir_parse_sts", ".Lir_parse_block"} {
+	for _, fn := range []string{".Lssa_parse_sts", ".Lssa_parse_block"} {
 		if !strings.Contains(string(asm), fn) {
-			t.Fatalf("%s not on the IR path (no %s label) — the move-on-return guard is not being exercised", strings.TrimPrefix(fn, ".Lir_"), fn)
+			t.Fatalf("%s not on the IR path (no %s label) — the move-on-return guard is not being exercised", strings.TrimPrefix(fn, ".Lssa_"), fn)
 		}
 	}
 	progBin := buildBin(t, gcc, dir, "tuple_move_prog", string(asm))

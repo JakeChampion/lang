@@ -22,7 +22,7 @@ import (
 // the value is correct no matter which assembler consumes the .s.
 //
 // Each case is oracle-checked against the interpreter and routing-pinned to the
-// IR path (.Lir_ labels present).
+// IR path (.Lssa_ labels present).
 func TestSelfHostF64ExactBitsIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
@@ -38,8 +38,8 @@ func TestSelfHostF64ExactBitsIR(t *testing.T) {
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
-			if !strings.Contains(string(asm), ".Lir_") {
-				t.Fatalf("%s did not lower through the IR (no .Lir_ labels)", tc.name)
+			if !strings.Contains(string(asm), ".Lssa_") {
+				t.Fatalf("%s did not lower through the IR (no .Lssa_ labels)", tc.name)
 			}
 			if strings.Contains(string(asm), ".double ") {
 				t.Errorf("%s still emits a `.double` directive — should emit exact `.long` bits", tc.name)

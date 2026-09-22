@@ -119,12 +119,6 @@ pub struct EmitState {
     // flushed as one data block per entry alongside the string pool. See
     // add_const_agg.
     const_aggs: string[],
-    // ssa_backend selects the register-allocating SSA emit for each function
-    // whose lowered ops the lift admits (docs/SELFHOST-SSA-BACKEND.md); the
-    // rest take the stack-machine emit. The two counters are the module tally.
-    ssa_backend: boolean,
-    ssa_emitted: i32,
-    ssa_declined: i32,
     // ssa_frame is the byte size of the SSA function being emitted, 0 outside
     // one; the arm64 emitter addresses that function's frame slots from sp.
     // ssa_save is the part of it holding the callee-saved registers the
@@ -181,9 +175,6 @@ pub function new_state(): EmitState {
         str_ns: "",
         shape_lits: [],
         const_aggs: [],
-        ssa_backend: false,
-        ssa_emitted: 0,
-        ssa_declined: 0,
         ssa_frame: 0,
         ssa_save: 0,
         ssa_x0: 0 - 1
@@ -320,8 +311,25 @@ pub function rt_src_map_find(): string {
 // a map iterates in insertion order, so a shift-down here and a swap-with-last
 // there made the same program print its keys differently on the two compilers
 // (#8839).
+//
+// The tuple carries the removed key and value at words 2 and 3 (zero when the
+// key was absent), where only __fern_map_delete_rel reads them: the entry is
+// overwritten by the swap, so this is the one place it is still in hand.
 pub function rt_src_map_delete(): string {
-    return "function __fern_map_delete(mapbox: i32, key: i32, keykind: i32, eqfn: i32): i32 { var keys: i32 = __raw_load_ptr(mapbox, 0); var found: i32 = __fern_map_find(keys, key, keykind, eqfn); var existed: i32 = 0; if (found >= 0) { var ks: i32 = __raw_load_ptr(mapbox, 0); var m: i32 = __raw_load_ptr(ks, 0); __raw_store_ptr(ks, found + 1, __raw_load_ptr(ks, m)); __raw_store_ptr(ks, 0, m - 1); var vs: i32 = __raw_load_ptr(mapbox, 1); __raw_store_ptr(vs, found + 1, __raw_load_ptr(vs, m)); __raw_store_ptr(vs, 0, m - 1); existed = 1; } var r: i32 = __raw_arr_box(2); __raw_store_ptr(r, 0, mapbox); __raw_store_ptr(r, 1, existed); return r; }";
+    return "function __fern_map_delete(mapbox: i32, key: i32, keykind: i32, eqfn: i32): i32 { var keys: i32 = __raw_load_ptr(mapbox, 0); var found: i32 = __fern_map_find(keys, key, keykind, eqfn); var existed: i32 = 0; var gone_k: i32 = 0; var gone_v: i32 = 0; if (found >= 0) { var ks: i32 = __raw_load_ptr(mapbox, 0); var m: i32 = __raw_load_ptr(ks, 0); gone_k = __raw_load_ptr(ks, found + 1); __raw_store_ptr(ks, found + 1, __raw_load_ptr(ks, m)); __raw_store_ptr(ks, 0, m - 1); var vs: i32 = __raw_load_ptr(mapbox, 1); gone_v = __raw_load_ptr(vs, found + 1); __raw_store_ptr(vs, found + 1, __raw_load_ptr(vs, m)); __raw_store_ptr(vs, 0, m - 1); existed = 1; } var r: i32 = __raw_arr_box(4); __raw_store_ptr(r, 0, mapbox); __raw_store_ptr(r, 1, existed); __raw_store_ptr(r, 2, gone_k); __raw_store_ptr(r, 3, gone_v); return r; }";
+}
+
+// rt_src_map_delete_rel (#9970): __fern_map_delete, then the release of what
+// it removed, for a map that owns one unit of every entry — the typed path's.
+// `kfree` says the key column is owned: a string key (keykind 0) takes
+// __fern_str_free and a keyed column's box (keykind 2) the release `krel`
+// addresses, or the shallow dec when the op site passed none. `vkind` is
+// op_map_set's: 1 a string, 2 a string array, 3 a box released through
+// `vrel`. `krel` and `vrel` are bare code addresses, declared i32 for the
+// reason `eqfn` is. The tuple comes back with words 2 and 3 still set; the
+// caller reads the map and the flag alone.
+pub function rt_src_map_delete_rel(): string {
+    return "function __fern_map_delete_rel(mapbox: i32, key: i32, keykind: i32, eqfn: i32, kfree: i32, vkind: i32, krel: i32, vrel: i32): i32 { var r: i32 = __fern_map_delete(mapbox, key, keykind, eqfn); if (__raw_load_ptr(r, 1) == 1) { var k: i32 = __raw_load_ptr(r, 2); var v: i32 = __raw_load_ptr(r, 3); if (kfree == 1) { if (keykind == 0) { __fern_str_free(k); } else if (keykind == 2) { if (krel != 0) { krel(k); } else { __fern_arr_dec(k); } } } if (vkind == 1) { __fern_str_free(v); } else if (vkind == 2) { __fern_str_arr_free(v); } else if (vkind == 3) { vrel(v); } } return r; }";
 }
 
 pub function (s: EmitState) mark_str_eq(): EmitState {
@@ -5385,6 +5393,12 @@ pub function runtime_need_deps(name: string): string[] {
         var dmd: string[] = ["maps"];
         return dmd;
     }
+    if (name == "map_delete_rel") {
+        // The releasing delete (#9970) calls __fern_map_delete, and the
+        // string, string-array and shallow frees, which ride the heap bundle.
+        var dmr: string[] = ["map_delete", "heap"];
+        return dmr;
+    }
     if (name == "maps") {
         // The bundle's shared __fern_map_find calls __fern_str_eq (string-key
         // path) and __fern_map_set calls __fern_arr_push.
@@ -6659,8 +6673,7 @@ pub function check_undefined_calls(mod: parser.Module): util.Diag[] {
 // ---------------------------------------------------------------------------
 // Shared GAS text emission — what the x86-64 and arm64 IR backends emit
 // IDENTICALLY: the literal / constant / shape label names, the `.data` blocks
-// behind them, the runtime `.globl` export list, and the byte scanners both
-// peepholes run over their own output. None of it is instruction selection, and
+// behind them, and the runtime `.globl` export list. None of it is instruction selection, and
 // keeping it in one backend is what let the pre-#3457 emitter twins drift.
 // wasm does not use any of it (its own linear-memory layout replaces the lot).
 // ---------------------------------------------------------------------------
@@ -6742,9 +6755,8 @@ pub function emit_const_agg_data_from(s: EmitState, first: i32): EmitState {
 pub struct ShapeRefOut { state: EmitState, label: string }
 
 // DynArg is where a `dyn Trait` call's argument is read from: a register
-// when `reg` is set, else the frame slot at `off` from the frame pointer.
-// The stack machine names its locals this way and the register path its
-// value homes, so one dispatch chain serves both.
+// when `reg` is set, else the frame slot at `off` from the frame pointer —
+// a value's home under the register path.
 pub struct DynArg { reg: string, off: i32 }
 
 // shape_ref resolves the label for an enum/struct SHAPE pointer (struct_make /
@@ -6960,33 +6972,6 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
 // locals + re-passed — the RC-miscount blocker fixed in step 1). The bundle is a
 // SINGLE param rather than 23 individual params so flat's arm64 stack frame stays
 // within `stur`'s ±256 offset range (23 params overflowed it).
-// pp_at reports whether the bytes at `lo` (bounded by `hi`) are `lit`.
-//
-// Byte-at-a-time rather than `asm[lo:lo+k] == lit`: a slice comparison
-// allocates, and this runs twice per emitted line. Going through slices here
-// cost a minute of system time on the compiler's own source, all of it arena
-// growth for temporaries the comparison drops immediately.
-pub function pp_at(asm: string, lo: i32, hi: i32, lit: string): boolean {
-    var m: i32 = lit.len();
-    if (lo + m > hi) { return false; }
-    var k: i32 = 0;
-    while (k < m) {
-        if (asm[lo + k] != lit[k]) { return false; }
-        k = k + 1;
-    }
-    return true;
-}
-
-// pp_eq_bytes reports whether asm[a:a_end] and asm[b:b_end] hold the same bytes.
-pub function pp_eq_bytes(asm: string, a: i32, a_end: i32, b: i32, b_end: i32): boolean {
-    if (a_end - a != b_end - b) { return false; }
-    var k: i32 = 0;
-    while (a + k < a_end) {
-        if (asm[a + k] != asm[b + k]) { return false; }
-        k = k + 1;
-    }
-    return true;
-}
 
 // ---- RC emission directives (#7736) -----------------------------------------
 //

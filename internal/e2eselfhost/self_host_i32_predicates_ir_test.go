@@ -26,7 +26,7 @@ import (
 //
 // Two-part assertion on purpose: the exit code alone would still pass if the
 // program took some other route, so each case also asserts the emitted asm
-// carries the IR path's function-scoped `.Lir_main_` labels, which the AST
+// carries the IR path's function-scoped `.Lssa_main_` labels, which the AST
 // emitter (global `.L0`/`.L1` numbering) never produces.
 //
 // The negative cases are the ones that catch it: parity lowers as `n & 1`, not
@@ -211,8 +211,8 @@ func TestSelfHostI32PredicatesIRX86_64(t *testing.T) {
 			if err != nil {
 				t.Fatalf("driver run: %v\n--- source ---\n%s", err, tc.source)
 			}
-			if !strings.Contains(string(emittedAsm), ".Lir_main_") {
-				t.Fatalf("predicate did not route through the IR path (no `.Lir_main_` label — the AST "+
+			if !strings.Contains(string(emittedAsm), ".Lssa_main_") {
+				t.Fatalf("predicate did not route through the IR path (no `.Lssa_main_` label — the AST "+
 					"emitter numbers labels globally as .L0/.L1)\n--- source ---\n%s", tc.source)
 			}
 			caseDir := t.TempDir()

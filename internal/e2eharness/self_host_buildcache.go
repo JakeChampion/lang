@@ -185,8 +185,8 @@ func selfHostImportClosures(dir string, fernNames ...string) ([]string, error) {
 // source the driver actually compiles changes — and is INVARIANT to unrelated
 // `.fern` files in the same dir. That invariance is what lets two tests building
 // the same stock driver (e.g. asm_run) share one cache entry even when their
-// project dirs differ in which OTHER drivers they also wrote, and lets the CI
-// `build` job warm a driver under a key the test shards reproduce exactly.
+// project dirs differ in which OTHER drivers they also wrote, and lets the two
+// worker processes of a CI shard share one driver through the disk cache.
 func HashSelfHostSources(t testing.TB, dir, fernName string) string {
 	t.Helper()
 	files := SelfHostImportClosure(t, dir, fernName)
@@ -327,8 +327,9 @@ func CachedDriverBin(t testing.TB, gcc, dir, fernName string) string {
 			return "", fmt.Errorf("link cache dir: %w", err)
 		}
 		binPath := filepath.Join(base, "drv-"+key)
-		// Cross-process disk hit: a driver binary a warm job pre-linked. Scan
-		// every configured dir; copy it in and skip both the emit and the link.
+		// Cross-process disk hit: a driver binary another process on this host
+		// linked. Scan every configured dir; copy it in and skip both the emit
+		// and the link.
 		for _, d := range diskCacheReadDirs() {
 			if in, oerr := os.ReadFile(filepath.Join(d, key+".driverbin")); oerr == nil {
 				if werr := os.WriteFile(binPath, in, 0o755); werr == nil {
@@ -379,8 +380,8 @@ func CachedDriverBin(t testing.TB, gcc, dir, fernName string) string {
 		}); err != nil {
 			return "", err
 		}
-		// Publish the linked binary to the disk cache (atomic), so a warm job
-		// seeds it for the test shards.
+		// Publish the linked binary to the disk cache (atomic), so the other
+		// worker process of the shard finds it.
 		if d := diskCacheWriteDir(); d != "" {
 			dst := filepath.Join(d, key+".driverbin")
 			_ = os.MkdirAll(filepath.Dir(dst), 0o755)
@@ -523,8 +524,8 @@ func CachedLink(t testing.TB, gcc, asm string) string {
 	sum := sha256.Sum256([]byte(gcc + "\x00" + asm))
 	key := hex.EncodeToString(sum[:])
 	// The cross-PROCESS disk .bin is keyed by the asm CONTENT alone (not gcc),
-	// so a binary a `warm` job linked is reused by a test shard even though the
-	// two runners may resolve different gcc paths (x86_64-linux-gnu-gcc vs gcc)
+	// so a binary another process linked is reused even though two processes
+	// may resolve different gcc paths (x86_64-linux-gnu-gcc vs gcc)
 	// and thus different in-process keys. The asm is byte-identical when the .s
 	// cache hits, and the output is a static -nostdlib -no-pie ELF — independent
 	// of which gcc produced it — so this is sound. Without it the .bin silently
@@ -538,7 +539,7 @@ func CachedLink(t testing.TB, gcc, asm string) string {
 			return "", fmt.Errorf("link cache dir: %w", err)
 		}
 		binPath := filepath.Join(base, key)
-		// Cross-process disk hit: a pre-linked binary from a warm job — copy it
+		// Cross-process disk hit: a binary another process linked — copy it
 		// into this process's link dir and skip gcc. Scan every configured dir.
 		for _, d := range diskCacheReadDirs() {
 			diskBin := filepath.Join(d, diskKey+".bin")

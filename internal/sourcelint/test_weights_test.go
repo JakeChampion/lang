@@ -399,20 +399,22 @@ func TestSelfHostWeightGateBudgetMatchesShardTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read workflow: %v", err)
 	}
-	timeoutRe := regexp.MustCompile(`-test\.timeout (\d+)m \)?\s*$`)
+	// The shards hand their selection to ci-test-workers, whose -timeout is
+	// each worker's -test.timeout.
+	timeoutRe := regexp.MustCompile(`-timeout (\d+)m -run "\$PAT"`)
 	var mins []int
 	for _, line := range strings.Split(string(wf), "\n") {
-		if !strings.Contains(line, "-test.run \"$PAT\"") {
+		if !strings.Contains(line, `-run "$PAT"`) {
 			continue
 		}
 		m := timeoutRe.FindStringSubmatch(line)
 		if m == nil {
-			t.Fatalf("shard run line has no -test.timeout: %q", line)
+			t.Fatalf("shard run line has no -timeout: %q", line)
 		}
 		mins = append(mins, mustAtoi(t, m[1]))
 	}
 	if len(mins) == 0 {
-		t.Fatal("found no shard `-test.run \"$PAT\"` invocations — did the run step change?")
+		t.Fatal("found no shard `-run \"$PAT\"` invocations — did the run step change?")
 	}
 	for _, m := range mins {
 		if m*60 != budget {

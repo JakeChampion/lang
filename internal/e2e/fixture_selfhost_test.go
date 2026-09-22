@@ -2,7 +2,6 @@ package e2e
 
 import (
 	"bytes"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -226,7 +225,6 @@ func TestFernFixturesSelfHostX86_64(t *testing.T) {
 		check: func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc) {
 			binPath := filepath.Join(t.TempDir(), "prog")
 			cmd := exec.Command(fernBin, "-target", "x86-64-linux", f.mainPath, stdlibRoot, "-o", binPath)
-			cmd.Env = append(os.Environ(), "FERN_SSA_REPORT=1")
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				// Includes the in-process assembler's own refusal ("could not
@@ -234,7 +232,6 @@ func TestFernFixturesSelfHostX86_64(t *testing.T) {
 				failf("self-host compile failed: %v\n%s%s", err, out, strictIRBailSite(fernBin, "x86-64-linux", nil, f.mainPath, stdlibRoot, out))
 				return
 			}
-			assertSSAFullCoverage(t, "x86-64-linux", f.name, string(out))
 			// write_file does not set the exec bit (the Makefile chmods
 			// bin/fern-selfhost for the same reason).
 			if err := os.Chmod(binPath, 0o755); err != nil {
@@ -274,7 +271,6 @@ func TestFernFixturesSelfHostArm64(t *testing.T) {
 		check: func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc) {
 			binPath := filepath.Join(t.TempDir(), "prog")
 			cmd := exec.Command(fernBin, "-target", "arm64-linux", f.mainPath, stdlibRoot, "-o", binPath)
-			cmd.Env = append(os.Environ(), "FERN_SSA_REPORT=1")
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				// Includes the in-process assembler's own refusal ("hit an
@@ -284,7 +280,6 @@ func TestFernFixturesSelfHostArm64(t *testing.T) {
 				failf("self-host compile failed: %v\n%s%s", err, out, strictIRBailSite(fernBin, "arm64-linux", nil, f.mainPath, stdlibRoot, out))
 				return
 			}
-			assertSSAFullCoverage(t, "arm64-linux", f.name, string(out))
 			// write_file does not set the exec bit (the Makefile chmods
 			// bin/fern-selfhost for the same reason).
 			if err := os.Chmod(binPath, 0o755); err != nil {
@@ -293,76 +288,6 @@ func TestFernFixturesSelfHostArm64(t *testing.T) {
 			checkSelfHostNativeRun(t, f, runSelfHostBin(runArm64Bin(qemu, binPath), f.stdin), failf)
 		},
 	})
-}
-
-// assertSSAFullCoverage holds the self-host register path's coverage at
-// EVERY function of every corpus program, on both native ISAs.
-//
-// The register path is the default on arm64 and x86-64, and a function it
-// declines falls back to the stack machine silently — which is the right
-// runtime behaviour and the wrong thing to be unable to see. Coverage reached
-// every op the compiler emits in 2026-09, and the sweep that proved it was a
-// script run by hand; nothing held the number there. This is the lane
-// docs/SELFHOST-SSA-BACKEND.md's retirement order waits on, because the stack
-// machine's per-function driver cannot go while a decline can appear unnoticed.
-//
-// It rides the compile the leg already does rather than sweeping the corpus a
-// second time: `FERN_SSA_REPORT=1` costs one line of stderr per module, plus a
-// line per declined function and one per function slower than 200 ms, so the
-// report is free where a second pass over 860 programs is not.
-//
-// A hard t.Errorf, never the leg's failFunc: a decline is a coverage
-// regression, not an output divergence, so a fixture listed in a
-// known-divergences file must not be able to carry one quietly.
-func assertSSAFullCoverage(t *testing.T, target, name, report string) {
-	t.Helper()
-	for _, problem := range ssaCoverageProblems(target, name, report) {
-		t.Error(problem)
-	}
-}
-
-// ssaCoverageProblems is the check itself, returning one message per problem so
-// both of its answers are testable without a fake *testing.T
-// (fixture_selfhost_ssa_coverage_test.go). A gate whose failure path has never
-// run is a gate that passes for the wrong reason.
-func ssaCoverageProblems(target, name, report string) []string {
-	var problems []string
-	var tallies, declines []string
-	for _, line := range strings.Split(report, "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "FERN_SSA: ") {
-			continue
-		}
-		switch {
-		case strings.HasPrefix(line, "FERN_SSA: module: "):
-			tallies = append(tallies, line)
-		case strings.HasPrefix(line, "FERN_SSA: time "):
-			// A slow function, not a declined one.
-		default:
-			// `FERN_SSA: <fn>: <why>` — the per-function decline, which names
-			// what to fix. Collected for the message even though the tally
-			// below is what decides.
-			declines = append(declines, line)
-		}
-	}
-	// No tally means the report never ran — the env did not reach the compile,
-	// or the target stopped defaulting to the register path. Either way the
-	// assertion below would pass over an empty string, so this is the
-	// vacuity guard rather than a nicety.
-	if len(tallies) == 0 {
-		return []string{fmt.Sprintf("%s (%s): no `FERN_SSA: module:` line in the compile's "+
-			"stderr, so this gate checked nothing. Either FERN_SSA_REPORT did not reach the "+
-			"compile or %s no longer selects the register path by default.", name, target, target)}
-	}
-	for _, tally := range tallies {
-		if strings.HasSuffix(tally, ", 0 declined") {
-			continue
-		}
-		problems = append(problems, fmt.Sprintf("%s (%s): the register path declined a "+
-			"function, so the stack machine emitted it:\n    %s\n%s",
-			name, target, tally, strings.Join(declines, "\n")))
-	}
-	return problems
 }
 
 // failFunc reports a divergence. It is t.Errorf for an unlisted fixture and a

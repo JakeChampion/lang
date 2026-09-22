@@ -49,7 +49,7 @@ function main(): i32 {
 `
 
 // labelDef matches an assembly label DEFINITION at the start of a line — both
-// the `.L…`/`.S…` unit-local pools and the `.Lir_…` control-flow labels, since a
+// the `.L…`/`.S…` unit-local pools and the `.Lssa_…` control-flow labels, since a
 // duplicate of any of them is equally fatal.
 var labelDef = regexp.MustCompile(`(?m)^(\.[A-Za-z_][A-Za-z0-9_$]*):`)
 
@@ -74,9 +74,9 @@ func TestSelfHostPerModuleLabelNS_X86_64(t *testing.T) {
 	}
 
 	// The case only guards the bug while it takes the per-module path. That
-	// path is the only producer of namespaced labels, so their presence is the
-	// route assertion.
-	if !strings.Contains(asm, ".L__entry_") {
+	// path is the only producer of namespaced labels, so the entry unit's
+	// namespaced string pool is the route assertion.
+	if !strings.Contains(asm, ".S__entry_") {
 		t.Fatal("no namespaced labels: the program no longer routes per-module (import set changed?) — pick one that does")
 	}
 

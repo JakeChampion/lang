@@ -141,8 +141,8 @@ function main(): i32 {
 		if code != 0 {
 			t.Fatalf("driver exited %d (stderr %q), want 0 (accept)", code, errOut)
 		}
-		if !strings.Contains(string(asm), ".Lir") {
-			t.Fatal("accepted program did not route through the IR path (no .Lir labels)")
+		if !strings.Contains(string(asm), ".Lssa_") {
+			t.Fatal("accepted program did not route through the IR path (no .Lssa_ labels)")
 		}
 		bin := buildBin(t, gcc, dir, "accept", string(asm))
 		var cmd *exec.Cmd
