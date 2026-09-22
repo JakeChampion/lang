@@ -143,4 +143,3 @@ func nearestLabelBefore(lines [][]byte, at int) string {
 	}
 	return "    before the first function label"
 }
-
