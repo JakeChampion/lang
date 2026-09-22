@@ -266,7 +266,7 @@ func ndarrayOpEffect(op Op) (pops, pushes int, ok bool) {
 	case OpRcInc, OpRcDec:
 		return 1, 1, true
 	}
-	return opStackEffect(op, nil)
+	return opStackEffect(op, nil, 2)
 }
 
 // FormatNdarrayShapes renders the recognized operations, or "" when there

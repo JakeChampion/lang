@@ -2056,13 +2056,38 @@ same tree at each step, outputs byte-identical on every row:
 | `ptx` 300 kB of prose | 955,048,228 | 853,437,426 | 770,658,577 | -19.3% |
 | `wc -w` 4.5 MB | 274,461,474 | 239,241,002 | 208,398,983 | -24.1% |
 
+Those rows are `-O -g` builds, which carry every peephole except the ones
+a statement boundary's `.loc` directive blocks (#10016); the release build
+without `-g` sits 1–3% lower on each and moves by the same fractions.
+
+The third slice is the condition an inlined predicate leaves behind.
+`wc`'s `if (is_print(b))` reaches the backend as the callee's
+`b >= 32 && b < 127` in the lowering's value form — a typed `if` that
+pushes a 0/1 — because the builder's branch chains only see a condition
+that is spelled with `&&` at the call site. `ir.ChainConditions` runs
+after inlining and rewrites any `&&` / `||` / `!` value that an `if` or a
+`br_if` consumes into the same chain, finding the value's extent by
+simulating the operand stack. Release builds, outputs identical:
+
+| workload | after slice 2 (Ir) | after slice 3 | change |
+|---|---:|---:|---:|
+| `sort -n` 100k numbers | 1,365,438,158 | 1,326,683,955 | -2.8% |
+| `sort -k2,2n` 100k lines | 1,466,846,688 | 1,400,641,173 | -4.5% |
+| `fmt` 1.1 MB of prose | 373,086,326 | 361,039,845 | -3.2% |
+| `ptx` 300 kB of prose | 768,177,949 | 748,726,899 | -2.5% |
+| `wc -w` 4.5 MB | 203,820,844 | 180,557,068 | -11.4% |
+
+Against the tree before any of the three, the release build of `wc -w`
+retires 32% fewer instructions, `sort -n` 31%, `cat -A` 29%, `ptx` 21%,
+`fmt` 22%.
+
 A scan loop's `var c = s[i]; if (c >= 48 && c <= 57)` body is eleven
-instructions per byte after both, from twenty-seven. What it still pays is
-the stack machine itself: every local is a frame slot, so the induction
-variable is stored and reloaded on each iteration, and the byte is stored
-to its slot before the chain compares it from the register. That is the
-register allocation the SSA backend does (`docs/SSA-DECISION.md`), not
-another peephole.
+instructions per byte after all three, from twenty-seven. What it still
+pays is the stack machine itself: every local is a frame slot, so the
+induction variable is stored and reloaded on each iteration, and the byte
+is stored to its slot before the chain compares it from the register. That
+is the register allocation the SSA backend does (`docs/SSA-DECISION.md`),
+not another peephole.
 
 ### ls, 2026-09-14, Linux x86-64 (GNU coreutils 9.4, uutils 0.0.24)
 
