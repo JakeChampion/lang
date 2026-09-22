@@ -23,9 +23,12 @@ permissions:
 # waits for one of its own. Only a pull request run cancels: a main validation
 # (ci-main.yml calling this) or a dispatch gets a group of its own and runs to
 # completion. The suite FIFO stays on ci-suite.yml, whose `queue: max` rules
-# out cancel-in-progress there.
+# out cancel-in-progress there. The fallback's prefix differs from
+# ci-suite.yml's on purpose: inside one run the `github` context is the
+# caller's, so an identical fallback would have the suite request the group
+# its own run holds, and GitHub cancels that as a deadlock.
 concurrency:
-  group: ${{ github.event_name == 'pull_request' && format('ci-pr-{0}', github.event.pull_request.number) || format('ci-run-{0}', github.run_id) }}
+  group: ${{ github.event_name == 'pull_request' && format('ci-pr-{0}', github.event.pull_request.number) || format('ci-root-{0}', github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:

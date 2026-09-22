@@ -248,7 +248,7 @@ func TestCICallsEveryLane(t *testing.T) {
 // behind a running suite the older waiter is silently dropped — its CI never
 // runs and nothing says so. `queue: max` holds up to 100 and starts them in
 // order; it forbids `cancel-in-progress: true`, which is why a newer push to a
-// PR is superseded by reap-stale-runs.yml rather than here.
+// PR is superseded by ci.yml's per-pull-request group rather than here.
 //
 // There are TWO such queues, split on the parity of the pull request number,
 // because the runner ceiling fits two suites and one suite leaves half of it

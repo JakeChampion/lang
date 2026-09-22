@@ -19,6 +19,14 @@ func TestCILintRunsOutsideTheFullSuiteQueue(t *testing.T) {
 	if !strings.Contains(conc, "cancel-in-progress: ${{ github.event_name == 'pull_request' }}") {
 		t.Errorf("root CI must cancel only a pull request's superseded run, never a main validation: %q", conc)
 	}
+	// Inside one run the `github` context is the caller's, so a fallback that
+	// spells the same as ci-suite.yml's has the suite request a group its own
+	// run already holds, and GitHub cancels the suite call as a deadlock. A PR
+	// run never shows it: only a main validation or a dispatch takes the
+	// fallback on both sides.
+	if strings.Contains(conc, "ci-run-") {
+		t.Errorf("root CI's fallback group shares %s's `ci-run-` prefix; the two collide inside one main validation", ciSuiteFile)
+	}
 	if strings.Contains(conc, "queue:") {
 		t.Errorf("root CI must not queue lint behind a full compiler suite; the suite FIFO belongs to %s", ciSuiteFile)
 	}
