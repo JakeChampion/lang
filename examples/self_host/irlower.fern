@@ -23025,6 +23025,10 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
         // (whose kinds are empty for the alias name, so captures
         // keep the documented aliased-env leak).
         ast.ExprIdent(iid) => { if (s.is_closure_local(iid.name)) { clo_init = true; } },
+        // A fn-typed declaration started at its zero — the defer desugar's
+        // return temp — holds a null box until a `return <lambda>` assigns
+        // one, so it is a closure local from the start.
+        ast.ExprZero(_) => { if (v.type_name == "fn" || is_fn_payload_spelling(v.type_name)) { clo_init = true; } },
         _ => { }
     }
     if (clo_init) {
@@ -65364,6 +65368,10 @@ function body_binds_closure_local(body: ast.Stmt[], name: string, closureset: st
                 if (v.name == name) {
                     match (v.init) {
                         ast.ExprLambda(_) => { return true; },
+                        // A fn-typed slot started at its zero (the defer
+                        // desugar's return temp) is bound a closure local, so
+                        // what a later assignment stores there is a box.
+                        ast.ExprZero(_) => { if (v.type_name == "fn" || is_fn_payload_spelling(v.type_name)) { return true; } },
                         ast.ExprCall(cc) => {
                             match (cc.callee) {
                                 ast.ExprIdent(cid) => {
@@ -73036,22 +73044,21 @@ pub function is_fn_payload_spelling(t: string): boolean {
 // lowering refuses them, at every surface that reaches a map — its
 // construction, its methods, and both shapes of loop over it.
 //
-// Two different reasons, and it is worth knowing which:
+// i64 / u64 / usize are too WIDE: the column is a 4-byte cell on wasm and
+// op_map_keys has no width to select, so admitting one would narrow the key
+// silently (#10005).
 //
-//   i64 / u64 / f64 / usize are too WIDE. The column is a 4-byte cell on wasm
-//   and op_map_keys has no width to select, so admitting one would narrow the
-//   key silently (#10005).
+// Loud is the direction to be wrong in: native and the interpreter answer
+// these programs on the register targets, so this is a gap to close rather
+// than a rule of the language.
 //
-//   f32 FITS the width and still does not reach the cell as an i32. Admitted
-//   briefly, it emitted a module wasmtime rejects — `f64.const 2.5` handed
-//   straight to a call whose key parameter is i32, because the insert path
-//   converts and the read path does not. Native has the same gap from the
-//   other side (#10008), and what float key EQUALITY should even mean is open
-//   (#10007), so this is a decision before it is a lowering.
-//
-// Loud is the direction to be wrong in for both: native and the interpreter
-// answer these programs on the register targets, so each is a gap to close
-// rather than a rule of the language.
+// FLOAT keys are listed even though E045 refuses every written float-key
+// spelling in both checkers now (#10009), because a written spelling is not
+// the only way one arrives: the self-host runs no diagnostic pass over a
+// MONOMORPHISED clone, so `build(2.5, 7)` through a `Map[T, i32]`-returning
+// generic reaches here with no diagnostic behind it (#10018). Native
+// re-checks its instantiations and reports; until the self-host does, this
+// is the only thing standing between that program and the string column.
 pub function map_key_has_no_column(kt: string): boolean {
     return kt == "i64" || kt == "u64" || kt == "f64" || kt == "usize" || kt == "f32";
 }
@@ -73773,16 +73780,6 @@ function desugar_lambda_returns(body: ast.Stmt[], counter: i32, sig: RetSig): De
     return DesugarRet { body: out, counter: c };
 }
 
-// desugar_nontail_lambda_returns applies the same rewrite to every `return
-// <lambda>` in `body` EXCEPT one that is the body's final top-level statement.
-// That one is hoist_escaping_closure's, and handing it to the desugar instead is
-// what regressed the `curry` shape (#5281); every other position has no hoist
-// and asked for a `<fd>$clo` nothing built.
-//
-// It exists for a body ASSEMBLED during lifting, which the pre-worklist pass
-// over the source functions cannot have seen — see unwrap_sole_iife_return, its
-// only caller. Returns `body` unchanged when nothing is rewritten, so an
-// unaffected function serializes byte-identically.
 function desugar_lifted_lambda_returns(fd: parser.FuncDecl): parser.FuncDecl {
     var sig: RetSig = ret_sig_of(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types);
     var n: i32 = fd.body.len();
@@ -73798,6 +73795,17 @@ function desugar_lifted_lambda_returns(fd: parser.FuncDecl): parser.FuncDecl {
     return parser.FuncDecl { ...fd, body: ldr.body };
 }
 
+// desugar_nontail_lambda_returns applies the same rewrite to every `return
+// <lambda>` in `body` EXCEPT one that is the body's final top-level statement.
+// That one is hoist_escaping_closure's, and handing it to the desugar instead is
+// what regressed the `curry` shape (#5281); every other position has no hoist
+// and asked for a `<fd>$clo` nothing built.
+//
+// It exists for a body ASSEMBLED during lifting, which the pre-worklist pass
+// over the source functions cannot have seen: unwrap_sole_iife_return calls it
+// on a source function's unwrapped body, desugar_lifted_lambda_returns on a
+// lifted body whose tail lambda captures. Returns `body` unchanged when nothing
+// is rewritten, so an unaffected function serializes byte-identically.
 function desugar_nontail_lambda_returns(body: ast.Stmt[], sig: RetSig): ast.Stmt[] {
     var n: i32 = body.len();
     if (n == 0) { return body; }

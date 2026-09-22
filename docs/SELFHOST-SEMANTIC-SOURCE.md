@@ -671,13 +671,11 @@ annotation — the zero word, which at a reference type is the null the
 assignment left at the declaration site overwrites, so the lift costs a slot
 and not a box.
 
-The lift takes every annotated type. The return TEMP does not: it holds what a
-`return` hands back, so the binding it was assigned from stays live beside it
-and the two name one value, and at a RECORD return that pairing miscompiles
-here today. The temp keeps the types whose release this boundary already gets
-right, and a record-returning function with a defer stays on the AST lowering
-(#9575). An UNANNOTATED declaration cannot be lifted either way — the desugar
-runs before the checker and has no type to name.
+The lift and the return temp both take every annotated type, a function type
+included: the temp is declared with the scope's result sidecars, so a closure
+factory with a defer binds it a closure slot on both legs. An UNANNOTATED
+declaration cannot be lifted either way — the desugar runs before the checker
+and has no type to name.
 
 ## Calls
 
