@@ -369,3 +369,57 @@ runner's RAM. The macOS job (14-18 min, 12-15 of it the coreutils corpus in
 one process on a 3-core runner) is the next long pole once the Linux side is
 under it; its own ~5-slot pool is what bounds sharding it. `changes` costs 1.2
 minutes at the front of every run for a listing call.
+
+## Multi-core test execution: what parallelism can and cannot buy
+
+Measured 2026-09-22 on the 4-core container (Xeon 2.10 GHz, a 14 GB cgroup),
+always the same x86 shard 5 of 12 (218 self-host tests plus 5 residuals)
+from the same test binaries, so every row is comparable. "Cold" is a fresh
+driver disk cache, which is what every CI shard starts with.
+
+| shape | wall | CPU (user+sys) |
+| --- | ---: | ---: |
+| one serial process, cold | 625 s | 880 s |
+| two worker processes (`ci-test-workers`), cold | 397 s | |
+| one process, `t.Parallel` in every test, `-parallel 4`, cold | 392 s | |
+| four worker processes, cold | 372 s | |
+| one serial process, warm | 389 s | 447 s |
+| one process, `t.Parallel`, `-parallel 4`, warm | 215 s | 397 s |
+
+Three facts follow.
+
+**The e2e packages are safe to run in parallel.** A blanket `t.Parallel()`
+in every top-level test of `internal/e2eselfhost` (1,448 files) and
+`internal/e2e` (842 files), injected by script and excluding the thirteen
+files that set an env var, change directory or assign a package global,
+ran this shard twice with no failure. The harness's caches were already built
+for it: per-key `sync.Once` builds and the RAM reservation.
+
+**A serial shard uses 1.15 cores, and parallelism recovers most of the rest —
+once the drivers exist.** Warm, four parallel tests are 1.8x faster than
+serial. Cold, every shape lands at 370-400 s, because the shard builds 21
+distinct drivers (~9-20 s of multi-core emit each, ~240 s of the cold
+serial run) and those emits are serialised by the RAM reservation and bound
+by the same four cores. The 811 small program links in the same cache are
+8 ms each and do not register. So the two-worker shape the fourth change
+shipped is worth ~1.57x on a cold shard, and switching it to in-process
+`t.Parallel` would tie it; the next gain on the self-host shards is a
+cheaper driver emit (docs/LOCAL-DEV-LOOP.md: the IR passes are 54% of a
+whole-compiler emit and GC 28%), not more parallelism.
+
+**`internal/e2e` cannot use `t.Parallel` today, and the reason is a compiler
+design choice, not the tests.** The same blanket injection on the x86_64
+lane fails 30 top-level tests, every one of them a differential that flips
+a compiler-wide switch and compiles both ways: `ast.RcFreeEnabled` (402
+assignment sites in tests, 140 readers in the compiler), `OwnedByDefault`,
+`EnumRcPayloads`, `BorrowInferEnabled`, `RcReuseEnabled`, `LeakCheckEnabled`,
+`TwoWordOverride` and seven more, fourteen package-level variables in
+`internal/ast` read from `checker`, `monomorph`, `ir` and both backends.
+Two tests flipping the same global at once corrupt each other's
+comparison. Under `t.Parallel` that lane did use 2.9 cores (5m23s wall for
+15m45s of CPU), so the throughput is there; the correctness is not. Making
+those switches per-compilation options carried through `checker.Check`,
+`monomorph.Run` and the emitters, instead of process globals, is the work
+that lets the native-backend lanes run in one parallel process, and it is
+also what a `fern` CLI flag for each of them wants. Until then those lanes
+stay on worker processes, where isolation comes from the process boundary.
