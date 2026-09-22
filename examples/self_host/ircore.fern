@@ -15,8 +15,8 @@
 //   * the helper-name map — is_fern_helper / ir_helper_symbol and the
 //     `__struct_drop_<T>` / `__field_reclaim_<T>` name<->type pair, plus the
 //     C-call classifier;
-//   * label naming and control-flow resolution — br_target, str_lit_label,
-//     str_box_label, and the compare-and-branch run flag_branch resolves;
+//   * label naming — str_lit_label, str_box_label — and the comparison
+//     classifiers the register path's compare-and-branch fusion reads;
 //   * the AST pre-passes each backend runs before it emits — lift_lambdas and
 //     script_normalized;
 //   * wp_fn_sigs, the whole-program lowering side-tables every emit path

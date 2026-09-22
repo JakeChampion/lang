@@ -9,9 +9,8 @@
 // Op[] produces a compatible layout; only the instruction selection differs.
 //
 // Reuse: the backend-INDEPENDENT analysis (eligibility, array-return tracking,
-// the helper-name map, the control-flow label resolver) is ircore's
-// (ircore.lower_gated / array_ret_fns / is_fern_helper /
-// ir_helper_symbol / br_target), and the GAS text this backend emits
+// the helper-name map) is ircore's (ircore.lower_gated / array_ret_fns /
+// is_fern_helper / ir_helper_symbol), and the GAS text this backend emits
 // identically to x86 — the literal / shape labels, their `.data` blocks, the
 // runtime `.globl` list, the peephole byte scanners — is asmcore's. Nothing
 // here imports asm_ir. This file is therefore ONLY the arm64 codegen for the
