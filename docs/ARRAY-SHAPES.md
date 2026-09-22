@@ -394,11 +394,17 @@ Three rules follow:
   that reassociates it is wrong, not fast. A packed handle takes a
   DIRECT-INDEX walk rather than the odometer — element `i` of the reading
   order is `data[i]` when `data` is the reading order — and owes the same
-  order by the same rule. The e2e gate holds both arms with an
+  order by the same rule. `map`, `fold_all` and `zip_with` take it;
+  the axis verbs walk per lane rather than in reading order and still
+  run the odometer. `zip_with` asks the predicate of BOTH operands and
+  asks it AFTER broadcasting, which needs no separation of the broadcast
+  case: §2's rule means an operand whose reading order a broadcast
+  changed already fails it. The e2e gate holds both arms with an
   order-sensitive fold, over a transpose, over a packed handle, and over
   the prepending broadcast of §2 that stays packed; a commutative `add`
   cannot tell them apart, which is why the fold that
-  guards this multiplies by ten.
+  guards this multiplies by ten, and why the packed `zip_with` case pins
+  every position under an element function that is not symmetric.
 - **`reduce_axis` is lane-sized.** It walks the input once in reading
   order and keeps one accumulator per lane (the row-major position in the
   shape with `axis` removed), so its allocation is the result, never a

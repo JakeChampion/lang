@@ -275,9 +275,26 @@ path needs `build_func` any more. In order:
    compile, 95,072 functions) found 381 functions in 115 programs declining
    for 58 OS-floor ops, on either ISA
    (`docs/ssa-log/2026-09-20-every-op-through-the-stack-machines-arm.md`);
-   `dyn_dispatch` followed the same day, and the sweep declines nothing. What
-   is left before the stack machine's function driver can go is a corpus
-   lane that holds the decline count at zero.
+   `dyn_dispatch` followed the same day, and the sweep declines nothing.
+6. Done: the corpus lane. The fixture legs
+   (`internal/e2e/fixture_selfhost_test.go`, x86-64 and arm64) compile every
+   program under `FERN_SSA_REPORT=1` and require each module's tally to read
+   `0 declined`, so the number the hand sweep measured is now held there. It
+   rides the compile the legs already do; a second pass over the corpus costs
+   about fifteen minutes per ISA and buys nothing. Re-measured before wiring
+   it: 866 modules on each ISA, every one `0 declined`.
+
+   Two shapes of this check are vacuous and both are pinned against synthetic
+   reports by `TestSSACoverageProblems`, because a corpus where nothing
+   declines exercises only the passing path. An empty report satisfies "no
+   tally says non-zero", and the per-function decline line is
+   `FERN_SSA: <fn>: <why>` — it contains no such word as "declined", so a
+   check grepping for one matches nothing however far coverage regresses.
+
+   What is left is the deletion itself: the stack machine's per-function
+   driver (`emit_function_via_ir` and what only it reaches) on the two native
+   ISAs. Its per-OP emitter stays either way — the register path's `flat_op`
+   arm runs `emit_stack_op`, so the op table is shared, not superseded.
 
 ## The other backends
 

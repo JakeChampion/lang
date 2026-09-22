@@ -1453,20 +1453,29 @@ Removing that is the packed-walk fast path below, and it takes the same
 scalar map from 213.3 ms to 71.3 ms. Reporting 79.79x would have been
 crediting the kernel with work the walk should never have been doing.
 
-**The packed walk itself** (`std/ndarray`'s `map` and `fold_all`), measured
-the same way with two compilers built either side of the change — the stdlib
-is embedded in the compiler binary, so reverting the source without
-rebuilding measures nothing:
+**The packed walk itself** (`std/ndarray`'s `map`, `fold_all` and
+`zip_with`), measured the same way with two compilers built either side of
+the change — the stdlib is embedded in the compiler binary, so reverting the
+source without rebuilding measures nothing:
 
-| | odometer | packed | |
-| --- | --- | --- | --- |
-| `map` | 212.1 ms | 71.3 ms | **2.97x** |
-| `fold_all` | 182.1 ms | 42.6 ms | **4.28x** |
+| | odometer | packed | | odometer work shed |
+| --- | --- | --- | --- | --- |
+| `map` | 212.1 ms | 71.3 ms | **2.97x** | one `addr_of`, one `bump` |
+| `fold_all` | 182.1 ms | 42.6 ms | **4.28x** | one `addr_of`, one `bump` |
+| `zip_with` | 295.4 ms | 82.3 ms | **3.59x** | two `addr_of`, one `bump` |
 
-`fold_all` gains more because it allocates nothing: the odometer is a larger
-share of what is left. `map` lands at 71.3 ms against `std/array`'s own
-`xs.map(x => x * k)` at 74.5 ms on the same host — parity, which is the
-expected result once the two walks do the same work.
+`fold_all` gains the largest ratio because it allocates nothing: the
+odometer is a larger share of what is left. `map` lands at 71.3 ms against
+`std/array`'s own `xs.map(x => x * k)` at 74.5 ms on the same host — parity,
+which is the expected result once the two walks do the same work.
+
+`zip_with` beats `map`'s ratio because it addresses both operands, so it
+sheds two `addr_of` calls per element instead of one. That gives two
+independent readings of the same two costs — 23.7 ns/element for
+`addr_of` + `bump`, 35.5 ns for two + one — which solve to **`addr_of` 11.8 ns
+and `bump` 11.9 ns**. Agreeing to that tolerance from separate measurements
+is the check that these numbers are measuring the odometer and not something
+else about the two builds.
 
 Both arms owe §7's increasing reading order, and `add` cannot tell them
 apart. `examples/tests/ndarray_test.fern` therefore folds
