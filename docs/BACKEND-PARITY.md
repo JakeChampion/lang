@@ -128,6 +128,13 @@ File-backed mapping tests read distinct bytes at a nonzero offset, then unmap
 and close. The offset exercises the sixth argument; a bad descriptor checks
 the error result. The Darwin test executes in the Apple Silicon lane.
 
+The self-host's `poll(fds, timeout_ms)` now reaches `kqueue`/`kevent` on
+arm64-darwin, replacing its unconditional `-1` stub. It ignores negative fds
+and failed registrations, returns the lowest ready caller index (including
+duplicate fds), and supports zero, positive and negative timeouts. The temporary
+kqueue and event storage are released on each call. Linux keeps its existing
+`poll`/`ppoll` implementation; wasm keeps its WASI pollable implementation.
+
 ## CPU baseline
 
 Fern emits **static binaries with no runtime CPU dispatch**, so every
