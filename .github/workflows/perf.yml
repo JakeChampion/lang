@@ -17,10 +17,13 @@ name: Perf
 # change is signal. The one exception — the string-keyed map's per-process hash
 # seed — is documented and given its own tolerance in the baseline.
 #
-# ADVISORY. The check warns and annotates; it does not fail the job. Flip
-# FERN_CI_PERF_GATE_STRICT=1 below once the numbers have been stable for a
-# while and the corpus is trusted. This mirrors the size gate (#6826), which
-# took the same route.
+# ADVISORY, EXCEPT THE ALLOCATION COMPARISON. Every check here warns and
+# annotates without failing the job — flip FERN_CI_PERF_GATE_STRICT=1 on one
+# once its numbers have been stable for a while and the corpus is trusted, the
+# route the size gate took (#6826). The self-host allocation step is the
+# exception and does fail: it carries FERN_CI_PERF_GATE_MAX_DRIFT, a CEILING
+# rather than a strict tolerance, for the reasons written above that step
+# (#9963).
 #
 # HISTORY. On main, every job also appends its report to the commit's note
 # under refs/notes/perf (scripts/perf-history). The baseline files are the
