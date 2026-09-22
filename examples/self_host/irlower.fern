@@ -73000,6 +73000,13 @@ function map_kv_elem_flag(mty: string, field: string): i32 {
         // per-element __fern_str_free) balances exactly. Flag 1 (raw alias)
         // remains only for i64/f64/struct/generic columns.
         if (map_key_of(mty) == "string") { return 2; }
+        // A KEYED column — a struct or enum key, compared through its derived
+        // equality — is counted exactly as a string column is, so it takes the
+        // same retaining snapshot. The helper is generic: it copies the buffer
+        // and rc-incs each element. Flag 1 handed back a RAW ALIAS of the map's
+        // own buffer, which the frame then released — freeing keys the map
+        // still held (#9962).
+        if (map_key_eqfn(mty) != "") { return 2; }
         return 1;
     }
     if (map_value_of(mty) == "i32") { return 0; }
