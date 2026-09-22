@@ -121,6 +121,13 @@ The same repeated-operation gate covers `tcp_local_port` success and error
 returns using a borrowed socket: IPv4 port zero and IPv6 port 65535 must
 survive scratch reclamation, without dropping the caller's socket.
 
+`TestWasmTcpLifecycleCensus` and `TestSelfHostWasmTcpLifecycleCensus`
+run 32 real WASI loopback lifecycles: listen on an ephemeral port, query it,
+connect, accept, and close both connections and the listener. Both allocator
+censuses must report nonzero, balanced allocations and zero live guest bytes.
+This covers socket records and setup/local-address scratch; it does not
+exercise stream I/O, UDP, or the lifetime of the instance-network capability.
+
 ## Generated digest sources
 
 The lint lane runs `make digest-check` on every PR and main push. It compares

@@ -59,3 +59,8 @@ remain separate work.
 
 Local-port queries also release their canonical return area after saving
 the port or errno. The socket remains borrowed throughout the lookup.
+
+Real WASI loopback lifecycle tests also check the allocator census. Across
+32 listen/local-port/connect/accept/close cycles, both compilers report
+128 allocations, 128 frees and zero live guest bytes. Stream I/O and UDP
+are outside this measurement.

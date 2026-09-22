@@ -9,6 +9,11 @@ import (
 	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
+func TestWasmTcpLifecycleCensus(t *testing.T) {
+	component := buildLeakCheckComponent(t, e2eharness.WasiTCPCensusProbe, false)
+	e2eharness.CheckWasiTCPCensus(t, component)
+}
+
 func TestWasmSocketSetupReclaimsOnError(t *testing.T) {
 	fern := e2eharness.BuildLangBinForInterp(t)
 	for _, tc := range []struct{ name, expr string }{

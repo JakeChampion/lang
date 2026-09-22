@@ -10,6 +10,49 @@ import (
 	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
+func TestSelfHostWasmTcpLifecycleCensus(t *testing.T) {
+	for _, tool := range []string{"wasm-tools", "wasmtime"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skip(tool + " not on PATH")
+		}
+	}
+	adapter := os.Getenv("FERN_WASI_ADAPTER")
+	if adapter == "" {
+		t.Skip("FERN_WASI_ADAPTER unset")
+	}
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "wasm_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	cmd := runX86_64Bin(runner, bin)
+	cmd.Env = append(os.Environ(), "FERN_LEAKCHECK=1", "FERN_STRICT_IR=1")
+	cmd.Stdin = strings.NewReader(e2eharness.WasiTCPCensusProbe)
+	wat, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("self-host TCP census: %v", err)
+	}
+	path := filepath.Join(dir, "census.wat")
+	if err := os.WriteFile(path, wat, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wit, err := filepath.Abs("../../cmd/fern/wit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	core, embedded, component := filepath.Join(dir, "core.wasm"), filepath.Join(dir, "embedded.wasm"), filepath.Join(dir, "component.wasm")
+	for _, args := range [][]string{
+		{"parse", path, "-o", core},
+		{"component", "embed", wit, "-w", "fern", core, "-o", embedded},
+		{"component", "new", embedded, "--adapt", "wasi_snapshot_preview1=" + adapter, "-o", component},
+		{"validate", component},
+	} {
+		if out, err := exec.Command("wasm-tools", args...).CombinedOutput(); err != nil {
+			t.Fatalf("wasm-tools %v: %v\n%s", args, err, out)
+		}
+	}
+	e2eharness.CheckWasiTCPCensus(t, component)
+}
+
 func TestSelfHostWasmSocketSetupReclaimsOnError(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
