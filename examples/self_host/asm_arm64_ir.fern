@@ -2808,6 +2808,21 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
     if (name == "__fern_map_free_va" || name == "__fern_map_free_ksva") {
         s = s.need("arrarr_free"); s = s.need("map_free_va");
     }
+    // The box-KEY members (#9966) free the key column through
+    // __fern_arrarr_free, so they pull in its body as well as their own; _kavsa
+    // frees its value column through __fern_strarrarr_free on top of that.
+    if (name == "__fern_map_free_ka") {
+        s = s.mark_heap(); s = s.need("maps"); s = s.need("arrarr_free"); s = s.need("map_free_ka");
+    }
+    if (name == "__fern_map_free_kavs") {
+        s = s.mark_heap(); s = s.need("maps"); s = s.need("arrarr_free"); s = s.need("map_free_kavs");
+    }
+    if (name == "__fern_map_free_kava") {
+        s = s.mark_heap(); s = s.need("maps"); s = s.need("arrarr_free"); s = s.need("map_free_kava");
+    }
+    if (name == "__fern_map_free_kavsa") {
+        s = s.mark_heap(); s = s.need("maps"); s = s.need("arrarr_free"); s = s.need("strarrarr_free"); s = s.need("map_free_kavsa");
+    }
     // The string[]-VALUE-column pair frees that column through
     // __fern_strarrarr_free, so they pull in its body as well as their own.
     if (name == "__fern_map_free_vsa" || name == "__fern_map_free_ksvsa") {
@@ -6270,6 +6285,23 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     if (s.has_need("map_free_va")) {
     s = emit_arm64_map_free_variant(s, "_va",   "arr_dec",      "arrarr_free",  "mapfva");
     s = emit_arm64_map_free_variant(s, "_ksva", "str_arr_free", "arrarr_free",  "mapfksva");
+    }
+    // The BOX-KEY siblings (#9966), the arm64 half: a struct- or enum-keyed
+    // column is a column of boxes exactly as a MAPVA: value column is, so it
+    // takes the same __fern_arrarr_free. Need-gated one by one for the same
+    // reason as the pair above — each names __fn___fern_arrarr_free, and
+    // _kavsa __fn___fern_strarrarr_free on top of it.
+    if (s.has_need("map_free_ka")) {
+    s = emit_arm64_map_free_variant(s, "_ka",    "arrarr_free",  "arr_dec",        "mapfka");
+    }
+    if (s.has_need("map_free_kavs")) {
+    s = emit_arm64_map_free_variant(s, "_kavs",  "arrarr_free",  "str_arr_free",   "mapfkavs");
+    }
+    if (s.has_need("map_free_kava")) {
+    s = emit_arm64_map_free_variant(s, "_kava",  "arrarr_free",  "arrarr_free",    "mapfkava");
+    }
+    if (s.has_need("map_free_kavsa")) {
+    s = emit_arm64_map_free_variant(s, "_kavsa", "arrarr_free",  "strarrarr_free", "mapfkavsa");
     }
     // A string[] value column: each value released whole by __fern_str_arr_free,
     // which is __fern_strarrarr_free's element walk. Need-gated like the pair above.

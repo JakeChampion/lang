@@ -2708,6 +2708,26 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = emit_ir_map_free_variant(s, "_va",   "arr_dec",      "arrarr_free",  "mapfva");
     s = emit_ir_map_free_variant(s, "_ksva", "str_arr_free", "arrarr_free",  "mapfksva");
     }
+    // The BOX-KEY siblings (#9966): a struct- or enum-keyed column is a column
+    // of boxes exactly as a MAPVA: value column is, so it takes the same
+    // __fern_arrarr_free — one rc-guarded dec per key, then the buffer. Without
+    // them a struct key column fell to the shallow `arr_dec` in the kfree
+    // position and every key box was stranded. Each is need-gated on its own:
+    // they all name __fn___fern_arrarr_free, and _kavsa names
+    // __fn___fern_strarrarr_free as well, so a binary that frees one shape must
+    // not carry the bodies of the others.
+    if (s.has_need("map_free_ka")) {
+    s = emit_ir_map_free_variant(s, "_ka",    "arrarr_free",  "arr_dec",        "mapfka");
+    }
+    if (s.has_need("map_free_kavs")) {
+    s = emit_ir_map_free_variant(s, "_kavs",  "arrarr_free",  "str_arr_free",   "mapfkavs");
+    }
+    if (s.has_need("map_free_kava")) {
+    s = emit_ir_map_free_variant(s, "_kava",  "arrarr_free",  "arrarr_free",    "mapfkava");
+    }
+    if (s.has_need("map_free_kavsa")) {
+    s = emit_ir_map_free_variant(s, "_kavsa", "arrarr_free",  "strarrarr_free", "mapfkavsa");
+    }
     // A string[] value column (MAPVA: on a `Map[K, string[]]`): each value is a
     // string[] buffer released whole by __fern_str_arr_free (its strings, then
     // the buffer, rc-guarded), which is __fern_strarrarr_free's element walk.
@@ -7230,6 +7250,21 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
     // __fern_strarrarr_free, so they pull in its body as well as their own.
     if (name == "__fern_map_free_vsa" || name == "__fern_map_free_ksvsa") {
         s = s.need("heap"); s = s.need("strarrarr_free"); s = s.need("map_free_vsa");
+    }
+    // The box-KEY members (#9966) each free the key column through
+    // __fern_arrarr_free, so they pull in its body as well as their own; _kavsa
+    // frees its value column through __fern_strarrarr_free on top of that.
+    if (name == "__fern_map_free_ka") {
+        s = s.need("heap"); s = s.need("maps"); s = s.need("arrarr_free"); s = s.need("map_free_ka");
+    }
+    if (name == "__fern_map_free_kavs") {
+        s = s.need("heap"); s = s.need("maps"); s = s.need("arrarr_free"); s = s.need("map_free_kavs");
+    }
+    if (name == "__fern_map_free_kava") {
+        s = s.need("heap"); s = s.need("maps"); s = s.need("arrarr_free"); s = s.need("map_free_kava");
+    }
+    if (name == "__fern_map_free_kavsa") {
+        s = s.need("heap"); s = s.need("maps"); s = s.need("arrarr_free"); s = s.need("strarrarr_free"); s = s.need("map_free_kavsa");
     }
     if (name == "__fern_map_free_vf" || name == "__fern_map_free_ksvf") {
         s = s.need("heap"); s = s.need("maps"); s = s.need("map_free_vf");
