@@ -34,7 +34,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
       # RUN_SHRINK_PROPERTY widens TestGenBytesShrinkIsMonotonicAndValid
-      # from its 3-seed default to the full 24-seed sweep: one type-check
+      # from its 2-seed default to the full 24-seed sweep: one type-check
       # per truncation point per seed, ~6 minutes. It belongs here rather
       # than in test-units because this lane already owns the generator
       # and runs its two hosts in parallel.
