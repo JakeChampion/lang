@@ -199,6 +199,22 @@ tests cover native Darwin with both compilers. These tests measure primitive
 ownership; they do not prove bounded HTTP handlers, zero-allocation framing,
 or native throughput. The Wasm lifecycle census is a separate gate.
 
+## HTTP handler ownership through semantic lowering
+
+`TestSelfHostHTTPHandlerCensus` and `TestSelfHostArm64DarwinHTTPHandlerCensus`
+bound the existing std/tcp accept-loop body to 32 requests and run it through
+the production self-host compiler. They verify every HTTP response, require
+the compiler to produce every reachable declaration through semantic lowering,
+and require equal allocations/frees with zero live bytes. Linux x86-64, ARM64
+and native Darwin run the same fixture; QEMU is permitted for correctness.
+`TestSelfHostWasmSemanticTCPPollable` separately checks semantic lowering and
+live socket subscription/drop on WASI. It is not a Wasm HTTP heap census.
+
+The native handler fixture catches missing builtin contracts or ambiguous
+deadline operand widths that otherwise move the handler back to AST ownership.
+It does not establish bootstrap compiler leak freedom, zero allocations per
+request, persistent-reactor behavior or throughput.
+
 ## Generated digest sources
 
 The lint lane runs `make digest-check` on every PR and main push. It compares

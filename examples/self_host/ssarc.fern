@@ -2611,6 +2611,7 @@ function os_floor_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
 function os_floor_process_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     if (ins.str == "tcp_send") { return Lowered { found: true, r: emit(r, ir.op_tcp_send()) }; }
     if (ins.str == "tcp_recv") { return Lowered { found: true, r: emit(r, ir.op_tcp_recv()) }; }
+    if (ins.str == "tcp_pollable") { return Lowered { found: true, r: emit(r, ir.op_tcp_pollable()) }; }
     if (ins.str == "tcp_close") { return Lowered { found: true, r: emit(r, ir.op_tcp_close()) }; }
     if (ins.str == "setuid") { return Lowered { found: true, r: emit(r, ir.op_setuid()) }; }
     if (ins.str == "setgid") { return Lowered { found: true, r: emit(r, ir.op_setgid()) }; }
