@@ -36,9 +36,9 @@ permissions:
 # into one without saying so.
 #
 # Parity of the PR NUMBER, not of the run, so every run for one pull request
-# picks the same lane: a re-push then queues behind the predecessor that
-# reap-stale-runs.yml is cancelling, inheriting the slot it frees, instead of
-# waiting on a stranger in the other lane.
+# picks the same lane: a re-push then takes the slot its predecessor frees
+# when ci.yml's per-pull-request group cancels it, instead of waiting on a
+# stranger in the other lane.
 concurrency:
   group: >-
     ${{ (github.event_name == 'pull_request'
