@@ -65,6 +65,28 @@ function has_row(rows: GrowRow[], callee: string, param: i32, field: i32): boole
     return false;
 }
 
+// Whether two grow tables say the same thing about `callees`.
+//
+// A body reads this table only through `grow_fields_of(grows, ins.str, i)` in
+// `ssarc.bracketed`, keyed by the name each call instruction names — so two
+// tables that agree on the callees one body names produce that body
+// identically, however much they differ elsewhere. That is what lets a second
+// lowering keep a body the inference did not move.
+pub function grow_rows_agree(a: GrowRow[], b: GrowRow[], callees: string[]): boolean {
+    for row in a {
+        if (names_has(callees, row.callee) && !has_row(b, row.callee, row.param, row.field)) { return false; }
+    }
+    for row in b {
+        if (names_has(callees, row.callee) && !has_row(a, row.callee, row.param, row.field)) { return false; }
+    }
+    return true;
+}
+
+function names_has(names: string[], name: string): boolean {
+    for n in names { if (n == name) { return true; } }
+    return false;
+}
+
 function with_row(rows: GrowRow[], callee: string, param: i32, field: i32): GrowRow[] {
     if (has_row(rows, callee, param, field)) { return rows; }
     return rows.append(GrowRow { callee: callee, param: param, field: field });
