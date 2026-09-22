@@ -423,6 +423,7 @@ function main(): i32 {
 	for _, dead := range []string{
 		"__fn_i32__to_string",
 		"__fn_i64__to_string",
+		"__fn_boolean__to_string",
 		"__fn_bigint__BigInt__to_string",
 	} {
 		if strings.Contains(asm, "\n"+dead+":") {

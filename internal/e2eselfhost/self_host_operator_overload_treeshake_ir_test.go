@@ -22,7 +22,7 @@ import (
 //	FERN_STRICT_IR: main (call to unknown symbol W.neg)
 //
 // ts_recv_tag reads the OPERAND's stamped type instead, which is the one
-// ts_arith_kept is asking about.
+// ts_recv_kept is asking about.
 //
 // Each case is an exit code, so it fails on a wrong answer as well as on a
 // bail, and it runs on x86-64 where the shape was first found on wasm.

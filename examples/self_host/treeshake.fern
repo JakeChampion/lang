@@ -59,13 +59,13 @@ function ts_op_is_arithmetic(op: string): boolean {
     return op == "+" || op == "-" || op == "*" || op == "/" || op == "%";
 }
 
-// ts_recv_tag is the type an operator's root is qualified by: the type of the
-// OPERAND, which is what ts_recv_kept matches against a method's
-// receiver_type. Not the type of the whole expression — those differ exactly
-// where a composite operator overload does not return Self, and `a * b` whose
-// `mul` returns f64 would look for `f64|mul` while the method that implements
-// it is `V.mul`. Every failing case of that shape is a scalar-returning
-// overload.
+// ts_recv_tag is the type a receiver-qualified root is qualified by — an
+// operator's operand, or a display argument: the type of that OPERAND, which
+// is what ts_recv_kept matches against a method's receiver_type. Not the type
+// of the whole expression — those differ exactly where a composite operator
+// overload does not return Self, and `a * b` whose `mul` returns f64 would
+// look for `f64|mul` while the method that implements it is `V.mul`. Every
+// failing case of that shape is a scalar-returning overload.
 //
 // "" for the forms annotate_module does not stamp, and under a driver that
 // never runs it at all (asm_load_run, asm_modload_run) — the caller falls back
