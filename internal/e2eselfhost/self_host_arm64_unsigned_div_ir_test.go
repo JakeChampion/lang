@@ -33,12 +33,11 @@ func TestSelfHostArm64UnsignedDivIR(t *testing.T) {
 		t.Fatalf("abs stdlib root: %v", err)
 	}
 
-	// The `import "std/test"` drags the merged module over the IR budget, so
-	// every function here lowers on the AST arm64 backend — the path the fix
-	// touches. The u64 helpers give named symbols to anchor the asm scan; the
-	// i32 helper is the signed control.
-	// main references all three so the default stdlib-root treeshake prune
-	// keeps them reachable (an unreferenced helper is pruned before codegen).
+	// The `import "std/test"` reproduces the program shape that exposed the
+	// bug. The u64 helpers give named symbols to anchor the asm scan; the
+	// i32 helper is the signed control. main references all three so the
+	// default stdlib-root treeshake prune keeps them reachable (an
+	// unreferenced helper is pruned before codegen).
 	prog := "import \"std/test\";\n" +
 		"function udiv_probe(a: u64, b: u64): u64 { return a / b; }\n" +
 		"function umod_probe(a: u64, b: u64): u64 { return a % b; }\n" +

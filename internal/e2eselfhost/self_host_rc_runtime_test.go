@@ -290,7 +290,7 @@ func TestSelfHostRcExitSweepX86_64(t *testing.T) {
 		// An array local declared inside a not-taken branch is never
 		// bound, so the exit sweep has nothing to release (no spurious
 		// release), detector clean.
-		{"branch-local-zeroinit", "function main(): i32 { var xs: i32[] = [5, 6]; if (xs[0] > 100) { var ys: i32[] = [1, 2]; return ys[0]; } return xs[1] + __rc_underflow(); }", 6},
+		{"branch-local-unbound", "function main(): i32 { var xs: i32[] = [5, 6]; if (xs[0] > 100) { var ys: i32[] = [1, 2]; return ys[0]; } return xs[1] + __rc_underflow(); }", 6},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -425,7 +425,7 @@ func TestSelfHostRcArm64(t *testing.T) {
 		{"return-array", "function make(): i32[] { var xs: i32[] = [1, 2, 3]; return xs; } function main(): i32 { var ys = make(); return ys[0] + ys[2]; }", 4},
 		{"borrowed-param", "function sum2(a: i32[]): i32 { return a[0] + a[1]; } function main(): i32 { var xs: i32[] = [7, 8]; var r = sum2(xs); return r + xs[0] + __rc_underflow(); }", 22},
 		{"exit-sweep-no-underflow", "function f(): i32 { var xs: i32[] = [1, 2]; var ys = xs; return ys[0]; } function main(): i32 { var a = f(); var b = f(); var c = f(); return __rc_underflow(); }", 0},
-		{"branch-local-zeroinit", "function main(): i32 { var xs: i32[] = [5, 6]; if (xs[0] > 100) { var ys: i32[] = [1, 2]; return ys[0]; } return xs[1] + __rc_underflow(); }", 6},
+		{"branch-local-unbound", "function main(): i32 { var xs: i32[] = [5, 6]; if (xs[0] > 100) { var ys: i32[] = [1, 2]; return ys[0]; } return xs[1] + __rc_underflow(); }", 6},
 		// Cow-aware dec (Phase 3 prep): a self-append loop stays clean.
 		{"self-append-no-underflow", "function main(): i32 { var xs: i32[] = []; var i = 0; while (i < 20) { xs = xs.append(i); i = i + 1; } return __rc_underflow(); }", 0},
 		{"self-append-values", "function main(): i32 { var xs: i32[] = []; var i = 0; while (i < 20) { xs = xs.append(i * 2); i = i + 1; } return xs[19]; }", 38},
