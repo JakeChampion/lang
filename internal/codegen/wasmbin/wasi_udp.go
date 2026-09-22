@@ -79,6 +79,31 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	sockDrop := idxs["wasi_sockets_udp_socket_drop"]
 	inDrop := idxs["wasi_sockets_incoming_datagram_stream_drop"]
 	outDrop := idxs["wasi_sockets_outgoing_datagram_stream_drop"]
+	free := func(body []byte, ptr uint32, size int32) []byte {
+		body = inst.InstLocalGet(body, ptr)
+		body = inst.InstI32Const(body, size)
+		return inst.InstCall(body, idxs["__free"])
+	}
+	// Host spills have already been released after parsing. Payload spills
+	// and the datagram record exist only once streams have been created.
+	reclaim := func(body []byte, streams bool) []byte {
+		if streams {
+			body = emitStrNormalizeFree(body, idxs, 4, 9, 10)
+			body = free(body, 18, 64)
+		}
+		body = free(body, 14, 4)
+		return free(body, 5, 16)
+	}
+	errorReturn := func(body []byte, streams bool) []byte {
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstLocalGet(body, 5)
+		body = memory.InstI32Load8U(body, 0, 4)
+		body = inst.InstCall(body, idxs["__fern_wasi_socket_errno"])
+		body = numeric.InstI32Sub(body)
+		// Keep errno on the operand stack while frees overwrite the scratch.
+		body = reclaim(body, streams)
+		return inst.InstReturn(body)
+	}
 
 	fail := func(body []byte, streams bool) []byte {
 		if streams {
@@ -89,7 +114,7 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 		}
 		body = inst.InstLocalGet(body, 6)
 		body = inst.InstCall(body, sockDrop)
-		return emitErrnoNegReturn(body, 5, idxs)
+		return errorReturn(body, streams)
 	}
 
 	var body []byte
@@ -215,6 +240,7 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	}
 	body = inst.InstEnd(body) // loop
 	body = inst.InstEnd(body) // block
+	body = emitStrNormalizeFree(body, idxs, 1, 12, 13)
 
 	// Reject unless four groups closed and the last carries a digit.
 	body = inst.InstLocalGet(body, 21)
@@ -227,6 +253,7 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	body = numeric.InstI32Or(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	body = inst.InstI32Const(body, -errnoSocketInvalidArgument)
+	body = free(body, 14, 4)
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
 
@@ -250,7 +277,7 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 5)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = emitErrnoNegReturn(body, 5, idxs)
+	body = errorReturn(body, false)
 	body = inst.InstEnd(body)
 	// $sock = mem[retptr+4]
 	body = inst.InstLocalGet(body, 5)
@@ -422,7 +449,21 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	// re-enters the permit wait; errors returned -errno above), so the
 	// whole payload went out — return its byte length.
 	body = inst.InstLocalGet(body, 10)
+	body = reclaim(body, true)
 
 	locals := inst.PutLocalsOneGroup(nil, 18, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// Only inline strings own the buffer created by emitStrNormalize. Heap-form
+// strings are borrowed from the caller and must never enter the freelist.
+func emitStrNormalizeFree(body []byte, idxs map[string]uint32, lenLocal, bufLocal, byteLenLocal uint32) []byte {
+	body = inst.InstLocalGet(body, lenLocal)
+	body = inst.InstI32Const(body, -0x80000000)
+	body = numeric.InstI32And(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, bufLocal)
+	body = inst.InstLocalGet(body, byteLenLocal)
+	body = inst.InstCall(body, idxs["__free"])
+	return inst.InstEnd(body)
 }

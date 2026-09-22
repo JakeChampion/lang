@@ -900,6 +900,7 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					// resource-has-children rule.
 					needs.add("__fern_tcp_close")
 				case "__fern_udp_send":
+					needs.add("__free")
 					// (host, port, data) → i32 — one-shot UDP
 					// datagram (create → bind → connect → send →
 					// drop). Parses the IPv4 host literal and

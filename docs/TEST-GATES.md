@@ -128,6 +128,19 @@ censuses must report nonzero, balanced allocations and zero live guest bytes.
 This covers socket records and setup/local-address scratch; it does not
 exercise stream I/O, UDP, or the lifetime of the instance-network capability.
 
+`TestWasmUDPGuestStorage` and `TestSelfHostWasmUDPGuestStorage` repeat
+UDP sends through the ownership-tracking host stub. Every setup/send failure
+and successful send must stop growing the heap after warmup, including empty,
+inline and heap-form payloads and malformed addresses. Borrowed input strings
+must retain their contents. `TestWasmUDPLifecycleCensus` and
+`TestSelfHostWasmUDPLifecycleCensus` send 32 real loopback datagrams per payload
+form, verify every payload at the receiver, and require balanced allocator
+counts with zero live guest bytes.
+The self-host census composes its Preview 1 adapter with
+`--realloc-via-memory-grow`: the adapter's component-lifetime stack pages
+stay outside the Fern allocator census. This does not measure total linear
+memory or remove the adapter's stack overhead.
+
 ## Generated digest sources
 
 The lint lane runs `make digest-check` on every PR and main push. It compares

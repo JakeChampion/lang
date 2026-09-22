@@ -3159,11 +3159,13 @@ pub function udp_send_func(): string {
     o = o + "    (local $ip i32) (local $sock i32) (local $ret i32) (local $in i32) (local $out i32) (local $p i32) (local $dg i32) (local $sent i32)\n";
     o = o + "    (local.set $ret (call $__fern_alloc (i32.const 16)))\n";
     o = o + "    (if (i32.lt_s (call $__fern_ipv4_parse (local.get $host) (local.get $ret)) (i32.const 0))\n";
-    o = o + "      (then (return (i32.const -28))))\n";
+    o = o + "      (then (call $__fern_raw_free (local.get $ret) (i32.const 16)) (return (i32.const -28))))\n";
     o = o + "    (local.set $ip (i32.load (local.get $ret)))\n";
     o = o + "    (call $__fern_wasi_create_udp_socket (i32.const 0) (local.get $ret))\n";
     o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
-    o = o + "      (return (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))))\n";
+    o = o + "      (local.set $sent (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))\n";
+    o = o + "      (call $__fern_raw_free (local.get $ret) (i32.const 16))\n";
+    o = o + "      (return (local.get $sent))))\n";
     o = o + "    (local.set $sock (i32.load offset=4 (local.get $ret)))\n";
     // bind 0.0.0.0:0 — ephemeral local port.
     o = o + "    (call $__fern_wasi_udp_start_bind (local.get $sock) (call $__fern_network_handle)\n";
@@ -3173,11 +3175,15 @@ pub function udp_send_func(): string {
     o = o + "      (local.get $ret))\n";
     o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
     o = o + "      (call $__fern_wasi_udp_socket_drop (local.get $sock))\n";
-    o = o + "      (return (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))))\n";
+    o = o + "      (local.set $sent (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))\n";
+    o = o + "      (call $__fern_raw_free (local.get $ret) (i32.const 16))\n";
+    o = o + "      (return (local.get $sent))))\n";
     o = o + "    (call $__fern_wasi_udp_finish_bind (local.get $sock) (local.get $ret))\n";
     o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
     o = o + "      (call $__fern_wasi_udp_socket_drop (local.get $sock))\n";
-    o = o + "      (return (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))))\n";
+    o = o + "      (local.set $sent (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))\n";
+    o = o + "      (call $__fern_raw_free (local.get $ret) (i32.const 16))\n";
+    o = o + "      (return (local.get $sent))))\n";
     // stream(Some(host:port)): option disc 1, then the ip-socket-address
     // flattening (disc 0 = ipv4, port, 4 octets, 6 pad).
     o = o + "    (call $__fern_wasi_udp_stream (local.get $sock)\n";
@@ -3190,7 +3196,9 @@ pub function udp_send_func(): string {
     o = o + "      (local.get $ret))\n";
     o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
     o = o + "      (call $__fern_wasi_udp_socket_drop (local.get $sock))\n";
-    o = o + "      (return (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))))\n";
+    o = o + "      (local.set $sent (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))\n";
+    o = o + "      (call $__fern_raw_free (local.get $ret) (i32.const 16))\n";
+    o = o + "      (return (local.get $sent))))\n";
     o = o + "    (local.set $in (i32.load offset=4 (local.get $ret)))\n";
     o = o + "    (local.set $out (i32.load offset=8 (local.get $ret)))\n";
     // The 1-element list<outgoing-datagram>: 60-byte record, remote none.
@@ -3222,6 +3230,8 @@ pub function udp_send_func(): string {
     o = o + "    (call $__fern_wasi_udp_in_drop (local.get $in))\n";
     o = o + "    (call $__fern_wasi_udp_out_drop (local.get $out))\n";
     o = o + "    (call $__fern_wasi_udp_socket_drop (local.get $sock))\n";
+    o = o + "    (call $__fern_raw_free (local.get $dg) (i32.const 64))\n";
+    o = o + "    (call $__fern_raw_free (local.get $ret) (i32.const 16))\n";
     o = o + "    (local.get $sent))\n";
     return o;
 }

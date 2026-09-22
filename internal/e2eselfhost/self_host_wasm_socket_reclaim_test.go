@@ -11,6 +11,12 @@ import (
 )
 
 func TestSelfHostWasmTcpLifecycleCensus(t *testing.T) {
+	component := buildWasiSocketCensusComponent(t, e2eharness.WasiTCPCensusProbe)
+	e2eharness.CheckWasiSocketCensus(t, component)
+}
+
+func buildWasiSocketCensusComponent(t *testing.T, src string) string {
+	t.Helper()
 	for _, tool := range []string{"wasm-tools", "wasmtime"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			t.Skip(tool + " not on PATH")
@@ -26,7 +32,7 @@ func TestSelfHostWasmTcpLifecycleCensus(t *testing.T) {
 	bin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	cmd := runX86_64Bin(runner, bin)
 	cmd.Env = append(os.Environ(), "FERN_LEAKCHECK=1", "FERN_STRICT_IR=1")
-	cmd.Stdin = strings.NewReader(e2eharness.WasiTCPCensusProbe)
+	cmd.Stdin = strings.NewReader(src)
 	wat, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("self-host TCP census: %v", err)
@@ -40,17 +46,21 @@ func TestSelfHostWasmTcpLifecycleCensus(t *testing.T) {
 		t.Fatal(err)
 	}
 	core, embedded, component := filepath.Join(dir, "core.wasm"), filepath.Join(dir, "embedded.wasm"), filepath.Join(dir, "component.wasm")
+	// Give the external Preview 1 adapter its own stack pages. Otherwise it
+	// calls the exported guest allocator before _start and keeps two 64 KiB
+	// blocks alive for the component lifetime. The census measures Fern heap
+	// ownership; adapter stack pages remain outside it, as native stacks do.
 	for _, args := range [][]string{
 		{"parse", path, "-o", core},
 		{"component", "embed", wit, "-w", "fern", core, "-o", embedded},
-		{"component", "new", embedded, "--adapt", "wasi_snapshot_preview1=" + adapter, "-o", component},
+		{"component", "new", embedded, "--realloc-via-memory-grow", "--adapt", "wasi_snapshot_preview1=" + adapter, "-o", component},
 		{"validate", component},
 	} {
 		if out, err := exec.Command("wasm-tools", args...).CombinedOutput(); err != nil {
 			t.Fatalf("wasm-tools %v: %v\n%s", args, err, out)
 		}
 	}
-	e2eharness.CheckWasiTCPCensus(t, component)
+	return component
 }
 
 func TestSelfHostWasmSocketSetupReclaimsOnError(t *testing.T) {

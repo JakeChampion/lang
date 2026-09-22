@@ -64,3 +64,12 @@ Real WASI loopback lifecycle tests also check the allocator census. Across
 32 listen/local-port/connect/accept/close cycles, both compilers report
 128 allocations, 128 frees and zero live guest bytes. Stream I/O and UDP
 are outside this measurement.
+
+UDP now releases its parse/return scratch, outgoing-datagram record and any
+temporary inline-string spills on success or error. Heap-form strings remain
+borrowed. Error values are saved before returning scratch to the freelist.
+Repeated fault probes cover setup and send failures, malformed hosts and all
+payload forms; real loopback tests verify payload bytes and zero live guest
+bytes. Stream I/O scratch and worker-owned network capabilities remain pending.
+The self-host test gives the external Preview 1 adapter separate stack pages;
+its persistent stacks are outside the Fern heap census, not reclaimed by UDP.

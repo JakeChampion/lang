@@ -40,12 +40,41 @@ func WasiSocketStorageProbe(expr string, closeSocket bool) string {
 }`
 }
 
+// WasiUDPStorageProbe covers both inline-string spills and borrowed string
+// buffers. Normalize successful byte counts for the host ownership oracle.
+func WasiUDPStorageProbe(host, data string) string {
+	return fmt.Sprintf(`function main(): i32 {
+    var host: string = %q;
+    var data: string = %q;
+    var i: i32 = 0;
+    var stable: i64 = 0;
+    var result: i32 = 0;
+    while (i < 32) {
+        result = udp_send(host, 1, data);
+        if (result >= 0) {
+            if (result != data.len()) { return -1002; }
+            result = 1;
+        }
+        var used: i64 = __heap_bump_bytes();
+        if (i == 0) { stable = used; }
+        if (used != stable) { return -1000; }
+        if (host != %q || data != %q) { return -1003; }
+        i = i + 1;
+    }
+    return result;
+}`, host, data, host, data)
+}
+
 // CheckWasiSocketReclaim replaces only host imports in a compiled core module.
 // The production socket bodies and allocator still execute. Host resources are
 // tracked independently; dropping an unowned handle or a parent before its
 // children traps. Each setup phase can report unknown (error-code zero).
 func CheckWasiSocketReclaim(t *testing.T, modulePath, operation string) {
 	t.Helper()
+	invalidHost := operation == "udp-invalid"
+	if invalidHost {
+		operation = "udp"
+	}
 	closing := strings.HasSuffix(operation, "-close")
 	operation = strings.TrimSuffix(operation, "-close")
 	for _, tool := range []string{"wasm-tools", "wasmtime"} {
@@ -100,6 +129,10 @@ func CheckWasiSocketReclaim(t *testing.T, modulePath, operation string) {
 	if closing {
 		socket, streams = 0, 0
 		successFailure = "(i32.ne (local.get $result) (i32.const 0))"
+	}
+	if invalidHost {
+		steps, socket, streams = 0, 0, 0
+		successFailure = "(i32.ne (local.get $result) (i32.const -28))"
 	}
 	borrowedListener := ""
 	if operation == "accept" || operation == "port" {

@@ -11,7 +11,7 @@ import (
 
 func TestWasmTcpLifecycleCensus(t *testing.T) {
 	component := buildLeakCheckComponent(t, e2eharness.WasiTCPCensusProbe, false)
-	e2eharness.CheckWasiTCPCensus(t, component)
+	e2eharness.CheckWasiSocketCensus(t, component)
 }
 
 func TestWasmSocketSetupReclaimsOnError(t *testing.T) {
