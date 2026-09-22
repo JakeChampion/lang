@@ -12544,6 +12544,8 @@ function genum_key_from_anno(ty: string, base: string, enums: EnumDecl[]): strin
     // `len(args) != len(gen.TypeParams)` gate in internal/monomorph.
     var gei: i32 = genum_index(enums, base);
     if (gei >= 0 && parts.len() != enums[gei].type_params.len()) { return ""; }
+    // `Opt[T]` inside the enum's own method names no instantiation.
+    if (gei >= 0) { for p in parts { if (str_in(enums[gei].type_params, p)) { return ""; } } }
     if (parts.len() == 1) {
         return ge_targ_mangle(parts[0], enums);
     }
@@ -13467,11 +13469,17 @@ pub function monomorphize_enums(mod: Module): Module {
     // Phase 1: rewrite references in every function (body + param/ret types)
     // and the top-level statements, accumulating instantiations.
     var nfuncs: FuncDecl[] = [];
+    // A generic enum's methods are held aside: an instantiated enum gets
+    // per-instantiation clones in phase 2 and these are dropped with its
+    // declaration; one never instantiated (used only at a composite key)
+    // keeps its declaration and gets them back in phase 3.
+    var held: FuncDecl[] = [];
+    var held_base: string[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
         var fn: FuncDecl = mod.funcs[fi];
-        // A generic enum's method is cloned per instantiation in phase 2.
-        if (fn.receiver_type.len() > 0 && genum_index(mod.enums, strip_struct_base(fn.receiver_type)) >= 0) { fi = fi + 1; continue; }
+        var owner: string = "";
+        if (fn.receiver_type.len() > 0 && genum_index(mod.enums, strip_struct_base(fn.receiver_type)) >= 0) { owner = strip_struct_base(fn.receiver_type); }
         var env: MEnv = me_env_from_params(fn.params);
         if (fn.receiver_name.len() > 0) { env = env.ebind(fn.receiver_name, fn.receiver_type); }
         var rb: RStmts = me_stmts(fn.body, env, fn.ret_type, mod.enums, mod.structs, efns, ins);
@@ -13482,9 +13490,11 @@ pub function monomorphize_enums(mod: Module): Module {
             ins = me_collect_anno(fn.params[pj].type_name, mod.enums, ins);
             pj = pj + 1;
         }
-        nfuncs = nfuncs.append(FuncDecl { ...fn,
+        var rfn: FuncDecl = FuncDecl { ...fn,
             params: me_rewrite_params(fn.params, mod.enums),
-            ret_type: me_rewrite_ty(fn.ret_type, mod.enums), body: rb.rstmts });
+            ret_type: me_rewrite_ty(fn.ret_type, mod.enums), body: rb.rstmts };
+        if (owner.len() > 0) { held = held.append(rfn); held_base = held_base.append(owner); }
+        else { nfuncs = nfuncs.append(rfn); }
         fi = fi + 1;
     }
     var topenv: MEnv = MEnv { mnames: [], mtypes: [] };
@@ -13630,6 +13640,11 @@ pub function monomorphize_enums(mod: Module): Module {
     }
     var k3: i32 = 0;
     while (k3 < cl_structs.len()) { out_structs = out_structs.append(cl_structs[k3]); k3 = k3 + 1; }
+    var hi: i32 = 0;
+    while (hi < held.len()) {
+        if (!str_in(dropped, held_base[hi])) { nfuncs = nfuncs.append(held[hi]); }
+        hi = hi + 1;
+    }
 
     return Module { ...mod, funcs: nfuncs, structs: out_structs, top_stmts: tr.rstmts, enums: out_enums };
 }

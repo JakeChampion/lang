@@ -660,6 +660,28 @@ function main(): i32 {
     }
     return t % 7;
 }`},
+	// A generic enum with a method that is only ever used at a composite key.
+	// The pass monomorphises nothing here (a tuple key has no clone name), so
+	// the enum keeps its declaration and must keep its method with it: phase 1
+	// holds every generic enum's methods aside and phase 3 gives back those
+	// whose enum was never instantiated. Nothing produces, since the composite
+	// key is not monomorphised; the row pins that the module still compiles
+	// and answers on every leg.
+	{name: "generic-enum-method-at-a-composite-key", atLeast: 0, src: `
+enum Opt[T] { Sm(T), Nn }
+
+function (o: Opt[T]) get_or(d: T): T {
+    var t: Opt[T] = o;
+    match (t) { Sm(x) => { return x; }, Nn => { return d; } }
+}
+
+function main(): i32 {
+    var o: Opt[(i32, i32)] = Sm((3, 4));
+    var n: Opt[(i32, i32)] = Nn;
+    var p: (i32, i32) = o.get_or((0, 0));
+    var q: (i32, i32) = n.get_or((1, 1));
+    return p.0 + p.1 + q.0 + q.1;
+}`},
 	{name: "value-match-first-arm-is-a-match-of-lambdas", atLeast: 8, noLeak: true, src: `
 enum Status { Active, Inactive, Pending }
 function main(): i32 {
