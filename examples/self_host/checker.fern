@@ -2141,7 +2141,11 @@ function conforms_by_impl_or_derive(s: Scope, tyname: string, tr: string): boole
 // composite key; the lowering builds a kind-2 map from the key's derived
 // hash/eq now, so the restriction it named is gone.
 function map_key_type_error(s: Scope, kt: typeinfo.Type): string {
-  if (is_unknown(kt) || is_integer(kt) || type_eq(kt, t_string())) { return ""; }
+  if (is_unknown(kt) || is_integer(kt) || type_eq(kt, t_string()) || type_eq(kt, t_str())) { return ""; }
+  match (kt) {
+    typeinfo.TypeBool(_) => { return ""; },
+    _ => {}
+  }
   var kn: string = "";
   var kw: string = "";
   match (kt) {
@@ -2192,19 +2196,23 @@ function e045_map_key_msgs(t: typeinfo.Type, s: Scope): string[] {
   var out: string[] = [];
   match (t) {
     typeinfo.TypeMap(mt) => {
-      // A TUPLE key is carved out: map_key_type_error refuses one, so
-      // `Map { (1, 2): 5 }` is E045, but the interpreter supports a tuple key
-      // (TestInterpMapCompositeKeys gates it) and the annotated spelling is
-      // accepted everywhere today. Compiled it answers the DEFAULT instead,
-      // silently — three answers for one type, filed as #10020. Applying the
-      // rule here would refuse the spelling the interpreter supports.
-      var is_tuple_key: boolean = false;
+      // A key the interpreter compares BY VALUE and no compiled backend
+      // dispatches — a tuple, an array, a slice — is carved out. All three
+      // answers differ and none is obviously the bug: `Map { (1, 2): 5 }` is
+      // E045, the annotated spelling is accepted and answers correctly
+      // interpreted, and compiled it answers the DEFAULT, silently.
+      // TestInterpMapCompositeKeys gates the interpreter's answer, so
+      // applying the rule here would refuse a spelling the language
+      // supports. Filed as #10020; the fix that matters is on the compiled
+      // side, where the wrong answer is silent.
+      var by_value_key: boolean = false;
       match (mt.key) {
-        typeinfo.TypeTuple(_) => { is_tuple_key = true; },
+        typeinfo.TypeTuple(_) => { by_value_key = true; },
+        typeinfo.TypeArray(_) => { by_value_key = true; },
         _ => {}
       }
       var msg: string = "";
-      if (!is_tuple_key) { msg = map_key_type_error(s, mt.key); }
+      if (!by_value_key) { msg = map_key_type_error(s, mt.key); }
       if (msg != "") { out = out.append(msg); }
       out = util.append_all(out, e045_map_key_msgs(mt.key, s));
       out = util.append_all(out, e045_map_key_msgs(mt.value, s));

@@ -68,16 +68,56 @@ function main(): i32 { var m: Map[f64, i32] = Map {}; return 0; }`,
 		"map key type f64 is not yet supported",
 	},
 	{
-		// A tuple key is deliberately NOT refused here: the interpreter
-		// supports one and TestInterpMapCompositeKeys gates it, while the
+		// A tuple key is deliberately NOT refused: the interpreter compares
+		// one by value and TestInterpMapCompositeKeys gates it, while the
 		// map-literal rule refuses it and the compiled backends answer the
-		// default. isTupleKey carries the reasoning; #10020 owns the
-		// decision. This row exists so that carve-out is pinned rather
-		// than rediscovered by a red corpus.
+		// default. isStructurallyKeyedByValue carries the reasoning; #10020
+		// owns the decision. Pinned here so the carve-out is not
+		// rediscovered by a red corpus.
 		"tuple key",
 		`import "core/map";
 function take(m: Map[(i32, i32), i32]): i32 { return 0; }
 function main(): i32 { return 0; }`,
+		"",
+	},
+	{
+		// An array key is the same shape: 14 interpreted, 9 compiled —
+		// the lookup misses and reads the default.
+		"array key",
+		`import "core/map";
+function take(m: Map[i32[], i32]): i32 { return 0; }
+function main(): i32 { return 0; }`,
+		"",
+	},
+	{
+		// boolean and str are not carve-outs — they are keys that WORK, on
+		// the interpreter and the compiled backends alike, and the rule
+		// refused them until that was measured. The literal spelling was
+		// the visible half: `Map { true: 1 }` was E045 while the annotated
+		// `Map[boolean, i32]` was accepted and ran.
+		"boolean key",
+		`import "core/map";
+function main(): i32 {
+    var m: Map[boolean, i32] = map_new(8);
+    m = m.insert(true, 5);
+    return m.get_or(true, 0);
+}`,
+		"",
+	},
+	{
+		"boolean key in a literal",
+		`import "core/map";
+function main(): i32 { var m = Map { true: 1 }; return m.len(); }`,
+		"",
+	},
+	{
+		"borrowed string key",
+		`import "core/map";
+function main(): i32 {
+    var m: Map[str, i32] = map_new(8);
+    m = m.insert("ab", 5);
+    return m.get_or("ab", 0);
+}`,
 		"",
 	},
 	{
