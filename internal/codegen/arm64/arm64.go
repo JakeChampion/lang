@@ -9372,6 +9372,7 @@ const (
 	kevUdata    = 24
 	evfiltRead  = 0xffff // EVFILT_READ (-1) in the low 16 bits
 	evAdd       = 0x0001
+	evReceipt   = 0x0040
 	evErrorFlag = 0x4000
 )
 
@@ -9399,10 +9400,10 @@ const (
 //     one per call is the simple first version: correct, and slower than it
 //     eventually should be. See docs/ATLAS-PLATFORM-PLAN.md §2c.
 //
-//  3. EV_ERROR EVENTS ARE SKIPPED. A failed registration comes back as an
-//     event with EV_ERROR set rather than as a kevent(2) failure, so
-//     treating every returned event as "ready" would report a bad fd as
-//     readable.
+//  3. REGISTRATION AND READINESS ARE SEPARATE. EV_RECEIPT reports every
+//     registration's result without draining ready events. A bad fd makes
+//     the following readiness wait nonblocking, like poll's POLLNVAL,
+//     but does not hide another fd that is already readable.
 //
 // The scan takes the MINIMUM udata rather than the first returned event,
 // because kevent returns events in its own order while the ppoll path
@@ -9434,12 +9435,13 @@ func (g *generator) emitPollRuntimeKqueue() {
 	g.emit("bl __fern_alloc")
 	g.emit("mov x25, x0")
 
-	// Marshal, skipping negative fds; x26 counts what actually registered.
+	// Register in reverse caller order: kevent coalesces duplicate fds and
+	// keeps the last udata, which must be the lowest caller index.
 	g.emit("mov x26, #0")
-	g.emit("mov x22, #0")
+	g.emit("mov x22, x19")
 	g.label(".Lkq_fill")
-	g.emit("cmp x22, x19")
-	g.emit("b.ge .Lkq_filled")
+	g.emit("subs x22, x22, #1")
+	g.emit("b.lt .Lkq_filled")
 	g.emit("ldr w0, [x20, x22, lsl #2]")
 	g.emit("cmp w0, #0")
 	g.emit("b.lt .Lkq_skip")
@@ -9450,14 +9452,13 @@ func (g *generator) emitPollRuntimeKqueue() {
 	g.emit("str x0, [x9, #%d]", kevIdent)
 	g.emit("mov w1, #%d", evfiltRead)
 	g.emit("strh w1, [x9, #%d]", kevFilter)
-	g.emit("mov w1, #%d", evAdd)
+	g.emit("mov w1, #%d", evAdd|evReceipt)
 	g.emit("strh w1, [x9, #%d]", kevFlags)
 	g.emit("str wzr, [x9, #%d]", kevFflags)
 	g.emit("str xzr, [x9, #%d]", kevData)
 	g.emit("str x22, [x9, #%d]", kevUdata) // caller's index, not ours
 	g.emit("add x26, x26, #1")
 	g.label(".Lkq_skip")
-	g.emit("add x22, x22, #1")
 	g.emit("b .Lkq_fill")
 	g.label(".Lkq_filled")
 	g.emit("cmp x26, #0")
@@ -9468,6 +9469,36 @@ func (g *generator) emitPollRuntimeKqueue() {
 	g.emit("svc #0x80")
 	g.emit("b.cs .Lkq_none")
 	g.emit("mov x24, x0")
+
+	// Obtain registration receipts, including success (data == 0).
+	g.emit("stp xzr, xzr, [x29, #80]")
+	g.emit("add x5, x29, #80")
+	g.emit("mov x0, x24")
+	g.emit("mov x1, x21")
+	g.emit("mov w2, w26")
+	g.emit("mov x3, x25")
+	g.emit("mov w4, w26")
+	g.emit("mov x16, #%d", darKevent)
+	g.emit("svc #0x80")
+	g.emit("b.cs .Lkq_close_none")
+	g.emit("mov x22, x0")
+	g.emit("mov x26, #0") // successful registrations
+	g.emit("mov x9, #0")
+	g.label(".Lkq_receipts")
+	g.emit("cmp x9, x22")
+	g.emit("b.ge .Lkq_registered")
+	g.emit("add x10, x25, x9, lsl #5")
+	g.emit("ldr x11, [x10, #%d]", kevData)
+	g.emit("cbnz x11, .Lkq_bad_registration")
+	g.emit("add x26, x26, #1")
+	g.emit("b .Lkq_next_receipt")
+	g.label(".Lkq_bad_registration")
+	g.emit("mov x23, #0") // invalid fds make poll return immediately
+	g.label(".Lkq_next_receipt")
+	g.emit("add x9, x9, #1")
+	g.emit("b .Lkq_receipts")
+	g.label(".Lkq_registered")
+	g.emit("cbz x26, .Lkq_close_none")
 
 	// timeout_ms < 0 → NULL timespec (block); else { sec, nsec }.
 	g.emit("cmp x23, #0")
@@ -9483,13 +9514,12 @@ func (g *generator) emitPollRuntimeKqueue() {
 	g.label(".Lkq_infinite")
 	g.emit("mov x5, #0")
 	g.label(".Lkq_call")
-	// kevent(kq, changelist, nchanges, eventlist, nevents, timeout).
-	// One call both registers and waits.
+	// Registration receipts are consumed; collect only readiness now.
 	g.emit("mov x0, x24")
-	g.emit("mov x1, x21")
-	g.emit("mov w2, w26")
+	g.emit("mov x1, #0")
+	g.emit("mov w2, #0")
 	g.emit("mov x3, x25")
-	g.emit("mov w4, w26")
+	g.emit("mov w4, w19")
 	g.emit("mov x16, #%d", darKevent)
 	g.emit("svc #0x80")
 	g.emit("mov x22, x0") // n (or garbage if the carry flag is set)

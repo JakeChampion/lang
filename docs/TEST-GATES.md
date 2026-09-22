@@ -79,8 +79,10 @@ multiplication, so the later body limit never sees a wrapped length.
 poll helpers on x86-64 Linux and ARM64 Linux.
 `TestArm64DarwinNativePollScratch` covers the flat Darwin helper on Apple
 Silicon. Each exercises empty, negative and invalid descriptors, a timeout,
-readiness and first-index selection. Repeated calls must balance allocations
-and frees, leave zero live bytes and produce no RC underflow. These gates
+readiness and first-index selection. Duplicate descriptors must return the
+lowest index. A failed registration must not hide a ready descriptor or block
+on another idle one, even with an infinite timeout. Repeated calls must balance
+allocations and frees, leave zero live bytes and produce no RC underflow. These gates
 cover temporary poll buffers; they do not establish leak freedom for a whole
 HTTP server or replace the persistent-reactor work in #9853.
 

@@ -43,22 +43,31 @@ func checkPollScratch(t *testing.T, target, qemu, backend string) {
 		name, fds string
 		want      int
 		ready     bool
+		timeout   int
 	}{
-		{"empty", "[]", -1, false},
-		{"negative", "[0 - 1]", -1, false},
-		{"invalid", "[123456]", -1, false},
-		{"timeout", "[3]", -1, false},
-		{"ready", "[0 - 1, 3]", 1, true},
-		{"first", "[3, 4]", 0, true},
+		{"empty", "[]", -1, false, 0},
+		{"negative", "[0 - 1]", -1, false, 0},
+		{"invalid", "[123456]", -1, false, 0},
+		{"timeout", "[3]", -1, false, 20},
+		{"ready", "[0 - 1, 3]", 1, true, 0},
+		{"mixed_invalid", "[123456, 3]", 1, true, -1},
+		{"mixed_invalid_not_ready", "[123456, 3]", -1, false, -1},
+		{"duplicate", "[0 - 1, 3, 3]", 1, true, 1000},
+		{"first", "[3, 4]", 0, true, 0},
+		{"infinite", "[3]", 0, true, -1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			rounds := 32
+			if tc.name == "timeout" {
+				rounds = 1
+			}
 			dir := t.TempDir()
 			path := filepath.Join(dir, "probe.fern")
 			src := fmt.Sprintf(`function exercise(): i32 {
     var fds: i32[] = %s;
     var i: i32 = 0;
-    while (i < 32) {
-        if (poll(fds, 0) != %d) { return 1; }
+    while (i < %d) {
+        if (poll(fds, %d) != %d) { return 1; }
         i = i + 1;
     }
     return 0;
@@ -68,7 +77,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return result;
 }
-`, tc.fds, tc.want)
+`, tc.fds, rounds, tc.timeout, tc.want)
 			if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -98,9 +107,14 @@ function main(): i32 {
 				}
 				cmd.ExtraFiles = append(cmd.ExtraFiles, r)
 			}
+			started := time.Now()
 			out, err := cmd.CombinedOutput()
+			elapsed := time.Since(started)
 			if err != nil {
 				t.Fatalf("poll: %v\n%s", err, out)
+			}
+			if tc.name == "timeout" && elapsed < time.Duration(tc.timeout)*time.Millisecond {
+				t.Errorf("poll returned before its timeout: %v", elapsed)
 			}
 			allocs, frees, live := parseLeakCheckLine(t, string(out))
 			t.Logf("allocs=%d frees=%d live_bytes=%d", allocs, frees, live)

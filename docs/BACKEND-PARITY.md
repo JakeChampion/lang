@@ -134,10 +134,11 @@ and failed registrations, returns the lowest ready caller index (including
 duplicate fds), and supports zero, positive and negative timeouts. The temporary
 kqueue and event storage are released on each call. Linux keeps its existing
 `poll`/`ppoll` implementation; wasm keeps its WASI pollable implementation.
-The Go bootstrap Darwin helper still differs for duplicate descriptors: its
-forward registration order keeps the highest caller index. The self-host
-registers in reverse so the lowest index survives kqueue coalescing. Bootstrap
-duplicate-descriptor parity remains follow-up work under #9853.
+The Go bootstrap Darwin helper uses the same reverse registration and
+`EV_RECEIPT` approach, preserving the lowest caller index for duplicate fds
+and allowing valid readiness alongside failed registrations. Bootstrap flat
+and SSA helpers also reclaim their temporary poll storage on every path.
+Persistent worker-owned reactors remain separate P0 work.
 
 ## CPU baseline
 
