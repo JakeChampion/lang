@@ -139,7 +139,17 @@ function is_print(b: i32): boolean {
 struct Scan { in_word: boolean, linepos: i64 }
 
 // One chunk counted the way GNU's single-byte-locale loop counts it.
-function scan_chunk(c: Counts, st: Scan, s: string): (Counts, Scan) {
+// The scan a chunk gets when the words or the longest line are wanted.
+// Every byte but the six isspace ones is a word byte — a NUL or a high
+// byte included, which GNU <= 9.4 counted as neither word nor space —
+// and nearly every byte of text is one, so it is the first test, and
+// the whitespace chain runs only for the others. Only a PRINTABLE word
+// byte adds to the line's width; without -L the width is not kept at
+// all, and the loop is the one below this.
+function scan_chunk(c: Counts, st: Scan, s: string, want_len: boolean): (Counts, Scan) {
+  if (!want_len) {
+    return scan_words(c, st, s);
+  }
   var lines: i64 = c.lines;
   var words: i64 = c.words;
   var maxlen: i64 = c.maxlen;
@@ -148,7 +158,14 @@ function scan_chunk(c: Counts, st: Scan, s: string): (Counts, Scan) {
   var i: i32 = 0;
   while (i < s.len()) {
     var b: i32 = s[i] as i32;
-    if (b == 10) {
+    if (b > 32) {
+      if (b < 127) {
+        pos = pos + 1 as i64;
+      }
+      in_word = true;
+    } else if (b < 9 || b > 13 && b != 32) {
+      in_word = true;
+    } else if (b == 10) {
       lines = lines + 1 as i64;
       if (pos > maxlen) {
         maxlen = pos;
@@ -179,24 +196,40 @@ function scan_chunk(c: Counts, st: Scan, s: string): (Counts, Scan) {
         words = words + 1 as i64;
       }
       in_word = false;
-    } else if (b == 11) {
+    } else {
       if (in_word) {
         words = words + 1 as i64;
       }
       in_word = false;
-    } else {
-      // Every isspace byte has its own case above, so anything here is
-      // a word character — a NUL or a high byte included, which GNU
-      // <= 9.4 counted as neither word nor space. Only a PRINTABLE one
-      // adds to the line's width.
-      if (is_print(b)) {
-        pos = pos + 1 as i64;
-      }
-      in_word = true;
     }
     i = i + 1;
   }
   return (Counts { ...c, lines: lines, words: words, maxlen: maxlen }, Scan { in_word: in_word, linepos: pos });
+}
+
+// `scan_words(c, st, s)` — the words and lines of a chunk, with no
+// column kept.
+function scan_words(c: Counts, st: Scan, s: string): (Counts, Scan) {
+  var lines: i64 = c.lines;
+  var words: i64 = c.words;
+  var in_word: boolean = st.in_word;
+  var i: i32 = 0;
+  while (i < s.len()) {
+    var b: i32 = s[i] as i32;
+    if (b > 32 || b < 9 || b > 13 && b != 32) {
+      in_word = true;
+    } else {
+      if (in_word) {
+        words = words + 1 as i64;
+      }
+      in_word = false;
+      if (b == 10) {
+        lines = lines + 1 as i64;
+      }
+    }
+    i = i + 1;
+  }
+  return (Counts { ...c, lines: lines, words: words }, Scan { ...st, in_word: in_word });
 }
 
 // `count_stream(r, show)` — every count `show` asks for, over `r`.
@@ -222,7 +255,7 @@ function count_stream(r: Reader, show: Show): (Counts, Option[IoError]) {
         }
         c = Counts { ...c, bytes: c.bytes + chunk.len() as i64 };
         if (per_byte) {
-          var r2: (Counts, Scan) = scan_chunk(c, st, chunk);
+          var r2: (Counts, Scan) = scan_chunk(c, st, chunk, show.maxlen);
           c = r2.0;
           st = r2.1;
         } else if (show.lines) {
