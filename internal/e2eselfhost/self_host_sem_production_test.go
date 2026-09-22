@@ -608,6 +608,56 @@ function main(): i32 {
 	// which nothing but the contract table can type — so the table is built
 	// to a fixpoint. Refused 4 of 8 before, `unresolved result type: declared
 	// fn`, and the caller with it.
+	// A generic enum that declares a method. monomorphize_enums skipped any
+	// enum with one, so the enum stayed generic and enum_entry refused its
+	// every use ("variant field type"). The methods clone per instantiation
+	// now, the derived ones included, and a method with a type parameter of
+	// its own folds into a free generic the way a struct's does, with the
+	// variant argument's payload settling that parameter.
+	{name: "generic-enum-methods-clone-per-instantiation", atLeast: 6, noLeak: true, src: `
+import "core/cmp";
+
+@derive(cmp.Eq)
+enum Opt[T] { Sm(T), Nn }
+
+function (o: Opt[T]) or_else(d: T): T { match (o) { Sm(x) => { return x; }, Nn => { return d; } } }
+function (o: Opt[T]) swap[U](other: Opt[U]): Opt[U] { match (o) { Sm(x) => { return other; }, Nn => { return Nn; } } }
+
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) {
+        var s: Opt[string] = Sm("round " + i.to_string());
+        var n: Opt[i32] = s.swap(Sm(i));
+        var e: Opt[string] = Nn;
+        if (s == e) { t = t + 100; }
+        if (s == s.swap(Sm("round " + i.to_string()))) { t = t + 1; }
+        t = t + n.or_else(1) + s.or_else("").len();
+        i = i + 1;
+    }
+    return t % 97;
+}`},
+	// A builtin union's literal takes its type arguments from the destination,
+	// and `and[U](other: Result[U, E])` binds U from this very argument: the
+	// destination `Result[U, string]` named Ok without saying what it held, so
+	// the literal was refused ("unsupported variant literal"). The payload
+	// settles it now, for Ok and Err as it already did for Some.
+	{name: "builtin-union-payload-settles-the-literal", atLeast: 1, noLeak: true, src: `
+import "std/result";
+
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) {
+        var r: Result[i32, string] = Ok(i);
+        var s: Result[string, string] = r.and(Ok("v" + "w"));
+        var e: Result[i32, string] = Err("no");
+        var f: Result[string, string] = e.and(Ok("zzz"));
+        t = t + s.unwrap_or("").len() + f.unwrap_or("q").len();
+        i = i + 1;
+    }
+    return t % 7;
+}`},
 	{name: "value-match-first-arm-is-a-match-of-lambdas", atLeast: 8, noLeak: true, src: `
 enum Status { Active, Inactive, Pending }
 function main(): i32 {
