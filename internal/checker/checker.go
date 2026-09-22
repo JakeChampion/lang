@@ -16447,12 +16447,28 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				if ed != nil && len(ed.TypeParams) > 0 {
 					args := make([]ast.Type, len(ed.TypeParams))
 					complete := true
+					// A variant fixes only the parameters its payload names:
+					// `Ok(9)` names T and says nothing about E. The rest come
+					// from where the value is going, so a destination naming
+					// this same enum fills them — its CONCRETE positions only,
+					// since a destination inside a generic signature
+					// (`other: Result[U, E]` with E already substituted) has a
+					// type parameter of its own in the position the payload
+					// was meant to pin (#9896).
+					destArgs := destEnumArgs(callExpected, vr.enumName, len(ed.TypeParams))
 					for i, p := range ed.TypeParams {
 						if v, ok := sub[p]; ok {
 							args[i] = v
-						} else {
-							complete = false
+							continue
 						}
+						if destArgs != nil {
+							if _, isParam := destArgs[i].(ast.ParamType); !isParam {
+								args[i] = destArgs[i]
+								sub[p] = destArgs[i]
+								continue
+							}
+						}
+						complete = false
 					}
 					if !complete {
 						// Couldn't fill in every parameter from
@@ -16791,9 +16807,22 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 						c.errfCode(n.P, "E040", "%s expects %d type argument(s), got %d",
 							display, len(fn.TypeParams), len(n.TypeArgs))
 					}
-					for i, tp := range fn.TypeParams {
-						if i < len(n.TypeArgs) {
-							sub[tp] = n.TypeArgs[i]
+					// A SHORT list the source wrote on a method call names the
+					// METHOD's own type params, which sit after the receiver's
+					// in fn.TypeParams. Binding it from the front instead named
+					// the receiver's — so `r.and[i32](..)` on a
+					// `Result[i32, string]` pinned T, left U exactly as unbound
+					// as before, and E040 went on naming a remedy it then
+					// refused (#9896). A full list still means the whole list,
+					// receiver params first, which is what a call that spells
+					// every one of them already relies on.
+					offset := 0
+					if n.Method != nil && n.TypeArgsWritten && tooFew {
+						offset = len(fn.TypeParams) - len(n.TypeArgs)
+					}
+					for i, ta := range n.TypeArgs {
+						if offset+i < len(fn.TypeParams) {
+							sub[fn.TypeParams[offset+i]] = ta
 						}
 					}
 				}
@@ -16848,6 +16877,17 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 						pt = substituteType(pt, sub)
 					}
 					if c.monomorphCloneEnumName(pt) != "" {
+						c.expectedType = pt
+					} else if _, isEnum := pt.(ast.EnumType); isEnum && sub != nil {
+						// A generic callee's enum parameter, with what the
+						// receiver already pinned substituted in
+						// (`and[U](other: Result[U, E])` on a
+						// `Result[i32, string]` receiver is `Result[U, string]`).
+						// The variant constructor needs it: `Ok(9)` pins the
+						// payload's T and nothing else, and without a
+						// destination for E it answers with a bare `Result`
+						// that binds U nowhere — E040 on a program the
+						// language accepts (#9896).
 						c.expectedType = pt
 					}
 				}
@@ -16931,7 +16971,12 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				own := i < len(calleeOwnFlags) && calleeOwnFlags[i]
 				if sub != nil {
 					if !c.unifyArrayArg(&n.Args[i], expected, at, sub, own) {
-						c.errArgMismatch(n, i, recvIsArg0, expected, at)
+						// Report what the parameter came to MEAN here, not how
+						// it was declared: `Box[U, E]` says nothing to a reader
+						// who wrote `.pair[string]` on a `Box[i32, string]`,
+						// where the parameter is `Box[string, string]`. What
+						// inference has not pinned stays as its own name.
+						c.errArgMismatch(n, i, recvIsArg0, substituteType(expected, sub), at)
 					}
 				} else if !c.argOK(&n.Args[i], expected, at, own) {
 					c.errArgMismatch(n, i, recvIsArg0, expected, at)
@@ -18265,6 +18310,17 @@ func (c *checker) stampStructTypeArgs(e ast.Expr, dst ast.Type) {
 			call.TypeArgs = dStruct.Args
 		}
 	}
+}
+
+// destEnumArgs returns the type arguments a destination supplies for enum
+// `name`, or nil when the destination is some other type, names no arguments,
+// or names the wrong number of them.
+func destEnumArgs(dst ast.Type, name string, want int) []ast.Type {
+	et, ok := dst.(ast.EnumType)
+	if !ok || et.Name != name || len(et.Args) != want {
+		return nil
+	}
+	return et.Args
 }
 
 // refineCallTypeArgsFromDest pushes the destination type's
