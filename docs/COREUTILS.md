@@ -2124,6 +2124,39 @@ is stored to its slot before the chain compares it from the register. That
 is the register allocation the SSA backend does (`docs/SSA-DECISION.md`),
 not another peephole.
 
+### ptx's column format, 2026-09-22, Linux x86-64 (GNU coreutils 9.12)
+
+#9083's item 3, the restructure rather than the primitive. `render_dumb`
+built each output line in a `u8[]` of the line width — `spaces(width)`
+copied to bytes, every field written into it one bounds-checked `.with`
+per byte, then `rtrim_bytes` copying it back out through a string and a
+slice — and the writer got the string plus its newline. The line is now
+streamed straight into the writer's buffer: `layout` walks the fields in
+line order once to prove every write lands past the one before it and
+inside the width, then once more emitting each piece behind its gap of
+spaces, with trailing spaces held back until a non-space byte follows
+them, which is the trim the whole line used to get. A layout the check
+refuses (a truncation marker whose position clamps at zero, so it
+overlaps the field it marks) takes the byte buffer as before, in the
+write order that path was defined with. The truncation marker is written
+before its field in the streaming order, since that is where it sits in
+the line.
+
+Outputs are identical to the previous build across 87 invocations — the
+default, `-G -O -T -A -r -R -f -w -g -W -F -S`, `--format=roff`, `-i`
+and `-o` with real lists, and their combinations, over three inputs —
+and `TestPtxParity` passes under both compilers. Release builds under
+callgrind and hyperfine, a 4-core container, 20 runs:
+
+| workload | before (Ir) | after (Ir) | before (ms) | after (ms) | gnu (ms) |
+|---|---:|---:|---:|---:|---:|
+| `ptx` 300 kB of prose | 731,629,742 | 555,371,349 | 110.8 | 88.4 | 31.2 |
+| `ptx` 120k words | 2,405,170,749 | 1,793,939,852 | 276.5 | 209.8 | 44.6 |
+
+What remains on the words row is `word_at`'s binary searches (12.5%),
+`norm` (7.7%), `key_less` (6.6%) and the sort (5.4%): the per-read cost
+of #8822 again, over ~17 probes per field cut.
+
 ### ls, 2026-09-14, Linux x86-64 (GNU coreutils 9.4, uutils 0.0.24)
 
 The same 4-core container, so read the columns against each other. The
