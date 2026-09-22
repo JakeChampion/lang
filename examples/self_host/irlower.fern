@@ -21957,9 +21957,8 @@ function bind_var_slot(v: ast.StmtVar, s: LowerState, se: LowerState, vt: VarTyp
         // stays "" and a later `m.insert / .get_or / .has` emits key-kind
         // 0 (string) for an i32-key map — the i32 key is then dereferenced
         // as a string pointer and segfaults. Store the FULL `Map[K, V]`
-        // form map_key_kind_of expects (it keys on the `Map[i32,` prefix);
-        // form map_key_kind_of / map_value_of expect (the `Map[i32,`
-        // prefix drives the key dispatch, the `, V]` suffix the value).
+        // form map_key_kind_of / map_value_of expect: the key spelling
+        // drives the key dispatch, the `, V]` suffix the value.
         var umk: i32 = expr_map_kind(v.init, sb);
         if (umk >= 0) {
             var uktag: string = "string";
