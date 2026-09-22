@@ -2466,6 +2466,46 @@ Known divergences). What remains is spread thin: the merge, the
 mismatch, the per-occurrence `Fields` record and its six strings, and
 the sentence scan.
 
+### A right operand kept out of the operand stack, 2026-09-22 (native x86-64)
+
+Every binary operation in the flat x86-64 emitter saves its left value
+with `push rax` while the right one is computed, copies the right one to
+`rcx`, pops the left back and combines them. P4 and P5 already folded the
+cases where the right operand is one instruction; fmt's `choose` still
+carried 33 push/pop pairs around index arithmetic, field loads and
+bounds-checked element reads. Two rules take the rest:
+
+- P18 renames the right operand's computation onto the register the copy
+  was heading for — `push rax / mov rax, [rbp-456] / sub rax, 1 / mov ecx,
+  eax / pop rax` is `mov rcx, [rbp-456] / sub ecx, 1` — when every line
+  is register arithmetic on the accumulator that names neither that
+  register nor rsp. A 32-bit copy zero-extends, so the last line narrows
+  to its 32-bit form where its low half depends only on its inputs' low
+  halves, and zero-extends explicitly otherwise. P5's restore-into-rax
+  form was the one-line case of this and is gone.
+- P17 keeps the left value in `rdx` when the right operand's lines cannot
+  be renamed because they use `rcx` themselves (an element read through
+  the index helper): `mov rdx, rax / … / add rax, rdx`. It admits only
+  instructions with explicit operands — `cqo` and `idiv` write rdx without
+  naming it, which the first attempt missed and four string tests caught —
+  and a branch into a cold arm. The inline-string arm used `edx` as its
+  length scratch and now uses `r8d`, so the saved value survives it.
+
+Release builds under callgrind, outputs byte-identical:
+
+| workload | before | after | change |
+|---|---:|---:|---:|
+| `fmt` 1.1 MB of prose | 348,973,964 | 336,378,123 | -3.6% |
+| `sort -n` 100k numbers | 392,071,379 | 380,208,261 | -3.0% |
+| `sort` 100k lines | 457,471,084 | 441,670,145 | -3.5% |
+| `ptx -G` 120k words | 1,193,606,927 | 1,161,166,232 | -2.7% |
+| `od -t f8` 64 kB | 64,812,637 | 61,204,398 | -5.6% |
+| `join` | 987,568,225 | 976,165,756 | -1.2% |
+| `cat -A` 3 MB | 120,221,610 | 119,320,164 | -0.7% |
+
+`choose` keeps 23 pairs: a nested operation whose inner one already took
+`rdx`, a value stored to two slots, and the pushes around calls.
+
 ### ls, 2026-09-14, Linux x86-64 (GNU coreutils 9.4, uutils 0.0.24)
 
 The same 4-core container, so read the columns against each other. The
