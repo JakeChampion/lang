@@ -1194,6 +1194,82 @@ function keycompare(c: Conf, text: string, alo: i32, ahi: i32, blo: i32, bhi: i3
   return 0;
 }
 
+// The one-word summary of a `-n` key that orders two spans without a
+// digit walk: the sign, the count of integer digits past leading zeros,
+// and the first fourteen of those digits, laid out so a plain i64
+// comparison agrees with numcompare whenever the words differ. Equal
+// words decide nothing — a fraction, digits past fourteen, and a
+// magnitude of zero (a non-number, or a negative zero) all leave the
+// answer to numcompare.
+function numeric_key(text: string, a0: i32, a1: i32): i64 {
+  var a: i32 = a0;
+  while (a < a1) {
+    var c: i32 = text[a] as i32;
+    if (c != 32 && c != 9 && c != 10) {
+      break;
+    }
+    a = a + 1;
+  }
+  var neg: boolean = a < a1 && text[a] as i32 == 45;
+  if (neg) {
+    a = a + 1;
+  }
+  a = skip_zeros(text, a, a1);
+  var len: i32 = 0;
+  var d: i64 = 0;
+  while (a < a1) {
+    var x: i32 = text[a] as i32;
+    if (x < 48 || x > 57) {
+      break;
+    }
+    if (len < 14) {
+      d = d * (10 as i64) + (x - 48) as i64;
+    }
+    len = len + 1;
+    a = a + 1;
+  }
+  if (len == 0) {
+    return 0 as i64;
+  }
+  if (len >= 32767) {
+    len = 32767;
+    d = 0 as i64;
+  }
+  var key: i64 = len as i64 << 48 as i64 | d;
+  if (neg) {
+    return 0 - key;
+  }
+  return key;
+}
+
+// Whether key `k` is the plain `-n` ordering numeric_key summarises.
+function plain_numeric(k: Key): boolean {
+  return k.numeric && !k.general && !k.human && !k.random;
+}
+
+// `numeric_keys(c, text, spans, n)` — numeric_key of every span of every
+// plain numeric key, indexed like `spans`; zero under any other key.
+function numeric_keys(c: Conf, text: string, spans: i64[], n: i32): i64[] {
+  var out: i64[] = [];
+  var ki: i32 = 0;
+  while (ki < c.keys.len()) {
+    var plain: boolean = plain_numeric(c.keys[ki]);
+    var i: i32 = 0;
+    while (i < n) {
+      var key: i64 = 0 as i64;
+      if (plain) {
+        var sp: i64 = spans[ki * n + i];
+        var lo: i32 = (sp >> 32 as i64) as i32;
+        key = numeric_key(text, lo, lo + (sp & 4294967295 as i64) as i32);
+      }
+      out = out.append(key);
+      i = i + 1;
+    }
+    ki = ki + 1;
+  }
+  return out;
+}
+
 // The key spans found once per line: `spans[k * n + i]` is line i's span
 // under key k. Locating a key is a byte walk over the line, and the sort
 // compares each line log n times, so the walk is done once and a
@@ -1241,18 +1317,26 @@ function compare(c: Conf, text: string, a: i64, b: i64): i32 {
 // out of `spans`. The same decision as compare, written out again rather
 // than shared, because this runs n log n times and nothing here is
 // inlined: a call is most of what a comparison of two short lines costs.
-function compare_at(c: Conf, text: string, lines: i64[], spans: i64[], n: i32, ia: i32, ib: i32): i32 {
-  var a: i64 = lines[ia];
-  var b: i64 = lines[ib];
-  var alo: i32 = (a >> 32 as i64) as i32;
-  var ahi: i32 = alo + (a & 4294967295 as i64) as i32;
-  var blo: i32 = (b >> 32 as i64) as i32;
-  var bhi: i32 = blo + (b & 4294967295 as i64) as i32;
+function compare_at(c: Conf, text: string, lines: i64[], spans: i64[], nkeys: i64[], n: i32, ia: i32, ib: i32): i32 {
   var nk: i32 = c.keys.len();
   if (nk > 0) {
     var i: i32 = 0;
     while (i < nk) {
-      var d: i32 = key_ordered(c, c.keys[i], text, spans[i * n + ia], spans[i * n + ib]);
+      var d: i32 = 0;
+      var ka: i64 = nkeys[i * n + ia];
+      var kb: i64 = nkeys[i * n + ib];
+      // Only a plain numeric key has words that can differ.
+      if (ka != kb) {
+        d = 1;
+        if (ka < kb) {
+          d = 0 - 1;
+        }
+        if (c.keys[i].reverse) {
+          d = 0 - d;
+        }
+      } else {
+        d = key_ordered(c, c.keys[i], text, spans[i * n + ia], spans[i * n + ib]);
+      }
       if (d != 0) {
         return d;
       }
@@ -1262,6 +1346,12 @@ function compare_at(c: Conf, text: string, lines: i64[], spans: i64[], n: i32, i
       return 0;
     }
   }
+  var a: i64 = lines[ia];
+  var b: i64 = lines[ib];
+  var alo: i32 = (a >> 32 as i64) as i32;
+  var ahi: i32 = alo + (a & 4294967295 as i64) as i32;
+  var blo: i32 = (b >> 32 as i64) as i32;
+  var bhi: i32 = blo + (b & 4294967295 as i64) as i32;
   var r: i32 = cmp_bytes(text, alo, ahi, blo, bhi);
   if (c.reverse) {
     return 0 - r;
@@ -1323,9 +1413,11 @@ function sort_lines(c: Conf, text: string, lines: i64[]): i64[] {
   // are. One merge serves both; `keyed` picks the comparison.
   var keyed: boolean = c.keys.len() > 0;
   var spans: i64[] = [];
+  var nkeys: i64[] = [];
   var src: i64[] = lines;
   if (keyed) {
     spans = key_spans(c, text, lines);
+    nkeys = numeric_keys(c, text, spans, n);
     src = index_of(n);
   }
   var dst: i64[] = index_of(n);
@@ -1349,7 +1441,7 @@ function sort_lines(c: Conf, text: string, lines: i64[]): i64[] {
         var lb: i64 = src[b];
         var d: i32 = 0;
         if (keyed) {
-          d = compare_at(c, text, lines, spans, n, lb as i32, la as i32);
+          d = compare_at(c, text, lines, spans, nkeys, n, lb as i32, la as i32);
         } else {
           d = compare(c, text, lb, la);
         }

@@ -35,6 +35,17 @@ func sortCases(t *testing.T) []invocation {
 	empty := catFile(t, dir, "e0", "")
 	blanksFile := catFile(t, dir, "blanks", "  b\n a\nc\n")
 	nums := catFile(t, dir, "nums", "10\n9\n100\n1\n")
+	// Every shape the one-word numeric key summarises or leaves to the
+	// digit walk: signs and blanks, zeros of both signs, fractions,
+	// non-numbers, equal fourteen-digit prefixes, and digit strings past
+	// the width the key's length field holds.
+	numkeys := catFile(t, dir, "numkeys", "5\n-5\n  5\n\t-5\n0\n-0\n.5\n-.5\n0.5\n-0.5\n3\n-3\nx\n+1\n1e2\n--1\n"+
+		"123456789012345678\n123456789012345679\n123456789012345670\n12345678901234\n12345678901235\n"+
+		"99999999999999999999\n100000000000000000000\n-99999999999999999999\n-100000000000000000000\n"+
+		"1.5\n1.25\n1.250\n1.\n1\n007\n7\n-007\n-7\n0.0\n1,000\n999\n"+
+		strings.Repeat("9", 40000)+"\n"+strings.Repeat("8", 40000)+"\n"+strings.Repeat("9", 32767)+"\n"+
+		"1"+strings.Repeat("0", 32766)+"\n1"+strings.Repeat("0", 32767)+"\n-"+strings.Repeat("9", 40000)+"\n-"+strings.Repeat("8", 40000)+"\n"+
+		"b 5\na -5\nc 0\nd 0.5\ne x\nf 12345678901234567\ng 12345678901234568\n")
 	dupes := catFile(t, dir, "dupes", "a\na\nb\nb\nb\nc\n")
 	fields := catFile(t, dir, "fields", "b 2 x\na 3 y\nc 1 z\n")
 	colons := catFile(t, dir, "colons", "b:2:x\na:3:y\nc:1:z\n")
@@ -113,6 +124,14 @@ func sortCases(t *testing.T) []invocation {
 
 		// -n.
 		{name: "numeric", args: []string{"-n", nums}},
+		{name: "numeric key shapes", args: []string{"-n", numkeys}},
+		{name: "numeric key shapes reversed", args: []string{"-rn", numkeys}},
+		{name: "numeric key shapes stable", args: []string{"-sn", numkeys}},
+		{name: "numeric key shapes unique", args: []string{"-un", numkeys}},
+		{name: "numeric key shapes by field", args: []string{"-k2,2n", numkeys}},
+		{name: "numeric key shapes reversed field", args: []string{"-k2,2nr", numkeys}},
+		{name: "numeric key shapes then bytes", args: []string{"-k2n", "-k1,1", numkeys}},
+		{name: "numeric key shapes ignoring blanks", args: []string{"-bn", numkeys}},
 		{name: "numeric long", args: []string{"--numeric-sort", nums}},
 		{name: "numeric signs", args: []string{"-n"}, stdin: "  -1\n  +1\n 0\n1e2\n.5\n-.5\n0.0\n-0\n"},
 		{name: "numeric leading zeros", args: []string{"-n"}, stdin: "007\n7\n0007.0\n"},
