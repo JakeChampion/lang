@@ -713,6 +713,73 @@ function main(): i32 {
     match (b) { Sm(p) => { x = x + p.0 + p.1; }, Nn => { } }
     return x;
 }`},
+	// `use v <- f(args)` writes its continuation with an untyped parameter,
+	// and the trampoline the lift built from it declared none, so the typed
+	// producer refused it ("unresolved result type"). The checker's annotate
+	// pass stamps the callee's callback parameter type on the binding now.
+	// One continuation captures nothing (a `$wrap` trampoline), one captures
+	// its caller's parameter (a `$clo` body), and the string binding is
+	// released. A callee that is a function-typed LOCAL is stamped the same
+	// way, but such a local's type nests a function type and the producer
+	// refuses that slot outright, so no row can reach it yet.
+	{name: "use-binding-takes-the-callee-parameter-type", atLeast: 5, noLeak: true, src: `
+import "core/cmp";
+
+function with_name(n: i32, k: (string) => i32): i32 { return k("name-" + n.to_string()); }
+
+function plain(i: i32): i32 {
+    use s <- with_name(i);
+    return s.len() * 2;
+}
+
+function capturing(i: i32): i32 {
+    use s <- with_name(i);
+    return s.len() + i % 3;
+}
+
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) {
+        t = t + plain(i) + capturing(i);
+        i = i + 1;
+    }
+    return t % 97;
+}`},
+	// A lambda returned from inside a lambda. The lift hoists the outer body
+	// to a declaration of its own, and the pre-worklist rewrite that turns a
+	// source function's ` + "`return <lambda>`" + ` into a boxed slot never
+	// reached it, so the inner lambda stayed a bare function address, which the
+	// producer refuses as a closure value. The worklist rewrites a lifted
+	// body's capture-free tail lambda the same way now; a capturing one stays
+	// with the escaping-closure hoist (#5281). The boxes each call builds are
+	// released.
+	{name: "lambda-returns-a-lambda-from-a-lambda", atLeast: 5, noLeak: true, src: `
+function main(): i32 {
+    var mk = (): ((i32) => i32) => { return (x: i32): i32 => x * 2; };
+    var mk2 = (): (i32) => i32 => { return (x: i32): i32 => x + 3; };
+    var f = mk();
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) {
+        t = t + f(i) + mk2()(i);
+        i = i + 1;
+    }
+    return t % 97;
+}`},
+	// A block-bodied lambda with no result annotation whose body binds through
+	// ` + "`use`" + `, and one whose block yields a tail value.
+	{name: "block-bodied-lambda-with-a-use-binding", atLeast: 4, noLeak: true, src: `
+function give(x: i32, cb: (i32) => i32): i32 { return cb(x); }
+
+function main(): i32 {
+    var bound = (): i32 => {
+        use n <- give(41);
+        return n + 1;
+    };
+    var tail = (x: i32) => { var y: i32 = x + 1; y * 2 };
+    return bound() + tail(3);
+}`},
 	{name: "value-match-first-arm-is-a-match-of-lambdas", atLeast: 8, noLeak: true, src: `
 enum Status { Active, Inactive, Pending }
 function main(): i32 {

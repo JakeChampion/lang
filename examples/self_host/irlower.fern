@@ -73783,6 +73783,21 @@ function desugar_lambda_returns(body: ast.Stmt[], counter: i32, sig: RetSig): De
 // over the source functions cannot have seen — see unwrap_sole_iife_return, its
 // only caller. Returns `body` unchanged when nothing is rewritten, so an
 // unaffected function serializes byte-identically.
+function desugar_lifted_lambda_returns(fd: parser.FuncDecl): parser.FuncDecl {
+    var sig: RetSig = ret_sig_of(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types);
+    var n: i32 = fd.body.len();
+    if (n > 0) {
+        if let ast.StmtReturn(r) = fd.body[n - 1] {
+            if let ast.ExprLambda(lam) = r.value {
+                if (lambda_captures(lam, fd).len() > 0) { return parser.FuncDecl { ...fd, body: desugar_nontail_lambda_returns(fd.body, sig) }; }
+            }
+        }
+    }
+    var ldr: DesugarRet = desugar_lambda_returns(fd.body, 0, sig);
+    if (ldr.counter == 0) { return fd; }
+    return parser.FuncDecl { ...fd, body: ldr.body };
+}
+
 function desugar_nontail_lambda_returns(body: ast.Stmt[], sig: RetSig): ast.Stmt[] {
     var n: i32 = body.len();
     if (n == 0) { return body; }
@@ -78370,6 +78385,11 @@ pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]):
     var wi: i32 = 0;
     while (wi < worklist.len()) {
         var fd: parser.FuncDecl = worklist[wi];
+        // A lifted body is a declaration of its own now, so its `return
+        // <lambda>` takes the `$lamret$N` slot the pre-worklist pass gave a
+        // source function's; a body that pass already rewrote has none left.
+        // A CAPTURING tail lambda stays for hoist_escaping_closure (#5281).
+        fd = desugar_lifted_lambda_returns(fd);
         // 0-pre. Beta-reduce a `return (() => {…})()` sole body (a lifted
         // block-body arrow lambda) so nested lambdas in the block become ordinary
         // statements the lifts below can reach (#nested-capture). Inline, not
