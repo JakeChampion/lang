@@ -1762,3 +1762,38 @@ nested in a branch), and three accept programs run to native's output — every
 primitive with `core/cmp` imported, a struct with its own `to_string`, and a
 program shadowing `i32.to_string`. `TestSelfHostCheckerCodesX86_64` carries
 the E038 rows for `-check`.
+
+## 2026-09-22 — a struct and a variant may share a name, and each position picks its own (#9968)
+
+`struct Empty { n: i32 }` beside `enum Shape { Square(i32), Empty }` is legal,
+and nothing diagnoses it. The self-host keeps both in one struct table keyed
+by the bare name, so every by-name read answered with whichever registered
+first. #9900 fixed the struct-first order at the sites that wanted the
+variant; declared enum-first, the same program was refused the other way
+round: `Empty { n: 3 }` drew `struct Empty has no field "n"` and a missing
+`__ev`, `e.n` the same E043, and the lowering read the variant's layout for a
+struct value.
+
+Native's rule, which it gets from keeping two tables, is now stated and
+applied: a literal, a field read on a value of the type, a receiver type's
+parameters and a layout question ask the **struct** namespace; a call form,
+a pattern and a bare receiver ask the **variant** namespace; either falls back
+to the other only when its own has no entry.
+
+| layer | struct namespace | variant namespace |
+|---|---|---|
+| checker | `Scope.lookup_struct`, `find_struct_sig` — the plain sig first | `Scope.lookup_variant`, `find_variant_sig` — a variant first; `lookup_owned_struct` when the enum is known. `variant_payload_struct`, `bind_variant_payloads`, the match-arm check and `payloadless_binder_diags` moved here |
+| irlower | `stab_struct_first` — the 23 by-name decl readers (`decl_field_index`, `decl_field_count`, `decl_index_of`, the `struct_fields_*` proofs, …) | `variant_decl_index` + `variant_enum_owner`, which a call-form constructor and the TRMC arm constructor now resolve through; `unit_decl_index` for a bare value |
+| semsource | `record_schema` | `type_head`: a name some enum declares as a variant is a value, so `Empty.to_string()` is a method call on the payloadless literal, not an associated call on a struct with no such contract |
+
+The last row is what closes `struct_shares_a_variant_name` on the semantic
+path: its first refusal was `call target has no semantic contract:
+Empty.to_string`, and it now produces all 108 declarations.
+
+### Gate
+
+`conformance/cases/enum_shares_a_struct_name` is the mirror of
+`struct_shares_a_variant_name`: the enum declared first, both collision shapes,
+a literal and a call picking different declarations by their form, a
+struct-update literal, and a struct passed to a function. It runs on native,
+interp and wasm and through the self-host on all three of its legs.

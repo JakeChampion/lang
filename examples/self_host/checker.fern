@@ -2403,20 +2403,45 @@ function (s: Scope) has_struct(name: string): boolean {
   return false;
 }
 
+// lookup_struct answers for the STRUCT namespace: the plain struct named
+// `name`, or, when only enum variants carry the name, the first of those. The
+// table is keyed by the bare name and a plain struct may share one with a
+// variant, so a literal or a field read that took whichever registered first
+// resolved to the variant when the enum was declared above the struct
+// (#9968). A pattern or a constructor call wants the other namespace and asks
+// lookup_variant or lookup_owned_struct.
 function (s: Scope) lookup_struct(name: string): StructSig {
+  var first: i32 = 0 - 1;
   var i: i32 = s.structs.head[sig_name_bucket(name)];
   while (i >= 0) {
     if (s.structs.structs[i].name == name) {
-      return s.structs.structs[i];
+      if (s.structs.structs[i].enum_owner.len() == 0) { return s.structs.structs[i]; }
+      if (first < 0) { first = i; }
     }
     i = s.structs.next[i];
   }
+  if (first >= 0) { return s.structs.structs[first]; }
   // Sentinel: empty name signals "no such struct".
   var empty_n: string[] = [];
   var empty_t: typeinfo.Type[] = [];
   var empty_tp: string[] = [];
   var empty_ftn: string[] = [];
   return StructSig { name: "", field_names: empty_n, field_types: empty_t, type_params: empty_tp, field_type_names: empty_ftn, variant_field_names: empty_n, derives: [], enum_owner: "" };
+}
+
+// lookup_variant answers for the VARIANT namespace: the first enum variant
+// named `name`, or, when no enum declares one, the plain struct of that name
+// — a struct-union's member is a declared struct. An unqualified pattern or
+// a constructor call is a variant first, as native reads it.
+function (s: Scope) lookup_variant(name: string): StructSig {
+  var i: i32 = s.structs.head[sig_name_bucket(name)];
+  while (i >= 0) {
+    if (s.structs.structs[i].name == name && s.structs.structs[i].enum_owner.len() > 0) {
+      return s.structs.structs[i];
+    }
+    i = s.structs.next[i];
+  }
+  return s.lookup_struct(name);
 }
 
 // lookup_owned_struct answers the variant struct `name` DECLARED BY enum
@@ -2444,7 +2469,7 @@ function (s: Scope) lookup_owned_struct(name: string, owner: string): StructSig 
 // parser's variant_struct_index does.
 function variant_payload_struct(s: Scope, type_name: string): StructSig {
   if (dot_index(type_name) < 0) {
-    return s.lookup_struct(type_name);
+    return s.lookup_variant(type_name);
   }
   return s.lookup_owned_struct(variant_pattern_name(type_name), variant_pattern_owner(type_name));
 }
@@ -2576,7 +2601,7 @@ function bind_variant_payloads(arm: Scope, look: Scope, pvin0: ast.PatVariant, w
     // rss.variant_field_names empty, and record_fields_cover would answer
     // false — silently skipping the rebind and the E015 native reports for a
     // renamed or positional-variant record pattern.
-    var rss: StructSig = look.lookup_struct(variant_pattern_name(pv.type_name));
+    var rss: StructSig = variant_payload_struct(look, pv.type_name);
     if (parser.record_fields_cover(rss.variant_field_names, pv.field_names)) {
       pv = parser.rebind_record_positional(pv, rss.variant_field_names);
     }
@@ -4438,7 +4463,7 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
           ast.PatWildcard(_) => {},
           ast.PatVariant(pv) => {
             var pvn: string = variant_pattern_name(pv.type_name);
-            var ss: StructSig = s.lookup_struct(pvn);
+            var ss: StructSig = s.lookup_variant(pvn);
             if (ss.name.len() == 0) {
               ok = false;
             } else {
@@ -7267,12 +7292,19 @@ function mx_stmts(stmts: ast.Stmt[], s: Scope, unions: UnionSig[], enums: parser
 // name_in -> util.has_str (SH-020).
 // find_struct_sig returns the struct sig named `name`, or an empty-named
 // sentinel when there's no such struct.
+// find_struct_sig is lookup_struct over the flat list: the plain struct first,
+// a variant only when no plain struct carries the name (#9968).
 function find_struct_sig(structs: StructSig[], name: string): StructSig {
-  for sd in structs {
-    if (sd.name == name) {
-      return sd;
+  var first: i32 = 0 - 1;
+  var k: i32 = 0;
+  while (k < structs.len()) {
+    if (structs[k].name == name) {
+      if (structs[k].enum_owner.len() == 0) { return structs[k]; }
+      if (first < 0) { first = k; }
     }
+    k = k + 1;
   }
+  if (first >= 0) { return structs[first]; }
   var none: string[] = [];
   var nonet: typeinfo.Type[] = [];
   var none_tp: string[] = [];
@@ -7284,22 +7316,25 @@ function find_struct_sig(structs: StructSig[], name: string): StructSig {
 // a match pattern or a qualified constructor writes (`E.Wrap`). Same rule as
 // lookup_owned_struct on the hash table: the qualifier is not part of the key,
 // it names the enum the decl must be owned by, so two enums declaring one
-// variant name each answer for their own decl. A qualifier nothing claims
-// falls back to the name-only match — which is also what an unqualified
-// spelling gets, its owner not being written down.
+// variant name each answer for their own decl. A qualifier nothing claims,
+// and an unqualified spelling, take the first VARIANT of that name, and the
+// plain struct only when no enum declares one (#9968).
 function find_variant_sig(structs: StructSig[], name: string): StructSig {
   var bare: string = variant_pattern_name(name);
   var owner: string = variant_pattern_owner(name);
-  var fallback: StructSig = find_struct_sig(structs, bare);
-  if (fallback.enum_owner == owner) {
-    return fallback;
+  if (owner.len() > 0) {
+    for sd in structs {
+      if (sd.name == bare && sd.enum_owner == owner) {
+        return sd;
+      }
+    }
   }
   for sd in structs {
-    if (sd.name == bare && sd.enum_owner == owner) {
+    if (sd.name == bare && sd.enum_owner.len() > 0) {
       return sd;
     }
   }
-  return fallback;
+  return find_struct_sig(structs, bare);
 }
 
 // slit_diags recurses through an expression and emits E005 for every
@@ -7952,7 +7987,7 @@ function payload_slot_type_name(ss: StructSig, idx: i32): string {
 // that happens to share a variant's name elsewhere is untouched.
 function payloadless_binder_diags(pv: ast.PatVariant, structs: StructSig[], unions: UnionTable, line: i32, col: i32): util.Diag[] {
   var out: util.Diag[] = [];
-  var ss: StructSig = find_struct_sig(structs, pv.type_name);
+  var ss: StructSig = find_variant_sig(structs, pv.type_name);
   if (ss.name.len() == 0) { return out; }
   var slot: i32 = 0;
   while (slot < pv.extra_bindings.len() + 1) {
@@ -15617,6 +15652,13 @@ pub function scope_type(s: Scope, name: string): typeinfo.Type {
 // module, or the empty-named sentinel when there is none.
 pub function struct_sig(s: Scope, name: string): StructSig {
   return s.lookup_struct(name);
+}
+
+// variant_owner_of is the enum that declares a variant named `name`, or ""
+// when no enum does — the receiver-position question: a bare name both a
+// struct and a variant carry is the variant's value, as native reads it.
+pub function variant_owner_of(s: Scope, name: string): string {
+  return union_of_variant(name, s.unions);
 }
 
 // variant_sig is the declared signature of variant `name` of enum `owner`,
