@@ -174,6 +174,17 @@ and verifies that socket-creation failure leaves existing listeners open.
 These are descriptor ownership checks, not throughput or heap-allocation
 measurements. Listen failure cleanup is not fault-injected by these probes.
 
+## Native TCP send errors
+
+`TestNativeSocketSendSuppressesSIGPIPE` and its self-host twin inherit a real
+TCP socket, shut down its write half, and require 32 consecutive sends to
+return `-EPIPE` without terminating the process. Their Darwin counterparts
+run on native Apple Silicon. Linux covers x86-64 and ARM64, including QEMU,
+with bootstrap flat/SSA and the strict-IR self-host production driver.
+Empty, inline, heap, and 4097-byte payloads also cover successful sends,
+exact received bytes, and invalid-descriptor errno. These tests do not yet
+exercise pending-write buffers or nonblocking backpressure.
+
 ## Generated digest sources
 
 The lint lane runs `make digest-check` on every PR and main push. It compares

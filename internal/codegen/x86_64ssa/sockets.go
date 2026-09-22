@@ -168,13 +168,15 @@ func emitTcpRecvHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
-// emitTcpSendHelper writes tcp_send(fd, s) -> i32: one write(2) of the
-// string, the byte count written or -errno. Leaf.
+// emitTcpSendHelper sends with MSG_NOSIGNAL, returning accepted bytes or -errno.
 func emitTcpSendHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("tcp_send"))
 	w("\tmov edx, %s", memRef("rsi", -4)) // len; fd and data are in place
-	w("\tmov eax, 1")                     // write
+	w("\tmov r10d, 16384")                // MSG_NOSIGNAL
+	w("\txor r8d, r8d")
+	w("\txor r9d, r9d")
+	w("\tmov eax, 44") // sendto
 	w("\tsyscall")
 	w("\tret")
 }

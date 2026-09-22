@@ -675,8 +675,9 @@ remainder splits three ways:
 - **The stdout/stderr leaves** — `print_str`, `print_int`, `putchar`,
   `eprint_str` — **have since moved**, on all three native targets at once. They
   are the cheapest family in the whole migration: one `write(2)` each, whose
-  number is the only per-target constant, and `sysno` already carried it because
-  `tcp_send` uses the same call. `print_str` is `tcp_send` with the fd fixed at 1.
+  number is the only per-target constant. `sysno` already carried it for the
+  original `tcp_send` implementation. Socket sends now use `sendto` with
+  `MSG_NOSIGNAL`; stdout and stderr still use `write`.
 
   The two that need a scratch byte (`putchar`'s character, `eprint_str`'s
   trailing newline) take it from the static `__fern_scratch` rather than the
@@ -979,7 +980,12 @@ versus copying the payload byte-by-byte on every call.
 word is slot 0 of that box, so `__raw_data(s)` lowers to `raw_load_ptr(s, 0)` —
 an op the floor has had since the beginning. It is a lowering entry and a
 checker type, no new op, no kind id, no sweep-list or golden change. `tcp_send`
-is a one-line helper that copies nothing.
+copies nothing. It now calls `sendto` through `__syscall6`, passing a null
+destination for the connected socket and `MSG_NOSIGNAL` (16384 on Linux,
+524288 on Darwin). This returns `-EPIPE` when the write half is closed,
+including an empty send, without changing the process's signal disposition.
+The result is the number of bytes accepted by that call, which may be short;
+callers must retain the unsent suffix.
 
 The lesson generalises past this leaf: "the floor cannot express X" is a claim
 about the floor's *reach*, and the reach of a set of primitives is not the union
@@ -1023,8 +1029,10 @@ hand-asm's `csel ... ge` did.
 All three are cheap to repeat, so they are worth naming.
 
 **Do not read arity off the registers a hand-asm body touches.** That gave
-`tcp_send` and `proc_exec` six arguments each; both are three, and the extra
-registers are scratch in their byte-copy loops.
+the original `tcp_send` and `proc_exec` six arguments each; both used
+three-argument syscalls, with extra registers serving their byte-copy loops.
+The later `tcp_send` move to six-argument `sendto` adds per-send SIGPIPE
+suppression, a separate requirement from that original audit.
 
 **Do not audit one target and generalise.** The first version of this table was
 read off the x86-64 bodies alone and got three rows wrong, because arm64 Linux

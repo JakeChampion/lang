@@ -247,6 +247,7 @@ const (
 	sysSocket  = 41
 	sysConnect = 42
 	sysAccept  = 43
+	sysSendto  = 44
 	sysBind    = 49
 	sysListen  = 50
 	// getsockname(2): the only way to read the port the kernel picked for
@@ -13331,12 +13332,8 @@ func (g *generator) emitTcpRecvRuntime() {
 	g.line(".size __fern_tcp_recv, .-__fern_tcp_recv")
 }
 
-// emitTcpSendRuntime emits `__fern_tcp_send(fd, data)` —
-// writes the full length-prefixed string to the socket.
-// Returns the byte count or -errno on the first write.
-// Single write(2) call — no buffering / partial-write loop;
-// callers needing >page-sized payloads should chunk
-// themselves.
+// emitTcpSendRuntime emits one socket send with MSG_NOSIGNAL.
+// Returns accepted bytes or -errno; callers retain any unsent suffix.
 func (g *generator) emitTcpSendRuntime() {
 	g.line("")
 	g.line(".globl __fern_tcp_send")
@@ -13350,7 +13347,10 @@ func (g *generator) emitTcpSendRuntime() {
 	g.emit("sub rsp, 16")
 	g.emitStrLen("edx", "rsi")                  // length from data
 	g.emitStrDataPtr("rsi", "rsi", "[rbp - 8]") // byte pointer for syscall
-	g.emitSyscall(sysWrite)
+	g.emit("mov r10d, 16384")                   // MSG_NOSIGNAL
+	g.emit("xor r8d, r8d")                      // destination is already connected
+	g.emit("xor r9d, r9d")
+	g.emitSyscall(sysSendto)
 	g.emit("add rsp, 16")
 	g.emit("pop rbp")
 	g.emit("ret")

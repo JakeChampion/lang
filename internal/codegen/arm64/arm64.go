@@ -167,6 +167,7 @@ var linuxDarwinSysno = map[string][2]int{
 	"listen":      {sysListen, darListen},
 	"accept":      {sysAccept, darAccept},
 	"connect":     {sysConnect, darConnect},
+	"sendto":      {206, 133},
 	"getsockname": {sysGetsockname, darGetsockname},
 	"openat":      {sysOpenat, darOpenat},
 	// fcntl(2) — Linux asm-generic 25, Darwin BSD 92. Backs the open
@@ -6419,14 +6420,23 @@ func (g *generator) emitTcpRecvRuntime() {
 	g.line(".ltorg")
 }
 
-// emitTcpSendRuntime emits `__fern_tcp_send(fd, data)` —
-// writes the entire string to the fd via `write(2)`. Returns
-// the syscall result (bytes written or `-errno`).
+// emitTcpSendRuntime emits one socket send with MSG_NOSIGNAL.
+// Returns accepted bytes or -errno; callers retain any unsent suffix.
 func (g *generator) emitTcpSendRuntime() {
 	g.line("")
 	g.line(".global __fern_tcp_send")
 	g.typeDirective("__fern_tcp_send")
 	g.label("__fern_tcp_send")
+	send := func() {
+		if g.darwin {
+			g.emit("mov x3, #524288") // Darwin MSG_NOSIGNAL
+		} else {
+			g.emit("mov x3, #16384") // Linux MSG_NOSIGNAL
+		}
+		g.emit("mov x4, #0") // destination is already connected
+		g.emit("mov x5, #0")
+		g.syscall("sendto")
+	}
 	if ast.UseTwoWordStrings(8) {
 		// x0 = fd, x1 = data, x2 = len.
 		g.emit("stp x29, x30, [sp, #-48]!")
@@ -6436,7 +6446,7 @@ func (g *generator) emitTcpSendRuntime() {
 		g.emitStrDataPtr2W("x1", "x1", "x2", 16) // x1 = byte ptr
 		g.emit("mov w0, w3")                     // x0 = fd
 		g.emit("mov x2, x4")                     // x2 = byte length
-		g.syscall("write")
+		send()
 		g.emit("ldp x29, x30, [sp], #48")
 		g.emit("ret")
 		g.sizeDirective("__fern_tcp_send")
@@ -6448,7 +6458,7 @@ func (g *generator) emitTcpSendRuntime() {
 	g.emit("mov x29, sp")
 	g.emitStrLen("w2", "x1")
 	g.emitStrDataPtr("x1", "x1", 16)
-	g.syscall("write")
+	send()
 	g.emit("ldp x29, x30, [sp], #32")
 	g.emit("ret")
 	g.sizeDirective("__fern_tcp_send")

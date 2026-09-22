@@ -3367,14 +3367,16 @@ func emitTcpRecvHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
-// emitTcpSendHelper writes tcp_send(fd, data) → i32: write(2) the whole
-// single-word string to the fd; returns the byte count written or -errno. Leaf.
+// emitTcpSendHelper sends with MSG_NOSIGNAL, returning accepted bytes or -errno.
 // x0=fd, x1=data (single-word string; length at [data-4]).
 func emitTcpSendHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("tcp_send"))
 	w("\tldur w2, [x1, #-4]") // byte length
-	w("\tmov x8, #64")        // write (x0=fd, x1=data already in place)
+	w("\tmov x3, #16384")     // MSG_NOSIGNAL
+	w("\tmov x4, #0")
+	w("\tmov x5, #0")
+	w("\tmov x8, #206") // sendto (x0=fd, x1=data already in place)
 	w("\tsvc #0")
 	w("\tret")
 }
