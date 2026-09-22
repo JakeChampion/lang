@@ -5558,7 +5558,8 @@ function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
     s = helper_call_needs(ins.str, s);
     s = ssa_read(reg_of, ins.args[0], "%r11", s);
     var p: string = ssa_src(reg_of, ins.args[0], "%r11");
-    var done: string = lp + "rc" + util.i32_to_string(ins.result);
+    var done: string = lp + "rcinc" + util.i32_to_string(ins.result);
+    if (ins.str == "__fern_rc_is_unique") { done = lp + "rcuniq" + util.i32_to_string(ins.result); }
     var rc: string = "-8(" + p + ")";
     var guard: string = "    testb $1, " + ssa_r8(p) + "\n    jnz " + done + "\n"
         + "    cmpq $0x10000, " + p + "\n    jb " + done + "\n";
@@ -5865,15 +5866,17 @@ struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave:
 // SsaFuse is a block's compare consumed as flags by its branch: `n` trailing
 // instructions (the compare, and the `not` between it and the branch when
 // `inverted`) are not materialised; the branch tests the condition of
-// compare `tag` on operands `a` and `b` instead. n is 0 when the block ends
-// some other way.
+// compare `tag` on operands `a` and `b` instead. A `not` of a plain boolean
+// fuses too: `tag` is 0, the branch tests `a` for zero and takes the true
+// edge when it is. n is 0 when the block ends some other way.
 struct SsaFuse { n: i32, tag: i32, inverted: boolean, a: i32, b: i32 }
 
 function ssa_no_fuse(): SsaFuse { return SsaFuse { n: 0, tag: 0, inverted: false, a: 0, b: 0 }; }
 
 // ssa_fuse finds the compare a block's brif can read as flags: the block's
 // last instruction is an integer compare read only by the branch, or a `not`
-// read only by the branch whose operand is such a compare read only by it.
+// read only by the branch whose operand is such a compare read only by it. A
+// `not` over anything else is the value test with the edges swapped.
 function ssa_fuse(fr: SsaFrame, blk: ssa.SBlock): SsaFuse {
     var t: ssa.STerm = blk.term;
     if (t.kind_tag != 3 || t.t == t.f || blk.insts.len() == 0) { return ssa_no_fuse(); }
@@ -5883,9 +5886,11 @@ function ssa_fuse(fr: SsaFrame, blk: ssa.SBlock): SsaFuse {
     var n: i32 = 1;
     var inverted: boolean = false;
     if (last.kind_tag == 10 && last.str == "!") {
-        if (blk.insts.len() < 2) { return ssa_no_fuse(); }
+        var value_test: SsaFuse = SsaFuse { n: 1, tag: 0, inverted: true, a: last.args[0], b: 0 };
+        if (blk.insts.len() < 2) { return value_test; }
         cmp = blk.insts[blk.insts.len() - 2];
-        if (cmp.result != last.args[0] || fr.uses[cmp.result] != 1) { return ssa_no_fuse(); }
+        if (cmp.result != last.args[0] || fr.uses[cmp.result] != 1) { return value_test; }
+        if (cmp.kind_tag != 9 || !ircore.is_int_cmp_kind(ir.kind_id(cmp.str))) { return value_test; }
         n = 2;
         inverted = true;
     }
@@ -6104,7 +6109,8 @@ function ssa_jump(lp: string, to: i32, next: i32, s: asmcore.EmitState): asmcore
 }
 
 // ssa_brif branches on a value, or on the flags a fused compare left (fu.n
-// above 0), in which case the false edge is the compare's inverse. An edge
+// above 0), in which case the false edge is the compare's inverse; a fused
+// `not` (fu.tag 0) is the value test with the edges swapped. An edge
 // whose target has phis lands on a stub carrying that edge's moves, since
 // the moves of the two edges differ.
 function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp: string, next: i32, fu: SsaFuse, s: asmcore.EmitState): asmcore.EmitState {
@@ -6123,13 +6129,16 @@ function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
     // moves, branch on the condition itself and fall through.
     if (!stub && t.f == next && !ssa_has_phis(f, fr, t.t)) {
         var tl: string = lp + util.i32_to_string(t.t);
+        if (fu.n > 0 && fu.tag == 0) { return s.write("    testq %r11, %r11\n    jz " + tl + "\n"); }
         if (fu.n > 0) { return s.write("    " + ir_cmp_jcc(fu.tag, !fu.inverted) + " " + tl + "\n"); }
         return s.write("    testq %r11, %r11\n    jnz " + tl + "\n");
     }
-    if (fu.n > 0) {
-    s = s.write("    " + ir_cmp_jcc(fu.tag, fu.inverted) + " " + fl + "\n");
+    if (fu.n > 0 && fu.tag == 0) {
+        s = s.write("    testq %r11, %r11\n    jnz " + fl + "\n");
+    } else if (fu.n > 0) {
+        s = s.write("    " + ir_cmp_jcc(fu.tag, fu.inverted) + " " + fl + "\n");
     } else {
-    s = s.write("    testq %r11, %r11\n    jz " + fl + "\n");
+        s = s.write("    testq %r11, %r11\n    jz " + fl + "\n");
     }
     s = ssa_phi_moves(f, fr, reg_of, blk.id, t.t, s);
     if (stub) {
@@ -6210,7 +6219,9 @@ function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, r: irlower
             if (ins.kind_tag != 6 && ins.kind_tag != 8) { s = ssa_inst(ins, reg_of, lp, fr, r, s); }
             ii = ii + 1;
         }
-        if (fu.n > 0) {
+        if (fu.n > 0 && fu.tag == 0) {
+            s = ssa_load(reg_of, fu.a, "%r11", s);
+        } else if (fu.n > 0) {
             s = ssa_read(reg_of, fu.a, "%r11", s);
             s = ssa_read_rhs(fr, reg_of, fu.b, "%rcx", s);
             s = s.write("    cmpq " + ssa_rhs(fr, reg_of, fu.b, "%rcx") + ", " + ssa_src(reg_of, fu.a, "%r11") + "\n");

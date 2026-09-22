@@ -113,10 +113,11 @@ func TestSelfHostProcExecAsIRArm64(t *testing.T) {
 			if len(asm) == 0 {
 				t.Fatal("self-host arm64 compiler emitted 0 bytes")
 			}
-			for _, want := range []string{"bl __fn___fern_proc_exec_as", "mov x0, #221"} {
-				if !strings.Contains(asm, want) {
-					t.Errorf("emitted arm64 asm missing %q", want)
-				}
+			if !strings.Contains(asm, "bl __fn___fern_proc_exec_as") {
+				t.Error("emitted arm64 asm missing the __fn___fern_proc_exec_as call")
+			}
+			if !arm64Imm(asm, "221") {
+				t.Error("emitted arm64 asm does not materialise the execve number (221)")
 			}
 			cmd := runArm64Bin(qemu, buildBinArm64(t, arm64gcc, dir, "procexecas_"+tc.name, asm))
 			_ = cmd.Run()

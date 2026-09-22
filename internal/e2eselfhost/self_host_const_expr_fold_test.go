@@ -142,21 +142,21 @@ func TestSelfHostConstExprFoldShape(t *testing.T) {
 	for _, tc := range []struct {
 		target  string
 		extra   []string
-		want    string   // the single constant the whole expression becomes
+		want    string   // the single constant the whole expression becomes (a pattern)
 		arith   []string // what the opaque twin emits and the folded one must not
 		backend string
 	}{
 		{
 			target:  "x86-64-linux",
-			want:    "movl $63, %eax",
-			arith:   []string{"addq $6, %rax", "imulq $9, %rax, %rax"},
+			want:    `movl \$63, %e[a-z0-9]+`,
+			arith:   []string{`addq \$6, %r[a-z0-9]+`, `imulq \$9, %r[a-z0-9]+, %r[a-z0-9]+`},
 			backend: "asm_ir.fern",
 		},
 		{
 			target:  "arm64-linux",
 			extra:   []string{"-target", "arm64-linux"},
-			want:    "mov x0, #63",
-			arith:   []string{"add x0, x0, #6", "mul x0, x0, x1"},
+			want:    `mov x[0-9]+, #63`,
+			arith:   []string{`add x[0-9]+, x[0-9]+, #6`, `mul x[0-9]+, x[0-9]+, x[0-9]+`},
 			backend: "asm_arm64_ir.fern",
 		},
 	} {
@@ -164,15 +164,15 @@ func TestSelfHostConstExprFoldShape(t *testing.T) {
 			asm := string(runCapture(t, gcc, runner, driverBin, src, tc.extra...))
 			folded := asmFuncBody(t, asm, "__fn_folded")
 			opaque := asmFuncBody(t, asm, "__fn_opaque")
-			if !strings.Contains(folded, tc.want) {
+			if !matchShape(folded, tc.want) {
 				t.Errorf("%s emitted no %q for `(1 + 2 * 3) * (4 + 5)`:\n%s", tc.backend, tc.want, folded)
 			}
 			for _, a := range tc.arith {
-				if strings.Contains(folded, a) {
+				if matchShape(folded, a) {
 					t.Errorf("%s still emits %q for a wholly constant expression; the fold\n"+
 						"is not seeing through the width normalise between the operands:\n%s", tc.backend, a, folded)
 				}
-				if !strings.Contains(opaque, a) {
+				if !matchShape(opaque, a) {
 					t.Errorf("%s emits no %q for the OPAQUE twin either, so the assertion\n"+
 						"above proves nothing — update the expected mnemonic:\n%s", tc.backend, a, opaque)
 				}

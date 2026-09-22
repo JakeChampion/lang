@@ -159,7 +159,7 @@ func TestSelfHostRcAliasIncX86_64(t *testing.T) {
 	t.Run("emits-retain-at-alias", func(t *testing.T) {
 		asm := runCapture(t, gcc, runner, driverBin,
 			[]byte("function main(): i32 { var xs: i32[] = [1, 2]; var ys = xs; return ys[0] + xs[1]; }"))
-		if !strings.Contains(string(asm), "call __fn___fern_rc_inc") {
+		if rcIncSites(string(asm)) == 0 {
 			t.Errorf("expected a retain (__fern_rc_inc) at the live-source array alias; not found in emitted asm")
 		}
 	})
@@ -171,7 +171,7 @@ func TestSelfHostRcAliasIncX86_64(t *testing.T) {
 	t.Run("elides-retain-at-move-alias", func(t *testing.T) {
 		asm := runCapture(t, gcc, runner, driverBin,
 			[]byte("function main(): i32 { var xs: i32[] = [1, 2]; var ys = xs; return ys[0]; }"))
-		if strings.Contains(string(asm), "call __fn___fern_rc_inc") {
+		if rcIncSites(string(asm)) > 0 {
 			t.Errorf("expected NO retain at the move-alias (the source's last mention transfers); found __fern_rc_inc in emitted asm")
 		}
 	})
@@ -180,7 +180,7 @@ func TestSelfHostRcAliasIncX86_64(t *testing.T) {
 	t.Run("emits-retain-at-field-alias", func(t *testing.T) {
 		asm := runCapture(t, gcc, runner, driverBin,
 			[]byte("struct H { items: i32[] } function main(): i32 { var h: H = H { items: [1, 2] }; var y = h.items; return y[0]; }"))
-		if !strings.Contains(string(asm), "call __fn___fern_rc_inc") {
+		if rcIncSites(string(asm)) == 0 {
 			t.Errorf("expected a retain (__fern_rc_inc) at the struct-field array alias; not found in emitted asm")
 		}
 	})
@@ -242,7 +242,7 @@ func TestSelfHostRcReassignX86_64(t *testing.T) {
 	t.Run("emits-retain-and-release", func(t *testing.T) {
 		asm := string(runCapture(t, gcc, runner, driverBin,
 			[]byte("function main(): i32 { var xs: i32[] = [1, 2]; var ys: i32[] = [3, 4]; ys = xs; return ys[0]; }")))
-		if !strings.Contains(asm, "call __fn___fern_rc_inc") {
+		if rcIncSites(asm) == 0 {
 			t.Errorf("expected a retain (__fern_rc_inc) for the reassigned alias")
 		}
 		if !strings.Contains(asm, "call __fn___fern_arr_dec") {
@@ -392,14 +392,14 @@ func TestSelfHostRcMoveOnReturnX86_64(t *testing.T) {
 	t.Run("emits-no-inc-on-move", func(t *testing.T) {
 		asm := string(runCapture(t, gcc, runner, driverBin,
 			[]byte("function make(): i32[] { var xs: i32[] = [1, 2, 3]; return xs; } function main(): i32 { var ys = make(); return ys[0]; }")))
-		if strings.Contains(asm, "call __fn___fern_rc_inc") {
+		if rcIncSites(asm) > 0 {
 			t.Errorf("move-on-return should elide the retain inc, but found call __fn___fern_rc_inc")
 		}
 	})
 	t.Run("emits-inc-when-not-moved", func(t *testing.T) {
 		asm := string(runCapture(t, gcc, runner, driverBin,
 			[]byte("struct H { items: i32[] } function get(h: H): i32[] { return h.items; } function main(): i32 { var hh: H = H { items: [4, 5, 6] }; var ys = get(hh); return ys[0]; }")))
-		if !strings.Contains(asm, "call __fn___fern_rc_inc") {
+		if rcIncSites(asm) == 0 {
 			t.Errorf("returning a non-local array expression should still emit the retain inc")
 		}
 	})
@@ -577,7 +577,7 @@ func TestSelfHostRcConstructX86_64(t *testing.T) {
 	t.Run("emits-retain-at-field-init", func(t *testing.T) {
 		asm := string(runCapture(t, gcc, runner, driverBin,
 			[]byte("struct H { items: i32[] } function main(): i32 { var xs: i32[] = [1, 2]; var h: H = H { items: xs }; return h.items[0] + xs[1]; }")))
-		if !strings.Contains(asm, "call __fn___fern_rc_inc") {
+		if rcIncSites(asm) == 0 {
 			t.Errorf("expected a retain (__fern_rc_inc) at the struct field init of an aliased local")
 		}
 	})
@@ -588,7 +588,7 @@ func TestSelfHostRcConstructX86_64(t *testing.T) {
 	t.Run("no-retain-when-the-field-init-moves", func(t *testing.T) {
 		asm := string(runCapture(t, gcc, runner, driverBin,
 			[]byte("struct H { items: i32[] } function main(): i32 { var xs: i32[] = [1, 2]; var h: H = H { items: xs }; return h.items[0]; }")))
-		if strings.Contains(asm, "call __fn___fern_rc_inc") {
+		if rcIncSites(asm) > 0 {
 			t.Errorf("a moved local needs no retain at the field init — the box takes over its reference (#6726)")
 		}
 	})
@@ -834,7 +834,7 @@ func TestSelfHostRcStructArrayFieldDropX86_64(t *testing.T) {
 		if !strings.Contains(asm, "call __fn___fern_arr_dec") {
 			t.Errorf("expected a struct-array field buffer drop (__fern_arr_dec) at struct reclamation; not found")
 		}
-		if !strings.Contains(asm, "call __fn___fern_rc_is_unique") {
+		if rcIsUniqueSites(asm) == 0 {
 			t.Errorf("expected the element-walk sole-owner gate (__fern_rc_is_unique) at the struct-array field drop; not found")
 		}
 	})

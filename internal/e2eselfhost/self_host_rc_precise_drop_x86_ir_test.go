@@ -1359,7 +1359,7 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 	// rather than by an end-to-end case.
 	t.Run("self-overwrite-guard-emitted", func(t *testing.T) {
 		asm := emit(t, `struct Point { x: i32, y: i32 } function main(): i32 { var d = Point { x: 3, y: 4 }; var c = Point { ...d, x: 10 }; return c.x + c.y; }`)
-		if !strings.Contains(asm, "call __fn___fern_rc_is_unique") {
+		if rcIsUniqueSites(asm) == 0 {
 			t.Error("self-overwrite reuse site emitted no __fern_rc_is_unique guard")
 		}
 		if !strings.Contains(asm, "call __fn___fern_alloc_reuse") {
@@ -1379,7 +1379,7 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 	// here and at scale by the self-compile fixpoints.
 	t.Run("inarm-reuse-guard-emitted", func(t *testing.T) {
 		asm := emit(t, `enum E { V(i32, i32), W(i32, i32) } function go(): i32 { var x = V(3, 4); var y = match (x) { V(a, b) => W(a + 1, b + 1), W(c, d) => V(c, d) }; var r = match (y) { V(a, b) => a + b, W(c, d) => c + d }; return r; } function main(): i32 { return go(); }`)
-		if !strings.Contains(asm, "call __fn___fern_rc_is_unique") {
+		if rcIsUniqueSites(asm) == 0 {
 			t.Error("in-arm match reuse site emitted no __fern_rc_is_unique guard")
 		}
 		if !strings.Contains(asm, "call __fn___fern_alloc_reuse") {

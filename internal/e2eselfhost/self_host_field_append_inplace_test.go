@@ -1312,24 +1312,25 @@ function main(): i32 {
 
 	body := asmFuncBody(t, string(runCaptureStrictIR(t, gcc, runner, driverBin, []byte(src), "-ir")), "__fn_outer")
 	lines := strings.Split(body, "\n")
-	slotRe := regexp.MustCompile(`^\s*movq %rax, (-\d+\(%rbp\))$`)
-	pushRe := regexp.MustCompile(`^\s*pushq (-\d+\(%rbp\))$`)
+	// The retained buffer is the operand pushed for the retain call — a
+	// register the allocator chose, or a spill slot — and the release must
+	// push the same one.
+	pushRe := regexp.MustCompile(`^\s*pushq (%r[a-z0-9]+|-\d+\(%rbp\))$`)
 
 	held := ""
 	for i, ln := range lines {
 		if !strings.Contains(ln, "call __fn___fern_rc_inc") {
 			continue
 		}
-		for j := i - 1; j >= 0 && j > i-6; j-- {
-			if m := slotRe.FindStringSubmatch(lines[j]); m != nil {
+		if i > 0 {
+			if m := pushRe.FindStringSubmatch(lines[i-1]); m != nil {
 				held = m[1]
-				break
 			}
 		}
 		break
 	}
 	if held == "" {
-		t.Fatalf("no bracket retain capturing a slot in __fn_outer; body:\n%s", body)
+		t.Fatalf("no bracket retain of a pushed operand in __fn_outer; body:\n%s", body)
 	}
 	for i, ln := range lines {
 		if !strings.Contains(ln, "call __fn___fern_arr_dec") {
@@ -1337,7 +1338,7 @@ function main(): i32 {
 		}
 		m := pushRe.FindStringSubmatch(lines[i-1])
 		if m == nil {
-			t.Fatalf("bracket release is not a plain load of a captured slot (got %q); body:\n%s", strings.TrimSpace(lines[i-1]), body)
+			t.Fatalf("bracket release is not a plain push of the retained operand (got %q); body:\n%s", strings.TrimSpace(lines[i-1]), body)
 		}
 		if m[1] != held {
 			t.Fatalf("bracket released %s but retained %s; body:\n%s", m[1], held, body)

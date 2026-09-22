@@ -118,7 +118,7 @@ func uniqueTestBeforeCallInFn(asm, label, callLine string) bool {
 	if end < 0 {
 		return false
 	}
-	return strings.Contains(body[:end], "__fern_rc_is_unique")
+	return rcIsUniqueSites(body[:end]) > 0
 }
 
 func TestSelfHostFieldOwnMoveIRArm64(t *testing.T) {

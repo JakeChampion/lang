@@ -85,28 +85,6 @@ func shapeFnBody(t *testing.T, asm, name string) string {
 	return m[1]
 }
 
-// matchShape reports whether body matches pattern. RE2 has no back-references,
-// so a pattern's `\1` (the register its first group captured, where two
-// operands must agree) is resolved by hand: every match of the pattern with
-// the back-references loosened to any operand proposes the registers, and the
-// pattern is re-run with those spelled out.
-func matchShape(body, pattern string) bool {
-	backref := regexp.MustCompile(`\\([1-9])`)
-	if !backref.MatchString(pattern) {
-		return regexp.MustCompile(pattern).MatchString(body)
-	}
-	loose := regexp.MustCompile(backref.ReplaceAllString(pattern, `[^\s,]+`))
-	for _, m := range loose.FindAllStringSubmatch(body, -1) {
-		exact := backref.ReplaceAllStringFunc(pattern, func(ref string) string {
-			return regexp.QuoteMeta(m[int(ref[1]-'0')])
-		})
-		if regexp.MustCompile(exact).MatchString(body) {
-			return true
-		}
-	}
-	return false
-}
-
 // shapeCase is one program with, per function, the line patterns its body
 // must match and the ones it must not.
 type shapeCase struct {
@@ -184,7 +162,7 @@ function main(): i32 {
 				"less":   {`\n    cmpq \$7, %r[a-z0-9]+\n`},
 			},
 			lacks: map[string][]string{
-				"bump":   {`\$1, %e`, `addq %r[a-z0-9]+, %r`, `pushq`},
+				"bump":   {`\$1, %e`, `addq %r[a-z0-9]+, %r`, `popq`},
 				"scaled": {`\$10, %e`, `imulq %r[a-z0-9]+, %r`},
 				"masked": {`\$6, %e`, `andq %r[a-z0-9]+, %r`},
 				"less":   {`\$7, %e`, `cmpq %r[a-z0-9]+, %r`},

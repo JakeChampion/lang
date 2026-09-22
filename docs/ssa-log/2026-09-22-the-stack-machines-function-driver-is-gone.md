@@ -129,9 +129,35 @@ a `mov` and a register subtract. A per-op predicate in `imm_operands` is
 the shape of the fix; the gate pins the boundary at 4095 meanwhile.
 
 The arm64 sysno assertions (`TestSelfHostSignalDispositionIRArm64`,
-`TestSelfHostPollIRArm64`) read `mov x0, #N` followed by its push, the
-stack machine's operand shape; they now read the number materialised in
-whichever register the allocator chose and that register pushed.
+`TestSelfHostPollIRArm64`, the subprocess, fork, exec, sysinfo and
+darwinized-helper tests) read `mov x0, #N` followed by its push, the stack
+machine's operand shape; they now read the number materialised in whichever
+register the allocator chose (`arm64Imm`, `pushedImm`).
+
+## What the driver's tests were really pinning
+
+`asm_ir_run`, the driver most of `internal/e2eselfhost` emits through, went
+through the stack machine until this change, so every shape gate written
+against it pinned the stack machine's output even after the register path
+became the CLI's default. Re-reading them against the register path found
+one selection gap and one blind spot in the gates themselves:
+
+- **`if (!flag)` was not fused.** `ssa_fuse` read a `not` over a compare as
+  the inverted compare, but a `not` over a plain boolean was materialised
+  (`test; setz; movzbq` / `cmp #0; cset eq`) and then tested again by the
+  branch. It now fuses as the value test with the edges swapped (`fu.tag`
+  0), on both ISAs — `TestSelfHostCmpBranchFusion`'s not-only shape.
+- **The rc primitives are inline.** `rc_inc` and `rc_is_unique` are
+  rendered at the site (`ssa_rc_prim`), so a gate counting
+  `call __fn___fern_rc_inc` saw zero retains where the code had one. The
+  inline forms' labels now name the primitive (`_rcinc<N>`, `_rcuniq<N>`),
+  and `rcIncSites` / `rcIsUniqueSites` count calls and inline forms alike.
+
+The literal-pool range fixture (`TestSelfHostArm64LitPoolRange`) dropped
+from past the LDR reach to 4,847 words: its 76,000 constants were bound to
+locals nothing read, which the stack machine stored and the register path
+does not emit. Each constant is now read through a parameter the fold cannot
+see.
 
 ## Found on the way
 
