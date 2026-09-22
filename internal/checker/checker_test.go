@@ -127,6 +127,110 @@ function main(): i32 { return apply(7, (x: i32) => x + 1); }`,
 	}
 }
 
+// The remedy E040 names has to WORK. A method on a generic receiver carries
+// the receiver's type parameters ahead of its own in one list, and a written
+// `[i32]` bound that list from the front — so the advised `.pair[i32](...)`
+// pinned the RECEIVER's first parameter, left the method's own as unbound as
+// before, and the same E040 came back (#9896). A short written list now names
+// the method's own parameters; a full one still means the whole list.
+//
+// The inference half is here too: `Full(9)` pins the payload's T and says
+// nothing about E, so without the destination it answered with a bare `Box`
+// that bound U nowhere — E040 on a call that needs no annotation at all.
+func TestMethodTypeArgsNameTheMethodsOwnParams(t *testing.T) {
+	const decls = `enum Box[T, E] { Full(T), Blank(E) }
+struct Pair[T, E] { a: T, b: E }
+function (b: Box[T, E]) pair[U](other: Box[U, E]): Box[U, E] { return other; }
+function (p: Pair[T, E]) pick[U](x: U): U { return x; }
+function take(b: Box[i32, string]): i32 {
+    match (b) {
+        Full(n) => { return n; },
+        Blank(s) => { return s.len(); }
+    }
+}
+`
+	ok := []string{
+		// Inference alone: the parameter's `Box[U, E]` has E settled from the
+		// receiver, so the payload settles U.
+		`function main(): i32 { var b: Box[i32, string] = Full(5); return take(b.pair(Full(9))); }`,
+		// The spelling E040 advises.
+		`function main(): i32 { var b: Box[i32, string] = Full(5); return take(b.pair[i32](Full(9))); }`,
+		// A full list still means the whole list, receiver parameters first.
+		`function main(): i32 { var b: Box[i32, string] = Full(5); return take(b.pair[i32, string, i32](Full(9))); }`,
+		// A STRUCT receiver reaches the same rule by a different route: its
+		// dispatch replaces the call's type arguments with the receiver's
+		// before any of this runs, so the written list has to be read from
+		// what the source wrote rather than from what is left there.
+		`function main(): i32 { var p: Pair[i32, string] = Pair[i32, string] { a: 1, b: "x" }; return p.pick[i32](5); }`,
+		// And with nothing written, the receiver's arguments still name the
+		// leading parameters.
+		`function main(): i32 { var p: Pair[i32, string] = Pair[i32, string] { a: 1, b: "x" }; return p.pick(5); }`,
+	}
+	for _, src := range ok {
+		if err := checkSource(t, decls+src); err != nil {
+			t.Errorf("should type-check, got: %v\nsrc: %s", err, src)
+		}
+	}
+	// The destination fills what the payload left OPEN — it does not overrule
+	// what the payload pinned. `Ok(n)` with an i32 `n` returned as
+	// `Result[i64, i32]` pins T = i32 from the payload while the destination
+	// says i64, and the widening that settles that runs downstream of the
+	// constructor, reached only while the type is still incomplete. Completing
+	// it from the contradicting destination answered `Result[i32, i32]` and
+	// turned the return into a type error (the interp oracle of
+	// TestSelfHostOptMakeI64IRWasm, which is where this showed up).
+	widening := `function g(n: i32): Result[i64, i32] { return Ok(n); }
+function main(): i32 { match (g(40)) { Ok(v) => { return (v / 8) as i32; }, Err(e) => { return e; } } }`
+	if err := checkSource(t, widening); err != nil {
+		t.Errorf("an i32 payload widening to its destination's i64 should type-check, got: %v", err)
+	}
+
+	// A short list still has to be CHECKED against the argument: naming the
+	// method's own parameter is not the same as ignoring it. And the report
+	// names what the parameter came to MEAN — `Box[string, string]`, the
+	// written U with E from the receiver — rather than the declared
+	// `Box[U, E]`, which says nothing about why this argument was refused.
+	badSrc := `function main(): i32 { var b: Box[i32, string] = Full(5); return take(b.pair[string](Full(9))); }`
+	err := checkSource(t, decls+badSrc)
+	if err == nil {
+		t.Fatalf("a written type argument the argument contradicts should not type-check")
+	}
+	if !strings.Contains(err.Error(), "expected Box[string, string], got Box[i32, string]") {
+		t.Errorf("error %q does not name the substituted parameter type", err.Error())
+	}
+	// It has to stay a refusal when the mistyped value has a destination that
+	// accepts it: completing the constructor from the destination is what
+	// surfaces the contradiction, and the numeric-widening exception above must
+	// not swallow this one.
+	annotated := `function main(): i32 {
+    var b: Box[i32, string] = Full(5);
+    var x: Box[string, string] = b.pair[string](Full(9));
+    match (x) { Full(s) => { return s.len(); }, Blank(e) => { return e.len(); } }
+}`
+	if err := checkSource(t, decls+annotated); err == nil {
+		t.Errorf("an i32 payload reaching a Box[string, string] should not type-check")
+	}
+	// Arity is the WRITTEN list's on both receivers. A struct receiver's stamp
+	// has replaced n.TypeArgs by the time the check runs, so counting that
+	// measured the receiver's parameters and a surplus argument went
+	// unreported — on the enum receiver, which keeps its written list, the
+	// same call was refused.
+	surplus := []string{
+		`function main(): i32 { var p: Pair[i32, string] = Pair[i32, string] { a: 1, b: "x" }; return p.pick[i32, string, i32, f64](5); }`,
+		`function main(): i32 { var b: Box[i32, string] = Full(5); return take(b.pair[i32, string, i32, f64](Full(9))); }`,
+	}
+	for _, src := range surplus {
+		err := checkSource(t, decls+src)
+		if err == nil {
+			t.Errorf("a surplus type argument should not type-check\nsrc: %s", src)
+			continue
+		}
+		if !strings.Contains(err.Error(), "expects 3 type argument(s), got 4") {
+			t.Errorf("error %q does not report the written list's arity\nsrc: %s", err.Error(), src)
+		}
+	}
+}
+
 // E040 at a call site must name a spelling the user can write (#6796). A
 // method call reaches the check rewritten onto `__method_<Type>_<method>`,
 // and the diagnostic used to advise `__method_Holder_make[i32](...)` — a
@@ -7374,7 +7478,10 @@ function main(): i32 {
     var r: Map[string, i32] = apply(a, bump);
     return 0;
 }`)
-		if err == nil || !strings.Contains(err.Error(), "expected (T) => T") {
+		// The report names the parameter as argument 1 pinned it —
+		// `(Map[i32, i32]) => Map[i32, i32]` — rather than the declared
+		// `(T) => T`, which is the half that says why these two conflict.
+		if err == nil || !strings.Contains(err.Error(), "expected (Map[i32, i32]) => Map[i32, i32]") {
 			t.Fatalf("Map[i32, i32] and Map[string, i32] must still conflict, got %v", err)
 		}
 	})

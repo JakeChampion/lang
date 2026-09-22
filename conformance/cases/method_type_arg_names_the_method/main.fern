@@ -1,0 +1,38 @@
+// A method on a generic receiver carries the receiver's type parameters ahead
+// of its own in one list. Two things followed from reading that list from the
+// front, and both are here (#9896):
+//
+//   - a written `[i32]` pinned the RECEIVER's first parameter, so the spelling
+//     E040 advises — `.pair[i32](...)` — left the method's own parameter as
+//     unbound as before and the same error came back;
+//   - with nothing written, `Full(9)` pins the payload's T and says nothing
+//     about E, so without the destination the argument answered with a bare
+//     `Box` that bound U nowhere. The parameter `Box[U, E]` has E settled from
+//     the receiver, which is exactly what lets the payload settle U.
+//
+// `Result.and` is the shape this was found on, and rides along: it is
+// `and[U](other: Result[U, E])`, so `r.and(Ok(3))` is the same question asked
+// of the stdlib.
+import "std/result";
+import "core/int";
+
+enum Box[T, E] { Full(T), Blank(E) }
+
+function (b: Box[T, E]) pair[U](other: Box[U, E]): Box[U, E] { return other; }
+
+function take(b: Box[i32, string]): i32 {
+    match (b) {
+        Full(n) => { return n; },
+        Blank(s) => { return s.len(); }
+    }
+}
+
+function main(): i32 {
+    var b: Box[i32, string] = Full(5);
+    var inferred: i32 = take(b.pair(Full(9)));                  // 9
+    var advised: i32 = take(b.pair[i32](Full(7)));              // 7
+    var spelled: i32 = take(b.pair[i32, string, i32](Full(4))); // 4, the full list
+    var r: Result[i32, string] = Ok(5);
+    var combinator: i32 = r.and(Ok(3)).unwrap_or(0);            // 3
+    return inferred + advised + spelled + combinator;           // 23
+}
