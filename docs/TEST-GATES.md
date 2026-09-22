@@ -185,6 +185,20 @@ Empty, inline, heap, and 4097-byte payloads also cover successful sends,
 exact received bytes, and invalid-descriptor errno. These tests do not yet
 exercise pending-write buffers or nonblocking backpressure.
 
+## Native TCP lifecycle allocation census
+
+`TestNativeTCPLifecycleCensus` and its self-host twin run 32 complete local
+listen/connect/accept/send/read-through-EOF/close cycles. Payloads cover
+empty, 1-byte, 7-byte and 4097-byte messages. The same corpus checks failed
+receives and nonpositive receive limits. Every case requires exactly one
+allocator report, equal allocation and free counts, and zero live bytes.
+
+Linux x86-64 and ARM64 run through bootstrap flat/SSA and strict-IR
+self-host compilation, including QEMU. `Arm64DarwinTCPLifecycleCensus`
+tests cover native Darwin with both compilers. These tests measure primitive
+ownership; they do not prove bounded HTTP handlers, zero-allocation framing,
+or native throughput. The Wasm lifecycle census is a separate gate.
+
 ## Generated digest sources
 
 The lint lane runs `make digest-check` on every PR and main push. It compares
