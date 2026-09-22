@@ -15001,30 +15001,12 @@ function dl_hoist_expr(e: ast.Expr, want: string[]): DeferHoistExpr {
 }
 
 // The shared return temp every expanded `return` writes before the cleanup
-// runs. It carries the scope's return type where that type has a zero to
-// start at: declared unannotated at a literal `0` it is an i32 slot, and a
-// function returning an array or a string then assigns its result into a slot
-// of the wrong type — which the AST lowering, whose frame slots carry no type,
-// never noticed.
-function dl_defret_decl(ret: string): ast.Stmt {
-    if (dl_defret_zeroable(ret)) { return s_var("__defret", ret, dl_zero_of(ret)); }
-    return s_var("__defret", "", e_number("0", "", false));
-}
-
-// The return temp is NOT every annotation the lift takes. It holds the value a
-// `return` hands back, so the binding it was assigned from stays live beside it
-// and the two name one value — an aliasing the lift never creates, since a
-// lifted slot is written before anything else reads it. At a RECORD return that
-// pairing miscompiles today (a struct-returning function with a defer segfaults
-// on this path where the AST lowering answers), so the temp keeps the types
-// whose release this boundary already gets right, and a record return stays on
-// the AST lowering as it did before ExprZero existed (#9575).
-function dl_defret_zeroable(ret: string): boolean {
-    if (!dl_zeroable(ret)) { return false; }
-    if (dl_is_array_type(ret)) { return true; }
-    return ret == "string" || ret == "boolean" || ret == "bool" || ret == "f64" || ret == "f32"
-        || ret == "i8" || ret == "i16" || ret == "i32" || ret == "i64"
-        || ret == "u8" || ret == "u16" || ret == "u32" || ret == "u64";
+// runs. It carries the scope's return type, started at that type's zero; a
+// scope with no spelled return type (a lambda whose result is inferred) keeps
+// an untyped `0`.
+function dl_defret_decl(ret: string, fn_ret: string, fn_param_types: string): ast.Stmt {
+    if (!dl_zeroable(ret)) { return s_var("__defret", "", e_number("0", "", false)); }
+    return ast.StmtVar { name: "__defret", type_name: ret, init: dl_zero_of(ret), line: 0, col: 0, is_str: false, fn_ret: fn_ret, fn_param_types: fn_param_types };
 }
 
 function dl_param_names(params: ast.ParamDecl[]): string[] {
@@ -15082,7 +15064,7 @@ pub function lower_defers_func(fn: FuncDecl): FuncDecl {
     var pnames: string[] = [];
     for p in fn.params { pnames = pnames.append(p.name); }
     if (fn.receiver_name.len() > 0) { pnames = pnames.append(fn.receiver_name); }
-    return FuncDecl { ...fn, body: lower_defers_body(fn.body, pnames, fn.ret_type) };
+    return FuncDecl { ...fn, body: lower_defers_body(fn.body, pnames, fn.ret_type, fn.ret_fn_ret, fn.ret_fn_param_types) };
 }
 
 // lower_defers_body is the per-SCOPE half of the pass. An ordinary lambda body
@@ -15102,7 +15084,7 @@ pub function lower_defers_func(fn: FuncDecl): FuncDecl {
 // an assignment inside a deferred action writing a stack local instead of the
 // captured env slot — the deferred code ran and its result was discarded
 // (#7174).
-function lower_defers_body(body0: ast.Stmt[], params: string[], ret: string): ast.Stmt[] {
+function lower_defers_body(body0: ast.Stmt[], params: string[], ret: string, fn_ret: string, fn_param_types: string): ast.Stmt[] {
     // Inner scopes first: each ordinary lambda in `body0` is lowered on its own
     // before this scope collects, so the collect below sees no lambda defers.
     var src: ast.Stmt[] = dl_lower_lambda_bodies(body0);
@@ -15119,9 +15101,8 @@ function lower_defers_body(body0: ast.Stmt[], params: string[], ret: string): as
     var cleanup_err: ast.Stmt[] = dl_cleanup_kind(cr.actions, cr.flags, 1);
     var expanded: ast.Stmt[] = dl_expand_returns(cr.stmts, cleanup, cleanup_err);
     var body: ast.Stmt[] = [];
-    // Shared return temp, an i32 initialised to 0, and a boolean flag per
-    // defer, since a condition is a boolean and nothing else.
-    body = body.append(dl_defret_decl(ret));
+    // The shared return temp, and a boolean flag per defer.
+    body = body.append(dl_defret_decl(ret, fn_ret, fn_param_types));
     var i: i32 = 0;
     while (i < cr.actions.len()) {
         body = body.append(s_var("__dfa" + dl_itoa(i), "boolean", e_bool(false)));
@@ -15194,7 +15175,7 @@ function dl_ll_stmt(st: ast.Stmt): ast.Stmt {
 
 function dl_ll_expr(e: ast.Expr): ast.Expr {
     match (e) {
-        ast.ExprLambda(lm) => { return ast.ExprLambda { ...lm, body: lower_defers_body(lm.body, dl_param_names(lm.params), lm.ret_type) }; },
+        ast.ExprLambda(lm) => { return ast.ExprLambda { ...lm, body: lower_defers_body(lm.body, dl_param_names(lm.params), lm.ret_type, lm.ret_fn_ret, lm.ret_fn_param_types) }; },
         ast.ExprCall(c) => {
             if (is_value_block(c)) { return dl_vb_rebuild(c, dl_lower_lambda_bodies(vb_body(c))); }
             // A hand-written IIFE carrying a defer becomes its own scope, and is
@@ -15205,7 +15186,7 @@ function dl_ll_expr(e: ast.Expr): ast.Expr {
                 match (c.callee) {
                     ast.ExprLambda(lm) => {
                         if (dl_stmts_have_defer(lm.body)) {
-                            var scoped: ast.Expr = ast.ExprLambda { ...lm, origin: ORIGIN_IIFE_SCOPED, body: lower_defers_body(lm.body, dl_param_names(lm.params), lm.ret_type) };
+                            var scoped: ast.Expr = ast.ExprLambda { ...lm, origin: ORIGIN_IIFE_SCOPED, body: lower_defers_body(lm.body, dl_param_names(lm.params), lm.ret_type, lm.ret_fn_ret, lm.ret_fn_param_types) };
                             return ast.ExprCall { ...c, callee: scoped };
                         }
                     },
