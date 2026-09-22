@@ -8133,7 +8133,7 @@ func (c *checker) validateMapKeyTypes(prog *ast.Program) {
 func (c *checker) checkMapKeyTypes(t ast.Type, mod string, pos ast.Position) {
 	switch x := t.(type) {
 	case ast.StructType:
-		if x.Name == "Map" && len(x.Args) == 2 && !isStructurallyKeyedByValue(x.Args[0]) {
+		if x.Name == "Map" && len(x.Args) == 2 && !mapKeyCarvedOut(x.Args[0]) {
 			if msg := c.mapKeyTypeError(x.Args[0]); msg != "" {
 				c.report(mod, pos, "E045", msg)
 			}
@@ -8161,26 +8161,21 @@ func (c *checker) checkMapKeyTypes(t ast.Type, mod string, pos ast.Position) {
 	}
 }
 
-// isStructurallyKeyedByValue names the key types the INTERPRETER compares by
-// value and no compiled backend dispatches: a tuple, an array, a slice.
-// They are carved out of the annotation rule because all three answers for
-// them differ and none is obviously the bug (#10020):
+// mapKeyCarvedOut names the key types this rule deliberately does not
+// refuse: the ones the INTERPRETER compares by value while no compiled
+// backend dispatches them (#10020). All three answers differ and none is
+// obviously the bug —
 //
 //	Map { (1, 2): 5 }            E045
-//	Map[(i32, i32), i32]         accepted; answers 5 interpreted, 0 compiled
-//	Map[i32[], i32]              accepted; answers 5 interpreted, 0 compiled
+//	Map[(i32, i32), i32]         accepted; 5 interpreted, refused compiling
+//	Map[i32[], i32]              accepted; 5 interpreted, refused compiling
 //
-// TestInterpMapCompositeKeys gates the interpreter's answer deliberately, so
-// applying the rule here would refuse a spelling the language supports.
-// Reconciling the three is that issue's decision, not this rule's to make by
-// accident — and the fix that matters is on the compiled side, where the
-// wrong answer is silent.
-func isStructurallyKeyedByValue(k ast.Type) bool {
-	switch k.(type) {
-	case ast.TupleType, ast.ArrayType, ast.SliceType:
-		return true
-	}
-	return false
+// — and TestInterpMapCompositeKeys gates the interpreter's answer
+// deliberately, so refusing the annotation here would take away a spelling
+// the language supports. The list is ast.MapKeyDispatchable's, shared with
+// the IR refusal that stops the compiled build answering the default.
+func mapKeyCarvedOut(k ast.Type) bool {
+	return !ast.MapKeyDispatchable(k)
 }
 
 // checkTypeKnown walks a resolved type tree and reports E064 for each

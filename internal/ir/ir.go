@@ -14073,25 +14073,6 @@ func mapKeyKindTag(t ast.Type, ptrW int) int32 {
 	return 0
 }
 
-// mapKeyDispatchable reports whether the map runtime can hash and compare
-// this key type. False for a tuple, an array or a slice: the interpreter
-// deep-compares them (TestInterpMapCompositeKeys gates that) but no compiled
-// backend has a branch for one, and mapKeyKindTag's fall-through classifies
-// them as i32 scalars — so the emitted code compares the pointer and every
-// lookup reads the default (#10020).
-//
-// A struct or enum IS dispatchable: #2671 threads its derived hash / eq in
-// as function values. A tuple is a struct without a name, which is why it
-// has nowhere to hang those and why lowering one is the fix this refusal
-// stands in for.
-func mapKeyDispatchable(t ast.Type) bool {
-	switch t.(type) {
-	case ast.TupleType, ast.ArrayType, ast.SliceType:
-		return false
-	}
-	return true
-}
-
 // mapKeyTagChecked and mapKeyKindTagChecked are the builder's way of asking
 // for a key tag: same answer as the free functions, and they record a key the
 // runtime cannot dispatch so lowerFunc can refuse the function rather than
@@ -14108,7 +14089,7 @@ func (b *builder) mapKeyKindTagChecked(t ast.Type) int32 {
 }
 
 func (b *builder) noteMapKey(t ast.Type) {
-	if b.badMapKey == nil && t != nil && !mapKeyDispatchable(t) {
+	if b.badMapKey == nil && t != nil && !ast.MapKeyDispatchable(t) {
 		b.badMapKey = t
 	}
 }
