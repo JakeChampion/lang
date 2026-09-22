@@ -68,11 +68,13 @@ function main(): i32 { var m: Map[f64, i32] = Map {}; return 0; }`,
 		"map key type f64 is not yet supported",
 	},
 	{
-		// A tuple key is deliberately NOT refused: the interpreter compares
-		// one by value and TestInterpMapCompositeKeys gates it, while the
-		// map-literal rule refuses it and the compiled backends answer the
-		// default. isStructurallyKeyedByValue carries the reasoning; #10020
-		// owns the decision. Pinned here so the carve-out is not
+		// A tuple key is deliberately NOT refused HERE: the interpreter
+		// compares one by value and TestInterpMapCompositeKeys gates it, so
+		// refusing the annotation would take away a spelling the language
+		// supports. The map-literal rule still refuses it, and the compiled
+		// backends refuse to lower it rather than answering the default.
+		// ast.MapKeyDispatchable is the list all three consult; #10020 owns
+		// reconciling them. Pinned here so the carve-out is not
 		// rediscovered by a red corpus.
 		"tuple key",
 		`import "core/map";

@@ -113,10 +113,12 @@ function main(): i32 {
     return 0;
 }
 `, true},
-	// Accepted by both on purpose: the interpreter compares a tuple or array
-	// key by value and TestInterpMapCompositeKeys gates it, while the
-	// compiled backends answer the default. See isStructurallyKeyedByValue
-	// and #10020.
+	// Accepted by both CHECKERS on purpose: the interpreter compares a tuple
+	// or array key by value and TestInterpMapCompositeKeys gates it, so
+	// refusing the annotation would take away a spelling the language
+	// supports. Lowering one is refused separately, which is where the
+	// compiled wrong answer used to be. See ast.MapKeyDispatchable and
+	// #10020.
 	{"tuple-key", `import "core/map";
 function take(m: Map[(i32, i32), i32]): i32 { return 0; }
 function main(): i32 { return 0; }

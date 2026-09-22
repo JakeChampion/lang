@@ -14052,7 +14052,7 @@ func floatOp(s string) (OpKind, bool) {
 // pointer-shaped, so the runtime then compares the POINTER: two
 // equal values built separately miss each other and every lookup
 // reads the default, silently, while the interpreter deep-compares
-// them and answers correctly (#10020). mapKeyDispatchable names
+// them and answers correctly (#10020). ast.MapKeyDispatchable names
 // them so the lowering can refuse instead of emitting that.
 func mapKeyKindTag(t ast.Type, ptrW int) int32 {
 	switch t.(type) {
