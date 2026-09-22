@@ -28,6 +28,14 @@ one. A method with a type parameter of its own — `pair[U](other: Box[U, E])`
 — folds into the free generic `__smm_Box_pair` before any of this, exactly as
 a struct's does; `is_generic_method_own_tps` admits an enum receiver now.
 
+An enum used only at a composite key (`Opt[(i32, i32)]`) is never
+instantiated by the pass and keeps its declaration, so it has to keep its
+methods too: phase 1 holds every generic enum's methods aside, rewritten as
+any function is, and phase 3 gives back those whose enum was not dropped. A
+held method's own `Opt[T]` spelling would otherwise key a clone `Opt__T` and
+drop the enum from under that composite-key use, so `genum_key_from_anno`
+refuses a key naming one of the enum's own type parameters.
+
 That fold left one gap: `b.pair(Full(9))` has to settle `U` from `Full(9)`,
 and `mono_infer` has no type for a bare variant construction. `variant_arg_binds`
 binds the enum's variables through the variant's field types against the
