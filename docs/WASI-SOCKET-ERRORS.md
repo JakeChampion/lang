@@ -79,4 +79,11 @@ the final host read, including empty sends and mid-stream errors. The return
 area holds the full twelve-byte `result<_, stream-error>` layout. A
 `last-operation-failed` payload owns an `io/error` resource, which send drops
 even when its handle is zero; `closed` owns no error resource. The public
-integer result remains the byte count or `-1`. Receive cleanup remains pending.
+integer result remains the byte count or `-1`.
+
+TCP receive copies the canonical returned byte list into its owned Fern array,
+then frees the list and return area. Empty lists own no allocation. Closed
+streams and other stream errors still return an empty array; owned error
+resources are released first. Nonpositive read limits return an empty array
+without calling the host in both compilers. Raw bootstrap core modules using
+receive now export `cabi_realloc`, so an external host can supply returned bytes.

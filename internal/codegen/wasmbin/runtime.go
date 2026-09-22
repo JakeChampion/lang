@@ -875,6 +875,8 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					// pollable for reactor fan-out.
 					needs.add("__fern_tcp_pollable")
 				case "__fern_tcp_recv":
+					needs.add("cabi_realloc")
+					needs.add("__free")
 					// (conn, max) → i32 — u8[] box with the bytes
 					// read (D9, #5714). Empty box on stream-error /
 					// EOF / max <= 0. The result carries the

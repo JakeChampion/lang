@@ -117,6 +117,14 @@ func WasiUDPCensusProbe(t *testing.T, data string) (string, func()) {
 }
 
 func WasiTCPSendCensusProbe(t *testing.T, data string) (string, func()) {
+	return wasiTCPStreamCensusProbe(t, data, false)
+}
+
+func WasiTCPRecvCensusProbe(t *testing.T, data string) (string, func()) {
+	return wasiTCPStreamCensusProbe(t, data, true)
+}
+
+func wasiTCPStreamCensusProbe(t *testing.T, data string, receive bool) (string, func()) {
 	t.Helper()
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
@@ -134,18 +142,23 @@ func WasiTCPSendCensusProbe(t *testing.T, data string) (string, func()) {
 				done <- err
 				return
 			}
-			if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+			if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
 				conn.Close()
 				done <- err
 				return
 			}
-			got, err := io.ReadAll(io.LimitReader(conn, int64(len(data)+1)))
+			var got []byte
+			if receive {
+				_, err = io.WriteString(conn, data)
+			} else {
+				got, err = io.ReadAll(io.LimitReader(conn, int64(len(data)+1)))
+			}
 			conn.Close()
 			if err != nil {
 				done <- err
 				return
 			}
-			if string(got) != data {
+			if !receive && string(got) != data {
 				done <- fmt.Errorf("connection %d: got %q, want %q", i, got, data)
 				return
 			}
@@ -163,6 +176,31 @@ func WasiTCPSendCensusProbe(t *testing.T, data string) (string, func()) {
     }
     return 0;
 }`, listener.Addr().(*net.TCPAddr).Port, data, len(data))
+	if receive {
+		src = fmt.Sprintf(`function read(c: i32): i32 {
+    var bytes: u8[] = tcp_recv(c, 4096);
+    var i: i32 = 0;
+    while (i < bytes.len()) {
+        if (bytes[i] != 120) { return -1; }
+        i = i + 1;
+    }
+    return bytes.len();
+}
+function main(): i32 {
+    var i: i32 = 0;
+    while (i < 32) {
+        var c: i32 = tcp_connect(127 + 16777216, %d);
+        if (c < 0) { return 1; }
+        var total: i32 = 0;
+        var n: i32 = read(c);
+        while (n > 0) { total = total + n; n = read(c); }
+        if (n < 0 || total != %d) { return 2; }
+        if (tcp_close(c) != 0) { return 3; }
+        i = i + 1;
+    }
+    return 0;
+}`, listener.Addr().(*net.TCPAddr).Port, len(data))
+	}
 	return src, func() {
 		t.Helper()
 		if err := <-done; err != nil {

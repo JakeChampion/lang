@@ -632,6 +632,11 @@ func buildTcpRecvBody(idxs map[string]uint32) []byte {
 	alloc := idxs["__fern_alloc"]
 	allocU8 := idxs["__alloc_u8"]
 	blockingRead := idxs["wasi_io_blocking_read"]
+	freeRet := func(body []byte) []byte {
+		body = inst.InstLocalGet(body, 3)
+		body = inst.InstI32Const(body, 12)
+		return inst.InstCall(body, idxs["__free"])
+	}
 
 	var body []byte
 
@@ -668,6 +673,8 @@ func buildTcpRecvBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 3)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = emitStreamErrorDrop(body, idxs, 3)
+	body = freeRet(body)
 	body = inst.InstI32Const(body, 0)
 	body = inst.InstCall(body, allocU8)
 	body = inst.InstReturn(body)
@@ -692,6 +699,15 @@ func buildTcpRecvBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 4)
 	body = inst.InstLocalGet(body, 5)
 	body = memory.InstMemoryCopy(body)
+	// The canonical list was allocated in our heap by cabi_realloc. Its
+	// copied array now owns the bytes; empty lists own no allocation.
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstCall(body, idxs["__free"])
+	body = inst.InstEnd(body)
+	body = freeRet(body)
 
 	// Return the box's data pointer.
 	body = inst.InstLocalGet(body, 6)

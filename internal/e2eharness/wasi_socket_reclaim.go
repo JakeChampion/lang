@@ -69,6 +69,31 @@ func WasiStreamSendStorageProbe(data string) string {
 	return strings.ReplaceAll(WasiUDPStorageProbe("127.0.0.1", data), "udp_send(host, 1, data)", "tcp_send(0, data)")
 }
 
+func WasiStreamRecvStorageProbe(max int) string {
+	return fmt.Sprintf(`function read(): i32 {
+    var data: u8[] = tcp_recv(0, %d);
+    var i: i32 = 0;
+    while (i < data.len()) {
+        if (data[i] != 120) { return -1002; }
+        i = i + 1;
+    }
+    return data.len();
+}
+function main(): i32 {
+    var i: i32 = 0;
+    var stable: i64 = 0;
+    var result: i32 = 0;
+    while (i < 32) {
+        result = read();
+        var used: i64 = __heap_bump_bytes();
+        if (i == 0) { stable = used; }
+        if (used != stable) { return -1000; }
+        i = i + 1;
+    }
+    return result;
+}`, max)
+}
+
 // CheckWasiSocketReclaim replaces only host imports in a compiled core module.
 // The production socket bodies and allocator still execute. Host resources are
 // tracked independently; dropping an unowned handle or a parent before its
@@ -103,6 +128,14 @@ func CheckWasiSocketReclaim(t *testing.T, modulePath, operation string) {
 	if len(export) != 2 {
 		t.Fatal("core module has no main export")
 	}
+	allocator := ""
+	if strings.HasPrefix(operation, "recv") {
+		alloc := regexp.MustCompile(`\(export "cabi_realloc" \(func ([^\s)]+)\)\)`).FindStringSubmatch(wat)
+		if len(alloc) != 2 {
+			t.Fatal("receive module has no canonical allocator")
+		}
+		allocator = "(func $fh_alloc (param $n i32) (result i32) (call " + alloc[1] + " (i32.const 0) (i32.const 0) (i32.const 1) (local.get $n)))"
+	}
 	// wasm-tools encloses numeric index comments in parentheses.
 	imports := regexp.MustCompile(`\(import "([^"]+)" "([^"]+)" \(func ((?:\$[^\s()]+\s+)?\(;[0-9]+;\)) \(type ([0-9]+)\)\)\)`)
 	seen := 0
@@ -115,7 +148,7 @@ func CheckWasiSocketReclaim(t *testing.T, modulePath, operation string) {
 	if seen == 0 || strings.Contains(wat, "(import ") {
 		t.Fatal("unhandled core import syntax")
 	}
-	steps := map[string]int{"listen": 5, "connect": 3, "accept": 1, "port": 1, "udp": 6, "send": 2}[operation]
+	steps := map[string]int{"listen": 5, "connect": 3, "accept": 1, "port": 1, "udp": 6, "send": 2, "recv": 3, "recv-zero": 1, "recv-negative": 1}[operation]
 	if steps == 0 {
 		t.Fatal("unknown socket operation")
 	}
@@ -143,6 +176,14 @@ func CheckWasiSocketReclaim(t *testing.T, modulePath, operation string) {
 		successFailure = "(i32.ne (local.get $result) (i32.const -28))"
 	}
 	errorResult := -29
+	if strings.HasPrefix(operation, "recv") {
+		socket, streams, errorResult = 0, 0, 0
+		successFailure = "(i32.ne (local.get $result) (i32.const 3))"
+		if operation != "recv" {
+			steps = 0
+			successFailure = "(i32.ne (local.get $result) (i32.const 0))"
+		}
+	}
 	if operation == "send" {
 		socket, streams = 0, 0
 		successFailure = "(i32.ne (local.get $result) (i32.const 1))"
@@ -161,7 +202,7 @@ func CheckWasiSocketReclaim(t *testing.T, modulePath, operation string) {
 		// streams. The listener remains host-owned and must never be dropped.
 		borrowedListener = "(i32.store (i32.const 0) (i32.const 42))"
 	}
-	probe := fmt.Sprintf(`
+	probe := allocator + fmt.Sprintf(`
   (global $fh_fail (mut i32) (i32.const 0))
   (global $fh_handle (mut i32) (i32.const 0))
   (global $fh_socket (mut i32) (i32.const 0))
@@ -245,6 +286,27 @@ func socketHostBody(operation, moduleName, name string) string {
 	}
 	if strings.HasSuffix(name, "pollable.block") {
 		return "(if (i32.eqz (global.get $fh_poll)) (then unreachable))"
+	}
+	if strings.HasSuffix(name, "input-stream.blocking-read") {
+		if operation != "recv" {
+			return "unreachable"
+		}
+		return `(local $p i32)
+    (if (i64.ne (local.get 1) (i64.const 3)) (then unreachable))
+    (i32.store8 (local.get 2) (i32.ge_u (global.get $fh_fail) (i32.const 2)))
+    (if (i32.ge_u (global.get $fh_fail) (i32.const 2)) (then
+      (i32.store8 offset=4 (local.get 2) (i32.eq (global.get $fh_fail) (i32.const 2)))
+      (if (i32.eq (global.get $fh_fail) (i32.const 3)) (then
+        (global.set $fh_error (i32.const 1))
+        (i32.store offset=8 (local.get 2) (global.get $fh_handle)))))
+    (else
+      (if (i32.eqz (global.get $fh_fail)) (then
+        (local.set $p (call $fh_alloc (i32.const 3)))
+        (i32.store8 (local.get $p) (i32.const 120))
+        (i32.store8 offset=1 (local.get $p) (i32.const 120))
+        (i32.store8 offset=2 (local.get $p) (i32.const 120))))
+      (i32.store offset=4 (local.get 2) (local.get $p))
+      (i32.store offset=8 (local.get 2) (select (i32.const 0) (i32.const 3) (global.get $fh_fail)))))`
 	}
 	if strings.HasSuffix(name, "output-stream.blocking-write-and-flush") {
 		return `(local $i i32) (local $fail i32)

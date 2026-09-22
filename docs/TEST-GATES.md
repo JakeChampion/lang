@@ -149,6 +149,14 @@ Owned errors must be dropped exactly once. `TestWasmTCPSendLifecycleCensus`
 and `TestSelfHostWasmTCPSendLifecycleCensus` verify complete real TCP payloads
 over 32 connections and require zero live Fern heap bytes after close.
 
+`TestWasmTCPRecvGuestStorage` and `TestSelfHostWasmTCPRecvGuestStorage`
+exercise returned data allocated through the real canonical allocator, empty
+success, closed streams and owned errors with handles zero/nonzero. Repeated
+reads preserve bytes and stop growing the heap after warmup. Nonpositive read
+limits must return empty arrays without calling the host. The corresponding
+`TCPRecvLifecycleCensus` tests read real loopback data through EOF, including
+payloads crossing a read-buffer boundary, and require zero live Fern heap bytes.
+
 ## Generated digest sources
 
 The lint lane runs `make digest-check` on every PR and main push. It compares
