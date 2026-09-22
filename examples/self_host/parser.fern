@@ -12465,10 +12465,12 @@ pub function monomorphize_structs(mod: Module): Module {
 // clones a struct's (clone_enum_method); a method with type params of its
 // own was folded into a free generic by register_struct_method_generics
 // before this pass. Scope: a key whose every type arg is a simple nominal
-// (primitive / string / bare struct). An instantiation with a composite key
-// (`Opt[Box[i32]]`) is left untouched — its references aren't rewritten and
-// its decls aren't dropped, so it keeps its pre-existing (un-monomorphised)
-// behaviour instead of dangling. The compiler source uses no generic enums
+// (primitive / string / bare struct, or a struct clone such as `Box__i32`,
+// since the struct pass runs first). An enum with any use at a composite
+// key (`Opt[(i32, i32)]`) is left out of the pass entirely (me_mono_enums),
+// declaration, variants and methods erased as before: a clone beside the
+// generic original mis-dispatches on the AST lowering, which resolves an
+// enum's methods by name. The compiler source uses no generic enums
 // and the stdlib's carry no methods, so the pass is a no-op there
 // (fixpoint-safe), exactly like the generic-struct pass. See issue #3572.
 
@@ -13479,21 +13481,31 @@ function me_use_spelling(ty: string, own u: MeUses): MeUses {
     return u;
 }
 
+// A function type's parameter list rides beside the coarse `fn` tag as a
+// comma-separated sidecar, each entry possibly `own`-prefixed.
+function me_use_list(list: string, own u: MeUses): MeUses {
+    if (list.len() == 0) { return u; }
+    for seg in split_top_commas(list) { u = me_use_spelling(spelling_without_own(seg), u); }
+    return u;
+}
+
+// A declared slot: its type, and the result and parameter sidecars of a
+// function type.
+function me_use_slot(ty: string, fn_ret: string, fn_params: string, own u: MeUses): MeUses {
+    u = me_use_spelling(ty, u);
+    u = me_use_spelling(fn_ret, u);
+    return me_use_list(fn_params, u);
+}
+
 function me_use_stmt(st: ast.Stmt, own u: MeUses): MeUses {
-    if let ast.StmtVar(v) = st {
-        u = me_use_spelling(v.type_name, u);
-        return me_use_spelling(v.fn_ret, u);
-    }
+    if let ast.StmtVar(v) = st { return me_use_slot(v.type_name, v.fn_ret, v.fn_param_types, u); }
     return u;
 }
 
 function me_use_expr(e: ast.Expr, own u: MeUses): MeUses {
     if let ast.ExprLambda(lm) = e {
-        for p in lm.params {
-            u = me_use_spelling(p.type_name, u);
-            u = me_use_spelling(p.fn_ret, u);
-        }
-        return me_use_spelling(lm.ret_type, u);
+        for p in lm.params { u = me_use_slot(p.type_name, p.fn_ret, p.fn_param_types, u); }
+        return me_use_slot(lm.ret_type, lm.ret_fn_ret, lm.ret_fn_param_types, u);
     }
     return u;
 }
@@ -13501,19 +13513,13 @@ function me_use_expr(e: ast.Expr, own u: MeUses): MeUses {
 function me_unkeyable_bases(mod: Module): string[] {
     var u: MeUses = MeUses { enums: mod.enums, bases: [] };
     for fd in mod.funcs {
-        for p in fd.params {
-            u = me_use_spelling(p.type_name, u);
-            u = me_use_spelling(p.fn_ret, u);
-        }
-        u = me_use_spelling(fd.ret_type, u);
+        for p in fd.params { u = me_use_slot(p.type_name, p.fn_ret, p.fn_param_types, u); }
+        u = me_use_slot(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types, u);
         for st in fd.body { u = astwalk.fold_stmt_nodes(st, u, me_use_stmt, me_use_expr, astwalk.descend_all); }
     }
     for st in mod.top_stmts { u = astwalk.fold_stmt_nodes(st, u, me_use_stmt, me_use_expr, astwalk.descend_all); }
     for sd in mod.structs {
-        for f in sd.fields {
-            u = me_use_spelling(f.type_name, u);
-            u = me_use_spelling(f.fn_ret, u);
-        }
+        for f in sd.fields { u = me_use_slot(f.type_name, f.fn_ret, f.fn_param_types, u); }
     }
     return u.bases;
 }
