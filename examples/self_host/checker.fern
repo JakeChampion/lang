@@ -2142,10 +2142,7 @@ function conforms_by_impl_or_derive(s: Scope, tyname: string, tr: string): boole
 // hash/eq now, so the restriction it named is gone.
 function map_key_type_error(s: Scope, kt: typeinfo.Type): string {
   if (is_unknown(kt) || is_integer(kt) || type_eq(kt, t_string()) || type_eq(kt, t_str())) { return ""; }
-  match (kt) {
-    typeinfo.TypeBool(_) => { return ""; },
-    _ => {}
-  }
+  if let typeinfo.TypeBool(_) = kt { return ""; }
   var kn: string = "";
   var kw: string = "";
   match (kt) {
@@ -2206,11 +2203,8 @@ function e045_map_key_msgs(t: typeinfo.Type, s: Scope): string[] {
       // supports. Filed as #10020; the fix that matters is on the compiled
       // side, where the wrong answer is silent.
       var by_value_key: boolean = false;
-      match (mt.key) {
-        typeinfo.TypeTuple(_) => { by_value_key = true; },
-        typeinfo.TypeArray(_) => { by_value_key = true; },
-        _ => {}
-      }
+      if let typeinfo.TypeTuple(_) = mt.key { by_value_key = true; }
+      if let typeinfo.TypeArray(_) = mt.key { by_value_key = true; }
       var msg: string = "";
       if (!by_value_key) { msg = map_key_type_error(s, mt.key); }
       if (msg != "") { out = out.append(msg); }
