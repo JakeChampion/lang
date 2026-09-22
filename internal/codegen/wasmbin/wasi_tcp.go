@@ -161,6 +161,14 @@ func buildTcpListenBody(idxs map[string]uint32) []byte {
 	startListen := idxs["wasi_sockets_tcp_start_listen"]
 	finishListen := idxs["wasi_sockets_tcp_finish_listen"]
 
+	// After create succeeds, every failed setup step owns this socket,
+	// including a zero-valued resource handle.
+	fail := func(body []byte) []byte {
+		body = inst.InstLocalGet(body, 1)
+		body = inst.InstCall(body, idxs["wasi_sockets_tcp_socket_drop"])
+		return emitErrnoNegReturn(body, 2, idxs)
+	}
+
 	var body []byte
 
 	// retptr = alloc(16). 8 would do for the create / bind /
@@ -210,7 +218,7 @@ func buildTcpListenBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 2)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = emitErrnoNegReturn(body, 2, idxs)
+	body = fail(body)
 	body = inst.InstEnd(body)
 
 	// finish-bind(self, retptr).
@@ -220,7 +228,7 @@ func buildTcpListenBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 2)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = emitErrnoNegReturn(body, 2, idxs)
+	body = fail(body)
 	body = inst.InstEnd(body)
 
 	// start-listen(self, retptr).
@@ -230,7 +238,7 @@ func buildTcpListenBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 2)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = emitErrnoNegReturn(body, 2, idxs)
+	body = fail(body)
 	body = inst.InstEnd(body)
 
 	// finish-listen(self, retptr).
@@ -240,7 +248,7 @@ func buildTcpListenBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 2)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = emitErrnoNegReturn(body, 2, idxs)
+	body = fail(body)
 	body = inst.InstEnd(body)
 
 	// Allocate the 12-byte listener struct: (sock, 0, 0).
@@ -303,6 +311,14 @@ func buildTcpConnectBody(idxs map[string]uint32) []byte {
 		return numeric.InstI32And(body)
 	}
 
+	// After create succeeds, every failed setup step owns this socket,
+	// including a zero-valued resource handle.
+	fail := func(body []byte) []byte {
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstCall(body, idxs["wasi_sockets_tcp_socket_drop"])
+		return emitErrnoNegReturn(body, 3, idxs)
+	}
+
 	var body []byte
 
 	// $retptr = alloc(16).
@@ -347,7 +363,7 @@ func buildTcpConnectBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 3)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = emitErrnoNegReturn(body, 3, idxs)
+	body = fail(body)
 	body = inst.InstEnd(body)
 
 	// subscribe($sock) → $pollable; block until connected; drop it.
@@ -366,7 +382,7 @@ func buildTcpConnectBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 3)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = emitErrnoNegReturn(body, 3, idxs)
+	body = fail(body)
 	body = inst.InstEnd(body)
 
 	// Allocate the 12-byte connection struct: (sock, input, output).

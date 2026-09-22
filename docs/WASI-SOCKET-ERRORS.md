@@ -28,3 +28,15 @@ recover their original detail:
 
 These are the legacy integer APIs. The closed `NetError` API, owned socket
 resources and nonblocking reactor remain P0 work under #9853.
+
+Setup failure now drops any socket created by that operation. UDP send errors
+also drop the datagram streams before their parent socket. Failed socket
+creation owns nothing and does not drop a handle; successful TCP setup transfers
+the socket and streams to its caller. The cleanup treats handle zero as valid.
+
+Fault-injection gates run the actual compiled socket bodies with a host stub
+that tracks ownership and traps on double drops or dropping a parent first.
+They cover every listen/connect/UDP setup stage, both handle zero and a nonzero
+handle, UDP send failures, and successful ownership transfer. They measure host
+socket resources only. Guest-memory scratch reclamation and the worker-owned
+network capability remain separate P0 work.

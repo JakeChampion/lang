@@ -47,6 +47,7 @@ function main(): i32 {
   (func $__fern_wasi_tcp_finish_bind (param i32 i32))
   (func $__fern_wasi_tcp_start_listen (param i32 i32))
   (func $__fern_wasi_tcp_finish_listen (param i32 i32))
+  (func $__fern_wasi_tcp_socket_drop (param i32) unreachable)
   (func (export "probe") (param $c i32) (result i32)
     (global.set $code (local.get $c))
     (call $__fern_tcp_listen (i32.const 0)))
@@ -63,6 +64,9 @@ function main(): i32 {
 			cmd := exec.Command(wasmtime, "run", "--invoke", "probe", p, strconv.Itoa(code))
 			out, err := cmd.Output()
 			if err != nil {
+				if ee, ok := err.(*exec.ExitError); ok {
+					t.Fatalf("probe: %v\n%s", err, ee.Stderr)
+				}
 				t.Fatalf("probe: %v", err)
 			}
 			got, err := strconv.Atoi(strings.TrimSpace(string(out)))

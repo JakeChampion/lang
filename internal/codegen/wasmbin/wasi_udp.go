@@ -80,6 +80,18 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	inDrop := idxs["wasi_sockets_incoming_datagram_stream_drop"]
 	outDrop := idxs["wasi_sockets_outgoing_datagram_stream_drop"]
 
+	fail := func(body []byte, streams bool) []byte {
+		if streams {
+			body = inst.InstLocalGet(body, 8)
+			body = inst.InstCall(body, inDrop)
+			body = inst.InstLocalGet(body, 7)
+			body = inst.InstCall(body, outDrop)
+		}
+		body = inst.InstLocalGet(body, 6)
+		body = inst.InstCall(body, sockDrop)
+		return emitErrnoNegReturn(body, 5, idxs)
+	}
+
 	var body []byte
 
 	// Parse the host as a dotted-quad IPv4 literal BEFORE creating the
@@ -262,7 +274,7 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 5)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = emitErrnoNegReturn(body, 5, idxs)
+	body = fail(body, false)
 	body = inst.InstEnd(body)
 
 	// finish-bind(sock, retptr); bail on Err.
@@ -272,7 +284,7 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 5)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = emitErrnoNegReturn(body, 5, idxs)
+	body = fail(body, false)
 	body = inst.InstEnd(body)
 
 	// stream(sock, Some(ipv4 host:port), retptr) — connect. The option
@@ -296,7 +308,7 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 5)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = emitErrnoNegReturn(body, 5, idxs)
+	body = fail(body, false)
 	body = inst.InstEnd(body)
 	// $inStream = mem[retptr+4], $outStream = mem[retptr+8]
 	body = inst.InstLocalGet(body, 5)
@@ -356,7 +368,7 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 			body = inst.InstLocalGet(body, 5)
 			body = memory.InstI32Load8U(body, 0, 0)
 			body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-			body = emitErrnoNegReturn(body, 5, idxs)
+			body = fail(body, true)
 			body = inst.InstEnd(body)
 			// permit (low 32 of the u64 @ +8): if non-zero, break the loop.
 			body = inst.InstLocalGet(body, 5)
@@ -384,7 +396,7 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 		body = inst.InstLocalGet(body, 5)
 		body = memory.InstI32Load8U(body, 0, 0)
 		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-		body = emitErrnoNegReturn(body, 5, idxs)
+		body = fail(body, true)
 		body = inst.InstEnd(body)
 		// $sent = low 32 bits of the u64 datagram count at retptr+8.
 		body = inst.InstLocalGet(body, 5)

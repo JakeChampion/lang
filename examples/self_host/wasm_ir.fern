@@ -2901,12 +2901,14 @@ pub function tcp_connect_func(): string {
     o = o + "      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)\n";
     o = o + "      (local.get $ret))\n";
     o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
+    o = o + "      (call $__fern_wasi_tcp_socket_drop (local.get $sock))\n";
     o = o + "      (return (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))))\n";
     o = o + "    (local.set $p (call $__fern_wasi_tcp_subscribe (local.get $sock)))\n";
     o = o + "    (call $__fern_wasi_pollable_block (local.get $p))\n";
     o = o + "    (call $__fern_wasi_pollable_drop (local.get $p))\n";
     o = o + "    (call $__fern_wasi_tcp_finish_connect (local.get $sock) (local.get $ret))\n";
     o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
+    o = o + "      (call $__fern_wasi_tcp_socket_drop (local.get $sock))\n";
     o = o + "      (return (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))))\n";
     o = o + "    (local.set $st (call $__fern_alloc (i32.const 12)))\n";
     o = o + "    (i32.store (local.get $st) (local.get $sock))\n";
@@ -2953,15 +2955,19 @@ pub function tcp_listen_func(): string {
     o = o + "      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)\n";
     o = o + "      (local.get $ret))\n";
     o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
+    o = o + "      (call $__fern_wasi_tcp_socket_drop (local.get $sock))\n";
     o = o + "      (return (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))))\n";
     o = o + "    (call $__fern_wasi_tcp_finish_bind (local.get $sock) (local.get $ret))\n";
     o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
+    o = o + "      (call $__fern_wasi_tcp_socket_drop (local.get $sock))\n";
     o = o + "      (return (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))))\n";
     o = o + "    (call $__fern_wasi_tcp_start_listen (local.get $sock) (local.get $ret))\n";
     o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
+    o = o + "      (call $__fern_wasi_tcp_socket_drop (local.get $sock))\n";
     o = o + "      (return (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))))\n";
     o = o + "    (call $__fern_wasi_tcp_finish_listen (local.get $sock) (local.get $ret))\n";
     o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
+    o = o + "      (call $__fern_wasi_tcp_socket_drop (local.get $sock))\n";
     o = o + "      (return (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))))\n";
     o = o + "    (local.set $st (call $__fern_alloc (i32.const 12)))\n";
     o = o + "    (i32.store (local.get $st) (local.get $sock))\n";
@@ -3139,9 +3145,11 @@ pub function udp_send_func(): string {
     o = o + "      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)\n";
     o = o + "      (local.get $ret))\n";
     o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
+    o = o + "      (call $__fern_wasi_udp_socket_drop (local.get $sock))\n";
     o = o + "      (return (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))))\n";
     o = o + "    (call $__fern_wasi_udp_finish_bind (local.get $sock) (local.get $ret))\n";
     o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
+    o = o + "      (call $__fern_wasi_udp_socket_drop (local.get $sock))\n";
     o = o + "      (return (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))))\n";
     // stream(Some(host:port)): option disc 1, then the ip-socket-address
     // flattening (disc 0 = ipv4, port, 4 octets, 6 pad).
@@ -3154,6 +3162,7 @@ pub function udp_send_func(): string {
     o = o + "      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)\n";
     o = o + "      (local.get $ret))\n";
     o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
+    o = o + "      (call $__fern_wasi_udp_socket_drop (local.get $sock))\n";
     o = o + "      (return (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))))\n";
     o = o + "    (local.set $in (i32.load offset=4 (local.get $ret)))\n";
     o = o + "    (local.set $out (i32.load offset=8 (local.get $ret)))\n";

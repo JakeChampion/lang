@@ -95,6 +95,14 @@ WASI's zero-valued `unknown` must return a negative errno, never success.
 Live TCP connection/server and UDP component tests cover helper inclusion and
 host integration. These gates do not establish socket resource reclamation.
 
+`TestWasmSocketSetupReclaimsOnError` and
+`TestSelfHostWasmSocketSetupReclaimsOnError` replace host imports in compiled
+core modules with an ownership-tracking host stub. Every setup stage can fail;
+zero and nonzero resource handles exercise the same cleanup. Successful TCP
+setup must transfer ownership, while UDP success and errors release their
+socket and streams. Child resources must be dropped before their parent and
+double drops trap. Guest-memory scratch reclamation is outside these gates.
+
 ## Generated digest sources
 
 The lint lane runs `make digest-check` on every PR and main push. It compares
