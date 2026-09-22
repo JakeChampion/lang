@@ -3339,7 +3339,7 @@ pub function rt_src_str_lines(): string {
 // until anonymous slice temps get a view-box reclaim. A sentinel `go` flag
 // drives the scan. Empty / all-whitespace input → start==end → "".
 pub function rt_src_str_trim(): string {
-    return "function __fern_str_trim(s: string): string { var n: i32 = s.len(); var start: i32 = 0; var go: i32 = 1; while (go == 1) { if (start >= n) { go = 0; } else { var c: i32 = s[start]; if (c == 32 || c == 9 || c == 10 || c == 13 || c == 11 || c == 12) { start = start + 1; } else { go = 0; } } } var end: i32 = n; var go2: i32 = 1; while (go2 == 1) { if (end <= start) { go2 = 0; } else { var c2: i32 = s[end - 1]; if (c2 == 32 || c2 == 9 || c2 == 10 || c2 == 13 || c2 == 11 || c2 == 12) { end = end - 1; } else { go2 = 0; } } } return slice_unchecked(s, start, end) + \"\"; }";
+    return "function __fern_str_trim(s: string): string { var n: i32 = s.len(); var start: i32 = 0; var go: i32 = 1; while (go == 1) { if (start >= n) { go = 0; } else { var c: i32 = s[start]; if (c == 32 || c >= 9 && c <= 13) { start = start + 1; } else { go = 0; } } } var end: i32 = n; var go2: i32 = 1; while (go2 == 1) { if (end <= start) { go2 = 0; } else { var c2: i32 = s[end - 1]; if (c2 == 32 || c2 >= 9 && c2 <= 13) { end = end - 1; } else { go2 = 0; } } } return slice_unchecked(s, start, end) + \"\"; }";
 }
 
 pub function match_payload_type(scrut: ast.Expr, s: EmitState): Ty {
