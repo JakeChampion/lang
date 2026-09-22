@@ -8143,7 +8143,7 @@ function emit_ir_op_map_set(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     // %r10 = the value release for a column of boxes (vkind 3), which the
     // overwrite calls on the value it supersedes; %r11 = the key release of a
     // keyed column, which the overwrite calls on a consumed key it discards
-    // (#9962); 0 where the op names none. ir.map_set_symbols splits the three.
+    // (#9962); 0 where the op names none. ir.map_op_symbols splits the three.
     var syms: string[] = ir.map_op_symbols(o);
     if (o.i32_imm == 2 && syms[0] != "") { s = s.write("    leaq __fn_" + asmcore.sanitize_label(syms[0]) + "(%rip), %r8\n"); } else { s = s.write("    xorq %r8, %r8\n"); }
     if (syms[1] != "") { s = s.write("    leaq __fn_" + asmcore.sanitize_label(syms[1]) + "(%rip), %r10\n"); } else { s = s.write("    xorq %r10, %r10\n"); }

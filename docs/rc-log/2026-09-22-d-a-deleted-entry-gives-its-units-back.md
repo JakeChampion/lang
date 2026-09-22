@@ -97,4 +97,9 @@ Nothing regresses.
 The register backends' AST delete still strands what it removes. Giving it
 back needs the AST path's column credits at the delete site, which is the
 AST lowering's own accounting; the typed path is the production route and
-is where the release lives.
+is where the release lives. The wasm AST leg's delete releases the removed
+boxes SHALLOW: its op carries no value kind and no symbols, so a keyed key's
+string field or a string array's elements stand where that leg's map death
+would walk them. Strictly less than releasing nothing and never an
+over-release, and the same quiet spot as the register AST leg's, one level
+down.
