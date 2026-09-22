@@ -17791,12 +17791,26 @@ func (g *generator) condBranchFarCC(fireCC, skipCC, target string) {
 }
 
 // condBranchReachInstrs is the largest function body, in instructions, for
-// which a direct conditional branch is unconditionally safe. b.cond / cbz /
-// tbz reach ±1MB = ±262144 instructions, so any branch inside a body no larger
+// which a direct `b.cond` / `cbz` is unconditionally safe. They reach
+// ±1MB = ±262144 instructions, so any such branch inside a body no larger
 // than that reaches any label in it whichever way it points. The margin below
 // the architectural limit costs nothing: only two functions in the self-host
 // compiler come anywhere near it.
 const condBranchReachInstrs = 200000
+
+// testBranchReachInstrs is the same bound for `tbz` / `tbnz`, whose 14-bit
+// offset reaches only ±32KB = ±8192 instructions. An index helper's
+// inline-string test is one of these, and its arm sits after the epilogue,
+// so a body over this size can put the two out of reach of each other.
+const testBranchReachInstrs = 8000
+
+// branchReach is the direct reach of a conditional branch mnemonic.
+func branchReach(mnem string) int {
+	if mnem == "tbz" || mnem == "tbnz" {
+		return testBranchReachInstrs
+	}
+	return condBranchReachInstrs
+}
 
 // invertCC maps an AArch64 condition code to its inverse.
 var invertCC = map[string]string{
@@ -17858,7 +17872,7 @@ func countInstrs(text []byte) int {
 // distances: there is no per-op instruction-count estimate to get wrong, and a
 // long function pays the trampoline only where the distance demands it.
 func (g *generator) reachCheckCondBranches(start int) {
-	if countInstrs(g.out.Bytes()[start:]) <= condBranchReachInstrs {
+	if countInstrs(g.out.Bytes()[start:]) <= testBranchReachInstrs {
 		return
 	}
 	body := append([]byte(nil), g.out.Bytes()[start:]...)
@@ -17878,8 +17892,8 @@ func (g *generator) reachCheckCondBranches(start int) {
 }
 
 // expandFarCondBranches rewrites the reach-limited conditional branches in one
-// function's emitted text whose target is more than `condBranchReachInstrs`
-// instructions away into a trampoline: the inverted test over a short forward
+// function's emitted text whose target is beyond the mnemonic's reach into a
+// trampoline: the inverted test over a short forward
 // skip, then an unconditional `b` to the real target.
 //
 //	b.eq  L    =>    b.ne .LbrFar_N / b L / .LbrFar_N:
@@ -17915,7 +17929,7 @@ func (g *generator) expandFarCondBranches(body []byte) ([]byte, bool) {
 			out.Write(line)
 			continue
 		}
-		if tgt, known := labelAt[target]; known && abs(tgt-at[i]) <= condBranchReachInstrs {
+		if tgt, known := labelAt[target]; known && abs(tgt-at[i]) <= branchReach(mnem) {
 			out.Write(line)
 			continue
 		}

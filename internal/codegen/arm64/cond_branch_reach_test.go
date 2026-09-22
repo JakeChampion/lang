@@ -71,6 +71,39 @@ func TestCondBranchBeyondReachExpandsToTrampoline(t *testing.T) {
 	}
 }
 
+// tbz / tbnz reach ±32KB where b.cond and cbz reach ±1MB, so a distance
+// that leaves a `b.eq` direct expands a `tbnz`.
+func TestTestBitBranchExpandsAtItsOwnReach(t *testing.T) {
+	gap := testBranchReachInstrs + 10
+	g := &generator{}
+	if _, changed := g.expandFarCondBranches([]byte(farBody("b.eq", gap))); changed {
+		t.Error("a b.cond inside its reach was expanded at the tbz limit")
+	}
+	out, changed := g.expandFarCondBranches([]byte(farBody("tbnz x1, #63,", gap)))
+	if !changed {
+		t.Fatal("a tbnz beyond ±32KB was left direct")
+	}
+	if !strings.Contains(string(out), "\ttbz x1, #63, .LbrFar") || !strings.Contains(string(out), "\tb .Ltarget\n") {
+		t.Errorf("expected the inverted bit test over a branch to the target, got:\n%s", head(string(out)))
+	}
+	if _, changed := g.expandFarCondBranches([]byte(farBody("tbz x0, #0,", testBranchReachInstrs-10))); changed {
+		t.Error("a tbz inside ±32KB was expanded")
+	}
+}
+
+// reachCheckCondBranches skips bodies every branch can cross; that skip has
+// to be sized by the shortest reach, or a tbnz in a body between 8K and 200K
+// instructions is never looked at.
+func TestReachCheckScansBodiesPastTheTestBitReach(t *testing.T) {
+	g := &generator{}
+	g.out.WriteString(farBody("tbnz x1, #63,", testBranchReachInstrs+10) + "\n")
+	g.reachCheckCondBranches(0)
+	s := g.out.String()
+	if strings.Contains(s, "\ttbnz x1, #63, .Ltarget") || !strings.Contains(s, "\ttbz x1, #63, .LbrFar") {
+		t.Errorf("the far tbnz was not expanded:\n%s", head(s))
+	}
+}
+
 // A branch whose target is not a label of this function has no measurable
 // distance, so it must expand rather than be assumed close.
 func TestCondBranchToUnknownLabelExpands(t *testing.T) {
