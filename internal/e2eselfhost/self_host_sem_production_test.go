@@ -3481,6 +3481,31 @@ function main(): i32 {
     return (pick[i64](xs, 1) as i32) + pick[i32](ys, 2,) + 34;
 }
 `},
+	// A labelled range loop. `for i in LOW..HIGH` is desugared to a counting
+	// while ahead of every consumer, and the while was built without the
+	// source label, so a `continue outer` or `break scan` inside it named a
+	// loop the semantic source could not find (`loop exit names no enclosing
+	// loop`; conformance/cases/labeled_loops, #9550).
+	{name: "labelled-range-loop", atLeast: 1, noLeak: true, src: `
+function main(): i32 {
+    var sum: i32 = 0;
+    outer: for i in 0..4 {
+        for j in 0..4 {
+            if (j == 2) { continue outer; }
+            sum = sum + 1;
+        }
+        sum = sum + 100;
+    }
+    var k: i32 = 0;
+    scan: for a in 0..10 {
+        while (true) {
+            k = k + 1;
+            if (k == 5) { break scan; }
+        }
+    }
+    return sum + k;
+}
+`},
 }
 
 // semHeldElementSource sorts by length with the insertion sort's body: the
