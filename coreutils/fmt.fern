@@ -15,8 +15,9 @@
 //     two "leave a word stranded" terms are 22500/(len+2) for the word
 //     that ENDS a sentence and 40000/(len+2) for the one after a
 //     sentence's first word;
-//   - a line may reach WIDTH-1 columns and never WIDTH, so the widest
-//     line `-w 75` writes is 74;
+//   - a line may reach WIDTH columns exactly (9.12; through 9.4 the bound
+//     was WIDTH-1, and the corpus pins the difference at every shape that
+//     can fill a line);
 //   - the LAST line of a paragraph is free, which is why the slack in a
 //     paragraph collects at its front;
 //   - the goal defaults to `width * 187 / 200`, not to the 93% `--help`
@@ -264,14 +265,17 @@ function push_spacing(h: usize, col: i32, n: i32, tabs: boolean): void {
 }
 
 // ---- the paragraph ----------------------------------------------------------
-struct Para { words: Word[], open: boolean, pending: boolean, first_indent: i32, other_indent: i32, p_indent: i32, sticky: i32 }
+//
+// The words are on the driver's `State` rather than here, so that `feed`
+// can append to them inside its rebuild of that record (see `feed`).
+struct Para { open: boolean, pending: boolean, first_indent: i32, other_indent: i32, p_indent: i32, sticky: i32 }
 
 function para_new(): Para {
-  return Para { words: [], open: false, pending: false, first_indent: 0, other_indent: 0, p_indent: 0, sticky: 0 };
+  return Para { open: false, pending: false, first_indent: 0, other_indent: 0, p_indent: 0, sticky: 0 };
 }
 
 function para_reset(p: Para): Para {
-  return Para { ...p, words: [], open: false, pending: false, first_indent: 0, other_indent: 0, p_indent: 0 };
+  return Para { ...p, open: false, pending: false, first_indent: 0, other_indent: 0, p_indent: 0 };
 }
 
 // `base_cost(ws, s)` — what starting a line at word `s` costs, over and
@@ -426,7 +430,7 @@ function emit(o0: Out, ws: Word[], p: Para, st: Settings): Out {
   return Out { w: w, col: col, tabs: tabs };
 }
 
-function flush_para(o0: Out, p0: Para, st: Settings): (Out, Para) {
+function flush_para(o0: Out, p0: Para, words: Word[], st: Settings): (Out, Para) {
   var p: Para = p0;
   var o: Out = o0;
   if (!p.open) {
@@ -451,8 +455,8 @@ function flush_para(o0: Out, p0: Para, st: Settings): (Out, Para) {
     p = Para { ...p, other_indent: other - lead };
   }
   p = Para { ...p, sticky: p.other_indent + p.p_indent + st.prefix_out.len() };
-  if (p.words.len() > 0) {
-    var ws: Word[] = p.words;
+  if (words.len() > 0) {
+    var ws: Word[] = words;
     var last: Word = ws[ws.len() - 1];
     ws = ws.with(ws.len() - 1, Word { ...last, sentence: true });
     o = emit(o, ws, p, st);
@@ -637,23 +641,29 @@ function scan_body(own out: Word[], line: string, at: i32, col0: i32, uniform: b
 }
 
 // ---- the driver -------------------------------------------------------------
-struct State { o: Out, p: Para, st: Settings, ok: boolean }
+struct State { o: Out, p: Para, words: Word[], st: Settings, ok: boolean }
 
-function feed(s0: State, line: string, term: boolean): State {
-  var s: State = s0;
-  var r: (Head, boolean) = scan_head(line, s.st, s.o.tabs);
+// `feed(s, line, term)` — one input line. The state comes in by ownership
+// and goes back out rebuilt, with the words appended to inside that
+// rebuild — `words: scan_body(s.words, …)` — which is the shape that
+// moves the array into `scan_body` with no other holder, so it grows in
+// place. Read out of the record first, it is shared with the record and
+// the append copies it, once per line: quadratic in the paragraph.
+function feed(own s: State, line: string, term: boolean): State {
+  var st: Settings = s.st;
+  var r: (Head, boolean) = scan_head(line, st, s.o.tabs);
   var h: Head = r.0;
-  s = State { ...s, o: Out { ...s.o, tabs: r.1 } };
+  var o: Out = Out { ...s.o, tabs: r.1 };
   if (h.kind == 0) {
-    var f0: (Out, Para) = flush_para(s.o, s.p, s.st);
+    var f0: (Out, Para) = flush_para(o, s.p, s.words, st);
     var o0: Out = f0.0;
     var h0: usize = o0.w.handle();
     var col: i32 = o0.col;
     push_spacing(h0, col, h.p_indent, o0.tabs);
     col = col + h.p_indent;
     if (h.pfx) {
-      buf_push(h0, s.st.prefix_out);
-      col = col + s.st.prefix_out.len();
+      buf_push(h0, st.prefix_out);
+      col = col + st.prefix_out.len();
       push_spacing(h0, col, h.indent, o0.tabs);
       col = col + h.indent;
     }
@@ -661,61 +671,53 @@ function feed(s0: State, line: string, term: boolean): State {
     if (term) {
       buf_push_byte(h0, 10);
     }
-    return State { ...s, o: Out { ...o0, w: gnu.settle(o0.w), col: 0 }, p: f0.1 };
+    return State { ...s, o: Out { ...o0, w: gnu.settle(o0.w), col: 0 }, p: f0.1, words: [] };
   }
   if (h.kind == 1) {
-    var f1: (Out, Para) = flush_para(s.o, s.p, s.st);
+    var f1: (Out, Para) = flush_para(o, s.p, s.words, st);
     var o1: Out = f1.0;
     // A blank line the prefix does not carry is copied like any other
     // unmatched line, so an unterminated one ends the output without a
     // newline of its own.
-    if (!term && (s.st.prefix.len() > 0 || s.st.prefix_lead > 0) && !h.pfx) {
-      return State { ...s, o: Out { ...o1, w: gnu.settle(o1.w), col: 0 }, p: f1.1 };
+    if (!term && (st.prefix.len() > 0 || st.prefix_lead > 0) && !h.pfx) {
+      return State { ...s, o: Out { ...o1, w: gnu.settle(o1.w), col: 0 }, p: f1.1, words: [] };
     }
     var h1: usize = o1.w.handle();
     if (h.pfx) {
       push_spacing(h1, o1.col, h.p_indent, o1.tabs);
-      buf_push(h1, s.st.prefix_out);
+      buf_push(h1, st.prefix_out);
     }
     buf_push_byte(h1, 10);
-    return State { ...s, o: Out { ...o1, w: gnu.settle(o1.w), col: 0 }, p: f1.1 };
+    return State { ...s, o: Out { ...o1, w: gnu.settle(o1.w), col: 0 }, p: f1.1, words: [] };
   }
   var p: Para = s.p;
-  var o: Out = s.o;
-  if (s.st.split && p.open) {
-    var f2: (Out, Para) = flush_para(o, p, s.st);
-    o = f2.0;
-    p = f2.1;
-  }
-  if (p.open) {
+  var flush: boolean = st.split && p.open;
+  if (!flush && p.open) {
     if (h.p_indent != p.p_indent) {
-      var f3: (Out, Para) = flush_para(o, p, s.st);
-      o = f3.0;
-      p = f3.1;
+      flush = true;
     } else if (p.pending) {
-      if (s.st.tagged && h.indent == p.first_indent) {
-        var f4: (Out, Para) = flush_para(o, p, s.st);
-        o = f4.0;
-        p = f4.1;
+      if (st.tagged && h.indent == p.first_indent) {
+        flush = true;
       } else {
         p = Para { ...p, other_indent: h.indent, pending: false };
       }
     } else if (h.indent != p.other_indent) {
-      var f5: (Out, Para) = flush_para(o, p, s.st);
-      o = f5.0;
-      p = f5.1;
+      flush = true;
     }
   }
+  if (flush) {
+    var f: (Out, Para) = flush_para(o, p, s.words, st);
+    o = f.0;
+    p = f.1;
+    s = State { ...s, words: [] };
+  }
   if (!p.open) {
-    p = Para { ...p, first_indent: h.indent, other_indent: h.indent, p_indent: h.p_indent, pending: s.st.crown || s.st.tagged, open: true };
+    p = Para { ...p, first_indent: h.indent, other_indent: h.indent, p_indent: h.p_indent, pending: st.crown || st.tagged, open: true };
   }
   if (!o.tabs && __memchr(line, 9, h.at) >= 0) {
     o = Out { ...o, tabs: true };
   }
-  var words: Word[] = p.words;
-  p = Para { ...p, words: [] };
-  words = scan_body(words, line, h.at, h.col, s.st.uniform);
-  return State { ...s, o: o, p: Para { ...p, words: words } };
+  return State { ...s, o: o, p: p, words: scan_body(s.words, line, h.at, h.col, st.uniform) };
 }
 
 // ---- options ----------------------------------------------------------------
@@ -881,7 +883,7 @@ pub function main(): i32 {
 // boundary, so one is flushed at the end of each; a line may span two
 // read blocks, so `carry` holds the part that has no terminator yet.
 function run(files: string[], st: Settings): i32 {
-  var s: State = State { o: Out { w: gnu.out_with(block_size()), col: 0, tabs: false }, p: para_new(), st: st, ok: true };
+  var s: State = State { o: Out { w: gnu.out_with(block_size()), col: 0, tabs: false }, p: para_new(), words: [], st: st, ok: true };
 
   var used_stdin: boolean = false;
   var fi: i32 = 0;
@@ -950,8 +952,8 @@ function run(files: string[], st: Settings): i32 {
       if (!is_stdin) {
         r.close();
       }
-      var f: (Out, Para) = flush_para(s.o, s.p, s.st);
-      s = State { ...s, o: f.0, p: f.1 };
+      var f: (Out, Para) = flush_para(s.o, s.p, s.words, s.st);
+      s = State { ...s, o: f.0, p: f.1, words: [] };
     }
   }
 
