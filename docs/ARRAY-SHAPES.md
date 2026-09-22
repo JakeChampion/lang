@@ -75,7 +75,10 @@ metadata:
   is then the storage order from `offset`, so a new shape is a new pair of
   `shape`/`strides` over the same `offset`.
 - **`is_packed()`**: row-major, `offset == 0`, and `data.len()` equals the
-  element count — `data` IS the reading order.
+  element count — `data` IS the reading order. The extent-1 skip above
+  carries into it, so a `broadcast_to` that only PREPENDS extent-1 axes
+  leaves a packed handle packed; one that stretches an axis gives that axis
+  a stride of 0 at extent greater than 1, and does not.
 
 ## 3. The materialization rule
 
@@ -392,8 +395,9 @@ Three rules follow:
   DIRECT-INDEX walk rather than the odometer — element `i` of the reading
   order is `data[i]` when `data` is the reading order — and owes the same
   order by the same rule. The e2e gate holds both arms with an
-  order-sensitive fold, over a transpose and over a packed handle; a
-  commutative `add` cannot tell them apart, which is why the fold that
+  order-sensitive fold, over a transpose, over a packed handle, and over
+  the prepending broadcast of §2 that stays packed; a commutative `add`
+  cannot tell them apart, which is why the fold that
   guards this multiplies by ten.
 - **`reduce_axis` is lane-sized.** It walks the input once in reading
   order and keeps one accumulator per lane (the row-major position in the
