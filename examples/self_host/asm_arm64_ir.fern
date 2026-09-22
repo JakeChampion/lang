@@ -3581,7 +3581,7 @@ function emit_arm64_op_map_set(o: ir.Op, s: asmcore.EmitState): asmcore.EmitStat
     s = s.write("    mov x4, #" + util.i32_to_string(x4bits) + "\n");
     // x5 = derived K.eq for a struct/enum key, x6 = the value release of a
     // column of boxes (vkind 3), x7 = the key release of a keyed column, each
-    // 0 where the op names none (ir.map_set_symbols splits the three, #9962).
+    // 0 where the op names none (ir.map_op_symbols splits the three, #9962).
     var syms: string[] = ir.map_op_symbols(o);
     if (o.i32_imm == 2) { s = map_eqfn_x5(s, syms[0]); } else { s = map_eqfn_x5(s, ""); }
     s = map_fn_address(s, "x6", syms[1]);

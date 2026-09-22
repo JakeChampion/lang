@@ -1097,7 +1097,7 @@ pub function op_map_new(keykind: i32, fns: string): Op { return Op { decl: 0 - 1
 // `str` carries up to THREE symbols, pipe-joined as `eq|vrel|krel`: the
 // derived equality, the release of one VALUE of a column of boxes (vkind 3)
 // and the release of one KEY of a keyed column (keykind 2), each "" where the
-// map has none. `map_set_symbols` splits them, and a bare name with no pipe
+// map has none. `map_op_symbols` splits them, and a bare name with no pipe
 // reads as the one symbol the op's kinds call for — the value release of a
 // column of boxes, else the eq of a keyed map (#9962).
 // `width` carries per-insert flags as bits. Bits 0/1 are the wasm-only
