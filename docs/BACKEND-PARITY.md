@@ -107,6 +107,27 @@ self-host counterpart (#6636), and `-emit asm` has no native one — native
 always links, and the text form is how the self-host's emitters are observed in
 isolation (docs/TOOLCHAIN-SELF-HOSTING.md).
 
+## Internal networking syscall floor
+
+The self-host runtime's `__syscall6` (#9853, #4451) passes a syscall number
+and six machine-word operands. It is an internal runtime intrinsic, registered
+beside `__syscall3` through `__syscall5`, rather than a public language builtin.
+It adds no public capability or platform-table entry. Networking APIs built on
+it still need their own capability and target classifications in both compilers.
+
+| Target | `__syscall6` |
+| --- | --- |
+| x86-64-linux | `syscall`, sixth argument in `r9` |
+| arm64-linux | `svc #0`, sixth argument in `x5` |
+| arm64-darwin | `svc #0x80`, sixth argument in `x5`, negative errno on failure |
+| wasm32-wasi | Rejected by the self-host wasm drivers; use WASI imports |
+| wasm32-wasi-http | No raw syscalls; self-host target remains unavailable (#6636) |
+| interp / Go frontend | Internal self-host intrinsic, not a public builtin |
+
+File-backed mapping tests read distinct bytes at a nonzero offset, then unmap
+and close. The offset exercises the sixth argument; a bad descriptor checks
+the error result. The Darwin test executes in the Apple Silicon lane.
+
 ## CPU baseline
 
 Fern emits **static binaries with no runtime CPU dispatch**, so every

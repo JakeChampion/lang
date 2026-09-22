@@ -4652,6 +4652,7 @@ function builtin_i32_names(): string[] {
         "__syscall3",
         "__syscall4",
         "__syscall5",
+        "__syscall6",
         "__raw_environ",
         // Fixed static scratch buffer for syscall leaves (timespec /
         // stat) — reused, never freed. Returns the buffer ptr as i32.

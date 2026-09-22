@@ -304,3 +304,4 @@ setgroups=319
 tcp_local_port=320
 chmod_at=321
 scale_f64=322
+syscall6=323

@@ -38,6 +38,20 @@ The unit lane installs wasmtime and qemu-aarch64: the wasm and arm64 EXECUTION
 tests in the unit packages `t.Skip` on a missing runtime, so without them that
 whole family reported `ok` having run nothing.
 
+## Networking foundations (#9853)
+
+`TestSelfHostSyscall6IRX86_64` and `TestSelfHostSyscall6IRArm64` execute a
+file-backed mapping at a nonzero offset through the self-host runtime's
+six-argument syscall primitive. They verify mapped bytes, unmap/close results
+and negative errno for a bad descriptor. `TestSelfHostArm64DarwinSyscall6`
+executes the same probe on Apple Silicon in the macOS lane.
+`TestSelfHostWasmUnsupportedBuiltins` verifies that both wasm drivers reject
+the intrinsic before producing WAT. `TestSelfHostIRKindRegistry` pins its
+stable op ID alongside the existing registry.
+
+These tests prove the syscall floor needed by the networking runtime. They
+do not establish socket correctness, leak freedom or a performance result.
+
 ## Generated digest sources
 
 The lint lane runs `make digest-check` on every PR and main push. It compares
