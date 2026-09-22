@@ -37,9 +37,9 @@ function add_imports(paths: string[], mod: parser.Module, root: string): string[
     return paths;
 }
 
-// prune_to_reachable keeps only `mod`'s funcs whose mangled name is in `reach`
-// (the reachable-name set derived from the treeshaked merged module). Both
-// flatten.bundle (the merged path) and flatten.bundle_per_module mangle a
+// prune_to_reachable keeps only `mod`'s funcs whose treeshake.reach_key is in
+// `reach` (the kept set of the treeshaked merged module, keyed the same way).
+// Both flatten.bundle (the merged path) and flatten.bundle_per_module mangle a
 // non-entry decl to `prefix__name`, so the names line up. Runs BEFORE
 // lift_lambdas — exactly where the merged path treeshakes — so a kept function's
 // lifted lambdas (generated names, not in `reach`) survive.
@@ -47,7 +47,7 @@ function prune_to_reachable(mod: parser.Module, reach: string[]): parser.Module 
     var kept: parser.FuncDecl[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        if (util.has_str(reach, mod.funcs[fi].name)) { kept = kept.append(mod.funcs[fi]); }
+        if (util.has_str(reach, treeshake.reach_key(mod.funcs[fi]))) { kept = kept.append(mod.funcs[fi]); }
         fi = fi + 1;
     }
     return parser.Module { funcs: kept, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls };
@@ -457,7 +457,7 @@ function main(): i32 {
     if (nfuncs > 512 && nfuncs < 1500) {
         var reach: string[] = [];
         var ri: i32 = 0;
-        while (ri < merged.funcs.len()) { reach = reach.append(merged.funcs[ri].name); ri = ri + 1; }
+        while (ri < merged.funcs.len()) { reach = reach.append(treeshake.reach_key(merged.funcs[ri])); ri = ri + 1; }
         var pmc: string = emit_per_module_concat(entry_mod, loaded, reach);
         if (pmc.len() > 0) { write(pmc); return 0; }
     }

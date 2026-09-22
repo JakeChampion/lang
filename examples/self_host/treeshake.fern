@@ -309,6 +309,17 @@ function ts_kept_name(fd: parser.FuncDecl, refs: RefSet): boolean {
     return ts_recv_rooted(fd.name) && ts_recv_kept(fd, refs);
 }
 
+// reach_key names a function the way this pass keeps it: a receiver method by
+// its receiver's base type and name, a free function by its (mangled) name. A
+// per-module driver prunes each unit to the kept set through this key, so two
+// methods sharing a name — `f32.to_string` beside `f64.to_string` — are two
+// entries, and the one the shake dropped does not come back by name alone,
+// without the callees the shake dropped with it.
+pub function reach_key(fd: parser.FuncDecl): string {
+    if (fd.receiver_type.len() > 0) { return util.base_type_name(fd.receiver_type) + "." + fd.name; }
+    return fd.name;
+}
+
 // treeshake returns `mod` with `mod.funcs` pruned to those reachable, by name,
 // from the roots (`main`, top-level statements, WIT exports, Drop finalizers,
 // body-bearing async functions). Structs / enums / aliases / imports /
