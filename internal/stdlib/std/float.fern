@@ -94,22 +94,17 @@ function _db_cache32(): string {
 }
 // END GENERATED DRAGONBOX TABLES
 
-// _db_dig decodes one table character to its 6-bit value. The alphabet is 64
-// printable ASCII characters in two contiguous spans, '0'..'[' (48..91) and
-// ']'..'p' (93..112); it skips '\' so no character needs escaping.
-function _db_dig(c: i32): u64 {
-    if (c < 92) { return (c - 48) as u64; }
-    return (c - 49) as u64;
-}
-
 // _db_word decodes the 64-bit word that starts at `at`: 11 characters, most
 // significant base-64 digit first. The accumulator cannot overflow because
 // every encoded word is itself a 64-bit value.
 function _db_word(s: string, at: i32): u64 {
     var v: u64 = 0 as u64;
-    var i: i32 = 0;
-    while (i < 11) {
-        v = v * (64 as u64) + _db_dig(s[at + i] as i32);
+    var i: i32 = at;
+    var end: i32 = at + 11;
+    while (i < end) {
+        var c: i32 = s[i] as i32;
+        if (c < 92) { c = c - 48; } else { c = c - 49; }
+        v = (v << (6 as u64)) | (c as u64);
         i = i + 1;
     }
     return v;
@@ -124,41 +119,42 @@ function _db_log2_pow10(e: i32): i32 { return (e * 1741647) >> 19; }
 function _db_log10_pow2_m43(e: i32): i32 { return (e * 631305 - 261663) >> 21; }
 
 // _db_mul64 is the 64x64 -> 128 widening multiply, returned as
-// (high, low). Fern has no 128-bit integer, so it is assembled from four
-// 32x32 -> 64 partial products; each fits u64 exactly.
-function _db_mul64(x: u64, y: u64): (u64, u64) {
+// the high half; the low half is the machine's wrapping product. Fern has
+// no 128-bit integer, so it is assembled from four 32x32 -> 64 partial
+// products; each fits u64 exactly. Scalar results throughout this file
+// rather than pairs, because a returned tuple is a heap cell.
+function _db_mul_hi(x: u64, y: u64): u64 {
     var m: u64 = 4294967295 as u64;
     var sh: u64 = 32 as u64;
     var a: u64 = x >> sh; var b: u64 = x & m;
     var c: u64 = y >> sh; var d: u64 = y & m;
     var bd: u64 = b * d; var ad: u64 = a * d; var bc: u64 = b * c;
     var mid: u64 = (bd >> sh) + (ad & m) + (bc & m);
-    var hi: u64 = a * c + (mid >> sh) + (ad >> sh) + (bc >> sh);
-    return (hi, ((mid & m) << sh) | (bd & m));
+    return a * c + (mid >> sh) + (ad >> sh) + (bc >> sh);
 }
 
-// _db_mul192_upper is the upper 128 bits of (64-bit x) * (128-bit cache),
-// returned as (high, low). `low == 0` is Dragonbox's integer check.
-function _db_mul192_upper(x: u64, chi: u64, clo: u64): (u64, u64) {
-    var p: (u64, u64) = _db_mul64(x, chi);
-    var q: (u64, u64) = _db_mul64(x, clo);
-    var lo: u64 = p.1 + q.0;
-    var hi: u64 = p.0;
-    if (lo < p.1) { hi = hi + (1 as u64); }   // carry out of the low half
-    return (hi, lo);
+// _db_mul192_hi / _db_mul192_lo are the upper 128 bits of (64-bit x) *
+// (128-bit cache), a word each. `lo == 0` is Dragonbox's integer check.
+function _db_mul192_lo(x: u64, chi: u64, clo: u64): u64 {
+    return x * chi + _db_mul_hi(x, clo);
+}
+function _db_mul192_hi(x: u64, chi: u64, clo: u64): u64 {
+    var hi: u64 = _db_mul_hi(x, chi);
+    if (_db_mul192_lo(x, chi, clo) < x * chi) { hi = hi + (1 as u64); }   // carry out of the low half
+    return hi;
 }
 
-// _db_parity64 returns (parity, is_integer) for the lower 128 bits of
-// two_f * cache, the tie-break probe Dragonbox uses at the interval
-// endpoints. beta is in [6, 9] here, so both shifts stay in range.
-function _db_parity64(two_f: u64, chi: u64, clo: u64, beta: i32): (boolean, boolean) {
-    var p: (u64, u64) = _db_mul64(two_f, clo);
-    var hi: u64 = two_f * chi + p.0;
-    var lo: u64 = p.1;
+// _db_parity64 answers bit 0 set for parity and bit 1 set for is_integer,
+// of the lower 128 bits of two_f * cache: the tie-break probe Dragonbox
+// uses at the interval endpoints. beta is in [6, 9] here, so both shifts
+// stay in range.
+function _db_parity64(two_f: u64, chi: u64, clo: u64, beta: i32): i32 {
+    var hi: u64 = two_f * chi + _db_mul_hi(two_f, clo);
+    var lo: u64 = two_f * clo;
     var back: u64 = (64 - beta) as u64;
-    var parity: boolean = ((hi >> back) & (1 as u64)) != (0 as u64);
-    var is_int: boolean = ((hi << (beta as u64)) | (lo >> back)) == (0 as u64);
-    return (parity, is_int);
+    var flags: i32 = ((hi >> back) & (1 as u64)) as i32;
+    if (((hi << (beta as u64)) | (lo >> back)) == (0 as u64)) { flags = flags + 2; }
+    return flags;
 }
 
 // _db_rtz strips trailing zeros from the significand, folding each into the
@@ -200,9 +196,9 @@ function __db_shortest64(n: f64): (i64, i32) {
     var clo: u64 = _db_word(tbl, at + 11);
 
     var deltai: u64 = chi >> ((63 - beta) as u64);
-    var z: (u64, u64) = _db_mul192_upper((two_fc | (1 as u64)) << (beta as u64), chi, clo);
-    var zi: u64 = z.0;
-    var z_int: boolean = z.1 == (0 as u64);
+    var zx: u64 = (two_fc | (1 as u64)) << (beta as u64);
+    var zi: u64 = _db_mul192_hi(zx, chi, clo);
+    var z_int: boolean = _db_mul192_lo(zx, chi, clo) == (0 as u64);
 
     var sig: u64 = zi / (1000 as u64);
     var r: u64 = zi - (1000 as u64) * sig;
@@ -219,8 +215,8 @@ function __db_shortest64(n: f64): (i64, i32) {
     } else if (r > deltai) {
         smaller = true;
     } else {
-        var xp: (boolean, boolean) = _db_parity64(two_fc - (1 as u64), chi, clo, beta);
-        if (!(xp.0 || (xp.1 && closed))) { smaller = true; }
+        var xp: i32 = _db_parity64(two_fc - (1 as u64), chi, clo, beta);
+        if (!((xp & 1) != 0 || ((xp & 2) != 0 && closed))) { smaller = true; }
     }
     if (!smaller) { return _db_rtz(sig, mk + 3); }
 
@@ -234,9 +230,9 @@ function __db_shortest64(n: f64): (i64, i32) {
     var divisible: boolean = dist % (100 as u64) == (0 as u64);
     sig = sig + dist / (100 as u64);
     if (divisible) {
-        var yp: (boolean, boolean) = _db_parity64(two_fc, chi, clo, beta);
-        if (yp.0 != approx) { sig = sig - (1 as u64); }
-        else if (sig % (2 as u64) != (0 as u64) && yp.1) { sig = sig - (1 as u64); }
+        var yp: i32 = _db_parity64(two_fc, chi, clo, beta);
+        if (((yp & 1) != 0) != approx) { sig = sig - (1 as u64); }
+        else if (sig % (2 as u64) != (0 as u64) && (yp & 2) != 0) { sig = sig - (1 as u64); }
     }
     return (sig as i64, mk + 2);
 }
@@ -288,8 +284,7 @@ function __db_shortest32(n: f32): (i64, i32) {
     var deltai: u64 = c >> ((63 - beta) as u64);
     // The binary32 product is 96-bit: widen the 32-bit operand into the high
     // half and keep the upper 64 bits.
-    var p: (u64, u64) = _db_mul64(((two_fc | (1 as u64)) << (beta as u64)) << (32 as u64), c);
-    var prod: u64 = p.0;
+    var prod: u64 = _db_mul_hi(((two_fc | (1 as u64)) << (beta as u64)) << (32 as u64), c);
     var zi: u64 = prod >> (32 as u64);
     var z_int: boolean = (prod & (4294967295 as u64)) == (0 as u64);
 
@@ -306,8 +301,8 @@ function __db_shortest32(n: f32): (i64, i32) {
     } else if (r > deltai) {
         smaller = true;
     } else {
-        var xp: (boolean, boolean) = _db_parity32(two_fc - (1 as u64), c, beta);
-        if (!(xp.0 || (xp.1 && closed))) { smaller = true; }
+        var xp: i32 = _db_parity32(two_fc - (1 as u64), c, beta);
+        if (!((xp & 1) != 0 || ((xp & 2) != 0 && closed))) { smaller = true; }
     }
     if (!smaller) { return _db_rtz(sig, mk + 2); }
 
@@ -319,20 +314,20 @@ function __db_shortest32(n: f32): (i64, i32) {
     var divisible: boolean = dist % (10 as u64) == (0 as u64);
     sig = sig + dist / (10 as u64);
     if (divisible) {
-        var yp: (boolean, boolean) = _db_parity32(two_fc, c, beta);
-        if (yp.0 != approx) { sig = sig - (1 as u64); }
-        else if (sig % (2 as u64) != (0 as u64) && yp.1) { sig = sig - (1 as u64); }
+        var yp: i32 = _db_parity32(two_fc, c, beta);
+        if (((yp & 1) != 0) != approx) { sig = sig - (1 as u64); }
+        else if (sig % (2 as u64) != (0 as u64) && (yp & 2) != 0) { sig = sig - (1 as u64); }
     }
     return (sig as i64, mk + 1);
 }
 
 // _db_parity32 is _db_parity64's 96-bit counterpart: the low 64 bits of the
 // product carry everything it needs. beta is in [3, 6] here.
-function _db_parity32(two_f: u64, c: u64, beta: i32): (boolean, boolean) {
+function _db_parity32(two_f: u64, c: u64, beta: i32): i32 {
     var r: u64 = two_f * c;
-    var parity: boolean = ((r >> ((64 - beta) as u64)) & (1 as u64)) != (0 as u64);
-    var is_int: boolean = ((r >> ((32 - beta) as u64)) & (4294967295 as u64)) == (0 as u64);
-    return (parity, is_int);
+    var flags: i32 = ((r >> ((64 - beta) as u64)) & (1 as u64)) as i32;
+    if (((r >> ((32 - beta) as u64)) & (4294967295 as u64)) == (0 as u64)) { flags = flags + 2; }
+    return flags;
 }
 
 function __db_shorter32(be: i32): (i64, i32) {
@@ -418,6 +413,41 @@ pub function (n: f64) to_string(): string {
 
 pub function (n: f32) to_string(): string {
     return __float_shortest_f32(n);
+}
+
+// `shortest_digits()` — the shortest decimal that reads back as `n`, as
+// (significand, exponent) with |n| == significand × 10^exponent and no
+// trailing zero on the significand, so its digit count is the fewest any
+// decimal of `n` that round-trips can have. Zero, an infinity and NaN
+// answer (0, 0). The sign is not part of the answer.
+pub function (n: f64) shortest_digits(): (i64, i32) {
+    if (n != n || n == 0.0 || n * 2.0 == n) { return (0 as i64, 0); }
+    if (n < 0.0) { n = 0.0 - n; }
+    return __db_trim(__db_shortest64(n));
+}
+
+pub function (n: f32) shortest_digits(): (i64, i32) {
+    if (n != n || n == 0.0 || n * 2.0 == n) { return (0 as i64, 0); }
+    if (n < 0.0) { n = 0.0 - n; }
+    return __db_trim(__db_shortest32(n));
+}
+
+// `pow10_hi(k)` / `pow10_lo(k)` — the 128-bit significand of 10^k the
+// shortest search runs on, for a caller doing its own scaled arithmetic:
+// with c the two words, 10^k == (c − θ) × 2^(pow10_log2(k) − 127) for some
+// 0 ≤ θ < 1 (c is 10^k rounded up), for k in -292..326.
+pub function pow10_hi(k: i32): u64 { return _db_word(_db_cache64(), (k + 292) * 22); }
+pub function pow10_lo(k: i32): u64 { return _db_word(_db_cache64(), (k + 292) * 22 + 11); }
+
+// `pow10_log2(k)` — floor(log2(10^k)), the exponent `pow10_hi` is stated against.
+pub function pow10_log2(k: i32): i32 { return _db_log2_pow10(k); }
+
+function __db_trim(d: (i64, i32)): (i64, i32) {
+    var sig: i64 = d.0;
+    if (sig % (10 as i64) != (0 as i64)) { return d; }
+    var exp: i32 = d.1;
+    while (sig % (10 as i64) == (0 as i64)) { sig = sig / (10 as i64); exp = exp + 1; }
+    return (sig, exp);
 }
 
 // __float_to_string_prec renders `n` with EXACTLY `prec` fractional

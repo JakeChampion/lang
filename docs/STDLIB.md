@@ -121,6 +121,11 @@ Receiver methods on i32 / byte values.
   matching Go's `strconv` shortest digit for digit. NaN / ±Inf
   handled. `(n) to_string_prec(prec)` — fixed `prec`
   fractional digits (no trimming), rounded half away from zero.
+  `(n) shortest_digits()` — the same shortest decimal as
+  `(significand, exponent)`, for a caller doing its own layout;
+  `pow10_hi(k)` / `pow10_lo(k)` / `pow10_log2(k)` — the 128-bit
+  power-of-ten table that formatter runs on, for scaled arithmetic
+  of the same kind (`lib/ld.fern`'s `round_to`).
 - **Math primitives** (on both f32 and f64; f32 wrappers
   promote to f64, apply, demote): `abs`, `floor`, `ceil`,
   `round`, `round_to(digits)` (round to N decimal places, half
