@@ -136,3 +136,110 @@ function main(): i32 { return digits("a1b22"); }`)
 		t.Errorf("want the two compares against the accumulator, got %d:\n%s", n, body)
 	}
 }
+
+func TestFoldLeaIntoLoad(t *testing.T) {
+	cases := []struct{ lea, load, want string }{
+		{"\tlea rax, [rax + rcx]", "\tmovzx eax, byte ptr [rax]", "\tmovzx eax, byte ptr [rax + rcx]"},
+		{"\tlea rax, [rax + rcx*4]", "\tmov eax, [rax]", "\tmov eax, [rax + rcx*4]"},
+		{"\tlea rax, [rax + rcx*8]", "\tmov rax, [rax]", "\tmov rax, [rax + rcx*8]"},
+		{"\tlea rax, [rax + rcx]", "\tmovsx eax, byte ptr [rax]", "\tmovsx eax, byte ptr [rax + rcx]"},
+	}
+	for _, c := range cases {
+		got, ok := foldLeaIntoLoad(c.lea, c.load)
+		if !ok || got != c.want {
+			t.Errorf("foldLeaIntoLoad(%q, %q) = %q, %v; want %q", c.lea, c.load, got, ok, c.want)
+		}
+	}
+	decline := []struct{ lea, load, why string }{
+		{"\tlea rax, [rax + rcx*4]", "\tmov rdi, [rax]", "the load leaves the biased address live in rax"},
+		{"\tlea rax, [rax + rcx*4]", "\tmovsd xmm0, [rax]", "a float load leaves rax live"},
+		{"\tlea rax, [rax + rcx*4]", "\tmov [rax], ecx", "a store is not a load"},
+		{"\tlea rax, [rax + 8]", "\tmov eax, [rax]", "not an index form (P7's job)"},
+		{"\tlea rdx, [rax + rcx*4]", "\tmov eax, [rax]", "the address is not in rax"},
+		{"\tlea rax, [rax + rcx*4]", "\tmov eax, [rax + 4]", "the load already has a displacement"},
+	}
+	for _, c := range decline {
+		if got, ok := foldLeaIntoLoad(c.lea, c.load); ok {
+			t.Errorf("folded %q / %q to %q; should decline: %s", c.lea, c.load, got, c.why)
+		}
+	}
+}
+
+func TestPeepholeDropsReloadAfterLoadCompareAndBranch(t *testing.T) {
+	got := runPeephole(
+		"\tmov rax, [rbp-64]",
+		"\tmov rcx, [rbp-72]",
+		"\tcmp eax, ecx",
+		"\tjne .L1",
+		"\tmov rax, [rbp-64]",
+	)
+	if !sameLines(got, "\tmov rax, [rbp-64]", "\tmov rcx, [rbp-72]", "\tcmp eax, ecx", "\tjne .L1") {
+		t.Errorf("got %q", got)
+	}
+	decline := [][]string{
+		// A store between could have written the slot.
+		{"\tmov rax, [rbp-64]", "\tmov [rbp-64], rcx", "\tcmp eax, 1", "\tjne .L1", "\tmov rax, [rbp-64]"},
+		// A call between clobbers rax.
+		{"\tmov rax, [rbp-64]", "\tcall __fn_f", "\tcmp eax, 1", "\tjne .L1", "\tmov rax, [rbp-64]"},
+		// A load into a 32-bit register name is not on the whitelist.
+		{"\tmov rax, [rbp-64]", "\tmov ecx, [rbp-72]", "\tmov eax, ecx", "\tjne .L1", "\tmov rax, [rbp-64]"},
+	}
+	for _, c := range decline {
+		got := runPeephole(c...)
+		if !sameLines(got, c...) {
+			t.Errorf("declined shape was rewritten:\n  in  %q\n  out %q", c, got)
+		}
+	}
+}
+
+func TestPeepholeDropsDeadReloadThroughFusedIncrement(t *testing.T) {
+	// Two fused increments in a row: the first one's reload is dead because
+	// the second one's overwrites rax without reading it.
+	got := runPeephole(
+		"\tadd qword ptr [rbp-48], 1",
+		"\tmov rax, [rbp-48]",
+		"\tadd qword ptr [rbp-56], 1",
+		"\tmov rax, [rbp-56]",
+	)
+	if !sameLines(got, "\tadd qword ptr [rbp-48], 1", "\tadd qword ptr [rbp-56], 1", "\tmov rax, [rbp-56]") {
+		t.Errorf("got %q", got)
+	}
+	// A register-form add reads rax: the load stays.
+	in := []string{"\tmov rax, [rbp-48]", "\tadd rax, 1", "\tmov rax, [rbp-56]"}
+	if got := runPeephole(in...); !sameLines(got, in...) {
+		t.Errorf("load feeding an add was dropped: %q", got)
+	}
+}
+
+// The index helper's common path is straight-line: the bounds check is a
+// compare against the length in memory and a branch to an abort that sits
+// after the function's ret, as does the inline-string arm, and the element
+// load carries the scaled address itself.
+func TestIndexHelperColdArmsFollowTheEpilogue(t *testing.T) {
+	asm := compile(t, `@noinline function f(s: string, a: i32[], i: i32): i32 {
+  return (s[i] as i32) + a[i];
+}
+function main(): i32 { var a: i32[] = [1, 2]; return f("ab", a, 1); }`)
+	body := fnBody(t, asm, "f")
+	ret := strings.Index(body, "\tret\n")
+	if ret < 0 {
+		t.Fatalf("no ret in body:\n%s", body)
+	}
+	hot, cold := body[:ret], body[ret:]
+	for _, want := range []string{"cmp ecx, [rax - 4]", "jae .Loob_", "movzx eax, byte ptr [rax + rcx]", "mov eax, [rax + rcx*4]"} {
+		if !strings.Contains(hot, want) {
+			t.Errorf("hot path lacks %q:\n%s", want, hot)
+		}
+	}
+	for _, bad := range []string{"__fern_report", "__fern_str_idx_scratch", "shr edx, 1", "\tjmp .Lstridx"} {
+		if strings.Contains(hot, bad) {
+			t.Errorf("hot path still carries %q:\n%s", bad, hot)
+		}
+		if !strings.Contains(cold, bad) {
+			t.Errorf("cold section lacks %q:\n%s", bad, cold)
+		}
+	}
+	if strings.Contains(hot, "\tlea rax, [rax + rcx") {
+		t.Errorf("an index lea survived unfused:\n%s", hot)
+	}
+}

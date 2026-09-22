@@ -1447,6 +1447,10 @@ type generator struct {
 	usesSignalDispositionRead bool
 	usesAsBytes               bool
 	usesReadLine              bool
+	// cold holds the current function's out-of-line arms — a bounds check's
+	// abort, an index's inline-string arm — emitted after its epilogue so the
+	// common path falls through without a jump over them.
+	cold []string
 	// usesStrIdx tracks whether any code emits the SSO-aware
 	// inlined __str_idx helper, which spills inline-tagged
 	// strings to the .bss `__fern_str_idx_scratch` slot before
@@ -2756,6 +2760,7 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	g.emit("pop rbp")
 	g.emit(".cfi_def_cfa rsp, 8")
 	g.emit("ret")
+	g.flushCold()
 	g.emit(".cfi_endproc")
 	g.line(fmt.Sprintf(".size %s, .-%s", sym, sym))
 	return nil
@@ -5641,29 +5646,51 @@ func (g *generator) peepholeTail() bool {
 		}
 	}
 
-	// P8 again, through a compare and its branch. A stored value tested and
-	// branched on before its reload:
+	// P8 again, through a compare and its branch. A value stored or loaded,
+	// tested and branched on, then reloaded from the same slot:
 	//
 	//   mov [rbp-N], rax / cmp eax, K / jb L / mov rax, [rbp-N]
 	//     =>  mov [rbp-N], rax / cmp eax, K / jb L
+	//   mov rax, [rbp-N] / mov rcx, [rbp-M] / cmp eax, ecx / jne L / mov rax, [rbp-N]
+	//     =>  mov rax, [rbp-N] / mov rcx, [rbp-M] / cmp eax, ecx / jne L
 	//
-	// The compare reads the accumulator without writing it, and the reload
-	// is only reached along the fall-through edge, on which rax still holds
-	// what was stored. Any path that takes the branch never executes the
-	// reload, so nothing can miss its value. `&&` conditions lower to
-	// chains of exactly this shape.
-	if n >= 4 && isFrameLoadToAcc(w[n-1]) {
+	// Between the two, only lines that neither write the accumulator nor
+	// write memory: a compare or test, a conditional jump, a load into
+	// another register. The reload is only reached along the fall-through
+	// edge, on which rax still holds the slot's value. Any path that takes a
+	// branch never executes the reload, so nothing can miss it. `&&`
+	// conditions lower to chains of exactly this shape.
+	if n >= 3 && isFrameLoadToAcc(w[n-1]) {
 		k := n - 2
-		for k >= 1 && isCompareOrCondJump(w[k]) {
+		for k >= 1 && (isCompareOrCondJump(w[k]) || isLoadIntoOtherReg(w[k])) {
 			k--
 		}
 		if k < n-2 {
-			if slot, ok := matchStoreFromAcc(w[k]); ok {
+			slot, ok := matchStoreFromAcc(w[k])
+			if !ok && isFrameLoadToAcc(w[k]) {
+				slot, ok = w[k][len("\tmov rax, "):], true
+			}
+			if ok {
 				if reg, ok := matchLoadFromSlot(w[n-1], slot); ok && reg == "rax" {
 					g.peepWin = w[:n-1]
 					return true
 				}
 			}
+		}
+	}
+
+	// P13 — index address folded into the load it feeds. An index helper
+	// ends in the scaled `lea` and the element load follows it:
+	//
+	//   lea rax, [rax + rcx*4] / mov eax, [rax]   =>  mov eax, [rax + rcx*4]
+	//
+	// Only a load that overwrites the accumulator qualifies (rax, or eax
+	// whose write zero-extends), since the biased address is dead exactly
+	// then. `lea` sets no flags, so none are lost.
+	if n >= 2 {
+		if line, ok := foldLeaIntoLoad(w[n-2], w[n-1]); ok {
+			g.peepWin = append(w[:n-2], line)
+			return true
 		}
 	}
 
@@ -5727,9 +5754,12 @@ func (g *generator) peepholeTail() bool {
 	// Sound because the deletion only changes the FALL-THROUGH path, which
 	// reaches the overwriter. A path that branches to one of the intervening
 	// labels never executed the load, so nothing can depend on its value.
+	// A memory-destination ALU op with a literal (P10's output) neither
+	// reads nor writes the accumulator, so the walk looks through it too:
+	// two fused increments in a row leave the first one's reload dead.
 	if n >= 2 && writesAccBeforeReading(w[n-1]) {
 		k := n - 2
-		for k >= 0 && isAsmLabel(w[k]) {
+		for k >= 0 && (isAsmLabel(w[k]) || isMemDstAluImm(w[k])) {
 			k--
 		}
 		if k >= 0 && isFrameLoadToAcc(w[k]) {
@@ -6281,6 +6311,53 @@ func renameAccDest(op, dst string, narrow bool) (string, bool) {
 	return "", false
 }
 
+// foldLeaIntoLoad recognises P13's pair and returns the load with the
+// `lea`'s operand as its own.
+func foldLeaIntoLoad(lea, load string) (string, bool) {
+	const leaPfx = "\tlea rax, [rax + rcx"
+	if !strings.HasPrefix(lea, leaPfx) || !strings.HasSuffix(lea, "]") {
+		return "", false
+	}
+	addr := lea[len("\tlea rax, "):]
+	for _, pfx := range [...]string{"\tmov rax, ", "\tmov eax, ", "\tmovzx eax, ", "\tmovsx eax, ", "\tmovsxd rax, "} {
+		if strings.HasPrefix(load, pfx) && strings.HasSuffix(load, "[rax]") {
+			return load[:len(load)-len("[rax]")] + addr, true
+		}
+	}
+	return "", false
+}
+
+// isLoadIntoOtherReg reports whether a line is `mov <r64>, <src>` into a
+// register other than the accumulator or rsp, with a source that is a
+// frame slot or a register: a line that writes neither rax nor memory.
+func isLoadIntoOtherReg(line string) bool {
+	const pfx = "\tmov "
+	if !strings.HasPrefix(line, pfx) {
+		return false
+	}
+	i := strings.Index(line, ", ")
+	if i < 0 {
+		return false
+	}
+	reg, src := line[len(pfx):i], line[i+2:]
+	if reg == "rax" || reg == "rsp" || reg32(reg) == reg {
+		return false
+	}
+	return strings.HasPrefix(src, "[rbp-") || reg32(src) != src
+}
+
+// isMemDstAluImm reports whether a line is a memory-destination ALU op on a
+// frame slot with a literal operand — P10's output, which touches neither
+// the accumulator nor the flags anyone reads.
+func isMemDstAluImm(line string) bool {
+	for _, m := range [...]string{"add", "sub", "and", "or", "xor"} {
+		if strings.HasPrefix(line, "\t"+m+" qword ptr [rbp-") {
+			return true
+		}
+	}
+	return false
+}
+
 // isCompareOrCondJump reports whether a line is a compare, a test, or a
 // conditional jump: the lines that read the accumulator and the flags
 // without writing a register.
@@ -6474,51 +6551,15 @@ func (g *generator) emitMakeClosureOrEnv(op ir.Op) error {
 	return nil
 }
 
-// emitArrBoundsCheck emits the array index bounds check shared by
-// every `__arr_idx*` variant: with the array base in rax and the
-// element index in rcx, the length prefix at [rax-4] is compared
-// and an out-of-range index aborts with exit code 134 (matching the
-// string-slice trap and wasm's `unreachable`). A single unsigned
-// compare catches a negative index (huge as unsigned) and index >=
-// len; rdx is scratch.
-func (g *generator) emitArrBoundsCheck() {
-	ok := g.freshLabel(".Larr_ok")
-	g.emit("mov edx, [rax - 4]") // len prefix
-	g.emit("cmp ecx, edx")
-	g.emit(fmt.Sprintf("jb %s", ok)) // unsigned idx < len → in bounds
-	g.emitAbort("__fern_msg_arr_oob")
-	g.label(ok)
-}
-
-// emitStrBoundsCheckAgainst is emitArrBoundsCheck for a string, with
-// the length already in lenReg and the byte index in rcx. An
-// out-of-range index aborts with exit code 134; a single unsigned
-// compare catches a negative index (huge as unsigned) too.
-//
-// The caller supplies the length because the only place it is cheap to
-// know is inside the __str_idx tag dispatch, which has already decided
-// whether this is a heap or an inline string. Calling emitStrLen here
-// instead would repeat that tag test and emit a second SSO decode per
-// index — a redundant branch, and one the LICM parity gate counts.
-func (g *generator) emitStrBoundsCheckAgainst(lenReg string) {
-	ok := g.freshLabel(".Lstr_ok")
-	g.emit(fmt.Sprintf("cmp ecx, %s", lenReg))
-	g.emit(fmt.Sprintf("jb %s", ok)) // unsigned idx < len → in bounds
-	g.emitAbort("__fern_msg_str_slice")
-	g.label(ok)
-}
-
-// emitSliceBoundsCheck is emitArrBoundsCheck for a slice: the len
-// is in the slice header at [rax+8] (8-byte data_ptr at [rax+0]),
-// read before the helper overwrites rax with the data pointer. rdx
-// is scratch.
-func (g *generator) emitSliceBoundsCheck() {
-	ok := g.freshLabel(".Lslice_ok")
-	g.emit("mov edx, [rax + 8]") // len at [slice+8] (after 8-byte data_ptr)
-	g.emit("cmp ecx, edx")
-	g.emit(fmt.Sprintf("jb %s", ok))
-	g.emitAbort("__fern_msg_slice_oob")
-	g.label(ok)
+// coldLabel and coldEmit append to the current function's out-of-line
+// arms, which flushCold emits after the epilogue.
+func (g *generator) coldLabel(name string) { g.cold = append(g.cold, name+":") }
+func (g *generator) coldEmit(s string)     { g.cold = append(g.cold, "\t"+s) }
+func (g *generator) flushCold() {
+	for _, l := range g.cold {
+		g.put(l)
+	}
+	g.cold = g.cold[:0]
 }
 
 // emitInlineIdxHelper inlines a `__str_idx` / `__arr_idx` /
@@ -6530,21 +6571,36 @@ func (g *generator) emitSliceBoundsCheck() {
 // the `_nc` suffix). Subsequent OpLoad / OpStore consumes
 // the address in rax.
 //
+// The common path is straight-line: the bounds check is one compare
+// against the length in memory and a branch to an out-of-line abort, and
+// an inline string's arm sits out of line too, rejoining just before the
+// address `lea`. A load that follows the `lea` then folds it into its own
+// addressing (P13).
+//
 // x86-64 has a `lea base + idx*scale` addressing form
 // directly for scale 1/2/4/8 — strictly faster than
 // arm64's `add rN, rN, rN, lsl #M` for the same job.
 func (g *generator) emitInlineIdxHelper(name string) error {
 	// Bounds-check elision (#4380 lever 3): a `_nc` suffix names the same
-	// address compute minus the len-load + compare + trap. Strip it and
-	// remember to skip emitArrBoundsCheck for the array cases below.
+	// address compute minus the compare and the abort.
 	checked := true
 	if strings.HasSuffix(name, "_nc") {
 		checked = false
 		name = strings.TrimSuffix(name, "_nc")
 	}
-	arrBounds := func() {
-		if checked {
-			g.emitArrBoundsCheck()
+	// bounds emits the check of the index in ecx against a length operand:
+	// a single unsigned compare catches a negative index (huge as unsigned)
+	// too. An out-of-range index aborts with exit code 134.
+	bounds := func(length, msg string) {
+		if !checked {
+			return
+		}
+		oob := g.freshLabel("oob")
+		g.emit("cmp ecx, " + length)
+		g.emit("jae " + oob)
+		g.coldLabel(oob)
+		for _, l := range abortLines(msg) {
+			g.coldEmit(l)
 		}
 	}
 	// Pop in the order the OpCallDirect dispatch would
@@ -6573,59 +6629,65 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 		// consumes the address before the next call, so there
 		// is no observable race even in `a[i] + b[j]` shapes.
 		//
-		// The bounds check is emitted in each arm of this dispatch: the heap
-		// length is the 4-byte prefix, the inline length is in the tag
-		// byte, and the tag test that tells them apart is already here.
+		// The inline arm leaves `scratch + 1` in rax and rejoins at the
+		// `lea`, so both arms share the one address compute. Its bounds
+		// check reads the length from the tag byte.
 		g.usesStrIdx = true
-		id := g.labelCounter
-		g.labelCounter++
+		inline := g.freshLabel("stridx_inline")
+		join := g.freshLabel("stridx_join")
 		g.emit("test rax, 1")
-		g.emit(fmt.Sprintf("jnz .Lstridx_inline_%d", id))
-		if checked {
-			g.emit("mov edx, [rax - 4]")
-			g.emitStrBoundsCheckAgainst("edx")
-		}
+		g.emit("jnz " + inline)
+		bounds("[rax - 4]", "__fern_msg_str_slice")
+		g.label(join)
 		g.emit("lea rax, [rax + rcx]")
-		g.emit(fmt.Sprintf("jmp .Lstridx_done_%d", id))
-		g.label(fmt.Sprintf(".Lstridx_inline_%d", id))
+
+		g.coldLabel(inline)
 		if checked {
-			g.emit("mov edx, eax")
-			g.emit("shr edx, 1")
-			g.emit("and edx, 7")
-			g.emitStrBoundsCheckAgainst("edx")
+			oob := g.freshLabel("oob")
+			g.coldEmit("mov edx, eax")
+			g.coldEmit("shr edx, 1")
+			g.coldEmit("and edx, 7")
+			g.coldEmit("cmp ecx, edx")
+			g.coldEmit("jae " + oob)
+			g.coldEmit("mov [rip + __fern_str_idx_scratch], rax")
+			g.coldEmit("lea rax, [rip + __fern_str_idx_scratch + 1]")
+			g.coldEmit("jmp " + join)
+			g.coldLabel(oob)
+			for _, l := range abortLines("__fern_msg_str_slice") {
+				g.coldEmit(l)
+			}
+		} else {
+			g.coldEmit("mov [rip + __fern_str_idx_scratch], rax")
+			g.coldEmit("lea rax, [rip + __fern_str_idx_scratch + 1]")
+			g.coldEmit("jmp " + join)
 		}
-		g.emit("mov [rip + __fern_str_idx_scratch], rax")
-		g.emit("lea rax, [rip + __fern_str_idx_scratch]")
-		g.emit("add rax, rcx")
-		g.emit("add rax, 1")
-		g.label(fmt.Sprintf(".Lstridx_done_%d", id))
 	case "__arr_idx_1":
 		// Stride-1 byte-array indexing: byte address = base +
 		// idx. Split from __str_idx so the string helper can
 		// own the SSO inline-spill dispatch without forcing
 		// byte arrays through the same `test rax, 1` check.
-		arrBounds()
+		bounds("[rax - 4]", "__fern_msg_arr_oob")
 		g.emit("lea rax, [rax + rcx]")
 	case "__arr_idx":
-		arrBounds()
+		bounds("[rax - 4]", "__fern_msg_arr_oob")
 		g.emit("lea rax, [rax + rcx*4]")
 	case "__arr_idx_8":
-		arrBounds()
+		bounds("[rax - 4]", "__fern_msg_arr_oob")
 		g.emit("lea rax, [rax + rcx*8]")
 	// Slice indexing first bounds-checks `i` against the slice
 	// header's len (at [slice+8]), then dereferences its data_ptr
 	// field (8-byte pointer at [slice+0]). After the deref it's the
 	// same stride-add shape as the array helpers.
 	case "__slice_idx_1":
-		g.emitSliceBoundsCheck()
+		bounds("[rax + 8]", "__fern_msg_slice_oob")
 		g.emit("mov rax, [rax]") // data_ptr (8-byte pointer)
-		g.emit("add rax, rcx")
+		g.emit("lea rax, [rax + rcx]")
 	case "__slice_idx":
-		g.emitSliceBoundsCheck()
+		bounds("[rax + 8]", "__fern_msg_slice_oob")
 		g.emit("mov rax, [rax]")
 		g.emit("lea rax, [rax + rcx*4]")
 	case "__slice_idx_8":
-		g.emitSliceBoundsCheck()
+		bounds("[rax + 8]", "__fern_msg_slice_oob")
 		g.emit("mov rax, [rax]")
 		g.emit("lea rax, [rax + rcx*8]")
 	default:
@@ -7162,11 +7224,21 @@ func AbortMsg(label string) (text string, code int) {
 // (which writes to stderr, then exit_group). Replaces a bare, silent
 // `mov edi, code; syscall` so the failure names its cause (#5538).
 func (g *generator) emitAbort(label string) {
+	for _, l := range abortLines(label) {
+		g.emit(l)
+	}
+}
+
+// abortLines is the tail call into __fern_report that reports the message
+// `label` names and exits with its code.
+func abortLines(label string) []string {
 	text, code := AbortMsg(label)
-	g.emit(fmt.Sprintf("lea rsi, [rip + %s]", label))
-	g.emit(fmt.Sprintf("mov edx, %d", len(text)))
-	g.emit(fmt.Sprintf("mov edi, %d", code))
-	g.emit("jmp __fern_report")
+	return []string{
+		fmt.Sprintf("lea rsi, [rip + %s]", label),
+		fmt.Sprintf("mov edx, %d", len(text)),
+		fmt.Sprintf("mov edi, %d", code),
+		"jmp __fern_report",
+	}
 }
 
 // emitAbortRuntime emits __fern_report — write(2, msg, len) then

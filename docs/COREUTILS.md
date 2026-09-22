@@ -2028,27 +2028,40 @@ then writes the index load straight to `ecx`, and P8 now sees a reload
 through the compare-and-branch pairs a chain leaves between a store and
 its reload.
 
+The second slice is the index itself. After the first, `magcompare` in
+`sort -n` still paid eight instructions to read one byte: the SSO tag test
+and its branch, the length load, the bounds compare and its branch, the
+address `lea`, a `jmp` over the inline-string arm, then the load. The
+helper's common path is now straight-line: the bounds check is one compare
+against the length in memory and a branch to an abort that sits after the
+function's `ret`, the inline-string arm sits there too and rejoins at the
+`lea` with `scratch + 1` in the base register, and P13 folds the `lea`
+into the load that follows it. That is five instructions for the byte, and
+three for an array element. The same slice lets P8 see a reload through
+the register loads a compare needs, and P11 see a dead reload through a
+fused increment.
+
 Instructions retired under callgrind, one build of each utility from the
-same tree before and after, outputs byte-identical on every row:
+same tree at each step, outputs byte-identical on every row:
 
-| workload | before (Ir) | after (Ir) | change |
-|---|---:|---:|---:|
-| `sort` 100k lines | 577,720,322 | 542,819,828 | -6.0% |
-| `sort -n` 100k numbers | 1,949,987,576 | 1,586,532,461 | -18.6% |
-| `sort -k2,2n` 100k lines | 2,125,121,727 | 1,703,001,250 | -19.9% |
-| `fmt` 1.1 MB of prose | 473,948,933 | 425,377,262 | -10.2% |
-| `cat -A` 3 MB | 142,710,846 | 114,794,139 | -19.6% |
-| `cat -n` 3 MB | 47,520,260 | 44,179,989 | -7.0% |
-| `ptx` 300 kB of prose | 955,048,228 | 853,437,426 | -10.6% |
-| `wc -w` 4.5 MB | 274,461,474 | 239,241,002 | -12.8% |
+| workload | before (Ir) | after slice 1 | after slice 2 | change |
+|---|---:|---:|---:|---:|
+| `sort` 100k lines | 577,720,322 | 542,819,828 | 530,464,775 | -8.2% |
+| `sort -n` 100k numbers | 1,949,987,576 | 1,586,532,461 | 1,454,793,061 | -25.4% |
+| `sort -k2,2n` 100k lines | 2,125,121,727 | 1,703,001,250 | 1,564,743,210 | -26.4% |
+| `fmt` 1.1 MB of prose | 473,948,933 | 425,377,262 | 407,448,730 | -14.0% |
+| `cat -A` 3 MB | 142,710,846 | 114,794,139 | 97,433,028 | -31.7% |
+| `cat -n` 3 MB | 47,520,260 | 44,179,989 | 43,795,128 | -7.8% |
+| `ptx` 300 kB of prose | 955,048,228 | 853,437,426 | 798,790,398 | -16.4% |
+| `wc -w` 4.5 MB | 274,461,474 | 239,241,002 | 230,186,558 | -16.1% |
 
-What the per-byte path still pays, from `magcompare` in `sort -n` after
-the change: the SSO tag dispatch on every index (a `test`, a branch, the
-length load, the bounds compare and its branch, the address `lea`, and a
-`jmp` over the inline-string arm before the byte load — eight instructions
-for one byte), the reload of a local the chain compared a moment ago from
-the same register, and the reload P10 leaves after a fused increment when
-the next statement is itself a store. Each is the next slice.
+A scan loop's `var c = s[i]; if (c >= 48 && c <= 57)` body is twelve
+instructions per byte after both, from twenty-seven. What it still pays is
+the stack machine itself: every local is a frame slot, so the induction
+variable is stored and reloaded on each iteration, and the byte is stored
+to its slot before the chain compares it from the register. That is the
+register allocation the SSA backend does (`docs/SSA-DECISION.md`), not
+another peephole.
 
 ### ls, 2026-09-14, Linux x86-64 (GNU coreutils 9.4, uutils 0.0.24)
 
