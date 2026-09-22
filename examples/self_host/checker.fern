@@ -16754,7 +16754,7 @@ function annotate_expr(e: ast.Expr, s: Scope): ast.Expr {
     },
     ast.ExprCall(c) => {
       var nargs: ast.Expr[] = [];
-      for arg in use_typed_args(c, s) {
+      for arg in c.args {
         nargs = nargs.append(annotate_expr(arg, s));
       }
       nargs = display_rewrite(c, nargs, s);
@@ -16803,51 +16803,6 @@ function annotate_expr(e: ast.Expr, s: Scope): ast.Expr {
     }
   }
   return e;
-}
-
-// `use v <- f(args)` writes its continuation with an untyped parameter that
-// the callee's callback parameter types (the E032 rule). The type is stamped
-// on the lambda before it is annotated, so its body reads a typed binding
-// and the trampoline the lift builds from it declares a typed parameter.
-// A callback parameter of function type has no spelling to stamp, and the
-// binding stays as written.
-function use_typed_args(c: ast.ExprCall, s: Scope): ast.Expr[] {
-  if (c.args.len() == 0) { return c.args; }
-  var last: i32 = c.args.len() - 1;
-  if let ast.ExprLambda(lm) = c.args[last] {
-    if (!lm.use_infer || lm.params.len() == 0 || lm.params[0].type_name.len() > 0) { return c.args; }
-    var bind: string = use_binding_spelling(c.callee, s);
-    if (bind.len() == 0) { return c.args; }
-    var params: ast.ParamDecl[] = [ast.ParamDecl { ...lm.params[0], type_name: bind, is_str: bind == "str" }];
-    var i: i32 = 1;
-    while (i < lm.params.len()) { params = params.append(lm.params[i]); i = i + 1; }
-    return c.args.with(last, ast.ExprLambda { ...lm, params: params });
-  }
-  return c.args;
-}
-
-// The spelling of the first parameter of the callee's trailing callback
-// parameter: from the module signature, else from a function-typed local.
-function use_binding_spelling(callee: ast.Expr, s: Scope): string {
-  var name: string = "";
-  if let ast.ExprIdent(id) = callee { name = id.name; }
-  if (name.len() == 0) { return ""; }
-  var trailing: typeinfo.Type = t_unknown("no callee");
-  var sig: FuncSig = s.lookup_sig(name);
-  if (sig.name.len() > 0) {
-    if (sig.param_types.len() > 0) { trailing = sig.param_types[sig.param_types.len() - 1]; }
-  } else {
-    if let typeinfo.TypeFunc(ft) = s.lookup(name) {
-      if (ft.param_types.len() > 0) { trailing = ft.param_types[ft.param_types.len() - 1]; }
-    }
-  }
-  if let typeinfo.TypeFunc(cb) = trailing {
-    if (cb.param_types.len() == 0) { return ""; }
-    var first: typeinfo.Type = cb.param_types[0];
-    if (is_unknown(first) || spells_function(first)) { return ""; }
-    return typeinfo.spelling(first);
-  }
-  return "";
 }
 
 // Capture contracts are resolved where the lambda is defined, including
