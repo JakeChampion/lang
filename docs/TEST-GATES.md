@@ -117,6 +117,10 @@ same ownership checks. The self-host gate also validates a close-only
 module so reclamation does not depend on a constructor pulling in the heap.
 These tests do not establish reclamation for UDP or stream-I/O scratch.
 
+The same repeated-operation gate covers `tcp_local_port` success and error
+returns using a borrowed socket: IPv4 port zero and IPv6 port 65535 must
+survive scratch reclamation, without dropping the caller's socket.
+
 ## Generated digest sources
 
 The lint lane runs `make digest-check` on every PR and main push. It compares

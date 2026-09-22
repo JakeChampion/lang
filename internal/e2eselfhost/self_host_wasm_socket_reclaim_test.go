@@ -88,10 +88,11 @@ func TestSelfHostWasmSocketGuestStorage(t *testing.T) {
 		{"listen", "tcp_listen(0)"},
 		{"connect", "tcp_connect(0, 1)"},
 		{"accept", "tcp_accept(0)"}, // harness supplies a borrowed listener record
+		{"port", "tcp_local_port(0)"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := runX86_64Bin(runner, bin)
-			cmd.Stdin = strings.NewReader(e2eharness.WasiSocketStorageProbe(tc.expr))
+			cmd.Stdin = strings.NewReader(e2eharness.WasiSocketStorageProbe(tc.expr, tc.name != "port"))
 			wat, err := cmd.Output()
 			if err != nil {
 				t.Fatalf("self-host socket probe: %v", err)
@@ -100,7 +101,11 @@ func TestSelfHostWasmSocketGuestStorage(t *testing.T) {
 			if err := os.WriteFile(path, wat, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			e2eharness.CheckWasiSocketReclaim(t, path, tc.name+"-close")
+			operation := tc.name
+			if operation != "port" {
+				operation += "-close"
+			}
+			e2eharness.CheckWasiSocketReclaim(t, path, operation)
 		})
 	}
 }

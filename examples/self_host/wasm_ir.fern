@@ -3049,12 +3049,14 @@ pub function wasi_sockets_local_address_import(): string {
 pub function tcp_local_port_func(): string {
     var o: string = "";
     o = o + "  (func $__fern_tcp_local_port (param $c i32) (result i32)\n";
-    o = o + "    (local $ret i32)\n";
+    o = o + "    (local $ret i32) (local $result i32)\n";
     o = o + "    (local.set $ret (call $__fern_alloc (i32.const 36)))\n";
     o = o + "    (call $__fern_wasi_tcp_local_address (i32.load (local.get $c)) (local.get $ret))\n";
     o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
-    o = o + "      (return (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))))\n";
-    o = o + "    (i32.load16_u offset=8 (local.get $ret)))\n";
+    o = o + "      (local.set $result (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret))))))\n";
+    o = o + "    (else (local.set $result (i32.load16_u offset=8 (local.get $ret)))))\n";
+    o = o + "    (call $__fern_raw_free (local.get $ret) (i32.const 36))\n";
+    o = o + "    (local.get $result))\n";
     return o;
 }
 

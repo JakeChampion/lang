@@ -865,6 +865,7 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__network_handle")
 					needs.add("__fern_tcp_connect")
 				case "__fern_tcp_local_port":
+					needs.add("__free")
 					// (sock) → i32 — the bound port, or -errno.
 					// The retptr scratch comes from plain alloc.
 					needs.add("__fern_alloc")

@@ -33,10 +33,9 @@
 //	blocking-write-
 //	  and-flush       → 4 bytes  (1 disc; payload is unit on both arms)
 //
-// Each helper allocates a fresh retptr via __fern_alloc. The
-// bump allocator can't free, so the buffers leak — bounded by
-// the per-process call count, and acceptable for the edge-handler
-// workload the language targets.
+// Setup reuses its return area as the successful socket record, reclaimed
+// by close, or frees it on failure. Local-port queries free their return
+// area on both paths. Stream-I/O scratch reclamation remains separate work.
 
 package wasmbin
 
@@ -486,7 +485,7 @@ func buildTcpLocalPortBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 2)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = emitErrnoNegReturn(body, 2, idxs)
+	body = emitErrnoNegReturnReclaim(body, 2, 36, idxs)
 	body = inst.InstEnd(body)
 
 	// Ok arm: the port, a u16 at retptr+8 in linear-memory order.
@@ -494,6 +493,10 @@ func buildTcpLocalPortBody(idxs map[string]uint32) []byte {
 	body = inst.InstI32Const(body, 8)
 	body = numeric.InstI32Add(body)
 	body = memory.InstI32Load16U(body, 1, 0)
+	// Keep the scalar result on the stack while returning its scratch area.
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstI32Const(body, 36)
+	body = inst.InstCall(body, idxs["__free"])
 
 	// 2 i32 locals after the 1 param.
 	locals := inst.PutLocalsOneGroup(nil, 2, encode.ValtypeI32)

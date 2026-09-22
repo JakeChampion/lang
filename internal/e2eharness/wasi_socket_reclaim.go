@@ -16,7 +16,11 @@ import (
 // WasiSocketStorageProbe repeats a complete operation, preserving its result
 // while checking that the guest heap stops growing after the first iteration.
 // The host fault fixture runs the same loop at every failure stage.
-func WasiSocketStorageProbe(expr string) string {
+func WasiSocketStorageProbe(expr string, closeSocket bool) string {
+	close := ""
+	if closeSocket {
+		close = "if (h >= 0) { result = tcp_close(h); }"
+	}
 	return `function main(): i32 {
     var i: i32 = 0;
     var stable: i64 = 0;
@@ -25,7 +29,7 @@ func WasiSocketStorageProbe(expr string) string {
         var allocations: i64 = __heap_alloc_count();
         var h: i32 = ` + expr + `;
         result = h;
-        if (h >= 0) { result = tcp_close(h); }
+        ` + close + `
         var used: i64 = __heap_bump_bytes();
         if (i == 0) { stable = used; }
         if (used != stable) { return -1000; }
@@ -74,7 +78,7 @@ func CheckWasiSocketReclaim(t *testing.T, modulePath, operation string) {
 	if seen == 0 || strings.Contains(wat, "(import ") {
 		t.Fatal("unhandled core import syntax")
 	}
-	steps := map[string]int{"listen": 5, "connect": 3, "accept": 1, "udp": 6}[operation]
+	steps := map[string]int{"listen": 5, "connect": 3, "accept": 1, "port": 1, "udp": 6}[operation]
 	if steps == 0 {
 		t.Fatal("unknown socket operation")
 	}
@@ -89,12 +93,16 @@ func CheckWasiSocketReclaim(t *testing.T, modulePath, operation string) {
 		socket = 0
 		successFailure = "(i32.ne (local.get $result) (i32.const 1))"
 	}
+	if operation == "port" {
+		socket = 0
+		successFailure = "(i32.ne (local.get $result) (select (i32.const 0) (i32.const 65535) (i32.eqz (global.get $fh_handle))))"
+	}
 	if closing {
 		socket, streams = 0, 0
 		successFailure = "(i32.ne (local.get $result) (i32.const 0))"
 	}
 	borrowedListener := ""
-	if operation == "accept" {
+	if operation == "accept" || operation == "port" {
 		// A borrowed listener record at address zero, with host handle 42.
 		// The accepted socket gets a distinct handle (0 or 7) and owns its
 		// streams. The listener remains host-owned and must never be dropped.
@@ -192,6 +200,8 @@ func socketHostBody(operation, moduleName, name string) string {
 		phase, own = 3, "streams"
 	case strings.HasSuffix(name, ".accept"):
 		phase, own = 1, "accepted"
+	case strings.HasSuffix(name, ".local-address"):
+		phase = 1
 	case strings.HasSuffix(name, ".start-listen"):
 		phase = 4
 	case strings.HasSuffix(name, ".finish-listen"):
@@ -213,6 +223,12 @@ func socketHostBody(operation, moduleName, name string) string {
 		own = "(global.set $fh_socket (i32.const 1)) (global.set $fh_in (i32.const 1)) (global.set $fh_out (i32.const 1))"
 	}
 	payload := fmt.Sprintf("(i32.store offset=4 (local.get %d) (global.get $fh_handle)) (i32.store offset=8 (local.get %d) (global.get $fh_handle))", ret, ret)
+	if operation == "port" {
+		// IPv4 port zero and IPv6 port 65535 exercise both canonical shapes.
+		payload = "(if (i32.ne (local.get 0) (i32.const 42)) (then unreachable)) " +
+			"(i32.store offset=4 (local.get 1) (i32.ne (global.get $fh_handle) (i32.const 0))) " +
+			"(i32.store16 offset=8 (local.get 1) (select (i32.const 0) (i32.const 65535) (i32.eqz (global.get $fh_handle))))"
+	}
 	if operation == "accept" {
 		payload += fmt.Sprintf(" (i32.store offset=12 (local.get %d) (global.get $fh_handle))", ret)
 	}

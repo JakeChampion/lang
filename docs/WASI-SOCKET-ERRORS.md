@@ -56,3 +56,6 @@ the freelist can overwrite the former error payload. Repeated fault probes
 check one allocation per operation and a flat heap high-water mark after
 warmup. UDP and stream-I/O scratch, and the worker's network capability,
 remain separate work.
+
+Local-port queries also release their canonical return area after saving
+the port or errno. The socket remains borrowed throughout the lookup.
