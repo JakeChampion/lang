@@ -44,9 +44,8 @@ import (
 // self-build reserves gen1BuildMB and each whole-tree emit wholeTreeEmitMB,
 // so on a 16 GB runner two whole-tree emits run side by side but neither
 // runs beside the self-build. The single-module emits are unreserved and
-// overlap anything. The self-build starts first and each compiler's semantic
-// emit is queued ahead of its AST ones, so the longest steps hold the slots
-// while the short ones fill in.
+// overlap anything. Which reservation is granted first is the scheduler's
+// choice, not this test's; the reservation forbids the overlap either way.
 func TestSelfHostSemanticWholeCompilerX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
