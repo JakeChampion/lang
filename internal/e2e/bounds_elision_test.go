@@ -101,7 +101,8 @@ func TestWASMBoundsElisionCorrect(t *testing.T) {
 func TestX86_64BoundsElisionEmitted(t *testing.T) {
 	forSrc := `function main(): i32 { var xs: i32[] = [10, 20, 30, 40]; var s: i32 = 0; for x in xs { s = s + x; } return s; }`
 	whileSrc := `function main(): i32 { var xs: i32[] = [10, 20, 30, 40]; var s: i32 = 0; var i: i32 = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; }`
-	keptSrc := `function main(): i32 { var xs: i32[] = [10, 20, 30, 40]; var n: i32 = xs.len(); var s: i32 = 0; var i: i32 = 0; while (i < n) { s = s + xs[i]; i = i + 1; } return s; }`
+	capturedSrc := `function main(): i32 { var xs: i32[] = [10, 20, 30, 40]; var n: i32 = xs.len(); var s: i32 = 0; var i: i32 = 0; while (i < n) { s = s + xs[i]; i = i + 1; } return s; }`
+	keptSrc := `function main(): i32 { var xs: i32[] = [10, 20, 30, 40]; var n: i32 = xs.len(); n = n - 1; var s: i32 = 0; var i: i32 = 0; while (i < n) { s = s + xs[i]; i = i + 1; } return s; }`
 
 	forAsm := compileToX86Asm(t, forSrc)
 	if n := strings.Count(mainBody(forAsm), "mov edi, 134"); n != 0 {
@@ -111,9 +112,13 @@ func TestX86_64BoundsElisionEmitted(t *testing.T) {
 	if n := strings.Count(mainBody(whileAsm), "mov edi, 134"); n != 0 {
 		t.Errorf("len-guarded while-index loop kept %d bounds-check trap(s); want 0 (elideLenBoundedChecks)\n%s", n, mainBody(whileAsm))
 	}
+	capturedAsm := compileToX86Asm(t, capturedSrc)
+	if n := strings.Count(mainBody(capturedAsm), "mov edi, 134"); n != 0 {
+		t.Errorf("loop bounded by a captured length kept %d bounds-check trap(s); want 0\n%s", n, mainBody(capturedAsm))
+	}
 	keptAsm := compileToX86Asm(t, keptSrc)
 	if n := strings.Count(mainBody(keptAsm), "mov edi, 134"); n == 0 {
-		t.Errorf("variable-bounded while-index loop dropped its bounds-check trap; want it kept (guard is not syntactically i < xs.len())")
+		t.Errorf("loop bounded by a reassigned length dropped its bounds-check trap; want it kept (n is not the array's length any more)")
 	}
 	// A string in the same idiom drops its check too (the SSO dispatch
 	// stays: it is how the byte address is found, not a check).

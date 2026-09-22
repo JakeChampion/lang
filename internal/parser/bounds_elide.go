@@ -24,7 +24,10 @@ import (
 // that point:
 //
 //   - the loop guard is exactly `i < arr.len()` / `i < len(arr)` (strict `<`,
-//     both operands bare idents) — gives the upper bound `i < len`;
+//     both operands bare idents) — gives the upper bound `i < len` — or
+//     `i < n` where an earlier statement of the same block declared
+//     `var n = arr.len()` and nothing between it and the loop assigns or
+//     re-binds `n` or `arr`;
 //   - `i` is initialised to a non-negative integer literal in the For's Init or
 //     the statement immediately before the loop, and every assignment to `i` in
 //     the body / step is `i = i + <non-negative int literal>` — so `i` is
@@ -80,18 +83,18 @@ func elideInStmts(stmts []ast.Stmt) {
 		}
 		switch x := stmt.(type) {
 		case *ast.While:
-			tryElideLoop(nil, prev, x.Cond, x.Body)
+			tryElideLoop(nil, stmts[:p], prev, x.Cond, x.Body)
 		case *ast.For:
-			tryElideLoop(x, prev, x.Cond, x.Body)
+			tryElideLoop(x, stmts[:p], prev, x.Cond, x.Body)
 		}
 	}
 }
 
 // tryElideLoop performs the elision for one loop. forNode is the *ast.For when
-// the loop is a C-style for (nil for a while); prev is the statement before the
-// loop in the same block.
-func tryElideLoop(forNode *ast.For, prev ast.Stmt, cond ast.Expr, body ast.Stmt) {
-	idx, arr, ok := loopIndexAndArray(cond)
+// the loop is a C-style for (nil for a while); before is the statements that
+// precede the loop in its block, and prev the last of them.
+func tryElideLoop(forNode *ast.For, before []ast.Stmt, prev ast.Stmt, cond ast.Expr, body ast.Stmt) {
+	idx, arr, lenVar, ok := loopIndexAndArray(cond, before)
 	if !ok {
 		return
 	}
@@ -107,6 +110,11 @@ func tryElideLoop(forNode *ast.For, prev ast.Stmt, cond ast.Expr, body ast.Stmt)
 		return
 	}
 	if bindsIdent(bodyBlock, idx) || bindsIdent(bodyBlock, arr) {
+		return
+	}
+	// A captured length must hold too: the body may neither assign nor
+	// re-bind it.
+	if lenVar != "" && (assignsIdent(bodyBlock, lenVar) || bindsIdent(bodyBlock, lenVar)) {
 		return
 	}
 	// Every assignment to `idx` (body + step) must be a non-negative increment,
@@ -131,22 +139,55 @@ func tryElideLoop(forNode *ast.For, prev ast.Stmt, cond ast.Expr, body ast.Stmt)
 	}
 }
 
-// loopIndexAndArray matches `IDX < ARR.len()` or `IDX < len(ARR)` with a strict
-// `<`, both operands bare idents, and returns (IDX, ARR).
-func loopIndexAndArray(cond ast.Expr) (idx, arr string, ok bool) {
+// loopIndexAndArray matches `IDX < ARR.len()` / `IDX < len(ARR)` / `IDX < N`
+// with a strict `<` and bare idents, and returns (IDX, ARR, N): N is "" for
+// the direct forms, and for the captured form the name of the `var N =
+// ARR.len()` declared among `before` (see capturedLenArray).
+func loopIndexAndArray(cond ast.Expr, before []ast.Stmt) (idx, arr, lenVar string, ok bool) {
 	bin, isBin := cond.(*ast.Binary)
 	if !isBin || bin.Op != "<" {
-		return "", "", false
+		return "", "", "", false
 	}
 	left, isIdent := bin.Left.(*ast.Ident)
 	if !isIdent {
-		return "", "", false
+		return "", "", "", false
 	}
-	arr, ok = lenCallArray(bin.Right)
-	if !ok || arr == left.Name {
-		return "", "", false
+	if n, isIdent := bin.Right.(*ast.Ident); isIdent {
+		arr, ok = capturedLenArray(n.Name, before)
+		lenVar = n.Name
+	} else {
+		arr, ok = lenCallArray(bin.Right)
 	}
-	return left.Name, arr, true
+	if !ok || arr == left.Name || lenVar == left.Name {
+		return "", "", "", false
+	}
+	return left.Name, arr, lenVar, true
+}
+
+// capturedLenArray resolves a loop bound `n` to the array whose length it
+// holds: the nearest `var n = ARR.len()` among the statements before the
+// loop, with no statement after it assigning or re-binding `n` or `ARR`.
+// A declaration inside a nested statement does not count — it may not have
+// run — so only a direct `var` of the block qualifies.
+func capturedLenArray(n string, before []ast.Stmt) (string, bool) {
+	for k := len(before) - 1; k >= 0; k-- {
+		if v, ok := before[k].(*ast.Var); ok && v.Name == n {
+			arr, ok := lenCallArray(v.Init)
+			if !ok {
+				return "", false
+			}
+			for _, st := range before[k+1:] {
+				if assignsIdent(st, n) || assignsIdent(st, arr) || bindsIdent(st, n) || bindsIdent(st, arr) {
+					return "", false
+				}
+			}
+			return arr, true
+		}
+		if assignsIdent(before[k], n) || bindsIdent(before[k], n) {
+			return "", false
+		}
+	}
+	return "", false
 }
 
 // lenCallArray returns the array-ident name of a length expression — `A.len()`

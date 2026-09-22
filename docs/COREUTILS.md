@@ -2111,7 +2111,10 @@ and the IR honoured the mark for arrays only; a string index now takes
 `__str_idx_nc`, the same SSO dispatch without the compare against the
 length. `wc -w` 176,079,326 → 162,147,106 (-7.9%); the other rows' scan
 loops are bounded by something other than the string's own length and
-do not qualify.
+do not qualify. The pass also accepts the bound captured in a variable —
+`var n = s.len(); … while (i < n)`, which `tr` writes seven times —
+when nothing between the capture and the loop, or in the body, assigns
+or re-binds either name.
 
 A scan loop's `var c = s[i]; if (c >= 48 && c <= 57)` body is eleven
 instructions per byte after all three, from twenty-seven. What it still
