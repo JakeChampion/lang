@@ -147,6 +147,22 @@ function main(): i32 {
 	if (!pkl.is_packed()) { return 126; }
 	if (pkl.fold_all(0 as i64, (acc: i64, x: i64): i64 => acc * (10 as i64) + x) != 1234 as i64) { return 127; }
 
+	// zip_with's PACKED arm: both operands packed after the broadcast step,
+	// so it pairs x[i] with y[i] rather than running the odometer twice.
+	// Every zip_with above has at least one stretched or strided operand, so
+	// nothing else here reaches it. Operand order and element order are both
+	// pinned: the element function is not symmetric, and all four positions
+	// of the result are checked, so an interior permutation cannot pass.
+	var zl: ndarray.NdArray[i64] = ndarray.from_flat([1 as i64, 2 as i64, 3 as i64, 4 as i64], [2, 2]);
+	var zr: ndarray.NdArray[i64] = ndarray.from_flat([10 as i64, 20 as i64, 30 as i64, 40 as i64], [2, 2]);
+	var zp: ndarray.NdArray[i64] = zl.zip_with(zr, (u: i64, v: i64): i64 => u * (100 as i64) + v);
+	if (!zp.is_packed() || zp.get([0, 0]) != 110 as i64 || zp.get([0, 1]) != 220 as i64) { return 128; }
+	if (zp.get([1, 0]) != 330 as i64 || zp.get([1, 1]) != 440 as i64) { return 128; }
+	// A prepending broadcast keeps both operands packed, so the pair still
+	// takes this arm at a rank the odometer would have grown.
+	var zb: ndarray.NdArray[i64] = zl.zip_with(zr.broadcast_to([1, 2, 2]), (u: i64, v: i64): i64 => u * (100 as i64) + v);
+	if (zb.rank() != 3 || zb.get([0, 0, 0]) != 110 as i64 || zb.get([0, 1, 1]) != 440 as i64) { return 129; }
+
 	// Along an axis: the result is lane-sized, never buffer-sized, and
 	// every lane folds in increasing index order — the order-sensitive
 	// fold is what a float reduction relies on (docs/ARRAY-ALGEBRA.md §3).
