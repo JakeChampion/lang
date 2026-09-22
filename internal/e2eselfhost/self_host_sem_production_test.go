@@ -1046,6 +1046,48 @@ function main(): i32 {
     }
     return 0;
 }`},
+	// `xs[lo:hi]` on an array whose elements are COUNTED was refused outright,
+	// in semsource and again in the graph verifier. The self-host lowers a
+	// slice to `op_arr_slice`, a window COPY that duplicates every element
+	// pointer, and nothing retained them — so releasing the copy decremented
+	// boxes it never held a unit on. `__fern_arr_inc_elems` is the retain,
+	// and `sole_owned_base` already makes it over the same copy; the slice
+	// was the one caller that did not.
+	//
+	// Written in the `[T]` slice-view spelling because that is what the
+	// language has: `all[1:3]` is a borrowed window, not an owned `T[]`, and
+	// native rejects both `var mid: string[] = all[1:3]` (E003) and returning
+	// one out of the frame that owns its storage (E063). The answer here,
+	// 19, is native's.
+	//
+	// A missing retain is not a leak: it frees a box the source still holds.
+	// Verified by dropping the retain alone and leaving the refusals gone —
+	// the sanitizer leg then aborts with `use-after-free (touched a
+	// quarantined block)`. `[i32[]]` is in it too, because an element that is
+	// itself a counted array takes the same retain at a different width.
+	//
+	// `conformance/cases/slice_views` went 0 of 111 to 111 of 111 on this.
+	{name: "a-slice-retains-the-elements-it-copied", atLeast: 3, noLeak: true, src: `
+function total(ws: [string]) : i32 {
+    var n: i32 = 0;
+    for w in ws { n = n + w.len(); }
+    return n;
+}
+
+function widths(rs: [i32[]]): i32 {
+    var n: i32 = 0;
+    for r in rs { n = n + r.len(); }
+    return n;
+}
+
+function main(): i32 {
+    var all: string[] = ["alpha", "beta", "gamma", "delta"];
+    var mid: [string] = all[1:3];
+    print(mid[0] + "/" + mid[1]);
+    var grid: i32[][] = [[1], [2, 2], [3, 3, 3]];
+    var tail: [i32[]] = grid[1:3];
+    return total(mid) + widths(tail) + all[3].len();
+}`},
 	// Two levels of value-position if, the inner arm a boolean call. The
 	// outer IIFE returns the CALL of the inner one, which the checker types
 	// from the inner declaration's tag — `if_expr_rt`'s concrete `i32` guess —
