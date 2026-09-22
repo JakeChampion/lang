@@ -344,10 +344,10 @@ pub function (a: NdArray[T]) map[T, U](f: (T) => U): NdArray[U] {
 }
 
 // A packed handle's `data` IS the reading order (§2), so the odometer has
-// nothing to compute: element `i` of the walk is `data[i]`. Measured at 2.86x
+// nothing to compute: element `i` of the walk is `data[i]`. Measured at 2.97x
 // on a 20,000-element f64 handle — 23 ns per element of `addr_of` and `bump`
-// that a packed walk does not owe. Worth a branch because it is the whole
-// cost for every shape the scale kernel of #9735 cannot take.
+// that a packed walk does not owe, and that is the whole cost for every
+// shape the scale kernel of #9735 cannot take.
 function packed_map[T, U](data: T[], f: (T) => U): U[] {
     var out: U[] = [];
     var n: i32 = data.len();
