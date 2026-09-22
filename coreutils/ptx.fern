@@ -257,7 +257,7 @@ function is_alpha(c: i32): boolean {
 }
 
 function is_space(c: i32): boolean {
-  return c == 32 || c == 9 || c == 10 || c == 13 || c == 11 || c == 12;
+  return c == 32 || c >= 9 && c <= 13;
 }
 
 function upper(c: i32): i32 {

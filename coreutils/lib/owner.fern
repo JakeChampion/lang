@@ -125,7 +125,7 @@ pub function (p: Parsed) message(spec: string): string {
 }
 
 function is_space(c: i32): boolean {
-  return c == 32 || c == 9 || c == 10 || c == 11 || c == 12 || c == 13;
+  return c == 32 || c >= 9 && c <= 13;
 }
 
 // strtoul's reading of an id, bounded at the sentinel. Leading whitespace is

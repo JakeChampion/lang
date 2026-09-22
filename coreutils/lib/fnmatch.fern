@@ -24,7 +24,7 @@ import "std/string";
 // the whole match fails however the bracket is negated. A pattern
 // ending in a lone backslash matches nothing.
 function fn_is_space(c: i32): boolean {
-  return c == 32 || c == 9 || c == 10 || c == 11 || c == 12 || c == 13;
+  return c == 32 || c >= 9 && c <= 13;
 }
 
 // `fn_class(name, c)` — (the name is a class, `c` is in it). glibc

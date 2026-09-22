@@ -238,11 +238,16 @@ func TestSelfHostMapStrColOwncolsIRX86_64(t *testing.T) {
 
 	// Deterministic owncols-flag pin (the negative-asm-grep discipline): the
 	// x86-64 map_set emission loads the per-insert flag bits into %r9 —
-	// bit 0 = kconsume (fresh string key), bit 1 = owncols. A string-column
-	// map must emit owncols (bit 1 SET); an i64-value map must not (its
-	// values() reads raw-alias the buffer, so an owned grow would dangle
-	// them). Grepping the emitted asm pins the routing without depending on
-	// freelist-reuse timing.
+	// bit 0 = kconsume (fresh string key), bit 1 = owncols. Grepping the
+	// emitted asm pins the routing without depending on freelist-reuse timing.
+	//
+	// owncols says no keys()/values() read aliases the raw column buffers, so
+	// the map solely owns them and a grow may free the superseded one. Every
+	// VALUE column now satisfies that: a pointer column snapshots with a
+	// per-element retain and a cell column snapshots flat, so an i64-valued map
+	// takes owncols too. It did not before — its reads raw-aliased the buffer,
+	// which was a use-after-free in its own right, not merely a reason to
+	// decline the credit.
 	t.Run("owncols-flag-asm", func(t *testing.T) {
 		emit := func(prog string) string {
 			return string(runCapture(t, gcc, runner, driverBin, []byte(prog+"\n")))
@@ -267,17 +272,29 @@ function main(): i32 {
 		if !strings.Contains(strval, "movq $2, %r9") {
 			t.Errorf("Map[i32,string] insert: want owncols flag load (movq $2, %%r9) in emitted asm")
 		}
+		// An 8-byte CELL value column: i32 key (no kconsume) + owncols = 2, the
+		// same as the string-valued map above. The snapshot copies the cells
+		// flat rather than retaining them — the op's widekind, not the column
+		// flag, is what makes an 8-byte cell copy whole.
 		i64val := emit(`import "core/map";
 function main(): i32 {
     var m: Map[i32, i64] = map_new(2);
     m = m.insert(1, 11);
     return m.len() - 1;
 }`)
-		if !strings.Contains(i64val, "xorq %r9, %r9") {
-			t.Errorf("Map[i32,i64] insert: want cleared flag bits (xorq %%r9, %%r9) in emitted asm")
+		if !strings.Contains(i64val, "movq $2, %r9") {
+			t.Errorf("Map[i32,i64] insert: want owncols flag load (movq $2, %%r9) in emitted asm")
 		}
-		if strings.Contains(i64val, "$2, %r9") || strings.Contains(i64val, "$3, %r9") {
-			t.Errorf("Map[i32,i64] insert: owncols bit must NOT be set (flag-1 alias column)")
+		// A column of BOXES: also owncols, and the read retains each element.
+		structval := emit(`import "core/map";
+struct Coord { x: i32, y: i32 }
+function main(): i32 {
+    var m: Map[i32, Coord] = map_new(2);
+    m = m.insert(1, Coord { x: 1, y: 2 });
+    return m.len() - 1;
+}`)
+		if !strings.Contains(structval, "movq $2, %r9") {
+			t.Errorf("Map[i32,Coord] insert: want owncols flag load (movq $2, %%r9) in emitted asm")
 		}
 	})
 

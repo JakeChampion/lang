@@ -3588,7 +3588,7 @@ pub function repeat_char(ch: i32, n: i32): string {
 // byte values. Internal helper used by trim() / fields() /
 // is_blank() and by std/i32's is_ascii_white_space method.
 pub function __is_ascii_ws(b: i32): boolean {
-    return b == 32 || b == 9 || b == 10 || b == 13 || b == 11 || b == 12;
+    return b == 32 || b >= 9 && b <= 13;
 }
 
 // `s.replace_at(i, new)` — return a copy of s with the byte at

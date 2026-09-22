@@ -47,7 +47,7 @@ function ulong_max(): u64 {
 }
 
 function is_space(b: i32): boolean {
-  return b == 32 || b == 9 || b == 10 || b == 11 || b == 12 || b == 13;
+  return b == 32 || b >= 9 && b <= 13;
 }
 
 // One OpenMP thread-count variable: leading blanks, decimal digits,
