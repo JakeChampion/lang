@@ -14310,8 +14310,8 @@ function lower_call_map_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, mtype: 
     var mkk2: i32 = map_key_kind_of(mtype);
     var meqfn: string = map_key_eqfn(mtype);
     // #7001: a COMPOSITE (struct / enum) key is kind 2, dispatched by its
-    // derived hash/eq. map_key_kind_of only separates `Map[i32,` from
-    // everything else, so it answers 0 — STRING — for one, and a
+    // derived hash/eq. map_key_kind_of answers only the integer / string
+    // columns, so it answers 0 — STRING — for one, and a
     // `Map { … }` literal built itself string-keyed: __fern_str_eq then read
     // each key box as a string, taking its first field as a length, and keys
     // differing only past that field collapsed. meqfn was already right here;
@@ -23184,6 +23184,11 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
                         // while its inserts used the integer column — which on
                         // wasm, where the constructor picks the box layout, is
                         // a map that answers nothing it was given (#9973).
+                        // A key with no column refuses HERE too. Falling
+                        // through left the generic arm below to build a
+                        // string-keyed box for it, which is the silent half of
+                        // what the method gate refuses loudly.
+                        if (map_key_is_wide_scalar(kt2)) { return s.fail(); }
                         if (map_key_kind_of(v.type_name) == 1) { kkind = 1; }
                         else if (kt2 == "string") { kkind = 0; }
                         else if (map_key_eqfn(v.type_name) != "") {
@@ -25386,6 +25391,7 @@ function lower_stmt_for(fr: ast.StmtFor, s: LowerState): LowerState {
         }
         if (mki_method != "") {
             var mkimty: string = mki_mtype;
+            if (map_key_is_wide_scalar(map_key_of(mkimty))) { return s.fail(); }
             // element type tag: keys -> key kind; values -> value type.
             var mki_elem_str: boolean = false;
             if (mki_method == "keys") { if (map_key_kind_of(mkimty) == 0) { mki_elem_str = true; } }
@@ -25612,7 +25618,8 @@ function lower_stmt_for(fr: ast.StmtFor, s: LowerState): LowerState {
     var kvparts: string[] = rc_fe_split_csv(fr.var_name);
     if (mslot >= 0 && s.map_type_of(mslot) != "" && kvparts.len() == 2) {
         var mty: string = s.map_type_of(mslot);
-        var kkind: i32 = map_key_kind_of(mty);   // 1 = i32 keys, 0 = string
+        if (map_key_is_wide_scalar(map_key_of(mty))) { return s.fail(); }
+        var kkind: i32 = map_key_kind_of(mty);   // 1 for an integer key, 0 for a string one
         var vty: string = map_value_of(mty);
         var kname: string = kvparts[0];
         var vname: string = kvparts[1];
@@ -73037,34 +73044,32 @@ pub function is_fn_payload_spelling(t: string): boolean {
     return t[j] == b'=' && t[j + 1] == b'>';
 }
 
+// map_key_is_wide_scalar names the scalars too wide for the integer key
+// column: an i64 / u64 / f64 / usize key. They have nowhere to live — the
+// column is a 4-byte cell on wasm — and the string column reads a key's VALUE
+// as an address, so routing one there segfaults (#9973). The lowering refuses
+// them instead, at every surface that reaches a map: its construction, its
+// methods, and both shapes of loop over it. Loud is the direction to be wrong
+// in until the column grows a width the way op_map_values already has one.
+//
+// Native and the interpreter answer these programs correctly, so this is a
+// self-host gap to close (#10005), not a rule of the language.
+pub function map_key_is_wide_scalar(kt: string): boolean {
+    return kt == "i64" || kt == "u64" || kt == "f64" || kt == "usize";
+}
+
 // map_key_kind_of returns the key COLUMN a Map type uses: 1 for an integer
 // key, 0 for a string one. (A struct / enum key is kind 2, decided by its
 // derived equality at the call site rather than here.)
 //
 // The question is whether the key is a POINTER, which is what the string
 // column's runtime assumes — not whether it is spelled `i32`. Asking for the
-// literal `Map[i32,` prefix sent every other integer key to the string column,
-// where the insert path read the key's VALUE as an address and dereferenced
-// it: `Map[u8, V]` and `Map[u32, V]` segfaulted on a program the interpreter
-// answers correctly (#9973).
+// literal `Map[i32,` prefix sent every other key that fits the column — `u8`,
+// `u32`, `f32` — to the string column, where the insert path read the key's
+// VALUE as an address and dereferenced it: those maps segfaulted on programs
+// the interpreter answers correctly (#9973).
 //
-// The WIDE integers stay out. An i64 / u64 key needs an 8-byte key column,
-// which op_map_keys has no width parameter for, and admitting one here would
-// trade a loud IR-ineligibility refusal for a silently narrowed key. They are
-// refused as they were, which is the direction to be wrong in.
-// map_key_is_wide_scalar names the scalars too wide for that 4-byte column:
-// an i64 / u64 / f64 / usize key. They have nowhere to live — the integer
-// column is a 4-byte cell on wasm — and the string column reads a key's VALUE
-// as an address, so routing one there segfaults (#9973). The lowering refuses
-// them instead, loudly, which is the direction to be wrong in until the key
-// column grows a width the way op_map_values already has one (#10005).
-//
-// Native and the interpreter answer these programs correctly, so this is a
-// self-host gap to close, not a rule of the language.
-pub function map_key_is_wide_scalar(kt: string): boolean {
-    return kt == "i64" || kt == "u64" || kt == "f64" || kt == "usize";
-}
-
+// A key too wide for the column is refused before this is asked; see above.
 pub function map_key_kind_of(typestr: string): i32 {
     var kt: string = map_key_of(typestr);
     if (kt == "i32" || kt == "u8" || kt == "u32" || kt == "f32") { return 1; }
