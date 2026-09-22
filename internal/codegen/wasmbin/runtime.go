@@ -1183,8 +1183,13 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 // unbreakable rather than merely written down. Every edge here is
 // read off the callee lookup at the top of the caller's build*Body.
 var unconditionalHelperCalls = map[string][]string{
-	"__fern_read_file": {"__fern_utf8_valid"},
-	"__fern_str_copy":  {"__fern_alloc_rc1"},
+	"__fern_tcp_listen":     {"__fern_wasi_socket_errno"},
+	"__fern_tcp_accept":     {"__fern_wasi_socket_errno"},
+	"__fern_tcp_connect":    {"__fern_wasi_socket_errno"},
+	"__fern_tcp_local_port": {"__fern_wasi_socket_errno"},
+	"__fern_udp_send":       {"__fern_wasi_socket_errno"},
+	"__fern_read_file":      {"__fern_utf8_valid"},
+	"__fern_str_copy":       {"__fern_alloc_rc1"},
 	// The IoError box keeps the static-sentinel header; its Other
 	// variant's message string is an rc1 block.
 	"__build_io_error": {"__fern_alloc_rc1", "__fern_alloc_box"},

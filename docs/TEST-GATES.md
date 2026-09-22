@@ -86,6 +86,15 @@ allocations and frees, leave zero live bytes and produce no RC underflow. These 
 cover temporary poll buffers; they do not establish leak freedom for a whole
 HTTP server or replace the persistent-reactor work in #9853.
 
+`TestWasiSocketErrorTableParity` pins all socket error discriminants to the
+vendored WIT and the self-host table. `TestWasiSocketErrorReturns` executes
+the bootstrap runtime's conversion and error-return sequence; the self-host
+`TestSelfHostWasiSocketErrors` injects errors through the emitted TCP listener.
+Both cover all 21 host error cases and an out-of-range byte. In particular,
+WASI's zero-valued `unknown` must return a negative errno, never success.
+Live TCP connection/server and UDP component tests cover helper inclusion and
+host integration. These gates do not establish socket resource reclamation.
+
 ## Generated digest sources
 
 The lint lane runs `make digest-check` on every PR and main push. It compares

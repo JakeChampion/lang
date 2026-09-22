@@ -106,20 +106,20 @@ func buildNetworkHandleBody(idxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
-// emitErrnoNegReturn emits "load errno from retptr+4, return
-// -errno". Used after every wasi:sockets call that lands a
+// emitErrnoNegReturn loads the socket error code from retptr+4 and returns
+// its negative Preview 1 errno. Used after every wasi:sockets call that lands a
 // result<_, error-code> at retptr: byte 0 holds the discriminant
 // and byte 4 holds the error-code variant value (a u8 enum).
-// We surface -errno (not the variant tag) for preview-1 parity —
-// callers downstream test for negative-return as "failed".
+// Discriminant zero is unknown, not success. Translate before negating.
 //
 // Stack on entry: empty. Stack on exit: function has returned.
-func emitErrnoNegReturn(body []byte, retptrLocal uint32) []byte {
+func emitErrnoNegReturn(body []byte, retptrLocal uint32, idxs map[string]uint32) []byte {
 	body = inst.InstI32Const(body, 0)
 	body = inst.InstLocalGet(body, retptrLocal)
 	body = inst.InstI32Const(body, 4)
 	body = numeric.InstI32Add(body)
 	body = memory.InstI32Load8U(body, 0, 0)
+	body = inst.InstCall(body, idxs["__fern_wasi_socket_errno"])
 	body = numeric.InstI32Sub(body)
 	body = inst.InstReturn(body)
 	return body
@@ -179,7 +179,7 @@ func buildTcpListenBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 2)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = emitErrnoNegReturn(body, 2)
+	body = emitErrnoNegReturn(body, 2, idxs)
 	body = inst.InstEnd(body)
 	// $sock = mem[retptr + 4]
 	body = inst.InstLocalGet(body, 2)
@@ -210,7 +210,7 @@ func buildTcpListenBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 2)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = emitErrnoNegReturn(body, 2)
+	body = emitErrnoNegReturn(body, 2, idxs)
 	body = inst.InstEnd(body)
 
 	// finish-bind(self, retptr).
@@ -220,7 +220,7 @@ func buildTcpListenBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 2)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = emitErrnoNegReturn(body, 2)
+	body = emitErrnoNegReturn(body, 2, idxs)
 	body = inst.InstEnd(body)
 
 	// start-listen(self, retptr).
@@ -230,7 +230,7 @@ func buildTcpListenBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 2)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = emitErrnoNegReturn(body, 2)
+	body = emitErrnoNegReturn(body, 2, idxs)
 	body = inst.InstEnd(body)
 
 	// finish-listen(self, retptr).
@@ -240,7 +240,7 @@ func buildTcpListenBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 2)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = emitErrnoNegReturn(body, 2)
+	body = emitErrnoNegReturn(body, 2, idxs)
 	body = inst.InstEnd(body)
 
 	// Allocate the 12-byte listener struct: (sock, 0, 0).
@@ -317,7 +317,7 @@ func buildTcpConnectBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 3)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = emitErrnoNegReturn(body, 3)
+	body = emitErrnoNegReturn(body, 3, idxs)
 	body = inst.InstEnd(body)
 	// $sock = mem[retptr + 4].
 	body = inst.InstLocalGet(body, 3)
@@ -347,7 +347,7 @@ func buildTcpConnectBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 3)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = emitErrnoNegReturn(body, 3)
+	body = emitErrnoNegReturn(body, 3, idxs)
 	body = inst.InstEnd(body)
 
 	// subscribe($sock) → $pollable; block until connected; drop it.
@@ -366,7 +366,7 @@ func buildTcpConnectBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 3)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = emitErrnoNegReturn(body, 3)
+	body = emitErrnoNegReturn(body, 3, idxs)
 	body = inst.InstEnd(body)
 
 	// Allocate the 12-byte connection struct: (sock, input, output).
@@ -458,7 +458,7 @@ func buildTcpLocalPortBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 2)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = emitErrnoNegReturn(body, 2)
+	body = emitErrnoNegReturn(body, 2, idxs)
 	body = inst.InstEnd(body)
 
 	// Ok arm: the port, a u16 at retptr+8 in linear-memory order.
@@ -528,7 +528,7 @@ func buildTcpAcceptBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 3)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = emitErrnoNegReturn(body, 3)
+	body = emitErrnoNegReturn(body, 3, idxs)
 	body = inst.InstEnd(body)
 
 	// Ok payload at retptr+4: (tcp-socket, input-stream, output-stream).

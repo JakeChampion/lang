@@ -29,11 +29,9 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/numeric"
 )
 
-// errCodeInvalidArgument is the discriminant of `invalid-argument` in
-// the `wasi:sockets/network` error-code enum
-// (component.WasiSocketsNetworkErrorCodeNames). The socket helpers
-// report failure as the negated error code, so a caller sees -3.
-const errCodeInvalidArgument = 3
+// errnoSocketInvalidArgument is EINVAL in the Preview 1 errno namespace used
+// by socket return values, including errors produced before any host call.
+const errnoSocketInvalidArgument = 28
 
 // buildUdpSendBody assembles __fern_udp_send.
 //
@@ -216,7 +214,7 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	body = numeric.InstI32Eqz(body)
 	body = numeric.InstI32Or(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = inst.InstI32Const(body, -errCodeInvalidArgument)
+	body = inst.InstI32Const(body, -errnoSocketInvalidArgument)
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
 
@@ -240,7 +238,7 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 5)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = emitErrnoNegReturn(body, 5)
+	body = emitErrnoNegReturn(body, 5, idxs)
 	body = inst.InstEnd(body)
 	// $sock = mem[retptr+4]
 	body = inst.InstLocalGet(body, 5)
@@ -264,7 +262,7 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 5)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = emitErrnoNegReturn(body, 5)
+	body = emitErrnoNegReturn(body, 5, idxs)
 	body = inst.InstEnd(body)
 
 	// finish-bind(sock, retptr); bail on Err.
@@ -274,7 +272,7 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 5)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = emitErrnoNegReturn(body, 5)
+	body = emitErrnoNegReturn(body, 5, idxs)
 	body = inst.InstEnd(body)
 
 	// stream(sock, Some(ipv4 host:port), retptr) — connect. The option
@@ -298,7 +296,7 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 5)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = emitErrnoNegReturn(body, 5)
+	body = emitErrnoNegReturn(body, 5, idxs)
 	body = inst.InstEnd(body)
 	// $inStream = mem[retptr+4], $outStream = mem[retptr+8]
 	body = inst.InstLocalGet(body, 5)
@@ -358,7 +356,7 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 			body = inst.InstLocalGet(body, 5)
 			body = memory.InstI32Load8U(body, 0, 0)
 			body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-			body = emitErrnoNegReturn(body, 5)
+			body = emitErrnoNegReturn(body, 5, idxs)
 			body = inst.InstEnd(body)
 			// permit (low 32 of the u64 @ +8): if non-zero, break the loop.
 			body = inst.InstLocalGet(body, 5)
@@ -386,7 +384,7 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 		body = inst.InstLocalGet(body, 5)
 		body = memory.InstI32Load8U(body, 0, 0)
 		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-		body = emitErrnoNegReturn(body, 5)
+		body = emitErrnoNegReturn(body, 5, idxs)
 		body = inst.InstEnd(body)
 		// $sent = low 32 bits of the u64 datagram count at retptr+8.
 		body = inst.InstLocalGet(body, 5)
