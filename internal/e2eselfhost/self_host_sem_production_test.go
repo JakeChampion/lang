@@ -77,6 +77,9 @@ func TestSelfHostSemanticProduction(t *testing.T) {
 					if prog.skip == "" && prog.refuses != "" && !strings.Contains(report, prog.refuses) {
 						t.Fatalf("FERN_SEM_IR did not report %q:\n%s", prog.refuses, report)
 					}
+					if prog.reportLacks != "" && strings.Contains(report, prog.reportLacks) {
+						t.Fatalf("FERN_SEM_IR reported %q, which this case pins as cleared:\n%s", prog.reportLacks, report)
+					}
 					if prog.skip != "" {
 						mixed, mixedReport, mixedLeak := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, true, prog.skip, prog.stdin)
 						if mixed != base {
@@ -265,6 +268,11 @@ var semProductionPrograms = []struct {
 	// leg it is a line the plain report must carry: the refusal that drops
 	// the whole module to the AST lowering.
 	refuses string
+	// reportLacks, when set, is a line the report must NOT carry: a refusal a
+	// fix CLEARED on a module that still refuses for another reason, so the
+	// production tally cannot observe it. `refuses` names what still stands;
+	// this names what may not come back.
+	reportLacks string
 	// want, when set, is the answer ("<exit>|<stdout>") of a program the AST
 	// lowering REFUSES and the semantic lowering produces whole, confirmed
 	// against the native compiler; the AST leg is asserted to refuse it
@@ -321,6 +329,71 @@ function main(): i32 {
     var mk: () => ((i32) => i32) = ((): (i32) => i32 => { var g: (i32) => i32 = ((y: i32) => y); return g; });
     var f: (i32) => i32 = mk();
     return f(42);
+}
+`},
+	// A generic struct named INSIDE a callable spelling. mg_ty understood an
+	// `own` prefix, an array suffix, a tuple and a bracketed `Base[args]` — and
+	// not a callable, so `(i32) => Slot[i32]` was read as the base
+	// `(i32) => Slot` and handed back with the instantiation unmangled. The
+	// tuple element is what carries a whole signature to mg_ty (a var or
+	// parameter annotation is coarsened to the "fn" tag plus sidecars, which
+	// were mangled already), and the callable's parameter and result positions
+	// are separate arms of the rebuild, so both are here. Produces 0 of 6
+	// without it: `main` refuses on the tuple element type, `take` and `unwrap`
+	// on a binding whose declared `Slot__i32` meets a semantic value of `Slot`.
+	{name: "generic-struct-inside-a-callable-spelling", atLeast: 6, src: `
+struct Slot[T] { v: T }
+
+function slot_of(n: i32): Slot[i32] { return Slot[i32] { v: n }; }
+
+function take(p: ((i32) => Slot[i32], i32)): i32 {
+    var f: (i32) => Slot[i32] = p.0;
+    var s: Slot[i32] = f(p.1);
+    return s.v;
+}
+
+function unwrap(q: ((Slot[i32]) => i32, Slot[i32])): i32 {
+    var g: (Slot[i32]) => i32 = q.0;
+    return g(q.1);
+}
+
+function main(): i32 {
+    var p: ((i32) => Slot[i32], i32) = (((b: i32): Slot[i32] => slot_of(b)), 4);
+    var q: ((Slot[i32]) => i32, Slot[i32]) = (((s: Slot[i32]): i32 => s.v), Slot[i32] { v: 7 });
+    return take(p) + unwrap(q);
+}
+`},
+	// The lambda half of the same fix, which the row above cannot observe:
+	// both its lambdas return a plain struct, so ExprLambda's callable-result
+	// sidecar stays empty. #9954's own repro is the shape that fills it — a
+	// lambda whose declared result is `(i32) => Slot[i32]` — and it still
+	// refuses as a whole, because a function type nested in a function type is
+	// a slot `ssasem.signature_slot` declines by design. What the mangling
+	// clears is the OTHER refusal the module carried: `outer: return type:
+	// declared ((i32) => ((i32) => Slot__i32)), returns ((i32) => ((i32) =>
+	// Slot))`, the sidecar the `...lm` spread copied verbatim meeting the
+	// signature ms_func had already mangled. So the pins are the refusal that
+	// stands and the one that may not come back.
+	{
+		name:        "a-lambda-declaring-a-callable-result-over-a-generic-struct",
+		refuses:     "function signature slot",
+		reportLacks: "outer: return type:",
+		src: `
+struct Slot[T] { v: T }
+
+function slot_of(n: i32): Slot[i32] {
+    return Slot[i32] { v: n };
+}
+
+function outer(): (i32) => (i32) => Slot[i32] {
+    return (a: i32): (i32) => Slot[i32] => ((b: i32): Slot[i32] => slot_of(a + b));
+}
+
+function main(): i32 {
+    var f: (i32) => (i32) => Slot[i32] = outer();
+    var g: (i32) => Slot[i32] = f(10);
+    var s: Slot[i32] = g(5);
+    return s.v;
 }
 `},
 	// An if-expression desugars to an IIFE whose ret_type if_expr_rt reads off
@@ -972,6 +1045,48 @@ function main(): i32 {
         Later(t, k) => { return t + 100; }
     }
     return 0;
+}`},
+	// `xs[lo:hi]` on an array whose elements are COUNTED was refused outright,
+	// in semsource and again in the graph verifier. The self-host lowers a
+	// slice to `op_arr_slice`, a window COPY that duplicates every element
+	// pointer, and nothing retained them — so releasing the copy decremented
+	// boxes it never held a unit on. `__fern_arr_inc_elems` is the retain,
+	// and `sole_owned_base` already makes it over the same copy; the slice
+	// was the one caller that did not.
+	//
+	// Written in the `[T]` slice-view spelling because that is what the
+	// language has: `all[1:3]` is a borrowed window, not an owned `T[]`, and
+	// native rejects both `var mid: string[] = all[1:3]` (E003) and returning
+	// one out of the frame that owns its storage (E063). The answer here,
+	// 19, is native's.
+	//
+	// A missing retain is not a leak: it frees a box the source still holds.
+	// Verified by dropping the retain alone and leaving the refusals gone —
+	// the sanitizer leg then aborts with `use-after-free (touched a
+	// quarantined block)`. `[i32[]]` is in it too, because an element that is
+	// itself a counted array takes the same retain at a different width.
+	//
+	// `conformance/cases/slice_views` went 0 of 111 to 111 of 111 on this.
+	{name: "a-slice-retains-the-elements-it-copied", atLeast: 3, noLeak: true, src: `
+function total(ws: [string]) : i32 {
+    var n: i32 = 0;
+    for w in ws { n = n + w.len(); }
+    return n;
+}
+
+function widths(rs: [i32[]]): i32 {
+    var n: i32 = 0;
+    for r in rs { n = n + r.len(); }
+    return n;
+}
+
+function main(): i32 {
+    var all: string[] = ["alpha", "beta", "gamma", "delta"];
+    var mid: [string] = all[1:3];
+    print(mid[0] + "/" + mid[1]);
+    var grid: i32[][] = [[1], [2, 2], [3, 3, 3]];
+    var tail: [i32[]] = grid[1:3];
+    return total(mid) + widths(tail) + all[3].len();
 }`},
 	// Two levels of value-position if, the inner arm a boolean call. The
 	// outer IIFE returns the CALL of the inner one, which the checker types

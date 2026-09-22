@@ -749,9 +749,7 @@ function arr_slice_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string
     if (ins.args.len() != 3) { return "slice arity"; }
     var src: typeinfo.Type = f.values[ins.args[0]];
     if (!semtypes.equal(src, result)) { return "slice container type"; }
-    if let typeinfo.TypeArray(a) = src {
-        if (reference(a.elem)) { return "slice container type"; }
-    } else { return "slice container type"; }
+    if let typeinfo.TypeArray(_) = src {} else { return "slice container type"; }
     if (!is_i32(f.values[ins.args[1]]) || !is_i32(f.values[ins.args[2]])) { return "slice bound type"; }
     return "";
 }
