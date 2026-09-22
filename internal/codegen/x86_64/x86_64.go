@@ -5806,6 +5806,24 @@ func (g *generator) peepholeTail() bool {
 		}
 	}
 
+	// P16 — dead reload before a scope jump. P10 leaves a statement's
+	// reload behind, and when the statement ends its block the next line is
+	// the jump out of it:
+	//
+	//   add qword ptr [rbp-N], 1 / mov rax, [rbp-N] / jmp .LblkEnd_3
+	//     =>  add qword ptr [rbp-N], 1 / jmp .LblkEnd_3
+	//
+	// The accumulator is dead at every IR scope boundary: a value that
+	// outlives an op is on the operand stack or in a slot, and the code a
+	// scope label leads to reads neither the flags nor rax from the edge
+	// that jumped there. The scope labels are the ones OpBr, OpElse and
+	// OpEnd emit; a jump anywhere else — the epilogue, or the join inside a
+	// runtime shape — is not one, and rax may be the value it carries.
+	if n >= 2 && isScopeJump(w[n-1]) && isFrameLoadToAcc(w[n-2]) {
+		g.peepWin = append(w[:n-2], w[n-1])
+		return true
+	}
+
 	// P2 — dead jump: `jmp L` immediately followed by the label `L:` is a
 	// no-op fall-through. Drop the jmp; the label stays for other jumps.
 	if n >= 2 {
@@ -6489,6 +6507,18 @@ func isLoadIntoOtherReg(line string) bool {
 func isMemDstAluImm(line string) bool {
 	for _, m := range [...]string{"add", "sub", "and", "or", "xor"} {
 		if strings.HasPrefix(line, "\t"+m+" qword ptr [rbp-") {
+			return true
+		}
+	}
+	return false
+}
+
+// isScopeJump reports whether a line is an unconditional jump to one of
+// the labels that open and close IR scopes (see irScope): a block's end, a
+// loop's top or end, an if's else or end.
+func isScopeJump(line string) bool {
+	for _, pfx := range [...]string{"\tjmp .LblkEnd_", "\tjmp .LloopTop_", "\tjmp .LloopEnd_", "\tjmp .LifEnd_", "\tjmp .LifElse_"} {
+		if strings.HasPrefix(line, pfx) {
 			return true
 		}
 	}

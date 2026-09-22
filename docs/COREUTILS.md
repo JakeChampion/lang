@@ -2097,6 +2097,14 @@ listings assembled by GNU `as`, which pads nothing, retire 93,060,668 and
 91,689,024. The executed padding is 6–7% of `cat -A`'s instructions and
 its own issue (#10017).
 
+The fifth is the reload P10 leaves when the statement it fused ends a
+block: `add qword ptr [i], 1 / mov rax, [i] / jmp .LblkEnd_9` is what
+`i = i + 1; continue;` and every `if` arm ending in an assignment left,
+and the accumulator is dead on every edge into a scope label, so P16
+drops the load before a jump to one. Release builds, outputs identical:
+`cat -A` 98,239,652 → 95,330,849 (-3.0%), `wc -w` -2.5%, `ptx` -1.2%,
+`sort` -1.2%.
+
 A scan loop's `var c = s[i]; if (c >= 48 && c <= 57)` body is eleven
 instructions per byte after all three, from twenty-seven. What it still
 pays is the stack machine itself: every local is a frame slot, so the
