@@ -16987,7 +16987,9 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	// checks the balance on the emitted text instead.
 	g.label(retLabel)
 	g.emit("mov sp, x29")
-	g.emit(".cfi_remember_state")
+	if len(g.cold) > 0 {
+		g.emit(".cfi_remember_state")
+	}
 	g.emit("ldp x29, x30, [sp], #16")
 	// Back to the CIE's initial rule. sp+0, not sp+8 as on x86-64: there
 	// is no return address on the stack here once the pair is popped.

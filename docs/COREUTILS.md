@@ -2139,9 +2139,10 @@ line order once to prove every write lands past the one before it and
 inside the width, then once more emitting each piece behind its gap of
 spaces, with trailing spaces held back until a non-space byte follows
 them, which is the trim the whole line used to get. A layout the check
-refuses (a truncation marker whose position clamps at zero, so it
-overlaps the field it marks) takes the byte buffer as before, in the
-write order that path was defined with. The truncation marker is written
+refuses — any piece that would start before the end of the one before
+it, or run past the width; a truncation marker whose position clamps at
+zero and overlaps the field it marks is the common one — takes the byte
+buffer as before, in the write order that path was defined with. The truncation marker is written
 before its field in the streaming order, since that is where it sits in
 the line.
 
