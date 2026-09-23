@@ -7035,8 +7035,7 @@ func optionSomeOps(payloadType ast.Type, valSlot, baseSlot int32, ptrW int) []Op
 // POINTER on the stack as the `dyn` fat pointer's `data` word
 // (docs/DYN-TRAITS.md §4.2.3). The cell is sized + stored via the concrete
 // type's own layout helpers, so a two-word wasm string boxes as two words,
-// an i64/f64 as 8 bytes, etc. The cell carries no rc header (leak-mode,
-// like the existing dyn box). `concrete` is the primitive type-name string
+// an i64/f64 as 8 bytes, etc. `concrete` is the primitive type-name string
 // from the coercion site; the caller has already gated isPrimitiveConcrete.
 func (b *builder) boxPrimitiveDynValue(concrete string) error {
 	ct := astTypeForConcreteName(concrete)
@@ -7051,18 +7050,28 @@ func (b *builder) boxPrimitiveDynValue(concrete string) error {
 	b.scratchType[valSlot] = ct
 	b.locals[fmt.Sprintf("__dynbox_val_%d", valSlot)] = valSlot
 	b.emit(Op{Kind: OpStoreLocal, I32: valSlot})
-	// Allocate the value cell (no rc header — leak-mode dyn box).
-	b.emit(Op{Kind: OpConstI32, I32: size})
+	// The value box is counted like every other concrete, so a dyn value
+	// is retained and released by the same rc ops whatever it holds:
+	// rc=1 at [base], the value at [base + rcHeaderBytes], and `data` is
+	// the address past the header.
+	const rcHeaderBytes = 8
+	b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
 	b.emit(Op{Kind: OpAlloc})
 	cellSlot := b.allocSlot()
 	b.scratchType[cellSlot] = ast.NumberType{Width: 32}
 	b.locals[fmt.Sprintf("__dynbox_cell_%d", cellSlot)] = cellSlot
 	b.emit(Op{Kind: OpStoreLocal, I32: cellSlot})
-	// cell[0] = value (concrete store width: two-word for a wasm string).
+	b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 1})
+	b.emit(Op{Kind: OpStore})
+	b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
+	b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(Op{Kind: OpStoreLocal, I32: cellSlot})
+	// value (concrete store width: two-word for a wasm string).
 	b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
 	b.emit(Op{Kind: OpLoadLocal, I32: valSlot})
 	b.emit(payloadStoreOpFor(ct, b.ptrW))
-	// Leave the cell pointer on the stack as `data`.
 	b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
 	return nil
 }
@@ -9203,10 +9212,16 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// never see __fern_rc_inc — they carry no header), hence the
 		// dedicated branch rather than widening those predicates.
 		if id, ok := n.Value.(*ast.Ident); ok && len(b.defers) == 0 &&
-			b.dynReclaim() && b.localIsDynTrait(id.Name) {
+			b.dynReclaim() && b.localIsDynTrait(id.Name) && !b.dynBorrowed(n.Value) {
 			b.emitRcDecLocalsAtExitExcept(id.Name)
 			b.emit(Op{Kind: OpReturn})
 			return nil
+		}
+		// A dyn value the frame holds only as a borrow is the caller's own
+		// argument, or another holder's value: returned as it stands, the
+		// caller would release it a second time.
+		if b.dynReclaim() && b.dynBorrowed(n.Value) {
+			b.emitDynRetain()
 		}
 		// `return m.insert(..)` on a Map this frame holds a slot for: the
 		// cow-in-place branch hands back m's own handle, which the caller

@@ -1828,8 +1828,8 @@ func (b *builder) emitAliasInc(e ast.Expr) {
 // store that follows.
 func (b *builder) emitDynConcreteInc(dc checker.DynCoercion) {
 	if isPrimitiveConcrete(b.info, dc.Concrete) {
-		// `data` is the fresh headerless value cell boxPrimitiveDynValue
-		// just allocated — no second owner exists to retain against.
+		// `data` is the value box boxPrimitiveDynValue just allocated at
+		// this site: the dyn value is its only holder.
 		return
 	}
 	if b.dynBoxed() {
@@ -1850,6 +1850,34 @@ func (b *builder) emitDynConcreteInc(dc checker.DynCoercion) {
 	b.emit(Op{Kind: OpStoreLocal, I32: vt})
 	b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 	b.emit(Op{Kind: OpLoadLocal, I32: vt})
+}
+
+// emitDynRetain gives the dyn value on the operand stack a unit of its own
+// when the frame holds it only as a borrow — a parameter, or an alias of
+// another holder's value. Every concrete behind a dyn is a counted box, so
+// the retain is the flat rc inc on `data`. On the natives the dyn value is a
+// `{data, vtable}` cell nothing counts, so the holder also takes a cell of
+// its own: two holders of one cell release it twice.
+func (b *builder) emitDynRetain() {
+	if !b.dynBoxed() {
+		vt := b.allocSlot()
+		b.scratchType[vt] = ast.NumberType{Width: 32}
+		b.emit(Op{Kind: OpStoreLocal, I32: vt})
+		b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
+		b.emit(Op{Kind: OpLoadLocal, I32: vt})
+		return
+	}
+	src := b.allocSlot()
+	b.scratchType[src] = ast.NumberType{Width: 32}
+	b.emit(Op{Kind: OpStoreLocal, I32: src})
+	b.emit(Op{Kind: OpLoadLocal, I32: src})
+	b.emit(Op{Kind: OpLoad, Width: WidthPtr})
+	b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
+	b.emit(Op{Kind: OpLoadLocal, I32: src})
+	b.emit(Op{Kind: OpConstI32, I32: int32(b.ptrW)})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(Op{Kind: OpLoad, Width: WidthPtr})
+	b.emit(Op{Kind: OpBoxDyn})
 }
 
 // emitVarReinitDropOld releases the value currently in a var's slot
@@ -3230,30 +3258,26 @@ func genArrDynDropFn(dynDrop string, ptrW int) *Func {
 // genDynPrimDropFn builds the `__drop_dynprim_<prim>` destructor a
 // PRIMITIVE/STRING concrete's vtable drop slot points at (#4351 —
 // docs/DYN-TRAITS.md §4.2.3 / §4.4). A primitive coerced to `dyn Trait` is
-// heap-boxed into a headerless VALUE CELL (boxPrimitiveDynValue) whose
-// pointer is the fat pointer's `data` word; before this helper the drop
-// slot was the null sentinel, so every coercion leaked the cell (16 bytes
-// per iteration in a churn loop). The helper frees exactly that cell —
-// `__free(data, payloadSlotSize(prim))`, the same size the coercion
-// allocated — matching the (ptr)->ptr dropSig every concrete dtor uses.
-// A `string` concrete's cell holds the string value; the string BUFFER
-// itself is deliberately NOT dec'd here: the coercion takes no retain, so
+// boxed into a counted value box (boxPrimitiveDynValue) whose address is the
+// dyn value's `data` word: the last unit frees the box, header included, and
+// any other unit is a flat rc dec. A `string` concrete's box holds the string
+// value without a retain, so the string buffer itself is not released here:
 // an aliased source (`var s = ...; var d: dyn T = s;`) would be freed out
-// from under `s`. Literal strings are static sentinels and heap strings
-// leak their buffer — the safe-leak invariant, exactly like the pre-slice
-// whole-cell behaviour. The cell is fresh at every coercion site and its
-// pointer lives only in the `dyn` cell, so freeing it at the dyn drop is
-// sole-owner sound. Null-guarded like __drop_dyn_<set>'s cell free.
+// from under `s`.
 func genDynPrimDropFn(prim string, ptrW int) *Func {
 	ct := astTypeForConcreteName(prim)
 	if ct == nil {
 		return nil
 	}
-	size := payloadSlotSize(ct, ptrW)
+	const rcHeaderBytes = 8
+	size := payloadSlotSize(ct, ptrW) + rcHeaderBytes
 	ops := []Op{
 		{Kind: OpLoadLocal, I32: 0},
+		{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1},
 		{Kind: OpIf, I32: BlockTypeVoid},
 		{Kind: OpLoadLocal, I32: 0},
+		{Kind: OpConstI32, I32: rcHeaderBytes},
+		{Kind: OpSub},
 		{Kind: OpConstI32, I32: size},
 		{Kind: OpCallDirect, Runtime: true, Str: "__free", Width: ResNarrow, I32: 2},
 	}
@@ -3266,6 +3290,10 @@ func genDynPrimDropFn(prim string, ptrW int) *Func {
 		ops = append(ops, Op{Kind: OpDrop})
 	}
 	ops = append(ops,
+		Op{Kind: OpElse},
+		Op{Kind: OpLoadLocal, I32: 0},
+		Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1},
+		Op{Kind: OpDrop},
 		Op{Kind: OpEnd},
 		Op{Kind: OpLoadLocal, I32: 0},
 		Op{Kind: OpReturn},

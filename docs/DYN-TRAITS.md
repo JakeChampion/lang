@@ -782,8 +782,8 @@ prove the inner free runs through the vtable destructor.
 **Slice (a) — wasm — SHIPPED.** `VtableDecl` gained a `Drop` field
 (`collectVtables` records `dropFnNameFor(C)`; a primitive concrete
 originally recorded "" — since #4351 it records `__drop_dynprim_<prim>`,
-which frees the `boxPrimitiveDynValue` VALUE CELL behind `data` that the
-null sentinel used to leak on every coercion. The string BUFFER behind a
+which releases a unit of the `boxPrimitiveDynValue` value box behind `data`,
+a counted box since #10072, and frees it at the last. The string BUFFER behind a
 string payload stays leak-mode: the coercion takes no retain, so an
 aliased source must never be freed from the dyn drop); the wasm `internVtable`
 appends it as the trailing function-table-index slot at index
@@ -939,6 +939,32 @@ matched-and-bound aliasing).
 - **`dyn Trait[]` array CAPTURED by a closure** (`genClosureDropThunk`'s
   `arrElemStructDropName(…, false)` site) — still FLAGGED-LEAKING; the
   capture inc/borrow accounting for a nested-array `dyn` isn't established.
+
+### 4.5 The target model: a dyn value is a counted value
+
+Settled on the #10072 design review. A `dyn` value is a reference to its
+concrete's own counted box, and it joins Perceus like every other
+reference: a holder that borrows one retains it with the plain rc inc, and
+a release is an rc dec followed, at the last unit, by the drop the shape
+dispatches to. It is **not** lent-only the way `str` is: a view exists to
+borrow someone else's buffer, while a trait object exists to own a value
+whose type is erased, and heterogeneous collections and factories that
+return one are its reason to exist.
+
+- **Every concrete is counted.** A struct or enum box already carries its
+  rc header; a primitive behind `dyn` is boxed with one too (#10072), so a
+  retain never needs the concrete's static type.
+- **The self-host representation is the target.** There the value IS the
+  concrete's box, its shape at offset 0, so coercing a struct or enum
+  allocates nothing — which matters below the OS as much as it does for
+  speed. The natives' `{data, vtable}` cell is the one heap value that
+  cannot be counted, and every native dyn RC bug so far has been that cell
+  shared or lost (#10053, #10054, #10072, #10073). Until the natives adopt
+  the self-host shape, a holder that borrows a native dyn takes a cell of
+  its own as well as a unit of the concrete (`emitDynRetain`).
+- **The typed self-host path's "lent, never owned" refusal is a slice
+  limit, not the rule.** It lifts once that path can release a dyn value
+  through the shape-dispatched drop.
 
 ## 5. Coercion (boxing) model
 
