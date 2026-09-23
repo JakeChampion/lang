@@ -21,12 +21,16 @@ import (
 // "this shape leaks" — an Option box or a get_or default temp would show in
 // both.
 //
-// Only BOX keys are asserted. Two neighbouring shapes leak with a borrowed key
-// too, so a fresh-key case over them would be measuring someone else's bug:
-// `without` (#9970, a deleted entry's key and value are never released) and
-// every string-keyed program (whatever owns that column's keys). They are left
-// out rather than asserted loosely — a case whose control is red cannot say
-// what made it red.
+// Only BOX keys on `has` and `get_or` are asserted. Three neighbouring shapes
+// leak with a borrowed key too, so a fresh-key case over them would be
+// measuring someone else's bug, and a case whose control is red cannot say what
+// made it red:
+//
+//   - `without` — #9970, a deleted entry's key and value are never released;
+//   - every string-keyed program — whatever owns that column's keys;
+//   - `get` itself — its Option result is stranded whether the key is fresh or
+//     borrowed, so the arm this change restructures most cannot be pinned from
+//     here until that is fixed.
 func TestSelfHostMapReadKeyTempWasmRC(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host map read-key rc e2e")
