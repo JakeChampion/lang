@@ -35,6 +35,12 @@ function inLoop(own s: S, k: i32): S {
     }
     return s;
 }
+function viaPatternKeeps(i: i32): i64 {
+    var s: S = S { a: [0 as i64, 0 as i64], b: ["x"], n: 1 };
+    var S { a, b, n } = s;
+    a = a.with(i, 1 as i64);
+    return a[i] + s.a[i];
+}
 function borrowed(s: S, i: i32): i64 {
     var a: i64[] = s.a;
     a = a.with(i, 1 as i64);
@@ -47,7 +53,7 @@ function main(): i32 {
     s = inLoop(s, 2);
     var u: i64 = borrowed(s, 0);
     var r: i64 = rereads(S { a: [0 as i64], b: ["y"], n: 1 }, 0);
-    return (r + u) as i32;
+    return (r + u + viaPatternKeeps(1)) as i32;
 }`
 
 func TestOwnFieldLocalMoveIsClaimed(t *testing.T) {
@@ -57,10 +63,10 @@ func TestOwnFieldLocalMoveIsClaimed(t *testing.T) {
 			t.Errorf("%s reads its field out without the is_unique-gated move:\n%s", fn, ip)
 		}
 	}
-	// rereads reads s.a again, inLoop re-runs the read every turn, and
-	// borrowed does not own s at all. A destructure needs no such case: the
-	// checker already refuses any use of s after it.
-	for _, fn := range []string{"rereads", "inLoop", "borrowed"} {
+	// rereads reads s.a again, inLoop re-runs the read every turn,
+	// viaPatternKeeps reads its local s after destructuring it, and borrowed
+	// does not own s at all.
+	for _, fn := range []string{"rereads", "inLoop", "viaPatternKeeps", "borrowed"} {
 		if n := moveTests(fnNamed(t, ip, fn)); n != 0 {
 			t.Errorf("%s moves a field something later still reads (%d uniqueness tests):\n%s", fn, n, ip)
 		}
