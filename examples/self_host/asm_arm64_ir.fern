@@ -1549,10 +1549,12 @@ struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave:
 // `inverted`) are not materialised; the branch tests the condition of
 // compare `tag` on operands `a` and `b` instead. A `not` of a plain boolean
 // fuses too: `tag` is 0, the branch tests `a` for zero and takes the true
-// edge when it is. n is 0 when the block ends some other way.
-struct SsaFuse { n: i32, tag: i32, inverted: boolean, a: i32, b: i32 }
+// edge when it is. An inline uniqueness test of `a` fuses as `unique`: its
+// guards leave the flags an equality compare would. n is 0 when the block
+// ends some other way.
+struct SsaFuse { n: i32, tag: i32, inverted: boolean, a: i32, b: i32, unique: boolean }
 
-function ssa_no_fuse(): SsaFuse { return SsaFuse { n: 0, tag: 0, inverted: false, a: 0, b: 0 }; }
+function ssa_no_fuse(): SsaFuse { return SsaFuse { n: 0, tag: 0, inverted: false, a: 0, b: 0, unique: false }; }
 
 // ssa_fuse finds the compare a block's brif can read as flags: the block's
 // last instruction is an integer compare read only by the branch, or a `not`
@@ -1567,19 +1569,28 @@ function ssa_fuse(fr: SsaFrame, blk: ssa.SBlock): SsaFuse {
     var n: i32 = 1;
     var inverted: boolean = false;
     if (last.kind_tag == 10 && last.str == "!") {
-        var value_test: SsaFuse = SsaFuse { n: 1, tag: 0, inverted: true, a: last.args[0], b: 0 };
+        var value_test: SsaFuse = SsaFuse { n: 1, tag: 0, inverted: true, a: last.args[0], b: 0, unique: false };
         if (blk.insts.len() < 2) { return value_test; }
         cmp = blk.insts[blk.insts.len() - 2];
         if (cmp.result != last.args[0] || fr.uses[cmp.result] != 1) { return value_test; }
-        if (cmp.kind_tag != 9 || !ircore.is_int_cmp_kind(ir.kind_id(cmp.str))) { return value_test; }
+        if (!ssa_unique_test(cmp) && (cmp.kind_tag != 9 || !ircore.is_int_cmp_kind(ir.kind_id(cmp.str)))) { return value_test; }
         n = 2;
         inverted = true;
     }
+    if (ssa_unique_test(cmp)) { return SsaFuse { n: n, tag: 35, inverted: inverted, a: cmp.args[0], b: 0, unique: true }; }
     if (cmp.kind_tag != 9 || !ircore.is_int_cmp_kind(ir.kind_id(cmp.str))) { return ssa_no_fuse(); }
     if (fr.imm.is_imm[cmp.args[0]]) {
-        return SsaFuse { n: n, tag: ircore.flip_int_cmp_kind(ir.kind_id(cmp.str)), inverted: inverted, a: cmp.args[1], b: cmp.args[0] };
+        return SsaFuse { n: n, tag: ircore.flip_int_cmp_kind(ir.kind_id(cmp.str)), inverted: inverted, a: cmp.args[1], b: cmp.args[0], unique: false };
     }
-    return SsaFuse { n: n, tag: ir.kind_id(cmp.str), inverted: inverted, a: cmp.args[0], b: cmp.args[1] };
+    return SsaFuse { n: n, tag: ir.kind_id(cmp.str), inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false };
+}
+
+// ssa_join is the label a block's fused test joins at; a rotated latch
+// re-runs its header's test under its own.
+function ssa_join(lp: string, blk: i32): string { return lp + "uq" + util.i32_to_string(blk); }
+
+function ssa_unique_test(ins: ssa.SInst): boolean {
+    return ssa.rc_inlined(ins) && ins.str == "__fern_rc_is_unique";
 }
 
 function ssa_view_off(fr: SsaFrame, v: i32): i32 {
@@ -1800,9 +1811,11 @@ function ssa_jump(lp: string, to: i32, next: i32, s: asmcore.EmitState): asmcore
 // the moves of the two edges differ.
 function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp: string, next: i32, fu: SsaFuse, s: asmcore.EmitState): asmcore.EmitState {
     var t: ssa.STerm = blk.term;
-    if (fu.n == 0) {
-    s = ssa_load(reg_of, t.cond, "x4", s);
-    }
+    // A value test reads the value where it lives, through x4 only when spilled.
+    var tv: i32 = t.cond;
+    if (fu.n > 0) { tv = fu.a; }
+    if (fu.n == 0) { s = ssa_read(reg_of, t.cond, "x4", s); }
+    var tr: string = ssa_src(reg_of, tv, "x4");
     if (t.t == t.f) {
         s = ssa_phi_moves(f, fr, reg_of, blk.id, t.t, s);
         return ssa_jump(lp, t.t, next, s);
@@ -1814,16 +1827,16 @@ function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
     // moves, branch on the condition itself and fall through.
     if (!stub && t.f == next && !ssa_has_phis(f, fr, t.t)) {
         var tl: string = lp + util.i32_to_string(t.t);
-        if (fu.n > 0 && fu.tag == 0) { return s.write("    cbz x4, " + tl + "\n"); }
+        if (fu.n > 0 && fu.tag == 0) { return s.write("    cbz " + tr + ", " + tl + "\n"); }
         if (fu.n > 0) { return s.write("    b." + ir_cmp_cond(fu.tag, !fu.inverted) + " " + tl + "\n"); }
-        return s.write("    cbnz x4, " + tl + "\n");
+        return s.write("    cbnz " + tr + ", " + tl + "\n");
     }
     if (fu.n > 0 && fu.tag == 0) {
-        s = s.write("    cbnz x4, " + fl + "\n");
+        s = s.write("    cbnz " + tr + ", " + fl + "\n");
     } else if (fu.n > 0) {
         s = s.write("    b." + ir_cmp_cond(fu.tag, fu.inverted) + " " + fl + "\n");
     } else {
-        s = s.write("    cbz x4, " + fl + "\n");
+        s = s.write("    cbz " + tr + ", " + fl + "\n");
     }
     s = ssa_phi_moves(f, fr, reg_of, blk.id, t.t, s);
     if (stub) {
@@ -1837,13 +1850,28 @@ function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
 }
 
 // ssa_fused_test sets the flags a block's fused compare leaves for its branch
-// (or loads a fused `not`'s operand, for the value test).
-function ssa_fused_test(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, s: asmcore.EmitState): asmcore.EmitState {
-    if (fu.n > 0 && fu.tag == 0) { return ssa_load(reg_of, fu.a, "x4", s); }
+// (or brings a fused `not`'s operand into a register, for the value test).
+// `join` names the label a fused uniqueness test's guards meet at.
+function ssa_fused_test(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, join: string, s: asmcore.EmitState): asmcore.EmitState {
+    if (fu.n > 0 && fu.tag == 0) { return ssa_read(reg_of, fu.a, "x4", s); }
     if (fu.n == 0) { return s; }
+    if (fu.unique) { return ssa_unique_flags(reg_of, fu.a, join, s); }
     s = ssa_read(reg_of, fu.a, "x4", s);
     s = ssa_read_rhs(fr, reg_of, fu.b, "x5", s);
     return s.write("    cmp " + ssa_src(reg_of, fu.a, "x4") + ", " + ssa_rhs(fr, reg_of, fu.b, "x5") + "\n");
+}
+
+// ssa_unique_flags is ssa_rc_prim's uniqueness test as flags: Z is set only
+// when the count is exactly one. Each guard's early exit already leaves Z
+// clear (a set tag bit; a pointer below, so unequal to, the floor), which is
+// why the tag test is a tst rather than the tbnz that sets no flags.
+function ssa_unique_flags(reg_of: i32[], v: i32, join: string, s: asmcore.EmitState): asmcore.EmitState {
+    s = helper_call_needs("__fern_rc_is_unique", s);
+    s = ssa_read(reg_of, v, "x4", s);
+    var p: string = ssa_src(reg_of, v, "x4");
+    s = s.write("    tst " + p + ", #1\n    b.ne " + join + "\n    cmp " + p + ", #16, lsl #12\n    b.lo " + join + "\n");
+    s = s.write("    ldur w5, [" + p + ", #-8]\n" + san_poison_check("w5", "w7", join + "us") + "    cmp w5, #1\n" + join + ":\n");
+    return s;
 }
 
 // ssa_rotates reports whether a branch from the block at position `from` to
@@ -1878,7 +1906,7 @@ function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
         if (ssa_rotates(f, fr, ssa_block_at(fr, blk.id), t.target)) {
             var h: ssa.SBlock = f.blocks[ssa_block_at(fr, t.target)];
             var hfu: SsaFuse = ssa_fuse(fr, h);
-            return ssa_brif(f, fr, h, reg_of, lp, next, hfu, ssa_fused_test(fr, reg_of, hfu, s));
+            return ssa_brif(f, fr, h, reg_of, lp, next, hfu, ssa_fused_test(fr, reg_of, hfu, ssa_join(lp, blk.id), s));
         }
         return ssa_jump(lp, t.target, next, s);
     }
@@ -2019,7 +2047,7 @@ function emit_ssa_function_arm64(lifted: ssa.SFunc, label_name: string, r: irlow
             if (ins.kind_tag != 6 && ins.kind_tag != 8) { s = ssa_inst(ins, reg_of, fr, lp, r, s); }
             ii = ii + 1;
         }
-        s = ssa_fused_test(fr, reg_of, fu, s);
+        s = ssa_fused_test(fr, reg_of, fu, ssa_join(lp, blk.id), s);
         s = ssa_term(f, fr, blk, reg_of, lp, next, fu, s);
         bi = bi + 1;
     }
@@ -7551,7 +7579,8 @@ function emit_rt_net(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     // op had no kind_tag case on either backend.
 
     // __fern_alloc_u8(x0 = n) → fresh n-element array (cap header,
-    // 8-byte slots, returned base+8). Elements start zero (.bss).
+    // 8-byte slots, returned base+8), its slots cleared: a block off the
+    // free list keeps its last owner's bytes.
     s = s.write(".globl __fern_alloc_u8\n");
     s = s.write(".type __fern_alloc_u8, %function\n");
     s = s.write("__fern_alloc_u8:\n");
@@ -7561,6 +7590,14 @@ function emit_rt_net(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     s = s.write("    mov x19, x0\n");           // n
     s = s.write("    mov x0, x19\n");           // cap = n
     s = s.write("    bl __fern_arr_box\n");      // -> data ptr in x0 (cap + len written)
+    s = s.write("    add x2, x0, #8\n");        // slot 0; the length is at [x0]
+    s = s.write("    mov w1, w19\n");           // n is an i32
+    s = s.write(".Lfern_alloc_u8_zero:\n");
+    s = s.write("    cbz x1, .Lfern_alloc_u8_done\n");
+    s = s.write("    str xzr, [x2], #8\n");
+    s = s.write("    sub x1, x1, #1\n");
+    s = s.write("    b .Lfern_alloc_u8_zero\n");
+    s = s.write(".Lfern_alloc_u8_done:\n");
     s = s.write("    ldp x19, x20, [sp], #16\n");
     s = s.write("    ldp x29, x30, [sp], #16\n");
     s = s.write("    ret\n");

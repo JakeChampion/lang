@@ -42,7 +42,7 @@ func arm64Imm(asm, n string) bool {
 
 var (
 	rcIncInlineRe      = regexp.MustCompile(`_rcinc[0-9]+:`)
-	rcIsUniqueInlineRe = regexp.MustCompile(`_rcuniq[0-9]+:`)
+	rcIsUniqueInlineRe = regexp.MustCompile(`_(?:rcuniq|uq)[0-9]+:`)
 )
 
 // rcIncSites counts the retains in asm: calls to the rc_inc helper and the
@@ -52,7 +52,8 @@ func rcIncSites(asm string) int {
 }
 
 // rcIsUniqueSites counts the uniqueness tests in asm, calls and inline forms
-// (label `_rcuniq<N>`) alike.
+// (label `_rcuniq<N>`, or `_uq<N>` where the test is fused into its branch)
+// alike.
 func rcIsUniqueSites(asm string) int {
 	return strings.Count(asm, "call __fn___fern_rc_is_unique") + strings.Count(asm, "bl __fn___fern_rc_is_unique") + len(rcIsUniqueInlineRe.FindAllString(asm, -1))
 }

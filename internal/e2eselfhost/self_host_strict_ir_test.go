@@ -857,9 +857,9 @@ func TestSelfHostStrictIRWasm(t *testing.T) {
 // distinguished them.
 //
 // It needs its own driver. The reason table above runs on `asm_run`, which
-// compiles ONE self-contained module, and there every unresolvable const_func
-// name is a `<fn>$clo` the escaping-closure lowering now refuses at the site it
-// mints the name. `asm_ir_run` takes a program-wide known-symbol set
+// compiles ONE self-contained module, and there every function value names a
+// function the module itself declares or lifts. `asm_ir_run` takes a
+// program-wide known-symbol set
 // (`-ir-extern`), which is what makes a fn value naming a SIBLING unit's
 // function — the missing import, the monomorphised clone absent from this view,
 // the unregistered helper — reachable as an input.

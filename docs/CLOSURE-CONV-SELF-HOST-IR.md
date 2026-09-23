@@ -72,7 +72,7 @@ push box[0]; call_indirect(arity+1)`.
 Producers:
 - **lambda arg** (capturing or not): hoist to `<host>$clo_N(__env, params…)`
   reading captures from `__env`; build the box `[const_func($clo_N), caps…]` at
-  the call site. Reuse `lambda_captures` + the escaping-closure box construction.
+  the call site, reusing `lambda_captures`.
 - **top-level fn as value** (`inc`, `[inc, dbl]`): wrap in a 1-element box
   `[const_func(inc$wrap)]` where `inc$wrap(__env, params…)` ignores `__env` and
   tail-calls `inc(params…)` — a generated `__env`-ignoring trampoline (one per

@@ -368,8 +368,7 @@ pub function op_arr_push_f64(): Op { return op0("arr_push_f64"); }
 pub function op_arr_push_owned_i64(): Op { return op0("arr_push_owned_i64"); }
 pub function op_arr_push_owned_f64(): Op { return op0("arr_push_owned_f64"); }
 // `alloc_u8` pops [n] → a fresh n-element array (8-byte slots, len = n) via
-// __fern_alloc_u8 (the `__alloc_u8(n)` byte-buffer builtin). Contents are NOT
-// zeroed (a reused freelist block keeps stale bytes — callers zero explicitly).
+// __fern_alloc_u8 (the `__alloc_u8(n)` byte-buffer builtin), every slot zero.
 pub function op_alloc_u8(): Op { return op0("alloc_u8"); }
 // `str_from_bytes` pops [arr] → a fresh string box packing each slot's low byte
 // via __fern_string_from_bytes (the `string_from_bytes_unchecked(arr)` builtin).
