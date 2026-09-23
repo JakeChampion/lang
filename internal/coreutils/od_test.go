@@ -130,10 +130,28 @@ func odCases(t *testing.T) []invocation {
 		noise[i] = byte(rnd.Intn(256))
 	}
 	random := odFile(t, dir, "random", noise)
+	// The second and third rows are where the shortest decimal and
+	// GNU's `%.*g` search part company: 2^-24 has a 16-digit decimal
+	// that reads back, but the 16-digit rounding of its exact value is
+	// a tie that rounds to even and does not, so GNU prints 17 digits;
+	// 2^-25 is the same tie one precision later. The rest sit on the
+	// style boundaries of `%g` (1e-5, 1e15..1e17), at the ends of the
+	// double's range, on the subnormal boundary, and where a rounding
+	// carries into a new digit.
 	floatVals := []float64{
 		0, math.Copysign(0, -1), 1, -1, 0.5, 1.0 / 3, 1e30, 1e-30,
 		3.4028235e38, 1.1754944e-38, 5e-324, math.Inf(1), math.Inf(-1),
 		math.NaN(), 123456789, 0.1, 1.5, 7, 255, 65535, 1e-300, -1e-300,
+		math.Ldexp(1, -24), math.Ldexp(1, -25), math.Ldexp(1, -1022),
+		2.2250738585072009e-308, 1e-310, 3 * 5e-324, 1.5e-320,
+		math.MaxFloat64, 1 << 53, 1<<53 + 2, 4503599627370497,
+		1e15, 1e16, 1e17, 123456789012345680, 1e21, 1e22, 1e23,
+		0.3, 100, 1e5, 1e-5, 1e-4, 999999999999999.9, 9.999999999999999e22,
+		0.000123456789012345678, 0.1 + 0.2, 1234567, 0.0001234,
+		math.Ldexp(1, 100), math.Ldexp(1, -100), math.Ldexp(1, -30),
+		math.Pow(3, 33), math.Pow(3, -33), math.Pow(7, 20) / 11,
+		math.Ldexp(1, -149), math.Ldexp(1, -126), math.Ldexp(3, -24),
+		16777216, 16777218, 1e10, 1e-10, math.Ldexp(1, -140),
 	}
 	f4 := odFile(t, dir, "f4", odFloats(floatVals, 4))
 	f8 := odFile(t, dir, "f8", odFloats(floatVals, 8))

@@ -155,7 +155,7 @@ const inlineTinyBudgetDivisor = 10
 func Inline(prog *Program) {
 	unit := 0
 	for _, fn := range prog.Funcs {
-		unit += len(fn.Ops)
+		unit += codeOps(fn.Ops)
 	}
 	if unit > inlineMaxUnitOps {
 		inlineTinyLeaves(prog, unit)
@@ -179,6 +179,19 @@ func Inline(prog *Program) {
 			return
 		}
 	}
+}
+
+// codeOps counts the ops that emit code: a line marker (`-g`) or a
+// coverage point (`-cover`) is not one, so the size policies see the same
+// program with or without them.
+func codeOps(ops []Op) int {
+	n := 0
+	for _, op := range ops {
+		if op.Kind != OpLine && op.Kind != OpCoverPoint {
+			n++
+		}
+	}
+	return n
 }
 
 // inlineTinyLeaves is what a unit over inlineMaxUnitOps gets instead of
@@ -244,25 +257,27 @@ type inlineMode struct {
 
 // admits reports whether fn may be a candidate at all under this mode.
 // The general mode takes whatever isInlineable passed; the tiny-leaf mode
-// additionally requires a call-free body within inlineTinyLeafOps — and
-// applies that size test itself, since isInlineable waives its own cap for
-// an @inline hint and this mode's bounds are what make it safe over the
-// ceiling.
+// additionally requires a call-free body within inlineTinyLeafOps, and
+// applies that size test itself. An @inline hint is honoured in both: the
+// programmer asked, and over the ceiling the one pass the mode runs is
+// what bounds it — a hinted body's own calls are spliced in as calls and
+// stay that way.
 func (m *inlineMode) admits(fn *Func) bool {
-	if !m.tinyLeaf {
+	if !m.tinyLeaf || fn.InlineHint == ast.InlineHintAlways {
 		return true
 	}
-	return len(fn.Ops) <= inlineTinyLeafOps && isCallFree(fn)
+	return codeOps(fn.Ops) <= inlineTinyLeafOps && isCallFree(fn)
 }
 
 // allows applies the per-call-site policy. Under the general mode that is
 // siteAllows; under the tiny-leaf mode candidacy has already bounded the
-// body, so all that is left per site is the budget.
+// body, so all that is left per site is the budget, which an @inline hint
+// is not charged against.
 func (m *inlineMode) allows(cand inlineCandidate, loopDepth int, constArgs bool) bool {
 	if !m.tinyLeaf {
 		return siteAllows(cand, loopDepth, constArgs)
 	}
-	return len(cand.body) <= m.budget
+	return cand.fn.InlineHint == ast.InlineHintAlways || len(cand.body) <= m.budget
 }
 
 // spend records a splice against the budget. A no-op under the general
@@ -471,7 +486,7 @@ func isInlineable(fn *Func) bool {
 	// Candidacy admits up to the LOOP cap — the flat cap is applied
 	// per call site by siteAllows, so an 81..160-op helper can inline
 	// where it's called from a loop while staying a call elsewhere.
-	if fn.InlineHint != ast.InlineHintAlways && len(fn.Ops) > inlineLoopSizeLimit {
+	if fn.InlineHint != ast.InlineHintAlways && codeOps(fn.Ops) > inlineLoopSizeLimit {
 		return false
 	}
 	// Never inline a per-closure drop thunk: it reads captures at
@@ -625,10 +640,11 @@ func siteAllows(cand inlineCandidate, loopDepth int, constArgs bool) bool {
 	if cand.fn.InlineHint == ast.InlineHintAlways {
 		return true
 	}
-	if len(cand.body) <= inlineSizeLimit {
+	size := codeOps(cand.body)
+	if size <= inlineSizeLimit {
 		return true
 	}
-	if len(cand.body) > inlineLoopSizeLimit {
+	if size > inlineLoopSizeLimit {
 		return false
 	}
 	return cand.refs == 1 || loopDepth > 0 || constArgs

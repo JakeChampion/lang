@@ -37,6 +37,7 @@
 import "std/string";
 import "std/array";
 import "std/io_buffered";
+import "std/float";
 import "./lib/gnu";
 import "./lib/ld";
 
@@ -238,7 +239,7 @@ function k_bfloat(): i32 {
 // one unit occupies before the block padding is spread over it, whether
 // the `z` suffix asked for the printable-character trailer, and the pad
 // this spec's block gets so every spec's block ends in the same column.
-struct Spec { kind: i32, size: i32, fw: i32, z: boolean, pad: i32 }
+struct Spec { kind: i32, size: i32, fw: i32, z: boolean, pad: i32, decode: ld.Format, print: ld.Format }
 
 function spec_width(kind: i32, size: i32): i32 {
   if (kind == k_named() || kind == k_char()) {
@@ -305,7 +306,7 @@ function long_double_size(): i32 {
 }
 
 function new_spec(kind: i32, size: i32, z: boolean): Spec {
-  return Spec { kind: kind, size: size, fw: spec_width(kind, size), z: z, pad: 0 };
+  return Spec { kind: kind, size: size, fw: spec_width(kind, size), z: z, pad: 0, decode: decode_format(kind, size), print: print_format(size) };
 }
 
 // ---- the type string -------------------------------------------------------
@@ -653,8 +654,7 @@ function is_printable(c: i32): boolean {
 // ---- floating point --------------------------------------------------------
 //
 // The unit's bytes as the exact value the format holds.
-function decode_float(block: string, at: i32, kind: i32, size: i32, big: boolean): ld.LD {
-  var f: ld.Format = decode_format(kind, size);
+function decode_float(block: string, at: i32, f: ld.Format, size: i32, big: boolean): ld.LD {
   var lo: u64 = 0 as u64;
   var hi: u64 = 0 as u64;
   if (size <= 8) {
@@ -770,12 +770,15 @@ function ftoa(f: ld.Format, v: ld.LD): string {
   if (v.neg) {
     sign = "-";
   }
-  var d: ld.Dec = v.dec();
   var prec: i32 = f.dig();
   if (f.is_subnormal(v)) {
     prec = 1;
   }
   var bound: i32 = prec_bound(f);
+  if ((f.mant == 53 || f.mant == 24) && !v.is_zero()) {
+    return sign + ftoa_ieee(f, f.canonical(v), prec, bound);
+  }
+  var d: ld.Dec = v.dec();
   var s: string = "";
   while (prec <= bound) {
     s = sign + ld.general(d, prec as i64, false, false, 0 as i64).text();
@@ -785,6 +788,52 @@ function ftoa(f: ld.Format, v: ld.LD): string {
     prec = prec + 1;
   }
   return s;
+}
+
+// The same search for a float or a double, where the shortest decimal
+// that reads back is one `std/float` call and fixes the first precision
+// that can succeed, and each candidate is one exact rounding in
+// `lib/ld.fern` rather than an expansion, a print and a parse.
+function ftoa_ieee(f: ld.Format, v: ld.LD, prec: i32, bound: i32): string {
+  var sd: (i64, i32) = shortest_digits(f, encode_ieee(f, v));
+  var k: i32 = 1;
+  var p10: i64 = 10 as i64;
+  while (sd.0 >= p10) {
+    p10 = p10 * (10 as i64);
+    k = k + 1;
+  }
+  var x: i32 = k - 1 + sd.1;
+  var p: i32 = prec;
+  if (k > p) {
+    p = k;
+  }
+  while (p < bound) {
+    var r: (ld.Dec, boolean) = f.round_to(v, x, p);
+    if (r.1) {
+      return ld.general(r.0, p as i64, false, false, 0 as i64).text();
+    }
+    p = p + 1;
+  }
+  return ld.general(f.round_to(v, x, bound).0, bound as i64, false, false, 0 as i64).text();
+}
+
+function shortest_digits(f: ld.Format, bits: u64): (i64, i32) {
+  if (f.mant == 53) {
+    return f64_from_bits(bits as i64).shortest_digits();
+  }
+  return f32_from_bits(bits as i32).shortest_digits();
+}
+
+// A canonical value's bits in the format's own encoding, without the
+// sign: the inverse of decode_ieee for a value the format holds.
+function encode_ieee(f: ld.Format, v: ld.LD): u64 {
+  var frac_bits: i32 = f.mant - 1;
+  var top: u64 = 1 as u64 << frac_bits as u64;
+  var exp: i32 = 0;
+  if ((v.lo & top) != 0 as u64) {
+    exp = v.e + f.emax + frac_bits;
+  }
+  return exp as u64 << frac_bits as u64 | v.lo & top - 1 as u64;
 }
 
 // ---- one field -------------------------------------------------------------
@@ -1109,7 +1158,7 @@ function push_field(h: usize, t: Tables, sp: Spec, block: string, at: i32, width
   } else if (sp.kind == k_named()) {
     push_entry(h, t, t.names, block[at] as i32, width);
   } else {
-    push_text(h, t, ftoa(print_format(sp.size), decode_float(block, at, sp.kind, sp.size, big)), width);
+    push_text(h, t, ftoa(sp.print, decode_float(block, at, sp.decode, sp.size, big)), width);
   }
 }
 

@@ -2481,19 +2481,34 @@ func linkNativePIE(asm, outPath string) error {
 	return writeExecutable(outPath, bin)
 }
 
-// writeExecutable replaces outPath with bin, executable. It unlinks first
-// rather than truncating in place: macOS caches a binary's code-signature
-// verdict by inode, so rewriting a signed executable through its existing
-// inode leaves the kernel holding the old verdict and kills the new program at
-// exec (SIGKILL, "Code Signature Invalid") although the file's own signature
-// is valid. A fresh inode carries no verdict. The chmod keeps the mode explicit
-// under any umask, and for --run's temp binary CreateTemp made at 0600.
+// writeExecutable writes bin to outPath, executable. A regular file is
+// unlinked first rather than truncated in place: macOS caches a binary's
+// code-signature verdict by inode, so rewriting a signed executable through
+// its existing inode leaves the kernel holding the old verdict and kills the
+// new program at exec (SIGKILL, "Code Signature Invalid") although the file's
+// own signature is valid. A fresh inode carries no verdict.
+//
+// Anything else at the path is written through and kept: a device, a FIFO or
+// a socket is not the compiler's to replace (`-o /dev/null` deleted the null
+// device, #10034), and a symlink keeps pointing where it did (a dangling one
+// creates its target, as cp does). The chmod keeps
+// the mode explicit under any umask, and for --run's temp binary CreateTemp
+// made at 0600; it applies only when the path resolves to a regular file.
 func writeExecutable(outPath string, bin []byte) error {
-	if err := os.Remove(outPath); err != nil && !os.IsNotExist(err) {
-		return err
+	if fi, err := os.Lstat(outPath); err == nil && fi.Mode().IsRegular() {
+		if err := os.Remove(outPath); err != nil {
+			return err
+		}
 	}
 	if err := os.WriteFile(outPath, bin, 0o755); err != nil {
 		return err
+	}
+	fi, err := os.Stat(outPath)
+	if err != nil {
+		return err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil
 	}
 	return os.Chmod(outPath, 0o755)
 }

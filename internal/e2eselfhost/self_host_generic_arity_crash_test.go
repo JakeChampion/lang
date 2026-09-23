@@ -51,8 +51,9 @@ var genericArityCrashCases = []struct {
 	src  string
 }{
 	// Struct, one argument short, at each annotation position. The `var` and
-	// return positions are the ones the checker does not report E019 for today,
-	// so before the fix nothing stopped them reaching the monomorphiser.
+	// return positions were the ones the checker did not report E019 for when
+	// this was written, so nothing stopped them reaching the monomorphiser; the
+	// guard stays, since the checker's verdict is not what the driver runs on.
 	{"struct_var", `struct Pair[A, B] { first: A, second: B }
 function main(): i32 { var p: Pair[i32] = Pair { first: 1, second: 2 }; return p.first; }`},
 	{"struct_param", `struct Pair[A, B] { first: A, second: B }

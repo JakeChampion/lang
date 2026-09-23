@@ -76,11 +76,72 @@ func fmtCases(t *testing.T) []invocation {
 	}
 	oneParagraph := fmtFile(t, dir, "tall", tall.String())
 	// 900 one-character words: long enough to exercise the chooser over a
-	// whole paragraph and short enough to stay inside GNU's own word
-	// buffer, which holds 997 (see docs/COREUTILS.md).
+	// whole paragraph and short enough to stay inside GNU's word buffer.
 	long := fmtFile(t, dir, "long", strings.Repeat("a ", 899)+"a\n")
-	// The last paragraph GNU formats in one piece.
+	// The last paragraph GNU formats in one piece, and the first it does
+	// not: the 999th word flushes the 998 before it, laid out as if the
+	// paragraph ended there, up to a line start the flush re-enters from.
 	brim := fmtFile(t, dir, "brim", strings.Repeat("a ", 996)+"a\n")
+	over := fmtFile(t, dir, "over", strings.Repeat("a ", 998)+"a\n")
+	// Two flushes, and a third paragraph's worth after them.
+	thrice := fmtFile(t, dir, "thrice", strings.Repeat("a ", 2500)+"a\n")
+	// 3000 words of varying length with sentence ends, commas and brackets
+	// among them, nine to an input line: the flush's choice of re-entry
+	// line depends on the costs of the lines before it, so the layout it
+	// leaves behind is not the one the whole paragraph would get. Also
+	// with the first line indented, for -c and -t, and behind a prefix.
+	var wide, wideIndented, wideQuoted strings.Builder
+	for i := 0; i < 3000; i++ {
+		w := strings.Repeat("abcdefghijk"[i%11:i%11+1], 1+(i*7)%9)
+		switch {
+		case i%13 == 12:
+			w += "."
+		case i%89 == 5:
+			w += ","
+		case i%97 == 41:
+			w = "(" + w
+		}
+		if i%9 == 0 {
+			if i == 0 {
+				wideIndented.WriteString("    ")
+			} else {
+				wide.WriteByte('\n')
+				wideIndented.WriteString("\n  ")
+				wideQuoted.WriteByte('\n')
+			}
+			wideQuoted.WriteString("> ")
+		} else {
+			wide.WriteByte(' ')
+			wideIndented.WriteByte(' ')
+			wideQuoted.WriteByte(' ')
+		}
+		wide.WriteString(w)
+		wideIndented.WriteString(w)
+		wideQuoted.WriteString(w)
+	}
+	wide.WriteByte('\n')
+	wideIndented.WriteByte('\n')
+	wideQuoted.WriteByte('\n')
+	wideFile := fmtFile(t, dir, "wide", wide.String())
+	wideIndentedFile := fmtFile(t, dir, "wide-indented", wideIndented.String())
+	wideQuotedFile := fmtFile(t, dir, "wide-quoted", wideQuoted.String())
+	// 700 twelve-byte words: 8400 bytes of word text, so the byte buffer
+	// fills before the word count does, in the middle of a word.
+	var longWords strings.Builder
+	for i := 0; i < 700; i++ {
+		fmt.Fprintf(&longWords, "w%011d", i)
+		if i%5 == 4 {
+			longWords.WriteByte('\n')
+		} else {
+			longWords.WriteByte(' ')
+		}
+	}
+	longWordsFile := fmtFile(t, dir, "long-words", longWords.String())
+	// A word longer than the byte buffer, with words before it and
+	// without: the bytes that fill the buffer with nothing else held are
+	// written as they are, and the word goes on from there.
+	giant := fmtFile(t, dir, "giant", "aa bb "+strings.Repeat("x", 12000)+" cc dd\n")
+	giantAlone := fmtFile(t, dir, "giant-alone", strings.Repeat("y", 6000)+" zz\n")
 
 	return []invocation{
 		// The default: width 75, goal 75*187/200 = 70.
@@ -180,6 +241,33 @@ func fmtCases(t *testing.T) []invocation {
 		{name: "a nine hundred word paragraph at goal ten", args: []string{"-w", "40", "-g", "10", long}},
 		{name: "the last paragraph GNU formats whole", args: []string{brim}},
 		{name: "the last paragraph GNU formats whole narrow", args: []string{"-w", "20", brim}},
+		{name: "the first paragraph GNU flushes", args: []string{over}},
+		{name: "the first paragraph GNU flushes narrow", args: []string{"-w", "20", over}},
+		{name: "a paragraph flushed twice", args: []string{thrice}},
+		{name: "a paragraph flushed twice narrow", args: []string{"-w", "20", thrice}},
+		// A flush inside the first line, where -c and -t take the reader's
+		// own column as the continuation indent.
+		{name: "the first paragraph GNU flushes crown", args: []string{"-c", over}},
+		{name: "the first paragraph GNU flushes tagged", args: []string{"-t", over}},
+		{name: "a paragraph flushed twice crown", args: []string{"-c", thrice}},
+		{name: "a paragraph flushed twice tagged", args: []string{"-t", thrice}},
+		{name: "a paragraph flushed twice tagged narrow", args: []string{"-t", "-w", "20", thrice}},
+		{name: "a long paragraph of varied words", args: []string{wideFile}},
+		{name: "a long paragraph of varied words narrow", args: []string{"-w", "30", wideFile}},
+		{name: "a long paragraph of varied words at goal ten", args: []string{"-w", "40", "-g", "10", wideFile}},
+		{name: "a long paragraph of varied words uniform", args: []string{"-u", wideFile}},
+		{name: "a long paragraph of varied words split", args: []string{"-s", "-w", "30", wideFile}},
+		{name: "a long paragraph of varied words crown", args: []string{"-c", wideIndentedFile}},
+		{name: "a long paragraph of varied words tagged", args: []string{"-t", wideIndentedFile}},
+		{name: "a long paragraph of varied words crown narrow", args: []string{"-c", "-w", "30", wideIndentedFile}},
+		{name: "a long paragraph of varied words tagged narrow", args: []string{"-t", "-w", "30", wideIndentedFile}},
+		{name: "a long paragraph of varied words plain but indented", args: []string{wideIndentedFile}},
+		{name: "a long paragraph of varied words with a prefix", args: []string{"-p", "> ", wideQuotedFile}},
+		{name: "a long paragraph of varied words with a prefix narrow", args: []string{"-p", "> ", "-w", "30", wideQuotedFile}},
+		{name: "a paragraph the byte buffer flushes", args: []string{longWordsFile}},
+		{name: "a paragraph the byte buffer flushes narrow", args: []string{"-w", "30", longWordsFile}},
+		{name: "a word longer than the byte buffer", args: []string{giant}},
+		{name: "a word longer than the byte buffer alone", args: []string{giantAlone}},
 
 		// The orphan term: what it costs to strand the word that ends a
 		// sentence, which shrinks as that word grows.

@@ -32,6 +32,7 @@ import "std/string";
 import "std/array";
 import "std/u64";
 import "core/bigint";
+import "std/float";
 
 // ---- the format ------------------------------------------------------------
 // `mant` is the significand's width in bits (C's LDBL_MANT_DIG),
@@ -1359,6 +1360,198 @@ function pow5_bits(k: i32): i32 {
   return 64 - __clz64(pow5_u64(k));
 }
 
+// `canonical(v)` — a finite `v` with its significand at the format's
+// full width: a normal value's leading bit at bit mant-1, a subnormal at
+// the format's least exponent. Decoding one of the format's own
+// encodings gives this form; a value read from a narrower format keeps
+// its shorter significand until it is widened here. For formats whose
+// significand fits a word.
+pub function (f: Format) canonical(v: LD): LD {
+  if (v.kind != 0 || v.hi != 0 as u64 || v.lo == 0 as u64) {
+    return v;
+  }
+  var shift: i32 = f.mant - (64 - __clz64(v.lo));
+  if (shift > v.e - f.min_exp()) {
+    shift = v.e - f.min_exp();
+  }
+  if (shift <= 0) {
+    return v;
+  }
+  return LD { neg: v.neg, kind: 0, hi: 0 as u64, lo: v.lo << shift as u64, e: v.e - shift };
+}
+
+// `round_to(v, x, p)` — the p-digit decimal nearest a canonical, finite,
+// non-zero `v`, ties to even, and whether it reads back as `v`: one
+// precision of C's `%.*g` search for the shortest decimal that does
+// (gnulib's ftoastr), for a `p` of at most 19. `x` is v's decimal
+// exponent, floor(log10 |v|). Where `dec` expands the whole value — a
+// subnormal runs to a thousand digits — this takes one product: v × 10^s
+// for s = p-1-x is m × 5^s × 2^(e+s), whose integer part is the digits
+// and whose remainder, against half the unit, is the rounding and,
+// against half the format's gap, the read-back.
+pub function (f: Format) round_to(v: LD, x: i32, p: i32): (Dec, boolean) {
+  var s: i32 = p - 1 - x;
+  var fast: (Dec, i32) = round_fast(f, v, x, p, s);
+  if (fast.1 != 0) {
+    return (fast.0, fast.1 == 2);
+  }
+  var m: bigint.BigInt = bigint.from_u64(v.lo);
+  var e2: i32 = v.e + s;
+  var q: bigint.BigInt = m;
+  var r: bigint.BigInt = bigint.zero();
+  var d: bigint.BigInt = bigint.from_u64(1 as u64);
+  var h: bigint.BigInt = d;
+  if (s >= 0) {
+    // m × 5^s over 2^-e2: the remainder is the low bits, and half a
+    // gap is 5^s in units of the divisor.
+    h = h.mul_pow5(s);
+    var a: bigint.BigInt = m.mul(h);
+    if (e2 >= 0) {
+      q = a.shl(e2);
+    } else {
+      q = a.shr(0 - e2);
+      r = a.sub(q.shl(0 - e2));
+      d = d.shl(0 - e2);
+    }
+  } else {
+    // m × 2^e2 over 5^-s, the power of two on whichever side keeps
+    // both whole; half a gap is 2^e2 in units of the divisor, or one
+    // when the divisor took the power.
+    d = d.mul_pow5(0 - s);
+    var b: bigint.BigInt = m;
+    if (e2 >= 0) {
+      b = m.shl(e2);
+      h = h.shl(e2);
+    } else {
+      d = d.shl(0 - e2);
+    }
+    var qr: (bigint.BigInt, bigint.BigInt) = b.divmod(d);
+    q = qr.0;
+    r = qr.1;
+  }
+  var c: i32 = r.shl(1).cmp(d);
+  var up: boolean = c > 0 || c == 0 && q.bit(0);
+  var dist: bigint.BigInt = r;
+  var twice: i32 = 1;
+  if (up) {
+    dist = d.sub(r);
+  } else if (v.lo == 1 as u64 << (f.mant - 1) as u64 && v.e > f.min_exp()) {
+    // The gap below a power of two is half the gap above it.
+    twice = 2;
+  }
+  var cg: i32 = dist.shl(twice).cmp(h);
+  var reads_back: boolean = cg < 0 || cg == 0 && (v.lo & 1 as u64) == 0 as u64;
+  var n: u64 = q.low_u64();
+  if (up) {
+    n = n + 1 as u64;
+  }
+  var digits: string = n.to_string();
+  var dp: i32 = x + 1;
+  if (digits.len() > p) {
+    digits = "1";
+    dp = dp + 1;
+  }
+  return (Dec { digits: digits, dp: dp }, reads_back);
+}
+
+function no_dec(): (Dec, i32) {
+  return (Dec { digits: "", dp: 0 }, 0);
+}
+
+// `round_to` without the product. `std/float` keeps 10^s as a 128-bit
+// significand c with 10^s = (c − θ) × 2^β for some 0 ≤ θ < 1, so m × c
+// is v × 10^s to within m × θ < m units of its low bit, and the integer
+// part, the fraction against a half and the fraction against half the
+// format's gap are all read off that one product. A fraction within the
+// error of any of those three lines is left to the exact path: 0 says
+// so, 1 is a candidate that does not read back, 2 one that does.
+function round_fast(f: Format, v: LD, x: i32, p: i32, s: i32): (Dec, i32) {
+  if (s < 0 - 292 || s > 326) {
+    return no_dec();
+  }
+  var chi: u64 = float.pow10_hi(s);
+  var clo: u64 = float.pow10_lo(s);
+  // v × 10^s is m × c / 2^sigma; F is that in units of 2^-64, so its
+  // high word is the integer part and its low word the fraction.
+  var t: i32 = 63 - float.pow10_log2(s) - v.e;
+  if (t < 48 || t > 126) {
+    return no_dec();
+  }
+  var m: u64 = v.lo;
+  var mc: u64 = m * chi;
+  var p0: u64 = m * clo;
+  var p1: u64 = mc + mul_hi64(m, clo);
+  var p2: u64 = mul_hi64(m, chi);
+  if (p1 < mc) {
+    p2 = p2 + 1 as u64;
+  }
+  var q: u64 = 0 as u64;
+  var fr: u64 = 0 as u64;
+  if (t >= 64) {
+    q = shr_hi(p2, t - 64);
+    fr = shr_lo(p2, p1, t - 64);
+  } else {
+    q = shr_lo(p2, p1, t);
+    fr = shr_lo(p1, p0, t);
+  }
+  // The true F is below the computed one plus one, and above it less
+  // m × θ / 2^t.
+  var margin: u64 = 1 as u64;
+  if (t < 64) {
+    margin = (m >> t as u64) + 1 as u64;
+  }
+  if (fr < margin) {
+    return no_dec();
+  }
+  var half: u64 = 9223372036854775808 as u64;
+  var up: boolean = fr - margin >= half;
+  if (!up && fr >= half) {
+    return no_dec();
+  }
+  // Half the format's gap in the same units is (c − θ) / 2^(t + 1),
+  // within one of its computed value either way.
+  var hh: u64 = shr_hi(chi, t + 1);
+  var hl: u64 = shr_lo(chi, clo, t + 1);
+  var reads: i32 = 0;
+  if (hh != 0 as u64) {
+    reads = 2;
+  } else if (up) {
+    var dc: u64 = 0 as u64 - fr;
+    if (dc - 1 as u64 > hl) {
+      reads = 1;
+    } else if (hl >= margin + 1 as u64 && dc <= hl - margin - 1 as u64) {
+      reads = 2;
+    }
+  } else if (v.lo == 1 as u64 << (f.mant - 1) as u64 && v.e > f.min_exp()) {
+    // The gap below a power of two is half the gap above it.
+    if (2 as u64 * (fr - margin) > hl) {
+      reads = 1;
+    } else if (2 as u64 * fr + 3 as u64 <= hl) {
+      reads = 2;
+    }
+  } else {
+    if (fr - margin > hl) {
+      reads = 1;
+    } else if (fr + 2 as u64 <= hl) {
+      reads = 2;
+    }
+  }
+  if (reads == 0) {
+    return no_dec();
+  }
+  var n: u64 = q;
+  if (up) {
+    n = n + 1 as u64;
+  }
+  var digits: string = n.to_string();
+  var dp: i32 = x + 1;
+  if (digits.len() > p) {
+    digits = "1";
+    dp = dp + 1;
+  }
+  return (Dec { digits: digits, dp: dp }, reads);
+}
+
 // `round_digits(d, n)` — the first `n` digits of `d`, rounded half to
 // even on the exact tail; all of `d` when it has no more than `n`. When
 // the rounding carries out of the top digit the result is one digit
@@ -1443,6 +1636,9 @@ function body(head: string, zeros: i64, tail: string): Body {
 // `text(b)` — the body as one string, for a caller whose precision is
 // known to be small.
 pub function (b: Body) text(): string {
+  if (b.zeros == 0 as i64) {
+    return b.head + b.tail;
+  }
   return b.head + "0".repeat(b.zeros as i32) + b.tail;
 }
 
@@ -1515,22 +1711,32 @@ function fixed_shape(digits: string, dp: i32, prec: i64, alt: boolean, zeros: i6
 
 // The `e+NN` tail, at least two exponent digits.
 function exp_suffix(x: i32, upper: boolean): string {
-  var out: string = "e";
-  if (upper) {
-    out = "E";
-  }
   var ax: i32 = x;
   if (x < 0) {
-    out = out + "-";
     ax = 0 - x;
-  } else {
-    out = out + "+";
   }
-  var ds: string = (ax as i64).to_string();
-  if (ds.len() < 2) {
-    ds = "0" + ds;
+  var nd: i32 = 2;
+  var probe: i32 = ax / 100;
+  while (probe > 0) {
+    nd = nd + 1;
+    probe = probe / 10;
   }
-  return out + ds;
+  var out: u8[] = __alloc_u8(2 + nd);
+  out = out.with(0, 101 as u8);
+  if (upper) {
+    out = out.with(0, 69 as u8);
+  }
+  out = out.with(1, 43 as u8);
+  if (x < 0) {
+    out = out.with(1, 45 as u8);
+  }
+  var i: i32 = 1 + nd;
+  while (i >= 2) {
+    out = out.with(i, (ax % 10 + 48) as u8);
+    ax = ax / 10;
+    i = i - 1;
+  }
+  return string_from_bytes_unchecked(out);
 }
 
 // `sci(d, prec, alt, upper, extra)` — the `%e` body: one digit, the
@@ -1581,9 +1787,10 @@ pub function general(d: Dec, prec: i64, alt: boolean, upper: boolean, extra: i64
     return general_shape("0", 0, pr, alt, upper, false, extra);
   }
   var sig: i32 = d.digits.len();
-  if (pr < sig as i64) {
-    sig = pr as i32;
+  if (pr >= sig as i64) {
+    return general_shape(d.digits, d.dp - 1, pr, alt, upper, false, extra);
   }
+  sig = pr as i32;
   var r: (string, boolean) = round_digits(d.digits, sig);
   var x: i32 = d.dp - 1;
   var digits: string = r.0;
@@ -1604,60 +1811,106 @@ function general_shape(digits: string, x: i32, prec: i64, alt: boolean, upper: b
   var pr: i32 = prec as i32;
   var zeros: i64 = 0 as i64;
   if (x < 0 - 4 || x as i64 >= prec) {
-    var mant: string = slice_unchecked(digits, 0, 1) + "";
-    var frac: string = slice_unchecked(digits, 1, digits.len()) + "";
+    var end: i32 = digits.len();
     if (carried && x as i64 == prec) {
-      frac = "";
+      end = 1;
     } else if (alt) {
       if (prec - 1 as i64 + extra >= overflow_len()) {
         return refused();
       }
       zeros = prec - digits.len() as i64;
     } else {
-      frac = strip_zeros(frac);
+      end = nonzero_end(digits, 1);
     }
-    if (frac.len() > 0 || alt) {
-      mant = mant + "." + frac;
+    var point: i32 = 0;
+    if (end > 1 || alt) {
+      point = 1;
     }
-    return body(mant, zeros, exp_suffix(x, upper));
+    var mant: u8[] = __alloc_u8(end + point);
+    mant = mant.with(0, digits[0]);
+    if (point == 1) {
+      mant = mant.with(1, 46 as u8);
+    }
+    mant = copy_digits(mant, 1 + point, digits, 1, end);
+    return body(string_from_bytes_unchecked(mant), zeros, exp_suffix(x, upper));
   }
+  // The whole part is the first `dp` digits, padded with zeros past the
+  // digits there are, or a lone zero when the value is below one; the
+  // fraction is `lead` zeros and the digits after, cut back to the last
+  // non-zero one unless `alt` keeps them.
   var dp: i32 = x + 1;
-  var ip: string = "0";
-  var frac: string = "";
-  if (dp >= 1) {
-    if (dp > digits.len()) {
-      ip = digits + "0".repeat(dp - digits.len());
-    } else {
-      ip = slice_unchecked(digits, 0, dp) + "";
-      frac = slice_unchecked(digits, dp, digits.len()) + "";
-    }
-  } else {
-    frac = "0".repeat(0 - dp) + digits;
+  var whole: i32 = dp;
+  var lead: i32 = 0;
+  var from: i32 = dp;
+  if (dp < 1) {
+    whole = 1;
+    lead = 0 - dp;
+    from = 0;
   }
+  if (from > digits.len()) {
+    from = digits.len();
+  }
+  var end: i32 = digits.len();
   if (alt) {
     var want: i32 = pr - 1 - x;
     if (want as i64 + extra >= overflow_len()) {
       return refused();
     }
-    if (frac.len() < want) {
-      zeros = (want - frac.len()) as i64;
+    if (lead + end - from < want) {
+      zeros = (want - lead - (end - from)) as i64;
     }
   } else {
-    frac = strip_zeros(frac);
+    end = nonzero_end(digits, from);
+    if (end == from) {
+      lead = 0;
+    }
   }
-  var head: string = ip;
-  if (frac.len() > 0 || alt) {
-    head = head + "." + frac;
+  var point: i32 = 0;
+  if (lead + end - from > 0 || alt) {
+    point = 1;
   }
-  return body(head, zeros, "");
+  var head: u8[] = __alloc_u8(whole + point + lead + end - from);
+  var at: i32 = 0;
+  if (dp < 1) {
+    head = head.with(0, 48 as u8);
+    at = 1;
+  } else {
+    head = copy_digits(head, 0, digits, 0, from);
+    at = from;
+    while (at < whole) {
+      head = head.with(at, 48 as u8);
+      at = at + 1;
+    }
+  }
+  if (point == 1) {
+    head = head.with(at, 46 as u8);
+    at = at + 1;
+  }
+  while (lead > 0) {
+    head = head.with(at, 48 as u8);
+    at = at + 1;
+    lead = lead - 1;
+  }
+  head = copy_digits(head, at, digits, from, end);
+  return body(string_from_bytes_unchecked(head), zeros, "");
 }
 
-function strip_zeros(s: string): string {
+// The end of `s` once its trailing zeros are dropped, never before `from`.
+function nonzero_end(s: string, from: i32): i32 {
   var n: i32 = s.len();
-  while (n > 0 && s[n - 1] as i32 == 48) {
+  while (n > from && s[n - 1] as i32 == 48) {
     n = n - 1;
   }
-  return slice_unchecked(s, 0, n) + "";
+  return n;
+}
+
+function copy_digits(own out: u8[], at: i32, s: string, from: i32, to: i32): u8[] {
+  var i: i32 = from;
+  while (i < to) {
+    out = out.with(at + i - from, s[i]);
+    i = i + 1;
+  }
+  return out;
 }
 
 // ---- whole conversions ------------------------------------------------------

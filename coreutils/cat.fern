@@ -157,10 +157,13 @@ function spell_table(f: Fmt): Fmt {
 // byte begins a line, whether the line before it was blank (for -s),
 // and whether any input failed.
 //
-// `num` is GNU's line_buf: the `%6d\t` field as bytes, incremented in
-// place, so a line number costs one byte store and a seven-byte copy
-// rather than a formatting of the count.
-struct State { w: io_buffered.BufWriter, num: u8[], at_start: boolean, prev_blank: boolean, ok: boolean }
+// `num` is the last line number written. Its `%6d\t` field goes into
+// the builder as three pushes — `head`, the number's hundreds with the
+// field's padding, which changes once in a hundred lines and is
+// formatted then; the last two digits as a pair from a table; and the
+// tab — so a line number costs no formatting and no byte-at-a-time
+// push. `head_of` is the hundreds `head` was formatted for.
+struct State { w: io_buffered.BufWriter, num: u64, head: string, head_of: u64, at_start: boolean, prev_blank: boolean, ok: boolean }
 
 // `read_size()` — bytes per read(2). GNU reads 128 KiB; measured
 // against `cat` of a 62 MiB file, that block is what the pipe and
@@ -170,37 +173,34 @@ function read_size(): i32 {
 }
 
 function state_new(): State {
-  var num: u8[] = [];
-  num = num.append(32 as u8).append(32 as u8).append(32 as u8).append(32 as u8).append(32 as u8).append(48 as u8).append(9 as u8);
-  return State { w: gnu.out_with(read_size()), num: num, at_start: true, prev_blank: false, ok: true };
+  return State { w: gnu.out_with(read_size()), num: 0 as u64, head: "", head_of: 0 as u64, at_start: true, prev_blank: false, ok: true };
 }
 
-// `next_num(num)` — GNU's next_line_num: carry from the last digit
-// leftwards, a blank becoming `1`, a new digit in front past 999999.
-function next_num(own num: u8[]): u8[] {
-  var i: i32 = num.len() - 2;
-  while (i >= 0 && num[i] as i32 == 57) {
-    num = num.with(i, 48 as u8);
-    i = i - 1;
+// "00" through "99", each at twice its value.
+function digit_pairs(): string {
+  return "0001020304050607080910111213141516171819202122232425262728293031323334353637383940414243444546474849505152535455565758596061626364656667686970717273747576777879808182838485868788899091929394959697989900";
+}
+
+// `head_for(q)` — the hundreds `q` of a line number, padded on the left
+// to the four columns the `%6d` field leaves them.
+function head_for(q: u64): string {
+  var digits: string = (q as i64).to_string();
+  var pad: i32 = 4 - digits.len();
+  if (pad <= 0) {
+    return digits;
   }
-  if (i < 0) {
-    var wider: u8[] = [];
-    wider = wider.append(49 as u8);
-    var j: i32 = 0;
-    while (j < num.len()) {
-      wider = wider.append(num[j]);
-      j = j + 1;
-    }
-    return wider;
+  var out: u8[] = __alloc_u8(4);
+  var i: i32 = 0;
+  while (i < pad) {
+    out = out.with(i, 32 as u8);
+    i = i + 1;
   }
-  var c: i32 = num[i] as i32;
-  if (c == 32) {
-    c = 49;
-  } else {
-    c = c + 1;
+  var j: i32 = 0;
+  while (j < digits.len()) {
+    out = out.with(pad + j, digits[j]);
+    j = j + 1;
   }
-  // The store is the last use of `num`, so it lands in place.
-  return num.with(i, c as u8);
+  return string_from_bytes_unchecked(out);
 }
 
 // `drain(s)` — get what is buffered out to the fd, so a diagnostic on
@@ -219,13 +219,18 @@ function format_chunk(st: State, chunk: string, f: Fmt): State {
   var s: State = st;
   var w: io_buffered.BufWriter = s.w;
   var h: usize = w.handle();
-  var num: u8[] = s.num;
+  var num: u64 = s.num;
+  var head: string = s.head;
+  var head_of: u64 = s.head_of;
   var at_start: boolean = s.at_start;
   var prev_blank: boolean = s.prev_blank;
-  s = State { ...s, num: [] };
   var pos: i32 = 0;
   var len: i32 = chunk.len();
   var spell: boolean = f.np || f.tabs;
+  var squeeze: boolean = f.squeeze;
+  var nonblank: boolean = f.nonblank;
+  var number: boolean = f.number;
+  var ends: boolean = f.ends;
   while (pos < len) {
     var nl: i32 = __memchr(chunk, 10, pos);
     var end: i32 = nl;
@@ -234,13 +239,32 @@ function format_chunk(st: State, chunk: string, f: Fmt): State {
     }
     if (at_start) {
       var blank: boolean = nl == pos;
-      if (blank && f.squeeze && prev_blank) {
+      if (blank && squeeze && prev_blank) {
         pos = nl + 1;
         continue;
       }
-      if (f.nonblank && !blank || !f.nonblank && f.number) {
-        num = next_num(num);
-        buf_push(h, string_from_bytes_unchecked(num));
+      if (nonblank && !blank || !nonblank && number) {
+        num = num + 1 as u64;
+        if (num < 100 as u64) {
+          buf_push(h, "    ");
+          if (num < 10 as u64) {
+            buf_push_byte(h, 32);
+            buf_push_byte(h, 48 + num as i32);
+          } else {
+            var k: i32 = num as i32 * 2;
+            buf_push_range(h, digit_pairs(), k, k + 2);
+          }
+        } else {
+          var q: u64 = num / (100 as u64);
+          if (q != head_of) {
+            head = head_for(q);
+            head_of = q;
+          }
+          buf_push_range(h, head, 0, head.len());
+          var r: i32 = (num - q * (100 as u64)) as i32 * 2;
+          buf_push_range(h, digit_pairs(), r, r + 2);
+        }
+        buf_push_byte(h, 9);
       }
       at_start = false;
       prev_blank = blank;
@@ -263,7 +287,7 @@ function format_chunk(st: State, chunk: string, f: Fmt): State {
       buf_push_range(h, chunk, pos, len);
       pos = len;
     } else {
-      if (f.ends) {
+      if (ends) {
         buf_push_range(h, chunk, pos, nl);
         buf_push(h, "$\n");
       } else {
@@ -272,9 +296,10 @@ function format_chunk(st: State, chunk: string, f: Fmt): State {
       at_start = true;
       pos = nl + 1;
     }
-    w = gnu.settle(w);
   }
-  return State { ...s, w: gnu.check(w), num: num, at_start: at_start, prev_blank: prev_blank };
+  // One settle per chunk: the builder grows as the chunk's lines are
+  // pushed, by at most a few times the read, and is written once.
+  return State { ...s, w: gnu.check(gnu.settle(w)), num: num, head: head, head_of: head_of, at_start: at_start, prev_blank: prev_blank };
 }
 
 // `squeeze_chunk(st, chunk)` — -s with nothing else: a run of

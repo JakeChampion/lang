@@ -1,8 +1,9 @@
 package x86_64
 
-// Tests for P12 (the zero-extending copy the index helpers leave behind) and
-// for P8's reach through a compare and its branch — the two rules that take
-// the per-byte cost out of a scan loop's `s[i]` read and its `&&` test.
+// Tests for the rules that take the per-byte cost out of a scan loop's
+// `s[i]` read and its `&&` test: P12 (the zero-extending copy the index
+// helpers leave behind), P8's reach through a compare and its branch, P15,
+// P16 and P17.
 
 import (
 	"strings"
@@ -242,7 +243,7 @@ function main(): i32 { var a: i32[] = [1, 2]; return f("ab", a, 1); }`)
 			t.Errorf("hot path lacks %q:\n%s", want, hot)
 		}
 	}
-	for _, bad := range []string{"__fern_report", "__fern_str_idx_scratch", "shr edx, 1", "\tjmp .Lstridx"} {
+	for _, bad := range []string{"__fern_report", "__fern_str_idx_scratch", "shr r8d, 1", "\tjmp .Lstridx"} {
 		if strings.Contains(hot, bad) {
 			t.Errorf("hot path still carries %q:\n%s", bad, hot)
 		}
@@ -373,6 +374,138 @@ function main(): i32 { return f(2, 3); }`)
 	for _, bad := range []string{".cfi_remember_state", ".cfi_restore_state"} {
 		if strings.Contains(body, bad) {
 			t.Errorf("a cold-less function carries %s:\n%s", bad, body)
+		}
+	}
+}
+
+// A `.loc` between a store and its reload is no obstacle: the rules look
+// through directives, and the directive stays in front of what follows it.
+func TestPeepholeLooksThroughDirectives(t *testing.T) {
+	got := runPeephole("\tmov [rbp-32], rax", "\t.loc 1 6 9", "\tmov rax, [rbp-32]")
+	if !sameLines(got, "\tmov [rbp-32], rax", "\t.loc 1 6 9") {
+		t.Errorf("got %q", got)
+	}
+	got = runPeephole("\tmov rax, [rbp-16]", "\t.loc 1 7 5", "\txor eax, eax")
+	if !sameLines(got, "\t.loc 1 7 5", "\txor eax, eax") {
+		t.Errorf("got %q", got)
+	}
+	// Directives do not use up the window: a five-argument call with a
+	// `.loc` before every argument still folds (P15's shape is 16 lines).
+	got = runPeephole(
+		"\t.loc 1 3 1", "\tmov rax, [rbp-8]", "\tpush rax",
+		"\t.loc 1 3 4", "\tmov rax, [rbp-16]", "\tpush rax",
+		"\t.loc 1 3 7", "\tmov rax, [rbp-8]", "\tpush rax",
+		"\t.loc 1 3 9", "\tmov rax, [rbp-32]", "\tpush rax",
+		"\t.loc 1 3 12", "\tmov rax, [rbp-64]", "\tmov r8, rax",
+		"\tpop rcx", "\tpop rdx", "\tpop rsi", "\tpop rdi", "\tsub rsp, 8", "\tcall __fern_mismatch",
+	)
+	if !sameLines(got, "\t.loc 1 3 1", "\t.loc 1 3 4", "\t.loc 1 3 7", "\t.loc 1 3 9", "\t.loc 1 3 12",
+		"\tmov rdi, [rbp-8]", "\tmov rsi, [rbp-16]", "\tmov rdx, [rbp-8]", "\tmov rcx, [rbp-32]", "\tmov r8, [rbp-64]",
+		"\tsub rsp, 8", "\tcall __fern_mismatch") {
+		t.Errorf("got %q", got)
+	}
+	// A directive ahead of the span stays where it was.
+	got = runPeephole("\t.cfi_def_cfa_register rbp", "\tpush rax", "\tpop rcx")
+	if !sameLines(got, "\t.cfi_def_cfa_register rbp", "\tmov rcx, rax") {
+		t.Errorf("got %q", got)
+	}
+}
+
+// A debug build emits the same instructions as a release build: only the
+// `.loc` rows and the file table differ (#10016).
+func TestDebugLinesDoNotChangeTheCode(t *testing.T) {
+	src := `@noinline function digits(s: string): i32 {
+  var n: i32 = 0;
+  var i: i32 = 0;
+  while (i < s.len()) {
+    var c = s[i];
+    if (c >= 48 && c <= 57) { n = n + 1; }
+    i = i + 1;
+  }
+  return n;
+}
+function main(): i32 { return digits("a1b22"); }`
+	plain := compileOpts(t, src, Options{})
+	debug := compileOpts(t, src, Options{DebugLines: true, DebugSource: "digits.fern"})
+	strip := func(asm string) string {
+		var out []string
+		for _, l := range strings.Split(asm, "\n") {
+			t := strings.TrimSpace(l)
+			if strings.HasPrefix(t, ".loc") || strings.HasPrefix(t, ".file") {
+				continue
+			}
+			out = append(out, l)
+		}
+		return strings.Join(out, "\n")
+	}
+	if a, b := strip(fnBody(t, plain, "digits")), strip(fnBody(t, debug, "digits")); a != b {
+		t.Errorf("the debug build's digits differs from the release build's:\n--- release ---\n%s\n--- debug ---\n%s", a, b)
+	}
+}
+
+// P17: the left operand of a binary operation is kept in rdx across the
+// right operand's computation instead of going through the operand stack.
+func TestPeepholeKeepsLeftOperandInRegister(t *testing.T) {
+	right := []string{
+		"\tmov rax, [rbp-96]",
+		"\tmov ecx, [rbp-176]",
+		"\tcmp ecx, [rax - 4]",
+		"\tjae .Loob_38",
+		"\tmov eax, [rax + rcx*4]",
+	}
+	seq := func(op string) []string {
+		return append(append([]string{"\tpush rax"}, right...), "\tmov rcx, rax", "\tpop rax", "\t"+op)
+	}
+	folded := func(tail ...string) []string {
+		return append(append([]string{"\tmov rdx, rax"}, right...), tail...)
+	}
+	cases := []struct {
+		name string
+		op   string
+		tail []string
+	}{
+		{"add", "add rax, rcx", []string{"\tadd rax, rdx"}},
+		{"and", "and rax, rcx", []string{"\tand rax, rdx"}},
+		{"imul", "imul rax, rcx", []string{"\timul rax, rdx"}},
+		{"sub", "sub rax, rcx", []string{"\tsub rdx, rax", "\tmov rax, rdx"}},
+		{"cmp", "cmp rax, rcx", []string{"\tcmp rdx, rax"}},
+		{"add32", "add eax, ecx", []string{"\tadd eax, edx"}},
+		{"sub32", "sub eax, ecx", []string{"\tsub edx, eax", "\tmov eax, edx"}},
+	}
+	for _, c := range cases {
+		got := runPeephole(seq(c.op)...)
+		if !sameLines(got, folded(c.tail...)...) {
+			t.Errorf("%s: got\n%s\nwant\n%s", c.name, strings.Join(got, "\n"), strings.Join(folded(c.tail...), "\n"))
+		}
+	}
+
+	// The inline-string arm's join label and the branch to it are
+	// straight-line for this purpose.
+	got := runPeephole("\tpush rax", "\tmov rax, [rbp-8]", "\tmov ecx, [rbp-40]", "\ttest rax, 1",
+		"\tjnz .Lstridx_inline_6", "\tcmp ecx, [rax - 4]", "\tjae .Loob_8", ".Lstridx_join_7:",
+		"\tmovzx eax, byte ptr [rax + rcx]", "\tmov rcx, rax", "\tpop rax", "\tadd rax, rcx")
+	if got[0] != "\tmov rdx, rax" || got[len(got)-1] != "\tadd rax, rdx" || len(got) != 10 {
+		t.Errorf("index through the inline-string join not folded:\n%s", strings.Join(got, "\n"))
+	}
+}
+
+// P17 stands down when the right operand's code could disturb the saved
+// register or the stack: a call, a mention of rdx, an instruction that
+// writes rdx implicitly, a jump elsewhere, or a first line that reads rax.
+func TestPeepholeLeavesLeftOperandPushWhenUnsafe(t *testing.T) {
+	cases := [][]string{
+		{"\tpush rax", "\tmov rax, [rbp-8]", "\tmov ecx, 7", "\tcqo", "\tidiv rcx", "\tmov rcx, rax", "\tpop rax", "\tadd rax, rcx"},
+		{"\tpush rax", "\tmov rax, [rbp-8]", "\tmov ecx, 7", "\timul rcx", "\tmov rcx, rax", "\tpop rax", "\tadd rax, rcx"},
+		{"\tpush rax", "\tmov rax, [rbp-8]", "\tsub rsp, 8", "\tcall f", "\tadd rsp, 8", "\tmov rcx, rax", "\tpop rax", "\tadd rax, rcx"},
+		{"\tpush rax", "\tmov rax, [rbp-8]", "\tmov edx, [rax - 8]", "\tmov rcx, rax", "\tpop rax", "\tadd rax, rcx"},
+		{"\tpush rax", "\tmov rax, [rbp-8]", "\tjne .LifElse_3", "\tmov rcx, rax", "\tpop rax", "\tadd rax, rcx"},
+		{"\tpush rax", "\tadd rax, 4", "\tmov rcx, rax", "\tpop rax", "\tadd rax, rcx"},
+		{"\tpush rax", "\tmov rax, [rax + 8]", "\tadd rax, 1", "\tmov rcx, rax", "\tpop rax", "\tadd rax, rcx"},
+	}
+	for i, c := range cases {
+		got := runPeephole(c...)
+		if !sameLines(got, c...) {
+			t.Errorf("case %d rewritten:\n%s", i, strings.Join(got, "\n"))
 		}
 	}
 }

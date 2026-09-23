@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/checker"
+	"github.com/jakechampion/lang/internal/parser"
 )
 
 // loweredAndInlined parses, type-checks, lowers, and runs Inline.
@@ -757,5 +760,76 @@ func TestInlineRefusesARecursiveCalleeInOtherCallers(t *testing.T) {
 	}
 	if len(inlined.Ops) != len(plain.Ops) {
 		t.Errorf("main grew from %d to %d ops: a recursive callee was inlined into it", len(plain.Ops), len(inlined.Ops))
+	}
+}
+
+// A `-g` build lowers a line marker at every statement. The markers emit no
+// code, so they do not count toward a callee's size: the tiny-leaf policy
+// admits the same callees with them as without (#10019).
+func TestInlineSizeIgnoresLineMarkers(t *testing.T) {
+	src := `function leaf(x: i32): i32 {
+			var a: i32 = x + 1;
+			a = a * 3;
+			a = a + 2;
+			a = a * 5;
+			return a;
+		}
+		function main(): i32 {
+		` + padStmts(4000) + `
+			return leaf(7) + acc;
+		}`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	p, err := LowerWith(prog, info, 8, EmitLineMarkers())
+	if err != nil {
+		t.Fatalf("lower: %v", err)
+	}
+	leaf := findFunc(p, "leaf")
+	if got := codeOps(leaf.Ops); got > inlineTinyLeafOps {
+		t.Fatalf("leaf has %d code ops, over the %d tiny cap — the case cannot test what it claims", got, inlineTinyLeafOps)
+	}
+	if got := len(leaf.Ops); got <= inlineTinyLeafOps {
+		t.Fatalf("leaf has %d ops with its markers, within the tiny cap — the case cannot test what it claims", got)
+	}
+	Inline(p)
+	if got := countCallDirect(findFunc(p, "main").Ops, "leaf"); got != 0 {
+		t.Fatalf("the markers kept a tiny leaf from inlining; %d calls survived:\n%s", got, p)
+	}
+}
+
+// An @inline hint holds over the unit ceiling: a hinted callee that is
+// neither tiny nor call-free still splices, its own call carried along.
+func TestInlineHintHoldsOverUnitCeiling(t *testing.T) {
+	p := lowerSource(t, `function bump(x: i32): i32 { return x + 1; }
+		@inline function big(x: i32): i32 {
+			var a: i32 = bump(x);
+			a = a * 3 + 1; a = a * 5 + 2; a = a * 7 + 3; a = a * 11 + 4;
+			a = a * 13 + 5; a = a * 17 + 6; a = a * 19 + 7;
+			return a;
+		}
+		function main(): i32 {
+		`+padStmts(4000)+`
+			return big(7) + acc;
+		}`)
+	if got := programOps(p); got <= inlineMaxUnitOps {
+		t.Fatalf("padding produced %d ops, at or under the %d ceiling", got, inlineMaxUnitOps)
+	}
+	big := findFunc(p, "big")
+	if codeOps(big.Ops) <= inlineTinyLeafOps || isCallFree(big) {
+		t.Fatalf("big must be over the tiny cap and carry a call for this to test anything:\n%s", p)
+	}
+	Inline(p)
+	main := findFunc(p, "main")
+	if got := countCallDirect(main.Ops, "big"); got != 0 {
+		t.Fatalf("the hinted callee was not inlined over the ceiling; %d calls survived", got)
+	}
+	if got := countCallDirect(main.Ops, "bump"); got != 1 {
+		t.Errorf("the spliced body's own call should survive as a call; found %d", got)
 	}
 }

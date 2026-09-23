@@ -5446,11 +5446,24 @@ func (g *generator) put(s string) {
 	g.peepWin = append(g.peepWin, s)
 	for g.peepholeTail() {
 	}
-	for len(g.peepWin) > peepWindow {
+	// The window holds peepWindow instructions; a directive between them
+	// does not use up a place.
+	for g.windowInstrs() > peepWindow {
 		g.out.WriteString(g.peepWin[0])
 		g.out.WriteByte('\n')
 		g.peepWin = g.peepWin[1:]
 	}
+}
+
+// windowInstrs counts the window's instruction and label lines.
+func (g *generator) windowInstrs() int {
+	n := 0
+	for _, l := range g.peepWin {
+		if !isAsmDirective(l) {
+			n++
+		}
+	}
+	return n
 }
 
 // flushPeep drains the remaining window to `out`. Call once, right before
@@ -5474,7 +5487,78 @@ func (g *generator) flushPeep() {
 // terminates — every rule but P8's register form removes a line from a
 // window of at most peepWindow lines, and P8's register form rewrites a
 // load into a register move that no rule reproduces.
+//
+// A directive in the window — the `.loc` a `-g` build puts at every
+// statement, a `.cfi_*` row — emits no code and is no branch target, so
+// the rules look through it: they run over the window with the directives
+// taken out, and the directives that sat inside a rewritten span go back
+// in front of what replaced it. A `.loc` therefore still precedes the
+// first instruction of its statement, which is what the line table needs,
+// and a `-g` build carries every rewrite a release build does.
 func (g *generator) peepholeTail() bool {
+	full := g.peepWin
+	w, dirs := splitDirectives(full)
+	if dirs == nil {
+		return g.peepholeRules()
+	}
+	// The rules rewrite the window's backing array in place, so they get a
+	// copy and w stays as it was for the comparison below.
+	g.peepWin = append([]string(nil), w...)
+	changed := g.peepholeRules()
+	nw := g.peepWin
+	k := 0
+	for k < len(w) && k < len(nw) && w[k] == nw[k] {
+		k++
+	}
+	out := make([]string, 0, len(full))
+	for i := 0; i < k; i++ {
+		out = append(out, dirs[i]...)
+		out = append(out, w[i])
+	}
+	for i := k; i <= len(w); i++ {
+		out = append(out, dirs[i]...)
+	}
+	g.peepWin = append(out, nw[k:]...)
+	return changed
+}
+
+// splitDirectives separates a window into its instruction and label lines
+// and the directives that precede each of them: dirs[i] are the directives
+// before lines[i], dirs[len(lines)] the ones after the last line. dirs is
+// nil when the window holds no directive.
+func splitDirectives(win []string) (lines []string, dirs [][]string) {
+	any := false
+	for _, l := range win {
+		if isAsmDirective(l) {
+			any = true
+			break
+		}
+	}
+	if !any {
+		return win, nil
+	}
+	lines = make([]string, 0, len(win))
+	dirs = make([][]string, 1, len(win)+1)
+	for _, l := range win {
+		if isAsmDirective(l) {
+			dirs[len(lines)] = append(dirs[len(lines)], l)
+			continue
+		}
+		lines = append(lines, l)
+		dirs = append(dirs, nil)
+	}
+	return lines, dirs
+}
+
+// isAsmDirective reports whether a window line is an indented assembler
+// directive — `.loc`, `.cfi_*` — rather than an instruction or a label.
+func isAsmDirective(line string) bool {
+	return strings.HasPrefix(line, "\t.")
+}
+
+// peepholeRules is peepholeTail's rule set, run over a window that holds
+// no directives.
+func (g *generator) peepholeRules() bool {
 	w := g.peepWin
 	n := len(w)
 
@@ -5532,32 +5616,48 @@ func (g *generator) peepholeTail() bool {
 		}
 	}
 
-	// P5 — the value the operand stack was protecting is never disturbed.
-	// `f(a, K)` evaluates a, saves it, materialises K into the accumulator,
-	// moves it to its argument register and restores a:
+	// P18 — a right operand computed straight into its register. The
+	// operand stack saves the left value while the right one is computed in
+	// the accumulator, copies the result out and restores the left:
 	//
-	//   push rax / <materialise into rax> / mov REG, rax / pop rax
-	//     =>  <materialise into REG>
+	//   push rax / mov rax, [rbp-456] / sub rax, 1 / mov ecx, eax / pop rax
+	//     =>  mov rcx, [rbp-456] / sub ecx, 1
 	//
-	// The materialisation is a pure register write — mov, lea, movzx, movsx,
-	// or the self-xor that makes a zero — so renaming its destination to REG
-	// computes the same thing in one instruction instead of four, and rax is
-	// left holding exactly what the push/pop pair was protecting.
+	// Every line of the computation is renamed onto the register the copy
+	// was heading for. Sound when the first line writes rax without reading
+	// it and the rest are straight-line register arithmetic that names
+	// neither that register nor rsp, so the renamed sequence reads exactly
+	// what the original read; rax is left holding the saved value in both
+	// forms. A 32-bit copy zero-extends, which the last line reproduces by
+	// narrowing to its 32-bit form where the low half of its result depends
+	// only on the low halves of its inputs, and by an explicit zero-extension
+	// otherwise.
 	//
-	// The same shape appears once more in two-argument call setup, where the
-	// saved value is restored into the OTHER argument register:
+	// Checked after P4, whose five-line shape begins the same way and folds
+	// one instruction further; P4 has already had its chance on this window.
+	if n >= 5 {
+		if lines, from, ok := foldRenamedOperand(w[:n-1]); ok {
+			tail := w[n-1] // read before append overwrites the matched slots
+			g.peepWin = append(append(w[:from], lines...), tail)
+			return true
+		}
+	}
+
+	// P5 — a call argument materialised while the accumulator is restored
+	// into another argument register. `f(a, K)` evaluates a, saves it,
+	// materialises K into the accumulator, moves it to its argument register
+	// and restores a into the other:
 	//
 	//   push rax / mov eax, K / mov rsi, rax / pop rdi / call f
 	//     =>  mov rdi, rax / mov esi, K / call f
 	//
-	// That one needs the `call`. Restoring into rdi rather than rax leaves
-	// the accumulator holding the materialised value in the original and the
-	// saved one in the rewrite, so it is only equivalent where rax is dead —
-	// and a call is exactly where this backend knows it is, rax being
-	// caller-saved and not an argument register.
-	//
-	// Checked after P4, whose five-line shape begins the same way and folds
-	// one instruction further; P4 has already had its chance on this window.
+	// The materialisation is a pure register write — mov, lea, movzx, movsx,
+	// or the self-xor that makes a zero — so renaming its destination to the
+	// argument register computes the same thing. Restoring into rdi rather
+	// than rax leaves the accumulator holding the materialised value in the
+	// original and the saved one in the rewrite, so it is only equivalent
+	// where rax is dead — and a call is exactly where this backend knows it
+	// is, rax being caller-saved and not an argument register.
 	if n >= 5 {
 		if lines, ok := foldStackedMaterialise(w[n-5], w[n-4], w[n-3], w[n-2], w[n-1]); ok {
 			tail := w[n-1] // read before append overwrites the matched slots
@@ -5811,6 +5911,29 @@ func (g *generator) peepholeTail() bool {
 		}
 		if k >= 0 && isFrameLoadToAcc(w[k]) {
 			g.peepWin = append(w[:k], w[k+1:]...)
+			return true
+		}
+	}
+
+	// P17 — a binary operation's left operand kept in a register. The
+	// operand stack saves the left value while the right is computed, then
+	// pairs them through rcx:
+	//
+	//   push rax / mov rax, [rbp-96] / mov ecx, [rbp-176] / cmp ecx, [rax - 4]
+	//     / jae .Loob_38 / mov eax, [rax + rcx*4] / mov rcx, rax / pop rax
+	//     / add rax, rcx
+	//   =>  mov rdx, rax / mov rax, [rbp-96] / … / mov eax, [rax + rcx*4]
+	//     / add rax, rdx
+	//
+	// Sound when the right operand's lines are straight-line code that
+	// starts by overwriting rax and never names rdx; rdx and rcx are both
+	// scratch to the stack machine, so neither the saved copy nor the
+	// pairing register it replaces can be observed after the operation.
+	// The cold arms a bounds check or an inline-string test branch to
+	// abort, or come back to the join with only rax and r8 rewritten.
+	if n >= 5 {
+		if lines, from, ok := foldLeftOperandPush(w); ok {
+			g.peepWin = append(w[:from], lines...)
 			return true
 		}
 	}
@@ -6143,11 +6266,10 @@ func matchAluAccCounter(line string) (op string, wide, ok bool) {
 }
 
 // foldStackedMaterialise recognises P5's shape and returns the lines that
-// replace it: the materialisation written straight to the register the copy
-// was heading for, preceded where needed by the restore the pop was doing.
+// replace it: the restore the pop was doing, then the materialisation
+// written straight to the register the copy was heading for.
 //
-// `next` is the line after the pop. It is only consulted for the
-// restore-into-another-register form, which needs it to be a call.
+// `next` is the line after the pop; the form is sound only before a call.
 func foldStackedMaterialise(l0, op, mv, pop, next string) ([]string, bool) {
 	if l0 != "\tpush rax" {
 		return nil, false
@@ -6157,16 +6279,8 @@ func foldStackedMaterialise(l0, op, mv, pop, next string) ([]string, bool) {
 		return nil, false
 	}
 	restore, ok := matchPopDst(pop)
-	if !ok {
+	if !ok || restore == "rax" {
 		return nil, false
-	}
-
-	if restore == "rax" {
-		line, ok := renameAccDest(op, reg.name, reg.narrow)
-		if !ok {
-			return nil, false
-		}
-		return []string{line}, true
 	}
 
 	// Restoring into another register leaves rax holding the saved value
@@ -6256,6 +6370,332 @@ func foldArgPushes(w []string) ([]string, int, bool) {
 		written = append(written, a.reg)
 	}
 	return append(lines, tail...), args[len(args)-1].from, true
+}
+
+// foldRenamedOperand recognises P18's shape at the end of w, which ends at
+// the pop, and returns the replacement for w[from:].
+func foldRenamedOperand(w []string) ([]string, int, bool) {
+	n := len(w)
+	if n < 4 || w[n-1] != "\tpop rax" {
+		return nil, 0, false
+	}
+	reg, ok := matchMovFromAcc(w[n-2])
+	if !ok {
+		return nil, 0, false
+	}
+	from := -1
+	for k := n - 3; k >= 0; k-- {
+		if w[k] == "\tpush rax" {
+			from = k
+			break
+		}
+		if !isAccArithmetic(w[k], reg.name) {
+			return nil, 0, false
+		}
+	}
+	if from < 0 || from+1 > n-3 || !writesAccWithoutReading(w[from+1]) {
+		return nil, 0, false
+	}
+	body := w[from+1 : n-2]
+	lines := make([]string, 0, len(body)+1)
+	for _, l := range body {
+		lines = append(lines, renameAcc(l, reg.name))
+	}
+	if reg.narrow {
+		last := len(lines) - 1
+		lines = append(lines[:last], narrowTo32(lines[last], reg.name)...)
+	}
+	return lines, from, true
+}
+
+// accArithmetic is the instruction set P18 renames: register arithmetic
+// whose only implicit operand is the flags it writes. Nothing here reads
+// the flags, uses rdx:rax, or touches memory other than through an explicit
+// source operand.
+var accArithmetic = map[string]bool{
+	"mov": true, "movabs": true, "lea": true, "movzx": true, "movsx": true, "movsxd": true,
+	"add": true, "sub": true, "and": true, "or": true, "xor": true,
+	"shl": true, "shr": true, "sar": true, "imul": true,
+	"neg": true, "not": true, "inc": true, "dec": true,
+	"popcnt": true, "lzcnt": true, "tzcnt": true, "bswap": true,
+}
+
+// isAccArithmetic reports whether a line is one of accArithmetic's
+// instructions with the accumulator as its destination, written so that
+// renaming rax and eax onto reg is a faithful copy of it: it names neither
+// reg nor rsp, nor the 16- and 8-bit accumulator names the rename does not
+// cover.
+func isAccArithmetic(line, reg string) bool {
+	mnem, ops, ok := splitInstr(line)
+	if !ok || !accArithmetic[mnem] {
+		return false
+	}
+	dst := ops
+	if i := strings.Index(ops, ", "); i >= 0 {
+		dst = ops[:i]
+	} else if mnem != "neg" && mnem != "not" && mnem != "inc" && mnem != "dec" && mnem != "bswap" {
+		return false
+	}
+	if dst != "rax" && dst != "eax" {
+		return false
+	}
+	if mentionsReg(line, reg) || mentionsReg(line, "rsp") {
+		return false
+	}
+	for _, tok := range regTokens(ops) {
+		if tok == "ax" || tok == "al" || tok == "ah" {
+			return false
+		}
+	}
+	return true
+}
+
+// splitInstr splits an instruction line into its mnemonic and operand text.
+func splitInstr(line string) (mnem, ops string, ok bool) {
+	if len(line) < 2 || line[0] != '\t' || line[1] == '.' {
+		return "", "", false
+	}
+	sp := strings.IndexByte(line, ' ')
+	if sp < 0 {
+		return line[1:], "", true
+	}
+	return line[1:sp], line[sp+1:], true
+}
+
+// regTokens returns the register-like tokens of operand text: maximal runs
+// of lower-case letters and digits.
+func regTokens(ops string) []string {
+	return strings.FieldsFunc(ops, func(r rune) bool { return !isRegChar(byte(r)) || r > 0x7f })
+}
+
+// renameAcc rewrites every rax and eax token of an instruction line to
+// reg's 64- and 32-bit names.
+func renameAcc(line, reg string) string {
+	mnem, ops, _ := splitInstr(line)
+	var b strings.Builder
+	b.WriteByte('\t')
+	b.WriteString(mnem)
+	b.WriteByte(' ')
+	i := 0
+	for i < len(ops) {
+		if !isRegChar(ops[i]) {
+			b.WriteByte(ops[i])
+			i++
+			continue
+		}
+		j := i
+		for j < len(ops) && isRegChar(ops[j]) {
+			j++
+		}
+		switch tok := ops[i:j]; tok {
+		case "rax":
+			b.WriteString(reg)
+		case "eax":
+			b.WriteString(reg32(reg))
+		default:
+			b.WriteString(tok)
+		}
+		i = j
+	}
+	return b.String()
+}
+
+// narrowTo32 rewrites the last renamed line of a P18 operand so that reg
+// ends up zero-extended from the low 32 bits of what the line computed, as
+// the `mov r32, eax` copy it replaces left it. A line that already writes
+// the 32-bit register has done so. An operation whose low 32 result bits
+// depend only on the low 32 bits of its inputs narrows to its 32-bit form
+// when every register operand outside an address is reg itself; anything
+// else keeps its 64-bit form and zero-extends afterwards.
+func narrowTo32(line, reg string) []string {
+	r32 := reg32(reg)
+	mnem, ops, _ := splitInstr(line)
+	if strings.HasPrefix(ops, r32+",") || ops == r32 {
+		return []string{line}
+	}
+	if mnem == "movsx" && ops == reg+", "+r32 {
+		return []string{"\tmov " + r32 + ", " + r32}
+	}
+	switch mnem {
+	case "mov", "add", "sub", "and", "or", "xor", "imul", "shl", "neg", "not", "inc", "dec":
+		// A count in cl is masked to five bits in the 32-bit form and six in
+		// the 64-bit one, so a variable shift keeps its width.
+		if strings.HasSuffix(ops, ", cl") {
+			break
+		}
+		if narrowed, ok := narrowRegOperands(ops, reg); ok {
+			return []string{"\t" + mnem + " " + narrowed}
+		}
+	}
+	return []string{line, "\tmov " + r32 + ", " + r32}
+}
+
+// narrowRegOperands rewrites reg to its 32-bit name in every operand of ops
+// outside an address, reporting false when some other 64-bit register or a
+// qword memory operand is named there.
+func narrowRegOperands(ops, reg string) (string, bool) {
+	if strings.Contains(ops, "qword ptr") {
+		return "", false
+	}
+	var b strings.Builder
+	depth := 0
+	i := 0
+	for i < len(ops) {
+		c := ops[i]
+		switch {
+		case c == '[':
+			depth++
+		case c == ']':
+			depth--
+		}
+		if !isRegChar(c) {
+			b.WriteByte(c)
+			i++
+			continue
+		}
+		j := i
+		for j < len(ops) && isRegChar(ops[j]) {
+			j++
+		}
+		tok := ops[i:j]
+		switch {
+		case depth > 0 || tok != reg && reg32(tok) == tok:
+			b.WriteString(tok)
+		case tok == reg:
+			b.WriteString(reg32(reg))
+		default:
+			return "", false
+		}
+		i = j
+	}
+	return b.String(), true
+}
+
+// foldLeftOperandPush recognises P17's shape at the end of w and returns
+// the replacement for w[from:].
+func foldLeftOperandPush(w []string) ([]string, int, bool) {
+	n := len(w)
+	op, wide, ok := matchAccPairOp(w[n-1])
+	if !ok || w[n-2] != "\tpop rax" || w[n-3] != "\tmov rcx, rax" {
+		return nil, 0, false
+	}
+	from := -1
+	for k := n - 4; k >= 0; k-- {
+		if w[k] == "\tpush rax" {
+			from = k
+			break
+		}
+		if !isRightOperandLine(w[k]) {
+			return nil, 0, false
+		}
+	}
+	if from < 0 || from+1 > n-4 || !writesAccWithoutReading(w[from+1]) {
+		return nil, 0, false
+	}
+	acc, save := "rax", "rdx"
+	if !wide {
+		acc, save = "eax", "edx"
+	}
+	lines := append([]string{"\tmov rdx, rax"}, w[from+1:n-3]...)
+	switch op {
+	case "sub":
+		lines = append(lines, "\tsub "+save+", "+acc, "\tmov "+acc+", "+save)
+	case "cmp":
+		lines = append(lines, "\tcmp "+save+", "+acc)
+	default:
+		lines = append(lines, "\t"+op+" "+acc+", "+save)
+	}
+	return lines, from, true
+}
+
+// matchAccPairOp matches `<op> rax, rcx` / `<op> eax, ecx` for the
+// operations P17 rewrites and reports the mnemonic and the width.
+func matchAccPairOp(line string) (string, bool, bool) {
+	for _, op := range []string{"add", "sub", "and", "or", "xor", "imul", "cmp"} {
+		if line == "\t"+op+" rax, rcx" {
+			return op, true, true
+		}
+		if line == "\t"+op+" eax, ecx" {
+			return op, false, true
+		}
+	}
+	return "", false, false
+}
+
+// isRightOperandLine reports whether a line may sit between P17's push and
+// its pairing copy: an instruction whose every operand is explicit and
+// that names neither rdx nor the stack, or a branch into a cold arm. A
+// `.Lstridx_join_` label is the inline-string arm's way back. Division
+// and the sign extension before it write rdx without naming it, so only
+// the listed instructions qualify.
+func isRightOperandLine(line string) bool {
+	if isAsmLabel(line) {
+		return strings.HasPrefix(line, ".Lstridx_join_")
+	}
+	mnem, ops, ok := splitInstr(line)
+	if !ok {
+		return false
+	}
+	// One-operand mul and imul read rax and write rdx:rax without naming them.
+	if (mnem == "mul" || mnem == "imul") && !strings.Contains(ops, ", ") {
+		return false
+	}
+	if mnem[0] == 'j' {
+		target := line[strings.LastIndexByte(line, ' ')+1:]
+		return strings.HasPrefix(target, ".Loob_") || strings.HasPrefix(target, ".Lstridx_inline_")
+	}
+	explicit := accArithmetic[mnem] || mnem == "cmp" || mnem == "test" ||
+		strings.HasPrefix(mnem, "set") || strings.HasPrefix(mnem, "cmov")
+	return explicit && !mentionsReg(line, "rdx") && !mentionsReg(line, "rsp")
+}
+
+// mentionsReg reports whether line names the 64-bit register or any of its
+// narrower spellings as an operand token.
+func mentionsReg(line, r64 string) bool {
+	names := regNames(r64)
+	sp := strings.IndexByte(line, ' ')
+	if sp < 0 {
+		return false
+	}
+	for _, tok := range regTokens(line[sp+1:]) {
+		for _, name := range names {
+			if tok == name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// regNames lists every spelling of a 64-bit register: its 64-, 32-, 16-
+// and 8-bit names.
+func regNames(r64 string) []string {
+	names := []string{r64, reg32(r64)}
+	switch r64 {
+	case "rax", "rbx", "rcx", "rdx":
+		l := r64[1:2]
+		return append(names, l+"x", l+"l", l+"h")
+	case "rsi", "rdi", "rbp", "rsp":
+		return append(names, r64[1:], r64[1:]+"l")
+	}
+	if strings.HasPrefix(r64, "r") {
+		return append(names, r64+"w", r64+"b")
+	}
+	return names
+}
+
+// writesAccWithoutReading reports whether a line writes rax from a source
+// that does not read it: the first line of a right operand's computation.
+func writesAccWithoutReading(line string) bool {
+	if line == "\txor eax, eax" {
+		return true
+	}
+	for _, pfx := range []string{"\tmov rax, ", "\tmov eax, ", "\tmovzx eax, ", "\tmovsx rax, ", "\tmovsx eax, ", "\tmovsxd rax, ", "\tmovabs rax, ", "\tlea rax, "} {
+		if strings.HasPrefix(line, pfx) {
+			return !readsReg(line, "rax")
+		}
+	}
+	return false
 }
 
 // isArgReg reports whether reg is one of the System V integer argument
@@ -6820,10 +7260,10 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 		g.coldLabel(inline)
 		if checked {
 			oob := g.freshLabel("oob")
-			g.coldEmit("mov edx, eax")
-			g.coldEmit("shr edx, 1")
-			g.coldEmit("and edx, 7")
-			g.coldEmit("cmp ecx, edx")
+			g.coldEmit("mov r8d, eax")
+			g.coldEmit("shr r8d, 1")
+			g.coldEmit("and r8d, 7")
+			g.coldEmit("cmp ecx, r8d")
 			g.coldEmit("jae " + oob)
 			g.coldEmit("mov [rip + __fern_str_idx_scratch], rax")
 			g.coldEmit("lea rax, [rip + __fern_str_idx_scratch + 1]")
@@ -11532,22 +11972,16 @@ func (g *generator) emitCrc32Step() {
 // emitSumBytesRuntime emits `__fern_sum_bytes(s) -> i32`: every byte of `s`
 // added into a 32-bit accumulator that wraps.
 //
-// SCALAR (docs/ATLAS-PLATFORM-PLAN.md §3.4 step 1). The SSE2 sequence this
-// wants is psadbw against a zero register plus paddq, both already inside the
-// declared baseline and both already encodable by internal/native/x86tbl, so
-// this body is the one in the family whose vectorisation costs no assembler
-// work — but §3.4's ordering puts the scalar lowering in all eight backends
-// first, and this is that step.
-//
-// `movzx` is the whole of the sign question: a byte is unsigned, so 0xff
-// contributes 255. The accumulate is a 32-bit `add`, so the wrap the builtin
-// promises is the register width rather than anything this body does.
+// The main loop is SSE2: psadbw against a zero register sums each 8-byte
+// half of a 16-byte block into a 64-bit lane, and paddq keeps the two lanes
+// running, so a block costs three instructions and no lane can wrap before
+// the string runs out. The fold adds the two lanes once; the low 32 bits of
+// that total are the wrapped sum the builtin promises. The scalar tail takes
+// the final 0..15 bytes, and the whole string when it is shorter than a
+// block — `movzx` there is the sign question, a byte being unsigned.
 //
 // rdi = string. Frame: 16 bytes of emitStrDataPtr scratch, since the operand
 // may be an inline SSO string that has to be spilled to get an address.
-//
-// No cursor and no byte operand, so there is no clamp and no range guard: an
-// empty string sums to 0 because it has no bytes.
 func (g *generator) emitSumBytesRuntime() {
 	g.line("")
 	g.line(".globl __fern_sum_bytes")
@@ -11558,14 +11992,30 @@ func (g *generator) emitSumBytesRuntime() {
 	g.emit("sub rsp, 16")
 	g.emitStrLen("ecx", "rdi") // ecx = len
 	g.emitStrDataPtr("rdi", "rdi", "[rbp - 16]")
-	g.emit("xor eax, eax") // running sum
-	g.emit("xor edx, edx") // cursor, as an INDEX
+	g.emit("mov r9d, ecx")
+	g.emit("add r9, rdi")     // end = data + len
+	g.emit("pxor xmm2, xmm2") // running lane sums
+	g.emit("pxor xmm3, xmm3") // the zero psadbw subtracts
+	g.label(".Lsum_bytes_vec")
+	g.emit("mov rax, r9")
+	g.emit("sub rax, rdi")
+	g.emit("cmp rax, 16")
+	g.emit("jl .Lsum_bytes_fold")
+	g.emit("movdqu xmm0, [rdi]")
+	g.emit("psadbw xmm0, xmm3")
+	g.emit("paddq xmm2, xmm0")
+	g.emit("add rdi, 16")
+	g.emit("jmp .Lsum_bytes_vec")
+	g.label(".Lsum_bytes_fold")
+	g.emit("pshufd xmm1, xmm2, 0xee")
+	g.emit("paddq xmm2, xmm1")
+	g.emit("movd eax, xmm2")
 	g.label(".Lsum_bytes_scan")
-	g.emit("cmp edx, ecx")
+	g.emit("cmp rdi, r9")
 	g.emit("jge .Lsum_bytes_ret")
-	g.emit("movzx r8d, byte ptr [rdi + rdx]")
+	g.emit("movzx r8d, byte ptr [rdi]")
 	g.emit("add eax, r8d")
-	g.emit("add edx, 1")
+	g.emit("add rdi, 1")
 	g.emit("jmp .Lsum_bytes_scan")
 	g.label(".Lsum_bytes_ret")
 	g.emit("mov rsp, rbp")
