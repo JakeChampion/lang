@@ -451,7 +451,8 @@ func (b *builder) ownedCallResultType(e ast.Expr) (ast.Type, bool) {
 //     its own dangles rather than merely leaking. A `_` position is exempt: it
 //     extracts nothing;
 //   - for the expression form, the RESULT is non-pointer too (`resultType`;
-//     pass nil for the statement form, which yields no value).
+//     pass nil for the statement form, which yields no value), or a dyn
+//     value, which is counted whichever arm yields it (countedDynResult).
 //
 // emitEnumSlotDrop then frees the box under an is_unique gate, so an aliased
 // scrutinee (rc>1 via a return-transfer inc) is only dec'd, never freed.
@@ -471,7 +472,7 @@ func (b *builder) reclaimableMatchScrutinee(tag ast.Expr, bindingNames [][]strin
 	if !ok {
 		return ast.EnumType{}, false
 	}
-	if resultType != nil && ast.IsPointerType(resultType) {
+	if resultType != nil && ast.IsPointerType(resultType) && !b.countedDynResult(resultType) {
 		return ast.EnumType{}, false
 	}
 	for a, bts := range bindingTypes {
@@ -500,6 +501,14 @@ func (b *builder) reclaimableMatchScrutinee(tag ast.Expr, bindingNames [][]strin
 		}
 	}
 	return et, true
+}
+
+// countedDynResult: a dyn match-expr result holds a unit of its own whichever
+// arm ran, because emitCountedYield retains an aliased arm value and any other
+// dyn value arrives counted. Nothing it holds dangles when the box is freed.
+func (b *builder) countedDynResult(t ast.Type) bool {
+	_, isDyn := t.(ast.DynTraitType)
+	return isDyn && b.dynReclaim()
 }
 
 // bindingConfinedInAll reports whether `name`, of type `bt`, is confined in
@@ -1104,8 +1113,9 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		// __drop_arr_dyn_<set> (per-element __drop_dyn — concrete dtor +
 		// cell free) before freeing the buffer, exactly like the loop-var
 		// reinit path already did. arrElemIsRcTracked deliberately excludes
-		// DynTraitType (dyn cells carry no rc header, so construction must
-		// not inc them), so without this arm a FUNCTION-local dyn array fell
+		// DynTraitType (a dyn cell carries no rc header, so an aliased element
+		// is retained through emitDynRetain, not the element inc), so without
+		// this arm a FUNCTION-local dyn array fell
 		// to the buffer-only dec below and leaked every element (cell +
 		// concrete + transitively-owned strings) on each call. `eligible`
 		// (computeFreeEligible) plus __drop_arr_dyn's own rc==1 gate keep an

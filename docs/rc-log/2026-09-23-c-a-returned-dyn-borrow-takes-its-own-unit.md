@@ -44,14 +44,22 @@ same answers hold on arm64 and wasm.
 
 Test coverage:
 
-- `TestDynReturnedBorrowTakesItsOwnUnit` fails on all three backends without
-  the change.
-- `TestDynReturnedBorrowBounded` grows on x86-64 without it.
+- `TestDynReturnedBorrowTakesItsOwnUnit` checks the answer on x86-64, arm64
+  and wasm. Its x86-64 `-sanitize` leg asserts no report and a balanced
+  census, which is where the use-after-free showed.
+- `TestDynReturnedBorrowBounded` checks that the heap high-water does not
+  grow with the churn on x86-64, arm64 and wasm.
 
 ## What it does not reach
 
-A borrowed dyn value stored into a field or an array element still copies
-the cell pointer with no retain, and use-after-frees the same way (#10073).
-That fix routes dyn through `rcIncOnAliasType` and `emitAliasInc` and
-retires `dynBorrowedViews`; it feeds the ownership analysis widely enough
-to be its own change.
+`dynBorrowed` sees a bare return only. Two cases are left:
+
+- A borrowed dyn value stored into a field or an array element still copies
+  the cell pointer with no retain (#10073).
+- A borrow returned through an `if` or `match` arm, directly or through a
+  local it initialises, hands the caller the same un-counted cell.
+
+Both use-after-free like the bare return did. The alias change routes dyn
+through `emitAliasInc`, which reaches both
+(`2026-09-23-d-a-dyn-alias-is-retained-and-its-holder-releases-it.md`,
+`2026-09-23-e-a-dyn-borrow-returned-through-a-branch.md`).
