@@ -16210,7 +16210,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		at := c.checkExpr(n.Array, s)
 		it := c.checkExpr(n.Idx, s)
 		if it != nil && !ast.Equal(it, ast.NumberType{}) {
-			c.errfCode(n.Idx.Pos(), "E034", "index must be an integer, got %s", it)
+			c.errfCode(n.Idx.Pos(), "E034", "index must be i32, got %s", it)
 		}
 		if arr, ok := at.(ast.ArrayType); ok {
 			n.ElemType = arr.Elem

@@ -10031,8 +10031,8 @@ function call_diags_index(ix: ast.ExprIndex, s: Scope, out: util.Diag[]): util.D
   // checker's Index case (index type != i32 -> E034 at the index
   // position). A missing / unknown index type is skipped (no cascade).
   var ixt: typeinfo.Type = check_expr(ix.index, s);
-  if (!is_unknown(ixt) && !is_integer(ixt)) {
-    out = out.append(dg_at("E034", "index must be an integer, got " + type_label(ixt), expr_line(ix.index), expr_col(ix.index)));
+  if (!is_unknown(ixt) && !type_eq(ixt, t_i32())) {
+    out = out.append(dg_at("E034", "index must be i32, got " + type_label(ixt), expr_line(ix.index), expr_col(ix.index)));
   }
   // E034: the indexed value must be an array or string. Mirrors the Go
   // checker ("indexing non-array value"); a non-array/string (i32 /

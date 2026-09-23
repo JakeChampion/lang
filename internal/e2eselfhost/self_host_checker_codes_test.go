@@ -1346,6 +1346,8 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"index-string-on-string", "function main(): i32 { var s = \"abc\"; return s[\"x\"] as i32; }\n", []string{"E034"}},
 		{"index-bool", "function main(): i32 { var a = [1, 2, 3]; var b = true; return a[b]; }\n", []string{"E034"}},
 		{"index-i32-ok", "function main(): i32 { var a = [1, 2, 3]; var i = 1; return a[i]; }\n", nil},
+		{"index-i64", "function main(): i32 { var a = [1, 2, 3]; var i: i64 = 1; return a[i]; }\n", []string{"E034"}},
+		{"index-u8-on-string", "function main(): i32 { var s = \"abc\"; var i: u8 = 1; return s[i] as i32; }\n", []string{"E034"}},
 		// E034 / E037 (non-array/string source): indexing or slicing a value
 		// that isn't an array or string. Arrays / strings stay ok.
 		{"index-non-array", "function main(): i32 { var x = 5; return x[0]; }\n", []string{"E034"}},
