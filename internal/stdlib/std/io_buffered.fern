@@ -157,6 +157,40 @@ pub function (b: BufWriter) write_range(s: string, lo: i32, hi: i32): BufWriter 
   return b.flush();
 }
 
+// `(b).write_mapped(s, table)` — append each byte `c` of `s` as
+// `table[c]`, or unchanged when `c` is past the table's end: a byte
+// translation with no intermediate string.
+pub function (b: BufWriter) write_mapped(s: string, table: u8[]): BufWriter {
+  buf_push_mapped(b.buf, s, table);
+  if (buf_len(b.buf) < b.cap) {
+    return b;
+  }
+  return b.flush();
+}
+
+// `(b).write_filtered(s, drop)` — append each byte `c` of `s` whose
+// `drop[c]` is zero, or that is past the table's end: a byte deletion with
+// no intermediate string.
+pub function (b: BufWriter) write_filtered(s: string, drop: u8[]): BufWriter {
+  buf_push_filtered(b.buf, s, drop);
+  if (buf_len(b.buf) < b.cap) {
+    return b;
+  }
+  return b.flush();
+}
+
+// `(b).write_expanded(s, table)` — append each byte `c` of `s` as the
+// record at `table[c * 8]`: a length byte (above 7 counts as 7), then the
+// bytes. A byte whose record is not wholly inside the table is appended
+// unchanged.
+pub function (b: BufWriter) write_expanded(s: string, table: u8[]): BufWriter {
+  buf_push_expanded(b.buf, s, table);
+  if (buf_len(b.buf) < b.cap) {
+    return b;
+  }
+  return b.flush();
+}
+
 // `(b).write_byte(byte)` — append one byte.
 pub function (b: BufWriter) write_byte(byte: i32): BufWriter {
   buf_push_byte(b.buf, byte);
@@ -195,13 +229,13 @@ pub function buf_push_u64(h: usize, n: u64): void {
       return;
     }
     var k: i32 = n as i32 * 2;
-    buf_push_range(h, __digit_pairs(), k, k + 2);
+    buf_push_range(h, digit_pairs(), k, k + 2);
     return;
   }
   var q: u64 = n / (100 as u64);
   buf_push_u64(h, q);
   var r: i32 = (n - q * (100 as u64)) as i32 * 2;
-  buf_push_range(h, __digit_pairs(), r, r + 2);
+  buf_push_range(h, digit_pairs(), r, r + 2);
 }
 
 // `buf_push_i64(h, n)` — `buf_push_u64` with a sign.
@@ -218,17 +252,20 @@ pub function buf_push_i64(h: usize, n: i64): void {
 // caller that pads the number to a field.
 pub function buf_u64_len(n: u64): i32 {
   var d: i32 = 1;
-  var x: u64 = n;
-  while (x >= 10 as u64) {
+  var p: u64 = 10 as u64;
+  while (n >= p) {
     d = d + 1;
-    x = x / (10 as u64);
+    if (d == 20) {
+      return d;
+    }
+    p = p * (10 as u64);
   }
   return d;
 }
 
 // "00" through "99", each at twice its value: a static literal, never
 // allocated.
-function __digit_pairs(): string {
+pub function digit_pairs(): string {
   return "0001020304050607080910111213141516171819202122232425262728293031323334353637383940414243444546474849505152535455565758596061626364656667686970717273747576777879808182838485868788899091929394959697989900";
 }
 

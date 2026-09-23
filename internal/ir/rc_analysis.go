@@ -1422,7 +1422,8 @@ func pureReadReceiverBuiltin(name string) bool {
 //     and returns void (its runtime doc, all three implementations);
 //   - buf_push / buf_push_range do the same into a capacity-carrying
 //     builder, and the piece is the argument at position 1 — position 0
-//     is the builder's handle;
+//     is the builder's handle; buf_push_mapped, buf_push_filtered and
+//     buf_push_expanded read their table (2) too;
 //   - print / write / eprint write the bytes to an fd, void result;
 //   - `w.write(s)` (__fern_writer_write) writes the bytes to the
 //     Writer's fd and returns a fresh Option[IoError] box holding an
@@ -1455,6 +1456,9 @@ var copyingBuiltinArgs = map[string][]int{
 	"strbuf_append":               {0},
 	"buf_push":                    {1},
 	"buf_push_range":              {1},
+	"buf_push_mapped":             {1, 2},
+	"buf_push_filtered":           {1, 2},
+	"buf_push_expanded":           {1, 2},
 	"print":                       {0},
 	"write":                       {0},
 	"eprint":                      {0},
@@ -1473,8 +1477,11 @@ var copyingBuiltinArgs = map[string][]int{
 	// carried CRC word, which owns nothing.
 	"__crc32_cksum": {1},
 	"__mismatch":    {0, 2},
-	// __scan_set reads its string and its set and returns an index.
+	// __scan_set and __count_runs read their string and their set and
+	// return a scalar.
 	"__scan_set":          {0, 2},
+	"__count_runs":        {0, 2},
+	"__bsd_sum":           {0},
 	"__method_Map_get":    {1},
 	"__method_Map_get_or": {1},
 	"__method_Map_has":    {1},

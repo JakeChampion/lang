@@ -636,6 +636,9 @@ func New() *Interp {
 	i.Builtins["buf_new"] = &Builtin{Fn: builtinBufNew}
 	i.Builtins["buf_push"] = &Builtin{Fn: builtinBufPush}
 	i.Builtins["buf_push_range"] = &Builtin{Fn: builtinBufPushRange}
+	i.Builtins["buf_push_mapped"] = &Builtin{Fn: builtinBufPushMapped}
+	i.Builtins["buf_push_filtered"] = &Builtin{Fn: builtinBufPushFiltered}
+	i.Builtins["buf_push_expanded"] = &Builtin{Fn: builtinBufPushExpanded}
 	i.Builtins["buf_push_byte"] = &Builtin{Fn: builtinBufPushByte}
 	i.Builtins["buf_push_u64"] = &Builtin{Fn: builtinBufPushU64}
 	i.Builtins["buf_len"] = &Builtin{Fn: builtinBufLen}
@@ -1027,6 +1030,62 @@ func New() *Interp {
 	// whose entry in `set` is nonzero, or len(s). `from` clamps like
 	// __memchr's, and a byte past the end of `set` is not in the set. The
 	// oracle for the byte-set scan kernel.
+	// __bsd_sum(s, sum): the BSD checksum continued over s from `sum`.
+	i.Builtins["__bsd_sum"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("__bsd_sum: expected 2 args, got %d", len(args))
+		}
+		s, ok := args[0].(String)
+		if !ok {
+			return nil, fmt.Errorf("__bsd_sum: expected a string, got %T", args[0])
+		}
+		n, ok := args[1].(Number)
+		if !ok {
+			return nil, fmt.Errorf("__bsd_sum: expected an integer sum, got %T", args[1])
+		}
+		sum := uint32(int64(n)) & 0xffff
+		for _, c := range []byte(string(s)) {
+			sum = (sum>>1 | sum<<15) & 0xffff
+			sum = (sum + uint32(c)) & 0xffff
+		}
+		return Number(sum), nil
+	}}
+	// __count_runs(s, inside, set): how many runs of set members begin in s;
+	// `inside` nonzero means the byte before s was a member.
+	i.Builtins["__count_runs"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		if len(args) != 3 {
+			return nil, fmt.Errorf("__count_runs: expected 3 args, got %d", len(args))
+		}
+		s, ok := args[0].(String)
+		if !ok {
+			return nil, fmt.Errorf("__count_runs: expected a string, got %T", args[0])
+		}
+		inside, ok := args[1].(Number)
+		if !ok {
+			return nil, fmt.Errorf("__count_runs: expected an integer flag, got %T", args[1])
+		}
+		set, ok := args[2].(Array)
+		if !ok {
+			return nil, fmt.Errorf("__count_runs: expected a u8[] set, got %T", args[2])
+		}
+		prev := int64(inside) != 0
+		runs := 0
+		for _, c := range []byte(string(s)) {
+			member := false
+			if int(c) < len(set.E) {
+				e, ok := set.E[c].(Number)
+				if !ok {
+					return nil, fmt.Errorf("__count_runs: set element %d is %T, not a byte", c, set.E[c])
+				}
+				member = int64(e) != 0
+			}
+			if member && !prev {
+				runs++
+			}
+			prev = member
+		}
+		return Number(runs), nil
+	}}
 	i.Builtins["__scan_set"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 		if len(args) != 3 {
 			return nil, fmt.Errorf("__scan_set: expected 3 args, got %d", len(args))
@@ -4841,6 +4900,123 @@ func builtinBufPushRange(i *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("buf_push_range [%d:%d] out of range for length %d", low, high, slen)
 	}
 	i.bufs[h] = append(b, string(s)[low:high]...)
+	return Void{}, nil
+}
+
+// builtinBufPushMapped appends table[c] for each byte c of s; a byte at or
+// past the table's length is appended unchanged.
+func builtinBufPushMapped(i *Interp, args []Value) (Value, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("buf_push_mapped: expected 3 args (b, s, table), got %d", len(args))
+	}
+	h, b, err := bufHandle(i, "buf_push_mapped", args[0])
+	if err != nil {
+		return nil, err
+	}
+	s, ok := args[1].(String)
+	if !ok {
+		return nil, fmt.Errorf("buf_push_mapped: expected string arg, got %T", args[1])
+	}
+	table, ok := args[2].(Array)
+	if !ok {
+		return nil, fmt.Errorf("buf_push_mapped: expected a u8[] table, got %T", args[2])
+	}
+	for _, c := range []byte(string(s)) {
+		if int(c) < len(table.E) {
+			e, ok := table.E[c].(Number)
+			if !ok {
+				return nil, fmt.Errorf("buf_push_mapped: table element %d is %T, not a byte", c, table.E[c])
+			}
+			c = byte(int64(e))
+		}
+		b = append(b, c)
+	}
+	i.bufs[h] = b
+	return Void{}, nil
+}
+
+// builtinBufPushFiltered appends each byte c of s whose entry drop[c] is
+// zero; a byte at or past the table's length is kept.
+func builtinBufPushFiltered(i *Interp, args []Value) (Value, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("buf_push_filtered: expected 3 args (b, s, drop), got %d", len(args))
+	}
+	h, b, err := bufHandle(i, "buf_push_filtered", args[0])
+	if err != nil {
+		return nil, err
+	}
+	s, ok := args[1].(String)
+	if !ok {
+		return nil, fmt.Errorf("buf_push_filtered: expected string arg, got %T", args[1])
+	}
+	drop, ok := args[2].(Array)
+	if !ok {
+		return nil, fmt.Errorf("buf_push_filtered: expected a u8[] table, got %T", args[2])
+	}
+	for _, c := range []byte(string(s)) {
+		if int(c) < len(drop.E) {
+			e, ok := drop.E[c].(Number)
+			if !ok {
+				return nil, fmt.Errorf("buf_push_filtered: table element %d is %T, not a byte", c, drop.E[c])
+			}
+			if int64(e) != 0 {
+				continue
+			}
+		}
+		b = append(b, c)
+	}
+	i.bufs[h] = b
+	return Void{}, nil
+}
+
+// builtinBufPushExpanded appends each byte c of s as the record at
+// table[c*8]: a length byte (above 7 counts as 7), then that many bytes. A
+// byte whose record is not wholly inside the table is appended unchanged.
+func builtinBufPushExpanded(i *Interp, args []Value) (Value, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("buf_push_expanded: expected 3 args (b, s, table), got %d", len(args))
+	}
+	h, b, err := bufHandle(i, "buf_push_expanded", args[0])
+	if err != nil {
+		return nil, err
+	}
+	s, ok := args[1].(String)
+	if !ok {
+		return nil, fmt.Errorf("buf_push_expanded: expected string arg, got %T", args[1])
+	}
+	table, ok := args[2].(Array)
+	if !ok {
+		return nil, fmt.Errorf("buf_push_expanded: expected a u8[] table, got %T", args[2])
+	}
+	entry := func(k int) (byte, error) {
+		e, ok := table.E[k].(Number)
+		if !ok {
+			return 0, fmt.Errorf("buf_push_expanded: table element %d is %T, not a byte", k, table.E[k])
+		}
+		return byte(int64(e)), nil
+	}
+	for _, c := range []byte(string(s)) {
+		at := int(c) * 8
+		if at+8 > len(table.E) {
+			b = append(b, c)
+			continue
+		}
+		n, err := entry(at)
+		if err != nil {
+			return nil, err
+		}
+		if n > 7 {
+			n = 7
+		}
+		for k := 1; k <= int(n); k++ {
+			x, err := entry(at + k)
+			if err != nil {
+				return nil, err
+			}
+			b = append(b, x)
+		}
+	}
+	i.bufs[h] = b
 	return Void{}, nil
 }
 

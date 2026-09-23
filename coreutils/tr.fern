@@ -767,33 +767,6 @@ function read_size(): i32 {
   return 65536;
 }
 
-function xf_translate(chunk: string, t: u8[]): string {
-  var n: i32 = chunk.len();
-  var buf: u8[] = __alloc_u8(n);
-  var i: i32 = 0;
-  while (i < n) {
-    buf = buf.with(i, t[chunk[i] as i32]);
-    i = i + 1;
-  }
-  return string_from_bytes_unchecked(buf);
-}
-
-function xf_delete(chunk: string, del: u8[]): string {
-  var n: i32 = chunk.len();
-  var buf: u8[] = __alloc_u8(n);
-  var j: i32 = 0;
-  var i: i32 = 0;
-  while (i < n) {
-    var c: i32 = chunk[i] as i32;
-    if (del[c] as i32 == 0) {
-      buf = buf.with(j, c as u8);
-      j = j + 1;
-    }
-    i = i + 1;
-  }
-  return slice_unchecked(string_from_bytes_unchecked(buf), 0, j) + "";
-}
-
 // `last` is the previously emitted byte, carried across chunks so a run
 // that straddles a read is still one byte.
 function xf_squeeze(chunk: string, sq: u8[], last: i32): (string, i32) {
@@ -1038,13 +1011,13 @@ pub function main(): i32 {
           last = t2.1;
           o = gnu.put(o, t2.0);
         } else if (translating) {
-          o = gnu.put(o, xf_translate(chunk, xlate));
+          o = gnu.check(o.write_mapped(chunk, xlate));
         } else if (deleting && squeezing) {
           var d2: (string, i32) = xf_delete_squeeze(chunk, del, sq, last);
           last = d2.1;
           o = gnu.put(o, d2.0);
         } else if (deleting) {
-          o = gnu.put(o, xf_delete(chunk, del));
+          o = gnu.check(o.write_filtered(chunk, del));
         } else {
           var q2: (string, i32) = xf_squeeze(chunk, sq, last);
           last = q2.1;

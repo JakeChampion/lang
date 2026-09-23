@@ -217,3 +217,7 @@ func TestWASMScanSet(t *testing.T) {
 func TestArm64SSAScanSet(t *testing.T) {
 	runScanSetCorpus(t, arm64SSACorpusRunner(t))
 }
+
+func TestX86_64SSAScanSet(t *testing.T) {
+	runScanSetCorpus(t, x86_64SSACorpusRunner(t))
+}

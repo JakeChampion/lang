@@ -511,14 +511,11 @@ function apply_case(piece: string, tab: u8[], conv: i32): string {
   if ((conv & (conv_ucase() | conv_lcase())) == 0) {
     return piece;
   }
-  var n: i32 = piece.len();
-  var buf: u8[] = __alloc_u8(n);
-  var i: i32 = 0;
-  while (i < n) {
-    buf = buf.with(i, tab[piece[i] as i32]);
-    i = i + 1;
-  }
-  return string_from_bytes_unchecked(buf);
+  var b: usize = buf_new(piece.len());
+  buf_push_mapped(b, piece, tab);
+  var out: string = buf_take(b);
+  buf_free(b);
+  return out;
 }
 
 // conv=swab exchanges every pair of bytes, and it pairs them across the
