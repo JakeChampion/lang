@@ -2421,6 +2421,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    ret\n");
     s = s.write("__fn___fern_arr_dec:\n");
     s = s.write("    movq 8(%rsp), %rax\n");
+    s = s.write("__fn___fern_arr_dec.r:\n");
     s = s.write("    testq %rax, %rax\n");
     s = s.write("    jz .Larrdec_ret\n");
     s = s.write("    cmpq $0x10000, %rax\n");
@@ -2474,12 +2475,13 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // map column element that other owners still reference (it only decs) — not
     // just a compile-time-proven-unique temp. A literal's data lives below
     // heap_base and is guarded out of the data-buffer free; len==0 / large-tier
-    // buffers leak (sound). Stack-arg ABI (box at 8(%rsp)); %rax=box, scratch
+    // buffers leak (sound). Stack-arg ABI (box at 8(%rsp)), or the register entry `.r` with the box in %rax; scratch
     // %rcx/%rdx/%rsi/%r8. (The former "header-less, no rc word, unique-only"
     // contract described the pre-#2649 layout and was stale — the code below
     // reads/decrements rc at box-8 and matches __fern_str_box's 24-byte block.)
     s = s.write("__fn___fern_str_free:\n");
     s = s.write("    movq 8(%rsp), %rax\n");        // box
+    s = s.write("__fn___fern_str_free.r:\n");
     s = s.write("    testq %rax, %rax\n");
     s = s.write("    jz .Lstrfree_ret\n");
     s = s.write("    testb $1, %al\n");             // tagged / SSO sentinel (defensive)
@@ -5933,6 +5935,12 @@ function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
 function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
     if (ssa.rc_inlined(ins)) { return ssa_rc_prim(ins, reg_of, lp, s); }
     s = ssa_x0_forget(s);
+    if (ircore.is_fern_helper(ins.str) && ins.args.len() == 1 && ssa_reg_helper(ircore.ir_helper_symbol(ins.str))) {
+        s = helper_call_needs(ins.str, s);
+        s = ssa_parallel_moves([reg_of[ins.args[0]]], [0], s);
+        s = s.write("    call " + ircore.ir_helper_symbol(ins.str) + ".r\n");
+        return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+    }
     if (ssa_reg_call(ins, s)) {
         // Only this call's own arguments can be in the pool's registers here:
         // anything live across it is callee-saved or in a slot.
@@ -6573,6 +6581,13 @@ function ssa_entry_shim(f: ssa.SFunc, name: string): string {
         p = p + 1;
     }
     return out + "__fn_" + name + ".r:\n";
+}
+
+// ssa_reg_helper names the hand-written runtime helpers with a register
+// entry: one argument, loaded by their stack entry into the pool's first
+// register, which is where the `.r` entry reads it.
+function ssa_reg_helper(sym: string): boolean {
+    return sym == "__fn___fern_arr_dec" || sym == "__fn___fern_str_free";
 }
 
 // ssa_reg_call reports whether a direct call passes its arguments in
