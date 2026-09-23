@@ -87,8 +87,20 @@ function main(): i32 {
     return p.x;
 }
 `,
-		want:   map[string][]string{"x86-64-linux": {`_uq\d+:`}, "arm64-linux": {`_uq\d+:`}},
-		forbid: map[string][]string{"x86-64-linux": {`_rcuniq\d+:`, `testq %r11, %r11`}, "arm64-linux": {`_rcuniq\d+:`, `mov x6, #1`}}},
+		want:   map[string][]string{"x86-64-linux": {`_uq\d+:`, `cmpl \$1, -8\(%\w+\)`}, "arm64-linux": {`_uq\d+:`}},
+		forbid: map[string][]string{"x86-64-linux": {`_rcuniq\d+:`, `testq %r11, %r11`, `movl -8\(%\w+\), %edx`}, "arm64-linux": {`_rcuniq\d+:`, `mov x6, #1`}}},
+	// An inline retain tests and bumps the count in memory rather than
+	// round-tripping it through %ecx.
+	{name: "rc_inc_in_memory", fn: "twice", exit: 5, src: `
+struct Two { a: string, b: string }
+@noinline function twice(s: string): Two { return Two { a: s, b: s }; }
+function main(): i32 {
+    var t: Two = twice("hi");
+    return t.a.len() + t.b.len() + 1;
+}
+`,
+		want:   map[string][]string{"x86-64-linux": {`cmpl \$0, -8\(%\w+\)\n\s+js `, `addl \$1, -8\(%\w+\)`}},
+		forbid: map[string][]string{"x86-64-linux": {`addl \$1, %ecx`, `movl -8\(%\w+\), %ecx`}}},
 	// A branch on a boolean tests the register the boolean lives in.
 	{name: "value_test_in_place", fn: "pick", exit: 7, src: `
 @noinline function pick(b: boolean, x: i32): i32 { if (b) { return x; } return 0; }

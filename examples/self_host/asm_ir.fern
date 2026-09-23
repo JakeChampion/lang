@@ -5890,8 +5890,9 @@ function ssa_push_operand(reg_of: i32[], v: i32, s: asmcore.EmitState): asmcore.
 // negative count, since a negative count never compares equal to one; rc_inc
 // needs one, because it would otherwise increment it.
 //
-// The count is read into %rdx and the 0/1 built in %rcx, neither of which is
-// ever a home, so both survive a destination that IS the operand's register —
+// The count is compared in memory, or read into %rdx first when the sanitizer
+// checks it; the 0/1 is built in %rcx. Neither register is ever a home, so both
+// survive a destination that IS the operand's register —
 // the usual case once a result and its operand share one — and the
 // destination is written after the last read of the operand.
 //
@@ -5911,17 +5912,20 @@ function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
     if (ins.str == "__fern_rc_is_unique") {
         var d: string = ssa_dst(reg_of, ins.result);
         s = s.write("    xorl %ecx, %ecx\n" + guard);
-        s = s.write("    movl " + rc + ", %edx\n");
-        s = s.write(san_poison_check("%edx"));
-        s = s.write("    cmpl $1, %edx\n    jne " + done + "\n");
+        s = s.write(ssa_rc_is_one(rc));
+        s = s.write("    jne " + done + "\n");
         s = s.write("    movl $1, %ecx\n" + done + ":\n");
         s = s.write("    movq %rcx, " + d + "\n");
         return ssa_store(reg_of, ins.result, d, s);
     }
     s = s.write(guard);
-    s = s.write("    movl " + rc + ", %ecx\n" + san_poison_check("%ecx"));
-    s = s.write("    testl %ecx, %ecx\n    js " + done + "\n");
-    s = s.write("    addl $1, %ecx\n    movl %ecx, " + rc + "\n");
+    if (rc_free_debug_on()) {
+        s = s.write("    movl " + rc + ", %ecx\n" + san_poison_check("%ecx"));
+        s = s.write("    testl %ecx, %ecx\n    js " + done + "\n");
+        s = s.write("    addl $1, %ecx\n    movl %ecx, " + rc + "\n");
+    } else {
+        s = s.write("    cmpl $0, " + rc + "\n    js " + done + "\n    addl $1, " + rc + "\n");
+    }
     s = s.write(done + ":\n");
     // rc_inc hands the pointer back; a result with no home stores nothing.
     return ssa_store(reg_of, ins.result, p, s);
@@ -6554,8 +6558,15 @@ function ssa_unique_flags(reg_of: i32[], v: i32, join: string, s: asmcore.EmitSt
     s = ssa_read(reg_of, v, "%r11", s);
     var p: string = ssa_src(reg_of, v, "%r11");
     s = s.write("    testb $1, " + ssa_r8(p) + "\n    jnz " + join + "\n    cmpq $0x10000, " + p + "\n    jb " + join + "\n");
-    s = s.write("    movl -8(" + p + "), %edx\n" + san_poison_check("%edx") + "    cmpl $1, %edx\n" + join + ":\n");
+    s = s.write(ssa_rc_is_one("-8(" + p + ")") + join + ":\n");
     return s;
+}
+
+// ssa_rc_is_one compares the count at `rc` with one, through %edx when the
+// sanitizer must see the loaded value first.
+function ssa_rc_is_one(rc: string): string {
+    if (rc_free_debug_on()) { return "    movl " + rc + ", %edx\n" + san_poison_check("%edx") + "    cmpl $1, %edx\n"; }
+    return "    cmpl $1, " + rc + "\n";
 }
 
 // ssa_rotates reports whether a branch from the block at position `from` to

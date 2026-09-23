@@ -1365,13 +1365,13 @@ function main(): i32 {
 	cases := []struct {
 		target string
 		floor  *regexp.Regexp // the heap-floor test that opens each chain
-		count  *regexp.Regexp // the read of the count word
+		count  *regexp.Regexp // the read of the count word, loaded or compared in place
 		absent []string       // the stub calls the chains replace
 		poison *regexp.Regexp // this backend's spelling of the sanitizer check
 	}{
 		{"x86-64-linux",
 			regexp.MustCompile(`(?m)^\s+cmpq \$0x10000, %r\w+$`),
-			regexp.MustCompile(`(?m)^\s+movl -8\(%r\w+\), %e\w+$`),
+			regexp.MustCompile(`(?m)^\s+(?:movl -8\(%r\w+\), %e\w+|cmpl \$[01], -8\(%r\w+\))$`),
 			[]string{"call __fn___fern_rc_is_unique", "call __fn___fern_rc_inc"},
 			regexp.MustCompile(`cmpl \$` + rcPoisonWord + `, %e\w+`)},
 		{"arm64-linux",
