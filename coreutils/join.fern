@@ -170,7 +170,7 @@ function file_number(s: string): i32 {
 struct Spec { file: i32, field: u64 }
 
 // ---- settings ---------------------------------------------------------------
-struct Opts { jf1: u64, jf2: u64, tab: i32, eol: i32, filler: string, ignore_case: boolean, pairs: boolean, unpair1: boolean, unpair2: boolean, specs: Spec[], autofmt: boolean, check: i32, header: boolean }
+struct Opts { jf1: u64, jf2: u64, tab: i32, eol: i32, filler: string, ignore_case: boolean, pairs: boolean, unpair1: boolean, unpair2: boolean, specs: Spec[], autofmt: boolean, check: i32, header: boolean, seps: u8[] }
 
 // check: 0 the default (report a disorder only once a line has proved
 // unpairable), 1 --check-order (report and die), 2 --nocheck-order.
@@ -246,6 +246,16 @@ function is_sep(c: i32): boolean {
   return c == 32 || c == 9 || c == 10;
 }
 
+// The bytes that end a default-mode field, for `__scan_set`: the three
+// blanks, and the line terminator so a scan stops at the line's end.
+function sep_table(eol: i32): u8[] {
+  var t: u8[] = __alloc_u8(256);
+  t = t.with(32, 1 as u8);
+  t = t.with(9, 1 as u8);
+  t = t.with(10, 1 as u8);
+  return t.with(eol, 1 as u8);
+}
+
 // gnulib's xfields, walked once for the field count and the join
 // field's bounds. An empty line has no fields at all; a `-t` line
 // always has one more field than it has separators, so a leading
@@ -253,10 +263,8 @@ function is_sep(c: i32): boolean {
 // either end are skipped and add no field. `-t ''` sets the separator to
 // a newline, which no line can contain, so the whole line is one field.
 // A join field the line does not have is the empty range at `lo`.
-// `other` is where the first tab or newline at or after `lo` sits, or
-// -1: a default-mode line that holds neither ends every field at a
-// space, so each is found by one `__memchr` rather than a byte loop.
-function make_line(text: string, lo: i32, hi: i32, tab: i32, jf: u64, other: i32): Line {
+// `seps` is sep_table's set, which ends a default-mode field.
+function make_line(text: string, lo: i32, hi: i32, tab: i32, jf: u64, seps: u8[]): Line {
   var k0: i32 = lo;
   var k1: i32 = lo;
   var s0: i32 = lo;
@@ -300,22 +308,16 @@ function make_line(text: string, lo: i32, hi: i32, tab: i32, jf: u64, other: i32
     // `i` at the next field's start or `more` false.
     while (more) {
       f = i;
-      if (tab >= 0 || other < 0 || other >= hi) {
-        var byte: i32 = tab;
-        if (tab < 0) {
-          byte = 32;
-        }
-        var j: i32 = __memchr(text, byte, f);
-        if (j < 0 || j > hi) {
-          j = hi;
-        }
-        i = j;
+      var j: i32 = hi;
+      if (tab >= 0) {
+        j = __memchr(text, tab, f);
       } else {
-        i = i + 1;
-        while (i < hi && !is_sep(text[i] as i32)) {
-          i = i + 1;
-        }
+        j = __scan_set(text, f, seps);
       }
+      if (j < 0 || j > hi) {
+        j = hi;
+      }
+      i = j;
       if (n == want) {
         k0 = f;
         k1 = i;
@@ -411,26 +413,10 @@ function range_cmp(at: string, a0: i32, a1: i32, bt: string, b0: i32, b1: i32, i
 // `have` and `line` are the last `next_line` answer; `msg` is a
 // disorder the caller still has to report, so the cursor comes back
 // alone rather than in a tuple with the writer and the run state.
-// `tab_at` and `nl_at` are where the next tab and newline sit in the
-// block, -1 once there are none and `stale()` after a refill; a line
-// that lies before both is split on spaces alone, by `__memchr`.
-struct In { r: Reader, is_stdin: boolean, buf: string, pos: i32, eof: boolean, name: string, no: u64, hasprev: boolean, warned: boolean, which: i32, have: boolean, line: Line, msg: string, tab_at: i32, nl_at: i32 }
+struct In { r: Reader, is_stdin: boolean, buf: string, pos: i32, eof: boolean, name: string, no: u64, hasprev: boolean, warned: boolean, which: i32, have: boolean, line: Line, msg: string }
 
 function read_size(): i32 {
   return 65536;
-}
-
-function stale(): i32 {
-  return 0 - 2;
-}
-
-// `cursor(at, text, byte, pos)` — `at` moved to the next `byte` at or
-// after `pos`, when it has fallen behind or the block was replaced.
-function cursor(at: i32, text: string, byte: i32, pos: i32): i32 {
-  if (at == stale() || at >= 0 && at < pos) {
-    return __memchr(text, byte, pos);
-  }
-  return at;
 }
 
 // `Run` — the two facts the order check reads and writes across both
@@ -499,9 +485,9 @@ function next_line(inp: In, o: Opts, unpairable: boolean, w: io_buffered.BufWrit
     match (cur.r.read_chunk(read_size())) {
       Ok(chunk) => {
         if (chunk.len() == 0) {
-          cur = In { ...cur, buf: rest, pos: 0, eof: true, tab_at: stale(), nl_at: stale() };
+          cur = In { ...cur, buf: rest, pos: 0, eof: true };
         } else {
-          cur = In { ...cur, buf: rest + chunk, pos: 0, tab_at: stale(), nl_at: stale() };
+          cur = In { ...cur, buf: rest + chunk, pos: 0 };
         }
       },
       Err(e) => {
@@ -510,26 +496,12 @@ function next_line(inp: In, o: Opts, unpairable: boolean, w: io_buffered.BufWrit
       }
     }
   }
-  var tab_at: i32 = cur.tab_at;
-  var nl_at: i32 = cur.nl_at;
-  var other: i32 = 0 - 1;
-  if (o.tab < 0) {
-    tab_at = cursor(tab_at, cur.buf, 9, lo);
-    other = tab_at;
-    // Only -z lets a newline sit inside a line.
-    if (o.eol != 10) {
-      nl_at = cursor(nl_at, cur.buf, 10, lo);
-      if (nl_at >= 0 && (other < 0 || nl_at < other)) {
-        other = nl_at;
-      }
-    }
-  }
-  var l: Line = make_line(cur.buf, lo, hi, o.tab, jf, other);
+  var l: Line = make_line(cur.buf, lo, hi, o.tab, jf, o.seps);
   var msg: string = "";
   if (cur.hasprev && needs_order_check(cur, o, unpairable) && keycmp(cur.line, l, o.ignore_case) > 0) {
     msg = cur.name + ":" + (cur.no + 1 as u64).to_string() + ": is not sorted: " + slice_unchecked(cur.buf, lo, hi) + "";
   }
-  return In { ...cur, pos: npos, no: cur.no + 1 as u64, hasprev: true, have: true, line: l, msg: msg, tab_at: tab_at, nl_at: nl_at };
+  return In { ...cur, pos: npos, no: cur.no + 1 as u64, hasprev: true, have: true, line: l, msg: msg };
 }
 
 // ---- output -----------------------------------------------------------------
@@ -871,7 +843,7 @@ pub function main(): i32 {
 
   var none_specs: Spec[] = [];
   var none_toks: Tok[] = [];
-  var o: Opts = Opts { jf1: unset(), jf2: unset(), tab: 0 - 1, eol: 10, filler: "", ignore_case: false, pairs: true, unpair1: false, unpair2: false, specs: none_specs, autofmt: false, check: check_default(), header: false };
+  var o: Opts = Opts { jf1: unset(), jf2: unset(), tab: 0 - 1, eol: 10, filler: "", ignore_case: false, pairs: true, unpair1: false, unpair2: false, specs: none_specs, autofmt: false, check: check_default(), header: false, seps: __alloc_u8(0) };
   var s: Scan = Scan { o: o, toks: none_toks, nfiles: 0, pending: 0 };
 
   var g: gnu.Getopt = gnu.getopt_new(argv, opts, "join", help_text(), 1);
@@ -1000,6 +972,7 @@ pub function main(): i32 {
     exit(1);
   }
 
+  o = Opts { ...o, seps: sep_table(o.eol) };
   var in1: In = open_input(files[0], 1);
   var in2: In = open_input(files[1], 2);
 
@@ -1063,6 +1036,9 @@ pub function main(): i32 {
   }
 
   var blank: Line = blank_line();
+  // A key's group once a second line with it turns up: `[]` allocates.
+  var g1: Line[] = [];
+  var g2: Line[] = [];
   while (have1 && have2) {
     var d: i32 = keycmp(l1, l2, o.ignore_case);
     if (d < 0) {
@@ -1103,13 +1079,10 @@ pub function main(): i32 {
     }
     // Equal keys. Both sides are read forward to the first line with a
     // different key and the cross product of the two groups is printed.
-    // One line on each side is the overwhelmingly common shape and is
-    // kept off the group arrays entirely, because allocating two of
-    // them per matched key is most of what this loop costs.
+    // One line on each side is the overwhelmingly common shape and never
+    // touches g1 or g2.
     var head1: Line = l1;
     var head2: Line = l2;
-    var g1: Line[] = [];
-    var g2: Line[] = [];
     var many1: boolean = false;
     var many2: boolean = false;
     while (true) {
@@ -1126,7 +1099,7 @@ pub function main(): i32 {
         break;
       }
       if (!many1) {
-        g1 = g1.append(head1);
+        g1 = [head1];
         many1 = true;
       }
       g1 = g1.append(l1);
@@ -1145,7 +1118,7 @@ pub function main(): i32 {
         break;
       }
       if (!many2) {
-        g2 = g2.append(head2);
+        g2 = [head2];
         many2 = true;
       }
       g2 = g2.append(l2);
@@ -1156,10 +1129,10 @@ pub function main(): i32 {
         w = gnu.settle(w);
       } else {
         if (!many1) {
-          g1 = g1.append(head1);
+          g1 = [head1];
         }
         if (!many2) {
-          g2 = g2.append(head2);
+          g2 = [head2];
         }
         var i: i32 = 0;
         while (i < g1.len()) {
@@ -1261,16 +1234,16 @@ function glued(argv: string[], g: gnu.Getopt, value: string): boolean {
 function open_input(path: string, which: i32): In {
   var name: string = path;
   if (path == "-") {
-    return In { r: stdin(), is_stdin: true, buf: "", pos: 0, eof: false, name: name, no: 0 as u64, hasprev: false, warned: false, which: which, have: false, line: blank_line(), msg: "", tab_at: stale(), nl_at: stale() };
+    return In { r: stdin(), is_stdin: true, buf: "", pos: 0, eof: false, name: name, no: 0 as u64, hasprev: false, warned: false, which: which, have: false, line: blank_line(), msg: "" };
   }
   match (open_reader(path)) {
     Ok(f) => {
-      return In { r: f, is_stdin: false, buf: "", pos: 0, eof: false, name: name, no: 0 as u64, hasprev: false, warned: false, which: which, have: false, line: blank_line(), msg: "", tab_at: stale(), nl_at: stale() };
+      return In { r: f, is_stdin: false, buf: "", pos: 0, eof: false, name: name, no: 0 as u64, hasprev: false, warned: false, which: which, have: false, line: blank_line(), msg: "" };
     },
     Err(e) => {
       gnu.error(gnu.quotef(path) + ": " + gnu.io_error_text(e));
       exit(1);
     }
   }
-  return In { r: stdin(), is_stdin: true, buf: "", pos: 0, eof: false, name: name, no: 0 as u64, hasprev: false, warned: false, which: which, have: false, line: blank_line(), msg: "", tab_at: stale(), nl_at: stale() };
+  return In { r: stdin(), is_stdin: true, buf: "", pos: 0, eof: false, name: name, no: 0 as u64, hasprev: false, warned: false, which: which, have: false, line: blank_line(), msg: "" };
 }

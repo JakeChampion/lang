@@ -47,6 +47,10 @@ func joinCases(t *testing.T) []invocation {
 	// Duplicate keys on both sides: the cross product.
 	d1 := joinFile(t, dir, "d1", "a 1\na 2\nb 3\n")
 	d2 := joinFile(t, dir, "d2", "a x\na y\n")
+	// A repeated key then a single one, against both keys once: the group
+	// built for `a` must not be read again when `b` pairs one line a side.
+	d3 := joinFile(t, dir, "d3", "a 1\na 2\nb 3\nc 4\nc 5\n")
+	d4 := joinFile(t, dir, "d4", "a x\nb y\nc z\n")
 	// Out of order in file 1, with everything still pairable.
 	o1 := joinFile(t, dir, "o1", "b 1\na 2\nc 3\n")
 	o2 := joinFile(t, dir, "o2", "a x\nb y\nc z\n")
@@ -95,6 +99,8 @@ func joinCases(t *testing.T) []invocation {
 		// The default join.
 		{name: "default", args: []string{f1, f2}},
 		{name: "duplicate keys", args: []string{d1, d2}},
+		{name: "a group on one side then a single key", args: []string{d3, d4}},
+		{name: "a group on the other side then a single key", args: []string{d4, d3}},
 		{name: "empty file 1", args: []string{empty, f2}},
 		{name: "empty file 2", args: []string{f1, empty}},
 		{name: "both empty", args: []string{empty, empty}},
