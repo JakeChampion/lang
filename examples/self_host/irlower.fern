@@ -59683,17 +59683,13 @@ function cell_decl_of(st: ast.Stmt, own acc: string[]): string[] {
     return acc;
 }
 
+// Only the statement's own binders: the fold visits nested statements itself,
+// and a loop body's cell declaration is not a non-cell binding of the loop.
 function non_cell_decl_of(st: ast.Stmt, own acc: string[]): string[] {
-    match (st) {
-        ast.StmtVar(v) => {
-            if (is_cell_type_name(v.type_name) || (v.type_name.len() == 0 && is_cell_new_call(v.init))) { return acc; }
-            return append_all(acc, astwalk.collect_bound_stmt(st, no_names()));
-        },
-        ast.StmtFor(_) => { return append_all(acc, astwalk.collect_bound_stmt(st, no_names())); },
-        ast.StmtMatch(_) => { return append_all(acc, astwalk.collect_bound_stmt(st, no_names())); },
-        _ => { return acc; }
+    if let ast.StmtVar(v) = st {
+        if (is_cell_type_name(v.type_name) || (v.type_name.len() == 0 && is_cell_new_call(v.init))) { return acc; }
     }
-    return acc;
+    return astwalk.binders_of(st, acc);
 }
 
 pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for_wasm: boolean): LowerResult {
