@@ -5995,6 +5995,25 @@ func (b *builder) localIsDynTrait(name string) bool {
 	return false
 }
 
+// dynBorrowed reports a dyn-typed expression the frame does not own a unit
+// of: a parameter, a view of another holder's value (dynBorrowedViews), or a
+// field, element or capture read.
+func (b *builder) dynBorrowed(e ast.Expr) bool {
+	if _, isDyn := b.exprType(e).(ast.DynTraitType); !isDyn {
+		return false
+	}
+	switch n := e.(type) {
+	case *ast.Ident:
+		if p := b.paramNamed(n.Name); p != nil {
+			return !p.Own
+		}
+		return b.rc.dynBorrowedViews[n.Name]
+	case *ast.FieldAccess, *ast.Index, *ast.CaptureRef:
+		return true
+	}
+	return false
+}
+
 func needsRcIncOnAlias(e ast.Expr, b *builder) bool {
 	switch e.(type) {
 	case *ast.Ident, *ast.FieldAccess, *ast.Index, *ast.CaptureRef:
