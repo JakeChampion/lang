@@ -1,0 +1,13 @@
+import "./lib";
+
+// A `const` written without a type, read from another module, settles where
+// it is read, as it does in its own module.
+function main(): i32 {
+    var x: i64 = lib.K;
+    var y: u8 = lib.J;
+    var t: i32 = 0;
+    if (x == 9i64) { t = t + 1; }
+    if (y == 18u8) { t = t + 1; }
+    if (lib.k_as_i64() == 9i64) { t = t + 1; }
+    return t;
+}

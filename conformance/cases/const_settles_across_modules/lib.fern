@@ -1,0 +1,7 @@
+pub const K = 9;
+pub const J = K * 2;
+
+pub function k_as_i64(): i64 {
+    var x: i64 = K;
+    return x;
+}

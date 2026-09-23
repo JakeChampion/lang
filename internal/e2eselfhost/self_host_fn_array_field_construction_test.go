@@ -110,7 +110,7 @@ func TestSelfHostFnArrayFieldConstructionWasm(t *testing.T) {
 			if code != 0 {
 				t.Fatalf("compile failed (exit %d):\n%s", code, errOut)
 			}
-			watFile := filepath.Join(dir, "fnfld_gate_prog.wat")
+			watFile := filepath.Join(dir, "fnfld_construction_prog.wat")
 			if err := os.WriteFile(watFile, []byte(wat), 0o644); err != nil {
 				t.Fatalf("write wat: %v", err)
 			}

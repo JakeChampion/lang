@@ -1,0 +1,30 @@
+// A `const` written without a type has no width of its own: each reference
+// reads the value where it stands, as a literal written there would. So K is
+// an i64 in `var x: i64 = K`, a u8 beside a u8, and R an f32. A local or a
+// parameter of the same name shadows the const.
+const K = 9;
+const BIG = 5000000000;
+const J = K * 2;
+const R = 2.5;
+const N = -K;
+
+function add(a: i64, b: i64): i64 { return a + b; }
+function shadow(K: i32): i32 { return K + 1; }
+
+function main(): i32 {
+    var x: i64 = K;
+    var y: u8 = J;
+    var f: f32 = R;
+    var z: i64 = add(K, BIG);
+    var w: u64 = BIG;
+    var t: i32 = 0;
+    if (x == 9i64) { t = t + 1; }
+    if (y == 18u8) { t = t + 1; }
+    if (f * 2.0f32 == 5.0f32) { t = t + 1; }
+    if (z == 5000000009i64) { t = t + 1; }
+    if (w > 4999999999u64) { t = t + 1; }
+    var g = (K: i32): i32 => K * 3;
+    var h = (q: i32): i32 => q + K;
+    t = t + shadow(40) + g(1) + h(1) + N;
+    return t;
+}

@@ -185,7 +185,7 @@ pub function warn_unresolved_imports(mod: Module, driver: string): boolean {
 // method names, and impls records every `impl Trait for Type` block with the
 // methods it explicitly provides. parse_module populates both; the
 // transformation passes propagate them unchanged.
-pub struct Module { funcs: FuncDecl[], structs: StructDecl[], aliases: TypeAlias[], imports: Import[], top_stmts: ast.Stmt[], enums: EnumDecl[], resources: ResourceDecl[], exports: ExportBinding[], impls: ImplInfo[], trait_reqs: TraitReq[], trait_decls: TraitDecl[] }
+pub struct Module { funcs: FuncDecl[], structs: StructDecl[], aliases: TypeAlias[], imports: Import[], top_stmts: ast.Stmt[], enums: EnumDecl[], resources: ResourceDecl[], exports: ExportBinding[], impls: ImplInfo[], trait_reqs: TraitReq[], trait_decls: TraitDecl[], inferred_consts: string[] }
 
 // TraitReq is one trait's required-method set: the abstract (body-less)
 // signatures an `impl` MUST provide. A defaulted (bodied) method is NOT
@@ -1799,7 +1799,10 @@ function parse_map_lit(p: Par): (ast.Expr, Par) {
     var ctor: string = if (kk == 1) { "map_new_i32" } else { "map_new" };
     var cargs: ast.Expr[] = [];
     cargs = cargs.append(e_number("8", "", false));
-    var mbase: ast.Expr = e_call(e_ident(ctor), cargs);
+    // Positioned at the literal, like the ExprMapLit the verbatim parse keeps:
+    // the desugared constructor is the only node left for a diagnostic about
+    // the literal to land on, and E001's missing-`core/map` report reads it.
+    var mbase: ast.Expr = e_call_at(e_ident(ctor), cargs, mline, mcol);
     var mpi: i32 = 0;
     while (mpi < mlk.len()) {
         var sargs: ast.Expr[] = [];
@@ -16870,148 +16873,6 @@ pub function infer_ret_types_module(mod: Module): Module {
     return Module { ...mod, funcs: funcs };
 }
 
-// ---- call-only 0-arg fn-value inlining ------------------------------
-// The self-host's "bare 0-arg receiver-less fn name = a CALL to it" rule (the
-// `const` rule, #2954) mis-lowers `var f = mk` (mk a 0-arg function) to
-// `var f = mk()`, binding the RESULT — so a later `f()` calls a non-function
-// and segfaults (an IR-path miscompile for an i32 return, an AST one for a
-// struct). When `f` is used ONLY as a call target, it is unambiguously the
-// function VALUE of a 0-arg function — and a 0-arg fn-value called is exactly
-// its direct call evaluated at each call site (matching the native compiler).
-// So inline it: drop the `var f = mk` binding and rewrite every `f(args)` to
-// `mk(args)`. `f` used as a value (`return f`, `g(f)`), reassigned, or
-// re-declared in a nested scope is left alone (the const-call semantics still
-// apply). The native compiler already handles this; this is a self-host-only
-// fix, applied to every consumer of this module. The
-// compiler source uses no such bindings, so the pass is fixpoint-neutral.
-
-// CFScan counts a name's VALUE uses (as a plain value) and CALL uses (as a
-// direct call callee) within an expression / statement subtree.
-struct CFScan { vals: i32, calls: i32 }
-function cf_add(a: CFScan, b: CFScan): CFScan { return CFScan { vals: a.vals + b.vals, calls: a.calls + b.calls }; }
-
-function cf_zero(): CFScan { return CFScan { vals: 0, calls: 0 }; }
-
-// cf_is_zero_arg_fn reports whether `name` is a receiver-less module function
-// with zero parameters (the const-rule shape that `var f = name` mis-handles).
-function cf_is_zero_arg_fn(funcs: FuncDecl[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < funcs.len()) {
-        if (funcs[i].name == name && funcs[i].receiver_name.len() == 0 && funcs[i].params.len() == 0) { return true; }
-        i = i + 1;
-    }
-    return false;
-}
-
-// cf_use_of is the per-node contribution shared by the two const-rule
-// scanners' expression halves: a matching identifier is one VALUE use.
-//
-// The call arm is the discrimination, and it is parent-dependent — `f(x)` is a
-// CALL of f, not a value of it, and the hand-written walk expressed that by not
-// recursing into the callee. The spine visits every node, so the same rule is a
-// signed contribution: the call node adds a call and subtracts the value its
-// callee child is about to add. Only the sum is read, so the order the two
-// land in does not matter.
-function cf_use_of(e: ast.Expr, f: string, acc: CFScan): CFScan {
-    match (e) {
-        ast.ExprIdent(id) => {
-            if (id.name == f) { return CFScan { vals: acc.vals + 1, calls: acc.calls }; }
-            return acc;
-        },
-        ast.ExprCall(c) => {
-            match (c.callee) {
-                ast.ExprIdent(cid) => {
-                    if (cid.name == f) { return CFScan { vals: acc.vals - 1, calls: acc.calls + 1 }; }
-                },
-                _ => { }
-            }
-            return acc;
-        },
-        _ => { return acc; }
-    }
-    return acc;
-}
-
-// cf_assign_target_of is the statement-shaped half: an assignment TARGET names
-// the local without being an expression the walk can hand to cf_use_of.
-function cf_assign_target_of(st: ast.Stmt, f: string, acc: CFScan): CFScan {
-    match (st) {
-        ast.StmtAssign(a) => {
-            if (a.target == f) { return CFScan { vals: acc.vals + 1, calls: acc.calls }; }
-            return acc;
-        },
-        _ => { return acc; }
-    }
-    return acc;
-}
-
-function cf_scan_expr(e: ast.Expr, f: string): CFScan {
-    function ve(n: ast.Expr, own a: CFScan): CFScan { return cf_use_of(n, f, a); }
-    return astwalk.fold_expr(e, cf_zero(), ve);
-}
-
-function cf_scan_stmts(stmts: ast.Stmt[], f: string): CFScan {
-    function ve(n: ast.Expr, own a: CFScan): CFScan { return cf_use_of(n, f, a); }
-    function vs(s: ast.Stmt, own a: CFScan): CFScan { return cf_assign_target_of(s, f, a); }
-    var acc: CFScan = cf_zero();
-    for st in stmts { acc = astwalk.fold_stmt_nodes(st, acc, vs, ve, astwalk.descend_all); }
-    return acc;
-}
-
-// cf_decl_count counts `var <name>` bindings anywhere in a statement list.
-function cf_decl_count(stmts: ast.Stmt[], name: string): i32 {
-    var n: i32 = 0;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
-            ast.StmtVar(v) => { if (v.name == name) { n = n + 1; } },
-            ast.StmtIf(f) => { n = n + cf_decl_count(f.then_body, name) + cf_decl_count(f.else_body, name); },
-            ast.StmtWhile(w) => { n = n + cf_decl_count(w.body, name); },
-            ast.StmtFor(fr) => { n = n + cf_decl_count(fr.body, name); if (fr.var_name == name) { n = n + 1; } },
-            ast.StmtMatch(m) => {
-                var ai: i32 = 0;
-                while (ai < m.arms.len()) { n = n + cf_decl_count(m.arms[ai].body, name); ai = ai + 1; }
-            },
-            _ => { }
-        }
-        i = i + 1;
-    }
-    return n;
-}
-
-// cf_rw_expr rewrites every direct call `f(args)` to `target(args)`.
-// cf_rw_expr / cf_rw_stmts rewrite every direct call `f(args)` to
-// `target(args)`, rebuilding every other node verbatim around its rewritten
-// children — which is map_expr's contract, so only the one changed node is
-// spelled here. POST-order costs nothing: a bare `f` ident is not rewritten by
-// either version, so the callee the rebuilt call node sees is the one the
-// hand-written walk tested.
-function cf_rw_call(x: ast.Expr, f: string, target: string): ast.Expr {
-    match (x) {
-        ast.ExprCall(c) => {
-            match (c.callee) {
-                ast.ExprIdent(cid) => {
-                    if (cid.name == f) { return ast.ExprCall { ...c, callee: ast.ExprIdent { ...cid, name: target } }; }
-                },
-                _ => { }
-            }
-            return x;
-        },
-        _ => { return x; }
-    }
-    return x;
-}
-
-function cf_rw_expr(e: ast.Expr, f: string, target: string): ast.Expr {
-    function rw(x: ast.Expr): ast.Expr { return cf_rw_call(x, f, target); }
-    return astwalk.map_expr(e, rw);
-}
-
-function cf_rw_stmts(stmts: ast.Stmt[], f: string, target: string): ast.Stmt[] {
-    function rw(x: ast.Expr): ast.Expr { return cf_rw_call(x, f, target); }
-    return astwalk.map_stmts(stmts, rw);
-}
-
 // ===================================================================
 // #4380 lever 3: syntactic bounds-check elision for len-bounded loops.
 //
@@ -17340,209 +17201,11 @@ function elb_mark_expr(e: ast.Expr, idx: string, arr: string): ast.Expr {
     return e;
 }
 
-// cf_inline_fn_body inlines every call-only 0-arg fn-value binding in a
-// function body's TOP-LEVEL statements (one full pass, left to right).
-// cf_all_zero_arg_fn_elems reports whether every element of an array literal is
-// a bare identifier naming a 0-arg receiver-less module function — the shape
-// `[mk, mk2]` that would otherwise const-CALL each element through the generic
-// array lowering (storing `mk()` results), so a later `fns[i]()` calls an
-// integer as a code pointer and segfaults. (A >0-arg fn name already lowers to a
-// fn value, so only the 0-arg case needs this handling.)
-function cf_all_zero_arg_fn_elems(elems: ast.Expr[], funcs: FuncDecl[]): boolean {
-    if (elems.len() == 0) { return false; }
-    var i: i32 = 0;
-    while (i < elems.len()) {
-        match (elems[i]) {
-            ast.ExprIdent(id) => { if (!cf_is_zero_arg_fn(funcs, id.name)) { return false; } },
-            _ => { return false; }
-        }
-        i = i + 1;
-    }
-    return true;
-}
-
-// cf_arr_scan_expr counts a name's INDEXED-CALL uses (`f[i](...)` — calls) vs
-// any OTHER use (vals: `f[i]` as a value, `f` passed / stored / a bare ref). A
-// `var f = [fns…]` used only as indexed calls is a function array; a value use
-// means the elements are meant as const CALLS (an `i32[]` of `mk()` results).
-// cf_arr_use_of is cf_use_of's sibling for the function-ARRAY rule: the call
-// shape is `f[i](…)`, so the callee is an index whose array is the name. Same
-// signed contribution — the call node adds a call and subtracts the value the
-// ident inside the index is about to add — and the index EXPRESSION is still
-// scanned, because the spine walks the whole callee.
-function cf_arr_use_of(e: ast.Expr, f: string, acc: CFScan): CFScan {
-    match (e) {
-        ast.ExprIdent(id) => {
-            if (id.name == f) { return CFScan { vals: acc.vals + 1, calls: acc.calls }; }
-            return acc;
-        },
-        ast.ExprCall(c) => {
-            match (c.callee) {
-                ast.ExprIndex(ix) => {
-                    match (ix.array) {
-                        ast.ExprIdent(aid) => {
-                            if (aid.name == f) { return CFScan { vals: acc.vals - 1, calls: acc.calls + 1 }; }
-                        },
-                        _ => { }
-                    }
-                },
-                _ => { }
-            }
-            return acc;
-        },
-        _ => { return acc; }
-    }
-    return acc;
-}
-
-function cf_arr_scan_expr(e: ast.Expr, f: string): CFScan {
-    function ve(n: ast.Expr, own a: CFScan): CFScan { return cf_arr_use_of(n, f, a); }
-    return astwalk.fold_expr(e, cf_zero(), ve);
-}
-
-function cf_arr_scan_stmts(stmts: ast.Stmt[], f: string): CFScan {
-    function ve(n: ast.Expr, own a: CFScan): CFScan { return cf_arr_use_of(n, f, a); }
-    function vs(s: ast.Stmt, own a: CFScan): CFScan { return cf_assign_target_of(s, f, a); }
-    var acc: CFScan = cf_zero();
-    for st in stmts { acc = astwalk.fold_stmt_nodes(st, acc, vs, ve, astwalk.descend_all); }
-    return acc;
-}
-
-// cf_inline_descend runs cf_inline_fn_body over the statement lists NESTED
-// inside `st` — an if/while/for's body, a match arm, a defer's action, and a
-// lambda body reached through an expression.
-//
-// Without it the whole analysis was flat: a `var fns = [mk, mk2]` one `if` deep
-// got no `fn[]` annotation, so the array lowering const-CALLED each element and
-// `fns[0]()` called an integer as a code pointer — SIGSEGV from a program native
-// compiles to 42 (#7199). The same shape at top level was always fine, which is
-// what made the blindness invisible.
-//
-// Each nested list is its own scope here. That is not a simplification: the
-// scans require a use IN the list they are given (`calls >= 1`), so a binding
-// whose uses live in a deeper block simply is not rewritten — the conservative
-// direction, and the same answer the flat walk already gave.
-function cf_inline_descend(st: ast.Stmt, funcs: FuncDecl[]): ast.Stmt {
-    match (st) {
-        ast.StmtIf(f) => {
-            return ast.StmtIf { ...f, cond: cf_inline_expr(f.cond, funcs), then_body: cf_inline_fn_body(f.then_body, funcs), else_body: cf_inline_fn_body(f.else_body, funcs) };
-        },
-        ast.StmtWhile(w) => {
-            return ast.StmtWhile { cond: cf_inline_expr(w.cond, funcs), body: cf_inline_fn_body(w.body, funcs), label: w.label, line: w.line, is_loop: w.is_loop };
-        },
-        ast.StmtFor(fr) => {
-            return ast.StmtFor { var_name: fr.var_name, iter: cf_inline_expr(fr.iter, funcs), body: cf_inline_fn_body(fr.body, funcs), label: fr.label, line: fr.line };
-        },
-        ast.StmtMatch(m) => {
-            var marms: ast.MatchArm[] = [];
-            var mi: i32 = 0;
-            while (mi < m.arms.len()) {
-                marms = marms.append(ast.MatchArm { ...m.arms[mi], body: cf_inline_fn_body(m.arms[mi].body, funcs) });
-                mi = mi + 1;
-            }
-            return ast.StmtMatch { ...m, scrutinee: cf_inline_expr(m.scrutinee, funcs), arms: marms };
-        },
-        ast.StmtDefer(d) => { return ast.StmtDefer { action: cf_inline_descend(d.action, funcs), on_error: d.on_error, line: d.line }; },
-        ast.StmtVar(v) => { return ast.StmtVar { ...v, init: cf_inline_expr(v.init, funcs) }; },
-        ast.StmtReturn(r) => { return ast.StmtReturn { ...r, value: cf_inline_expr(r.value, funcs) }; },
-        ast.StmtExpr(x) => { return ast.StmtExpr { ...x, value: cf_inline_expr(x.value, funcs) }; },
-        ast.StmtAssign(a) => { return ast.StmtAssign { ...a, value: cf_inline_expr(a.value, funcs) }; },
-        _ => { return st; }
-    }
-    return st;
-}
-
-// cf_inline_expr reaches a LAMBDA body, the one statement list that hangs off an
-// expression rather than a statement.
-function cf_inline_expr(e: ast.Expr, funcs: FuncDecl[]): ast.Expr {
-    match (e) {
-        ast.ExprLambda(lm) => { return ast.ExprLambda { ...lm, body: cf_inline_fn_body(lm.body, funcs) }; },
-        _ => {}
-    }
-    return map_expr_kids(e, (k: ast.Expr): ast.Expr => { return cf_inline_expr(k, funcs); });
-}
-
-function cf_inline_fn_body(body: ast.Stmt[], funcs: FuncDecl[]): ast.Stmt[] {
-    var pre: ast.Stmt[] = [];
-    var pi2: i32 = 0;
-    while (pi2 < body.len()) { pre = pre.append(cf_inline_descend(body[pi2], funcs)); pi2 = pi2 + 1; }
-    var out: ast.Stmt[] = pre;
-    var i: i32 = 0;
-    while (i < out.len()) {
-        var handled: boolean = false;
-        match (out[i]) {
-            ast.StmtVar(v) => {
-                match (v.init) {
-                    ast.ExprIdent(id) => {
-                        if (cf_is_zero_arg_fn(funcs, id.name) && cf_decl_count(out, v.name) == 1) {
-                            var sc: CFScan = cf_scan_stmts(out, v.name);
-                            if (sc.vals == 0 && sc.calls >= 1) {
-                                // Drop the binding; rewrite f(args) -> fnname(args).
-                                var nb: ast.Stmt[] = [];
-                                var k: i32 = 0;
-                                while (k < out.len()) { if (k != i) { nb = nb.append(out[k]); } k = k + 1; }
-                                out = cf_rw_stmts(nb, v.name, id.name);
-                                handled = true;
-                            }
-                        }
-                    },
-                    _ => { }
-                }
-            },
-            _ => { }
-        }
-        if (!handled) { i = i + 1; }
-    }
-    // Annotate a `var fns = [<0-arg fn names>]` used ONLY as indexed calls
-    // (`fns[i]()`) as a function array (`fn[]`), so the fn[]-array lowering
-    // emits const_func per element instead of const-CALLING each (which makes
-    // `fns[i]()` call an integer as a code pointer → segfault). A value use of
-    // `fns` leaves it as the generic const-called array (the elements are
-    // `mk()` results), so const semantics are unchanged.
-    var res: ast.Stmt[] = [];
-    var j: i32 = 0;
-    while (j < out.len()) {
-        var keep: ast.Stmt = out[j];
-        match (out[j]) {
-            ast.StmtVar(v) => {
-                if (v.type_name.len() == 0) {
-                    match (v.init) {
-                        ast.ExprArray(arr) => {
-                            if (cf_all_zero_arg_fn_elems(arr.elements, funcs) && cf_decl_count(out, v.name) == 1) {
-                                var asc: CFScan = cf_arr_scan_stmts(out, v.name);
-                                if (asc.vals == 0 && asc.calls >= 1) {
-                                    keep = ast.StmtVar { name: v.name, type_name: "fn[]", init: v.init, line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types };
-                                }
-                            }
-                        },
-                        _ => { }
-                    }
-                }
-            },
-            _ => { }
-        }
-        res = res.append(keep);
-        j = j + 1;
-    }
-    return res;
-}
-
-pub function inline_callonly_fn_values(mod: Module): Module {
-    var funcs: FuncDecl[] = [];
-    var i: i32 = 0;
-    while (i < mod.funcs.len()) {
-        var fd: FuncDecl = mod.funcs[i];
-        funcs = funcs.append(FuncDecl { ...fd, body: cf_inline_fn_body(fd.body, mod.funcs) });
-        i = i + 1;
-    }
-    return Module { ...mod, funcs: funcs, top_stmts: cf_inline_fn_body(mod.top_stmts, mod.funcs) };
-}
-
 pub function module_with_builtins(mod: Module): Module {
     // Prepare defaults, ranges, return types and resource drops before generic
     // specialization. Deferred actions retain their source scopes until the
     // IR consumer resolves binding identities and expands cleanup.
-    var mono: Module = inline_callonly_fn_values(monomorphize_enums(monomorphize_structs(monomorphize_module(register_struct_method_generics(register_map_method_generics(register_array_method_generics(lower_defers_prepass_module(hoist_local_funcs_module(desugar_prepass_module(mod))))))))));
+    var mono: Module = monomorphize_enums(monomorphize_structs(monomorphize_module(register_struct_method_generics(register_map_method_generics(register_array_method_generics(lower_defers_prepass_module(hoist_local_funcs_module(desugar_prepass_module(mod)))))))));
     return Module { ...mono, structs: inject_builtin_enums(mono.structs) };
 }
 
@@ -19921,6 +19584,94 @@ pub function settle_module(mod: Module): Module {
     return Module { ...mod, funcs: funcs, top_stmts: settle_block(mod.top_stmts, "", nonames, nonames, fns, mod.structs) };
 }
 
+// ConstTable is the value each const written without a type stands for, in
+// declaration order. Native's constfold keeps such a const's literal untyped
+// and substitutes it at every reference, so `const K = 9; var x: i64 = K;`
+// reads 9 at i64 as a written literal would; references are replaced by the
+// value here for the same reason. A const referenced from another module is
+// replaced when flatten merges it, so Module.inferred_consts carries the names.
+pub struct ConstTable { names: string[], values: ast.Expr[] }
+
+// inferred_const_table extends `t` with every const in `funcs` written without
+// a type, each value already carrying the earlier ones'.
+pub function inferred_const_table(funcs: FuncDecl[], names: string[], t: ConstTable): ConstTable {
+    var out: ConstTable = t;
+    for fd in funcs {
+        if (fd.is_const && util.has_str(names, fd.name) && fd.body.len() == 1) {
+            if let ast.StmtReturn(r) = fd.body[0] {
+                out = ConstTable { names: out.names.append(fd.name), values: out.values.append(astwalk.substitute_consts_expr(r.value, out.names, out.values)) };
+            }
+        }
+    }
+    return out;
+}
+
+// substitute_const_refs replaces every reference to a const in `t` that no
+// local binding shadows. A const's initialiser sees only the consts declared
+// before it, so a forward reference stays for the checker's const rule.
+pub function substitute_const_refs(mod: Module, t: ConstTable): Module {
+    if (t.names.len() == 0) { return mod; }
+    var funcs: FuncDecl[] = [];
+    var earlier: string[] = [];
+    for fd in mod.funcs {
+        if (fd.is_const) {
+            var seen: ConstTable = const_table_within(t, earlier);
+            funcs = funcs.append(FuncDecl { ...fd, body: astwalk.substitute_consts(fd.body, [], seen.names, seen.values) });
+            earlier = earlier.append(fd.name);
+            continue;
+        }
+        var bound: string[] = [];
+        var params: ast.ParamDecl[] = [];
+        for p in fd.params {
+            params = params.append(ast.ParamDecl { ...p, default_value: astwalk.substitute_consts_expr(p.default_value, t.names, t.values) });
+            bound = astwalk.append_bound_name(bound, p.name);
+        }
+        if (fd.receiver_name.len() > 0) { bound = bound.append(fd.receiver_name); }
+        funcs = funcs.append(FuncDecl { ...fd, params: params, body: astwalk.substitute_consts(fd.body, bound, t.names, t.values) });
+    }
+    return Module { ...mod, funcs: funcs, top_stmts: astwalk.substitute_consts(mod.top_stmts, [], t.names, t.values) };
+}
+
+// const_table_within keeps the entries of `t` named in `names`.
+function const_table_within(t: ConstTable, names: string[]): ConstTable {
+    var out: ConstTable = ConstTable { names: [], values: [] };
+    var i: i32 = 0;
+    for n in t.names {
+        if (util.has_str(names, n)) { out = ConstTable { names: out.names.append(n), values: out.values.append(t.values[i]) }; }
+        i = i + 1;
+    }
+    return out;
+}
+
+// unannotated_const_names lists the consts written without a type.
+function unannotated_const_names(funcs: FuncDecl[]): string[] {
+    var out: string[] = [];
+    for fd in funcs { if (fd.is_const && fd.ret_type == "") { out = out.append(fd.name); } }
+    return out;
+}
+
+// settle_const_types gives a `const` written without a type its value's type,
+// so its own declaration is typed. Consts settle in declaration order, each one
+// visible to the next, so `const B = A * 2` reads A's type. A value it cannot
+// type keeps "" and draws E070.
+function settle_const_types(funcs: FuncDecl[], structs: StructDecl[]): FuncDecl[] {
+    var known: ast.ParamDecl[] = [];
+    var out: FuncDecl[] = [];
+    for fd in funcs {
+        var f: FuncDecl = fd;
+        if (f.is_const && f.ret_type == "" && f.body.len() == 1) {
+            if let ast.StmtReturn(r) = f.body[0] {
+                f = FuncDecl { ...f, ret_type: irt_guess(r.value, known, funcs, structs) };
+            }
+        }
+        if (f.is_const && f.ret_type.len() > 0) {
+            known = known.append(ast.ParamDecl { name: f.name, type_name: f.ret_type, is_str: false, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" });
+        }
+        out = out.append(f);
+    }
+    return out;
+}
+
 pub function parse_module(toks: lexer.Token[]): Module {
     var (m, t, im, fl, ih) = parse_module_flagged(toks, false);
     return m;
@@ -20365,7 +20116,14 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
     // resolve_assoc_projections runs FIRST of the module passes: settle_module
     // and the variant-field resolver both read declared type spellings, and a
     // `Self::Item` left unresolved would reach them as an unknown nominal.
-    return (settle_module(resolve_variant_fields_module(resolve_labels_module(resolve_assoc_projections(Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports, impls: impl_infos, trait_reqs: trait_reqs, trait_decls: traits })))), traits, impl_decls, flines, inline_hints);
+    var parsed: Module = Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports, impls: impl_infos, trait_reqs: trait_reqs, trait_decls: traits, inferred_consts: [] };
+    if (!verbatim) {
+        var inferred: string[] = unannotated_const_names(funcs);
+        var nothing: string[] = [];
+        parsed = substitute_const_refs(parsed, inferred_const_table(funcs, inferred, ConstTable { names: nothing, values: [] }));
+        parsed = Module { ...parsed, funcs: settle_const_types(parsed.funcs, structs), inferred_consts: inferred };
+    }
+    return (settle_module(resolve_variant_fields_module(resolve_labels_module(resolve_assoc_projections(parsed)))), traits, impl_decls, flines, inline_hints);
 }
 
 // merge_module flat-concatenates `into`'s decls with `from`'s:

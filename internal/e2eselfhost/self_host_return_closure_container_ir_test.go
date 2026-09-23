@@ -7,10 +7,10 @@ import (
 
 // returnClosureContainerIRCases pin RETURNING a closure/fn value held in a
 // container across a function boundary — the struct-field / param variants of
-// issue #5202 (cases B, C, E). closure_ret_fns_of / closurearr_ret_fns_of (the
-// pre-passes registering functions whose body returns a closure box, so a
-// caller's `var g = pick()` binds g a closure local / closure array) gained a
-// `structs`-aware type resolver (detector_expr_type) and now recognise:
+// issue #5202 (cases B, C, E). closure_ret_fns_of / closurearr_ret_fns_of
+// register a function declared to return a function or a function array, so a
+// caller's `var g = pick()` binds g a closure local / closure array, whatever
+// the return statements spell:
 //
 //	B — `return r.hs[0]` / `return fs[i]`: an element of a closure ARRAY that is
 //	    a struct field or an fn[] param (type resolves to "fn[]").

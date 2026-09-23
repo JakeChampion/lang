@@ -79,7 +79,7 @@ function run(): i32 {
     // injection below assign struct type-ids in the order the AST path used
     // (injecting before monomorphize would renumber user structs and break
     // struct programs).
-    var elm: parser.Module = parser.Module { funcs: lm.funcs, structs: parser.inject_builtin_enums(lm.structs), aliases: lm.aliases, imports: lm.imports, top_stmts: lm.top_stmts, enums: lm.enums, resources: lm.resources, exports: lm.exports, impls: lm.impls, trait_reqs: lm.trait_reqs, trait_decls: lm.trait_decls };
+    var elm: parser.Module = parser.Module { funcs: lm.funcs, structs: parser.inject_builtin_enums(lm.structs), aliases: lm.aliases, imports: lm.imports, top_stmts: lm.top_stmts, enums: lm.enums, resources: lm.resources, exports: lm.exports, impls: lm.impls, trait_reqs: lm.trait_reqs, trait_decls: lm.trait_decls, inferred_consts: lm.inferred_consts };
     // Judge eligibility BOTH ways: `lm_ok` is the exact verdict the un-injected
     // module gets (the main-path behaviour — every program that lowered before
     // still lowers identically), `elm_ok` additionally lets a struct-returning
@@ -96,7 +96,7 @@ function run(): i32 {
     // through a bare-typevar param (each targets a concrete clone), so
     // `module_erased_wide` clears and the module lowers on the wasm IR path
     // instead of being refused. Non-generic modules no-op (nothing bounded).
-    var mmod: parser.Module = parser.inline_callonly_fn_values(parser.monomorphize_enums(parser.monomorphize_structs(parser.monomorphize_module(parser.register_struct_method_generics(parser.register_map_method_generics(parser.register_array_method_generics(lm)))))));
+    var mmod: parser.Module = parser.monomorphize_enums(parser.monomorphize_structs(parser.monomorphize_module(parser.register_struct_method_generics(parser.register_map_method_generics(parser.register_array_method_generics(lm))))));
     // `mono_ok` is the erased-wide-container rescue: only consulted when the raw
     // verdicts both say defer, so every program that already lowered keeps its
     // exact IR/AST verdict (and byte-identical output). Judging the SAME
@@ -116,7 +116,7 @@ function run(): i32 {
         // output stays byte-identical to before — appending the builtin structs
         // perturbs the emitter even when they're unused.
         if (!lm_ok && elm_ok) {
-            mod = parser.Module { funcs: mod.funcs, structs: parser.inject_builtin_enums(mod.structs), aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls };
+            mod = parser.Module { funcs: mod.funcs, structs: parser.inject_builtin_enums(mod.structs), aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls, inferred_consts: mod.inferred_consts };
         }
         // Force the IR path. Lower every function ONCE and hand the cache to
         // emit_ir_module, which queries module_emits_op / module_uses_* /
