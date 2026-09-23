@@ -14422,7 +14422,9 @@ function lower_call_map_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, mtype: 
         mget = lower_expr(c.args[0], mget);
         if (!mget.ok) { return mget; }
         var mgk: i32 = 0 - 1;
-        if (mkk2 == 0 && is_fresh_str_temp(c.args[0], s)) {
+        var mgrel: string = map_read_key_box_release(mtype, mkk2, c.args[0], s);
+        if (mgrel == "" && mkk2 == 0 && is_fresh_str_temp(c.args[0], s)) { mgrel = "__fern_str_free"; }
+        if (mgrel != "") {
             var mgkn: string = "$mgkey" + util.i32_to_string(mget.locals.len());
             mget = mget.add_local(mgkn);
             mgk = mget.slot_of(mgkn);
@@ -14430,7 +14432,7 @@ function lower_call_map_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, mtype: 
         }
         mget = mget.emit(ir.op_map_get(mkk2, meqfn, map_value_widekind(map_value_of(mtype))));
         if (mgk >= 0) {
-            mget = mget.release(mgk, "__fern_str_free", "map-get-key-temp");
+            mget = mget.release(mgk, mgrel, "map-get-key-temp");
         }
         return mget;
     }
@@ -14439,13 +14441,33 @@ function lower_call_map_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, mtype: 
         if (!mhas.ok) { return mhas; }
         mhas = lower_expr(c.args[0], mhas);
         if (!mhas.ok) { return mhas; }
-        return mhas.emit(ir.op_map_has(mkk2, meqfn));
+        var mhk: i32 = 0 - 1;
+        var mhrel: string = map_read_key_box_release(mtype, mkk2, c.args[0], s);
+        if (mhrel != "") {
+            var mhkn: string = "$mhkey" + util.i32_to_string(mhas.locals.len());
+            mhas = mhas.add_local(mhkn);
+            mhk = mhas.slot_of(mhkn);
+            mhas = mhas.emit(ir.op_tee_local(mhk));
+        }
+        mhas = mhas.emit(ir.op_map_has(mkk2, meqfn));
+        if (mhk >= 0) {
+            mhas = mhas.release(mhk, mhrel, "map-has-key-temp");
+        }
+        return mhas;
     }
     if (fa.field == "get_or" && c.args.len() == 2) {
         var mgo: LowerState = lower_expr(fa.obj, s);
         if (!mgo.ok) { return mgo; }
         mgo = lower_expr(c.args[0], mgo);
         if (!mgo.ok) { return mgo; }
+        var gok: i32 = 0 - 1;
+        var gokrel: string = map_read_key_box_release(mtype, mkk2, c.args[0], s);
+        if (gokrel != "") {
+            var gokn: string = "$gokey" + util.i32_to_string(mgo.locals.len());
+            mgo = mgo.add_local(gokn);
+            gok = mgo.slot_of(gokn);
+            mgo = mgo.emit(ir.op_tee_local(gok));
+        }
         // The DEFAULT must match the value width: an i64/u64 map's
         // default lowers 8-byte too, else a > 2^31 default (or an
         // i64 default local) truncates on the miss path (#5253).
@@ -14474,6 +14496,9 @@ function lower_call_map_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, mtype: 
         if (govw) { gowk = 1; }
         else if (map_value_of(mtype) == "f64" || expr_is_f64(c.args[1], s)) { gowk = 2; }
         mgo = mgo.emit(ir.op_map_get_or(mkk2, meqfn, gowk));
+        if (gok >= 0) {
+            mgo = mgo.release(gok, gokrel, "map-get-or-key-temp");
+        }
         if (godef >= 0) {
             var gorn: string = "$gores" + util.i32_to_string(mgo.locals.len());
             mgo = mgo.add_local(gorn);
@@ -39411,6 +39436,32 @@ function box_binding_is_fresh(e: ast.Expr, structs: StructTab): boolean {
 function map_arg_is_fresh_temp(e: ast.Expr, s: LowerState): boolean {
     if (is_fresh_str_temp(e, s)) { return true; }
     return box_binding_is_fresh(e, s.frame.structs);
+}
+
+// map_read_key_box_release: the release a freshly constructed COMPOSITE key
+// temp handed to a map READ needs once the probe has finished with it, or ""
+// when the site must not release. The read helpers take no ref of their own —
+// right for a BORROWED key, whose local owns it and sweeps it — so a
+// constructed key had no owner anywhere and every call stranded one (#10071).
+//
+// __fern_rc_dec, because the free symbol is a memory-layout choice rather than
+// a preference: it frees a box at data-16 where a string's block starts at
+// value-8. One dec is a composite key's whole release exactly where
+// map_key_box_column_ok already says so; a key whose own fields are counted
+// wants the deep walk first, which this does not claim, leaving it at the same
+// safe-leak floor a discarded struct literal keeps.
+//
+// STRING keys are deliberately not answered here. `get` releases a fresh
+// string temp of its own and keeps doing so; `has` and `get_or` never have,
+// and the evidence does not support adding it: a string-keyed read leaks with
+// a BORROWED key too, so freshness is not what strands it, and the holder that
+// does own those keys is what wants finding. Releasing there on the strength
+// of the fresh-key reasoning alone moved MapAliasGroup's pinned free count.
+function map_read_key_box_release(mtype: string, kkind: i32, e: ast.Expr, s: LowerState): string {
+    if (kkind != 2) { return ""; }
+    if (!box_binding_is_fresh(e, s.frame.structs)) { return ""; }
+    if (!map_key_box_column_ok(map_key_of(mtype), s.frame.structs)) { return ""; }
+    return "__fern_rc_dec";
 }
 
 // call_is_variant_construction: `c` constructs an enum variant — `Line(7)`
