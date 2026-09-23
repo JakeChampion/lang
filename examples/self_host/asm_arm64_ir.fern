@@ -1577,7 +1577,7 @@ function ssa_fuse(fr: SsaFrame, blk: ssa.SBlock): SsaFuse {
         n = 2;
         inverted = true;
     }
-    if (ssa_unique_test(cmp)) { return SsaFuse { n: n, tag: 35, inverted: inverted, a: cmp.args[0], b: 0, unique: true }; }
+    if (ssa_unique_test(cmp)) { return SsaFuse { n: n, tag: ir.kind_id("eq"), inverted: inverted, a: cmp.args[0], b: 0, unique: true }; }
     if (cmp.kind_tag != 9 || !ircore.is_int_cmp_kind(ir.kind_id(cmp.str))) { return ssa_no_fuse(); }
     if (fr.imm.is_imm[cmp.args[0]]) {
         return SsaFuse { n: n, tag: ircore.flip_int_cmp_kind(ir.kind_id(cmp.str)), inverted: inverted, a: cmp.args[1], b: cmp.args[0], unique: false };

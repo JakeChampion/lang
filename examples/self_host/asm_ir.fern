@@ -6205,6 +6205,12 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmco
     return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
 }
 
+// ssa_is_rt_call is a kind-50 call that ssa_rt_call emits: neither a
+// transcendental nor a host call, which stage their own arguments.
+function ssa_is_rt_call(ins: ssa.SInst): boolean {
+    return ins.kind_tag == 50 && ssa_fcall_sym(ins.str) == "" && !ssa_host_kind(ins.str);
+}
+
 // ssa_rt_arg_reg is the allocator index of argument `a`'s register.
 function ssa_rt_arg_reg(a: i32): i32 { if (a == 0) { return 2; } return 1; }
 
@@ -6292,7 +6298,7 @@ function ssa_fuse(fr: SsaFrame, blk: ssa.SBlock): SsaFuse {
         n = 2;
         inverted = true;
     }
-    if (ssa_unique_test(cmp)) { return SsaFuse { n: n, tag: 35, inverted: inverted, a: cmp.args[0], b: 0, unique: true }; }
+    if (ssa_unique_test(cmp)) { return SsaFuse { n: n, tag: ir.kind_id("eq"), inverted: inverted, a: cmp.args[0], b: 0, unique: true }; }
     if (cmp.kind_tag != 9 || !ircore.is_int_cmp_kind(ir.kind_id(cmp.str))) { return ssa_no_fuse(); }
     if (fr.imm.is_imm[cmp.args[0]]) {
         return SsaFuse { n: n, tag: ircore.flip_int_cmp_kind(ir.kind_id(cmp.str)), inverted: inverted, a: cmp.args[1], b: cmp.args[0], unique: false };
@@ -6395,7 +6401,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
     if (k == 49) { return ssa_str_call(ins, reg_of, s); }
     if (k == 50 && ssa_fcall_sym(ins.str) != "") { return ssa_fcall(ins, reg_of, s); }
     if (k == 50 && ssa_host_kind(ins.str)) { return ssa_host_call(ins, reg_of, s); }
-    if (k == 50) { return ssa_rt_call(ins, reg_of, s); }
+    if (ssa_is_rt_call(ins)) { return ssa_rt_call(ins, reg_of, s); }
     if (k == 58) { return ssa_sym_addr(ins, reg_of, s); }
     if (k >= 52 && k <= 55) { return ssa_raw_inst(ins, reg_of, s); }
     if (k == 56) { return ssa_call_ind(ins, reg_of, s); }
@@ -6714,7 +6720,7 @@ function ssa_arg_prefs(f: ssa.SFunc, s: asmcore.EmitState): i32[] {
     while (p < ssa_reg_params(f)) { pref = pref.with(p, p); p = p + 1; }
     for blk in f.blocks {
         for ins in blk.insts {
-            var rt: boolean = ins.kind_tag == 50;
+            var rt: boolean = ssa_is_rt_call(ins);
             if (!rt && !ssa_reg_call(ins, s)) { continue; }
             var a: i32 = 0;
             while (a < ins.args.len() && (!rt || a < 2)) {
