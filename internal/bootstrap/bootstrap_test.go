@@ -15,8 +15,10 @@ import (
 // fixpointCompiler is a stand-in compiler whose output IS itself, so every
 // generation it builds is byte-identical to the one before: the shape a real
 // stage chain must have. It ignores the source it is handed. Run without -o
-// it is the "program" it compiled, and exits 42 as the smoke test expects.
+// it is the "program" it compiled: with no operands the one-liner, which
+// exits 42, and with operands coreutils/tr, which the host's tr stands in for.
 const fixpointCompiler = `#!/bin/sh
+case "$1" in -*|"") ;; *) exec tr "$@" ;; esac
 out=""
 while [ $# -gt 0 ]; do
   case "$1" in -o) out="$2"; shift 2 ;; *) shift ;; esac
