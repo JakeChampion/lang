@@ -1008,7 +1008,7 @@ function ssa_const_reg(text: string, d: string, s: asmcore.EmitState): asmcore.E
 // ssa_unary_known is the unary vocabulary lift_from_ir_prod produces.
 function ssa_unary_known(what: string): boolean {
     if (what == "!" || what == "int_extend" || what == "int_wrap" || what == "u32_wrap" || what == "load_i32") { return true; }
-    return util.str_has_prefix(what, "int_cast:") || ssa_funary_known(what) || ssa_bits_asm(what) != "";
+    return util.str_has_prefix(what, "int_cast:") || ssa_funary_known(what) || ssa_bits_asm(what, "x4") != "";
 }
 
 // ssa_funary_known is the f64 unary vocabulary lift_float_prod produces.
@@ -1065,71 +1065,74 @@ function ssa_has_phis(f: ssa.SFunc, fr: SsaFrame, id: i32): boolean {
 }
 
 // ssa_unary_asm is the stack machine's selection for the width ops, `not`
-// and the f64 unaries, on x0. A cast to a type none of the arms name moves
-// nothing there either.
-function ssa_unary_asm(what: string, unsigned: boolean): string {
-    var f: string = ssa_fmath_asm(what);
-    if (f == "") { f = ssa_fconv_asm(what, unsigned); }
-    if (f == "") { f = ssa_bits_asm(what); }
+// and the f64 unaries, in place on `d`. A cast to a type none of the arms name
+// moves nothing there either.
+function ssa_unary_asm(what: string, unsigned: boolean, d: string): string {
+    var w: string = ssa_wreg(d);
+    var f: string = ssa_fmath_asm(what, d);
+    if (f == "") { f = ssa_fconv_asm(what, unsigned, d); }
+    if (f == "") { f = ssa_bits_asm(what, d); }
     if (f != "") { return f; }
-    if (what == "load_i32") { return "    ldrsw x4, [x4]\n"; }
-    if (what == "!") { return "    cmp x4, #0\n    cset x4, eq\n"; }
-    if (what == "u32_wrap" || what == "int_cast:u32") { return "    mov w4, w4\n"; }
-    if (what == "int_cast:u8") { return "    and x4, x4, #255\n"; }
-    if (what == "int_cast:i32") { return "    sxtw x4, w4\n"; }
+    if (what == "load_i32") { return "    ldrsw " + d + ", [" + d + "]\n"; }
+    if (what == "!") { return "    cmp " + d + ", #0\n    cset " + d + ", eq\n"; }
+    if (what == "u32_wrap" || what == "int_cast:u32") { return "    mov " + w + ", " + w + "\n"; }
+    if (what == "int_cast:u8") { return "    and " + d + ", " + d + ", #255\n"; }
+    if (what == "int_cast:i32") { return "    sxtw " + d + ", " + w + "\n"; }
     if (what == "int_extend" || what == "int_wrap") {
-        if (unsigned) { return "    mov w4, w4\n"; }
-        return "    sxtw x4, w4\n";
+        if (unsigned) { return "    mov " + w + ", " + w + "\n"; }
+        return "    sxtw " + d + ", " + w + "\n";
     }
     return "";
 }
 
-// ssa_bits_asm is the bit counts on x0 at the width the name carries, as the
+// ssa_bits_asm is the bit counts on `d` at the width the name carries, as the
 // stack machine's arms select them; "" for any other op.
-function ssa_bits_asm(what: string): string {
-    if (what == "clz:64") { return "    clz x4, x4\n"; }
-    if (what == "clz:32") { return "    clz w4, w4\n"; }
-    if (what == "ctz:64") { return "    rbit x4, x4\n    clz x4, x4\n"; }
-    if (what == "ctz:32") { return "    rbit w4, w4\n    clz w4, w4\n"; }
-    if (what == "popcount:64") { return "    fmov d0, x4\n    cnt v0.8b, v0.8b\n    addv b0, v0.8b\n    fmov w4, s0\n"; }
-    if (what == "popcount:32") { return "    fmov s0, w4\n    cnt v0.8b, v0.8b\n    addv b0, v0.8b\n    fmov w4, s0\n"; }
+function ssa_bits_asm(what: string, d: string): string {
+    var w: string = ssa_wreg(d);
+    if (what == "clz:64") { return "    clz " + d + ", " + d + "\n"; }
+    if (what == "clz:32") { return "    clz " + w + ", " + w + "\n"; }
+    if (what == "ctz:64") { return "    rbit " + d + ", " + d + "\n    clz " + d + ", " + d + "\n"; }
+    if (what == "ctz:32") { return "    rbit " + w + ", " + w + "\n    clz " + w + ", " + w + "\n"; }
+    if (what == "popcount:64") { return "    fmov d0, " + d + "\n    cnt v0.8b, v0.8b\n    addv b0, v0.8b\n    fmov " + w + ", s0\n"; }
+    if (what == "popcount:32") { return "    fmov s0, " + w + "\n    cnt v0.8b, v0.8b\n    addv b0, v0.8b\n    fmov " + w + ", s0\n"; }
     return "";
 }
 
-// ssa_fmath_asm is the single-instruction f64 math on the pattern in x0, as
+// ssa_fmath_asm is the single-instruction f64 math on the pattern in `d`, as
 // the stack machine's arms select it; "" for any other op.
-function ssa_fmath_asm(what: string): string {
+function ssa_fmath_asm(what: string, d: string): string {
     var op: string = "";
     if (what == "fsqrt") { op = "fsqrt"; } else if (what == "ffloor") { op = "frintm"; }
     else if (what == "fceil") { op = "frintp"; } else if (what == "ftrunc") { op = "frintz"; }
     else if (what == "fround") { op = "frinta"; } else if (what == "fneg") { op = "fneg"; }
     else if (what == "fabs") { op = "fabs"; }
     if (op == "") { return ""; }
-    return "    fmov d0, x4\n    " + op + " d0, d0\n    fmov x4, d0\n";
+    return "    fmov d0, " + d + "\n    " + op + " d0, d0\n    fmov " + d + ", d0\n";
 }
 
-// ssa_fconv_asm is the f64 conversions and reinterprets on x0: the saturating
+// ssa_fconv_asm is the f64 conversions and reinterprets on `d`: the saturating
 // fcvtz forms and the width-selected scvtf/ucvtf, as the stack machine's arms
 // select them; "" for any other op.
-function ssa_fconv_asm(what: string, unsigned: boolean): string {
+function ssa_fconv_asm(what: string, unsigned: boolean, d: string): string {
+    var w: string = ssa_wreg(d);
     if (what == "i32_to_f64:64") {
-        if (unsigned) { return "    ucvtf d0, x4\n    fmov x4, d0\n"; }
-        return "    scvtf d0, x4\n    fmov x4, d0\n";
+        if (unsigned) { return "    ucvtf d0, " + d + "\n    fmov " + d + ", d0\n"; }
+        return "    scvtf d0, " + d + "\n    fmov " + d + ", d0\n";
     }
     if (what == "i32_to_f64:32") {
-        if (unsigned) { return "    ucvtf d0, w4\n    fmov x4, d0\n"; }
-        return "    scvtf d0, x4\n    fmov x4, d0\n";
+        if (unsigned) { return "    ucvtf d0, " + w + "\n    fmov " + d + ", d0\n"; }
+        return "    scvtf d0, " + d + "\n    fmov " + d + ", d0\n";
     }
     if (what == "f64_to_i32") {
-        if (unsigned) { return "    fmov d0, x4\n    fcvtzu w4, d0\n"; }
-        return "    fmov d0, x4\n    fcvtzs w4, d0\n    sxtw x4, w4\n";
+        if (unsigned) { return "    fmov d0, " + d + "\n    fcvtzu " + w + ", d0\n"; }
+        return "    fmov d0, " + d + "\n    fcvtzs " + w + ", d0\n    sxtw " + d + ", " + w + "\n";
     }
     if (what == "f64_to_i64") {
-        if (unsigned) { return "    fmov d0, x4\n    fcvtzu x4, d0\n"; }
-        return "    fmov d0, x4\n    fcvtzs x4, d0\n";
+        if (unsigned) { return "    fmov d0, " + d + "\n    fcvtzu " + d + ", d0\n"; }
+        return "    fmov d0, " + d + "\n    fcvtzs " + d + ", d0\n";
     }
-    if (what == "f32_bits") { return "    fmov d0, x4\n    fcvt s0, d0\n    fmov w4, s0\n    sxtw x4, w4\n"; }
-    if (what == "f32_from_bits") { return "    fmov s0, w4\n    fcvt d0, s0\n    fmov x4, d0\n"; }
+    if (what == "f32_bits") { return "    fmov d0, " + d + "\n    fcvt s0, d0\n    fmov " + w + ", s0\n    sxtw " + d + ", " + w + "\n"; }
+    if (what == "f32_from_bits") { return "    fmov s0, " + w + "\n    fcvt d0, s0\n    fmov " + d + ", d0\n"; }
     return "";
 }
 
@@ -1202,12 +1205,13 @@ function ssa_push_operand(reg_of: i32[], v: i32, pushed: i32, s: asmcore.EmitSta
 }
 
 // ssa_rc_prim renders one rc primitive inline, in the instructions its stub
-// uses. x5 holds the floor and then the count, x6 the 0/1, and x7 the poison
-// the sanitizer compares against; none is a home (those are x0 and x9 upward),
-// so all survive a destination that IS the operand's register, and the
-// destination is written after the last read of it. Every read of the count
-// carries the poison check, the uniqueness test no less than the retain
-// (#9889). ssa.rc_inlined says which calls come here and why.
+// uses, the heap floor compared as a shifted immediate. x5 holds the count,
+// x6 the 0/1, and x7 the poison the sanitizer compares against; none is a
+// home (those are x0 and x9 upward), so all survive a destination that IS
+// the operand's register, and the destination is written after the last read
+// of it. Every read of the count carries the poison check, the uniqueness
+// test no less than the retain (#9889). ssa.rc_inlined says which calls come
+// here and why.
 function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
     s = helper_call_needs(ins.str, s);
     s = ssa_read(reg_of, ins.args[0], "x4", s);
@@ -1215,7 +1219,7 @@ function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
     var done: string = lp + "rcinc" + util.i32_to_string(ins.result);
     if (ins.str == "__fern_rc_is_unique") { done = lp + "rcuniq" + util.i32_to_string(ins.result); }
     var guard: string = "    tbnz " + p + ", #0, " + done + "\n"
-        + "    mov x5, #0x10000\n    cmp " + p + ", x5\n    blo " + done + "\n";
+        + "    cmp " + p + ", #16, lsl #12\n    blo " + done + "\n";
     if (ins.str == "__fern_rc_is_unique") {
         var d: string = ssa_dst(reg_of, ins.result);
         s = s.write("    mov x6, #0\n" + guard);
@@ -1636,9 +1640,8 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
         var fb: string = ssa_fbin_asm(ins.str);
         if (fb != "") { s = s.write(fb); } else { s = s.write(ir_bin_asm(ir.kind_id(ins.str), ins.imm, "x4", "x5", "x6")); }
     } else {
-        d = "x4";
-        s = ssa_load(reg_of, ins.args[0], "x4", s);
-        s = s.write(ssa_unary_asm(ins.str, ins.imm == 1));
+        s = ssa_load(reg_of, ins.args[0], d, s);
+        s = s.write(ssa_unary_asm(ins.str, ins.imm == 1, d));
     }
     return ssa_store(reg_of, ins.result, d, s);
 }
@@ -6203,8 +6206,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    ldr x0, [sp]\n");
     s = s.write("__fn___fern_arr_dec.r:\n");
     s = s.write("    cbz x0, .Larrdec_ret\n");
-    s = s.write("    mov x9, #0x10000\n");
-    s = s.write("    cmp x0, x9\n");
+    s = s.write("    cmp x0, #16, lsl #12\n");
     s = s.write("    blo .Larrdec_ret\n");
     s = s.write("    ldur w1, [x0, #-8]\n");      // rc
     s = s.write(san_poison_check("w1", "w9", ".Larrdec_live"));
@@ -6261,6 +6263,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("__fn___fern_str_free.r:\n");
     s = s.write("    cbz x0, .Lstrfree_ret\n");
     s = s.write("    tbnz x0, #0, .Lstrfree_ret\n");   // tagged / SSO sentinel (defensive)
+    // x9 is both the heap floor here and the freelist class cap below.
     s = s.write("    mov x9, #0x10000\n");
     s = s.write("    cmp x0, x9\n");
     s = s.write("    blo .Lstrfree_ret\n");        // low-addr guard

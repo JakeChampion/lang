@@ -77,6 +77,14 @@ function main(): i32 { return caller(3); }
 `,
 		want:   map[string][]string{"x86-64-linux": {`call __fn_cube\b`}, "arm64-linux": {`bl __fn_cube\b`}},
 		forbid: map[string][]string{"x86-64-linux": {`__fn_sq\b`}, "arm64-linux": {`__fn_sq\b`}}},
+	// An i32 result's wrap is one sign-extension on the value's own register,
+	// not a round trip through the scratch.
+	{name: "wrap_in_place", fn: "add3", exit: 12, src: `
+@noinline function add3(a: i32, b: i32, c: i32): i32 { return a + b + c; }
+function main(): i32 { return add3(3, 4, 5); }
+`,
+		want:   map[string][]string{"x86-64-linux": {`\bmovslq %(\w+)d?, %\w+`}, "arm64-linux": {`\bsxtw x(\d+), w\d+`}},
+		forbid: map[string][]string{"arm64-linux": {`\bsxtw x4, w4\b`}}},
 }
 
 var optShapeLegs = []struct {
