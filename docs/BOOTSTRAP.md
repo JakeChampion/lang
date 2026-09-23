@@ -2,8 +2,8 @@
 
 `make bootstrap` builds the self-host compiler from a clean checkout with no Go
 toolchain and no native backend involved: a pinned earlier compiler (stage0)
-compiles `examples/self_host/fern.fern`, the result compiles and runs a small
-program, and is installed as `bin/fern-selfhost` — the same artifact `make
+compiles `examples/self_host/fern.fern`, the result compiles and runs a one-line
+program and `coreutils/tr`, and is installed as `bin/fern-selfhost` — the same artifact `make
 selfhost-cli` produces via `./bin/fern`. `make distcheck` is the reproducibility
 half: that compiler recompiles its own source and the two binaries must be
 byte-identical. This is `NATIVE-CONVERGENCE.md §3a` precondition 1, the shape
@@ -16,7 +16,11 @@ STAGE0=bin/fern-selfhost make bootstrap   # run the chain from a local candidate
 ```
 
 Everything lands in `build/bootstrap/`: the cached stage0 under
-`stage0/<release>/`, `stage1`, `stage2`, and the smoke program. Nothing here
+`stage0/<release>/`, `stage1`, `stage2`, and the smoke programs. The smoke is
+a one-line program and `coreutils/tr` built with `-O` and run: a stage1 that
+an old stage0 built through its AST-lowering fallback compiles the first and
+aborts on the second (#9763), so a one-liner alone installed a compiler that
+could not build real programs. Nothing here
 reads `bin/fern`; the target does not depend on it and the CI job that runs it
 installs no Go.
 
