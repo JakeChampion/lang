@@ -2605,14 +2605,12 @@ pub function (s: LowerState) mark_closure_opt_ret(i: i32, ty: string): LowerStat
 // stamp_fn_value_facts applies BOTH fn-VALUE facts to the slot a `var` bind has
 // just created: the declaration's signature and the Option/Result return.
 //
-// THREE paths in lower_stmt_var bind a fn-typed `var`, and each has to call this:
-// bind_var_slot, lower_stmt_var_closure (a lambda / closure init, which does not
-// route through bind_var_slot and calls the two halves itself because its init
-// carries no fn-type ANNOTATION to gate on), and the const-fn VALUE branch
-// (`var g: () => T = f`, #3574), which binds its own slot and returns early.
-// Missing that third one took `match (f())` off the IR path outright: the local
-// had no recorded Option return, so lower_stmt_match could not name the
-// scrutinee's payload type and bailed the whole function.
+// Both paths in lower_stmt_var that bind a fn-typed `var` have to call this:
+// bind_var_slot, and lower_stmt_var_closure (a lambda / closure init, which does
+// not route through bind_var_slot and calls the two halves itself because its
+// init carries no fn-type ANNOTATION to gate on). Without it `match (f())` left
+// the IR path: the local had no recorded Option return, so lower_stmt_match could
+// not name the scrutinee's payload type and bailed the whole function.
 pub function (s: LowerState) stamp_fn_value_facts(v: ast.StmtVar, slot: i32, pre: LowerState): LowerState {
     var out: LowerState = s.stamp_fnval_decl(slot, v);
     // An ANNOTATED fn-typed local bound to a named opt-returning fn
@@ -6512,6 +6510,10 @@ pub function expr_struct_type(e: ast.Expr, s: LowerState): string {
             // the structural walk unchanged.
             var cnom: string = struct_tag_from_ty(c.ty, s);
             if (cnom != "") { return cnom; }
+            // A call through a fn value (`var f = mk; f().x`) answers the
+            // return type its binding, parameter or field declares.
+            var fvnom: string = struct_tag_from_ty(call_fn_value_ret(c, s), s);
+            if (fvnom != "") { return fvnom; }
             // A call to a struct-returning function evaluates to that struct type
             // (so `var p = make()` / `var p = obj.make()` then `p.x` resolves).
             match (c.callee) {
@@ -23083,30 +23085,6 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
             }
         },
         _ => {}
-    }
-    // A bare ZERO-ARG fn name bound to a `fn`-typed local is a function
-    // VALUE (pointer), not a `const`-style call: `var g: () => T = f`.
-    // The generic lower_expr below would read `f` (a 0-arg receiver-less
-    // fn, indistinguishable from a `const` without context) as a const and
-    // CALL it, storing f()'s result; `g()` then calls that integer as a
-    // code pointer and segfaults. The `fn`-typed target disambiguates it
-    // as a value → emit const_func (the same pointer a >=1-arg fn-name
-    // already lowers to). g stays a plain fn-pointer slot, so `g()`
-    // dispatches via the plain call_indirect path. (#3574)
-    if (v.type_name == "fn") {
-        match (v.init) {
-            ast.ExprIdent(fvid) => {
-                if (s.slot_of(fvid.name) < 0 && s.is_const_fn(fvid.name)) {
-                    var fvs: LowerState = s.emit(ir.op_const_func(0, fvid.name));
-                    var fvb: LowerState = fvs.add_local(v.name);
-                    fvb = fvb.mark_reclaim_site(fvb.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
-                    var fvslot: i32 = fvb.slot_of(v.name);
-                    fvb = fvb.stamp_fn_value_facts(v, fvslot, s);
-                    return fvb.emit(ir.op_store_local(fvslot));
-                }
-            },
-            _ => {}
-        }
     }
     var se: LowerState = s;
     // #6713: `var t = slice_unchecked(s, a, b)` where every use of `t` borrows
@@ -58520,37 +58498,6 @@ function emit_inarm_match_reuse(y_name: string, y_site: string, init: ast.Expr, 
     return st;
 }
 
-// register_fnvalue_local_struct_rets augments `reg` with a `f|S` entry for each
-// struct-returning fn-value LOCAL `var f = g` (type_name "fn", `g` a struct-
-// returning function already in `reg`) — so a later `f()` resolves its struct
-// result for field / method access (#3640 slice B.1). Recurses nested bodies so
-// a binding inside an if / while / for / match arm counts.
-function register_fnvalue_local_struct_rets(stmts: ast.Stmt[], reg: SigReg): SigReg {
-    for stmt in stmts {
-        match (stmt) {
-            ast.StmtVar(v) => {
-                if (v.type_name == "fn") {
-                    match (v.init) {
-                        ast.ExprIdent(g) => {
-                            var s_ty: string = sig_reg_value_of(reg, g.name);
-                            if (s_ty.len() > 0) { reg = sig_reg_append(reg, v.name + "|" + s_ty); }
-                        },
-                        _ => {}
-                    }
-                }
-            },
-            ast.StmtIf(f) => { reg = register_fnvalue_local_struct_rets(f.then_body, reg); reg = register_fnvalue_local_struct_rets(f.else_body, reg); },
-            ast.StmtWhile(w) => { reg = register_fnvalue_local_struct_rets(w.body, reg); },
-            ast.StmtFor(fr) => { reg = register_fnvalue_local_struct_rets(fr.body, reg); },
-            ast.StmtMatch(m) => {
-                for arm in m.arms { reg = register_fnvalue_local_struct_rets(arm.body, reg); }
-            },
-            _ => {}
-        }
-    }
-    return reg;
-}
-
 // has_self_tail reports whether `ops` contains at least one
 // `call_direct <name>/<nparams> ; return` pair worth rewriting — the tail-call
 // shape TCO fires on. The pre-walk lets tco_self_tail skip the loop wrapper
@@ -60057,42 +60004,11 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     // it never leaks to another function — a param named `f` elsewhere that is
     // NOT array-returning is unaffected.
     var arr_ret_fns_aug: SigReg = sg.arr_ret_fns;
-    // Struct-returning fn-value PARAM (`g: () => P`, coarse "fn" with the
-    // return-struct name on ParamDecl.fn_ret): a call `g()` yields a `P`, so
-    // register a `g|P` entry in THIS function's sg.struct_ret_fns view. The
-    // existing struct_ret_type lookup (split on `|`) then resolves `g().field`
-    // / `var p = g()` exactly as it does for a struct-returning free function —
-    // so the call-result field read lowers on the IR path instead of bailing to
-    // AST (#3640 slice A). Like arr_ret_fns_aug, the entry lives only in the
-    // per-call LowerState, so it never leaks to another function. The self-host
-    // compiler's own source uses no fn-typed params, so this never fires there —
-    // the byte-identical fixpoint is undisturbed.
-    var struct_ret_fns_aug: SigReg = sg.struct_ret_fns;
     var pri: i32 = 0;
     while (pri < fn.params.len()) {
         if (fn.params[pri].ret_arr) { arr_ret_fns_aug = sig_reg_append(arr_ret_fns_aug, fn.params[pri].name); }
-        // A fn-value param whose return names a bare struct registers a
-        // sg.struct_ret_fns entry (drives `g().field`, #3640). fn_ret also
-        // carries bracketed enum return spellings (#4722), "string", and now
-        // SCALAR returns — none of which name a struct. Ask the parser's
-        // is_struct_ret_name rather than enumerating the exclusions here: it
-        // already rejects brackets, "string" and every scalar, and it is the
-        // same predicate that decides what fn_ret keeps in the first place, so
-        // the two cannot drift.
-        if (fn.params[pri].type_name == "fn" && parser.is_struct_ret_name(fn.params[pri].fn_ret)) {
-            struct_ret_fns_aug = sig_reg_append(struct_ret_fns_aug, fn.params[pri].name + "|" + fn.params[pri].fn_ret);
-        }
         pri = pri + 1;
     }
-    // #3640 slice B.1: a struct-returning fn-value LOCAL `var f: () => P = mk`
-    // (type_name coarsed to "fn") binds `mk` as a fn-value (const_func); a call
-    // `f()` then yields a `P`. Register a `f|P` entry — the local sibling of the
-    // param registration above — so `f().field` / `var p = f()` resolve the
-    // struct result and lower on the IR path instead of bailing. The return
-    // struct is recovered from the target `mk`'s own sg.struct_ret_fns entry (a
-    // struct-returning free function), so no annotation return-type spelling is
-    // needed. Scanned over the function body (incl. nested blocks).
-    struct_ret_fns_aug = register_fnvalue_local_struct_rets(fn.body, struct_ret_fns_aug);
     // Struct reclamation: the fresh, non-escaping struct locals this function may
     // free at scope exit / loop-rebind (conservative escape analysis above).
     // move_sites_of is the array-store construction-move analysis (#6569), until
@@ -60337,7 +60253,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     var da_bp: string[] = dead_alias_borrow_params_of(fn, structs);
     var dalias: DeadAliases = dead_alias_of(fn.body, asg_targets, fn_moves_all.names, da_bp, is_scalar_type_name(fn.ret_type));
     var persistent_ops: ir.OpBuffer = ir.op_buffer();
-    var s: LowerState = LowerState { ops: persistent_ops, locals: locals0, ctrl: 0, loop_blk: noloop, frame: LowerFrame { ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dalias.sites, dead_alias_bp: da_bp, spread_sites: spread_sites_of(fn.body, structs, []), type_params: fn.type_params, strarr_sources: string_array_sources_of(fn), structs: structs, reclaimable_names: reclaim, aliased_names: aliased, map_clone_sites: map_clone_insert_sites_of(fn.body), borrowed_names: borrowed, try_cleanup: tclean, defer_slots: [], defer_guard: "", append_inplace: append_inplace_names_of(fn), field_append_inplace: field_append_inplace_sites_of(fn), grow_sole: grow_sole_exempt_names_of(fn), grow_alias: grow_alias_names_of(fn), own_params: own_names, cur_key: struct_ret_key(fn), n_params: names.len(), fail_why: "", moved_names: fn_moves_top.names, moved_elided: [], move_sites: fn_moves_top.sites, fld_bases: field_move_bases_of(fn, sg), own_lift_sites: own_lift_retain_sites_of(fn, sg, structs) }, xblock_pending: [], optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
+    var s: LowerState = LowerState { ops: persistent_ops, locals: locals0, ctrl: 0, loop_blk: noloop, frame: LowerFrame { ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dalias.sites, dead_alias_bp: da_bp, spread_sites: spread_sites_of(fn.body, structs, []), type_params: fn.type_params, strarr_sources: string_array_sources_of(fn), structs: structs, reclaimable_names: reclaim, aliased_names: aliased, map_clone_sites: map_clone_insert_sites_of(fn.body), borrowed_names: borrowed, try_cleanup: tclean, defer_slots: [], defer_guard: "", append_inplace: append_inplace_names_of(fn), field_append_inplace: field_append_inplace_sites_of(fn), grow_sole: grow_sole_exempt_names_of(fn), grow_alias: grow_alias_names_of(fn), own_params: own_names, cur_key: struct_ret_key(fn), n_params: names.len(), fail_why: "", moved_names: fn_moves_top.names, moved_elided: [], move_sites: fn_moves_top.sites, fld_bases: field_move_bases_of(fn, sg), own_lift_sites: own_lift_retain_sites_of(fn, sg, structs) }, xblock_pending: [], optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
     // A `Cell[T]` PARAM takes the element-width columns a `var c: Cell[T]`
     // local gets from its annotation, so its `get` reads at the element's
     // width rather than as an i32.
