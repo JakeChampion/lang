@@ -1,10 +1,7 @@
 // A function returning a function, called and its result called in one
 // expression, through a function VALUE rather than the declaration's name:
 // a local bound with a written type, a local bound without one, and a
-// parameter. The self-host's AST lowering dispatches the inner result as a
-// bare code pointer when it is a closure box and segfaults on all three
-// (#10057); the typed path answers them since a function type nested in a
-// function value's signature is a slot (#10024).
+// parameter.
 function adder(n: i32): (i32) => i32 { return (b: i32): i32 => b + n; }
 
 function call_through(mk: (i32) => ((i32) => i32)): i32 { return mk(1)(2); }

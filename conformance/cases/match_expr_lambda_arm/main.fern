@@ -3,12 +3,9 @@
 // StmtAssign / StmtIf / StmtWhile / StmtFor and fell through the `_` arm for
 // StmtMatch, so a match's arm bodies were never walked at all.
 //
-// The consequence was not a wrong answer but a REFUSAL: no `__lam_N` was
-// hoisted for the arm lambdas, so lower_expr's ExprLambda arm asked for a
-// `<cur_fn>$clo` that hoist_escaping_closure never built — it only fires on a
-// body whose LAST statement is literally `return <ExprLambda>`, and a
-// match-EXPRESSION in return position makes that `return <IIFE call>`. The whole
-// MODULE then bailed off the IR path. #6256.
+// The consequence was not a wrong answer but a REFUSAL: no lift claimed the arm
+// lambdas, so they reached lower_expr's ExprLambda arm, which refuses a lambda
+// no lift claims, and the whole MODULE bailed off the IR path. #6256.
 //
 // The if-expression sibling always worked, precisely because StmtIf was in that
 // list — so the two rows below are the same program written two ways, and they

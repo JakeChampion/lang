@@ -2104,12 +2104,19 @@ pub function fn_param_from_func(name: string, f: parser.FuncDecl, skip: i32): as
     var tys: string[] = [];
     var i: i32 = skip;
     while (i < f.params.len()) {
-        var ty: string = f.params[i].type_name;
+        var ty: string = nested_fn_spelling(f.params[i].type_name, f.params[i].fn_ret, f.params[i].fn_param_types);
         if (f.params[i].own) { ty = "own " + ty; }
         tys = tys.append(ty);
         i = i + 1;
     }
-    return fn_param_decl(name, tys, f.ret_type);
+    return fn_param_decl(name, tys, nested_fn_spelling(f.ret_type, f.ret_fn_ret, f.ret_fn_param_types));
+}
+
+// nested_fn_spelling spells a coarse `fn` tag out from its sidecars, grouped so
+// it can stand as a parameter or result of another function type.
+function nested_fn_spelling(tag: string, fn_ret: string, fn_ptys: string): string {
+    if (tag != "fn" || fn_ret.len() == 0) { return tag; }
+    return "(" + parser.fn_tag_spelling(tag, fn_ret, fn_ptys) + ")";
 }
 
 // fn_spelling_of renders a fn-typed ParamDecl's signature as the source
@@ -16096,97 +16103,35 @@ function lower_expr_call(c: ast.ExprCall, e: ast.Expr, s: LowerState): LowerStat
             }
             return s.fail();
         },
-        // `mk()(args)` — the callee is itself a CALL returning a plain
-        // function value (a bare fn pointer; e.g. mk returns a no-capture
-        // lambda, lifted to a const_func by lift_lambdas). Lower the args,
-        // then the callee call (its returned fn pointer on TOS), then
-        // call_indirect — the same shape as a fn-pointer array element /
-        // tuple element call.
+        // `mk()(args)` — the callee is itself a CALL, so what it returns is a
+        // function value, and every function value is an env box
+        // [funcval, caps…]: dispatch env-first, the shape a closure local uses.
         ast.ExprCall(cocall) => {
-            var coc_is_closure: boolean = false;
-            match (cocall.callee) {
-                ast.ExprIdent(cocid) => {
-                    // `mk()(args)` — inner call to a closure-returning
-                    // module fn — OR `g()(args)` where g is a RETCLO
-                    // closure LOCAL (g() returns a closure box), #5281.
-                    if (util.index_of_str(s.frame.sigs.closure_fns, cocid.name) >= 0) { coc_is_closure = true; }
-                    else if (s.is_closure_local("RETCLO$" + cocid.name)) { coc_is_closure = true; }
-                },
-                // `pick(9)()(args)` — the inner callee is ITSELF a call to a
-                // RETCLO2 factory (its result's OWN call returns a closure),
-                // so `pick(9)()` returns a closure box; dispatch env-first (#5281).
-                ast.ExprCall(cocinner) => {
-                    match (cocinner.callee) {
-                        ast.ExprIdent(cociid) => {
-                            if (util.index_of_str(s.frame.sigs.closure_fns, "RETCLO2:" + cociid.name) >= 0) { coc_is_closure = true; }
-                        },
-                        _ => {}
-                    }
-                },
-                // `m.make()(args)` — the inner call is a METHOD returning
-                // a closure, invoked immediately without ever binding to a
-                // local. The sibling of the `var f = m.make()` case in the
-                // closure-local binding match: both call sites only ever
-                // inspected a bare-ident callee, so a method-returned
-                // closure was dispatched as a bare fn pointer and wasm
-                // trapped with `undefined element: out of bounds table
-                // access`. Keyed by bare method name, matching how
-                // closure_ret_fns_of registers methods. #4801.
-                ast.ExprFieldAccess(cocfa) => {
-                    if (util.index_of_str(s.frame.sigs.closure_fns, cocfa.field) >= 0) { coc_is_closure = true; }
-                },
-                _ => {}
-            }
-            // A callee that returns a CLOSURE box [funcval, caps…] (a
-            // capturing-lambda-returning fn, tracked in closure_fns):
-            // dispatch env-FIRST, the same shape a closure LOCAL uses
-            // (the `is_closure_local` arm above). The box is needed twice
-            // — as the `__env` first arg and to read `box[0]` as the call
-            // target — so the inner call is evaluated into a fresh temp.
-            // Mirrors `var f = mk(…); f(args)`: the temp is marked an array
-            // so the exit dec-sweep releases the box, exactly as the bound
-            // closure local is. (#3551)
-            if (coc_is_closure) {
-                var bs: LowerState = lower_expr(c.callee, s);   // inner call -> box on TOS
+            var bs: LowerState = lower_expr(c.callee, s);   // inner call -> box on TOS
+            if (!bs.ok) { return bs; }
+            var btmp: string = "$coc" + util.i32_to_string(bs.locals.len());
+            bs = bs.add_local(btmp);
+            var bslot: i32 = bs.slot_of(btmp);
+            bs = bs.mark_arr(bslot, true);
+            bs = bs.emit(ir.op_store_local(bslot));
+            bs = bs.emit(ir.op_load_local(bslot));          // __env (the box)
+            // One declared signature drives both halves — the width each
+            // argument is lowered at and the funcref type the call names.
+            // The tag describes the REAL parameters, so it is indexed from
+            // argument 0; the env box's leading 'w' is added by
+            // callee_fn_sig_declared, after the widths are read (#5986).
+            var bxsig: string = call_ret_fn_sig(cocall, s);
+            var bxai: i32 = 0;
+            while (bxai < c.args.len()) {
+                bs = lower_fn_value_arg_wc(c.args[bxai], sig_arg_width_char(bxsig, bxai), bs);
                 if (!bs.ok) { return bs; }
-                var btmp: string = "$coc" + util.i32_to_string(bs.locals.len());
-                bs = bs.add_local(btmp);
-                var bslot: i32 = bs.slot_of(btmp);
-                bs = bs.mark_arr(bslot, true);
-                bs = bs.emit(ir.op_store_local(bslot));
-                bs = bs.emit(ir.op_load_local(bslot));          // __env (the box)
-                // One declared signature drives both halves — the width each
-                // argument is lowered at and the funcref type the call names.
-                // The tag describes the REAL parameters, so it is indexed from
-                // argument 0; the env box's leading 'w' is added by
-                // callee_fn_sig_declared, after the widths are read (#5986).
-                var bxsig: string = call_ret_fn_sig(cocall, s);
-                var bxai: i32 = 0;
-                while (bxai < c.args.len()) {
-                    bs = lower_fn_value_arg_wc(c.args[bxai], sig_arg_width_char(bxsig, bxai), bs);
-                    if (!bs.ok) { return bs; }
-                    bxai = bxai + 1;
-                }
-                bs = bs.emit(ir.op_load_local(bslot));          // box again
-                bs = bs.emit(ir.op_const_i32(0));
-                bs = bs.emit(ir.op_arr_get(32));                // box[0] = funcval
-                return bs.emit(ir.op_call_indirect_sig(c.args.len() + 1,
-                    callee_fn_sig_declared(bxsig, c, true)));
+                bxai = bxai + 1;
             }
-            var cocs: LowerState = s;
-            // One declared signature drives both halves — the width each argument
-            // is lowered at and the funcref type the call names (#5986).
-            var cocsig: string = call_ret_fn_sig(cocall, s);
-            var cocai: i32 = 0;
-            while (cocai < c.args.len()) {
-                cocs = lower_fn_value_arg_wc(c.args[cocai], sig_arg_width_char(cocsig, cocai), cocs);
-                if (!cocs.ok) { return cocs; }
-                cocai = cocai + 1;
-            }
-            var coce: LowerState = lower_expr(c.callee, cocs);
-            if (!coce.ok) { return coce; }
-            return coce.emit(ir.op_call_indirect_sig(c.args.len(),
-                callee_fn_sig_declared(cocsig, c, false)));
+            bs = bs.emit(ir.op_load_local(bslot));          // box again
+            bs = bs.emit(ir.op_const_i32(0));
+            bs = bs.emit(ir.op_arr_get(32));                // box[0] = funcval
+            return bs.emit(ir.op_call_indirect_sig(c.args.len() + 1,
+                callee_fn_sig_declared(bxsig, c, true)));
         },
         _ => { return s.fail(); }
     }
@@ -16195,13 +16140,20 @@ function lower_expr_call(c: ast.ExprCall, e: ast.Expr, s: LowerState): LowerStat
 
 // call_ret_fn_sig is the funcref signature tag for a call THROUGH the result of
 // another call — `mk()(4.5)`, whose callee is itself a call returning a fn value.
-// The result has no slot and no declared spelling at the call site; what names it
-// is the CALLEE's own declaration, recorded on FuncDecl and registered by
-// ret_fn_sigs_of. "" for a method or an indirect inner callee, and for a
-// signature `$fn<N>` already describes, both of which keep today's emission.
+// The result has no slot and no declared spelling at the call site, and the
+// checker's stamp on the inner call is the coarse "fn" tag. What names it is the
+// inner callee's own declaration: a function-typed local, param or struct field
+// records its result in a sidecar (call_fn_value_ret), and a function or method
+// on its FuncDecl (ret_fn_sigs_of). "" for a signature `$fn<N>` already describes.
 function call_ret_fn_sig(inner: ast.ExprCall, s: LowerState): string {
+    var ret: string = call_fn_value_ret(inner, s);
+    if (ret.len() > 0) { return fn_sig_of_ref(parser.parse_type_ref(ret), []); }
     match (inner.callee) {
         ast.ExprIdent(id) => { return sig_reg_value_last(s.frame.sigs.ret_fn_sigs, s.mod_fn_name(id.name)); },
+        ast.ExprFieldAccess(fa) => {
+            var rty: string = expr_struct_type(fa.obj, s);
+            if (rty.len() > 0) { return sig_reg_value_last(s.frame.sigs.ret_fn_sigs, rty + "." + fa.field); }
+        },
         _ => {}
     }
     return "";
@@ -68482,7 +68434,9 @@ pub function ret_fn_sigs_of(funcs: parser.FuncDecl[]): string[] {
         if (pd.type_name.len() == 0) { continue; }
         var tag: string = fn_sig_of(pd, []);
         if (tag.len() == 0) { continue; }
-        out = out.append(fn.name + "|" + tag);
+        var key: string = fn.name;
+        if (fn.receiver_type.len() > 0) { key = util.base_type_name(fn.receiver_type) + "." + fn.name; }
+        out = out.append(key + "|" + tag);
     }
     return out;
 }
@@ -77136,10 +77090,6 @@ function ilc_stmt_at(st: ast.Stmt, acc: InlineCloAcc, fd: parser.FuncDecl, gfns:
             // fn-arg both use the env-first call path (the slot is marked a
             // closure local at lowering, recognising the `__mkclo$` init). A
             // non-fn-value init falls through to the ordinary aggregate walk.
-            var bn: string = v.name;
-            var bty: string = v.type_name;
-            var bln: i32 = v.line;
-            var bco: i32 = v.col;
             match (v.init) {
                 ast.ExprIdent(vid) => {
                     // A local binding of the same name SHADOWS the module
@@ -77150,7 +77100,7 @@ function ilc_stmt_at(st: ast.Stmt, acc: InlineCloAcc, fd: parser.FuncDecl, gfns:
                         var hr: HoistResult = make_wrap_named_func(vid.name, wn, mfuncs);
                         if (hr.ok) {
                             var marker: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "__mkclo$" + wn, line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_argc: 0, ty: "" };
-                            return (ast.StmtVar { name: bn, type_name: bty, init: marker, line: bln, col: bco, is_str: false, fn_ret: "", fn_param_types: "" }, InlineCloAcc { funcs: fs.append(hr.func), counter: ct + 1 }, true);
+                            return (ast.StmtVar { ...v, init: marker }, InlineCloAcc { funcs: fs.append(hr.func), counter: ct + 1 }, true);
                         }
                     }
                 },
@@ -77167,11 +77117,11 @@ function ilc_stmt_at(st: ast.Stmt, acc: InlineCloAcc, fd: parser.FuncDecl, gfns:
                     // unchanged) for non-i32 captures — only the ExprCall result
                     // counts as boxed; a decline falls through to the walk so the
                     // module bails (correctness preserved).
-                    if (stmts_value_use(fd.body, bn)) {
+                    if (stmts_value_use(fd.body, v.name)) {
                         var lr: InlineCloRes = try_fn_field_value(v.init, fd, fs, ct, gfns, mfuncs, structs);
                         match (lr.expr) {
                             ast.ExprCall(_) => {
-                                return (ast.StmtVar { name: bn, type_name: bty, init: lr.expr, line: bln, col: bco, is_str: false, fn_ret: "", fn_param_types: "" }, InlineCloAcc { funcs: lr.funcs, counter: lr.counter }, true);
+                                return (ast.StmtVar { ...v, init: lr.expr }, InlineCloAcc { funcs: lr.funcs, counter: lr.counter }, true);
                             },
                             _ => {}
                         }
