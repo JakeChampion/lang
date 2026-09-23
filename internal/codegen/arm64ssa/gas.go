@@ -1372,6 +1372,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_count_byte":         emitCountByteHelper,
 	"__fern_scan_set":           emitScanSetHelper,
 	"__fern_count_runs":         emitCountRunsHelper,
+	"__fern_bsd_sum":            emitBsdSumHelper,
 	"__fern_sum_bytes":          emitSumBytesHelper,
 	"__fern_scale_f64":          emitScaleF64Helper,
 	"__fern_crc32_cksum":        emitCrc32CksumHelper,
@@ -6203,6 +6204,29 @@ func emitCrc32CksumHelper(w func(string, ...any)) {
 // No cursor, so no clamp. Both degenerate answers are real counts rather
 // than sentinels: an out-of-range byte counts 0 because nothing can equal it,
 // an empty string counts 0 because it has no bytes.
+// emitBsdSumHelper writes __fern_bsd_sum(s, sum) -> the BSD checksum continued
+// over s: per byte a 16-bit rotate right by one and an add.
+func emitBsdSumHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_bsd_sum"))
+	w("\tldur w3, [x0, #-4]") // len
+	w("\tand w1, w1, #0xffff")
+	w("\tmov x10, #0")
+	w(".Lssa_bsd_sum_loop:")
+	w("\tcmp w10, w3")
+	w("\tb.ge .Lssa_bsd_sum_end")
+	w("\tldrb w11, [x0, x10]")
+	w("\tlsr w9, w1, #1")
+	w("\torr w1, w9, w1, lsl #15")
+	w("\tadd w1, w1, w11")
+	w("\tand w1, w1, #0xffff")
+	w("\tadd x10, x10, #1")
+	w("\tb .Lssa_bsd_sum_loop")
+	w(".Lssa_bsd_sum_end:")
+	w("\tmov w0, w1")
+	w("\tret")
+}
+
 // emitCountRunsHelper writes __fern_count_runs(s, inside, set) -> how many
 // runs of bytes whose entry in `set` is nonzero begin in s, `inside` nonzero
 // meaning the byte before s was a member. It keeps "not a member" as 0 or 1,

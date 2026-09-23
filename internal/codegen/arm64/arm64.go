@@ -833,6 +833,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesCountRuns {
 		g.emitCountRunsRuntime()
 	}
+	if g.usesBsdSum {
+		g.emitBsdSumRuntime()
+	}
 	if g.usesSumBytes {
 		g.emitSumBytesRuntime()
 	}
@@ -5047,6 +5050,38 @@ func (g *generator) emitScanSetRuntime() {
 	g.emit("ldp x29, x30, [sp], #48")
 	g.emit("ret")
 	g.sizeDirective("__fern_scan_set")
+}
+
+// emitBsdSumRuntime emits `__fern_bsd_sum(s, sum) -> i32`: the BSD checksum
+// continued over s, each byte a 16-bit rotate right by one and an add.
+func (g *generator) emitBsdSumRuntime() {
+	g.line("")
+	g.line(".global __fern_bsd_sum")
+	g.typeDirective("__fern_bsd_sum")
+	g.label("__fern_bsd_sum")
+	// x0/x1 = string words, w2 = sum.
+	g.emit("stp x29, x30, [sp, #-48]!")
+	g.emit("mov x29, sp")
+	g.emit("mov x4, x0")
+	g.emit("mov x5, x1")
+	g.emitStrDataPtr2W("x7", "x4", "x5", 16) // x7 = byte pointer
+	g.emitStrLen2W("w6", "x5")               // w6 = byte length
+	g.emit("and w0, w2, #0xffff")
+	g.emit("mov x10, #0")
+	g.label(".Lbsd_sum_loop")
+	g.emit("cmp w10, w6")
+	g.emit("b.ge .Lbsd_sum_ret")
+	g.emit("ldrb w11, [x7, x10]")
+	g.emit("lsr w9, w0, #1")
+	g.emit("orr w0, w9, w0, lsl #15")
+	g.emit("add w0, w0, w11")
+	g.emit("and w0, w0, #0xffff")
+	g.emit("add x10, x10, #1")
+	g.emit("b .Lbsd_sum_loop")
+	g.label(".Lbsd_sum_ret")
+	g.emit("ldp x29, x30, [sp], #48")
+	g.emit("ret")
+	g.sizeDirective("__fern_bsd_sum")
 }
 
 // emitCountRunsRuntime emits `__fern_count_runs(s, inside, set) -> i32`: how
@@ -15611,6 +15646,8 @@ type generator struct {
 	usesScanSet bool
 	// usesCountRuns gates the run-count kernel (__fern_count_runs).
 	usesCountRuns bool
+	// usesBsdSum gates the BSD checksum kernel (__fern_bsd_sum).
+	usesBsdSum bool
 	// usesSumBytes gates the byte-sum reduction kernel (__fern_sum_bytes).
 	usesSumBytes bool
 	// usesScaleF64 gates the f64 scaling kernel (__fern_scale_f64).
@@ -20209,6 +20246,8 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesScanSet = true
 		case "__fern_count_runs":
 			g.usesCountRuns = true
+		case "__fern_bsd_sum":
+			g.usesBsdSum = true
 		case "__fern_sum_bytes":
 			g.usesSumBytes = true
 		case "__fern_scale_f64":

@@ -1654,6 +1654,17 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		},
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
+	// __bsd_sum(s, sum) → i32: the BSD checksum `sum -r` keeps, carried in
+	// `sum` and continued over s: per byte, rotate the 16 bits right by one
+	// and add the byte, modulo 2^16. Native runtime surface, carried by the
+	// self-host emitters too (#4451).
+	c.info.FuncSigs["__bsd_sum"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.StringType{},
+			ast.NumberType{Width: 32, Signed: true},
+		},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
 	// __count_runs(s, inside, set) → i32: how many runs of bytes whose entry
 	// in `set` is nonzero begin in s. `inside` nonzero says the byte before s
 	// was a member, so a run open at s[0] is not counted. A byte past the end

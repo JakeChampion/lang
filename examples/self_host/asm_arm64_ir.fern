@@ -528,6 +528,26 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.mark_heap();
         return s;
     }
+    if (o.kind_tag == 329) {  // bsd_sum
+        // operand stack [box, sum] (sum on top) -> the BSD checksum continued
+        // over the string: per byte a 16-bit rotate right by one and an add.
+        var blo: asmcore.LabelOut = asmcore.fresh_label(s);
+        var b_loop: string = blo.name;
+        var blo2: asmcore.LabelOut = asmcore.fresh_label(blo.state);
+        var b_done: string = blo2.name;
+        s = blo2.state;
+        s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+        s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
+        s = s.write("    and x1, x1, #0xffff\n    mov x2, #0\n");
+        s = s.write(b_loop + ":\n");
+        s = s.write("    cmp x2, x3\n    b.ge " + b_done + "\n");
+        s = s.write("    add x5, x0, x2\n    ldrb w6, [x5]\n");
+        s = s.write("    lsr x9, x1, #1\n    orr x1, x9, x1, lsl #15\n");
+        s = s.write("    add x1, x1, x6\n    and x1, x1, #0xffff\n");
+        s = s.write("    add x2, x2, #1\n    b " + b_loop + "\n");
+        s = s.write(b_done + ":\n    str x1, [sp, #-16]!\n");
+        return s;
+    }
     if (o.kind_tag == 327) {  // count_runs
         // operand stack [box, inside, set] (set on top) -> how many runs of
         // set members begin in the string. The set's length is at [set] and

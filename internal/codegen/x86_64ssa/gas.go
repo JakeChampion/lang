@@ -2361,6 +2361,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_count_byte":               emitCountByteHelper,
 	"__fern_scan_set":                 emitScanSetHelper,
 	"__fern_count_runs":               emitCountRunsHelper,
+	"__fern_bsd_sum":                  emitBsdSumHelper,
 	"__fern_sum_bytes":                emitSumBytesHelper,
 	"__fern_scale_f64":                emitScaleF64Helper,
 	"__fern_crc32_cksum":              emitCrc32CksumHelper,
@@ -4399,6 +4400,28 @@ func emitCountRunsHelper(w func(string, ...any)) {
 	w("\tinc esi")
 	w("\tjmp .Lssa_count_runs_loop")
 	w(".Lssa_count_runs_end:")
+	w("\tret")
+}
+
+// emitBsdSumHelper writes __fern_bsd_sum(s, sum) -> the BSD checksum continued
+// over s: per byte a 16-bit rotate right by one and an add.
+func emitBsdSumHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_bsd_sum"))
+	w("\tmov ecx, %s", memRef("rdi", -4)) // len
+	w("\tmovzx eax, si")
+	w("\txor edx, edx")
+	w("\ttest ecx, ecx")
+	w("\tjz .Lssa_bsd_sum_ret")
+	w(".Lssa_bsd_sum_loop:")
+	w("\tmovzx r8d, byte ptr [rdi + rdx]")
+	w("\tror ax, 1")
+	w("\tadd ax, r8w")
+	w("\tadd edx, 1")
+	w("\tcmp edx, ecx")
+	w("\tjb .Lssa_bsd_sum_loop")
+	w(".Lssa_bsd_sum_ret:")
+	w("\tmovzx eax, ax")
 	w("\tret")
 }
 

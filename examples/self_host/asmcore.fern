@@ -4727,6 +4727,8 @@ function builtin_i32_names(): string[] {
         // __count_runs(s, inside, set): how many runs of `set` members
         // begin in s. i32 for ascii_run's reason.
         "__count_runs",
+        // __bsd_sum(s, sum): the BSD checksum continued over s.
+        "__bsd_sum",
         // __rmemchr(s, byte, from): the index of the LAST `byte` at
         // or before `from`, or -1 (ATLAS-PLATFORM-PLAN §3.3,
         // memchr's nominated sibling). Same i32 shape as __memchr's;

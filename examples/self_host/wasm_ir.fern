@@ -403,6 +403,7 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
     if (module_uses_sum_bytes(cache)) { out = out.append("@uses_sum_bytes"); }
     if (module_uses_scan_set(cache)) { out = out.append("@uses_scan_set"); }
     if (module_uses_count_runs(cache)) { out = out.append("@uses_count_runs"); }
+    if (module_uses_bsd_sum(cache)) { out = out.append("@uses_bsd_sum"); }
     if (module_uses_scale_f64(cache)) { out = out.append("@uses_scale_f64"); }
     if (module_uses_crc32_cksum(cache)) { out = out.append("@uses_crc32_cksum"); }
     if (module_uses_ascii_run(cache)) { out = out.append("@uses_ascii_run"); }
@@ -762,6 +763,13 @@ pub function module_uses_count_byte(cache: irlower.LowerResult[]): boolean {
 pub function module_uses_scan_set(cache: irlower.LowerResult[]): boolean {
     function is_scan_set(o: ir.Op): boolean { return o.kind_tag == 324; }  // scan_set
     return any_op(cache, is_scan_set);
+}
+
+// module_uses_bsd_sum gates $__fern_bsd_sum, the BSD checksum. Same shape as
+// module_uses_memchr above.
+pub function module_uses_bsd_sum(cache: irlower.LowerResult[]): boolean {
+    function is_bsd_sum(o: ir.Op): boolean { return o.kind_tag == 329; }  // bsd_sum
+    return any_op(cache, is_bsd_sum);
 }
 
 // module_uses_count_runs gates $__fern_count_runs, the run count. Same shape
@@ -4861,6 +4869,11 @@ function emit_str_op_wat(o: ir.Op): string {
         // A call for memchr's reason.
         return "    call $__fern_count_runs\n";
     }
+    if (o.kind_tag == 329) {  // bsd_sum
+        // stack: s, sum -> the BSD checksum continued over s. A call for
+        // memchr's reason.
+        return "    call $__fern_bsd_sum\n";
+    }
     if (o.kind_tag == 322) {  // scale_f64
         // stack: xs, k -> the data pointer of a fresh f64 array, xs scaled
         // by k. A call for memchr's reason.
@@ -6902,6 +6915,24 @@ pub function rmemchr_helper(): string {
 // an empty string counts 0 because it has no bytes.
 //
 // Reads only the source block — no allocation, no calls.
+// bsd_sum_helper emits $__fern_bsd_sum(s, sum) -> the BSD checksum continued
+// over s from `sum`: per byte a 16-bit rotate right by one and an add.
+pub function bsd_sum_helper(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_bsd_sum (param $s i32) (param $sum i32) (result i32)\n";
+    o = o + "    (local $len i32) (local $i i32)\n";
+    o = o + "    (local.set $len (i32.load (local.get $s)))\n";
+    o = o + "    (local.set $sum (i32.and (local.get $sum) (i32.const 65535)))\n";
+    o = o + "    (block $d (loop $c\n";
+    o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $len)))\n";
+    o = o + "      (local.set $sum (i32.and (i32.add (i32.or (i32.shr_u (local.get $sum) (i32.const 1)) (i32.shl (local.get $sum) (i32.const 15)))\n";
+    o = o + "        (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i)))) (i32.const 65535)))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $c)))\n";
+    o = o + "    (local.get $sum))\n";
+    return o;
+}
+
 // count_runs_helper emits $__fern_count_runs(s, inside, set) -> how many runs
 // of bytes whose set entry (the 4-byte slot at set + 8 + b*4) is nonzero
 // begin in s; `inside` nonzero means the byte before s was a member. A byte
@@ -10905,6 +10936,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     if (need(needs, "@uses_sum_bytes")) { parts = parts.append(sum_bytes_helper()); }
     if (need(needs, "@uses_scan_set")) { parts = parts.append(scan_set_helper()); }
     if (need(needs, "@uses_count_runs")) { parts = parts.append(count_runs_helper()); }
+    if (need(needs, "@uses_bsd_sum")) { parts = parts.append(bsd_sum_helper()); }
     if (need(needs, "@uses_scale_f64")) { parts = parts.append(scale_f64_helper()); }
     if (need(needs, "@uses_crc32_cksum")) { parts = parts.append(crc32_cksum_helper()); }
     if (need(needs, "@uses_ascii_run")) { parts = parts.append(ascii_run_helper()); }

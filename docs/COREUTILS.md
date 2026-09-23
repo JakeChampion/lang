@@ -2673,6 +2673,21 @@ holding a CR under `-E` alone takes the line rewriter instead of the
 expansion. The corpus now covers the CRLF line, the CR across files and
 reads, and the trailing CR.
 
+### The BSD checksum, 2026-09-23 (GNU coreutils 9.12)
+
+`__bsd_sum(s, sum)` continues the checksum that `sum -r` and `cksum -a bsd`
+keep over a string. For each byte it rotates the 16 bits right by one and
+adds the byte, modulo 2^16. It is a kernel on every backend and in both
+compilers, and `std/hash`'s `BsdSum.update` calls it. The checksum is one
+serial chain through the sum, and the default x86-64 emitter spent about
+fifteen instructions a byte on it. The kernel's loop spends two on the
+chain, a `ror` and an `add` on the 16-bit register.
+
+| workload | before | after | GNU 9.12 |
+|---|---:|---:|---:|
+| `sum` of the 62 MiB bench file | 191 ms | 49 ms | 111 ms |
+| `cksum -a bsd` of the same file | 186 ms | 52 ms | 113 ms |
+
 ### nl's ordinary lines, 2026-09-23 (GNU coreutils 9.12)
 
 `nl` made every line a string, `slice_unchecked` plus a copy, and ran it

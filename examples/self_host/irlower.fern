@@ -13138,7 +13138,7 @@ function lower_call_path_scalars(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerSt
 // number of arguments falls through to the ordinary named-call path.
 function is_byte_kernel_call(name: string, argc: i32): boolean {
     if (name == "__memchr" || name == "__rmemchr") { return argc == 3; }
-    if (name == "__count_byte" || name == "__ascii_run") { return argc == 2; }
+    if (name == "__count_byte" || name == "__ascii_run" || name == "__bsd_sum") { return argc == 2; }
     if (name == "__scan_set" || name == "__count_runs") { return argc == 3; }
     if (name == "__crc32_cksum") { return argc == 2; }
     if (name == "__sum_bytes") { return argc == 1; }
@@ -13162,6 +13162,7 @@ function is_byte_kernel_call(name: string, argc: i32): boolean {
 //   __scan_set(s, from, set)    → the first byte at or after `from` whose
 //                                 entry in the u8[] `set` is nonzero, or the
 //                                 LENGTH.
+//   __bsd_sum(s, sum)           → the BSD checksum continued over s.
 //   __count_runs(s, inside, set) → how many runs of `set` members begin in
 //                                 s; `inside` says one was open before it.
 //   __mismatch(a, ao, b, bo, n) → the first differing offset of two ranges, or
@@ -13188,6 +13189,7 @@ function lower_call_byte_kernel(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerSta
     if (cid.name == "__ascii_run") { return k.emit(ir.op_ascii_run()); }
     if (cid.name == "__scan_set") { return k.emit(ir.op_scan_set()); }
     if (cid.name == "__count_runs") { return k.emit(ir.op_count_runs()); }
+    if (cid.name == "__bsd_sum") { return k.emit(ir.op_bsd_sum()); }
     if (cid.name == "__crc32_cksum") { return k.emit(ir.op_crc32_cksum()); }
     if (cid.name == "__scale_f64") { return k.emit(ir.op_scale_f64()); }
     return k.emit(ir.op_mismatch());
@@ -66989,7 +66991,7 @@ function borrow_reg_record(key: string, flags: string): string {
 // name: the escape walks see no receiver type, so the name alone must settle
 // it.
 function copying_builtin_keys(funcs: parser.FuncDecl[]): string[] {
-    var keys: string[] = ["print", "write", "eprint", "strbuf_append", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "__memchr", "__rmemchr", "__ascii_run", "__scan_set", "__count_runs", "__count_byte", "__sum_bytes", "__mismatch", "__crc32_cksum", "__scale_f64"];
+    var keys: string[] = ["print", "write", "eprint", "strbuf_append", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "__memchr", "__rmemchr", "__ascii_run", "__scan_set", "__count_runs", "__bsd_sum", "__count_byte", "__sum_bytes", "__mismatch", "__crc32_cksum", "__scale_f64"];
     var has_write: boolean = false;
     var has_write_some: boolean = false;
     for fn in funcs {

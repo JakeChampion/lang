@@ -1030,6 +1030,26 @@ func New() *Interp {
 	// whose entry in `set` is nonzero, or len(s). `from` clamps like
 	// __memchr's, and a byte past the end of `set` is not in the set. The
 	// oracle for the byte-set scan kernel.
+	// __bsd_sum(s, sum): the BSD checksum continued over s from `sum`.
+	i.Builtins["__bsd_sum"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("__bsd_sum: expected 2 args, got %d", len(args))
+		}
+		s, ok := args[0].(String)
+		if !ok {
+			return nil, fmt.Errorf("__bsd_sum: expected a string, got %T", args[0])
+		}
+		n, ok := args[1].(Number)
+		if !ok {
+			return nil, fmt.Errorf("__bsd_sum: expected an integer sum, got %T", args[1])
+		}
+		sum := uint32(int64(n)) & 0xffff
+		for _, c := range []byte(string(s)) {
+			sum = (sum>>1 | sum<<15) & 0xffff
+			sum = (sum + uint32(c)) & 0xffff
+		}
+		return Number(sum), nil
+	}}
 	// __count_runs(s, inside, set): how many runs of set members begin in s;
 	// `inside` nonzero means the byte before s was a member.
 	i.Builtins["__count_runs"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {

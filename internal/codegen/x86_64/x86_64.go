@@ -819,6 +819,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesCountRuns {
 		g.emitCountRunsRuntime()
 	}
+	if g.usesBsdSum {
+		g.emitBsdSumRuntime()
+	}
 	if g.usesSumBytes {
 		g.emitSumBytesRuntime()
 	}
@@ -1309,6 +1312,8 @@ type generator struct {
 	usesScanSet bool
 	// usesCountRuns gates the run-count kernel (__fern_count_runs).
 	usesCountRuns bool
+	// usesBsdSum gates the BSD checksum kernel (__fern_bsd_sum).
+	usesBsdSum bool
 	// usesSumBytes gates the byte-sum reduction kernel (__fern_sum_bytes).
 	usesSumBytes bool
 	// usesScaleF64 gates the f64 scaling kernel (__fern_scale_f64).
@@ -1930,6 +1935,8 @@ func (g *generator) recordUse(target string) {
 		g.usesScanSet = true
 	case "__fern_count_runs":
 		g.usesCountRuns = true
+	case "__fern_bsd_sum":
+		g.usesBsdSum = true
 	case "__fern_sum_bytes":
 		g.usesSumBytes = true
 	case "__fern_scale_f64":
@@ -11783,6 +11790,40 @@ func (g *generator) emitScanSetRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_scan_set, .-__fern_scan_set")
+}
+
+// emitBsdSumRuntime emits `__fern_bsd_sum(s, sum) -> i32`: the BSD checksum
+// continued over s, each byte a 16-bit rotate right by one and an add. The
+// chain through the sum is the whole cost, and it is one `ror` and one `add`
+// on the 16-bit register a byte.
+func (g *generator) emitBsdSumRuntime() {
+	g.line("")
+	g.line(".globl __fern_bsd_sum")
+	g.line(".type __fern_bsd_sum, @function")
+	g.label("__fern_bsd_sum")
+	// rdi = string, esi = sum.
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("sub rsp, 16")
+	g.emitStrLen("ecx", "rdi") // ecx = len
+	g.emitStrDataPtr("rdi", "rdi", "[rbp - 16]")
+	g.emit("movzx eax, si")
+	g.emit("xor edx, edx")
+	g.emit("test ecx, ecx")
+	g.emit("jz .Lbsd_sum_ret")
+	g.label(".Lbsd_sum_loop")
+	g.emit("movzx r8d, byte ptr [rdi + rdx]")
+	g.emit("ror ax, 1")
+	g.emit("add ax, r8w")
+	g.emit("add edx, 1")
+	g.emit("cmp edx, ecx")
+	g.emit("jb .Lbsd_sum_loop")
+	g.label(".Lbsd_sum_ret")
+	g.emit("movzx eax, ax")
+	g.emit("mov rsp, rbp")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_bsd_sum, .-__fern_bsd_sum")
 }
 
 // emitCountRunsRuntime emits `__fern_count_runs(s, inside, set) -> i32`: how

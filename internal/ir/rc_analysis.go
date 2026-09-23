@@ -1481,6 +1481,7 @@ var copyingBuiltinArgs = map[string][]int{
 	// return a scalar.
 	"__scan_set":          {0, 2},
 	"__count_runs":        {0, 2},
+	"__bsd_sum":           {0},
 	"__method_Map_get":    {1},
 	"__method_Map_get_or": {1},
 	"__method_Map_has":    {1},

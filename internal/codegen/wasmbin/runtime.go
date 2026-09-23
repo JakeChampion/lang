@@ -342,6 +342,12 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_str_len")
 					needs.add("__fern_str_byte")
 					needs.add("__fern_scan_set")
+				case "__fern_bsd_sum":
+					// The BSD checksum. Scalar, reading every byte through
+					// str_byte as the byte tally does.
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
+					needs.add("__fern_bsd_sum")
 				case "__fern_count_runs":
 					// The run count. Scalar, reading every byte through
 					// str_byte as the byte-set scan does.
@@ -1646,6 +1652,12 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildScanSetBody,
+	},
+	"__fern_bsd_sum": {
+		// (data, len, sum) → i32 the BSD checksum continued over the string.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildBsdSumBody,
 	},
 	"__fern_count_runs": {
 		// (data, len, inside, set) → i32 how many runs of set members
@@ -6317,6 +6329,63 @@ func buildCountByteBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, lC)
 	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32) // $n, $i, $c
 	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildBsdSumBody assembles wasm bytes for __fern_bsd_sum: the BSD checksum
+// continued over the string from `sum`, each byte a 16-bit rotate right by one
+// and an add.
+//
+// Locals after the three params: $n (3), $i (4).
+func buildBsdSumBody(idxs map[string]uint32) []byte {
+	strLen := idxs["__fern_str_len"]
+	strByte := idxs["__fern_str_byte"]
+	const (
+		pData = 0
+		pLen  = 1
+		pSum  = 2
+		lN    = 3
+		lI    = 4
+	)
+	var body []byte
+	body = inst.InstLocalGet(body, pData)
+	body = inst.InstLocalGet(body, pLen)
+	body = inst.InstCall(body, strLen)
+	body = inst.InstLocalSet(body, lN)
+	body = inst.InstLocalGet(body, pSum)
+	body = inst.InstI32Const(body, 0xffff)
+	body = numeric.InstI32And(body)
+	body = inst.InstLocalSet(body, pSum)
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstLocalGet(body, lN)
+	body = numeric.InstI32GeS(body)
+	body = inst.InstBrIf(body, 1)
+	// sum = ((sum >> 1 | sum << 15) + byte) & 0xffff
+	body = inst.InstLocalGet(body, pSum)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32ShrU(body)
+	body = inst.InstLocalGet(body, pSum)
+	body = inst.InstI32Const(body, 15)
+	body = numeric.InstI32Shl(body)
+	body = numeric.InstI32Or(body)
+	body = inst.InstLocalGet(body, pData)
+	body = inst.InstLocalGet(body, pLen)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstCall(body, strByte)
+	body = numeric.InstI32Add(body)
+	body = inst.InstI32Const(body, 0xffff)
+	body = numeric.InstI32And(body)
+	body = inst.InstLocalSet(body, pSum)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, lI)
+	body = inst.InstBr(body, 0)
+	body = inst.InstEnd(body) // loop
+	body = inst.InstEnd(body) // block
+	body = inst.InstLocalGet(body, pSum)
+	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 2, encode.ValtypeI32), body)
 }
 
 // buildCountRunsBody assembles wasm bytes for __fern_count_runs: how many runs

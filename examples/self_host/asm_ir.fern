@@ -5232,6 +5232,25 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.write(s_done + ":\n");
         return s;
     }
+    if (o.kind_tag == 329) {  // bsd_sum
+        // operand stack [box, sum] (sum on top) -> the BSD checksum continued
+        // over the string: per byte a 16-bit rotate right by one and an add.
+        var blo: asmcore.LabelOut = asmcore.fresh_label(s);
+        var b_loop: string = blo.name;
+        var blo2: asmcore.LabelOut = asmcore.fresh_label(blo.state);
+        var b_done: string = blo2.name;
+        s = blo2.state;
+        s = s.write("    popq %rcx\n    popq %rax\n");
+        s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
+        s = s.write("    movzwq %cx, %rcx\n    xorq %rdx, %rdx\n");
+        s = s.write(b_loop + ":\n");
+        s = s.write("    cmpq %r8, %rdx\n    jae " + b_done + "\n");
+        s = s.write("    movzbq (%rax,%rdx), %r10\n");
+        s = s.write("    rorw $1, %cx\n    addw %r10w, %cx\n");
+        s = s.write("    addq $1, %rdx\n    jmp " + b_loop + "\n");
+        s = s.write(b_done + ":\n    movzwq %cx, %rcx\n    pushq %rcx\n");
+        return s;
+    }
     if (o.kind_tag == 327) {  // count_runs
         // operand stack [box, inside, set] (set on top) -> how many runs of
         // set members begin in the string. The set's length is at (set) and
