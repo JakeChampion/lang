@@ -2603,6 +2603,26 @@ The same kernel does not help `tr -d`: on the bench input the kept runs
 are one to three bytes, and a scan and an append per run cost more than
 the per-byte loop (240 → 301 ms), so tr keeps its loop.
 
+### tr's translation and dd's case tables, 2026-09-23 (GNU coreutils 9.12)
+
+`buf_push_mapped(b, s, table)` joins the builder family on every backend
+and in both compilers: it appends `table[c]` for each byte `c` of `s`, or
+`c` unchanged when it is past the table's end. `io_buffered`'s
+`write_mapped` wraps it. Before it, `tr SET1 SET2` translated through a
+`.with` loop into a fresh `u8[]`, copied that into a string and copied the
+string into the output buffer. That was about 30 instructions a byte on the
+default x86-64 emitter. The kernel writes the translated bytes straight
+into the output buffer, four bytes a turn on x86-64.
+
+| workload | before | after | GNU 9.12 |
+|---|---:|---:|---:|
+| `tr 0-9 a-j` over the 62 MiB bench file | 250 ms | 45 ms | 61 ms |
+| `dd 8MiB conv=ucase` (`bs=64k`) | 41.8 ms | 14.8 ms | 14.8 ms |
+
+`dd`'s `conv=lcase` and `conv=ucase` use the same kernel for each record.
+Both utilities are byte-identical to GNU across their corpora, natively
+and when built by the self-host compiler.
+
 ### ls, 2026-09-14, Linux x86-64 (GNU coreutils 9.4, uutils 0.0.24)
 
 The same 4-core container, so read the columns against each other. The

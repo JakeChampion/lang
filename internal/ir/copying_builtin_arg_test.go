@@ -20,6 +20,7 @@ func TestCopyingBuiltinArgIsCounted(t *testing.T) {
 		{"strbuf_append", `strbuf_append(p); return 0;`},
 		{"buf_push", `var b: usize = buf_new(16); buf_push(b, p); buf_free(b); return 0;`},
 		{"buf_push_range", `var b: usize = buf_new(16); buf_push_range(b, p, 0, 1); buf_free(b); return 0;`},
+		{"buf_push_mapped", `var b: usize = buf_new(16); var t: u8[] = [1 as u8]; buf_push_mapped(b, p, t); buf_free(b); return 0;`},
 		{"count_byte", `return __count_byte(p, 97);`},
 		{"memchr", `return __memchr(p, 97, 0);`},
 		{"print", `print(p); return 0;`},
@@ -33,6 +34,17 @@ func TestCopyingBuiltinArgIsCounted(t *testing.T) {
 			t.Errorf("%s: paramCountedRetain[eat] = %v, want [true] — the builtin copies "+
 				"the bytes out and retains nothing", c.name, got)
 		}
+	}
+}
+
+// buf_push_mapped reads its table and retains nothing, so a table parameter
+// is credited the way the string is.
+func TestCopyingBuiltinTableArgIsCounted(t *testing.T) {
+	src := "function eat(p: u8[]): i32 { var b: usize = buf_new(16); buf_push_mapped(b, \"ab\", p); buf_free(b); return 0; }\n" +
+		"function main(): i32 { return 0; }"
+	got := paramCountedFor(t, src, "eat")
+	if len(got) != 1 || !got[0] {
+		t.Errorf("paramCountedRetain[eat] = %v, want [true] — the table is read, never retained", got)
 	}
 }
 

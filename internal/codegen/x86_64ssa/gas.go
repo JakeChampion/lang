@@ -2419,6 +2419,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_buf_reserve":              emitBufReserveHelper,
 	"buf_push":                        emitBufPushHelper,
 	"buf_push_range":                  emitBufPushRangeHelper,
+	"buf_push_mapped":                 emitBufPushMappedHelper,
 	"buf_push_byte":                   emitBufPushByteHelper,
 	"buf_push_u64":                    emitBufPushU64Helper,
 	"buf_len":                         emitBufLenHelper,
@@ -2732,6 +2733,7 @@ var runtimeHelperDeps = map[string][]string{
 	"__fern_buf_reserve":              {"__fern_box_free"},
 	"buf_push":                        {"__fern_buf_reserve"},
 	"buf_push_range":                  {"__fern_buf_reserve"},
+	"buf_push_mapped":                 {"__fern_buf_reserve"},
 	"buf_push_byte":                   {"__fern_buf_reserve"},
 	"buf_push_u64":                    {"__fern_buf_reserve"},
 	"buf_free":                        {"__fern_box_free"},
@@ -4730,6 +4732,92 @@ func emitBufPushRangeHelper(w func(string, ...any)) {
 	w("\tpop r12")
 	w("\tpop rbx")
 	w("\tjmp .Lssa_bufrange_fits")
+}
+
+// emitBufPushMappedHelper writes buf_push_mapped(H, s, table): append
+// table[c] for each byte c of s, or c itself when it is past the table's end.
+// A table covering every byte value takes a loop with no length check, four
+// bytes a turn.
+func emitBufPushMappedHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("buf_push_mapped"))
+	w("\tmov ecx, %s", memRef("rsi", -4)) // n
+	w("\ttest ecx, ecx")
+	w("\tjz .Lssa_bufmap_none")
+	w("\tmov rax, [rdi + 8]")
+	w("\tadd rax, rcx") // need
+	w("\tcmp rax, [rdi + 16]")
+	w("\tja .Lssa_bufmap_grow")
+	w(".Lssa_bufmap_fits:")
+	w("\tmov r8, [rdi]")
+	w("\tadd r8, [rdi + 8]")              // dst = data + len
+	w("\tadd [rdi + 8], rcx")             // len += n
+	w("\tmov r9d, %s", memRef("rdx", -4)) // table length
+	w("\txor r10d, r10d")
+	w("\tcmp r9d, 256")
+	w("\tjb .Lssa_bufmap_short")
+	w("\tcmp rcx, 4")
+	w("\tjb .Lssa_bufmap_tail")
+	w("\tsub rcx, 4")
+	w(".Lssa_bufmap_four:")
+	w("\tmovzx eax, byte ptr [rsi + r10]")
+	w("\tmovzx edi, byte ptr [rsi + r10 + 1]")
+	w("\tmovzx r9d, byte ptr [rsi + r10 + 2]")
+	w("\tmovzx r11d, byte ptr [rsi + r10 + 3]")
+	w("\tmovzx eax, byte ptr [rdx + rax]")
+	w("\tmovzx edi, byte ptr [rdx + rdi]")
+	w("\tmovzx r9d, byte ptr [rdx + r9]")
+	w("\tmovzx r11d, byte ptr [rdx + r11]")
+	w("\tmov byte ptr [r8 + r10], al")
+	w("\tmov byte ptr [r8 + r10 + 1], dil")
+	w("\tmov byte ptr [r8 + r10 + 2], r9b")
+	w("\tmov byte ptr [r8 + r10 + 3], r11b")
+	w("\tadd r10, 4")
+	w("\tcmp r10, rcx")
+	w("\tjbe .Lssa_bufmap_four")
+	w("\tadd rcx, 4")
+	w("\tcmp r10, rcx")
+	w("\tjae .Lssa_bufmap_none")
+	w(".Lssa_bufmap_tail:")
+	w("\tmovzx eax, byte ptr [rsi + r10]")
+	w("\tmovzx eax, byte ptr [rdx + rax]")
+	w("\tmov byte ptr [r8 + r10], al")
+	w("\tinc r10")
+	w("\tcmp r10, rcx")
+	w("\tjb .Lssa_bufmap_tail")
+	w("\tjmp .Lssa_bufmap_none")
+	w(".Lssa_bufmap_short:")
+	w("\tmovzx eax, byte ptr [rsi + r10]")
+	w("\tcmp eax, r9d")
+	w("\tjae .Lssa_bufmap_keep")
+	w("\tmovzx eax, byte ptr [rdx + rax]")
+	w(".Lssa_bufmap_keep:")
+	w("\tmov byte ptr [r8 + r10], al")
+	w("\tinc r10")
+	w("\tcmp r10, rcx")
+	w("\tjb .Lssa_bufmap_short")
+	w(".Lssa_bufmap_none:")
+	w("\txor eax, eax")
+	w("\tret")
+	w(".Lssa_bufmap_grow:")
+	// Three callee-saved pushes plus the return address leave rsp 16-aligned
+	// for the call.
+	w("\tpush rbx")
+	w("\tpush r12")
+	w("\tpush r13")
+	w("\tmov rbx, rdi")
+	w("\tmov r12, rsi")
+	w("\tmov r13, rdx")
+	w("\tmov rsi, rax")
+	w("\tcall %s", fnLabel("__fern_buf_reserve"))
+	w("\tmov rdi, rbx")
+	w("\tmov rsi, r12")
+	w("\tmov rdx, r13")
+	w("\tmov ecx, %s", memRef("rsi", -4))
+	w("\tpop r13")
+	w("\tpop r12")
+	w("\tpop rbx")
+	w("\tjmp .Lssa_bufmap_fits")
 }
 
 // emitBufPushByteHelper writes buf_push_byte(H, x): append the low byte of x.

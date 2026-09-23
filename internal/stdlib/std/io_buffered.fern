@@ -157,6 +157,17 @@ pub function (b: BufWriter) write_range(s: string, lo: i32, hi: i32): BufWriter 
   return b.flush();
 }
 
+// `(b).write_mapped(s, table)` — append each byte `c` of `s` as
+// `table[c]`, or unchanged when `c` is past the table's end: a byte
+// translation with no intermediate string.
+pub function (b: BufWriter) write_mapped(s: string, table: u8[]): BufWriter {
+  buf_push_mapped(b.buf, s, table);
+  if (buf_len(b.buf) < b.cap) {
+    return b;
+  }
+  return b.flush();
+}
+
 // `(b).write_byte(byte)` — append one byte.
 pub function (b: BufWriter) write_byte(byte: i32): BufWriter {
   buf_push_byte(b.buf, byte);

@@ -767,17 +767,6 @@ function read_size(): i32 {
   return 65536;
 }
 
-function xf_translate(chunk: string, t: u8[]): string {
-  var n: i32 = chunk.len();
-  var buf: u8[] = __alloc_u8(n);
-  var i: i32 = 0;
-  while (i < n) {
-    buf = buf.with(i, t[chunk[i] as i32]);
-    i = i + 1;
-  }
-  return string_from_bytes_unchecked(buf);
-}
-
 function xf_delete(chunk: string, del: u8[]): string {
   var n: i32 = chunk.len();
   var buf: u8[] = __alloc_u8(n);
@@ -1038,7 +1027,7 @@ pub function main(): i32 {
           last = t2.1;
           o = gnu.put(o, t2.0);
         } else if (translating) {
-          o = gnu.put(o, xf_translate(chunk, xlate));
+          o = gnu.check(o.write_mapped(chunk, xlate));
         } else if (deleting && squeezing) {
           var d2: (string, i32) = xf_delete_squeeze(chunk, del, sq, last);
           last = d2.1;

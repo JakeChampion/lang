@@ -1487,6 +1487,10 @@ pub function op_strbuf_take(): Op { return op0("strbuf_take"); }
 pub function op_buf_new(): Op { return op0("buf_new"); }
 pub function op_buf_push(): Op { return op0("buf_push"); }
 pub function op_buf_push_range(): Op { return op0("buf_push_range"); }
+// `buf_push_mapped` pops [handle, str, table]: each byte c of the string is
+// appended as table[c], a u8[] indexed by byte value, or unchanged when c is
+// past the table's end.
+pub function op_buf_push_mapped(): Op { return op0("buf_push_mapped"); }
 pub function op_buf_push_byte(): Op { return op0("buf_push_byte"); }
 pub function op_buf_push_u64(): Op { return op0("buf_push_u64"); }
 pub function op_buf_len(): Op { return op0("buf_len"); }
@@ -2583,6 +2587,7 @@ function kind_id_len14(name: string): i32 {
 
 function kind_id_len15(name: string): i32 {
     var c: u8 = name[0];
+    if (c == b'b' && name == "buf_push_mapped") { return 325; }
     if (c == b'h' && name == "heap_bump_bytes") { return 80; }
     if (c == b'h' && name == "heap_release_to") { return 230; }
     if (c == b'm' && name == "mapiter_advance") { return 137; }
@@ -2878,6 +2883,7 @@ function kind_name_4(id: i32): string {
     if (id == 235) { return "count_byte"; }
     if (id == 253) { return "sum_bytes"; }
     if (id == 324) { return "scan_set"; }
+    if (id == 325) { return "buf_push_mapped"; }
     if (id == 322) { return "scale_f64"; }
     if (id == 309) { return "crc32_cksum"; }
     if (id == 228) { return "syscall5"; }
@@ -3153,6 +3159,7 @@ function pops_buf(t: i32): i32 {
     // buf_push_u64 arrived after the block had closed over 291-297, so it
     // carries the next free id instead of extending it.
     if (t == 306) { return 2; }
+    if (t == 325) { return 3; }                       // buf_push_mapped: handle + string + table
     if (t < 291 || t > 297) { return 0 - 1; }
     if (t == 293) { return 4; }                       // buf_push_range: handle + string + lo + hi
     if (t == 292 || t == 294) { return 2; }           // buf_push, buf_push_byte

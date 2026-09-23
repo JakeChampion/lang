@@ -1544,6 +1544,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_buf_reserve":              emitBufReserveHelper,
 	"buf_push":                        emitBufPushHelper,
 	"buf_push_range":                  emitBufPushRangeHelper,
+	"buf_push_mapped":                 emitBufPushMappedHelper,
 	"buf_push_byte":                   emitBufPushByteHelper,
 	"buf_push_u64":                    emitBufPushU64Helper,
 	"buf_len":                         emitBufLenHelper,
@@ -4494,6 +4495,7 @@ var runtimeHelperDeps = map[string][]string{
 	"__fern_buf_reserve":              {"__alloc", "__free"},
 	"buf_push":                        {"__fern_buf_reserve"},
 	"buf_push_range":                  {"__fern_buf_reserve"},
+	"buf_push_mapped":                 {"__fern_buf_reserve"},
 	"buf_push_byte":                   {"__fern_buf_reserve"},
 	"buf_push_u64":                    {"__fern_buf_reserve"},
 	"buf_take":                        {"__alloc"},
@@ -10005,6 +10007,63 @@ func emitBufPushRangeHelper(w func(string, ...any)) {
 	emitBcopyCall(w, "x9", "x11", "x12")
 	w("\tldp x29, x30, [sp], #48")
 	w(".Lssa_bufrange_none:")
+	w("\tmov x0, xzr")
+	w("\tret")
+}
+
+// emitBufPushMappedHelper writes buf_push_mapped(H, s, table): append
+// table[c] for each byte c of s, or c itself when it is past the table's end.
+// A table covering every byte value takes the loop with no length check.
+func emitBufPushMappedHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("buf_push_mapped"))
+	w("\tldur w12, [x1, #-4]")
+	w("\tcbz w12, .Lssa_bufmap_none")
+	w("\tstp x29, x30, [sp, #-48]!")
+	w("\tstr x0, [sp, #16]") // H
+	w("\tstr x1, [sp, #24]") // s
+	w("\tstr x2, [sp, #32]") // table
+	w("\tldr x13, [x0, #8]")
+	w("\tadd x14, x13, x12") // need
+	w("\tldr x15, [x0, #16]")
+	w("\tcmp x14, x15")
+	w("\tb.ls .Lssa_bufmap_fits")
+	w("\tmov x1, x14")
+	w("\tbl %s", fnLabel("__fern_buf_reserve"))
+	w(".Lssa_bufmap_fits:")
+	w("\tldr x1, [sp, #16]")
+	w("\tldr x11, [sp, #24]")
+	w("\tldr x2, [sp, #32]")
+	w("\tldp x29, x30, [sp], #48")
+	w("\tldur w12, [x11, #-4]")
+	w("\tldr x13, [x1, #8]")
+	w("\tldr x9, [x1]")
+	w("\tadd x9, x9, x13") // dst
+	w("\tadd x14, x13, x12")
+	w("\tstr x14, [x1, #8]")
+	w("\tldur w4, [x2, #-4]") // table length
+	w("\tmov x5, xzr")
+	w("\tcmp w4, #256")
+	w("\tb.lo .Lssa_bufmap_short")
+	w(".Lssa_bufmap_full:")
+	w("\tldrb w6, [x11, x5]")
+	w("\tldrb w6, [x2, x6]")
+	w("\tstrb w6, [x9, x5]")
+	w("\tadd x5, x5, #1")
+	w("\tcmp x5, x12")
+	w("\tb.lo .Lssa_bufmap_full")
+	w("\tb .Lssa_bufmap_none")
+	w(".Lssa_bufmap_short:")
+	w("\tldrb w6, [x11, x5]")
+	w("\tcmp w6, w4")
+	w("\tb.hs .Lssa_bufmap_keep")
+	w("\tldrb w6, [x2, x6]")
+	w(".Lssa_bufmap_keep:")
+	w("\tstrb w6, [x9, x5]")
+	w("\tadd x5, x5, #1")
+	w("\tcmp x5, x12")
+	w("\tb.lo .Lssa_bufmap_short")
+	w(".Lssa_bufmap_none:")
 	w("\tmov x0, xzr")
 	w("\tret")
 }

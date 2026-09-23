@@ -2630,6 +2630,7 @@ function builder_builtin_site(own r: irlower.LowerResult, ins: ssa.SInst): Lower
     if (ins.str == "buf_new") { return Lowered { found: true, r: emit(r, ir.op_buf_new()) }; }
     if (ins.str == "buf_push") { return Lowered { found: true, r: emit(r, ir.op_buf_push()) }; }
     if (ins.str == "buf_push_range") { return Lowered { found: true, r: emit(r, ir.op_buf_push_range()) }; }
+    if (ins.str == "buf_push_mapped") { return Lowered { found: true, r: emit(r, ir.op_buf_push_mapped()) }; }
     if (ins.str == "buf_push_byte") { return Lowered { found: true, r: emit(r, ir.op_buf_push_byte()) }; }
     if (ins.str == "buf_push_u64") { return Lowered { found: true, r: emit(r, ir.op_buf_push_u64()) }; }
     if (ins.str == "buf_len") { return Lowered { found: true, r: emit(r, ir.op_buf_len()) }; }

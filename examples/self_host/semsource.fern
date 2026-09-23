@@ -4161,6 +4161,7 @@ function builder_contracts(): ssasem.Contract[] {
         ssasem.Contract { name: "buf_new", params: [t_i32()], modes: handle, result: t_usize() },
         ssasem.Contract { name: "buf_push", params: [t_usize(), t_string()], modes: push, result: t_void() },
         ssasem.Contract { name: "buf_push_range", params: [t_usize(), t_string(), t_i32(), t_i32()], modes: [ssaunits.value_mode(), ssaunits.borrow_mode(), ssaunits.value_mode(), ssaunits.value_mode()], result: t_void() },
+        ssasem.Contract { name: "buf_push_mapped", params: [t_usize(), t_string(), typeinfo.TypeArray { elem: t_u8() }], modes: [ssaunits.value_mode(), ssaunits.borrow_mode(), ssaunits.borrow_mode()], result: t_void() },
         ssasem.Contract { name: "buf_push_byte", params: [t_usize(), t_i32()], modes: [ssaunits.value_mode(), ssaunits.value_mode()], result: t_void() },
         ssasem.Contract { name: "buf_push_u64", params: [t_usize(), t_u64()], modes: [ssaunits.value_mode(), ssaunits.value_mode()], result: t_void() },
         ssasem.Contract { name: "buf_len", params: [t_usize()], modes: handle, result: t_i32() },

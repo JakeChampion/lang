@@ -306,3 +306,4 @@ chmod_at=321
 scale_f64=322
 syscall6=323
 scan_set=324
+buf_push_mapped=325

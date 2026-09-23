@@ -636,6 +636,7 @@ func New() *Interp {
 	i.Builtins["buf_new"] = &Builtin{Fn: builtinBufNew}
 	i.Builtins["buf_push"] = &Builtin{Fn: builtinBufPush}
 	i.Builtins["buf_push_range"] = &Builtin{Fn: builtinBufPushRange}
+	i.Builtins["buf_push_mapped"] = &Builtin{Fn: builtinBufPushMapped}
 	i.Builtins["buf_push_byte"] = &Builtin{Fn: builtinBufPushByte}
 	i.Builtins["buf_push_u64"] = &Builtin{Fn: builtinBufPushU64}
 	i.Builtins["buf_len"] = &Builtin{Fn: builtinBufLen}
@@ -4841,6 +4842,38 @@ func builtinBufPushRange(i *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("buf_push_range [%d:%d] out of range for length %d", low, high, slen)
 	}
 	i.bufs[h] = append(b, string(s)[low:high]...)
+	return Void{}, nil
+}
+
+// builtinBufPushMapped appends table[c] for each byte c of s; a byte at or
+// past the table's length is appended unchanged.
+func builtinBufPushMapped(i *Interp, args []Value) (Value, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("buf_push_mapped: expected 3 args (b, s, table), got %d", len(args))
+	}
+	h, b, err := bufHandle(i, "buf_push_mapped", args[0])
+	if err != nil {
+		return nil, err
+	}
+	s, ok := args[1].(String)
+	if !ok {
+		return nil, fmt.Errorf("buf_push_mapped: expected string arg, got %T", args[1])
+	}
+	table, ok := args[2].(Array)
+	if !ok {
+		return nil, fmt.Errorf("buf_push_mapped: expected a u8[] table, got %T", args[2])
+	}
+	for _, c := range []byte(string(s)) {
+		if int(c) < len(table.E) {
+			e, ok := table.E[c].(Number)
+			if !ok {
+				return nil, fmt.Errorf("buf_push_mapped: table element %d is %T, not a byte", c, table.E[c])
+			}
+			c = byte(int64(e))
+		}
+		b = append(b, c)
+	}
+	i.bufs[h] = b
 	return Void{}, nil
 }
 

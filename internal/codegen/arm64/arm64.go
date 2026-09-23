@@ -7329,6 +7329,70 @@ func (g *generator) emitStrBuilderRuntime() {
 	g.emit("ret")
 	g.sizeDirective("__fern_buf_push_range")
 
+	// __fern_buf_push_mapped(H, s_data, s_len, table): append table[c]
+	// for each byte c of `s`, or c itself when it is past the table's
+	// end. A table covering every byte value takes the loop with no length
+	// check. Frame 80: fp/lr, x19..x24, spill at [x29 + 64].
+	g.line("")
+	g.line(".global __fern_buf_push_mapped")
+	g.typeDirective("__fern_buf_push_mapped")
+	g.label("__fern_buf_push_mapped")
+	g.emit("stp x29, x30, [sp, #-80]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("stp x23, x24, [sp, #48]")
+	g.emit("mov x19, x0")
+	g.emit("mov x20, x1")
+	g.emit("mov x21, x2")
+	g.emit("mov x22, x3") // table
+	g.emitStrLen2W("w23", "x21")
+	g.emit("cbz w23, .Lbufmap_done")
+	g.emit("ldr x0, [x19, #8]")
+	g.emit("add x0, x0, x23")
+	g.emit("ldr x1, [x19, #16]")
+	g.emit("cmp x0, x1")
+	g.emit("b.ls .Lbufmap_fits")
+	g.emit("mov x1, x0")
+	g.emit("mov x0, x19")
+	g.emit("bl __fern_buf_reserve")
+	g.label(".Lbufmap_fits")
+	g.emitStrDataPtr2W("x1", "x20", "x21", 64)
+	g.emit("ldr x0, [x19]")
+	g.emit("ldr x3, [x19, #8]")
+	g.emit("add x0, x0, x3") // dst = data + len
+	g.emit("add x3, x3, x23")
+	g.emit("str x3, [x19, #8]") // len += n
+	g.emit("ldur w4, [x22, #-4]") // table length
+	g.emit("mov x5, #0")
+	g.emit("cmp w4, #256")
+	g.emit("b.lo .Lbufmap_short")
+	g.label(".Lbufmap_full")
+	g.emit("ldrb w6, [x1, x5]")
+	g.emit("ldrb w6, [x22, x6]")
+	g.emit("strb w6, [x0, x5]")
+	g.emit("add x5, x5, #1")
+	g.emit("cmp x5, x23")
+	g.emit("b.lo .Lbufmap_full")
+	g.emit("b .Lbufmap_done")
+	g.label(".Lbufmap_short")
+	g.emit("ldrb w6, [x1, x5]")
+	g.emit("cmp w6, w4")
+	g.emit("b.hs .Lbufmap_keep")
+	g.emit("ldrb w6, [x22, x6]")
+	g.label(".Lbufmap_keep")
+	g.emit("strb w6, [x0, x5]")
+	g.emit("add x5, x5, #1")
+	g.emit("cmp x5, x23")
+	g.emit("b.lo .Lbufmap_short")
+	g.label(".Lbufmap_done")
+	g.emit("ldp x23, x24, [sp, #48]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #80")
+	g.emit("ret")
+	g.sizeDirective("__fern_buf_push_mapped")
+
 	// __fern_buf_push_byte(H, x): append the low byte of `x`.
 	g.line("")
 	g.line(".global __fern_buf_push_byte")
@@ -20271,7 +20335,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// call never comes back.
 			target = "__fern_exit"
 			g.usesExit = true
-		case "buf_new", "buf_push", "buf_push_range", "buf_push_byte", "buf_push_u64", "buf_len", "buf_take", "buf_free":
+		case "buf_new", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_byte", "buf_push_u64", "buf_len", "buf_take", "buf_free":
 			target = "__fern_" + target
 			g.usesStrBuilder = true
 			// Every entry point but buf_len can reach the allocator, the

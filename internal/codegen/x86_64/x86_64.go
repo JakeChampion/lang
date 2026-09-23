@@ -2022,7 +2022,7 @@ func (g *generator) recordUse(target string) {
 		g.usesEprint = true
 	case "exit":
 		g.usesExit = true
-	case "buf_new", "buf_push", "buf_push_range", "buf_push_byte", "buf_push_u64", "buf_len", "buf_take", "buf_free":
+	case "buf_new", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_byte", "buf_push_u64", "buf_len", "buf_take", "buf_free":
 		g.usesStrBuilder = true
 		// Every entry point but buf_len can reach the allocator, the
 		// copier and the freelist through __fern_buf_reserve, so pull the
@@ -3883,6 +3883,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_buf_push"
 		case "buf_push_range":
 			target = "__fern_buf_push_range"
+		case "buf_push_mapped":
+			target = "__fern_buf_push_mapped"
 		case "buf_push_byte":
 			target = "__fern_buf_push_byte"
 		case "buf_push_u64":
@@ -12788,6 +12790,92 @@ func (g *generator) emitStrBuilderRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_buf_push_range, .-__fern_buf_push_range")
+
+	// __fern_buf_push_mapped(H, s, table): append table[b] for each byte b
+	// of `s`; a byte at or past the table's length is appended unchanged.
+	// A table covering every byte value takes the loop with no length check.
+	g.line("")
+	g.line(".globl __fern_buf_push_mapped")
+	g.line(".type __fern_buf_push_mapped, @function")
+	g.label("__fern_buf_push_mapped")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("push r12")
+	g.emit("push r13")
+	g.emit("push r14")
+	g.emit("sub rsp, 16") // [rbp-48]: emitStrDataPtr spill for an inline `s`
+	g.emit("mov rbx, rdi")
+	g.emit("mov r12, rsi")
+	g.emit("mov r14, rdx") // table
+	g.emitStrLen("r13", "r12")
+	g.emit("test r13d, r13d")
+	g.emit("jz .Lbufmap_done")
+	g.emit("mov rax, qword ptr [rbx + 8]")
+	g.emit("add rax, r13")
+	g.emit("cmp rax, qword ptr [rbx + 16]")
+	g.emit("jbe .Lbufmap_fits")
+	g.emit("mov rdi, rbx")
+	g.emit("mov rsi, rax")
+	g.emit("call __fern_buf_reserve")
+	g.label(".Lbufmap_fits")
+	g.emitStrDataPtr("rsi", "r12", "[rbp - 48]")
+	g.emit("mov rdi, qword ptr [rbx]")
+	g.emit("add rdi, qword ptr [rbx + 8]")
+	g.emit("mov ecx, dword ptr [r14 - 4]")
+	g.emit("xor edx, edx")
+	g.emit("cmp ecx, 256")
+	g.emit("jb .Lbufmap_short")
+	g.emit("lea r8, [r13 - 4]")
+	g.emit("cmp r13, 4")
+	g.emit("jb .Lbufmap_tail")
+	g.label(".Lbufmap_four")
+	g.emit("movzx eax, byte ptr [rsi + rdx]")
+	g.emit("movzx ecx, byte ptr [rsi + rdx + 1]")
+	g.emit("movzx r9d, byte ptr [rsi + rdx + 2]")
+	g.emit("movzx r10d, byte ptr [rsi + rdx + 3]")
+	g.emit("movzx eax, byte ptr [r14 + rax]")
+	g.emit("movzx ecx, byte ptr [r14 + rcx]")
+	g.emit("movzx r9d, byte ptr [r14 + r9]")
+	g.emit("movzx r10d, byte ptr [r14 + r10]")
+	g.emit("mov byte ptr [rdi + rdx], al")
+	g.emit("mov byte ptr [rdi + rdx + 1], cl")
+	g.emit("mov byte ptr [rdi + rdx + 2], r9b")
+	g.emit("mov byte ptr [rdi + rdx + 3], r10b")
+	g.emit("add rdx, 4")
+	g.emit("cmp rdx, r8")
+	g.emit("jbe .Lbufmap_four")
+	g.emit("cmp rdx, r13")
+	g.emit("jae .Lbufmap_len")
+	g.label(".Lbufmap_tail")
+	g.emit("movzx eax, byte ptr [rsi + rdx]")
+	g.emit("movzx eax, byte ptr [r14 + rax]")
+	g.emit("mov byte ptr [rdi + rdx], al")
+	g.emit("add rdx, 1")
+	g.emit("cmp rdx, r13")
+	g.emit("jb .Lbufmap_tail")
+	g.emit("jmp .Lbufmap_len")
+	g.label(".Lbufmap_short")
+	g.emit("movzx eax, byte ptr [rsi + rdx]")
+	g.emit("cmp eax, ecx")
+	g.emit("jae .Lbufmap_keep")
+	g.emit("movzx eax, byte ptr [r14 + rax]")
+	g.label(".Lbufmap_keep")
+	g.emit("mov byte ptr [rdi + rdx], al")
+	g.emit("add rdx, 1")
+	g.emit("cmp rdx, r13")
+	g.emit("jb .Lbufmap_short")
+	g.label(".Lbufmap_len")
+	g.emit("add qword ptr [rbx + 8], r13")
+	g.label(".Lbufmap_done")
+	g.emit("add rsp, 16")
+	g.emit("pop r14")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_buf_push_mapped, .-__fern_buf_push_mapped")
 
 	// __fern_buf_push_byte(H, x): append the low byte of `x`.
 	g.line("")
