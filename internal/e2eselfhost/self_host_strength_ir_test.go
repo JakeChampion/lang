@@ -31,8 +31,8 @@ var strengthIRCases = []struct {
 	// `f() * 0` becomes `drop ; const_i32 0`: the drop is what keeps the stack
 	// balanced after the call's result stops being consumed, so g()'s result
 	// still lands in b rather than reading f()'s leftover.
-	{"mul-zero-stack-balance", `function f(): i32 { return 3; }
-function g(): i32 { return 7; }
+	{"mul-zero-stack-balance", `@noinline function f(): i32 { return 3; }
+@noinline function g(): i32 { return 7; }
 function main(): i32 { var a: i32 = f() * 0; var b: i32 = g(); return a + b; }`},
 	{"identities", `function main(): i32 { var x: i32 = 42; return (((x + 0) - 0) | 0) ^ 0; }`},
 	{"and-all-bits", `function main(): i32 { var x: i32 = 42; return x & (0 - 1); }`},
@@ -108,7 +108,7 @@ func TestSelfHostStrengthShiftImmediateShape(t *testing.T) {
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "asm_ir_run")
-	src := []byte("function shift8(x: i32): i32 { return x * 8; }\nfunction main(): i32 { return shift8(5); }\n")
+	src := []byte("@noinline function shift8(x: i32): i32 { return x * 8; }\nfunction main(): i32 { return shift8(5); }\n")
 
 	for _, tc := range []struct {
 		target  string
