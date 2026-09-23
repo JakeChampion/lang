@@ -329,9 +329,10 @@ function emit_per_module_concat(dir: string, entry_path: string, entry_mod: pars
     // Signatures are hashed over the PRUNED modules, so a dependency whose
     // reach changed moves every dependent's key.
     var sighashes: string[] = [];
+    var fh: modloader.FactHashes = modloader.FactHashes { per_mod: [], global: "" };
     if (cache_dir.len() > 0) {
-        var shi: i32 = 0;
-        while (shi < parts.len()) { sighashes = sighashes.append(util.hash_key(modloader.module_sig_string(infmods[shi]))); shi = shi + 1; }
+        fh = modloader.module_fact_hashes(infmods, irlower.wp_fact_rows(wpb, all_funcs, all_stab));
+        sighashes = modloader.fact_sig_hashes(infmods, fh);
     }
     var out: string = "";
     var idx: i32 = 0;
@@ -341,7 +342,7 @@ function emit_per_module_concat(dir: string, entry_path: string, entry_mod: pars
         var cachefile: string = "";
         if (cache_dir.len() > 0) {
             var src_hash: string = modloader.module_src_hash(modloader.no_overlay(), dir, entry_path, parts, idx);
-            var key: string = modloader.module_concat_unit_cache_key(parts, infmods, sighashes, idx, src_hash, extra);
+            var key: string = modloader.module_concat_unit_cache_key(parts, infmods, sighashes, idx, src_hash, extra, fh);
             if (key.len() > 0) { cachefile = cache_dir + "/" + parts[idx].ns + "_c__" + util.hash_key(key) + ".s"; }
         }
         var served: boolean = false;
@@ -393,11 +394,11 @@ function emit_per_module_concat(dir: string, entry_path: string, entry_mod: pars
 // bytes for that unit (TestSelfHostAssumeEligibleByteIdenticalX86_64 pins it),
 // so without the normalisation they would key the same asm twice and never
 // reuse each other's entries.
-function unit_cache_file(cache_dir: string, parts: flatten.PerModule[], infmods: parser.Module[], sighashes: string[], src_hash: string, midx: i32, extra: string[], wlo: i32, whi: i32): string {
+function unit_cache_file(cache_dir: string, parts: flatten.PerModule[], infmods: parser.Module[], sighashes: string[], src_hash: string, midx: i32, extra: string[], wlo: i32, whi: i32, fh: modloader.FactHashes): string {
     if (cache_dir.len() == 0 || sighashes.len() == 0 || src_hash.len() == 0) { return ""; }
     var khi: i32 = whi;
     if (wlo == 0 && khi >= infmods[midx].funcs.len()) { khi = 0 - 1; }
-    var key: string = modloader.module_unit_cache_key(parts, infmods, sighashes, midx, src_hash, extra, wlo, khi);
+    var key: string = modloader.module_unit_cache_key(parts, infmods, sighashes, midx, src_hash, extra, wlo, khi, fh);
     if (key.len() == 0) { return ""; }
     var shard_tag: string = "";
     if (wlo > 0) { shard_tag = "_s" + util.i32_to_string(wlo); }
@@ -791,11 +792,13 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
         // would otherwise re-read and re-hash its source once per shard.
         var srchashes: string[] = [];
         var sighashes_ea: string[] = [];
+        var fh_ea: modloader.FactHashes = modloader.FactHashes { per_mod: [], global: "" };
         if (cache_dir.len() > 0) {
+            fh_ea = modloader.module_fact_hashes(infmods, irlower.wp_fact_rows(wpb, all_funcs, all_stab));
+            sighashes_ea = modloader.fact_sig_hashes(infmods, fh_ea);
             var chi: i32 = 0;
             while (chi < parts.len()) {
                 srchashes = srchashes.append(modloader.module_src_hash(modloader.no_overlay(), dir, entry_path, parts, chi));
-                sighashes_ea = sighashes_ea.append(util.hash_key(modloader.module_sig_string(infmods[chi])));
                 chi = chi + 1;
             }
         }
@@ -812,7 +815,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
             if (parts[idx].is_entry) { uextra = needs; }
             var usrc: string = "";
             if (srchashes.len() > 0) { usrc = srchashes[idx]; }
-            var ucache: string = unit_cache_file(cache_dir, parts, infmods, sighashes_ea, usrc, idx, uextra, nth_field_i32(units[uidx], 1), nth_field_i32(units[uidx], 2));
+            var ucache: string = unit_cache_file(cache_dir, parts, infmods, sighashes_ea, usrc, idx, uextra, nth_field_i32(units[uidx], 1), nth_field_i32(units[uidx], 2), fh_ea);
             // Whatever is in the cache was emitted from a module that lowered, so
             // a hit makes the eligibility re-lowering pure waste — and that check
             // costs about as much as the emit the hit just saved. Probe before
@@ -915,10 +918,14 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     // reuse set; stdout stays exactly the unit asm. A "?" src_hash yields an empty
     // key, which disables the cache for that module (always emit — sound, see
     // module_src_hash).
+    // The whole-program registry base: the cache key digests it, the gate lowers
+    // with it and the unit emit routes on it (#8199).
+    var pm_wpb: irlower.FnSigs = ircore.wp_fn_sigs(all_funcs, all_stab);
     var cachefile: string = "";
     if (cache_dir.len() > 0) {
         var src_hash: string = modloader.module_src_hash(modloader.no_overlay(), dir, entry_path, parts, pm_index);
-        cachefile = unit_cache_file(cache_dir, parts, infmods, sighashes, src_hash, pm_index, extra, pm_lo, pm_hi);
+        var pm_fh: modloader.FactHashes = modloader.module_fact_hashes(infmods, irlower.wp_fact_rows(pm_wpb, all_funcs, all_stab));
+        cachefile = unit_cache_file(cache_dir, parts, infmods, modloader.fact_sig_hashes(infmods, pm_fh), src_hash, pm_index, extra, pm_lo, pm_hi, pm_fh);
         if (cachefile.len() > 0) {
             match (read_file(cachefile)) {
                 Ok(cached) => {
@@ -930,12 +937,9 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
             }
         }
     }
-    // One whole-program registry base for this process: the gate lowers with
-    // it and the unit emit routes on it (#8199). The pre-check covers the
-    // window this process emits: a sharded module's windows are separate
-    // processes, so each checking the whole module would lower it once per
-    // window. The entry is never sharded.
-    var pm_wpb: irlower.FnSigs = ircore.wp_fn_sigs(all_funcs, all_stab);
+    // The pre-check covers the window this process emits: a sharded module's
+    // windows are separate processes, so each checking the whole module would
+    // lower it once per window. The entry is never sharded.
     var elig: boolean = true;
     if (!assume_eligible) {
         elig = ircore.all_eligible_view_base_range(infmods[pm_index], known, all_stab, pm_wpb, pm_lo, pm_hi);

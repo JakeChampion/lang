@@ -14,7 +14,8 @@ import (
 //
 // The reach phase is the one a source-and-signature key gets wrong: the entry
 // starts calling a second lib3 function, so lib3's pruned unit grows although
-// lib3.fern is untouched. It must be re-emitted, not served.
+// lib3.fern is untouched. It must be re-emitted, not served. The fact phase is
+// the other: a body-only edit that flips a borrow verdict its caller reads.
 func TestSelfHostPerModuleConcatObjectCacheX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -100,6 +101,25 @@ func TestSelfHostPerModuleConcatObjectCacheX86_64(t *testing.T) {
 		}
 	}
 	pmWantSets(t, "reach", hits, misses, reHits, []string{"__entry", "lib3"})
+
+	// A body-only edit that moves a fact about a function. m3_keep's parameter is
+	// borrowable until its body starts storing it, and callers lower against that
+	// verdict, so lib3's facts move and every module importing lib3 re-emits the
+	// way it would for a signature change. Modules outside that closure are
+	// served. First bring m3_keep into reach, then make the fact-only edit.
+	edit("lib3.fern", "return x + 301;", "return x + 301 + m3_keep([x]) - 1;")
+	b3, err := os.ReadFile(filepath.Join(proj, "lib3.fern"))
+	if err != nil {
+		t.Fatalf("read lib3: %v", err)
+	}
+	keep := "pub function m3_keep(xs: i32[]): i32 { return xs.len(); }\n"
+	if err := os.WriteFile(filepath.Join(proj, "lib3.fern"), append(b3, keep...), 0o644); err != nil {
+		t.Fatalf("write lib3: %v", err)
+	}
+	concat("keep")
+	edit("lib3.fern", "{ return xs.len(); }", "{ var h: i32[][] = [xs]; return h[0].len(); }")
+	hits, misses = concat("fact")
+	pmWantSets(t, "fact", hits, misses, reHits, []string{"__entry", "lib3"})
 
 	asm, _ := drive("-cache-dir", cacheDir)
 	bin := buildBin(t, gcc, dir, "concat_cache_prog", asm)

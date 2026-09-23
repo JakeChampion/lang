@@ -691,6 +691,47 @@ pub struct FnSigs {
     grow_field_positions: string[],
 }
 
+// wp_fact_rows lists the whole-program facts a unit's lowering reads that come
+// from function BODIES: the borrow, consume, fresh-return and handback verdicts
+// ircore.wp_fn_sigs derives, the reclaim verdicts, and the enum-contract regions.
+// A body-only edit in one module can move any of them for a unit elsewhere, so
+// the per-module caches fold them into their keys (modloader.module_fact_hashes).
+//
+// Columns built from signatures alone are left out: a unit reads a signature row
+// only for a callee in its import closure, whose signature hash is already in
+// the key. Signature-only columns:
+// b.arr_ret_fns b.bool_ret_fns b.strarr_ret_fns b.arr_method_fns b.opt_ret_fns
+// b.tuple_ret_fns b.arrtup_ret_fns b.map_ret_fns b.f64_ret_fns b.f64arr_ret_fns
+// b.i64arr_ret_fns b.erased_elem_ret_fns b.ret_type_fns b.ret_fn_sigs
+// b.closure_fns b.const_fns b.fn_names b.own_positions b.own_scalar_arr_positions
+pub function wp_fact_rows(b: FnSigs, all_funcs: parser.FuncDecl[], all_stab: StructTab): string[] {
+    var regs: SigReg[] = [b.str_ret_fns, b.i64_ret_fns, b.struct_ret_fns, b.fn_param_sigs, b.noesc_ret_fns, b.opt_fresh_ret_fns];
+    var cols: string[][] = [b.closurearr_ret_fns, b.borrowable_params, b.borrow_bare, b.fresh_struct_ret_fns, b.consume_safe_params, b.return_fresh_struct_ret_fns, b.recv_borrow_fns, b.str_fresh_ret_fns, b.strfld_ok_types, b.tuple_fresh_ret_fns, b.own_consumed_positions, b.consumed_arr_positions, b.param_counted, b.trmc_consume_fns, b.handback_params, b.cnt_struct_ret_fns, b.cnt_handback_params, b.handback_carry_params, b.str_handback_ret, b.grow_recv_fns, b.grow_field_positions, structfld_reclaim_ok_types_of(all_funcs, all_stab, b.borrowable_params)];
+    for r in regs { cols = cols.append(r.rows); }
+    var out: string[] = [];
+    var ci: i32 = 0;
+    for c in cols {
+        for row in c {
+            // A registry row can hold a whole hash bucket, entries joined by
+            // newlines, and which entries share a bucket depends on the table's
+            // size; so each entry is its own fact. An empty entry is a slot for a
+            // function with nothing to record.
+            var start: i32 = 0;
+            var i: i32 = 0;
+            while (i <= row.len()) {
+                if (i == row.len() || row[i] == b'\n') {
+                    if (i > start) { out = out.append(util.i32_to_string(ci) + "#" + slice_unchecked(row, start, i) + ""); }
+                    start = i + 1;
+                }
+                i = i + 1;
+            }
+        }
+        ci = ci + 1;
+    }
+    for rg in b.enum_regions { out = out.append("R#" + enumcontract.region_key(rg)); }
+    return out;
+}
+
 // LowerFrame is the per-function half of LowerState: what lower_func computes
 // once and threads read-only, plus the few accumulators written rarely enough
 // (a reclaim row, an elided move, a bail note) that rebuilding this whole box

@@ -16,9 +16,12 @@
 //
 // The cache key is modloader.module_unit_cache_key: a module's own source hash
 // folded with the SIGNATURE hashes of everything it depends on, plus the function
-// window the unit covers. That asymmetry is the point — a body-only edit re-emits
-// just that module, while a signature change also invalidates its dependents,
-// whose call-site tagging depends on it.
+// window the unit covers, and the whole-program facts lowering reads
+// (irlower.wp_fact_rows, split by module in modloader.module_fact_hashes). That asymmetry is the point — a body-only edit
+// re-emits just that module, while a signature change also invalidates its
+// dependents, whose call-site tagging depends on it. A body edit that moves a
+// fact about a function (a borrow verdict) invalidates that module's dependents
+// the same way; one that moves a type-level reclaim verdict invalidates every unit.
 // hit/miss is reported on stderr (one ns per line) so a build orchestrator, or a
 // test, can observe the reuse set; stdout stays exactly the unit text.
 //
@@ -33,6 +36,7 @@ import "./parser";
 import "./flatten";
 import "./wasm_ir";
 import "./irlower";
+import "./ircore";
 import "./modloader";
 import "./wasm_objfile";
 
@@ -152,12 +156,12 @@ function build_unit(infmods: parser.Module[], all_funcs: parser.FuncDecl[], all_
 // load_unit returns module `idx`'s object, served from the cache when its key
 // still matches and built (lowered) only when it does not. hit/miss goes to
 // stderr so a build, or a test, can observe exactly which modules were reused.
-function load_unit(dir: string, entry_path: string, parts: flatten.PerModule[], infmods: parser.Module[], sighashes: string[], all_funcs: parser.FuncDecl[], all_stab: irlower.StructTab, idx: i32, lo: i32, hi: i32, cache_dir: string): wasm_objfile.UnitObj {
-    var lk: wasm_objfile.MaybeUnit = cache_lookup(dir, entry_path, parts, infmods, sighashes, idx, lo, hi, cache_dir);
+function load_unit(dir: string, entry_path: string, parts: flatten.PerModule[], infmods: parser.Module[], sighashes: string[], fh: modloader.FactHashes, all_funcs: parser.FuncDecl[], all_stab: irlower.StructTab, idx: i32, lo: i32, hi: i32, cache_dir: string): wasm_objfile.UnitObj {
+    var lk: wasm_objfile.MaybeUnit = cache_lookup(dir, entry_path, parts, infmods, sighashes, fh, idx, lo, hi, cache_dir);
     if (lk.found) { return lk.obj; }
     var obj: wasm_objfile.UnitObj = build_unit(infmods, all_funcs, all_stab, idx, lo, hi);
     if (cache_dir.len() > 0 && sighashes.len() > 0) {
-        var ck: string = cache_file_for(dir, entry_path, parts, infmods, sighashes, idx, lo, hi, cache_dir);
+        var ck: string = cache_file_for(dir, entry_path, parts, infmods, sighashes, fh, idx, lo, hi, cache_dir);
         if (ck.len() > 0) {
             eprint("cache-miss " + parts[idx].ns + "\n");
             match (write_file(ck, wasm_objfile.encode(obj))) {
@@ -172,13 +176,13 @@ function load_unit(dir: string, entry_path: string, parts: flatten.PerModule[], 
 // cache_file_for returns the object path for module idx, or "" when the module
 // has no stable key (module_src_hash == "?") or no cache is configured. The
 // single source of the path both the read and the write use.
-function cache_file_for(dir: string, entry_path: string, parts: flatten.PerModule[], infmods: parser.Module[], sighashes: string[], idx: i32, lo: i32, hi: i32, cache_dir: string): string {
+function cache_file_for(dir: string, entry_path: string, parts: flatten.PerModule[], infmods: parser.Module[], sighashes: string[], fh: modloader.FactHashes, idx: i32, lo: i32, hi: i32, cache_dir: string): string {
     if (cache_dir.len() == 0 || sighashes.len() == 0) { return ""; }
     var src_hash: string = modloader.module_src_hash(modloader.no_overlay(), dir, entry_path, parts, idx);
     // The window is folded in by module_unit_cache_key so two shards of one
     // module get distinct objects; the filename carries the shard-ns for
     // readability.
-    var key: string = modloader.module_unit_cache_key(parts, infmods, sighashes, idx, src_hash, [], lo, hi);
+    var key: string = modloader.module_unit_cache_key(parts, infmods, sighashes, idx, src_hash, [], lo, hi, fh);
     if (key.len() == 0) { return ""; }
     return cache_dir + "/" + parts[idx].ns + unit_ns(idx, lo) + "__" + util.hash_key(key) + ".wu";
 }
@@ -187,8 +191,8 @@ function cache_file_for(dir: string, entry_path: string, parts: flatten.PerModul
 // is what lets -link be hit-only: a whole-compiler link that lowered every
 // module in one process exhausts the bump arena (#3425). A miss returns
 // found=false; the caller decides whether to build (-emit) or error (-link).
-function cache_lookup(dir: string, entry_path: string, parts: flatten.PerModule[], infmods: parser.Module[], sighashes: string[], idx: i32, lo: i32, hi: i32, cache_dir: string): wasm_objfile.MaybeUnit {
-    var cf: string = cache_file_for(dir, entry_path, parts, infmods, sighashes, idx, lo, hi, cache_dir);
+function cache_lookup(dir: string, entry_path: string, parts: flatten.PerModule[], infmods: parser.Module[], sighashes: string[], fh: modloader.FactHashes, idx: i32, lo: i32, hi: i32, cache_dir: string): wasm_objfile.MaybeUnit {
+    var cf: string = cache_file_for(dir, entry_path, parts, infmods, sighashes, fh, idx, lo, hi, cache_dir);
     if (cf.len() > 0) {
         match (read_file(cf)) {
             Ok(cached) => {
@@ -246,6 +250,14 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
             shi = shi + 1;
         }
     }
+    // A cached emit or link keys on the facts too; the manifest reports plain
+    // signature hashes.
+    var fh: modloader.FactHashes = modloader.FactHashes { per_mod: [], global: "" };
+    if (pm_mode != "manifest" && sighashes.len() > 0) {
+        var fstab: irlower.StructTab = irlower.struct_tab(all_structs);
+        fh = modloader.module_fact_hashes(infmods, irlower.wp_fact_rows(ircore.wp_fn_sigs(all_funcs, fstab), all_funcs, fstab));
+        sighashes = modloader.fact_sig_hashes(infmods, fh);
+    }
 
     if (pm_mode == "manifest") {
         var mi: i32 = 0;
@@ -292,7 +304,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
             var pidx: i32 = plan[li].idx;
             var plo: i32 = plan[li].lo;
             var phi: i32 = plan[li].hi;
-            var lk: wasm_objfile.MaybeUnit = cache_lookup(dir, entry_path, parts, infmods, sighashes, pidx, plo, phi, cache_dir);
+            var lk: wasm_objfile.MaybeUnit = cache_lookup(dir, entry_path, parts, infmods, sighashes, fh, pidx, plo, phi, cache_dir);
             if (!lk.found) {
                 missing = missing + " " + parts[pidx].ns + unit_ns(pidx, plo);
                 li = li + 1;
@@ -337,7 +349,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
         return 1;
     }
 
-    var obj: wasm_objfile.UnitObj = load_unit(dir, entry_path, parts, infmods, sighashes, all_funcs, irlower.struct_tab(all_structs), pm_index, pm_lo, pm_hi, cache_dir);
+    var obj: wasm_objfile.UnitObj = load_unit(dir, entry_path, parts, infmods, sighashes, fh, all_funcs, irlower.struct_tab(all_structs), pm_index, pm_lo, pm_hi, cache_dir);
     write(wasm_objfile.encode(obj));
     return 0;
 }
