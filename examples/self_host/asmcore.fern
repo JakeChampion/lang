@@ -5739,7 +5739,7 @@ pub function synth_script_main(mod: parser.Module): parser.Module {
             col: 0,
         });
     }
-    var entry: parser.FuncDecl = parser.FuncDecl {
+    var entry: parser.FuncDecl = parser.FuncDecl { no_inline: false,
         name: "main", receiver_name: "", receiver_type: "", type_params: [],
         params: [], ret_type: "i32", body: body, line: 0, col: 0,
         import_iface: "", import_wit: "", type_param_count: 0,

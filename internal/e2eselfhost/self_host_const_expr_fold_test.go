@@ -135,8 +135,8 @@ func TestSelfHostConstExprFoldShape(t *testing.T) {
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "asm_ir_run")
-	src := []byte("function folded(): i32 { return (1 + 2 * 3) * (4 + 5); }\n" +
-		"function opaque(x: i32): i32 { return (x + 2 * 3) * (4 + 5); }\n" +
+	src := []byte("@noinline function folded(): i32 { return (1 + 2 * 3) * (4 + 5); }\n" +
+		"@noinline function opaque(x: i32): i32 { return (x + 2 * 3) * (4 + 5); }\n" +
 		"function main(): i32 { return folded() - opaque(1); }\n")
 
 	for _, tc := range []struct {

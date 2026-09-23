@@ -87,7 +87,7 @@ func cmpBranchMatrix(ty string, unsigned bool, pairs [][2]uint64) string {
 	var b strings.Builder
 	var checks []string
 	id := 0
-	b.WriteString("function sq(x: i32): i32 { return x * x; }\n")
+	b.WriteString("@noinline function sq(x: i32): i32 { return x * x; }\n")
 	for _, op := range cmpOps {
 		for _, nots := range []int{0, 1, 2} {
 			cond := strings.Repeat("!", nots) + "(a " + op + " b)"
@@ -178,7 +178,7 @@ func TestSelfHostCmpBranchFusion(t *testing.T) {
 	}{
 		{
 			name:    "signed",
-			src:     "function f(a: i32, b: i32): i32 { if (a < b) { return 1; } return 2; }\nfunction main(): i32 { return f(1, 2); }",
+			src:     "@noinline function f(a: i32, b: i32): i32 { if (a < b) { return 1; } return 2; }\nfunction main(): i32 { return f(1, 2); }",
 			wantX86: []string{`cmpq %r[a-z0-9]+, %r[a-z0-9]+\n    jge `},
 			deadX86: []string{"setl", "movzbq"},
 			wantArm: []string{`cmp x[0-9]+, x[0-9]+\n    b.ge `},
@@ -188,7 +188,7 @@ func TestSelfHostCmpBranchFusion(t *testing.T) {
 			// u64 `<` must take the below/above family: the two disagree across
 			// the sign boundary, and a wrong pick silently miscompiles.
 			name:    "unsigned",
-			src:     "function f(a: u64, b: u64): i32 { if (a < b) { return 1; } return 2; }\nfunction main(): i32 { return f(1, 2); }",
+			src:     "@noinline function f(a: u64, b: u64): i32 { if (a < b) { return 1; } return 2; }\nfunction main(): i32 { return f(1, 2); }",
 			wantX86: []string{`cmpq %r[a-z0-9]+, %r[a-z0-9]+\n    jae `},
 			deadX86: []string{"setb", "movzbq"},
 			wantArm: []string{`cmp x[0-9]+, x[0-9]+\n    b.hs `},
@@ -198,7 +198,7 @@ func TestSelfHostCmpBranchFusion(t *testing.T) {
 			// A boolean that is not a comparison's result: the `not` emits
 			// nothing and the branch inverts its own zero test.
 			name:    "not-only",
-			src:     "function f(a: boolean): i32 { if (!a) { return 1; } return 2; }\nfunction main(): i32 { return f(false); }",
+			src:     "@noinline function f(a: boolean): i32 { if (!a) { return 1; } return 2; }\nfunction main(): i32 { return f(false); }",
 			wantX86: []string{`testq %r[a-z0-9]+, %r[a-z0-9]+\n    jnz `},
 			deadX86: []string{"setz", "movzbq"},
 			wantArm: []string{`cbnz x[0-9]+, `},
@@ -209,7 +209,7 @@ func TestSelfHostCmpBranchFusion(t *testing.T) {
 			// its `br_if` through the lowering's own `not`, so the fusion has to
 			// see through it to the comparison.
 			name:    "loop-guard",
-			src:     "function f(n: i32): i32 { var i: i32 = 0; var c: i32 = 0; while (i < n) { c = c + 2; i = i + 1; } return c; }\nfunction main(): i32 { return f(3); }",
+			src:     "@noinline function f(n: i32): i32 { var i: i32 = 0; var c: i32 = 0; while (i < n) { c = c + 2; i = i + 1; } return c; }\nfunction main(): i32 { return f(3); }",
 			wantX86: []string{`cmpq %r[a-z0-9]+, %r[a-z0-9]+\n    jge `},
 			deadX86: []string{"setl", "setz"},
 			wantArm: []string{`cmp x[0-9]+, x[0-9]+\n    b.ge `},

@@ -35,17 +35,17 @@ const scaleMapSrc = `import "std/array";
 
 // The shape the pass takes: an inline lambda whose body is one multiply by a
 // literal.
-function scale2(xs: f64[]): f64[] { return xs.map((x: f64): f64 => x * 2.0); }
+@noinline function scale2(xs: f64[]): f64[] { return xs.map((x: f64): f64 => x * 2.0); }
 
 // A NAMED element function, which this slice declines -- its body is not in
 // hand at the call site, so recognising it needs a module lookup this pass
 // does not do yet. Here to prove the declined shape still runs and still
 // answers what the loop answers.
-function half(x: f64): f64 { return x * 0.5; }
-function scale_named(xs: f64[]): f64[] { return xs.map(half); }
+@noinline function half(x: f64): f64 { return x * 0.5; }
+@noinline function scale_named(xs: f64[]): f64[] { return xs.map(half); }
 
 // The same transform as a loop. Not a map, so nothing rewrites it.
-function loop_scale(xs: f64[], k: f64): f64[] {
+@noinline function loop_scale(xs: f64[], k: f64): f64[] {
     var out: f64[] = [];
     var i: i32 = 0;
     while (i < xs.len()) { out = out.append(xs[i] * k); i = i + 1; }
@@ -53,12 +53,12 @@ function loop_scale(xs: f64[], k: f64): f64[] {
 }
 
 // All NaNs count as equal: the payload is not guaranteed across backends.
-function same_f64(a: f64, b: f64): boolean {
+@noinline function same_f64(a: f64, b: f64): boolean {
     if (a != a) { return b != b; }
     return a == b;
 }
 
-function same(a: f64[], b: f64[]): boolean {
+@noinline function same(a: f64[], b: f64[]): boolean {
     if (a.len() != b.len()) { return false; }
     var i: i32 = 0;
     while (i < a.len()) {
@@ -70,7 +70,7 @@ function same(a: f64[], b: f64[]): boolean {
 
 // Values a scale can go wrong on: sign, zero, a fraction, and an infinity
 // whose product with zero is NaN.
-function build(n: i32): f64[] {
+@noinline function build(n: i32): f64[] {
     var inf: f64 = 1.0e308 * 10.0;
     var seed: f64[] = [1.0, 0.0 - 2.0, 0.0, 0.5, 0.0 - 0.25, 1000000.0, inf, 0.0 - 1.0, 7.5];
     var xs: f64[] = [];
@@ -110,7 +110,7 @@ function main(): i32 {
 // helper survives. Same imports and same shape otherwise.
 const scaleMapKeptSrc = `import "std/array";
 
-function bump(xs: f64[]): f64[] { return xs.map((x: f64): f64 => x + 2.0); }
+@noinline function bump(xs: f64[]): f64[] { return xs.map((x: f64): f64 => x + 2.0); }
 
 function main(): i32 {
     var xs: f64[] = [1.0, 2.0];

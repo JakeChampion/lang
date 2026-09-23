@@ -67,6 +67,16 @@ function main(): i32 { return caller(25); }
 `,
 		want:   map[string][]string{"x86-64-linux": {`call __fn_clamp\.r\n`}},
 		forbid: map[string][]string{"x86-64-linux": {`\bpushq %(rax|rsi|rdi|r8|r9|r10)\b`, `addq \$\d+, %rsp`, `\s[1-9]\d*\(%rbp\), %`}}},
+	// A tiny call-free function is spliced into its callers; @noinline keeps
+	// the call.
+	{name: "inline_tiny_leaf", fn: "caller", exit: 33, src: `
+function sq(x: i32): i32 { return x * x; }
+@noinline function cube(x: i32): i32 { return x * x * x; }
+@noinline function caller(v: i32): i32 { return sq(v) + sq(v + 1) + cube(v - 1); }
+function main(): i32 { return caller(3); }
+`,
+		want:   map[string][]string{"x86-64-linux": {`call __fn_cube\b`}, "arm64-linux": {`bl __fn_cube\b`}},
+		forbid: map[string][]string{"x86-64-linux": {`__fn_sq\b`}, "arm64-linux": {`__fn_sq\b`}}},
 }
 
 var optShapeLegs = []struct {

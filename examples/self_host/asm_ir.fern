@@ -8794,7 +8794,7 @@ pub function emit_module_ir_gated_sub(mod: parser.Module, known: string[], sub: 
     var g: ircore.Lowered = ircore.lower_gated(im, imtab, irlower.fn_sigs_with_dyn(base, im.trait_reqs), known, false, sub);
     if (!g.ok) { return ""; }
     // Every function eligible — emit from the cache (no second lowering).
-    return emit_module_ir_unit_flat(im, true, false, "", [], im.funcs, imtab, 0, 0 - 1, ircore.sub_cache(sub, g.cache), base);
+    return emit_module_ir_unit_flat(im, true, false, "", [], im.funcs, imtab, 0, 0 - 1, ircore.inline_tiny_leaves(im, ircore.sub_cache(sub, g.cache)), base);
 }
 
 pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab, lo: i32, hi: i32, cache: irlower.LowerResult[]): string {
