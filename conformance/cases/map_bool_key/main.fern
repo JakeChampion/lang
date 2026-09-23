@@ -1,0 +1,61 @@
+import "core/map";
+// A map keyed by `boolean`. Both checkers admit one deliberately — #10009
+// measured that boolean and `str` keys WORK and that the rule was refusing
+// them wrongly — so this is a program the language says is well-formed.
+//
+// The self-host answered it wrong on every target: x86-64 SIGSEGV'd, arm64
+// and wasm collapsed `true` and `false` into ONE entry. `map_key_kind_of`
+// picks the key COLUMN from the type string and its integer arm listed
+// `i32 / u8 / u32`, so `boolean` took the STRING column, whose runtime reads
+// a key's VALUE as an address — the #9973 mechanism by another spelling.
+// `map_key_kind_of_expr` had answered 1 for a bool LITERAL key since #10015,
+// so the two halves of the same question disagreed (#10043).
+//
+// The INSERT ORDER matters, and not for the column choice: `false` goes in
+// first so that the LAST entry is the `true` one. A reader that walks the
+// column at the wrong stride reads element 1 off the end of a two-element
+// buffer, which lands in zero padding and reads as `false` — with `true`
+// first that lie is invisible, and an earlier version of this shape passed a
+// broken lowering because of it (#10000).
+//
+// Every surface a key column is consumed by: len, has, get, get_or, the
+// materialised keys() array, and pair iteration.
+function main(): i32 {
+    var m: Map[boolean, i32] = map_new(2);
+    m = m.insert(false, 7);
+    m = m.insert(true, 5);
+    if (m.len() != 2) { return 1; }
+    if (!m.has(true)) { return 2; }
+    if (!m.has(false)) { return 3; }
+    if (m.get_or(true, 0) != 5) { return 4; }
+    if (m.get_or(false, 0) != 7) { return 5; }
+
+    var ks: boolean[] = m.keys();
+    if (ks.len() != 2) { return 6; }
+    if (ks[0]) { return 7; }
+    if (!ks[1]) { return 8; }
+    // The keys taken BACK from the column: a wrong element is a wrong lookup,
+    // not a value that happens to compare equal.
+    if (m.get_or(ks[0], 0) != 7) { return 9; }
+    if (m.get_or(ks[1], 0) != 5) { return 10; }
+
+    var trues: i32 = 0;
+    var sum: i32 = 0;
+    for (k, v) in m {
+        if (k) { trues = trues + 1; }
+        sum = sum + v;
+    }
+    if (trues != 1) { return 11; }
+    if (sum != 12) { return 12; }
+
+    // Overwrite: the two keys stay distinct under a second insert.
+    m = m.insert(false, 30);
+    if (m.len() != 2) { return 13; }
+    if (m.get_or(false, 0) != 30) { return 14; }
+    if (m.get_or(true, 0) != 5) { return 15; }
+
+    match (m.get(true)) {
+        Some(v) => { return v + 37; },
+        None => { return 16; }
+    }
+}

@@ -13,13 +13,10 @@ import "core/map";
 // clean. The loop below is kept as the other half, since a fix that made
 // indexing right by breaking iteration would pass an index-only case.
 //
-// The KEY column is not here, and that is not because it is uninteresting:
-// the self-host answers a `Map[boolean, V]` wrong on every target — x86-64
-// segfaults, arm64 and wasm collapse `true` and `false` into ONE entry — so a
-// boolean-keyed case pins that bug (#10043) rather than this one. The native
-// side of the key column is covered by
-// TestX86_64BoolMapKeyColumn / TestArm64BoolMapKeyColumn, which the
-// self-host legs do not run.
+// The KEY column is map_bool_key's. It lived outside the corpus for a while,
+// because a boolean-keyed program crashed the self-host (#10043) and any case
+// asserting one pinned that bug rather than this one; that is fixed, so the
+// key column is a case like any other.
 //
 // wasm is unaffected by the stride itself: a wasm32 boolean element strides 4,
 // which is what the runtime already wrote.
