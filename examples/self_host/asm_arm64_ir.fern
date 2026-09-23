@@ -805,19 +805,15 @@ function map_fn_address(s: asmcore.EmitState, reg: string, name: string): asmcor
 // the stack machine this replaced used, so the runtime helpers and the
 // flat-op arms it still runs are unchanged.
 //
-// Registers: x9..x15 are allocatable. They are AAPCS temporaries a callee may
-// clobber, and the allocator spills a value that is live across a call, so
-// nothing is saved around one. x0/x1/x2 are the scratch ir_bin_asm already
-// uses; x16/x17 belong to fr_ldr and fr_sub_imm. A spilled value lives at
-// [x29, #-8*(slot+1)] by its allocator slot; the slots after the spills stage
-// the moves of an edge with several phis, so every source is read before any
-// result is written.
+// Registers: x0 and x9..x15 are the caller-saved pool; x19..x28 are the
+// callee-saved pool a value live across a call takes, saved in pairs once per
+// function. x4..x7 are scratch; x16/x17 belong to fr_ldr and fr_sub_imm. A
+// spilled value lives at [x29, #-8*(slot+1)] by its allocator slot.
 
 // Pool index 0 is x0, the register the ABI returns a call's result in, so a
-// call result allocated there needs no move at all. It is caller-saved like
-// the rest of the low pool, and every arm that is not a call was moved off
-// x0 for it; the arms that ARE calls may write it, since the allocator never
-// leaves a caller-saved value live across one.
+// call result allocated there needs no move at all. The arms that are calls
+// may write it, since the allocator never leaves a caller-saved value live
+// across one.
 function ssa_reg(k: i32): string {
     if (k >= ssa_nregs()) { return "x" + util.i32_to_string(19 + k - ssa_nregs()); }
     if (k == 0) { return "x0"; }
@@ -1427,8 +1423,8 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmco
 
 // ssa_view_slots gives each frame-resident string view (kind 51, imm 1) the
 // index of its three frame words, in instruction order, and -1 to every other
-// value; ssa_view_count is how many there are. The words sit after the values
-// and the phi stage.
+// value; ssa_view_count is how many there are. The words sit after the spill
+// slots.
 function ssa_view_slots(f: ssa.SFunc): i32[] {
     var out: i32[] = [];
     var i: i32 = 0;
