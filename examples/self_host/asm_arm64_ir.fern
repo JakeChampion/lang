@@ -3488,10 +3488,15 @@ pub function emit_ir_runtime_fern_fn(src: string, all_structs: irlower.StructTab
     var vsigs: irverify.NameIndex = irlower.fn_sig_index(fns);
     var lit0: i32 = s.string_lits.len();
     var agg0: i32 = s.const_aggs.len();
+    var sh0: i32 = s.shape_lits.len();
     var i: i32 = 0;
     while (i < fns.len()) {
         s = emit_function_via_ir(fns[i], s, sg, vsigs);
         i = i + 1;
+    }
+    if (s.shape_lits.len() > sh0) {
+        s = asmcore.emit_shape_lits_from(s, sh0);
+        s = s.write("    .text\n");
     }
     if (s.const_aggs.len() > agg0) {
         s = asmcore.emit_const_agg_data_from(s, agg0);
@@ -4067,16 +4072,7 @@ pub function emit_rodata_pools_arm64(s: asmcore.EmitState, darwin: boolean): asm
     if (reloc) { s = s.write("    .align 8\n.Lfern_cagg_begin:\n"); }
     s = asmcore.emit_const_agg_data(s);
     if (reloc) { s = s.write("    .section .data\n.Lfern_cagg_end:\n"); }
-    if (s.shape_lits.len() > 0) {
-        s = s.write("    .section .rodata\n");
-        var shi: i32 = 0;
-        while (shi < s.shape_lits.len()) {
-            var shsym: string = asmcore.shape_sym(s.shape_lits[shi]);
-            s = s.write(".weak " + shsym + "\n");
-            s = s.write(shsym + ": .ascii \"" + asmcore.escape_for_ascii(s.shape_lits[shi]) + "\"\n");
-            shi = shi + 1;
-        }
-    }
+    s = asmcore.emit_shape_lits_from(s, 0);
     // Hand back `.text`, which every caller emitting code after this one needs
     // and the per-module pool site already restores by hand. It used to hold by
     // accident: a program with no pooled data emitted nothing here and never
@@ -7449,23 +7445,6 @@ function emit_rt_heap(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
             var wsPre: asmcore.ShapeRefOut = asmcore.shape_ref(s, "WinSize");
             s = wsPre.state;
         }
-        // IoError variant shapes for __fern_io_error (#4624, the arm64 leg
-        // of #4370) — interned early for the same reason as FileStat above.
-        var ioe1: asmcore.ShapeRefOut = asmcore.shape_ref(s, "NotFound");
-        s = ioe1.state;
-        var ioe2: asmcore.ShapeRefOut = asmcore.shape_ref(s, "PermissionDenied");
-        s = ioe2.state;
-        var ioe3: asmcore.ShapeRefOut = asmcore.shape_ref(s, "AlreadyExists");
-        s = ioe3.state;
-        var ioe4: asmcore.ShapeRefOut = asmcore.shape_ref(s, "Interrupted");
-        s = ioe4.state;
-        var ioe5: asmcore.ShapeRefOut = asmcore.shape_ref(s, "Other");
-        s = ioe5.state;
-        // InvalidUtf8 is constructed by rt_src_read_file's D9 validation
-        // (#5714) — the one IoError variant no compiler user-code names, so
-        // it needs the same early intern as the rest.
-        var ioe6: asmcore.ShapeRefOut = asmcore.shape_ref(s, "InvalidUtf8");
-        s = ioe6.state;
     }
     // .rodata: emit each interned string literal as a
     // labelled `.ascii` directive. GAS interprets the escape

@@ -195,6 +195,25 @@ pub function add_shape_lit(s: EmitState, name: string): EmitState {
     return EmitState { ...s, shape_lits: s.shape_lits.append(name) };
 }
 
+// emit_shape_lits_from writes shape_lits[from..] as `.weak` shape symbols into
+// .rodata, the definitions add_shape_lit's references resolve to. A runtime
+// helper lowered after a unit's main flush records its shapes past that flush,
+// so its emitter flushes from where the list stood before it.
+pub function emit_shape_lits_from(s: EmitState, from: i32): EmitState {
+    if (s.shape_lits.len() <= from) {
+        return s;
+    }
+    s = s.write("    .section .rodata\n");
+    var i: i32 = from;
+    while (i < s.shape_lits.len()) {
+        var sym: string = shape_sym(s.shape_lits[i]);
+        s = s.write(".weak " + sym + "\n");
+        s = s.write(sym + ": .ascii \"" + escape_for_ascii(s.shape_lits[i]) + "\"\n");
+        i = i + 1;
+    }
+    return s;
+}
+
 // shape_sym is the deterministic global symbol for a shape name (the linker-merged
 // weak symbol the per-module path uses for shape pointers). Stable across units so
 // two units' references to the same shape resolve to one address.
