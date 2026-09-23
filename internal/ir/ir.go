@@ -9344,10 +9344,14 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// elided (emitRcDecLocalsAtExitExcept), a net-zero pair.
 		if needsRcIncOnAlias(n.Init, b) && !b.rc.moveSites[n] && !b.rc.borrowedAliasSites[n] &&
 			!b.isOwnedContainerRead(n.Init) {
-			if RcPlanHook != nil {
-				b.rc.aliasBindIncs[n] = true
+			if fa, isField := n.Init.(*ast.FieldAccess); isField && b.rc.fieldOwnMoves[fa] {
+				b.emitFieldOwnMove(fa)
+			} else {
+				if RcPlanHook != nil {
+					b.rc.aliasBindIncs[n] = true
+				}
+				b.emitAliasInc(n.Init)
 			}
-			b.emitAliasInc(n.Init)
 		}
 		// Phase 5h: release the slot's previous value before this
 		// (re-)init store. For a loop-body `var` this reclaims the prior
@@ -9391,7 +9395,8 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// local at its last use (b.rc.moveSites[n] set in
 		// computeMovedLocals), the alias inc and the source's exit-sweep
 		// dec cancel — move the source into the temp instead.
-		if needsRcIncOnAlias(n.Init, b) && !b.rc.moveSites[n] {
+		moved := b.rc.destructureMoves[n]
+		if needsRcIncOnAlias(n.Init, b) && !b.rc.moveSites[n] && !moved {
 			b.emitAliasInc(n.Init)
 		}
 		// Loop-body reclamation: a destructure inside a loop reuses the
@@ -9408,6 +9413,12 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// drop's is_unique / null guards no-op on the NULL.
 		b.emitVarReinitDropOld(n.TempName, tempIdx)
 		b.emit(Op{Kind: OpStoreLocal, I32: tempIdx})
+		if moved {
+			// The source's reference is the temp's now: its slot is emptied
+			// so the exit sweep meets a null.
+			b.emit(Op{Kind: OpConstI32, I32: 0})
+			b.emit(Op{Kind: OpStoreLocal, I32: b.locals[n.Init.(*ast.Ident).Name]})
+		}
 		// Recover the per-name element types + offsets. Tuple mode
 		// reads them off the synthetic temp's tuple type; struct mode
 		// (n.Fields set) reads the field offset off the struct layout
@@ -9470,6 +9481,11 @@ func (b *builder) stmt(s ast.Stmt) error {
 			b.emit(Op{Kind: OpConstI32, I32: offs[i]})
 			b.emit(Op{Kind: OpAdd})
 			b.emit(payloadLoadOpFor(elemTypes[i], b.ptrW))
+			if moved && arrElemIsRcTracked(elemTypes[i]) {
+				b.emitSlotFieldMove(tempIdx, offs[i], elemTypes[i])
+				b.emit(Op{Kind: OpStoreLocal, I32: nameIdx})
+				continue
+			}
 			// Dup-on-projection: a pointer-shaped element is extracted by
 			// reference (the load copies the box's stored pointer without
 			// an inc). The binding now co-owns it alongside the tuple box,

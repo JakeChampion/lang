@@ -251,6 +251,12 @@ type rcPlan struct {
 	// runtime and retains the value otherwise — see emitFieldOwnMove. Filled
 	// by computeFieldOwnMoves.
 	fieldOwnMoves map[*ast.FieldAccess]bool
+	// destructureMoves marks the struct destructures `var S { a, b } = x;`
+	// whose source is a frame-owned x never mentioned after them: x moves
+	// into the destructure's temp and each rc field moves out of it the way
+	// fieldOwnMoves does, so a binding is the field's only holder (#10084).
+	// Filled by computeFieldOwnMoves.
+	destructureMoves map[*ast.Destructure]bool
 	// preciseDrops[stmtIdx] lists the owned locals to deep-drop + zero right
 	// after lowering that top-level statement (Perceus garbage-free precise
 	// drops — computePreciseDrops).
@@ -9547,6 +9553,57 @@ func (b *builder) computeFieldOwnMoves() map[*ast.FieldAccess]bool {
 		}
 		return true
 	})
+	// A field read into a new local, `var a = x.f;`, is the same move when
+	// nothing after it can read x.f again: the declaration is a statement of
+	// the body itself, so no loop re-runs what came before it, and every
+	// later mention of x reads another field or is the base of an update
+	// that sets f anew (#10084).
+	for i, stmt := range b.fn.Body.Stmts {
+		v, ok := stmt.(*ast.Var)
+		if !ok {
+			continue
+		}
+		fa, ok := v.Init.(*ast.FieldAccess)
+		if !ok {
+			continue
+		}
+		base, ok := fa.Target.(*ast.Ident)
+		if !ok || esc[base.Name] || !b.frameOwnsIdent(base.Name) {
+			continue
+		}
+		st, ok := b.exprStaticType(base).(ast.StructType)
+		if !ok {
+			continue
+		}
+		sd, ok := b.info.Structs[st.Name]
+		if !ok || !arrElemIsRcTracked(fieldType(sd.Fields, fa.Field)) {
+			continue
+		}
+		if fieldUnreadAfter(b.fn.Body.Stmts[i+1:], base.Name, fa.Field) {
+			out[fa] = true
+		}
+	}
+	b.rc.destructureMoves = map[*ast.Destructure]bool{}
+	for i, stmt := range b.fn.Body.Stmts {
+		d, ok := stmt.(*ast.Destructure)
+		if !ok || d.Fields == nil || d.AtName != "" || hasNestedDestructure(d) {
+			continue
+		}
+		base, ok := d.Init.(*ast.Ident)
+		if !ok || esc[base.Name] || !b.frameOwnsIdent(base.Name) {
+			continue
+		}
+		if _, isStruct := b.exprStaticType(base).(ast.StructType); !isStruct {
+			continue
+		}
+		later := 0
+		for _, st := range b.fn.Body.Stmts[i+1:] {
+			later += mentions(st, base.Name)
+		}
+		if later == 0 {
+			b.rc.destructureMoves[d] = true
+		}
+	}
 	// The `own` recognizer needs the callee to be a direct function; a local
 	// of the same name shadows it, and the checker's own-flag table is keyed
 	// by bare name.
@@ -9587,6 +9644,57 @@ func (b *builder) computeFieldOwnMoves() map[*ast.FieldAccess]bool {
 		return true
 	})
 	return out
+}
+
+// fieldUnreadAfter reports whether `stmts` never read field f of x: every
+// mention of x is a read of another field, or the base of a struct update
+// that names f. Anything else — x passed whole, reassigned, or x.f itself —
+// could reach the slot a move has emptied.
+func fieldUnreadAfter(stmts []ast.Stmt, x, f string) bool {
+	allowed := map[*ast.Ident]bool{}
+	for _, st := range stmts {
+		ast.Walk(st, func(n ast.Node) bool {
+			switch e := n.(type) {
+			case *ast.FieldAccess:
+				if id, ok := e.Target.(*ast.Ident); ok && id.Name == x && e.Field != f {
+					allowed[id] = true
+				}
+			case *ast.StructLit:
+				if id, ok := e.Base.(*ast.Ident); ok && id.Name == x && structLitSets(e, f) {
+					allowed[id] = true
+				}
+			}
+			return true
+		})
+	}
+	unread := true
+	for _, st := range stmts {
+		ast.Walk(st, func(n ast.Node) bool {
+			if id, ok := n.(*ast.Ident); ok && id.Name == x && !allowed[id] {
+				unread = false
+			}
+			return unread
+		})
+	}
+	return unread
+}
+
+func hasNestedDestructure(d *ast.Destructure) bool {
+	for _, nd := range d.Nested {
+		if nd != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func structLitSets(sl *ast.StructLit, f string) bool {
+	for _, fi := range sl.Fields {
+		if fi.Name == f {
+			return true
+		}
+	}
+	return false
 }
 
 // supersededFieldSetReceivers is the `.with` half of the superseded-field

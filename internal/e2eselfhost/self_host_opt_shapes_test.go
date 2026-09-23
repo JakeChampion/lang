@@ -114,6 +114,47 @@ function main(): i32 { var xs: i32[] = fill(10); return xs[9] + xs.len(); }
 `,
 		want:   map[string][]string{"x86-64-linux": {`call __fern_arr_push`}},
 		forbid: map[string][]string{"x86-64-linux": {`movq %r11, %rdi`, `movq %rcx, %rsi`}}},
+	// With the callee-saved registers full, the value a loop reads and writes
+	// every iteration keeps its register and a cold one spills, though the
+	// loop value lives longer.
+	{name: "spill_the_cold_value", fn: "hot", exit: 56, src: `
+@noinline function g(x: i64): i64 { return x + 1i64; }
+@noinline function hot(n: i64): i64 {
+    var c1: i64 = g(n); var c2: i64 = g(c1); var c3: i64 = g(c2); var c4: i64 = g(c3);
+    var c5: i64 = g(c4); var c6: i64 = g(c5); var c7: i64 = g(c6); var c8: i64 = g(c7);
+    var c9: i64 = g(c8); var c10: i64 = g(c9); var c11: i64 = g(c10); var c12: i64 = g(c11);
+    var k: i64 = g(0i64);
+    var i: i64 = 0i64;
+    while (i < n) { k = g(k + i); i = i + 1i64; }
+    var t: i64 = g(c1 + c2 + c3 + c4 + c5 + c6 + c7 + c8 + c9 + c10 + c11 + c12);
+    return g(k) + t;
+}
+function main(): i32 { return (hot(5i64) % 100i64) as i32; }
+`,
+		want: map[string][]string{
+			"x86-64-linux": {`movq %r(?:bx|1[2-5]), %rax\n\s+addq %r(?:bx|1[2-5]), %rax\n\s+call __fn_g\.r`},
+			"arm64-linux":  {`add x0, x(?:19|2\d), x(?:19|2\d)\n\s+bl __fn_g\.r`}},
+		forbid: map[string][]string{
+			"x86-64-linux": {`movq %rax, -\d+\(%rbp\)\n\s+cmpq`},
+			"arm64-linux":  {`str x0, \[sp, #\d+\]\n\s+cmp `}}},
+	// Spilled values whose lifetimes do not meet share a frame slot: the
+	// second phase's spills reuse the first phase's slots.
+	{name: "spill_slots_shared", fn: "two_phase", exit: 57, src: `
+@noinline function g(x: i64): i64 { return x + 1i64; }
+@noinline function two_phase(n: i64): i64 {
+    var a1: i64 = g(n); var a2: i64 = g(a1); var a3: i64 = g(a2); var a4: i64 = g(a3); var a5: i64 = g(a4);
+    var a6: i64 = g(a5); var a7: i64 = g(a6); var a8: i64 = g(a7); var a9: i64 = g(a8); var a10: i64 = g(a9);
+    var a11: i64 = g(a10); var a12: i64 = g(a11); var a13: i64 = g(a12);
+    var s: i64 = g(a1 + a2 + a3 + a4 + a5 + a6 + a7 + a8 + a9 + a10 + a11 + a12 + a13);
+    var b1: i64 = g(s); var b2: i64 = g(b1); var b3: i64 = g(b2); var b4: i64 = g(b3); var b5: i64 = g(b4);
+    var b6: i64 = g(b5); var b7: i64 = g(b6); var b8: i64 = g(b7); var b9: i64 = g(b8); var b10: i64 = g(b9);
+    var b11: i64 = g(b10); var b12: i64 = g(b11); var b13: i64 = g(b12);
+    return g(b1 + b2 + b3 + b4 + b5 + b6 + b7 + b8 + b9 + b10 + b11 + b12 + b13);
+}
+function main(): i32 { return (two_phase(1i64) % 100i64) as i32; }
+`,
+		want:   map[string][]string{"x86-64-linux": {`-\d+\(%rbp\)`}, "arm64-linux": {`\[sp, #\d+\]`}},
+		forbid: map[string][]string{"x86-64-linux": {`-(?:1\d\d)\(%rbp\)`}, "arm64-linux": {`\[sp, #(?:1[6-9]|[2-9]\d)\]`}}},
 	// A branch on a boolean tests the register the boolean lives in.
 	{name: "value_test_in_place", fn: "pick", exit: 7, src: `
 @noinline function pick(b: boolean, x: i32): i32 { if (b) { return x; } return 0; }

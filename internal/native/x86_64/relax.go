@@ -23,10 +23,27 @@ type relaxEvent struct {
 	// ret, an indirect jump — recorded only so that branch alignment can
 	// pad it; it never shrinks and has no fixup of its own.
 	fixed bool
-	// bpad is the NOP padding laid before the branch under branch
-	// alignment, so that its bytes neither cross nor end on a 32-byte
-	// boundary (see Assembler.SetBranchAlignment). Filled in by relax.
+	// bpad is the padding laid at the event's start under branch
+	// alignment, so that the branch's bytes neither cross nor end on a
+	// 32-byte boundary (see Assembler.SetBranchAlignment). Filled in by
+	// relax, and spent as prefixes before NOPs (see bpfx).
 	bpad int
+	// lead is the byte count at the event's start that belongs to the
+	// instruction BEFORE the branch, which the event swallows so the
+	// padding can land in front of it rather than between the two. Zero
+	// when there is no such instruction to take.
+	//
+	// The erratum counts an instruction's prefixes as part of it, so a 2E
+	// laid in front of the BRANCH lengthens the very instruction that must
+	// not straddle the line and buys nothing. Lengthening the instruction
+	// before it pushes the branch forward whole, which is why the padding
+	// has to reach back over it.
+	lead int
+	// bpfx is how many of bpad's bytes are redundant 2E prefixes on the
+	// lead instruction rather than NOPs. They decode as part of that
+	// instruction, so unlike a NOP they cost no executed instruction —
+	// which is the whole point (#10017). The rest of bpad stays NOPs.
+	bpfx int
 	// Alignment pad (align > 1):
 	align   int
 	maxSkip int // -1 when absent
@@ -115,15 +132,12 @@ func (a *Assembler) relaxOnce() error {
 			case e.align > 0:
 				e.newSize = padWidth(e.newStart, e.align, e.maxSkip)
 			default:
-				n := e.size
+				bn := e.size - e.lead
 				if e.short {
-					n = 2
+					bn = 2
 				}
-				e.bpad = 0
-				if a.alignBranches {
-					e.bpad = branchPad(a.alignBase+e.newStart, n)
-				}
-				e.newSize = e.bpad + n
+				e.bpad, e.bpfx = a.padFor(e, bn)
+				e.newSize = e.bpad + e.lead + bn
 			}
 			cum += e.newSize - e.size
 			prefix[i] = cum
@@ -134,10 +148,34 @@ func (a *Assembler) relaxOnce() error {
 	// AT an event's start — a label at a shrinking branch, an instruction
 	// end an empty pad shares — stays on the pre-event side. (An offset
 	// inside a kept-long branch is also fine: that event's delta is 0.)
+	// An offset within a lead-extended event needs the padding laid before
+	// the lead, and NOT that event's other delta: a branch that shrinks to
+	// its rel8 form gets shorter without its start moving, so a rule or
+	// label sitting AT that branch must not follow the shrink. Before the
+	// lead was taken into the event, this fell out of "an offset at an
+	// event's start stays on the pre-event side"; now it has to be said.
+	// Every view of a position has to agree on this, or the fixpoint judges
+	// a branch in rel8 range against an offset the rebuild then puts
+	// somewhere else — which is how it settled a 127-byte displacement that
+	// came out at 128.
+	leadShift := func(pref []int, j, off int) (int, bool) {
+		e := &ev[j-1]
+		if e.align > 0 || e.lead == 0 || off > e.start+e.lead {
+			return 0, false
+		}
+		base := 0
+		if j >= 2 {
+			base = pref[j-2]
+		}
+		return off + base + e.bpad, true
+	}
 	mapNew := func(off int) int {
 		i := sort.Search(len(ev), func(i int) bool { return ev[i].start >= off })
 		if i == 0 {
 			return off
+		}
+		if at, ok := leadShift(prefix, i, off); ok {
+			return at
 		}
 		return off + prefix[i-1]
 	}
@@ -217,8 +255,14 @@ func (a *Assembler) relaxOnce() error {
 		case j == 0:
 			return off
 		case j-1 < i:
+			if at, ok := leadShift(prefix, j, off); ok {
+				return at
+			}
 			return off + prefix[j-1]
 		default:
+			if at, ok := leadShift(before, j, off); ok {
+				return at + carried(j)
+			}
 			return off + before[j-1] + carried(j)
 		}
 	}
@@ -234,26 +278,21 @@ func (a *Assembler) relaxOnce() error {
 			case e.align > 0:
 				e.newSize = padWidth(e.newStart, e.align, e.maxSkip)
 			default:
-				n := e.size
+				bn := e.size - e.lead
 				if e.short {
-					n = 2
+					bn = 2
 				}
-				e.bpad = 0
-				if a.alignBranches {
-					e.bpad = branchPad(a.alignBase+e.newStart, n)
-				}
+				e.bpad, e.bpfx = a.padFor(e, bn)
 				if e.short {
 					sym := a.relFixups[e.fixup].sym
-					if disp := seenFrom(sym, i, cum) - (e.newStart + e.bpad + 2); disp < -128 || disp > 127 {
+					if disp := seenFrom(sym, i, cum) - (e.newStart + e.bpad + e.lead + 2); disp < -128 || disp > 127 {
 						e.short = false
 						changed = true
-						n = e.size
-						if a.alignBranches {
-							e.bpad = branchPad(a.alignBase+e.newStart, n)
-						}
+						bn = e.size - e.lead
+						e.bpad, e.bpfx = a.padFor(e, bn)
 					}
 				}
-				e.newSize = e.bpad + n
+				e.newSize = e.bpad + e.lead + bn
 			}
 			cum += e.newSize - e.size
 			prefix[i] = cum
@@ -283,17 +322,22 @@ func (a *Assembler) relaxOnce() error {
 			return fmt.Errorf("internal: branch-relaxation layout drift at %#x", e.start)
 		}
 		if e.align == 0 {
-			out = appendNopPad(out, e.bpad)
+			out = appendNopPad(out, e.bpad-e.bpfx)
+			for p := 0; p < e.bpfx; p++ {
+				out = append(out, 0x2E)
+			}
+			out = append(out, a.text[e.start:e.start+e.lead]...)
 		}
+		bs := e.start + e.lead // the branch's own bytes
 		switch {
 		case e.align > 0:
 			out = appendNopPad(out, e.newSize)
-		case e.short && a.text[e.start] == 0xE9:
+		case e.short && a.text[bs] == 0xE9:
 			out = append(out, 0xEB, 0)
 		case e.short:
-			out = append(out, a.text[e.start+1]-0x80+0x70, 0) // 0F 80+cc → 70+cc
+			out = append(out, a.text[bs+1]-0x80+0x70, 0) // 0F 80+cc → 70+cc
 		default:
-			out = append(out, a.text[e.start:e.start+e.size]...)
+			out = append(out, a.text[bs:e.start+e.size]...)
 		}
 		prev = e.start + e.size
 	}
@@ -308,11 +352,11 @@ func (a *Assembler) relaxOnce() error {
 			continue
 		}
 		sym := a.relFixups[e.fixup].sym
-		disp := labelPos(sym) - (e.newStart + e.bpad + 2)
+		disp := labelPos(sym) - (e.newStart + e.bpad + e.lead + 2)
 		if disp < -128 || disp > 127 {
 			return fmt.Errorf("internal: relaxed branch to %q out of rel8 range (%d)", sym, disp)
 		}
-		out[e.newStart+e.bpad+1] = byte(disp)
+		out[e.newStart+e.bpad+e.lead+1] = byte(disp)
 		resolved[e.fixup] = true
 	}
 	a.text = out
@@ -353,6 +397,25 @@ func (a *Assembler) relaxOnce() error {
 	return nil
 }
 
+// padFor sizes the padding an aligned branch event needs at its planned
+// start, and how much of it the lead instruction absorbs as prefixes.
+//
+// The span kept off the 32-byte line is the BRANCH alone. A macro-fused
+// cmp/test+jcc pair is one span to the erratum and is NOT protected here —
+// that is #10100, left out because protecting it costs padding that cannot
+// become prefixes (the span starts at the lead, so a prefix lengthens it
+// without moving its start) and measured +0.3% instructions on cat.
+func (a *Assembler) padFor(e *relaxEvent, bn int) (pad, pfx int) {
+	if !a.alignBranches {
+		return 0, 0
+	}
+	// The branch alone: the padding puts it at a line start, and prefixes
+	// sit before the lead, so they change what the pad COSTS and not where
+	// the branch lands.
+	pad = branchPad(a.alignBase+e.newStart+e.lead, bn)
+	return pad, prefixSplit(pad, e.lead)
+}
+
 // branchPad is the NOP padding that moves an n-byte branch at address start
 // so that it neither crosses a 32-byte boundary nor ends on one: the
 // start of the next 32-byte line, when it would. A jump, call or return
@@ -367,4 +430,37 @@ func branchPad(start, n int) int {
 		return 0
 	}
 	return 32 - start%32
+}
+
+// maxSegPrefixes is how many redundant 2E bytes one instruction may carry
+// here. GNU as's -mbranches-within-32B-boundaries caps it at 5 per
+// instruction, and the hard ceiling is the decoder's 15-byte instruction
+// limit — past either, the rest of the padding stays NOPs.
+const maxSegPrefixes = 5
+
+// maxInstBytes is the decoder's limit. An instruction longer than this
+// faults, so the prefixes may never carry the lead past it.
+const maxInstBytes = 15
+
+// prefixSplit divides `pad` bytes of branch padding into the redundant 2E
+// prefixes the lead instruction can absorb and the NOPs that must make up
+// the rest. A prefix rides along inside an instruction the CPU already
+// decodes; a NOP is one more instruction retired on every pass through the
+// loop the branch sits in, which on `cat -A` over 3 MB was 6.7% of all
+// instructions retired (#10017).
+func prefixSplit(pad, lead int) int {
+	if pad <= 0 || lead <= 0 {
+		return 0
+	}
+	room := maxInstBytes - lead
+	if room > maxSegPrefixes {
+		room = maxSegPrefixes
+	}
+	if room < 0 {
+		room = 0
+	}
+	if pad < room {
+		return pad
+	}
+	return room
 }

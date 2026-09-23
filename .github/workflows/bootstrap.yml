@@ -109,9 +109,12 @@ jobs:
     # A later publish supersedes an earlier one — both would tag the same
     # release. Job-level, per host: a workflow-level group is not this lane's
     # to hold (ci.yml owns it when this lane is called), and one group across
-    # the matrix would make the three hosts cancel each other.
+    # the matrix would make the three hosts cancel each other. A called run
+    # skips this job but still enters its group, so only a publish dispatch
+    # gets the shared name: otherwise every CI run's bootstrap lane cancels
+    # the publish in flight.
     concurrency:
-      group: bootstrap-publish-${{ matrix.host }}
+      group: ${{ inputs.publish && format('bootstrap-dispatch-publish-{0}', matrix.host) || format('bootstrap-called-{0}-{1}', github.run_id, matrix.host) }}
       cancel-in-progress: true
     strategy:
       fail-fast: false
@@ -158,7 +161,7 @@ jobs:
   release:
     needs: publish
     concurrency:
-      group: bootstrap-release
+      group: ${{ inputs.publish && 'bootstrap-dispatch-release' || format('bootstrap-called-release-{0}', github.run_id) }}
       cancel-in-progress: true
     runs-on: ubuntu-latest
     permissions:
