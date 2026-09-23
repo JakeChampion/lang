@@ -330,7 +330,7 @@ function argmatch(v: string, names: string[], opt: string): i32 {
 // ---- comparing --------------------------------------------------------------
 // `Cfg` — everything the option scan settles, in the shape the line
 // loop reads it.
-struct Cfg { count: boolean, unique: boolean, first_repeated: boolean, later_repeated: boolean, delimit: i32, grouping: i32, skip_fields: u64, skip_chars: u64, check_chars: u64, ignore_case: boolean, term: i32, plain: boolean }
+struct Cfg { count: boolean, unique: boolean, first_repeated: boolean, later_repeated: boolean, delimit: i32, grouping: i32, skip_fields: u64, skip_chars: u64, check_chars: u64, ignore_case: boolean, term: i32, plain: boolean, seps: u8[], ink: u8[] }
 
 // A field ends at a blank or at a newline, whatever the line delimiter
 // is: under `-z` a line can hold newlines and they still separate its
@@ -357,21 +357,44 @@ function cap(v: u64, hi: i32): i32 {
 // `skip_fields` blank-separated fields, then `skip_chars` bytes. `at` is
 // where the line begins in `s` and `len` its length INCLUDING the
 // delimiter, which is not part of the content.
+//
+// Each run is one `__scan_set`: `cfg.ink` stops at the first byte that is
+// not a separator, `cfg.seps` at the first separator or the terminator. A
+// scan can pass the line's end, so its answer is clamped to the content.
 function field_offset(s: string, at: i32, len: i32, cfg: Cfg): i32 {
   var size: i32 = len - 1;
   var i: i32 = 0;
   var n: i32 = cap(cfg.skip_fields, size);
   var c: i32 = 0;
   while (c < n && i < size) {
-    while (i < size && is_field_sep(s[at + i] as i32)) {
-      i = i + 1;
+    i = __scan_set(s, at + i, cfg.ink) - at;
+    if (i < size) {
+      i = __scan_set(s, at + i, cfg.seps) - at;
     }
-    while (i < size && !is_field_sep(s[at + i] as i32)) {
-      i = i + 1;
+    if (i > size) {
+      i = size;
     }
     c = c + 1;
   }
   return i + cap(cfg.skip_chars, size - i);
+}
+
+// The two byte sets field_offset scans with: the separators and the line
+// terminator, and every byte that is not a separator.
+function field_sets(cfg: Cfg): Cfg {
+  var seps: u8[] = __alloc_u8(256);
+  var ink: u8[] = __alloc_u8(256);
+  var c: i32 = 0;
+  while (c < 256) {
+    if (is_field_sep(c) || c == cfg.term) {
+      seps = seps.with(c, 1 as u8);
+    }
+    if (!is_field_sep(c)) {
+      ink = ink.with(c, 1 as u8);
+    }
+    c = c + 1;
+  }
+  return Cfg { ...cfg, seps: seps, ink: ink };
 }
 
 function to_lower(c: i32): i32 {
@@ -701,7 +724,7 @@ pub function main(): i32 {
     d = d + 1;
   }
 
-  var cfg: Cfg = Cfg { count: false, unique: true, first_repeated: true, later_repeated: false, delimit: dm_none(), grouping: gm_none(), skip_fields: 0 as u64, skip_chars: 0 as u64, check_chars: size_max(), ignore_case: false, term: 10, plain: true };
+  var cfg: Cfg = Cfg { count: false, unique: true, first_repeated: true, later_repeated: false, delimit: dm_none(), grouping: gm_none(), skip_fields: 0 as u64, skip_chars: 0 as u64, check_chars: size_max(), ignore_case: false, term: 10, plain: true, seps: [], ink: [] };
   // gnulib tracks where the last skip-fields count came from, because a
   // digit after `-f` starts a new number and a digit after a digit
   // continues one: 0 nothing yet, 1 `-f`, 2 the obsolete digits.
@@ -828,6 +851,9 @@ pub function main(): i32 {
   }
 
   cfg = Cfg { ...cfg, plain: cfg.skip_fields == 0 as u64 && cfg.skip_chars == 0 as u64 && cfg.check_chars == size_max() && !cfg.ignore_case };
+  if (cfg.skip_fields > 0 as u64) {
+    cfg = field_sets(cfg);
+  }
 
   var r: Reader = stdin();
   if (files.in_name != "-") {
