@@ -1196,12 +1196,10 @@ a false positive would break a working build. Verified against
 `TestSelfHostAsmIRPath`, the IR fixpoint, the closure / fnptr / tuple-fn suites,
 the wasm IR path, and both stage-2 compilers — no program lost.
 
-Option (b) is still the better end state (it would also close the
-cross-representation LOCAL rebind, which no gate can classify), but it is a
-representation change across every backend. Until then, an `fn[]` struct
-field is only safe when its construction is provable — which after #5790 means
-an array literal, a local bound to one, or (closure side only) a local rebound
-to one by a top-level assignment.
+**Option (b) is DONE (#10076).** Every function array holds env boxes, so the
+gate is deleted and both shapes above compile and answer 7.
+`TestSelfHostFnArrayFieldConstruction{X86_64,Wasm}` runs them alongside the
+shapes the gate used to accept.
 
 **Root cause of the tuple gap (closed by #5758), and the shape of that fix.** A callable
 behind a struct field has an ambiguous REPRESENTATION that its declared type
