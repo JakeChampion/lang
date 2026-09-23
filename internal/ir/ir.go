@@ -9212,16 +9212,10 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// never see __fern_rc_inc — they carry no header), hence the
 		// dedicated branch rather than widening those predicates.
 		if id, ok := n.Value.(*ast.Ident); ok && len(b.defers) == 0 &&
-			b.dynReclaim() && b.localIsDynTrait(id.Name) && !b.dynBorrowed(n.Value) {
+			b.dynReclaim() && b.localIsDynTrait(id.Name) && !b.dynParamBorrowed(id.Name) {
 			b.emitRcDecLocalsAtExitExcept(id.Name)
 			b.emit(Op{Kind: OpReturn})
 			return nil
-		}
-		// A dyn value the frame holds only as a borrow is the caller's own
-		// argument, or another holder's value: returned as it stands, the
-		// caller would release it a second time.
-		if b.dynReclaim() && b.dynBorrowed(n.Value) {
-			b.emitDynRetain()
 		}
 		// `return m.insert(..)` on a Map this frame holds a slot for: the
 		// cow-in-place branch hands back m's own handle, which the caller
@@ -9524,6 +9518,8 @@ func (b *builder) stmt(s ast.Stmt) error {
 				b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 			} else if arrElemIsRcTracked(elemTypes[i]) {
 				b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
+			} else if _, isDyn := elemTypes[i].(ast.DynTraitType); isDyn && b.dynReclaim() {
+				b.emitDynRetain()
 			}
 			// Loop-body reclamation: like the temp above, a binding declared
 			// by a destructure inside a loop reuses one slot per iteration.
@@ -16885,11 +16881,18 @@ func structUpdateFieldInits(sl *ast.StructLit, sd *ast.StructDecl, t *ast.Ident)
 // the reuse path's carried ones. Keyed on the field type rather than on a
 // source expression (there is none): a two-word string goes through
 // __fern_str_inc so the inline-bit tag check applies, everything else
-// pointer-shaped through __fern_rc_inc, and a scalar takes nothing. Every
-// branch inc's-and-passes-through, leaving the value on the stack for the
-// store.
+// pointer-shaped through __fern_rc_inc, and a scalar takes nothing. A dyn
+// value has no header of its own to inc, so it is retained as a dyn alias is.
+// Every branch inc's-and-passes-through, leaving the value on the stack for
+// the store.
 func (b *builder) emitCopiedFieldInc(t ast.Type) {
 	if !ast.IsPointerType(t) {
+		return
+	}
+	if _, isDyn := t.(ast.DynTraitType); isDyn {
+		if b.dynReclaim() {
+			b.emitDynRetain()
+		}
 		return
 	}
 	if _, isStr := t.(ast.StringType); isStr && b.twoWordStrings() {
@@ -19670,10 +19673,8 @@ func (b *builder) assign(n *ast.Assign) error {
 			// an array nor a struct/enum/string/tuple by these predicates), so
 			// nothing released the old cell + concrete and a reassigning loop
 			// orphaned one of each per iteration. Reuses the loop-body
-			// re-declaration drop, which carries the gating a `dyn` slot needs
-			// — dynBorrowedViews / dynAliasElemArrays hold no cell of their own
-			// — and is net-zero on the operand stack, so the new value
-			// underneath survives for the store below.
+			// re-declaration drop, which is net-zero on the operand stack, so
+			// the new value underneath survives for the store below.
 			b.emitVarReinitDropOld(t.Name, idx)
 		}
 		// Tee semantics: leave a copy on the stack for callers that

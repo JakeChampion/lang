@@ -277,25 +277,6 @@ type rcPlan struct {
 	borrowedAlias      map[string]bool
 	borrowedAliasSites map[ast.Node]bool
 	borrowSources      map[string]bool
-	// dynBorrowedViews[name] marks a `dyn Trait` local bound (or ever
-	// reassigned) from an UNCOUNTED alias shape — an element read
-	// (`var x = xs[i]`), a field read, or a bare dyn-to-dyn ident — with no
-	// DynCoercion recorded on the source expr (a coercion packs a FRESH
-	// {data, vtable} cell at the site, which the binding owns; an alias
-	// shape just copies the owner's cell pointer). Dyn cells carry no rc
-	// header, so there is no retain to balance: sweeping such a view drops
-	// the owner's cell out from under it (double free with the owning
-	// array's / local's own drop — #4787). The exit sweep and the reinit
-	// drop skip these; the true owner releases the cell. Over-marking is
-	// leak-safe (a skipped owned cell merely leaks), never a UAF.
-	dynBorrowedViews map[string]bool
-	// dynAliasElemArrays[name] marks a `dyn Trait[]` local whose literal
-	// received a bare pre-coerced dyn LOCAL as an element (`[d]` — an
-	// uncounted cell move; see computeDynBorrowedViews). The array keeps
-	// its exit-sweep drop (it owns the moved cells) but skips the
-	// loop-reinit drop: re-declaring it per iteration would free the
-	// still-live source local's cell.
-	dynAliasElemArrays map[string]bool
 	// borrowedMapFieldResults[name] marks a local bound to a Map COW-mutator
 	// call whose RECEIVER is a field access (`var m = s.m.insert(k, v)`). On
 	// the rc==1 in-place path the mutator returns the SAME handle the
@@ -365,8 +346,6 @@ func (b *builder) computeRcAnalyses() {
 	b.rc.borrowedMapFieldResults = b.computeBorrowedMapFieldResults()
 	b.rc.arraySetInc = b.computeArraySetIncs()
 	b.computeBorrowedAliases()
-	b.rc.dynAliasElemArrays = map[string]bool{}
-	b.rc.dynBorrowedViews = b.computeDynBorrowedViews()
 	// After the borrow analyses: a borrowed view's source must stay in its
 	// slot until the exit sweep, so it is never moved into a call.
 	b.rc.ownedArgMoves = b.computeOwnedArgMoves()
@@ -374,91 +353,6 @@ func (b *builder) computeRcAnalyses() {
 	b.rc.reuseSources, b.rc.reuseConsumed = b.computeReuseSources()
 	b.rc.returnSpreadReuse = b.computeReturnSpreadReuse()
 	b.rc.consumingMatchReuse = b.computeConsumingMatchReuse()
-}
-
-// computeDynBorrowedViews finds `dyn Trait` locals that are pure borrowed
-// VIEWS of a cell some other value owns (see rc.dynBorrowedViews). A dyn
-// local OWNS its cell only when the cell was freshly packed at the binding —
-// an init with a DynCoercion recorded (a concrete coerced into the dyn slot)
-// or a non-alias shape (a call result / match-expr moving a cell in). An
-// Ident / Index / FieldAccess init WITHOUT a coercion copies an existing
-// cell pointer uncounted (dyn cells have no rc header, so needsRcIncOnAlias
-// deliberately never incs them), making the binding a borrow the sweep must
-// not drop. A dyn local ASSIGNED such a shape anywhere is marked too — the
-// slot may hold a borrow at exit, and skipping an owned cell only leaks.
-func (b *builder) computeDynBorrowedViews() map[string]bool {
-	out := map[string]bool{}
-	if b.fn.Body == nil {
-		return out
-	}
-	isUncoercedAlias := func(init ast.Expr) bool {
-		if init == nil {
-			return false
-		}
-		switch init.(type) {
-		case *ast.Ident, *ast.Index, *ast.FieldAccess:
-		default:
-			return false
-		}
-		if b.info != nil && b.info.DynCoercions != nil {
-			if _, coerced := b.info.DynCoercions[init]; coerced {
-				return false
-			}
-		}
-		return true
-	}
-	localIsDyn := func(name string) bool {
-		t, ok := b.localDeclType(name)
-		if !ok {
-			return false
-		}
-		_, isDyn := t.(ast.DynTraitType)
-		return isDyn
-	}
-	// A dyn LOCAL flowing bare into an ARRAY LITERAL element (`[d]` where d
-	// is already dyn — no coercion, so no fresh cell is packed) MOVES its
-	// cell into the array uncounted: the array's drop walk
-	// (__drop_arr_dyn_<set>) frees the cell, so the source local must not
-	// be swept too. The array itself keeps its exit-sweep drop (it owns the
-	// cells now) but must skip the loop-reinit drop (dynAliasElemArrays):
-	// re-declaring `var xs = [d]` per iteration would free d's cell on
-	// iteration 2 while d is still live.
-	markDynAliasElems := func(init ast.Expr) bool {
-		al, ok := init.(*ast.ArrayLit)
-		if !ok {
-			return false
-		}
-		found := false
-		for _, el := range al.Elems {
-			if id, ok := el.(*ast.Ident); ok && localIsDyn(id.Name) && isUncoercedAlias(el) {
-				out[id.Name] = true
-				found = true
-			}
-		}
-		return found
-	}
-	ast.Walk(b.fn.Body, func(n ast.Node) bool {
-		switch x := n.(type) {
-		case *ast.Var:
-			if localIsDyn(x.Name) && isUncoercedAlias(x.Init) {
-				out[x.Name] = true
-			}
-			if markDynAliasElems(x.Init) {
-				b.rc.dynAliasElemArrays[x.Name] = true
-			}
-		case *ast.Assign:
-			if id, ok := x.Target.(*ast.Ident); ok {
-				if localIsDyn(id.Name) && isUncoercedAlias(x.Value) {
-					out[id.Name] = true
-				}
-				if markDynAliasElems(x.Value) {
-					b.rc.dynAliasElemArrays[id.Name] = true
-				}
-			}
-		}
-		return true
-	})
-	return out
 }
 
 // summaryTable is a per-function summary under a worklist fixpoint. Every
@@ -2845,10 +2739,9 @@ func (b *builder) computeFreeEligible() map[string]bool {
 	// move instead (markConstructionMoves), which skips the dup and drops
 	// the name from the sweep, so that path is balanced too.
 	//
-	// What remains is the source a sink stores UNCOUNTED: `dyn Trait`, which
-	// needsRcIncOnAlias declines (dyn cells carry no rc header, so
-	// construction must not inc them). Freeing such a local at scope exit
-	// would reclaim the cell the container still holds.
+	// What remains is a source a sink stores UNCOUNTED, one needsRcIncOnAlias
+	// declines. Freeing such a local at scope exit would reclaim what the
+	// container still holds.
 	escapeOwned := func(e ast.Expr) {
 		id, ok := e.(*ast.Ident)
 		if !ok {
@@ -4190,28 +4083,6 @@ func (b *builder) markConstructionMoves(val ast.Expr, order identOrder, moved ma
 			for _, cap := range lit.Captures {
 				if arrElemIsRcTracked(b.exprType(cap)) {
 					mark(cap)
-				}
-				// `dyn Trait` capture (docs/DYN-TRAITS.md §7.8 — closure-capture
-				// kind). A captured `dyn` is move-only (needsRcIncOnAlias declines
-				// it, so NO inc at MakeEnv), and the closure's drop thunk reclaims
-				// it (genClosureDropThunk's dyn arm), so the source local MUST be
-				// suppressed from the exit sweep — otherwise both the source-local
-				// drop AND the thunk reclaim the same cell (a use-after-free when
-				// the closure ESCAPES: the source drop frees the cell the returned
-				// closure still derefs). NATIVES ONLY (b.dynRcSupported → boxed
-				// one-word cell, single owner after the move); wasm's inline two-
-				// word `dyn` keeps its prior correct-but-leaking capture behaviour
-				// (its env copy isn't reclaimed, the thunk doesn't reclaim it, and
-				// the source local stays swept) — gating here on dynRcSupported (NOT
-				// dynReclaim, which includes wasm) keeps the suppress/reclaim pair
-				// consistent with hasRcCapture + the thunk. `mark` can't be reused —
-				// it gates on isOwnedRcLocal, which (deliberately) excludes `dyn` —
-				// so apply the last-use guard inline.
-				if _, isDyn := b.exprType(cap).(ast.DynTraitType); isDyn && b.dynRcSupported {
-					if id, ok := cap.(*ast.Ident); ok && order.isLast(id) {
-						moved[id.Name] = true
-						b.rc.moveSites[id] = true
-					}
 				}
 			}
 		case *ast.Call:
@@ -5995,23 +5866,26 @@ func (b *builder) localIsDynTrait(name string) bool {
 	return false
 }
 
-// dynBorrowed reports a dyn-typed expression the frame does not own a unit
-// of: a parameter, a view of another holder's value (dynBorrowedViews), or a
-// field, element or capture read.
-func (b *builder) dynBorrowed(e ast.Expr) bool {
-	if _, isDyn := b.exprType(e).(ast.DynTraitType); !isDyn {
+// dynParamBorrowed reports a dyn parameter the frame holds as a borrow, which
+// returning must retain rather than move.
+func (b *builder) dynParamBorrowed(name string) bool {
+	p := b.paramNamed(name)
+	if p == nil || p.Own {
 		return false
 	}
-	switch n := e.(type) {
-	case *ast.Ident:
-		if p := b.paramNamed(n.Name); p != nil {
-			return !p.Own
-		}
-		return b.rc.dynBorrowedViews[n.Name]
-	case *ast.FieldAccess, *ast.Index, *ast.CaptureRef:
-		return true
+	_, isDyn := p.Type.(ast.DynTraitType)
+	return isDyn
+}
+
+// retainsOnAlias is rcIncOnAliasType for a builder that knows its target: a
+// dyn value is retained like any other reference on the backends that
+// reclaim it (docs/DYN-TRAITS.md §4.5), and arm64 still leaks it (§4.4
+// slice 4c), so there it takes nothing.
+func (b *builder) retainsOnAlias(t ast.Type) bool {
+	if _, isDyn := t.(ast.DynTraitType); isDyn {
+		return b.dynReclaim()
 	}
-	return false
+	return rcIncOnAliasType(t)
 }
 
 func needsRcIncOnAlias(e ast.Expr, b *builder) bool {
@@ -6023,7 +5897,7 @@ func needsRcIncOnAlias(e ast.Expr, b *builder) bool {
 	default:
 		return false
 	}
-	return rcIncOnAliasType(b.exprType(e))
+	return b.retainsOnAlias(b.exprType(e))
 }
 
 // rcIncOnAliasType is needsRcIncOnAlias' type half, split out for the callers
@@ -7593,7 +7467,7 @@ func (b *builder) computeBorrowedAliases() {
 		if !b.localNameUnique(y) {
 			return true
 		}
-		if !rcIncOnAliasType(bt) || b.isOwnedContainerRead(v.Init) {
+		if !b.retainsOnAlias(bt) || b.isOwnedContainerRead(v.Init) {
 			return true
 		}
 		// The weaker reading, not bindingConfinedToArm's: y may hand the
@@ -9741,13 +9615,13 @@ func supersededFieldSetReceivers(sl *ast.StructLit, target string) []*ast.FieldA
 // away: a declared rc-tracked local — every binding form leaves it holding
 // exactly one (an alias inc, a fresh result, a transferred return) — that is
 // neither a borrowed view nor the source one reads through (borrowedAlias /
-// borrowSources / dynBorrowedViews), or a parameter the frame owns by a
+// borrowSources), or a parameter the frame owns by a
 // count (own / owned-by-default / consumed, but not the flag-carrying
 // consumed array). Deliberately not freeEligible: that asks whether the frame
 // may FREE the value, and its taint excludes anything that might alias a
 // live one; moving needs only that the frame holds a reference.
 func (b *builder) frameOwnsIdent(name string) bool {
-	if b.rc.borrowedAlias[name] || b.rc.borrowSources[name] || b.rc.dynBorrowedViews[name] {
+	if b.rc.borrowedAlias[name] || b.rc.borrowSources[name] {
 		return false
 	}
 	if b.isOwnedRcLocal(name) {

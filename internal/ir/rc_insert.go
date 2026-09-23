@@ -819,7 +819,7 @@ func (b *builder) bindingUsesExcused(body ast.Node, name string, bt ast.Type, co
 // `bt` is the alias source's type, which the callers hold and exprType cannot
 // supply: the scrutinee reclaim runs before the arm's bindings are in scope.
 func (b *builder) assignTakesAliasInc(n *ast.Assign, bt ast.Type) bool {
-	return rcIncOnAliasType(bt) && !b.rc.moveSites[n] &&
+	return b.retainsOnAlias(bt) && !b.rc.moveSites[n] &&
 		!b.isOwnedContainerRead(n.Value)
 }
 
@@ -1268,13 +1268,20 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 					b.emit(Op{Kind: OpDrop})
 					continue
 				}
-				if !arrElemIsRcTracked(et) {
+				dynDrop, isDyn := dynSlotDrop(et, b.ptrW, b.dynRcSupported)
+				if !arrElemIsRcTracked(et) && !isDyn {
 					continue
 				}
 				b.emit(Op{Kind: OpLoadLocal, I32: slot})
 				if offs[i] != 0 {
 					b.emit(Op{Kind: OpConstI32, I32: offs[i]})
 					b.emit(Op{Kind: OpAdd})
+				}
+				if isDyn {
+					for _, op := range dynDrop {
+						b.emit(op)
+					}
+					continue
 				}
 				b.emit(Op{Kind: OpLoad, Width: WidthPtr})
 				dropStructField(et)
@@ -1588,16 +1595,6 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 	for name := range b.rc.borrowedAlias {
 		seen[name] = true
 	}
-	// Borrowed `dyn Trait` views (#4787): a dyn local bound from an element /
-	// field / bare-ident read holds another value's cell pointer uncounted
-	// (dyn cells carry no rc header). The sweep's DynTraitType arm drops
-	// UNCONDITIONALLY (__drop_dyn_<set> frees the cell + runs the concrete
-	// dtor), so sweeping a view double-frees against the owner's own drop —
-	// e.g. `var x = xs[0]` swept alongside xs's __drop_arr_dyn walk. Skip
-	// them; the owner releases the cell.
-	for name := range b.rc.dynBorrowedViews {
-		seen[name] = true
-	}
 	for _, v := range b.info.Locals[b.fn] {
 		if !rcTracked(v.Type) {
 			continue
@@ -1797,6 +1794,10 @@ func (b *builder) emitAliasInc(e ast.Expr) {
 			return
 		}
 	}
+	if _, isDyn := b.exprType(e).(ast.DynTraitType); isDyn {
+		b.emitDynRetain()
+		return
+	}
 	if _, isStr := b.exprType(e).(ast.StringType); isStr && b.twoWordStrings() {
 		// Two-word string ABI (wasm32 + arm64 TwoWordOverride): the
 		// value occupies two stack words (data, len), so the retain
@@ -1951,15 +1952,6 @@ func (b *builder) emitVarReinitDropOld(name string, idx int32) {
 		}
 		return
 	}
-	// A borrowed `dyn Trait` view (#4787 — e.g. a for-in loop var
-	// re-declared per iteration from `iter[idx]`) owns no cell to release;
-	// dropping the previous iteration's value would free the array's cell.
-	// A dyn array that received a bare dyn LOCAL as a literal element
-	// (dynAliasElemArrays) likewise skips the reinit drop — freeing the
-	// prior iteration's walk would free the still-live source's cell.
-	if b.rc.dynBorrowedViews[name] || b.rc.dynAliasElemArrays[name] {
-		return
-	}
 	t, ok := b.localDeclType(name)
 	if !ok {
 		return
@@ -2055,9 +2047,8 @@ func (b *builder) emitReuseOldFieldDrops(reusedSlot, baseSlot int32, offsets []i
 
 // hasRcCapture reports whether any capture is rc-tracked (i.e. was
 // inc'd at MakeEnv and so needs dropping when the closure dies). A
-// `dyn Trait` capture is move-only (no MakeEnv inc) but still needs the
-// thunk to reclaim it, so it counts on the natives (dynRcSupported);
-// docs/DYN-TRAITS.md §7.8 — closure-capture kind.
+// `dyn Trait` capture counts on the natives (dynRcSupported), where the
+// thunk reclaims it; docs/DYN-TRAITS.md §7.8 — closure-capture kind.
 func hasRcCapture(caps []ast.Param, ptrW int, dynRcSupported bool) bool {
 	for _, c := range caps {
 		if arrElemIsRcTracked(c.Type) {
@@ -2168,14 +2159,12 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.
 			continue
 		}
 		// `dyn Trait` capture — NATIVES ONLY (dynRcSupported, boxed one-word
-		// cell ptr in the env slot). The capture was MOVED into the env (no
-		// MakeEnv inc — needsRcIncOnAlias declines `dyn`), and
-		// markConstructionMoves suppressed the source local's exit-sweep drop,
-		// so this thunk is the SOLE owner that reclaims the cell. Load the cell
-		// ptr from [env+off] and run __drop_dyn_<set> (argc 1, VOID return → NO
-		// trailing OpDrop, mirroring appendChildDrop's dyn arm). wasm (inline
-		// two-word) is excluded — it has no thunk reclaim for `dyn` and keeps
-		// leaking the capture; see docs/DYN-TRAITS.md §7.8.
+		// cell ptr in the env slot). MakeEnv retained the capture into a cell
+		// of the env's own (emitDynRetain), so the thunk releases that unit:
+		// load the cell ptr from [env+off] and run __drop_dyn_<set> (argc 1,
+		// VOID return → NO trailing OpDrop, mirroring appendChildDrop's dyn
+		// arm). wasm (inline two-word) is excluded — it has no thunk reclaim
+		// for `dyn` and keeps leaking the capture; see docs/DYN-TRAITS.md §7.8.
 		if dt, isDyn := c.Type.(ast.DynTraitType); isDyn && dynRcSupported {
 			ops = append(ops,
 				Op{Kind: OpLoadLocal, I32: 0},
@@ -3714,12 +3703,17 @@ func genTupleDropFn(mangled string, tt ast.TupleType, info *checker.Info, ptrW i
 				Op{Kind: OpDrop})
 			continue
 		}
-		if !arrElemIsRcTracked(et) {
+		dynDrop, isDyn := dynSlotDrop(et, ptrW, dynRcSupported)
+		if !arrElemIsRcTracked(et) && !isDyn {
 			continue
 		}
 		ops = append(ops, Op{Kind: OpLoadLocal, I32: 0})
 		if offs[i] != 0 {
 			ops = append(ops, Op{Kind: OpConstI32, I32: offs[i]}, Op{Kind: OpAdd})
+		}
+		if isDyn {
+			ops = append(ops, dynDrop...)
+			continue
 		}
 		ops = append(ops, Op{Kind: OpLoad, Width: WidthPtr})
 		ops = appendChildDrop(ops, et, info, ptrW, reg, tupleReg, dynRcSupported)
@@ -3745,6 +3739,23 @@ func genTupleDropFn(mangled string, tt ast.TupleType, info *checker.Info, ptrW i
 	}
 }
 
+// dynSlotDrop returns the ops that release a dyn value stored in a struct
+// field or tuple element, given the slot's address on the stack: wasm's
+// inline [data, vtable] or the natives' cell pointer, released like a dyn
+// local. The slot holds a unit of its own — a fresh coercion moved in, an
+// alias retained, a copy retained (emitCopiedFieldInc).
+func dynSlotDrop(t ast.Type, ptrW int, dynRcSupported bool) ([]Op, bool) {
+	dt, ok := t.(ast.DynTraitType)
+	if !ok || (ptrW != 4 && !dynRcSupported) {
+		return nil, false
+	}
+	argc := int32(1)
+	if ptrW == 4 {
+		argc = 2
+	}
+	return []Op{payloadLoadOpFor(t, ptrW), {Kind: OpCallDirect, Str: dynDropFnName(dt.Traits), I32: argc}}, true
+}
+
 // genStructDropFn builds the recursive __drop_struct_<Name> function:
 // at the value's last reference (rc==1) it drops each rc-tracked field
 // — recursing into nested struct fields via their own drop fns — then
@@ -3766,12 +3777,17 @@ func genStructDropFn(name string, sd *ast.StructDecl, info *checker.Info, ptrW i
 		isTwoWordStr = isTwoWordStr && ast.UseTwoWordStrings(ptrW)
 		_, isNativeStr := f.Type.(ast.StringType)
 		isNativeStr = isNativeStr && ptrW == 8 && !ast.UseTwoWordStrings(ptrW)
-		if !arrElemIsRcTracked(f.Type) && !isTwoWordStr && !isNativeStr {
+		dynDrop, isDyn := dynSlotDrop(f.Type, ptrW, dynRcSupported)
+		if !arrElemIsRcTracked(f.Type) && !isTwoWordStr && !isNativeStr && !isDyn {
 			continue
 		}
 		ops = append(ops, Op{Kind: OpLoadLocal, I32: 0})
 		if off := offs[f.Name]; off != 0 {
 			ops = append(ops, Op{Kind: OpConstI32, I32: off}, Op{Kind: OpAdd})
+		}
+		if isDyn {
+			ops = append(ops, dynDrop...)
+			continue
 		}
 		if isTwoWordStr {
 			// Two-word string field: load (data, len) and reclaim via
