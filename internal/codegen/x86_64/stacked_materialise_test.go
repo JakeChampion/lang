@@ -109,6 +109,9 @@ func TestPeepholeRenamesMultiLineOperand(t *testing.T) {
 		{"shift count in cl renames onto another register",
 			[]string{"\tpush rax", "\tmov rax, [rbp-8]", "\tshl rax, cl", "\tmov rsi, rax", "\tpop rax", "\tret"},
 			[]string{"\tmov rsi, [rbp-8]", "\tshl rsi, cl", "\tret"}},
+		{"32-bit copy after a shift by cl keeps the 64-bit count mask",
+			[]string{"\tpush rax", "\tmov rax, [rbp-8]", "\tshl rax, cl", "\tmov esi, eax", "\tpop rax", "\tret"},
+			[]string{"\tmov rsi, [rbp-8]", "\tshl rsi, cl", "\tmov esi, esi", "\tret"}},
 	}
 	for _, c := range cases {
 		got := runPeephole(c.in...)
