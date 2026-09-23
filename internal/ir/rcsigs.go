@@ -292,7 +292,7 @@ var rcInertBuiltins = map[string]bool{
 	// take and return scalars. `buf_free` releases the builder's own
 	// blocks, which is the wholesale-invalidation axis `__heap_release_to`
 	// is filed under above and not one this table answers.
-	"buf_new": true, "buf_push": true, "buf_push_range": true,
+	"buf_new": true, "buf_push": true, "buf_push_range": true, "buf_push_mapped": true, "buf_push_filtered": true, "buf_push_expanded": true,
 	"buf_push_byte": true, "buf_push_u64": true, "buf_len": true, "buf_take": true,
 	"buf_free": true,
 
@@ -475,7 +475,7 @@ var rcInert = map[string]bool{
 	"__fern_environ":               true,
 	"__fern_arr_push_shared_bytes": true,
 	"__fern_arr_push_shared_count": true, "__fern_ascii_run": true,
-	"__fern_rmemchr": true, "__fern_count_byte": true, "__fern_scan_set": true,
+	"__fern_rmemchr": true, "__fern_count_byte": true, "__fern_scan_set": true, "__fern_count_runs": true, "__fern_bsd_sum": true,
 	"__fern_sum_bytes": true, "__fern_crc32_cksum": true,
 	// Reads its f64[] and allocates the scaled copy; moves no count on the
 	// input. The RESULT is counted, in rcResultOwned.

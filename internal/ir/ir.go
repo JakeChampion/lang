@@ -15423,6 +15423,32 @@ func (b *builder) callBody(n *ast.Call) error {
 			return nil
 		}
 	}
+	// __bsd_sum(s, sum) — __count_byte's operand shape.
+	if id.Name == "__bsd_sum" && len(n.Args) == 2 {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			for _, a := range n.Args {
+				if err := b.expr(a); err != nil {
+					return err
+				}
+			}
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_bsd_sum", Width: ResNarrow, I32: 2,
+				Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}}}})
+			return nil
+		}
+	}
+	// __count_runs(s, inside, set) — __scan_set's operand shape.
+	if id.Name == "__count_runs" && len(n.Args) == 3 {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			for _, a := range n.Args {
+				if err := b.expr(a); err != nil {
+					return err
+				}
+			}
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_count_runs", Width: ResNarrow, I32: 3,
+				Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}}}})
+			return nil
+		}
+	}
 	// __mismatch(a, ao, b, bo, n) — the same runtime-helper-call shape as its
 	// four siblings, with TWO strings. ArgTypes is doubly essential here:
 	// under the two-word ABI this call is seven operand slots, not five, and

@@ -603,6 +603,17 @@ pub function op_sum_bytes(): Op { return op0("sum_bytes"); }
 // as ascii_run's is, so a caller's run walk needs no branch.
 pub function op_scan_set(): Op { return op0("scan_set"); }
 
+// count_runs: pops [str, inside, set] → the i32 count of runs of bytes whose
+// entry in `set`, a u8[] indexed by byte value, is nonzero that begin in the
+// string; `inside` nonzero means the byte before it was a member. A byte past
+// the end of `set` is not a member. Allocates nothing. wc's word count.
+pub function op_count_runs(): Op { return op0("count_runs"); }
+
+// bsd_sum: pops [str, sum] → the i32 BSD checksum (`sum -r`) continued over
+// the string from `sum`: per byte, rotate the 16 bits right by one and add the
+// byte, modulo 2^16. Allocates nothing.
+pub function op_bsd_sum(): Op { return op0("bsd_sum"); }
+
 // scale_f64 (docs/ATLAS-PLATFORM-PLAN.md §3.3, eighth kernel): pops [xs, k]
 // → the data pointer of a FRESH f64 array of xs's length whose element i is
 // xs[i] * k. The first kernel over an array rather than a string, and the
@@ -1487,6 +1498,17 @@ pub function op_strbuf_take(): Op { return op0("strbuf_take"); }
 pub function op_buf_new(): Op { return op0("buf_new"); }
 pub function op_buf_push(): Op { return op0("buf_push"); }
 pub function op_buf_push_range(): Op { return op0("buf_push_range"); }
+// `buf_push_mapped` pops [handle, str, table]: each byte c of the string is
+// appended as table[c], a u8[] indexed by byte value, or unchanged when c is
+// past the table's end.
+pub function op_buf_push_mapped(): Op { return op0("buf_push_mapped"); }
+// `buf_push_filtered` pops [handle, str, drop]: each byte c of the string is
+// appended unless drop[c] is nonzero; a byte past the table's end is kept.
+pub function op_buf_push_filtered(): Op { return op0("buf_push_filtered"); }
+// `buf_push_expanded` pops [handle, str, table]: each byte c of the string is
+// appended as the record at table[c*8], a length (above 7 counts as 7) and
+// then the bytes; a byte whose record is not wholly in the table is kept.
+pub function op_buf_push_expanded(): Op { return op0("buf_push_expanded"); }
 pub function op_buf_push_byte(): Op { return op0("buf_push_byte"); }
 pub function op_buf_push_u64(): Op { return op0("buf_push_u64"); }
 pub function op_buf_len(): Op { return op0("buf_len"); }
@@ -2244,6 +2266,7 @@ function kind_id_len7(name: string): i32 {
     if (c == b'e' && name == "environ") { return 249; }
     if (c == b'b' && name == "buf_new") { return 291; }
     if (c == b'b' && name == "buf_len") { return 295; }
+    if (c == b'b' && name == "bsd_sum") { return 329; }
     if (c == b'm') { return kind_id_len7_m(name); }
     if (c == b'o' && name == "opt_tag") { return 122; }
     if (c == b'p' && name == "putchar") { return 165; }
@@ -2424,6 +2447,7 @@ function kind_id_len10(name: string): i32 {
     var c: u8 = name[0];
     if (c == b'c' && name == "const_func") { return 6; }
     if (c == b'c' && name == "count_byte") { return 235; }
+    if (c == b'c' && name == "count_runs") { return 327; }
     if (c == b'c' && name == "create_dir") { return 260; }
     if (c == b'e' && name == "eprint_str") { return 164; }
     if (c == b'f' && name == "f64_to_i32") { return 12; }
@@ -2583,6 +2607,7 @@ function kind_id_len14(name: string): i32 {
 
 function kind_id_len15(name: string): i32 {
     var c: u8 = name[0];
+    if (c == b'b' && name == "buf_push_mapped") { return 325; }
     if (c == b'h' && name == "heap_bump_bytes") { return 80; }
     if (c == b'h' && name == "heap_release_to") { return 230; }
     if (c == b'm' && name == "mapiter_advance") { return 137; }
@@ -2606,6 +2631,8 @@ function kind_id_len16(name: string): i32 {
 function kind_id_len17(name: string): i32 {
     var c: u8 = name[0];
     if (c == b's' && name == "set_process_group") { return 284; }
+    if (c == b'b' && name == "buf_push_filtered") { return 326; }
+    if (c == b'b' && name == "buf_push_expanded") { return 328; }
     return 0;
 }
 
@@ -2878,6 +2905,11 @@ function kind_name_4(id: i32): string {
     if (id == 235) { return "count_byte"; }
     if (id == 253) { return "sum_bytes"; }
     if (id == 324) { return "scan_set"; }
+    if (id == 327) { return "count_runs"; }
+    if (id == 329) { return "bsd_sum"; }
+    if (id == 325) { return "buf_push_mapped"; }
+    if (id == 326) { return "buf_push_filtered"; }
+    if (id == 328) { return "buf_push_expanded"; }
     if (id == 322) { return "scale_f64"; }
     if (id == 309) { return "crc32_cksum"; }
     if (id == 228) { return "syscall5"; }
@@ -3102,6 +3134,7 @@ function pops2_mem(t: i32): boolean {
         || t == 105 || t == 108                                          // str_split, str_repeat
         || t == 227                                                      // ascii_run
         || t == 235                                                      // count_byte
+        || t == 329                                                      // bsd_sum
         || t == 309                                                      // crc32_cksum
         || t == 322                                                      // scale_f64
         || t == 127 || t == 128 || t == 130                              // map_get, map_has, map_delete
@@ -3134,7 +3167,8 @@ function pops3(t: i32): boolean {
         || t == 280                                                      // proc_exec_as (path, argv, envp)
         || t == 313                                                      // termios_set (fd, when, words)
         || t == 314                                                      // set_window_size (fd, rows, cols)
-        || t == 324;                                                     // scan_set (str, from, set)
+        || t == 324                                                      // scan_set (str, from, set)
+        || t == 327;                                                     // count_runs (str, inside, set)
 }
 
 // op_pops is how many operand slots `o` consumes, or -1 when the op is not
@@ -3153,6 +3187,7 @@ function pops_buf(t: i32): i32 {
     // buf_push_u64 arrived after the block had closed over 291-297, so it
     // carries the next free id instead of extending it.
     if (t == 306) { return 2; }
+    if (t == 325 || t == 326 || t == 328) { return 3; } // buf_push_mapped / _filtered / _expanded: handle + string + table
     if (t < 291 || t > 297) { return 0 - 1; }
     if (t == 293) { return 4; }                       // buf_push_range: handle + string + lo + hi
     if (t == 292 || t == 294) { return 2; }           // buf_push, buf_push_byte
@@ -4916,7 +4951,7 @@ pub function is_str_op_kind(tag: i32): boolean {
         || tag == 110 || tag == 111 || tag == 113 || tag == 98
         || tag == 99 || tag == 100 || tag == 225 || tag == 227
         || tag == 234 || tag == 235 || tag == 245 || tag == 253
-        || tag == 309 || tag == 322 || tag == 324;
+        || tag == 309 || tag == 322 || tag == 324 || tag == 327 || tag == 329;
 }
 
 // --- Structured-scope navigation over an op stream ---

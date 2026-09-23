@@ -11566,6 +11566,7 @@ function lower_target_name(name: string, s: LowerState): LowerState {
 function buf_builtin_arity(name: string): i32 {
     if (name == "buf_new" || name == "buf_len" || name == "buf_take" || name == "buf_free") { return 1; }
     if (name == "buf_push" || name == "buf_push_byte" || name == "buf_push_u64") { return 2; }
+    if (name == "buf_push_mapped" || name == "buf_push_filtered" || name == "buf_push_expanded") { return 3; }
     if (name == "buf_push_range") { return 4; }
     return 0 - 1;
 }
@@ -11575,6 +11576,9 @@ function buf_builtin_op(name: string): ir.Op {
     if (name == "buf_new") { return ir.op_buf_new(); }
     if (name == "buf_push") { return ir.op_buf_push(); }
     if (name == "buf_push_range") { return ir.op_buf_push_range(); }
+    if (name == "buf_push_mapped") { return ir.op_buf_push_mapped(); }
+    if (name == "buf_push_filtered") { return ir.op_buf_push_filtered(); }
+    if (name == "buf_push_expanded") { return ir.op_buf_push_expanded(); }
     if (name == "buf_push_byte") { return ir.op_buf_push_byte(); }
     if (name == "buf_push_u64") { return ir.op_buf_push_u64(); }
     if (name == "buf_len") { return ir.op_buf_len(); }
@@ -13150,8 +13154,8 @@ function lower_call_path_scalars(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerSt
 // number of arguments falls through to the ordinary named-call path.
 function is_byte_kernel_call(name: string, argc: i32): boolean {
     if (name == "__memchr" || name == "__rmemchr") { return argc == 3; }
-    if (name == "__count_byte" || name == "__ascii_run") { return argc == 2; }
-    if (name == "__scan_set") { return argc == 3; }
+    if (name == "__count_byte" || name == "__ascii_run" || name == "__bsd_sum") { return argc == 2; }
+    if (name == "__scan_set" || name == "__count_runs") { return argc == 3; }
     if (name == "__crc32_cksum") { return argc == 2; }
     if (name == "__sum_bytes") { return argc == 1; }
     if (name == "__mismatch") { return argc == 5; }
@@ -13173,8 +13177,10 @@ function is_byte_kernel_call(name: string, argc: i32): boolean {
 //                                 caller can skip a run branch-free.
 //   __scan_set(s, from, set)    → the first byte at or after `from` whose
 //                                 entry in the u8[] `set` is nonzero, or the
-//                                 LENGTH. The only one over a string AND an
-//                                 array.
+//                                 LENGTH.
+//   __bsd_sum(s, sum)           → the BSD checksum continued over s.
+//   __count_runs(s, inside, set) → how many runs of `set` members begin in
+//                                 s; `inside` says one was open before it.
 //   __mismatch(a, ao, b, bo, n) → the first differing offset of two ranges, or
 //                                 the clamped n. The only one with TWO string
 //                                 operands, at slots 0 and 2.
@@ -13198,6 +13204,8 @@ function lower_call_byte_kernel(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerSta
     if (cid.name == "__sum_bytes") { return k.emit(ir.op_sum_bytes()); }
     if (cid.name == "__ascii_run") { return k.emit(ir.op_ascii_run()); }
     if (cid.name == "__scan_set") { return k.emit(ir.op_scan_set()); }
+    if (cid.name == "__count_runs") { return k.emit(ir.op_count_runs()); }
+    if (cid.name == "__bsd_sum") { return k.emit(ir.op_bsd_sum()); }
     if (cid.name == "__crc32_cksum") { return k.emit(ir.op_crc32_cksum()); }
     if (cid.name == "__scale_f64") { return k.emit(ir.op_scale_f64()); }
     return k.emit(ir.op_mismatch());
@@ -67002,7 +67010,7 @@ function borrow_reg_record(key: string, flags: string): string {
 // name: the escape walks see no receiver type, so the name alone must settle
 // it.
 function copying_builtin_keys(funcs: parser.FuncDecl[]): string[] {
-    var keys: string[] = ["print", "write", "eprint", "strbuf_append", "buf_push", "buf_push_range", "__memchr", "__rmemchr", "__ascii_run", "__scan_set", "__count_byte", "__sum_bytes", "__mismatch", "__crc32_cksum", "__scale_f64"];
+    var keys: string[] = ["print", "write", "eprint", "strbuf_append", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "__memchr", "__rmemchr", "__ascii_run", "__scan_set", "__count_runs", "__bsd_sum", "__count_byte", "__sum_bytes", "__mismatch", "__crc32_cksum", "__scale_f64"];
     var has_write: boolean = false;
     var has_write_some: boolean = false;
     for fn in funcs {
@@ -67019,11 +67027,15 @@ function copying_builtin_keys(funcs: parser.FuncDecl[]): string[] {
 // __mismatch reads TWO ranges and retains neither, so positions 0 and 2 both
 // carry the credit (native's copyingBuiltinArgs["__mismatch"] is {0, 2}), and
 // the two buf_push forms take the builder handle at position 0, and
-// __crc32_cksum the carried CRC, so the string they copy is at position 1.
+// __crc32_cksum the carried CRC, so the string they copy is at position 1;
+// buf_push_mapped, buf_push_filtered and buf_push_expanded read their table at
+// position 2 as well.
 // A position past the string's end reads as not borrowable, which is what the
 // i32 parameters want.
 function copying_builtin_flags(key: string): string {
     if (key == "__mismatch") { return "10100"; }
+    if (key == "__count_runs") { return "101"; }
+    if (key == "buf_push_mapped" || key == "buf_push_filtered" || key == "buf_push_expanded") { return "011"; }
     if (key == "buf_push" || key == "buf_push_range" || key == "__crc32_cksum") { return "01"; }
     return "1";
 }

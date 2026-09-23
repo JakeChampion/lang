@@ -253,9 +253,10 @@ function __bsd_sum_absorb(s: BsdSum, bs: [u8]): BsdSum {
     return BsdSum { sum: sum, len: s.len + (n as u64) };
 }
 
+// update(chunk) runs the __bsd_sum kernel over a string; update_bytes keeps
+// the loop, as the kernel family takes strings only.
 pub function (s: BsdSum) update(chunk: string): BsdSum {
-    s = __bsd_sum_absorb(s, chunk.as_bytes());
-    return s;
+    return BsdSum { sum: __bsd_sum(chunk, s.sum as i32) as u32, len: s.len + (chunk.len() as u64) };
 }
 
 pub function (s: BsdSum) update_bytes(chunk: [u8]): BsdSum {
