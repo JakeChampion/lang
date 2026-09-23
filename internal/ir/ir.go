@@ -15484,6 +15484,9 @@ func (b *builder) callBody(n *ast.Call) error {
 			if isWideMapValueTypeIR(vType) {
 				return b.emitWideMapValues(n, vType)
 			}
+			if isByteMapColumnIR(vType) {
+				return b.emitByteMapColumn(n, true)
+			}
 		}
 	}
 	// `m.keys()` on `Map[K, V]` where K is wide (i64 / u64 /
@@ -15501,6 +15504,9 @@ func (b *builder) callBody(n *ast.Call) error {
 			kType := st.Args[0]
 			if isWideMapValueTypeIR(kType) {
 				return b.emitWideMapKeys(n, kType)
+			}
+			if isByteMapColumnIR(kType) {
+				return b.emitByteMapColumn(n, false)
 			}
 		}
 	}
@@ -21085,6 +21091,37 @@ func isWideMapValueTypeIR(t ast.Type) bool {
 		return true
 	}
 	return false
+}
+
+// isByteMapColumnIR reports whether a K / V occupies ONE byte per element in
+// the `K[]` / `V[]` a keys() / values() snapshot is bound to — `u8`, the only
+// width-8 type the parser spells. Its opposite number is
+// isWideMapValueTypeIR: both name a column the stdlib's fixed 4-byte
+// destStride is wrong for, at opposite ends of the same axis (#10000).
+func isByteMapColumnIR(t ast.Type) bool {
+	n, ok := t.(ast.NumberType)
+	return ok && n.NormalWidth() == 8
+}
+
+// emitByteMapColumn lowers `m.keys()` / `m.values()` on a one-byte column to
+// __map_u8_column, which writes the result at the stride a `u8[]` reads at.
+// `values` selects the V slot within each entry, one pointer width past the K.
+//
+// The offset is __ptr_width() rather than this builder's ptrW for the same
+// reason emitWideMapValues reads it at run time: the entry layout is the
+// stdlib Map runtime's, and asking it keeps one IR correct on both a 4-byte
+// and an 8-byte target.
+func (b *builder) emitByteMapColumn(n *ast.Call, values bool) error {
+	if err := b.expr(n.Args[0]); err != nil {
+		return err
+	}
+	if values {
+		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__ptr_width", Width: ResNarrow, I32: 0})
+	} else {
+		b.emit(Op{Kind: OpConstI32, I32: 0})
+	}
+	b.emit(Op{Kind: OpCallDirect, Str: "__map_u8_column", I32: 2})
+	return nil
 }
 
 // emitWideMapValues lowers `m.values()` when V is wide (i64 /

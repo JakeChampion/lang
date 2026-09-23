@@ -854,6 +854,34 @@ pub function __map_column(m: usize, kvOffset: i32, destStride: i32): usize {
     return arr + hdr;
 }
 
+// __map_u8_column snapshots a ONE-BYTE column — a `u8` key or value — into a
+// fresh `u8[]`. It exists because the stride is a property of the TYPE and the
+// runtime tag cannot see it: a `u8` key and an `i32` key are both keyKind 0, so
+// __map_column wrote both at its 4-byte destStride while the result was bound
+// to a `u8[]`, whose elements stride 1. Twelve entries read at stride 1 out of
+// a buffer written at stride 4 land inside the first three (#10000).
+//
+// Entries still hold the key or value in the low bits of an i32-sized slot, so
+// the READ is __map_column's i32 read; only the write narrows. Building the
+// result as a real `u8[]` rather than by hand is what supplies the byte store —
+// there is no callable byte-store shim, and `.with` on a sole-owner buffer is
+// the in-place write the IR already lowers for an array element.
+pub function __map_u8_column(m: usize, kvOffset: i32): u8[] {
+    var buf: usize = __load_ptr(m);
+    var cap: i32 = __load_i32(buf);
+    var len_: i32 = __load_i32(buf + 4);
+    var entryStride: i32 = 2 * __ptr_width();
+    var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
+    var out: u8[] = __alloc_u8(len_);
+    var i: i32 = 0;
+    while (i < len_) {
+        var v32: i32 = __load_i32(entriesBase + i * entryStride + kvOffset);
+        out = out.with(i, v32 as u8);
+        i = i + 1;
+    }
+    return out;
+}
+
 // __map_keys_impl / __map_values_impl back `m.keys()` / `m.values()`.
 // COST: each call ALLOCATES a fresh length-prefixed array snapshot of the
 // column and retains every element — O(n) time + memory PER CALL. Calling

@@ -383,6 +383,7 @@ map_string_key                                       0
 map_struct_enum_keys                                 14
 map_struct_key_grow                                  26
 map_struct_value_field                               3
+map_u8_column                                        0
 map_values_str                                       0
 match_arm_tuple                                      0
 match_expr_arm_width                                 1
