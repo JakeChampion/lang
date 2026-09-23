@@ -2807,6 +2807,7 @@ var CallDirectAliases = mergeCodegenAliases(map[string]string{
 	"__method_Writer_syncfs":          "__fern_fd_syncfs",
 	"__method_Reader_dup_onto":        "__fern_fd_dup_onto",
 	"__method_Reader_window_size":     "__fern_handle_window_size",
+	"__method_Reader_splice_to":       "__fern_reader_splice",
 	"__method_Reader_set_window_size": "__fern_handle_set_window_size",
 	"__method_Reader_termios_get":     "__fern_handle_termios_get",
 	"__method_Reader_termios_set":     "__fern_handle_termios_set",

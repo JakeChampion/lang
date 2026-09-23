@@ -485,6 +485,7 @@ pub function sysno(t: string, name: string): string {
     if (name == "fork") { return "57"; }
         if (name == "pipe2") { return "293"; }
         if (name == "dup3") { return "292"; }
+        if (name == "splice") { return "275"; }
         if (name == "timerfd_create") { return "283"; }
         if (name == "timerfd_settime") { return "286"; }
         if (name == "ioctl") { return "16"; }
@@ -675,6 +676,7 @@ pub function sysno(t: string, name: string): string {
     if (name == "clone") { return "220"; }
     if (name == "pipe2") { return "59"; }
     if (name == "dup3") { return "24"; }
+    if (name == "splice") { return "76"; }
     if (name == "timerfd_create") { return "85"; }
     if (name == "timerfd_settime") { return "86"; }
     if (name == "ioctl") { return "29"; }
@@ -2710,6 +2712,27 @@ pub function rt_src_sync_family(s: EmitState, t: string): string {
 // lseek(2), the new offset back. The result is bound to an i64 rather than
 // cast from an i32: the register backends' `as i64` sign-extends the low 32
 // bits, which would fold an offset past 2 GiB.
+// rt_src_reader_splice backs `r.splice_to(w, max)` -> Result[i64, IoError], the
+// native codegens' __fern_reader_splice: a direct splice(2), after which a
+// writer that is a pipe grows to hold max (asked once per writer, the third
+// word recording which), and on EINVAL the pipe whose fds __raw_splice_pipe()
+// holds, created on first use and sized to max, after an empty-pipe probe of
+// the writer. Every failure before bytes
+// leave the reader is Unsupported; a drain failure is the writer's and
+// discards the pipe. XNU has no splice, so Darwin answers Unsupported.
+pub function rt_src_reader_splice(t: string): string {
+    var head: string = "function __fern_reader_splice(fd: i32, out: i32, max: i32): Result[i64, IoError] { ";
+    if (t == "arm64-darwin") { return head + "return Err(Unsupported); }"; }
+    var sp: string = sysno(t, "splice");
+    var fc: string = sysno(t, "fcntl");
+    var o: string = head + "var n: i32 = __syscall6(" + sp + ", fd, 0, out, 0, max, 0); var p: i32 = __raw_splice_pipe(); if (n >= 0) { if (__load_i32(__raw_addr(p, 8)) != out + 1) { __store_i32(__raw_addr(p, 8), out + 1); var cap: i32 = __syscall3(" + fc + ", out, 1032, 0); if (cap >= 0 && cap < max) { __syscall3(" + fc + ", out, 1031, max); } } return Ok(n as i64); } if (n != 0 - 22) { return Err(Unsupported); } ";
+    o = o + "if (__load_i64(p) == (0 as i64)) { if (__syscall3(" + sysno(t, "pipe2") + ", p, 524288, 0) != 0) { return Err(Unsupported); } __syscall3(" + sysno(t, "fcntl") + ", __load_i32(__raw_addr(p, 4)), 1031, max); } ";
+    o = o + "var pr: i32 = __load_i32(p); var pw: i32 = __load_i32(__raw_addr(p, 4)); if (__syscall6(" + sp + ", pr, 0, out, 0, 1, 2) != 0 - 11) { return Err(Unsupported); } ";
+    o = o + "var got: i32 = __syscall6(" + sp + ", fd, 0, pw, 0, max, 0); if (got < 0) { return Err(Unsupported); } var left: i32 = got; ";
+    o = o + "while (left > 0) { var m: i32 = __syscall6(" + sp + ", pr, 0, out, 0, left, 0); if (m > 0) { left = left - m; } else if (m != 0 - 4) { __syscall3(" + sysno(t, "close") + ", pr, 0, 0); __syscall3(" + sysno(t, "close") + ", pw, 0, 0); __store_i64(p, 0 as i64); var e: i32 = 0 - m; if (m == 0) { e = 5; } return Err(__fern_io_error(e, \"\")); } } ";
+    return o + "return Ok(got as i64); }";
+}
+
 pub function rt_src_reader_seek(t: string): string {
     return "function __fern_reader_seek(fd: i32, off: i64, whence: i32): Result[i64, IoError] { var r: i64 = __syscall3(" + sysno(t, "lseek") + ", fd, off, whence); if (r < (0 as i64)) { return Err(__fern_io_error(((0 as i64) - r) as i32, \"\")); } return Ok(r); }";
 }
@@ -3454,6 +3477,7 @@ pub function match_payload_type(scrut: ast.Expr, s: EmitState): Ty {
                     // integer here.
                     if ((ty_struct_name(rcv) == "Reader" || ty_struct_name(rcv) == "Writer") && (fa.field == "seek" || fa.field == "flags")) { return ty_i32(); }
                     if (ty_struct_name(rcv) == "Writer" && fa.field == "write_some") { return ty_i32(); }
+                    if (ty_struct_name(rcv) == "Reader" && fa.field == "splice_to") { return ty_i32(); }
                     if (fa.field == "get" && is_map(rcv)) { return map_val(rcv); }
                     if ((fa.field == "min" || fa.field == "max") && ty_is_array_i32(rcv)) {
                         return ty_i32();
@@ -4449,6 +4473,7 @@ function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: Emi
     // Writer.write_some is Result[i64, IoError]: a count, in the same 64-bit
     // payload slot seek's offset lands in.
     if (ty_struct_name(rt) == "Writer" && fa.field == "write_some") { return ty_result(ty_i32()); }
+    if (ty_struct_name(rt) == "Reader" && fa.field == "splice_to") { return ty_result(ty_i32()); }
     if (ty_struct_name(rt) == "Writer" && (fa.field == "write" || fa.field == "truncate")) { return ty_option(ty_unknown()); }
     // Reader.dup_onto / Writer.dup_onto -> Option[IoError]: the descriptor
     // either took the handle or reports why not.
@@ -4698,6 +4723,8 @@ function builtin_i32_names(): string[] {
         "__syscall5",
         "__syscall6",
         "__raw_environ",
+        // The splice helper's pipe word, its fds kept between calls.
+        "__raw_splice_pipe",
         // Fixed static scratch buffer for syscall leaves (timespec /
         // stat) — reused, never freed. Returns the buffer ptr as i32.
         "__raw_scratch",

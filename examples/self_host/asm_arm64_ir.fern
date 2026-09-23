@@ -2433,6 +2433,12 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
         s = s.need("heap"); s = s.need("reader"); s = s.need("reader_seek");
         s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
         s = s.write("    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_reader_seek\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
+    } else if (o.kind_tag == 330) {  // reader_splice
+        // [fd][out_fd][max] (max on top) -> Result[i64, IoError], re-pushed
+        // with param[0] (fd) on top as reader_seek is.
+        s = s.need("heap"); s = s.need("reader"); s = s.need("reader_splice");
+        s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+        s = s.write("    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_reader_splice\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
     } else if (o.kind_tag == 281) {  // writer_truncate
         // [fd][length] -> Option[IoError]. The length is on top but
         // param[0] is fd, so swap before the call, as writer_write does.
@@ -8244,6 +8250,12 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         if (s.has_need("fd_stat")) { fs_src = fs_src + " " + asmcore.rt_src_fd_stat(tgt); }
         fs_src = fs_src + asmcore.rt_src_sync_family(s, tgt);
         if (s.has_need("reader_seek")) { fs_src = fs_src + " " + asmcore.rt_src_reader_seek(tgt); }
+        if (s.has_need("reader_splice")) {
+            if (tgt != "arm64-darwin") {
+                s = s.write("    .section .bss\n    .p2align 3\n__fern_splice_pipe: .quad 0, 0\n    .text\n");
+            }
+            fs_src = fs_src + " " + asmcore.rt_src_reader_splice(tgt);
+        }
         if (s.has_need("fd_flags")) { fs_src = fs_src + " " + asmcore.rt_src_fd_flags(tgt); }
         if (s.has_need("fd_dup_onto")) { fs_src = fs_src + " " + asmcore.rt_src_fd_dup_onto(tgt); }
         if (s.has_need("writer_truncate")) { fs_src = fs_src + " " + asmcore.rt_src_writer_truncate(tgt); }

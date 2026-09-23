@@ -12771,6 +12771,10 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
     if (cid.name == "__raw_environ" && c.args.len() == 0) {
         return s.emit(ir.op_raw_environ());
     }
+    // __raw_splice_pipe() — the address of the splice helper's pipe word.
+    if (cid.name == "__raw_splice_pipe" && c.args.len() == 0) {
+        return s.emit(ir.op_raw_splice_pipe());
+    }
     // __raw_arr_box(n) — a fresh n-element array box's data pointer (#2649).
     // The rc header, length and capacity are written by __fern_arr_box; the
     // caller fills element i with __raw_store_ptr(p, i + 1, v).
@@ -14675,7 +14679,7 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
     if ((fa.field == "read_chunk" || fa.field == "close" || fa.field == "write" || fa.field == "read_line"
             || fa.field == "stat" || fa.field == "seek" || fa.field == "truncate"
             || fa.field == "flags" || fa.field == "isatty" || fa.field == "write_some"
-            || fa.field == "dup_onto"
+            || fa.field == "dup_onto" || fa.field == "splice_to"
             || is_handle_tty_method(fa.field)
             || is_fd_sync_method(fa.field))
         && !decl_is_struct(s.frame.structs, expr_struct_type(fa.obj, s)) && expr_enum_type(fa.obj, s) == ""
@@ -14741,6 +14745,17 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
             dpo = lower_expr(c.args[0], dpo);
             if (!dpo.ok) { return dpo; }
             return dpo.emit(ir.op_fd_dup_onto());
+        }
+        // r.splice_to(w, max) -> Result[i64, IoError]: both handles are their
+        // fds and max is an i32, so the three operands lower as they stand.
+        if (fa.field == "splice_to" && c.args.len() == 2) {
+            var spl: LowerState = lower_expr(fa.obj, s);
+            if (!spl.ok) { return spl; }
+            spl = lower_expr(c.args[0], spl);
+            if (!spl.ok) { return spl; }
+            spl = lower_expr(c.args[1], spl);
+            if (!spl.ok) { return spl; }
+            return spl.emit(ir.op_reader_splice());
         }
         // The four terminal questions asked of a handle (#9363). A handle
         // IS its fd here, so each lowers to the FREE op with the receiver
@@ -18186,6 +18201,7 @@ function resource_method_opt_ret_type(field: string, obj: ast.Expr, s: LowerStat
     // Writer-only, so keyed under Writer: a "Reader." key names no method
     // and answers "", which bails the lowering rather than reading wrong.
     if (field == "write_some") { return s.opt_ret_type("Writer.write_some"); }
+    if (field == "splice_to") { return s.opt_ret_type("Reader.splice_to"); }
     if (field == "write") { return s.opt_ret_type("Writer.write"); }
     if (field == "truncate") { return s.opt_ret_type("Writer.truncate"); }
     return "";
@@ -73015,6 +73031,7 @@ function builtin_opt_ret_type(name: string): string {
     if (name == "Reader.flags" || name == "Writer.flags") { return "Result[i64, IoError]"; }
     if (name == "Reader.isatty" || name == "Writer.isatty") { return "boolean"; }
     if (name == "Writer.write_some") { return "Result[i64, IoError]"; }
+    if (name == "Reader.splice_to") { return "Result[i64, IoError]"; }
     if (name == "Reader.close" || name == "Writer.close" || name == "Writer.write"
         || name == "Writer.truncate") { return "Option[IoError]"; }
     if (name == "Reader.dup_onto" || name == "Writer.dup_onto") { return "Option[IoError]"; }

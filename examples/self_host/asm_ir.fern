@@ -7174,6 +7174,12 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
         s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n");
         s = s.write("    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n    call __fn___fern_reader_seek\n    addq $24, %rsp\n    pushq %rax\n");
         s = s.need("heap"); s = s.need("reader"); s = s.need("reader_seek");
+    } else if (o.kind_tag == 330) {  // reader_splice
+        // [fd][out_fd][max] (max on top) -> Result[i64, IoError], re-pushed
+        // with param[0] (fd) on top as reader_seek is.
+        s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n");
+        s = s.write("    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n    call __fn___fern_reader_splice\n    addq $24, %rsp\n    pushq %rax\n");
+        s = s.need("heap"); s = s.need("reader"); s = s.need("reader_splice");
     } else if (o.kind_tag == 281) {  // writer_truncate
         // [fd][length]; the Fern __fn___fern_writer_truncate(fd, length)
         // pushes a fresh Option[IoError]. The length is on top but param[0]
@@ -9378,6 +9384,10 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         if (s.has_need("reader")) { fs_src = fs_src + " " + asmcore.rt_src_reader_read_chunk("x86_64") + " " + asmcore.rt_src_reader_close("x86_64"); }
         if (s.has_need("fd_stat")) { fs_src = fs_src + " " + asmcore.rt_src_fd_stat("x86_64"); }
         if (s.has_need("reader_seek")) { fs_src = fs_src + " " + asmcore.rt_src_reader_seek("x86_64"); }
+        if (s.has_need("reader_splice")) {
+            s = s.write("    .section .bss\n    .align 8\n__fern_splice_pipe: .quad 0, 0\n    .text\n");
+            fs_src = fs_src + " " + asmcore.rt_src_reader_splice("x86_64");
+        }
         if (s.has_need("fd_flags")) { fs_src = fs_src + " " + asmcore.rt_src_fd_flags("x86_64"); }
         if (s.has_need("fd_dup_onto")) { fs_src = fs_src + " " + asmcore.rt_src_fd_dup_onto("x86_64"); }
         if (s.has_need("writer_truncate")) { fs_src = fs_src + " " + asmcore.rt_src_writer_truncate("x86_64"); }

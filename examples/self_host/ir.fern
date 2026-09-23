@@ -511,6 +511,10 @@ pub function op_syscall4(): Op { return op0("syscall4"); }
 // envp pointer (the `char **` the kernel handed _start, saved in __fern_envp).
 // A single `movq __fern_envp(%rip), %rax`. The env leaf walks the array from it.
 pub function op_raw_environ(): Op { return op0("raw_environ"); }
+// raw_splice_pipe: pops nothing → the address of __fern_splice_pipe, where
+// the splice helper keeps its pipe's two descriptors between calls (zero
+// before the first) and, in the third word, the writer it last grew.
+pub function op_raw_splice_pipe(): Op { return op0("raw_splice_pipe"); }
 // syscall5 (#2649 syscall sub-floor): the 5-arg sibling. Three helpers need it
 // and none can be reached without it — arm64 Linux has no `poll` or `fork`, only
 // `ppoll` and `clone`, and XNU has no `nanosleep`, only `select`. All three take
@@ -1413,6 +1417,11 @@ pub function op_sync(): Op { return op0("sync"); }
 // `reader_seek` pops [fd, offset, whence] and pushes Result[i64, IoError]:
 // lseek(2), the new offset back. Backs `r.seek(offset, whence)`.
 pub function op_reader_seek(): Op { return op0("reader_seek"); }
+// `reader_splice` pops [fd, out_fd, max] and pushes Result[i64, IoError]: up
+// to max bytes moved from fd to out_fd by splice(2), through the pipe
+// __fern_splice_pipe caches when neither side is one. Unsupported means
+// nothing moved. Backs `r.splice_to(w, max)`.
+pub function op_reader_splice(): Op { return op0("reader_splice"); }
 // `fd_flags` pops [fd] and pushes Result[i64, IoError]: the handle's open
 // flags as Fern's own three bits (1 readable, 2 writable, 4 appending).
 // One op for both `r.flags()` and `w.flags()`, like reader_seek: a handle
@@ -2584,6 +2593,7 @@ function kind_id_len13(name: string): i32 {
     if (c == b'b' && name == "buf_push_byte") { return 294; }
     if (c == b'r' && name == "raw_store_ptr") { return 84; }
     if (c == b'r' && name == "rlimit_nofile") { return 272; }
+    if (c == b'r' && name == "reader_splice") { return 330; }
     if (c == b's' && name == "strbuf_append") { return 118; }
     if (c == b's' && name == "signal_ignore") { return 243; }
     return 0;
@@ -2612,6 +2622,7 @@ function kind_id_len15(name: string): i32 {
     if (c == b'h' && name == "heap_release_to") { return 230; }
     if (c == b'm' && name == "mapiter_advance") { return 137; }
     if (c == b'r' && name == "read_file_bytes") { return 233; }
+    if (c == b'r' && name == "raw_splice_pipe") { return 331; }
     if (c == b's' && name == "set_window_size") { return 314; }
     if (c == b'w' && name == "write_file_exec") { return 226; }
     if (c == b'w' && name == "writer_truncate") { return 281; }
@@ -2883,6 +2894,7 @@ function kind_name_4(id: i32): string {
     if (id == 205) { return "raw_scratch"; }
     if (id == 206) { return "syscall4"; }
     if (id == 207) { return "raw_environ"; }
+    if (id == 331) { return "raw_splice_pipe"; }
     if (id == 208) { return "udp_send"; }
     if (id == 209) { return "read_all_stdin"; }
     if (id == 210) { return "arg_at"; }
@@ -2924,6 +2936,7 @@ function kind_name_4(id: i32): string {
     if (id == 240) { return "hostname"; }
     if (id == 241) { return "fd_stat"; }
     if (id == 242) { return "reader_seek"; }
+    if (id == 330) { return "reader_splice"; }
     if (id == 307) { return "fd_flags"; }
     if (id == 308) { return "write_some"; }
     if (id == 243) { return "signal_ignore"; }
@@ -3051,6 +3064,7 @@ function pops0(t: i32): boolean {
         || t == 182 || t == 183 || t == 184                              // monotonic_ns, now_ns, now_unix_ms
         || t == 186                                                      // random_i32
         || t == 207 || t == 209 || t == 211                              // raw_environ, read_all_stdin, proc_fork
+        || t == 331                                                      // raw_splice_pipe
         || t == 216 || t == 217 || t == 218                              // arr_push_shared_*, const_struct
         || t == 222                                                      // map_hash_seed
         || t == 238 || t == 239 || t == 240                              // geteuid, getegid, hostname
@@ -3164,6 +3178,7 @@ function pops3(t: i32): boolean {
         || t == 125 || t == 129                                          // map_set, map_get_or
         || t == 177 || t == 208 || t == 225 || t == 234                  // subprocess, udp_send, memchr, rmemchr
         || t == 242                                                      // reader_seek (fd, offset, whence)
+        || t == 330                                                      // reader_splice (fd, out_fd, max)
         || t == 280                                                      // proc_exec_as (path, argv, envp)
         || t == 313                                                      // termios_set (fd, when, words)
         || t == 314                                                      // set_window_size (fd, rows, cols)
@@ -4887,9 +4902,10 @@ pub function op_allocates(tag: i32): boolean {
     if (tag == 270) { return true; }
     // window_size boxes a fresh WinSize struct + a Result wrapper.
     if (tag == 276) { return true; }
-    // fd_stat boxes the same pair; reader_seek and fd_flags box their
-    // Result[i64, IoError]; writer_truncate boxes its Option[IoError].
-    if (tag == 241 || tag == 242 || tag == 281 || tag == 307) { return true; }
+    // fd_stat boxes the same pair; reader_seek, reader_splice and fd_flags
+    // box their Result[i64, IoError]; writer_truncate boxes its
+    // Option[IoError].
+    if (tag == 241 || tag == 242 || tag == 281 || tag == 307 || tag == 330) { return true; }
     // subprocess boxes a fresh ProcessResult struct + its two stdout/stderr
     // string blocks, so it needs the heap runtime.
     if (tag == 177) { return true; }
