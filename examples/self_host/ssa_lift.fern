@@ -655,7 +655,7 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResu
     while (i < ops.len() && ok) {
         var op: ir.Op = ops[i];
         var tag: i32 = op.kind_tag;
-        if (tag < 0) { ok = false; i = i + 1; continue; }
+        if (tag < 0) { ok = false; bail = "invalid#" + util.i32_to_string(tag); i = i + 1; continue; }
         if (kcls[tag] < 0) {
             knames = knames.with(tag, ir.kind_name(tag));
             kcls = kcls.with(tag, kind_class(knames[tag]));
