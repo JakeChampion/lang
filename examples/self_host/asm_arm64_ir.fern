@@ -2398,7 +2398,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
         // (asm_arm64.emit_runtime's __fern_arg_at, in the same args block).
         s = s.need("heap"); s = s.need("args");
         s = s.write("    ldr x0, [sp], #16\n    bl __fern_arg_at\n    str x0, [sp, #-16]!\n");
-    } else if ((o.kind_tag >= 291 && o.kind_tag <= 297) || o.kind_tag == 306 || o.kind_tag == 325) {  // the buf_* builder
+    } else if ((o.kind_tag >= 291 && o.kind_tag <= 297) || o.kind_tag == 306 || o.kind_tag == 325 || o.kind_tag == 326) {  // the buf_* builder
         s = emit_arm64_op_buf(o, s);
     } else if (o.kind_tag == 181) {  // sleep_ms
         // [ms] -> nanosleep(ms). Push x0 for the drop.
@@ -2593,6 +2593,10 @@ function emit_arm64_op_buf(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     if (o.kind_tag == 325) {                                  // buf_push_mapped
         s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
         return s.write("    bl __fern_buf_push_mapped\n    str x0, [sp, #-16]!\n");
+    }
+    if (o.kind_tag == 326) {                                  // buf_push_filtered
+        s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+        return s.write("    bl __fern_buf_push_filtered\n    str x0, [sp, #-16]!\n");
     }
     if (o.kind_tag == 294) {                                  // buf_push_byte
         return s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_buf_push_byte\n    str x0, [sp, #-16]!\n");
@@ -5683,6 +5687,60 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
         s = s.write(".size __fern_buf_push_mapped, .-__fern_buf_push_mapped\n");
+        // __fern_buf_push_filtered(x0 = H, x1 = box, x2 = drop): append each
+        // byte c of the box's data whose drop entry (the low byte of the
+        // 8-byte slot 8 + c*8) is zero, or that is past the table's length at
+        // [drop]. Room for the whole box is reserved.
+        s = s.write(".globl __fern_buf_push_filtered\n");
+        s = s.write(".type __fern_buf_push_filtered, %function\n");
+        s = s.write("__fern_buf_push_filtered:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    stp x21, x22, [sp, #-16]!\n");
+        s = s.write("    mov x19, x0\n");
+        s = s.write("    mov x20, x1\n");
+        s = s.write("    mov x21, x2\n");                       // drop
+        s = s.write("    ldr x22, [x20, #8]\n");                // n
+        s = s.write("    cbz x22, .Lbuffilt_done\n");
+        s = s.write("    ldr x0, [x19, #8]\n");
+        s = s.write("    add x0, x0, x22\n");
+        s = s.write("    ldr x1, [x19, #16]\n");
+        s = s.write("    cmp x0, x1\n");
+        s = s.write("    b.ls .Lbuffilt_fits\n");
+        s = s.write("    mov x1, x0\n");
+        s = s.write("    mov x0, x19\n");
+        s = s.write("    bl __fern_buf_reserve\n");
+        s = s.write(".Lbuffilt_fits:\n");
+        s = s.write("    ldr x1, [x20]\n");                     // src data
+        s = s.write("    ldr x3, [x19]\n");
+        s = s.write("    ldr x4, [x19, #8]\n");
+        s = s.write("    add x3, x3, x4\n");                    // dst = data + len
+        s = s.write("    ldr x4, [x21]\n");                     // table length
+        s = s.write("    mov x2, x22\n");
+        s = s.write("    mov x7, #0\n");                        // kept
+        s = s.write(".Lbuffilt_loop:\n");
+        s = s.write("    ldrb w5, [x1], #1\n");
+        s = s.write("    cmp x5, x4\n");
+        s = s.write("    b.hs .Lbuffilt_keep\n");
+        s = s.write("    add x6, x21, x5, lsl #3\n");
+        s = s.write("    ldrb w6, [x6, #8]\n");
+        s = s.write("    cbnz w6, .Lbuffilt_next\n");
+        s = s.write(".Lbuffilt_keep:\n");
+        s = s.write("    strb w5, [x3], #1\n");
+        s = s.write("    add x7, x7, #1\n");
+        s = s.write(".Lbuffilt_next:\n");
+        s = s.write("    sub x2, x2, #1\n");
+        s = s.write("    cbnz x2, .Lbuffilt_loop\n");
+        s = s.write("    ldr x0, [x19, #8]\n");
+        s = s.write("    add x0, x0, x7\n");
+        s = s.write("    str x0, [x19, #8]\n");
+        s = s.write(".Lbuffilt_done:\n");
+        s = s.write("    ldp x21, x22, [sp], #16\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_buf_push_filtered, .-__fern_buf_push_filtered\n");
         // __fern_buf_push_byte(x0 = H, x1 = x): append the low byte of x.
         s = s.write(".globl __fern_buf_push_byte\n");
         s = s.write(".type __fern_buf_push_byte, %function\n");

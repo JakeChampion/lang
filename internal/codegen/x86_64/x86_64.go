@@ -2022,7 +2022,7 @@ func (g *generator) recordUse(target string) {
 		g.usesEprint = true
 	case "exit":
 		g.usesExit = true
-	case "buf_new", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_byte", "buf_push_u64", "buf_len", "buf_take", "buf_free":
+	case "buf_new", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_filtered", "buf_push_byte", "buf_push_u64", "buf_len", "buf_take", "buf_free":
 		g.usesStrBuilder = true
 		// Every entry point but buf_len can reach the allocator, the
 		// copier and the freelist through __fern_buf_reserve, so pull the
@@ -3885,6 +3885,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_buf_push_range"
 		case "buf_push_mapped":
 			target = "__fern_buf_push_mapped"
+		case "buf_push_filtered":
+			target = "__fern_buf_push_filtered"
 		case "buf_push_byte":
 			target = "__fern_buf_push_byte"
 		case "buf_push_u64":
@@ -12876,6 +12878,78 @@ func (g *generator) emitStrBuilderRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_buf_push_mapped, .-__fern_buf_push_mapped")
+
+	// __fern_buf_push_filtered(H, s, drop): append each byte c of `s`
+	// whose entry drop[c] is zero; a byte at or past the table's length is
+	// kept. Room for all of `s` is reserved, and the full-table loop stores
+	// every byte and advances the length only past a kept one.
+	g.line("")
+	g.line(".globl __fern_buf_push_filtered")
+	g.line(".type __fern_buf_push_filtered, @function")
+	g.label("__fern_buf_push_filtered")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("push r12")
+	g.emit("push r13")
+	g.emit("push r14")
+	g.emit("sub rsp, 16") // [rbp-48]: emitStrDataPtr spill for an inline `s`
+	g.emit("mov rbx, rdi")
+	g.emit("mov r12, rsi")
+	g.emit("mov r14, rdx") // drop table
+	g.emitStrLen("r13", "r12")
+	g.emit("test r13d, r13d")
+	g.emit("jz .Lbuffilt_done")
+	g.emit("mov rax, qword ptr [rbx + 8]")
+	g.emit("add rax, r13")
+	g.emit("cmp rax, qword ptr [rbx + 16]")
+	g.emit("jbe .Lbuffilt_fits")
+	g.emit("mov rdi, rbx")
+	g.emit("mov rsi, rax")
+	g.emit("call __fern_buf_reserve")
+	g.label(".Lbuffilt_fits")
+	g.emitStrDataPtr("rsi", "r12", "[rbp - 48]")
+	g.emit("mov rdi, qword ptr [rbx]")
+	g.emit("add rdi, qword ptr [rbx + 8]")
+	g.emit("mov ecx, dword ptr [r14 - 4]")
+	g.emit("xor edx, edx") // i
+	g.emit("xor r8d, r8d") // kept
+	g.emit("cmp ecx, 256")
+	g.emit("jb .Lbuffilt_short")
+	g.label(".Lbuffilt_full")
+	g.emit("movzx eax, byte ptr [rsi + rdx]")
+	g.emit("movzx r9d, byte ptr [r14 + rax]")
+	g.emit("mov byte ptr [rdi + r8], al")
+	g.emit("cmp r9d, 1")
+	g.emit("adc r8, 0")
+	g.emit("add rdx, 1")
+	g.emit("cmp rdx, r13")
+	g.emit("jb .Lbuffilt_full")
+	g.emit("jmp .Lbuffilt_len")
+	g.label(".Lbuffilt_short")
+	g.emit("movzx eax, byte ptr [rsi + rdx]")
+	g.emit("cmp eax, ecx")
+	g.emit("jae .Lbuffilt_keep")
+	g.emit("cmp byte ptr [r14 + rax], 0")
+	g.emit("jne .Lbuffilt_next")
+	g.label(".Lbuffilt_keep")
+	g.emit("mov byte ptr [rdi + r8], al")
+	g.emit("add r8, 1")
+	g.label(".Lbuffilt_next")
+	g.emit("add rdx, 1")
+	g.emit("cmp rdx, r13")
+	g.emit("jb .Lbuffilt_short")
+	g.label(".Lbuffilt_len")
+	g.emit("add qword ptr [rbx + 8], r8")
+	g.label(".Lbuffilt_done")
+	g.emit("add rsp, 16")
+	g.emit("pop r14")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_buf_push_filtered, .-__fern_buf_push_filtered")
 
 	// __fern_buf_push_byte(H, x): append the low byte of `x`.
 	g.line("")

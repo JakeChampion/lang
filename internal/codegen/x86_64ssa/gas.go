@@ -2420,6 +2420,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"buf_push":                        emitBufPushHelper,
 	"buf_push_range":                  emitBufPushRangeHelper,
 	"buf_push_mapped":                 emitBufPushMappedHelper,
+	"buf_push_filtered":               emitBufPushFilteredHelper,
 	"buf_push_byte":                   emitBufPushByteHelper,
 	"buf_push_u64":                    emitBufPushU64Helper,
 	"buf_len":                         emitBufLenHelper,
@@ -2734,6 +2735,7 @@ var runtimeHelperDeps = map[string][]string{
 	"buf_push":                        {"__fern_buf_reserve"},
 	"buf_push_range":                  {"__fern_buf_reserve"},
 	"buf_push_mapped":                 {"__fern_buf_reserve"},
+	"buf_push_filtered":               {"__fern_buf_reserve"},
 	"buf_push_byte":                   {"__fern_buf_reserve"},
 	"buf_push_u64":                    {"__fern_buf_reserve"},
 	"buf_free":                        {"__fern_box_free"},
@@ -4818,6 +4820,77 @@ func emitBufPushMappedHelper(w func(string, ...any)) {
 	w("\tpop r12")
 	w("\tpop rbx")
 	w("\tjmp .Lssa_bufmap_fits")
+}
+
+// emitBufPushFilteredHelper writes buf_push_filtered(H, s, drop): append each
+// byte c of s whose entry drop[c] is zero, or that is past the table's end.
+// Room for all of s is reserved; the full-table loop stores every byte and
+// advances the kept count only past a kept one.
+func emitBufPushFilteredHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("buf_push_filtered"))
+	w("\tmov ecx, %s", memRef("rsi", -4)) // n
+	w("\ttest ecx, ecx")
+	w("\tjz .Lssa_buffilt_none")
+	w("\tmov rax, [rdi + 8]")
+	w("\tadd rax, rcx") // need
+	w("\tcmp rax, [rdi + 16]")
+	w("\tja .Lssa_buffilt_grow")
+	w(".Lssa_buffilt_fits:")
+	w("\tmov r8, [rdi]")
+	w("\tadd r8, [rdi + 8]")              // dst = data + len
+	w("\tmov r9d, %s", memRef("rdx", -4)) // table length
+	w("\txor r10d, r10d")                 // i
+	w("\txor r11d, r11d")                 // kept
+	w("\tcmp r9d, 256")
+	w("\tjb .Lssa_buffilt_short")
+	w(".Lssa_buffilt_full:")
+	w("\tmovzx eax, byte ptr [rsi + r10]")
+	w("\tmovzx r9d, byte ptr [rdx + rax]")
+	w("\tmov byte ptr [r8 + r11], al")
+	w("\tcmp r9d, 1")
+	w("\tadc r11, 0")
+	w("\tinc r10")
+	w("\tcmp r10, rcx")
+	w("\tjb .Lssa_buffilt_full")
+	w("\tjmp .Lssa_buffilt_len")
+	w(".Lssa_buffilt_short:")
+	w("\tmovzx eax, byte ptr [rsi + r10]")
+	w("\tcmp eax, r9d")
+	w("\tjae .Lssa_buffilt_keep")
+	w("\tcmp byte ptr [rdx + rax], 0")
+	w("\tjne .Lssa_buffilt_next")
+	w(".Lssa_buffilt_keep:")
+	w("\tmov byte ptr [r8 + r11], al")
+	w("\tinc r11")
+	w(".Lssa_buffilt_next:")
+	w("\tinc r10")
+	w("\tcmp r10, rcx")
+	w("\tjb .Lssa_buffilt_short")
+	w(".Lssa_buffilt_len:")
+	w("\tadd [rdi + 8], r11")
+	w(".Lssa_buffilt_none:")
+	w("\txor eax, eax")
+	w("\tret")
+	w(".Lssa_buffilt_grow:")
+	// Three callee-saved pushes plus the return address leave rsp 16-aligned
+	// for the call.
+	w("\tpush rbx")
+	w("\tpush r12")
+	w("\tpush r13")
+	w("\tmov rbx, rdi")
+	w("\tmov r12, rsi")
+	w("\tmov r13, rdx")
+	w("\tmov rsi, rax")
+	w("\tcall %s", fnLabel("__fern_buf_reserve"))
+	w("\tmov rdi, rbx")
+	w("\tmov rsi, r12")
+	w("\tmov rdx, r13")
+	w("\tmov ecx, %s", memRef("rsi", -4))
+	w("\tpop r13")
+	w("\tpop r12")
+	w("\tpop rbx")
+	w("\tjmp .Lssa_buffilt_fits")
 }
 
 // emitBufPushByteHelper writes buf_push_byte(H, x): append the low byte of x.

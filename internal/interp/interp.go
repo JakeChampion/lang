@@ -637,6 +637,7 @@ func New() *Interp {
 	i.Builtins["buf_push"] = &Builtin{Fn: builtinBufPush}
 	i.Builtins["buf_push_range"] = &Builtin{Fn: builtinBufPushRange}
 	i.Builtins["buf_push_mapped"] = &Builtin{Fn: builtinBufPushMapped}
+	i.Builtins["buf_push_filtered"] = &Builtin{Fn: builtinBufPushFiltered}
 	i.Builtins["buf_push_byte"] = &Builtin{Fn: builtinBufPushByte}
 	i.Builtins["buf_push_u64"] = &Builtin{Fn: builtinBufPushU64}
 	i.Builtins["buf_len"] = &Builtin{Fn: builtinBufLen}
@@ -4870,6 +4871,40 @@ func builtinBufPushMapped(i *Interp, args []Value) (Value, error) {
 				return nil, fmt.Errorf("buf_push_mapped: table element %d is %T, not a byte", c, table.E[c])
 			}
 			c = byte(int64(e))
+		}
+		b = append(b, c)
+	}
+	i.bufs[h] = b
+	return Void{}, nil
+}
+
+// builtinBufPushFiltered appends each byte c of s whose entry drop[c] is
+// zero; a byte at or past the table's length is kept.
+func builtinBufPushFiltered(i *Interp, args []Value) (Value, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("buf_push_filtered: expected 3 args (b, s, drop), got %d", len(args))
+	}
+	h, b, err := bufHandle(i, "buf_push_filtered", args[0])
+	if err != nil {
+		return nil, err
+	}
+	s, ok := args[1].(String)
+	if !ok {
+		return nil, fmt.Errorf("buf_push_filtered: expected string arg, got %T", args[1])
+	}
+	drop, ok := args[2].(Array)
+	if !ok {
+		return nil, fmt.Errorf("buf_push_filtered: expected a u8[] table, got %T", args[2])
+	}
+	for _, c := range []byte(string(s)) {
+		if int(c) < len(drop.E) {
+			e, ok := drop.E[c].(Number)
+			if !ok {
+				return nil, fmt.Errorf("buf_push_filtered: table element %d is %T, not a byte", c, drop.E[c])
+			}
+			if int64(e) != 0 {
+				continue
+			}
 		}
 		b = append(b, c)
 	}

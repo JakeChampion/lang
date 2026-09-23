@@ -2601,22 +2601,29 @@ per-byte walk and an append. `cat -A` over the 62 MiB bench file:
 
 The same kernel does not help `tr -d`: on the bench input the kept runs
 are one to three bytes, and a scan and an append per run cost more than
-the per-byte loop (240 → 301 ms), so tr keeps its loop.
+the per-byte loop (240 → 301 ms). `buf_push_filtered` below is what
+closed it.
 
-### tr's translation and dd's case tables, 2026-09-23 (GNU coreutils 9.12)
+### tr's translation and deletion, dd's case tables, 2026-09-23 (GNU coreutils 9.12)
 
-`buf_push_mapped(b, s, table)` joins the builder family on every backend
-and in both compilers: it appends `table[c]` for each byte `c` of `s`, or
-`c` unchanged when it is past the table's end. `io_buffered`'s
-`write_mapped` wraps it. Before it, `tr SET1 SET2` translated through a
+Two kernels join the builder family on every backend and in both
+compilers. `buf_push_mapped(b, s, table)` appends `table[c]` for each byte
+`c` of `s`, or `c` unchanged when it is past the table's end.
+`buf_push_filtered(b, s, drop)` appends each byte whose `drop[c]` is zero,
+or that is past the table's end. `io_buffered`'s `write_mapped` and
+`write_filtered` wrap them. Before them, `tr SET1 SET2` translated through a
 `.with` loop into a fresh `u8[]`, copied that into a string and copied the
 string into the output buffer. That was about 30 instructions a byte on the
-default x86-64 emitter. The kernel writes the translated bytes straight
-into the output buffer, four bytes a turn on x86-64.
+default x86-64 emitter, and `tr -d` did the same with a branch per byte.
+The kernels write straight into the output buffer: the translation four
+bytes a turn on x86-64, and the deletion with no branch, storing every byte
+and advancing the length only past a kept one.
 
 | workload | before | after | GNU 9.12 |
 |---|---:|---:|---:|
 | `tr 0-9 a-j` over the 62 MiB bench file | 250 ms | 45 ms | 61 ms |
+| `tr -d 0-4` over the same file | 247 ms | 53 ms | 81 ms |
+| `tr -cd 0-9` over the same file | 290 ms | 63 ms | 83 ms |
 | `dd 8MiB conv=ucase` (`bs=64k`) | 41.8 ms | 14.8 ms | 14.8 ms |
 
 `dd`'s `conv=lcase` and `conv=ucase` use the same kernel for each record.

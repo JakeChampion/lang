@@ -8,10 +8,11 @@ import (
 )
 
 // buf_push_mapped(b, s, table) appends table[c] for each byte c of s, or c
-// itself when it is at or past the table's end. The corpus sweeps lengths
-// across the unrolled loop's boundaries, a full table, a short one, an empty
-// one, NUL and high bytes, and pushes that land after bytes already held and
-// that outgrow the builder.
+// itself when it is at or past the table's end; buf_push_filtered(b, s, drop)
+// appends each byte c whose drop[c] is zero, or that is past the table's end.
+// One corpus drives both: lengths across the unrolled loop's boundaries, a
+// full table, a short one, an empty one, NUL and high bytes, and pushes that
+// land after bytes already held and that outgrow the builder.
 
 func bufPushMappedRef(held string, s string, table []byte) string {
 	out := []byte(held)
@@ -19,6 +20,18 @@ func bufPushMappedRef(held string, s string, table []byte) string {
 		c := s[i]
 		if int(c) < len(table) {
 			c = table[c]
+		}
+		out = append(out, c)
+	}
+	return string(out)
+}
+
+func bufPushFilteredRef(held string, s string, drop []byte) string {
+	out := []byte(held)
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if int(c) < len(drop) && drop[c] != 0 {
+			continue
 		}
 		out = append(out, c)
 	}
@@ -44,6 +57,12 @@ func bufMapCases() []bufMapCase {
 		digits[c] = byte('a' + c - '0')
 	}
 	short := []byte{'x', 'y', 'z', 0xff}
+	// Every other entry zero: half the bytes are kept by the filter, and the
+	// mapping sends odd bytes to 1.
+	alternate := make([]byte, 256)
+	for i := range alternate {
+		alternate[i] = byte(i % 2)
+	}
 
 	var out []bufMapCase
 	var all strings.Builder
@@ -58,6 +77,7 @@ func bufMapCases() []bufMapCase {
 		out = append(out, bufMapCase{"", s, rot})
 		out = append(out, bufMapCase{"", all.String()[:n], short})
 		out = append(out, bufMapCase{"ab", strings.Repeat("0123456789", 4)[:n], digits})
+		out = append(out, bufMapCase{"", all.String()[n : 2*n+1], alternate})
 	}
 	out = append(out,
 		bufMapCase{"", all.String(), rot},
@@ -78,6 +98,8 @@ func bufMapCases() []bufMapCase {
 		table := rot
 		if i%3 == 1 {
 			table = short
+		} else if i%3 == 2 {
+			table = alternate
 		}
 		out = append(out, bufMapCase{strings.Repeat("p", rng.Intn(9)), sb.String(), table})
 	}
@@ -86,8 +108,9 @@ func bufMapCases() []bufMapCase {
 
 // runBufPushMappedCorpus pushes every case through a builder that starts at
 // four bytes of capacity, so most pushes grow it, and prints each result as
-// its byte values.
-func runBufPushMappedCorpus(t *testing.T, run func(t *testing.T, src string) string) {
+// its byte values. `builtin` names the kernel, buf_push_mapped or
+// buf_push_filtered.
+func runBufPushMappedCorpus(t *testing.T, builtin string, run func(t *testing.T, src string) string) {
 	t.Helper()
 	cases := bufMapCases()
 	tables := map[string]string{}
@@ -104,9 +127,12 @@ func runBufPushMappedCorpus(t *testing.T, run func(t *testing.T, src string) str
 		if c.held != "" {
 			body.WriteString(fmt.Sprintf("    buf_push(b, %s);\n", fernQuote(c.held)))
 		}
-		body.WriteString(fmt.Sprintf("    buf_push_mapped(b, %s, %s);\n    dump(buf_take(b));\n",
-			fernQuote(c.s), name))
+		body.WriteString(fmt.Sprintf("    %s(b, %s, %s);\n    dump(buf_take(b));\n",
+			builtin, fernQuote(c.s), name))
 		ref := bufPushMappedRef(c.held, c.s, c.table)
+		if builtin == "buf_push_filtered" {
+			ref = bufPushFilteredRef(c.held, c.s, c.table)
+		}
 		var line strings.Builder
 		for i := 0; i < len(ref); i++ {
 			fmt.Fprintf(&line, "%d,", ref[i])
@@ -143,8 +169,8 @@ function main(): i32 {
 		if strings.TrimSpace(got[i]) != want[i] {
 			bad++
 			if bad <= 10 {
-				t.Errorf("held %q, buf_push_mapped(%q, %v):\n got %s\nwant %s",
-					cases[i].held, cases[i].s, cases[i].table, strings.TrimSpace(got[i]), want[i])
+				t.Errorf("held %q, %s(%q, %v):\n got %s\nwant %s",
+					cases[i].held, builtin, cases[i].s, cases[i].table, strings.TrimSpace(got[i]), want[i])
 			}
 		}
 	}
@@ -155,7 +181,7 @@ function main(): i32 {
 }
 
 func TestInterpBufPushMapped(t *testing.T) {
-	runBufPushMappedCorpus(t, func(t *testing.T, src string) string {
+	runBufPushMappedCorpus(t, "buf_push_mapped", func(t *testing.T, src string) string {
 		out, exit := runInterpExitCode(t, src)
 		if exit != 0 {
 			t.Fatalf("program exited %d, want 0\noutput:\n%s", exit, out)
@@ -165,7 +191,7 @@ func TestInterpBufPushMapped(t *testing.T) {
 }
 
 func TestX86_64BufPushMapped(t *testing.T) {
-	runBufPushMappedCorpus(t, func(t *testing.T, src string) string {
+	runBufPushMappedCorpus(t, "buf_push_mapped", func(t *testing.T, src string) string {
 		out, exit := compileAndRunX86_64(t, src)
 		if exit != 0 {
 			t.Fatalf("program exited %d, want 0\noutput:\n%s", exit, out)
@@ -175,7 +201,7 @@ func TestX86_64BufPushMapped(t *testing.T) {
 }
 
 func TestArm64BufPushMapped(t *testing.T) {
-	runBufPushMappedCorpus(t, func(t *testing.T, src string) string {
+	runBufPushMappedCorpus(t, "buf_push_mapped", func(t *testing.T, src string) string {
 		out, exit := compileAndRunArm64(t, src)
 		if exit != 0 {
 			t.Fatalf("program exited %d, want 0\noutput:\n%s", exit, out)
@@ -185,7 +211,7 @@ func TestArm64BufPushMapped(t *testing.T) {
 }
 
 func TestWASMBufPushMapped(t *testing.T) {
-	runBufPushMappedCorpus(t, func(t *testing.T, src string) string {
+	runBufPushMappedCorpus(t, "buf_push_mapped", func(t *testing.T, src string) string {
 		out, _ := invokeWasmtime(t, src)
 		lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
 		if n := len(lines); n == 0 || strings.TrimSpace(lines[n-1]) != "0" {
@@ -196,9 +222,58 @@ func TestWASMBufPushMapped(t *testing.T) {
 }
 
 func TestX86_64SSABufPushMapped(t *testing.T) {
-	runBufPushMappedCorpus(t, x86_64SSACorpusRunner(t))
+	runBufPushMappedCorpus(t, "buf_push_mapped", x86_64SSACorpusRunner(t))
 }
 
 func TestArm64SSABufPushMapped(t *testing.T) {
-	runBufPushMappedCorpus(t, arm64SSACorpusRunner(t))
+	runBufPushMappedCorpus(t, "buf_push_mapped", arm64SSACorpusRunner(t))
+}
+
+func TestInterpBufPushFiltered(t *testing.T) {
+	runBufPushMappedCorpus(t, "buf_push_filtered", func(t *testing.T, src string) string {
+		out, exit := runInterpExitCode(t, src)
+		if exit != 0 {
+			t.Fatalf("program exited %d, want 0\noutput:\n%s", exit, out)
+		}
+		return out
+	})
+}
+
+func TestX86_64BufPushFiltered(t *testing.T) {
+	runBufPushMappedCorpus(t, "buf_push_filtered", func(t *testing.T, src string) string {
+		out, exit := compileAndRunX86_64(t, src)
+		if exit != 0 {
+			t.Fatalf("program exited %d, want 0\noutput:\n%s", exit, out)
+		}
+		return out
+	})
+}
+
+func TestArm64BufPushFiltered(t *testing.T) {
+	runBufPushMappedCorpus(t, "buf_push_filtered", func(t *testing.T, src string) string {
+		out, exit := compileAndRunArm64(t, src)
+		if exit != 0 {
+			t.Fatalf("program exited %d, want 0\noutput:\n%s", exit, out)
+		}
+		return out
+	})
+}
+
+func TestWASMBufPushFiltered(t *testing.T) {
+	runBufPushMappedCorpus(t, "buf_push_filtered", func(t *testing.T, src string) string {
+		out, _ := invokeWasmtime(t, src)
+		lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+		if n := len(lines); n == 0 || strings.TrimSpace(lines[n-1]) != "0" {
+			t.Fatalf("main() result line = %q, want \"0\"", lines[len(lines)-1])
+		}
+		return strings.Join(lines[:len(lines)-1], "\n")
+	})
+}
+
+func TestX86_64SSABufPushFiltered(t *testing.T) {
+	runBufPushMappedCorpus(t, "buf_push_filtered", x86_64SSACorpusRunner(t))
+}
+
+func TestArm64SSABufPushFiltered(t *testing.T) {
+	runBufPushMappedCorpus(t, "buf_push_filtered", arm64SSACorpusRunner(t))
 }

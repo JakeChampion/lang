@@ -11550,7 +11550,7 @@ function lower_target_name(name: string, s: LowerState): LowerState {
 function buf_builtin_arity(name: string): i32 {
     if (name == "buf_new" || name == "buf_len" || name == "buf_take" || name == "buf_free") { return 1; }
     if (name == "buf_push" || name == "buf_push_byte" || name == "buf_push_u64") { return 2; }
-    if (name == "buf_push_mapped") { return 3; }
+    if (name == "buf_push_mapped" || name == "buf_push_filtered") { return 3; }
     if (name == "buf_push_range") { return 4; }
     return 0 - 1;
 }
@@ -11561,6 +11561,7 @@ function buf_builtin_op(name: string): ir.Op {
     if (name == "buf_push") { return ir.op_buf_push(); }
     if (name == "buf_push_range") { return ir.op_buf_push_range(); }
     if (name == "buf_push_mapped") { return ir.op_buf_push_mapped(); }
+    if (name == "buf_push_filtered") { return ir.op_buf_push_filtered(); }
     if (name == "buf_push_byte") { return ir.op_buf_push_byte(); }
     if (name == "buf_push_u64") { return ir.op_buf_push_u64(); }
     if (name == "buf_len") { return ir.op_buf_len(); }
@@ -66987,7 +66988,7 @@ function borrow_reg_record(key: string, flags: string): string {
 // name: the escape walks see no receiver type, so the name alone must settle
 // it.
 function copying_builtin_keys(funcs: parser.FuncDecl[]): string[] {
-    var keys: string[] = ["print", "write", "eprint", "strbuf_append", "buf_push", "buf_push_range", "buf_push_mapped", "__memchr", "__rmemchr", "__ascii_run", "__scan_set", "__count_byte", "__sum_bytes", "__mismatch", "__crc32_cksum", "__scale_f64"];
+    var keys: string[] = ["print", "write", "eprint", "strbuf_append", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_filtered", "__memchr", "__rmemchr", "__ascii_run", "__scan_set", "__count_byte", "__sum_bytes", "__mismatch", "__crc32_cksum", "__scale_f64"];
     var has_write: boolean = false;
     var has_write_some: boolean = false;
     for fn in funcs {
@@ -67005,12 +67006,12 @@ function copying_builtin_keys(funcs: parser.FuncDecl[]): string[] {
 // carry the credit (native's copyingBuiltinArgs["__mismatch"] is {0, 2}), and
 // the two buf_push forms take the builder handle at position 0, and
 // __crc32_cksum the carried CRC, so the string they copy is at position 1;
-// buf_push_mapped reads its table at position 2 as well.
+// buf_push_mapped and buf_push_filtered read their table at position 2 as well.
 // A position past the string's end reads as not borrowable, which is what the
 // i32 parameters want.
 function copying_builtin_flags(key: string): string {
     if (key == "__mismatch") { return "10100"; }
-    if (key == "buf_push_mapped") { return "011"; }
+    if (key == "buf_push_mapped" || key == "buf_push_filtered") { return "011"; }
     if (key == "buf_push" || key == "buf_push_range" || key == "__crc32_cksum") { return "01"; }
     return "1";
 }

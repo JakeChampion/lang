@@ -990,7 +990,7 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					// The string builder. Its callees come from
 					// unconditionalHelperCalls below.
 					needs.add(op.Str)
-				case "buf_new", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_byte",
+				case "buf_new", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_filtered", "buf_push_byte",
 					"buf_push_u64", "buf_len", "buf_take", "buf_free":
 					// The capacity-carrying builder, same shape: its
 					// callees come from unconditionalHelperCalls.
@@ -1226,6 +1226,7 @@ var unconditionalHelperCalls = map[string][]string{
 	"buf_push":               {"__fern_str_len", "__fern_str_byte", "__fern_buf_reserve"},
 	"buf_push_range":         {"__fern_str_byte", "__fern_buf_reserve"},
 	"buf_push_mapped":        {"__fern_str_len", "__fern_str_byte", "__fern_buf_reserve"},
+	"buf_push_filtered":      {"__fern_str_len", "__fern_str_byte", "__fern_buf_reserve"},
 	"buf_push_byte":          {"__fern_buf_reserve"},
 	"buf_push_u64":           {"__fern_buf_reserve"},
 	"buf_free":               {"__fern_box_free"},
@@ -2110,6 +2111,13 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 			encode.ValtypeI32},
 		results: nil,
 		body:    buildBufPushMappedBody,
+	},
+	"buf_push_filtered": {
+		// (h, data, len, drop) → (). The bytes a u8[] table does not drop.
+		params: []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI32},
+		results: nil,
+		body:    buildBufPushFilteredBody,
 	},
 	"buf_push_byte": {
 		// (h, x) → (). The low byte of x.
@@ -5263,6 +5271,98 @@ func buildBufPushMappedBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, lNeed)
 	body = memory.InstI32Store(body, 2, 4)
 	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 6, encode.ValtypeI32), body)
+}
+
+// buildBufPushFilteredBody assembles wasm bytes for buf_push_filtered.
+//
+// Signature: (h, data, len, drop i32) → (). Each byte c of the string is
+// appended unless c is below the table's length (at drop - 4) and drop[c] is
+// nonzero. Room for the whole string is reserved; the length advances by
+// the bytes kept.
+func buildBufPushFilteredBody(idxs map[string]uint32) []byte {
+	strLen := idxs["__fern_str_len"]
+	strByte := idxs["__fern_str_byte"]
+	reserve := idxs["__fern_buf_reserve"]
+	const (
+		pH    = 0
+		pData = 1
+		pLen  = 2
+		pDrop = 3
+		lN    = 4
+		lNeed = 5
+		lDst  = 6
+		lI    = 7
+		lM    = 8
+		lC    = 9
+		lJ    = 10
+	)
+	var body []byte
+	body = inst.InstLocalGet(body, pData)
+	body = inst.InstLocalGet(body, pLen)
+	body = inst.InstCall(body, strLen)
+	body = inst.InstLocalTee(body, lN)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, pH)
+	body = memory.InstI32Load(body, 2, 4)
+	body = inst.InstLocalGet(body, lN)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, lNeed)
+	body = bufReserveCall(body, reserve, pH, lNeed)
+	body = bufDst(body, pH)
+	body = inst.InstLocalSet(body, lDst)
+	body = inst.InstLocalGet(body, pDrop)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalSet(body, lM)
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstLocalGet(body, lN)
+	body = numeric.InstI32GeU(body)
+	body = inst.InstBrIf(body, 1)
+	body = inst.InstLocalGet(body, pData)
+	body = inst.InstLocalGet(body, pLen)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstCall(body, strByte)
+	body = inst.InstLocalSet(body, lC)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, lI)
+	// Dropped: below the table's length with a nonzero entry.
+	body = inst.InstLocalGet(body, lC)
+	body = inst.InstLocalGet(body, lM)
+	body = numeric.InstI32LtU(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, pDrop)
+	body = inst.InstLocalGet(body, lC)
+	body = numeric.InstI32Add(body)
+	body = memory.InstI32Load8U(body, 0, 0)
+	body = inst.InstBrIf(body, 1) // continue the loop
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, lDst)
+	body = inst.InstLocalGet(body, lJ)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalGet(body, lC)
+	body = memory.InstI32Store8(body, 0, 0)
+	body = inst.InstLocalGet(body, lJ)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, lJ)
+	body = inst.InstBr(body, 0)
+	body = inst.InstEnd(body) // end loop
+	body = inst.InstEnd(body) // end block
+	body = inst.InstLocalGet(body, pH)
+	body = inst.InstLocalGet(body, pH)
+	body = memory.InstI32Load(body, 2, 4)
+	body = inst.InstLocalGet(body, lJ)
+	body = numeric.InstI32Add(body)
+	body = memory.InstI32Store(body, 2, 4)
+	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 7, encode.ValtypeI32), body)
 }
 
 // buildBufPushByteBody assembles wasm bytes for buf_push_byte.

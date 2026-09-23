@@ -44,6 +44,8 @@ var interpStdlibModloadCases = []struct {
 	{"alloc-fill-pack", "function main(): i32 {\n  var buf: u8[] = __alloc_u8(3);\n  buf = buf.with(0, 102 as u8);\n  buf = buf.with(1, 111 as u8);\n  buf = buf.with(2, 111 as u8);\n  if (string_from_bytes_unchecked(buf) == \"foo\") { return 7; }\n  return 1;\n}\n"},
 	{"memchr-ascii-run", "function main(): i32 {\n  if (__memchr(\"abcb\", 98, 2) != 3) { return 1; }\n  if (__memchr(\"abc\", 122, 0) != 0 - 1) { return 2; }\n  if (__ascii_run(\"abé\", 0) != 2) { return 3; }\n  return 7;\n}\n"},
 	{"scan-set", "function main(): i32 {\n  var set: u8[] = __alloc_u8(256);\n  set = set.with(32, 1 as u8);\n  if (__scan_set(\"ab cd\", 0, set) != 2) { return 1; }\n  if (__scan_set(\"ab cd\", 3, set) != 5) { return 2; }\n  var short: u8[] = [0 as u8, 1 as u8];\n  if (__scan_set(\"ab\\x01\", 0, short) != 2) { return 3; }\n  return 7;\n}\n"},
+	{"buf-push-mapped", "function main(): i32 {\n  var b: usize = buf_new(4);\n  var t: u8[] = [65 as u8, 66 as u8];\n  buf_push_mapped(b, \"\\x00\\x01z\", t);\n  if (buf_take(b) != \"ABz\") { return 1; }\n  buf_free(b);\n  return 7;\n}\n"},
+	{"buf-push-filtered", "function main(): i32 {\n  var b: usize = buf_new(4);\n  var d: u8[] = [0 as u8, 1 as u8];\n  buf_push_filtered(b, \"\\x00\\x01z\\x01\", d);\n  if (buf_take(b) != \"\\x00z\") { return 1; }\n  buf_free(b);\n  return 7;\n}\n"},
 	// The CRC kernel, which is the family's odd one in two ways the interp
 	// has to get right on its own: its STRING is the second argument, so it
 	// cannot ride __memchr's destructure the way __count_byte does, and it

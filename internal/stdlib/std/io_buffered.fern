@@ -168,6 +168,17 @@ pub function (b: BufWriter) write_mapped(s: string, table: u8[]): BufWriter {
   return b.flush();
 }
 
+// `(b).write_filtered(s, drop)` — append each byte `c` of `s` whose
+// `drop[c]` is zero, or that is past the table's end: a byte deletion with
+// no intermediate string.
+pub function (b: BufWriter) write_filtered(s: string, drop: u8[]): BufWriter {
+  buf_push_filtered(b.buf, s, drop);
+  if (buf_len(b.buf) < b.cap) {
+    return b;
+  }
+  return b.flush();
+}
+
 // `(b).write_byte(byte)` — append one byte.
 pub function (b: BufWriter) write_byte(byte: i32): BufWriter {
   buf_push_byte(b.buf, byte);
