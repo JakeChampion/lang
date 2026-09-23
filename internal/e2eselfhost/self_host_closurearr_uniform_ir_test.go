@@ -8,25 +8,16 @@ import (
 	"testing"
 )
 
-// closureArrUniformCases pin the representation a fn-VALUED array carries when
-// more than one literal reaches the same destination.
+// closureArrUniformCases pin that every function-array literal reaching one
+// destination holds env boxes: a plain lambda array, a capturing one, a
+// generic-passthrough element like `id(<lambda>)`, and a `.with`/`.append`
+// store into any of them.
 //
-// A closure array has two representations, and the choice was made per LITERAL:
-// an array of plain lambdas keeps bare `__lam_N` fn pointers (#3574), an array
-// holding anything boxed — a capturing lambda, or a generic-passthrough element
-// like `id(<lambda>)` — is given uniform env boxes and its consumers dispatch
-// env-first. A function with two `return`s could therefore hand back one of
-// each, and the caller's single binding got one dispatch ABI for both: it
-// env-first-dispatched whichever arm ran. That compiled clean and SIGSEGV'd,
-// so neither the bail count nor the strict-IR gate could see it (#6555).
-//
-// The rule is now per FUNCTION: if anything in it forces a box — a returned
-// array literal, or a `.with`/`.append` storing a fn value into an array — every
-// fn-valued array literal in that function boxes, and every fn value written
-// into one is boxed to match. all-plain-returns-stay-bare and
-// non-fn-with-leaves-fn-array-bare are the guards on the other side: a function
-// with nothing to box keeps the bare fn-pointer representation, where env-first
-// dispatch would be the same crash in the other direction.
+// While an array of plain lambdas held bare `__lam_N` fn pointers, a function
+// with two `return`s could hand back one of each representation, and the
+// caller's one dispatch ABI crashed on whichever arm disagreed: compiled clean
+// and SIGSEGV'd, invisible to the bail count and the strict-IR gate (#6555).
+// Since #10076 every function array holds boxes whatever built it.
 var closureArrUniformCases = []struct {
 	name string
 	src  string
@@ -42,19 +33,12 @@ var closureArrUniformCases = []struct {
 	// lambda. This one bailed rather than crashing — the arm-array rewrite
 	// counted only a direct capturing lambda, so nothing boxed at all.
 	{"arm-array-passthrough-element", `function pick[T](cond: boolean, a: T, b: T): T { return if (cond) { a } else { b }; } function main(): i32 { var p: i32 = 4i32; var fs: ((i32) => i32)[] = (if (true) { [pick(true, ((x: i32) => (x + p)), ((y: i32) => y))] } else { [((z: i32) => z)] }); return fs[0i32](1i32) & 63i32; }`, 5},
-	// The guard: nothing boxed anywhere, so both returns keep bare fn pointers.
-	{"all-plain-returns-stay-bare", `function gen(c: boolean): ((i32) => i32)[] { return if (c) { [((x: i32) => x)] } else { [((y: i32) => (y + 1i32))] }; } function main(): i32 { var fs: ((i32) => i32)[] = gen(false); return fs[0i32](1i32) & 63i32; }`, 2},
+	// Both returns hold only no-capture lambdas.
+	{"all-plain-returns", `function gen(c: boolean): ((i32) => i32)[] { return if (c) { [((x: i32) => x)] } else { [((y: i32) => (y + 1i32))] }; } function main(): i32 { var fs: ((i32) => i32)[] = gen(false); return fs[0i32](1i32) & 63i32; }`, 2},
 
-	// `xs.with(i, v)` / `xs.append(v)` is the same disagreement one container
-	// further out again: the clone they produce has the receiver's element ABI,
-	// but the lift boxes a fn value at every method-argument position. So an
-	// array of plain lambdas — bare `__lam_N` fn pointers — got a closure BOX
-	// written into element i, and calling that element jumped to the box
-	// address. The rule reaches the store now: a fn-value `.with`/`.append`
-	// anywhere in the function puts its fn-value array literals on the env-box
-	// ABI, the stored value is boxed to match, and the destination binding
-	// inherits the receiver's closure-array mark so it dispatches env-first.
-	// Each case reads the WRITTEN element and an untouched one, so a
+	// `xs.with(i, v)` / `xs.append(v)`: the clone keeps the receiver's boxes and
+	// the stored value is boxed to match, so the destination dispatches
+	// env-first. Each case reads the WRITTEN element and an untouched one, so a
 	// representation that agrees only at index 0 still fails.
 	{"with-lambda-into-plain-fn-array", `function main(): i32 { var s: ((i32) => i32)[] = [((a: i32) => a), ((c: i32) => (c + 2i32))]; var w: ((i32) => i32)[] = s.with(0i32, ((b: i32) => (b + 1i32))); return ((w[0i32](5i32) + w[1i32](5i32) + s[0i32](5i32)) & 63i32); }`, 18},
 	{"with-capturing-lambda-into-plain-fn-array", `function main(): i32 { var n: i32 = 3i32; var s: ((i32) => i32)[] = [((a: i32) => a), ((c: i32) => (c + 2i32))]; var w: ((i32) => i32)[] = s.with(0i32, ((b: i32) => (b + n))); return ((w[0i32](5i32) + w[1i32](5i32)) & 63i32); }`, 15},
@@ -62,17 +46,15 @@ var closureArrUniformCases = []struct {
 	// lambda-bound local is already an env box, so the receiver has to box even
 	// though no lambda appears in the `.with` at all.
 	{"with-boxed-local-into-plain-fn-array", `function main(): i32 { var s: ((i32) => i32)[] = [((a: i32) => a), ((c: i32) => (c + 2i32))]; var f = ((b: i32) => (b + 1i32)); var w: ((i32) => i32)[] = s.with(0i32, f); return ((w[0i32](5i32) + f(1i32)) & 63i32); }`, 8},
-	// The mismatch in the other direction: a boxed receiver, and a bare
-	// module-fn NAME as the value. The name gets the `$wrapN` trampoline box a
+	// A bare module-fn NAME as the value gets the `$wrapN` trampoline box a
 	// fn-name array ELEMENT gets, so the clone holds boxes throughout.
 	{"with-fn-name-into-closure-array", `function bump(x: i32): i32 { return (x + 1i32); } function main(): i32 { var n: i32 = 2i32; var s: ((i32) => i32)[] = [((a: i32) => a), ((c: i32) => (c + n))]; var w: ((i32) => i32)[] = s.with(0i32, bump); return ((w[0i32](5i32) + w[1i32](5i32)) & 63i32); }`, 13},
-	// No fn value in the `.with` at all — the value is an element read out of
-	// the receiver — so only the destination's inherited mark can be wrong.
+	// No fn value in the `.with` at all: the value is an element read out of
+	// the receiver.
 	{"with-element-of-closure-array", `function main(): i32 { var n: i32 = 2i32; var s: ((i32) => i32)[] = [((a: i32) => a), ((c: i32) => (c + n))]; var w: ((i32) => i32)[] = s.with(0i32, s[1i32]); return ((w[0i32](5i32) + w[1i32](5i32)) & 63i32); }`, 14},
 	{"append-capturing-lambda-to-plain-fn-array", `function main(): i32 { var n: i32 = 4i32; var s: ((i32) => i32)[] = [((a: i32) => a)]; var w: ((i32) => i32)[] = s.append(((b: i32) => (b + n))); return ((w[0i32](1i32) + w[1i32](5i32)) & 63i32); }`, 10},
-	// The guard on the store side: a `.with` on a NON-fn array stores no fn
-	// value, so the fn-value literal beside it keeps bare fn pointers.
-	{"non-fn-with-leaves-fn-array-bare", `function main(): i32 { var xs: i32[] = [1i32, 2i32]; var ys: i32[] = xs.with(0i32, 7i32); var s: ((i32) => i32)[] = [((a: i32) => a), ((c: i32) => (c + 2i32))]; return ((s[0i32](ys[0i32]) + s[1i32](ys[1i32])) & 63i32); }`, 11},
+	// A `.with` on a NON-fn array beside a function array.
+	{"non-fn-with-beside-fn-array", `function main(): i32 { var xs: i32[] = [1i32, 2i32]; var ys: i32[] = xs.with(0i32, 7i32); var s: ((i32) => i32)[] = [((a: i32) => a), ((c: i32) => (c + 2i32))]; return ((s[0i32](ys[0i32]) + s[1i32](ys[1i32])) & 63i32); }`, 11},
 }
 
 // TestSelfHostClosureArrUniformIRX86_64 — the x86-64 IR path (asm_ir_run `-ir`).
