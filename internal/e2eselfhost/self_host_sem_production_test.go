@@ -3077,7 +3077,8 @@ function main(): i32 { return signals(); }
 	// The sockets, `sync` and the set-id builtins, which no other row reaches:
 	// a loopback listener on an ephemeral port (a fixed one sits in TIME_WAIT
 	// for the leg that runs next), a connection, an accept, one send and its
-	// receive as a fresh u8[], the three closes, `sync` as a statement, and
+	// receive as a fresh u8[], a connection's readiness token (the fd itself
+	// on native), the three closes, `sync` as a statement, and
 	// the set-id calls asking for root, which a host refuses or grants and
 	// the row counts either way.
 	{name: "os-floor-sockets-and-ids", atLeast: 2, nativeOnly: true, src: `
@@ -3091,6 +3092,7 @@ function sockets(): i32 {
             var a: i32 = tcp_accept(listener);
             if (a >= 0) {
                 if (tcp_send(c, "ping") == 4) { n = n + 1; }
+                if (tcp_pollable(c) == c) { n = n + 1; }
                 var got: u8[] = tcp_recv(a, 16);
                 if (got.len() == 4 && got[0] as i32 == 112) { n = n + 1; }
                 if (tcp_close(a) >= 0) { n = n + 1; }
@@ -3884,6 +3886,33 @@ function main(): i32 {
     match (s[5:9]) { Some(v) => { n = n + 10; }, None => { n = n + 1; } }
     return n - 5;
 }
+`},
+	// A record holding a function value reaches, through the field, the
+	// records the function takes and hands back, so a body that names only
+	// the record still carries their schemas (examples/proposals/pipeline.fern).
+	{name: "a-function-field-names-its-signature-records", atLeast: 3, noLeak: true, src: `
+struct Ctx { value: i32 }
+struct Fault { why: string }
+struct Stage { name: string, run: (Ctx) => Result[Ctx, Fault] }
+function names(a: Stage[]): i32 { return a.len(); }
+function main(): i32 {
+    var xs: Stage[] = [Stage { name: "a", run: (c: Ctx): Result[Ctx, Fault] => Ok(c) }];
+    return names(xs) - 1;
+}
+`},
+	// An unsuffixed literal beside an operand the checker gave no width is
+	// read at that operand's width, on either side: the i64 deadline
+	// arithmetic in std/tcp's request reader was refused as `i64 / i32`.
+	{name: "a-literal-takes-its-operands-width", atLeast: 2, noLeak: true, src: `
+function ms(recv_deadline_ms: i32): i32 {
+    var read_start_ns: i64 = monotonic_ns();
+    var deadline_ns: i64 = (recv_deadline_ms as i64) * 1000000;
+    var remaining_ms: i32 = ((deadline_ns - (monotonic_ns() - read_start_ns)) / 1000000) as i32;
+    var back: i64 = 7000000000 - (monotonic_ns() - read_start_ns);
+    if (back < 6000000000) { return 0 - 1; }
+    return remaining_ms;
+}
+function main(): i32 { if (ms(5000) > 4000) { return 0; } return 1; }
 `},
 	// A method call on a `dyn Trait` receiver: the widening borrows the
 	// record, and the call dispatches on its shape to the implementation

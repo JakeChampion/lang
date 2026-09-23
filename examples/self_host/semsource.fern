@@ -1027,9 +1027,23 @@ function address_widen(v: Value, want: typeinfo.Type): Value {
 function binary(e: ast.Expr, b: ast.ExprBinary, s: State, expected: typeinfo.Type): Value {
     if (b.op == "&&" || b.op == "||") { return logical(b, s); }
     var want: typeinfo.Type = operand_width(e, b, s, expected);
+    // With no width known before either side is produced, a literal side is
+    // read at the other side's integer type, as the checker settles it. A
+    // literal has no effects, so producing the other side first is safe.
+    if (!operand_type(want) && parser.int_literal_tree(b.left) && !parser.int_literal_tree(b.right)) {
+        var first: Value = expr(b.right, s, want);
+        if (!first.s.ok) { return first; }
+        var wide: typeinfo.Type = first.s.values[first.id];
+        if (ssasem.is_integer(wide)) {
+            var lit: Value = expr(b.left, first.s, wide);
+            if (!lit.s.ok) { return lit; }
+            return arithmetic(b, lit, Value { s: lit.s, id: first.id }, lit.s);
+        }
+    }
     var left: Value = address_widen(expr(b.left, s, want), want);
     s = left.s;
     if (!s.ok) { return left; }
+    if (!operand_type(want) && parser.int_literal_tree(b.right) && ssasem.is_integer(s.values[left.id])) { want = s.values[left.id]; }
     // The left operand decides whether this is a composite comparison, and the
     // decision is taken before the RIGHT one is produced: the method call
     // produces it, and producing it here too would give the call two values for
@@ -1041,6 +1055,10 @@ function binary(e: ast.Expr, b: ast.ExprBinary, s: State, expected: typeinfo.Typ
     var right: Value = address_widen(expr(b.right, s, want), want);
     s = right.s;
     if (!s.ok) { return right; }
+    return arithmetic(b, left, right, s);
+}
+
+function arithmetic(b: ast.ExprBinary, left: Value, right: Value, s: State): Value {
     right = shift_count(b.op, right, s.values[left.id]);
     s = right.s;
     var ty: typeinfo.Type = ssasem.binary_result(b.op, s.values[left.id], s.values[right.id]);
@@ -3479,6 +3497,15 @@ function schema_of(t: typeinfo.Type, s: State, out: Schemas): Schemas {
         if (!out.ok) { return out; }
         return schema_of(m.value, s, out);
     }
+    // A function value's signature names the records its calls take and hand
+    // back, which a record holding one reaches through the field.
+    if let typeinfo.TypeFunc(fn) = t {
+        for p in fn.param_types {
+            out = schema_of(p, s, out);
+            if (!out.ok) { return out; }
+        }
+        return schema_of(fn.ret_type, s, out);
+    }
     if let typeinfo.TypeStruct(r) = t {
         // A stream handle is its descriptor, not a box: it has no layout to
         // record and nothing to walk.
@@ -4015,6 +4042,7 @@ function os_floor_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Co
         ssasem.Contract { name: "termios_get", params: [t_i32()], modes: [v], result: t_io_result(gids) },
         ssasem.Contract { name: "termios_set", params: [t_i32(), t_i32(), gids], modes: [v, v, b], result: done },
         ssasem.Contract { name: "tcp_close", params: [t_i32()], modes: [v], result: t_i32() },
+        ssasem.Contract { name: "tcp_pollable", params: [t_i32()], modes: [v], result: t_i32() },
         ssasem.Contract { name: "setuid", params: [t_i64()], modes: [v], result: done },
         ssasem.Contract { name: "setgid", params: [t_i64()], modes: [v], result: done },
         ssasem.Contract { name: "set_priority", params: [t_i32()], modes: [v], result: done }
