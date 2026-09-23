@@ -10116,12 +10116,17 @@ function call_diags_array(a: ast.ExprArray, s: Scope, out: util.Diag[]): util.Di
   // (whose union-widening the Go checker handles and this port
   // doesn't yet). The Go checker reports E034 at the element.
   if (a.elements.len() >= 2) {
-    // An unsuffixed numeric literal takes the element type the other
-    // elements settle on, so the anchor is the first element that is not one.
+    // An unsuffixed numeric literal takes the numeric element type the other
+    // elements settle on, so the anchor is the first element that is not one
+    // when that element is numeric, and the first element otherwise.
     var anchor: i32 = 0;
     while (anchor < a.elements.len() && numeric_literal_tree(a.elements[anchor])) { anchor = anchor + 1; }
     if (anchor == a.elements.len()) { anchor = 0; }
     var et0: typeinfo.Type = check_expr(a.elements[anchor], s);
+    if (anchor > 0 && !is_integer(et0) && !is_float(et0)) {
+      anchor = 0;
+      et0 = check_expr(a.elements[0], s);
+    }
     if (is_primitive_type(et0)) {
       var k: i32 = 0;
       var flagged: boolean = false;
@@ -16842,8 +16847,9 @@ pub struct ModuleTables { structs: StructTable, unions: UnionTable, sigs: SigTab
 // ("std/string"), which is the spelling a hint tells the reader to add.
 // E001 (#10094): a Map lowers to core/map, so a program whose import closure
 // lacks it is refused once, at its first `map_new` — every Map literal
-// desugars to one. A bundle holds core/map's declarations whenever anything in
-// the closure imports it.
+// desugars to one. A bundle lists every import its modules write
+// (flatten.closure_imports), loaded or not, and holds core/map's declarations
+// whenever it loaded them.
 function map_import_diags(mod: parser.Module): util.Diag[] {
   if (loads_core_map(mod)) { return []; }
   var want: string[] = ["map_new", "map_new_i32"];

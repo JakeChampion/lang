@@ -1161,6 +1161,23 @@ function disambiguate_methods(mod: parser.Module, ns: string, claimed: string[])
 // the compiler's module layout). This is the final brick: after it,
 // a multi-module program — the compiler itself — lowers to a single
 // namespace and self-compiles.
+// closure_imports is every import the bundled modules write, once per path:
+// the closure a question like "is core/map imported" is asked of, whether or
+// not the loader could load the module the path names.
+function closure_imports(entry: parser.Module, imports: LoadedModule[]): parser.Import[] {
+    var out: parser.Import[] = [];
+    var seen: string[] = [];
+    var all: parser.Import[] = entry.imports;
+    for lm in imports { all = util.append_all(all, lm.mod.imports); }
+    for im in all {
+        if (!util.has_str(seen, im.path)) {
+            seen = seen.append(im.path);
+            out = out.append(im);
+        }
+    }
+    return out;
+}
+
 pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Module {
     var funcs: parser.FuncDecl[] = [];
     var structs: parser.StructDecl[] = [];
@@ -1240,7 +1257,6 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
     while (eti < e.trait_reqs.len()) { trait_reqs = trait_reqs.append(e.trait_reqs[eti]); eti = eti + 1; }
     var edi: i32 = 0;
     while (edi < e.trait_decls.len()) { trait_decls = trait_decls.append(e.trait_decls[edi]); edi = edi + 1; }
-    var no_imports: parser.Import[] = [];
     // Re-settle on the merged signature set. A call into an IMPORTED module had
     // no declaration to settle its arguments against at parse time, so
     // `lib.f([1, 2])` reached an `f64[]`/`i64[]` parameter as unsettled i32
@@ -1250,7 +1266,7 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
         funcs: funcs,
         structs: structs,
         aliases: aliases,
-        imports: no_imports,
+        imports: closure_imports(entry, imports),
         top_stmts: e.top_stmts,
         enums: enums,
         resources: resources,
