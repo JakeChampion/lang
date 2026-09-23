@@ -172,7 +172,7 @@ pub function dominates(f: ssa.SFunc): Dom {
 }
 
 // push_at writes v at stack depth d, growing the array only past its length.
-function push_at(stack: i32[], d: i32, v: i32): i32[] {
+function push_at(own stack: i32[], d: i32, v: i32): i32[] {
     if (d < stack.len()) { return stack.with(d, v); }
     return stack.append(v);
 }

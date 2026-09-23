@@ -196,6 +196,9 @@ pub function compute(f: ssa.SFunc, dependencies: i32[][]): Flow {
     }
     var live_in: i64[] = words_of(nb * words);
     var live_out: i64[] = words_of(nb * words);
+    // row holds the block being recomputed, so a pass updates live_out in
+    // place instead of copying the whole table for each block.
+    var row: i64[] = words_of(words);
     var changed: boolean = true;
     while (changed) {
         changed = false;
@@ -203,15 +206,16 @@ pub function compute(f: ssa.SFunc, dependencies: i32[][]): Flow {
         while (bi >= 0) {
             var b: ssa.SBlock = f.blocks[bi];
             var base: i32 = bi * words;
-            var out: i64[] = live_out;
+            var w: i32 = 0;
+            while (w < words) { row = row.with(w, live_out[base + w]); w = w + 1; }
             var si: i32 = 0;
             while (si < 2) {
                 var target: i32 = successor(b.term, si);
                 if (target >= 0) {
                     var sb: i32 = at[target];
-                    var w: i32 = 0;
+                    w = 0;
                     while (w < words) {
-                        out = out.with(base + w, out[base + w] | live_in[sb * words + w]);
+                        row = row.with(w, row[w] | live_in[sb * words + w]);
                         w = w + 1;
                     }
                     // Phi arguments belong to this exact predecessor edge.
@@ -219,19 +223,18 @@ pub function compute(f: ssa.SFunc, dependencies: i32[][]): Flow {
                     // normal live-in set already excludes that result.
                     var pi: i32 = pred_index(f.blocks[sb], b.id);
                     for ins in f.blocks[sb].insts {
-                        if (ins.kind_tag == 8) { out = add_use(out, base, ins.args[pi], dependencies); }
+                        if (ins.kind_tag == 8) { row = add_use(row, 0, ins.args[pi], dependencies); }
                     }
                 }
                 si = si + 1;
             }
-            var w: i32 = 0;
+            w = 0;
             while (w < words) {
-                if (out[base + w] != live_out[base + w]) { changed = true; }
-                var inw: i64 = uses[base + w] | (out[base + w] & (defs[base + w] ^ (0i64 - 1i64)));
+                if (row[w] != live_out[base + w]) { live_out = live_out.with(base + w, row[w]); changed = true; }
+                var inw: i64 = uses[base + w] | (row[w] & (defs[base + w] ^ (0i64 - 1i64)));
                 if (inw != live_in[base + w]) { live_in = live_in.with(base + w, inw); changed = true; }
                 w = w + 1;
             }
-            live_out = out;
             bi = bi - 1;
         }
     }
