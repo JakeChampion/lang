@@ -1,0 +1,118 @@
+package e2eselfhost
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"testing"
+)
+
+// Optimisations that compute the right answer whether or not they fire, so no
+// runtime test notices when one stops: each case names a function and the
+// shape its emitted code must (and must not) have on each native target.
+// Every case is checked on BOTH lowerings the CLI has — the typed semantic
+// path it takes by default and the AST path `FERN_SEM_IR=` selects — since
+// an optimisation living in one of them is invisible to the other. The
+// program's exit code is checked too, on the host target.
+type optShapeCase struct {
+	name string
+	src  string
+	fn   string
+	exit int
+	// want and forbid are regexps over the function's body, keyed by target.
+	want   map[string][]string
+	forbid map[string][]string
+}
+
+var optShapeCases = []optShapeCase{
+	// `while (i < xs.len())` with `i` counting up from 0 reads in bounds.
+	{name: "bce_while_len", fn: "sum_while", exit: 39, src: `
+@noinline function sum_while(xs: i32[]): i32 {
+    var s: i32 = 0;
+    var i: i32 = 0;
+    while (i < xs.len()) { s = s + xs[i]; i = i + 1; }
+    return s;
+}
+function main(): i32 { return sum_while([3, 5, 7, 11, 13]); }
+`,
+		forbid: map[string][]string{"x86-64-linux": {`__fern_oob_abort`}, "arm64-linux": {`__fern_oob_abort`}}},
+	// A for-in loop's index is below the length by construction.
+	{name: "bce_for_in", fn: "sum_for", exit: 39, src: `
+@noinline function sum_for(xs: i64[]): i64 {
+    var s: i64 = 0;
+    for x in xs { s = s + x; }
+    return s;
+}
+function main(): i32 { return sum_for([3, 5, 7, 11, 13]) as i32; }
+`,
+		forbid: map[string][]string{"x86-64-linux": {`__fern_oob_abort`}, "arm64-linux": {`__fern_oob_abort`}}},
+	// A multiply by a power of two is a shift.
+	{name: "strength_mul_pow2", fn: "times8", exit: 40, src: `
+@noinline function times8(x: i32): i32 { return x * 8; }
+function main(): i32 { return times8(5); }
+`,
+		want:   map[string][]string{"x86-64-linux": {`\bshl[lq]? \$3,`}, "arm64-linux": {`\blsl x\d+, x\d+, #3\b`}},
+		forbid: map[string][]string{"x86-64-linux": {`\bimul`}, "arm64-linux": {`\bmul\b`}}},
+}
+
+var optShapeLegs = []struct {
+	name string
+	env  []string
+}{
+	{"typed", nil},
+	{"ast", []string{"FERN_SEM_IR="}},
+}
+
+func TestSelfHostOptimisationShapes(t *testing.T) {
+	h := selfHostCLIForHost(t)
+	for _, c := range optShapeCases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			src := filepath.Join(dir, c.name+".fern")
+			if err := os.WriteFile(src, []byte(c.src), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			for _, leg := range optShapeLegs {
+				for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+					out := filepath.Join(dir, leg.name+"-"+target+".s")
+					cmd := exec.Command(h.cli, "-target", target, "-emit", "asm", "-o", out, src, h.stdlib)
+					cmd.Env = append(os.Environ(), leg.env...)
+					if combined, err := cmd.CombinedOutput(); err != nil {
+						t.Fatalf("%s/%s: emitting: %v\n%s", leg.name, target, err, combined)
+					}
+					asm, err := os.ReadFile(out)
+					if err != nil {
+						t.Fatal(err)
+					}
+					body := selfHostFnBody(t, asm, c.fn)
+					for _, re := range c.want[target] {
+						if !regexp.MustCompile(re).MatchString(body) {
+							t.Errorf("%s/%s: %s lacks %q:\n%s", leg.name, target, c.fn, re, body)
+						}
+					}
+					for _, re := range c.forbid[target] {
+						if regexp.MustCompile(re).MatchString(body) {
+							t.Errorf("%s/%s: %s still has %q:\n%s", leg.name, target, c.fn, re, body)
+						}
+					}
+				}
+				tg := h.targets[0]
+				bin := filepath.Join(dir, leg.name+".bin")
+				cmd := exec.Command(h.cli, "-target", tg.target, "-o", bin, src, h.stdlib)
+				cmd.Env = append(os.Environ(), leg.env...)
+				if combined, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("%s: building: %v\n%s", leg.name, err, combined)
+				}
+				run := exec.Command(bin)
+				if len(tg.runner) > 0 {
+					run = exec.Command(tg.runner[0], append(tg.runner[1:], bin)...)
+				}
+				_ = run.Run()
+				if got := run.ProcessState.ExitCode(); got != c.exit {
+					t.Errorf("%s: exit %d, want %d", leg.name, got, c.exit)
+				}
+			}
+		})
+	}
+}

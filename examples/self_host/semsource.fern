@@ -643,7 +643,9 @@ function index(ix: ast.ExprIndex, s: State): Value {
     }
     var elem: typeinfo.Type = element_type(s.values[container.id]);
     if (!semtypes.concrete(elem, false)) { return refused(s, "array projection contract"); }
-    return define(s, ssasem.array_get(), [container.id, at.id], 0, "", elem);
+    var unchecked: i32 = 0;
+    if (ix.unchecked) { unchecked = 1; }
+    return define(s, ssasem.array_get(), [container.id, at.id], unchecked, "", elem);
 }
 
 // A checked slice's decision tree as it is built: the state, and the blocks
@@ -2904,7 +2906,8 @@ function iterate_array(fo: ast.StmtFor, s: State): State {
     s = terminate(s, t_brif(test.id, body_id, exit_id));
 
     var opened: State = open(State { ...s, vals: advanced }, body_id, [cond_end]);
-    var item: Value = define(opened, ssasem.array_get(), [it.id, step.id], 0, "", elem);
+    // The header's `step < n` test is the bounds check, so neither read repeats it.
+    var item: Value = define(opened, ssasem.array_get(), [it.id, step.id], 1, "", elem);
     // A string's element is one byte, read rather than projected.
     if (text) { item = define(opened, ssasem.str_index(), [it.id, step.id], 0, "", elem); }
     // The element is a checker binding for the body's span as well: every type
@@ -2915,7 +2918,7 @@ function iterate_array(fo: ast.StmtFor, s: State): State {
     if (vals >= 0) {
         var names: string[] = checker.split_pattern_names(fo.var_name);
         if (names.len() != 2) { return fail(s, "unsupported loop binding"); }
-        var vitem: Value = define(item.s, ssasem.array_get(), [vals, step.id], 0, "", vtype);
+        var vitem: Value = define(item.s, ssasem.array_get(), [vals, step.id], 1, "", vtype);
         body_state = bind(bind(vitem.s, names[0], item.id), names[1], vitem.id);
     } else if (util.contains(fo.var_name, ",")) { body_state = destructure_tuple(fo.var_name, item.id, item.s, inner); }
     if (!body_state.ok) { return body_state; }
@@ -3632,7 +3635,7 @@ function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Cont
     // is what has to be clear of one.
     if (semtypes.holds_map_iter(s.result)) { return refuse("cursor result escapes its map"); }
     s = parameters(fd, s);
-    s = stmts(fd.body, s);
+    s = stmts(parser.elide_len_bounded_body(fd.body), s);
     return complete(fd, s, name);
 }
 
