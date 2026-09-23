@@ -644,13 +644,13 @@ function index(ix: ast.ExprIndex, s: State): Value {
     // A string's element is one byte, typed u8 the way the checker types it.
     // Nothing is borrowed, so this is a read of the source rather than a
     // projection of it.
+    var unchecked: i32 = 0;
+    if (ix.unchecked) { unchecked = 1; }
     if (ssasem.is_text(s.values[container.id])) {
-        return define(s, ssasem.str_index(), [container.id, at.id], 0, "", t_u8());
+        return define(s, ssasem.str_index(), [container.id, at.id], unchecked, "", t_u8());
     }
     var elem: typeinfo.Type = element_type(s.values[container.id]);
     if (!semtypes.concrete(elem, false)) { return refused(s, "array projection contract"); }
-    var unchecked: i32 = 0;
-    if (ix.unchecked) { unchecked = 1; }
     return define(s, ssasem.array_get(), [container.id, at.id], unchecked, "", elem);
 }
 
@@ -2986,7 +2986,7 @@ function iterate_array(fo: ast.StmtFor, s: State): State {
     // The header's `step < n` test is the bounds check, so neither read repeats it.
     var item: Value = define(opened, ssasem.array_get(), [it.id, step.id], 1, "", elem);
     // A string's element is one byte, read rather than projected.
-    if (text) { item = define(opened, ssasem.str_index(), [it.id, step.id], 0, "", elem); }
+    if (text) { item = define(opened, ssasem.str_index(), [it.id, step.id], 1, "", elem); }
     // The element is a checker binding for the body's span as well: every type
     // this boundary reads from the checker is read in s.scope. A pattern header
     // destructures the element the way a declaration does.

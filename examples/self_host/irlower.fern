@@ -9527,7 +9527,9 @@ function lower_string_foreach(var_name: string, iter: ast.Expr, body: ast.Stmt[]
     var lenc: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: sref, field: "len", line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_argc: 0, ty: "" };
     var rargs: ast.Expr[] = [zero, lenc];
     var range_iter: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "__range", line: 0, col: 0, ty: "" }, args: rargs, line: 0, col: 0, type_argc: 0, ty: "" };
-    var bind: ast.Stmt = ast.StmtVar { name: var_name, type_name: "", init: ast.ExprIndex { array: sref, index: iref, unchecked: false, ty: "" }, line: 0, col: 0, is_str: false, fn_ret: "", fn_param_types: "" };
+    // Both locals are hidden, so the index runs over [0, len) of a string
+    // nothing rebinds: the byte read needs no bounds check.
+    var bind: ast.Stmt = ast.StmtVar { name: var_name, type_name: "", init: ast.ExprIndex { array: sref, index: iref, unchecked: true, ty: "" }, line: 0, col: 0, is_str: false, fn_ret: "", fn_param_types: "" };
     var nbody: ast.Stmt[] = [bind];
     var bi: i32 = 0;
     while (bi < body.len()) { nbody = nbody.append(body[bi]); bi = bi + 1; }
@@ -16306,6 +16308,7 @@ function lower_expr_index(ix: ast.ExprIndex, s: LowerState): LowerState {
     }
     sidx = lower_expr(ix.index, sidx);
     if (!sidx.ok) { return sidx; }
+    if (expr_is_str(ix.array, s) && ix.unchecked) { return free_parked_view_after(sidx.emit(ir.op_str_index_nc()), ixvst.slot); }
     if (expr_is_str(ix.array, s)) { return free_parked_view_after(sidx.emit(ir.op_str_index()), ixvst.slot); }
     if (ixslot >= 0) {
         var ixw: i32 = 32;

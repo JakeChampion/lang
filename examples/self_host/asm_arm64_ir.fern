@@ -1313,7 +1313,8 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
     }
     if (k == 44) {
         s = s.mark_heap();
-        s = s.write("    ldr x6, [" + a + ", #8]\n    cmp " + b + ", x6\n    b.lo 1f\n    b __fern_oob_abort\n1:\n    ldr x6, [" + a + "]\n    ldrb " + ssa_wreg(d) + ", [x6, " + b + "]\n");
+        if (ins.imm != 1) { s = s.write("    ldr x6, [" + a + ", #8]\n    cmp " + b + ", x6\n    b.lo 1f\n    b __fern_oob_abort\n1:\n"); }
+        s = s.write("    ldr x6, [" + a + "]\n    ldrb " + ssa_wreg(d) + ", [x6, " + b + "]\n");
         return ssa_store(reg_of, ins.result, d, s);
     }
     var c: string = ssa_src(reg_of, ins.args[2], "x6");

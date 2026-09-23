@@ -443,6 +443,9 @@ pub function op_str_cmp(): Op { return op0("str_cmp"); }
 // [data@0,len@8] → byte at [data+i]; wasm data-section [len@0,bytes@4] → byte at
 // [s+4+i]). No bounds check (matches the AST path).
 pub function op_str_index(): Op { return op0("str_index"); }
+// op_str_index_nc is the byte read with its bounds check elided (i32_imm 1), for
+// an index the lowering proved below the length, as op_arr_get_nc is.
+pub function op_str_index_nc(): Op { return Op { ...op0("str_index"), i32_imm: 1 }; }
 // `str_slice` pops [str, start, end] → a fresh string for `s[start:end]`. On
 // x86/arm64 this is a zero-copy VIEW: a new 16-byte box [data = src.data+start,
 // len = end-start] sharing the source bytes. On wasm, strings are inline blocks

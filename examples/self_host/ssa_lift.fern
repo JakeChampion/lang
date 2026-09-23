@@ -429,7 +429,7 @@ function lift_prod_read(k: string, op: ir.Op, lv: LiftVals): LiftVals {
     if (k == "raw_load_ptr") { return lift_pop_push(lv, 2, 52, 0, ""); }
     if (k == "raw_load8") { return lift_pop_push(lv, 2, 54, 0, ""); }
     if (k == "arr_get") { return lift_pop_push(lv, 2, 42, op.i32_imm, ""); }
-    if (k == "str_index") { return lift_pop_push(lv, 2, 44, 0, ""); }
+    if (k == "str_index") { return lift_pop_push(lv, 2, 44, op.i32_imm, ""); }
     if (k == "const_func") { return lift_pop_push(lv, 0, 45, 0, op.str); }
     if (k == "const_struct") { return lift_pop_push(lv, 0, 57, 0, op.str); }
     return lift_pop_push(lv, 0, 47, 0, op.str);

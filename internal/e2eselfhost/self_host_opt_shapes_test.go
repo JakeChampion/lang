@@ -47,6 +47,18 @@ function main(): i32 { return sum_while([3, 5, 7, 11, 13]); }
 function main(): i32 { return sum_for([3, 5, 7, 11, 13]) as i32; }
 `,
 		forbid: map[string][]string{"x86-64-linux": {`__fern_oob_abort`}, "arm64-linux": {`__fern_oob_abort`}}},
+	// The same two shapes over a string's bytes.
+	{name: "bce_string", fn: "count_a", exit: 5, src: `
+@noinline function count_a(s: string): i32 {
+    var n: i32 = 0;
+    var i: i32 = 0;
+    while (i < s.len()) { if (s[i] == 97u8) { n = n + 1; } i = i + 1; }
+    for c in s { if (c == 97u8) { n = n + 1; } }
+    return n;
+}
+function main(): i32 { return count_a("banana") - 1; }
+`,
+		forbid: map[string][]string{"x86-64-linux": {`__fern_oob_abort`}, "arm64-linux": {`__fern_oob_abort`}}},
 	// A multiply by a power of two is a shift.
 	{name: "strength_mul_pow2", fn: "times8", exit: 40, src: `
 @noinline function times8(x: i32): i32 { return x * 8; }
