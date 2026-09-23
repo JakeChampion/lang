@@ -3983,11 +3983,7 @@ function main(): i32 {
 	// whatever it nests, and the call through the value dispatches by the same
 	// signature tag. Covered: a local bound to a function taking a callback, a
 	// `use` through such a local, a parameter whose type takes a callback, and
-	// a local bound to a function returning a function value. Its result is
-	// bound before it is called: calling it in the same expression is the shape
-	// the AST lowering, this row's control, segfaults on (#10057), and
-	// conformance/cases/call_of_a_call_through_a_function_value pins the typed
-	// path's answer to it instead.
+	// a local bound to a function returning a function value.
 	{name: "a-function-value-whose-type-nests-a-function-type", atLeast: 9, noLeak: true, src: `
 function with_name(n: i32, k: (string) => i32): i32 { return k("x") + n; }
 function through_local(i: i32): i32 {
@@ -4007,11 +4003,37 @@ function adder(n: i32): (i32) => i32 { return (b: i32): i32 => b + n; }
 function through_result(): i32 {
     var mk: (i32) => ((i32) => i32) = adder;
     var add3 = mk(3);
-    var add10 = mk(10);
-    return add3(4) + add10(0);
+    return add3(4) + mk(10)(0);
 }
 function main(): i32 {
     return through_local(3) + use_through_local() + apply2(runner, 5) + through_result() - 1;
+}
+`},
+	// A call of a call, where the inner callee is a function VALUE: the AST
+	// lowering, the control leg, dispatched the returned function as a bare
+	// code pointer unless it could name the inner callee as a closure factory,
+	// so every shape here but the last segfaulted there (#10057). Every function
+	// value is an env box, so the outer call always dispatches env-first.
+	// Covered: a capturing and a capture-free result through a local, a
+	// parameter, a generic passthrough of a lambda and of a named function,
+	// three levels through a local, and a method's result.
+	{name: "a-call-of-a-call-through-a-function-value", atLeast: 9, noLeak: true, src: `
+struct M { k: i32 }
+function (m: M) make(): (i32) => i32 { var k = m.k; return (b: i32): i32 => b + k; }
+function adder(n: i32): (i32) => i32 { return (b: i32): i32 => b + n; }
+function doubler(n: i32): (i32) => i32 { return (b: i32): i32 => b * 2; }
+function id[T](x: T): T { return x; }
+function inc(b: i32): i32 { return b + 1; }
+function c3(a: i32): (i32) => ((i32) => i32) { return (b: i32): (i32) => i32 => (c: i32): i32 => a * 100 + b * 10 + c; }
+function call_through(mk: (i32) => ((i32) => i32)): i32 { return mk(1)(2); }
+function main(): i32 {
+    var add: (i32) => ((i32) => i32) = adder;
+    var dbl = doubler;
+    var three = c3;
+    var k = 3;
+    var m = M { k: 4 };
+    return add(10)(20) + dbl(0)(5) + call_through(adder) + id((b: i32): i32 => b + k)(4)
+        + id(inc)(5) + three(1)(2)(3) - 100 + m.make()(5) - 33;
 }
 `},
 	// A CAPTURING lambda returned from a lambda. The lifted body's tail
