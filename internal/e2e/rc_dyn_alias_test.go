@@ -140,9 +140,7 @@ function main(): i32 {
 // of the env, so a capture after it was read from the wrong offset (#10075).
 // A coerced dyn argument's cell is the call's own however the callee's other
 // parameters are summarised; beside a string it leaked 16 B a call on the
-// natives. Each trip contributes 2443. The closure is built in a helper: one
-// that captures a parameter and is rebound in the loop body leaks on the
-// natives (#10112).
+// natives. Each trip contributes 2443.
 func TestDynCaptureBesideOtherCaptures(t *testing.T) {
 	src := `trait Label { function a(self: Self): i32; }
 struct Box { name: string }
@@ -150,17 +148,14 @@ impl Label for Box { function a(self: Self): i32 { return self.name.len(); } }
 function later(l: dyn Label, k: i32, s: string, m: dyn Label): () => i32 {
     return () => l.a() * 1000 + k * 100 + s.len() * 10 + m.a();
 }
-function trip(): i32 {
-    var x: Box = Box { name: "b" + "c" };
-    var y: Box = Box { name: "d" + "ef" };
-    var f: () => i32 = later(x, 4, "q" + "rs" + "t", y);
-    return f() - 2443;
-}
 function main(): i32 {
     var t: i32 = 0;
     var i: i32 = 0;
     while (i < 6) {
-        t = t + trip();
+        var x: Box = Box { name: "b" + "c" };
+        var y: Box = Box { name: "d" + "ef" };
+        var f: () => i32 = later(x, 4, "q" + "rs" + "t", y);
+        t = t + f() - 2443;
         i = i + 1;
     }
     return t + 7;

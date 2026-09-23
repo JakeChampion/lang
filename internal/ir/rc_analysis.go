@@ -1779,6 +1779,12 @@ func stringParamCounted(fn *ast.FuncDecl, pn string, summary *summaryTable[[]boo
 					safe[id] = true
 				}
 			}
+		case *ast.MakeClosure:
+			// MakeEnv retains a borrowed capture into the env, and the
+			// closure's drop releases it: a counted store like a field slot.
+			for _, c := range x.Captures {
+				mark(c)
+			}
 		case *ast.StructLit:
 			for _, f := range x.Fields {
 				mark(f.Value)
@@ -1995,6 +2001,12 @@ func arrayParamCounted(fn *ast.FuncDecl, pn string, at ast.ArrayType, info *chec
 						break
 					}
 				}
+			}
+		case *ast.MakeClosure:
+			// MakeEnv retains a borrowed capture into the env, and the
+			// closure's drop releases it: a counted store like a field slot.
+			for _, c := range x.Captures {
+				mark(c)
 			}
 		case *ast.StructLit:
 			for _, f := range x.Fields {
@@ -2281,6 +2293,10 @@ func paramProjectionsSafe(fn *ast.FuncDecl, pn string, info *checker.Info, summa
 		case *ast.MatchExpr:
 			if id, ok := x.Tag.(*ast.Ident); ok && tracked[id.Name] {
 				safe[id] = true
+			}
+		case *ast.MakeClosure:
+			for _, c := range x.Captures {
+				markSlotValue(c)
 			}
 		case *ast.StructLit:
 			for _, f := range x.Fields {
