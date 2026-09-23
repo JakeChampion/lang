@@ -2947,6 +2947,11 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		// resolve AND type: an unknown result would trip the self-host's
 		// uncoded over-reject in a non-generic body.
 		{"assoc-concrete-primitive-ok", "import \"std/num\";\nfunction main(): i32 { var z: i32 = i32.zero(); return z; }\n"},
+		// #10120: the entry's unit variant `Ok` is invisible inside std/json,
+		// whose `return Ok(v)` is Result's; in the entry both are visible, so
+		// a bare `Ok(1)` there is only the E036 ambiguity.
+		{"entry-variant-invisible-in-import-ok", "import \"std/json\";\nenum Reply { Ok, Full }\nfunction main(): i32 {\n    var r: Reply = Reply.Ok;\n    match (json.json_parse_result(\"1\")) { Ok(_) => { }, Err(_) => { return 1; } }\n    return match (r) { Ok => 0, Full => 2 };\n}\n"},
+		{"entry-variant-shadows-result-e036", "enum Reply { Ok, Full }\nfunction f(): Result[i32, string] { return Ok(1); }\nfunction main(): i32 { var r: Reply = Reply.Full; return match (r) { Reply.Ok => 0, Reply.Full => 2 }; }\n"},
 		{"assoc-concrete-user-impl-ok", "import \"std/num\";\nstruct P { x: i32 }\nimpl num.Zero for P { function zero(): Self { return P { x: 0 }; } }\nfunction main(): i32 { var p: P = P.zero(); return p.x; }\n"},
 		// #10094, the BUNDLED half. E001's missing-`core/map` rule reads the
 		// program's import closure, which only exists here because

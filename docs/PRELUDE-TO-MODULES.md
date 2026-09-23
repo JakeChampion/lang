@@ -390,6 +390,14 @@ everywhere. Without this a `Kind { Text }` anywhere in the program made every
 module's bare `Text` ambiguous, including stdlib source the author cannot edit
 (#6951).
 
+The self-host bundler (`examples/self_host/flatten.fern`) does mangle an
+imported module's variants (`Full` → `g3__Full`) and rewrites bare references to
+them, so only the ENTRY's variants stay bare. Its checker therefore needs one
+rule rather than the closure: an import cannot name the entry, so a function an
+import declares (`FuncDecl.module` non-empty) reads a variant index without the
+entry's enums (`UnionTable.lib_head`). Without it a program's
+`enum Reply { Ok, … }` captured `return Ok(v)` inside `std/json` (#10120).
+
 That dedupe also closed an older bug: an explicit `import "std/foo";` of a
 module that transitively imports another (e.g. `std/json` → `core/int`) sent
 bare-name method dispatch (`(n).to_string()`) through the mangled
