@@ -529,23 +529,58 @@ function remove_reg(free: i32[], reg: i32): i32[] {
     }
     return out;
 }
-// furthest_active is the index of the active interval that ends latest among
-// those holding a register of the class this value needs, or -1. Linear scan
-// without it spills whatever it is looking at, so one long-lived value can
-// hold a register through a whole function while a hundred short ones go to
-// the frame; taking the register from the longer interval and spilling THAT
-// is what the algorithm is supposed to do.
-function furthest_active(act_hi: i32[], act_reg: i32[], nregs: i32, need_saved: boolean): i32 {
+// cheapest_active is the index of the active interval, among those holding a
+// register of the class this value needs, whose spill costs least (the latest
+// ending on a tie), or -1. A spilled value pays at every reference, so what
+// is spilled should be what is referenced least, weighted by loop depth.
+function cheapest_active(act_val: i32[], act_reg: i32[], act_hi: i32[], shared_with: i32[], weight: i32[], nregs: i32, need_saved: boolean): i32 {
     var best: i32 = 0 - 1;
+    var best_w: i32 = 0;
     var i: i32 = 0;
-    while (i < act_hi.len()) {
-        var saved: boolean = act_reg[i] >= nregs;
-        if (saved == need_saved) {
-            if (best < 0 || act_hi[i] > act_hi[best]) { best = i; }
+    while (i < act_val.len()) {
+        if ((act_reg[i] >= nregs) == need_saved) {
+            var w: i32 = chain_weight(act_val[i], shared_with, weight);
+            if (best < 0 || w < best_w || (w == best_w && act_hi[i] > act_hi[best])) { best = i; best_w = w; }
         }
         i = i + 1;
     }
     return best;
+}
+
+// chain_weight sums the spill weights of a register's holder and of the
+// values that shared the register before it, which an eviction spills too.
+function chain_weight(v: i32, shared_with: i32[], weight: i32[]): i32 {
+    var w: i32 = 0;
+    var ev: i32 = v;
+    while (ev >= 0) { w = w + weight[ev]; ev = shared_with[ev]; }
+    return w;
+}
+
+// block_loop_weights gives each block, by position, the weight of one
+// reference inside it: 8 per enclosing loop, up to three. A loop is the span
+// of block positions from a back edge's target to its source.
+function block_loop_weights(f: SFunc): i32[] {
+    var at: i32[] = block_positions(f);
+    var depth: i32[] = [];
+    for blk in f.blocks { depth = depth.append(0); }
+    var bi: i32 = 0;
+    while (bi < f.blocks.len()) {
+        for tgt in successor_positions(f, at, bi) {
+            if (tgt >= 0 && tgt <= bi) {
+                var k: i32 = tgt;
+                while (k <= bi) { depth = depth.with(k, depth[k] + 1); k = k + 1; }
+            }
+        }
+        bi = bi + 1;
+    }
+    var out: i32[] = [];
+    for d in depth {
+        var w: i32 = 1;
+        var n: i32 = 0;
+        while (n < d && n < 3) { w = w * 8; n = n + 1; }
+        out = out.append(w);
+    }
+    return out;
 }
 
 function drop_active_at(a: i32[], k: i32): i32[] {
@@ -667,6 +702,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
     var cum: i32[] = calls_before(calls, total_pos);
     var cum_abi: i32[] = calls_before(abi_cl, total_pos);
     var mates: Mates = phi_mates(f, def_pos);
+    var weight: i32[] = spill_weights(f, at);
 
     var reg_of: i32[] = [];
     var shared_with: i32[] = [];
@@ -761,13 +797,15 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
         var pick: i32 = pick_caller_reg(free, abi_reg, call_def[v] == 1 && abi_ok, abi_ok);
         var from_caller: boolean = !spans_call(cum, lo[v], hi[v]) && pick >= 0;
         if (!from_caller && free_s.len() == 0) {
-            // Nothing free: take the register from the active interval that
-            // ends latest, if that is later than this one's end, and spill it
+            // Nothing free: take the register from the active interval whose
+            // spill costs least, if that is less than this one's, and spill it
             // instead. `need_saved` keeps the two pools apart, since a value
             // live across a call may only sit in a callee-saved register.
             var need_saved: boolean = spans_call(cum, lo[v], hi[v]);
-            var fa: i32 = furthest_active(act_hi, act_reg, nregs, need_saved);
-            if (fa >= 0 && act_hi[fa] > hi[v]) {
+            var fa: i32 = cheapest_active(act_val, act_reg, act_hi, shared_with, weight, nregs, need_saved);
+            var fw: i32 = 0;
+            if (fa >= 0) { fw = chain_weight(act_val[fa], shared_with, weight); }
+            if (fa >= 0 && (fw < weight[v] || (fw == weight[v] && act_hi[fa] > hi[v]))) {
                 var taken: i32 = act_reg[fa];
                 var ev: i32 = act_val[fa];
                 while (ev >= 0) { reg_of = reg_of.with(ev, 0 - 1); var nx: i32 = shared_with[ev]; shared_with = shared_with.with(ev, 0 - 1); ev = nx; }
@@ -788,12 +826,46 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
         }
         oi = oi + 1;
     }
-    return assign_spill_slots(hi, reg_of);
+    return assign_spill_slots(lo, hi, def_pos, reg_of);
+}
+
+// spill_weights counts, per value, its definition and every read, each at the
+// loop weight of the block it happens in; a phi operand is read at the end of
+// the predecessor it arrives from. A spilled value pays a load or store at each.
+function spill_weights(f: SFunc, at: i32[]): i32[] {
+    var bw: i32[] = block_loop_weights(f);
+    var w: i32[] = [];
+    var i: i32 = 0;
+    while (i < f.nvals) { w = w.append(0); i = i + 1; }
+    var bi: i32 = 0;
+    while (bi < f.blocks.len()) {
+        var blk: SBlock = f.blocks[bi];
+        for ins in blk.insts {
+            if (ins.result >= 0 && ins.result < f.nvals) { w = w.with(ins.result, w[ins.result] + bw[bi]); }
+            var sl: i32 = 0;
+            while (sl < ins.args.len()) {
+                var a: i32 = ins.args[sl];
+                var rb: i32 = bi;
+                if (ins.kind_tag == 8) {
+                    rb = 0 - 1;
+                    if (sl < blk.preds.len()) { rb = position_of(at, blk.preds[sl]); }
+                }
+                if (a >= 0 && a < f.nvals && rb >= 0) { w = w.with(a, w[a] + bw[rb]); }
+                sl = sl + 1;
+            }
+        }
+        var tv: i32 = 0 - 1;
+        if (blk.term.kind_tag == 1) { tv = blk.term.value; }
+        if (blk.term.kind_tag == 3) { tv = blk.term.cond; }
+        if (tv >= 0 && tv < f.nvals) { w = w.with(tv, w[tv] + bw[bi]); }
+        bi = bi + 1;
+    }
+    return w;
 }
 
 // A value's home after allocation is a register index, or `spill_code(slot)`
 // for a frame slot; -1 is a value nothing defines, which has no home. The
-// slots are numbered densely over the spilled values, so an emitter sizes the
+// slots are numbered densely and shared, so an emitter sizes the
 // frame by `spill_count` rather than by the id space, which the lift's phi per
 // local per merge makes hundreds of times larger than what survives pruning.
 function drop_last_i(a: i32[]): i32[] {
@@ -948,12 +1020,23 @@ function index_of_reg(a: i32[], x: i32): i32 {
     return 0 - 1;
 }
 
-function assign_spill_slots(hi: i32[], reg_of: i32[]): i32[] {
-    var nslot: i32 = 0;
+// assign_spill_slots gives the spilled values frame slots, sharing one between
+// values whose intervals do not meet. A value nothing defines (a parameter) is
+// stored on entry, so it is live from position 0.
+function assign_spill_slots(lo: i32[], hi: i32[], def_pos: i32[], reg_of: i32[]): i32[] {
+    var from: i32[] = [];
     var i: i32 = 0;
     while (i < reg_of.len()) {
-        if (hi[i] >= 0 && reg_of[i] < 0) { reg_of = reg_of.with(i, spill_code(nslot)); nslot = nslot + 1; }
+        if (def_pos[i] < 0) { from = from.append(0); } else { from = from.append(lo[i]); }
         i = i + 1;
+    }
+    var slot_end: i32[] = [];
+    for v in order_by_lo(reg_of.len(), from) {
+        if (hi[v] < 0 || reg_of[v] >= 0) { continue; }
+        var s: i32 = 0;
+        while (s < slot_end.len() && slot_end[s] >= from[v]) { s = s + 1; }
+        if (s == slot_end.len()) { slot_end = slot_end.append(hi[v]); } else { slot_end = slot_end.with(s, hi[v]); }
+        reg_of = reg_of.with(v, spill_code(s));
     }
     return reg_of;
 }
