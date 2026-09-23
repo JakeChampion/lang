@@ -2565,25 +2565,53 @@ function call_buf_push_range(h: usize, args: Value[]): Value {
 // `buf_push_mapped(b, s, table)` appends table[c] for each byte c of s, or c
 // itself when it is past the table's end; `buf_push_filtered(b, s, drop)`
 // appends each byte c whose drop[c] is zero, or that is past the table's end;
-// `buf_push_expanded(b, s, table)` appends each byte's eight-byte record.
+// `buf_push_expanded(b, s, table)` appends each byte's eight-byte record. The
+// bytes go through buf_push_byte rather than the kernels themselves, which the
+// bootstrap's stage0 compiler predates.
 function call_buf_push_table(name: string, h: usize, args: Value[]): Value {
     if (args.len() != 3) { return v_err(name + ": expected 3 args (b, s, table)"); }
     if (!is_string_arg(args[1])) { return v_err(name + ": expected string arg"); }
     match (args[2]) {
         VArr(tv) => {
-            var table: u8[] = [];
-            for e in tv.elements { table = table.append(vint_bits(e) as u8); }
-            if (name == "buf_push_filtered") {
-                buf_push_filtered(h, vstr_of(args[1]), table);
-            } else if (name == "buf_push_expanded") {
-                buf_push_expanded(h, vstr_of(args[1]), table);
-            } else {
-                buf_push_mapped(h, vstr_of(args[1]), table);
+            var table: i32[] = [];
+            for e in tv.elements { table = table.append(vint_bits(e) & 255); }
+            var s: string = vstr_of(args[1]);
+            var i: i32 = 0;
+            while (i < s.len()) {
+                push_table_byte(name, h, s[i] as i32, table);
+                i = i + 1;
             }
             return v_void();
         },
         _ => { return v_err(name + ": table must be a u8[]"); }
     }
+}
+
+// push_table_byte appends what one of those kernels makes of byte `c`.
+function push_table_byte(name: string, h: usize, c: i32, table: i32[]): void {
+    if (name == "buf_push_expanded") {
+        if (c * 8 + 8 > table.len()) {
+            buf_push_byte(h, c);
+            return;
+        }
+        var n: i32 = table[c * 8];
+        if (n > 7) { n = 7; }
+        var k: i32 = 1;
+        while (k <= n) {
+            buf_push_byte(h, table[c * 8 + k]);
+            k = k + 1;
+        }
+        return;
+    }
+    if (c >= table.len()) {
+        buf_push_byte(h, c);
+        return;
+    }
+    if (name == "buf_push_filtered") {
+        if (table[c] == 0) { buf_push_byte(h, c); }
+        return;
+    }
+    buf_push_byte(h, table[c]);
 }
 
 // The three whole-argument appends: a string's bytes, the low byte of a
