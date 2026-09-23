@@ -2174,20 +2174,14 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.
 			off += slot
 			continue
 		}
-		// `dyn Trait` capture — NATIVES ONLY (dynRcSupported, boxed one-word
-		// cell ptr in the env slot). MakeEnv retained the capture into a cell
-		// of the env's own (emitDynRetain), so the thunk releases that unit:
-		// load the cell ptr from [env+off] and run __drop_dyn_<set> (argc 1,
-		// VOID return → NO trailing OpDrop, mirroring appendChildDrop's dyn
-		// arm). wasm (inline two-word) is excluded — it has no thunk reclaim
-		// for `dyn` and keeps leaking the capture; see docs/DYN-TRAITS.md §7.8.
-		if dt, isDyn := c.Type.(ast.DynTraitType); isDyn && dynRcSupported {
+		// A dyn capture: MakeEnv retained it (emitDynRetain), so the thunk
+		// releases that unit through __drop_dyn_<set>, which returns nothing.
+		if dynDrop, isDyn := dynSlotDrop(c.Type, ptrW, dynRcSupported); isDyn {
 			ops = append(ops,
 				Op{Kind: OpLoadLocal, I32: 0},
 				Op{Kind: OpConstI32, I32: off},
-				Op{Kind: OpAdd},
-				Op{Kind: OpLoad, Width: WidthPtr},
-				Op{Kind: OpCallDirect, Str: dynDropFnName(dt.Traits), I32: 1})
+				Op{Kind: OpAdd})
+			ops = append(ops, dynDrop...)
 			off += slot
 			continue
 		}

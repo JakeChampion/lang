@@ -101,9 +101,8 @@ func TestDynAliasStoredPastTheBorrow(t *testing.T) {
 	}
 }
 
-// A closure that captures a dyn parameter and escapes. wasm dispatches it to
-// the wrong answer on main as well (#10075), so it has no leg here. Each trip
-// contributes 2 + 2 = 4.
+// A closure that captures a dyn parameter and escapes. Each trip contributes
+// 2 + 2 = 4. On wasm the env holds the capture's two words (#10075).
 func TestDynCaptureStoredPastTheBorrow(t *testing.T) {
 	src := `trait Label { function a(self: Self): i32; }
 struct Box { name: string }
@@ -130,10 +129,51 @@ function main(): i32 {
 			t.Errorf("got exit %d, want 40", code)
 		}
 	})
+	t.Run("wasm", func(t *testing.T) {
+		if got := runWasm(t, src); got != 40 {
+			t.Errorf("got %d, want 40", got)
+		}
+	})
 }
 
-// No wasm leg: the churn calls a closure that captured a dyn value, which
-// wasm dispatches wrongly (#10075).
+// Dyn captures beside other captures. On wasm each dyn capture is two words
+// of the env, so a capture after it was read from the wrong offset (#10075).
+// A coerced dyn argument's cell is the call's own however the callee's other
+// parameters are summarised; beside a string it leaked 16 B a call on the
+// natives. Each trip contributes 2443. The closure is built in a helper: one
+// that captures a parameter and is rebound in the loop body leaks on the
+// natives (#10112).
+func TestDynCaptureBesideOtherCaptures(t *testing.T) {
+	src := `trait Label { function a(self: Self): i32; }
+struct Box { name: string }
+impl Label for Box { function a(self: Self): i32 { return self.name.len(); } }
+function later(l: dyn Label, k: i32, s: string, m: dyn Label): () => i32 {
+    return () => l.a() * 1000 + k * 100 + s.len() * 10 + m.a();
+}
+function trip(): i32 {
+    var x: Box = Box { name: "b" + "c" };
+    var y: Box = Box { name: "d" + "ef" };
+    var f: () => i32 = later(x, 4, "q" + "rs" + "t", y);
+    return f() - 2443;
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 6) {
+        t = t + trip();
+        i = i + 1;
+    }
+    return t + 7;
+}`
+	t.Run("x86_64-sanitize", func(t *testing.T) { checkSanitizedBalanced(t, src, 7, runSanitizeX86_64) })
+	t.Run("arm64-sanitize", func(t *testing.T) { checkSanitizedBalanced(t, src, 7, runSanitizeArm64) })
+	t.Run("wasm", func(t *testing.T) {
+		if got := runWasm(t, src); got != 7 {
+			t.Errorf("got %d, want 7", got)
+		}
+	})
+}
+
 func TestDynAliasStoredPastTheBorrowBounded(t *testing.T) {
 	src := dynAliasBumpSrc("500", "2000")
 	t.Run("x86_64", func(t *testing.T) {
@@ -144,6 +184,11 @@ func TestDynAliasStoredPastTheBorrowBounded(t *testing.T) {
 	t.Run("arm64", func(t *testing.T) {
 		if _, code := compileAndRunArm64FreeOn(t, src); code != 0 {
 			t.Errorf("heap high-water grew with the churn length (verdict %d, want 0)", code)
+		}
+	})
+	t.Run("wasm", func(t *testing.T) {
+		if got := runWasm(t, src); got != 0 {
+			t.Errorf("heap high-water grew with the churn length (verdict %d, want 0)", got)
 		}
 	})
 }

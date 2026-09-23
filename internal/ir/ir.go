@@ -16378,7 +16378,7 @@ func (b *builder) callBody(n *ast.Call) error {
 		guardArgTemp := !toOwnParam && !reclaimArgTemps && !reclaimIndirectArgTemps &&
 			!countedArgTemp(ai) && (consumedArrayArgTemp(ai) || boxTemp)
 		if (reclaimArgTemps || reclaimIndirectArgTemps || countedArgTemp(ai) ||
-			guardArgTemp) && !toOwnParam {
+			guardArgTemp || b.dynCoercedArg(a)) && !toOwnParam {
 			// An owned-temp arg is either a fresh-allocating literal shape
 			// (freshOwnedRcTempType) OR a fresh-returning user-function call
 			// (ownedCallResultType — `take(mk(i))` leaked the mk result: the
@@ -16600,7 +16600,7 @@ func (b *builder) emitIndirectCallArgs(args []ast.Expr, sig *ast.FuncType) ([]in
 			}
 			continue
 		}
-		if reclaim {
+		if reclaim || b.dynCoercedArg(a) {
 			slot, tt, ok, err := b.stashOwnedArgTemp(a)
 			if err != nil {
 				return nil, nil, err
@@ -16630,6 +16630,17 @@ func (b *builder) emitIndirectCallArgs(args []ast.Expr, sig *ast.FuncType) ([]in
 // width. Shared by the direct-call arg loop and emitIndirectCallArgs — the
 // classification is the same question in both, only the admission gate around
 // it differs.
+// dynCoercedArg reports an argument coerced to dyn on a backend that reclaims
+// dyn values. Its cell and the concrete's unit are the call's own whatever the
+// callee does, because a callee that keeps a dyn value takes a unit of its own.
+func (b *builder) dynCoercedArg(a ast.Expr) bool {
+	if !b.dynReclaim() || b.info == nil {
+		return false
+	}
+	_, ok := b.info.DynCoercions[a]
+	return ok
+}
+
 func (b *builder) stashOwnedArgTemp(a ast.Expr) (int32, ast.Type, bool, error) {
 	tt, ok := b.freshOwnedRcTempType(a)
 	if !ok {
