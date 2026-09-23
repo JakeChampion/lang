@@ -1,6 +1,8 @@
 package sourcelint
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -13,6 +15,17 @@ var docOnlyPathsIgnore = []string{
 	"docs/**",
 	"*.md",
 }
+
+// selfHostOnlyPaths are the trees only the self-host compiler and its tests
+// read. A lane whose tests never read them may add them to the doc-only block,
+// provided every one of its jobs deletes them first (dropSelfHostAction), so
+// that a test starting to read them fails on every run of that lane.
+var selfHostOnlyPaths = []string{
+	"examples/self_host/**",
+	"internal/e2eselfhost/**",
+}
+
+const dropSelfHostAction = "./.github/actions/drop-selfhost-sources"
 
 // alwaysRunOnPR names the lane that must NEVER carry a filter. A doc-only PR
 // still has to run one real gate: a pull request reporting no checks at all is
@@ -43,10 +56,49 @@ func TestPRLanesShareOneDocOnlyFilter(t *testing.T) {
 		case len(f.PathsIgnore) == 0:
 			t.Errorf("%s: %q has no path filter: a doc-only PR would launch it. Give it the "+
 				"shared paths-ignore block or a `paths` allowlist.", ciFile, lane)
-		case strings.Join(f.PathsIgnore, " ") != strings.Join(docOnlyPathsIgnore, " "):
-			t.Errorf("%s: %q's paths-ignore is %v, not %v — the block must be identical "+
-				"across lanes, or a doc-only PR fires some of them and not others",
-				ciFile, lane, f.PathsIgnore, docOnlyPathsIgnore)
+		case strings.Join(f.PathsIgnore, " ") == strings.Join(docOnlyPathsIgnore, " "):
+		case strings.Join(f.PathsIgnore, " ") == strings.Join(append(append([]string{}, docOnlyPathsIgnore...), selfHostOnlyPaths...), " "):
+			checkDropsSelfHostSources(t, lane)
+		default:
+			t.Errorf("%s: %q's paths-ignore is %v, not %v, optionally followed by %v — "+
+				"the doc-only part must be identical across lanes, or a doc-only PR fires "+
+				"some of them and not others",
+				ciFile, lane, f.PathsIgnore, docOnlyPathsIgnore, selfHostOnlyPaths)
+		}
+	}
+}
+
+// checkDropsSelfHostSources holds a lane that skips self-host-only changes to
+// deleting those trees in every job, straight after checkout: without that, a
+// test that starts to read them passes on a stale tree while the changes that
+// would break it never run the lane.
+func checkDropsSelfHostSources(t *testing.T, lane string) {
+	t.Helper()
+	src := workflowSource(t, lane+".yml")
+	jobs := jobBlocks(src)
+	if len(jobs) == 0 {
+		t.Fatalf("%s.yml: no jobs found — did the `jobs:` layout change?", lane)
+	}
+	for name, job := range jobs {
+		checkout := strings.Index(job, "- uses: actions/checkout@")
+		drop := strings.Index(job, "- uses: "+dropSelfHostAction+"\n")
+		if checkout < 0 || drop < 0 {
+			t.Errorf("%s.yml job %q skips self-host-only changes (ci.yml's lane table) but does "+
+				"not run %s after checkout", lane, name, dropSelfHostAction)
+			continue
+		}
+		if between := job[checkout:drop]; strings.Count(between, "\n      - ") > 1 {
+			t.Errorf("%s.yml job %q runs a step between checkout and %s; delete the "+
+				"self-host sources before anything else can read them", lane, name, dropSelfHostAction)
+		}
+	}
+	action, err := os.ReadFile(filepath.Join("..", "..", dropSelfHostAction[2:], "action.yml"))
+	if err != nil {
+		t.Fatalf("read %s: %v", dropSelfHostAction, err)
+	}
+	for _, p := range selfHostOnlyPaths {
+		if dir := strings.TrimSuffix(p, "/**"); !strings.Contains(string(action), " "+dir) {
+			t.Errorf("%s does not delete %s, which the lanes using it skip changes to", dropSelfHostAction, dir)
 		}
 	}
 }

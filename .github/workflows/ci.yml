@@ -62,21 +62,27 @@ jobs:
           # (#8474, #8627); TestWorkflowPathFiltersCoverEveryDependency holds
           # each allowlist to the packages its lane is built from.
           #
+          # Five lanes also skip a change that touches only the self-host
+          # compiler (examples/self_host, internal/e2eselfhost): their tests
+          # never read those trees, and each of their jobs deletes both right
+          # after checkout (.github/actions/drop-selfhost-sources) so that
+          # stays true. A lane whose tests do read them keeps the doc-only block.
+          #
           # internal/sourcelint reads this table (TestPRLanesShareOneDocOnlyFilter,
           # TestWorkflowPathFiltersHaveNoDeadEntries, ...).
           LANES: |
             {
               "test-units":            { "paths-ignore": ["docs/**", "*.md"] },
               "test-coreutils":        { "paths-ignore": ["docs/**", "*.md"] },
-              "test-e2e-x86_64":       { "paths-ignore": ["docs/**", "*.md"] },
+              "test-e2e-x86_64":       { "paths-ignore": ["docs/**", "*.md", "examples/self_host/**", "internal/e2eselfhost/**"] },
               "test-e2e-arm64":        { "paths-ignore": ["docs/**", "*.md"] },
               "test-e2e-wasm":         { "paths-ignore": ["docs/**", "*.md"] },
               "test-e2e-other":        { "paths-ignore": ["docs/**", "*.md"] },
-              "test-e2e-differential": { "paths-ignore": ["docs/**", "*.md"] },
+              "test-e2e-differential": { "paths-ignore": ["docs/**", "*.md", "examples/self_host/**", "internal/e2eselfhost/**"] },
               "test-e2e-selfhost":     { "paths-ignore": ["docs/**", "*.md"] },
-              "test-fernsmith":        { "paths-ignore": ["docs/**", "*.md"] },
-              "fuzz-diff":             { "paths-ignore": ["docs/**", "*.md"] },
-              "examples":              { "paths-ignore": ["docs/**", "*.md"] },
+              "test-fernsmith":        { "paths-ignore": ["docs/**", "*.md", "examples/self_host/**", "internal/e2eselfhost/**"] },
+              "fuzz-diff":             { "paths-ignore": ["docs/**", "*.md", "examples/self_host/**", "internal/e2eselfhost/**"] },
+              "examples":              { "paths-ignore": ["docs/**", "*.md", "examples/self_host/**", "internal/e2eselfhost/**"] },
               "perf":                  { "paths-ignore": ["docs/**", "*.md"] },
               "bootstrap": { "paths": [
                 "bootstrap/**",

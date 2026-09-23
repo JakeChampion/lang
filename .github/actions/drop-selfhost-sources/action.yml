@@ -1,0 +1,14 @@
+name: Drop the self-host sources
+description: >
+  Delete examples/self_host and internal/e2eselfhost from the checkout. Used
+  right after checkout by every job of the lanes that ci.yml's lane table does
+  not run on a change touching only those two trees. A test in such a lane
+  that starts to read them then fails on every run, instead of the lane going
+  on skipping the very changes that could break it.
+
+runs:
+  using: composite
+  steps:
+    - name: delete examples/self_host and internal/e2eselfhost
+      shell: bash
+      run: rm -rf examples/self_host internal/e2eselfhost

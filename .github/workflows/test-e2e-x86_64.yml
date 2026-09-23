@@ -25,6 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/drop-selfhost-sources
       - uses: ./.github/actions/setup-fern
       - name: build native test runners
         run: |
@@ -94,6 +95,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/drop-selfhost-sources
       - uses: ./.github/actions/setup-fern
       - name: go test (fixture corpus under the seccomp filter)
         env:
