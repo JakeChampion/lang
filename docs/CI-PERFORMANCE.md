@@ -580,8 +580,8 @@ sources.
 Main ran every lane on every push. A rebase merge of a branch level with main
 pushes exactly the tree the PR's run tested; 9 of the 40 merges before
 2026-09-22 did. On a main push, the lane selector now finds the merged PR, and
-when its head's tree equals the pushed tree it skips each lane whose every job
-passed on the PR's successful run at that head. A lane the PR did not run
+when its head's tree equals the pushed tree it skips each lane that passed on
+the PR's successful run at that head. A lane the PR did not run
 still runs on main, and perf always does, since its main run records the perf
 history.
 
@@ -642,7 +642,7 @@ tree, which is the case the identical-tree skip above serves.
 
 A main push that is not a level merge still ran every lane. The selector now
 also looks, per lane, at the newest completed `ci-main.yml` run that ran that
-lane. If every job of the lane passed there, and the compare from that run's
+lane. If the lane passed there, and the compare from that run's
 commit to the pushed commit is a fast-forward listing fewer than 300 files, a
 lane whose filter selects none of those files is skipped. A lane that failed on
 that run runs again, as does perf. A lane a later push cancelled proves
@@ -650,6 +650,15 @@ nothing, so the search continues to an older run; main runs are coalesced, so
 the newest completed run is often a cancelled one. A failed API call, a base
 that is not an ancestor, or a compare that may be truncated runs every lane
 with a warning in the job summary.
+
+Both rules judge a lane by its jobs that ran: it has passed when at least one
+job succeeded and none failed, timed out or was cancelled. Jobs the lane's own
+conditions skip do not count against it. The first main run after the fix to
+#10105's bootstrap tests (447, 41bc326) was a level merge and skipped 15 lanes
+on #10116's run, but Bootstrap ran anyway: a called bootstrap.yml always skips
+`publish` and `release`, and both rules then required every job to succeed, so
+Bootstrap never counted as passed. The last-pass search also walked all 30 runs
+looking for one, and the selector step took two minutes.
 
 ## Multi-core test execution: what parallelism can and cannot buy
 

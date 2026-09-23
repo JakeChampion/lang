@@ -180,7 +180,11 @@ check("no successful PR run: every lane runs, and says why",
 r = await decide({ event: "push", proof: proofOf({ jobs: jobsFor(laneKeys.filter((l) => l !== "macos")) }) });
 check("a lane the PR run did not run still runs on main", [r.lanes.macos, r.lanes["test-units"]], [true, false]);
 r = await decide({ event: "push", proof: proofOf({ jobs: [...jobsFor(laneKeys), { name: `Full suite / ${display["test-units"]} / extra`, conclusion: "skipped" }] }) });
-check("a lane with any job not passed still runs", [r.lanes["test-units"], r.lanes["test-coreutils"]], [true, false]);
+check("a job the lane's own conditions skipped does not unprove it", [r.lanes["test-units"], r.lanes["test-coreutils"]], [false, false]);
+r = await decide({ event: "push", proof: proofOf({ jobs: [...jobsFor(laneKeys.filter((l) => l !== "test-units")), ...jobsFor(["test-units"], "skipped")] }) });
+check("a lane whose every job was skipped still runs", [r.lanes["test-units"], r.lanes["test-coreutils"]], [true, false]);
+r = await decide({ event: "push", proof: proofOf({ jobs: [...jobsFor(laneKeys), { name: `Full suite / ${display["test-units"]} / extra`, conclusion: "cancelled" }] }) });
+check("a lane with a cancelled job still runs", [r.lanes["test-units"], r.lanes["test-coreutils"]], [true, false]);
 r = await decide({ event: "push", proof: proofOf({ prs: [{ ...merged("t"), base: { ref: "other" } }] }) });
 check("a PR merged elsewhere proves nothing", all(r), true);
 r = await decide({ event: "push", proof: proofOf({ prs: [{ ...merged("t"), merged_at: null }] }) });
@@ -206,10 +210,15 @@ check("main: a self-host-only change skips the lanes that cannot see it",
   [false, false, true, true, true, true]);
 r = await decide({ event: "push", proof: mainProof({ compare: { [`m1...${head}`]: cmp(["internal/checker/x.go"]) } }) });
 check("main: a compiler change runs the lanes it reaches", [r.lanes["test-units"], r.lanes["test-e2e-x86_64"], r.lanes.macos], [true, true, true]);
+check("main: the log names the base and what changed since", r.infos.some((m) => m.startsWith("last passed at m1 (") && m.endsWith("): 1 file(s) changed since")), true);
 r = await decide({ event: "push", proof: mainProof({
   jobs: { 50: [...mainJobs(laneKeys.filter((l) => l !== "test-units")), ...mainJobs(["test-units"], "failure")] },
   compare: { [`m1...${head}`]: cmp(["docs/x.md"]) } }) });
 check("main: a lane red on its last run runs again", [r.lanes["test-units"], r.lanes["test-coreutils"]], [true, false]);
+r = await decide({ event: "push", proof: mainProof({
+  jobs: { 50: [...mainJobs(laneKeys), { name: `Validate / Full suite / ${display.bootstrap} / publish`, conclusion: "skipped" }] },
+  compare: { [`m1...${head}`]: cmp(["docs/x.md"]) } }) });
+check("main: a lane with a skipped publish job still counts as passed", r.lanes.bootstrap, false);
 r = await decide({ event: "push", proof: mainProof({
   runs: [{ id: 51, head_sha: "m2" }, { id: 50, head_sha: "m1" }],
   jobs: { 51: mainJobs(laneKeys.filter((l) => l !== "test-units")), 50: mainJobs(laneKeys) },
@@ -222,12 +231,14 @@ r = await decide({ event: "push", proof: mainProof({
 check("main: a lane a later push cancelled is diffed from where it last passed", [r.lanes["test-units"], r.lanes["test-e2e-x86_64"]], [false, true]);
 r = await decide({ event: "push", proof: mainProof({ compare: { [`m1...${head}`]: cmp(["docs/x.md"], "diverged") } }) });
 check("main: a base that is not an ancestor proves nothing", all(r), true);
+check("main: the log says why an unusable compare runs its lanes", r.infos.some((m) => m.startsWith("last passed at m1 (") && m.endsWith("): compare is diverged with 1 file(s), so they run")), true);
 r = await decide({ event: "push", proof: mainProof({ compare: { [`m1...${head}`]: cmp(Array.from({ length: 300 }, (_, i) => `docs/${i}.md`)) } }) });
 check("main: a truncated file list proves nothing", all(r), true);
 r = await decide({ event: "push", proof: mainProof({ runs: [{ id: 52, head_sha: head }], jobs: { 52: mainJobs(laneKeys) } }) });
 check("main: a run of this same commit is not a base", all(r), true);
 r = await decide({ event: "push", proof: mainProof({ runs: [] }) });
 check("main: no earlier main run proves nothing", all(r), true);
+check("main: the log names the lanes with nothing to diff from", r.infos.some((m) => m.startsWith("no passing main run to diff from: ") && m.includes("test-units")), true);
 r = await decide({ event: "push", proof: mainProof({ mainThrows: true }) });
 check("main: an API error proves nothing", [all(r), r.warnings.some((w) => w.includes("main's earlier runs"))], [true, true]);
 
