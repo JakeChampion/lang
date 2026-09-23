@@ -3819,6 +3819,14 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq %rdi, %r12\n");        // n
     s = s.write("    movq %r12, %rdi\n");        // cap = n
     s = s.write("    call __fern_arr_box\n");    // -> data ptr in %rax (cap + len written)
+    // A block off the free list keeps its last owner's bytes, and the
+    // builtin promises zeros: clear the n slots after the length word.
+    s = s.write("    movq %rax, %rdx\n");
+    s = s.write("    leaq 8(%rax), %rdi\n");      // slot 0; the length is at [%rax]
+    s = s.write("    movl %r12d, %ecx\n");
+    s = s.write("    xorl %eax, %eax\n");
+    s = s.write("    rep stosq\n");
+    s = s.write("    movq %rdx, %rax\n");
     s = s.write("    popq %r12\n");
     s = s.write("    popq %rbp\n");
     s = s.write("    ret\n");
