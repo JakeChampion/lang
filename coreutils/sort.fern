@@ -1377,7 +1377,7 @@ function in_order(c: Conf, text: string, lines: i64[]): boolean {
   }
   return true;
 }
-//
+
 // A bottom-up stable merge over line indices: only 4-byte indices move,
 // and equal lines keep their input order, which is what -u and -s both
 // rely on. Each pass writes a fresh destination rather than merging
