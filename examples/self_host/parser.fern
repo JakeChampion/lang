@@ -15615,7 +15615,9 @@ function desugar_ranges_one(st: ast.Stmt): ast.Stmt[] {
                 var wbody: ast.Stmt[] = [incr, brk];
                 var k: i32 = 0;
                 while (k < dbody.len()) { wbody = wbody.append(dbody[k]); k = k + 1; }
-                return [ivar, hivar, s_while(e_bool(true), wbody)];
+                // The source label names this loop, so a `break outer` or
+                // `continue outer` inside it still finds a loop carrying it.
+                return [ivar, hivar, with_loop_label(s_while(e_bool(true), wbody), fr.label)];
             }
             return [ast.StmtFor { var_name: fr.var_name, iter: fr.iter, body: dbody, label: fr.label, line: fr.line }];
         },

@@ -1762,3 +1762,75 @@ nested in a branch), and three accept programs run to native's output — every
 primitive with `core/cmp` imported, a struct with its own `to_string`, and a
 program shadowing `i32.to_string`. `TestSelfHostCheckerCodesX86_64` carries
 the E038 rows for `-check`.
+
+## 2026-09-22 — a struct and a variant may share a name, and each position picks its own (#9968)
+
+`struct Empty { n: i32 }` beside `enum Shape { Square(i32), Empty }` is legal,
+and nothing diagnoses it. The self-host keeps both in one struct table keyed
+by the bare name, so every by-name read answered with whichever registered
+first. #9900 fixed the struct-first order at the sites that wanted the
+variant; declared enum-first, the same program was refused the other way
+round: `Empty { n: 3 }` drew `struct Empty has no field "n"` and a missing
+`__ev`, `e.n` the same E043, and the lowering read the variant's layout for a
+struct value.
+
+Native's rule, which it gets from keeping two tables, is now stated and
+applied: a literal, a field read on a value of the type, a receiver type's
+parameters and a layout question ask the **struct** namespace; a call form,
+a pattern and a bare receiver ask the **variant** namespace; either falls back
+to the other only when its own has no entry.
+
+| layer | struct namespace | variant namespace |
+|---|---|---|
+| checker | `Scope.lookup_struct`, `find_struct_sig` — the plain sig first | `Scope.lookup_variant`, `find_variant_sig` — a variant first; `lookup_owned_struct` when the enum is known. `variant_payload_struct`, `bind_variant_payloads`, the match-arm check and `payloadless_binder_diags` moved here |
+| irlower | `stab_struct_first` — the 23 by-name decl readers (`decl_field_index`, `decl_field_count`, `decl_index_of`, the `struct_fields_*` proofs, …) | `variant_decl_index` + `variant_enum_owner`, which a call-form constructor and the TRMC arm constructor now resolve through; `unit_decl_index` for a bare value |
+| semsource | `record_schema` | `type_head`: a name an enum or a union alias declares as a variant is a value, so `Empty.to_string()` is a method call on the payloadless literal, not an associated call on a struct with no such contract |
+
+The last row is what closes `struct_shares_a_variant_name` on the semantic
+path: its first refusal was `call target has no semantic contract:
+Empty.to_string`, and it now produces all 108 declarations.
+
+### Gate
+
+`conformance/cases/enum_shares_a_struct_name` is the mirror of
+`struct_shares_a_variant_name`: the enum declared first, both collision shapes,
+a literal and a call picking different declarations by their form, a
+struct-update literal, and a struct passed to a function. It runs on native,
+interp and wasm and through the self-host on all three of its legs.
+
+## 2026-09-22 — a `use` binding is typed from its callee (#9550's `$wrap0` leaf)
+
+`use NAME <- CALL;` desugars in the parser to CALL with the rest of the block
+appended as a callback lambda, and when the author writes no `: TYPE` the
+lambda's parameter carries none. Native fills it in `inferUseParam`: the
+callee's trailing parameter is the callback slot, and its first parameter is
+NAME's type. The self-host only *verified* that the inference had a signature
+to read (E032) and left the parameter untyped, so:
+
+- the checker typed NAME as unknown, and `var s: string = n;` under a `use`
+  passed where native reports E003;
+- the closure lift copied the untyped parameter into the `$wrapN` trampoline,
+  whose body then returned a value of no type, and semsource refused the
+  declaration with `unresolved result type: inferred from the first returned
+  value`. `conformance/cases/use_callback_bind` and `arrow_lambda_block_body`
+  were the two #9550 cases blocked on it.
+
+The value-block retype pass (`retype_value_blocks`, #8657) already ran ahead
+of both `check_module` and `annotate_module` with a scoped walk, which is the
+shape the stamp needs — the callee may be a fn-typed local (`var t = taker;
+use x <- t();`), which shadows a module function of the same name (#6302). It
+is now `pretype_module`, with two rules: a value-block local gets the type its
+arms assign, and an unannotated `use` binding gets the type its callee's
+callback slot spells (`use_binding_type`, value binding first, then the module
+signature). A type with no declaration spelling — a type parameter of a
+generic callee, which erases here — leaves the binding as written, so the
+E032 walk still sees and reports what it always did.
+
+### Gate
+
+`TestSelfHostCheckerCodesX86_64` gains three E003 rows (a mistyped read of the
+binding through a module callee, through a fn-typed local, and inside a
+lambda's block body); `TestSelfHostSemanticProduction` gains three rows that
+produce whole (an `i32` binding, a `string` binding read through a method, and
+a `use` inside an arrow lambda). Both blocked conformance cases now produce
+every declaration and answer 42 and 0 on the semantic path.

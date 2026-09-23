@@ -2077,6 +2077,13 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e032-use-lastparam-not-fn", "function add(x: i32, y: i32): i32 { return x + y; }\nfunction main(): i32 {\n    use n <- add(1);\n    return n;\n}\n", []string{"E032", "E038"}},
 		{"e032-use-ok", "function apply(x: i32, cb: (i32) => i32): i32 { return cb(x); }\nfunction main(): i32 {\n    use n <- apply(41);\n    return n + 1;\n}\n", nil},
 		{"e032-use-annotated-ok", "function apply(x: i32, cb: (i32) => i32): i32 { return cb(x); }\nfunction main(): i32 {\n    use n: i32 <- apply(41);\n    return n + 1;\n}\n", nil},
+		// An inferred `use` binding is typed from the callee's callback slot
+		// (native inferUseParam), so a read of it at the wrong type is E003
+		// rather than an unknown that passes: through a module function, a
+		// fn-typed local shadowing nothing, and inside a lambda's block body.
+		{"e003-use-binding-mistyped", "function apply(x: i32, cb: (i32) => i32): i32 { return cb(x); }\nfunction main(): i32 {\n    use n <- apply(41);\n    var s: string = n;\n    return n;\n}\n", []string{"E003"}},
+		{"e003-use-binding-through-local-mistyped", "function taker(f: (string) => i32): i32 { return f(\"hi\"); }\nfunction g(): i32 {\n    var t = taker;\n    use x <- t();\n    var n: i32 = x;\n    return n;\n}\nfunction main(): i32 { return g(); }\n", []string{"E003"}},
+		{"e003-use-binding-inside-lambda-mistyped", "function give(x: i32, cb: (i32) => i32): i32 { return cb(x); }\nfunction main(): i32 {\n    var f = (): i32 => {\n        use n <- give(41);\n        var s: string = n;\n        return n + 1;\n    };\n    return f() - 42;\n}\n", []string{"E003"}},
 		// @inline / @noinline function attributes (#4412 Rec §14): native
 		// consults them in the IR inliner; the self-host parser
 		// parse-tolerates and drops them. Both checkers must accept the
