@@ -8595,7 +8595,7 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all
     var hh: i32 = hi;
     if (hh < 0 || hh > mod.funcs.len()) { hh = mod.funcs.len(); }
     if (check_claims) { ircore.check_fip_claims(mod.funcs, lo, hh, cache, s.struct_decls, sg, false); }
-    s = asmcore.EmitState { ...s, reg_entries: irlower.sig_reg_of(unit_labels(mod, lo, hh, cache)) };
+    s = asmcore.EmitState { ...s, reg_entries: irlower.sig_reg_of(asmcore.unit_labels(mod, lo, hh, cache)) };
     var fi: i32 = lo;
     while (fi < hh) {
         // A template the substitution superseded has no body: its instances
@@ -8621,25 +8621,6 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all
     // naming the symbol it defines. `.weak`, so a shard window or a sibling
     // unit that emits the same body co-links to one definition.
     return emit_named_bodies(cache, mod.funcs.len(), s, vsigs);
-}
-
-// unit_labels is the sanitized label of every function emit_module_funcs
-// emits for mod.funcs[lo..hi) and the bodies on the cache tail: the names a
-// direct call in this unit may reach through their register entries.
-function unit_labels(mod: parser.Module, lo: i32, hi: i32, cache: irlower.LowerResult[]): string[] {
-    var out: string[] = [];
-    var fi: i32 = lo;
-    while (fi < hi) {
-        if (cache.len() == 0 || !cache[fi].superseded) {
-            var name: string = mod.funcs[fi].name;
-            if (mod.funcs[fi].receiver_type.len() > 0) { name = util.base_type_name(mod.funcs[fi].receiver_type) + "." + name; }
-            out = out.append(asmcore.sanitize_label(name));
-        }
-        fi = fi + 1;
-    }
-    var xi: i32 = mod.funcs.len();
-    while (xi < cache.len()) { out = out.append(asmcore.sanitize_label(cache[xi].name)); xi = xi + 1; }
-    return out;
 }
 
 function emit_named_bodies(cache: irlower.LowerResult[], from: i32, s: asmcore.EmitState, vsigs: irverify.NameIndex): asmcore.EmitState {

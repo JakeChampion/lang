@@ -96,10 +96,21 @@ func TestSelfHostUnwindData(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
+				// A function's register entry `__fn_X.r` is a label inside
+				// it, covered by the same FDE, so X's extent runs through it.
+				entries := map[string]goelf.Symbol{}
+				for _, s := range syms {
+					if strings.HasPrefix(s.Name, "__fn_") && strings.HasSuffix(s.Name, ".r") {
+						entries[strings.TrimSuffix(s.Name, ".r")] = s
+					}
+				}
 				want := 0
 				for _, s := range syms {
-					if !strings.HasPrefix(s.Name, "__fn_") {
+					if !strings.HasPrefix(s.Name, "__fn_") || strings.HasSuffix(s.Name, ".r") {
 						continue
+					}
+					if r, ok := entries[s.Name]; ok && s.Size > 0 {
+						s.Size = r.Value + r.Size - s.Value
 					}
 					want++
 					end, ok := fdes[s.Value]
