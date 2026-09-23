@@ -7778,6 +7778,10 @@ func (b *builder) emitLiteralMatchExpr(n *ast.MatchExpr) error {
 			resultType = ast.BoolType{}
 			break
 		}
+		if dt, ok := t.(ast.DynTraitType); ok {
+			resultType = dt
+			break
+		}
 	}
 	resultSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__matchexpr_r_%d", resultSlot)] = resultSlot
@@ -7902,6 +7906,10 @@ func (b *builder) emitStructMatchExpr(n *ast.MatchExpr) error {
 		}
 		if _, ok := t.(ast.BoolType); ok {
 			resultType = ast.BoolType{}
+			break
+		}
+		if dt, ok := t.(ast.DynTraitType); ok {
+			resultType = dt
 			break
 		}
 	}
@@ -9199,18 +9207,12 @@ func (b *builder) stmt(s ast.Stmt) error {
 			b.emit(Op{Kind: OpReturn})
 			return nil
 		}
-		// Move-on-return for a swept `dyn Trait` local (#4351): the exit
-		// sweep's DynTraitType arm drops unconditionally — __drop_dyn_<set>
-		// runs the concrete dtor and, on the natives, frees the {data,vtable}
-		// cell outright; there is no rc header to net against a transfer inc.
-		// Returning a bare dyn local MOVES the value to the caller, so
-		// sweeping it here handed back a freed cell — the caller's next
-		// dispatch read reclaimed memory (segfault on the natives, a garbage
-		// dispatch on wasm). Exclude it from the sweep; no inc is emitted
-		// (dyn values are not rc-counted), so this is a pure move. dyn locals
-		// sit outside isOwnedRcLocal / needsRcIncOnAlias (dyn cells must
-		// never see __fern_rc_inc — they carry no header), hence the
-		// dedicated branch rather than widening those predicates.
+		// Move-on-return for a swept `dyn Trait` local (#4351): the frame's
+		// unit (its cell and the concrete's count) moves to the caller, so
+		// the local is excluded from the sweep and takes no retain. A dyn
+		// value is retained through emitDynRetain, never __fern_rc_inc: the
+		// natives' {data, vtable} cell carries no header. Hence this branch
+		// rather than isOwnedRcLocal.
 		if id, ok := n.Value.(*ast.Ident); ok && len(b.defers) == 0 &&
 			b.dynReclaim() && b.localIsDynTrait(id.Name) && !b.dynParamBorrowed(id.Name) {
 			b.emitRcDecLocalsAtExitExcept(id.Name)
@@ -10555,6 +10557,11 @@ func (b *builder) expr(e ast.Expr) error {
 		if _, isString := b.exprType(n).(ast.StringType); isString && b.twoWordStrings() {
 			bt = BlockTypeStringPair
 		}
+		// wasm's `dyn` value is the inline `[data, vtable]` pair, the same
+		// two i32 words as a two-word string.
+		if _, isDyn := b.exprType(n).(ast.DynTraitType); isDyn && b.ptrW == 4 {
+			bt = BlockTypeStringPair
+		}
 		if err := b.expr(n.Cond); err != nil {
 			return err
 		}
@@ -10641,6 +10648,12 @@ func (b *builder) expr(e ast.Expr) error {
 			// declare `<slot>_data` + `<slot>_len`.
 			if _, ok := t.(ast.StringType); ok {
 				resultType = ast.StringType{}
+				break
+			}
+			// A `dyn` arm body is the two-word `[data, vtable]` pair on
+			// wasm32, the same slot shape.
+			if dt, ok := t.(ast.DynTraitType); ok {
+				resultType = dt
 				break
 			}
 		}

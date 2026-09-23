@@ -5725,17 +5725,14 @@ func (b *builder) preciseDroppableType(name string) bool {
 	}
 	switch tt := t.(type) {
 	case ast.ArrayType:
-		// `dyn Trait[]` is NEVER precise-droppable (#4787): an element read
-		// (`xs[i]`, the for-in loop var) is an UNCOUNTED borrow — dyn cells
-		// carry no rc header, so needsRcIncOnAlias deliberately has no dyn
-		// arm and the element-view binding takes no retain. The dyn-array
-		// drop (__drop_arr_dyn_<set>) frees every cell + runs the concrete
-		// dtor UNCONDITIONALLY, so an early drop at xs's last syntactic use
-		// frees the cell a live element view still points at (segfault on
-		// the natives / garbage dispatch). The "x[i] alias sites are SAFE —
-		// the precise drop only decs there" argument in computePreciseDrops
-		// holds only for rc-headered elements. Falls back to the exit
-		// sweep, which runs after every read.
+		// `dyn Trait[]` is NEVER precise-droppable (#4787): the dyn-array
+		// drop (__drop_arr_dyn_<set>) frees every cell and runs the concrete
+		// dtor with no per-element uniqueness test, so an early drop at xs's
+		// last syntactic use frees a cell an element read before it still
+		// points at (segfault on the natives / garbage dispatch). The "x[i]
+		// alias sites are SAFE — the precise drop only decs there" argument
+		// in computePreciseDrops holds only for elements released through a
+		// count. Falls back to the exit sweep, which runs after every read.
 		if _, elemDyn := tt.Elem.(ast.DynTraitType); elemDyn {
 			return false
 		}
@@ -5847,9 +5844,10 @@ func (b *builder) isOwnedRcParam(name string) bool {
 // type. The exit sweep drops those through __drop_dyn_<set> when the backend
 // reclaims dyn (dynReclaim), so a returned one must be excluded from the
 // sweep (move-on-return in the Return lowering) or the caller receives a
-// freed cell. Deliberately NOT folded into isOwnedRcLocal: dyn values carry
-// no rc header, so they must never take the __fern_rc_inc/dec traffic the
-// isOwnedRcLocal/needsRcIncOnAlias pairing implies.
+// freed cell. Deliberately NOT folded into isOwnedRcLocal: the natives' dyn
+// cell carries no rc header, so a dyn value is retained through
+// emitDynRetain rather than the __fern_rc_inc/dec traffic isOwnedRcLocal
+// implies.
 func (b *builder) localIsDynTrait(name string) bool {
 	for _, v := range b.info.Locals[b.fn] {
 		if v.Name == name {

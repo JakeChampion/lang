@@ -12,7 +12,10 @@
 // outright.
 package e2e
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 const dynReturnPrelude = `trait Label { function a(self: Self): i32; }
 struct Box { name: string }
@@ -93,6 +96,9 @@ func TestDynReturnedBorrowTakesItsOwnUnit(t *testing.T) {
 				t.Errorf("got exit %d, want %d", code, c.want)
 			}
 		})
+		t.Run("x86_64-sanitize/"+c.name, func(t *testing.T) {
+			checkDynReturnSanitized(t, c.src, c.want)
+		})
 		t.Run("arm64/"+c.name, func(t *testing.T) {
 			if _, code := compileAndRunArm64FreeOn(t, c.src); code != c.want {
 				t.Errorf("got exit %d, want %d", code, c.want)
@@ -106,12 +112,15 @@ func TestDynReturnedBorrowTakesItsOwnUnit(t *testing.T) {
 	}
 }
 
-// arm64 does not reclaim dyn values (§4.4 slice 4c), so it has no bounded
-// leg.
 func TestDynReturnedBorrowBounded(t *testing.T) {
 	src := dynReturnBumpSrc("500", "2000")
 	t.Run("x86_64", func(t *testing.T) {
 		if _, code := compileAndRunX86_64FreeOn(t, src); code != 0 {
+			t.Errorf("heap high-water grew with the churn length (verdict %d, want 0)", code)
+		}
+	})
+	t.Run("arm64", func(t *testing.T) {
+		if _, code := compileAndRunArm64FreeOn(t, src); code != 0 {
 			t.Errorf("heap high-water grew with the churn length (verdict %d, want 0)", code)
 		}
 	})
@@ -120,4 +129,69 @@ func TestDynReturnedBorrowBounded(t *testing.T) {
 			t.Errorf("heap high-water grew with the churn length (verdict %d, want 0)", got)
 		}
 	})
+}
+
+// checkDynReturnSanitized runs src under the x86-64 sanitizer: the answer,
+// no report, and every allocation freed.
+func checkDynReturnSanitized(t *testing.T, src string, want int) {
+	t.Helper()
+	stdout, stderr, code := runSanitizeX86_64(t, src)
+	if code != want {
+		t.Fatalf("exit = %d, want %d\nstdout: %s\nstderr: %s", code, want, stdout, stderr)
+	}
+	if strings.Contains(stderr, "fern-sanitizer:") {
+		t.Errorf("sanitizer report:\n%s", stderr)
+	}
+	allocs, frees, live := parseLeakCheckLine(t, stderr)
+	if allocs == 0 || allocs != frees || live != 0 {
+		t.Errorf("census: allocs=%d frees=%d live_bytes=%d, want balanced / 0", allocs, frees, live)
+	}
+}
+
+// A borrow returned through a branch is returned as surely as a bare one:
+// an `if` or `match` whose arm yields a parameter, returned directly or
+// through a local it initialises. Each arm's yield takes its own unit
+// (emitCountedYield), which the caller then owns. On wasm the branch yields
+// the two-word `[data, vtable]` pair, and a variant match still frees its
+// fresh scrutinee.
+func TestDynReturnedBorrowThroughABranch(t *testing.T) {
+	const head = `trait Label { function a(self: Self): i32; }
+struct Box { name: string }
+impl Label for Box { function a(self: Self): i32 { return self.name.len(); } }
+`
+	const body = `
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3) {
+        var x: Box = Box { name: "ab" + "c" };
+        var y: Box = Box { name: "d" + "e" };
+        var p: dyn Label = pick(i % 2, x, y);
+        t = t + p.a() + x.name.len() + y.name.len();
+        i = i + 1;
+    }
+    return t;
+}`
+	cases := []struct{ name, pick string }{
+		{"if_returned", `function pick(c: i32, l: dyn Label, m: dyn Label): dyn Label { return if (c == 0) { l } else { m }; }`},
+		{"if_bound", `function pick(c: i32, l: dyn Label, m: dyn Label): dyn Label { var r: dyn Label = if (c == 0) { l } else { m }; return r; }`},
+		{"match_returned", `function pick(c: i32, l: dyn Label, m: dyn Label): dyn Label { return match (c) { 0 => l, _ => m }; }`},
+		{"variant_match_returned", `enum Pick { First, Second(i32) }
+function tag(c: i32): Pick { if (c == 0) { return Pick.First; } return Pick.Second(c); }
+function pick(c: i32, l: dyn Label, m: dyn Label): dyn Label { return match (tag(c)) { First => l, Second(_) => m }; }`},
+	}
+	for _, c := range cases {
+		src := head + c.pick + body
+		t.Run("x86_64-sanitize/"+c.name, func(t *testing.T) { checkDynReturnSanitized(t, src, 23) })
+		t.Run("arm64/"+c.name, func(t *testing.T) {
+			if _, code := compileAndRunArm64FreeOn(t, src); code != 23 {
+				t.Errorf("got exit %d, want 23", code)
+			}
+		})
+		t.Run("wasm/"+c.name, func(t *testing.T) {
+			if got := runWasm(t, src); got != 23 {
+				t.Errorf("got %d, want 23", got)
+			}
+		})
+	}
 }
