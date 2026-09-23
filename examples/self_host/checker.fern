@@ -2861,6 +2861,12 @@ function (s: Scope) has_any_array_module_method(): boolean {
   return false;
 }
 
+// map_builtin_methods: the Map methods native registers unconditionally, less
+// the retired in-place spellings. The rest are core/map's receiver methods.
+function map_builtin_methods(): string[] {
+  return ["cleared", "get", "get_or", "has", "insert", "iter", "keys", "len", "values", "without"];
+}
+
 // push_str_unique_sorted inserts `v` in sorted position, dropping a duplicate.
 function push_str_unique_sorted(xs: string[], v: string): string[] {
   var out: string[] = [];
@@ -9564,6 +9570,20 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
             out = out.append(dg_at("E004", "method \"" + mfa.field + "\" expects 0 argument(s), got " + util.i32_to_string(c.args.len()), c.line, c.col));
           }
         },
+        typeinfo.TypeMap(_) => {
+          // E043: neither a builtin nor a core/map receiver method. A
+          // retired in-place spelling (`m.set`) is told its replacement
+          // (#10095); any other name is read as a field of struct Map, as
+          // native reads it, once core/map's methods are in scope to rule
+          // it out.
+          if (!util.has_str(map_builtin_methods(), mfa.field) && s.lookup_method(mfa.field, "Map").name.len() == 0) {
+            if (retired_collection_spelling("Map", mfa.field).len() > 0) {
+              out = out.append(dg_at("E043", s.unknown_method_message("Map", mfa.field, "Map", recv), mfa.line, mfa.col));
+            } else if (s.core_map_loaded()) {
+              out = out.append(dg_at("E043", "struct Map has no field \"" + mfa.field + "\"", mfa.line, mfa.col));
+            }
+          }
+        },
         typeinfo.TypeArray(ar) => {
           // E038: a built-in array method whose argument must
           // match the element type. `append(elem)` takes the
@@ -15766,6 +15786,7 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
   // own_diags (E050/E051) and e049_diags (E049) walk whole-function bodies
   // for move / capture analysis.
   var dd: util.Diag[] = util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(fda_diags, collect_decl_diags(mod)), body_diags), own_diags(mod)), e049_diags(mod)), e021_diags(mod)), derive_diags), e021_object_safety_diags(mod)), e060_e062_diags(mod));
+  dd = util.append_diags(dd, map_import_diags(mod));
   if (dd.len() > 0) {
     well_typed = false;
   }
@@ -16796,6 +16817,41 @@ pub struct ModuleTables { structs: StructTable, unions: UnionTable, sigs: SigTab
 
 // import_paths_of: the module's `import` paths exactly as written in source
 // ("std/string"), which is the spelling a hint tells the reader to add.
+// E001 (#10094): a Map lowers to core/map, so a program whose import closure
+// lacks it is refused once, at its first `map_new` — every Map literal
+// desugars to one. A bundle holds core/map's declarations whenever anything in
+// the closure imports it.
+function map_import_diags(mod: parser.Module): util.Diag[] {
+  if (loads_core_map(mod)) { return []; }
+  var want: string[] = ["map_new", "map_new_i32"];
+  var sites: astwalk.CallSite[] = [];
+  for fd in mod.funcs {
+    for st in fd.body { sites = astwalk.collect_calls_stmt(st, want, sites); }
+  }
+  for st in mod.top_stmts { sites = astwalk.collect_calls_stmt(st, want, sites); }
+  for site in sites {
+    if (!site.method) { return [dg_at("E001", "Map operations require `import \"core/map\";`", site.line, site.col)]; }
+  }
+  return [];
+}
+
+function loads_core_map(mod: parser.Module): boolean {
+  for im in mod.imports { if (im.path == "core/map") { return true; } }
+  for fd in mod.funcs { if (is_core_map_decl(fd.name)) { return true; } }
+  return false;
+}
+
+// core/map's constructor, bare or as the bundler mangles it: present exactly
+// when core/map's declarations were loaded.
+function is_core_map_decl(name: string): boolean {
+  return name == "map_new_impl" || util.str_has_suffix(name, "__map_new_impl");
+}
+
+function (s: Scope) core_map_loaded(): boolean {
+  for sig in s.sigs.sigs { if (is_core_map_decl(sig.name)) { return true; } }
+  return false;
+}
+
 function import_paths_of(mod: parser.Module): string[] {
     var out: string[] = [];
     for im in mod.imports { out = out.append(im.path); }

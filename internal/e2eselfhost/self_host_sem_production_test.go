@@ -493,6 +493,7 @@ function total(ss: Shape[]): i32 {
 function main(): i32 { return total([Dot, Line(3), Box(4, 5)]); }
 `},
 	{name: "map-and-string-keys", atLeast: 3, src: `
+import "core/map";
 function tally(words: string[]): Map[string, i32] {
     var m: Map[string, i32] = map_new(8);
     for w in words { m = m.insert(w, 1); }
@@ -515,6 +516,7 @@ function main(): i32 { return seen(["a", "b"], "b") + seen(["a", "b"], "z"); }
 	// is the property the string column's per-element retain buys: an alias
 	// would be reading freed bytes by then, and the sanitizer leg would say so.
 	{name: "map-column-snapshot", atLeast: 4, src: `
+import "core/map";
 function str_keys(n: i32): i32 {
     var ks: string[] = [];
     {
@@ -1591,6 +1593,7 @@ function by_key(): i32 {
 function main(): i32 { return by_string() + by_value() + by_key(); }
 `},
 	{name: "map-delete-and-clear", atLeast: 4, noLeak: true, src: `
+import "core/map";
 function survivors(n: i32): i32 {
     var m: Map[i32, i32] = map_new(8);
     var i: i32 = 0;
@@ -1622,6 +1625,7 @@ function main(): i32 { return survivors(5) + emptied(0) + absent(0); }
 	// same shape over a tuple literal, and reads BOTH elements, so the take has
 	// to leave the one it did not null alone.
 	{name: "tuple-element-take", atLeast: 3, noLeak: true, src: `
+import "core/map";
 function chained(n: i32): i32 {
     var m: Map[i32, i32] = map_new(8);
     var i: i32 = 0;
@@ -1678,6 +1682,7 @@ function main(): i32 { return (closed(5) + single(3) + skipping(12)) & 255; }
 	// `get_or`, consumes it, and then reads the SAME key again: if the take
 	// fired on `get_or` the second read would see the nulled slot.
 	{name: "container-read-is-not-a-take", atLeast: 3, noLeak: true, src: `
+import "core/map";
 function seeded(n: i32): Map[i32, (i32[], i32)] {
     var m: Map[i32, (i32[], i32)] = map_new(4);
     return m.insert(1, ([n, n + 1], n));
@@ -1698,6 +1703,7 @@ function main(): i32 { return shared(7) & 255; }
 	// never evaluates the receiver for anything else, so a call result works
 	// the way a local does.
 	{name: "map-clear-call-receiver", atLeast: 2, want: "1|", noLeak: true, src: `
+import "core/map";
 function built(n: i32): Map[i32, i32] {
     var m: Map[i32, i32] = map_new(8);
     var i: i32 = 0;
