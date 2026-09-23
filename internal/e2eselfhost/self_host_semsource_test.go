@@ -584,7 +584,7 @@ function scan_words(x: i32, f: string): i32 {
 }
 function wide_sig(f: (i64) => i64, n: i64): i64 { return f(n); }
 function fn_result_named(): (i32) => i32 { return twice_it; }
-function refused_fn_element(n: i32): i32 { var fs: ((i32) => i32)[] = [twice_it]; return fs.len(); }
+function fn_element_array(n: i32): i32 { var fs: ((i32) => i32)[] = [twice_it]; return fs.len(); }
 
 // A free builtin whose result the checker types is a value like any other, so
 // the record literal, array or operator written around the call keeps its own

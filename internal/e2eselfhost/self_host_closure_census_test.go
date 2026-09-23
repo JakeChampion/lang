@@ -93,17 +93,17 @@ func TestSelfHostClosureCallCensusBuckets(t *testing.T) {
 			want: "env=0 env_local=0 env_call=0 env_param=0 env_other=0 plain=0",
 		},
 		{
-			// A fn-POINTER array. No env box: the element IS the code address,
-			// so the call is `load … ; call_indirect(argc)` with no box read.
-			// A different rewrite from every env-first case below.
-			name: "fn-pointer-array",
+			// An array of named functions. Its elements are env boxes like every
+			// other function value (#10076), and the box is read out of the
+			// array rather than a local, so the provenance is env_other.
+			name: "function-array",
 			src: `function a(x: i32): i32 { return x + 1; }
 function b(x: i32): i32 { return x + 2; }
 function main(): i32 {
     var fs: ((i32) => i32)[] = [a, b];
     return fs[0](1) + fs[1](2);
 }`,
-			want: "env=0 env_local=0 env_call=0 env_param=0 env_other=0 plain=2",
+			want: "env=2 env_local=0 env_call=0 env_param=0 env_other=2 plain=0",
 		},
 		{
 			// A fn-typed PARAMETER — env-first even for a non-capturing callee,

@@ -4052,6 +4052,34 @@ function main(): i32 {
         + id(inc)(5) + three(1)(2)(3) - 100 + m.make()(5) - 33 + floats();
 }
 `},
+	// A function array holds env boxes whatever built it (#10076). An array of
+	// named functions held bare code pointers on the AST lowering, the control
+	// leg, while every other function value was a box, so an element that left
+	// the array (returned, reassigned, passed) reached a caller that dispatched
+	// it env-first and segfaulted. A zero-parameter function names a function
+	// value unless it is a `const`, so it boxes too.
+	{name: "a-function-array-holds-boxes", atLeast: 15, want: "64|", astAnswers: "64|", noLeak: true, src: `
+struct M { k: i32 }
+enum E { Wrap(() => i32), No }
+function a(b: i32): i32 { return b + 1; }
+function bb(b: i32): i32 { return b + 2; }
+function z(): i32 { return 7; }
+function y(): i32 { return 8; }
+function pickf(i: i32): (i32) => i32 { var fs = [a, bb]; return fs[i]; }
+function pickz(i: i32): () => i32 { var fs = [z, y]; return fs[i]; }
+function refill(xs: ((i32) => i32)[]): i32 { var fs: ((i32) => i32)[] = []; fs = xs; return fs[0](1) + fs[1](1); }
+function (m: M) run(fs: ((i32) => i32)[]): i32 { return fs[0](m.k); }
+function main(): i32 {
+    var f = pickf(0);
+    var t: ((() => i32), i32) = (z, 1);
+    var o: Option[() => i32] = Some(y);
+    var w = Wrap(z);
+    var r = f(10) + pickf(1)(10) + pickz(1)() + refill([a, bb]) + M { k: 4 }.run([a]) + t.0() + t.1;
+    match (o) { Some(g) => { r = r + g(); }, None => {} }
+    match (w) { Wrap(h) => { r = r + h(); }, No => {} }
+    return r;
+}
+`},
 	// A CAPTURING lambda returned from a lambda. The lifted body's tail
 	// `return <lambda>` kept an escaping-closure hoist that left the lambda at
 	// the return site, which the typed path refused ("unsupported expression"),

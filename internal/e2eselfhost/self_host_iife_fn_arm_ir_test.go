@@ -148,14 +148,11 @@ var iifeFnArmCases = []struct {
 	{"arm-array-else-branch-taken", "function main(): i32 { var v1: i32 = 3i32; var c: boolean = false; var xs: ((i32) => i32)[] = (if (c) { [((x: i32) => (x + v1))] } else { [((y: i32) => (y + 10i32))] }); return xs[0i32](1i32) & 63i32; }", 11},
 	{"matchexpr-arm-array-capturing", "enum S { A, B } function main(): i32 { var v1: i32 = 3i32; var e: S = S.B; var xs: ((i32) => i32)[] = (match (e) { A => [((x: i32) => (x + v1))], B => [((y: i32) => (y * v1))] }); return xs[0i32](2i32) & 63i32; }", 6},
 	{"arm-array-mixed-cap-and-fnname", "function inc(x: i32): i32 { return x + 1i32; } function main(): i32 { var v1: i32 = 3i32; var xs: ((i32) => i32)[] = (if (true) { [((x: i32) => (x + v1)), inc] } else { [inc, inc] }); return (xs[0i32](1i32) + xs[1i32](1i32)) & 63i32; }", 6},
-	// An arm spelled as a NAME rather than an array literal (#8163). The
-	// binding's other arm boxes, so this one has to as well — but the named
-	// local's literal sits elsewhere in the function, out of reach of the
-	// in-place arm boxing, so fd_binds_iife_boxed_fn_array puts every fn-value
-	// array literal in the function on the env-box ABI instead. Left
-	// unclassified the binding kept plain fn-pointer dispatch over an env-box
-	// array and `xs[0](1)` called the box pointer as code: accepted, linked,
-	// SIGSEGV, where native runs the same program to 4.
+	// An arm spelled as a NAME rather than an array literal (#8163): the named
+	// local's literal sits elsewhere in the function and boxes where it is
+	// built, as every function array literal does. Before that, `xs[0](1)`
+	// called the box pointer as code: accepted, linked, SIGSEGV, where native
+	// runs the same program to 4.
 	//
 	// named-local-then-arm has the name in the TAKEN arm, and
 	// named-local-both-arrays-used calls the named array itself — which is what
@@ -168,19 +165,15 @@ var iifeFnArmCases = []struct {
 	{"arm-array-named-local-both-arrays-used", "function main(): i32 { var v1: i32 = 3i32; var ys: ((i32) => i32)[] = [((z: i32) => z)]; var xs: ((i32) => i32)[] = (if (true) { [((x: i32) => (x + v1))] } else { ys }); return ((xs[0i32](1i32) * 10i32) + ys[0i32](2i32)) & 63i32; }", 42},
 	{"matchexpr-arm-array-named-local", "enum S { A, B } function main(): i32 { var v1: i32 = 3i32; var e: S = S.A; var ys: ((i32) => i32)[] = [((z: i32) => (z + 10i32))]; var xs: ((i32) => i32)[] = (match (e) { A => [((x: i32) => (x + v1))], B => ys }); return xs[0i32](1i32) & 63i32; }", 4},
 	{"nested-iife-arm-array-named-local", "function main(): i32 { var v1: i32 = 3i32; var ys: ((i32) => i32)[] = [((z: i32) => (z + 10i32))]; var zs: ((i32) => i32)[] = [((w: i32) => (w * 2i32))]; var c: boolean = true; var xs: ((i32) => i32)[] = (if (c) { [((x: i32) => (x + v1))] } else { (if (c) { ys } else { zs }) }); return xs[0i32](1i32) & 63i32; }", 4},
-	// The fd-wide promotion reaches EVERY fn-value array literal in the
-	// function, including one the IIFE never touches. `ps` holds bare fn names,
-	// so it moves from the #3574 fn-pointer classification onto env boxes — a
-	// representation change that has to keep answering the same.
+	// `ps`, a named-function array the IIFE never touches, dispatches through
+	// its `$wrap` boxes alongside the arm arrays.
 	{"arm-array-named-local-unrelated-fnptr-array", "function inc(x: i32): i32 { return x + 1i32; } function main(): i32 { var v1: i32 = 3i32; var ps: ((i32) => i32)[] = [inc]; var ys: ((i32) => i32)[] = [((z: i32) => z)]; var xs: ((i32) => i32)[] = (if (true) { [((x: i32) => (x + v1))] } else { ys }); return ((xs[0i32](1i32) * 10i32) + ps[0i32](1i32)) & 63i32; }", 42},
 	{"arm-array-named-local-foreach-over-name", "function main(): i32 { var v1: i32 = 3i32; var ys: ((i32) => i32)[] = [((z: i32) => (z + 1i32))]; var xs: ((i32) => i32)[] = (if (true) { [((x: i32) => (x + v1))] } else { ys }); var t: i32 = 0i32; for f in ys { t = t + f(1i32); } return (xs[0i32](1i32) + t) & 63i32; }", 6},
 	{"arm-array-named-local-append-to-name", "function main(): i32 { var v1: i32 = 3i32; var ys: ((i32) => i32)[] = [((z: i32) => (z + 1i32))]; var ws: ((i32) => i32)[] = ys.append(((q: i32) => (q + 5i32))); var xs: ((i32) => i32)[] = (if (true) { [((x: i32) => (x + v1))] } else { ys }); return (xs[0i32](1i32) + ws[1i32](1i32)) & 63i32; }", 10},
 
-	// An all-no-capture arm array boxes its lambdas like any other lambda
-	// array, and the binding it yields has to be classified env-first to
-	// match: boxed elements under plain fn-pointer dispatch SIGSEGV at the
-	// call. An all-bare-fn-name arm array keeps the #3574 fn-pointer-array
-	// classification.
+	// An all-no-capture arm array and an all-named-function arm array box
+	// their elements like any other function array, so the binding they yield
+	// dispatches env-first.
 	{"arm-array-nocapture", "function main(): i32 { var xs: ((i32) => i32)[] = (if (true) { [((x: i32) => (x + 3i32))] } else { [((y: i32) => y)] }); return xs[0i32](1i32) & 63i32; }", 4},
 	{"arm-array-bare-fnnames-unchanged", "function inc(x: i32): i32 { return x + 1i32; } function dbl(x: i32): i32 { return x * 2i32; } function main(): i32 { var xs: ((i32) => i32)[] = (if (true) { [inc] } else { [dbl] }); return xs[0i32](41i32) & 63i32; }", 42},
 	// The IIFE is not the whole value but sits INSIDE one — an array element, a
