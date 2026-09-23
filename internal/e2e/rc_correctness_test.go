@@ -4557,6 +4557,107 @@ function main(): i32 {
 }`,
 	},
 	{
+		// `x = y` where y is written again before anything reads it moves y
+		// into x and empties y's slot (computeOverwriteMoves). Strings,
+		// arrays and structs; the write inside both arms of an if/else; an
+		// early return between the move and the write, where the exit sweep
+		// meets the emptied slot; and a break between them, which leaves the
+		// copy retained.
+		name: "overwrite_move_before_read",
+		src: `
+struct P { tag: string, n: i32 }
+function strs(k: string): i32 {
+    var a: string = "s" + k;
+    var b: string = "";
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) {
+        b = a;
+        a = b + "x";
+        total = total + b.len();
+        i = i + 1;
+    }
+    return total;
+}
+function arms(k: string): i32 {
+    var a: string = "t" + k;
+    var b: string = "";
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) {
+        b = a;
+        if (i % 2 == 0) {
+            a = b + "y";
+        } else {
+            a = "z" + k;
+        }
+        total = total + b.len();
+        i = i + 1;
+    }
+    return total;
+}
+function arrs(k: string): i32 {
+    var a: i32[] = [k.len()];
+    var b: i32[] = [];
+    var i: i32 = 0;
+    while (i < 50) {
+        b = a;
+        a = b.append(i);
+        i = i + 1;
+    }
+    return b.len() + a.len();
+}
+function structs(k: string): i32 {
+    var a: P = P { tag: "p" + k, n: 0 };
+    var b: P = P { tag: "", n: 0 };
+    var i: i32 = 0;
+    while (i < 50) {
+        b = a;
+        a = P { tag: b.tag + "q", n: b.n + 1 };
+        i = i + 1;
+    }
+    return a.n + b.tag.len();
+}
+function early(k: string, stop: i32): i32 {
+    var a: string = "e" + k;
+    var b: string = "";
+    var i: i32 = 0;
+    while (i < 50) {
+        b = a;
+        if (i == stop) {
+            return b.len();
+        }
+        a = b + "w";
+        i = i + 1;
+    }
+    return a.len();
+}
+function broken(k: string): i32 {
+    var a: string = "b" + k;
+    var b: string = "";
+    var i: i32 = 0;
+    while (i < 50) {
+        b = a;
+        if (i == 40) {
+            break;
+        }
+        a = b + "v";
+        i = i + 1;
+    }
+    return a.len() + b.len();
+}
+function main(): i32 {
+    var bad: i32 = 0;
+    if (strs("7") != 1325) { bad = bad + 1; }
+    if (arms("7") != 125) { bad = bad + 2; }
+    if (arrs("7") != 101) { bad = bad + 4; }
+    if (structs("7") != 101) { bad = bad + 8; }
+    if (early("7", 10) != 12) { bad = bad + 16; }
+    if (broken("7") != 84) { bad = bad + 32; }
+    return bad + __rc_underflow_count();
+}`,
+	},
+	{
 		// ARRAY-BEARING cursor struct (Par-shaped — the self-host parser's)
 		// threaded through `(value, cursor)` tuple returns. The param is
 		// consumed-promoted (it is reassigned) but borrow-taint keeps it
