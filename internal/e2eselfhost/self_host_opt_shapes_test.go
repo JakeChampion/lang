@@ -23,6 +23,8 @@ type optShapeCase struct {
 	// want and forbid are regexps over the function's body, keyed by target.
 	want   map[string][]string
 	forbid map[string][]string
+	// typedOnly names an optimisation of a pass only the typed lowering runs.
+	typedOnly bool
 }
 
 var optShapeCases = []optShapeCase{
@@ -71,6 +73,29 @@ function main(): i32 { return count_a("banana") - 1; }
 function main(): i32 { return sum_to(10i64) as i32; }
 `,
 		forbid: map[string][]string{"x86-64-linux": {`\bjmp\b`}, "arm64-linux": {`\bb \.L`}}},
+	// A uniqueness test whose answer only chooses a branch is fused into it:
+	// the guards meet at a `_uq` join and the branch reads the flags, with no
+	// 0/1 built and copied into a scratch to be tested again. Reuse, and so
+	// the test, is the typed lowering's.
+	{name: "unique_test_fused", fn: "bump", exit: 11, typedOnly: true, src: `
+struct Pt { x: i32, y: i32, tag: string }
+@noinline function bump(p: Pt): Pt { return Pt { ...p, x: p.x + 1 }; }
+function main(): i32 {
+    var p: Pt = Pt { x: 1, y: 2, tag: "a" };
+    var i: i32 = 0;
+    while (i < 10) { p = bump(p); i = i + 1; }
+    return p.x;
+}
+`,
+		want:   map[string][]string{"x86-64-linux": {`_uq\d+:`}, "arm64-linux": {`_uq\d+:`}},
+		forbid: map[string][]string{"x86-64-linux": {`_rcuniq\d+:`, `testq %r11, %r11`}, "arm64-linux": {`_rcuniq\d+:`, `mov x6, #1`}}},
+	// A branch on a boolean tests the register the boolean lives in.
+	{name: "value_test_in_place", fn: "pick", exit: 7, src: `
+@noinline function pick(b: boolean, x: i32): i32 { if (b) { return x; } return 0; }
+function main(): i32 { return pick(true, 7) + pick(false, 9); }
+`,
+		want:   map[string][]string{"x86-64-linux": {`testq (%r\w+), (%r\w+)`}, "arm64-linux": {`\bcbn?z x\d+,`}},
+		forbid: map[string][]string{"x86-64-linux": {`testq %r11, %r11`, `movq %r\w+, %r11`}, "arm64-linux": {`\bcbn?z x4,`, `mov x4, x`}}},
 	// A multiply by a power of two is a shift.
 	{name: "strength_mul_pow2", fn: "times8", exit: 40, src: `
 @noinline function times8(x: i32): i32 { return x * 8; }
@@ -129,6 +154,9 @@ func TestSelfHostOptimisationShapes(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, leg := range optShapeLegs {
+				if c.typedOnly && leg.name != "typed" {
+					continue
+				}
 				for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 					out := filepath.Join(dir, leg.name+"-"+target+".s")
 					cmd := exec.Command(h.cli, "-target", target, "-emit", "asm", "-o", out, src, h.stdlib)
