@@ -1,0 +1,8 @@
+// A `const` written without a type is range-checked where it is read: 300
+// does not fit the u8 it is assigned to.
+const K = 300;
+
+function main(): i32 {
+    var x: u8 = K;
+    return x as i32;
+}

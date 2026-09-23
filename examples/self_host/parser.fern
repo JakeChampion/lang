@@ -185,7 +185,7 @@ pub function warn_unresolved_imports(mod: Module, driver: string): boolean {
 // method names, and impls records every `impl Trait for Type` block with the
 // methods it explicitly provides. parse_module populates both; the
 // transformation passes propagate them unchanged.
-pub struct Module { funcs: FuncDecl[], structs: StructDecl[], aliases: TypeAlias[], imports: Import[], top_stmts: ast.Stmt[], enums: EnumDecl[], resources: ResourceDecl[], exports: ExportBinding[], impls: ImplInfo[], trait_reqs: TraitReq[], trait_decls: TraitDecl[] }
+pub struct Module { funcs: FuncDecl[], structs: StructDecl[], aliases: TypeAlias[], imports: Import[], top_stmts: ast.Stmt[], enums: EnumDecl[], resources: ResourceDecl[], exports: ExportBinding[], impls: ImplInfo[], trait_reqs: TraitReq[], trait_decls: TraitDecl[], inferred_consts: string[] }
 
 // TraitReq is one trait's required-method set: the abstract (body-less)
 // signatures an `impl` MUST provide. A defaulted (bodied) method is NOT
@@ -19581,10 +19581,57 @@ pub function settle_module(mod: Module): Module {
     return Module { ...mod, funcs: funcs, top_stmts: settle_block(mod.top_stmts, "", nonames, nonames, fns, mod.structs) };
 }
 
+// ConstTable is the value each const written without a type stands for, in
+// declaration order. Native's constfold keeps such a const's literal untyped
+// and substitutes it at every reference, so `const K = 9; var x: i64 = K;`
+// reads 9 at i64 as a written literal would; references are replaced by the
+// value here for the same reason. A const referenced from another module is
+// replaced when flatten merges it, so Module.inferred_consts carries the names.
+pub struct ConstTable { names: string[], values: ast.Expr[] }
+
+// inferred_const_table extends `t` with every const in `funcs` written without
+// a type, each value already carrying the earlier ones'.
+pub function inferred_const_table(funcs: FuncDecl[], names: string[], t: ConstTable): ConstTable {
+    var out: ConstTable = t;
+    for fd in funcs {
+        if (fd.is_const && util.has_str(names, fd.name) && fd.body.len() == 1) {
+            if let ast.StmtReturn(r) = fd.body[0] {
+                out = ConstTable { names: out.names.append(fd.name), values: out.values.append(astwalk.substitute_consts_expr(r.value, out.names, out.values)) };
+            }
+        }
+    }
+    return out;
+}
+
+// substitute_const_refs replaces every reference to a const in `t` that no
+// local binding shadows.
+pub function substitute_const_refs(mod: Module, t: ConstTable): Module {
+    if (t.names.len() == 0) { return mod; }
+    var funcs: FuncDecl[] = [];
+    for fd in mod.funcs {
+        var bound: string[] = [];
+        var params: ast.ParamDecl[] = [];
+        for p in fd.params {
+            params = params.append(ast.ParamDecl { ...p, default_value: astwalk.substitute_consts_expr(p.default_value, t.names, t.values) });
+            bound = astwalk.append_bound_name(bound, p.name);
+        }
+        if (fd.receiver_name.len() > 0) { bound = bound.append(fd.receiver_name); }
+        funcs = funcs.append(FuncDecl { ...fd, params: params, body: astwalk.substitute_consts(fd.body, bound, t.names, t.values) });
+    }
+    return Module { ...mod, funcs: funcs, top_stmts: astwalk.substitute_consts(mod.top_stmts, [], t.names, t.values) };
+}
+
+// unannotated_const_names lists the consts written without a type.
+function unannotated_const_names(funcs: FuncDecl[]): string[] {
+    var out: string[] = [];
+    for fd in funcs { if (fd.is_const && fd.ret_type == "") { out = out.append(fd.name); } }
+    return out;
+}
+
 // settle_const_types gives a `const` written without a type its value's type,
-// as native's constfold does from the folded literal. Consts settle in
-// declaration order, each one visible to the next, so `const B = A * 2` reads
-// A's type. A value it cannot type keeps "" and draws E070.
+// so its own declaration is typed. Consts settle in declaration order, each one
+// visible to the next, so `const B = A * 2` reads A's type. A value it cannot
+// type keeps "" and draws E070.
 function settle_const_types(funcs: FuncDecl[], structs: StructDecl[]): FuncDecl[] {
     var known: ast.ParamDecl[] = [];
     var out: FuncDecl[] = [];
@@ -20047,8 +20094,14 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
     // resolve_assoc_projections runs FIRST of the module passes: settle_module
     // and the variant-field resolver both read declared type spellings, and a
     // `Self::Item` left unresolved would reach them as an unknown nominal.
-    if (!verbatim) { funcs = settle_const_types(funcs, structs); }
-    return (settle_module(resolve_variant_fields_module(resolve_labels_module(resolve_assoc_projections(Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports, impls: impl_infos, trait_reqs: trait_reqs, trait_decls: traits })))), traits, impl_decls, flines, inline_hints);
+    var parsed: Module = Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports, impls: impl_infos, trait_reqs: trait_reqs, trait_decls: traits, inferred_consts: [] };
+    if (!verbatim) {
+        var inferred: string[] = unannotated_const_names(funcs);
+        var nothing: string[] = [];
+        parsed = substitute_const_refs(parsed, inferred_const_table(funcs, inferred, ConstTable { names: nothing, values: [] }));
+        parsed = Module { ...parsed, funcs: settle_const_types(parsed.funcs, structs), inferred_consts: inferred };
+    }
+    return (settle_module(resolve_variant_fields_module(resolve_labels_module(resolve_assoc_projections(parsed)))), traits, impl_decls, flines, inline_hints);
 }
 
 // merge_module flat-concatenates `into`'s decls with `from`'s:

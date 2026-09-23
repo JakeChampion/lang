@@ -50,7 +50,7 @@ function prune_to_reachable(mod: parser.Module, reach: string[]): parser.Module 
         if (util.has_str(reach, treeshake.reach_key(mod.funcs[fi]))) { kept = kept.append(mod.funcs[fi]); }
         fi = fi + 1;
     }
-    return parser.Module { funcs: kept, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls };
+    return parser.Module { funcs: kept, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls, inferred_consts: mod.inferred_consts };
 }
 
 // shaken_program prunes an annotated module to what main reaches when `prune`

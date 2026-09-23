@@ -1124,3 +1124,109 @@ pub function collect_qualrefs_stmt(st: ast.Stmt, quals: string[], own acc: QualR
     function visit(n: ast.Expr, own a: QualRef[]): QualRef[] { return qualref_of(n, quals, a); }
     return fold_stmt(st, acc, visit);
 }
+
+// ConstSubst replaces a reference to a named const with the const's value
+// wherever no local binding of that name is in scope. `bound` is the names in
+// scope; `names` and `values` are parallel.
+pub struct ConstSubst { names: string[], values: ast.Expr[], bound: string[] }
+
+pub function substitute_consts(stmts: ast.Stmt[], bound: string[], names: string[], values: ast.Expr[]): ast.Stmt[] {
+    if (names.len() == 0) { return stmts; }
+    return cs_body(stmts, ConstSubst { names: names, values: values, bound: bound });
+}
+
+pub function substitute_consts_expr(e: ast.Expr, names: string[], values: ast.Expr[]): ast.Expr {
+    if (names.len() == 0) { return e; }
+    return cs_expr(e, ConstSubst { names: names, values: values, bound: [] });
+}
+
+function cs_bind(c: ConstSubst, packed: string): ConstSubst {
+    var bound: string[] = c.bound;
+    for name in append_bound_name([], packed) { bound = bound.append(name); }
+    return ConstSubst { ...c, bound: bound };
+}
+
+function cs_expr(e: ast.Expr, c: ConstSubst): ast.Expr {
+    var (out, tail, handled) = map_expr_acc(e, c, cs_stmt_at, cs_expr_at);
+    return out;
+}
+
+function cs_body(stmts: ast.Stmt[], c: ConstSubst): ast.Stmt[] {
+    var out: ast.Stmt[] = [];
+    var cur: ConstSubst = c;
+    for st in stmts {
+        var (next, tail, handled) = map_stmt_acc(st, cur, cs_stmt_at, cs_expr_at);
+        out = out.append(next);
+        cur = tail;
+    }
+    return out;
+}
+
+function cs_expr_at(e: ast.Expr, c: ConstSubst): (ast.Expr, ConstSubst, boolean) {
+    match (e) {
+        ast.ExprIdent(i) => {
+            if (!util.has_str(c.bound, i.name)) {
+                var k: i32 = util.index_of_str(c.names, i.name);
+                if (k >= 0) { return (placed_at(c.values[k], i.line, i.col), c, true); }
+            }
+            return (e, c, true);
+        },
+        ast.ExprLambda(lm) => {
+            var inner: ConstSubst = c;
+            for p in lm.params { inner = cs_bind(inner, p.name); }
+            return (ast.ExprLambda { ...lm, body: cs_body(lm.body, inner) }, c, true);
+        },
+        _ => { return (e, c, false); }
+    }
+    return (e, c, false);
+}
+
+// placed_at gives a substituted value the reference's position, so a
+// diagnostic about it (a literal out of range for its destination) names the
+// use.
+function placed_at(e: ast.Expr, line: i32, col: i32): ast.Expr {
+    match (e) {
+        ast.ExprNumber(n) => { return ast.ExprNumber { ...n, line: line, col: col }; },
+        ast.ExprString(sv) => { return ast.ExprString { ...sv, line: line, col: col }; },
+        ast.ExprUnary(u) => { return ast.ExprUnary { ...u, operand: placed_at(u.operand, line, col), line: line, col: col }; },
+        ast.ExprBinary(b) => { return ast.ExprBinary { ...b, left: placed_at(b.left, line, col), right: placed_at(b.right, line, col), line: line, col: col }; },
+        _ => { return e; }
+    }
+    return e;
+}
+
+function cs_stmt_at(st: ast.Stmt, c: ConstSubst): (ast.Stmt, ConstSubst, boolean) {
+    match (st) {
+        ast.StmtVar(v) => {
+            var before: ConstSubst = c;
+            if let ast.ExprLambda(lm) = v.init { before = cs_bind(before, v.name); }
+            return (ast.StmtVar { ...v, init: cs_expr(v.init, before) }, cs_bind(c, v.name), true);
+        },
+        ast.StmtIf(f) => {
+            return (ast.StmtIf { ...f, cond: cs_expr(f.cond, c), then_body: cs_body(f.then_body, c), else_body: cs_body(f.else_body, c) }, c, true);
+        },
+        ast.StmtWhile(w) => {
+            return (ast.StmtWhile { ...w, cond: cs_expr(w.cond, c), body: cs_body(w.body, c) }, c, true);
+        },
+        ast.StmtFor(f) => {
+            return (ast.StmtFor { ...f, iter: cs_expr(f.iter, c), body: cs_body(f.body, cs_bind(c, f.var_name)) }, c, true);
+        },
+        ast.StmtMatch(m) => {
+            var arms: ast.MatchArm[] = [];
+            for arm in m.arms {
+                var inner: ConstSubst = c;
+                for n in pattern_binders(arm.pattern, []) { inner = cs_bind(inner, n); }
+                var guard: ast.Expr = arm.guard;
+                if (arm.has_guard) { guard = cs_expr(guard, inner); }
+                arms = arms.append(ast.MatchArm { ...arm, guard: guard, body: cs_body(arm.body, inner) });
+            }
+            return (ast.StmtMatch { ...m, scrutinee: cs_expr(m.scrutinee, c), arms: arms }, c, true);
+        },
+        ast.StmtDefer(d) => {
+            var (action, tail, handled) = map_stmt_acc(d.action, c, cs_stmt_at, cs_expr_at);
+            return (ast.StmtDefer { ...d, action: action }, c, true);
+        },
+        _ => { return (st, c, false); }
+    }
+    return (st, c, false);
+}

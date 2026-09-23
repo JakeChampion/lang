@@ -17144,7 +17144,7 @@ function annotate_module_in(mod: parser.Module, mt: ModuleTables): parser.Module
     nfuncs = nfuncs.append(annotate_func(func, mt));
   }
   var ntop: ast.Stmt[] = annotate_block(rmod.top_stmts, new_scope_full(mt.sigs, mt.structs, mt.unions, mt.methods, mt.imports));
-  return parser.Module { funcs: nfuncs, structs: rmod.structs, aliases: rmod.aliases, imports: rmod.imports, top_stmts: ntop, enums: rmod.enums, resources: rmod.resources, exports: rmod.exports, impls: rmod.impls, trait_reqs: rmod.trait_reqs, trait_decls: rmod.trait_decls };
+  return parser.Module { funcs: nfuncs, structs: rmod.structs, aliases: rmod.aliases, imports: rmod.imports, top_stmts: ntop, enums: rmod.enums, resources: rmod.resources, exports: rmod.exports, impls: rmod.impls, trait_reqs: rmod.trait_reqs, trait_decls: rmod.trait_decls, inferred_consts: rmod.inferred_consts };
 }
 
 function unchecked_capture(e: ast.Expr, own found: boolean): boolean {
