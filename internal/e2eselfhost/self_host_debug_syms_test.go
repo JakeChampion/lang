@@ -41,7 +41,7 @@ func TestSelfHostDebugSymsFlag(t *testing.T) {
 
 	src := filepath.Join(dir, "p.fern")
 	if err := os.WriteFile(src, []byte(
-		"function helper(n: i32): i32 { return n + 3; }\n"+
+		"@noinline function helper(n: i32): i32 { return n + 3; }\n"+
 			"function main(): i32 { return helper(4); }\n"), 0o644); err != nil {
 		t.Fatalf("writing source: %v", err)
 	}

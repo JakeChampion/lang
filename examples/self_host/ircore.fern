@@ -1360,6 +1360,168 @@ pub function lower_gated(mod: parser.Module, structs: irlower.StructTab, sg: irl
     return Lowered { ok: true, cache: cache };
 }
 
+// ---- tiny-leaf inlining -------------------------------------------------
+//
+// inline_tiny_leaves splices the body of every small call-free function into
+// its direct callers: the call sequence is most of what such a site costs, and
+// a leaf spliced in creates no new call site, so one walk is a fixpoint. It is
+// native internal/ir/inline.go's tiny-leaf mode — the one policy that pays on
+// a unit the compiler's size (`inlineTinyLeafOps`, measured there at -12.3% Ir
+// on `sort -k2,2n` for +0.09% of the self-host's text) — with the same budget
+// bounding the sum of a large unit's growth. It runs on the lowering the register backends emit, the
+// substituted bodies included (after sub_cache); wasm declares each local with
+// a type (i64_slots / f64_slots), which the splice does not extend.
+//
+// A candidate is a declaration of at most inline_leaf_ops() ops besides its
+// local loads and stores (the typed lowering routes every value through a
+// slot, which the SSA lift takes back out, so they are not what a body costs)
+// that is not @noinline, calls nothing — a retain or release is a runtime
+// helper call here, which a splice would keep and grow the site around — and
+// names no function, and touches its frame only through load/store/tee_local. A caller
+// claiming fip or fbip is left alone, since its claim is verified against its
+// own ops.
+function inline_leaf_ops(): i32 { return 16; }
+
+pub function inline_tiny_leaves(mod: parser.Module, cache: irlower.LowerResult[]): irlower.LowerResult[] {
+    var names: string[] = [];
+    var at: i32[] = [];
+    var unit: i32 = 0;
+    var i: i32 = 0;
+    while (i < cache.len() && i < mod.funcs.len()) {
+        unit = unit + cache[i].ops.len();
+        if (inline_leaf(mod.funcs[i], cache[i])) { names = names.append(inline_label(mod.funcs[i])); at = at.append(i); }
+        i = i + 1;
+    }
+    if (names.len() == 0) { return cache; }
+    var reg: irlower.SigReg = irlower.sig_reg_of(names);
+    // Only a unit over native's inlineMaxUnitOps has its growth budgeted.
+    var budget: i32 = 2147483647;
+    if (unit > 20000) { budget = unit / 10; }
+    var out: irlower.LowerResult[] = [];
+    i = 0;
+    while (i < cache.len()) {
+        var r: irlower.LowerResult = cache[i];
+        var claims: boolean = i < mod.funcs.len() && (mod.funcs[i].fip || mod.funcs[i].fbip);
+        if (r.ok && !r.superseded && !claims && budget > 0) {
+            var self: string = r.name;
+            if (i < mod.funcs.len()) { self = inline_label(mod.funcs[i]); }
+            var sp: Spliced = splice_leaves(r, self, reg, names, at, cache, budget);
+            budget = sp.budget;
+            if (sp.changed) {
+                var opt: ir.OptimizedOps = ir.optimize_ops(sp.r.ops, sp.r.n_params, sp.r.n_locals);
+                r = irlower.LowerResult { ...sp.r, ops: opt.ops, n_locals: opt.n_locals };
+            }
+        }
+        out = out.append(r);
+        i = i + 1;
+    }
+    return cull_spliced_leaves(mod, out, names, at);
+}
+
+// cull_spliced_leaves drops a leaf every one of whose references was spliced
+// away: its body would be emitted and never reached. Only a free function
+// with a source name is judged — a method can be reached through dyn
+// dispatch, and a `__` name through the runtime, neither of which spells a
+// reference in the ops — and never `main`, an import or an export. Dropping is marking it
+// superseded, which no emit writes.
+function cull_spliced_leaves(mod: parser.Module, cache: irlower.LowerResult[], names: string[], at: i32[]): irlower.LowerResult[] {
+    var dead: boolean[] = [];
+    var k: i32 = 0;
+    while (k < names.len()) {
+        var fd: parser.FuncDecl = mod.funcs[at[k]];
+        var exported: boolean = false;
+        for x in mod.exports { if (x.func_name == fd.name) { exported = true; } }
+        dead = dead.append(fd.receiver_type.len() == 0 && fd.name != "main" && !util.str_has_prefix(fd.name, "__") && fd.import_iface == "" && !exported);
+        k = k + 1;
+    }
+    var reg: irlower.SigReg = irlower.sig_reg_of(names);
+    for r in cache {
+        if (r.superseded) { continue; }
+        for o in r.ops {
+            if (o.str == "") { continue; }
+            var ref: string = o.str;
+            if (o.kind_tag == ir.kind_id("const_struct")) { ref = ir.const_struct_fn_body(o.str); }
+            if (irlower.sig_reg_has_exact(reg, ref)) { dead = dead.with(util.index_of_str(names, ref), false); }
+        }
+    }
+    var out: irlower.LowerResult[] = cache;
+    k = 0;
+    while (k < names.len()) {
+        if (dead[k]) { out = out.with(at[k], irlower.LowerResult { ...out[at[k]], superseded: true }); }
+        k = k + 1;
+    }
+    return out;
+}
+
+// inline_label is the name a direct call to fd carries.
+function inline_label(fd: parser.FuncDecl): string {
+    if (fd.receiver_type.len() > 0) { return util.base_type_name(fd.receiver_type) + "." + fd.name; }
+    return fd.name;
+}
+
+function inline_leaf(fd: parser.FuncDecl, r: irlower.LowerResult): boolean {
+    if (!r.ok || r.superseded || fd.no_inline || r.n_params > r.n_locals) { return false; }
+    var k_calld: i32 = ir.kind_id("call_direct");
+    var work: i32 = 0;
+    for o in r.ops {
+        var k: i32 = o.kind_tag;
+        if (k != ir.kind_id("load_local") && k != ir.kind_id("store_local") && k != ir.kind_id("tee_local")) { work = work + 1; }
+        if (work > inline_leaf_ops()) { return false; }
+        if (k == k_calld) { return false; }
+        if (k == ir.kind_id("call_indirect") || k == ir.kind_id("call_closure_direct") || k == ir.kind_id("const_func") || k == ir.kind_id("dyn_dispatch")) { return false; }
+    }
+    return true;
+}
+
+struct Spliced { r: irlower.LowerResult, changed: boolean, budget: i32 }
+
+// splice_leaves rewrites every call in `r` to a leaf. A site becomes: the
+// arguments stored to a fresh copy of the leaf's parameter slots, its other
+// slots zeroed (the lowering assumes a frame that starts at zero), then the
+// body inside a void block that each `return` leaves with `br`, the word it
+// returns (every function returns one, irverifystack) parked in one more
+// fresh slot and loaded after the block.
+function splice_leaves(r: irlower.LowerResult, self: string, reg: irlower.SigReg, names: string[], at: i32[], cache: irlower.LowerResult[], budget: i32): Spliced {
+    var k_calld: i32 = ir.kind_id("call_direct");
+    var out: ir.Op[] = [];
+    var n_locals: i32 = r.n_locals;
+    var changed: boolean = false;
+    for o in r.ops {
+        if (o.kind_tag != k_calld || o.str == self || !irlower.sig_reg_has_exact(reg, o.str)) { out = out.append(o); continue; }
+        var li: i32 = at[util.index_of_str(names, o.str)];
+        var leaf: irlower.LowerResult = cache[li];
+        if (o.i32_imm != leaf.n_params || leaf.ops.len() > budget) { out = out.append(o); continue; }
+        var base: i32 = n_locals;
+        var ret: i32 = base + leaf.n_locals;
+        var p: i32 = leaf.n_params - 1;
+        while (p >= 0) { out = out.append(ir.op_store_local(base + p)); p = p - 1; }
+        var z: i32 = leaf.n_params;
+        while (z < leaf.n_locals) { out = out.append(ir.op_const_i32(0)); out = out.append(ir.op_store_local(base + z)); z = z + 1; }
+        out = out.append(ir.op_block(0));
+        var depth: i32 = 0;
+        for b in leaf.ops {
+            var k: i32 = b.kind_tag;
+            if (k == ir.kind_id("load_local") || k == ir.kind_id("store_local") || k == ir.kind_id("tee_local")) {
+                out = out.append(ir.Op { ...b, i32_imm: b.i32_imm + base });
+            } else if (k == ir.kind_id("return")) {
+                out = out.append(ir.op_store_local(ret));
+                out = out.append(ir.op_br(depth));
+            } else {
+                if (k == ir.kind_id("block") || k == ir.kind_id("loop") || k == ir.kind_id("if")) { depth = depth + 1; }
+                if (k == ir.kind_id("end")) { depth = depth - 1; }
+                out = out.append(b);
+            }
+        }
+        out = out.append(ir.op_end());
+        out = out.append(ir.op_load_local(ret));
+        n_locals = ret + 1;
+        budget = budget - leaf.ops.len();
+        changed = true;
+    }
+    return Spliced { r: irlower.LowerResult { ...r, ops: out, n_locals: n_locals }, changed: changed, budget: budget };
+}
+
+
 // check_fip_claims refuses a window of declarations whose `fip` / `fbip` claim
 // the lowering does not keep. The budget check itself is irfipverify's; what is
 // added here is running it on the COMPILE path, where nothing ran it before —

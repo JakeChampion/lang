@@ -39,9 +39,9 @@ func TestSelfHostArm64UnsignedDivIR(t *testing.T) {
 	// default stdlib-root treeshake prune keeps them reachable (an
 	// unreferenced helper is pruned before codegen).
 	prog := "import \"std/test\";\n" +
-		"function udiv_probe(a: u64, b: u64): u64 { return a / b; }\n" +
-		"function umod_probe(a: u64, b: u64): u64 { return a % b; }\n" +
-		"function sdiv_probe(a: i32, b: i32): i32 { return a / b; }\n" +
+		"@noinline function udiv_probe(a: u64, b: u64): u64 { return a / b; }\n" +
+		"@noinline function umod_probe(a: u64, b: u64): u64 { return a % b; }\n" +
+		"@noinline function sdiv_probe(a: i32, b: i32): i32 { return a / b; }\n" +
 		"function main(): i32 {\n" +
 		"    var q: u64 = udiv_probe(10 as u64, 3 as u64);\n" +
 		"    var m: u64 = umod_probe(10 as u64, 3 as u64);\n" +
@@ -105,7 +105,7 @@ func arm64FnBody(t *testing.T, asm, label string) string {
 	for i := start + 1; i < len(lines); i++ {
 		ln := lines[i]
 		trimmed := strings.TrimSpace(ln)
-		if strings.HasSuffix(trimmed, ":") && strings.HasPrefix(trimmed, "__fn_") {
+		if strings.HasSuffix(trimmed, ":") && strings.HasPrefix(trimmed, "__fn_") && trimmed != label+".r:" {
 			break
 		}
 		if strings.HasPrefix(trimmed, ".weak") || strings.HasPrefix(trimmed, ".globl") {

@@ -4654,7 +4654,8 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         parts = parts.append("    global.get " + str_base_global(ns) + "\n    i32.const "
             + util.i32_to_string(offset_of_value(str_vals, o.str) - str_region_base()) + "\n    i32.add\n");
     } else if (o.kind_tag == 101) {  // str_index
-        parts = emit_wasm_str_index(arrtmp, bctmp, parts);
+        if (o.i32_imm == 1) { parts = parts.append("    i32.const 4\n    i32.add\n    i32.add\n    i32.load8_u\n"); }
+        else { parts = emit_wasm_str_index(arrtmp, bctmp, parts); }
     } else if (ir.is_str_op_kind(o.kind_tag)) {
         parts = parts.append(emit_str_op_wat(o));
     } else if (o.kind_tag == 96) {  // arr_slice

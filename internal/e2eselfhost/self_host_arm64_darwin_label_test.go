@@ -1,6 +1,9 @@
 package e2eselfhost
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -64,6 +67,34 @@ func TestSelfHostArm64LinuxKeepsDotL(t *testing.T) {
 	lin := selfHostArm64Asm(t, "arm64-linux")
 	if n := countOutsideStrings(lin, ".L"); n == 0 {
 		t.Error("the self-host Linux listing lost its .L labels — the rewrite is not Darwin-only")
+	}
+}
+
+// TestSelfHostArm64DarwinRegisterEntriesAreLocal: a function's register
+// entry `__fn_X.r` sits inside the function, so on Mach-O it must be an `L`
+// label like the rest; as a symbol it splits the function's CFI and the
+// assembler refuses the listing. The Linux listing keeps the symbol.
+func TestSelfHostArm64DarwinRegisterEntriesAreLocal(t *testing.T) {
+	dar := selfHostArm64Asm(t, "arm64-darwin")
+	if !strings.Contains(dar, "\nL__fn_fib.r:") || !strings.Contains(dar, " L__fn_fib.r\n") {
+		t.Fatal("the Darwin listing has no local register entry for fib and no call to it")
+	}
+	if strings.Contains(strings.ReplaceAll(dar, "L__fn_", ""), "__fn_fib.r") {
+		t.Error("the Darwin listing still names __fn_fib.r as a symbol")
+	}
+	if !strings.Contains(selfHostArm64Asm(t, "arm64-linux"), "\n__fn_fib.r:") {
+		t.Error("the Linux listing lost its __fn_fib.r symbol — the rewrite is not Darwin-only")
+	}
+	mc, err := exec.LookPath("llvm-mc")
+	if err != nil {
+		t.Skip("llvm-mc not on PATH; the listing's shape is checked, its assembly is not")
+	}
+	src := filepath.Join(t.TempDir(), "fib.s")
+	if err := os.WriteFile(src, []byte(dar), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(mc, "-triple", "arm64-apple-macos", "-filetype=obj", "-o", os.DevNull, src).CombinedOutput(); err != nil {
+		t.Errorf("llvm-mc refuses the Darwin listing: %v\n%s", err, out)
 	}
 }
 

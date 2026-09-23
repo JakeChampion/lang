@@ -3675,71 +3675,26 @@ func asmFcvtToInt(a *Assembler, ops []string, encD, encS func(rd, rn uint32) uin
 
 // asmCmn handles `cmn Xn, Xm` and `cmn Xn, #imm`.
 func asmCmn(a *Assembler, ops []string) error {
-	if len(ops) != 2 {
-		return fmt.Errorf("cmn expects 2 operands")
-	}
-	rn, err := parseReg(ops[0])
-	if err != nil {
-		return err
-	}
-	w := is32(ops[0])
-	if strings.HasPrefix(ops[1], "#") {
-		imm, err := parseImm(ops[1])
-		if err != nil {
-			return err
-		}
-		imm, add := addSubNegate(imm, true)
-		i12, sh12, ok := addSubImm12(imm)
-		if !ok {
-			return fmt.Errorf("cmn immediate %s out of range", ops[1])
-		}
-		if !add {
-			a.Emit(clearSF(CMPimm(rn, i12, sh12), w))
-			return nil
-		}
-		a.Emit(clearSF(CMNimm(rn, i12, sh12), w))
-		return nil
-	}
-	rm, err := parseReg(ops[1])
-	if err != nil {
-		return err
-	}
-	a.Emit(clearSF(CMN(rn, rm), w))
-	return nil
+	return asmCompareAlias(a, "adds", ops)
 }
 
 func asmCmp(a *Assembler, ops []string) error {
+	return asmCompareAlias(a, "subs", ops)
+}
+
+// asmCompareAlias assembles cmp / cmn as the flag-setting sub / add they
+// alias, with the zero register as the destination, so every operand form
+// (an immediate's explicit `lsl #12`, a shifted or extended register) is
+// the one add/sub reads rather than a subset of it.
+func asmCompareAlias(a *Assembler, mnem string, ops []string) error {
 	if len(ops) < 2 {
-		return fmt.Errorf("cmp expects 2 operands")
+		return fmt.Errorf("compare expects 2 operands")
 	}
-	rn, err := parseReg(ops[0])
-	if err != nil {
-		return err
+	zr := "xzr"
+	if is32(ops[0]) {
+		zr = "wzr"
 	}
-	w := is32(ops[0])
-	if strings.HasPrefix(ops[1], "#") {
-		imm, err := parseImm(ops[1])
-		if err != nil {
-			return err
-		}
-		imm, add := addSubNegate(imm, false)
-		i12, sh12, ok := addSubImm12(imm)
-		if !ok {
-			return fmt.Errorf("cmp immediate %s out of range", ops[1])
-		}
-		if add {
-			a.Emit(clearSF(CMNimm(rn, i12, sh12), w))
-			return nil
-		}
-		a.Emit(clearSF(CMPimm(rn, i12, sh12), w))
-		return nil
-	}
-	rm, err := parseReg(ops[1])
-	if err != nil {
-		return err
-	}
-	a.Emit(clearSF(CMPreg(rn, rm), w))
-	return nil
+	return asmAddSub(a, mnem, append([]string{zr}, ops...))
 }
 
 func one(ops []string, f func(string)) error {

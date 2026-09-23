@@ -419,10 +419,10 @@ function dyn_owned_error(f: ssasem.Func, owned: boolean[]): string {
     }
     return "";
 }
-function row(all: boolean[], bi: i32, n: i32): boolean[] {
+function live_out_row(flow: ssalive.Flow, bi: i32, n: i32): boolean[] {
     var out: boolean[] = [];
     var i: i32 = 0;
-    while (i < n) { out = out.append(all[bi * n + i]); i = i + 1; }
+    while (i < n) { out = out.append(ssalive.live_out_has(flow, bi, i)); i = i + 1; }
     return out;
 }
 function add_use(own live: boolean[], value: i32, deps: i32[][]): boolean[] {
@@ -557,7 +557,7 @@ function reads(a: ssasem.Analysis, arg: i32, w: i32): boolean {
 // instruction, by the terminator, or on the way out of the block.
 function used_after(f: ssasem.Func, a: ssasem.Analysis, bi: i32, pos: i32, w: i32): boolean {
     var b: ssa.SBlock = f.graph.blocks[bi];
-    if (a.flow.live_out[bi * f.graph.nvals + w]) { return true; }
+    if (ssalive.live_out_has(a.flow, bi, w)) { return true; }
     var i: i32 = pos + 1;
     while (i < b.insts.len()) {
         for arg in b.insts[i].args { if (reads(a, arg, w)) { return true; } }
@@ -608,7 +608,7 @@ function projection_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], d
     if (defs[root].kind_tag != 6 && !owned[root]) { return none; }
     if (projection(defs[root].kind_tag)) { return none; }
     var b: ssa.SBlock = f.graph.blocks[bi];
-    if (a.flow.live_out[bi * f.graph.nvals + root]) { return none; }
+    if (ssalive.live_out_has(a.flow, bi, root)) { return none; }
     var i: i32 = pos + 1;
     while (i < b.insts.len()) {
         var later: ssa.SInst = b.insts[i];
@@ -693,7 +693,7 @@ function tuple_take_field(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], 
     if (!ssasem.reference(f.values[ins.result])) { return none; }
     if (!owned[root] || !takeable_root(defs[root].kind_tag)) { return none; }
     var b: ssa.SBlock = f.graph.blocks[bi];
-    if (a.flow.live_out[bi * f.graph.nvals + root]) { return none; }
+    if (ssalive.live_out_has(a.flow, bi, root)) { return none; }
     var i: i32 = pos + 1;
     while (i < b.insts.len()) {
         var later: ssa.SInst = b.insts[i];
@@ -801,7 +801,7 @@ function outliving(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], held: 
     while (w < f.graph.nvals) {
         if (w != s && !out[w] && retainable_element(f, defs, w) && reads(a, w, s)) {
             var live: boolean = false;
-            if (si >= 0) { live = a.flow.live_in[si * f.graph.nvals + w]; } else { live = used_after(f, a, bi, pos, w); }
+            if (si >= 0) { live = ssalive.live_in_has(a.flow, si, w); } else { live = used_after(f, a, bi, pos, w); }
             if (live) { out = out.with(w, true); }
         }
         w = w + 1;
@@ -880,7 +880,7 @@ function payload_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs
     if (!is_union(f.values[root]) || option_layout(f, f.values[root])) { return none; }
     if (!owned[root] || projection(defs[root].kind_tag)) { return none; }
     var b: ssa.SBlock = f.graph.blocks[bi];
-    if (a.flow.live_out[bi * f.graph.nvals + root]) { return none; }
+    if (ssalive.live_out_has(a.flow, bi, root)) { return none; }
     var i: i32 = pos + 1;
     while (i < b.insts.len()) {
         var later: ssa.SInst = b.insts[i];
@@ -1056,7 +1056,7 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
     while (bi < f.graph.blocks.len()) {
         var b: ssa.SBlock = f.graph.blocks[bi];
         if (reachable[bi]) {
-            var live: boolean[] = row(analysis.flow.live_out, bi, f.graph.nvals);
+            var live: boolean[] = live_out_row(analysis.flow, bi, f.graph.nvals);
             if (b.term.kind_tag == 1) { live = add_use(live, b.term.value, analysis.dependencies); }
             if (b.term.kind_tag == 3) { live = add_use(live, b.term.cond, analysis.dependencies); }
             var pos: i32 = b.insts.len() - 1;
@@ -1099,7 +1099,7 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
                 var dead: boolean[] = bits(f.graph.nvals);
                 var vi: i32 = 0;
                 while (vi < f.graph.nvals) {
-                    if (analysis.flow.live_out[bi * f.graph.nvals + vi] && !analysis.flow.live_in[si * f.graph.nvals + vi]) { dead = dead.with(vi, true); }
+                    if (ssalive.live_out_has(analysis.flow, bi, vi) && !ssalive.live_in_has(analysis.flow, si, vi)) { dead = dead.with(vi, true); }
                     vi = vi + 1;
                 }
                 steps = steps.append(choose(step(b.id, edge_point(), target), edge_supplies(f, b, target, owned), dead, owned));
@@ -1123,11 +1123,11 @@ function read_error(state: boolean[], value: i32, owned: boolean[], deps: i32[][
     }
     return "";
 }
-function invariant(f: ssasem.Func, bi: i32, owned: boolean[], live_in: boolean[]): boolean[] {
+function invariant(f: ssasem.Func, bi: i32, owned: boolean[], flow: ssalive.Flow): boolean[] {
     var state: boolean[] = bits(f.graph.nvals);
     var i: i32 = 0;
     while (i < f.graph.nvals) {
-        if (owned[i] && live_in[bi * f.graph.nvals + i]) { state = state.with(i, true); }
+        if (owned[i] && ssalive.live_in_has(flow, bi, i)) { state = state.with(i, true); }
         i = i + 1;
     }
     for ins in f.graph.blocks[bi].insts {
@@ -1263,13 +1263,13 @@ function verify_edge(f: ssasem.Func, b: ssa.SBlock, target: i32, p: Plan, state:
     var si: i32 = block_index(f.graph, target);
     var entered: Ledger = enter_phis(f.graph.blocks[si], done.bits, owned);
     if (!entered.ok) { return entered.why; }
-    if (!same_bits(entered.bits, invariant(f, si, owned, analysis.flow.live_in))) { return "edge unit invariant mismatch"; }
+    if (!same_bits(entered.bits, invariant(f, si, owned, analysis.flow))) { return "edge unit invariant mismatch"; }
     return "";
 }
 
 function verify_block(f: ssasem.Func, bi: i32, p: Plan, owned: boolean[], analysis: ssasem.Analysis): ReplayProgress {
     var b: ssa.SBlock = f.graph.blocks[bi];
-    var state: boolean[] = invariant(f, bi, owned, analysis.flow.live_in);
+    var state: boolean[] = invariant(f, bi, owned, analysis.flow);
     var at: i32 = find_step(p, b.id, entry_point(), 0 - 1);
     if (at < 0) { return progress_error("missing or duplicate entry step"); }
     var done: Ledger = replay(state, p.steps[at], [], 0 - 1, owned, analysis.dependencies);

@@ -4,18 +4,55 @@
 // Keep phi inputs on predecessor edges; do not add synthetic graph operands.
 import "./ssa";
 
-// Matrices are indexed by block POSITION * nvals + value id. Block ids need
-// not be contiguous after CFG simplification. Flat scalar buffers avoid a
-// separately allocated row for every block or dataflow iteration.
+// The sets are bit rows, one per block POSITION (block ids need not be
+// contiguous after CFG simplification), `words` i64s each, value id v at bit
+// v % 64 of word v / 64. Read them through live_in_has / live_out_has.
 pub struct Flow {
     ok: boolean,
     why: string,
-    live_in: boolean[],
-    live_out: boolean[]
+    words: i32,
+    live_in: i64[],
+    live_out: i64[]
 }
 
 function failed(why: string): Flow {
-    return Flow { ok: false, why: why, live_in: [], live_out: [] };
+    return Flow { ok: false, why: why, words: 0, live_in: [], live_out: [] };
+}
+
+pub function live_in_has(fl: Flow, bi: i32, v: i32): boolean { return bit_has(fl.live_in, bi * fl.words, v); }
+pub function live_out_has(fl: Flow, bi: i32, v: i32): boolean { return bit_has(fl.live_out, bi * fl.words, v); }
+
+// live_in_bits / live_out_bits spell a set out as one flag per block * nvals,
+// for a reader that wants every bit.
+pub function live_in_bits(fl: Flow, nblocks: i32, nvals: i32): boolean[] { return spelled(fl.live_in, fl.words, nblocks, nvals); }
+pub function live_out_bits(fl: Flow, nblocks: i32, nvals: i32): boolean[] { return spelled(fl.live_out, fl.words, nblocks, nvals); }
+
+function spelled(rows: i64[], words: i32, nblocks: i32, nvals: i32): boolean[] {
+    var out: boolean[] = [];
+    var bi: i32 = 0;
+    while (bi < nblocks) {
+        var v: i32 = 0;
+        while (v < nvals) { out = out.append(bit_has(rows, bi * words, v)); v = v + 1; }
+        bi = bi + 1;
+    }
+    return out;
+}
+
+function bit_has(rows: i64[], base: i32, v: i32): boolean {
+    if (v < 0 || rows.len() == 0) { return false; }
+    return ((rows[base + v / 64] >> ((v % 64) as i64)) & 1i64) != 0i64;
+}
+
+function bit_set(own rows: i64[], base: i32, v: i32): i64[] {
+    var w: i32 = base + v / 64;
+    return rows.with(w, rows[w] | (1i64 << ((v % 64) as i64)));
+}
+
+function words_of(n: i32): i64[] {
+    var out: i64[] = [];
+    var i: i32 = 0;
+    while (i < n) { out = out.append(0i64); i = i + 1; }
+    return out;
 }
 
 function zeroes(n: i32): boolean[] {
@@ -102,18 +139,18 @@ pub function input_error(f: ssa.SFunc, dependencies: i32[][]): string {
     return "";
 }
 
-function add_use(own bits: boolean[], base: i32, value: i32, dependencies: i32[][]): boolean[] {
+function add_use(own bits: i64[], base: i32, value: i32, dependencies: i32[][]): i64[] {
     if (value < 0) { return bits; }
-    bits = bits.with(base + value, true);
-    for dep in dependencies[value] { bits = bits.with(base + dep, true); }
+    bits = bit_set(bits, base, value);
+    for dep in dependencies[value] { bits = bit_set(bits, base, dep); }
     return bits;
 }
 
-function add_local_use(own bits: boolean[], defs: boolean[], base: i32, value: i32, dependencies: i32[][]): boolean[] {
+function add_local_use(own bits: i64[], defs: i64[], base: i32, value: i32, dependencies: i32[][]): i64[] {
     if (value < 0) { return bits; }
-    if (!defs[base + value]) { bits = bits.with(base + value, true); }
+    if (!bit_has(defs, base, value)) { bits = bit_set(bits, base, value); }
     for dep in dependencies[value] {
-        if (!defs[base + dep]) { bits = bits.with(base + dep, true); }
+        if (!bit_has(defs, base, dep)) { bits = bit_set(bits, base, dep); }
     }
     return bits;
 }
@@ -124,73 +161,78 @@ function add_local_use(own bits: boolean[], defs: boolean[], base: i32, value: i
 pub function compute(f: ssa.SFunc, dependencies: i32[][]): Flow {
     var why: string = input_error(f, dependencies);
     if (why != "") { return failed(why); }
-    var size: i32 = f.blocks.len() * f.nvals;
-    var uses: boolean[] = zeroes(size);
-    var defs: boolean[] = zeroes(size);
+    var words: i32 = (f.nvals + 63) / 64;
+    var nb: i32 = f.blocks.len();
+    var at: i32[] = position_of(f);
+    var uses: i64[] = words_of(nb * words);
+    var defs: i64[] = words_of(nb * words);
     var bi: i32 = 0;
-    while (bi < f.blocks.len()) {
+    while (bi < nb) {
         var b: ssa.SBlock = f.blocks[bi];
-        var base: i32 = bi * f.nvals;
+        var base: i32 = bi * words;
         for ins in b.insts {
             if (ins.kind_tag != 8) {
                 for arg in ins.args { uses = add_local_use(uses, defs, base, arg, dependencies); }
             }
-            if (ins.result >= 0) { defs = defs.with(base + ins.result, true); }
+            if (ins.result >= 0) { defs = bit_set(defs, base, ins.result); }
         }
         if (b.term.kind_tag == 1) { uses = add_local_use(uses, defs, base, b.term.value, dependencies); }
         if (b.term.kind_tag == 3) { uses = add_local_use(uses, defs, base, b.term.cond, dependencies); }
         bi = bi + 1;
     }
-    var live_in: boolean[] = zeroes(size);
-    var live_out: boolean[] = zeroes(size);
+    var live_in: i64[] = words_of(nb * words);
+    var live_out: i64[] = words_of(nb * words);
     var changed: boolean = true;
     while (changed) {
         changed = false;
-        bi = f.blocks.len() - 1;
+        bi = nb - 1;
         while (bi >= 0) {
             var b: ssa.SBlock = f.blocks[bi];
-            var base: i32 = bi * f.nvals;
+            var base: i32 = bi * words;
+            var out: i64[] = live_out;
             var si: i32 = 0;
             while (si < 2) {
                 var target: i32 = successor(b.term, si);
                 if (target >= 0) {
-                    var sb: i32 = block_index(f, target);
-                    var sbase: i32 = sb * f.nvals;
-                    var value: i32 = 0;
-                    while (value < f.nvals) {
-                        if (live_in[sbase + value] && !live_out[base + value]) {
-                            live_out = live_out.with(base + value, true);
-                            changed = true;
-                        }
-                        value = value + 1;
+                    var sb: i32 = at[target];
+                    var w: i32 = 0;
+                    while (w < words) {
+                        out = out.with(base + w, out[base + w] | live_in[sb * words + w]);
+                        w = w + 1;
                     }
                     // Phi arguments belong to this exact predecessor edge.
                     // The phi result is a definition in the successor, so its
                     // normal live-in set already excludes that result.
                     var pi: i32 = pred_index(f.blocks[sb], b.id);
                     for ins in f.blocks[sb].insts {
-                        if (ins.kind_tag == 8) {
-                            var arg: i32 = ins.args[pi];
-                            if (!live_out[base + arg]) { changed = true; }
-                            for dep in dependencies[arg] {
-                                if (!live_out[base + dep]) { changed = true; }
-                            }
-                            live_out = add_use(live_out, base, arg, dependencies);
-                        }
+                        if (ins.kind_tag == 8) { out = add_use(out, base, ins.args[pi], dependencies); }
                     }
                 }
                 si = si + 1;
             }
-            var value: i32 = 0;
-            while (value < f.nvals) {
-                if ((uses[base + value] || (live_out[base + value] && !defs[base + value])) && !live_in[base + value]) {
-                    live_in = live_in.with(base + value, true);
-                    changed = true;
-                }
-                value = value + 1;
+            var w: i32 = 0;
+            while (w < words) {
+                if (out[base + w] != live_out[base + w]) { changed = true; }
+                var inw: i64 = uses[base + w] | (out[base + w] & (defs[base + w] ^ (0i64 - 1i64)));
+                if (inw != live_in[base + w]) { live_in = live_in.with(base + w, inw); changed = true; }
+                w = w + 1;
             }
+            live_out = out;
             bi = bi - 1;
         }
     }
-    return Flow { ok: true, why: "", live_in: live_in, live_out: live_out };
+    return Flow { ok: true, why: "", words: words, live_in: live_in, live_out: live_out };
+}
+
+// position_of maps a block id to its position in f.blocks, -1 for an id no
+// block carries.
+function position_of(f: ssa.SFunc): i32[] {
+    var top: i32 = 0;
+    for b in f.blocks { if (b.id > top) { top = b.id; } }
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i <= top) { out = out.append(0 - 1); i = i + 1; }
+    i = 0;
+    while (i < f.blocks.len()) { out = out.with(f.blocks[i].id, i); i = i + 1; }
+    return out;
 }

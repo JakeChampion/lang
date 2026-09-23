@@ -149,7 +149,7 @@ pub function is_map_iter_op(kind: i32): boolean {
 pub function refused_analysis(why: string): Analysis { return failed(why); }
 
 function failed(why: string): Analysis {
-    return Analysis { ok: false, why: why, dependencies: [], flow: ssalive.Flow { ok: false, why: why, live_in: [], live_out: [] } };
+    return Analysis { ok: false, why: why, dependencies: [], flow: ssalive.Flow { ok: false, why: why, words: 0, live_in: [], live_out: [] } };
 }
 
 function empty_dependencies(n: i32): i32[][] {
@@ -1822,7 +1822,7 @@ struct Known { held: string[], gone: string[] }
 // What the tests of `value` have settled on every way into block `bi`. An
 // edge settles nothing unless it is its successor's only way in, and unless
 // that successor dominates `bi`.
-function settled(f: Func, value: i32, bi: i32, dom: boolean[], defs: ssa.SInst[]): Known {
+function settled(f: Func, value: i32, bi: i32, dom: ssadeps.Dom, defs: ssa.SInst[]): Known {
     var held: string[] = [];
     var gone: string[] = [];
     var n: i32 = f.graph.blocks.len();
@@ -1833,9 +1833,9 @@ function settled(f: Func, value: i32, bi: i32, dom: boolean[], defs: ssa.SInst[]
             var test: ssa.SInst = defs[b.term.cond];
             if (test.kind_tag == variant_is() && test.args[0] == value) {
                 var ti: i32 = sole_successor(f, b.term.t, b.id);
-                if (ti >= 0 && dom[bi * n + ti]) { held = held.append(test.str); }
+                if (ti >= 0 && ssadeps.dom_holds(dom, bi, ti)) { held = held.append(test.str); }
                 var fi: i32 = sole_successor(f, b.term.f, b.id);
-                if (fi >= 0 && dom[bi * n + fi]) { gone = gone.append(test.str); }
+                if (fi >= 0 && ssadeps.dom_holds(dom, bi, fi)) { gone = gone.append(test.str); }
             }
         }
         pi = pi + 1;
@@ -1852,7 +1852,7 @@ function names_has(names: string[], name: string): boolean {
 // every OTHER variant its enum declares has been refuted, since a value is
 // one of them. The second is what a total match's last arm rests on: it
 // carries no test of its own.
-function guarded(f: Func, ins: ssa.SInst, bi: i32, dom: boolean[], defs: ssa.SInst[]): boolean {
+function guarded(f: Func, ins: ssa.SInst, bi: i32, dom: ssadeps.Dom, defs: ssa.SInst[]): boolean {
     var value: i32 = ins.args[0];
     var known: Known = settled(f, value, bi, dom, defs);
     if (names_has(known.held, ins.str)) { return true; }
@@ -1869,7 +1869,7 @@ function guarded(f: Func, ins: ssa.SInst, bi: i32, dom: boolean[], defs: ssa.SIn
 // what a test settled holds for every later use of the value.
 function guard_error(f: Func): string {
     var reachable: boolean[] = ssadeps.reachable_blocks(f.graph);
-    var dom: boolean[] = ssadeps.dominates(f.graph);
+    var dom: ssadeps.Dom = ssadeps.dominates(f.graph);
     var defs: ssa.SInst[] = definitions(f);
     var bi: i32 = 0;
     while (bi < f.graph.blocks.len()) {
