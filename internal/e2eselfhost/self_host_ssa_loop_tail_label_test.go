@@ -36,7 +36,8 @@ import (
 // produced — appended at the `br` and leaving the loop's `end` with nothing to
 // append — and no duplicate appears at all. So the obvious spelling of this
 // program covers nothing; do not "simplify" it to one.
-const loopTailLabelProgram = `function walk(n: i32, seen: i32): i32 {
+const loopTailLabelProgram = `@noinline
+function walk(n: i32, seen: i32): i32 {
     if (n > 0) { return walk(n - 1, seen + 1); }
     return seen;
 }

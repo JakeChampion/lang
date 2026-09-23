@@ -44,6 +44,14 @@ func catCases(t *testing.T) []invocation {
 	// Every byte class -v distinguishes: printable, tab, a control,
 	// DEL, then the same four with the high bit set, plus CR and ESC.
 	ctrl := catFile(t, dir, "ctrl", "x\ty\x01\x7f\x80\x89\x8a\x9f\xa0\xfe\xff\r\x1b\n\x00\n")
+	// -E shows a CR that ends a line as ^M, and only that CR: across a
+	// file boundary and a read boundary it waits on the next byte, and one
+	// that ends the input is copied as it is.
+	crlf := catFile(t, dir, "crlf", "a\r\nb\r\r\nc\rd\n\r\n")
+	crEnd := catFile(t, dir, "crend", "a\r")
+	nlStart := catFile(t, dir, "nlstart", "\nb\n")
+	crSplit := catFile(t, dir, "crsplit", strings.Repeat("x", 131071)+"\r\ny\r\n")
+	crBig := catFile(t, dir, "crbig", strings.Repeat("line\r\n", 30000))
 	spaced := catFile(t, dir, "f name", "x\n")
 	quoted := catFile(t, dir, "f'n", "x\n")
 	raw := rawByteFile(t, dir, "x\n")
@@ -125,6 +133,16 @@ func catCases(t *testing.T) []invocation {
 		{name: "nonprinting with numbers", args: []string{"-nv", ctrl}},
 		{name: "show all a large file", args: []string{"-A", big}},
 		{name: "show ends an unterminated line", args: []string{"-E", nonl}},
+		{name: "show ends a CRLF line", args: []string{"-E", crlf}},
+		{name: "show ends a CRLF line with tabs", args: []string{"-ET", crlf}},
+		{name: "show ends a CRLF line with numbers", args: []string{"-En", crlf}},
+		{name: "show ends a CRLF line with v", args: []string{"-vE", crlf}},
+		{name: "show ends a CR across files", args: []string{"-E", crEnd, nlStart}},
+		{name: "show ends a CR across files with numbers", args: []string{"-En", crEnd, nlStart}},
+		{name: "show ends a CR that ends the input", args: []string{"-E", crEnd}},
+		{name: "show ends a CR across a read", args: []string{"-E", crSplit}},
+		{name: "show ends a large CRLF file", args: []string{"-E", crBig}},
+		{name: "show ends a CRLF stdin", args: []string{"-E"}, stdin: "p\r\nq\r"},
 		{name: "high bytes", args: []string{"-v"}, stdin: "\x80\x81\x9f\xa0\xa1\xfe\xff"},
 		{name: "a NUL", args: []string{"-v"}, stdin: "\x00\n"},
 		{name: "a tab under v alone", args: []string{"-v"}, stdin: "\t\n"},

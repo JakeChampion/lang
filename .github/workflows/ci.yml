@@ -243,15 +243,17 @@ jobs:
                 const tree = (await github.rest.git.getCommit({ owner, repo, commit_sha: sha })).data.tree.sha;
                 const prs = (await github.rest.repos.listPullRequestsAssociatedWithCommit({ owner, repo, commit_sha: sha }))
                   .data.filter((p) => p.merged_at && p.base.ref === "main");
-                if (prs.length === 0) return null;
+                if (prs.length === 0) return { reason: "no merged pull request is associated with this commit" };
                 const suite = Buffer.from((await github.rest.repos.getContent({
                   owner, repo, path: ".github/workflows/ci-suite.yml", ref: sha,
                 })).data.content, "base64").toString();
                 const display = {};
                 for (const m of suite.matchAll(/^  ([a-z0-9_-]+):\n    name: (.+)$/gm)) display[m[1]] = m[2].trim();
+                let reason = `the pushed tree differs from the head of #${prs.map((p) => p.number).join(", #")}`;
                 for (const pr of prs) {
                   const head = (await github.rest.git.getCommit({ owner, repo, commit_sha: pr.head.sha })).data.tree.sha;
                   if (head !== tree) continue;
+                  reason = `#${pr.number}'s head has no successful CI run`;
                   const { data } = await github.rest.actions.listWorkflowRuns({
                     owner, repo, workflow_id: "ci.yml", event: "pull_request", head_sha: pr.head.sha, status: "success",
                   });
@@ -266,7 +268,7 @@ jobs:
                     return { pr: pr.number, run: run.id, lanes: passed };
                   }
                 }
-                return null;
+                return { reason };
               };
               let proven = null;
               if (context.eventName === "push" && files === null) {
@@ -276,7 +278,8 @@ jobs:
                   core.warning(`every lane runs: could not check the merged PR's run (${e.message})`);
                 }
               }
-              const provenOff = proven ? proven.lanes.filter((l) => l in out && !alwaysOnMain.includes(l)) : [];
+              if (proven && proven.reason) why = `a push runs every lane: ${proven.reason}`;
+              const provenOff = proven && proven.lanes ? proven.lanes.filter((l) => l in out && !alwaysOnMain.includes(l)) : [];
               for (const l of provenOff) out[l] = false;
               core.setOutput("lanes", JSON.stringify(out));
 

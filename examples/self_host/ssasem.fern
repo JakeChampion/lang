@@ -134,6 +134,11 @@ pub function mapiter_has_next(): i32 { return 0 - 42; }
 pub function mapiter_key(): i32 { return 0 - 43; }
 pub function mapiter_value(): i32 { return 0 - 44; }
 pub function mapiter_advance(): i32 { return 0 - 45; }
+// A `dyn Trait` value is the struct or enum box it was widened from, whose
+// shape at offset 0 is what a dispatch reads. The widening borrows that box,
+// and so does every holder of the result: its release would have to dispatch
+// on the shape to find the children, so a dyn value is lent and never owned.
+pub function dyn_up(): i32 { return 0 - 46; }
 pub function is_map_iter_op(kind: i32): boolean {
     return kind == map_iter() || kind == mapiter_has_next() || kind == mapiter_key()
         || kind == mapiter_value() || kind == mapiter_advance();
@@ -144,7 +149,7 @@ pub function is_map_iter_op(kind: i32): boolean {
 pub function refused_analysis(why: string): Analysis { return failed(why); }
 
 function failed(why: string): Analysis {
-    return Analysis { ok: false, why: why, dependencies: [], flow: ssalive.Flow { ok: false, why: why, live_in: [], live_out: [] } };
+    return Analysis { ok: false, why: why, dependencies: [], flow: ssalive.Flow { ok: false, why: why, words: 0, live_in: [], live_out: [] } };
 }
 
 function empty_dependencies(n: i32): i32[][] {
@@ -257,6 +262,7 @@ pub function reference(t: typeinfo.Type): boolean {
     if let typeinfo.TypeUnion(_) = t { return true; }
     if let typeinfo.TypeFunc(_) = t { return true; }
     if let typeinfo.TypeMap(_) = t { return true; }
+    if let typeinfo.TypeDyn(_) = t { return true; }
     return false;
 }
 
@@ -302,6 +308,49 @@ pub function is_char(t: typeinfo.Type): boolean {
 }
 
 // A function value: the env box a closure is carried in.
+pub function is_dyn(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeDyn(_) = t { return true; }
+    return false;
+}
+
+// A method call on a dyn receiver names its contract `dyn <method>|<traits>`,
+// a spelling no declaration can take, whose tail is the tag `ir.op_dyn_dispatch`
+// carries. The contract is the implementations' shared signature with the dyn
+// type at the receiver.
+pub function dyn_call_name(method: string, traits: string[]): string {
+    var out: string = "dyn " + method;
+    var i: i32 = 0;
+    while (i < traits.len()) {
+        if (i == 0) { out = out + "|"; } else { out = out + ","; }
+        out = out + traits[i];
+        i = i + 1;
+    }
+    return out;
+}
+pub function is_dyn_call(name: string): boolean { return name.len() > 4 && slice_unchecked(name, 0, 4) == "dyn "; }
+
+function dyn_call_bar(name: string): i32 {
+    var i: i32 = 4;
+    while (i < name.len() && name[i] != b'|') { i = i + 1; }
+    return i;
+}
+
+pub function dyn_call_method(name: string): string { return slice_unchecked(name, 4, dyn_call_bar(name)) + ""; }
+
+pub function dyn_call_traits(name: string): string[] {
+    var out: string[] = [];
+    var start: i32 = dyn_call_bar(name) + 1;
+    var k: i32 = start;
+    while (k <= name.len()) {
+        if (k == name.len() || name[k] == b',') {
+            if (k > start) { out = out.append(slice_unchecked(name, start, k) + ""); }
+            start = k + 1;
+        }
+        k = k + 1;
+    }
+    return out;
+}
+
 pub function is_func(t: typeinfo.Type): boolean {
     if let typeinfo.TypeFunc(_) = t { return true; }
     return false;
@@ -681,6 +730,17 @@ function widening_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string 
     return "";
 }
 
+// A widening to dyn keeps the box, whose shape the dispatch reads, so the
+// operand is a record or an enum value.
+function dyn_widening_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 1) { return "dyn widening arity"; }
+    if (!is_dyn(result)) { return "dyn widening type"; }
+    var from: typeinfo.Type = f.values[ins.args[0]];
+    if let typeinfo.TypeStruct(_) = from { return ""; }
+    if let typeinfo.TypeUnion(_) = from { return ""; }
+    return "dyn widening operand";
+}
+
 function narrowing_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.args.len() != 1) { return "variant narrowing arity"; }
     var whole: typeinfo.Type = f.values[ins.args[0]];
@@ -760,6 +820,7 @@ function variant_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.kind_tag == variant_new()) { return variant_construction_error(ins, f, result); }
     if (ins.kind_tag == variant_is()) { return variant_test_error(ins, f, result); }
     if (ins.kind_tag == variant_up()) { return widening_error(ins, f, result); }
+    if (ins.kind_tag == dyn_up()) { return dyn_widening_error(ins, f, result); }
     if (ins.kind_tag == str_as()) { return retag_error(ins, f, result); }
     if (ins.kind_tag == variant_as()) { return narrowing_error(ins, f, result); }
     return variant_projection_error(ins, f, result);
@@ -1055,7 +1116,7 @@ function map_operand_error(m: typeinfo.Type, key: typeinfo.Type, value: typeinfo
 
 function is_variant_op(kind: i32): boolean {
     return kind == variant_new() || kind == variant_is() || kind == variant_get()
-        || kind == variant_up() || kind == variant_as() || kind == str_as();
+        || kind == variant_up() || kind == variant_as() || kind == str_as() || kind == dyn_up();
 }
 
 // A variant's field, and a narrowing to a variant, exist only while the value
@@ -1304,6 +1365,7 @@ function call_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (at < 0) { return "missing call contract"; }
     var c: Contract = f.calls[at];
     if (ins.args.len() != c.params.len()) { return "call arity"; }
+    if (is_dyn_call(ins.str) && (c.params.len() == 0 || !is_dyn(c.params[0]))) { return "dyn call receiver type"; }
     var i: i32 = 0;
     while (i < ins.args.len()) {
         if (!semtypes.equal(c.params[i], f.values[ins.args[i]])) { return "call argument type"; }
@@ -1585,13 +1647,41 @@ function nests_func(t: typeinfo.Type): boolean {
 
 function holds_func(t: typeinfo.Type): boolean { return is_func(t) || nests_func(t); }
 
+// A dyn value is lent, so nothing that owns its contents may hold one: not a
+// container's element, a builtin union's payload, nor a cell's slot.
+function nests_dyn(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeArray(a) = t { return holds_dyn(a.elem); }
+    if let typeinfo.TypeTuple(tup) = t {
+        for e in tup.elements { if (holds_dyn(e)) { return true; } }
+    }
+    if let typeinfo.TypeMap(m) = t { return holds_dyn(m.key) || holds_dyn(m.value); }
+    if let typeinfo.TypeStruct(r) = t {
+        for a in r.args { if (holds_dyn(a)) { return true; } }
+    }
+    if let typeinfo.TypeUnion(u) = t {
+        for a in u.args { if (holds_dyn(a)) { return true; } }
+    }
+    return false;
+}
+
+function holds_dyn(t: typeinfo.Type): boolean { return is_dyn(t) || nests_dyn(t); }
+
 function type_placement_error(t: typeinfo.Type): string {
     if let typeinfo.TypeFunc(fn) = t { return func_shape_error(fn); }
     if (nests_func(t)) { return "function value is not an element"; }
+    if (nests_dyn(t)) { return "dyn value is not an element"; }
     return "";
 }
 
 function field_placement_error(f: Func): string {
+    for record in f.records {
+        for field in record.fields { if (holds_dyn(field.ty)) { return "dyn value is not a field"; } }
+    }
+    for e in f.enums {
+        for v in e.variants {
+            for field in v.fields { if (holds_dyn(field.ty)) { return "dyn value is not a field"; } }
+        }
+    }
     for record in f.records {
         var env: boolean = semtypes.is_env(record.ty);
         for field in record.fields {
@@ -1732,7 +1822,7 @@ struct Known { held: string[], gone: string[] }
 // What the tests of `value` have settled on every way into block `bi`. An
 // edge settles nothing unless it is its successor's only way in, and unless
 // that successor dominates `bi`.
-function settled(f: Func, value: i32, bi: i32, dom: boolean[], defs: ssa.SInst[]): Known {
+function settled(f: Func, value: i32, bi: i32, dom: ssadeps.Dom, defs: ssa.SInst[]): Known {
     var held: string[] = [];
     var gone: string[] = [];
     var n: i32 = f.graph.blocks.len();
@@ -1743,9 +1833,9 @@ function settled(f: Func, value: i32, bi: i32, dom: boolean[], defs: ssa.SInst[]
             var test: ssa.SInst = defs[b.term.cond];
             if (test.kind_tag == variant_is() && test.args[0] == value) {
                 var ti: i32 = sole_successor(f, b.term.t, b.id);
-                if (ti >= 0 && dom[bi * n + ti]) { held = held.append(test.str); }
+                if (ti >= 0 && ssadeps.dom_holds(dom, bi, ti)) { held = held.append(test.str); }
                 var fi: i32 = sole_successor(f, b.term.f, b.id);
-                if (fi >= 0 && dom[bi * n + fi]) { gone = gone.append(test.str); }
+                if (fi >= 0 && ssadeps.dom_holds(dom, bi, fi)) { gone = gone.append(test.str); }
             }
         }
         pi = pi + 1;
@@ -1762,7 +1852,7 @@ function names_has(names: string[], name: string): boolean {
 // every OTHER variant its enum declares has been refuted, since a value is
 // one of them. The second is what a total match's last arm rests on: it
 // carries no test of its own.
-function guarded(f: Func, ins: ssa.SInst, bi: i32, dom: boolean[], defs: ssa.SInst[]): boolean {
+function guarded(f: Func, ins: ssa.SInst, bi: i32, dom: ssadeps.Dom, defs: ssa.SInst[]): boolean {
     var value: i32 = ins.args[0];
     var known: Known = settled(f, value, bi, dom, defs);
     if (names_has(known.held, ins.str)) { return true; }
@@ -1779,7 +1869,7 @@ function guarded(f: Func, ins: ssa.SInst, bi: i32, dom: boolean[], defs: ssa.SIn
 // what a test settled holds for every later use of the value.
 function guard_error(f: Func): string {
     var reachable: boolean[] = ssadeps.reachable_blocks(f.graph);
-    var dom: boolean[] = ssadeps.dominates(f.graph);
+    var dom: ssadeps.Dom = ssadeps.dominates(f.graph);
     var defs: ssa.SInst[] = definitions(f);
     var bi: i32 = 0;
     while (bi < f.graph.blocks.len()) {
@@ -1802,7 +1892,7 @@ function guard_error(f: Func): string {
 function projects(kind: i32): boolean {
     return kind == 7 || kind == array_get() || kind == tuple_get() || kind == record_get()
         || kind == variant_get() || kind == variant_up() || kind == variant_as()
-        || kind == slice() || kind == str_as()
+        || kind == slice() || kind == str_as() || kind == dyn_up()
         || kind == map_iter() || kind == mapiter_key() || kind == mapiter_value();
 }
 

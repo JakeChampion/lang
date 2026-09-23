@@ -522,6 +522,10 @@ per-run `changes` filter and `ci-main.yml`'s coalescing already remove more,
 and the skip would need the PR run to have run every lane. Not worth its
 own machinery at that rate.
 
+The seventh change builds it anyway, per lane rather than all or nothing,
+which removes that last objection: a lane the PR run skipped still runs on
+main.
+
 ## Seventh change: split the long poles, and skip what a change cannot reach
 
 ### Splitting the longest jobs
@@ -538,7 +542,9 @@ it (35745901102, 35757937523):
 
 The macOS corpus halves took 429 s and 432 s; shard 1 also carried every
 other step, 250 s of them, which the next commit rebalances by moving the
-162-second self-host native step to shard 0. The ratchet moved to a Linux job
+162-second self-host native step to shard 0. On the first two main runs
+after the merge (35828177487, 35828545177) the two shards took 6.6 and 7.5
+minutes, then 8.0 and 8.2. The ratchet moved to a Linux job
 that reads both shard logs, and passed on its first run.
 
 The semantic whole-compiler job (11-12 minutes) was not split: it is a chain in
@@ -578,6 +584,13 @@ when its head's tree equals the pushed tree it skips each lane whose every job
 passed on the PR's successful run at that head. A lane the PR did not run
 still runs on main, and perf always does, since its main run records the perf
 history.
+
+On the first two main pushes after it merged, neither qualified: #10049's and
+#10059's heads were not level with main when they merged, so their trees differ
+from the pushed trees and every lane ran, as it should. The selector's log said
+only "a push runs every lane", which does not distinguish that from a failure
+to find the PR. It now names which of the three cases applied: no merged PR, a
+different tree, or no successful run at the PR's head.
 
 ### Review runs
 

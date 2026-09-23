@@ -1,0 +1,483 @@
+package e2e
+
+import (
+	"fmt"
+	"math/rand"
+	"strings"
+	"testing"
+)
+
+// buf_push_mapped(b, s, table) appends table[c] for each byte c of s, or c
+// itself when it is at or past the table's end; buf_push_filtered(b, s, drop)
+// appends each byte c whose drop[c] is zero, or that is past the table's end.
+// One corpus drives both: lengths across the unrolled loop's boundaries, a
+// full table, a short one, an empty one, NUL and high bytes, and pushes that
+// land after bytes already held and that outgrow the builder.
+
+func bufPushMappedRef(held string, s string, table []byte) string {
+	out := []byte(held)
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if int(c) < len(table) {
+			c = table[c]
+		}
+		out = append(out, c)
+	}
+	return string(out)
+}
+
+func bufPushFilteredRef(held string, s string, drop []byte) string {
+	out := []byte(held)
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if int(c) < len(drop) && drop[c] != 0 {
+			continue
+		}
+		out = append(out, c)
+	}
+	return string(out)
+}
+
+type bufMapCase struct {
+	held  string
+	s     string
+	table []byte
+}
+
+func bufMapCases() []bufMapCase {
+	rot := make([]byte, 256)
+	for i := range rot {
+		rot[i] = byte(i + 13)
+	}
+	digits := make([]byte, 256)
+	for i := range digits {
+		digits[i] = byte(i)
+	}
+	for c := '0'; c <= '9'; c++ {
+		digits[c] = byte('a' + c - '0')
+	}
+	short := []byte{'x', 'y', 'z', 0xff}
+	// Every other entry zero: half the bytes are kept by the filter, and the
+	// mapping sends odd bytes to 1.
+	alternate := make([]byte, 256)
+	for i := range alternate {
+		alternate[i] = byte(i % 2)
+	}
+
+	var out []bufMapCase
+	var all strings.Builder
+	for c := 0; c < 256; c++ {
+		all.WriteByte(byte(c))
+	}
+	for n := 0; n <= 40; n++ {
+		s := all.String()[200 : 200+n%56]
+		if n > 55 {
+			s = all.String()[:n]
+		}
+		out = append(out, bufMapCase{"", s, rot})
+		out = append(out, bufMapCase{"", all.String()[:n], short})
+		out = append(out, bufMapCase{"ab", strings.Repeat("0123456789", 4)[:n], digits})
+		out = append(out, bufMapCase{"", all.String()[n : 2*n+1], alternate})
+	}
+	out = append(out,
+		bufMapCase{"", all.String(), rot},
+		bufMapCase{"", all.String(), short},
+		bufMapCase{"", all.String(), []byte{}},
+		bufMapCase{"held", "\x00\x01\x02\x03", short},
+		bufMapCase{"", "\xff\xfe\x80\x00", rot},
+		bufMapCase{"", strings.Repeat("9876543210", 30), digits},
+		bufMapCase{strings.Repeat("h", 70), strings.Repeat("q7", 90), digits},
+	)
+	rng := rand.New(rand.NewSource(20260923))
+	for i := 0; i < 40; i++ {
+		n := rng.Intn(90)
+		var sb strings.Builder
+		for j := 0; j < n; j++ {
+			sb.WriteByte(byte(rng.Intn(256)))
+		}
+		table := rot
+		if i%3 == 1 {
+			table = short
+		} else if i%3 == 2 {
+			table = alternate
+		}
+		out = append(out, bufMapCase{strings.Repeat("p", rng.Intn(9)), sb.String(), table})
+	}
+	return out
+}
+
+// runBufPushMappedCorpus pushes every case through a builder that starts at
+// four bytes of capacity, so most pushes grow it, and prints each result as
+// its byte values. `builtin` names the kernel, buf_push_mapped or
+// buf_push_filtered.
+func runBufPushMappedCorpus(t *testing.T, builtin string, run func(t *testing.T, src string) string) {
+	t.Helper()
+	cases := bufMapCases()
+	tables := map[string]string{}
+	var decls, body strings.Builder
+	want := make([]string, 0, len(cases))
+	for _, c := range cases {
+		key := string(c.table)
+		name, ok := tables[key]
+		if !ok {
+			name = fmt.Sprintf("tab%d", len(tables))
+			tables[key] = name
+			decls.WriteString(fmt.Sprintf("    var %s: u8[] = %s;\n", name, fernSet(c.table)))
+		}
+		if c.held != "" {
+			body.WriteString(fmt.Sprintf("    buf_push(b, %s);\n", fernQuote(c.held)))
+		}
+		body.WriteString(fmt.Sprintf("    %s(b, %s, %s);\n    dump(buf_take(b));\n",
+			builtin, fernQuote(c.s), name))
+		ref := bufPushMappedRef(c.held, c.s, c.table)
+		if builtin == "buf_push_filtered" {
+			ref = bufPushFilteredRef(c.held, c.s, c.table)
+		}
+		var line strings.Builder
+		for i := 0; i < len(ref); i++ {
+			fmt.Fprintf(&line, "%d,", ref[i])
+		}
+		want = append(want, line.String()+".")
+	}
+
+	out := run(t, `import "std/i32";
+
+function dump(s: string): void {
+    var line: string = "";
+    var i: i32 = 0;
+    while (i < s.len()) {
+        line = line + (s[i] as i32).to_string() + ",";
+        i = i + 1;
+    }
+    write(line + ".\n");
+}
+
+function main(): i32 {
+    var b: usize = buf_new(4);
+`+decls.String()+body.String()+`    buf_free(b);
+    return 0;
+}
+`)
+	got := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(got) != len(want) {
+		t.Fatalf("printed %d lines, want %d — the program and the expectation "+
+			"list are out of step, so no comparison below is trustworthy",
+			len(got), len(want))
+	}
+	bad := 0
+	for i := range want {
+		if strings.TrimSpace(got[i]) != want[i] {
+			bad++
+			if bad <= 10 {
+				t.Errorf("held %q, %s(%q, %v):\n got %s\nwant %s",
+					cases[i].held, builtin, cases[i].s, cases[i].table, strings.TrimSpace(got[i]), want[i])
+			}
+		}
+	}
+	if bad > 10 {
+		t.Errorf("... and %d more mismatches (%d of %d)", bad-10, bad, len(want))
+	}
+	t.Logf("%d cases checked against the Go reference", len(want))
+}
+
+func TestInterpBufPushMapped(t *testing.T) {
+	runBufPushMappedCorpus(t, "buf_push_mapped", func(t *testing.T, src string) string {
+		out, exit := runInterpExitCode(t, src)
+		if exit != 0 {
+			t.Fatalf("program exited %d, want 0\noutput:\n%s", exit, out)
+		}
+		return out
+	})
+}
+
+func TestX86_64BufPushMapped(t *testing.T) {
+	runBufPushMappedCorpus(t, "buf_push_mapped", func(t *testing.T, src string) string {
+		out, exit := compileAndRunX86_64(t, src)
+		if exit != 0 {
+			t.Fatalf("program exited %d, want 0\noutput:\n%s", exit, out)
+		}
+		return out
+	})
+}
+
+func TestArm64BufPushMapped(t *testing.T) {
+	runBufPushMappedCorpus(t, "buf_push_mapped", func(t *testing.T, src string) string {
+		out, exit := compileAndRunArm64(t, src)
+		if exit != 0 {
+			t.Fatalf("program exited %d, want 0\noutput:\n%s", exit, out)
+		}
+		return out
+	})
+}
+
+func TestWASMBufPushMapped(t *testing.T) {
+	runBufPushMappedCorpus(t, "buf_push_mapped", func(t *testing.T, src string) string {
+		out, _ := invokeWasmtime(t, src)
+		lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+		if n := len(lines); n == 0 || strings.TrimSpace(lines[n-1]) != "0" {
+			t.Fatalf("main() result line = %q, want \"0\"", lines[len(lines)-1])
+		}
+		return strings.Join(lines[:len(lines)-1], "\n")
+	})
+}
+
+func TestX86_64SSABufPushMapped(t *testing.T) {
+	runBufPushMappedCorpus(t, "buf_push_mapped", x86_64SSACorpusRunner(t))
+}
+
+func TestArm64SSABufPushMapped(t *testing.T) {
+	runBufPushMappedCorpus(t, "buf_push_mapped", arm64SSACorpusRunner(t))
+}
+
+func TestInterpBufPushFiltered(t *testing.T) {
+	runBufPushMappedCorpus(t, "buf_push_filtered", func(t *testing.T, src string) string {
+		out, exit := runInterpExitCode(t, src)
+		if exit != 0 {
+			t.Fatalf("program exited %d, want 0\noutput:\n%s", exit, out)
+		}
+		return out
+	})
+}
+
+func TestX86_64BufPushFiltered(t *testing.T) {
+	runBufPushMappedCorpus(t, "buf_push_filtered", func(t *testing.T, src string) string {
+		out, exit := compileAndRunX86_64(t, src)
+		if exit != 0 {
+			t.Fatalf("program exited %d, want 0\noutput:\n%s", exit, out)
+		}
+		return out
+	})
+}
+
+func TestArm64BufPushFiltered(t *testing.T) {
+	runBufPushMappedCorpus(t, "buf_push_filtered", func(t *testing.T, src string) string {
+		out, exit := compileAndRunArm64(t, src)
+		if exit != 0 {
+			t.Fatalf("program exited %d, want 0\noutput:\n%s", exit, out)
+		}
+		return out
+	})
+}
+
+func TestWASMBufPushFiltered(t *testing.T) {
+	runBufPushMappedCorpus(t, "buf_push_filtered", func(t *testing.T, src string) string {
+		out, _ := invokeWasmtime(t, src)
+		lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+		if n := len(lines); n == 0 || strings.TrimSpace(lines[n-1]) != "0" {
+			t.Fatalf("main() result line = %q, want \"0\"", lines[len(lines)-1])
+		}
+		return strings.Join(lines[:len(lines)-1], "\n")
+	})
+}
+
+func TestX86_64SSABufPushFiltered(t *testing.T) {
+	runBufPushMappedCorpus(t, "buf_push_filtered", x86_64SSACorpusRunner(t))
+}
+
+func TestArm64SSABufPushFiltered(t *testing.T) {
+	runBufPushMappedCorpus(t, "buf_push_filtered", arm64SSACorpusRunner(t))
+}
+
+// buf_push_expanded(b, s, table) appends each byte c of s as the record at
+// table[c*8]: a length byte (above 7 counts as 7), then the bytes. A byte
+// whose record is not wholly inside the table is appended unchanged.
+func bufPushExpandedRef(held string, s string, table []byte) string {
+	out := []byte(held)
+	for i := 0; i < len(s); i++ {
+		c := int(s[i])
+		if c*8+8 > len(table) {
+			out = append(out, s[i])
+			continue
+		}
+		n := int(table[c*8])
+		if n > 7 {
+			n = 7
+		}
+		out = append(out, table[c*8+1:c*8+1+n]...)
+	}
+	return string(out)
+}
+
+// expandTable builds a table of records from a spelling per byte; a byte
+// with no spelling maps to itself.
+func expandTable(spell func(c int) string, records int) []byte {
+	t := make([]byte, records*8)
+	for c := 0; c < records; c++ {
+		s := spell(c)
+		t[c*8] = byte(len(s))
+		copy(t[c*8+1:c*8+8], s)
+	}
+	return t
+}
+
+type bufExpandCase struct {
+	held  string
+	s     string
+	table []byte
+}
+
+func bufExpandCases() []bufExpandCase {
+	// cat -A's spelling: ^X for a control, M- for a high byte, $ before a
+	// newline, and M-^? as the four-byte case.
+	catA := expandTable(func(c int) string {
+		if c == '\n' {
+			return "$\n"
+		}
+		out := ""
+		if c >= 128 {
+			out = "M-"
+			c -= 128
+		}
+		switch {
+		case c < 32:
+			return out + "^" + string(rune(c+64))
+		case c == 127:
+			return out + "^?"
+		}
+		return out + string(rune(c))
+	}, 256)
+	// Lengths past seven count as seven: the record's own eight bytes.
+	long := expandTable(func(c int) string { return "abcdefg" }, 256)
+	for c := 0; c < 256; c += 3 {
+		long[c*8] = byte(8 + c%200)
+	}
+	// Three whole records and a partial fourth: bytes 0..2 expand, the rest
+	// pass through.
+	short := append(expandTable(func(c int) string { return strings.Repeat("<", c+1) }, 3), 5, 'x', 'y')
+	var all strings.Builder
+	for c := 0; c < 256; c++ {
+		all.WriteByte(byte(c))
+	}
+	var out []bufExpandCase
+	for n := 0; n <= 40; n++ {
+		out = append(out,
+			bufExpandCase{"", all.String()[256-n:], catA},
+			bufExpandCase{"hd", all.String()[:n], short},
+			bufExpandCase{"", all.String()[n : 2*n], long},
+		)
+	}
+	out = append(out,
+		bufExpandCase{"", all.String(), catA},
+		bufExpandCase{"", all.String(), long},
+		bufExpandCase{"", all.String(), short},
+		bufExpandCase{"", all.String(), []byte{}},
+		bufExpandCase{"", strings.Repeat("line one\n\tx\x7f\xff\n", 40), catA},
+		bufExpandCase{strings.Repeat("p", 70), strings.Repeat("\x00\x01\x02", 50), short},
+	)
+	return out
+}
+
+func runBufPushExpandedCorpus(t *testing.T, run func(t *testing.T, src string) string) {
+	t.Helper()
+	cases := bufExpandCases()
+	tables := map[string]string{}
+	var decls, body strings.Builder
+	want := make([]string, 0, len(cases))
+	for _, c := range cases {
+		key := string(c.table)
+		name, ok := tables[key]
+		if !ok {
+			name = fmt.Sprintf("tab%d", len(tables))
+			tables[key] = name
+			decls.WriteString(fmt.Sprintf("    var %s: u8[] = %s;\n", name, fernSet(c.table)))
+		}
+		if c.held != "" {
+			body.WriteString(fmt.Sprintf("    buf_push(b, %s);\n", fernQuote(c.held)))
+		}
+		body.WriteString(fmt.Sprintf("    buf_push_expanded(b, %s, %s);\n    dump(buf_take(b));\n",
+			fernQuote(c.s), name))
+		ref := bufPushExpandedRef(c.held, c.s, c.table)
+		var line strings.Builder
+		for i := 0; i < len(ref); i++ {
+			fmt.Fprintf(&line, "%d,", ref[i])
+		}
+		want = append(want, line.String()+".")
+	}
+	out := run(t, `import "std/i32";
+
+function dump(s: string): void {
+    var line: string = "";
+    var i: i32 = 0;
+    while (i < s.len()) {
+        line = line + (s[i] as i32).to_string() + ",";
+        i = i + 1;
+    }
+    write(line + ".\n");
+}
+
+function main(): i32 {
+    var b: usize = buf_new(4);
+`+decls.String()+body.String()+`    buf_free(b);
+    return 0;
+}
+`)
+	got := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(got) != len(want) {
+		t.Fatalf("printed %d lines, want %d — the program and the expectation "+
+			"list are out of step, so no comparison below is trustworthy",
+			len(got), len(want))
+	}
+	bad := 0
+	for i := range want {
+		if strings.TrimSpace(got[i]) != want[i] {
+			bad++
+			if bad <= 10 {
+				t.Errorf("held %q, buf_push_expanded(%q):\n got %s\nwant %s",
+					cases[i].held, cases[i].s, strings.TrimSpace(got[i]), want[i])
+			}
+		}
+	}
+	if bad > 10 {
+		t.Errorf("... and %d more mismatches (%d of %d)", bad-10, bad, len(want))
+	}
+	t.Logf("%d cases checked against the Go reference", len(want))
+}
+
+func TestInterpBufPushExpanded(t *testing.T) {
+	runBufPushExpandedCorpus(t, func(t *testing.T, src string) string {
+		out, exit := runInterpExitCode(t, src)
+		if exit != 0 {
+			t.Fatalf("program exited %d, want 0\noutput:\n%s", exit, out)
+		}
+		return out
+	})
+}
+
+func TestX86_64BufPushExpanded(t *testing.T) {
+	runBufPushExpandedCorpus(t, func(t *testing.T, src string) string {
+		out, exit := compileAndRunX86_64(t, src)
+		if exit != 0 {
+			t.Fatalf("program exited %d, want 0\noutput:\n%s", exit, out)
+		}
+		return out
+	})
+}
+
+func TestArm64BufPushExpanded(t *testing.T) {
+	runBufPushExpandedCorpus(t, func(t *testing.T, src string) string {
+		out, exit := compileAndRunArm64(t, src)
+		if exit != 0 {
+			t.Fatalf("program exited %d, want 0\noutput:\n%s", exit, out)
+		}
+		return out
+	})
+}
+
+func TestWASMBufPushExpanded(t *testing.T) {
+	runBufPushExpandedCorpus(t, func(t *testing.T, src string) string {
+		out, _ := invokeWasmtime(t, src)
+		lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+		if n := len(lines); n == 0 || strings.TrimSpace(lines[n-1]) != "0" {
+			t.Fatalf("main() result line = %q, want \"0\"", lines[len(lines)-1])
+		}
+		return strings.Join(lines[:len(lines)-1], "\n")
+	})
+}
+
+func TestX86_64SSABufPushExpanded(t *testing.T) {
+	runBufPushExpandedCorpus(t, x86_64SSACorpusRunner(t))
+}
+
+func TestArm64SSABufPushExpanded(t *testing.T) {
+	runBufPushExpandedCorpus(t, arm64SSACorpusRunner(t))
+}

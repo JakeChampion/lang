@@ -4053,9 +4053,25 @@ function map_key_int_evidence(k: ast.Expr, s: LowerState): boolean {
             if (is_int_irtag(kix.ty)) { return true; }
             return arr_elem_is_int(kix.array, s);
         },
+        // Arithmetic and bitwise ops are integers when an operand is; a string
+        // `+` answered expr_is_str above.
+        ast.ExprBinary(kb) => {
+            if (map_key_bool_op(kb.op)) { return false; }
+            return map_key_int_evidence(kb.left, s) || map_key_int_evidence(kb.right, s);
+        },
+        ast.ExprUnary(ku) => {
+            if (ku.op != "-") { return false; }
+            return map_key_int_evidence(ku.operand, s);
+        },
         _ => { return false; }
     }
     return false;
+}
+
+// map_key_bool_op reports a binary op whose result is a boolean whatever its
+// operands are.
+function map_key_bool_op(op: string): boolean {
+    return op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=" || op == "&&" || op == "||";
 }
 
 // arr_elem_is_int reports POSITIVE evidence that indexing `a` reads an INTEGER
@@ -4353,23 +4369,6 @@ function map_read_aliases_arr_value(fa: ast.ExprFieldAccess, nargs: i32, s: Lowe
     if (fa.field == "get_or" && nargs != 2) { return false; }
     if (fa.field != "get" && fa.field != "get_or") { return false; }
     return map_value_type_is_arr(map_value_of(expr_map_type_tag(fa.obj, s)));
-}
-
-// map_insert_value_consumed (#4353 item 3): the map-insert VALUE is a FRESH
-// pointer temp this frame solely owns, so the wasm $__fern_map_set must TAKE its
-// single ref (vconsume) rather than retaining it — the retain would be unbalanced
-// and the box leaks by one. Strings answer through is_fresh_str_temp; an ARRAY or
-// STRUCT literal is the box-shaped twin (nothing else can name an anonymous
-// literal). The register backends ignore vconsume; their column reclaim is the
-// MAPVS: / MAPVA: credit instead.
-function map_insert_value_consumed(e: ast.Expr, s: LowerState): boolean {
-    if (is_fresh_str_temp(e, s)) { return true; }
-    match (e) {
-        ast.ExprArray(_) => { return true; },
-        ast.ExprStructLit(sl) => { return !sl.has_base; },
-        _ => {}
-    }
-    return false;
 }
 
 // map_insert_value_retains (#6880): the map-insert VALUE is an ALIASED array,
@@ -9511,7 +9510,9 @@ function lower_string_foreach(var_name: string, iter: ast.Expr, body: ast.Stmt[]
     var lenc: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: sref, field: "len", line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_argc: 0, ty: "" };
     var rargs: ast.Expr[] = [zero, lenc];
     var range_iter: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "__range", line: 0, col: 0, ty: "" }, args: rargs, line: 0, col: 0, type_argc: 0, ty: "" };
-    var bind: ast.Stmt = ast.StmtVar { name: var_name, type_name: "", init: ast.ExprIndex { array: sref, index: iref, unchecked: false, ty: "" }, line: 0, col: 0, is_str: false, fn_ret: "", fn_param_types: "" };
+    // Both locals are hidden, so the index runs over [0, len) of a string
+    // nothing rebinds: the byte read needs no bounds check.
+    var bind: ast.Stmt = ast.StmtVar { name: var_name, type_name: "", init: ast.ExprIndex { array: sref, index: iref, unchecked: true, ty: "" }, line: 0, col: 0, is_str: false, fn_ret: "", fn_param_types: "" };
     var nbody: ast.Stmt[] = [bind];
     var bi: i32 = 0;
     while (bi < body.len()) { nbody = nbody.append(body[bi]); bi = bi + 1; }
@@ -11550,6 +11551,7 @@ function lower_target_name(name: string, s: LowerState): LowerState {
 function buf_builtin_arity(name: string): i32 {
     if (name == "buf_new" || name == "buf_len" || name == "buf_take" || name == "buf_free") { return 1; }
     if (name == "buf_push" || name == "buf_push_byte" || name == "buf_push_u64") { return 2; }
+    if (name == "buf_push_mapped" || name == "buf_push_filtered" || name == "buf_push_expanded") { return 3; }
     if (name == "buf_push_range") { return 4; }
     return 0 - 1;
 }
@@ -11559,6 +11561,9 @@ function buf_builtin_op(name: string): ir.Op {
     if (name == "buf_new") { return ir.op_buf_new(); }
     if (name == "buf_push") { return ir.op_buf_push(); }
     if (name == "buf_push_range") { return ir.op_buf_push_range(); }
+    if (name == "buf_push_mapped") { return ir.op_buf_push_mapped(); }
+    if (name == "buf_push_filtered") { return ir.op_buf_push_filtered(); }
+    if (name == "buf_push_expanded") { return ir.op_buf_push_expanded(); }
     if (name == "buf_push_byte") { return ir.op_buf_push_byte(); }
     if (name == "buf_push_u64") { return ir.op_buf_push_u64(); }
     if (name == "buf_len") { return ir.op_buf_len(); }
@@ -13134,8 +13139,8 @@ function lower_call_path_scalars(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerSt
 // number of arguments falls through to the ordinary named-call path.
 function is_byte_kernel_call(name: string, argc: i32): boolean {
     if (name == "__memchr" || name == "__rmemchr") { return argc == 3; }
-    if (name == "__count_byte" || name == "__ascii_run") { return argc == 2; }
-    if (name == "__scan_set") { return argc == 3; }
+    if (name == "__count_byte" || name == "__ascii_run" || name == "__bsd_sum") { return argc == 2; }
+    if (name == "__scan_set" || name == "__count_runs") { return argc == 3; }
     if (name == "__crc32_cksum") { return argc == 2; }
     if (name == "__sum_bytes") { return argc == 1; }
     if (name == "__mismatch") { return argc == 5; }
@@ -13157,8 +13162,10 @@ function is_byte_kernel_call(name: string, argc: i32): boolean {
 //                                 caller can skip a run branch-free.
 //   __scan_set(s, from, set)    → the first byte at or after `from` whose
 //                                 entry in the u8[] `set` is nonzero, or the
-//                                 LENGTH. The only one over a string AND an
-//                                 array.
+//                                 LENGTH.
+//   __bsd_sum(s, sum)           → the BSD checksum continued over s.
+//   __count_runs(s, inside, set) → how many runs of `set` members begin in
+//                                 s; `inside` says one was open before it.
 //   __mismatch(a, ao, b, bo, n) → the first differing offset of two ranges, or
 //                                 the clamped n. The only one with TWO string
 //                                 operands, at slots 0 and 2.
@@ -13182,6 +13189,8 @@ function lower_call_byte_kernel(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerSta
     if (cid.name == "__sum_bytes") { return k.emit(ir.op_sum_bytes()); }
     if (cid.name == "__ascii_run") { return k.emit(ir.op_ascii_run()); }
     if (cid.name == "__scan_set") { return k.emit(ir.op_scan_set()); }
+    if (cid.name == "__count_runs") { return k.emit(ir.op_count_runs()); }
+    if (cid.name == "__bsd_sum") { return k.emit(ir.op_bsd_sum()); }
     if (cid.name == "__crc32_cksum") { return k.emit(ir.op_crc32_cksum()); }
     if (cid.name == "__scale_f64") { return k.emit(ir.op_scale_f64()); }
     return k.emit(ir.op_mismatch());
@@ -13872,6 +13881,9 @@ function lower_call_dyn_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, rty: st
     dm = dm.emit(ir.op_store_local(dbase));
     var dai: i32 = 0;
     while (dai < c.args.len()) {
+        // The slot is typed by what it holds, which wasm spells in the local.
+        if (expr_is_f64(c.args[dai], dm)) { dm = dm.mark_f64(dbase + 1 + dai, true); }
+        else if (infer_expr_width(c.args[dai], dm) == 64) { dm = dm.mark_i64(dbase + 1 + dai, true); }
         dm = lower_expr(c.args[dai], dm);
         if (!dm.ok) { return dm; }
         dm = dm.emit(ir.op_store_local(dbase + 1 + dai));
@@ -14398,7 +14410,7 @@ function lower_call_map_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, mtype: 
         var mswk: i32 = 0;
         if (msvw) { mswk = 1; }
         else if (map_value_of(mtype) == "f64" || expr_is_f64(c.args[1], s)) { mswk = 2; }
-        return mset.emit(ir.op_map_set(mkk2, map_value_is_ptr(map_value_of(mtype)) || insert_value_is_ptr(c.args[1], s), map_insert_value_consumed(c.args[1], s), is_fresh_str_temp(c.args[0], s), map_owncols(mtype) || map_site_owncols(fa.obj, s), map_insert_value_retains(c.args[1], map_value_of(mtype), s), meqfn, mswk, 0));
+        return mset.emit(ir.op_map_set(mkk2, map_value_is_ptr(map_value_of(mtype)) || insert_value_is_ptr(c.args[1], s), map_arg_is_fresh_temp(c.args[1], s), map_arg_is_fresh_temp(c.args[0], s), map_owncols(mtype) || map_site_owncols(fa.obj, s), map_insert_value_retains(c.args[1], map_value_of(mtype), s), meqfn, mswk, 0));
     }
     if (fa.field == "len" && c.args.len() == 0) {
         var mlen: LowerState = lower_expr(fa.obj, s);
@@ -15023,7 +15035,7 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
             var emwk: i32 = 0;
             if (emvw) { emwk = 1; }
             else if (map_value_of(emtt) == "f64" || expr_is_f64(c.args[1], s)) { emwk = 2; }
-            return emset.emit(ir.op_map_set(emk, map_value_is_ptr(map_value_of(emtt)) || insert_value_is_ptr(c.args[1], s), map_insert_value_consumed(c.args[1], s), is_fresh_str_temp(c.args[0], s), map_owncols(emtt), map_insert_value_retains(c.args[1], map_value_of(emtt), s), map_key_eqfn(emtt), emwk, 0));
+            return emset.emit(ir.op_map_set(emk, map_value_is_ptr(map_value_of(emtt)) || insert_value_is_ptr(c.args[1], s), map_arg_is_fresh_temp(c.args[1], s), map_arg_is_fresh_temp(c.args[0], s), map_owncols(emtt), map_insert_value_retains(c.args[1], map_value_of(emtt), s), map_key_eqfn(emtt), emwk, 0));
         }
     }
     // Qualified built-in Option/Result construction:
@@ -16287,6 +16299,7 @@ function lower_expr_index(ix: ast.ExprIndex, s: LowerState): LowerState {
     }
     sidx = lower_expr(ix.index, sidx);
     if (!sidx.ok) { return sidx; }
+    if (expr_is_str(ix.array, s) && ix.unchecked) { return free_parked_view_after(sidx.emit(ir.op_str_index_nc()), ixvst.slot); }
     if (expr_is_str(ix.array, s)) { return free_parked_view_after(sidx.emit(ir.op_str_index()), ixvst.slot); }
     if (ixslot >= 0) {
         var ixw: i32 = 32;
@@ -39363,6 +39376,14 @@ function map_decl_type(stmts: ast.Stmt[], name: string, want_key: boolean): stri
 function map_arg_binding_is_fresh(e: ast.Expr, kind: string, str_fresh: string[], structs: StructTab): boolean {
     if (kind == "s") { return str_local_binding_is_fresh(e); }
     if (kind == "a") { return tuple_strarr_elem_fresh(e, str_fresh); }
+    return box_binding_is_fresh(e, structs);
+}
+
+// box_binding_is_fresh: `e` constructs a BOX here, so nothing else names it and
+// a consuming site may take its single ref rather than retain it. The "b" kind
+// of the test above, split out because the kconsume bit asks the same question
+// at a site that has no string-freshness list to pass (#9984).
+function box_binding_is_fresh(e: ast.Expr, structs: StructTab): boolean {
     match (e) {
         ast.ExprArray(_) => { return true; },
         ast.ExprStructLit(sl) => { return !sl.has_base; },
@@ -39384,6 +39405,23 @@ function map_arg_binding_is_fresh(e: ast.Expr, kind: string, str_fresh: string[]
         _ => { return false; },
     }
     return false;
+}
+
+// map_arg_is_fresh_temp (#4353 item 3, #9984): an op_map_set argument is a FRESH
+// pointer temp this frame solely owns, so $__fern_map_set must TAKE its single
+// ref rather than retain it — the retain is unbalanced and the box leaks by one.
+// It answers for both columns: vconsume for the VALUE, kconsume for the KEY,
+// which additionally frees the key an overwrite discards.
+//
+// Both halves asked a narrower question than they meant. The key asked only
+// is_fresh_str_temp, so no constructed box ever set kconsume; the value knew
+// struct and array literals but not a variant construction, so `m.insert(k,
+// Tag.Lo(n))` leaked one box per insert while `P { … }` did not. The register
+// backends ignore vconsume — their column reclaim is the MAPVS: / MAPVA: credit
+// — and never retain a key, so kconsume there is only the overwrite free.
+function map_arg_is_fresh_temp(e: ast.Expr, s: LowerState): boolean {
+    if (is_fresh_str_temp(e, s)) { return true; }
+    return box_binding_is_fresh(e, s.frame.structs);
 }
 
 // call_is_variant_construction: `c` constructs an enum variant — `Line(7)`
@@ -66983,7 +67021,7 @@ function borrow_reg_record(key: string, flags: string): string {
 // name: the escape walks see no receiver type, so the name alone must settle
 // it.
 function copying_builtin_keys(funcs: parser.FuncDecl[]): string[] {
-    var keys: string[] = ["print", "write", "eprint", "strbuf_append", "buf_push", "buf_push_range", "__memchr", "__rmemchr", "__ascii_run", "__scan_set", "__count_byte", "__sum_bytes", "__mismatch", "__crc32_cksum", "__scale_f64"];
+    var keys: string[] = ["print", "write", "eprint", "strbuf_append", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "__memchr", "__rmemchr", "__ascii_run", "__scan_set", "__count_runs", "__bsd_sum", "__count_byte", "__sum_bytes", "__mismatch", "__crc32_cksum", "__scale_f64"];
     var has_write: boolean = false;
     var has_write_some: boolean = false;
     for fn in funcs {
@@ -67000,11 +67038,15 @@ function copying_builtin_keys(funcs: parser.FuncDecl[]): string[] {
 // __mismatch reads TWO ranges and retains neither, so positions 0 and 2 both
 // carry the credit (native's copyingBuiltinArgs["__mismatch"] is {0, 2}), and
 // the two buf_push forms take the builder handle at position 0, and
-// __crc32_cksum the carried CRC, so the string they copy is at position 1.
+// __crc32_cksum the carried CRC, so the string they copy is at position 1;
+// buf_push_mapped, buf_push_filtered and buf_push_expanded read their table at
+// position 2 as well.
 // A position past the string's end reads as not borrowable, which is what the
 // i32 parameters want.
 function copying_builtin_flags(key: string): string {
     if (key == "__mismatch") { return "10100"; }
+    if (key == "__count_runs") { return "101"; }
+    if (key == "buf_push_mapped" || key == "buf_push_filtered" || key == "buf_push_expanded") { return "011"; }
     if (key == "buf_push" || key == "buf_push_range" || key == "__crc32_cksum") { return "01"; }
     return "1";
 }
@@ -73539,7 +73581,7 @@ function lift_call_arg(e: ast.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
             if (lambda_has_no_captures(lam, gfns)) {
                 var nm: string = "__lam_" + util.i32_to_string(acc.counter);
                 var tp: string[] = [];
-                var nf: parser.FuncDecl = parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: lam.params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false };
+                var nf: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: lam.params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false };
                 var nacc: LiftAcc = LiftAcc { funcs: acc.funcs.append(nf), counter: acc.counter + 1 };
                 return LiftExpr { expr: ast.ExprIdent { name: nm, line: 0, col: 0, ty: "" }, acc: nacc };
             }
@@ -74223,7 +74265,7 @@ function try_lift_binding(body: ast.Stmt[], idx: i32, fname: string, lam: ast.Ex
     var notp: string[] = [];
     var lbody: ast.Stmt[] = lam.body;
     if (lam.origin == parser.ORIGIN_NESTED_FN) { lbody = desugar_lambda_returns(lbody, 0, ret_sig_of(lam.ret_type, lam.ret_fn_ret, lam.ret_fn_param_types)).body; }
-    var newfn: parser.FuncDecl = parser.FuncDecl { name: lname, receiver_name: "", receiver_type: "", type_params: notp, params: lparams, ret_type: lam.ret_type, body: lbody, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false };
+    var newfn: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: lname, receiver_name: "", receiver_type: "", type_params: notp, params: lparams, ret_type: lam.ret_type, body: lbody, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false };
     var capargs: ast.Expr[] = [];
     var ca: i32 = 0;
     while (ca < caps.len()) { capargs = capargs.append(ast.ExprIdent { name: caps[ca], line: 0, col: 0, ty: "" }); ca = ca + 1; }
@@ -74411,7 +74453,7 @@ function make_clo_func(lam: ast.ExprLambda, cloname: string, fd: parser.FuncDecl
     var bk: i32 = 0;
     while (bk < lam.body.len()) { bd = bd.append(lam.body[bk]); bk = bk + 1; }
     var notp: string[] = [];
-    var clo: parser.FuncDecl = parser.FuncDecl { name: cloname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false };
+    var clo: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: cloname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false };
     return HoistResult { func: clo, ok: true };
 }
 
@@ -74518,7 +74560,7 @@ function make_wrap_lambda_func(lam: ast.ExprLambda, wrapname: string): parser.Fu
     var pj: i32 = 0;
     while (pj < lam.params.len()) { ps = ps.append(lam.params[pj]); pj = pj + 1; }
     var notp: string[] = [];
-    return parser.FuncDecl { name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false };
+    return parser.FuncDecl { no_inline: false, name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false };
 }
 
 // make_wrap_named_func builds the env-taking trampoline for a BARE FN-NAME field
@@ -74528,7 +74570,7 @@ function make_wrap_lambda_func(lam: ast.ExprLambda, wrapname: string): parser.Fu
 // up by name in `mfuncs`). Declines (ok:false) if no receiver-less function of
 // that name is found — the field then stays as-is and the module bails.
 function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: MFuncs): HoistResult {
-    var none: parser.FuncDecl = parser.FuncDecl { name: "", receiver_name: "", receiver_type: "", type_params: [], params: [], ret_type: "", body: [], line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "" , is_package: false };
+    var none: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: "", receiver_name: "", receiver_type: "", type_params: [], params: [], ret_type: "", body: [], line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "" , is_package: false };
     var fi: i32 = 0;
     while (fi < mfuncs.decls.len()) {
         if (mfuncs.decls[fi].name == fnname && mfuncs.decls[fi].receiver_type.len() == 0) {
@@ -74556,7 +74598,7 @@ function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: MFuncs):
             if (tgt.ret_type == "void") { body = ast.StmtExpr { value: call, line: 0 }; }
             var bd: ast.Stmt[] = [body];
             var notp: string[] = [];
-            return HoistResult { func: parser.FuncDecl { name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: tgt.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: tgt.ret_fn_ret, ret_fn_param_types: tgt.ret_fn_param_types , is_package: false }, ok: true };
+            return HoistResult { func: parser.FuncDecl { no_inline: false, name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: tgt.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: tgt.ret_fn_ret, ret_fn_param_types: tgt.ret_fn_param_types , is_package: false }, ok: true };
         }
         fi = fi + 1;
     }
@@ -76388,7 +76430,7 @@ function hoist_value_iife(lam: ast.ExprLambda, fd: parser.FuncDecl, funcs: parse
         fnptys = armptys;
     }
     var dlr: DesugarRet = desugar_lambda_returns(lam.body, 0, ret_sig_of("fn", fnret, fnptys));
-    var nf: parser.FuncDecl = parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: "fn", body: dlr.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: fnret, ret_fn_param_types: fnptys , is_package: false };
+    var nf: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: nm, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: "fn", body: dlr.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: fnret, ret_fn_param_types: fnptys , is_package: false };
     var ncall: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: nm, line: 0, col: 0, ty: "" }, args: args, line: 0, col: 0, type_argc: 0, ty: "" };
     return InlineCloRes { expr: ncall, funcs: funcs.append(nf), counter: counter + 1 };
 }

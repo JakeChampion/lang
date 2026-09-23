@@ -87,9 +87,9 @@ func TestSelfHostConstOperandReachesImmediateFormArm64(t *testing.T) {
 	runArm64ShapeCases(t, []shapeCase{
 		{
 			name: "alu",
-			src: `function bump(x: i64): i64 { return x + 1i64; }
-function down(x: i32): i32 { return x - 4095; }
-function less(x: i32): boolean { return x < 7; }
+			src: `@noinline function bump(x: i64): i64 { return x + 1i64; }
+@noinline function down(x: i32): i32 { return x - 4095; }
+@noinline function less(x: i32): boolean { return x < 7; }
 function main(): i32 {
     var i: i64 = 0i64; var s: i64 = 0i64;
     while (i < 3i64) { s = s + bump(i); if (less(i as i32)) { s = s + 100i64; } i = i + 1i64; }
@@ -109,9 +109,9 @@ function main(): i32 {
 		},
 		{
 			name: "refused-widths",
-			src: `function page(x: i32): i32 { return x + 4096; }
-function odd(x: i32): i32 { return x + 4097; }
-function wide(x: i64): i64 { return x + 70000i64; }
+			src: `@noinline function page(x: i32): i32 { return x + 4096; }
+@noinline function odd(x: i32): i32 { return x + 4097; }
+@noinline function wide(x: i64): i64 { return x + 70000i64; }
 function main(): i32 { return page(1) - 4000 + odd(1) - 4090 + ((wide(1i64) % 100i64) as i32); }`,
 			want: 97 + 8 + 1,
 			has: map[string][]string{
@@ -136,9 +136,9 @@ func TestSelfHostI64ConstantTakesMovzFormArm64(t *testing.T) {
 	runArm64ShapeCases(t, []shapeCase{
 		{
 			name: "forms",
-			src: `function small(): i64 { return 65535i64; }
-function wide(): i64 { return 65536i64; }
-function neg(): i64 { return 0i64 - 5i64; }
+			src: `@noinline function small(): i64 { return 65535i64; }
+@noinline function wide(): i64 { return 65536i64; }
+@noinline function neg(): i64 { return 0i64 - 5i64; }
 function main(): i32 { return ((small() + wide() + neg()) % 1000i64) as i32; }`,
 			want: (65535 + 65536 - 5) % 1000,
 			has: map[string][]string{

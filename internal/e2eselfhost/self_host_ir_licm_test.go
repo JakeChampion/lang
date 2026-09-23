@@ -176,12 +176,16 @@ func asmLenShape(asm string, marker func(string) bool, loopTop func(string) (str
 
 // selfHostLenShape reads the self-host x86-64 backend's listing: a length is
 // the load at offset 8 of a string box, from whichever register the allocator
-// holds the box in, and a loop runs from a `.Lssa_` label to the `jmp` back
+// holds the box in, and a loop runs from a `.Lssa_` label to the jump back
 // to it. Labels are only loop tops when a jump
 // later in the function targets them, so every label is opened on sight and
 // closed by its back edge; a forward-only label simply never closes, which is
 // why the set is cleared at each function.
 var selfHostLenRead = regexp.MustCompile(`^movq 8\(%[a-z0-9]+\), %[a-z0-9]+$`)
+
+// selfHostJump is any jump to a local label: a rotated loop's back edge is
+// the conditional branch that re-runs the header's test.
+var selfHostJump = regexp.MustCompile(`^j[a-z]+ (\.Lssa_\S+)$`)
 
 func selfHostLenShape(asm string) (outside, inside int) {
 	backEdge := map[string]bool{}
@@ -191,17 +195,21 @@ func selfHostLenShape(asm string) (outside, inside int) {
 		if strings.HasPrefix(line, ".Lssa_") && strings.HasSuffix(line, ":") {
 			seen[strings.TrimSuffix(line, ":")] = true
 		}
-		if strings.HasPrefix(line, "jmp .Lssa_") && seen[strings.TrimPrefix(line, "jmp ")] {
-			backEdge[strings.TrimPrefix(line, "jmp ")] = true
+		if m := selfHostJump.FindStringSubmatch(line); m != nil && seen[m[1]] {
+			backEdge[m[1]] = true
 		}
 	}
 	return asmLenShape(asm,
-		func(l string) bool { return selfHostLenRead.MatchString(l) },
+		// A stack entry's parameter load reads 8(%rsp); no string box is there.
+		func(l string) bool { return selfHostLenRead.MatchString(l) && !strings.Contains(l, "(%rsp)") },
 		func(l string) (string, bool) {
 			label := strings.TrimSuffix(l, ":")
 			return label, strings.HasPrefix(l, ".Lssa_") && strings.HasSuffix(l, ":") && backEdge[label]
 		},
-		func(l, label string) bool { return l == "jmp "+label })
+		func(l, label string) bool {
+			m := selfHostJump.FindStringSubmatch(l)
+			return m != nil && m[1] == label
+		})
 }
 
 // nativeLenShape reads the native x86-64 backend's listing: a length is one

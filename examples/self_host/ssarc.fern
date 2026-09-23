@@ -106,6 +106,7 @@ function supported_leaf(t: typeinfo.Type): boolean {
     if let typeinfo.TypeVoid(_) = t { return true; }
     if let typeinfo.TypeString(_) = t { return true; }
     if let typeinfo.TypeFunc(_) = t { return true; }
+    if let typeinfo.TypeDyn(_) = t { return true; }
     return semtypes.is_handle(t);
 }
 // A nominal box is named by a declaration this function's schema table carries,
@@ -1333,6 +1334,7 @@ function validate(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irlow
     for b in f.graph.blocks {
         for ins in b.insts {
             if (!supported_op(ins.kind_tag)) { return "unsupported physical RC operation"; }
+            if (dyn_call(ins) && !consecutive(ins.args)) { return "dyn call operands are not consecutive slots"; }
             if (builds(ins.kind_tag)) {
                 why = construction_error(f, ins, structs);
                 if (why != "") { return why; }
@@ -1373,11 +1375,12 @@ function variant_op(k: i32): boolean {
     return kind_in([ssasem.variant_new(), ssasem.variant_is(), ssasem.variant_get()], k) || identity_op(k);
 }
 
-// A struct-union's member is its own box, and a view and the string it
-// borrows are one box, so widening, narrowing and a string retag move no
-// bytes: the operand is already on the stack and the store below takes it.
+// A struct-union's member is its own box, a view and the string it borrows
+// are one box, and a dyn value is the box it was widened from, so widening,
+// narrowing and a string retag move no bytes: the operand is already on the
+// stack and the store below takes it.
 function identity_op(k: i32): boolean {
-    return kind_in([ssasem.variant_up(), ssasem.variant_as(), ssasem.str_as()], k);
+    return kind_in([ssasem.variant_up(), ssasem.variant_as(), ssasem.str_as(), ssasem.dyn_up()], k);
 }
 
 function supported_op(k: i32): boolean { return value_op(k) || container_op(k); }
@@ -1688,6 +1691,7 @@ function container(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, s
     if (ins.kind_tag == ssasem.str_bytes()) { return emit(r, ir.op_str_bytes()); }
     if (ins.kind_tag == ssasem.arr_sum()) { return emit(r, ir.op_call_direct("__fern_arr_i32_sum", 1)); }
     if (ins.kind_tag == ssasem.arr_product()) { return emit(r, ir.op_call_direct("__fern_arr_i32_product", 1)); }
+    if (ins.kind_tag == ssasem.str_index() && ins.imm == 1) { return emit(r, ir.op_str_index_nc()); }
     if (ins.kind_tag == ssasem.str_index()) { return emit(r, ir.op_str_index()); }
     if (ssasem.is_map_op(ins.kind_tag)) { return map_op(r, ins, f); }
     if (ins.kind_tag == ssasem.array_get()) { return emit(r, arr_get_op(f.values[ins.result], ins.imm == 1)); }
@@ -1911,6 +1915,7 @@ function instruction(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Pla
     if (ins.kind_tag == ssasem.arr_join()) { r = join_call(r, ins); return emit(r, ir.op_store_local(ins.result)); }
     if (ins.kind_tag == ssasem.append()) { r = append_push(r, f, p, ins, defer0); return emit(r, ir.op_store_local(ins.result)); }
     if (ins.kind_tag == 9 && (ssasem.saturating(ins.str) || ssasem.checked_arith(ins.str))) { r = overflow_binary(r, f, ins); return emit(r, ir.op_store_local(ins.result)); }
+    if (dyn_call(ins)) { r = dyn_site(r, ins); return emit(r, ir.op_store_local(ins.result)); }
     for arg in ins.args { r = emit(r, ir.op_load_local(arg)); }
     if (constant_op(ins.kind_tag)) { r = constant(r, f, ins); }
     if (ssasem.scalar_op(ins.kind_tag)) { r = scalar(r, f, ins); }
@@ -2410,6 +2415,26 @@ function unshared_map(own r: irlower.LowerResult, f: ssasem.Func, slot: i32, box
     return emit(r, ir.op_end());
 }
 
+// A dyn method call dispatches on the receiver's shape, and every arm reloads
+// the operands, so the dispatch reads them from a run of consecutive slots
+// rather than the stack. semsource defines the operands as a run of copies,
+// which makes their value ids, and so their slots, that run. Every operand is
+// lent, so there is nothing to supply and nothing taken.
+function dyn_call(ins: ssa.SInst): boolean { return ins.kind_tag == ssasem.call() && ssasem.is_dyn_call(ins.str); }
+
+function consecutive(args: i32[]): boolean {
+    var i: i32 = 1;
+    while (i < args.len()) {
+        if (args[i] != args[0] + i) { return false; }
+        i = i + 1;
+    }
+    return args.len() > 0;
+}
+
+function dyn_site(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
+    return emit(r, ir.op_dyn_dispatch(ssasem.dyn_call_method(ins.str), ssasem.dyn_call_traits(ins.str), ins.args[0], ins.args.len()));
+}
+
 function call_site(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
     if (ins.str == "print") {
         // The payload, then the newline, as the AST lowering writes it.
@@ -2633,6 +2658,9 @@ function builder_builtin_site(own r: irlower.LowerResult, ins: ssa.SInst): Lower
     if (ins.str == "buf_new") { return Lowered { found: true, r: emit(r, ir.op_buf_new()) }; }
     if (ins.str == "buf_push") { return Lowered { found: true, r: emit(r, ir.op_buf_push()) }; }
     if (ins.str == "buf_push_range") { return Lowered { found: true, r: emit(r, ir.op_buf_push_range()) }; }
+    if (ins.str == "buf_push_mapped") { return Lowered { found: true, r: emit(r, ir.op_buf_push_mapped()) }; }
+    if (ins.str == "buf_push_filtered") { return Lowered { found: true, r: emit(r, ir.op_buf_push_filtered()) }; }
+    if (ins.str == "buf_push_expanded") { return Lowered { found: true, r: emit(r, ir.op_buf_push_expanded()) }; }
     if (ins.str == "buf_push_byte") { return Lowered { found: true, r: emit(r, ir.op_buf_push_byte()) }; }
     if (ins.str == "buf_push_u64") { return Lowered { found: true, r: emit(r, ir.op_buf_push_u64()) }; }
     if (ins.str == "buf_len") { return Lowered { found: true, r: emit(r, ir.op_buf_len()) }; }
@@ -2699,6 +2727,8 @@ function byte_scan_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     if (ins.str == "__crc32_cksum") { return Lowered { found: true, r: emit(r, ir.op_crc32_cksum()) }; }
     if (ins.str == "__ascii_run") { return Lowered { found: true, r: emit(r, ir.op_ascii_run()) }; }
     if (ins.str == "__scan_set") { return Lowered { found: true, r: emit(r, ir.op_scan_set()) }; }
+    if (ins.str == "__count_runs") { return Lowered { found: true, r: emit(r, ir.op_count_runs()) }; }
+    if (ins.str == "__bsd_sum") { return Lowered { found: true, r: emit(r, ir.op_bsd_sum()) }; }
     if (ins.str == "__count_byte") { return Lowered { found: true, r: emit(r, ir.op_count_byte()) }; }
     if (ins.str == "__rmemchr") { return Lowered { found: true, r: emit(r, ir.op_rmemchr()) }; }
     if (ins.str == "__mismatch") { return Lowered { found: true, r: emit(r, ir.op_mismatch()) }; }

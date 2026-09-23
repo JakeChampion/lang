@@ -131,7 +131,31 @@ pub struct EmitState {
     // two equal. Forgotten at every label, and by every sequence that writes
     // the register on its own — including one whose result leaves elsewhere,
     // which is the case the store cannot re-assert.
-    ssa_x0: i32
+    ssa_x0: i32,
+    // reg_entries names the functions this unit emits with a register-ABI
+    // entry (`__fn_<name>.r`), sanitized; a direct call to one passes its
+    // arguments in registers. Every function keeps its stack-ABI entry, so a
+    // callee missing from it is still called correctly, only more slowly.
+    reg_entries: irlower.SigReg
+}
+
+// unit_labels is the sanitized label of every function a unit emits for
+// mod.funcs[lo..hi) and the bodies on the cache tail: the names a direct call
+// in that unit may reach through their register entries (reg_entries).
+pub function unit_labels(mod: parser.Module, lo: i32, hi: i32, cache: irlower.LowerResult[]): string[] {
+    var out: string[] = [];
+    var fi: i32 = lo;
+    while (fi < hi) {
+        if (cache.len() == 0 || !cache[fi].superseded) {
+            var name: string = mod.funcs[fi].name;
+            if (mod.funcs[fi].receiver_type.len() > 0) { name = util.base_type_name(mod.funcs[fi].receiver_type) + "." + name; }
+            out = out.append(sanitize_label(name));
+        }
+        fi = fi + 1;
+    }
+    var xi: i32 = mod.funcs.len();
+    while (xi < cache.len()) { out = out.append(sanitize_label(cache[xi].name)); xi = xi + 1; }
+    return out;
 }
 
 pub function new_state(): EmitState {
@@ -177,7 +201,8 @@ pub function new_state(): EmitState {
         const_aggs: [],
         ssa_frame: 0,
         ssa_save: 0,
-        ssa_x0: 0 - 1
+        ssa_x0: 0 - 1,
+        reg_entries: irlower.sig_reg_of([])
     };
 }
 
@@ -4724,6 +4749,11 @@ function builtin_i32_names(): string[] {
         // after `from` whose entry in the u8[] `set` is nonzero, or the
         // LENGTH. i32 for ascii_run's reason.
         "__scan_set",
+        // __count_runs(s, inside, set): how many runs of `set` members
+        // begin in s. i32 for ascii_run's reason.
+        "__count_runs",
+        // __bsd_sum(s, sum): the BSD checksum continued over s.
+        "__bsd_sum",
         // __rmemchr(s, byte, from): the index of the LAST `byte` at
         // or before `from`, or -1 (ATLAS-PLATFORM-PLAN §3.3,
         // memchr's nominated sibling). Same i32 shape as __memchr's;
@@ -5709,7 +5739,7 @@ pub function synth_script_main(mod: parser.Module): parser.Module {
             col: 0,
         });
     }
-    var entry: parser.FuncDecl = parser.FuncDecl {
+    var entry: parser.FuncDecl = parser.FuncDecl { no_inline: false,
         name: "main", receiver_name: "", receiver_type: "", type_params: [],
         params: [], ret_type: "i32", body: body, line: 0, col: 0,
         import_iface: "", import_wit: "", type_param_count: 0,
@@ -6881,7 +6911,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         "__fern_strbuf_reset", "__fern_strbuf_take",
         // The capacity-carrying string builder (#8773). __fern_buf_reserve is
         // internal to the bundle — no call crosses a unit boundary to it.
-        "__fern_buf_new", "__fern_buf_push", "__fern_buf_push_range",
+        "__fern_buf_new", "__fern_buf_push", "__fern_buf_push_range", "__fern_buf_push_mapped", "__fern_buf_push_filtered", "__fern_buf_push_expanded",
         "__fern_buf_push_byte", "__fern_buf_push_u64", "__fern_buf_len", "__fern_buf_take",
         "__fern_buf_free",
         // crash-only supervision (#5686): the entry owns fork / wait4.
@@ -6954,7 +6984,11 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         "__fn___fern_arr_i32_sum", "__fn___fern_arr_i32_product", "__fn___fern_i32_pow",
         "__fn___fern_i32_gcd", "__fn___fern_i32_lcm",
         "__fn___fern_arr_i32_index_of",
-        "__fn___fern_arr_i32_min_opt", "__fn___fern_arr_i32_max_opt"
+        "__fn___fern_arr_i32_min_opt", "__fn___fern_arr_i32_max_opt",
+        // The register entries of the helpers that have one (ssa_reg_helper),
+        // called from every unit like the stack entries they sit beside.
+        "__fn___fern_arr_dec.r", "__fn___fern_str_free.r",
+        "__fn___fern_str_eq.r", "__fn___fern_arr_inc_elems.r"
     ];
     var i: i32 = 0;
     while (i < names.len()) {

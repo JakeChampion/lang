@@ -138,16 +138,11 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 50) { t = t + 
 // the next `__fn_` label.
 func emittedFn(t *testing.T, asm, fn string) string {
 	t.Helper()
-	label := "\n__fn_" + fn + ":\n"
-	i := strings.Index(asm, label)
-	if i < 0 {
-		t.Fatalf("emitted asm has no %s", strings.TrimSpace(label))
+	label := "__fn_" + fn
+	if !strings.Contains(asm, "\n"+label+":\n") {
+		t.Fatalf("emitted asm has no %s:", label)
 	}
-	body := asm[i+len(label):]
-	if j := strings.Index(body, "\n__fn_"); j >= 0 {
-		body = body[:j]
-	}
-	return body
+	return functionListing(asm, label)
 }
 
 // The x86-64 leg pins the emit where a row asks and runs the result: the named

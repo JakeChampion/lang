@@ -1332,13 +1332,20 @@ function main(): i32 {
 	if held == "" {
 		t.Fatalf("no bracket retain of a pushed operand in __fn_outer; body:\n%s", body)
 	}
+	// The release passes the same operand: pushed for the stack entry, or
+	// moved into %rax for the register entry.
+	regArgRe := regexp.MustCompile(`^\s*movq (%r[a-z0-9]+|-\d+\(%rbp\)), %rax$`)
 	for i, ln := range lines {
 		if !strings.Contains(ln, "call __fn___fern_arr_dec") {
 			continue
 		}
-		m := pushRe.FindStringSubmatch(lines[i-1])
+		re := pushRe
+		if strings.Contains(ln, "call __fn___fern_arr_dec.r") {
+			re = regArgRe
+		}
+		m := re.FindStringSubmatch(lines[i-1])
 		if m == nil {
-			t.Fatalf("bracket release is not a plain push of the retained operand (got %q); body:\n%s", strings.TrimSpace(lines[i-1]), body)
+			t.Fatalf("bracket release does not pass the retained operand directly (got %q); body:\n%s", strings.TrimSpace(lines[i-1]), body)
 		}
 		if m[1] != held {
 			t.Fatalf("bracket released %s but retained %s; body:\n%s", m[1], held, body)

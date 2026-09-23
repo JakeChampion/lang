@@ -2944,15 +2944,18 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 //	for i in 0..L: mem[dst+i] = __fern_str_byte(data, len, i)
 //	mem[dst + L] = '\n'
 //	retBuf = __fern_alloc(16)
-//	wasi:io/streams::blocking-write-and-flush(
-//	    mem[stdoutHandleAddr], dst, L+1, retBuf)
-//	;; ignore the result<_, stream-error> (no error handling)
+//	for each piece of at most 4096 bytes (the call's limit):
+//	    wasi:io/streams::blocking-write-and-flush(
+//	        mem[stdoutHandleAddr], dst + i, piece, retBuf)
+//	    stop on a stream-error (print has nowhere to report it)
 //
 // Wasm locals (after the two params):
 //
 //	2: $L
 //	3: $dst
 //	4: $i
+//	5: $retBuf
+//	6: $piece
 func buildPrintBodyP2(idxs map[string]uint32) []byte {
 	return buildPrintLikeBodyP2(idxs, true, "wasi_get_stdout_p2", stdoutInitAddr, stdoutHandleAddr)
 }
@@ -3055,15 +3058,49 @@ func buildPrintLikeBodyP2(idxs map[string]uint32, withNewline bool, getHandleSym
 	body = inst.InstI32Const(body, 16)
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalSet(body, 5)
-	// blocking-write-and-flush(handle, dst, $L, retBuf).
-	// handle = mem[handleAddr].
+	// blocking-write-and-flush takes at most 4096 bytes a call, so the
+	// bytes go in pieces of that size: $i is the cursor, $piece (6) the
+	// length of this one. A failed write ends the loop; its error is
+	// ignored, as print has no way to report one.
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, 4)
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstLocalGet(body, 2)
+	body = numeric.InstI32GeU(body)
+	body = inst.InstBrIf(body, 1)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstLocalGet(body, 4)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstLocalSet(body, 6)
+	body = inst.InstLocalGet(body, 6)
+	body = inst.InstI32Const(body, 4096)
+	body = numeric.InstI32GtU(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, 4096)
+	body = inst.InstLocalSet(body, 6)
+	body = inst.InstEnd(body)
+	// blocking-write-and-flush(mem[handleAddr], dst + $i, $piece, retBuf)
 	body = inst.InstI32Const(body, handleAddr)
 	body = memory.InstI32Load(body, 2, 0)
 	body = inst.InstLocalGet(body, 3)
-	body = inst.InstLocalGet(body, 2)
+	body = inst.InstLocalGet(body, 4)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalGet(body, 6)
 	body = inst.InstLocalGet(body, 5)
 	body = inst.InstCall(body, write)
-	// Result is in retBuf; we ignore it (no error handling yet). Both
+	body = inst.InstLocalGet(body, 5)
+	body = memory.InstI32Load8U(body, 0, 0)
+	body = inst.InstBrIf(body, 1)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstLocalGet(body, 6)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, 4)
+	body = inst.InstBr(body, 0)
+	body = inst.InstEnd(body) // loop
+	body = inst.InstEnd(body) // block
+	// The result area and the copy are dead once the writes return. Both
 	// blocks are dead once the blocking call returns, and nothing else
 	// frees them — a print loop would otherwise grow the heap by a
 	// buffer and a result area per call.
@@ -3073,7 +3110,7 @@ func buildPrintLikeBodyP2(idxs map[string]uint32, withNewline bool, getHandleSym
 	body = inst.InstLocalGet(body, 3)
 	body = inst.InstLocalGet(body, 2)
 	body = inst.InstCall(body, free)
-	locals := inst.PutLocalsOneGroup(nil, 4, encode.ValtypeI32)
+	locals := inst.PutLocalsOneGroup(nil, 5, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 

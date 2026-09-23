@@ -15423,6 +15423,32 @@ func (b *builder) callBody(n *ast.Call) error {
 			return nil
 		}
 	}
+	// __bsd_sum(s, sum) — __count_byte's operand shape.
+	if id.Name == "__bsd_sum" && len(n.Args) == 2 {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			for _, a := range n.Args {
+				if err := b.expr(a); err != nil {
+					return err
+				}
+			}
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_bsd_sum", Width: ResNarrow, I32: 2,
+				Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}}}})
+			return nil
+		}
+	}
+	// __count_runs(s, inside, set) — __scan_set's operand shape.
+	if id.Name == "__count_runs" && len(n.Args) == 3 {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			for _, a := range n.Args {
+				if err := b.expr(a); err != nil {
+					return err
+				}
+			}
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_count_runs", Width: ResNarrow, I32: 3,
+				Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}}}})
+			return nil
+		}
+	}
 	// __mismatch(a, ao, b, bo, n) — the same runtime-helper-call shape as its
 	// four siblings, with TWO strings. ArgTypes is doubly essential here:
 	// under the two-word ABI this call is seven operand slots, not five, and
@@ -16577,6 +16603,24 @@ func (b *builder) stashOwnedArgTemp(a ast.Expr) (int32, ast.Type, bool, error) {
 		// temp the `.len()` receiver site reclaims by this route (#6401).
 		tt, ok = b.exprType(a), true
 	}
+	// A coercion site lowers to the dyn value rather than the concrete one,
+	// so the temp is released as the dyn it is, whatever the concrete is:
+	// the natives' cell is the call's own even when the concrete is not.
+	// A concrete someone else holds is retained for the dyn, as a coercion
+	// into a local is, so the release balances. A backend that does not
+	// reclaim dyn values has no drop helper to release it through.
+	fresh := ok
+	var dc checker.DynCoercion
+	coerced := false
+	if b.info != nil && b.info.DynCoercions != nil {
+		dc, coerced = b.info.DynCoercions[a]
+	}
+	if coerced {
+		if !b.dynReclaim() {
+			return 0, nil, false, nil
+		}
+		tt, ok = ast.DynTraitType{Traits: dc.Traits}, true
+	}
 	if !ok {
 		return 0, nil, false, nil
 	}
@@ -16585,6 +16629,9 @@ func (b *builder) stashOwnedArgTemp(a ast.Expr) (int32, ast.Type, bool, error) {
 	b.scratchType[slot] = tt
 	if err := b.expr(a); err != nil {
 		return 0, nil, false, err
+	}
+	if coerced && !fresh {
+		b.emitDynConcreteInc(dc)
 	}
 	b.emit(Op{Kind: OpStoreLocal, I32: slot})
 	b.emit(Op{Kind: OpLoadLocal, I32: slot})

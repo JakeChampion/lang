@@ -830,6 +830,12 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesScanSet {
 		g.emitScanSetRuntime()
 	}
+	if g.usesCountRuns {
+		g.emitCountRunsRuntime()
+	}
+	if g.usesBsdSum {
+		g.emitBsdSumRuntime()
+	}
 	if g.usesSumBytes {
 		g.emitSumBytesRuntime()
 	}
@@ -5046,6 +5052,82 @@ func (g *generator) emitScanSetRuntime() {
 	g.sizeDirective("__fern_scan_set")
 }
 
+// emitBsdSumRuntime emits `__fern_bsd_sum(s, sum) -> i32`: the BSD checksum
+// continued over s, each byte a 16-bit rotate right by one and an add.
+func (g *generator) emitBsdSumRuntime() {
+	g.line("")
+	g.line(".global __fern_bsd_sum")
+	g.typeDirective("__fern_bsd_sum")
+	g.label("__fern_bsd_sum")
+	// x0/x1 = string words, w2 = sum.
+	g.emit("stp x29, x30, [sp, #-48]!")
+	g.emit("mov x29, sp")
+	g.emit("mov x4, x0")
+	g.emit("mov x5, x1")
+	g.emitStrDataPtr2W("x7", "x4", "x5", 16) // x7 = byte pointer
+	g.emitStrLen2W("w6", "x5")               // w6 = byte length
+	g.emit("and w0, w2, #0xffff")
+	g.emit("mov x10, #0")
+	g.label(".Lbsd_sum_loop")
+	g.emit("cmp w10, w6")
+	g.emit("b.ge .Lbsd_sum_ret")
+	g.emit("ldrb w11, [x7, x10]")
+	g.emit("lsr w9, w0, #1")
+	g.emit("orr w0, w9, w0, lsl #15")
+	g.emit("add w0, w0, w11")
+	g.emit("and w0, w0, #0xffff")
+	g.emit("add x10, x10, #1")
+	g.emit("b .Lbsd_sum_loop")
+	g.label(".Lbsd_sum_ret")
+	g.emit("ldp x29, x30, [sp], #48")
+	g.emit("ret")
+	g.sizeDirective("__fern_bsd_sum")
+}
+
+// emitCountRunsRuntime emits `__fern_count_runs(s, inside, set) -> i32`: how
+// many runs of bytes whose entry in `set` is nonzero begin in s, with
+// `inside` nonzero meaning the byte before s was a member. A byte past the
+// set's end is not a member. It keeps "not a member" as 0 or 1, and a run
+// begins where that drops from 1 to 0.
+func (g *generator) emitCountRunsRuntime() {
+	g.line("")
+	g.line(".global __fern_count_runs")
+	g.typeDirective("__fern_count_runs")
+	g.label("__fern_count_runs")
+	// x0/x1 = string words, w2 = inside, x3 = set (length at [x3 - 4]).
+	g.emit("stp x29, x30, [sp, #-48]!")
+	g.emit("mov x29, sp")
+	g.emit("mov x4, x0")                     // data word
+	g.emit("mov x5, x1")                     // length word
+	g.emitStrDataPtr2W("x7", "x4", "x5", 16) // x7 = byte pointer
+	g.emitStrLen2W("w6", "x5")               // w6 = byte length
+	g.emit("cmp w2, #0")
+	g.emit("cset w9, eq") // w9 = the previous byte is not a member
+	g.emit("mov w0, #0")
+	g.emit("mov x10, #0")
+	g.emit("ldur w8, [x3, #-4]") // set length
+	g.label(".Lcount_runs_loop")
+	g.emit("cmp w10, w6")
+	g.emit("b.ge .Lcount_runs_ret")
+	g.emit("ldrb w11, [x7, x10]")
+	g.emit("mov w12, #1")
+	g.emit("cmp w11, w8")
+	g.emit("b.hs .Lcount_runs_flag")
+	g.emit("ldrb w12, [x3, x11]")
+	g.emit("cmp w12, #0")
+	g.emit("cset w12, eq")
+	g.label(".Lcount_runs_flag")
+	g.emit("bic w13, w9, w12")
+	g.emit("add w0, w0, w13")
+	g.emit("mov w9, w12")
+	g.emit("add x10, x10, #1")
+	g.emit("b .Lcount_runs_loop")
+	g.label(".Lcount_runs_ret")
+	g.emit("ldp x29, x30, [sp], #48")
+	g.emit("ret")
+	g.sizeDirective("__fern_count_runs")
+}
+
 // emitCountByteRuntime emits `__fern_count_byte(s, byte) -> i32`: how many
 // bytes of `s` equal `byte`.
 //
@@ -7348,6 +7430,215 @@ func (g *generator) emitStrBuilderRuntime() {
 	g.emit("ldp x29, x30, [sp], #80")
 	g.emit("ret")
 	g.sizeDirective("__fern_buf_push_range")
+
+	// __fern_buf_push_mapped(H, s_data, s_len, table): append table[c]
+	// for each byte c of `s`, or c itself when it is past the table's
+	// end. A table covering every byte value takes the loop with no length
+	// check. Frame 80: fp/lr, x19..x24, spill at [x29 + 64].
+	g.line("")
+	g.line(".global __fern_buf_push_mapped")
+	g.typeDirective("__fern_buf_push_mapped")
+	g.label("__fern_buf_push_mapped")
+	g.emit("stp x29, x30, [sp, #-80]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("stp x23, x24, [sp, #48]")
+	g.emit("mov x19, x0")
+	g.emit("mov x20, x1")
+	g.emit("mov x21, x2")
+	g.emit("mov x22, x3") // table
+	g.emitStrLen2W("w23", "x21")
+	g.emit("cbz w23, .Lbufmap_done")
+	g.emit("ldr x0, [x19, #8]")
+	g.emit("add x0, x0, x23")
+	g.emit("ldr x1, [x19, #16]")
+	g.emit("cmp x0, x1")
+	g.emit("b.ls .Lbufmap_fits")
+	g.emit("mov x1, x0")
+	g.emit("mov x0, x19")
+	g.emit("bl __fern_buf_reserve")
+	g.label(".Lbufmap_fits")
+	g.emitStrDataPtr2W("x1", "x20", "x21", 64)
+	g.emit("ldr x0, [x19]")
+	g.emit("ldr x3, [x19, #8]")
+	g.emit("add x0, x0, x3") // dst = data + len
+	g.emit("add x3, x3, x23")
+	g.emit("str x3, [x19, #8]")   // len += n
+	g.emit("ldur w4, [x22, #-4]") // table length
+	g.emit("mov x5, #0")
+	g.emit("cmp w4, #256")
+	g.emit("b.lo .Lbufmap_short")
+	g.label(".Lbufmap_full")
+	g.emit("ldrb w6, [x1, x5]")
+	g.emit("ldrb w6, [x22, x6]")
+	g.emit("strb w6, [x0, x5]")
+	g.emit("add x5, x5, #1")
+	g.emit("cmp x5, x23")
+	g.emit("b.lo .Lbufmap_full")
+	g.emit("b .Lbufmap_done")
+	g.label(".Lbufmap_short")
+	g.emit("ldrb w6, [x1, x5]")
+	g.emit("cmp w6, w4")
+	g.emit("b.hs .Lbufmap_keep")
+	g.emit("ldrb w6, [x22, x6]")
+	g.label(".Lbufmap_keep")
+	g.emit("strb w6, [x0, x5]")
+	g.emit("add x5, x5, #1")
+	g.emit("cmp x5, x23")
+	g.emit("b.lo .Lbufmap_short")
+	g.label(".Lbufmap_done")
+	g.emit("ldp x23, x24, [sp, #48]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #80")
+	g.emit("ret")
+	g.sizeDirective("__fern_buf_push_mapped")
+
+	// __fern_buf_push_filtered(H, s_data, s_len, drop): append each byte c
+	// of `s` whose entry drop[c] is zero, or that is past the table's end.
+	// Room for all of `s` is reserved; the full-table loop stores every
+	// byte and advances the kept count only past a kept one. Frame 80:
+	// fp/lr, x19..x24, spill at [x29 + 64].
+	g.line("")
+	g.line(".global __fern_buf_push_filtered")
+	g.typeDirective("__fern_buf_push_filtered")
+	g.label("__fern_buf_push_filtered")
+	g.emit("stp x29, x30, [sp, #-80]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("stp x23, x24, [sp, #48]")
+	g.emit("mov x19, x0")
+	g.emit("mov x20, x1")
+	g.emit("mov x21, x2")
+	g.emit("mov x22, x3") // drop table
+	g.emitStrLen2W("w23", "x21")
+	g.emit("cbz w23, .Lbuffilt_done")
+	g.emit("ldr x0, [x19, #8]")
+	g.emit("add x0, x0, x23")
+	g.emit("ldr x1, [x19, #16]")
+	g.emit("cmp x0, x1")
+	g.emit("b.ls .Lbuffilt_fits")
+	g.emit("mov x1, x0")
+	g.emit("mov x0, x19")
+	g.emit("bl __fern_buf_reserve")
+	g.label(".Lbuffilt_fits")
+	g.emitStrDataPtr2W("x1", "x20", "x21", 64)
+	g.emit("ldr x0, [x19]")
+	g.emit("ldr x3, [x19, #8]")
+	g.emit("add x0, x0, x3")      // dst = data + len
+	g.emit("ldur w4, [x22, #-4]") // table length
+	g.emit("mov x5, #0")          // i
+	g.emit("mov x7, #0")          // kept
+	g.emit("cmp w4, #256")
+	g.emit("b.lo .Lbuffilt_short")
+	g.label(".Lbuffilt_full")
+	g.emit("ldrb w6, [x1, x5]")
+	g.emit("ldrb w8, [x22, x6]")
+	g.emit("strb w6, [x0, x7]")
+	g.emit("cmp w8, #0")
+	g.emit("cinc x7, x7, eq")
+	g.emit("add x5, x5, #1")
+	g.emit("cmp x5, x23")
+	g.emit("b.lo .Lbuffilt_full")
+	g.emit("b .Lbuffilt_len")
+	g.label(".Lbuffilt_short")
+	g.emit("ldrb w6, [x1, x5]")
+	g.emit("cmp w6, w4")
+	g.emit("b.hs .Lbuffilt_keep")
+	g.emit("ldrb w8, [x22, x6]")
+	g.emit("cbnz w8, .Lbuffilt_next")
+	g.label(".Lbuffilt_keep")
+	g.emit("strb w6, [x0, x7]")
+	g.emit("add x7, x7, #1")
+	g.label(".Lbuffilt_next")
+	g.emit("add x5, x5, #1")
+	g.emit("cmp x5, x23")
+	g.emit("b.lo .Lbuffilt_short")
+	g.label(".Lbuffilt_len")
+	g.emit("add x3, x3, x7")
+	g.emit("str x3, [x19, #8]")
+	g.label(".Lbuffilt_done")
+	g.emit("ldp x23, x24, [sp, #48]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #80")
+	g.emit("ret")
+	g.sizeDirective("__fern_buf_push_filtered")
+
+	// __fern_buf_push_expanded(H, s_data, s_len, table): append each byte c
+	// of `s` as the record at table[c*8], a length byte (above 7 counts as
+	// 7) and then the bytes, or c itself when its record is not wholly
+	// inside the table. Eight bytes per input byte are reserved, so a
+	// record is copied as one eight-byte store. Frame 80: fp/lr, x19..x24,
+	// spill at [x29 + 64].
+	g.line("")
+	g.line(".global __fern_buf_push_expanded")
+	g.typeDirective("__fern_buf_push_expanded")
+	g.label("__fern_buf_push_expanded")
+	g.emit("stp x29, x30, [sp, #-80]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("stp x23, x24, [sp, #48]")
+	g.emit("mov x19, x0")
+	g.emit("mov x20, x1")
+	g.emit("mov x21, x2")
+	g.emit("mov x22, x3") // table
+	g.emitStrLen2W("w23", "x21")
+	g.emit("cbz w23, .Lbufexp_done")
+	g.emit("ldr x0, [x19, #8]")
+	g.emit("add x0, x0, x23, lsl #3")
+	g.emit("add x0, x0, #8")
+	g.emit("ldr x1, [x19, #16]")
+	g.emit("cmp x0, x1")
+	g.emit("b.ls .Lbufexp_fits")
+	g.emit("mov x1, x0")
+	g.emit("mov x0, x19")
+	g.emit("bl __fern_buf_reserve")
+	g.label(".Lbufexp_fits")
+	g.emitStrDataPtr2W("x1", "x20", "x21", 64)
+	g.emit("ldr x0, [x19]")
+	g.emit("ldr x3, [x19, #8]")
+	g.emit("add x0, x0, x3") // dst = data + len
+	g.emit("mov x9, x0")     // where this push began
+	g.emit("ldur w4, [x22, #-4]")
+	g.emit("lsr w4, w4, #3") // whole records
+	g.emit("mov w11, #7")
+	g.emit("mov x5, #0")
+	g.label(".Lbufexp_loop")
+	g.emit("cmp x5, x23")
+	g.emit("b.hs .Lbufexp_len")
+	g.emit("ldrb w6, [x1, x5]")
+	g.emit("cmp w6, w4")
+	g.emit("b.hs .Lbufexp_keep")
+	g.emit("add x7, x22, x6, lsl #3")
+	g.emit("ldr x8, [x7]")
+	g.emit("and w10, w8, #0xff")
+	g.emit("cmp w10, w11")
+	g.emit("csel w10, w11, w10, hi")
+	g.emit("lsr x8, x8, #8")
+	g.emit("str x8, [x0]")
+	g.emit("add x0, x0, x10")
+	g.emit("b .Lbufexp_next")
+	g.label(".Lbufexp_keep")
+	g.emit("strb w6, [x0], #1")
+	g.label(".Lbufexp_next")
+	g.emit("add x5, x5, #1")
+	g.emit("b .Lbufexp_loop")
+	g.label(".Lbufexp_len")
+	g.emit("sub x0, x0, x9")
+	g.emit("ldr x3, [x19, #8]")
+	g.emit("add x3, x3, x0")
+	g.emit("str x3, [x19, #8]")
+	g.label(".Lbufexp_done")
+	g.emit("ldp x23, x24, [sp, #48]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #80")
+	g.emit("ret")
+	g.sizeDirective("__fern_buf_push_expanded")
 
 	// __fern_buf_push_byte(H, x): append the low byte of `x`.
 	g.line("")
@@ -15353,6 +15644,10 @@ type generator struct {
 	usesCountByte bool
 	// usesScanSet gates the byte-set scan kernel (__fern_scan_set).
 	usesScanSet bool
+	// usesCountRuns gates the run-count kernel (__fern_count_runs).
+	usesCountRuns bool
+	// usesBsdSum gates the BSD checksum kernel (__fern_bsd_sum).
+	usesBsdSum bool
 	// usesSumBytes gates the byte-sum reduction kernel (__fern_sum_bytes).
 	usesSumBytes bool
 	// usesScaleF64 gates the f64 scaling kernel (__fern_scale_f64).
@@ -19949,6 +20244,10 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesCountByte = true
 		case "__fern_scan_set":
 			g.usesScanSet = true
+		case "__fern_count_runs":
+			g.usesCountRuns = true
+		case "__fern_bsd_sum":
+			g.usesBsdSum = true
 		case "__fern_sum_bytes":
 			g.usesSumBytes = true
 		case "__fern_scale_f64":
@@ -20291,7 +20590,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// call never comes back.
 			target = "__fern_exit"
 			g.usesExit = true
-		case "buf_new", "buf_push", "buf_push_range", "buf_push_byte", "buf_push_u64", "buf_len", "buf_take", "buf_free":
+		case "buf_new", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_byte", "buf_push_u64", "buf_len", "buf_take", "buf_free":
 			target = "__fern_" + target
 			g.usesStrBuilder = true
 			// Every entry point but buf_len can reach the allocator, the

@@ -47,6 +47,30 @@ function main(): i32 { return sum_while([3, 5, 7, 11, 13]); }
 function main(): i32 { return sum_for([3, 5, 7, 11, 13]) as i32; }
 `,
 		forbid: map[string][]string{"x86-64-linux": {`__fern_oob_abort`}, "arm64-linux": {`__fern_oob_abort`}}},
+	// The same two shapes over a string's bytes.
+	{name: "bce_string", fn: "count_a", exit: 5, src: `
+@noinline function count_a(s: string): i32 {
+    var n: i32 = 0;
+    var i: i32 = 0;
+    while (i < s.len()) { if (s[i] == 97u8) { n = n + 1; } i = i + 1; }
+    for c in s { if (c == 97u8) { n = n + 1; } }
+    return n;
+}
+function main(): i32 { return count_a("banana") - 1; }
+`,
+		forbid: map[string][]string{"x86-64-linux": {`__fern_oob_abort`}, "arm64-linux": {`__fern_oob_abort`}}},
+	// A loop is rotated: the back edge re-runs the header's test and branches
+	// to the body, so no unconditional branch is left in the loop.
+	{name: "loop_rotation", fn: "sum_to", exit: 45, src: `
+@noinline function sum_to(n: i64): i64 {
+    var s: i64 = 0i64;
+    var i: i64 = 0i64;
+    while (i < n) { s = s + i; i = i + 1i64; }
+    return s;
+}
+function main(): i32 { return sum_to(10i64) as i32; }
+`,
+		forbid: map[string][]string{"x86-64-linux": {`\bjmp\b`}, "arm64-linux": {`\bb \.L`}}},
 	// A multiply by a power of two is a shift.
 	{name: "strength_mul_pow2", fn: "times8", exit: 40, src: `
 @noinline function times8(x: i32): i32 { return x * 8; }
@@ -54,6 +78,37 @@ function main(): i32 { return times8(5); }
 `,
 		want:   map[string][]string{"x86-64-linux": {`\bshl[lq]? \$3,`}, "arm64-linux": {`\blsl x\d+, x\d+, #3\b`}},
 		forbid: map[string][]string{"x86-64-linux": {`\bimul`}, "arm64-linux": {`\bmul\b`}}},
+	// A direct call passes its arguments in registers to the callee's `.r`
+	// entry: no push, no pop, and the callee reads no parameter from memory.
+	{name: "register_args", fn: "caller", exit: 10, src: `
+@noinline function clamp(v: i32, lo: i32, hi: i32): i32 {
+    if (v < lo) { return lo; }
+    if (v > hi) { return hi; }
+    return v;
+}
+@noinline function caller(v: i32): i32 { return clamp(v, 0, 10) + clamp(v - 30, 0, 10); }
+function main(): i32 { return caller(25); }
+`,
+		want:   map[string][]string{"x86-64-linux": {`call __fn_clamp\.r\n`}},
+		forbid: map[string][]string{"x86-64-linux": {`\bpushq %(rax|rsi|rdi|r8|r9|r10)\b`, `addq \$\d+, %rsp`, `\s[1-9]\d*\(%rbp\), %`}}},
+	// A tiny call-free function is spliced into its callers; @noinline keeps
+	// the call.
+	{name: "inline_tiny_leaf", fn: "caller", exit: 33, src: `
+function sq(x: i32): i32 { return x * x; }
+@noinline function cube(x: i32): i32 { return x * x * x; }
+@noinline function caller(v: i32): i32 { return sq(v) + sq(v + 1) + cube(v - 1); }
+function main(): i32 { return caller(3); }
+`,
+		want:   map[string][]string{"x86-64-linux": {`call __fn_cube\b`}, "arm64-linux": {`bl __fn_cube\b`}},
+		forbid: map[string][]string{"x86-64-linux": {`__fn_sq\b`}, "arm64-linux": {`__fn_sq\b`}}},
+	// An i32 result's wrap is one sign-extension on the value's own register,
+	// not a round trip through the scratch.
+	{name: "wrap_in_place", fn: "add3", exit: 12, src: `
+@noinline function add3(a: i32, b: i32, c: i32): i32 { return a + b + c; }
+function main(): i32 { return add3(3, 4, 5); }
+`,
+		want:   map[string][]string{"x86-64-linux": {`\bmovslq %(\w+)d?, %\w+`}, "arm64-linux": {`\bsxtw x(\d+), w\d+`}},
+		forbid: map[string][]string{"arm64-linux": {`\bsxtw x4, w4\b`}}},
 }
 
 var optShapeLegs = []struct {
