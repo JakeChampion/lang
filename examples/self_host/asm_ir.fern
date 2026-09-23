@@ -8703,7 +8703,7 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all
     // module-scoped registries — are applied here, and they are cheap.
     var sg: irlower.FnSigs = irlower.FnSigs {
         ...irlower.fn_sigs_with_dyn(base, mod.trait_reqs),
-        closurearr_ret_fns: irlower.closurearr_ret_fns_of(mod.funcs, stab),
+        closurearr_ret_fns: irlower.closurearr_ret_fns_of(mod.funcs),
         fn_names: irlower.sig_reg_of(irlower.fn_names_of(mod.funcs)),
     };
     // The IR verify gate's callee-arity index, derived ONCE over the

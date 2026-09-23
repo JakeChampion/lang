@@ -539,7 +539,6 @@ pub function all_eligible_view_base(mod: parser.Module, known: string[], all_str
 // pre-check lowers its own window rather than the whole module once per
 // process. hi < 0 (or past the end) means to the module end.
 pub function all_eligible_view_base_range(mod: parser.Module, known: string[], all_structs: irlower.StructTab, base: irlower.FnSigs, lo: i32, hi: i32): boolean {
-    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
     // A function-less module is eligible: a types-only module (ast.fern) has
     // nothing that could fail to lower, and its unit is the preamble alone.
     // No 512-function size budget here: a per-module unit is a SINGLE module
@@ -550,7 +549,7 @@ pub function all_eligible_view_base_range(mod: parser.Module, known: string[], a
         ...irlower.fn_sigs_without_ownership(base),
         // These two stay scoped to THIS module rather than the whole program.
         fn_names: irlower.sig_reg_of(irlower.fn_names_of(mod.funcs)),
-        closurearr_ret_fns: irlower.closurearr_ret_fns_of(mod.funcs, stab),
+        closurearr_ret_fns: irlower.closurearr_ret_fns_of(mod.funcs),
     };
     var freg: irlower.SigReg = module_func_reg(mod);
     var end: i32 = hi;
