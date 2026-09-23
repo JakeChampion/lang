@@ -1370,6 +1370,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_mismatch":           emitMismatchHelper,
 	"__fern_rmemchr":            emitRmemchrHelper,
 	"__fern_count_byte":         emitCountByteHelper,
+	"__fern_scan_set":           emitScanSetHelper,
 	"__fern_sum_bytes":          emitSumBytesHelper,
 	"__fern_scale_f64":          emitScaleF64Helper,
 	"__fern_crc32_cksum":        emitCrc32CksumHelper,
@@ -6180,6 +6181,52 @@ func emitCrc32CksumHelper(w func(string, ...any)) {
 // No cursor, so no clamp. Both degenerate answers are real counts rather
 // than sentinels: an out-of-range byte counts 0 because nothing can equal it,
 // an empty string counts 0 because it has no bytes.
+// emitScanSetHelper writes __fern_scan_set(s, from, set) -> the index of the
+// first byte at or after `from` whose entry in `set` is nonzero, or len(s).
+// Scalar: the table read per byte is the kernel. A set with an entry for
+// every byte value takes the loop with no length check. Leaf.
+func emitScanSetHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_scan_set"))
+	w("\tldur w3, [x0, #-4]") // len
+	w("\tcmp w1, #0")
+	w("\tb.ge .Lssa_scan_set_from_ok")
+	w("\tmov w1, #0") // clamp `from` up to 0
+	w(".Lssa_scan_set_from_ok:")
+	w("\tldur w4, [x2, #-4]") // set length
+	w("\tcmp w4, #256")
+	w("\tb.lo .Lssa_scan_set_short")
+	w(".Lssa_scan_set_loop:")
+	w("\tcmp w1, w3")
+	w("\tb.ge .Lssa_scan_set_end")
+	w("\tadd x5, x0, w1, uxtw")
+	w("\tldrb w6, [x5]")
+	w("\tadd x5, x2, w6, uxtw")
+	w("\tldrb w7, [x5]")
+	w("\tcbnz w7, .Lssa_scan_set_hit")
+	w("\tadd w1, w1, #1")
+	w("\tb .Lssa_scan_set_loop")
+	w(".Lssa_scan_set_short:")
+	w("\tcmp w1, w3")
+	w("\tb.ge .Lssa_scan_set_end")
+	w("\tadd x5, x0, w1, uxtw")
+	w("\tldrb w6, [x5]")
+	w("\tcmp w6, w4")
+	w("\tb.hs .Lssa_scan_set_short_next")
+	w("\tadd x5, x2, w6, uxtw")
+	w("\tldrb w7, [x5]")
+	w("\tcbnz w7, .Lssa_scan_set_hit")
+	w(".Lssa_scan_set_short_next:")
+	w("\tadd w1, w1, #1")
+	w("\tb .Lssa_scan_set_short")
+	w(".Lssa_scan_set_hit:")
+	w("\tmov w0, w1")
+	w("\tret")
+	w(".Lssa_scan_set_end:")
+	w("\tmov w0, w3")
+	w("\tret")
+}
+
 func emitCountByteHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__fern_count_byte"))

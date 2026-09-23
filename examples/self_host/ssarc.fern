@@ -2695,6 +2695,7 @@ function byte_scan_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     if (ins.str == "__scale_f64") { return Lowered { found: true, r: emit(r, ir.op_scale_f64()) }; }
     if (ins.str == "__crc32_cksum") { return Lowered { found: true, r: emit(r, ir.op_crc32_cksum()) }; }
     if (ins.str == "__ascii_run") { return Lowered { found: true, r: emit(r, ir.op_ascii_run()) }; }
+    if (ins.str == "__scan_set") { return Lowered { found: true, r: emit(r, ir.op_scan_set()) }; }
     if (ins.str == "__count_byte") { return Lowered { found: true, r: emit(r, ir.op_count_byte()) }; }
     if (ins.str == "__rmemchr") { return Lowered { found: true, r: emit(r, ir.op_rmemchr()) }; }
     if (ins.str == "__mismatch") { return Lowered { found: true, r: emit(r, ir.op_mismatch()) }; }

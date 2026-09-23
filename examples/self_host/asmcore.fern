@@ -4714,6 +4714,10 @@ function builtin_i32_names(): string[] {
         // is why the miss value can be a real index rather than a
         // sentinel outside the type.
         "__ascii_run",
+        // __scan_set(s, from, set): the index of the first byte at or
+        // after `from` whose entry in the u8[] `set` is nonzero, or the
+        // LENGTH. i32 for ascii_run's reason.
+        "__scan_set",
         // __rmemchr(s, byte, from): the index of the LAST `byte` at
         // or before `from`, or -1 (ATLAS-PLATFORM-PLAN §3.3,
         // memchr's nominated sibling). Same i32 shape as __memchr's;

@@ -4987,6 +4987,49 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.need("heap");
         return s;
     }
+    if (o.kind_tag == 324) {  // scan_set
+        // operand stack [box, from, set] (set on top) -> the index of the
+        // first byte at or after `from` whose set entry is nonzero, or the
+        // LENGTH. Scalar: the table read per byte is the kernel. The set's
+        // length is at (set) and its byte i in the 8-byte slot 8 + i*8;
+        // a byte past that length is not in the set, and a set with an
+        // entry for every byte value takes the loop with no length check.
+        var slo: asmcore.LabelOut = asmcore.fresh_label(s);
+        var s_loop: string = slo.name;
+        var slo2: asmcore.LabelOut = asmcore.fresh_label(slo.state);
+        var s_short: string = slo2.name;
+        var slo3: asmcore.LabelOut = asmcore.fresh_label(slo2.state);
+        var s_short_next: string = slo3.name;
+        var slo4: asmcore.LabelOut = asmcore.fresh_label(slo3.state);
+        var s_hit: string = slo4.name;
+        var slo5: asmcore.LabelOut = asmcore.fresh_label(slo4.state);
+        var s_end: string = slo5.name;
+        var slo6: asmcore.LabelOut = asmcore.fresh_label(slo5.state);
+        var s_done: string = slo6.name;
+        var slo7: asmcore.LabelOut = asmcore.fresh_label(slo6.state);
+        var s_from_ok: string = slo7.name;
+        s = slo7.state;
+        s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n");
+        s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
+        s = s.write("    testq %rcx, %rcx\n    jns " + s_from_ok + "\n    xorq %rcx, %rcx\n");
+        s = s.write(s_from_ok + ":\n    movq (%rdx), %r9\n");
+        s = s.write("    cmpq $256, %r9\n    jb " + s_short + "\n");
+        s = s.write(s_loop + ":\n");
+        s = s.write("    cmpq %r8, %rcx\n    jge " + s_end + "\n");
+        s = s.write("    movzbq (%rax,%rcx), %r10\n");
+        s = s.write("    cmpq $0, 8(%rdx,%r10,8)\n    jne " + s_hit + "\n");
+        s = s.write("    addq $1, %rcx\n    jmp " + s_loop + "\n");
+        s = s.write(s_short + ":\n");
+        s = s.write("    cmpq %r8, %rcx\n    jge " + s_end + "\n");
+        s = s.write("    movzbq (%rax,%rcx), %r10\n");
+        s = s.write("    cmpq %r9, %r10\n    jae " + s_short_next + "\n");
+        s = s.write("    cmpq $0, 8(%rdx,%r10,8)\n    jne " + s_hit + "\n");
+        s = s.write(s_short_next + ":\n    addq $1, %rcx\n    jmp " + s_short + "\n");
+        s = s.write(s_hit + ":\n    pushq %rcx\n    jmp " + s_done + "\n");
+        s = s.write(s_end + ":\n    pushq %r8\n");
+        s = s.write(s_done + ":\n");
+        return s;
+    }
     if (o.kind_tag == 253) {  // sum_bytes
         // operand stack [box] -> every byte of the string added into a
         // 32-bit accumulator that wraps.

@@ -2359,6 +2359,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_rmemchr":                  emitRmemchrHelper,
 	"__fern_ascii_run":                emitAsciiRunHelper,
 	"__fern_count_byte":               emitCountByteHelper,
+	"__fern_scan_set":                 emitScanSetHelper,
 	"__fern_sum_bytes":                emitSumBytesHelper,
 	"__fern_scale_f64":                emitScaleF64Helper,
 	"__fern_crc32_cksum":              emitCrc32CksumHelper,
@@ -4315,6 +4316,49 @@ func emitCrc32CksumHelper(w func(string, ...any)) {
 // replaced was 12.6x slower on examples/bench/string_count_byte.fern, which is
 // what the differential's ratio gate reports (#8069). Byte-at-a-time is a fine
 // helper right up until a program counts 32 KiB twice per round, 6000 rounds.
+// emitScanSetHelper writes __fern_scan_set(s, from, set) -> the index of the
+// first byte at or after `from` whose entry in `set` is nonzero, or len(s).
+// Scalar: the table read per byte is the kernel. A set with an entry for
+// every byte value takes the loop with no length check. Leaf.
+func emitScanSetHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_scan_set"))
+	w("\tmov r8d, %s", memRef("rdi", -4)) // len
+	w("\ttest esi, esi")
+	w("\tjns .Lssa_scan_set_from_ok")
+	w("\txor esi, esi") // clamp `from` up to 0
+	w(".Lssa_scan_set_from_ok:")
+	w("\tmov esi, esi")
+	w("\tmov r9d, %s", memRef("rdx", -4)) // set length
+	w("\tcmp r9d, 256")
+	w("\tjb .Lssa_scan_set_short")
+	w(".Lssa_scan_set_loop:")
+	w("\tcmp esi, r8d")
+	w("\tjge .Lssa_scan_set_end")
+	w("\tmovzx eax, byte ptr [rdi + rsi]")
+	w("\tcmp byte ptr [rdx + rax], 0")
+	w("\tjne .Lssa_scan_set_hit")
+	w("\tinc esi")
+	w("\tjmp .Lssa_scan_set_loop")
+	w(".Lssa_scan_set_short:")
+	w("\tcmp esi, r8d")
+	w("\tjge .Lssa_scan_set_end")
+	w("\tmovzx eax, byte ptr [rdi + rsi]")
+	w("\tcmp eax, r9d")
+	w("\tjae .Lssa_scan_set_short_next")
+	w("\tcmp byte ptr [rdx + rax], 0")
+	w("\tjne .Lssa_scan_set_hit")
+	w(".Lssa_scan_set_short_next:")
+	w("\tinc esi")
+	w("\tjmp .Lssa_scan_set_short")
+	w(".Lssa_scan_set_hit:")
+	w("\tmov eax, esi")
+	w("\tret")
+	w(".Lssa_scan_set_end:")
+	w("\tmov eax, r8d")
+	w("\tret")
+}
+
 func emitCountByteHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__fern_count_byte"))
