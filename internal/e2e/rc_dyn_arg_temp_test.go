@@ -107,12 +107,15 @@ func TestDynCoercedArgTempReleasedAsDyn(t *testing.T) {
 	}
 }
 
-// arm64 does not reclaim dyn values (§4.4 slice 4c), so it leaks the
-// temporary by design and has no bounded leg.
 func TestDynCoercedArgTempBounded(t *testing.T) {
 	src := dynArgTempBumpSrc("500", "2000")
 	t.Run("x86_64", func(t *testing.T) {
 		if _, code := compileAndRunX86_64FreeOn(t, src); code != 0 {
+			t.Errorf("heap high-water grew with the churn length (verdict %d, want 0)", code)
+		}
+	})
+	t.Run("arm64", func(t *testing.T) {
+		if _, code := compileAndRunArm64FreeOn(t, src); code != 0 {
 			t.Errorf("heap high-water grew with the churn length (verdict %d, want 0)", code)
 		}
 	})

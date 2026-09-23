@@ -4939,6 +4939,20 @@ function quarantine_rc(addr: string, w: string): string {
     return "    stur wzr, " + addr + "\n";
 }
 
+// arr_push_fast is the append both __fern_arr_push and __fern_arr_push_owned
+// start with: a receiver with a free slot that this push may mutate (sole
+// owner, or the bit-31 immortal sentinel) takes the value in place, with no
+// frame and no register but x2 and x3 touched. Anything else, and every push
+// under the sanitizer, which checks the count first, goes to `slow`.
+function arr_push_fast(slow: string): string {
+    if (rc_free_debug_on()) { return ""; }
+    var ok: string = slow + "_ok";
+    return "    ldr x2, [x0]\n    ldur x3, [x0, #-16]\n    cmp x2, x3\n    b.ge " + slow + "\n"
+        + "    ldur x3, [x0, #-8]\n    cmp x3, #1\n    b.eq " + ok + "\n"
+        + "    tbz x3, #31, " + slow + "\n"
+        + ok + ":\n    add x2, x2, #1\n    str x1, [x0, x2, lsl #3]\n    str x2, [x0]\n    ret\n";
+}
+
 // san_poison_check: the UAF trap after an rc-word load. `rc` holds the word,
 // `w` is a clobberable w-register and `live` the site's "not poisoned, carry
 // on" continuation. ast.RcPoison is a large POSITIVE value precisely so the
@@ -8107,6 +8121,8 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     // replaces the old O(N²) fresh-copy-every-push.
     if (s.has_need("arr_push")) {
         s = s.write("__fern_arr_push:\n");
+        s = s.write(arr_push_fast(".Larr_push_slow"));
+        s = s.write(".Larr_push_slow:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
         s = s.write("    stp x19, x20, [sp, #-16]!\n");
@@ -8115,6 +8131,8 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write("    mov x20, x1\n");           // value
         s = s.write("    ldr x21, [x19]\n");        // len
         s = s.write("    ldur x22, [x19, #-16]\n"); // cap (hidden at -16; rc at -8)
+        // Past the fast path, the receiver is shared or full: both grow.
+        if (!rc_free_debug_on()) { s = s.write("    b .Larr_push_grow\n"); }
         // #4873 containment gate — the arm64 twin of the x86 gate: an
         // rc >= 2 receiver is shared, so take the fresh-box copy path even
         // when capacity fits; rc == 1 / the bit-31 immortal sentinel keep
@@ -8219,11 +8237,14 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         // cap+3, freelist word-indexed, class cap 65536). arm64 mirror of asm_ir's
         // __fern_arr_push_owned; co-emitted with __fern_arr_push (its dependency).
         s = s.write("__fern_arr_push_owned:\n");
+        s = s.write(arr_push_fast(".Lapo_slow"));
+        s = s.write(".Lapo_slow:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
         s = s.write("    stp x19, x20, [sp, #-16]!\n");
         s = s.write("    mov x19, x0\n");             // save old arr ptr
-        s = s.write("    bl __fern_arr_push\n");       // x0 = new (grew) or old (in place)
+        // x0 = new (grew) or old (in place); the fast path already declined.
+        if (rc_free_debug_on()) { s = s.write("    bl __fern_arr_push\n"); } else { s = s.write("    bl .Larr_push_slow\n"); }
         s = s.write("    cmp x0, x19\n");
         s = s.write("    beq .Lapo_ret\n");            // in place — nothing freed
         s = s.write("    mov x9, #0x10000\n");
@@ -9636,10 +9657,6 @@ function emit_module_ir_flat(mod: parser.Module, stab: irlower.StructTab, darwin
     var nfok: string[] = irlower.structfld_reclaim_ok_types_of(mod.funcs, stab, base.borrowable_params);
     var nfoi: i32 = 0;
     while (nfoi < nfok.len()) { s = s.need("structfldok:" + nfok[nfoi]); nfoi = nfoi + 1; }
-    // #5235: plain-fn-pointer-array field registry (see the emit_module_funcs twin).
-    var fpk: string[] = irlower.fnptr_arr_fields_of(mod.funcs, stab);
-    var fpi: i32 = 0;
-    while (fpi < fpk.len()) { s = s.need(fpk[fpi]); fpi = fpi + 1; }
     // Per-type __field_reclaim_<T> / __struct_drop_<T> bodies (#3457).
     s = emit_arm64_reclaim_drop_bodies(s);
     s = emit_ir_runtime(s, darwin);
@@ -9729,11 +9746,6 @@ pub function emit_module_ir_unit_arm64_flat(mod: parser.Module, is_entry: boolea
     var nfok: string[] = irlower.structfld_reclaim_ok_types_of(all_funcs, all_structs, b.borrowable_params);
     var nfoi: i32 = 0;
     while (nfoi < nfok.len()) { s = s.need("structfldok:" + nfok[nfoi]); nfoi = nfoi + 1; }
-    // #5235: seed the plain-fn-pointer-array field registry as needs so
-    // emit_arm64_struct_drop_one buffer-only-decs those fields (no element walk).
-    var fpk: string[] = irlower.fnptr_arr_fields_of(all_funcs, all_structs);
-    var fpi: i32 = 0;
-    while (fpi < fpk.len()) { s = s.need(fpk[fpi]); fpi = fpi + 1; }
     // Per-type __field_reclaim_<T> + __struct_drop_<T> bodies (#3457). Shared
     // with emit_module's single-unit IR path (so the load_run / emit_module
     // route also emits them — previously only this multi-unit path did, so a

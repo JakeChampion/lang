@@ -717,6 +717,21 @@ function buf_block_free(s: asmcore.EmitState, ptr: string, words: string, lbl: s
     return s;
 }
 
+// arr_push_fast is the append both __fern_arr_push and __fern_arr_push_owned
+// start with: a receiver with a free slot that this push may mutate (sole
+// owner, or the bit-31 immortal sentinel) takes the value in place, with no frame
+// and no register but %rax, %rcx and %rdx touched. Anything else, and every
+// push under the sanitizer, which checks the count first, goes to `slow`.
+function arr_push_fast(slow: string): string {
+    if (rc_free_debug_on()) { return ""; }
+    var ok: string = slow + "_ok";
+    return "    movq (%rdi), %rdx\n    cmpq -16(%rdi), %rdx\n    jge " + slow + "\n"
+        + "    movq -8(%rdi), %rcx\n    cmpq $1, %rcx\n    je " + ok + "\n"
+        + "    btq $31, %rcx\n    jnc " + slow + "\n"
+        + ok + ":\n    movq %rsi, 8(%rdi,%rdx,8)\n    incq %rdx\n    movq %rdx, (%rdi)\n"
+        + "    movq %rdi, %rax\n    ret\n";
+}
+
 function hev_free(s: asmcore.EmitState, ptr: string, words: string): asmcore.EmitState {
     if (!hev_on()) { return s; }
     s = s.write("    pushq " + words + "\n");
@@ -3838,6 +3853,8 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     if (s.has_need("arr_push") || s.has_need("maps")) {
     // __fern_arr_push (transcribed from asm.fern for the IR map path).
     s = s.write("__fern_arr_push:\n");
+    s = s.write(arr_push_fast(".Larr_push_slow"));
+    s = s.write(".Larr_push_slow:\n");
     s = s.write("    pushq %rbp\n");
     s = s.write("    movq %rsp, %rbp\n");
     s = s.write("    pushq %r12\n");
@@ -3848,6 +3865,8 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq %rsi, %r13\n");        // value
     s = s.write("    movq (%r12), %r14\n");      // len
     s = s.write("    movq -16(%r12), %r15\n");   // cap (hidden at -16; rc at -8)
+    // Past the fast path, the receiver is shared or full: both grow.
+    if (!rc_free_debug_on()) { s = s.write("    jmp .Larr_push_grow\n"); }
     // #4873 containment gate: an rc >= 2 receiver is SHARED (the caller-side
     // grow bracket inc'd it, or a counted alias exists) — never mutate it in
     // place even when capacity fits; take the grow path's fresh-box copy,
@@ -3980,12 +3999,15 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // without threading a separate need through the union.
     if (s.has_need("arr_push") || s.has_need("maps")) {
         s = s.write("__fern_arr_push_owned:\n");
+        s = s.write(arr_push_fast(".Lapo_slow"));
+        s = s.write(".Lapo_slow:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
         s = s.write("    pushq %r12\n");
         s = s.write("    pushq %r13\n");            // align stack to 16 for the call
         s = s.write("    movq %rdi, %r12\n");        // save old arr ptr
-        s = s.write("    call __fern_arr_push\n");   // %rax = new (grew) or old (in place)
+        // %rax = new (grew) or old (in place); the fast path already declined.
+        if (rc_free_debug_on()) { s = s.write("    call __fern_arr_push\n"); } else { s = s.write("    call .Larr_push_slow\n"); }
         s = s.write("    cmpq %rax, %r12\n");
         s = s.write("    je .Lapo_ret\n");            // in place — nothing freed
         s = s.write("    cmpq $0x10000, %r12\n");     // grew: free the dead old box %r12
@@ -8903,9 +8925,9 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     // library modules can link their `call __fern_*` externs against them.
     if (is_entry && globl_defs) { s = asmcore.emit_runtime_globls(s); }
     // The side-table bases arrive as INDIVIDUAL params (b_*), threaded straight to
-    // emit_module_funcs. The strfldok / FNPTR need seeding below recomputes its
-    // two columns directly (all_funcs is in scope) rather than re-reading a base
-    // that was just passed as an arg.
+    // emit_module_funcs. The strfldok need seeding below recomputes its column
+    // directly (all_funcs is in scope) rather than re-reading a base that was
+    // just passed as an arg.
     s = emit_module_funcs(mod, all_funcs, all_structs, s, globl_defs, lo, hi, cache, b, true);
     // #4355: admit the replaced-STRING-field arm per type, from the
     // WHOLE-PROGRAM read scan (a unit-local func list would under-count the
@@ -8939,17 +8961,6 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     while (nfoi < nfok.len()) {
         s = s.need("structfldok:" + nfok[nfoi]);
         nfoi = nfoi + 1;
-    }
-    // #5235: seed the plain-fn-pointer-array field registry as needs
-    // ("FNPTR:<sty>.<field>") so emit_ir_struct_drop_one leaks-the-walk (buffer-
-    // only dec, no element walk) for those fields — their elements are raw code
-    // addresses. Same whole-program (all_funcs/all_structs) verdict everywhere so
-    // the weak-deduped __struct_drop bodies agree across units.
-    var fpk: string[] = irlower.fnptr_arr_fields_of(all_funcs, all_structs);
-    var fpi: i32 = 0;
-    while (fpi < fpk.len()) {
-        s = s.need(fpk[fpi]);
-        fpi = fpi + 1;
     }
     // Per-type __field_reclaim_<T> bodies (#3457), in .text alongside the module
     // funcs — emitted by EVERY unit that uses one (weak-deduped at link), so a

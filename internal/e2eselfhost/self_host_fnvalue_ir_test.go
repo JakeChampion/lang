@@ -73,8 +73,8 @@ func TestSelfHostFnValueIR(t *testing.T) {
 		// Regression: a 1-arg fn-name bound to a fn-typed local stays correct.
 		{"bind-one-arg", `function inc(x: i32): i32 { return x + 1; } function main(): i32 { var g: (i32) => i32 = inc; return g(41); }`, 42},
 		// #3574 (array half): a `(() => i32)[]` literal of bare named-fn VALUES.
-		// Each element is a fn pointer (const_func), not a const-call of f, so the
-		// indexed `fns[i]()` dispatches the pointer.
+		// Each element is a function value boxed through its `$wrap`, not a
+		// const-call of f, so the indexed `fns[i]()` dispatches the box.
 		{"arr-bind-call", `function f(): i32 { return 7; } function main(): i32 { var fns: (() => i32)[] = [f]; return fns[0](); }`, 7},
 		{"arr-two-sum", `function f(): i32 { return 7; } function g(): i32 { return 5; } function main(): i32 { var fns: (() => i32)[] = [f, g]; return fns[0]() + fns[1](); }`, 12},
 		// loop over a bare-named-fn array, calling each through a variable index.
