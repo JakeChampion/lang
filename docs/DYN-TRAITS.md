@@ -601,9 +601,9 @@ a `'2'` flag in the existing `fn_param_sigs` registry (no new
 still flows in unboxed and mis-dispatches (pre-existing, no regression);
 the `lower_dyn_arg` helper drops straight into those two sites once their
 dyn-type detection is added. The self-host checker (`checker.fern`)
-enforces object-safety (E021) but not the coercion rule, that the concrete
-implements every trait in the set (#10055); the Go checker is the strict
-gate there until it does.
+enforces object-safety (E021) and the coercion rule: the concrete
+implements every trait in the set, and a `dyn` slot inside a container
+takes only the same `dyn` (#10055).
 
 **The typed path (`FERN_SEM_IR`).** A struct or enum widened to `dyn` is
 a borrow of its box (`ssasem.dyn_up`), and a method call on it is a
