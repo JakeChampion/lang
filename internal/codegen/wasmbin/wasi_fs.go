@@ -964,8 +964,9 @@ func buildReadFileErr(body []byte, idxs map[string]uint32, buildIoErr, allocRc1,
 // A heap-form string's data is already that buffer, so it is used in
 // place; only an inline-form string (high bit on len — its bytes live in
 // the (data, len) words, not in memory) is spilled, the way
-// buildStringAsBytesBody promotes one. The spill is a bump block of at
-// most 7 bytes that nothing frees (#8408).
+// buildStringAsBytesBody promotes one. The caller owns that spill and can
+// release it with emitStrNormalizeFree after the host has finished reading.
+// Callers not yet paired with that release remain part of #8408.
 func emitStrNormalize(body []byte, idxs map[string]uint32, dataLocal, lenLocal, bufLocal, byteLenLocal, iLocal uint32) []byte {
 	strLen := idxs["__fern_str_len"]
 	strByte := idxs["__fern_str_byte"]

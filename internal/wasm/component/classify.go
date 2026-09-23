@@ -79,6 +79,8 @@ func ClassifyCore(bin []byte) (ComposeRequest, []string) {
 			req.DropInput = true
 		case m == "wasi:io/streams@0.2.0" && n == "[resource-drop]output-stream":
 			req.DropOutput = true
+		case m == "wasi:io/error@0.2.0" && n == "[resource-drop]error":
+			req.DropError = true
 		case m == "wasi:filesystem/preopens@0.2.0" && n == "get-directories":
 			getDirs = true
 		case m == "wasi:filesystem/types@0.2.0" && n == "[method]descriptor.open-at":
@@ -199,7 +201,7 @@ func ClassifyCore(bin []byte) (ComposeRequest, []string) {
 // lifted-export) builder rather than the composer.
 func RequestEmpty(req ComposeRequest) bool {
 	return !req.Stdout && !req.Stderr && !req.Stdin &&
-		!req.BlockWrite && !req.BlockRead && !req.DropInput && !req.DropOutput &&
+		!req.BlockWrite && !req.BlockRead && !req.DropInput && !req.DropOutput && !req.DropError &&
 		!req.File.Any() &&
 		!req.Tcp && !req.Udp && !req.Http && !req.Timer && !req.Poll && !req.PollableDrop && !req.TcpConnect &&
 		!req.WallNow && !req.Args && !req.Env && len(req.Structured) == 0
