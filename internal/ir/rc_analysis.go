@@ -257,6 +257,15 @@ type rcPlan struct {
 	// fieldOwnMoves does, so a binding is the field's only holder (#10084).
 	// Filled by computeFieldOwnMoves.
 	destructureMoves map[*ast.Destructure]bool
+	// overwriteMoves marks the assignments `x = y` whose source local is
+	// overwritten before anything reads it again: x takes y's reference
+	// without a retain and y's slot is emptied, so y's own overwrite finds
+	// nothing to release. Filled by computeOverwriteMoves.
+	overwriteMoves map[*ast.Assign]string
+	// emptiedOverwrites marks the writes that end an overwriteMoves source's
+	// dead stretch. Each is reached only through its move, so the slot it
+	// overwrites is empty and there is nothing to release.
+	emptiedOverwrites map[*ast.Assign]bool
 	// preciseDrops[stmtIdx] lists the owned locals to deep-drop + zero right
 	// after lowering that top-level statement (Perceus garbage-free precise
 	// drops — computePreciseDrops).
@@ -336,6 +345,7 @@ func (b *builder) computeRcAnalyses() {
 	b.rc.aliasBindIncs = map[*ast.Var]bool{}
 	b.rc.ownCallMoveArgs = map[ast.Node]bool{}
 	b.rc.movedLocals = b.computeMovedLocals()
+	b.rc.overwriteMoves = b.computeOverwriteMoves()
 	// Per-RETURN-SITE own-param transfers, which the whole-function
 	// movedLocals above cannot express (#6125).
 	b.rc.returnOwnMove = b.computeReturnOwnMoves()
@@ -9585,6 +9595,124 @@ func (b *builder) computeFieldOwnMoves() map[*ast.FieldAccess]bool {
 		return true
 	})
 	return out
+}
+
+// computeOverwriteMoves finds `x = y` between locals where y's next event
+// on every path through the rest of its statement list is a write that
+// does not read it: an assignment to y, or an if/else each of whose arms
+// begins that way. Until that write y holds a reference nothing reads, so
+// x can take it instead of a retained copy and y's slot is emptied. The
+// retain the copy would have made and the release y's overwrite would
+// have made are the pair removed, so y has to be a local that owns its
+// reference (freeEligible) and whose copy would have been retained.
+//
+// A path that leaves the list before the write (a break or continue out
+// of it) could reach a read of the emptied slot and disqualifies the site;
+// a return is safe, since the exit sweep releases nothing from an empty
+// slot. A local a closure captures is excluded: the closure reads it
+// through the capture, which the scan cannot see.
+func (b *builder) computeOverwriteMoves() map[*ast.Assign]string {
+	out := map[*ast.Assign]string{}
+	b.rc.emptiedOverwrites = map[*ast.Assign]bool{}
+	if !ast.RcFreeEnabled || b.fn.Body == nil {
+		return out
+	}
+	captured := map[string]bool{}
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		if lm, ok := n.(*ast.Lambda); ok {
+			ast.Walk(lm, func(m ast.Node) bool {
+				if id, ok := m.(*ast.Ident); ok {
+					captured[id.Name] = true
+				}
+				return true
+			})
+			return false
+		}
+		return true
+	})
+	eligible := func(src *ast.Ident) bool {
+		name := src.Name
+		if captured[name] || !b.isOwnedRcLocal(name) || !b.localNameUnique(name) ||
+			!b.rc.freeEligible[name] || !needsRcIncOnAlias(src, b) {
+			return false
+		}
+		switch t := b.exprType(src).(type) {
+		case ast.StringType:
+			return !b.twoWordStrings()
+		case ast.StructType:
+			return !isMapType(t)
+		case ast.ArrayType, ast.EnumType, ast.TupleType:
+			return true
+		}
+		return false
+	}
+	scan := func(stmts []ast.Stmt) {
+		for i, st := range stmts {
+			es, ok := st.(*ast.ExprStmt)
+			if !ok {
+				continue
+			}
+			a, ok := es.Expr.(*ast.Assign)
+			if !ok || b.rc.moveSites[a] {
+				continue
+			}
+			dst, ok := a.Target.(*ast.Ident)
+			if !ok {
+				continue
+			}
+			src, ok := a.Value.(*ast.Ident)
+			if !ok || src.Name == dst.Name || !eligible(src) {
+				continue
+			}
+			if writes, ok := overwrittenBeforeRead(stmts[i+1:], src.Name); ok {
+				out[a] = src.Name
+				b.rc.moveSites[a] = true
+				for _, w := range writes {
+					b.rc.emptiedOverwrites[w] = true
+				}
+			}
+		}
+	}
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		if blk, ok := n.(*ast.Block); ok {
+			scan(blk.Stmts)
+		}
+		return true
+	})
+	return out
+}
+
+// overwrittenBeforeRead reports whether every path through `stmts` writes
+// `name` before reading it, without leaving the list first, and returns
+// those writes.
+func overwrittenBeforeRead(stmts []ast.Stmt, name string) ([]*ast.Assign, bool) {
+	for _, st := range stmts {
+		if es, ok := st.(*ast.ExprStmt); ok {
+			if a, ok := es.Expr.(*ast.Assign); ok {
+				if id, ok := a.Target.(*ast.Ident); ok && id.Name == name && mentions(a.Value, name) == 0 {
+					return []*ast.Assign{a}, true
+				}
+			}
+		}
+		if f, ok := st.(*ast.If); ok && f.Else != nil && mentions(f.Cond, name) == 0 {
+			tw, tok := armOverwrites(f.Then, name)
+			ew, eok := armOverwrites(f.Else, name)
+			if tok && eok {
+				return append(tw, ew...), true
+			}
+		}
+		if mentions(st, name) > 0 || jumpEscapes(st) {
+			return nil, false
+		}
+	}
+	return nil, false
+}
+
+func armOverwrites(st ast.Stmt, name string) ([]*ast.Assign, bool) {
+	if blk, ok := st.(*ast.Block); ok {
+		return overwrittenBeforeRead(blk.Stmts, name)
+	}
+	return overwrittenBeforeRead([]ast.Stmt{st}, name)
 }
 
 // fieldUnreadAfter reports whether `stmts` never read field f of x: every

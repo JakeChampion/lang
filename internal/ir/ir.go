@@ -19340,7 +19340,9 @@ func (b *builder) assign(n *ast.Assign) error {
 		// Both cases are covered by dec'ing iff the new value
 		// differs from the old (i.e. cow copied). Other rc-tracked
 		// reassignments keep the unconditional dec.
-		if isArrayTypeOfLocal(t.Name, b) {
+		if b.rc.emptiedOverwrites[n] {
+			// A dominating overwrite move emptied the slot.
+		} else if isArrayTypeOfLocal(t.Name, b) {
 			if flagSlot, hasFlag := b.locals[ownFlagName(t.Name)]; hasFlag &&
 				isSelfArraySetReassign(n.Value, t.Name) && b.isConsumedArrayParam(t.Name) {
 				// `p = p.with(i, v)` on a consumed-threaded ARRAY param. Whether
@@ -19725,6 +19727,12 @@ func (b *builder) assign(n *ast.Assign) error {
 		// use the assignment as an expression. Plain ExprStmts drop it
 		// via exprLeavesValue + OpDrop.
 		b.emit(Op{Kind: OpStoreLocal, I32: idx})
+		if src, moved := b.rc.overwriteMoves[n]; moved {
+			// The source's reference is the target's now; the source is
+			// written again before anything reads it.
+			b.emit(Op{Kind: OpConstI32, I32: 0})
+			b.emit(Op{Kind: OpStoreLocal, I32: b.locals[src]})
+		}
 		b.emit(Op{Kind: OpLoadLocal, I32: idx})
 		return nil
 	case *ast.Index:
