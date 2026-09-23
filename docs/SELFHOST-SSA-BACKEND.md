@@ -32,8 +32,10 @@ lowered function it:
    the op;
 2. drops what nothing reads (`ssa.prune_dead`), which is most of the zeros
    the lift gives declared locals and most of the loop-header phis;
-3. allocates registers with `ssa.regalloc_linear` over the caller-saved
-   temporaries (x9 to x15 on arm64; rsi, rdi and r8 to r11 on x86-64);
+3. allocates registers with `ssa.regalloc_linear` over two pools: the
+   caller-saved registers (x0 and x9 to x15 on arm64; rax, rsi, rdi and r8
+   to r10 on x86-64) and, for a value live across a call, the callee-saved
+   ones (x19 to x28; rbx and r12 to r15);
 4. emits the function on the conventions the stack machine established:
    the same frame record, parameters read from the caller's slots
    (`[x29, #16 + 16*i]`, `16 + 8*i(%rbp)`), the result in x0 or %rax, calls
@@ -131,10 +133,8 @@ went with it (see "What this retires").
 
 ## The emitter today
 
-Values live in seven caller-saved registers or in frame slots numbered over
-the spilled values, addressed from sp on arm64; a value live across a call
-is spilled, so a loop that calls out keeps its loop-carried values in
-memory. An instruction the emitter selects itself writes into its result's
+Values live in registers from the two pools above or in frame slots
+numbered over the spilled values, addressed from sp on arm64. An instruction the emitter selects itself writes into its result's
 home and reads operands from theirs (`ssa_dst`, `ssa_src`): the integer
 add, subtract, multiply, and, or, xor and the compares compute into the
 home with only a spilled operand passing through a scratch
@@ -161,8 +161,7 @@ the shifts and the table shared with the stack machine still go through
 x0/x1 (`%rax`/`%rcx`), as does every call result. The phis of one edge are
 parallel moves between homes (`ssa_parallel_moves`): one instruction per
 move, a cycle broken by parking one location in the scratch, and no move at
-all for a phi whose operand already sits in its home. The optimiser's
-passes do not run. On the compiler
+all for a phi whose operand already sits in its home. On the compiler
 compiling itself the SSA text is 1.12x the flat text (4.71M against 4.21M
 instructions, arm64); the numbers of each step are in
 `docs/ssa-log/2026-09-17-selfhost-ssa-backend-whole-compiler.md`. What
@@ -190,9 +189,11 @@ not register pressure. The order to take that in:
    into x0 of the value it already holds emits nothing, which removes the
    move back after every move out. The rest is x0 as an allocatable
    register for a value whose only reader follows the call.
-3. The optimiser (`ssa.optimize`) on the lifted function once its binary
-   arms read IR kind names rather than the symbols the `build_func` frontend
-   used.
+3. `build_func`'s optimiser (`ssa.optimize`) is deleted: its binary arms
+   read the frontend's operator symbols rather than IR kind names, and the
+   subset that worked on the lifted function saved 1.2-1.9% of instructions
+   for 20-22% more compile time
+   (`docs/ssa-log/2026-09-17-the-optimiser-costs-more-than-it-saves.md`).
 
 ## Gates
 

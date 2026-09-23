@@ -3212,9 +3212,9 @@ pub function is_terminator_kind(id: i32): boolean {
 
 // is_foldable_binary_kind reports whether `id` is an i32 binary op a constant
 // folder can evaluate at compile time (pop r, pop l, push apply) — the int-id
-// twin of irlower.is_bin_kind and native's isFoldableBinary. Division /
-// remainder are included (the folder models the total, never-trapping
-// x/0 = 0 semantics).
+// twin of irlower.is_bin_kind and native's isFoldableBinary. Division and
+// remainder are included; a zero divisor is never folded
+// (fold_would_divide_by_zero), so its runtime behaviour is kept.
 pub function is_foldable_binary_kind(id: i32): boolean {
     return id == kind_id("add") || id == kind_id("sub") || id == kind_id("mul")
         || id == kind_id("div_s") || id == kind_id("rem_s")
@@ -3235,10 +3235,7 @@ pub function is_foldable_binary_kind(id: i32): boolean {
 // helper's `__raw_addr(p, 0 - 8)` costs a const, a const, two pops, a sub and
 // a push, none of which survive folding.
 //
-// It runs on EVERY build, not just -O. constfold.fold_module is the AST-level
-// sibling and is gated behind -O (fern.fern), so a default build had no
-// constant folding at all; this one is a pure op-list rewrite with no source
-// shape to preserve, so there is nothing for a diagnostic to lose by it.
+// It runs on every build, beside constfold.fold_module, its AST-level sibling.
 //
 // Width and signedness come from the BINARY op, not the operands: a folded
 // `const` inherits the width the binary was going to produce. Only i32-width
