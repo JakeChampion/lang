@@ -172,3 +172,49 @@ func TestBranchAlignmentSpendsPaddingAsPrefixes(t *testing.T) {
 }
 
 func itoa(i int) string { return strconv.Itoa(i) }
+
+// The fixpoint and the rebuild must agree about a label that sits INSIDE a
+// lead span — at the branch the lead was taken for.
+//
+// mapNew gives such an offset the padding laid before the lead but not that
+// event's rel8 shrink, because a branch that shortens does not move its own
+// start. seenFrom, the fixpoint's mid-pass model of the same position, has two
+// arms; teaching only one of them left a forward branch judged in range against
+// a position the rebuild then computed three bytes further on, and the
+// assembler refused its own layout ("out of rel8 range (128)").
+//
+// The geometry is narrow: the target label must sit at a SHRUNK branch that
+// took a lead, with the forward branch's displacement within the three bytes
+// that shrink accounts for. Sweeping one dimension misses it — the first
+// version of this test did, and passed against the bug. Sweeping the pair count
+// against the tail finds 17 of them, the tightest at pairs=13, tail=2.
+func TestBranchAlignmentAgreesOnALabelInsideALead(t *testing.T) {
+	for _, base := range []uint64{0, 8, 16, 31} {
+		for pairs := 0; pairs < 60; pairs++ {
+			for tail := 0; tail < 12; tail++ {
+				var sb strings.Builder
+				sb.WriteString(".text\n_start:\n\tcmp rax, 1\n\tjne target\n")
+				// lead+branch pairs, so the span the forward branch crosses is
+				// full of events whose lengths the fixpoint is still settling.
+				for i := 0; i < pairs; i++ {
+					sb.WriteString("\tmov rcx, 1\n\tjmp s" + itoa(i) + "\ns" + itoa(i) + ":\n")
+				}
+				for i := 0; i < tail; i++ {
+					sb.WriteString("\tnop\n")
+				}
+				// `target` labels the branch of a lead+branch pair, so it lands
+				// inside that event's lead span; the jmp shrinks to rel8, which
+				// is the delta the two views disagreed about.
+				sb.WriteString("\tmov rdx, 1\ntarget:\n\tjmp done\ndone:\n\tret\n")
+				a, err := ParseProgram(sb.String())
+				if err != nil {
+					t.Fatalf("base %#x pairs %d tail %d: %v", base, pairs, tail, err)
+				}
+				a.SetBranchAlignment(base)
+				if _, _, err := a.BytesProgram(base); err != nil {
+					t.Fatalf("base %#x pairs %d tail %d: the assembler refused its own layout: %v", base, pairs, tail, err)
+				}
+			}
+		}
+	}
+}
