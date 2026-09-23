@@ -185,6 +185,17 @@ function prod_kind(k: string): boolean {
     return prod_mem_kind(k) || prod_float_kind(k);
 }
 
+// kind_class packs the three classifications lift_impl branches on: bit 0
+// prod_kind, bit 1 prod_mem_kind, bit 2 prod_float_kind. lift_impl works it
+// out once per kind it meets, since each builds and scans its name lists.
+function kind_class(k: string): i32 {
+    var c: i32 = 0;
+    if (prod_kind(k)) { c = c + 1; }
+    if (prod_mem_kind(k)) { c = c + 2; }
+    if (prod_float_kind(k)) { c = c + 4; }
+    return c;
+}
+
 // prod_float_kind is the f64 vocabulary: the literal, the arithmetic and
 // compares, the single-instruction math, the conversions and reinterprets,
 // and the transcendentals the stack machine calls the runtime for. A value
@@ -634,10 +645,23 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResu
     var edge_block: i32[] = [];
     var edge_vals: i32[] = [];
 
+    // Each kind's name and kind_class, filled in the first time it appears.
+    var top_tag: i32 = 0;
+    for o in ops { if (o.kind_tag > top_tag) { top_tag = o.kind_tag; } }
+    var knames: string[] = [];
+    var kcls: i32[] = [];
+    while (kcls.len() <= top_tag) { kcls = kcls.append(0 - 1); knames = knames.append(""); }
     var i: i32 = 0;
     while (i < ops.len() && ok) {
         var op: ir.Op = ops[i];
-        var k: string = ir.kind_name(op.kind_tag);
+        var tag: i32 = op.kind_tag;
+        if (tag < 0) { ok = false; i = i + 1; continue; }
+        if (kcls[tag] < 0) {
+            knames = knames.with(tag, ir.kind_name(tag));
+            kcls = kcls.with(tag, kind_class(knames[tag]));
+        }
+        var k: string = knames[tag];
+        var cls: i32 = kcls[tag];
 
         // Skip dead code after a terminator (e.g. ops after a `return`/`br`
         // inside an arm); only else/end/the matching block delimiters act on it.
@@ -646,10 +670,10 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResu
             continue;
         }
 
-        if (!prod_kind(k) && flat_arm_op(op)) {
+        if ((cls & 1) == 0 && flat_arm_op(op)) {
             var lv: LiftVals = lift_pop_push(LiftVals { nvals: nvals, stack: stack, insts: [], ok: true }, ir.op_pops(op), 59, i, k);
             nvals = lv.nvals; stack = lv.stack; cur_insts = splice(cur_insts, lv.insts); ok = lv.ok;
-        } else if (!prod_kind(k)) {
+        } else if ((cls & 1) == 0) {
             ok = false;
         } else if ((k == "const_i32_text" || k == "const_i64")) {
             var lv: LiftVals = lift_const_text_prod(k, op, nvals, stack, []);
@@ -657,10 +681,10 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResu
         } else if ((k == "int_extend" || k == "int_wrap" || k == "int_cast" || k == "u32_wrap")) {
             var lv: LiftVals = lift_int_narrow_prod(k, op, nvals, stack, [], ok);
             nvals = lv.nvals; stack = lv.stack; cur_insts = splice(cur_insts, lv.insts); ok = lv.ok;
-        } else if (prod_mem_kind(k)) {
+        } else if ((cls & 2) != 0) {
             var lv: LiftVals = lift_prod_mem(k, op, nvals, stack, []);
             nvals = lv.nvals; stack = lv.stack; cur_insts = splice(cur_insts, lv.insts); ok = lv.ok;
-        } else if (k != "const_f64" && prod_float_kind(k)) {
+        } else if (k != "const_f64" && (cls & 4) != 0) {
             var lv: LiftVals = lift_float_prod(k, op, nvals, stack, []);
             nvals = lv.nvals; stack = lv.stack; cur_insts = splice(cur_insts, lv.insts); ok = lv.ok;
         } else if (k == "const_i32") {
