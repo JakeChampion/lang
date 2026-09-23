@@ -33,8 +33,23 @@ on:
   workflow_dispatch:
 
 jobs:
+  # TWO JOBS, split over the coreutils corpus, which is most of the lane: one
+  # job ran 15.8 minutes, the longest in the suite. Each shard runs its half
+  # of the catalogue; shard 1 also runs every other step, so shard 0 is only
+  # its half. The ratchet reads both halves in the darwin-ratchet job below.
+  # The pool here is five macOS jobs account-wide, so two per suite leaves
+  # room for a PR suite beside main's.
   test-arm64-darwin:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { shard: 0, nshard: 2 }
+          - { shard: 1, nshard: 2 }
+    name: test-arm64-darwin${{ matrix.shard != 0 && format('-shard{0}', matrix.shard) || '' }}
     runs-on: macos-15
+    outputs:
+      signed: ${{ steps.gate.outputs.signed }}
     # A hung step here holds one of the PR queue's two slots: without this the
     # job runs to GitHub's 360-minute default and half the queue waits behind
     # it. Round five wedged inside the corpus at 03:19 and was still "in
@@ -77,10 +92,11 @@ jobs:
           go version
 
       - name: go vet
+        if: matrix.shard == 1
         run: go vet ./internal/codegen/arm64/... ./internal/e2e/... ./internal/interp/...
 
       - name: go test (Darwin interpreter timestamps)
-        if: steps.gate.outputs.signed != 'true'
+        if: matrix.shard == 1 && steps.gate.outputs.signed != 'true'
         run: |
           gotestsum --format standard-verbose -- -run '^(TestSetFileTimesDarwin.*|TestInterpFsMetaPrimitives)$' ./internal/interp/ ./internal/e2e/
 
@@ -89,7 +105,7 @@ jobs:
       # other lane is Linux, where the sixteen Darwin overrides are unread
       # data — exactly the shape that goes stale without anyone noticing.
       - name: go test (Darwin errno table)
-        if: steps.gate.outputs.signed != 'true'
+        if: matrix.shard == 1 && steps.gate.outputs.signed != 'true'
         run: |
           gotestsum --format standard-verbose -- ./internal/strerror/
 
@@ -228,6 +244,12 @@ jobs:
       # Linux units lane runs them. The arm64-darwin self-host path is gated
       # two steps down instead.
       #
+      # A shard runs its half by NAME, but the names come from `go test -list`
+      # on this runner, so a Linux-only test is never in the list and the
+      # objection above does not apply: scripts/shard-tests partitions exactly
+      # the tests that exist here, with .github/darwin-corpus-test-weights.txt
+      # steering the balance.
+      #
       # -timeout is set EXPLICITLY because go test's default is ten minutes:
       # a binary the default kills reports whichever cases were in flight as
       # failures with no output, so the lane names tests that did not fail and
@@ -259,13 +281,27 @@ jobs:
       - name: go test (coreutils corpus on Darwin)
         if: steps.gate.outputs.signed != 'true'
         timeout-minutes: 50
+        # The runner's bash is macOS's 3.2, so no mapfile and no bash-4 forms.
         run: |
+          set -euo pipefail
+          tops=$(
+            go test -list '^Test' ./internal/coreutils/ |
+              grep -E '^Test' | grep -v '^TestSelfHost' | sort |
+              scripts/shard-tests "${{ matrix.shard }}" "${{ matrix.nshard }}" .github/darwin-corpus-test-weights.txt
+          )
+          n=$(printf '%s\n' "$tops" | grep -c . || true)
+          if [ "$n" -eq 0 ]; then
+            echo "::error::shard ${{ matrix.shard }}/${{ matrix.nshard }} got no tests; the list or the partition is wrong" >&2
+            exit 1
+          fi
+          echo "shard ${{ matrix.shard }}/${{ matrix.nshard }}: $n top-level tests"
+          PAT="^($(printf '%s\n' "$tops" | paste -s -d '|' -))\$"
           set +e
-          gotestsum --format standard-verbose -- -timeout 45m -skip '^TestSelfHost' ./internal/coreutils/ > corpus-darwin.log 2>&1
+          gotestsum --format standard-verbose -- -timeout 45m -run "$PAT" ./internal/coreutils/ > corpus-darwin.log 2>&1
           echo "EXIT=$?"
           # Deliberately not the step's exit status. The catalogue does not
           # pass on Darwin yet, so a non-zero here is the expected state; what
-          # decides the lane is the ratchet below, which cares about WHICH
+          # decides the lane is the darwin-ratchet job, which cares about WHICH
           # utilities failed rather than that some did.
 
       # The artifact FIRST, and the summary after it. The whole log is the
@@ -274,7 +310,7 @@ jobs:
         if: always() && steps.gate.outputs.signed != 'true'
         uses: actions/upload-artifact@v7
         with:
-          name: coreutils-corpus-darwin
+          name: coreutils-corpus-darwin-shard${{ matrix.shard }}
           path: corpus-darwin.log
           retention-days: 7
           if-no-files-found: ignore
@@ -288,7 +324,7 @@ jobs:
       # for detail; this is only the shape of the round.
       # `!cancelled()` rather than `always()`: a red lane elsewhere cancels
       # this one mid-corpus, and under `always()` both this step and the
-      # ratchet below read the truncated log as a finding — a cancelled lane
+      # ratchet read the truncated log as a finding — a cancelled lane
       # reporting as a second bug. The upload above stays `always()`, because
       # a partial log is still worth keeping.
       - name: which cases failed
@@ -310,38 +346,121 @@ jobs:
           grep -oE '^--- FAIL: Test[A-Za-z0-9]+' corpus-darwin.log \
             | sed 's/^--- FAIL: //' | sort | uniq -c | sort -rn || true
 
-      # The ratchet. The catalogue runs in full and the set of test functions
-      # that failed is compared against the checked-in list of utilities not
-      # yet working on Darwin. A name that fails and is not on the list fails
-      # the lane, so the Darwin result cannot drift while the divergences are
-      # worked through; a name on the list that now passes is reported for its
-      # line to be deleted.
-      #
-      # That second direction is a warning rather than an error, which is where
-      # this parts from the complexity ratchet in internal/lint: TestPtxParity
-      # failed on one round of the catalogue and passed on the next two, and an
-      # error there would make one flaky utility hold the lane red whichever
-      # way it landed. A name going quiet is good news either way, and the
-      # worst case is a stale line that someone deletes later.
+      # `!cancelled()` on the four steps below: the corpus is gated by the
+      # darwin-ratchet job, and these check native arm64-darwin EXECUTION.
+      # Without it a red step above skips them, so the one Darwin machine in
+      # CI reports nothing about the other half of the target. Shard 1 only.
+      - name: go test (arm64-darwin native execution)
+        if: "!cancelled() && matrix.shard == 1 && steps.gate.outputs.signed != 'true'"
+        # TestArm64DarwinBuilds detects runtime.GOOS=="darwin"
+        # && GOARCH=="arm64" and switches from "verify Mach-O
+        # file format" to "build with native clang+ld64 and
+        # actually run the binary, asserting exit codes". The
+        # other arm64 tests in this file SKIP cleanly when
+        # qemu-aarch64 + aarch64-linux-gnu-gcc aren't present
+        # (which is always the case on macOS). `standard-verbose`
+        # keeps the streamed RUN/PASS/FAIL of the old `-v` run.
+        run: |
+          gotestsum --format standard-verbose -- -run TestArm64Darwin ./internal/e2e/
+
+      - name: go test (SELF-HOST arm64-darwin native execution)
+        if: "!cancelled() && matrix.shard == 1 && steps.gate.outputs.signed != 'true'"
+        # The sibling of the step above for the SELF-HOST arm64-darwin path,
+        # which lives in a different package (internal/e2eselfhost) and so was
+        # not selected by the `-run TestArm64Darwin ./internal/e2e/` filter —
+        # nothing in CI ran it on hardware that can execute its output. That
+        # gap is why #6042 (the arena mmap emitted with Linux MAP_ flags),
+        # the static LC_UNIXTHREAD container, the entry-point offset and the
+        # unmapped .bss tail all shipped: on the Linux shards this test only
+        # parses the Mach-O it cannot run.
+        run: |
+          gotestsum --format standard-verbose -- -run '^(TestSelfHostArm64Darwin.*|TestSelfHostCheckerFallbackHint)$' ./internal/e2eselfhost/
+
+      - name: Compile + run every example for arm64-darwin (native, default)
+        if: "!cancelled() && matrix.shard == 1"
+        # Build each examples/*.fern via the driver's DEFAULT path — the
+        # in-process Mach-O backend, no clang/ld64 — then actually execute
+        # the binary. This is the full-corpus execution check for the
+        # native arm64-darwin path. Examples whose darwin codegen isn't
+        # ported (read_file / now_unix_ms — Linux-only syscalls) error at
+        # codegen the same as on the clang path; skip those.
+        run: |
+          go build -o bin/fern ./cmd/fern
+          mkdir -p build
+          for f in examples/*.fern; do
+            name=$(basename "$f" .fern)
+            if ! ./bin/fern -target arm64-darwin -o "build/$name" "$f" 2>"build/$name.err"; then
+              if grep -q "not yet ported" "build/$name.err"; then
+                echo "skip $name (unported darwin runtime helper)"; continue
+              fi
+              echo "build $name FAILED:"; cat "build/$name.err"; exit 1
+            fi
+            echo "::group::run $name"
+            rc=0; scripts/ci-run-example "$name" "./build/$name" || rc=$?
+            echo "::endgroup::"
+            if [ "$rc" -ne 0 ]; then echo "::error::example $name failed (exit $rc)"; exit 1; fi
+          done
+
+      - name: clang fallback still works (-cc opt-out)
+        if: "!cancelled() && matrix.shard == 1"
+        # The external-toolchain path must remain available via -cc.
+        run: |
+          echo 'function main(): i32 { return 7; }' > /tmp/fb.fern
+          ./bin/fern -target arm64-darwin -cc clang -o /tmp/fb /tmp/fb.fern
+          # `if` disables errexit for the (intentionally non-zero) exit.
+          if /tmp/fb; then code=0; else code=$?; fi
+          test $code -eq 7 || { echo "clang fallback exit $code, want 7"; exit 1; }
+
+  # The ratchet. The catalogue runs in full and the set of test functions
+  # that failed is compared against the checked-in list of utilities not
+  # yet working on Darwin. A name that fails and is not on the list fails
+  # the lane, so the Darwin result cannot drift while the divergences are
+  # worked through; a name on the list that now passes is reported for its
+  # line to be deleted.
+  #
+  # That second direction is a warning rather than an error, which is where
+  # this parts from the complexity ratchet in internal/lint: TestPtxParity
+  # failed on one round of the catalogue and passed on the next two, and an
+  # error there would make one flaky utility hold the lane red whichever
+  # way it landed. A name going quiet is good news either way, and the
+  # worst case is a stale line that someone deletes later.
+  #
+  # Its own job, on Linux, because the catalogue runs as two macOS shards: the
+  # failure set only means anything over both halves, and the floor counts
+  # both. It needs no macOS runner, only the two logs.
+  darwin-ratchet:
+    needs: [test-arm64-darwin]
+    if: ${{ !cancelled() && needs.test-arm64-darwin.outputs.signed != 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: coreutils-corpus-darwin-shard*
+          path: darwin-logs
       - name: the Darwin ratchet
-        if: "!cancelled() && steps.gate.outputs.signed != 'true'"
         timeout-minutes: 3
         run: |
-          if [ ! -f corpus-darwin.log ]; then
-            echo "::error::no corpus-darwin.log: the corpus step did not run"
+          shopt -s nullglob
+          logs=(darwin-logs/*/corpus-darwin.log)
+          if [ ${#logs[@]} -ne 2 ]; then
+            echo "::error::${#logs[@]} of the 2 corpus shard logs arrived: a shard did not get as far as running the corpus"
             exit 1
           fi
-          if ! grep -qE '^DONE ' corpus-darwin.log; then
-            echo "::error::the corpus produced no DONE line, so it did not finish — read the coreutils-corpus-darwin artifact"
-            tail -5 corpus-darwin.log || true
-            exit 1
-          fi
+          for l in "${logs[@]}"; do
+            if ! grep -qE '^DONE ' "$l"; then
+              echo "::error::$l has no DONE line, so that shard did not finish — read its coreutils-corpus-darwin-shard artifact"
+              tail -5 "$l" || true
+              exit 1
+            fi
+          done
+          cat "${logs[@]}" > corpus-darwin.log
           # A DONE line is not enough: a runaway case can take the tail of the
           # run down with it and still leave one, which is how 32 utilities
           # were recorded as passing without ever having run (see the header
           # of the known-failures file). A short run's narrower failure set
           # would read as an improvement, so refuse it instead.
-          ran=$(sed -n 's/^DONE \([0-9][0-9]*\) tests.*/\1/p' corpus-darwin.log | head -1)
+          ran=$(sed -n 's/^DONE \([0-9][0-9]*\) tests.*/\1/p' corpus-darwin.log | awk '{s += $1} END {print s}')
           floor=$(sed -n 's/^# min-tests: *\([0-9][0-9]*\).*/\1/p' .github/darwin-corpus-known-failures.txt | head -1)
           if [ -z "$ran" ] || [ -z "$floor" ]; then
             echo "::error::could not read the test count ('$ran') or the min-tests floor ('$floor')"
@@ -382,68 +501,3 @@ jobs:
             exit 1
           fi
           echo "no Darwin regressions"
-
-      # `!cancelled()` on the four steps below: the ratchet above gates the
-      # CORPUS, and these check native arm64-darwin EXECUTION. Without it a
-      # red ratchet skips them, so the one Darwin machine in CI reports
-      # nothing about the other half of the target.
-      - name: go test (arm64-darwin native execution)
-        if: "!cancelled() && steps.gate.outputs.signed != 'true'"
-        # TestArm64DarwinBuilds detects runtime.GOOS=="darwin"
-        # && GOARCH=="arm64" and switches from "verify Mach-O
-        # file format" to "build with native clang+ld64 and
-        # actually run the binary, asserting exit codes". The
-        # other arm64 tests in this file SKIP cleanly when
-        # qemu-aarch64 + aarch64-linux-gnu-gcc aren't present
-        # (which is always the case on macOS). `standard-verbose`
-        # keeps the streamed RUN/PASS/FAIL of the old `-v` run.
-        run: |
-          gotestsum --format standard-verbose -- -run TestArm64Darwin ./internal/e2e/
-
-      - name: go test (SELF-HOST arm64-darwin native execution)
-        if: "!cancelled() && steps.gate.outputs.signed != 'true'"
-        # The sibling of the step above for the SELF-HOST arm64-darwin path,
-        # which lives in a different package (internal/e2eselfhost) and so was
-        # not selected by the `-run TestArm64Darwin ./internal/e2e/` filter —
-        # nothing in CI ran it on hardware that can execute its output. That
-        # gap is why #6042 (the arena mmap emitted with Linux MAP_ flags),
-        # the static LC_UNIXTHREAD container, the entry-point offset and the
-        # unmapped .bss tail all shipped: on the Linux shards this test only
-        # parses the Mach-O it cannot run.
-        run: |
-          gotestsum --format standard-verbose -- -run '^(TestSelfHostArm64Darwin.*|TestSelfHostCheckerFallbackHint)$' ./internal/e2eselfhost/
-
-      - name: Compile + run every example for arm64-darwin (native, default)
-        if: "!cancelled()"
-        # Build each examples/*.fern via the driver's DEFAULT path — the
-        # in-process Mach-O backend, no clang/ld64 — then actually execute
-        # the binary. This is the full-corpus execution check for the
-        # native arm64-darwin path. Examples whose darwin codegen isn't
-        # ported (read_file / now_unix_ms — Linux-only syscalls) error at
-        # codegen the same as on the clang path; skip those.
-        run: |
-          go build -o bin/fern ./cmd/fern
-          mkdir -p build
-          for f in examples/*.fern; do
-            name=$(basename "$f" .fern)
-            if ! ./bin/fern -target arm64-darwin -o "build/$name" "$f" 2>"build/$name.err"; then
-              if grep -q "not yet ported" "build/$name.err"; then
-                echo "skip $name (unported darwin runtime helper)"; continue
-              fi
-              echo "build $name FAILED:"; cat "build/$name.err"; exit 1
-            fi
-            echo "::group::run $name"
-            rc=0; scripts/ci-run-example "$name" "./build/$name" || rc=$?
-            echo "::endgroup::"
-            if [ "$rc" -ne 0 ]; then echo "::error::example $name failed (exit $rc)"; exit 1; fi
-          done
-
-      - name: clang fallback still works (-cc opt-out)
-        if: "!cancelled()"
-        # The external-toolchain path must remain available via -cc.
-        run: |
-          echo 'function main(): i32 { return 7; }' > /tmp/fb.fern
-          ./bin/fern -target arm64-darwin -cc clang -o /tmp/fb /tmp/fb.fern
-          # `if` disables errexit for the (intentionally non-zero) exit.
-          if /tmp/fb; then code=0; else code=$?; fi
-          test $code -eq 7 || { echo "clang fallback exit $code, want 7"; exit 1; }
