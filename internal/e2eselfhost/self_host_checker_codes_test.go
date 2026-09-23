@@ -381,15 +381,21 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"str-view-annotated-clean", "function f(t: string): i32 { var v: str = slice_unchecked(t, 0, 3); return v.len(); }\nfunction main(): i32 { return f(\"abcdef\"); }\n", nil},
 		{"str-view-arg-borrow-clean", "function g(x: string): i32 { return x.len(); }\nfunction main(): i32 { var t: string = \"abcdef\"; return g(slice_unchecked(t, 0, 3)); }\n", nil},
 		{"str-ret-fn-into-str-clean", "function f(t: string): str { return slice_unchecked(t, 0, 3); }\nfunction main(): i32 { var v: str = f(\"abcdef\"); return v.len(); }\n", nil},
-		// `[T]`, the array view a slice yields (#9944), held to the same owning
-		// sinks as `str`. A `[T]` binding, a slice of a view, a `[T]`-returning
-		// function, and an argument (a `[T]` parameter reaches the checker as
-		// `T[]`) stay clean.
+		// `[T]`, the array view a slice or `.as_bytes()` yields (#9944). A view
+		// and an owned `T[]` convert in neither direction — var init, assignment,
+		// return, field, argument — except an owned argument lent to a `[T]`
+		// parameter. A `[T]` binding, a slice of a view, a `[T]`-returning
+		// function and a `[T]` parameter handed on to another stay clean.
 		{"arr-view-into-array-var-e003", "function main(): i32 { var all: string[] = [\"a\", \"b\", \"c\"]; var mid: string[] = all[1:3]; return mid.len(); }\n", []string{"E003"}},
 		{"arr-view-assign-e003", "function main(): i32 { var x: i32[] = [1, 2]; var y: i32[] = [3]; y = x[0:1]; return y.len(); }\n", []string{"E003"}},
 		{"arr-view-return-e002", "function g(a: i32[]): i32[] { return a[0:1]; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
 		{"arr-view-field-e043", "struct Q { xs: i32[] }\nfunction mk(a: i32[]): Q { return Q { xs: a[0:1] }; }\nfunction main(): i32 { return 0; }\n", []string{"E043"}},
 		{"arr-ret-fn-into-array-e003", "function first(a: [i32]): [i32] { return a[0:1]; }\nfunction main(): i32 { var x: i32[] = [1, 2]; var o: i32[] = first(x); return o.len(); }\n", []string{"E003"}},
+		{"arr-owned-into-view-var-e003", "function main(): i32 { var a: i32[] = [1]; var w: [i32] = a; return w.len(); }\n", []string{"E003"}},
+		{"arr-owned-return-from-view-fn-e002", "function f(a: i32[]): [i32] { return a; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
+		{"arr-view-param-into-array-param-e038", "function h(x: i32[]): i32 { return x.len(); }\nfunction k(v: [i32]): i32 { return h(v); }\nfunction main(): i32 { return 0; }\n", []string{"E038"}},
+		{"as-bytes-into-array-var-e003", "function main(): i32 { var s: string = \"ab\"; var b: u8[] = s.as_bytes(); return b.len(); }\n", []string{"E003"}},
+		{"arr-view-param-clean", "function n(v: [u8]): i32 { return v.len(); }\nfunction k(v: [u8]): i32 { var w: [u8] = v[0:1]; return n(v) + n(w); }\nfunction main(): i32 { var s: string = \"ab\"; var b: [u8] = s.as_bytes(); var o: u8[] = [1, 2]; return k(b) + k(o); }\n", nil},
 		{"arr-view-clean", "function sum(s: [i32]): i32 { var t: i32 = 0; for v in s { t = t + v; } return t; }\nfunction first(a: [i32]): [i32] { return a[0:1]; }\nfunction main(): i32 { var a: i32[] = [1, 2, 3, 4, 5]; var s: [i32] = a[1:4]; var s2: [i32] = s[0:2]; var u = a[0:2]; var f: [i32] = first(a); return sum(a[0:5]) + s.len() + s2[1] + u.len() + f[0] + sum(s); }\n", nil},
 		// #7311's remaining half: string-builtin and free-builtin arity.
 		// These used to fall through to IR lowering and surface as the
@@ -2391,6 +2397,11 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"arr-view-return", `function f(a: i32[]): i32[] { return a[0:1]; }`},
 		{"arr-view-field", "struct Q { xs: i32[] }\nfunction f(a: i32[]): Q { return Q { xs: a[0:1] }; }"},
 		{"arr-ret-fn-into-array", "function first(a: [i32]): [i32] { return a[0:1]; }\nfunction f(x: i32[]): i32 { var o: i32[] = first(x); return o.len(); }"},
+		{"arr-owned-into-view-var", `function f(a: i32[]): i32 { var w: [i32] = a; return w.len(); }`},
+		{"arr-owned-return-from-view-fn", `function f(a: i32[]): [i32] { return a; }`},
+		{"arr-view-param-into-array-param", "function h(x: i32[]): i32 { return x.len(); }\nfunction k(v: [i32]): i32 { return h(v); }"},
+		{"as-bytes-into-array-var", `function f(s: string): i32 { var b: u8[] = s.as_bytes(); return b.len(); }`},
+		{"arr-view-param-uses", "function n(v: [u8]): i32 { return v.len(); }\nfunction k(v: [u8]): i32 { var w: [u8] = v[0:1]; return n(v) + n(w); }\nfunction f(s: string): i32 { var b: [u8] = s.as_bytes(); var o: u8[] = [1, 2]; return k(b) + k(o); }"},
 		{"arr-view-uses", "function sum(s: [i32]): i32 { var t: i32 = 0; for v in s { t = t + v; } return t; }\nfunction first(a: [i32]): [i32] { return a[0:1]; }\nfunction f(a: i32[]): i32 { var s: [i32] = a[1:4]; var s2: [i32] = s[0:2]; var u = a[0:2]; var g: [i32] = first(a); return sum(a[0:5]) + s.len() + s2[1] + u.len() + g[0] + sum(s); }"},
 		{"loop-generic-callback-result", `function f[T, U](xs: T[], callback: (T) => U[]): U[] { var out: U[] = []; for x in xs { for y in callback(x) { out = out.append(y); } } return out; }`},
 		{"loop-generic-callback-local", `function f[T, U](xs: T[], callback: (T) => U[]): U[] { var out: U[] = []; for x in xs { var ys = callback(x); for y in ys { out = out.append(y); } } return out; }`},

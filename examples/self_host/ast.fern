@@ -522,7 +522,7 @@ pub type Stmt = StmtVar | StmtReturn | StmtExpr | StmtIf | StmtWhile
 // spellings are kept RAW rather than mapped to widths here, because deciding
 // whether `T` is a type variable or a struct named T needs the enclosing
 // function's type_params, which parse_param does not have.
-pub struct ParamDecl { name: string, type_name: string, is_str: boolean, own: boolean, has_default: boolean, default_value: Expr, ret_arr: boolean, fn_ret: string, fn_param_dyn: string, fn_param_types: string }
+pub struct ParamDecl { name: string, type_name: string, is_str: boolean, is_view: boolean, own: boolean, has_default: boolean, default_value: Expr, ret_arr: boolean, fn_ret: string, fn_param_dyn: string, fn_param_types: string }
 
 // LitArm is one arm of a match on a non-enum (i32 / string) scrutinee:
 // a literal to compare against (`lit`, dispatched via `==`) or the `_`
