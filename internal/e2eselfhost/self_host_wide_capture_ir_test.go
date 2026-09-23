@@ -54,7 +54,7 @@ func TestSelfHostWideCaptureIR(t *testing.T) {
 		src  string
 		exit int
 	}{
-		// Returned closure (hoist_escaping_closure), one wide capture, each width.
+		// Returned closure (the `$lamret$N` slot), one wide capture, each width.
 		{"escaping-i64-capture", "function make(n: i64): (i32) => i32 { return (x: i32): i32 => { return x + (n as i32); }; }\nfunction main(): i32 { var f = make(100 as i64); return f(5); }", 105},
 		{"escaping-u64-capture", "function make(n: u64): (i32) => i32 { return (x: i32): i32 => { return x + (n as i32); }; }\nfunction main(): i32 { var f = make(100 as u64); return f(5); }", 105},
 		{"escaping-f64-capture", "function make(d: f64): (i32) => i32 { return (x: i32): i32 => { return x + (d as i32); }; }\nfunction main(): i32 { var f = make(100.0); return f(5); }", 105},

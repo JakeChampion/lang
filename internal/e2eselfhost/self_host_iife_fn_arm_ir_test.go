@@ -106,8 +106,8 @@ var iifeFnArmCases = []struct {
 	// arm lambdas are capture-free, so each lifts to its own `__lam_N`; a
 	// capturing one cannot lift, and inside the hoisted `<fd>$iifeN` it reached
 	// lower_expr bare and asked for a `<fd>$iifeN$clo` — one name, built by
-	// nobody, since hoist_escaping_closure only claims a body whose LAST
-	// statement is the return and an arm's return is one level down.
+	// nobody, since the escaping-closure hoist of the time only claimed a body
+	// whose LAST statement is the return and an arm's return is one level down.
 	//
 	// The arms now get the same `return <lambda>` desugar the worklist gives a
 	// source function, so each lifts through its local binding to a uniquely
@@ -126,8 +126,8 @@ var iifeFnArmCases = []struct {
 	// above reaches only via a local. unwrap_sole_iife_return beta-reduces a sole
 	// `return (…)()` body into the enclosing function, so the arm returns appear
 	// AFTER the pre-worklist `return <lambda>` desugar has run and nothing had
-	// walked them. The desugar now also runs per worklist entry, on everything
-	// but the tail return that hoist_escaping_closure claims (#5281).
+	// walked them. The desugar now also runs per worklist entry, on every
+	// return including the tail one (#10025).
 	{"sole-return-iife-capturing-arms", "function gen(n: i32): (i32) => i32 { return (if (n > 0) { ((x: i32) => (x + n)) } else { ((y: i32) => (y - n)) }); } function main(): i32 { var f: (i32) => i32 = gen(5i32); return f(4i32) & 63i32; }", 9},
 	{"sole-return-matchexpr-capturing-arms", "enum S { A, B } function gen(n: i32, e: S): (i32) => i32 { return (match (e) { A => ((x: i32) => (x + n)), B => ((y: i32) => (y * n)) }); } function main(): i32 { var f: (i32) => i32 = gen(5i32, S.B); return f(4i32) & 63i32; }", 20},
 
@@ -264,9 +264,9 @@ var iifeArmArrayUnreachableName = []struct {
 	reason string
 }{
 	{"arm-array-param-name", "function pick(ys: ((i32) => i32)[], c: boolean): i32 { var v1: i32 = 3i32; var xs: ((i32) => i32)[] = (if (c) { [((x: i32) => (x + v1))] } else { ys }); return xs[0i32](1i32) & 63i32; } function main(): i32 { var zs: ((i32) => i32)[] = [((z: i32) => z)]; return pick(zs, true); }",
-		"pick", "did not lower: lambda: no lifted `pick$clo` for the escaping closure"},
+		"pick", "did not lower: lambda: no lift claims this lambda in `pick`"},
 	{"arm-array-call-result", "function mk(): ((i32) => i32)[] { return [((z: i32) => z)]; } function main(): i32 { var v1: i32 = 3i32; var xs: ((i32) => i32)[] = (if (true) { [((x: i32) => (x + v1))] } else { mk() }); return xs[0i32](1i32) & 63i32; }",
-		"main", "did not lower: lambda: no lifted `main$clo` for the escaping closure"},
+		"main", "did not lower: lambda: no lift claims this lambda in `main`"},
 }
 
 // TestSelfHostIIFEArmArrayUnreachableNameRefuses asserts those shapes REFUSE

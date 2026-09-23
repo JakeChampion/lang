@@ -12887,6 +12887,14 @@ func (b *builder) callReturnType(c *ast.Call) ast.Type {
 		}
 		return nil
 	}
+	// `f(a)(b)(c)`: the callee is itself a call whose result is a function,
+	// so this call's result is that function's result.
+	if inner, ok := c.Callee.(*ast.Call); ok {
+		if ft, ok := b.callReturnType(inner).(*ast.FuncType); ok {
+			return ft.Result
+		}
+		return nil
+	}
 	id, ok := c.Callee.(*ast.Ident)
 	if !ok {
 		return nil

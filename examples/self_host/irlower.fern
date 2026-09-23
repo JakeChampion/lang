@@ -727,12 +727,7 @@ pub struct LowerFrame {
     // sigs: the module-wide signature registry (see FnSigs). Threaded read-only
     // except for the two call-site-augmented views lower_func installs.
     sigs: FnSigs,
-    // clo_base: the receiver-qualified name (clo_owner_name) every closure /
-    // wrapper hoisted out of this function is named under.
-    clo_base: string,
-    // cur_fn: the name of the function being lowered. An escaping capturing
-    // ExprLambda in it is hoisted to `<cur_fn>$clo(__env, params…)`; lowering
-    // the lambda emits const_func(<cur_fn>$clo) + the captures into a tuple box.
+    // cur_fn: the name of the function being lowered.
     cur_fn: string,
     // cur_ret: the enclosing function's return-type spelling (e.g.
     // "Result[i32, AppErr]"). Threaded read-only like cur_fn; used by lower_try
@@ -15923,35 +15918,13 @@ pub function lower_expr(e: ast.Expr, s: LowerState): LowerState {
     return r.note_fail(expr_bail_tag(e));
 }
 
-// lower_expr_lambda lowers a lambda, hoisting a capturing one to its `$clo` form.
+// lower_expr_lambda refuses a lambda still in place at lowering. The lift
+// turns every lambda the lowering can dispatch into a `__mkclo$` box or a
+// `$lamret$N` slot before this runs, so one left behind is a shape no lift
+// claims, and naming it here keeps the gap a bail at this expression rather
+// than a reference with nothing behind it (#7215).
 function lower_expr_lambda(lam: ast.ExprLambda, s: LowerState): LowerState {
-    // First-class (escaping) closure (slice 3a): build the env box —
-    // an i32[] [funcval, caps…]. The body was hoisted to `<cur_fn>$clo`
-    // by lift_lambdas; const_func names it, the captures (free vars that
-    // are local slots, in the SAME first-seen order hoist_escaping_closure
-    // read them) follow, and arr_make wraps them.
-    //
-    // Naming a `$clo` no lift hoisted emits a reference with no definition
-    // behind it, which a whole-program build silently swallows and every
-    // per-unit link fails on, far from the source line (#7215). Refuse
-    // here instead, so the gap is a bail naming this expression.
-    var clo: string = s.frame.clo_base + "$clo";
-    if (!s.is_user_fn(clo)) {
-        return s.note_fail("lambda: no lifted `" + clo + "` for the escaping closure").fail();
-    }
-    var caps: string[] = closure_captures(lam, s);
-    // Capturing nothing, the box is a compile-time constant — one static block
-    // for every evaluation of this lambda, as native folds it (#9839).
-    if (caps.len() == 0) { return s.emit(ir.op_const_closure(clo)); }
-    var cs: LowerState = s.emit(ir.op_const_func(0, clo));
-    var ci: i32 = 0;
-    while (ci < caps.len()) {
-        var slot: i32 = cs.slot_of(caps[ci]);
-        if (slot < 0) { return s.fail(); }
-        cs = cs.emit(ir.op_load_local(slot));
-        ci = ci + 1;
-    }
-    return cs.emit(ir.op_arr_make(caps.len() + 1, 32));
+    return s.note_fail("lambda: no lift claims this lambda in `" + s.frame.cur_fn + "`").fail();
 }
 
 // lower_expr_call lowers a call expression, routing to the named / method / closure paths.
@@ -60645,7 +60618,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     var da_bp: string[] = dead_alias_borrow_params_of(fn, structs);
     var dalias: DeadAliases = dead_alias_of(fn.body, asg_targets, fn_moves_all.names, da_bp, is_scalar_type_name(fn.ret_type));
     var persistent_ops: ir.OpBuffer = ir.op_buffer();
-    var s: LowerState = LowerState { ops: persistent_ops, locals: locals0, ctrl: 0, loop_blk: noloop, frame: LowerFrame { ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, clo_base: clo_owner_name(fn), cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dalias.sites, dead_alias_bp: da_bp, spread_sites: spread_sites_of(fn.body, structs, []), type_params: fn.type_params, strarr_sources: string_array_sources_of(fn), structs: structs, reclaimable_names: reclaim, aliased_names: aliased, map_clone_sites: map_clone_insert_sites_of(fn.body), borrowed_names: borrowed, try_cleanup: tclean, defer_slots: [], defer_guard: "", append_inplace: append_inplace_names_of(fn), field_append_inplace: field_append_inplace_sites_of(fn), grow_sole: grow_sole_exempt_names_of(fn), grow_alias: grow_alias_names_of(fn), own_params: own_names, cur_key: struct_ret_key(fn), n_params: names.len(), fail_why: "", moved_names: fn_moves_top.names, moved_elided: [], move_sites: fn_moves_top.sites, fld_bases: field_move_bases_of(fn, sg), own_lift_sites: own_lift_retain_sites_of(fn, sg, structs) }, xblock_pending: [], optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
+    var s: LowerState = LowerState { ops: persistent_ops, locals: locals0, ctrl: 0, loop_blk: noloop, frame: LowerFrame { ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dalias.sites, dead_alias_bp: da_bp, spread_sites: spread_sites_of(fn.body, structs, []), type_params: fn.type_params, strarr_sources: string_array_sources_of(fn), structs: structs, reclaimable_names: reclaim, aliased_names: aliased, map_clone_sites: map_clone_insert_sites_of(fn.body), borrowed_names: borrowed, try_cleanup: tclean, defer_slots: [], defer_guard: "", append_inplace: append_inplace_names_of(fn), field_append_inplace: field_append_inplace_sites_of(fn), grow_sole: grow_sole_exempt_names_of(fn), grow_alias: grow_alias_names_of(fn), own_params: own_names, cur_key: struct_ret_key(fn), n_params: names.len(), fail_why: "", moved_names: fn_moves_top.names, moved_elided: [], move_sites: fn_moves_top.sites, fld_bases: field_move_bases_of(fn, sg), own_lift_sites: own_lift_retain_sites_of(fn, sg, structs) }, xblock_pending: [], optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
     // A `Cell[T]` PARAM takes the element-width columns a `var c: Cell[T]`
     // local gets from its annotation, so its `get` reads at the element's
     // width rather than as an i32.
@@ -72515,7 +72488,7 @@ pub function str_own_dump(fn: parser.FuncDecl, structs: StructTab, funcs: parser
         pi = pi + 1;
     }
     var persistent_ops: ir.OpBuffer = ir.op_buffer();
-    var st: LowerState = LowerState { ops: persistent_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, frame: LowerFrame { ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)) }, clo_base: clo_owner_name(fn), cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, tup_elem_kinds: no_strs, alias_incs: no_strs, dead_alias_ok: no_strs, dead_alias_bp: no_strs, spread_sites: spread_sites_of(fn.body, structs, []), type_params: fn.type_params, strarr_sources: StringArraySources { arrays: [], elements: [] }, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, map_clone_sites: no_strs, borrowed_names: no_strs, try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", append_inplace: [], field_append_inplace: [], grow_sole: [], grow_alias: [], own_params: own_param_names_of(fn), cur_key: struct_ret_key(fn), n_params: fn.params.len(), fail_why: "", moved_names: [], moved_elided: [], move_sites: [], fld_bases: [], own_lift_sites: [] }, xblock_pending: no_strs, optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
+    var st: LowerState = LowerState { ops: persistent_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, frame: LowerFrame { ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)) }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, tup_elem_kinds: no_strs, alias_incs: no_strs, dead_alias_ok: no_strs, dead_alias_bp: no_strs, spread_sites: spread_sites_of(fn.body, structs, []), type_params: fn.type_params, strarr_sources: StringArraySources { arrays: [], elements: [] }, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, map_clone_sites: no_strs, borrowed_names: no_strs, try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", append_inplace: [], field_append_inplace: [], grow_sole: [], grow_alias: [], own_params: own_param_names_of(fn), cur_key: struct_ret_key(fn), n_params: fn.params.len(), fail_why: "", moved_names: [], moved_elided: [], move_sites: [], fld_bases: [], own_lift_sites: [] }, xblock_pending: no_strs, optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
     var out: string = "";
     var qi: i32 = 0;
     while (qi < fn.params.len()) {
@@ -73886,53 +73859,9 @@ function desugar_lambda_returns(body: ast.Stmt[], counter: i32, sig: RetSig): De
 
 function desugar_lifted_lambda_returns(fd: parser.FuncDecl): parser.FuncDecl {
     var sig: RetSig = ret_sig_of(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types);
-    var n: i32 = fd.body.len();
-    if (n > 0) {
-        if let ast.StmtReturn(r) = fd.body[n - 1] {
-            if let ast.ExprLambda(lam) = r.value {
-                if (lambda_captures(lam, fd).len() > 0) { return parser.FuncDecl { ...fd, body: desugar_nontail_lambda_returns(fd.body, sig) }; }
-            }
-        }
-    }
     var ldr: DesugarRet = desugar_lambda_returns(fd.body, 0, sig);
     if (ldr.counter == 0) { return fd; }
     return parser.FuncDecl { ...fd, body: ldr.body };
-}
-
-// desugar_nontail_lambda_returns applies the same rewrite to every `return
-// <lambda>` in `body` EXCEPT one that is the body's final top-level statement.
-// That one is hoist_escaping_closure's, and handing it to the desugar instead is
-// what regressed the `curry` shape (#5281); every other position has no hoist
-// and asked for a `<fd>$clo` nothing built.
-//
-// It exists for a body ASSEMBLED during lifting, which the pre-worklist pass
-// over the source functions cannot have seen: unwrap_sole_iife_return calls it
-// on a source function's unwrapped body, desugar_lifted_lambda_returns on a
-// lifted body whose tail lambda captures. Returns `body` unchanged when nothing
-// is rewritten, so an unaffected function serializes byte-identically.
-function desugar_nontail_lambda_returns(body: ast.Stmt[], sig: RetSig): ast.Stmt[] {
-    var n: i32 = body.len();
-    if (n == 0) { return body; }
-    var tail_is_lam_ret: boolean = false;
-    match (body[n - 1]) {
-        ast.StmtReturn(tr) => {
-            match (tr.value) {
-                ast.ExprLambda(_) => { tail_is_lam_ret = true; },
-                _ => {}
-            }
-        },
-        _ => {}
-    }
-    var upto: i32 = n;
-    if (tail_is_lam_ret) { upto = n - 1; }
-    var head: ast.Stmt[] = [];
-    var i: i32 = 0;
-    while (i < upto) { head = head.append(body[i]); i = i + 1; }
-    var hd: DesugarRet = desugar_lambda_returns(head, 0, sig);
-    if (hd.counter == 0) { return body; }
-    var nb: ast.Stmt[] = hd.body;
-    if (tail_is_lam_ret) { nb = nb.append(body[n - 1]); }
-    return nb;
 }
 
 // lift_stmt rewrites a single statement, recursing into nested bodies + the
@@ -73993,11 +73922,8 @@ function lift_stmt(st: ast.Stmt, acc: LiftAcc, gfns: string[]): LiftStmts {
         },
         // A match's ARM BODIES need the same walk StmtIf's branches get. Without
         // it a `return <lambda>` inside an arm never reached lift_call_arg, so no
-        // `__lam_N` was hoisted — and lower_expr's ExprLambda arm then asked for a
-        // `<cur_fn>$clo` that hoist_escaping_closure never built (it only fires on
-        // a body whose LAST statement is literally `return <ExprLambda>`, and a
-        // match-EXPRESSION makes that `return <IIFE call>`). The module bailed off
-        // the IR path (#6256).
+        // `__lam_N` was hoisted and the lambda reached the lowering unlifted. The
+        // module bailed off the IR path (#6256).
         //
         // The if-expression sibling worked precisely because StmtIf was here, so
         // this is restoring symmetry rather than adding a rule.
@@ -74058,25 +73984,6 @@ function lift_stmts(stmts: ast.Stmt[], acc: LiftAcc, gfns: string[]): LiftStmts 
 // lambda_captures returns the lambda's free variables (its captures): every used
 // identifier that is not a param, a local it binds, a global function, or a
 // literal keyword. Deduped, first-seen order.
-// closure_captures returns the lambda's captures during lowering: free
-// identifiers (used minus params minus locally-bound) that resolve to a local
-// SLOT in the enclosing function. First-seen order, deduped — matching
-// hoist_escaping_closure's lambda_captures order so cap[i] lines up with the
-// env box's slot 1+i.
-function closure_captures(lam: ast.ExprLambda, s: LowerState): string[] {
-    var used: string[] = astwalk.collect_lambda_idents(lam, []);
-    var caps: string[] = [];
-    var ui: i32 = 0;
-    while (ui < used.len()) {
-        var u: string = used[ui];
-        if (util.index_of_str(caps, u) < 0 && s.slot_of(u) >= 0) {
-            caps = caps.append(u);
-        }
-        ui = ui + 1;
-    }
-    return caps;
-}
-
 function lambda_captures(lam: ast.ExprLambda, fd: parser.FuncDecl): string[] {
     var names: string[] = [];
     for cap in lam.captures { names = names.append(cap.name); }
@@ -74386,9 +74293,8 @@ function cap_slot_ok(t: string): boolean {
 // the closure stays an ExprLambda and the module bails. The capture var
 // is declared with its REAL type so downstream uses (e.g. a captured string's
 // `.len()`) dispatch correctly even though the box is typed i32[] (the 32-bit
-// load yields the pointer, which fits). Shared by the return-position
-// (`hoist_escaping_closure`) and the array-element / struct-field inline lifts
-// (`lift_inline_closures`) so the two agree byte-for-byte on the box layout.
+// load yields the pointer, which fits). The array-element / struct-field
+// inline lifts (`lift_inline_closures`) build every such box through it.
 //
 // A fn-VALUE capture is read back under its full `(P) => R` spelling rather than
 // the flat "fn" tag, which carries no signature: a wasm funcref type is
@@ -74443,35 +74349,13 @@ function clo_owner_name(fd: parser.FuncDecl): string {
     return fd.name;
 }
 
-// hoist_escaping_closure handles a function whose body ends in
-// `return <capturing lambda>` — a first-class closure (slice 3a). It hoists the
-// lambda body to `<fd>$clo(__env: i32[], origparams…)` via make_clo_func (each
-// i32 capture read from the env box). The lambda STAYS at the return site —
-// irlower lowers it to a make_closure box (const_func(<fd>$clo) + caps → i32[]).
-function hoist_escaping_closure(fd: parser.FuncDecl, gfns: string[], structs: StructTab, mfuncs: MFuncs): HoistResult {
-    var none: parser.FuncDecl = fd;
-    if (fd.body.len() == 0) { return HoistResult { func: none, ok: false }; }
-    match (fd.body[fd.body.len() - 1]) {
-        ast.StmtReturn(r) => {
-            match (r.value) {
-                ast.ExprLambda(lam) => {
-                    return make_clo_func(lam, clo_owner_name(fd) + "$clo", fd, gfns, structs, mfuncs);
-                },
-                _ => { return HoistResult { func: none, ok: false }; }
-            }
-        },
-        _ => { return HoistResult { func: none, ok: false }; }
-    }
-    return HoistResult { func: none, ok: false };
-}
-
 // ---- inline capturing closures in aggregate position (#2994) -----------
 //
 // A CAPTURING inline lambda in an array-element (`[(x) => { x+n }]`) or a
 // struct-field value (`Box { f: (x) => { x+n } }`) is a first-class closure
 // that does NOT come from a `return <lambda>` or a `mk()` call, so neither the
-// param-lift (call-only bindings) nor hoist_escaping_closure (return position)
-// reaches it — it stayed an ExprLambda and bailed the module to AST. This pass
+// param-lift (call-only bindings) nor the `$lamret$N` return slot reaches it —
+// it stayed an ExprLambda and bailed the module to AST. This pass
 // hoists each such lambda to a UNIQUELY-named `<fd>$cloN` (so a function may host
 // several distinct inline closures) via make_clo_func, and replaces the inline
 // lambda with a `__mkclo$<fd>$cloN(caps…)` marker that lower_expr turns into the
@@ -76388,13 +76272,9 @@ function hoist_value_iife(lam: ast.ExprLambda, fd: parser.FuncDecl, funcs: parse
     // carries, so this is the same declaration, not a special case.
     // The arms are USER code, so they get the same `return <lambda>` desugar the
     // worklist gives a source function (`var $lamret$N = <lambda>; return
-    // $lamret$N;`) — a BRANCH-position returned lambda is out of reach of
-    // hoist_escaping_closure, which only claims a body whose LAST statement is
-    // the return, so the arm lambda kept asking for a `<nm>$clo` nothing built.
-    // Through the local binding it lifts to a uniquely-named `<nm>$cloN` box
-    // instead, one per arm. The lifted `__lam_N` / `$cloN` bodies drained onto
-    // the worklist do NOT get this (#5281), which is why it is applied here
-    // rather than at the drain.
+    // $lamret$N;`), so each arm's lambda lifts through the local binding to a
+    // uniquely-named `<nm>$cloN` box, one per arm. The hoisted body is built
+    // here rather than drained onto the worklist, so it is desugared here.
     // e_lambda_origin gives a synthesised IIFE an empty sidecar pair, so for an
     // if/match-expression arm the contract has to come from the arm itself,
     // and the `$lamret$N` slot the desugar binds each arm's lambda to is
@@ -78364,11 +78244,9 @@ function unwrap_sole_iife_return(fd: parser.FuncDecl): parser.FuncDecl {
                             if (lam.params.len() != 0) { return fd; }
                             // The spliced body carries the IIFE's arm returns
                             // into a function, past the pre-worklist `return
-                            // <lambda>` desugar, so run it here on everything but
-                            // the tail return (desugar_nontail_lambda_returns).
-                            // Without it an arm lambda asked for a `<fd>$clo`
-                            // nothing built.
-                            return parser.FuncDecl { ...fd, body: desugar_nontail_lambda_returns(lam.body, ret_sig_of(lam.ret_type, lam.ret_fn_ret, lam.ret_fn_param_types)) };
+                            // <lambda>` desugar, so run it here. Without it an
+                            // arm lambda reached the lowering unlifted.
+                            return parser.FuncDecl { ...fd, body: desugar_lambda_returns(lam.body, 0, ret_sig_of(lam.ret_type, lam.ret_fn_ret, lam.ret_fn_param_types)).body };
                         },
                         _ => { return fd; }
                     }
@@ -78500,7 +78378,6 @@ pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]):
         // A lifted body is a declaration of its own now, so its `return
         // <lambda>` takes the `$lamret$N` slot the pre-worklist pass gave a
         // source function's; a body that pass already rewrote has none left.
-        // A CAPTURING tail lambda stays for hoist_escaping_closure (#5281).
         fd = desugar_lifted_lambda_returns(fd);
         // 0-pre. Beta-reduce a `return (() => {…})()` sole body (a lifted
         // block-body arrow lambda) so nested lambdas in the block become ordinary
@@ -78560,14 +78437,6 @@ pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]):
         acc = r.acc;
         var nb: ast.Stmt[] = r.stmts;
         newfuncs = newfuncs.append(parser.FuncDecl { ...fd, body: nb });
-        // 3. First-class (escaping) closure: a `return <capturing lambda>` hoists
-        // its body to `<fd>$clo`. The lambda stays in the body (irlower lowers it
-        // to a make_closure box); only the hoisted target is appended here.
-        // Include the functions lifted for this worklist entry.
-        var hsigs: MFuncs = mf;
-        if (acc.funcs.len() > 0) { hsigs = mfuncs_extend(mf, acc.funcs); }
-        var hc: HoistResult = hoist_escaping_closure(fd, gfns, mstab, hsigs);
-        if (hc.ok) { acc = LiftAcc { funcs: acc.funcs.append(hc.func), counter: acc.counter + 1 }; }
         // Drain the functions lifted by THIS iteration onto the worklist so their
         // OWN nested lambdas lift in a later round, then clear them (the counter
         // persists across iterations for unique `__lam_N` naming).
