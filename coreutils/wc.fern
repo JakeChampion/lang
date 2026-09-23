@@ -138,70 +138,53 @@ function is_print(b: i32): boolean {
 // `Scan` — the state a per-byte count carries across chunks.
 struct Scan { in_word: boolean, linepos: i64 }
 
-// One chunk counted the way GNU's single-byte-locale loop counts it.
-// The scan a chunk gets when the words or the longest line are wanted.
-// Every byte but the six isspace ones is a word byte — a NUL or a high
-// byte included, which GNU <= 9.4 counted as neither word nor space —
-// and nearly every byte of text is one, so it is the first test, and
-// the whitespace chain runs only for the others. Only a PRINTABLE word
-// byte adds to the line's width; without -L the width is not kept at
-// all, and words are counted by `count_words` instead.
-function scan_chunk(c: Counts, st: Scan, s: string): (Counts, Scan) {
+// `scan_width(c, st, s, other)` — the lines of a chunk and the width of
+// its longest one, the way GNU's single-byte-locale loop measures it:
+// a printable byte or a blank is one column, a tab reaches the next stop
+// of eight, a newline, carriage return or form feed ends the width, and
+// any other byte adds nothing. `other` is every byte but the printable
+// ones and the blank, so a run of those is one `__scan_set` and the loop
+// only stops at the bytes that are not.
+function scan_width(c: Counts, st: Scan, s: string, other: u8[]): (Counts, Scan) {
   var lines: i64 = c.lines;
-  var words: i64 = c.words;
   var maxlen: i64 = c.maxlen;
-  var in_word: boolean = st.in_word;
   var pos: i64 = st.linepos;
+  var n: i32 = s.len();
   var i: i32 = 0;
-  while (i < s.len()) {
-    var b: i32 = s[i] as i32;
-    if (b > 32) {
-      if (b < 127) {
-        pos = pos + 1 as i64;
+  while (i < n) {
+    var j: i32 = __scan_set(s, i, other);
+    pos = pos + (j - i) as i64;
+    if (j >= n) {
+      break;
+    }
+    var b: i32 = s[j] as i32;
+    if (b == 10 || b == 13 || b == 12) {
+      if (b == 10) {
+        lines = lines + 1 as i64;
       }
-      in_word = true;
-    } else if (b < 9 || b > 13 && b != 32) {
-      in_word = true;
-    } else if (b == 10) {
-      lines = lines + 1 as i64;
       if (pos > maxlen) {
         maxlen = pos;
       }
       pos = 0 as i64;
-      if (in_word) {
-        words = words + 1 as i64;
-      }
-      in_word = false;
-    } else if (b == 13 || b == 12) {
-      if (pos > maxlen) {
-        maxlen = pos;
-      }
-      pos = 0 as i64;
-      if (in_word) {
-        words = words + 1 as i64;
-      }
-      in_word = false;
     } else if (b == 9) {
       pos = pos + 8 as i64 - pos % (8 as i64);
-      if (in_word) {
-        words = words + 1 as i64;
-      }
-      in_word = false;
-    } else if (b == 32) {
-      pos = pos + 1 as i64;
-      if (in_word) {
-        words = words + 1 as i64;
-      }
-      in_word = false;
-    } else {
-      if (in_word) {
-        words = words + 1 as i64;
-      }
-      in_word = false;
     }
-    i = i + 1;
+    i = j + 1;
   }
-  return (Counts { ...c, lines: lines, words: words, maxlen: maxlen }, Scan { in_word: in_word, linepos: pos });
+  return (Counts { ...c, lines: lines, maxlen: maxlen }, Scan { ...st, linepos: pos });
+}
+
+// Every byte but the printable ones and the blank, for `scan_width`.
+function other_table(): u8[] {
+  var t: u8[] = __alloc_u8(256);
+  var b: i32 = 0;
+  while (b < 256) {
+    if (b < 32 || b > 126) {
+      t = t.with(b, 1 as u8);
+    }
+    b = b + 1;
+  }
+  return t;
 }
 
 // The six isspace bytes, as a table for `__count_runs`.
@@ -236,9 +219,10 @@ function count_words(c: Counts, st: Scan, s: string, space: u8[]): (Counts, Scan
 function count_stream(r: Reader, show: Show): (Counts, Option[IoError]) {
   var c: Counts = zero_counts();
   var st: Scan = Scan { in_word: false, linepos: 0 as i64 };
-  // The longest line needs every byte; words are a run count, and lines
-  // and bytes a SIMD count and a length.
+  // The longest line is a scan over runs of printable bytes; words are a
+  // run count, and lines and bytes a SIMD count and a length.
   var space: u8[] = space_table();
+  var other: u8[] = other_table();
   while (true) {
     match (r.read_chunk(read_size())) {
       Ok(chunk) => {
@@ -253,18 +237,16 @@ function count_stream(r: Reader, show: Show): (Counts, Option[IoError]) {
         }
         c = Counts { ...c, bytes: c.bytes + chunk.len() as i64 };
         if (show.maxlen) {
-          var r2: (Counts, Scan) = scan_chunk(c, st, chunk);
+          var r2: (Counts, Scan) = scan_width(c, st, chunk, other);
           c = r2.0;
           st = r2.1;
-        } else {
-          if (show.words) {
-            var r3: (Counts, Scan) = count_words(c, st, chunk, space);
-            c = r3.0;
-            st = r3.1;
-          }
-          if (show.lines) {
-            c = Counts { ...c, lines: c.lines + __count_byte(chunk, 10) as i64 };
-          }
+        } else if (show.lines) {
+          c = Counts { ...c, lines: c.lines + __count_byte(chunk, 10) as i64 };
+        }
+        if (show.words) {
+          var r3: (Counts, Scan) = count_words(c, st, chunk, space);
+          c = r3.0;
+          st = r3.1;
         }
       },
       Err(e) => {
