@@ -490,17 +490,27 @@ function target_writes_binary(t: string, emit: string): boolean {
 // produced one. Both emit paths (the SSA one and the AST shell) go through it
 // so the mode rule cannot be applied at one and forgotten at the other.
 //
-// An executable replaces the file rather than overwriting it in place: macOS
-// caches a binary's code-signature verdict by inode, so rewriting a signed
-// executable through its existing inode leaves the kernel holding the old
-// verdict and it kills the new program at exec (SIGKILL, "Code Signature
+// An executable replaces a regular file rather than overwriting it in place:
+// macOS caches a binary's code-signature verdict by inode, so rewriting a
+// signed executable through its existing inode leaves the kernel holding the
+// old verdict and it kills the new program at exec (SIGKILL, "Code Signature
 // Invalid") although the file's own signature is valid.
+//
+// Anything else at the path is written through and kept, the rule native's
+// writeExecutable states: a device, a FIFO or a socket is not the compiler's to
+// replace (`-o /dev/null` deleted the null device, #10034), a symlink keeps
+// pointing where it did, and only a path that resolves to a regular file is
+// made executable.
 function write_output(out_path: string, data: string, t: string, emit: string): Result[void, IoError] {
-    if (target_writes_binary(t, emit)) {
+    if (!target_writes_binary(t, emit)) { return write_file(out_path, data); }
+    if let Ok(link) = lstat(out_path) {
+        if (!link.is_file) {
+            if let Ok(st) = stat(out_path) { if (st.is_file) { return write_file_exec(out_path, data); } }
+            return write_file(out_path, data);
+        }
         match (remove_file(out_path)) { Ok(_) => {}, Err(_) => {} }
-        return write_file_exec(out_path, data);
     }
-    return write_file(out_path, data);
+    return write_file_exec(out_path, data);
 }
 
 // capability_violations reports every call to a builtin the target does not
