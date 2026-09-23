@@ -1540,6 +1540,7 @@ pub function module_uses_buf(cache: irlower.LowerResult[]): boolean {
     return module_emits_op_cached(cache, "buf_new") || module_emits_op_cached(cache, "buf_push")
         || module_emits_op_cached(cache, "buf_push_range") || module_emits_op_cached(cache, "buf_push_byte")
         || module_emits_op_cached(cache, "buf_push_mapped") || module_emits_op_cached(cache, "buf_push_filtered")
+        || module_emits_op_cached(cache, "buf_push_expanded")
         || module_emits_op_cached(cache, "buf_push_u64")
         || module_emits_op_cached(cache, "buf_len") || module_emits_op_cached(cache, "buf_take")
         || module_emits_op_cached(cache, "buf_free");
@@ -4706,7 +4707,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         // stack: strblock ptr -> copy its bytes onto the builder. Void helper
         // (consumes the arg); push a dummy i32 for the statement-level drop.
         parts = parts.append("    call $__fern_strbuf_append\n    i32.const 0\n");
-    } else if ((o.kind_tag >= 291 && o.kind_tag <= 297) || o.kind_tag == 306 || o.kind_tag == 325 || o.kind_tag == 326) {  // the buf_* builder
+    } else if ((o.kind_tag >= 291 && o.kind_tag <= 297) || o.kind_tag == 306 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328) {  // the buf_* builder
         parts = emit_wasm_buf_op(o, parts);
     } else if (o.kind_tag == 119) {  // strbuf_take
         // no args -> snapshot the builder into a fresh string box and reset it
@@ -7617,6 +7618,7 @@ function emit_wasm_buf_op(o: ir.Op, parts: string[]): string[] {
     if (o.kind_tag == 293) { return parts.append("    call $__fern_buf_push_range\n    i32.const 0\n"); }
     if (o.kind_tag == 325) { return parts.append("    call $__fern_buf_push_mapped\n    i32.const 0\n"); }
     if (o.kind_tag == 326) { return parts.append("    call $__fern_buf_push_filtered\n    i32.const 0\n"); }
+    if (o.kind_tag == 328) { return parts.append("    call $__fern_buf_push_expanded\n    i32.const 0\n"); }
     if (o.kind_tag == 294) { return parts.append("    call $__fern_buf_push_byte\n    i32.const 0\n"); }
     if (o.kind_tag == 306) { return parts.append("    call $__fern_buf_push_u64\n    i32.const 0\n"); }
     if (o.kind_tag == 295) { return parts.append("    call $__fern_buf_len\n"); }
@@ -7804,6 +7806,38 @@ pub function buf_helpers(): string {
     o = o + "        (br_if $fl (i32.load (i32.add (i32.add (local.get $t) (i32.const 8)) (i32.mul (local.get $c) (i32.const 4)))))))\n";
     o = o + "      (i32.store8 (i32.add (local.get $d) (local.get $j)) (local.get $c))\n";
     o = o + "      (local.set $j (i32.add (local.get $j) (i32.const 1))) (br $fl)))\n";
+    o = o + "    (i32.store (i32.add (local.get $h) (i32.const 4)) (i32.add (local.get $len) (local.get $j))))\n";
+    // push_expanded(H, s, table): append each byte c of s as the record at
+    // table[c*8], a length (above 7 counts as 7) and then the bytes, or c
+    // itself when its record is not wholly inside the table. Entry i is the
+    // 4-byte slot at table + 8 + i*4, so byte c's record starts at
+    // table + 8 + c*32.
+    o = o + "  (func $__fern_buf_push_expanded (param $h i32) (param $s i32) (param $t i32)\n";
+    o = o + "    (local $n i32) (local $i i32) (local $d i32) (local $len i32) (local $m i32) (local $c i32) (local $j i32) (local $r i32) (local $l i32) (local $k i32)\n";
+    o = o + "    (local.set $n (i32.load (local.get $s)))\n";
+    o = o + "    (if (i32.eqz (local.get $n)) (then (return)))\n";
+    o = o + "    (local.set $len (i32.load (i32.add (local.get $h) (i32.const 4))))\n";
+    o = o + "    (if (i32.gt_u (i32.add (local.get $len) (i32.mul (local.get $n) (i32.const 7))) (i32.load (i32.add (local.get $h) (i32.const 8))))\n";
+    o = o + "      (then (call $__fern_buf_reserve (local.get $h) (i32.add (local.get $len) (i32.mul (local.get $n) (i32.const 7))))))\n";
+    o = o + "    (local.set $d (i32.add (i32.add (i32.load (local.get $h)) (i32.const 4)) (local.get $len)))\n";
+    o = o + "    (local.set $m (i32.shr_u (i32.load (local.get $t)) (i32.const 3)))\n";
+    o = o + "    (block $ed (loop $el (br_if $ed (i32.ge_u (local.get $i) (local.get $n)))\n";
+    o = o + "      (local.set $c (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (if (i32.lt_u (local.get $c) (local.get $m))\n";
+    o = o + "        (then\n";
+    o = o + "          (local.set $r (i32.add (i32.add (local.get $t) (i32.const 8)) (i32.mul (local.get $c) (i32.const 32))))\n";
+    o = o + "          (local.set $l (i32.load (local.get $r)))\n";
+    o = o + "          (if (i32.gt_u (local.get $l) (i32.const 7)) (then (local.set $l (i32.const 7))))\n";
+    o = o + "          (local.set $k (i32.const 0))\n";
+    o = o + "          (block $bd (loop $bl (br_if $bd (i32.ge_u (local.get $k) (local.get $l)))\n";
+    o = o + "            (i32.store8 (i32.add (local.get $d) (local.get $j)) (i32.load (i32.add (local.get $r) (i32.mul (i32.add (local.get $k) (i32.const 1)) (i32.const 4)))))\n";
+    o = o + "            (local.set $j (i32.add (local.get $j) (i32.const 1)))\n";
+    o = o + "            (local.set $k (i32.add (local.get $k) (i32.const 1))) (br $bl))))\n";
+    o = o + "        (else\n";
+    o = o + "          (i32.store8 (i32.add (local.get $d) (local.get $j)) (local.get $c))\n";
+    o = o + "          (local.set $j (i32.add (local.get $j) (i32.const 1)))))\n";
+    o = o + "      (br $el)))\n";
     o = o + "    (i32.store (i32.add (local.get $h) (i32.const 4)) (i32.add (local.get $len) (local.get $j))))\n";
     // push_byte(H, x): append the low byte of x.
     o = o + "  (func $__fern_buf_push_byte (param $h i32) (param $x i32)\n";

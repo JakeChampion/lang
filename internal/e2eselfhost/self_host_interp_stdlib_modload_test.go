@@ -47,6 +47,7 @@ var interpStdlibModloadCases = []struct {
 	{"count-runs", "function main(): i32 {\n  var set: u8[] = __alloc_u8(256);\n  set = set.with(32, 1 as u8);\n  if (__count_runs(\"a b  c\", 0, set) != 2) { return 1; }\n  if (__count_runs(\" a\", 1, set) != 0) { return 2; }\n  return 7;\n}\n"},
 	{"buf-push-mapped", "function main(): i32 {\n  var b: usize = buf_new(4);\n  var t: u8[] = [65 as u8, 66 as u8];\n  buf_push_mapped(b, \"\\x00\\x01z\", t);\n  if (buf_take(b) != \"ABz\") { return 1; }\n  buf_free(b);\n  return 7;\n}\n"},
 	{"buf-push-filtered", "function main(): i32 {\n  var b: usize = buf_new(4);\n  var d: u8[] = [0 as u8, 1 as u8];\n  buf_push_filtered(b, \"\\x00\\x01z\\x01\", d);\n  if (buf_take(b) != \"\\x00z\") { return 1; }\n  buf_free(b);\n  return 7;\n}\n"},
+	{"buf-push-expanded", "function main(): i32 {\n  var b: usize = buf_new(4);\n  var t: u8[] = [2 as u8, 94 as u8, 64 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8];\n  buf_push_expanded(b, \"\\x00z\", t);\n  if (buf_take(b) != \"^@z\") { return 1; }\n  buf_free(b);\n  return 7;\n}\n"},
 	// The CRC kernel, which is the family's odd one in two ways the interp
 	// has to get right on its own: its STRING is the second argument, so it
 	// cannot ride __memchr's destructure the way __count_byte does, and it

@@ -179,6 +179,18 @@ pub function (b: BufWriter) write_filtered(s: string, drop: u8[]): BufWriter {
   return b.flush();
 }
 
+// `(b).write_expanded(s, table)` — append each byte `c` of `s` as the
+// record at `table[c * 8]`: a length byte (above 7 counts as 7), then the
+// bytes. A byte whose record is not wholly inside the table is appended
+// unchanged.
+pub function (b: BufWriter) write_expanded(s: string, table: u8[]): BufWriter {
+  buf_push_expanded(b.buf, s, table);
+  if (buf_len(b.buf) < b.cap) {
+    return b;
+  }
+  return b.flush();
+}
+
 // `(b).write_byte(byte)` — append one byte.
 pub function (b: BufWriter) write_byte(byte: i32): BufWriter {
   buf_push_byte(b.buf, byte);

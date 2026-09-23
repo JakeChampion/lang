@@ -8294,7 +8294,7 @@ pub function builtin_function_names(): string[] {
         "strbuf_take", "string_from_bytes_unchecked", "slice_unchecked", "chr", "len",
         // the capacity-carrying string builder (#8773): a handle is the
         // address of its own control block, so any number are live at once.
-        "buf_new", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_filtered", "buf_push_byte", "buf_push_u64", "buf_len",
+        "buf_new", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_byte", "buf_push_u64", "buf_len",
         "buf_take", "buf_free",
         // Cell[T] constructor (docs/CELL-TYPE-PLAN.md): cell_new(v) is a
         // front-end builtin (like map_new); get/set are method calls, not

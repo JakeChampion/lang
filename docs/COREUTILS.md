@@ -2649,6 +2649,30 @@ bytes a turn into two counts.
 
 `wc -L` still walks every byte for the line width.
 
+### cat's spelling as one expansion, 2026-09-23 (GNU coreutils 9.12)
+
+`buf_push_expanded(b, s, table)` joins the builder kernels on every backend
+and in both compilers. It appends each byte `c` of `s` as the eight-byte
+record at `table[c * 8]`: a length byte (above 7 counts as 7), then the
+bytes. A byte whose record is not wholly inside the table passes through.
+It reserves room for eight bytes per input byte, so x86-64 copies each
+record with one eight-byte store and advances the tail by its length.
+
+`cat -v`, `-T`, `-E` and their combinations, with no numbering or
+squeezing, now build one table of every byte's output (`-E`'s `$` on the
+newline included) and make one call per read. That replaces the set
+scan, per-run appends and per-byte spelling above. `cat -A` over the 62 MiB
+bench file: 192 → 74 ms (GNU 9.12: 104). Over 3 MB of random bytes, where
+nearly every byte is spelled: 62 → 4.4 ms (GNU: 22.7).
+
+GNU 9.12's `-E` without `-v` shows a carriage return that ends a line as
+`^M$`. That CR can end one read, or one file, while its newline starts the
+next. A CR that ends the input is copied as it is. Fern's cat had never
+done this. The CR is held back until the next byte decides it, and a read
+holding a CR under `-E` alone takes the line rewriter instead of the
+expansion. The corpus now covers the CRLF line, the CR across files and
+reads, and the trailing CR.
+
 ### ls, 2026-09-14, Linux x86-64 (GNU coreutils 9.4, uutils 0.0.24)
 
 The same 4-core container, so read the columns against each other. The

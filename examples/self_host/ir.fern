@@ -1500,6 +1500,10 @@ pub function op_buf_push_mapped(): Op { return op0("buf_push_mapped"); }
 // `buf_push_filtered` pops [handle, str, drop]: each byte c of the string is
 // appended unless drop[c] is nonzero; a byte past the table's end is kept.
 pub function op_buf_push_filtered(): Op { return op0("buf_push_filtered"); }
+// `buf_push_expanded` pops [handle, str, table]: each byte c of the string is
+// appended as the record at table[c*8], a length (above 7 counts as 7) and
+// then the bytes; a byte whose record is not wholly in the table is kept.
+pub function op_buf_push_expanded(): Op { return op0("buf_push_expanded"); }
 pub function op_buf_push_byte(): Op { return op0("buf_push_byte"); }
 pub function op_buf_push_u64(): Op { return op0("buf_push_u64"); }
 pub function op_buf_len(): Op { return op0("buf_len"); }
@@ -2622,6 +2626,7 @@ function kind_id_len17(name: string): i32 {
     var c: u8 = name[0];
     if (c == b's' && name == "set_process_group") { return 284; }
     if (c == b'b' && name == "buf_push_filtered") { return 326; }
+    if (c == b'b' && name == "buf_push_expanded") { return 328; }
     return 0;
 }
 
@@ -2897,6 +2902,7 @@ function kind_name_4(id: i32): string {
     if (id == 327) { return "count_runs"; }
     if (id == 325) { return "buf_push_mapped"; }
     if (id == 326) { return "buf_push_filtered"; }
+    if (id == 328) { return "buf_push_expanded"; }
     if (id == 322) { return "scale_f64"; }
     if (id == 309) { return "crc32_cksum"; }
     if (id == 228) { return "syscall5"; }
@@ -3173,7 +3179,7 @@ function pops_buf(t: i32): i32 {
     // buf_push_u64 arrived after the block had closed over 291-297, so it
     // carries the next free id instead of extending it.
     if (t == 306) { return 2; }
-    if (t == 325 || t == 326) { return 3; }           // buf_push_mapped / _filtered: handle + string + table
+    if (t == 325 || t == 326 || t == 328) { return 3; } // buf_push_mapped / _filtered / _expanded: handle + string + table
     if (t < 291 || t > 297) { return 0 - 1; }
     if (t == 293) { return 4; }                       // buf_push_range: handle + string + lo + hi
     if (t == 292 || t == 294) { return 2; }           // buf_push, buf_push_byte

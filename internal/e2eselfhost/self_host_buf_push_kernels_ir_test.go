@@ -13,7 +13,8 @@ import (
 // self-host IR path: the first appends each byte c of s as table[c], or
 // unchanged when c is past the table's end (tr's SET1 -> SET2); the second
 // appends each byte whose drop[c] is zero, or that is past the table's end
-// (tr -d).
+// (tr -d); `buf_push_expanded(b, s, table)` appends each byte's eight-byte
+// record (cat -v / -T / -E).
 //
 // The table's length lives in the array header and its bytes in the
 // backend's element slots, eight bytes on the register backends and four on
@@ -56,6 +57,43 @@ function check_filtered(b: usize, held: string, s: string, drop: u8[]): boolean 
     buf_push_filtered(b, s, drop);
     return buf_take(b) == held + ref_filtered(s, drop);
 }
+function ref_expanded(s: string, t: u8[]): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < s.len()) {
+        var c: i32 = s[i] as i32;
+        if (c * 8 + 8 > t.len()) {
+            out = out + chr(c);
+        } else {
+            var n: i32 = t[c * 8] as i32;
+            if (n > 7) { n = 7; }
+            var k: i32 = 0;
+            while (k < n) { out = out + chr(t[c * 8 + 1 + k] as i32); k = k + 1; }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+// Byte c becomes c % 8 copies of 'a' + c % 26; every fifth record claims a
+// length past seven, which counts as seven.
+function expand_table(): u8[] {
+    var t: u8[] = __alloc_u8(2048);
+    var c: i32 = 0;
+    while (c < 256) {
+        var n: i32 = c % 8;
+        if (c % 5 == 0) { n = 9 + c % 100; }
+        t = t.with(c * 8, n as u8);
+        var k: i32 = 1;
+        while (k < 8) { t = t.with(c * 8 + k, (97 + c % 26) as u8); k = k + 1; }
+        c = c + 1;
+    }
+    return t;
+}
+function check_expanded(b: usize, held: string, s: string, t: u8[]): boolean {
+    buf_push(b, held);
+    buf_push_expanded(b, s, t);
+    return buf_take(b) == held + ref_expanded(s, t);
+}
 function rot_table(): u8[] {
     var t: u8[] = __alloc_u8(256);
     var z: i32 = 0;
@@ -73,6 +111,7 @@ function main(): i32 {
     var short: u8[] = [120 as u8, 121 as u8, 122 as u8];
     var none: u8[] = [];
     var alt: u8[] = alternate_table();
+    var ex: u8[] = expand_table();
     var n: i32 = 0;
     var s: string = "";
     while (n <= 40) {
@@ -83,6 +122,8 @@ function main(): i32 {
         if (!check_filtered(b, "cd", s, short)) { return 8; }
         if (!check_filtered(b, "", s, none)) { return 9; }
         if (!check_filtered(b, "", s, rot)) { return 10; }
+        if (!check_expanded(b, "ef", s, ex)) { return 12; }
+        if (!check_expanded(b, "", s, short)) { return 13; }
         s = s + chr((n * 7 + 1) % 128);
         n = n + 1;
     }
@@ -93,6 +134,7 @@ function main(): i32 {
     while (k < 300) { big = big + "9z"; k = k + 1; }
     if (!check(b, "", big, rot)) { return 6; }
     if (!check_filtered(b, "", big, alt)) { return 11; }
+    if (!check_expanded(b, "", big, ex)) { return 14; }
     buf_free(b);
     return 42;
 }
@@ -168,8 +210,8 @@ func TestSelfHostBufPushKernelsIRWasm(t *testing.T) {
 	if err != nil || len(wat) == 0 {
 		t.Fatalf("wasm IR driver failed: %v", err)
 	}
-	if !bytes.Contains(wat, []byte("$__fern_buf_push_mapped")) || !bytes.Contains(wat, []byte("$__fern_buf_push_filtered")) {
-		t.Fatal("emitted wat lacks the $__fern_buf_push_mapped or $__fern_buf_push_filtered helper — the op did not lower")
+	if !bytes.Contains(wat, []byte("$__fern_buf_push_mapped")) || !bytes.Contains(wat, []byte("$__fern_buf_push_filtered")) || !bytes.Contains(wat, []byte("$__fern_buf_push_expanded")) {
+		t.Fatal("emitted wat lacks one of the buf_push kernel helpers — the op did not lower")
 	}
 	watFile := filepath.Join(dir, "buf_push_kernels.wat")
 	if err := os.WriteFile(watFile, wat, 0o644); err != nil {

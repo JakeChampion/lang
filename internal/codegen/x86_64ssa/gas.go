@@ -2422,6 +2422,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"buf_push_range":                  emitBufPushRangeHelper,
 	"buf_push_mapped":                 emitBufPushMappedHelper,
 	"buf_push_filtered":               emitBufPushFilteredHelper,
+	"buf_push_expanded":               emitBufPushExpandedHelper,
 	"buf_push_byte":                   emitBufPushByteHelper,
 	"buf_push_u64":                    emitBufPushU64Helper,
 	"buf_len":                         emitBufLenHelper,
@@ -2737,6 +2738,7 @@ var runtimeHelperDeps = map[string][]string{
 	"buf_push_range":                  {"__fern_buf_reserve"},
 	"buf_push_mapped":                 {"__fern_buf_reserve"},
 	"buf_push_filtered":               {"__fern_buf_reserve"},
+	"buf_push_expanded":               {"__fern_buf_reserve"},
 	"buf_push_byte":                   {"__fern_buf_reserve"},
 	"buf_push_u64":                    {"__fern_buf_reserve"},
 	"buf_free":                        {"__fern_box_free"},
@@ -4928,6 +4930,92 @@ func emitBufPushFilteredHelper(w func(string, ...any)) {
 	w("\tpop r12")
 	w("\tpop rbx")
 	w("\tjmp .Lssa_buffilt_fits")
+}
+
+// emitBufPushExpandedHelper writes buf_push_expanded(H, s, table): append each
+// byte c of s as the record at table[c*8], a length byte (above 7 counts as
+// 7) and then the bytes, or c itself when its record is not wholly inside
+// the table. Eight bytes per input byte are reserved, so a record is copied
+// as one eight-byte store and the tail advances by its length.
+func emitBufPushExpandedHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("buf_push_expanded"))
+	w("\tmov ecx, %s", memRef("rsi", -4)) // n
+	w("\ttest ecx, ecx")
+	w("\tjz .Lssa_bufexp_none")
+	w("\tlea rax, [rcx*8 + 8]")
+	w("\tadd rax, [rdi + 8]") // need
+	w("\tcmp rax, [rdi + 16]")
+	w("\tja .Lssa_bufexp_grow")
+	w(".Lssa_bufexp_fits:")
+	w("\tmov r8, [rdi]")
+	w("\tadd r8, [rdi + 8]") // dst = data + len
+	w("\tmov r9, r8")        // where this push began
+	w("\tadd rcx, rsi")      // the string's end
+	w("\tmov r10d, %s", memRef("rdx", -4))
+	w("\tshr r10d, 3") // whole records
+	w("\tcmp r10d, 256")
+	w("\tjb .Lssa_bufexp_short")
+	w("\tmov r10d, 7")
+	w(".Lssa_bufexp_full:")
+	w("\tmovzx eax, byte ptr [rsi]")
+	w("\tmov r11, [rdx + rax*8]")
+	w("\tmovzx eax, r11b")
+	w("\tcmp eax, r10d")
+	w("\tcmova eax, r10d")
+	w("\tshr r11, 8")
+	w("\tmov [r8], r11")
+	w("\tadd r8, rax")
+	w("\tinc rsi")
+	w("\tcmp rsi, rcx")
+	w("\tjb .Lssa_bufexp_full")
+	w("\tjmp .Lssa_bufexp_len")
+	w(".Lssa_bufexp_short:")
+	w("\tmovzx eax, byte ptr [rsi]")
+	w("\tcmp eax, r10d")
+	w("\tjae .Lssa_bufexp_keep")
+	w("\tmov r11, [rdx + rax*8]")
+	w("\tmovzx eax, r11b")
+	w("\tcmp eax, 7")
+	w("\tjbe .Lssa_bufexp_room")
+	w("\tmov eax, 7")
+	w(".Lssa_bufexp_room:")
+	w("\tshr r11, 8")
+	w("\tmov [r8], r11")
+	w("\tadd r8, rax")
+	w("\tjmp .Lssa_bufexp_next")
+	w(".Lssa_bufexp_keep:")
+	w("\tmov byte ptr [r8], al")
+	w("\tinc r8")
+	w(".Lssa_bufexp_next:")
+	w("\tinc rsi")
+	w("\tcmp rsi, rcx")
+	w("\tjb .Lssa_bufexp_short")
+	w(".Lssa_bufexp_len:")
+	w("\tsub r8, r9")
+	w("\tadd [rdi + 8], r8")
+	w(".Lssa_bufexp_none:")
+	w("\txor eax, eax")
+	w("\tret")
+	w(".Lssa_bufexp_grow:")
+	// Three callee-saved pushes plus the return address leave rsp 16-aligned
+	// for the call.
+	w("\tpush rbx")
+	w("\tpush r12")
+	w("\tpush r13")
+	w("\tmov rbx, rdi")
+	w("\tmov r12, rsi")
+	w("\tmov r13, rdx")
+	w("\tmov rsi, rax")
+	w("\tcall %s", fnLabel("__fern_buf_reserve"))
+	w("\tmov rdi, rbx")
+	w("\tmov rsi, r12")
+	w("\tmov rdx, r13")
+	w("\tmov ecx, %s", memRef("rsi", -4))
+	w("\tpop r13")
+	w("\tpop r12")
+	w("\tpop rbx")
+	w("\tjmp .Lssa_bufexp_fits")
 }
 
 // emitBufPushByteHelper writes buf_push_byte(H, x): append the low byte of x.

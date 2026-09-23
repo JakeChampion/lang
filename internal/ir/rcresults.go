@@ -510,7 +510,7 @@ var rcResultNonPointer = map[string]bool{
 	"__fern_reader_close": true, "__fern_sleep_ms": true,
 	"__fern_sleep_ns": true,
 	"strbuf_reset":    true, "strbuf_append": true,
-	"buf_push": true, "buf_push_range": true, "buf_push_mapped": true, "buf_push_filtered": true, "buf_push_byte": true,
+	"buf_push": true, "buf_push_range": true, "buf_push_mapped": true, "buf_push_filtered": true, "buf_push_expanded": true, "buf_push_byte": true,
 	"buf_push_u64": true,
 	"buf_free":     true, "__fern_buf_reserve": true,
 

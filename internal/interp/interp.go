@@ -638,6 +638,7 @@ func New() *Interp {
 	i.Builtins["buf_push_range"] = &Builtin{Fn: builtinBufPushRange}
 	i.Builtins["buf_push_mapped"] = &Builtin{Fn: builtinBufPushMapped}
 	i.Builtins["buf_push_filtered"] = &Builtin{Fn: builtinBufPushFiltered}
+	i.Builtins["buf_push_expanded"] = &Builtin{Fn: builtinBufPushExpanded}
 	i.Builtins["buf_push_byte"] = &Builtin{Fn: builtinBufPushByte}
 	i.Builtins["buf_push_u64"] = &Builtin{Fn: builtinBufPushU64}
 	i.Builtins["buf_len"] = &Builtin{Fn: builtinBufLen}
@@ -4943,6 +4944,57 @@ func builtinBufPushFiltered(i *Interp, args []Value) (Value, error) {
 			}
 		}
 		b = append(b, c)
+	}
+	i.bufs[h] = b
+	return Void{}, nil
+}
+
+// builtinBufPushExpanded appends each byte c of s as the record at
+// table[c*8]: a length byte (above 7 counts as 7), then that many bytes. A
+// byte whose record is not wholly inside the table is appended unchanged.
+func builtinBufPushExpanded(i *Interp, args []Value) (Value, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("buf_push_expanded: expected 3 args (b, s, table), got %d", len(args))
+	}
+	h, b, err := bufHandle(i, "buf_push_expanded", args[0])
+	if err != nil {
+		return nil, err
+	}
+	s, ok := args[1].(String)
+	if !ok {
+		return nil, fmt.Errorf("buf_push_expanded: expected string arg, got %T", args[1])
+	}
+	table, ok := args[2].(Array)
+	if !ok {
+		return nil, fmt.Errorf("buf_push_expanded: expected a u8[] table, got %T", args[2])
+	}
+	entry := func(k int) (byte, error) {
+		e, ok := table.E[k].(Number)
+		if !ok {
+			return 0, fmt.Errorf("buf_push_expanded: table element %d is %T, not a byte", k, table.E[k])
+		}
+		return byte(int64(e)), nil
+	}
+	for _, c := range []byte(string(s)) {
+		at := int(c) * 8
+		if at+8 > len(table.E) {
+			b = append(b, c)
+			continue
+		}
+		n, err := entry(at)
+		if err != nil {
+			return nil, err
+		}
+		if n > 7 {
+			n = 7
+		}
+		for k := 1; k <= int(n); k++ {
+			x, err := entry(at + k)
+			if err != nil {
+				return nil, err
+			}
+			b = append(b, x)
+		}
 	}
 	i.bufs[h] = b
 	return Void{}, nil

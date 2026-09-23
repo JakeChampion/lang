@@ -1547,6 +1547,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"buf_push_range":                  emitBufPushRangeHelper,
 	"buf_push_mapped":                 emitBufPushMappedHelper,
 	"buf_push_filtered":               emitBufPushFilteredHelper,
+	"buf_push_expanded":               emitBufPushExpandedHelper,
 	"buf_push_byte":                   emitBufPushByteHelper,
 	"buf_push_u64":                    emitBufPushU64Helper,
 	"buf_len":                         emitBufLenHelper,
@@ -4499,6 +4500,7 @@ var runtimeHelperDeps = map[string][]string{
 	"buf_push_range":                  {"__fern_buf_reserve"},
 	"buf_push_mapped":                 {"__fern_buf_reserve"},
 	"buf_push_filtered":               {"__fern_buf_reserve"},
+	"buf_push_expanded":               {"__fern_buf_reserve"},
 	"buf_push_byte":                   {"__fern_buf_reserve"},
 	"buf_push_u64":                    {"__fern_buf_reserve"},
 	"buf_take":                        {"__alloc"},
@@ -10167,6 +10169,71 @@ func emitBufPushFilteredHelper(w func(string, ...any)) {
 	w("\tadd x13, x13, x7")
 	w("\tstr x13, [x1, #8]")
 	w(".Lssa_buffilt_none:")
+	w("\tmov x0, xzr")
+	w("\tret")
+}
+
+// emitBufPushExpandedHelper writes buf_push_expanded(H, s, table): append each
+// byte c of s as the record at table[c*8], a length byte (above 7 counts as
+// 7) and then the bytes, or c itself when its record is not wholly inside
+// the table. Eight bytes per input byte are reserved, so a record is copied
+// as one eight-byte store.
+func emitBufPushExpandedHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("buf_push_expanded"))
+	w("\tldur w12, [x1, #-4]")
+	w("\tcbz w12, .Lssa_bufexp_none")
+	w("\tstp x29, x30, [sp, #-48]!")
+	w("\tstr x0, [sp, #16]") // H
+	w("\tstr x1, [sp, #24]") // s
+	w("\tstr x2, [sp, #32]") // table
+	w("\tldr x13, [x0, #8]")
+	w("\tadd x14, x13, x12, lsl #3")
+	w("\tadd x14, x14, #8") // need
+	w("\tldr x15, [x0, #16]")
+	w("\tcmp x14, x15")
+	w("\tb.ls .Lssa_bufexp_fits")
+	w("\tmov x1, x14")
+	w("\tbl %s", fnLabel("__fern_buf_reserve"))
+	w(".Lssa_bufexp_fits:")
+	w("\tldr x1, [sp, #16]")
+	w("\tldr x11, [sp, #24]")
+	w("\tldr x2, [sp, #32]")
+	w("\tldp x29, x30, [sp], #48")
+	w("\tldur w12, [x11, #-4]")
+	w("\tldr x13, [x1, #8]")
+	w("\tldr x9, [x1]")
+	w("\tadd x9, x9, x13") // dst
+	w("\tmov x3, x9")      // where this push began
+	w("\tldur w4, [x2, #-4]")
+	w("\tlsr w4, w4, #3") // whole records
+	w("\tmov w15, #7")
+	w("\tmov x5, xzr")
+	w(".Lssa_bufexp_loop:")
+	w("\tcmp x5, x12")
+	w("\tb.hs .Lssa_bufexp_len")
+	w("\tldrb w6, [x11, x5]")
+	w("\tcmp w6, w4")
+	w("\tb.hs .Lssa_bufexp_keep")
+	w("\tadd x7, x2, x6, lsl #3")
+	w("\tldr x8, [x7]")
+	w("\tand w10, w8, #0xff")
+	w("\tcmp w10, w15")
+	w("\tcsel w10, w15, w10, hi")
+	w("\tlsr x8, x8, #8")
+	w("\tstr x8, [x9]")
+	w("\tadd x9, x9, x10")
+	w("\tb .Lssa_bufexp_next")
+	w(".Lssa_bufexp_keep:")
+	w("\tstrb w6, [x9], #1")
+	w(".Lssa_bufexp_next:")
+	w("\tadd x5, x5, #1")
+	w("\tb .Lssa_bufexp_loop")
+	w(".Lssa_bufexp_len:")
+	w("\tsub x9, x9, x3")
+	w("\tadd x13, x13, x9")
+	w("\tstr x13, [x1, #8]")
+	w(".Lssa_bufexp_none:")
 	w("\tmov x0, xzr")
 	w("\tret")
 }

@@ -2529,7 +2529,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
 // error internal/interp answers one with.
 function is_buf_builtin(name: string): boolean {
     if (name == "buf_new" || name == "buf_push" || name == "buf_push_range") { return true; }
-    if (name == "buf_push_byte" || name == "buf_push_u64" || name == "buf_push_mapped" || name == "buf_push_filtered") { return true; }
+    if (name == "buf_push_byte" || name == "buf_push_u64" || name == "buf_push_mapped" || name == "buf_push_filtered" || name == "buf_push_expanded") { return true; }
     return name == "buf_len" || name == "buf_take" || name == "buf_free";
 }
 function v_buf_handle(h: usize): Value { return v_wide(h as i64, true); }
@@ -2564,7 +2564,8 @@ function call_buf_push_range(h: usize, args: Value[]): Value {
 
 // `buf_push_mapped(b, s, table)` appends table[c] for each byte c of s, or c
 // itself when it is past the table's end; `buf_push_filtered(b, s, drop)`
-// appends each byte c whose drop[c] is zero, or that is past the table's end.
+// appends each byte c whose drop[c] is zero, or that is past the table's end;
+// `buf_push_expanded(b, s, table)` appends each byte's eight-byte record.
 function call_buf_push_table(name: string, h: usize, args: Value[]): Value {
     if (args.len() != 3) { return v_err(name + ": expected 3 args (b, s, table)"); }
     if (!is_string_arg(args[1])) { return v_err(name + ": expected string arg"); }
@@ -2574,6 +2575,8 @@ function call_buf_push_table(name: string, h: usize, args: Value[]): Value {
             for e in tv.elements { table = table.append(vint_bits(e) as u8); }
             if (name == "buf_push_filtered") {
                 buf_push_filtered(h, vstr_of(args[1]), table);
+            } else if (name == "buf_push_expanded") {
+                buf_push_expanded(h, vstr_of(args[1]), table);
             } else {
                 buf_push_mapped(h, vstr_of(args[1]), table);
             }
@@ -2632,7 +2635,7 @@ function call_buf_builtin(name: string, args: Value[]): Value {
     if (args.len() == 0 || !is_int_like(args[0])) { return v_err(name + ": expected a builder handle"); }
     var h: usize = buf_handle_of(args[0]);
     if (name == "buf_push_range") { return call_buf_push_range(h, args); }
-    if (name == "buf_push_mapped" || name == "buf_push_filtered") { return call_buf_push_table(name, h, args); }
+    if (name == "buf_push_mapped" || name == "buf_push_filtered" || name == "buf_push_expanded") { return call_buf_push_table(name, h, args); }
     if (name == "buf_push" || name == "buf_push_byte" || name == "buf_push_u64") { return call_buf_append(name, h, args); }
     return call_buf_read(name, h, args);
 }

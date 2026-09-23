@@ -1455,6 +1455,14 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{bufH, ast.StringType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
 		Result: ast.VoidType{},
 	}
+	// buf_push_expanded(h, s, table) appends each byte b of s as the record
+	// at table[b*8]: a length byte (above 7 counts as 7), then the bytes. A
+	// byte whose record is not wholly inside the table is appended
+	// unchanged. cat -v / -T / -E is one call per read.
+	c.info.FuncSigs["buf_push_expanded"] = &ast.FuncType{
+		Params: []ast.Type{bufH, ast.StringType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+		Result: ast.VoidType{},
+	}
 	c.info.FuncSigs["buf_push_byte"] = &ast.FuncType{
 		Params: []ast.Type{bufH, ast.NumberType{}},
 		Result: ast.VoidType{},
