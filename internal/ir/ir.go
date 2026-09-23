@@ -16603,25 +16603,35 @@ func (b *builder) stashOwnedArgTemp(a ast.Expr) (int32, ast.Type, bool, error) {
 		// temp the `.len()` receiver site reclaims by this route (#6401).
 		tt, ok = b.exprType(a), true
 	}
+	// A coercion site lowers to the dyn value rather than the concrete one,
+	// so the temp is released as the dyn it is, whatever the concrete is:
+	// the natives' cell is the call's own even when the concrete is not.
+	// A concrete someone else holds is retained for the dyn, as a coercion
+	// into a local is, so the release balances. A backend that does not
+	// reclaim dyn values has no drop helper to release it through.
+	fresh := ok
+	var dc checker.DynCoercion
+	coerced := false
+	if b.info != nil && b.info.DynCoercions != nil {
+		dc, coerced = b.info.DynCoercions[a]
+	}
+	if coerced {
+		if !b.dynReclaim() {
+			return 0, nil, false, nil
+		}
+		tt, ok = ast.DynTraitType{Traits: dc.Traits}, true
+	}
 	if !ok {
 		return 0, nil, false, nil
-	}
-	// A coercion site lowers to the dyn value rather than the concrete one,
-	// so the temp is released as the dyn it is. A backend that does not
-	// reclaim dyn values has no drop helper to release it through.
-	if b.info != nil && b.info.DynCoercions != nil {
-		if dc, coerced := b.info.DynCoercions[a]; coerced {
-			if !b.dynReclaim() {
-				return 0, nil, false, nil
-			}
-			tt = ast.DynTraitType{Traits: dc.Traits}
-		}
 	}
 	slot := b.allocSlot()
 	b.locals[fmt.Sprintf("__argtmp_%d", slot)] = slot
 	b.scratchType[slot] = tt
 	if err := b.expr(a); err != nil {
 		return 0, nil, false, err
+	}
+	if coerced && !fresh {
+		b.emitDynConcreteInc(dc)
 	}
 	b.emit(Op{Kind: OpStoreLocal, I32: slot})
 	b.emit(Op{Kind: OpLoadLocal, I32: slot})
