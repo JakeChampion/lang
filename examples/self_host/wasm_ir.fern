@@ -1602,14 +1602,10 @@ pub function module_uses_arr_slice8(cache: irlower.LowerResult[]): boolean {
 
 // module_uses_udivrem / module_uses_i64_udivrem are the same gates for the
 // unsigned helpers.
-pub function module_uses_udivrem(cache: irlower.LowerResult[]): boolean {
-    function is_udivrem(o: ir.Op): boolean { return (o.kind_tag == 25 || o.kind_tag == 27) && o.width != 64; }  // div_u, rem_u
-    return any_op(cache, is_udivrem);
-}
-pub function module_uses_i64_udivrem(cache: irlower.LowerResult[]): boolean {
-    function is_i64_udivrem(o: ir.Op): boolean { return (o.kind_tag == 25 || o.kind_tag == 27) && o.width == 64; }  // div_u, rem_u
-    return any_op(cache, is_i64_udivrem);
-}
+pub function module_uses_udivrem(cache: irlower.LowerResult[]): boolean { return any_op(cache, is_udivrem); }
+pub function module_uses_i64_udivrem(cache: irlower.LowerResult[]): boolean { return any_op(cache, is_i64_udivrem); }
+function is_udivrem(o: ir.Op): boolean { return (o.kind_tag == 25 || o.kind_tag == 27) && o.width != 64; }  // div_u, rem_u
+function is_i64_udivrem(o: ir.Op): boolean { return (o.kind_tag == 25 || o.kind_tag == 27) && o.width == 64; }
 
 pub function module_uses_i64_divrem(cache: irlower.LowerResult[]): boolean {
     function is_i64_divrem(o: ir.Op): boolean { return (o.kind_tag == 24 || o.kind_tag == 26) && o.width == 64; }  // div_s, rem_s
