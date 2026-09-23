@@ -4281,10 +4281,15 @@ func armConfinementRegion(atBinding string, guard ast.Expr, body ast.Node) []ast
 // Net-zero on the operand stack: the value is left in place for the call.
 func (b *builder) emitFieldOwnMove(fa *ast.FieldAccess) {
 	base := fa.Target.(*ast.Ident)
-	baseSlot := b.locals[base.Name]
 	sd := b.info.Structs[b.fieldOwner(fa.Target)]
 	offs, _ := structFieldLayout(sd.Fields, b.ptrW)
-	ft := fieldType(sd.Fields, fa.Field)
+	b.emitSlotFieldMove(b.locals[base.Name], offs[fa.Field], fieldType(sd.Fields, fa.Field))
+}
+
+// emitSlotFieldMove is emitFieldOwnMove for the field at byte offset `off`
+// of the box in local `baseSlot`, whose value of type `ft` is on the
+// operand stack.
+func (b *builder) emitSlotFieldMove(baseSlot int32, off int32, ft ast.Type) {
 	tmp := b.allocSlot()
 	b.locals[fmt.Sprintf("__fmove_%d", tmp)] = tmp
 	b.scratchType[tmp] = ft
@@ -4293,7 +4298,7 @@ func (b *builder) emitFieldOwnMove(fa *ast.FieldAccess) {
 	b.emit(Op{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1})
 	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
-	if off := offs[fa.Field]; off != 0 {
+	if off != 0 {
 		b.emit(Op{Kind: OpConstI32, I32: off})
 		b.emit(Op{Kind: OpAdd})
 	}
