@@ -113,19 +113,28 @@ Measured 2026-09-23 against the same tree without it, x86-64:
 
 The compiler's values mostly live across calls in callee-saved registers,
 so many of its arguments become a move rather than disappearing; what goes
-is the store and reload through memory, and the pop. The rest of the track,
-in order:
+is the store and reload through memory, and the pop.
 
-1. arm64, the same design over x0 and x9..x15.
-2. The hand-written runtime helpers the compiler calls most
-   (`__fern_arr_dec` at ~10k call sites, `__fern_str_free` at ~7k,
-   `str_eq`, `rc_is_unique`) read their arguments from registers.
-3. Indirect calls, function addresses, closures and dyn dispatch move to
+arm64 has the same two entries over x0 and x9..x15 (eight arguments in
+registers, stack slots 16 bytes apart): `checker.fern` 459,464 -> 444,286
+static instructions.
+
+The two runtime helpers the compiler calls most, `__fern_arr_dec` (10,267
+sites on `checker.fern`) and `__fern_str_free` (6,823), are hand-written
+and began by loading their one argument into `%rax` / x0, so each has a
+`.r` entry after that load (`ssa_reg_helper`): `checker.fern` falls to
+449,708 static instructions (x86-64, -6.2% on the stack ABI), and the
+stage-2 compiler to 3,912 M Ir compiling `ssa.fern` (-3.0%) and 10,444,920
+bytes (-3.9%). The rest of the track, in order:
+
+1. The other hand-written helpers with arguments (`str_eq`, `str_concat`,
+   `arr_inc_elems`, `alloc_reuse`), each by its own argument order.
+2. Indirect calls, function addresses, closures and dyn dispatch move to
    the `.r` entries together — the one step that can miscompile silently,
    since both symbols exist.
-4. More than six arguments: the caller reserves the stack slots of the
+3. More than six arguments: the caller reserves the stack slots of the
    first six and pushes the rest where the stack ABI puts them.
-5. Once nothing refers to a stack entry, the shims go.
+4. Once nothing refers to a stack entry, the shims go.
 
 ## What the lift admits, and what declines
 

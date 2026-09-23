@@ -1245,6 +1245,12 @@ function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
 function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
     if (ssa.rc_inlined(ins)) { return ssa_rc_prim(ins, reg_of, lp, s); }
     s = ssa_x0_forget(s);
+    if (ircore.is_fern_helper(ins.str) && ins.args.len() == 1 && ssa_reg_helper(ircore.ir_helper_symbol(ins.str))) {
+        s = helper_call_needs(ins.str, s);
+        s = ssa_parallel_moves([reg_of[ins.args[0]]], [0], s);
+        s = s.write("    bl " + ircore.ir_helper_symbol(ins.str) + ".r\n");
+        return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
+    }
     if (ssa_reg_call(ins, s)) {
         // Only this call's own arguments can be in the pool's registers here:
         // anything live across it is callee-saved or in a slot.
@@ -1838,6 +1844,13 @@ function ssa_entry_shim(f: ssa.SFunc, name: string): string {
         p = p + 1;
     }
     return out + "__fn_" + name + ".r:\n";
+}
+
+// ssa_reg_helper names the hand-written runtime helpers with a register
+// entry: one argument, loaded by their stack entry into the pool's first
+// register, which is where the `.r` entry reads it.
+function ssa_reg_helper(sym: string): boolean {
+    return sym == "__fn___fern_arr_dec" || sym == "__fn___fern_str_free";
 }
 
 // ssa_reg_call reports whether a direct call passes its arguments in
@@ -6178,6 +6191,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    ret\n");
     s = s.write("__fn___fern_arr_dec:\n");
     s = s.write("    ldr x0, [sp]\n");
+    s = s.write("__fn___fern_arr_dec.r:\n");
     s = s.write("    cbz x0, .Larrdec_ret\n");
     s = s.write("    mov x9, #0x10000\n");
     s = s.write("    cmp x0, x9\n");
@@ -6234,6 +6248,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     // x0=box, x1=data, x2=len/words, x3=freelist, x9/x10 scratch.
     s = s.write("__fn___fern_str_free:\n");
     s = s.write("    ldr x0, [sp]\n");             // box
+    s = s.write("__fn___fern_str_free.r:\n");
     s = s.write("    cbz x0, .Lstrfree_ret\n");
     s = s.write("    tbnz x0, #0, .Lstrfree_ret\n");   // tagged / SSO sentinel (defensive)
     s = s.write("    mov x9, #0x10000\n");
