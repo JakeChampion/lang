@@ -3969,12 +3969,30 @@ func taintedReachesSlot(e ast.Expr, slot ast.Type, tainted map[string]bool, info
 			}
 			return false
 		}
+		// `a.with(i, v)` / `a.append(v)` answer an array of the receiver's
+		// type, so the stored element reaches the result only through an
+		// element slot: a byte read out of a tainted string does not.
+		if at, isArr := slot.(ast.ArrayType); isArr && len(x.Args) >= 2 &&
+			(id.Name == "__method_Array_set" || id.Name == "__method_Array_push") {
+			return taintedReachesSlot(x.Args[0], slot, tainted, info, variantPayloads, escapes) ||
+				taintedReachesSlot(x.Args[len(x.Args)-1], at.Elem, tainted, info, variantPayloads, escapes)
+		}
 		// User function / method: a tainted argument reaches the result only if
-		// the callee itself escapes that argument position. Unknown callees
-		// (absent from `escapes`) are conservative: a tainted arg reaches out.
+		// the callee itself escapes that argument position, and only if the
+		// argument can carry tainted heap into a slot of the parameter's type.
+		// Unknown callees (absent from `escapes`) are conservative: a tainted
+		// arg reaches out.
 		ce, known := escapes.get(id.Name)
+		var params []ast.Type
+		if sig := info.FuncSigs[id.Name]; known && sig != nil {
+			params = sig.Params
+		}
 		for i, a := range x.Args {
-			if !exprRefsTainted(a, tainted) {
+			var pt ast.Type
+			if i < len(params) {
+				pt = params[i]
+			}
+			if !taintedReachesSlot(a, pt, tainted, info, variantPayloads, escapes) {
 				continue
 			}
 			if !known || (i < len(ce) && ce[i]) {

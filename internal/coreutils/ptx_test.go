@@ -147,6 +147,8 @@ func ptxCases(t *testing.T) []invocation {
 	brkEmpty := ptxFile(t, dir, "brkempty", "")
 	brkTab := ptxFile(t, dir, "brktab", "\t")
 	brkInput := ptxFile(t, dir, "brkinput", "axb ayb\n")
+	brkZ := ptxFile(t, dir, "brkz", "z")
+	brkAcross := ptxFile(t, dir, "brkacross", "aa bb.  cc dd.  ee ff\nzz gg hh\n")
 	ign := ptxFile(t, dir, "ign", "banana\ncherry\n")
 	ign2 := ptxFile(t, dir, "ign2", "banana cherry\n")
 	ign3 := ptxFile(t, dir, "ign3", "\nbanana\n\n")
@@ -189,6 +191,8 @@ func ptxCases(t *testing.T) []invocation {
 		{name: "sentence end of line splits", args: []string{"-O", sent3}},
 		{name: "sentence tab splits", args: []string{"-O", tabsep}},
 		{name: "sentence closers", args: []string{"-O", closers}},
+		{name: "sentence end of line starts the next line's context", stdin: "a b.\nthe c d\n"},
+		{name: "sentence blanks stay out of both contexts", stdin: "x y.  \n  the c d.\t e f\n"},
 		{name: "traditional lines", args: []string{"-G", "-O", sent}},
 		{name: "sentence regexp", args: []string{"-O", "-S", "\\.", sent2}},
 		{name: "sentence regexp newline", args: []string{"-O", "-S", "\\n", in1}},
@@ -219,6 +223,8 @@ func ptxCases(t *testing.T) []invocation {
 		{name: "empty break file", args: []string{"-O", "-b", brkEmpty, brkInput}},
 		{name: "empty break file traditional", args: []string{"-G", "-O", "-b", brkEmpty, brkInput}},
 		{name: "break file is not escape processed", args: []string{"-O", "-b", brkTab, tabsep}},
+		{name: "a word running past a sentence is cut at it", args: []string{"-b", brkZ, brkAcross}},
+		{name: "a word running past a sentence is cut at it in roff", args: []string{"-O", "-b", brkZ, brkAcross}},
 		{name: "break file from stdin", args: []string{"-O", "-b", "-", brkInput}, stdin: "xyz\n"},
 		{name: "break file empty name is stdin", args: []string{"-O", "-b", "", brkInput}, stdin: "xyz\n"},
 		{name: "control bytes", args: []string{ctrl}},

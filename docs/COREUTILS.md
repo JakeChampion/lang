@@ -2873,6 +2873,92 @@ That is 472 M instructions down to 426 M. About 390 of the roughly 2,100
 instructions left a line go to allocating and dropping the `Line` and `In`
 records each line builds.
 
+### ptx's fields as spans, and bre's end-only matcher, 2026-09-23 (GNU coreutils 9.12)
+
+Each output line used to copy six strings out of the normalised buffer
+(tail, before, keyafter, keyword, after, head) for the renderers to print.
+`cut_fields` now returns them as spans of that buffer, and the column,
+roff and TeX renderers write the spans directly. One `Line` record now
+serves every output line instead of two being allocated per line, and
+`line_of` runs only when a reference is printed. When a run of equal
+leading words is already in order, which a word repeated through a text
+is, the occurrence sort checks it with one comparison per element and
+skips the merge passes. `word_at` indexes the word table in place: copying
+its two arrays into locals cost an inc and a dec per call.
+
+In `lib/bre.fern`, `search_from` skips to the next position a match can
+start at with one scan (`__scan_set` over the fastmap, or the literal
+prefix search) instead of testing every position. `match_at`, which
+`search_from` and `search_back` use and which only needs the match's end,
+now runs a thread simulation without captures for any pattern without a
+backreference. It keeps flat program-counter lists and one stamp per
+position, where the capture engine allocated per thread and per step.
+The capture engine now also passes its thread list as `own`, so a stamp
+updates it in place. That matters for `exec`, which still needs the
+groups.
+
+The compiler's escape summary judged a call argument by whether it
+mentioned a parameter at all. So a parameter that was only read (`r.k`
+in an `i32` field of a self-recursive call's argument, a byte of a string
+stored into a `u8[]`) counted as escaping, became owned, and cost a
+retain and a drop on every call. A call argument is now judged against
+the callee's declared parameter type, and a `.with` or `.append` element
+against the array's element type. ptx's `layout` and `render_dumb`
+(through `Opts`) and bre's `add_thread` (through `re`) had been paying
+that retain and drop.
+
+| workload | before | after | GNU 9.12 |
+|---|---:|---:|---:|
+| ptx 120k words | 189.8 ms | 117.6 ms | 57.6 ms |
+| ptx -G 120k words | 163.6 ms | 122.3 ms | 75.6 ms |
+| ptx -O 120k words | 162.9 ms | 109.0 ms | 69.2 ms |
+| ptx -T 120k words | 204.5 ms | 145.9 ms | 72.4 ms |
+| ptx -W a regexp alphabet | 891.0 ms | 267.9 ms | 295.2 ms |
+| ptx prose with sentences | 110.0 ms | 76.7 ms | 42.5 ms |
+| ptx -A prose | 139.3 ms | 98.7 ms | 46.4 ms |
+
+In instructions: 1.28 G to 0.78 G for the 120k words, 6.85 G to 1.88 G
+under `-W`, and 656 M to 428 M for the prose. GNU runs the words in
+377 M. What is left is spread across the column layout (`put` runs about
+100 instructions a call, ten calls a line) and the radix sort's fixed
+histogram cost. No single phase dominates.
+
+Two differences from GNU turned up along the way and are fixed. ptx's
+default sentence regexp lacked GNU's trailing `[ \t\n]*`, so a sentence
+ending at a newline started the next context at the newline, and the
+first keyword of the next line printed one column right of GNU's. The
+context end also now drops the separator's trailing blanks, as GNU's
+does. Since whitespace can be a word byte under `-b`, a context's words
+are now the scanned words cut to the context, as GNU's scan finds them,
+and the widest word is measured after the cut.
+
+### nl's regex style on the fast path, 2026-09-23 (GNU coreutils 9.12)
+
+`nl -bpRE` sent every line through `proc_line`. That meant a copy of the
+line into a string of its own, a call to `fast_lines` that returned at
+once with a fresh tuple, the style fetched as a retained `Style`, and the
+`State` and `BufWriter` rebuilt in an `Emit` record. The regex style now
+takes `fast_lines`' loop like the others do. The line is searched where
+it sits, with `search_range` over the read buffer, and a line goes to
+`proc_line` only when it might be a delimiter or its number would
+overflow. `proc_line` itself works on the buffer range too.
+
+| workload | before | after | GNU 9.12 |
+|---|---:|---:|---:|
+| nl -bp7 a 3 MiB file | 142.7 ms | 36.5 ms | 85.4 ms |
+
+That is 1.09 G instructions down to 271 M.
+
+Searching the read buffer in place first leaked every 64 KiB buffer read,
+because of a gap in the compiler's retain summaries. They are least
+fixpoints that start all-false, so a recursive function passing its
+parameter back into the same slot (bre's `add_thread` passes the text it
+matches in) could never be credited. That refusal travelled up through
+`search_range` to nl's loop, where the buffer stayed borrow-tainted and
+was never released. A direct self-recursive call's argument in the
+parameter's own slot is now credited. Any retention the recursion does
+make happens at some other occurrence, which still refutes it.
+
 ### ls, 2026-09-14, Linux x86-64 (GNU coreutils 9.4, uutils 0.0.24)
 
 The same 4-core container, so read the columns against each other. The
