@@ -117,7 +117,12 @@ function carry(out: boolean[], a: ssasem.Analysis, v: i32): boolean[] {
 // The contract's own modes are stale by construction here — they are what this
 // analysis is computing — so the CURRENT round's answer is read instead, which
 // is what makes the fixpoint close over a call graph rather than a tree.
+//
+// A dyn call has no row, and needs none: semsource admits one only where
+// every implementation lends every operand, and those keep the modes they
+// declared (`semsource.dyn_arms`).
 function call_carried(out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[]): boolean[] {
+    if (ssasem.is_dyn_call(ins.str)) { return out; }
     var next: boolean[] = out;
     var i: i32 = 0;
     while (i < ins.args.len()) {

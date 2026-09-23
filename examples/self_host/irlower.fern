@@ -13872,6 +13872,9 @@ function lower_call_dyn_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, rty: st
     dm = dm.emit(ir.op_store_local(dbase));
     var dai: i32 = 0;
     while (dai < c.args.len()) {
+        // The slot is typed by what it holds, which wasm spells in the local.
+        if (expr_is_f64(c.args[dai], dm)) { dm = dm.mark_f64(dbase + 1 + dai, true); }
+        else if (infer_expr_width(c.args[dai], dm) == 64) { dm = dm.mark_i64(dbase + 1 + dai, true); }
         dm = lower_expr(c.args[dai], dm);
         if (!dm.ok) { return dm; }
         dm = dm.emit(ir.op_store_local(dbase + 1 + dai));
