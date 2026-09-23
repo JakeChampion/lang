@@ -59,6 +59,18 @@ function main(): i32 { return sum_for([3, 5, 7, 11, 13]) as i32; }
 function main(): i32 { return count_a("banana") - 1; }
 `,
 		forbid: map[string][]string{"x86-64-linux": {`__fern_oob_abort`}, "arm64-linux": {`__fern_oob_abort`}}},
+	// A loop is rotated: the back edge re-runs the header's test and branches
+	// to the body, so no unconditional branch is left in the loop.
+	{name: "loop_rotation", fn: "sum_to", exit: 45, src: `
+@noinline function sum_to(n: i64): i64 {
+    var s: i64 = 0i64;
+    var i: i64 = 0i64;
+    while (i < n) { s = s + i; i = i + 1i64; }
+    return s;
+}
+function main(): i32 { return sum_to(10i64) as i32; }
+`,
+		forbid: map[string][]string{"x86-64-linux": {`\bjmp\b`}, "arm64-linux": {`\bb \.L`}}},
 	// A multiply by a power of two is a shift.
 	{name: "strength_mul_pow2", fn: "times8", exit: 40, src: `
 @noinline function times8(x: i32): i32 { return x * 8; }

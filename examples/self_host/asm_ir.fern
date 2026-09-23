@@ -6528,6 +6528,37 @@ function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
     return ssa_jump(lp, t.t, next, s);
 }
 
+// ssa_fused_test sets the flags a block's fused compare leaves for its branch
+// (or loads a fused `not`'s operand, for the value test).
+function ssa_fused_test(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, s: asmcore.EmitState): asmcore.EmitState {
+    if (fu.n > 0 && fu.tag == 0) { return ssa_load(reg_of, fu.a, "%r11", s); }
+    if (fu.n == 0) { return s; }
+    s = ssa_read(reg_of, fu.a, "%r11", s);
+    s = ssa_read_rhs(fr, reg_of, fu.b, "%rcx", s);
+    return s.write("    cmpq " + ssa_rhs(fr, reg_of, fu.b, "%rcx") + ", " + ssa_src(reg_of, fu.a, "%r11") + "\n");
+}
+
+// ssa_rotates reports whether a branch from the block at position `from` to
+// block `to` can re-run `to`'s test in place of jumping to it: `to` is at or
+// before `from` (a back edge), holds nothing but phis and the test (and the
+// immediates it reads), and
+// neither of its successors has phis, so its branch carries no moves of its
+// own. A loop then costs one branch per iteration rather than two.
+function ssa_rotates(f: ssa.SFunc, fr: SsaFrame, from: i32, to: i32): boolean {
+    var ti: i32 = ssa_block_at(fr, to);
+    if (ti < 0 || ti > from) { return false; }
+    var h: ssa.SBlock = f.blocks[ti];
+    if (h.term.kind_tag != 3 || h.term.t == h.term.f) { return false; }
+    if (ssa_has_phis(f, fr, h.term.t) || ssa_has_phis(f, fr, h.term.f)) { return false; }
+    var n: i32 = 0;
+    for ins in h.insts {
+        // A constant the test reads as an immediate is never materialised.
+        var imm: boolean = (ins.kind_tag == 1 || ins.kind_tag == 3) && fr.imm.is_imm[ins.result];
+        if (ins.kind_tag != 8 && !imm) { n = n + 1; }
+    }
+    return n == ssa_fuse(fr, h).n;
+}
+
 function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp: string, next: i32, fu: SsaFuse, s: asmcore.EmitState): asmcore.EmitState {
     var t: ssa.STerm = blk.term;
     if (t.kind_tag == 1) {
@@ -6536,6 +6567,11 @@ function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
     }
     if (t.kind_tag == 2) {
         s = ssa_phi_moves(f, fr, reg_of, blk.id, t.target, s);
+        if (ssa_rotates(f, fr, ssa_block_at(fr, blk.id), t.target)) {
+            var h: ssa.SBlock = f.blocks[ssa_block_at(fr, t.target)];
+            var hfu: SsaFuse = ssa_fuse(fr, h);
+            return ssa_brif(f, fr, h, reg_of, lp, next, hfu, ssa_fused_test(fr, reg_of, hfu, s));
+        }
         return ssa_jump(lp, t.target, next, s);
     }
     if (t.kind_tag == 3) { return ssa_brif(f, fr, blk, reg_of, lp, next, fu, s); }
@@ -6672,13 +6708,7 @@ function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, r: irlower
             if (ins.kind_tag != 6 && ins.kind_tag != 8) { s = ssa_inst(ins, reg_of, lp, fr, r, s); }
             ii = ii + 1;
         }
-        if (fu.n > 0 && fu.tag == 0) {
-            s = ssa_load(reg_of, fu.a, "%r11", s);
-        } else if (fu.n > 0) {
-            s = ssa_read(reg_of, fu.a, "%r11", s);
-            s = ssa_read_rhs(fr, reg_of, fu.b, "%rcx", s);
-            s = s.write("    cmpq " + ssa_rhs(fr, reg_of, fu.b, "%rcx") + ", " + ssa_src(reg_of, fu.a, "%r11") + "\n");
-        }
+        s = ssa_fused_test(fr, reg_of, fu, s);
         s = ssa_term(f, fr, blk, reg_of, lp, next, fu, s);
         bi = bi + 1;
     }
