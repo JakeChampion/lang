@@ -700,24 +700,98 @@ func findReturnsFreshPairPayload(prog *ast.Program, info *checker.Info) map[stri
 			}
 		}
 	}
-	out := map[string]bool{}
+	// Greatest fixpoint: a function may forward another's payload, so its
+	// answer depends on the one it forwards from.
+	q := newSummaryTable[bool](len(prog.Funcs))
 	for _, fn := range prog.Funcs {
-		if fn.Body == nil {
-			continue
+		if fn.Body != nil {
+			q.vals[fn.Name] = true
 		}
+	}
+	q.fixpoint(prog.Funcs, func(fn *ast.FuncDecl) bool {
+		if fn.Body == nil || !q.at(fn.Name) {
+			return false
+		}
+		forwards := payloadForwards(fn, payloadCount)
 		ok := true
 		ast.Walk(fn.Body, func(n ast.Node) bool {
 			r, isRet := n.(*ast.Return)
 			if !isRet || r.Value == nil {
 				return true
 			}
-			if !returnsFreshVariantPayload(r.Value, nullaryVariant, payloadCount) {
-				ok = false
+			if returnsFreshVariantPayload(r.Value, nullaryVariant, payloadCount) {
+				return true
 			}
+			if g, fwd := forwards[r]; fwd && q.at(g) {
+				return true
+			}
+			// `return g(…)` hands back g's (tag, payload) pair unchanged.
+			if c, isCall := r.Value.(*ast.Call); isCall {
+				if id, isIdent := c.Callee.(*ast.Ident); isIdent && payloadCount[id.Name] == 0 && !nullaryVariant[id.Name] && q.at(id.Name) {
+					return true
+				}
+			}
+			ok = false
 			return true
 		})
-		out[fn.Name] = ok
-	}
+		if ok {
+			return false
+		}
+		q.vals[fn.Name] = false
+		return true
+	})
+	return q.vals
+}
+
+// payloadForwards finds the returns in fn that hand on a payload unchanged:
+// `match (g(…)) { V(x) => { … return W(x); … } }`, where that return is the
+// only mention of x in the arm. The arm moves g's payload into the return, so
+// it is as fresh as g's is. Each such return maps to g.
+func payloadForwards(fn *ast.FuncDecl, payloadCount map[string]int) map[*ast.Return]string {
+	out := map[*ast.Return]string{}
+	ast.Walk(fn.Body, func(n ast.Node) bool {
+		m, ok := n.(*ast.Match)
+		if !ok {
+			return true
+		}
+		call, ok := m.Tag.(*ast.Call)
+		if !ok {
+			return true
+		}
+		g, ok := call.Callee.(*ast.Ident)
+		if !ok {
+			return true
+		}
+		for _, arm := range m.Arms {
+			if arm.Body == nil || arm.Guard != nil || arm.AtBinding != "" || len(arm.Bindings) != 1 || arm.Bindings[0] == "" {
+				continue
+			}
+			x := arm.Bindings[0]
+			uses := 0
+			var fwd *ast.Return
+			ast.Walk(arm.Body, func(n ast.Node) bool {
+				switch y := n.(type) {
+				case *ast.Ident:
+					if y.Name == x {
+						uses++
+					}
+				case *ast.Return:
+					if c, ok := y.Value.(*ast.Call); ok && len(c.Args) == 1 {
+						if id, ok := c.Callee.(*ast.Ident); ok && payloadCount[id.Name] == 1 {
+							if a, ok := c.Args[0].(*ast.Ident); ok && a.Name == x {
+								fwd = y
+							}
+						}
+					}
+				}
+				return true
+			})
+			if fwd != nil && uses == 1 {
+				out[fwd] = g.Name
+			}
+		}
+		return true
+	})
 	return out
 }
 
@@ -3532,7 +3606,14 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		// pattern string it was parsed from is a borrowed parameter.
 		// findReturnsFreshBox says why returnsNoParamEscape cannot serve.
 		if id, ok := x.Callee.(*ast.Ident); ok {
-			if _, isLocal := b.locals[id.Name]; !isLocal && b.returnsFreshBox[id.Name] {
+			_, isLocal := b.locals[id.Name]
+			if !isLocal && b.returnsFreshBox[id.Name] {
+				return false
+			}
+			// A call through a function value reaches only an address-taken
+			// function or a lifted lambda; when every one of those hands back
+			// a box of its own, so does this call.
+			if isLocal && b.indirectCallsReturnOwnBox() {
 				return false
 			}
 		}
@@ -9746,4 +9827,27 @@ func (b *builder) matchBindingTypes() map[string]ast.Type {
 		return true
 	})
 	return out
+}
+
+// indirectCallsReturnOwnBox reports whether every function an indirect call
+// could reach — each address-taken function, lifted lambdas included — returns
+// a box the caller owns (returnsFreshBox) or no rc-tracked value at all. A
+// builtin taken as a value has no body to prove it, so one returning an
+// rc-tracked value makes the answer false.
+func (b *builder) indirectCallsReturnOwnBox() bool {
+	if b.indirectOwnBoxKnown {
+		return b.indirectOwnBox
+	}
+	b.indirectOwnBoxKnown, b.indirectOwnBox = true, true
+	for name := range b.addressTaken {
+		sig := b.info.FuncSigs[name]
+		if sig == nil || sig.Result == nil || !rcTrackedSlotType(sig.Result) {
+			continue
+		}
+		if !b.returnsFreshBox[name] {
+			b.indirectOwnBox = false
+			break
+		}
+	}
+	return b.indirectOwnBox
 }

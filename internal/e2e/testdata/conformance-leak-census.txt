@@ -598,8 +598,8 @@ to_string_round_trip                                 0
 trailing_commas                                      0
 trait_method_bound_wins                              0
 trmc_map                                             0
-try_op_in_closure                                    2
-try_result_struct_payload                            2
+try_op_in_closure                                    1
+try_result_struct_payload                            1
 tuple_basics                                         0
 tuple_binder_shadows_module_decl                     0
 tuple_binder_shadows_outer_var                       0

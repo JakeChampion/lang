@@ -5300,6 +5300,8 @@ type builder struct {
 	// constructs its result. rhsTainted's Call case uses it to stop an
 	// argument's borrow taint flowing into a box the callee built.
 	returnsFreshBox map[string]bool
+	// indirectOwnBox caches indirectCallsReturnOwnBox for this function.
+	indirectOwnBox, indirectOwnBoxKnown bool
 	// returnsConstructedBox[name] is true when every value return of the
 	// callee is a box it BUILT — never a parameter, owned or not, nor a
 	// projection of one (findReturnsConstructedBox). Identity, where
