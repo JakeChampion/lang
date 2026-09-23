@@ -73107,6 +73107,15 @@ function map_key_is_composite(kt: string): boolean {
 pub function map_key_kind_of(typestr: string): i32 {
     var kt: string = map_key_of(typestr);
     if (kt == "i32" || kt == "u8" || kt == "u32") { return 1; }
+    // A boolean is a non-pointer scalar, so it belongs in the integer column
+    // for the same reason u8 and u32 do. map_key_kind_of_expr answers 1 for a
+    // bool LITERAL key and has since #10015; this — the same question asked of
+    // a written `Map[boolean, V]` — went on answering 0, the string column,
+    // whose runtime reads a key's VALUE as an address. `true` and `false`
+    // became the same key on arm64 and wasm, and dereferencing 0 or 1
+    // segfaulted on x86-64 (#10043). Both spellings, because map_key_eqfn
+    // accepts both.
+    if (kt == "boolean" || kt == "bool") { return 1; }
     return 0;
 }
 
