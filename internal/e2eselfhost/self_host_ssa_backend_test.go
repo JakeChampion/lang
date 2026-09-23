@@ -1375,7 +1375,7 @@ function main(): i32 {
 			[]string{"call __fn___fern_rc_is_unique", "call __fn___fern_rc_inc"},
 			regexp.MustCompile(`cmpl \$` + rcPoisonWord + `, %e\w+`)},
 		{"arm64-linux",
-			regexp.MustCompile(`(?m)^\s+mov x5, #0x10000$`),
+			regexp.MustCompile(`(?m)^\s+cmp x\d+, #16, lsl #12$`),
 			regexp.MustCompile(`(?m)^\s+ldur w5, \[x\d+, #-8\]$`),
 			[]string{"bl __fn___fern_rc_is_unique", "bl __fn___fern_rc_inc"},
 			regexp.MustCompile(fmt.Sprintf(`movz w\d+, #%d\n\s+movk w\d+, #%d, lsl #16`,
