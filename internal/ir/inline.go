@@ -155,7 +155,7 @@ const inlineTinyBudgetDivisor = 10
 func Inline(prog *Program) {
 	unit := 0
 	for _, fn := range prog.Funcs {
-		unit += codeOps(fn.Ops)
+		unit += sizeOps(fn.Ops)
 	}
 	if unit > inlineMaxUnitOps {
 		inlineTinyLeaves(prog, unit)
@@ -181,10 +181,15 @@ func Inline(prog *Program) {
 	}
 }
 
-// codeOps counts the ops that emit code: a line marker (`-g`) or a
-// coverage point (`-cover`) is not one, so the size policies see the same
-// program with or without them.
-func codeOps(ops []Op) int {
+// sizeOps counts the ops a size policy should weigh. A line marker (`-g`) and
+// a coverage point (`-cover`) are excluded, and NOT because they are free —
+// OpCoverPoint emits a counter bump on both natives. They are excluded because
+// they are fixed per STATEMENT at lowering and travel with the body whichever
+// way the decision goes: inlined into the caller or left in the callee, the
+// same markers run either way. So they say nothing about the cost the policy
+// is comparing, and counting them only makes the same program look bigger
+// under -g (#10019).
+func sizeOps(ops []Op) int {
 	n := 0
 	for _, op := range ops {
 		if op.Kind != OpLine && op.Kind != OpCoverPoint {
@@ -266,7 +271,7 @@ func (m *inlineMode) admits(fn *Func) bool {
 	if !m.tinyLeaf || fn.InlineHint == ast.InlineHintAlways {
 		return true
 	}
-	return codeOps(fn.Ops) <= inlineTinyLeafOps && isCallFree(fn)
+	return sizeOps(fn.Ops) <= inlineTinyLeafOps && isCallFree(fn)
 }
 
 // allows applies the per-call-site policy. Under the general mode that is
@@ -277,7 +282,7 @@ func (m *inlineMode) allows(cand inlineCandidate, loopDepth int, constArgs bool)
 	if !m.tinyLeaf {
 		return siteAllows(cand, loopDepth, constArgs)
 	}
-	return cand.fn.InlineHint == ast.InlineHintAlways || len(cand.body) <= m.budget
+	return cand.fn.InlineHint == ast.InlineHintAlways || sizeOps(cand.body) <= m.budget
 }
 
 // spend records a splice against the budget. A no-op under the general
@@ -486,7 +491,7 @@ func isInlineable(fn *Func) bool {
 	// Candidacy admits up to the LOOP cap — the flat cap is applied
 	// per call site by siteAllows, so an 81..160-op helper can inline
 	// where it's called from a loop while staying a call elsewhere.
-	if fn.InlineHint != ast.InlineHintAlways && codeOps(fn.Ops) > inlineLoopSizeLimit {
+	if fn.InlineHint != ast.InlineHintAlways && sizeOps(fn.Ops) > inlineLoopSizeLimit {
 		return false
 	}
 	// Never inline a per-closure drop thunk: it reads captures at
@@ -563,7 +568,7 @@ func inlineOps(fn *Func, ops []Op, candidates map[string]inlineCandidate, mode *
 		if out == nil {
 			out = append(make([]Op, 0, len(ops)+len(cand.body)), ops[:i]...)
 		}
-		mode.spend(len(cand.body))
+		mode.spend(sizeOps(cand.body))
 		out = append(out, expandInline(fn, cand)...)
 	}
 	if out == nil {
@@ -640,7 +645,7 @@ func siteAllows(cand inlineCandidate, loopDepth int, constArgs bool) bool {
 	if cand.fn.InlineHint == ast.InlineHintAlways {
 		return true
 	}
-	size := codeOps(cand.body)
+	size := sizeOps(cand.body)
 	if size <= inlineSizeLimit {
 		return true
 	}
