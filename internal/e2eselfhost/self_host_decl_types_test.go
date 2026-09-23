@@ -29,7 +29,7 @@ func TestSelfHostDeclTypesX86_64(t *testing.T) {
 		{"typed signature", `tp([view(), fraction()], box())`, "fn|str,f32|Box[str]|"},
 		{"typed zero parameters", `tp([], fraction())`, "fn||f32|"},
 		{"typed nested function", `tp([callback([view()], fraction())], callback([], box()))`, "fn|((str) => f32)|(() => Box[str])|"},
-		{"typed return array", `tp([], typeinfo.TypeArray { elem: view() })`, "fn||str[]|"},
+		{"typed return array", `tp([], typeinfo.TypeArray { elem: view(), view: false })`, "fn||str[]|"},
 		{"typed dyn", `tp([typeinfo.TypeDyn { traits: "A" }, fraction(), typeinfo.TypeDyn { traits: "B + C" }], view())`, "fn|dyn A,f32,dyn B + C|str|0,2"},
 		{"unknown parameter", `tp([typeinfo.unchecked()], view())`, "|||"},
 		{"unknown result", `tp([], typeinfo.unchecked())`, "|||"},

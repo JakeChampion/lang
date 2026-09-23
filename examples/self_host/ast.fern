@@ -340,7 +340,7 @@ pub function expr_col(e: Expr): i32 {
 // only names half the signature; wasm needs all of it, because a funcref
 // type is structural and dispatching a `(f64) => f64` element through an
 // all-i32 `$fn1` is a runtime `indirect call type mismatch`.
-pub struct StmtVar { name: string, type_name: string, init: Expr, line: i32, col: i32, is_str: boolean, fn_ret: string, fn_param_types: string }
+pub struct StmtVar { name: string, type_name: string, init: Expr, line: i32, col: i32, is_str: boolean, is_view: boolean, fn_ret: string, fn_param_types: string }
 
 pub struct StmtReturn { value: Expr, line: i32, col: i32 }
 

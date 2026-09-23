@@ -14,7 +14,7 @@ pub struct Plan { ok: boolean, roots: string[], borrowed: boolean[] }
 
 function integer(): typeinfo.Type { return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false }; }
 function boolean_type(): typeinfo.Type { return typeinfo.TypeBool { tag: 0 }; }
-function array_type(): typeinfo.Type { return typeinfo.TypeArray { elem: integer() }; }
+function array_type(): typeinfo.Type { return typeinfo.TypeArray { elem: integer(), view: false }; }
 function same(a: typeinfo.Type, b: typeinfo.Type): boolean {
     if let typeinfo.TypeI32(x) = a {
         if let typeinfo.TypeI32(y) = b { return x.width == y.width && x.unsigned == y.unsigned && x.is_char == y.is_char; }
