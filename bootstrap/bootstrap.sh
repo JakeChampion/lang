@@ -119,7 +119,18 @@ smoke() {
   code=0
   "$bin" || code=$?
   [ "$code" = 42 ] || die "smoke: program compiled by $1 exited $code, want 42"
-  echo "smoke: $1 compiles and its output runs"
+  # A one-line program never reaches the lowering of records, matches and
+  # imported modules, where a stage1 built through the AST lowering aborts
+  # (#9763). coreutils/tr is a real multi-module program that does.
+  bin="$OUT/smoke-tr"
+  rm -f "$bin"
+  "$1" -O -target "$HOST" -o "$bin" "$ROOT/coreutils/tr.fern" "$STDLIB" \
+    || die "smoke: $1 could not compile coreutils/tr.fern"
+  chmod +x "$bin"
+  local got
+  got="$(printf 'abc' | "$bin" a-c x-z)" || die "smoke: tr compiled by $1 failed"
+  [ "$got" = xyz ] || die "smoke: tr compiled by $1 printed '$got', want 'xyz'"
+  echo "smoke: $1 compiles a program and coreutils/tr, and both run"
 }
 
 build() {
