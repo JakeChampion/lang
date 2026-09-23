@@ -204,11 +204,6 @@ function state_new(): State {
   return State { w: gnu.out_with(read_size()), num: 0 as u64, head: "", head_of: 0 as u64, at_start: true, prev_blank: false, pending_cr: false, ok: true };
 }
 
-// "00" through "99", each at twice its value.
-function digit_pairs(): string {
-  return "0001020304050607080910111213141516171819202122232425262728293031323334353637383940414243444546474849505152535455565758596061626364656667686970717273747576777879808182838485868788899091929394959697989900";
-}
-
 // `head_for(q)` — the hundreds `q` of a line number, padded on the left
 // to the four columns the `%6d` field leaves them.
 function head_for(q: u64): string {
@@ -291,7 +286,7 @@ function format_chunk(st: State, chunk: string, f: Fmt): State {
             buf_push_byte(h, 48 + num as i32);
           } else {
             var k: i32 = num as i32 * 2;
-            buf_push_range(h, digit_pairs(), k, k + 2);
+            buf_push_range(h, io_buffered.digit_pairs(), k, k + 2);
           }
         } else {
           var q: u64 = num / (100 as u64);
@@ -301,7 +296,7 @@ function format_chunk(st: State, chunk: string, f: Fmt): State {
           }
           buf_push_range(h, head, 0, head.len());
           var r: i32 = (num - q * (100 as u64)) as i32 * 2;
-          buf_push_range(h, digit_pairs(), r, r + 2);
+          buf_push_range(h, io_buffered.digit_pairs(), r, r + 2);
         }
         buf_push_byte(h, 9);
       }
@@ -354,9 +349,7 @@ function spell_chunk(st: State, chunk: string, f: Fmt): State {
   if (f.ends && !f.np && (st.pending_cr || __memchr(chunk, 13, 0) >= 0)) {
     return format_chunk(st, chunk, f);
   }
-  var w: io_buffered.BufWriter = st.w;
-  buf_push_expanded(w.handle(), chunk, f.expand);
-  return State { ...st, w: gnu.check(gnu.settle(w)), at_start: chunk[chunk.len() - 1] as i32 == 10 };
+  return State { ...st, w: gnu.check(st.w.write_expanded(chunk, f.expand)), at_start: chunk[chunk.len() - 1] as i32 == 10 };
 }
 
 // `squeeze_chunk(st, chunk)` — -s with nothing else: a run of

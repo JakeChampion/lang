@@ -2673,6 +2673,27 @@ holding a CR under `-E` alone takes the line rewriter instead of the
 expansion. The corpus now covers the CRLF line, the CR across files and
 reads, and the trailing CR.
 
+### nl's ordinary lines, 2026-09-23 (GNU coreutils 9.12)
+
+`nl` made every line a string, `slice_unchecked` plus a copy, and ran it
+through `proc_line`. That built and dropped `State`, `Style` and `Emit`
+records, allocated an `Option` for `checked_add`, and found the field width
+with a loop of 64-bit divisions. It cost about 1,750 instructions a line. A
+fast path now takes every ordinary line of a read straight from the read
+buffer. An ordinary line is not a possible delimiter, has style `a`, `t` or
+`n` with no `-l` run to count, and has no overflow pending. Its number
+field is cached per hundred: the padding and leading digits (or, for
+`-n ln`, the trailing padding and the separator) are formatted when the
+number enters a new hundred. Each line then pushes that cached part, a
+digit pair from `io_buffered.digit_pairs()`, and a range of the buffer. The
+overflow check is two comparisons. `io_buffered.buf_u64_len` counts digits
+by comparison rather than division. Regular-expression styles, `-l` runs
+and delimiter lines still take `proc_line`.
+
+| workload | before | after | GNU 9.12 |
+|---|---:|---:|---:|
+| `nl` over the 62 MiB bench file | 2,229 ms | 400 ms | 998 ms |
+
 ### ls, 2026-09-14, Linux x86-64 (GNU coreutils 9.4, uutils 0.0.24)
 
 The same 4-core container, so read the columns against each other. The

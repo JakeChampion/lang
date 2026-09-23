@@ -229,13 +229,13 @@ pub function buf_push_u64(h: usize, n: u64): void {
       return;
     }
     var k: i32 = n as i32 * 2;
-    buf_push_range(h, __digit_pairs(), k, k + 2);
+    buf_push_range(h, digit_pairs(), k, k + 2);
     return;
   }
   var q: u64 = n / (100 as u64);
   buf_push_u64(h, q);
   var r: i32 = (n - q * (100 as u64)) as i32 * 2;
-  buf_push_range(h, __digit_pairs(), r, r + 2);
+  buf_push_range(h, digit_pairs(), r, r + 2);
 }
 
 // `buf_push_i64(h, n)` — `buf_push_u64` with a sign.
@@ -252,17 +252,20 @@ pub function buf_push_i64(h: usize, n: i64): void {
 // caller that pads the number to a field.
 pub function buf_u64_len(n: u64): i32 {
   var d: i32 = 1;
-  var x: u64 = n;
-  while (x >= 10 as u64) {
+  var p: u64 = 10 as u64;
+  while (n >= p) {
     d = d + 1;
-    x = x / (10 as u64);
+    if (d == 20) {
+      return d;
+    }
+    p = p * (10 as u64);
   }
   return d;
 }
 
 // "00" through "99", each at twice its value: a static literal, never
 // allocated.
-function __digit_pairs(): string {
+pub function digit_pairs(): string {
   return "0001020304050607080910111213141516171819202122232425262728293031323334353637383940414243444546474849505152535455565758596061626364656667686970717273747576777879808182838485868788899091929394959697989900";
 }
 
