@@ -4252,6 +4252,24 @@ function main(): i32 {
     return t - 31;
 }
 `},
+	// A literal mixing a scalar and a string, at each position that declares a
+	// `dyn Show[]`: a binding, a field, a return and an argument. The checker
+	// once refused all four with the first-element E034 (#10097); the skip
+	// leg leaves the returning function to the AST lowering.
+	{name: "a-mixed-dyn-array-literal-at-each-destination", atLeast: 5, noLeak: true, skip: "mk", src: `
+trait Show { function show(self: Self): i32; }
+impl Show for i32 { function show(self: Self): i32 { return self * 2; } }
+impl Show for string { function show(self: Self): i32 { return self.len(); } }
+struct H { xs: dyn Show[] }
+function total(xs: dyn Show[]): i32 { var t: i32 = 0; for x in xs { t = t + x.show(); } return t; }
+function mk(): dyn Show[] { return [3, "abc"]; }
+
+function main(): i32 {
+    var xs: dyn Show[] = [1, "ab"];
+    var h: H = H { xs: [2, "x"] };
+    return total(xs) + total(h.xs) + total(mk()) + total([5, "q"]) - 29;
+}
+`},
 	// A generic implementation's instances are not enumerated, so a release
 	// could not find their children: owning a dyn value of a type one
 	// implements is refused, and borrowing one is not.

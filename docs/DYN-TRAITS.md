@@ -604,7 +604,10 @@ the `lower_dyn_arg` helper drops straight into those two sites once their
 dyn-type detection is added. The self-host checker (`checker.fern`)
 enforces object-safety (E021) and the coercion rule: the concrete
 implements every trait in the set, and a `dyn` slot inside a container
-takes only the same `dyn` (#10055).
+takes only the same `dyn` (#10055). An array literal written at a declared
+`dyn Trait[]` (a binding, a field, a return or an argument) has each element
+coerced on its own, so `[1, "a"]` is one. An assignment declares nothing, so
+there the elements must agree, as native has it (#10097).
 
 **The typed path (`FERN_SEM_IR`).** A struct or enum widened to `dyn` is
 a projection of its box (`ssasem.dyn_up`), and a method call on it is a

@@ -7108,11 +7108,19 @@ pub function lower_dyn_arg(e: ast.Expr, s: LowerState): LowerState {
 
 // lower_dyn_array_lit lowers an array LITERAL every element of which coerces to
 // `dyn Trait` — lower_dyn_arg per element, then the buffer — leaving the array
-// on the stack. The two positions such a literal can appear in share it: the
-// `var xs: dyn Trait[] = […]` binding and an argument at a `dyn Trait[]` param
-// (#6906). Without the second, a primitive/string element flowed in RAW and the
+// on the stack. Every position such a literal can appear in shares it: the
+// `var xs: dyn Trait[] = […]` binding, an argument at a `dyn Trait[]` param
+// (#6906), a `dyn Trait[]` field and a `dyn Trait[]` return. Without the second, a primitive/string element flowed in RAW and the
 // callee's op_dyn_dispatch read a shape pointer out of a scalar — a segfault on
 // the register backends, a validation failure on wasm.
+// dyn_array_literal: `e` is an array literal written where a `dyn Trait[]`
+// is declared, so each element is coerced on its own.
+function dyn_array_literal(declared: string, e: ast.Expr): boolean {
+    if (declared.len() <= 4 || slice_unchecked(declared, 0, 4) != "dyn " || !is_array_type_name(declared)) { return false; }
+    if let ast.ExprArray(_) = e { return true; }
+    return false;
+}
+
 pub function lower_dyn_array_lit(a: ast.ExprArray, s: LowerState): LowerState {
     var das: LowerState = s;
     var i: i32 = 0;
@@ -17528,6 +17536,8 @@ function lower_expr_struct_lit(slit: ast.ExprStructLit, s: LowerState): LowerSta
                 // A dyn field is a coercion site like a dyn var or argument:
                 // a primitive or string value is boxed so it carries a shape.
                 sm = lower_dyn_arg(slit.field_values[found], sm);
+            } else if (dyn_array_literal(cfft, slit.field_values[found])) {
+                if let ast.ExprArray(fda) = slit.field_values[found] { sm = lower_dyn_array_lit(fda, sm); }
             } else {
                 sm = lower_expr(slit.field_values[found], sm);
             }
@@ -20512,6 +20522,14 @@ function lower_stmt_inner(st: ast.Stmt, s: LowerState): LowerState {
             // caller's dispatch can read), a struct/enum flows unboxed
             // (docs/DYN-TRAITS.md §4.3). The returned value is not a local array,
             // so the exit dec-sweep over array locals leaves it alone.
+            if (dyn_array_literal(s.frame.cur_ret, r.value)) {
+                if let ast.ExprArray(rda) = r.value {
+                    var rdl: LowerState = lower_dyn_array_lit(rda, s);
+                    if (!rdl.ok) { return rdl; }
+                    rdl = emit_dec_sweep_except(rdl, 0 - 1);
+                    return rdl.emit(ir.op_return());
+                }
+            }
             if (s.ret_dyn()) {
                 var rds: LowerState = lower_dyn_arg(r.value, s);
                 if (!rds.ok) { return rds; }
