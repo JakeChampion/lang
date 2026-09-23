@@ -1343,13 +1343,13 @@ pub function struct_alias_ident_escapes(e: ast.Expr, s: LowerState): boolean {
 
 // stored_elem_is_borrow reports whether an element value about to be stored in a
 // container is a reference some other owner releases — an indexed struct or
-// array element, a borrowed struct parameter, an enum alias or field read, a
-// caller-owned string element — so the store has to be counted. It is the
+// array element, a borrowed struct parameter, an enum alias, a field its struct's
+// drop releases, a caller-owned string element — so the store has to be counted. It is the
 // question lower_append_elem_value asks of a value, gathered so a call result
 // standing in for one of its arguments can ask it of the argument.
 function stored_elem_is_borrow(e: ast.Expr, s: LowerState): boolean {
     return indexed_box_elem_escapes(e, s) || struct_alias_ident_escapes(e, s)
-        || enum_alias_ident_escapes(e, s) || enum_field_read_type(e, s) != ""
+        || enum_alias_ident_escapes(e, s) || counted_field_read_reaches_drop(e, s)
         || str_param_elem_escapes(e, s) || handback_result_of_borrow(e, s);
 }
 
@@ -5522,6 +5522,27 @@ pub function enum_field_read_type(e: ast.Expr, s: LowerState): string {
         _ => { return ""; }
     }
     return "";
+}
+
+// counted_field_read_reaches_drop reports whether `e` reads a struct field that
+// the source struct's __struct_drop_<T> always releases: an enum, a nested
+// struct, a scalar array or an array of structs or enums. A container storing
+// that value is a second owner, so the store retains it. A string, string[] or
+// fn field is released only for a type the whole-program read scan admits, and
+// its construction retain follows the same gate, so it is not counted here.
+pub function counted_field_read_reaches_drop(e: ast.Expr, s: LowerState): boolean {
+    match (e) {
+        ast.ExprFieldAccess(fa) => {
+            var oty: string = expr_struct_type(fa.obj, s);
+            if (oty == "") { return false; }
+            var ft: string = decl_field_type(s.frame.structs, oty, fa.field);
+            return decl_is_enum(s.frame.structs, ft) || decl_is_struct(s.frame.structs, ft)
+                || is_leaksafe_array_field(ft) || is_struct_array_field_type(s.frame.structs, ft)
+                || is_enum_array_field_type(s.frame.structs, ft);
+        },
+        _ => { return false; }
+    }
+    return false;
 }
 
 // strarr_field_read_type is the string[] twin of scalar_arr_field_type /
@@ -13910,14 +13931,8 @@ function lower_call_append(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
     }
     var aps: LowerState = lower_expr(fa.obj, aps0);
     if (!aps.ok) { return aps; }
-    aps = lower_expr(c.args[0], aps);
+    aps = lower_append_elem_value(c.args[0], aps);
     if (!aps.ok) { return aps; }
-    // An element of a caller-owned string[] is a second owner once stored
-    // (str_param_elem_escapes), here as in the self-append and clone forms;
-    // so is a struct or array element read by index (indexed_box_elem_escapes).
-    if (str_param_elem_escapes(c.args[0], aps)) { aps = aps.retain_tos("append-param-str-elem"); }
-    if (indexed_box_elem_escapes(c.args[0], aps)) { aps = aps.retain_tos("append-indexed-elem"); }
-    if (handback_result_of_borrow(c.args[0], aps)) { aps = aps.retain_tos("append-handback"); }
     aps = aps.emit(ir.op_arr_push());
     if (apcs >= 0) { aps = emit_arr_share(aps, apcs, "__fern_arr_share_dec"); }
     // An in-place push on a BORROWED param's buffer hands that same buffer out
@@ -16317,12 +16332,12 @@ function lower_expr_array(arr: ast.ExprArray, s: LowerState): LowerState {
                     else { sa = sa.retain_tos("arrlit-arrstruct-elem"); }
                 }
             },
-            // A DIRECT ENUM field read (`[first.node]`) aliases the source
-            // struct's enum box, which __struct_drop_<T>'s k_enum arm decs on
-            // reclamation — retain it so that dec only releases the dup (#6049).
+            // A field read (`[first.node]`) aliases a box the source struct's
+            // __struct_drop_<T> releases — retain it so that release only
+            // drops the dup (#6049).
             _ => {
-                if (enum_field_read_type(arr.elements[i], sa) != "") {
-                    sa = sa.retain_tos("arrlit-enum-field");
+                if (counted_field_read_reaches_drop(arr.elements[i], sa)) {
+                    sa = sa.retain_tos("arrlit-counted-field");
                 }
                 // `[p[i]]` over a string[] PARAMETER (str_param_elem_escapes);
                 // the local-routed form is an ident and takes the
@@ -24522,14 +24537,14 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
                                         aps = aps.retain(apelslot, "append-param-str-elem");
                                     }
                                 },
-                                // A DIRECT ENUM field read (`branches.append(nxt.node)`)
-                                // escapes the same way, against the k_enum dec of the
-                                // source struct's __struct_drop_<T> (#6049). The inc is
+                                // A field read (`branches.append(nxt.node)`) escapes
+                                // the same way, against the release of the source
+                                // struct's __struct_drop_<T> (#6049). The inc is
                                 // emitted INLINE on the value already on the operand
                                 // stack (__fern_rc_inc returns its arg), so no reload.
                                 _ => {
-                                    if (enum_field_read_type(wc.args[0], aps) != "") {
-                                        aps = aps.retain_tos("append-enum-field");
+                                    if (counted_field_read_reaches_drop(wc.args[0], aps)) {
+                                        aps = aps.retain_tos("append-counted-field");
                                     }
                                     // `xs.append(p[i])` over a string[] PARAMETER: the
                                     // element belongs to the caller's array (see
@@ -27253,32 +27268,15 @@ pub function lower_arr_append_value(obj: ast.Expr, val: ast.Expr, s: LowerState)
     return st.emit(ir.op_arr_push_owned());
 }
 
-// lower_append_elem_value lowers a pointer-width element about to be pushed
-// onto an array the frame owns, with the retains a stored reference owes: a
-// direct enum field read or enum alias (the source struct's __struct_drop_<T>
-// decs it, #6049), a struct element that is a borrowed parameter (the caller
-// still releases it, #7853), a string element of a caller-owned string[]
-// (#6644), and a struct or array element read by index (the source array's
-// release drops it). Shared by the clone-form append and the in-place field
-// append of an `own` base's reuse arm, so the two store the same reference.
+// lower_append_elem_value lowers a pointer-width element about to be pushed,
+// retained when it is a reference another owner releases (stored_elem_is_borrow).
+// Shared by the expression-position and clone-form appends and the in-place
+// field append of an `own` base's reuse arm, so all three store the same
+// reference.
 function lower_append_elem_value(val: ast.Expr, s: LowerState): LowerState {
     var st: LowerState = lower_expr(val, s);
     if (!st.ok) { return st; }
-    if (enum_field_read_type(val, st) != "" || enum_alias_ident_escapes(val, st)) {
-        st = st.retain_tos("clone-append-elem");
-    }
-    if (struct_alias_ident_escapes(val, st)) {
-        st = st.retain_tos("clone-append-struct-elem");
-    }
-    if (str_param_elem_escapes(val, st)) {
-        st = st.retain_tos("clone-append-param-str-elem");
-    }
-    if (indexed_box_elem_escapes(val, st)) {
-        st = st.retain_tos("clone-append-indexed-elem");
-    }
-    if (handback_result_of_borrow(val, st)) {
-        st = st.retain_tos("clone-append-handback");
-    }
+    if (stored_elem_is_borrow(val, st)) { st = st.retain_tos("append-borrowed-elem"); }
     return st;
 }
 

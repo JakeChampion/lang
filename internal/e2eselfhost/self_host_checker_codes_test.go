@@ -2399,6 +2399,17 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		// chain, so the constructor the walk sees is not the one written.
 		{"map-literal-without-core-map-import", "function main(): i32 { var m: Map[i32, i32] = Map { 1: 2 }; return m.get_or(1, 0) - 2; }\n"},
 		{"map-literal-with-core-map-import", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i32] = Map { 1: 2 }; return m.get_or(1, 0) - 2; }\n"},
+		// #10095: the pure-collection API removed the in-place Map spellings,
+		// and native reports E043 naming the value-returning replacement. The
+		// self-host had no Map arm at all, so ANY name on a Map receiver was
+		// accepted — and the two lowerings then answered differently for it.
+		{"map-set-retired", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i32] = map_new(8); m.set(1, 2); return m.get_or(1, 0); }\n"},
+		{"map-delete-retired", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i32] = map_new(8); m.delete(1); return 0; }\n"},
+		{"map-clear-retired", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i32] = map_new(8); m.clear(); return 0; }\n"},
+		{"map-unknown-method", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i32] = map_new(8); return m.nope(); }\n"},
+		// The controls: the value-returning spellings and the other builtins
+		// stay clean, so the rule discriminates rather than refusing Maps.
+		{"map-value-returning-ok", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); m = m.without(1); m = m.cleared(); return m.len() + m.get_or(1, 0); }\n"},
 		// A settled i32 beside a settled i64 widens to i64 in either operand
 		// order (native's commonIntegerWidth), so the sum returns as i64 and
 		// is refused as i32.
@@ -2955,6 +2966,12 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		{"map-bundled-no-import", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); return m.get_or(1, 0) - 2; }\n"},
 		{"map-bundled-direct-import", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); return m.get_or(1, 0) - 2; }\n"},
 		{"map-bundled-transitive-import", "import \"std/json\";\nfunction main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); return m.get_or(1, 0) - 2; }\n"},
+		// #10095's escape, which only the bundled table can see: core/map's own
+		// receiver methods are not runtime builtins, they reach the Map
+		// namespace through the method table once the module is loaded. The
+		// single-module driver records the import without loading it, so this
+		// row would read as an unknown method there and prove the opposite.
+		{"map-core-receiver-method-ok", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i32] = map_new(4); m = m.insert(1, 2); return m.entries().len(); }\n"},
 	}
 
 	for _, tc := range progs {
