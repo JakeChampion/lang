@@ -74,7 +74,6 @@ function copy(r: Reader, w: Writer): i32 {
             Err(_) => { return 0 - 3; }
         }
     }
-    return spliced;
 }
 
 function main(): i32 {

@@ -625,35 +625,35 @@ function byte_at(text: string, i: i32, end: i32): i32 {
 
 // The fraction after a decimal point, once the integer parts have been
 // found equal.
-function fraccompare(text: string, ai: i32, aend: i32, bi: i32, bend: i32): i32 {
+function fraccompare(ta: string, ai: i32, aend: i32, tb: string, bi: i32, bend: i32): i32 {
   var a: i32 = ai;
   var b: i32 = bi;
-  if (byte_at(text, a, aend) == 46 && byte_at(text, b, bend) == 46) {
+  if (byte_at(ta, a, aend) == 46 && byte_at(tb, b, bend) == 46) {
     a = a + 1;
     b = b + 1;
-    while (byte_at(text, a, aend) == byte_at(text, b, bend)) {
-      if (!is_digit_b(byte_at(text, a, aend))) {
+    while (byte_at(ta, a, aend) == byte_at(tb, b, bend)) {
+      if (!is_digit_b(byte_at(ta, a, aend))) {
         return 0;
       }
       a = a + 1;
       b = b + 1;
     }
-    if (is_digit_b(byte_at(text, a, aend)) && is_digit_b(byte_at(text, b, bend))) {
-      return byte_at(text, a, aend) - byte_at(text, b, bend);
+    if (is_digit_b(byte_at(ta, a, aend)) && is_digit_b(byte_at(tb, b, bend))) {
+      return byte_at(ta, a, aend) - byte_at(tb, b, bend);
     }
-    if (is_digit_b(byte_at(text, a, aend))) {
-      return trailing_nonzero(text, a, aend);
+    if (is_digit_b(byte_at(ta, a, aend))) {
+      return trailing_nonzero(ta, a, aend);
     }
-    if (is_digit_b(byte_at(text, b, bend))) {
-      return 0 - trailing_nonzero(text, b, bend);
+    if (is_digit_b(byte_at(tb, b, bend))) {
+      return 0 - trailing_nonzero(tb, b, bend);
     }
     return 0;
   }
-  if (byte_at(text, a, aend) == 46) {
-    return trailing_nonzero(text, a + 1, aend);
+  if (byte_at(ta, a, aend) == 46) {
+    return trailing_nonzero(ta, a + 1, aend);
   }
-  if (byte_at(text, b, bend) == 46) {
-    return 0 - trailing_nonzero(text, b + 1, bend);
+  if (byte_at(tb, b, bend) == 46) {
+    return 0 - trailing_nonzero(tb, b + 1, bend);
   }
   return 0;
 }
@@ -676,38 +676,38 @@ function trailing_nonzero(text: string, from: i32, end: i32): i32 {
 // The digit test and the byte read are written out rather than called
 // here and in `numcompare`: this is the loop `sort -n` lives in, and
 // see is_digit_b above for why a call costs what it does.
-function magcompare(text: string, ai: i32, aend: i32, bi: i32, bend: i32): i32 {
+function magcompare(ta: string, ai: i32, aend: i32, tb: string, bi: i32, bend: i32): i32 {
   var a: i32 = ai;
   var b: i32 = bi;
   var ca: i32 = 0;
   if (a < aend) {
-    ca = text[a] as i32;
+    ca = ta[a] as i32;
   }
   var cb: i32 = 0;
   if (b < bend) {
-    cb = text[b] as i32;
+    cb = tb[b] as i32;
   }
   while (ca == cb && ca >= 48 && ca <= 57) {
     a = a + 1;
     b = b + 1;
     ca = 0;
     if (a < aend) {
-      ca = text[a] as i32;
+      ca = ta[a] as i32;
     }
     cb = 0;
     if (b < bend) {
-      cb = text[b] as i32;
+      cb = tb[b] as i32;
     }
   }
   var da: boolean = ca >= 48 && ca <= 57;
   var db: boolean = cb >= 48 && cb <= 57;
   if (ca == 46 && !db || cb == 46 && !da) {
-    return fraccompare(text, a, aend, b, bend);
+    return fraccompare(ta, a, aend, tb, b, bend);
   }
   var tmp: i32 = ca - cb;
   var log_a: i32 = 0;
   while (a < aend) {
-    var x: i32 = text[a] as i32;
+    var x: i32 = ta[a] as i32;
     if (x < 48 || x > 57) {
       break;
     }
@@ -716,7 +716,7 @@ function magcompare(text: string, ai: i32, aend: i32, bi: i32, bend: i32): i32 {
   }
   var log_b: i32 = 0;
   while (b < bend) {
-    var y: i32 = text[b] as i32;
+    var y: i32 = tb[b] as i32;
     if (y < 48 || y > 57) {
       break;
     }
@@ -756,47 +756,47 @@ function nonzero_after(text: string, from: i32, end: i32): boolean {
   return is_digit_b(byte_at(text, i, end));
 }
 
-function numcompare(text: string, ai: i32, aend: i32, bi: i32, bend: i32): i32 {
+function numcompare(ta: string, ai: i32, aend: i32, tb: string, bi: i32, bend: i32): i32 {
   var a: i32 = ai;
   var b: i32 = bi;
   while (a < aend) {
-    var ba: i32 = text[a] as i32;
+    var ba: i32 = ta[a] as i32;
     if (ba != 32 && ba != 9 && ba != 10) {
       break;
     }
     a = a + 1;
   }
   while (b < bend) {
-    var bb: i32 = text[b] as i32;
+    var bb: i32 = tb[b] as i32;
     if (bb != 32 && bb != 9 && bb != 10) {
       break;
     }
     b = b + 1;
   }
-  var nega: boolean = a < aend && text[a] as i32 == 45;
-  var negb: boolean = b < bend && text[b] as i32 == 45;
+  var nega: boolean = a < aend && ta[a] as i32 == 45;
+  var negb: boolean = b < bend && tb[b] as i32 == 45;
   if (nega && !negb) {
-    if (nonzero_after(text, a + 1, aend)) {
+    if (nonzero_after(ta, a + 1, aend)) {
       return 0 - 1;
     }
-    if (nonzero_after(text, b, bend)) {
+    if (nonzero_after(tb, b, bend)) {
       return 0 - 1;
     }
     return 0;
   }
   if (negb && !nega) {
-    if (nonzero_after(text, b + 1, bend)) {
+    if (nonzero_after(tb, b + 1, bend)) {
       return 1;
     }
-    if (nonzero_after(text, a, aend)) {
+    if (nonzero_after(ta, a, aend)) {
       return 1;
     }
     return 0;
   }
   if (nega) {
-    return 0 - magcompare(text, skip_zeros(text, a + 1, aend), aend, skip_zeros(text, b + 1, bend), bend);
+    return 0 - magcompare(ta, skip_zeros(ta, a + 1, aend), aend, tb, skip_zeros(tb, b + 1, bend), bend);
   }
-  return magcompare(text, skip_zeros(text, a, aend), aend, skip_zeros(text, b, bend), bend);
+  return magcompare(ta, skip_zeros(ta, a, aend), aend, tb, skip_zeros(tb, b, bend), bend);
 }
 
 // ---- human-readable comparison ----------------------------------------------
@@ -868,20 +868,20 @@ function find_unit_order(text: string, from: i32, end: i32): i32 {
   return sign * unit_order(byte_at(text, p, end));
 }
 
-function human_numcompare(text: string, ai: i32, aend: i32, bi: i32, bend: i32): i32 {
+function human_numcompare(ta: string, ai: i32, aend: i32, tb: string, bi: i32, bend: i32): i32 {
   var a: i32 = ai;
   var b: i32 = bi;
-  while (is_blank_b(byte_at(text, a, aend))) {
+  while (is_blank_b(byte_at(ta, a, aend))) {
     a = a + 1;
   }
-  while (is_blank_b(byte_at(text, b, bend))) {
+  while (is_blank_b(byte_at(tb, b, bend))) {
     b = b + 1;
   }
-  var diff: i32 = find_unit_order(text, a, aend) - find_unit_order(text, b, bend);
+  var diff: i32 = find_unit_order(ta, a, aend) - find_unit_order(tb, b, bend);
   if (diff != 0) {
     return diff;
   }
-  return numcompare(text, a, aend, b, bend);
+  return numcompare(ta, a, aend, tb, b, bend);
 }
 
 // ---- month comparison -------------------------------------------------------
@@ -959,9 +959,9 @@ function getmonth(text: string, from: i32, end: i32): i64 {
 // documents. It costs nothing — a shared state's pending block is
 // copied by every update anyway — and the shape it avoids is one the
 // self-host compiler miscompiles (#8825).
-function compare_random(seed: string, text: string, a0: i32, a1: i32, b0: i32, b1: i32): i32 {
-  var da: u8[] = crypto.md5_new().update(seed).update(slice_unchecked(text, a0, a1) + "").final_bytes();
-  var db: u8[] = crypto.md5_new().update(seed).update(slice_unchecked(text, b0, b1) + "").final_bytes();
+function compare_random(seed: string, ta: string, a0: i32, a1: i32, tb: string, b0: i32, b1: i32): i32 {
+  var da: u8[] = crypto.md5_new().update(seed).update(slice_unchecked(ta, a0, a1) + "").final_bytes();
+  var db: u8[] = crypto.md5_new().update(seed).update(slice_unchecked(tb, b0, b1) + "").final_bytes();
   var i: i32 = 0;
   while (i < da.len()) {
     var x: i32 = da[i] as i32;
@@ -971,7 +971,7 @@ function compare_random(seed: string, text: string, a0: i32, a1: i32, b0: i32, b
     }
     i = i + 1;
   }
-  return cmp_bytes(text, a0, a1, b0, b1);
+  return cmp_bytes(ta, a0, a1, tb, b0, b1);
 }
 
 // ---- lines ------------------------------------------------------------------
@@ -1001,7 +1001,7 @@ function line_len(v: i64): i32 {
 // A plain byte comparison of two spans, with the shorter one first when
 // one is a prefix of the other. An empty span sorts before every
 // non-empty one.
-function cmp_bytes(text: string, a0: i32, a1: i32, b0: i32, b1: i32): i32 {
+function cmp_bytes(ta: string, a0: i32, a1: i32, tb: string, b0: i32, b1: i32): i32 {
   var la: i32 = a1 - a0;
   var lb: i32 = b1 - b0;
   if (la == 0) {
@@ -1020,9 +1020,9 @@ function cmp_bytes(text: string, a0: i32, a1: i32, b0: i32, b1: i32): i32 {
   // Scan only the common span: a terminator or the next line must not
   // decide prefix ordering. The mismatch kernel compares bytes in blocks
   // without allocating substrings, including embedded NUL and high bytes.
-  var i: i32 = __mismatch(text, a0, text, b0, n);
+  var i: i32 = __mismatch(ta, a0, tb, b0, n);
   if (i < n) {
-    return text[a0 + i] as i32 - text[b0 + i] as i32;
+    return ta[a0 + i] as i32 - tb[b0 + i] as i32;
   }
   if (la < lb) {
     return 0 - 1;
@@ -1034,7 +1034,7 @@ function cmp_bytes(text: string, a0: i32, a1: i32, b0: i32, b1: i32): i32 {
 }
 
 // The same with each byte folded to upper case first: -f.
-function cmp_folded(text: string, a0: i32, a1: i32, b0: i32, b1: i32): i32 {
+function cmp_folded(ta: string, a0: i32, a1: i32, tb: string, b0: i32, b1: i32): i32 {
   var la: i32 = a1 - a0;
   var lb: i32 = b1 - b0;
   var n: i32 = la;
@@ -1043,8 +1043,8 @@ function cmp_folded(text: string, a0: i32, a1: i32, b0: i32, b1: i32): i32 {
   }
   var i: i32 = 0;
   while (i < n) {
-    var x: i32 = fold_up(text[a0 + i] as i32);
-    var y: i32 = fold_up(text[b0 + i] as i32);
+    var x: i32 = fold_up(ta[a0 + i] as i32);
+    var y: i32 = fold_up(tb[b0 + i] as i32);
     if (x != y) {
       return x - y;
     }
@@ -1062,21 +1062,21 @@ function cmp_folded(text: string, a0: i32, a1: i32, b0: i32, b1: i32): i32 {
 // The same skipping every byte the key's `ignore` table drops, with or
 // without the case fold. Two keys are equal when both run out at the
 // same time.
-function cmp_ignoring(k: Key, text: string, a0: i32, a1: i32, b0: i32, b1: i32): i32 {
+function cmp_ignoring(k: Key, ta: string, a0: i32, a1: i32, tb: string, b0: i32, b1: i32): i32 {
   var a: i32 = a0;
   var b: i32 = b0;
   while (true) {
-    while (a < a1 && ignored(k.ignore, text[a] as i32)) {
+    while (a < a1 && ignored(k.ignore, ta[a] as i32)) {
       a = a + 1;
     }
-    while (b < b1 && ignored(k.ignore, text[b] as i32)) {
+    while (b < b1 && ignored(k.ignore, tb[b] as i32)) {
       b = b + 1;
     }
     if (!(a < a1 && b < b1)) {
       break;
     }
-    var x: i32 = text[a] as i32;
-    var y: i32 = text[b] as i32;
+    var x: i32 = ta[a] as i32;
+    var y: i32 = tb[b] as i32;
     if (k.translate) {
       x = fold_up(x);
       y = fold_up(y);
@@ -1099,9 +1099,9 @@ function cmp_ignoring(k: Key, text: string, a0: i32, a1: i32, b0: i32, b1: i32):
 }
 
 // One key's verdict on two spans, before its own `r` is applied.
-function key_diff(c: Conf, k: Key, text: string, a0: i32, a1: i32, b0: i32, b1: i32): i32 {
+function key_diff(c: Conf, k: Key, ta: string, a0: i32, a1: i32, tb: string, b0: i32, b1: i32): i32 {
   if (k.random) {
-    return compare_random(c.seed, text, a0, a1, b0, b1);
+    return compare_random(c.seed, ta, a0, a1, tb, b0, b1);
   }
   if (key_numeric(k)) {
     // The number scans stop at any byte that is not part of a number,
@@ -1109,21 +1109,21 @@ function key_diff(c: Conf, k: Key, text: string, a0: i32, a1: i32, b0: i32, b1: 
     // need — GNU's NUL terminator is already what `byte_at` answers
     // past it.
     if (k.human) {
-      return human_numcompare(text, a0, a1, b0, b1);
+      return human_numcompare(ta, a0, a1, tb, b0, b1);
     }
     if (k.general) {
-      return general_numcompare(text, a0, nul_end(text, a0, a1), b0, nul_end(text, b0, b1));
+      return general_numcompare(ta, a0, nul_end(ta, a0, a1), tb, b0, nul_end(tb, b0, b1));
     }
-    return numcompare(text, a0, a1, b0, b1);
+    return numcompare(ta, a0, a1, tb, b0, b1);
   }
   if (k.version) {
-    return vercmp.compare_range(text, a0, nul_end(text, a0, a1), b0, nul_end(text, b0, b1));
+    return vercmp.compare_texts(ta, a0, nul_end(ta, a0, a1), tb, b0, nul_end(tb, b0, b1));
   }
   if (k.month) {
-    return line_start(getmonth(text, a0, nul_end(text, a0, a1))) - line_start(getmonth(text, b0, nul_end(text, b0, b1)));
+    return line_start(getmonth(ta, a0, nul_end(ta, a0, a1))) - line_start(getmonth(tb, b0, nul_end(tb, b0, b1)));
   }
   if (k.ignore != ignore_none()) {
-    return cmp_ignoring(k, text, a0, a1, b0, b1);
+    return cmp_ignoring(k, ta, a0, a1, tb, b0, b1);
   }
   if (a1 - a0 == 0) {
     if (b1 - b0 == 0) {
@@ -1135,19 +1135,19 @@ function key_diff(c: Conf, k: Key, text: string, a0: i32, a1: i32, b0: i32, b1: 
     return 1;
   }
   if (k.translate) {
-    return cmp_folded(text, a0, a1, b0, b1);
+    return cmp_folded(ta, a0, a1, tb, b0, b1);
   }
-  return cmp_bytes(text, a0, a1, b0, b1);
+  return cmp_bytes(ta, a0, a1, tb, b0, b1);
 }
 
 // `-g` converts with strtold and compares the two long doubles, which
 // is the one ordering mode whose answer depends on the machine's
 // format. A string no conversion consumed sorts before every number,
 // and a NaN between the two.
-function general_numcompare(text: string, a0: i32, a1: i32, b0: i32, b1: i32): i32 {
+function general_numcompare(ta: string, a0: i32, a1: i32, tb: string, b0: i32, b1: i32): i32 {
   var f: ld.Format = ld.format();
-  var pa: ld.Parse = f.strtold(slice_unchecked(text, a0, a1) + "");
-  var pb: ld.Parse = f.strtold(slice_unchecked(text, b0, b1) + "");
+  var pa: ld.Parse = f.strtold(slice_unchecked(ta, a0, a1) + "");
+  var pb: ld.Parse = f.strtold(slice_unchecked(tb, b0, b1) + "");
   if (pa.end == 0) {
     if (pb.end == 0) {
       return 0;
@@ -1171,10 +1171,10 @@ function general_numcompare(text: string, a0: i32, a1: i32, b0: i32, b1: i32): i
 }
 
 // How key `k` orders the two spans, reversed when the key was.
-function key_ordered(c: Conf, k: Key, text: string, sa: i64, sb: i64): i32 {
+function key_ordered(c: Conf, k: Key, ta: string, sa: i64, tb: string, sb: i64): i32 {
   var a0: i32 = (sa >> 32 as i64) as i32;
   var b0: i32 = (sb >> 32 as i64) as i32;
-  var d: i32 = key_diff(c, k, text, a0, a0 + (sa & 4294967295 as i64) as i32, b0, b0 + (sb & 4294967295 as i64) as i32);
+  var d: i32 = key_diff(c, k, ta, a0, a0 + (sa & 4294967295 as i64) as i32, tb, b0, b0 + (sb & 4294967295 as i64) as i32);
   if (d != 0 && k.reverse) {
     return 0 - d;
   }
@@ -1182,11 +1182,11 @@ function key_ordered(c: Conf, k: Key, text: string, sa: i64, sb: i64): i32 {
 }
 
 // Every key in turn; the first that separates the two lines decides.
-function keycompare(c: Conf, text: string, alo: i32, ahi: i32, blo: i32, bhi: i32): i32 {
+function keycompare(c: Conf, ta: string, alo: i32, ahi: i32, tb: string, blo: i32, bhi: i32): i32 {
   var i: i32 = 0;
   while (i < c.keys.len()) {
     var k: Key = c.keys[i];
-    var d: i32 = key_ordered(c, k, text, key_span(text, alo, ahi, k, c.tab), key_span(text, blo, bhi, k, c.tab));
+    var d: i32 = key_ordered(c, k, ta, key_span(ta, alo, ahi, k, c.tab), tb, key_span(tb, blo, bhi, k, c.tab));
     if (d != 0) {
       return d;
     }
@@ -1296,18 +1296,18 @@ function key_spans(c: Conf, text: string, lines: i64[]): i64[] {
 // The whole comparison: the keys, then the line itself unless -u or -s
 // dropped that last resort. The global -r applies only here once a key
 // exists.
-function compare(c: Conf, text: string, a: i64, b: i64): i32 {
+function compare(c: Conf, ta: string, a: i64, tb: string, b: i64): i32 {
   var alo: i32 = (a >> 32 as i64) as i32;
   var ahi: i32 = alo + (a & 4294967295 as i64) as i32;
   var blo: i32 = (b >> 32 as i64) as i32;
   var bhi: i32 = blo + (b & 4294967295 as i64) as i32;
   if (c.keys.len() > 0) {
-    var d: i32 = keycompare(c, text, alo, ahi, blo, bhi);
+    var d: i32 = keycompare(c, ta, alo, ahi, tb, blo, bhi);
     if (d != 0 || c.unique || c.stable) {
       return d;
     }
   }
-  var r: i32 = cmp_bytes(text, alo, ahi, blo, bhi);
+  var r: i32 = cmp_bytes(ta, alo, ahi, tb, blo, bhi);
   if (c.reverse) {
     return 0 - r;
   }
@@ -1336,7 +1336,7 @@ function compare_at(c: Conf, text: string, lines: i64[], spans: i64[], nkeys: i6
           d = 0 - d;
         }
       } else {
-        d = key_ordered(c, c.keys[i], text, spans[i * n + ia], spans[i * n + ib]);
+        d = key_ordered(c, c.keys[i], text, spans[i * n + ia], text, spans[i * n + ib]);
       }
       if (d != 0) {
         return d;
@@ -1353,59 +1353,38 @@ function compare_at(c: Conf, text: string, lines: i64[], spans: i64[], nkeys: i6
   var ahi: i32 = alo + (a & 4294967295 as i64) as i32;
   var blo: i32 = (b >> 32 as i64) as i32;
   var bhi: i32 = blo + (b & 4294967295 as i64) as i32;
-  var r: i32 = cmp_bytes(text, alo, ahi, blo, bhi);
+  var r: i32 = cmp_bytes(text, alo, ahi, text, blo, bhi);
   if (c.reverse) {
     return 0 - r;
   }
   return r;
 }
 
-// `merge_files(c, text, lo, hi, bounds)` — `-m`: the inputs are taken
-// as already sorted, and the smallest head across them is emitted each
-// time, a tie going to the earlier operand. Nothing is compared within
-// one input, so `sort -m` over an unsorted file reproduces it.
-function merge_files(c: Conf, text: string, lines: i64[], bounds: i32[]): i64[] {
-  var n: i32 = bounds.len();
-  var head: i32[] = [];
-  var f: i32 = 0;
-  var start: i32 = 0;
-  while (f < n) {
-    head = head.append(start);
-    start = bounds[f];
-    f = f + 1;
-  }
-  var out: i64[] = [];
-  var total: i32 = lines.len();
-  var emitted: i32 = 0;
-  while (emitted < total) {
-    var best: i32 = 0 - 1;
-    f = 0;
-    while (f < n) {
-      if (head[f] < bounds[f]) {
-        if (best < 0) {
-          best = f;
-        } else if (compare(c, text, lines[head[f]], lines[head[best]]) < 0) {
-          best = f;
-        }
-      }
-      f = f + 1;
-    }
-    out = out.append(lines[head[best]]);
-    head = head.with(best, head[best] + 1);
-    emitted = emitted + 1;
-  }
-  return out;
-}
-
 // ---- the sort ---------------------------------------------------------------
 //
+// `in_order(c, text, lines)` — whether no line sorts before the one ahead
+// of it. The merge below is stable, so such input is already its own
+// result, and GNU's merge finds that in one comparison a line where the
+// radix pass would cost a full sort. Unsorted input stops at its first
+// disorder.
+function in_order(c: Conf, text: string, lines: i64[]): boolean {
+  var i: i32 = 1;
+  while (i < lines.len()) {
+    if (compare(c, text, lines[i - 1], text, lines[i]) > 0) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
 // A bottom-up stable merge over line indices: only 4-byte indices move,
 // and equal lines keep their input order, which is what -u and -s both
 // rely on. Each pass writes a fresh destination rather than merging
 // through an alias.
 function sort_lines(c: Conf, text: string, lines: i64[]): i64[] {
   var n: i32 = lines.len();
-  if (n < 2) {
+  if (n < 2 || in_order(c, text, lines)) {
     return lines;
   }
   // The elements sorted are line INDICES, so the key spans and words
@@ -1465,7 +1444,7 @@ function sort_lines(c: Conf, text: string, lines: i64[]): i64[] {
           if (keyed) {
             d = compare_at(c, text, lines, spans, nkeys, n, lb as i32, la as i32);
           } else {
-            d = compare(c, text, lines[lb as i32], lines[la as i32]);
+            d = compare(c, text, lines[lb as i32], text, lines[la as i32]);
           }
           if (d < 0) {
             dst = dst.with(at, lb);
@@ -1608,6 +1587,48 @@ function read_size(): i32 {
   return 262144;
 }
 
+// `read_into(h, path, open_msg)` — every byte of `path` ("-" is standard
+// input) pushed into the builder `h`, and the last of them, -1 for none;
+// or death with the wording GNU uses for that stage.
+function read_into(h: usize, path: string, open_msg: string): i32 {
+  var r: Reader = stdin();
+  if (path != "-") {
+    match (open_reader(path)) {
+      Ok(f) => {
+        r = f;
+      },
+      Err(e) => {
+        die_file(open_msg, path, e);
+      }
+    }
+  }
+  var last: i32 = read_into_from(h, r, path);
+  if (path != "-") {
+    r.close();
+  }
+  return last;
+}
+
+// `read_into_from(h, r, path)` — read_into from the open reader `r`.
+function read_into_from(h: usize, r: Reader, path: string): i32 {
+  var last: i32 = 0 - 1;
+  while (true) {
+    match (r.read_chunk(read_size())) {
+      Ok(chunk) => {
+        if (chunk.len() == 0) {
+          break;
+        }
+        buf_push(h, chunk);
+        last = chunk[chunk.len() - 1] as i32;
+      },
+      Err(e) => {
+        die_file("read failed", path, e);
+      }
+    }
+  }
+  return last;
+}
+
 // Every byte of `path` ("-" is standard input), or death with the
 // wording GNU uses for that stage.
 function slurp(path: string, open_msg: string): string {
@@ -1710,13 +1731,9 @@ function out_put(o: Out, s: string): Out {
   return Out { ...o, w: w };
 }
 
-// `out_line(o, text, lo, hi, term)` — the line `text[lo..hi)` and its
-// terminator, pushed straight into the writer's builder rather than
-// sliced into a string first.
-function out_line(o: Out, text: string, lo: i32, hi: i32, term: i32): Out {
-  var h: usize = o.w.handle();
-  buf_push_range(h, text, lo, hi);
-  buf_push_byte(h, term);
+// `out_settle(o)` — flush once a block has built up in the writer's
+// builder, which the output loop pushes lines into directly.
+function out_settle(o: Out): Out {
   var w: io_buffered.BufWriter = o.w.settle();
   match (w.error()) {
     Some(e) => {
@@ -2292,23 +2309,72 @@ function numeric_locale_warnings(tab: i32, span: boolean): void {
 //
 // `-c` reports the first line that is out of order and exits 1; `-C`
 // exits 1 in silence. With -u, equal adjacent lines are disorder too.
-function check_order(c: Conf, name: string, text: string, lines: i64[], quiet: boolean): i32 {
-  var i: i32 = 1;
-  while (i < lines.len()) {
-    var d: i32 = compare(c, text, lines[i - 1], lines[i]);
-    var bad: boolean = d > 0;
-    if (c.unique && d == 0) {
-      bad = true;
-    }
-    if (bad) {
-      if (!quiet) {
-        var w: Writer = stderr();
-        var at: i32 = line_start(lines[i]);
-        w.write(gnu.prog() + ": " + name + ":" + (i + 1).to_string() + ": disorder: " + slice_unchecked(text, at, at + line_len(lines[i])) + term_string(c.term));
+//
+// The input is checked as it is read, as GNU checks it. Each read is
+// appended to what is left of the one before, the last whole line and a
+// partial one, so only that tail is copied and memory stays one read.
+function check_order(c: Conf, name: string, quiet: boolean): i32 {
+  var r: Reader = stdin();
+  if (name != "-") {
+    match (open_reader(name)) {
+      Ok(f) => {
+        r = f;
+      },
+      Err(e) => {
+        die_file("open failed", name, e);
       }
-      return 1;
     }
-    i = i + 1;
+  }
+  var buf: string = "";
+  var prev: i64 = 0 - 1 as i64;
+  var at: i32 = 0;
+  var lineno: i32 = 0;
+  var eof: boolean = false;
+  while (!eof) {
+    match (r.read_chunk(read_size())) {
+      Ok(chunk) => {
+        if (chunk.len() == 0) {
+          eof = true;
+        } else {
+          buf = buf + chunk;
+        }
+      },
+      Err(e) => {
+        die_file("read failed", name, e);
+      }
+    }
+    while (at < buf.len()) {
+      var end: i32 = __memchr(buf, c.term, at);
+      if (end < 0) {
+        if (!eof) {
+          break;
+        }
+        end = buf.len();
+      }
+      var line: i64 = pack_line(at, end - at);
+      lineno = lineno + 1;
+      if (prev >= 0 as i64) {
+        var d: i32 = compare(c, buf, prev, buf, line);
+        if (d > 0 || c.unique && d == 0) {
+          if (!quiet) {
+            var w: Writer = stderr();
+            w.write(gnu.prog() + ": " + name + ":" + lineno.to_string() + ": disorder: " + slice_unchecked(buf, at, end) + term_string(c.term));
+          }
+          return 1;
+        }
+      }
+      prev = line;
+      at = end + 1;
+    }
+    if (!eof && prev >= 0 as i64) {
+      var keep: i32 = line_start(prev);
+      buf = slice_unchecked(buf, keep, buf.len()) + "";
+      prev = pack_line(0, line_len(prev));
+      at = at - keep;
+    }
+  }
+  if (name != "-") {
+    r.close();
   }
   return 0;
 }
@@ -2821,54 +2887,45 @@ function run(a0: Args): i32 {
   }
 
   if (a.checkonly != 0) {
-    var text: string = slurp(files[0], "open failed");
-    return check_order(c, files[0], text, split_lines(text, term), a.checkonly == 67);
+    return check_order(c, files[0], a.checkonly == 67);
   }
 
   check_inputs(files);
-  var chunks: string[] = [];
-  var ends: i32[] = [];
+  if (a.merge) {
+    return merge_files(c, a, files);
+  }
+  // Every operand read into one builder, each ending in a terminator.
+  var hb: usize = buf_new(read_size());
   i = 0;
   while (i < files.len()) {
-    var part: string = slurp(files[i], "open failed");
-    if (part.len() > 0) {
-      chunks = chunks.append(part);
-      if (part[part.len() - 1] as i32 != term) {
-        chunks = chunks.append(term_string(term));
-      }
+    var last: i32 = read_into(hb, files[i], "open failed");
+    if (last >= 0 && last != term) {
+      buf_push_byte(hb, term);
     }
-    ends = ends.append(chunk_bytes(chunks));
     i = i + 1;
   }
-  var all: string = "";
-  if (chunks.len() == 1) {
-    all = chunks[0];
-  } else if (chunks.len() > 1) {
-    all = chunks.join("");
-  }
-  var lines: i64[] = split_lines(all, term);
-  if (a.merge) {
-    lines = merge_files(c, all, lines, line_bounds(lines, ends));
-  } else {
-    lines = sort_lines(c, all, lines);
-  }
+  var all: string = buf_take(hb);
+  buf_free(hb);
+  var lines: i64[] = sort_lines(c, all, split_lines(all, term));
 
   var out: Out = out_open(a.outfile, !a.have_out);
+  var h: usize = out.w.handle();
+  var block: i32 = gnu.block_bytes();
   var prev: i64 = 0 as i64;
   var have_prev: boolean = false;
   i = 0;
   while (i < lines.len()) {
     var v: i64 = lines[i];
-    var keep: boolean = true;
-    if (a.unique && have_prev) {
-      keep = compare(c, all, prev, v) != 0;
-    }
-    if (keep) {
+    if (!(a.unique && have_prev && compare(c, all, prev, all, v) == 0)) {
       var at: i32 = line_start(v);
       if (c.debug) {
         out = debug_line(out, c, all, at, at + line_len(v));
       } else {
-        out = out_line(out, all, at, at + line_len(v), term);
+        buf_push_range(h, all, at, at + line_len(v));
+        buf_push_byte(h, term);
+        if (buf_len(h) >= block) {
+          out = out_settle(out);
+        }
       }
       prev = v;
       have_prev = true;
@@ -2879,33 +2936,189 @@ function run(a0: Args): i32 {
   return 0;
 }
 
-// Bytes held in the chunks read so far — where one operand's text
-// ends and the next begins.
-function chunk_bytes(chunks: string[]): i32 {
-  var n: i32 = 0;
-  var i: i32 = 0;
-  while (i < chunks.len()) {
-    n = n + chunks[i].len();
-    i = i + 1;
-  }
-  return n;
-}
+// ---- merge ------------------------------------------------------------------
+//
+// `-m` holds one buffer of each input and emits the smallest head across
+// them, a tie going to the earlier operand. Nothing is compared within
+// one input, so `sort -m` over an unsorted file reproduces it.
+//
+// `bufs[f]` is input f's current buffer, `cur[f]` its head line in that
+// buffer (-1 once the input is spent), and `at[f]` where the line after
+// the head starts. `Feeds` holds what only a refill touches; `fresh` is
+// the buffer the last refill read.
+struct Feeds { rs: Reader[], names: string[], eof: boolean[], fresh: string }
 
-// The line index each operand's text ends at, from the byte offset it
-// ends at. Lines never straddle an operand: every operand's text is
-// terminated before the next is appended.
-function line_bounds(lines: i64[], ends: i32[]): i32[] {
-  var bounds: i32[] = [];
-  var line: i32 = 0;
-  var f: i32 = 0;
-  while (f < ends.len()) {
-    while (line < lines.len() && line_start(lines[line]) < ends[f]) {
-      line = line + 1;
+function merge_files(c: Conf, a: Args, files: string[]): i32 {
+  var n: i32 = files.len();
+  var term: i32 = c.term;
+  var m: Feeds = Feeds { rs: [], names: files, eof: [], fresh: "" };
+  var bufs: string[] = [];
+  var at: i32[] = [];
+  var cur: i64[] = [];
+  var o_dev: i64 = 0 as i64;
+  var o_ino: i64 = 0 as i64;
+  var o_file: boolean = false;
+  if (a.have_out) {
+    match (stat(a.outfile)) {
+      Ok(st) => {
+        o_file = st.is_file;
+        o_dev = st.dev;
+        o_ino = st.ino;
+      },
+      Err(_) => {}
     }
-    bounds = bounds.append(line);
+  }
+  var f: i32 = 0;
+  while (f < n) {
+    m = open_feed(m, files[f], o_file, o_dev, o_ino, term);
+    bufs = bufs.append(m.fresh);
+    at = at.append(0);
+    cur = cur.append(0 - 1 as i64);
     f = f + 1;
   }
-  return bounds;
+  var out: Out = out_open(a.outfile, !a.have_out);
+  var h: usize = out.w.handle();
+  var block: i32 = gnu.block_bytes();
+  var prev_text: string = "";
+  var prev: i64 = 0 as i64;
+  var have_prev: boolean = false;
+  // Each input is advanced once to prime it, then the input a line was
+  // taken from is advanced after each line.
+  var primed: i32 = 0;
+  f = 0;
+  while (f >= 0) {
+    var from: i32 = at[f];
+    var end: i32 = __memchr(bufs[f], term, from);
+    if (end < 0) {
+      m = refill(m, f, bufs[f], from, term);
+      bufs = bufs.with(f, m.fresh);
+      from = 0;
+      end = __memchr(bufs[f], term, 0);
+    }
+    if (end < 0) {
+      cur = cur.with(f, 0 - 1 as i64);
+    } else {
+      cur = cur.with(f, pack_line(from, end - from));
+      at = at.with(f, end + 1);
+    }
+    primed = primed + 1;
+    if (primed < n) {
+      f = primed;
+    } else {
+      f = 0 - 1;
+      var g: i32 = 0;
+      while (g < n) {
+        if (cur[g] >= 0 as i64) {
+          if (f < 0 || compare(c, bufs[g], cur[g], bufs[f], cur[f]) < 0) {
+            f = g;
+          }
+        }
+        g = g + 1;
+      }
+      if (f >= 0) {
+        var text: string = bufs[f];
+        var v: i64 = cur[f];
+        if (!(a.unique && have_prev && compare(c, prev_text, prev, text, v) == 0)) {
+          var lo: i32 = line_start(v);
+          if (c.debug) {
+            out = debug_line(out, c, text, lo, lo + line_len(v));
+          } else {
+            buf_push_range(h, text, lo, lo + line_len(v));
+            buf_push_byte(h, term);
+            if (buf_len(h) >= block) {
+              out = out_settle(out);
+            }
+          }
+          prev_text = text;
+          prev = v;
+          have_prev = true;
+        }
+      }
+    }
+  }
+  f = 0;
+  while (f < n) {
+    if (files[f] != "-") {
+      m.rs[f].close();
+    }
+    f = f + 1;
+  }
+  out_finish(out);
+  return 0;
+}
+
+// `open_feed(m, path, ...)` — input `path` added to `m`, its buffer left
+// in `fresh`: empty, unless the input is the -o file, which is read whole
+// now as GNU copies it aside, since opening the output empties it.
+function open_feed(own m: Feeds, path: string, o_file: boolean, o_dev: i64, o_ino: i64, term: i32): Feeds {
+  var r: Reader = stdin();
+  if (path != "-") {
+    match (open_reader(path)) {
+      Ok(fd) => {
+        r = fd;
+      },
+      Err(e) => {
+        die_file("open failed", path, e);
+      }
+    }
+  }
+  var buf: string = "";
+  var whole: boolean = false;
+  if (o_file) {
+    match (r.stat()) {
+      Ok(st) => {
+        whole = st.is_file && st.dev == o_dev && st.ino == o_ino;
+      },
+      Err(_) => {}
+    }
+  }
+  if (whole) {
+    var h: usize = buf_new(read_size());
+    var last: i32 = read_into_from(h, r, path);
+    if (last >= 0 && last != term) {
+      buf_push_byte(h, term);
+    }
+    buf = buf_take(h);
+    buf_free(h);
+  }
+  return Feeds { ...m, rs: m.rs.append(r), eof: m.eof.append(whole), fresh: buf };
+}
+
+// `refill(m, f, buf, from, term)` — input f's next buffer into `fresh`:
+// what is left of `buf` past `from`, then reads until one holds a
+// terminator or the input ends, when a last unterminated line gets one.
+// Empty once the input is spent.
+function refill(own m: Feeds, f: i32, buf: string, from: i32, term: i32): Feeds {
+  if (m.eof[f]) {
+    return Feeds { ...m, fresh: "" };
+  }
+  var h: usize = buf_new(read_size());
+  buf_push_range(h, buf, from, buf.len());
+  var ended: boolean = false;
+  var done: boolean = false;
+  while (!done) {
+    match (m.rs[f].read_chunk(read_size())) {
+      Ok(chunk) => {
+        if (chunk.len() == 0) {
+          // What is held has no terminator, or the loop had stopped.
+          ended = true;
+          if (buf_len(h) > 0) {
+            buf_push_byte(h, term);
+          }
+          done = true;
+        } else {
+          buf_push(h, chunk);
+          done = __memchr(chunk, term, 0) >= 0;
+        }
+      },
+      Err(e) => {
+        die_file("read failed", m.names[f], e);
+      }
+    }
+  }
+  var fresh: string = buf_take(h);
+  buf_free(h);
+  return Feeds { ...m, eof: m.eof.with(f, ended), fresh: fresh };
 }
 
 function term_string(term: i32): string {

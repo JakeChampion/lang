@@ -57,7 +57,6 @@ func selfHostSpliceToSource(dir string, spliced bool) string {
             Err(_) => { return 0 - 3; }
         }
     }
-    return spliced;
 }
 
 function main(): i32 {

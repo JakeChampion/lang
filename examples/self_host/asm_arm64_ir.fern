@@ -7551,7 +7551,8 @@ function emit_rt_net(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     // op had no kind_tag case on either backend.
 
     // __fern_alloc_u8(x0 = n) → fresh n-element array (cap header,
-    // 8-byte slots, returned base+8). Elements start zero (.bss).
+    // 8-byte slots, returned base+8), its slots cleared: a block off the
+    // free list keeps its last owner's bytes.
     s = s.write(".globl __fern_alloc_u8\n");
     s = s.write(".type __fern_alloc_u8, %function\n");
     s = s.write("__fern_alloc_u8:\n");
@@ -7561,6 +7562,14 @@ function emit_rt_net(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     s = s.write("    mov x19, x0\n");           // n
     s = s.write("    mov x0, x19\n");           // cap = n
     s = s.write("    bl __fern_arr_box\n");      // -> data ptr in x0 (cap + len written)
+    s = s.write("    add x2, x0, #8\n");        // slot 0; the length is at [x0]
+    s = s.write("    mov w1, w19\n");           // n is an i32
+    s = s.write(".Lfern_alloc_u8_zero:\n");
+    s = s.write("    cbz x1, .Lfern_alloc_u8_done\n");
+    s = s.write("    str xzr, [x2], #8\n");
+    s = s.write("    sub x1, x1, #1\n");
+    s = s.write("    b .Lfern_alloc_u8_zero\n");
+    s = s.write(".Lfern_alloc_u8_done:\n");
     s = s.write("    ldp x19, x20, [sp], #16\n");
     s = s.write("    ldp x29, x30, [sp], #16\n");
     s = s.write("    ret\n");
