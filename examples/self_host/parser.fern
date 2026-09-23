@@ -6649,6 +6649,10 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, boolean, s
             tprev_word = false; tprev_dyn = false;
             continue;
         }
+        // Multi-trait object `dyn A + B` as a tuple element — join with ` + `
+        // to match parse_type_dyn, whose spelling the checker compares against
+        // a value's traits string exactly.
+        if (tpk == "+") { tbuf = tbuf + " + "; p = p.advance(); tprev_word = false; tprev_dyn = false; continue; }
         if (tpk.len() > 0) { tbuf = tbuf + tpk; p = p.advance(); tprev_word = false; tprev_dyn = false; continue; }
         var tseg: string = p.peek_ident();
         if (tseg.len() == 0) { tseg = p.peek_keyword(); }
