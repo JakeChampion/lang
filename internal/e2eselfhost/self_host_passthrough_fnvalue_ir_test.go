@@ -23,7 +23,7 @@ import (
 // try_fn_field_value directly and the walk never reached the call's arguments.
 //
 // A `PASSTHRU:<fn>:<argidx>` marker is stored in the closure_fns list (the same
-// convention as `FNPTR:` / `RETCLO2:` / `CLOARR:`) so the read side can answer
+// convention as `RETCLO2:`) so the read side can answer
 // "is this call a box" with "is its passthrough argument one".
 //
 // nocapture-array is the case that shows capture is not the discriminator: no

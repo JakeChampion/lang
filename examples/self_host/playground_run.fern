@@ -221,9 +221,8 @@ function run(): i32 {
     errs = util.append_diags(errs, asmcore.check_map_new_chain(merged));
     errs = util.append_diags(errs, asmcore.check_undefined_calls(merged));
     errs = util.append_diags(errs, asmcore.check_decl_names(merged));
-    var fnfld: string = irlower.check_fn_array_fields(merged);
-    if (errs.len() > 0 || fnfld.len() > 0) {
-        eprint(util.format_diags(errs) + fnfld);
+    if (errs.len() > 0) {
+        eprint(util.format_diags(errs));
         return 1;
     }
     var unsupported: string = wasm_ir.wasm_unsupported_builtin(merged);
