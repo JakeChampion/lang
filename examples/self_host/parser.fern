@@ -1799,7 +1799,10 @@ function parse_map_lit(p: Par): (ast.Expr, Par) {
     var ctor: string = if (kk == 1) { "map_new_i32" } else { "map_new" };
     var cargs: ast.Expr[] = [];
     cargs = cargs.append(e_number("8", "", false));
-    var mbase: ast.Expr = e_call(e_ident(ctor), cargs);
+    // Positioned at the literal, like the ExprMapLit the verbatim parse keeps:
+    // the desugared constructor is the only node left for a diagnostic about
+    // the literal to land on, and E001's missing-`core/map` report reads it.
+    var mbase: ast.Expr = e_call_at(e_ident(ctor), cargs, mline, mcol);
     var mpi: i32 = 0;
     while (mpi < mlk.len()) {
         var sargs: ast.Expr[] = [];
