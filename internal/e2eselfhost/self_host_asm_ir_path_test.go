@@ -118,16 +118,14 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"clo-struct-field-mixed", `struct H { f: (i32) => i32, n: i32 } function main(): i32 { var h = H { f: (x: i32): i32 => { return x + 1; }, n: 100 }; return h.f(h.n); }`},
 		{"clo-struct-field-2fn", `struct Ops { add1: (i32) => i32, dbl: (i32) => i32 } function main(): i32 { var o = Ops { add1: (x: i32): i32 => { return x + 1; }, dbl: (x: i32): i32 => { return x * 2; } }; return o.add1(10) + o.dbl(10); }`},
 		// Calling an element of a function-value ARRAY inline (`fns[i](args)`):
-		// a plain fn-pointer array element lowers to args + the element + call_
-		// indirect (the local-bind form `var f = fns[i]; f()` already lowered).
+		// the element is an env box, so the call is env-first, as the local-bind
+		// form `var f = fns[i]; f()` is.
 		{"fnarr-elem-call", `function inc(n: i32): i32 { return n + 1; } function dbl(n: i32): i32 { return n * 2; } function main(): i32 { var fns = [inc, dbl]; return fns[0](10) + fns[1](10); }`},
 		{"fnarr-elem-call-loop", `function apply(fns: ((i32) => i32)[], n: i32): i32 { var s = 0; var i = 0; while (i < fns.len()) { s = s + fns[i](n); i = i + 1; } return s; } function inc(n: i32): i32 { return n + 1; } function dbl(n: i32): i32 { return n * 2; } function main(): i32 { return apply([inc, dbl], 10); }`},
 		{"fnarr-elem-call-2arg", `function add(a: i32, b: i32): i32 { return a + b; } function mul(a: i32, b: i32): i32 { return a * b; } function main(): i32 { var ops = [add, mul]; return ops[0](3, 4) + ops[1](3, 4); }`},
-		// Array literals of NO-CAPTURE LAMBDAS (#2994): each lambda element is
-		// hoisted to a top-level fn (the lift a no-capture lambda arg gets), so the
-		// array is a function-pointer array and `fs[i](args)` / `for f in fs`
-		// use the existing fn-pointer-array call path. (Named-function arrays
-		// above already lowered; this adds the inline-lambda element form.)
+		// Array literals of NO-CAPTURE LAMBDAS (#2994): each element is a `$wrap`
+		// box, as the named-function elements above are, so `fs[i](args)` /
+		// `for f in fs` dispatch env-first.
 		{"clo-arr-call", `function main(): i32 { var fs = [(x: i32): i32 => { return x * 2; }, (x: i32): i32 => { return x + 100; }]; return fs[0](5) + fs[1](5); }`},
 		{"clo-arr-len", `function main(): i32 { var fs = [(x: i32): i32 => { return x + 1; }]; return fs.len() + 9; }`},
 		{"clo-arr-idxvar", `function main(): i32 { var fs = [(x: i32): i32 => { return x * 10; }]; var i = 0; return fs[i](7); }`},

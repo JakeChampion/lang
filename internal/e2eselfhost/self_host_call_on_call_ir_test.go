@@ -12,15 +12,10 @@ import (
 // callOnCallIRCases exercise calling the RESULT of a call — `mk()(args)`, where
 // `mk` returns a function value — through the self-host IR path on x86-64 + wasm.
 //
-// Binding first (`var g = mk(); g(args)`) and calling a fn-pointer array element
-// (`fs[i](args)`) already lowered; only the inline call-on-call-result form
-// bailed, because the ExprCall callee dispatch had no arm for an `ExprCall`
-// callee. The fix lowers the args, then the callee call (its returned fn pointer
-// on TOS), then call_indirect — the same shape as the array-element / tuple-
-// element fn-value calls. A callee that returns a CAPTURING lambda (a
-// closure-box-returning fn, tracked in closure_fns) needs the env-passing form
-// and still bails (guarded here only indirectly: those programs come out
-// ineligible, so they are not in this IR-pinned set).
+// Every function value is an env box, so the call on the result dispatches
+// env-first: the inner call's box is stashed, passed as the __env first
+// argument, and box[0] is the target (#10057). Binding the result first and
+// calling an element of a function array take the same form.
 //
 // Each case is oracle-checked against the interpreter, routing-pinned to "ir",
 // and returns a value <= 126 (wasmtime exit-code truncation, cf. #2908).
@@ -43,7 +38,7 @@ function main(): i32 { return mk()(4) + mk()(10); }`},
 	// Regression: binding the result first still lowers (4 + 1 = 5).
 	{"bind-regress", `function mk(): (i32) => i32 { return (b: i32): i32 => { return b + 1; }; }
 function main(): i32 { var g = mk(); return g(4); }`},
-	// Regression: calling a fn-pointer array element still lowers (4 + 1 = 5).
+	// Regression: calling a function-array element still lowers (4 + 1 = 5).
 	{"fnarr-regress", `function inc(b: i32): i32 { return b + 1; }
 function main(): i32 { var fs: ((i32) => i32)[] = [inc]; return fs[0](4); }`},
 }
