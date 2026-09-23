@@ -717,6 +717,21 @@ function buf_block_free(s: asmcore.EmitState, ptr: string, words: string, lbl: s
     return s;
 }
 
+// arr_push_fast is the append both __fern_arr_push and __fern_arr_push_owned
+// start with: a receiver with a free slot that this push may mutate (sole
+// owner, or the bit-31 immortal sentinel) takes the value in place, with no frame
+// and no register but %rax, %rcx and %rdx touched. Anything else, and every
+// push under the sanitizer, which checks the count first, goes to `slow`.
+function arr_push_fast(slow: string): string {
+    if (rc_free_debug_on()) { return ""; }
+    var ok: string = slow + "_ok";
+    return "    movq (%rdi), %rdx\n    cmpq -16(%rdi), %rdx\n    jge " + slow + "\n"
+        + "    movq -8(%rdi), %rcx\n    cmpq $1, %rcx\n    je " + ok + "\n"
+        + "    btq $31, %rcx\n    jnc " + slow + "\n"
+        + ok + ":\n    movq %rsi, 8(%rdi,%rdx,8)\n    incq %rdx\n    movq %rdx, (%rdi)\n"
+        + "    movq %rdi, %rax\n    ret\n";
+}
+
 function hev_free(s: asmcore.EmitState, ptr: string, words: string): asmcore.EmitState {
     if (!hev_on()) { return s; }
     s = s.write("    pushq " + words + "\n");
@@ -3838,6 +3853,8 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     if (s.has_need("arr_push") || s.has_need("maps")) {
     // __fern_arr_push (transcribed from asm.fern for the IR map path).
     s = s.write("__fern_arr_push:\n");
+    s = s.write(arr_push_fast(".Larr_push_slow"));
+    s = s.write(".Larr_push_slow:\n");
     s = s.write("    pushq %rbp\n");
     s = s.write("    movq %rsp, %rbp\n");
     s = s.write("    pushq %r12\n");
@@ -3848,6 +3865,8 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq %rsi, %r13\n");        // value
     s = s.write("    movq (%r12), %r14\n");      // len
     s = s.write("    movq -16(%r12), %r15\n");   // cap (hidden at -16; rc at -8)
+    // Past the fast path, the receiver is shared or full: both grow.
+    if (!rc_free_debug_on()) { s = s.write("    jmp .Larr_push_grow\n"); }
     // #4873 containment gate: an rc >= 2 receiver is SHARED (the caller-side
     // grow bracket inc'd it, or a counted alias exists) — never mutate it in
     // place even when capacity fits; take the grow path's fresh-box copy,
@@ -3980,12 +3999,15 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // without threading a separate need through the union.
     if (s.has_need("arr_push") || s.has_need("maps")) {
         s = s.write("__fern_arr_push_owned:\n");
+        s = s.write(arr_push_fast(".Lapo_slow"));
+        s = s.write(".Lapo_slow:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
         s = s.write("    pushq %r12\n");
         s = s.write("    pushq %r13\n");            // align stack to 16 for the call
         s = s.write("    movq %rdi, %r12\n");        // save old arr ptr
-        s = s.write("    call __fern_arr_push\n");   // %rax = new (grew) or old (in place)
+        // %rax = new (grew) or old (in place); the fast path already declined.
+        if (rc_free_debug_on()) { s = s.write("    call __fern_arr_push\n"); } else { s = s.write("    call .Larr_push_slow\n"); }
         s = s.write("    cmpq %rax, %r12\n");
         s = s.write("    je .Lapo_ret\n");            // in place — nothing freed
         s = s.write("    cmpq $0x10000, %r12\n");     // grew: free the dead old box %r12
@@ -5890,8 +5912,9 @@ function ssa_push_operand(reg_of: i32[], v: i32, s: asmcore.EmitState): asmcore.
 // negative count, since a negative count never compares equal to one; rc_inc
 // needs one, because it would otherwise increment it.
 //
-// The count is read into %rdx and the 0/1 built in %rcx, neither of which is
-// ever a home, so both survive a destination that IS the operand's register —
+// The count is compared in memory, or read into %rdx first when the sanitizer
+// checks it; the 0/1 is built in %rcx. Neither register is ever a home, so both
+// survive a destination that IS the operand's register —
 // the usual case once a result and its operand share one — and the
 // destination is written after the last read of the operand.
 //
@@ -5911,17 +5934,20 @@ function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
     if (ins.str == "__fern_rc_is_unique") {
         var d: string = ssa_dst(reg_of, ins.result);
         s = s.write("    xorl %ecx, %ecx\n" + guard);
-        s = s.write("    movl " + rc + ", %edx\n");
-        s = s.write(san_poison_check("%edx"));
-        s = s.write("    cmpl $1, %edx\n    jne " + done + "\n");
+        s = s.write(ssa_rc_is_one(rc));
+        s = s.write("    jne " + done + "\n");
         s = s.write("    movl $1, %ecx\n" + done + ":\n");
         s = s.write("    movq %rcx, " + d + "\n");
         return ssa_store(reg_of, ins.result, d, s);
     }
     s = s.write(guard);
-    s = s.write("    movl " + rc + ", %ecx\n" + san_poison_check("%ecx"));
-    s = s.write("    testl %ecx, %ecx\n    js " + done + "\n");
-    s = s.write("    addl $1, %ecx\n    movl %ecx, " + rc + "\n");
+    if (rc_free_debug_on()) {
+        s = s.write("    movl " + rc + ", %ecx\n" + san_poison_check("%ecx"));
+        s = s.write("    testl %ecx, %ecx\n    js " + done + "\n");
+        s = s.write("    addl $1, %ecx\n    movl %ecx, " + rc + "\n");
+    } else {
+        s = s.write("    cmpl $0, " + rc + "\n    js " + done + "\n    addl $1, " + rc + "\n");
+    }
     s = s.write(done + ":\n");
     // rc_inc hands the pointer back; a result with no home stores nothing.
     return ssa_store(reg_of, ins.result, p, s);
@@ -6554,8 +6580,15 @@ function ssa_unique_flags(reg_of: i32[], v: i32, join: string, s: asmcore.EmitSt
     s = ssa_read(reg_of, v, "%r11", s);
     var p: string = ssa_src(reg_of, v, "%r11");
     s = s.write("    testb $1, " + ssa_r8(p) + "\n    jnz " + join + "\n    cmpq $0x10000, " + p + "\n    jb " + join + "\n");
-    s = s.write("    movl -8(" + p + "), %edx\n" + san_poison_check("%edx") + "    cmpl $1, %edx\n" + join + ":\n");
+    s = s.write(ssa_rc_is_one("-8(" + p + ")") + join + ":\n");
     return s;
+}
+
+// ssa_rc_is_one compares the count at `rc` with one, through %edx when the
+// sanitizer must see the loaded value first.
+function ssa_rc_is_one(rc: string): string {
+    if (rc_free_debug_on()) { return "    movl " + rc + ", %edx\n" + san_poison_check("%edx") + "    cmpl $1, %edx\n"; }
+    return "    cmpl $1, " + rc + "\n";
 }
 
 // ssa_rotates reports whether a branch from the block at position `from` to
