@@ -13932,12 +13932,13 @@ function emit_wasm_heap_bump_bytes(cagg_vals: string[], str_vals: string[], part
 function emit_wasm_alloc_u8(arrtmp: i32, eltmp: i32, parts: string[]): string[] {
     // stack: n -> a fresh n-element array. wasm has no $__fern_alloc_u8;
     // synthesize via $__fern_arr_box(n*4) + the [len@0, cap@4] header
-    // (matching arr_make). Contents are not zeroed (callers zero
-    // explicitly), like the register backends' __fern_alloc_u8.
+    // (matching arr_make), its slots cleared: a block off the free list
+    // keeps its last owner's bytes, and the builtin promises zeros.
     parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n");
     parts = parts.append("    local.get " + util.i32_to_string(eltmp) + "\n    i32.const 4\n    i32.mul\n    call $__fern_arr_box\n    local.set " + util.i32_to_string(arrtmp) + "\n");
     parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n");
     parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n");
+    parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 8\n    i32.add\n    i32.const 0\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.const 4\n    i32.mul\n    memory.fill\n");
     parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n");
 
     return parts;

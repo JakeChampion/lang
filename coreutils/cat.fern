@@ -437,7 +437,6 @@ function splice_all(r: Reader): boolean {
       }
     }
   }
-  return true;
 }
 
 // `cat_file(path, st, f, out_stat)` — one operand. `out_stat` is

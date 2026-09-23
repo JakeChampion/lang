@@ -515,10 +515,13 @@ function next_line(inp: In, o: Opts, unpairable: boolean, w: io_buffered.BufWrit
   var other: i32 = 0 - 1;
   if (o.tab < 0) {
     tab_at = cursor(tab_at, cur.buf, 9, lo);
-    nl_at = cursor(nl_at, cur.buf, 10, lo);
     other = tab_at;
-    if (nl_at >= 0 && (other < 0 || nl_at < other)) {
-      other = nl_at;
+    // Only -z lets a newline sit inside a line.
+    if (o.eol != 10) {
+      nl_at = cursor(nl_at, cur.buf, 10, lo);
+      if (nl_at >= 0 && (other < 0 || nl_at < other)) {
+        other = nl_at;
+      }
     }
   }
   var l: Line = make_line(cur.buf, lo, hi, o.tab, jf, other);

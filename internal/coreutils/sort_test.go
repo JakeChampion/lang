@@ -33,6 +33,16 @@ func sortCases(t *testing.T) []invocation {
 	ba := catFile(t, dir, "ba", "b\na\n")
 	cd := catFile(t, dir, "cd", "c\nd\n")
 	nonl := catFile(t, dir, "nonl", "b\na")
+	mergeNine := checkLong(t, dir, "merge9", 9, -1, false)
+	mergeSixteen := checkLong(t, dir, "merge16", 16, -1, false)
+	mergeWide := catFile(t, dir, "mergewide", "a\n"+strings.Repeat("b", 300000)+"\nc")
+	mergeSelf := filepath.Join(dir, "mergeself")
+	prepMergeSelf := func(t *testing.T) {
+		t.Helper()
+		if err := os.WriteFile(mergeSelf, []byte("b\nd\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	empty := catFile(t, dir, "e0", "")
 	blanksFile := catFile(t, dir, "blanks", "  b\n a\nc\n")
 	nums := catFile(t, dir, "nums", "10\n9\n100\n1\n")
@@ -330,6 +340,20 @@ func sortCases(t *testing.T) []invocation {
 		{name: "merge with a key", args: []string{"-m", "-k2,2n", fields, fields}},
 		{name: "merge stdin", args: []string{"-m", ab, "-"}, stdin: "a\nz\n"},
 		{name: "merge empty file", args: []string{"-m", empty, ab}},
+		{name: "merge unterminated first", args: []string{"-m", nonl, cd}},
+		{name: "merge three", args: []string{"-m", cd, ba, ab}},
+		{name: "merge zero terminated", args: []string{"-m", "-z", "--", "-", ab}, stdin: "a\x00c\x00"},
+		// -m holds one read of each input at a time: lines straddle reads,
+		// one input runs out mid-merge, and -u compares across refills.
+		{name: "merge across reads", args: []string{"-m", mergeNine, mergeSixteen}},
+		{name: "merge across reads unique", args: []string{"-m", "-u", mergeNine, mergeNine}},
+		{name: "merge across reads with a key", args: []string{"-m", "-n", mergeSixteen, mergeNine}},
+		{name: "merge across reads from stdin", args: []string{"-m", "-", mergeSixteen}, stdin: checkLines(9, -1, false)},
+		{name: "merge a line longer than a read", args: []string{"-m", mergeWide, ab}},
+		// Opening the -o file empties it, so an input that is the output is
+		// read whole before that, and a named one is not the only way in.
+		{name: "merge onto an input", args: []string{"-m", "-o", mergeSelf, mergeSelf, cd}, prepare: prepMergeSelf, artifacts: []string{mergeSelf}},
+		{name: "merge onto stdin's file", args: []string{"-m", "-o", mergeSelf, "-", ab}, stdinPath: mergeSelf, prepare: prepMergeSelf, artifacts: []string{mergeSelf}},
 
 		// -c and -C.
 		{name: "check sorted", args: []string{"-c", ab}},
@@ -354,6 +378,24 @@ func sortCases(t *testing.T) []invocation {
 		{name: "check directory", args: []string{"-c", d}},
 		{name: "check two files", args: []string{"-c", ab, cd}},
 		{name: "check capital two files", args: []string{"-C", ab, cd}},
+		// Input already in order is returned as it stands; these are the
+		// orderings where "in order" has to mean what the sort means.
+		{name: "sorted input with duplicates", stdin: "a\na\nb\nb\nc\n"},
+		{name: "sorted input unique", args: []string{"-u"}, stdin: "a\na\nb\nb\nc\n"},
+		{name: "sorted input by a key, stable", args: []string{"-s", "-k1,1"}, stdin: "a 2\na 1\nb 3\n"},
+		{name: "sorted input by a key, last resort", args: []string{"-k1,1"}, stdin: "a 2\na 1\nb 3\n"},
+		{name: "sorted input reversed", args: []string{"-r"}, stdin: "c\nb\nb\na\n"},
+		{name: "sorted input numeric", args: []string{"-n"}, stdin: "-1\n2\n02\n10\n"},
+		// -c reads as it goes, 256 KiB at a time, and carries the last line
+		// over each read. These put the disorder at a read's edge.
+		{name: "check long sorted", args: []string{"-c", checkLong(t, dir, "long", 9, -1, false)}},
+		{name: "check long sorted from stdin", args: []string{"-c"}, stdin: checkLines(9, -1, false)},
+		{name: "check disorder straddling a read", args: []string{"-c", checkLong(t, dir, "straddle", 9, 262144/9, false)}},
+		{name: "check disorder straddling a read from stdin", args: []string{"-c"}, stdin: checkLines(9, 262144/9, false)},
+		{name: "check disorder starting a read", args: []string{"-c", checkLong(t, dir, "starts", 16, 262144/16, false)}},
+		{name: "check disorder ending a read", args: []string{"-c", checkLong(t, dir, "ends", 16, 262144/16-1, false)}},
+		{name: "check unique across a read", args: []string{"-c", "-u", checkLong(t, dir, "dup", 16, 262144/16, true)}},
+		{name: "check long unterminated disorder", args: []string{"-c"}, stdin: strings.TrimSuffix(checkLines(9, 99999, false), "\n")},
 		{name: "check and merge", args: []string{"-c", "-m", ba}},
 		{name: "check and output", args: []string{"-c", "-o", "/dev/null", ab}},
 		{name: "check capital and output", args: []string{"-C", "-o", "/dev/null", ab}},
@@ -662,6 +704,29 @@ func sortByteComparisonCases() []invocation {
 		{name: "byte comparison unique key boundaries", args: []string{"-u", "-t:", "-k2,2"}, stdin: keys.String()},
 		{name: "byte comparison zero terminated boundaries", args: []string{"-z"}, stdin: strings.ReplaceAll(plain, "\n", "\x00")},
 	}
+}
+
+// checkLines is 100,000 zero-padded numbers, each `width` bytes with its
+// newline, in order except at line `bad`: there the line is all zeros,
+// which sorts before its predecessor, or with `dup` a copy of it. -1
+// leaves every line in order.
+func checkLines(width, bad int, dup bool) string {
+	var b strings.Builder
+	for i := 0; i < 100000; i++ {
+		v := i + 1
+		if i == bad {
+			v = 0
+			if dup {
+				v = i
+			}
+		}
+		fmt.Fprintf(&b, "%0*d\n", width-1, v)
+	}
+	return b.String()
+}
+
+func checkLong(t *testing.T, dir, name string, width, bad int, dup bool) string {
+	return catFile(t, dir, name, checkLines(width, bad, dup))
 }
 
 // shuffledLines is n lines with duplicate keys, in an order no ordering
