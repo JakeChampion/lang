@@ -2876,12 +2876,6 @@ function (s: Scope) has_any_array_module_method(): boolean {
   return false;
 }
 
-// map_builtin_methods: the Map methods native registers unconditionally, less
-// the retired in-place spellings. The rest are core/map's receiver methods.
-function map_builtin_methods(): string[] {
-  return ["cleared", "get", "get_or", "has", "insert", "iter", "keys", "len", "values", "without"];
-}
-
 // push_str_unique_sorted inserts `v` in sorted position, dropping a duplicate.
 function push_str_unique_sorted(xs: string[], v: string): string[] {
   var out: string[] = [];
@@ -9616,20 +9610,6 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           // which has its own arity rule.
           if ((mfa.field == "len" || mfa.field == "as_bytes") && c.args.len() != 0 && s.lookup_method(mfa.field, "string").name.len() == 0) {
             out = out.append(dg_at("E004", "method \"" + mfa.field + "\" expects 0 argument(s), got " + util.i32_to_string(c.args.len()), c.line, c.col));
-          }
-        },
-        typeinfo.TypeMap(_) => {
-          // E043: neither a builtin nor a core/map receiver method. A
-          // retired in-place spelling (`m.set`) is told its replacement
-          // (#10095); any other name is read as a field of struct Map, as
-          // native reads it, once core/map's methods are in scope to rule
-          // it out.
-          if (!util.has_str(map_builtin_methods(), mfa.field) && s.lookup_method(mfa.field, "Map").name.len() == 0) {
-            if (retired_collection_spelling("Map", mfa.field).len() > 0) {
-              out = out.append(dg_at("E043", s.unknown_method_message("Map", mfa.field, "Map", recv), mfa.line, mfa.col));
-            } else if (s.core_map_loaded()) {
-              out = out.append(dg_at("E043", "struct Map has no field \"" + mfa.field + "\"", mfa.line, mfa.col));
-            }
           }
         },
         typeinfo.TypeArray(ar) => {
@@ -16918,16 +16898,6 @@ function type_to_arrtag(t: typeinfo.Type): string {
 // annotate pass cannot perturb check_module's byte-identity-critical body.
 pub struct ModuleTables { structs: StructTable, unions: UnionTable, sigs: SigTable, methods: MethodTable, imports: string[] }
 
-// core/map's constructor, bare or as the bundler mangles it: present exactly
-// when core/map's declarations were loaded.
-function is_core_map_decl(name: string): boolean {
-  return name == "map_new_impl" || util.str_has_suffix(name, "__map_new_impl");
-}
-
-function (s: Scope) core_map_loaded(): boolean {
-  for sig in s.sigs.sigs { if (is_core_map_decl(sig.name)) { return true; } }
-  return false;
-}
 
 // import_paths_of: the module's `import` paths exactly as written in source
 // ("std/string"), which is the spelling a hint tells the reader to add.

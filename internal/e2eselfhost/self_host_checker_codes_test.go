@@ -1834,13 +1834,6 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"map-ann-empty-ok", "import \"core/map\";\nfunction main(): i32 { var m: Map[string,i32] = Map {}; return 0; }\n", nil},
 		{"map-ann-nonempty-ok", "import \"core/map\";\nfunction main(): i32 { var m: Map[string,i32] = Map { \"a\": 1 }; return 0; }\n", nil},
 		{"map-ann-i32keys-ok", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32,i32] = Map { 1: 2 }; return 0; }\n", nil},
-		// E043 (#10095): the retired in-place spellings, which need no
-		// module loaded to refuse. An unknown name is refused only against
-		// core/map's loaded method set, which this single-module driver never
-		// has; the build gate covers that shape.
-		{"e043-map-retired-set", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i32] = map_new(8); m.set(1, 2); return m.get_or(1, 0); }\n", []string{"E043"}},
-		{"e043-map-retired-delete", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i32] = map_new(8); m.delete(1); return m.len(); }\n", []string{"E043"}},
-		{"e043-map-builtins-ok", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); var (w, had) = m.without(1); return m.get_or(1, 0) + w.len() + m.cleared().len() + m.keys().len() - 3; }\n", nil},
 		// E022: `if let` / `let … else` carry dedicated pattern-binding
 		// diagnostics. The self-host parser desugars both to a StmtMatch
 		// tagged with `origin` ("if_let" / "let_else"); the checker reads
