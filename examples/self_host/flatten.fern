@@ -1240,7 +1240,34 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
     while (eti < e.trait_reqs.len()) { trait_reqs = trait_reqs.append(e.trait_reqs[eti]); eti = eti + 1; }
     var edi: i32 = 0;
     while (edi < e.trait_decls.len()) { trait_decls = trait_decls.append(e.trait_decls[edi]); edi = edi + 1; }
-    var no_imports: parser.Import[] = [];
+    // The bundle keeps the program's import CLOSURE — the entry's own imports
+    // plus every loaded module's — rather than an empty list. Nothing loads
+    // from a bundled module's list (the loaders read the entry and each part
+    // before they get here), and it is what tells the checker which stdlib
+    // modules the program linked: the self-host's answer to native's
+    // `prog.LoadedStdlibPaths`, which is what its E001 `core/map` rule reads.
+    var closure: parser.Import[] = [];
+    var closure_paths: string[] = [];
+    var ci: i32 = 0;
+    while (ci < entry.imports.len()) {
+        if (index_of_str(entry.imports[ci].path, closure_paths) < 0) {
+            closure_paths = closure_paths.append(entry.imports[ci].path);
+            closure = closure.append(entry.imports[ci]);
+        }
+        ci = ci + 1;
+    }
+    var cm: i32 = 0;
+    while (cm < imports.len()) {
+        var cmi: i32 = 0;
+        while (cmi < imports[cm].mod.imports.len()) {
+            if (index_of_str(imports[cm].mod.imports[cmi].path, closure_paths) < 0) {
+                closure_paths = closure_paths.append(imports[cm].mod.imports[cmi].path);
+                closure = closure.append(imports[cm].mod.imports[cmi]);
+            }
+            cmi = cmi + 1;
+        }
+        cm = cm + 1;
+    }
     // Re-settle on the merged signature set. A call into an IMPORTED module had
     // no declaration to settle its arguments against at parse time, so
     // `lib.f([1, 2])` reached an `f64[]`/`i64[]` parameter as unsettled i32
@@ -1250,7 +1277,7 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
         funcs: funcs,
         structs: structs,
         aliases: aliases,
-        imports: no_imports,
+        imports: closure,
         top_stmts: e.top_stmts,
         enums: enums,
         resources: resources,
