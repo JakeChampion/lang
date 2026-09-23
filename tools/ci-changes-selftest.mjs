@@ -223,12 +223,14 @@ r = await decide({ event: "push", proof: mainProof({
 check("main: a lane a later push cancelled is diffed from where it last passed", [r.lanes["test-units"], r.lanes["test-e2e-x86_64"]], [false, true]);
 r = await decide({ event: "push", proof: mainProof({ compare: { [`m1...${head}`]: cmp(["docs/x.md"], "diverged") } }) });
 check("main: a base that is not an ancestor proves nothing", all(r), true);
+check("main: the log says why an unusable compare runs its lanes", r.infos.some((m) => m.startsWith("last passed at m1 (") && m.endsWith("): compare is diverged with 1 file(s), so they run")), true);
 r = await decide({ event: "push", proof: mainProof({ compare: { [`m1...${head}`]: cmp(Array.from({ length: 300 }, (_, i) => `docs/${i}.md`)) } }) });
 check("main: a truncated file list proves nothing", all(r), true);
 r = await decide({ event: "push", proof: mainProof({ runs: [{ id: 52, head_sha: head }], jobs: { 52: mainJobs(laneKeys) } }) });
 check("main: a run of this same commit is not a base", all(r), true);
 r = await decide({ event: "push", proof: mainProof({ runs: [] }) });
 check("main: no earlier main run proves nothing", all(r), true);
+check("main: the log names the lanes with nothing to diff from", r.infos.some((m) => m.startsWith("no passing main run to diff from: ") && m.includes("test-units")), true);
 r = await decide({ event: "push", proof: mainProof({ mainThrows: true }) });
 check("main: an API error proves nothing", [all(r), r.warnings.some((w) => w.includes("main's earlier runs"))], [true, true]);
 
