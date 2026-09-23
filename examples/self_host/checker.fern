@@ -10059,7 +10059,7 @@ function call_diags_slice(s2: ast.ExprSlice, s: Scope, out: util.Diag[]): util.D
   out = util.append_diags(call_diags(s2.array, s), call_diags(s2.start, s));
   // E037: a present slice bound must be i32.
   var sbt: typeinfo.Type = check_expr(s2.start, s);
-  if (!is_unknown(sbt) && !is_integer(sbt)) {
+  if (!is_unknown(sbt) && !type_eq(sbt, t_i32())) {
     out = out.append(dg_at("E037", "slice low bound must be i32, got " + type_label(sbt), expr_line(s2.start), expr_col(s2.start)));
   }
   // An open-ended `s[a:]` / `s[:]` writes no high bound: `end` holds a
@@ -10068,7 +10068,7 @@ function call_diags_slice(s2: ast.ExprSlice, s: Scope, out: util.Diag[]): util.D
   if (!s2.open_end) {
     out = util.append_diags(out, call_diags(s2.end, s));
     var ebt: typeinfo.Type = check_expr(s2.end, s);
-    if (!is_unknown(ebt) && !is_integer(ebt)) {
+    if (!is_unknown(ebt) && !type_eq(ebt, t_i32())) {
       out = out.append(dg_at("E037", "slice high bound must be i32, got " + type_label(ebt), expr_line(s2.end), expr_col(s2.end)));
     }
   }

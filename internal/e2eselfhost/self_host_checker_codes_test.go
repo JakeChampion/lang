@@ -1353,6 +1353,8 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"index-non-array", "function main(): i32 { var x = 5; return x[0]; }\n", []string{"E034"}},
 		{"index-struct", "struct P { x: i32 }\nfunction main(): i32 { var p = P { x: 1 }; return p[0]; }\n", []string{"E034"}},
 		{"slice-non-array", "function main(): i32 { var x = 5; var y = x[1:2]; return 0; }\n", []string{"E037"}},
+		{"slice-i64-low-bound", "function main(): i32 { var a = [1, 2, 3]; var i: i64 = 1; var b = a[i:2]; return 0; }\n", []string{"E037"}},
+		{"slice-i64-high-bound", "function main(): i32 { var a = [1, 2, 3]; var j: i64 = 2; var b = a[0:j]; return 0; }\n", []string{"E037"}},
 		{"index-string-source-ok", "function main(): i32 { var s = \"ab\"; return s[0] as i32; }\n", nil},
 		{"slice-array-source-ok", "function main(): i32 { var a = [1, 2, 3, 4]; var b = a[1:3]; return b[0]; }\n", nil},
 		{"slice-string-source-ok", "function main(): i32 { var s = \"abcd\"; var t = slice_unchecked(s, 1, 3); return t.len(); }\n", nil},
