@@ -101,6 +101,19 @@ function main(): i32 {
 `,
 		want:   map[string][]string{"x86-64-linux": {`cmpl \$0, -8\(%\w+\)\n\s+js `, `addl \$1, -8\(%\w+\)`}},
 		forbid: map[string][]string{"x86-64-linux": {`addl \$1, %ecx`, `movl -8\(%\w+\), %ecx`}}},
+	// A runtime call's arguments move straight into %rdi and %rsi, not
+	// through %r11 and %rcx first.
+	{name: "rt_call_args_direct", fn: "fill", exit: 37, src: `
+@noinline function fill(n: i32): i32[] {
+    var xs: i32[] = [];
+    var i: i32 = 0;
+    while (i < n) { xs = xs.append(i * 3); i = i + 1; }
+    return xs;
+}
+function main(): i32 { var xs: i32[] = fill(10); return xs[9] + xs.len(); }
+`,
+		want:   map[string][]string{"x86-64-linux": {`call __fern_arr_push`}},
+		forbid: map[string][]string{"x86-64-linux": {`movq %r11, %rdi`, `movq %rcx, %rsi`}}},
 	// With the callee-saved registers full, the value a loop reads and writes
 	// every iteration keeps its register and a cold one spills, though the
 	// loop value lives longer.

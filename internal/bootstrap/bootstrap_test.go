@@ -49,6 +49,18 @@ done
 cp "$0" "$out"
 `
 
+// oneLinerCompiler's output runs the one-line smoke program and nothing else:
+// run as coreutils/tr it exits 42 too, like a stage1 that aborts on any
+// real program.
+const oneLinerCompiler = `#!/bin/sh
+out=""
+while [ $# -gt 0 ]; do
+  case "$1" in -o) out="$2"; shift 2 ;; *) shift ;; esac
+done
+[ -n "$out" ] || exit 42
+cp "$0" "$out"
+`
+
 // driftingCompiler appends a line to itself on every generation, so stage1
 // and stage2 differ by exactly one line.
 const driftingCompiler = fixpointCompiler + `echo "# one more generation" >> "$out"
@@ -191,6 +203,23 @@ func TestBuildRejectsBrokenMultiModuleSmoke(t *testing.T) {
 				t.Fatalf("compiler must not be installed after failed smoke: %v", err)
 			}
 		})
+	}
+}
+
+func TestBuildRejectsACompilerThatOnlyHandlesAOneLiner(t *testing.T) {
+	root := checkout(t)
+	stage0 := filepath.Join(root, "candidate")
+	write(t, stage0, []byte(oneLinerCompiler), 0o755)
+
+	out, err := run(t, root, "build", []string{"STAGE0=" + stage0}, "")
+	if err == nil {
+		t.Fatal("a compiler whose coreutils/tr does not translate must fail the smoke test")
+	}
+	if !strings.Contains(out, "smoke: tr compiled by") {
+		t.Errorf("failure does not name the tr smoke: %s", out)
+	}
+	if _, err := os.Stat(filepath.Join(root, "bin", "fern-selfhost")); err == nil {
+		t.Errorf("bin/fern-selfhost installed despite a failed smoke test")
 	}
 }
 
