@@ -495,6 +495,7 @@ func TestPeepholeKeepsLeftOperandInRegister(t *testing.T) {
 func TestPeepholeLeavesLeftOperandPushWhenUnsafe(t *testing.T) {
 	cases := [][]string{
 		{"\tpush rax", "\tmov rax, [rbp-8]", "\tmov ecx, 7", "\tcqo", "\tidiv rcx", "\tmov rcx, rax", "\tpop rax", "\tadd rax, rcx"},
+		{"\tpush rax", "\tmov rax, [rbp-8]", "\tmov ecx, 7", "\timul rcx", "\tmov rcx, rax", "\tpop rax", "\tadd rax, rcx"},
 		{"\tpush rax", "\tmov rax, [rbp-8]", "\tsub rsp, 8", "\tcall f", "\tadd rsp, 8", "\tmov rcx, rax", "\tpop rax", "\tadd rax, rcx"},
 		{"\tpush rax", "\tmov rax, [rbp-8]", "\tmov edx, [rax - 8]", "\tmov rcx, rax", "\tpop rax", "\tadd rax, rcx"},
 		{"\tpush rax", "\tmov rax, [rbp-8]", "\tjne .LifElse_3", "\tmov rcx, rax", "\tpop rax", "\tadd rax, rcx"},

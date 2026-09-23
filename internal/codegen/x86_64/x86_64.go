@@ -6517,6 +6517,11 @@ func narrowTo32(line, reg string) []string {
 	}
 	switch mnem {
 	case "mov", "add", "sub", "and", "or", "xor", "imul", "shl", "neg", "not", "inc", "dec":
+		// A count in cl is masked to five bits in the 32-bit form and six in
+		// the 64-bit one, so a variable shift keeps its width.
+		if strings.HasSuffix(ops, ", cl") {
+			break
+		}
 		if narrowed, ok := narrowRegOperands(ops, reg); ok {
 			return []string{"\t" + mnem + " " + narrowed}
 		}
@@ -6626,8 +6631,12 @@ func isRightOperandLine(line string) bool {
 	if isAsmLabel(line) {
 		return strings.HasPrefix(line, ".Lstridx_join_")
 	}
-	mnem, _, ok := splitInstr(line)
+	mnem, ops, ok := splitInstr(line)
 	if !ok {
+		return false
+	}
+	// One-operand mul and imul read rax and write rdx:rax without naming them.
+	if (mnem == "mul" || mnem == "imul") && !strings.Contains(ops, ", ") {
 		return false
 	}
 	if mnem[0] == 'j' {
