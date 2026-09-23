@@ -3870,6 +3870,21 @@ function main(): i32 {
     return v.len() - 2;
 }
 `},
+	// A checked string slice is an Option[str], and binds and returns as one.
+	// The driver's pre-lowering check typed it as its source string and
+	// refused both with E003 and E002, where native accepts them.
+	{name: "a-checked-slice-is-an-option", atLeast: 2, noLeak: true, src: `
+function f(t: string): Option[str] { return t[0:2]; }
+function main(): i32 {
+    var s: string = "abcdef";
+    var o: Option[str] = s[1:3];
+    var n: i32 = 0;
+    match (o) { Some(v) => { print(v); n = n + v.len(); }, None => { n = n + 10; } }
+    match (f(s)) { Some(v) => { print(v); n = n + v.len(); }, None => { n = n + 10; } }
+    match (s[5:9]) { Some(v) => { n = n + 10; }, None => { n = n + 1; } }
+    return n - 5;
+}
+`},
 	// A method call on a `dyn Trait` receiver: the widening borrows the
 	// record, and the call dispatches on its shape to the implementation
 	// (conformance/cases/dyn_trait_dispatch). Two implementations behind one
