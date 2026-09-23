@@ -3,9 +3,12 @@ package e2eselfhost
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 func TestSelfHostSSAPhiCyclesAcrossSpills(t *testing.T) {
@@ -32,7 +35,13 @@ func TestSelfHostSSAPhiCyclesAcrossSpills(t *testing.T) {
 				if err := os.WriteFile(path, []byte(source.String()), 0o600); err != nil {
 					t.Fatal(err)
 				}
-				h.compileWithSemantic(t, target, path, bin)
+				cmd := exec.Command(h.cli, "-target", target.target, "-o", bin, path, h.stdlib)
+				cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1", "FERN_SEM_IR=1", "FERN_SEM_IR_REPORT=1")
+				report, err := cmd.CombinedOutput()
+				if err != nil {
+					t.Fatalf("compile phi cycle: %v\n%s", err, report)
+				}
+				e2eharness.RequireCompleteSemanticLowering(t, report)
 				if out, code := h.runProduced(t, target, bin); code != 0 {
 					t.Fatalf("parallel swap corrupted value %d:\n%s", code-1, out)
 				}
