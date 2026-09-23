@@ -12,7 +12,7 @@
 // callee (no double-free, no premature free of the caller's cell).
 //
 // arm64 has its own structural-mirror counterpart now (slice 4c,
-// rc_heap_bump_dyn_trait_arm64_test.go) — both natives share this boxed
+// rc_heap_bump_dyn_trait_aarch64_test.go) — both natives share this boxed
 // reclaim; the broader native dyn dispatch/downcast tests stay green on
 // every backend.
 package e2e
