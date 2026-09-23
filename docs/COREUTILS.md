@@ -2771,11 +2771,89 @@ Three changes, each where `sort` spent time GNU does not.
 | `sort -m`, two sorted files | 151 ms | 129 ms | 41.5 ms |
 
 What is left in `-c` is about 260 instructions a line, spread over the line
-scan, the comparison and its byte kernel. `-m` still reads every input and
-joins the reads before merging, where GNU streams them. Streaming it needs a
-comparison of two lines in two different buffers, and every comparator here
-takes one text. The shuffled row is GNU's threads: it spends 265 ms of CPU
-time to finish in 167 ms.
+scan, the comparison and its byte kernel. `-m` streams now (next section).
+The shuffled row is GNU's threads: it spends 265 ms of CPU time to finish in
+167 ms.
+
+### sort -m streams, 2026-09-23 (GNU coreutils 9.12)
+
+`-m` read every input whole, split the text into a line array and merged
+that into a second array before writing a line. For two 6 MB files that is
+68 MB resident and 17,000 page faults, which is 36 ms of system time against
+GNU's 2. Making the faults cheaper does not help: `MADV_HUGEPAGE` on the
+arena cut the faults to 935 and left the system time where it was, because
+the cost is the bytes touched, not the number of faults.
+
+The merge now holds one buffer per input, as GNU does. Each input is read
+until its buffer holds a whole line, the smallest head line across the
+inputs is written, and the input it came from moves to its next line,
+refilling only when its buffer runs out. Memory is one read per input, so
+`-m` over presorted files larger than memory works, which is what the
+option is for. To compare lines held in two different buffers, every
+comparator takes a text for each side (`cmp_bytes(ta, a0, a1, tb, b0, b1)`
+and the rest); the sort passes its one text twice, at no measurable cost.
+`vercmp.compare_range` went with it. Opening the `-o` file empties it, so an
+input that is also the output, named or as standard input, is read whole
+before the output is opened, which is GNU's copy of it aside.
+
+| workload | before | after | GNU 9.12 |
+|---|---:|---:|---:|
+| `sort -m`, two sorted 6 MB files | 120 ms | 65.6 ms | 43.9 ms |
+| the same, self-hosted build | 141 ms | 99.3 ms | |
+| peak RSS | 68 MB | 10 MB | 10 MB |
+
+The per-line state lives in local arrays rather than in the struct the
+refill takes. Read out of an `own` struct into locals, the native
+compiler keeps the fields shared until the struct's exit drop, so each
+`.with` copied the array: 337 instructions a line in `advance` (#10084).
+
+### fmt's layout pass, 2026-09-23 (GNU coreutils 9.12)
+
+`choose` is GNU's dynamic program: for each word, the cheapest way to end a
+line there given the best layout of everything before it. It tried every
+earlier word as the line's start and recomputed each line's width by
+walking the words, and every word was its own record of strings and flags.
+
+- **A word is three i64s** in arrays that one `Words` value holds for the
+  whole run: its byte span, its line and flags (period, sentence end,
+  punctuation, parenthesis), and its trailing space and gap. The arrays are
+  reused from paragraph to paragraph, swapped with a spare so they stay
+  uniquely owned.
+- **Word ends are found by a table**: `__scan_set` skips a word's bytes in
+  blocks, and one byte-class table gives the flags.
+- **A line's width is a difference of prefix sums**, and the farthest word a
+  line from here can reach moves forward with a pointer, not a walk.
+- **Candidates are tried longest line first and pruned**: once a line is no
+  longer than the goal, a shorter one only adds shortness cost, so a
+  candidate whose cost is already above the best is cut off, with a
+  monotone deque holding the best layout cost seen so far.
+- The cost weights are constants rather than calls.
+
+Output is byte-identical to GNU on the prose bench input, in 400 random
+differential trials, and in the 1490-case corpus on both compilers.
+
+| workload | before | after | GNU 9.12 |
+|---|---:|---:|---:|
+| `fmt`, 2.8 MB of prose | 162 ms | 79.3 ms | 42.7 ms |
+| the same, self-hosted build | 179 ms | 142 ms | |
+
+That is 1287 M instructions down to 675 M. What is left is `choose` and
+`scan_body` at about 350 instructions a word between them, most of it the
+flat backend's operand traffic.
+
+### wc -L, 2026-09-23 (GNU coreutils 9.12)
+
+`-L` walked every byte to track the display width. `scan_width` now asks
+`__scan_set` for the next byte that is not a plain printable one, and adds
+the length of the run before it as width. Only tabs, control bytes, line
+ends and high bytes are handled one at a time, and the line ends it stops
+at are the line count. Without `-L` lines are `__count_byte`, and words are
+always `count_words`.
+
+| workload | before | after | GNU 9.12 |
+|---|---:|---:|---:|
+| `wc -L` of a 62 MiB file | 157 ms | 111 ms | 89.1 ms |
+| the same, self-hosted build | 241 ms | 161 ms | |
 
 ### ls, 2026-09-14, Linux x86-64 (GNU coreutils 9.4, uutils 0.0.24)
 

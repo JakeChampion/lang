@@ -33,6 +33,16 @@ func sortCases(t *testing.T) []invocation {
 	ba := catFile(t, dir, "ba", "b\na\n")
 	cd := catFile(t, dir, "cd", "c\nd\n")
 	nonl := catFile(t, dir, "nonl", "b\na")
+	mergeNine := checkLong(t, dir, "merge9", 9, -1, false)
+	mergeSixteen := checkLong(t, dir, "merge16", 16, -1, false)
+	mergeWide := catFile(t, dir, "mergewide", "a\n"+strings.Repeat("b", 300000)+"\nc")
+	mergeSelf := filepath.Join(dir, "mergeself")
+	prepMergeSelf := func(t *testing.T) {
+		t.Helper()
+		if err := os.WriteFile(mergeSelf, []byte("b\nd\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	empty := catFile(t, dir, "e0", "")
 	blanksFile := catFile(t, dir, "blanks", "  b\n a\nc\n")
 	nums := catFile(t, dir, "nums", "10\n9\n100\n1\n")
@@ -330,6 +340,20 @@ func sortCases(t *testing.T) []invocation {
 		{name: "merge with a key", args: []string{"-m", "-k2,2n", fields, fields}},
 		{name: "merge stdin", args: []string{"-m", ab, "-"}, stdin: "a\nz\n"},
 		{name: "merge empty file", args: []string{"-m", empty, ab}},
+		{name: "merge unterminated first", args: []string{"-m", nonl, cd}},
+		{name: "merge three", args: []string{"-m", cd, ba, ab}},
+		{name: "merge zero terminated", args: []string{"-m", "-z", "--", "-", ab}, stdin: "a\x00c\x00"},
+		// -m holds one read of each input at a time: lines straddle reads,
+		// one input runs out mid-merge, and -u compares across refills.
+		{name: "merge across reads", args: []string{"-m", mergeNine, mergeSixteen}},
+		{name: "merge across reads unique", args: []string{"-m", "-u", mergeNine, mergeNine}},
+		{name: "merge across reads with a key", args: []string{"-m", "-n", mergeSixteen, mergeNine}},
+		{name: "merge across reads from stdin", args: []string{"-m", "-", mergeSixteen}, stdin: checkLines(9, -1, false)},
+		{name: "merge a line longer than a read", args: []string{"-m", mergeWide, ab}},
+		// Opening the -o file empties it, so an input that is the output is
+		// read whole before that, and a named one is not the only way in.
+		{name: "merge onto an input", args: []string{"-m", "-o", mergeSelf, mergeSelf, cd}, prepare: prepMergeSelf, artifacts: []string{mergeSelf}},
+		{name: "merge onto stdin's file", args: []string{"-m", "-o", mergeSelf, "-", ab}, stdinPath: mergeSelf, prepare: prepMergeSelf, artifacts: []string{mergeSelf}},
 
 		// -c and -C.
 		{name: "check sorted", args: []string{"-c", ab}},
