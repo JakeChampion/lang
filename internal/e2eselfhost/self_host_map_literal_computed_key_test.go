@@ -225,6 +225,15 @@ function main(): i32 {
     var ss: string[] = ["ab", "cd"];
     return take(Map { ss[0i32]: 6i32, ss[1i32]: 4i32 });
 }`},
+	// Arithmetic over ident keys, in the second arm of an `if` whose first arm
+	// consumed the declaration's key kind. Reduced from fernsmith seed 139,
+	// where the negative key's hash read faulted on wasm. 7 + 3 + 2 = 12.
+	{"arithmetic_keys_in_sibling_literal", `import "core/map";
+function main(): i32 {
+    var a: i32 = 5i32;
+    var m: Map[i32, i32] = if (a < 0i32) { Map {} } else { Map { (a - (a ^ 726i32)): 7i32, -(a * 2i32): 3i32 } };
+    return m.get_or(0i32 - 718i32, 0i32) + m.get_or(0i32 - 10i32, 0i32) + m.len();
+}`},
 	// The direction the evidence rule must never flip: string-typed ident keys
 	// in the same un-annotated position stay string-keyed.
 	{"ident_string_keys_stay_string", `import "core/map";
