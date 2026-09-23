@@ -6003,7 +6003,8 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
     }
     if (k == 44) {
         s = s.need("heap");
-        s = s.write("    cmpq 8(" + a + "), " + b + "\n    jae __fern_oob_abort\n    movq (" + a + "), %rdx\n    movzbl (%rdx," + b + "), " + ssa_r32(d) + "\n");
+        if (ins.imm != 1) { s = s.write("    cmpq 8(" + a + "), " + b + "\n    jae __fern_oob_abort\n"); }
+        s = s.write("    movq (" + a + "), %rdx\n    movzbl (%rdx," + b + "), " + ssa_r32(d) + "\n");
         return ssa_store(reg_of, ins.result, d, s);
     }
     var c: string = ssa_src(reg_of, ins.args[2], "%rdx");
