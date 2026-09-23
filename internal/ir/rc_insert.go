@@ -831,12 +831,15 @@ func (b *builder) bindingUsesExcused(body ast.Node, name string, bt ast.Type, co
 				}
 			}
 		case *ast.Return:
-			// `return Some(c)`: the construction retains an alias payload
-			// (emitEnumNew / emitPairFormPayloadRetain, same gate), so the
-			// returned value holds a count of its own. A move site hands
-			// over the binding's reference instead and stays unexcused.
+			// `return Some(c)`: the construction retains an alias payload, so
+			// the returned value holds a count of its own. The gate is
+			// emitEnumNew's, the stricter of the two constructors' (the pair
+			// form's emitPairFormPayloadRetain drops the eligibility and reuse
+			// terms), so a construction that does not retain is never
+			// excused. A move site hands over the binding's reference instead.
 			if c, ok := x.Value.(*ast.Call); ok && countedAliasOK && len(c.Args) == 1 {
 				if id, ok := c.Args[0].(*ast.Ident); ok && id.Name == name && c.IsVariantCall &&
+					b.enumRcPayloadsEligibleForValue(c) && !b.rc.consumingMatchReuse[c] &&
 					needsRcIncOnAlias(id, b) && !b.rc.moveSites[id] {
 					excused[id] = true
 				}
