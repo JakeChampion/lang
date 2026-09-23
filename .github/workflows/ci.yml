@@ -240,6 +240,13 @@ jobs:
               const alwaysOnMain = ["perf"];
               // Lane id to the name its jobs carry under "Full suite / ".
               let display = null;
+              // A lane's own conditions skip some of its jobs (bootstrap's publish
+              // and release, outside a dispatch), so a skipped job is ignored.
+              const verdict = (mine) => {
+                if (mine.some((j) => j.conclusion === "failure" || j.conclusion === "timed_out")) return "failed";
+                const ran = mine.filter((j) => j.conclusion !== "skipped");
+                return ran.length > 0 && ran.every((j) => j.conclusion === "success") ? "passed" : "unknown";
+              };
               const laneNames = async () => {
                 if (display) return display;
                 const suite = Buffer.from((await github.rest.repos.getContent({
@@ -270,7 +277,7 @@ jobs:
                     });
                     const passed = Object.keys(lanes).filter((l) => {
                       const mine = display[l] ? jobs.filter((j) => j.name.startsWith(`Full suite / ${display[l]} / `)) : [];
-                      return mine.length > 0 && mine.every((j) => j.conclusion === "success");
+                      return verdict(mine) === "passed";
                     });
                     return { pr: pr.number, run: run.id, lanes: passed };
                   }
@@ -301,14 +308,23 @@ jobs:
                   for (const l of todo) {
                     const mine = display[l] ? jobs.filter((j) => j.name.startsWith(`Validate / Full suite / ${display[l]} / `)) : [];
                     // A lane a later push cancelled proves nothing either way; look further back.
-                    if (mine.some((j) => j.conclusion === "failure" || j.conclusion === "timed_out")) base[l] = null;
-                    else if (mine.length && mine.every((j) => j.conclusion === "success")) base[l] = run.head_sha;
+                    const v = verdict(mine);
+                    if (v === "failed") base[l] = null;
+                    else if (v === "passed") base[l] = run.head_sha;
                   }
                 }
+                const unproven = candidates.filter((l) => !base[l]);
+                if (unproven.length) core.info(`no passing main run to diff from: ${unproven.join(", ")}`);
                 const changed = {};
                 for (const b of new Set(Object.values(base).filter(Boolean))) {
                   const { data: cmp } = await github.rest.repos.compareCommitsWithBasehead({ owner, repo, basehead: `${b}...${context.sha}` });
-                  if (cmp.status !== "ahead" || (cmp.files || []).length >= 300) continue;
+                  const at = candidates.filter((l) => base[l] === b).join(", ");
+                  const n = (cmp.files || []).length;
+                  if (cmp.status !== "ahead" || n >= 300) {
+                    core.info(`last passed at ${b.slice(0, 7)} (${at}): compare is ${cmp.status} with ${n} file(s), so they run`);
+                    continue;
+                  }
+                  core.info(`last passed at ${b.slice(0, 7)} (${at}): ${n} file(s) changed since`);
                   changed[b] = cmp.files.flatMap((f) => f.previous_filename ? [f.filename, f.previous_filename] : [f.filename]);
                 }
                 return candidates.filter((l) => base[l] && changed[base[l]] && !runsOn(lanes[l], changed[base[l]]));
@@ -338,7 +354,7 @@ jobs:
               const on = Object.keys(out).filter((l) => out[l]);
               const off = Object.keys(out).filter((l) => !out[l]);
               core.info(files === null
-                ? (off.length ? `${on.length} lane(s) run, ${off.length} skipped (${why})` : `every lane runs: ${why}`)
+                ? (off.length ? `${on.length} lane(s) run, ${off.length} skipped` : `every lane runs: ${why}`)
                 : `${paths.length} changed path(s): ${on.length} lane(s) run, ${off.length} skipped`);
               if (provenOff.length) {
                 core.info(`${provenOff.length} lane(s) skipped: they passed on #${proven.pr}'s run ${proven.run} at this exact tree`);

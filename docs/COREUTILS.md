@@ -2855,6 +2855,24 @@ always `count_words`.
 | `wc -L` of a 62 MiB file | 157 ms | 111 ms | 89.1 ms |
 | the same, self-hosted build | 241 ms | 161 ms | |
 
+### join's matched keys and field ends, 2026-09-23 (GNU coreutils 9.12)
+
+Every matched key declared its two group arrays as `[]`, which allocates:
+two allocations a pair, although one line on each side, the common shape,
+never touches them. They are now declared once and built only when a
+second line with the key turns up. A default-mode field now ends at the
+first byte of a set holding the three blanks and the line terminator, one
+`__scan_set` a field. That replaces a `__memchr` for a space plus the tab
+and newline cursors that decided when it could be trusted.
+
+| workload | before | after | GNU 9.12 |
+|---|---:|---:|---:|
+| join two 100k-line files | 60.6 ms | 53.1 ms | 41.9 ms |
+
+That is 472 M instructions down to 426 M. About 390 of the roughly 2,100
+instructions left a line go to allocating and dropping the `Line` and `In`
+records each line builds.
+
 ### ls, 2026-09-14, Linux x86-64 (GNU coreutils 9.4, uutils 0.0.24)
 
 The same 4-core container, so read the columns against each other. The
