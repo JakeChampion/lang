@@ -263,6 +263,9 @@ func hexVal(r rune) int {
 // token kind so the parser can stay grammar-only — formatter / LSP
 // / hover-doc consumers walk the comment list explicitly.
 func Tokenize(src string) ([]Token, []ast.Comment, error) {
+	if err := checkUTF8(src); err != nil {
+		return nil, nil, err
+	}
 	l := &lexer{src: src, line: 1, col: 1}
 	// One token per 7 source bytes, plus a floor for files too short for the
 	// division to reserve anything. The repository's own Fern sources average
@@ -281,6 +284,28 @@ func Tokenize(src string) ([]Token, []ast.Comment, error) {
 		}
 		l.afterDot = tok.Kind == Punct && tok.Text == "."
 	}
+}
+
+// checkUTF8 refuses a source that is not valid UTF-8 anywhere, string literals
+// and comments included, naming the first byte that starts no valid sequence.
+func checkUTF8(src string) error {
+	if utf8.ValidString(src) {
+		return nil
+	}
+	line, col := 1, 1
+	for i := 0; i < len(src); {
+		r, size := utf8.DecodeRuneInString(src[i:])
+		if r == utf8.RuneError && size == 1 {
+			return &Error{Pos: ast.Position{Line: line, Col: col}, Msg: fmt.Sprintf("invalid UTF-8 byte 0x%02X", src[i])}
+		}
+		if r == '\n' {
+			line, col = line+1, 1
+		} else {
+			col += size
+		}
+		i += size
+	}
+	return nil
 }
 
 type lexer struct {
@@ -616,10 +641,7 @@ func (l *lexer) next() (Token, error) {
 // instead, and say so plainly when it is a letter, since "identifiers
 // must be ASCII" is the actionable form of that error.
 func (l *lexer) badCharError(start ast.Position) error {
-	r, size := utf8.DecodeRuneInString(l.src[l.i:])
-	if r == utf8.RuneError && size <= 1 {
-		return &Error{Pos: start, Msg: fmt.Sprintf("invalid UTF-8 byte 0x%02X", l.src[l.i])}
-	}
+	r, _ := utf8.DecodeRuneInString(l.src[l.i:])
 	if unicode.IsLetter(r) || unicode.IsDigit(r) {
 		return &Error{Pos: start, Msg: fmt.Sprintf("identifiers must be ASCII; found %q", r)}
 	}
