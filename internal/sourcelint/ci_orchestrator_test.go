@@ -412,6 +412,53 @@ func TestCILaneFiltersMatchTheirJobs(t *testing.T) {
 	}
 }
 
+// The bootstrap smoke compiles real programs from the tree, so the bootstrap
+// lane's paths must select every Fern source those programs reach through a
+// relative import; otherwise a change that breaks the smoke skips the lane.
+func TestBootstrapLaneWatchesTheSmokeSources(t *testing.T) {
+	root, err := repoRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	script, err := os.ReadFile(filepath.Join(root, "bootstrap", "bootstrap.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var queue []string
+	for _, m := range regexp.MustCompile(`\$ROOT/([A-Za-z0-9_./-]+\.fern)`).FindAllStringSubmatch(string(script), -1) {
+		queue = append(queue, m[1])
+	}
+	if len(queue) == 0 {
+		t.Fatal("bootstrap/bootstrap.sh names no $ROOT/*.fern source; if the smoke moved, update this gate with it")
+	}
+	paths := laneTable(t)["bootstrap"].Paths
+	relImport := regexp.MustCompile(`(?m)^import "(\.\.?/[^"]+)";`)
+	seen := map[string]bool{}
+	for len(queue) > 0 {
+		p := queue[0]
+		queue = queue[1:]
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		selected := false
+		for _, pat := range paths {
+			selected = selected || globMatches(pat, p)
+		}
+		if !selected {
+			t.Errorf("%s: the bootstrap lane's paths do not select %s, which the bootstrap smoke compiles", ciFile, p)
+		}
+		src, err := os.ReadFile(filepath.Join(root, p))
+		if err != nil {
+			t.Errorf("read %s: %v", p, err)
+			continue
+		}
+		for _, m := range relImport.FindAllStringSubmatch(string(src), -1) {
+			queue = append(queue, filepath.ToSlash(filepath.Join(filepath.Dir(p), m[1]+".fern")))
+		}
+	}
+}
+
 // permissionRequests returns the strongest level a workflow asks for per
 // scope, across its workflow-level and job-level `permissions:` blocks.
 func permissionRequests(src string) map[string]string {
