@@ -385,55 +385,65 @@ function section_footer(): i32 {
   return 2;
 }
 
-function style_of(s: State, o: Opts): Style {
+// The kind of the style the current section numbers by. A caller that
+// needs the style itself passes `o.header`, `o.body` or `o.footer`
+// straight on: a Style handed back from a function is retained and then
+// dropped, once a line.
+function kind_of(s: State, o: Opts): i32 {
   if (s.section == section_header()) {
-    return o.header;
+    return o.header.kind;
   }
   if (s.section == section_footer()) {
-    return o.footer;
+    return o.footer.kind;
   }
-  return o.body;
+  return o.body.kind;
 }
 
-// `check_section(line, o)` — which delimiter the line is, exactly: -1
-// for an ordinary line, else the section it starts. The match is on the
-// WHOLE line, so `\:\:\:x` is text.
-function check_section(line: string, o: Opts): i32 {
+// `check_section(buf, lo, hi, o)` — which delimiter the line `buf[lo, hi)`
+// is, exactly: -1 for an ordinary line, else the section it starts. The
+// match is on the WHOLE line, so `\:\:\:x` is text.
+function check_section(buf: string, lo: i32, hi: i32, o: Opts): i32 {
   // Every delimiter starts with the same byte, so an ordinary line is
   // told apart by its first byte before any whole-line comparison.
-  if (o.del1.len() == 0 || line.len() == 0 || line[0] as i32 != o.del1[0] as i32) {
+  if (o.del1.len() == 0 || hi == lo || buf[lo] as i32 != o.del1[0] as i32) {
     return 0 - 1;
   }
-  if (line == o.del3) {
+  if (span_is(buf, lo, hi, o.del3)) {
     return section_header();
   }
-  if (line == o.del2) {
+  if (span_is(buf, lo, hi, o.del2)) {
     return section_body();
   }
-  if (line == o.del1) {
+  if (span_is(buf, lo, hi, o.del1)) {
     return section_footer();
   }
   return 0 - 1;
 }
 
-// `numbered(line, st, s, o)` — whether this line takes a number, and
-// the blank-line run -l is counting carried forward.
-function numbered(line: string, st: State, sty: Style, o: Opts): (boolean, i64) {
+// Whether `buf[lo, hi)` is `s`.
+function span_is(buf: string, lo: i32, hi: i32, s: string): boolean {
+  var n: i32 = hi - lo;
+  return n == s.len() && __mismatch(buf, lo, s, 0, n) == n;
+}
+
+// `numbered(buf, lo, hi, st, sty, o)` — whether the line `buf[lo, hi)`
+// takes a number, and the blank-line run -l is counting carried forward.
+function numbered(buf: string, lo: i32, hi: i32, st: State, sty: Style, o: Opts): (boolean, i64) {
   if (sty.kind == style_none()) {
     return (false, st.blanks);
   }
   if (sty.kind == style_nonempty()) {
-    return (line.len() > 0, st.blanks);
+    return (hi > lo, st.blanks);
   }
   if (sty.kind == style_regex()) {
-    return (sty.re.search(line), st.blanks);
+    return (sty.re.search_range(buf, lo, hi), st.blanks);
   }
   // style_all with -l: a run of `join_blank` empty lines is numbered
   // once, at its last line.
   if (o.join_blank <= 1 as i64) {
     return (true, st.blanks);
   }
-  if (line.len() > 0) {
+  if (hi > lo) {
     return (true, 0 as i64);
   }
   var run: i64 = st.blanks + 1 as i64;
@@ -443,13 +453,25 @@ function numbered(line: string, st: State, sty: Style, o: Opts): (boolean, i64) 
   return (false, run);
 }
 
+// `numbered` under the current section's style.
+function numbered_here(buf: string, lo: i32, hi: i32, st: State, o: Opts): (boolean, i64) {
+  if (st.section == section_header()) {
+    return numbered(buf, lo, hi, st, o.header, o);
+  }
+  if (st.section == section_footer()) {
+    return numbered(buf, lo, hi, st, o.footer, o);
+  }
+  return numbered(buf, lo, hi, st, o.body, o);
+}
+
 // ---- the per-line work ------------------------------------------------------
 struct Emit { st: State, w: io_buffered.BufWriter }
 
-function proc_line(line: string, st0: State, o: Opts, w0: io_buffered.BufWriter): Emit {
+// The line `buf[lo, hi)`, without its newline.
+function proc_line(buf: string, lo: i32, hi: i32, st0: State, o: Opts, w0: io_buffered.BufWriter): Emit {
   var st: State = st0;
   var w: io_buffered.BufWriter = w0;
-  var sec: i32 = check_section(line, o);
+  var sec: i32 = check_section(buf, lo, hi, o);
   if (sec >= 0) {
     var next: State = State { ...st, section: sec, blanks: 0 as i64 };
     if (o.renumber) {
@@ -457,13 +479,12 @@ function proc_line(line: string, st0: State, o: Opts, w0: io_buffered.BufWriter)
     }
     return Emit { st: next, w: gnu.put(w, "\n") };
   }
-  var sty: Style = style_of(st, o);
-  var r: (boolean, i64) = numbered(line, st, sty, o);
+  var r: (boolean, i64) = numbered_here(buf, lo, hi, st, o);
   st = State { ...st, blanks: r.1 };
   if (!r.0) {
     var hb: usize = w.handle();
     buf_push(hb, o.blank);
-    buf_push(hb, line);
+    buf_push_range(hb, buf, lo, hi);
     buf_push_byte(hb, 10);
     return Emit { st: st, w: gnu.settle(w) };
   }
@@ -478,7 +499,7 @@ function proc_line(line: string, st0: State, o: Opts, w0: io_buffered.BufWriter)
   var h: usize = w.handle();
   push_lineno(h, st.line_no, o);
   buf_push(h, o.sep);
-  buf_push(h, line);
+  buf_push_range(h, buf, lo, hi);
   buf_push_byte(h, 10);
   w = gnu.settle(w);
   match (st.line_no.checked_add(o.incr)) {
@@ -492,14 +513,25 @@ function proc_line(line: string, st0: State, o: Opts, w0: io_buffered.BufWriter)
   return Emit { st: st, w: w };
 }
 
-// `fast_style(sty, o)` — whether lines under this style can take the fast
-// path: every line or every non-empty line numbered, or none, with no -l
-// run to count. A regular expression needs the line as a string.
-function fast_style(sty: Style, o: Opts): boolean {
-  if (sty.kind == style_all()) {
+// `fast_style(kind, o)` — whether lines under a style of this kind can
+// take the fast path: every line or every non-empty line numbered, none,
+// or the lines a regexp matches, with no -l run to count.
+function fast_style(kind: i32, o: Opts): boolean {
+  if (kind == style_all()) {
     return o.join_blank <= 1 as i64;
   }
-  return sty.kind == style_nonempty() || sty.kind == style_none();
+  return true;
+}
+
+// Whether the current section's regexp matches the line `buf[lo, hi)`.
+function matches_here(buf: string, lo: i32, hi: i32, st: State, o: Opts): boolean {
+  if (st.section == section_header()) {
+    return o.header.re.search_range(buf, lo, hi);
+  }
+  if (st.section == section_footer()) {
+    return o.footer.re.search_range(buf, lo, hi);
+  }
+  return o.body.re.search_range(buf, lo, hi);
 }
 
 // `Field` — the parts of the line-number field shared by the hundred
@@ -537,18 +569,17 @@ function next_line_no(n: i64, incr: i64): (boolean, i64) {
 
 // `fast_lines(buf, pos, st, o, w)` — the ordinary lines of `buf` from
 // `pos`, each pushed straight from the buffer: no line string, and no
-// state rebuilt per line. It stops at the first line it cannot take
-// (a possible delimiter, a style that needs the line, a number about to
+// state rebuilt per line. It stops at the first line it cannot take (a
+// possible delimiter, a style that counts -l runs, a number about to
 // overflow) or at the end of the complete lines, and answers where it
 // stopped.
 function fast_lines(buf: string, pos0: i32, st: State, o: Opts, w0: io_buffered.BufWriter): (i32, State, io_buffered.BufWriter) {
   var w: io_buffered.BufWriter = w0;
   var h: usize = w.handle();
-  var sty: Style = style_of(st, o);
-  if (!fast_style(sty, o) || st.over) {
+  var kind: i32 = kind_of(st, o);
+  if (!fast_style(kind, o) || st.over) {
     return (pos0, st, w);
   }
-  var kind: i32 = sty.kind;
   var d0: i32 = 0 - 1;
   if (o.del1.len() > 0) {
     d0 = o.del1[0] as i32;
@@ -563,7 +594,7 @@ function fast_lines(buf: string, pos0: i32, st: State, o: Opts, w0: io_buffered.
     if (j < 0 || j > pos && buf[pos] as i32 == d0) {
       break;
     }
-    if (kind == style_none() || kind == style_nonempty() && j == pos) {
+    if (kind == style_none() || kind == style_nonempty() && j == pos || kind == style_regex() && !matches_here(buf, pos, j, st, o)) {
       buf_push(h, o.blank);
     } else {
       var nx: (boolean, i64) = next_line_no(line_no, incr);
@@ -609,7 +640,7 @@ function proc_reader(r: Reader, name: string, st0: State, o: Opts, w0: io_buffer
     w = f.2;
     var j: i32 = __memchr(buf, 10, pos);
     if (j >= 0) {
-      var e: Emit = proc_line(slice_unchecked(buf, pos, j) + "", st, o, w);
+      var e: Emit = proc_line(buf, pos, j, st, o, w);
       st = e.st;
       w = e.w;
       pos = j + 1;
@@ -617,7 +648,7 @@ function proc_reader(r: Reader, name: string, st0: State, o: Opts, w0: io_buffer
     }
     if (eof) {
       if (pos < buf.len()) {
-        var e: Emit = proc_line(slice_unchecked(buf, pos, buf.len()) + "", st, o, w);
+        var e: Emit = proc_line(buf, pos, buf.len(), st, o, w);
         st = e.st;
         w = e.w;
       }

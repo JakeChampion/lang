@@ -34,6 +34,7 @@ func nlCases(t *testing.T) []invocation {
 	s4 := nlFile(t, dir, "s4", "a\nb\n\nc\n")
 	two := nlFile(t, dir, "two", "p\nq\n")
 	two2 := nlFile(t, dir, "two2", "r\ns\n")
+	threep := nlFile(t, dir, "threep", "p\nq\np\np\n")
 	// Every section in one file, twice over.
 	sec := nlFile(t, dir, "sec", "A\n\\:\\:\\:\nH1\n\\:\\:\nB1\nB2\n\\:\nF1\n\\:\\:\\:\nH2\n\\:\\:\nB3\n")
 	// One delimiter at a time, to show each one resets the numbering.
@@ -180,6 +181,7 @@ func nlCases(t *testing.T) []invocation {
 		{name: "increment lands on intmax", args: []string{"-v", "9223372036854775805", "-i", "2", two}},
 		{name: "decrement past intmin", args: []string{"-v", "-9223372036854775808", "-i", "-1", two}},
 		{name: "overflow is not reached on the last line", args: []string{"-v", "9223372036854775807", "-bn", two}},
+		{name: "regex numbering overflows past intmax", args: []string{"-v", "9223372036854775806", "-bpp", threep}},
 
 		// -s.
 		{name: "separator colon", args: []string{"-s:", s4}},

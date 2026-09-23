@@ -2932,6 +2932,33 @@ does. Since whitespace can be a word byte under `-b`, a context's words
 are now the scanned words cut to the context, as GNU's scan finds them,
 and the widest word is measured after the cut.
 
+### nl's regex style on the fast path, 2026-09-23 (GNU coreutils 9.12)
+
+`nl -bpRE` sent every line through `proc_line`. That meant a copy of the
+line into a string of its own, a call to `fast_lines` that returned at
+once with a fresh tuple, the style fetched as a retained `Style`, and the
+`State` and `BufWriter` rebuilt in an `Emit` record. The regex style now
+takes `fast_lines`' loop like the others do. The line is searched where
+it sits, with `search_range` over the read buffer, and a line goes to
+`proc_line` only when it might be a delimiter or its number would
+overflow. `proc_line` itself works on the buffer range too.
+
+| workload | before | after | GNU 9.12 |
+|---|---:|---:|---:|
+| nl -bp7 a 3 MiB file | 142.7 ms | 36.5 ms | 85.4 ms |
+
+That is 1.09 G instructions down to 271 M.
+
+Searching the read buffer in place first leaked every 64 KiB buffer read,
+because of a gap in the compiler's retain summaries. They are least
+fixpoints that start all-false, so a recursive function passing its
+parameter back into the same slot (bre's `add_thread` passes the text it
+matches in) could never be credited. That refusal travelled up through
+`search_range` to nl's loop, where the buffer stayed borrow-tainted and
+was never released. A direct self-recursive call's argument in the
+parameter's own slot is now credited. Any retention the recursion does
+make happens at some other occurrence, which still refutes it.
+
 ### ls, 2026-09-14, Linux x86-64 (GNU coreutils 9.4, uutils 0.0.24)
 
 The same 4-core container, so read the columns against each other. The
