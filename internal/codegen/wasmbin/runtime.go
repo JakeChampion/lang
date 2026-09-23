@@ -613,7 +613,8 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 				case "__fern_fd_fsync", "__fern_fd_fdatasync", "__fern_fd_syncfs",
 					"__fern_fd_dup_onto",
 					"__fern_handle_window_size", "__fern_handle_set_window_size",
-					"__fern_handle_termios_get", "__fern_handle_termios_set":
+					"__fern_handle_termios_get", "__fern_handle_termios_set",
+					"__fern_reader_splice":
 					// (r) → i32 — write-back of the handle;
 					// Option[IoError]. syncfs reaches no import:
 					// neither preview has a per-filesystem flush,
@@ -622,7 +623,8 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					// refused the same way. The last four are the
 					// terminal questions asked of a handle, refused
 					// for the same reason and carrying it in a
-					// Result rather than an Option (#9363).
+					// Result rather than an Option (#9363), and so
+					// is splice_to: neither world can splice.
 					needs.add("__fern_alloc")
 					needs.add("__fern_alloc_rc1")
 					needs.add("__build_io_error")
@@ -1280,6 +1282,7 @@ var preview2HelperCalls = map[string][]string{
 	"__fern_handle_set_window_size": {"__wasi_errno_of_code"},
 	"__fern_handle_termios_get":     {"__wasi_errno_of_code"},
 	"__fern_handle_termios_set":     {"__wasi_errno_of_code"},
+	"__fern_reader_splice":          {"__wasi_errno_of_code"},
 	"__fern_reader_seek":            {"__wasi_errno_of_code"},
 	"__fern_writer_seek":            {"__wasi_errno_of_code"},
 	"__fern_reader_flags":           {"__wasi_errno_of_code"},
@@ -1343,6 +1346,7 @@ var helperResultBoxCallers = []string{
 	"__fern_fd_dup_onto",
 	"__fern_handle_window_size", "__fern_handle_set_window_size",
 	"__fern_handle_termios_get", "__fern_handle_termios_set",
+	"__fern_reader_splice",
 	"__fern_remove_file", "__fern_stat", "__fern_lstat", "__fern_read_dir",
 	"__fern_read_dir_all",
 	"__fern_remove_dir_all", "__fern_temp_dir",
@@ -2983,6 +2987,14 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 	"__fern_handle_set_window_size": {
 		// (r, rows, cols) -> i32 - the same refusal, and none to
 		// configure either.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildHandleTtyRefusal(3),
+	},
+	"__fern_reader_splice": {
+		// (r, w, max) -> i32 - heap-form Result[i64, IoError], always
+		// Err(Unsupported), which promises nothing moved: neither
+		// preview can splice, so the caller reads and writes.
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildHandleTtyRefusal(3),

@@ -344,6 +344,10 @@ var f64UnaryIntrinsic = map[string]string{
 
 var linuxOnlySysno = map[string]int{
 	"getrandom": sysGetrandom,
+	// splice(2) and pipe2(2), behind `Reader.splice_to`. XNU has neither,
+	// and __fern_reader_splice answers Unsupported there without a call.
+	"splice": 76,
+	"pipe2":  59,
 	// fchmodat2: the flags-taking fchmodat, which `chmod_at` issues for
 	// its nofollow case. XNU's fchmodat takes the flag itself, so
 	// __fern_chmod_at branches on g.darwin rather than reaching this
@@ -654,7 +658,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// without the Reader API.
 	if g.usesReadFile || g.usesReadFileBytes || g.usesWriteFile || g.usesWriteFileExec ||
 		g.usesRemoveFile || g.usesTempDir || g.usesReadDir || g.usesReadDirAll || g.usesStat || g.usesLstat ||
-		g.usesFdStat || g.usesReaderSeek || g.usesFdFlags || g.usesWriterTruncate ||
+		g.usesFdStat || g.usesReaderSeek || g.usesReaderSplice || g.usesFdFlags || g.usesWriterTruncate ||
 		g.usesAccess || g.usesRemoveDirAll || g.usesCreateDirAll ||
 		g.usesCreateDir || g.usesChdir || g.usesChroot || g.usesRemoveDir || g.usesCreateLink ||
 		g.usesCreateSymlink || g.usesReadLink || g.usesStatfs ||
@@ -1143,6 +1147,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesReaderSeek {
 		g.emitReaderSeekRuntime()
+	}
+	if g.usesReaderSplice {
+		g.emitReaderSpliceRuntime()
 	}
 	if g.usesFdFlags {
 		g.emitFdFlagsRuntime()
@@ -13590,6 +13597,149 @@ func (g *generator) emitReaderSeekRuntime() {
 	g.line(".ltorg")
 }
 
+// emitReaderSpliceRuntime emits `__fern_reader_splice(reader_ptr,
+// writer_ptr, max)` in (x0, x1, w2) → Result[i64, IoError], the x86-64
+// helper of the same name: a direct splice(2), and on EINVAL the pipe
+// cached in __fern_splice_pipe after an empty-pipe probe of the writer.
+// Every failure before bytes leave the reader is Unsupported; a drain
+// failure is the writer's and discards the pipe. Darwin has no splice
+// and answers Unsupported without a call.
+func (g *generator) emitReaderSpliceRuntime() {
+	g.line("")
+	if g.darwin {
+		g.line(`.section __DATA,__bss`)
+	} else {
+		g.line(`.section .bss`)
+	}
+	g.line(".p2align 3")
+	g.label("__fern_splice_pipe")
+	g.line("\t.space 16")
+	g.line(".text")
+	g.line(".global __fern_reader_splice")
+	g.typeDirective("__fern_reader_splice")
+	g.label("__fern_reader_splice")
+	g.emit("stp x29, x30, [sp, #-64]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("str x23, [sp, #48]")
+	if !g.darwin {
+		splice := func(in func(), out string, n string, flags int) {
+			in()
+			g.emit("mov x1, xzr")
+			if out == "pipe_w" {
+				g.emit("ldr w2, [x23, #4]")
+			} else {
+				g.emit("mov w2, %s", out)
+			}
+			g.emit("mov x3, xzr")
+			g.emit("mov x4, %s", n)
+			g.emit("mov x5, #%d", flags)
+			g.syscall("splice")
+		}
+		fromReader := func() { g.emit("mov w0, w19") }
+		fromPipe := func() { g.emit("ldr w0, [x23]") }
+		g.emit("ldr w19, [x0]") // reader fd
+		g.emit("ldr w20, [x1]") // writer fd
+		g.emit("sxtw x21, w2")  // max
+		g.adrpAdd("x23", "__fern_splice_pipe")
+		splice(fromReader, "w20", "x21", 0)
+		g.emit("mov x22, x0")
+		g.emit("tbz x0, #63, .Lrspl_grow")
+		g.emit("cmn x0, #22") // EINVAL: no pipe on either side
+		g.emit("b.ne .Lrspl_unsup")
+		g.emit("ldr x9, [x23]")
+		g.emit("cbnz x9, .Lrspl_have")
+		g.emit("mov x0, x23")
+		g.emit("mov x1, #0x80000") // O_CLOEXEC
+		g.syscall("pipe2")
+		g.emit("cbnz x0, .Lrspl_unsup")
+		g.emit("ldr w0, [x23, #4]")
+		g.emit("mov x1, #1031") // F_SETPIPE_SZ
+		g.emit("mov x2, x21")
+		g.syscall("fcntl")
+		g.label(".Lrspl_have")
+		splice(fromPipe, "w20", "#1", 2) // SPLICE_F_NONBLOCK
+		g.emit("cmn x0, #11")            // EAGAIN: the writer takes spliced bytes
+		g.emit("b.ne .Lrspl_unsup")
+		splice(fromReader, "pipe_w", "x21", 0)
+		g.emit("tbnz x0, #63, .Lrspl_unsup")
+		g.emit("mov x22, x0") // moved
+		g.emit("mov x21, x0") // still in the pipe
+		g.label(".Lrspl_drain")
+		g.emit("cbz x21, .Lrspl_ok")
+		splice(fromPipe, "w20", "x21", 0)
+		g.emit("cmp x0, #0")
+		g.emit("b.le .Lrspl_derr")
+		g.emit("sub x21, x21, x0")
+		g.emit("b .Lrspl_drain")
+		g.label(".Lrspl_derr")
+		g.emit("cmn x0, #4") // EINTR
+		g.emit("b.eq .Lrspl_drain")
+		g.emit("mov x22, x0")
+		g.emit("ldr w0, [x23]")
+		g.syscall("close")
+		g.emit("ldr w0, [x23, #4]")
+		g.syscall("close")
+		g.emit("str xzr, [x23]")
+		g.emit("neg x0, x22")
+		g.emit("mov x9, #5") // a writer that takes nothing without saying why is EIO
+		g.emit("cmp x22, #0")
+		g.emit("csel x0, x9, x0, eq")
+		g.emitEmptyPathArgs()
+		g.emit("bl __fern_io_error")
+		g.emit("b .Lrspl_err")
+		// A direct splice had a pipe on one side; a writer that is one
+		// grows to hold max, as GNU grows stdout's, or each call moves
+		// 64 KiB.
+		g.label(".Lrspl_grow")
+		g.emit("add w9, w20, #1") // the writer last checked, plus one
+		g.emit("ldr w10, [x23, #8]")
+		g.emit("cmp w10, w9")
+		g.emit("b.eq .Lrspl_ok")
+		g.emit("str w9, [x23, #8]")
+		g.emit("mov w0, w20")
+		g.emit("mov x1, #1032") // F_GETPIPE_SZ
+		g.syscall("fcntl")
+		g.emit("tbnz x0, #63, .Lrspl_ok")
+		g.emit("cmp x0, x21")
+		g.emit("b.ge .Lrspl_ok")
+		g.emit("mov w0, w20")
+		g.emit("mov x1, #1031") // F_SETPIPE_SZ
+		g.emit("mov x2, x21")
+		g.syscall("fcntl")
+		g.emit("b .Lrspl_ok")
+	}
+	g.label(".Lrspl_unsup")
+	g.emit("mov x0, #8")
+	g.emit("bl __fern_alloc_box")
+	g.emit("mov w1, #5") // IoError::Unsupported
+	g.emit("str w1, [x0]")
+	g.label(".Lrspl_err")
+	g.emit("mov x22, x0")
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov w1, #1")
+	g.emit("str w1, [x0]") // Err
+	g.emit("str x22, [x0, #8]")
+	if !g.darwin {
+		g.emit("b .Lrspl_ret")
+		g.label(".Lrspl_ok")
+		g.emit("mov x0, #16")
+		g.emit("bl __fern_alloc_rc1")
+		g.emit("str wzr, [x0]") // Ok
+		g.emit("str x22, [x0, #8]")
+		g.label(".Lrspl_ret")
+	}
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldr x23, [sp, #48]")
+	g.emit("ldp x29, x30, [sp], #64")
+	g.emit("ret")
+	g.sizeDirective("__fern_reader_splice")
+	g.line(".ltorg")
+}
+
 // emitFdFlagsRuntime emits `__fern_fd_flags(handle_ptr)` in x0 →
 // Result[i64, IoError]: fcntl(fd, F_GETFL) reduced to Fern's own three
 // bits — 1 readable, 2 writable, 4 appending. A Reader and a Writer hold
@@ -16089,6 +16239,7 @@ type generator struct {
 	usesLstat        bool
 	usesFdStat       bool
 	usesReaderSeek   bool
+	usesReaderSplice bool
 	usesFdFlags      bool
 	usesHandleIsatty bool
 	// usesHandleTty pulls in the four terminal questions' handle forms —
@@ -20789,6 +20940,9 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// and a Writer hold the fd at the same place.
 			target = "__fern_reader_seek"
 			g.usesReaderSeek = true
+		case "__method_Reader_splice_to":
+			target = "__fern_reader_splice"
+			g.usesReaderSplice = true
 		case "__method_Writer_truncate":
 			// ftruncate(2) on the handle's fd → Option[IoError].
 			target = "__fern_writer_truncate"

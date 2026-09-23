@@ -1945,21 +1945,6 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
     ]);
 }
 
-// needs_io_error_shapes is __fern_io_error's own gate — needs_fs_runtime
-// minus the four that never build an IoError. The two move together: a
-// filesystem need added to one and not the other leaves the helper
-// referencing a shape label the literal pool never interned.
-function needs_io_error_shapes(s: asmcore.EmitState): boolean {
-    return s.any_need([
-        "read_file", "read_file_bytes", "write_file", "write_file_exec",
-        "remove_file", "stat", "lstat", "statfs", "access", "read_dir", "read_dir_all",
-        "remove_dir_all", "temp_dir", "create_dir_all", "create_dir",
-        "remove_dir", "create_link", "create_symlink", "rename", "chmod", "chmod_at",
-        "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times",
-        "read_link", "chdir", "chroot", "setuid", "setgid", "setgroups", "writer_truncate", "fd_fsync", "fd_fdatasync", "fd_syncfs"
-    ]);
-}
-
 // needs_heap_runtime gates the allocator and the RC runtime. `heap` is the
 // need an allocating op marks; the rest are the helpers whose own bodies
 // allocate, so a program that never allocates directly still pulls the
@@ -7312,6 +7297,12 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
         s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n");
         s = s.write("    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n    call __fn___fern_reader_seek\n    addq $24, %rsp\n    pushq %rax\n");
         s = s.need("heap"); s = s.need("reader"); s = s.need("reader_seek");
+    } else if (o.kind_tag == 330) {  // reader_splice
+        // [fd][out_fd][max] (max on top) -> Result[i64, IoError], re-pushed
+        // with param[0] (fd) on top as reader_seek is.
+        s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n");
+        s = s.write("    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n    call __fn___fern_reader_splice\n    addq $24, %rsp\n    pushq %rax\n");
+        s = s.need("heap"); s = s.need("reader"); s = s.need("reader_splice");
     } else if (o.kind_tag == 281) {  // writer_truncate
         // [fd][length]; the Fern __fn___fern_writer_truncate(fd, length)
         // pushes a fresh Option[IoError]. The length is on top but param[0]
@@ -8588,10 +8579,15 @@ function emit_ir_runtime_fern_fn(src: string, all_structs: irlower.StructTab, s:
     var vsigs: irverify.NameIndex = irlower.fn_sig_index(fns);
     var lit0: i32 = s.string_lits.len();
     var agg0: i32 = s.const_aggs.len();
+    var sh0: i32 = s.shape_lits.len();
     var i: i32 = 0;
     while (i < fns.len()) {
         s = emit_function_via_ir(fns[i], s, sg, vsigs);
         i = i + 1;
+    }
+    if (s.shape_lits.len() > sh0) {
+        s = asmcore.emit_shape_lits_from(s, sh0);
+        s = s.write("    .text\n");
     }
     if (s.string_lits.len() > lit0) {
         s = s.write("    .section .rodata\n");
@@ -9009,27 +9005,6 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         var prPre: asmcore.ShapeRefOut = asmcore.shape_ref(s, "ProcessResult");
         s = prPre.state;
     }
-    // Pre-intern the IoError variant shapes for __fern_io_error (#4370) —
-    // same reasoning as FileStat above; keep the gate in sync with the
-    // helper's own (the union of the fs needs).
-    if (needs_io_error_shapes(s)) {
-        var ioePre1: asmcore.ShapeRefOut = asmcore.shape_ref(s, "NotFound");
-        s = ioePre1.state;
-        var ioePre2: asmcore.ShapeRefOut = asmcore.shape_ref(s, "PermissionDenied");
-        s = ioePre2.state;
-        var ioePre3: asmcore.ShapeRefOut = asmcore.shape_ref(s, "AlreadyExists");
-        s = ioePre3.state;
-        var ioePre4: asmcore.ShapeRefOut = asmcore.shape_ref(s, "Interrupted");
-        s = ioePre4.state;
-        var ioePre5: asmcore.ShapeRefOut = asmcore.shape_ref(s, "Other");
-        s = ioePre5.state;
-        // InvalidUtf8 is constructed by rt_src_read_file's D9 validation
-        // (#5714) — the one IoError variant no compiler user-code names, so
-        // without this pre-intern its weak shape def is recorded only AFTER
-        // the flush below and the per-module link dangles.
-        var ioePre6: asmcore.ShapeRefOut = asmcore.shape_ref(s, "InvalidUtf8");
-        s = ioePre6.state;
-    }
     // .rodata: each interned string literal as a labelled `.ascii` directive
     // (GAS interprets the escapes), matching asm.fern's emit_module so the box's
     // .S<idx> data pointer resolves. string_lits was populated by const_str.
@@ -9052,16 +9027,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     // boundary (a token constructed in the lexer unit matches in the parser unit).
     // Only populated on the per-module path (shape_ref interns shapes as ordinary
     // string literals when str_ns == "", so the whole-program emit is unchanged).
-    if (s.shape_lits.len() > 0) {
-        s = s.write("    .section .rodata\n");
-        var shi: i32 = 0;
-        while (shi < s.shape_lits.len()) {
-            var shsym: string = asmcore.shape_sym(s.shape_lits[shi]);
-            s = s.write(".weak " + shsym + "\n");
-            s = s.write(shsym + ": .ascii \"" + asmcore.escape_for_ascii(s.shape_lits[shi]) + "\"\n");
-            shi = shi + 1;
-        }
-    }
+    s = asmcore.emit_shape_lits_from(s, 0);
     // The "maps" / "heap" needs were marked per-function during the emit loop
     // above (off the ops each lower_func already produced), so there is no need to
     // re-lower the module here. The whole-program extra_needs (sibling modules'
@@ -9517,6 +9483,10 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         if (s.has_need("reader")) { fs_src = fs_src + " " + asmcore.rt_src_reader_read_chunk("x86_64") + " " + asmcore.rt_src_reader_close("x86_64"); }
         if (s.has_need("fd_stat")) { fs_src = fs_src + " " + asmcore.rt_src_fd_stat("x86_64"); }
         if (s.has_need("reader_seek")) { fs_src = fs_src + " " + asmcore.rt_src_reader_seek("x86_64"); }
+        if (s.has_need("reader_splice")) {
+            s = s.write("    .section .bss\n    .align 8\n__fern_splice_pipe: .quad 0, 0\n    .text\n");
+            fs_src = fs_src + " " + asmcore.rt_src_reader_splice("x86_64");
+        }
         if (s.has_need("fd_flags")) { fs_src = fs_src + " " + asmcore.rt_src_fd_flags("x86_64"); }
         if (s.has_need("fd_dup_onto")) { fs_src = fs_src + " " + asmcore.rt_src_fd_dup_onto("x86_64"); }
         if (s.has_need("writer_truncate")) { fs_src = fs_src + " " + asmcore.rt_src_writer_truncate("x86_64"); }

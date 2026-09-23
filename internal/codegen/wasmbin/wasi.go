@@ -2892,6 +2892,7 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 	"__fern_handle_set_window_size": buildHandleTtyRefusal(3),
 	"__fern_handle_termios_get":     buildHandleTtyRefusal(1),
 	"__fern_handle_termios_set":     buildHandleTtyRefusal(3),
+	"__fern_reader_splice":          buildHandleTtyRefusal(3),
 	"__fern_reader_seek":            buildReaderSeekBodyP2,
 	"__fern_writer_seek":            buildWriterSeekBodyP2,
 	"__fern_reader_flags":           buildReaderFlagsBodyP2,
