@@ -188,7 +188,10 @@ func TestBuildRejectsBrokenMultiModuleSmoke(t *testing.T) {
 	}{
 		{"compile", `[ -f "$tr_source" ] || exit 1`, `exit 1`, "could not compile coreutils/tr.fern"},
 		{"run", `exec tr "$@"`, `exit 1`, "tr compiled by"},
-		{"output", `exec tr "$@"`, `printf abc`, "printed 'abc', want 'xyz'"},
+		// The wrong tr drains its input first: the smoke pipes into it under
+		// pipefail, so one that exits unread can fail the pipeline with SIGPIPE
+		// before the output is ever compared.
+		{"output", `exec tr "$@"`, `cat >/dev/null; printf abc`, "printed 'abc', want 'xyz'"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := checkout(t)
