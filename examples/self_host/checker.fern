@@ -1236,7 +1236,9 @@ pub struct MethodSig { name: string, receiver_type: string, param_types: typeinf
 // `type U = P | Q` alias's variant IS a declared struct. The struct table is
 // keyed by the bare name alone, so without this a plain struct sharing a
 // payloadless variant's name is read as that variant's payload (#9900).
-pub struct UnionSig { name: string, variants: string[], is_try: boolean, is_enum: boolean }
+// module is the bundle prefix of the import that declared an enum, "" for the
+// entry module and for a union alias.
+pub struct UnionSig { name: string, variants: string[], is_try: boolean, is_enum: boolean, module: string }
 
 // A flat name → type map plus the function signature table
 // plus the struct-decl table plus the union-alias table.
@@ -1474,6 +1476,22 @@ pub struct UnionTable {
   names: string[],
   head: i32[],
   next: i32[],
+  // lib_head / lib_next index the same entries minus the entry module's enums.
+  // An import cannot name the entry, and the entry's variants are the only
+  // ones the bundler leaves unmangled, so a bare `Ok` in std/json would
+  // otherwise resolve to a program's `enum Reply { Ok, … }` (#10120).
+  lib_head: i32[],
+  lib_next: i32[],
+  // from_import selects the lib_ index: the scope is a function an import
+  // declared (build_func_scope).
+  from_import: boolean,
+}
+
+// enum_union_sig registers an enum as a union sig (variants = variant names),
+// so an enum-typed scrutinee types to TypeUnion and exhaustiveness and
+// union-variant assignability cover enums the way they cover aliases.
+function enum_union_sig(ed: parser.EnumDecl): UnionSig {
+  return UnionSig { name: ed.name, variants: ed.variant_names, is_try: ed.try_marker, is_enum: true, module: ed.module };
 }
 
 // union_table indexes every union's variants by variant name. Built backward so
@@ -1506,11 +1524,17 @@ function union_table(unions: UnionSig[]): UnionTable {
     next = next.append(0 - 1);
     j = j + 1;
   }
+  var lib_head: i32[] = head;
+  var lib_next: i32[] = next;
   var k: i32 = vnames.len() - 1;
   while (k >= 0) {
     var bk: i32 = sig_name_bucket(vnames[k]);
     next = next.with(k, head[bk]);
     head = head.with(bk, k);
+    if (!declared_by_entry(unions[vowner[k]])) {
+      lib_next = lib_next.with(k, lib_head[bk]);
+      lib_head = lib_head.with(bk, k);
+    }
     k = k - 1;
   }
   var names: string[] = [];
@@ -1519,7 +1543,28 @@ function union_table(unions: UnionSig[]): UnionTable {
     names = names.append(unions[m].name);
     m = m + 1;
   }
-  return UnionTable { unions: unions, vnames: vnames, vowner: vowner, names: names, head: head, next: next };
+  return UnionTable { unions: unions, vnames: vnames, vowner: vowner, names: names, head: head, next: next, lib_head: lib_head, lib_next: lib_next, from_import: false };
+}
+
+function declared_by_entry(u: UnionSig): boolean {
+  return u.is_enum && u.module.len() == 0;
+}
+
+// seen_from is the table as the function `fd` reads the variant namespace.
+function (ut: UnionTable) seen_from(fd: parser.FuncDecl): UnionTable {
+  return UnionTable { ...ut, from_import: fd.module.len() > 0 };
+}
+
+// variant_chain_head / variant_chain_next walk the variant index this scope
+// sees: every enum, or, from an import, every enum but the entry's.
+function (ut: UnionTable) variant_chain_head(name: string): i32 {
+  if (ut.from_import) { return ut.lib_head[sig_name_bucket(name)]; }
+  return ut.head[sig_name_bucket(name)];
+}
+
+function (ut: UnionTable) variant_chain_next(e: i32): i32 {
+  if (ut.from_import) { return ut.lib_next[e]; }
+  return ut.next[e];
 }
 
 // MethodTable is the module's receiver-method table plus a bucket index over the
@@ -1817,12 +1862,12 @@ function is_reserved_struct_name(name: string): boolean {
 // variant_in_unions reports whether `name` is a variant of ANY declared
 // enum/union in scope.
 function variant_in_unions(name: string, unions: UnionTable): boolean {
-  var e: i32 = unions.head[sig_name_bucket(name)];
+  var e: i32 = unions.variant_chain_head(name);
   while (e >= 0) {
     if (unions.vnames[e] == name) {
       return true;
     }
-    e = unions.next[e];
+    e = unions.variant_chain_next(e);
   }
   return false;
 }
@@ -1851,15 +1896,15 @@ function is_nopayload_builtin_variant(name: string): boolean {
 // union_sig_of_variant returns the first declared enum/union in scope that
 // lists `name` as a variant, or the empty sig when none does.
 function union_sig_of_variant(name: string, unions: UnionTable): UnionSig {
-  var e: i32 = unions.head[sig_name_bucket(name)];
+  var e: i32 = unions.variant_chain_head(name);
   while (e >= 0) {
     if (unions.vnames[e] == name) {
       return unions.unions[unions.vowner[e]];
     }
-    e = unions.next[e];
+    e = unions.variant_chain_next(e);
   }
   var empty_v: string[] = [];
-  return UnionSig { name: "", variants: empty_v, is_try: false, is_enum: false };
+  return UnionSig { name: "", variants: empty_v, is_try: false, is_enum: false, module: "" };
 }
 
 // union_of_variant returns the NAME of that union, or "" when none declares
@@ -2476,12 +2521,45 @@ function (s: Scope) lookup_struct(name: string): StructSig {
 function (s: Scope) lookup_variant(name: string): StructSig {
   var i: i32 = s.structs.head[sig_name_bucket(name)];
   while (i >= 0) {
-    if (s.structs.structs[i].name == name && s.structs.structs[i].enum_owner.len() > 0) {
+    if (s.structs.structs[i].name == name && s.structs.structs[i].enum_owner.len() > 0 && !s.variant_hidden(s.structs.structs[i])) {
       return s.structs.structs[i];
     }
     i = s.structs.next[i];
   }
   return s.lookup_struct(name);
+}
+
+// variant_hidden reports whether the variant struct `v` belongs to an enum the
+// scope's variant index leaves out (UnionTable.lib_head).
+function (s: Scope) variant_hidden(v: StructSig): boolean {
+  if (!s.unions.from_import) { return false; }
+  var e: i32 = s.unions.head[sig_name_bucket(v.name)];
+  while (e >= 0) {
+    var u: UnionSig = s.unions.unions[s.unions.vowner[e]];
+    if (s.unions.vnames[e] == v.name && u.name == v.enum_owner) { return declared_by_entry(u); }
+    e = s.unions.next[e];
+  }
+  return false;
+}
+
+// variant_ambiguous reports whether a bare `name` is a variant of two or more
+// enums this scope sees, a built-in enum counting as one — the E036 case, where
+// the reference has no type until it is qualified. A variant repeated within
+// one enum is E017 and counts once.
+function (s: Scope) variant_ambiguous(name: string): boolean {
+  var n: i32 = 0;
+  if (mx_builtin_enum_of(name).len() > 0) { n = 1; }
+  var last: i32 = 0 - 1;
+  var e: i32 = s.unions.variant_chain_head(name);
+  while (e >= 0) {
+    var o: i32 = s.unions.vowner[e];
+    if (s.unions.vnames[e] == name && s.unions.unions[o].is_enum && o != last) {
+      n = n + 1;
+      last = o;
+    }
+    e = s.unions.variant_chain_next(e);
+  }
+  return n >= 2;
 }
 
 // lookup_owned_struct answers the variant struct `name` DECLARED BY enum
@@ -2980,7 +3058,7 @@ function (s: Scope) lookup_union(name: string): UnionSig {
   }
   // Sentinel: empty name signals "no such union".
   var empty_v: string[] = [];
-  return UnionSig { name: "", variants: empty_v, is_try: false, is_enum: false };
+  return UnionSig { name: "", variants: empty_v, is_try: false, is_enum: false, module: "" };
 }
 
 // try_able_union answers whether `?` accepts an operand of this union type.
@@ -3010,7 +3088,8 @@ function is_variant_of(struct_name: string, union_name: string, unions: UnionSig
       return false;
     }
   }
-  return false;
+  // The built-in enums are not in the table (mx_builtin_enum_of).
+  return mx_builtin_enum_of(struct_name) == union_name && union_name.len() > 0;
 }
 
 // type_assignable: is `from` usable where `to` is expected?
@@ -3637,6 +3716,9 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
         if (name == "values") {
           return t_array(mt.value);
         }
+        if (name == "iter" && c.args.len() == 0) {
+          return t_struct_g("MapIter", [mt.key, mt.value]);
+        }
         // `cleared` returns the receiver's own Map type. Its absence did not
         // read as a missing method: the dispatch fell through to the user
         // MethodSig lookup, which types the call `unknown` — so
@@ -3648,6 +3730,15 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
             return t_unknown("map.cleared: 0 args");
           }
           return recv_ty;
+        }
+      },
+      // The MapIter cursor Map.iter() hands out (native registerMapIterMethod).
+      typeinfo.TypeStruct(it) => {
+        if (it.name == "MapIter" && it.args.len() == 2 && c.args.len() == 0) {
+          if (name == "has_next") { return t_bool(); }
+          if (name == "key") { return it.args[0]; }
+          if (name == "value") { return it.args[1]; }
+          if (name == "advance") { return t_void(); }
         }
       },
       _ => {}
@@ -3756,6 +3847,9 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
   // TypeFunc binding is already dispatched as a closure call above; this is
   // every other bound type). #6658.
   var ctor_shadowed: boolean = !is_unknown(s.lookup(name));
+  if (!ctor_shadowed && s.variant_ambiguous(name)) {
+    return t_unknown("ambiguous variant `" + name + "`");
+  }
   var ctor_user: string = "";
   if (!ctor_shadowed) {
     ctor_user = union_of_variant(name, s.unions);
@@ -3927,6 +4021,9 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
       // Builtin Option/Result variants aren't registered as unions here,
       // so they stay unknown (their generic payloads are a separate
       // slice).
+      if (s.variant_ambiguous(id.name)) {
+        return t_unknown("ambiguous variant `" + id.name + "`");
+      }
       var un: string = union_of_variant(id.name, s.unions);
       if (un.len() > 0 && !variant_carries_payload(s, id.name)) {
         return t_union(un);
@@ -4584,7 +4681,8 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
           ast.PatVariant(pv) => {
             var pvn: string = variant_pattern_name(pv.type_name);
             var ss: StructSig = s.lookup_variant(pvn);
-            if (ss.name.len() == 0) {
+            // Option's and Result's variants have no struct sig at all.
+            if (ss.name.len() == 0 && !is_variant_of(pvn, union_name, s.unions.unions)) {
               ok = false;
             } else {
               // Variant must be compatible with
@@ -5348,7 +5446,7 @@ function collect_union_sigs(aliases: parser.TypeAlias[], struct_names: string[])
       k = k + 1;
     }
     if (!dup) {
-      out = out.append(UnionSig { name: a.name, variants: a.variants, is_try: false, is_enum: false });
+      out = out.append(UnionSig { name: a.name, variants: a.variants, is_try: false, is_enum: false, module: "" });
     }
   }
   return out;
@@ -5390,7 +5488,7 @@ function validate_union_sigs(unions: UnionSig[], struct_names: string[]): boolea
 // methods), then the parameters. Shared by check_func_body and the
 // coded-diagnostic walks so they bind names identically.
 function build_func_scope(fd: parser.FuncDecl, st: SigTable, structs: StructTable, unions: UnionTable, methods: MethodTable, imports: string[]): Scope {
-  var s: Scope = new_scope_full(st, structs, unions, methods, imports);
+  var s: Scope = new_scope_full(st, structs, unions.seen_from(fd), methods, imports);
   var tps: string[] = func_scope_tparams(fd);
   // A DERIVED associated function spells its receiver BARE (`Pair`, never
   // `Pair[T]`) so the struct-method monomorphiser keys on the plain name —
@@ -8813,6 +8911,9 @@ function variant_ctor_diags(qname: string, c: ast.ExprCall, s: Scope): util.Diag
   if (union_of_variant(vname, s.unions).len() == 0) {
     return out;
   }
+  if (dot_index(qname) < 0 && s.variant_ambiguous(vname)) {
+    return out;
+  }
   var want: i32 = variant_payload_count(qname, s.structs.structs);
   if (want < 0) {
     return out;
@@ -10903,7 +11004,7 @@ function vref_expr(e: ast.Expr, s: Scope, ambig: string[]): util.Diag[] {
   function at(n: ast.Expr, own acc: util.Diag[]): util.Diag[] {
     match (n) {
       ast.ExprIdent(id) => {
-        if (util.has_str(ambig, id.name) && is_unknown(s.lookup(id.name))) {
+        if (util.has_str(ambig, id.name) && is_unknown(s.lookup(id.name)) && s.variant_ambiguous(id.name)) {
           return acc.append(dg_at("E036", "variant \"" + id.name + "\" is declared in multiple enums — qualify the reference", id.line, id.col));
         }
         return acc;
@@ -15648,7 +15749,7 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
   // no enum decls, so this is inert on the bundle; it enables
   // exhaustiveness for user / corpus enum matches.
   for ed in mod.enums {
-    unions = unions.append(UnionSig { name: ed.name, variants: ed.variant_names, is_try: ed.try_marker, is_enum: true });
+    unions = unions.append(enum_union_sig(ed));
   }
   var well_typed: boolean = true;
   if (!validate_union_sigs(unions, struct_names)) {
@@ -16082,7 +16183,7 @@ function module_env(mod: parser.Module): ModuleEnv {
   }
   var unions: UnionSig[] = collect_union_sigs(mod.aliases, struct_names);
   for ed in mod.enums {
-    unions = unions.append(UnionSig { name: ed.name, variants: ed.variant_names, is_try: ed.try_marker, is_enum: true });
+    unions = unions.append(enum_union_sig(ed));
   }
   var union_names: string[] = union_sig_names(unions);
   var sigs: FuncSig[] = collect_func_sigs(mod.funcs, struct_names, union_names);
@@ -17105,7 +17206,7 @@ function build_module_tables(mod: parser.Module): ModuleTables {
   }
   var unions: UnionSig[] = collect_union_sigs(mod.aliases, struct_names);
   for ed in mod.enums {
-    unions = unions.append(UnionSig { name: ed.name, variants: ed.variant_names, is_try: ed.try_marker, is_enum: true });
+    unions = unions.append(enum_union_sig(ed));
   }
   var union_names: string[] = union_sig_names(unions);
   var sigs: FuncSig[] = collect_func_sigs(mod.funcs, struct_names, union_names);
