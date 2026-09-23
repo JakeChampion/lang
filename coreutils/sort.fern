@@ -1399,13 +1399,29 @@ function merge_files(c: Conf, text: string, lines: i64[], bounds: i32[]): i64[] 
 
 // ---- the sort ---------------------------------------------------------------
 //
+// `in_order(c, text, lines)` — whether no line sorts before the one ahead
+// of it. The merge below is stable, so such input is already its own
+// result, and GNU's merge finds that in one comparison a line where the
+// radix pass would cost a full sort. Unsorted input stops at its first
+// disorder.
+function in_order(c: Conf, text: string, lines: i64[]): boolean {
+  var i: i32 = 1;
+  while (i < lines.len()) {
+    if (compare(c, text, lines[i - 1], lines[i]) > 0) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+//
 // A bottom-up stable merge over line indices: only 4-byte indices move,
 // and equal lines keep their input order, which is what -u and -s both
 // rely on. Each pass writes a fresh destination rather than merging
 // through an alias.
 function sort_lines(c: Conf, text: string, lines: i64[]): i64[] {
   var n: i32 = lines.len();
-  if (n < 2) {
+  if (n < 2 || in_order(c, text, lines)) {
     return lines;
   }
   // The elements sorted are line INDICES, so the key spans and words
@@ -1710,13 +1726,9 @@ function out_put(o: Out, s: string): Out {
   return Out { ...o, w: w };
 }
 
-// `out_line(o, text, lo, hi, term)` — the line `text[lo..hi)` and its
-// terminator, pushed straight into the writer's builder rather than
-// sliced into a string first.
-function out_line(o: Out, text: string, lo: i32, hi: i32, term: i32): Out {
-  var h: usize = o.w.handle();
-  buf_push_range(h, text, lo, hi);
-  buf_push_byte(h, term);
+// `out_settle(o)` — flush once a block has built up in the writer's
+// builder, which the output loop pushes lines into directly.
+function out_settle(o: Out): Out {
   var w: io_buffered.BufWriter = o.w.settle();
   match (w.error()) {
     Some(e) => {
@@ -2292,23 +2304,72 @@ function numeric_locale_warnings(tab: i32, span: boolean): void {
 //
 // `-c` reports the first line that is out of order and exits 1; `-C`
 // exits 1 in silence. With -u, equal adjacent lines are disorder too.
-function check_order(c: Conf, name: string, text: string, lines: i64[], quiet: boolean): i32 {
-  var i: i32 = 1;
-  while (i < lines.len()) {
-    var d: i32 = compare(c, text, lines[i - 1], lines[i]);
-    var bad: boolean = d > 0;
-    if (c.unique && d == 0) {
-      bad = true;
-    }
-    if (bad) {
-      if (!quiet) {
-        var w: Writer = stderr();
-        var at: i32 = line_start(lines[i]);
-        w.write(gnu.prog() + ": " + name + ":" + (i + 1).to_string() + ": disorder: " + slice_unchecked(text, at, at + line_len(lines[i])) + term_string(c.term));
+//
+// The input is checked as it is read, as GNU checks it. Each read is
+// appended to what is left of the one before, the last whole line and a
+// partial one, so only that tail is copied and memory stays one read.
+function check_order(c: Conf, name: string, quiet: boolean): i32 {
+  var r: Reader = stdin();
+  if (name != "-") {
+    match (open_reader(name)) {
+      Ok(f) => {
+        r = f;
+      },
+      Err(e) => {
+        die_file("open failed", name, e);
       }
-      return 1;
     }
-    i = i + 1;
+  }
+  var buf: string = "";
+  var prev: i64 = 0 - 1 as i64;
+  var at: i32 = 0;
+  var lineno: i32 = 0;
+  var eof: boolean = false;
+  while (!eof) {
+    match (r.read_chunk(read_size())) {
+      Ok(chunk) => {
+        if (chunk.len() == 0) {
+          eof = true;
+        } else {
+          buf = buf + chunk;
+        }
+      },
+      Err(e) => {
+        die_file("read failed", name, e);
+      }
+    }
+    while (at < buf.len()) {
+      var end: i32 = __memchr(buf, c.term, at);
+      if (end < 0) {
+        if (!eof) {
+          break;
+        }
+        end = buf.len();
+      }
+      var line: i64 = pack_line(at, end - at);
+      lineno = lineno + 1;
+      if (prev >= 0 as i64) {
+        var d: i32 = compare(c, buf, prev, line);
+        if (d > 0 || c.unique && d == 0) {
+          if (!quiet) {
+            var w: Writer = stderr();
+            w.write(gnu.prog() + ": " + name + ":" + lineno.to_string() + ": disorder: " + slice_unchecked(buf, at, end) + term_string(c.term));
+          }
+          return 1;
+        }
+      }
+      prev = line;
+      at = end + 1;
+    }
+    if (!eof && prev >= 0 as i64) {
+      var keep: i32 = line_start(prev);
+      buf = slice_unchecked(buf, keep, buf.len()) + "";
+      prev = pack_line(0, line_len(prev));
+      at = at - keep;
+    }
+  }
+  if (name != "-") {
+    r.close();
   }
   return 0;
 }
@@ -2821,8 +2882,7 @@ function run(a0: Args): i32 {
   }
 
   if (a.checkonly != 0) {
-    var text: string = slurp(files[0], "open failed");
-    return check_order(c, files[0], text, split_lines(text, term), a.checkonly == 67);
+    return check_order(c, files[0], a.checkonly == 67);
   }
 
   check_inputs(files);
@@ -2854,6 +2914,8 @@ function run(a0: Args): i32 {
   }
 
   var out: Out = out_open(a.outfile, !a.have_out);
+  var h: usize = out.w.handle();
+  var block: i32 = gnu.block_bytes();
   var prev: i64 = 0 as i64;
   var have_prev: boolean = false;
   i = 0;
@@ -2868,7 +2930,11 @@ function run(a0: Args): i32 {
       if (c.debug) {
         out = debug_line(out, c, all, at, at + line_len(v));
       } else {
-        out = out_line(out, all, at, at + line_len(v), term);
+        buf_push_range(h, all, at, at + line_len(v));
+        buf_push_byte(h, term);
+        if (buf_len(h) >= block) {
+          out = out_settle(out);
+        }
       }
       prev = v;
       have_prev = true;

@@ -2744,6 +2744,39 @@ Reading from a pipe is set by GNU `cat` on the writing end, and the two runs
 are level within their spread (σ 1.2 and 1.4 ms). The self-hosted build is
 1.65×, 1.39× and 0.91× GNU on the same rows.
 
+### sort's check, sorted input and output loop, 2026-09-23 (GNU coreutils 9.12)
+
+Three changes, each where `sort` spent time GNU does not.
+
+- **`-c` reads as it goes.** It used to read the whole input, join the reads
+  into one string, and split that into a line array before comparing
+  anything: 18 ms of system time for the bench file, most of it page faults.
+  Now each read is appended to what is left of the one before, the last
+  whole line and a partial one, and lines are compared as they are found.
+  Memory is one read.
+- **Input already in order is returned as it is.** The merge is stable, so
+  a non-decreasing input is its own result. GNU's merge finds that in about
+  one comparison a line, where the radix pass cost 418 instructions a line
+  whatever the order. `in_order` makes the n − 1 comparisons first, and
+  unsorted input stops at its first disorder.
+- **The output loop pushes into the writer's builder** and flushes once a
+  block has built up. It used to rebuild an `Out` and a `BufWriter` for
+  every line, about 190 instructions a line.
+
+| workload | before | after | GNU 9.12 |
+|---|---:|---:|---:|
+| `sort -c`, sorted 500k-line file | 41.1 ms | 17.8 ms | 10.6 ms |
+| `sort`, sorted 500k-line file | 173 ms | 46 ms | 57 ms |
+| `sort`, 500k shuffled lines | 224 ms | 212 ms | 167 ms |
+| `sort -m`, two sorted files | 151 ms | 129 ms | 41.5 ms |
+
+What is left in `-c` is about 260 instructions a line, spread over the line
+scan, the comparison and its byte kernel. `-m` still reads every input and
+joins the reads before merging, where GNU streams them. Streaming it needs a
+comparison of two lines in two different buffers, and every comparator here
+takes one text. The shuffled row is GNU's threads: it spends 265 ms of CPU
+time to finish in 167 ms.
+
 ### ls, 2026-09-14, Linux x86-64 (GNU coreutils 9.4, uutils 0.0.24)
 
 The same 4-core container, so read the columns against each other. The
