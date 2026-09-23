@@ -13135,6 +13135,7 @@ function lower_call_path_scalars(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerSt
 function is_byte_kernel_call(name: string, argc: i32): boolean {
     if (name == "__memchr" || name == "__rmemchr") { return argc == 3; }
     if (name == "__count_byte" || name == "__ascii_run") { return argc == 2; }
+    if (name == "__scan_set") { return argc == 3; }
     if (name == "__crc32_cksum") { return argc == 2; }
     if (name == "__sum_bytes") { return argc == 1; }
     if (name == "__mismatch") { return argc == 5; }
@@ -13154,6 +13155,10 @@ function is_byte_kernel_call(name: string, argc: i32): boolean {
 //                                 the only one taking a single operand.
 //   __ascii_run(s, from)        → the first high-bit byte, or the LENGTH, so a
 //                                 caller can skip a run branch-free.
+//   __scan_set(s, from, set)    → the first byte at or after `from` whose
+//                                 entry in the u8[] `set` is nonzero, or the
+//                                 LENGTH. The only one over a string AND an
+//                                 array.
 //   __mismatch(a, ao, b, bo, n) → the first differing offset of two ranges, or
 //                                 the clamped n. The only one with TWO string
 //                                 operands, at slots 0 and 2.
@@ -13176,6 +13181,7 @@ function lower_call_byte_kernel(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerSta
     if (cid.name == "__count_byte") { return k.emit(ir.op_count_byte()); }
     if (cid.name == "__sum_bytes") { return k.emit(ir.op_sum_bytes()); }
     if (cid.name == "__ascii_run") { return k.emit(ir.op_ascii_run()); }
+    if (cid.name == "__scan_set") { return k.emit(ir.op_scan_set()); }
     if (cid.name == "__crc32_cksum") { return k.emit(ir.op_crc32_cksum()); }
     if (cid.name == "__scale_f64") { return k.emit(ir.op_scale_f64()); }
     return k.emit(ir.op_mismatch());
@@ -66979,7 +66985,7 @@ function borrow_reg_record(key: string, flags: string): string {
 // name: the escape walks see no receiver type, so the name alone must settle
 // it.
 function copying_builtin_keys(funcs: parser.FuncDecl[]): string[] {
-    var keys: string[] = ["print", "write", "eprint", "strbuf_append", "buf_push", "buf_push_range", "__memchr", "__rmemchr", "__ascii_run", "__count_byte", "__sum_bytes", "__mismatch", "__crc32_cksum", "__scale_f64"];
+    var keys: string[] = ["print", "write", "eprint", "strbuf_append", "buf_push", "buf_push_range", "__memchr", "__rmemchr", "__ascii_run", "__scan_set", "__count_byte", "__sum_bytes", "__mismatch", "__crc32_cksum", "__scale_f64"];
     var has_write: boolean = false;
     var has_write_some: boolean = false;
     for fn in funcs {

@@ -826,6 +826,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesCountByte {
 		g.emitCountByteRuntime()
 	}
+	if g.usesScanSet {
+		g.emitScanSetRuntime()
+	}
 	if g.usesSumBytes {
 		g.emitSumBytesRuntime()
 	}
@@ -4980,6 +4983,66 @@ func (g *generator) emitRmemchrRuntime() {
 	g.emit("ldp x29, x30, [sp], #48")
 	g.emit("ret")
 	g.sizeDirective("__fern_rmemchr")
+}
+
+// emitScanSetRuntime emits `__fern_scan_set(s, from, set) -> i32`: the index
+// of the first byte at or after `from` whose entry in `set` is nonzero, or
+// len(s). Scalar: a byte set has no splat, and the table read per byte is
+// what the kernel is. The fast loop runs when the set has an entry for every
+// byte value; a shorter set takes the loop that checks each byte against
+// its length first.
+func (g *generator) emitScanSetRuntime() {
+	g.line("")
+	g.line(".global __fern_scan_set")
+	g.typeDirective("__fern_scan_set")
+	g.label("__fern_scan_set")
+	// x0/x1 = string words, w2 = from, x3 = set (length at [x3 - 4]).
+	g.emit("stp x29, x30, [sp, #-48]!")
+	g.emit("mov x29, sp")
+	g.emit("mov x4, x0")                     // data word
+	g.emit("mov x5, x1")                     // length word
+	g.emitStrDataPtr2W("x7", "x4", "x5", 16) // x7 = byte pointer
+	g.emitStrLen2W("w6", "x5")               // w6 = byte length
+	// Clamp `from` into [0, len]; at or past the end the answer is len.
+	g.emit("tbz w2, #31, .Lscan_set_from_ok")
+	g.emit("mov w2, #0")
+	g.label(".Lscan_set_from_ok")
+	g.emit("ldur w8, [x3, #-4]") // set length
+	g.emit("cmp w8, #256")
+	g.emit("b.lo .Lscan_set_short")
+	g.label(".Lscan_set_loop")
+	g.emit("cmp w2, w6")
+	g.emit("b.ge .Lscan_set_end")
+	g.emit("add x9, x7, w2, uxtw")
+	g.emit("ldrb w10, [x9]")
+	g.emit("add x9, x3, w10, uxtw")
+	g.emit("ldrb w11, [x9]")
+	g.emit("cbnz w11, .Lscan_set_hit")
+	g.emit("add w2, w2, #1")
+	g.emit("b .Lscan_set_loop")
+	// A set shorter than 256 entries: a byte past its end is not in it.
+	g.label(".Lscan_set_short")
+	g.emit("cmp w2, w6")
+	g.emit("b.ge .Lscan_set_end")
+	g.emit("add x9, x7, w2, uxtw")
+	g.emit("ldrb w10, [x9]")
+	g.emit("cmp w10, w8")
+	g.emit("b.hs .Lscan_set_short_next")
+	g.emit("add x9, x3, w10, uxtw")
+	g.emit("ldrb w11, [x9]")
+	g.emit("cbnz w11, .Lscan_set_hit")
+	g.label(".Lscan_set_short_next")
+	g.emit("add w2, w2, #1")
+	g.emit("b .Lscan_set_short")
+	g.label(".Lscan_set_hit")
+	g.emit("mov w0, w2")
+	g.emit("b .Lscan_set_ret")
+	g.label(".Lscan_set_end")
+	g.emit("mov w0, w6") // nothing in the set: the answer is len
+	g.label(".Lscan_set_ret")
+	g.emit("ldp x29, x30, [sp], #48")
+	g.emit("ret")
+	g.sizeDirective("__fern_scan_set")
 }
 
 // emitCountByteRuntime emits `__fern_count_byte(s, byte) -> i32`: how many
@@ -15268,6 +15331,8 @@ type generator struct {
 	usesRmemchr bool
 	// usesCountByte gates the byte-tally kernel (__fern_count_byte).
 	usesCountByte bool
+	// usesScanSet gates the byte-set scan kernel (__fern_scan_set).
+	usesScanSet bool
 	// usesSumBytes gates the byte-sum reduction kernel (__fern_sum_bytes).
 	usesSumBytes bool
 	// usesScaleF64 gates the f64 scaling kernel (__fern_scale_f64).
@@ -19862,6 +19927,8 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesCrc32Cksum = true
 		case "__fern_count_byte":
 			g.usesCountByte = true
+		case "__fern_scan_set":
+			g.usesScanSet = true
 		case "__fern_sum_bytes":
 			g.usesSumBytes = true
 		case "__fern_scale_f64":

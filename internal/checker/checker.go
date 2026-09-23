@@ -1619,6 +1619,19 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		},
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
+	// __scan_set(s, from, set) → i32: the index of the first byte at or after
+	// `from` whose entry in `set`, a u8[] indexed by byte value, is nonzero,
+	// or len(s). A byte past the end of `set` is not in it. The byte-set scan
+	// behind cat -A's spelling. Native runtime surface, carried by the
+	// self-host emitters too (#4451).
+	c.info.FuncSigs["__scan_set"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.StringType{},
+			ast.NumberType{Width: 32, Signed: true},
+			ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
+		},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
 	// __rmemchr(s, byte, from) → i32: the index of the LAST occurrence of
 	// `byte` at or before `from`, or -1. __memchr's mirror, and the third
 	// fused SIMD kernel (docs/ATLAS-PLATFORM-PLAN.md §3.3, which nominates

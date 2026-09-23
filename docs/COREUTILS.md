@@ -2586,6 +2586,23 @@ same under -r, -f, -s, -u, -k and the orderings that have no word — at
 a size below the threshold and at 20000 lines, and for ptx 20000
 distinct keywords.
 
+### cat's spelling scan, 2026-09-23 (GNU coreutils 9.12)
+
+`__scan_set(s, from, set)` is a kernel on every backend and in both
+compilers: the index of the first byte at or after `from` whose entry in
+the u8[] `set` is nonzero, or the length. It is scalar, a table read per
+byte, which is what a byte set costs without a shuffle-based lookup.
+`cat -v`, `-T` and `-A` with no numbering or squeezing now take one
+scan per chunk against a stop set that holds the spelled bytes and the
+newline, so a line costs one scan and one append instead of a memchr, a
+per-byte walk and an append. `cat -A` over the 62 MiB bench file:
+291 → 187 ms (GNU 9.12: 101). Byte-identical to GNU under -A, -v, -T,
+-e, -t, -vE, -vn, -An and -vs over text, a binary and several files.
+
+The same kernel does not help `tr -d`: on the bench input the kept runs
+are one to three bytes, and a scan and an append per run cost more than
+the per-byte loop (240 → 301 ms), so tr keeps its loop.
+
 ### ls, 2026-09-14, Linux x86-64 (GNU coreutils 9.4, uutils 0.0.24)
 
 The same 4-core container, so read the columns against each other. The

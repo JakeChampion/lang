@@ -4140,6 +4140,7 @@ function byte_scan_contracts(): ssasem.Contract[] {
         ssasem.Contract { name: "__scale_f64", params: [typeinfo.TypeArray { elem: t_f64() }, t_f64()], modes: [lent, value], result: typeinfo.TypeArray { elem: t_f64() } },
         ssasem.Contract { name: "__crc32_cksum", params: [t_i32(), t_string()], modes: [value, lent], result: t_i32() },
         ssasem.Contract { name: "__ascii_run", params: [t_string(), t_i32()], modes: [lent, value], result: t_i32() },
+        ssasem.Contract { name: "__scan_set", params: [t_string(), t_i32(), typeinfo.TypeArray { elem: t_u8() }], modes: [lent, value, lent], result: t_i32() },
         ssasem.Contract { name: "__count_byte", params: [t_string(), t_i32()], modes: [lent, value], result: t_i32() },
         ssasem.Contract { name: "__memchr", params: [t_string(), t_i32(), t_i32()], modes: [lent, value, value], result: t_i32() },
         ssasem.Contract { name: "__rmemchr", params: [t_string(), t_i32(), t_i32()], modes: [lent, value, value], result: t_i32() },

@@ -812,6 +812,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesCountByte {
 		g.emitCountByteRuntime()
 	}
+	if g.usesScanSet {
+		g.emitScanSetRuntime()
+	}
 	if g.usesSumBytes {
 		g.emitSumBytesRuntime()
 	}
@@ -1298,6 +1301,8 @@ type generator struct {
 	usesRmemchr bool
 	// usesCountByte gates the byte-tally kernel (__fern_count_byte).
 	usesCountByte bool
+	// usesScanSet gates the byte-set scan kernel (__fern_scan_set).
+	usesScanSet bool
 	// usesSumBytes gates the byte-sum reduction kernel (__fern_sum_bytes).
 	usesSumBytes bool
 	// usesScaleF64 gates the f64 scaling kernel (__fern_scale_f64).
@@ -1915,6 +1920,8 @@ func (g *generator) recordUse(target string) {
 		g.usesRmemchr = true
 	case "__fern_count_byte":
 		g.usesCountByte = true
+	case "__fern_scan_set":
+		g.usesScanSet = true
 	case "__fern_sum_bytes":
 		g.usesSumBytes = true
 	case "__fern_scale_f64":
@@ -11703,6 +11710,65 @@ func (g *generator) emitRmemchrRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_rmemchr, .-__fern_rmemchr")
+}
+
+// emitScanSetRuntime emits `__fern_scan_set(s, from, set) -> i32`: the index
+// of the first byte at or after `from` whose entry in `set` is nonzero, or
+// len(s). Scalar: a byte set has no splat, and the table read per byte is
+// what the kernel is. The fast loop runs when the set has an entry for every
+// byte value; a shorter set takes the loop that checks each byte against
+// its length first.
+func (g *generator) emitScanSetRuntime() {
+	g.line("")
+	g.line(".globl __fern_scan_set")
+	g.line(".type __fern_scan_set, @function")
+	g.label("__fern_scan_set")
+	// rdi = string, esi = from, rdx = set (length at [rdx - 4]).
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("sub rsp, 16")
+	g.emitStrLen("ecx", "rdi") // ecx = len
+	g.emitStrDataPtr("rdi", "rdi", "[rbp - 16]")
+	// Clamp `from` into [0, len]; at or past the end the answer is len. The
+	// cursor is scaled into an address, so its top half is cleared once.
+	g.emit("test esi, esi")
+	g.emit("jns .Lscan_set_from_ok")
+	g.emit("xor esi, esi")
+	g.label(".Lscan_set_from_ok")
+	g.emit("mov esi, esi")
+	g.emit("mov r8d, [rdx - 4]") // set length
+	g.emit("cmp r8d, 256")
+	g.emit("jb .Lscan_set_short")
+	g.label(".Lscan_set_loop")
+	g.emit("cmp esi, ecx")
+	g.emit("jge .Lscan_set_end")
+	g.emit("movzx eax, byte ptr [rdi + rsi]")
+	g.emit("cmp byte ptr [rdx + rax], 0")
+	g.emit("jne .Lscan_set_hit")
+	g.emit("inc esi")
+	g.emit("jmp .Lscan_set_loop")
+	// A set shorter than 256 entries: a byte past its end is not in it.
+	g.label(".Lscan_set_short")
+	g.emit("cmp esi, ecx")
+	g.emit("jge .Lscan_set_end")
+	g.emit("movzx eax, byte ptr [rdi + rsi]")
+	g.emit("cmp eax, r8d")
+	g.emit("jae .Lscan_set_short_next")
+	g.emit("cmp byte ptr [rdx + rax], 0")
+	g.emit("jne .Lscan_set_hit")
+	g.label(".Lscan_set_short_next")
+	g.emit("inc esi")
+	g.emit("jmp .Lscan_set_short")
+	g.label(".Lscan_set_hit")
+	g.emit("mov eax, esi")
+	g.emit("jmp .Lscan_set_ret")
+	g.label(".Lscan_set_end")
+	g.emit("mov eax, ecx") // nothing in the set: the answer is len
+	g.label(".Lscan_set_ret")
+	g.emit("mov rsp, rbp")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_scan_set, .-__fern_scan_set")
 }
 
 // emitCountByteRuntime emits `__fern_count_byte(s, byte) -> i32`: how many

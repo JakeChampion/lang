@@ -2788,6 +2788,27 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
         }
         return v_err("__scale_f64: first arg must be an array");
     }
+    // `__scan_set(s, from, set)` — the byte-set scan: the first byte at or
+    // after `from` whose entry in `set` is nonzero, or len(s). `from` clamps
+    // like __memchr's, and a byte past the end of `set` is not in it.
+    if (name == "__scan_set") {
+        if (args.len() != 3) { return v_err("__scan_set: expected 3 args (s, from, set)"); }
+        if (!is_string_arg(args[0]) || !is_i32_arg(args[1])) { return v_err("__scan_set: s must be a string and from an integer"); }
+        var ss: string = vstr_of(args[0]);
+        var si: i32 = vint_bits(args[1]);
+        if (si < 0) { si = 0; }
+        match (args[2]) {
+            VArr(set) => {
+                while (si < ss.len()) {
+                    var sb: i32 = ss[si] as i32;
+                    if (sb < set.elements.len() && vint_bits(set.elements[sb]) != 0) { return v_int(si); }
+                    si = si + 1;
+                }
+                return v_int(ss.len());
+            },
+            _ => { return v_err("__scan_set: set must be a u8[]"); }
+        }
+    }
     if (name == "__memchr" || name == "__count_byte" || name == "__sum_bytes") {
         var cb: boolean = name == "__count_byte";
         var sb: boolean = name == "__sum_bytes";

@@ -530,7 +530,7 @@ var rcResultNonPointer = map[string]bool{
 	// i32 counts, indices, comparisons and booleans.
 	"__fern_str_len": true, "__fern_str_byte": true, "__fern_memchr": true,
 	"__fern_ascii_run": true, "__fern_rmemchr": true,
-	"__fern_count_byte": true, "__fern_mismatch": true,
+	"__fern_count_byte": true, "__fern_mismatch": true, "__fern_scan_set": true,
 	"__fern_sum_bytes": true, "__fern_crc32_cksum": true,
 	"__str_eq":  true,
 	"__str_ord": true, "__fern_env_count": true, "__fern_arg_count": true,
