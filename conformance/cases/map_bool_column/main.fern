@@ -1,0 +1,53 @@
+import "core/map";
+// A `boolean` map column read back through keys() and values(). The other end
+// of map_u8_column's axis, and the less obvious one: a boolean is not
+// pointer-shaped, but its ARRAY ELEMENT strides a pointer width on the
+// natives — ast.ElemSizeBytesFor has no BoolType case, so it takes the
+// pointer default. The column was written at a fixed 4, so four entries were
+// laid where the reader looks for two and `values()[1]` returned the THIRD
+// entry's value (#10000).
+//
+// It has to be read by INDEX. A `for v in column` loop walks at the stride
+// the column was written at, so it agreed with the interpreter on the broken
+// compiler — the first probe for this ran that way and reported the column
+// clean. The loops below are kept as the other half, since a fix that made
+// indexing right by breaking iteration would pass an index-only case.
+//
+// wasm is unaffected: a wasm32 boolean element strides 4, which is what the
+// runtime already wrote. So this case is a native-vs-interpreter question
+// that happens to be trivially true on one of the four backends.
+function main(): i32 {
+    var vm: Map[i32, boolean] = map_new(2);
+    vm = vm.insert(0, true);
+    vm = vm.insert(1, false);
+    vm = vm.insert(2, true);
+    vm = vm.insert(3, false);
+    var vs: boolean[] = vm.values();
+    if (vs.len() != 4) { return 1; }
+    if (!vs[0]) { return 2; }
+    if (vs[1]) { return 3; }
+    if (!vs[2]) { return 4; }
+    if (vs[3]) { return 5; }
+    var vtrue: i32 = 0;
+    for v in vs { if (v) { vtrue = vtrue + 1; } }
+    if (vtrue != 2) { return 6; }
+
+    // The key column. A boolean key has only two inhabitants, so the read
+    // past the end a wrong stride reaches for is off a two-element buffer —
+    // which is why the value side above carries the index assertions.
+    var km: Map[boolean, i32] = map_new(2);
+    km = km.insert(true, 5);
+    km = km.insert(false, 7);
+    var ks: boolean[] = km.keys();
+    if (ks.len() != 2) { return 7; }
+    if (!ks[0]) { return 8; }
+    if (ks[1]) { return 9; }
+    if (km.get_or(ks[0], 0) != 5) { return 10; }
+    if (km.get_or(ks[1], 0) != 7) { return 11; }
+
+    var ktrue: i32 = 0;
+    for k in ks { if (k) { ktrue = ktrue + 1; } }
+    if (ktrue != 1) { return 12; }
+
+    return 42;
+}

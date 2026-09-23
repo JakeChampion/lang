@@ -15487,6 +15487,9 @@ func (b *builder) callBody(n *ast.Call) error {
 			if isByteMapColumnIR(vType) {
 				return b.emitByteMapColumn(n, true)
 			}
+			if _, isBool := vType.(ast.BoolType); isBool {
+				return b.emitBoolMapColumn(n, true)
+			}
 		}
 	}
 	// `m.keys()` on `Map[K, V]` where K is wide (i64 / u64 /
@@ -15507,6 +15510,9 @@ func (b *builder) callBody(n *ast.Call) error {
 			}
 			if isByteMapColumnIR(kType) {
 				return b.emitByteMapColumn(n, false)
+			}
+			if _, isBool := kType.(ast.BoolType); isBool {
+				return b.emitBoolMapColumn(n, false)
 			}
 		}
 	}
@@ -21109,15 +21115,13 @@ func isByteMapColumnIR(t ast.Type) bool {
 	return ok && n.NormalWidth() == 8
 }
 
-// emitByteMapColumn lowers `m.keys()` / `m.values()` on a one-byte column to
-// __map_u8_column, which writes the result at the stride a `u8[]` reads at.
-// `values` selects the V slot within each entry, one pointer width past the K.
-//
-// The offset is __ptr_width() rather than this builder's ptrW for the same
-// reason emitWideMapValues reads it at run time: the entry layout is the
+// emitMapColumnReceiver pushes the map handle and the kvOffset that selects
+// the K or V slot within an entry — 0 for a key, one pointer width for a
+// value. The offset is __ptr_width() rather than this builder's ptrW for the
+// same reason emitWideMapValues reads it at run time: the entry layout is the
 // stdlib Map runtime's, and asking it keeps one IR correct on both a 4-byte
 // and an 8-byte target.
-func (b *builder) emitByteMapColumn(n *ast.Call, values bool) error {
+func (b *builder) emitMapColumnReceiver(n *ast.Call, values bool) error {
 	if err := b.expr(n.Args[0]); err != nil {
 		return err
 	}
@@ -21126,7 +21130,31 @@ func (b *builder) emitByteMapColumn(n *ast.Call, values bool) error {
 	} else {
 		b.emit(Op{Kind: OpConstI32, I32: 0})
 	}
+	return nil
+}
+
+// emitByteMapColumn lowers `m.keys()` / `m.values()` on a one-byte column to
+// __map_u8_column, which writes the result at the stride a `u8[]` reads at.
+func (b *builder) emitByteMapColumn(n *ast.Call, values bool) error {
+	if err := b.emitMapColumnReceiver(n, values); err != nil {
+		return err
+	}
 	b.emit(Op{Kind: OpCallDirect, Str: "__map_u8_column", I32: 2})
+	return nil
+}
+
+// emitBoolMapColumn lowers them on a `boolean` column, whose array element
+// strides a POINTER WIDTH on the natives — ast.ElemSizeBytesFor has no
+// BoolType case, so it takes the pointer default even though a boolean is not
+// pointer-shaped. __map_column's own stride argument carries it; passing
+// __ptr_width() is right on both targets at once, since a wasm32 boolean
+// element strides 4 and that is the arm the runtime already had.
+func (b *builder) emitBoolMapColumn(n *ast.Call, values bool) error {
+	if err := b.emitMapColumnReceiver(n, values); err != nil {
+		return err
+	}
+	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__ptr_width", Width: ResNarrow, I32: 0})
+	b.emit(Op{Kind: OpCallDirect, Str: "__map_column", I32: 3})
 	return nil
 }
 

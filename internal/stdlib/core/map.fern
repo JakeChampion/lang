@@ -813,15 +813,26 @@ pub function __map_set_impl(m: usize, k: usize, v: usize): usize {
 
 // Snapshot a column (keys or values) into a freshly-allocated
 // length-prefixed array. `kvOffset` selects the column within
-// each entry; `destStride` is the byte stride of the result
-// array's element type (4 for i32-sized, ptr-width for
-// pointer-shaped). Insertion order preserved up to any
+// each entry; `destStride` is the byte stride of the RESULT
+// array's element type. Insertion order preserved up to any
 // deletions (swap-with-last reorders past the deleted slot).
 //
-// Two-mode dispatch on destStride: i32-stride uses i32 loads/
-// stores (low 32 bits of the entry slot, which IS the value
-// when K/V is i32); pointer-stride uses __load_ptr / __store_
-// ptr so the full heap address survives on arm64.
+// The SOURCE is always an i32-sized scalar slot: a pointer-shaped column —
+// string, struct, enum, array — is routed to __map_string_column or
+// __map_ptr_column before reaching here. So only the write varies.
+//
+// 4 is the common case (i32 / u32 / f32 / usize). __ptr_width() is a
+// `boolean`, whose ARRAY ELEMENT strides a pointer width on the natives even
+// though the value is not a pointer (ast.ElemSizeBytesFor has no BoolType
+// case, so it takes the pointer default) — written at 4, four entries were
+// laid where the reader looks for two, and `m.values()[1]` read the third
+// entry (#10000). Widening the slot is sound rather than a reinterpretation:
+// the source is read as an i32 either way, so the high half is zero and not
+// whatever the entry slot held before.
+//
+// A one-byte `u8` column is NOT a third mode here: it needs a byte store,
+// and there is no callable byte-store shim to do it from raw addresses.
+// __map_u8_column builds a real `u8[]` instead.
 pub function __map_column(m: usize, kvOffset: i32, destStride: i32): usize {
     var buf: usize = __load_ptr(m);
     var cap: i32 = __load_i32(buf);
@@ -832,22 +843,18 @@ pub function __map_column(m: usize, kvOffset: i32, destStride: i32): usize {
     // (data-12), rc=1 (data-8) and length (data-4); data = arr + hdr.
     // Without the cap/rc slots the snapshot's scope-exit drop reads
     // heap-allocator metadata at data-8 as the refcount and underflows.
-    // (When destStride > 16 the header grows to destStride so the first
-    // element stays stride-aligned, matching ArrayLit.)
     var hdr: i32 = 16;
-    if (destStride > 16) { hdr = destStride; }
     var arr: usize = __alloc(hdr + len_ * destStride);
     __store_i32(arr + hdr - 12, len_);   // capacity
     __store_i32(arr + hdr - 8, 1);       // rc = 1
     __store_i32(arr + hdr - 4, len_);    // length
     var i: i32 = 0;
     while (i < len_) {
+        var v32: i32 = __load_i32(entriesBase + i * entryStride + kvOffset);
         if (destStride == 4) {
-            var v32: i32 = __load_i32(entriesBase + i * entryStride + kvOffset);
             __store_i32(arr + hdr + i * 4, v32);
         } else {
-            var vp: usize = __load_ptr(entriesBase + i * entryStride + kvOffset);
-            __store_ptr(arr + hdr + i * destStride, vp);
+            __store_ptr(arr + hdr + i * destStride, v32 as usize);
         }
         i = i + 1;
     }
