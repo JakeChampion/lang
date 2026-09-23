@@ -599,7 +599,7 @@ pub function op_sum_bytes(): Op { return op0("sum_bytes"); }
 // after `from` whose entry in `set`, a u8[] indexed by byte value, is nonzero,
 // or the string's length. A byte past the end of `set` is not in it. Allocates
 // nothing and reads only the string and the set. The byte-set scan behind
-// wc's word split, cat -A's spelling and tr -d; the miss value is the LENGTH,
+// cat -A's spelling; the miss value is the LENGTH,
 // as ascii_run's is, so a caller's run walk needs no branch.
 pub function op_scan_set(): Op { return op0("scan_set"); }
 

@@ -11,8 +11,7 @@ import (
 
 // `__scan_set(s, from, set)` on the self-host IR path: the index of the first
 // byte at or after `from` whose entry in the u8[] `set` is nonzero, or the
-// LENGTH. The byte-set scan behind wc's word split, cat -A's spelling and
-// tr -d.
+// LENGTH. The byte-set scan behind cat -A's spelling.
 //
 // What a port gets wrong here is the SET: its length lives in the array
 // header and its bytes in the backend's element slots — eight bytes on the

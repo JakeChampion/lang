@@ -1622,7 +1622,8 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// __scan_set(s, from, set) → i32: the index of the first byte at or after
 	// `from` whose entry in `set`, a u8[] indexed by byte value, is nonzero,
 	// or len(s). A byte past the end of `set` is not in it. The byte-set scan
-	// behind wc's word split, cat -A's spelling and tr -d.
+	// behind cat -A's spelling. Native runtime surface, carried by the
+	// self-host emitters too (#4451).
 	c.info.FuncSigs["__scan_set"] = &ast.FuncType{
 		Params: []ast.Type{
 			ast.StringType{},

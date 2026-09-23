@@ -10,10 +10,8 @@ import (
 // __scan_set(s, from, set) is the byte-set scan: the index of the first byte
 // of `s` at or after `from` whose entry in `set`, a u8[] indexed by byte
 // value, is nonzero, or len(s) when no byte qualifies. A byte past the end of
-// `set` is not in the set. It is what wc's word split, cat -A's spelling and
-// tr -d walk the input with, so its corpus sweeps the shapes those callers
-// produce: dense and sparse sets, a short set, the cursor at every offset,
-// and NUL and high bytes on both sides.
+// `set` is not in the set. The corpus sweeps dense and sparse sets, a short
+// set, the cursor at every offset, and NUL and high bytes on both sides.
 
 // scanSetRef is the reference semantics, matching the interpreter builtin.
 func scanSetRef(s string, from int, set []byte) int {
