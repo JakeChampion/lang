@@ -758,9 +758,12 @@ function drops(own r: irlower.LowerResult, step: ssaunits.Step, f: ssasem.Func):
 
 // The drops of a step less the one a construction took as its box: that value's
 // storage became the result's, so releasing it here would free a live box.
-function drops_less(own r: irlower.LowerResult, step: ssaunits.Step, f: ssasem.Func, taken: i32, took: i32): irlower.LowerResult {
+// `shell` is a box whose payload this step took without emptying its slot
+// (`ssaunits.shell_root`), so its drop releases the box alone.
+function drops_less(own r: irlower.LowerResult, step: ssaunits.Step, f: ssasem.Func, taken: i32, took: i32, shell: i32): irlower.LowerResult {
     for value in step.drops {
-        if (value != taken && value != took) { r = drop_value(r, value, f.values[value], scratch_base(f), f); }
+        if (value == shell) { r = release(r, value, f.values[value]); }
+        else if (value != taken && value != took) { r = drop_value(r, value, f.values[value], scratch_base(f), f); }
     }
     return r;
 }
@@ -1969,6 +1972,7 @@ function took(own r: irlower.LowerResult, p: ssaunits.Plan, ins: ssa.SInst): irl
 // (ssaunits.payload_root).
 function took_payload(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): irlower.LowerResult {
     if (ins.result >= p.payloads.len() || !p.payloads[ins.result]) { return r; }
+    if (ssaunits.shell_root(f, p, ins) >= 0) { return r; }
     return steal(r, f, ins.result, scratch_base(f));
 }
 
@@ -2784,7 +2788,7 @@ function block_body(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan
             else { r = instruction(r, f, p, ins, structs, defer0); }
             r = bracket_give(r, f, held);
             if (pairs.tokens[pos] >= 0) { r = reuse_token(r, f, pairs.tokens[pos]); }
-            r = drops_less(r, step, f, pairs.tokens[pos], pairs.selfs[pos]);
+            r = drops_less(r, step, f, pairs.tokens[pos], pairs.selfs[pos], ssaunits.shell_root(f, p, ins));
         }
         pos = pos + 1;
     }

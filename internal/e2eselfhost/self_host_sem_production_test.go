@@ -3748,6 +3748,128 @@ function main(): i32 {
     return f(4) + mk()(3) + add(0)(20, 8);
 }
 `},
+	// A view result reads the parameter it is anchored to, so the caller keeps
+	// that argument alive while the result lives: a temporary receiver is
+	// released after the last read of the view rather than after the call,
+	// and the anchor passes through `pick`, whose result is `tail`'s. Each
+	// trip allocates the next string where the released one was, so a
+	// dangling view prints it (conformance/cases/alloc_flat_method_identity_return).
+	{name: "a-view-result-is-anchored-to-its-argument", atLeast: 3, noLeak: true, src: `
+import "std/i32";
+function (s: string) tail(n: i32): str {
+    if (n <= 0) { return s; }
+    var sLen: i32 = s.len();
+    if (n >= sLen) { return ""; }
+    return slice_unchecked(s, n, sLen);
+}
+function pick(a: string, n: i32): str { return a.tail(n); }
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3) {
+        var r: str = ("abcdefghijklmnopqrstuvwxyz0123456789" + i.to_string()).tail(i);
+        var junk: string = "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZYYYY" + i.to_string();
+        var local: string = "0123456789012345678901234567890ab" + i.to_string();
+        var q: str = pick(local, 2);
+        var junk2: string = "WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWVVVV" + i.to_string();
+        print(r);
+        print(q);
+        t = t + r.len() + q.len() + junk.len() + junk2.len();
+        i = i + 1;
+    }
+    return t - 194;
+}
+`},
+	// A checked slice wraps its view in a fresh Option, and the Option reads the
+	// source's bytes as the view did: the local stays alive until the last read
+	// of the payload rather than dying at its own last use, the slice. Each trip
+	// allocates the next string where a released one was, so a dangling view
+	// prints it.
+	{name: "a-slice-view-keeps-its-local-alive", atLeast: 1, noLeak: true, src: `
+import "std/i32";
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3) {
+        var s: string = "abcdefghijklmnopqrstuvwxyz0123456789" + i.to_string();
+        match (s[0:30]) {
+            Some(v) => {
+                var junk: string = "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ" + i.to_string();
+                print(v);
+                t = t + v.len() + junk.len();
+            },
+            None => { t = t + 1; }
+        }
+        i = i + 1;
+    }
+    return t - 204;
+}
+`},
+	// `?` on the Option a slice built reads a view out of a box nothing else
+	// holds, so it takes the payload with no count to test and releases the box
+	// alone; the Option the function returns is anchored to the parameter its
+	// view reads (conformance/cases/string_slice_option).
+	{name: "an-option-view-result-takes-its-payload", atLeast: 2, noLeak: true, src: `
+import "std/i32";
+function first_three(s: string): Option[str] {
+    var v: str = s[0:3]?;
+    return Some(v);
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3) {
+        match (first_three("abcdefghijklmnopqrstuvwxyz0123456789" + i.to_string())) {
+            Some(v) => {
+                var junk: string = "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ" + i.to_string();
+                print(v);
+                t = t + v.len() + junk.len();
+            },
+            None => { t = t + 100; }
+        }
+        match (first_three("ab")) {
+            Some(v) => { t = t + 100; },
+            None => { t = t + 1; }
+        }
+        i = i + 1;
+    }
+    return t - 126;
+}
+`},
+	// A str loop variable that starts as a view of a parameter and is then
+	// reassigned from an owned string, std/string's drop, merges two sources
+	// at its phi. Each operand is a counted string's own box, so the phi's unit
+	// carries the bytes and anchors nothing (examples/cli/fold.fern).
+	{name: "a-view-of-counted-strings-carries-its-own-bytes", atLeast: 2, noLeak: true, src: `
+import "std/string";
+function fold_line(line: string, width: i32): i32 {
+    var n: i32 = 0;
+    var rest: str = line;
+    while (rest.len() > width) {
+        print(rest.take(width));
+        rest = rest.drop(width);
+        n = n + 1;
+    }
+    print(rest);
+    return n;
+}
+function main(): i32 {
+    return fold_line("the quick brown fox jumps over the lazy dog", 10) - 4;
+}
+`},
+	// A view of either of two parameters has no one argument its caller could
+	// keep alive for it. (A view of a local is the checker's E065.)
+	{name: "a-view-result-of-either-parameter-is-refused", atLeast: 0, refuses: "view result escapes its source", src: `
+import "std/i32";
+function either(a: string, b: string, first: boolean): str {
+    if (first) { return a; }
+    return b;
+}
+function main(): i32 {
+    var v: str = either(7.to_string(), 42.to_string(), false);
+    return v.len() - 2;
+}
+`},
 	// A method call on a `dyn Trait` receiver: the widening borrows the
 	// record, and the call dispatches on its shape to the implementation
 	// (conformance/cases/dyn_trait_dispatch). Two implementations behind one

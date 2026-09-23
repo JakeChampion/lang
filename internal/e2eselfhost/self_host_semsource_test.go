@@ -422,8 +422,9 @@ function narrow_float(x: f32): f32 { return x + 1.0; }
 
 // A string view: a slice is one; an owned string bound or passed where a view
 // is declared is lent (a retag that borrows the box); a view passed to a
-// borrowed 'string' parameter is the retag the other way. A view result would
-// escape its source, so it is refused.
+// borrowed 'string' parameter is the retag the other way. A view result reads
+// the one parameter it is anchored to; one that reads a local, or either of
+// two parameters, escapes its source and is refused.
 function view_len(v: str): i32 { return v.len(); }
 function view_of(s: string): i32 {
     var v: str = slice_unchecked(s, 1, 3);
@@ -433,7 +434,15 @@ function view_of(s: string): i32 {
     return v.len() + view_len(s) + string_length(v) + inner.len();
 }
 function copy_view(v: str): string { return v + ""; }
-function refused_view_result(s: string): str { return slice_unchecked(s, 0, 1); }
+function view_result(s: string): str { return slice_unchecked(s, 0, 1); }
+function refused_view_of_a_local(t: string): str {
+    var s: string = t + "x";
+    return slice_unchecked(s, 0, 1);
+}
+function refused_view_of_either(a: string, b: string, c: boolean): str {
+    if (c) { return a; }
+    return b;
+}
 function refused_view_element(s: string): i32 {
     var xs: string[] = [];
     xs = xs.append(slice_unchecked(s, 0, 1));
