@@ -3502,6 +3502,21 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		[]ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.NumberType{}}, seekResult)
 	registerStructMethod("Writer", "seek",
 		[]ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.NumberType{}}, seekResult)
+	// splice_to(w, max) moves up to `max` bytes from this handle to `w`
+	// inside the kernel, splice(2) on Linux, and answers how many; 0 is
+	// the end of the input. Two handles neither of which is a pipe go
+	// through a pipe the runtime keeps for the purpose, sized to `max`, and
+	// a writer that is a pipe is grown to hold `max`, as GNU cat grows
+	// stdout's.
+	//
+	// `Unsupported` means nothing moved: the target has no splice, the
+	// pair cannot be spliced, or taking from this handle failed. The
+	// caller falls back to read_chunk and write, which then meet any real
+	// failure on the side it belongs to. Any other error is a failure
+	// writing `w` after bytes were taken, the one case a fallback cannot
+	// repair.
+	registerStructMethod("Reader", "splice_to",
+		[]ast.Type{writerType, ast.NumberType{}}, seekResult)
 	// flags() is fcntl(fd, F_GETFL) reduced to what every target can
 	// answer, as a word of Fern's own — the query side of the flags word
 	// `open_reader_with` / `open_writer_with` take:

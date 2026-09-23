@@ -495,6 +495,16 @@ MOVES a descriptor where this duplicates one, and the handle the caller still
 holds would be left dangling with a drop that closes a number it no longer
 owns. Preview 2 has no numbered table to renumber at all.
 
+**`splice_to` is the same shape, refused at the call wherever the kernel
+cannot move the bytes itself.** `r.splice_to(w, max)` is splice(2) on Linux,
+through a pipe the runtime keeps when neither handle is one. XNU has no
+splice, neither WASI preview has anything like it, and the interpreter's
+stdio need not be a descriptor, so all of them answer `Unsupported`. The
+answer carries a promise the caller builds on: nothing was taken from the
+reader, so reading and writing from the same offset finishes the copy. A
+target that cannot splice is therefore slower but not wrong, which is why the
+method is ungated rather than a capability.
+
 **`termios_get` / `termios_set` surrender the KERNEL's words**, which is the
 one place here that does not invent Fern's own numbering, and `stty -g` is
 why: it prints the four flag words and the control characters in hex and its

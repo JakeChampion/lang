@@ -672,6 +672,7 @@ func New() *Interp {
 	i.Builtins["__method_Writer_stat"] = &Builtin{Fn: builtinFdStat}
 	i.Builtins["__method_Reader_seek"] = &Builtin{Fn: builtinHandleSeek}
 	i.Builtins["__method_Writer_seek"] = &Builtin{Fn: builtinHandleSeek}
+	i.Builtins["__method_Reader_splice_to"] = &Builtin{Fn: builtinReaderSpliceTo}
 	i.Builtins["__method_Reader_flags"] = &Builtin{Fn: builtinFdFlags}
 	i.Builtins["__method_Writer_flags"] = &Builtin{Fn: builtinFdFlags}
 	i.Builtins["__method_Reader_isatty"] = &Builtin{Fn: builtinHandleIsatty}
@@ -3039,6 +3040,17 @@ func builtinHandleSeek(i *Interp, args []Value) (Value, error) {
 		return resultErr(classifyIoError("", serr)), nil
 	}
 	return resultOk(Number(pos)), nil
+}
+
+// builtinReaderSpliceTo answers `r.splice_to(w, max)` with Unsupported,
+// the refusal that promises nothing moved, so the caller's read_chunk and
+// write fallback carries the bytes: the interpreter's stdio need not be a
+// descriptor at all.
+func builtinReaderSpliceTo(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("splice_to: expected 3 args")
+	}
+	return resultErr(&Enum{EnumName: "IoError", VariantName: "Unsupported", Index: 5}), nil
 }
 
 // builtinAccess answers `access(path, mode)` against the EFFECTIVE ids,

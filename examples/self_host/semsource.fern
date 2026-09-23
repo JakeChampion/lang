@@ -3876,7 +3876,8 @@ function contracts(mod: parser.Module, scopes: checker.Scope[]): ssasem.Contract
 // table so they cannot drift.
 //
 // The handle metadata surface — stat, flags, seek, the partial write, the
-// truncation, the three fd syncs, isatty, dup_onto and the window size — is
+// truncation, the three fd syncs, isatty, dup_onto, splice_to and the window
+// size — is
 // asked of the bare descriptor like close, and hands back a fresh Result or
 // Option box.
 function handle_contracts(): ssasem.Contract[] {
@@ -3927,6 +3928,7 @@ function handle_metadata_contracts(reader: typeinfo.Type, writer: typeinfo.Type,
         out = out.append(ssasem.Contract { name: o + ".dup_onto", params: [h, t_i32()], modes: [v, v], result: io_error });
         i = i + 1;
     }
+    out = out.append(ssasem.Contract { name: "Reader.splice_to", params: [reader, writer, t_i32()], modes: [v, v, v], result: t_io_result(t_i64()) });
     out = out.append(ssasem.Contract { name: "Reader.window_size", params: [reader], modes: [v], result: t_io_result(typeinfo.TypeStruct { name: "WinSize", args: [] }) });
     // The terminal's own three, Reader-only the way native registers them. The
     // termios record crosses as `i64[]` in the kernel's own words: `termios_get`

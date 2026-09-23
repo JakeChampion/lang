@@ -271,7 +271,8 @@ var rcInertBuiltins = map[string]bool{
 
 	"__method_Reader_close": true, "__method_Reader_read_chunk": true,
 	"__method_Reader_read_line": true, "__method_Reader_seek": true, "__method_Writer_seek": true,
-	"__method_Reader_flags": true, "__method_Writer_flags": true,
+	"__method_Reader_splice_to": true,
+	"__method_Reader_flags":     true, "__method_Writer_flags": true,
 	"__method_Reader_isatty": true, "__method_Writer_isatty": true,
 	"__method_Reader_dup_onto": true, "__method_Writer_dup_onto": true,
 	// The four terminal questions asked of a handle (#9363). Each reads
@@ -505,7 +506,8 @@ var rcInert = map[string]bool{
 	"__fern_read_file_bytes": true, "__fern_read_line": true,
 	"__fern_reader_close": true, "__fern_reader_close_fd": true,
 	"__fern_fd_stat": true, "__fern_reader_seek": true, "__fern_writer_seek": true,
-	"__fern_reader_flags": true, "__fern_writer_flags": true,
+	"__fern_reader_splice": true,
+	"__fern_reader_flags":  true, "__fern_writer_flags": true,
 	"__fern_fd_fsync": true, "__fern_fd_fdatasync": true, "__fern_fd_syncfs": true,
 	"__fern_fd_dup_onto":            true,
 	"__fern_handle_window_size":     true,

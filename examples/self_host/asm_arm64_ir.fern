@@ -2575,6 +2575,12 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
         s = s.need("heap"); s = s.need("reader"); s = s.need("reader_seek");
         s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
         s = s.write("    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_reader_seek\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
+    } else if (o.kind_tag == 330) {  // reader_splice
+        // [fd][out_fd][max] (max on top) -> Result[i64, IoError], re-pushed
+        // with param[0] (fd) on top as reader_seek is.
+        s = s.need("heap"); s = s.need("reader"); s = s.need("reader_splice");
+        s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+        s = s.write("    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_reader_splice\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
     } else if (o.kind_tag == 281) {  // writer_truncate
         // [fd][length] -> Option[IoError]. The length is on top but
         // param[0] is fd, so swap before the call, as writer_write does.
@@ -3629,10 +3635,15 @@ pub function emit_ir_runtime_fern_fn(src: string, all_structs: irlower.StructTab
     var vsigs: irverify.NameIndex = irlower.fn_sig_index(fns);
     var lit0: i32 = s.string_lits.len();
     var agg0: i32 = s.const_aggs.len();
+    var sh0: i32 = s.shape_lits.len();
     var i: i32 = 0;
     while (i < fns.len()) {
         s = emit_function_via_ir(fns[i], s, sg, vsigs);
         i = i + 1;
+    }
+    if (s.shape_lits.len() > sh0) {
+        s = asmcore.emit_shape_lits_from(s, sh0);
+        s = s.write("    .text\n");
     }
     if (s.const_aggs.len() > agg0) {
         s = asmcore.emit_const_agg_data_from(s, agg0);
@@ -4208,16 +4219,7 @@ pub function emit_rodata_pools_arm64(s: asmcore.EmitState, darwin: boolean): asm
     if (reloc) { s = s.write("    .align 8\n.Lfern_cagg_begin:\n"); }
     s = asmcore.emit_const_agg_data(s);
     if (reloc) { s = s.write("    .section .data\n.Lfern_cagg_end:\n"); }
-    if (s.shape_lits.len() > 0) {
-        s = s.write("    .section .rodata\n");
-        var shi: i32 = 0;
-        while (shi < s.shape_lits.len()) {
-            var shsym: string = asmcore.shape_sym(s.shape_lits[shi]);
-            s = s.write(".weak " + shsym + "\n");
-            s = s.write(shsym + ": .ascii \"" + asmcore.escape_for_ascii(s.shape_lits[shi]) + "\"\n");
-            shi = shi + 1;
-        }
-    }
+    s = asmcore.emit_shape_lits_from(s, 0);
     // Hand back `.text`, which every caller emitting code after this one needs
     // and the per-module pool site already restores by hand. It used to hold by
     // accident: a program with no pooled data emitted nothing here and never
@@ -7593,23 +7595,6 @@ function emit_rt_heap(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
             var wsPre: asmcore.ShapeRefOut = asmcore.shape_ref(s, "WinSize");
             s = wsPre.state;
         }
-        // IoError variant shapes for __fern_io_error (#4624, the arm64 leg
-        // of #4370) — interned early for the same reason as FileStat above.
-        var ioe1: asmcore.ShapeRefOut = asmcore.shape_ref(s, "NotFound");
-        s = ioe1.state;
-        var ioe2: asmcore.ShapeRefOut = asmcore.shape_ref(s, "PermissionDenied");
-        s = ioe2.state;
-        var ioe3: asmcore.ShapeRefOut = asmcore.shape_ref(s, "AlreadyExists");
-        s = ioe3.state;
-        var ioe4: asmcore.ShapeRefOut = asmcore.shape_ref(s, "Interrupted");
-        s = ioe4.state;
-        var ioe5: asmcore.ShapeRefOut = asmcore.shape_ref(s, "Other");
-        s = ioe5.state;
-        // InvalidUtf8 is constructed by rt_src_read_file's D9 validation
-        // (#5714) — the one IoError variant no compiler user-code names, so
-        // it needs the same early intern as the rest.
-        var ioe6: asmcore.ShapeRefOut = asmcore.shape_ref(s, "InvalidUtf8");
-        s = ioe6.state;
     }
     // .rodata: emit each interned string literal as a
     // labelled `.ascii` directive. GAS interprets the escape
@@ -8394,6 +8379,12 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         if (s.has_need("fd_stat")) { fs_src = fs_src + " " + asmcore.rt_src_fd_stat(tgt); }
         fs_src = fs_src + asmcore.rt_src_sync_family(s, tgt);
         if (s.has_need("reader_seek")) { fs_src = fs_src + " " + asmcore.rt_src_reader_seek(tgt); }
+        if (s.has_need("reader_splice")) {
+            if (tgt != "arm64-darwin") {
+                s = s.write("    .section .bss\n    .p2align 3\n__fern_splice_pipe: .quad 0, 0\n    .text\n");
+            }
+            fs_src = fs_src + " " + asmcore.rt_src_reader_splice(tgt);
+        }
         if (s.has_need("fd_flags")) { fs_src = fs_src + " " + asmcore.rt_src_fd_flags(tgt); }
         if (s.has_need("fd_dup_onto")) { fs_src = fs_src + " " + asmcore.rt_src_fd_dup_onto(tgt); }
         if (s.has_need("writer_truncate")) { fs_src = fs_src + " " + asmcore.rt_src_writer_truncate(tgt); }
