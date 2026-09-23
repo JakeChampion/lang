@@ -6984,7 +6984,10 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         "__fn___fern_arr_i32_sum", "__fn___fern_arr_i32_product", "__fn___fern_i32_pow",
         "__fn___fern_i32_gcd", "__fn___fern_i32_lcm",
         "__fn___fern_arr_i32_index_of",
-        "__fn___fern_arr_i32_min_opt", "__fn___fern_arr_i32_max_opt"
+        "__fn___fern_arr_i32_min_opt", "__fn___fern_arr_i32_max_opt",
+        // The register entries of the helpers that have one (ssa_reg_helper),
+        // called from every unit like the stack entries they sit beside.
+        "__fn___fern_arr_dec.r", "__fn___fern_str_free.r"
     ];
     var i: i32 = 0;
     while (i < names.len()) {
