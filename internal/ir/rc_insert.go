@@ -756,6 +756,12 @@ func (b *builder) bindingUsesExcused(body ast.Node, name string, bt ast.Type, co
 		return true
 	})
 	excused := map[*ast.Ident]bool{}
+	// An expression arm that is the binding itself yields it through
+	// emitCountedYield, which retains it, so the result holds a reference of
+	// its own.
+	if id, ok := body.(*ast.Ident); ok && id.Name == name && countedAliasOK && b.retainsOnAlias(bt) {
+		excused[id] = true
+	}
 	ast.Walk(body, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.FieldAccess:
@@ -1216,8 +1222,8 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		//   - x86-64 (boxed, slice 4b): the slot is one word (the cell ptr);
 		//     OpLoadLocal pushes it and the helper takes 1 arg, reloading
 		//     data/vtable from the cell and freeing the cell.
-		// arm64 leaks `dyn` (no helper, slice 4c) and never sets rcTracked,
-		// so this arm is unreached there.
+		// A backend without dyn RC never sets rcTracked, so this arm is
+		// unreached there.
 		if dt, ok := t.(ast.DynTraitType); ok && b.dynReclaim() {
 			b.emit(Op{Kind: OpLoadLocal, I32: slot}) // wasm: [data, vtable]; native: cell ptr
 			argc := int32(1)
@@ -1567,11 +1573,11 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		}
 		// `dyn Trait` values own their erased concrete `data` object
 		// (docs/DYN-TRAITS.md §4.4). On wasm (inline two-word) the slot's
-		// `data` word, and on x86-64 (boxed one-word) the cell + its data,
-		// are dropped through the per-set __drop_dyn_<set> helper at scope
-		// exit (emitDec's DynTraitType arm). wasm (slice 4a) + x86-64
-		// (slice 4b). arm64 still leaks `dyn` (no __drop_dyn helper, slice
-		// 4c), so don't sweep it or the dec would call a missing fn.
+		// `data` word, and on the natives (boxed one-word) the cell + its
+		// data, are dropped through the per-set __drop_dyn_<set> helper at
+		// scope exit (emitDec's DynTraitType arm). A backend without dyn RC
+		// has no __drop_dyn helper, so it is not swept there or the dec would
+		// call a missing fn.
 		if _, isDyn := t.(ast.DynTraitType); isDyn && b.dynReclaim() {
 			return true
 		}
