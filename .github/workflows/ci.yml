@@ -305,10 +305,18 @@ jobs:
                     else if (mine.length && mine.every((j) => j.conclusion === "success")) base[l] = run.head_sha;
                   }
                 }
+                const unproven = candidates.filter((l) => !base[l]);
+                if (unproven.length) core.info(`no passing main run to diff from: ${unproven.join(", ")}`);
                 const changed = {};
                 for (const b of new Set(Object.values(base).filter(Boolean))) {
                   const { data: cmp } = await github.rest.repos.compareCommitsWithBasehead({ owner, repo, basehead: `${b}...${context.sha}` });
-                  if (cmp.status !== "ahead" || (cmp.files || []).length >= 300) continue;
+                  const at = candidates.filter((l) => base[l] === b).join(", ");
+                  const n = (cmp.files || []).length;
+                  if (cmp.status !== "ahead" || n >= 300) {
+                    core.info(`last passed at ${b.slice(0, 7)} (${at}): compare is ${cmp.status} with ${n} file(s), so they run`);
+                    continue;
+                  }
+                  core.info(`last passed at ${b.slice(0, 7)} (${at}): ${n} file(s) changed since`);
                   changed[b] = cmp.files.flatMap((f) => f.previous_filename ? [f.filename, f.previous_filename] : [f.filename]);
                 }
                 return candidates.filter((l) => base[l] && changed[base[l]] && !runsOn(lanes[l], changed[base[l]]));
