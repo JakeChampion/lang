@@ -2490,7 +2490,8 @@ func linkNativePIE(asm, outPath string) error {
 //
 // Anything else at the path is written through and kept: a device, a FIFO or
 // a socket is not the compiler's to replace (`-o /dev/null` deleted the null
-// device, #10034), and a symlink keeps pointing where it did. The chmod keeps
+// device, #10034), and a symlink keeps pointing where it did (a dangling one
+// creates its target, as cp does). The chmod keeps
 // the mode explicit under any umask, and for --run's temp binary CreateTemp
 // made at 0600; it applies only when the path resolves to a regular file.
 func writeExecutable(outPath string, bin []byte) error {
@@ -2502,8 +2503,12 @@ func writeExecutable(outPath string, bin []byte) error {
 	if err := os.WriteFile(outPath, bin, 0o755); err != nil {
 		return err
 	}
-	if fi, err := os.Stat(outPath); err != nil || !fi.Mode().IsRegular() {
+	fi, err := os.Stat(outPath)
+	if err != nil {
 		return err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil
 	}
 	return os.Chmod(outPath, 0o755)
 }

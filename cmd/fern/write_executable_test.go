@@ -135,3 +135,27 @@ func TestWriteExecutableKeepsASymlink(t *testing.T) {
 		t.Fatalf("the target's mode %v is not executable", tfi.Mode())
 	}
 }
+
+// A dangling symlink creates its target, executable, and stays a link — cp's
+// behaviour, and the self-host writer's.
+func TestWriteExecutableCreatesADanglingLinksTarget(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "prog")
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeExecutable(link, []byte("new")); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Lstat(link); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("the link is now %v (%v), want it kept", fi, err)
+	}
+	tfi, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tfi.Mode()&0o111 == 0 {
+		t.Fatalf("the created target's mode %v is not executable", tfi.Mode())
+	}
+}

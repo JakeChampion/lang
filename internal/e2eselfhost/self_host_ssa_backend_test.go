@@ -1154,6 +1154,20 @@ func TestSelfHostOutputKeepsANonRegularPath(t *testing.T) {
 	if _, exit := h.runProduced(t, tg, target); exit != 31 {
 		t.Fatalf("the link's target exit %d, want 31", exit)
 	}
+
+	// A dangling link creates its target, executable, as native and cp do.
+	created := filepath.Join(dir, "created")
+	dangling := filepath.Join(dir, "dangling")
+	if err := os.Symlink(created, dangling); err != nil {
+		t.Fatal(err)
+	}
+	h.compileWith(t, tg, src, dangling)
+	if li, err := os.Lstat(dangling); err != nil || li.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("the dangling link is now %v (%v), want it kept", li, err)
+	}
+	if _, exit := h.runProduced(t, tg, created); exit != 31 {
+		t.Fatalf("the dangling link's created target exit %d, want 31", exit)
+	}
 }
 
 // TestSelfHostCLIBuildsForEveryNativeTarget builds the self-host compiler for

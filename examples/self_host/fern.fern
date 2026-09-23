@@ -499,14 +499,14 @@ function target_writes_binary(t: string, emit: string): boolean {
 // Anything else at the path is written through and kept, the rule native's
 // writeExecutable states: a device, a FIFO or a socket is not the compiler's to
 // replace (`-o /dev/null` deleted the null device, #10034), a symlink keeps
-// pointing where it did, and only a path that resolves to a regular file is
-// made executable.
+// pointing where it did (a dangling one creates its target), and only a path
+// that resolves to a regular file is made executable.
 function write_output(out_path: string, data: string, t: string, emit: string): Result[void, IoError] {
     if (!target_writes_binary(t, emit)) { return write_file(out_path, data); }
     if let Ok(link) = lstat(out_path) {
         if (!link.is_file) {
-            if let Ok(st) = stat(out_path) { if (st.is_file) { return write_file_exec(out_path, data); } }
-            return write_file(out_path, data);
+            if let Ok(st) = stat(out_path) { if (!st.is_file) { return write_file(out_path, data); } }
+            return write_file_exec(out_path, data);
         }
         match (remove_file(out_path)) { Ok(_) => {}, Err(_) => {} }
     }
