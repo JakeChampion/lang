@@ -21,8 +21,7 @@ import (
 // twice and the self-host zero times.
 //
 // What the blind spot was hiding: on 11 of the 69 the self-host checker reported
-// NO diagnostic at all (7 remain; diag_e010, err_map_key_no_hash,
-// err_duplicate_field and underscore_not_readable are closed).
+// NO diagnostic at all; the gap file lists the ones that remain.
 // `err_map_key_no_hash` showed what a missing rejection costs once it reaches a
 // backend — the wasm module it produced did not validate, calling a `$Has.hash`
 // nothing defines. It draws native's E045 now.
