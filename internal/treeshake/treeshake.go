@@ -188,8 +188,13 @@ var watHelperDeps = map[string][]string{
 	"__method_Map_set_keyed":    {"__map_set_keyed_impl", "__map_grow_keyed", "__map_lookup_val_keyed", "__map_clone"},
 	"__method_Map_delete_keyed": {"__map_delete_keyed_impl", "__map_clone"},
 	"__method_Map_clear":        {"__map_clear_impl", "__map_clone"},
-	"__method_Map_keys":         {"__map_keys_impl", "__map_column"},
-	"__method_Map_values":       {"__map_values_impl", "__map_column"},
+	// __map_u8_column is reached only for a one-byte K / V (#10000), which
+	// the IR decides from the type — after this walk. So it is rooted with
+	// the rest of the column machinery: a program that calls keys() or
+	// values() at all carries it, which is the price of shaking before the
+	// stride is known.
+	"__method_Map_keys":         {"__map_keys_impl", "__map_column", "__map_u8_column"},
+	"__method_Map_values":       {"__map_values_impl", "__map_column", "__map_u8_column"},
 	"__method_Map_iter":         {"__map_iter_impl"},
 	"__method_MapIter_has_next": {"__mapiter_has_next_impl"},
 	"__method_MapIter_key":      {"__mapiter_key_impl", "__mapiter_entry_addr"},

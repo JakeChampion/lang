@@ -14,10 +14,9 @@ import "core/map";
 // refusal.
 //
 // The keys() column is read on the `u32` map rather than the `u8` one because
-// a u8 COLUMN is a separate native bug: `__map_column`'s 4-byte destStride
-// writes into a 1-byte-stride `u8[]`, so native answers 3 where every other
-// leg answers 66 — on values() as much as keys(), and with no self-host
-// involvement. That is #10000, and its own case covers it.
+// the u8 COLUMN is a separate question — the stride of the result array rather
+// than the column a key is stored in — and `map_u8_column` is the case for it.
+// Keeping them apart is what lets this one stay about the key column alone.
 function main(): i32 {
     var small: Map[u8, i32] = map_new(2);
     var i: i32 = 0;
