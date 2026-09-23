@@ -2758,8 +2758,8 @@ func buildDynboxWrappers(info *checker.Info, ptrW int, vtables []VtableDecl) ([]
 // implementors still emits a helper (its method count is well-defined and
 // a no-implementor set is unreachable at runtime, but the symbol must
 // resolve where a `dyn` of that set is dec'd). Declines on a native
-// backend that hasn't opted in (arm64, slice 4c): no helper, no drop slot
-// read, `dyn` keeps leaking — no dangling call.
+// backend that hasn't opted in (arm64ssa): no helper, no drop slot read,
+// `dyn` keeps leaking — no dangling call.
 func buildDynDropHelpers(prog *ast.Program, info *checker.Info, ptrW int, dynRcSupported bool) []*Func {
 	if (ptrW != 4 && !dynRcSupported) || info == nil {
 		return nil
@@ -2896,11 +2896,10 @@ type lowerOpts struct {
 	// dynRcSupported lets a ptrW==8 native backend opt into Perceus RC
 	// of boxed `dyn Trait` values (the per-set __drop_dyn_<set> helper,
 	// the trailing vtable drop slot, and the dec/drop sweep arms —
-	// docs/DYN-TRAITS.md §4.4). A STRICT subset of dynSupported: dispatch
-	// shipped on both natives (2c/2d) but RC lands one backend at a time
-	// (x86-64 = slice 4b passes it; arm64 = slice 4c does not yet, so
-	// arm64 keeps leaking `dyn` — harmless). wasm RC (slice 4a) keys on
-	// ptrW==4 and never needs this.
+	// docs/DYN-TRAITS.md §4.4). A STRICT subset of dynSupported: both
+	// natives pass it (x86-64 slice 4b, arm64 slice 4c); a backend that
+	// dispatches without it (arm64ssa) leaks `dyn`. wasm RC (slice 4a) keys
+	// on ptrW==4 and never needs this.
 	dynRcSupported bool
 	// emitLineMarkers makes the builder emit a zero-effect OpLine at each
 	// statement boundary, carrying its source Pos, so a native backend can
@@ -2944,8 +2943,8 @@ func DynSupported() LowerOption { return func(o *lowerOpts) { o.dynSupported = t
 // DynRcSupported marks the calling backend as able to RECLAIM boxed
 // `dyn Trait` values via Perceus RC (the __drop_dyn_<set> helper + the
 // trailing vtable drop slot, §4.4). A strict subset of DynSupported:
-// x86-64 passes it (slice 4b); arm64 does not yet (slice 4c — it keeps
-// leaking `dyn`, which is harmless). wasm RC keys on ptrW==4 directly.
+// x86-64 (slice 4b) and arm64 (slice 4c) pass it; arm64ssa does not, and
+// leaks `dyn`. wasm RC keys on ptrW==4 directly.
 func DynRcSupported() LowerOption { return func(o *lowerOpts) { o.dynRcSupported = true } }
 
 // EmitLineMarkers makes the lowering emit OpLine source-position markers at
@@ -3024,8 +3023,8 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 	// backends that lifted their gate.
 	dynSupported := ptrW == 4 || lo.dynSupported
 	// RC of `dyn` is a strict subset of dispatch: wasm (slice 4a) + a
-	// native that opted in via DynRcSupported (x86-64 slice 4b). arm64
-	// (slice 4c) lifts dispatch but not RC, so it still leaks `dyn`.
+	// native that opted in via DynRcSupported (x86-64 slice 4b, arm64 slice
+	// 4c).
 	dynRcSupported := ptrW == 4 || lo.dynRcSupported
 	if !dynSupported {
 		if err := rejectDynTrait(prog); err != nil {
@@ -3456,10 +3455,9 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 		// sees them — without this seeding a struct/enum behind `dyn` whose
 		// __drop_struct_/__drop_enum_ body is reached ONLY via the vtable
 		// would be referenced (by name in the vtable cell) but never
-		// generated. wasm (slice 4a) + x86-64 (slice 4b, DynRcSupported)
-		// both append the drop slot and need this seeding; arm64 lifts
-		// dispatch but not RC yet (slice 4c), so it records no Drop and
-		// needs no seeding.
+		// generated. wasm (slice 4a) and the DynRcSupported natives append
+		// the drop slot and need this seeding; a backend without RC records
+		// no Drop and needs none.
 		if dynRcSupported {
 			for _, vt := range out.Vtables {
 				if vt.Drop == "" || queued[vt.Drop] {
@@ -5566,9 +5564,9 @@ type builder struct {
 	ptrW int
 	// dynRcSupported is the backend's `dyn Trait` RC capability flag
 	// (LowerOption DynRcSupported, threaded from LowerWith). Only matters
-	// for ptrW==8: x86-64 (slice 4b) reclaims boxed `dyn` values, arm64
-	// (slice 4c, not landed) still leaks them — even though BOTH natives
-	// pass DynSupported for dispatch. On ptrW==4 (wasm, slice 4a) the
+	// for ptrW==8: x86-64 (slice 4b) and arm64 (slice 4c) reclaim boxed
+	// `dyn` values; a backend passing DynSupported alone leaks them. On
+	// ptrW==4 (wasm, slice 4a) the
 	// `dyn` RC arms fire via ptrW==4 and ignore this. The builder-side
 	// Perceus arms key on b.dynReclaim() (= ptrW==4 || dynRcSupported) —
 	// docs/DYN-TRAITS.md §4.4.
@@ -5627,9 +5625,8 @@ func (b *builder) dynBoxed() bool {
 
 // dynReclaim reports whether the current backend reclaims `dyn Trait`
 // values (Perceus RC, docs/DYN-TRAITS.md §4.4). True on wasm (ptrW==4,
-// slice 4a) and on a native backend that opted in via DynSupported
-// (x86-64, slice 4b). arm64 (ptrW==8, no DynSupported, slice 4c) is
-// false and keeps leaking `dyn`. The builder-side Perceus arms key on
+// slice 4a) and on a native backend that opted in via DynRcSupported
+// (x86-64 slice 4b, arm64 slice 4c). The builder-side Perceus arms key on
 // this so a backend without a `__drop_dyn_<set>` helper never emits a
 // dangling call to one.
 func (b *builder) dynReclaim() bool {
@@ -7035,8 +7032,7 @@ func optionSomeOps(payloadType ast.Type, valSlot, baseSlot int32, ptrW int) []Op
 // POINTER on the stack as the `dyn` fat pointer's `data` word
 // (docs/DYN-TRAITS.md §4.2.3). The cell is sized + stored via the concrete
 // type's own layout helpers, so a two-word wasm string boxes as two words,
-// an i64/f64 as 8 bytes, etc. The cell carries no rc header (leak-mode,
-// like the existing dyn box). `concrete` is the primitive type-name string
+// an i64/f64 as 8 bytes, etc. `concrete` is the primitive type-name string
 // from the coercion site; the caller has already gated isPrimitiveConcrete.
 func (b *builder) boxPrimitiveDynValue(concrete string) error {
 	ct := astTypeForConcreteName(concrete)
@@ -7051,18 +7047,28 @@ func (b *builder) boxPrimitiveDynValue(concrete string) error {
 	b.scratchType[valSlot] = ct
 	b.locals[fmt.Sprintf("__dynbox_val_%d", valSlot)] = valSlot
 	b.emit(Op{Kind: OpStoreLocal, I32: valSlot})
-	// Allocate the value cell (no rc header — leak-mode dyn box).
-	b.emit(Op{Kind: OpConstI32, I32: size})
+	// The value box is counted like every other concrete, so a dyn value
+	// is retained and released by the same rc ops whatever it holds:
+	// rc=1 at [base], the value at [base + rcHeaderBytes], and `data` is
+	// the address past the header.
+	const rcHeaderBytes = 8
+	b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
 	b.emit(Op{Kind: OpAlloc})
 	cellSlot := b.allocSlot()
 	b.scratchType[cellSlot] = ast.NumberType{Width: 32}
 	b.locals[fmt.Sprintf("__dynbox_cell_%d", cellSlot)] = cellSlot
 	b.emit(Op{Kind: OpStoreLocal, I32: cellSlot})
-	// cell[0] = value (concrete store width: two-word for a wasm string).
+	b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 1})
+	b.emit(Op{Kind: OpStore})
+	b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
+	b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(Op{Kind: OpStoreLocal, I32: cellSlot})
+	// value (concrete store width: two-word for a wasm string).
 	b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
 	b.emit(Op{Kind: OpLoadLocal, I32: valSlot})
 	b.emit(payloadStoreOpFor(ct, b.ptrW))
-	// Leave the cell pointer on the stack as `data`.
 	b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
 	return nil
 }
@@ -7769,6 +7775,10 @@ func (b *builder) emitLiteralMatchExpr(n *ast.MatchExpr) error {
 			resultType = ast.BoolType{}
 			break
 		}
+		if dt, ok := t.(ast.DynTraitType); ok {
+			resultType = dt
+			break
+		}
 	}
 	resultSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__matchexpr_r_%d", resultSlot)] = resultSlot
@@ -7893,6 +7903,10 @@ func (b *builder) emitStructMatchExpr(n *ast.MatchExpr) error {
 		}
 		if _, ok := t.(ast.BoolType); ok {
 			resultType = ast.BoolType{}
+			break
+		}
+		if dt, ok := t.(ast.DynTraitType); ok {
+			resultType = dt
 			break
 		}
 	}
@@ -9190,20 +9204,14 @@ func (b *builder) stmt(s ast.Stmt) error {
 			b.emit(Op{Kind: OpReturn})
 			return nil
 		}
-		// Move-on-return for a swept `dyn Trait` local (#4351): the exit
-		// sweep's DynTraitType arm drops unconditionally — __drop_dyn_<set>
-		// runs the concrete dtor and, on the natives, frees the {data,vtable}
-		// cell outright; there is no rc header to net against a transfer inc.
-		// Returning a bare dyn local MOVES the value to the caller, so
-		// sweeping it here handed back a freed cell — the caller's next
-		// dispatch read reclaimed memory (segfault on the natives, a garbage
-		// dispatch on wasm). Exclude it from the sweep; no inc is emitted
-		// (dyn values are not rc-counted), so this is a pure move. dyn locals
-		// sit outside isOwnedRcLocal / needsRcIncOnAlias (dyn cells must
-		// never see __fern_rc_inc — they carry no header), hence the
-		// dedicated branch rather than widening those predicates.
+		// Move-on-return for a swept `dyn Trait` local (#4351): the frame's
+		// unit (its cell and the concrete's count) moves to the caller, so
+		// the local is excluded from the sweep and takes no retain. A dyn
+		// value is retained through emitDynRetain, never __fern_rc_inc: the
+		// natives' {data, vtable} cell carries no header. Hence this branch
+		// rather than isOwnedRcLocal.
 		if id, ok := n.Value.(*ast.Ident); ok && len(b.defers) == 0 &&
-			b.dynReclaim() && b.localIsDynTrait(id.Name) {
+			b.dynReclaim() && b.localIsDynTrait(id.Name) && !b.dynParamBorrowed(id.Name) {
 			b.emitRcDecLocalsAtExitExcept(id.Name)
 			b.emit(Op{Kind: OpReturn})
 			return nil
@@ -9509,6 +9517,8 @@ func (b *builder) stmt(s ast.Stmt) error {
 				b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 			} else if arrElemIsRcTracked(elemTypes[i]) {
 				b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
+			} else if _, isDyn := elemTypes[i].(ast.DynTraitType); isDyn && b.dynReclaim() {
+				b.emitDynRetain()
 			}
 			// Loop-body reclamation: like the temp above, a binding declared
 			// by a destructure inside a loop reuses one slot per iteration.
@@ -10560,6 +10570,11 @@ func (b *builder) expr(e ast.Expr) error {
 		if _, isString := b.exprType(n).(ast.StringType); isString && b.twoWordStrings() {
 			bt = BlockTypeStringPair
 		}
+		// wasm's `dyn` value is the inline `[data, vtable]` pair, the same
+		// two i32 words as a two-word string.
+		if _, isDyn := b.exprType(n).(ast.DynTraitType); isDyn && b.ptrW == 4 {
+			bt = BlockTypeStringPair
+		}
 		if err := b.expr(n.Cond); err != nil {
 			return err
 		}
@@ -10646,6 +10661,12 @@ func (b *builder) expr(e ast.Expr) error {
 			// declare `<slot>_data` + `<slot>_len`.
 			if _, ok := t.(ast.StringType); ok {
 				resultType = ast.StringType{}
+				break
+			}
+			// A `dyn` arm body is the two-word `[data, vtable]` pair on
+			// wasm32, the same slot shape.
+			if dt, ok := t.(ast.DynTraitType); ok {
+				resultType = dt
 				break
 			}
 		}
@@ -16870,11 +16891,18 @@ func structUpdateFieldInits(sl *ast.StructLit, sd *ast.StructDecl, t *ast.Ident)
 // the reuse path's carried ones. Keyed on the field type rather than on a
 // source expression (there is none): a two-word string goes through
 // __fern_str_inc so the inline-bit tag check applies, everything else
-// pointer-shaped through __fern_rc_inc, and a scalar takes nothing. Every
-// branch inc's-and-passes-through, leaving the value on the stack for the
-// store.
+// pointer-shaped through __fern_rc_inc, and a scalar takes nothing. A dyn
+// value has no header of its own to inc, so it is retained as a dyn alias is.
+// Every branch inc's-and-passes-through, leaving the value on the stack for
+// the store.
 func (b *builder) emitCopiedFieldInc(t ast.Type) {
 	if !ast.IsPointerType(t) {
+		return
+	}
+	if _, isDyn := t.(ast.DynTraitType); isDyn {
+		if b.dynReclaim() {
+			b.emitDynRetain()
+		}
 		return
 	}
 	if _, isStr := t.(ast.StringType); isStr && b.twoWordStrings() {
@@ -17954,9 +17982,8 @@ func (b *builder) emitOwnedSlotDrop(idx int32, t ast.Type) {
 		// vtable drop slot and dispatches the concrete destructor; the
 		// concrete dtor self-guards on rc==1. wasm (ptrW==4, slice 4a) passes
 		// the inline two-word `[data, vtable]` (2 args); x86-64 (boxed, slice
-		// 4b) passes the cell ptr (1 arg). arm64 leaks `dyn` (slice 4c) and
-		// never reaches here (rcTracked is false for it, so the slot is never
-		// an owned rc-tracked local the reinit path drops).
+		// 4b) and arm64 (slice 4c) pass the cell ptr (1 arg). A backend
+		// without dyn RC never reaches here: rcTracked is false for it.
 		if b.dynReclaim() {
 			b.emit(Op{Kind: OpLoadLocal, I32: idx}) // wasm: [data, vtable]; native: cell ptr
 			argc := int32(1)
@@ -19655,10 +19682,8 @@ func (b *builder) assign(n *ast.Assign) error {
 			// an array nor a struct/enum/string/tuple by these predicates), so
 			// nothing released the old cell + concrete and a reassigning loop
 			// orphaned one of each per iteration. Reuses the loop-body
-			// re-declaration drop, which carries the gating a `dyn` slot needs
-			// — dynBorrowedViews / dynAliasElemArrays hold no cell of their own
-			// — and is net-zero on the operand stack, so the new value
-			// underneath survives for the store below.
+			// re-declaration drop, which is net-zero on the operand stack, so
+			// the new value underneath survives for the store below.
 			b.emitVarReinitDropOld(t.Name, idx)
 		}
 		// Tee semantics: leave a copy on the stack for callers that

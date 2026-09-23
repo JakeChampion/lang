@@ -56,9 +56,8 @@ function main(): i32 { var f = dbl; return f(7); }`, 14},
 		{"const_as_value", `const TEN: i32 = 10;
 function main(): i32 { var f = TEN; return f + 5; }`, 15},
 		// 0-arg fn in an unannotated ARRAY, called via index — the array analog.
-		// `var fns = [mk]` would const-call each element (storing mk()'s result),
-		// so `fns[0]()` calls an integer as a code pointer and segfaults; the pass
-		// types it `fn[]` (a fn-pointer array) when used only as indexed calls.
+		// `mk` is not a `const`, so each element is a function value, boxed like
+		// any other, rather than a const-call storing mk()'s result.
 		{"array_index_call", `function mk(): i32 { return 7; }
 function main(): i32 { var fns = [mk]; return fns[0](); }`, 7},
 		// two 0-arg fns in an array, both called by index.

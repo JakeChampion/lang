@@ -28,13 +28,11 @@ import (
 // segfaulted while `all_eligible` wrongly admitted it. The fix marks the slot a
 // closure array at the FIRST closure `.append` (when the appended value is a
 // `__mkclo$…` env box / closure-returning call / closure local), so the indexed
-// call dispatches env-first. A bare NAMED-function value (`[f]` / `append(f)`) is
-// a plain fn POINTER, not a closure box: the `namedfn-*` cases below flow through
-// the is_fnarr slot flag (#3574) — each element lowers to const_func and
-// dispatches via PLAIN call_indirect. The fn[]-literal `[f, g]` is handled at the
-// StmtVar binding; the `append(f)` form reads is_fnarr at the append site so a
-// bare 0-arg fn name emits const_func instead of const-calling f (which
-// segfaulted). They share this harness because the routing-pin + run is identical.
+// call dispatches env-first. A bare NAMED-function value (`[f]` / `append(f)`)
+// is boxed through its `$wrap` like any other function value (#10076), so the
+// `namedfn-*` cases below dispatch env-first too; a bare 0-arg name is a function
+// value rather than a const-call of f (which segfaulted, #3574). They share this
+// harness because the routing-pin + run is identical.
 //
 // Each case is routing-pinned to "ir" (asm_pathprobe_run) and oracle-checked
 // against the interpreter; every result stays <= 120 (the wasm exit-code clamp,
@@ -73,13 +71,12 @@ var closureArrayIRCases = []struct {
 	// The loop form: a factory appends one capturing lambda per iteration and
 	// returns the array; the caller sums the calls. (10+0)+(10+1)+(10+2) = 33.
 	{"escape-loop-capture", `function adders(n: i32): ((i32) => i32)[] { var fs: ((i32) => i32)[] = []; var i = 0; while (i < n) { var k = i; fs = fs.append((x: i32) => x + k); i = i + 1; } return fs; } function main(): i32 { var fs = adders(3); var t = 0; for f in fs { t = t + f(10); } return t; }`, 33},
-	// #3574: a bare NAMED-fn value appended to an empty fn-pointer array (is_fnarr),
-	// then called. Const-calling f instead segfaults (exit -1).
+	// #3574: a bare NAMED-fn value appended to an empty function array, then
+	// called. Const-calling f instead segfaults (exit -1).
 	{"namedfn-append-empty", `function f(): i32 { return 7; } function main(): i32 { var fns: (() => i32)[] = []; fns = fns.append(f); return fns[0](); }`, 7},
 	// append two named fns, call both: 7 + 5 = 12.
 	{"namedfn-append-two", `function f(): i32 { return 7; } function g(): i32 { return 5; } function main(): i32 { var fns: (() => i32)[] = []; fns = fns.append(f); fns = fns.append(g); return fns[0]() + fns[1](); }`, 12},
-	// append a named fn onto a NON-empty named-fn literal (the literal marks
-	// is_fnarr at its StmtVar binding; the append reads it), then call it.
+	// append a named fn onto a NON-empty named-fn literal, then call it.
 	{"namedfn-append-after-literal", `function f(): i32 { return 7; } function g(): i32 { return 5; } function main(): i32 { var fns: (() => i32)[] = [f]; fns = fns.append(g); return fns[1](); }`, 5},
 	// append three named fns, sum via a `for` loop: 1 + 2 + 4 = 7.
 	{"namedfn-append-loop", `function a(): i32 { return 1; } function b(): i32 { return 2; } function c(): i32 { return 4; } function main(): i32 { var fns: (() => i32)[] = []; fns = fns.append(a); fns = fns.append(b); fns = fns.append(c); var s = 0; for f in fns { s = s + f(); } return s; }`, 7},
@@ -124,9 +121,8 @@ var closureArrayIRCases = []struct {
 	{"param-if-condition", `function get(fs: ((i32) => i32)[], v: i32): i32 { var f = fs[0]; return f(v); } function main(): i32 { var k = 10; var fs: ((i32) => i32)[] = [(x: i32) => x + k]; if (get(fs, 4) == 14) { return 100; } return 99; }`, 100},
 	// callee called as an ARGUMENT to another call: id(get(fs,4)) → 14.
 	{"param-call-argument", `function id(x: i32): i32 { return x; } function get(fs: ((i32) => i32)[], v: i32): i32 { var f = fs[0]; return f(v); } function main(): i32 { var k = 10; var fs: ((i32) => i32)[] = [(x: i32) => x + k]; return id(get(fs, 4)); }`, 14},
-	// regression: a BARE-fn-pointer array param (named fns, is_fnarr) must STAY
-	// plain-dispatched even when the callee is called from a match scrutinee —
-	// the scan must NOT over-eagerly mark it is_closurearr. inc(5)=6 → arm 100.
+	// A named-function array param, the callee called from a match scrutinee:
+	// the element is a `$wrap` box like a lambda's. inc(5)=6 → arm 100.
 	{"param-namedfn-plain-in-match", `function inc(x: i32): i32 { return x + 1; } function apply(fs: ((i32) => i32)[], v: i32): i32 { var f = fs[0]; return f(v); } function main(): i32 { var fs: ((i32) => i32)[] = [inc]; match (apply(fs, 5)) { 6 => { return 100; }, _ => { return 99; } } }`, 100},
 	// #5119: a closure-array param FORWARDED to another function must keep the
 	// final callee env-first. The proof is a fixpoint: chain's param proves
@@ -156,9 +152,9 @@ var closureArrayIRCases = []struct {
 	{"local-elem-both-names", `function main(): i32 { var n = 20; var f: () => i32 = (): i32 => { return n; }; var fs: (() => i32)[] = [f]; var x = f(); return x + fs[0]() + 2; }`, 42},
 	// Two closure locals in one literal: 20 + 21 + 1 = 42.
 	{"local-elem-two", `function main(): i32 { var n = 20; var f: () => i32 = (): i32 => { return n; }; var g: () => i32 = (): i32 => { return n + 1; }; var fs: (() => i32)[] = [f, g]; return fs[0]() + fs[1]() + 1; }`, 42},
-	// regression: a bare NAMED-fn literal element stays on the #3574
-	// fn-pointer path (is_closure_local is false for it): 42.
-	{"local-elem-namedfn-plain", `function h(): i32 { return 42; } function main(): i32 { var fs: (() => i32)[] = [h]; return fs[0](); }`, 42},
+	// A named-function element beside the closure-local cases: boxed through
+	// its `$wrap`, so it dispatches the same way. 42.
+	{"local-elem-namedfn", `function h(): i32 { return 42; } function main(): i32 { var fs: (() => i32)[] = [h]; return fs[0](); }`, 42},
 
 	// #6571: the closure array sits in the CONDITION of a value-position
 	// if — an IIFE, so the arms are statements inside an expression and every
@@ -187,21 +183,14 @@ function main(): i32 { var v2: i32 = 5i32; if (g([((x: i32) => (x + v2))], 1i64)
 	// through. Boxing every element is the fix; 40 + 2 = 42.
 	{"passthrough-iife-elem-mixed", `function id[T](x: T): T { return x; }
 function main(): i32 { var fs: ((i32) => i32)[] = [id((if (false) { ((x: i32) => 1i32) } else { ((x: i32) => 2i32) })), ((x: i32) => 40i32)]; return fs[1i32](0i32) + fs[0i32](0i32); }`, 42},
-	// The same disagreement one container out: the literal is all-no-capture,
-	// so it stays a POINTER array — but its element binding is handed to a
-	// fn-typed PARAMETER, and every fn-value argument is an env box, so the
-	// callee dispatches env-first through a bare code address. The literal has
-	// to box for that use, like the `return` and `.with` siblings already do.
+	// An element of an all-no-capture literal, bound and handed to a fn-typed
+	// parameter: the element is already a box, as every fn-value argument is.
 	{"elem-bound-passed-to-fn-param", `function apply(f: (i32) => i32, n: i32): i32 { return f(n); }
 function main(): i32 { var fs: ((i32) => i32)[] = [((x: i32) => (x + 2i32))]; var f: (i32) => i32 = fs[0i32]; return apply(f, 40i32); }`, 42},
 
-	// #8090 — the disagreement one container further out: an `fn[]` PARAMETER
-	// gets one dispatch ABI across all its call sites, and here two of them want
-	// different ones. The outer literal is all-no-capture, so the lift hoists it
-	// to bare fn pointers; the inner one captures `y`, so it has no
-	// representation but env boxes. The all-call-sites proof then fails on the
-	// disagreement, the parameter dispatches plain, and the box array's elements
-	// are called as code. A site with no choice settles the ABI for the rest.
+	// #8090 — an `fn[]` PARAMETER reached from two call sites, one passing
+	// no-capture lambdas and one a lambda capturing `y`. Both literals hold
+	// boxes, so the parameter's one env-first dispatch serves both.
 	// 1 + (1 + 40) = 42.
 	{"fnarr-param-two-call-sites", `function apply_all(fs: ((i32) => i32)[]): i32 { var acc: i32 = 0i32; for f in fs { acc = acc + f(1i32); } return acc; }
 function main(): i32 { return apply_all([((x: i32) => 1i32), ((y: i32) => apply_all([((z: i32) => (y + 40i32))]))]); }`, 42},
@@ -220,9 +209,9 @@ function main(): i32 {
   var xs: i32[] = [(0i32 ^ (if (false) { 109i32 } else { gen_f0(Blue, Active, (733i32, 747i64), ((x: i32) => (x + 40i32))) }))];
   return xs[0i32];
 }`, 42},
-	// The direction the promotion must not disturb: one call site, all
-	// no-capture, stays on the bare fn-pointer representation. 1 + 41 = 42.
-	{"fnarr-param-single-site-stays-pointers", `function apply_all(fs: ((i32) => i32)[]): i32 { var acc: i32 = 0i32; for f in fs { acc = acc + f(1i32); } return acc; }
+	// One call site, all no-capture: the elements are `$wrap` boxes like any
+	// other. 1 + 41 = 42.
+	{"fnarr-param-single-site-no-capture", `function apply_all(fs: ((i32) => i32)[]): i32 { var acc: i32 = 0i32; for f in fs { acc = acc + f(1i32); } return acc; }
 function main(): i32 { return apply_all([((x: i32) => 1i32), ((y: i32) => 41i32)]); }`, 42},
 
 	// The match SCRUTINEE sibling: same blind spot, the other selector.

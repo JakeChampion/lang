@@ -9,7 +9,8 @@
 #   stage0   a pinned earlier compiler (bootstrap/stage0.lock), or the binary
 #            named by STAGE0=<path>
 #   stage1   stage0 compiles examples/self_host/fern.fern for this host; it
-#            must then compile and run a small program (the smoke test), and
+#            must then compile and run a one-line program and coreutils/tr
+#            (the smoke test), and
 #            is installed as bin/fern-selfhost — the artifact `make
 #            selfhost-cli` builds with the native toolchain
 #   stage2   stage1 compiles the same source. stage1 and stage2 must be
@@ -106,8 +107,10 @@ stage() {
   echo "$1: $(( $(date +%s) - t0 )) s, $(size "$out") bytes"
 }
 
-# smoke COMPILER: the compiler must compile a program and the result must
-# run — a binary that links but cannot execute is not a compiler.
+# smoke COMPILER: the compiler must compile a one-line program and
+# coreutils/tr, and both results must run — a binary that links but cannot
+# execute is not a compiler, and one that only handles a one-liner is not
+# one either.
 smoke() {
   local src bin code
   src="$OUT/smoke.fern"
@@ -119,7 +122,18 @@ smoke() {
   code=0
   "$bin" || code=$?
   [ "$code" = 42 ] || die "smoke: program compiled by $1 exited $code, want 42"
-  echo "smoke: $1 compiles and its output runs"
+  # A one-line program never reaches the lowering of records, matches and
+  # imported modules, where a stage1 built through the AST lowering aborts
+  # (#9763). coreutils/tr is a real multi-module program that does.
+  bin="$OUT/smoke-tr"
+  rm -f "$bin"
+  "$1" -O -target "$HOST" -o "$bin" "$ROOT/coreutils/tr.fern" "$STDLIB" \
+    || die "smoke: $1 could not compile coreutils/tr.fern"
+  chmod +x "$bin"
+  local got
+  got="$(printf 'abc' | "$bin" a-c x-z)" || die "smoke: tr compiled by $1 failed"
+  [ "$got" = xyz ] || die "smoke: tr compiled by $1 printed '$got', want 'xyz'"
+  echo "smoke: $1 compiles a program and coreutils/tr, and both run"
 }
 
 build() {
