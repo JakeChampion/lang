@@ -366,17 +366,16 @@ function main(): i32 {
 	// The lambda half of the same fix, which the row above cannot observe:
 	// both its lambdas return a plain struct, so ExprLambda's callable-result
 	// sidecar stays empty. #9954's own repro is the shape that fills it — a
-	// lambda whose declared result is `(i32) => Slot[i32]` — and it still
-	// refuses as a whole, now at the capturing lambda `outer`'s lambda returns
-	// (#10025's second half). What the mangling clears is the OTHER refusal
-	// the module carried: `outer: return type: declared ((i32) => ((i32) =>
-	// Slot__i32)), returns ((i32) => ((i32) => Slot))`, the sidecar the
-	// `...lm` spread copied verbatim meeting the signature ms_func had already
-	// mangled. So the pins are the refusal that stands and the one that may
-	// not come back.
+	// lambda whose declared result is `(i32) => Slot[i32]` — and it produces
+	// whole since a capturing returned lambda takes the `$lamret$N` slot
+	// (#10025). What the mangling clears is the refusal the module used to
+	// carry: `outer: return type: declared ((i32) => ((i32) => Slot__i32)),
+	// returns ((i32) => ((i32) => Slot))`, the sidecar the `...lm` spread
+	// copied verbatim meeting the signature ms_func had already mangled, which
+	// is pinned so it cannot come back.
 	{
 		name:        "a-lambda-declaring-a-callable-result-over-a-generic-struct",
-		refuses:     "outer$wrap0: unsupported expression",
+		atLeast:     5,
 		reportLacks: "outer: return type:",
 		src: `
 struct Slot[T] { v: T }
@@ -4013,6 +4012,22 @@ function through_result(): i32 {
 }
 function main(): i32 {
     return through_local(3) + use_through_local() + apply2(runner, 5) + through_result() - 1;
+}
+`},
+	// A CAPTURING lambda returned from a lambda. The lifted body's tail
+	// `return <lambda>` kept an escaping-closure hoist that left the lambda at
+	// the return site, which the typed path refused ("unsupported expression"),
+	// because the AST lowering had once segfaulted given the `$lamret$N` slot
+	// instead (#5281). That no longer reproduces, so every tail takes the slot
+	// and the hoist is gone (#10025). Two levels, three levels, and a lambda
+	// bound to a local that returns an expression-bodied lambda.
+	{name: "a-lambda-returning-a-capturing-lambda", atLeast: 5, noLeak: true, src: `
+function main(): i32 {
+    var curry = (a: i32) => { return (b: i32): i32 => a + b; };
+    var add5 = curry(5);
+    var c3 = (a: i32) => { return (b: i32) => { return (c: i32): i32 => a + b + c; }; };
+    var add = (x: i32) => (y: i32) => x + y;
+    return add5(4) + curry(1)(2) + c3(1)(2)(3) + add(3)(4) + 17;
 }
 `},
 }

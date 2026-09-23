@@ -35,8 +35,9 @@ Two call protocols coexist in `irlower.fern`'s `ExprCall` lowering:
   `lift_lambdas` step 2 / `lift_call_arg`).
 - **Env-first box** — `push box (as __env); push args; push box[0] (target);
   call_indirect(arity+1)`, target signature `(__env, params…)`. Used by a closure
-  LOCAL (`is_closure_local`, ~3933), a closure-array element, and the escaping
-  `return <capturing lambda>` path (`hoist_escaping_closure` → `<fn>$clo`).
+  LOCAL (`is_closure_local`, ~3933), a closure-array element, and a returned
+  capturing lambda (bound to a `$lamret$N` slot, which lifts it to a
+  `__mkclo$<fn>$cloN` box like any other closure local).
 
 A capturing lambda arg needs the env-first box (to carry its captures), but the
 callee invokes a fn-typed param via the **bare** protocol — and the callee is
