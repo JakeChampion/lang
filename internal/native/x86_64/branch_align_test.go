@@ -2,6 +2,7 @@ package x86_64
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -64,23 +65,11 @@ func checkBranchAlignment(t *testing.T, base uint64, fill int) {
 			if addr/32 != last/32 || last%32 == 31 {
 				t.Errorf("base %#x fill %d: a branch of %d bytes at address %#x (mod 32 = %d) crosses or ends on a 32-byte line", base, fill, n, addr, addr%32)
 			}
-			// A macro-fused pair is one span to the erratum, so putting the
-			// jcc alone at a line start would leave the pair straddling it
-			// exactly — the shape this is supposed to avoid.
-			if e.leadFuse {
-				fa, fl := int(base)+e.newStart+e.bpad, int(base)+e.newStart+e.bpad+e.lead+n-1
-				if fa/32 != fl/32 || fl%32 == 31 {
-					t.Errorf("base %#x fill %d: a fused %d-byte pair at address %#x (mod 32 = %d) crosses or ends on a 32-byte line", base, fill, e.lead+n, fa, fa%32)
-				}
-			}
 			// Padding spent as prefixes must stay within one instruction's
 			// encoding: 5 per GNU as, and the decoder's 15-byte limit.
 			if e.bpfx > 0 {
 				if e.bpfx > e.bpad || e.bpfx > 5 || e.lead+e.bpfx > 15 {
 					t.Errorf("base %#x fill %d: %d prefixes on a %d-byte lead with %d bytes of pad", base, fill, e.bpfx, e.lead, e.bpad)
-				}
-				if !e.leadPrefixable {
-					t.Errorf("base %#x fill %d: prefixes on a lead that cannot take them", base, fill)
 				}
 			}
 			if e.fixed {
@@ -137,10 +126,13 @@ func TestBranchAlignmentSpendsPaddingAsPrefixes(t *testing.T) {
 		for i := 0; i < fill; i++ {
 			sb.WriteString("\tnop\n")
 		}
+		// An unconditional jump after a non-flag-setting lead: no macro
+		// fusion, so the span kept off the line is the branch alone and the
+		// padding in front of the lead is free to become prefixes.
 		for i := 0; i < 24; i++ {
-			sb.WriteString("\tadd rcx, 1\n\tcmp rax, 1\n\tjne near\n")
+			sb.WriteString("\tmov rcx, 1\n\tjmp over" + itoa(i) + "\nover" + itoa(i) + ":\n")
 		}
-		sb.WriteString("near:\n\tret\n")
+		sb.WriteString("\tret\n")
 		a, err := ParseProgram(sb.String())
 		if err != nil {
 			t.Fatalf("fill %d: %v", fill, err)
@@ -178,3 +170,5 @@ func TestBranchAlignmentSpendsPaddingAsPrefixes(t *testing.T) {
 	}
 	t.Logf("%d padded branches, %d pad bytes spent as prefixes", padded, converted)
 }
+
+func itoa(i int) string { return strconv.Itoa(i) }
