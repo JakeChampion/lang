@@ -9250,8 +9250,8 @@ func (g *generator) emitRandomBytesRuntime() {
 // each, calls ppoll(2) (#73 — arm64 has no bare `poll`), and returns
 // the INDEX of the first readable fd, or -1 on timeout / none.
 // `timeout_ms` < 0 blocks indefinitely (NULL timespec); >= 0 builds a
-// timespec. On Darwin the readiness path (kqueue) is not yet ported,
-// so the helper returns -1 (no readiness).
+// timespec. Darwin uses kqueue. Both paths release their temporary kernel
+// buffers before returning.
 func (g *generator) emitPollRuntime() {
 	const pollin = 1 // POLLIN
 	g.line("")
@@ -9268,6 +9268,7 @@ func (g *generator) emitPollRuntime() {
 	g.emit("stp x19, x20, [sp, #16]") // x19 = nfds, x20 = fds ptr
 	g.emit("stp x21, x22, [sp, #32]") // x21 = pollfd buf, x22 = loop i
 	g.emit("stp x23, xzr, [sp, #48]") // x23 = timeout_ms
+	g.emit("mov x21, #0")             // no scratch on the empty-set path
 	// timespec scratch lives at [x29, #64..79].
 	g.emit("mov x20, x0") // fds ptr
 	g.emit("mov x23, x1") // timeout_ms
@@ -9328,6 +9329,13 @@ func (g *generator) emitPollRuntime() {
 	g.label(".Lpoll_none")
 	g.emit("mov x0, #-1")
 	g.label(".Lpoll_ret")
+	g.emit("mov x23, x0") // result survives the free call
+	g.emit("cbz x21, .Lpoll_reclaimed")
+	g.emit("mov x0, x21")
+	g.emit("lsl x1, x19, #3")
+	g.emit("bl __fern_free")
+	g.label(".Lpoll_reclaimed")
+	g.emit("mov x0, x23")
 	g.emit("ldp x19, x20, [sp, #16]")
 	g.emit("ldp x21, x22, [sp, #32]")
 	g.emit("ldr x23, [sp, #48]")
@@ -9364,6 +9372,7 @@ const (
 	kevUdata    = 24
 	evfiltRead  = 0xffff // EVFILT_READ (-1) in the low 16 bits
 	evAdd       = 0x0001
+	evReceipt   = 0x0040
 	evErrorFlag = 0x4000
 )
 
@@ -9391,10 +9400,10 @@ const (
 //     one per call is the simple first version: correct, and slower than it
 //     eventually should be. See docs/ATLAS-PLATFORM-PLAN.md §2c.
 //
-//  3. EV_ERROR EVENTS ARE SKIPPED. A failed registration comes back as an
-//     event with EV_ERROR set rather than as a kevent(2) failure, so
-//     treating every returned event as "ready" would report a bad fd as
-//     readable.
+//  3. REGISTRATION AND READINESS ARE SEPARATE. EV_RECEIPT reports every
+//     registration's result without draining ready events. A bad fd makes
+//     the following readiness wait nonblocking, like poll's POLLNVAL,
+//     but does not hide another fd that is already readable.
 //
 // The scan takes the MINIMUM udata rather than the first returned event,
 // because kevent returns events in its own order while the ppoll path
@@ -9409,6 +9418,8 @@ func (g *generator) emitPollRuntimeKqueue() {
 	g.emit("stp x21, x22, [sp, #32]") // x21 = changelist, x22 = loop i
 	g.emit("stp x23, x24, [sp, #48]") // x23 = timeout_ms, x24 = kq fd
 	g.emit("stp x25, x26, [sp, #64]") // x25 = eventlist, x26 = nchanges
+	g.emit("mov x21, #0")             // no buffers on the empty-set path
+	g.emit("mov x25, #0")
 	g.emit("mov x20, x0")
 	g.emit("mov x23, x1")
 	g.emitArrayLen("w19", "x20")
@@ -9424,12 +9435,13 @@ func (g *generator) emitPollRuntimeKqueue() {
 	g.emit("bl __fern_alloc")
 	g.emit("mov x25, x0")
 
-	// Marshal, skipping negative fds; x26 counts what actually registered.
+	// Register in reverse caller order: kevent coalesces duplicate fds and
+	// keeps the last udata, which must be the lowest caller index.
 	g.emit("mov x26, #0")
-	g.emit("mov x22, #0")
+	g.emit("mov x22, x19")
 	g.label(".Lkq_fill")
-	g.emit("cmp x22, x19")
-	g.emit("b.ge .Lkq_filled")
+	g.emit("subs x22, x22, #1")
+	g.emit("b.lt .Lkq_filled")
 	g.emit("ldr w0, [x20, x22, lsl #2]")
 	g.emit("cmp w0, #0")
 	g.emit("b.lt .Lkq_skip")
@@ -9440,14 +9452,13 @@ func (g *generator) emitPollRuntimeKqueue() {
 	g.emit("str x0, [x9, #%d]", kevIdent)
 	g.emit("mov w1, #%d", evfiltRead)
 	g.emit("strh w1, [x9, #%d]", kevFilter)
-	g.emit("mov w1, #%d", evAdd)
+	g.emit("mov w1, #%d", evAdd|evReceipt)
 	g.emit("strh w1, [x9, #%d]", kevFlags)
 	g.emit("str wzr, [x9, #%d]", kevFflags)
 	g.emit("str xzr, [x9, #%d]", kevData)
 	g.emit("str x22, [x9, #%d]", kevUdata) // caller's index, not ours
 	g.emit("add x26, x26, #1")
 	g.label(".Lkq_skip")
-	g.emit("add x22, x22, #1")
 	g.emit("b .Lkq_fill")
 	g.label(".Lkq_filled")
 	g.emit("cmp x26, #0")
@@ -9458,6 +9469,36 @@ func (g *generator) emitPollRuntimeKqueue() {
 	g.emit("svc #0x80")
 	g.emit("b.cs .Lkq_none")
 	g.emit("mov x24, x0")
+
+	// Obtain registration receipts, including success (data == 0).
+	g.emit("stp xzr, xzr, [x29, #80]")
+	g.emit("add x5, x29, #80")
+	g.emit("mov x0, x24")
+	g.emit("mov x1, x21")
+	g.emit("mov w2, w26")
+	g.emit("mov x3, x25")
+	g.emit("mov w4, w26")
+	g.emit("mov x16, #%d", darKevent)
+	g.emit("svc #0x80")
+	g.emit("b.cs .Lkq_close_none")
+	g.emit("mov x22, x0")
+	g.emit("mov x26, #0") // successful registrations
+	g.emit("mov x9, #0")
+	g.label(".Lkq_receipts")
+	g.emit("cmp x9, x22")
+	g.emit("b.ge .Lkq_registered")
+	g.emit("add x10, x25, x9, lsl #5")
+	g.emit("ldr x11, [x10, #%d]", kevData)
+	g.emit("cbnz x11, .Lkq_bad_registration")
+	g.emit("add x26, x26, #1")
+	g.emit("b .Lkq_next_receipt")
+	g.label(".Lkq_bad_registration")
+	g.emit("mov x23, #0") // invalid fds make poll return immediately
+	g.label(".Lkq_next_receipt")
+	g.emit("add x9, x9, #1")
+	g.emit("b .Lkq_receipts")
+	g.label(".Lkq_registered")
+	g.emit("cbz x26, .Lkq_close_none")
 
 	// timeout_ms < 0 → NULL timespec (block); else { sec, nsec }.
 	g.emit("cmp x23, #0")
@@ -9473,13 +9514,12 @@ func (g *generator) emitPollRuntimeKqueue() {
 	g.label(".Lkq_infinite")
 	g.emit("mov x5, #0")
 	g.label(".Lkq_call")
-	// kevent(kq, changelist, nchanges, eventlist, nevents, timeout).
-	// One call both registers and waits.
+	// Registration receipts are consumed; collect only readiness now.
 	g.emit("mov x0, x24")
-	g.emit("mov x1, x21")
-	g.emit("mov w2, w26")
+	g.emit("mov x1, #0")
+	g.emit("mov w2, #0")
 	g.emit("mov x3, x25")
-	g.emit("mov w4, w26")
+	g.emit("mov w4, w19")
 	g.emit("mov x16, #%d", darKevent)
 	g.emit("svc #0x80")
 	g.emit("mov x22, x0") // n (or garbage if the carry flag is set)
@@ -9524,6 +9564,16 @@ func (g *generator) emitPollRuntimeKqueue() {
 	g.label(".Lkq_none")
 	g.emit("mov x0, #-1")
 	g.label(".Lkq_ret")
+	g.emit("mov x23, x0") // preserve readiness across both frees
+	g.emit("cbz x21, .Lkq_reclaimed")
+	g.emit("mov x0, x21")
+	g.emit("lsl x1, x19, #5")
+	g.emit("bl __fern_free")
+	g.emit("mov x0, x25")
+	g.emit("lsl x1, x19, #5")
+	g.emit("bl __fern_free")
+	g.label(".Lkq_reclaimed")
+	g.emit("mov x0, x23")
 	g.emit("ldp x19, x20, [sp, #16]")
 	g.emit("ldp x21, x22, [sp, #32]")
 	g.emit("ldp x23, x24, [sp, #48]")
@@ -19989,6 +20039,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			target = "__fern_poll"
 			g.usesPoll = true
 			g.usesAlloc = true
+			g.usesFree = true
 		case "timer_fd":
 			target = "__fern_timer_fd"
 			g.usesTimerFd = true

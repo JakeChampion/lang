@@ -2634,6 +2634,7 @@ var heapUsingHelpers = map[string]bool{
 // calls another must have that callee emitted too — the module never references
 // it directly). Transitively closed by referencedRuntimeHelpers.
 var runtimeHelperDeps = map[string][]string{
+	"poll":                            {"__alloc", "__free"},
 	"strbuf_append":                   {"__alloc", "__free"},
 	"strbuf_take":                     {"__alloc"},
 	"__method_string_as_bytes":        {"__slice_make"},
