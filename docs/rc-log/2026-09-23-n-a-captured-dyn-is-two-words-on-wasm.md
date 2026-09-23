@@ -28,7 +28,9 @@ value, for the slot size, the scratch valtypes, the pop and the store.
   `genClosureDropThunk` had a dyn arm for the natives only, so the unit
   MakeEnv retained leaked with every closure. It now releases through
   `dynSlotDrop`, the helper the struct and tuple drops already use, which
-  covers both layouts.
+  covers both layouts. `hasRcCapture` asks the same helper, so a closure
+  whose only counted capture is a dyn value is dropped through its thunk
+  on wasm too, not the generic env drop.
 - **A coerced dyn argument beside a string leaked its cell on the
   natives.** `inferParamRetainSummary` treats a dyn parameter as holding no
   heap, and credits such a parameter only when every pointer parameter is
@@ -55,10 +57,3 @@ The alias churn's wasm leg, excluded until now, holds its heap flat.
 `TestDynCaptureBesideOtherCaptures`, and the wasm legs of
 `TestDynCaptureStoredPastTheBorrow` and
 `TestDynAliasStoredPastTheBorrowBounded`, fail without the change.
-
-## Traps
-
-A closure that captures a parameter and is rebound in a loop body still
-leaks on the natives. The retain summaries do not credit a capture as a
-counted store, so the local never gets its per-trip drop (#10112). The new
-test builds its closure in a per-trip helper for that reason.

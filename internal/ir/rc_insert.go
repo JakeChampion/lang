@@ -2070,8 +2070,8 @@ func (b *builder) emitReuseOldFieldDrops(reusedSlot, baseSlot int32, offsets []i
 
 // hasRcCapture reports whether any capture is rc-tracked (i.e. was
 // inc'd at MakeEnv and so needs dropping when the closure dies). A
-// `dyn Trait` capture counts on the natives (dynRcSupported), where the
-// thunk reclaims it; docs/DYN-TRAITS.md §7.8 — closure-capture kind.
+// `dyn Trait` capture counts wherever the thunk's dynSlotDrop releases it;
+// docs/DYN-TRAITS.md §7.8 — closure-capture kind.
 func hasRcCapture(caps []ast.Param, ptrW int, dynRcSupported bool) bool {
 	for _, c := range caps {
 		if arrElemIsRcTracked(c.Type) {
@@ -2086,11 +2086,7 @@ func hasRcCapture(caps []ast.Param, ptrW int, dynRcSupported bool) bool {
 		if _, isStr := c.Type.(ast.StringType); isStr && ptrW == 8 && !ast.UseTwoWordStrings(ptrW) {
 			return true
 		}
-		// `dyn Trait` capture — NATIVES ONLY (boxed one-word cell ptr in
-		// the env slot, reclaimed via __drop_dyn_<set> in the thunk). wasm
-		// (ptrW==4, inline two-word) is excluded: it has no thunk reclaim
-		// for `dyn` and keeps leaking the capture (correct-but-leaking).
-		if _, isDyn := c.Type.(ast.DynTraitType); isDyn && dynRcSupported {
+		if _, isDyn := dynSlotDrop(c.Type, ptrW, dynRcSupported); isDyn {
 			return true
 		}
 	}

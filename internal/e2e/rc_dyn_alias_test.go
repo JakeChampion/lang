@@ -136,6 +136,53 @@ function main(): i32 {
 	})
 }
 
+// A closure whose only counted capture is a dyn value, built and dropped in
+// the loop body: its precise drop reaches the closure's own drop thunk on
+// every backend, so the env's unit of the dyn value is released each trip.
+func TestDynOnlyCaptureDroppedLocallyBounded(t *testing.T) {
+	src := `trait Label { function a(self: Self): i32; }
+struct Box { name: string }
+impl Label for Box { function a(self: Self): i32 { return self.name.len(); } }
+function run(n: i32): i32 {
+    var sum: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        var local: Box = Box { name: "b" + "c" };
+        var l: dyn Label = local;
+        var f: () => i32 = () => l.a();
+        sum = sum + f();
+        i = i + 1;
+    }
+    return sum;
+}
+function main(): i32 {
+    var base: i32 = (__heap_bump_bytes() as i32);
+    var s1: i32 = run(500);
+    var first: i32 = (__heap_bump_bytes() as i32) - base;
+    var mid: i32 = (__heap_bump_bytes() as i32);
+    var s2: i32 = run(2000);
+    var second: i32 = (__heap_bump_bytes() as i32) - mid;
+    if (second > first) { return 1; }
+    if (s1 != 1000 || s2 != 4000) { return 2; }
+    return 0;
+}`
+	t.Run("x86_64", func(t *testing.T) {
+		if _, code := compileAndRunX86_64FreeOn(t, src); code != 0 {
+			t.Errorf("verdict %d, want 0 (1: heap grew with the churn; 2: wrong answer)", code)
+		}
+	})
+	t.Run("arm64", func(t *testing.T) {
+		if _, code := compileAndRunArm64FreeOn(t, src); code != 0 {
+			t.Errorf("verdict %d, want 0 (1: heap grew with the churn; 2: wrong answer)", code)
+		}
+	})
+	t.Run("wasm", func(t *testing.T) {
+		if got := runWasm(t, src); got != 0 {
+			t.Errorf("verdict %d, want 0 (1: heap grew with the churn; 2: wrong answer)", got)
+		}
+	})
+}
+
 // Dyn captures beside other captures. On wasm each dyn capture is two words
 // of the env, so a capture after it was read from the wrong offset (#10075).
 // A coerced dyn argument's cell is the call's own however the callee's other

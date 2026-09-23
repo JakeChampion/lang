@@ -894,13 +894,16 @@ exactly what the enum match-bind does not do. Tests:
   capture (#10075). The source local keeps its own exit-sweep drop, and
   `genClosureDropThunk` releases the env's unit through the per-set
   `__drop_dyn_<set>` (`dynSlotDrop`, VOID return, so NO trailing `OpDrop`).
-  `hasRcCapture` counts a `dyn` capture so the named thunk is generated. An
+  `hasRcCapture` counts a `dyn` capture on every backend (the same
+  `dynSlotDrop` predicate), so the named thunk is generated and a local
+  closure's precise drop reaches it. An
   escaping closure is sound for the same reason: the env holds its own unit,
   so the source's drop cannot free what the closure still reads. Tests:
   `rc_heap_bump_dyn_trait_closure_test.go` (bounded loop + no-underflow, an
   ESCAPING closure capturing a String-owning Circle behind `dyn Shape` — the
   use-after-free-sensitive shape — on x86-64 + arm64) and
-  `rc_dyn_alias_test.go` (the answer and the bounded churn on all three).
+  `rc_dyn_alias_test.go` (the answer, the bounded churn, and a dyn-only
+  capture dropped locally, on all three).
 - **Map value** of a `dyn` (`Map[K, dyn Shape]`) — FLAGGED-LEAKING
   (DELIBERATE; a documented leak beats a double-free). Map-of-`dyn`
   *dispatches* fine on the natives (`m.get(k).area()` works — verified), but
