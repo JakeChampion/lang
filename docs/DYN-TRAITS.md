@@ -5,13 +5,14 @@ three compiled backends (slice 2: wasm 2b, x86-64 2c, arm64 2d), the
 self-host (slice 3: x86-64 + arm64 + wasm), and Perceus RC for trait
 objects on **all three backends** (slice 4: wasm 4a, x86-64 4b, arm64 4c,
 §4.4), now including `dyn` values held as **array elements**
-(`dyn Trait[]`, all backends), as **enum payloads / struct fields / tuple
-elements** (`enum Box { Wrap(dyn Shape) }`, x86-64 + arm64), and **captured
-by a closure** (x86-64 + arm64). Dispatch is complete
-everywhere; standalone + array `dyn` reclaim on every backend; enum-payload
-/ struct-field / tuple-element and closure-captured `dyn` reclaim on the
-natives (wasm keeps these leaking — its inline two-word `dyn` double-drops a
-matched-and-bound payload, and a captured copy isn't reclaimed). The
+(`dyn Trait[]`, all backends), as **struct fields and tuple elements** (all
+backends, #10082), as **enum payloads** (`enum Box { Wrap(dyn Shape) }`,
+x86-64 + arm64), and **captured by a closure** (x86-64 + arm64). Dispatch is
+complete everywhere; standalone, array, struct-field and tuple-element `dyn`
+reclaim on every backend; enum-payload and closure-captured `dyn` reclaim on
+the natives (wasm keeps these leaking — its inline two-word `dyn`
+double-drops a matched-and-bound payload, and a captured copy isn't
+reclaimed). The
 closure-capture fix also closed a **use-after-free**: an escaping closure's
 captured `dyn` was both swept (incorrectly, via the source local) and held
 by the returned env — see §7.8. Still flagged-leaking: **map value** `dyn`
@@ -676,8 +677,6 @@ variant). Per-variant keying — unlike the AST fallback — means two enums
 implementing the same trait dispatch to their own impls. Coverage:
 `internal/e2eselfhost/self_host_dyn_enum_ir_test.go` (x86-64 + wasm +
 arm64) and the native leg `internal/e2e/dyn_enum_dispatch_native_test.go`.
-(The native x86-64 backend still segfaults on an enum LOCAL as a
-`dyn Trait[]` array-literal element — #4787, separate coercion-side gap.)
 
 ### 4.4 RC of trait objects (Perceus follow-up — design)
 
@@ -747,11 +746,8 @@ destructor to the vtable and routes `dyn` drops through it.
    double-free — identical to how a borrowed `struct` param is treated.
    `inc` of a `dyn` value (aliasing) inc's `data` only (the concrete
    object's own header); the static vtable is untouched. On the natives
-   an `inc` that must keep the box alive across two owners either inc's
-   the cell's own RC header **or** copies the cell — TBD at
-   implementation; the first cut can forbid `dyn` aliasing (move-only)
-   to dodge the question, matching how reuse analysis already prefers
-   moves.
+   the alias also takes a cell of its own (`emitDynRetain`, #10073), since
+   the cell carries no header to count.
 
 4. **Reuse / drop-specialisation** is out of scope for the first cut —
    trait objects are dropped, not reused — but the boxed cell is a
@@ -782,8 +778,8 @@ prove the inner free runs through the vtable destructor.
 **Slice (a) — wasm — SHIPPED.** `VtableDecl` gained a `Drop` field
 (`collectVtables` records `dropFnNameFor(C)`; a primitive concrete
 originally recorded "" — since #4351 it records `__drop_dynprim_<prim>`,
-which frees the `boxPrimitiveDynValue` VALUE CELL behind `data` that the
-null sentinel used to leak on every coercion. The string BUFFER behind a
+which releases a unit of the `boxPrimitiveDynValue` value box behind `data`,
+a counted box since #10072, and frees it at the last. The string BUFFER behind a
 string payload stays leak-mode: the coercion takes no retain, so an
 aliased source must never be freed from the dyn drop); the wasm `internVtable`
 appends it as the trailing function-table-index slot at index
@@ -797,8 +793,9 @@ Perceus passes treat a wasm `dyn` local as owning: `rcTracked`,
 `computeFreeEligible`, the exit sweep (`emitDec`), and the loop-body
 reinit drop (`emitOwnedSlotDrop`) all gained `DynTraitType` arms gated on
 `ptrW==4`. A dispatched-only `dyn` param stays borrowed
-(`paramOwnedByDefault` false → never dropped), so no double-free. Aliasing
-is move-only (first cut — `needsRcIncOnAlias` declines `dyn`, so no inc).
+(`paramOwnedByDefault` false → never dropped), so no double-free. An alias
+is retained through `needsRcIncOnAlias` / `emitAliasInc` like any other
+reference (#10073).
 The vtable-referenced drop fns are reached only by indirect call, so the
 wasm build roots them (`ip.Vtables[*].Drop` + `__drop_dyn_*`) past IR
 dead-function elimination, and the drop worklist is seeded from the
@@ -849,8 +846,8 @@ Empty }`) now reclaims its boxed `dyn` (cell + concrete + any String the
 concrete transitively owns) on **x86-64 + arm64**. The dyn-RC capability
 is threaded through the enum drop sites: `enumVariantDropPlan`'s
 `dropKind` admits a `DynTraitType` payload, and the shared child-drop
-helpers — the generated `appendChildDrop` (used by `genEnumDropFn` /
-`genTupleDropFn` / `genStructDropFn`) and the inline `dropStructField`
+helpers — the generated `appendChildDrop` (used by `genEnumDropFn`) and the
+inline `dropStructField`
 (used by `emitEnumSlotDrop`'s variant-plan tier at the exit sweep) — gained
 a `DynTraitType` arm that calls the per-set `__drop_dyn_<set>` destructor
 on the boxed one-word cell ptr (argc 1, VOID return, so NO trailing
@@ -876,41 +873,36 @@ ARRAY-element kind is unaffected (it reclaims on wasm via the separate
 `genArrDynDropFn` path, whose dedicated per-element generator has no
 matched-and-bound aliasing).
 
+**§7.8 follow-up — `dyn` as a STRUCT FIELD or TUPLE ELEMENT — SHIPPED on
+every backend (#10082).** A field or element holds a unit of its own: a
+fresh coercion moves one in, an alias is retained (`emitAliasInc` →
+`emitDynRetain`), a spread copy is retained (`emitCopiedFieldInc`), and a
+destructured binding retains what it projects. So the drop releases it —
+`genStructDropFn`, `genTupleDropFn` and the inline tuple-local drop share
+`dynSlotDrop`, which loads the slot with `payloadLoadOpFor` and calls
+`__drop_dyn_<set>` with one word on the natives and two on wasm. wasm needs
+no exclusion here: every read out of the slot takes its own unit, which is
+exactly what the enum match-bind does not do. Tests:
+`internal/e2e/rc_dyn_alias_test.go` (`TestDynFieldReleasedByStructDrop*`).
+
 **§7.8 — already-reclaiming and still-FLAGGED kinds (follow-up).**
 
 - **Closure capture of a plain `dyn`** — SHIPPED on the natives
-  (x86-64 + arm64). A captured `dyn` is moved into the env *without an inc*
-  (`needsRcIncOnAlias` declines `dyn`, move-only). The first cut *assumed*
-  the source local's exit-sweep drop (`emitDec`'s `DynTraitType` arm)
-  reclaimed it once and the thunk must NOT — true ONLY for a NON-escaping
-  closure. For an **escaping** closure (`return function () { … d.m() … }`)
-  the source local is NOT swept (it escaped into the returned env), so the
-  capture leaked — worse, the standalone-`dyn` reclaim's sweep predicate did
-  not exclude an escaped capture, so the source-local drop **freed the cell
-  the returned closure still dereferenced** — a use-after-free that
-  SEGFAULTED. Now both halves are wired on the natives:
-  `markConstructionMoves`' MakeClosure arm marks a `dyn` capture MOVED
-  (suppressing the source-local exit-sweep drop on EVERY path, escaping or
-  not), and `genClosureDropThunk` reclaims the captured `dyn` via the per-set
-  `__drop_dyn_<set>` destructor (boxed one-word cell ptr → vtable's trailing
-  drop slot → concrete dtor → `__free` the cell; argc 1, VOID return, so NO
-  trailing `OpDrop`). Net: no MakeEnv inc + one suppressed source drop + one
-  thunk reclaim = exactly one reclaim. `hasRcCapture` counts a `dyn` capture
-  (so the named thunk is generated + selected by `emitDec`). NATIVES ONLY:
-  all three sites gate on `dynRcSupported` (NOT `dynReclaim`, which includes
-  wasm) so the suppress/reclaim pair stays consistent. **wasm's**
+  (x86-64 + arm64). MakeEnv retains the capture like any other reference
+  (`emitDynRetain` builds the env a cell and a unit of its own, #10073), the
+  source local keeps its own exit-sweep drop, and `genClosureDropThunk`
+  releases the env's unit through the per-set `__drop_dyn_<set>` (argc 1,
+  VOID return, so NO trailing `OpDrop`). `hasRcCapture` counts a `dyn`
+  capture so the named thunk is generated. An escaping closure is sound
+  for the same reason: the env holds its own unit, so the source's drop
+  cannot free what the closure still reads. **wasm's**
   closure-captured `dyn` keeps its prior correct-but-leaking behaviour (its
   inline two-word env copy isn't reclaimed, the thunk declines it, and the
   source local stays swept) — and an escaping `dyn`-capturing closure on
-  wasm is a PRE-EXISTING dispatch bug (returns the wrong value), independent
-  of RC. Tests: `rc_heap_bump_dyn_trait_closure_test.go` (bounded loop +
+  wasm is a PRE-EXISTING dispatch bug (returns the wrong value, #10075),
+  independent of RC. Tests: `rc_heap_bump_dyn_trait_closure_test.go` (bounded loop +
   no-underflow, an ESCAPING closure capturing a String-owning Circle behind
   `dyn Shape` — the use-after-free-sensitive shape — on x86-64 + arm64).
-- **Tuple element** holding a `dyn` (`(dyn Shape, i32)`) — FLAGGED-LEAKING.
-  Pre-existing DISPATCH bug, not an RC gap: `t.0.area()` traps on wasm
-  ("indirect call type mismatch") and segfaults on the natives, so the
-  tuple-of-`dyn` cannot be exercised end-to-end. RC of a kind that doesn't
-  dispatch is moot/unsafe; deferred behind a tuple-`dyn` dispatch fix.
 - **Map value** of a `dyn` (`Map[K, dyn Shape]`) — FLAGGED-LEAKING
   (DELIBERATE; a documented leak beats a double-free). Map-of-`dyn`
   *dispatches* fine on the natives (`m.get(k).area()` works — verified), but
@@ -926,9 +918,7 @@ matched-and-bound aliasing).
   headerless cell — heap corruption. Routing `dyn` as kind 1 with a
   *drop-only* (no-retain) column walk avoids the corruption but reintroduces
   a hazard: a `dyn` read out via `get` and kept past the map's life would be
-  freed by the map drop (no retain co-owns it) → use-after-free — and `dyn`
-  is move-only (`needsRcIncOnAlias` declines it), so it can't be retained out
-  of the map under the current model anyway. So `mapValHasDrop` keeps
+  freed by the map drop (no retain co-owns it) → use-after-free. So `mapValHasDrop` keeps
   `dynRcSupported=false` for a `dyn` value: it reads kind 1, the value
   leaks, and NOTHING double-frees. Cleanly wiring it needs either an
   rc-headered boxed `dyn` cell (a `__fern_alloc_rc1`-based representation —
@@ -939,6 +929,32 @@ matched-and-bound aliasing).
 - **`dyn Trait[]` array CAPTURED by a closure** (`genClosureDropThunk`'s
   `arrElemStructDropName(…, false)` site) — still FLAGGED-LEAKING; the
   capture inc/borrow accounting for a nested-array `dyn` isn't established.
+
+### 4.5 The target model: a dyn value is a counted value
+
+Settled on the #10072 design review. A `dyn` value is a reference to its
+concrete's own counted box, and it joins Perceus like every other
+reference: a holder that borrows one retains it with the plain rc inc, and
+a release is an rc dec followed, at the last unit, by the drop the shape
+dispatches to. It is **not** lent-only the way `str` is: a view exists to
+borrow someone else's buffer, while a trait object exists to own a value
+whose type is erased, and heterogeneous collections and factories that
+return one are its reason to exist.
+
+- **Every concrete is counted.** A struct or enum box already carries its
+  rc header; a primitive behind `dyn` is boxed with one too (#10072), so a
+  retain never needs the concrete's static type.
+- **The self-host representation is the target.** There the value IS the
+  concrete's box, its shape at offset 0, so coercing a struct or enum
+  allocates nothing — which matters below the OS as much as it does for
+  speed. The natives' `{data, vtable}` cell is the one heap value that
+  cannot be counted, and every native dyn RC bug so far has been that cell
+  shared or lost (#10053, #10054, #10072, #10073, #10082). Until the natives adopt
+  the self-host shape, a holder that borrows a native dyn takes a cell of
+  its own as well as a unit of the concrete (`emitDynRetain`).
+- **The typed self-host path's "lent, never owned" refusal is a slice
+  limit, not the rule.** It lifts once that path can release a dyn value
+  through the shape-dispatched drop.
 
 ## 5. Coercion (boxing) model
 

@@ -8,25 +8,15 @@ import (
 	"testing"
 )
 
-// fnptrArrayRebindCases pin a whole-literal REBIND of a fn-POINTER array local —
+// fnptrArrayRebindCases pin a whole-literal REBIND of a function-array local —
 // `var a: (() => i32)[] = [seven]; a = [nine];` — which SIGSEGV'd on the x86-64
 // IR path (and trapped on wasm) while the interpreter returned the right answer.
 //
-// A `(() => T)[]` local carries a representation flag (`is_fnarr`) set where it
-// is DECLARED, and a bare fn NAME is only lowered to a fn POINTER (`const_func`)
-// at the sites that know about that flag: the declaration, and `.append`. The
-// whole-literal reassignment was the third construction site and had no such
-// handling, so its elements fell through to the generic expression path, which
-// const-CALLS a 0-arg fn name and stores the RESULT. The buffer then held
-// integers where code addresses belong, and the plain `call_indirect` the
-// is_fnarr slot dispatches through jumped to 9.
-//
-// The fix is representation-PRESERVING: the slot is already is_fnarr and stays
-// so. That is what makes the branch and loop cases below correct too — the
-// lowering never has to decide whether the assignment dominates the reads.
-//
-// A rebind that CHANGES the representation (`[seven]` <-> `[() => n]`, either
-// direction) is a separate, still-open defect — see docs/SELFHOST-AST-RETIREMENT.md.
+// Every element of a function array is an env box, whatever built it (#10076),
+// so a rebind stores the same representation the declaration did. The branch
+// and loop cases need no reasoning about whether the assignment dominates the
+// reads, and neither does a rebind between named functions and lambdas, which
+// crashed while a named-function array held bare code pointers.
 //
 // Exit codes cross-checked against the interpreter.
 var fnptrArrayRebindCases = []struct {
@@ -45,9 +35,14 @@ var fnptrArrayRebindCases = []struct {
 	{"rebind-in-branch", "function seven(): i32 { return 7; }\nfunction nine(): i32 { return 9; }\nfunction main(): i32 { var n: i32 = 5; var a: (() => i32)[] = [seven]; if (n > 100) { a = [nine]; } return a[0](); }", 7},
 	// …and inside a loop that runs twice, so the rebind is re-executed.
 	{"rebind-in-loop", "function seven(): i32 { return 7; }\nfunction nine(): i32 { return 9; }\nfunction main(): i32 { var a: (() => i32)[] = [seven]; var i: i32 = 0; while (i < 2) { a = [nine]; i = i + 1; } return a[0](); }", 9},
-	// Rebind then grow: the `.append` path (which always emitted const_func)
-	// must agree with the buffer the rebind just built.
+	// Rebind then grow: the `.append` path must agree with the buffer the
+	// rebind just built.
 	{"rebind-then-append", "function seven(): i32 { return 7; }\nfunction nine(): i32 { return 9; }\nfunction main(): i32 { var a: (() => i32)[] = [seven]; a = [nine]; a = a.append(seven); return a[0]() * 10 + a[1](); }", 97},
+	// A rebind from named functions to a capturing lambda, the reverse, and the
+	// first inside a branch that runs.
+	{"rebind-named-to-lambda", "function seven(): i32 { return 7; }\nfunction main(): i32 { var n: i32 = 5; var a: (() => i32)[] = [seven]; a = [() => n]; return a[0](); }", 5},
+	{"rebind-lambda-to-named", "function seven(): i32 { return 7; }\nfunction main(): i32 { var n: i32 = 5; var a: (() => i32)[] = [() => n]; a = [seven]; return a[0](); }", 7},
+	{"rebind-named-to-lambda-in-branch", "function seven(): i32 { return 7; }\nfunction main(): i32 { var n: i32 = 5; var a: (() => i32)[] = [seven]; if (n > 1) { a = [() => n]; } return a[0](); }", 5},
 	// Repeated rebinds in a loop: the superseded buffer is released by
 	// emit_arr_store's cow-guarded dec, so the heap must not grow without bound
 	// and nothing may be released twice.

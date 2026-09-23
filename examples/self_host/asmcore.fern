@@ -7155,12 +7155,7 @@ pub function struct_drop_field_ops(s: EmitState, sty: string): RcOp[] {
     while (k < n) {
         var fdt: string = irlower.decl_field_type_at(s.struct_decls, sty, k);
         var k_scalar: boolean = irlower.is_leaksafe_array_field(fdt);
-        // A registered plain-fn-pointer array field (#5235): elements are RAW
-        // code addresses, so it takes the buffer-only dec rather than the
-        // element walk that would release each as a box.
-        var k_fnptr: boolean = !k_scalar && irlower.is_enum_array_field_type(s.struct_decls, fdt)
-            && s.has_need("FNPTR:" + sty + "." + irlower.decl_field_name_at(s.struct_decls, sty, k));
-        var k_box: boolean = !k_scalar && !k_fnptr && (irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt));
+        var k_box: boolean = !k_scalar && (irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt));
         var k_struct: boolean = !k_scalar && !k_box && irlower.decl_is_struct(s.struct_decls, fdt);
         // The string / string[] / closure arms are gated on the whole-program
         // read scan: the construction-side retain only fires for admitted
@@ -7199,7 +7194,7 @@ pub function struct_drop_field_ops(s: EmitState, sty: string): RcOp[] {
         // ran it. Both are rc==1-gated, so in a scope-exit context both fire and
         // the second dec lands past a live claim (#8692). The field-reclaim side
         // has no such twin and keeps its deep_enum_dec.
-        } else if (k_scalar || k_struct || k_enum || k_clo || k_fnptr || k_str_arr_shallow) {
+        } else if (k_scalar || k_struct || k_enum || k_clo || k_str_arr_shallow) {
             ops = ops.append(RcOp { kind: "arr_dec", idx: k, ty: "", cow: false, uniq: false });
         }
         k = k + 1;
@@ -7233,9 +7228,7 @@ pub function field_reclaim_field_ops(s: EmitState, sty: string): RcOp[] {
         var fr_clo: boolean = fdt == "fn" && s.has_need("strfldok:clo:" + sty);
         var fr_struct: boolean = irlower.decl_is_struct(s.struct_decls, fdt) && s.has_need("structfldok:" + sty);
         var fr_enum: boolean = irlower.decl_is_enum(s.struct_decls, fdt) && s.has_need("structfldok:" + sty);
-        var fr_fnptr: boolean = irlower.is_enum_array_field_type(s.struct_decls, fdt)
-            && s.has_need("FNPTR:" + sty + "." + irlower.decl_field_name_at(s.struct_decls, sty, k));
-        var fr_box_arr: boolean = !fr_str && !fr_str_arr && !fr_clo && !fr_struct && !fr_enum && !fr_fnptr
+        var fr_box_arr: boolean = !fr_str && !fr_str_arr && !fr_clo && !fr_struct && !fr_enum
             && !irlower.is_leaksafe_array_field(fdt)
             && (irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt))
             && s.has_need("strfldok:sarr:" + sty);
@@ -7251,7 +7244,7 @@ pub function field_reclaim_field_ops(s: EmitState, sty: string): RcOp[] {
             // was taken (an in-place move, or #6653's suppressed retain) and the
             // pointers coincide for that reason. A string or closure field is
             // carried uncounted unless routed, so it keeps the cow compare.
-            var uniq: boolean = fr_struct || fr_enum || fr_str_arr || fr_box_arr || fr_fnptr
+            var uniq: boolean = fr_struct || fr_enum || fr_str_arr || fr_box_arr
                 || irlower.is_leaksafe_array_field(fdt)
                 || (fdt == "string[]" && s.has_need("strfldok:arrbuf:" + sty))
                 || irlower.is_struct_array_field_type(s.struct_decls, fdt)
