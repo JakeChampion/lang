@@ -5,6 +5,33 @@
 // floor (`__load_u8`, `__load_i64`, ...) and never in an operation that would
 // lower to a call of the helper being defined.
 
+// wasi:sockets error-code discriminants to Preview 1 errnos. Keep in sync
+// with internal/strerror.WasiSocketErrorCodes; its parity test checks all rows.
+function __fern_wasi_socket_errno(code: i32): i32 {
+    if (code == 0) { return 29; }
+    if (code == 1) { return 2; }
+    if (code == 2) { return 58; }
+    if (code == 3) { return 28; }
+    if (code == 4) { return 48; }
+    if (code == 5) { return 73; }
+    if (code == 6) { return 7; }
+    if (code == 7) { return 28; }
+    if (code == 8) { return 6; }
+    if (code == 9) { return 28; }
+    if (code == 10) { return 33; }
+    if (code == 11) { return 4; }
+    if (code == 12) { return 3; }
+    if (code == 13) { return 23; }
+    if (code == 14) { return 14; }
+    if (code == 15) { return 15; }
+    if (code == 16) { return 13; }
+    if (code == 17) { return 35; }
+    if (code == 18) { return 44; }
+    if (code == 19) { return 6; }
+    if (code == 20) { return 29; }
+    return 29;
+}
+
 // __fern_utf8_valid(data, len) is 1 when the `len` bytes at `data` are
 // well-formed UTF-8 and 0 otherwise. It accepts exactly what
 // std/utf8.is_valid_utf8 accepts: a stray continuation, an overlong 2-, 3- or

@@ -23,6 +23,7 @@ type ComposeRequest struct {
 	// are Reader/Writer close() → canon resource.drop.
 	BlockWrite, BlockRead bool
 	DropInput, DropOutput bool
+	DropError             bool // owned last-operation-failed payload
 
 	// wasi:filesystem/types methods the core imports — the open-chain's
 	// via-stream directions and the path mutators, as an independent set
@@ -356,6 +357,9 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 	}
 	if req.DropOutput {
 		g.add(gImport{iface: streams, name: "[resource-drop]output-stream", kind: gDrop, resourceT: g.surfaced["output-stream"]})
+	}
+	if req.DropError {
+		g.add(gImport{iface: "wasi:io/error@0.2.0", name: "[resource-drop]error", kind: gDrop, resourceT: g.ensureIoError()})
 	}
 
 	// CLI stdio getters (no-opts).

@@ -984,6 +984,12 @@ var importSpecs = map[string]importSpec{
 		params:  []byte{encode.ValtypeI32},
 		results: nil,
 	},
+	"wasi_io_error_drop": {
+		module:  "wasi:io/error@0.2.0",
+		name:    "[resource-drop]error",
+		params:  []byte{encode.ValtypeI32},
+		results: nil,
+	},
 	"wasi_io_output_stream_drop": {
 		// (handle) → (). Drops an output-stream resource. Same
 		// child-before-parent rule as input-stream.
@@ -2411,12 +2417,16 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 	}
 	if helpers.set["__fern_tcp_recv"] {
 		in.add("wasi_io_blocking_read")
+		in.add("wasi_io_error_drop")
 	}
 	if helpers.set["__fern_tcp_send"] {
 		in.add("wasi_blocking_write_and_flush_p2")
+		in.add("wasi_io_error_drop")
+	}
+	if helpers.set["__fern_tcp_listen"] || helpers.set["__fern_tcp_connect"] || helpers.set["__fern_tcp_close"] {
+		in.add("wasi_sockets_tcp_socket_drop")
 	}
 	if helpers.set["__fern_tcp_close"] {
-		in.add("wasi_sockets_tcp_socket_drop")
 		in.add("wasi_io_input_stream_drop")
 		in.add("wasi_io_output_stream_drop")
 	}

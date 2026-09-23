@@ -1935,6 +1935,13 @@ function path_copy_src(): string {
     return "function __fern_path_copy(pz: i32, n: i32): string { if (n == 0) { return \"\"; } var b: i32 = __raw_alloc(n); var i: i32 = 0; while (i < n) { __raw_store8(b, i, __raw_load8(pz, i)); i = i + 1; } return __raw_string(b, n); }";
 }
 
+// wasi:sockets/network@0.2.0 error-code to Preview 1 errno. In particular,
+// unknown (discriminant zero) must not become a successful zero return.
+// Pinned against internal/strerror.WasiSocketErrorCodes and the vendored WIT.
+pub function wasi_socket_error_errnos(): i32[] {
+    return [29, 2, 58, 28, 48, 73, 7, 28, 6, 28, 33, 4, 3, 23, 14, 15, 13, 35, 44, 6, 29];
+}
+
 // rt_src_io_error is the shared errno→IoError classifier the Fern fs helpers CALL
 // (#2649) — the single definition of the mapping native's __fern_io_error carries,
 // so the fs leaves stop INLINING the five-way branch and just call it. `path` is

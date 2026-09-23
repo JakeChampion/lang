@@ -29,11 +29,9 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/numeric"
 )
 
-// errCodeInvalidArgument is the discriminant of `invalid-argument` in
-// the `wasi:sockets/network` error-code enum
-// (component.WasiSocketsNetworkErrorCodeNames). The socket helpers
-// report failure as the negated error code, so a caller sees -3.
-const errCodeInvalidArgument = 3
+// errnoSocketInvalidArgument is EINVAL in the Preview 1 errno namespace used
+// by socket return values, including errors produced before any host call.
+const errnoSocketInvalidArgument = 28
 
 // buildUdpSendBody assembles __fern_udp_send.
 //
@@ -81,6 +79,43 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	sockDrop := idxs["wasi_sockets_udp_socket_drop"]
 	inDrop := idxs["wasi_sockets_incoming_datagram_stream_drop"]
 	outDrop := idxs["wasi_sockets_outgoing_datagram_stream_drop"]
+	free := func(body []byte, ptr uint32, size int32) []byte {
+		body = inst.InstLocalGet(body, ptr)
+		body = inst.InstI32Const(body, size)
+		return inst.InstCall(body, idxs["__free"])
+	}
+	// Host spills have already been released after parsing. Payload spills
+	// and the datagram record exist only once streams have been created.
+	reclaim := func(body []byte, streams bool) []byte {
+		if streams {
+			body = emitStrNormalizeFree(body, idxs, 4, 9, 10)
+			body = free(body, 18, 64)
+		}
+		body = free(body, 14, 4)
+		return free(body, 5, 16)
+	}
+	errorReturn := func(body []byte, streams bool) []byte {
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstLocalGet(body, 5)
+		body = memory.InstI32Load8U(body, 0, 4)
+		body = inst.InstCall(body, idxs["__fern_wasi_socket_errno"])
+		body = numeric.InstI32Sub(body)
+		// Keep errno on the operand stack while frees overwrite the scratch.
+		body = reclaim(body, streams)
+		return inst.InstReturn(body)
+	}
+
+	fail := func(body []byte, streams bool) []byte {
+		if streams {
+			body = inst.InstLocalGet(body, 8)
+			body = inst.InstCall(body, inDrop)
+			body = inst.InstLocalGet(body, 7)
+			body = inst.InstCall(body, outDrop)
+		}
+		body = inst.InstLocalGet(body, 6)
+		body = inst.InstCall(body, sockDrop)
+		return errorReturn(body, streams)
+	}
 
 	var body []byte
 
@@ -205,6 +240,7 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	}
 	body = inst.InstEnd(body) // loop
 	body = inst.InstEnd(body) // block
+	body = emitStrNormalizeFree(body, idxs, 1, 12, 13)
 
 	// Reject unless four groups closed and the last carries a digit.
 	body = inst.InstLocalGet(body, 21)
@@ -216,7 +252,8 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	body = numeric.InstI32Eqz(body)
 	body = numeric.InstI32Or(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = inst.InstI32Const(body, -errCodeInvalidArgument)
+	body = inst.InstI32Const(body, -errnoSocketInvalidArgument)
+	body = free(body, 14, 4)
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
 
@@ -240,7 +277,7 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 5)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = emitErrnoNegReturn(body, 5)
+	body = errorReturn(body, false)
 	body = inst.InstEnd(body)
 	// $sock = mem[retptr+4]
 	body = inst.InstLocalGet(body, 5)
@@ -264,7 +301,7 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 5)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = emitErrnoNegReturn(body, 5)
+	body = fail(body, false)
 	body = inst.InstEnd(body)
 
 	// finish-bind(sock, retptr); bail on Err.
@@ -274,7 +311,7 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 5)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = emitErrnoNegReturn(body, 5)
+	body = fail(body, false)
 	body = inst.InstEnd(body)
 
 	// stream(sock, Some(ipv4 host:port), retptr) — connect. The option
@@ -298,7 +335,7 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 5)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = emitErrnoNegReturn(body, 5)
+	body = fail(body, false)
 	body = inst.InstEnd(body)
 	// $inStream = mem[retptr+4], $outStream = mem[retptr+8]
 	body = inst.InstLocalGet(body, 5)
@@ -358,7 +395,7 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 			body = inst.InstLocalGet(body, 5)
 			body = memory.InstI32Load8U(body, 0, 0)
 			body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-			body = emitErrnoNegReturn(body, 5)
+			body = fail(body, true)
 			body = inst.InstEnd(body)
 			// permit (low 32 of the u64 @ +8): if non-zero, break the loop.
 			body = inst.InstLocalGet(body, 5)
@@ -386,7 +423,7 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 		body = inst.InstLocalGet(body, 5)
 		body = memory.InstI32Load8U(body, 0, 0)
 		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-		body = emitErrnoNegReturn(body, 5)
+		body = fail(body, true)
 		body = inst.InstEnd(body)
 		// $sent = low 32 bits of the u64 datagram count at retptr+8.
 		body = inst.InstLocalGet(body, 5)
@@ -412,7 +449,21 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	// re-enters the permit wait; errors returned -errno above), so the
 	// whole payload went out — return its byte length.
 	body = inst.InstLocalGet(body, 10)
+	body = reclaim(body, true)
 
 	locals := inst.PutLocalsOneGroup(nil, 18, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// Only inline strings own the buffer created by emitStrNormalize. Heap-form
+// strings are borrowed from the caller and must never enter the freelist.
+func emitStrNormalizeFree(body []byte, idxs map[string]uint32, lenLocal, bufLocal, byteLenLocal uint32) []byte {
+	body = inst.InstLocalGet(body, lenLocal)
+	body = inst.InstI32Const(body, -0x80000000)
+	body = numeric.InstI32And(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, bufLocal)
+	body = inst.InstLocalGet(body, byteLenLocal)
+	body = inst.InstCall(body, idxs["__free"])
+	return inst.InstEnd(body)
 }
