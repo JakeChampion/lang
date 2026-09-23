@@ -1629,7 +1629,10 @@ function main(): i32 {
 
     // a.add → a__add; a's own main → a__main (mangled, no collision);
     // entry's main kept. So merged funcs: a__add, a__main, main.
-    if (merged.imports.len() != 0) { return 100; }
+    // The merged module keeps the import CLOSURE — here the entry's one
+    // `./a`, since a imports nothing — which is what tells the checker
+    // which modules the program linked.
+    if (merged.imports.len() != 1 || merged.imports[0].path != "./a") { return 100; }
     if (merged.funcs.len() != 3) { return 101; }
     if (merged.funcs[0].name != "a__add") { return 102; }
     if (merged.funcs[1].name != "a__main") { return 103; }
