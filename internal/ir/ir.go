@@ -21101,15 +21101,20 @@ func isWideMapValueTypeIR(t ast.Type) bool {
 
 // isByteMapColumnIR reports whether a K / V occupies ONE byte per element in
 // the `K[]` / `V[]` a keys() / values() snapshot is bound to — `u8`, the only
-// width-8 type the parser spells. Its opposite number is
-// isWideMapValueTypeIR: both name a column the stdlib's fixed 4-byte
-// destStride is wrong for, at opposite ends of the same axis (#10000).
+// width-8 type the parser spells.
 //
-// Between them 4 is already the right stride, and that is measured rather
-// than assumed: i32, u32, f32, boolean and usize columns all read back equal
-// to the interpreter on both register targets. A pointer-shaped column never
-// meets the fixed stride at all — a string, struct, enum or array column is
-// routed to __map_string_column / __map_ptr_column before __map_column.
+// Three types now need a stride the stdlib's old fixed 4 was wrong for, and
+// this is the narrow one. isWideMapValueTypeIR is the wide one (i64 / u64 /
+// f64, walked inline). `boolean` is the third and the least obvious: it is
+// not pointer-shaped, but its array element strides a POINTER WIDTH on the
+// natives, so emitBoolMapColumn passes __ptr_width() rather than leaving it
+// at 4 (#10000).
+//
+// The remainder do stride 4, and that is measured rather than assumed: i32,
+// u32, f32 and usize columns all read back equal to the interpreter on both
+// register targets. A pointer-shaped column never meets the fixed stride at
+// all — a string, struct, enum or array column is routed to
+// __map_string_column / __map_ptr_column before __map_column.
 func isByteMapColumnIR(t ast.Type) bool {
 	n, ok := t.(ast.NumberType)
 	return ok && n.NormalWidth() == 8
