@@ -5890,8 +5890,9 @@ function ssa_push_operand(reg_of: i32[], v: i32, s: asmcore.EmitState): asmcore.
 // negative count, since a negative count never compares equal to one; rc_inc
 // needs one, because it would otherwise increment it.
 //
-// The count is read into %rdx and the 0/1 built in %rcx, neither of which is
-// ever a home, so both survive a destination that IS the operand's register —
+// The count is compared in memory, or read into %rdx first when the sanitizer
+// checks it; the 0/1 is built in %rcx. Neither register is ever a home, so both
+// survive a destination that IS the operand's register —
 // the usual case once a result and its operand share one — and the
 // destination is written after the last read of the operand.
 //
@@ -5911,17 +5912,20 @@ function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
     if (ins.str == "__fern_rc_is_unique") {
         var d: string = ssa_dst(reg_of, ins.result);
         s = s.write("    xorl %ecx, %ecx\n" + guard);
-        s = s.write("    movl " + rc + ", %edx\n");
-        s = s.write(san_poison_check("%edx"));
-        s = s.write("    cmpl $1, %edx\n    jne " + done + "\n");
+        s = s.write(ssa_rc_is_one(rc));
+        s = s.write("    jne " + done + "\n");
         s = s.write("    movl $1, %ecx\n" + done + ":\n");
         s = s.write("    movq %rcx, " + d + "\n");
         return ssa_store(reg_of, ins.result, d, s);
     }
     s = s.write(guard);
-    s = s.write("    movl " + rc + ", %ecx\n" + san_poison_check("%ecx"));
-    s = s.write("    testl %ecx, %ecx\n    js " + done + "\n");
-    s = s.write("    addl $1, %ecx\n    movl %ecx, " + rc + "\n");
+    if (rc_free_debug_on()) {
+        s = s.write("    movl " + rc + ", %ecx\n" + san_poison_check("%ecx"));
+        s = s.write("    testl %ecx, %ecx\n    js " + done + "\n");
+        s = s.write("    addl $1, %ecx\n    movl %ecx, " + rc + "\n");
+    } else {
+        s = s.write("    cmpl $0, " + rc + "\n    js " + done + "\n    addl $1, " + rc + "\n");
+    }
     s = s.write(done + ":\n");
     // rc_inc hands the pointer back; a result with no home stores nothing.
     return ssa_store(reg_of, ins.result, p, s);
@@ -6235,10 +6239,12 @@ struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave:
 // `inverted`) are not materialised; the branch tests the condition of
 // compare `tag` on operands `a` and `b` instead. A `not` of a plain boolean
 // fuses too: `tag` is 0, the branch tests `a` for zero and takes the true
-// edge when it is. n is 0 when the block ends some other way.
-struct SsaFuse { n: i32, tag: i32, inverted: boolean, a: i32, b: i32 }
+// edge when it is. An inline uniqueness test of `a` fuses as `unique`: its
+// guards leave the flags an equality compare would. n is 0 when the block
+// ends some other way.
+struct SsaFuse { n: i32, tag: i32, inverted: boolean, a: i32, b: i32, unique: boolean }
 
-function ssa_no_fuse(): SsaFuse { return SsaFuse { n: 0, tag: 0, inverted: false, a: 0, b: 0 }; }
+function ssa_no_fuse(): SsaFuse { return SsaFuse { n: 0, tag: 0, inverted: false, a: 0, b: 0, unique: false }; }
 
 // ssa_fuse finds the compare a block's brif can read as flags: the block's
 // last instruction is an integer compare read only by the branch, or a `not`
@@ -6253,19 +6259,28 @@ function ssa_fuse(fr: SsaFrame, blk: ssa.SBlock): SsaFuse {
     var n: i32 = 1;
     var inverted: boolean = false;
     if (last.kind_tag == 10 && last.str == "!") {
-        var value_test: SsaFuse = SsaFuse { n: 1, tag: 0, inverted: true, a: last.args[0], b: 0 };
+        var value_test: SsaFuse = SsaFuse { n: 1, tag: 0, inverted: true, a: last.args[0], b: 0, unique: false };
         if (blk.insts.len() < 2) { return value_test; }
         cmp = blk.insts[blk.insts.len() - 2];
         if (cmp.result != last.args[0] || fr.uses[cmp.result] != 1) { return value_test; }
-        if (cmp.kind_tag != 9 || !ircore.is_int_cmp_kind(ir.kind_id(cmp.str))) { return value_test; }
+        if (!ssa_unique_test(cmp) && (cmp.kind_tag != 9 || !ircore.is_int_cmp_kind(ir.kind_id(cmp.str)))) { return value_test; }
         n = 2;
         inverted = true;
     }
+    if (ssa_unique_test(cmp)) { return SsaFuse { n: n, tag: 35, inverted: inverted, a: cmp.args[0], b: 0, unique: true }; }
     if (cmp.kind_tag != 9 || !ircore.is_int_cmp_kind(ir.kind_id(cmp.str))) { return ssa_no_fuse(); }
     if (fr.imm.is_imm[cmp.args[0]]) {
-        return SsaFuse { n: n, tag: ircore.flip_int_cmp_kind(ir.kind_id(cmp.str)), inverted: inverted, a: cmp.args[1], b: cmp.args[0] };
+        return SsaFuse { n: n, tag: ircore.flip_int_cmp_kind(ir.kind_id(cmp.str)), inverted: inverted, a: cmp.args[1], b: cmp.args[0], unique: false };
     }
-    return SsaFuse { n: n, tag: ir.kind_id(cmp.str), inverted: inverted, a: cmp.args[0], b: cmp.args[1] };
+    return SsaFuse { n: n, tag: ir.kind_id(cmp.str), inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false };
+}
+
+// ssa_join is the label a block's fused test joins at; a rotated latch
+// re-runs its header's test under its own.
+function ssa_join(lp: string, blk: i32): string { return lp + "uq" + util.i32_to_string(blk); }
+
+function ssa_unique_test(ins: ssa.SInst): boolean {
+    return ssa.rc_inlined(ins) && ins.str == "__fern_rc_is_unique";
 }
 
 function ssa_view_off(fr: SsaFrame, v: i32): i32 {
@@ -6485,9 +6500,11 @@ function ssa_jump(lp: string, to: i32, next: i32, s: asmcore.EmitState): asmcore
 // the moves of the two edges differ.
 function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp: string, next: i32, fu: SsaFuse, s: asmcore.EmitState): asmcore.EmitState {
     var t: ssa.STerm = blk.term;
-    if (fu.n == 0) {
-    s = ssa_load(reg_of, t.cond, "%r11", s);
-    }
+    // A value test reads the value where it lives, through %r11 only when spilled.
+    var tv: i32 = t.cond;
+    if (fu.n > 0) { tv = fu.a; }
+    if (fu.n == 0) { s = ssa_read(reg_of, t.cond, "%r11", s); }
+    var tr: string = ssa_src(reg_of, tv, "%r11");
     if (t.t == t.f) {
         s = ssa_phi_moves(f, fr, reg_of, blk.id, t.t, s);
         return ssa_jump(lp, t.t, next, s);
@@ -6499,16 +6516,16 @@ function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
     // moves, branch on the condition itself and fall through.
     if (!stub && t.f == next && !ssa_has_phis(f, fr, t.t)) {
         var tl: string = lp + util.i32_to_string(t.t);
-        if (fu.n > 0 && fu.tag == 0) { return s.write("    testq %r11, %r11\n    jz " + tl + "\n"); }
+        if (fu.n > 0 && fu.tag == 0) { return s.write("    testq " + tr + ", " + tr + "\n    jz " + tl + "\n"); }
         if (fu.n > 0) { return s.write("    " + ir_cmp_jcc(fu.tag, !fu.inverted) + " " + tl + "\n"); }
-        return s.write("    testq %r11, %r11\n    jnz " + tl + "\n");
+        return s.write("    testq " + tr + ", " + tr + "\n    jnz " + tl + "\n");
     }
     if (fu.n > 0 && fu.tag == 0) {
-        s = s.write("    testq %r11, %r11\n    jnz " + fl + "\n");
+        s = s.write("    testq " + tr + ", " + tr + "\n    jnz " + fl + "\n");
     } else if (fu.n > 0) {
         s = s.write("    " + ir_cmp_jcc(fu.tag, fu.inverted) + " " + fl + "\n");
     } else {
-        s = s.write("    testq %r11, %r11\n    jz " + fl + "\n");
+        s = s.write("    testq " + tr + ", " + tr + "\n    jz " + fl + "\n");
     }
     s = ssa_phi_moves(f, fr, reg_of, blk.id, t.t, s);
     if (stub) {
@@ -6522,13 +6539,34 @@ function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
 }
 
 // ssa_fused_test sets the flags a block's fused compare leaves for its branch
-// (or loads a fused `not`'s operand, for the value test).
-function ssa_fused_test(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, s: asmcore.EmitState): asmcore.EmitState {
-    if (fu.n > 0 && fu.tag == 0) { return ssa_load(reg_of, fu.a, "%r11", s); }
+// (or brings a fused `not`'s operand into a register, for the value test).
+// `join` names the label a fused uniqueness test's guards meet at.
+function ssa_fused_test(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, join: string, s: asmcore.EmitState): asmcore.EmitState {
+    if (fu.n > 0 && fu.tag == 0) { return ssa_read(reg_of, fu.a, "%r11", s); }
     if (fu.n == 0) { return s; }
+    if (fu.unique) { return ssa_unique_flags(reg_of, fu.a, join, s); }
     s = ssa_read(reg_of, fu.a, "%r11", s);
     s = ssa_read_rhs(fr, reg_of, fu.b, "%rcx", s);
     return s.write("    cmpq " + ssa_rhs(fr, reg_of, fu.b, "%rcx") + ", " + ssa_src(reg_of, fu.a, "%r11") + "\n");
+}
+
+// ssa_unique_flags is ssa_rc_prim's uniqueness test as flags: ZF is set only
+// when the count is exactly one. Each guard's early exit already leaves ZF
+// clear (a set tag bit; a pointer below, so unequal to, the floor).
+function ssa_unique_flags(reg_of: i32[], v: i32, join: string, s: asmcore.EmitState): asmcore.EmitState {
+    s = helper_call_needs("__fern_rc_is_unique", s);
+    s = ssa_read(reg_of, v, "%r11", s);
+    var p: string = ssa_src(reg_of, v, "%r11");
+    s = s.write("    testb $1, " + ssa_r8(p) + "\n    jnz " + join + "\n    cmpq $0x10000, " + p + "\n    jb " + join + "\n");
+    s = s.write(ssa_rc_is_one("-8(" + p + ")") + join + ":\n");
+    return s;
+}
+
+// ssa_rc_is_one compares the count at `rc` with one, through %edx when the
+// sanitizer must see the loaded value first.
+function ssa_rc_is_one(rc: string): string {
+    if (rc_free_debug_on()) { return "    movl " + rc + ", %edx\n" + san_poison_check("%edx") + "    cmpl $1, %edx\n"; }
+    return "    cmpl $1, " + rc + "\n";
 }
 
 // ssa_rotates reports whether a branch from the block at position `from` to
@@ -6563,7 +6601,7 @@ function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
         if (ssa_rotates(f, fr, ssa_block_at(fr, blk.id), t.target)) {
             var h: ssa.SBlock = f.blocks[ssa_block_at(fr, t.target)];
             var hfu: SsaFuse = ssa_fuse(fr, h);
-            return ssa_brif(f, fr, h, reg_of, lp, next, hfu, ssa_fused_test(fr, reg_of, hfu, s));
+            return ssa_brif(f, fr, h, reg_of, lp, next, hfu, ssa_fused_test(fr, reg_of, hfu, ssa_join(lp, blk.id), s));
         }
         return ssa_jump(lp, t.target, next, s);
     }
@@ -6701,7 +6739,7 @@ function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, r: irlower
             if (ins.kind_tag != 6 && ins.kind_tag != 8) { s = ssa_inst(ins, reg_of, lp, fr, r, s); }
             ii = ii + 1;
         }
-        s = ssa_fused_test(fr, reg_of, fu, s);
+        s = ssa_fused_test(fr, reg_of, fu, ssa_join(lp, blk.id), s);
         s = ssa_term(f, fr, blk, reg_of, lp, next, fu, s);
         bi = bi + 1;
     }
