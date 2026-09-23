@@ -155,6 +155,11 @@ one FIFO queue: a PR's lanes run in parallel, PRs wait their turn, and a push
 to a PR cancels its older run the moment it lands. Wait time is queue
 position, not runner scarcity.
 
+**Don't push while your run is in flight.** The cancelled run's work is lost: on
+2026-09-22 runs cancelled by a follow-up push were 28% of all runner time.
+Unless the run is already red, batch the next fixes, review nits included, into
+one push after it reports.
+
 **One red lane cancels the rest.** When a lane concludes `failure` the rest of
 the run is cancelled to hand the lock to the next PR — so a red PR shows one
 `failure` among a wall of `cancelled`, and a `cancelled` check is not a second

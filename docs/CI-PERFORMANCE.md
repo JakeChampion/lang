@@ -604,6 +604,51 @@ provider whose runners GitHub does not count against it; that needs an account
 with the provider and its GitHub App installed on the repository, which only
 the owner can do. Once it exists, moving a lane is a `runs-on` label change.
 
+## Eighth measurement: where a day of runner time goes
+
+Every job that ran on a runner in the 24 hours to 2026-09-22 18:00 UTC, summed
+by what started it. Jobs cancelled before a runner took them are not counted.
+
+| Source | Job-minutes | Share |
+|---|---:|---:|
+| PR runs that finished | 19,000 | 40% |
+| PR runs cancelled by a later push | 13,400 | 28% |
+| Main runs (47) | 12,900 | 27% |
+| Pullfrog reviews (118) | 2,000 | 4% |
+| Total | 47,800 | |
+
+47,800 job-minutes is 83% of what 40 slots provide in a day, so the pool is
+busy enough that the queue, not the runners, sets how long a PR waits.
+
+Of the cancelled PR time, 9,900 job-minutes across 81 runs were superseded by
+a push that changed code and 3,000 across 24 runs by a push that only merged
+main. 34 of the day's 170 PR runs were started by a push that only brought
+main in.
+
+### Pushing while a run is in flight
+
+A push cancels the PR's run in flight, and everything that run had done is
+thrown away. CLAUDE.md now asks agents to hold further fixes, review nits
+included, until the run reports, unless it is already red.
+
+### The up-to-date requirement stays
+
+The main ruleset requires a PR to be level with main before it merges. That is
+what the 3,000 main-merge job-minutes above pay for, and the owner has chosen to
+keep it. It also means a merge that honours the requirement pushes the PR's own
+tree, which is the case the identical-tree skip above serves.
+
+### Main lanes whose inputs did not change since they last passed
+
+A main push that is not a level merge still ran every lane. The selector now
+also looks, per lane, at the newest completed `ci-main.yml` run that ran that
+lane. If every job of the lane passed there, and the compare from that run's
+commit to the pushed commit is a fast-forward listing fewer than 300 files, a
+lane whose filter selects none of those files is skipped. A lane that was red
+or cancelled on that run runs again, as does perf. A failed API call, a base
+that is not an ancestor, or a compare that may be truncated runs every lane
+with a warning in the job summary.
+
 ## Multi-core test execution: what parallelism can and cannot buy
 
 Measured 2026-09-22 on the 4-core container (Xeon 2.10 GHz, a 14 GB cgroup),
