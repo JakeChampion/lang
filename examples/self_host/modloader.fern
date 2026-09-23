@@ -660,3 +660,22 @@ pub function module_unit_cache_key(parts: flatten.PerModule[], infmods: parser.M
     return key + "|r" + util.i32_to_string(lo) + ":" + util.i32_to_string(hi);
 }
 
+// module_concat_unit_cache_key keys ONE unit of the single-process per-module
+// concat. Its units are tree-shaken against a whole-program reach set, so a
+// change anywhere can change what a module contributes without touching its
+// source; the key folds the module's kept functions (after pruning and lambda
+// lifting) to cover that. `sighashes` must be taken over the same pruned
+// modules, so a dependency's reach change moves the key too. The route tag
+// keeps concat and emit-all entries apart in one cache directory.
+pub function module_concat_unit_cache_key(parts: flatten.PerModule[], infmods: parser.Module[], sighashes: string[], idx: i32, src_hash: string, extra: string[]): string {
+    var key: string = module_unit_cache_key(parts, infmods, sighashes, idx, src_hash, extra, 0, 0 - 1);
+    if (key.len() == 0) { return ""; }
+    var kept: string = "";
+    var fi: i32 = 0;
+    while (fi < infmods[idx].funcs.len()) {
+        kept = kept + infmods[idx].funcs[fi].receiver_type + "." + infmods[idx].funcs[fi].name + ",";
+        fi = fi + 1;
+    }
+    return key + "|concat|" + util.hash_key(kept);
+}
+
