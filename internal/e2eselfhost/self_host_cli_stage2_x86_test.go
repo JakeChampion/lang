@@ -72,6 +72,8 @@ function main(): i32 {
 	})
 
 	t.Run("stage3", func(t *testing.T) {
+		// CI-DARK: FERN_STAGE3 — doubles a job already ~4 minutes long; stage 2
+		// compiling lexer.fern and a program is what runs on every push.
 		if os.Getenv("FERN_STAGE3") != "1" {
 			t.Skip("set FERN_STAGE3=1 to have stage 2 rebuild the whole compiler")
 		}
