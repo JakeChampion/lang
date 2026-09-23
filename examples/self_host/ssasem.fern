@@ -772,11 +772,12 @@ function dyn_box_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     return "";
 }
 
-// The primitives a dyn box holds: one word on every backend, which a wide
-// integer or a float is not on wasm.
+// The primitives a dyn box holds: an integer, a boolean or an f64, stored at
+// its own width, or a string.
 pub function boxes_into_dyn(t: typeinfo.Type): boolean {
-    if let typeinfo.TypeI32(_) = t { return !is_wide(t); }
+    if let typeinfo.TypeI32(_) = t { return true; }
     if let typeinfo.TypeBool(_) = t { return true; }
+    if let typeinfo.TypeFloat(fl) = t { return fl.width != 32; }
     return is_string(t);
 }
 

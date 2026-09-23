@@ -4226,6 +4226,32 @@ function main(): i32 {
     return t - 66;
 }
 `},
+	// A 64-bit integer and a float are boxed at their own width, which wasm's
+	// box stores and unboxes by the primitive's name (#10098): an i64 above
+	// 2^32 keeps its high half, and an f64 its fraction. The AST lowering
+	// refuses the module.
+	{name: "a-wide-scalar-dyn-value-is-boxed-at-its-width", atLeast: 5, noLeak: true, want: "0|", src: `
+trait Show { function show(self: Self): i32; }
+impl Show for i64 { function show(self: Self): i32 { return (self / 1000000000) as i32; } }
+impl Show for f64 { function show(self: Self): i32 { return (self * 4.0) as i32; } }
+impl Show for boolean { function show(self: Self): i32 { if (self) { return 1; } return 0; } }
+function pick(i: i32): dyn Show {
+    if (i % 3 == 0) { return 5000000000 as i64; }
+    if (i % 3 == 1) { return 2.5; }
+    return i > 3;
+}
+
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 6) {
+        var d: dyn Show = pick(i);
+        t = t + d.show();
+        i = i + 1;
+    }
+    return t - 31;
+}
+`},
 	// A generic implementation's instances are not enumerated, so a release
 	// could not find their children: owning a dyn value of a type one
 	// implements is refused, and borrowing one is not.

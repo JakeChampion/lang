@@ -613,15 +613,12 @@ operands go in consecutive slots, which is where `op_dyn_dispatch` reads
 them. A dyn value is counted like any box: a rebinding phi, a return, a
 field and an element each own a unit, and the release tests the box's
 shape against every record and enum implementing the whole trait set,
-calling that concrete's drop (`ssasem.Func.dyns`). A one-word primitive
-or a string is boxed (`ssasem.dyn_box`, lowered to `op_dyn_box`) into a
-cell laid out as a one-field record, and the release frees a boxed
-string. Two shapes are still refused:
-
-- An `i64` or `f64` coerced to `dyn` (#10098). The wasm box stores one
-  i32 word.
-- Owning a dyn value of a type that a generic declaration implements. The
-  release cannot enumerate that declaration's instances. See `docs/rc-log/2026-09-23-dyn-trait-dispatch-on-the-typed-path.md`
+calling that concrete's drop (`ssasem.Func.dyns`). A scalar or a string
+is boxed (`ssasem.dyn_box`, lowered to `op_dyn_box`) into a cell laid out
+as a one-field record, the value stored at its own width. The release
+frees a boxed string. One shape is still refused: owning a dyn value of a
+type that a generic declaration implements, because the release cannot
+enumerate that declaration's instances. See `docs/rc-log/2026-09-23-dyn-trait-dispatch-on-the-typed-path.md`
 and `docs/rc-log/2026-09-23-g-a-dyn-value-is-counted.md`.
 
 **A `dyn Trait[]` array literal in ARGUMENT position — wired (#6906).**

@@ -1182,9 +1182,10 @@ function construction_error(f: ssasem.Func, ins: ssa.SInst, structs: irlower.Str
 // The undeclared constructions that carry their own element width: the array
 // ops, of which a cell's slot is one, and the tuple construction through the
 // kinds `tuple_kinds` names.
+// A dyn box stores its primitive at the width the primitive's name gives.
 function wide_element_site(k: i32): boolean {
     return kind_in([ssasem.array_new(), ssasem.tuple_new(), ssasem.append(), ssasem.with(),
-        ssasem.cell_new(), ssasem.cell_set()], k);
+        ssasem.cell_new(), ssasem.cell_set(), ssasem.dyn_box()], k);
 }
 
 // The declaration a record or variant construction stores its fields
