@@ -11227,8 +11227,9 @@ function receiver_type_ok(rt: string, mod: parser.Module): boolean {
 
 // const_expr_ok reports whether `e` is inside native's constant grammar
 // (internal/constfold evalConst): a literal, a reference to an EARLIER const,
-// or a unary / binary operation over those. Everything else — a struct or
-// array literal, a call, a field access, an index — is not a constant.
+// a unary / binary operation over those, or an array or tuple literal of them
+// (#7987). Everything else — a struct literal, a call, a field access, an
+// index — is not a constant.
 // `earlier` is the names of the consts declared before this one, so a forward
 // reference is rejected the way native's sequential fold rejects it.
 // Returns "" when `e` is constant, else the message tail native reports.
@@ -11253,6 +11254,24 @@ function const_expr_err(e: ast.Expr, earlier: string[]): string {
     },
     ast.ExprUnary(u) => {
       return const_expr_err(u.operand, earlier);
+    },
+    ast.ExprArray(a) => {
+      for el in a.elements {
+        var ae: string = const_expr_err(el, earlier);
+        if (ae.len() > 0) {
+          return ae;
+        }
+      }
+      return "";
+    },
+    ast.ExprTuple(t) => {
+      for el in t.elements {
+        var te: string = const_expr_err(el, earlier);
+        if (te.len() > 0) {
+          return te;
+        }
+      }
+      return "";
     },
     ast.ExprBinary(b) => {
       if (const_refused_op(b.op)) {

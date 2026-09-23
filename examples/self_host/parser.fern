@@ -16717,6 +16717,21 @@ function irt_guess(e: ast.Expr, params: ast.ParamDecl[], funcs: FuncDecl[], stru
             if (el == "") { return ""; }
             return el + "[]";
         },
+        // A tuple literal is the tuple of its elements' types, spelled the way
+        // render_type_ref spells one, so an unannotated `const T = (3, "a")`
+        // is typed like its annotated form (#7987).
+        ast.ExprTuple(tl) => {
+            var parts: string = "";
+            var ti: i32 = 0;
+            while (ti < tl.elements.len()) {
+                var tt: string = irt_guess(tl.elements[ti], params, funcs, structs);
+                if (tt == "") { return ""; }
+                if (ti > 0) { parts = parts + ", "; }
+                parts = parts + tt;
+                ti = ti + 1;
+            }
+            return "(" + parts + ")";
+        },
         // `a[i]` yields the element type of whatever `a` infers to. Reached for
         // a LIFTED lambda (`() => a[1]`, `() => mk()[1]`), whose synthesised
         // FuncDecl carries ret_type "" — without this the inference bailed, the

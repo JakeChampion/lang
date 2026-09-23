@@ -10,6 +10,7 @@ const YS: i32[][] = [XS, [1]];
 const W: i64[] = [5000000000, 1];
 const Z = [10, 20];
 const P: (string, i32)[] = [("a", 1), ("bb", 2)];
+const U = (5, "xy");
 
 struct B { n: i32 }
 
@@ -25,6 +26,7 @@ function main(): i32 {
     if (XS[0] != 2 || xs[0] != 99) { return 8; }
     if ((4, B { n: 3 }).1.n != 3) { return 9; }
     if ((4, (5, 6)).1.0 != 5) { return 10; }
+    if (U.0 != 5 || U.1.len() != 2) { return 11; }
     print("ok");
     return 0;
 }

@@ -65,6 +65,17 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			wantDiag: "const E: expression is not a constant",
 		},
 		{
+			// An array or tuple literal of constants is a constant (#7987); a
+			// call inside one still is not.
+			name: "const-composite",
+			src:  "const XS: i32[] = [1, 2];\nconst T = (3, \"a\");\nfunction main(): i32 { return XS[1] + T.0; }\n",
+		},
+		{
+			name:     "const-composite-holding-a-call",
+			src:      "function g(): i32 { return 1; }\nconst E: i32[] = [g()];\nfunction main(): i32 { return E[0]; }\n",
+			wantDiag: "const E: expression is not a constant",
+		},
+		{
 			// A const written without a type takes its value's (#10079); the
 			// self-host drew E070 on it as if it were a function.
 			name: "const-without-a-type",
