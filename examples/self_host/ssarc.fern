@@ -891,7 +891,7 @@ function claimed_after(c: Claims, slots: i32, pos: i32): boolean {
     return at >= 0 && c.last[at] > pos;
 }
 
-function reuse_pairs(f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock): ReusePairs {
+function reuse_pairs(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], b: ssa.SBlock): ReusePairs {
     var tokens: i32[] = [];
     var builds: i32[] = [];
     var selfs: i32[] = [];
@@ -909,7 +909,7 @@ function reuse_pairs(f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock): ReusePair
         selfs = selfs.append(0 - 1);
         var ins: ssa.SInst = b.insts[pos];
         if (ins.kind_tag != 6 && ins.kind_tag != 8) {
-            var step: ssaunits.Step = at(p, b.id, pos, 0 - 1);
+            var step: ssaunits.Step = at(p, idx, b.id, pos, 0 - 1);
             var claims: i32 = recipient_slots(f, ins);
             if (off) { pending = 0 - 1; }
             else {
@@ -1057,10 +1057,9 @@ function tuple_elements(t: typeinfo.Type): typeinfo.Type[] {
     return [];
 }
 
-function at(p: ssaunits.Plan, block: i32, point: i32, target: i32): ssaunits.Step {
-    for step in p.steps {
-        if (step.block == block && step.point == point && step.target == target) { return step; }
-    }
+function at(p: ssaunits.Plan, idx: i32[][], block: i32, point: i32, target: i32): ssaunits.Step {
+    var i: i32 = ssaunits.step_at(p, idx, block, point, target);
+    if (i >= 0) { return p.steps[i]; }
     // Unreachable after verification of the complete plan.
     return ssaunits.Step { block: 0 - 1, point: point, target: 0 - 1, supplies: [], drops: [], hand_roots: [], hand_fields: [] };
 }
@@ -1080,8 +1079,8 @@ function successors(t: ssa.STerm): i32[] {
     return [];
 }
 
-function edge(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, from: i32, target: i32): irlower.LowerResult {
-    var step: ssaunits.Step = at(p, from, ssaunits.edge_point(), target);
+function edge(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], from: i32, target: i32): irlower.LowerResult {
+    var step: ssaunits.Step = at(p, idx, from, ssaunits.edge_point(), target);
     r = supplies(r, f, step, false);
     var dest: ssa.SBlock = f.graph.blocks[block_index(f.graph, target)];
     var pi: i32 = 0;
@@ -2762,13 +2761,13 @@ function builtin_site(own r: irlower.LowerResult, ins: ssa.SInst): irlower.Lower
     return emit(r, ir.op_call_direct(ins.str, ins.args.len()));
 }
 
-function block_body(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock, structs: irlower.StructTab, grows: ssaunits.GrowRow[]): irlower.LowerResult {
-    r = drops(r, at(p, b.id, ssaunits.entry_point(), 0 - 1), f);
+function block_body(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], b: ssa.SBlock, structs: irlower.StructTab, grows: ssaunits.GrowRow[]): irlower.LowerResult {
+    r = drops(r, at(p, idx, b.id, ssaunits.entry_point(), 0 - 1), f);
     var pos: i32 = 0;
-    var pairs: ReusePairs = reuse_pairs(f, p, b);
+    var pairs: ReusePairs = reuse_pairs(f, p, idx, b);
     for ins in b.insts {
         if (ins.kind_tag != 6 && ins.kind_tag != 8) {
-            var step: ssaunits.Step = at(p, b.id, pos, 0 - 1);
+            var step: ssaunits.Step = at(p, idx, b.id, pos, 0 - 1);
             var held: Held = bracketed(f, step, ins, grows);
             // One answer for both: the retain `supplies` holds back is the one
             // `instruction` then takes, and two calls could drift apart with
@@ -2795,7 +2794,8 @@ function block_body(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan
 // Open stack-IR labels, innermost last. A label is the layout index control
 // reaches by branching to it: a `block` ends before that index, a `loop`
 // starts at it. An `if` arm is a label of its own that no branch targets.
-struct Emit { r: irlower.LowerResult, labels: i32[], why: string }
+// `steps` is the plan's step index (ssaunits.step_index).
+struct Emit { r: irlower.LowerResult, labels: i32[], why: string, steps: i32[][] }
 
 function label_if(): i32 { return 0 - 1; }
 
@@ -2826,7 +2826,7 @@ function rank(f: ssa.SFunc, order: i32[], id: i32): i32 {
 }
 
 function jump(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[], position: i32, target: i32): Emit {
-    e = Emit { ...e, r: edge(e.r, f, p, f.graph.blocks[order[position]].id, target) };
+    e = Emit { ...e, r: edge(e.r, f, p, e.steps, f.graph.blocks[order[position]].id, target) };
     var dest: i32 = rank(f.graph, order, target);
     if (dest == position + 1) { return e; }
     var d: i32 = depth(e, dest);
@@ -2837,7 +2837,7 @@ function jump(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[], posit
 function terminator(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[], position: i32): Emit {
     var b: ssa.SBlock = f.graph.blocks[order[position]];
     if (b.term.kind_tag == 1 || b.term.kind_tag == 4) {
-        var ret: ssaunits.Step = at(p, b.id, ssaunits.return_point(), 0 - 1);
+        var ret: ssaunits.Step = at(p, e.steps, b.id, ssaunits.return_point(), 0 - 1);
         e = Emit { ...e, r: supplies(e.r, f, ret, false) };
         e = Emit { ...e, r: drops(e.r, ret, f) };
         // The unreachable end aborts as a failed bounds check does, then
@@ -2889,7 +2889,7 @@ function region(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, l: ssalayout.Layo
             e = region(e, f, p, l, position, l.loop_end[position], true, structs, grows);
             position = l.loop_end[position] + 1;
         } else {
-            e = Emit { ...e, r: block_body(e.r, f, p, f.graph.blocks[l.order[position]], structs, grows) };
+            e = Emit { ...e, r: block_body(e.r, f, p, e.steps, f.graph.blocks[l.order[position]], structs, grows) };
             e = terminator(e, f, p, l.order, position);
             position = position + 1;
         }
@@ -3118,7 +3118,7 @@ pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irlo
     if (why != "") { return empty(why); }
     var layout: ssalayout.Layout = ssalayout.compute(f.graph);
     if (!layout.ok) { return empty("physical RC needs reducible graph"); }
-    var e: Emit = region(Emit { r: frame(f), labels: [], why: "" }, f, p, layout, 0, layout.order.len() - 1, false, structs, grows);
+    var e: Emit = region(Emit { r: frame(f), labels: [], why: "", steps: ssaunits.step_index(p) }, f, p, layout, 0, layout.order.len() - 1, false, structs, grows);
     if (e.why != "") { return empty(e.why); }
     var optimized: ir.OptimizedOps = ir.optimize_ops(e.r.ops, e.r.n_params, e.r.n_locals);
     return irlower.LowerResult { ...e.r, ops: optimized.ops, n_locals: optimized.n_locals };
