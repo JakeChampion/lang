@@ -296,7 +296,7 @@ function contract_error(f: ssasem.Func, modes: i32[]): string {
 // released when the box is. So is a cell, over its one element; a read of a
 // cell hands out a unit of the element rather than borrowing the slot.
 function construction(kind: i32): boolean {
-    return kind == ssasem.array_new() || kind == ssasem.tuple_new() || kind == ssasem.record_new() || kind == ssasem.variant_new()
+    return kind == ssasem.array_new() || kind == ssasem.tuple_new() || kind == ssasem.record_new() || kind == ssasem.variant_new() || kind == ssasem.dyn_box()
         || kind == ssasem.closure_new() || kind == ssasem.cell_new() || kind == ssasem.map_new()
         || kind == ssasem.map_cleared();
 }
@@ -400,16 +400,11 @@ function phi_ownership(f: ssasem.Func, owned: boolean[]): boolean[] {
 //
 // A string retagged as a view is the string's own counted box, so retaining
 // it retains the string, which `__fern_str_view_free` then releases as one.
-//
-// A dyn value is lent for the same reason at a different step: a unit of one
-// would be released through `__fern_rc_dec`, which frees the box without the
-// children only a dispatch on its shape could find.
 function view_retain_error(f: ssasem.Func, steps: Step[]): string {
     var defs: ssa.SInst[] = definitions(f);
     for s in steps {
         for item in s.supplies {
             if (item.mode == retain_unit() && ssasem.is_view(f.values[item.value]) && !retagged_string(f, defs, item.value)) { return "a view is lent, never retained"; }
-            if (item.mode == retain_unit() && ssasem.is_dyn(f.values[item.value])) { return "a dyn value is lent, never retained"; }
         }
     }
     return "";
@@ -420,14 +415,45 @@ function retagged_string(f: ssasem.Func, defs: ssa.SInst[], v: i32): boolean {
     return d.kind_tag == ssasem.str_as() && d.args.len() == 1 && !ssasem.is_view(f.values[d.args[0]]);
 }
 
-function dyn_owned_error(f: ssasem.Func, owned: boolean[]): string {
+// A unit whose release would reach a dyn value of an open type
+// (`ssasem.Func.open_dyns`) is refused rather than released without the
+// children of a generic implementation.
+function open_dyn_error(f: ssasem.Func, owned: boolean[]): string {
+    if (f.open_dyns.len() == 0) { return ""; }
     var v: i32 = 0;
     while (v < f.graph.nvals) {
-        if (owned[v] && ssasem.is_dyn(f.values[v])) { return "a dyn value is lent, never owned"; }
+        if (owned[v] && reaches_open_dyn(f, f.values[v], [])) { return "a dyn value over a generic implementation is lent, never owned"; }
         v = v + 1;
     }
     return "";
 }
+
+function reaches_open_dyn(f: ssasem.Func, t: typeinfo.Type, seen: string[]): boolean {
+    if (ssasem.is_dyn(t)) {
+        for o in f.open_dyns { if (semtypes.equal(o, t)) { return true; } }
+        return false;
+    }
+    var key: string = ssasem.type_key(t);
+    for k in seen { if (k == key) { return false; } }
+    seen = seen.append(key);
+    var parts: typeinfo.Type[] = [];
+    if let typeinfo.TypeArray(a) = t { parts = parts.append(a.elem); }
+    if let typeinfo.TypeTuple(tup) = t { parts = tup.elements; }
+    if let typeinfo.TypeMap(m) = t { parts = [m.key, m.value]; }
+    if (semtypes.is_cell(t)) { parts = parts.append(semtypes.cell_elem(t)); }
+    if let typeinfo.TypeUnion(u) = t { parts = u.args; }
+    var ri: i32 = semrecords.find(f.records, t);
+    if (ri >= 0) { for field in f.records[ri].fields { parts = parts.append(field.ty); } }
+    var ei: i32 = semrecords.find_enum(f.enums, t);
+    if (ei >= 0) {
+        for variant in f.enums[ei].variants {
+            for field in variant.fields { parts = parts.append(field.ty); }
+        }
+    }
+    for p in parts { if (reaches_open_dyn(f, p, seen)) { return true; } }
+    return false;
+}
+
 function live_out_row(flow: ssalive.Flow, bi: i32, n: i32): boolean[] {
     var out: boolean[] = [];
     var i: i32 = 0;
@@ -1138,7 +1164,7 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
     var defs: ssa.SInst[] = definitions(f);
     var units: Units = units_of(f, owned, analysis, defs);
     owned = units.owned;
-    why = dyn_owned_error(f, owned);
+    why = open_dyn_error(f, owned);
     if (why != "") { return bad(why); }
     var takes: i32[] = units.takes;
     analysis = units_analysis(f, analysis, units);

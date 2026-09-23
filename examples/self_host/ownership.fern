@@ -92,7 +92,7 @@ function all_true(n: i32): boolean[] {
 function builds_out(kind: i32): boolean {
     return kind == ssasem.array_new() || kind == ssasem.tuple_new() || kind == ssasem.record_new()
         || kind == ssasem.variant_new() || kind == ssasem.closure_new() || kind == ssasem.cell_new()
-        || kind == ssasem.cell_set() || kind == ssasem.map_insert();
+        || kind == ssasem.cell_set() || kind == ssasem.map_insert() || kind == ssasem.dyn_box();
 }
 
 // A store whose RECEIVER is operand 0 and whose stored value is every operand

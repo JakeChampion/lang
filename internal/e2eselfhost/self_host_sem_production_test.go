@@ -4068,77 +4068,203 @@ function main(): i32 {
     return describe(sq) + describe(tr) - 155;
 }
 `},
-	// A dyn value is lent, never owned: the unit a holder would take could
-	// only be released by dispatching on the shape to find the children. A
-	// rebinding merges two widenings at a phi that would own one, a return
-	// hands one out, and a field holds one; each is refused where it stands.
-	{name: "a-rebound-dyn-value-is-refused", atLeast: 0, refuses: "a dyn value is lent, never owned", src: `
-trait Shape {
-    function area(self: Self): i32;
-    function sides(self: Self): i32;
-}
-struct Square { side: i32 }
-impl Shape for Square {
-    function area(self: Self): i32 { return self.side * self.side; }
-    function sides(self: Self): i32 { return 4; }
-}
-struct Triangle { base: i32, height: i32 }
-impl Shape for Triangle {
-    function area(self: Self): i32 { return (self.base * self.height) / 2; }
-    function sides(self: Self): i32 { return 3; }
-}
+	// A dyn value is counted: a holder owns the box's unit, and its release
+	// dispatches on the box's shape to the concrete's drop. The concretes are
+	// a record and an enum that each own a string, so a release that missed
+	// the children would leak. Each shape builds six values round a loop:
+	// rebound at a phi, returned, held in a field, held in an array, and
+	// passed through a function that hands its parameter back. A skip leg
+	// leaves the dyn's producer or its pass-through to the AST lowering.
+	{name: "a-rebound-dyn-value-is-owned", atLeast: 3, noLeak: true, src: semDynShapes + `
 function main(): i32 {
-    var s: dyn Shape = Square { side: 3 };
+    var t: i32 = 0;
     var i: i32 = 0;
-    while (i < 2) {
-        s = Triangle { base: 4, height: 5 };
+    while (i < 6) {
+        var s: dyn Shape = Square { side: 1, tag: "a" + i.to_string() };
+        if (i % 2 == 1) { s = Tri.Right(i, "b" + i.to_string()); }
+        t = t + s.area();
         i = i + 1;
     }
-    return s.area() - 10;
+    return t - 24;
 }
 `},
-	{name: "a-returned-dyn-value-is-refused", atLeast: 0, refuses: "a dyn value is lent, never retained", src: `
-trait Shape {
-    function area(self: Self): i32;
-    function sides(self: Self): i32;
-}
-struct Square { side: i32 }
-impl Shape for Square {
-    function area(self: Self): i32 { return self.side * self.side; }
-    function sides(self: Self): i32 { return 4; }
-}
-struct Triangle { base: i32, height: i32 }
-impl Shape for Triangle {
-    function area(self: Self): i32 { return (self.base * self.height) / 2; }
-    function sides(self: Self): i32 { return 3; }
-}
-function make(n: i32): dyn Shape { return Square { side: n }; }
-
+	{name: "a-returned-dyn-value-is-owned", atLeast: 4, noLeak: true, skip: "make", src: semDynShapes + `
 function main(): i32 {
-    var s: dyn Shape = make(3);
-    return s.area() - 9;
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 6) {
+        var s: dyn Shape = make(i);
+        t = t + s.area();
+        i = i + 1;
+    }
+    return t - 50;
 }
 `},
-	{name: "a-dyn-field-is-refused", atLeast: 0, refuses: "dyn value is not a field", src: `
-trait Shape {
-    function area(self: Self): i32;
-    function sides(self: Self): i32;
-}
-struct Square { side: i32 }
-impl Shape for Square {
-    function area(self: Self): i32 { return self.side * self.side; }
-    function sides(self: Self): i32 { return 4; }
-}
-struct Triangle { base: i32, height: i32 }
-impl Shape for Triangle {
-    function area(self: Self): i32 { return (self.base * self.height) / 2; }
-    function sides(self: Self): i32 { return 3; }
-}
+	{name: "a-dyn-field-is-owned", atLeast: 4, noLeak: true, src: semDynShapes + `
 struct Holder { s: dyn Shape }
 
 function main(): i32 {
-    var h: Holder = Holder { s: Square { side: 3 } };
-    return h.s.area() - 9;
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 6) {
+        var h: Holder = Holder { s: make(i) };
+        t = t + h.s.area();
+        i = i + 1;
+    }
+    return t - 50;
+}
+`},
+	{name: "a-dyn-array-owns-its-elements", atLeast: 4, noLeak: true, src: semDynShapes + `
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 6) {
+        var xs: dyn Shape[] = [make(i), make(i + 1)];
+        t = t + xs[0].area() + xs[1].area();
+        i = i + 1;
+    }
+    return t - 136;
+}
+`},
+	{name: "a-dyn-option-payload-is-owned", atLeast: 4, noLeak: true, src: semDynShapes + `
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 6) {
+        var o: Option[dyn Shape] = Some(make(i));
+        if let Some(s) = o { t = t + s.area(); }
+        i = i + 1;
+    }
+    return t - 50;
+}
+`},
+	// A superseded entry is released through the map's value column, which
+	// dispatches the same way.
+	{name: "a-dyn-map-value-is-owned", atLeast: 4, noLeak: true, src: `import "core/map";` + semDynShapes + `
+function main(): i32 {
+    var t: i32 = 0;
+    var m: Map[i32, dyn Shape] = map_new(8);
+    var i: i32 = 0;
+    while (i < 6) { m = m.insert(i % 3, make(i)); i = i + 1; }
+    i = 0;
+    while (i < 3) { if let Some(s) = m.get(i) { t = t + s.area(); } i = i + 1; }
+    return t - 35;
+}
+`},
+	{name: "a-captured-dyn-value-is-owned", atLeast: 5, noLeak: true, src: semDynShapes + `
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 6) {
+        var s: dyn Shape = make(i);
+        var f = (): i32 => { return s.area(); };
+        t = t + f() + s.area();
+        i = i + 1;
+    }
+    return t - 100;
+}
+`},
+	{name: "a-dyn-parameter-handed-back-is-retained", atLeast: 4, noLeak: true, skip: "pass", src: semDynShapes + `
+function pass(s: dyn Shape): dyn Shape { return s; }
+
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 6) {
+        var q: Square = Square { side: 2, tag: "k" + i.to_string() };
+        var s: dyn Shape = pass(q);
+        t = t + s.area() + q.tag.len();
+        i = i + 1;
+    }
+    return t - 48;
+}
+`},
+	// A dyn array local an AST-lowered frame builds and lends to a produced
+	// callee. The AST frame frees the elements at exit only when the callee's
+	// row promises it keeps no reference, which the produced callee now gives
+	// for a borrowed parameter nothing derived from is retained or handed on.
+	{name: "a-dyn-array-lent-to-a-produced-callee", atLeast: 4, noLeak: true, skip: "main", src: `
+trait Show { function show(self: Self): i32; }
+impl Show for i32 { function show(self: Self): i32 { return self * 2; } }
+impl Show for string { function show(self: Self): i32 { return self.len(); } }
+function total(xs: dyn Show[]): i32 { var t: i32 = 0; for x in xs { t = t + x.show(); } return t; }
+
+function main(): i32 {
+    var xs: dyn Show[] = [1, 2];
+    return total(xs) - 6;
+}
+`},
+	// A scalar or string widened to dyn is boxed into a cell whose shape is the
+	// primitive's name; the release dispatches on it and frees a boxed
+	// string. The widenings reach a return, a local and an array element, and
+	// the skip leg leaves the producer to the AST lowering.
+	{name: "a-primitive-dyn-value-is-boxed", atLeast: 5, noLeak: true, skip: "make", src: semPrimitiveShows + `
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 6) {
+        var d: dyn Show = make(i);
+        var e: dyn Show = i + 1;
+        t = t + d.show() + e.show();
+        i = i + 1;
+    }
+    return t - 63;
+}
+`},
+	{name: "a-boxed-string-dyn-held-in-an-array", atLeast: 5, noLeak: true, src: semPrimitiveShows + `
+struct Holder { d: dyn Show }
+
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 6) {
+        var xs: dyn Show[] = [make(i), make(i + 1)];
+        var h: Holder = Holder { d: "h" + i.to_string() };
+        t = t + xs[0].show() + xs[1].show() + h.d.show();
+        i = i + 1;
+    }
+    return t - 66;
+}
+`},
+	// A generic implementation's instances are not enumerated, so a release
+	// could not find their children: owning a dyn value of a type one
+	// implements is refused, and borrowing one is not.
+	{name: "a-dyn-value-over-a-generic-implementation-is-refused", atLeast: 0,
+		refuses: "a dyn value over a generic implementation is lent, never owned", src: `
+import "std/i32";
+
+trait Shape { function area(self: Self): i32; }
+struct W[T] { v: T, tag: string }
+impl[T] Shape for W[T] { function area(self: Self): i32 { return self.tag.len(); } }
+function make(i: i32): dyn Shape { return W { v: "v" + i.to_string(), tag: "w" + i.to_string() }; }
+
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 6) {
+        var s: dyn Shape = make(i);
+        t = t + s.area();
+        i = i + 1;
+    }
+    return t - 12;
+}
+`},
+	{name: "a-borrowed-dyn-value-over-a-generic-implementation", atLeast: 2, noLeak: true, src: `
+import "std/i32";
+
+trait Shape { function area(self: Self): i32; }
+struct W[T] { v: T, tag: string }
+impl[T] Shape for W[T] { function area(self: Self): i32 { return self.tag.len(); } }
+
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 6) {
+        var s: dyn Shape = W { v: "v" + i.to_string(), tag: "w" + i.to_string() };
+        t = t + s.area();
+        i = i + 1;
+    }
+    return t - 12;
 }
 `},
 	// A function VALUE whose type nests a function type: a parameter that is
@@ -4263,6 +4389,45 @@ function main(): i32 {
 }
 `},
 }
+
+// semDynShapes is a trait with a record and an enum implementation, each
+// owning a string, and a function widening either into the dyn type.
+const semDynShapes = `
+import "std/i32";
+
+trait Shape { function area(self: Self): i32; }
+struct Square { side: i32, tag: string }
+impl Shape for Square {
+    function area(self: Self): i32 { return self.side * self.side + self.tag.len(); }
+}
+enum Tri { Right(i32, string), Flat }
+impl Shape for Tri {
+    function area(self: Self): i32 {
+        match (self) { Right(b, t) => { return b + t.len(); }, Flat => { return 0; } }
+    }
+}
+function make(n: i32): dyn Shape {
+    if (n % 2 == 0) { return Square { side: n, tag: "sq" + n.to_string() }; }
+    return Tri.Right(n, "tri" + n.to_string());
+}
+`
+
+// semPrimitiveShows implements a trait for i32, string and a record owning a
+// string, and a function widening each of the three into the dyn type.
+const semPrimitiveShows = `
+import "std/i32";
+
+trait Show { function show(self: Self): i32; }
+impl Show for i32 { function show(self: Self): i32 { return self * 2; } }
+impl Show for string { function show(self: Self): i32 { return self.len(); } }
+struct Sq { side: i32, tag: string }
+impl Show for Sq { function show(self: Self): i32 { return self.side + self.tag.len(); } }
+function make(i: i32): dyn Show {
+    if (i % 3 == 0) { return i; }
+    if (i % 3 == 1) { return "s" + i.to_string(); }
+    return Sq { side: i, tag: "t" + i.to_string() };
+}
+`
 
 // semHeldElementSource sorts by length with the insertion sort's body: the
 // element read into `v` is live across the inner loop's `.with`.

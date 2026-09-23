@@ -3692,7 +3692,7 @@ function main(): i32 {
         var lowered = ssarc.lower(p.func, p.modes, plans[at], tab, grows);
         if (!lowered.ok) { eprint(fd.name + ": " + lowered.why); return 6; }
         eprint("produced " + fd.name + "\n");
-        base = ssarc.caller_sigs(base, fd.name, p.func, p.modes);
+        base = ssarc.caller_sigs(base, fd.name, p.func, p.modes, plans[at]);
         seeds = seeds.append(fd.name + "|" + ssarc.grow_mask(fd.name, p.func, grows, false));
         for row in ssarc.consumed_array_rows(fd.name, p.func, p.modes) { consumed = consumed.append(row); }
         for h in ssarc.drop_helpers(p.func) { helpers = helpers.append(h); }

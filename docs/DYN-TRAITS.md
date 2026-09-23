@@ -607,12 +607,22 @@ implements every trait in the set, and a `dyn` slot inside a container
 takes only the same `dyn` (#10055).
 
 **The typed path (`FERN_SEM_IR`).** A struct or enum widened to `dyn` is
-a borrow of its box (`ssasem.dyn_up`), and a method call on it is a
+a projection of its box (`ssasem.dyn_up`), and a method call on it is a
 `call` whose contract is the implementations' shared signature. The
 operands go in consecutive slots, which is where `op_dyn_dispatch` reads
-them. A dyn value is lent and never owned, so a rebinding phi, a return, a
-field, an element and a primitive coercion are refused rather than
-counted. See `docs/rc-log/2026-09-23-dyn-trait-dispatch-on-the-typed-path.md`.
+them. A dyn value is counted like any box: a rebinding phi, a return, a
+field and an element each own a unit, and the release tests the box's
+shape against every record and enum implementing the whole trait set,
+calling that concrete's drop (`ssasem.Func.dyns`). A one-word primitive
+or a string is boxed (`ssasem.dyn_box`, lowered to `op_dyn_box`) into a
+cell laid out as a one-field record, and the release frees a boxed
+string. Two shapes are still refused:
+
+- An `i64` or `f64` coerced to `dyn` (#10098). The wasm box stores one
+  i32 word.
+- Owning a dyn value of a type that a generic declaration implements. The
+  release cannot enumerate that declaration's instances. See `docs/rc-log/2026-09-23-dyn-trait-dispatch-on-the-typed-path.md`
+and `docs/rc-log/2026-09-23-g-a-dyn-value-is-counted.md`.
 
 **A `dyn Trait[]` array literal in ARGUMENT position — wired (#6906).**
 `render(["a", "b"])`, where `render`'s parameter is `dyn Show[]`, is the

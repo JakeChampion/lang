@@ -17524,6 +17524,10 @@ function lower_expr_struct_lit(slit: ast.ExprStructLit, s: LowerState): LowerSta
             // isn't self-evidently i64), so lower it via lower_i64.
             if (struct_field_is_i64(s.frame.structs, slit.type_name, di)) {
                 sm = lower_i64(slit.field_values[found], sm);
+            } else if (cfft.len() > 4 && slice_unchecked(cfft, 0, 4) == "dyn " && !is_array_type_name(cfft)) {
+                // A dyn field is a coercion site like a dyn var or argument:
+                // a primitive or string value is boxed so it carries a shape.
+                sm = lower_dyn_arg(slit.field_values[found], sm);
             } else {
                 sm = lower_expr(slit.field_values[found], sm);
             }
