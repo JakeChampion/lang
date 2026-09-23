@@ -40,7 +40,7 @@ pub struct ExprIdent { name: string, line: i32, col: i32, ty: string }
 
 pub struct ExprString { value: string, line: i32, col: i32 }
 
-pub struct ExprBool { value: boolean }
+pub struct ExprBool { value: boolean, line: i32, col: i32 }
 
 // `ty` is the typed-IR carrier (#5986, the ExprBinary sibling of ExprCall.ty
 // from #5531). Ordinary arithmetic needs no carrier — irlower's predicates
@@ -247,7 +247,7 @@ pub function expr_line(e: Expr): i32 {
         ExprNumber(n) => { return n.line; },
         ExprIdent(id) => { return id.line; },
         ExprString(st) => { return st.line; },
-        ExprBool(b) => { return 0; },
+        ExprBool(b) => { return b.line; },
         ExprBinary(b) => { return b.line; },
         ExprUnary(u) => { return u.line; },
         ExprCall(c) => { return c.line; },

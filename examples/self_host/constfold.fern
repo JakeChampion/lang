@@ -80,7 +80,7 @@ function fits(v: i64, suffix: string): boolean {
 }
 
 function lit_bool(b: boolean): ast.Expr {
-    return ast.ExprBool { value: b };
+    return ast.ExprBool { value: b, line: 0, col: 0 };
 }
 
 function lit_string(s: string): ast.Expr {
