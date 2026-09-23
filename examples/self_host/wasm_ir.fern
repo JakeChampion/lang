@@ -6378,7 +6378,14 @@ function read_dir_func_like(fname: string, skip_dots: boolean): string {
     o = o + "    (local.set $buf (call $__fern_alloc (i32.const 4096)))\n";
     o = o + "    (local.set $cookie (i64.const 0))\n";
     o = o + "    (block $rdone (loop $rloop\n";
-    o = o + "      (if (call $fd_readdir (local.get $fd) (local.get $buf) (i32.const 4096) (local.get $cookie) (i32.const 8)) (then (i32.store (i32.const 8) (i32.const 0))))\n";
+    // A failed listing is the Err native reports, not a short one.
+    o = o + "      (local.set $err (call $fd_readdir (local.get $fd) (local.get $buf) (i32.const 4096) (local.get $cookie) (i32.const 8)))\n";
+    o = o + "      (if (local.get $err) (then\n";
+    o = o + "        (drop (call $fd_close (local.get $fd)))\n";
+    o = o + "        (local.set $res (call $__fern_str_box (i32.const 8)))\n";
+    o = o + "        (i32.store (local.get $res) (i32.const 1))\n";
+    o = o + "        (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
+    o = o + "        (return (local.get $res))))\n";
     o = o + "      (local.set $used (i32.load (i32.const 8)))\n";
     o = o + "      (br_if $rdone (i32.eqz (local.get $used)))\n";
     o = o + "      (local.set $pos (i32.const 0))\n";
@@ -6472,7 +6479,11 @@ pub function remove_dir_all_func(): string {
     o = o + "    (local.set $buf (call $__fern_alloc (i32.const 4096)))\n";
     o = o + "    (local.set $cookie (i64.const 0))\n";
     o = o + "    (block $rdone (loop $rloop\n";
-    o = o + "      (if (call $fd_readdir (local.get $fd) (local.get $buf) (i32.const 4096) (local.get $cookie) (i32.const 8)) (then (i32.store (i32.const 8) (i32.const 0))))\n";
+    // A failed listing is the Err native reports, not a short one.
+    o = o + "      (local.set $err (call $fd_readdir (local.get $fd) (local.get $buf) (i32.const 4096) (local.get $cookie) (i32.const 8)))\n";
+    o = o + "      (if (local.get $err) (then\n";
+    o = o + "        (drop (call $fd_close (local.get $fd)))\n";
+    o = o + "        (return (call $__rda_err (call $__fern_build_io_error (local.get $err) (local.get $path))))))\n";
     o = o + "      (local.set $used (i32.load (i32.const 8)))\n";
     o = o + "      (br_if $rdone (i32.eqz (local.get $used)))\n";
     o = o + "      (local.set $pos (i32.const 0))\n";
