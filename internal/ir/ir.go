@@ -21098,6 +21098,12 @@ func isWideMapValueTypeIR(t ast.Type) bool {
 // width-8 type the parser spells. Its opposite number is
 // isWideMapValueTypeIR: both name a column the stdlib's fixed 4-byte
 // destStride is wrong for, at opposite ends of the same axis (#10000).
+//
+// Between them 4 is already the right stride, and that is measured rather
+// than assumed: i32, u32, f32, boolean and usize columns all read back equal
+// to the interpreter on both register targets. A pointer-shaped column never
+// meets the fixed stride at all — a string, struct, enum or array column is
+// routed to __map_string_column / __map_ptr_column before __map_column.
 func isByteMapColumnIR(t ast.Type) bool {
 	n, ok := t.(ast.NumberType)
 	return ok && n.NormalWidth() == 8
