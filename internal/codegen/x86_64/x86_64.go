@@ -512,8 +512,7 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	// It ALSO reclaims them (Perceus RC, slice 4b — docs/DYN-TRAITS.md
 	// §4.4): DynRcSupported lifts the RC path (the trailing vtable drop
 	// slot + the per-set __drop_dyn_<set> helper + the dec/drop sweep
-	// arms). arm64 passes only DynSupported (dispatch) — its RC slice 4c
-	// hasn't landed, so it keeps leaking `dyn` (harmless).
+	// arms). arm64 opts in the same way (slice 4c).
 	// The target's two halves answer a `target_os()` / `target_arch()` the
 	// front end did not fold; the IR cannot tell the natives apart by pointer
 	// width alone.

@@ -179,6 +179,11 @@ function main(): i32 {
 		{"variant_match_returned", `enum Pick { First, Second(i32) }
 function tag(c: i32): Pick { if (c == 0) { return Pick.First; } return Pick.Second(c); }
 function pick(c: i32, l: dyn Label, m: dyn Label): dyn Label { return match (tag(c)) { First => l, Second(_) => m }; }`},
+		// The scrutinee's own dyn payload, bound and yielded: the yield retains
+		// it before the scrutinee's deep drop releases the box's reference.
+		{"variant_payload_yielded", `enum Holder { Has(dyn Label), Empty }
+function mk(c: i32): Holder { if (c == 0) { return Holder.Has(Box { name: "ab" + "c" }); } return Holder.Empty; }
+function pick(c: i32, l: dyn Label, m: dyn Label): dyn Label { return match (mk(c)) { Has(d) => d, Empty => m }; }`},
 	}
 	for _, c := range cases {
 		src := head + c.pick + body

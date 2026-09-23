@@ -3216,9 +3216,8 @@ func (b *builder) computeFreeEligible() map[string]bool {
 			// DynTraitType arm) — docs/DYN-TRAITS.md §4.4. Same borrow-
 			// aware taint: a `dyn` that escapes (stored into a container,
 			// returned, passed as a retained arg) is tainted above and
-			// falls back. wasm (ptrW==4, slice 4a) + x86-64 (DynSupported,
-			// slice 4b) reclaim; arm64 leaks `dyn` and never sets rcTracked
-			// for it, so eligibility there is moot.
+			// falls back. wasm (ptrW==4, slice 4a) and the DynRcSupported
+			// natives reclaim.
 			if b.dynReclaim() {
 				elig[v.Name] = true
 			}
@@ -5876,9 +5875,9 @@ func (b *builder) dynParamBorrowed(name string) bool {
 }
 
 // retainsOnAlias is rcIncOnAliasType for a builder that knows its target: a
-// dyn value is retained like any other reference on the backends that
-// reclaim it (docs/DYN-TRAITS.md §4.5), and arm64 still leaks it (§4.4
-// slice 4c), so there it takes nothing.
+// dyn value is retained like any other reference wherever dyn is reclaimed
+// (docs/DYN-TRAITS.md §4.5) — both natives through DynRcSupported, wasm
+// through its inline pair — and the shape-dispatched drop releases the unit.
 func (b *builder) retainsOnAlias(t ast.Type) bool {
 	if _, isDyn := t.(ast.DynTraitType); isDyn {
 		return b.dynReclaim()

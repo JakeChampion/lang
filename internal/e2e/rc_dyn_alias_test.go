@@ -132,13 +132,20 @@ function main(): i32 {
 	})
 }
 
-// Only x86-64 reclaims every holder: arm64 leaks dyn values (§4.4 slice 4c),
-// and wasm does not reclaim a closure's dyn capture (§7.8).
+// No wasm leg: the churn calls a closure that captured a dyn value, which
+// wasm dispatches wrongly (#10075).
 func TestDynAliasStoredPastTheBorrowBounded(t *testing.T) {
 	src := dynAliasBumpSrc("500", "2000")
-	if _, code := compileAndRunX86_64FreeOn(t, src); code != 0 {
-		t.Errorf("heap high-water grew with the churn length (verdict %d, want 0)", code)
-	}
+	t.Run("x86_64", func(t *testing.T) {
+		if _, code := compileAndRunX86_64FreeOn(t, src); code != 0 {
+			t.Errorf("heap high-water grew with the churn length (verdict %d, want 0)", code)
+		}
+	})
+	t.Run("arm64", func(t *testing.T) {
+		if _, code := compileAndRunArm64FreeOn(t, src); code != 0 {
+			t.Errorf("heap high-water grew with the churn length (verdict %d, want 0)", code)
+		}
+	})
 }
 
 // dynFieldSrc builds structs holding a dyn field every way a field gets one —
@@ -226,12 +233,15 @@ func TestDynFieldReleasedByStructDrop(t *testing.T) {
 	}
 }
 
-// arm64 does not reclaim dyn values (§4.4 slice 4c), so it has no bounded
-// leg.
 func TestDynFieldReleasedByStructDropBounded(t *testing.T) {
 	src := dynFieldBumpSrc("500", "2000")
 	t.Run("x86_64", func(t *testing.T) {
 		if _, code := compileAndRunX86_64FreeOn(t, src); code != 0 {
+			t.Errorf("heap high-water grew with the churn length (verdict %d, want 0)", code)
+		}
+	})
+	t.Run("arm64", func(t *testing.T) {
+		if _, code := compileAndRunArm64FreeOn(t, src); code != 0 {
 			t.Errorf("heap high-water grew with the churn length (verdict %d, want 0)", code)
 		}
 	})
