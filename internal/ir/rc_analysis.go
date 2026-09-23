@@ -345,7 +345,6 @@ func (b *builder) computeRcAnalyses() {
 	b.rc.aliasBindIncs = map[*ast.Var]bool{}
 	b.rc.ownCallMoveArgs = map[ast.Node]bool{}
 	b.rc.movedLocals = b.computeMovedLocals()
-	b.rc.overwriteMoves = b.computeOverwriteMoves()
 	// Per-RETURN-SITE own-param transfers, which the whole-function
 	// movedLocals above cannot express (#6125).
 	b.rc.returnOwnMove = b.computeReturnOwnMoves()
@@ -357,7 +356,9 @@ func (b *builder) computeRcAnalyses() {
 	b.rc.arraySetInc = b.computeArraySetIncs()
 	b.computeBorrowedAliases()
 	// After the borrow analyses: a borrowed view's source must stay in its
-	// slot until the exit sweep, so it is never moved into a call.
+	// slot until the exit sweep, so it is never moved into a call or
+	// another local.
+	b.rc.overwriteMoves = b.computeOverwriteMoves()
 	b.rc.ownedArgMoves = b.computeOwnedArgMoves()
 	b.rc.fieldOwnMoves = b.computeFieldOwnMoves()
 	b.rc.reuseSources, b.rc.reuseConsumed = b.computeReuseSources()
@@ -9654,7 +9655,10 @@ func (b *builder) computeFieldOwnMoves() map[*ast.FieldAccess]bool {
 // computeOverwriteMoves finds `x = y` between locals where y's next event
 // on every path through the rest of its statement list is a write that
 // does not read it: an assignment to y, or an if/else each of whose arms
-// begins that way. Until that write y holds a reference nothing reads, so
+// begins that way. When the list declares y, or is an if/else arm whose
+// enclosing list declares y and never mentions it after the if, the end of
+// the list ends y too, and nothing later in it mentioning y is enough. Until
+// then y holds a reference nothing reads, so
 // x can take it instead of a retained copy and y's slot is emptied. The
 // retain the copy would have made and the release y's overwrite would
 // have made are the pair removed, so y has to be a local that owns its
@@ -9664,7 +9668,9 @@ func (b *builder) computeFieldOwnMoves() map[*ast.FieldAccess]bool {
 // of it) could reach a read of the emptied slot and disqualifies the site;
 // a return is safe, since the exit sweep releases nothing from an empty
 // slot. A local a closure captures is excluded: the closure reads it
-// through the capture, which the scan cannot see.
+// through the capture, which the scan cannot see. So is a borrowed view or
+// its source: the view holds no count, and x's next release would free the
+// box under it.
 func (b *builder) computeOverwriteMoves() map[*ast.Assign]string {
 	out := map[*ast.Assign]string{}
 	b.rc.emptiedOverwrites = map[*ast.Assign]bool{}
@@ -9686,7 +9692,8 @@ func (b *builder) computeOverwriteMoves() map[*ast.Assign]string {
 	})
 	eligible := func(src *ast.Ident) bool {
 		name := src.Name
-		if captured[name] || !b.isOwnedRcLocal(name) || !b.localNameUnique(name) ||
+		if captured[name] || b.rc.borrowSources[name] || b.rc.borrowedAlias[name] ||
+			!b.isOwnedRcLocal(name) || !b.localNameUnique(name) ||
 			!b.rc.freeEligible[name] || !needsRcIncOnAlias(src, b) {
 			return false
 		}
@@ -9700,8 +9707,32 @@ func (b *builder) computeOverwriteMoves() map[*ast.Assign]string {
 		}
 		return false
 	}
-	scan := func(stmts []ast.Stmt) {
+	// dying holds, per if/else arm, the names whose declaring list the
+	// arm's if ends without mentioning them again.
+	dying := map[ast.Stmt]map[string]bool{}
+	scan := func(blk ast.Stmt, stmts []ast.Stmt) {
+		declared := map[string]bool{}
+		for n := range dying[blk] {
+			declared[n] = true
+		}
 		for i, st := range stmts {
+			if v, ok := st.(*ast.Var); ok {
+				declared[v.Name] = true
+			}
+			if f, ok := st.(*ast.If); ok {
+				inherit := map[string]bool{}
+				for n := range declared {
+					if unmentioned(stmts[i+1:], n) {
+						inherit[n] = true
+					}
+				}
+				for ; f != nil; f, _ = f.Else.(*ast.If) {
+					dying[f.Then] = inherit
+					if f.Else != nil {
+						dying[f.Else] = inherit
+					}
+				}
+			}
 			es, ok := st.(*ast.ExprStmt)
 			if !ok {
 				continue
@@ -9718,6 +9749,15 @@ func (b *builder) computeOverwriteMoves() map[*ast.Assign]string {
 			if !ok || src.Name == dst.Name || !eligible(src) {
 				continue
 			}
+			// A source this list, or one whose if leads here, declares is
+			// dead once the rest of the list is: its scope ends with the
+			// list, and a loop re-entering it runs the declaration again
+			// before anything can read it.
+			if declared[src.Name] && unmentioned(stmts[i+1:], src.Name) {
+				out[a] = src.Name
+				b.rc.moveSites[a] = true
+				continue
+			}
 			if writes, ok := overwrittenBeforeRead(stmts[i+1:], src.Name); ok {
 				out[a] = src.Name
 				b.rc.moveSites[a] = true
@@ -9729,7 +9769,7 @@ func (b *builder) computeOverwriteMoves() map[*ast.Assign]string {
 	}
 	ast.Walk(b.fn.Body, func(n ast.Node) bool {
 		if blk, ok := n.(*ast.Block); ok {
-			scan(blk.Stmts)
+			scan(blk, blk.Stmts)
 		}
 		return true
 	})
@@ -9748,6 +9788,8 @@ func overwrittenBeforeRead(stmts []ast.Stmt, name string) ([]*ast.Assign, bool) 
 				}
 			}
 		}
+		// A one-arm write reaches the bail below only because mentions
+		// counts assignment targets too.
 		if f, ok := st.(*ast.If); ok && f.Else != nil && mentions(f.Cond, name) == 0 {
 			tw, tok := armOverwrites(f.Then, name)
 			ew, eok := armOverwrites(f.Else, name)
@@ -9760,6 +9802,15 @@ func overwrittenBeforeRead(stmts []ast.Stmt, name string) ([]*ast.Assign, bool) 
 		}
 	}
 	return nil, false
+}
+
+func unmentioned(stmts []ast.Stmt, name string) bool {
+	for _, st := range stmts {
+		if mentions(st, name) > 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func armOverwrites(st ast.Stmt, name string) ([]*ast.Assign, bool) {
