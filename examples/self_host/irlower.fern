@@ -16100,13 +16100,20 @@ function lower_expr_call(c: ast.ExprCall, e: ast.Expr, s: LowerState): LowerStat
 
 // call_ret_fn_sig is the funcref signature tag for a call THROUGH the result of
 // another call — `mk()(4.5)`, whose callee is itself a call returning a fn value.
-// The result has no slot and no declared spelling at the call site; what names it
-// is the CALLEE's own declaration, recorded on FuncDecl and registered by
-// ret_fn_sigs_of. "" for a method or an indirect inner callee, and for a
-// signature `$fn<N>` already describes, both of which keep today's emission.
+// The result has no slot and no declared spelling at the call site, and the
+// checker's stamp on the inner call is the coarse "fn" tag. What names it is the
+// inner callee's own declaration: a function-typed local, param or struct field
+// records its result in a sidecar (call_fn_value_ret), and a function or method
+// on its FuncDecl (ret_fn_sigs_of). "" for a signature `$fn<N>` already describes.
 function call_ret_fn_sig(inner: ast.ExprCall, s: LowerState): string {
+    var ret: string = call_fn_value_ret(inner, s);
+    if (ret.len() > 0) { return fn_sig_of_ref(parser.parse_type_ref(ret), []); }
     match (inner.callee) {
         ast.ExprIdent(id) => { return sig_reg_value_last(s.frame.sigs.ret_fn_sigs, s.mod_fn_name(id.name)); },
+        ast.ExprFieldAccess(fa) => {
+            var rty: string = expr_struct_type(fa.obj, s);
+            if (rty.len() > 0) { return sig_reg_value_last(s.frame.sigs.ret_fn_sigs, rty + "." + fa.field); }
+        },
         _ => {}
     }
     return "";
@@ -68360,7 +68367,9 @@ pub function ret_fn_sigs_of(funcs: parser.FuncDecl[]): string[] {
         if (pd.type_name.len() == 0) { continue; }
         var tag: string = fn_sig_of(pd, []);
         if (tag.len() == 0) { continue; }
-        out = out.append(fn.name + "|" + tag);
+        var key: string = fn.name;
+        if (fn.receiver_type.len() > 0) { key = util.base_type_name(fn.receiver_type) + "." + fn.name; }
+        out = out.append(key + "|" + tag);
     }
     return out;
 }

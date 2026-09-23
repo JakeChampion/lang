@@ -4016,7 +4016,10 @@ function main(): i32 {
 	// value is an env box, so the outer call always dispatches env-first.
 	// Covered: a capturing and a capture-free result through a local, a
 	// parameter, a generic passthrough of a lambda and of a named function,
-	// three levels through a local, and a method's result.
+	// three levels through a local, and a method's result. The f64 and i64
+	// arguments pin the outer call's funcref signature: with only the arity
+	// known, the AST lowering called an all-i32 funcref and wasm refused the
+	// module.
 	{name: "a-call-of-a-call-through-a-function-value", atLeast: 9, noLeak: true, src: `
 struct M { k: i32 }
 function (m: M) make(): (i32) => i32 { var k = m.k; return (b: i32): i32 => b + k; }
@@ -4026,6 +4029,19 @@ function id[T](x: T): T { return x; }
 function inc(b: i32): i32 { return b + 1; }
 function c3(a: i32): (i32) => ((i32) => i32) { return (b: i32): (i32) => i32 => (c: i32): i32 => a * 100 + b * 10 + c; }
 function call_through(mk: (i32) => ((i32) => i32)): i32 { return mk(1)(2); }
+struct F { k: f64 }
+function (f: F) scale(): (f64) => f64 { var k = f.k; return (x: f64): f64 => x * k; }
+function mkf(k: f64): (f64) => f64 { return (x: f64): f64 => x * k; }
+function mkw(k: i64): (i64) => i64 { return (x: i64): i64 => x * k; }
+function wide(mk: (i64) => ((i64) => i64)): i32 { if (mk(3i64)(5000000000i64) == 15000000000i64) { return 1; } return 0; }
+function floats(): i32 {
+    var f = F { k: 2.0 };
+    var m: (f64) => ((f64) => f64) = mkf;
+    var r = 0;
+    if (f.scale()(1.5) == 3.0) { r = r + 1; }
+    if (m(2.0)(1.5) == 3.0) { r = r + 1; }
+    return r + wide(mkw);
+}
 function main(): i32 {
     var add: (i32) => ((i32) => i32) = adder;
     var dbl = doubler;
@@ -4033,7 +4049,7 @@ function main(): i32 {
     var k = 3;
     var m = M { k: 4 };
     return add(10)(20) + dbl(0)(5) + call_through(adder) + id((b: i32): i32 => b + k)(4)
-        + id(inc)(5) + three(1)(2)(3) - 100 + m.make()(5) - 33;
+        + id(inc)(5) + three(1)(2)(3) - 100 + m.make()(5) - 33 + floats();
 }
 `},
 	// A CAPTURING lambda returned from a lambda. The lifted body's tail
