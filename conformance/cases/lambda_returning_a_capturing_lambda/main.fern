@@ -1,0 +1,10 @@
+// A lambda bound to a local that returns a CAPTURING lambda, called through its
+// result, at two and three levels. The self-host's AST lowering segfaulted on
+// the three-level shape and the typed path refused both, so a default build
+// crashed (#10025); every returned lambda now takes a `$lamret$N` slot.
+function main(): i32 {
+    var curry = (a: i32) => { return (b: i32): i32 => a + b; };
+    var add5 = curry(5);
+    var c3 = (a: i32) => { return (b: i32) => { return (c: i32): i32 => a + b + c; }; };
+    return add5(4) + curry(1)(2) + c3(1)(2)(3);
+}

@@ -355,6 +355,7 @@ json_array_field                                     0
 json_error_location                                  51
 json_object                                          8
 labeled_loops                                        0
+lambda_returning_a_capturing_lambda                  6
 lambda_tuple_return                                  0
 len_on_empty_u8                                      0
 let_else_pattern_forms                               0
