@@ -19604,11 +19604,19 @@ pub function inferred_const_table(funcs: FuncDecl[], names: string[], t: ConstTa
 }
 
 // substitute_const_refs replaces every reference to a const in `t` that no
-// local binding shadows.
+// local binding shadows. A const's initialiser sees only the consts declared
+// before it, so a forward reference stays for the checker's const rule.
 pub function substitute_const_refs(mod: Module, t: ConstTable): Module {
     if (t.names.len() == 0) { return mod; }
     var funcs: FuncDecl[] = [];
+    var earlier: string[] = [];
     for fd in mod.funcs {
+        if (fd.is_const) {
+            var seen: ConstTable = const_table_within(t, earlier);
+            funcs = funcs.append(FuncDecl { ...fd, body: astwalk.substitute_consts(fd.body, [], seen.names, seen.values) });
+            earlier = earlier.append(fd.name);
+            continue;
+        }
         var bound: string[] = [];
         var params: ast.ParamDecl[] = [];
         for p in fd.params {
@@ -19619,6 +19627,17 @@ pub function substitute_const_refs(mod: Module, t: ConstTable): Module {
         funcs = funcs.append(FuncDecl { ...fd, params: params, body: astwalk.substitute_consts(fd.body, bound, t.names, t.values) });
     }
     return Module { ...mod, funcs: funcs, top_stmts: astwalk.substitute_consts(mod.top_stmts, [], t.names, t.values) };
+}
+
+// const_table_within keeps the entries of `t` named in `names`.
+function const_table_within(t: ConstTable, names: string[]): ConstTable {
+    var out: ConstTable = ConstTable { names: [], values: [] };
+    var i: i32 = 0;
+    for n in t.names {
+        if (util.has_str(names, n)) { out = ConstTable { names: out.names.append(n), values: out.values.append(t.values[i]) }; }
+        i = i + 1;
+    }
+    return out;
 }
 
 // unannotated_const_names lists the consts written without a type.
