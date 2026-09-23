@@ -17717,7 +17717,7 @@ function vb_zero_of(tag: string): ast.Expr {
     return ast.ExprString { value: "", line: 0, col: 0 };
   }
   if (tag == "boolean") {
-    return ast.ExprBool { value: false };
+    return ast.ExprBool { value: false, line: 0, col: 0 };
   }
   if (tag == "f64") {
     return ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: true, line: 0, col: 0 };

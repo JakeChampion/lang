@@ -354,7 +354,10 @@ function e_ident(name: string): ast.Expr { return ast.ExprIdent { name: name, li
 function e_ident_at(name: string, line: i32, col: i32): ast.Expr { return ast.ExprIdent { name: name, line: line, col: col, ty: "" }; }
 function e_string(value: string): ast.Expr { return ast.ExprString { value: value, line: 0, col: 0 }; }
 function e_string_at(value: string, line: i32, col: i32): ast.Expr { return ast.ExprString { value: value, line: line, col: col }; }
-pub function e_bool(value: boolean): ast.Expr { return ast.ExprBool { value: value }; }
+pub function e_bool(value: boolean): ast.Expr { return ast.ExprBool { value: value, line: 0, col: 0 }; }
+
+// e_bool_at is a written `true` / `false`, carrying its position.
+function e_bool_at(value: boolean, line: i32, col: i32): ast.Expr { return ast.ExprBool { value: value, line: line, col: col }; }
 function e_binary(op: string, left: ast.Expr, right: ast.Expr): ast.Expr {
     return ast.ExprBinary { op: op, left: left, right: right, line: 0, col: 0, ty: "" };
 }
@@ -2128,7 +2131,7 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
                             // `Box { val: 42 }` and quietly became `Box[i32]`.
                             var glit_name: string = bid.name;
                             if (pending_type_args.len() > 0) { glit_name = glit_name + "[" + pending_type_args + "]"; }
-                            var (glit_expr, glit_p) = parse_struct_lit_body(p, glit_name, 0, 0);
+                            var (glit_expr, glit_p) = parse_struct_lit_body(p, glit_name, bid.line, bid.col);
                             p = glit_p;
                             base = glit_expr;
                             pending_type_argc = 0;
@@ -2198,8 +2201,14 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
             // (`ast.ExprBinary { … }`), so the self-host parser
             // must accept it to parse its own source.
             var qname: string = "";
+            var qline: i32 = 0;
+            var qcol: i32 = 0;
             match (base) {
-                ast.ExprIdent(qid) => { qname = qid.name; },
+                ast.ExprIdent(qid) => {
+                    qname = qid.name;
+                    qline = qid.line;
+                    qcol = qid.col;
+                },
                 _ => { }
             }
             var qstruct_ok: boolean = false;
@@ -2220,7 +2229,7 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
                 }
             }
             if (qstruct_ok) {
-                var (qr_expr, qr_p) = parse_struct_lit_body(p, qname + "." + fname, 0, 0);
+                var (qr_expr, qr_p) = parse_struct_lit_body(p, qname + "." + fname, qline, qcol);
                 p = qr_p;
                 base = qr_expr;
             } else {
@@ -2348,16 +2357,14 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
             return parse_postfix(p, e_string_at(x.value, sline, scol));
         },
         lexer.TokKeyword(x) => {
-            if (x.name == "true") {
+            if (x.name == "true" || x.name == "false") {
+                var bline: i32 = p.peek_line();
+                var bcol: i32 = p.peek_col();
                 p = p.advance();
                 // Route through parse_postfix like the number / string literal
                 // arms so a postfix chain on a bool literal (`true.to_i()`) is
                 // parsed, not silently dropped (#4338).
-                return parse_postfix(p, e_bool(true));
-            }
-            if (x.name == "false") {
-                p = p.advance();
-                return parse_postfix(p, e_bool(false));
+                return parse_postfix(p, e_bool_at(x.name == "true", bline, bcol));
             }
             if (x.name == "function") {
                 // `function` introduces a NAMED declaration and nothing
@@ -16280,7 +16287,7 @@ function fda_const_value(name: string, funcs: FuncDecl[]): (ast.Expr, boolean) {
             }
         }
     }
-    return (ast.ExprBool { value: false }, false);
+    return (ast.ExprBool { value: false, line: 0, col: 0 }, false);
 }
 
 // fda_fold_consts substitutes every top-level const a default names with the
