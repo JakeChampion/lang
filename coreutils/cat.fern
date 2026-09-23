@@ -3,8 +3,9 @@
 //   cat [-AbeEnstTuv] [FILE]...
 //
 // Every FILE in order, `-` and no operand both meaning stdin. With no
-// formatting option the bytes are copied as read, one write per read;
-// with one they are rewritten line by line:
+// formatting option the bytes are copied as they are, spliced by the
+// kernel where it can and one write per read where it cannot; with one
+// they are rewritten line by line:
 //
 //   -n  number every line, `%6d\t` (the field widens past a million)
 //   -b  number the non-blank lines only; -n is then ignored
@@ -198,6 +199,19 @@ struct State { w: io_buffered.BufWriter, num: u64, head: string, head_of: u64, a
 // the file both want.
 function read_size(): i32 {
   return 131072;
+}
+
+// `splice_size()` — bytes per splice(2), and the size of the pipe the
+// runtime moves them through. GNU asks for 512 KiB; 1 MiB, the kernel's
+// default ceiling, measured 3 ms to 4 ms on a 62 MiB file.
+function splice_size(): i32 {
+  return 1048576;
+}
+
+// GNU's splice_cat skips a regular file this small or smaller, whose
+// bytes a read and a write move as cheaply.
+function splice_floor(): i64 {
+  return 32768 as i64;
 }
 
 function state_new(): State {
@@ -398,6 +412,34 @@ function fail(st: State, msg: string): State {
   return State { ...s, w: gnu.error_out(s.w, msg), ok: false };
 }
 
+// `splice_all(r)` — the input moved to stdout by the kernel. False when
+// the pair cannot be spliced, which leaves the input where it stood for
+// the read loop to carry on from and meet any failure of its own.
+function splice_all(r: Reader): boolean {
+  var out: Writer = stdout();
+  while (true) {
+    match (r.splice_to(out, splice_size())) {
+      Ok(n) => {
+        if (n == 0 as i64) {
+          return true;
+        }
+      },
+      Err(e) => {
+        match (e) {
+          Unsupported => {
+            return false;
+          },
+          _ => {
+            gnu.error("write error: " + gnu.io_error_text(e));
+            exit(1);
+          }
+        }
+      }
+    }
+  }
+  return true;
+}
+
 // `cat_file(path, st, f, out_stat)` — one operand. `out_stat` is
 // stdout's record, for the input-is-output check.
 function cat_file(path: string, st: State, f: Fmt, out_stat: FileStat): State {
@@ -414,8 +456,10 @@ function cat_file(path: string, st: State, f: Fmt, out_stat: FileStat): State {
       }
     }
   }
+  var small: boolean = false;
   match (r.stat()) {
     Ok(in_stat) => {
+      small = in_stat.is_file && in_stat.size <= splice_floor();
       if (out_stat.is_file && in_stat.dev == out_stat.dev && in_stat.ino == out_stat.ino) {
         match (r.seek(0 as i64, 1)) {
           Ok(pos) => {
@@ -440,7 +484,12 @@ function cat_file(path: string, st: State, f: Fmt, out_stat: FileStat): State {
   var plain: boolean = is_plain(f);
   var squeeze_only: boolean = is_squeeze_only(f);
   var spell_only: boolean = is_spell_only(f);
-  while (true) {
+  var done: boolean = false;
+  if (plain && !small) {
+    s = drain(s);
+    done = splice_all(r);
+  }
+  while (!done) {
     match (r.read_chunk(read_size())) {
       Ok(chunk) => {
         if (chunk.len() == 0) {

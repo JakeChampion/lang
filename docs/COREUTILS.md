@@ -2709,6 +2709,41 @@ and delimiter lines still take `proc_line`.
 |---|---:|---:|---:|
 | `nl` over the 62 MiB bench file | 2,229 ms | 400 ms | 998 ms |
 
+### cat's plain copy, spliced, 2026-09-23 (GNU coreutils 9.12)
+
+GNU 9.12's `cat` with no formatting option never copies a byte through
+userspace. A regular file onto a regular file goes by `copy_file_range`.
+Anything else, unless the input is a regular file of 32 KiB or less, goes
+by `splice(2)` through a pipe of its own, grown to 512 KiB, with stdout's
+pipe grown to match. Fern's `cat` read and wrote 128 KiB at a time, 480
+reads and 480 writes for the bench file.
+
+`r.splice_to(w, max)` is that move as a handle method, on every backend and
+in both compilers. It tries a direct splice first, which serves any pair
+with a pipe on one side, and a writer that is a pipe is grown to hold `max`
+(asked once per writer). A pair with no pipe goes through a pipe the runtime
+creates on first use and keeps. Before anything leaves the reader, a
+non-blocking splice from the empty pipe asks whether the writer takes spliced
+bytes, so `Unsupported` always means nothing moved. `cat` then falls back to
+reading and writing from the same offset, and any real failure is met on its
+own side, with GNU's wording. An appending stdout and `/dev/full` both take
+that path. wasm and the interpreter answer `Unsupported` to every call.
+
+`cat` passes 1 MiB, the kernel's default ceiling for a pipe. Against GNU's
+512 KiB it measured 3 ms to 4 ms on the bench file in a C loop of the same
+two splices. Regular file to regular file goes through the pipe too, rather
+than `copy_file_range`; the bench has no such row.
+
+| workload | before | after | GNU 9.12 |
+|---|---:|---:|---:|
+| `cat` of the 62 MiB bench file | 18.0 ms | 1.94 ms | 3.43 ms |
+| `cat` of two 62 MiB files | 29.8 ms | 3.16 ms | 4.98 ms |
+| `cat` from a pipe | 18.2 ms | 4.84 ms | 4.67 ms |
+
+Reading from a pipe is set by GNU `cat` on the writing end, and the two runs
+are level within their spread (σ 1.2 and 1.4 ms). The self-hosted build is
+1.65×, 1.39× and 0.91× GNU on the same rows.
+
 ### ls, 2026-09-14, Linux x86-64 (GNU coreutils 9.4, uutils 0.0.24)
 
 The same 4-core container, so read the columns against each other. The
