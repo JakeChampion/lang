@@ -781,9 +781,12 @@ same code(s) the Go checker does — restricted to
   …)` would also be flagged, but that's pathological (the runtime can't key
   on a float anyway) and never appears in real code; for actual map
   literals the check is faithful. Map programs need `import "core/map";`
-  (Go reports its own E001 "Map operations require import" otherwise — a
-  Go-only rule the self-host doesn't model, so such cases stay out of the
-  corpus). Reachable Go contract note: the mixed-key / mixed-value E045
+  — E001 "Map operations require import" otherwise, on both sides since
+  #10094. The self-host reads it off the program's import CLOSURE, which
+  `flatten.bundle` now keeps on the merged module for exactly this (it used
+  to discard the list, leaving the checker unable to tell a program that
+  imported `core/map` from one that did not); `thin_map_import_diags` cuts
+  the repeats down to the one diagnostic per program native emits. Reachable Go contract note: the mixed-key / mixed-value E045
   paths the Go source suggests don't actually fire (polymorphic-numeric
   settling), so the implemented + tested surface is the unsupported-first-
   key-type case. Gated by 4 corpus cases (float key → E045; string-key,

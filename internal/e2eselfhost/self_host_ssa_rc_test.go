@@ -393,7 +393,7 @@ function main(): i32 {
     // retain, nothing handed on) earns the bare row as well as the counted one.
     var lenRows: string = "";
     for bucket in ssarc.caller_sigs(irlower.fn_sigs_empty(), "len", arrLen, [2], arrLenPlan).borrowable_params { lenRows = lenRows + bucket; }
-    if (!has_sub("\n" + lenRows, "\nlen|1\n")) { eprint(lenRows); return 133; }
+    if (!has_sub("\n" + lenRows, "\nlen|1\n")) { eprint(lenRows); return 194; }
     var arrLenLowered = ssarc.lower(arrLen, [2], arrLenPlan, irlower.struct_tab_empty(), []);
     if (!arrLenLowered.ok) { eprint(arrLenLowered.why); return 33; }
     var sawArrLen: boolean = false;
@@ -983,7 +983,7 @@ function main(): i32 {
     for o in mapLowered.ops {
         if (o.str == "__fern_rc_inc") { sawMapRetain = true; }
     }
-    if (!sawMapRetain) { return 138; }
+    if (!sawMapRetain) { return 195; }
     // The same graph over an OWNED map moves that unit, and the map is freed
     // by its own helper rather than released by a count.
     var ownMapPlan = ssaunits.plan(mapFunc, [3]);

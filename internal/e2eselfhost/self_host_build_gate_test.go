@@ -88,6 +88,20 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			wantDiag: "error[E028]",
 		},
 		{
+			// An uncoded refusal: native's constfold rejects a non-constant
+			// initialiser before it type-checks. The gate kept only coded
+			// diagnostics, so `-check` refused this and `-target` built it.
+			name:     "const-not-a-constant",
+			src:      "function g(): i32 { return 1; }\nconst E = g();\nfunction main(): i32 { return E; }\n",
+			wantDiag: "const E: expression is not a constant",
+		},
+		{
+			// A const written without a type takes its value's (#10079); the
+			// self-host drew E070 on it as if it were a function.
+			name: "const-without-a-type",
+			src:  "const W = 9;\nconst A = W * 2;\nfunction main(): i32 { return A; }\n",
+		},
+		{
 			// One of the six codes that gated before this change, so the
 			// widening cannot be read as having replaced the old set.
 			name:     "field-assign-E048",
@@ -526,6 +540,8 @@ func TestSelfHostBuildGateMatchesCheckX86_64(t *testing.T) {
 		// exclusion list. IR lowering does not stop it either: the call is
 		// well-formed, it is simply short an argument.
 		"function two(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return two(1); }\n",
+		// An uncoded refusal gates too: native folds consts before it checks.
+		"function g(): i32 { return 1; }\nconst E = g();\nfunction main(): i32 { return E; }\n",
 	}
 	for i, src := range srcs {
 		progDir := t.TempDir()

@@ -2605,14 +2605,12 @@ pub function (s: LowerState) mark_closure_opt_ret(i: i32, ty: string): LowerStat
 // stamp_fn_value_facts applies BOTH fn-VALUE facts to the slot a `var` bind has
 // just created: the declaration's signature and the Option/Result return.
 //
-// THREE paths in lower_stmt_var bind a fn-typed `var`, and each has to call this:
-// bind_var_slot, lower_stmt_var_closure (a lambda / closure init, which does not
-// route through bind_var_slot and calls the two halves itself because its init
-// carries no fn-type ANNOTATION to gate on), and the const-fn VALUE branch
-// (`var g: () => T = f`, #3574), which binds its own slot and returns early.
-// Missing that third one took `match (f())` off the IR path outright: the local
-// had no recorded Option return, so lower_stmt_match could not name the
-// scrutinee's payload type and bailed the whole function.
+// Both paths in lower_stmt_var that bind a fn-typed `var` have to call this:
+// bind_var_slot, and lower_stmt_var_closure (a lambda / closure init, which does
+// not route through bind_var_slot and calls the two halves itself because its
+// init carries no fn-type ANNOTATION to gate on). Without it `match (f())` left
+// the IR path: the local had no recorded Option return, so lower_stmt_match could
+// not name the scrutinee's payload type and bailed the whole function.
 pub function (s: LowerState) stamp_fn_value_facts(v: ast.StmtVar, slot: i32, pre: LowerState): LowerState {
     var out: LowerState = s.stamp_fnval_decl(slot, v);
     // An ANNOTATED fn-typed local bound to a named opt-returning fn
@@ -6512,6 +6510,10 @@ pub function expr_struct_type(e: ast.Expr, s: LowerState): string {
             // the structural walk unchanged.
             var cnom: string = struct_tag_from_ty(c.ty, s);
             if (cnom != "") { return cnom; }
+            // A call through a fn value (`var f = mk; f().x`) answers the
+            // return type its binding, parameter or field declares.
+            var fvnom: string = struct_tag_from_ty(call_fn_value_ret(c, s), s);
+            if (fvnom != "") { return fvnom; }
             // A call to a struct-returning function evaluates to that struct type
             // (so `var p = make()` / `var p = obj.make()` then `p.x` resolves).
             match (c.callee) {
@@ -23105,30 +23107,6 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
             }
         },
         _ => {}
-    }
-    // A bare ZERO-ARG fn name bound to a `fn`-typed local is a function
-    // VALUE (pointer), not a `const`-style call: `var g: () => T = f`.
-    // The generic lower_expr below would read `f` (a 0-arg receiver-less
-    // fn, indistinguishable from a `const` without context) as a const and
-    // CALL it, storing f()'s result; `g()` then calls that integer as a
-    // code pointer and segfaults. The `fn`-typed target disambiguates it
-    // as a value → emit const_func (the same pointer a >=1-arg fn-name
-    // already lowers to). g stays a plain fn-pointer slot, so `g()`
-    // dispatches via the plain call_indirect path. (#3574)
-    if (v.type_name == "fn") {
-        match (v.init) {
-            ast.ExprIdent(fvid) => {
-                if (s.slot_of(fvid.name) < 0 && s.is_const_fn(fvid.name)) {
-                    var fvs: LowerState = s.emit(ir.op_const_func(0, fvid.name));
-                    var fvb: LowerState = fvs.add_local(v.name);
-                    fvb = fvb.mark_reclaim_site(fvb.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
-                    var fvslot: i32 = fvb.slot_of(v.name);
-                    fvb = fvb.stamp_fn_value_facts(v, fvslot, s);
-                    return fvb.emit(ir.op_store_local(fvslot));
-                }
-            },
-            _ => {}
-        }
     }
     var se: LowerState = s;
     // #6713: `var t = slice_unchecked(s, a, b)` where every use of `t` borrows
@@ -58542,37 +58520,6 @@ function emit_inarm_match_reuse(y_name: string, y_site: string, init: ast.Expr, 
     return st;
 }
 
-// register_fnvalue_local_struct_rets augments `reg` with a `f|S` entry for each
-// struct-returning fn-value LOCAL `var f = g` (type_name "fn", `g` a struct-
-// returning function already in `reg`) — so a later `f()` resolves its struct
-// result for field / method access (#3640 slice B.1). Recurses nested bodies so
-// a binding inside an if / while / for / match arm counts.
-function register_fnvalue_local_struct_rets(stmts: ast.Stmt[], reg: SigReg): SigReg {
-    for stmt in stmts {
-        match (stmt) {
-            ast.StmtVar(v) => {
-                if (v.type_name == "fn") {
-                    match (v.init) {
-                        ast.ExprIdent(g) => {
-                            var s_ty: string = sig_reg_value_of(reg, g.name);
-                            if (s_ty.len() > 0) { reg = sig_reg_append(reg, v.name + "|" + s_ty); }
-                        },
-                        _ => {}
-                    }
-                }
-            },
-            ast.StmtIf(f) => { reg = register_fnvalue_local_struct_rets(f.then_body, reg); reg = register_fnvalue_local_struct_rets(f.else_body, reg); },
-            ast.StmtWhile(w) => { reg = register_fnvalue_local_struct_rets(w.body, reg); },
-            ast.StmtFor(fr) => { reg = register_fnvalue_local_struct_rets(fr.body, reg); },
-            ast.StmtMatch(m) => {
-                for arm in m.arms { reg = register_fnvalue_local_struct_rets(arm.body, reg); }
-            },
-            _ => {}
-        }
-    }
-    return reg;
-}
-
 // has_self_tail reports whether `ops` contains at least one
 // `call_direct <name>/<nparams> ; return` pair worth rewriting — the tail-call
 // shape TCO fires on. The pre-walk lets tco_self_tail skip the loop wrapper
@@ -60079,42 +60026,11 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     // it never leaks to another function — a param named `f` elsewhere that is
     // NOT array-returning is unaffected.
     var arr_ret_fns_aug: SigReg = sg.arr_ret_fns;
-    // Struct-returning fn-value PARAM (`g: () => P`, coarse "fn" with the
-    // return-struct name on ParamDecl.fn_ret): a call `g()` yields a `P`, so
-    // register a `g|P` entry in THIS function's sg.struct_ret_fns view. The
-    // existing struct_ret_type lookup (split on `|`) then resolves `g().field`
-    // / `var p = g()` exactly as it does for a struct-returning free function —
-    // so the call-result field read lowers on the IR path instead of bailing to
-    // AST (#3640 slice A). Like arr_ret_fns_aug, the entry lives only in the
-    // per-call LowerState, so it never leaks to another function. The self-host
-    // compiler's own source uses no fn-typed params, so this never fires there —
-    // the byte-identical fixpoint is undisturbed.
-    var struct_ret_fns_aug: SigReg = sg.struct_ret_fns;
     var pri: i32 = 0;
     while (pri < fn.params.len()) {
         if (fn.params[pri].ret_arr) { arr_ret_fns_aug = sig_reg_append(arr_ret_fns_aug, fn.params[pri].name); }
-        // A fn-value param whose return names a bare struct registers a
-        // sg.struct_ret_fns entry (drives `g().field`, #3640). fn_ret also
-        // carries bracketed enum return spellings (#4722), "string", and now
-        // SCALAR returns — none of which name a struct. Ask the parser's
-        // is_struct_ret_name rather than enumerating the exclusions here: it
-        // already rejects brackets, "string" and every scalar, and it is the
-        // same predicate that decides what fn_ret keeps in the first place, so
-        // the two cannot drift.
-        if (fn.params[pri].type_name == "fn" && parser.is_struct_ret_name(fn.params[pri].fn_ret)) {
-            struct_ret_fns_aug = sig_reg_append(struct_ret_fns_aug, fn.params[pri].name + "|" + fn.params[pri].fn_ret);
-        }
         pri = pri + 1;
     }
-    // #3640 slice B.1: a struct-returning fn-value LOCAL `var f: () => P = mk`
-    // (type_name coarsed to "fn") binds `mk` as a fn-value (const_func); a call
-    // `f()` then yields a `P`. Register a `f|P` entry — the local sibling of the
-    // param registration above — so `f().field` / `var p = f()` resolve the
-    // struct result and lower on the IR path instead of bailing. The return
-    // struct is recovered from the target `mk`'s own sg.struct_ret_fns entry (a
-    // struct-returning free function), so no annotation return-type spelling is
-    // needed. Scanned over the function body (incl. nested blocks).
-    struct_ret_fns_aug = register_fnvalue_local_struct_rets(fn.body, struct_ret_fns_aug);
     // Struct reclamation: the fresh, non-escaping struct locals this function may
     // free at scope exit / loop-rebind (conservative escape analysis above).
     // move_sites_of is the array-store construction-move analysis (#6569), until
@@ -60359,7 +60275,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     var da_bp: string[] = dead_alias_borrow_params_of(fn, structs);
     var dalias: DeadAliases = dead_alias_of(fn.body, asg_targets, fn_moves_all.names, da_bp, is_scalar_type_name(fn.ret_type));
     var persistent_ops: ir.OpBuffer = ir.op_buffer();
-    var s: LowerState = LowerState { ops: persistent_ops, locals: locals0, ctrl: 0, loop_blk: noloop, frame: LowerFrame { ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dalias.sites, dead_alias_bp: da_bp, spread_sites: spread_sites_of(fn.body, structs, []), type_params: fn.type_params, strarr_sources: string_array_sources_of(fn), structs: structs, reclaimable_names: reclaim, aliased_names: aliased, map_clone_sites: map_clone_insert_sites_of(fn.body), borrowed_names: borrowed, try_cleanup: tclean, defer_slots: [], defer_guard: "", append_inplace: append_inplace_names_of(fn), field_append_inplace: field_append_inplace_sites_of(fn), grow_sole: grow_sole_exempt_names_of(fn), grow_alias: grow_alias_names_of(fn), own_params: own_names, cur_key: struct_ret_key(fn), n_params: names.len(), fail_why: "", moved_names: fn_moves_top.names, moved_elided: [], move_sites: fn_moves_top.sites, fld_bases: field_move_bases_of(fn, sg), own_lift_sites: own_lift_retain_sites_of(fn, sg, structs) }, xblock_pending: [], optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
+    var s: LowerState = LowerState { ops: persistent_ops, locals: locals0, ctrl: 0, loop_blk: noloop, frame: LowerFrame { ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dalias.sites, dead_alias_bp: da_bp, spread_sites: spread_sites_of(fn.body, structs, []), type_params: fn.type_params, strarr_sources: string_array_sources_of(fn), structs: structs, reclaimable_names: reclaim, aliased_names: aliased, map_clone_sites: map_clone_insert_sites_of(fn.body), borrowed_names: borrowed, try_cleanup: tclean, defer_slots: [], defer_guard: "", append_inplace: append_inplace_names_of(fn), field_append_inplace: field_append_inplace_sites_of(fn), grow_sole: grow_sole_exempt_names_of(fn), grow_alias: grow_alias_names_of(fn), own_params: own_names, cur_key: struct_ret_key(fn), n_params: names.len(), fail_why: "", moved_names: fn_moves_top.names, moved_elided: [], move_sites: fn_moves_top.sites, fld_bases: field_move_bases_of(fn, sg), own_lift_sites: own_lift_retain_sites_of(fn, sg, structs) }, xblock_pending: [], optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
     // A `Cell[T]` PARAM takes the element-width columns a `var c: Cell[T]`
     // local gets from its annotation, so its `get` reads at the element's
     // width rather than as an i32.
@@ -64786,111 +64702,7 @@ function body_local_decl_type(body: ast.Stmt[], name: string): string {
     return "";
 }
 
-// detector_expr_type resolves the coarse type spelling of container expr `e`
-// within function `fn`, using only fn.params + local annotations + structs —
-// the LowerState-free type view the closure-return detector has. Covers the
-// shapes closure-return detection needs: an ident (param / annotated local), an
-// array index (element type = strip trailing "[]"), and a struct-field access.
-// Returns "" when unknown.
-function detector_expr_type(e: ast.Expr, fn: parser.FuncDecl, structs: StructTab): string {
-    match (e) {
-        ast.ExprIdent(id) => {
-            var pi: i32 = 0;
-            while (pi < fn.params.len()) {
-                if (fn.params[pi].name == id.name) { return fn.params[pi].type_name; }
-                pi = pi + 1;
-            }
-            var bt: string = body_local_decl_type(fn.body, id.name);
-            if (bt.len() > 0) { return bt; }
-            // typed-IR (#5986): an unannotated local (or the receiver, which
-            // the param loop never sees) answers from the checker's stamp.
-            return id.ty;
-        },
-        ast.ExprIndex(ix) => {
-            var at: string = detector_expr_type(ix.array, fn, structs);
-            if (at.len() >= 2 && slice_unchecked(at, at.len() - 2, at.len()) == "[]") { return slice_unchecked(at, 0, at.len() - 2) + ""; }
-            // The stamped tag carries the ELEMENT type directly (#5986).
-            return ix.ty;
-        },
-        ast.ExprFieldAccess(fa) => {
-            var ot: string = detector_expr_type(fa.obj, fn, structs);
-            if (ot.len() > 0) {
-                var dft: string = decl_field_type(structs, ot, fa.field);
-                if (dft.len() > 0) { return dft; }
-            }
-            return fa.ty;
-        },
-        // A call-valued object in a return chain (`mk(41).hs[0]`) — no walk
-        // exists at lift time; the stamp carries the callee's result (#5986).
-        ast.ExprCall(c) => { return c.ty; },
-        _ => { return ""; }
-    }
-}
-
-// variant_payload_field_type resolves the payload FIELD TYPE bound by `name` in a
-// PatVariant arm (`__ev` for the main binding, `__ev<k+1>` for the k-th extra),
-// using only `structs` — the LowerState-free view the closure-return detector has.
-// An enum variant desugars to a struct named after the variant carrying its payload
-// as field `__ev`; a qualified `Enum.Variant` spelling strips to the bare variant.
-// "" when `name` doesn't bind a payload of this variant. Structs-only sibling of
-// iife_variant_payload_field.
-function variant_payload_field_type(pv: ast.PatVariant, name: string, structs: StructTab): string {
-    var vname: string = pv.type_name;
-    var vld: i32 = 0;
-    while (vld < pv.type_name.len()) {
-        if (pv.type_name[vld] == b'.') { vname = slice_unchecked(pv.type_name, vld + 1, pv.type_name.len()) + ""; }
-        vld = vld + 1;
-    }
-    if (!decl_is_struct(structs, vname)) { return ""; }
-    if (pv.binding.len() > 0 && pv.binding != "_" && pv.binding == name) { return decl_field_type(structs, vname, "__ev"); }
-    var k: i32 = 0;
-    while (k < pv.extra_bindings.len()) {
-        var eb: string = pv.extra_bindings[k];
-        if (eb.len() > 0 && eb != "_" && eb == name) { return decl_field_type(structs, vname, "__ev" + util.i32_to_string(k + 1)); }
-        k = k + 1;
-    }
-    return "";
-}
-
-// body_binds_fn_payload_via_match reports whether `body` binds local `name` via a
-// MATCH-ARM pattern `V(name)` whose enum variant payload is fn-typed (a `() => …`
-// field, coarsened to "fn"). #5202 case D: `match (b) { W(f) => { return f; } }`
-// returns a closure BOX the caller must dispatch env-first — but the binding is a
-// match arm, not a `var f = …`, so body_binds_closure_local (var-bindings only)
-// misses it. Recurses into nested if/while/for/match blocks, mirroring the
-// over-approximate scoping of body_binds_closure_local (the fn-return-type gate on
-// the sole caller keeps it to genuine higher-order factories).
-function body_binds_fn_payload_via_match(body: ast.Stmt[], name: string, structs: StructTab): boolean {
-    var i: i32 = 0;
-    while (i < body.len()) {
-        match (body[i]) {
-            ast.StmtMatch(bmt) => {
-                var ai: i32 = 0;
-                while (ai < bmt.arms.len()) {
-                    match (bmt.arms[ai].pattern) {
-                        ast.PatVariant(pv) => {
-                            if (variant_payload_field_type(pv, name, structs) == "fn") { return true; }
-                        },
-                        _ => {}
-                    }
-                    if (body_binds_fn_payload_via_match(bmt.arms[ai].body, name, structs)) { return true; }
-                    ai = ai + 1;
-                }
-            },
-            ast.StmtIf(bif) => {
-                if (body_binds_fn_payload_via_match(bif.then_body, name, structs)) { return true; }
-                if (body_binds_fn_payload_via_match(bif.else_body, name, structs)) { return true; }
-            },
-            ast.StmtWhile(bwh) => { if (body_binds_fn_payload_via_match(bwh.body, name, structs)) { return true; } },
-            ast.StmtFor(bfr) => { if (body_binds_fn_payload_via_match(bfr.body, name, structs)) { return true; } },
-            _ => {}
-        }
-        i = i + 1;
-    }
-    return false;
-}
-
-pub function closure_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab): string[] {
+pub function closure_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var gfns: string[] = [];
     for fn in funcs {
         if (fn.receiver_type.len() == 0) { gfns = gfns.append(fn.name); }
@@ -64899,142 +64711,30 @@ pub function closure_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab): s
     // frame's binders shadows a module function, and the list is fixed here.
     var gset: SigReg = sig_reg_of(gfns);
     var out: string[] = [];
-    // Two forms produce a closure box the caller must dispatch env-first:
-    //   (a) `return <capturing lambda>` — a fresh box built at the return.
-    //   (b) `return <ident>` where the ident is a top-level local bound to a
-    //       closure box (a lambda, `__mkclo$`, or a closure-returning call) —
-    //       e.g. `var f = (b) => { … }; return f;`. Form (b) is gated on
-    //       a declared `fn` return type so it only fires for genuine
-    //       higher-order factories, never the compiler's own no-fn-return
-    //       sources — keeping the self-compile fixpoint byte-identical. The
-    //       fixpoint loop resolves (b)'s transitive `var f = other_factory()`
-    //       chains.
-    var changed: boolean = true;
-    while (changed) {
-        changed = false;
-        for fn in funcs {
-            if (util.index_of_str(out, fn.name) < 0) {
-                var b: ast.Stmt[] = fn.body;
-                // With a declared fn return type, check EVERY return in the
-                // body (branch / loop / match-arm returns included — see
-                // collect_returns); without one, only the last-statement
-                // `return <capturing lambda>` form applies (below), keeping
-                // the no-annotation behaviour untouched.
-                if (fn.ret_type == "fn") {
-                    var rets: ast.Expr[] = collect_returns(b, []);
-                    var hit: boolean = false;
-                    var ri: i32 = 0;
-                    while (ri < rets.len()) {
-                        match (rets[ri]) {
-                            // Same filter as the lift's (#7253): a module-fn
-                            // name this function shadows is a local here, so a
-                            // lambda reading it IS capturing and this function
-                            // DOES return a closure. Filtered only at a lambda
-                            // return: the filter walks the body and the whole
-                            // module-fn list, and this loop visits every
-                            // function every round.
-                            ast.ExprLambda(nlam) => {
-                                if (!lambda_has_no_captures(nlam, gfns_visible_in(fn, gfns, gset))) { hit = true; }
-                            },
-                            ast.ExprIdent(nrid) => {
-                                if (body_binds_closure_local(b, nrid.name, out)) { hit = true; }
-                                // (d') `return f` where f is a MATCH-ARM binding to a
-                                // fn-typed enum payload (`match (b) { W(f) => return f }`,
-                                // #5202 case D) — the box the caller must dispatch env-first.
-                                if (!hit && body_binds_fn_payload_via_match(b, nrid.name, structs)) { hit = true; }
-                                // (b') `return p` where p is this function's own
-                                // fn-typed PARAM. A fn-typed param is ALWAYS a box
-                                // here — the lift pass routes every fn-value
-                                // argument through try_fn_field_value ("there is
-                                // one fn-arg shape, the box"), and lower_func
-                                // already mark_closure_local's every "fn" param on
-                                // the strength of that. So a declared-fn-returning
-                                // function that returns one returns a box, and the
-                                // caller's binding has to dispatch env-first.
-                                //
-                                // Reached by the #6324 hoist: it carries a captured
-                                // fn-typed local into the hoisted function as a
-                                // param, so the arm that read a local now reads a
-                                // param and form (b) stopped matching. Without this
-                                // the caller bare-called the box — a bail turned
-                                // into a SIGSEGV.
-                                if (!hit) {
-                                    var pk: i32 = 0;
-                                    while (pk < fn.params.len()) {
-                                        if (fn.params[pk].name == nrid.name && fn.params[pk].type_name == "fn") { hit = true; }
-                                        pk = pk + 1;
-                                    }
-                                }
-                            },
-                            // (c) `return <closure-returning call>` — a factory
-                            // that forwards another factory's box, e.g.
-                            // `return makeAdder();`. The callee is a top-level
-                            // fn already known to return a closure box (`out`,
-                            // resolved by the fixpoint) or an inline `__mkclo$`
-                            // env-box constructor.
-                            ast.ExprCall(nrcc) => {
-                                match (nrcc.callee) {
-                                    ast.ExprIdent(nrccid) => {
-                                        if ((nrccid.name.len() > 8 && slice_unchecked(nrccid.name, 0, 8) == "__mkclo$") || util.index_of_str(out, nrccid.name) >= 0) { hit = true; }
-                                    },
-                                    _ => {}
-                                }
-                            },
-                            // (d) `return hs[0]` — an ELEMENT of a closure ARRAY
-                            // (a closure box). Register this fn closure-returning
-                            // so the caller's `var g = pick()` binds g a closure
-                            // local (env-first `g()`); without it g() bare-calls
-                            // the box pointer and SIGSEGVs.
-                            ast.ExprIndex(nix) => {
-                                var arrok: boolean = false;
-                                match (nix.array) {
-                                    ast.ExprIdent(naid) => {
-                                        if (body_binds_closurearr_local(b, naid.name, b, out, [])) { arrok = true; }
-                                    },
-                                    _ => {}
-                                }
-                                // (e) `return r.hs[0]` / `return fnarr[i]` — indexing a
-                                // closure ARRAY that is a struct FIELD, a PARAM, or an
-                                // annotated local (its type resolves to "fn[]"); the
-                                // element is a closure box (#5202 B). Distinct from the
-                                // unannotated-local-literal case above.
-                                if (!arrok && detector_expr_type(nix.array, fn, structs) == "fn[]") { arrok = true; }
-                                if (arrok) { hit = true; }
-                            },
-                            // (f) `return kvs[i].f` / `return s.f` — a fn-valued struct
-                            // FIELD (a closure box). Resolve the object's struct type +
-                            // the field type (#5202 E). A numeric tuple index resolves to
-                            // "" (tuples aren't structs), so it can't misfire here.
-                            ast.ExprFieldAccess(nfa) => {
-                                var foty: string = detector_expr_type(nfa.obj, fn, structs);
-                                if (foty.len() > 0 && decl_field_type(structs, foty, nfa.field) == "fn") { hit = true; }
-                            },
-                            _ => {}
-                        }
-                        ri = ri + 1;
-                    }
-                    if (hit) { out = out.append(fn.name); changed = true; }
-                } else if (b.len() > 0) {
-                    match (b[b.len() - 1]) {
-                        ast.StmtReturn(r) => {
-                            match (r.value) {
-                                ast.ExprLambda(lam) => {
-                                    if (!lambda_has_no_captures(lam, gfns_visible_in(fn, gfns, gset))) { out = out.append(fn.name); changed = true; }
-                                },
-                                _ => { }
-                            }
+    // Every function value is an env box, so a function declared to return one
+    // returns a box whatever its return statements spell (#10076). Without a
+    // declared return, only a trailing `return <capturing lambda>` says so.
+    for fn in funcs {
+        if (fn.ret_type == "fn") {
+            out = out.append(fn.name);
+        } else if (fn.body.len() > 0) {
+            match (fn.body[fn.body.len() - 1]) {
+                ast.StmtReturn(r) => {
+                    match (r.value) {
+                        ast.ExprLambda(lam) => {
+                            if (!lambda_has_no_captures(lam, gfns_visible_in(fn, gfns, gset))) { out = out.append(fn.name); }
                         },
                         _ => { }
                     }
-                }
+                },
+                _ => { }
             }
         }
     }
     // "PASSTHRU:<fn>:<argidx>" markers share the same list — a marker can never
     // collide with a function name, so every membership consumer is unaffected,
     // and the classifiers that ask whether a CALL yields a closure box can
-    // recognise the generic passthrough that forwards one (expr_is_closure_elem,
-    // arr_elem_is_closure_box).
+    // recognise the generic passthrough that forwards one (arr_elem_is_closure_box).
     var ptm: string[] = typevar_passthrough_markers_of(funcs);
     var pmi: i32 = 0;
     while (pmi < ptm.len()) { out = out.append(ptm[pmi]); pmi = pmi + 1; }
@@ -65048,9 +64748,9 @@ pub function closure_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab): s
 // with a bare fn name, and the membership consumers ignore it. `var g = pick()`
 // reads it to mark g a RETCLO local so a later `var h = g()` binds h a closure
 // local (env-first).
-pub function closure_fns_of(funcs: parser.FuncDecl[], structs: StructTab): string[] {
-    var out: string[] = closure_ret_fns_of(funcs, structs);
-    var rc: string[] = closure_ret_closure_fns_of(funcs, structs);
+pub function closure_fns_of(funcs: parser.FuncDecl[]): string[] {
+    var out: string[] = closure_ret_fns_of(funcs);
+    var rc: string[] = closure_ret_closure_fns_of(funcs);
     var ri: i32 = 0;
     while (ri < rc.len()) { out = out.append("RETCLO2:" + rc[ri]); ri = ri + 1; }
     return out;
@@ -65129,8 +64829,8 @@ function body_binding_mkclo_funcval(body: ast.Stmt[], name: string): string {
 // A caller's `var g = pick()` reads this to mark g a RETCLO local so a later
 // `var h = g()` binds h a closure local and `h()` dispatches env-first instead of
 // bare-calling the inner box pointer (#5281 SIGSEGV).
-pub function closure_ret_closure_fns_of(funcs: parser.FuncDecl[], structs: StructTab): string[] {
-    var closureset: string[] = closure_ret_fns_of(funcs, structs);
+pub function closure_ret_closure_fns_of(funcs: parser.FuncDecl[]): string[] {
+    var closureset: string[] = closure_ret_fns_of(funcs);
     var out: string[] = [];
     for fn in funcs {
         if (fn.ret_type == "fn") {
@@ -65160,169 +64860,10 @@ pub function closure_ret_closure_fns_of(funcs: parser.FuncDecl[], structs: Struc
     return out;
 }
 
-// expr_is_closure_elem reports whether `e` is a closure VALUE — a lambda, a
-// `__mkclo$` env-box construction, or a call to a closure-box-returning factory
-// (closureset). A named function in an array literal arrives here already
-// boxed as a `__mkclo$` marker.
-function expr_is_closure_elem(e: ast.Expr, closureset: string[]): boolean {
-    match (e) {
-        ast.ExprLambda(_) => { return true; },
-        ast.ExprCall(ec) => {
-            match (ec.callee) {
-                ast.ExprIdent(ecid) => {
-                    if (ecid.name.len() > 8 && slice_unchecked(ecid.name, 0, 8) == "__mkclo$") { return true; }
-                    if (util.index_of_str(closureset, ecid.name) >= 0) { return true; }
-                    // A generic passthrough hands its argument back unchanged and
-                    // the lift boxes a fn value at that parameter unconditionally,
-                    // so the call yields a box. Without this the array holding it
-                    // was not classified a closure array and the caller
-                    // bare-dispatched a box: `fs[0](3)` SIGSEGV'd, no bail.
-                    var pi: i32 = 0;
-                    while (pi < ec.args.len()) {
-                        if (util.index_of_str(closureset, "PASSTHRU:" + ecid.name + ":" + util.i32_to_string(pi)) >= 0
-                                && expr_is_closure_elem(ec.args[pi], closureset)) { return true; }
-                        pi = pi + 1;
-                    }
-                },
-                _ => {}
-            }
-        },
-        _ => {}
-    }
-    return false;
-}
-
-// closure_elem_in_scope is expr_is_closure_elem plus the one form that needs
-// the enclosing body: an ident `scope` binds to a closure box (`var f = <lambda>;
-// … [f]`). Such a local is a box exactly as the lambda written inline would be,
-// so an array built from it is a closure array (nightly seed 24937).
-function closure_elem_in_scope(e: ast.Expr, scope: ast.Stmt[], closureset: string[]): boolean {
-    if (expr_is_closure_elem(e, closureset)) { return true; }
-    match (e) {
-        ast.ExprIdent(eid) => { return body_binds_closure_local(scope, eid.name, closureset); },
-        _ => {}
-    }
-    return false;
-}
-
-// expr_is_closurearr_in_scope reports whether `e` provably yields a closure
-// ARRAY: a literal whose element is a closure in `scope`, a call to a
-// closurearr-returning fn (`caset`), a call to a generic passthrough handing
-// such an argument straight back (`id([f, g])`, the array-shaped twin of
-// expr_is_closure_elem's PASSTHRU case), or a local `scope` binds to one.
-function expr_is_closurearr_in_scope(e: ast.Expr, scope: ast.Stmt[], closureset: string[], caset: string[]): boolean {
-    match (e) {
-        ast.ExprArray(_) => { return array_lit_is_closurearr(e, scope, closureset); },
-        ast.ExprIdent(eid) => { return body_binds_closurearr_local(scope, eid.name, scope, closureset, caset); },
-        ast.ExprCall(ec) => {
-            match (ec.callee) {
-                ast.ExprIdent(ecid) => {
-                    if (util.index_of_str(caset, ecid.name) >= 0) { return true; }
-                    var pi: i32 = 0;
-                    while (pi < ec.args.len()) {
-                        if (util.index_of_str(closureset, "PASSTHRU:" + ecid.name + ":" + util.i32_to_string(pi)) >= 0
-                                && expr_is_closurearr_in_scope(ec.args[pi], scope, closureset, caset)) { return true; }
-                        pi = pi + 1;
-                    }
-                },
-                _ => {}
-            }
-        },
-        _ => {}
-    }
-    return false;
-}
-
-function array_lit_is_closurearr(init: ast.Expr, scope: ast.Stmt[], closureset: string[]): boolean {
-    match (init) {
-        ast.ExprArray(a) => {
-            if (a.elements.len() == 0) { return false; }
-            return closure_elem_in_scope(a.elements[0], scope, closureset);
-        },
-        _ => {}
-    }
-    return false;
-}
-
-// assign_builds_closurearr reports whether `value` (the RHS of `name = value`)
-// makes `name` a closure array: either a closure-array literal, or an
-// `<arr>.append(<closure>)` / `.push(<closure>)` that adds a closure element —
-// the incremental build the initial `var fs = []` literal misses.
-function assign_builds_closurearr(value: ast.Expr, scope: ast.Stmt[], closureset: string[]): boolean {
-    if (array_lit_is_closurearr(value, scope, closureset)) { return true; }
-    match (value) {
-        ast.ExprCall(sac) => {
-            match (sac.callee) {
-                ast.ExprFieldAccess(safa) => {
-                    if (safa.field == "append" || safa.field == "push") {
-                        var ai: i32 = 0;
-                        while (ai < sac.args.len()) {
-                            if (closure_elem_in_scope(sac.args[ai], scope, closureset)) { return true; }
-                            ai = ai + 1;
-                        }
-                    }
-                },
-                _ => {}
-            }
-        },
-        _ => {}
-    }
-    return false;
-}
-
-// body_binds_closurearr_local reports whether `body` (recursing into nested
-// blocks, mirroring body_binds_closure_local) binds local `name` to a closure
-// ARRAY: a closure-array literal, or a call to a function already known to
-// return one (`caset`, resolved by closurearr_ret_fns_of's fixpoint).
-function body_binds_closurearr_local(body: ast.Stmt[], name: string, scope: ast.Stmt[], closureset: string[], caset: string[]): boolean {
-    var i: i32 = 0;
-    while (i < body.len()) {
-        match (body[i]) {
-            ast.StmtVar(sv) => {
-                if (sv.name == name) {
-                    match (sv.init) {
-                        ast.ExprIdent(_) => {},
-                        _ => { if (expr_is_closurearr_in_scope(sv.init, scope, closureset, caset)) { return true; } }
-                    }
-                }
-            },
-            // `fs = fs.append(<closure>)` / `fs = [<closure>, …]` — an
-            // incremental reassignment that makes `name` a closure array, which
-            // the initial (often empty `[]`) StmtVar literal doesn't reveal.
-            // Without this a factory that builds its closure array by append
-            // isn't classified closurearr-returning, so the CALLER dispatches
-            // `fs[i](x)` as a bare fn pointer and SIGSEGVs on the env box.
-            ast.StmtAssign(sasg) => {
-                if (sasg.target == name && assign_builds_closurearr(sasg.value, scope, closureset)) { return true; }
-            },
-            ast.StmtIf(bif) => {
-                if (body_binds_closurearr_local(bif.then_body, name, scope, closureset, caset)) { return true; }
-                if (body_binds_closurearr_local(bif.else_body, name, scope, closureset, caset)) { return true; }
-            },
-            ast.StmtWhile(bwh) => {
-                if (body_binds_closurearr_local(bwh.body, name, scope, closureset, caset)) { return true; }
-            },
-            ast.StmtFor(bfr) => {
-                if (body_binds_closurearr_local(bfr.body, name, scope, closureset, caset)) { return true; }
-            },
-            ast.StmtMatch(bmt) => {
-                var bmi: i32 = 0;
-                while (bmi < bmt.arms.len()) {
-                    if (body_binds_closurearr_local(bmt.arms[bmi].body, name, scope, closureset, caset)) { return true; }
-                    bmi = bmi + 1;
-                }
-            },
-            _ => {}
-        }
-        i = i + 1;
-    }
-    return false;
-}
-
-pub function closurearr_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab): string[] {
+pub function closurearr_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     // The single-closure registry, reused so a `[mk(), …]` element (mk a
     // closure factory) counts as a closure-array element.
-    var closureset: string[] = closure_ret_fns_of(funcs, structs);
+    var closureset: string[] = closure_ret_fns_of(funcs);
     // A function array holds env boxes whatever built it, so a function declared
     // to return one returns a closure array.
     var out: string[] = [];
@@ -67703,8 +67244,8 @@ pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: StructTab, ar
         i64arr_ret_fns: sig_reg_of(i64arr_ret_fns_of(funcs)),
         erased_elem_ret_fns: sig_reg_of(erased_elem_ret_fns_of(funcs, structs)),
         fn_param_sigs: sig_reg_of(fn_param_sigs_of(funcs, structs, growflags)),
-        closure_fns: closure_fns_of(funcs, structs),
-        closurearr_ret_fns: closurearr_ret_fns_of(funcs, structs),
+        closure_fns: closure_fns_of(funcs),
+        closurearr_ret_fns: closurearr_ret_fns_of(funcs),
         const_fns: const_fns_of(funcs),
         borrowable_params: breg,
         borrow_bare: bbare,
@@ -76690,7 +76231,7 @@ pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]):
     }
     // Keep resolved bindings and expanded cleanup even when no lambda lifted.
     // Keep explicit fields until #8989 is fixed: a spread here crashes stage1 bootstrap.
-    var result: parser.Module = parser.Module { funcs: stamp_fn_local_types(newfuncs), structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls };
+    var result: parser.Module = parser.Module { funcs: stamp_fn_local_types(newfuncs), structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls, inferred_consts: mod.inferred_consts };
     // Infer return types on the FINAL lifted module so a lifted lambda with an
     // inferred (empty) ret_type that returns i64/u64 is typed BEFORE eligibility
     // lowers it. Without this, eligibility ran on the un-inferred module and

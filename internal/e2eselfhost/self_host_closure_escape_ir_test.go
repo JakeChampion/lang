@@ -74,15 +74,12 @@ var closureEscapeCases = []struct {
 	// the legacy AST path, which miscompiled it (exit 0).
 	{"closure-array-direct-index-call", "function mk(): ((i32) => i32)[] { var n = 5; var a = [(x: i32): i32 => { return x + n; }]; return a; } function main(): i32 { return mk()[0](37); }", 42},
 	// A factory whose closure returns live in IF/ELSE branches (not the last
-	// statement): closure_ret_fns_of must collect nested returns; before the
-	// fix the caller's binding stayed a plain scalar → SIGSEGV.
+	// statement); the caller's binding once stayed a plain scalar → SIGSEGV.
 	{"ifelse-branch-factory", "function mk(flag: boolean): (i32) => i32 { if (flag) { var f = (x: i32): i32 => { return x + 1; }; return f; } else { var g = (x: i32): i32 => { return x + 2; }; return g; } } function main(): i32 { var a = mk(true); var b = mk(false); return a(20) + b(19); }", 42},
-	// A factory FORWARDING another factory's closure array (`return mk();`):
-	// closurearr_ret_fns_of needs the transitive call form (fixpoint-ordered,
-	// like closure_ret_fns_of); before the fix → SIGSEGV.
+	// A factory FORWARDING another factory's closure array (`return mk();`);
+	// once a SIGSEGV.
 	{"transitive-closure-array-factory", "function mk(): ((i32) => i32)[] { var n = 5; var a = [(x: i32): i32 => { return x + n; }]; return a; } function outer(): ((i32) => i32)[] { return mk(); } function main(): i32 { var arr = outer(); return arr[0](37); }", 42},
-	// Regression: a directly-returned lambda (bare fn pointer, no box) must
-	// keep working under the extended detection.
+	// A directly-returned capturing lambda.
 	{"direct-return", "function adder(a: i32): (i32) => i32 { return (b: i32): i32 => { return a + b; }; } function main(): i32 { var add10 = adder(10); return add10(5); }", 15},
 	// Capture used ONLY in a match-arm `when` guard: astwalk.collect_idents_stmt
 	// (the free-variable collector for capture analysis) walked the scrutinee and

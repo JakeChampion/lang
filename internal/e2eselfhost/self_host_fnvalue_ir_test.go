@@ -79,9 +79,14 @@ func TestSelfHostFnValueIR(t *testing.T) {
 		{"arr-two-sum", `function f(): i32 { return 7; } function g(): i32 { return 5; } function main(): i32 { var fns: (() => i32)[] = [f, g]; return fns[0]() + fns[1](); }`, 12},
 		// loop over a bare-named-fn array, calling each through a variable index.
 		{"arr-loop", `function a(): i32 { return 1; } function b(): i32 { return 2; } function c(): i32 { return 4; } function main(): i32 { var fns: (() => i32)[] = [a, b, c]; var s: i32 = 0; var i: i32 = 0; while (i < 3) { s = s + fns[i](); i = i + 1; } return s; }`, 7},
-		// a 1-arg named-fn array stays correct (already const_func via the generic
-		// path; the fn[] interception emits the same const_func).
+		// a 1-arg named-fn array stays correct.
 		{"arr-one-arg", `function inc(x: i32): i32 { return x + 1; } function dbl(x: i32): i32 { return x * 2; } function main(): i32 { var fns: ((i32) => i32)[] = [inc, dbl]; return fns[0](10) + fns[1](10); }`, 31},
+		// A struct result read through a fn-value parameter or local, answered
+		// from the return type on its slot.
+		{"param-ret-struct-witharg", `struct P { x: i32 } function call(g: (i32) => P): i32 { return g(7).x; } function mk(n: i32): P { return P { x: n + 1 }; } function main(): i32 { return call(mk); }`, 8},
+		{"local-ret-struct-witharg", `struct P { x: i32 } function mk(n: i32): P { return P { x: n + 1 }; } function main(): i32 { var f: (i32) => P = mk; return f(7).x; }`, 8},
+		{"local-infer-field", `struct P { x: i32 } function mk(): P { return P { x: 7 }; } function main(): i32 { var f = mk; return f().x; }`, 7},
+		{"local-infer-witharg", `struct P { x: i32 } function mk(n: i32): P { return P { x: n + 1 }; } function main(): i32 { var f = mk; return f(2).x; }`, 3},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

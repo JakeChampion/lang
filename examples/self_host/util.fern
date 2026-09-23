@@ -787,7 +787,9 @@ pub function format_diags(diags: Diag[]): string {
   var i: i32 = 0;
   while (i < diags.len()) {
     var d: Diag = diags[i];
-    out = out + "error[" + d.code + "]: " + d.message + " (" + i32_to_string(d.line) + ":" + i32_to_string(d.col) + ")\n";
+    var tag: string = "";
+    if (d.code.len() > 0) { tag = "error[" + d.code + "]: "; }
+    out = out + tag + d.message + " (" + i32_to_string(d.line) + ":" + i32_to_string(d.col) + ")\n";
     i = i + 1;
   }
   return out;

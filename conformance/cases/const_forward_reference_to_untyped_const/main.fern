@@ -1,0 +1,8 @@
+// A const's initialiser may read only consts declared before it. B is declared
+// after A, so the build is refused even though B has no written type.
+const A = B * 4;
+const B = 9;
+
+function main(): i32 {
+    return A;
+}

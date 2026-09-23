@@ -1,0 +1,11 @@
+// A const's initialiser is a constant expression: literals, earlier consts, and
+// operators over them. A call is not one, so the build is refused. The
+// self-host checked this under -check but let a build through, because the
+// refusal is uncoded and its build gate kept only coded diagnostics.
+function g(): i32 { return 1; }
+
+const E = g();
+
+function main(): i32 {
+    return E;
+}

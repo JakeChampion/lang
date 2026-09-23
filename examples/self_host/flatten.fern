@@ -1161,23 +1161,6 @@ function disambiguate_methods(mod: parser.Module, ns: string, claimed: string[])
 // the compiler's module layout). This is the final brick: after it,
 // a multi-module program — the compiler itself — lowers to a single
 // namespace and self-compiles.
-// closure_imports is every import the bundled modules write, once per path:
-// the closure a question like "is core/map imported" is asked of, whether or
-// not the loader could load the module the path names.
-function closure_imports(entry: parser.Module, imports: LoadedModule[]): parser.Import[] {
-    var out: parser.Import[] = [];
-    var seen: string[] = [];
-    var all: parser.Import[] = entry.imports;
-    for lm in imports { all = util.append_all(all, lm.mod.imports); }
-    for im in all {
-        if (!util.has_str(seen, im.path)) {
-            seen = seen.append(im.path);
-            out = out.append(im);
-        }
-    }
-    return out;
-}
-
 pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Module {
     var funcs: parser.FuncDecl[] = [];
     var structs: parser.StructDecl[] = [];
@@ -1219,6 +1202,7 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
     // `pub use` re-export table: redirects a consumer's `facade.name`
     // (which mangles to `facade__name`) to the original `origin__name`.
     var rx: ReexportTable = build_reexports(imports, ids, pfxs);
+    var inferred: string[] = mangled_inferred_consts(imports, pfxs, entry);
     var mclaims: string[] = [];
     var i: i32 = 0;
     while (i < imports.len()) {
@@ -1257,24 +1241,72 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
     while (eti < e.trait_reqs.len()) { trait_reqs = trait_reqs.append(e.trait_reqs[eti]); eti = eti + 1; }
     var edi: i32 = 0;
     while (edi < e.trait_decls.len()) { trait_decls = trait_decls.append(e.trait_decls[edi]); edi = edi + 1; }
+    // The bundle keeps the program's import CLOSURE — the entry's own imports
+    // plus every loaded module's — rather than an empty list. Nothing loads
+    // from a bundled module's list (the loaders read the entry and each part
+    // before they get here), and it is what tells the checker which stdlib
+    // modules the program linked: the self-host's answer to native's
+    // `prog.LoadedStdlibPaths`, which is what its E001 `core/map` rule reads.
+    var closure: parser.Import[] = [];
+    var closure_paths: string[] = [];
+    var ci: i32 = 0;
+    while (ci < entry.imports.len()) {
+        if (index_of_str(entry.imports[ci].path, closure_paths) < 0) {
+            closure_paths = closure_paths.append(entry.imports[ci].path);
+            closure = closure.append(entry.imports[ci]);
+        }
+        ci = ci + 1;
+    }
+    var cm: i32 = 0;
+    while (cm < imports.len()) {
+        var cmi: i32 = 0;
+        while (cmi < imports[cm].mod.imports.len()) {
+            if (index_of_str(imports[cm].mod.imports[cmi].path, closure_paths) < 0) {
+                closure_paths = closure_paths.append(imports[cm].mod.imports[cmi].path);
+                closure = closure.append(imports[cm].mod.imports[cmi]);
+            }
+            cmi = cmi + 1;
+        }
+        cm = cm + 1;
+    }
     // Re-settle on the merged signature set. A call into an IMPORTED module had
     // no declaration to settle its arguments against at parse time, so
     // `lib.f([1, 2])` reached an `f64[]`/`i64[]` parameter as unsettled i32
     // literals in a literal sized for i32 slots. settle_module is idempotent, so
     // this settles only what the merge newly reaches.
-    return parser.settle_module(parser.Module {
+    var merged: parser.Module = parser.Module {
         funcs: funcs,
         structs: structs,
         aliases: aliases,
-        imports: closure_imports(entry, imports),
+        imports: closure,
         top_stmts: e.top_stmts,
         enums: enums,
         resources: resources,
         exports: exports,
         impls: impls,
         trait_reqs: trait_reqs,
-        trait_decls: trait_decls
-    });
+        trait_decls: trait_decls,
+        inferred_consts: inferred
+    };
+    return parser.settle_module(parser.substitute_const_refs(merged, merged_const_table(funcs, inferred)));
+}
+
+// mangled_inferred_consts names every const written without a type, across
+// the bundle, by the name it has once merged. A reference from another module
+// is only resolvable after the merge, so parse left it to flatten.
+function mangled_inferred_consts(imports: LoadedModule[], pfxs: string[], entry: parser.Module): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < imports.len()) {
+        for n in imports[i].mod.inferred_consts { out = out.append(mangled_name(pfxs[i], n)); }
+        i = i + 1;
+    }
+    return util.append_all(out, entry.inferred_consts);
+}
+
+function merged_const_table(funcs: parser.FuncDecl[], inferred: string[]): parser.ConstTable {
+    var nothing: string[] = [];
+    return parser.inferred_const_table(funcs, inferred, parser.ConstTable { names: nothing, values: [] });
 }
 
 // ReexportTable is the parallel-array re-export map threaded into every
@@ -1363,7 +1395,9 @@ pub function bundle_per_module(entry: parser.Module, imports: LoadedModule[]): P
         iv = iv + 1;
     }
     var rx: ReexportTable = build_reexports(imports, ids, pfxs);
-    var out: PerModule[] = [];
+    var inferred: string[] = mangled_inferred_consts(imports, pfxs, entry);
+    var mods: parser.Module[] = [];
+    var all_funcs: parser.FuncDecl[] = [];
     // Same claim threading `bundle` does, in the same module order, so the
     // per-module units and the merged bundle agree on which definition owns a
     // `<Type>.<name>` symbol.
@@ -1373,12 +1407,21 @@ pub function bundle_per_module(entry: parser.Module, imports: LoadedModule[]): P
         var pfx: string = pfxs[i];
         var md: MethodDedup = disambiguate_methods(mangle_module(imports[i].mod, pfx, ids, pfxs, ivar_names, ivar_mangled, rx.keys, rx.targets), pfx, mclaims);
         mclaims = md.keys;
-        var m: parser.Module = md.mod;
-        out = out.append(PerModule { ns: imports[i].name, mod: m, is_entry: false });
+        mods = mods.append(md.mod);
+        all_funcs = util.append_all(all_funcs, md.mod.funcs);
         i = i + 1;
     }
     var e: parser.Module = disambiguate_methods(flatten_qualified(entry, ids, pfxs, ivar_names, ivar_mangled, rx.keys, rx.targets), "__entry", mclaims).mod;
-    out = out.append(PerModule { ns: "__entry", mod: e, is_entry: true });
+    all_funcs = util.append_all(all_funcs, e.funcs);
+    // A unit reads a const another unit declares, so the table spans them all.
+    var table: parser.ConstTable = merged_const_table(all_funcs, inferred);
+    var out: PerModule[] = [];
+    var j: i32 = 0;
+    while (j < imports.len()) {
+        out = out.append(PerModule { ns: imports[j].name, mod: parser.substitute_const_refs(mods[j], table), is_entry: false });
+        j = j + 1;
+    }
+    out = out.append(PerModule { ns: "__entry", mod: parser.substitute_const_refs(e, table), is_entry: true });
     return out;
 }
 
@@ -1618,7 +1661,10 @@ function main(): i32 {
 
     // a.add → a__add; a's own main → a__main (mangled, no collision);
     // entry's main kept. So merged funcs: a__add, a__main, main.
-    if (merged.imports.len() != 0) { return 100; }
+    // The merged module keeps the import CLOSURE — here the entry's one
+    // `./a`, since a imports nothing — which is what tells the checker
+    // which modules the program linked.
+    if (merged.imports.len() != 1 || merged.imports[0].path != "./a") { return 100; }
     if (merged.funcs.len() != 3) { return 101; }
     if (merged.funcs[0].name != "a__add") { return 102; }
     if (merged.funcs[1].name != "a__main") { return 103; }
