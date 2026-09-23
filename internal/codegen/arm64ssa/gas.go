@@ -1371,6 +1371,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_rmemchr":            emitRmemchrHelper,
 	"__fern_count_byte":         emitCountByteHelper,
 	"__fern_scan_set":           emitScanSetHelper,
+	"__fern_count_runs":         emitCountRunsHelper,
 	"__fern_sum_bytes":          emitSumBytesHelper,
 	"__fern_scale_f64":          emitScaleF64Helper,
 	"__fern_crc32_cksum":        emitCrc32CksumHelper,
@@ -6185,6 +6186,41 @@ func emitCrc32CksumHelper(w func(string, ...any)) {
 // No cursor, so no clamp. Both degenerate answers are real counts rather
 // than sentinels: an out-of-range byte counts 0 because nothing can equal it,
 // an empty string counts 0 because it has no bytes.
+// emitCountRunsHelper writes __fern_count_runs(s, inside, set) -> how many
+// runs of bytes whose entry in `set` is nonzero begin in s, `inside` nonzero
+// meaning the byte before s was a member. It keeps "not a member" as 0 or 1,
+// and a run begins where that drops from 1 to 0. A byte past the set's end
+// is not a member.
+func emitCountRunsHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_count_runs"))
+	w("\tldur w3, [x0, #-4]") // len
+	w("\tcmp w1, #0")
+	w("\tcset w9, eq") // the previous byte is not a member
+	w("\tmov w1, #0")
+	w("\tmov x10, #0")
+	w("\tldur w4, [x2, #-4]") // set length
+	w(".Lssa_count_runs_loop:")
+	w("\tcmp w10, w3")
+	w("\tb.ge .Lssa_count_runs_end")
+	w("\tldrb w11, [x0, x10]")
+	w("\tmov w12, #1")
+	w("\tcmp w11, w4")
+	w("\tb.hs .Lssa_count_runs_flag")
+	w("\tldrb w12, [x2, x11]")
+	w("\tcmp w12, #0")
+	w("\tcset w12, eq")
+	w(".Lssa_count_runs_flag:")
+	w("\tbic w13, w9, w12")
+	w("\tadd w1, w1, w13")
+	w("\tmov w9, w12")
+	w("\tadd x10, x10, #1")
+	w("\tb .Lssa_count_runs_loop")
+	w(".Lssa_count_runs_end:")
+	w("\tmov w0, w1")
+	w("\tret")
+}
+
 // emitScanSetHelper writes __fern_scan_set(s, from, set) -> the index of the
 // first byte at or after `from` whose entry in `set` is nonzero, or len(s).
 // Scalar: the table read per byte is the kernel. A set with an entry for

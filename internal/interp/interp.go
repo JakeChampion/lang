@@ -1029,6 +1029,42 @@ func New() *Interp {
 	// whose entry in `set` is nonzero, or len(s). `from` clamps like
 	// __memchr's, and a byte past the end of `set` is not in the set. The
 	// oracle for the byte-set scan kernel.
+	// __count_runs(s, inside, set): how many runs of set members begin in s;
+	// `inside` nonzero means the byte before s was a member.
+	i.Builtins["__count_runs"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		if len(args) != 3 {
+			return nil, fmt.Errorf("__count_runs: expected 3 args, got %d", len(args))
+		}
+		s, ok := args[0].(String)
+		if !ok {
+			return nil, fmt.Errorf("__count_runs: expected a string, got %T", args[0])
+		}
+		inside, ok := args[1].(Number)
+		if !ok {
+			return nil, fmt.Errorf("__count_runs: expected an integer flag, got %T", args[1])
+		}
+		set, ok := args[2].(Array)
+		if !ok {
+			return nil, fmt.Errorf("__count_runs: expected a u8[] set, got %T", args[2])
+		}
+		prev := int64(inside) != 0
+		runs := 0
+		for _, c := range []byte(string(s)) {
+			member := false
+			if int(c) < len(set.E) {
+				e, ok := set.E[c].(Number)
+				if !ok {
+					return nil, fmt.Errorf("__count_runs: set element %d is %T, not a byte", c, set.E[c])
+				}
+				member = int64(e) != 0
+			}
+			if member && !prev {
+				runs++
+			}
+			prev = member
+		}
+		return Number(runs), nil
+	}}
 	i.Builtins["__scan_set"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 		if len(args) != 3 {
 			return nil, fmt.Errorf("__scan_set: expected 3 args, got %d", len(args))

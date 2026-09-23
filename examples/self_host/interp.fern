@@ -2831,6 +2831,29 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
             _ => { return v_err("__scan_set: set must be a u8[]"); }
         }
     }
+    // `__count_runs(s, inside, set)` — how many runs of `set` members begin in
+    // s; `inside` nonzero means the byte before s was a member.
+    if (name == "__count_runs") {
+        if (args.len() != 3) { return v_err("__count_runs: expected 3 args (s, inside, set)"); }
+        if (!is_string_arg(args[0]) || !is_i32_arg(args[1])) { return v_err("__count_runs: s must be a string and inside an integer"); }
+        var rs: string = vstr_of(args[0]);
+        var prev: boolean = vint_bits(args[1]) != 0;
+        match (args[2]) {
+            VArr(set) => {
+                var runs: i32 = 0;
+                var ri: i32 = 0;
+                while (ri < rs.len()) {
+                    var rb: i32 = rs[ri] as i32;
+                    var member: boolean = rb < set.elements.len() && vint_bits(set.elements[rb]) != 0;
+                    if (member && !prev) { runs = runs + 1; }
+                    prev = member;
+                    ri = ri + 1;
+                }
+                return v_int(runs);
+            },
+            _ => { return v_err("__count_runs: set must be a u8[]"); }
+        }
+    }
     if (name == "__memchr" || name == "__count_byte" || name == "__sum_bytes") {
         var cb: boolean = name == "__count_byte";
         var sb: boolean = name == "__sum_bytes";

@@ -2630,6 +2630,25 @@ and advancing the length only past a kept one.
 Both utilities are byte-identical to GNU across their corpora, natively
 and when built by the self-host compiler.
 
+### wc's word count, 2026-09-23 (GNU coreutils 9.12)
+
+`__count_runs(s, inside, set)` is a kernel on every backend and in both
+compilers: how many runs of bytes whose entry in the u8[] `set` is nonzero
+begin in `s`, where `inside` says the byte before `s` was a member. `wc`
+counts a word where it ends, at a run of whitespace that begins after a word
+byte, so the words of a read are one call over the six isspace bytes, and
+its lines stay the SIMD `__count_byte`. The x86-64 loop has no branch but
+its exit: it keeps "not a member" as a 0/1 byte, and a run begins where
+subtracting the previous flag from the current one borrows. It takes two
+bytes a turn into two counts.
+
+| workload | before | after | GNU 9.12 |
+|---|---:|---:|---:|
+| `wc` over the 62 MiB bench file | 163 ms | 52 ms | 85 ms |
+| `wc -w` over the same file | 164 ms | 52 ms | 96 ms |
+
+`wc -L` still walks every byte for the line width.
+
 ### ls, 2026-09-14, Linux x86-64 (GNU coreutils 9.4, uutils 0.0.24)
 
 The same 4-core container, so read the columns against each other. The

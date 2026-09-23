@@ -815,6 +815,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesScanSet {
 		g.emitScanSetRuntime()
 	}
+	if g.usesCountRuns {
+		g.emitCountRunsRuntime()
+	}
 	if g.usesSumBytes {
 		g.emitSumBytesRuntime()
 	}
@@ -1303,6 +1306,8 @@ type generator struct {
 	usesCountByte bool
 	// usesScanSet gates the byte-set scan kernel (__fern_scan_set).
 	usesScanSet bool
+	// usesCountRuns gates the run-count kernel (__fern_count_runs).
+	usesCountRuns bool
 	// usesSumBytes gates the byte-sum reduction kernel (__fern_sum_bytes).
 	usesSumBytes bool
 	// usesScaleF64 gates the f64 scaling kernel (__fern_scale_f64).
@@ -1922,6 +1927,8 @@ func (g *generator) recordUse(target string) {
 		g.usesCountByte = true
 	case "__fern_scan_set":
 		g.usesScanSet = true
+	case "__fern_count_runs":
+		g.usesCountRuns = true
 	case "__fern_sum_bytes":
 		g.usesSumBytes = true
 	case "__fern_scale_f64":
@@ -11773,6 +11780,84 @@ func (g *generator) emitScanSetRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_scan_set, .-__fern_scan_set")
+}
+
+// emitCountRunsRuntime emits `__fern_count_runs(s, inside, set) -> i32`: how
+// many runs of bytes whose entry in `set` is nonzero begin in s, with
+// `inside` nonzero meaning the byte before s was a member. A byte past the
+// set's end is not a member. The full-set loop has no branch but its exit:
+// it keeps "not a member" as a 0/1 byte, and a run begins where that drops
+// from 1 to 0, which is the borrow of subtracting the previous flag from
+// the current one. Two bytes a turn, into two counts.
+func (g *generator) emitCountRunsRuntime() {
+	g.line("")
+	g.line(".globl __fern_count_runs")
+	g.line(".type __fern_count_runs, @function")
+	g.label("__fern_count_runs")
+	// rdi = string, esi = inside, rdx = set (length at [rdx - 4]).
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("sub rsp, 16")
+	g.emitStrLen("ecx", "rdi") // ecx = len
+	g.emitStrDataPtr("rdi", "rdi", "[rbp - 16]")
+	g.emit("xor r9d, r9d")
+	g.emit("xor r11d, r11d")
+	g.emit("test esi, esi")
+	g.emit("sete r9b") // r9b = the previous byte is not a member
+	g.emit("xor esi, esi")
+	g.emit("xor eax, eax")
+	g.emit("cmp dword ptr [rdx - 4], 256")
+	g.emit("jb .Lcount_runs_short")
+	g.emit("xor r8d, r8d") // the second count
+	g.label(".Lcount_runs_pair")
+	g.emit("lea r10d, [rsi + 1]")
+	g.emit("cmp r10d, ecx")
+	g.emit("jge .Lcount_runs_single")
+	g.emit("movzx r10d, byte ptr [rdi + rsi]")
+	g.emit("cmp byte ptr [rdx + r10], 1")
+	g.emit("setb r11b")
+	g.emit("cmp r11b, r9b")
+	g.emit("adc eax, 0")
+	g.emit("movzx r10d, byte ptr [rdi + rsi + 1]")
+	g.emit("cmp byte ptr [rdx + r10], 1")
+	g.emit("setb r9b")
+	g.emit("cmp r9b, r11b")
+	g.emit("adc r8d, 0")
+	g.emit("add esi, 2")
+	g.emit("jmp .Lcount_runs_pair")
+	g.label(".Lcount_runs_single")
+	g.emit("add eax, r8d")
+	g.emit("cmp esi, ecx")
+	g.emit("jge .Lcount_runs_ret")
+	g.emit("movzx r10d, byte ptr [rdi + rsi]")
+	g.emit("cmp byte ptr [rdx + r10], 1")
+	g.emit("setb r11b")
+	g.emit("cmp r11b, r9b")
+	g.emit("adc eax, 0")
+	g.emit("jmp .Lcount_runs_ret")
+	// A set shorter than 256 entries: a byte past its end is not a member.
+	g.label(".Lcount_runs_short")
+	g.emit("mov r8d, [rdx - 4]")
+	g.label(".Lcount_runs_short_loop")
+	g.emit("cmp esi, ecx")
+	g.emit("jge .Lcount_runs_ret")
+	g.emit("movzx r10d, byte ptr [rdi + rsi]")
+	g.emit("mov r11b, 1")
+	g.emit("cmp r10d, r8d")
+	g.emit("jae .Lcount_runs_flag")
+	g.emit("cmp byte ptr [rdx + r10], 1")
+	g.emit("setb r11b")
+	g.label(".Lcount_runs_flag")
+	g.emit("cmp r11b, r9b")
+	g.emit("adc eax, 0")
+	g.emit("mov r9b, r11b")
+	g.emit("inc esi")
+	g.emit("jmp .Lcount_runs_short_loop")
+	g.label(".Lcount_runs_ret")
+	g.emit("mov rsp, rbp")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_count_runs, .-__fern_count_runs")
 }
 
 // emitCountByteRuntime emits `__fern_count_byte(s, byte) -> i32`: how many

@@ -1646,6 +1646,19 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		},
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
+	// __count_runs(s, inside, set) → i32: how many runs of bytes whose entry
+	// in `set` is nonzero begin in s. `inside` nonzero says the byte before s
+	// was a member, so a run open at s[0] is not counted. A byte past the end
+	// of `set` is not a member. wc's word count, one call per read. Native
+	// runtime surface, carried by the self-host emitters too (#4451).
+	c.info.FuncSigs["__count_runs"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.StringType{},
+			ast.NumberType{Width: 32, Signed: true},
+			ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
+		},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
 	// __rmemchr(s, byte, from) → i32: the index of the LAST occurrence of
 	// `byte` at or before `from`, or -1. __memchr's mirror, and the third
 	// fused SIMD kernel (docs/ATLAS-PLATFORM-PLAN.md §3.3, which nominates

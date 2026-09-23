@@ -502,6 +502,7 @@ function intrinsic_result(name: string, argc: i32): typeinfo.Type {
   if (argc == 2 && name == "__scale_f64") { return t_array(t_float()); }
   if (argc == 2 && name == "__ascii_run") { return t_i32(); }
   if (argc == 3 && name == "__scan_set") { return t_i32(); }
+  if (argc == 3 && name == "__count_runs") { return t_i32(); }
   if (argc == 2 && name == "__count_byte") { return t_i32(); }
   if (argc == 2 && name == "__crc32_cksum") { return t_i32(); }
   if (argc == 3 && name == "__memchr") { return t_i32(); }
@@ -581,6 +582,7 @@ function intrinsic_params(name: string): (typeinfo.Type[], boolean) {
   if (name == "__scale_f64") { return ([t_array(t_float()), t_float()], true); }
   if (name == "__ascii_run") { return ([t_string(), t_i32()], true); }
   if (name == "__scan_set") { return ([t_string(), t_i32(), t_array(t_u8())], true); }
+  if (name == "__count_runs") { return ([t_string(), t_i32(), t_array(t_u8())], true); }
   if (name == "__count_byte") { return ([t_string(), t_i32()], true); }
   if (name == "__crc32_cksum") { return ([t_i32(), t_string()], true); }
   if (name == "__memchr" || name == "__rmemchr") { return ([t_string(), t_i32(), t_i32()], true); }

@@ -5159,6 +5159,36 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.write(s_done + ":\n");
         return s;
     }
+    if (o.kind_tag == 327) {  // count_runs
+        // operand stack [box, inside, set] (set on top) -> how many runs of
+        // set members begin in the string. The set's length is at (set) and
+        // its byte i in the 8-byte slot 8 + i*8; a byte past that length is
+        // not a member. "Not a member" is kept as 0/1, and a run begins where
+        // it drops from 1 to 0: the borrow of the current flag minus the
+        // previous one.
+        var clo: asmcore.LabelOut = asmcore.fresh_label(s);
+        var c_loop: string = clo.name;
+        var clo2: asmcore.LabelOut = asmcore.fresh_label(clo.state);
+        var c_flag: string = clo2.name;
+        var clo3: asmcore.LabelOut = asmcore.fresh_label(clo2.state);
+        var c_done: string = clo3.name;
+        s = clo3.state;
+        s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n");
+        s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
+        s = s.write("    xorq %r9, %r9\n    testq %rcx, %rcx\n    sete %r9b\n");
+        s = s.write("    xorq %r11, %r11\n    xorq %rcx, %rcx\n    movq (%rdx), %rsi\n");
+        s = s.write(c_loop + ":\n");
+        s = s.write("    cmpq %r8, %rcx\n    jge " + c_done + "\n");
+        s = s.write("    movzbq (%rax,%rcx), %r10\n");
+        s = s.write("    movq $1, %rdi\n");
+        s = s.write("    cmpq %rsi, %r10\n    jae " + c_flag + "\n");
+        s = s.write("    cmpq $0, 8(%rdx,%r10,8)\n    sete %dil\n");
+        s = s.write(c_flag + ":\n");
+        s = s.write("    cmpq %r9, %rdi\n    adcq $0, %r11\n    movq %rdi, %r9\n");
+        s = s.write("    addq $1, %rcx\n    jmp " + c_loop + "\n");
+        s = s.write(c_done + ":\n    pushq %r11\n");
+        return s;
+    }
     if (o.kind_tag == 253) {  // sum_bytes
         // operand stack [box] -> every byte of the string added into a
         // 32-bit accumulator that wraps.

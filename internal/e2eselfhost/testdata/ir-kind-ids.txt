@@ -308,3 +308,4 @@ syscall6=323
 scan_set=324
 buf_push_mapped=325
 buf_push_filtered=326
+count_runs=327

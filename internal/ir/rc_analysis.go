@@ -1476,8 +1476,10 @@ var copyingBuiltinArgs = map[string][]int{
 	// carried CRC word, which owns nothing.
 	"__crc32_cksum": {1},
 	"__mismatch":    {0, 2},
-	// __scan_set reads its string and its set and returns an index.
+	// __scan_set and __count_runs read their string and their set and
+	// return a scalar.
 	"__scan_set":          {0, 2},
+	"__count_runs":        {0, 2},
 	"__method_Map_get":    {1},
 	"__method_Map_get_or": {1},
 	"__method_Map_has":    {1},

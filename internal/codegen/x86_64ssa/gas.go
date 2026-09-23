@@ -2360,6 +2360,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_ascii_run":                emitAsciiRunHelper,
 	"__fern_count_byte":               emitCountByteHelper,
 	"__fern_scan_set":                 emitScanSetHelper,
+	"__fern_count_runs":               emitCountRunsHelper,
 	"__fern_sum_bytes":                emitSumBytesHelper,
 	"__fern_scale_f64":                emitScaleF64Helper,
 	"__fern_crc32_cksum":              emitCrc32CksumHelper,
@@ -4360,6 +4361,42 @@ func emitScanSetHelper(w func(string, ...any)) {
 	w("\tret")
 	w(".Lssa_scan_set_end:")
 	w("\tmov eax, r8d")
+	w("\tret")
+}
+
+// emitCountRunsHelper writes __fern_count_runs(s, inside, set) -> how many
+// runs of bytes whose entry in `set` is nonzero begin in s, `inside` nonzero
+// meaning the byte before s was a member. It keeps "not a member" as a 0/1
+// byte, and a run begins where that drops from 1 to 0: the borrow of the
+// current flag minus the previous one. A byte past the set's end is not a
+// member.
+func emitCountRunsHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_count_runs"))
+	w("\tmov ecx, %s", memRef("rdi", -4)) // len
+	w("\txor r9d, r9d")
+	w("\txor r11d, r11d")
+	w("\ttest esi, esi")
+	w("\tsete r9b") // the previous byte is not a member
+	w("\txor esi, esi")
+	w("\txor eax, eax")
+	w("\tmov r8d, %s", memRef("rdx", -4)) // set length
+	w(".Lssa_count_runs_loop:")
+	w("\tcmp esi, ecx")
+	w("\tjge .Lssa_count_runs_end")
+	w("\tmovzx r10d, byte ptr [rdi + rsi]")
+	w("\tmov r11b, 1")
+	w("\tcmp r10d, r8d")
+	w("\tjae .Lssa_count_runs_flag")
+	w("\tcmp byte ptr [rdx + r10], 1")
+	w("\tsetb r11b")
+	w(".Lssa_count_runs_flag:")
+	w("\tcmp r11b, r9b")
+	w("\tadc eax, 0")
+	w("\tmov r9b, r11b")
+	w("\tinc esi")
+	w("\tjmp .Lssa_count_runs_loop")
+	w(".Lssa_count_runs_end:")
 	w("\tret")
 }
 

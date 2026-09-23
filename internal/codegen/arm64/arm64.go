@@ -829,6 +829,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesScanSet {
 		g.emitScanSetRuntime()
 	}
+	if g.usesCountRuns {
+		g.emitCountRunsRuntime()
+	}
 	if g.usesSumBytes {
 		g.emitSumBytesRuntime()
 	}
@@ -5043,6 +5046,50 @@ func (g *generator) emitScanSetRuntime() {
 	g.emit("ldp x29, x30, [sp], #48")
 	g.emit("ret")
 	g.sizeDirective("__fern_scan_set")
+}
+
+// emitCountRunsRuntime emits `__fern_count_runs(s, inside, set) -> i32`: how
+// many runs of bytes whose entry in `set` is nonzero begin in s, with
+// `inside` nonzero meaning the byte before s was a member. A byte past the
+// set's end is not a member. It keeps "not a member" as 0 or 1, and a run
+// begins where that drops from 1 to 0.
+func (g *generator) emitCountRunsRuntime() {
+	g.line("")
+	g.line(".global __fern_count_runs")
+	g.typeDirective("__fern_count_runs")
+	g.label("__fern_count_runs")
+	// x0/x1 = string words, w2 = inside, x3 = set (length at [x3 - 4]).
+	g.emit("stp x29, x30, [sp, #-48]!")
+	g.emit("mov x29, sp")
+	g.emit("mov x4, x0")                     // data word
+	g.emit("mov x5, x1")                     // length word
+	g.emitStrDataPtr2W("x7", "x4", "x5", 16) // x7 = byte pointer
+	g.emitStrLen2W("w6", "x5")               // w6 = byte length
+	g.emit("cmp w2, #0")
+	g.emit("cset w9, eq") // w9 = the previous byte is not a member
+	g.emit("mov w0, #0")
+	g.emit("mov x10, #0")
+	g.emit("ldur w8, [x3, #-4]") // set length
+	g.label(".Lcount_runs_loop")
+	g.emit("cmp w10, w6")
+	g.emit("b.ge .Lcount_runs_ret")
+	g.emit("ldrb w11, [x7, x10]")
+	g.emit("mov w12, #1")
+	g.emit("cmp w11, w8")
+	g.emit("b.hs .Lcount_runs_flag")
+	g.emit("ldrb w12, [x3, x11]")
+	g.emit("cmp w12, #0")
+	g.emit("cset w12, eq")
+	g.label(".Lcount_runs_flag")
+	g.emit("bic w13, w9, w12")
+	g.emit("add w0, w0, w13")
+	g.emit("mov w9, w12")
+	g.emit("add x10, x10, #1")
+	g.emit("b .Lcount_runs_loop")
+	g.label(".Lcount_runs_ret")
+	g.emit("ldp x29, x30, [sp], #48")
+	g.emit("ret")
+	g.sizeDirective("__fern_count_runs")
 }
 
 // emitCountByteRuntime emits `__fern_count_byte(s, byte) -> i32`: how many
@@ -15469,6 +15516,8 @@ type generator struct {
 	usesCountByte bool
 	// usesScanSet gates the byte-set scan kernel (__fern_scan_set).
 	usesScanSet bool
+	// usesCountRuns gates the run-count kernel (__fern_count_runs).
+	usesCountRuns bool
 	// usesSumBytes gates the byte-sum reduction kernel (__fern_sum_bytes).
 	usesSumBytes bool
 	// usesScaleF64 gates the f64 scaling kernel (__fern_scale_f64).
@@ -20065,6 +20114,8 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesCountByte = true
 		case "__fern_scan_set":
 			g.usesScanSet = true
+		case "__fern_count_runs":
+			g.usesCountRuns = true
 		case "__fern_sum_bytes":
 			g.usesSumBytes = true
 		case "__fern_scale_f64":

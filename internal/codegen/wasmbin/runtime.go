@@ -342,6 +342,12 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_str_len")
 					needs.add("__fern_str_byte")
 					needs.add("__fern_scan_set")
+				case "__fern_count_runs":
+					// The run count. Scalar, reading every byte through
+					// str_byte as the byte-set scan does.
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
+					needs.add("__fern_count_runs")
 				case "__fern_sum_bytes":
 					// The byte-sum reduction. Scalar, and it reads
 					// every byte through str_byte for the same reason
@@ -1639,6 +1645,13 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildScanSetBody,
+	},
+	"__fern_count_runs": {
+		// (data, len, inside, set) → i32 how many runs of set members
+		// begin in the string.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildCountRunsBody,
 	},
 	"__fern_sum_bytes": {
 		// (data, len) → i32 wrapped sum of every byte.
@@ -6157,6 +6170,90 @@ func buildCountByteBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, lC)
 	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32) // $n, $i, $c
 	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildCountRunsBody assembles wasm bytes for __fern_count_runs: how many runs
+// of bytes whose entry in `set` is nonzero begin in the string, `inside`
+// nonzero meaning the byte before it was a member. A byte past the set's
+// length (at set - 4) is not a member.
+//
+// Locals after the four params: $n (4), $i (5), $m (6, the set length),
+// $b (7, the byte), $prev (8), $cur (9), $runs (10).
+func buildCountRunsBody(idxs map[string]uint32) []byte {
+	strLen := idxs["__fern_str_len"]
+	strByte := idxs["__fern_str_byte"]
+	const (
+		pData   = 0
+		pLen    = 1
+		pInside = 2
+		pSet    = 3
+		lN      = 4
+		lI      = 5
+		lM      = 6
+		lB      = 7
+		lPrev   = 8
+		lCur    = 9
+		lRuns   = 10
+	)
+	var body []byte
+	body = inst.InstLocalGet(body, pData)
+	body = inst.InstLocalGet(body, pLen)
+	body = inst.InstCall(body, strLen)
+	body = inst.InstLocalSet(body, lN)
+	body = inst.InstLocalGet(body, pSet)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalSet(body, lM)
+	// $prev = $inside != 0
+	body = inst.InstLocalGet(body, pInside)
+	body = inst.InstI32Const(body, 0)
+	body = numeric.InstI32Ne(body)
+	body = inst.InstLocalSet(body, lPrev)
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstLocalGet(body, lN)
+	body = numeric.InstI32GeS(body)
+	body = inst.InstBrIf(body, 1)
+	body = inst.InstLocalGet(body, pData)
+	body = inst.InstLocalGet(body, pLen)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstCall(body, strByte)
+	body = inst.InstLocalSet(body, lB)
+	// $cur = $b < $m && mem8[$set + $b] != 0
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, lCur)
+	body = inst.InstLocalGet(body, lB)
+	body = inst.InstLocalGet(body, lM)
+	body = numeric.InstI32LtU(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, pSet)
+	body = inst.InstLocalGet(body, lB)
+	body = numeric.InstI32Add(body)
+	body = memory.InstI32Load8U(body, 0, 0)
+	body = inst.InstI32Const(body, 0)
+	body = numeric.InstI32Ne(body)
+	body = inst.InstLocalSet(body, lCur)
+	body = inst.InstEnd(body)
+	// $runs += $cur > $prev
+	body = inst.InstLocalGet(body, lRuns)
+	body = inst.InstLocalGet(body, lCur)
+	body = inst.InstLocalGet(body, lPrev)
+	body = numeric.InstI32GtU(body)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, lRuns)
+	body = inst.InstLocalGet(body, lCur)
+	body = inst.InstLocalSet(body, lPrev)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, lI)
+	body = inst.InstBr(body, 0)
+	body = inst.InstEnd(body) // loop
+	body = inst.InstEnd(body) // block
+	body = inst.InstLocalGet(body, lRuns)
+	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 7, encode.ValtypeI32), body)
 }
 
 // buildScanSetBody assembles wasm bytes for __fern_scan_set: the index of the
