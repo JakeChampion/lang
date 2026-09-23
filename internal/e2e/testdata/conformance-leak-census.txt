@@ -185,6 +185,7 @@ both_arms_read_p                                     0
 break_continue                                       0
 bytes_writer                                         0
 c2_consuming_reuse                                   0
+call_of_a_call_through_a_function_value              6
 call_result_arg_temp                                 0
 cast_in_tuple                                        0
 cast_int_arith_to_float                              0
