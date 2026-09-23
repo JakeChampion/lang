@@ -219,13 +219,13 @@ jobs:
               };
               const paths = files === null ? [] : files.flatMap((f) =>
                 f.previous_filename ? [f.filename, f.previous_filename] : [f.filename]);
-              const runs = (filter) => {
-                if (files === null) return true;
+              const runsOn = (filter, ps) => {
                 let ok = true;
-                if (filter.paths) ok = paths.some((p) => selects(filter.paths, p));
-                if (ok && filter["paths-ignore"]) ok = paths.some((p) => !selects(filter["paths-ignore"], p));
+                if (filter.paths) ok = ps.some((p) => selects(filter.paths, p));
+                if (ok && filter["paths-ignore"]) ok = ps.some((p) => !selects(filter["paths-ignore"], p));
                 return ok;
               };
+              const runs = (filter) => files === null || runsOn(filter, paths);
 
               const out = {};
               for (const [lane, filter] of Object.entries(lanes)) out[lane] = runs(filter);
@@ -238,17 +238,24 @@ jobs:
               // filters; perf always runs, because its main run records the
               // history. Any error proves nothing and skips nothing.
               const alwaysOnMain = ["perf"];
+              // Lane id to the name its jobs carry under "Full suite / ".
+              let display = null;
+              const laneNames = async () => {
+                if (display) return display;
+                const suite = Buffer.from((await github.rest.repos.getContent({
+                  owner, repo, path: ".github/workflows/ci-suite.yml", ref: context.sha,
+                })).data.content, "base64").toString();
+                display = {};
+                for (const m of suite.matchAll(/^  ([a-z0-9_-]+):\n    name: (.+)$/gm)) display[m[1]] = m[2].trim();
+                return display;
+              };
               const provenOnIdenticalTree = async () => {
                 const sha = context.sha;
                 const tree = (await github.rest.git.getCommit({ owner, repo, commit_sha: sha })).data.tree.sha;
                 const prs = (await github.rest.repos.listPullRequestsAssociatedWithCommit({ owner, repo, commit_sha: sha }))
                   .data.filter((p) => p.merged_at && p.base.ref === "main");
                 if (prs.length === 0) return { reason: "no merged pull request is associated with this commit" };
-                const suite = Buffer.from((await github.rest.repos.getContent({
-                  owner, repo, path: ".github/workflows/ci-suite.yml", ref: sha,
-                })).data.content, "base64").toString();
-                const display = {};
-                for (const m of suite.matchAll(/^  ([a-z0-9_-]+):\n    name: (.+)$/gm)) display[m[1]] = m[2].trim();
+                const display = await laneNames();
                 let reason = `the pushed tree differs from the head of #${prs.map((p) => p.number).join(", #")}`;
                 for (const pr of prs) {
                   const head = (await github.rest.git.getCommit({ owner, repo, commit_sha: pr.head.sha })).data.tree.sha;
@@ -270,7 +277,43 @@ jobs:
                 }
                 return { reason };
               };
+              // A lane whose inputs have not changed since main last passed it
+              // has nothing new to check on main. Its base is the newest main
+              // run that ran it: passed there, the lane is filtered on the
+              // diff from that commit, which also covers pushes ci-main.yml
+              // coalesced away; failed or cancelled there, it runs, so a red
+              // lane is always re-checked. Only a straight line forward from
+              // the base with a complete file list proves anything, and any
+              // error proves nothing.
+              const unchangedSinceLastPass = async (candidates) => {
+                const display = await laneNames();
+                const { data } = await github.rest.actions.listWorkflowRuns({
+                  owner, repo, workflow_id: "ci-main.yml", branch: "main", status: "completed", per_page: 30,
+                });
+                const base = {};
+                for (const run of data.workflow_runs) {
+                  if (run.head_sha === context.sha) continue;
+                  const todo = candidates.filter((l) => !(l in base));
+                  if (todo.length === 0) break;
+                  const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+                    owner, repo, run_id: run.id, filter: "latest", per_page: 100,
+                  });
+                  for (const l of todo) {
+                    const mine = display[l] ? jobs.filter((j) => j.name.startsWith(`Validate / Full suite / ${display[l]} / `)) : [];
+                    if (mine.length === 0) continue;
+                    base[l] = mine.every((j) => j.conclusion === "success") ? run.head_sha : null;
+                  }
+                }
+                const changed = {};
+                for (const b of new Set(Object.values(base).filter(Boolean))) {
+                  const { data: cmp } = await github.rest.repos.compareCommitsWithBasehead({ owner, repo, basehead: `${b}...${context.sha}` });
+                  if (cmp.status !== "ahead" || (cmp.files || []).length >= 300) continue;
+                  changed[b] = cmp.files.flatMap((f) => f.previous_filename ? [f.filename, f.previous_filename] : [f.filename]);
+                }
+                return candidates.filter((l) => base[l] && changed[base[l]] && !runsOn(lanes[l], changed[base[l]]));
+              };
               let proven = null;
+              let unchanged = [];
               if (context.eventName === "push" && files === null) {
                 try {
                   proven = await provenOnIdenticalTree();
@@ -281,22 +324,35 @@ jobs:
               if (proven && proven.reason) why = `a push runs every lane: ${proven.reason}`;
               const provenOff = proven && proven.lanes ? proven.lanes.filter((l) => l in out && !alwaysOnMain.includes(l)) : [];
               for (const l of provenOff) out[l] = false;
+              if (context.eventName === "push" && files === null) {
+                try {
+                  unchanged = await unchangedSinceLastPass(Object.keys(out).filter((l) => out[l] && !alwaysOnMain.includes(l)));
+                } catch (e) {
+                  core.warning(`lanes run regardless of their last pass on main: could not read main's earlier runs (${e.message})`);
+                }
+              }
+              for (const l of unchanged) out[l] = false;
               core.setOutput("lanes", JSON.stringify(out));
 
               const on = Object.keys(out).filter((l) => out[l]);
               const off = Object.keys(out).filter((l) => !out[l]);
               core.info(files === null
-                ? `every lane runs: ${why}`
+                ? (off.length ? `${on.length} lane(s) run, ${off.length} skipped (${why})` : `every lane runs: ${why}`)
                 : `${paths.length} changed path(s): ${on.length} lane(s) run, ${off.length} skipped`);
               if (provenOff.length) {
                 core.info(`${provenOff.length} lane(s) skipped: they passed on #${proven.pr}'s run ${proven.run} at this exact tree`);
+              }
+              if (unchanged.length) {
+                core.info(`${unchanged.length} lane(s) skipped: nothing they read changed since main last passed them (${unchanged.join(", ")})`);
               }
               await core.summary
                 .addHeading("Lanes", 3)
                 .addRaw(files === null
                   ? (provenOff.length
-                    ? `The tree is identical to #${proven.pr}'s head, and ${provenOff.length} lane(s) passed on its run ${proven.run}; the rest run.\n`
-                    : `Every lane runs: ${why}.\n`)
+                    ? `The tree is identical to #${proven.pr}'s head, and ${provenOff.length} lane(s) passed on its run ${proven.run}.\n`
+                    : `${why}.\n`) + (unchanged.length
+                    ? `${unchanged.length} lane(s) unchanged since main last passed them: ${unchanged.join(", ")}.\n`
+                    : "")
                   : `${files.length} changed file(s).\n`)
                 .addTable([
                   [{ data: "Lane", header: true }, { data: "Runs", header: true }],
