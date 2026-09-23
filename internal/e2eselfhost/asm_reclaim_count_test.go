@@ -23,7 +23,7 @@ func countUserCalls(asm []byte, callee string) int {
 		// A new FUNCTION label at column 0 switches the current-function
 		// context. Local labels (`.Lwhile_3:` etc.) also sit at column 0
 		// inside a body — they start with '.' and must not reset it.
-		if len(line) > 0 && line[0] != ' ' && line[0] != '\t' && line[0] != '.' && bytes.HasSuffix(trimmed, []byte(":")) {
+		if isFunctionLabel(line, trimmed) {
 			inHelper = bytes.HasPrefix(trimmed, helperPrefix)
 			continue
 		}
@@ -32,6 +32,16 @@ func countUserCalls(asm []byte, callee string) int {
 		}
 	}
 	return count
+}
+
+// isFunctionLabel reports a label that starts a function: at column 0, not a
+// local `.L` label, and not a function's own register entry `<label>.r:`,
+// which sits inside the function it names.
+func isFunctionLabel(line, trimmed []byte) bool {
+	if len(line) == 0 || line[0] == ' ' || line[0] == '\t' || line[0] == '.' {
+		return false
+	}
+	return bytes.HasSuffix(trimmed, []byte(":")) && !bytes.HasSuffix(trimmed, []byte(".r:"))
 }
 
 // countCallsInFn counts `call <callee>` sites inside ONE user function
@@ -45,7 +55,7 @@ func countCallsInFn(asm []byte, fn string, callee string) int {
 	inFn := false
 	for _, line := range bytes.Split(asm, []byte("\n")) {
 		trimmed := bytes.TrimSpace(line)
-		if len(line) > 0 && line[0] != ' ' && line[0] != '\t' && line[0] != '.' && bytes.HasSuffix(trimmed, []byte(":")) {
+		if isFunctionLabel(line, trimmed) {
 			inFn = bytes.Equal(trimmed, label)
 			continue
 		}

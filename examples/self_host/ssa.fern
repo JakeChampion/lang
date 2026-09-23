@@ -565,7 +565,11 @@ function drop_active_at(a: i32[], k: i32): i32[] {
 // register first, a callee-saved one when those are out, a slot last. The
 // lowest indices go first, so an emitter that saves the callee-saved
 // registers a function uses saves a dense prefix of them.
-pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, abi_fixed_by_div: boolean, no_home: boolean[]): i32[] {
+// `pref[v]`, when not -1, is the caller-saved register v would rather have:
+// the one a register-ABI parameter arrives in or a call argument leaves in. It
+// is taken when free and v does not live across a call; an empty `pref` asks
+// for nothing.
+pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, abi_fixed_by_div: boolean, no_home: boolean[], pref: i32[]): i32[] {
     var big: i32 = 2000000000;
     var lo: i32[] = [];
     var hi: i32[] = [];
@@ -596,7 +600,9 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
             if (ins.result >= 0 && ins.result < def_pos.len()) {
                 def_pos = def_pos.with(ins.result, pos);
                 def_blk = def_blk.with(ins.result, bi);
-                if (ins.kind_tag == 8 || ins.kind_tag == 10 || (ins.kind_tag == 9 && shares_operand_home(ins.str))) {
+                // A call reads its arguments before it writes its result, so
+                // the result may take a dying argument's register.
+                if (ins.kind_tag == 8 || ins.kind_tag == 10 || ins.kind_tag == 11 || (ins.kind_tag == 9 && shares_operand_home(ins.str))) {
                     reads_mate = reads_mate.with(ins.result, true);
                     if (ins.kind_tag != 8 && ins.args.len() > 0) { def_a = def_a.with(ins.result, ins.args[0]); }
                     if (ins.kind_tag != 8 && ins.args.len() > 1) { def_b = def_b.with(ins.result, ins.args[1]); }
@@ -701,13 +707,27 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
         // writes, or the holder is the phi this loop-carried value feeds and
         // the two never live at once. First fit wins; the phi mate first.
         var placed: boolean = false;
-        var cands: i32[] = [mates.hint[v], def_a[v], def_b[v]];
+        // -2 stands for `pref[v]`, which names a register rather than a value.
+        var cands: i32[] = [mates.hint[v], 0 - 2, def_a[v], def_b[v]];
         var ci: i32 = 0;
         while (ci < cands.len() && !placed) {
             var h: i32 = cands[ci];
             ci = ci + 1;
+            if (h == 0 - 2) {
+                var pr: i32 = 0 - 1;
+                if (v < pref.len()) { pr = pref[v]; }
+                if (pr < 0 || spans_call(cum, lo[v], hi[v]) || (pr == abi_reg && !abi_ok) || index_of_reg(free, pr) < 0) { continue; }
+                free = remove_reg(free, pr);
+                reg_of = reg_of.with(v, pr);
+                act_val = act_val.append(v); act_hi = act_hi.append(hi[v]); act_reg = act_reg.append(pr);
+                placed = true;
+                continue;
+            }
             if (h < 0 || reg_of[h] < 0) { continue; }
             var hr: i32 = reg_of[h];
+            // A call's result arrives in abi_reg, so an argument's register
+            // saves a move only when it is that one.
+            if (call_def[v] == 1 && h != mates.hint[v] && hr != abi_reg) { continue; }
             if ((spans_call(cum, lo[v], hi[v]) && hr < nregs) || (hr == abi_reg && !abi_ok)) { continue; }
             var fi: i32 = index_of_reg(free, hr);
             var fsi: i32 = index_of_reg(free_s, hr);

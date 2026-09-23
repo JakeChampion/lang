@@ -1058,7 +1058,7 @@ function ssa_const_reg(text: string, d: string, s: asmcore.EmitState): asmcore.E
 // ssa_unary_known is the unary vocabulary lift_from_ir_prod produces.
 function ssa_unary_known(what: string): boolean {
     if (what == "!" || what == "int_extend" || what == "int_wrap" || what == "u32_wrap" || what == "load_i32") { return true; }
-    return util.str_has_prefix(what, "int_cast:") || ssa_funary_known(what) || ssa_bits_asm(what) != "";
+    return util.str_has_prefix(what, "int_cast:") || ssa_funary_known(what) || ssa_bits_asm(what, "x4") != "";
 }
 
 // ssa_funary_known is the f64 unary vocabulary lift_float_prod produces.
@@ -1115,71 +1115,74 @@ function ssa_has_phis(f: ssa.SFunc, fr: SsaFrame, id: i32): boolean {
 }
 
 // ssa_unary_asm is the stack machine's selection for the width ops, `not`
-// and the f64 unaries, on x0. A cast to a type none of the arms name moves
-// nothing there either.
-function ssa_unary_asm(what: string, unsigned: boolean): string {
-    var f: string = ssa_fmath_asm(what);
-    if (f == "") { f = ssa_fconv_asm(what, unsigned); }
-    if (f == "") { f = ssa_bits_asm(what); }
+// and the f64 unaries, in place on `d`. A cast to a type none of the arms name
+// moves nothing there either.
+function ssa_unary_asm(what: string, unsigned: boolean, d: string): string {
+    var w: string = ssa_wreg(d);
+    var f: string = ssa_fmath_asm(what, d);
+    if (f == "") { f = ssa_fconv_asm(what, unsigned, d); }
+    if (f == "") { f = ssa_bits_asm(what, d); }
     if (f != "") { return f; }
-    if (what == "load_i32") { return "    ldrsw x4, [x4]\n"; }
-    if (what == "!") { return "    cmp x4, #0\n    cset x4, eq\n"; }
-    if (what == "u32_wrap" || what == "int_cast:u32") { return "    mov w4, w4\n"; }
-    if (what == "int_cast:u8") { return "    and x4, x4, #255\n"; }
-    if (what == "int_cast:i32") { return "    sxtw x4, w4\n"; }
+    if (what == "load_i32") { return "    ldrsw " + d + ", [" + d + "]\n"; }
+    if (what == "!") { return "    cmp " + d + ", #0\n    cset " + d + ", eq\n"; }
+    if (what == "u32_wrap" || what == "int_cast:u32") { return "    mov " + w + ", " + w + "\n"; }
+    if (what == "int_cast:u8") { return "    and " + d + ", " + d + ", #255\n"; }
+    if (what == "int_cast:i32") { return "    sxtw " + d + ", " + w + "\n"; }
     if (what == "int_extend" || what == "int_wrap") {
-        if (unsigned) { return "    mov w4, w4\n"; }
-        return "    sxtw x4, w4\n";
+        if (unsigned) { return "    mov " + w + ", " + w + "\n"; }
+        return "    sxtw " + d + ", " + w + "\n";
     }
     return "";
 }
 
-// ssa_bits_asm is the bit counts on x0 at the width the name carries, as the
+// ssa_bits_asm is the bit counts on `d` at the width the name carries, as the
 // stack machine's arms select them; "" for any other op.
-function ssa_bits_asm(what: string): string {
-    if (what == "clz:64") { return "    clz x4, x4\n"; }
-    if (what == "clz:32") { return "    clz w4, w4\n"; }
-    if (what == "ctz:64") { return "    rbit x4, x4\n    clz x4, x4\n"; }
-    if (what == "ctz:32") { return "    rbit w4, w4\n    clz w4, w4\n"; }
-    if (what == "popcount:64") { return "    fmov d0, x4\n    cnt v0.8b, v0.8b\n    addv b0, v0.8b\n    fmov w4, s0\n"; }
-    if (what == "popcount:32") { return "    fmov s0, w4\n    cnt v0.8b, v0.8b\n    addv b0, v0.8b\n    fmov w4, s0\n"; }
+function ssa_bits_asm(what: string, d: string): string {
+    var w: string = ssa_wreg(d);
+    if (what == "clz:64") { return "    clz " + d + ", " + d + "\n"; }
+    if (what == "clz:32") { return "    clz " + w + ", " + w + "\n"; }
+    if (what == "ctz:64") { return "    rbit " + d + ", " + d + "\n    clz " + d + ", " + d + "\n"; }
+    if (what == "ctz:32") { return "    rbit " + w + ", " + w + "\n    clz " + w + ", " + w + "\n"; }
+    if (what == "popcount:64") { return "    fmov d0, " + d + "\n    cnt v0.8b, v0.8b\n    addv b0, v0.8b\n    fmov " + w + ", s0\n"; }
+    if (what == "popcount:32") { return "    fmov s0, " + w + "\n    cnt v0.8b, v0.8b\n    addv b0, v0.8b\n    fmov " + w + ", s0\n"; }
     return "";
 }
 
-// ssa_fmath_asm is the single-instruction f64 math on the pattern in x0, as
+// ssa_fmath_asm is the single-instruction f64 math on the pattern in `d`, as
 // the stack machine's arms select it; "" for any other op.
-function ssa_fmath_asm(what: string): string {
+function ssa_fmath_asm(what: string, d: string): string {
     var op: string = "";
     if (what == "fsqrt") { op = "fsqrt"; } else if (what == "ffloor") { op = "frintm"; }
     else if (what == "fceil") { op = "frintp"; } else if (what == "ftrunc") { op = "frintz"; }
     else if (what == "fround") { op = "frinta"; } else if (what == "fneg") { op = "fneg"; }
     else if (what == "fabs") { op = "fabs"; }
     if (op == "") { return ""; }
-    return "    fmov d0, x4\n    " + op + " d0, d0\n    fmov x4, d0\n";
+    return "    fmov d0, " + d + "\n    " + op + " d0, d0\n    fmov " + d + ", d0\n";
 }
 
-// ssa_fconv_asm is the f64 conversions and reinterprets on x0: the saturating
+// ssa_fconv_asm is the f64 conversions and reinterprets on `d`: the saturating
 // fcvtz forms and the width-selected scvtf/ucvtf, as the stack machine's arms
 // select them; "" for any other op.
-function ssa_fconv_asm(what: string, unsigned: boolean): string {
+function ssa_fconv_asm(what: string, unsigned: boolean, d: string): string {
+    var w: string = ssa_wreg(d);
     if (what == "i32_to_f64:64") {
-        if (unsigned) { return "    ucvtf d0, x4\n    fmov x4, d0\n"; }
-        return "    scvtf d0, x4\n    fmov x4, d0\n";
+        if (unsigned) { return "    ucvtf d0, " + d + "\n    fmov " + d + ", d0\n"; }
+        return "    scvtf d0, " + d + "\n    fmov " + d + ", d0\n";
     }
     if (what == "i32_to_f64:32") {
-        if (unsigned) { return "    ucvtf d0, w4\n    fmov x4, d0\n"; }
-        return "    scvtf d0, x4\n    fmov x4, d0\n";
+        if (unsigned) { return "    ucvtf d0, " + w + "\n    fmov " + d + ", d0\n"; }
+        return "    scvtf d0, " + d + "\n    fmov " + d + ", d0\n";
     }
     if (what == "f64_to_i32") {
-        if (unsigned) { return "    fmov d0, x4\n    fcvtzu w4, d0\n"; }
-        return "    fmov d0, x4\n    fcvtzs w4, d0\n    sxtw x4, w4\n";
+        if (unsigned) { return "    fmov d0, " + d + "\n    fcvtzu " + w + ", d0\n"; }
+        return "    fmov d0, " + d + "\n    fcvtzs " + w + ", d0\n    sxtw " + d + ", " + w + "\n";
     }
     if (what == "f64_to_i64") {
-        if (unsigned) { return "    fmov d0, x4\n    fcvtzu x4, d0\n"; }
-        return "    fmov d0, x4\n    fcvtzs x4, d0\n";
+        if (unsigned) { return "    fmov d0, " + d + "\n    fcvtzu " + d + ", d0\n"; }
+        return "    fmov d0, " + d + "\n    fcvtzs " + d + ", d0\n";
     }
-    if (what == "f32_bits") { return "    fmov d0, x4\n    fcvt s0, d0\n    fmov w4, s0\n    sxtw x4, w4\n"; }
-    if (what == "f32_from_bits") { return "    fmov s0, w4\n    fcvt d0, s0\n    fmov x4, d0\n"; }
+    if (what == "f32_bits") { return "    fmov d0, " + d + "\n    fcvt s0, d0\n    fmov " + w + ", s0\n    sxtw " + d + ", " + w + "\n"; }
+    if (what == "f32_from_bits") { return "    fmov s0, " + w + "\n    fcvt d0, s0\n    fmov " + d + ", d0\n"; }
     return "";
 }
 
@@ -1252,12 +1255,13 @@ function ssa_push_operand(reg_of: i32[], v: i32, pushed: i32, s: asmcore.EmitSta
 }
 
 // ssa_rc_prim renders one rc primitive inline, in the instructions its stub
-// uses. x5 holds the floor and then the count, x6 the 0/1, and x7 the poison
-// the sanitizer compares against; none is a home (those are x0 and x9 upward),
-// so all survive a destination that IS the operand's register, and the
-// destination is written after the last read of it. Every read of the count
-// carries the poison check, the uniqueness test no less than the retain
-// (#9889). ssa.rc_inlined says which calls come here and why.
+// uses, the heap floor compared as a shifted immediate. x5 holds the count,
+// x6 the 0/1, and x7 the poison the sanitizer compares against; none is a
+// home (those are x0 and x9 upward), so all survive a destination that IS
+// the operand's register, and the destination is written after the last read
+// of it. Every read of the count carries the poison check, the uniqueness
+// test no less than the retain (#9889). ssa.rc_inlined says which calls come
+// here and why.
 function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
     s = helper_call_needs(ins.str, s);
     s = ssa_read(reg_of, ins.args[0], "x4", s);
@@ -1265,7 +1269,7 @@ function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
     var done: string = lp + "rcinc" + util.i32_to_string(ins.result);
     if (ins.str == "__fern_rc_is_unique") { done = lp + "rcuniq" + util.i32_to_string(ins.result); }
     var guard: string = "    tbnz " + p + ", #0, " + done + "\n"
-        + "    mov x5, #0x10000\n    cmp " + p + ", x5\n    blo " + done + "\n";
+        + "    cmp " + p + ", #16, lsl #12\n    blo " + done + "\n";
     if (ins.str == "__fern_rc_is_unique") {
         var d: string = ssa_dst(reg_of, ins.result);
         s = s.write("    mov x6, #0\n" + guard);
@@ -1295,6 +1299,27 @@ function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
 function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
     if (ssa.rc_inlined(ins)) { return ssa_rc_prim(ins, reg_of, lp, s); }
     s = ssa_x0_forget(s);
+    if (ircore.is_fern_helper(ins.str) && ssa_reg_helper(ircore.ir_helper_symbol(ins.str), ins.args.len())) {
+        s = helper_call_needs(ins.str, s);
+        var hsrc: i32[] = [];
+        var hdst: i32[] = [];
+        var ha: i32 = 0;
+        while (ha < ins.args.len()) { hsrc = hsrc.append(reg_of[ins.args[ha]]); hdst = hdst.append(ha); ha = ha + 1; }
+        s = ssa_parallel_moves(hsrc, hdst, s);
+        s = s.write("    bl " + ircore.ir_helper_symbol(ins.str) + ".r\n");
+        return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
+    }
+    if (ssa_reg_call(ins, s)) {
+        // Only this call's own arguments can be in the pool's registers here:
+        // anything live across it is callee-saved or in a slot.
+        var srcs: i32[] = [];
+        var dsts: i32[] = [];
+        var a: i32 = 0;
+        while (a < ins.args.len()) { srcs = srcs.append(reg_of[ins.args[a]]); dsts = dsts.append(a); a = a + 1; }
+        s = ssa_parallel_moves(srcs, dsts, s);
+        s = s.write("    bl __fn_" + asmcore.sanitize_label(ins.str) + ".r\n");
+        return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
+    }
     var argc: i32 = ins.args.len();
     var helper: boolean = ircore.is_fern_helper(ins.str);
     if (helper) { s = helper_call_needs(ins.str, s); }
@@ -1338,7 +1363,8 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
     }
     if (k == 44) {
         s = s.mark_heap();
-        s = s.write("    ldr x6, [" + a + ", #8]\n    cmp " + b + ", x6\n    b.lo 1f\n    b __fern_oob_abort\n1:\n    ldr x6, [" + a + "]\n    ldrb " + ssa_wreg(d) + ", [x6, " + b + "]\n");
+        if (ins.imm != 1) { s = s.write("    ldr x6, [" + a + ", #8]\n    cmp " + b + ", x6\n    b.lo 1f\n    b __fern_oob_abort\n1:\n"); }
+        s = s.write("    ldr x6, [" + a + "]\n    ldrb " + ssa_wreg(d) + ", [x6, " + b + "]\n");
         return ssa_store(reg_of, ins.result, d, s);
     }
     var c: string = ssa_src(reg_of, ins.args[2], "x6");
@@ -1665,9 +1691,8 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
         var fb: string = ssa_fbin_asm(ins.str);
         if (fb != "") { s = s.write(fb); } else { s = s.write(ir_bin_asm(ir.kind_id(ins.str), ins.imm, "x4", "x5", "x6")); }
     } else {
-        d = "x4";
-        s = ssa_load(reg_of, ins.args[0], "x4", s);
-        s = s.write(ssa_unary_asm(ins.str, ins.imm == 1));
+        s = ssa_load(reg_of, ins.args[0], d, s);
+        s = s.write(ssa_unary_asm(ins.str, ins.imm == 1, d));
     }
     return ssa_store(reg_of, ins.result, d, s);
 }
@@ -1685,24 +1710,25 @@ function ssa_phi_moves(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], pred: i32, suc
     var dsts: i32[] = [];
     for ins in tb.insts {
         if (ins.kind_tag == 8 && reg_of[ins.result] != 0 - 1 && reg_of[ins.args[sl]] != reg_of[ins.result]) {
-            srcs = srcs.append(ins.args[sl]);
-            dsts = dsts.append(ins.result);
+            srcs = srcs.append(reg_of[ins.args[sl]]);
+            dsts = dsts.append(reg_of[ins.result]);
         }
     }
-    return ssa_parallel_moves(reg_of, srcs, dsts, s);
+    return ssa_parallel_moves(srcs, dsts, s);
 }
 
-// The moves of one edge are parallel: every source is read before any
-// destination it names is written. A move whose destination no pending move
-// still reads goes first, in one instruction between two homes, or two through
-// x4 between two slots. When every pending destination is still read, the
-// moves form a cycle: one source location is parked in x4 and every move
-// reading it takes it from there, which frees that location to be written.
-function ssa_parallel_moves(reg_of: i32[], srcs: i32[], dsts: i32[], s: asmcore.EmitState): asmcore.EmitState {
+// ssa_parallel_moves emits moves between locations (a register index or a
+// spill code, as reg_of holds them) that happen at once: every source is read
+// before any destination it names is written. They are a phi edge's copies, a
+// register call's arguments and a register entry's parameters. A move whose
+// destination no pending move still reads goes first, in one instruction when
+// either side is a register, or two through x5 between two slots. When every
+// pending destination is still read, the moves form a cycle: one source is
+// parked in x4 and every move reading it takes it from there, which frees
+// that location to be written.
+function ssa_parallel_moves(srcs: i32[], dsts: i32[], s: asmcore.EmitState): asmcore.EmitState {
     var done: boolean[] = [];
     for src in srcs { done = done.append(false); }
-    // The location parked in the scratch, when `parking`; a location is a
-    // register number or a spill code, so the flag says whether one is held.
     var parking: boolean = false;
     var parked: i32 = 0;
     var left: i32 = srcs.len();
@@ -1710,9 +1736,9 @@ function ssa_parallel_moves(reg_of: i32[], srcs: i32[], dsts: i32[], s: asmcore.
         var progressed: boolean = false;
         var i: i32 = 0;
         while (i < srcs.len()) {
-            if (!done[i] && !ssa_move_blocked(reg_of, srcs, dsts, done, i, parking, parked)) {
-                if (parking && reg_of[srcs[i]] == parked) { s = ssa_store(reg_of, dsts[i], "x4", s); }
-                else { s = ssa_move(reg_of, srcs[i], dsts[i], s); }
+            if (!done[i] && !ssa_move_blocked(srcs, dsts, done, i, parking, parked)) {
+                if (parking && srcs[i] == parked) { s = ssa_loc_str(dsts[i], "x4", s); }
+                else { s = ssa_move(srcs[i], dsts[i], s); }
                 done = done.with(i, true);
                 left = left - 1;
                 progressed = true;
@@ -1722,30 +1748,38 @@ function ssa_parallel_moves(reg_of: i32[], srcs: i32[], dsts: i32[], s: asmcore.
         if (!progressed) {
             var j: i32 = 0;
             while (done[j]) { j = j + 1; }
-            s = ssa_load(reg_of, srcs[j], "x4", s);
+            s = ssa_loc_ldr(srcs[j], "x4", s);
             parking = true;
-            parked = reg_of[srcs[j]];
+            parked = srcs[j];
         }
     }
-    return s;
+    return ssa_x0_forget(s);
 }
-// A move is blocked while another pending move still reads its destination's
-// location from that location rather than from the parked copy.
-function ssa_move_blocked(reg_of: i32[], srcs: i32[], dsts: i32[], done: boolean[], i: i32, parking: boolean, parked: i32): boolean {
+// A move is blocked while another pending move still reads its destination
+// from that location rather than from the parked copy.
+function ssa_move_blocked(srcs: i32[], dsts: i32[], done: boolean[], i: i32, parking: boolean, parked: i32): boolean {
     var k: i32 = 0;
     while (k < srcs.len()) {
-        if (k != i && !done[k] && reg_of[srcs[k]] == reg_of[dsts[i]] && !(parking && reg_of[srcs[k]] == parked)) { return true; }
+        if (k != i && !done[k] && srcs[k] == dsts[i] && !(parking && srcs[k] == parked)) { return true; }
         k = k + 1;
     }
     return false;
 }
-// ssa_move copies one value between homes: one instruction when either side
-// is a register, two through x4 between two slots.
-function ssa_move(reg_of: i32[], src: i32, dst: i32, s: asmcore.EmitState): asmcore.EmitState {
-    if (reg_of[src] >= 0) { return ssa_store(reg_of, dst, ssa_reg(reg_of[src]), s); }
-    if (reg_of[dst] >= 0) { return ssa_load(reg_of, src, ssa_reg(reg_of[dst]), s); }
-    s = ssa_load(reg_of, src, "x4", s);
-    return ssa_store(reg_of, dst, "x4", s);
+function ssa_move(src: i32, dst: i32, s: asmcore.EmitState): asmcore.EmitState {
+    if (src == dst) { return s; }
+    if (src >= 0) { return ssa_loc_str(dst, ssa_reg(src), s); }
+    if (dst >= 0) { return ssa_loc_ldr(src, ssa_reg(dst), s); }
+    s = ssa_loc_ldr(src, "x5", s);
+    return ssa_loc_str(dst, "x5", s);
+}
+// ssa_loc_ldr / ssa_loc_str copy a location into / out of a register.
+function ssa_loc_ldr(loc: i32, reg: string, s: asmcore.EmitState): asmcore.EmitState {
+    if (loc >= 0) { return s.write("    mov " + reg + ", " + ssa_reg(loc) + "\n"); }
+    return ssa_fr_ldr(s, reg, ssa_slot_off(ssa.spill_slot(loc)), 0);
+}
+function ssa_loc_str(loc: i32, reg: string, s: asmcore.EmitState): asmcore.EmitState {
+    if (loc >= 0) { return s.write("    mov " + ssa_reg(loc) + ", " + reg + "\n"); }
+    return ssa_fr_str(s, reg, ssa_slot_off(ssa.spill_slot(loc)), 0);
 }
 
 function ssa_epilogue(): string {
@@ -1802,6 +1836,37 @@ function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
     return ssa_jump(lp, t.t, next, s);
 }
 
+// ssa_fused_test sets the flags a block's fused compare leaves for its branch
+// (or loads a fused `not`'s operand, for the value test).
+function ssa_fused_test(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, s: asmcore.EmitState): asmcore.EmitState {
+    if (fu.n > 0 && fu.tag == 0) { return ssa_load(reg_of, fu.a, "x4", s); }
+    if (fu.n == 0) { return s; }
+    s = ssa_read(reg_of, fu.a, "x4", s);
+    s = ssa_read_rhs(fr, reg_of, fu.b, "x5", s);
+    return s.write("    cmp " + ssa_src(reg_of, fu.a, "x4") + ", " + ssa_rhs(fr, reg_of, fu.b, "x5") + "\n");
+}
+
+// ssa_rotates reports whether a branch from the block at position `from` to
+// block `to` can re-run `to`'s test in place of jumping to it: `to` is at or
+// before `from` (a back edge), holds nothing but phis and the test (and the
+// immediates it reads), and
+// neither of its successors has phis, so its branch carries no moves of its
+// own. A loop then costs one branch per iteration rather than two.
+function ssa_rotates(f: ssa.SFunc, fr: SsaFrame, from: i32, to: i32): boolean {
+    var ti: i32 = ssa_block_at(fr, to);
+    if (ti < 0 || ti > from) { return false; }
+    var h: ssa.SBlock = f.blocks[ti];
+    if (h.term.kind_tag != 3 || h.term.t == h.term.f) { return false; }
+    if (ssa_has_phis(f, fr, h.term.t) || ssa_has_phis(f, fr, h.term.f)) { return false; }
+    var n: i32 = 0;
+    for ins in h.insts {
+        // A constant the test reads as an immediate is never materialised.
+        var imm: boolean = (ins.kind_tag == 1 || ins.kind_tag == 3) && fr.imm.is_imm[ins.result];
+        if (ins.kind_tag != 8 && !imm) { n = n + 1; }
+    }
+    return n == ssa_fuse(fr, h).n;
+}
+
 function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp: string, next: i32, fu: SsaFuse, s: asmcore.EmitState): asmcore.EmitState {
     var t: ssa.STerm = blk.term;
     if (t.kind_tag == 1) {
@@ -1810,6 +1875,11 @@ function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
     }
     if (t.kind_tag == 2) {
         s = ssa_phi_moves(f, fr, reg_of, blk.id, t.target, s);
+        if (ssa_rotates(f, fr, ssa_block_at(fr, blk.id), t.target)) {
+            var h: ssa.SBlock = f.blocks[ssa_block_at(fr, t.target)];
+            var hfu: SsaFuse = ssa_fuse(fr, h);
+            return ssa_brif(f, fr, h, reg_of, lp, next, hfu, ssa_fused_test(fr, reg_of, hfu, s));
+        }
         return ssa_jump(lp, t.target, next, s);
     }
     if (t.kind_tag == 3) { return ssa_brif(f, fr, blk, reg_of, lp, next, fu, s); }
@@ -1820,8 +1890,20 @@ function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
 
 // ssa_load_params moves each parameter from the caller's slot to its home;
 // value p is parameter p.
+// The first ssa_nregs() parameters arrive in the pool's registers, in order
+// (a stack caller's are loaded there by the entry shim); the rest stay in the
+// caller's slots. The register moves go first, since a later parameter's home
+// may be a register still holding an earlier one.
 function ssa_load_params(f: ssa.SFunc, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+    var k: i32 = ssa_reg_params(f);
+    var srcs: i32[] = [];
+    var dsts: i32[] = [];
     var p: i32 = 0;
+    while (p < k) {
+        if (reg_of[p] != 0 - 1) { srcs = srcs.append(p); dsts = dsts.append(reg_of[p]); }
+        p = p + 1;
+    }
+    s = ssa_parallel_moves(srcs, dsts, s);
     while (p < f.nparams) {
         // Straight into the home, not through a scratch: x0 is an allocatable
         // home now, so staging every parameter through it overwrote whichever
@@ -1834,6 +1916,71 @@ function ssa_load_params(f: ssa.SFunc, reg_of: i32[], s: asmcore.EmitState): asm
     return s;
 }
 
+// ssa_reg_params is how many of f's parameters arrive in registers.
+function ssa_reg_params(f: ssa.SFunc): i32 {
+    if (f.nparams < ssa_nregs()) { return f.nparams; }
+    return ssa_nregs();
+}
+
+// ssa_entry_shim is a function's two entries. `__fn_<name>`, the stack-ABI
+// entry every caller outside this unit's direct calls uses, loads the first
+// ssa_reg_params() arguments from the caller's 16-byte stack slots into the
+// pool registers and falls through into `__fn_<name>.r`, where a register-ABI
+// caller enters with them already there. A function with no parameters has
+// one entry.
+function ssa_entry_shim(f: ssa.SFunc, name: string): string {
+    var k: i32 = ssa_reg_params(f);
+    if (k == 0) { return ""; }
+    var out: string = "";
+    var p: i32 = 0;
+    while (p < k) {
+        out = out + "    ldr " + ssa_reg(p) + ", [sp, #" + util.i32_to_string(16 * p) + "]\n";
+        p = p + 1;
+    }
+    return out + "__fn_" + name + ".r:\n";
+}
+
+// ssa_reg_helper names the hand-written runtime helpers with a register
+// entry, by argument count: their stack entry loads the arguments into the
+// pool's first registers, which is where the `.r` entry reads them.
+function ssa_reg_helper(sym: string, argc: i32): boolean {
+    if (argc == 2) { return sym == "__fn___fern_str_eq"; }
+    return argc == 1 && (sym == "__fn___fern_arr_dec" || sym == "__fn___fern_str_free" || sym == "__fn___fern_arr_inc_elems");
+}
+
+// ssa_reg_call reports whether a direct call passes its arguments in
+// registers: the callee has a register entry in this unit and takes between
+// one and ssa_nregs() arguments.
+function ssa_reg_call(ins: ssa.SInst, s: asmcore.EmitState): boolean {
+    var argc: i32 = ins.args.len();
+    if (ins.kind_tag != 11 || argc == 0 || argc > ssa_nregs() || ssa.rc_inlined(ins)) { return false; }
+    if (ircore.is_fern_helper(ins.str) || ircore.is_c_call(ins.str)) { return false; }
+    return irlower.sig_reg_has_exact(s.reg_entries, asmcore.sanitize_label(ins.str));
+}
+
+// ssa_arg_prefs asks the allocator for the register each parameter arrives in
+// and each register call's argument leaves in, so neither needs a move when
+// the value has nowhere better to be.
+function ssa_arg_prefs(f: ssa.SFunc, s: asmcore.EmitState): i32[] {
+    var pref: i32[] = [];
+    var i: i32 = 0;
+    while (i < f.nvals) { pref = pref.append(0 - 1); i = i + 1; }
+    var p: i32 = 0;
+    while (p < ssa_reg_params(f)) { pref = pref.with(p, p); p = p + 1; }
+    for blk in f.blocks {
+        for ins in blk.insts {
+            if (!ssa_reg_call(ins, s)) { continue; }
+            var a: i32 = 0;
+            while (a < ins.args.len()) {
+                var v: i32 = ins.args[a];
+                if (v >= 0 && v < pref.len() && pref[v] < 0) { pref = pref.with(v, a); }
+                a = a + 1;
+            }
+        }
+    }
+    return pref;
+}
+
 // emit_ssa_function_arm64 emits one lifted function: the stack machine's frame
 // record, the parameters loaded from the caller's slots into their homes, each
 // block behind its label, and the literal pool the constants may have used.
@@ -1843,10 +1990,11 @@ function ssa_load_params(f: ssa.SFunc, reg_of: i32[], s: asmcore.EmitState): asm
 function emit_ssa_function_arm64(lifted: ssa.SFunc, label_name: string, r: irlower.LowerResult, s: asmcore.EmitState): asmcore.EmitState {
     var f: ssa.SFunc = ssa.thread_forwarding(ssa.prune_dead(ssa.prune_trivial_phis(lifted)));
     var imm: ssa.Imms = ssa.imm_operands(f, 0i64, 4095i64, ssa_imm_right(), ssa_imm_left());
-    var reg_of: i32[] = ssa.regalloc_linear(f, ssa_nregs(), ssa_nsaved(), 0, false, imm.is_imm);
+    var reg_of: i32[] = ssa.regalloc_linear(f, ssa_nregs(), ssa_nsaved(), 0, false, imm.is_imm, ssa_arg_prefs(f, s));
     var lp: string = ".Lssa_" + asmcore.sanitize_label(label_name) + "_";
-    s = s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n");
-    s = s.write("    .cfi_startproc\n    stp x29, x30, [sp, #-16]!\n    .cfi_def_cfa_offset 16\n    .cfi_offset x29, -16\n    .cfi_offset x30, -8\n    mov x29, sp\n    .cfi_def_cfa_register x29\n");
+    s = s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n    .cfi_startproc\n");
+    s = s.write(ssa_entry_shim(f, asmcore.sanitize_label(label_name)));
+    s = s.write("    stp x29, x30, [sp, #-16]!\n    .cfi_def_cfa_offset 16\n    .cfi_offset x29, -16\n    .cfi_offset x30, -8\n    mov x29, sp\n    .cfi_def_cfa_register x29\n");
     var saved: i32[] = ssa_saved_regs(reg_of);
     var save: i32 = ssa_save_bytes(saved);
     s = s.write(ssa_save_asm(saved));
@@ -1871,13 +2019,7 @@ function emit_ssa_function_arm64(lifted: ssa.SFunc, label_name: string, r: irlow
             if (ins.kind_tag != 6 && ins.kind_tag != 8) { s = ssa_inst(ins, reg_of, fr, lp, r, s); }
             ii = ii + 1;
         }
-        if (fu.n > 0 && fu.tag == 0) {
-            s = ssa_load(reg_of, fu.a, "x4", s);
-        } else if (fu.n > 0) {
-            s = ssa_read(reg_of, fu.a, "x4", s);
-            s = ssa_read_rhs(fr, reg_of, fu.b, "x5", s);
-            s = s.write("    cmp " + ssa_src(reg_of, fu.a, "x4") + ", " + ssa_rhs(fr, reg_of, fu.b, "x5") + "\n");
-        }
+        s = ssa_fused_test(fr, reg_of, fu, s);
         s = ssa_term(f, fr, blk, reg_of, lp, next, fu, s);
         bi = bi + 1;
     }
@@ -3371,6 +3513,7 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
     var sg: irlower.FnSigs = irlower.fn_sigs_with_dyn(base, mod.trait_reqs);
     var vsigs: irverify.NameIndex = irlower.fn_sig_index(mod.funcs);
     ircore.check_fip_claims(mod.funcs, 0, mod.funcs.len(), cache, s.struct_decls, sg, false);
+    s = asmcore.EmitState { ...s, reg_entries: irlower.sig_reg_of(asmcore.unit_labels(mod, 0, mod.funcs.len(), cache)) };
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
         if (cache.len() == 0) {
@@ -3426,9 +3569,13 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
 // x29/x30 are saved even though nothing else needs a frame: __fern_report walks
 // the frame chain to print a backtrace.
 function rt_arm64_str_eq(): string {
+    // The stack entry loads both boxes into x0/x9, where the register entry
+    // `.r` takes them; equality is symmetric, so their order is not.
     var s: string = "__fn___fern_str_eq:\n";
+    s = s + "    ldr x0, [sp]\n    ldr x9, [sp, #16]\n";
+    s = s + "__fn___fern_str_eq.r:\n";
     s = s + "    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n";
-    s = s + "    ldr x2, [x29, #16]\n    ldr x3, [x29, #32]\n";
+    s = s + "    mov x2, x0\n    mov x3, x9\n";
     // Same box: interned literals, which is most of what a compiler compares.
     s = s + "    cmp x2, x3\n    b.eq .Lseq_yes\n";
     s = s + "    ldr x4, [x2, #8]\n    ldr x5, [x3, #8]\n    cmp x4, x5\n    b.ne .Lseq_no\n";
@@ -6146,6 +6293,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     if (s.has_need("arr_inc_elems")) {
     s = s.write("__fn___fern_arr_inc_elems:\n");
     s = s.write("    ldr x0, [sp]\n");              // arr (also the result)
+    s = s.write("__fn___fern_arr_inc_elems.r:\n");
     s = s.write("    cbz x0, .Laie_ret\n");
     s = s.write("    mov x9, #0x10000\n");
     s = s.write("    cmp x0, x9\n");
@@ -6334,9 +6482,9 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    ret\n");
     s = s.write("__fn___fern_arr_dec:\n");
     s = s.write("    ldr x0, [sp]\n");
+    s = s.write("__fn___fern_arr_dec.r:\n");
     s = s.write("    cbz x0, .Larrdec_ret\n");
-    s = s.write("    mov x9, #0x10000\n");
-    s = s.write("    cmp x0, x9\n");
+    s = s.write("    cmp x0, #16, lsl #12\n");
     s = s.write("    blo .Larrdec_ret\n");
     s = s.write("    ldur w1, [x0, #-8]\n");      // rc
     s = s.write(san_poison_check("w1", "w9", ".Larrdec_live"));
@@ -6390,8 +6538,10 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     // x0=box, x1=data, x2=len/words, x3=freelist, x9/x10 scratch.
     s = s.write("__fn___fern_str_free:\n");
     s = s.write("    ldr x0, [sp]\n");             // box
+    s = s.write("__fn___fern_str_free.r:\n");
     s = s.write("    cbz x0, .Lstrfree_ret\n");
     s = s.write("    tbnz x0, #0, .Lstrfree_ret\n");   // tagged / SSO sentinel (defensive)
+    // x9 is both the heap floor here and the freelist class cap below.
     s = s.write("    mov x9, #0x10000\n");
     s = s.write("    cmp x0, x9\n");
     s = s.write("    blo .Lstrfree_ret\n");        // low-addr guard
@@ -9436,7 +9586,7 @@ pub function emit_module_ir_gated_sub(mod: parser.Module, darwin: boolean, sub: 
     base = ircore.sub_sigs(sub, base);
     var g: ircore.Lowered = ircore.lower_gated(im, imtab, irlower.fn_sigs_with_dyn(base, im.trait_reqs), [], false, sub);
     if (!g.ok) { return ""; }
-    return emit_module_ir_flat(im, imtab, darwin, ircore.sub_cache(sub, g.cache), base);
+    return emit_module_ir_flat(im, imtab, darwin, ircore.inline_tiny_leaves(im, ircore.sub_cache(sub, g.cache)), base);
 }
 
 function emit_module_ir_flat(mod: parser.Module, stab: irlower.StructTab, darwin: boolean, cache: irlower.LowerResult[], base: irlower.FnSigs): string {
@@ -9522,6 +9672,7 @@ pub function emit_module_ir_unit_arm64_flat(mod: parser.Module, is_entry: boolea
     var hh: i32 = hi;
     if (hh < 0 || hh > mod.funcs.len()) { hh = mod.funcs.len(); }
     ircore.check_fip_claims(mod.funcs, lo, hh, [], all_structs, sg, false);
+    s = asmcore.EmitState { ...s, reg_entries: irlower.sig_reg_of(asmcore.unit_labels(mod, lo, hh, [])) };
     var fi: i32 = lo;
     while (fi < hh) {
         if (globl_defs) {
@@ -9754,10 +9905,25 @@ function darwin_retarget_locals(line: string): string {
             i = i + 1;
             continue;
         }
+        if (c == 95 && (i == 0 || !darwin_is_sym_byte(line[i - 1])) && darwin_is_reg_entry(line, i)) {
+            // A register entry `__fn_X.r` becomes `L__fn_X.r`, for the same
+            // reason: as a symbol it would split its function's CFI.
+            out = out + slice_unchecked(line, run, i) + "L";
+            run = i;
+        }
         i = i + 1;
     }
-    if (run == 0) { return line; }
+    if (run == 0 && out.len() == 0) { return line; }
     return out + slice_unchecked(line, run, n);
+}
+
+// darwin_is_reg_entry reports whether the symbol starting at `i` is a
+// function's register entry, `__fn_<name>.r`.
+function darwin_is_reg_entry(line: string, i: i32): boolean {
+    if (!darwin_starts_with(slice_unchecked(line, i, line.len()), "__fn_")) { return false; }
+    var j: i32 = i;
+    while (j < line.len() && darwin_is_sym_byte(line[j])) { j = j + 1; }
+    return j - i > 7 && line[j - 2] == 46 && line[j - 1] == 114;
 }
 
 // darwin_is_sym_byte reports whether the byte can appear inside an assembler

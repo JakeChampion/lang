@@ -171,3 +171,16 @@ func TestMoviRejectsNonBytemask(t *testing.T) {
 		}
 	}
 }
+
+// cmp and cmn take every operand form subs and adds do. The explicit `lsl #12`
+// was read and dropped, so `cmp x0, #16, lsl #12` (the self-host's heap-floor
+// test) assembled as a compare against 16.
+func TestCompareOperandFormsMatchGNUAs(t *testing.T) {
+	var lines []string
+	for _, mnem := range []string{"cmp", "cmn"} {
+		lines = append(lines,
+			mnem+" x1, #16, lsl #12", mnem+" w1, #1, lsl #12", mnem+" x1, #0, lsl #12",
+			mnem+" x1, x2, lsl #3", mnem+" w1, w2, asr #2", mnem+" x1, w2, uxtw", mnem+" x1, w2, sxtw #2")
+	}
+	assertMatchesGas(t, lines)
+}

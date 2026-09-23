@@ -4654,7 +4654,8 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         parts = parts.append("    global.get " + str_base_global(ns) + "\n    i32.const "
             + util.i32_to_string(offset_of_value(str_vals, o.str) - str_region_base()) + "\n    i32.add\n");
     } else if (o.kind_tag == 101) {  // str_index
-        parts = emit_wasm_str_index(arrtmp, bctmp, parts);
+        if (o.i32_imm == 1) { parts = parts.append("    i32.const 4\n    i32.add\n    i32.add\n    i32.load8_u\n"); }
+        else { parts = emit_wasm_str_index(arrtmp, bctmp, parts); }
     } else if (ir.is_str_op_kind(o.kind_tag)) {
         parts = parts.append(emit_str_op_wat(o));
     } else if (o.kind_tag == 96) {  // arr_slice
@@ -6378,7 +6379,14 @@ function read_dir_func_like(fname: string, skip_dots: boolean): string {
     o = o + "    (local.set $buf (call $__fern_alloc (i32.const 4096)))\n";
     o = o + "    (local.set $cookie (i64.const 0))\n";
     o = o + "    (block $rdone (loop $rloop\n";
-    o = o + "      (drop (call $fd_readdir (local.get $fd) (local.get $buf) (i32.const 4096) (local.get $cookie) (i32.const 8)))\n";
+    // A failed listing is the Err native reports, not a short one.
+    o = o + "      (local.set $err (call $fd_readdir (local.get $fd) (local.get $buf) (i32.const 4096) (local.get $cookie) (i32.const 8)))\n";
+    o = o + "      (if (local.get $err) (then\n";
+    o = o + "        (drop (call $fd_close (local.get $fd)))\n";
+    o = o + "        (local.set $res (call $__fern_str_box (i32.const 8)))\n";
+    o = o + "        (i32.store (local.get $res) (i32.const 1))\n";
+    o = o + "        (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
+    o = o + "        (return (local.get $res))))\n";
     o = o + "      (local.set $used (i32.load (i32.const 8)))\n";
     o = o + "      (br_if $rdone (i32.eqz (local.get $used)))\n";
     o = o + "      (local.set $pos (i32.const 0))\n";
@@ -6472,7 +6480,11 @@ pub function remove_dir_all_func(): string {
     o = o + "    (local.set $buf (call $__fern_alloc (i32.const 4096)))\n";
     o = o + "    (local.set $cookie (i64.const 0))\n";
     o = o + "    (block $rdone (loop $rloop\n";
-    o = o + "      (drop (call $fd_readdir (local.get $fd) (local.get $buf) (i32.const 4096) (local.get $cookie) (i32.const 8)))\n";
+    // A failed listing is the Err native reports, not a short one.
+    o = o + "      (local.set $err (call $fd_readdir (local.get $fd) (local.get $buf) (i32.const 4096) (local.get $cookie) (i32.const 8)))\n";
+    o = o + "      (if (local.get $err) (then\n";
+    o = o + "        (drop (call $fd_close (local.get $fd)))\n";
+    o = o + "        (return (call $__rda_err (call $__fern_build_io_error (local.get $err) (local.get $path))))))\n";
     o = o + "      (local.set $used (i32.load (i32.const 8)))\n";
     o = o + "      (br_if $rdone (i32.eqz (local.get $used)))\n";
     o = o + "      (local.set $pos (i32.const 0))\n";
@@ -8474,7 +8486,7 @@ pub function readfile_func(): string {
     o = o + "        (local.set $cap (i32.add (local.get $cap) (i32.const 65536)))))\n";
     o = o + "      (i32.store (i32.const 0) (i32.add (i32.add (local.get $blk) (i32.const 4)) (local.get $off)))\n";
     o = o + "      (i32.store (i32.const 4) (i32.sub (local.get $cap) (local.get $off)))\n";
-    o = o + "      (drop (call $fd_read (local.get $fd) (i32.const 0) (i32.const 1) (i32.const 8)))\n";
+    o = o + "      (if (call $fd_read (local.get $fd) (i32.const 0) (i32.const 1) (i32.const 8)) (then (i32.store (i32.const 8) (i32.const 0))))\n";
     o = o + "      (local.set $n (i32.load (i32.const 8)))\n";
     o = o + "      (br_if $rd (i32.eqz (local.get $n)))\n";
     o = o + "      (local.set $off (i32.add (local.get $off) (local.get $n)))\n";
@@ -8518,7 +8530,7 @@ pub function readfile_bytes_func(): string {
     o = o + "        (local.set $cap (i32.add (local.get $cap) (i32.const 65536)))))\n";
     o = o + "      (i32.store (i32.const 0) (i32.add (i32.add (local.get $blk) (i32.const 4)) (local.get $off)))\n";
     o = o + "      (i32.store (i32.const 4) (i32.sub (local.get $cap) (local.get $off)))\n";
-    o = o + "      (drop (call $fd_read (local.get $fd) (i32.const 0) (i32.const 1) (i32.const 8)))\n";
+    o = o + "      (if (call $fd_read (local.get $fd) (i32.const 0) (i32.const 1) (i32.const 8)) (then (i32.store (i32.const 8) (i32.const 0))))\n";
     o = o + "      (local.set $n (i32.load (i32.const 8)))\n";
     o = o + "      (br_if $rd (i32.eqz (local.get $n)))\n";
     o = o + "      (local.set $off (i32.add (local.get $off) (local.get $n)))\n";
@@ -8739,7 +8751,7 @@ pub function read_line_func(): string {
     o = o + "      (br_if $d (i32.ge_u (local.get $len) (i32.const 256)))\n";
     o = o + "      (i32.store (i32.const 0) (i32.add (local.get $buf) (local.get $len)))\n";
     o = o + "      (i32.store (i32.const 4) (i32.const 1))\n";
-    o = o + "      (drop (call $fd_read (local.get $fd) (i32.const 0) (i32.const 1) (i32.const 8)))\n";
+    o = o + "      (if (call $fd_read (local.get $fd) (i32.const 0) (i32.const 1) (i32.const 8)) (then (i32.store (i32.const 8) (i32.const 0))))\n";
     o = o + "      (local.set $nread (i32.load (i32.const 8)))\n";
     o = o + "      (br_if $d (i32.eqz (local.get $nread)))\n";
     o = o + "      (local.set $len (i32.add (local.get $len) (i32.const 1)))\n";
@@ -8790,7 +8802,7 @@ pub function read_all_stdin_func(): string {
     // read_line / reader_read_chunk use. ptr advances with the running total.
     o = o + "      (i32.store (i32.const 0) (i32.add (i32.add (local.get $blk) (i32.const 4)) (local.get $total)))\n";
     o = o + "      (i32.store (i32.const 4) (i32.const 1048576))\n";
-    o = o + "      (drop (call $fd_read (i32.const 0) (i32.const 0) (i32.const 1) (i32.const 8)))\n";
+    o = o + "      (if (call $fd_read (i32.const 0) (i32.const 0) (i32.const 1) (i32.const 8)) (then (i32.store (i32.const 8) (i32.const 0))))\n";
     o = o + "      (local.set $nread (i32.load (i32.const 8)))\n";
     o = o + "      (br_if $done (i32.eqz (local.get $nread)))\n";
     o = o + "      (local.set $total (i32.add (local.get $total) (local.get $nread)))\n";
@@ -8875,7 +8887,7 @@ pub function read_int_func(): string {
     o = o + "    (local $nread i32) (local $i i32) (local $acc i32) (local $neg i32) (local $c i32)\n";
     o = o + "    (i32.store (i32.const 0) (i32.const 16))\n";
     o = o + "    (i32.store (i32.const 4) (i32.const 16))\n";
-    o = o + "    (drop (call $fd_read (i32.const 0) (i32.const 0) (i32.const 1) (i32.const 8)))\n";
+    o = o + "    (if (call $fd_read (i32.const 0) (i32.const 0) (i32.const 1) (i32.const 8)) (then (i32.store (i32.const 8) (i32.const 0))))\n";
     o = o + "    (local.set $nread (i32.load (i32.const 8)))\n";
     o = o + "    (local.set $i (i32.const 0))\n";
     o = o + "    (local.set $acc (i32.const 0))\n";

@@ -105,10 +105,10 @@ func TestSelfHostConstOperandReachesImmediateFormX86_64(t *testing.T) {
 	runX86ShapeCases(t, []shapeCase{
 		{
 			name: "alu",
-			src: `function bump(x: i64): i64 { return x + 1i64; }
-function scaled(x: i64): i64 { return x * 10i64; }
-function masked(x: i32): i32 { return x & 6; }
-function less(x: i32): boolean { return x < 7; }
+			src: `@noinline function bump(x: i64): i64 { return x + 1i64; }
+@noinline function scaled(x: i64): i64 { return x * 10i64; }
+@noinline function masked(x: i32): i32 { return x & 6; }
+@noinline function less(x: i32): boolean { return x < 7; }
 function main(): i32 {
     var i: i64 = 0i64; var s: i64 = 0i64;
     while (i < 3i64) { s = s + bump(i) + scaled(i) + (masked(i as i32) as i64); if (less(i as i32)) { s = s + 100i64; } i = i + 1i64; }
@@ -130,8 +130,8 @@ function main(): i32 {
 		},
 		{
 			name: "shift-count",
-			src: `function shifted(x: i64): i64 { return x << 3i64; }
-function shifted_wide(x: i64): i64 { return x >> 65i64; }
+			src: `@noinline function shifted(x: i64): i64 { return x << 3i64; }
+@noinline function shifted_wide(x: i64): i64 { return x >> 65i64; }
 function main(): i32 { return (shifted(5i64) + shifted_wide(12i64)) as i32; }`,
 			want: 40 + 6,
 			has: map[string][]string{
@@ -145,8 +145,8 @@ function main(): i32 { return (shifted(5i64) + shifted_wide(12i64)) as i32; }`,
 		},
 		{
 			name: "refused-widths",
-			src: `function wide(x: i64): i64 { return x + 4294967296i64; }
-function narrow_big(x: i64): i64 { return x + 2147483648i64; }
+			src: `@noinline function wide(x: i64): i64 { return x + 4294967296i64; }
+@noinline function narrow_big(x: i64): i64 { return x + 2147483648i64; }
 function main(): i32 { return ((wide(1i64) + narrow_big(1i64)) % 100i64) as i32; }`,
 			want: (4294967297 + 2147483649) % 100,
 			has: map[string][]string{
@@ -171,12 +171,12 @@ func TestSelfHostConstZeroExtendedFormX86_64(t *testing.T) {
 	runX86ShapeCases(t, []shapeCase{
 		{
 			name: "forms",
-			src: `function pos(): i32 { return 7; }
-function zero(): i32 { return 0; }
-function neg(): i32 { return 0 - 3; }
-function hex(): u32 { return 0xffffffff; }
-function small64(): i64 { return 4294967295i64; }
-function wide64(): i64 { return 4294967296i64; }
+			src: `@noinline function pos(): i32 { return 7; }
+@noinline function zero(): i32 { return 0; }
+@noinline function neg(): i32 { return 0 - 3; }
+@noinline function hex(): u32 { return 0xffffffff; }
+@noinline function small64(): i64 { return 4294967295i64; }
+@noinline function wide64(): i64 { return 4294967296i64; }
 function main(): i32 {
     var h: u32 = hex();
     var w: i64 = wide64();

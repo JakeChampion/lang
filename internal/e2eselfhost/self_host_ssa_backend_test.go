@@ -1208,10 +1208,10 @@ func TestSelfHostCLIBuildsForEveryNativeTarget(t *testing.T) {
 }
 
 // A counted loop's two loop-carried values share registers with their
-// updates and the branch reaches the body without passing an empty block,
-// so the loop is the compare, its branch, the two adds and the back edge on
-// both ISAs: no copy in the loop, and no jump but the back edge.
-func TestSelfHostSSALoopIsFiveInstructions(t *testing.T) {
+// updates and the loop is rotated, so the loop is the two adds, the compare
+// and the conditional back edge on both ISAs: no copy in the loop, and no
+// jump but the back edge.
+func TestSelfHostSSALoopIsFourInstructions(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "count.fern")
@@ -1231,8 +1231,8 @@ function main(): i32 { return (count(3000i64) % 97i64) as i32; }
 		back   *regexp.Regexp
 		move   *regexp.Regexp
 	}{
-		{"x86-64-linux", regexp.MustCompile(`(?m)^\s+jmp (\.Lssa_count_\d+)\n`), regexp.MustCompile(`(?m)^\s+movq %r\w+, %r\w+$`)},
-		{"arm64-linux", regexp.MustCompile(`(?m)^\s+b (\.Lssa_count_\d+)\n`), regexp.MustCompile(`(?m)^\s+mov x\d+, x\d+$`)},
+		{"x86-64-linux", regexp.MustCompile(`(?m)^\s+j\w+ (\.Lssa_count_\d+)\n`), regexp.MustCompile(`(?m)^\s+movq %r\w+, %r\w+$`)},
+		{"arm64-linux", regexp.MustCompile(`(?m)^\s+b\.?\w* (\.Lssa_count_\d+)\n`), regexp.MustCompile(`(?m)^\s+mov x\d+, x\d+$`)},
 	}
 	for _, c := range cases {
 		out := filepath.Join(dir, "count-"+c.target+".s")
@@ -1249,15 +1249,15 @@ function main(): i32 { return (count(3000i64) % 97i64) as i32; }
 		if fn == "" {
 			t.Fatalf("%s: no __fn_count in the listing:\n%s", c.target, asm)
 		}
-		backs := c.back.FindAllStringSubmatchIndex(fn, -1)
-		if len(backs) == 0 {
-			t.Fatalf("%s: no back edge in count:\n%s", c.target, fn)
+		// The back edge is the last branch to a label defined above it.
+		head, last := -1, []int(nil)
+		for _, m := range c.back.FindAllStringSubmatchIndex(fn, -1) {
+			if at := strings.Index(fn, "\n"+fn[m[2]:m[3]]+":\n"); at >= 0 && at < m[0] {
+				head, last = at, m
+			}
 		}
-		last := backs[len(backs)-1]
-		label := fn[last[2]:last[3]]
-		head := strings.Index(fn, "\n"+label+":\n")
-		if head < 0 {
-			t.Fatalf("%s: the back edge's label %s is not in count:\n%s", c.target, label, fn)
+		if last == nil {
+			t.Fatalf("%s: no back edge in count:\n%s", c.target, fn)
 		}
 		loop := fn[head:last[1]]
 		var insts []string
@@ -1266,8 +1266,8 @@ function main(): i32 { return (count(3000i64) % 97i64) as i32; }
 				insts = append(insts, strings.TrimSpace(line))
 			}
 		}
-		if len(insts) != 5 {
-			t.Errorf("%s: the loop of count is %d instructions, want 5:\n%s", c.target, len(insts), loop)
+		if len(insts) != 4 {
+			t.Errorf("%s: the loop of count is %d instructions, want 4:\n%s", c.target, len(insts), loop)
 		}
 		if c.move.MatchString(loop) {
 			t.Errorf("%s: the loop of count still copies between registers:\n%s", c.target, loop)
@@ -1375,7 +1375,7 @@ function main(): i32 {
 			[]string{"call __fn___fern_rc_is_unique", "call __fn___fern_rc_inc"},
 			regexp.MustCompile(`cmpl \$` + rcPoisonWord + `, %e\w+`)},
 		{"arm64-linux",
-			regexp.MustCompile(`(?m)^\s+mov x5, #0x10000$`),
+			regexp.MustCompile(`(?m)^\s+cmp x\d+, #16, lsl #12$`),
 			regexp.MustCompile(`(?m)^\s+ldur w5, \[x\d+, #-8\]$`),
 			[]string{"bl __fn___fern_rc_is_unique", "bl __fn___fern_rc_inc"},
 			regexp.MustCompile(fmt.Sprintf(`movz w\d+, #%d\n\s+movk w\d+, #%d, lsl #16`,
@@ -1572,8 +1572,17 @@ func functionListing(text, label string) string {
 		return ""
 	}
 	rest := text[start+len(label)+2:]
-	if end := strings.Index(rest, "\n__fn_"); end >= 0 {
-		return rest[:end]
+	// The function's register entry, `<label>.r:`, is inside its listing.
+	from := 0
+	for {
+		end := strings.Index(rest[from:], "\n__fn_")
+		if end < 0 {
+			return rest
+		}
+		if strings.HasPrefix(rest[from+end+1:], label+".r:\n") {
+			from += end + 1
+			continue
+		}
+		return rest[:from+end]
 	}
-	return rest
 }
