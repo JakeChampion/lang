@@ -16836,24 +16836,32 @@ function annotate_lambda_expr(lm: ast.ExprLambda, s: Scope, self_name: string): 
     ls = ls.bind(lm.params[i].name, pts[i]);
     i = i + 1;
   }
-  var ret: string = lm.ret_type;
-  if (ret.len() == 0) { ret = inferred_lambda_ret(lm, ls); }
-  return ast.ExprLambda { ...lm, ret_type: ret, body: annotate_block(lm.body, ls), captures: captures, captures_known: true };
+  var typed: ast.ExprLambda = lm;
+  if (lm.ret_type.len() == 0) { typed = inferred_lambda_result(lm, ls); }
+  return ast.ExprLambda { ...typed, body: annotate_block(lm.body, ls), captures: captures, captures_known: true };
 }
 
 // A lambda spelling no result is hoisted as a declaration spelling none, and
 // the signature table then types a call through its box as nothing. The
-// result its body returns is stamped as the declaration's spelling. Left
-// empty: a function-valued result, whose signature lives in sidecars a
-// spelling has no room for, and a bare literal, which adapts to the width of
-// whatever receives the lambda.
-function inferred_lambda_ret(lm: ast.ExprLambda, body_scope: Scope): string {
+// result its body returns is stamped as the declaration's spelling; a
+// function-valued result is stamped `fn` with the signature in the result
+// sidecars, the pair a declaration's `ret_fn_ret` carries (#10025). Left
+// empty: a result nested inside another type that holds a function, which no
+// spelling carries, and a bare literal, which adapts to the width of whatever
+// receives the lambda.
+function inferred_lambda_result(lm: ast.ExprLambda, body_scope: Scope): ast.ExprLambda {
   var (returned, at) = first_returned(lm.body, body_scope);
-  if (bare_return(returned) || int_literal_tree(returned)) { return ""; }
+  if (bare_return(returned) || int_literal_tree(returned)) { return lm; }
   var t: typeinfo.Type = check_expr(returned, at);
-  if let typeinfo.TypeFloat(f) = t { if (f.polymorphic) { return ""; } }
-  if (is_unknown(t) || spells_function(t)) { return ""; }
-  return typeinfo.spelling(t);
+  if let typeinfo.TypeFloat(f) = t { if (f.polymorphic) { return lm; } }
+  if (is_unknown(t)) { return lm; }
+  if let typeinfo.TypeFunc(_) = t {
+    var callable: ast.ParamDecl = decltypes.fn_param_from_type("", t);
+    if (callable.type_name != "fn") { return lm; }
+    return ast.ExprLambda { ...lm, ret_type: "fn", ret_fn_ret: callable.fn_ret, ret_fn_param_types: callable.fn_param_types };
+  }
+  if (spells_function(t)) { return lm; }
+  return ast.ExprLambda { ...lm, ret_type: typeinfo.spelling(t) };
 }
 
 function spells_function(t: typeinfo.Type): boolean {

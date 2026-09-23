@@ -3735,6 +3735,20 @@ function main(): i32 {
     return d.x + e.x + 28;
 }
 `},
+	// A lambda bound to a local that returns a lambda, with no result written.
+	// The checker left a function-valued result unspelled, so the call of the
+	// call (`mk()(3)`) had no function type to dispatch through and main was
+	// refused ("callee is neither a name nor a field"). The result is stamped
+	// `fn` with its signature sidecars now (#10025, first half). The returned
+	// lambda captures nothing; a capturing one is the issue's second half.
+	{name: "a-lambda-returning-a-lambda-is-called-through-its-result", atLeast: 3, noLeak: true, src: `
+function main(): i32 {
+    var mk = () => { return (b: i32): i32 => b * 2; };
+    var f = mk();
+    var add = (n: i32) => { return (a: i32, b: i32): i32 => a + b; };
+    return f(4) + mk()(3) + add(0)(20, 8);
+}
+`},
 }
 
 // semHeldElementSource sorts by length with the insertion sort's body: the
