@@ -8,14 +8,11 @@ import (
 // returnMatchPayloadIRCases pin RETURNING a fn value bound by a MATCH ARM to an
 // enum payload across a function boundary — case D of issue #5202, the last of
 // the container-held-fn-value cluster (A: local closure-array element #5207;
-// B/C/E: struct-field / param closure-array element or fn field #5252). The
-// closure_ret_fns_of return scan's ExprIdent arm only recognised a `var`-bound
-// closure local (body_binds_closure_local); a `match (b) { W(f) => return f }`
-// binding was missed, so the caller bound `g` a plain scalar and `g()` bare-
-// called the closure box pointer → SIGSEGV. body_binds_fn_payload_via_match now
-// recognises a match-arm binding to a fn-typed enum payload (the variant's `__ev`
-// field resolves to "fn" via the structs-only variant_payload_field_type), so the
-// factory is registered closure-returning and the caller dispatches env-first.
+// B/C/E: struct-field / param closure-array element or fn field #5252). While
+// closure_ret_fns_of recognised returns by shape, a `match (b) { W(f) => return
+// f }` binding was missed, so the caller bound `g` a plain scalar and `g()`
+// bare-called the closure box pointer → SIGSEGV. A function declared to return
+// a function now returns a box by its type, so the caller dispatches env-first.
 //
 // A narrower sibling defect (returning a match-bound payload from one branch and
 // a LAMBDA from another in the same fn-typed function) is tracked separately in
@@ -41,8 +38,7 @@ var returnMatchPayloadIRCases = []struct {
 	// Control: `return f()` (CALL the payload, not return it) — not a closure
 	// return, must stay unregistered and still evaluate correctly.
 	{"call-not-return", "enum Box { W(() => i32) } function pick(b: Box): i32 { match (b) { W(f) => { return f(); } } } function main(): i32 { var n: i32 = 11; return pick(Box.W(() => n)); }", 11},
-	// Control: a NON-fn (i32) payload return must NOT be misclassified as a
-	// closure (variant_payload_field_type resolves "i32", not "fn").
+	// Control: a NON-fn (i32) payload return is not a closure.
 	{"nonfn-payload", "enum Box { W(i32) } function pick(b: Box): i32 { match (b) { W(v) => { return v; } } } function main(): i32 { var g = pick(Box.W(42)); return g; }", 42},
 }
 

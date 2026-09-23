@@ -9,15 +9,14 @@ import (
 
 // TestSelfHostZeroArgFnValueIRX86_64 covers a local bound to a bare ZERO-arg
 // function name (`var f = mk`) and used only as a call target. The self-host's
-// "bare 0-arg receiver-less fn name = a call to it" rule (#2954) otherwise
+// "bare 0-arg receiver-less fn name = a call to it" rule (#2954) once
 // mis-lowered `var f = mk` to `var f = mk()` — binding the RESULT — so a later
 // `f()` called a non-function and segfaulted (an IR-path miscompile for an i32
-// return; an AST one for a struct). The parser's inline_callonly_fn_values pass
-// recognises the call-only case and inlines it (drops the binding, rewrites
-// `f(args)` to `mk(args)` — a 0-arg fn-value called is exactly its direct call),
-// matching the native compiler; a `const` used as a VALUE (`var f = K; f + 1`)
-// is left as a const-call. Each case asserts the oracle exit code; a size bound
-// proves the small IR path (a segfaulting AST bail would differ).
+// return; an AST one for a struct). A zero-parameter function is a const only
+// when declared `const` (#10076), so `var f = mk` binds the function value and
+// `f()` calls it; a `const` used as a VALUE (`var f = K; f + 1`) still reads the
+// constant. Each case asserts the oracle exit code; a size bound proves the
+// small IR path (a segfaulting AST bail would differ).
 func TestSelfHostZeroArgFnValueIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

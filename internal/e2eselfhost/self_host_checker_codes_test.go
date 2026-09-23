@@ -74,7 +74,9 @@ func driverDiags(out string) []driverDiag {
 func driverCodes(out string) []string {
 	var codes []string
 	for _, d := range driverDiags(out) {
-		codes = append(codes, d.code)
+		if d.code != "" {
+			codes = append(codes, d.code)
+		}
 	}
 	return uniqueSortedCodes(codes)
 }

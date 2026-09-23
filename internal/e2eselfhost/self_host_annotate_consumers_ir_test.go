@@ -24,8 +24,7 @@ import (
 // expr_opt_elem_tag's method callee; expr_tuple_elem_tag's FieldAccess
 // fallback; lower_i64's Call load site paired with infer_expr_width;
 // method_recv_tyname's associated bare-type receiver; the mark_tuple/map
-// binding transfers; the lift-time detector_expr_type / cap_type_expr /
-// cap_type_in_stmts family; and ty survival through the monomorphiser's
+// binding transfers; the lift-time cap_type_expr / cap_type_in_stmts family; and ty survival through the monomorphiser's
 // array/map method folds.
 var annotateConsumerCases = []struct {
 	name string

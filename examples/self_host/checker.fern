@@ -11050,6 +11050,16 @@ pub function is_build_gate_code(code: string): boolean {
   return util.is_diagnostic_code(code);
 }
 
+// build_gate_diags is what the compile path rejects a module for. Native folds
+// consts before it type-checks and fails the build on a const its fold refuses;
+// that refusal is uncoded, as native's is, so it gates here by where it comes
+// from rather than by code.
+pub function build_gate_diags(mod: parser.Module): util.Diag[] {
+  var cgd: util.Diag[] = const_grammar_diags(mod);
+  if (cgd.len() > 0) { return cgd; }
+  return filter_build_gate(check_module(mod).diags);
+}
+
 // filter_build_gate keeps the diagnostics the compile path enforces.
 pub function filter_build_gate(diags: util.Diag[]): util.Diag[] {
   var out: util.Diag[] = [];
@@ -11553,7 +11563,9 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
   // externs are exempt (they carry a signature, not a definition). Mirrors
   // the native checkFunction rule.
   for func in mod.funcs {
-    if (func.ret_type == "" && func.body.len() > 0) {
+    if (func.ret_type == "" && func.body.len() > 0 && func.is_const) {
+      out = out.append(dg_at("E070", "cannot infer the type of const \"" + func.name + "\"; declare it explicitly", func.line, func.col));
+    } else if (func.ret_type == "" && func.body.len() > 0) {
       out = out.append(dg_at("E070", "missing return type on function \"" + func.name + "\"; declare it explicitly (use `: void` if it returns nothing)", func.line, func.col));
     }
   }
@@ -17168,7 +17180,7 @@ function annotate_module_in(mod: parser.Module, mt: ModuleTables): parser.Module
     nfuncs = nfuncs.append(annotate_func(func, mt));
   }
   var ntop: ast.Stmt[] = annotate_block(rmod.top_stmts, new_scope_full(mt.sigs, mt.structs, mt.unions, mt.methods, mt.imports));
-  return parser.Module { funcs: nfuncs, structs: rmod.structs, aliases: rmod.aliases, imports: rmod.imports, top_stmts: ntop, enums: rmod.enums, resources: rmod.resources, exports: rmod.exports, impls: rmod.impls, trait_reqs: rmod.trait_reqs, trait_decls: rmod.trait_decls };
+  return parser.Module { funcs: nfuncs, structs: rmod.structs, aliases: rmod.aliases, imports: rmod.imports, top_stmts: ntop, enums: rmod.enums, resources: rmod.resources, exports: rmod.exports, impls: rmod.impls, trait_reqs: rmod.trait_reqs, trait_decls: rmod.trait_decls, inferred_consts: rmod.inferred_consts };
 }
 
 function unchecked_capture(e: ast.Expr, own found: boolean): boolean {

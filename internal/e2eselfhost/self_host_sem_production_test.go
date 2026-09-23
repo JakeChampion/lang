@@ -4102,6 +4102,30 @@ function main(): i32 {
     return add5(4) + curry(1)(2) + c3(1)(2)(3) + add(3)(4) + 17;
 }
 `},
+	// A function declared to return a function returns an env box, whatever its
+	// return statements spell (#9763). The AST lowering, the control leg,
+	// registered a box-returning function by the shape of its returns, so a
+	// lambda handed back through a generic call, a local bound from one, or a
+	// match-arm payload was dispatched as a bare code pointer by a caller that
+	// bound the result to a local, and segfaulted.
+	{name: "a-function-returning-a-function-returns-a-box", atLeast: 15, want: "53|", astAnswers: "53|", noLeak: true, src: `
+enum Box { W((i32) => i32), No }
+function id[T](x: T): T { return x; }
+function inc(x: i32): i32 { return x + 1; }
+function through(a: i32): (i32) => i32 { return id(((x: i32) => x + a)); }
+function bound(a: i32): (i32) => i32 { var g: (i32) => i32 = id(((x: i32) => x * a)); return g; }
+function either(k: i32): (i32) => i32 { if (k > 0) { return inc; } return (x: i32) => x + k; }
+function unbox(b: Box): (i32) => i32 { match (b) { W(f) => { return f; }, No => { return inc; } } }
+function main(): i32 {
+    function mk(a: i32): (i32) => i32 { return id(((x: i32) => x)); }
+    var f: (i32) => i32 = mk(1);
+    var g = through(2);
+    var h = bound(3);
+    var e = either(0);
+    var u = unbox(W((x: i32) => x - 1));
+    return f(4) + g(5) + h(6) + e(7) + u(8) + either(1)(9);
+}
+`},
 }
 
 // semHeldElementSource sorts by length with the insertion sort's body: the

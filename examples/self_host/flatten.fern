@@ -1202,6 +1202,7 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
     // `pub use` re-export table: redirects a consumer's `facade.name`
     // (which mangles to `facade__name`) to the original `origin__name`.
     var rx: ReexportTable = build_reexports(imports, ids, pfxs);
+    var inferred: string[] = mangled_inferred_consts(imports, pfxs, entry);
     var mclaims: string[] = [];
     var i: i32 = 0;
     while (i < imports.len()) {
@@ -1273,7 +1274,7 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
     // `lib.f([1, 2])` reached an `f64[]`/`i64[]` parameter as unsettled i32
     // literals in a literal sized for i32 slots. settle_module is idempotent, so
     // this settles only what the merge newly reaches.
-    return parser.settle_module(parser.Module {
+    var merged: parser.Module = parser.Module {
         funcs: funcs,
         structs: structs,
         aliases: aliases,
@@ -1284,8 +1285,28 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
         exports: exports,
         impls: impls,
         trait_reqs: trait_reqs,
-        trait_decls: trait_decls
-    });
+        trait_decls: trait_decls,
+        inferred_consts: inferred
+    };
+    return parser.settle_module(parser.substitute_const_refs(merged, merged_const_table(funcs, inferred)));
+}
+
+// mangled_inferred_consts names every const written without a type, across
+// the bundle, by the name it has once merged. A reference from another module
+// is only resolvable after the merge, so parse left it to flatten.
+function mangled_inferred_consts(imports: LoadedModule[], pfxs: string[], entry: parser.Module): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < imports.len()) {
+        for n in imports[i].mod.inferred_consts { out = out.append(mangled_name(pfxs[i], n)); }
+        i = i + 1;
+    }
+    return util.append_all(out, entry.inferred_consts);
+}
+
+function merged_const_table(funcs: parser.FuncDecl[], inferred: string[]): parser.ConstTable {
+    var nothing: string[] = [];
+    return parser.inferred_const_table(funcs, inferred, parser.ConstTable { names: nothing, values: [] });
 }
 
 // ReexportTable is the parallel-array re-export map threaded into every
@@ -1374,7 +1395,9 @@ pub function bundle_per_module(entry: parser.Module, imports: LoadedModule[]): P
         iv = iv + 1;
     }
     var rx: ReexportTable = build_reexports(imports, ids, pfxs);
-    var out: PerModule[] = [];
+    var inferred: string[] = mangled_inferred_consts(imports, pfxs, entry);
+    var mods: parser.Module[] = [];
+    var all_funcs: parser.FuncDecl[] = [];
     // Same claim threading `bundle` does, in the same module order, so the
     // per-module units and the merged bundle agree on which definition owns a
     // `<Type>.<name>` symbol.
@@ -1384,12 +1407,21 @@ pub function bundle_per_module(entry: parser.Module, imports: LoadedModule[]): P
         var pfx: string = pfxs[i];
         var md: MethodDedup = disambiguate_methods(mangle_module(imports[i].mod, pfx, ids, pfxs, ivar_names, ivar_mangled, rx.keys, rx.targets), pfx, mclaims);
         mclaims = md.keys;
-        var m: parser.Module = md.mod;
-        out = out.append(PerModule { ns: imports[i].name, mod: m, is_entry: false });
+        mods = mods.append(md.mod);
+        all_funcs = util.append_all(all_funcs, md.mod.funcs);
         i = i + 1;
     }
     var e: parser.Module = disambiguate_methods(flatten_qualified(entry, ids, pfxs, ivar_names, ivar_mangled, rx.keys, rx.targets), "__entry", mclaims).mod;
-    out = out.append(PerModule { ns: "__entry", mod: e, is_entry: true });
+    all_funcs = util.append_all(all_funcs, e.funcs);
+    // A unit reads a const another unit declares, so the table spans them all.
+    var table: parser.ConstTable = merged_const_table(all_funcs, inferred);
+    var out: PerModule[] = [];
+    var j: i32 = 0;
+    while (j < imports.len()) {
+        out = out.append(PerModule { ns: imports[j].name, mod: parser.substitute_const_refs(mods[j], table), is_entry: false });
+        j = j + 1;
+    }
+    out = out.append(PerModule { ns: "__entry", mod: parser.substitute_const_refs(e, table), is_entry: true });
     return out;
 }
 

@@ -208,9 +208,12 @@ compound_assign_wider                                0
 concat_of_empties                                    0
 const_divisor_lowering                               0
 const_divisor_runtime                                0
+const_settles_across_modules                         0
+const_settles_where_it_is_read                       0
 const_shadowed_by_binder                             0
 const_shadowed_by_pattern_binder                     0
 const_struct_negative_fields                         0
+const_without_a_type                                 0
 consuming_method                                     0
 consuming_trait_method                               0
 contains_demo                                        0

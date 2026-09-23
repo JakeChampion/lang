@@ -81,31 +81,27 @@ func TestSelfHostFnValueX86IR(t *testing.T) {
 		{"arr-one-arg", `function inc(x: i32): i32 { return x + 1; } function dbl(x: i32): i32 { return x * 2; } function main(): i32 { var fns: ((i32) => i32)[] = [inc, dbl]; return fns[0](10) + fns[1](10); }`, 31},
 		// #3640 slice A: a fn-value PARAM whose RETURN type is a STRUCT. The
 		// return-struct name is preserved through parse-time coarsening
-		// (ParamDecl.fn_ret) and registered as a `g|P` struct_ret_fns entry in
-		// lower_func, so the call-result field read `g().x` resolves P's field
-		// index and lowers on the IR path. Discarding P at coarsening leaves
-		// `g().x` unable to resolve the field, routing the module to `ast`.
+		// (ParamDecl.fn_ret) onto the parameter's slot, and expr_struct_type
+		// reads it there, so `g().x` resolves P's field index.
 		{"param-ret-struct-field", `struct P { x: i32 } function call(g: () => P): i32 { return g().x; } function mk(): P { return P { x: 4 }; } function main(): i32 { return call(mk); }`, 4},
 		{"param-ret-struct-var-2fields", `struct P { x: i32, y: i32 } function call(g: () => P): i32 { var p = g(); return p.x + p.y; } function mk(): P { return P { x: 4, y: 5 }; } function main(): i32 { return call(mk); }`, 9},
 		{"param-ret-struct-method", `struct P { x: i32 } function (p: P) dbl(): i32 { return p.x * 2; } function call(g: () => P): i32 { return g().dbl(); } function mk(): P { return P { x: 11 }; } function main(): i32 { return call(mk); }`, 22},
 		{"param-ret-struct-witharg", `struct P { x: i32 } function call(g: (i32) => P): i32 { return g(7).x; } function mk(n: i32): P { return P { x: n + 1 }; } function main(): i32 { return call(mk); }`, 8},
 		// #3640 slice B.1: a struct-returning fn-value LOCAL `var f: () => P = mk`
-		// (the local sibling of the slice-A param case). lower_func registers a
-		// `f|P` struct_ret_fns entry — recovering P from the target `mk`'s own
-		// struct return — so `f().x` / `var p = f()` / `f().method()` resolve the
-		// struct result and lower on the IR path. Without the entry, the field
-		// read on the fn-value-local call result cannot resolve P and bails to
-		// AST. The unannotated form `var f = mk` (no `: () => P`) is the
-		// separate use-directed-inference slice and stays as-is.
+		// answers P from the return type recorded on its slot, as a parameter
+		// does.
 		{"local-ret-struct-field", `struct P { x: i32 } function mk(): P { return P { x: 4 }; } function main(): i32 { var f: () => P = mk; return f().x; }`, 4},
 		{"local-ret-struct-var-2fields", `struct P { x: i32, y: i32 } function mk(): P { return P { x: 4, y: 5 }; } function main(): i32 { var f: () => P = mk; var p = f(); return p.x + p.y; }`, 9},
 		{"local-ret-struct-method", `struct P { x: i32 } function (p: P) dbl(): i32 { return p.x * 2; } function mk(): P { return P { x: 11 }; } function main(): i32 { var f: () => P = mk; return f().dbl(); }`, 22},
+		{"local-ret-struct-witharg", `struct P { x: i32 } function mk(n: i32): P { return P { x: n + 1 }; } function main(): i32 { var f: (i32) => P = mk; return f(7).x; }`, 8},
 		// The UNANNOTATED `var f = mk` where mk is a zero-arg struct-returning
 		// fn: mk is not a `const`, so the bare name is a function value, and
 		// `f()` calls it rather than calling mk()'s struct as code (#3640).
 		{"local-infer-field", `struct P { x: i32 } function mk(): P { return P { x: 7 }; } function main(): i32 { var f = mk; return f().x; }`, 7},
 		{"local-infer-var-2fields", `struct P { x: i32, y: i32 } function mk(): P { return P { x: 4, y: 5 }; } function main(): i32 { var f = mk; var p = f(); return p.x + p.y; }`, 9},
 		{"local-infer-method", `struct P { x: i32 } function (p: P) dbl(): i32 { return p.x * 2; } function mk(): P { return P { x: 11 }; } function main(): i32 { var f = mk; return f().dbl(); }`, 22},
+		// The same with an argument.
+		{"local-infer-witharg", `struct P { x: i32 } function mk(n: i32): P { return P { x: n + 1 }; } function main(): i32 { var f = mk; return f(2).x; }`, 3},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
