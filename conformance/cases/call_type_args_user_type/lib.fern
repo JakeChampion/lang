@@ -1,0 +1,3 @@
+pub struct Box { n: i32 }
+
+pub function id[T](a: T): T { return a; }

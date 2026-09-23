@@ -301,7 +301,9 @@ PostfixOp   = '(' [ CallArgs ] ')'
 MemberName  = IDENT | NUMBER | 'default' ;
 CallArgs    = CallArg { ',' CallArg } [ ',' ] ;
 CallArg     = IDENT '=' Expr | Expr ;
-# `f[i32](x)` — explicit generic instantiation.
+# `f[i32](x)` — explicit generic instantiation. A lone name (`f[Box](x)`)
+# derives as '[' Expr ']'; the checker reads it as a type argument when the
+# base names a generic function and the name a type.
 TypeArgList = Type { ',' Type } [ ',' ] ;
 
 # NoStructExpr is Expr with the brace-suffixed struct literal withheld,

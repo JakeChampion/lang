@@ -1,0 +1,35 @@
+// Explicit type arguments naming user-defined types (#7040). A lone name in
+// the bracket parses as an index and is retagged once the base is known to be
+// a generic function; a comma or a nested type bracket makes it a type list
+// at parse time. A call inside the bracket keeps it an index. Before a `{`
+// any name list is a struct literal's type arguments.
+import "./lib";
+
+struct Loc { n: i32 }
+struct Pair[A] { a: A }
+struct Holder[T] { v: T }
+
+function second[A, B](a: A, b: B): B { return b; }
+function pass[T](a: T): T { return lib.id[T](a); }
+function k(x: i32): i32 { return x + 1; }
+
+function main(): i32 {
+    var b: lib.Box = lib.Box { n: 5 };
+    var l: Loc = Loc { n: 2 };
+    var p: Pair[i32] = Pair[i32] { a: 7 };
+    var fs: ((i32) => i32)[] = [k, k];
+    var bs: Loc[] = [l];
+    if (lib.id[lib.Box](b).n != 5) { return 1; }
+    if (lib.id[Loc](l).n != 2) { return 2; }
+    if (second[lib.Box, Loc](b, l).n != 2) { return 3; }
+    if (lib.id[Pair[i32]](p).a != 7) { return 4; }
+    if (lib.id[Loc[]](bs)[0].n != 2) { return 5; }
+    if (second[Loc, (i32, lib.Box)](l, (1, b)).1.n != 5) { return 6; }
+    if (pass[Loc](l).n != 2) { return 7; }
+    if (fs[lib.id[i32](1)](3) != 4) { return 8; }
+    var h: Holder[lib.Box] = Holder[lib.Box] { v: b };
+    var hl: Holder[Loc] = Holder[Loc] { v: l };
+    if (h.v.n + hl.v.n != 7) { return 9; }
+    print("ok");
+    return 0;
+}
