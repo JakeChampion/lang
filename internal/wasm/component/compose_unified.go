@@ -43,7 +43,7 @@ type ComposeRequest struct {
 
 	// Reactor timer: wasi:clocks/monotonic-clock.subscribe-duration
 	// (own<pollable>) + wasi:io/poll.pollable.block, composed
-	// standalone (no sockets). The wasm reactor's timer primitive.
+	// standalone or alongside sockets. The wasm reactor's timer primitive.
 	Timer bool
 
 	// Reactor multiplexer: wasi:io/poll.poll(list<pollable>) ->
@@ -53,9 +53,8 @@ type ComposeRequest struct {
 	Poll bool
 
 	// Reactor pollable drop: wasi:io/poll.[resource-drop]pollable, so
-	// the reactor frees a consumed timer pollable. Only added on the
-	// standalone (timer / poll) path — the socket paths emit their own
-	// pollable drop, so the lowering is gated to avoid a duplicate.
+	// the reactor frees a consumed timer pollable. Socket capabilities also
+	// require this lowering; all paths share a single declaration.
 	PollableDrop bool
 
 	// Standalone CLI capabilities. WallNow is wasi:clocks/wall-clock.now
@@ -180,8 +179,6 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 			gImport{iface: tcp, name: "[method]tcp-socket.local-address", kind: gMem, params: composeTcpSelfRetParams},
 			gImport{iface: tcp, name: "[method]tcp-socket.subscribe", kind: gNoOpt},
 			gImport{iface: tcp, name: "[resource-drop]tcp-socket", kind: gDrop, resourceT: g.surfaced["tcp-socket"]},
-			gImport{iface: "wasi:io/poll@0.2.0", name: "[method]pollable.block", kind: gNoOpt},
-			gImport{iface: "wasi:io/poll@0.2.0", name: "[resource-drop]pollable", kind: gDrop, resourceT: g.surfaced["pollable"]},
 		)
 		if req.TcpConnect {
 			// Outbound client: the connect chain. The tcp instance type
@@ -209,15 +206,6 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 			gImport{iface: udp, name: "[resource-drop]incoming-datagram-stream", kind: gDrop, resourceT: g.surfaced["incoming-datagram-stream"]},
 			gImport{iface: udp, name: "[resource-drop]outgoing-datagram-stream", kind: gDrop, resourceT: g.surfaced["outgoing-datagram-stream"]},
 		)
-		// The send path blocks on the outgoing-datagram-stream's
-		// pollable until a datagram is permitted; pull in poll.block /
-		// drop unless the TCP block already declared them.
-		if !req.Tcp {
-			g.add(
-				gImport{iface: "wasi:io/poll@0.2.0", name: "[method]pollable.block", kind: gNoOpt},
-				gImport{iface: "wasi:io/poll@0.2.0", name: "[resource-drop]pollable", kind: gDrop, resourceT: g.surfaced["pollable"]},
-			)
-		}
 	}
 	if req.Tcp || req.Udp {
 		g.add(gImport{iface: "wasi:sockets/instance-network@0.2.0", name: "instance-network", kind: gNoOpt})
@@ -246,28 +234,24 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 		)
 	}
 
-	// Reactor timer lowerings: subscribe-duration (→ own<pollable>)
-	// and pollable.block. The pollable resource is surfaced by
-	// ensureIoPoll (pulled in by ensureMonotonicTimer); its drop is
-	// not emitted yet (the program exits with the pollable live — the
-	// canonical ABI permits a leaked own handle at trap/exit). The
-	// list multiplexer (wasi:io/poll.poll) lands in a later slice.
+	// Sockets and timers share pollable.block. Declare the shared method
+	// and resource drop once, regardless of how many surfaces need them.
+	if req.Tcp || req.Udp || req.Timer {
+		g.add(gImport{iface: "wasi:io/poll@0.2.0", name: "[method]pollable.block", kind: gNoOpt})
+	}
+	if req.Tcp || req.Udp || req.PollableDrop {
+		g.add(gImport{iface: "wasi:io/poll@0.2.0", name: "[resource-drop]pollable", kind: gDrop, resourceT: g.surfaced["pollable"]})
+	}
+	// subscribe-duration returns an owned pollable. Its resource type was
+	// surfaced by ensureIoPoll through ensureMonotonicTimer above.
 	if req.Timer {
-		g.add(
-			gImport{iface: "wasi:clocks/monotonic-clock@0.2.0", name: "subscribe-duration", kind: gNoOpt},
-			gImport{iface: "wasi:io/poll@0.2.0", name: "[method]pollable.block", kind: gNoOpt},
-		)
+		g.add(gImport{iface: "wasi:clocks/monotonic-clock@0.2.0", name: "subscribe-duration", kind: gNoOpt})
 	}
 	if req.Poll {
 		// poll(list<pollable>) -> list<u32>: list param (ptr, len) +
 		// list result via return area — memory + realloc lowering,
 		// like fields.entries / get-arguments.
 		g.add(gImport{iface: "wasi:io/poll@0.2.0", name: "poll", kind: gMemRealloc, params: repeatI32(3)})
-	}
-	if req.PollableDrop && !req.Tcp && !req.Udp {
-		// Standalone reactor pollable drop. Gated off Tcp/Udp, which
-		// already declare [resource-drop]pollable in their blocks.
-		g.add(gImport{iface: "wasi:io/poll@0.2.0", name: "[resource-drop]pollable", kind: gDrop, resourceT: g.surfaced["pollable"]})
 	}
 
 	// Filesystem lowerings — one per method the core imports, in the

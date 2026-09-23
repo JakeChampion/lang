@@ -88,6 +88,8 @@ jobs:
                 "bootstrap/**",
                 "examples/self_host/**",
                 "internal/stdlib/**",
+                "coreutils/tr.fern",
+                "coreutils/lib/gnu.fern",
                 "Makefile",
                 ".github/workflows/bootstrap.yml",
                 ".github/workflows/ci-suite.yml",

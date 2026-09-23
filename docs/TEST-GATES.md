@@ -86,6 +86,43 @@ allocations and frees, leave zero live bytes and produce no RC underflow. These 
 cover temporary poll buffers; they do not establish leak freedom for a whole
 HTTP server or replace the persistent-reactor work in #9853.
 
+## WASI poll storage
+
+`TestWasmPollGuestStorage` and `TestSelfHostWasmPollGuestStorage` exercise
+32 calls per host case through the production poll helpers and allocator.
+Cases include empty results, first-ready indices zero and one, multiple
+returned indices, and timeout-only readiness. Both compilers' finite-wait
+cases require exactly one drop of the created timer, including handle zero;
+caller pollables remain borrowed. Repeated calls must stop growing the heap.
+`TestWasmPollLifecycleCensus` and `TestSelfHostWasmPollLifecycleCensus` also
+run real timer polls and require balanced allocation counts with zero live
+bytes. Both direct `wasm_poll` and compatibility `poll` are covered.
+Host fixtures check the exact timer duration at zero, finite and maximum
+`i32` milliseconds, with negative timeouts creating no timer.
+`TestWasmPollDeadlines` and `TestSelfHostWasmPollDeadlines` run real ready,
+pending and empty pollable lists. They require correct deadline results,
+monotonic lower bounds, and zero live heap storage after 32 waits.
+
+## HTTP handler ownership through semantic lowering
+
+`TestSelfHostHTTPHandlerCensus` and `TestSelfHostArm64DarwinHTTPHandlerCensus`
+bound the existing std/tcp accept-loop body to 32 requests and run it through
+the production self-host compiler. They verify every HTTP response, require
+the compiler to produce every reachable declaration through semantic lowering,
+and require equal allocations/frees with zero live bytes. Linux x86-64, ARM64
+and native Darwin run the same fixture; QEMU is permitted for correctness.
+`TestSelfHostWasmSemanticTCPPollable` separately checks semantic lowering and
+live socket subscription/drop on WASI. `TestSelfHostWasmHTTPHandlerCensus`
+runs the bounded handler against real WASI sockets, with a guest-selected
+ephemeral port and the same response and ownership assertions. External
+Preview 1 adapter stacks use separate memory pages, outside the Fern heap
+census; this does not claim zero live WebAssembly linear memory.
+
+The native handler fixture catches missing builtin contracts or ambiguous
+deadline operand widths that otherwise move the handler back to AST ownership.
+It does not establish bootstrap compiler leak freedom, zero allocations per
+request, persistent-reactor behavior or throughput.
+
 ## WASI socket lifecycles
 
 `TestWasiSocketErrorTableParity` pins all socket error discriminants to the

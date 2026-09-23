@@ -154,7 +154,7 @@ pub function tcp_recv_deadline(fd: i32, max: i32, deadline_ms: i32): Option[u8[]
     // elapsed (timeout); an instant -1 is the interp stub (or EINTR /
     // a poll error), where blocking recv preserves the old behavior.
     var waited_ns: i64 = monotonic_ns() - start_ns;
-    if (waited_ns * 2 >= (wait_ms as i64) * ns_per_ms) {
+    if (waited_ns * 2i64 >= (wait_ms as i64) * ns_per_ms) {
         return None;
     }
     return Some(tcp_recv(fd, max));
@@ -179,7 +179,7 @@ function __read_request(fd: i32, recv_deadline_ms: i32): Option[HttpRequest] {
         // Per-request read deadline (slow-loris guard): the whole
         // request must arrive within `recv_deadline_ms` or the
         // connection is dropped without a response.
-        var remaining_ms: i32 = ((deadline_ns - (monotonic_ns() - read_start_ns)) / 1000000) as i32;
+        var remaining_ms: i32 = ((deadline_ns - (monotonic_ns() - read_start_ns)) / 1000000i64) as i32;
         if (remaining_ms <= 0) {
             return None;
         }

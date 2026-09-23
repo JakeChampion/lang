@@ -459,6 +459,7 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					// cabi_realloc so the host can lower the returned
 					// list<u32> of ready indices into our memory.
 					needs.add("__fern_alloc")
+					needs.add("__free")
 					needs.add("cabi_realloc")
 					needs.add("__fern_wasm_poll")
 				case "__fern_sqrt_f64":
@@ -983,15 +984,12 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 				case "__ptr_width":
 					needs.add("__ptr_width")
 				case "poll":
-					// `poll(fds, timeout_ms)` readiness builtin. On wasm it
-					// forwards to __fern_wasm_poll (wasi:io/poll.poll over the i32
-					// tokens as pollable handles) — so pull in that helper and its
-					// deps (alloc for the 8-byte return area, cabi_realloc so the
-					// host can lower the returned ready-index list into memory).
-					// __fern_wasm_poll's presence adds the wasi:io/poll.poll import,
-					// which makes the composer wire the io/poll instance (classify.go).
+					// Finite waits append an owned timer to a temporary list;
+					// indefinite waits borrow the caller's list directly.
+					// Both use the canonical ready-list helper below.
 					needs.add("poll")
 					needs.add("__fern_alloc")
+					needs.add("__free")
 					needs.add("cabi_realloc")
 					needs.add("__fern_wasm_poll")
 				case "isatty":
@@ -7084,20 +7082,87 @@ func buildPtrWidthBody(_ map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 
-// buildPollStubBody — (fds, timeout_ms) → i32, the wasm `poll` stub: ignores its
-// two params and returns -1 ("no fd ready"). Real wasm readiness is the separate
-// wasi:io/poll pollable path; this keeps poll-referencing modules compilable.
-// buildPollWasmBody — (fds: i32, timeout_ms: i32) → i32, the wasm `poll`
-// builtin. Forwards the fds list-data pointer (param 0) to
-// __fern_wasm_poll, which reads its length at fds-4 and multiplexes the
-// pollable handles through wasi:io/poll.poll, returning the index of the
-// first ready one (or -1). `timeout_ms` (param 1) is ignored for now.
+// buildPollWasmBody appends a timer for nonnegative timeouts, matching the
+// self-host helper. Only the temporary list and timer are owned here; caller
+// pollables remain borrowed. The shared wasm_poll helper reclaims its own
+// return area and ready-index list before returning.
 func buildPollWasmBody(idxs map[string]uint32) []byte {
 	wp := idxs["__fern_wasm_poll"]
 	var body []byte
-	body = inst.InstLocalGet(body, 0) // fds (list data ptr)
-	body = inst.InstCall(body, wp)    // __fern_wasm_poll(fds) → index | -1
-	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+	// Parameters: fds=0, milliseconds=1. Locals: n=2, buf=3, timer=4, idx=5.
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstI32Const(body, 0)
+	body = numeric.InstI32LtS(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstCall(body, wp)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalSet(body, 2)
+	// One word for the length and n+1 words for the pollable handles.
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstI32Const(body, 2)
+	body = numeric.InstI32Add(body)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Mul(body)
+	body = inst.InstCall(body, idxs["__fern_alloc"])
+	body = inst.InstLocalSet(body, 3)
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Add(body)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Mul(body)
+	body = memory.InstMemoryCopy(body)
+	// Widen before multiplying, including at the maximum i32 timeout.
+	body = inst.InstLocalGet(body, 1)
+	body = convert.InstI64ExtendI32S(body)
+	body = inst.InstI64Const(body, 1000000)
+	body = numeric.InstI64Mul(body)
+	body = inst.InstCall(body, idxs["wasi_clocks_subscribe_duration"])
+	body = inst.InstLocalSet(body, 4)
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Add(body)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Mul(body)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalGet(body, 4)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Add(body)
+	body = inst.InstCall(body, wp)
+	body = inst.InstLocalSet(body, 5)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstCall(body, idxs["wasi_io_pollable_drop"])
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstI32Const(body, 2)
+	body = numeric.InstI32Add(body)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Mul(body)
+	body = inst.InstCall(body, idxs["__free"])
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstLocalGet(body, 2)
+	body = numeric.InstI32GeU(body)
+	body = inst.InstIfStart(body, encode.ValtypeI32)
+	body = inst.InstI32Const(body, -1)
+	body = inst.InstElse(body)
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstEnd(body)
+	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 4, encode.ValtypeI32), body)
 }
 
 // buildAliasAllocBody — (size) → i32. Calls __fern_alloc; lets
