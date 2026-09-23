@@ -60,14 +60,14 @@ function prefix(xs: i32[], n: i32): i32[] {
     return out;
 }
 
-function find_loops(f: ssa.SFunc, reachable: boolean[], dom: boolean[]): Loops {
+function find_loops(f: ssa.SFunc, reachable: boolean[], dom: ssadeps.Dom): Loops {
     var n: i32 = f.blocks.len();
     var l: Loops = Loops { n: n, header: flags(n, false), members: flags(n * n, false) };
     var u: i32 = 0;
     while (u < n) {
         if (reachable[u]) {
             for h in successors(f, u) {
-                if (dom[u * n + h]) {
+                if (ssadeps.dom_holds(dom, u, h)) {
                     l = Loops { ...l, header: l.header.with(h, true), members: l.members.with(h * n + h, true) };
                     l = absorb(f, l, h, u, reachable);
                 }

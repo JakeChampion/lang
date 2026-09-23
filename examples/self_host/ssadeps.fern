@@ -31,110 +31,174 @@ function contains(values: i32[], value: i32): boolean {
     return false;
 }
 
+// position_of maps a block id to its position in f.blocks, -1 for an id no
+// block carries: one table, so no walk below searches the block list.
+function position_of(f: ssa.SFunc): i32[] {
+    var top: i32 = 0;
+    for b in f.blocks { if (b.id > top) { top = b.id; } }
+    var out: i32[] = indices(top + 1);
+    var i: i32 = 0;
+    while (i < f.blocks.len()) { out = out.with(f.blocks[i].id, i); i = i + 1; }
+    return out;
+}
+
+// successor_positions is block bi's successors by position, in branch order.
+function successor_positions(f: ssa.SFunc, at: i32[], bi: i32): i32[] {
+    var term: ssa.STerm = f.blocks[bi].term;
+    if (term.kind_tag == 2) { return [at[term.target]]; }
+    if (term.kind_tag == 3) { return [at[term.t], at[term.f]]; }
+    return [];
+}
+
 // Requires a structurally verified graph with an existing entry block.
 pub function reachable_blocks(f: ssa.SFunc): boolean[] {
+    var at: i32[] = position_of(f);
     var reachable: boolean[] = flags(f.blocks.len(), false);
-    reachable = reachable.with(block_index(f, f.entry), true);
-    var changed: boolean = true;
-    while (changed) {
-        changed = false;
-        var bi: i32 = 0;
-        while (bi < f.blocks.len()) {
-            if (reachable[bi]) {
-                var term: ssa.STerm = f.blocks[bi].term;
-                var si: i32 = 0;
-                while (si < 2) {
-                    var target: i32 = 0 - 1;
-                    if (term.kind_tag == 2 && si == 0) { target = term.target; }
-                    if (term.kind_tag == 3) {
-                        target = term.t;
-                        if (si == 1) { target = term.f; }
-                    }
-                    if (target >= 0) {
-                        var sb: i32 = block_index(f, target);
-                        if (!reachable[sb]) { reachable = reachable.with(sb, true); changed = true; }
-                    }
-                    si = si + 1;
-                }
-            }
-            bi = bi + 1;
+    var entry: i32 = at[f.entry];
+    reachable = reachable.with(entry, true);
+    var work: i32[] = [entry];
+    var depth: i32 = 1;
+    while (depth > 0) {
+        depth = depth - 1;
+        var bi: i32 = work[depth];
+        for sb in successor_positions(f, at, bi) {
+            if (!reachable[sb]) { reachable = reachable.with(sb, true); work = push_at(work, depth, sb); depth = depth + 1; }
         }
     }
     return reachable;
 }
 
-// Each block's predecessors by position, resolved once: the solver below
-// reads them once per block pair per round.
-function pred_positions(f: ssa.SFunc): i32[][] {
-    var out: i32[][] = [];
-    for b in f.blocks {
-        var ps: i32[] = [];
-        for pred in b.preds { ps = ps.append(block_index(f, pred)); }
-        out = out.append(ps);
-    }
-    return out;
+// Dom is the dominator tree of a function's reachable blocks, by position:
+// `pre` and `post` number each block in a walk of the tree, so a block
+// dominates another exactly when its interval contains the other's. -1 marks
+// an unreachable block, which dominates nothing and is dominated by nothing.
+pub struct Dom { pre: i32[], post: i32[] }
+
+// dom_holds reports whether position di dominates position bi.
+pub function dom_holds(d: Dom, bi: i32, di: i32): boolean {
+    if (d.pre[bi] < 0 || d.pre[di] < 0) { return false; }
+    return d.pre[di] <= d.pre[bi] && d.post[bi] <= d.post[di];
 }
 
-function dominators(f: ssa.SFunc, reachable: boolean[]): boolean[] {
+// dominates computes the tree with Cooper, Harvey and Kennedy's iteration over
+// reverse postorder: each block's immediate dominator is the intersection of
+// its processed predecessors' dominator paths, found by walking the two up
+// by postorder number. It settles in a few rounds on a reducible graph, where
+// the n-by-n dataflow it replaces cost a pass over every block pair per round.
+pub function dominates(f: ssa.SFunc): Dom {
     var n: i32 = f.blocks.len();
-    var dom: boolean[] = flags(n * n, false);
-    var entry: i32 = block_index(f, f.entry);
-    var preds: i32[][] = pred_positions(f);
-    var bi: i32 = 0;
-    while (bi < n) {
-        var di: i32 = 0;
-        while (di < n) {
-            if (reachable[bi] && ((bi == entry && di == entry) || (bi != entry && reachable[di]))) {
-                dom = dom.with(bi * n + di, true);
-            }
-            di = di + 1;
+    var at: i32[] = position_of(f);
+    var entry: i32 = at[f.entry];
+    // Postorder by an explicit stack: a block is numbered once all its
+    // successors are.
+    var po: i32[] = indices(n);
+    var order: i32[] = [];
+    var seen: boolean[] = flags(n, false);
+    var stack: i32[] = [entry];
+    var sp: i32 = 1;
+    var next_succ: i32[] = indices(n);
+    seen = seen.with(entry, true);
+    while (sp > 0) {
+        var bi: i32 = stack[sp - 1];
+        var succ: i32[] = successor_positions(f, at, bi);
+        var k: i32 = next_succ[bi] + 1;
+        while (k < succ.len() && seen[succ[k]]) { k = k + 1; }
+        next_succ = next_succ.with(bi, k);
+        if (k < succ.len()) {
+            seen = seen.with(succ[k], true);
+            stack = push_at(stack, sp, succ[k]);
+            sp = sp + 1;
+        } else {
+            po = po.with(bi, order.len());
+            order = order.append(bi);
+            sp = sp - 1;
         }
-        bi = bi + 1;
     }
+    var idom: i32[] = indices(n);
+    idom = idom.with(entry, entry);
     var changed: boolean = true;
     while (changed) {
         changed = false;
-        bi = 0;
-        while (bi < n) {
-            if (reachable[bi] && bi != entry) {
-                var di: i32 = 0;
-                while (di < n) {
-                    var present: boolean = reachable[di];
-                    for pi in preds[bi] {
-                        if (reachable[pi] && !dom[pi * n + di]) { present = false; }
-                    }
-                    if (di == bi) { present = true; }
-                    if (dom[bi * n + di] != present) {
-                        dom = dom.with(bi * n + di, present);
-                        changed = true;
-                    }
-                    di = di + 1;
-                }
+        var r: i32 = order.len() - 1;
+        while (r >= 0) {
+            var bi: i32 = order[r];
+            r = r - 1;
+            if (bi == entry) { continue; }
+            var nd: i32 = 0 - 1;
+            for pid in f.blocks[bi].preds {
+                var p: i32 = at[pid];
+                if (p < 0 || idom[p] < 0) { continue; }
+                if (nd < 0) { nd = p; } else { nd = intersect(idom, po, p, nd); }
             }
-            bi = bi + 1;
+            if (nd >= 0 && idom[bi] != nd) { idom = idom.with(bi, nd); changed = true; }
         }
     }
-    return dom;
+    // Number the tree: children lists, then an explicit-stack walk.
+    var first_child: i32[] = indices(n);
+    var next_sibling: i32[] = indices(n);
+    var bi: i32 = 0;
+    while (bi < n) {
+        if (bi != entry && idom[bi] >= 0) {
+            next_sibling = next_sibling.with(bi, first_child[idom[bi]]);
+            first_child = first_child.with(idom[bi], bi);
+        }
+        bi = bi + 1;
+    }
+    var pre: i32[] = indices(n);
+    var post: i32[] = indices(n);
+    var clock: i32 = 0;
+    var walk: i32[] = [entry];
+    var wp: i32 = 1;
+    var cursor: i32[] = indices(n);
+    pre = pre.with(entry, clock);
+    clock = clock + 1;
+    while (wp > 0) {
+        var top: i32 = walk[wp - 1];
+        var c: i32 = first_child[top];
+        if (cursor[top] >= 0) { c = next_sibling[cursor[top]]; }
+        if (c >= 0) {
+            cursor = cursor.with(top, c);
+            pre = pre.with(c, clock);
+            clock = clock + 1;
+            walk = push_at(walk, wp, c);
+            wp = wp + 1;
+        } else {
+            post = post.with(top, clock);
+            clock = clock + 1;
+            wp = wp - 1;
+        }
+    }
+    return Dom { pre: pre, post: post };
 }
 
-// dominates[bi * n + di] holds when block position di dominates position bi.
-// Unreachable positions dominate nothing and are dominated by nothing.
-pub function dominates(f: ssa.SFunc): boolean[] {
-    return dominators(f, reachable_blocks(f));
+// push_at writes v at stack depth d, growing the array only past its length.
+function push_at(stack: i32[], d: i32, v: i32): i32[] {
+    if (d < stack.len()) { return stack.with(d, v); }
+    return stack.append(v);
 }
 
-function available(value: i32, block: i32, pos: i32, nblocks: i32, defs: i32[], positions: i32[], dom: boolean[]): boolean {
+function intersect(idom: i32[], po: i32[], a: i32, b: i32): i32 {
+    var x: i32 = a;
+    var y: i32 = b;
+    while (x != y) {
+        while (po[x] < po[y]) { x = idom[x]; }
+        while (po[y] < po[x]) { y = idom[y]; }
+    }
+    return x;
+}
+
+function available(value: i32, block: i32, pos: i32, defs: i32[], positions: i32[], dom: Dom): boolean {
     var definition: i32 = defs[value];
     if (definition < 0) { return false; }
     if (definition == block) { return positions[value] < pos; }
-    return dom[block * nblocks + definition];
+    return dom_holds(dom, block, definition);
 }
 
-function use_error(value: i32, block: i32, pos: i32, f: ssa.SFunc, dependencies: i32[][], defs: i32[], positions: i32[], dom: boolean[]): string {
+function use_error(value: i32, block: i32, pos: i32, f: ssa.SFunc, dependencies: i32[][], defs: i32[], positions: i32[], dom: Dom): string {
     if (value < 0) { return ""; }
-    if (!available(value, block, pos, f.blocks.len(), defs, positions, dom)) { return "value unavailable at use"; }
+    if (!available(value, block, pos, defs, positions, dom)) { return "value unavailable at use"; }
     for dep in dependencies[value] {
-        if (!available(dep, block, pos, f.blocks.len(), defs, positions, dom)) { return "dependency unavailable at use"; }
+        if (!available(dep, block, pos, defs, positions, dom)) { return "dependency unavailable at use"; }
     }
     return "";
 }
@@ -202,7 +266,7 @@ pub function verify(f: ssa.SFunc, dependencies: i32[][]): string {
         value = value + 1;
     }
     var reachable: boolean[] = reachable_blocks(f);
-    var dom: boolean[] = dominators(f, reachable);
+    var dom: Dom = dominates(f);
     bi = 0;
     while (bi < f.blocks.len()) {
         var b: ssa.SBlock = f.blocks[bi];
