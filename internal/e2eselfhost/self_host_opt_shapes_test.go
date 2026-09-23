@@ -101,6 +101,19 @@ function main(): i32 {
 `,
 		want:   map[string][]string{"x86-64-linux": {`cmpl \$0, -8\(%\w+\)\n\s+js `, `addl \$1, -8\(%\w+\)`}},
 		forbid: map[string][]string{"x86-64-linux": {`addl \$1, %ecx`, `movl -8\(%\w+\), %ecx`}}},
+	// A runtime call's arguments move straight into %rdi and %rsi, not
+	// through %r11 and %rcx first.
+	{name: "rt_call_args_direct", fn: "fill", exit: 37, src: `
+@noinline function fill(n: i32): i32[] {
+    var xs: i32[] = [];
+    var i: i32 = 0;
+    while (i < n) { xs = xs.append(i * 3); i = i + 1; }
+    return xs;
+}
+function main(): i32 { var xs: i32[] = fill(10); return xs[9] + xs.len(); }
+`,
+		want:   map[string][]string{"x86-64-linux": {`call __fern_arr_push`}},
+		forbid: map[string][]string{"x86-64-linux": {`movq %r11, %rdi`, `movq %rcx, %rsi`}}},
 	// A branch on a boolean tests the register the boolean lives in.
 	{name: "value_test_in_place", fn: "pick", exit: 7, src: `
 @noinline function pick(b: boolean, x: i32): i32 { if (b) { return x; } return 0; }

@@ -6170,11 +6170,11 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmco
     else if (ins.str == "map_hash_seed") { s = s.need("random_i32").need("map_hash_seed"); sym = "__fern_map_hash_seed"; }
     else if (util.str_has_prefix(ins.str, "arr_push_owned")) { s = s.mark_arr_push(); s = s.need("arr_push_owned"); sym = "__fern_arr_push_owned"; }
     else if (util.str_has_prefix(ins.str, "arr_push")) { s = s.mark_arr_push(); sym = "__fern_arr_push"; }
-    // %rdi and %rsi are allocatable here, so an argument whose home is the
-    // other one's register is read before either is written.
-    if (ins.args.len() > 0) { s = ssa_load(reg_of, ins.args[0], "%r11", s); }
-    if (ins.args.len() > 1) { s = ssa_load(reg_of, ins.args[1], "%rcx", s); s = s.write("    movq %rcx, %rsi\n"); }
-    if (ins.args.len() > 0) { s = s.write("    movq %r11, %rdi\n"); }
+    var srcs: i32[] = [];
+    var dsts: i32[] = [];
+    var a: i32 = 0;
+    while (a < ins.args.len() && a < 2) { srcs = srcs.append(reg_of[ins.args[a]]); dsts = dsts.append(ssa_rt_arg_reg(a)); a = a + 1; }
+    s = ssa_parallel_moves(srcs, dsts, s);
     // raw_alloc asks for 24 bytes more and hands back the pointer past them,
     // the string box header a buffer may later grow (#7351).
     if (ins.str == "raw_alloc") { s = s.write("    addq $24, %rdi\n"); }
@@ -6182,6 +6182,9 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmco
     if (ins.str == "raw_alloc") { s = s.write("    addq $24, %rax\n"); }
     return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
 }
+
+// ssa_rt_arg_reg is the allocator index of argument `a`'s register.
+function ssa_rt_arg_reg(a: i32): i32 { if (a == 0) { return 2; } return 1; }
 
 // ssa_view_slots gives each frame-resident string view (kind 51, imm 1) the
 // index of its three frame words, in instruction order, and -1 to every other
@@ -6689,11 +6692,14 @@ function ssa_arg_prefs(f: ssa.SFunc, s: asmcore.EmitState): i32[] {
     while (p < ssa_reg_params(f)) { pref = pref.with(p, p); p = p + 1; }
     for blk in f.blocks {
         for ins in blk.insts {
-            if (!ssa_reg_call(ins, s)) { continue; }
+            var rt: boolean = ins.kind_tag == 50;
+            if (!rt && !ssa_reg_call(ins, s)) { continue; }
             var a: i32 = 0;
-            while (a < ins.args.len()) {
+            while (a < ins.args.len() && (!rt || a < 2)) {
                 var v: i32 = ins.args[a];
-                if (v >= 0 && v < pref.len() && pref[v] < 0) { pref = pref.with(v, a); }
+                var r: i32 = a;
+                if (rt) { r = ssa_rt_arg_reg(a); }
+                if (v >= 0 && v < pref.len() && pref[v] < 0) { pref = pref.with(v, r); }
                 a = a + 1;
             }
         }
