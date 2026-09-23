@@ -69,6 +69,15 @@ func TestClassifyCoreAcceptsKnownImports(t *testing.T) {
 	}
 }
 
+func TestClassifyCoreAcceptsErrorDropAlone(t *testing.T) {
+	req, unsupported := component.ClassifyCore(coreModuleWithImports([][2]string{
+		{"wasi:io/error@0.2.0", "[resource-drop]error"},
+	}))
+	if len(unsupported) != 0 || !req.DropError || component.RequestEmpty(req) {
+		t.Fatalf("owned error drop must compose on its own: request=%+v unsupported=%v", req, unsupported)
+	}
+}
+
 // get-directories on its own is an incomplete chain — nothing would use
 // the descriptor it resolves.
 func TestClassifyCoreRejectsIncompleteFilesystemChain(t *testing.T) {

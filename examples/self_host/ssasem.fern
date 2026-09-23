@@ -356,10 +356,15 @@ pub function keyed_map_key_name(k: typeinfo.Type): string {
 
 // A column whose snapshot is a fresh array owning one unit of every element:
 // a string column and a column of boxes are copied with a per-element retain,
-// and an i32 column holds no references. Every other element — a wide
-// scalar, a function value, a map — would come back aliasing the map's own.
+// and a column of narrow scalars — `i32`, `u8`, `u32`, `bool`, each an
+// i32-shaped cell — holds no references. Every other element — a wide scalar,
+// a function value, a map — would come back aliasing the map's own.
 pub function retained_column(elem: typeinfo.Type): boolean {
-    return is_string(elem) || is_i32(elem) || keyed_map_key(elem) || counted_map_value(elem);
+    return is_string(elem) || narrow_column(elem) || keyed_map_key(elem) || counted_map_value(elem);
+}
+
+function narrow_column(t: typeinfo.Type): boolean {
+    return is_i32(t) || is_u8(t) || is_u32(t) || is_bool(t);
 }
 
 // A value column the map releases by freeing the buffer alone.
@@ -478,7 +483,7 @@ function copy_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
 // — the form the backends splice straight into an immediate of its own width,
 // and the one the AST lowering already uses for the same literal.
 function integer_constant_error(ins: ssa.SInst, result: typeinfo.Type): string {
-    if (!is_integer(result)) { return "integer constant type"; }
+    if (!is_integer(result) && !is_char(result)) { return "integer constant type"; }
     if (text_constant(result)) {
         if (ins.str == "" || ins.imm != 0) { return "constant needs its literal text"; }
         return "";

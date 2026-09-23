@@ -2048,3 +2048,32 @@ wrong. The tuple slice above is not the first time a leaf that read as a
 missing analysis turned out to be one construction site choosing the narrower
 of two ops that both already existed — the array element's own width and
 `op_call_indirect_sig` are the same shape.
+
+### The conformance corpus's leaves, 2026-09-22 (#9550)
+
+The corpus census — the first `FERN_SEM_IR:` line per case over
+`conformance/cases/*/`, x86-64 — read **526 of 599 cases producing whole**
+after this round, from 512. Of the 73 that do not, 70 are diagnostic
+fixtures with an `expected.error` that never reach the lowering, so three
+real cases are left. Seven leaves closed here, each a small rule the
+semantic path had never stated rather than an analysis it lacked, and each
+is a `TestSelfHostSemanticProduction` row; two more closed on main the same
+day (`lambda_tuple_return` and `defer_block_form`, the rc-log's `f` and `g`
+entries):
+
+| case | first refusal | what was missing |
+|---|---|---|
+| `use_callback_bind`, `arrow_lambda_block_body` | `call target has no semantic contract: main$wrap0` | the `use` callback's parameter had no type; `checker.pretype_module` stamps it from the callee's callback slot ahead of both checking and annotation (`docs/SELFHOST-CHECKER-PORT.md`, same date) |
+| `map_narrow_int_keys` | `aliased column element: u8` | `ssasem.retained_column` admitted only an `i32` scalar column; a `u8`, `u32` or `boolean` column bit-copies the same i32-shaped cells |
+| `trailing_commas` | `call arity` | explicit type arguments at a call are erased by the parser and only counted; the count was refused on all three call paths, where the inference from arguments and destination already decides |
+| `labeled_loops` | `loop exit names no enclosing loop` | `parser.desugar_ranges_one` built the counting while without the source label |
+| `char_byte_literals` | `unsupported literal width` | `literal_type` knew no `char` suffix, and the verifier's integer-constant rule excluded a char |
+| `op_overload_nested` | `operator contract: V + V` | only the comparisons dispatched through a nominal operand's method; the five arithmetic operators and unary minus now take `add` … `rem`, `neg` the same way |
+
+The three left are design boundaries this file already names rather than
+leaves of the same kind: a `str` result escaping its source
+(`alloc_flat_method_identity_return`), a view lent past its frame
+(`string_slice_option`), and a `dyn Trait` call (`dyn_trait_dispatch`). A
+fn-typed local holding a function whose parameter is itself callable
+(`var t = taker; t(lambda)`) refuses as `function signature slot` by the same
+boundary; no corpus case holds it.

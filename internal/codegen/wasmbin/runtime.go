@@ -839,7 +839,8 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__build_io_error")
 					needs.add("__fern_temp_dir")
 				case "__fern_tcp_listen":
-					// (port) → i32 — heap pointer to a 12-byte
+					needs.add("__free")
+					// (port) → i32 — heap pointer to a 16-byte
 					// listener struct (sock, 0, 0), or -errno
 					// on failure. Pulls in the __network_handle
 					// accessor that caches wasi:sockets/instance-
@@ -849,19 +850,22 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__network_handle")
 					needs.add("__fern_tcp_listen")
 				case "__fern_tcp_accept":
+					needs.add("__free")
 					// (listener) → i32 — heap pointer to a
-					// 12-byte connection struct (sock, instream,
+					// 16-byte connection struct (sock, instream,
 					// outstream), or -errno on failure.
 					needs.add("__fern_alloc")
 					needs.add("__fern_tcp_accept")
 				case "__fern_tcp_connect":
+					needs.add("__free")
 					// (host_be, port) → i32 — outbound client; same
-					// 12-byte connection struct as accept. Needs the
+					// 16-byte connection struct as accept. Needs the
 					// network accessor (like tcp_listen).
 					needs.add("__fern_alloc")
 					needs.add("__network_handle")
 					needs.add("__fern_tcp_connect")
 				case "__fern_tcp_local_port":
+					needs.add("__free")
 					// (sock) → i32 — the bound port, or -errno.
 					// The retptr scratch comes from plain alloc.
 					needs.add("__fern_alloc")
@@ -871,6 +875,8 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					// pollable for reactor fan-out.
 					needs.add("__fern_tcp_pollable")
 				case "__fern_tcp_recv":
+					needs.add("cabi_realloc")
+					needs.add("__free")
 					// (conn, max) → i32 — u8[] box with the bytes
 					// read (D9, #5714). Empty box on stream-error /
 					// EOF / max <= 0. The result carries the
@@ -880,6 +886,7 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__alloc_u8")
 					needs.add("__fern_tcp_recv")
 				case "__fern_tcp_send":
+					needs.add("__free")
 					// (conn, data) → i32 — bytes sent, -1 on
 					// failure. SSO-normalizes the input string
 					// so inline-form data flows through the
@@ -889,12 +896,14 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_str_byte")
 					needs.add("__fern_tcp_send")
 				case "__fern_tcp_close":
+					needs.add("__free")
 					// (conn) → i32 (always 0). Drops the
-					// streams (if non-zero) before the parent
+					// streams (if present) before the parent
 					// tcp-socket to satisfy the canonical-ABI
 					// resource-has-children rule.
 					needs.add("__fern_tcp_close")
 				case "__fern_udp_send":
+					needs.add("__free")
 					// (host, port, data) → i32 — one-shot UDP
 					// datagram (create → bind → connect → send →
 					// drop). Parses the IPv4 host literal and
@@ -1183,8 +1192,13 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 // unbreakable rather than merely written down. Every edge here is
 // read off the callee lookup at the top of the caller's build*Body.
 var unconditionalHelperCalls = map[string][]string{
-	"__fern_read_file": {"__fern_utf8_valid"},
-	"__fern_str_copy":  {"__fern_alloc_rc1"},
+	"__fern_tcp_listen":     {"__fern_wasi_socket_errno"},
+	"__fern_tcp_accept":     {"__fern_wasi_socket_errno"},
+	"__fern_tcp_connect":    {"__fern_wasi_socket_errno"},
+	"__fern_tcp_local_port": {"__fern_wasi_socket_errno"},
+	"__fern_udp_send":       {"__fern_wasi_socket_errno"},
+	"__fern_read_file":      {"__fern_utf8_valid"},
+	"__fern_str_copy":       {"__fern_alloc_rc1"},
 	// The IoError box keeps the static-sentinel header; its Other
 	// variant's message string is an rc1 block.
 	"__build_io_error": {"__fern_alloc_rc1", "__fern_alloc_box"},
@@ -2699,7 +2713,7 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		body:    buildNetworkHandleBody,
 	},
 	"__fern_tcp_listen": {
-		// (port: i32) → i32 — heap pointer to a 12-byte
+		// (port: i32) → i32 — heap pointer to a 16-byte
 		// listener struct (tcp-socket, 0, 0) on success;
 		// -errno on failure. See wasi_tcp.go.
 		params:  []byte{encode.ValtypeI32},
@@ -2707,7 +2721,7 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		body:    buildTcpListenBody,
 	},
 	"__fern_tcp_accept": {
-		// (listener: i32) → i32 — heap pointer to a 12-byte
+		// (listener: i32) → i32 — heap pointer to a 16-byte
 		// connection struct (tcp-socket, input-stream,
 		// output-stream); -errno on failure.
 		params:  []byte{encode.ValtypeI32},
@@ -2716,7 +2730,7 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 	},
 	"__fern_tcp_connect": {
 		// (host_be: i32, port: i32) → i32 — heap pointer to a
-		// 12-byte connection struct (tcp-socket, input-stream,
+		// 16-byte connection struct (tcp-socket, input-stream,
 		// output-stream), the same shape tcp_accept yields, or
 		// -errno on failure. The outbound client. See wasi_tcp.go.
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},

@@ -1,0 +1,51 @@
+import "core/map";
+// A `boolean` map VALUE column read back through values(). The other end of
+// map_u8_column's axis, and the less obvious one: a boolean is not
+// pointer-shaped, but its ARRAY ELEMENT strides a pointer width on the
+// natives — ast.ElemSizeBytesFor has no BoolType case, so it takes the
+// pointer default. The column was written at a fixed 4, so four entries were
+// laid where the reader looks for two and `values()[1]` returned the THIRD
+// entry's value (#10000).
+//
+// It has to be read by INDEX. A `for v in column` loop walks at the stride
+// the column was written at, so it agreed with the interpreter on the broken
+// compiler — the first probe for this ran that way and reported the column
+// clean. The loop below is kept as the other half, since a fix that made
+// indexing right by breaking iteration would pass an index-only case.
+//
+// The KEY column is map_bool_key's. It lived outside the corpus for a while,
+// because a boolean-keyed program crashed the self-host (#10043) and any case
+// asserting one pinned that bug rather than this one; that is fixed, so the
+// key column is a case like any other.
+//
+// wasm is unaffected by the stride itself: a wasm32 boolean element strides 4,
+// which is what the runtime already wrote.
+function main(): i32 {
+    var vm: Map[i32, boolean] = map_new(2);
+    vm = vm.insert(0, true);
+    vm = vm.insert(1, false);
+    vm = vm.insert(2, true);
+    vm = vm.insert(3, false);
+    var vs: boolean[] = vm.values();
+    if (vs.len() != 4) { return 1; }
+    if (!vs[0]) { return 2; }
+    if (vs[1]) { return 3; }
+    if (!vs[2]) { return 4; }
+    if (vs[3]) { return 5; }
+
+    var vtrue: i32 = 0;
+    for v in vs { if (v) { vtrue = vtrue + 1; } }
+    if (vtrue != 2) { return 6; }
+
+    // Grown past the initial capacity, so the rehash moves the column before
+    // it is snapshotted, and read at an index past the first two.
+    var big: Map[i32, boolean] = map_new(2);
+    var i: i32 = 0;
+    while (i < 9) { big = big.insert(i, (i % 3) == 0); i = i + 1; }
+    var bs: boolean[] = big.values();
+    if (bs.len() != 9) { return 7; }
+    if (!bs[6]) { return 8; }
+    if (bs[7]) { return 9; }
+
+    return 42;
+}

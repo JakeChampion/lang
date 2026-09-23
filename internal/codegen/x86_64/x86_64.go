@@ -2097,6 +2097,7 @@ func (g *generator) recordUse(target string) {
 		// helper allocates a scratch pollfd buffer.
 		g.usesPoll = true
 		g.usesAlloc = true
+		g.usesFree = true
 	case "timer_fd":
 		// timer_fd(ms) — a timerfd readable after `ms`.
 		g.usesTimerFd = true
@@ -14299,7 +14300,7 @@ func (g *generator) emitRandomBytesRuntime() {
 // requests POLLIN on every fd, calls poll(2), and returns the INDEX of
 // the first fd that became readable, or -1 on timeout / no readiness.
 // The scheduler calls it repeatedly to drain ready fds. The pollfd
-// scratch is bump-allocated (reclaimed with the per-request arena).
+// scratch is returned to the allocator before every return.
 func (g *generator) emitPollRuntime() {
 	const pollin = 1 // POLLIN
 	g.line("")
@@ -14308,11 +14309,13 @@ func (g *generator) emitPollRuntime() {
 	g.label("__fern_poll")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
-	g.emit("push rbx") // nfds
-	g.emit("push r12") // fds data ptr
-	g.emit("push r13") // pollfd buffer
-	g.emit("push r14") // timeout_ms
-	g.emit("push r15") // loop index
+	g.emit("push rbx")       // nfds
+	g.emit("push r12")       // fds data ptr
+	g.emit("push r13")       // pollfd buffer
+	g.emit("push r14")       // timeout_ms
+	g.emit("push r15")       // loop index
+	g.emit("sub rsp, 8")     // keep calls 16-byte aligned
+	g.emit("xor r13d, r13d") // no scratch on the empty-set path
 	// rdi = fds data ptr, rsi = timeout_ms.
 	g.emit("mov r12, rdi")
 	g.emit("mov r14, rsi")
@@ -14358,6 +14361,16 @@ func (g *generator) emitPollRuntime() {
 	g.label(".Lpoll_none")
 	g.emit("mov rax, -1")
 	g.label(".Lpoll_ret")
+	g.emit("mov r14, rax") // result survives the free call
+	g.emit("test r13, r13")
+	g.emit("jz .Lpoll_reclaimed")
+	g.emit("mov rdi, r13")
+	g.emit("mov rsi, rbx")
+	g.emit("shl rsi, 3")
+	g.emit("call __fern_free")
+	g.label(".Lpoll_reclaimed")
+	g.emit("mov rax, r14")
+	g.emit("add rsp, 8")
 	g.emit("pop r15")
 	g.emit("pop r14")
 	g.emit("pop r13")

@@ -29,10 +29,9 @@ import (
 //     result<tuple<tcp-socket, input-stream, output-stream>, error-code> — laid
 //     out disc@+0, 3 pad, then the three handles at +4/+8/+12, hence a 16-byte
 //     retptr where connect's tuple of two needed only 12.
-//   - a LISTENER struct leaves its stream slots zero (it has no streams until it
-//     accepts). tcp_close already guards each drop on a non-zero handle for
-//     exactly this case, since passing 0 to a resource-drop import traps
-//     host-side — so the same tcp_close serves listeners and connections.
+//   - a listener owns no streams. Its separate presence word tells tcp_close
+//     to skip the stream drops. Accepted connections set that word, including
+//     when their valid stream handles are zero.
 func TestSelfHostWasmIRTcpServer(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {

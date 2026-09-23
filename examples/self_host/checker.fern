@@ -2437,20 +2437,45 @@ function (s: Scope) has_struct(name: string): boolean {
   return false;
 }
 
+// lookup_struct answers for the STRUCT namespace: the plain struct named
+// `name`, or, when only enum variants carry the name, the first of those. The
+// table is keyed by the bare name and a plain struct may share one with a
+// variant, so a literal or a field read that took whichever registered first
+// resolved to the variant when the enum was declared above the struct
+// (#9968). A pattern or a constructor call wants the other namespace and asks
+// lookup_variant or lookup_owned_struct.
 function (s: Scope) lookup_struct(name: string): StructSig {
+  var first: i32 = 0 - 1;
   var i: i32 = s.structs.head[sig_name_bucket(name)];
   while (i >= 0) {
     if (s.structs.structs[i].name == name) {
-      return s.structs.structs[i];
+      if (s.structs.structs[i].enum_owner.len() == 0) { return s.structs.structs[i]; }
+      if (first < 0) { first = i; }
     }
     i = s.structs.next[i];
   }
+  if (first >= 0) { return s.structs.structs[first]; }
   // Sentinel: empty name signals "no such struct".
   var empty_n: string[] = [];
   var empty_t: typeinfo.Type[] = [];
   var empty_tp: string[] = [];
   var empty_ftn: string[] = [];
   return StructSig { name: "", field_names: empty_n, field_types: empty_t, type_params: empty_tp, field_type_names: empty_ftn, variant_field_names: empty_n, derives: [], enum_owner: "" };
+}
+
+// lookup_variant answers for the VARIANT namespace: the first enum variant
+// named `name`, or, when no enum declares one, the plain struct of that name
+// — a struct-union's member is a declared struct. An unqualified pattern or
+// a constructor call is a variant first, as native reads it.
+function (s: Scope) lookup_variant(name: string): StructSig {
+  var i: i32 = s.structs.head[sig_name_bucket(name)];
+  while (i >= 0) {
+    if (s.structs.structs[i].name == name && s.structs.structs[i].enum_owner.len() > 0) {
+      return s.structs.structs[i];
+    }
+    i = s.structs.next[i];
+  }
+  return s.lookup_struct(name);
 }
 
 // lookup_owned_struct answers the variant struct `name` DECLARED BY enum
@@ -2478,7 +2503,7 @@ function (s: Scope) lookup_owned_struct(name: string, owner: string): StructSig 
 // parser's variant_struct_index does.
 function variant_payload_struct(s: Scope, type_name: string): StructSig {
   if (dot_index(type_name) < 0) {
-    return s.lookup_struct(type_name);
+    return s.lookup_variant(type_name);
   }
   return s.lookup_owned_struct(variant_pattern_name(type_name), variant_pattern_owner(type_name));
 }
@@ -2610,7 +2635,7 @@ function bind_variant_payloads(arm: Scope, look: Scope, pvin0: ast.PatVariant, w
     // rss.variant_field_names empty, and record_fields_cover would answer
     // false — silently skipping the rebind and the E015 native reports for a
     // renamed or positional-variant record pattern.
-    var rss: StructSig = look.lookup_struct(variant_pattern_name(pv.type_name));
+    var rss: StructSig = variant_payload_struct(look, pv.type_name);
     if (parser.record_fields_cover(rss.variant_field_names, pv.field_names)) {
       pv = parser.rebind_record_positional(pv, rss.variant_field_names);
     }
@@ -4472,7 +4497,7 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
           ast.PatWildcard(_) => {},
           ast.PatVariant(pv) => {
             var pvn: string = variant_pattern_name(pv.type_name);
-            var ss: StructSig = s.lookup_struct(pvn);
+            var ss: StructSig = s.lookup_variant(pvn);
             if (ss.name.len() == 0) {
               ok = false;
             } else {
@@ -7301,12 +7326,19 @@ function mx_stmts(stmts: ast.Stmt[], s: Scope, unions: UnionSig[], enums: parser
 // name_in -> util.has_str (SH-020).
 // find_struct_sig returns the struct sig named `name`, or an empty-named
 // sentinel when there's no such struct.
+// find_struct_sig is lookup_struct over the flat list: the plain struct first,
+// a variant only when no plain struct carries the name (#9968).
 function find_struct_sig(structs: StructSig[], name: string): StructSig {
-  for sd in structs {
-    if (sd.name == name) {
-      return sd;
+  var first: i32 = 0 - 1;
+  var k: i32 = 0;
+  while (k < structs.len()) {
+    if (structs[k].name == name) {
+      if (structs[k].enum_owner.len() == 0) { return structs[k]; }
+      if (first < 0) { first = k; }
     }
+    k = k + 1;
   }
+  if (first >= 0) { return structs[first]; }
   var none: string[] = [];
   var nonet: typeinfo.Type[] = [];
   var none_tp: string[] = [];
@@ -7318,22 +7350,25 @@ function find_struct_sig(structs: StructSig[], name: string): StructSig {
 // a match pattern or a qualified constructor writes (`E.Wrap`). Same rule as
 // lookup_owned_struct on the hash table: the qualifier is not part of the key,
 // it names the enum the decl must be owned by, so two enums declaring one
-// variant name each answer for their own decl. A qualifier nothing claims
-// falls back to the name-only match — which is also what an unqualified
-// spelling gets, its owner not being written down.
+// variant name each answer for their own decl. A qualifier nothing claims,
+// and an unqualified spelling, take the first VARIANT of that name, and the
+// plain struct only when no enum declares one (#9968).
 function find_variant_sig(structs: StructSig[], name: string): StructSig {
   var bare: string = variant_pattern_name(name);
   var owner: string = variant_pattern_owner(name);
-  var fallback: StructSig = find_struct_sig(structs, bare);
-  if (fallback.enum_owner == owner) {
-    return fallback;
+  if (owner.len() > 0) {
+    for sd in structs {
+      if (sd.name == bare && sd.enum_owner == owner) {
+        return sd;
+      }
+    }
   }
   for sd in structs {
-    if (sd.name == bare && sd.enum_owner == owner) {
+    if (sd.name == bare && sd.enum_owner.len() > 0) {
       return sd;
     }
   }
-  return fallback;
+  return find_struct_sig(structs, bare);
 }
 
 // slit_diags recurses through an expression and emits E005 for every
@@ -7986,7 +8021,7 @@ function payload_slot_type_name(ss: StructSig, idx: i32): string {
 // that happens to share a variant's name elsewhere is untouched.
 function payloadless_binder_diags(pv: ast.PatVariant, structs: StructSig[], unions: UnionTable, line: i32, col: i32): util.Diag[] {
   var out: util.Diag[] = [];
-  var ss: StructSig = find_struct_sig(structs, pv.type_name);
+  var ss: StructSig = find_variant_sig(structs, pv.type_name);
   if (ss.name.len() == 0) { return out; }
   var slot: i32 = 0;
   while (slot < pv.extra_bindings.len() + 1) {
@@ -15186,11 +15221,12 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
   // because a call that did not resolve was left as written.
   var (filled, fda_diags) = parser.fill_default_args_with_diags(raw_mod);
   // A value block's local is declared from the first arm's syntax alone
-  // (parser.if_expr_rt); re-declare it from the type its arms assign before
-  // anything is typed against it, or a legal `string` / `i64` arm value reads
-  // as a store into an i32 (#8657). Lowering gets the same rewrite through
-  // annotate_module.
-  var revalued: parser.Module = retype_value_blocks(filled);
+  // (parser.if_expr_rt), and a `use` binding from nothing at all; re-declare
+  // both from the types the program spells before anything is typed against
+  // them, or a legal `string` / `i64` arm value reads as a store into an i32
+  // (#8657) and the binding reads as unknown. Lowering gets the same rewrite
+  // through annotate_module.
+  var revalued: parser.Module = pretype_module(filled);
   // The built-in struct declarations (Platform, Stream, HeaderMap, the
   // std/time types, …) are injected into the struct table, not written in any
   // source, so a checker reading `mod.structs` as parsed sees only the
@@ -15683,6 +15719,13 @@ pub function scope_type(s: Scope, name: string): typeinfo.Type {
 // module, or the empty-named sentinel when there is none.
 pub function struct_sig(s: Scope, name: string): StructSig {
   return s.lookup_struct(name);
+}
+
+// variant_owner_of is the enum or union alias that declares a variant named
+// `name`, or "" when none does — the receiver-position question: a bare name
+// both a struct and a variant carry is the variant's value, as native reads it.
+pub function variant_owner_of(s: Scope, name: string): string {
+  return union_of_variant(name, s.unions);
 }
 
 // variant_sig is the declared signature of variant `name` of enum `owner`,
@@ -16711,7 +16754,7 @@ function annotate_expr(e: ast.Expr, s: Scope): ast.Expr {
     },
     ast.ExprCall(c) => {
       var nargs: ast.Expr[] = [];
-      for arg in use_typed_args(c, s) {
+      for arg in c.args {
         nargs = nargs.append(annotate_expr(arg, s));
       }
       nargs = display_rewrite(c, nargs, s);
@@ -16760,51 +16803,6 @@ function annotate_expr(e: ast.Expr, s: Scope): ast.Expr {
     }
   }
   return e;
-}
-
-// `use v <- f(args)` writes its continuation with an untyped parameter that
-// the callee's callback parameter types (the E032 rule). The type is stamped
-// on the lambda before it is annotated, so its body reads a typed binding
-// and the trampoline the lift builds from it declares a typed parameter.
-// A callback parameter of function type has no spelling to stamp, and the
-// binding stays as written.
-function use_typed_args(c: ast.ExprCall, s: Scope): ast.Expr[] {
-  if (c.args.len() == 0) { return c.args; }
-  var last: i32 = c.args.len() - 1;
-  if let ast.ExprLambda(lm) = c.args[last] {
-    if (!lm.use_infer || lm.params.len() == 0 || lm.params[0].type_name.len() > 0) { return c.args; }
-    var bind: string = use_binding_spelling(c.callee, s);
-    if (bind.len() == 0) { return c.args; }
-    var params: ast.ParamDecl[] = [ast.ParamDecl { ...lm.params[0], type_name: bind, is_str: bind == "str" }];
-    var i: i32 = 1;
-    while (i < lm.params.len()) { params = params.append(lm.params[i]); i = i + 1; }
-    return c.args.with(last, ast.ExprLambda { ...lm, params: params });
-  }
-  return c.args;
-}
-
-// The spelling of the first parameter of the callee's trailing callback
-// parameter: from the module signature, else from a function-typed local.
-function use_binding_spelling(callee: ast.Expr, s: Scope): string {
-  var name: string = "";
-  if let ast.ExprIdent(id) = callee { name = id.name; }
-  if (name.len() == 0) { return ""; }
-  var trailing: typeinfo.Type = t_unknown("no callee");
-  var sig: FuncSig = s.lookup_sig(name);
-  if (sig.name.len() > 0) {
-    if (sig.param_types.len() > 0) { trailing = sig.param_types[sig.param_types.len() - 1]; }
-  } else {
-    if let typeinfo.TypeFunc(ft) = s.lookup(name) {
-      if (ft.param_types.len() > 0) { trailing = ft.param_types[ft.param_types.len() - 1]; }
-    }
-  }
-  if let typeinfo.TypeFunc(cb) = trailing {
-    if (cb.param_types.len() == 0) { return ""; }
-    var first: typeinfo.Type = cb.param_types[0];
-    if (is_unknown(first) || spells_function(first)) { return ""; }
-    return typeinfo.spelling(first);
-  }
-  return "";
 }
 
 // Capture contracts are resolved where the lambda is defined, including
@@ -17046,7 +17044,7 @@ pub function annotate_module(mod: parser.Module): parser.Module {
 }
 
 function annotate_module_in(mod: parser.Module, mt: ModuleTables): parser.Module {
-  var rmod: parser.Module = retype_value_blocks_in(mod, mt);
+  var rmod: parser.Module = pretype_module_in(mod, mt);
   var nfuncs: parser.FuncDecl[] = [];
   for func in rmod.funcs {
     nfuncs = nfuncs.append(annotate_func(func, mt));
@@ -17416,7 +17414,7 @@ function vb_retype_dest(e: ast.Expr, s: Scope, dest: string): ast.Expr {
   return e;
 }
 
-// vb_expr rewrites every value block one expression holds. The walk claims
+// pretype_expr rewrites every value block one expression holds. The walk claims
 // two node kinds and descends into everything else:
 //
 //   - a value block: its body is rewritten first, so a block nested inside
@@ -17430,24 +17428,30 @@ function vb_retype_dest(e: ast.Expr, s: Scope, dest: string): ast.Expr {
 //
 // The scope is carried in the accumulator unchanged: the walk never rebinds it, so
 // every sibling reads the same one.
-function vb_expr(e: ast.Expr, s: Scope): ast.Expr {
-  var (ne, ns, nh) = astwalk.map_expr_acc(e, s, vb_at_stmt, vb_at_expr);
+function pretype_expr(e: ast.Expr, s: Scope): ast.Expr {
+  var (ne, ns, nh) = astwalk.map_expr_acc(e, s, pretype_at_stmt, pretype_at_expr);
   return ne;
 }
 
-function vb_at_stmt(st: ast.Stmt, s: Scope): (ast.Stmt, Scope, boolean) {
+function pretype_at_stmt(st: ast.Stmt, s: Scope): (ast.Stmt, Scope, boolean) {
   return (st, s, false);
 }
 
-function vb_at_expr(x: ast.Expr, s: Scope): (ast.Expr, Scope, boolean) {
+function pretype_at_expr(x: ast.Expr, s: Scope): (ast.Expr, Scope, boolean) {
   match (x) {
     ast.ExprCall(c) => {
+      if (use_untyped(c)) {
+        var uc: ast.ExprCall = use_typed(c, s);
+        var nargs: ast.Expr[] = [];
+        for arg in uc.args { nargs = nargs.append(pretype_expr(arg, s)); }
+        return (ast.ExprCall { ...uc, callee: pretype_expr(uc.callee, s), args: nargs }, s, true);
+      }
       if (!parser.is_value_block(c)) {
         return (x, s, false);
       }
       match (c.callee) {
         ast.ExprLambda(lm) => {
-          var inner: ast.Expr = ast.ExprCall { ...c, callee: ast.ExprLambda { ...lm, body: vb_stmts(lm.body, s) } };
+          var inner: ast.Expr = ast.ExprCall { ...c, callee: ast.ExprLambda { ...lm, body: pretype_stmts(lm.body, s) } };
           return (vb_retype(inner, s), s, true);
         },
         _ => {
@@ -17456,7 +17460,7 @@ function vb_at_expr(x: ast.Expr, s: Scope): (ast.Expr, Scope, boolean) {
       }
     },
     ast.ExprLambda(lm) => {
-      return (ast.ExprLambda { ...lm, body: vb_stmts(lm.body, lambda_body_scope(lm, s)) }, s, true);
+      return (ast.ExprLambda { ...lm, body: pretype_stmts(lm.body, lambda_body_scope(lm, s)) }, s, true);
     },
     _ => {
       return (x, s, false);
@@ -17465,32 +17469,32 @@ function vb_at_expr(x: ast.Expr, s: Scope): (ast.Expr, Scope, boolean) {
   return (x, s, false);
 }
 
-function vb_stmt(st: ast.Stmt, s: Scope): ast.Stmt {
+function pretype_stmt(st: ast.Stmt, s: Scope): ast.Stmt {
   match (st) {
     ast.StmtVar(v) => {
-      var init: ast.Expr = vb_expr(v.init, s);
+      var init: ast.Expr = pretype_expr(v.init, s);
       if (v.type_name.len() > 0 && !parser.is_destr_marker(v.type_name)) {
         init = vb_retype_dest(init, s, v.type_name);
       }
       return ast.StmtVar { ...v, init: init };
     },
     ast.StmtReturn(r) => {
-      return ast.StmtReturn { ...r, value: vb_expr(r.value, s) };
+      return ast.StmtReturn { ...r, value: pretype_expr(r.value, s) };
     },
     ast.StmtExpr(x) => {
-      return ast.StmtExpr { ...x, value: vb_expr(x.value, s) };
+      return ast.StmtExpr { ...x, value: pretype_expr(x.value, s) };
     },
     ast.StmtAssign(a) => {
-      return ast.StmtAssign { ...a, value: vb_expr(a.value, s) };
+      return ast.StmtAssign { ...a, value: pretype_expr(a.value, s) };
     },
     ast.StmtIf(f) => {
-      return ast.StmtIf { ...f, cond: vb_expr(f.cond, s), then_body: vb_stmts(f.then_body, s), else_body: vb_stmts(f.else_body, s) };
+      return ast.StmtIf { ...f, cond: pretype_expr(f.cond, s), then_body: pretype_stmts(f.then_body, s), else_body: pretype_stmts(f.else_body, s) };
     },
     ast.StmtWhile(w) => {
-      return ast.StmtWhile { ...w, cond: vb_expr(w.cond, s), body: vb_stmts(w.body, s) };
+      return ast.StmtWhile { ...w, cond: pretype_expr(w.cond, s), body: pretype_stmts(w.body, s) };
     },
     ast.StmtFor(fr) => {
-      return ast.StmtFor { ...fr, iter: vb_expr(fr.iter, s), body: vb_stmts(fr.body, for_body_scope(fr, s)) };
+      return ast.StmtFor { ...fr, iter: pretype_expr(fr.iter, s), body: pretype_stmts(fr.body, for_body_scope(fr, s)) };
     },
     ast.StmtMatch(m) => {
       var narms: ast.MatchArm[] = [];
@@ -17498,14 +17502,14 @@ function vb_stmt(st: ast.Stmt, s: Scope): ast.Stmt {
         var asc: Scope = annotate_arm_scope(arm, s, check_expr(m.scrutinee, s));
         var g: ast.Expr = arm.guard;
         if (arm.has_guard) {
-          g = vb_expr(arm.guard, asc);
+          g = pretype_expr(arm.guard, asc);
         }
-        narms = narms.append(ast.MatchArm { ...arm, body: vb_stmts(arm.body, asc), guard: g });
+        narms = narms.append(ast.MatchArm { ...arm, body: pretype_stmts(arm.body, asc), guard: g });
       }
-      return ast.StmtMatch { ...m, scrutinee: vb_expr(m.scrutinee, s), arms: narms };
+      return ast.StmtMatch { ...m, scrutinee: pretype_expr(m.scrutinee, s), arms: narms };
     },
     ast.StmtDefer(d) => {
-      return ast.StmtDefer { ...d, action: vb_stmt(d.action, s) };
+      return ast.StmtDefer { ...d, action: pretype_stmt(d.action, s) };
     },
     _ => {
       return st;
@@ -17514,24 +17518,25 @@ function vb_stmt(st: ast.Stmt, s: Scope): ast.Stmt {
   return st;
 }
 
-function vb_stmts(stmts: ast.Stmt[], s: Scope): ast.Stmt[] {
+function pretype_stmts(stmts: ast.Stmt[], s: Scope): ast.Stmt[] {
   var out: ast.Stmt[] = [];
   var cur: Scope = s;
   for stmt in stmts {
-    out = out.append(vb_stmt(stmt, cur));
+    out = out.append(pretype_stmt(stmt, cur));
     cur = bind_stmt(stmt, cur);
   }
   return out;
 }
 
-// vb_at_value_local is the pre-scan's per-node contribution: a value block that
-// routes its value through a local.
-function vb_at_value_local(x: ast.Expr, own acc: boolean): boolean {
+// pretype_at is the pre-scan's per-node contribution: a value block that
+// routes its value through a local, or a `use` binding with no annotation.
+function pretype_at(x: ast.Expr, own acc: boolean): boolean {
   if (acc) {
     return true;
   }
   match (x) {
     ast.ExprCall(c) => {
+      if (use_untyped(c)) { return true; }
       if (!parser.is_value_block(c)) {
         return false;
       }
@@ -17544,35 +17549,97 @@ function vb_at_value_local(x: ast.Expr, own acc: boolean): boolean {
   return false;
 }
 
-// vb_holds_local reports whether a body holds a value block with a value local
-// at all. It is the cheap syntactic test that keeps the scoped rewrite (and the
-// module tables it needs) off the modules that have none.
-function vb_holds_local(stmts: ast.Stmt[]): boolean {
+// needs_pretype reports whether a body holds anything pretype_module rewrites.
+// It is the cheap syntactic test that keeps the scoped rewrite (and the module
+// tables it needs) off the modules that have none.
+function needs_pretype(stmts: ast.Stmt[]): boolean {
   var found: boolean = false;
   for stmt in stmts {
-    found = astwalk.fold_stmt_pruned(stmt, found, vb_at_value_local, astwalk.descend_all);
+    found = astwalk.fold_stmt_pruned(stmt, found, pretype_at, astwalk.descend_all);
   }
   return found;
 }
 
-// retype_value_blocks re-declares every value-block local the parser typed from
-// syntax alone with the type its arms assign. Runs ahead of the checker's own
-// diagnostics and of lowering, so both see one declaration.
-pub function retype_value_blocks(mod: parser.Module): parser.Module {
-  if (vb_holds_local(mod.top_stmts)) { return retype_value_blocks_in(mod, build_module_tables(mod)); }
+// use_untyped reports whether `c` is the source call of a `use NAME <- CALL;`
+// whose binding the author left unannotated: the parser appended the callback
+// lambda as CALL's last argument with `use_infer` set and its parameter untyped.
+function use_untyped(c: ast.ExprCall): boolean {
+  if (c.args.len() == 0) { return false; }
+  if let ast.ExprLambda(lm) = c.args[c.args.len() - 1] {
+    return lm.use_infer && lm.params.len() > 0 && lm.params[0].type_name.len() == 0;
+  }
+  return false;
+}
+
+// use_binding_type is the type a `use` binding takes: the first parameter of
+// the callee's trailing callable parameter, the slot the callback is passed
+// into (native inferUseParam). A value binding shadows a module function of
+// the same name (#6302), so it is read first. Unknown when the callee is not a
+// bare name, is not callable, or its trailing parameter is not a callable
+// taking a parameter; E032 reports those, and a type parameter of a generic
+// callee erases to unknown here, so its binding stays unannotated as well.
+function use_binding_type(c: ast.ExprCall, s: Scope): typeinfo.Type {
+  if let ast.ExprIdent(id) = c.callee {
+    var last: typeinfo.Type = t_unknown("use: callee has no signature");
+    if let typeinfo.TypeFunc(ft) = s.lookup(id.name) {
+      if (ft.param_types.len() > 0) { last = ft.param_types[ft.param_types.len() - 1]; }
+    } else {
+      var sig: FuncSig = s.lookup_sig(id.name);
+      if (sig.param_types.len() > 0) { last = sig.param_types[sig.param_types.len() - 1]; }
+    }
+    if let typeinfo.TypeFunc(cb) = last {
+      if (cb.params_known && cb.param_types.len() > 0) { return cb.param_types[0]; }
+    }
+  }
+  return t_unknown("use: callee has no signature");
+}
+
+// use_typed stamps the `use` binding's parameter with its inferred type, so
+// the body reads the binding at that type and a lift of the callback carries a
+// typed declaration. A type with no declaration spelling leaves the call as
+// written.
+function use_typed(c: ast.ExprCall, s: Scope): ast.ExprCall {
+  var t: typeinfo.Type = use_binding_type(c, s);
+  var at: i32 = c.args.len() - 1;
+  if let ast.ExprLambda(lm) = c.args[at] {
+    var p: ast.ParamDecl = decltypes.fn_param_from_type(lm.params[0].name, t);
+    if (p.type_name.len() == 0) {
+      var sp: string = typeinfo.spelling(t);
+      if (sp.len() == 0) { return c; }
+      p = ast.ParamDecl { ...lm.params[0], type_name: sp, is_str: sp == "str" };
+    }
+    var nparams: ast.ParamDecl[] = [p];
+    var i: i32 = 1;
+    while (i < lm.params.len()) { nparams = nparams.append(lm.params[i]); i = i + 1; }
+    var nargs: ast.Expr[] = [];
+    var j: i32 = 0;
+    while (j < at) { nargs = nargs.append(c.args[j]); j = j + 1; }
+    nargs = nargs.append(ast.ExprLambda { ...lm, params: nparams });
+    return ast.ExprCall { ...c, args: nargs };
+  }
+  return c;
+}
+
+// pretype_module re-declares what the parser typed from syntax alone before
+// anything is typed against it: a value-block local gets the type its arms
+// assign, and an unannotated `use` binding the type its callee's callback
+// slot spells. Runs ahead of the checker's own diagnostics and of lowering, so
+// both see one declaration.
+pub function pretype_module(mod: parser.Module): parser.Module {
+  if (needs_pretype(mod.top_stmts)) { return pretype_module_in(mod, build_module_tables(mod)); }
   for fd in mod.funcs {
-    if (vb_holds_local(fd.body)) { return retype_value_blocks_in(mod, build_module_tables(mod)); }
+    if (needs_pretype(fd.body)) { return pretype_module_in(mod, build_module_tables(mod)); }
   }
   return mod;
 }
 
-function retype_value_blocks_in(mod: parser.Module, mt: ModuleTables): parser.Module {
-  // Keep untouched functions and avoid rebuilding bodies without value locals.
-  var top_hit: boolean = vb_holds_local(mod.top_stmts);
+function pretype_module_in(mod: parser.Module, mt: ModuleTables): parser.Module {
+  // Keep untouched functions and avoid rebuilding bodies with nothing to retype.
+  var top_hit: boolean = needs_pretype(mod.top_stmts);
   var hits: boolean[] = [];
   var any: boolean = top_hit;
   for fn in mod.funcs {
-    var hit: boolean = vb_holds_local(fn.body);
+    var hit: boolean = needs_pretype(fn.body);
     hits = hits.append(hit);
     if (hit) {
       any = true;
@@ -17587,7 +17654,7 @@ function retype_value_blocks_in(mod: parser.Module, mt: ModuleTables): parser.Mo
     var func: parser.FuncDecl = mod.funcs[i];
     if (hits[i]) {
       var fs: Scope = build_func_scope(func, mt.sigs, mt.structs, mt.unions, mt.methods, mt.imports);
-      nfuncs = nfuncs.append(parser.FuncDecl { ...func, body: vb_stmts(func.body, fs) });
+      nfuncs = nfuncs.append(parser.FuncDecl { ...func, body: pretype_stmts(func.body, fs) });
     } else {
       nfuncs = nfuncs.append(func);
     }
@@ -17595,7 +17662,7 @@ function retype_value_blocks_in(mod: parser.Module, mt: ModuleTables): parser.Mo
   }
   var ntop: ast.Stmt[] = mod.top_stmts;
   if (top_hit) {
-    ntop = vb_stmts(mod.top_stmts, new_scope_full(mt.sigs, mt.structs, mt.unions, mt.methods, mt.imports));
+    ntop = pretype_stmts(mod.top_stmts, new_scope_full(mt.sigs, mt.structs, mt.unions, mt.methods, mt.imports));
   }
   return parser.Module { ...mod, funcs: nfuncs, top_stmts: ntop };
 }

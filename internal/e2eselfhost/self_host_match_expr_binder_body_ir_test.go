@@ -17,7 +17,7 @@ import (
 // first arm's syntax alone (parser.if_expr_rt), where a bare ident falls to the
 // "i32" default. A `string` / `i64` / `f64` binder was then stored into an i32
 // local: E003 on legal code, and the wrong slot width underneath it.
-// checker.retype_value_blocks re-declares the local from the type the arms
+// checker.pretype_module re-declares the local from the type the arms
 // assign, which is why these run through fern.fern — a driver that skips
 // checker.check_module / annotate_module never sees the rewrite.
 //

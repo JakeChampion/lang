@@ -1119,6 +1119,14 @@ pub function (s: LowerState) note_fail(why: string): LowerState {
     return LowerState { ...s, frame: LowerFrame { ...s.frame, fail_why: why } };
 }
 
+// note_no_column is the bail every map_key_has_no_column site takes. It names
+// the KEY, because the statement the bail unwinds to is a `var` or a method
+// call that says nothing about why the map was refused — and a reader who has
+// only the message cannot otherwise tell this refusal from any other.
+function note_no_column(s: LowerState, kt: string): LowerState {
+    return s.note_fail("a Map keyed by `" + kt + "` has no key column").fail();
+}
+
 // expr_bail_tag names an expression for the strict-IR bail diagnostic. Beyond
 // the node kind it carries the one detail that distinguishes same-kind bails
 // from each other — a binary/unary operator, a callee or field name, a struct
@@ -4722,6 +4730,22 @@ pub function stab_first(structs: StructTab, name: string): i32 {
     if (structs.head.len() == 0) { return 0 - 1; }
     return stab_skip(structs, structs.head[util.hash_bucket(name, structs.head.len())], name);
 }
+// stab_struct_first is the STRUCT namespace's entry point: the first decl
+// named `name` that no enum owns, or, when only variants carry the name, the
+// first of those. A plain struct and a variant may share a bare name and both
+// land in one bucket, so a reader that wants the struct — a literal, a field
+// read on a value of that type, a layout question — asks here rather than
+// taking whichever registered first (#9968). A reader that wants the variant
+// asks variant_decl_index with the enum it already knows, or unit_decl_index.
+pub function stab_struct_first(structs: StructTab, name: string): i32 {
+    var i: i32 = stab_first(structs, name);
+    var j: i32 = i;
+    while (j >= 0) {
+        if (structs.decls[j].enum_owner == "") { return j; }
+        j = stab_next(structs, j, name);
+    }
+    return i;
+}
 pub function stab_next(structs: StructTab, i: i32, name: string): i32 {
     return stab_skip(structs, structs.next[i], name);
 }
@@ -4829,7 +4853,7 @@ pub function try_enum_ok(structs: StructTab, t: string): boolean {
 }
 
 pub function decl_field_index(structs: StructTab, struct_name: string, field: string): i32 {
-    var si: i32 = stab_first(structs, struct_name);
+    var si: i32 = stab_struct_first(structs, struct_name);
     if (si < 0) { return 0 - 1; }
     var fi: i32 = 0;
     while (fi < structs.decls[si].fields.len()) {
@@ -5652,6 +5676,13 @@ pub function decl_is_leaksafe(structs: StructTab, struct_name: string): boolean 
     return decl_is_leaksafe_d(structs, struct_name, 0, seen);
 }
 
+// decl_is_leaksafe_at is the same proof for a decl the caller has already
+// resolved by index — a variant picked out from beside a same-named struct.
+pub function decl_is_leaksafe_at(structs: StructTab, decl_index: i32): boolean {
+    var seen: string[] = [];
+    return decl_is_leaksafe_at_d(structs, decl_index, 0, seen);
+}
+
 // decl_at_is_leaksafe is the same question asked of an already-resolved decl —
 // what a variant pattern needs, since two enums may declare one variant name and
 // only one of the two decls is this arm's. The recursion below stays by-name:
@@ -5856,7 +5887,7 @@ pub function prim_type_id(structs: StructTab, name: string): i32 {
 
 // decl_has_scalar_array reports whether a struct has any scalar-array field.
 pub function decl_has_scalar_array(structs: StructTab, struct_name: string): boolean {
-    var si: i32 = stab_first(structs, struct_name);
+    var si: i32 = stab_struct_first(structs, struct_name);
     if (si < 0) { return false; }
     for fld in structs.decls[si].fields {
         if (is_scalar_array_type(fld.type_name)) { return true; }
@@ -5867,7 +5898,7 @@ pub function decl_has_scalar_array(structs: StructTab, struct_name: string): boo
 // decl_field_type returns the declared type name of `field` in `struct_name`
 // ("" if absent) — used to track a string-typed field's reads as strings.
 pub function decl_field_type(structs: StructTab, struct_name: string, field: string): string {
-    var si: i32 = stab_first(structs, struct_name);
+    var si: i32 = stab_struct_first(structs, struct_name);
     if (si < 0) { return ""; }
     for fld in structs.decls[si].fields {
         if (fld.name == field) { return fld.type_name; }
@@ -5880,7 +5911,7 @@ pub function decl_field_type(structs: StructTab, struct_name: string, field: str
 // `(…) => R` return is a struct/nominal/string spelling), or "". The string
 // case drives expr_is_str's fn-field-call arm (#5306 gap 2).
 pub function decl_field_fn_ret(structs: StructTab, struct_name: string, field: string): string {
-    var si: i32 = stab_first(structs, struct_name);
+    var si: i32 = stab_struct_first(structs, struct_name);
     if (si < 0) { return ""; }
     for fld in structs.decls[si].fields {
         if (fld.name == field) { return fld.fn_ret; }
@@ -5893,7 +5924,7 @@ pub function decl_field_fn_ret(structs: StructTab, struct_name: string, field: s
 // The sibling of decl_field_fn_ret; "" means either a zero-parameter fn type or
 // a field that is not one, which decl_field_fn_sig separates by asking fn_ret.
 pub function decl_field_fn_param_types(structs: StructTab, struct_name: string, field: string): string {
-    var si: i32 = stab_first(structs, struct_name);
+    var si: i32 = stab_struct_first(structs, struct_name);
     if (si < 0) { return ""; }
     for fld in structs.decls[si].fields {
         if (fld.name == field) { return fld.fn_param_types; }
@@ -5905,7 +5936,7 @@ pub function decl_field_fn_param_types(structs: StructTab, struct_name: string, 
 // wasm_width_char must decline against: a field spelled `() => T` has no width
 // until the struct is instantiated.
 pub function decl_type_params(structs: StructTab, struct_name: string): string[] {
-    var si: i32 = stab_first(structs, struct_name);
+    var si: i32 = stab_struct_first(structs, struct_name);
     if (si < 0) { return []; }
     return structs.decls[si].type_params;
 }
@@ -6157,13 +6188,13 @@ pub function field_access_is_fnarr(e: ast.Expr, s: LowerState): boolean {
     }
 }
 
-// decl_index_of returns the index in `structs` of the FIRST decl named `name`,
-// or -1. Struct names are unique, so first-wins is exact for them; enum VARIANT
-// decls are keyed by their bare name, so two enums declaring one variant name
-// give two decls this cannot tell apart — resolve those through
-// variant_pattern_decl_index instead.
+// decl_index_of returns the index in `structs` of the decl named `name` in the
+// struct namespace — the plain struct when one carries the name, else the first
+// variant decl — or -1. Enum VARIANT decls are keyed by their bare name, so two
+// enums declaring one variant name give two decls this cannot tell apart;
+// resolve those through variant_pattern_decl_index instead.
 pub function decl_index_of(structs: StructTab, name: string): i32 {
-    return stab_first(structs, name);
+    return stab_struct_first(structs, name);
 }
 
 // variant_pattern_decl_index resolves the decl a variant PATTERN reads its
@@ -6349,7 +6380,7 @@ pub function is_builtin_variant_pattern(structs: StructTab, name: string, scrut_
 }
 
 pub function decl_field_count(structs: StructTab, struct_name: string): i32 {
-    return decl_at_field_count(structs, stab_first(structs, struct_name));
+    return decl_at_field_count(structs, stab_struct_first(structs, struct_name));
 }
 
 // unit_decl_index returns the index of the first decl named `name` that carries
@@ -12132,15 +12163,19 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         return s.emit(ir.op_map_hash_seed());
     }
     if (decl_is_struct(s.frame.structs, cid.name)) {
-        if (!decl_is_leaksafe(s.frame.structs, cid.name)) { return s.fail(); }
         // Variant / struct construction via a call form (`Many(items)`,
-        // `One(c)`). lower_variant_ctor_args carries the payload retains.
-        if (c.args.len() != decl_field_count(s.frame.structs, cid.name)) { return s.fail(); }
+        // `One(c)`). lower_variant_ctor_args carries the payload retains. A
+        // call form names the variant when a plain struct shares the name: a
+        // struct is built by a literal, never called (#9968).
+        var cdecl: i32 = decl_index_of(s.frame.structs, cid.name);
+        var cowner: string = variant_enum_owner(s.frame.structs, cid.name);
+        if (cowner.len() > 0) { cdecl = variant_decl_index(s.frame.structs, cid.name, cowner); }
+        if (!decl_is_leaksafe_at(s.frame.structs, cdecl)) { return s.fail(); }
+        if (c.args.len() != decl_at_field_count(s.frame.structs, cdecl)) { return s.fail(); }
         // Consumed here, then cleared at once so a NESTED ctor in an argument
         // (`a = Cons(1, Cons(2, a))`) keeps its own retain — the same one-
         // expression scoping the struct-literal path gives it (#6653).
         var ctor_selfrebind: string = s.selfrebind;
-        var cdecl: i32 = decl_index_of(s.frame.structs, cid.name);
         var vctor: LowerState = lower_variant_ctor_args(c.args, cdecl, ctor_selfrebind, s.with_selfrebind(""));
         if (!vctor.ok) { return vctor; }
         return vctor.emit(ir.op_struct_make(cid.name, c.args.len(), cdecl));
@@ -12780,6 +12815,15 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         var s55: LowerState = lower_expr(c.args[5], s54);
         if (!s55.ok) { return s55; }
         return s55.emit(ir.op_syscall5());
+    }
+    // __syscall6(nr, a1..a6): the networking syscall floor (#9853).
+    if (cid.name == "__syscall6" && c.args.len() == 7) {
+        var s6: LowerState = s;
+        for arg in c.args {
+            s6 = lower_expr(arg, s6);
+            if (!s6.ok) { return s6; }
+        }
+        return s6.emit(ir.op_syscall6());
     }
     // __raw_scratch(n) — fixed static scratch buffer ptr (#2649).
     if (cid.name == "__raw_scratch" && c.args.len() == 1) {
@@ -14284,7 +14328,8 @@ function lower_call_arr_firstlast(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: L
 // is the map type mtype. Split out of lower_call_method; the guard selecting it
 // stays there.
 function lower_call_map_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, mtype: string, s: LowerState): LowerState {
-    if (map_key_has_no_column(map_key_of(mtype))) { return s.fail(); }
+    var mkt: string = map_key_of(mtype);
+    if (map_key_has_no_column(mkt)) { return note_no_column(s, mkt); }
     var mkk2: i32 = map_key_kind_of(mtype);
     var meqfn: string = map_key_eqfn(mtype);
     // #7001: a COMPOSITE (struct / enum) key is kind 2, dispatched by its
@@ -23178,7 +23223,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
                         // through left the generic arm below to build a
                         // string-keyed box for it, which is the silent half of
                         // what the method gate refuses loudly.
-                        if (map_key_has_no_column(kt2)) { return s.fail(); }
+                        if (map_key_has_no_column(kt2)) { return note_no_column(s, kt2); }
                         if (map_key_kind_of(v.type_name) == 1) { kkind = 1; }
                         else if (kt2 == "string") { kkind = 0; }
                         else if (map_key_eqfn(v.type_name) != "") {
@@ -25381,7 +25426,8 @@ function lower_stmt_for(fr: ast.StmtFor, s: LowerState): LowerState {
         }
         if (mki_method != "") {
             var mkimty: string = mki_mtype;
-            if (map_key_has_no_column(map_key_of(mkimty))) { return s.fail(); }
+            var mkikt: string = map_key_of(mkimty);
+            if (map_key_has_no_column(mkikt)) { return note_no_column(s, mkikt); }
             // element type tag: keys -> key kind; values -> value type.
             var mki_elem_str: boolean = false;
             if (mki_method == "keys") { if (map_key_kind_of(mkimty) == 0) { mki_elem_str = true; } }
@@ -25608,7 +25654,8 @@ function lower_stmt_for(fr: ast.StmtFor, s: LowerState): LowerState {
     var kvparts: string[] = rc_fe_split_csv(fr.var_name);
     if (mslot >= 0 && s.map_type_of(mslot) != "" && kvparts.len() == 2) {
         var mty: string = s.map_type_of(mslot);
-        if (map_key_has_no_column(map_key_of(mty))) { return s.fail(); }
+        var mtykt: string = map_key_of(mty);
+        if (map_key_has_no_column(mtykt)) { return note_no_column(s, mtykt); }
         var kkind: i32 = map_key_kind_of(mty);   // 1 for an integer key, 0 for a string one
         var vty: string = map_value_of(mty);
         var kname: string = kvparts[0];
@@ -39484,7 +39531,7 @@ function map_val_struct_deep_type(vt: string, structs: StructTab): string {
 // non-pointer scalar. An unknown / generic name reads false (the safe direction —
 // it keeps the shallow free).
 function struct_fields_all_scalar(structs: StructTab, sty: string): boolean {
-    var si: i32 = stab_first(structs, sty);
+    var si: i32 = stab_struct_first(structs, sty);
     if (si < 0) { return false; }
     if (structs.decls[si].type_params.len() > 0) { return false; }
     for fld in structs.decls[si].fields {
@@ -53369,7 +53416,7 @@ function expr_spread_sites(e: ast.Expr, structs: StructTab, acc: string[]): stri
     match (e) {
         ast.ExprStructLit(sl) => {
             if (sl.has_base) {
-                var sdi: i32 = stab_first(structs, sl.type_name);
+                var sdi: i32 = stab_struct_first(structs, sl.type_name);
                 while (sdi >= 0) {
                     for fld in structs.decls[sdi].fields { a = push_str_unique(a, "FT:" + fld.type_name); }
                     sdi = stab_next(structs, sdi, sl.type_name);
@@ -55195,7 +55242,7 @@ function inarm_reuse_payload_type_ok(t: string): boolean {
 // hazard. String / enum / map / option / tuple pointer fields are still excluded
 // (no full-drop wired for them here), so they bail to the alloc path.
 function struct_fields_reusable(structs: StructTab, struct_name: string): boolean {
-    var si: i32 = stab_first(structs, struct_name);
+    var si: i32 = stab_struct_first(structs, struct_name);
     if (si < 0) { return false; }
     if (structs.decls[si].fields.len() == 0) { return false; }
     for fld in structs.decls[si].fields {
@@ -55216,7 +55263,7 @@ function struct_fields_reusable(structs: StructTab, struct_name: string): boolea
 // _cross widening below).
 function struct_fields_reusable_param(structs: StructTab, struct_name: string): boolean {
     if (struct_fields_reusable(structs, struct_name)) { return true; }
-    var si: i32 = stab_first(structs, struct_name);
+    var si: i32 = stab_struct_first(structs, struct_name);
     if (si < 0) { return false; }
     if (structs.decls[si].fields.len() == 0) { return false; }
     for fld in structs.decls[si].fields {
@@ -55242,7 +55289,7 @@ function struct_fields_reusable_param(structs: StructTab, struct_name: string): 
 function struct_fields_reusable_ownparam(structs: StructTab, sfok: string[], struct_name: string): boolean {
     if (struct_fields_reusable_param(structs, struct_name)) { return true; }
     if (struct_has_string_field(structs, struct_name) && !struct_routes_field_reclaim_at(structs, sfok, struct_name)) { return false; }
-    var si: i32 = stab_first(structs, struct_name);
+    var si: i32 = stab_struct_first(structs, struct_name);
     if (si < 0) { return false; }
     if (structs.decls[si].fields.len() == 0) { return false; }
     for fld in structs.decls[si].fields {
@@ -55267,7 +55314,7 @@ function struct_fields_reusable_ownparam(structs: StructTab, sfok: string[], str
 // fields would need per-field retain/release balancing — a later slice).
 function struct_fields_reusable_cross(structs: StructTab, struct_name: string): boolean {
     if (struct_fields_reusable(structs, struct_name)) { return true; }
-    var si: i32 = stab_first(structs, struct_name);
+    var si: i32 = stab_struct_first(structs, struct_name);
     if (si < 0) { return false; }
     if (structs.decls[si].fields.len() == 0) { return false; }
     for fld in structs.decls[si].fields {
@@ -55410,7 +55457,7 @@ function fresh_struct_lit_types_acc(stmts: ast.Stmt[], name: string, acc: string
 // site is a flat/rc-aware free that admission must keep alias-free by
 // gating the DONOR's original values fresh (donor_enum_fields_fresh).
 function struct_has_enum_field(structs: StructTab, name: string): boolean {
-    var si: i32 = stab_first(structs, name);
+    var si: i32 = stab_struct_first(structs, name);
     if (si < 0) { return false; }
     for fld in structs.decls[si].fields {
         if (is_enum_like_name(fld.type_name, structs)) { return true; }
@@ -56162,7 +56209,7 @@ function struct_fields_reusable_own(structs: StructTab, struct_name: string): bo
     if (struct_fields_reusable_param(structs, struct_name)) { return true; }
     // No decl of this name answers true, as the scan this replaced did by
     // falling out of its loop.
-    var si: i32 = stab_first(structs, struct_name);
+    var si: i32 = stab_struct_first(structs, struct_name);
     if (si < 0) { return true; }
     if (structs.decls[si].fields.len() == 0) { return false; }
     for fld in structs.decls[si].fields {
@@ -59828,7 +59875,7 @@ function emit_trmc_leaf(e: ast.Expr, fn: parser.FuncDecl, ctx: TrmcCtx, sin: Low
                 }
                 li = li + 1;
             }
-            s = s.emit(ir.op_struct_make(arm_ctor, argc, decl_index_of(s.frame.structs, arm_ctor)));
+            s = s.emit(ir.op_struct_make(arm_ctor, argc, variant_decl_index(s.frame.structs, arm_ctor, variant_enum_owner(s.frame.structs, arm_ctor))));
             var ntmp: string = "$trmc_n" + ctx.uid;
             s = s.add_local(ntmp);
             var nslot: i32 = s.slot_of(ntmp);
@@ -63337,7 +63384,7 @@ function structfld_collect_unsafe_stmts(stmts: ast.Stmt[], acc: string[], borrow
 
 // struct_has_strarr_field: does `sty` declare at least one string[] field?
 pub function struct_has_strarr_field(structs: StructTab, sty: string): boolean {
-    var si: i32 = stab_first(structs, sty);
+    var si: i32 = stab_struct_first(structs, sty);
     if (si < 0) { return false; }
     for fld in structs.decls[si].fields {
         if (fld.type_name == "string[]") { return true; }
@@ -63350,7 +63397,7 @@ pub function struct_has_strarr_field(structs: StructTab, sty: string): boolean {
 // wraps its value into a `__mkclo$…` env box, so the slot holds an
 // rc-headered closure box at runtime)?
 pub function struct_has_clo_field(structs: StructTab, sty: string): boolean {
-    var si: i32 = stab_first(structs, sty);
+    var si: i32 = stab_struct_first(structs, sty);
     if (si < 0) { return false; }
     for fld in structs.decls[si].fields {
         if (fld.type_name == "fn") { return true; }
@@ -63362,7 +63409,7 @@ pub function struct_has_clo_field(structs: StructTab, sty: string): boolean {
 // the moves_fields exemption list for field-closure calls.
 function clo_field_names_of(structs: StructTab, sty: string): string[] {
     var out: string[] = [];
-    var si: i32 = stab_first(structs, sty);
+    var si: i32 = stab_struct_first(structs, sty);
     if (si < 0) { return out; }
     for fld in structs.decls[si].fields {
         if (fld.type_name == "fn") { out = out.append(fld.name); }
@@ -63416,7 +63463,7 @@ function clofld_scan(e: ast.Expr, structs: StructTab, acc: string[]): string[] {
                 a = clofld_scan(sl2.base, structs, a);
                 // A base copy of an fn-fielded type carries the closure box —
                 // mark every fn field of the type unsafe.
-                var sdi: i32 = stab_first(structs, sl2.type_name);
+                var sdi: i32 = stab_struct_first(structs, sl2.type_name);
                 while (sdi >= 0) {
                     for fld in structs.decls[sdi].fields {
                         if (fld.type_name == "fn") { a = push_str_unique(a, fld.name); }
@@ -64361,7 +64408,7 @@ function strarrfld_scan(e: ast.Expr, structs: StructTab, binds: string[], str_fr
                 // for an array field, so both boxes hold the same buffer with
                 // one reference between them: STORE-unsafe for the buffer dec,
                 // whatever the overrides look like.
-                var sdi: i32 = stab_first(structs, sl2.type_name);
+                var sdi: i32 = stab_struct_first(structs, sl2.type_name);
                 while (sdi >= 0) {
                     for fld in structs.decls[sdi].fields {
                         if (fld.type_name == "string[]") {
@@ -69318,7 +69365,7 @@ function rc_scalar_type_name(t: string): boolean {
 // rc_struct_decl_index returns the index of the PLAIN struct decl named `t`
 // (enum-variant payload structs, which carry enum_owner, don't count), or -1.
 function rc_struct_decl_index(structs: StructTab, t: string): i32 {
-    var i: i32 = stab_first(structs, t);
+    var i: i32 = stab_struct_first(structs, t);
     while (i >= 0) {
         if (structs.decls[i].enum_owner.len() == 0) { return i; }
         i = stab_next(structs, i, t);
@@ -72980,24 +73027,12 @@ pub function opt_payload_type(rettype: string, variant: string): string {
         return slice_unchecked(rettype, 7, n - 1) + "";
     }
     if (n >= 8 && slice_unchecked(rettype, 0, 7) == "Result[" && rettype[n - 1] == b']') {
-        // Split the inside on the FIRST top-level comma: T , E. Depth counts both
-        // `[`/`]` (a nested Option/Result/Map payload) AND `(`/`)` (a tuple
-        // payload, e.g. `Result[(i32, i32), string]`), so the comma inside a
-        // bracketed/parenthesised T is not mistaken for the T-E separator.
+        // Split the inside on the top-level comma: T , E.
         var inside: str = slice_unchecked(rettype, 7, n - 1);
-        var depth: i32 = 0;
-        var ci: i32 = 0;
-        while (ci < inside.len()) {
-            var ch: u8 = inside[ci];
-            if (ch == b'[' || ch == b'(') { depth = depth + 1; }
-            else if (ch == b']' || ch == b')') { depth = depth - 1; }
-            else if (ch == b',' && depth == 0) {           // at top level
-                if (variant == "Err") { return trim_spaces(slice_unchecked(inside, ci + 1, inside.len())); }
-                return trim_spaces(slice_unchecked(inside, 0, ci));
-            }
-            ci = ci + 1;
-        }
-        return "";
+        var ci: i32 = top_level_comma(inside);
+        if (ci >= inside.len()) { return ""; }
+        if (variant == "Err") { return trim_spaces(slice_unchecked(inside, ci + 1, inside.len())); }
+        return trim_spaces(slice_unchecked(inside, 0, ci));
     }
     return "";
 }
@@ -73038,19 +73073,19 @@ pub function is_fn_payload_spelling(t: string): boolean {
     return t[j] == b'=' && t[j + 1] == b'>';
 }
 
-// map_key_has_no_column names the scalar keys the integer key column cannot
-// take. The string column is not an alternative for any of them: it reads a
-// key's VALUE as an address, which is how they segfaulted before #9973. So the
-// lowering refuses them, at every surface that reaches a map — its
-// construction, its methods, and both shapes of loop over it.
+// map_key_has_no_column names the keys neither key column can take. The string
+// column is not an alternative for any of them: it reads a key's VALUE as an
+// address, which is how they segfaulted before #9973. So the lowering refuses
+// them, at every surface that reaches a map — its construction, its methods,
+// and both shapes of loop over it.
 //
-// i64 / u64 / usize are too WIDE: the column is a 4-byte cell on wasm and
-// op_map_keys has no width to select, so admitting one would narrow the key
-// silently (#10005).
+// Two families, refused for opposite reasons.
 //
-// Loud is the direction to be wrong in: native and the interpreter answer
-// these programs on the register targets, so this is a gap to close rather
-// than a rule of the language.
+// The SCALARS are too WIDE: i64 / u64 / usize do not fit a column that is a
+// 4-byte cell on wasm, and op_map_keys has no width to select, so admitting
+// one would narrow the key silently (#10005). Loud is the direction to be
+// wrong in: native and the interpreter answer these programs on the register
+// targets, so this is a gap to close rather than a rule of the language.
 //
 // FLOAT keys are listed even though E045 refuses every written float-key
 // spelling in both checkers now (#10009), because a written spelling is not
@@ -73059,8 +73094,29 @@ pub function is_fn_payload_spelling(t: string): boolean {
 // generic reaches here with no diagnostic behind it (#10018). Native
 // re-checks its instantiations and reports; until the self-host does, this
 // is the only thing standing between that program and the string column.
+//
+// The COMPOSITES have no hash or equality to dispatch: a tuple, an array or a
+// slice is not a struct, so there is nothing for @derive(Eq) + @derive(Hash)
+// to hang off the way #2671 threads them in for a struct key. map_key_eqfn
+// named one anyway — a key of `i32[]` asked the linker for `__fn_i32[]__eq`,
+// and a tuple key reached the x86 assembler as an unencodable `leaq` — so the
+// self-host reached the right ANSWER (it never miscompiled these) by a route
+// that named an instruction rather than the key (#10032). Native refuses them
+// through ast.MapKeyDispatchable; this is the self-host's half of that rule,
+// and #10020 holds whether the long-term answer is to lower them instead.
 pub function map_key_has_no_column(kt: string): boolean {
-    return kt == "i64" || kt == "u64" || kt == "f64" || kt == "usize" || kt == "f32";
+    if (kt == "i64" || kt == "u64" || kt == "f64" || kt == "usize" || kt == "f32") { return true; }
+    return map_key_is_composite(kt);
+}
+
+// map_key_is_composite reads the SPELLING, because a type string is all the
+// lowering has: `(...)` is a tuple, `[...]` a slice, `...[]` an array. A
+// generic struct key ends in `]` too — `Pair[i32, i32]` — and is dispatchable,
+// so the array test is the two-character suffix rather than the last one.
+function map_key_is_composite(kt: string): boolean {
+    if (kt.len() < 2) { return false; }
+    if (kt[0] == b'(' || kt[0] == b'[') { return true; }
+    return slice_unchecked(kt, kt.len() - 2, kt.len()) == "[]";
 }
 
 // map_key_kind_of returns the key COLUMN a Map type uses: 1 for an integer
@@ -73078,6 +73134,15 @@ pub function map_key_has_no_column(kt: string): boolean {
 pub function map_key_kind_of(typestr: string): i32 {
     var kt: string = map_key_of(typestr);
     if (kt == "i32" || kt == "u8" || kt == "u32") { return 1; }
+    // A boolean is a non-pointer scalar, so it belongs in the integer column
+    // for the same reason u8 and u32 do. map_key_kind_of_expr answers 1 for a
+    // bool LITERAL key and has since #10015; this — the same question asked of
+    // a written `Map[boolean, V]` — went on answering 0, the string column,
+    // whose runtime reads a key's VALUE as an address. `true` and `false`
+    // became the same key on arm64 and wasm, and dereferencing 0 or 1
+    // segfaulted on x86-64 (#10043). Both spellings, because map_key_eqfn
+    // accepts both.
+    if (kt == "boolean" || kt == "bool") { return 1; }
     return 0;
 }
 
@@ -73192,8 +73257,7 @@ function map_kv_elem_flag(mty: string, field: string): i32 {
 pub function map_value_of(typestr: string): string {
     if (typestr.len() < 5 || slice_unchecked(typestr, 0, 4) != "Map[") { return ""; }
     var inner: str = slice_unchecked(typestr, 4, typestr.len() - 1);   // K, V
-    var ci: i32 = 0;
-    while (ci < inner.len() && inner[ci] != b',') { ci = ci + 1; }   // first comma
+    var ci: i32 = top_level_comma(inner);
     if (ci >= inner.len()) { return ""; }
     return trim_spaces(slice_unchecked(inner, ci + 1, inner.len()));
 }
@@ -73256,9 +73320,26 @@ function lower_expr_map_base(e: ast.Expr, mtype: string, s: LowerState): LowerSt
 pub function map_key_of(typestr: string): string {
     if (typestr.len() < 5 || slice_unchecked(typestr, 0, 4) != "Map[") { return ""; }
     var inner: str = slice_unchecked(typestr, 4, typestr.len() - 1);   // K, V
+    return trim_spaces(slice_unchecked(inner, 0, top_level_comma(inner)));
+}
+
+// top_level_comma returns the index of the first comma at bracket depth zero
+// in `inner`, or its length when there is none. It is what separates the two
+// halves of a two-parameter type spelling — K from V in `Map[K, V]`, T from E
+// in `Result[T, E]` — where either half carries commas of its own:
+// `(i32, i32)`, `Pair[i32, i32]`. Stopping at the FIRST comma read
+// `Map[(i32, i32), i32]` as a key of `(i32` and a value of `i32), i32`.
+function top_level_comma(inner: str): i32 {
+    var depth: i32 = 0;
     var ci: i32 = 0;
-    while (ci < inner.len() && inner[ci] != b',') { ci = ci + 1; }   // first comma
-    return trim_spaces(slice_unchecked(inner, 0, ci));
+    while (ci < inner.len()) {
+        var c: u8 = inner[ci];
+        if (c == b'[' || c == b'(') { depth = depth + 1; }
+        else if (c == b']' || c == b')') { depth = depth - 1; }
+        else if (c == b',' && depth == 0) { return ci; }
+        ci = ci + 1;
+    }
+    return inner.len();
 }
 
 // map_key_eqfn returns the derived equality symbol (`__fn_<K>__eq`) for a

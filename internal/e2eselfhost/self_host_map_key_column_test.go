@@ -38,6 +38,12 @@ var noColumnMapKeyCases = []struct {
 	src    string
 	wantIR bool
 	oracle int
+	// key is the key type the refusal must name, for the rows that refuse.
+	// Before #10032 the bail carried no description at all, so the message
+	// said only which statement it unwound to — and for a tuple key it never
+	// got that far: map_key_eqfn read `(i32` as a struct name and the program
+	// died in the x86 assembler on an unencodable `leaq`.
+	key string
 }{
 	// Construction ALONE, with no method on the map and no loop over it — the
 	// only shape that isolates the construction gate. `construct-and-insert`
@@ -49,14 +55,14 @@ function main(): i32 {
     var m: Map[i64, i32] = map_new(2);
     return 7;
 }
-`, false, 7},
+`, false, 7, "i64"},
 	{"construct-and-insert", `import "core/map";
 function main(): i32 {
     var m: Map[i64, i32] = map_new(2);
     m = m.insert(7, 3);
     return m.len() + 7;
 }
-`, false, 8},
+`, false, 8, "i64"},
 	{"pair-iteration-of-a-parameter", `import "core/map";
 function total(m: Map[i64, i32]): i32 {
     var s: i32 = 0;
@@ -64,7 +70,7 @@ function total(m: Map[i64, i32]): i32 {
     return s + 7;
 }
 function main(): i32 { return total(map_new(2)); }
-`, false, 7},
+`, false, 7, "i64"},
 	{"keys-of-a-parameter", `import "core/map";
 function total(m: Map[u64, i32]): i32 {
     var s: i32 = 0;
@@ -72,11 +78,36 @@ function total(m: Map[u64, i32]): i32 {
     return s + 7;
 }
 function main(): i32 { return total(map_new(2)); }
-`, false, 7},
+`, false, 7, "u64"},
 	{"method-on-a-parameter", `import "core/map";
 function total(m: Map[usize, i32]): i32 { return m.len() + 7; }
 function main(): i32 { return total(map_new(2)); }
-`, false, 7},
+`, false, 7, "usize"},
+	// The COMPOSITE keys, refused for the opposite reason to the scalars
+	// above: not too wide for the column, but with no hash or equality to
+	// dispatch at all. A tuple is a struct without a name, so there is nowhere
+	// to hang the derived Eq + Hash a struct key uses — map_key_eqfn named one
+	// regardless, and asked the linker for `__fn_i32[]__eq` (#10032).
+	//
+	// The tuple row is also what pins the type string being split at the
+	// TOP-LEVEL comma: a key of `(i32, i32)` contains the comma the split used
+	// to stop at, which read the key as `(i32` and the value as `i32), i32`.
+	// The refusal names the whole key, so a regression there shows up here as
+	// a truncated name rather than as a wrong column much later.
+	{"tuple-key", `import "core/map";
+function main(): i32 {
+    var m: Map[(i32, i32), i32] = map_new(8);
+    m = m.insert((1, 2), 5);
+    return m.get_or((1, 2), 0) + 9;
+}
+`, false, 14, "(i32, i32)"},
+	{"array-key", `import "core/map";
+function main(): i32 {
+    var m: Map[i32[], i32] = map_new(8);
+    m = m.insert([1, 2], 5);
+    return m.get_or([1, 2], 0) + 9;
+}
+`, false, 14, "i32[]"},
 	// The control: the same iteration over a key that DOES fit the column.
 	{"pair-iteration-of-an-i32-parameter", `import "core/map";
 function total(m: Map[i32, i32]): i32 {
@@ -85,7 +116,7 @@ function total(m: Map[i32, i32]): i32 {
     return s + 7;
 }
 function main(): i32 { return total(map_new(2)); }
-`, true, 7},
+`, true, 7, ""},
 }
 
 func TestSelfHostMapKeyWithNoColumnRefusesEverySurface(t *testing.T) {
@@ -125,6 +156,20 @@ func TestSelfHostMapKeyWithNoColumnRefusesEverySurface(t *testing.T) {
 			if got != "ast" {
 				t.Errorf("-decide = %q, want \"ast\": this key does not fit the integer column, and "+
 					"lowering it anyway is the silent wrong answer the refusal exists to prevent", got)
+			}
+			// The route alone is only half of it. A refusal a reader cannot
+			// act on is the state #10032 reported: the whole-module message
+			// says to set FERN_STRICT_IR=1, and what that then printed named
+			// the statement the bail unwound to and nothing about the key.
+			cmd := exec.Command(driver, entry, root)
+			cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
+			var stderr strings.Builder
+			cmd.Stderr = &stderr
+			_ = cmd.Run()
+			want := "a Map keyed by `" + tc.key + "` has no key column"
+			if !strings.Contains(stderr.String(), want) {
+				t.Errorf("the strict refusal does not say %q, so it does not tell its reader which "+
+					"key to change:\n%s", want, stderr.String())
 			}
 		})
 	}

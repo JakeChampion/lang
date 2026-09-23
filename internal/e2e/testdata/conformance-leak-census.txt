@@ -250,6 +250,7 @@ enum_consume_rebind_alias                            0
 enum_payload                                         0
 enum_payload_aliases_container                       35
 enum_reuse_churn                                     0
+enum_shares_a_struct_name                            0
 enum_str                                             0
 enum_u64_payload_unsigned_shift                      0
 eq_struct_enum                                       0
@@ -361,6 +362,8 @@ log_leveled                                          0
 loop_form                                            0
 loop_rotation_shapes                                 0
 loop_var_reclaim                                     0
+map_bool_column                                      0
+map_bool_key                                         1
 map_cleared_alias                                    0
 map_column_snapshot_outlives_the_map                 0
 map_delete_and_clear_rebuild_the_map                 0
@@ -383,6 +386,7 @@ map_string_key                                       0
 map_struct_enum_keys                                 14
 map_struct_key_grow                                  26
 map_struct_value_field                               3
+map_u8_column                                        0
 map_values_str                                       0
 match_arm_tuple                                      0
 match_expr_arm_width                                 1

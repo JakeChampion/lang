@@ -5278,6 +5278,12 @@ type builder struct {
 	info *checker.Info
 	fn   *ast.FuncDecl
 	out  *Func
+	// badMapKey is the first map key type this function asked to classify
+	// that the runtime cannot hash or compare (#10020). Set by noteMapKey,
+	// read once at the end of lowerFunc: a per-site error return would have
+	// to be threaded through eleven call sites, and the one this PR forgot
+	// is the one that would ship the silent answer.
+	badMapKey ast.Type
 	// genEnumDrops is the shared (LowerWith-owned) registry mapping a
 	// generic-enum-instantiation drop name (the mangled `en` part of
 	// `__drop_enum_<en>`, e.g. `Option_LB_Item_RB_`) to the SUBSTITUTED
@@ -6269,6 +6275,13 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 	// and every table is final.
 	if RcPlanHook != nil {
 		RcPlanHook(fn.Name, b.dumpRcPlan())
+	}
+	if b.badMapKey != nil {
+		return nil, fmt.Errorf("%s: a Map keyed by %s cannot be compiled: the runtime hashes and "+
+			"compares a key by value only for an integer, a string, or a struct/enum deriving "+
+			"cmp.Eq and cmp.Hash, and this key is none of those. The interpreter answers such a "+
+			"program correctly; compiling it would read the default out of every lookup instead "+
+			"(#10020)", fn.Name, b.badMapKey.String())
 	}
 	return out, nil
 }
@@ -11612,7 +11625,7 @@ func (b *builder) expr(e ast.Expr) error {
 		// Stash the constructed Map handle in a fresh local so
 		// each `set` call can reload it.
 		b.emit(Op{Kind: OpConstI32, I32: int32(len(n.Entries))})
-		b.emit(Op{Kind: OpConstI32, I32: mapKeyTag(n.KeyType, b.ptrW)})
+		b.emit(Op{Kind: OpConstI32, I32: b.mapKeyTagChecked(n.KeyType)})
 		b.emit(Op{Kind: OpConstI32, I32: mapValTag(n.ValueType, b.ptrW, b.info, b.genEnumDrops, b.genTupleDrops)})
 		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "map_new", Width: ResAddr, I32: 3})
 		mapSlot := b.allocSlot()
@@ -11624,7 +11637,7 @@ func (b *builder) expr(e ast.Expr) error {
 		// sites. Triggers for wide V (i64 / u64 / f64) on every
 		// target, and string K / V on wasm32 (where the two-word
 		// ABI doesn't fit the helper's i32 K/V slot).
-		boxK := isStringForBoxing(n.KeyType, b.ptrW) || mapKeyKindTag(n.KeyType, b.ptrW) == 2
+		boxK := isStringForBoxing(n.KeyType, b.ptrW) || b.mapKeyKindTagChecked(n.KeyType) == 2
 		boxV := isWideScalar(n.ValueType) || isStringForBoxing(n.ValueType, b.ptrW)
 		for _, ent := range n.Entries {
 			if err := b.emitMapSetRetains(ent.Key, ent.Value, n.KeyType, n.ValueType); err != nil {
@@ -12861,8 +12874,7 @@ func (b *builder) sigResultFor(c *ast.Call, name string) (ast.Type, bool) {
 	if !ok || sig == nil {
 		return nil, false
 	}
-	if len(c.TypeArgs) >= 2 &&
-		(strings.HasPrefix(name, "__method_Map_") || strings.HasPrefix(name, "__method_MapIter_")) {
+	if len(c.TypeArgs) >= 2 && isMapCallName(name) {
 		return substituteTypeParamsDeep(sig.Result, []string{"K", "V"}, c.TypeArgs[:2]), true
 	}
 	return sig.Result, true
@@ -14039,9 +14051,13 @@ func floatOp(s string) (OpKind, bool) {
 //	    both Eq and Hash, so this can classify structurally
 //	    without consulting checker.Info. See #2671.
 //
-// Other key types (tuple / array / slice / float-on-narrow-ptr)
-// still aren't supported; they'd need their own runtime
-// branches.
+// A key type with no branch here — a tuple, an array, a slice —
+// falls through to 0, which says "i32-sized scalar". They are
+// pointer-shaped, so the runtime then compares the POINTER: two
+// equal values built separately miss each other and every lookup
+// reads the default, silently, while the interpreter deep-compares
+// them and answers correctly (#10020). ast.MapKeyDispatchable names
+// them so the lowering can refuse instead of emitting that.
 func mapKeyKindTag(t ast.Type, ptrW int) int32 {
 	switch t.(type) {
 	case ast.StringType:
@@ -14059,6 +14075,33 @@ func mapKeyKindTag(t ast.Type, ptrW int) int32 {
 		return 2
 	}
 	return 0
+}
+
+// isMapCallName reports whether a call's TypeArgs are a map's [K, V]
+// rather than the call's own type arguments.
+func isMapCallName(name string) bool {
+	return strings.HasPrefix(name, "__method_Map_") || strings.HasPrefix(name, "__method_MapIter_")
+}
+
+// mapKeyTagChecked and mapKeyKindTagChecked are the builder's way of asking
+// for a key tag: same answer as the free functions, and they record a key the
+// runtime cannot dispatch so lowerFunc can refuse the function rather than
+// emit a silent wrong answer. Every classification site goes through them, so
+// a new one cannot forget the check.
+func (b *builder) mapKeyTagChecked(t ast.Type) int32 {
+	b.noteMapKey(t)
+	return mapKeyTag(t, b.ptrW)
+}
+
+func (b *builder) mapKeyKindTagChecked(t ast.Type) int32 {
+	b.noteMapKey(t)
+	return mapKeyKindTag(t, b.ptrW)
+}
+
+func (b *builder) noteMapKey(t ast.Type) {
+	if b.badMapKey == nil && t != nil && !ast.MapKeyDispatchable(t) {
+		b.badMapKey = t
+	}
 }
 
 // mapKeyTag is mapKeyKindTag plus the KEY CELL SIZE in its high bytes, the
@@ -15441,6 +15484,12 @@ func (b *builder) callBody(n *ast.Call) error {
 			if isWideMapValueTypeIR(vType) {
 				return b.emitWideMapValues(n, vType)
 			}
+			if isByteMapColumnIR(vType) {
+				return b.emitByteMapColumn(n, true)
+			}
+			if _, isBool := vType.(ast.BoolType); isBool {
+				return b.emitBoolMapColumn(n, true)
+			}
 		}
 	}
 	// `m.keys()` on `Map[K, V]` where K is wide (i64 / u64 /
@@ -15458,6 +15507,12 @@ func (b *builder) callBody(n *ast.Call) error {
 			kType := st.Args[0]
 			if isWideMapValueTypeIR(kType) {
 				return b.emitWideMapKeys(n, kType)
+			}
+			if isByteMapColumnIR(kType) {
+				return b.emitByteMapColumn(n, false)
+			}
+			if _, isBool := kType.(ast.BoolType); isBool {
+				return b.emitBoolMapColumn(n, false)
 			}
 		}
 	}
@@ -15609,8 +15664,16 @@ func (b *builder) callBody(n *ast.Call) error {
 	// `has` boolean, `get` when V is i32-scalar,
 	// `get_or` when V is i32-scalar) flow through
 	// emitStringKMapCall when only K needs boxing.
-	needBoxK := len(n.TypeArgs) >= 1 && (isStringForBoxing(n.TypeArgs[0], b.ptrW) || mapKeyKindTag(n.TypeArgs[0], b.ptrW) == 2)
-	needBoxV := len(n.TypeArgs) >= 2 && (isWideScalar(n.TypeArgs[1]) || isStringForBoxing(n.TypeArgs[1], b.ptrW))
+	// Only a Map or MapIter call carries [K, V] in TypeArgs; on any other
+	// generic call they are that call's own type arguments, and reading
+	// TypeArgs[0] as a key asks what column `i32[]` hashes in for an
+	// `id[T](x: T)` instantiated at an array. Every consumer of these three
+	// switches on one of those names, so outside them they were already
+	// dead — but mapKeyKindTagChecked records the key it was handed, so the
+	// unguarded question refused a program with no map in it (#10020).
+	mapCall := isMapCallName(id.Name)
+	needBoxK := mapCall && len(n.TypeArgs) >= 1 && (isStringForBoxing(n.TypeArgs[0], b.ptrW) || b.mapKeyKindTagChecked(n.TypeArgs[0]) == 2)
+	needBoxV := mapCall && len(n.TypeArgs) >= 2 && (isWideScalar(n.TypeArgs[1]) || isStringForBoxing(n.TypeArgs[1], b.ptrW))
 	// keyKind3: a struct/enum key dispatched through its derived
 	// hash/eq (see emitMapCall). The key is a raw pointer (never
 	// boxed — needBoxK is false), so the boxing helpers handle it as
@@ -15623,7 +15686,7 @@ func (b *builder) callBody(n *ast.Call) error {
 	// leak, no corruption — tracked as a follow-up). See #2671. A string
 	// value is unaffected: its release is in __map_dec_value, which the
 	// set reaches whatever the key kind is (#8421).
-	keyKind3 := len(n.TypeArgs) >= 1 && mapKeyKindTag(n.TypeArgs[0], b.ptrW) == 3
+	keyKind3 := mapCall && len(n.TypeArgs) >= 1 && b.mapKeyKindTagChecked(n.TypeArgs[0]) == 3
 	if id.Name == "__method_Map_set" && len(n.Args) == 3 && len(n.TypeArgs) >= 1 {
 		var vType ast.Type
 		if len(n.TypeArgs) >= 2 {
@@ -16317,7 +16380,7 @@ func (b *builder) callBody(n *ast.Call) error {
 	if id.Name == "map_new" {
 		var keyKind, valKind int32
 		if len(n.TypeArgs) >= 1 {
-			keyKind = mapKeyTag(n.TypeArgs[0], b.ptrW)
+			keyKind = b.mapKeyTagChecked(n.TypeArgs[0])
 		}
 		if len(n.TypeArgs) >= 2 {
 			valKind = mapValTag(n.TypeArgs[1], b.ptrW, b.info, b.genEnumDrops, b.genTupleDrops)
@@ -21036,6 +21099,70 @@ func isWideMapValueTypeIR(t ast.Type) bool {
 	return false
 }
 
+// isByteMapColumnIR reports whether a K / V occupies ONE byte per element in
+// the `K[]` / `V[]` a keys() / values() snapshot is bound to — `u8`, the only
+// width-8 type the parser spells.
+//
+// Three types now need a stride the stdlib's old fixed 4 was wrong for, and
+// this is the narrow one. isWideMapValueTypeIR is the wide one (i64 / u64 /
+// f64, walked inline). `boolean` is the third and the least obvious: it is
+// not pointer-shaped, but its array element strides a POINTER WIDTH on the
+// natives, so emitBoolMapColumn passes __ptr_width() rather than leaving it
+// at 4 (#10000).
+//
+// The remainder do stride 4, and that is measured rather than assumed: i32,
+// u32, f32 and usize columns all read back equal to the interpreter on both
+// register targets. A pointer-shaped column never meets the fixed stride at
+// all — a string, struct, enum or array column is routed to
+// __map_string_column / __map_ptr_column before __map_column.
+func isByteMapColumnIR(t ast.Type) bool {
+	n, ok := t.(ast.NumberType)
+	return ok && n.NormalWidth() == 8
+}
+
+// emitMapColumnReceiver pushes the map handle and the kvOffset that selects
+// the K or V slot within an entry — 0 for a key, one pointer width for a
+// value. The offset is __ptr_width() rather than this builder's ptrW for the
+// same reason emitWideMapValues reads it at run time: the entry layout is the
+// stdlib Map runtime's, and asking it keeps one IR correct on both a 4-byte
+// and an 8-byte target.
+func (b *builder) emitMapColumnReceiver(n *ast.Call, values bool) error {
+	if err := b.expr(n.Args[0]); err != nil {
+		return err
+	}
+	if values {
+		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__ptr_width", Width: ResNarrow, I32: 0})
+	} else {
+		b.emit(Op{Kind: OpConstI32, I32: 0})
+	}
+	return nil
+}
+
+// emitByteMapColumn lowers `m.keys()` / `m.values()` on a one-byte column to
+// __map_u8_column, which writes the result at the stride a `u8[]` reads at.
+func (b *builder) emitByteMapColumn(n *ast.Call, values bool) error {
+	if err := b.emitMapColumnReceiver(n, values); err != nil {
+		return err
+	}
+	b.emit(Op{Kind: OpCallDirect, Str: "__map_u8_column", I32: 2})
+	return nil
+}
+
+// emitBoolMapColumn lowers them on a `boolean` column, whose array element
+// strides a POINTER WIDTH on the natives — ast.ElemSizeBytesFor has no
+// BoolType case, so it takes the pointer default even though a boolean is not
+// pointer-shaped. __map_column's own stride argument carries it; passing
+// __ptr_width() is right on both targets at once, since a wasm32 boolean
+// element strides 4 and that is the arm the runtime already had.
+func (b *builder) emitBoolMapColumn(n *ast.Call, values bool) error {
+	if err := b.emitMapColumnReceiver(n, values); err != nil {
+		return err
+	}
+	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__ptr_width", Width: ResNarrow, I32: 0})
+	b.emit(Op{Kind: OpCallDirect, Str: "__map_column", I32: 3})
+	return nil
+}
+
 // emitWideMapValues lowers `m.values()` when V is wide (i64 /
 // u64 / f64). Each entry's V slot in the map's entries table
 // holds a 4-byte pointer to a heap-allocated 8-byte cell — the
@@ -21356,7 +21483,7 @@ func (b *builder) emitWideMapKeys(n *ast.Call, kType ast.Type) error {
 	b.emit(Op{Kind: OpLoadLocal, I32: strideSlot})
 	b.emit(Op{Kind: OpMul})
 	b.emit(Op{Kind: OpAdd})
-	if mapKeyKindTag(kType, b.ptrW) == 2 {
+	if b.mapKeyKindTagChecked(kType) == 2 {
 		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__load_ptr", Width: ResAddr, I32: 1})
 	}
 	b.emit(Op{Kind: OpConstI32, I32: 8})
@@ -22991,7 +23118,7 @@ type keyedMapFns struct{ hash, eq string }
 // onto a `(self: K) hash()` / `(self: K) eq(other: K)` method — for a
 // derived key these are synthesised by @derive(Eq, Hash).
 func (b *builder) keyedMapFnsFor(kType ast.Type) (keyedMapFns, bool) {
-	if mapKeyKindTag(kType, b.ptrW) != 3 {
+	if b.mapKeyKindTagChecked(kType) != 3 {
 		return keyedMapFns{}, false
 	}
 	name := mapKeyTypeName(kType)
@@ -23036,7 +23163,7 @@ func (b *builder) emitMapCall(baseTarget string, baseArgc int32, kType ast.Type)
 // keeps the equal key already in the column, so the cell and the string
 // reference it carries have to come back (freeDiscardedSetKeyCell, #6243).
 func (b *builder) emitWideMapSet(n *ast.Call, kType, vType ast.Type) error {
-	boxK := isStringForBoxing(kType, b.ptrW) || mapKeyKindTag(kType, b.ptrW) == 2
+	boxK := isStringForBoxing(kType, b.ptrW) || b.mapKeyKindTagChecked(kType) == 2
 	if err := b.expr(n.Args[0]); err != nil {
 		return err
 	}
@@ -23235,7 +23362,7 @@ func (b *builder) emitMapGetRebox(n *ast.Call, kType, vType ast.Type, boxedV boo
 	if err := b.expr(n.Args[0]); err != nil {
 		return err
 	}
-	boxK := isStringForBoxing(kType, b.ptrW) || mapKeyKindTag(kType, b.ptrW) == 2
+	boxK := isStringForBoxing(kType, b.ptrW) || b.mapKeyKindTagChecked(kType) == 2
 	keyCell := int32(-1)
 	keyTmp, keyTmpType := int32(-1), ast.Type(nil)
 	if boxK {
@@ -23454,7 +23581,7 @@ func (b *builder) emitMapDeleteReturningTuple(n *ast.Call, kType ast.Type) error
 
 	// Push map and key for the delete call, boxing key when needed.
 	b.emit(Op{Kind: OpLoadLocal, I32: mapSlot})
-	needBoxK := isStringForBoxing(kType, b.ptrW) || mapKeyKindTag(kType, b.ptrW) == 2
+	needBoxK := isStringForBoxing(kType, b.ptrW) || b.mapKeyKindTagChecked(kType) == 2
 	keyCell := int32(-1)
 	if needBoxK {
 		var err error
@@ -23555,7 +23682,7 @@ func (b *builder) emitWideMapGetOr(n *ast.Call, kType, vType ast.Type) error {
 	if err := b.expr(n.Args[0]); err != nil {
 		return err
 	}
-	boxK := isStringForBoxing(kType, b.ptrW) || mapKeyKindTag(kType, b.ptrW) == 2
+	boxK := isStringForBoxing(kType, b.ptrW) || b.mapKeyKindTagChecked(kType) == 2
 	keyCell := int32(-1)
 	if boxK {
 		var err error

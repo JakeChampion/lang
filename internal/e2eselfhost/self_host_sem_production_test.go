@@ -715,9 +715,9 @@ function main(): i32 {
 }`},
 	// `use v <- f(args)` writes its continuation with an untyped parameter,
 	// and the trampoline the lift built from it declared none, so the typed
-	// producer refused it ("unresolved result type"). The checker's annotate
-	// pass stamps the callee's callback parameter type on the binding now.
-	// One continuation captures nothing (a `$wrap` trampoline), one captures
+	// producer refused it ("unresolved result type"). checker.pretype_module
+	// stamps the callee's callback parameter type on the binding ahead of
+	// both checking and annotation. One continuation captures nothing (a `$wrap` trampoline), one captures
 	// its caller's parameter (a `$clo` body), and the string binding is
 	// released. A callee that is a function-typed LOCAL is stamped the same
 	// way, but such a local's type nests a function type and the producer
@@ -3576,6 +3576,165 @@ function main(): i32 {
     if ((w as f32) != 200.0) { return 7; }
     return acc;
 }`},
+	// `use NAME <- CALL;` with no annotation on NAME. The parser appends the
+	// rest of the block as a callback lambda whose parameter carries no type,
+	// and the lift kept it that way, so the `$wrapN` body returned a value of
+	// no type and the declaration was refused. checker.pretype_module now
+	// stamps the parameter from the callee's callback slot (native
+	// inferUseParam), before anything is typed against it. Produces 0 of 3
+	// without the stamp.
+	{name: "use-binding-typed-from-its-callee", atLeast: 3, noLeak: true, src: `
+function with_doubled(n: i32, k: (i32) => i32): i32 { return k(n * 2); }
+
+function main(): i32 {
+    use v <- with_doubled(21);
+    return v;
+}
+`},
+	// The binding is a string, read through a method: the stamp carries the
+	// callee's spelling, not a scalar guess.
+	{name: "use-binding-is-a-string", atLeast: 3, noLeak: true, src: `
+function taker(f: (string) => i32): i32 { return f("hi"); }
+
+function main(): i32 {
+    use x <- taker();
+    return x.len() + 23;
+}
+`},
+	// The `use` sits inside an arrow lambda's block body (the shape
+	// conformance/cases/arrow_lambda_block_body pins), so the stamp runs in
+	// the lambda's own scope and the lifted body is typed twice over.
+	{name: "use-binding-inside-a-lambda", atLeast: 4, noLeak: true, src: `
+function give(x: i32, cb: (i32) => i32): i32 { return cb(x); }
+
+function main(): i32 {
+    var bound = (): i32 => {
+        use n <- give(41);
+        return n + 1;
+    };
+    return bound();
+}
+`},
+	// keys() and values() over narrow scalar columns. The runtime snapshot
+	// bit-copies a column of i32-shaped cells into a fresh array, which is as
+	// true of a `u8`, `u32` or `boolean` column as of the `i32` one
+	// ssasem.retained_column admitted alone; the rest were refused as an
+	// alias of the map's own elements, which is the refusal that kept
+	// conformance/cases/map_narrow_int_keys on the AST lowering (#9550). The
+	// AST lowering is the oracle here: native materialises a `u8` column at
+	// the wrong stride (#10000), so its answer is not the one to pin.
+	{name: "narrow-scalar-columns-snapshot", atLeast: 1, noLeak: true, src: `
+import "core/map";
+
+function main(): i32 {
+    var m: Map[u8, i32] = map_new(2);
+    var i: i32 = 0;
+    while (i < 12) { m = m.insert(i as u8, i * 2); i = i + 1; }
+    var ks: u8[] = m.keys();
+    var s: i32 = 0;
+    for k in ks { s = s + (k as i32); }
+    var w: Map[i32, u8] = map_new(2);
+    i = 0;
+    while (i < 12) { w = w.insert(i, (i * 2) as u8); i = i + 1; }
+    for v in w.values() { s = s + (v as i32); }
+    var b: Map[i32, boolean] = map_new(2);
+    i = 0;
+    while (i < 12) { b = b.insert(i, i % 3 == 0); i = i + 1; }
+    for f in b.values() { if (f) { s = s + 10; } }
+    return s - 200;
+}
+`},
+	// Explicit type arguments at a call. The parser erases them from the
+	// argument list and keeps only their count (`type_argc`, which E040 checks
+	// against the declaration), and the instantiation is inferred from the
+	// arguments and the destination exactly as it is without them; the three
+	// call paths refused any count above zero as a `call arity`, which is what
+	// kept conformance/cases/trailing_commas on the AST lowering (#9550). A
+	// variable the arguments and destination leave unbound is still refused,
+	// as `unbound type variable`.
+	{name: "explicit-type-arguments-at-a-call", atLeast: 2, noLeak: true, src: `
+function pick[T](xs: T[], i: i32): T { return xs[i]; }
+
+function main(): i32 {
+    var xs: i64[] = [1, 2, 3];
+    var ys: i32[] = [4, 5, 6];
+    return (pick[i64](xs, 1) as i32) + pick[i32](ys, 2,) + 34;
+}
+`},
+	// A labelled range loop. `for i in LOW..HIGH` is desugared to a counting
+	// while ahead of every consumer, and the while was built without the
+	// source label, so a `continue outer` or `break scan` inside it named a
+	// loop the semantic source could not find (`loop exit names no enclosing
+	// loop`; conformance/cases/labeled_loops, #9550).
+	{name: "labelled-range-loop", atLeast: 1, noLeak: true, src: `
+function main(): i32 {
+    var sum: i32 = 0;
+    outer: for i in 0..4 {
+        for j in 0..4 {
+            if (j == 2) { continue outer; }
+            sum = sum + 1;
+        }
+        sum = sum + 100;
+    }
+    var k: i32 = 0;
+    scan: for a in 0..10 {
+        while (true) {
+            k = k + 1;
+            if (k == 5) { break scan; }
+        }
+    }
+    return sum + k;
+}
+`},
+	// Character literals. The lexer tags one with the type name `char` where
+	// an integer literal carries a numeric suffix, and semsource's literal_type
+	// knew no such suffix, so every module with a `'x'` was refused as an
+	// `unsupported literal width`; ssasem's verifier then refused the constant
+	// as an integer of no integer type (conformance/cases/char_byte_literals,
+	// #9550). A char is a 32-bit cell carrying a code point; it converts to and
+	// from every integer width, and compares as one.
+	{name: "char-literals", atLeast: 3, noLeak: true, src: `
+const NEWLINE: char = '\n';
+
+function upper_ascii(c: char): char {
+    var n: i32 = c as i32;
+    if (n >= 97 && n <= 122) { return (n - 32) as char; }
+    return c;
+}
+
+function main(): i32 {
+    var c: char = 'x';
+    if (upper_ascii(c) != 'X') { return 1; }
+    if (upper_ascii('Q') != 'Q') { return 2; }
+    if ((NEWLINE as i32) != 10) { return 3; }
+    if (('\u{1F600}' as i32) != 128512) { return 4; }
+    var back: char = 65 as char;
+    if (back != 'A') { return 5; }
+    return (c as i32) - 78;
+}
+`},
+	// Operator overloading on a struct: `a + b` is `a.add(b)` and `-a` is
+	// `a.neg()`, the desugar the native checker applies and the AST lowering
+	// mirrors (#2706). The semantic source dispatched only the comparisons
+	// that way and refused every arithmetic operator on a nominal operand
+	// with `operator contract: V + V` (conformance/cases/op_overload_nested,
+	// #9550). The nested form leaves two intermediate records live across the
+	// outer call, which the leak pin covers.
+	{name: "arithmetic-operators-on-a-struct", atLeast: 5, noLeak: true, src: `
+struct V { x: i32 }
+function (a: V) add(b: V): V { return V { x: a.x + b.x }; }
+function (a: V) sub(b: V): V { return V { x: a.x - b.x }; }
+function (a: V) mul(b: V): V { return V { x: a.x * b.x }; }
+function (a: V) neg(): V { return V { x: 0 - a.x }; }
+
+function main(): i32 {
+    var a: V = V { x: 5 };
+    var b: V = V { x: 3 };
+    var d: V = (a + b) * (a - b);
+    var e: V = -(a - b);
+    return d.x + e.x + 28;
+}
+`},
 }
 
 // semHeldElementSource sorts by length with the insertion sort's body: the

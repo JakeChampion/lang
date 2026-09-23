@@ -327,8 +327,8 @@ function __parse_headers(block: string): HeaderMap {
 //   - non-numeric / overflowing value → reject (was silently
 //     treated as "no body").
 //
-// i32-only parse so the helper stays arm64-clean; the 1 MiB body
-// cap upstream filters anything that would overflow i32 anyway.
+// Check before each i32 multiply/add. The later body cap cannot catch a
+// decimal length that has already wrapped to a small nonnegative value.
 function __http_content_length(h: HeaderMap): Option[i32] {
     if (h.get_all("transfer-encoding").len() > 0) {
         return None;
@@ -351,10 +351,11 @@ function __http_content_length(h: HeaderMap): Option[i32] {
         if (b < 48 || b > 57) {
             return None;
         }
-        acc = acc * 10 + (b - 48);
-        if (acc < 0) {
+        var digit: i32 = b - 48;
+        if (acc > 214748364 || (acc == 214748364 && digit > 7)) {
             return None;
         }
+        acc = acc * 10 + digit;
         i = i + 1;
     }
     return Some(acc);

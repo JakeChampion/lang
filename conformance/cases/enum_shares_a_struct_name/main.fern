@@ -1,0 +1,46 @@
+// The mirror of struct_shares_a_variant_name: the ENUM is declared first, so
+// its variants register in the struct table before the plain structs of the
+// same names. The self-host's by-name readers answered with whichever entry
+// registered first, and in this order that was the variant: the checker
+// refused `Empty { n: 3 }` (`struct Empty has no field "n"`) and `e.n`, the
+// literal wanted the variant's synthesised `__ev` field, and the lowering's
+// layout questions read the variant's decl for a struct value. Native reads
+// the struct for a literal and a field read whichever order the two are
+// declared in, and the variant for a call, a pattern and a receiver. #9968.
+//
+// The same two collision shapes as the sibling case: `Empty` a payloadless
+// variant beside a struct WITH a field, `Square` a payload variant beside a
+// struct of the same name, so a literal `Square { side: 4 }` and a call
+// `Square(7)` pick different declarations by their form.
+import "core/cmp";
+import "core/int";
+
+@derive(cmp.Eq, cmp.Display, cmp.Ord)
+enum Shape { Square(i32), Empty }
+
+struct Empty { n: i32 }
+struct Square { side: i32 }
+
+function name_of(s: Shape): string {
+    match (s) {
+        Shape.Square(n) => { return "sq" + n.to_string(); },
+        Shape.Empty => { return "empty"; }
+    }
+}
+
+function area(q: Square): i32 { return q.side * q.side; }
+
+function main(): i32 {
+    var e: Empty = Empty { n: 3 };
+    var q: Square = Square { side: 4 };
+    var v: Shape = Empty;
+    var w: Shape = Square(7);
+    var t: i32 = e.n + q.side;                 // 7
+    t = t + name_of(v).len();                  // + "empty"  = 12
+    t = t + name_of(w).len();                  // + "sq7"    = 15
+    t = t + Empty.to_string().len();           // + "Empty"  = 20
+    t = t + area(Square { side: 2 });          // + 4       = 24
+    var r: Square = Square { ...q, side: 5 };
+    t = t + r.side;                            // + 5       = 29
+    return t;
+}

@@ -21,7 +21,7 @@ import (
 //
 //   - The host is an IPv4 LITERAL STRING ("a.b.c.d"), not a packed i32 like
 //     tcp_connect's, so the backend parses the dotted quad ($__fern_ipv4_parse).
-//     A malformed literal returns -1 without touching the network, which the
+//     A malformed literal returns -28 (WASI EINVAL) without touching the network, which the
 //     reject cases below pin — a parser that fell through to the socket calls
 //     would produce a confusing errno instead.
 //   - `send` takes list<outgoing-datagram>, a record of list<u8> +
@@ -187,7 +187,7 @@ func TestSelfHostWasmIRUdpSend(t *testing.T) {
 	})
 
 	// A malformed IPv4 literal must be rejected by the parser BEFORE any socket
-	// call, returning -1. Falling through to the socket path would surface some
+	// call, returning -28 (WASI EINVAL). Falling through would surface some
 	// unrelated errno instead.
 	for _, tc := range []struct{ name, host string }{
 		{"rejects_non_numeric_host", "not-an-ip"},
@@ -200,8 +200,8 @@ func TestSelfHostWasmIRUdpSend(t *testing.T) {
     write("r="); print_int(n); write("\n");
     return 0;
 }`, tc.host))
-			if out != "r=-1" {
-				t.Errorf("guest stdout = %q, want %q for host %q", out, "r=-1", tc.host)
+			if out != "r=-28" {
+				t.Errorf("guest stdout = %q, want %q (WASI EINVAL) for host %q", out, "r=-28", tc.host)
 			}
 		})
 	}

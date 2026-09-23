@@ -25,14 +25,19 @@ returned its address, which the producer refuses as a closure value
 
 ## What it does
 
-`checker.use_typed_args` runs in the annotate pass: a call whose last argument
-is a `use_infer` lambda with an untyped first parameter takes the spelling of
-the callee's trailing callback parameter's first parameter — from the module
-signature, or from a function-typed local — and stamps it on the lambda
-before `annotate_lambda_expr` binds the body's scope. The body then reads a
-typed binding, `inferred_lambda_ret` answers, and the trampoline declares
-both. A callback parameter that is itself a function type has no spelling to
-stamp and the binding stays as written.
+`checker.pretype_module` runs ahead of both `check_module` and
+`annotate_module` (it is the value-block retype pass with a second rule): a
+call whose last argument is a `use_infer` lambda with an untyped first
+parameter takes the type of the callee's trailing callback parameter's first
+parameter — from a function-typed local first, since a binding shadows a
+module function of the same name, else from the module signature — and
+stamps it on the lambda before either pass binds the body's scope. The body
+then reads a typed binding, `inferred_lambda_ret` answers, and the trampoline
+declares both; the checker reports E003 on a mistyped read of the binding as
+native does. A callback parameter that is itself a function type is stamped
+as `fn` with its sidecars (`decltypes.fn_param_from_type`); a type with no
+declaration spelling leaves the binding as written. (`SELFHOST-CHECKER-PORT.md`,
+same date, has the pass.)
 
 `irlower.desugar_lifted_lambda_returns` runs at the top of the worklist drain,
 so every lifted body gets the `$lamret$N` rewrite a source function got before

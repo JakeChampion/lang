@@ -256,7 +256,7 @@ function prod_mem_kind(k: string): boolean {
 // string builder, the two static addresses and the full-width address add;
 // with the zero-operand helper calls, which prod_call_argc cannot name.
 function prod_host_kind(k: string): boolean {
-    var host: string[] = ["syscall3", "syscall4", "syscall5", "exit", "raw_string", "strbuf_reset", "strbuf_append",
+    var host: string[] = ["syscall3", "syscall4", "syscall5", "syscall6", "exit", "raw_string", "strbuf_reset", "strbuf_append",
         "raw_scratch", "raw_environ", "raw_addr", "monotonic_ns", "now_unix_ms",
         "load_i32", "load_i64", "load_ptr", "store_i32", "store_i64", "store_ptr", "raw_arr_box",
         "map_new", "strbuf_take", "args", "map_hash_seed", "arr_push_shared_bytes", "arr_push_shared_count"];
@@ -293,6 +293,7 @@ function lift_prod_host(k: string, op: ir.Op, lv: LiftVals): LiftVals {
     if (k == "syscall3") { return lift_pop_push(lv, 4, 50, 0, k); }
     if (k == "syscall4") { return lift_pop_push(lv, 5, 50, 0, k); }
     if (k == "syscall5") { return lift_pop_push(lv, 6, 50, 0, k); }
+    if (k == "syscall6") { return lift_pop_push(lv, 7, 50, 0, k); }
     if (k == "raw_string") { return lift_pop_push(lv, 2, 50, 0, k); }
     if (k == "exit" || k == "strbuf_append") { return lift_pop_push(lv, 1, 50, 0, k); }
     if (k == "strbuf_reset") { return lift_pop_push(lv, 0, 50, 0, k); }

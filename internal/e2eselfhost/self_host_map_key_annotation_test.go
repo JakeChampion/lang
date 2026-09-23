@@ -113,10 +113,26 @@ function main(): i32 {
     return 0;
 }
 `, true},
-	// Accepted by both on purpose: the interpreter compares a tuple or array
-	// key by value and TestInterpMapCompositeKeys gates it, while the
-	// compiled backends answer the default. See isStructurallyKeyedByValue
-	// and #10020.
+	// A composite key WRITTEN AS A LITERAL is refused, unlike the bare
+	// annotation two rows below, and the difference is the whole shape of the
+	// rule: the annotation is carved out so the interpreter keeps a spelling
+	// it supports, while a literal has keys in it and the map-literal chain
+	// lowers without consulting the key column at all. These rows are what
+	// makes that the gated half rather than the assumed half — widening the
+	// carve-out to cover literals would land a composite key in the string
+	// column, which reads its VALUE as an address (#9973).
+	{"tuple-key-literal", `import "core/map";
+function main(): i32 { var m: Map[(i32, i32), i32] = Map { (1, 2): 5 }; return 0; }
+`, true},
+	{"array-key-literal", `import "core/map";
+function main(): i32 { var m: Map[i32[], i32] = Map { [1, 2]: 5 }; return 0; }
+`, true},
+	// Accepted by both CHECKERS on purpose: the interpreter compares a tuple
+	// or array key by value and TestInterpMapCompositeKeys gates it, so
+	// refusing the annotation would take away a spelling the language
+	// supports. Lowering one is refused separately, which is where the
+	// compiled wrong answer used to be — see ast.MapKeyDispatchable, #10020,
+	// and the two literal rows above for the other half of the split.
 	{"tuple-key", `import "core/map";
 function take(m: Map[(i32, i32), i32]): i32 { return 0; }
 function main(): i32 { return 0; }

@@ -38,6 +38,127 @@ The unit lane installs wasmtime and qemu-aarch64: the wasm and arm64 EXECUTION
 tests in the unit packages `t.Skip` on a missing runtime, so without them that
 whole family reported `ok` having run nothing.
 
+## Networking foundations (#9853)
+
+`TestSelfHostSyscall6IRX86_64` and `TestSelfHostSyscall6IRArm64` execute a
+file-backed mapping at a nonzero offset through the self-host runtime's
+six-argument syscall primitive. They verify mapped bytes, unmap/close results
+and negative errno for a bad descriptor. `TestSelfHostArm64DarwinSyscall6`
+executes the same probe on Apple Silicon in the macOS lane.
+`TestSelfHostWasmUnsupportedBuiltins` verifies that both wasm drivers reject
+the intrinsic before producing WAT. `TestSelfHostIRKindRegistry` pins its
+stable op ID alongside the existing registry.
+
+These tests prove the syscall floor needed by the networking runtime. They
+do not establish socket correctness, leak freedom or a performance result.
+
+`TestSelfHostArm64DarwinPoll` exercises the self-host kqueue helper with
+inherited pipes and a loopback TCP listener on Apple Silicon. It checks ready,
+timed-out, empty, negative, invalid and duplicate descriptors, the lowest
+ready index, and zero/infinite timeouts. Every case requires balanced
+`FERN_LEAKCHECK` counts and zero live bytes; descriptor reuse checks that
+the helper closes each temporary kqueue. It runs under the macOS lane's
+`TestSelfHostArm64Darwin.*` selector. This is the compatibility `poll` helper;
+P0's persistent worker-owned reactor remains separate work.
+
+## HTTP Content-Length parsing
+
+`TestHttpContentLength*`, `TestArm64DarwinHTTPContentLength`,
+`TestSelfHostHTTPContentLength` and `TestSelfHostArm64DarwinHTTPContentLength`
+exercise the public request parser against an unbounded decimal oracle.
+The corpus includes lengths that wrap to zero or small positive i32 values,
+leading zeros, incomplete bodies, duplicate Content-Length, Transfer-Encoding,
+and acceptance/rejection at the body limit. It runs in the interpreter,
+both native compiler families and WebAssembly; the self-host legs require
+complete semantic lowering. The decimal parser must reject overflow before
+multiplication, so the later body limit never sees a wrapped length.
+
+## Native compatibility poll storage
+
+`TestPollScratchReclaimed` checks the Go bootstrap compiler's flat and SSA
+poll helpers on x86-64 Linux and ARM64 Linux.
+`TestArm64DarwinNativePollScratch` covers the flat Darwin helper on Apple
+Silicon. Each exercises empty, negative and invalid descriptors, a timeout,
+readiness and first-index selection. Duplicate descriptors must return the
+lowest index. A failed registration must not hide a ready descriptor or block
+on another idle one, even with an infinite timeout. Repeated calls must balance
+allocations and frees, leave zero live bytes and produce no RC underflow. These gates
+cover temporary poll buffers; they do not establish leak freedom for a whole
+HTTP server or replace the persistent-reactor work in #9853.
+
+## WASI socket lifecycles
+
+`TestWasiSocketErrorTableParity` pins all socket error discriminants to the
+vendored WIT and the self-host table. `TestWasiSocketErrorReturns` executes
+the bootstrap runtime's conversion and error-return sequence; the self-host
+`TestSelfHostWasiSocketErrors` injects errors through the emitted TCP listener.
+Both cover all 21 host error cases and an out-of-range byte. In particular,
+WASI's zero-valued `unknown` must return a negative errno, never success.
+Live TCP connection/server and UDP component tests cover helper inclusion and
+host integration. These gates do not establish socket resource reclamation.
+
+`TestWasmSocketSetupReclaimsOnError` and
+`TestSelfHostWasmSocketSetupReclaimsOnError` replace host imports in compiled
+core modules with an ownership-tracking host stub. Every setup stage can fail;
+zero and nonzero resource handles exercise the same cleanup. Successful TCP
+setup must transfer ownership, while UDP success and errors release their
+socket and streams. Child resources must be dropped before their parent and
+double drops trap. Guest-memory scratch reclamation is outside these gates.
+
+`TestWasmSocketCloseZeroHandles` and `TestSelfHostWasmSocketCloseZeroHandles`
+extend that host stub through `tcp_close`: listener, connect and accept must
+release all owned resources, including valid handle zero. A separate presence
+word distinguishes absent listener streams from live connection streams.
+
+`TestWasmSocketGuestStorage` and `TestSelfHostWasmSocketGuestStorage`
+repeat each TCP success/failure case 32 times. After the first operation,
+the heap high-water mark must stay flat. Each operation allocates one
+return area, reused as the successful connection record and released by
+close, or released immediately on error. Host resources still pass the
+same ownership checks. The self-host gate also validates a close-only
+module so reclamation does not depend on a constructor pulling in the heap.
+These tests do not establish reclamation for UDP or stream-I/O scratch.
+
+The same repeated-operation gate covers `tcp_local_port` success and error
+returns using a borrowed socket: IPv4 port zero and IPv6 port 65535 must
+survive scratch reclamation, without dropping the caller's socket.
+
+`TestWasmTcpLifecycleCensus` and `TestSelfHostWasmTcpLifecycleCensus`
+run 32 real WASI loopback lifecycles: listen on an ephemeral port, query it,
+connect, accept, and close both connections and the listener. Both allocator
+censuses must report nonzero, balanced allocations and zero live guest bytes.
+This covers socket records and setup/local-address scratch; it does not
+exercise stream I/O, UDP, or the lifetime of the instance-network capability.
+
+`TestWasmUDPGuestStorage` and `TestSelfHostWasmUDPGuestStorage` repeat
+UDP sends through the ownership-tracking host stub. Every setup/send failure
+and successful send must stop growing the heap after warmup, including empty,
+inline and heap-form payloads and malformed addresses. Borrowed input strings
+must retain their contents. `TestWasmUDPLifecycleCensus` and
+`TestSelfHostWasmUDPLifecycleCensus` send 32 real loopback datagrams per payload
+form, verify every payload at the receiver, and require balanced allocator
+counts with zero live guest bytes.
+The self-host census composes its Preview 1 adapter with
+`--realloc-via-memory-grow`: the adapter's component-lifetime stack pages
+stay outside the Fern allocator census. This does not measure total linear
+memory or remove the adapter's stack overhead.
+
+`TestWasmTCPSendGuestStorage` and `TestSelfHostWasmTCPSendGuestStorage`
+cover empty, inline, heap and chunked sends with bounded heap growth. A host
+stub reads every submitted byte and returns success, closed, or an owned error
+resource with handle zero/nonzero, including failures after the first chunk.
+Owned errors must be dropped exactly once. `TestWasmTCPSendLifecycleCensus`
+and `TestSelfHostWasmTCPSendLifecycleCensus` verify complete real TCP payloads
+over 32 connections and require zero live Fern heap bytes after close.
+
+`TestWasmTCPRecvGuestStorage` and `TestSelfHostWasmTCPRecvGuestStorage`
+exercise returned data allocated through the real canonical allocator, empty
+success, closed streams and owned errors with handles zero/nonzero. Repeated
+reads preserve bytes and stop growing the heap after warmup. Nonpositive read
+limits must return empty arrays without calling the host. The corresponding
+`TCPRecvLifecycleCensus` tests read real loopback data through EOF, including
+payloads crossing a read-buffer boundary, and require zero live Fern heap bytes.
+
 ## Generated digest sources
 
 The lint lane runs `make digest-check` on every PR and main push. It compares

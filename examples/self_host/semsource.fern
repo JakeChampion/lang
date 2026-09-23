@@ -364,6 +364,7 @@ function integer_literal(text: string): boolean {
 // function was refused for a WIDTH that was never the problem.
 function literal_type(suffix: string): typeinfo.Type {
     if (suffix == "u8") { return t_u8(); }
+    if (suffix == "char") { return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: true }; }
     if (suffix == "u32") { return t_u32(); }
     if (suffix == "i64") { return t_i64(); }
     if (suffix == "u64") { return t_u64(); }
@@ -1027,6 +1028,8 @@ function binary(e: ast.Expr, b: ast.ExprBinary, s: State, expected: typeinfo.Typ
     // one expression.
     var key: string = composite_key(b.op, s.values[left.id], s);
     if (key != "") { return composite_compare(b, left, key, s); }
+    var arith: string = nominal_method_key(arithmetic_verb(b.op), s.values[left.id], s);
+    if (arith != "") { return operator_method(left, [b.right], arith, s); }
     var right: Value = address_widen(expr(b.right, s, want), want);
     s = right.s;
     if (!s.ok) { return right; }
@@ -1048,14 +1051,37 @@ function binary(e: ast.Expr, b: ast.ExprBinary, s: State, expected: typeinfo.Typ
 // method falls through to the operator refusal, which names the type rather
 // than a contract the program never asked for.
 function composite_key(op: string, left: typeinfo.Type, s: State): string {
-    var verb: string = comparison_verb(op);
+    return nominal_method_key(comparison_verb(op), left, s);
+}
+
+// The contract key of the method `verb` on a struct or enum type, or "" when
+// the operand is not nominal or the type supplies no such method.
+function nominal_method_key(verb: string, t: typeinfo.Type, s: State): string {
     if (verb == "") { return ""; }
-    var owner: string = struct_name(left);
-    if (owner == "") { owner = union_name(left); }
+    var owner: string = struct_name(t);
+    if (owner == "") { owner = union_name(t); }
     if (owner == "") { return ""; }
     var key: string = owner + "." + verb;
     if (ssasem.find_contract(s.contracts, key) < 0) { return ""; }
     return key;
+}
+
+// An arithmetic operator on a struct or an enum is the method its `impl`
+// supplies: `a + b` is `a.add(b)` and `-a` is `a.neg()`, the desugar the
+// native checker applies (#2706). The result is whatever the method answers.
+function arithmetic_verb(op: string): string {
+    if (op == "+") { return "add"; }
+    if (op == "-") { return "sub"; }
+    if (op == "*") { return "mul"; }
+    if (op == "/") { return "div"; }
+    if (op == "%") { return "rem"; }
+    return "";
+}
+
+function operator_method(recv: Value, args: ast.Expr[], key: string, s: State): Value {
+    var contract: ssasem.Contract = s.contracts[ssasem.find_contract(s.contracts, key)];
+    if (args.len() + 1 != contract.params.len()) { return refused(s, "call arity"); }
+    return invoke_method(recv, args, contract, s);
 }
 
 // The method a comparison goes through: the two equalities read `eq` and the
@@ -1104,6 +1130,10 @@ function unary(e: ast.Expr, u: ast.ExprUnary, s: State, expected: typeinfo.Type)
     var operand: Value = expr(u.operand, s, want);
     s = operand.s;
     if (!s.ok) { return operand; }
+    if (u.op == "-") {
+        var neg: string = nominal_method_key("neg", s.values[operand.id], s);
+        if (neg != "") { return operator_method(operand, [], neg, s); }
+    }
     var ty: typeinfo.Type = ssasem.unary_result(u.op, s.values[operand.id]);
     if (!semtypes.concrete(ty, false)) { return refused(s, "operator contract: " + u.op + " " + typeinfo.spelling(s.values[operand.id])); }
     return define(s, 10, [operand.id], 0, u.op, ty);
@@ -1595,7 +1625,7 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
     var at: i32 = ssasem.find_contract(s.contracts, key);
     if (at < 0) { return refused(s, "call target has no semantic contract: " + key); }
     var contract: ssasem.Contract = s.contracts[at];
-    if (c.type_argc > 0 || c.args.len() + 1 != contract.params.len()) { return refused(s, "call arity"); }
+    if (c.args.len() + 1 != contract.params.len()) { return refused(s, "call arity"); }
     if (is_void(contract.result) && !statement) { return refused(s, "unsupported void call"); }
     // A method on a generic receiver is a template the receiver instantiates.
     if (ssasem.contract_variables(contract).len() > 0) { return invoke_method(recv, c.args, contract, s); }
@@ -1711,7 +1741,7 @@ function keeps(s: State, callee: string): boolean {
 function indirect_call(c: ast.ExprCall, callee: i32, s: State, statement: boolean): Value {
     var params: typeinfo.Type[] = ssasem.func_params(s.values[callee]);
     var result: typeinfo.Type = ssasem.func_result(s.values[callee]);
-    if (c.type_argc > 0 || c.args.len() != params.len()) { return refused(s, "call arity"); }
+    if (c.args.len() != params.len()) { return refused(s, "call arity"); }
     if (is_void(result) && !statement) { return refused(s, "unsupported void call"); }
     var ids: i32[] = [callee];
     var i: i32 = 0;
@@ -1961,7 +1991,7 @@ function settled_union(whole: typeinfo.Type, name: string, args: ast.Expr[], s: 
 }
 
 function direct_call(c: ast.ExprCall, contract: ssasem.Contract, s: State, statement: boolean, expected: typeinfo.Type): Value {
-    if (c.type_argc > 0 || c.args.len() != contract.params.len()) { return refused(s, "call arity"); }
+    if (c.args.len() != contract.params.len()) { return refused(s, "call arity"); }
     if (is_void(contract.result) && !statement) { return refused(s, "unsupported void call"); }
     return invoke(c.args, contract, s, destination_binding(contract, expected));
 }
@@ -2019,11 +2049,10 @@ function type_head(obj: ast.Expr, s: State): string {
         if (lookup(s, id.name) >= 0) { return ""; }
         // A VARIANT names a value, not a type. `Shape.Circle(1)` is a
         // qualified path and `Empty.to_string()` is a method call on the
-        // payloadless literal; they are the same shape in the tree, and the
-        // enum owner on the sig this name resolves to is what separates them.
-        // The lookup answers whichever declaration registered first, so a name
-        // a plain struct and a variant share resolves by order — the checker
-        // refuses that program before this reads it, which is #9900.
+        // payloadless literal; they are the same shape in the tree. A name a
+        // plain struct and a variant share is the variant's value here, as
+        // native reads a receiver (#9968).
+        if (checker.variant_owner_of(s.scope, id.name).len() > 0) { return ""; }
         var sig: checker.StructSig = checker.struct_sig(s.scope, id.name);
         if (sig.name.len() > 0) {
             if (sig.enum_owner.len() > 0) { return ""; }

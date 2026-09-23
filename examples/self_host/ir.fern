@@ -516,6 +516,9 @@ pub function op_raw_environ(): Op { return op0("raw_environ"); }
 // `ppoll` and `clone`, and XNU has no `nanosleep`, only `select`. All three take
 // five arguments. pops [nr, a1..a5] → the syscall return value; a5 → %r8 / x4.
 pub function op_syscall5(): Op { return op0("syscall5"); }
+// Six-argument syscall floor for networking (#9853, #4451): recvfrom,
+// sendto and Darwin kevent. Pops [nr, a1..a6]; a6 reaches %r9 / x5.
+pub function op_syscall6(): Op { return op0("syscall6"); }
 // raw_addr (#2649 raw-memory floor): pops [ptr, off] → ptr + off, computed at
 // the machine's FULL pointer width. It exists because `p + off` written in the
 // helper source does not survive: the surface type of a raw pointer is i32, so
@@ -2327,6 +2330,7 @@ function kind_id_len8_s(name: string): i32 {
     if (name == "syscall3") { return 204; }
     if (name == "syscall4") { return 206; }
     if (name == "syscall5") { return 228; }
+    if (name == "syscall6") { return 323; }
     return 0;
 }
 
@@ -2867,6 +2871,7 @@ function kind_name_4(id: i32): string {
     if (id == 322) { return "scale_f64"; }
     if (id == 309) { return "crc32_cksum"; }
     if (id == 228) { return "syscall5"; }
+    if (id == 323) { return "syscall6"; }
     if (id == 229) { return "heap_mark"; }
     if (id == 230) { return "heap_release_to"; }
     if (id == 231) { return "create_dir_all"; }
@@ -3155,6 +3160,7 @@ pub function op_pops(o: Op): i32 {
     if (t == 206) { return 5; }                       // syscall4
     if (t == 245) { return 5; }                       // mismatch: a, ao, b, bo, n
     if (t == 228) { return 6; }                       // syscall5
+    if (t == 323) { return 7; }                       // syscall6: nr + 6 args
     if (t == 269) { return 6; }                       // set_file_times: path + two timespecs + flags
     if (t == 274) { return 4; }                       // mknod: path + mode + major + minor
     if (t == 275) { return 4; }                       // chown_at: path + uid + gid + follow

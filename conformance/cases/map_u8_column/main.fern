@@ -1,0 +1,53 @@
+import "core/map";
+// A `u8` map column read back through keys() and values(). The stride of the
+// result array is a property of the TYPE, and the runtime tag cannot see it:
+// a `u8` key and an `i32` key are both keyKind 0, so `__map_column` wrote both
+// at its 4-byte destStride while the result was bound to a `u8[]`, whose
+// elements stride 1. Twelve entries read at stride 1 out of a buffer written
+// at stride 4 land inside the first three, and native summed 3 where every
+// other leg summed 66 — with the right length throughout, so nothing was lost
+// and nothing reported (#10000).
+//
+// The index reads are what separate a stride bug from a lost entry: at stride
+// 4 the value the reader finds at index 5 is a padding byte of entry 1, so a
+// length check alone passes on the broken compiler.
+//
+// Both maps are grown past their initial capacity so the rehash moves the
+// column before it is snapshotted. The empty and single-entry maps at the end
+// cover the two lengths a stride cannot be wrong at, which is what makes them
+// worth pinning: a fix that only ever ran the loop body would still have to
+// allocate a zero-length column and hand back a readable one-element one.
+function main(): i32 {
+    var keyed: Map[u8, i32] = map_new(2);
+    var i: i32 = 0;
+    while (i < 12) { keyed = keyed.insert(i as u8, i * 2); i = i + 1; }
+    var ks: u8[] = keyed.keys();
+    if (ks.len() != 12) { return 1; }
+    if ((ks[5] as i32) != 5) { return 2; }
+    if ((ks[11] as i32) != 11) { return 3; }
+    var ksum: i32 = 0;
+    for k in ks { ksum = ksum + (k as i32); }
+    if (ksum != 66) { return 4; }
+
+    var valued: Map[i32, u8] = map_new(2);
+    var j: i32 = 0;
+    while (j < 12) { valued = valued.insert(j, (j * 2) as u8); j = j + 1; }
+    var vs: u8[] = valued.values();
+    if (vs.len() != 12) { return 5; }
+    if ((vs[5] as i32) != 10) { return 6; }
+    var vsum: i32 = 0;
+    for v in vs { vsum = vsum + (v as i32); }
+    if (vsum != 132) { return 7; }
+
+    var empty: Map[u8, i32] = map_new(2);
+    var eks: u8[] = empty.keys();
+    if (eks.len() != 0) { return 8; }
+
+    var one: Map[u8, i32] = map_new(2);
+    one = one.insert(9 as u8, 1);
+    var oks: u8[] = one.keys();
+    if (oks.len() != 1) { return 9; }
+    if ((oks[0] as i32) != 9) { return 10; }
+
+    return 42;
+}
