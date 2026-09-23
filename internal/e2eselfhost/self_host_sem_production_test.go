@@ -367,16 +367,16 @@ function main(): i32 {
 	// both its lambdas return a plain struct, so ExprLambda's callable-result
 	// sidecar stays empty. #9954's own repro is the shape that fills it — a
 	// lambda whose declared result is `(i32) => Slot[i32]` — and it still
-	// refuses as a whole, because a function type nested in a function type is
-	// a slot `ssasem.signature_slot` declines by design. What the mangling
-	// clears is the OTHER refusal the module carried: `outer: return type:
-	// declared ((i32) => ((i32) => Slot__i32)), returns ((i32) => ((i32) =>
-	// Slot))`, the sidecar the `...lm` spread copied verbatim meeting the
-	// signature ms_func had already mangled. So the pins are the refusal that
-	// stands and the one that may not come back.
+	// refuses as a whole, now at the capturing lambda `outer`'s lambda returns
+	// (#10025's second half). What the mangling clears is the OTHER refusal
+	// the module carried: `outer: return type: declared ((i32) => ((i32) =>
+	// Slot__i32)), returns ((i32) => ((i32) => Slot))`, the sidecar the
+	// `...lm` spread copied verbatim meeting the signature ms_func had already
+	// mangled. So the pins are the refusal that stands and the one that may
+	// not come back.
 	{
 		name:        "a-lambda-declaring-a-callable-result-over-a-generic-struct",
-		refuses:     "function signature slot",
+		refuses:     "outer$wrap0: unsupported expression",
 		reportLacks: "outer: return type:",
 		src: `
 struct Slot[T] { v: T }
@@ -3747,6 +3747,45 @@ function main(): i32 {
     var f = mk();
     var add = (n: i32) => { return (a: i32, b: i32): i32 => a + b; };
     return f(4) + mk()(3) + add(0)(20, 8);
+}
+`},
+	// A function VALUE whose type nests a function type: a parameter that is
+	// itself callable, or a result that is. ssasem.signature_slot refused every
+	// function type inside another ("function signature slot"), so a
+	// higher-order function could be called by name but not through a local or
+	// a parameter (#10024). A function type is one word, the environment box,
+	// whatever it nests, and the call through the value dispatches by the same
+	// signature tag. Covered: a local bound to a function taking a callback, a
+	// `use` through such a local, a parameter whose type takes a callback, and
+	// a local bound to a function returning a function value. Its result is
+	// bound before it is called: calling it in the same expression is the shape
+	// the AST lowering, this row's control, segfaults on (#10057), and
+	// conformance/cases/call_of_a_call_through_a_function_value pins the typed
+	// path's answer to it instead.
+	{name: "a-function-value-whose-type-nests-a-function-type", atLeast: 9, noLeak: true, src: `
+function with_name(n: i32, k: (string) => i32): i32 { return k("x") + n; }
+function through_local(i: i32): i32 {
+    var f: (i32, (string) => i32) => i32 = with_name;
+    return f(i, (s: string): i32 => s.len());
+}
+function taker(f: (string) => i32): i32 { return f("hi"); }
+function use_through_local(): i32 {
+    var t = taker;
+    use x <- t();
+    if (x == "hi") { return 5; }
+    return 0;
+}
+function runner(k: (i32) => i32, v: i32): i32 { return k(v) + 1; }
+function apply2(h: ((i32) => i32, i32) => i32, v: i32): i32 { return h((z: i32): i32 => z * 3, v); }
+function adder(n: i32): (i32) => i32 { return (b: i32): i32 => b + n; }
+function through_result(): i32 {
+    var mk: (i32) => ((i32) => i32) = adder;
+    var add3 = mk(3);
+    var add10 = mk(10);
+    return add3(4) + add10(0);
+}
+function main(): i32 {
+    return through_local(3) + use_through_local() + apply2(runner, 5) + through_result() - 1;
 }
 `},
 }
