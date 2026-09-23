@@ -29,6 +29,7 @@
 //     fixpoint.
 import "./ast";
 import "./astwalk";
+import "./ir";
 import "./ircore";
 import "./irlower";
 import "./parser";
@@ -223,8 +224,15 @@ function live_reg(r: Rows): irlower.SigReg {
 // body that reaches a symbol no surviving produced body defines. The runtime
 // helpers and the C calls are provided bodies with a fixed ABI, so they are
 // not it.
-function escaping_callee(r: irlower.LowerResult, reg: irlower.SigReg): string {
+// A dyn dispatch reaches every implementation its chain names, so each is a
+// callee the same way.
+function escaping_callee(r: irlower.LowerResult, reg: irlower.SigReg, funcs: parser.FuncDecl[]): string {
     for o in r.ops {
+        if (o.kind_tag == 147) {  // dyn_dispatch
+            for arm in semsource.dyn_arms(funcs, ir.dyn_dispatch_method(o.str), ir.dyn_dispatch_traits(o.str)) {
+                if (!irlower.sig_reg_has_exact(reg, arm)) { return arm; }
+            }
+        }
         if (o.kind_tag == 149 || o.kind_tag == 6) {  // call_direct, const_func
             if (!ircore.is_fern_helper(o.str) && !ircore.is_c_call(o.str)
                 && !is_drop_helper(o.str) && !irlower.sig_reg_has_exact(reg, o.str)) {
@@ -429,7 +437,7 @@ function prune(r: Rows, mod: parser.Module, built: semsource.Built): Rows {
         var i: i32 = 0;
         while (i < r.body.len()) {
             if (r.keep[i]) {
-                var bad: string = escaping_callee(r.body[i], reg);
+                var bad: string = escaping_callee(r.body[i], reg, mod.funcs);
                 if (bad.len() > 0) { bad = "calls " + bad + ", which the AST lowering defines"; }
                 else { bad = ast_value_call(r.called[i], values); }
                 if (bad.len() == 0) { bad = ast_built_value(r, i); }

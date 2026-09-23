@@ -33,7 +33,10 @@ pub struct Request { key: string, name: string, binding: ssasem.Binding }
 // Every declaration in order, then every instance the declarations reached.
 // `contracts` is the module's contract table, by declaration key: what a
 // caller of a declaration reads, whether or not the declaration produced.
-pub struct Built { decls: Produced[], instances: Produced[], contracts: ssasem.Contract[], names: string[] }
+// `dyn_arms` is every implementation a produced body dispatches to through a
+// dyn call: the ownership inference leaves their modes as declared, since the
+// dispatch lends every operand.
+pub struct Built { decls: Produced[], instances: Produced[], contracts: ssasem.Contract[], names: string[], dyn_arms: string[] }
 
 // Environments are the values of the bindings visible at loop entry, in
 // binding order, captured where a body leaves the loop.
@@ -78,7 +81,10 @@ struct State {
     // Each parameter's declared mode, in order. A parameter's value id is its
     // position, so this doubles as the answer to "is this value a parameter,
     // and does this frame own it?".
-    modes: i32[]
+    modes: i32[],
+    // The module's declarations, which a dyn call's implementations are read
+    // from.
+    funcs: parser.FuncDecl[]
 }
 
 struct Value { s: State, id: i32 }
@@ -1578,6 +1584,7 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
     var recv: Value = expr(fa.obj, s, want);
     s = recv.s;
     if (!s.ok) { return recv; }
+    if (ssasem.is_dyn(s.values[recv.id])) { return dyn_method(c, fa, recv, s, statement); }
     var owner: string = struct_name(s.values[recv.id]);
     if (owner == "") { owner = union_name(s.values[recv.id]); }
     // A record FIELD of function type is not a method. The contract table keys
@@ -1644,6 +1651,73 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
     }
     if (ssasem.find_contract(s.calls, key) < 0) { s = State { ...s, calls: s.calls.append(contract) }; }
     return define(s, ssasem.call(), ids, 0, key, contract.result);
+}
+
+// `d.m(args)` on a dyn receiver dispatches on the shape of the box it holds to
+// one of the implementations `dyn_arms` names. Their shared signature is the
+// call's contract, with the dyn type at the receiver: they must agree on every
+// other operand and the result, and lend every operand, because the dispatch
+// hands each one the same slots. Each operand is copied into a run of
+// consecutive values, which is where `ssarc.dyn_site` reads them from.
+function dyn_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: State, statement: boolean): Value {
+    var receiver: typeinfo.Type = s.values[recv.id];
+    var traits: string[] = parser.dyn_trait_set(typeinfo.spelling(receiver));
+    var arms: string[] = dyn_arms(s.funcs, fa.field, traits);
+    if (arms.len() == 0) { return refused(s, "dyn method has no implementation: " + fa.field); }
+    var shape: ssasem.Contract = ssasem.Contract { name: "", params: [], modes: [], result: t_void() };
+    for arm in arms {
+        var at: i32 = ssasem.find_contract(s.contracts, arm);
+        if (at < 0) { return refused(s, "dyn method implementation has no semantic contract: " + arm); }
+        var why: string = dyn_arm_error(s.contracts[at], shape);
+        if (why != "") { return refused(s, why + ": " + arm); }
+        if (shape.name == "") { shape = s.contracts[at]; }
+    }
+    if (c.args.len() + 1 != shape.params.len()) { return refused(s, "call arity"); }
+    if (is_void(shape.result) && !statement) { return refused(s, "unsupported void call"); }
+    var params: typeinfo.Type[] = [receiver];
+    var modes: i32[] = [ssaunits.borrow_mode()];
+    var i: i32 = 1;
+    while (i < shape.params.len()) {
+        params = params.append(shape.params[i]);
+        modes = modes.append(shape.modes[i]);
+        i = i + 1;
+    }
+    var contract: ssasem.Contract = ssasem.Contract { name: ssasem.dyn_call_name(fa.field, traits), params: params, modes: modes, result: shape.result };
+    var ids: i32[] = [recv.id];
+    i = 0;
+    while (i < c.args.len()) {
+        var v: Value = lend(expr(c.args[i], s, params[i + 1]), params[i + 1], modes[i + 1], true);
+        s = v.s;
+        if (!s.ok) { return v; }
+        if (!semtypes.equal(s.values[v.id], params[i + 1])) { return refused(s, "call argument type"); }
+        ids = ids.append(v.id);
+        i = i + 1;
+    }
+    var run: i32[] = [];
+    for id in ids {
+        var cp: Value = define(s, 7, [id], 0, "", s.values[id]);
+        s = cp.s;
+        run = run.append(cp.id);
+    }
+    if (ssasem.find_contract(s.calls, contract.name) < 0) { s = State { ...s, calls: s.calls.append(contract) }; }
+    return define(s, ssasem.call(), run, 0, contract.name, contract.result);
+}
+
+// Why an implementation cannot share a dyn call's contract with `first`, the
+// one before it ("" names none yet). The receiver is compared by mode alone,
+// since each implementation names its own type there.
+function dyn_arm_error(c: ssasem.Contract, first: ssasem.Contract): string {
+    if (ssasem.contract_variables(c).len() > 0) { return "dyn method implementation is generic"; }
+    if (c.params.len() == 0) { return "dyn method implementation takes no receiver"; }
+    for m in c.modes { if (m == ssaunits.counted_mode()) { return "dyn method implementation consumes an operand"; } }
+    if (first.name == "") { return ""; }
+    if (c.params.len() != first.params.len() || !semtypes.equal(c.result, first.result)) { return "dyn method implementations disagree"; }
+    var i: i32 = 1;
+    while (i < c.params.len()) {
+        if (!semtypes.equal(c.params[i], first.params[i]) || c.modes[i] != first.modes[i]) { return "dyn method implementations disagree"; }
+        i = i + 1;
+    }
+    return "";
 }
 
 // `cell_new(v)` builds the shared one-element box over v's unit. The checker
@@ -2168,6 +2242,9 @@ function widen(v: Value, expected: typeinfo.Type): Value {
     var s: State = v.s;
     if (semtypes.equal(s.values[v.id], expected)) { return v; }
     if (ssasem.is_view(expected) && ssasem.is_string(s.values[v.id])) { return define(s, ssasem.str_as(), [v.id], 0, "", expected); }
+    if (ssasem.is_dyn(expected) && (struct_name(s.values[v.id]) != "" || union_name(s.values[v.id]) != "")) {
+        return define(s, ssasem.dyn_up(), [v.id], 0, "", expected);
+    }
     var owner: string = union_name(expected);
     if (owner == "" || union_layout(s, owner) != semrecords.layout_member()) { return v; }
     var member: string = struct_name(s.values[v.id]);
@@ -3330,12 +3407,12 @@ function refuse(why: string): Produced {
     return Produced { ok: false, why: why, func: ssasem.Func { graph: graph, values: [], params: [], result: t_void(), records: [], enums: [], calls: [], envs: [] }, modes: [], template: false, key: "", requests: [], bodyless: false };
 }
 
-function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contract[], binding: ssasem.Binding, name: string, handers: string[]): State {
+function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contract[], binding: ssasem.Binding, name: string, handers: string[], funcs: parser.FuncDecl[]): State {
     var entry: ssa.SBlock = ssa.SBlock { id: 0, insts: [], term: t_none(), preds: [] };
     return State { ok: true, why: "", blocks: [], cur: entry, live: true, next_block: 1, values: [],
         names: [], vals: [], scope: scope, result: result_type(fd, scope, binding, contracts), loops: [], contracts: contracts, calls: [],
         template: generic_decl(fd, scope), binding: binding, requests: [], foreign: [], handers: handers,
-        name: name, modes: [] };
+        name: name, modes: [], funcs: funcs };
 }
 
 // ---- record schemas ---------------------------------------------------------
@@ -3619,10 +3696,10 @@ function unresolved_result_spelling(fd: parser.FuncDecl, s: State): string {
 // the checker's function scope, the module's call contracts and — for a
 // template — the instantiation to produce it under, named `name`. Unsupported
 // constructs are explicit refusals, never a partial graph.
-function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contract[], binding: ssasem.Binding, name: string, handers: string[]): Produced {
+function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contract[], binding: ssasem.Binding, name: string, handers: string[], funcs: parser.FuncDecl[]): Produced {
     var why: string = unsupported_declaration(fd, scope);
     if (why != "") { return refuse(why); }
-    var s: State = initial(fd, scope, contracts, binding, name, handers);
+    var s: State = initial(fd, scope, contracts, binding, name, handers, funcs);
     if (!semtypes.concrete(s.result, true)) { return refuse("unresolved result type: " + unresolved_result_spelling(fd, s)); }
     if (ssasem.is_view(s.result)) { return refuse("view result escapes its source"); }
     // A cursor escapes the same way, and worse: it is anchored to a map this
@@ -4415,8 +4492,8 @@ function closure_body_produced(p: Produced): boolean {
     return semtypes.is_env(p.func.params[0]);
 }
 
-function infer_rows(all: Produced[], names: string[]): ownership.Escapes[] {
-    var taken: string[] = [];
+function infer_rows(all: Produced[], names: string[], pinned: string[]): ownership.Escapes[] {
+    var taken: string[] = pinned;
     var k: i32 = 0;
     while (k < all.len()) {
         if (all[k].ok) { taken = ownership.address_taken(all[k].func, taken); }
@@ -4455,8 +4532,8 @@ function infer_rows(all: Produced[], names: string[]): ownership.Escapes[] {
     return rows;
 }
 
-function infer_ownership(all: Produced[], names: string[], table: ssasem.Contract[]): Inferred {
-    var rows: ownership.Escapes[] = infer_rows(all, names);
+function infer_ownership(all: Produced[], names: string[], table: ssasem.Contract[], pinned: string[]): Inferred {
+    var rows: ownership.Escapes[] = infer_rows(all, names, pinned);
     var out: Produced[] = [];
     var i: i32 = 0;
     while (i < all.len()) {
@@ -4479,7 +4556,7 @@ pub function build_module(mod: parser.Module): Built {
     while (i < mod.funcs.len()) {
         var fd: parser.FuncDecl = mod.funcs[i];
         var p: Produced = template_entry(decl_key(fd), false, "uninstantiated generic", true);
-        if (!generic_decl(fd, scopes[i])) { p = build(fd, scopes[i], table, ssasem.unbound(), fd.name, handed_back); }
+        if (!generic_decl(fd, scopes[i])) { p = build(fd, scopes[i], table, ssasem.unbound(), fd.name, handed_back, mod.funcs); }
         pending = queue(pending, p.requests);
         decls = decls.append(p);
         names = names.append(decl_key(fd));
@@ -4491,7 +4568,7 @@ pub function build_module(mod: parser.Module): Built {
         var r: Request = pending[at];
         var di: i32 = util.index_of_str(names, r.key);
         var p: Produced = refuse("unbounded instantiation");
-        if (at < instance_limit()) { p = build(mod.funcs[di], scopes[di], table, r.binding, r.name, handed_back); }
+        if (at < instance_limit()) { p = build(mod.funcs[di], scopes[di], table, r.binding, r.name, handed_back, mod.funcs); }
         pending = queue(pending, p.requests);
         instances = instances.append(Produced { ...p, key: r.key });
         names = names.append(r.name);
@@ -4510,7 +4587,37 @@ pub function build_module(mod: parser.Module): Built {
         if (decls[i].template) { decls = decls.with(i, template_verdict(names[i], instances)); }
         i = i + 1;
     }
-    return Built { decls: decls, instances: instances, contracts: table, names: names };
+    return Built { decls: decls, instances: instances, contracts: table, names: names, dyn_arms: dispatched_arms(mod.funcs, util.append_all(decls, instances)) };
+}
+
+// The implementations a dyn call on `method` over `traits` reaches: the
+// methods `parser.dyn_arm_matches` picks, which is the search every backend's
+// dispatch chain runs, less an array method's `T[]` receiver, which no chain
+// takes.
+pub function dyn_arms(funcs: parser.FuncDecl[], method: string, traits: string[]): string[] {
+    var out: string[] = [];
+    for fd in funcs {
+        var n: i32 = fd.receiver_type.len();
+        if (n == 0 || (n >= 2 && slice_unchecked(fd.receiver_type, n - 2, n) == "[]")) { continue; }
+        if (parser.dyn_arm_matches(fd, traits, method, funcs)) { out = out.append(decl_key(fd)); }
+    }
+    return out;
+}
+
+function dispatched_arms(funcs: parser.FuncDecl[], all: Produced[]): string[] {
+    var out: string[] = [];
+    for p in all {
+        if (!p.ok) { continue; }
+        for b in p.func.graph.blocks {
+            for ins in b.insts {
+                if (ins.kind_tag != ssasem.call() || !ssasem.is_dyn_call(ins.str)) { continue; }
+                for arm in dyn_arms(funcs, ssasem.dyn_call_method(ins.str), ssasem.dyn_call_traits(ins.str)) {
+                    if (util.index_of_str(out, arm) < 0) { out = out.append(arm); }
+                }
+            }
+        }
+    }
+    return out;
 }
 
 // The same module with every consumed parameter counted. Kept OUT of
@@ -4521,7 +4628,7 @@ pub function build_module(mod: parser.Module): Built {
 // this and checks the answer still lowers whole before keeping it.
 pub function with_inferred_modes(b: Built): Built {
     var all: Produced[] = util.append_all(b.decls, b.instances);
-    var inferred: Inferred = infer_ownership(all, b.names, b.contracts);
+    var inferred: Inferred = infer_ownership(all, b.names, b.contracts, b.dyn_arms);
     var decls: Produced[] = [];
     var instances: Produced[] = [];
     var i: i32 = 0;
@@ -4530,7 +4637,7 @@ pub function with_inferred_modes(b: Built): Built {
         else { instances = instances.append(inferred.all[i]); }
         i = i + 1;
     }
-    return Built { decls: decls, instances: instances, contracts: inferred.table, names: b.names };
+    return Built { decls: decls, instances: instances, contracts: inferred.table, names: b.names, dyn_arms: b.dyn_arms };
 }
 
 // Which rows the inference moved, in the order `semlower.rows_of` walks them:

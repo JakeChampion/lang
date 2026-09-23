@@ -3749,6 +3749,233 @@ function main(): i32 {
     return f(4) + mk()(3) + add(0)(20, 8);
 }
 `},
+	// A method call on a `dyn Trait` receiver: the widening borrows the
+	// record, and the call dispatches on its shape to the implementation
+	// (conformance/cases/dyn_trait_dispatch). Two implementations behind one
+	// dyn type reach different bodies, and the second method proves the
+	// dispatch reads the method rather than landing on the first.
+	{name: "dyn-dispatch", atLeast: 6, noLeak: true, src: `
+trait Shape {
+    function area(self: Self): i32;
+    function sides(self: Self): i32;
+}
+struct Square { side: i32 }
+impl Shape for Square {
+    function area(self: Self): i32 { return self.side * self.side; }
+    function sides(self: Self): i32 { return 4; }
+}
+struct Triangle { base: i32, height: i32 }
+impl Shape for Triangle {
+    function area(self: Self): i32 { return (self.base * self.height) / 2; }
+    function sides(self: Self): i32 { return 3; }
+}
+function describe(s: dyn Shape): i32 {
+    return s.area() * 10 + s.sides();
+}
+
+function main(): i32 {
+    var sq: dyn Shape = Square { side: 3 };
+    var tr: dyn Shape = Triangle { base: 4, height: 5 };
+    return describe(sq) + describe(tr) - 155;
+}
+`},
+	// A dyn value holding a record that owns a string, built on every trip
+	// round a loop. The AST lowering leaks the record each trip (199 blocks
+	// over 100 trips); the typed path owns the record, lends the dyn value to
+	// the call, and releases the record when the trip ends.
+	{name: "dyn-over-a-counted-record", atLeast: 3, noLeak: true, src: `
+import "std/i32";
+
+trait Shape { function area(self: Self): i32; }
+struct Named { label: string, side: i32 }
+impl Shape for Named {
+    function area(self: Self): i32 { return self.side * self.side + self.label.len(); }
+}
+function describe(s: dyn Shape): i32 { return s.area(); }
+
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        var n: dyn Shape = Named { label: "sq" + i.to_string(), side: 3 };
+        t = t + describe(n);
+        i = i + 1;
+    }
+    return t % 97;
+}
+`},
+	// Operands past the receiver, of a counted type, a 64-bit float and an
+	// integer, and results of a counted type and a float, dispatched to a
+	// record and to an enum implementation. The operands reach the dispatch
+	// in consecutive frame slots, which wasm types by value: a float operand
+	// in an i32 slot is a module the validator rejects. An enum temporary
+	// widened at the argument is released after the call that borrowed it.
+	{name: "dyn-method-operands-and-results", atLeast: 6, noLeak: true, src: `
+import "std/i32";
+
+trait Label {
+    function tag(self: Self, prefix: string, n: i32): string;
+    function weight(self: Self, k: f64): f64;
+}
+struct Box { name: string, size: i32 }
+impl Label for Box {
+    function tag(self: Self, prefix: string, n: i32): string { return prefix + self.name + n.to_string(); }
+    function weight(self: Self, k: f64): f64 { return k * 2.0; }
+}
+enum Shape { Dot, Line(i32) }
+impl Label for Shape {
+    function tag(self: Self, prefix: string, n: i32): string {
+        match (self) {
+            Dot => { return prefix + "dot"; },
+            Line(len) => { return prefix + "line" + (len + n).to_string(); }
+        }
+    }
+    function weight(self: Self, k: f64): f64 { return k + 1.0; }
+}
+function show(l: dyn Label, i: i32): i32 {
+    var s: string = l.tag("<", i);
+    var w: f64 = l.weight(1.5);
+    return s.len() + (w * 2.0) as i32;
+}
+
+function main(): i32 {
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while (i < 20) {
+        var b: dyn Label = Box { name: "b" + i.to_string(), size: i };
+        total = total + show(b, i);
+        total = total + show(Shape.Line(i), i);
+        total = total + show(Shape.Dot, i);
+        i = i + 1;
+    }
+    print(total.to_string());
+    return total % 200;
+}
+`},
+	// The dispatch crosses the mixed module in both directions. With the
+	// implementations left to the AST lowering, the produced caller would
+	// reach bodies whose modes it cannot read, so it is turned off; with the
+	// caller left there instead, the AST dispatch reaches produced bodies,
+	// which keep the modes they declared.
+	{name: "dyn-dispatch-into-ast-implementations", atLeast: 1, skip: "area,sides",
+		refuses: "describe: calls Square.area, which the AST lowering defines", src: `
+trait Shape {
+    function area(self: Self): i32;
+    function sides(self: Self): i32;
+}
+struct Square { side: i32 }
+impl Shape for Square {
+    function area(self: Self): i32 { return self.side * self.side; }
+    function sides(self: Self): i32 { return 4; }
+}
+struct Triangle { base: i32, height: i32 }
+impl Shape for Triangle {
+    function area(self: Self): i32 { return (self.base * self.height) / 2; }
+    function sides(self: Self): i32 { return 3; }
+}
+function describe(s: dyn Shape): i32 { return s.area() * 10 + s.sides(); }
+
+function main(): i32 {
+    var sq: dyn Shape = Square { side: 3 };
+    return describe(sq) - 94;
+}
+`},
+	{name: "ast-dispatch-into-produced-implementations", atLeast: 4, skip: "describe", src: `
+trait Shape {
+    function area(self: Self): i32;
+    function sides(self: Self): i32;
+}
+struct Square { side: i32 }
+impl Shape for Square {
+    function area(self: Self): i32 { return self.side * self.side; }
+    function sides(self: Self): i32 { return 4; }
+}
+struct Triangle { base: i32, height: i32 }
+impl Shape for Triangle {
+    function area(self: Self): i32 { return (self.base * self.height) / 2; }
+    function sides(self: Self): i32 { return 3; }
+}
+function describe(s: dyn Shape): i32 { return s.area() * 10 + s.sides(); }
+
+function main(): i32 {
+    var sq: dyn Shape = Square { side: 3 };
+    var tr: dyn Shape = Triangle { base: 4, height: 5 };
+    return describe(sq) + describe(tr) - 155;
+}
+`},
+	// A dyn value is lent, never owned: the unit a holder would take could
+	// only be released by dispatching on the shape to find the children. A
+	// rebinding merges two widenings at a phi that would own one, a return
+	// hands one out, and a field holds one; each is refused where it stands.
+	{name: "a-rebound-dyn-value-is-refused", atLeast: 0, refuses: "a dyn value is lent, never owned", src: `
+trait Shape {
+    function area(self: Self): i32;
+    function sides(self: Self): i32;
+}
+struct Square { side: i32 }
+impl Shape for Square {
+    function area(self: Self): i32 { return self.side * self.side; }
+    function sides(self: Self): i32 { return 4; }
+}
+struct Triangle { base: i32, height: i32 }
+impl Shape for Triangle {
+    function area(self: Self): i32 { return (self.base * self.height) / 2; }
+    function sides(self: Self): i32 { return 3; }
+}
+function main(): i32 {
+    var s: dyn Shape = Square { side: 3 };
+    var i: i32 = 0;
+    while (i < 2) {
+        s = Triangle { base: 4, height: 5 };
+        i = i + 1;
+    }
+    return s.area() - 10;
+}
+`},
+	{name: "a-returned-dyn-value-is-refused", atLeast: 0, refuses: "a dyn value is lent, never retained", src: `
+trait Shape {
+    function area(self: Self): i32;
+    function sides(self: Self): i32;
+}
+struct Square { side: i32 }
+impl Shape for Square {
+    function area(self: Self): i32 { return self.side * self.side; }
+    function sides(self: Self): i32 { return 4; }
+}
+struct Triangle { base: i32, height: i32 }
+impl Shape for Triangle {
+    function area(self: Self): i32 { return (self.base * self.height) / 2; }
+    function sides(self: Self): i32 { return 3; }
+}
+function make(n: i32): dyn Shape { return Square { side: n }; }
+
+function main(): i32 {
+    var s: dyn Shape = make(3);
+    return s.area() - 9;
+}
+`},
+	{name: "a-dyn-field-is-refused", atLeast: 0, refuses: "dyn value is not a field", src: `
+trait Shape {
+    function area(self: Self): i32;
+    function sides(self: Self): i32;
+}
+struct Square { side: i32 }
+impl Shape for Square {
+    function area(self: Self): i32 { return self.side * self.side; }
+    function sides(self: Self): i32 { return 4; }
+}
+struct Triangle { base: i32, height: i32 }
+impl Shape for Triangle {
+    function area(self: Self): i32 { return (self.base * self.height) / 2; }
+    function sides(self: Self): i32 { return 3; }
+}
+struct Holder { s: dyn Shape }
+
+function main(): i32 {
+    var h: Holder = Holder { s: Square { side: 3 } };
+    return h.s.area() - 9;
+}
+`},
 }
 
 // semHeldElementSource sorts by length with the insertion sort's body: the
