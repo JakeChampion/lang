@@ -4119,8 +4119,9 @@ function pipe_prepend(head: ast.Expr, tail: ast.Expr[]): ast.Expr[] {
 
 // pipe_desugar lowers `left |> right`. `x |> f(a, b)` prepends x to the
 // call's args → `f(x, a, b)`; `x |> f(a, _)` substitutes x at the `_`
-// topic placeholder instead → `f(a, x)` (at most one `_`, direct args
-// only — the native parser rejects two with P004, so a native-valid
+// topic placeholder instead → `f(a, x)`, and `x |> f(b = _)` → `f(b = x)`
+// (at most one `_`, a direct arg or a named argument's value — the native
+// parser rejects two with P004, so a native-valid
 // program has at most one; this mirror substitutes at the first);
 // `x |> f` (a bare callee) wraps it as a single-arg call → `f(x)`.
 // Mirrors the Go parser's parsePipe, lowering to the same ExprCall the
@@ -4131,12 +4132,7 @@ function pipe_desugar(left: ast.Expr, right: ast.Expr): ast.Expr {
             var hole: i32 = 0 - 1;
             var hi: i32 = 0;
             while (hi < c.args.len()) {
-                if (hole < 0) {
-                    match (c.args[hi]) {
-                        ast.ExprIdent(id) => { if (id.name == "_") { hole = hi; } },
-                        _ => {}
-                    }
-                }
+                if (hole < 0 && is_pipe_hole(c.args[hi])) { hole = hi; }
                 hi = hi + 1;
             }
             if (hole >= 0) {
@@ -4144,7 +4140,7 @@ function pipe_desugar(left: ast.Expr, right: ast.Expr): ast.Expr {
                 var si: i32 = 0;
                 while (si < c.args.len()) {
                     if (si == hole) {
-                        subst = subst.append(left);
+                        subst = subst.append(fill_pipe_hole(c.args[si], left));
                     } else {
                         subst = subst.append(c.args[si]);
                     }
@@ -4159,6 +4155,33 @@ function pipe_desugar(left: ast.Expr, right: ast.Expr): ast.Expr {
             return e_call(right, one);
         }
     }
+}
+
+// is_pipe_hole reports whether a call argument is the `_` topic placeholder,
+// written positionally or as a named argument's value (`b = _`).
+function is_pipe_hole(arg: ast.Expr): boolean {
+    match (arg) {
+        ast.ExprIdent(id) => { return id.name == "_"; },
+        ast.ExprBinary(b) => {
+            if (b.op != "__named_arg") { return false; }
+            match (b.right) {
+                ast.ExprIdent(v) => { return v.name == "_"; },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// fill_pipe_hole puts the piped value where is_pipe_hole found the `_`,
+// keeping a named argument's name.
+function fill_pipe_hole(arg: ast.Expr, value: ast.Expr): ast.Expr {
+    match (arg) {
+        ast.ExprBinary(b) => { return ast.ExprBinary { ...b, right: value }; },
+        _ => { return value; }
+    }
+    return value;
 }
 
 // parse_pipe sits just above parse_binary (looser than every binary
@@ -19282,7 +19305,7 @@ function settle_to_type(e: ast.Expr, t: TypeRef): ast.Expr {
 // settle_to_name is settle_to_type against a declared type NAME, the spelling
 // every decl in the AST carries. An empty name is "no annotation" and settles
 // nothing.
-function settle_to_name(e: ast.Expr, type_name: string): ast.Expr {
+pub function settle_to_name(e: ast.Expr, type_name: string): ast.Expr {
     if (type_name.len() == 0) { return e; }
     return settle_to_type(e, parse_type_ref(type_name));
 }

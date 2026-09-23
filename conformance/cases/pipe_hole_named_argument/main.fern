@@ -1,0 +1,9 @@
+// `x |> f(b = _)` puts the piped value in the named argument the hole stands
+// for, whatever order the names are written in.
+function diff(a: i32, b: i32 = 0): i32 { return a - b; }
+
+function main(): i32 {
+    var one: i32 = 9 |> diff(b = _, a = 20);
+    var two: i32 = 30 |> diff(a = _, b = 1);
+    return one + two;
+}
