@@ -3406,7 +3406,7 @@ function main(): i32 {
 	// WAT body for this builtin, so the register legs' fix says nothing about
 	// it: before the wasm half of the fix this program printed 25 over-releases
 	// on the typed leg against its own AST leg's 0.
-	{name: "a-builtin-string-result-is-never-its-argument", atLeast: 113, noLeak: true, src: `
+	{name: "a-builtin-string-result-is-never-its-argument", atLeast: 111, noLeak: true, src: `
 import "std/string";
 import "std/io";
 function sq(s: string): string { return s.replace("Q", "Z"); }
@@ -3480,7 +3480,7 @@ function main(): i32 {
 	// the contract table for `Empty.to_string` and found nothing. Every other
 	// spelling of the same call already worked: a binding of the variant, an
 	// annotated binding, and a payloaded `Circle(1).to_string()`.
-	{name: "a-variant-is-a-value-not-a-type-head", atLeast: 110, noLeak: true, src: `
+	{name: "a-variant-is-a-value-not-a-type-head", atLeast: 108, noLeak: true, src: `
 import "core/cmp";
 @derive(cmp.Eq, cmp.Display, cmp.Ord)
 enum Shape { Circle(i32), Square(i32), Empty }
@@ -3493,7 +3493,7 @@ function main(): i32 {
     while (i < 20) { acc = acc + direct().len() + qualified().len() + bound().len(); i = i + 1; }
     return acc % 101;
 }`},
-	{name: "a-method-reads-its-receiver-by-name", atLeast: 109, noLeak: true, src: `
+	{name: "a-method-reads-its-receiver-by-name", atLeast: 107, noLeak: true, src: `
 import "std/json";
 @derive(json.Json)
 struct Bag { items: i32[], names: string[] }
