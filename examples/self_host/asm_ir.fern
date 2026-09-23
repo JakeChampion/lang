@@ -1235,9 +1235,13 @@ function fc_horner(acc: string, x: string, scratch: string, lbl: string): string
 // rbp chain to print a backtrace, and a leaf that skipped it would break the
 // walk for every frame below.
 function rt_x86_str_eq(): string {
+    // The stack entry loads both boxes into %rax/%rsi, where the register
+    // entry `.r` takes them; equality is symmetric, so their order is not.
     var s: string = "__fn___fern_str_eq:\n";
+    s = s + "    movq 8(%rsp), %rax\n    movq 16(%rsp), %rsi\n";
+    s = s + "__fn___fern_str_eq.r:\n";
     s = s + "    pushq %rbp\n    movq %rsp, %rbp\n";
-    s = s + "    movq 16(%rbp), %rdx\n    movq 24(%rbp), %rcx\n";
+    s = s + "    movq %rax, %rdx\n    movq %rsi, %rcx\n";
     // Same box: interned literals, which is most of what a compiler compares.
     s = s + "    cmpq %rcx, %rdx\n    jz .Lseq_yes\n";
     s = s + "    movq 8(%rdx), %rsi\n    cmpq 8(%rcx), %rsi\n    jnz .Lseq_no\n";
@@ -2817,6 +2821,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     if (s.has_need("arr_inc_elems")) {
     s = s.write("__fn___fern_arr_inc_elems:\n");
     s = s.write("    movq 8(%rsp), %rax\n");        // arr (also the result)
+    s = s.write("__fn___fern_arr_inc_elems.r:\n");
     s = s.write("    testq %rax, %rax\n");
     s = s.write("    jz .Laie_ret\n");
     s = s.write("    cmpq $0x10000, %rax\n");
@@ -5935,9 +5940,13 @@ function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
 function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
     if (ssa.rc_inlined(ins)) { return ssa_rc_prim(ins, reg_of, lp, s); }
     s = ssa_x0_forget(s);
-    if (ircore.is_fern_helper(ins.str) && ins.args.len() == 1 && ssa_reg_helper(ircore.ir_helper_symbol(ins.str))) {
+    if (ircore.is_fern_helper(ins.str) && ssa_reg_helper(ircore.ir_helper_symbol(ins.str), ins.args.len())) {
         s = helper_call_needs(ins.str, s);
-        s = ssa_parallel_moves([reg_of[ins.args[0]]], [0], s);
+        var hsrc: i32[] = [];
+        var hdst: i32[] = [];
+        var ha: i32 = 0;
+        while (ha < ins.args.len()) { hsrc = hsrc.append(reg_of[ins.args[ha]]); hdst = hdst.append(ha); ha = ha + 1; }
+        s = ssa_parallel_moves(hsrc, hdst, s);
         s = s.write("    call " + ircore.ir_helper_symbol(ins.str) + ".r\n");
         return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
     }
@@ -6584,10 +6593,11 @@ function ssa_entry_shim(f: ssa.SFunc, name: string): string {
 }
 
 // ssa_reg_helper names the hand-written runtime helpers with a register
-// entry: one argument, loaded by their stack entry into the pool's first
-// register, which is where the `.r` entry reads it.
-function ssa_reg_helper(sym: string): boolean {
-    return sym == "__fn___fern_arr_dec" || sym == "__fn___fern_str_free";
+// entry, by argument count: their stack entry loads the arguments into the
+// pool's first registers, which is where the `.r` entry reads them.
+function ssa_reg_helper(sym: string, argc: i32): boolean {
+    if (argc == 2) { return sym == "__fn___fern_str_eq"; }
+    return argc == 1 && (sym == "__fn___fern_arr_dec" || sym == "__fn___fern_str_free" || sym == "__fn___fern_arr_inc_elems");
 }
 
 // ssa_reg_call reports whether a direct call passes its arguments in
