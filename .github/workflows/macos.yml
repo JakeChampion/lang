@@ -35,8 +35,9 @@ on:
 jobs:
   # TWO JOBS, split over the coreutils corpus, which is most of the lane: one
   # job ran 15.8 minutes, the longest in the suite. Each shard runs its half
-  # of the catalogue; shard 1 also runs every other step, so shard 0 is only
-  # its half. The ratchet reads both halves in the darwin-ratchet job below.
+  # of the catalogue (~430 s each); shard 0 also runs the self-host native
+  # execution step (~160 s) and shard 1 every other step (~90 s), so the two
+  # finish together. The ratchet reads both halves in the darwin-ratchet job.
   # The pool here is five macOS jobs account-wide, so two per suite leaves
   # room for a PR suite beside main's.
   test-arm64-darwin:
@@ -349,7 +350,8 @@ jobs:
       # `!cancelled()` on the four steps below: the corpus is gated by the
       # darwin-ratchet job, and these check native arm64-darwin EXECUTION.
       # Without it a red step above skips them, so the one Darwin machine in
-      # CI reports nothing about the other half of the target. Shard 1 only.
+      # CI reports nothing about the other half of the target. The self-host
+      # step runs on shard 0 and the rest on shard 1, to balance the two.
       - name: go test (arm64-darwin native execution)
         if: "!cancelled() && matrix.shard == 1 && steps.gate.outputs.signed != 'true'"
         # TestArm64DarwinBuilds detects runtime.GOOS=="darwin"
@@ -364,7 +366,7 @@ jobs:
           gotestsum --format standard-verbose -- -run TestArm64Darwin ./internal/e2e/
 
       - name: go test (SELF-HOST arm64-darwin native execution)
-        if: "!cancelled() && matrix.shard == 1 && steps.gate.outputs.signed != 'true'"
+        if: "!cancelled() && matrix.shard == 0 && steps.gate.outputs.signed != 'true'"
         # The sibling of the step above for the SELF-HOST arm64-darwin path,
         # which lives in a different package (internal/e2eselfhost) and so was
         # not selected by the `-run TestArm64Darwin ./internal/e2e/` filter —
