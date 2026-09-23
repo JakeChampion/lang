@@ -68,7 +68,9 @@ async function decide({ event = "pull_request", files = [], throwOn = false, lan
     rest: {
       pulls: { listFiles: "listFiles" },
       repos: {
-        compareCommitsWithBasehead: "compare",
+        compareCommitsWithBasehead: async ({ basehead }) => ({
+          data: (p.compare || {})[basehead] || { status: "diverged", files: [] },
+        }),
         listPullRequestsAssociatedWithCommit: async () => ({ data: p.prs }),
         getContent: async () => ({ data: { content: Buffer.from(suiteYml).toString("base64") } }),
       },
@@ -79,7 +81,13 @@ async function decide({ event = "pull_request", files = [], throwOn = false, lan
         },
       },
       actions: {
-        listWorkflowRuns: async ({ head_sha }) => ({ data: { workflow_runs: p.runs[head_sha] || [] } }),
+        listWorkflowRuns: async ({ workflow_id, head_sha }) => {
+          if (workflow_id === "ci-main.yml") {
+            if (p.mainThrows) throw new Error("runs api down");
+            return { data: { workflow_runs: p.mainRuns || [] } };
+          }
+          return { data: { workflow_runs: p.runs[head_sha] || [] } };
+        },
         listJobsForWorkflowRun: "listJobs",
       },
     },
@@ -181,6 +189,47 @@ r = await decide({ event: "push", proof: proofOf(), proofThrows: true });
 check("an API error proves nothing", [all(r), r.warnings.some((w) => w.includes("merged PR"))], [true, true]);
 r = await decide({ event: "workflow_dispatch", proof: proofOf() });
 check("a dispatch is never trimmed", all(r), true);
+
+// A main push skips each lane whose inputs did not change since the newest
+// main run that ran it passed it; a lane red or cancelled there runs.
+const mainJobs = (keys, conclusion = "success") => keys.map((l) => ({ name: `Validate / Full suite / ${display[l]} / job`, conclusion }));
+const head = "c".repeat(40);
+const mainProof = ({ runs = [{ id: 50, head_sha: "m1" }], jobs = { 50: mainJobs(laneKeys) }, compare = {}, mainThrows = false } = {}) =>
+  ({ tree: "t", prs: [], runs: {}, jobs, mainRuns: runs, compare, mainThrows });
+const cmp = (files, status = "ahead") => ({ status, files: files.map((f) => ({ filename: f })) });
+const running = (r) => Object.keys(r.lanes).filter((l) => r.lanes[l]);
+r = await decide({ event: "push", proof: mainProof({ compare: { [`m1...${head}`]: cmp(["docs/x.md"]) } }) });
+check("main: docs-only since the last pass runs only perf", running(r), ["perf"]);
+r = await decide({ event: "push", proof: mainProof({ compare: { [`m1...${head}`]: cmp(["examples/self_host/lexer.fern"]) } }) });
+check("main: a self-host-only change skips the lanes that cannot see it",
+  [r.lanes["test-e2e-x86_64"], r.lanes["test-e2e-differential"], r.lanes["test-units"], r.lanes["test-e2e-selfhost"], r.lanes.bootstrap, r.lanes.macos],
+  [false, false, true, true, true, true]);
+r = await decide({ event: "push", proof: mainProof({ compare: { [`m1...${head}`]: cmp(["internal/checker/x.go"]) } }) });
+check("main: a compiler change runs the lanes it reaches", [r.lanes["test-units"], r.lanes["test-e2e-x86_64"], r.lanes.macos], [true, true, true]);
+r = await decide({ event: "push", proof: mainProof({
+  jobs: { 50: [...mainJobs(laneKeys.filter((l) => l !== "test-units")), ...mainJobs(["test-units"], "failure")] },
+  compare: { [`m1...${head}`]: cmp(["docs/x.md"]) } }) });
+check("main: a lane red on its last run runs again", [r.lanes["test-units"], r.lanes["test-coreutils"]], [true, false]);
+r = await decide({ event: "push", proof: mainProof({
+  runs: [{ id: 51, head_sha: "m2" }, { id: 50, head_sha: "m1" }],
+  jobs: { 51: mainJobs(laneKeys.filter((l) => l !== "test-units")), 50: mainJobs(laneKeys) },
+  compare: { [`m2...${head}`]: cmp(["docs/x.md"]), [`m1...${head}`]: cmp(["docs/x.md", "internal/checker/x.go"]) } }) });
+check("main: a lane skipped on the newest run is diffed from where it last ran", [r.lanes["test-units"], r.lanes["test-coreutils"]], [true, false]);
+r = await decide({ event: "push", proof: mainProof({
+  runs: [{ id: 51, head_sha: "m2" }, { id: 50, head_sha: "m1" }],
+  jobs: { 51: [...mainJobs(laneKeys.filter((l) => l !== "test-units"), "cancelled"), ...mainJobs(["test-units"])], 50: mainJobs(laneKeys) },
+  compare: { [`m2...${head}`]: cmp(["docs/x.md"]), [`m1...${head}`]: cmp(["docs/x.md", "internal/checker/x.go"]) } }) });
+check("main: a lane a later push cancelled is diffed from where it last passed", [r.lanes["test-units"], r.lanes["test-e2e-x86_64"]], [false, true]);
+r = await decide({ event: "push", proof: mainProof({ compare: { [`m1...${head}`]: cmp(["docs/x.md"], "diverged") } }) });
+check("main: a base that is not an ancestor proves nothing", all(r), true);
+r = await decide({ event: "push", proof: mainProof({ compare: { [`m1...${head}`]: cmp(Array.from({ length: 300 }, (_, i) => `docs/${i}.md`)) } }) });
+check("main: a truncated file list proves nothing", all(r), true);
+r = await decide({ event: "push", proof: mainProof({ runs: [{ id: 52, head_sha: head }], jobs: { 52: mainJobs(laneKeys) } }) });
+check("main: a run of this same commit is not a base", all(r), true);
+r = await decide({ event: "push", proof: mainProof({ runs: [] }) });
+check("main: no earlier main run proves nothing", all(r), true);
+r = await decide({ event: "push", proof: mainProof({ mainThrows: true }) });
+check("main: an API error proves nothing", [all(r), r.warnings.some((w) => w.includes("main's earlier runs"))], [true, true]);
 
 // Fail-open, and the one loud exception.
 check("listing failure runs everything", all(await decide({ throwOn: true })), true);

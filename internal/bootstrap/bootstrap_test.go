@@ -14,14 +14,27 @@ import (
 
 // fixpointCompiler is a stand-in compiler whose output IS itself, so every
 // generation it builds is byte-identical to the one before: the shape a real
-// stage chain must have. It ignores the source it is handed. Run without -o
-// it is the "program" it compiled, and exits 42 as the smoke test expects.
+// stage chain must have. It emits a tr stand-in for the multi-module smoke
+// source; other output is itself, exiting 42 when run without -o.
 const fixpointCompiler = `#!/bin/sh
 out=""
+tr_source=""
 while [ $# -gt 0 ]; do
-  case "$1" in -o) out="$2"; shift 2 ;; *) shift ;; esac
+  case "$1" in
+    -o) out="$2"; shift 2 ;;
+    */coreutils/tr.fern) tr_source="$1"; shift ;;
+    *) shift ;;
+  esac
 done
 [ -n "$out" ] || exit 42
+if [ -n "$tr_source" ]; then
+  [ -f "$tr_source" ] || exit 1
+  cat > "$out" <<'PROGRAM'
+#!/bin/sh
+exec tr "$@"
+PROGRAM
+  exit 0
+fi
 cp "$0" "$out"
 `
 
@@ -78,13 +91,14 @@ func checkout(t *testing.T) string {
 		t.Fatal(err)
 	}
 	root := t.TempDir()
-	for _, d := range []string{"bootstrap", "examples/self_host", "internal/stdlib"} {
+	for _, d := range []string{"bootstrap", "examples/self_host", "internal/stdlib", "coreutils"} {
 		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
 	write(t, filepath.Join(root, "bootstrap", "bootstrap.sh"), script, 0o755)
 	write(t, filepath.Join(root, "examples", "self_host", "fern.fern"), []byte("function main(): i32 { return 0; }\n"), 0o644)
+	write(t, filepath.Join(root, "coreutils", "tr.fern"), []byte("// Multi-module smoke source for the stand-in compiler.\n"), 0o644)
 	return root
 }
 
@@ -153,6 +167,30 @@ func TestBuildRejectsACompilerWhoseOutputDoesNotRun(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "bin", "fern-selfhost")); err == nil {
 		t.Errorf("bin/fern-selfhost installed despite a failed smoke test")
+	}
+}
+
+func TestBuildRejectsBrokenMultiModuleSmoke(t *testing.T) {
+	for _, tc := range []struct {
+		name, old, replacement, diagnostic string
+	}{
+		{"compile", `[ -f "$tr_source" ] || exit 1`, `exit 1`, "could not compile coreutils/tr.fern"},
+		{"run", `exec tr "$@"`, `exit 1`, "tr compiled by"},
+		{"output", `exec tr "$@"`, `printf abc`, "printed 'abc', want 'xyz'"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := checkout(t)
+			stage0 := filepath.Join(root, "candidate")
+			compiler := strings.Replace(fixpointCompiler, tc.old, tc.replacement, 1)
+			write(t, stage0, []byte(compiler), 0o755)
+			out, err := run(t, root, "build", []string{"STAGE0=" + stage0}, "")
+			if err == nil || !strings.Contains(out, tc.diagnostic) {
+				t.Fatalf("expected multi-module smoke failure %q, got %v", tc.diagnostic, err)
+			}
+			if _, err := os.Stat(filepath.Join(root, "bin", "fern-selfhost")); !os.IsNotExist(err) {
+				t.Fatalf("compiler must not be installed after failed smoke: %v", err)
+			}
+		})
 	}
 }
 

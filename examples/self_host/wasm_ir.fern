@@ -11218,27 +11218,19 @@ function emit_ir_rc_bodies_seeded(mod: parser.Module, frt: string[], sdt: string
     // #6127: the DIRECT nested-struct / nested-enum field arm (see the x86 twin).
     var nfok: string[] = irlower.structfld_reclaim_ok_types_of(mod.funcs, stab, bparams);
     var frti: i32 = 0;
-    // #5235: plain-fn-pointer-array field markers ("FNPTR:<sty>.<field>") — a
-    // registered field is buffer-only-freed (its elements are raw code addresses).
-    var fpk: string[] = irlower.fnptr_arr_fields_of(mod.funcs, stab);
     while (frti < frt.len()) {
-        parts = parts.append(emit_wasm_field_reclaim_body(frt[frti], stab, mr_types, heap_base, util.index_of_str(sfok, frt[frti]) >= 0, util.index_of_str(sfok, "clo:" + frt[frti]) >= 0, util.index_of_str(nfok, frt[frti]) >= 0, util.index_of_str(sfok, "sarr:" + frt[frti]) >= 0, util.index_of_str(sfok, "arr:" + frt[frti]) >= 0, fpk));
+        parts = parts.append(emit_wasm_field_reclaim_body(frt[frti], stab, mr_types, heap_base, util.index_of_str(sfok, frt[frti]) >= 0, util.index_of_str(sfok, "clo:" + frt[frti]) >= 0, util.index_of_str(nfok, frt[frti]) >= 0, util.index_of_str(sfok, "sarr:" + frt[frti]) >= 0, util.index_of_str(sfok, "arr:" + frt[frti]) >= 0));
         frti = frti + 1;
     }
     // The struct-drop field walk reads its admissions off a need set, seeded
     // here exactly as asm_ir.emit_module_ir_unit_flat seeds them: one
-    // "strfldok:<row>" per admission row and the FNPTR markers as-is.
+    // "strfldok:<row>" per admission row.
     var ds: asmcore.EmitState = asmcore.new_state();
     ds = asmcore.EmitState { ...ds, struct_decls: irlower.struct_tab(mod.structs) };
     var sfi: i32 = 0;
     while (sfi < sfok.len()) {
         ds = ds.need("strfldok:" + sfok[sfi]);
         sfi = sfi + 1;
-    }
-    var fpi: i32 = 0;
-    while (fpi < fpk.len()) {
-        ds = ds.need(fpk[fpi]);
-        fpi = fpi + 1;
     }
     var sdti: i32 = 0;
     while (sdti < sdt.len()) {
@@ -11428,7 +11420,7 @@ pub function emit_wasm_struct_drop_body(t: string, s: asmcore.EmitState, hb: i32
 // emit_wasm_struct_drop_body. `old` null / below heap_base skips the field loop
 // (snapshot_dec null-guards the box free). Returns `new`. `hb` is the module's
 // heap base (the low-address guard threshold).
-pub function emit_wasm_field_reclaim_body(t: string, structs: irlower.StructTab, mr_types: string[], hb: i32, str_ok: boolean, clo_ok: boolean, nest_ok: boolean, sarr_ok: boolean, strarr_ok: boolean, fnptr_fields: string[]): string {
+pub function emit_wasm_field_reclaim_body(t: string, structs: irlower.StructTab, mr_types: string[], hb: i32, str_ok: boolean, clo_ok: boolean, nest_ok: boolean, sarr_ok: boolean, strarr_ok: boolean): string {
     var o: string = "  (func $__field_reclaim_" + t + " (param $new i32) (param $old i32) (param $snap i32) (result i32)\n";
     o = o + "    (if (i32.and (i32.ge_u (local.get $old) (i32.const " + util.i32_to_string(hb) + ")) (i32.ne (local.get $old) (local.get $new))) (then\n";
     var si: i32 = 0;
@@ -11486,13 +11478,10 @@ pub function emit_wasm_field_reclaim_body(t: string, structs: irlower.StructTab,
                     // same predicate $__struct_drop_<T> routes on, so an enum-array
                     // whose element type carries no methods (classified scalar
                     // "i" here) stays on the flat dec in BOTH helpers rather than
-                    // having raw slots walked as boxes; and a registered
-                    // plain-fn-pointer array field (#5235) stays flat too — its
-                    // elements are raw code addresses.
+                    // having raw slots walked as boxes.
                     if (sarr_ok
                         && (irlower.is_struct_array_field_type(structs, ft) || irlower.is_enum_array_field_type(structs, ft))
-                        && array_field_elem_is_ptr(ft, structs, mr_types)
-                        && !util.has_str(fnptr_fields, "FNPTR:" + t + "." + structs.decls[si].fields[k].name)) {
+                        && array_field_elem_is_ptr(ft, structs, mr_types)) {
                         dec = "(drop (call $__fern_arr_dec_ptr " + oldf + "))";
                         // MULTI-LEVEL element deep-drop (#2649), the same helpers
                         // $__struct_drop_<T>'s array arm calls first: release each
