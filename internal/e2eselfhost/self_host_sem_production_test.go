@@ -4058,7 +4058,7 @@ function main(): i32 {
 	// the array (returned, reassigned, passed) reached a caller that dispatched
 	// it env-first and segfaulted. A zero-parameter function names a function
 	// value unless it is a `const`, so it boxes too.
-	{name: "a-function-array-holds-boxes", atLeast: 15, noLeak: true, src: `
+	{name: "a-function-array-holds-boxes", atLeast: 15, want: "64|", astAnswers: "64|", noLeak: true, src: `
 struct M { k: i32 }
 enum E { Wrap(() => i32), No }
 function a(b: i32): i32 { return b + 1; }
