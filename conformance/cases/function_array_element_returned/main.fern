@@ -1,0 +1,25 @@
+// An element of an array of named functions, returned and called by the
+// caller: through a binding, in the same expression, and through a function
+// value bound to the factory. The same for zero-parameter functions, which are
+// function values unless they are `const`s.
+function a(b: i32): i32 { return b + 1; }
+function bb(b: i32): i32 { return b + 2; }
+function z(): i32 { return 7; }
+function y(): i32 { return 8; }
+
+function pickf(i: i32): (i32) => i32 {
+    var fs = [a, bb];
+    return fs[i];
+}
+
+function pickz(i: i32): () => i32 {
+    var fs = [z, y];
+    return fs[i];
+}
+
+function main(): i32 {
+    var f = pickf(0);
+    var p = pickf;
+    var g = pickz(1);
+    return f(10) + pickf(1)(10) + p(1)(20) + g() + pickz(0)();
+}

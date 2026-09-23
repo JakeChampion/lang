@@ -260,11 +260,12 @@ func TestRcTrackedSetLayering(t *testing.T) {
 		t.Error("dyn must not be in the shared sets — it is the backend-gated sweep extra")
 	}
 	// The gate the sweep layer keys on: wasm (ptrW==4) and any native
-	// that opted in reclaim dyn; arm64 (ptrW==8, no opt-in) leaks it.
+	// that opted in reclaim dyn; a native without the opt-in (arm64ssa)
+	// leaks it.
 	if !(&builder{ptrW: 4}).dynReclaim() || !(&builder{ptrW: 8, dynRcSupported: true}).dynReclaim() {
 		t.Error("dyn must be reclaimable on wasm and opted-in natives")
 	}
 	if (&builder{ptrW: 8}).dynReclaim() {
-		t.Error("dyn must NOT be reclaimable on arm64 (no __drop_dyn helper, slice 4c)")
+		t.Error("dyn must NOT be reclaimable on a native without DynRcSupported")
 	}
 }

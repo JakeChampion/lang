@@ -284,7 +284,7 @@ function main(): i32 {
     var fs: ((f64) => f64)[] = [(x: f64) => x * k];
     return fs[0](4.5) as i32;
 }`},
-	// A fn-pointer ARRAY struct FIELD with arguments — the field's own two
+	// A function-array struct FIELD with arguments — the field's own two
 	// sidecars, which the parser now records for an array-of-fn field too.
 	{"fnarrayfield_arg_f64", `struct Reg { hs: ((f64) => f64)[] }
 function scale(x: f64): f64 { return x * 10.0; }
