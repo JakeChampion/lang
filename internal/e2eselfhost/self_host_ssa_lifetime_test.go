@@ -197,10 +197,10 @@ var result = ssalive.compute(f, deps);
 if (!result.ok) { print(result.why); return 1; }
 if (ssa.print_func(f) != before) { return 2; }
 var bits: string = "";
-for bit in result.live_in { if (bit) { bits = bits + "1"; } else { bits = bits + "0"; } }
+for bit in ssalive.live_in_bits(result, f.blocks.len(), f.nvals) { if (bit) { bits = bits + "1"; } else { bits = bits + "0"; } }
 print(bits);
 bits = "";
-for bit in result.live_out { if (bit) { bits = bits + "1"; } else { bits = bits + "0"; } }
+for bit in ssalive.live_out_bits(result, f.blocks.len(), f.nvals) { if (bit) { bits = bits + "1"; } else { bits = bits + "0"; } }
 print(bits);
 return 0;
 }
