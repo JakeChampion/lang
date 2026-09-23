@@ -1916,10 +1916,34 @@ func stringParamCounted(fn *ast.FuncDecl, pn string, summary *summaryTable[[]boo
 					}
 				}
 			}
+			if a := selfSlotArg(fn, pn, x); a != nil {
+				mark(a)
+			}
 		}
 		return true
 	})
 	return everyOccurrenceSafe(total, len(safe))
+}
+
+// selfSlotArg is the argument a direct self-recursive call `c` passes back
+// into parameter `pn`'s own position, or nil. The frame it enters retains
+// that argument exactly as this one retains `pn`, so it is the property
+// being proved and not a use that can refute it: an uncounted retention
+// anywhere down the recursion happens at some other occurrence, which the
+// classifier sees. The least fixpoint cannot credit it through the
+// summary, whose entry for this position is what it is computing, and so
+// refused every recursive walker that threads its input through itself.
+func selfSlotArg(fn *ast.FuncDecl, pn string, c *ast.Call) ast.Expr {
+	id, ok := c.Callee.(*ast.Ident)
+	if !ok || id.Name != fn.Name {
+		return nil
+	}
+	for i, p := range fn.Params {
+		if p.Name == pn && i < len(c.Args) {
+			return c.Args[i]
+		}
+	}
+	return nil
 }
 
 // arrayParamCounted is the array sibling of stringParamCounted: an array
@@ -2069,6 +2093,9 @@ func arrayParamCounted(fn *ast.FuncDecl, pn string, at ast.ArrayType, info *chec
 						}
 					}
 				}
+			}
+			if a := selfSlotArg(fn, pn, x); a != nil {
+				mark(a)
 			}
 		}
 		return true
@@ -2386,6 +2413,9 @@ func paramProjectionsSafe(fn *ast.FuncDecl, pn string, info *checker.Info, summa
 						}
 					}
 				}
+			}
+			if a := selfSlotArg(fn, pn, x); a != nil {
+				markSlotValue(a)
 			}
 			// A variant-constructor payload is a counted slot exactly like a
 			// StructLit field: a bare `p` is inc'd in, a `p.field` is inc'd
