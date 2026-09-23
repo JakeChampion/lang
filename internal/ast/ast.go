@@ -1677,6 +1677,35 @@ const MapHeaderBytes = 24
 // circuits to `true` without reading `TwoWordOverride`.
 var CodegenMu sync.Mutex
 
+// MapKeyDispatchable reports whether the map runtime can hash and compare
+// values of `t` BY VALUE. False for a tuple, an array or a slice: the
+// interpreter deep-compares them (TestInterpMapCompositeKeys gates that) and
+// no compiled backend has a branch for one, so the emitted code compares the
+// pointer and every lookup reads the default (#10020).
+//
+// A struct or enum IS dispatchable: #2671 threads its derived hash / eq in as
+// function values. A tuple is a struct without a name, which is why it has
+// nowhere to hang those, and synthesising them structurally is the fix this
+// predicate stands in for.
+//
+// It lives here because two packages need the same answer and only one
+// direction of import is possible: internal/ir imports internal/checker, so
+// the checker cannot reach into the IR. This is a leaf fact about a type's
+// shape either way, which is what this file already holds.
+//
+// The two that consult it are the checker's annotation carve-out — which
+// must not refuse what the interpreter supports — and the IR's refusal to
+// lower one, which stops the compiled build answering the default in
+// silence. A copy each would drift, and the drift reintroduces the
+// miscompile.
+func MapKeyDispatchable(t Type) bool {
+	switch t.(type) {
+	case TupleType, ArrayType, SliceType:
+		return false
+	}
+	return true
+}
+
 // IsPointerType reports whether values of `t` are represented
 // as heap pointers in the compiled code — so the slot holding
 // the value must be pointer-width (4 on wasm32, 8 on arm64).
