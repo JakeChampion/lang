@@ -4108,6 +4108,55 @@ function main(): i32 {
 	// lambda handed back through a generic call, a local bound from one, or a
 	// match-arm payload was dispatched as a bare code pointer by a caller that
 	// bound the result to a local, and segfaulted.
+	// A field read stored into a container is a second owner of a box its
+	// struct's __struct_drop_<T> releases: a scalar array, an array of structs,
+	// a nested struct, an enum. The AST lowering, the control leg, retained only
+	// an enum field read, so `xs.append(a.env)` in a callee left the element
+	// uncounted, the caller's drop of the argument freed it, and the next
+	// allocation reused the block under the container. That was the
+	// out-of-bounds abort of a compiler built through the AST lowering (#9763).
+	{name: "a-stored-field-read-is-retained", atLeast: 11, want: "24|", astAnswers: "24|", noLeak: true, src: `
+struct In { x: i32 }
+enum Tag { A(i32), B }
+struct E { env: i32[], live: boolean }
+struct I { ins: In[], live: boolean }
+struct N { inner: In, live: boolean }
+struct T { tag: Tag, live: boolean }
+function mke(k: i32): E { return E { env: [k, k + 1], live: true }; }
+function mki(k: i32): I { return I { ins: [In { x: k }], live: true }; }
+function mkn(k: i32): N { return N { inner: In { x: k }, live: true }; }
+function mkt(k: i32): T { return T { tag: A(k), live: true }; }
+function put_env(xs: i32[][], a: E): i32[][] { return xs.append(a.env); }
+function put_ins(xs: In[][], a: I): In[][] { return xs.append(a.ins); }
+function put_inner(xs: In[], a: N): In[] { return xs.append(a.inner); }
+function put_tag(xs: Tag[], a: T): Tag[] { return xs.append(a.tag); }
+function lit_env(a: E): i32[][] { return [a.env]; }
+function tag_of(t: Tag): i32 { match (t) { A(n) => { return n; }, B => { return 0; } } }
+function main(): i32 {
+    var es: i32[][] = [];
+    var k: i32 = 1;
+    while (k < 5) { es = put_env(es, mke(k)); k = k + 1; }
+    var is: In[][] = [];
+    k = 1;
+    while (k < 5) { is = put_ins(is, mki(k)); k = k + 1; }
+    var ns: In[] = [];
+    k = 1;
+    while (k < 5) { ns = put_inner(ns, mkn(k)); k = k + 1; }
+    var ts: Tag[] = [];
+    k = 1;
+    while (k < 5) { ts = put_tag(ts, mkt(k)); k = k + 1; }
+    var ls: i32[][] = [];
+    k = 1;
+    while (k < 5) { ls = ls.append(lit_env(mke(k))[0]); k = k + 1; }
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) {
+        t = t * 3 + es[i][0] * 1000 + is[i][0].x * 100 + ns[i].x * 10 + tag_of(ts[i]) + ls[i][1];
+        i = i + 1;
+    }
+    return t % 256;
+}
+`},
 	{name: "a-function-returning-a-function-returns-a-box", atLeast: 15, want: "53|", astAnswers: "53|", noLeak: true, src: `
 enum Box { W((i32) => i32), No }
 function id[T](x: T): T { return x; }
