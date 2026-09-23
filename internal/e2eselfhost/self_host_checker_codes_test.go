@@ -2701,6 +2701,39 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 			}
 		})
 	}
+
+	// Map's helpers all come from the one module, so one report covers every
+	// use: native stops after the first with a checker-level flag
+	// (mapErrReported), and thin_map_import_diags is this checker's pure
+	// equivalent. The rows above cannot see it — every differential here
+	// compares a de-duplicated code SET, so a program reported twice and a
+	// program reported once are the same answer — and no row has two map
+	// sites. This counts the diagnostics instead.
+	t.Run("map-import-reported-once-per-program", func(t *testing.T) {
+		const src = "function a(): i32 { var m: Map[i32, i32] = map_new(8); return m.len(); }\n" +
+			"function b(): i32 { var m: Map[i32, i32] = map_new(4); return m.len(); }\n" +
+			"function main(): i32 { return a() + b(); }\n"
+		var cmd *exec.Cmd
+		if len(runner) == 0 {
+			cmd = exec.Command(checkerBin)
+		} else {
+			cmd = exec.Command(runner[0], append(runner[1:], checkerBin)...)
+		}
+		cmd.Stdin = bytes.NewReader([]byte(src))
+		out := runCheckerDriver(t, cmd, "map-import-reported-once-per-program")
+		var mapDiags []driverDiag
+		for _, d := range driverDiags(out) {
+			if d.code == "E001" && strings.Contains(d.msg, "core/map") {
+				mapDiags = append(mapDiags, d)
+			}
+		}
+		// Two map_new sites, one diagnostic. Native answers the same program
+		// with one, so anything else is a parity break rather than a style
+		// choice; zero would mean the rule stopped firing at all.
+		if len(mapDiags) != 1 {
+			t.Errorf("two map_new sites drew %d missing-core/map diagnostics, want 1: %v\nsrc: %s", len(mapDiags), mapDiags, src)
+		}
+	})
 }
 
 // TestSelfHostCheckerBundleDifferentialX86_64 is the MULTI-MODULE differential
