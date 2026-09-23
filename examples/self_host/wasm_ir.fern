@@ -384,6 +384,8 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
     if (module_uses_u64_to_string(cache) || module_uses_u32_to_string(cache)) { out = out.append("@uses_u64_to_string"); }
     if (module_uses_u32_to_string(cache)) { out = out.append("@uses_u32_to_string"); }
     if (module_uses_i64_divrem(cache)) { out = out.append("@uses_i64_divrem"); }
+    if (module_uses_udivrem(cache)) { out = out.append("@uses_udivrem"); }
+    if (module_uses_i64_udivrem(cache)) { out = out.append("@uses_i64_udivrem"); }
     if (module_uses_maps(cache)) { out = out.append("@uses_maps"); }
     if (module_uses_map_w64(cache)) { out = out.append("@uses_map_w64"); }
     if (module_uses_random(cache)) { out = out.append("@uses_random"); }
@@ -806,11 +808,11 @@ function wasm_binop(tag: i32): string {
     if (tag == 31) { return "i32.shl"; }
     if (tag == 32) { return "i32.shr_s"; }
     if (tag == 33) { return "i32.shr_u"; }
-    // Unsigned u32 div/rem (#3204+): wasm's native i32.div_u/rem_u — irlower
-    // remaps div_s/rem_s -> div_u/rem_u when an operand is u32, so a u32
-    // numerator >= 2^31 divides as unsigned (signed div gave the wrong answer).
-    if (tag == 25) { return "i32.div_u"; }
-    if (tag == 27) { return "i32.rem_u"; }
+    // Unsigned div/rem (#3204+): irlower remaps div_s/rem_s -> div_u/rem_u when
+    // an operand is unsigned, so a numerator >= 2^31 divides as unsigned. The
+    // helpers give x/0 = 0 and x%0 = x where i32.div_u / rem_u would trap.
+    if (tag == 25) { return "call $__fern_udiv"; }
+    if (tag == 27) { return "call $__fern_urem"; }
     if (tag == 35) { return "i32.eq"; }
     if (tag == 36) { return "i32.ne"; }
     if (tag == 37) { return "i32.lt_s"; }
@@ -839,11 +841,9 @@ function wasm_binop_w(tag: i32, width: i32): string {
     // wasm.fern's AST path; emitted by divrem_helpers (module_uses_divrem).
     if (tag == 24) { return "call $__fern_idiv64"; }
     if (tag == 26) { return "call $__fern_irem64"; }
-    // Unsigned 64-bit div/rem (u64, #2904): wasm's native i64.div_u/rem_u (they
-    // trap only on divide-by-zero — the signed INT64_MIN/-1 overflow that the
-    // $__fern_*64 helpers neutralise can't arise unsigned).
-    if (tag == 25) { return "i64.div_u"; }
-    if (tag == 27) { return "i64.rem_u"; }
+    // Unsigned 64-bit div/rem (u64, #2904): only a zero divisor needs guarding.
+    if (tag == 25) { return "call $__fern_udiv64"; }
+    if (tag == 27) { return "call $__fern_urem64"; }
     if (tag == 28) { return "i64.and"; }
     if (tag == 29) { return "i64.or"; }
     if (tag == 30) { return "i64.xor"; }
@@ -1598,6 +1598,17 @@ pub function module_uses_arr_slice(cache: irlower.LowerResult[]): boolean {
 pub function module_uses_arr_slice8(cache: irlower.LowerResult[]): boolean {
     function is_arr_slice8(o: ir.Op): boolean { return o.kind_tag == 96 && o.width == 64; }  // arr_slice
     return any_op(cache, is_arr_slice8);
+}
+
+// module_uses_udivrem / module_uses_i64_udivrem are the same gates for the
+// unsigned helpers.
+pub function module_uses_udivrem(cache: irlower.LowerResult[]): boolean {
+    function is_udivrem(o: ir.Op): boolean { return (o.kind_tag == 25 || o.kind_tag == 27) && o.width != 64; }  // div_u, rem_u
+    return any_op(cache, is_udivrem);
+}
+pub function module_uses_i64_udivrem(cache: irlower.LowerResult[]): boolean {
+    function is_i64_udivrem(o: ir.Op): boolean { return (o.kind_tag == 25 || o.kind_tag == 27) && o.width == 64; }  // div_u, rem_u
+    return any_op(cache, is_i64_udivrem);
 }
 
 pub function module_uses_i64_divrem(cache: irlower.LowerResult[]): boolean {
@@ -9261,6 +9272,20 @@ pub function divrem64_helpers(): string {
     parts = parts.append("    (select (local.get $a) (i64.rem_s (local.get $a) (local.get $safe)) (i64.eqz (local.get $b))))\n");
     return util.str_join_chunks(parts);
 }
+// udivrem_helpers is the unsigned pair at width `t` ("i32" / "i64"): a zero
+// divisor is sanitised to 1, then `select` gives 0 for div and the dividend
+// for rem.
+pub function udivrem_helpers(t: string, suffix: string): string {
+    var safe: string = "    (local.set $safe (select (" + t + ".const 1) (local.get $b) (" + t + ".eqz (local.get $b))))\n";
+    var parts: string[] = [];
+    parts = parts.append("  (func $__fern_udiv" + suffix + " (param $a " + t + ") (param $b " + t + ") (result " + t + ")\n");
+    parts = parts.append("    (local $safe " + t + ")\n" + safe);
+    parts = parts.append("    (select (" + t + ".const 0) (" + t + ".div_u (local.get $a) (local.get $safe)) (" + t + ".eqz (local.get $b))))\n");
+    parts = parts.append("  (func $__fern_urem" + suffix + " (param $a " + t + ") (param $b " + t + ") (result " + t + ")\n");
+    parts = parts.append("    (local $safe " + t + ")\n" + safe);
+    parts = parts.append("    (select (local.get $a) (" + t + ".rem_u (local.get $a) (local.get $safe)) (" + t + ".eqz (local.get $b))))\n");
+    return util.str_join_chunks(parts);
+}
 // print_int64_helper mirrors print_int_helper for i64 values, formatting
 // into a 24-byte scratch buffer at `buf` (i64's widest decimal is 20
 // chars incl. sign). No trailing newline.
@@ -10543,6 +10568,8 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     if (module_needs_extern_wrappers(mod, xslot_ir())) { parts = parts.append(extern_wrappers(mod, xslot_ir())); }
     if (need(needs, "@uses_divrem")) { parts = parts.append(divrem_helpers()); }
     if (need(needs, "@uses_i64_divrem")) { parts = parts.append(divrem64_helpers()); }
+    if (need(needs, "@uses_udivrem")) { parts = parts.append(udivrem_helpers("i32", "")); }
+    if (need(needs, "@uses_i64_udivrem")) { parts = parts.append(udivrem_helpers("i64", "64")); }
     // $__fern_exp_f64: e^x via a polynomial (no transcendental wasm
     // instruction). Self-contained f64 math — no imports or heap. fpow (x^y =
     // exp(y·ln x)) reuses it, so its gate folds fpow in (emitted once).
