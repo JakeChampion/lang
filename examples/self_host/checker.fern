@@ -7900,12 +7900,16 @@ function variant_pattern_owner(name: string): string {
 
 // type_arity_diag checks one type annotation: if it supplies an explicit
 // `[...]` argument list whose count doesn't match the named struct's
-// declared type-parameter count, it's E019. Checked at param + struct-
-// field positions (where the Go checker reports E019 on its own); a `var`
-// / return annotation with the wrong arity additionally trips E003 / E002
-// in Go, so those positions are left out to keep the code sets matching.
+// declared type-parameter count, it's E019. Checked at every annotation
+// position: parameter, struct field, return and body `var`. At the last
+// two the Go checker adds an E003 / E002 on the mismatched value as well;
+// this reports the E019 alone.
 function type_arity_diag(t: string, structs: parser.StructDecl[]): util.Diag[] {
   var out: util.Diag[] = [];
+  // An array of an instantiation (`Pair[i32][]`) names the same head.
+  while (t.len() > 2 && slice_unchecked(t, t.len() - 2, t.len()) == "[]") {
+    t = slice_unchecked(t, 0, t.len() - 2) + "";
+  }
   var nargs: i32 = count_type_args(t);
   if (nargs >= 0) {
     var tpc: i32 = struct_type_param_count(structs, util.base_type_name(t));
@@ -15433,6 +15437,10 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
     while (pai2 < mod.funcs[i].params.len()) {
       body_diags = util.append_diags(body_diags, type_arity_diag(mod.funcs[i].params[pai2].type_name, mod.structs));
       pai2 = pai2 + 1;
+    }
+    body_diags = util.append_diags(body_diags, type_arity_diag(mod.funcs[i].ret_type, mod.structs));
+    for annot in collect_annots(mod.funcs[i].body) {
+      body_diags = util.append_diags(body_diags, type_arity_diag(annot.type_name, mod.structs));
     }
     // E036: unqualified reference to a variant shared by 2+ enums.
     if (ambig.len() > 0) {
