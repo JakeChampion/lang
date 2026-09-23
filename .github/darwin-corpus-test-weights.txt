@@ -1,0 +1,84 @@
+# Measured weights for the macOS coreutils corpus shards, in seconds.
+#
+# `TestName seconds` per line; `#` comments and blanks ignored. A name with no
+# entry weighs 1, so this file steers BALANCE only: scripts/shard-tests
+# partitions the live `go test -list` output of the macOS runner itself, and
+# every listed name lands in exactly one bucket. A stale weight costs an
+# unevenly filled shard, nothing more.
+#
+# Separate from coreutils-test-weights.txt because Darwin's costs are not
+# Linux's: TestPrintfParity is 169 s there and 37 s here, TestMulticallParity
+# 96 s there and 201 s here.
+#
+# Entries under 2 s are omitted. Source: the per-test times in the
+# coreutils-corpus-darwin log of run 35733713188 (2026-09-22). Refresh from the
+# shard logs when the two macOS shards drift apart.
+
+TestMulticallParity 201
+TestDateParity 38
+TestPrintfParity 37
+TestNumfmtParity 30
+TestTimeout 25
+TestExprRegexDifferential 23
+TestTailParity 21
+TestSeqParity 18
+TestPrParity 17
+TestCksumParity 11
+TestStat 10
+TestTestParity 9
+TestSplitParity 8
+TestCsplit 7
+TestSleepParity 7
+TestSortParity 7
+TestHeadSeekableMatchesStreaming 6
+TestMkdir 6
+TestDDProgress 6
+TestTeeParity 6
+TestVdir 6
+TestBracketParity 5
+TestMulticallDispatch 5
+TestDir 5
+TestLs 5
+TestMkfifoParity 5
+TestOd 5
+TestExprParity 4
+TestDf 4
+TestShufParity 4
+TestMvParity 4
+TestPtxParity 4
+TestSyncParity 4
+TestChmodParity 4
+TestBasencParity 4
+TestB2sumParity 3
+TestRmParity 3
+TestSha224sumParity 3
+TestDu 3
+TestSha1sumParity 3
+TestSha512sumParity 3
+TestSha384sumParity 3
+TestSha256sumParity 3
+TestCpParity 3
+TestShred 3
+TestWasmSmoke 3
+TestTsortParity 3
+TestDircolorsParity 3
+TestRealpathParity 3
+TestTruncateParity 3
+TestFmtParity 3
+TestMknodParity 3
+TestEnv 3
+TestFactorParity 2
+TestLnParity 2
+TestMd5sumParity 2
+TestUniqParity 2
+TestMktempParity 2
+TestTrParity 2
+TestReadlinkParity 2
+TestTacParity 2
+TestRmdirParity 2
+TestInstallParity 2
+TestJoinParity 2
+TestWcParity 2
+TestChown 2
+TestUnexpandParity 2
+TestPathchkParity 2

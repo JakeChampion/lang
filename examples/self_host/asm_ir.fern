@@ -181,7 +181,7 @@ function emit_ir_tcp_pollable(s: asmcore.EmitState): asmcore.EmitState {
 // — read(2) into a scratch buffer, spread into a fresh u8[] box (#5714).
 
 // __fern_tcp_send is a Fern runtime function (#2649): asmcore.rt_src_tcp_send
-// — write(2) straight out of the string's own buffer, via __raw_data.
+// sendto(2) with MSG_NOSIGNAL from the string's buffer, via __raw_data.
 // __fern_tcp_listen is a Fern runtime function (#2649):
 // asmcore.rt_src_tcp_listen — socket + bind + listen over a sockaddr_in built
 // byte-wise in __fern_scratch.
@@ -5462,18 +5462,13 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
 // this replaced used, so the runtime helpers and the flat-op arms it still
 // runs are unchanged.
 //
-// Registers: %rsi, %rdi, %r8, %r9, %r10 and %r11 are allocatable. They are
-// caller-saved, and the allocator spills a value that is live across a call,
-// so nothing is saved around one. %rax, %rcx and %rdx are the scratch the
-// instruction table (ir_bin_asm, ir_div_guarded) already uses. A spilled value
-// lives at -8*(slot+1)(%rbp) by its allocator slot; the slots after the spills
-// stage the moves of an edge with several phis, so every source is read before
-// any result is written.
+// Registers: %rax, %rsi, %rdi, %r8, %r9 and %r10 are the caller-saved pool;
+// %rbx and %r12-%r15 are the callee-saved pool a value live across a call
+// takes, saved once per function. %r11, %rcx and %rdx are scratch. A spilled
+// value lives below the save area by its allocator slot (ssa_slot).
 
 // Pool index 0 is %rax, the register the ABI returns a call's result in, so a
-// call result allocated there needs no move. %r11 left the pool to become the
-// register path's working register, since every arm that is not a call was
-// moved off %rax for this; the pool is the same size it was.
+// call result allocated there needs no move.
 function ssa_reg(k: i32): string {
     if (k == 0) { return "%rax"; }
     if (k == 1) { return "%rsi"; }
@@ -6145,8 +6140,8 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmco
 
 // ssa_view_slots gives each frame-resident string view (kind 51, imm 1) the
 // index of its three frame words, in instruction order, and -1 to every other
-// value; ssa_view_count is how many there are. The words sit after the values
-// and the phi stage.
+// value; ssa_view_count is how many there are. The words sit after the spill
+// slots.
 function ssa_view_slots(f: ssa.SFunc): i32[] {
     var out: i32[] = [];
     var i: i32 = 0;

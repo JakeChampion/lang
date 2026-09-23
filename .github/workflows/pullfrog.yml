@@ -14,6 +14,23 @@ on:
 permissions:
   contents: read
 
+# Added to the generated file on purpose: at most two reviews run at once.
+# Each holds a standard runner for 15-35 minutes, from the same 40-job
+# account pool the CI suite needs, and four at once took a PR suite from
+# 40 slots to 25. Two queues split on run-number parity, since a group
+# admits one run at a time; `queue: max` keeps every review waiting in
+# order rather than dropping all but the newest.
+concurrency:
+  group: >-
+    pullfrog-${{ (endsWith(format('{0}', github.run_number), '0')
+                  || endsWith(format('{0}', github.run_number), '2')
+                  || endsWith(format('{0}', github.run_number), '4')
+                  || endsWith(format('{0}', github.run_number), '6')
+                  || endsWith(format('{0}', github.run_number), '8'))
+                 && 'even' || 'odd' }}
+  cancel-in-progress: false
+  queue: max
+
 jobs:
   pullfrog:
     runs-on: ubuntu-latest

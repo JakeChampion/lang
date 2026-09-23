@@ -61232,10 +61232,8 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     // for functions without an adjacent `call_direct self ; return` pair.
     var tco_ops: ir.Op[] = tco_self_tail(s.ops.to_array(), fn.name, s.frame.n_params);
     // Op-list peepholes: constant-fold adjacent `const; const; <foldable bin>`
-    // triples and strength-reduce `const K; <binop>` pairs, to a fixpoint. Runs
-    // on every build (constfold.fold_module, the AST-level sibling, is gated
-    // behind -O), in the shared lowering rather than per backend, so all three
-    // get it. See ir.optimize_ops, whose slot count — not the lowering's — sizes
+    // triples and strength-reduce `const K; <binop>` pairs, to a fixpoint, in
+    // the shared lowering rather than per backend, so all three get it. See ir.optimize_ops, whose slot count — not the lowering's — sizes
     // the frame, since a pass there may have minted a slot.
     var opt: ir.OptimizedOps = ir.optimize_ops(tco_ops, s.frame.n_params, s.locals.len());
     return LowerResult { ok: true, ops: opt.ops, n_locals: opt.n_locals, n_params: s.frame.n_params, erased_wide: erased_wide_stmts(fn.body, s), superseded: false, arr_slots: arr_slots_of(s), i64_slots: i64_slots_of(s), f64_slots: f64_slots_of(s), str_slots: str_slots_of(s), why: "", alias_incs: s.frame.alias_incs, name: "", result_kind: result_from_decl() };

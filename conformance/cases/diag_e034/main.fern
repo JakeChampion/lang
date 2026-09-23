@@ -6,7 +6,7 @@ function main(): i32 {
     var xs: i32[] = [1, "two"];   // error[E034]: array element type string, expected i32
 
     var i: f32 = 0.5;
-    var x: i32 = xs[i];           // error[E034]: index must be an integer, got f32
+    var x: i32 = xs[i];           // error[E034]: index must be i32, got f32
 
     var n: i32 = 42;
     return n[0];                  // error[E034]: indexing non-array value of type i32

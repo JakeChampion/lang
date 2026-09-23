@@ -2075,5 +2075,6 @@ leaves of the same kind: a `str` result escaping its source
 (`alloc_flat_method_identity_return`), a view lent past its frame
 (`string_slice_option`), and a `dyn Trait` call (`dyn_trait_dispatch`). A
 fn-typed local holding a function whose parameter is itself callable
-(`var t = taker; t(lambda)`) refuses as `function signature slot` by the same
-boundary; no corpus case holds it.
+(`var t = taker; t(lambda)`) produced nothing when this section was written
+(`function signature slot`); it produces since #10024, which admits a
+function type nested in a function value's signature.

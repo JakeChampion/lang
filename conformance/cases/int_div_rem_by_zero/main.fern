@@ -16,6 +16,12 @@ function idiv(a: i32, b: i32): i32 { return a / b; }
 function irem(a: i32, b: i32): i32 { return a % b; }
 function ldiv(a: i64, b: i64): i64 { return a / b; }
 function lrem(a: i64, b: i64): i64 { return a % b; }
+function bdiv(a: u8, b: u8): u8 { return a / b; }
+function brem(a: u8, b: u8): u8 { return a % b; }
+function udiv(a: u32, b: u32): u32 { return a / b; }
+function urem(a: u32, b: u32): u32 { return a % b; }
+function uldiv(a: u64, b: u64): u64 { return a / b; }
+function ulrem(a: u64, b: u64): u64 { return a % b; }
 
 function main(): i32 {
     print(idiv(10, 0).to_string());
@@ -25,5 +31,11 @@ function main(): i32 {
     print(idiv(0, 0).to_string());
     print(ldiv(10i64, 0i64).to_string());
     print(lrem(10i64, 0i64).to_string());
+    print((bdiv(7u8, 0u8) as i32).to_string());
+    print((brem(7u8, 0u8) as i32).to_string());
+    print(udiv(3000000000u32, 0u32).to_string());
+    print(urem(3000000000u32, 0u32).to_string());
+    print(uldiv(10u64, 0u64).to_string());
+    print(ulrem(10u64, 0u64).to_string());
     return 0;
 }

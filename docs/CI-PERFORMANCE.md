@@ -522,6 +522,75 @@ per-run `changes` filter and `ci-main.yml`'s coalescing already remove more,
 and the skip would need the PR run to have run every lane. Not worth its
 own machinery at that rate.
 
+## Seventh change: split the long poles, and skip what a change cannot reach
+
+### Splitting the longest jobs
+
+Measured on #10047's green run (35819228993) against the two full runs before
+it (35745901102, 35757937523):
+
+| Job | before | after |
+| --- | ---: | ---: |
+| macOS | 15.8 min, one job | 7.6 and 12.0 min, two shards |
+| differential aarch64 | 10.8 min, one shard | 5.8 and 5.8 min |
+| differential x86_64 | 9.7 min, one shard | 5.2 and 5.1 min |
+| fernsmith x86_64 | 9.7 min | 5.5 and 4.6 min |
+
+The macOS corpus halves took 429 s and 432 s; shard 1 also carried every
+other step, 250 s of them, which the next commit rebalances by moving the
+162-second self-host native step to shard 0. The ratchet moved to a Linux job
+that reads both shard logs, and passed on its first run.
+
+The semantic whole-compiler job (11-12 minutes) was not split: it is a chain in
+which gen1 must exist before gen1 can emit, so two jobs would add a hand-off to
+the same chain.
+
+### A premise that did not hold: job order
+
+The same PR first listed lanes longest first, on the reading that the
+12-minute semantic job started six minutes late on an idle pool (35745901102)
+because it was listed seventh. That reading was wrong. On that run, lanes
+listed after the self-host lane started at once; only the self-host lane's own
+26 jobs waited, whatever their position. On 35819228993, with the order changed,
+the self-host lane's jobs again started across 22 minutes. The reorder was
+dropped before merging.
+
+### Lanes a self-host-only change cannot reach
+
+26 of the 74 commits on main from 2026-09-15 to 2026-09-22 touched only
+`examples/self_host` or `internal/e2eselfhost`, and every lane ran on each. The
+x86_64 e2e, differential, fernsmith, fuzz and examples lanes select no test
+that reads either tree, and nothing outside the self-host lane imports
+`internal/e2eselfhost`. Run locally with both trees deleted, all five passed:
+fernsmith, a 1/32 slice of the differential sweep, the fixture corpus, the
+whole `^TestX86_64` set (813 s) and every example build. Those lanes now ignore
+both trees, and each of their jobs deletes them right after checkout so a test
+that starts to read them fails on every run. The wasm, arm64 and e2e-other
+lanes keep running: each selects tests that build or read the self-host
+sources.
+
+### Main runs that re-test the PR's tree
+
+Main ran every lane on every push. A rebase merge of a branch level with main
+pushes exactly the tree the PR's run tested; 9 of the 40 merges before
+2026-09-22 did. On a main push, the lane selector now finds the merged PR, and
+when its head's tree equals the pushed tree it skips each lane whose every job
+passed on the PR's successful run at that head. A lane the PR did not run
+still runs on main, and perf always does, since its main run records the perf
+history.
+
+### Review runs
+
+Pullfrog review runs, one standard runner each for 15-35 minutes, are capped
+at two at once by two concurrency groups with `queue: max`.
+
+### Not done: runners outside the 40-job limit
+
+The Team plan is out. The other way past the 40-job ceiling is a runner
+provider whose runners GitHub does not count against it; that needs an account
+with the provider and its GitHub App installed on the repository, which only
+the owner can do. Once it exists, moving a lane is a `runs-on` label change.
+
 ## Multi-core test execution: what parallelism can and cannot buy
 
 Measured 2026-09-22 on the 4-core container (Xeon 2.10 GHz, a 14 GB cgroup),

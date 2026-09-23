@@ -159,6 +159,46 @@ limits must return empty arrays without calling the host. The corresponding
 `TCPRecvLifecycleCensus` tests read real loopback data through EOF, including
 payloads crossing a read-buffer boundary, and require zero live Fern heap bytes.
 
+## Native socket setup ownership
+
+`TestNativeSocketSetupReclaimsDescriptors` and its `TestSelfHost` twin
+exercise failed binds and connects on x86-64 and ARM64 Linux, including QEMU.
+The `Arm64DarwinSocketSetupReclaimsDescriptors` tests cover native Darwin.
+Bootstrap tests run both flat and SSA backends on Linux; self-host tests
+compile through the production driver with strict IR enabled.
+
+Each probe repeats a setup failure 32 times and requires the kernel to reuse
+the next available descriptor, including descriptor zero. It also checks
+the original errno. A separate probe exhausts a bounded descriptor limit
+and verifies that socket-creation failure leaves existing listeners open.
+These are descriptor ownership checks, not throughput or heap-allocation
+measurements. Listen failure cleanup is not fault-injected by these probes.
+
+## Native TCP send errors
+
+`TestNativeSocketSendSuppressesSIGPIPE` and its self-host twin inherit a real
+TCP socket, shut down its write half, and require 32 consecutive sends to
+return `-EPIPE` without terminating the process. Their Darwin counterparts
+run on native Apple Silicon. Linux covers x86-64 and ARM64, including QEMU,
+with bootstrap flat/SSA and the strict-IR self-host production driver.
+Empty, inline, heap, and 4097-byte payloads also cover successful sends,
+exact received bytes, and invalid-descriptor errno. These tests do not yet
+exercise pending-write buffers or nonblocking backpressure.
+
+## Native TCP lifecycle allocation census
+
+`TestNativeTCPLifecycleCensus` and its self-host twin run 32 complete local
+listen/connect/accept/send/read-through-EOF/close cycles. Payloads cover
+empty, 1-byte, 7-byte and 4097-byte messages. The same corpus checks failed
+receives and nonpositive receive limits. Every case requires exactly one
+allocator report, equal allocation and free counts, and zero live bytes.
+
+Linux x86-64 and ARM64 run through bootstrap flat/SSA and strict-IR
+self-host compilation, including QEMU. `Arm64DarwinTCPLifecycleCensus`
+tests cover native Darwin with both compilers. These tests measure primitive
+ownership; they do not prove bounded HTTP handlers, zero-allocation framing,
+or native throughput. The Wasm lifecycle census is a separate gate.
+
 ## Generated digest sources
 
 The lint lane runs `make digest-check` on every PR and main push. It compares
