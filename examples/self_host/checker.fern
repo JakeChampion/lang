@@ -2825,10 +2825,25 @@ function (s: Scope) methods_in_namespace(ns: string): string[] {
   var out: string[] = [];
   if (ns == "Array") { out = ["append", "len", "with"]; }
   if (ns == "string") { out = ["as_bytes", "len"]; }
+  // Map's runtime methods. `set` / `delete` / `clear` are NOT among them:
+  // native registers them and then deletes them (the pure-collection API's
+  // hard removal), which is what leaves retired_collection_spelling naming
+  // the value-returning replacement. core/map's own receiver methods
+  // (entries, merge, extend, …) arrive through the loop below.
+  if (ns == "Map") { out = ["cleared", "get", "get_or", "has", "insert", "iter", "keys", "len", "values", "without"]; }
   for method in s.methods.methods {
-    if (method.receiver_type == ns) { out = push_str_unique_sorted(out, method.name); }
+    if (method.receiver_type == ns || (ns == "Map" && map_receiver_type(method.receiver_type))) { out = push_str_unique_sorted(out, method.name); }
   }
   return out;
+}
+
+// map_receiver_type: a receiver spelled `Map` or `Map[K, V]`. core/map declares
+// its own methods (entries, merge, update, …) on the generic spelling, which a
+// bare-namespace compare misses — the same mismatch has_array_recv_method
+// exists for on `T[]`.
+function map_receiver_type(rt: string): boolean {
+  if (rt == "Map") { return true; }
+  return rt.len() > 4 && slice_unchecked(rt, 0, 4) == "Map[";
 }
 
 // namespace_is_exact: every method on `ns` declares a concrete receiver, so
@@ -9628,6 +9643,19 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           if (mfa.field == "with") { abw = 2; }
           if (abw >= 0 && c.args.len() != abw) {
             out = out.append(dg_at("E004", "method \"" + mfa.field + "\" expects " + util.i32_to_string(abw) + " argument(s), got " + util.i32_to_string(c.args.len()), c.line, c.col));
+          }
+        },
+        typeinfo.TypeMap(_) => {
+          // E043 (map method existence). methods_in_namespace("Map") is the
+          // whole surface — the runtime builtins plus whatever core/map's
+          // receiver methods add once it is in the program — so a name that
+          // is not in it exists nowhere. That covers the retired `set` /
+          // `delete` / `clear`, which native registers and then removes, and
+          // whose advice names the value-returning replacement.
+          if (!util.has_str(s.methods_in_namespace("Map"), mfa.field)) {
+            // Labelled "Map", not the parameterised spelling: native models a
+            // Map as a struct of that name, so that is what its message says.
+            out = out.append(dg_at("E043", s.unknown_method_message("Map", mfa.field, "Map", recv), mfa.line, mfa.col));
           }
         },
         typeinfo.TypeStruct(sn) => {

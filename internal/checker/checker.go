@@ -3766,9 +3766,8 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// as its mutable-looking sibling, so dispatch (checker.go:6392,
 	// rewriting the call to the mangled ident) and the IR keyed on that
 	// name are reused wholesale — purely additive, zero IR change, no
-	// breakage. The mutable-looking names (`set`/`delete`/`clear`) stay
-	// for now; a later slice marks them deprecated and eventually
-	// removes them once call sites have migrated.
+	// breakage. The mutable-looking names are registered above and then
+	// deleted below, so only these aliases resolve.
 	c.info.Methods["Map.insert"] = "__method_Map_set"     // m.insert(k, v) — value-returning set
 	c.info.Methods["Map.without"] = "__method_Map_delete" // m.without(k) — value-returning delete
 	c.info.Methods["Map.cleared"] = "__method_Map_clear"  // m.cleared() — value-returning clear
