@@ -2408,6 +2408,12 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"loop-range-shadow", `function f(i: string): i32 { for i in 0..4 { var n: i32 = i; } return i.len(); }`},
 		{"loop-map-shadow", `function f(m: Map[string, i64], k: i32): i32 { for (k, v) in m { var text: string = k; } return k; }`},
 		{"loop-array-shadow", `function f(xs: string[], x: i64): i64 { for x in xs { var text: string = x; } return x; }`},
+		// An unsuffixed float literal takes the element type the other elements
+		// settle on, whichever element comes first (#10122).
+		{"array-float-literals-beside-f32", `function g(): f32 { return 1.0 as f32; } function f(): f32 { var a: f32[] = [2.0, g(), -1.5 * 2.0]; return a[0]; }`},
+		{"array-float-literal-anchor-mismatch", `function g(): f32 { return 1.0 as f32; } function f(): i32 { var a = [2.0, g(), "x"]; return 0; }`},
+		// A pipe hole as a named argument's value (#10121).
+		{"pipe-hole-named-arg", `function diff(a: i32 = 0, b: i32 = 0): i32 { return a - b; } function f(): i32 { return 9 |> diff(b = _); }`},
 		// Annotated tuple shapes — var binding, parameter, return, nested, and
 		// a tuple whose element is a (builtin) enum/union. All well-typed: the
 		// self-host must not invent a diagnostic the Go checker doesn't report.
