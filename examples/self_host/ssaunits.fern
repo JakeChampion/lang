@@ -1161,7 +1161,7 @@ function same_bits(a: boolean[], b: boolean[]): boolean {
 }
 // step_index lists, for each block id, the positions of the plan's steps at
 // that block, so a lookup scans one block's steps rather than the whole plan.
-function step_index(p: Plan): i32[][] {
+pub function step_index(p: Plan): i32[][] {
     var top: i32 = 0 - 1;
     for s in p.steps { if (s.block > top) { top = s.block; } }
     var out: i32[][] = [];
@@ -1174,6 +1174,15 @@ function step_index(p: Plan): i32[][] {
         i = i + 1;
     }
     return out;
+}
+
+// step_at is the first step at (block, point, target), or -1.
+pub function step_at(p: Plan, idx: i32[][], block: i32, point: i32, target: i32): i32 {
+    if (block < 0 || block >= idx.len()) { return 0 - 1; }
+    for i in idx[block] {
+        if (p.steps[i].point == point && p.steps[i].target == target) { return i; }
+    }
+    return 0 - 1;
 }
 
 // find_step is the one step at (block, point, target), or -1 when there is
