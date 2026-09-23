@@ -12968,6 +12968,14 @@ func (b *builder) callReturnType(c *ast.Call) ast.Type {
 		}
 		return nil
 	}
+	// `st.run(a)`: a call through a function-typed struct field returns
+	// that field's declared result.
+	if fa, ok := c.Callee.(*ast.FieldAccess); ok {
+		if ft, ok := b.exprType(fa).(*ast.FuncType); ok {
+			return ft.Result
+		}
+		return nil
+	}
 	id, ok := c.Callee.(*ast.Ident)
 	if !ok {
 		return nil
