@@ -6138,7 +6138,7 @@ function ssa_phi_moves(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], pred: i32, suc
 // The moves of one edge are parallel: every source is read before any
 // destination it names is written. A move whose destination no pending move
 // still reads goes first, in one instruction between two homes, or two through
-// %r11 between two slots. When every pending destination is still read, the
+// %rcx between two slots. When every pending destination is still read, the
 // moves form a cycle: one source location is parked in %r11 and every move
 // reading it takes it from there, which frees that location to be written.
 function ssa_parallel_moves(reg_of: i32[], srcs: i32[], dsts: i32[], s: asmcore.EmitState): asmcore.EmitState {
@@ -6183,12 +6183,13 @@ function ssa_move_blocked(reg_of: i32[], srcs: i32[], dsts: i32[], done: boolean
     return false;
 }
 // ssa_move copies one value between homes: one movq when either side is a
-// register, two through %r11 between two slots.
+// register, two through %rcx between two slots. %r11 may hold a parked cycle
+// source until a later move consumes it, so it cannot stage an ordinary copy.
 function ssa_move(reg_of: i32[], src: i32, dst: i32, s: asmcore.EmitState): asmcore.EmitState {
     if (reg_of[src] >= 0) { return ssa_store(reg_of, dst, ssa_reg(reg_of[src]), s); }
     if (reg_of[dst] >= 0) { return ssa_load(reg_of, src, ssa_reg(reg_of[dst]), s); }
-    s = ssa_load(reg_of, src, "%r11", s);
-    return ssa_store(reg_of, dst, "%r11", s);
+    s = ssa_load(reg_of, src, "%rcx", s);
+    return ssa_store(reg_of, dst, "%rcx", s);
 }
 
 function ssa_epilogue(): string {
