@@ -9,7 +9,8 @@
 #   stage0   a pinned earlier compiler (bootstrap/stage0.lock), or the binary
 #            named by STAGE0=<path>
 #   stage1   stage0 compiles examples/self_host/fern.fern for this host; it
-#            must then compile and run a small program (the smoke test), and
+#            must then compile and run a one-line program and coreutils/tr
+#            (the smoke test), and
 #            is installed as bin/fern-selfhost — the artifact `make
 #            selfhost-cli` builds with the native toolchain
 #   stage2   stage1 compiles the same source. stage1 and stage2 must be
@@ -106,8 +107,10 @@ stage() {
   echo "$1: $(( $(date +%s) - t0 )) s, $(size "$out") bytes"
 }
 
-# smoke COMPILER: the compiler must compile a program and the result must
-# run — a binary that links but cannot execute is not a compiler.
+# smoke COMPILER: the compiler must compile a one-line program and
+# coreutils/tr, and both results must run — a binary that links but cannot
+# execute is not a compiler, and one that only handles a one-liner is not
+# one either.
 smoke() {
   local src bin code
   src="$OUT/smoke.fern"

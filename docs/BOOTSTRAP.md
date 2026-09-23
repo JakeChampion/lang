@@ -2,8 +2,8 @@
 
 `make bootstrap` builds the self-host compiler from a clean checkout with no Go
 toolchain and no native backend involved: a pinned earlier compiler (stage0)
-compiles `examples/self_host/fern.fern`, the result compiles and runs a small
-program, and is installed as `bin/fern-selfhost` — the same artifact `make
+compiles `examples/self_host/fern.fern`, the result compiles and runs a one-line
+program and `coreutils/tr`, and is installed as `bin/fern-selfhost` — the same artifact `make
 selfhost-cli` produces via `./bin/fern`. `make distcheck` is the reproducibility
 half: that compiler recompiles its own source and the two binaries must be
 byte-identical. This is `NATIVE-CONVERGENCE.md §3a` precondition 1, the shape
