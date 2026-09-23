@@ -6302,6 +6302,20 @@ func needsImplicitReturn(ops []Op) bool {
 // `enumName == ""` therefore means "no qualifier was available" — a
 // scrutinee with no static enum type, or an Ident the checker left
 // unstamped — and keeps the legacy scan for those.
+// unitVariantRef reports whether x is a qualified payload-less variant
+// (`Color.Red`), and which.
+func (b *builder) unitVariantRef(x *ast.FieldAccess) (enumName string, varIdx int, ok bool) {
+	tid, isIdent := x.Target.(*ast.Ident)
+	if !isIdent {
+		return "", 0, false
+	}
+	if _, isEnum := b.info.Enums[tid.Name]; !isEnum {
+		return "", 0, false
+	}
+	_, varIdx, payloadCount, isVar := b.lookupVariantOn(x.Field, tid.Name)
+	return tid.Name, varIdx, isVar && payloadCount == 0
+}
+
 func (b *builder) lookupVariantOn(name, enumName string) (foundEnum string, varIdx int, payloadCount int, ok bool) {
 	return lookupVariantIn(b.info, name, enumName)
 }
@@ -12039,13 +12053,9 @@ func (b *builder) expr(e ast.Expr) error {
 		// `[tag=varIdx]` cell that `emitEnumNew` reuses for any
 		// payload-less variant, so match / try sites just read
 		// the tag with `[ptr+0]` like every other enum value.
-		if tid, ok := n.Target.(*ast.Ident); ok {
-			if _, isEnum := b.info.Enums[tid.Name]; isEnum {
-				if _, varIdx, payloadCount, isVar := b.lookupVariantOn(n.Field, tid.Name); isVar && payloadCount == 0 {
-					b.emit(Op{Kind: OpEnumSentinel, I32: int32(varIdx)})
-					return nil
-				}
-			}
+		if _, varIdx, ok := b.unitVariantRef(n); ok {
+			b.emit(Op{Kind: OpEnumSentinel, I32: int32(varIdx)})
+			return nil
 		}
 		// Compute base + offset_of(field), then load the value
 		// at its declared width (4-byte for i32 / f32 / sub-i32,
@@ -12462,12 +12472,8 @@ func (b *builder) exprType(e ast.Expr) ast.Type {
 		// (`Color.Red`). Same shape exprType expects for the
 		// `Red`-as-Ident form — an EnumType naming the owning
 		// enum, with no Args.
-		if tid, ok := x.Target.(*ast.Ident); ok {
-			if _, isEnum := b.info.Enums[tid.Name]; isEnum {
-				if _, _, payloadCount, isVar := b.lookupVariantOn(x.Field, tid.Name); isVar && payloadCount == 0 {
-					return ast.EnumType{Name: tid.Name}
-				}
-			}
+		if enumName, _, ok := b.unitVariantRef(x); ok {
+			return ast.EnumType{Name: enumName}
 		}
 		// Tuple field access (`pair.0`) — resolve the static
 		// tuple type, parse the numeric selector, and look up

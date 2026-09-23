@@ -3365,6 +3365,11 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		// untainted-owned cases.
 		return false
 	case *ast.FieldAccess:
+		// `Color.Red`, a payload-less variant, is the shared static sentinel,
+		// which aliases nothing, like a string literal.
+		if _, _, ok := b.unitVariantRef(x); ok {
+			return false
+		}
 		// Reading a pointer field out of a struct-typed LOCAL is a COUNTED
 		// alias, not a borrow: the binding site inc's it (needsRcIncOnAlias
 		// fires for a pointer field), and both the destination and the

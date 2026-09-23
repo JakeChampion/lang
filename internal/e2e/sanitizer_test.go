@@ -116,6 +116,23 @@ func runSanitizeArm64(t *testing.T, src string) (string, string, int) {
 	return buildAndRunSanitized(t, gcc, []string{qemu}, emitSanitize(t, "arm64-linux", src, true), true)
 }
 
+// checkSanitizedBalanced runs src under the sanitizer and asserts the answer,
+// no finding, and a census that allocated and freed everything.
+func checkSanitizedBalanced(t *testing.T, src string, want int, run func(*testing.T, string) (string, string, int)) {
+	t.Helper()
+	stdout, stderr, code := run(t, src)
+	if code != want {
+		t.Fatalf("exit = %d, want %d\nstdout: %s\nstderr: %s", code, want, stdout, stderr)
+	}
+	if strings.Contains(stderr, "fern-sanitizer:") {
+		t.Errorf("sanitizer report:\n%s", stderr)
+	}
+	allocs, frees, live := parseLeakCheckLine(t, stderr)
+	if allocs == 0 || allocs != frees || live != 0 {
+		t.Errorf("census: allocs=%d frees=%d live_bytes=%d, want balanced / 0", allocs, frees, live)
+	}
+}
+
 func buildAndRunSanitized(t *testing.T, gcc string, runner []string, asm string, arm64 bool) (string, string, int) {
 	t.Helper()
 	dir := t.TempDir()
