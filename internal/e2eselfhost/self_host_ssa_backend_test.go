@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -1086,6 +1087,86 @@ func TestSelfHostOutputReplacesExecutable(t *testing.T) {
 	}
 	if _, exit := h.runProduced(t, tg, out); exit != 55 {
 		t.Fatalf("second program exit %d, want 55", exit)
+	}
+}
+
+// A path that is not a regular file is written through and kept, the rule
+// native's writeExecutable states: `-o /dev/null` used to delete the null
+// device and leave the program in its place (#10034). A FIFO stands in for
+// the device and must keep its mode; a symlink stays a link and its target
+// becomes the executable.
+func TestSelfHostOutputKeepsANonRegularPath(t *testing.T) {
+	h := selfHostCLIForHost(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "p.fern")
+	if err := os.WriteFile(src, []byte("function main(): i32 { return 31; }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tg := h.targets[0]
+
+	fifo := filepath.Join(dir, "fifo")
+	if err := syscall.Mkfifo(fifo, 0o622); err != nil {
+		t.Skipf("mkfifo: %v", err)
+	}
+	got := make(chan int, 1)
+	go func() {
+		f, err := os.Open(fifo)
+		if err != nil {
+			got <- -1
+			return
+		}
+		defer f.Close()
+		b, _ := io.ReadAll(f)
+		got <- len(b)
+	}()
+	h.compileWith(t, tg, src, fifo)
+	select {
+	case n := <-got:
+		if n <= 0 {
+			t.Fatalf("the FIFO's reader got %d bytes, want the program written through it", n)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the FIFO's reader never saw the write; the path was replaced")
+	}
+	fi, err := os.Lstat(fifo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode()&os.ModeNamedPipe == 0 {
+		t.Fatalf("the FIFO is now %v, want it kept", fi.Mode())
+	}
+	if perm := fi.Mode().Perm(); perm&0o111 != 0 {
+		t.Fatalf("the FIFO's mode became %v; a non-regular path must not be chmodded", perm)
+	}
+
+	target := filepath.Join(dir, "prog")
+	link := filepath.Join(dir, "link")
+	if err := os.WriteFile(target, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	h.compileWith(t, tg, src, link)
+	if li, err := os.Lstat(link); err != nil || li.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("the link is now %v (%v), want it kept", li, err)
+	}
+	if _, exit := h.runProduced(t, tg, target); exit != 31 {
+		t.Fatalf("the link's target exit %d, want 31", exit)
+	}
+
+	// A dangling link creates its target, executable, as native and cp do.
+	created := filepath.Join(dir, "created")
+	dangling := filepath.Join(dir, "dangling")
+	if err := os.Symlink(created, dangling); err != nil {
+		t.Fatal(err)
+	}
+	h.compileWith(t, tg, src, dangling)
+	if li, err := os.Lstat(dangling); err != nil || li.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("the dangling link is now %v (%v), want it kept", li, err)
+	}
+	if _, exit := h.runProduced(t, tg, created); exit != 31 {
+		t.Fatalf("the dangling link's created target exit %d, want 31", exit)
 	}
 }
 
