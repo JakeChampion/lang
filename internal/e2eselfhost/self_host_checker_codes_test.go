@@ -1336,6 +1336,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"match-lit-wildcard-last-ok", "function classify(x: i32): i32 { match (x) { 1 => { return 10; }, 2 => { return 20; }, _ => { return 99; } } }\nfunction main(): i32 { return classify(2); }\n", nil},
 		{"type-arity-param", "struct Box[T] { v: T }\nfunction f(b: Box[i32, i32]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E019"}},
 		{"type-arity-field", "struct Box[T] { v: T }\nstruct W { b: Box[i32, i32] }\nfunction main(): i32 { return 0; }\n", []string{"E019"}},
+		{"type-arity-var-array", "struct Pair[A, B] { first: A, second: B }\nfunction main(): i32 { var xs: Pair[i32][] = []; return 0; }\n", []string{"E019"}},
 		{"type-arity-param-ok", "struct Box[T] { v: T }\nfunction f(b: Box[i32]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"array-elem-string-in-i32", "function main(): i32 { var a = [1, \"x\", 3]; return 0; }\n", []string{"E034"}},
 		{"array-elem-i32-in-string", "function main(): i32 { var a = [\"a\", 1]; return 0; }\n", []string{"E034"}},
