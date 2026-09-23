@@ -139,6 +139,25 @@ pub struct EmitState {
     reg_entries: irlower.SigReg
 }
 
+// unit_labels is the sanitized label of every function a unit emits for
+// mod.funcs[lo..hi) and the bodies on the cache tail: the names a direct call
+// in that unit may reach through their register entries (reg_entries).
+pub function unit_labels(mod: parser.Module, lo: i32, hi: i32, cache: irlower.LowerResult[]): string[] {
+    var out: string[] = [];
+    var fi: i32 = lo;
+    while (fi < hi) {
+        if (cache.len() == 0 || !cache[fi].superseded) {
+            var name: string = mod.funcs[fi].name;
+            if (mod.funcs[fi].receiver_type.len() > 0) { name = util.base_type_name(mod.funcs[fi].receiver_type) + "." + name; }
+            out = out.append(sanitize_label(name));
+        }
+        fi = fi + 1;
+    }
+    var xi: i32 = mod.funcs.len();
+    while (xi < cache.len()) { out = out.append(sanitize_label(cache[xi].name)); xi = xi + 1; }
+    return out;
+}
+
 pub function new_state(): EmitState {
     var ns: string[] = [];
     var sl: string[] = [];

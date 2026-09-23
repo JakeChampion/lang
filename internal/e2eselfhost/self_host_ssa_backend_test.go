@@ -1572,8 +1572,17 @@ func functionListing(text, label string) string {
 		return ""
 	}
 	rest := text[start+len(label)+2:]
-	if end := strings.Index(rest, "\n__fn_"); end >= 0 {
-		return rest[:end]
+	// The function's register entry, `<label>.r:`, is inside its listing.
+	from := 0
+	for {
+		end := strings.Index(rest[from:], "\n__fn_")
+		if end < 0 {
+			return rest
+		}
+		if strings.HasPrefix(rest[from+end+1:], label+".r:\n") {
+			from += end + 1
+			continue
+		}
+		return rest[:from+end]
 	}
-	return rest
 }
