@@ -65138,16 +65138,10 @@ pub function closure_ret_closure_fns_of(funcs: parser.FuncDecl[], structs: Struc
     return out;
 }
 
-// body_returns_closurearr reports whether `body` returns an ARRAY of closure
-// boxes: a `return [<lambda>|<closure-call>, …]` literal, or a `return <ident>`
-// where the ident is a top-level local bound to such a literal. Element 0 is
-// the probe (a homogeneous closure-array literal, matching the is_closurearr
-// var-binding rule). `closureset` is the set of closure-returning fns (so a
-// `[mk(), …]` element counts). Used by closurearr_ret_fns_of.
 // expr_is_closure_elem reports whether `e` is a closure VALUE — a lambda, a
 // `__mkclo$` env-box construction, or a call to a closure-box-returning factory
-// (closureset). A bare named fn is NOT a closure (it lowers to a plain fn
-// pointer), so an array built only from those stays a fn-pointer array.
+// (closureset). A named function in an array literal arrives here already
+// boxed as a `__mkclo$` marker.
 function expr_is_closure_elem(e: ast.Expr, closureset: string[]): boolean {
     match (e) {
         ast.ExprLambda(_) => { return true; },
@@ -65179,9 +65173,7 @@ function expr_is_closure_elem(e: ast.Expr, closureset: string[]): boolean {
 // closure_elem_in_scope is expr_is_closure_elem plus the one form that needs
 // the enclosing body: an ident `scope` binds to a closure box (`var f = <lambda>;
 // … [f]`). Such a local is a box exactly as the lambda written inline would be,
-// so an array built from it is a closure array — without this the array read
-// as a fn-pointer array, the callee's param went unproven, and `a[0](x)` inside
-// it bare-called the box as code (SIGSEGV, nightly seed 24937).
+// so an array built from it is a closure array (nightly seed 24937).
 function closure_elem_in_scope(e: ast.Expr, scope: ast.Stmt[], closureset: string[]): boolean {
     if (expr_is_closure_elem(e, closureset)) { return true; }
     match (e) {
@@ -72498,13 +72490,10 @@ function lift_expr_walk(e: ast.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
             }
             return LiftExpr { expr: ast.ExprTuple { elements: nte, line: tu.line, col: tu.col }, acc: ta };
         },
-        // An array literal of NO-CAPTURE lambdas (`var fs = [(x) => {...}, ...]`):
-        // hoist each lambda element to a top-level `__lam_N` (the same lift a
-        // no-capture lambda ARGUMENT gets), so the array becomes one of bare
-        // function-name idents -- which lower to a function-pointer array, and
-        // `fs[i](args)` uses the existing fn-pointer-array call_indirect path.
-        // A capturing lambda element is returned unchanged by lift_call_arg, so
-        // the module bails.
+        // An array literal: each element goes through lift_call_arg, which
+        // hoists a no-capture lambda and recurses into anything else. A
+        // function array's elements are already boxes by now, since
+        // lift_inline_closures runs first.
         ast.ExprArray(arr) => {
             var aa: LiftAcc = acc;
             var nelems: ast.Expr[] = [];
@@ -74117,8 +74106,7 @@ function lift_arg_is_passthrough_fn_value(arg: ast.Expr, mfuncs: MFuncs): boolea
 // unconditional.
 //
 // This is the one place that answers the question, and `ilc_expr_at`'s
-// ExprArray arm boxes exactly what it says: an arm classified as a plain
-// fn-pointer array whose elements are boxes is a SIGSEGV at the call.
+// ExprArray arm boxes exactly what it says.
 function array_elem_is_env_boxed(e: ast.Expr, fd: parser.FuncDecl, structs: StructTab, mfuncs: MFuncs): boolean {
     match (e) {
         ast.ExprLambda(_) => { return true; },
@@ -74245,10 +74233,9 @@ function iife_stmts_all_boxed(stmts: ast.Stmt[], s: LowerState, seen: i32): i32 
 // arr_elem_is_closure_box reports whether an array literal's element is a
 // closure BOX rather than a raw fn pointer: an inline lambda, a call to a
 // closure-returning fn, a `__mkclo$<name>(caps…)` env-box marker
-// (lift_inline_closures, #2994), or a closure-LOCAL ident (#5405). A bare
-// named-fn element answers false, which is what keeps the #3574 fn-pointer-array
-// classification. Read of element[0]: all elements of a closure array share one
-// dispatch ABI (#5071 gives a mixed literal uniform boxes).
+// (lift_inline_closures, #2994), or a closure-LOCAL ident (#5405). A named
+// function element is already a `__mkclo$` marker by this point. Read of
+// element[0]: every element of a function array is a box (#5071, #10076).
 function arr_elem_is_closure_box(e: ast.Expr, s: LowerState): boolean {
     match (e) {
         ast.ExprLambda(_) => { return true; },
@@ -74334,12 +74321,7 @@ function expr_is_closure_array(e: ast.Expr, s: LowerState): boolean {
             return arr_elem_is_closure_box(arr.elements[0], s);
         },
         // `(if (c) { [<lambda>] } else { ys })` — an arm that NAMES a local
-        // array. Its slot already records the element ABI, which is the same
-        // answer the literal arm computes from its element; without this arm the
-        // name read as "not a closure array", the destination stayed on plain
-        // fn-pointer dispatch, and `xs[0](…)` called the box pointer as code
-        // (#8163). The lift's arm-uniformity gate is what makes the two arms
-        // agree, so this only ever reports what that gate already arranged.
+        // array: its slot already records whether it is a closure array (#8163).
         ast.ExprIdent(aid) => { return s.is_closurearr_slot(s.slot_of(aid.name)); },
         ast.ExprCall(c) => {
             match (c.callee) {
@@ -74347,8 +74329,7 @@ function expr_is_closure_array(e: ast.Expr, s: LowerState): boolean {
                     if (s.is_closurearr_ret_fn(cid.name)) { return true; }
                     // A generic passthrough hands its erased-generic argument
                     // straight back, so `id([<closure>, …])` yields the array it
-                    // was given. Without this the arm reads as a plain fn-pointer
-                    // array and the binding bare-dispatches a box.
+                    // was given.
                     var pi: i32 = 0;
                     while (pi < c.args.len()) {
                         if (util.index_of_str(s.frame.sigs.closure_fns, "PASSTHRU:" + cid.name + ":" + util.i32_to_string(pi)) >= 0
@@ -74612,9 +74593,8 @@ function iife_arm_arrays_boxed_elems(stmts: ast.Stmt[], fd: parser.FuncDecl, see
                         }
                     },
                     // An arm that NAMES a local bound to an array literal in the
-                    // enclosing function. Nothing can box it where it sits, so
-                    // fd_binds_iife_boxed_fn_array puts that declaration's
-                    // literal on the env-box ABI too and the arms still agree.
+                    // enclosing function: that literal boxes where it is built,
+                    // as every function array literal does, so the arms agree.
                     // A name bound to anything else — a parameter, a call's
                     // result — is out of this pass's reach and declines the
                     // whole IIFE, which leaves a capturing arm lambda raw for

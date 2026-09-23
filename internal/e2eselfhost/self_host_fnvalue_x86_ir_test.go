@@ -71,14 +71,13 @@ func TestSelfHostFnValueX86IR(t *testing.T) {
 		{"bind-call-twice", `function f(): i32 { return 7; } function main(): i32 { var g: () => i32 = f; return g() + g(); }`, 14},
 		{"bind-one-arg", `function inc(x: i32): i32 { return x + 1; } function main(): i32 { var g: (i32) => i32 = inc; return g(41); }`, 42},
 		// #3574 (array half): a `(() => i32)[]` literal of bare named-fn VALUES.
-		// Each element is a fn pointer (const_func), not a const-call of f, so the
-		// indexed `fns[i]()` dispatches the pointer.
+		// Each element is a function value boxed through its `$wrap`, not a
+		// const-call of f, so the indexed `fns[i]()` dispatches the box.
 		{"arr-bind-call", `function f(): i32 { return 7; } function main(): i32 { var fns: (() => i32)[] = [f]; return fns[0](); }`, 7},
 		{"arr-two-sum", `function f(): i32 { return 7; } function g(): i32 { return 5; } function main(): i32 { var fns: (() => i32)[] = [f, g]; return fns[0]() + fns[1](); }`, 12},
 		// loop over a bare-named-fn array, calling each through a variable index.
 		{"arr-loop", `function a(): i32 { return 1; } function b(): i32 { return 2; } function c(): i32 { return 4; } function main(): i32 { var fns: (() => i32)[] = [a, b, c]; var s: i32 = 0; var i: i32 = 0; while (i < 3) { s = s + fns[i](); i = i + 1; } return s; }`, 7},
-		// a 1-arg named-fn array stays correct (already const_func via the generic
-		// path; the fn[] interception emits the same const_func).
+		// a 1-arg named-fn array stays correct.
 		{"arr-one-arg", `function inc(x: i32): i32 { return x + 1; } function dbl(x: i32): i32 { return x * 2; } function main(): i32 { var fns: ((i32) => i32)[] = [inc, dbl]; return fns[0](10) + fns[1](10); }`, 31},
 		// #3640 slice A: a fn-value PARAM whose RETURN type is a STRUCT. The
 		// return-struct name is preserved through parse-time coarsening

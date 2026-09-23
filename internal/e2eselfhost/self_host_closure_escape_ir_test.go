@@ -64,10 +64,9 @@ var closureEscapeCases = []struct {
 	// dispatches env-first; before the fix it bare-called the element box →
 	// SIGSEGV.
 	{"closure-array-param", "function mk(): ((i32) => i32)[] { var n = 5; var a = [(x: i32): i32 => { return x + n; }]; return a; } function consume(fns: ((i32) => i32)[]): i32 { return fns[0](37); } function main(): i32 { var arr = mk(); return consume(arr); }", 42},
-	// The counterpart guard: a BARE fn-pointer array (`[inc, dbl]`) passed to
-	// the same-shaped param must KEEP the plain call_indirect dispatch — the
-	// '3' proof must not fire (also pinned by TestSelfHostAsmIRPath's
-	// fnarr-elem-call-loop, which this case mirrors).
+	// A named-function array (`[inc, dbl]`) passed to the same-shaped param:
+	// its elements are `$wrap` boxes, so the param dispatches env-first too
+	// (TestSelfHostAsmIRPath's fnarr-elem-call-loop is the same shape).
 	{"bare-fnarr-param", "function apply(fns: ((i32) => i32)[], n: i32): i32 { var s = 0; var i = 0; while (i < fns.len()) { s = s + fns[i](n); i = i + 1; } return s; } function inc(n: i32): i32 { return n + 1; } function dbl(n: i32): i32 { return n * 2; } function main(): i32 { return apply([inc, dbl], 10); }", 31},
 	// Indexing a closure-array factory's result DIRECTLY (`mk()[0](x)`, no
 	// binding): the ExprIndex-callee dispatch must recognise a call to a
