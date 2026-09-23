@@ -727,11 +727,10 @@ func (b *builder) bindingConfinedToArm(body ast.Node, name string, bt ast.Type) 
 // refusing to give one back need the same fact — every escape is counted —
 // which is why one predicate answers both.
 //
-// bindingConfinedToArm's own callers keep the strict reading. The for-in and
-// borrowed-parameter legs decide the same cancellation over a source whose
-// release is NOT the arm's to see, and neither has been measured against a
-// counted escape; widening them is their own change, not a consequence of
-// this one.
+// The borrowed-parameter leg asks it too: the caller holds the parameter
+// across the call, so an alias that takes no count may still hand on counted
+// ones. The for-in leg keeps the strict reading; its source's release is not
+// the arm's to see, and it has not been measured against a counted escape.
 func (b *builder) bindingReleasableInArm(body ast.Node, name string, bt ast.Type) bool {
 	return b.bindingUsesExcused(body, name, bt, true)
 }
@@ -801,6 +800,14 @@ func (b *builder) bindingUsesExcused(body ast.Node, name string, bt ast.Type, co
 			if id, ok := x.Value.(*ast.Ident); ok && id.Name == name &&
 				countedAliasOK && toLocal && tgt.Name != name && b.assignTakesAliasInc(x, bt) {
 				excused[id] = true
+			}
+		case *ast.MakeClosure:
+			// A capture MakeEnv retains is the closure's own reference.
+			for _, c := range x.Captures {
+				if id, ok := c.(*ast.Ident); ok && id.Name == name &&
+					countedAliasOK && b.retainsOnAlias(bt) && !b.rc.moveSites[c] {
+					excused[id] = true
+				}
 			}
 		case *ast.Call:
 			for i, a := range x.Args {

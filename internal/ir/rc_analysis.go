@@ -7410,7 +7410,7 @@ func (b *builder) computeBorrowedAliases() {
 		// `returned[y]` would refuse `return y.len()`, which hands out a
 		// scalar — aliasReturnsConfined is the same question asked of what
 		// the return VALUE carries, as the for-in leg asks it.
-		if !b.bindingConfinedToArm(b.fn.Body, y, v.Type) || !b.aliasReturnsConfined(y) {
+		if !b.bindingReleasableInArm(b.fn.Body, y, v.Type) || !b.aliasReturnsConfined(y) {
 			return true
 		}
 		b.rc.borrowedAlias[y] = true
