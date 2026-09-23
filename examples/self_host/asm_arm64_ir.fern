@@ -8162,7 +8162,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     if (s.has_need("tcp_recv")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_recv(tgt), s.struct_decls, s);
     }
-    // tcp_send: write(2) straight out of the string's buffer, via __raw_data.
+    // tcp_send: sendto(2) with MSG_NOSIGNAL from the string's buffer, via __raw_data.
     if (s.has_need("tcp_send")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_send(tgt), s.struct_decls, s);
     }

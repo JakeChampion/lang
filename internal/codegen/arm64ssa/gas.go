@@ -3221,15 +3221,21 @@ func emitTcpListenHelper(w func(string, ...any)) {
 	w("\tmov x8, #200") // bind
 	w("\tsvc #0")
 	w("\tadd sp, sp, #16") // pop sockaddr_in before any branch
-	w("\ttbnz x0, #63, .Lssa_tcpl_err")
+	w("\ttbnz x0, #63, .Lssa_tcpl_close")
 	// listen(fd, 128)
 	w("\tmov x0, x20")
 	w("\tmov x1, #128")
 	w("\tmov x8, #201") // listen
 	w("\tsvc #0")
-	w("\ttbnz x0, #63, .Lssa_tcpl_err")
+	w("\ttbnz x0, #63, .Lssa_tcpl_close")
 	w("\tmov x0, x20") // return fd
 	w("\tb .Lssa_tcpl_ret")
+	w(".Lssa_tcpl_close:")
+	w("\tmov x19, x0") // port is dead; preserve errno
+	w("\tmov x0, x20")
+	w("\tmov x8, #57") // close
+	w("\tsvc #0")
+	w("\tmov x0, x19")
 	w(".Lssa_tcpl_err:")
 	// x0 holds -errno from the failed syscall.
 	w(".Lssa_tcpl_ret:")
@@ -3275,8 +3281,15 @@ func emitTcpConnectHelper(w func(string, ...any)) {
 	w("\tmov x2, #16")
 	w("\tmov x8, #203") // connect
 	w("\tsvc #0")
-	w("\ttbnz x0, #63, .Lssa_tcpc_ret")
+	w("\ttbnz x0, #63, .Lssa_tcpc_close")
 	w("\tmov x0, x19") // return fd
+	w("\tb .Lssa_tcpc_ret")
+	w(".Lssa_tcpc_close:")
+	w("\tstr x0, [sp]") // sockaddr is dead; preserve errno
+	w("\tmov x0, x19")
+	w("\tmov x8, #57") // close
+	w("\tsvc #0")
+	w("\tldr x0, [sp]")
 	w(".Lssa_tcpc_ret:")
 	// x0 is the fd, or -errno from the failed syscall.
 	w("\tadd sp, sp, #16")
@@ -3355,14 +3368,16 @@ func emitTcpRecvHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
-// emitTcpSendHelper writes tcp_send(fd, data) → i32: write(2) the whole
-// single-word string to the fd; returns the byte count written or -errno. Leaf.
+// emitTcpSendHelper sends with MSG_NOSIGNAL, returning accepted bytes or -errno.
 // x0=fd, x1=data (single-word string; length at [data-4]).
 func emitTcpSendHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("tcp_send"))
 	w("\tldur w2, [x1, #-4]") // byte length
-	w("\tmov x8, #64")        // write (x0=fd, x1=data already in place)
+	w("\tmov x3, #16384")     // MSG_NOSIGNAL
+	w("\tmov x4, #0")
+	w("\tmov x5, #0")
+	w("\tmov x8, #206") // sendto (x0=fd, x1=data already in place)
 	w("\tsvc #0")
 	w("\tret")
 }
