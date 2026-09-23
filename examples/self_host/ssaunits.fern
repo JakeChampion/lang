@@ -198,6 +198,7 @@ function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
     if (unit_free(t)) { return true; }
     if let typeinfo.TypeString(_) = t { return true; }
     if let typeinfo.TypeFunc(_) = t { return true; }
+    if let typeinfo.TypeDyn(_) = t { return true; }
     if let typeinfo.TypeArray(a) = t { return supported(a.elem, f); }
     if let typeinfo.TypeTuple(tup) = t { return supported_tuple(tup, f); }
     // A cell holds one unit of its own and one slot; no declaration names it.
@@ -396,11 +397,25 @@ function phi_ownership(f: ssasem.Func, owned: boolean[]): boolean[] {
 // phi merging a live view with a fresh one released the live one from
 // under its holder. `ssarc`'s #9328 note is the same asymmetry at the call
 // bracket, which it restricts to arrays.
+//
+// A dyn value is lent for the same reason at a different step: a unit of one
+// would be released through `__fern_rc_dec`, which frees the box without the
+// children only a dispatch on its shape could find.
 function view_retain_error(f: ssasem.Func, steps: Step[]): string {
     for s in steps {
         for item in s.supplies {
             if (item.mode == retain_unit() && ssasem.is_view(f.values[item.value])) { return "a view is lent, never retained"; }
+            if (item.mode == retain_unit() && ssasem.is_dyn(f.values[item.value])) { return "a dyn value is lent, never retained"; }
         }
+    }
+    return "";
+}
+
+function dyn_owned_error(f: ssasem.Func, owned: boolean[]): string {
+    var v: i32 = 0;
+    while (v < f.graph.nvals) {
+        if (owned[v] && ssasem.is_dyn(f.values[v])) { return "a dyn value is lent, never owned"; }
+        v = v + 1;
     }
     return "";
 }
@@ -527,7 +542,7 @@ function is_record(t: typeinfo.Type): boolean {
 function projection(kind: i32): boolean {
     return kind == 7 || kind == ssasem.array_get() || kind == ssasem.tuple_get() || kind == ssasem.record_get()
         || kind == ssasem.variant_get() || kind == ssasem.variant_up() || kind == ssasem.variant_as()
-        || kind == ssasem.slice() || kind == ssasem.str_as();
+        || kind == ssasem.slice() || kind == ssasem.str_as() || kind == ssasem.dyn_up();
 }
 
 // Whether reading `arg` reads `w`: the value itself, or one anchored to it.
@@ -1027,6 +1042,8 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
     var defs: ssa.SInst[] = definitions(f);
     var units: Units = units_of(f, owned, analysis, defs);
     owned = units.owned;
+    why = dyn_owned_error(f, owned);
+    if (why != "") { return bad(why); }
     var takes: i32[] = units.takes;
     analysis = units_analysis(f, analysis, units);
     if (!analysis.ok) { return bad(analysis.why); }

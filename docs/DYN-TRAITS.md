@@ -600,9 +600,18 @@ a `'2'` flag in the existing `fn_param_sigs` registry (no new
 `d = x` / `return x` coercion sites are not yet wired — a primitive there
 still flows in unboxed and mis-dispatches (pre-existing, no regression);
 the `lower_dyn_arg` helper drops straight into those two sites once their
-dyn-type detection is added. The self-host checker (`checker.fern`) still
-does not enforce object-safety or the coercion rule; the Go checker is
-the strict gate until it retires.
+dyn-type detection is added. The self-host checker (`checker.fern`)
+enforces object-safety (E021) but not the coercion rule, that the concrete
+implements every trait in the set (#10055); the Go checker is the strict
+gate there until it does.
+
+**The typed path (`FERN_SEM_IR`).** A struct or enum widened to `dyn` is
+a borrow of its box (`ssasem.dyn_up`), and a method call on it is a
+`call` whose contract is the implementations' shared signature. The
+operands go in consecutive slots, which is where `op_dyn_dispatch` reads
+them. A dyn value is lent and never owned, so a rebinding phi, a return, a
+field, an element and a primitive coercion are refused rather than
+counted. See `docs/rc-log/2026-09-23-dyn-trait-dispatch-on-the-typed-path.md`.
 
 **A `dyn Trait[]` array literal in ARGUMENT position — wired (#6906).**
 `render(["a", "b"])`, where `render`'s parameter is `dyn Show[]`, is the
