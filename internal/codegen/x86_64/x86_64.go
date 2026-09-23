@@ -242,7 +242,11 @@ const (
 	sysSyncfs    = 306
 	// dup3(2), behind the handle `dup_onto` method. Linux/arm64 has no
 	// dup2 at all, so dup3 is the form both Linux architectures carry.
-	sysDup3    = 292
+	sysDup3 = 292
+	// splice(2) and the pipe2(2) / fcntl(2) F_SETPIPE_SZ pair that
+	// builds the pipe it goes through, behind `Reader.splice_to`.
+	sysSplice  = 275
+	sysPipe2   = 293
 	sysMmap    = 9
 	sysSocket  = 41
 	sysConnect = 42
@@ -1141,6 +1145,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesReaderSeek {
 		g.emitReaderSeekRuntime()
 	}
+	if g.usesReaderSplice {
+		g.emitReaderSpliceRuntime()
+	}
 	if g.usesFdFlags {
 		g.emitFdFlagsRuntime()
 	}
@@ -1704,6 +1711,7 @@ type generator struct {
 	usesLstat          bool
 	usesFdStat         bool
 	usesReaderSeek     bool
+	usesReaderSplice   bool
 	usesFdFlags        bool
 	usesWriterTruncate bool
 	usesFdSync         bool
@@ -2256,6 +2264,10 @@ func (g *generator) recordUse(target string) {
 		g.usesSync = true
 	case "__method_Reader_seek", "__method_Writer_seek":
 		g.usesReaderSeek = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "__method_Reader_splice_to":
+		g.usesReaderSplice = true
 		g.usesAlloc = true
 		g.usesIoError = true
 	case "__method_Reader_flags", "__method_Writer_flags":
@@ -4110,6 +4122,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_sync"
 		case "__method_Reader_seek", "__method_Writer_seek":
 			target = "__fern_reader_seek"
+		case "__method_Reader_splice_to":
+			target = "__fern_reader_splice"
 		case "__method_Reader_flags", "__method_Writer_flags":
 			target = "__fern_fd_flags"
 		case "__method_Reader_isatty", "__method_Writer_isatty":
@@ -18622,6 +18636,161 @@ func (g *generator) emitReaderSeekRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_reader_seek, .-__fern_reader_seek")
+}
+
+// emitReaderSpliceRuntime emits `__fern_reader_splice(reader_ptr,
+// writer_ptr, max) → Result[i64, IoError]`, GNU cat's splice_cat step.
+// A direct splice(2) serves a pair with a pipe on either side; EINVAL
+// sends the bytes through the pipe cached in __fern_splice_pipe instead,
+// created on first use and sized to `max`. Its first word holds pipe2's
+// two fds as written, read end low; zero means no pipe yet, since the
+// write end is never descriptor 0. The third dword is one more than the
+// last writer a direct splice checked for a pipe to grow, so that fcntl
+// is asked once per writer rather than once per call.
+//
+// Before anything is taken from the reader, an empty-pipe splice with
+// SPLICE_F_NONBLOCK asks whether the writer accepts spliced bytes:
+// EAGAIN means it does and anything else means it does not. So every
+// failure up to the fill answers Unsupported with nothing moved, and a
+// drain failure is the writer's. That one leaves bytes in the pipe, which
+// is discarded with them.
+// System V: rdi = reader ptr, rsi = writer ptr, edx = max.
+func (g *generator) emitReaderSpliceRuntime() {
+	const (
+		eintr      = 4
+		eagain     = 11
+		einval     = 22
+		oCloexec   = 0o2000000
+		fSetpipeSz = 1031
+		fGetpipeSz = 1032
+		nonblock   = 2 // SPLICE_F_NONBLOCK
+		sysFcntl   = 72
+	)
+	splice := func(in, out, n string, flags int) {
+		g.emit("mov edi, " + in)
+		g.emit("xor esi, esi")
+		g.emit("mov edx, " + out)
+		g.emit("xor r10d, r10d")
+		g.emit("mov r8, " + n)
+		g.emit(fmt.Sprintf("mov r9d, %d", flags))
+		g.emitSyscall(sysSplice)
+	}
+	g.line("")
+	g.line(".section .bss")
+	g.line(".align 8")
+	g.line("__fern_splice_pipe: .skip 16")
+	g.line(".text")
+	g.line(".globl __fern_reader_splice")
+	g.line(".type __fern_reader_splice, @function")
+	g.label("__fern_reader_splice")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("push r12")
+	g.emit("push r13")
+	g.emit("push r14")
+	g.emit("push r15")
+	g.emit("sub rsp, 8")
+	g.emit("mov r12d, [rdi]") // reader fd
+	g.emit("mov r13d, [rsi]") // writer fd
+	g.emit("movsxd r14, edx") // max
+	splice("r12d", "r13d", "r14", 0)
+	g.emit("mov rbx, rax")
+	g.emit("test rax, rax")
+	g.emit("jns .Lrspl_grow")
+	g.emit(fmt.Sprintf("cmp rax, -%d", einval))
+	g.emit("jne .Lrspl_unsup")
+	g.emit("cmp qword ptr [rip + __fern_splice_pipe], 0")
+	g.emit("jne .Lrspl_have")
+	g.emit("lea rdi, [rip + __fern_splice_pipe]")
+	g.emit(fmt.Sprintf("mov esi, %d", oCloexec))
+	g.emitSyscall(sysPipe2)
+	g.emit("test rax, rax")
+	g.emit("jnz .Lrspl_unsup")
+	g.emit("mov edi, [rip + __fern_splice_pipe + 4]")
+	g.emit(fmt.Sprintf("mov esi, %d", fSetpipeSz))
+	g.emit("mov rdx, r14")
+	g.emitSyscall(sysFcntl)
+	g.label(".Lrspl_have")
+	splice("[rip + __fern_splice_pipe]", "r13d", "1", nonblock)
+	g.emit(fmt.Sprintf("cmp rax, -%d", eagain))
+	g.emit("jne .Lrspl_unsup")
+	splice("r12d", "[rip + __fern_splice_pipe + 4]", "r14", 0)
+	g.emit("test rax, rax")
+	g.emit("js .Lrspl_unsup")
+	g.emit("mov rbx, rax") // moved
+	g.emit("mov r15, rax") // still in the pipe
+	g.label(".Lrspl_drain")
+	g.emit("test r15, r15")
+	g.emit("jz .Lrspl_ok")
+	splice("[rip + __fern_splice_pipe]", "r13d", "r15", 0)
+	g.emit("test rax, rax")
+	g.emit("jle .Lrspl_derr")
+	g.emit("sub r15, rax")
+	g.emit("jmp .Lrspl_drain")
+	g.label(".Lrspl_derr")
+	g.emit(fmt.Sprintf("cmp rax, -%d", eintr))
+	g.emit("je .Lrspl_drain")
+	g.emit("mov rbx, rax")
+	g.emit("mov edi, [rip + __fern_splice_pipe]")
+	g.emitSyscall(sysClose)
+	g.emit("mov edi, [rip + __fern_splice_pipe + 4]")
+	g.emitSyscall(sysClose)
+	g.emit("mov qword ptr [rip + __fern_splice_pipe], 0")
+	// A writer that takes nothing without saying why is EIO.
+	g.emit("mov edi, 5")
+	g.emit("mov rax, rbx")
+	g.emit("neg rax")
+	g.emit("test rbx, rbx")
+	g.emit("cmovnz edi, eax")
+	g.emit("lea rsi, [rip + .LStr_ioerr_empty]")
+	g.emit("call __fern_io_error")
+	g.emit("jmp .Lrspl_err")
+	// A direct splice had a pipe on one side; a writer that is one grows to
+	// hold `max`, as GNU grows stdout's, or each call moves 64 KiB.
+	g.label(".Lrspl_grow")
+	g.emit("lea ecx, [r13 + 1]")
+	g.emit("cmp dword ptr [rip + __fern_splice_pipe + 8], ecx")
+	g.emit("je .Lrspl_ok")
+	g.emit("mov dword ptr [rip + __fern_splice_pipe + 8], ecx")
+	g.emit("mov edi, r13d")
+	g.emit(fmt.Sprintf("mov esi, %d", fGetpipeSz))
+	g.emitSyscall(sysFcntl)
+	g.emit("cmp rax, r14")
+	g.emit("jge .Lrspl_ok")
+	g.emit("test rax, rax")
+	g.emit("js .Lrspl_ok")
+	g.emit("mov edi, r13d")
+	g.emit(fmt.Sprintf("mov esi, %d", fSetpipeSz))
+	g.emit("mov rdx, r14")
+	g.emitSyscall(sysFcntl)
+	g.emit("jmp .Lrspl_ok")
+	g.label(".Lrspl_unsup")
+	g.emit("mov edi, 8")
+	g.emit("call __fern_alloc_box")
+	g.emit("mov dword ptr [rax], 5") // IoError::Unsupported
+	g.label(".Lrspl_err")
+	g.emit("mov rbx, rax")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 1") // Err
+	g.emit("mov [rax + 8], rbx")
+	g.emit("jmp .Lrspl_ret")
+	g.label(".Lrspl_ok")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 0") // Ok
+	g.emit("mov [rax + 8], rbx")
+	g.label(".Lrspl_ret")
+	g.emit("add rsp, 8")
+	g.emit("pop r15")
+	g.emit("pop r14")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_reader_splice, .-__fern_reader_splice")
 }
 
 // emitFdFlagsRuntime emits `__fern_fd_flags(handle_ptr) → Result[i32,

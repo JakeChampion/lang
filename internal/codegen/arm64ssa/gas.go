@@ -1505,6 +1505,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__method_Reader_stat":         emitFdStatHelper("__method_Reader_stat", "rst"),
 	"__method_Writer_stat":         emitFdStatHelper("__method_Writer_stat", "wst"),
 	"__method_Reader_seek":         emitSeekHelper("__method_Reader_seek", "rsk"),
+	"__method_Reader_splice_to":    emitReaderSpliceHelper,
 	"__method_Writer_seek":         emitSeekHelper("__method_Writer_seek", "wsk"),
 	"__method_Reader_flags":        emitFdFlagsHelper("__method_Reader_flags", "rfl"),
 	"__method_Writer_flags":        emitFdFlagsHelper("__method_Writer_flags", "wfl"),
@@ -4591,6 +4592,7 @@ var runtimeHelperDeps = map[string][]string{
 	"__method_Reader_stat":            {"__fern_io_error", "__fern_rc_inc"},
 	"__method_Writer_stat":            {"__fern_io_error", "__fern_rc_inc"},
 	"__method_Reader_seek":            {"__fern_io_error"},
+	"__method_Reader_splice_to":       {"__fern_io_error"},
 	"__method_Writer_seek":            {"__fern_io_error"},
 	"__method_Reader_flags":           {"__fern_io_error"},
 	"__method_Writer_flags":           {"__fern_io_error"},
@@ -4710,6 +4712,7 @@ var heapUsingHelpers = map[string]bool{
 	"__method_Reader_stat":            true,
 	"__method_Writer_stat":            true,
 	"__method_Reader_seek":            true,
+	"__method_Reader_splice_to":       true,
 	"__method_Writer_seek":            true,
 	"__method_Reader_flags":           true,
 	"__method_Writer_flags":           true,
@@ -9055,6 +9058,136 @@ func emitSeekHelper(name, lp string) func(w func(string, ...any)) {
 		w("\tldp x29, x30, [sp], #32")
 		w("\tret")
 	}
+}
+
+// emitReaderSpliceHelper writes __method_Reader_splice_to(reader, writer,
+// max) -> Result[i64, IoError], the arm64 codegen's __fern_reader_splice: a
+// direct splice(2), and on EINVAL the pipe cached in __fern_splice_pipe after
+// an empty-pipe probe of the writer. Every failure before bytes leave the
+// reader is Unsupported; a drain failure is the writer's and discards the
+// pipe. x0=reader, x1=writer, w2=max.
+func emitReaderSpliceHelper(w func(string, ...any)) {
+	splice := func(in, out, n string, flags int) {
+		w("\t%s", in)
+		w("\tmov x1, xzr")
+		w("\t%s", out)
+		w("\tmov x3, xzr")
+		w("\tmov x4, %s", n)
+		w("\tmov x5, #%d", flags)
+		w("\tmov x8, #76") // splice
+		w("\tsvc #0")
+	}
+	const (
+		fromReader = "mov w0, w19"
+		fromPipe   = "ldr w0, [x23]"
+		toWriter   = "mov w2, w20"
+		toPipe     = "ldr w2, [x23, #4]"
+	)
+	w("")
+	w("%s:", fnLabel("__method_Reader_splice_to"))
+	w("\tstp x29, x30, [sp, #-64]!")
+	w("\tmov x29, sp")
+	w("\tstp x19, x20, [sp, #16]")
+	w("\tstp x21, x22, [sp, #32]")
+	w("\tstr x23, [sp, #48]")
+	w("\tldr w19, [x0, #8]") // reader fd
+	w("\tldr w20, [x1, #8]") // writer fd
+	w("\tsxtw x21, w2")      // max
+	w("\tadrp x23, __fern_splice_pipe")
+	w("\tadd x23, x23, #:lo12:__fern_splice_pipe")
+	splice(fromReader, toWriter, "x21", 0)
+	w("\tmov x22, x0")
+	w("\ttbz x0, #63, .Lssa_rspl_grow")
+	w("\tcmn x0, #22") // EINVAL: no pipe on either side
+	w("\tb.ne .Lssa_rspl_unsup")
+	w("\tldr x9, [x23]")
+	w("\tcbnz x9, .Lssa_rspl_have")
+	w("\tmov x0, x23")
+	w("\tmov x1, #0x80000") // O_CLOEXEC
+	w("\tmov x8, #59")      // pipe2
+	w("\tsvc #0")
+	w("\tcbnz x0, .Lssa_rspl_unsup")
+	w("\tldr w0, [x23, #4]")
+	w("\tmov x1, #1031") // F_SETPIPE_SZ
+	w("\tmov x2, x21")
+	w("\tmov x8, #25") // fcntl
+	w("\tsvc #0")
+	w(".Lssa_rspl_have:")
+	splice(fromPipe, toWriter, "#1", 2) // SPLICE_F_NONBLOCK
+	w("\tcmn x0, #11")                  // EAGAIN: the writer takes spliced bytes
+	w("\tb.ne .Lssa_rspl_unsup")
+	splice(fromReader, toPipe, "x21", 0)
+	w("\ttbnz x0, #63, .Lssa_rspl_unsup")
+	w("\tmov x22, x0") // moved
+	w("\tmov x21, x0") // still in the pipe
+	w(".Lssa_rspl_drain:")
+	w("\tcbz x21, .Lssa_rspl_ok")
+	splice(fromPipe, toWriter, "x21", 0)
+	w("\tcmp x0, #0")
+	w("\tb.le .Lssa_rspl_derr")
+	w("\tsub x21, x21, x0")
+	w("\tb .Lssa_rspl_drain")
+	w(".Lssa_rspl_derr:")
+	w("\tcmn x0, #4") // EINTR
+	w("\tb.eq .Lssa_rspl_drain")
+	w("\tmov x22, x0")
+	w("\tldr w0, [x23]")
+	w("\tmov x8, #57") // close
+	w("\tsvc #0")
+	w("\tldr w0, [x23, #4]")
+	w("\tmov x8, #57")
+	w("\tsvc #0")
+	w("\tstr xzr, [x23]")
+	w("\tneg x19, x22")
+	w("\tmov x9, #5") // a writer that takes nothing without saying why is EIO
+	w("\tcmp x22, #0")
+	w("\tcsel x19, x9, x19, eq")
+	emitEmptyString(w, "x1")
+	w("\tmov x0, x19")
+	w("\tbl %s", fnLabel("__fern_io_error"))
+	w("\tb .Lssa_rspl_err")
+	// A direct splice had a pipe on one side; a writer that is one grows to
+	// hold max, as GNU grows stdout's, or each call moves 64 KiB.
+	w(".Lssa_rspl_grow:")
+	w("\tadd w9, w20, #1") // the writer last checked, plus one
+	w("\tldr w10, [x23, #8]")
+	w("\tcmp w10, w9")
+	w("\tb.eq .Lssa_rspl_ok")
+	w("\tstr w9, [x23, #8]")
+	w("\tmov w0, w20")
+	w("\tmov x1, #1032") // F_GETPIPE_SZ
+	w("\tmov x8, #25")
+	w("\tsvc #0")
+	w("\ttbnz x0, #63, .Lssa_rspl_ok")
+	w("\tcmp x0, x21")
+	w("\tb.ge .Lssa_rspl_ok")
+	w("\tmov w0, w20")
+	w("\tmov x1, #1031") // F_SETPIPE_SZ
+	w("\tmov x2, x21")
+	w("\tmov x8, #25")
+	w("\tsvc #0")
+	w("\tb .Lssa_rspl_ok")
+	w(".Lssa_rspl_unsup:")
+	emitOptionBox(w, 0, "")
+	w("\tmov w6, #5") // IoError::Unsupported
+	w("\tstr w6, [x0]")
+	w("\tstr xzr, [x0, #8]")
+	w(".Lssa_rspl_err:")
+	w("\tmov x22, x0")
+	emitOptionBox(w, 1, "x22") // Err
+	w("\tb .Lssa_rspl_ret")
+	w(".Lssa_rspl_ok:")
+	emitOptionBox(w, 0, "x22") // Ok(moved)
+	w(".Lssa_rspl_ret:")
+	w("\tldp x19, x20, [sp, #16]")
+	w("\tldp x21, x22, [sp, #32]")
+	w("\tldr x23, [sp, #48]")
+	w("\tldp x29, x30, [sp], #64")
+	w("\tret")
+	w(".section .bss")
+	w(".p2align 3")
+	w("__fern_splice_pipe: .space 16")
+	w(".text")
 }
 
 // emitFdFlagsHelper writes Result[i64, IoError] for __method_Reader_flags

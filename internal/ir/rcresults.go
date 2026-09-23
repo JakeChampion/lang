@@ -206,6 +206,7 @@ var rcResultOwned = map[string]bool{
 	"__fern_handle_termios_get":     true,
 	"__fern_handle_termios_set":     true,
 	"__fern_reader_seek":            true,
+	"__fern_reader_splice":          true,
 	"__fern_writer_seek":            true,
 	"__fern_reader_flags":           true,
 	"__fern_writer_flags":           true,
@@ -313,6 +314,7 @@ var rcOwnedResultBuiltins = map[string]bool{
 	"__method_Writer_write":           true, // __fern_writer_write
 	"__method_Writer_truncate":        true, // __fern_writer_truncate
 	"__method_Reader_seek":            true, // __fern_reader_seek
+	"__method_Reader_splice_to":       true, // __fern_reader_splice
 	"__method_Writer_seek":            true, // __fern_writer_seek
 	"__method_Reader_flags":           true, // __fern_reader_flags
 	"__method_Writer_flags":           true, // __fern_writer_flags

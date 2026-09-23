@@ -1107,7 +1107,7 @@ pub function all_runtime_need_roots(): string[] {
         "chmod", "chmod_at", "set_file_times", "truncate", "mknod", "chown_at",
         "sync", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_dup_onto",
         "termios_get", "termios_set",
-        "temp_dir", "open_file", "open_with", "reader", "fd_stat", "reader_seek", "fd_flags",
+        "temp_dir", "open_file", "open_with", "reader", "fd_stat", "reader_seek", "reader_splice", "fd_flags",
         "writer_write", "write_some", "writer_truncate", "subprocess", "crc32_cksum",
         // stdin / argv / the host's name / the process's own identity:
         "read_all_stdin", "hostname", "environ",

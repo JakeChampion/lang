@@ -91,6 +91,128 @@ func emitSeekHelper(name, tag string) func(w func(string, ...any)) {
 	}
 }
 
+// emitReaderSpliceHelper writes __method_Reader_splice_to(reader, writer, max)
+// -> Result[i64, IoError], the x86_64 codegen's __fern_reader_splice: a direct
+// splice(2), and on EINVAL the pipe cached in __fern_splice_pipe after an
+// empty-pipe probe of the writer. Every failure before bytes leave the reader
+// is Unsupported; a drain failure is the writer's and discards the pipe.
+func emitReaderSpliceHelper(w func(string, ...any)) {
+	splice := func(in, out, n string, flags int) {
+		w("\tmov edi, %s", in)
+		w("\txor esi, esi")
+		w("\tmov edx, %s", out)
+		w("\txor r10d, r10d")
+		w("\tmov r8, %s", n)
+		w("\tmov r9d, %d", flags)
+		w("\tmov eax, 275") // splice
+		w("\tsyscall")
+	}
+	const pipeR, pipeW = "dword ptr [rip + __fern_splice_pipe]", "dword ptr [rip + __fern_splice_pipe + 4]"
+	w("")
+	w("%s:", fnLabel("__method_Reader_splice_to"))
+	w("\tpush rbx")
+	w("\tpush r12")
+	w("\tpush r13")
+	w("\tpush r14")
+	w("\tpush r15")
+	w("\tmov r12d, dword ptr [rdi + 8]") // reader fd
+	w("\tmov r13d, dword ptr [rsi + 8]") // writer fd
+	w("\tmovsxd r14, edx")               // max
+	splice("r12d", "r13d", "r14", 0)
+	w("\tmov rbx, rax")
+	w("\ttest rax, rax")
+	w("\tjns .Lssa_rspl_grow")
+	w("\tcmp rax, -22") // EINVAL: no pipe on either side
+	w("\tjne .Lssa_rspl_unsup")
+	w("\tcmp qword ptr [rip + __fern_splice_pipe], 0")
+	w("\tjne .Lssa_rspl_have")
+	w("\tlea rdi, [rip + __fern_splice_pipe]")
+	w("\tmov esi, 0x80000") // O_CLOEXEC
+	w("\tmov eax, 293")     // pipe2
+	w("\tsyscall")
+	w("\ttest rax, rax")
+	w("\tjnz .Lssa_rspl_unsup")
+	w("\tmov edi, %s", pipeW)
+	w("\tmov esi, 1031") // F_SETPIPE_SZ
+	w("\tmov rdx, r14")
+	w("\tmov eax, 72") // fcntl
+	w("\tsyscall")
+	w(".Lssa_rspl_have:")
+	splice(pipeR, "r13d", "1", 2) // SPLICE_F_NONBLOCK
+	w("\tcmp rax, -11")           // EAGAIN: the writer takes spliced bytes
+	w("\tjne .Lssa_rspl_unsup")
+	splice("r12d", pipeW, "r14", 0)
+	w("\ttest rax, rax")
+	w("\tjs .Lssa_rspl_unsup")
+	w("\tmov rbx, rax") // moved
+	w("\tmov r15, rax") // still in the pipe
+	w(".Lssa_rspl_drain:")
+	w("\ttest r15, r15")
+	w("\tjz .Lssa_rspl_ok")
+	splice(pipeR, "r13d", "r15", 0)
+	w("\ttest rax, rax")
+	w("\tjle .Lssa_rspl_derr")
+	w("\tsub r15, rax")
+	w("\tjmp .Lssa_rspl_drain")
+	w(".Lssa_rspl_derr:")
+	w("\tcmp rax, -4") // EINTR
+	w("\tje .Lssa_rspl_drain")
+	w("\tmov rbx, rax")
+	w("\tmov edi, %s", pipeR)
+	w("\tmov eax, 3") // close
+	w("\tsyscall")
+	w("\tmov edi, %s", pipeW)
+	w("\tmov eax, 3")
+	w("\tsyscall")
+	w("\tmov qword ptr [rip + __fern_splice_pipe], 0")
+	w("\tmov eax, 5") // a writer that takes nothing without saying why is EIO
+	w("\tmov rcx, rbx")
+	w("\tneg rcx")
+	w("\ttest rbx, rbx")
+	w("\tcmovnz eax, ecx")
+	ssaFdIoErr(w, 1) // Err(e)
+	w("\tjmp .Lssa_rspl_ret")
+	// A direct splice had a pipe on one side; a writer that is one grows to
+	// hold max, as GNU grows stdout's, or each call moves 64 KiB.
+	w(".Lssa_rspl_grow:")
+	w("\tlea ecx, [r13 + 1]") // the writer last checked, plus one
+	w("\tcmp dword ptr [rip + __fern_splice_pipe + 8], ecx")
+	w("\tje .Lssa_rspl_ok")
+	w("\tmov dword ptr [rip + __fern_splice_pipe + 8], ecx")
+	w("\tmov edi, r13d")
+	w("\tmov esi, 1032") // F_GETPIPE_SZ
+	w("\tmov eax, 72")
+	w("\tsyscall")
+	w("\tcmp rax, r14")
+	w("\tjge .Lssa_rspl_ok")
+	w("\ttest rax, rax")
+	w("\tjs .Lssa_rspl_ok")
+	w("\tmov edi, r13d")
+	w("\tmov esi, 1031") // F_SETPIPE_SZ
+	w("\tmov rdx, r14")
+	w("\tmov eax, 72")
+	w("\tsyscall")
+	w("\tjmp .Lssa_rspl_ok")
+	w(".Lssa_rspl_unsup:")
+	ssaOptionBox(w, 5, "") // IoError::Unsupported
+	w("\tmov rbx, rax")
+	ssaOptionBox(w, 1, "rbx") // Err
+	w("\tjmp .Lssa_rspl_ret")
+	w(".Lssa_rspl_ok:")
+	ssaOptionBox(w, 0, "rbx") // Ok(moved)
+	w(".Lssa_rspl_ret:")
+	w("\tpop r15")
+	w("\tpop r14")
+	w("\tpop r13")
+	w("\tpop r12")
+	w("\tpop rbx")
+	w("\tret")
+	w(".section .bss")
+	w(".align 8")
+	w("__fern_splice_pipe: .skip 16")
+	w(".text")
+}
+
 // emitFdFlagsHelper returns the emitter for Reader.flags / Writer.flags ->
 // Result[i64, IoError]: fcntl(fd, F_GETFL) reduced to Fern's own three bits —
 // 1 readable, 2 writable, 4 appending. The kernel's access mode is a VALUE in

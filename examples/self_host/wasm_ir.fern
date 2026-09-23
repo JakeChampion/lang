@@ -311,6 +311,7 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
     if (module_emits_op_cached(cache, "fd_syncfs")) { out = out.append("fd_syncfs"); }
     if (module_emits_op_cached(cache, "fd_dup_onto")) { out = out.append("fd_dup_onto"); }
     if (module_emits_op_cached(cache, "reader_seek")) { out = out.append("reader_seek"); }
+    if (module_emits_op_cached(cache, "reader_splice")) { out = out.append("reader_splice"); }
     if (module_emits_op_cached(cache, "fd_flags")) { out = out.append("fd_flags"); }
     if (module_emits_op_cached(cache, "writer_truncate")) { out = out.append("writer_truncate"); }
     if (module_emits_op_cached(cache, "read_dir")) { out = out.append("read_dir"); }
@@ -1746,7 +1747,7 @@ function all_lowered_ok(cache: irlower.LowerResult[]): boolean {
 // lowers to a raw_load_ptr and __raw_array emits nothing at all.
 function is_raw_floor_builtin(name: string): boolean {
     if (name == "__raw_alloc" || name == "__raw_store8" || name == "__raw_load8") { return true; }
-    if (name == "__raw_string" || name == "__raw_scratch" || name == "__raw_environ") { return true; }
+    if (name == "__raw_string" || name == "__raw_scratch" || name == "__raw_environ" || name == "__raw_splice_pipe") { return true; }
     if (name == "__raw_addr" || name == "__raw_arr_box") { return true; }
     return name == "__syscall3" || name == "__syscall4" || name == "__syscall5" || name == "__syscall6";
 }
@@ -4409,6 +4410,10 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         // r.flags() / w.flags() -> Result[i64, IoError]: the fd is already
         // on the stack, as fd_stat's is.
         parts = parts.append("    call $__fern_fd_flags\n");
+    } else if (o.kind_tag == 330) {  // reader_splice
+        // r.splice_to(w, max) -> Result[i64, IoError]: always Err(Unsupported),
+        // which promises nothing moved; the operands are dropped by the callee.
+        parts = parts.append("    call $__fern_reader_splice\n");
     } else if (o.kind_tag == 242) {  // reader_seek
         // r.seek(offset, whence) -> Result[i64, IoError]: fd, i64 offset and
         // whence are on the stack in param order.
@@ -5231,11 +5236,11 @@ function io_err_field_off(i: i32, slot: i32): string {
 }
 
 // needs_fd_sync reports whether the module reached any of the per-handle
-// write-back ops. Two gates ask it, and neither wants three `need` calls
-// spelled out.
+// write-back ops, or the two refusals built beside them. Two gates ask it,
+// and neither wants the `need` calls spelled out.
 function needs_fd_sync(needs: string[]): boolean {
     return need(needs, "fd_fsync") || need(needs, "fd_fdatasync") || need(needs, "fd_syncfs")
-        || need(needs, "fd_dup_onto");
+        || need(needs, "fd_dup_onto") || need(needs, "reader_splice");
 }
 
 // needs_io_error reports whether the module carries any fs op — the gate on
@@ -5901,6 +5906,7 @@ pub function fd_sync_funcs(needs: string[]): string {
     if (need(needs, "fd_fdatasync")) { o = o + fd_sync_func("fdatasync", "fd_datasync"); }
     if (need(needs, "fd_syncfs")) { o = o + fd_syncfs_func(); }
     if (need(needs, "fd_dup_onto")) { o = o + fd_dup_onto_func(); }
+    if (need(needs, "reader_splice")) { o = o + reader_splice_func(); }
     return o;
 }
 
@@ -5968,6 +5974,22 @@ pub function fd_dup_onto_func(): string {
     o = o + "    (i32.store (local.get $path) (i32.const 0))\n";
     o = o + "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
     o = o + "    (i32.store (local.get $res) (i32.const 0))\n";
+    o = o + "    (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (i32.const 58) (local.get $path)))\n";
+    o = o + "    (local.get $res))\n";
+    return o;
+}
+
+// reader_splice_func emits $__fern_reader_splice(fd, out, max) ->
+// Result[i64, IoError]: always Err(Unsupported), which promises nothing
+// moved. Neither preview can splice, so the caller reads and writes.
+pub function reader_splice_func(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_reader_splice (param $fd i32) (param $out i32) (param $max i32) (result i32)\n";
+    o = o + "    (local $res i32) (local $path i32)\n";
+    o = o + "    (local.set $path (call $__fern_str_box (i32.const 4)))\n";
+    o = o + "    (i32.store (local.get $path) (i32.const 0))\n";
+    o = o + "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
+    o = o + "    (i32.store (local.get $res) (i32.const 1))\n";
     o = o + "    (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (i32.const 58) (local.get $path)))\n";
     o = o + "    (local.get $res))\n";
     return o;
