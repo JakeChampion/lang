@@ -4014,16 +4014,36 @@ pub struct OptimizedOps {
 // Loop-invariant code motion runs LAST, as native's battery orders it: it reads
 // the shape the cleanup settles on, and the slot it introduces is a plain store
 // the backends already handle.
+//
+// Constant propagation is what makes a constant adjacent to its consumer when
+// the lowering routes every value through a slot (the typed path's `ssarc`
+// does), so strength reduction gets one more pass over its output.
 function finish_ops(cur: Op[], n_locals: i32): OptimizedOps {
     var done: Op[] = eliminate_dead_code(fold_const_binaries(propagate_copies(const_propagate(fuse_tee(eliminate_dead_code(cur))))));
+    var again: StrengthResult = reduce_strength_ex(done);
+    if (again.changed) { done = eliminate_dead_code(strength_fixpoint(fold_const_binaries(again.ops))); }
     return hoist_loop_invariants(done, n_locals);
+}
+
+// strength_fixpoint alternates strength reduction and folding until neither
+// rewrites anything. fold_const_binaries already self-iterates, so a strength
+// pass that rewrote nothing is the fixpoint; the round cap is defensive.
+function strength_fixpoint(ops: Op[]): Op[] {
+    var cur: Op[] = ops;
+    var rounds: i32 = 0;
+    while (rounds < 8) {
+        var r: StrengthResult = reduce_strength_ex(cur);
+        if (!r.changed) { return cur; }
+        cur = fold_const_binaries(r.ops);
+        rounds = rounds + 1;
+    }
+    return cur;
 }
 
 // optimize_ops runs the op-list peepholes to a fixpoint, then finishes. The first
 // two feed each other: folding makes a constant adjacent to the op that consumes
 // it, and a strength rewrite's `drop ; const_i32 0` puts a fresh constant next to
-// whatever constant follows. fold_const_binaries already self-iterates, so a
-// strength pass that rewrote nothing is the fixpoint; the round cap is defensive.
+// whatever constant follows.
 //
 // prune_zero_slot_guards runs FIRST, ahead of the leading fold, because it only
 // ever CREATES a constant: the fold's decided-`if` rule is what deletes the drop
@@ -4038,15 +4058,7 @@ function finish_ops(cur: Op[], n_locals: i32): OptimizedOps {
 // is the one the frame must be sized from, and only a slot-allocating pass moves
 // it.
 pub function optimize_ops(ops: Op[], n_params: i32, n_locals: i32): OptimizedOps {
-    var cur: Op[] = fold_const_binaries(prune_zero_slot_guards(ops, n_params));
-    var rounds: i32 = 0;
-    while (rounds < 8) {
-        var r: StrengthResult = reduce_strength_ex(cur);
-        if (!r.changed) { return finish_ops(cur, n_locals); }
-        cur = fold_const_binaries(r.ops);
-        rounds = rounds + 1;
-    }
-    return finish_ops(cur, n_locals);
+    return finish_ops(strength_fixpoint(fold_const_binaries(prune_zero_slot_guards(ops, n_params))), n_locals);
 }
 
 // ---- loop-invariant code motion (#8245, native internal/ir/licm.go) ------
