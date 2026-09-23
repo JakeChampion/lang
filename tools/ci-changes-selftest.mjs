@@ -206,6 +206,7 @@ check("main: a self-host-only change skips the lanes that cannot see it",
   [false, false, true, true, true, true]);
 r = await decide({ event: "push", proof: mainProof({ compare: { [`m1...${head}`]: cmp(["internal/checker/x.go"]) } }) });
 check("main: a compiler change runs the lanes it reaches", [r.lanes["test-units"], r.lanes["test-e2e-x86_64"], r.lanes.macos], [true, true, true]);
+check("main: the log names the base and what changed since", r.infos.some((m) => m.startsWith("last passed at m1 (") && m.endsWith("): 1 file(s) changed since")), true);
 r = await decide({ event: "push", proof: mainProof({
   jobs: { 50: [...mainJobs(laneKeys.filter((l) => l !== "test-units")), ...mainJobs(["test-units"], "failure")] },
   compare: { [`m1...${head}`]: cmp(["docs/x.md"]) } }) });
