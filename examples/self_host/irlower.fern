@@ -4053,9 +4053,25 @@ function map_key_int_evidence(k: ast.Expr, s: LowerState): boolean {
             if (is_int_irtag(kix.ty)) { return true; }
             return arr_elem_is_int(kix.array, s);
         },
+        // Arithmetic and bitwise ops are integers when an operand is; a string
+        // `+` answered expr_is_str above.
+        ast.ExprBinary(kb) => {
+            if (map_key_bool_op(kb.op)) { return false; }
+            return map_key_int_evidence(kb.left, s) || map_key_int_evidence(kb.right, s);
+        },
+        ast.ExprUnary(ku) => {
+            if (ku.op != "-") { return false; }
+            return map_key_int_evidence(ku.operand, s);
+        },
         _ => { return false; }
     }
     return false;
+}
+
+// map_key_bool_op reports a binary op whose result is a boolean whatever its
+// operands are.
+function map_key_bool_op(op: string): boolean {
+    return op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=" || op == "&&" || op == "||";
 }
 
 // arr_elem_is_int reports POSITIVE evidence that indexing `a` reads an INTEGER
@@ -13855,6 +13871,9 @@ function lower_call_dyn_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, rty: st
     dm = dm.emit(ir.op_store_local(dbase));
     var dai: i32 = 0;
     while (dai < c.args.len()) {
+        // The slot is typed by what it holds, which wasm spells in the local.
+        if (expr_is_f64(c.args[dai], dm)) { dm = dm.mark_f64(dbase + 1 + dai, true); }
+        else if (infer_expr_width(c.args[dai], dm) == 64) { dm = dm.mark_i64(dbase + 1 + dai, true); }
         dm = lower_expr(c.args[dai], dm);
         if (!dm.ok) { return dm; }
         dm = dm.emit(ir.op_store_local(dbase + 1 + dai));
