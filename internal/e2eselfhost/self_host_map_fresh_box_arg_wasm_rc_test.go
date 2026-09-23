@@ -9,22 +9,25 @@ import (
 	"testing"
 )
 
-// #9984: a FRESH struct or enum key strands its box on every insert.
+// A FRESHLY CONSTRUCTED map argument strands its box on every insert, in both
+// columns (#9984).
 //
-// `kconsume` — bit 1 of op_map_set's width word — tells $__fern_map_set to TAKE
-// a fresh key's single ref instead of retaining it. irlower computed it with
-// the STRING freshness test at both op_map_set sites, so a freshly constructed
-// struct or enum key never set it: insert retains (rc 1 → 2), release decs once
-// (2 → 1), and nothing names the box afterwards.
+// op_map_set's width word carries two bits that tell $__fern_map_set to TAKE an
+// argument's single ref instead of retaining it: vconsume for the value,
+// kconsume for the key. Each asked a narrower question than it meant — the key
+// asked only whether the argument was a fresh STRING, so no constructed box
+// ever set it; the value knew struct and array literals but not a variant
+// construction. Either way the retain went unmatched: rc 1 → 2 on insert, one
+// dec at release, and nothing else naming the box.
 //
-// A BORROWED key is even, because the source local's own sweep supplies the
-// second dec — which is why TestSelfHostMapBoxKeyWasmRC passes and why the
-// existing struct-key fixtures, all inline constructions with no heap readout,
-// never showed it. Freshness is the whole discriminator, so these cases
-// construct the key in the insert and read the heap across 1000 rounds.
-func TestSelfHostMapFreshBoxKeyWasmRC(t *testing.T) {
+// A BORROWED argument is even, because the source local's own sweep supplies
+// the second dec — which is why TestSelfHostMapBoxKeyWasmRC passes and why the
+// existing struct fixtures, all inline constructions with no heap readout,
+// never showed it. Freshness is the whole discriminator, so every case here
+// constructs its argument in the insert and reads the heap across 1000 rounds.
+func TestSelfHostMapFreshBoxArgWasmRC(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host fresh box-key map wasm rc e2e")
+		t.Skip("wasmtime not on PATH; skipping self-host fresh box-arg map wasm rc e2e")
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -51,6 +54,16 @@ func TestSelfHostMapFreshBoxKeyWasmRC(t *testing.T) {
 		{"variant-key",
 			`import "core/cmp"; @derive(cmp.Eq, cmp.Hash) enum Tag { Lo(i32), Hi(i32) } ` +
 				`function build(n: i32): i32 { var m: Map[Tag, i32] = map_new(4); m = m.insert(Tag.Lo(n), 7); return m.len(); } ` + probe},
+		// The VALUE column asks the same question, and knew struct literals but
+		// not variant constructions: this one leaked where its struct twin
+		// below was already flat, which is what says the two columns want one
+		// predicate rather than two that drift.
+		{"variant-value",
+			`import "core/cmp"; @derive(cmp.Eq, cmp.Hash) enum Tag { Lo(i32), Hi(i32) } ` +
+				`function build(n: i32): i32 { var m: Map[i32, Tag] = map_new(4); m = m.insert(n, Tag.Lo(n)); return m.len(); } ` + probe},
+		{"struct-value",
+			`import "core/cmp"; @derive(cmp.Eq, cmp.Hash) struct P { x: i32, y: i32 } ` +
+				`function build(n: i32): i32 { var m: Map[i32, P] = map_new(4); m = m.insert(n, P { x: n, y: n * 2 }); return m.len(); } ` + probe},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -65,10 +78,10 @@ func TestSelfHostMapFreshBoxKeyWasmRC(t *testing.T) {
 			if err != nil || len(wat) == 0 {
 				t.Fatalf("driver failed for %q: %v", tc.name, err)
 			}
-			if !strings.Contains(string(wat), "$__fern_map_new_struct") {
+			if strings.HasSuffix(tc.name, "-key") && !strings.Contains(string(wat), "$__fern_map_new_struct") {
 				t.Fatalf("%q did not reach the struct-key IR path (no $__fern_map_new_struct in WAT)", tc.name)
 			}
-			watFile := filepath.Join(dir, "freshkey_rc_"+tc.name+".wat")
+			watFile := filepath.Join(dir, "fresharg_rc_"+tc.name+".wat")
 			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
 				t.Fatalf("write wat: %v", err)
 			}
@@ -79,7 +92,7 @@ func TestSelfHostMapFreshBoxKeyWasmRC(t *testing.T) {
 			}
 			if got := rcmd.ProcessState.ExitCode(); got != 0 {
 				t.Fatalf("%s exited %d, want 0 "+
-					"(1 = the fresh key box leaks, a retain with no matching release; "+
+					"(1 = the fresh box leaks, a retain with no matching release; "+
 					"99 = over-release, a dec with no matching inc; "+
 					"88 = a key read back wrong)", tc.name, got)
 			}
