@@ -1441,6 +1441,28 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{bufH, ast.StringType{}, ast.NumberType{}, ast.NumberType{}},
 		Result: ast.VoidType{},
 	}
+	// buf_push_mapped(h, s, table) appends table[b] for each byte b of s; a
+	// byte at or past the table's length is appended unchanged. tr's
+	// translation and dd's conv tables are one call per read.
+	c.info.FuncSigs["buf_push_mapped"] = &ast.FuncType{
+		Params: []ast.Type{bufH, ast.StringType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+		Result: ast.VoidType{},
+	}
+	// buf_push_filtered(h, s, drop) appends each byte b of s whose entry
+	// drop[b] is zero; a byte at or past the table's length is kept. tr -d's
+	// deletion is one call per read.
+	c.info.FuncSigs["buf_push_filtered"] = &ast.FuncType{
+		Params: []ast.Type{bufH, ast.StringType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+		Result: ast.VoidType{},
+	}
+	// buf_push_expanded(h, s, table) appends each byte b of s as the record
+	// at table[b*8]: a length byte (above 7 counts as 7), then the bytes. A
+	// byte whose record is not wholly inside the table is appended
+	// unchanged. cat -v / -T / -E is one call per read.
+	c.info.FuncSigs["buf_push_expanded"] = &ast.FuncType{
+		Params: []ast.Type{bufH, ast.StringType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+		Result: ast.VoidType{},
+	}
 	c.info.FuncSigs["buf_push_byte"] = &ast.FuncType{
 		Params: []ast.Type{bufH, ast.NumberType{}},
 		Result: ast.VoidType{},
@@ -1625,6 +1647,30 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// behind cat -A's spelling. Native runtime surface, carried by the
 	// self-host emitters too (#4451).
 	c.info.FuncSigs["__scan_set"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.StringType{},
+			ast.NumberType{Width: 32, Signed: true},
+			ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
+		},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	// __bsd_sum(s, sum) → i32: the BSD checksum `sum -r` keeps, carried in
+	// `sum` and continued over s: per byte, rotate the 16 bits right by one
+	// and add the byte, modulo 2^16. Native runtime surface, carried by the
+	// self-host emitters too (#4451).
+	c.info.FuncSigs["__bsd_sum"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.StringType{},
+			ast.NumberType{Width: 32, Signed: true},
+		},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	// __count_runs(s, inside, set) → i32: how many runs of bytes whose entry
+	// in `set` is nonzero begin in s. `inside` nonzero says the byte before s
+	// was a member, so a run open at s[0] is not counted. A byte past the end
+	// of `set` is not a member. wc's word count, one call per read. Native
+	// runtime surface, carried by the self-host emitters too (#4451).
+	c.info.FuncSigs["__count_runs"] = &ast.FuncType{
 		Params: []ast.Type{
 			ast.StringType{},
 			ast.NumberType{Width: 32, Signed: true},

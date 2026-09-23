@@ -492,6 +492,105 @@ function proc_line(line: string, st0: State, o: Opts, w0: io_buffered.BufWriter)
   return Emit { st: st, w: w };
 }
 
+// `fast_style(sty, o)` — whether lines under this style can take the fast
+// path: every line or every non-empty line numbered, or none, with no -l
+// run to count. A regular expression needs the line as a string.
+function fast_style(sty: Style, o: Opts): boolean {
+  if (sty.kind == style_all()) {
+    return o.join_blank <= 1 as i64;
+  }
+  return sty.kind == style_nonempty() || sty.kind == style_none();
+}
+
+// `Field` — the parts of the line-number field shared by the hundred
+// numbers `q * 100` to `q * 100 + 99`, for `q` > 0: what comes before
+// their last two digits and what comes after, the separator included.
+struct Field { q: i64, head: string, tail: string }
+
+function field_for(q: i64, o: Opts): Field {
+  var digits: string = q.to_string();
+  var need: i32 = o.width - digits.len() - 2;
+  if (need < 0) {
+    need = 0;
+  }
+  if (o.fmt == fmt_ln()) {
+    return Field { q: q, head: digits, tail: slice_unchecked(o.pad, 0, need) + o.sep };
+  }
+  if (o.fmt == fmt_rz()) {
+    return Field { q: q, head: slice_unchecked(o.zeros, 0, need) + digits, tail: o.sep };
+  }
+  return Field { q: q, head: slice_unchecked(o.pad, 0, need) + digits, tail: o.sep };
+}
+
+// `next_line_no(n, incr)` — n + incr, or false when that leaves the range
+// of an intmax_t.
+function next_line_no(n: i64, incr: i64): (boolean, i64) {
+  if (incr >= 0 as i64) {
+    if (n > 9223372036854775807 as i64 - incr) {
+      return (false, n);
+    }
+  } else if (n < 0 as i64 - 9223372036854775807 as i64 - 1 as i64 - incr) {
+    return (false, n);
+  }
+  return (true, n + incr);
+}
+
+// `fast_lines(buf, pos, st, o, w)` — the ordinary lines of `buf` from
+// `pos`, each pushed straight from the buffer: no line string, and no
+// state rebuilt per line. It stops at the first line it cannot take
+// (a possible delimiter, a style that needs the line, a number about to
+// overflow) or at the end of the complete lines, and answers where it
+// stopped.
+function fast_lines(buf: string, pos0: i32, st: State, o: Opts, w0: io_buffered.BufWriter): (i32, State, io_buffered.BufWriter) {
+  var w: io_buffered.BufWriter = w0;
+  var h: usize = w.handle();
+  var sty: Style = style_of(st, o);
+  if (!fast_style(sty, o) || st.over) {
+    return (pos0, st, w);
+  }
+  var kind: i32 = sty.kind;
+  var d0: i32 = 0 - 1;
+  if (o.del1.len() > 0) {
+    d0 = o.del1[0] as i32;
+  }
+  var line_no: i64 = st.line_no;
+  var incr: i64 = o.incr;
+  var field: Field = Field { q: 0 as i64, head: "", tail: "" };
+  var base: i64 = 0 as i64;
+  var pos: i32 = pos0;
+  while (true) {
+    var j: i32 = __memchr(buf, 10, pos);
+    if (j < 0 || j > pos && buf[pos] as i32 == d0) {
+      break;
+    }
+    if (kind == style_none() || kind == style_nonempty() && j == pos) {
+      buf_push(h, o.blank);
+    } else {
+      var nx: (boolean, i64) = next_line_no(line_no, incr);
+      if (!nx.0) {
+        break;
+      }
+      if (line_no < 100 as i64) {
+        push_lineno(h, line_no, o);
+        buf_push(h, o.sep);
+      } else {
+        if (field.q == 0 as i64 || line_no < base || line_no >= base + 100 as i64) {
+          field = field_for(line_no / (100 as i64), o);
+          base = field.q * (100 as i64);
+        }
+        buf_push(h, field.head);
+        var r: i32 = (line_no - base) as i32 * 2;
+        buf_push_range(h, io_buffered.digit_pairs(), r, r + 2);
+        buf_push(h, field.tail);
+      }
+      line_no = nx.1;
+    }
+    buf_push_range(h, buf, pos, j + 1);
+    pos = j + 1;
+  }
+  return (pos, State { ...st, line_no: line_no, blanks: 0 as i64 }, gnu.settle(w));
+}
+
 // ---- input ------------------------------------------------------------------
 function read_size(): i32 {
   return 65536;
@@ -504,6 +603,10 @@ function proc_reader(r: Reader, name: string, st0: State, o: Opts, w0: io_buffer
   var pos: i32 = 0;
   var eof: boolean = false;
   while (true) {
+    var f: (i32, State, io_buffered.BufWriter) = fast_lines(buf, pos, st, o, w);
+    pos = f.0;
+    st = f.1;
+    w = f.2;
     var j: i32 = __memchr(buf, 10, pos);
     if (j >= 0) {
       var e: Emit = proc_line(slice_unchecked(buf, pos, j) + "", st, o, w);

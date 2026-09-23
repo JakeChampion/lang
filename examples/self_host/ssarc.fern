@@ -2656,6 +2656,9 @@ function builder_builtin_site(own r: irlower.LowerResult, ins: ssa.SInst): Lower
     if (ins.str == "buf_new") { return Lowered { found: true, r: emit(r, ir.op_buf_new()) }; }
     if (ins.str == "buf_push") { return Lowered { found: true, r: emit(r, ir.op_buf_push()) }; }
     if (ins.str == "buf_push_range") { return Lowered { found: true, r: emit(r, ir.op_buf_push_range()) }; }
+    if (ins.str == "buf_push_mapped") { return Lowered { found: true, r: emit(r, ir.op_buf_push_mapped()) }; }
+    if (ins.str == "buf_push_filtered") { return Lowered { found: true, r: emit(r, ir.op_buf_push_filtered()) }; }
+    if (ins.str == "buf_push_expanded") { return Lowered { found: true, r: emit(r, ir.op_buf_push_expanded()) }; }
     if (ins.str == "buf_push_byte") { return Lowered { found: true, r: emit(r, ir.op_buf_push_byte()) }; }
     if (ins.str == "buf_push_u64") { return Lowered { found: true, r: emit(r, ir.op_buf_push_u64()) }; }
     if (ins.str == "buf_len") { return Lowered { found: true, r: emit(r, ir.op_buf_len()) }; }
@@ -2722,6 +2725,8 @@ function byte_scan_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     if (ins.str == "__crc32_cksum") { return Lowered { found: true, r: emit(r, ir.op_crc32_cksum()) }; }
     if (ins.str == "__ascii_run") { return Lowered { found: true, r: emit(r, ir.op_ascii_run()) }; }
     if (ins.str == "__scan_set") { return Lowered { found: true, r: emit(r, ir.op_scan_set()) }; }
+    if (ins.str == "__count_runs") { return Lowered { found: true, r: emit(r, ir.op_count_runs()) }; }
+    if (ins.str == "__bsd_sum") { return Lowered { found: true, r: emit(r, ir.op_bsd_sum()) }; }
     if (ins.str == "__count_byte") { return Lowered { found: true, r: emit(r, ir.op_count_byte()) }; }
     if (ins.str == "__rmemchr") { return Lowered { found: true, r: emit(r, ir.op_rmemchr()) }; }
     if (ins.str == "__mismatch") { return Lowered { found: true, r: emit(r, ir.op_mismatch()) }; }

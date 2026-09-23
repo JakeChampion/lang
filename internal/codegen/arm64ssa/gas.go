@@ -1371,6 +1371,8 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_rmemchr":            emitRmemchrHelper,
 	"__fern_count_byte":         emitCountByteHelper,
 	"__fern_scan_set":           emitScanSetHelper,
+	"__fern_count_runs":         emitCountRunsHelper,
+	"__fern_bsd_sum":            emitBsdSumHelper,
 	"__fern_sum_bytes":          emitSumBytesHelper,
 	"__fern_scale_f64":          emitScaleF64Helper,
 	"__fern_crc32_cksum":        emitCrc32CksumHelper,
@@ -1544,6 +1546,9 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_buf_reserve":              emitBufReserveHelper,
 	"buf_push":                        emitBufPushHelper,
 	"buf_push_range":                  emitBufPushRangeHelper,
+	"buf_push_mapped":                 emitBufPushMappedHelper,
+	"buf_push_filtered":               emitBufPushFilteredHelper,
+	"buf_push_expanded":               emitBufPushExpandedHelper,
 	"buf_push_byte":                   emitBufPushByteHelper,
 	"buf_push_u64":                    emitBufPushU64Helper,
 	"buf_len":                         emitBufLenHelper,
@@ -4509,6 +4514,9 @@ var runtimeHelperDeps = map[string][]string{
 	"__fern_buf_reserve":              {"__alloc", "__free"},
 	"buf_push":                        {"__fern_buf_reserve"},
 	"buf_push_range":                  {"__fern_buf_reserve"},
+	"buf_push_mapped":                 {"__fern_buf_reserve"},
+	"buf_push_filtered":               {"__fern_buf_reserve"},
+	"buf_push_expanded":               {"__fern_buf_reserve"},
 	"buf_push_byte":                   {"__fern_buf_reserve"},
 	"buf_push_u64":                    {"__fern_buf_reserve"},
 	"buf_take":                        {"__alloc"},
@@ -6196,6 +6204,64 @@ func emitCrc32CksumHelper(w func(string, ...any)) {
 // No cursor, so no clamp. Both degenerate answers are real counts rather
 // than sentinels: an out-of-range byte counts 0 because nothing can equal it,
 // an empty string counts 0 because it has no bytes.
+// emitBsdSumHelper writes __fern_bsd_sum(s, sum) -> the BSD checksum continued
+// over s: per byte a 16-bit rotate right by one and an add.
+func emitBsdSumHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_bsd_sum"))
+	w("\tldur w3, [x0, #-4]") // len
+	w("\tand w1, w1, #0xffff")
+	w("\tmov x10, #0")
+	w(".Lssa_bsd_sum_loop:")
+	w("\tcmp w10, w3")
+	w("\tb.ge .Lssa_bsd_sum_end")
+	w("\tldrb w11, [x0, x10]")
+	w("\tlsr w9, w1, #1")
+	w("\torr w1, w9, w1, lsl #15")
+	w("\tadd w1, w1, w11")
+	w("\tand w1, w1, #0xffff")
+	w("\tadd x10, x10, #1")
+	w("\tb .Lssa_bsd_sum_loop")
+	w(".Lssa_bsd_sum_end:")
+	w("\tmov w0, w1")
+	w("\tret")
+}
+
+// emitCountRunsHelper writes __fern_count_runs(s, inside, set) -> how many
+// runs of bytes whose entry in `set` is nonzero begin in s, `inside` nonzero
+// meaning the byte before s was a member. It keeps "not a member" as 0 or 1,
+// and a run begins where that drops from 1 to 0. A byte past the set's end
+// is not a member.
+func emitCountRunsHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_count_runs"))
+	w("\tldur w3, [x0, #-4]") // len
+	w("\tcmp w1, #0")
+	w("\tcset w9, eq") // the previous byte is not a member
+	w("\tmov w1, #0")
+	w("\tmov x10, #0")
+	w("\tldur w4, [x2, #-4]") // set length
+	w(".Lssa_count_runs_loop:")
+	w("\tcmp w10, w3")
+	w("\tb.ge .Lssa_count_runs_end")
+	w("\tldrb w11, [x0, x10]")
+	w("\tmov w12, #1")
+	w("\tcmp w11, w4")
+	w("\tb.hs .Lssa_count_runs_flag")
+	w("\tldrb w12, [x2, x11]")
+	w("\tcmp w12, #0")
+	w("\tcset w12, eq")
+	w(".Lssa_count_runs_flag:")
+	w("\tbic w13, w9, w12")
+	w("\tadd w1, w1, w13")
+	w("\tmov w9, w12")
+	w("\tadd x10, x10, #1")
+	w("\tb .Lssa_count_runs_loop")
+	w(".Lssa_count_runs_end:")
+	w("\tmov w0, w1")
+	w("\tret")
+}
+
 // emitScanSetHelper writes __fern_scan_set(s, from, set) -> the index of the
 // first byte at or after `from` whose entry in `set` is nonzero, or len(s).
 // Scalar: the table read per byte is the kernel. A set with an entry for
@@ -10020,6 +10086,193 @@ func emitBufPushRangeHelper(w func(string, ...any)) {
 	emitBcopyCall(w, "x9", "x11", "x12")
 	w("\tldp x29, x30, [sp], #48")
 	w(".Lssa_bufrange_none:")
+	w("\tmov x0, xzr")
+	w("\tret")
+}
+
+// emitBufPushMappedHelper writes buf_push_mapped(H, s, table): append
+// table[c] for each byte c of s, or c itself when it is past the table's end.
+// A table covering every byte value takes the loop with no length check.
+func emitBufPushMappedHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("buf_push_mapped"))
+	w("\tldur w12, [x1, #-4]")
+	w("\tcbz w12, .Lssa_bufmap_none")
+	w("\tstp x29, x30, [sp, #-48]!")
+	w("\tstr x0, [sp, #16]") // H
+	w("\tstr x1, [sp, #24]") // s
+	w("\tstr x2, [sp, #32]") // table
+	w("\tldr x13, [x0, #8]")
+	w("\tadd x14, x13, x12") // need
+	w("\tldr x15, [x0, #16]")
+	w("\tcmp x14, x15")
+	w("\tb.ls .Lssa_bufmap_fits")
+	w("\tmov x1, x14")
+	w("\tbl %s", fnLabel("__fern_buf_reserve"))
+	w(".Lssa_bufmap_fits:")
+	w("\tldr x1, [sp, #16]")
+	w("\tldr x11, [sp, #24]")
+	w("\tldr x2, [sp, #32]")
+	w("\tldp x29, x30, [sp], #48")
+	w("\tldur w12, [x11, #-4]")
+	w("\tldr x13, [x1, #8]")
+	w("\tldr x9, [x1]")
+	w("\tadd x9, x9, x13") // dst
+	w("\tadd x14, x13, x12")
+	w("\tstr x14, [x1, #8]")
+	w("\tldur w4, [x2, #-4]") // table length
+	w("\tmov x5, xzr")
+	w("\tcmp w4, #256")
+	w("\tb.lo .Lssa_bufmap_short")
+	w(".Lssa_bufmap_full:")
+	w("\tldrb w6, [x11, x5]")
+	w("\tldrb w6, [x2, x6]")
+	w("\tstrb w6, [x9, x5]")
+	w("\tadd x5, x5, #1")
+	w("\tcmp x5, x12")
+	w("\tb.lo .Lssa_bufmap_full")
+	w("\tb .Lssa_bufmap_none")
+	w(".Lssa_bufmap_short:")
+	w("\tldrb w6, [x11, x5]")
+	w("\tcmp w6, w4")
+	w("\tb.hs .Lssa_bufmap_keep")
+	w("\tldrb w6, [x2, x6]")
+	w(".Lssa_bufmap_keep:")
+	w("\tstrb w6, [x9, x5]")
+	w("\tadd x5, x5, #1")
+	w("\tcmp x5, x12")
+	w("\tb.lo .Lssa_bufmap_short")
+	w(".Lssa_bufmap_none:")
+	w("\tmov x0, xzr")
+	w("\tret")
+}
+
+// emitBufPushFilteredHelper writes buf_push_filtered(H, s, drop): append each
+// byte c of s whose entry drop[c] is zero, or that is past the table's end.
+// Room for all of s is reserved; the full-table loop stores every byte and
+// advances the kept count only past a kept one.
+func emitBufPushFilteredHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("buf_push_filtered"))
+	w("\tldur w12, [x1, #-4]")
+	w("\tcbz w12, .Lssa_buffilt_none")
+	w("\tstp x29, x30, [sp, #-48]!")
+	w("\tstr x0, [sp, #16]") // H
+	w("\tstr x1, [sp, #24]") // s
+	w("\tstr x2, [sp, #32]") // drop
+	w("\tldr x13, [x0, #8]")
+	w("\tadd x14, x13, x12") // need
+	w("\tldr x15, [x0, #16]")
+	w("\tcmp x14, x15")
+	w("\tb.ls .Lssa_buffilt_fits")
+	w("\tmov x1, x14")
+	w("\tbl %s", fnLabel("__fern_buf_reserve"))
+	w(".Lssa_buffilt_fits:")
+	w("\tldr x1, [sp, #16]")
+	w("\tldr x11, [sp, #24]")
+	w("\tldr x2, [sp, #32]")
+	w("\tldp x29, x30, [sp], #48")
+	w("\tldur w12, [x11, #-4]")
+	w("\tldr x13, [x1, #8]")
+	w("\tldr x9, [x1]")
+	w("\tadd x9, x9, x13")    // dst
+	w("\tldur w4, [x2, #-4]") // table length
+	w("\tmov x5, xzr")        // i
+	w("\tmov x7, xzr")        // kept
+	w("\tcmp w4, #256")
+	w("\tb.lo .Lssa_buffilt_short")
+	w(".Lssa_buffilt_full:")
+	w("\tldrb w6, [x11, x5]")
+	w("\tldrb w8, [x2, x6]")
+	w("\tstrb w6, [x9, x7]")
+	w("\tcmp w8, #0")
+	w("\tcinc x7, x7, eq")
+	w("\tadd x5, x5, #1")
+	w("\tcmp x5, x12")
+	w("\tb.lo .Lssa_buffilt_full")
+	w("\tb .Lssa_buffilt_len")
+	w(".Lssa_buffilt_short:")
+	w("\tldrb w6, [x11, x5]")
+	w("\tcmp w6, w4")
+	w("\tb.hs .Lssa_buffilt_keep")
+	w("\tldrb w8, [x2, x6]")
+	w("\tcbnz w8, .Lssa_buffilt_next")
+	w(".Lssa_buffilt_keep:")
+	w("\tstrb w6, [x9, x7]")
+	w("\tadd x7, x7, #1")
+	w(".Lssa_buffilt_next:")
+	w("\tadd x5, x5, #1")
+	w("\tcmp x5, x12")
+	w("\tb.lo .Lssa_buffilt_short")
+	w(".Lssa_buffilt_len:")
+	w("\tadd x13, x13, x7")
+	w("\tstr x13, [x1, #8]")
+	w(".Lssa_buffilt_none:")
+	w("\tmov x0, xzr")
+	w("\tret")
+}
+
+// emitBufPushExpandedHelper writes buf_push_expanded(H, s, table): append each
+// byte c of s as the record at table[c*8], a length byte (above 7 counts as
+// 7) and then the bytes, or c itself when its record is not wholly inside
+// the table. Eight bytes per input byte are reserved, so a record is copied
+// as one eight-byte store.
+func emitBufPushExpandedHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("buf_push_expanded"))
+	w("\tldur w12, [x1, #-4]")
+	w("\tcbz w12, .Lssa_bufexp_none")
+	w("\tstp x29, x30, [sp, #-48]!")
+	w("\tstr x0, [sp, #16]") // H
+	w("\tstr x1, [sp, #24]") // s
+	w("\tstr x2, [sp, #32]") // table
+	w("\tldr x13, [x0, #8]")
+	w("\tadd x14, x13, x12, lsl #3")
+	w("\tadd x14, x14, #8") // need
+	w("\tldr x15, [x0, #16]")
+	w("\tcmp x14, x15")
+	w("\tb.ls .Lssa_bufexp_fits")
+	w("\tmov x1, x14")
+	w("\tbl %s", fnLabel("__fern_buf_reserve"))
+	w(".Lssa_bufexp_fits:")
+	w("\tldr x1, [sp, #16]")
+	w("\tldr x11, [sp, #24]")
+	w("\tldr x2, [sp, #32]")
+	w("\tldp x29, x30, [sp], #48")
+	w("\tldur w12, [x11, #-4]")
+	w("\tldr x13, [x1, #8]")
+	w("\tldr x9, [x1]")
+	w("\tadd x9, x9, x13") // dst
+	w("\tmov x3, x9")      // where this push began
+	w("\tldur w4, [x2, #-4]")
+	w("\tlsr w4, w4, #3") // whole records
+	w("\tmov w15, #7")
+	w("\tmov x5, xzr")
+	w(".Lssa_bufexp_loop:")
+	w("\tcmp x5, x12")
+	w("\tb.hs .Lssa_bufexp_len")
+	w("\tldrb w6, [x11, x5]")
+	w("\tcmp w6, w4")
+	w("\tb.hs .Lssa_bufexp_keep")
+	w("\tadd x7, x2, x6, lsl #3")
+	w("\tldr x8, [x7]")
+	w("\tand w10, w8, #0xff")
+	w("\tcmp w10, w15")
+	w("\tcsel w10, w15, w10, hi")
+	w("\tlsr x8, x8, #8")
+	w("\tstr x8, [x9]")
+	w("\tadd x9, x9, x10")
+	w("\tb .Lssa_bufexp_next")
+	w(".Lssa_bufexp_keep:")
+	w("\tstrb w6, [x9], #1")
+	w(".Lssa_bufexp_next:")
+	w("\tadd x5, x5, #1")
+	w("\tb .Lssa_bufexp_loop")
+	w(".Lssa_bufexp_len:")
+	w("\tsub x9, x9, x3")
+	w("\tadd x13, x13, x9")
+	w("\tstr x13, [x1, #8]")
+	w(".Lssa_bufexp_none:")
 	w("\tmov x0, xzr")
 	w("\tret")
 }

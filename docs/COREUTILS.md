@@ -2601,7 +2601,113 @@ per-byte walk and an append. `cat -A` over the 62 MiB bench file:
 
 The same kernel does not help `tr -d`: on the bench input the kept runs
 are one to three bytes, and a scan and an append per run cost more than
-the per-byte loop (240 → 301 ms), so tr keeps its loop.
+the per-byte loop (240 → 301 ms). `buf_push_filtered` below is what
+closed it.
+
+### tr's translation and deletion, dd's case tables, 2026-09-23 (GNU coreutils 9.12)
+
+Two kernels join the builder family on every backend and in both
+compilers. `buf_push_mapped(b, s, table)` appends `table[c]` for each byte
+`c` of `s`, or `c` unchanged when it is past the table's end.
+`buf_push_filtered(b, s, drop)` appends each byte whose `drop[c]` is zero,
+or that is past the table's end. `io_buffered`'s `write_mapped` and
+`write_filtered` wrap them. Before them, `tr SET1 SET2` translated through a
+`.with` loop into a fresh `u8[]`, copied that into a string and copied the
+string into the output buffer. That was about 30 instructions a byte on the
+default x86-64 emitter, and `tr -d` did the same with a branch per byte.
+The kernels write straight into the output buffer: the translation four
+bytes a turn on x86-64, and the deletion with no branch, storing every byte
+and advancing the length only past a kept one.
+
+| workload | before | after | GNU 9.12 |
+|---|---:|---:|---:|
+| `tr 0-9 a-j` over the 62 MiB bench file | 250 ms | 45 ms | 61 ms |
+| `tr -d 0-4` over the same file | 247 ms | 53 ms | 81 ms |
+| `tr -cd 0-9` over the same file | 290 ms | 63 ms | 83 ms |
+| `dd 8MiB conv=ucase` (`bs=64k`) | 41.8 ms | 14.8 ms | 14.8 ms |
+
+`dd`'s `conv=lcase` and `conv=ucase` use the same kernel for each record.
+Both utilities are byte-identical to GNU across their corpora, natively
+and when built by the self-host compiler.
+
+### wc's word count, 2026-09-23 (GNU coreutils 9.12)
+
+`__count_runs(s, inside, set)` is a kernel on every backend and in both
+compilers: how many runs of bytes whose entry in the u8[] `set` is nonzero
+begin in `s`, where `inside` says the byte before `s` was a member. `wc`
+counts a word where it ends, at a run of whitespace that begins after a word
+byte, so the words of a read are one call over the six isspace bytes, and
+its lines stay the SIMD `__count_byte`. The x86-64 loop has no branch but
+its exit: it keeps "not a member" as a 0/1 byte, and a run begins where
+subtracting the previous flag from the current one borrows. It takes two
+bytes a turn into two counts.
+
+| workload | before | after | GNU 9.12 |
+|---|---:|---:|---:|
+| `wc` over the 62 MiB bench file | 163 ms | 52 ms | 85 ms |
+| `wc -w` over the same file | 164 ms | 52 ms | 96 ms |
+
+`wc -L` still walks every byte for the line width.
+
+### cat's spelling as one expansion, 2026-09-23 (GNU coreutils 9.12)
+
+`buf_push_expanded(b, s, table)` joins the builder kernels on every backend
+and in both compilers. It appends each byte `c` of `s` as the eight-byte
+record at `table[c * 8]`: a length byte (above 7 counts as 7), then the
+bytes. A byte whose record is not wholly inside the table passes through.
+It reserves room for eight bytes per input byte, so x86-64 copies each
+record with one eight-byte store and advances the tail by its length.
+
+`cat -v`, `-T`, `-E` and their combinations, with no numbering or
+squeezing, now build one table of every byte's output (`-E`'s `$` on the
+newline included) and make one call per read. That replaces the set
+scan, per-run appends and per-byte spelling above. `cat -A` over the 62 MiB
+bench file: 192 → 74 ms (GNU 9.12: 104). Over 3 MB of random bytes, where
+nearly every byte is spelled: 62 → 4.4 ms (GNU: 22.7).
+
+GNU 9.12's `-E` without `-v` shows a carriage return that ends a line as
+`^M$`. That CR can end one read, or one file, while its newline starts the
+next. A CR that ends the input is copied as it is. Fern's cat had never
+done this. The CR is held back until the next byte decides it, and a read
+holding a CR under `-E` alone takes the line rewriter instead of the
+expansion. The corpus now covers the CRLF line, the CR across files and
+reads, and the trailing CR.
+
+### The BSD checksum, 2026-09-23 (GNU coreutils 9.12)
+
+`__bsd_sum(s, sum)` continues the checksum that `sum -r` and `cksum -a bsd`
+keep over a string. For each byte it rotates the 16 bits right by one and
+adds the byte, modulo 2^16. It is a kernel on every backend and in both
+compilers, and `std/hash`'s `BsdSum.update` calls it. The checksum is one
+serial chain through the sum, and the default x86-64 emitter spent about
+fifteen instructions a byte on it. The kernel's loop spends two on the
+chain, a `ror` and an `add` on the 16-bit register.
+
+| workload | before | after | GNU 9.12 |
+|---|---:|---:|---:|
+| `sum` of the 62 MiB bench file | 191 ms | 49 ms | 111 ms |
+| `cksum -a bsd` of the same file | 186 ms | 52 ms | 113 ms |
+
+### nl's ordinary lines, 2026-09-23 (GNU coreutils 9.12)
+
+`nl` made every line a string, `slice_unchecked` plus a copy, and ran it
+through `proc_line`. That built and dropped `State`, `Style` and `Emit`
+records, allocated an `Option` for `checked_add`, and found the field width
+with a loop of 64-bit divisions. It cost about 1,750 instructions a line. A
+fast path now takes every ordinary line of a read straight from the read
+buffer. An ordinary line is not a possible delimiter, has style `a`, `t` or
+`n` with no `-l` run to count, and has no overflow pending. Its number
+field is cached per hundred: the padding and leading digits (or, for
+`-n ln`, the trailing padding and the separator) are formatted when the
+number enters a new hundred. Each line then pushes that cached part, a
+digit pair from `io_buffered.digit_pairs()`, and a range of the buffer. The
+overflow check is two comparisons. `io_buffered.buf_u64_len` counts digits
+by comparison rather than division. Regular-expression styles, `-l` runs
+and delimiter lines still take `proc_line`.
+
+| workload | before | after | GNU 9.12 |
+|---|---:|---:|---:|
+| `nl` over the 62 MiB bench file | 2,229 ms | 400 ms | 998 ms |
 
 ### ls, 2026-09-14, Linux x86-64 (GNU coreutils 9.4, uutils 0.0.24)
 

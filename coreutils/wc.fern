@@ -145,11 +145,8 @@ struct Scan { in_word: boolean, linepos: i64 }
 // and nearly every byte of text is one, so it is the first test, and
 // the whitespace chain runs only for the others. Only a PRINTABLE word
 // byte adds to the line's width; without -L the width is not kept at
-// all, and the loop is the one below this.
-function scan_chunk(c: Counts, st: Scan, s: string, want_len: boolean): (Counts, Scan) {
-  if (!want_len) {
-    return scan_words(c, st, s);
-  }
+// all, and words are counted by `count_words` instead.
+function scan_chunk(c: Counts, st: Scan, s: string): (Counts, Scan) {
   var lines: i64 = c.lines;
   var words: i64 = c.words;
   var maxlen: i64 = c.maxlen;
@@ -207,29 +204,30 @@ function scan_chunk(c: Counts, st: Scan, s: string, want_len: boolean): (Counts,
   return (Counts { ...c, lines: lines, words: words, maxlen: maxlen }, Scan { in_word: in_word, linepos: pos });
 }
 
-// `scan_words(c, st, s)` — the words and lines of a chunk, with no
-// column kept.
-function scan_words(c: Counts, st: Scan, s: string): (Counts, Scan) {
-  var lines: i64 = c.lines;
-  var words: i64 = c.words;
-  var in_word: boolean = st.in_word;
-  var i: i32 = 0;
-  while (i < s.len()) {
-    var b: i32 = s[i] as i32;
-    if (b > 32 || b < 9 || b > 13 && b != 32) {
-      in_word = true;
-    } else {
-      if (in_word) {
-        words = words + 1 as i64;
-      }
-      in_word = false;
-      if (b == 10) {
-        lines = lines + 1 as i64;
-      }
-    }
-    i = i + 1;
+// The six isspace bytes, as a table for `__count_runs`.
+function space_table(): u8[] {
+  var t: u8[] = __alloc_u8(256);
+  t = t.with(32, 1 as u8);
+  var b: i32 = 9;
+  while (b <= 13) {
+    t = t.with(b, 1 as u8);
+    b = b + 1;
   }
-  return (Counts { ...c, lines: lines, words: words }, Scan { ...st, in_word: in_word });
+  return t;
+}
+
+// `count_words(c, st, s, space)` — the words of a chunk with no column
+// kept. A word is counted where it ends, at a run of whitespace that
+// begins after a word byte, so a word still open at the chunk's end is
+// counted by a later chunk or at the end of the stream.
+function count_words(c: Counts, st: Scan, s: string, space: u8[]): (Counts, Scan) {
+  var inside: i32 = 1;
+  if (st.in_word) {
+    inside = 0;
+  }
+  var ends: i32 = __count_runs(s, inside, space);
+  var in_word: boolean = space[s[s.len() - 1] as i32] as i32 == 0;
+  return (Counts { ...c, words: c.words + ends as i64 }, Scan { ...st, in_word: in_word });
 }
 
 // `count_stream(r, show)` — every count `show` asks for, over `r`.
@@ -238,9 +236,9 @@ function scan_words(c: Counts, st: Scan, s: string): (Counts, Scan) {
 function count_stream(r: Reader, show: Show): (Counts, Option[IoError]) {
   var c: Counts = zero_counts();
   var st: Scan = Scan { in_word: false, linepos: 0 as i64 };
-  // Words and the longest line need every byte; lines and bytes alone
-  // are a SIMD count and a length, which is the `wc -l` hot path.
-  var per_byte: boolean = show.words || show.maxlen;
+  // The longest line needs every byte; words are a run count, and lines
+  // and bytes a SIMD count and a length.
+  var space: u8[] = space_table();
   while (true) {
     match (r.read_chunk(read_size())) {
       Ok(chunk) => {
@@ -254,12 +252,19 @@ function count_stream(r: Reader, show: Show): (Counts, Option[IoError]) {
           return (c, None);
         }
         c = Counts { ...c, bytes: c.bytes + chunk.len() as i64 };
-        if (per_byte) {
-          var r2: (Counts, Scan) = scan_chunk(c, st, chunk, show.maxlen);
+        if (show.maxlen) {
+          var r2: (Counts, Scan) = scan_chunk(c, st, chunk);
           c = r2.0;
           st = r2.1;
-        } else if (show.lines) {
-          c = Counts { ...c, lines: c.lines + __count_byte(chunk, 10) as i64 };
+        } else {
+          if (show.words) {
+            var r3: (Counts, Scan) = count_words(c, st, chunk, space);
+            c = r3.0;
+            st = r3.1;
+          }
+          if (show.lines) {
+            c = Counts { ...c, lines: c.lines + __count_byte(chunk, 10) as i64 };
+          }
         }
       },
       Err(e) => {
