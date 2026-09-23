@@ -164,14 +164,18 @@ func (a *Assembler) relaxOnce() error {
 	// label sitting AT that branch must not follow the shrink. Before the
 	// lead was taken into the event, this fell out of "an offset at an
 	// event's start stays on the pre-event side"; now it has to be said.
-	shiftInto := func(i, off int) (int, bool) {
-		e := &ev[i-1]
+	// Every view of a position has to agree on this, or the fixpoint judges
+	// a branch in rel8 range against an offset the rebuild then puts
+	// somewhere else — which is how it settled a 127-byte displacement that
+	// came out at 128.
+	leadShift := func(pref []int, j, off int) (int, bool) {
+		e := &ev[j-1]
 		if e.align > 0 || e.lead == 0 || off > e.start+e.lead {
 			return 0, false
 		}
 		base := 0
-		if i >= 2 {
-			base = prefix[i-2]
+		if j >= 2 {
+			base = pref[j-2]
 		}
 		return off + base + e.bpad, true
 	}
@@ -180,7 +184,7 @@ func (a *Assembler) relaxOnce() error {
 		if i == 0 {
 			return off
 		}
-		if at, ok := shiftInto(i, off); ok {
+		if at, ok := leadShift(prefix, i, off); ok {
 			return at
 		}
 		return off + prefix[i-1]
@@ -261,11 +265,14 @@ func (a *Assembler) relaxOnce() error {
 		case j == 0:
 			return off
 		case j-1 < i:
-			if at, ok := shiftInto(j, off); ok {
+			if at, ok := leadShift(prefix, j, off); ok {
 				return at
 			}
 			return off + prefix[j-1]
 		default:
+			if at, ok := leadShift(before, j, off); ok {
+				return at + carried(j)
+			}
 			return off + before[j-1] + carried(j)
 		}
 	}
