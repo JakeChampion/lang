@@ -2108,10 +2108,12 @@ function e021_type_known(cty: string, at: typeinfo.Type, s: Scope): boolean {
 }
 
 // e021_scope_has_impl is the scope-carried analogue of e021_has_impl: does
-// the module contain `impl <trait_name> for <impl_type>`?
+// the module contain `impl <trait_name> for <impl_type>`? Keyed on the base
+// name, as native's impl table is, so `impl[T] Tr for W[T]` covers `W[i32]`.
 function e021_scope_has_impl(impls: parser.ImplInfo[], trait_name: string, impl_type: string): boolean {
+  var base: string = util.base_type_name(impl_type);
   for imp in impls {
-    if (imp.trait_name == trait_name && imp.impl_type == impl_type) {
+    if (imp.trait_name == trait_name && util.base_type_name(imp.impl_type) == base) {
       return true;
     }
   }
@@ -3019,7 +3021,8 @@ function coercible(from: typeinfo.Type, to: typeinfo.Type, s: Scope): boolean {
 function dyn_conforms(from: typeinfo.Type, to: typeinfo.Type, s: Scope): boolean {
   var traits: string = "";
   if let typeinfo.TypeDyn(d) = to { traits = d.traits; } else { return true; }
-  if let typeinfo.TypeDyn(_) = from { return true; }
+  // A dyn value's table was built for its own set, so only the same set takes it.
+  if let typeinfo.TypeDyn(_) = from { return type_eq(from, to); }
   if (is_unknown(from)) { return true; }
   if let typeinfo.TypeErased(_) = from { return true; }
   var tn: string = util.base_type_name(type_label(from));
@@ -3028,6 +3031,34 @@ function dyn_conforms(from: typeinfo.Type, to: typeinfo.Type, s: Scope): boolean
     if (!conforms_by_impl_or_derive(s, tn, util.base_type_name(tr))) { return false; }
   }
   return true;
+}
+
+// ctor_payload_diags: a builtin `Some` / `Ok` / `Err` coerced into an Option or
+// Result whose payload slot is dyn casts its payload to that slot, so a payload
+// that does not implement the traits is refused as that cast is (E033), as
+// native's maybeWrapForUnion does. The enum types themselves compare by name.
+function ctor_payload_diags(e: ast.Expr, to: typeinfo.Type, s: Scope): util.Diag[] {
+  var out: util.Diag[] = [];
+  var args: typeinfo.Type[] = [];
+  var owner: string = "";
+  if let typeinfo.TypeUnion(u) = to { args = u.args; owner = u.name; } else { return out; }
+  if let ast.ExprCall(c) = e {
+    if let ast.ExprIdent(id) = c.callee {
+      var slot: i32 = 0 - 1;
+      if (owner == "Option" && id.name == "Some") { slot = 0; }
+      if (owner == "Result" && id.name == "Ok") { slot = 0; }
+      if (owner == "Result" && id.name == "Err") { slot = 1; }
+      if (slot < 0 || slot >= args.len() || c.args.len() != 1) { return out; }
+      var pt: typeinfo.Type = args[slot];
+      if let typeinfo.TypeDyn(_) = pt {
+        var at: typeinfo.Type = check_expr(c.args[0], s);
+        if (!is_unknown(at) && !dyn_conforms(at, pt, s)) {
+          out = out.append(dg_at("E033", "cannot cast " + type_label(at) + " to " + type_label(pt) + "; only numeric casts (and [u8]/u8[]/string ↔ i32 data-pointer hops, plus i32 → T[]) are supported", expr_line(c.args[0]), expr_col(c.args[0])));
+        }
+      }
+    }
+  }
+  return out;
 }
 
 function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSig[]): boolean {
@@ -5637,6 +5668,7 @@ function ret_diags(stmts: ast.Stmt[], s: Scope, ret_ty: typeinfo.Type, unions: U
         } else {
           var t: typeinfo.Type = check_expr(r.value, cur);
           out = util.append_diags(out, int_dest_range_diags(r.value, ret_ty));
+          out = util.append_diags(out, ctor_payload_diags(r.value, ret_ty, cur));
           if (!is_unknown(t) && !settles_to(r.value, ret_ty, cur) && !(type_assignable(t, ret_ty, unions) && dyn_conforms(t, ret_ty, cur))) {
             out = out.append(dg_at("E002", "return type mismatch: function returns " + type_label(ret_ty) + " but expression is " + type_label(t) + str_copy_hint(t, ret_ty), r.line, r.col));
           }
@@ -9420,6 +9452,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
                 out = util.append_diags(out, e021_bound_call_diag(sig.param_bound[ai], at, s, expr_line(c.args[ai]), expr_col(c.args[ai])));
               }
               out = util.append_diags(out, int_dest_range_diags(c.args[ai], sig.param_types[ai]));
+              out = util.append_diags(out, ctor_payload_diags(c.args[ai], sig.param_types[ai], s));
               // An unknown PARAM type is an opaque generic
               // parameter (`f[T](x: T)`, where T erases to
               // unknown) — the arg can't be checked against
@@ -10220,6 +10253,7 @@ function call_diags_struct_lit(sl: ast.ExprStructLit, s: Scope, out: util.Diag[]
         var ft: typeinfo.Type = ssig.field_types[fidx];
         var vt: typeinfo.Type = check_expr(sl.field_values[fi], s);
         out = util.append_diags(out, int_dest_range_diags(sl.field_values[fi], ft));
+        out = util.append_diags(out, ctor_payload_diags(sl.field_values[fi], ft, s));
         if (!is_unknown(ft) && !is_unknown(vt) && !settles_to(sl.field_values[fi], ft, s) && !coercible(vt, ft, s)) {
           out = out.append(dg_at("E043", "field \"" + sl.field_names[fi] + "\": expected " + type_label(ft) + ", got " + type_label(vt) + str_copy_hint(vt, ft), expr_line(sl.field_values[fi]), expr_col(sl.field_values[fi])));
         }
@@ -10884,6 +10918,7 @@ function stmts_assign_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): ut
           // read at, so one the type cannot hold is a range error rather than
           // the assignment mismatch it would otherwise be reported as.
           out = util.append_diags(out, int_dest_range_diags(v.init, declared));
+          out = util.append_diags(out, ctor_payload_diags(v.init, declared, cur));
           if (!is_unknown(declared) && !is_unknown(initt) && !settles_to(v.init, declared, cur) && !(type_assignable(initt, declared, unions) && dyn_conforms(initt, declared, cur))) {
             out = out.append(dg_at("E003", "cannot assign " + type_label(initt) + " to variable of type " + type_label(declared) + str_copy_hint(initt, declared), v.line, v.col));
           }
@@ -10929,6 +10964,7 @@ function stmts_assign_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): ut
           var tt: typeinfo.Type = cur.lookup(a.target);
           var vt: typeinfo.Type = check_expr(a.value, cur);
           out = util.append_diags(out, int_dest_range_diags(a.value, tt));
+          out = util.append_diags(out, ctor_payload_diags(a.value, tt, cur));
           if (!is_unknown(tt) && !is_unknown(vt) && !settles_to(a.value, tt, cur) && !(type_assignable(vt, tt, unions) && dyn_conforms(vt, tt, cur))) {
             out = out.append(dg_at("E003", "cannot assign " + type_label(vt) + " to " + type_label(tt) + str_copy_hint(vt, tt), a.line, a.col));
           }
