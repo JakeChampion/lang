@@ -1119,6 +1119,14 @@ pub function (s: LowerState) note_fail(why: string): LowerState {
     return LowerState { ...s, frame: LowerFrame { ...s.frame, fail_why: why } };
 }
 
+// note_no_column is the bail every map_key_has_no_column site takes. It names
+// the KEY, because the statement the bail unwinds to is a `var` or a method
+// call that says nothing about why the map was refused — and a reader who has
+// only the message cannot otherwise tell this refusal from any other.
+function note_no_column(s: LowerState, kt: string): LowerState {
+    return s.note_fail("a Map keyed by `" + kt + "` has no key column").fail();
+}
+
 // expr_bail_tag names an expression for the strict-IR bail diagnostic. Beyond
 // the node kind it carries the one detail that distinguishes same-kind bails
 // from each other — a binary/unary operator, a callee or field name, a struct
@@ -14293,7 +14301,8 @@ function lower_call_arr_firstlast(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: L
 // is the map type mtype. Split out of lower_call_method; the guard selecting it
 // stays there.
 function lower_call_map_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, mtype: string, s: LowerState): LowerState {
-    if (map_key_has_no_column(map_key_of(mtype))) { return s.fail(); }
+    var mkt: string = map_key_of(mtype);
+    if (map_key_has_no_column(mkt)) { return note_no_column(s, mkt); }
     var mkk2: i32 = map_key_kind_of(mtype);
     var meqfn: string = map_key_eqfn(mtype);
     // #7001: a COMPOSITE (struct / enum) key is kind 2, dispatched by its
@@ -23187,7 +23196,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
                         // through left the generic arm below to build a
                         // string-keyed box for it, which is the silent half of
                         // what the method gate refuses loudly.
-                        if (map_key_has_no_column(kt2)) { return s.fail(); }
+                        if (map_key_has_no_column(kt2)) { return note_no_column(s, kt2); }
                         if (map_key_kind_of(v.type_name) == 1) { kkind = 1; }
                         else if (kt2 == "string") { kkind = 0; }
                         else if (map_key_eqfn(v.type_name) != "") {
@@ -25390,7 +25399,8 @@ function lower_stmt_for(fr: ast.StmtFor, s: LowerState): LowerState {
         }
         if (mki_method != "") {
             var mkimty: string = mki_mtype;
-            if (map_key_has_no_column(map_key_of(mkimty))) { return s.fail(); }
+            var mkikt: string = map_key_of(mkimty);
+            if (map_key_has_no_column(mkikt)) { return note_no_column(s, mkikt); }
             // element type tag: keys -> key kind; values -> value type.
             var mki_elem_str: boolean = false;
             if (mki_method == "keys") { if (map_key_kind_of(mkimty) == 0) { mki_elem_str = true; } }
@@ -25617,7 +25627,8 @@ function lower_stmt_for(fr: ast.StmtFor, s: LowerState): LowerState {
     var kvparts: string[] = rc_fe_split_csv(fr.var_name);
     if (mslot >= 0 && s.map_type_of(mslot) != "" && kvparts.len() == 2) {
         var mty: string = s.map_type_of(mslot);
-        if (map_key_has_no_column(map_key_of(mty))) { return s.fail(); }
+        var mtykt: string = map_key_of(mty);
+        if (map_key_has_no_column(mtykt)) { return note_no_column(s, mtykt); }
         var kkind: i32 = map_key_kind_of(mty);   // 1 for an integer key, 0 for a string one
         var vty: string = map_value_of(mty);
         var kname: string = kvparts[0];
@@ -72989,24 +73000,12 @@ pub function opt_payload_type(rettype: string, variant: string): string {
         return slice_unchecked(rettype, 7, n - 1) + "";
     }
     if (n >= 8 && slice_unchecked(rettype, 0, 7) == "Result[" && rettype[n - 1] == b']') {
-        // Split the inside on the FIRST top-level comma: T , E. Depth counts both
-        // `[`/`]` (a nested Option/Result/Map payload) AND `(`/`)` (a tuple
-        // payload, e.g. `Result[(i32, i32), string]`), so the comma inside a
-        // bracketed/parenthesised T is not mistaken for the T-E separator.
+        // Split the inside on the top-level comma: T , E.
         var inside: str = slice_unchecked(rettype, 7, n - 1);
-        var depth: i32 = 0;
-        var ci: i32 = 0;
-        while (ci < inside.len()) {
-            var ch: u8 = inside[ci];
-            if (ch == b'[' || ch == b'(') { depth = depth + 1; }
-            else if (ch == b']' || ch == b')') { depth = depth - 1; }
-            else if (ch == b',' && depth == 0) {           // at top level
-                if (variant == "Err") { return trim_spaces(slice_unchecked(inside, ci + 1, inside.len())); }
-                return trim_spaces(slice_unchecked(inside, 0, ci));
-            }
-            ci = ci + 1;
-        }
-        return "";
+        var ci: i32 = top_level_comma(inside);
+        if (ci >= inside.len()) { return ""; }
+        if (variant == "Err") { return trim_spaces(slice_unchecked(inside, ci + 1, inside.len())); }
+        return trim_spaces(slice_unchecked(inside, 0, ci));
     }
     return "";
 }
@@ -73047,19 +73046,19 @@ pub function is_fn_payload_spelling(t: string): boolean {
     return t[j] == b'=' && t[j + 1] == b'>';
 }
 
-// map_key_has_no_column names the scalar keys the integer key column cannot
-// take. The string column is not an alternative for any of them: it reads a
-// key's VALUE as an address, which is how they segfaulted before #9973. So the
-// lowering refuses them, at every surface that reaches a map — its
-// construction, its methods, and both shapes of loop over it.
+// map_key_has_no_column names the keys neither key column can take. The string
+// column is not an alternative for any of them: it reads a key's VALUE as an
+// address, which is how they segfaulted before #9973. So the lowering refuses
+// them, at every surface that reaches a map — its construction, its methods,
+// and both shapes of loop over it.
 //
-// i64 / u64 / usize are too WIDE: the column is a 4-byte cell on wasm and
-// op_map_keys has no width to select, so admitting one would narrow the key
-// silently (#10005).
+// Two families, refused for opposite reasons.
 //
-// Loud is the direction to be wrong in: native and the interpreter answer
-// these programs on the register targets, so this is a gap to close rather
-// than a rule of the language.
+// The SCALARS are too WIDE: i64 / u64 / usize do not fit a column that is a
+// 4-byte cell on wasm, and op_map_keys has no width to select, so admitting
+// one would narrow the key silently (#10005). Loud is the direction to be
+// wrong in: native and the interpreter answer these programs on the register
+// targets, so this is a gap to close rather than a rule of the language.
 //
 // FLOAT keys are listed even though E045 refuses every written float-key
 // spelling in both checkers now (#10009), because a written spelling is not
@@ -73068,8 +73067,29 @@ pub function is_fn_payload_spelling(t: string): boolean {
 // generic reaches here with no diagnostic behind it (#10018). Native
 // re-checks its instantiations and reports; until the self-host does, this
 // is the only thing standing between that program and the string column.
+//
+// The COMPOSITES have no hash or equality to dispatch: a tuple, an array or a
+// slice is not a struct, so there is nothing for @derive(Eq) + @derive(Hash)
+// to hang off the way #2671 threads them in for a struct key. map_key_eqfn
+// named one anyway — a key of `i32[]` asked the linker for `__fn_i32[]__eq`,
+// and a tuple key reached the x86 assembler as an unencodable `leaq` — so the
+// self-host reached the right ANSWER (it never miscompiled these) by a route
+// that named an instruction rather than the key (#10032). Native refuses them
+// through ast.MapKeyDispatchable; this is the self-host's half of that rule,
+// and #10020 holds whether the long-term answer is to lower them instead.
 pub function map_key_has_no_column(kt: string): boolean {
-    return kt == "i64" || kt == "u64" || kt == "f64" || kt == "usize" || kt == "f32";
+    if (kt == "i64" || kt == "u64" || kt == "f64" || kt == "usize" || kt == "f32") { return true; }
+    return map_key_is_composite(kt);
+}
+
+// map_key_is_composite reads the SPELLING, because a type string is all the
+// lowering has: `(...)` is a tuple, `[...]` a slice, `...[]` an array. A
+// generic struct key ends in `]` too — `Pair[i32, i32]` — and is dispatchable,
+// so the array test is the two-character suffix rather than the last one.
+function map_key_is_composite(kt: string): boolean {
+    if (kt.len() < 2) { return false; }
+    if (kt[0] == b'(' || kt[0] == b'[') { return true; }
+    return slice_unchecked(kt, kt.len() - 2, kt.len()) == "[]";
 }
 
 // map_key_kind_of returns the key COLUMN a Map type uses: 1 for an integer
@@ -73201,8 +73221,7 @@ function map_kv_elem_flag(mty: string, field: string): i32 {
 pub function map_value_of(typestr: string): string {
     if (typestr.len() < 5 || slice_unchecked(typestr, 0, 4) != "Map[") { return ""; }
     var inner: str = slice_unchecked(typestr, 4, typestr.len() - 1);   // K, V
-    var ci: i32 = 0;
-    while (ci < inner.len() && inner[ci] != b',') { ci = ci + 1; }   // first comma
+    var ci: i32 = top_level_comma(inner);
     if (ci >= inner.len()) { return ""; }
     return trim_spaces(slice_unchecked(inner, ci + 1, inner.len()));
 }
@@ -73265,9 +73284,26 @@ function lower_expr_map_base(e: ast.Expr, mtype: string, s: LowerState): LowerSt
 pub function map_key_of(typestr: string): string {
     if (typestr.len() < 5 || slice_unchecked(typestr, 0, 4) != "Map[") { return ""; }
     var inner: str = slice_unchecked(typestr, 4, typestr.len() - 1);   // K, V
+    return trim_spaces(slice_unchecked(inner, 0, top_level_comma(inner)));
+}
+
+// top_level_comma returns the index of the first comma at bracket depth zero
+// in `inner`, or its length when there is none. It is what separates the two
+// halves of a two-parameter type spelling — K from V in `Map[K, V]`, T from E
+// in `Result[T, E]` — where either half carries commas of its own:
+// `(i32, i32)`, `Pair[i32, i32]`. Stopping at the FIRST comma read
+// `Map[(i32, i32), i32]` as a key of `(i32` and a value of `i32), i32`.
+function top_level_comma(inner: str): i32 {
+    var depth: i32 = 0;
     var ci: i32 = 0;
-    while (ci < inner.len() && inner[ci] != b',') { ci = ci + 1; }   // first comma
-    return trim_spaces(slice_unchecked(inner, 0, ci));
+    while (ci < inner.len()) {
+        var c: u8 = inner[ci];
+        if (c == b'[' || c == b'(') { depth = depth + 1; }
+        else if (c == b']' || c == b')') { depth = depth - 1; }
+        else if (c == b',' && depth == 0) { return ci; }
+        ci = ci + 1;
+    }
+    return inner.len();
 }
 
 // map_key_eqfn returns the derived equality symbol (`__fn_<K>__eq`) for a
