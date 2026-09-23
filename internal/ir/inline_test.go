@@ -511,7 +511,7 @@ func TestInlineSkipsRuntimeMarkedCall(t *testing.T) {
 func programOps(p *Program) int {
 	n := 0
 	for _, fn := range p.Funcs {
-		n += len(fn.Ops)
+		n += sizeOps(fn.Ops)
 	}
 	return n
 }

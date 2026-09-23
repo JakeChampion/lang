@@ -47,8 +47,33 @@ func TestLineMarkersDoNotChangeInlining(t *testing.T) {
 	b.WriteString("function main(): i32 {\n    var n = 3;\n    return mid(n) + mid(n + 1);\n}\n")
 	src := b.String()
 
-	// Each leg parses and checks its own copy: Inline mutates the program in
-	// place, so one shared tree would carry the first leg's splices.
+	plain, debug := lowerBothWays(t, src)
+	find := func(prog *Program, name string) *Func {
+		for _, fn := range prog.Funcs {
+			if fn.Name == name {
+				return fn
+			}
+		}
+		t.Fatalf("no %q in the lowered program", name)
+		return nil
+	}
+	pm, dm := find(plain, "mid"), find(debug, "mid")
+	if len(pm.Ops) > inlineSizeLimit || len(dm.Ops) <= inlineSizeLimit {
+		t.Fatalf("`mid` no longer straddles the flat cap (%d): %d ops without -g, %d with. "+
+			"Retune the statement count — as written this test cannot fail.",
+			inlineSizeLimit, len(pm.Ops), len(dm.Ops))
+	}
+
+	Inline(plain)
+	Inline(debug)
+	assertSameCode(t, plain, debug)
+}
+
+// lowerBothWays lowers the same source twice, markers off then on. Each leg
+// parses and checks its own copy: Inline mutates the program in place, so one
+// shared tree would carry the first leg's splices.
+func lowerBothWays(t *testing.T, src string) (plain, debug *Program) {
+	t.Helper()
 	lower := func(withMarkers bool) *Program {
 		t.Helper()
 		p, err := parser.Parse(src)
@@ -69,27 +94,13 @@ func TestLineMarkersDoNotChangeInlining(t *testing.T) {
 		}
 		return out
 	}
+	return lower(false), lower(true)
+}
 
-	plain, debug := lower(false), lower(true)
-	find := func(prog *Program, name string) *Func {
-		for _, fn := range prog.Funcs {
-			if fn.Name == name {
-				return fn
-			}
-		}
-		t.Fatalf("no %q in the lowered program", name)
-		return nil
-	}
-	pm, dm := find(plain, "mid"), find(debug, "mid")
-	if len(pm.Ops) > inlineSizeLimit || len(dm.Ops) <= inlineSizeLimit {
-		t.Fatalf("`mid` no longer straddles the flat cap (%d): %d ops without -g, %d with. "+
-			"Retune the statement count — as written this test cannot fail.",
-			inlineSizeLimit, len(pm.Ops), len(dm.Ops))
-	}
-
-	Inline(plain)
-	Inline(debug)
-
+// assertSameCode fails unless the two programs emit the same code once the
+// markers are removed — the property `-g` owes the release build.
+func assertSameCode(t *testing.T, plain, debug *Program) {
+	t.Helper()
 	if len(plain.Funcs) != len(debug.Funcs) {
 		t.Fatalf("-g changed the function count: %d vs %d", len(plain.Funcs), len(debug.Funcs))
 	}
