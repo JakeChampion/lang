@@ -16566,6 +16566,17 @@ func (b *builder) stashOwnedArgTemp(a ast.Expr) (int32, ast.Type, bool, error) {
 	if !ok {
 		return 0, nil, false, nil
 	}
+	// A coercion site lowers to the dyn value rather than the concrete one,
+	// so the temp is released as the dyn it is. A backend that does not
+	// reclaim dyn values has no drop helper to release it through.
+	if b.info != nil && b.info.DynCoercions != nil {
+		if dc, coerced := b.info.DynCoercions[a]; coerced {
+			if !b.dynReclaim() {
+				return 0, nil, false, nil
+			}
+			tt = ast.DynTraitType{Traits: dc.Traits}
+		}
+	}
 	slot := b.allocSlot()
 	b.locals[fmt.Sprintf("__argtmp_%d", slot)] = slot
 	b.scratchType[slot] = tt
