@@ -6591,11 +6591,10 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, boolean, s
     // redundant grouping (source needs them so a trailing `[]` binds to
     // the whole `dyn T`, not to a trait generic-arg). Unwrap to the
     // paren-free `dyn T` / `dyn T[]` spelling the `dyn` branch above
-    // produces — otherwise the tuple char-collect loop below mashes
-    // `dyn Shape` into `(dynShape)` (space dropped, parens kept) and
-    // every `type_name[0:4] == "dyn "` consumer misses, so a
-    // `(dyn Trait)[]` PARAM's element dispatch declines the IR path
-    // (#5203). A genuine tuple whose first element is `dyn`
+    // produces — otherwise the tuple char-collect loop below keeps the
+    // parens (`(dyn Shape)`) and every `type_name[0:4] == "dyn "` consumer
+    // misses, so a `(dyn Trait)[]` PARAM's element dispatch declines the
+    // IR path (#5203). A genuine tuple whose first element is `dyn`
     // (`(dyn A, i32)`) is NOT a single-type wrap: the `)`-follows check
     // fails and the untouched cursor runs the unchanged tuple path.
     var dpa: Par = p.advance();   // peek past `(`
