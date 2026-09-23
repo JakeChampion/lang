@@ -2988,10 +2988,13 @@ func anyTableOp(prog *ir.Program) bool {
 // CaptureRef offsets in the body — keep the two in sync.
 //
 //   - i64 / u64 / f64 → 8 bytes
-//   - string         → 8 bytes (data + len, two i32 slots)
+//   - string, dyn    → 8 bytes (two i32 slots: data + len, data + vtable)
 //   - everything else → 4 bytes (i32 / f32 / bool / heap-pointer-
 //     shaped types, plus sub-i32 widths that pad to 4)
 func captureSlotSize(t ast.Type) int {
+	if isPairCapture(t) {
+		return 8
+	}
 	switch v := t.(type) {
 	case ast.NumberType:
 		if v.NormalWidth() == 64 {
@@ -3003,12 +3006,20 @@ func captureSlotSize(t ast.Type) int {
 			return 8
 		}
 		return 4
-	case ast.StringType:
-		return 8
 	}
 	// Pointer-shaped: struct / enum / array / slice / func value /
 	// tuple — all i32 on wasm32.
 	return 4
+}
+
+// isPairCapture reports a capture held as two i32 words: a string
+// `(data, len)` or a dyn value `(data, vtable)`.
+func isPairCapture(t ast.Type) bool {
+	switch t.(type) {
+	case ast.StringType, ast.DynTraitType:
+		return true
+	}
+	return false
 }
 
 // captureScratchValtypes returns the wasm-level valtype sequence
@@ -3016,7 +3027,7 @@ func captureSlotSize(t ast.Type) int {
 // one slot of the matching wasm type; string captures fan out to
 // two i32 slots (data + len).
 func captureScratchValtypes(t ast.Type) []byte {
-	if _, isString := t.(ast.StringType); isString {
+	if isPairCapture(t) {
 		return []byte{encode.ValtypeI32, encode.ValtypeI32}
 	}
 	switch v := t.(type) {
@@ -3151,12 +3162,11 @@ func emitClosureMakeAlloc(body []byte, site closureMakeSite, ctx *emitCtx) ([]by
 	// stack drains top-down.
 	for i := n - 1; i >= 0; i-- {
 		c := caps[i]
-		if _, isString := c.Type.(ast.StringType); isString {
-			// Top of stack is len; below is data. Pop len then
-			// data into the two scratch slots in that order:
-			// scratch[off] = data, scratch[off+1] = len.
-			body = inst.InstLocalSet(body, wasmSlotOffsets[i]+1) // len
-			body = inst.InstLocalSet(body, wasmSlotOffsets[i])   // data
+		if isPairCapture(c.Type) {
+			// Top of stack is the second word; below it is data. Pop
+			// both: scratch[off] = data, scratch[off+1] = second word.
+			body = inst.InstLocalSet(body, wasmSlotOffsets[i]+1)
+			body = inst.InstLocalSet(body, wasmSlotOffsets[i])
 		} else {
 			body = inst.InstLocalSet(body, wasmSlotOffsets[i])
 		}
@@ -3171,13 +3181,13 @@ func emitClosureMakeAlloc(body []byte, site closureMakeSite, ctx *emitCtx) ([]by
 	// hence the load-env_ptr then value pattern.
 	for i, c := range caps {
 		off := envOffsets[i]
-		if _, isString := c.Type.(ast.StringType); isString {
-			// Two i32.stores: data at off+0, len at off+4.
+		if isPairCapture(c.Type) {
+			// Two i32.stores: data at off+0, the second word at off+4.
 			body = inst.InstLocalGet(body, envSlot)
-			body = inst.InstLocalGet(body, wasmSlotOffsets[i]) // data
+			body = inst.InstLocalGet(body, wasmSlotOffsets[i])
 			body = memory.InstI32Store(body, 2, off)
 			body = inst.InstLocalGet(body, envSlot)
-			body = inst.InstLocalGet(body, wasmSlotOffsets[i]+1) // len
+			body = inst.InstLocalGet(body, wasmSlotOffsets[i]+1)
 			body = memory.InstI32Store(body, 2, off+4)
 			continue
 		}

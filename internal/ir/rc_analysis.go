@@ -1779,6 +1779,12 @@ func stringParamCounted(fn *ast.FuncDecl, pn string, summary *summaryTable[[]boo
 					safe[id] = true
 				}
 			}
+		case *ast.MakeClosure:
+			// MakeEnv retains a borrowed capture into the env, and the
+			// closure's drop releases it: a counted store like a field slot.
+			for _, c := range x.Captures {
+				mark(c)
+			}
 		case *ast.StructLit:
 			for _, f := range x.Fields {
 				mark(f.Value)
@@ -1995,6 +2001,12 @@ func arrayParamCounted(fn *ast.FuncDecl, pn string, at ast.ArrayType, info *chec
 						break
 					}
 				}
+			}
+		case *ast.MakeClosure:
+			// MakeEnv retains a borrowed capture into the env, and the
+			// closure's drop releases it: a counted store like a field slot.
+			for _, c := range x.Captures {
+				mark(c)
 			}
 		case *ast.StructLit:
 			for _, f := range x.Fields {
@@ -2281,6 +2293,10 @@ func paramProjectionsSafe(fn *ast.FuncDecl, pn string, info *checker.Info, summa
 		case *ast.MatchExpr:
 			if id, ok := x.Tag.(*ast.Ident); ok && tracked[id.Name] {
 				safe[id] = true
+			}
+		case *ast.MakeClosure:
+			for _, c := range x.Captures {
+				markSlotValue(c)
 			}
 		case *ast.StructLit:
 			for _, f := range x.Fields {
@@ -3365,6 +3381,11 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		// untainted-owned cases.
 		return false
 	case *ast.FieldAccess:
+		// `Color.Red`, a payload-less variant, is the shared static sentinel,
+		// which aliases nothing, like a string literal.
+		if _, _, ok := b.unitVariantRef(x); ok {
+			return false
+		}
 		// Reading a pointer field out of a struct-typed LOCAL is a COUNTED
 		// alias, not a borrow: the binding site inc's it (needsRcIncOnAlias
 		// fires for a pointer field), and both the destination and the
@@ -7389,7 +7410,7 @@ func (b *builder) computeBorrowedAliases() {
 		// `returned[y]` would refuse `return y.len()`, which hands out a
 		// scalar — aliasReturnsConfined is the same question asked of what
 		// the return VALUE carries, as the for-in leg asks it.
-		if !b.bindingConfinedToArm(b.fn.Body, y, v.Type) || !b.aliasReturnsConfined(y) {
+		if !b.bindingReleasableInArm(b.fn.Body, y, v.Type) || !b.aliasReturnsConfined(y) {
 			return true
 		}
 		b.rc.borrowedAlias[y] = true

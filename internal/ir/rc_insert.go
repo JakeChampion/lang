@@ -727,11 +727,10 @@ func (b *builder) bindingConfinedToArm(body ast.Node, name string, bt ast.Type) 
 // refusing to give one back need the same fact — every escape is counted —
 // which is why one predicate answers both.
 //
-// bindingConfinedToArm's own callers keep the strict reading. The for-in and
-// borrowed-parameter legs decide the same cancellation over a source whose
-// release is NOT the arm's to see, and neither has been measured against a
-// counted escape; widening them is their own change, not a consequence of
-// this one.
+// The borrowed-parameter leg asks it too: the caller holds the parameter
+// across the call, so an alias that takes no count may still hand on counted
+// ones. The for-in leg keeps the strict reading; its source's release is not
+// the arm's to see, and it has not been measured against a counted escape.
 func (b *builder) bindingReleasableInArm(body ast.Node, name string, bt ast.Type) bool {
 	return b.bindingUsesExcused(body, name, bt, true)
 }
@@ -801,6 +800,14 @@ func (b *builder) bindingUsesExcused(body ast.Node, name string, bt ast.Type, co
 			if id, ok := x.Value.(*ast.Ident); ok && id.Name == name &&
 				countedAliasOK && toLocal && tgt.Name != name && b.assignTakesAliasInc(x, bt) {
 				excused[id] = true
+			}
+		case *ast.MakeClosure:
+			// A capture MakeEnv retains is the closure's own reference.
+			for _, c := range x.Captures {
+				if id, ok := c.(*ast.Ident); ok && id.Name == name &&
+					countedAliasOK && b.retainsOnAlias(bt) && !b.rc.moveSites[c] {
+					excused[id] = true
+				}
 			}
 		case *ast.Call:
 			for i, a := range x.Args {
@@ -2063,8 +2070,8 @@ func (b *builder) emitReuseOldFieldDrops(reusedSlot, baseSlot int32, offsets []i
 
 // hasRcCapture reports whether any capture is rc-tracked (i.e. was
 // inc'd at MakeEnv and so needs dropping when the closure dies). A
-// `dyn Trait` capture counts on the natives (dynRcSupported), where the
-// thunk reclaims it; docs/DYN-TRAITS.md §7.8 — closure-capture kind.
+// `dyn Trait` capture counts wherever the thunk's dynSlotDrop releases it;
+// docs/DYN-TRAITS.md §7.8 — closure-capture kind.
 func hasRcCapture(caps []ast.Param, ptrW int, dynRcSupported bool) bool {
 	for _, c := range caps {
 		if arrElemIsRcTracked(c.Type) {
@@ -2079,11 +2086,7 @@ func hasRcCapture(caps []ast.Param, ptrW int, dynRcSupported bool) bool {
 		if _, isStr := c.Type.(ast.StringType); isStr && ptrW == 8 && !ast.UseTwoWordStrings(ptrW) {
 			return true
 		}
-		// `dyn Trait` capture — NATIVES ONLY (boxed one-word cell ptr in
-		// the env slot, reclaimed via __drop_dyn_<set> in the thunk). wasm
-		// (ptrW==4, inline two-word) is excluded: it has no thunk reclaim
-		// for `dyn` and keeps leaking the capture (correct-but-leaking).
-		if _, isDyn := c.Type.(ast.DynTraitType); isDyn && dynRcSupported {
+		if _, isDyn := dynSlotDrop(c.Type, ptrW, dynRcSupported); isDyn {
 			return true
 		}
 	}
@@ -2174,20 +2177,14 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.
 			off += slot
 			continue
 		}
-		// `dyn Trait` capture — NATIVES ONLY (dynRcSupported, boxed one-word
-		// cell ptr in the env slot). MakeEnv retained the capture into a cell
-		// of the env's own (emitDynRetain), so the thunk releases that unit:
-		// load the cell ptr from [env+off] and run __drop_dyn_<set> (argc 1,
-		// VOID return → NO trailing OpDrop, mirroring appendChildDrop's dyn
-		// arm). wasm (inline two-word) is excluded — it has no thunk reclaim
-		// for `dyn` and keeps leaking the capture; see docs/DYN-TRAITS.md §7.8.
-		if dt, isDyn := c.Type.(ast.DynTraitType); isDyn && dynRcSupported {
+		// A dyn capture: MakeEnv retained it (emitDynRetain), so the thunk
+		// releases that unit through __drop_dyn_<set>, which returns nothing.
+		if dynDrop, isDyn := dynSlotDrop(c.Type, ptrW, dynRcSupported); isDyn {
 			ops = append(ops,
 				Op{Kind: OpLoadLocal, I32: 0},
 				Op{Kind: OpConstI32, I32: off},
-				Op{Kind: OpAdd},
-				Op{Kind: OpLoad, Width: WidthPtr},
-				Op{Kind: OpCallDirect, Str: dynDropFnName(dt.Traits), I32: 1})
+				Op{Kind: OpAdd})
+			ops = append(ops, dynDrop...)
 			off += slot
 			continue
 		}
