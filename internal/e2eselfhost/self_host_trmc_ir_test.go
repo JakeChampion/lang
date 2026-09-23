@@ -315,7 +315,7 @@ function main(): i32 { var xs: L = A(1, Z(5, B(A(3, Nil)))); if (score(step(xs))
 // countSelfCalls counts `call __fn_<name>` sites in emitted x86-64 asm. A TRMC'd
 // function keeps only its callers' call sites; the recursive ones are gone.
 func countSelfCalls(asm, name string) int {
-	return strings.Count(asm, "call __fn_"+name+"\n")
+	return strings.Count(asm, "call __fn_"+name+"\n") + strings.Count(asm, "call __fn_"+name+".r\n")
 }
 
 // TestSelfHostTrmcWasmIR: the wasm sibling through the -ir driver.

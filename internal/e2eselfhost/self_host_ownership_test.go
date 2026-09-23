@@ -230,7 +230,8 @@ function main(): i32 {
 `
 
 // asmWholeFunc returns the emitted body of `__fn_<name>` in full, from its
-// label to the next function label. The package's asmFuncBody stops at the
+// label to the next function label (its own register entry `.r:` is inside
+// it). The package's asmFuncBody stops at the
 // first `ret`, which is a window these multi-arm bodies leave through early.
 func asmWholeFunc(asm, name string) (string, bool) {
 	lines := strings.Split(asm, "\n")
@@ -245,7 +246,7 @@ func asmWholeFunc(asm, name string) (string, bool) {
 		return "", false
 	}
 	for i := start; i < len(lines); i++ {
-		if strings.HasPrefix(lines[i], "__fn_") && strings.HasSuffix(lines[i], ":") {
+		if strings.HasPrefix(lines[i], "__fn_") && strings.HasSuffix(lines[i], ":") && lines[i] != "__fn_"+name+".r:" {
 			return strings.Join(lines[start:i], "\n"), true
 		}
 	}

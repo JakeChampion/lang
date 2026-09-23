@@ -484,7 +484,8 @@ func extractFuncBody(asm, sym string) string {
 		// number the caller is looking for — read as absent rather than wrong.
 		// Nothing local is ever a call target, so neither prefix can be a
 		// function here.
-		if len(rest) > 0 && rest[0] != ' ' && rest[0] != '\t' && rest[0] != '.' && rest[0] != 'L' && rest[0] != '\n' {
+		// The function's own register entry `sym.r:` is inside it too.
+		if len(rest) > 0 && rest[0] != ' ' && rest[0] != '\t' && rest[0] != '.' && rest[0] != 'L' && rest[0] != '\n' && !strings.HasPrefix(rest, sym+".r:") {
 			if end := strings.Index(rest, "\n"); end < 0 || strings.Contains(rest[:end], ":") {
 				return body[:lineStart]
 			}

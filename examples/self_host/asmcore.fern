@@ -131,7 +131,12 @@ pub struct EmitState {
     // two equal. Forgotten at every label, and by every sequence that writes
     // the register on its own — including one whose result leaves elsewhere,
     // which is the case the store cannot re-assert.
-    ssa_x0: i32
+    ssa_x0: i32,
+    // reg_entries names the functions this unit emits with a register-ABI
+    // entry (`__fn_<name>.r`), sanitized; a direct call to one passes its
+    // arguments in registers. Every function keeps its stack-ABI entry, so a
+    // callee missing from it is still called correctly, only more slowly.
+    reg_entries: irlower.SigReg
 }
 
 pub function new_state(): EmitState {
@@ -177,7 +182,8 @@ pub function new_state(): EmitState {
         const_aggs: [],
         ssa_frame: 0,
         ssa_save: 0,
-        ssa_x0: 0 - 1
+        ssa_x0: 0 - 1,
+        reg_entries: irlower.sig_reg_of([])
     };
 }
 
