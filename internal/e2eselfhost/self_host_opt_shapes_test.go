@@ -54,6 +54,19 @@ function main(): i32 { return times8(5); }
 `,
 		want:   map[string][]string{"x86-64-linux": {`\bshl[lq]? \$3,`}, "arm64-linux": {`\blsl x\d+, x\d+, #3\b`}},
 		forbid: map[string][]string{"x86-64-linux": {`\bimul`}, "arm64-linux": {`\bmul\b`}}},
+	// A direct call passes its arguments in registers to the callee's `.r`
+	// entry: no push, no pop, and the callee reads no parameter from memory.
+	{name: "register_args", fn: "caller", exit: 10, src: `
+@noinline function clamp(v: i32, lo: i32, hi: i32): i32 {
+    if (v < lo) { return lo; }
+    if (v > hi) { return hi; }
+    return v;
+}
+@noinline function caller(v: i32): i32 { return clamp(v, 0, 10) + clamp(v - 30, 0, 10); }
+function main(): i32 { return caller(25); }
+`,
+		want:   map[string][]string{"x86-64-linux": {`call __fn_clamp\.r\n`}},
+		forbid: map[string][]string{"x86-64-linux": {`\bpushq %(rax|rsi|rdi|r8|r9|r10)\b`, `addq \$\d+, %rsp`, `\s[1-9]\d*\(%rbp\), %`}}},
 }
 
 var optShapeLegs = []struct {

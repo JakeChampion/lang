@@ -5682,6 +5682,17 @@ function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
 function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
     if (ssa.rc_inlined(ins)) { return ssa_rc_prim(ins, reg_of, lp, s); }
     s = ssa_x0_forget(s);
+    if (ssa_reg_call(ins, s)) {
+        // Only this call's own arguments can be in the pool's registers here:
+        // anything live across it is callee-saved or in a slot.
+        var srcs: i32[] = [];
+        var dsts: i32[] = [];
+        var a: i32 = 0;
+        while (a < ins.args.len()) { srcs = srcs.append(reg_of[ins.args[a]]); dsts = dsts.append(a); a = a + 1; }
+        s = ssa_parallel_moves(srcs, dsts, s);
+        s = s.write("    call __fn_" + asmcore.sanitize_label(ins.str) + ".r\n");
+        return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+    }
     var argc: i32 = ins.args.len();
     var helper: boolean = ircore.is_fern_helper(ins.str);
     if (helper) { s = helper_call_needs(ins.str, s); }
@@ -6128,24 +6139,25 @@ function ssa_phi_moves(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], pred: i32, suc
     var dsts: i32[] = [];
     for ins in tb.insts {
         if (ins.kind_tag == 8 && reg_of[ins.result] != 0 - 1 && reg_of[ins.args[sl]] != reg_of[ins.result]) {
-            srcs = srcs.append(ins.args[sl]);
-            dsts = dsts.append(ins.result);
+            srcs = srcs.append(reg_of[ins.args[sl]]);
+            dsts = dsts.append(reg_of[ins.result]);
         }
     }
-    return ssa_parallel_moves(reg_of, srcs, dsts, s);
+    return ssa_parallel_moves(srcs, dsts, s);
 }
 
-// The moves of one edge are parallel: every source is read before any
-// destination it names is written. A move whose destination no pending move
-// still reads goes first, in one instruction between two homes, or two through
-// %r11 between two slots. When every pending destination is still read, the
-// moves form a cycle: one source location is parked in %r11 and every move
-// reading it takes it from there, which frees that location to be written.
-function ssa_parallel_moves(reg_of: i32[], srcs: i32[], dsts: i32[], s: asmcore.EmitState): asmcore.EmitState {
+// ssa_parallel_moves emits moves between locations (a register index or a
+// spill code, as reg_of holds them) that happen at once: every source is read
+// before any destination it names is written. They are a phi edge's copies, a
+// register call's arguments and a register entry's parameters. A move whose
+// destination no pending move still reads goes first, in one instruction when
+// either side is a register, or two through %rcx between two slots. When
+// every pending destination is still read, the moves form a cycle: one source
+// is parked in %r11 and every move reading it takes it from there, which
+// frees that location to be written.
+function ssa_parallel_moves(srcs: i32[], dsts: i32[], s: asmcore.EmitState): asmcore.EmitState {
     var done: boolean[] = [];
     for src in srcs { done = done.append(false); }
-    // The location parked in the scratch, when `parking`; a location is a
-    // register number or a spill code, so the flag says whether one is held.
     var parking: boolean = false;
     var parked: i32 = 0;
     var left: i32 = srcs.len();
@@ -6153,9 +6165,9 @@ function ssa_parallel_moves(reg_of: i32[], srcs: i32[], dsts: i32[], s: asmcore.
         var progressed: boolean = false;
         var i: i32 = 0;
         while (i < srcs.len()) {
-            if (!done[i] && !ssa_move_blocked(reg_of, srcs, dsts, done, i, parking, parked)) {
-                if (parking && reg_of[srcs[i]] == parked) { s = ssa_store(reg_of, dsts[i], "%r11", s); }
-                else { s = ssa_move(reg_of, srcs[i], dsts[i], s); }
+            if (!done[i] && !ssa_move_blocked(srcs, dsts, done, i, parking, parked)) {
+                if (parking && srcs[i] == parked) { s = s.write("    movq %r11, " + ssa_loc(dsts[i], s) + "\n"); }
+                else { s = ssa_move(srcs[i], dsts[i], s); }
                 done = done.with(i, true);
                 left = left - 1;
                 progressed = true;
@@ -6165,30 +6177,32 @@ function ssa_parallel_moves(reg_of: i32[], srcs: i32[], dsts: i32[], s: asmcore.
         if (!progressed) {
             var j: i32 = 0;
             while (done[j]) { j = j + 1; }
-            s = ssa_load(reg_of, srcs[j], "%r11", s);
+            s = s.write("    movq " + ssa_loc(srcs[j], s) + ", %r11\n");
             parking = true;
-            parked = reg_of[srcs[j]];
+            parked = srcs[j];
         }
     }
-    return s;
+    return ssa_x0_forget(s);
 }
-// A move is blocked while another pending move still reads its destination's
-// location from that location rather than from the parked copy.
-function ssa_move_blocked(reg_of: i32[], srcs: i32[], dsts: i32[], done: boolean[], i: i32, parking: boolean, parked: i32): boolean {
+// A move is blocked while another pending move still reads its destination
+// from that location rather than from the parked copy.
+function ssa_move_blocked(srcs: i32[], dsts: i32[], done: boolean[], i: i32, parking: boolean, parked: i32): boolean {
     var k: i32 = 0;
     while (k < srcs.len()) {
-        if (k != i && !done[k] && reg_of[srcs[k]] == reg_of[dsts[i]] && !(parking && reg_of[srcs[k]] == parked)) { return true; }
+        if (k != i && !done[k] && srcs[k] == dsts[i] && !(parking && srcs[k] == parked)) { return true; }
         k = k + 1;
     }
     return false;
 }
-// ssa_move copies one value between homes: one movq when either side is a
-// register, two through %r11 between two slots.
-function ssa_move(reg_of: i32[], src: i32, dst: i32, s: asmcore.EmitState): asmcore.EmitState {
-    if (reg_of[src] >= 0) { return ssa_store(reg_of, dst, ssa_reg(reg_of[src]), s); }
-    if (reg_of[dst] >= 0) { return ssa_load(reg_of, src, ssa_reg(reg_of[dst]), s); }
-    s = ssa_load(reg_of, src, "%r11", s);
-    return ssa_store(reg_of, dst, "%r11", s);
+function ssa_move(src: i32, dst: i32, s: asmcore.EmitState): asmcore.EmitState {
+    if (src == dst) { return s; }
+    if (src >= 0 || dst >= 0) { return s.write("    movq " + ssa_loc(src, s) + ", " + ssa_loc(dst, s) + "\n"); }
+    return s.write("    movq " + ssa_loc(src, s) + ", %rcx\n    movq %rcx, " + ssa_loc(dst, s) + "\n");
+}
+// ssa_loc spells a location: its register, or its frame slot.
+function ssa_loc(loc: i32, s: asmcore.EmitState): string {
+    if (loc >= 0) { return ssa_reg(loc); }
+    return ssa_slot(ssa.spill_slot(loc), s.ssa_save);
 }
 
 function ssa_epilogue(): string {
@@ -6261,10 +6275,21 @@ function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
     return s.write("    xorl %eax, %eax\n" + fr.epilogue);
 }
 
-// ssa_load_params moves each parameter from the caller's slot to its home;
-// value p is parameter p.
+// ssa_load_params moves each parameter to its home; value p is parameter p.
+// The first ssa_nregs() arrive in the pool's registers, in order (a stack
+// caller's are loaded there by the entry shim); the rest stay in the caller's
+// slots. The register moves go first, since a later parameter's home may be a
+// register still holding an earlier one.
 function ssa_load_params(f: ssa.SFunc, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+    var k: i32 = ssa_reg_params(f);
+    var srcs: i32[] = [];
+    var dsts: i32[] = [];
     var p: i32 = 0;
+    while (p < k) {
+        if (reg_of[p] != 0 - 1) { srcs = srcs.append(p); dsts = dsts.append(reg_of[p]); }
+        p = p + 1;
+    }
+    s = ssa_parallel_moves(srcs, dsts, s);
     while (p < f.nparams) {
         // Straight into the home: %rax is an allocatable home now, so staging
         // every parameter through it overwrote whichever parameter had it.
@@ -6276,6 +6301,62 @@ function ssa_load_params(f: ssa.SFunc, reg_of: i32[], s: asmcore.EmitState): asm
     return s;
 }
 
+// ssa_reg_params is how many of f's parameters arrive in registers.
+function ssa_reg_params(f: ssa.SFunc): i32 {
+    if (f.nparams < ssa_nregs()) { return f.nparams; }
+    return ssa_nregs();
+}
+
+// ssa_entry_shim is a function's two entries. `__fn_<name>`, the stack-ABI
+// entry every caller outside this unit's direct calls uses, loads the first
+// ssa_reg_params() arguments from the caller's stack into the pool registers
+// and falls through into `__fn_<name>.r`, where a register-ABI caller enters
+// with them already there. A function with no parameters has one entry.
+function ssa_entry_shim(f: ssa.SFunc, name: string): string {
+    var k: i32 = ssa_reg_params(f);
+    if (k == 0) { return ""; }
+    var out: string = "";
+    var p: i32 = 0;
+    while (p < k) {
+        out = out + "    movq " + util.i32_to_string(8 + 8 * p) + "(%rsp), " + ssa_reg(p) + "\n";
+        p = p + 1;
+    }
+    return out + "__fn_" + name + ".r:\n";
+}
+
+// ssa_reg_call reports whether a direct call passes its arguments in
+// registers: the callee has a register entry in this unit and takes between
+// one and ssa_nregs() arguments.
+function ssa_reg_call(ins: ssa.SInst, s: asmcore.EmitState): boolean {
+    var argc: i32 = ins.args.len();
+    if (ins.kind_tag != 11 || argc == 0 || argc > ssa_nregs() || ssa.rc_inlined(ins)) { return false; }
+    if (ircore.is_fern_helper(ins.str) || ircore.is_c_call(ins.str)) { return false; }
+    return irlower.sig_reg_has_exact(s.reg_entries, asmcore.sanitize_label(ins.str));
+}
+
+// ssa_arg_prefs asks the allocator for the register each parameter arrives in
+// and each register call's argument leaves in, so neither needs a move when
+// the value has nowhere better to be.
+function ssa_arg_prefs(f: ssa.SFunc, s: asmcore.EmitState): i32[] {
+    var pref: i32[] = [];
+    var i: i32 = 0;
+    while (i < f.nvals) { pref = pref.append(0 - 1); i = i + 1; }
+    var p: i32 = 0;
+    while (p < ssa_reg_params(f)) { pref = pref.with(p, p); p = p + 1; }
+    for blk in f.blocks {
+        for ins in blk.insts {
+            if (!ssa_reg_call(ins, s)) { continue; }
+            var a: i32 = 0;
+            while (a < ins.args.len()) {
+                var v: i32 = ins.args[a];
+                if (v >= 0 && v < pref.len() && pref[v] < 0) { pref = pref.with(v, a); }
+                a = a + 1;
+            }
+        }
+    }
+    return pref;
+}
+
 // emit_ssa_function_x86 emits one lifted function: the stack machine's frame,
 // the parameters loaded from the caller's slots into their homes, and each
 // block behind its label. prune_dead first takes out the zeros the lift gives
@@ -6283,10 +6364,11 @@ function ssa_load_params(f: ssa.SFunc, reg_of: i32[], s: asmcore.EmitState): asm
 function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, r: irlower.LowerResult, s: asmcore.EmitState): asmcore.EmitState {
     var f: ssa.SFunc = ssa.thread_forwarding(ssa.prune_dead(ssa.prune_trivial_phis(lifted)));
     var imm: ssa.Imms = ssa.imm_operands(f, 0i64 - 2147483648i64, 2147483647i64, ssa_imm_right(), ssa_imm_left());
-    var reg_of: i32[] = ssa.regalloc_linear(f, ssa_nregs(), ssa_nsaved(), 0, true, imm.is_imm);
+    var reg_of: i32[] = ssa.regalloc_linear(f, ssa_nregs(), ssa_nsaved(), 0, true, imm.is_imm, ssa_arg_prefs(f, s));
     var lp: string = ".Lssa_" + asmcore.sanitize_label(label_name) + "_";
-    s = s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n");
-    s = s.write("    .cfi_startproc\n    pushq %rbp\n    .cfi_def_cfa_offset 16\n    .cfi_offset %rbp, -16\n    movq %rsp, %rbp\n    .cfi_def_cfa_register %rbp\n");
+    s = s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n    .cfi_startproc\n");
+    s = s.write(ssa_entry_shim(f, asmcore.sanitize_label(label_name)));
+    s = s.write("    pushq %rbp\n    .cfi_def_cfa_offset 16\n    .cfi_offset %rbp, -16\n    movq %rsp, %rbp\n    .cfi_def_cfa_register %rbp\n");
     var saved: i32[] = ssa_saved_regs(reg_of);
     var save: i32 = 8 * saved.len();
     s = s.write(ssa_save_asm(saved));
@@ -8253,6 +8335,7 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all
     var hh: i32 = hi;
     if (hh < 0 || hh > mod.funcs.len()) { hh = mod.funcs.len(); }
     if (check_claims) { ircore.check_fip_claims(mod.funcs, lo, hh, cache, s.struct_decls, sg, false); }
+    s = asmcore.EmitState { ...s, reg_entries: irlower.sig_reg_of(unit_labels(mod, lo, hh, cache)) };
     var fi: i32 = lo;
     while (fi < hh) {
         // A template the substitution superseded has no body: its instances
@@ -8278,6 +8361,25 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all
     // naming the symbol it defines. `.weak`, so a shard window or a sibling
     // unit that emits the same body co-links to one definition.
     return emit_named_bodies(cache, mod.funcs.len(), s, vsigs);
+}
+
+// unit_labels is the sanitized label of every function emit_module_funcs
+// emits for mod.funcs[lo..hi) and the bodies on the cache tail: the names a
+// direct call in this unit may reach through their register entries.
+function unit_labels(mod: parser.Module, lo: i32, hi: i32, cache: irlower.LowerResult[]): string[] {
+    var out: string[] = [];
+    var fi: i32 = lo;
+    while (fi < hi) {
+        if (cache.len() == 0 || !cache[fi].superseded) {
+            var name: string = mod.funcs[fi].name;
+            if (mod.funcs[fi].receiver_type.len() > 0) { name = util.base_type_name(mod.funcs[fi].receiver_type) + "." + name; }
+            out = out.append(asmcore.sanitize_label(name));
+        }
+        fi = fi + 1;
+    }
+    var xi: i32 = mod.funcs.len();
+    while (xi < cache.len()) { out = out.append(asmcore.sanitize_label(cache[xi].name)); xi = xi + 1; }
+    return out;
 }
 
 function emit_named_bodies(cache: irlower.LowerResult[], from: i32, s: asmcore.EmitState, vsigs: irverify.NameIndex): asmcore.EmitState {

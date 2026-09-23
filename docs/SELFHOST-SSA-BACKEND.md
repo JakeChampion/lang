@@ -53,7 +53,7 @@ with it. `-backend ssa` names the register path explicitly and is
 byte-identical to omitting the flag; `-backend flat` is refused on the native
 ISAs and names wasm's one emitter.
 
-## Why per function, and why the stack ABI
+## Why per function
 
 Native's `-backend ssa` replaces the whole program's emitter and carries its
 own copies of the runtime helpers. The self-host did not need to: the stack
@@ -69,8 +69,63 @@ ownership, here they only disagreed about where a temporary lives.
 The per-function granularity is what made the track measurable from its
 first day: the whole examples corpus built and ran with the flag on, and a
 tally said how much of each program the new emitter produced. With the stack
-machine gone the granularity is still per function, and the ABI it
-established is now simply the ABI.
+machine gone the granularity is still per function, and the stack ABI it
+established is what every caller outside a unit's own direct calls still
+uses.
+
+## Calls: two entries per function
+
+Pushing every argument cost about 15% of the static instructions on the
+compiler compiling itself (x86-64, 38k `pushq` and 34k `addq $n, %rsp` of
+481k), plus a load of each parameter back in the callee. On x86-64 a
+function with parameters now has two entries:
+
+- `__fn_<name>`, the stack-ABI entry, loads the first six arguments from the
+  caller's stack into the caller-saved pool (`%rax, %rsi, %rdi, %r8, %r9,
+  %r10`, in pool order) and falls through into
+- `__fn_<name>.r`, the register-ABI entry, where the body starts with them
+  already there. A seventh parameter onward is read from the caller's stack
+  either way.
+
+A direct call to a function the same unit emits (`reg_entries`, built by
+`emit_module_funcs`), with one to six arguments, moves its arguments into
+the pool in parallel (`ssa_parallel_moves`, which phi edges use too) and
+calls the `.r` entry: no pushes and no pop. Everything else keeps the stack
+entry — runtime helpers, `__c_call`, the flat-op arms, hand-written stubs,
+indirect and dyn-dispatch calls, and a call across per-module units — so a
+callee the registry does not name is still called correctly. The pool is the
+argument order because it is also where the allocator homes caller-saved
+values: `ssa_arg_prefs` asks for a parameter's arrival register and an
+argument's departure register, and a call's result may keep `%rax` when its
+dying first argument was there, so `s = f(s, …)` moves nothing when `s` does
+not live across another call.
+
+Measured 2026-09-23 against the same tree without it, x86-64:
+
+| subject | before | after |
+|---|---|---|
+| `checker.fern`, static instructions | 479,522 | 466,435 (-2.7%) |
+| of which `pushq` / `addq $n, %rsp` | 50,825 / 33,809 | 31,463 / 21,501 |
+| stage-2 compiler binary | 10,863,416 B | 10,736,144 B (-1.2%) |
+| stage-2 compiler compiling `ssa.fern`, Ir | 4,034 M | 3,971 M (-1.6%) |
+| `examples/bench/call_overhead`, Ir | 22.0 M | 17.9 M (-18.9%) |
+| `tokenize` / `sort_ints` / `enum_match` / `record_update` | | -4.5% / -4.5% / -3.1% / -1.9% |
+
+The compiler's values mostly live across calls in callee-saved registers,
+so many of its arguments become a move rather than disappearing; what goes
+is the store and reload through memory, and the pop. The rest of the track,
+in order:
+
+1. arm64, the same design over x0 and x9..x15.
+2. The hand-written runtime helpers the compiler calls most
+   (`__fern_arr_dec` at ~10k call sites, `__fern_str_free` at ~7k,
+   `str_eq`, `rc_is_unique`) read their arguments from registers.
+3. Indirect calls, function addresses, closures and dyn dispatch move to
+   the `.r` entries together — the one step that can miscompile silently,
+   since both symbols exist.
+4. More than six arguments: the caller reserves the stack slots of the
+   first six and pushes the rest where the stack ABI puts them.
+5. Once nothing refers to a stack entry, the shims go.
 
 ## What the lift admits, and what declines
 
