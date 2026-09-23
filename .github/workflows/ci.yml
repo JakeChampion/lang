@@ -300,8 +300,9 @@ jobs:
                   });
                   for (const l of todo) {
                     const mine = display[l] ? jobs.filter((j) => j.name.startsWith(`Validate / Full suite / ${display[l]} / `)) : [];
-                    if (mine.length === 0) continue;
-                    base[l] = mine.every((j) => j.conclusion === "success") ? run.head_sha : null;
+                    // A lane a later push cancelled proves nothing either way; look further back.
+                    if (mine.some((j) => j.conclusion === "failure" || j.conclusion === "timed_out")) base[l] = null;
+                    else if (mine.length && mine.every((j) => j.conclusion === "success")) base[l] = run.head_sha;
                   }
                 }
                 const changed = {};
