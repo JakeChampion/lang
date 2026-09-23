@@ -791,7 +791,7 @@ func TestInlineSizeIgnoresLineMarkers(t *testing.T) {
 		t.Fatalf("lower: %v", err)
 	}
 	leaf := findFunc(p, "leaf")
-	if got := codeOps(leaf.Ops); got > inlineTinyLeafOps {
+	if got := sizeOps(leaf.Ops); got > inlineTinyLeafOps {
 		t.Fatalf("leaf has %d code ops, over the %d tiny cap — the case cannot test what it claims", got, inlineTinyLeafOps)
 	}
 	if got := len(leaf.Ops); got <= inlineTinyLeafOps {
@@ -821,7 +821,7 @@ func TestInlineHintHoldsOverUnitCeiling(t *testing.T) {
 		t.Fatalf("padding produced %d ops, at or under the %d ceiling", got, inlineMaxUnitOps)
 	}
 	big := findFunc(p, "big")
-	if codeOps(big.Ops) <= inlineTinyLeafOps || isCallFree(big) {
+	if sizeOps(big.Ops) <= inlineTinyLeafOps || isCallFree(big) {
 		t.Fatalf("big must be over the tiny cap and carry a call for this to test anything:\n%s", p)
 	}
 	Inline(p)
