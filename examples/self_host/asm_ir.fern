@@ -8865,9 +8865,9 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     // library modules can link their `call __fern_*` externs against them.
     if (is_entry && globl_defs) { s = asmcore.emit_runtime_globls(s); }
     // The side-table bases arrive as INDIVIDUAL params (b_*), threaded straight to
-    // emit_module_funcs. The strfldok / FNPTR need seeding below recomputes its
-    // two columns directly (all_funcs is in scope) rather than re-reading a base
-    // that was just passed as an arg.
+    // emit_module_funcs. The strfldok need seeding below recomputes its column
+    // directly (all_funcs is in scope) rather than re-reading a base that was
+    // just passed as an arg.
     s = emit_module_funcs(mod, all_funcs, all_structs, s, globl_defs, lo, hi, cache, b, true);
     // #4355: admit the replaced-STRING-field arm per type, from the
     // WHOLE-PROGRAM read scan (a unit-local func list would under-count the
@@ -8901,17 +8901,6 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     while (nfoi < nfok.len()) {
         s = s.need("structfldok:" + nfok[nfoi]);
         nfoi = nfoi + 1;
-    }
-    // #5235: seed the plain-fn-pointer-array field registry as needs
-    // ("FNPTR:<sty>.<field>") so emit_ir_struct_drop_one leaks-the-walk (buffer-
-    // only dec, no element walk) for those fields — their elements are raw code
-    // addresses. Same whole-program (all_funcs/all_structs) verdict everywhere so
-    // the weak-deduped __struct_drop bodies agree across units.
-    var fpk: string[] = irlower.fnptr_arr_fields_of(all_funcs, all_structs);
-    var fpi: i32 = 0;
-    while (fpi < fpk.len()) {
-        s = s.need(fpk[fpi]);
-        fpi = fpi + 1;
     }
     // Per-type __field_reclaim_<T> bodies (#3457), in .text alongside the module
     // funcs — emitted by EVERY unit that uses one (weak-deduped at link), so a

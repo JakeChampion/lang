@@ -898,7 +898,12 @@ here, and it is sound only because of the construction gap below. Pinned on
 both sides — `TestSelfHostCloArrayFieldCallIRX86_64` (closure elements) and
 `TestSelfHostFnptrArrayFieldIRX86_64` (`direct`, `rc-soundness`).
 
-### Open, self-host-only: a LOCAL-BUILT fn-pointer array field miscompiles
+### Closed: a LOCAL-BUILT fn-pointer array field miscompiled
+
+**Superseded by #10076.** Every function array now holds env boxes, whatever
+built it, so there is one representation to dispatch on. The `FNPTR:` registry,
+the `is_fnarr` slot flag and `check_fn_array_fields` are deleted, and the shapes
+below all answer. What follows is the record of the two-representation design.
 
 Differential-probed 2026-07-28 (interp / native x86-64 / self-host):
 
@@ -1088,7 +1093,12 @@ came out of it (#5799, #5850, #5865, #5881 and the #5001/#5007/#5009/#5026
 closure-dispatch group before them), and everything probed outside it agreed with
 the oracle first time.
 
-### Rebinding an `fn[]` LOCAL: one direction fixed, the cross-representation ones open
+### Rebinding an `fn[]` LOCAL: closed by one representation (#10076)
+
+**Superseded by #10076.** Every function array now holds env boxes, whatever
+built it, so there is one representation to dispatch on. The `FNPTR:` registry,
+the `is_fnarr` slot flag and `check_fn_array_fields` are deleted, and the shapes
+below all answer. What follows is the record of the two-representation design.
 
 Probed 2026-07-29 on the x86-64 IR path (no struct field involved; the wasm IR
 path traps where x86-64 SIGSEGVs):

@@ -101,13 +101,9 @@ func TestSelfHostFnValueX86IR(t *testing.T) {
 		{"local-ret-struct-field", `struct P { x: i32 } function mk(): P { return P { x: 4 }; } function main(): i32 { var f: () => P = mk; return f().x; }`, 4},
 		{"local-ret-struct-var-2fields", `struct P { x: i32, y: i32 } function mk(): P { return P { x: 4, y: 5 }; } function main(): i32 { var f: () => P = mk; var p = f(); return p.x + p.y; }`, 9},
 		{"local-ret-struct-method", `struct P { x: i32 } function (p: P) dbl(): i32 { return p.x * 2; } function mk(): P { return P { x: 11 }; } function main(): i32 { var f: () => P = mk; return f().dbl(); }`, 22},
-		// #3640 slice B.2: the UNANNOTATED `var f = mk` where mk is a zero-arg
-		// struct-returning fn and `f` is later CALLED. infer_fnvalue_locals_module
-		// (on the shared IR funnel) binds it as a fn-value rather than const-calling
-		// mk — matching the native compiler's use-directed inference — so it uses
-		// the slice-B.1 lowering. Const-calling instead stores mk()'s struct, and
-		// `f()` then calls the struct box as a code pointer. A bare
-		// `var p = mk` that is NOT called stays a const-call (unchanged).
+		// The UNANNOTATED `var f = mk` where mk is a zero-arg struct-returning
+		// fn: mk is not a `const`, so the bare name is a function value, and
+		// `f()` calls it rather than calling mk()'s struct as code (#3640).
 		{"local-infer-field", `struct P { x: i32 } function mk(): P { return P { x: 7 }; } function main(): i32 { var f = mk; return f().x; }`, 7},
 		{"local-infer-var-2fields", `struct P { x: i32, y: i32 } function mk(): P { return P { x: 4, y: 5 }; } function main(): i32 { var f = mk; var p = f(); return p.x + p.y; }`, 9},
 		{"local-infer-method", `struct P { x: i32 } function (p: P) dbl(): i32 { return p.x * 2; } function mk(): P { return P { x: 11 }; } function main(): i32 { var f = mk; return f().dbl(); }`, 22},

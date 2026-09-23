@@ -54,16 +54,8 @@ function run(): i32 {
     // where a keyword was used (`function use()`), and nothing downstream
     // notices — see asmcore.check_decl_names for what that cost.
     arity_errs = util.append_diags(arity_errs, asmcore.check_decl_names(mod));
-    // Unclassifiable `fn[]` struct field (#5787 / #3457): a field whose
-    // construction proves neither fn-pointers nor closures has no safe dispatch
-    // — either default crashes — and used to bail to the AST emitter, which
-    // miscompiles it into a runtime SIGSEGV with no diagnostic. Report it.
-    // check_fn_array_fields is uncoded — it refuses a shape rather than naming a
-    // diagnostic in the E/P registry — so it renders alongside rather than through
-    // format_diags.
-    var fnfld_errs: string = irlower.check_fn_array_fields(mod);
-    if (arity_errs.len() > 0 || fnfld_errs.len() > 0) {
-        eprint(util.format_diags(arity_errs) + fnfld_errs);
+    if (arity_errs.len() > 0) {
+        eprint(util.format_diags(arity_errs));
         return 1;
     }
     // Builtins with no wasm meaning at all (subprocess #4320, timer_fd #4317,
