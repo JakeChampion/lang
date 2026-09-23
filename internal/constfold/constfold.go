@@ -5,7 +5,8 @@
 // the pipeline never sees a ConstDecl). For each const it
 // evaluates the initialiser as a constant expression — literals,
 // references to earlier consts, and arithmetic / comparison /
-// logical / unary operations on those, plus the __fern_asset builtin
+// logical / unary operations on those, array and tuple literals of
+// constant elements, plus the __fern_asset / __fern_assets builtins
 // below. Anything outside that grammar (ordinary function calls, array
 // indexing, struct literals, runtime expressions) is rejected with a
 // diagnostic.
@@ -105,7 +106,7 @@ func FoldWith(prog *ast.Program, in Inputs) error {
 			errs = append(errs, rangeErrs...)
 			continue
 		}
-		val, err := evalConst(cd.Value, declaredWidth(cd.Type), values, types, in.Assets)
+		val, err := evalConstTyped(cd.Value, cd.Type, values, types, in.Assets)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: const %s: %w", cd.P, cd.Name, err))
 			continue
@@ -158,21 +159,68 @@ func FoldWith(prog *ast.Program, in Inputs) error {
 	return nil
 }
 
-// evalConst tries to reduce e to a literal AST node using only
+// evalConstTyped is evalConst for a value whose declared type (nil when
+// undeclared) may be composite: an array or tuple literal of constant
+// elements folds element by element, each at its own declared width, and
+// `__fern_assets()` folds to its array of tuples.
+func evalConstTyped(e ast.Expr, want ast.Type, values map[string]ast.Expr, types map[string]ast.Type, assets *embed.Set) (ast.Expr, error) {
+	switch n := e.(type) {
+	case *ast.ArrayLit:
+		var elemT ast.Type
+		if at, ok := want.(ast.ArrayType); ok {
+			elemT = at.Elem
+		}
+		elems := make([]ast.Expr, len(n.Elems))
+		for i, el := range n.Elems {
+			v, err := evalConstTyped(el, elemT, values, types, assets)
+			if err != nil {
+				return nil, err
+			}
+			elems[i] = v
+		}
+		return &ast.ArrayLit{P: n.P, Elems: elems, ElemType: n.ElemType}, nil
+	case *ast.TupleLit:
+		var elemTs []ast.Type
+		if tt, ok := want.(ast.TupleType); ok && len(tt.Elems) == len(n.Elems) {
+			elemTs = tt.Elems
+		}
+		elems := make([]ast.Expr, len(n.Elems))
+		for i, el := range n.Elems {
+			var et ast.Type
+			if elemTs != nil {
+				et = elemTs[i]
+			}
+			v, err := evalConstTyped(el, et, values, types, assets)
+			if err != nil {
+				return nil, err
+			}
+			elems[i] = v
+		}
+		return &ast.TupleLit{P: n.P, Elems: elems}, nil
+	case *ast.Call:
+		if isAssetsCall(n) {
+			return resolveAssets(n, assets)
+		}
+	case *ast.Ident:
+		// An earlier composite const is copied, so the two trees never alias.
+		if v, ok := values[n.Name]; ok {
+			return cloneLit(v, n.P), nil
+		}
+	}
+	return evalConst(e, declaredWidth(want), values, types, assets)
+}
+
+// evalConst tries to reduce e to a scalar literal AST node using only
 // constant-expression rules. Returned values are always one of
-// *ast.NumberLit, *ast.FloatLit, *ast.BoolLit, *ast.StringLit.
+// *ast.NumberLit, *ast.FloatLit, *ast.BoolLit, *ast.StringLit,
+// *ast.CharLit; composites go through evalConstTyped.
 func evalConst(e ast.Expr, w intWidth, values map[string]ast.Expr, types map[string]ast.Type, assets *embed.Set) (ast.Expr, error) {
 	switch n := e.(type) {
 	case *ast.NumberLit, *ast.FloatLit, *ast.BoolLit, *ast.StringLit, *ast.CharLit:
 		return n, nil
 	case *ast.Call:
-		// A single asset is a string, so it is legal in a const
-		// initialiser. The enumeration is not: evalConst's contract is to
-		// return a scalar literal, and an array of tuples is neither —
-		// settleConstLit and every fold rule below would have to grow a
-		// composite case for a value no const can usefully hold.
 		if isAssetsCall(n) {
-			return nil, fmt.Errorf("%s() builds an array, which is not a constant expression — assign it to a `var` instead", assetsBuiltin)
+			return nil, fmt.Errorf("%s() builds an array, which an operator cannot take in a constant expression", assetsBuiltin)
 		}
 		if !isAssetCall(n) {
 			return nil, fmt.Errorf("expression is not a constant (only literals, earlier consts, and arithmetic / comparison / logical operations on them are allowed)")
@@ -540,6 +588,30 @@ func settleConstLit(want ast.Type, val ast.Expr) error {
 		}
 		lit.Width = w.NormalWidth()
 		return nil
+	case ast.ArrayType:
+		lit, ok := val.(*ast.ArrayLit)
+		if !ok {
+			break
+		}
+		for _, el := range lit.Elems {
+			if err := settleConstLit(w.Elem, el); err != nil {
+				return err
+			}
+		}
+		// An empty literal has nothing to infer its element from.
+		lit.ElemType = w.Elem
+		return nil
+	case ast.TupleType:
+		lit, ok := val.(*ast.TupleLit)
+		if !ok || len(lit.Elems) != len(w.Elems) {
+			break
+		}
+		for i, el := range lit.Elems {
+			if err := settleConstLit(w.Elems[i], el); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 	if got := litType(val); !ast.Equal(want, got) {
 		return fmt.Errorf("declared type %s does not match initialiser type %s", want, got)
@@ -547,10 +619,26 @@ func settleConstLit(want ast.Type, val ast.Expr) error {
 	return nil
 }
 
-// litType returns the ast.Type that matches a folded literal. Only
-// the scalar literal kinds appear here — everything else would
-// have been rejected as non-constant in evalConst.
+// litType returns the ast.Type that matches a folded literal: a scalar
+// kind, or an array / tuple of them. nil for an empty array literal with
+// no stamped element type, which has no type of its own.
 func litType(e ast.Expr) ast.Type {
+	switch x := e.(type) {
+	case *ast.ArrayLit:
+		if x.ElemType != nil {
+			return ast.ArrayType{Elem: x.ElemType}
+		}
+		if len(x.Elems) == 0 {
+			return nil
+		}
+		return ast.ArrayType{Elem: litType(x.Elems[0])}
+	case *ast.TupleLit:
+		elems := make([]ast.Type, len(x.Elems))
+		for i, el := range x.Elems {
+			elems[i] = litType(el)
+		}
+		return ast.TupleType{Elems: elems}
+	}
 	switch e.(type) {
 	case *ast.NumberLit:
 		return ast.NumberType{}
@@ -973,12 +1061,24 @@ func (s *substituter) walkExpr(slot *ast.Expr) {
 	}
 }
 
-// cloneLit returns a fresh literal carrying the same scalar value
-// as src but a position taken from the substitution site. Doing a
-// fresh allocation lets the checker / IR pipeline annotate each
-// occurrence independently without aliasing surprises.
+// cloneLit returns a fresh literal carrying the same value as src but a
+// position taken from the substitution site, copying an array or tuple
+// deeply. Doing a fresh allocation lets the checker / IR pipeline
+// annotate each occurrence independently without aliasing surprises.
 func cloneLit(src ast.Expr, pos ast.Position) ast.Expr {
 	switch v := src.(type) {
+	case *ast.ArrayLit:
+		elems := make([]ast.Expr, len(v.Elems))
+		for i, el := range v.Elems {
+			elems[i] = cloneLit(el, pos)
+		}
+		return &ast.ArrayLit{P: pos, Elems: elems, ElemType: v.ElemType}
+	case *ast.TupleLit:
+		elems := make([]ast.Expr, len(v.Elems))
+		for i, el := range v.Elems {
+			elems[i] = cloneLit(el, pos)
+		}
+		return &ast.TupleLit{P: pos, Elems: elems}
 	case *ast.NumberLit:
 		// Width / IsUnsigned carry the declared type settleConstLit stamped on
 		// the const's literal; ExceedsI64 says how to read a Value past i64

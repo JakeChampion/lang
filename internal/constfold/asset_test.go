@@ -262,6 +262,22 @@ function main(): i32 {
 	}
 }
 
+// The enumeration may be held in a const, as it may in a var (#7987).
+func TestAssetsInConst(t *testing.T) {
+	set := assetSet(t, map[string]string{"b.txt": "BB", "a.txt": "AAA"})
+	prog := foldAssets(t, `
+const XS: (string, string)[] = __fern_assets();
+function main(): i32 {
+  var xs = XS;
+  return 0;
+}`, set)
+	want := [][2]string{{"a.txt", "AAA"}, {"b.txt", "BB"}}
+	got := tupleElems(t, prog)
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("const XS substituted %v, want %v", got, want)
+	}
+}
+
 // Binary contents survive enumeration the same way they survive a single
 // __fern_asset lookup.
 func TestAssetsCarriesBinaryBytes(t *testing.T) {
@@ -316,10 +332,10 @@ func TestAssetsErrors(t *testing.T) {
 			want: "takes no arguments, got 1",
 		},
 		{
-			name: "not a constant expression",
+			name: "a const of the wrong type",
 			src:  `const A: string = __fern_assets(); function main(): i32 { return 0; }`,
 			set:  set,
-			want: "builds an array, which is not a constant expression",
+			want: "declared type string does not match initialiser type (string, string)[]",
 		},
 	}
 	for _, tc := range tests {
