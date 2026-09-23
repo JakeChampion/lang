@@ -94,3 +94,43 @@ func TestSelfHostSSALiftGivesEachBlockOneID(t *testing.T) {
 		t.Fatalf("driver exit %d: %s", code, output)
 	}
 }
+
+// A refusal names the op it refused on, even for a kind tag no op can carry,
+// so the strict-SSA diagnostics can report the site instead of emitting a
+// partial function.
+const ssaLiftNegativeKindProg = `import "./ir";
+import "./ssa_lift";
+
+function main(): i32 {
+    var ops: ir.Op[] = [ir.Op { ...ir.op_const_i32(0), kind_tag: 0 - 1 }, ir.op_return()];
+    var r: ssa_lift.LResult = ssa_lift.lift_from_ir_prod("negative_kind", 0, 0, ops);
+    if (r.ok) { return 2; }
+    if (r.bail != "invalid#-1") { return 3; }
+    return 0;
+}
+`
+
+func TestSelfHostSSALiftNamesANegativeKind(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := copySelfHostTree(t)
+	if err := os.WriteFile(filepath.Join(dir, "ssa_lift_negative.fern"), []byte(ssaLiftNegativeKindProg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := buildSelfHostBin(t, gcc, dir, "ssa_lift_negative.fern", "ssa-lift-negative")
+	cmd := runX86_64Bin(runner, bin)
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		return
+	}
+	if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
+		t.Fatalf("driver did not exit normally: %v\n%s", err, output)
+	}
+	switch code := cmd.ProcessState.ExitCode(); code {
+	case 2:
+		t.Fatal("the lift accepted an op with a negative kind tag")
+	case 3:
+		t.Fatal("the lift refused a negative kind tag without naming it")
+	default:
+		t.Fatalf("driver exit %d: %s", code, output)
+	}
+}
