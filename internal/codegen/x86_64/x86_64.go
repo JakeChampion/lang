@@ -247,6 +247,7 @@ const (
 	sysSocket  = 41
 	sysConnect = 42
 	sysAccept  = 43
+	sysSendto  = 44
 	sysBind    = 49
 	sysListen  = 50
 	// getsockname(2): the only way to read the port the kernel picked for
@@ -812,6 +813,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesCountByte {
 		g.emitCountByteRuntime()
 	}
+	if g.usesScanSet {
+		g.emitScanSetRuntime()
+	}
 	if g.usesSumBytes {
 		g.emitSumBytesRuntime()
 	}
@@ -1298,6 +1302,8 @@ type generator struct {
 	usesRmemchr bool
 	// usesCountByte gates the byte-tally kernel (__fern_count_byte).
 	usesCountByte bool
+	// usesScanSet gates the byte-set scan kernel (__fern_scan_set).
+	usesScanSet bool
 	// usesSumBytes gates the byte-sum reduction kernel (__fern_sum_bytes).
 	usesSumBytes bool
 	// usesScaleF64 gates the f64 scaling kernel (__fern_scale_f64).
@@ -1915,6 +1921,8 @@ func (g *generator) recordUse(target string) {
 		g.usesRmemchr = true
 	case "__fern_count_byte":
 		g.usesCountByte = true
+	case "__fern_scan_set":
+		g.usesScanSet = true
 	case "__fern_sum_bytes":
 		g.usesSumBytes = true
 	case "__fern_scale_f64":
@@ -11705,6 +11713,65 @@ func (g *generator) emitRmemchrRuntime() {
 	g.line(".size __fern_rmemchr, .-__fern_rmemchr")
 }
 
+// emitScanSetRuntime emits `__fern_scan_set(s, from, set) -> i32`: the index
+// of the first byte at or after `from` whose entry in `set` is nonzero, or
+// len(s). Scalar: a byte set has no splat, and the table read per byte is
+// what the kernel is. The fast loop runs when the set has an entry for every
+// byte value; a shorter set takes the loop that checks each byte against
+// its length first.
+func (g *generator) emitScanSetRuntime() {
+	g.line("")
+	g.line(".globl __fern_scan_set")
+	g.line(".type __fern_scan_set, @function")
+	g.label("__fern_scan_set")
+	// rdi = string, esi = from, rdx = set (length at [rdx - 4]).
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("sub rsp, 16")
+	g.emitStrLen("ecx", "rdi") // ecx = len
+	g.emitStrDataPtr("rdi", "rdi", "[rbp - 16]")
+	// Clamp `from` into [0, len]; at or past the end the answer is len. The
+	// cursor is scaled into an address, so its top half is cleared once.
+	g.emit("test esi, esi")
+	g.emit("jns .Lscan_set_from_ok")
+	g.emit("xor esi, esi")
+	g.label(".Lscan_set_from_ok")
+	g.emit("mov esi, esi")
+	g.emit("mov r8d, [rdx - 4]") // set length
+	g.emit("cmp r8d, 256")
+	g.emit("jb .Lscan_set_short")
+	g.label(".Lscan_set_loop")
+	g.emit("cmp esi, ecx")
+	g.emit("jge .Lscan_set_end")
+	g.emit("movzx eax, byte ptr [rdi + rsi]")
+	g.emit("cmp byte ptr [rdx + rax], 0")
+	g.emit("jne .Lscan_set_hit")
+	g.emit("inc esi")
+	g.emit("jmp .Lscan_set_loop")
+	// A set shorter than 256 entries: a byte past its end is not in it.
+	g.label(".Lscan_set_short")
+	g.emit("cmp esi, ecx")
+	g.emit("jge .Lscan_set_end")
+	g.emit("movzx eax, byte ptr [rdi + rsi]")
+	g.emit("cmp eax, r8d")
+	g.emit("jae .Lscan_set_short_next")
+	g.emit("cmp byte ptr [rdx + rax], 0")
+	g.emit("jne .Lscan_set_hit")
+	g.label(".Lscan_set_short_next")
+	g.emit("inc esi")
+	g.emit("jmp .Lscan_set_short")
+	g.label(".Lscan_set_hit")
+	g.emit("mov eax, esi")
+	g.emit("jmp .Lscan_set_ret")
+	g.label(".Lscan_set_end")
+	g.emit("mov eax, ecx") // nothing in the set: the answer is len
+	g.label(".Lscan_set_ret")
+	g.emit("mov rsp, rbp")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_scan_set, .-__fern_scan_set")
+}
+
 // emitCountByteRuntime emits `__fern_count_byte(s, byte) -> i32`: how many
 // bytes of `s` equal `byte`.
 //
@@ -13599,16 +13666,21 @@ func (g *generator) emitTcpListenRuntime() {
 	g.emit("mov edx, 16")
 	g.emitSyscall(sysBind)
 	g.emit("test eax, eax")
-	g.emit("js .Ltcp_lst_err")
+	g.emit("js .Ltcp_lst_close")
 	// listen(fd, 128)
 	g.emit("mov edi, ebx")
 	g.emit("mov esi, 128")
 	g.emitSyscall(sysListen)
 	g.emit("test eax, eax")
-	g.emit("js .Ltcp_lst_err")
+	g.emit("js .Ltcp_lst_close")
 	// Return listener fd.
 	g.emit("mov eax, ebx")
 	g.emit("jmp .Ltcp_lst_done")
+	g.label(".Ltcp_lst_close")
+	g.emit("mov r12d, eax") // preserve the setup errno across close
+	g.emit("mov edi, ebx")
+	g.emitSyscall(sysClose)
+	g.emit("mov eax, r12d")
 	g.label(".Ltcp_lst_err")
 	// On failure rax already holds -errno from the failing syscall.
 	g.label(".Ltcp_lst_done")
@@ -13662,9 +13734,14 @@ func (g *generator) emitTcpConnectRuntime() {
 	g.emit("mov edx, 16")
 	g.emitSyscall(sysConnect)
 	g.emit("test eax, eax")
-	g.emit("js .Ltcp_con_err")
+	g.emit("js .Ltcp_con_close")
 	g.emit("mov eax, ebx") // return fd
 	g.emit("jmp .Ltcp_con_done")
+	g.label(".Ltcp_con_close")
+	g.emit("mov r12d, eax") // preserve the setup errno across close
+	g.emit("mov edi, ebx")
+	g.emitSyscall(sysClose)
+	g.emit("mov eax, r12d")
 	g.label(".Ltcp_con_err")
 	// rax holds -errno from the failing syscall.
 	g.label(".Ltcp_con_done")
@@ -13771,12 +13848,8 @@ func (g *generator) emitTcpRecvRuntime() {
 	g.line(".size __fern_tcp_recv, .-__fern_tcp_recv")
 }
 
-// emitTcpSendRuntime emits `__fern_tcp_send(fd, data)` —
-// writes the full length-prefixed string to the socket.
-// Returns the byte count or -errno on the first write.
-// Single write(2) call — no buffering / partial-write loop;
-// callers needing >page-sized payloads should chunk
-// themselves.
+// emitTcpSendRuntime emits one socket send with MSG_NOSIGNAL.
+// Returns accepted bytes or -errno; callers retain any unsent suffix.
 func (g *generator) emitTcpSendRuntime() {
 	g.line("")
 	g.line(".globl __fern_tcp_send")
@@ -13790,7 +13863,10 @@ func (g *generator) emitTcpSendRuntime() {
 	g.emit("sub rsp, 16")
 	g.emitStrLen("edx", "rsi")                  // length from data
 	g.emitStrDataPtr("rsi", "rsi", "[rbp - 8]") // byte pointer for syscall
-	g.emitSyscall(sysWrite)
+	g.emit("mov r10d, 16384")                   // MSG_NOSIGNAL
+	g.emit("xor r8d, r8d")                      // destination is already connected
+	g.emit("xor r9d, r9d")
+	g.emitSyscall(sysSendto)
 	g.emit("add rsp, 16")
 	g.emit("pop rbp")
 	g.emit("ret")

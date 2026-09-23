@@ -67,6 +67,8 @@ func copyingBuiltinCases() []copyingBuiltinCase {
 		{name: "eprint", use: `eprint(out);`, pinCounts: true},
 		{name: "memchr", use: `var q: i32 = __memchr(out, 10, 0);`, pinCounts: true},
 		{name: "count_byte", use: `var q: i32 = __count_byte(out, 97);`, pinCounts: true},
+		{name: "scan_set", use: `var st: u8[] = __alloc_u8(256);
+    var q: i32 = __scan_set(out, 0, st);`, pinCounts: true},
 		{name: "mismatch", use: `var q: i32 = __mismatch(out, 0, out, 0, 24);`, pinCounts: true},
 		{name: "writer_write", use: `var w: Writer = stdout();
     match (w.write(out)) { Some(_) => { return -1; }, None => {} }`, pinCounts: true},

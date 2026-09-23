@@ -1120,12 +1120,19 @@ func TestGenBytesShrinkIsMonotonicAndValid(t *testing.T) {
 	if os.Getenv("RUN_SHRINK_PROPERTY") == "1" {
 		seeds = sweepN(t, 24)
 	}
+	shard, nshard, err := parseShard(os.Getenv("FERNSMITH_SHRINK_SHARD"))
+	if err != nil {
+		t.Fatalf("FERNSMITH_SHRINK_SHARD: %v", err)
+	}
 	// Seeds are independent, so each is a parallel subtest: the sweep is
 	// CPU-bound and three entry points alone leave a core idle.
 	for _, g := range gens {
 		t.Run(g.name, func(t *testing.T) {
 			t.Parallel()
 			for seed := uint64(0); seed < seeds; seed++ {
+				if seed%nshard != shard {
+					continue
+				}
 				t.Run(fmt.Sprintf("seed=%d", seed), func(t *testing.T) {
 					t.Parallel()
 					r := rand.New(rand.NewPCG(seed, 0x5eed))
@@ -1156,6 +1163,56 @@ func TestGenBytesShrinkIsMonotonicAndValid(t *testing.T) {
 				})
 			}
 		})
+	}
+}
+
+// parseShard reads an `I/N` shard selector: the caller takes the seeds with
+// `seed % N == I`. Empty selects everything.
+func parseShard(raw string) (shard, nshard uint64, err error) {
+	if raw == "" {
+		return 0, 1, nil
+	}
+	i, n, ok := strings.Cut(raw, "/")
+	if !ok {
+		return 0, 0, fmt.Errorf("%q: want I/N, e.g. 0/2", raw)
+	}
+	if shard, err = strconv.ParseUint(i, 10, 64); err != nil {
+		return 0, 0, fmt.Errorf("%q: %v", raw, err)
+	}
+	if nshard, err = strconv.ParseUint(n, 10, 64); err != nil {
+		return 0, 0, fmt.Errorf("%q: %v", raw, err)
+	}
+	if nshard == 0 || shard >= nshard {
+		return 0, 0, fmt.Errorf("%q: want 0 <= I < N", raw)
+	}
+	return shard, nshard, nil
+}
+
+func TestParseShard(t *testing.T) {
+	for _, c := range []struct {
+		raw           string
+		shard, nshard uint64
+		bad           bool
+	}{
+		{raw: "", shard: 0, nshard: 1},
+		{raw: "0/2", shard: 0, nshard: 2},
+		{raw: "1/2", shard: 1, nshard: 2},
+		{raw: "2/2", bad: true},
+		{raw: "0/0", bad: true},
+		{raw: "1", bad: true},
+		{raw: "a/2", bad: true},
+		{raw: "0/-1", bad: true},
+	} {
+		shard, nshard, err := parseShard(c.raw)
+		if c.bad {
+			if err == nil {
+				t.Errorf("parseShard(%q) = %d/%d, want an error", c.raw, shard, nshard)
+			}
+			continue
+		}
+		if err != nil || shard != c.shard || nshard != c.nshard {
+			t.Errorf("parseShard(%q) = %d/%d, %v; want %d/%d", c.raw, shard, nshard, err, c.shard, c.nshard)
+		}
 	}
 }
 

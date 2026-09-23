@@ -1611,8 +1611,9 @@ function instruction_error(ins: ssa.SInst, f: Func): string {
 
 // A function type is one word of code address, and the call through one
 // carries the signature it dispatches by (`ssarc.signature_tag`), so a slot
-// may be any width. A function type inside another has no address to take.
-// A void result is a word like any other: every backend hands one back from
+// may be any width. A function type inside another is one word too, the
+// environment box every function value is, so a parameter or result of
+// function type is a slot when its own signature is (#10024). A void result is a word like any other: every backend hands one back from
 // a void body, so the call stands in statement position like any void call.
 function func_shape_error(fn: typeinfo.TypeFunc): string {
     if (!fn.params_known) { return "function type without a signature"; }
@@ -1622,7 +1623,8 @@ function func_shape_error(fn: typeinfo.TypeFunc): string {
 }
 
 function signature_slot(t: typeinfo.Type): boolean {
-    if (is_func(t) || nests_func(t)) { return false; }
+    if let typeinfo.TypeFunc(inner) = t { return func_shape_error(inner) == ""; }
+    if (nests_func(t)) { return false; }
     return semtypes.concrete(t, false);
 }
 

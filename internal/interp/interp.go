@@ -1023,6 +1023,46 @@ func New() *Interp {
 		}
 		return Number(n), nil
 	}}
+	// __scan_set(s, from, set): the index of the first byte at or after `from`
+	// whose entry in `set` is nonzero, or len(s). `from` clamps like
+	// __memchr's, and a byte past the end of `set` is not in the set. The
+	// oracle for the byte-set scan kernel.
+	i.Builtins["__scan_set"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		if len(args) != 3 {
+			return nil, fmt.Errorf("__scan_set: expected 3 args, got %d", len(args))
+		}
+		s, ok := args[0].(String)
+		if !ok {
+			return nil, fmt.Errorf("__scan_set: expected a string, got %T", args[0])
+		}
+		fn, ok := args[1].(Number)
+		if !ok {
+			return nil, fmt.Errorf("__scan_set: expected an integer start, got %T", args[1])
+		}
+		set, ok := args[2].(Array)
+		if !ok {
+			return nil, fmt.Errorf("__scan_set: expected a u8[] set, got %T", args[2])
+		}
+		from := int(int64(fn))
+		if from < 0 {
+			from = 0
+		}
+		b := []byte(string(s))
+		for idx := from; idx < len(b); idx++ {
+			c := int(b[idx])
+			if c >= len(set.E) {
+				continue
+			}
+			e, ok := set.E[c].(Number)
+			if !ok {
+				return nil, fmt.Errorf("__scan_set: set element %d is %T, not a byte", c, set.E[c])
+			}
+			if int64(e) != 0 {
+				return Number(idx), nil
+			}
+		}
+		return Number(len(b)), nil
+	}}
 	// __sum_bytes(s): the wrapped 32-bit sum of every byte of `s`. The oracle
 	// for the sixth fused kernel (docs/ATLAS-PLATFORM-PLAN.md §3.3).
 	//

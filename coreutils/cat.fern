@@ -99,11 +99,18 @@ function help_text(): string {
 // `Fmt` — the formatting the option scan selected. `plain` is the
 // fast path: none of it. `spell` is the -v / -T spelling by byte,
 // built once by `spell_table`, and `spell_len` its length: zero for a
-// byte copied through as it is.
-struct Fmt { number: boolean, nonblank: boolean, squeeze: boolean, ends: boolean, tabs: boolean, np: boolean, spell: string[], spell_len: u8[] }
+// byte copied through as it is. `stop` is the set a line's scan stops at:
+// the spelled bytes and the newline.
+struct Fmt { number: boolean, nonblank: boolean, squeeze: boolean, ends: boolean, tabs: boolean, np: boolean, spell: string[], spell_len: u8[], stop: u8[] }
 
 function is_plain(f: Fmt): boolean {
   return !f.number && !f.nonblank && !f.squeeze && !f.ends && !f.tabs && !f.np;
+}
+
+// -v / -T / -E with no numbering or squeezing: the one scan per chunk
+// that `spell_chunk` takes.
+function is_spell_only(f: Fmt): boolean {
+  return (f.np || f.tabs) && !f.number && !f.nonblank && !f.squeeze;
 }
 
 function is_squeeze_only(f: Fmt): boolean {
@@ -149,7 +156,14 @@ function spell_table(f: Fmt): Fmt {
     lens = lens.with(b, s.len() as u8);
     b = b + 1;
   }
-  return Fmt { ...f, spell: tab, spell_len: lens };
+  var stop: u8[] = __alloc_u8(256);
+  var k: i32 = 0;
+  while (k < 256) {
+    stop = stop.with(k, lens[k]);
+    k = k + 1;
+  }
+  stop = stop.with(10, 1 as u8);
+  return Fmt { ...f, spell: tab, spell_len: lens, stop: stop };
 }
 
 // `State` — what carries across files: the buffered stdout, the
@@ -227,6 +241,7 @@ function format_chunk(st: State, chunk: string, f: Fmt): State {
   var pos: i32 = 0;
   var len: i32 = chunk.len();
   var spell: boolean = f.np || f.tabs;
+  var stop: u8[] = f.stop;
   var squeeze: boolean = f.squeeze;
   var nonblank: boolean = f.nonblank;
   var number: boolean = f.number;
@@ -270,17 +285,13 @@ function format_chunk(st: State, chunk: string, f: Fmt): State {
       prev_blank = blank;
     }
     if (spell) {
-      var i: i32 = pos;
+      // The stop set holds the newline, so the scan never passes `end`.
+      var i: i32 = __scan_set(chunk, pos, stop);
       while (i < end) {
-        var b: i32 = chunk[i] as i32;
-        if (f.spell_len[b] as i32 == 0) {
-          i = i + 1;
-          continue;
-        }
         buf_push_range(h, chunk, pos, i);
-        buf_push(h, f.spell[b]);
-        i = i + 1;
-        pos = i;
+        buf_push(h, f.spell[chunk[i] as i32]);
+        pos = i + 1;
+        i = __scan_set(chunk, pos, stop);
       }
     }
     if (nl < 0) {
@@ -300,6 +311,36 @@ function format_chunk(st: State, chunk: string, f: Fmt): State {
   // One settle per chunk: the builder grows as the chunk's lines are
   // pushed, by at most a few times the read, and is written once.
   return State { ...s, w: gnu.check(gnu.settle(w)), num: num, head: head, head_of: head_of, at_start: at_start, prev_blank: prev_blank };
+}
+
+// `spell_chunk(st, chunk, f)` — -v / -T with nothing that needs the start
+// of a line: one set scan finds the next byte to spell or the newline, and
+// the run before it is one append. No memchr for the line end, since the
+// stop set holds the newline.
+function spell_chunk(st: State, chunk: string, f: Fmt): State {
+  var w: io_buffered.BufWriter = st.w;
+  var h: usize = w.handle();
+  var stop: u8[] = f.stop;
+  var ends: boolean = f.ends;
+  var len: i32 = chunk.len();
+  var pos: i32 = 0;
+  var i: i32 = __scan_set(chunk, 0, stop);
+  while (i < len) {
+    buf_push_range(h, chunk, pos, i);
+    var b: i32 = chunk[i] as i32;
+    if (b == 10) {
+      if (ends) {
+        buf_push_byte(h, 36);
+      }
+      buf_push_byte(h, 10);
+    } else {
+      buf_push(h, f.spell[b]);
+    }
+    pos = i + 1;
+    i = __scan_set(chunk, pos, stop);
+  }
+  buf_push_range(h, chunk, pos, len);
+  return State { ...st, w: gnu.check(gnu.settle(w)), at_start: chunk[len - 1] as i32 == 10 };
 }
 
 // `squeeze_chunk(st, chunk)` — -s with nothing else: a run of
@@ -389,6 +430,7 @@ function cat_file(path: string, st: State, f: Fmt, out_stat: FileStat): State {
   }
   var plain: boolean = is_plain(f);
   var squeeze_only: boolean = is_squeeze_only(f);
+  var spell_only: boolean = is_spell_only(f);
   while (true) {
     match (r.read_chunk(read_size())) {
       Ok(chunk) => {
@@ -399,6 +441,8 @@ function cat_file(path: string, st: State, f: Fmt, out_stat: FileStat): State {
           s = State { ...s, w: gnu.put(s.w, chunk) };
         } else if (squeeze_only) {
           s = squeeze_chunk(s, chunk);
+        } else if (spell_only) {
+          s = spell_chunk(s, chunk, f);
         } else {
           s = format_chunk(s, chunk, f);
         }
@@ -433,7 +477,7 @@ pub function main(): i32 {
   opts = opts.append(gnu.flag("t", "", opt_t()));
   opts = opts.append(gnu.flag("u", "", opt_u()));
 
-  var f: Fmt = Fmt { number: false, nonblank: false, squeeze: false, ends: false, tabs: false, np: false, spell: [], spell_len: [] };
+  var f: Fmt = Fmt { number: false, nonblank: false, squeeze: false, ends: false, tabs: false, np: false, spell: [], spell_len: [], stop: [] };
   var g: gnu.Getopt = gnu.getopt_new(argv, opts, "cat", help_text(), 1);
   while (true) {
     var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();

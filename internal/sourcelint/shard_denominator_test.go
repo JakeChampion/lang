@@ -29,7 +29,17 @@ import (
 // filename merged down to one (#7519). Both were a hand-maintained count
 // drifting from the thing it described. The fix each time was to derive the
 // number rather than restate it; this pins that the derivation stays.
+// FERNSMITH_SHRINK_SHARD has the same `I/N` shape over the fernsmith shrink
+// sweep's seeds, and the same failure if its N drifts from the matrix.
+var shardEnvs = []string{"DIFF_ORACLE_SHARD", "FERNSMITH_SHRINK_SHARD"}
+
 func TestShardDenominatorMatchesMatrix(t *testing.T) {
+	for _, env := range shardEnvs {
+		t.Run(env, func(t *testing.T) { checkShardDenominators(t, env) })
+	}
+}
+
+func checkShardDenominators(t *testing.T, env string) {
 	dir := filepath.Join("..", "..", ".github", "workflows")
 	ents, err := os.ReadDir(dir)
 	if err != nil {
@@ -37,9 +47,9 @@ func TestShardDenominatorMatchesMatrix(t *testing.T) {
 	}
 
 	// A literal denominator, e.g. `DIFF_ORACLE_SHARD: "${{ matrix.shard }}/2"`.
-	literal := regexp.MustCompile(`DIFF_ORACLE_SHARD:\s*"[^"]*/(\d+)"`)
+	literal := regexp.MustCompile(env + `:\s*"[^"]*/(\d+)"`)
 	// The derived form, where the denominator is carried by the matrix.
-	derived := regexp.MustCompile(`DIFF_ORACLE_SHARD:\s*"[^"]*/\$\{\{\s*matrix\.[A-Za-z0-9_.]*nshard\s*\}\}"`)
+	derived := regexp.MustCompile(env + `:\s*"[^"]*/\$\{\{\s*matrix\.[A-Za-z0-9_.]*nshard\s*\}\}"`)
 
 	var checked int
 	for _, e := range ents {
@@ -51,7 +61,7 @@ func TestShardDenominatorMatchesMatrix(t *testing.T) {
 			t.Fatalf("read %s: %v", e.Name(), err)
 		}
 		src := string(b)
-		if !strings.Contains(src, "DIFF_ORACLE_SHARD") {
+		if !strings.Contains(src, env) {
 			continue
 		}
 		checked++
@@ -62,7 +72,7 @@ func TestShardDenominatorMatchesMatrix(t *testing.T) {
 		// another's matrix — which is the drift this exists to catch.
 		var sawEnv bool
 		for jobName, job := range jobBlocks(src) {
-			if !strings.Contains(job, "DIFF_ORACLE_SHARD") {
+			if !strings.Contains(job, env) {
 				continue
 			}
 			sawEnv = true
@@ -70,29 +80,29 @@ func TestShardDenominatorMatchesMatrix(t *testing.T) {
 			for _, m := range literal.FindAllStringSubmatch(job, -1) {
 				n, _ := strconv.Atoi(m[1])
 				if !containsInt(buckets, n) {
-					t.Errorf("%s job %q: DIFF_ORACLE_SHARD names %d buckets but its "+
+					t.Errorf("%s job %q: %s names %d buckets but its "+
 						"matrix schedules %v jobs. Seeds in a bucket no job claims "+
 						"are swept by nobody and every job still reports green. "+
 						"Carry the denominator on the matrix "+
 						"(`${{ matrix.nshard }}`, see test-e2e-differential.yml) "+
-						"rather than restating it here", e.Name(), jobName, n, buckets)
+						"rather than restating it here", e.Name(), jobName, env, n, buckets)
 				}
 			}
 			if !literal.MatchString(job) && !derived.MatchString(job) {
-				t.Errorf("%s job %q: sets DIFF_ORACLE_SHARD in a shape this guard "+
+				t.Errorf("%s job %q: sets %s in a shape this guard "+
 					"does not recognise, so its denominator is no longer checked "+
 					"against the matrix — update the patterns here alongside the "+
-					"workflow", e.Name(), jobName)
+					"workflow", e.Name(), jobName, env)
 			}
 		}
 		if !sawEnv {
-			t.Errorf("%s: sets DIFF_ORACLE_SHARD but not inside any job block this "+
-				"guard can find — did the `jobs:` layout change?", e.Name())
+			t.Errorf("%s: sets %s but not inside any job block this "+
+				"guard can find — did the `jobs:` layout change?", e.Name(), env)
 		}
 	}
 
 	if checked == 0 {
-		t.Fatal("no workflow sets DIFF_ORACLE_SHARD — did the env var get renamed?")
+		t.Fatalf("no workflow sets %s — did the env var get renamed?", env)
 	}
 }
 

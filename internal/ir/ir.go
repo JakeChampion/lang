@@ -15409,6 +15409,20 @@ func (b *builder) callBody(n *ast.Call) error {
 			return nil
 		}
 	}
+	// __scan_set(s, from, set) — the same runtime-helper-call shape, with a
+	// u8[] third operand: one pointer slot everywhere, the string one or two.
+	if id.Name == "__scan_set" && len(n.Args) == 3 {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			for _, a := range n.Args {
+				if err := b.expr(a); err != nil {
+					return err
+				}
+			}
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_scan_set", Width: ResNarrow, I32: 3,
+				Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}}}})
+			return nil
+		}
+	}
 	// __mismatch(a, ao, b, bo, n) — the same runtime-helper-call shape as its
 	// four siblings, with TWO strings. ArgTypes is doubly essential here:
 	// under the two-word ABI this call is seven operand slots, not five, and

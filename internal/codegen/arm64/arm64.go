@@ -167,6 +167,7 @@ var linuxDarwinSysno = map[string][2]int{
 	"listen":      {sysListen, darListen},
 	"accept":      {sysAccept, darAccept},
 	"connect":     {sysConnect, darConnect},
+	"sendto":      {206, 133},
 	"getsockname": {sysGetsockname, darGetsockname},
 	"openat":      {sysOpenat, darOpenat},
 	// fcntl(2) — Linux asm-generic 25, Darwin BSD 92. Backs the open
@@ -825,6 +826,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesCountByte {
 		g.emitCountByteRuntime()
+	}
+	if g.usesScanSet {
+		g.emitScanSetRuntime()
 	}
 	if g.usesSumBytes {
 		g.emitSumBytesRuntime()
@@ -4982,6 +4986,66 @@ func (g *generator) emitRmemchrRuntime() {
 	g.sizeDirective("__fern_rmemchr")
 }
 
+// emitScanSetRuntime emits `__fern_scan_set(s, from, set) -> i32`: the index
+// of the first byte at or after `from` whose entry in `set` is nonzero, or
+// len(s). Scalar: a byte set has no splat, and the table read per byte is
+// what the kernel is. The fast loop runs when the set has an entry for every
+// byte value; a shorter set takes the loop that checks each byte against
+// its length first.
+func (g *generator) emitScanSetRuntime() {
+	g.line("")
+	g.line(".global __fern_scan_set")
+	g.typeDirective("__fern_scan_set")
+	g.label("__fern_scan_set")
+	// x0/x1 = string words, w2 = from, x3 = set (length at [x3 - 4]).
+	g.emit("stp x29, x30, [sp, #-48]!")
+	g.emit("mov x29, sp")
+	g.emit("mov x4, x0")                     // data word
+	g.emit("mov x5, x1")                     // length word
+	g.emitStrDataPtr2W("x7", "x4", "x5", 16) // x7 = byte pointer
+	g.emitStrLen2W("w6", "x5")               // w6 = byte length
+	// Clamp `from` into [0, len]; at or past the end the answer is len.
+	g.emit("tbz w2, #31, .Lscan_set_from_ok")
+	g.emit("mov w2, #0")
+	g.label(".Lscan_set_from_ok")
+	g.emit("ldur w8, [x3, #-4]") // set length
+	g.emit("cmp w8, #256")
+	g.emit("b.lo .Lscan_set_short")
+	g.label(".Lscan_set_loop")
+	g.emit("cmp w2, w6")
+	g.emit("b.ge .Lscan_set_end")
+	g.emit("add x9, x7, w2, uxtw")
+	g.emit("ldrb w10, [x9]")
+	g.emit("add x9, x3, w10, uxtw")
+	g.emit("ldrb w11, [x9]")
+	g.emit("cbnz w11, .Lscan_set_hit")
+	g.emit("add w2, w2, #1")
+	g.emit("b .Lscan_set_loop")
+	// A set shorter than 256 entries: a byte past its end is not in it.
+	g.label(".Lscan_set_short")
+	g.emit("cmp w2, w6")
+	g.emit("b.ge .Lscan_set_end")
+	g.emit("add x9, x7, w2, uxtw")
+	g.emit("ldrb w10, [x9]")
+	g.emit("cmp w10, w8")
+	g.emit("b.hs .Lscan_set_short_next")
+	g.emit("add x9, x3, w10, uxtw")
+	g.emit("ldrb w11, [x9]")
+	g.emit("cbnz w11, .Lscan_set_hit")
+	g.label(".Lscan_set_short_next")
+	g.emit("add w2, w2, #1")
+	g.emit("b .Lscan_set_short")
+	g.label(".Lscan_set_hit")
+	g.emit("mov w0, w2")
+	g.emit("b .Lscan_set_ret")
+	g.label(".Lscan_set_end")
+	g.emit("mov w0, w6") // nothing in the set: the answer is len
+	g.label(".Lscan_set_ret")
+	g.emit("ldp x29, x30, [sp], #48")
+	g.emit("ret")
+	g.sizeDirective("__fern_scan_set")
+}
+
 // emitCountByteRuntime emits `__fern_count_byte(s, byte) -> i32`: how many
 // bytes of `s` equal `byte`.
 //
@@ -6240,15 +6304,20 @@ func (g *generator) emitTcpListenRuntime() {
 	g.syscall("bind")
 	g.emit("add sp, sp, #16") // pop sockaddr_in
 	g.emit("cmp x0, #0")
-	g.emit("blt .Ltcp_lst_err")
+	g.emit("blt .Ltcp_lst_close")
 	// listen(fd, 128)
 	g.emit("mov x0, x20")
 	g.emit("mov x1, #128")
 	g.syscall("listen")
 	g.emit("cmp x0, #0")
-	g.emit("blt .Ltcp_lst_err")
+	g.emit("blt .Ltcp_lst_close")
 	g.emit("mov x0, x20") // return fd
 	g.emit("b .Ltcp_lst_done")
+	g.label(".Ltcp_lst_close")
+	g.emit("mov x19, x0") // preserve the setup errno across close
+	g.emit("mov x0, x20")
+	g.syscall("close")
+	g.emit("mov x0, x19")
 	g.label(".Ltcp_lst_err")
 	// x0 holds -errno from the failed syscall.
 	g.label(".Ltcp_lst_done")
@@ -6297,9 +6366,14 @@ func (g *generator) emitTcpConnectRuntime() {
 	g.syscall("connect")
 	g.emit("add sp, sp, #16")
 	g.emit("cmp x0, #0")
-	g.emit("blt .Ltcp_con_err")
+	g.emit("blt .Ltcp_con_close")
 	g.emit("mov x0, x21") // return fd
 	g.emit("b .Ltcp_con_done")
+	g.label(".Ltcp_con_close")
+	g.emit("mov x19, x0") // preserve the setup errno across close
+	g.emit("mov x0, x21")
+	g.syscall("close")
+	g.emit("mov x0, x19")
 	g.label(".Ltcp_con_err")
 	// x0 holds -errno from the failed syscall.
 	g.label(".Ltcp_con_done")
@@ -6409,14 +6483,23 @@ func (g *generator) emitTcpRecvRuntime() {
 	g.line(".ltorg")
 }
 
-// emitTcpSendRuntime emits `__fern_tcp_send(fd, data)` —
-// writes the entire string to the fd via `write(2)`. Returns
-// the syscall result (bytes written or `-errno`).
+// emitTcpSendRuntime emits one socket send with MSG_NOSIGNAL.
+// Returns accepted bytes or -errno; callers retain any unsent suffix.
 func (g *generator) emitTcpSendRuntime() {
 	g.line("")
 	g.line(".global __fern_tcp_send")
 	g.typeDirective("__fern_tcp_send")
 	g.label("__fern_tcp_send")
+	send := func() {
+		if g.darwin {
+			g.emit("mov x3, #524288") // Darwin MSG_NOSIGNAL
+		} else {
+			g.emit("mov x3, #16384") // Linux MSG_NOSIGNAL
+		}
+		g.emit("mov x4, #0") // destination is already connected
+		g.emit("mov x5, #0")
+		g.syscall("sendto")
+	}
 	if ast.UseTwoWordStrings(8) {
 		// x0 = fd, x1 = data, x2 = len.
 		g.emit("stp x29, x30, [sp, #-48]!")
@@ -6426,7 +6509,7 @@ func (g *generator) emitTcpSendRuntime() {
 		g.emitStrDataPtr2W("x1", "x1", "x2", 16) // x1 = byte ptr
 		g.emit("mov w0, w3")                     // x0 = fd
 		g.emit("mov x2, x4")                     // x2 = byte length
-		g.syscall("write")
+		send()
 		g.emit("ldp x29, x30, [sp], #48")
 		g.emit("ret")
 		g.sizeDirective("__fern_tcp_send")
@@ -6438,7 +6521,7 @@ func (g *generator) emitTcpSendRuntime() {
 	g.emit("mov x29, sp")
 	g.emitStrLen("w2", "x1")
 	g.emitStrDataPtr("x1", "x1", 16)
-	g.syscall("write")
+	send()
 	g.emit("ldp x29, x30, [sp], #32")
 	g.emit("ret")
 	g.sizeDirective("__fern_tcp_send")
@@ -15268,6 +15351,8 @@ type generator struct {
 	usesRmemchr bool
 	// usesCountByte gates the byte-tally kernel (__fern_count_byte).
 	usesCountByte bool
+	// usesScanSet gates the byte-set scan kernel (__fern_scan_set).
+	usesScanSet bool
 	// usesSumBytes gates the byte-sum reduction kernel (__fern_sum_bytes).
 	usesSumBytes bool
 	// usesScaleF64 gates the f64 scaling kernel (__fern_scale_f64).
@@ -19862,6 +19947,8 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesCrc32Cksum = true
 		case "__fern_count_byte":
 			g.usesCountByte = true
+		case "__fern_scan_set":
+			g.usesScanSet = true
 		case "__fern_sum_bytes":
 			g.usesSumBytes = true
 		case "__fern_scale_f64":

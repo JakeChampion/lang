@@ -479,6 +479,7 @@ pub function sysno(t: string, name: string): string {
         if (name == "bind") { return "49"; }
         if (name == "listen") { return "50"; }
         if (name == "connect") { return "42"; }
+        if (name == "sendto") { return "44"; }
         if (name == "getsockname") { return "51"; }
     if (name == "execve") { return "59"; }
     if (name == "fork") { return "57"; }
@@ -563,6 +564,7 @@ pub function sysno(t: string, name: string): string {
         if (name == "bind") { return "104"; }
         if (name == "listen") { return "106"; }
         if (name == "connect") { return "98"; }
+        if (name == "sendto") { return "133"; }
         if (name == "getsockname") { return "32"; }
         if (name == "execve") { return "59"; }
         if (name == "ioctl") { return "54"; }
@@ -667,6 +669,7 @@ pub function sysno(t: string, name: string): string {
     if (name == "bind") { return "200"; }
     if (name == "listen") { return "201"; }
     if (name == "connect") { return "203"; }
+    if (name == "sendto") { return "206"; }
     if (name == "getsockname") { return "204"; }
     if (name == "execve") { return "221"; }
     if (name == "clone") { return "220"; }
@@ -1603,7 +1606,7 @@ function sockaddr_head(t: string, buf: string): string {
 // which is what `htons` means and why it is two explicit byte stores rather
 // than an endianness-dependent word write.
 pub function rt_src_tcp_listen(t: string): string {
-    return "function __fern_tcp_listen(port: i32): i32 { var fd: i32 = __syscall3(" + sysno(t, "socket") + ", 2, 1, 0); if (fd < 0) { return fd; } var sa: i32 = __raw_scratch(16); " + sockaddr_head(t, "sa") + " __raw_store8(sa, 2, (port >> 8) & 255); __raw_store8(sa, 3, port & 255); var z: i32 = 4; while (z < 16) { __raw_store8(sa, z, 0); z = z + 1; } var rb: i32 = __syscall3(" + sysno(t, "bind") + ", fd, sa, 16); if (rb < 0) { return rb; } var rl: i32 = __syscall3(" + sysno(t, "listen") + ", fd, 128, 0); if (rl < 0) { return rl; } return fd; }";
+    return "function __fern_tcp_listen(port: i32): i32 { var fd: i32 = __syscall3(" + sysno(t, "socket") + ", 2, 1, 0); if (fd < 0) { return fd; } var sa: i32 = __raw_scratch(16); " + sockaddr_head(t, "sa") + " __raw_store8(sa, 2, (port >> 8) & 255); __raw_store8(sa, 3, port & 255); var z: i32 = 4; while (z < 16) { __raw_store8(sa, z, 0); z = z + 1; } var rb: i32 = __syscall3(" + sysno(t, "bind") + ", fd, sa, 16); if (rb < 0) { __syscall3(" + sysno(t, "close") + ", fd, 0, 0); return rb; } var rl: i32 = __syscall3(" + sysno(t, "listen") + ", fd, 128, 0); if (rl < 0) { __syscall3(" + sysno(t, "close") + ", fd, 0, 0); return rl; } return fd; }";
 }
 
 // rt_src_tcp_connect backs `tcp_connect(host_be, port)` (#2649, syscall-leaf) →
@@ -1620,7 +1623,7 @@ pub function rt_src_tcp_listen(t: string): string {
 // through the Linux trap. Baking the number per target is exactly the mechanism
 // that exists because darwinize cannot remap a number it only sees at runtime.
 pub function rt_src_tcp_connect(t: string): string {
-    return "function __fern_tcp_connect(host_be: i32, port: i32): i32 { var fd: i32 = __syscall3(" + sysno(t, "socket") + ", 2, 1, 0); if (fd < 0) { return fd; } var sa: i32 = __raw_scratch(16); " + sockaddr_head(t, "sa") + " __raw_store8(sa, 2, (port >> 8) & 255); __raw_store8(sa, 3, port & 255); __raw_store8(sa, 4, host_be & 255); __raw_store8(sa, 5, (host_be >> 8) & 255); __raw_store8(sa, 6, (host_be >> 16) & 255); __raw_store8(sa, 7, (host_be >> 24) & 255); var z: i32 = 8; while (z < 16) { __raw_store8(sa, z, 0); z = z + 1; } var rc: i32 = __syscall3(" + sysno(t, "connect") + ", fd, sa, 16); if (rc < 0) { return rc; } return fd; }";
+    return "function __fern_tcp_connect(host_be: i32, port: i32): i32 { var fd: i32 = __syscall3(" + sysno(t, "socket") + ", 2, 1, 0); if (fd < 0) { return fd; } var sa: i32 = __raw_scratch(16); " + sockaddr_head(t, "sa") + " __raw_store8(sa, 2, (port >> 8) & 255); __raw_store8(sa, 3, port & 255); __raw_store8(sa, 4, host_be & 255); __raw_store8(sa, 5, (host_be >> 8) & 255); __raw_store8(sa, 6, (host_be >> 16) & 255); __raw_store8(sa, 7, (host_be >> 24) & 255); var z: i32 = 8; while (z < 16) { __raw_store8(sa, z, 0); z = z + 1; } var rc: i32 = __syscall3(" + sysno(t, "connect") + ", fd, sa, 16); if (rc < 0) { __syscall3(" + sysno(t, "close") + ", fd, 0, 0); return rc; } return fd; }";
 }
 
 // rt_src_udp_send backs `udp_send(host, port, data)` (#2649, #6917) → the bytes
@@ -1651,7 +1654,8 @@ pub function rt_src_udp_send(t: string): string {
 }
 
 // rt_src_tcp_send backs `tcp_send(fd, s)` (#2649, syscall-leaf) → bytes written
-// or -errno. A single write(2) straight out of the string's own buffer.
+// or -errno. One sendto(2) from the string's buffer with MSG_NOSIGNAL, so
+// a disconnected peer cannot terminate the process. Short writes stay visible.
 //
 // This was the last leaf, and it was held up by a floor addition it turned out
 // not to need. The blocker was described as a missing `__raw_data` OP — the
@@ -1660,7 +1664,9 @@ pub function rt_src_udp_send(t: string): string {
 // box pointer and the data word is slot 0 of that box, so __raw_data lowers to
 // the raw_load_ptr the floor has had all along. No copy, and no new op.
 pub function rt_src_tcp_send(t: string): string {
-    return "function __fern_tcp_send(fd: i32, s: string): i32 { return __syscall3(" + sysno(t, "write") + ", fd, __raw_data(s), s.len()); }";
+    var flags: string = "16384";
+    if (t == "arm64-darwin") { flags = "524288"; }
+    return "function __fern_tcp_send(fd: i32, s: string): i32 { return __syscall6(" + sysno(t, "sendto") + ", fd, __raw_data(s), s.len(), " + flags + ", 0, 0); }";
 }
 
 // rt_src_tcp_recv backs `tcp_recv(fd, max)` (#5714, syscall-leaf) → a fresh
@@ -4714,6 +4720,10 @@ function builtin_i32_names(): string[] {
         // is why the miss value can be a real index rather than a
         // sentinel outside the type.
         "__ascii_run",
+        // __scan_set(s, from, set): the index of the first byte at or
+        // after `from` whose entry in the u8[] `set` is nonzero, or the
+        // LENGTH. i32 for ascii_run's reason.
+        "__scan_set",
         // __rmemchr(s, byte, from): the index of the LAST `byte` at
         // or before `from`, or -1 (ATLAS-PLATFORM-PLAN §3.3,
         // memchr's nominated sibling). Same i32 shape as __memchr's;
