@@ -19921,6 +19921,28 @@ pub function settle_module(mod: Module): Module {
     return Module { ...mod, funcs: funcs, top_stmts: settle_block(mod.top_stmts, "", nonames, nonames, fns, mod.structs) };
 }
 
+// settle_const_types gives a `const` written without a type its value's type,
+// as native's constfold does from the folded literal. Consts settle in
+// declaration order, each one visible to the next, so `const B = A * 2` reads
+// A's type. A value it cannot type keeps "" and draws E070.
+function settle_const_types(funcs: FuncDecl[], structs: StructDecl[]): FuncDecl[] {
+    var known: ast.ParamDecl[] = [];
+    var out: FuncDecl[] = [];
+    for fd in funcs {
+        var f: FuncDecl = fd;
+        if (f.is_const && f.ret_type == "" && f.body.len() == 1) {
+            if let ast.StmtReturn(r) = f.body[0] {
+                f = FuncDecl { ...f, ret_type: irt_guess(r.value, known, funcs, structs) };
+            }
+        }
+        if (f.is_const && f.ret_type.len() > 0) {
+            known = known.append(ast.ParamDecl { name: f.name, type_name: f.ret_type, is_str: false, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" });
+        }
+        out = out.append(f);
+    }
+    return out;
+}
+
 pub function parse_module(toks: lexer.Token[]): Module {
     var (m, t, im, fl, ih) = parse_module_flagged(toks, false);
     return m;
@@ -20365,6 +20387,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
     // resolve_assoc_projections runs FIRST of the module passes: settle_module
     // and the variant-field resolver both read declared type spellings, and a
     // `Self::Item` left unresolved would reach them as an unknown nominal.
+    if (!verbatim) { funcs = settle_const_types(funcs, structs); }
     return (settle_module(resolve_variant_fields_module(resolve_labels_module(resolve_assoc_projections(Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports, impls: impl_infos, trait_reqs: trait_reqs, trait_decls: traits })))), traits, impl_decls, flines, inline_hints);
 }
 

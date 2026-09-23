@@ -183,6 +183,21 @@ import "./semlower";
 // encoder produces) into a u8[] so string_from_bytes_unchecked can pack it into a
 // string whose bytes are written verbatim (incl. 0x00 / high bytes) by
 // write_file. Used by the wasm binary output forms.
+// eprint_diags prints diagnostics as `-check` and native do: `line:col: ` when
+// the position is known, and no `error[…]` segment for an uncoded one (the
+// const-grammar rule is one).
+function eprint_diags(ds: util.Diag[]): void {
+    for d in ds {
+        var tag: string = "";
+        if (d.code.len() > 0) { tag = "error[" + d.code + "]: "; }
+        if (d.line > 0) {
+            eprint(util.i32_to_string(d.line) + ":" + util.i32_to_string(d.col) + ": " + tag + d.message + "\n");
+        } else {
+            eprint(tag + d.message + "\n");
+        }
+    }
+}
+
 function to_u8(b: i32[]): u8[] {
     var o: u8[] = [];
     var i: i32 = 0;
@@ -1370,23 +1385,7 @@ function check_bundle(b: Bundle, target: string, target_given: boolean): i32 {
     var mt: checker.ModuleTypes = checker.check_module(merged);
     // Surface the coded diagnostics (the same E0XX codes the Go
     // checker emits — see docs/SELFHOST-CHECKER-PORT.md) on stderr.
-    // Positions aren't threaded through the AST yet, so a diagnostic
-    // is `error[E0XX]: message` without a line:col prefix for now.
-    var di: i32 = 0;
-    while (di < mt.diags.len()) {
-        var d: util.Diag = mt.diags[di];
-        // An empty code renders with no `error[…]` segment — some native
-        // diagnostics are uncoded (the const-grammar rule is one), and
-        // parity is on the text native actually prints.
-        var tag: string = "";
-        if (d.code.len() > 0) { tag = "error[" + d.code + "]: "; }
-        if (d.line > 0) {
-            eprint(util.i32_to_string(d.line) + ":" + util.i32_to_string(d.col) + ": " + tag + d.message + "\n");
-        } else {
-            eprint(tag + d.message + "\n");
-        }
-        di = di + 1;
-    }
+    eprint_diags(mt.diags);
     // The capability boundary, when a target was asked for. It runs
     // whatever the checker concluded: the scan is syntactic — a call to a
     // named builtin — so it holds where the partial checker collapses an
@@ -2253,18 +2252,9 @@ function run(): i32 {
     // diagnostic except the partial-port rules measured to false-positive —
     // and a hit is reported with the same `line:col: error[CODE]: message`
     // shape as `-check`.
-    var gated: util.Diag[] = checker.filter_build_gate(checker.check_module(merged).diags);
+    var gated: util.Diag[] = checker.build_gate_diags(merged);
     if (gated.len() > 0) {
-        var ii: i32 = 0;
-        while (ii < gated.len()) {
-            var idg: util.Diag = gated[ii];
-            if (idg.line > 0) {
-                eprint(util.i32_to_string(idg.line) + ":" + util.i32_to_string(idg.col) + ": error[" + idg.code + "]: " + idg.message + "\n");
-            } else {
-                eprint("error[" + idg.code + "]: " + idg.message + "\n");
-            }
-            ii = ii + 1;
-        }
+        eprint_diags(gated);
         return 1;
     }
 
