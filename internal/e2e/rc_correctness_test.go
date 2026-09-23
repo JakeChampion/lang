@@ -8995,6 +8995,37 @@ function main(): i32 {
     return (t - 400) + __rc_underflow_count();
 }`,
 	},
+	{
+		// #7914: a `string[]` of heap strings returned bare from one arm of a
+		// callee while the caller keeps using its own binding. Refusing the
+		// returned-parameter credit once stranded every element here (1260
+		// allocs / 780 frees); the leak gate pins it at zero.
+		name: "returned_bare_param_kept_by_caller",
+		src: `
+@noinline
+function w(i: i32): string { var t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "a-wide-payload-past-any-inline-threshold-" + t; }
+@noinline
+function visible(gfns: string[], keep: boolean): string[] {
+    if (keep) { return gfns; }
+    var out: string[] = [];
+    return out;
+}
+function round(i: i32): i32 {
+    var gfns: string[] = [];
+    var k: i32 = 0;
+    while (k < 6) { gfns = gfns.append(w(i + k)); k = k + 1; }
+    var vis: string[] = visible(gfns, i % 2 == 0);
+    var t: i32 = 0;
+    if (gfns[0] == w(i)) { t = t + 1; }
+    return (t + vis.len() + gfns.len() + gfns.len()) % 97;
+}
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 120) { acc = acc + round(i); i = i + 1; }
+    return (acc % 83 - 11) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {

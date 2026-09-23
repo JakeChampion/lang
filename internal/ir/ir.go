@@ -3165,23 +3165,10 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 	// ownership model, since a call_indirect / call-through-pointer has no
 	// callee name to hang a caller-side retain on (paramVerdict).
 	vtableDispatched := vtableDispatchedMethods(info, out.Vtables)
-	// Per-function "every value return is a box this callee constructed" —
-	// what rhsTainted's Call case needs to stop inheriting an argument's
-	// borrow taint into a freshly built result (findReturnsFreshBox). Runs
-	// once the ownership ladder's inputs are all in, because a bare
-	// parameter return earns the credit only where the parameter is
-	// owned-by-default.
-	verdictFacts := paramVerdictFacts{
-		info:                info,
-		ptrW:                ptrW,
-		trmcFuncs:           trmcFuncs,
-		trmcConsumeSafe:     trmcConsumeSafe,
-		vtableDispatched:    vtableDispatched,
-		addressTaken:        addressTaken,
-		paramEscapes:        paramEscapes,
-		readOnlyComparators: readOnlyComparators,
-	}
-	returnsFreshBox := findReturnsFreshBox(prog, info, pairForm, trmcFuncs, verdictFacts.ownedParam)
+	// Per-function "every value return is a box this callee owns" — what
+	// rhsTainted's Call case needs to stop inheriting an argument's borrow
+	// taint into a freshly built result (findReturnsFreshBox).
+	returnsFreshBox := findReturnsFreshBox(prog, info, pairForm, trmcFuncs)
 	returnsConstructedBox := findReturnsConstructedBox(prog, info, pairForm, trmcFuncs)
 	// #4873: per-function param positions whose buffers the callee may grow
 	// in place — drives the caller-side containment bracket in callBody.
@@ -6556,12 +6543,6 @@ func (b *builder) paramVerdictFacts() paramVerdictFacts {
 		paramEscapes:        b.paramEscapes,
 		readOnlyComparators: b.readOnlyComparators,
 	}
-}
-
-// ownedParam reports whether parameter i of fn is owned-by-default on the
-// definition side: fn's exit sweep releases the reference it was handed.
-func (f paramVerdictFacts) ownedParam(fn *ast.FuncDecl, i int) bool {
-	return f.verdict(fn.Name, fn.Params[i].Type, i) == paramVerdictOwned
 }
 
 func (f paramVerdictFacts) verdict(fnName string, t ast.Type, i int) paramVerdict {
