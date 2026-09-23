@@ -21,7 +21,6 @@
 diag_e033
 diag_e073
 diag_e074
-sat_const_rejected
 sat_usize_rejected
 tuple_match_err_nonexhaustive
 

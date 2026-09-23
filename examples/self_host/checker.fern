@@ -2808,10 +2808,10 @@ function scalar_method_module(t: typeinfo.Type, method: string): string {
   return "";
 }
 
-// module_imported: the module being checked names `path` in its own import
-// list. Direct imports only — reaching a module transitively does not put its
-// methods in scope, so a transitive match would suppress the hint for exactly
-// the reader who still needs it.
+// module_imported: `path` is in the program's import list. For a single module
+// that is its own imports; for a bundle it is the closure flatten.bundle keeps,
+// which is the only list that still exists once the modules are merged into one
+// namespace — a bundled program has no "direct" imports to distinguish.
 function (s: Scope) module_imported(path: string): boolean {
   return util.index_of_str(s.imports, path) >= 0;
 }
@@ -9333,6 +9333,18 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
       if (!is_resolvable_callee(cid.name, s)) {
         out = out.append(dg_at("E001", "undefined function \"" + cid.name + "\"", cid.line, cid.col));
       }
+      // E001: a Map built without `core/map` in the program's import closure.
+      // Every Map operation lowers to that module's runtime helpers, so
+      // without it the build links against undefined symbols — native reports
+      // it here rather than leaving it to codegen, and so does this. A map
+      // LITERAL needs no arm of its own: the compile parse desugars
+      // `Map { … }` to one of these two constructors, which is also why
+      // map_new_i32 is named here although native has no such spelling.
+      // Reported at every site and thinned to the first by check_module,
+      // matching native's one diagnostic per program.
+      if ((cid.name == "map_new" || cid.name == "map_new_i32") && !s.module_imported("core/map")) {
+        out = out.append(dg_at("E001", map_import_msg(), c.line, c.col));
+      }
     },
     _ => {
       out = call_diags(c.callee, s);
@@ -11038,6 +11050,16 @@ pub function is_build_gate_code(code: string): boolean {
   return util.is_diagnostic_code(code);
 }
 
+// build_gate_diags is what the compile path rejects a module for. Native folds
+// consts before it type-checks and fails the build on a const its fold refuses;
+// that refusal is uncoded, as native's is, so it gates here by where it comes
+// from rather than by code.
+pub function build_gate_diags(mod: parser.Module): util.Diag[] {
+  var cgd: util.Diag[] = const_grammar_diags(mod);
+  if (cgd.len() > 0) { return cgd; }
+  return filter_build_gate(check_module(mod).diags);
+}
+
 // filter_build_gate keeps the diagnostics the compile path enforces.
 pub function filter_build_gate(diags: util.Diag[]): util.Diag[] {
   var out: util.Diag[] = [];
@@ -11541,7 +11563,9 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
   // externs are exempt (they carry a signature, not a definition). Mirrors
   // the native checkFunction rule.
   for func in mod.funcs {
-    if (func.ret_type == "" && func.body.len() > 0) {
+    if (func.ret_type == "" && func.body.len() > 0 && func.is_const) {
+      out = out.append(dg_at("E070", "cannot infer the type of const \"" + func.name + "\"; declare it explicitly", func.line, func.col));
+    } else if (func.ret_type == "" && func.body.len() > 0) {
       out = out.append(dg_at("E070", "missing return type on function \"" + func.name + "\"; declare it explicitly (use `: void` if it returns nothing)", func.line, func.col));
     }
   }
@@ -15440,6 +15464,30 @@ function e060_e062_diags(mod: parser.Module): util.Diag[] {
   return out;
 }
 
+// map_import_msg is the missing-`core/map` text, written once because the rule
+// that emits it and the pass that thins it to one diagnostic both name it.
+function map_import_msg(): string {
+  return "Map operations require `import \"core/map\";`";
+}
+
+// thin_map_import_diags keeps only the FIRST missing-`core/map` diagnostic.
+// Map's helpers all come from the one module, so one report covers every use;
+// native keeps it to one with a checker-level flag, which this pure walk has
+// no equivalent of, so it drops the repeats on the way out instead.
+function thin_map_import_diags(ds: util.Diag[]): util.Diag[] {
+  var msg: string = map_import_msg();
+  var seen: boolean = false;
+  var out: util.Diag[] = [];
+  for d in ds {
+    if (d.code == "E001" && d.message == msg) {
+      if (seen) { continue; }
+      seen = true;
+    }
+    out = out.append(d);
+  }
+  return out;
+}
+
 pub function check_module(raw_mod: parser.Module): ModuleTypes {
   // Native's checker resolves named arguments and fills omitted defaults
   // before it types anything, and reports what does not resolve (E076 /
@@ -15893,7 +15941,7 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
   }
   // own_diags (E050/E051) and e049_diags (E049) walk whole-function bodies
   // for move / capture analysis.
-  var dd: util.Diag[] = util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(fda_diags, collect_decl_diags(mod)), body_diags), own_diags(mod)), e049_diags(mod)), e021_diags(mod)), derive_diags), e021_object_safety_diags(mod)), e060_e062_diags(mod));
+  var dd: util.Diag[] = thin_map_import_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(fda_diags, collect_decl_diags(mod)), body_diags), own_diags(mod)), e049_diags(mod)), e021_diags(mod)), derive_diags), e021_object_safety_diags(mod)), e060_e062_diags(mod)));
   if (dd.len() > 0) {
     well_typed = false;
   }
@@ -17289,7 +17337,7 @@ function annotate_module_in(mod: parser.Module, mt: ModuleTables): parser.Module
     nfuncs = nfuncs.append(annotate_func(func, mt));
   }
   var ntop: ast.Stmt[] = annotate_block(rmod.top_stmts, new_scope_full(mt.sigs, mt.structs, mt.unions, mt.methods, mt.imports));
-  return parser.Module { funcs: nfuncs, structs: rmod.structs, aliases: rmod.aliases, imports: rmod.imports, top_stmts: ntop, enums: rmod.enums, resources: rmod.resources, exports: rmod.exports, impls: rmod.impls, trait_reqs: rmod.trait_reqs, trait_decls: rmod.trait_decls };
+  return parser.Module { funcs: nfuncs, structs: rmod.structs, aliases: rmod.aliases, imports: rmod.imports, top_stmts: ntop, enums: rmod.enums, resources: rmod.resources, exports: rmod.exports, impls: rmod.impls, trait_reqs: rmod.trait_reqs, trait_decls: rmod.trait_decls, inferred_consts: rmod.inferred_consts };
 }
 
 function unchecked_capture(e: ast.Expr, own found: boolean): boolean {

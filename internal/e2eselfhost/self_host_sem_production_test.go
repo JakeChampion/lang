@@ -493,6 +493,7 @@ function total(ss: Shape[]): i32 {
 function main(): i32 { return total([Dot, Line(3), Box(4, 5)]); }
 `},
 	{name: "map-and-string-keys", atLeast: 3, src: `
+import "core/map";
 function tally(words: string[]): Map[string, i32] {
     var m: Map[string, i32] = map_new(8);
     for w in words { m = m.insert(w, 1); }
@@ -515,6 +516,7 @@ function main(): i32 { return seen(["a", "b"], "b") + seen(["a", "b"], "z"); }
 	// is the property the string column's per-element retain buys: an alias
 	// would be reading freed bytes by then, and the sanitizer leg would say so.
 	{name: "map-column-snapshot", atLeast: 4, src: `
+import "core/map";
 function str_keys(n: i32): i32 {
     var ks: string[] = [];
     {
@@ -1591,6 +1593,7 @@ function by_key(): i32 {
 function main(): i32 { return by_string() + by_value() + by_key(); }
 `},
 	{name: "map-delete-and-clear", atLeast: 4, noLeak: true, src: `
+import "core/map";
 function survivors(n: i32): i32 {
     var m: Map[i32, i32] = map_new(8);
     var i: i32 = 0;
@@ -1622,6 +1625,7 @@ function main(): i32 { return survivors(5) + emptied(0) + absent(0); }
 	// same shape over a tuple literal, and reads BOTH elements, so the take has
 	// to leave the one it did not null alone.
 	{name: "tuple-element-take", atLeast: 3, noLeak: true, src: `
+import "core/map";
 function chained(n: i32): i32 {
     var m: Map[i32, i32] = map_new(8);
     var i: i32 = 0;
@@ -1678,6 +1682,7 @@ function main(): i32 { return (closed(5) + single(3) + skipping(12)) & 255; }
 	// `get_or`, consumes it, and then reads the SAME key again: if the take
 	// fired on `get_or` the second read would see the nulled slot.
 	{name: "container-read-is-not-a-take", atLeast: 3, noLeak: true, src: `
+import "core/map";
 function seeded(n: i32): Map[i32, (i32[], i32)] {
     var m: Map[i32, (i32[], i32)] = map_new(4);
     return m.insert(1, ([n, n + 1], n));
@@ -1698,6 +1703,7 @@ function main(): i32 { return shared(7) & 255; }
 	// never evaluates the receiver for anything else, so a call result works
 	// the way a local does.
 	{name: "map-clear-call-receiver", atLeast: 2, want: "1|", noLeak: true, src: `
+import "core/map";
 function built(n: i32): Map[i32, i32] {
     var m: Map[i32, i32] = map_new(8);
     var i: i32 = 0;
@@ -4094,6 +4100,79 @@ function main(): i32 {
     var c3 = (a: i32) => { return (b: i32) => { return (c: i32): i32 => a + b + c; }; };
     var add = (x: i32) => (y: i32) => x + y;
     return add5(4) + curry(1)(2) + c3(1)(2)(3) + add(3)(4) + 17;
+}
+`},
+	// A function declared to return a function returns an env box, whatever its
+	// return statements spell (#9763). The AST lowering, the control leg,
+	// registered a box-returning function by the shape of its returns, so a
+	// lambda handed back through a generic call, a local bound from one, or a
+	// match-arm payload was dispatched as a bare code pointer by a caller that
+	// bound the result to a local, and segfaulted.
+	// A field read stored into a container is a second owner of a box its
+	// struct's __struct_drop_<T> releases: a scalar array, an array of structs,
+	// a nested struct, an enum. The AST lowering, the control leg, retained only
+	// an enum field read, so `xs.append(a.env)` in a callee left the element
+	// uncounted, the caller's drop of the argument freed it, and the next
+	// allocation reused the block under the container. That was the
+	// out-of-bounds abort of a compiler built through the AST lowering (#9763).
+	{name: "a-stored-field-read-is-retained", atLeast: 11, want: "24|", astAnswers: "24|", noLeak: true, src: `
+struct In { x: i32 }
+enum Tag { A(i32), B }
+struct E { env: i32[], live: boolean }
+struct I { ins: In[], live: boolean }
+struct N { inner: In, live: boolean }
+struct T { tag: Tag, live: boolean }
+function mke(k: i32): E { return E { env: [k, k + 1], live: true }; }
+function mki(k: i32): I { return I { ins: [In { x: k }], live: true }; }
+function mkn(k: i32): N { return N { inner: In { x: k }, live: true }; }
+function mkt(k: i32): T { return T { tag: A(k), live: true }; }
+function put_env(xs: i32[][], a: E): i32[][] { return xs.append(a.env); }
+function put_ins(xs: In[][], a: I): In[][] { return xs.append(a.ins); }
+function put_inner(xs: In[], a: N): In[] { return xs.append(a.inner); }
+function put_tag(xs: Tag[], a: T): Tag[] { return xs.append(a.tag); }
+function lit_env(a: E): i32[][] { return [a.env]; }
+function tag_of(t: Tag): i32 { match (t) { A(n) => { return n; }, B => { return 0; } } }
+function main(): i32 {
+    var es: i32[][] = [];
+    var k: i32 = 1;
+    while (k < 5) { es = put_env(es, mke(k)); k = k + 1; }
+    var is: In[][] = [];
+    k = 1;
+    while (k < 5) { is = put_ins(is, mki(k)); k = k + 1; }
+    var ns: In[] = [];
+    k = 1;
+    while (k < 5) { ns = put_inner(ns, mkn(k)); k = k + 1; }
+    var ts: Tag[] = [];
+    k = 1;
+    while (k < 5) { ts = put_tag(ts, mkt(k)); k = k + 1; }
+    var ls: i32[][] = [];
+    k = 1;
+    while (k < 5) { ls = ls.append(lit_env(mke(k))[0]); k = k + 1; }
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) {
+        t = t * 3 + es[i][0] * 1000 + is[i][0].x * 100 + ns[i].x * 10 + tag_of(ts[i]) + ls[i][1];
+        i = i + 1;
+    }
+    return t % 256;
+}
+`},
+	{name: "a-function-returning-a-function-returns-a-box", atLeast: 15, want: "53|", astAnswers: "53|", noLeak: true, src: `
+enum Box { W((i32) => i32), No }
+function id[T](x: T): T { return x; }
+function inc(x: i32): i32 { return x + 1; }
+function through(a: i32): (i32) => i32 { return id(((x: i32) => x + a)); }
+function bound(a: i32): (i32) => i32 { var g: (i32) => i32 = id(((x: i32) => x * a)); return g; }
+function either(k: i32): (i32) => i32 { if (k > 0) { return inc; } return (x: i32) => x + k; }
+function unbox(b: Box): (i32) => i32 { match (b) { W(f) => { return f; }, No => { return inc; } } }
+function main(): i32 {
+    function mk(a: i32): (i32) => i32 { return id(((x: i32) => x)); }
+    var f: (i32) => i32 = mk(1);
+    var g = through(2);
+    var h = bound(3);
+    var e = either(0);
+    var u = unbox(W((x: i32) => x - 1));
+    return f(4) + g(5) + h(6) + e(7) + u(8) + either(1)(9);
 }
 `},
 }

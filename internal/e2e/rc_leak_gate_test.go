@@ -24,7 +24,7 @@ import (
 //
 // # Why a pinned baseline rather than a flat zero
 //
-// 15 of 309 cases leak on x86-64 today and 14 on arm64: the map drop
+// 14 of 309 cases leak on x86-64 today and 13 on arm64: the map drop
 // path, and closure and string residuals around it, do not fully
 // reclaim, which is the same list the corpus header names. A flat zero
 // assertion could not land without fixing all of that first, and
@@ -34,7 +34,7 @@ import (
 // So each leaking case is pinned at its exact byte count and everything
 // else must be zero. What that buys, which nothing had before:
 //
-//   - the 294 (x86-64) / 295 (arm64) clean cases are now GATED. A change
+//   - the 295 (x86-64) / 296 (arm64) clean cases are now GATED. A change
 //     that starts leaking in any of them fails here.
 //   - a new corpus case that leaks fails, because absent from the table
 //     means zero. Joining the leaking set is a deliberate act.
@@ -82,7 +82,6 @@ var rcCorpusLeakBaselineX86_64 = map[string]int64{
 	"pair_form_payload_borrowing_call":     128,
 	"stdlib_json_cursor_idiom":             1456,
 	"stdlib_json_roundtrip":                640,
-	"tuple_return_scalar_cursor_recursion": 320,
 	// The hand-back half of the guarded arg-temp release: the callee
 	// returned the temp unchanged, so the guard declined the drop and the
 	// result's own reference keeps rhsTainted's conservative call-result
@@ -121,7 +120,6 @@ var rcCorpusLeakBaselineArm64 = map[string]int64{
 	"pair_form_payload_borrowing_call":     128,
 	"stdlib_json_cursor_idiom":             1664,
 	"stdlib_json_roundtrip":                720,
-	"tuple_return_scalar_cursor_recursion": 320,
 	// See the x86-64 twin — the same guarded hand-back, byte for byte.
 	"consumed_array_arg_temp_released_and_guarded": 128,
 }
@@ -177,7 +175,6 @@ var rcCorpusLeakBaselineWasm = map[string]int64{
 	"stdlib_json_cursor_idiom":                       1232,
 	"stdlib_json_roundtrip":                          560,
 	"string_pushed_then_returned_bare_stays_refused": 320,
-	"tuple_return_scalar_cursor_recursion":           320,
 }
 
 // checkCorpusLeaks runs every corpus case under the leak detector and

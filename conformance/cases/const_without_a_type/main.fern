@@ -1,0 +1,22 @@
+// A `const` written without a type takes its value's type, and a later const
+// may be built from an earlier one.
+import "std/i32";
+
+const WIDTH = 9;
+const AREA = WIDTH * WIDTH;
+const NAME = "fern";
+const RATIO = 2.5;
+const ON = true;
+const BIG = 5000000000;
+const MASK = 255u64;
+const NEG = -WIDTH;
+const WIDE = WIDTH > 4;
+
+function main(): i32 {
+    var total: i32 = AREA + NAME.len() + NEG;
+    if (RATIO * 2.0 == 5.0) { total = total + 1; }
+    if (ON && WIDE) { total = total + 1; }
+    if (BIG > 4000000000) { total = total + 1; }
+    if (MASK == 255u64) { total = total + 1; }
+    return total;
+}

@@ -329,18 +329,18 @@ struct Occ { kw_start: i32, kw_end: i32, ctx_start: i32, ctx_end: i32, ref: stri
 // since every cut point is within a half line of it — so the walk is a
 // few steps where a search from scratch was seventeen.
 function word_at(w: Words, p: i32, wi: i32): i64 {
-  var starts: i32[] = w.starts;
-  var ends: i32[] = w.ends;
-  var n: i32 = starts.len();
+  var n: i32 = w.starts.len();
   var k: i32 = wi;
-  while (k > 0 && starts[k] >= p) {
+  while (k > 0 && w.starts[k] >= p) {
     k = k - 1;
   }
-  while (k + 1 < n && starts[k + 1] < p) {
+  while (k + 1 < n && w.starts[k + 1] < p) {
     k = k + 1;
   }
-  if (starts[k] < p && p < ends[k]) {
-    return starts[k] as i64 << 32 as i64 | ends[k] as i64;
+  var s: i32 = w.starts[k];
+  var e: i32 = w.ends[k];
+  if (s < p && p < e) {
+    return s as i64 << 32 as i64 | e as i64;
   }
   return 0 - 1 as i64;
 }
@@ -517,9 +517,10 @@ function parse_num(v: string, what: string): i64 {
 
 // ---- regexps ----------------------------------------------------------------
 // The sentence that ends a context without -G: one of `.?!`, any run of
-// the closers, then end of line, a tab, or two spaces.
+// the closers, then end of line, a tab, or two spaces, and the blanks
+// after it, so the next context starts at its first word.
 function default_sentence(): string {
-  return "[.?!][]\"')}]*\\($\\|\t\\|  \\)";
+  return "[.?!][]\"')}]*\\($\\|\t\\|  \\)[ \t\n]*";
 }
 
 function compile(pat: string, w: io_buffered.BufWriter): bre.Bre {
@@ -730,9 +731,20 @@ function sort_occs(buf: string, occs: Occ[], fold: boolean): i32[] {
     }
     // A bottom-up merge of src[lo..hi), the two buffers alternating;
     // an odd number of passes leaves the run in dst, and it is copied
-    // back so src holds every run.
+    // back so src holds every run. A run already in order, which one
+    // word repeated through a text is, costs one comparison an element.
     var passes: i32 = 0;
-    var width: i32 = 1;
+    var width: i32 = hi - lo;
+    var c0: i32 = lo + 1;
+    while (c0 < hi) {
+      var ic: i32 = src[c0] as i32;
+      var ip: i32 = src[c0 - 1] as i32;
+      if (key_less(kbuf, ks[ic], ke[ic], ks[ip], ke[ip])) {
+        width = 1;
+        break;
+      }
+      c0 = c0 + 1;
+    }
     while (width < hi - lo) {
       var start: i32 = lo;
       var at: i32 = lo;
@@ -799,25 +811,10 @@ function sort_occs(buf: string, occs: Occ[], fold: boolean): i32[] {
 }
 
 // ---- field text -------------------------------------------------------------
-// A context is copied with every whitespace byte turned into one space;
-// nothing else changes, so a NUL or a high byte reaches the output as
-// it stood in the file.
-// The span copied in one `__memcpy`, then only the bytes that have to
-// change written back. Every context of every occurrence comes through
-// here, and almost none of them holds a whitespace byte that is not
-// already a space, so the common case is the copy alone.
-function norm(nbuf: string, a: i32, b: i32): string {
-  // cut_fields hands this an INVERTED span when a field has no room —
-  // the byte loop this replaced ran zero times and answered the empty
-  // string, where slice_unchecked refuses a > b outright.
-  if (b <= a) {
-    return "";
-  }
-  return slice_unchecked(nbuf, a, b) + "";
-}
-
+// Every field is a span of the normalised buffer, written to the output
+// from there: nothing is copied out per occurrence.
 // `buf` with every whitespace byte that is not a space made one, once,
-// so a field is a plain slice of it: positions are unchanged, and the
+// so a field is a plain span of it: positions are unchanged, and the
 // space tests the cuts make answer the same on either buffer.
 function norm_all(buf: string): string {
   var n: i32 = buf.len();
@@ -834,11 +831,31 @@ function norm_all(buf: string): string {
   return string_from_bytes_unchecked(out);
 }
 
-// `norm` maps every whitespace byte to a space and a space is itself
-// whitespace, so trimming the SOURCE span picks exactly the bytes
-// trimming norm's output would. Doing it first is one string per field
-// rather than two.
-function norm_trim(buf: string, a: i32, b: i32): string {
+// A span as its start in the high word and its end in the low; a span
+// cut_fields computes with no room left comes out inverted, and is the
+// empty span at its start.
+function span(a: i32, b: i32): i64 {
+  var e: i32 = b;
+  if (e < a) {
+    e = a;
+  }
+  return a as i64 << 32 as i64 | e as i64;
+}
+
+function span_lo(sp: i64): i32 {
+  return (sp >> 32 as i64) as i32;
+}
+
+function span_hi(sp: i64): i32 {
+  return (sp & 4294967295 as i64) as i32;
+}
+
+function span_len(sp: i64): i32 {
+  return span_hi(sp) - span_lo(sp);
+}
+
+// `buf[a, b)` without its leading and trailing whitespace.
+function trim_span(buf: string, a: i32, b: i32): i64 {
   var i: i32 = a;
   while (i < b && is_space(buf[i] as i32)) {
     i = i + 1;
@@ -847,18 +864,18 @@ function norm_trim(buf: string, a: i32, b: i32): string {
   while (j > i && is_space(buf[j - 1] as i32)) {
     j = j - 1;
   }
-  return norm(buf, i, j);
+  return span(i, j);
 }
 
 // The keyword begins the keyafter field, so only its tail is trimmed:
 // a -W that matches whitespace makes the keyword itself a blank, and
 // GNU prints it.
-function norm_rtrim(buf: string, a: i32, b: i32): string {
+function rtrim_span(buf: string, a: i32, b: i32): i64 {
   var j: i32 = b;
   while (j > a && is_space(buf[j - 1] as i32)) {
     j = j - 1;
   }
-  return norm(buf, a, j);
+  return span(a, j);
 }
 
 function has_text(buf: string, a: i32, b: i32): boolean {
@@ -873,7 +890,7 @@ function has_text(buf: string, a: i32, b: i32): boolean {
 }
 
 // `Fields` — one output line's five pieces and which of them lost text.
-struct Fields { tail: string, before: string, keyafter: string, keyword: string, after: string, head: string, tail_flag: boolean, before_flag: boolean, keyafter_flag: boolean, head_flag: boolean, blank_pad: i32 }
+struct Fields { tail: i64, before: i64, keyafter: i64, keyword: i64, after: i64, head: i64, tail_flag: boolean, before_flag: boolean, keyafter_flag: boolean, head_flag: boolean, blank_pad: i32 }
 
 function cut_fields(buf: string, o: Occ, w: Words, g: Geom, maxword: i32): Fields {
   var t: i32 = g.tlen;
@@ -894,7 +911,7 @@ function cut_fields(buf: string, o: Occ, w: Words, g: Geom, maxword: i32): Field
       }
     }
   }
-  var ka: string = norm_rtrim(buf, o.kw_start, ka_end);
+  var ka: i64 = rtrim_span(buf, o.kw_start, ka_end);
 
   // before: the last bef_max bytes of what precedes the keyword, moved
   // forward out of a word.
@@ -914,11 +931,11 @@ function cut_fields(buf: string, o: Occ, w: Words, g: Geom, maxword: i32): Field
       bef_start = word_end(wb);
     }
   }
-  var before: string = norm_trim(buf, bef_start, bsrc_end);
+  var before: i64 = trim_span(buf, bef_start, bsrc_end);
 
   // tail: what keyafter left behind, cut at what the before field left
   // of the left half.
-  var tail: string = "";
+  var tail: i64 = span(0, 0);
   var tail_flag: boolean = false;
   var rest: boolean = has_text(buf, ka_end, o.ctx_end);
   var t_start: i32 = ka_end;
@@ -928,8 +945,8 @@ function cut_fields(buf: string, o: Occ, w: Words, g: Geom, maxword: i32): Field
   // An empty before field puts its truncation flag AT the half-line
   // column rather than left of it, so the tail keeps the column the
   // flag would otherwise have taken.
-  var tail_room: i32 = g.tail_base - before.len();
-  if (lost_before && before.len() == 0) {
+  var tail_room: i32 = g.tail_base - span_len(before);
+  if (lost_before && span_len(before) == 0) {
     tail_room = tail_room + 1;
   }
   if (rest && tail_room > 0) {
@@ -942,21 +959,21 @@ function cut_fields(buf: string, o: Occ, w: Words, g: Geom, maxword: i32): Field
         t_end = word_start(wt);
       }
     }
-    tail = norm_trim(buf, t_start, t_end);
-    if (tail.len() > 0 && has_text(buf, t_end, o.ctx_end)) {
+    tail = trim_span(buf, t_start, t_end);
+    if (span_len(tail) > 0 && has_text(buf, t_end, o.ctx_end)) {
       tail_flag = true;
     }
   }
-  var ka_flag: boolean = rest && tail.len() == 0;
+  var ka_flag: boolean = rest && span_len(tail) == 0;
 
   // head: what before left behind, held in the room GNU reserves for
   // the widest keyword, and never wider than what is left of the before
   // field once keyafter has taken its share.
-  var head: string = "";
+  var head: i64 = span(0, 0);
   var head_flag: boolean = false;
   if (lost_before) {
     var head_max: i32 = maxword + g.head_base;
-    var room: i32 = g.half - g.gap - 2 * t - ka.len() - g.room_adj;
+    var room: i32 = g.half - g.gap - 2 * t - span_len(ka) - g.room_adj;
     // Measured from the keyword rather than from the trimmed end of
     // the before field: a blank between the two belongs to the head's
     // share.
@@ -970,8 +987,8 @@ function cut_fields(buf: string, o: Occ, w: Words, g: Geom, maxword: i32): Field
         h = word_end(wh);
       }
     }
-    head = norm_trim(buf, h, bef_start);
-    if (head.len() > room) {
+    head = trim_span(buf, h, bef_start);
+    if (span_len(head) > room) {
       head_flag = true;
       var h_end: i32 = bef_start;
       while (h_end > h && is_space(buf[h_end - 1] as i32)) {
@@ -985,24 +1002,24 @@ function cut_fields(buf: string, o: Occ, w: Words, g: Geom, maxword: i32): Field
       if (wh2 >= 0 as i64) {
         h = word_end(wh2);
       }
-      head = norm_trim(buf, h, h_end);
-      if (head.len() > room) {
-        head = "";
+      head = trim_span(buf, h, h_end);
+      if (span_len(head) > room) {
+        head = span(0, 0);
       }
     }
-    if (head.len() == 0) {
+    if (span_len(head) == 0) {
       head_flag = false;
     }
   }
-  var before_flag: boolean = lost_before && head.len() == 0;
+  var before_flag: boolean = lost_before && span_len(head) == 0;
   var blank_pad: i32 = 0;
-  if (before.len() == 0 && !lost_before) {
+  if (span_len(before) == 0 && !lost_before) {
     blank_pad = o.kw_start - bef_start;
   }
-  var keyword: string = norm(buf, o.kw_start, o.kw_end);
-  var after: string = "";
-  if (ka.len() > keyword.len()) {
-    after = slice_unchecked(ka, keyword.len(), ka.len()) + "";
+  var keyword: i64 = span(o.kw_start, o.kw_end);
+  var after: i64 = span(0, 0);
+  if (span_len(ka) > span_len(keyword)) {
+    after = span(o.kw_end, span_hi(ka));
   }
   return Fields { tail: tail, before: before, keyafter: ka, keyword: keyword, after: after, head: head, tail_flag: tail_flag, before_flag: before_flag, keyafter_flag: ka_flag, head_flag: head_flag, blank_pad: blank_pad };
 }
@@ -1017,34 +1034,34 @@ function flag_of(on: boolean, opts: Opts): string {
 
 // The truncation string bypasses the doubling the field text gets, so
 // `-F '"'` leaves malformed roff exactly as GNU does.
-// One quoted roff argument: `"`, `pre`, the text with every `"` doubled,
-// `post`, `"` — pushed as the runs between the quotes, not a byte at a time.
-function roff_field(h: usize, text: string, pre: string, post: string): void {
+// One quoted roff argument: `"`, `pre`, `text[a, n)` with every `"`
+// doubled, `post`, `"` — pushed as the runs between the quotes, not a
+// byte at a time. The span sits inside the whole input, so the quote is
+// looked for byte by byte: `__memchr` would read on to the input's end.
+function roff_field(h: usize, text: string, a: i32, n: i32, pre: string, post: string): void {
   buf_push_byte(h, 34);
   buf_push(h, pre);
-  var i: i32 = 0;
-  var n: i32 = text.len();
+  var run: i32 = a;
+  var i: i32 = a;
   while (i < n) {
-    var q: i32 = __memchr(text, 34, i);
-    if (q < 0) {
-      buf_push_range(h, text, i, n);
-      break;
+    if (text[i] as i32 == 34) {
+      buf_push_range(h, text, run, i + 1);
+      buf_push_byte(h, 34);
+      run = i + 1;
     }
-    buf_push_range(h, text, i, q + 1);
-    buf_push_byte(h, 34);
-    i = q + 1;
+    i = i + 1;
   }
+  buf_push_range(h, text, run, n);
   buf_push(h, post);
   buf_push_byte(h, 34);
 }
 
 // TeX's own eight: the four money-and-comment characters, the
 // underscore, the backslash, and the two braces, which need maths mode.
-// `s` with TeX's specials escaped, pushed as the runs between them.
-function tex_quote(h: usize, s: string): void {
-  var i: i32 = 0;
-  var run: i32 = 0;
-  var n: i32 = s.len();
+// `s[a, n)` with TeX's specials escaped, pushed as the runs between them.
+function tex_quote(h: usize, s: string, a: i32, n: i32): void {
+  var i: i32 = a;
+  var run: i32 = a;
   while (i < n) {
     var c: i32 = s[i] as i32;
     var esc: string = "";
@@ -1106,12 +1123,13 @@ function push_spaces(h: usize, count: i32): void {
   }
 }
 
-function put(own l: Line, at: i32, s: string): Line {
+// `s[a, b)` at column `at`.
+function put(own l: Line, at: i32, s: string, a: i32, b: i32): Line {
   var p: i32 = at;
   if (p < 0) {
     p = 0;
   }
-  var n: i32 = s.len();
+  var n: i32 = b - a;
   if (l.mode == 0) {
     if (p < l.cursor || p + n > l.width) {
       return Line { ...l, ok: false };
@@ -1119,17 +1137,17 @@ function put(own l: Line, at: i32, s: string): Line {
     return Line { ...l, cursor: p + n };
   }
   if (l.mode == 2) {
-    return Line { ...l, buf: put_at(l.buf, p, s) };
+    return Line { ...l, buf: put_at(l.buf, p, s, a, b) };
   }
   var pending: i32 = l.pending + (p - l.cursor);
   var body: i32 = n;
-  while (body > 0 && s[body - 1] as i32 == 32) {
+  while (body > 0 && s[a + body - 1] as i32 == 32) {
     body = body - 1;
   }
   var emitted: i32 = l.emitted;
   if (body > 0) {
     push_spaces(l.h, pending);
-    buf_push_range(l.h, s, 0, body);
+    buf_push_range(l.h, s, a, a + body);
     emitted = emitted + pending + body;
     pending = n - body;
   } else {
@@ -1142,65 +1160,71 @@ function put(own l: Line, at: i32, s: string): Line {
 // keeps the order the format was defined with, field then marker over
 // it, because the two overlap once the marker's position clamps at 0;
 // the other modes take them in line order.
-function put_marked(own l: Line, at: i32, s: string, mark_at: i32, mark: string, flag: boolean): Line {
+function put_marked(own l: Line, at: i32, s: string, sp: i64, mark_at: i32, mark: string, flag: boolean): Line {
   if (l.mode == 2) {
-    l = put(l, at, s);
+    l = put(l, at, s, span_lo(sp), span_hi(sp));
     if (flag) {
-      l = put(l, mark_at, mark);
+      l = put(l, mark_at, mark, 0, mark.len());
     }
     return l;
   }
   if (flag) {
-    l = put(l, mark_at, mark);
+    l = put(l, mark_at, mark, 0, mark.len());
   }
-  return put(l, at, s);
+  return put(l, at, s, span_lo(sp), span_hi(sp));
 }
 
-function layout(own l0: Line, f: Fields, ref: string, g: Geom, opts: Opts): Line {
+function layout(own l0: Line, text: string, f: Fields, ref: string, g: Geom, opts: Opts): Line {
   var t: i32 = g.tlen;
+  var tr: string = opts.trunc;
   var l: Line = l0;
   var base: i32 = 0;
   if (g.refs_left) {
     base = g.refw;
-    l = put(l, 0, ref);
+    l = put(l, 0, ref, 0, ref.len());
   } else if (opts.right_ref) {
     base = 0 - g.gap;
   }
-  l = put(l, base + g.gap, f.tail);
+  l = put(l, base + g.gap, text, span_lo(f.tail), span_hi(f.tail));
   if (f.tail_flag) {
-    l = put(l, base + g.gap + f.tail.len(), opts.trunc);
+    l = put(l, base + g.gap + span_len(f.tail), tr, 0, t);
   }
   var e: i32 = base + g.col_half;
   var shift: i32 = 0;
-  if (f.before.len() > 0) {
-    l = put_marked(l, e - f.before.len(), f.before, e - f.before.len() - t, opts.trunc, f.before_flag);
+  var bn: i32 = span_len(f.before);
+  if (bn > 0) {
+    l = put_marked(l, e - bn, text, f.before, e - bn - t, tr, f.before_flag);
   } else {
     if (f.before_flag) {
-      l = put(l, e + 1 - t, opts.trunc);
+      l = put(l, e + 1 - t, tr, 0, t);
       shift = 1;
     }
     shift = shift + f.blank_pad;
   }
   var p: i32 = base + g.col_half + shift + g.gap;
-  l = put(l, p, f.keyafter);
+  l = put(l, p, text, span_lo(f.keyafter), span_hi(f.keyafter));
   if (f.keyafter_flag) {
-    l = put(l, p + f.keyafter.len(), opts.trunc);
+    l = put(l, p + span_len(f.keyafter), tr, 0, t);
   }
   var e2: i32 = p + g.col_half;
-  if (f.head.len() > 0) {
-    l = put_marked(l, e2 - f.head.len(), f.head, e2 - f.head.len() - t, opts.trunc, f.head_flag);
+  var hn: i32 = span_len(f.head);
+  if (hn > 0) {
+    l = put_marked(l, e2 - hn, text, f.head, e2 - hn - t, tr, f.head_flag);
   }
   return Line { ...l, e2: e2 };
 }
 
-function render_dumb(h: usize, f: Fields, ref: string, g: Geom, opts: Opts): void {
+// One output line, through `l0`, which carries only the writer from one
+// line to the next.
+function render_dumb(own l0: Line, text: string, f: Fields, ref: string, g: Geom, opts: Opts): Line {
+  var h: usize = l0.h;
   var t: i32 = g.tlen;
-  var width: i32 = g.refw + 2 * g.col_half + 4 * g.gap + 4 * t + 8 + f.tail.len() + f.before.len() + f.keyafter.len() + f.head.len() + ref.len();
-  var l: Line = layout(Line { h: h, width: width, mode: 0, cursor: 0, pending: 0, emitted: 0, e2: 0, ok: true, buf: [] }, f, ref, g, opts);
+  var width: i32 = g.refw + 2 * g.col_half + 4 * g.gap + 4 * t + 8 + span_len(f.tail) + span_len(f.before) + span_len(f.keyafter) + span_len(f.head) + ref.len();
+  var l: Line = layout(Line { ...l0, width: width, mode: 0, cursor: 0, pending: 0, emitted: 0, e2: 0, ok: true }, text, f, ref, g, opts);
   if (l.ok) {
-    l = layout(Line { ...l, mode: 1, cursor: 0 }, f, ref, g, opts);
+    l = layout(Line { ...l, mode: 1, cursor: 0 }, text, f, ref, g, opts);
   } else {
-    l = layout(Line { ...l, mode: 2, cursor: 0, buf: spaces(width).bytes() }, f, ref, g, opts);
+    l = layout(Line { ...l, mode: 2, cursor: 0, buf: spaces(width).bytes() }, text, f, ref, g, opts);
     var out: string = rtrim_bytes(l.buf);
     buf_push(h, out);
     l = Line { ...l, emitted: out.len() };
@@ -1213,18 +1237,20 @@ function render_dumb(h: usize, f: Fields, ref: string, g: Geom, opts: Opts): voi
     buf_push(h, ref);
   }
   buf_push_byte(h, 10);
+  return l;
 }
 
-function put_at(own line: u8[], at: i32, s: string): u8[] {
+function put_at(own line: u8[], at: i32, s: string, a: i32, b: i32): u8[] {
   var p: i32 = at;
   if (p < 0) {
     p = 0;
   }
   var out: u8[] = line;
-  var i: i32 = 0;
-  while (i < s.len() && p + i < out.len()) {
-    out = out.with(p + i, s[i]);
+  var i: i32 = a;
+  while (i < b && p < out.len()) {
+    out = out.with(p, s[i]);
     i = i + 1;
+    p = p + 1;
   }
   return out;
 }
@@ -1237,43 +1263,43 @@ function rtrim_bytes(line: u8[]): string {
   return slice_unchecked(bytes_to_string(line), 0, n) + "";
 }
 
-function render_roff(h: usize, f: Fields, ref: string, g: Geom, opts: Opts): void {
+function render_roff(h: usize, text: string, f: Fields, ref: string, g: Geom, opts: Opts): void {
   buf_push_byte(h, 46);
   buf_push(h, opts.macro);
   buf_push_byte(h, 32);
-  roff_field(h, f.tail, "", flag_of(f.tail_flag, opts));
+  roff_field(h, text, span_lo(f.tail), span_hi(f.tail), "", flag_of(f.tail_flag, opts));
   buf_push_byte(h, 32);
-  roff_field(h, f.before, flag_of(f.before_flag, opts), "");
+  roff_field(h, text, span_lo(f.before), span_hi(f.before), flag_of(f.before_flag, opts), "");
   buf_push_byte(h, 32);
-  roff_field(h, f.keyafter, "", flag_of(f.keyafter_flag, opts));
+  roff_field(h, text, span_lo(f.keyafter), span_hi(f.keyafter), "", flag_of(f.keyafter_flag, opts));
   buf_push_byte(h, 32);
-  roff_field(h, f.head, flag_of(f.head_flag, opts), "");
+  roff_field(h, text, span_lo(f.head), span_hi(f.head), flag_of(f.head_flag, opts), "");
   if (g.has_ref) {
     buf_push_byte(h, 32);
-    roff_field(h, ref, "", "");
+    roff_field(h, ref, 0, ref.len(), "", "");
   }
   buf_push_byte(h, 10);
 }
 
 // TeX splits the keyword from what follows it, and prints no
 // truncation flag at all.
-function render_tex(h: usize, f: Fields, ref: string, g: Geom, opts: Opts): void {
+function render_tex(h: usize, text: string, f: Fields, ref: string, g: Geom, opts: Opts): void {
   buf_push_byte(h, 92);
   buf_push(h, opts.macro);
   buf_push(h, " {");
-  tex_quote(h, f.tail);
+  tex_quote(h, text, span_lo(f.tail), span_hi(f.tail));
   buf_push(h, "}{");
-  tex_quote(h, f.before);
+  tex_quote(h, text, span_lo(f.before), span_hi(f.before));
   buf_push(h, "}{");
-  tex_quote(h, f.keyword);
+  tex_quote(h, text, span_lo(f.keyword), span_hi(f.keyword));
   buf_push(h, "}{");
-  tex_quote(h, f.after);
+  tex_quote(h, text, span_lo(f.after), span_hi(f.after));
   buf_push(h, "}{");
-  tex_quote(h, f.head);
+  tex_quote(h, text, span_lo(f.head), span_hi(f.head));
   buf_push_byte(h, 125);
   if (g.has_ref) {
     buf_push_byte(h, 123);
-    tex_quote(h, ref);
+    tex_quote(h, ref, 0, ref.len());
     buf_push_byte(h, 125);
   }
   buf_push_byte(h, 10);
@@ -1482,18 +1508,13 @@ pub function main(): i32 {
     lines = find_lines(buf, fstart[i], fend[i], lines);
     i = i + 1;
   }
-  var maxword: i32 = 0;
-  i = 0;
-  while (i < words.starts.len()) {
-    var wl: i32 = words.ends[i] - words.starts[i];
-    if (wl > maxword) {
-      maxword = wl;
-    }
-    i = i + 1;
-  }
 
-  // The occurrences, file by file and context by context.
+  // The occurrences, file by file and context by context. A context's
+  // words are the ones found inside it, so a word the scan found running
+  // past either end is cut there, and the widest word is measured after
+  // the cut, reference words included.
   var occs: Occ[] = [];
+  var maxword: i32 = 0;
   var maxref: i32 = 0;
   var wi: i32 = 0;
   i = 0;
@@ -1520,6 +1541,10 @@ pub function main(): i32 {
       } else {
         pos = fend[i];
       }
+      // The separator's trailing blanks are not the context's.
+      while (ce > cs && is_space(buf[ce - 1] as i32)) {
+        ce = ce - 1;
+      }
       var start: i32 = cs;
       if (o.input_ref) {
         var li0: i32 = line_of(lines, cs);
@@ -1527,14 +1552,23 @@ pub function main(): i32 {
           start = lines.text[li0];
         }
       }
-      while (wi < words.starts.len() && words.starts[wi] < start) {
+      while (wi < words.starts.len() && words.ends[wi] <= cs) {
         wi = wi + 1;
       }
       var k: i32 = wi;
-      while (k < words.starts.len() && words.ends[k] <= ce) {
+      while (k < words.starts.len() && words.starts[k] < ce) {
         var ws: i32 = words.starts[k];
+        if (ws < cs) {
+          ws = cs;
+        }
         var we: i32 = words.ends[k];
-        var keep: boolean = true;
+        if (we > ce) {
+          we = ce;
+        }
+        if (we - ws > maxword) {
+          maxword = we - ws;
+        }
+        var keep: boolean = we > ws;
         if (o.input_ref) {
           var lr: i32 = line_of(lines, ws);
           if (ws < lines.ref_end[lr]) {
@@ -1552,10 +1586,10 @@ pub function main(): i32 {
         }
         if (keep) {
           var refv: string = "";
-          var li: i32 = line_of(lines, ws);
           if (o.auto_ref) {
-            refv = show + ":" + lines.nums[li].to_string();
+            refv = show + ":" + lines.nums[line_of(lines, ws)].to_string();
           } else if (o.input_ref) {
+            var li: i32 = line_of(lines, ws);
             refv = slice_unchecked(buf, lines.starts[li], lines.ref_end[li]) + "";
           }
           if (refv.len() > maxref) {
@@ -1597,6 +1631,7 @@ pub function main(): i32 {
   var order: i32[] = sort_occs(buf, occs, o.fold);
   var nbuf: string = norm_all(buf);
   var h: usize = w.handle();
+  var ln: Line = Line { h: h, width: 0, mode: 0, cursor: 0, pending: 0, emitted: 0, e2: 0, ok: true, buf: [] };
   var j: i32 = 0;
   while (j < order.len()) {
     var oc: Occ = occs[order[j]];
@@ -1606,11 +1641,11 @@ pub function main(): i32 {
       refv2 = refv2 + ":";
     }
     if (o.format == 1) {
-      render_roff(h, f, oc.ref, geom, o);
+      render_roff(h, nbuf, f, oc.ref, geom, o);
     } else if (o.format == 2) {
-      render_tex(h, f, oc.ref, geom, o);
+      render_tex(h, nbuf, f, oc.ref, geom, o);
     } else {
-      render_dumb(h, f, refv2, geom, o);
+      ln = render_dumb(ln, nbuf, f, refv2, geom, o);
     }
     w = gnu.settle(w);
     j = j + 1;

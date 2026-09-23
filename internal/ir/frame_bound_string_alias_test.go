@@ -85,8 +85,8 @@ func TestFrameBoundStringAliasKeepsTheCallersReclaim(t *testing.T) {
 			callee: `var x: string = src;
     var f: (i32) => i32 = (k: i32) => x.len() + k;
     return f(i);`,
-			free: false,
-			why:  "a capture lives as long as the closure, which can outlive the frame",
+			free: true,
+			why:  "a capture is a counted store: MakeEnv retains it and the closure's drop releases it (#10112)",
 		},
 		{
 			name: "alias handed to a callee that returns it",

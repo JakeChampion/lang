@@ -9728,7 +9728,7 @@ pub function emit_module_ir_unit_arm64_flat(mod: parser.Module, is_entry: boolea
     // module-scoped registries are applied on top, and they are cheap.
     var sg: irlower.FnSigs = irlower.FnSigs {
         ...b,
-        closurearr_ret_fns: irlower.closurearr_ret_fns_of(mod.funcs, stab),
+        closurearr_ret_fns: irlower.closurearr_ret_fns_of(mod.funcs),
         fn_names: irlower.sig_reg_of(irlower.fn_names_of(mod.funcs)),
     };
     // [lo, hi) function-index window (function-sharding, #3425 — the arm64

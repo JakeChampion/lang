@@ -539,7 +539,6 @@ pub function all_eligible_view_base(mod: parser.Module, known: string[], all_str
 // pre-check lowers its own window rather than the whole module once per
 // process. hi < 0 (or past the end) means to the module end.
 pub function all_eligible_view_base_range(mod: parser.Module, known: string[], all_structs: irlower.StructTab, base: irlower.FnSigs, lo: i32, hi: i32): boolean {
-    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
     // A function-less module is eligible: a types-only module (ast.fern) has
     // nothing that could fail to lower, and its unit is the preamble alone.
     // No 512-function size budget here: a per-module unit is a SINGLE module
@@ -550,7 +549,7 @@ pub function all_eligible_view_base_range(mod: parser.Module, known: string[], a
         ...irlower.fn_sigs_without_ownership(base),
         // These two stay scoped to THIS module rather than the whole program.
         fn_names: irlower.sig_reg_of(irlower.fn_names_of(mod.funcs)),
-        closurearr_ret_fns: irlower.closurearr_ret_fns_of(mod.funcs, stab),
+        closurearr_ret_fns: irlower.closurearr_ret_fns_of(mod.funcs),
     };
     var freg: irlower.SigReg = module_func_reg(mod);
     var end: i32 = hi;
@@ -1022,7 +1021,7 @@ pub function lift_lambdas_view(mod: parser.Module, view: parser.FuncDecl[]): par
     // `__arrm_map__<elem>` call to recognise. Giving wasm the kernel means
     // running this pass post-mono on that route, which is its own change.
     var lifted: parser.Module = irlower.lift_lambdas_view(scale_f64_maps_module(mod), view);
-    return parser.Module { funcs: lifted.funcs, structs: parser.inject_builtin_enums(lifted.structs), aliases: lifted.aliases, imports: lifted.imports, top_stmts: lifted.top_stmts, enums: lifted.enums, resources: lifted.resources, exports: lifted.exports, impls: lifted.impls, trait_reqs: lifted.trait_reqs, trait_decls: lifted.trait_decls };
+    return parser.Module { funcs: lifted.funcs, structs: parser.inject_builtin_enums(lifted.structs), aliases: lifted.aliases, imports: lifted.imports, top_stmts: lifted.top_stmts, enums: lifted.enums, resources: lifted.resources, exports: lifted.exports, impls: lifted.impls, trait_reqs: lifted.trait_reqs, trait_decls: lifted.trait_decls, inferred_consts: lifted.inferred_consts };
 }
 
 // lift_lambdas_parts lifts and return-type-infers every module of a PER-MODULE

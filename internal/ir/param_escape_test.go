@@ -139,3 +139,76 @@ function main(): i32 { return 0; }`)
 		}
 	}
 }
+
+// A call argument that only READS a parameter does not carry it into the
+// call's result. The argument is judged against the callee's declared
+// parameter type, and an array's `.with` / `.append` against its element
+// type, so a scalar projection of the parameter — `r.k` in a struct field
+// of type i32, a byte of a string stored into a u8[] — no longer marks it
+// escaping. An escaping parameter is owned, so the false positive cost a
+// retain at every call and a drop at every return: a self-recursive tail
+// call re-passing a read-only context paid both on each step.
+//
+// Both directions are pinned: a projection that carries heap into the slot
+// still escapes.
+func TestParamEscapesJudgesCallArgumentsBySlot(t *testing.T) {
+	prog, err := parser.Parse(`struct R { name: string, k: i32 }
+struct T { xs: i32[], n: i32 }
+struct N { xs: i32[], name: string }
+function step(r: R, own t: T, d: i32): T {
+  if (d <= 0) { return t; }
+  return step(r, T { ...t, n: t.n + r.k }, d - 1);
+}
+function nested(r: R, own t: T, d: i32): T {
+  if (d <= 0) { return t; }
+  return nested(r, nested(r, T { ...t, n: r.k }, d - 1), d - 2);
+}
+function carries(r: R, own t: N, d: i32): N {
+  if (d <= 0) { return t; }
+  return carries(r, N { ...t, name: r.name }, d - 1);
+}
+function byte_into(s: string, own out: u8[]): u8[] {
+  out = out.with(0, s[0]);
+  out = out.append(s[1]);
+  return out;
+}
+function str_into(s: string, own out: string[]): string[] {
+  out = out.with(0, s);
+  return out;
+}
+function str_appended(s: string, own out: string[]): string[] {
+  out = out.append(s);
+  return out;
+}
+function main(): i32 { return 0; }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	esc := inferParamEscapes(prog, info, nil, nil)
+	cases := []struct {
+		fn     string
+		idx    int
+		escape bool
+		why    string
+	}{
+		{"step", 0, false, "r.k fills an i32 field of the argument"},
+		{"nested", 0, false, "the inner call's result is judged by the callee's own summary"},
+		{"carries", 0, true, "r.name fills a string field of the argument"},
+		{"byte_into", 0, false, "a byte of s is stored into a u8[]"},
+		{"str_into", 0, true, "s itself is stored into a string[]"},
+		{"str_appended", 0, true, "s itself is appended to a string[]"},
+	}
+	for _, c := range cases {
+		got := false
+		if e := esc[c.fn]; c.idx < len(e) {
+			got = e[c.idx]
+		}
+		if got != c.escape {
+			t.Errorf("inferParamEscapes[%s][%d] = %v, want %v (%s)", c.fn, c.idx, got, c.escape, c.why)
+		}
+	}
+}

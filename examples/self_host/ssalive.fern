@@ -62,13 +62,26 @@ function zeroes(n: i32): boolean[] {
     return out;
 }
 
-function block_index(f: ssa.SFunc, id: i32): i32 {
+// first_positions maps each non-negative block id to the position of the
+// first block carrying it, -1 for an id no block carries.
+function first_positions(f: ssa.SFunc): i32[] {
+    var top: i32 = 0 - 1;
+    for b in f.blocks { if (b.id > top) { top = b.id; } }
+    var out: i32[] = [];
     var i: i32 = 0;
+    while (i <= top) { out = out.append(0 - 1); i = i + 1; }
+    i = 0;
     while (i < f.blocks.len()) {
-        if (f.blocks[i].id == id) { return i; }
+        var id: i32 = f.blocks[i].id;
+        if (id >= 0 && out[id] < 0) { out = out.with(id, i); }
         i = i + 1;
     }
-    return 0 - 1;
+    return out;
+}
+
+function block_index(at: i32[], id: i32): i32 {
+    if (id < 0 || id >= at.len()) { return 0 - 1; }
+    return at[id];
 }
 
 function pred_index(b: ssa.SBlock, id: i32): i32 {
@@ -93,7 +106,8 @@ function successor(t: ssa.STerm, which: i32): i32 {
 // availability of each dependency remain obligations of the caller.
 pub function input_error(f: ssa.SFunc, dependencies: i32[][]): string {
     if (f.nvals < 0 || dependencies.len() != f.nvals) { return "dependency dimensions"; }
-    if (block_index(f, f.entry) < 0) { return "missing entry block"; }
+    var at: i32[] = first_positions(f);
+    if (block_index(at, f.entry) < 0) { return "missing entry block"; }
     if (f.nvals > 0 && f.blocks.len() > 2147483647 / f.nvals) { return "live matrix overflow"; }
     for deps in dependencies {
         for value in deps {
@@ -103,13 +117,13 @@ pub function input_error(f: ssa.SFunc, dependencies: i32[][]): string {
     var bi: i32 = 0;
     while (bi < f.blocks.len()) {
         var b: ssa.SBlock = f.blocks[bi];
-        if (b.id < 0 || block_index(f, b.id) != bi) { return "duplicate or negative block id"; }
+        if (b.id < 0 || block_index(at, b.id) != bi) { return "duplicate or negative block id"; }
         if (b.term.kind_tag < 1 || b.term.kind_tag > 4) { return "invalid terminator"; }
         if (b.term.kind_tag == 1 && (b.term.value < 0 - 1 || b.term.value >= f.nvals)) { return "return value out of range"; }
         if (b.term.kind_tag == 3 && (b.term.cond < 0 || b.term.cond >= f.nvals)) { return "condition value out of range"; }
         var pi: i32 = 0;
         while (pi < b.preds.len()) {
-            var pb: i32 = block_index(f, b.preds[pi]);
+            var pb: i32 = block_index(at, b.preds[pi]);
             if (pb < 0 || pred_index(b, b.preds[pi]) != pi) { return "invalid predecessor"; }
             var pt: ssa.STerm = f.blocks[pb].term;
             if (successor(pt, 0) != b.id && successor(pt, 1) != b.id) { return "predecessor is not an edge"; }
@@ -126,7 +140,7 @@ pub function input_error(f: ssa.SFunc, dependencies: i32[][]): string {
         while (si < 2) {
             var target: i32 = successor(b.term, si);
             if (target >= 0) {
-                var sb: i32 = block_index(f, target);
+                var sb: i32 = block_index(at, target);
                 if (sb < 0) { return "missing successor"; }
                 if (pred_index(f.blocks[sb], b.id) < 0) { return "missing predecessor edge"; }
             } else if (b.term.kind_tag == 3 || (b.term.kind_tag == 2 && si == 0)) {

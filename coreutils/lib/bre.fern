@@ -1813,11 +1813,79 @@ pub function (re: Bre) exec(text: string): BreMatch {
 // `(re).match_at(text, start, hi)` — the end of the longest match
 // starting at `start` in `text[0, hi)`, or -1.
 function (re: Bre) match_at(text: string, start: i32, hi: i32): i32 {
+  if (!re.backref) {
+    return longest_at(re, text, start, 0, hi);
+  }
   var m: BreMatch = exec_at(re, text, start, 0, hi);
   if (!m.matched) {
     return 0 - 1;
   }
   return m.end;
+}
+
+// The end of the longest match beginning at `start`, or -1: the thread
+// simulation with no captures, for a caller that asks only where a match
+// ends. Which path reached a program counter first decides the captures
+// and nothing else, so each counter is entered once per position. The
+// lists are sized once: a position holds each counter at most once, and
+// the closure's stack at most two entries per counter entered.
+function longest_at(re: Bre, text: string, start: i32, lo: i32, hi: i32): i32 {
+  var n: i32 = re.insts.len();
+  var seen: i32[] = fill(n, 0 - 1);
+  var cur: i32[] = fill(n, 0);
+  var stack: i32[] = fill(2 * n + 2, 0);
+  var nc: i32 = 0;
+  var sp: i32 = 1;
+  var best: i32 = 0 - 1;
+  var pos: i32 = start;
+  while (true) {
+    while (sp > 0) {
+      sp = sp - 1;
+      var pc: i32 = stack[sp];
+      if (seen[pc] == pos) {
+        continue;
+      }
+      seen = seen.with(pc, pos);
+      var op: i32 = re.insts[pc].op;
+      if (op == op_jmp()) {
+        stack = stack.with(sp, re.insts[pc].a);
+        sp = sp + 1;
+      } else if (op == op_split()) {
+        stack = stack.with(sp, re.insts[pc].b);
+        stack = stack.with(sp + 1, re.insts[pc].a);
+        sp = sp + 2;
+      } else if (op == op_save() || op == op_mark() || op == op_progress()) {
+        stack = stack.with(sp, pc + 1);
+        sp = sp + 1;
+      } else if (op == op_bol() || op == op_eol() || op == op_assert()) {
+        if (zero_width_holds(re, text, re.insts[pc], pos, lo, hi)) {
+          stack = stack.with(sp, pc + 1);
+          sp = sp + 1;
+        }
+      } else if (op == op_match()) {
+        best = pos;
+      } else {
+        cur = cur.with(nc, pc);
+        nc = nc + 1;
+      }
+    }
+    if (pos >= hi || nc == 0) {
+      break;
+    }
+    var b: i32 = text[pos] as i32;
+    var k: i32 = 0;
+    while (k < nc) {
+      var at: i32 = cur[k];
+      if (byte_matches(re, re.insts[at], b)) {
+        stack = stack.with(sp, at + 1);
+        sp = sp + 1;
+      }
+      k = k + 1;
+    }
+    nc = 0;
+    pos = pos + 1;
+  }
+  return best;
 }
 
 // `(re).search_from(text, lo, hi)` — glibc's `re_search` over
@@ -1829,15 +1897,43 @@ function (re: Bre) match_at(text: string, start: i32, hi: i32): i32 {
 pub function (re: Bre) search_from(text: string, lo: i32, hi: i32): (i32, i32) {
   var start: i32 = lo;
   while (start <= hi) {
-    if (can_start_at(re, text, start, hi)) {
-      var end: i32 = re.match_at(text, start, hi);
-      if (end >= 0) {
-        return (start, end);
-      }
+    start = next_start(re, text, start, hi);
+    if (start < 0) {
+      break;
+    }
+    var end: i32 = re.match_at(text, start, hi);
+    if (end >= 0) {
+      return (start, end);
     }
     start = start + 1;
   }
   return (0 - 1, 0 - 1);
+}
+
+// The first position in `text[pos, hi]` that `can_start_at` accepts, or
+// -1, found by one scan rather than a test per position.
+function next_start(re: Bre, text: string, pos: i32, hi: i32): i32 {
+  if (re.pre.len() > 0) {
+    return find_literal(text, re.pre, pos, hi);
+  }
+  if (re.alts.len() > 0) {
+    return find_any_literal(text, re.alts, pos, hi);
+  }
+  if (re.empty_ok) {
+    return pos;
+  }
+  var i: i32 = pos;
+  if (hi == text.len()) {
+    i = __scan_set(text, pos, re.first);
+  } else {
+    while (i < hi && re.first[text[i] as i32] as i32 == 0) {
+      i = i + 1;
+    }
+  }
+  if (i >= hi) {
+    return 0 - 1;
+  }
+  return i;
 }
 
 // `(re).search_back(text, hi)` — glibc's `re_search` over `text[0, hi)`
@@ -2035,7 +2131,7 @@ function zw_stamp(gen: i32): i32 {
 // array, and each stamp would then copy it (#8498) — one copy per
 // instruction of the closure, which a pattern like `\(a*\)\{3200\}`
 // walks in full at every position.
-function add_thread(re: Bre, t0: Threads, gen: i32, pc: i32, caps: i32[], pos: i32, text: string, lo: i32, hi: i32, zw: boolean): Threads {
+function add_thread(re: Bre, own t0: Threads, gen: i32, pc: i32, caps: i32[], pos: i32, text: string, lo: i32, hi: i32, zw: boolean): Threads {
   var seen: i32 = t0.seen[pc];
   if (seen == gen) {
     return t0;
@@ -2083,7 +2179,8 @@ function add_thread(re: Bre, t0: Threads, gen: i32, pc: i32, caps: i32[], pos: i
   }
   if (in.op == op_match()) {
     if (over) {
-      return Threads { ...stamp(t0, pc, mark), caps: t0.caps.with(t0.match_at, caps) };
+      var t1: Threads = stamp(t0, pc, mark);
+      return Threads { ...t1, caps: t1.caps.with(t1.match_at, caps) };
     }
     return append_match_thread(stamp(t0, pc, mark), pc, caps);
   }
@@ -2093,15 +2190,15 @@ function add_thread(re: Bre, t0: Threads, gen: i32, pc: i32, caps: i32[], pos: i
   return append_thread(stamp(t0, pc, mark), pc, caps);
 }
 
-function stamp(t: Threads, pc: i32, mark: i32): Threads {
+function stamp(own t: Threads, pc: i32, mark: i32): Threads {
   return Threads { ...t, seen: t.seen.with(pc, mark) };
 }
 
-function append_thread(t: Threads, pc: i32, caps: i32[]): Threads {
+function append_thread(own t: Threads, pc: i32, caps: i32[]): Threads {
   return Threads { ...t, pcs: t.pcs.append(pc), caps: t.caps.append(caps) };
 }
 
-function append_match_thread(t: Threads, pc: i32, caps: i32[]): Threads {
+function append_match_thread(own t: Threads, pc: i32, caps: i32[]): Threads {
   var at: i32 = t.pcs.len();
   return Threads { ...t, pcs: t.pcs.append(pc), caps: t.caps.append(caps), match_at: at };
 }

@@ -1826,6 +1826,12 @@ func stringParamCounted(fn *ast.FuncDecl, pn string, summary *summaryTable[[]boo
 					safe[id] = true
 				}
 			}
+		case *ast.MakeClosure:
+			// MakeEnv retains a borrowed capture into the env, and the
+			// closure's drop releases it: a counted store like a field slot.
+			for _, c := range x.Captures {
+				mark(c)
+			}
 		case *ast.StructLit:
 			for _, f := range x.Fields {
 				mark(f.Value)
@@ -1963,10 +1969,34 @@ func stringParamCounted(fn *ast.FuncDecl, pn string, summary *summaryTable[[]boo
 					}
 				}
 			}
+			if a := selfSlotArg(fn, pn, x); a != nil {
+				mark(a)
+			}
 		}
 		return true
 	})
 	return everyOccurrenceSafe(total, len(safe))
+}
+
+// selfSlotArg is the argument a direct self-recursive call `c` passes back
+// into parameter `pn`'s own position, or nil. The frame it enters retains
+// that argument exactly as this one retains `pn`, so it is the property
+// being proved and not a use that can refute it: an uncounted retention
+// anywhere down the recursion happens at some other occurrence, which the
+// classifier sees. The least fixpoint cannot credit it through the
+// summary, whose entry for this position is what it is computing, and so
+// refused every recursive walker that threads its input through itself.
+func selfSlotArg(fn *ast.FuncDecl, pn string, c *ast.Call) ast.Expr {
+	id, ok := c.Callee.(*ast.Ident)
+	if !ok || id.Name != fn.Name {
+		return nil
+	}
+	for i, p := range fn.Params {
+		if p.Name == pn && i < len(c.Args) {
+			return c.Args[i]
+		}
+	}
+	return nil
 }
 
 // arrayParamCounted is the array sibling of stringParamCounted: an array
@@ -2043,6 +2073,12 @@ func arrayParamCounted(fn *ast.FuncDecl, pn string, at ast.ArrayType, info *chec
 					}
 				}
 			}
+		case *ast.MakeClosure:
+			// MakeEnv retains a borrowed capture into the env, and the
+			// closure's drop releases it: a counted store like a field slot.
+			for _, c := range x.Captures {
+				mark(c)
+			}
 		case *ast.StructLit:
 			for _, f := range x.Fields {
 				mark(f.Value)
@@ -2116,6 +2152,9 @@ func arrayParamCounted(fn *ast.FuncDecl, pn string, at ast.ArrayType, info *chec
 						}
 					}
 				}
+			}
+			if a := selfSlotArg(fn, pn, x); a != nil {
+				mark(a)
 			}
 		}
 		return true
@@ -2329,6 +2368,10 @@ func paramProjectionsSafe(fn *ast.FuncDecl, pn string, info *checker.Info, summa
 			if id, ok := x.Tag.(*ast.Ident); ok && tracked[id.Name] {
 				safe[id] = true
 			}
+		case *ast.MakeClosure:
+			for _, c := range x.Captures {
+				markSlotValue(c)
+			}
 		case *ast.StructLit:
 			for _, f := range x.Fields {
 				markSlotValue(f.Value)
@@ -2433,6 +2476,9 @@ func paramProjectionsSafe(fn *ast.FuncDecl, pn string, info *checker.Info, summa
 						}
 					}
 				}
+			}
+			if a := selfSlotArg(fn, pn, x); a != nil {
+				markSlotValue(a)
 			}
 			// A variant-constructor payload is a counted slot exactly like a
 			// StructLit field: a bare `p` is inc'd in, a `p.field` is inc'd
@@ -3412,6 +3458,11 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		// untainted-owned cases.
 		return false
 	case *ast.FieldAccess:
+		// `Color.Red`, a payload-less variant, is the shared static sentinel,
+		// which aliases nothing, like a string literal.
+		if _, _, ok := b.unitVariantRef(x); ok {
+			return false
+		}
 		// Reading a pointer field out of a struct-typed LOCAL is a COUNTED
 		// alias, not a borrow: the binding site inc's it (needsRcIncOnAlias
 		// fires for a pointer field), and both the destination and the
@@ -7443,7 +7494,7 @@ func (b *builder) computeBorrowedAliases() {
 		// `returned[y]` would refuse `return y.len()`, which hands out a
 		// scalar — aliasReturnsConfined is the same question asked of what
 		// the return VALUE carries, as the for-in leg asks it.
-		if !b.bindingConfinedToArm(b.fn.Body, y, v.Type) || !b.aliasReturnsConfined(y) {
+		if !b.bindingReleasableInArm(b.fn.Body, y, v.Type) || !b.aliasReturnsConfined(y) {
 			return true
 		}
 		b.rc.borrowedAlias[y] = true

@@ -12,10 +12,7 @@
 // outright.
 package e2e
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
 const dynReturnPrelude = `trait Label { function a(self: Self): i32; }
 struct Box { name: string }
@@ -97,7 +94,7 @@ func TestDynReturnedBorrowTakesItsOwnUnit(t *testing.T) {
 			}
 		})
 		t.Run("x86_64-sanitize/"+c.name, func(t *testing.T) {
-			checkDynReturnSanitized(t, c.src, c.want)
+			checkSanitizedBalanced(t, c.src, c.want, runSanitizeX86_64)
 		})
 		t.Run("arm64/"+c.name, func(t *testing.T) {
 			if _, code := compileAndRunArm64FreeOn(t, c.src); code != c.want {
@@ -129,23 +126,6 @@ func TestDynReturnedBorrowBounded(t *testing.T) {
 			t.Errorf("heap high-water grew with the churn length (verdict %d, want 0)", got)
 		}
 	})
-}
-
-// checkDynReturnSanitized runs src under the x86-64 sanitizer: the answer,
-// no report, and every allocation freed.
-func checkDynReturnSanitized(t *testing.T, src string, want int) {
-	t.Helper()
-	stdout, stderr, code := runSanitizeX86_64(t, src)
-	if code != want {
-		t.Fatalf("exit = %d, want %d\nstdout: %s\nstderr: %s", code, want, stdout, stderr)
-	}
-	if strings.Contains(stderr, "fern-sanitizer:") {
-		t.Errorf("sanitizer report:\n%s", stderr)
-	}
-	allocs, frees, live := parseLeakCheckLine(t, stderr)
-	if allocs == 0 || allocs != frees || live != 0 {
-		t.Errorf("census: allocs=%d frees=%d live_bytes=%d, want balanced / 0", allocs, frees, live)
-	}
 }
 
 // A borrow returned through a branch is returned as surely as a bare one:
@@ -187,7 +167,7 @@ function pick(c: i32, l: dyn Label, m: dyn Label): dyn Label { return match (mk(
 	}
 	for _, c := range cases {
 		src := head + c.pick + body
-		t.Run("x86_64-sanitize/"+c.name, func(t *testing.T) { checkDynReturnSanitized(t, src, 23) })
+		t.Run("x86_64-sanitize/"+c.name, func(t *testing.T) { checkSanitizedBalanced(t, src, 23, runSanitizeX86_64) })
 		t.Run("arm64/"+c.name, func(t *testing.T) {
 			if _, code := compileAndRunArm64FreeOn(t, src); code != 23 {
 				t.Errorf("got exit %d, want 23", code)

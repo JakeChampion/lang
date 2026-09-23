@@ -74,7 +74,9 @@ func driverDiags(out string) []driverDiag {
 func driverCodes(out string) []string {
 	var codes []string
 	for _, d := range driverDiags(out) {
-		codes = append(codes, d.code)
+		if d.code != "" {
+			codes = append(codes, d.code)
+		}
 	}
 	return uniqueSortedCodes(codes)
 }
@@ -2378,6 +2380,18 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"loop-generic-callback-local", `function f[T, U](xs: T[], callback: (T) => U[]): U[] { var out: U[] = []; for x in xs { var ys = callback(x); for y in ys { out = out.append(y); } } return out; }`},
 		{"loop-callback-argument-mismatch", `function f(callback: (string) => i32[]): i32 { for y in callback(1) { var n = y; } return 0; }`},
 		{"loop-map-pair-types", `function f(m: Map[string, i64]): i64 { for (k, v) in m { return k.len() + v; } return 0; }`},
+		// Map's helpers all come from core/map, so a program that never
+		// imports it does not link — native reports E001 up front and the
+		// self-host used to build it (#10094). The imported row is the
+		// control: the rule must read the program's import closure, not
+		// just flag every map_new it walks.
+		{"map-without-core-map-import", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); return m.get_or(1, 0) - 2; }\n"},
+		{"map-with-core-map-import", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); return m.get_or(1, 0) - 2; }\n"},
+		// The literal spelling reaches the same rule by a different road: the
+		// compile parse desugars `Map { … }` to a map_new_i32 / map_new
+		// chain, so the constructor the walk sees is not the one written.
+		{"map-literal-without-core-map-import", "function main(): i32 { var m: Map[i32, i32] = Map { 1: 2 }; return m.get_or(1, 0) - 2; }\n"},
+		{"map-literal-with-core-map-import", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i32] = Map { 1: 2 }; return m.get_or(1, 0) - 2; }\n"},
 		// A settled i32 beside a settled i64 widens to i64 in either operand
 		// order (native's commonIntegerWidth), so the sum returns as i64 and
 		// is refused as i32.
@@ -2689,6 +2703,39 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 			}
 		})
 	}
+
+	// Map's helpers all come from the one module, so one report covers every
+	// use: native stops after the first with a checker-level flag
+	// (mapErrReported), and thin_map_import_diags is this checker's pure
+	// equivalent. The rows above cannot see it — every differential here
+	// compares a de-duplicated code SET, so a program reported twice and a
+	// program reported once are the same answer — and no row has two map
+	// sites. This counts the diagnostics instead.
+	t.Run("map-import-reported-once-per-program", func(t *testing.T) {
+		const src = "function a(): i32 { var m: Map[i32, i32] = map_new(8); return m.len(); }\n" +
+			"function b(): i32 { var m: Map[i32, i32] = map_new(4); return m.len(); }\n" +
+			"function main(): i32 { return a() + b(); }\n"
+		var cmd *exec.Cmd
+		if len(runner) == 0 {
+			cmd = exec.Command(checkerBin)
+		} else {
+			cmd = exec.Command(runner[0], append(runner[1:], checkerBin)...)
+		}
+		cmd.Stdin = bytes.NewReader([]byte(src))
+		out := runCheckerDriver(t, cmd, "map-import-reported-once-per-program")
+		var mapDiags []driverDiag
+		for _, d := range driverDiags(out) {
+			if d.code == "E001" && strings.Contains(d.msg, "core/map") {
+				mapDiags = append(mapDiags, d)
+			}
+		}
+		// Two map_new sites, one diagnostic. Native answers the same program
+		// with one, so anything else is a parity break rather than a style
+		// choice; zero would mean the rule stopped firing at all.
+		if len(mapDiags) != 1 {
+			t.Errorf("two map_new sites drew %d missing-core/map diagnostics, want 1: %v\nsrc: %s", len(mapDiags), mapDiags, src)
+		}
+	})
 }
 
 // TestSelfHostCheckerBundleDifferentialX86_64 is the MULTI-MODULE differential
@@ -2878,6 +2925,17 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		// uncoded over-reject in a non-generic body.
 		{"assoc-concrete-primitive-ok", "import \"std/num\";\nfunction main(): i32 { var z: i32 = i32.zero(); return z; }\n"},
 		{"assoc-concrete-user-impl-ok", "import \"std/num\";\nstruct P { x: i32 }\nimpl num.Zero for P { function zero(): Self { return P { x: 0 }; } }\nfunction main(): i32 { var p: P = P.zero(); return p.x; }\n"},
+		// #10094, the BUNDLED half. E001's missing-`core/map` rule reads the
+		// program's import closure, which only exists here because
+		// flatten.bundle keeps it on the merged module — it used to hand the
+		// checker an empty list, which cannot tell these three apart. The
+		// direct-import row is what a dropped list breaks (it would draw the
+		// diagnostic the no-import row wants); the transitive row is what a
+		// list narrowed to the ENTRY's own imports breaks, since std/json is
+		// where core/map is imported.
+		{"map-bundled-no-import", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); return m.get_or(1, 0) - 2; }\n"},
+		{"map-bundled-direct-import", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); return m.get_or(1, 0) - 2; }\n"},
+		{"map-bundled-transitive-import", "import \"std/json\";\nfunction main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); return m.get_or(1, 0) - 2; }\n"},
 	}
 
 	for _, tc := range progs {
