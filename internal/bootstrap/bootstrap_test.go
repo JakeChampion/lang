@@ -14,11 +14,11 @@ import (
 
 // fixpointCompiler is a stand-in compiler whose output IS itself, so every
 // generation it builds is byte-identical to the one before: the shape a real
-// stage chain must have. It ignores the source it is handed. Run without -o
-// it is the "program" it compiled: with no operands the one-liner, which
-// exits 42, and with operands coreutils/tr, which the host's tr stands in for.
+// stage chain must have. It ignores the source it is handed. Run as a program
+// it is whichever one the smoke test compiled: given tr's operands it
+// translates, and with no arguments it exits 42.
 const fixpointCompiler = `#!/bin/sh
-case "$1" in -*|"") ;; *) exec tr "$@" ;; esac
+case "$1" in -*|"") ;; *) exec tr "$1" "$2" ;; esac
 out=""
 while [ $# -gt 0 ]; do
   case "$1" in -o) out="$2"; shift 2 ;; *) shift ;; esac
@@ -35,6 +35,18 @@ while [ $# -gt 0 ]; do
   case "$1" in -o) out="$2"; shift 2 ;; *) shift ;; esac
 done
 [ -n "$out" ] || exit 1
+cp "$0" "$out"
+`
+
+// oneLinerCompiler's output runs the one-line smoke program and nothing else:
+// run as coreutils/tr it exits 42 too, like a stage1 that aborts on any
+// real program.
+const oneLinerCompiler = `#!/bin/sh
+out=""
+while [ $# -gt 0 ]; do
+  case "$1" in -o) out="$2"; shift 2 ;; *) shift ;; esac
+done
+[ -n "$out" ] || exit 42
 cp "$0" "$out"
 `
 
@@ -152,6 +164,23 @@ func TestBuildRejectsACompilerWhoseOutputDoesNotRun(t *testing.T) {
 	}
 	if !strings.Contains(out, "smoke:") || !strings.Contains(out, "exited 1, want 42") {
 		t.Errorf("failure does not name the smoke test's exit code")
+	}
+	if _, err := os.Stat(filepath.Join(root, "bin", "fern-selfhost")); err == nil {
+		t.Errorf("bin/fern-selfhost installed despite a failed smoke test")
+	}
+}
+
+func TestBuildRejectsACompilerThatOnlyHandlesAOneLiner(t *testing.T) {
+	root := checkout(t)
+	stage0 := filepath.Join(root, "candidate")
+	write(t, stage0, []byte(oneLinerCompiler), 0o755)
+
+	out, err := run(t, root, "build", []string{"STAGE0=" + stage0}, "")
+	if err == nil {
+		t.Fatal("a compiler whose coreutils/tr does not translate must fail the smoke test")
+	}
+	if !strings.Contains(out, "smoke: tr compiled by") {
+		t.Errorf("failure does not name the tr smoke: %s", out)
 	}
 	if _, err := os.Stat(filepath.Join(root, "bin", "fern-selfhost")); err == nil {
 		t.Errorf("bin/fern-selfhost installed despite a failed smoke test")
