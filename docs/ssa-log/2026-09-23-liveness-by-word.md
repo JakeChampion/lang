@@ -22,5 +22,5 @@ The allocation rise is the id lists themselves, one array per query.
 byte-identical on x86-64, arm64 and wasm32.
 
 `TestSelfHostSSALifetimeDependencies` checks all three lists against the
-per-value predicates on every fixture, and its `wide` fixture has 70-value
-live sets so each row spans two words.
+per-value predicates on every fixture, and its `wide` fixture has 174
+values, so each row spans three words.

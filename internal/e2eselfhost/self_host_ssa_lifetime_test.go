@@ -39,7 +39,7 @@ func testSelfHostSSALifetimeIR(t *testing.T, target string) {
 		t.Fatal(err)
 	}
 	fixtures := selfHostLifetimeFixtures()
-	for _, name := range []string{"nested-projection", "phi-edges", "loop-anchor", "rebound-value"} {
+	for _, name := range []string{"nested-projection", "phi-edges", "loop-anchor", "rebound-value", "wide"} {
 		t.Run(name, func(t *testing.T) {
 			source, want := lifetimeFernFixture(t, fixtures[name])
 			entry := filepath.Join(dir, "lifetime_fixture.fern")
