@@ -36,9 +36,14 @@ const table = block("- id: filter", "LANES");
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const run = new AsyncFunction("github", "context", "core", script);
 
+const suiteYml = fs.readFileSync(path.join(root, ".github/workflows/ci-suite.yml"), "utf8");
+
 // One invocation of the script: `files` is what the API lists, `throwOn`
-// makes the listing fail, `lanes` replaces the real table.
-async function decide({ event = "pull_request", files = [], throwOn = false, lanes = table } = {}) {
+// makes the listing fail, `lanes` replaces the real table. `proof` stubs what
+// a main push reads about the pull request it merged: the pushed tree, the
+// associated PRs with their head trees, and each head's successful runs and
+// their jobs. `proofThrows` makes the first of those calls fail.
+async function decide({ event = "pull_request", files = [], throwOn = false, lanes = table, proof = null, proofThrows = false } = {}) {
   process.env.LANES = typeof lanes === "string" ? lanes : JSON.stringify(lanes);
   const outputs = {}, warnings = [], failed = [];
   let listings = 0;
@@ -51,14 +56,35 @@ async function decide({ event = "pull_request", files = [], throwOn = false, lan
   };
   const context = {
     eventName: event,
+    sha: "c".repeat(40),
     repo: { owner: "o", repo: "r" },
     payload: event === "pull_request"
       ? { pull_request: { number: 1 } }
       : { before: "a".repeat(40), after: "b".repeat(40) },
   };
+  const p = proof || { tree: "t", prs: [], runs: {}, jobs: {} };
+  const trees = { [context.sha]: p.tree, ...Object.fromEntries(p.prs.map((pr) => [pr.head.sha, pr.tree])) };
   const github = {
-    rest: { pulls: { listFiles: "listFiles" }, repos: { compareCommitsWithBasehead: "compare" } },
+    rest: {
+      pulls: { listFiles: "listFiles" },
+      repos: {
+        compareCommitsWithBasehead: "compare",
+        listPullRequestsAssociatedWithCommit: async () => ({ data: p.prs }),
+        getContent: async () => ({ data: { content: Buffer.from(suiteYml).toString("base64") } }),
+      },
+      git: {
+        getCommit: async ({ commit_sha }) => {
+          if (proofThrows) throw new Error("api down");
+          return { data: { tree: { sha: trees[commit_sha] } } };
+        },
+      },
+      actions: {
+        listWorkflowRuns: async ({ head_sha }) => ({ data: { workflow_runs: p.runs[head_sha] || [] } }),
+        listJobsForWorkflowRun: "listJobs",
+      },
+    },
     paginate: async (fn, opts, map) => {
+      if (fn === "listJobs") return p.jobs[opts.run_id] || [];
       listings++;
       if (throwOn) throw new Error("boom");
       const list = files.map((f) => (typeof f === "string" ? { filename: f } : f));
@@ -121,6 +147,34 @@ for (const files of [["docs/x.md"], ["editors/vscode/x.ts"], []]) {
   r = await decide({ event: "push", files });
   check(`main validates full tip: ${JSON.stringify(files)}`, [all(r), r.listings], [true, 0]);
 }
+// A main push at a tree identical to the merged PR's head skips each lane
+// whose every job passed on that head's successful run; perf always runs.
+const display = Object.fromEntries([...suiteYml.matchAll(/^  ([a-z0-9_-]+):\n    name: (.+)$/gm)].map((m) => [m[1], m[2].trim()]));
+const laneKeys = Object.keys(JSON.parse(table));
+check("every lane has a Full suite name to prove it by", laneKeys.filter((l) => !display[l]), []);
+const jobsFor = (keys, conclusion = "success") => keys.map((l) => ({ name: `Full suite / ${display[l]} / job`, conclusion }));
+const merged = (tree) => ({ number: 7, merged_at: "2026-09-23T00:00:00Z", base: { ref: "main" }, head: { sha: "h".repeat(40) }, tree });
+const proofOf = ({ tree = "t", headTree = "t", jobs = jobsFor(laneKeys), prs } = {}) => ({
+  tree, prs: prs || [merged(headTree)], runs: { ["h".repeat(40)]: [{ id: 99 }] }, jobs: { 99: jobs },
+});
+r = await decide({ event: "push", proof: proofOf() });
+check("identical tree: every passed lane skips, perf runs",
+  Object.keys(r.lanes).filter((l) => r.lanes[l]), ["perf"]);
+r = await decide({ event: "push", proof: proofOf({ headTree: "other" }) });
+check("different tree: every lane runs", all(r), true);
+r = await decide({ event: "push", proof: proofOf({ jobs: jobsFor(laneKeys.filter((l) => l !== "macos")) }) });
+check("a lane the PR run did not run still runs on main", [r.lanes.macos, r.lanes["test-units"]], [true, false]);
+r = await decide({ event: "push", proof: proofOf({ jobs: [...jobsFor(laneKeys), { name: `Full suite / ${display["test-units"]} / extra`, conclusion: "skipped" }] }) });
+check("a lane with any job not passed still runs", [r.lanes["test-units"], r.lanes["test-coreutils"]], [true, false]);
+r = await decide({ event: "push", proof: proofOf({ prs: [{ ...merged("t"), base: { ref: "other" } }] }) });
+check("a PR merged elsewhere proves nothing", all(r), true);
+r = await decide({ event: "push", proof: proofOf({ prs: [{ ...merged("t"), merged_at: null }] }) });
+check("an unmerged PR proves nothing", all(r), true);
+r = await decide({ event: "push", proof: proofOf(), proofThrows: true });
+check("an API error proves nothing", [all(r), r.warnings.some((w) => w.includes("merged PR"))], [true, true]);
+r = await decide({ event: "workflow_dispatch", proof: proofOf() });
+check("a dispatch is never trimmed", all(r), true);
+
 // Fail-open, and the one loud exception.
 check("listing failure runs everything", all(await decide({ throwOn: true })), true);
 check("dispatch runs everything", all(await decide({ event: "workflow_dispatch" })), true);
