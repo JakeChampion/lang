@@ -644,8 +644,10 @@ A main push that is not a level merge still ran every lane. The selector now
 also looks, per lane, at the newest completed `ci-main.yml` run that ran that
 lane. If every job of the lane passed there, and the compare from that run's
 commit to the pushed commit is a fast-forward listing fewer than 300 files, a
-lane whose filter selects none of those files is skipped. A lane that was red
-or cancelled on that run runs again, as does perf. A failed API call, a base
+lane whose filter selects none of those files is skipped. A lane that failed on
+that run runs again, as does perf. A lane a later push cancelled proves
+nothing, so the search continues to an older run; main runs are coalesced, so
+the newest completed run is often a cancelled one. A failed API call, a base
 that is not an ancestor, or a compare that may be truncated runs every lane
 with a warning in the job summary.
 
