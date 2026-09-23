@@ -44,16 +44,6 @@ type relaxEvent struct {
 	// instruction, so unlike a NOP they cost no executed instruction —
 	// which is the whole point (#10017). The rest of bpad stays NOPs.
 	bpfx int
-	// leadPrefixable says the lead instruction may carry redundant 2E
-	// prefixes. A VEX-encoded instruction may not: a legacy segment prefix
-	// ahead of C4/C5 is #UD, not a longer encoding of the same thing. Such
-	// a lead is still taken for the fused-span measurement; only the
-	// prefixes are withheld, and its padding stays NOPs.
-	leadPrefixable bool
-	// leadFuse marks a lead that macro-fuses with this branch (a flag-
-	// setting ALU op before a jcc). The pair is what the erratum tests, so
-	// the span kept off the line covers both.
-	leadFuse bool
 	// Alignment pad (align > 1):
 	align   int
 	maxSkip int // -1 when absent
@@ -408,25 +398,22 @@ func (a *Assembler) relaxOnce() error {
 }
 
 // padFor sizes the padding an aligned branch event needs at its planned
-// start, and how much of it the lead instruction absorbs as prefixes. The
-// span kept off the 32-byte line is the BRANCH alone, or the lead and the
-// branch together when they macro-fuse: the erratum tests the fused pair as
-// one, and padding to put the jcc alone at the line start leaves that pair
-// straddling it exactly.
+// start, and how much of it the lead instruction absorbs as prefixes.
+//
+// The span kept off the 32-byte line is the BRANCH alone. A macro-fused
+// cmp/test+jcc pair is one span to the erratum and is NOT protected here —
+// that is #10100, left out because protecting it costs padding that cannot
+// become prefixes (the span starts at the lead, so a prefix lengthens it
+// without moving its start) and measured +0.3% instructions on cat.
 func (a *Assembler) padFor(e *relaxEvent, bn int) (pad, pfx int) {
 	if !a.alignBranches {
 		return 0, 0
 	}
-	if e.leadFuse && e.lead+bn <= 32 {
-		// Only when the pair can fit on one line at all: branchPad moves a
-		// span to a line START, which keeps it whole only if it is no wider
-		// than the line. A longer pair straddles wherever it is put, so
-		// protect the branch alone and spend the padding there.
-		pad = branchPad(a.alignBase+e.newStart, e.lead+bn)
-	} else {
-		pad = branchPad(a.alignBase+e.newStart+e.lead, bn)
-	}
-	return pad, prefixSplit(pad, e.lead, e.leadPrefixable)
+	// The branch alone: the padding puts it at a line start, and prefixes
+	// sit before the lead, so they change what the pad COSTS and not where
+	// the branch lands.
+	pad = branchPad(a.alignBase+e.newStart+e.lead, bn)
+	return pad, prefixSplit(pad, e.lead)
 }
 
 // branchPad is the NOP padding that moves an n-byte branch at address start
@@ -461,8 +448,8 @@ const maxInstBytes = 15
 // decodes; a NOP is one more instruction retired on every pass through the
 // loop the branch sits in, which on `cat -A` over 3 MB was 6.7% of all
 // instructions retired (#10017).
-func prefixSplit(pad, lead int, prefixable bool) int {
-	if pad <= 0 || lead <= 0 || !prefixable {
+func prefixSplit(pad, lead int) int {
+	if pad <= 0 || lead <= 0 {
 		return 0
 	}
 	room := maxInstBytes - lead

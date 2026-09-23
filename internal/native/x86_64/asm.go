@@ -710,33 +710,17 @@ func (a *Assembler) prefixed(prefix byte, in Inst) error {
 // may do with it under branch alignment (relaxEvent.lead).
 type instSpan struct {
 	start, end int
-	// prefixable: the encoding tolerates redundant 2E bytes in front. A
-	// VEX-encoded instruction does not — a legacy segment prefix ahead of
-	// C4/C5 is #UD, not a longer spelling of the same instruction.
-	prefixable bool
-	// fusable: a flag-setting ALU op the CPU macro-fuses with a following
-	// jcc, so the erratum tests the two as one span.
-	fusable bool
 	// wasEvent: the instruction is itself a branch-class event, whose
 	// length relaxation can still change. Reaching back over one would put
 	// a moving target inside another event's span.
 	wasEvent bool
 }
 
-// macroFusable lists the flag-setting ALU ops that fuse with a following
-// jcc on the Intel parts the erratum covers. Fusion only widens the span
-// kept off the line, so a name missing here costs a little padding, never
-// correctness.
-var macroFusable = map[string]bool{
-	"cmp": true, "test": true, "add": true, "sub": true,
-	"and": true, "inc": true, "dec": true,
-}
-
 // addBranchEvent records a branch-class relaxation event, taking the
 // instruction before it into the event when the two are adjacent. The pad
 // then lands in FRONT of that instruction, where it can be spent as
 // prefixes on it rather than as NOPs the loop executes (#10017).
-func (a *Assembler) addBranchEvent(e relaxEvent, jcc bool) {
+func (a *Assembler) addBranchEvent(e relaxEvent) {
 	// Events are recorded in offset order and the rebuild walks them that
 	// way, so the lead may only be taken when nothing else has been
 	// recorded over it. An EMPTY alignment pad is the case that bites: it
@@ -752,8 +736,6 @@ func (a *Assembler) addBranchEvent(e relaxEvent, jcc bool) {
 		e.lead = p.end - p.start
 		e.start = p.start
 		e.size += e.lead
-		e.leadPrefixable = p.prefixable
-		e.leadFuse = jcc && p.fusable
 	}
 	a.relaxEvents = append(a.relaxEvents, e)
 }
@@ -796,14 +778,12 @@ func (a *Assembler) Inst(in Inst) error {
 	// A return or an indirect branch is a fixed-size event, for branch
 	// alignment only; the direct forms record their own relaxable event.
 	if in.Mnem == "ret" || ((in.Mnem == "call" || in.Mnem == "jmp") && len(in.Ops) == 1 && in.Ops[0].kind != opLabel) {
-		a.addBranchEvent(relaxEvent{start: start, size: len(a.text) - start, fixed: true}, false)
+		a.addBranchEvent(relaxEvent{start: start, size: len(a.text) - start, fixed: true})
 	}
 	a.prevInst = instSpan{
-		start:      start,
-		end:        len(a.text),
-		prefixable: len(a.text) > start && a.text[start] != 0xC4 && a.text[start] != 0xC5,
-		fusable:    macroFusable[in.Mnem],
-		wasEvent:   len(a.relaxEvents) > nEv,
+		start:    start,
+		end:      len(a.text),
+		wasEvent: len(a.relaxEvents) > nEv,
 	}
 	return nil
 }
@@ -2149,7 +2129,7 @@ func (a *Assembler) jmp(ops []Operand) error {
 	if ops[0].kind != opLabel {
 		return fmt.Errorf("jmp expects a label, register, or memory operand")
 	}
-	a.addBranchEvent(relaxEvent{start: len(a.text), size: 5, fixup: len(a.relFixups)}, false)
+	a.addBranchEvent(relaxEvent{start: len(a.text), size: 5, fixup: len(a.relFixups)})
 	a.emit(0xE9)
 	a.relFixups = append(a.relFixups, relFixup{at: len(a.text), sym: ops[0].sym})
 	a.emit32(0)
@@ -2169,7 +2149,7 @@ func (a *Assembler) call(ops []Operand) error {
 	if ops[0].kind != opLabel {
 		return fmt.Errorf("call expects a label, register, or memory operand")
 	}
-	a.addBranchEvent(relaxEvent{start: len(a.text), size: 5, fixed: true}, false)
+	a.addBranchEvent(relaxEvent{start: len(a.text), size: 5, fixed: true})
 	a.emit(0xE8)
 	a.relFixups = append(a.relFixups, relFixup{at: len(a.text), sym: ops[0].sym})
 	a.emit32(0)
@@ -2205,7 +2185,7 @@ func (a *Assembler) jcc(ops []Operand, cc byte) error {
 	if len(ops) != 1 || ops[0].kind != opLabel {
 		return fmt.Errorf("jcc expects a label")
 	}
-	a.addBranchEvent(relaxEvent{start: len(a.text), size: 6, fixup: len(a.relFixups)}, true)
+	a.addBranchEvent(relaxEvent{start: len(a.text), size: 6, fixup: len(a.relFixups)})
 	a.emit(0x0F, 0x80+cc)
 	a.relFixups = append(a.relFixups, relFixup{at: len(a.text), sym: ops[0].sym})
 	a.emit32(0)
