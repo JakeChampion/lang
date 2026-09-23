@@ -180,7 +180,11 @@ check("no successful PR run: every lane runs, and says why",
 r = await decide({ event: "push", proof: proofOf({ jobs: jobsFor(laneKeys.filter((l) => l !== "macos")) }) });
 check("a lane the PR run did not run still runs on main", [r.lanes.macos, r.lanes["test-units"]], [true, false]);
 r = await decide({ event: "push", proof: proofOf({ jobs: [...jobsFor(laneKeys), { name: `Full suite / ${display["test-units"]} / extra`, conclusion: "skipped" }] }) });
-check("a lane with any job not passed still runs", [r.lanes["test-units"], r.lanes["test-coreutils"]], [true, false]);
+check("a job the lane's own conditions skipped does not unprove it", [r.lanes["test-units"], r.lanes["test-coreutils"]], [false, false]);
+r = await decide({ event: "push", proof: proofOf({ jobs: [...jobsFor(laneKeys.filter((l) => l !== "test-units")), ...jobsFor(["test-units"], "skipped")] }) });
+check("a lane whose every job was skipped still runs", [r.lanes["test-units"], r.lanes["test-coreutils"]], [true, false]);
+r = await decide({ event: "push", proof: proofOf({ jobs: [...jobsFor(laneKeys), { name: `Full suite / ${display["test-units"]} / extra`, conclusion: "cancelled" }] }) });
+check("a lane with a cancelled job still runs", [r.lanes["test-units"], r.lanes["test-coreutils"]], [true, false]);
 r = await decide({ event: "push", proof: proofOf({ prs: [{ ...merged("t"), base: { ref: "other" } }] }) });
 check("a PR merged elsewhere proves nothing", all(r), true);
 r = await decide({ event: "push", proof: proofOf({ prs: [{ ...merged("t"), merged_at: null }] }) });
@@ -211,6 +215,10 @@ r = await decide({ event: "push", proof: mainProof({
   jobs: { 50: [...mainJobs(laneKeys.filter((l) => l !== "test-units")), ...mainJobs(["test-units"], "failure")] },
   compare: { [`m1...${head}`]: cmp(["docs/x.md"]) } }) });
 check("main: a lane red on its last run runs again", [r.lanes["test-units"], r.lanes["test-coreutils"]], [true, false]);
+r = await decide({ event: "push", proof: mainProof({
+  jobs: { 50: [...mainJobs(laneKeys), { name: `Validate / Full suite / ${display.bootstrap} / publish`, conclusion: "skipped" }] },
+  compare: { [`m1...${head}`]: cmp(["docs/x.md"]) } }) });
+check("main: a lane with a skipped publish job still counts as passed", r.lanes.bootstrap, false);
 r = await decide({ event: "push", proof: mainProof({
   runs: [{ id: 51, head_sha: "m2" }, { id: 50, head_sha: "m1" }],
   jobs: { 51: mainJobs(laneKeys.filter((l) => l !== "test-units")), 50: mainJobs(laneKeys) },
