@@ -4053,9 +4053,25 @@ function map_key_int_evidence(k: ast.Expr, s: LowerState): boolean {
             if (is_int_irtag(kix.ty)) { return true; }
             return arr_elem_is_int(kix.array, s);
         },
+        // Arithmetic and bitwise ops are integers when an operand is; a string
+        // `+` answered expr_is_str above.
+        ast.ExprBinary(kb) => {
+            if (map_key_bool_op(kb.op)) { return false; }
+            return map_key_int_evidence(kb.left, s) || map_key_int_evidence(kb.right, s);
+        },
+        ast.ExprUnary(ku) => {
+            if (ku.op != "-") { return false; }
+            return map_key_int_evidence(ku.operand, s);
+        },
         _ => { return false; }
     }
     return false;
+}
+
+// map_key_bool_op reports a binary op whose result is a boolean whatever its
+// operands are.
+function map_key_bool_op(op: string): boolean {
+    return op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=" || op == "&&" || op == "||";
 }
 
 // arr_elem_is_int reports POSITIVE evidence that indexing `a` reads an INTEGER
