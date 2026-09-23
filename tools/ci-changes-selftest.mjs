@@ -45,13 +45,13 @@ const suiteYml = fs.readFileSync(path.join(root, ".github/workflows/ci-suite.yml
 // their jobs. `proofThrows` makes the first of those calls fail.
 async function decide({ event = "pull_request", files = [], throwOn = false, lanes = table, proof = null, proofThrows = false } = {}) {
   process.env.LANES = typeof lanes === "string" ? lanes : JSON.stringify(lanes);
-  const outputs = {}, warnings = [], failed = [];
+  const outputs = {}, warnings = [], failed = [], infos = [];
   let listings = 0;
   const core = {
     setOutput: (k, v) => (outputs[k] = v),
     setFailed: (m) => failed.push(m),
     warning: (m) => warnings.push(m),
-    info: () => {},
+    info: (m) => infos.push(m),
     summary: { addHeading() { return this; }, addRaw() { return this; }, addTable() { return this; }, async write() {} },
   };
   const context = {
@@ -92,7 +92,7 @@ async function decide({ event = "pull_request", files = [], throwOn = false, lan
     },
   };
   await run(github, context, core);
-  return { lanes: outputs.lanes ? JSON.parse(outputs.lanes) : null, warnings, failed, listings };
+  return { lanes: outputs.lanes ? JSON.parse(outputs.lanes) : null, warnings, failed, listings, infos };
 }
 
 let failures = 0;
@@ -161,7 +161,14 @@ r = await decide({ event: "push", proof: proofOf() });
 check("identical tree: every passed lane skips, perf runs",
   Object.keys(r.lanes).filter((l) => r.lanes[l]), ["perf"]);
 r = await decide({ event: "push", proof: proofOf({ headTree: "other" }) });
-check("different tree: every lane runs", all(r), true);
+check("different tree: every lane runs, and says why",
+  [all(r), r.infos.some((m) => m.includes("the pushed tree differs from the head of #7"))], [true, true]);
+r = await decide({ event: "push", proof: proofOf({ prs: [] }) });
+check("no associated PR: every lane runs, and says why",
+  [all(r), r.infos.some((m) => m.includes("no merged pull request is associated"))], [true, true]);
+r = await decide({ event: "push", proof: { ...proofOf(), runs: {} } });
+check("no successful PR run: every lane runs, and says why",
+  [all(r), r.infos.some((m) => m.includes("#7's head has no successful CI run"))], [true, true]);
 r = await decide({ event: "push", proof: proofOf({ jobs: jobsFor(laneKeys.filter((l) => l !== "macos")) }) });
 check("a lane the PR run did not run still runs on main", [r.lanes.macos, r.lanes["test-units"]], [true, false]);
 r = await decide({ event: "push", proof: proofOf({ jobs: [...jobsFor(laneKeys), { name: `Full suite / ${display["test-units"]} / extra`, conclusion: "skipped" }] }) });
