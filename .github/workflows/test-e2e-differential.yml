@@ -16,7 +16,10 @@ name: Test e2e differential
 # min of work across 8 jobs), then two. On run 33675174529 the four
 # jobs ran 4.6-5.0 min each after waiting 30-40 min for a runner — six
 # to eight times more queueing than working, which is a slot spent on
-# job setup. ONE shard per arch sweeps the whole corpus in ~9.5 min.
+# job setup. ONE shard per arch then swept the whole corpus in ~9.5 min,
+# which made it one of the suite's longest jobs (10.8 min on aarch64, run
+# 35745901102). Two per arch again since a push cancels its superseded run
+# server-side (#10011), which is what took the queue pressure away.
 #
 # Splitting a fixed corpus costs no coverage at any N: every seed is
 # claimed by exactly one bucket, and at N=1 that bucket is the sweep.
@@ -57,19 +60,21 @@ jobs:
         host:
           - { runner: ubuntu-latest,    name: x86_64,  require: "x86_64,wasmbin"      }
           - { runner: ubuntu-24.04-arm, name: aarch64, require: "arm64-linux,wasmbin" }
-        # One shard = the whole 2048-seed sweep. See the shard-count note
-        # above before changing this; nshard rides along so the partition
+        # Two shards per arch, each half the 2048-seed sweep. See the
+        # shard-count note above before changing this; nshard rides along so the partition
         # denominator cannot drift from the number of jobs scheduled, which
         # is pinned by TestShardDenominatorMatchesMatrix.
         shard:
-          - { index: 0, nshard: 1 }
+          - { index: 0, nshard: 2 }
+          - { index: 1, nshard: 2 }
     name: test-e2e-differential-${{ matrix.host.name }}-shard${{ matrix.shard.index }}
     runs-on: ${{ matrix.host.runner }}
-    # ~9.5 min of sweep at one shard; 25 keeps the ~2x headroom the lane had
-    # at 15 minutes against a 4.8-min shard.
+    # ~5 min of sweep per shard at two; 25 is generous and leaves room for a
+    # slow runner or a return to one shard.
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/drop-selfhost-sources
       - uses: ./.github/actions/setup-fern
         with:
           wasmtime: "true"

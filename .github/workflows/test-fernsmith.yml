@@ -25,13 +25,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # The x86_64 sweep is split across two jobs by seed: at ~9.5 minutes it
+        # was one of the suite's longest jobs, and the aarch64 one runs in ~6.
+        # nshard rides the matrix so FERNSMITH_SHRINK_SHARD's denominator
+        # cannot drift from the jobs scheduled (TestShardDenominatorMatchesMatrix).
         include:
-          - { runner: ubuntu-latest,    host: x86_64  }
-          - { runner: ubuntu-24.04-arm, host: aarch64 }
-    name: test-fernsmith-${{ matrix.host }}
+          - { runner: ubuntu-latest,    host: x86_64,  shard: 0, nshard: 2 }
+          - { runner: ubuntu-latest,    host: x86_64,  shard: 1, nshard: 2 }
+          - { runner: ubuntu-24.04-arm, host: aarch64, shard: 0, nshard: 1 }
+    name: test-fernsmith-${{ matrix.host }}${{ matrix.shard != 0 && format('-shard{0}', matrix.shard) || '' }}
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/drop-selfhost-sources
       - uses: ./.github/actions/setup-fern
       # RUN_SHRINK_PROPERTY widens TestGenBytesShrinkIsMonotonicAndValid
       # from its 2-seed default to the full 24-seed sweep: one type-check
@@ -45,6 +51,17 @@ jobs:
       # runner blew it (twice on one PR, measured byte-identical to main —
       # the diff was not the cause). Weight pessimistically, per TEST-GATES
       # rule 8.
-      - run: gotestsum --format pkgname-and-test-fails -- -timeout=20m ./internal/fernsmith/...
+      #
+      # Shard 0 runs the whole package with its slice of the sweep; every other
+      # shard runs only its slice.
+      - name: go test (fernsmith, sweep shard ${{ matrix.shard }}/${{ matrix.nshard }})
         env:
           RUN_SHRINK_PROPERTY: "1"
+          FERNSMITH_SHRINK_SHARD: "${{ matrix.shard }}/${{ matrix.nshard }}"
+        run: |
+          set -euo pipefail
+          sel=()
+          if [ "${{ matrix.shard }}" != 0 ]; then
+            sel=(-run '^TestGenBytesShrinkIsMonotonicAndValid$')
+          fi
+          gotestsum --format pkgname-and-test-fails -- -timeout=20m "${sel[@]}" ./internal/fernsmith/...
