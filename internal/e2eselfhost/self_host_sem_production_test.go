@@ -3920,6 +3920,48 @@ function ms(recv_deadline_ms: i32): i32 {
 }
 function main(): i32 { if (ms(5000) > 4000) { return 0; } return 1; }
 `},
+	// A variant literal whose payload is an unsuffixed float settles it at the
+	// f64 it is, as a container of one does, so `Some(3.14)?` has a concrete
+	// union to test and unwrap (conformance f64_tryop_widen).
+	// An unannotated map literal takes its columns from its entries (#10208):
+	// the checker types the desugared `map_new_i32(n).insert(k, v)` chain, and
+	// the chain's head takes that type where no destination names one.
+	{name: "an-unannotated-map-literal-names-its-columns", atLeast: 1, noLeak: true, src: `import "core/map";
+function main(): i32 {
+    var m = Map { true: 5, false: 9 };
+    var n = Map { 1: 10, 2: 20 };
+    var s: i32 = m.get_or(true, 0) + m.get_or(false, 0) + n.get_or(2, 0);
+    if (m.has(true)) { s = s + 1; }
+    return s + m.len() + n.len();
+}
+`},
+	// A match in value position routes its arms through a local the parser
+	// declares with a bare 0 before the arms name a type. At a reference type
+	// that 0 is the type's zero, the null word the arm's store replaces.
+	{name: "a-match-value-local-starts-at-its-types-zero", atLeast: 1, noLeak: true, src: `struct P { x: i32, name: string }
+struct Q { n: i32 }
+function main(): i32 {
+    var t: (i32, i32) = (7, 2);
+    var p: P = match (t) { (a, b) => P { x: a + b, name: "q" } };
+    var r: Result[Q, string] = match (t) { (a, b) => { if (a > b) { Ok(Q { n: a }) } else { Err("no") } } };
+    var xs: i32[] = match (t) { (a, b) => [a, b, 1] };
+    var out: i32 = p.x + p.name.len() + xs.len();
+    match (r) { Ok(q) => { return out + q.n; }, Err(_) => { return 51; } }
+}
+`},
+	{name: "a-variant-literal-settles-its-float-payload", atLeast: 2, noLeak: true, src: `
+function process(): Option[f64] {
+    var v: f64 = Some(3.14)?;
+    return Some(v * 2.0);
+}
+function main(): i32 {
+    match (process()) {
+        Some(f) => { if (f > 6.0 && f < 7.0) { return 0; } return 1; },
+        None => { return 2; },
+    }
+    return 99;
+}
+`},
 	// A method call on a `dyn Trait` receiver: the widening borrows the
 	// record, and the call dispatches on its shape to the implementation
 	// (conformance/cases/dyn_trait_dispatch). Two implementations behind one

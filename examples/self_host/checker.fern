@@ -2230,6 +2230,19 @@ function map_key_type_error(s: Scope, kt: typeinfo.Type): string {
   return "map key type " + type_label(kt) + " is not yet supported — use i32, string, or a struct/enum with `@derive(cmp.Eq, cmp.Hash)`, which requires `import \"core/cmp\";`";
 }
 
+// mlit_entries_settle reports whether every entry of a desugared map literal
+// settles to, or is assignable to, the destination's key and value types.
+function mlit_entries_settle(e: ast.Expr, want: typeinfo.TypeMap, s: Scope): boolean {
+  if let ast.ExprCall(c) = e {
+    if let ast.ExprFieldAccess(fa) = c.callee {
+      if (fa.field != "insert" || c.args.len() != 2) { return false; }
+      if (!settles_or_assignable(c.args[0], want.key, s) || !settles_or_assignable(c.args[1], want.value, s)) { return false; }
+      return mlit_is_base(fa.obj) || mlit_entries_settle(fa.obj, want, s);
+    }
+  }
+  return false;
+}
+
 // mlit_is_desugared reports whether `e` is a map LITERAL as the parser leaves
 // it: an `.insert(k, v)` chain bottoming out at the `map_new` / `map_new_i32`
 // base. The literal's own key check (the first insert, above) reports E045 for
@@ -2252,6 +2265,13 @@ function mlit_is_desugared(e: ast.Expr): boolean {
     _ => { return false; }
   }
   return false;
+}
+
+// literal_insert reports whether `c` is one of the `.insert(k, v)` calls a
+// map literal desugars to. The parser builds those without a source position;
+// a written call carries its own.
+function literal_insert(c: ast.ExprCall): boolean {
+  return c.line == 0 && c.col == 0 && mlit_is_desugared(c);
 }
 
 // e045_map_key_msgs collects the E045 message for every `Map[K, V]` inside one
@@ -3800,6 +3820,18 @@ function builtin_ctor_type(en: string, name: string, c: ast.ExprCall, s: Scope):
   return t_union(en);
 }
 
+// A `Map { k: v }` literal desugars to a `map_new(n).insert(k, v)` chain with
+// no columns; its entries name them, as native types the literal. A written
+// `map_new(n).insert(…)` keeps them unresolved.
+function literal_insert_columns(c: ast.ExprCall, mt: typeinfo.TypeMap, recv_ty: typeinfo.Type, s: Scope): typeinfo.Type {
+  if (!literal_insert(c) || (!is_unknown(mt.key) && !is_unknown(mt.value))) { return recv_ty; }
+  var ik: typeinfo.Type = mt.key;
+  var iv: typeinfo.Type = mt.value;
+  if (is_unknown(ik)) { ik = check_expr(c.args[0], s); }
+  if (is_unknown(iv)) { iv = check_expr(c.args[1], s); }
+  return t_map(ik, iv);
+}
+
 function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
   // A desugared value if/match-expression is a 0-arg call of a
   // 0-param lambda whose single-statement body is a StmtIf / StmtMatch
@@ -4003,7 +4035,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
   // has no inference for them. The surrounding
   // type-annotation (e.g. `var m: Map[K, V] = …`)
   // pins them via assignability.
-  if (!is_method && name == "map_new") {
+  if (!is_method && is_map_new_name(name)) {
     return t_map(t_unknown("map_new key"), t_unknown("map_new value"));
   }
   // cell_new(v) builtin — the Cell[T] constructor
@@ -4082,7 +4114,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
           if (c.args.len() != 2) {
             return t_unknown("map.set: 2 args");
           }
-          return recv_ty;
+          return literal_insert_columns(c, mt, recv_ty, s);
         }
         if (name == "get_or") {
           if (c.args.len() != 2) {
@@ -5310,6 +5342,8 @@ function func_ret_type(fd: parser.FuncDecl, struct_names: string[], union_names:
 // A lambda's declared result, through the sidecars a function-valued result
 // is spelled in: the pair a declaration's `ret_fn_ret` carries.
 function lambda_ret_type(lm: ast.ExprLambda, s: Scope): typeinfo.Type {
+  if (lm.ret_str) { return t_str(); }
+  if (lm.ret_str_elem) { return t_array(t_str()); }
   if (lm.ret_fn_ret.len() > 0 && (lm.ret_type == "fn" || lm.ret_type == "fn[]")) {
     return declared_callable_type(lm.ret_type, lm.ret_fn_ret, lm.ret_fn_param_types, s.tparams, s.structs.names, s.unions.names);
   }
@@ -9066,7 +9100,7 @@ function mlit_is_base(e: ast.Expr): boolean {
     ast.ExprCall(bc) => {
       match (bc.callee) {
         ast.ExprIdent(bid) => {
-          return bid.name == "map_new" || bid.name == "map_new_i32";
+          return is_map_new_name(bid.name);
         },
         _ => {
           return false;
@@ -9078,6 +9112,11 @@ function mlit_is_base(e: ast.Expr): boolean {
     }
   }
   return false;
+}
+
+// is_map_new_name reports whether `name` is one of the empty-map constructors.
+function is_map_new_name(name: string): boolean {
+  return name == "map_new" || name == "map_new_i32";
 }
 
 // unsettled_int_literal: is `e` an integer literal that has not been pinned to a
@@ -9283,6 +9322,9 @@ function int_dest_range_diags(e: ast.Expr, want: typeinfo.Type): util.Diag[] {
 // still rejecting a genuinely wrong element.
 function settles_to(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
   match (want) {
+    typeinfo.TypeMap(wm) => {
+      return mlit_is_desugared(e) && mlit_entries_settle(e, wm, s);
+    },
     typeinfo.TypeFloat(_) => {
       return unsettled_int_literal(e) || is_poly_float(check_expr(e, s));
     },
@@ -9895,6 +9937,29 @@ function display_arg_diags(c: ast.ExprCall, s: Scope): util.Diag[] {
     expr_line(c.args[0]), expr_col(c.args[0]))];
 }
 
+// E038: `insert`'s key and value must match the map's columns, as `append`'s
+// element does. It stores both, so a `str` view is not lent here (native's
+// storesArgument). A literal's own entries are the E045 check's, apart from
+// the view.
+function insert_arg_diags(c: ast.ExprCall, mt: typeinfo.TypeMap, s: Scope, out: util.Diag[]): util.Diag[] {
+  if (c.args.len() != 2) { return out; }
+  var slots: typeinfo.Type[] = [mt.key, mt.value];
+  var ii: i32 = 0;
+  while (ii < 2) {
+    var it: typeinfo.Type = check_expr(c.args[ii], s);
+    var mismatch: boolean = is_str_view(it) && is_owned_string(slots[ii]);
+    if (!literal_insert(c) && !is_unknown(slots[ii]) && !is_unknown(it)) {
+      out = util.append_diags(out, int_dest_range_diags(c.args[ii], slots[ii]));
+      mismatch = !settles_to(c.args[ii], slots[ii], s) && !coercible(it, slots[ii], s);
+    }
+    if (mismatch) {
+      out = out.append(dg_at("E038", "argument " + util.i32_to_string(ii + 1) + " to \"insert\": expected " + type_label(slots[ii]) + ", got " + type_label(it) + str_copy_hint(it, slots[ii]), expr_line(c.args[ii]), expr_col(c.args[ii])));
+    }
+    ii = ii + 1;
+  }
+  return out;
+}
+
 function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag[] {
   // A method-call callee (`obj.m(...)`) is an ExprFieldAccess
   // whose field names a METHOD, not a field — recurse only into
@@ -9983,7 +10048,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
       // map_new_i32 is named here although native has no such spelling.
       // Reported at every site and thinned to the first by check_module,
       // matching native's one diagnostic per program.
-      if ((cid.name == "map_new" || cid.name == "map_new_i32") && !s.module_imported("core/map")) {
+      if (is_map_new_name(cid.name) && !s.module_imported("core/map")) {
         out = out.append(dg_at("E001", map_import_msg(), c.line, c.col));
       }
     },
@@ -10142,7 +10207,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           out = util.append_diags(out, display_arg_diags(c, s));
           // The Display builtins' arity, which free_builtin_sig leaves to this
           // pass: native reports E004 at the call (#7311).
-          if ((id.name == "print" || id.name == "eprint") && c.args.len() != 1) {
+          if (is_display_builtin(id.name) && c.args.len() != 1) {
             out = out.append(dg_at("E004", "function expects 1 arguments, got " + util.i32_to_string(c.args.len()), c.line, c.col));
           }
         }
@@ -10272,19 +10337,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           }
         },
         typeinfo.TypeMap(mt) => {
-          // E038: `insert` stores its key and value, so a `str` view there
-          // would outlive the bytes it names (native's storesArgument).
-          if (mfa.field == "insert" && c.args.len() == 2) {
-            var slots: typeinfo.Type[] = [mt.key, mt.value];
-            var ii: i32 = 0;
-            while (ii < 2) {
-              var it: typeinfo.Type = check_expr(c.args[ii], s);
-              if (is_str_view(it) && is_owned_string(slots[ii])) {
-                out = out.append(dg_at("E038", "argument " + util.i32_to_string(ii + 1) + " to \"insert\": expected " + type_label(slots[ii]) + ", got " + type_label(it) + str_copy_hint(it, slots[ii]), expr_line(c.args[ii]), expr_col(c.args[ii])));
-              }
-              ii = ii + 1;
-            }
-          }
+          if (mfa.field == "insert") { out = insert_arg_diags(c, mt, s, out); }
           // E043 (map method existence). methods_in_namespace("Map") is the
           // whole surface — the runtime builtins plus whatever core/map's
           // receiver methods add once it is in the program — so a name that

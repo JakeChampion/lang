@@ -408,6 +408,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"string-as-bytes-arity-e004", "function main(): i32 { var s: string = \"abc\"; return s.as_bytes(1).len(); }\n", []string{"E004"}},
 		{"print-arity-e004", "function main(): i32 { print(\"a\", \"b\"); return 0; }\n", []string{"E004"}},
 		{"eprint-arity-e004", "function main(): i32 { eprint(\"a\", \"b\"); return 0; }\n", []string{"E004"}},
+		{"write-arity-e004", "function main(): i32 { write(\"a\", \"b\"); return 0; }\n", []string{"E004"}},
 		{"slice-unchecked-arity-e004", "function main(): i32 { var s: string = \"abcdef\"; var t: str = slice_unchecked(s, 1); return t.len(); }\n", []string{"E004"}},
 		// target_os() is a string under -check, where nothing folds it: a
 		// clean use types, a mismatch is E003, and an argument is E004 — the
@@ -1872,6 +1873,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e003-str-array-param-element-into-string", "function f(xs: str[]): i32 { var t: string = xs[0]; return t.len(); }\nfunction main(): i32 { return 0; }\n", []string{"E003"}},
 		{"e003-str-array-result-element-into-string", "function mk(s: string): str[] { var xs: str[] = [slice_unchecked(s, 0, 1)]; return xs; }\nfunction main(): i32 { var t: string = mk(\"ab\")[0]; return t.len(); }\n", []string{"E003"}},
 		{"str-array-element-into-str-clean", "function f(xs: str[]): i32 { var t: str = xs[0]; return t.len(); }\nfunction main(): i32 { return 0; }\n", nil},
+		// A lambda's `str` / `str[]` result keeps its views as a function's does (#10212).
+		{"e003-lambda-str-array-result-element-into-string", "function main(): i32 { var s: string = \"ab\"; var f = (x: string): str[] => { var o: str[] = []; o = o.append(slice_unchecked(x, 0, 1)); return o; }; var t: string = f(s)[0]; return t.len(); }\n", []string{"E003"}},
+		{"e003-lambda-str-result-into-string", "function main(): i32 { var s: string = \"ab\"; var f = (x: string): str => { return slice_unchecked(x, 0, 1); }; var t: string = f(s); return t.len(); }\n", []string{"E003"}},
+		{"lambda-str-result-clean", "function main(): i32 { var s: string = \"ab\"; var f = (x: string): str => { return slice_unchecked(x, 0, 1); }; var t: str = f(s); return t.len(); }\n", nil},
+		// A nested function declaration desugars to the same lambda.
+		{"e003-nested-fn-str-result-into-string", "function main(): i32 { var s: string = \"ab\"; function f(x: string): str { return slice_unchecked(x, 0, 1); } var t: string = f(s); return t.len(); }\n", []string{"E003"}},
+		{"e003-nested-fn-str-array-result-element-into-string", "function main(): i32 { var s: string = \"ab\"; function f(x: string): str[] { var o: str[] = []; o = o.append(slice_unchecked(x, 0, 1)); return o; } var t: string = f(s)[0]; return t.len(); }\n", []string{"E003"}},
+		{"nested-fn-str-result-clean", "function main(): i32 { var s: string = \"ab\"; function f(x: string): str { return slice_unchecked(x, 0, 1); } var t: str = f(s); return t.len(); }\n", nil},
 		// A builtin that stores its argument is an owning sink, so a `str` view
 		// is not lent there: append, with, and a map insert's key and value.
 		// Native's storesArgument; a `str[]` still takes the view.
@@ -1901,6 +1910,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"map-ann-empty-ok", "import \"core/map\";\nfunction main(): i32 { var m: Map[string,i32] = Map {}; return 0; }\n", nil},
 		{"map-ann-nonempty-ok", "import \"core/map\";\nfunction main(): i32 { var m: Map[string,i32] = Map { \"a\": 1 }; return 0; }\n", nil},
 		{"map-ann-i32keys-ok", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32,i32] = Map { 1: 2 }; return 0; }\n", nil},
+		// An unannotated literal takes its key and value types from its entries.
+		{"maplit-bool-keys-ok", "import \"core/map\";\nfunction main(): i32 { var m = Map { true: 5, false: 9 }; return m.get_or(true, 0); }\n", nil},
+		{"maplit-value-type-from-entries", "import \"core/map\";\nfunction main(): i32 { var m = Map { 1: \"a\" }; var n: i32 = m.get_or(1, \"z\"); return n; }\n", []string{"E003"}},
+		// `insert` takes the map's columns, as `append` takes the element type.
+		{"map-insert-key-type-e038", "import \"core/map\";\nfunction main(): i32 { var m: Map[string, i32] = Map { \"k\": 1 }; m = m.insert(2, 3); return m.len(); }\n", []string{"E038"}},
+		{"maplit-insert-key-type-e038", "import \"core/map\";\nfunction main(): i32 { var m = Map { \"k\": 1 }; m = m.insert(2, 3); return m.len(); }\n", []string{"E038"}},
 		// E022: `if let` / `let … else` carry dedicated pattern-binding
 		// diagnostics. The self-host parser desugars both to a StmtMatch
 		// tagged with `origin` ("if_let" / "let_else"); the checker reads

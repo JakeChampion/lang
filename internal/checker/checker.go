@@ -16576,7 +16576,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// which would otherwise claim every `Enum.x(...)` shape.
 		if fa, ok := n.Callee.(*ast.FieldAccess); ok {
 			if tid, ok := fa.Target.(*ast.Ident); ok {
-				if _, shadowed := s.lookup(tid.Name); !shadowed {
+				if _, shadowed := c.identValueBinding(tid.Name, s); !shadowed {
 					// Generic associated dispatch: `T.f(args)` where `T` is
 					// a bounded type parameter of the current function whose
 					// trait declares an associated function `f`. Type via
@@ -16633,7 +16633,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		}
 		if fa, ok := n.Callee.(*ast.FieldAccess); ok {
 			if tid, ok := fa.Target.(*ast.Ident); ok {
-				if _, shadowed := s.lookup(tid.Name); !shadowed && c.info.Enums[tid.Name] != nil {
+				if _, shadowed := c.identValueBinding(tid.Name, s); !shadowed && c.info.Enums[tid.Name] != nil {
 					n.Callee = &ast.Ident{P: fa.P, Name: fa.Field, EnumName: tid.Name}
 				}
 			}
@@ -18466,7 +18466,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// variant-call shape (`Color.Red(payload)`) is handled in
 		// the *ast.Call branch.
 		if tid, ok := n.Target.(*ast.Ident); ok {
-			if _, shadowed := s.lookup(tid.Name); !shadowed && c.info.Enums[tid.Name] != nil {
+			if _, shadowed := c.identValueBinding(tid.Name, s); !shadowed && c.info.Enums[tid.Name] != nil {
 				if vr, ok, _ := c.resolveVariant(n.Field, tid.Name); ok {
 					if len(vr.payloads) > 0 {
 						en := c.enumHintName(tid.Name)

@@ -106,7 +106,7 @@ pub struct TypedBinding { name: string, ty: typeinfo.Type }
 // pair, and the semantic lowering refused the module for an unresolved result
 // type. That refusal was 238 of the 1,054 the fuzzer corpus produced
 // (docs/rc-log/2026-09-19-what-the-typed-path-still-refuses-is-lambdas.md).
-pub struct ExprLambda { params: ParamDecl[], ret_type: string, body: Stmt[], use_infer: boolean, origin: string, line: i32, col: i32, captures: TypedBinding[], captures_known: boolean, ret_fn_ret: string, ret_fn_param_types: string }
+pub struct ExprLambda { params: ParamDecl[], ret_type: string, body: Stmt[], use_infer: boolean, origin: string, line: i32, col: i32, captures: TypedBinding[], captures_known: boolean, ret_fn_ret: string, ret_fn_param_types: string, ret_str: boolean, ret_str_elem: boolean }
 
 // ExprTuple holds a parenthesised comma-separated list:
 // `(a, b, c)`. Distinct from arrays because tuple shape is

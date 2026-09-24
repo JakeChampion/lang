@@ -2082,3 +2082,57 @@ fn-typed local holding a function whose parameter is itself callable
 (`var t = taker; t(lambda)`) produced nothing when this section was written
 (`function signature slot`); it produces since #10024, which admits a
 function type nested in a function value's signature.
+
+## Retiring the AST lowering
+
+The typed path is the default, and a module it does not produce whole falls
+back to the AST lowering (`irlower`) with nothing to say so.
+`FERN_SEM_IR_STRICT=1` makes that fallback a hard error instead. The refusals
+are printed as `FERN_SEM_IR_REPORT` would print them, and the compile exits 3.
+It is the measurement the retirement waits on: the AST lowering can go when
+nothing needs it.
+
+What the typed path produced whole, 2026-09-24:
+
+| input | result |
+|---|---|
+| `conformance/cases/` | all 540 cases that compile, once a variant literal settles an unsuffixed float payload (`f64_tryop_widen`'s `Some(3.14)?`). `diag_e068` expects a lowering error. |
+| the compiler compiling itself | every declaration |
+| `examples/` outside the compiler | every program, once `word_freq` copies what it stores (`rc-log/2026-09-24-g-…`) |
+| `coreutils/` | all 106 programs |
+| e2eselfhost under strict, shards 0–1 of 12 | 438 of 440 tests |
+
+The two strict failures are the next finding, not a lowering gap of the usual
+kind. Each is a test that calls a raw-floor intrinsic directly: `__rc_dec` in
+`TestSelfHostOverReleaseReportArm64`, and `__raw_data` in
+`TestSelfHostStrEqSymbolTypeChecks`.
+
+### The runtime helpers never reach the typed path
+
+The Fern-source runtime functions (#2649, `asmcore.rt_src_*`: file open,
+writes, sockets, process control, the map finder and more) are appended to a
+program on demand. `asm_ir`, `asm_arm64_ir` and `wasm_ir` compile them through
+`emit_ir_runtime_fern_fn`, which calls the AST lowering directly and never
+asks the substitution. They are written on the raw floor: `__raw_alloc`,
+`__raw_store8` / `__raw_load8`, `__raw_store_ptr` / `__raw_load_ptr`,
+`__raw_string`, `__raw_data`, `__raw_array`, `__raw_arr_box`, `__raw_addr`,
+`__raw_scratch`, `__raw_environ`, `__raw_splice_pipe`, `__syscall3`–`6`,
+`__fern_map_find` and `__fern_str_eq`. The checker has no row for any of them,
+because these sources are unchecked by design, and the typed path starts from
+checked syntax.
+
+So the order is:
+
+1. The checker types each raw-floor intrinsic. They are `i32` / `usize` in and
+   out, with three exceptions: `__raw_string` hands its buffer to a fresh owned
+   string, `__raw_data` reads a borrowed string's data word, and `__raw_array`
+   takes its array type from its destination.
+2. Each gets a `semsource` contract and an `ssarc` arm emitting the one op
+   `irlower` emits for it (`op_raw_alloc`, `op_syscall4`, …). The `__load_*` /
+   `__store_*` family is already written this way.
+3. `emit_ir_runtime_fern_fn` asks the substitution for its bundle, on all three
+   backends.
+4. Strict mode goes green over every suite. The fallback then becomes the
+   error, and `FERN_SEM_IR=` loses its off column.
+5. The AST lowering is deleted, along with the differential legs that compare
+   against it.

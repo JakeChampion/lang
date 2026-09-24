@@ -4,6 +4,7 @@
 import "./ast";
 import "./astwalk";
 import "./parser";
+import "./lexical";
 import "./checker";
 import "./typeinfo";
 import "./semtypes";
@@ -1665,9 +1666,13 @@ function tuple_index(field: string, n: i32): i32 {
 function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, statement: boolean, expected: typeinfo.Type): Value {
     // An insert hands its receiver back, so the receiver's shape is the
     // call's: the head of a literal's `map_new(n).insert(k, v)` chain names no
-    // shape of its own and takes the destination's through the chain.
+    // shape of its own and takes the destination's through the chain, or the
+    // checker's reading of the whole literal where no destination names one.
     var want: typeinfo.Type = typeinfo.unchecked();
-    if ((fa.field == "insert" || fa.field == "set") && ssasem.is_map(expected)) { want = expected; }
+    if (fa.field == "insert" || fa.field == "set") {
+        if (ssasem.is_map(expected)) { want = expected; }
+        else if (ssasem.is_map(checked(c, s))) { want = checked(c, s); }
+    }
     var recv: Value = expr(fa.obj, s, want);
     s = recv.s;
     if (!s.ok) { return recv; }
@@ -2125,7 +2130,7 @@ function captures(c: ast.ExprCall, s: State, types: typeinfo.Type[]): Captured {
 // A name with no contract may still be a variant constructor of the enum the
 // call is written against.
 function variant_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State, expected: typeinfo.Type): Value {
-    var whole: typeinfo.Type = settled_union(literal_union(e, s, expected), name, c.args, s);
+    var whole: typeinfo.Type = settled_union(settled(literal_union(e, s, expected)), name, c.args, s);
     if (names_variant(s, whole, name)) { return variant(name, whole, c.args, s); }
     return refused(s, "call target has no semantic contract: " + name);
 }
@@ -2524,11 +2529,25 @@ function declare(st: ast.Stmt, v: ast.StmtVar, s: State): State {
     // expectation and takes the value's type as the binding's.
     if (!semtypes.concrete(ty, false) && is_call(v.init)) { return declare_from_call(v, s, after); }
     if (!semtypes.concrete(ty, false)) { return fail(s, "unresolved type of binding " + v.name + ": " + type_detail(ty)); }
+    if (value_local_placeholder(v) && !ssasem.is_integer(ty)) {
+        var z: Value = define(s, ssasem.zero(), [], 0, "", ty);
+        return State { ...bind(z.s, v.name, z.id), scope: after };
+    }
     var init: Value = expr(v.init, s, ty);
     s = init.s;
     if (!s.ok) { return s; }
     if (!semtypes.equal(s.values[init.id], ty)) { return fail(s, mismatch(v.name, ty, s.values[init.id])); }
     return State { ...bind(s, v.name, init.id), scope: after };
+}
+
+// The local a value-position match routes its arms through is declared with a
+// bare `0` before the arms say what they produce (parser.IfChain.value_local).
+// The `0` only zeroes the slot the checker then types, so at a non-integer type
+// it is that type's zero, the null word at a reference type.
+function value_local_placeholder(v: ast.StmtVar): boolean {
+    if (!parser.is_value_local_name(lexical.source_name(v.name))) { return false; }
+    if let ast.ExprNumber(n) = v.init { return n.text == "0" && n.suffix.len() == 0 && !n.is_float; }
+    return false;
 }
 
 function is_call(e: ast.Expr): boolean {

@@ -342,4 +342,4 @@ wasm_runio_run.fern 7811744
 asm_pathprobe_run.fern 7026808
 asm_ir_elig_run.fern 5882776
 irlower_run.fern 6810800
-checker_modload_run.fern 2535292
+checker_modload_run.fern 2663732

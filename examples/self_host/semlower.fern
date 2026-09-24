@@ -150,8 +150,18 @@ function selected(only: string, skip: string, name: string): boolean {
     return has_prefix_in(only, name);
 }
 
+// sem_strict_on reports whether FERN_SEM_IR_STRICT makes a module the typed
+// path does not produce whole a hard error, where it would keep the AST
+// lowering. The refusals are reported first, as FERN_SEM_IR_REPORT would.
+pub function sem_strict_on(): boolean {
+    match (env("FERN_SEM_IR_STRICT")) {
+        Some(v) => { return v.len() > 0; },
+        None => { return false; }
+    }
+}
+
 function report(what: string, why: string): i32 {
-    if (sem_report_on()) { eprint("FERN_SEM_IR: " + what + ": " + why + "\n"); }
+    if (sem_report_on() || sem_strict_on()) { eprint("FERN_SEM_IR: " + what + ": " + why + "\n"); }
     return 0;
 }
 
@@ -676,6 +686,10 @@ pub function substitution(mod: parser.Module, structs: irlower.StructTab, base: 
         report("module", "produced 0 of " + util.i32_to_string(mod.funcs.len()) + " declarations and 0 of "
             + util.i32_to_string(built.instances.len()) + " instances: "
             + util.i32_to_string(mod.funcs.len() - n) + " refused, the AST lowering stands");
+        if (sem_strict_on()) {
+            eprint("FERN_SEM_IR_STRICT: the typed lowering refused " + util.i32_to_string(mod.funcs.len() - n) + " declarations; the FERN_SEM_IR lines above name each\n");
+            exit(3);
+        }
         return ircore.no_sub();
     }
     report("module", "produced " + util.i32_to_string(n) + " of "

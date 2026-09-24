@@ -72308,7 +72308,7 @@ function lift_call_arg(e: ast.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
             if (lambda_has_no_captures(lam, gfns)) {
                 var nm: string = "__lam_" + util.i32_to_string(acc.counter);
                 var tp: string[] = [];
-                var nf: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: lam.params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_str_elem: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false, module: "" };
+                var nf: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: lam.params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: lam.ret_str, ret_str_elem: lam.ret_str_elem, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false, module: "" };
                 var nacc: LiftAcc = LiftAcc { funcs: acc.funcs.append(nf), counter: acc.counter + 1 };
                 return LiftExpr { expr: ast.ExprIdent { name: nm, line: 0, col: 0, ty: "" }, acc: nacc };
             }
@@ -72923,7 +72923,7 @@ function try_lift_binding(body: ast.Stmt[], idx: i32, fname: string, lam: ast.Ex
     var notp: string[] = [];
     var lbody: ast.Stmt[] = lam.body;
     if (lam.origin == parser.ORIGIN_NESTED_FN) { lbody = desugar_lambda_returns(lbody, 0, ret_sig_of(lam.ret_type, lam.ret_fn_ret, lam.ret_fn_param_types)).body; }
-    var newfn: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: lname, receiver_name: "", receiver_type: "", type_params: notp, params: lparams, ret_type: lam.ret_type, body: lbody, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_str_elem: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false, module: "" };
+    var newfn: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: lname, receiver_name: "", receiver_type: "", type_params: notp, params: lparams, ret_type: lam.ret_type, body: lbody, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: lam.ret_str, ret_str_elem: lam.ret_str_elem, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false, module: "" };
     var capargs: ast.Expr[] = [];
     var ca: i32 = 0;
     while (ca < caps.len()) { capargs = capargs.append(ast.ExprIdent { name: caps[ca], line: 0, col: 0, ty: "" }); ca = ca + 1; }
@@ -73110,7 +73110,7 @@ function make_clo_func(lam: ast.ExprLambda, cloname: string, fd: parser.FuncDecl
     var bk: i32 = 0;
     while (bk < lam.body.len()) { bd = bd.append(lam.body[bk]); bk = bk + 1; }
     var notp: string[] = [];
-    var clo: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: cloname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_str_elem: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false, module: fd.module };
+    var clo: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: cloname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: lam.ret_str, ret_str_elem: lam.ret_str_elem, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false, module: fd.module };
     return HoistResult { func: clo, ok: true };
 }
 
@@ -73195,7 +73195,7 @@ function make_wrap_lambda_func(lam: ast.ExprLambda, wrapname: string): parser.Fu
     var pj: i32 = 0;
     while (pj < lam.params.len()) { ps = ps.append(lam.params[pj]); pj = pj + 1; }
     var notp: string[] = [];
-    return parser.FuncDecl { no_inline: false, name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_str_elem: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false, module: "" };
+    return parser.FuncDecl { no_inline: false, name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: lam.ret_str, ret_str_elem: lam.ret_str_elem, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false, module: "" };
 }
 
 // make_wrap_named_func builds the env-taking trampoline for a BARE FN-NAME field
@@ -73233,7 +73233,7 @@ function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: MFuncs):
             if (tgt.ret_type == "void") { body = ast.StmtExpr { value: call, line: 0 }; }
             var bd: ast.Stmt[] = [body];
             var notp: string[] = [];
-            return HoistResult { func: parser.FuncDecl { no_inline: false, name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: tgt.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_str_elem: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: tgt.ret_fn_ret, ret_fn_param_types: tgt.ret_fn_param_types , is_package: false, module: "" }, ok: true };
+            return HoistResult { func: parser.FuncDecl { no_inline: false, name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: tgt.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: tgt.ret_str, ret_str_elem: tgt.ret_str_elem, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: tgt.ret_fn_ret, ret_fn_param_types: tgt.ret_fn_param_types , is_package: false, module: "" }, ok: true };
         }
         fi = fi + 1;
     }
@@ -76027,7 +76027,7 @@ function box_scan_stmts(stmts: ast.Stmt[], fd: parser.FuncDecl, structs: StructT
     while (i < stmts.len()) {
         var lam_ok: boolean = false;
         var bname: string = "";
-        var lam: ast.ExprLambda = ast.ExprLambda { params: [], ret_type: "", body: [], use_infer: false, origin: "", line: 0, col: 0, captures: [], captures_known: false, ret_fn_ret: "", ret_fn_param_types: "" };
+        var lam: ast.ExprLambda = ast.ExprLambda { params: [], ret_type: "", body: [], use_infer: false, origin: "", line: 0, col: 0, captures: [], captures_known: false, ret_fn_ret: "", ret_fn_param_types: "", ret_str: false, ret_str_elem: false };
         var nested: ast.ExprLambda[] = [];
         match (stmts[i]) {
             ast.StmtVar(v) => {
