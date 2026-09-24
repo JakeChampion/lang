@@ -1845,6 +1845,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// supports). Map programs need `import "core/map";` (Go reports E001
 		// otherwise — a Go-only rule the self-host doesn't model, so kept out
 		// of the corpus). Cross-checked against the Go checker.
+		// A declared `str[]` keeps its view elements (#10201): the parser erases
+		// the spelling to `string[]`, and the str_elem sidecar puts them back, so
+		// an element read into a `string` is E003 as it is natively. Local,
+		// parameter and function result each have their own sidecar.
+		{"e003-str-array-local-element-into-string", "function main(): i32 { var s: string = \"ab\"; var xs: str[] = [slice_unchecked(s, 0, 1)]; var t: string = xs[0]; return t.len(); }\n", []string{"E003"}},
+		{"e003-str-array-param-element-into-string", "function f(xs: str[]): i32 { var t: string = xs[0]; return t.len(); }\nfunction main(): i32 { return 0; }\n", []string{"E003"}},
+		{"e003-str-array-result-element-into-string", "function mk(s: string): str[] { var xs: str[] = [slice_unchecked(s, 0, 1)]; return xs; }\nfunction main(): i32 { var t: string = mk(\"ab\")[0]; return t.len(); }\n", []string{"E003"}},
+		{"str-array-element-into-str-clean", "function f(xs: str[]): i32 { var t: str = xs[0]; return t.len(); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"e045-maplit-float-key", "import \"core/map\";\nfunction main(): i32 { var m = Map { 1.0: 10 }; return 0; }\n", []string{"E045"}},
 		{"e045-maplit-string-key-ok", "import \"core/map\";\nfunction main(): i32 { var m = Map { \"a\": 1, \"b\": 2 }; return 0; }\n", nil},
 		{"e045-maplit-i32-key-ok", "import \"core/map\";\nfunction main(): i32 { var m = Map { 1: 10, 2: 20 }; return 0; }\n", nil},
