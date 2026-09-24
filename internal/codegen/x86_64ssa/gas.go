@@ -4343,14 +4343,41 @@ func emitScanSetHelper(w func(string, ...any)) {
 	w("\tmov r9d, %s", memRef("rdx", -4)) // set length
 	w("\tcmp r9d, 256")
 	w("\tjb .Lssa_scan_set_short")
-	w(".Lssa_scan_set_loop:")
+	// Full set: four bytes a turn on a cursor, then one at a time. A hit at
+	// byte k of the four steps the cursor k times before its offset is read.
 	w("\tcmp esi, r8d")
 	w("\tjge .Lssa_scan_set_end")
-	w("\tmovzx eax, byte ptr [rdi + rsi]")
+	w("\tlea r10, [rdi + rsi]") // cursor
+	w("\tlea r11, [rdi + r8]")  // end
+	w("\tlea rcx, [r11 - 4]")   // the last cursor with four bytes ahead
+	w(".Lssa_scan_set_quad:")
+	w("\tcmp r10, rcx")
+	w("\tja .Lssa_scan_set_one")
+	for k := 0; k < 4; k++ {
+		w("\tmovzx eax, byte ptr [r10 + %d]", k)
+		w("\tcmp byte ptr [rdx + rax], 0")
+		w("\tjne .Lssa_scan_set_hit%d", k)
+	}
+	w("\tadd r10, 4")
+	w("\tjmp .Lssa_scan_set_quad")
+	w(".Lssa_scan_set_one:")
+	w("\tcmp r10, r11")
+	w("\tjae .Lssa_scan_set_end")
+	w("\tmovzx eax, byte ptr [r10]")
 	w("\tcmp byte ptr [rdx + rax], 0")
-	w("\tjne .Lssa_scan_set_hit")
-	w("\tinc esi")
-	w("\tjmp .Lssa_scan_set_loop")
+	w("\tjne .Lssa_scan_set_hit0")
+	w("\tinc r10")
+	w("\tjmp .Lssa_scan_set_one")
+	w(".Lssa_scan_set_hit3:")
+	w("\tinc r10")
+	w(".Lssa_scan_set_hit2:")
+	w("\tinc r10")
+	w(".Lssa_scan_set_hit1:")
+	w("\tinc r10")
+	w(".Lssa_scan_set_hit0:")
+	w("\tmov rax, r10")
+	w("\tsub rax, rdi")
+	w("\tret")
 	w(".Lssa_scan_set_short:")
 	w("\tcmp esi, r8d")
 	w("\tjge .Lssa_scan_set_end")

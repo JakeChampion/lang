@@ -5044,16 +5044,40 @@ func (g *generator) emitScanSetRuntime() {
 	g.emit("ldur w8, [x3, #-4]") // set length
 	g.emit("cmp w8, #256")
 	g.emit("b.lo .Lscan_set_short")
-	g.label(".Lscan_set_loop")
+	// Full set: four bytes a turn on a cursor, then one at a time. A hit at
+	// byte k of the four steps the cursor k times before its offset is read.
 	g.emit("cmp w2, w6")
 	g.emit("b.ge .Lscan_set_end")
-	g.emit("add x9, x7, w2, uxtw")
-	g.emit("ldrb w10, [x9]")
-	g.emit("add x9, x3, w10, uxtw")
+	g.emit("add x9, x7, w2, uxtw")  // cursor
+	g.emit("add x10, x7, w6, uxtw") // end
+	g.emit("sub x12, x10, #4")      // the last cursor with four bytes ahead
+	g.label(".Lscan_set_quad")
+	g.emit("cmp x9, x12")
+	g.emit("b.hi .Lscan_set_one")
+	for k := 0; k < 4; k++ {
+		g.emit("ldrb w11, [x9, #%d]", k)
+		g.emit("ldrb w13, [x3, x11]")
+		g.emit("cbnz w13, .Lscan_set_hit%d", k)
+	}
+	g.emit("add x9, x9, #4")
+	g.emit("b .Lscan_set_quad")
+	g.label(".Lscan_set_one")
+	g.emit("cmp x9, x10")
+	g.emit("b.hs .Lscan_set_end")
 	g.emit("ldrb w11, [x9]")
-	g.emit("cbnz w11, .Lscan_set_hit")
-	g.emit("add w2, w2, #1")
-	g.emit("b .Lscan_set_loop")
+	g.emit("ldrb w13, [x3, x11]")
+	g.emit("cbnz w13, .Lscan_set_hit0")
+	g.emit("add x9, x9, #1")
+	g.emit("b .Lscan_set_one")
+	g.label(".Lscan_set_hit3")
+	g.emit("add x9, x9, #1")
+	g.label(".Lscan_set_hit2")
+	g.emit("add x9, x9, #1")
+	g.label(".Lscan_set_hit1")
+	g.emit("add x9, x9, #1")
+	g.label(".Lscan_set_hit0")
+	g.emit("sub x0, x9, x7")
+	g.emit("b .Lscan_set_ret")
 	// A set shorter than 256 entries: a byte past its end is not in it.
 	g.label(".Lscan_set_short")
 	g.emit("cmp w2, w6")

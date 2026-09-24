@@ -2141,7 +2141,11 @@ The condition is now lowered in `internal/ir`, so every backend gets it:
 `||` and `!` into a chain of `br_if`s (a block where the operator's own
 value is what is branched on), and each backend already fuses a comparison
 with the branch that follows it. A coverage build keeps the expression
-form, whose arms carry the `&&` / `||` counters. The index shape is the
+form, whose arms carry the `&&` / `||` counters. The self-hosted
+compiler's semantic lowering builds the same chains (`semsource.cond`);
+its register backend already kept a boolean out of memory, so there the
+saving is 1 to 3% (`uniq` 178.3 M to 173.0 M instructions, `fmt` 2.44 G
+to 2.41 G). The index shape is the
 x86-64 peephole: P12 folds the zero-extending copy into a 32-bit move, P5
 then writes the index load straight to `ecx`, and P8 now sees a reload
 through the compare-and-branch pairs a chain leaves between a store and
@@ -3070,6 +3074,81 @@ of nops at that site (the reciprocal's extra length) gives 210.7 ms. So
 the slowdown is where the loop's code lands, not the division. Aligning
 every loop head to 16 bytes does not remove that sensitivity: it moved
 the old build to 204.6 ms and the new one to 196.7 ms.
+
+### The self-host's builder copies, 2026-09-24 (GNU coreutils 9.12)
+
+The self-hosted compiler's runtime copied a byte at a time in every
+byte-buffer and string-builder helper: `buf_push`, `buf_push_range`,
+`buf_take`, the reserve that grows a buffer, and the three string-builder
+helpers. That is six instructions a byte. On x86-64 they now call a
+`__fern_memcpy` with native's size classes, each covered by two
+overlapping accesses. `rep movsb` was tried first and made `uniq`
+slower (337 ms to 372 ms), because a line push copies a few bytes and
+`rep movsb` is nearly all start-up at that length. On arm64 they take
+the memcpy op's word loop. Self-host builds, x86-64:
+
+| workload | before | after | GNU 9.12 |
+|---|---:|---:|---:|
+| uniq over 8M distinct lines | 339.3 ms | 289.3 ms | 284.0 ms |
+| sort -m of two sorted 500k-line files | 77.9 ms | 62.7 ms | 40.4 ms |
+
+Instructions: `sort -m` 778.9 M to 518.9 M, `uniq` over the first 16 MB
+875.0 M to 714.4 M. Native builds were already copying through their
+own `__fern_memcpy`.
+
+### The byte-set scan four bytes a turn, 2026-09-24 (GNU coreutils 9.12)
+
+`__scan_set` stepped an index a byte at a time: a bounds test, a load, a
+table test and a jump back, seven instructions a byte. With a full
+256-entry set it now walks a cursor four bytes a turn, one load, one
+table test and one branch a byte, then finishes the tail a byte at a
+time. That applies on every register backend in both compilers. Native
+x86-64's kernel also lost its frame: a leaf reads an inline string's
+bytes from the red zone. `wc -L` over the bench file is one scan per
+line, and a line of `seq` output is seven bytes, so the call itself was
+half the kernel's cost.
+
+| workload | before | after | GNU 9.12 |
+|---|---:|---:|---:|
+| `wc -L` of a 62 MiB file | 129.5 ms | 94.2 ms | 87.7 ms |
+| the same, self-hosted build | 124.2 ms | 91.7 ms | |
+
+### The self-host's expansion table packed per call, 2026-09-24 (GNU coreutils 9.12)
+
+The self-hosted compiler keeps a `u8[]` one byte to an eight-byte slot,
+so `buf_push_expanded`'s record for a byte spans 64 bytes of table, and
+its kernel copied a record out a byte at a time: about 24 instructions
+per input byte on `cat -A`. A push of 256 bytes or more through a
+table of every record now first packs the 256 records into 2 KiB of
+frame, 2048 loads and stores, then copies each byte's record as one
+eight-byte store the way native's kernel does. A shorter push keeps the
+byte loop, where the packing would cost more than it saves. The room
+reserved is now eight bytes per input byte, since the store writes a
+whole record.
+
+| workload | before | after | GNU 9.12 |
+|---|---:|---:|---:|
+| `cat -A` of a 62 MiB file, self-hosted build | 190.0 ms | 78.3 ms | 106.8 ms |
+
+The native build of the same source runs in 78.7 ms.
+
+### The self-host's buffer pushes without a frame, 2026-09-24 (GNU coreutils 9.12)
+
+`__fern_buf_push_range` and `__fern_buf_push_byte` in the self-hosted
+compiler's runtime saved four or five callee-saved registers on every call,
+because the rare path that grows the buffer calls `__fern_buf_reserve`. A
+push that fits now keeps no frame: it sets the new length and, for a range,
+tail-calls the copy. Only a growth saves the operands across the reserve.
+`__fern_buf_push` is a range over the whole string and jumps into it. Self-
+hosted builds, x86-64, over 1M lines of `seq`:
+
+| workload | before | after | GNU 9.12 |
+|---|---:|---:|---:|
+| `cat -n` of a 62 MiB file | 286.9 ms | 210.6 ms | 190.3 ms |
+
+Instructions: `cat -n` 297.9 M to 228.9 M, `nl` 431.9 M to 355.9 M,
+`uniq` 294.9 M to 271.9 M, `join` of two 300k-line files 357.9 M to
+338.9 M, `fmt` over 3 MB of prose 713.9 M to 694.7 M.
 
 ### ls, 2026-09-14, Linux x86-64 (GNU coreutils 9.4, uutils 0.0.24)
 

@@ -1578,7 +1578,7 @@ func scalar_match {
 }
 
 modes 2 1 result i32
-v0:string v1:i32 v2:u8 v3:u8 v4:u8 v5:u8 v6:boolean v7:u8 v8:boolean v9:boolean v10:boolean v11:i32 v12:i32
+v0:string v1:i32 v2:u8 v3:u8 v4:u8 v5:u8 v6:boolean v7:u8 v8:boolean v9:i32 v10:i32
 func byte_ops {
   b0:
     v0 = param 0
@@ -1588,25 +1588,19 @@ func byte_ops {
     v4 = binary + v2 v3
     v5 = const_int 97
     v6 = binary == v2 v5
-    brif v6 b2 b1
-  b1:
+    brif v6 b1 b4
+  b4:
     v7 = const_int 122
     v8 = binary > v7 v4
-    br b3
+    brif v8 b1 b2
+  b1:
+    v9 = cast v4
+    ret v9
   b2:
-    v9 = const_bool 1
     br b3
   b3:
-    v10 = phi v8 v9
-    brif v10 b4 b5
-  b4:
-    v11 = cast v4
-    ret v11
-  b5:
-    br b6
-  b6:
-    v12 = cast v2
-    ret v12
+    v10 = cast v2
+    ret v10
 }
 
 modes 1 result u8
@@ -1666,7 +1660,7 @@ func float_cast {
 
 refused operator contract: u8 + i32
 modes 1 1 result i32
-v0:f64 v1:i32 v2:f64 v3:f64 v4:f64 v5:f64 v6:f64 v7:boolean v8:f64 v9:boolean v10:boolean v11:boolean v12:f64 v13:f64 v14:i32 v15:f64 v16:i64 v17:f64 v18:f64 v19:f64 v20:i32
+v0:f64 v1:i32 v2:f64 v3:f64 v4:f64 v5:f64 v6:f64 v7:boolean v8:f64 v9:boolean v10:f64 v11:f64 v12:i32 v13:f64 v14:i64 v15:f64 v16:f64 v17:f64 v18:i32
 func float_ops {
   b0:
     v0 = param 0
@@ -1677,32 +1671,26 @@ func float_ops {
     v5 = binary + v3 v4
     v6 = const_int 10.0
     v7 = binary > v5 v6
-    brif v7 b2 b1
-  b1:
+    brif v7 b1 b4
+  b4:
     v8 = unary - v5
     v9 = binary == v8 v0
-    br b3
+    brif v9 b1 b2
+  b1:
+    v10 = const_int 2.0
+    v11 = binary / v5 v10
+    v12 = cast v11
+    ret v12
   b2:
-    v10 = const_bool 1
     br b3
   b3:
-    v11 = phi v9 v10
-    brif v11 b4 b5
-  b4:
-    v12 = const_int 2.0
-    v13 = binary / v5 v12
+    v13 = binary - v5 v0
     v14 = cast v13
-    ret v14
-  b5:
-    br b6
-  b6:
-    v15 = binary - v5 v0
-    v16 = cast v15
-    v17 = cast v16
-    v18 = const_int 0.5
-    v19 = binary + v17 v18
-    v20 = cast v19
-    ret v20
+    v15 = cast v14
+    v16 = const_int 0.5
+    v17 = binary + v15 v16
+    v18 = cast v17
+    ret v18
 }
 
 refused operator contract: f64 % f64
@@ -1726,7 +1714,7 @@ func view_len {
 }
 
 modes 2 result i32
-v0:string v1:i32 v2:i32 v3:str v4:str v5:i32 v6:i32 v7:str v8:boolean v9:string v10:boolean v11:boolean v12:boolean v13:i32 v14:u8 v15:i32 v16:i32 v17:str v18:i32 v19:i32 v20:string v21:i32 v22:i32 v23:i32 v24:i32
+v0:string v1:i32 v2:i32 v3:str v4:str v5:i32 v6:i32 v7:str v8:boolean v9:string v10:boolean v11:i32 v12:u8 v13:i32 v14:i32 v15:str v16:i32 v17:i32 v18:string v19:i32 v20:i32 v21:i32 v22:i32
 func view_of {
   b0:
     v0 = param 0
@@ -1738,35 +1726,29 @@ func view_of {
     v6 = const_int 1
     v7 = slice v4 v5 v6
     v8 = binary == v3 v4
-    brif v8 b2 b1
-  b1:
+    brif v8 b1 b4
+  b4:
     v9 = const_str
     v10 = binary != v7 v9
-    br b3
+    brif v10 b1 b2
+  b1:
+    v11 = const_int 0
+    v12 = str_index v3 v11
+    v13 = cast v12
+    ret v13
   b2:
-    v11 = const_bool 1
     br b3
   b3:
-    v12 = phi v10 v11
-    brif v12 b4 b5
-  b4:
-    v13 = const_int 0
-    v14 = str_index v3 v13
-    v15 = cast v14
-    ret v15
-  b5:
-    br b6
-  b6:
-    v16 = length v3
-    v17 = str_as v0
-    v18 = call view_len v17
-    v19 = binary + v16 v18
-    v20 = str_as v3
-    v21 = call string_length v20
-    v22 = binary + v19 v21
-    v23 = length v7
-    v24 = binary + v22 v23
-    ret v24
+    v14 = length v3
+    v15 = str_as v0
+    v16 = call view_len v15
+    v17 = binary + v14 v16
+    v18 = str_as v3
+    v19 = call string_length v18
+    v20 = binary + v17 v19
+    v21 = length v7
+    v22 = binary + v20 v21
+    ret v22
 }
 
 modes 2 result string
@@ -3094,7 +3076,7 @@ func vb_bare {
 }
 
 modes 1 result i32
-v0:i32 v1:i32 v2:(i32, i32) v3:i32 v4:boolean v5:i32 v6:i32 v7:boolean v8:boolean v9:i32 v10:boolean v11:boolean v12:boolean v13:boolean v14:i32 v15:i32 v16:i32 v17:boolean v18:boolean v19:boolean v20:i32 v21:boolean v22:i32
+v0:i32 v1:i32 v2:(i32, i32) v3:i32 v4:boolean v5:i32 v6:i32 v7:boolean v8:i32 v9:boolean v10:boolean v11:i32 v12:i32 v13:i32 v14:boolean v15:boolean v16:i32 v17:boolean v18:i32
 func tm_line {
   b0:
     v0 = param 0
@@ -3107,44 +3089,36 @@ func tm_line {
     v5 = tuple_get 0 v2
     v6 = tuple_get 1 v2
     v7 = const_bool 0
-    v8 = unary ! v7
-    brif v8 b4 b5
+    brif v7 b5 b7
+  b7:
+    v8 = const_int 1
+    v9 = binary == v5 v8
+    brif v9 b4 b5
   b4:
-    v9 = const_int 1
-    v10 = binary == v5 v9
+    v10 = const_bool 1
+    v11 = const_int 10
+    v12 = binary * v6 v11
     br b6
   b5:
-    v11 = const_bool 0
     br b6
   b6:
-    v12 = phi v10 v11
-    brif v12 b7 b8
-  b7:
-    v13 = const_bool 1
-    v14 = const_int 10
-    v15 = binary * v6 v14
-    br b9
+    v13 = phi v12 v3
+    v14 = phi v10 v7
+    brif v14 b9 b8
   b8:
-    br b9
+    v15 = const_bool 1
+    br b10
   b9:
-    v16 = phi v15 v3
-    v17 = phi v13 v7
-    v18 = unary ! v17
-    brif v18 b10 b11
+    br b10
   b10:
-    v19 = const_bool 1
-    br b12
-  b11:
-    br b12
-  b12:
-    v20 = phi v5 v16
-    v21 = phi v19 v17
+    v16 = phi v5 v13
+    v17 = phi v15 v14
     br b3
   b2:
     br b3
   b3:
-    v22 = phi v20 v3
-    ret v22
+    v18 = phi v16 v3
+    ret v18
 }
 
 refused operator contract: usize +| usize

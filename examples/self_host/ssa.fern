@@ -862,7 +862,29 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
         }
         oi = oi + 1;
     }
-    return assign_spill_slots(lo, hi, def_pos, reg_of);
+    return assign_spill_slots(lo, hi, def_pos, reg_of, slot_hints(f, at, blk_start, def_blk, def_pos, reg_of, mates));
+}
+
+// A spilled value keeps its phi mate's hint for a slot, a loop-carried one
+// only where the register rule would have let the two share. Where the mate
+// is dead from the value's definition on, `take_over` lets the value take the
+// slot over while the mate's interval still covers it.
+struct SlotHints { hint: i32[], take_over: boolean[] }
+
+function slot_hints(f: SFunc, at: i32[], blk_start: i32[], def_blk: i32[], def_pos: i32[], reg_of: i32[], mates: Mates): SlotHints {
+    var hint: i32[] = [];
+    var take_over: boolean[] = [];
+    var i: i32 = 0;
+    while (i < f.nvals) {
+        var sh: i32 = mates.hint[i];
+        if (reg_of[i] >= 0 || sh < 0 || reg_of[sh] >= 0) { sh = 0 - 1; }
+        var free: boolean = sh >= 0 && def_pos[sh] >= 0 && !mate_interferes(f, at, blk_start, sh, i, def_blk[sh], def_blk[i], def_pos[i]);
+        if (sh >= 0 && mates.carried[i] && !free) { sh = 0 - 1; }
+        hint = hint.append(sh);
+        take_over = take_over.append(free);
+        i = i + 1;
+    }
+    return SlotHints { hint: hint, take_over: take_over };
 }
 
 // spill_weights counts, per value, its definition and every read, each at the
@@ -897,6 +919,13 @@ function spill_weights(f: SFunc, at: i32[]): i32[] {
         bi = bi + 1;
     }
     return w;
+}
+
+// kept_for_mate says the slot `holder` last held is wanted by its phi mate,
+// which is not `v` and has no slot yet.
+function kept_for_mate(wanted_by: i32[], reg_of: i32[], holder: i32, v: i32): boolean {
+    var w: i32 = wanted_by[holder];
+    return w >= 0 && w != v && reg_of[w] == 0 - 1;
 }
 
 // A value's home after allocation is a register index, or `spill_code(slot)`
@@ -992,24 +1021,25 @@ function position_of(at: i32[], id: i32): i32 {
     return at[id];
 }
 
-function reads_value(ins: SInst, v: i32): boolean {
+pub function reads_value(ins: SInst, v: i32): boolean {
     for a in ins.args { if (a == v) { return true; } }
     return false;
 }
 
-function term_reads_value(t: STerm, v: i32): boolean {
+pub function term_reads_value(t: STerm, v: i32): boolean {
     if (t.kind_tag == 1) { return t.value == v; }
     if (t.kind_tag == 3) { return t.cond == v; }
     return false;
 }
 
-// mate_interferes says whether phi result r is live anywhere its back-edge
-// operand a is: that is so exactly when a use of r is reachable from a's
-// definition without passing r's block (the loop header, where r is
-// defined afresh). A read of r as a phi operand happens on the edge into the
-// phi's block and counts for the edge's source. The use at a's own
-// definition is a read before the write and does not count, unless a's
-// block reaches itself again without the header.
+// mate_interferes says whether r is live anywhere its phi mate a is, where
+// r is defined in block `hdr`: a phi result and its back-edge operand, or a
+// phi's entry operand and the phi. That is so exactly when a use of r is
+// reachable from a's definition without passing `hdr`, where r is defined
+// afresh. A read of r as a phi operand happens on the edge into the phi's
+// block and counts for the edge's source. The use at a's own definition is a
+// read before the write and does not count, unless a's block reaches itself
+// again without `hdr`.
 function mate_interferes(f: SFunc, at: i32[], blk_start: i32[], r: i32, a: i32, hdr: i32, ablk: i32, apos: i32): boolean {
     var reach: boolean[] = [];
     var i: i32 = 0;
@@ -1027,12 +1057,13 @@ function mate_interferes(f: SFunc, at: i32[], blk_start: i32[], r: i32, a: i32, 
         var blk: SBlock = f.blocks[bi];
         var from: boolean = reach[bi] || bi == ablk;
         if (reach[bi] && bi != ablk) {
-            for ins in blk.insts { if (reads_value(ins, r)) { return true; } }
+            for ins in blk.insts { if (ins.kind_tag != 8 && reads_value(ins, r)) { return true; } }
         }
         if (bi == ablk) {
             var k: i32 = 0;
             while (k < blk.insts.len()) {
-                if ((reach[bi] || blk_start[bi] + k > apos) && reads_value(blk.insts[k], r)) { return true; }
+                var ki: SInst = blk.insts[k];
+                if ((reach[bi] || blk_start[bi] + k > apos) && ki.kind_tag != 8 && reads_value(ki, r)) { return true; }
                 k = k + 1;
             }
         }
@@ -1058,23 +1089,69 @@ function index_of_reg(a: i32[], x: i32): i32 {
 
 // assign_spill_slots gives the spilled values frame slots, sharing one between
 // values whose intervals do not meet. A value nothing defines (a parameter) is
-// stored on entry, so it is live from position 0.
-function assign_spill_slots(lo: i32[], hi: i32[], def_pos: i32[], reg_of: i32[]): i32[] {
-    var from: i32[] = [];
-    var i: i32 = 0;
-    while (i < reg_of.len()) {
-        if (def_pos[i] < 0) { from = from.append(0); } else { from = from.append(lo[i]); }
-        i = i + 1;
-    }
+// stored on entry, so it is live from position 0. A value takes the slot of
+// `hints.hint[v]`, its phi mate, before any other: when the slot is free, or
+// when the mate still holds it and `hints.take_over[v]` says the two were
+// found not to interfere. The edge between them then moves nothing. A value
+// with no such slot passes over a free one whose last holder is the mate of a
+// value not placed yet: a block's phis start one after another, but every
+// operand arriving from before them dies at the edge, so the first phi would
+// otherwise take the slot a later one wants.
+function assign_spill_slots(lo: i32[], hi: i32[], def_pos: i32[], reg_of: i32[], hints: SlotHints): i32[] {
+    var from: i32[] = spill_starts(lo, def_pos);
+    var wanted_by: i32[] = mates_wanted(hi, reg_of, hints.hint);
     var slot_end: i32[] = [];
+    var holder: i32[] = [];
     for v in order_by_lo(reg_of.len(), from) {
         if (hi[v] < 0 || reg_of[v] >= 0) { continue; }
-        var s: i32 = 0;
-        while (s < slot_end.len() && slot_end[s] >= from[v]) { s = s + 1; }
-        if (s == slot_end.len()) { slot_end = slot_end.append(hi[v]); } else { slot_end = slot_end.with(s, hi[v]); }
+        var s: i32 = hinted_slot(slot_end, holder, reg_of, hints.hint[v], from[v], hints.take_over[v]);
+        if (s < 0) { s = free_slot(slot_end, holder, wanted_by, reg_of, from[v], v); }
+        var end: i32 = hi[v];
+        if (s < slot_end.len() && slot_end[s] > end) { end = slot_end[s]; }
+        if (s == slot_end.len()) { slot_end = slot_end.append(end); holder = holder.append(v); }
+        else { slot_end = slot_end.with(s, end); holder = holder.with(s, v); }
         reg_of = reg_of.with(v, spill_code(s));
     }
     return reg_of;
+}
+
+function spill_starts(lo: i32[], def_pos: i32[]): i32[] {
+    var from: i32[] = [];
+    var i: i32 = 0;
+    while (i < lo.len()) {
+        if (def_pos[i] < 0) { from = from.append(0); } else { from = from.append(lo[i]); }
+        i = i + 1;
+    }
+    return from;
+}
+
+// wanted_by[m] is the spilled value whose phi mate is m, or -1.
+function mates_wanted(hi: i32[], reg_of: i32[], hint: i32[]): i32[] {
+    var wanted_by: i32[] = [];
+    var i: i32 = 0;
+    while (i < reg_of.len()) { wanted_by = wanted_by.append(0 - 1); i = i + 1; }
+    i = 0;
+    while (i < reg_of.len()) {
+        var m: i32 = hint[i];
+        if (m >= 0 && hi[i] >= 0 && reg_of[i] == 0 - 1 && reg_of[m] == 0 - 1) { wanted_by = wanted_by.with(m, i); }
+        i = i + 1;
+    }
+    return wanted_by;
+}
+
+// The slot of the mate h, when it is free at `from` or the value may take it
+// over from h; -1 otherwise.
+function hinted_slot(slot_end: i32[], holder: i32[], reg_of: i32[], h: i32, from: i32, take_over: boolean): i32 {
+    if (h < 0 || reg_of[h] >= 0 - 1) { return 0 - 1; }
+    var hs: i32 = spill_slot(reg_of[h]);
+    if (slot_end[hs] < from || take_over && holder[hs] == h) { return hs; }
+    return 0 - 1;
+}
+
+function free_slot(slot_end: i32[], holder: i32[], wanted_by: i32[], reg_of: i32[], from: i32, v: i32): i32 {
+    var s: i32 = 0;
+    while (s < slot_end.len() && (slot_end[s] >= from || kept_for_mate(wanted_by, reg_of, holder[s], v))) { s = s + 1; }
+    return s;
 }
 
 // Imms marks the integer constants an emitter reads as immediate operands and
@@ -1208,6 +1285,108 @@ function trivial_phi_repl(f: SFunc): i32[] {
         }
     }
     return repl;
+}
+
+// ---- inlining ------------------------------------------------------------
+// A leaf is a function a caller may take in place of a call to it: one block,
+// or a chain of blocks each branching to the next, that returns a value and
+// calls nothing, of at most leaf_limit() instructions
+// that compute (constants, copies, binaries, unaries) and its parameters. Its
+// body is already reference-counted as the callee's own, so splicing it in
+// place of the call keeps every retain and release the call would have made.
+// `name` is the callee name a call to it carries.
+pub struct Leaf { name: string, func: SFunc }
+
+function leaf_limit(): i32 { return 12; }
+
+function leaf_kind(k: i32): boolean {
+    return k == 1 || k == 2 || k == 3 || k == 6 || k == 7 || k == 9 || k == 10;
+}
+
+// leaf_of is the leaf `f` is, as one block, or none.
+pub function leaf_of(name: string, f: SFunc): Leaf[] {
+    if (f.takes_env || f.blocks.len() == 0) { return []; }
+    var at: i32[] = block_positions(f);
+    var insts: SInst[] = [];
+    var bi: i32 = position_of(at, f.entry);
+    var seen: i32 = 0;
+    while (bi >= 0 && seen < f.blocks.len()) {
+        var b: SBlock = f.blocks[bi];
+        for ins in b.insts { insts = insts.append(ins); }
+        seen = seen + 1;
+        if (b.term.kind_tag == 1) {
+            if (seen != f.blocks.len()) { return []; }
+            return returning_leaf(name, f, insts, b.term);
+        }
+        if (b.term.kind_tag != 2) { return []; }
+        bi = position_of(at, b.term.target);
+    }
+    return [];
+}
+
+// returning_leaf is the leaf of `f`'s instructions, flattened into one block
+// that ends in `term`, or none when they return no value, include an op a leaf
+// may not, or are too many.
+function returning_leaf(name: string, f: SFunc, insts: SInst[], term: STerm): Leaf[] {
+    if (term.value < 0) { return []; }
+    var n: i32 = 0;
+    for ins in insts {
+        if (!leaf_kind(ins.kind_tag)) { return []; }
+        if (ins.kind_tag != 6) { n = n + 1; }
+    }
+    if (n > leaf_limit()) { return []; }
+    var one: SBlock = SBlock { id: f.entry, insts: insts, term: term, preds: [] };
+    return [Leaf { name: name, func: SFunc { ...f, blocks: [one] } }];
+}
+
+// inline_leaves replaces each direct call to a leaf with the leaf's
+// instructions: its parameters read the call's
+// arguments, its other values are renumbered past the caller's, and the call's
+// result becomes a copy of the value the leaf returns.
+pub function inline_leaves(f: SFunc, leaves: Leaf[]): SFunc {
+    if (leaves.len() == 0) { return f; }
+    var nvals: i32 = f.nvals;
+    var blocks: SBlock[] = [];
+    for b in f.blocks {
+        var insts: SInst[] = [];
+        for ins in b.insts {
+            var at: i32 = 0 - 1;
+            if (ins.kind_tag == 11) { at = leaf_index(leaves, ins.str, ins.args.len()); }
+            if (at < 0) {
+                insts = insts.append(ins);
+                continue;
+            }
+            var leaf: SFunc = leaves[at].func;
+            var map: i32[] = [];
+            var i: i32 = 0;
+            while (i < leaf.nvals) { map = map.append(0 - 1); i = i + 1; }
+            for li in leaf.blocks[0].insts {
+                if (li.kind_tag == 6) {
+                    map = map.with(li.result, ins.args[li.imm]);
+                } else {
+                    map = map.with(li.result, nvals);
+                    var args: i32[] = [];
+                    for a in li.args { args = args.append(map[a]); }
+                    insts = insts.append(SInst { ...li, result: nvals, args: args });
+                    nvals = nvals + 1;
+                }
+            }
+            if (ins.result >= 0) {
+                insts = insts.append(SInst { kind_tag: 7, result: ins.result, args: [map[leaf.blocks[0].term.value]], imm: 0, str: "" });
+            }
+        }
+        blocks = blocks.append(SBlock { ...b, insts: insts });
+    }
+    return SFunc { ...f, nvals: nvals, blocks: blocks };
+}
+
+function leaf_index(leaves: Leaf[], name: string, argc: i32): i32 {
+    var i: i32 = 0;
+    while (i < leaves.len()) {
+        if (leaves[i].name == name && leaves[i].func.nparams == argc) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
 }
 
 // prune_trivial_phis drops the folded phis and rewrites every reader.

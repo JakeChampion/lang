@@ -378,9 +378,11 @@ function deferred_retain(f: ssasem.Func, p: ssaunits.Plan, step: ssaunits.Step, 
 // is a buffer the plan HANDS on (ssaunits.hands) — a borrowed parameter, or
 // a field of a record, this frame reads no further.
 //
-// Conservative on purpose for arrays: no interprocedural may-grow set is
-// consulted, since the cost is one retain and one release on an argument the
-// frame keeps.
+// An array is bracketed only at a position the callee's grow row says it may
+// grow (ssaunits.grows_buffer). The table answers for every callee a kept body
+// names: `semlower.prune` drops a body that calls anything the AST lowering
+// defines, and a builtin never grows what it is lent. Unconditional, the
+// bracket cost a retain and a release per call, per loop turn.
 //
 // ARRAYS only. A text box is never updated in place — a concatenation builds
 // its own — so a bracket buys nothing there, and a `string` that is really a
@@ -414,7 +416,7 @@ function bracketed(f: ssasem.Func, step: ssaunits.Step, ins: ssa.SInst, grows: s
         var v: i32 = ins.args[i];
         if (modes[i] == ssaunits.borrow_mode() && util.index_of_i32(step.drops, v) < 0) {
             var handed: boolean = i < step.hand_roots.len() && step.hand_roots[i] >= 0;
-            if (bracketable(f.values[v]) && !handed && util.index_of_i32(out.arrays, v) < 0) {
+            if (bracketable(f.values[v]) && !handed && ssaunits.grows_buffer(grows, ins.str, i) && util.index_of_i32(out.arrays, v) < 0) {
                 out = Held { ...out, arrays: out.arrays.append(v) };
             }
             if (handed && step.hand_fields[i] >= 0) {

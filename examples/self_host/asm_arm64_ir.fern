@@ -599,18 +599,40 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         var s_done: string = slo6.name;
         var slo7: asmcore.LabelOut = asmcore.fresh_label(slo6.state);
         var s_from_ok: string = slo7.name;
-        s = slo7.state;
+        var slo8: asmcore.LabelOut = asmcore.fresh_label(slo7.state);
+        var s_one: string = slo8.name;
+        var hits: string[] = [];
+        s = slo8.state;
+        while (hits.len() < 4) {
+            var hl: asmcore.LabelOut = asmcore.fresh_label(s);
+            hits = hits.append(hl.name);
+            s = hl.state;
+        }
         s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
         s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
         s = s.write("    cmp x1, #0\n    b.ge " + s_from_ok + "\n    mov x1, #0\n");
         s = s.write(s_from_ok + ":\n    ldr x4, [x2]\n");
         s = s.write("    cmp x4, #256\n    b.lo " + s_short + "\n");
-        s = s.write(s_loop + ":\n");
+        // Full set: four bytes a turn on a cursor (x5, the end x8), then one
+        // at a time. A hit at byte k of the four steps the cursor k times
+        // before its offset is read.
         s = s.write("    cmp x1, x3\n    b.ge " + s_end + "\n");
-        s = s.write("    add x5, x0, x1\n    ldrb w6, [x5]\n");
-        s = s.write("    add x5, x2, x6, lsl #3\n    ldr x7, [x5, #8]\n");
-        s = s.write("    cmp x7, #0\n    b.ne " + s_hit + "\n");
-        s = s.write("    add x1, x1, #1\n    b " + s_loop + "\n");
+        s = s.write("    add x5, x0, x1\n    add x8, x0, x3\n    sub x9, x8, #4\n    add x10, x2, #8\n");
+        s = s.write(s_loop + ":\n    cmp x5, x9\n    b.hi " + s_one + "\n");
+        var k: i32 = 0;
+        while (k < 4) {
+            s = s.write("    ldrb w6, [x5, #" + util.i32_to_string(k) + "]\n    ldr x7, [x10, x6, lsl #3]\n");
+            s = s.write("    cbnz x7, " + hits[k] + "\n");
+            k = k + 1;
+        }
+        s = s.write("    add x5, x5, #4\n    b " + s_loop + "\n");
+        s = s.write(s_one + ":\n    cmp x5, x8\n    b.hs " + s_end + "\n");
+        s = s.write("    ldrb w6, [x5]\n    ldr x7, [x10, x6, lsl #3]\n    cbnz x7, " + hits[0] + "\n");
+        s = s.write("    add x5, x5, #1\n    b " + s_one + "\n");
+        s = s.write(hits[3] + ":\n    add x5, x5, #1\n");
+        s = s.write(hits[2] + ":\n    add x5, x5, #1\n");
+        s = s.write(hits[1] + ":\n    add x5, x5, #1\n");
+        s = s.write(hits[0] + ":\n    sub x1, x5, x0\n    b " + s_hit + "\n");
         s = s.write(s_short + ":\n");
         s = s.write("    cmp x1, x3\n    b.ge " + s_end + "\n");
         s = s.write("    add x5, x0, x1\n    ldrb w6, [x5]\n");
@@ -1313,11 +1335,12 @@ function ssa_helper_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): a
     return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
 }
 
-// ssa_rc_dec renders the array release inline where the count survives it:
-// below the heap floor (every null), a static box's negative count, and a
-// count above one, decremented in w5 and stored back. A count of one (the
-// free) or zero (the underflow the helper reports) calls __fern_arr_dec.
-// Either way the pointer is the result, as the helper leaves it in x0.
+// ssa_rc_dec renders an array or string release inline where the count
+// survives it: below the heap floor (every null), an inline string's tag bit,
+// a static box's negative count, and a count above one, decremented in w5 and
+// stored back. A count of one (the free) or zero (the underflow the helper
+// reports) calls the helper. Either way the pointer is the result, as the
+// helper leaves it in x0.
 function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
     s = helper_call_needs(ins.str, s);
     s = ssa_read(reg_of, ins.args[0], "x4", s);
@@ -1326,6 +1349,7 @@ function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitSt
     var dec: string = lp + "rcdecd" + id;
     var kept: string = lp + "rcdeck" + id;
     var done: string = lp + "rcdece" + id;
+    if (ins.str == "__fern_str_free") { s = s.write("    tbnz " + p + ", #0, " + kept + "\n"); }
     s = s.write("    cmp " + p + ", #16, lsl #12\n    blo " + kept + "\n");
     s = s.write("    ldur w5, [" + p + ", #-8]\n    cmp w5, #1\n    bgt " + dec + "\n");
     s = s.write("    tbnz w5, #31, " + kept + "\n");
@@ -1341,7 +1365,7 @@ function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitSt
 function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
     if (ssa.rc_inlined(ins)) { return ssa_rc_prim(ins, reg_of, lp, s); }
     s = ssa_x0_forget(s);
-    if (ins.str == "__fern_rc_dec" && ins.args.len() == 1 && !rc_free_debug_on()) { return ssa_rc_dec(ins, reg_of, lp, s); }
+    if ((ins.str == "__fern_rc_dec" || ins.str == "__fern_str_free") && ins.args.len() == 1 && !rc_free_debug_on()) { return ssa_rc_dec(ins, reg_of, lp, s); }
     if (ircore.is_fern_helper(ins.str) && ssa_reg_helper(ircore.ir_helper_symbol(ins.str), ins.args.len())) {
         return ssa_helper_call(ins, reg_of, s);
     }
@@ -2122,7 +2146,7 @@ function emit_ssa_function(r: irlower.LowerResult, label_name: string, s: asmcor
     if (why != "") { ircore.ssa_refuse(label_name, why); }
     var lift_ms: i64 = (monotonic_ns() - t_lift) / 1000000i64;
     var t_emit: i64 = monotonic_ns();
-    s = emit_ssa_function_arm64(lifted.func, label_name, r, s);
+    s = emit_ssa_function_arm64(ssa.inline_leaves(lifted.func, s.leaves), label_name, r, s);
     // Under the report, a function whose lift or emit took over 200 ms is
     // named with both times: the whole-compiler build is where a phase's
     // cost shows, and this is how a slow one is found.
@@ -2732,14 +2756,142 @@ function ssa_dyn_dispatch(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.
 // registers hold nothing live; its labels take the op's index under the SSA
 // function's prefix.
 function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, r: irlower.LowerResult, s: asmcore.EmitState): asmcore.EmitState {
+    if (asmcore.buf_helper(r.ops[ins.imm].kind_tag) != "") { return ssa_buf_call(ins, reg_of, asmcore.buf_helper(r.ops[ins.imm].kind_tag), s); }
     s = ssa_x0_forget(s);
+    var outer: usize = s.capture;
+    var h: usize = buf_new(256);
+    s = emit_stack_op(r.ops[ins.imm], ins.imm, lp, r, asmcore.EmitState { ...s, capture: h });
+    var arm: string = buf_take(h);
+    s = asmcore.EmitState { ...s, capture: outer };
+    var pops: string[] = ssa_leading_pops(arm, ins.args.len());
+    if (!ssa_pops_ordered(ins, reg_of, pops)) { pops = []; }
+    var stacked: i32 = ins.args.len() - pops.len();
     var i: i32 = 0;
-    while (i < ins.args.len()) {
+    while (i < stacked) {
         s = ssa_push_operand(reg_of, ins.args[i], i * 16, s);
         i = i + 1;
     }
-    s = emit_stack_op(r.ops[ins.imm], ins.imm, lp, r, s);
-    s = s.write("    ldr x0, [sp], #16\n");
+    for k in ssa_pop_order(ins, reg_of, pops) {
+        s = ssa_load_pushed(reg_of, ins.args[ins.args.len() - 1 - k], pops[k], stacked * 16, s);
+    }
+    var body: string = slice_unchecked(arm, ssa_pops_len(pops), arm.len()) + "";
+    var result: string = ssa_trailing_push(body);
+    if (result != "") {
+        s = s.write(slice_unchecked(body, 0, body.len() - ssa_push_line(result).len()) + "");
+        return ssa_store(reg_of, ins.result, result, ssa_x0_forget(s));
+    }
+    s = s.write(body + "    ldr x0, [sp], #16\n");
+    return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
+}
+
+// An arm starts by popping its operands, the last operand first. The register
+// path loads those operands into the registers the pops name instead, and
+// runs the rest of the arm; operands the arm does not pop that way are pushed
+// as before, beneath where the pops would have read.
+function ssa_pop_line(reg: string): string { return "    ldr " + reg + ", [sp], #16\n"; }
+function ssa_push_line(reg: string): string { return "    str " + reg + ", [sp, #-16]!\n"; }
+
+function ssa_pops_len(pops: string[]): i32 {
+    var n: i32 = 0;
+    for p in pops { n = n + ssa_pop_line(p).len(); }
+    return n;
+}
+
+// ssa_leading_pops lists the registers the arm's first lines pop into, at
+// most `limit` of them.
+function ssa_leading_pops(arm: string, limit: i32): string[] {
+    var out: string[] = [];
+    var at: i32 = 0;
+    while (out.len() < limit) {
+        var reg: string = ssa_line_reg(arm, at, "    ldr x", ", [sp], #16\n");
+        if (reg == "") { return out; }
+        out = out.append(reg);
+        at = at + ssa_pop_line(reg).len();
+    }
+    return out;
+}
+
+// ssa_trailing_push is the register a body's last line pushes, "" when its
+// last line is anything else.
+function ssa_trailing_push(body: string): string {
+    var at: i32 = body.len() - 1;
+    if (at < 0 || body[at] != 10) { return ""; }
+    at = at - 1;
+    while (at >= 0 && body[at] != 10) { at = at - 1; }
+    var reg: string = ssa_line_reg(body, at + 1, "    str x", ", [sp, #-16]!\n");
+    if (reg == "" || at + 1 + ssa_push_line(reg).len() != body.len()) { return ""; }
+    return reg;
+}
+
+// ssa_line_reg reads `xN` from a line at `at` that is `prefix`, the register's
+// digits and `suffix`, or "".
+function ssa_line_reg(text: string, at: i32, prefix: string, suffix: string): string {
+    if (at + prefix.len() > text.len()) { return ""; }
+    if (slice_unchecked(text, at, at + prefix.len()) != prefix) { return ""; }
+    var end: i32 = at + prefix.len();
+    while (end < text.len() && text[end] >= 48 && text[end] <= 57) { end = end + 1; }
+    if (end == at + prefix.len() || end + suffix.len() > text.len()) { return ""; }
+    if (slice_unchecked(text, end, end + suffix.len()) != suffix) { return ""; }
+    return "x" + slice_unchecked(text, at + prefix.len(), end);
+}
+
+// ssa_pops_ordered says the loads into the popped registers can go as one
+// parallel move with no cycle: ssa_pop_order then names an order in which no
+// load overwrites a register a later load still reads.
+function ssa_pops_ordered(ins: ssa.SInst, reg_of: i32[], pops: string[]): boolean {
+    return ssa_pop_order(ins, reg_of, pops).len() == pops.len();
+}
+
+function ssa_pop_order(ins: ssa.SInst, reg_of: i32[], pops: string[]): i32[] {
+    var srcs: string[] = [];
+    var k: i32 = 0;
+    while (k < pops.len()) {
+        var v: i32 = ins.args[ins.args.len() - 1 - k];
+        var src: string = "";
+        if (reg_of[v] >= 0) { src = ssa_reg(reg_of[v]); }
+        srcs = srcs.append(src);
+        k = k + 1;
+    }
+    var done: boolean[] = [];
+    for p in pops { done = done.append(false); }
+    var order: i32[] = [];
+    var progressed: boolean = true;
+    while (progressed && order.len() < pops.len()) {
+        progressed = false;
+        var i: i32 = 0;
+        while (i < pops.len()) {
+            if (!done[i] && !ssa_still_read(srcs, done, pops[i], i)) {
+                order = order.append(i);
+                done = done.with(i, true);
+                progressed = true;
+            }
+            i = i + 1;
+        }
+    }
+    return order;
+}
+
+function ssa_still_read(srcs: string[], done: boolean[], reg: string, self: i32): boolean {
+    var j: i32 = 0;
+    while (j < srcs.len()) {
+        if (j != self && !done[j] && srcs[j] == reg) { return true; }
+        j = j + 1;
+    }
+    return false;
+}
+
+// ssa_buf_call calls a builder helper with its operands loaded straight into
+// x0.. in order. Only x0 can be a home, so it loads last.
+function ssa_buf_call(ins: ssa.SInst, reg_of: i32[], sym: string, s: asmcore.EmitState): asmcore.EmitState {
+    s = ssa_x0_forget(s);
+    s = s.mark_heap();
+    s = s.need("buf");
+    var i: i32 = ins.args.len() - 1;
+    while (i >= 0) {
+        s = ssa_load(reg_of, ins.args[i], "x" + util.i32_to_string(i), s);
+        i = i - 1;
+    }
+    s = s.write("    bl " + sym + "\n");
     return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
 }
 
@@ -2760,28 +2912,40 @@ function emit_arm64_op_memcpy(o: ir.Op, i: i32, lp: string, s: asmcore.EmitState
     // examples/bench, this shape is a 2.1x win here and a 10% LOSS
     // there, where ERMSB covers the whole supported CPU baseline.
     var mi: string = util.i32_to_string(i);
-    var mdone: string = lp + "mcd" + mi;
     s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-    s = s.write("    cbz x2, " + mdone + "\n");
-    s = s.write("    cmp x2, #8\n    b.lo " + lp + "mcb" + mi + "\n");
-    s = s.write("    add x9, x1, x2\n    sub x9, x9, #8\n");
-    s = s.write("    add x10, x0, x2\n    sub x10, x10, #8\n");
-    s = s.write(lp + "mc" + mi + ":\n");
-    s = s.write("    cmp x0, x10\n    b.hs " + lp + "mct" + mi + "\n");
-    s = s.write("    ldr x4, [x1], #8\n    str x4, [x0], #8\n");
-    s = s.write("    b " + lp + "mc" + mi + "\n");
-    s = s.write(lp + "mct" + mi + ":\n");
-    s = s.write("    ldr x4, [x9]\n    str x4, [x10]\n");
-    s = s.write("    b " + mdone + "\n");
-    s = s.write(lp + "mcb" + mi + ":\n");
-    s = s.write("    ldrb w3, [x1], #1\n    strb w3, [x0], #1\n    sub x2, x2, #1\n");
-    s = s.write("    cbnz x2, " + lp + "mcb" + mi + "\n");
-    s = s.write(mdone + ":\n");
+    s = arm64_copy_bytes(s, CopyRegs { dst: "x0", src: "x1", n: "x2", tmp: "x4", src_end: "x9", dst_end: "x10" }, lp + "mc" + mi, lp + "mct" + mi, lp + "mcb" + mi, lp + "mcd" + mi);
     s = s.write("    mov x0, #0\n    str x0, [sp, #-16]!\n");
 
     return s;
 }
 
+
+// The registers `arm64_copy_bytes` copies through: the three operands, which
+// it advances, and three scratch registers it clobbers.
+struct CopyRegs { dst: string, src: string, n: string, tmp: string, src_end: string, dst_end: string }
+
+// arm64_copy_bytes copies `n` bytes from `src` to `dst`, the two regions
+// disjoint, in the size-classed shape emit_arm64_op_memcpy describes. The four
+// labels are the word loop, its overlapping last word, the byte loop taken
+// below 8 bytes, and the end.
+function arm64_copy_bytes(s: asmcore.EmitState, r: CopyRegs, words: string, tail: string, bytes: string, done: string): asmcore.EmitState {
+    var tb: string = "w" + slice_unchecked(r.tmp, 1, r.tmp.len());
+    s = s.write("    cbz " + r.n + ", " + done + "\n");
+    s = s.write("    cmp " + r.n + ", #8\n    b.lo " + bytes + "\n");
+    s = s.write("    add " + r.src_end + ", " + r.src + ", " + r.n + "\n    sub " + r.src_end + ", " + r.src_end + ", #8\n");
+    s = s.write("    add " + r.dst_end + ", " + r.dst + ", " + r.n + "\n    sub " + r.dst_end + ", " + r.dst_end + ", #8\n");
+    s = s.write(words + ":\n");
+    s = s.write("    cmp " + r.dst + ", " + r.dst_end + "\n    b.hs " + tail + "\n");
+    s = s.write("    ldr " + r.tmp + ", [" + r.src + "], #8\n    str " + r.tmp + ", [" + r.dst + "], #8\n");
+    s = s.write("    b " + words + "\n");
+    s = s.write(tail + ":\n");
+    s = s.write("    ldr " + r.tmp + ", [" + r.src_end + "]\n    str " + r.tmp + ", [" + r.dst_end + "]\n");
+    s = s.write("    b " + done + "\n");
+    s = s.write(bytes + ":\n");
+    s = s.write("    ldrb " + tb + ", [" + r.src + "], #1\n    strb " + tb + ", [" + r.dst + "], #1\n    sub " + r.n + ", " + r.n + ", #1\n");
+    s = s.write("    cbnz " + r.n + ", " + bytes + "\n");
+    return s.write(done + ":\n");
+}
 function emit_arm64_op_heap_bump_bytes(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     // bump high-water mark = (__fern_heap_ptr == 0) ? 0 : ptr − base.
     // The arena is mmap'd lazily; its base is recoverable from the
@@ -2847,41 +3011,12 @@ function emit_arm64_op_heap_release_to(o: ir.Op, s: asmcore.EmitState): asmcore.
 // buf_free returns blocks to the freelists, so all seven pull the heap in.
 function emit_arm64_op_buf(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.mark_heap(); s = s.need("buf");
-    if (o.kind_tag == 291) {                                  // buf_new
-        return s.write("    ldr x0, [sp], #16\n    bl __fern_buf_new\n    str x0, [sp, #-16]!\n");
+    var k: i32 = asmcore.buf_arity(o.kind_tag);
+    while (k > 0) {
+        k = k - 1;
+        s = s.write("    ldr x" + util.i32_to_string(k) + ", [sp], #16\n");
     }
-    if (o.kind_tag == 292) {                                  // buf_push
-        return s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_buf_push\n    str x0, [sp, #-16]!\n");
-    }
-    if (o.kind_tag == 293) {                                  // buf_push_range
-        s = s.write("    ldr x3, [sp], #16\n    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-        return s.write("    bl __fern_buf_push_range\n    str x0, [sp, #-16]!\n");
-    }
-    if (o.kind_tag == 325) {                                  // buf_push_mapped
-        s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-        return s.write("    bl __fern_buf_push_mapped\n    str x0, [sp, #-16]!\n");
-    }
-    if (o.kind_tag == 326) {                                  // buf_push_filtered
-        s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-        return s.write("    bl __fern_buf_push_filtered\n    str x0, [sp, #-16]!\n");
-    }
-    if (o.kind_tag == 328) {                                  // buf_push_expanded
-        s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-        return s.write("    bl __fern_buf_push_expanded\n    str x0, [sp, #-16]!\n");
-    }
-    if (o.kind_tag == 294) {                                  // buf_push_byte
-        return s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_buf_push_byte\n    str x0, [sp, #-16]!\n");
-    }
-    if (o.kind_tag == 306) {                                  // buf_push_u64
-        return s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_buf_push_u64\n    str x0, [sp, #-16]!\n");
-    }
-    if (o.kind_tag == 295) {                                  // buf_len
-        return s.write("    ldr x0, [sp], #16\n    bl __fern_buf_len\n    str x0, [sp, #-16]!\n");
-    }
-    if (o.kind_tag == 296) {                                  // buf_take
-        return s.write("    ldr x0, [sp], #16\n    bl __fern_buf_take\n    str x0, [sp, #-16]!\n");
-    }
-    return s.write("    ldr x0, [sp], #16\n    bl __fern_buf_free\n    str x0, [sp, #-16]!\n");  // buf_free
+    return s.write("    bl " + asmcore.buf_helper(o.kind_tag) + "\n    str x0, [sp, #-16]!\n");
 }
 
 // emit_arm64_op_map and emit_arm64_op_map_read select the map ops, the
@@ -3592,7 +3727,7 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
     var sg: irlower.FnSigs = irlower.fn_sigs_with_dyn(base, mod.trait_reqs);
     var vsigs: irverify.NameIndex = irlower.fn_sig_index(mod.funcs);
     ircore.check_fip_claims(mod.funcs, 0, mod.funcs.len(), cache, s.struct_decls, sg, false);
-    s = asmcore.EmitState { ...s, reg_entries: irlower.sig_reg_of(asmcore.unit_labels(mod, 0, mod.funcs.len(), cache)) };
+    s = asmcore.EmitState { ...s, reg_entries: irlower.sig_reg_of(asmcore.unit_labels(mod, 0, mod.funcs.len(), cache)), leaves: asmcore.unit_leaves(mod, 0, mod.funcs.len(), cache) };
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
         if (cache.len() == 0) {
@@ -5708,11 +5843,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
         s = s.write("    ldr x2, [x2]\n");                      // live bytes (0 while old is null)
         s = s.write("    mov x3, x19\n");
         s = s.write("    cbz x2, .Lsbgrow_copied\n");
-        s = s.write(".Lsbgrow_copy:\n");
-        s = s.write("    ldrb w4, [x1], #1\n");
-        s = s.write("    strb w4, [x3], #1\n");
-        s = s.write("    sub x2, x2, #1\n");
-        s = s.write("    cbnz x2, .Lsbgrow_copy\n");
+        s = arm64_copy_bytes(s, CopyRegs { dst: "x3", src: "x1", n: "x2", tmp: "x9", src_end: "x10", dst_end: "x11" }, ".Lsbgrow_copy_w", ".Lsbgrow_copy_t", ".Lsbgrow_copy_b", ".Lsbgrow_copy_d");
         s = s.write(".Lsbgrow_copied:\n");
         s = s.write("    adrp x1, __fern_strbuf_ptr\n");
         s = s.write("    add x1, x1, :lo12:__fern_strbuf_ptr\n");
@@ -5756,11 +5887,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
         s = s.write("    add x4, x4, :lo12:__fern_strbuf_len\n");
         s = s.write("    ldr x5, [x4]\n");
         s = s.write("    add x3, x3, x5\n");                    // dst = ptr + len
-        s = s.write(".Lsbapp_loop:\n");
-        s = s.write("    ldrb w6, [x1], #1\n");
-        s = s.write("    strb w6, [x3], #1\n");
-        s = s.write("    sub x2, x2, #1\n");
-        s = s.write("    cbnz x2, .Lsbapp_loop\n");
+        s = arm64_copy_bytes(s, CopyRegs { dst: "x3", src: "x1", n: "x2", tmp: "x9", src_end: "x10", dst_end: "x11" }, ".Lsbapp_loop_w", ".Lsbapp_loop_t", ".Lsbapp_loop_b", ".Lsbapp_loop_d");
         s = s.write(".Lsbapp_done:\n");
         s = s.write("    ldr x2, [x19, #8]\n");                 // reload src len
         s = s.write("    adrp x4, __fern_strbuf_len\n");
@@ -5793,11 +5920,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
         s = s.write("    mov x2, x20\n");                       // dst
         s = s.write("    mov x3, x19\n");                       // count
         s = s.write("    cbz x3, .Lsbtake_box\n");
-        s = s.write(".Lsbtake_loop:\n");
-        s = s.write("    ldrb w4, [x1], #1\n");
-        s = s.write("    strb w4, [x2], #1\n");
-        s = s.write("    sub x3, x3, #1\n");
-        s = s.write("    cbnz x3, .Lsbtake_loop\n");
+        s = arm64_copy_bytes(s, CopyRegs { dst: "x2", src: "x1", n: "x3", tmp: "x9", src_end: "x10", dst_end: "x11" }, ".Lsbtake_loop_w", ".Lsbtake_loop_t", ".Lsbtake_loop_b", ".Lsbtake_loop_d");
         s = s.write(".Lsbtake_box:\n");
         // Result box via __fern_str_box, not a bare __fern_alloc(16) — see the
         // x86-64 sibling for why: the drained string is owned, so a drop reaches
@@ -5888,11 +6011,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
         s = s.write("    cbz x2, .Lbufres_nocopy\n");
         s = s.write("    ldr x1, [x19]\n");                     // old buffer
         s = s.write("    mov x3, x22\n");
-        s = s.write(".Lbufres_copy:\n");
-        s = s.write("    ldrb w4, [x1], #1\n");
-        s = s.write("    strb w4, [x3], #1\n");
-        s = s.write("    sub x2, x2, #1\n");
-        s = s.write("    cbnz x2, .Lbufres_copy\n");
+        s = arm64_copy_bytes(s, CopyRegs { dst: "x3", src: "x1", n: "x2", tmp: "x9", src_end: "x10", dst_end: "x11" }, ".Lbufres_copy_w", ".Lbufres_copy_t", ".Lbufres_copy_b", ".Lbufres_copy_d");
         s = s.write(".Lbufres_nocopy:\n");
         s = s.write("    ldr x5, [x19]\n");                     // old buffer
         s = s.write("    cbz x5, .Lbufres_store\n");
@@ -5913,86 +6032,48 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
         s = s.write(".globl __fern_buf_push\n");
         s = s.write(".type __fern_buf_push, %function\n");
         s = s.write("__fern_buf_push:\n");
-        s = s.write("    stp x29, x30, [sp, #-16]!\n");
-        s = s.write("    mov x29, sp\n");
-        s = s.write("    stp x19, x20, [sp, #-16]!\n");
-        s = s.write("    stp x21, x22, [sp, #-16]!\n");
-        s = s.write("    mov x19, x0\n");
-        s = s.write("    mov x20, x1\n");
-        s = s.write("    ldr x21, [x20, #8]\n");                // src len
-        s = s.write("    cbz x21, .Lbufpush_done\n");
-        s = s.write("    ldr x0, [x19, #8]\n");
-        s = s.write("    add x0, x0, x21\n");                   // len after this push
-        s = s.write("    ldr x1, [x19, #16]\n");
-        s = s.write("    cmp x0, x1\n");
-        s = s.write("    b.ls .Lbufpush_fits\n");
-        s = s.write("    mov x1, x0\n");
-        s = s.write("    mov x0, x19\n");
-        s = s.write("    bl __fern_buf_reserve\n");
-        s = s.write(".Lbufpush_fits:\n");
-        s = s.write("    ldr x1, [x20]\n");                     // src data
-        s = s.write("    ldr x3, [x19]\n");
-        s = s.write("    ldr x4, [x19, #8]\n");
-        s = s.write("    add x3, x3, x4\n");                    // dst = data + len
-        s = s.write("    mov x2, x21\n");
-        s = s.write(".Lbufpush_loop:\n");
-        s = s.write("    ldrb w5, [x1], #1\n");
-        s = s.write("    strb w5, [x3], #1\n");
-        s = s.write("    sub x2, x2, #1\n");
-        s = s.write("    cbnz x2, .Lbufpush_loop\n");
-        s = s.write("    ldr x0, [x19, #8]\n");
-        s = s.write("    add x0, x0, x21\n");
-        s = s.write("    str x0, [x19, #8]\n");
-        s = s.write(".Lbufpush_done:\n");
-        s = s.write("    ldp x21, x22, [sp], #16\n");
-        s = s.write("    ldp x19, x20, [sp], #16\n");
-        s = s.write("    ldp x29, x30, [sp], #16\n");
-        s = s.write("    ret\n");
+        s = s.write("    ldr x3, [x1, #8]\n");
+        s = s.write("    mov x2, #0\n");
+        s = s.write("    b __fern_buf_push_range\n");
         s = s.write(".size __fern_buf_push, .-__fern_buf_push\n");
         // __fern_buf_push_range(x0 = H, x1 = box, x2 = lo, x3 = hi): append
         // s[lo:hi] with no intermediate string. An empty or inverted range is a
-        // no-op; the bounds are the caller's, as with slice_unchecked.
+        // no-op; the bounds are the caller's, as with slice_unchecked. A push
+        // that fits is a leaf with no frame; only a growth saves the operands
+        // across the reserve.
         s = s.write(".globl __fern_buf_push_range\n");
         s = s.write(".type __fern_buf_push_range, %function\n");
         s = s.write("__fern_buf_push_range:\n");
+        s = s.write("    sub x3, x3, x2\n");
+        s = s.write("    cmp x3, #0\n");
+        s = s.write("    b.le .Lbufrange_done\n");
+        s = s.write("    ldr x4, [x0, #8]\n");
+        s = s.write("    add x5, x4, x3\n");
+        s = s.write("    ldr x6, [x0, #16]\n");
+        s = s.write("    cmp x5, x6\n");
+        s = s.write("    b.hi .Lbufrange_grow\n");
+        s = s.write(".Lbufrange_copy:\n");
+        s = s.write("    str x5, [x0, #8]\n");
+        s = s.write("    ldr x1, [x1]\n");
+        s = s.write("    add x1, x1, x2\n");
+        s = s.write("    ldr x6, [x0]\n");
+        s = s.write("    add x6, x6, x4\n");
+        s = s.write("    mov x2, x3\n");
+        s = arm64_copy_bytes(s, CopyRegs { dst: "x6", src: "x1", n: "x2", tmp: "x9", src_end: "x10", dst_end: "x11" }, ".Lbufrange_loop_w", ".Lbufrange_loop_t", ".Lbufrange_loop_b", ".Lbufrange_done");
+        s = s.write("    ret\n");
+        s = s.write(".Lbufrange_grow:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
-        s = s.write("    stp x19, x20, [sp, #-16]!\n");
-        s = s.write("    stp x21, x22, [sp, #-16]!\n");
-        s = s.write("    mov x19, x0\n");
-        s = s.write("    mov x20, x1\n");
-        s = s.write("    mov x21, x2\n");                       // lo
-        s = s.write("    sub x22, x3, x2\n");                   // n = hi - lo
-        s = s.write("    cmp x22, #0\n");
-        s = s.write("    b.le .Lbufrange_done\n");
-        s = s.write("    ldr x0, [x19, #8]\n");
-        s = s.write("    add x0, x0, x22\n");
-        s = s.write("    ldr x1, [x19, #16]\n");
-        s = s.write("    cmp x0, x1\n");
-        s = s.write("    b.ls .Lbufrange_fits\n");
-        s = s.write("    mov x1, x0\n");
-        s = s.write("    mov x0, x19\n");
+        s = s.write("    stp x0, x1, [sp, #-16]!\n");
+        s = s.write("    stp x2, x3, [sp, #-16]!\n");
+        s = s.write("    mov x1, x5\n");
         s = s.write("    bl __fern_buf_reserve\n");
-        s = s.write(".Lbufrange_fits:\n");
-        s = s.write("    ldr x1, [x20]\n");
-        s = s.write("    add x1, x1, x21\n");                   // src = data + lo
-        s = s.write("    ldr x3, [x19]\n");
-        s = s.write("    ldr x4, [x19, #8]\n");
-        s = s.write("    add x3, x3, x4\n");
-        s = s.write("    mov x2, x22\n");
-        s = s.write(".Lbufrange_loop:\n");
-        s = s.write("    ldrb w5, [x1], #1\n");
-        s = s.write("    strb w5, [x3], #1\n");
-        s = s.write("    sub x2, x2, #1\n");
-        s = s.write("    cbnz x2, .Lbufrange_loop\n");
-        s = s.write("    ldr x0, [x19, #8]\n");
-        s = s.write("    add x0, x0, x22\n");
-        s = s.write("    str x0, [x19, #8]\n");
-        s = s.write(".Lbufrange_done:\n");
-        s = s.write("    ldp x21, x22, [sp], #16\n");
-        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x2, x3, [sp], #16\n");
+        s = s.write("    ldp x0, x1, [sp], #16\n");
         s = s.write("    ldp x29, x30, [sp], #16\n");
-        s = s.write("    ret\n");
+        s = s.write("    ldr x4, [x0, #8]\n");
+        s = s.write("    add x5, x4, x3\n");
+        s = s.write("    b .Lbufrange_copy\n");
         s = s.write(".size __fern_buf_push_range, .-__fern_buf_push_range\n");
         // __fern_buf_push_mapped(x0 = H, x1 = box, x2 = table): append
         // table[c] for each byte c of the box's data, or c itself when it is
@@ -6115,7 +6196,9 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
         // (above 7 counts as 7) and then the bytes, or c itself when its
         // record is not wholly inside the table. Entry i of the table is the
         // low byte of the 8-byte slot 8 + i*8, so byte c's record starts at
-        // table + 8 + c*64.
+        // table + 8 + c*64. A push of 256 bytes or more through a table of
+        // every record first packs the records into 2 KiB of frame, then
+        // copies each as one eight-byte store.
         s = s.write(".globl __fern_buf_push_expanded\n");
         s = s.write(".type __fern_buf_push_expanded, %function\n");
         s = s.write("__fern_buf_push_expanded:\n");
@@ -6129,7 +6212,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
         s = s.write("    ldr x22, [x20, #8]\n");                // n
         s = s.write("    cbz x22, .Lbufexp_done\n");
         s = s.write("    lsl x0, x22, #3\n");
-        s = s.write("    sub x0, x0, x22\n");                   // at most seven bytes each
+        s = s.write("    add x0, x0, #8\n");                    // a whole record stored per byte
         s = s.write("    ldr x1, [x19, #8]\n");
         s = s.write("    add x0, x0, x1\n");
         s = s.write("    ldr x1, [x19, #16]\n");
@@ -6146,6 +6229,19 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
         s = s.write("    ldr x4, [x21]\n");
         s = s.write("    lsr x4, x4, #3\n");                    // whole records
         s = s.write("    mov x2, x22\n");
+        s = s.write("    cmp x4, #256\n    b.lo .Lbufexp_loop\n");
+        s = s.write("    cmp x2, #256\n    b.lo .Lbufexp_loop\n");
+        s = s.write("    sub sp, sp, #2048\n    add x6, x21, #8\n    mov x7, #0\n");
+        s = s.write(".Lbufexp_pack:\n");
+        s = s.write("    ldr x8, [x6, x7, lsl #3]\n    strb w8, [sp, x7]\n");
+        s = s.write("    add x7, x7, #1\n    cmp x7, #2048\n    b.lo .Lbufexp_pack\n");
+        s = s.write("    mov x9, #7\n");
+        s = s.write(".Lbufexp_fast:\n");
+        s = s.write("    ldrb w5, [x1], #1\n    ldr x8, [sp, x5, lsl #3]\n");
+        s = s.write("    and x7, x8, #255\n    cmp x7, x9\n    csel x7, x7, x9, ls\n");
+        s = s.write("    lsr x8, x8, #8\n    str x8, [x3]\n    add x3, x3, x7\n");
+        s = s.write("    subs x2, x2, #1\n    b.ne .Lbufexp_fast\n");
+        s = s.write("    add sp, sp, #2048\n    b .Lbufexp_len\n");
         s = s.write(".Lbufexp_loop:\n");
         s = s.write("    cbz x2, .Lbufexp_len\n");
         s = s.write("    ldrb w5, [x1], #1\n");
@@ -6179,33 +6275,32 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
         s = s.write(".size __fern_buf_push_expanded, .-__fern_buf_push_expanded\n");
-        // __fern_buf_push_byte(x0 = H, x1 = x): append the low byte of x.
+        // __fern_buf_push_byte(x0 = H, x1 = x): append the low byte of x, as a
+        // leaf unless the buffer grows.
         s = s.write(".globl __fern_buf_push_byte\n");
         s = s.write(".type __fern_buf_push_byte, %function\n");
         s = s.write("__fern_buf_push_byte:\n");
+        s = s.write("    ldr x4, [x0, #8]\n");
+        s = s.write("    add x5, x4, #1\n");
+        s = s.write("    ldr x6, [x0, #16]\n");
+        s = s.write("    cmp x5, x6\n");
+        s = s.write("    b.hi .Lbufbyte_grow\n");
+        s = s.write(".Lbufbyte_fits:\n");
+        s = s.write("    ldr x6, [x0]\n");
+        s = s.write("    strb w1, [x6, x4]\n");
+        s = s.write("    str x5, [x0, #8]\n");
+        s = s.write("    ret\n");
+        s = s.write(".Lbufbyte_grow:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
-        s = s.write("    stp x19, x20, [sp, #-16]!\n");
-        s = s.write("    mov x19, x0\n");
-        s = s.write("    mov x20, x1\n");
-        s = s.write("    ldr x0, [x19, #8]\n");
-        s = s.write("    add x0, x0, #1\n");
-        s = s.write("    ldr x1, [x19, #16]\n");
-        s = s.write("    cmp x0, x1\n");
-        s = s.write("    b.ls .Lbufbyte_fits\n");
-        s = s.write("    mov x1, x0\n");
-        s = s.write("    mov x0, x19\n");
+        s = s.write("    stp x0, x1, [sp, #-16]!\n");
+        s = s.write("    mov x1, x5\n");
         s = s.write("    bl __fern_buf_reserve\n");
-        s = s.write(".Lbufbyte_fits:\n");
-        s = s.write("    ldr x0, [x19]\n");
-        s = s.write("    ldr x1, [x19, #8]\n");
-        s = s.write("    add x0, x0, x1\n");
-        s = s.write("    strb w20, [x0]\n");
-        s = s.write("    add x1, x1, #1\n");
-        s = s.write("    str x1, [x19, #8]\n");
-        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x0, x1, [sp], #16\n");
         s = s.write("    ldp x29, x30, [sp], #16\n");
-        s = s.write("    ret\n");
+        s = s.write("    ldr x4, [x0, #8]\n");
+        s = s.write("    add x5, x4, #1\n");
+        s = s.write("    b .Lbufbyte_fits\n");
         s = s.write(".size __fern_buf_push_byte, .-__fern_buf_push_byte\n");
         // __fern_buf_push_u64(x0 = H, x1 = v): append the eight bytes of v,
         // least significant first.
@@ -6264,11 +6359,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
         s = s.write("    ldr x1, [x19]\n");                     // data
         s = s.write("    mov x3, x21\n");
         s = s.write("    mov x2, x20\n");
-        s = s.write(".Lbuftake_copy:\n");
-        s = s.write("    ldrb w4, [x1], #1\n");
-        s = s.write("    strb w4, [x3], #1\n");
-        s = s.write("    sub x2, x2, #1\n");
-        s = s.write("    cbnz x2, .Lbuftake_copy\n");
+        s = arm64_copy_bytes(s, CopyRegs { dst: "x3", src: "x1", n: "x2", tmp: "x9", src_end: "x10", dst_end: "x11" }, ".Lbuftake_copy_w", ".Lbuftake_copy_t", ".Lbuftake_copy_b", ".Lbuftake_copy_d");
         s = s.write("    str xzr, [x19, #8]\n");
         s = s.write("    mov x0, x21\n");
         s = s.write("    mov x1, x20\n");
