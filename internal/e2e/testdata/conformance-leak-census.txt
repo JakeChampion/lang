@@ -38,10 +38,6 @@
 # the box nor its payload. Both fixtures build one and their rows were the
 # box each stranded.
 #
-# f64_tryop_widen and try_binding_takes_its_success_payload try a variant
-# literal with `?` (`Some(3.25)?`), and native never releases the literal's
-# box (#10200). The self-host builds both clean.
-#
 # fstring_reassign_releases_old is #8697's fixture: an f-string RHS now
 # releases the destination's superseded string, so the row registers a
 # clean fixture rather than banking a leak.
@@ -200,7 +196,7 @@ bool_in_tuple_with_i64                               0
 bool_to_string                                       0
 bool_to_string_receivers                             0
 boolean_logic                                        0
-boolean_scalar_dispatch                              1
+boolean_scalar_dispatch                              0
 both_arms_read_p                                     0
 break_continue                                       0
 bytes_writer                                         0
@@ -292,7 +288,7 @@ f32_array_param                                      0
 f64_elements                                         0
 f64_if_expr                                          0
 f64_sqrt                                             0
-f64_tryop_widen                                      1
+f64_tryop_widen                                      0
 factorial_print                                      0
 fib_recursion                                        0
 field_read_off_a_call_through_a_function_field       0
@@ -628,7 +624,7 @@ trailing_commas                                      0
 trait_method_bound_wins                              0
 trmc_map                                             0
 try_op_in_closure                                    0
-try_binding_takes_its_success_payload                2
+try_binding_takes_its_success_payload                0
 try_result_struct_payload                            1
 tuple_basics                                         0
 tuple_binder_shadows_module_decl                     0
@@ -657,7 +653,7 @@ u64_if_expr_suffix                                   0
 u64_literal_compare                                  0
 u64_max_to_f64_is_huge                               0
 u8_method_module                                     0
-underscore_discard                                   1
+underscore_discard                                   0
 union_eval                                           0
 union_lambda_param                                   0
 url_codec                                            1

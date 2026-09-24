@@ -13,7 +13,7 @@ import (
 // per-iteration-fresh `mk(i)` leaked one box every iteration.
 //
 // The Match / MatchExpr lowering now reclaims a FRESH owned enum scrutinee
-// (ownedCallResultType) once the match completes. The drop routes through the
+// (freshOwnedBoxType) once the match completes. The drop routes through the
 // generated `__drop_enum_<Name>` fn (emitEnumDropViaGenFn → is_unique-gated
 // variant-plan + exact-size box_free) — the wasm-correct path: a box_free
 // inside a generated drop FUNCTION returns the box to the freelist on every
@@ -66,6 +66,42 @@ function main(): i32 {
 }`
 }
 
+// A variant LITERAL scrutinee (#10200): `match (A(i))` builds a fresh box the
+// match alone owns, the same as a fresh call result.
+func matchScrutineeLiteralBumpSrc(n string) string {
+	return `enum E3 { A(i32), B(i32), C }
+function main(): i32 {
+    var before: i32 = (__heap_bump_bytes() as i32);
+    var i: i32 = 0;
+    var acc: i32 = 0;
+    while (i < ` + n + `) {
+        var r: i32 = match (A(i)) { A(x) => x, B(y) => y, C => 0 };
+        match (B(i)) { A(x) => { acc = acc + x; }, B(y) => { acc = acc + y; }, C => {}, }
+        acc = acc + r;
+        i = i + 1;
+    }
+    if (acc < 0) { return -1; }
+    return (__heap_bump_bytes() as i32) - before;
+}`
+}
+
+// A literal scrutinee carrying the caller's live string: the drop releases the
+// reference construction counted, so keep survives every iteration.
+const matchScrutineeLiteralAliasedPayloadSafe = `enum S3 { P(string), Q(i32), R }
+function main(): i32 {
+    var keep: string = "abc" + "def";
+    var i: i32 = 0;
+    var acc: i32 = 0;
+    while (i < 200) {
+        var r: i32 = match (P(keep)) { P(s) => s.len(), Q(y) => y, R => 0 };
+        acc = acc + r;
+        i = i + 1;
+    }
+    if (acc != 1200) { return 99; }
+    if (keep.len() != 6) { return 88; }
+    return __rc_underflow_count();
+}`
+
 // CRITICAL soundness: pass(b) returns its param (aliased; rc>=2 via the
 // return-transfer inc), so matching pass(b) must only DEC (is_unique false),
 // never free — `b` stays a valid box, re-read after the loop. acc = 7*200 =
@@ -93,10 +129,13 @@ func checkMatchScrutineeSafe(t *testing.T, run func(*testing.T, string) (string,
 	if _, code := run(t, matchScrutineeAliasedSafe); code != 0 {
 		t.Errorf("aliased-scrutinee safety: code=%d (99=value, 88=UAF/freed-early, >0=over-release)", code)
 	}
+	if _, code := run(t, matchScrutineeLiteralAliasedPayloadSafe); code != 0 {
+		t.Errorf("literal aliased-payload safety: code=%d (99=value, 88=payload freed under caller, >0=over-release)", code)
+	}
 }
 
 func TestX86_64MatchScrutineeReclaim(t *testing.T) {
-	for _, mk := range []func(string) string{matchScrutineeExprBumpSrc, matchScrutineeStmtBumpSrc} {
+	for _, mk := range []func(string) string{matchScrutineeExprBumpSrc, matchScrutineeStmtBumpSrc, matchScrutineeLiteralBumpSrc} {
 		small := mustRunX86_64FreeOn(t, mk("50"))
 		large := mustRunX86_64FreeOn(t, mk("5000"))
 		if small != large {
@@ -107,7 +146,7 @@ func TestX86_64MatchScrutineeReclaim(t *testing.T) {
 }
 
 func TestArm64MatchScrutineeReclaim(t *testing.T) {
-	for _, mk := range []func(string) string{matchScrutineeExprBumpSrc, matchScrutineeStmtBumpSrc} {
+	for _, mk := range []func(string) string{matchScrutineeExprBumpSrc, matchScrutineeStmtBumpSrc, matchScrutineeLiteralBumpSrc} {
 		small := mustRunArm64FreeOn(t, mk("50"))
 		large := mustRunArm64FreeOn(t, mk("5000"))
 		if small != large {
@@ -121,7 +160,7 @@ func TestWASMMatchScrutineeReclaim(t *testing.T) {
 	prev := ast.RcFreeEnabled
 	ast.RcFreeEnabled = true
 	defer func() { ast.RcFreeEnabled = prev }()
-	for _, mk := range []func(string) string{matchScrutineeExprBumpSrc, matchScrutineeStmtBumpSrc} {
+	for _, mk := range []func(string) string{matchScrutineeExprBumpSrc, matchScrutineeStmtBumpSrc, matchScrutineeLiteralBumpSrc} {
 		small := runWasm(t, mk("50"))
 		large := runWasm(t, mk("5000"))
 		if small != large {

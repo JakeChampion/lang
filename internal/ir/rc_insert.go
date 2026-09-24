@@ -289,52 +289,75 @@ func (b *builder) freshOwnedRcTempType(e ast.Expr) (ast.Type, bool) {
 				return t, true
 			}
 		}
-		// A VARIANT CONSTRUCTOR carrying payloads (`E.A(mk())`) allocates a
-		// fresh rc=1 box exactly as the ArrayLit / StructLit / TupleLit arms
-		// above do — it is a literal construction that happens to be spelled
-		// as a call, not one of the aliasing calls this switch excludes.
-		//
-		// The drop this admits is DEEP (__drop_enum_<Name> releases payloads),
-		// so it is sound exactly when the construction COUNTED them — and the
-		// gate here is therefore the same pair emitEnumNew's payload inc
-		// carries, rather than a restatement of it:
-		//
-		//   - enumRcPayloadsEligible(enumName). Under the move model
-		//     (EnumRcPayloads off) and for a Map-carrying enum, an aliased
-		//     payload is not inc'd at all, so releasing the box frees a value
-		//     the caller still owns. Both differentials caught exactly this:
-		//     the wasm move leg aborted (134) where the rc leg returned 0, and
-		//     stdlib_json_roundtrip — a JsonValue tree, whose JObject payload
-		//     is a Map — "improved" by 112 bytes on each backend, which was
-		//     the over-release, not a reclaim.
-		//   - !consumingMatchReuse. That path stores moved-out bindings back
-		//     into the box and skips the inc for the same reason.
-		//
-		// With both held, every payload form balances: an aliased ident /
-		// field / index is inc'd (needsRcIncOnAlias), one the move analysis
-		// marked a last use hands over its own reference, and a fresh call
-		// result or literal is owned outright at rc 1.
-		//
-		// Measured against three controls in the identical argument position —
-		// the same value bound to a `var` first, a struct literal, and a tuple
-		// literal — all of which were reclaimed while `sink(E.A(mk(...)))`
-		// stranded its box AND its payload every call (200 allocs / 0 frees
-		// over 100 rounds).
-		//
-		// PAYLOADLESS variants are excluded because they allocate nothing:
-		// emitEnumNew rewrites them to a shared static sentinel, so there is
-		// no fresh box to reclaim. nameShadowsVariant is the checker's own
-		// rule for when a same-named local or user function wins over the
-		// constructor, so a call this arm claims is one callBody really does
-		// lower through emitEnumNew (#7867).
-		if cid, ok := x.Callee.(*ast.Ident); ok && !b.nameShadowsVariant(cid.Name) && !b.rc.consumingMatchReuse[x] {
-			if enumName, _, payloads, isVariant := b.lookupVariantOn(cid.Name, cid.EnumName); isVariant && payloads > 0 &&
-				b.enumRcPayloadsEligible(enumName) {
-				if t := b.exprType(e); ast.IsPointerType(t) {
-					return t, true
-				}
-			}
+		if t, ok := b.freshVariantConstructionType(x); ok {
+			return t, true
 		}
+	}
+	return nil, false
+}
+
+// freshOwnedBoxType classifies a match or `?` source the caller alone owns at
+// rc 1: a fresh user-call result or a fresh variant construction.
+func (b *builder) freshOwnedBoxType(e ast.Expr) (ast.Type, bool) {
+	if t, ok := b.ownedCallResultType(e); ok {
+		return t, true
+	}
+	if c, ok := e.(*ast.Call); ok {
+		return b.freshVariantConstructionType(c)
+	}
+	return nil, false
+}
+
+// freshVariantConstructionType: a VARIANT CONSTRUCTOR carrying payloads
+// (`E.A(mk())`) allocates a fresh rc=1 box exactly as freshOwnedRcTempType's
+// ArrayLit / StructLit / TupleLit arms do — it is a literal construction that
+// happens to be spelled as a call, not one of the aliasing calls
+// ownedCallResultType excludes.
+//
+// The drop this admits is DEEP (__drop_enum_<Name> releases payloads),
+// so it is sound exactly when the construction COUNTED them — and the
+// gate here is therefore the same pair emitEnumNew's payload inc
+// carries, rather than a restatement of it:
+//
+//   - enumRcPayloadsEligible(enumName). Under the move model
+//     (EnumRcPayloads off) and for a Map-carrying enum, an aliased
+//     payload is not inc'd at all, so releasing the box frees a value
+//     the caller still owns. Both differentials caught exactly this:
+//     the wasm move leg aborted (134) where the rc leg returned 0, and
+//     stdlib_json_roundtrip — a JsonValue tree, whose JObject payload
+//     is a Map — "improved" by 112 bytes on each backend, which was
+//     the over-release, not a reclaim.
+//   - !consumingMatchReuse. That path stores moved-out bindings back
+//     into the box and skips the inc for the same reason.
+//
+// With both held, every payload form balances: an aliased ident /
+// field / index is inc'd (needsRcIncOnAlias), one the move analysis
+// marked a last use hands over its own reference, and a fresh call
+// result or literal is owned outright at rc 1.
+//
+// Measured against three controls in the identical argument position —
+// the same value bound to a `var` first, a struct literal, and a tuple
+// literal — all of which were reclaimed while `sink(E.A(mk(...)))`
+// stranded its box AND its payload every call (200 allocs / 0 frees
+// over 100 rounds).
+//
+// PAYLOADLESS variants are excluded because they allocate nothing:
+// emitEnumNew rewrites them to a shared static sentinel, so there is
+// no fresh box to reclaim. nameShadowsVariant is the checker's own
+// rule for when a same-named local or user function wins over the
+// constructor, so a call this claims is one callBody really does
+// lower through emitEnumNew (#7867).
+func (b *builder) freshVariantConstructionType(x *ast.Call) (ast.Type, bool) {
+	cid, ok := x.Callee.(*ast.Ident)
+	if !ok || b.nameShadowsVariant(cid.Name) || b.rc.consumingMatchReuse[x] {
+		return nil, false
+	}
+	enumName, _, payloads, isVariant := b.lookupVariantOn(cid.Name, cid.EnumName)
+	if !isVariant || payloads == 0 || !b.enumRcPayloadsEligible(enumName) {
+		return nil, false
+	}
+	if t := b.exprType(x); ast.IsPointerType(t) {
+		return t, true
 	}
 	return nil, false
 }
@@ -475,10 +498,10 @@ func (b *builder) ownedCallResultType(e ast.Expr) (ast.Type, bool) {
 // / `.len()`-of-fresh reclamation; docs/RC-PERCEUS-PLAN.md).
 //
 // Eligibility mirrors that family's gate exactly:
-//   - the scrutinee is a fresh owned call result (ownedCallResultType — a user
-//     function returning a heap-boxed enum; pair-form / builtin / variant-
-//     constructor callees are excluded there, so the value is always a real
-//     box this lowering stores in ptrSlot and dispatches on via OpMatchTag);
+//   - the scrutinee is a fresh box (freshOwnedBoxType): a user function
+//     returning a heap-boxed enum, or a payload-carrying variant construction
+//     (`match (Some(n)) { … }`), which this lowering stores in ptrSlot and
+//     dispatches on via OpMatchTag;
 //   - no NAMED arm binding lets a pointer payload out of the arm UNCOUNTED
 //     (bindingReleasableInAll). The drop here is DEEP (__drop_enum_<Name>
 //     releases payloads), so a surviving reference that never took a count of
@@ -498,7 +521,7 @@ func (b *builder) reclaimableMatchScrutinee(tag ast.Expr, bindingNames [][]strin
 	if !ast.RcFreeEnabled {
 		return ast.EnumType{}, false
 	}
-	t, ok := b.ownedCallResultType(tag)
+	t, ok := b.freshOwnedBoxType(tag)
 	if !ok {
 		return ast.EnumType{}, false
 	}
@@ -1013,10 +1036,9 @@ func (b *builder) indirectCallArg(call *ast.Call) bool {
 // type for emitTryBoxFree.
 //
 // Eligibility:
-//   - the inner is a fresh owned call result (ownedCallResultType — a user
-//     function returning a heap-boxed Option/Result; pair-form / builtin /
-//     variant-constructor callees are excluded there, so the value is always
-//     a real box the lowering stores in ptrSlot);
+//   - the inner is a fresh box (freshOwnedBoxType): a user function returning
+//     a heap-boxed Option/Result, or a payload-carrying variant construction
+//     (`Some(3.25)?`);
 //   - the success payload (`n.Type`) is a NON-POINTER scalar or a STRING. A
 //     scalar copy can't alias the freed box. A string payload is MOVED out:
 //     the box's payload reference transfers to the extracted value —
@@ -1036,7 +1058,7 @@ func (b *builder) reclaimableTryScrutinee(n *ast.TryOp) (ast.EnumType, bool) {
 	if !ast.RcFreeEnabled {
 		return ast.EnumType{}, false
 	}
-	t, ok := b.ownedCallResultType(n.Inner)
+	t, ok := b.freshOwnedBoxType(n.Inner)
 	if !ok {
 		return ast.EnumType{}, false
 	}

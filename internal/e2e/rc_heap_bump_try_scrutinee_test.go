@@ -12,8 +12,9 @@ import (
 // box is dead — but it was never dec'd, so a per-iteration `?` leaked one box
 // per success. Two shapes, two mechanisms:
 //
-//   - HEAP-FORM inner (a pointer payload forces a real box): gated by
-//     reclaimableTryScrutinee (ownedCallResultType + EnumRcPayloads-eligible +
+//   - HEAP-FORM inner (a pointer payload forces a real box, as does a variant
+//     literal): gated by reclaimableTryScrutinee (freshOwnedBoxType +
+//     EnumRcPayloads-eligible +
 //     scalar-or-string payload) and freed by emitTryBoxFree — is_unique-gated
 //     shallow box_free with the SUCCESS variant's exact size (tag==0 proven on
 //     the path). A STRING payload's reference MOVES to the extracted value,
@@ -113,6 +114,28 @@ function main(): i32 {
 }`
 }
 
+// A variant LITERAL through `?` (#10200): `Some(x)?` builds a fresh box the
+// `?` alone owns, the same as a fresh call result. A scalar payload and a
+// fresh string payload, each through its own literal.
+func tryScrutLiteralBumpSrc(n string) string {
+	return `function go(pre: string, k: i32): Option[i32] {
+    var f: f64 = Some(0.5 + (k as f64))?;
+    var s: string = Some(pre + "abc")?;
+    return Some((f as i32) + s.len());
+}
+function main(): i32 {
+    var before: i32 = (__heap_bump_bytes() as i32);
+    var i: i32 = 0;
+    var acc: i32 = 0;
+    while (i < ` + n + `) {
+        match (go("ab", i % 3)) { Some(v) => { acc = acc + v; }, None => { acc = acc + 1; }, }
+        i = i + 1;
+    }
+    if (acc < 0) { return -1; }
+    return (__heap_bump_bytes() as i32) - before;
+}`
+}
+
 // Wasm-only correctness pin for the concat-payload shape (see the
 // tryScrutStringBumpSrc doc): values stay right and nothing over-releases;
 // the concat payload itself keeps the documented pair-form leak.
@@ -165,6 +188,22 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
+// A literal carrying the caller's live string: construction counts the alias,
+// the binding takes that reference, and keep survives every iteration.
+const tryScrutLiteralAliasedPayloadSafe = `function go(pre: string): Option[i32] { var s: string = Some(pre)?; return Some(s.len()); }
+function main(): i32 {
+    var keep: string = "abc" + "def";
+    var i: i32 = 0;
+    var acc: i32 = 0;
+    while (i < 200) {
+        match (go(keep)) { Some(v) => { acc = acc + v; }, None => {}, }
+        i = i + 1;
+    }
+    if (acc != 1200) { return 99; }
+    if (keep.len() != 6) { return 88; }
+    return __rc_underflow_count();
+}`
+
 func checkTryScrutSafe(t *testing.T, run func(*testing.T, string) (string, int)) {
 	t.Helper()
 	if _, code := run(t, tryScrutAliasedBoxSafe); code != 0 {
@@ -173,10 +212,13 @@ func checkTryScrutSafe(t *testing.T, run func(*testing.T, string) (string, int))
 	if _, code := run(t, tryScrutAliasedPayloadSafe); code != 0 {
 		t.Errorf("aliased-payload safety: code=%d (99=value, 88=payload freed under caller, >0=over-release)", code)
 	}
+	if _, code := run(t, tryScrutLiteralAliasedPayloadSafe); code != 0 {
+		t.Errorf("literal aliased-payload safety: code=%d (99=value, 88=payload freed under caller, >0=over-release)", code)
+	}
 }
 
 func TestX86_64TryScrutineeReclaim(t *testing.T) {
-	for _, mk := range []func(string) string{tryScrutScalarBumpSrc, tryScrutOptionBumpSrc, tryScrutStringBumpSrc} {
+	for _, mk := range []func(string) string{tryScrutScalarBumpSrc, tryScrutOptionBumpSrc, tryScrutStringBumpSrc, tryScrutLiteralBumpSrc} {
 		small := mustRunX86_64FreeOn(t, mk("50"))
 		large := mustRunX86_64FreeOn(t, mk("5000"))
 		if small != large {
@@ -187,7 +229,7 @@ func TestX86_64TryScrutineeReclaim(t *testing.T) {
 }
 
 func TestArm64TryScrutineeReclaim(t *testing.T) {
-	for _, mk := range []func(string) string{tryScrutScalarBumpSrc, tryScrutOptionBumpSrc, tryScrutStringBumpSrc} {
+	for _, mk := range []func(string) string{tryScrutScalarBumpSrc, tryScrutOptionBumpSrc, tryScrutStringBumpSrc, tryScrutLiteralBumpSrc} {
 		small := mustRunArm64FreeOn(t, mk("50"))
 		large := mustRunArm64FreeOn(t, mk("5000"))
 		if small != large {
@@ -205,7 +247,7 @@ func TestWASMTryScrutineeReclaim(t *testing.T) {
 	// wasm keeps the documented payload leak — see tryScrutStringBumpSrc);
 	// wasm asserts the literal-payload sibling for boundedness instead and
 	// pins the concat shape as correctness + detector-zero below.
-	for _, mk := range []func(string) string{tryScrutScalarBumpSrc, tryScrutOptionBumpSrc, tryScrutStrLitBumpSrc} {
+	for _, mk := range []func(string) string{tryScrutScalarBumpSrc, tryScrutOptionBumpSrc, tryScrutStrLitBumpSrc, tryScrutLiteralBumpSrc} {
 		small := runWasm(t, mk("50"))
 		large := runWasm(t, mk("5000"))
 		if small != large {
