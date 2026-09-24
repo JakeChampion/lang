@@ -14,7 +14,7 @@
 # it being visible; a row going DOWN is progress and also fails, so the
 # improvement gets recorded rather than absorbed.
 #
-# Measured 2026-09-24: 541 fixtures, 482 clean, 59 leaking, 318
+# Measured 2026-09-24: 543 fixtures, 484 clean, 59 leaking, 318
 # unpaired allocations. The median leaking fixture is 1, and the largest,
 # json_error_location, is 51.
 #
@@ -248,7 +248,9 @@ defer_binding_action_write                           0
 defer_binding_conditional                            0
 defer_binding_early_exit                             0
 defer_binding_labelled_continue                      0
+defer_binding_return_record                          0
 defer_binding_return_snapshot                        0
+defer_binding_return_string                          0
 defer_binding_siblings                               0
 defer_binding_value_block                            0
 defer_block_form                                     0

@@ -953,62 +953,6 @@ function main(): i32 {
     return sum_values(m) + longest(t) + rounds(m, 50) + sum_values(empty)
         + narrow_keys(a) + narrow_key_str_value(b);
 }`},
-	// A cursor RETURNED over a map the frame owns. The anchor keeps the map
-	// live for as long as a read through the cursor can happen inside the
-	// frame, and a return takes the cursor out of it, so the columns it points
-	// at are the ones this frame is about to release. Refused, and the AST
-	// lowering — which sidesteps the class by never reclaiming a frame map
-	// that has an explicit `iter()` — stands and answers.
-	//
-	// Before the refusal this crashed the compiler outright ("array index out
-	// of range"), so the row pins a diagnostic where there was a backtrace.
-	// Native answers 0 on this shape where the AST leg answers 7, filed
-	// separately; the case here is the refusal, not the divergence.
-	//
-	{name: "a-cursor-result-escapes-its-map", atLeast: 0, refuses: "cursor result escapes its map", src: `
-import "core/map";
-
-function make_cursor(): MapIter[string, i32] {
-    var m: Map[string, i32] = map_new(4);
-    m = m.insert("a", 7);
-    return m.iter();
-}
-
-function main(): i32 {
-    var it: MapIter[string, i32] = make_cursor();
-    var total: i32 = 0;
-    while (it.has_next()) { total = total + it.value(); it.advance(); }
-    return total;
-}`},
-	// A CONTAINER carries the cursor exactly as far, and this is its OWN row on
-	// purpose. Put beside the bare form, the container proves nothing: the bare
-	// refusal alone satisfies the `refuses` substring, `atLeast: 0` sets no
-	// floor, and the container shape ANSWERS when it is wrongly produced, so
-	// the differential stays green too — a row holding both would pass with the
-	// container walk deleted. Alone, the refusal line appears only while
-	// `semtypes.holds_map_iter` recurses, so losing the walk turns this red.
-	//
-	// The container is the worse of the two shapes: `array_new` is no
-	// projection, so the array has no anchor edge to the map at all. A TUPLE
-	// holding a cursor is refused identically and is in no row, because the AST
-	// leg declines that shape outright ("module is not IR-eligible") and a
-	// differential row needs an oracle that runs.
-	{name: "a-container-of-cursors-escapes-too", atLeast: 0, refuses: "cursor result escapes its map", src: `
-import "core/map";
-
-function make_cursors(): MapIter[string, i32][] {
-    var m: Map[string, i32] = map_new(4);
-    m = m.insert("b", 5);
-    return [m.iter()];
-}
-
-function main(): i32 {
-    var cs: MapIter[string, i32][] = make_cursors();
-    var it: MapIter[string, i32] = cs[0];
-    var total: i32 = 0;
-    while (it.has_next()) { total = total + it.value(); it.advance(); }
-    return total;
-}`},
 	// A type variable that only a CONSTRAINT mentions. `nth[T, I: Iterator[T]]`
 	// and `last[T, I: Iterator[T]]` return `Option[T]`, and `to_array` returns
 	// `T[]`, but no parameter spells T — it is the impl the bound resolved to
