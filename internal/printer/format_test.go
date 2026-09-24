@@ -1536,6 +1536,68 @@ func TestFormatKeepsNonUTF8BytesEscaped(t *testing.T) {
 	}
 }
 
+// A comment inside a multi-line list stays where it was written (#10143). The
+// list keeps the source's line grouping, so a long annotated table does not turn
+// into one element per line, and a list with no comment inside stays one line.
+func TestFormatKeepsListInteriorComments(t *testing.T) {
+	src := `struct S { a: i32, b: i32 }
+function g(a: i32, b: i32): i32 { return a + b; }
+function f(): i32 {
+  var xs: i32[] = [
+    // group one
+    1, 2,
+    // group two
+    3,  // just three
+  ];
+  var s: S = S {
+    // the a field
+    a: 1,
+    b: 2,  // trailing
+  };
+  var t: S = S { ...s,
+    // override
+    a: 3 };
+  var plain: i32[] = [1,
+    2];
+  return g(
+    xs[0],  // first
+    // second
+    t.a + s.b + plain[1],
+  );
+}
+`
+	want := `  var xs: i32[] = [
+    // group one
+    1, 2,
+    // group two
+    3,  // just three
+  ];
+  var s: S = S {
+    // the a field
+    a: 1,
+    b: 2,  // trailing
+  };
+  var t: S = S {
+    ...s,
+    // override
+    a: 3,
+  };
+  var plain: i32[] = [1, 2];
+  return g(
+    xs[0],  // first
+    // second
+    t.a + s.b + plain[1],
+  );
+`
+	got := formatSrc(t, src)
+	if !strings.Contains(got, want) {
+		t.Fatalf("want\n%s\nin:\n%s", want, got)
+	}
+	if again := formatSrc(t, got); again != got {
+		t.Fatalf("not idempotent:\n%s\n---\n%s", got, again)
+	}
+}
+
 func TestFormatKeepsAssertSugar(t *testing.T) {
 	src := "function f(x: i32): void {\n  assert(x > 0);\n  assert(x < 10, \"x is \" + x.to_string());\n}\n"
 	got := formatSrc(t, src)

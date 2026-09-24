@@ -4493,6 +4493,31 @@ function main(): i32 {
     return t % 256;
 }
 `},
+	// An unsuffixed literal in an array literal takes a concrete sibling's
+	// type, as native's settleNumeric does after joining the element type, and
+	// a float literal with no sibling to take a width from is an f64 inside a
+	// container as it is alone. The self-host checker rejected the mixed
+	// literals with E034, and the typed path refused every binding here.
+	{name: "an-array-literal-settles-to-its-concrete-sibling", atLeast: 4, want: "59|", noLeak: true, src: `
+function half(x: f32): f32 { return x / 2.0; }
+function big(): i64 { return 5000000000; }
+function id[T](x: T): T { return x; }
+function main(): i32 {
+    var xs = id([4, half(1.0), 0.5]);
+    var ys = [0.25, half(0.5), 3];
+    var zs = [1, big(), 2];
+    var ws = [1.5, 2.25];
+    var tu = (1.5, 2);
+    var s: f32 = 0.0;
+    for x in xs { s = s + x; }
+    for y in ys { s = s + y; }
+    var t: i64 = 0;
+    for z in zs { t = t + z; }
+    var w: f64 = 0.0;
+    for v in ws { w = w + v; }
+    return (s * 4.0) as i32 + (t / 1000000000) as i32 + (w * 4.0) as i32 + (tu.0 * 2.0) as i32 + tu.1;
+}
+`},
 	{name: "a-function-returning-a-function-returns-a-box", atLeast: 15, want: "53|", astAnswers: "53|", noLeak: true, src: `
 enum Box { W((i32) => i32), No }
 function id[T](x: T): T { return x; }

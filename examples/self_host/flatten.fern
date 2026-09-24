@@ -858,7 +858,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
             enumnames: ctx.enumnames, ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled,
             reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets
         };
-        funcs = funcs.append(parser.FuncDecl { ...fd, name: new_name, receiver_type: rewrite_type_name(fd.receiver_type, ctx), params: rewrite_params(fd.params, bctx), ret_type: rewrite_type_name(fd.ret_type, ctx), ret_fn_ret: rewrite_type_name(fd.ret_fn_ret, ctx), ret_fn_param_types: rewrite_type_name_list(fd.ret_fn_param_types, ctx), body: rewrite_block(fd.body, bctx), is_pub: true });
+        funcs = funcs.append(parser.FuncDecl { ...fd, name: new_name, receiver_type: rewrite_type_name(fd.receiver_type, ctx), params: rewrite_params(fd.params, bctx), ret_type: rewrite_type_name(fd.ret_type, ctx), ret_fn_ret: rewrite_type_name(fd.ret_fn_ret, ctx), ret_fn_param_types: rewrite_type_name_list(fd.ret_fn_param_types, ctx), body: rewrite_block(fd.body, bctx), is_pub: true, module: ctx.prefix });
         i = i + 1;
     }
     var structs: parser.StructDecl[] = [];
@@ -893,7 +893,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
             line: mod.aliases[k].line,
             col: mod.aliases[k].col,
             is_pub: true
-        , is_package: false });
+        , is_package: false, module: ctx.prefix });
         k = k + 1;
     }
     return parser.Module { ...mod, funcs: funcs, structs: structs, aliases: aliases, top_stmts: rewrite_block(mod.top_stmts, RewriteCtx { modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix, declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, dn_head: ctx.dn_head, dn_next: ctx.dn_next, locals: astwalk.collect_bound_stmts(mod.top_stmts, []), enumnames: ctx.enumnames, ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled, reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets }), enums: mangle_enum_decls(mod.enums, ctx), impls: mangle_impls(mod.impls, ctx) };
@@ -970,7 +970,7 @@ function mangle_enum_decls(enums: parser.EnumDecl[], ctx: RewriteCtx): parser.En
             must_consume: e.must_consume,
             try_marker: e.try_marker,
             is_pub: true
-        , is_package: false });
+        , is_package: false, module: ctx.prefix });
         i = i + 1;
     }
     return out;
