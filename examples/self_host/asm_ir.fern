@@ -1979,6 +1979,71 @@ function needs_heap_runtime(s: asmcore.EmitState): boolean {
     ]);
 }
 
+// emit_runtime_memcpy emits `__fern_memcpy(%rdi = dst, %rsi = src, %rdx = n)`
+// for the builders' copies, the same size classes as native's: `rep movsb` is
+// nearly all start-up at the few bytes a line push copies. Each class covers
+// its range with two overlapping accesses; the regions must not overlap.
+// Clobbers %rax, %rsi, %rdi, %r8, %r9, %xmm0 and %xmm1.
+function emit_runtime_memcpy(s: asmcore.EmitState): asmcore.EmitState {
+    s = s.write("__fern_memcpy:\n");
+    s = s.write("    movq %rdi, %rax\n");
+    s = s.write("    cmpq $8, %rdx\n");
+    s = s.write("    jb .Lmcp_lt8\n");
+    s = s.write("    cmpq $16, %rdx\n");
+    s = s.write("    jb .Lmcp_8_15\n");
+    s = s.write("    cmpq $32, %rdx\n");
+    s = s.write("    jbe .Lmcp_16_32\n");
+    s = s.write("    leaq -32(%rdi,%rdx), %r8\n");
+    s = s.write("    leaq -32(%rsi,%rdx), %r9\n");
+    s = s.write(".Lmcp_bulk:\n");
+    s = s.write("    movdqu (%rsi), %xmm0\n");
+    s = s.write("    movdqu 16(%rsi), %xmm1\n");
+    s = s.write("    movdqu %xmm0, (%rdi)\n");
+    s = s.write("    movdqu %xmm1, 16(%rdi)\n");
+    s = s.write("    addq $32, %rsi\n");
+    s = s.write("    addq $32, %rdi\n");
+    s = s.write("    cmpq %r8, %rdi\n");
+    s = s.write("    jb .Lmcp_bulk\n");
+    s = s.write("    movdqu (%r9), %xmm0\n");
+    s = s.write("    movdqu 16(%r9), %xmm1\n");
+    s = s.write("    movdqu %xmm0, (%r8)\n");
+    s = s.write("    movdqu %xmm1, 16(%r8)\n");
+    s = s.write("    ret\n");
+    s = s.write(".Lmcp_16_32:\n");
+    s = s.write("    movdqu (%rsi), %xmm0\n");
+    s = s.write("    movdqu -16(%rsi,%rdx), %xmm1\n");
+    s = s.write("    movdqu %xmm0, (%rdi)\n");
+    s = s.write("    movdqu %xmm1, -16(%rdi,%rdx)\n");
+    s = s.write("    ret\n");
+    s = s.write(".Lmcp_8_15:\n");
+    s = s.write("    movq (%rsi), %r8\n");
+    s = s.write("    movq -8(%rsi,%rdx), %r9\n");
+    s = s.write("    movq %r8, (%rdi)\n");
+    s = s.write("    movq %r9, -8(%rdi,%rdx)\n");
+    s = s.write("    ret\n");
+    s = s.write(".Lmcp_lt8:\n");
+    s = s.write("    cmpq $4, %rdx\n");
+    s = s.write("    jb .Lmcp_lt4\n");
+    s = s.write("    movl (%rsi), %r8d\n");
+    s = s.write("    movl -4(%rsi,%rdx), %r9d\n");
+    s = s.write("    movl %r8d, (%rdi)\n");
+    s = s.write("    movl %r9d, -4(%rdi,%rdx)\n");
+    s = s.write("    ret\n");
+    s = s.write(".Lmcp_lt4:\n");
+    s = s.write("    testq %rdx, %rdx\n");
+    s = s.write("    je .Lmcp_done\n");
+    s = s.write("    movzbq (%rsi), %r8\n");
+    s = s.write("    movzbq -1(%rsi,%rdx), %r9\n");
+    s = s.write("    movb %r8b, (%rdi)\n");
+    s = s.write("    movb %r9b, -1(%rdi,%rdx)\n");
+    s = s.write("    cmpq $3, %rdx\n");
+    s = s.write("    jb .Lmcp_done\n");
+    s = s.write("    movzbq 1(%rsi), %r8\n");
+    s = s.write("    movb %r8b, 1(%rdi)\n");
+    s = s.write(".Lmcp_done:\n");
+    return s.write("    ret\n");
+}
+
 function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // .bss: heap bump pointer + arena end, the over-release detector, and the
     // size-classed freelist (65536 classes * 8 bytes). The heap arena itself is
@@ -3120,6 +3185,9 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // accumulated output has no fixed ceiling (#8212). Three .bss words: len,
     // data ptr, cap. take allocates a fresh box via __fern_alloc (so this is
     // heap-gated too). Gated on the strbuf need the op handlers marked.
+    if (s.has_need("strbuf") || s.has_need("buf")) {
+        s = emit_runtime_memcpy(s);
+    }
     if (s.has_need("strbuf")) {
         s = s.write("    .section .bss\n");
         s = s.write("    .align 8\n");
@@ -3169,13 +3237,9 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movq %rbx, %rdx\n");
         s = s.write("    cmpq $0, %rcx\n");
         s = s.write("    je .Lsbgrow_copied\n");
-        s = s.write(".Lsbgrow_copy:\n");
-        s = s.write("    movzbq (%rsi), %rax\n");
-        s = s.write("    movb %al, (%rdx)\n");
-        s = s.write("    incq %rsi\n");
-        s = s.write("    incq %rdx\n");
-        s = s.write("    decq %rcx\n");
-        s = s.write("    jne .Lsbgrow_copy\n");
+        s = s.write("    movq %rdx, %rdi\n");
+        s = s.write("    movq %rcx, %rdx\n");
+        s = s.write("    call __fern_memcpy\n");
         s = s.write(".Lsbgrow_copied:\n");
         s = s.write("    movq %rbx, __fern_strbuf_ptr(%rip)\n");
         s = s.write("    movq %r12, __fern_strbuf_cap(%rip)\n");
@@ -3206,13 +3270,9 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    addq __fern_strbuf_len(%rip), %rdx\n");// dst = ptr + len
         s = s.write("    cmpq $0, %rcx\n");
         s = s.write("    je .Lsbapp_done\n");
-        s = s.write(".Lsbapp_loop:\n");
-        s = s.write("    movzbq (%rsi), %rax\n");
-        s = s.write("    movb %al, (%rdx)\n");
-        s = s.write("    incq %rsi\n");
-        s = s.write("    incq %rdx\n");
-        s = s.write("    decq %rcx\n");
-        s = s.write("    jne .Lsbapp_loop\n");
+        s = s.write("    movq %rdx, %rdi\n");
+        s = s.write("    movq %rcx, %rdx\n");
+        s = s.write("    call __fern_memcpy\n");
         s = s.write(".Lsbapp_done:\n");
         s = s.write("    movq 8(%rbx), %rcx\n");               // reload src len
         s = s.write("    addq %rcx, __fern_strbuf_len(%rip)\n");
@@ -3236,13 +3296,8 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movq %r12, %rcx\n");
         s = s.write("    cmpq $0, %rcx\n");
         s = s.write("    je .Lsbtake_box\n");
-        s = s.write(".Lsbtake_loop:\n");
-        s = s.write("    movzbq (%rsi), %rax\n");
-        s = s.write("    movb %al, (%rdi)\n");
-        s = s.write("    incq %rsi\n");
-        s = s.write("    incq %rdi\n");
-        s = s.write("    decq %rcx\n");
-        s = s.write("    jne .Lsbtake_loop\n");
+        s = s.write("    movq %rcx, %rdx\n");
+        s = s.write("    call __fern_memcpy\n");
         s = s.write(".Lsbtake_box:\n");
         // The result box comes from __fern_str_box, not a bare __fern_alloc(16):
         // the drained string is an ordinary owned string (irlower's str-tracking
@@ -3340,13 +3395,9 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    jz .Lbufres_nocopy\n");
         s = s.write("    movq (%rbx), %rsi\n");                // old buffer
         s = s.write("    movq %r14, %rdx\n");
-        s = s.write(".Lbufres_copy:\n");
-        s = s.write("    movzbq (%rsi), %rax\n");
-        s = s.write("    movb %al, (%rdx)\n");
-        s = s.write("    incq %rsi\n");
-        s = s.write("    incq %rdx\n");
-        s = s.write("    decq %rcx\n");
-        s = s.write("    jne .Lbufres_copy\n");
+        s = s.write("    movq %rdx, %rdi\n");
+        s = s.write("    movq %rcx, %rdx\n");
+        s = s.write("    call __fern_memcpy\n");
         s = s.write(".Lbufres_nocopy:\n");
         s = s.write("    movq (%rbx), %rcx\n");                // old buffer
         s = s.write("    testq %rcx, %rcx\n");
@@ -3391,13 +3442,9 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movq 8(%rbx), %rax\n");
         s = s.write("    addq %rax, %rdx\n");                  // dst = data + len
         s = s.write("    movq %r13, %rcx\n");
-        s = s.write(".Lbufpush_loop:\n");
-        s = s.write("    movzbq (%rsi), %rax\n");
-        s = s.write("    movb %al, (%rdx)\n");
-        s = s.write("    incq %rsi\n");
-        s = s.write("    incq %rdx\n");
-        s = s.write("    decq %rcx\n");
-        s = s.write("    jne .Lbufpush_loop\n");
+        s = s.write("    movq %rdx, %rdi\n");
+        s = s.write("    movq %rcx, %rdx\n");
+        s = s.write("    call __fern_memcpy\n");
         s = s.write("    movq 8(%rbx), %rax\n");
         s = s.write("    addq %r13, %rax\n");
         s = s.write("    movq %rax, 8(%rbx)\n");
@@ -3440,13 +3487,9 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movq 8(%rbx), %rax\n");
         s = s.write("    addq %rax, %rdx\n");
         s = s.write("    movq %r14, %rcx\n");
-        s = s.write(".Lbufrange_loop:\n");
-        s = s.write("    movzbq (%rsi), %rax\n");
-        s = s.write("    movb %al, (%rdx)\n");
-        s = s.write("    incq %rsi\n");
-        s = s.write("    incq %rdx\n");
-        s = s.write("    decq %rcx\n");
-        s = s.write("    jne .Lbufrange_loop\n");
+        s = s.write("    movq %rdx, %rdi\n");
+        s = s.write("    movq %rcx, %rdx\n");
+        s = s.write("    call __fern_memcpy\n");
         s = s.write("    movq 8(%rbx), %rax\n");
         s = s.write("    addq %r14, %rax\n");
         s = s.write("    movq %rax, 8(%rbx)\n");
@@ -3743,13 +3786,9 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movq (%rbx), %rsi\n");                // data
         s = s.write("    movq %r13, %rdx\n");
         s = s.write("    movq %r12, %rcx\n");
-        s = s.write(".Lbuftake_copy:\n");
-        s = s.write("    movzbq (%rsi), %rax\n");
-        s = s.write("    movb %al, (%rdx)\n");
-        s = s.write("    incq %rsi\n");
-        s = s.write("    incq %rdx\n");
-        s = s.write("    decq %rcx\n");
-        s = s.write("    jne .Lbuftake_copy\n");
+        s = s.write("    movq %rdx, %rdi\n");
+        s = s.write("    movq %rcx, %rdx\n");
+        s = s.write("    call __fern_memcpy\n");
         s = s.write("    movq $0, 8(%rbx)\n");
         s = s.write("    movq %r13, %rdi\n");
         s = s.write("    movq %r12, %rsi\n");

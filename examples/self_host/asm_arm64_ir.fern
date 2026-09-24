@@ -2765,28 +2765,40 @@ function emit_arm64_op_memcpy(o: ir.Op, i: i32, lp: string, s: asmcore.EmitState
     // examples/bench, this shape is a 2.1x win here and a 10% LOSS
     // there, where ERMSB covers the whole supported CPU baseline.
     var mi: string = util.i32_to_string(i);
-    var mdone: string = lp + "mcd" + mi;
     s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-    s = s.write("    cbz x2, " + mdone + "\n");
-    s = s.write("    cmp x2, #8\n    b.lo " + lp + "mcb" + mi + "\n");
-    s = s.write("    add x9, x1, x2\n    sub x9, x9, #8\n");
-    s = s.write("    add x10, x0, x2\n    sub x10, x10, #8\n");
-    s = s.write(lp + "mc" + mi + ":\n");
-    s = s.write("    cmp x0, x10\n    b.hs " + lp + "mct" + mi + "\n");
-    s = s.write("    ldr x4, [x1], #8\n    str x4, [x0], #8\n");
-    s = s.write("    b " + lp + "mc" + mi + "\n");
-    s = s.write(lp + "mct" + mi + ":\n");
-    s = s.write("    ldr x4, [x9]\n    str x4, [x10]\n");
-    s = s.write("    b " + mdone + "\n");
-    s = s.write(lp + "mcb" + mi + ":\n");
-    s = s.write("    ldrb w3, [x1], #1\n    strb w3, [x0], #1\n    sub x2, x2, #1\n");
-    s = s.write("    cbnz x2, " + lp + "mcb" + mi + "\n");
-    s = s.write(mdone + ":\n");
+    s = arm64_copy_bytes(s, CopyRegs { dst: "x0", src: "x1", n: "x2", tmp: "x4", src_end: "x9", dst_end: "x10" }, lp + "mc" + mi, lp + "mct" + mi, lp + "mcb" + mi, lp + "mcd" + mi);
     s = s.write("    mov x0, #0\n    str x0, [sp, #-16]!\n");
 
     return s;
 }
 
+
+// The registers `arm64_copy_bytes` copies through: the three operands, which
+// it advances, and three scratch registers it clobbers.
+struct CopyRegs { dst: string, src: string, n: string, tmp: string, src_end: string, dst_end: string }
+
+// arm64_copy_bytes copies `n` bytes from `src` to `dst`, the two regions
+// disjoint, in the size-classed shape emit_arm64_op_memcpy describes. The four
+// labels are the word loop, its overlapping last word, the byte loop taken
+// below 8 bytes, and the end.
+function arm64_copy_bytes(s: asmcore.EmitState, r: CopyRegs, words: string, tail: string, bytes: string, done: string): asmcore.EmitState {
+    var tb: string = "w" + slice_unchecked(r.tmp, 1, r.tmp.len());
+    s = s.write("    cbz " + r.n + ", " + done + "\n");
+    s = s.write("    cmp " + r.n + ", #8\n    b.lo " + bytes + "\n");
+    s = s.write("    add " + r.src_end + ", " + r.src + ", " + r.n + "\n    sub " + r.src_end + ", " + r.src_end + ", #8\n");
+    s = s.write("    add " + r.dst_end + ", " + r.dst + ", " + r.n + "\n    sub " + r.dst_end + ", " + r.dst_end + ", #8\n");
+    s = s.write(words + ":\n");
+    s = s.write("    cmp " + r.dst + ", " + r.dst_end + "\n    b.hs " + tail + "\n");
+    s = s.write("    ldr " + r.tmp + ", [" + r.src + "], #8\n    str " + r.tmp + ", [" + r.dst + "], #8\n");
+    s = s.write("    b " + words + "\n");
+    s = s.write(tail + ":\n");
+    s = s.write("    ldr " + r.tmp + ", [" + r.src_end + "]\n    str " + r.tmp + ", [" + r.dst_end + "]\n");
+    s = s.write("    b " + done + "\n");
+    s = s.write(bytes + ":\n");
+    s = s.write("    ldrb " + tb + ", [" + r.src + "], #1\n    strb " + tb + ", [" + r.dst + "], #1\n    sub " + r.n + ", " + r.n + ", #1\n");
+    s = s.write("    cbnz " + r.n + ", " + bytes + "\n");
+    return s.write(done + ":\n");
+}
 function emit_arm64_op_heap_bump_bytes(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     // bump high-water mark = (__fern_heap_ptr == 0) ? 0 : ptr − base.
     // The arena is mmap'd lazily; its base is recoverable from the
@@ -5661,11 +5673,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
         s = s.write("    ldr x2, [x2]\n");                      // live bytes (0 while old is null)
         s = s.write("    mov x3, x19\n");
         s = s.write("    cbz x2, .Lsbgrow_copied\n");
-        s = s.write(".Lsbgrow_copy:\n");
-        s = s.write("    ldrb w4, [x1], #1\n");
-        s = s.write("    strb w4, [x3], #1\n");
-        s = s.write("    sub x2, x2, #1\n");
-        s = s.write("    cbnz x2, .Lsbgrow_copy\n");
+        s = arm64_copy_bytes(s, CopyRegs { dst: "x3", src: "x1", n: "x2", tmp: "x9", src_end: "x10", dst_end: "x11" }, ".Lsbgrow_copy_w", ".Lsbgrow_copy_t", ".Lsbgrow_copy_b", ".Lsbgrow_copy_d");
         s = s.write(".Lsbgrow_copied:\n");
         s = s.write("    adrp x1, __fern_strbuf_ptr\n");
         s = s.write("    add x1, x1, :lo12:__fern_strbuf_ptr\n");
@@ -5709,11 +5717,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
         s = s.write("    add x4, x4, :lo12:__fern_strbuf_len\n");
         s = s.write("    ldr x5, [x4]\n");
         s = s.write("    add x3, x3, x5\n");                    // dst = ptr + len
-        s = s.write(".Lsbapp_loop:\n");
-        s = s.write("    ldrb w6, [x1], #1\n");
-        s = s.write("    strb w6, [x3], #1\n");
-        s = s.write("    sub x2, x2, #1\n");
-        s = s.write("    cbnz x2, .Lsbapp_loop\n");
+        s = arm64_copy_bytes(s, CopyRegs { dst: "x3", src: "x1", n: "x2", tmp: "x9", src_end: "x10", dst_end: "x11" }, ".Lsbapp_loop_w", ".Lsbapp_loop_t", ".Lsbapp_loop_b", ".Lsbapp_loop_d");
         s = s.write(".Lsbapp_done:\n");
         s = s.write("    ldr x2, [x19, #8]\n");                 // reload src len
         s = s.write("    adrp x4, __fern_strbuf_len\n");
@@ -5746,11 +5750,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
         s = s.write("    mov x2, x20\n");                       // dst
         s = s.write("    mov x3, x19\n");                       // count
         s = s.write("    cbz x3, .Lsbtake_box\n");
-        s = s.write(".Lsbtake_loop:\n");
-        s = s.write("    ldrb w4, [x1], #1\n");
-        s = s.write("    strb w4, [x2], #1\n");
-        s = s.write("    sub x3, x3, #1\n");
-        s = s.write("    cbnz x3, .Lsbtake_loop\n");
+        s = arm64_copy_bytes(s, CopyRegs { dst: "x2", src: "x1", n: "x3", tmp: "x9", src_end: "x10", dst_end: "x11" }, ".Lsbtake_loop_w", ".Lsbtake_loop_t", ".Lsbtake_loop_b", ".Lsbtake_loop_d");
         s = s.write(".Lsbtake_box:\n");
         // Result box via __fern_str_box, not a bare __fern_alloc(16) — see the
         // x86-64 sibling for why: the drained string is owned, so a drop reaches
@@ -5841,11 +5841,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
         s = s.write("    cbz x2, .Lbufres_nocopy\n");
         s = s.write("    ldr x1, [x19]\n");                     // old buffer
         s = s.write("    mov x3, x22\n");
-        s = s.write(".Lbufres_copy:\n");
-        s = s.write("    ldrb w4, [x1], #1\n");
-        s = s.write("    strb w4, [x3], #1\n");
-        s = s.write("    sub x2, x2, #1\n");
-        s = s.write("    cbnz x2, .Lbufres_copy\n");
+        s = arm64_copy_bytes(s, CopyRegs { dst: "x3", src: "x1", n: "x2", tmp: "x9", src_end: "x10", dst_end: "x11" }, ".Lbufres_copy_w", ".Lbufres_copy_t", ".Lbufres_copy_b", ".Lbufres_copy_d");
         s = s.write(".Lbufres_nocopy:\n");
         s = s.write("    ldr x5, [x19]\n");                     // old buffer
         s = s.write("    cbz x5, .Lbufres_store\n");
@@ -5888,11 +5884,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
         s = s.write("    ldr x4, [x19, #8]\n");
         s = s.write("    add x3, x3, x4\n");                    // dst = data + len
         s = s.write("    mov x2, x21\n");
-        s = s.write(".Lbufpush_loop:\n");
-        s = s.write("    ldrb w5, [x1], #1\n");
-        s = s.write("    strb w5, [x3], #1\n");
-        s = s.write("    sub x2, x2, #1\n");
-        s = s.write("    cbnz x2, .Lbufpush_loop\n");
+        s = arm64_copy_bytes(s, CopyRegs { dst: "x3", src: "x1", n: "x2", tmp: "x9", src_end: "x10", dst_end: "x11" }, ".Lbufpush_loop_w", ".Lbufpush_loop_t", ".Lbufpush_loop_b", ".Lbufpush_loop_d");
         s = s.write("    ldr x0, [x19, #8]\n");
         s = s.write("    add x0, x0, x21\n");
         s = s.write("    str x0, [x19, #8]\n");
@@ -5933,11 +5925,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
         s = s.write("    ldr x4, [x19, #8]\n");
         s = s.write("    add x3, x3, x4\n");
         s = s.write("    mov x2, x22\n");
-        s = s.write(".Lbufrange_loop:\n");
-        s = s.write("    ldrb w5, [x1], #1\n");
-        s = s.write("    strb w5, [x3], #1\n");
-        s = s.write("    sub x2, x2, #1\n");
-        s = s.write("    cbnz x2, .Lbufrange_loop\n");
+        s = arm64_copy_bytes(s, CopyRegs { dst: "x3", src: "x1", n: "x2", tmp: "x9", src_end: "x10", dst_end: "x11" }, ".Lbufrange_loop_w", ".Lbufrange_loop_t", ".Lbufrange_loop_b", ".Lbufrange_loop_d");
         s = s.write("    ldr x0, [x19, #8]\n");
         s = s.write("    add x0, x0, x22\n");
         s = s.write("    str x0, [x19, #8]\n");
@@ -6217,11 +6205,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
         s = s.write("    ldr x1, [x19]\n");                     // data
         s = s.write("    mov x3, x21\n");
         s = s.write("    mov x2, x20\n");
-        s = s.write(".Lbuftake_copy:\n");
-        s = s.write("    ldrb w4, [x1], #1\n");
-        s = s.write("    strb w4, [x3], #1\n");
-        s = s.write("    sub x2, x2, #1\n");
-        s = s.write("    cbnz x2, .Lbuftake_copy\n");
+        s = arm64_copy_bytes(s, CopyRegs { dst: "x3", src: "x1", n: "x2", tmp: "x9", src_end: "x10", dst_end: "x11" }, ".Lbuftake_copy_w", ".Lbuftake_copy_t", ".Lbuftake_copy_b", ".Lbuftake_copy_d");
         s = s.write("    str xzr, [x19, #8]\n");
         s = s.write("    mov x0, x21\n");
         s = s.write("    mov x1, x20\n");

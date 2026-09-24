@@ -3071,6 +3071,27 @@ the slowdown is where the loop's code lands, not the division. Aligning
 every loop head to 16 bytes does not remove that sensitivity: it moved
 the old build to 204.6 ms and the new one to 196.7 ms.
 
+### The self-host's builder copies, 2026-09-24 (GNU coreutils 9.12)
+
+The self-hosted compiler's runtime copied a byte at a time in every
+byte-buffer and string-builder helper: `buf_push`, `buf_push_range`,
+`buf_take`, the reserve that grows a buffer, and the three string-builder
+helpers. That is six instructions a byte. On x86-64 they now call a
+`__fern_memcpy` with native's size classes, each covered by two
+overlapping accesses. `rep movsb` was tried first and made `uniq`
+slower (337 ms to 372 ms), because a line push copies a few bytes and
+`rep movsb` is nearly all start-up at that length. On arm64 they take
+the memcpy op's word loop. Self-host builds, x86-64:
+
+| workload | before | after | GNU 9.12 |
+|---|---:|---:|---:|
+| uniq over 8M distinct lines | 339.3 ms | 289.3 ms | 284.0 ms |
+| sort -m of two sorted 500k-line files | 77.9 ms | 62.7 ms | 40.4 ms |
+
+Instructions: `sort -m` 778.9 M to 518.9 M, `uniq` over the first 16 MB
+875.0 M to 714.4 M. Native builds were already copying through their
+own `__fern_memcpy`.
+
 ### ls, 2026-09-14, Linux x86-64 (GNU coreutils 9.4, uutils 0.0.24)
 
 The same 4-core container, so read the columns against each other. The
