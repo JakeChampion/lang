@@ -3383,6 +3383,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 					strings.HasPrefix(op.Str, "__drop_arr_dyn_") ||
 					strings.HasPrefix(op.Str, "__drop_arr_of_") ||
 					strings.HasPrefix(op.Str, "__drop_map_via_") ||
+					strings.HasPrefix(op.Str, "__drop_mapchain_") ||
 					op.Str == "__drop_map_str_values" ||
 					op.Str == "__drop_map_str_keys" ||
 					strings.HasPrefix(op.Str, "__drop_enum_") ||
@@ -3536,6 +3537,13 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 				fn = genMapStrValDropFn(ptrW)
 			} else if name == "__drop_map_str_keys" {
 				fn = genMapStrKeyDropFn(ptrW)
+			} else if strings.HasPrefix(name, "__drop_mapchain_") {
+				// A Map[]'s per-element drop: the map's own drop chain, whose
+				// value-column drop this worklist then generates from the body.
+				fn = genMapChainDropFn(name)
+				if fn == nil {
+					continue
+				}
 			} else if perVal := strings.TrimPrefix(name, "__drop_map_via_"); perVal != name {
 				// Map value-column drop loop; its body calls the embedded
 				// per-value drop (__drop_struct_<V> / __drop_enum_<V>), which
