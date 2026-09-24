@@ -17547,9 +17547,14 @@ pub function dyn_trait_set(ty: string): string[] {
     var out: string[] = [];
     if (ty.len() <= 4 || slice_unchecked(ty, 0, 4) != "dyn ") { return out; }
     var start: i32 = 4;
+    var depth: i32 = 0;
     var i: i32 = 4;
     while (i <= ty.len()) {
-        if (i == ty.len() || ty[i] == b'+') {
+        // A `+` inside brackets joins an associated-type pin or generic
+        // argument (`dyn Holder[Item = i32]`), not the trait set.
+        if (i < ty.len() && ty[i] == b'[') { depth = depth + 1; }
+        if (i < ty.len() && ty[i] == b']') { depth = depth - 1; }
+        if (i == ty.len() || (depth == 0 && ty[i] == b'+')) {
             var part: string = util.trim(slice_unchecked(ty, start, i) + "");
             if (part.len() > 0) { out = out.append(part); }
             start = i + 1;
