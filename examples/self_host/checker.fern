@@ -5122,7 +5122,8 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
         return CheckResult { scope: s, ty: t_unknown("assign to undefined `" + a.target + "`") };
       }
       var vt: typeinfo.Type = check_expr(a.value, s);
-      if (!settles_to(a.value, existing, s) && !type_eq(existing, vt)) {
+      if (is_unknown(vt)) { return CheckResult { scope: s, ty: vt }; }
+      if (!settles_to(a.value, existing, s) && !coercible(vt, existing, s)) {
         return CheckResult { scope: s, ty: t_unknown("type mismatch in assign to `" + a.target + "`") };
       }
       return CheckResult { scope: s, ty: vt };
@@ -17109,6 +17110,48 @@ pub function module_scopes(mod: parser.Module): Scope[] {
   return out.append(new_scope_full(env.sigs, env.structs, env.unions, env.methods, env.imports));
 }
 
+// The innermost statement of a body whose type the checker could not infer,
+// and the reason it recorded for the unknown.
+struct UnknownSite { found: boolean, line: i32, reason: string }
+
+function unknown_site(stmts: ast.Stmt[], s: Scope): UnknownSite {
+  var cur: Scope = s;
+  for st in stmts {
+    var r: CheckResult = check_stmt(st, cur);
+    if let typeinfo.TypeUnknown(u) = r.ty {
+      var inner: UnknownSite = unknown_site_within(st, cur);
+      if (inner.found) { return inner; }
+      return UnknownSite { found: true, line: ast.stmt_line(st), reason: u.reason };
+    }
+    cur = r.scope;
+  }
+  return UnknownSite { found: false, line: 0, reason: "" };
+}
+
+// The nested bodies a statement checks, each in the scope check_stmt gives it.
+function unknown_site_within(st: ast.Stmt, s: Scope): UnknownSite {
+  var none: UnknownSite = UnknownSite { found: false, line: 0, reason: "" };
+  match (st) {
+    ast.StmtIf(f) => {
+      var t: UnknownSite = unknown_site(f.then_body, s);
+      if (t.found) { return t; }
+      return unknown_site(f.else_body, s);
+    },
+    ast.StmtWhile(w) => { return unknown_site(w.body, s.enter_loop()); },
+    ast.StmtFor(fo) => { return unknown_site(fo.body, for_body_scope(fo, s)); },
+    ast.StmtMatch(m) => {
+      var whole: typeinfo.Type = check_expr(m.scrutinee, s);
+      for arm in m.arms {
+        var a: UnknownSite = unknown_site(arm.body, annotate_arm_scope(arm, s, whole));
+        if (a.found) { return a; }
+      }
+    },
+    ast.StmtDefer(d) => { return unknown_site_within(d.action, s); },
+    _ => {}
+  }
+  return none;
+}
+
 // ill_typed_hint returns a best-effort fallback diagnostic for a module that
 // check_module marked ill-typed but produced NO coded diagnostic for — an
 // expression collapsed to TypeUnknown, for example at a dyn method call or
@@ -17128,7 +17171,12 @@ pub function ill_typed_hint(mod: parser.Module): util.Diag[] {
   var env: ModuleEnv = module_env(mod);
   var hint_impls: parser.ImplInfo[] = assoc_func_impls(mod.impls, mod.funcs);
   for func in mod.funcs {
-    if (!check_func_body(func, build_func_scope(func, env.sigs, env.structs, env.unions, env.methods, env.imports).with_impls(hint_impls, mod.trait_reqs))) {
+    var fs: Scope = build_func_scope(func, env.sigs, env.structs, env.unions, env.methods, env.imports).with_impls(hint_impls, mod.trait_reqs);
+    if (!check_func_body(func, fs)) {
+      var site: UnknownSite = unknown_site(func.body, fs);
+      if (site.found) {
+        return [dg_at("type", "\"" + func.name + "\": the self-host checker could not infer the type of the statement at line " + util.i32_to_string(site.line) + " (" + site.reason + "); run native `fern -check` for further diagnostics - see issue #4451", site.line, 1)];
+      }
       return [dg_at("type", "\"" + func.name + "\": the self-host checker could not infer an expression's type (for example, a dyn method call or an unregistered builtin); run native `fern -check` for further diagnostics - see issue #4451", func.line, func.col)];
     }
   }
