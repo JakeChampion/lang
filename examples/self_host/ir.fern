@@ -149,7 +149,7 @@ pub function op_const_i32_text(t: string): Op {
     return Op { decl: 0 - 1, kind_tag: 2, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: t };
 }
 pub function op_const_i64(v: i64): Op {
-    return Op { decl: 0 - 1, kind_tag: 3, i32_imm: 0, i64_imm: v, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+    return Op { decl: 0 - 1, kind_tag: 3, i32_imm: 0, i64_imm: v, f64_imm: 0.0, width: 64, unsigned: false, str: "" };
 }
 // int_extend widens an i32 to i64 (`as i64` / `as u64`); int_wrap narrows an
 // i64 to i32 (`as i32` / `as u32`). `unsigned` picks zero- vs sign-extension on
@@ -172,6 +172,21 @@ pub function op_const_i64_text(t: string): Op {
 }
 pub function op_const_f64(v: f64): Op {
     return Op { decl: 0 - 1, kind_tag: 4, i32_imm: 0, i64_imm: 0, f64_imm: v, width: 0, unsigned: false, str: "" };
+}
+
+// A constant is built either from source text (the _text constructors) or
+// from a value (op_const_i64 / op_const_f64); consumers read it through these
+// two so they cannot tell which. const_i64_text is the decimal immediate;
+// const_f64_bits is the exact IEEE bit pattern, which no decimal text carries
+// for an infinity or a NaN payload.
+pub function const_i64_text(o: Op): string {
+    if (o.str.len() > 0) { return o.str; }
+    return util.i64_to_string(o.i64_imm);
+}
+
+pub function const_f64_bits(o: Op): i64 {
+    if (o.str.len() > 0) { return util.parse_f64_bits(o.str); }
+    return f64_bits(o.f64_imm);
 }
 pub function op_const_str(s: string): Op {
     return Op { decl: 0 - 1, kind_tag: 5, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: s };

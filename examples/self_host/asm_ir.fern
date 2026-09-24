@@ -6508,7 +6508,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
     var d: string = ssa_dst(reg_of, ins.result);
     if (k == 1) { s = ssa_const_reg(util.i32_to_string(ins.imm), false, d, s); }
     else if (k == 3) { s = ssa_const_reg(ins.str, ins.imm == 64, d, s); }
-    else if (k == 4) { s = s.write("    movabsq $" + util.i64_to_string(util.parse_f64_bits(ins.str)) + ", " + d + "\n"); }
+    else if (k == 4) { s = s.write("    movabsq $" + ins.str + ", " + d + "\n"); }
     else if (k == 7) { s = ssa_load(reg_of, ins.args[0], d, s); }
     else if (k == 9 && ssa_direct_bin(ir.kind_id(ins.str))) { return ssa_bin_in_place(ins, reg_of, fr, s); }
     else if (k == 9 && ssa_shift_tag(ir.kind_id(ins.str)) && fr.imm.is_imm[ins.args[1]]) { return ssa_bin_in_place(ins, reg_of, fr, s); }
@@ -8974,9 +8974,9 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
 }
 
 // emit_module_ir_gated_sub is the same gate with a caller-supplied semantic
-// lowering substituted into it (ircore.Sub). The `fern` CLI is the one driver
-// that supplies one; every other passes ircore.no_sub(), which is this function
-// behaving exactly as it did before the seam existed.
+// lowering substituted into it (ircore.Sub): the `fern` CLI's semantic
+// lowering, or ir_const_numeric_run's rebuilt one. ircore.no_sub() is this
+// function behaving exactly as it did before the seam existed.
 pub function emit_module_ir_gated_sub(mod: parser.Module, known: string[], sub: ircore.Sub): string {
     var sm: parser.Module = ircore.script_normalized(mod);
     // The merged-bundle SIZE budget that stood here is gone with its twin in

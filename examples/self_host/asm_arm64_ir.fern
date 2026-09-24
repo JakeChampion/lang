@@ -1741,7 +1741,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
     var d: string = ssa_dst(reg_of, ins.result);
     if (k == 1) { s = ssa_const_reg(util.i32_to_string(ins.imm), d, s); }
     else if (k == 3) { s = ssa_const_reg(ins.str, d, s); }
-    else if (k == 4) { s = s.write("    ldr " + d + ", =" + util.i64_to_string(util.parse_f64_bits(ins.str)) + "\n"); }
+    else if (k == 4) { s = s.write("    ldr " + d + ", =" + ins.str + "\n"); }
     else if (k == 7) { s = ssa_load(reg_of, ins.args[0], d, s); }
     else if (k == 9 && ssa_direct_bin(ir.kind_id(ins.str))) { return ssa_bin_in_place(ins, reg_of, fr, s); }
     else if (k == 9 && ssa_shift_tag(ir.kind_id(ins.str)) && fr.imm.is_imm[ins.args[1]]) { return ssa_bin_in_place(ins, reg_of, fr, s); }

@@ -1245,8 +1245,7 @@ pub function wp_fn_sigs(funcs: parser.FuncDecl[], structs: irlower.StructTab): i
 // the emit as a value. The pipeline behind it (semsource -> ssaunits -> ssarc,
 // `semlower`) is a large import closure, so passing the RESULT rather than
 // calling the producer is what keeps a driver that cannot use the path from
-// linking it: `no_sub()` is the AST lowering, unchanged, and every driver but
-// the CLI passes exactly that.
+// linking it: `no_sub()` is the AST lowering, unchanged.
 pub struct Sub {
     on: boolean,
     // One entry per mod.funcs, `ok` where a produced body replaces the AST one.

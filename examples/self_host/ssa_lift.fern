@@ -586,7 +586,9 @@ function lift_const_text_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], cu
     var width: i32 = 0;
     if (k == "const_i64") { width = 64; }
     var v: i32 = nvals; nvals = nvals + 1;
-    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 3, result: v, args: [], imm: width, str: op.str });
+    var text: string = op.str;
+    if (k == "const_i64") { text = ir.const_i64_text(op); }
+    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 3, result: v, args: [], imm: width, str: text });
     stack = stack.append(v);
     return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: true };
 }
@@ -720,10 +722,10 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResu
             cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: v, args: [], imm: op.i32_imm, str: "" });
             stack = stack.append(v);
         } else if (tag == t_const_f64) {
-            // An f64 literal, carried as source text: the const_float inst,
-            // which each emitter materialises as the literal's bits.
+            // An f64 constant: the const_float inst, carrying its exact bit
+            // pattern as decimal i64 text for each emitter to materialise.
             var fcv: i32 = nvals; nvals = nvals + 1;
-            cur_insts = cur_insts.append(ssa.SInst { kind_tag: 4, result: fcv, args: [], imm: 0, str: op.str });
+            cur_insts = cur_insts.append(ssa.SInst { kind_tag: 4, result: fcv, args: [], imm: 0, str: util.i64_to_string(ir.const_f64_bits(op)) });
             stack = stack.append(fcv);
         } else if (tag == t_load_local) {
             if (op.i32_imm < 0 || op.i32_imm >= slots.len()) { ok = false; }
