@@ -14,7 +14,7 @@
 # it being visible; a row going DOWN is progress and also fails, so the
 # improvement gets recorded rather than absorbed.
 #
-# Measured 2026-09-24: 540 fixtures, 472 clean, 68 leaking, 4585
+# Measured 2026-09-24: 540 fixtures, 473 clean, 67 leaking, 4535
 # unpaired allocations. The distribution is heavily skewed — the median
 # leaking fixture is 2, and regex_captures_assert alone is 3741 of the
 # total.
@@ -28,6 +28,9 @@
 # field_read_off_a_call_through_a_function_field reached 0 with it. The 200
 # closure_field_match has left are arguments to calls with a pointer result
 # (#10168).
+#
+# chained_array_methods reaches 0 once `xs.with(i, v).append(w)` releases
+# the copy the `.with` made for its still-live receiver.
 #
 # shadowed_builtin_variant and tuple_elem_variant_pattern reach 0 with
 # #9313: a GENERIC enum construction typed as the bare enum, losing the
@@ -211,7 +214,7 @@ cast_narrow_binding                                  0
 cell_in_container                                    0
 cell_string_accumulate                               2
 cell_struct_field_wide                               0
-chained_array_methods                                50
+chained_array_methods                                0
 chained_methods                                      0
 char_byte_literals                                   0
 char_cast_receiver                                   0
