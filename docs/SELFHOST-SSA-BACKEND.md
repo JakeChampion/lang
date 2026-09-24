@@ -176,6 +176,9 @@ emitted, in the order it was admitted:
   (the process and host queries, the handle ops, the signal, socket and
   timer ops). The instruction carries the op's index; the emitter pushes
   the operands, runs `emit_stack_op` for that exact op, and pops the result.
+  The byte-buffer builder's ops skip the stack: their helpers take the
+  register ABI, so `ssa_buf_call` loads the operands straight into the
+  argument registers (`asmcore.buf_helper` names the helper for both).
   `emit_stack_op` is what survives of the stack machine: an op table with
   one arm per op the lift has no instruction of its own for, and a refusal
   (`ircore.flat_arm_missing`) for an op that reaches it without one. The

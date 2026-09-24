@@ -2759,6 +2759,7 @@ function ssa_dyn_dispatch(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.
 // registers hold nothing live; its labels take the op's index under the SSA
 // function's prefix.
 function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, r: irlower.LowerResult, s: asmcore.EmitState): asmcore.EmitState {
+    if (asmcore.buf_helper(r.ops[ins.imm].kind_tag) != "") { return ssa_buf_call(ins, reg_of, asmcore.buf_helper(r.ops[ins.imm].kind_tag), s); }
     s = ssa_x0_forget(s);
     var i: i32 = 0;
     while (i < ins.args.len()) {
@@ -2767,6 +2768,21 @@ function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, r: irlower.Lower
     }
     s = emit_stack_op(r.ops[ins.imm], ins.imm, lp, r, s);
     s = s.write("    ldr x0, [sp], #16\n");
+    return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
+}
+
+// ssa_buf_call calls a builder helper with its operands loaded straight into
+// x0.. in order. Only x0 can be a home, so it loads last.
+function ssa_buf_call(ins: ssa.SInst, reg_of: i32[], sym: string, s: asmcore.EmitState): asmcore.EmitState {
+    s = ssa_x0_forget(s);
+    s = s.mark_heap();
+    s = s.need("buf");
+    var i: i32 = ins.args.len() - 1;
+    while (i >= 0) {
+        s = ssa_load(reg_of, ins.args[i], "x" + util.i32_to_string(i), s);
+        i = i - 1;
+    }
+    s = s.write("    bl " + sym + "\n");
     return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
 }
 
@@ -2886,41 +2902,12 @@ function emit_arm64_op_heap_release_to(o: ir.Op, s: asmcore.EmitState): asmcore.
 // buf_free returns blocks to the freelists, so all seven pull the heap in.
 function emit_arm64_op_buf(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.mark_heap(); s = s.need("buf");
-    if (o.kind_tag == 291) {                                  // buf_new
-        return s.write("    ldr x0, [sp], #16\n    bl __fern_buf_new\n    str x0, [sp, #-16]!\n");
+    var k: i32 = asmcore.buf_arity(o.kind_tag);
+    while (k > 0) {
+        k = k - 1;
+        s = s.write("    ldr x" + util.i32_to_string(k) + ", [sp], #16\n");
     }
-    if (o.kind_tag == 292) {                                  // buf_push
-        return s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_buf_push\n    str x0, [sp, #-16]!\n");
-    }
-    if (o.kind_tag == 293) {                                  // buf_push_range
-        s = s.write("    ldr x3, [sp], #16\n    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-        return s.write("    bl __fern_buf_push_range\n    str x0, [sp, #-16]!\n");
-    }
-    if (o.kind_tag == 325) {                                  // buf_push_mapped
-        s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-        return s.write("    bl __fern_buf_push_mapped\n    str x0, [sp, #-16]!\n");
-    }
-    if (o.kind_tag == 326) {                                  // buf_push_filtered
-        s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-        return s.write("    bl __fern_buf_push_filtered\n    str x0, [sp, #-16]!\n");
-    }
-    if (o.kind_tag == 328) {                                  // buf_push_expanded
-        s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-        return s.write("    bl __fern_buf_push_expanded\n    str x0, [sp, #-16]!\n");
-    }
-    if (o.kind_tag == 294) {                                  // buf_push_byte
-        return s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_buf_push_byte\n    str x0, [sp, #-16]!\n");
-    }
-    if (o.kind_tag == 306) {                                  // buf_push_u64
-        return s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_buf_push_u64\n    str x0, [sp, #-16]!\n");
-    }
-    if (o.kind_tag == 295) {                                  // buf_len
-        return s.write("    ldr x0, [sp], #16\n    bl __fern_buf_len\n    str x0, [sp, #-16]!\n");
-    }
-    if (o.kind_tag == 296) {                                  // buf_take
-        return s.write("    ldr x0, [sp], #16\n    bl __fern_buf_take\n    str x0, [sp, #-16]!\n");
-    }
-    return s.write("    ldr x0, [sp], #16\n    bl __fern_buf_free\n    str x0, [sp, #-16]!\n");  // buf_free
+    return s.write("    bl " + asmcore.buf_helper(o.kind_tag) + "\n    str x0, [sp, #-16]!\n");
 }
 
 // emit_arm64_op_map and emit_arm64_op_map_read select the map ops, the

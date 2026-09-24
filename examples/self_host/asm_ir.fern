@@ -6297,6 +6297,7 @@ function ssa_dyn_dispatch(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.
 // treats the op as a call, so the registers the arm writes hold nothing live;
 // its labels take the op's index under the SSA function's prefix.
 function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, r: irlower.LowerResult, s: asmcore.EmitState): asmcore.EmitState {
+    if (asmcore.buf_helper(r.ops[ins.imm].kind_tag) != "") { return ssa_buf_call(ins, reg_of, asmcore.buf_helper(r.ops[ins.imm].kind_tag), s); }
     s = ssa_x0_forget(s);
     var i: i32 = 0;
     while (i < ins.args.len()) {
@@ -6306,6 +6307,45 @@ function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, r: irlower.Lower
     s = emit_stack_op(r.ops[ins.imm], ins.imm, lp, r, s);
     s = s.write("    popq %rax\n");
     return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+}
+
+function ssa_arg_regs(): string[] { return ["%rdi", "%rsi", "%rdx", "%rcx"]; }
+
+// ssa_buf_call calls a builder helper with its operands loaded straight into
+// the argument registers. %rdx and %rcx are never a home, so they load first;
+// the %rdi / %rsi pair then goes in whichever order reads each source before
+// it is written, or swaps.
+function ssa_buf_call(ins: ssa.SInst, reg_of: i32[], sym: string, s: asmcore.EmitState): asmcore.EmitState {
+    s = ssa_x0_forget(s);
+    var i: i32 = 2;
+    while (i < ins.args.len()) {
+        s = ssa_load(reg_of, ins.args[i], ssa_arg_regs()[i], s);
+        i = i + 1;
+    }
+    if (ins.args.len() == 1) { s = ssa_load(reg_of, ins.args[0], "%rdi", s); }
+    if (ins.args.len() >= 2) {
+        var h0: string = ssa_home_name(reg_of, ins.args[0]);
+        var h1: string = ssa_home_name(reg_of, ins.args[1]);
+        if (h0 == "%rsi" && h1 == "%rdi") {
+            s = s.write("    xchgq %rdi, %rsi\n");
+        } else if (h1 == "%rdi") {
+            s = ssa_load(reg_of, ins.args[1], "%rsi", s);
+            s = ssa_load(reg_of, ins.args[0], "%rdi", s);
+        } else {
+            s = ssa_load(reg_of, ins.args[0], "%rdi", s);
+            s = ssa_load(reg_of, ins.args[1], "%rsi", s);
+        }
+    }
+    s = s.write("    call " + sym + "\n");
+    s = s.need("heap");
+    s = s.need("buf");
+    return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+}
+
+// ssa_home_name is a value's register, or "" for a frame slot.
+function ssa_home_name(reg_of: i32[], v: i32): string {
+    if (reg_of[v] < 0) { return ""; }
+    return ssa_reg(reg_of[v]);
 }
 
 // ssa_sym_addr is a static symbol's address, or the word at it (imm 1).
@@ -7580,33 +7620,12 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
 // handle, the length or the string box for the value ops, and the helper's
 // return as the dummy a statement-level drop takes for the rest.
 function emit_ir_op_buf(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
-    if (o.kind_tag == 291) {                                  // buf_new
-        s = s.write("    popq %rdi\n    call __fern_buf_new\n    pushq %rax\n");
-    } else if (o.kind_tag == 292) {                           // buf_push
-        s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_buf_push\n    pushq %rax\n");
-    } else if (o.kind_tag == 293) {                           // buf_push_range
-        s = s.write("    popq %rcx\n    popq %rdx\n    popq %rsi\n    popq %rdi\n");
-        s = s.write("    call __fern_buf_push_range\n    pushq %rax\n");
-    } else if (o.kind_tag == 325) {                           // buf_push_mapped
-        s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n");
-        s = s.write("    call __fern_buf_push_mapped\n    pushq %rax\n");
-    } else if (o.kind_tag == 326) {                           // buf_push_filtered
-        s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n");
-        s = s.write("    call __fern_buf_push_filtered\n    pushq %rax\n");
-    } else if (o.kind_tag == 328) {                           // buf_push_expanded
-        s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n");
-        s = s.write("    call __fern_buf_push_expanded\n    pushq %rax\n");
-    } else if (o.kind_tag == 294) {                           // buf_push_byte
-        s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_buf_push_byte\n    pushq %rax\n");
-    } else if (o.kind_tag == 306) {                           // buf_push_u64
-        s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_buf_push_u64\n    pushq %rax\n");
-    } else if (o.kind_tag == 295) {                           // buf_len
-        s = s.write("    popq %rdi\n    call __fern_buf_len\n    pushq %rax\n");
-    } else if (o.kind_tag == 296) {                           // buf_take
-        s = s.write("    popq %rdi\n    call __fern_buf_take\n    pushq %rax\n");
-    } else {                                                  // buf_free (297)
-        s = s.write("    popq %rdi\n    call __fern_buf_free\n    pushq %rax\n");
+    var k: i32 = asmcore.buf_arity(o.kind_tag);
+    while (k > 0) {
+        k = k - 1;
+        s = s.write("    popq " + ssa_arg_regs()[k] + "\n");
     }
+    s = s.write("    call " + asmcore.buf_helper(o.kind_tag) + "\n    pushq %rax\n");
     s = s.need("heap");
     return s.need("buf");
 }
