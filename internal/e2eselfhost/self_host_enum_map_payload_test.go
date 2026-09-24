@@ -57,6 +57,49 @@ function main(): i32 {
 }
 `
 
+// A recursive enum with a Map variant: the payload array's elements are
+// themselves enum boxes, released through the array.
+const enumMapRecursiveSrc = `import "core/map";
+enum Tree3 { Leaf(string), Node(Tree3[]), Obj(Map[string, Tree3]) }
+function once(v: string): i32 {
+    var r: Tree3 = Node([Leaf(v + "-a"), Leaf(v + "-b-longer-payload")]);
+    match (r) {
+        Node(ks) => { return ks.len(); },
+        Leaf(s) => { return s.len(); },
+        Obj(m) => { return 0; }
+    }
+    return 0;
+}
+function main(): i32 {
+    var n: i32 = 0; var i: i32 = 0;
+    while (i < 200) { n = once("val"); i = i + 1; }
+    return n;
+}
+`
+
+// The typed lowering releases the built maps and the recursive payloads as
+// well; the AST lowering still strands both.
+func TestSelfHostEnumMapPayloadTypedReleaseX86_64(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, sc := range []struct {
+		name, src string
+		want      int
+	}{
+		{"built", enumMapBuiltSrc, 59},
+		{"recursive", enumMapRecursiveSrc, 2},
+	} {
+		src := writeEnumMapSrc(t, "enum_map_"+sc.name, sc.src)
+		t.Run(sc.name, func(t *testing.T) {
+			bin := cli.x86Binary(t, src, "FERN_LEAKCHECK=1", "FERN_SEM_IR=1")
+			stderr, exit := runWithStdin(t, cli.runner, bin, nil)
+			if exit != sc.want {
+				t.Fatalf("exit = %d, want %d\n%s", exit, sc.want, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+		})
+	}
+}
+
 var enumMapLowerings = []struct{ name, env string }{
 	{"semantic", "FERN_SEM_IR=1"},
 	{"ast", "FERN_SEM_IR="},
