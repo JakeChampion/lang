@@ -250,7 +250,80 @@ pub struct FunctionInlineHint { line: i32, col: i32, never: boolean }
 
 // ParsedFmt is parse_module_verbatim's result: the module plus the decls kept
 // only for printing.
-pub struct ParsedFmt { pmod: Module, ptraits: TraitDecl[], pimpls: ImplDecl[], pflines: FieldLines[], pinline: FunctionInlineHint[] }
+pub struct ParsedFmt { pmod: Module, ptraits: TraitDecl[], pimpls: ImplDecl[], pflines: FieldLines[], pinline: FunctionInlineHint[], pspans: BlockSpans }
+
+// BlockSpans lists every `{ … }` in source order: the lines of its two braces,
+// and `firsts`, the line of the token after the `{`. The statement-list AST
+// keeps no brace positions, and the first statement's line is what a printer
+// walking the blocks in source order can match against (#10154).
+pub struct BlockSpans { opens: i32[], firsts: i32[], closes: i32[] }
+
+function token_line(t: lexer.Token): i32 {
+    match (t) {
+        lexer.TokEof(x) => { return x.line; },
+        lexer.TokNumber(x) => { return x.line; },
+        lexer.TokIdent(x) => { return x.line; },
+        lexer.TokKeyword(x) => { return x.line; },
+        lexer.TokPunct(x) => { return x.line; },
+        lexer.TokString(x) => { return x.line; },
+        lexer.TokError(x) => { return x.line; },
+        lexer.TokFString(x) => { return x.line; }
+    }
+    return 0;
+}
+
+// A `{` opening a match's arms or a declaration's members is never a
+// statement block, so it stays out of the list: its first token shares a line
+// with the first arm's body often enough to claim that body's braces.
+function opens_non_block(t: lexer.Token): boolean {
+    if let lexer.TokKeyword(k) = t {
+        return k.name == "match" || k.name == "struct" || k.name == "enum" || k.name == "trait" || k.name == "impl";
+    }
+    return false;
+}
+
+function block_spans(toks: lexer.Token[]): BlockSpans {
+    var opens: i32[] = [];
+    var firsts: i32[] = [];
+    var closes: i32[] = [];
+    // Each open brace's index into the lists, -1 for one left out.
+    var stack: i32[] = [];
+    var sp: i32 = 0;
+    var nest: i32 = 0;
+    var skip_at: i32 = -1;
+    var i: i32 = 0;
+    while (i < toks.len()) {
+        if (skip_at < 0 && opens_non_block(toks[i])) { skip_at = nest; }
+        if let lexer.TokPunct(x) = toks[i] {
+            if (x.text == "(" || x.text == "[") {
+                nest = nest + 1;
+            } else if (x.text == ")" || x.text == "]") {
+                nest = nest - 1;
+            } else if (x.text == ";" && skip_at == nest) {
+                skip_at = -1;
+            } else if (x.text == "{") {
+                var at: i32 = -1;
+                if (skip_at == nest) {
+                    skip_at = -1;
+                } else {
+                    var first: i32 = 0;
+                    if (i + 1 < toks.len()) { first = token_line(toks[i + 1]); }
+                    at = opens.len();
+                    opens = opens.append(x.line);
+                    firsts = firsts.append(first);
+                    closes = closes.append(0);
+                }
+                if (sp < stack.len()) { stack = stack.with(sp, at); } else { stack = stack.append(at); }
+                sp = sp + 1;
+            } else if (x.text == "}" && sp > 0) {
+                sp = sp - 1;
+                if (stack[sp] >= 0) { closes = closes.with(stack[sp], x.line); }
+            }
+        }
+        i = i + 1;
+    }
+    return BlockSpans { opens: opens, firsts: firsts, closes: closes };
+}
 
 // ResourceDecl records a `resource Name;` declaration (P5 — WIT resource-handle
 // types, docs/WIT-BRING-YOUR-OWN.md). `iface` / `wit` carry the WIT identity
@@ -19865,7 +19938,7 @@ pub function parse_module(toks: lexer.Token[]): Module {
 // / `== "fn"` dispatch would misread.
 pub function parse_module_verbatim(toks: lexer.Token[]): ParsedFmt {
     var (m, t, im, fl, ih) = parse_module_flagged(toks, true);
-    return ParsedFmt { pmod: m, ptraits: t, pimpls: im, pflines: fl, pinline: ih };
+    return ParsedFmt { pmod: m, ptraits: t, pimpls: im, pflines: fl, pinline: ih, pspans: block_spans(toks) };
 }
 
 // record_field_lines appends one FieldLines entry, and is a no-op outside a

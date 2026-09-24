@@ -885,16 +885,22 @@ func (f *formatter) formatBlock(blk *ast.Block, depth int) {
 		f.b.WriteString("{}")
 		return
 	}
-	f.b.WriteString("{\n")
+	f.b.WriteByte('{')
+	// A comment on the opening brace's line stays there: on a one-line block
+	// it annotated the whole block, not the statement the expanded form puts
+	// first (#10154).
+	if blk.End.Line > 0 {
+		f.emitTrailing(blk.P.Line)
+	}
+	f.b.WriteByte('\n')
 	f.formatStmtLines(blk.Stmts, depth+1, false)
 	f.b.WriteByte('\n')
-	// Comments past the last statement but still "inside" the
-	// block — i.e. before its closing brace — emit at the inner
-	// indent. We don't track the block's end position so we just
-	// drain everything that's still queued and at a position past
-	// the last statement; comments that belong to outer scopes
-	// will exceed the block's range when drained at the outer
-	// recursion level.
+	// A comment above the closing brace is the block's own last line, at the
+	// inner indent; left queued it drained into whatever followed the brace,
+	// an `else` branch included (#10154).
+	if blk.End.Line > 0 {
+		f.drainLeading(blk.End.Line, depth+1)
+	}
 	f.indent(depth)
 	f.b.WriteByte('}')
 }

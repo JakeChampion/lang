@@ -156,6 +156,7 @@ func zeroBlock(b *ast.Block) {
 		return
 	}
 	b.P = ast.Position{}
+	b.End = ast.Position{}
 	for _, s := range b.Stmts {
 		zeroStmt(s)
 	}

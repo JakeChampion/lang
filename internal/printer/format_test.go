@@ -1598,6 +1598,57 @@ function f(): i32 {
 	}
 }
 
+func TestFormatKeepsBlockEndComments(t *testing.T) {
+	src := `function f(x: i32): i32 {
+  if (x > 0) {
+    x = x + 1;
+    // end of then
+  } else {
+    x = x - 1;
+    // end of else
+  }
+  while (x > 10) { x = x - 1; }  // shrink
+  for i in 0..3 {
+    x = x + i;
+    // end of for
+  }
+  return x;
+  // end of f
+}
+function g(): i32 { return 1; }  // one
+`
+	want := `function f(x: i32): i32 {
+  if (x > 0) {
+    x = x + 1;
+    // end of then
+  } else {
+    x = x - 1;
+    // end of else
+  }
+  while (x > 10) {  // shrink
+    x = x - 1;
+  }
+  for i in 0..3 {
+    x = x + i;
+    // end of for
+  }
+  return x;
+  // end of f
+}
+
+function g(): i32 {  // one
+  return 1;
+}
+`
+	got := formatSrc(t, src)
+	if got != want {
+		t.Fatalf("want\n%s\ngot:\n%s", want, got)
+	}
+	if again := formatSrc(t, got); again != got {
+		t.Fatalf("not idempotent:\n%s\n---\n%s", got, again)
+	}
+}
+
 func TestFormatKeepsAssertSugar(t *testing.T) {
 	src := "function f(x: i32): void {\n  assert(x > 0);\n  assert(x < 10, \"x is \" + x.to_string());\n}\n"
 	got := formatSrc(t, src)

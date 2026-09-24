@@ -2735,7 +2735,10 @@ type Stmt interface {
 }
 
 type Block struct {
-	P     Position
+	P Position
+	// End is the closing brace's position; zero on a block no source brace
+	// closes (a desugar's).
+	End   Position
 	Stmts []Stmt
 	// Sugar records the `for … in …` loop this Block is the desugar of, so
 	// the formatter reprints the loop the user wrote instead of the lowered
