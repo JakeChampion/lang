@@ -18,6 +18,13 @@ func TestCancelOnConflictReapsSafely(t *testing.T) {
 	}
 	src := string(b)
 
+	// A pending run in a concurrency group is replaced by the next merge's, so
+	// on a busy queue a grouped sweep never runs (see reap_stale_runs_test.go).
+	if _, ok := topLevelBlock(src, "concurrency"); ok {
+		t.Error("cancel-on-conflict.yml has a concurrency group: under steady merges " +
+			"each pending run is replaced by the next and the sweep never runs")
+	}
+
 	// merge-tree walks back to each PR's merge base with main; a shallow clone
 	// has none and every PR reads as unrelated.
 	if !strings.Contains(src, "fetch-depth: 0") {

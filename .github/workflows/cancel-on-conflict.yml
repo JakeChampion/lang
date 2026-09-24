@@ -25,12 +25,11 @@ permissions:
   contents: read
   pull-requests: write
 
-# Every run checks every open PR against main's current tip, so one pending run
-# covers any number of merges. A running one is never cancelled: it may be
-# between cancelling a PR's CI and posting the comment that explains it.
-concurrency:
-  group: cancel-on-conflict
-  cancel-in-progress: false
+# No concurrency group, for the reason reap-stale-runs.yml gives: GitHub keeps
+# only the newest pending run per group, so under steady merges a grouped run is
+# replaced before it reaches a runner and never runs. Overlapping runs are
+# harmless: a repeated cancel returns 409, and a comment already posted for the
+# head is not posted again.
 
 jobs:
   check:
