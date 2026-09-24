@@ -81,7 +81,7 @@ env:
   # their own, so their minutes do not lengthen whichever shard the LPT
   # partition happens to drop them into. Excluded from shard selection by the
   # same regex as the two lists above, and each has a matching job below.
-  OWN_JOB_TESTS: "TestSelfHostPerModuleEmitAllFixpointX86_64|TestSelfHostStage2FixpointArm64|TestSelfHostWasmWholeCompilerShardedLink|TestSelfHostModloadPerModuleWholeCompilerArm64|TestSelfHostSemanticWholeCompilerX86_64"
+  OWN_JOB_TESTS: "TestSelfHostPerModuleEmitAllFixpointX86_64|TestSelfHostStage2FixpointArm64|TestSelfHostCLIStage2X86_64|TestSelfHostWasmWholeCompilerShardedLink|TestSelfHostModloadPerModuleWholeCompilerArm64|TestSelfHostSemanticWholeCompilerX86_64"
   # QUARANTINED: tests excluded from shard selection (they still run locally)
   # while their root cause is fixed. EXACT names only, each with its issue in
   # the comment, and re-run the list when that issue closes: a quarantine with
@@ -215,13 +215,13 @@ jobs:
           FERN_CI_SIZE_GATE_STRICT: "1"
         run: scripts/ci-check-driver-sizes .github/selfhost-driver-sizes.txt "${{ runner.temp }}/driver-sizes.txt"
 
-  # WHOLE-COMPILER FIXPOINTS. Three OWN_JOB_TESTS-class proofs that each run
-  # the built compiler over the whole compiler source; they share one job
-  # because each is a minute or two and they share the fern.fern build.
+  # WHOLE-COMPILER FIXPOINTS. OWN_JOB_TESTS-class proofs that each run the
+  # built compiler over the whole compiler source; they share one job because
+  # each is a few minutes and they share the fern.fern build.
   selfhost-fixpoints:
     name: selfhost-fixpoints-x86_64
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
@@ -253,6 +253,20 @@ jobs:
           cd internal/e2eselfhost
           gotestsum --format standard-verbose --raw-command -- \
             go tool test2json -t -p e2eselfhost "$BIN" -test.run '^TestSelfHostStage2FixpointArm64$' -test.v -test.timeout 22m
+      # The CLI rebuilding itself, and the result compiling real input
+      # (#7954). The fixpoints compare bytes; this runs what stage 1 built.
+      - name: x86-64 stage-2 CLI compiles lexer.fern and a program
+        if: ${{ !cancelled() }}
+        env:
+          FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/selfhost-unicache"
+        run: |
+          set -euo pipefail
+          mkdir -p "$FERN_SELFHOST_BUILD_CACHE"
+          chmod +x e2eselfhost.test
+          BIN="$PWD/e2eselfhost.test"
+          cd internal/e2eselfhost
+          gotestsum --format standard-verbose --raw-command -- \
+            go tool test2json -t -p e2eselfhost "$BIN" -test.run '^TestSelfHostCLIStage2X86_64$' -test.v -test.timeout 20m
       - name: whole-compiler emit-all fixpoint at batch=8 (gen0 == gen1)
         if: ${{ !cancelled() }}
         env:

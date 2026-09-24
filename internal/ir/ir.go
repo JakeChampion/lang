@@ -3165,23 +3165,10 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 	// ownership model, since a call_indirect / call-through-pointer has no
 	// callee name to hang a caller-side retain on (paramVerdict).
 	vtableDispatched := vtableDispatchedMethods(info, out.Vtables)
-	// Per-function "every value return is a box this callee constructed" —
-	// what rhsTainted's Call case needs to stop inheriting an argument's
-	// borrow taint into a freshly built result (findReturnsFreshBox). Runs
-	// once the ownership ladder's inputs are all in, because a bare
-	// parameter return earns the credit only where the parameter is
-	// owned-by-default.
-	verdictFacts := paramVerdictFacts{
-		info:                info,
-		ptrW:                ptrW,
-		trmcFuncs:           trmcFuncs,
-		trmcConsumeSafe:     trmcConsumeSafe,
-		vtableDispatched:    vtableDispatched,
-		addressTaken:        addressTaken,
-		paramEscapes:        paramEscapes,
-		readOnlyComparators: readOnlyComparators,
-	}
-	returnsFreshBox := findReturnsFreshBox(prog, info, pairForm, trmcFuncs, verdictFacts.ownedParam)
+	// Per-function "every value return is a box this callee owns" — what
+	// rhsTainted's Call case needs to stop inheriting an argument's borrow
+	// taint into a freshly built result (findReturnsFreshBox).
+	returnsFreshBox := findReturnsFreshBox(prog, info, pairForm, trmcFuncs)
 	returnsConstructedBox := findReturnsConstructedBox(prog, info, pairForm, trmcFuncs)
 	// #4873: per-function param positions whose buffers the callee may grow
 	// in place — drives the caller-side containment bracket in callBody.
@@ -5331,6 +5318,8 @@ type builder struct {
 	// constructs its result. rhsTainted's Call case uses it to stop an
 	// argument's borrow taint flowing into a box the callee built.
 	returnsFreshBox map[string]bool
+	// indirectOwnBox caches indirectCallsReturnOwnBox for this function.
+	indirectOwnBox, indirectOwnBoxKnown bool
 	// returnsConstructedBox[name] is true when every value return of the
 	// callee is a box it BUILT — never a parameter, owned or not, nor a
 	// projection of one (findReturnsConstructedBox). Identity, where
@@ -6588,12 +6577,6 @@ func (b *builder) paramVerdictFacts() paramVerdictFacts {
 		paramEscapes:        b.paramEscapes,
 		readOnlyComparators: b.readOnlyComparators,
 	}
-}
-
-// ownedParam reports whether parameter i of fn is owned-by-default on the
-// definition side: fn's exit sweep releases the reference it was handed.
-func (f paramVerdictFacts) ownedParam(fn *ast.FuncDecl, i int) bool {
-	return f.verdict(fn.Name, fn.Params[i].Type, i) == paramVerdictOwned
 }
 
 func (f paramVerdictFacts) verdict(fnName string, t ast.Type, i int) paramVerdict {
@@ -12468,6 +12451,9 @@ func (b *builder) exprType(e ast.Expr) ast.Type {
 		// for any downstream code that wants them; only
 		// `IsPointerType(TupleType{...}) == true` is needed for
 		// slot sizing.
+		if t, ok := b.tupleLitType(x); ok {
+			return t
+		}
 		elems := make([]ast.Type, len(x.Elems))
 		for i, e := range x.Elems {
 			elems[i] = b.exprType(e)
@@ -12692,16 +12678,8 @@ func (b *builder) targetTupleType(e ast.Expr) (ast.TupleType, bool) {
 			}
 		}
 	case *ast.TupleLit:
-		elems := make([]ast.Type, 0, len(x.Elems))
-		// The checker has already type-checked inner exprs, but
-		// we don't have access to their resolved types from the
-		// IR layer without re-checking. Skip the optimisation
-		// for raw `(...).N` access by deferring back to fieldOwner
-		// (which won't find it either, surfacing a compile-time
-		// error) — in practice nobody writes `(1,2).0` because
-		// they could just write `1`. If this becomes a real
-		// pattern, plumb expr types through checker.Info.
-		_ = elems
+		// `(1, "a").0` — what a tuple const's substitution produces.
+		return b.tupleLitType(x)
 	case *ast.FieldAccess:
 		// Nested tuple access — need to walk down. Only one level
 		// supported: `pair.0.field` where `pair.0` is a tuple.
@@ -12758,6 +12736,40 @@ func (b *builder) targetTupleType(e ast.Expr) (ast.TupleType, bool) {
 		}
 	}
 	return ast.TupleType{}, false
+}
+
+// tupleLitType types a tuple literal from its elements. A number or float
+// literal no destination settled has no stamped width and reads as the
+// default i32 / f64, the widths its construction is lowered at.
+func (b *builder) tupleLitType(x *ast.TupleLit) (ast.TupleType, bool) {
+	elems := make([]ast.Type, len(x.Elems))
+	for i, e := range x.Elems {
+		var t ast.Type
+		switch v := e.(type) {
+		case *ast.TupleLit:
+			tt, ok := b.tupleLitType(v)
+			if !ok {
+				return ast.TupleType{}, false
+			}
+			t = tt
+		case *ast.NumberLit:
+			// An unstamped literal past i32 has no width to default to (#8722).
+			if t = b.exprType(v); t == nil && !v.IsFloat && !v.ExceedsI64 && v.Value == int64(int32(v.Value)) {
+				t = ast.NumberType{}
+			}
+		case *ast.FloatLit:
+			if t = b.exprType(v); t == nil {
+				t = ast.FloatType{}
+			}
+		default:
+			t = b.exprType(e)
+		}
+		if t == nil {
+			return ast.TupleType{}, false
+		}
+		elems[i] = t
+	}
+	return ast.TupleType{Elems: elems}, true
 }
 
 // fieldOwner returns the struct name of the value e produces. It

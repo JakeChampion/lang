@@ -125,7 +125,7 @@ runtime needs no decompressor at all.
 
 ## Errors
 
-All four are compile-time diagnostics naming the call site:
+Each is a compile-time diagnostic naming the call site:
 
 | Situation | Diagnostic |
 | --- | --- |
@@ -134,7 +134,6 @@ All four are compile-time diagnostics naming the call site:
 | Unknown name, nothing close | `no embedded asset "..."` + the available names |
 | Computed name | `needs a string literal — assets are resolved at compile time` |
 | `__fern_assets()` given arguments | `takes no arguments, got N` |
-| `__fern_assets()` in a `const` | `builds an array, which is not a constant expression — assign it to a \`var\` instead` |
 
 A computed name can never work: there is no later point at which it could
 be resolved. Saying so directly beats letting it reach the checker as a
@@ -164,16 +163,9 @@ redbean's trailing-ZIP trick, whose whole value is that property; the
 reasoning is preserved in the issue. Nothing here forecloses it: appending
 a ZIP would be purely additive.
 
-A single asset is a compile-time constant and so is legal in a `const`
-initialiser; on the **native** compiler the enumeration is not, because
-`evalConst` returns scalar literals and an array of tuples is not one. Bind it
-with `var`.
-
-The self-host compiler accepts `const XS = __fern_assets()` — it has no
-const-evaluation phase to be limited by, so the substituted array reaches
-codegen exactly as a `var` initialiser's would. That is the only case where the
-two disagree, and the restriction is native's implementation rather than the
-language's; #7987 tracks lifting it rather than reproducing it.
+Both a single asset and the enumeration are compile-time constants, so either
+may initialise a `const`: `const XS: (string, string)[] = __fern_assets();`
+folds to the same array a `var` would hold, on both compilers.
 
 ## Coverage
 

@@ -171,13 +171,13 @@ standalone pass to gain init-expression type inference — tracked
 separately, not a correctness hazard for the common annotated / literal
 forms.
 
-The enclosing-scope half of `E049` (#8440) is native-only for the same
-reason: deciding it needs the captured variable's declaration identity and
-the stored value's resolved type, neither of which the standalone walk
-threads. A self-host build therefore still ACCEPTS an outer rebind that
-closes a cycle, and leaks it. Native-only surface, so it is debt under
-#4451 rather than a free win; the checker-codes differential is unaffected
-because no `cap-assign-*` case rebinds from the enclosing scope.
+The enclosing-scope half of `E049` (#8440) is in both checkers. The
+self-host's (`e049_cell_stores`) judges the variable's DECLARED type, where
+native judges the stored value's; a value is assignable to the slot, so a
+declared type that reaches no function holds none, and both refuse the same
+spellings in `conformance/cases/diag_e049_enclosing_cycle`. An unannotated
+`var` is typed only when its initialiser is a closure literal, the same
+under-approximation as the paragraph above.
 
 ## Related
 

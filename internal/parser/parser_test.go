@@ -1422,6 +1422,8 @@ func TestStructLitTypeArgsParse(t *testing.T) {
 		{"path qualified", `m::Box[i32] { val: 1 }`, "m.Box", []string{"i32"}, false},
 		{"spread", `Box[i32] { ...b, val: 1 }`, "Box", []string{"i32"}, true},
 		{"no args", `Box { val: 1 }`, "Box", nil, false},
+		{"named arg", `Box[Loc] { val: l }`, "Box", []string{"Loc"}, false},
+		{"qualified named arg", `Box[m.Loc] { val: l }`, "Box", []string{"m.Loc"}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1476,6 +1478,50 @@ func TestStructLitTypeArgsDoNotClaimIndexing(t *testing.T) {
 	}
 	if _, ok := body[3].(*ast.Var).Init.(*ast.Index); !ok {
 		t.Errorf("`xs[1]` should stay an Index, got %T", body[3].(*ast.Var).Init)
+	}
+}
+
+// A call's `[...]` holds type arguments whenever its contents could not be an
+// index — a type keyword first, a top-level comma, or a nested type bracket —
+// and stays an Index otherwise (#7040). A lone name is left for the checker.
+func TestCallTypeArgsShapes(t *testing.T) {
+	cases := []struct {
+		call string
+		args []string // nil: the callee must stay an Index
+	}{
+		{`f[i32](a)`, []string{"i32"}},
+		{`f[Box, Loc](a)`, []string{"Box", "Loc"}},
+		{`f[Pair[i32]](a)`, []string{"Pair[i32]"}},
+		{`f[Box[]](a)`, []string{"Box[]"}},
+		{`f[Box, (i32, Loc)](a)`, []string{"Box", "(i32, Loc)"}},
+		{`f[Box](a)`, nil},
+		{`fs[i](a)`, nil},
+		{`fs[g[i32](1)](a)`, nil},
+		{`fs[m.k](a)`, nil},
+	}
+	for _, tc := range cases {
+		prog, err := Parse(`function main(): i32 { var v = ` + tc.call + `; return 0; }`)
+		if err != nil {
+			t.Fatalf("parse %s: %v", tc.call, err)
+		}
+		c, ok := prog.Funcs[0].Body.Stmts[0].(*ast.Var).Init.(*ast.Call)
+		if !ok {
+			t.Fatalf("%s: init should be a Call", tc.call)
+		}
+		if tc.args == nil {
+			if _, isIndex := c.Callee.(*ast.Index); !isIndex || len(c.TypeArgs) != 0 {
+				t.Errorf("%s: callee should stay an Index, got %T with type args %v", tc.call, c.Callee, c.TypeArgs)
+			}
+			continue
+		}
+		if !c.TypeArgsWritten || len(c.TypeArgs) != len(tc.args) {
+			t.Fatalf("%s: got type args %v (written %v), want %v", tc.call, c.TypeArgs, c.TypeArgsWritten, tc.args)
+		}
+		for i, want := range tc.args {
+			if got := c.TypeArgs[i].String(); got != want {
+				t.Errorf("%s: TypeArgs[%d] = %s, want %s", tc.call, i, got, want)
+			}
+		}
 	}
 }
 

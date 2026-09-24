@@ -1381,6 +1381,15 @@ return tup((1, 2)) + strct(P { x: 1, y: 2 }) + block_arm((0, 3)) + sub_pattern_s
 		"return s.len() + f.len();\n" +
 		"}\n"},
 
+	// A byte escape that is not part of valid UTF-8 stays an escape on both
+	// sides; written raw it made the formatted file invalid UTF-8, which the
+	// self-host reader then refused. A real multibyte character stays itself.
+	{"string-non-utf8-bytes", "function main(): i32 {\n" +
+		"var s: string = \"\\x07\\xb2é\\xff\\xed\\xa0\\x80\";\n" +
+		"var f: string = f\"\\xc3{s}\\xa9\";\n" +
+		"return s.len() + f.len();\n" +
+		"}\n"},
+
 	// `use` is a rest-of-block desugar on both sides — a synthesised callback
 	// passed as the call's last argument — and both printers emitted that
 	// callback instead of the `use` (#8729): native as a `__use_N` local

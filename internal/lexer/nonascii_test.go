@@ -122,3 +122,26 @@ func TestContinuationByteIsNotWhitespace(t *testing.T) {
 		t.Fatal("Tokenize swallowed a 0xA0 continuation byte as whitespace")
 	}
 }
+
+// A string literal or comment is no exception: the source file itself has to
+// be UTF-8, the same rule the self-host's reader enforces on the whole file,
+// and the error names the first bad byte's position.
+func TestInvalidUTF8InLiteralOrComment(t *testing.T) {
+	for _, tc := range []struct {
+		src       string
+		line, col int
+	}{
+		{"var s = \"a\xb2\";", 1, 11},
+		{"var x = 1;\n// caf\xe9\nvar y = 2;", 2, 7},
+		{"var s = \"\xed\xa0\x80\";", 1, 10},
+	} {
+		_, _, err := Tokenize(tc.src)
+		lerr, ok := err.(*Error)
+		if !ok {
+			t.Fatalf("Tokenize(%q) = %v, want a lex error", tc.src, err)
+		}
+		if !strings.HasPrefix(lerr.Msg, "invalid UTF-8 byte 0x") || lerr.Pos.Line != tc.line || lerr.Pos.Col != tc.col {
+			t.Errorf("Tokenize(%q) = %s at %d:%d, want invalid UTF-8 at %d:%d", tc.src, lerr.Msg, lerr.Pos.Line, lerr.Pos.Col, tc.line, tc.col)
+		}
+	}
+}
