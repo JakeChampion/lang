@@ -17,9 +17,7 @@ import (
 //
 // f builds mm{"a": 3}, stores it in Cache{m: mm, n: 4}, reads c.m back, and
 // returns c.m["a"] + c.n = 3 + 4 = 7. Without map-field support Cache is not
-// leaf-safe and the whole module bails to the ~35 KB AST runtime; with it the IR
-// output is small — so the size check proves admission, the exit code the
-// round-trip.
+// leaf-safe and the module is refused; the exit code pins the round-trip.
 func TestSelfHostMapStructFieldIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -42,14 +40,8 @@ function f(): i32 {
 }
 function main(): i32 { return f(); }`
 	asm := runCapture(t, gcc, runner, driverBin, []byte(prog))
-	// The cap distinguishes IR admission from the ~35 KB AST-runtime bail. It
-	// sits comfortably below that floor with margin for legitimate IR growth:
-	// map-helper additions on the IR path (e.g. the struct/enum-key eq dispatch
-	// in #4037) push this module's IR output a little each time, and a too-tight
-	// cap turns into a false failure on an unrelated merge. 30000 still fails
-	// loudly on a real bail (which lands near 35 KB) without that brittleness.
-	if len(asm) == 0 || len(asm) > 33000 {
-		t.Fatalf("asm is %d bytes — expected IR output (with map helpers); the map-field module likely bailed to the AST runtime", len(asm))
+	if len(asm) == 0 {
+		t.Fatal("self-host compiler emitted 0 bytes")
 	}
 	progBin := buildBin(t, gcc, dir, "map_struct_field", string(asm))
 	var cmd *exec.Cmd

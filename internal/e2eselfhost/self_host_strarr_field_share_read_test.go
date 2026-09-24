@@ -53,9 +53,9 @@ import (
 // now admitted on the same terms as that ident: the construction retains it,
 // so the returned box carries a counted reference of its own, the source's
 // drop releases only the source's count, and the caller's deep drop decs the
-// literal's. __fern_str_arr_free walks elements only at rc 1, so every holder
-// that outlives the frame — a parameter source, a second literal, a source that
-// escaped and was never dropped — leaves the count above 1 and costs a leak,
+// literal's. __fern_str_arr_free walks elements only at rc 1, so a holder that
+// outlives the frame — a source that escaped and was never dropped, or an
+// element bound before the share — leaves the count above 1 and costs a leak,
 // never a free. The `escaping_holder_*` rows below pin each of those.
 //
 // Every want was confirmed against native x86-64 AND `bin/fern -interp`, which
@@ -159,9 +159,8 @@ function main(): i32 {
 			// The source is a PARAMETER the caller keeps reading after the
 			// returned holder has been dropped. The read is admitted — the
 			// literal retained it, so the caller's drop decs to the parameter's
-			// own count — and the leak pinned here is the caller's `q`, which
-			// is refused as a non-borrowable call argument. Exit 76 on every
-			// engine, and `q.f[1]` reads back intact.
+			// own count — and the caller's `q` is reclaimed as well. Exit 76 on
+			// every engine, and `q.f[1]` reads back intact.
 			name: "escaping_holder_param_source",
 			src: strarrShareReadDecl + strarrEscapingChurn + `function make(q: P, i: i32): P { return P { f: q.f, n: i }; }
 function round(i: i32): i32 {
@@ -174,12 +173,11 @@ function round(i: i32): i32 {
     if (q.f[1].len() != want) { return 0 - 3; }
     return (p.f[1].len() + q.f.len() + junk) % 101;
 }` + strarrEscapingMain,
-			want: 76,
+			want: 76, balance: true,
 		},
 		{
-			// A local holder SHADOWS a parameter of the same name. The holder
-			// type is refused as ambiguous, `make` earns no credit, and the
-			// returned box leaks — the conservative direction. Exit 76.
+			// A local holder SHADOWS a parameter of the same name, and the
+			// returned box is still reclaimed exactly once. Exit 76.
 			name: "escaping_holder_shadowed_holder",
 			src: strarrShareReadDecl + strarrEscapingChurn + `function make(q: P, i: i32): P {
     var q: P = P { f: mkv(i), n: i };
@@ -195,7 +193,7 @@ function round(i: i32): i32 {
     if (p.f[0].len() != want) { return 0 - 2; }
     return (p.f[1].len() + q0.f.len() + junk) % 101;
 }` + strarrEscapingMain,
-			want: 76,
+			want: 76, balance: true,
 		},
 		{
 			// An ELEMENT is bound inside `make` before the share. strarrfld_scan

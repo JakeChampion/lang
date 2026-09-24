@@ -27,8 +27,7 @@ import (
 //
 // Each program builds an enum array into a struct field and sums it back, so a
 // botched alias-inc (over-release → wrong/garbage element) or a missing field
-// (bail → AST) is caught by the exit code; the asm-size bound pins the IR path
-// (the AST map/heap runtime is ~40 KB, the IR runtime ~10-12 KB).
+// is caught by the exit code.
 var enumArrayFieldIRCases = []struct {
 	name string
 	src  string
@@ -77,8 +76,8 @@ func TestSelfHostEnumArrayFieldIRX86_64(t *testing.T) {
 	for _, tc := range enumArrayFieldIRCases {
 		t.Run(tc.name, func(t *testing.T) {
 			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
-			if len(asm) == 0 || len(asm) > 28000 {
-				t.Fatalf("%s: asm is %d bytes — expected the compact IR output, not the AST runtime (a bail)", tc.name, len(asm))
+			if len(asm) == 0 {
+				t.Fatalf("%s: self-host compiler emitted 0 bytes", tc.name)
 			}
 			progBin := buildBin(t, gcc, dir, "eaf_"+tc.name, string(asm))
 			var cmd *exec.Cmd
@@ -104,8 +103,7 @@ func TestSelfHostEnumArrayFieldIRX86_64(t *testing.T) {
 // so asm_arm64.emit_module's own use_ir dispatch runs) is deliberate — only it
 // injects the builtin enums (module_with_builtins) that enum-eligibility needs;
 // the differential -ir driver bails every enum program. IR routing is
-// pinned by the arm64 IR emitter's `.Lssa_` label marker rather than a size
-// bound (arm64's IR runtime is ~48-55 KB, close to the AST runtime size).
+// pinned by the arm64 IR emitter's `.Lssa_` label marker.
 func TestSelfHostEnumArrayFieldIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

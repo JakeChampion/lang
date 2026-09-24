@@ -15,8 +15,7 @@ import (
 // return; an AST one for a struct). A zero-parameter function is a const only
 // when declared `const` (#10076), so `var f = mk` binds the function value and
 // `f()` calls it; a `const` used as a VALUE (`var f = K; f + 1`) still reads the
-// constant. Each case asserts the oracle exit code; a size bound proves the
-// small IR path (a segfaulting AST bail would differ).
+// constant. Each case asserts the oracle exit code.
 func TestSelfHostZeroArgFnValueIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -70,8 +69,8 @@ function main(): i32 { var fns = [one]; var s = 0; var i = 0; while (i < 5) { s 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
-			if len(asm) == 0 || len(asm) > 18000 {
-				t.Fatalf("asm is %d bytes — expected small IR output; the fn-value module likely bailed/miscompiled", len(asm))
+			if len(asm) == 0 {
+				t.Fatal("self-host compiler emitted 0 bytes")
 			}
 			progBin := buildBin(t, gcc, dir, "zfv_"+tc.name, string(asm))
 			var cmd *exec.Cmd
