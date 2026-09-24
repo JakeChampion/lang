@@ -11,8 +11,12 @@ The mechanism below is implemented in `internal/interp/interp.go`:
 - `Map` carries an `rc int` (the COW reference count); `(*Map).clone()`
   makes an independent copy.
 - `builtinMapSet` / `builtinMapDelete` / `builtinMapClear` mutate in place
-  when `rc <= 1` and `clone()` when `rc > 1`, mirroring the compiled
-  runtime's `__map_cow_inplace`.
+  only when no slot but the one being reassigned holds the map
+  (`Interp.cowTarget`: `rc` no greater than the reassignments in flight on
+  it), and `clone()` otherwise. A collection operation returns a new value
+  (E055), so `var n = m.insert(k, v)` leaves `m` as it was (#9834, #8764).
+  A map parameter is an owned binding like any other, so a callee's insert
+  never writes the caller's map.
 - `retain` / `release` (via `adjustRC`, which recurses through map
   keys/values so nested `Map[K, Map[…]]` counts flow through) are wired at
   the value-flow hook points the table below lists: `var` bind + block-end
@@ -76,8 +80,12 @@ certify.
 
 ## The observable contract (what "match COW" means)
 
-The backends use **reference-counted COW** (Perceus). The observable rule
-is *not* "maps are value types" and *not* "maps are functional"; it is:
+This section is the original design. The contract has since become value
+semantics: E055 refuses a bare mutating statement, every mutator returns a
+new map, and a receiver the frame still reads, or only borrows, is left
+unchanged. The backends keep the in-place write for a reassign-to-self and a
+dead receiver, where nothing can observe it. What follows is the rule as it
+stood when this was written:
 
 > A mutating method (`set` / `delete` / `clear`) mutates the receiver
 > **in place** when the map has a single live reference (rc == 1), and

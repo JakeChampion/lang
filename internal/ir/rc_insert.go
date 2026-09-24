@@ -298,11 +298,36 @@ func (b *builder) freshOwnedRcTempType(e ast.Expr) (ast.Type, bool) {
 				return t, true
 			}
 		}
+		if b.mapMutatorResultFresh(x) {
+			return b.exprType(x), true
+		}
 		if t, ok := b.freshVariantConstructionType(x); ok {
 			return t, true
 		}
 	}
 	return nil, false
+}
+
+// mapMutatorResultFresh reports whether an `insert` / `cleared` result is a
+// table only this expression holds: a copy a live receiver forced
+// (computeMapCowForcedCopies), or the in-place write of a receiver that was
+// itself such a copy, as in `m.insert(a, 1).insert(b, 2)`. Each counted
+// column of a copy is claimed by it.
+func (b *builder) mapMutatorResultFresh(x *ast.Call) bool {
+	if !isMapMutatorCall(x) || isMapDeleteCall(x) || len(x.Args) == 0 || !isMapType(b.exprType(x)) {
+		return false
+	}
+	if b.rc.mapCowForced[x] {
+		return true
+	}
+	inner, ok := x.Args[0].(*ast.Call)
+	return ok && b.mapMutatorResultFresh(inner)
+}
+
+// freshMapMutatorResult is mapMutatorResultFresh for any expression.
+func (b *builder) freshMapMutatorResult(e ast.Expr) bool {
+	c, ok := e.(*ast.Call)
+	return ok && b.mapMutatorResultFresh(c)
 }
 
 // freshOwnedBoxType classifies a match or `?` source the caller alone owns at

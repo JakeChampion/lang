@@ -12324,8 +12324,10 @@ function main(): i32 {
     m = m.insert("a", 1);
     m = m.insert("b", 2);
     m = m.insert("c", 3);
+    var (mb, hadb) = m.without("b");
+    if (!hadb) { return 1; }               // "b" present → true
+    m = mb;
     // Bool field access on call result.
-    if (!m.without("b").1) { return 1; }   // "b" present → true
     if (m.without("z").1)  { return 2; }   // "z" missing → false
     // Tuple destructuring: m2 is the updated map, ok is the found-flag.
     var (m2, ok) = m.without("a");

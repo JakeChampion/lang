@@ -314,6 +314,11 @@ type rcPlan struct {
 	// freeEligible consults this, so computeRcAnalyses runs it first.
 	// Purely syntactic; filled by computeMapCowBindSites.
 	mapCowBindSites map[ast.Node]bool
+	// mapCowForced holds the Map mutator calls whose receiver is retained
+	// across the call so the COW copies, and mapCowForcedUntilOwned the ones
+	// that need it only while a cow-threaded param's ownership bit is clear.
+	// Filled by computeMapCowForcedCopies.
+	mapCowForced, mapCowForcedUntilOwned map[*ast.Call]bool
 }
 
 // computeRcAnalyses runs every per-function Perceus RC decision analysis, in
@@ -352,6 +357,7 @@ func (b *builder) computeRcAnalyses() {
 	// overwrite-dec.
 	b.computeSelfReassignOwnMoves()
 	b.rc.ctorAliasInced = b.computeCtorAliasInced()
+	b.rc.mapCowForced, b.rc.mapCowForcedUntilOwned = b.computeMapCowForcedCopies()
 	b.rc.borrowedMapFieldResults = b.computeBorrowedMapFieldResults()
 	b.rc.arraySetInc = b.computeArraySetIncs()
 	b.computeBorrowedAliases()
@@ -4493,42 +4499,7 @@ func (b *builder) computeArraySetIncs() map[*ast.Call]bool {
 	// The accumulator is unaffected either way: `a = a.with(i, v)` takes the
 	// reassignSelf early return above and never reaches here, so the #4838
 	// in-place threading keeps its rc==1 branch.
-	liveAcrossBackEdge := map[*ast.Call]bool{}
-	ast.Walk(b.fn.Body, func(n ast.Node) bool {
-		var body ast.Stmt
-		switch x := n.(type) {
-		case *ast.While:
-			body = x.Body
-		case *ast.Loop:
-			body = x.Body
-		case *ast.For:
-			body = x.Body
-		case *ast.ForEach:
-			body = x.Body
-		}
-		if body == nil {
-			return true
-		}
-		// Names declared as direct statements of the body, accumulated in
-		// statement order so a declaration that follows the call — where the
-		// receiver still names the OUTER binding — does not exempt it. A
-		// nested loop's own bodies are visited by this same walk, so a call
-		// is marked if ANY enclosing loop declares its receiver elsewhere,
-		// which is exactly "declared outside the innermost enclosing loop".
-		blk, _ := body.(*ast.Block)
-		if blk == nil {
-			markArraySetReceivers(body, nil, liveAcrossBackEdge)
-			return true
-		}
-		declared := map[string]bool{}
-		for _, st := range blk.Stmts {
-			markArraySetReceivers(st, declared, liveAcrossBackEdge)
-			if v, ok := st.(*ast.Var); ok {
-				declared[v.Name] = true
-			}
-		}
-		return true
-	})
+	liveAcrossBackEdge := receiversLiveAcrossBackEdge(b.fn.Body, isArraySetCall)
 	// Match-arm bindings of a NON-consuming match are borrows too
 	// (rc.borrowedBindings): `B(n, kids) => B(n, kids.with(i, v))` must
 	// not rewrite the box's payload.
@@ -4854,13 +4825,55 @@ func (b *builder) computeBorrowedBindings() map[string]bool {
 	return out
 }
 
-// markArraySetReceivers records every `.with` call under n whose ident
+// receiversLiveAcrossBackEdge returns the isCall calls whose ident receiver is
+// declared outside an enclosing loop, so the next iteration reads it again.
+func receiversLiveAcrossBackEdge(fnBody ast.Stmt, isCall func(*ast.Call) bool) map[*ast.Call]bool {
+	out := map[*ast.Call]bool{}
+	ast.Walk(fnBody, func(n ast.Node) bool {
+		var body ast.Stmt
+		switch x := n.(type) {
+		case *ast.While:
+			body = x.Body
+		case *ast.Loop:
+			body = x.Body
+		case *ast.For:
+			body = x.Body
+		case *ast.ForEach:
+			body = x.Body
+		}
+		if body == nil {
+			return true
+		}
+		// Names declared as direct statements of the body, accumulated in
+		// statement order so a declaration that follows the call — where the
+		// receiver still names the OUTER binding — does not exempt it. A
+		// nested loop's own bodies are visited by this same walk, so a call
+		// is marked if ANY enclosing loop declares its receiver elsewhere,
+		// which is exactly "declared outside the innermost enclosing loop".
+		blk, _ := body.(*ast.Block)
+		if blk == nil {
+			markLoopCallReceivers(body, nil, isCall, out)
+			return true
+		}
+		declared := map[string]bool{}
+		for _, st := range blk.Stmts {
+			markLoopCallReceivers(st, declared, isCall, out)
+			if v, ok := st.(*ast.Var); ok {
+				declared[v.Name] = true
+			}
+		}
+		return true
+	})
+	return out
+}
+
+// markLoopCallReceivers records every isCall call under n whose ident
 // receiver is not in declared — the names a loop body re-declares each
 // iteration, which are the only receivers a back edge cannot observe.
-func markArraySetReceivers(n ast.Node, declared map[string]bool, out map[*ast.Call]bool) {
+func markLoopCallReceivers(n ast.Node, declared map[string]bool, isCall func(*ast.Call) bool, out map[*ast.Call]bool) {
 	ast.Walk(n, func(m ast.Node) bool {
 		c, ok := m.(*ast.Call)
-		if !ok || !isArraySetCall(c) {
+		if !ok || !isCall(c) {
 			return true
 		}
 		if rid, rok := c.Args[0].(*ast.Ident); !rok || !declared[rid.Name] {
@@ -7390,7 +7403,7 @@ func (b *builder) computeBorrowedMapFieldResults() map[string]bool {
 		if !ok || v.Init == nil {
 			return true
 		}
-		if mapMutatorReceiverIsFieldAccess(v.Init) {
+		if c, ok := v.Init.(*ast.Call); ok && mapMutatorReceiverIsFieldAccess(c) && !b.rc.mapCowForced[c] {
 			out[v.Name] = true
 		}
 		return true
@@ -7438,6 +7451,136 @@ func (b *builder) computeMapCowBindSites() map[ast.Node]bool {
 		return true
 	})
 	return out
+}
+
+// computeMapCowForcedCopies decides, for each Map mutator (`insert` / `without`
+// / `cleared`) on a bare-ident or field receiver, whether the receiver must be retained
+// across the call so __map_cow_inplace copies instead of writing in place. A
+// collection operation returns a new value (E055), so a receiver the frame
+// reads again, or one it only borrows, must come out unchanged (#9834, #8764).
+// The rule is computeArraySetIncs's: a reassign-to-self, a `return`, a last
+// use, or a receiver the following statements overwrite before reading keeps
+// the rc==1 in-place path. A field receiver never does: its struct still
+// holds the table. The second map holds the reassign-to-self calls on
+// a cow-threaded param, whose ownership is the runtime bit, so the retain is
+// owed only while that bit is clear.
+func (b *builder) computeMapCowForcedCopies() (forced, untilOwned map[*ast.Call]bool) {
+	forced = map[*ast.Call]bool{}
+	untilOwned = map[*ast.Call]bool{}
+	if b.fn.Body == nil {
+		return forced, untilOwned
+	}
+	order := b.curIdentOrder()
+	isMapCall := func(c *ast.Call) bool { return isMapMutatorCall(c) && len(c.Args) > 0 }
+	liveAcrossBackEdge := receiversLiveAcrossBackEdge(b.fn.Body, isMapCall)
+	selfAssign := map[*ast.Call]bool{}
+	deadAfter := map[*ast.Call]bool{}
+	returnPos := map[*ast.Call]bool{}
+	hasDefer := false
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.Defer:
+			hasDefer = true
+		case *ast.Assign:
+			if tid, ok := x.Target.(*ast.Ident); ok {
+				if c := mapMutatorChainRoot(x.Value); c != nil && isIdentNamed(c.Args[0], tid.Name) {
+					selfAssign[c] = true
+				}
+			}
+		case *ast.Return:
+			if c, ok := x.Value.(*ast.Call); ok && isMapCall(c) {
+				returnPos[c] = true
+			}
+		case *ast.Block:
+			for i, st := range x.Stmts {
+				c := mapMutatorChainRoot(statementValue(st))
+				if c == nil {
+					continue
+				}
+				if rid, ok := c.Args[0].(*ast.Ident); ok {
+					if _, over := overwrittenBeforeRead(x.Stmts[i+1:], rid.Name); over {
+						deadAfter[c] = true
+					}
+				}
+			}
+		}
+		return true
+	})
+	if hasDefer {
+		returnPos = map[*ast.Call]bool{}
+	}
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		c, ok := n.(*ast.Call)
+		if !ok || !isMapCall(c) {
+			return true
+		}
+		if !isMapType(b.exprType(c.Args[0])) {
+			return true
+		}
+		if fa, ok := c.Args[0].(*ast.FieldAccess); ok {
+			if _, _, rooted := fieldPlace(fa); rooted {
+				forced[c] = true
+			}
+			return true
+		}
+		rid, ok := c.Args[0].(*ast.Ident)
+		if !ok {
+			return true
+		}
+		_, consumingBinding := b.rc.consumingBindings[rid.Name]
+		framed := b.isOwnedRcLocal(rid.Name) || b.isOwnedRcParam(rid.Name) || consumingBinding
+		switch {
+		case b.arraySetReceiverBorrowed(rid.Name) || !framed:
+			if selfAssign[c] && b.rc.cowMapParams[rid.Name] {
+				untilOwned[c] = true
+			} else {
+				forced[c] = true
+			}
+		case selfAssign[c] || returnPos[c] || deadAfter[c]:
+		default:
+			forced[c] = !order.isLast(rid) || liveAcrossBackEdge[c]
+		}
+		return true
+	})
+	return forced, untilOwned
+}
+
+// mapMutatorChainRoot returns the innermost Map mutator of e, looking through
+// a tuple projection (`m.without(k).0`) and a chain of mutators
+// (`m.insert(a, 1).insert(b, 2)`), or nil when e is not one.
+func mapMutatorChainRoot(e ast.Expr) *ast.Call {
+	if fa, ok := e.(*ast.FieldAccess); ok {
+		e = fa.Target
+	}
+	c, ok := e.(*ast.Call)
+	if !ok || !isMapMutatorCall(c) || len(c.Args) == 0 {
+		return nil
+	}
+	if inner := mapMutatorChainRoot(c.Args[0]); inner != nil {
+		return inner
+	}
+	return c
+}
+
+// statementValue returns the value a `var`, destructure or assignment
+// statement binds, or nil.
+func statementValue(st ast.Stmt) ast.Expr {
+	switch x := st.(type) {
+	case *ast.Var:
+		return x.Init
+	case *ast.Destructure:
+		return x.Init
+	case *ast.ExprStmt:
+		if a, ok := x.Expr.(*ast.Assign); ok {
+			return a.Value
+		}
+	}
+	return nil
+}
+
+func isIdentNamed(e ast.Expr, name string) bool {
+	id, ok := e.(*ast.Ident)
+	return ok && id.Name == name
 }
 
 // mapMutatorReceiverIsFieldAccess reports whether e is a Map COW-mutator call

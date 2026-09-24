@@ -1538,9 +1538,8 @@ function main(): i32 {
 	},
 	{
 		// Escape into a map value: an owned array built inside a
-		// helper escapes via `m.set` (retained without an inc under
-		// the borrow model), so it must NOT be freed at the helper's
-		// exit. The churn loop reclaims same-size blocks — if `arr`
+		// helper escapes into the map the helper returns, so it must
+		// NOT be freed at the helper's exit. The churn loop reclaims same-size blocks — if `arr`
 		// were wrongly freed, a junk array would reuse its block and
 		// corrupt the value the map still points at. Mirrors
 		// std/url's __query_pair, the case that blocked the flip.
@@ -1549,13 +1548,13 @@ function main(): i32 {
 import "core/int";
 import "core/map";
 import "std/string";
-function add_pair(m: Map[i32, i32[]], k: i32): void {
+function add_pair(m: Map[i32, i32[]], k: i32): Map[i32, i32[]] {
     var arr: i32[] = [k * 10, k * 10 + 1];
-    m = m.insert(k, arr);
+    return m.insert(k, arr);
 }
 function main(): i32 {
     var m: Map[i32, i32[]] = map_new(8);
-    add_pair(m, 7);
+    m = add_pair(m, 7);
     var c: i32 = 0;
     while (c < 64) {
         var junk: i32[] = [c, c];
