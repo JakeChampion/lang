@@ -1375,7 +1375,7 @@ func TestArm64LeakCheckToStringReclaim(t *testing.T) {
 //     at issue is COUNTED: `return <param>` emits the return-transfer inc, and a
 //     param is never an isOwnedRcLocal, so move-on-return cannot cancel that inc
 //     away. rc is 2 on the pass-through path and 1 on the fresh path, and one
-//     post-call dec nets both to a single owner (resultIsCountedStringAlias).
+//     post-call dec nets both to a single owner (resultIsCountedParamAlias).
 //   - `ownedCallResultType` refuses to reclaim a `__`-prefixed method result
 //     unless the callee is PROVEN fresh-returning, and the whole int-to-string
 //     family was unproven: they all end in `string_from_bytes_unchecked`, a

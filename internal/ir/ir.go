@@ -3152,6 +3152,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 	// owned-by-default params are kept borrowed.
 	paramEscapes := inferParamEscapes(prog, info, pairForm, trmcFuncs)
 	returnsParamProjection := findReturnsParamProjection(prog)
+	returnedArrayParams := findReturnedArrayParams(prog, info, returnsNoParamEscape)
 	// Per-callee: string params retained only through counted constructions, so
 	// a caller may release its own reference (see inferParamCountedRetain).
 	paramCountedRetain := inferParamCountedRetain(prog, info, trmcFuncs)
@@ -3192,7 +3193,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 		if fn.ImportIface != "" {
 			return nil
 		}
-		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, lo.emitLineMarkers, target, cover, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox, returnsConstructedBox, trmcFuncs, trmcConsumeSafe, paramEscapes, returnsParamProjection, paramCountedRetain, paramNoUncountedAlias, consumedArrayArgPos, readOnlyComparators, vtableDispatched, addressTaken, growParams, paramFieldObs)
+		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, lo.emitLineMarkers, target, cover, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox, returnsConstructedBox, trmcFuncs, trmcConsumeSafe, paramEscapes, returnsParamProjection, paramCountedRetain, paramNoUncountedAlias, consumedArrayArgPos, returnedArrayParams, readOnlyComparators, vtableDispatched, addressTaken, growParams, paramFieldObs)
 		if err != nil {
 			return err
 		}
@@ -5426,6 +5427,10 @@ type builder struct {
 	// to release a fresh temp passed there, which nothing else would
 	// (consumedArrayParamPositions).
 	consumedArrayArgPos map[string][]bool
+	// returnedArrayParams[callee] marks the parameters an array-returning
+	// callee hands back bare; the callee is absent when some other return may
+	// alias a parameter (findReturnedArrayParams).
+	returnedArrayParams map[string][]bool
 	// readOnlyComparators is the set of Eq/Hash trait method names
 	// (`__method_<T>_eq` / `__method_<T>_hash`). They are read-only by
 	// contract, so they BORROW their params even under the owned model
@@ -5948,7 +5953,7 @@ type variantDrop struct {
 	size  int32
 }
 
-func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, emitLineMarkers bool, target targetName, cover *coverTable, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox, returnsConstructedBox map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool, returnsParamProjection map[string]bool, paramCountedRetain, paramNoUncountedAlias map[string][]bool, consumedArrayArgPos map[string][]bool, readOnlyComparators map[string]bool, vtableDispatched map[string]bool, addressTaken map[string]bool, growParams map[string][]growParam, paramFieldObs map[string][]fieldObs) (*Func, error) {
+func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, emitLineMarkers bool, target targetName, cover *coverTable, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox, returnsConstructedBox map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool, returnsParamProjection map[string]bool, paramCountedRetain, paramNoUncountedAlias map[string][]bool, consumedArrayArgPos, returnedArrayParams map[string][]bool, readOnlyComparators map[string]bool, vtableDispatched map[string]bool, addressTaken map[string]bool, growParams map[string][]growParam, paramFieldObs map[string][]fieldObs) (*Func, error) {
 	out := &Func{
 		Name:       fn.Name,
 		Params:     fn.Params,
@@ -5985,6 +5990,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 		paramCountedRetain:      paramCountedRetain,
 		paramNoUncountedAlias:   paramNoUncountedAlias,
 		consumedArrayArgPos:     consumedArrayArgPos,
+		returnedArrayParams:     returnedArrayParams,
 		readOnlyComparators:     readOnlyComparators,
 		vtableDispatched:        vtableDispatched,
 		addressTaken:            addressTaken,
@@ -14931,48 +14937,75 @@ func (b *builder) emitLentViewDrops(slots []int32) {
 	}
 }
 
-// resultIsCountedStringAlias admits the stage-(b) arg-temp reclaim for a
-// STRING-returning user callee, where resultCannotAliasArg says no. The result
-// really can be the argument — `pad_start`'s `if (sl >= n) { return s; }` is the
-// canonical shape — so this rests on a different argument: not that the alias is
-// impossible, but that it is COUNTED.
+// resultIsCountedParamAlias admits the stage-(b) arg-temp reclaim for a
+// STRING- or ARRAY-returning user callee, where resultCannotAliasArg says no.
+// The result really can be the argument — `pad_start`'s `if (sl >= n) {
+// return s; }` is the canonical shape — so this rests on a different argument:
+// not that the alias is impossible, but that it is COUNTED.
 //
 // `return <param>` emits the return-transfer inc. A param is borrowed, so it is
 // never an isOwnedRcLocal, so move-on-return can never cancel that inc away
-// (needsRcIncOnAlias's StringType arm supplies it on every backend). So after the
-// call the temp's rc is 2 on the pass-through path and 1 on the fresh path, and
-// the immediate post-call dec nets it to exactly one owner either way — freeing
-// the temp only when the result does not reference it.
+// (needsRcIncOnAlias supplies it for StringType and ArrayType on every
+// backend). So after the call the temp's rc is 2 on the pass-through path and 1
+// on the fresh path, and the immediate post-call dec nets it to exactly one
+// owner either way — freeing the temp only when the result does not reference
+// it.
 //
 // Without this, a fresh string temp handed to a string-returning call is never
 // reclaimed at all: `(k * 66049).to_binary().pad_start(40, "0")` leaks one block
 // per call, while the identical code with the intermediate bound to a `var` does
 // not (#5942). It hid from the x86-64 leakcheck suite because ≤ 7-byte strings
 // are SSO-inline on the single-word ABI, so short intermediates allocate nothing;
-// arm64 and wasm heap-allocate them.
+// arm64 and wasm heap-allocate them. `first([1, 2])` leaked its literal the same
+// way (#10140).
 //
 // Deliberately narrow, because widening this gate to POINTER results in general
 // is the thing that segfaulted the differential oracle before (seeds
-// 1392/1596/1836, recorded on reclaimArgTemps above). Two restrictions carry
-// that weight:
+// 1392/1596/1836, recorded on reclaimArgTemps above). The restrictions that
+// carry that weight:
 //
-//   - CONCRETE StringType only. The shapes that broke were generic identity
-//     returns (`id[T](x)`, `pick[T](c,a,b)`), whose result type is the bare type
-//     var `ast.ParamType` — not StringType, so they stay excluded exactly as
-//     they are today. A concrete string result cannot hide a type var.
+//   - CONCRETE StringType or ArrayType only. The shapes that broke were generic
+//     identity returns (`id[T](x)`, `pick[T](c,a,b)`), whose result type is the
+//     bare type var `ast.ParamType` — needsRcIncOnAlias has no arm for it, so no
+//     transfer inc backs the credit.
 //   - USER-DECLARED callees only (the returnsNoParamEscape map keys every decl in
 //     prog.Funcs). A builtin's allocation contract is per-helper rather than the
 //     return-transfer model this argument rests on, so builtins keep their
 //     prior safe-leak.
-func (b *builder) resultIsCountedStringAlias(name string, t ast.Type) bool {
+//   - For an array, every return is param-free or a bare parameter of the
+//     callee's own array type (findReturnedArrayParams): an array has element
+//     reads, slices and in-place pushes that a string's concat and copying
+//     slice do not. The bare parameter must not be consumed-threaded, whose
+//     ownership-flag protocol hands the buffer back without the transfer inc,
+//     and no position may grow in place (computeGrowParams), which would
+//     reallocate the buffer out from under the temp the dec then reads.
+func (b *builder) resultIsCountedParamAlias(name string, t ast.Type) bool {
 	if !ast.RcFreeEnabled {
 		return false
 	}
-	if _, isStr := t.(ast.StringType); !isStr {
-		return false
+	switch t.(type) {
+	case ast.StringType:
+		_, isUserFn := b.returnsNoParamEscape[name]
+		return isUserFn
+	case ast.ArrayType:
+		bare, ok := b.returnedArrayParams[name]
+		if !ok || b.trmcFuncs[name] {
+			return false
+		}
+		consumed := b.consumedArrayArgPos[name]
+		for i, isBare := range bare {
+			if isBare && i < len(consumed) && consumed[i] {
+				return false
+			}
+		}
+		for _, g := range b.growParams[name] {
+			if g.any() {
+				return false
+			}
+		}
+		return true
 	}
-	_, isUserFn := b.returnsNoParamEscape[name]
-	return isUserFn
+	return false
 }
 
 // growBracketEntry is one buffer the #4873 caller-side containment bracket
@@ -16233,7 +16266,7 @@ func (b *builder) callBody(n *ast.Call) error {
 		(pairArgTempsSafe ||
 			(!b.pairForm[id.Name] && resultCannotAliasArg(b.exprType(n))) ||
 			b.returnsNoParamEscape[id.Name] ||
-			b.resultIsCountedStringAlias(id.Name, b.exprType(n)))
+			b.resultIsCountedParamAlias(id.Name, b.exprType(n)))
 	// Per-ARGUMENT admission, where the call-level gate above says no. That
 	// gate is whole-call: one pointer-shaped result disqualifies every
 	// argument at once, so `node(name, no_deps(), k)` — a constructor whose
@@ -16242,7 +16275,7 @@ func (b *builder) callBody(n *ast.Call) error {
 	// (#6522).
 	//
 	// paramCountedRetain[C][ai] is the position-wise form of the argument
-	// resultIsCountedStringAlias makes for a string result: every appearance
+	// resultIsCountedParamAlias makes for a string result: every appearance
 	// of C's parameter ai is a counted store or a non-retaining read, so if
 	// the argument reaches C's result it does so through a construction that
 	// inc'd it. The temp is therefore at rc 2 on the escaping path and rc 1

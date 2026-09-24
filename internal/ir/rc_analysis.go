@@ -942,6 +942,60 @@ func findReturnsParamProjection(prog *ast.Program) map[string]bool {
 	return out
 }
 
+// findReturnedArrayParams answers, per user function declared to return an
+// array, which parameters it hands back bare — or leaves the function out when
+// some return may alias a parameter any other way. A return qualifies when
+// exprNoParamEscape proves it param-free, or when it is a parameter declared
+// with the function's own array type, which the Return lowering hands back with
+// the transfer inc. resultIsCountedParamAlias reads it.
+func findReturnedArrayParams(prog *ast.Program, info *checker.Info, returnsNoParamEscape map[string]bool) map[string][]bool {
+	variantPayloads := map[string][]ast.Type{}
+	for _, en := range info.Enums {
+		for _, v := range en.Variants {
+			variantPayloads[v.Name] = v.Payloads
+		}
+	}
+	q := newSummaryTable[bool](len(returnsNoParamEscape))
+	for name, v := range returnsNoParamEscape {
+		q.vals[name] = v
+	}
+	out := map[string][]bool{}
+	for _, fn := range prog.Funcs {
+		rt, isArr := fn.ReturnType.(ast.ArrayType)
+		if !isArr || fn.Body == nil {
+			continue
+		}
+		shadowed := shadowingNames(fn, info)
+		index := map[string]int{}
+		for i, p := range fn.Params {
+			if pt, ok := p.Type.(ast.ArrayType); ok && ast.Equal(pt, rt) && !shadowed[p.Name] {
+				index[p.Name] = i
+			}
+		}
+		freshLocals := computeFreshLocals(fn, info, variantPayloads, q)
+		bare := make([]bool, len(fn.Params))
+		ok := true
+		ast.Walk(fn.Body, func(n ast.Node) bool {
+			r, isRet := n.(*ast.Return)
+			if !isRet || r.Value == nil || !ok {
+				return ok
+			}
+			if id, isIdent := r.Value.(*ast.Ident); isIdent {
+				if i, isParam := index[id.Name]; isParam {
+					bare[i] = true
+					return true
+				}
+			}
+			ok = exprNoParamEscape(r.Value, fn.ReturnType, info, variantPayloads, q, freshLocals)
+			return ok
+		})
+		if ok {
+			out[fn.Name] = bare
+		}
+	}
+	return out
+}
+
 func inferParamEscapes(prog *ast.Program, info *checker.Info, pairForm, trmcFuncs map[string]bool) map[string][]bool {
 	variantPayloads := map[string][]ast.Type{}
 	for _, en := range info.Enums {
