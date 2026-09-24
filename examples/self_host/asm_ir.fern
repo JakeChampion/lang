@@ -3634,7 +3634,9 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         // (above 7 counts as 7) and then the bytes, or c itself when its
         // record is not wholly inside the table. Entry i of the table is the
         // low byte of the 8-byte slot 8 + i*8, so byte c's record starts at
-        // table + 8 + c*64.
+        // table + 8 + c*64. A push of 256 bytes or more through a table of
+        // every record first packs the records into 2 KiB of frame, then
+        // copies each as one eight-byte store, as native's kernel does.
         s = s.write("__fern_buf_push_expanded:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
@@ -3648,8 +3650,8 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movq 8(%r12), %r13\n");               // n
         s = s.write("    testq %r13, %r13\n");
         s = s.write("    jz .Lbufexp_done\n");
-        s = s.write("    imulq $7, %r13, %rax\n");
-        s = s.write("    addq 8(%rbx), %rax\n");               // at most seven bytes each
+        s = s.write("    leaq 8(,%r13,8), %rax\n");
+        s = s.write("    addq 8(%rbx), %rax\n");               // a whole record stored per byte
         s = s.write("    movq 16(%rbx), %rcx\n");
         s = s.write("    cmpq %rcx, %rax\n");
         s = s.write("    jbe .Lbufexp_fits\n");
@@ -3663,6 +3665,19 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movq (%r14), %r9\n");
         s = s.write("    shrq $3, %r9\n");                     // whole records
         s = s.write("    xorq %rcx, %rcx\n");
+        s = s.write("    cmpq $256, %r9\n    jb .Lbufexp_loop\n");
+        s = s.write("    cmpq $256, %r13\n    jb .Lbufexp_loop\n");
+        s = s.write("    subq $2048, %rsp\n");
+        s = s.write(".Lbufexp_pack:\n");
+        s = s.write("    movzbq 8(%r14,%rcx,8), %rax\n    movb %al, (%rsp,%rcx)\n");
+        s = s.write("    incq %rcx\n    cmpq $2048, %rcx\n    jb .Lbufexp_pack\n");
+        s = s.write("    xorq %rcx, %rcx\n    movq $7, %r10\n");
+        s = s.write(".Lbufexp_fast:\n");
+        s = s.write("    movzbq (%rsi,%rcx), %rax\n    movq (%rsp,%rax,8), %r8\n");
+        s = s.write("    movzbq %r8b, %r9\n    cmpq %r10, %r9\n    cmovaq %r10, %r9\n");
+        s = s.write("    shrq $8, %r8\n    movq %r8, (%rdx)\n    addq %r9, %rdx\n");
+        s = s.write("    incq %rcx\n    cmpq %r13, %rcx\n    jb .Lbufexp_fast\n");
+        s = s.write("    addq $2048, %rsp\n    jmp .Lbufexp_len\n");
         s = s.write(".Lbufexp_loop:\n");
         s = s.write("    cmpq %r13, %rcx\n");
         s = s.write("    jae .Lbufexp_len\n");

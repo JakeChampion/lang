@@ -3113,6 +3113,25 @@ half the kernel's cost.
 | `wc -L` of a 62 MiB file | 129.5 ms | 94.2 ms | 87.7 ms |
 | the same, self-hosted build | 124.2 ms | 91.7 ms | |
 
+### The self-host's expansion table packed per call, 2026-09-24 (GNU coreutils 9.12)
+
+The self-hosted compiler keeps a `u8[]` one byte to an eight-byte slot,
+so `buf_push_expanded`'s record for a byte spans 64 bytes of table, and
+its kernel copied a record out a byte at a time: about 24 instructions
+per input byte on `cat -A`. A push of 256 bytes or more through a
+table of every record now first packs the 256 records into 2 KiB of
+frame, 2048 loads and stores, then copies each byte's record as one
+eight-byte store the way native's kernel does. A shorter push keeps the
+byte loop, where the packing would cost more than it saves. The room
+reserved is now eight bytes per input byte, since the store writes a
+whole record.
+
+| workload | before | after | GNU 9.12 |
+|---|---:|---:|---:|
+| `cat -A` of a 62 MiB file, self-hosted build | 190.0 ms | 78.3 ms | 106.8 ms |
+
+The native build of the same source runs in 78.7 ms.
+
 ### ls, 2026-09-14, Linux x86-64 (GNU coreutils 9.4, uutils 0.0.24)
 
 The same 4-core container, so read the columns against each other. The

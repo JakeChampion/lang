@@ -6078,7 +6078,9 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
         // (above 7 counts as 7) and then the bytes, or c itself when its
         // record is not wholly inside the table. Entry i of the table is the
         // low byte of the 8-byte slot 8 + i*8, so byte c's record starts at
-        // table + 8 + c*64.
+        // table + 8 + c*64. A push of 256 bytes or more through a table of
+        // every record first packs the records into 2 KiB of frame, then
+        // copies each as one eight-byte store.
         s = s.write(".globl __fern_buf_push_expanded\n");
         s = s.write(".type __fern_buf_push_expanded, %function\n");
         s = s.write("__fern_buf_push_expanded:\n");
@@ -6092,7 +6094,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
         s = s.write("    ldr x22, [x20, #8]\n");                // n
         s = s.write("    cbz x22, .Lbufexp_done\n");
         s = s.write("    lsl x0, x22, #3\n");
-        s = s.write("    sub x0, x0, x22\n");                   // at most seven bytes each
+        s = s.write("    add x0, x0, #8\n");                    // a whole record stored per byte
         s = s.write("    ldr x1, [x19, #8]\n");
         s = s.write("    add x0, x0, x1\n");
         s = s.write("    ldr x1, [x19, #16]\n");
@@ -6109,6 +6111,19 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
         s = s.write("    ldr x4, [x21]\n");
         s = s.write("    lsr x4, x4, #3\n");                    // whole records
         s = s.write("    mov x2, x22\n");
+        s = s.write("    cmp x4, #256\n    b.lo .Lbufexp_loop\n");
+        s = s.write("    cmp x2, #256\n    b.lo .Lbufexp_loop\n");
+        s = s.write("    sub sp, sp, #2048\n    add x6, x21, #8\n    mov x7, #0\n");
+        s = s.write(".Lbufexp_pack:\n");
+        s = s.write("    ldr x8, [x6, x7, lsl #3]\n    strb w8, [sp, x7]\n");
+        s = s.write("    add x7, x7, #1\n    cmp x7, #2048\n    b.lo .Lbufexp_pack\n");
+        s = s.write("    mov x9, #7\n");
+        s = s.write(".Lbufexp_fast:\n");
+        s = s.write("    ldrb w5, [x1], #1\n    ldr x8, [sp, x5, lsl #3]\n");
+        s = s.write("    and x7, x8, #255\n    cmp x7, x9\n    csel x7, x7, x9, ls\n");
+        s = s.write("    lsr x8, x8, #8\n    str x8, [x3]\n    add x3, x3, x7\n");
+        s = s.write("    subs x2, x2, #1\n    b.ne .Lbufexp_fast\n");
+        s = s.write("    add sp, sp, #2048\n    b .Lbufexp_len\n");
         s = s.write(".Lbufexp_loop:\n");
         s = s.write("    cbz x2, .Lbufexp_len\n");
         s = s.write("    ldrb w5, [x1], #1\n");
