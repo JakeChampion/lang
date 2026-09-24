@@ -1525,9 +1525,19 @@ function ssa_host_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asm
     return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
 }
 
+// The need whose gate defines a floor symbol, so an address taken outside the
+// helpers that already mark it still links.
+function sym_addr_need(sym: string): string {
+    if (sym == "__fern_scratch") { return "raw_scratch"; }
+    if (sym == "__fern_envp") { return "heap"; }
+    if (sym == "__fern_splice_pipe") { return "raw_splice_pipe"; }
+    return "";
+}
+
 // ssa_sym_addr is a static symbol's address, or the word at it (imm 1).
 function ssa_sym_addr(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
     if (util.str_has_prefix(ins.str, "__fern_arr_push_")) { s = s.mark_heap(); }
+    if (sym_addr_need(ins.str) != "") { s = s.need(sym_addr_need(ins.str)); }
     var d: string = ssa_dst(reg_of, ins.result);
     s = s.write("    adrp " + d + ", " + ins.str + "\n    add " + d + ", " + d + ", :lo12:" + ins.str + "\n");
     if (ins.imm == 1) { s = s.write("    ldr " + d + ", [" + d + "]\n"); }
@@ -4487,9 +4497,12 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
         "rlimit_nofile", "signal_ignore", "signal_default", "signal_mask",
         "signal_disposition", "access",
         "geteuid", "getegid", "getuid", "getgid", "getgroups", "environ",
-        "fd_stat", "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync"
+        "fd_stat", "raw_scratch", "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync"
     ])) {
         s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip " + asmcore.scratch_size(ctgt, s.has_need("statfs")) + "\n    .section .text\n");
+    }
+    if (!darwin && s.any_need(["reader_splice", "raw_splice_pipe"])) {
+        s = s.write("    .section .bss\n    .p2align 3\n__fern_splice_pipe: .quad 0, 0\n    .text\n");
     }
     if (s.has_need("read_int")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_read_int(ctgt), s.struct_decls, s);
@@ -8628,12 +8641,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         if (s.has_need("fd_stat")) { fs_src = fs_src + " " + asmcore.rt_src_fd_stat(tgt); }
         fs_src = fs_src + asmcore.rt_src_sync_family(s, tgt);
         if (s.has_need("reader_seek")) { fs_src = fs_src + " " + asmcore.rt_src_reader_seek(tgt); }
-        if (s.has_need("reader_splice")) {
-            if (tgt != "arm64-darwin") {
-                s = s.write("    .section .bss\n    .p2align 3\n__fern_splice_pipe: .quad 0, 0\n    .text\n");
-            }
-            fs_src = fs_src + " " + asmcore.rt_src_reader_splice(tgt);
-        }
+        if (s.has_need("reader_splice")) { fs_src = fs_src + " " + asmcore.rt_src_reader_splice(tgt); }
         if (s.has_need("fd_flags")) { fs_src = fs_src + " " + asmcore.rt_src_fd_flags(tgt); }
         if (s.has_need("fd_dup_onto")) { fs_src = fs_src + " " + asmcore.rt_src_fd_dup_onto(tgt); }
         if (s.has_need("writer_truncate")) { fs_src = fs_src + " " + asmcore.rt_src_writer_truncate(tgt); }

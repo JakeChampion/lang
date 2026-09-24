@@ -506,6 +506,8 @@ function is_bit_count(name: string): boolean {
 // trampolines. `__alloc_u8` is the one whose result the caller OWNS — a fresh
 // zeroed `u8[]` — where every other answer here is a scalar.
 function intrinsic_result(name: string, argc: i32): typeinfo.Type {
+  var raw: RawFloorSig[] = raw_floor_find(name);
+  if (raw.len() == 1 && raw[0].params.len() == argc) { return raw[0].result; }
   if (argc == 1 && is_f64_primitive(name)) { return t_float(); }
   if (argc == 2 && name == "__pow_f64") { return t_float(); }
   if (argc == 1 && is_bit_count(name)) { return t_i32(); }
@@ -580,6 +582,8 @@ function builtin_result_type(recv: typeinfo.Type, name: string, is_method: boole
 // parameter that carries it. The second half reports whether `name` is one at
 // all, since an empty list is a real signature (`__ptr_width()`).
 function intrinsic_params(name: string): (typeinfo.Type[], boolean) {
+  var raw: RawFloorSig[] = raw_floor_find(name);
+  if (raw.len() == 1) { return (raw[0].params, true); }
   if (is_f64_primitive(name)) { return ([t_float()], true); }
   if (name == "__pow_f64") { return ([t_float(), t_float()], true); }
   if (name == "__clz32" || name == "__ctz32" || name == "__popcount32") { return ([t_u32()], true); }
@@ -617,6 +621,46 @@ function intrinsic_params(name: string): (typeinfo.Type[], boolean) {
   if (name == "__fern_arr_dec") { return ([t_usize(), t_i32()], true); }
   if (name == "__fern_drop_arr_ptr") { return ([t_usize(), t_i32()], true); }
   return ([], false);
+}
+
+// The raw-memory floor the Fern-source runtime helpers are written on (#2649,
+// docs/RUNTIME-INTRINSICS.md). Self-host only: native registers none of them.
+// An address is a `usize`; an offset, a byte or a length is an `i32`. A
+// syscall takes and answers machine words, signed so a negative errno reads
+// as one. `__raw_string` and `__raw_array` hand a block to a fresh string or
+// `i32[]` the caller owns, and `__raw_data` reads a string's data word.
+pub struct RawFloorSig { name: string, params: typeinfo.Type[], result: typeinfo.Type }
+
+pub function raw_floor_sigs(): RawFloorSig[] {
+  var p: typeinfo.Type = t_usize();
+  var n: typeinfo.Type = t_i32();
+  var w: typeinfo.Type = t_i64();
+  return [
+    RawFloorSig { name: "__raw_alloc", params: [n], result: p },
+    RawFloorSig { name: "__raw_store8", params: [p, n, n], result: t_void() },
+    RawFloorSig { name: "__raw_load8", params: [p, n], result: n },
+    RawFloorSig { name: "__raw_store_ptr", params: [p, n, p], result: t_void() },
+    RawFloorSig { name: "__raw_load_ptr", params: [p, n], result: p },
+    RawFloorSig { name: "__raw_string", params: [p, n], result: t_string() },
+    RawFloorSig { name: "__raw_array", params: [p], result: typeinfo.TypeArray { elem: n, view: false } },
+    RawFloorSig { name: "__raw_data", params: [t_string()], result: p },
+    RawFloorSig { name: "__raw_addr", params: [p, n], result: p },
+    RawFloorSig { name: "__raw_arr_box", params: [n], result: p },
+    RawFloorSig { name: "__raw_scratch", params: [n], result: p },
+    RawFloorSig { name: "__raw_environ", params: [], result: p },
+    RawFloorSig { name: "__raw_splice_pipe", params: [], result: p },
+    RawFloorSig { name: "__syscall3", params: [n, w, w, w], result: w },
+    RawFloorSig { name: "__syscall4", params: [n, w, w, w, w], result: w },
+    RawFloorSig { name: "__syscall5", params: [n, w, w, w, w, w], result: w },
+    RawFloorSig { name: "__syscall6", params: [n, w, w, w, w, w, w], result: w }
+  ];
+}
+
+// The raw-floor signature named `name`: one element, or none for any other name.
+function raw_floor_find(name: string): RawFloorSig[] {
+  if (!util.str_has_prefix(name, "__raw_") && !util.str_has_prefix(name, "__syscall")) { return []; }
+  for sig in raw_floor_sigs() { if (sig.name == name) { return [sig]; } }
+  return [];
 }
 
 // free_builtin_sig is the callable a free builtin denotes, so a call to one is

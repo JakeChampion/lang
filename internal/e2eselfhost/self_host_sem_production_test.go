@@ -3962,6 +3962,48 @@ function main(): i32 {
     return 99;
 }
 `},
+	// The raw floor the runtime helpers are written on, through the checker's
+	// types: an address is a usize, a syscall's words are i64. The produced
+	// bodies release the three strings and both arrays, which the AST lowering
+	// leaves live. Syscall 4000 is unassigned on both Linux ISAs, so it answers
+	// -ENOSYS (-38) on each.
+	{name: "raw-floor-intrinsics", atLeast: 3, nativeOnly: true, noLeak: true, src: `
+function chr_of(b: i32): string { var p: usize = __raw_alloc(1); __raw_store8(p, 0, b); return __raw_string(p, 1); }
+function cat2(a: string, b: string): string {
+    var la: i32 = a.len();
+    var lb: i32 = b.len();
+    var p: usize = __raw_alloc(la + lb);
+    __memcpy(p, __raw_data(a), la);
+    __memcpy(__raw_addr(p, la), __raw_data(b), lb);
+    return __raw_string(p, la + lb);
+}
+function main(): i32 {
+    var t: string = cat2(chr_of(65), "bc");
+    var sc: usize = __raw_scratch(16);
+    __raw_store_ptr(sc, 0, __raw_data(t));
+    if (__raw_load8(__raw_load_ptr(sc, 0), 1) != 98) { return 90; }
+    if (__syscall3(4000, 0, 0, 0) != -38) { return 91; }
+    if (__syscall6(4000, 1, 2, 3, 4, 5, 6) != -38) { return 92; }
+    if (__raw_load_ptr(__raw_environ(), 0) == (0 as usize)) { return 93; }
+    var kept: u8[] = __rc_inc(__alloc_u8(8));
+    var none: i32[] = __raw_array(__raw_arr_box(0));
+    if (__rc_underflow_count() != 0) { return 94; }
+    print(t);
+    return t.len() + kept.len() - 8 + none.len();
+}
+`},
+	// The floor's three static words, taken with no runtime helper to mark
+	// the need that defines them: each address pulls in its own definition.
+	{name: "raw-floor-symbols-link-without-a-helper", atLeast: 1, nativeOnly: true, noLeak: true, src: `
+function main(): i32 {
+    var sc: usize = __raw_scratch(8);
+    __raw_store8(sc, 0, 7);
+    var sp: usize = __raw_splice_pipe();
+    __raw_store_ptr(sp, 0, sc);
+    if (__raw_load_ptr(__raw_environ(), 0) == (0 as usize)) { return 1; }
+    return __raw_load8(__raw_load_ptr(sp, 0), 0);
+}
+`},
 	// A method call on a `dyn Trait` receiver: the widening borrows the
 	// record, and the call dispatches on its shape to the implementation
 	// (conformance/cases/dyn_trait_dispatch). Two implementations behind one
