@@ -715,7 +715,7 @@ function rewrite_stmt(st: ast.Stmt, ctx: RewriteCtx): ast.Stmt {
                 name: v.name,
                 type_name: rewrite_type_name(v.type_name, ctx),
                 init: rewrite_expr(v.init, ctx),
-                line: v.line, col: v.col, is_str: v.is_str,
+                line: v.line, col: v.col, is_str: v.is_str, is_view: v.is_view,
                 fn_ret: rewrite_type_name(v.fn_ret, ctx),
                 fn_param_types: rewrite_type_name_list(v.fn_param_types, ctx) };
         },
@@ -772,7 +772,7 @@ function rewrite_params(params: ast.ParamDecl[], ctx: RewriteCtx): ast.ParamDecl
         out = out.append(ast.ParamDecl {
             name: params[i].name,
             type_name: rewrite_type_name(params[i].type_name, ctx),
-            is_str: params[i].is_str, own: params[i].own,
+            is_str: params[i].is_str, is_view: params[i].is_view, own: params[i].own,
             has_default: params[i].has_default,
             default_value: params[i].default_value,
             ret_arr: params[i].ret_arr,

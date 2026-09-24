@@ -68,8 +68,8 @@ function caller(template: irlower.LowerResult, mode: i32): irlower.LowerResult {
 }
 function fixture(): ssasem.Func {
     var i: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false };
-    var row: typeinfo.Type = typeinfo.TypeArray { elem: i };
-    var rows: typeinfo.Type = typeinfo.TypeArray { elem: row };
+    var row: typeinfo.Type = typeinfo.TypeArray { elem: i, view: false };
+    var rows: typeinfo.Type = typeinfo.TypeArray { elem: row, view: false };
     var pair: typeinfo.Type = typeinfo.TypeTuple { elements: [rows, rows] };
     var types: typeinfo.Type[] = [i, row, rows, i, row];
     var ops: ssa.SInst[] = [inst(1, 0, [], 7), inst(ssasem.array_new(), 1, [0], 0),
@@ -258,7 +258,7 @@ function main(): i32 {
     if (!refused(ssarc.lower(cfg, [], cp, irlower.struct_tab_empty(), []), "physical RC needs reducible graph")) { return 4; }
     // An array of a 64-bit element: its ops carry the eight-byte stride, so it
     // is a value here like any other array.
-    var wide: typeinfo.Type = typeinfo.TypeArray { elem: typeinfo.TypeI32 { width: 64, unsigned: false, is_char: false } };
+    var wide: typeinfo.Type = typeinfo.TypeArray { elem: typeinfo.TypeI32 { width: 64, unsigned: false, is_char: false }, view: false };
     var g = ssa.SFunc { name: "unsupported", nparams: 1, nvals: 1, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0)], term: ret(0) }] };
     var typed = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: g, values: [wide], params: [wide], result: wide, records: [], enums: [], calls: [] };
@@ -658,7 +658,7 @@ function main(): i32 {
     if (ssaunits.plan(badIndex, [3, 2, 1]).why != "with index type") { return 125; }
     var badWithElem = ssasem.Func { ...withFunc, values: [f.result, i32ty, strTy, f.result], params: [f.result, i32ty, strTy] };
     if (ssaunits.plan(badWithElem, [3, 1, 2]).why != "with element type") { return 126; }
-    var strArr: typeinfo.Type = typeinfo.TypeArray { elem: strTy };
+    var strArr: typeinfo.Type = typeinfo.TypeArray { elem: strTy, view: false };
     var strWith = ssasem.Func { ...withFunc, values: [strArr, i32ty, strTy, strArr], params: [strArr, i32ty, strTy], result: strArr };
     var strWithPlan = ssaunits.plan(strWith, [3, 1, 3]);
     if (!strWithPlan.ok) { eprint(strWithPlan.why); return 127; }
@@ -766,7 +766,7 @@ function main(): i32 {
     if (narrowValLowered.f64_slots.len() != 1 || narrowValLowered.f64_slots[0] != 0) { return 111; }
     var floatElem = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: ssa.SFunc { ...dropGraph, nvals: 2, blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0),
             inst(ssasem.array_new(), 1, [0], 0)], term: ret(1) }] },
-        values: [f64ty, typeinfo.TypeArray { elem: f64ty }], params: [f64ty], result: typeinfo.TypeArray { elem: f64ty }, records: [], enums: [], calls: [] };
+        values: [f64ty, typeinfo.TypeArray { elem: f64ty, view: false }], params: [f64ty], result: typeinfo.TypeArray { elem: f64ty, view: false }, records: [], enums: [], calls: [] };
     // An ARRAY element of that width does lower: every element op carries its
     // own slot width, so the construction stores eight bytes and wasm reads
     // back the float form. The i64 shares the stride and takes the integer
@@ -875,7 +875,7 @@ function main(): i32 {
     if (!sawWide) { return 94; }
     // A wide value is an array element and a VALUE, and the array that holds
     // it is one box like any other.
-    var wideArr: typeinfo.Type = typeinfo.TypeArray { elem: i64ty };
+    var wideArr: typeinfo.Type = typeinfo.TypeArray { elem: i64ty, view: false };
     var wideArrFunc = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: g, values: [wideArr], params: [wideArr], result: wideArr,
         records: [], enums: [], calls: [] };
     var wideArrLowered = ssarc.lower(wideArrFunc, [2], ssaunits.plan(wideArrFunc, [2]), irlower.struct_tab_empty(), []);
@@ -1003,7 +1003,7 @@ function main(): i32 {
     // A column of BOXES — here i32 arrays — is counted too: the map owns a
     // unit of every value, and the value's own release, named by the physical
     // lowering, is what the runtime walks the column with.
-    var arrMapTy: typeinfo.Type = typeinfo.TypeMap { key: strTy, value: typeinfo.TypeArray { elem: i32ty } };
+    var arrMapTy: typeinfo.Type = typeinfo.TypeMap { key: strTy, value: typeinfo.TypeArray { elem: i32ty, view: false } };
     var arrMapFunc = ssasem.Func { ...mapFunc, values: [arrMapTy], params: [arrMapTy], result: arrMapTy };
     if (!ssaunits.plan(arrMapFunc, [3]).ok) { eprint(ssaunits.plan(arrMapFunc, [3]).why); return 146; }
     // A column of function values owns nothing it could release: a function
@@ -1042,7 +1042,7 @@ function main(): i32 {
     var dropArrMap = ssasem.Func { ...dropIntMap, values: [arrMapTy, i32ty], params: [arrMapTy] };
     var dropArrLowered = ssarc.lower(dropArrMap, [3], ssaunits.plan(dropArrMap, [3]), irlower.struct_tab_empty(), []);
     if (!dropArrLowered.ok) { eprint(dropArrLowered.why); return 187; }
-    var releaseName: string = ssarc.release_helper_name(typeinfo.TypeArray { elem: i32ty });
+    var releaseName: string = ssarc.release_helper_name(typeinfo.TypeArray { elem: i32ty, view: false });
     var sawArrFree: boolean = false;
     var sawArrRelease: boolean = false;
     for o in dropArrLowered.ops {
@@ -1056,7 +1056,7 @@ function main(): i32 {
     var arrInsertGraph = ssa.SFunc { name: "arr_insert", nparams: 3, nvals: 4, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1), inst(6, 2, [], 2),
             ssa.SInst { kind_tag: ssasem.map_insert(), result: 3, args: [0, 1, 2], imm: 0, str: "" }], term: ret(3) }] };
-    var arrInsert = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: arrInsertGraph, values: [arrMapTy, strTy, typeinfo.TypeArray { elem: i32ty }, arrMapTy], params: [arrMapTy, strTy, typeinfo.TypeArray { elem: i32ty }], result: arrMapTy, records: [], enums: [], calls: [] };
+    var arrInsert = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: arrInsertGraph, values: [arrMapTy, strTy, typeinfo.TypeArray { elem: i32ty, view: false }, arrMapTy], params: [arrMapTy, strTy, typeinfo.TypeArray { elem: i32ty, view: false }], result: arrMapTy, records: [], enums: [], calls: [] };
     var arrInsertPlan = ssaunits.plan(arrInsert, [3, 3, 3]);
     if (!arrInsertPlan.ok) { eprint(arrInsertPlan.why); return 190; }
     var arrInsertLowered = ssarc.lower(arrInsert, [3, 3, 3], arrInsertPlan, irlower.struct_tab_empty(), []);
