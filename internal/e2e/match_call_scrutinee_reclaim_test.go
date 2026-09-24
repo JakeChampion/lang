@@ -7,8 +7,8 @@ import (
 )
 
 // A fresh owned enum box is freed after the match that consumed it
-// (reclaimableMatchScrutinee, #6417). Both directions are pinned: a `_`
-// payload position is eligible, a payload bound to a real NAME is not.
+// (reclaimableMatchScrutinee, #6417): a `_` payload position is eligible, and
+// so is a NAMED payload moved into a variant construction (#9180).
 
 // A boxed enum whose Err-side payload is a string, matched directly on the
 // call.
@@ -77,9 +77,11 @@ function main(): i32 {
 }`
 
 // The string payload is bound to a real name and re-wrapped, so the binding
-// outlives the arm. Must stay refused — i.e. must still leak.
+// outlives the arm: the new Err takes the payload's reference and the old box
+// goes shell-only. Every other iteration takes the Err arm and reads the
+// payload back after the free.
 const matchCallBoundPayloadSrc = `function make(i: i32): Result[i32, string] {
-    if (i < 0) { return Err("neg"); }
+    if (i % 2 == 1) { return Err("neg" + "ative"); }
     return Ok(i);
 }
 function step(i: i32): Result[i32, string] {
@@ -89,7 +91,7 @@ function round(r: i32): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 4) {
-        match (step(i)) { Ok(x) => { acc = acc + x; }, Err(_) => { acc = acc + 1; } }
+        match (step(i)) { Ok(x) => { acc = acc + x; }, Err(e) => { acc = acc + e.len(); } }
         i = i + 1;
     }
     return acc + r;
@@ -155,13 +157,11 @@ func TestX86_64MatchCallScrutineeReclaim(t *testing.T) {
 		})
 	}
 
-	t.Run("bound_payload_stays_refused", func(t *testing.T) {
-		allocs, frees, live := leakCounts(t, "bound_payload", matchCallBoundPayloadSrc, 57)
-		if live <= 0 {
-			t.Errorf("a NAMED pointer payload binding now reclaims (allocs=%d frees=%d live=%d). That is only "+
-				"safe if the binding is proven confined to its arm — it is re-wrapped into the returned Err "+
-				"here, so it outlives the free. Re-read reclaimableMatchScrutinee before taking this green.",
-				allocs, frees, live)
+	t.Run("bound_payload_moved_into_construction", func(t *testing.T) {
+		allocs, frees, live := leakCounts(t, "bound_payload", matchCallBoundPayloadSrc, 61)
+		if live != 0 {
+			t.Errorf("bound_payload: live_bytes=%d (allocs=%d frees=%d), want 0 — the re-wrapped payload's old box is not reclaimed",
+				live, allocs, frees)
 		}
 	})
 }
