@@ -3,15 +3,6 @@
 import "./ssa";
 import "./ssalive";
 
-function block_index(f: ssa.SFunc, id: i32): i32 {
-    var i: i32 = 0;
-    while (i < f.blocks.len()) {
-        if (f.blocks[i].id == id) { return i; }
-        i = i + 1;
-    }
-    return 0 - 1;
-}
-
 function flags(n: i32, bit: boolean): boolean[] {
     var out: boolean[] = [];
     var i: i32 = 0;
@@ -220,7 +211,8 @@ pub function verify(f: ssa.SFunc, dependencies: i32[][]): string {
     if (err != "") { return err; }
     if (f.blocks.len() > 2147483647 / f.blocks.len()) { return "dominator matrix overflow"; }
     if (f.nparams < 0 || f.nparams > f.nvals) { return "parameter dimensions"; }
-    if (f.blocks[block_index(f, f.entry)].preds.len() > 0) { return "entry has predecessors"; }
+    var at: i32[] = position_of(f);
+    if (f.blocks[at[f.entry]].preds.len() > 0) { return "entry has predecessors"; }
     var defs: i32[] = indices(f.nvals);
     var positions: i32[] = indices(f.nvals);
     var bi: i32 = 0;
@@ -276,7 +268,7 @@ pub function verify(f: ssa.SFunc, dependencies: i32[][]): string {
                 if (ins.kind_tag == 8) {
                     var pi: i32 = 0;
                     while (pi < b.preds.len()) {
-                        var pb: i32 = block_index(f, b.preds[pi]);
+                        var pb: i32 = at[b.preds[pi]];
                         if (reachable[pb]) {
                             err = use_error(ins.args[pi], pb, f.blocks[pb].insts.len(), f, dependencies, defs, positions, dom);
                             if (err != "") { return err; }
