@@ -38,10 +38,6 @@
 # the box nor its payload. Both fixtures build one and their rows were the
 # box each stranded.
 #
-# field_read_off_a_call_through_a_function_field reads a field off the
-# result of a call through a function-typed struct field, which native
-# never releases (#10149). The self-host builds it clean.
-#
 # fstring_reassign_releases_old is #8697's fixture: an f-string RHS now
 # releases the destination's superseded string, so the row registers a
 # clean fixture rather than banking a leak.

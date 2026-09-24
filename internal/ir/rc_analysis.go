@@ -3794,6 +3794,8 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 			if isLocal && b.indirectCallsReturnOwnBox() {
 				return false
 			}
+		} else if b.indirectCalleeFuncType(x.Callee) != nil && b.indirectCallsReturnOwnBox() {
+			return false
 		}
 		// Map builtins return the MAP HANDLE, which aliases only the
 		// receiver (cow) — never the stored key/value args. The generic
