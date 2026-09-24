@@ -40,7 +40,8 @@ pub struct Step { block: i32, point: i32, target: i32, supplies: Supply[], drops
 // -1; `grow_fields` holds that field's index at the same position.
 // `held` marks an element read that takes a unit of its own at the read
 // (held_elements); the physical lowering retains what it read.
-pub struct Plan { ok: boolean, why: string, steps: Step[], owned: boolean[], grows: i32[], grow_fields: i32[], takes: i32[], held: boolean[], payloads: boolean[] }
+// `literal` marks the values that can only hold a string literal (`literals`).
+pub struct Plan { ok: boolean, why: string, steps: Step[], owned: boolean[], literal: boolean[], grows: i32[], grow_fields: i32[], takes: i32[], held: boolean[], payloads: boolean[] }
 struct Ledger { ok: boolean, why: string, bits: boolean[] }
 
 // A callee parameter whose buffer the callee may grow in place: `field` is the
@@ -154,7 +155,7 @@ pub function grow_table(keys: string[], funcs: ssasem.Func[], plans: Plan[]): Gr
     return table;
 }
 
-function bad(why: string): Plan { return Plan { ok: false, why: why, steps: [], owned: [], grows: [], grow_fields: [], takes: [], held: [], payloads: [] }; }
+function bad(why: string): Plan { return Plan { ok: false, why: why, steps: [], owned: [], literal: [], grows: [], grow_fields: [], takes: [], held: [], payloads: [] }; }
 pub function refused(why: string): Plan { return bad(why); }
 function rejected(why: string): Ledger { return Ledger { ok: false, why: why, bits: [] }; }
 function step(block: i32, point: i32, target: i32): Step { return Step { block: block, point: point, target: target, supplies: [], drops: [], hand_roots: [], hand_fields: [] }; }
@@ -321,8 +322,12 @@ function taken(t: typeinfo.Type): boolean {
 // helper carries, and the replacement the declaration site assigns drops
 // exactly that nothing. It is deliberately NOT a `construction` — no box was
 // made, so nothing may take a field out of one.
+//
+// A string literal (kind 5) is not a unit either: its static box carries the
+// immortal count on every backend, so it is never released, and a consumer
+// that takes one is handed it with no retain (`literal`).
 function fresh_unit(kind: i32): boolean {
-    return kind == 8 || kind == 5 || kind == 9 || kind == ssasem.zero() || construction(kind) || hands_out(kind);
+    return kind == 8 || kind == 9 || kind == ssasem.zero() || construction(kind) || hands_out(kind);
 }
 // The operations whose result is a unit handed to this function: a call's
 // result, a rebuilt container, a view's box, a cell's element, a map read,
@@ -337,6 +342,29 @@ function hands_out(kind: i32): boolean {
         || kind == ssasem.map_keys() || kind == ssasem.map_values() || kind == ssasem.map_delete()
         || kind == ssasem.str_bytes() || kind == ssasem.arr_join() || kind == ssasem.arr_slice();
 }
+// A phi is a literal too when every operand is: assumed of every phi, then
+// withdrawn from each one with another operand, to a fixpoint, so a loop
+// phi that only ever carries literals keeps the mark.
+function literals(f: ssasem.Func): boolean[] {
+    var out: boolean[] = bits(f.graph.nvals);
+    for b in f.graph.blocks {
+        for ins in b.insts { if (ins.kind_tag == 5 || ins.kind_tag == 8) { out = out.with(ins.result, true); } }
+    }
+    var changed: boolean = true;
+    while (changed) {
+        changed = false;
+        for b in f.graph.blocks {
+            for ins in b.insts {
+                if (ins.kind_tag != 8 || !out[ins.result]) { continue; }
+                var lit: boolean = true;
+                for a in ins.args { if (a < 0 || !out[a]) { lit = false; } }
+                if (!lit) { out = out.with(ins.result, false); changed = true; }
+            }
+        }
+    }
+    return out;
+}
+
 function owned_values(f: ssasem.Func, modes: i32[]): boolean[] {
     var out: boolean[] = bits(f.graph.nvals);
     for b in f.graph.blocks {
@@ -351,7 +379,7 @@ function owned_values(f: ssasem.Func, modes: i32[]): boolean[] {
 }
 
 // A phi owns a unit unless every operand is lent whole: a borrowed parameter,
-// or another phi that is. Such a phi holds nothing its edges could supply --
+// a string literal, or another phi that is. Such a phi holds nothing its edges could supply --
 // asking them retains a view with a no-op and releases it with a free
 // (#9802), and retains a counted box for nothing. Any other operand makes the
 // phi owned as before: a projection of an owned record is anchored to its
@@ -367,7 +395,7 @@ function phi_ownership(f: ssasem.Func, owned: boolean[]): boolean[] {
             var lent: boolean = true;
             for a in ins.args {
                 if (a < 0) { continue; }
-                if (defs[a].kind_tag == 8) { continue; }
+                if (defs[a].kind_tag == 8 || defs[a].kind_tag == 5) { continue; }
                 if (defs[a].kind_tag == 6 && !out[a]) { continue; }
                 lent = false;
             }
@@ -400,11 +428,12 @@ function phi_ownership(f: ssasem.Func, owned: boolean[]): boolean[] {
 //
 // A string retagged as a view is the string's own counted box, so retaining
 // it retains the string, which `__fern_str_view_free` then releases as one.
-function view_retain_error(f: ssasem.Func, steps: Step[]): string {
+// A literal's retain is never emitted (ssarc.supplies), so it lends nothing.
+function view_retain_error(f: ssasem.Func, steps: Step[], literal: boolean[]): string {
     var defs: ssa.SInst[] = definitions(f);
     for s in steps {
         for item in s.supplies {
-            if (item.mode == retain_unit() && ssasem.is_view(f.values[item.value]) && !retagged_string(f, defs, item.value)) { return "a view is lent, never retained"; }
+            if (item.mode == retain_unit() && ssasem.is_view(f.values[item.value]) && !retagged_string(f, defs, item.value) && !literal[item.value]) { return "a view is lent, never retained"; }
         }
     }
     return "";
@@ -543,8 +572,9 @@ function return_supplies(f: ssasem.Func, b: ssa.SBlock): Supply[] {
     if (b.term.kind_tag == 1 && b.term.value >= 0 && ssasem.reference(f.values[b.term.value])) { return [Supply { value: b.term.value, slot: 0, mode: 0 }]; }
     return [];
 }
-function edge_supplies(f: ssasem.Func, b: ssa.SBlock, target: i32, owned: boolean[]): Supply[] {
-    var succ: ssa.SBlock = f.graph.blocks[block_index(f.graph, target)];
+// The edge from b into the block at position si.
+function edge_supplies(f: ssasem.Func, b: ssa.SBlock, si: i32, owned: boolean[]): Supply[] {
+    var succ: ssa.SBlock = f.graph.blocks[si];
     var pi: i32 = 0;
     while (succ.preds[pi] != b.id) { pi = pi + 1; }
     var out: Supply[] = [];
@@ -900,8 +930,8 @@ function held_elements(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], def
         }
         var targets: i32[] = successors(b);
         for target in targets {
-            var si: i32 = block_index(f.graph, target);
-            var along: Supply[] = edge_supplies(f, b, target, owned);
+            var si: i32 = ssalive.position(a.flow, target);
+            var along: Supply[] = edge_supplies(f, b, si, owned);
             for got in along {
                 if (owned[got.value]) { out = outliving(f, a, defs, out, got.value, bi, 0, si); }
             }
@@ -1215,16 +1245,17 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
                 steps = steps.append(choose(step(b.id, return_point(), 0 - 1), return_supplies(f, b), dead, owned));
             }
             for target in successors(b) {
-                var si: i32 = block_index(f.graph, target);
+                var si: i32 = ssalive.position(analysis.flow, target);
                 var dead: i32[] = ssalive.out_not_in(analysis.flow, bi, si);
-                steps = steps.append(choose_ids(step(b.id, edge_point(), target), edge_supplies(f, b, target, owned), dead, owned));
+                steps = steps.append(choose_ids(step(b.id, edge_point(), target), edge_supplies(f, b, si, owned), dead, owned));
             }
         }
         bi = bi + 1;
     }
-    why = view_retain_error(f, steps);
+    var literal: boolean[] = literals(f);
+    why = view_retain_error(f, steps, literal);
     if (why != "") { return bad(why); }
-    return Plan { ok: true, why: "", steps: steps, owned: owned, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads };
+    return Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads };
 }
 
 function read_error(state: boolean[], value: i32, owned: boolean[], deps: i32[][]): string {
@@ -1244,6 +1275,26 @@ function invariant(f: ssasem.Func, bi: i32, owned: boolean[], flow: ssalive.Flow
         if ((ins.kind_tag == 8 || ins.kind_tag == 6) && owned[ins.result]) { state = state.with(ins.result, true); }
     }
     return state;
+}
+// holds_invariant is same_bits(state, invariant(f, bi, owned, flow)) without
+// building the invariant.
+function holds_invariant(state: boolean[], f: ssasem.Func, bi: i32, owned: boolean[], flow: ssalive.Flow): boolean {
+    var want: i32 = 0;
+    for v in ssalive.live_in_ids(flow, bi) {
+        if (owned[v]) {
+            if (!state[v]) { return false; }
+            want = want + 1;
+        }
+    }
+    for ins in f.graph.blocks[bi].insts {
+        if ((ins.kind_tag == 8 || ins.kind_tag == 6) && owned[ins.result] && !ssalive.live_in_has(flow, bi, ins.result)) {
+            if (!state[ins.result]) { return false; }
+            want = want + 1;
+        }
+    }
+    var have: i32 = 0;
+    for bit in state { if (bit) { have = have + 1; } }
+    return have == want;
 }
 function same_bits(a: boolean[], b: boolean[]): boolean {
     var i: i32 = 0;
@@ -1395,12 +1446,12 @@ function enter_phis(b: ssa.SBlock, state: boolean[], owned: boolean[]): Ledger {
 function verify_edge(f: ssasem.Func, b: ssa.SBlock, target: i32, p: Plan, idx: i32[][], state: boolean[], owned: boolean[], analysis: ssasem.Analysis): string {
     var at: i32 = find_step(p, idx, b.id, edge_point(), target);
     if (at < 0) { return "missing or duplicate edge step"; }
-    var done: Ledger = replay(state, p.steps[at], edge_supplies(f, b, target, owned), 0 - 1, owned, analysis.dependencies);
+    var si: i32 = ssalive.position(analysis.flow, target);
+    var done: Ledger = replay(state, p.steps[at], edge_supplies(f, b, si, owned), 0 - 1, owned, analysis.dependencies);
     if (!done.ok) { return done.why; }
-    var si: i32 = block_index(f.graph, target);
     var entered: Ledger = enter_phis(f.graph.blocks[si], done.bits, owned);
     if (!entered.ok) { return entered.why; }
-    if (!same_bits(entered.bits, invariant(f, si, owned, analysis.flow))) { return "edge unit invariant mismatch"; }
+    if (!holds_invariant(entered.bits, f, si, owned, analysis.flow)) { return "edge unit invariant mismatch"; }
     return "";
 }
 

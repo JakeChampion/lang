@@ -40,7 +40,7 @@ pub struct ExprIdent { name: string, line: i32, col: i32, ty: string }
 
 pub struct ExprString { value: string, line: i32, col: i32 }
 
-pub struct ExprBool { value: boolean }
+pub struct ExprBool { value: boolean, line: i32, col: i32 }
 
 // `ty` is the typed-IR carrier (#5986, the ExprBinary sibling of ExprCall.ty
 // from #5531). Ordinary arithmetic needs no carrier — irlower's predicates
@@ -247,7 +247,7 @@ pub function expr_line(e: Expr): i32 {
         ExprNumber(n) => { return n.line; },
         ExprIdent(id) => { return id.line; },
         ExprString(st) => { return st.line; },
-        ExprBool(b) => { return 0; },
+        ExprBool(b) => { return b.line; },
         ExprBinary(b) => { return b.line; },
         ExprUnary(u) => { return u.line; },
         ExprCall(c) => { return c.line; },
@@ -340,7 +340,7 @@ pub function expr_col(e: Expr): i32 {
 // only names half the signature; wasm needs all of it, because a funcref
 // type is structural and dispatching a `(f64) => f64` element through an
 // all-i32 `$fn1` is a runtime `indirect call type mismatch`.
-pub struct StmtVar { name: string, type_name: string, init: Expr, line: i32, col: i32, is_str: boolean, fn_ret: string, fn_param_types: string }
+pub struct StmtVar { name: string, type_name: string, init: Expr, line: i32, col: i32, is_str: boolean, is_view: boolean, fn_ret: string, fn_param_types: string }
 
 pub struct StmtReturn { value: Expr, line: i32, col: i32 }
 
@@ -522,7 +522,7 @@ pub type Stmt = StmtVar | StmtReturn | StmtExpr | StmtIf | StmtWhile
 // spellings are kept RAW rather than mapped to widths here, because deciding
 // whether `T` is a type variable or a struct named T needs the enclosing
 // function's type_params, which parse_param does not have.
-pub struct ParamDecl { name: string, type_name: string, is_str: boolean, own: boolean, has_default: boolean, default_value: Expr, ret_arr: boolean, fn_ret: string, fn_param_dyn: string, fn_param_types: string }
+pub struct ParamDecl { name: string, type_name: string, is_str: boolean, is_view: boolean, own: boolean, has_default: boolean, default_value: Expr, ret_arr: boolean, fn_ret: string, fn_param_dyn: string, fn_param_types: string }
 
 // LitArm is one arm of a match on a non-enum (i32 / string) scrutinee:
 // a literal to compare against (`lit`, dispatched via `==`) or the `_`

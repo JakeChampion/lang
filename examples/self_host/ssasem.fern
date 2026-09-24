@@ -172,7 +172,7 @@ pub function is_map_iter_op(kind: i32): boolean {
 pub function refused_analysis(why: string): Analysis { return failed(why); }
 
 function failed(why: string): Analysis {
-    return Analysis { ok: false, why: why, dependencies: [], flow: ssalive.Flow { ok: false, why: why, words: 0, live_in: [], live_out: [] } };
+    return Analysis { ok: false, why: why, dependencies: [], flow: ssalive.Flow { ok: false, why: why, words: 0, live_in: [], live_out: [], at: [] } };
 }
 
 function empty_dependencies(n: i32): i32[][] {
@@ -1095,7 +1095,7 @@ function map_column_error(ins: ssa.SInst, f: Func, result: typeinfo.Type, keys: 
     var elem: typeinfo.Type = map_value(m);
     if (keys) { elem = map_key(m); }
     if (!retained_column(elem)) { return "map column element"; }
-    if (!semtypes.equal(typeinfo.TypeArray { elem: elem }, result)) { return "map column result"; }
+    if (!semtypes.equal(typeinfo.TypeArray { elem: elem, view: false }, result)) { return "map column result"; }
     return "";
 }
 
@@ -1284,7 +1284,7 @@ pub function substitute(t: typeinfo.Type, b: Binding): typeinfo.Type {
         // scalar body hands out.
         return typeinfo.TypeFunc { ...fn, param_types: params, param_own: typeinfo.own_flags(fn.param_own, params), ret_type: substitute(fn.ret_type, b) };
     }
-    if let typeinfo.TypeArray(a) = t { return typeinfo.TypeArray { elem: substitute(a.elem, b) }; }
+    if let typeinfo.TypeArray(a) = t { return typeinfo.TypeArray { elem: substitute(a.elem, b), view: a.view }; }
     if let typeinfo.TypeTuple(tup) = t { return typeinfo.TypeTuple { elements: substitute_list(tup.elements, b) }; }
     if let typeinfo.TypeMap(m) = t { return typeinfo.TypeMap { key: substitute(m.key, b), value: substitute(m.value, b) }; }
     if let typeinfo.TypeStruct(r) = t { return typeinfo.TypeStruct { ...r, args: substitute_list(r.args, b) }; }

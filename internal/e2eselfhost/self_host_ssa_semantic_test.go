@@ -19,10 +19,10 @@ var i64t: typeinfo.Type = typeinfo.TypeI32 { width: 64, unsigned: false, is_char
 var bt: typeinfo.Type = typeinfo.TypeBool { tag: 0 };
 var st: typeinfo.Type = typeinfo.TypeString { tag: 0 };
 var view: typeinfo.Type = typeinfo.TypeString { tag: 1 };
-var sa: typeinfo.Type = typeinfo.TypeArray { elem: st };
-var saa: typeinfo.Type = typeinfo.TypeArray { elem: sa };
+var sa: typeinfo.Type = typeinfo.TypeArray { elem: st, view: false };
+var saa: typeinfo.Type = typeinfo.TypeArray { elem: sa, view: false };
 var root: typeinfo.Type = typeinfo.TypeTuple { elements: [saa, bt] };
-var ia: typeinfo.Type = typeinfo.TypeArray { elem: i32t };
+var ia: typeinfo.Type = typeinfo.TypeArray { elem: i32t, view: false };
 var pair: typeinfo.Type = typeinfo.TypeTuple { elements: [st, i32t] };
 var types: typeinfo.Type[] = [root, i32t, saa, sa, st, st, sa, bt, ia, i32t, pair];
 var params: typeinfo.Type[] = [root, i32t];
@@ -97,7 +97,7 @@ function type_checks(): i32 {
     if (semtypes.equal(s, v) || semtypes.equal(f, p) || typeinfo.spelling(f) != typeinfo.spelling(p)) { return 2; }
     if (semtypes.equal(n, nw) || semtypes.equal(un, unw) || semtypes.equal(n, un)) { return 3; }
     if (semtypes.equal(sig, opaque) || semtypes.equal(sig, sv) || semtypes.equal(tuple, tuple2) || semtypes.equal(map, map2)) { return 4; }
-    var array: typeinfo.Type = typeinfo.TypeArray { elem: tuple };
+    var array: typeinfo.Type = typeinfo.TypeArray { elem: tuple, view: false };
     if (!semtypes.equal(array, array) || !semtypes.equal(map, map) || !semtypes.concrete(array, false)) { return 5; }
     if (semtypes.concrete(p, false) || semtypes.concrete(opaque, false) || semtypes.equal(typeinfo.unchecked(), typeinfo.unchecked())) { return 6; }
     return 0;

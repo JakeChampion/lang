@@ -381,6 +381,22 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"str-view-annotated-clean", "function f(t: string): i32 { var v: str = slice_unchecked(t, 0, 3); return v.len(); }\nfunction main(): i32 { return f(\"abcdef\"); }\n", nil},
 		{"str-view-arg-borrow-clean", "function g(x: string): i32 { return x.len(); }\nfunction main(): i32 { var t: string = \"abcdef\"; return g(slice_unchecked(t, 0, 3)); }\n", nil},
 		{"str-ret-fn-into-str-clean", "function f(t: string): str { return slice_unchecked(t, 0, 3); }\nfunction main(): i32 { var v: str = f(\"abcdef\"); return v.len(); }\n", nil},
+		// `[T]`, the array view a slice or `.as_bytes()` yields (#9944). A view
+		// and an owned `T[]` convert in neither direction — var init, assignment,
+		// return, field, argument — except an owned argument lent to a `[T]`
+		// parameter. A `[T]` binding, a slice of a view, a `[T]`-returning
+		// function and a `[T]` parameter handed on to another stay clean.
+		{"arr-view-into-array-var-e003", "function main(): i32 { var all: string[] = [\"a\", \"b\", \"c\"]; var mid: string[] = all[1:3]; return mid.len(); }\n", []string{"E003"}},
+		{"arr-view-assign-e003", "function main(): i32 { var x: i32[] = [1, 2]; var y: i32[] = [3]; y = x[0:1]; return y.len(); }\n", []string{"E003"}},
+		{"arr-view-return-e002", "function g(a: i32[]): i32[] { return a[0:1]; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
+		{"arr-view-field-e043", "struct Q { xs: i32[] }\nfunction mk(a: i32[]): Q { return Q { xs: a[0:1] }; }\nfunction main(): i32 { return 0; }\n", []string{"E043"}},
+		{"arr-ret-fn-into-array-e003", "function first(a: [i32]): [i32] { return a[0:1]; }\nfunction main(): i32 { var x: i32[] = [1, 2]; var o: i32[] = first(x); return o.len(); }\n", []string{"E003"}},
+		{"arr-owned-into-view-var-e003", "function main(): i32 { var a: i32[] = [1]; var w: [i32] = a; return w.len(); }\n", []string{"E003"}},
+		{"arr-owned-return-from-view-fn-e002", "function f(a: i32[]): [i32] { return a; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
+		{"arr-view-param-into-array-param-e038", "function h(x: i32[]): i32 { return x.len(); }\nfunction k(v: [i32]): i32 { return h(v); }\nfunction main(): i32 { return 0; }\n", []string{"E038"}},
+		{"as-bytes-into-array-var-e003", "function main(): i32 { var s: string = \"ab\"; var b: u8[] = s.as_bytes(); return b.len(); }\n", []string{"E003"}},
+		{"arr-view-param-clean", "function n(v: [u8]): i32 { return v.len(); }\nfunction k(v: [u8]): i32 { var w: [u8] = v[0:1]; return n(v) + n(w); }\nfunction main(): i32 { var s: string = \"ab\"; var b: [u8] = s.as_bytes(); var o: u8[] = [1, 2]; return k(b) + k(o); }\n", nil},
+		{"arr-view-clean", "function sum(s: [i32]): i32 { var t: i32 = 0; for v in s { t = t + v; } return t; }\nfunction first(a: [i32]): [i32] { return a[0:1]; }\nfunction main(): i32 { var a: i32[] = [1, 2, 3, 4, 5]; var s: [i32] = a[1:4]; var s2: [i32] = s[0:2]; var u = a[0:2]; var f: [i32] = first(a); return sum(a[0:5]) + s.len() + s2[1] + u.len() + f[0] + sum(s); }\n", nil},
 		// #7311's remaining half: string-builtin and free-builtin arity.
 		// These used to fall through to IR lowering and surface as the
 		// whole-function #9053 ineligibility hint; native reports E004 at
@@ -2376,6 +2392,17 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"loop-string-byte-binding", `function f(text: string): i32 { var out: u8[] = []; for ch in text { out = out.append(ch); } return out.len(); }`},
 		{"loop-string-byte-mismatch", `function f(text: string): i32 { for ch in text { var wrong: string = ch; } return 0; }`},
 		{"loop-str-byte-binding", `function f(text: str): i32 { var out: u8[] = []; for ch in text { out = out.append(ch); } return out.len(); }`},
+		{"arr-view-into-array-var", `function f(all: string[]): i32 { var mid: string[] = all[1:3]; return mid.len(); }`},
+		{"arr-view-assign", `function f(x: i32[]): i32 { var y: i32[] = [3]; y = x[0:1]; return y.len(); }`},
+		{"arr-view-return", `function f(a: i32[]): i32[] { return a[0:1]; }`},
+		{"arr-view-field", "struct Q { xs: i32[] }\nfunction f(a: i32[]): Q { return Q { xs: a[0:1] }; }"},
+		{"arr-ret-fn-into-array", "function first(a: [i32]): [i32] { return a[0:1]; }\nfunction f(x: i32[]): i32 { var o: i32[] = first(x); return o.len(); }"},
+		{"arr-owned-into-view-var", `function f(a: i32[]): i32 { var w: [i32] = a; return w.len(); }`},
+		{"arr-owned-return-from-view-fn", `function f(a: i32[]): [i32] { return a; }`},
+		{"arr-view-param-into-array-param", "function h(x: i32[]): i32 { return x.len(); }\nfunction k(v: [i32]): i32 { return h(v); }"},
+		{"as-bytes-into-array-var", `function f(s: string): i32 { var b: u8[] = s.as_bytes(); return b.len(); }`},
+		{"arr-view-param-uses", "function n(v: [u8]): i32 { return v.len(); }\nfunction k(v: [u8]): i32 { var w: [u8] = v[0:1]; return n(v) + n(w); }\nfunction f(s: string): i32 { var b: [u8] = s.as_bytes(); var o: u8[] = [1, 2]; return k(b) + k(o); }"},
+		{"arr-view-uses", "function sum(s: [i32]): i32 { var t: i32 = 0; for v in s { t = t + v; } return t; }\nfunction first(a: [i32]): [i32] { return a[0:1]; }\nfunction f(a: i32[]): i32 { var s: [i32] = a[1:4]; var s2: [i32] = s[0:2]; var u = a[0:2]; var g: [i32] = first(a); return sum(a[0:5]) + s.len() + s2[1] + u.len() + g[0] + sum(s); }"},
 		{"loop-generic-callback-result", `function f[T, U](xs: T[], callback: (T) => U[]): U[] { var out: U[] = []; for x in xs { for y in callback(x) { out = out.append(y); } } return out; }`},
 		{"loop-generic-callback-local", `function f[T, U](xs: T[], callback: (T) => U[]): U[] { var out: U[] = []; for x in xs { var ys = callback(x); for y in ys { out = out.append(y); } } return out; }`},
 		{"loop-callback-argument-mismatch", `function f(callback: (string) => i32[]): i32 { for y in callback(1) { var n = y; } return 0; }`},
@@ -2425,6 +2452,9 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		// settle on, whichever element comes first (#10122).
 		{"array-float-literals-beside-f32", `function g(): f32 { return 1.0 as f32; } function f(): f32 { var a: f32[] = [2.0, g(), -1.5 * 2.0]; return a[0]; }`},
 		{"array-float-literal-anchor-mismatch", `function g(): f32 { return 1.0 as f32; } function f(): i32 { var a = [2.0, g(), "x"]; return 0; }`},
+		// A struct that shares a built-in variant's name is not that
+		// variant: native has no struct-to-enum assignability.
+		{"struct-named-like-a-builtin-variant", `struct Some { n: i32 } function f(): i32 { var o: Option[i32] = Some { n: 1 }; return 0; }`},
 		// A pipe hole as a named argument's value (#10121).
 		{"pipe-hole-named-arg", `function diff(a: i32 = 0, b: i32 = 0): i32 { return a - b; } function f(): i32 { return 9 |> diff(b = _); }`},
 		// Annotated tuple shapes — var binding, parameter, return, nested, and
@@ -2685,6 +2715,23 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"dyn-coerce-inside-a-container", "trait Shape { function area(self: Self): i32; }\nstruct Square { side: i32 }\nimpl Shape for Square { function area(self: Self): i32 { return self.side; } }\nstruct Other { x: i32 }\nfunction describe(s: dyn Shape): i32 { return s.area(); }\nfunction main(): i32 { var arr: Square[] = [Square { side: 1 }]; var ds: dyn Shape[] = arr; return 0; }\n"},
 		{"dyn-coerce-conforming-ok", "trait Shape { function area(self: Self): i32; }\nstruct Square { side: i32 }\nimpl Shape for Square { function area(self: Self): i32 { return self.side; } }\nstruct Other { x: i32 }\nfunction describe(s: dyn Shape): i32 { return s.area(); }\nfunction main(): i32 { var d: dyn Shape = Square { side: 2 }; var e: dyn Shape = d; return describe(d) + describe(e) + describe(Square { side: 1 }); }\n"},
 		{"dyn-coerce-array-literal-ok", "trait Shape { function area(self: Self): i32; }\nstruct Square { side: i32 }\nimpl Shape for Square { function area(self: Self): i32 { return self.side; } }\nstruct Other { x: i32 }\nfunction describe(s: dyn Shape): i32 { return s.area(); }\nfunction main(): i32 { var ds: dyn Shape[] = [Square { side: 1 }, Square { side: 2 }]; return describe(ds[0]); }\n"},
+		// #10085: a TUPLE element is not a coercion site. Native refuses a
+		// concrete in a `dyn` tuple slot even when it conforms — boxing is a
+		// representation change and a tuple is not where one happens — where
+		// the array literal above is a coercion site and stays clean. The
+		// self-host accepted both, because `dyn Shape` mashed to `dynShape` in
+		// a parenthesised type list and the element resolved to no type at all.
+		{"tuple-dyn-element-nonconforming", "trait Shape { function area(self: Self): i32; }\nstruct Square { side: i32 }\nimpl Shape for Square { function area(self: Self): i32 { return self.side; } }\nstruct Other { x: i32 }\nfunction main(): i32 { var t: (dyn Shape, i32) = (Other { x: 1 }, 2); return 0; }\n"},
+		{"tuple-dyn-element-conforming", "trait Shape { function area(self: Self): i32; }\nstruct Square { side: i32 }\nimpl Shape for Square { function area(self: Self): i32 { return self.side; } }\nfunction main(): i32 { var t: (dyn Shape, i32) = (Square { side: 1 }, 2); return 0; }\n"},
+		// The control for the parser half on its own: a dyn tuple element that
+		// IS a dyn value stays clean, so keeping the space does not start
+		// refusing the shape the tuple genuinely admits.
+		{"tuple-dyn-element-from-dyn-ok", "trait Shape { function area(self: Self): i32; }\nstruct Square { side: i32 }\nimpl Shape for Square { function area(self: Self): i32 { return self.side; } }\nfunction main(): i32 { var d: dyn Shape = Square { side: 3 }; var t: (dyn Shape, i32) = (d, 2); return t.1; }\n"},
+		// The same control for a MULTI-trait element. The checker compares dyn
+		// types by exact traits string, so the parenthesised type list has to
+		// spell the separator ` + ` the way parse_type_dyn does: collecting
+		// `dyn Shape+Named` refuses a value whose type is `dyn Shape + Named`.
+		{"tuple-dyn-element-from-dyn-multi-trait-ok", "trait Shape { function area(self: Self): i32; }\ntrait Named { function name(self: Self): i32; }\nstruct Square { side: i32 }\nimpl Shape for Square { function area(self: Self): i32 { return self.side; } }\nimpl Named for Square { function name(self: Self): i32 { return 2; } }\nfunction main(): i32 { var d: dyn Shape + Named = Square { side: 3 }; var t: (dyn Shape + Named, i32) = (d, 2); return t.1; }\n"},
 		{"dyn-coerce-enum-and-primitive-ok", "trait Shape { function area(self: Self): i32; }\nstruct Square { side: i32 }\nimpl Shape for Square { function area(self: Self): i32 { return self.side; } }\nstruct Other { x: i32 }\nfunction describe(s: dyn Shape): i32 { return s.area(); }\nenum E { A, B(i32) }\nimpl Shape for E { function area(self: Self): i32 { return 1; } }\nimpl Shape for i32 { function area(self: Self): i32 { return self; } }\nimpl Shape for string { function area(self: Self): i32 { return self.len(); } }\nfunction main(): i32 { var s: string = \"ab\"; return describe(E.A) + describe(E.B(2)) + describe(7) + describe(s); }\n"},
 		{"dyn-coerce-two-traits", "trait Shape { function area(self: Self): i32; }\nstruct Square { side: i32 }\nimpl Shape for Square { function area(self: Self): i32 { return self.side; } }\nstruct Other { x: i32 }\nfunction describe(s: dyn Shape): i32 { return s.area(); }\ntrait Named { function name(self: Self): string; }\nimpl Named for Square { function name(self: Self): string { return \"sq\"; } }\nimpl Named for Other { function name(self: Self): string { return \"o\"; } }\nfunction both(x: dyn Shape + Named): i32 { return x.area(); }\nfunction main(): i32 { return both(Square { side: 1 }) + both(Other { x: 1 }); }\n"},
 		{"dyn-coerce-option-payload-ok", "trait Shape { function area(self: Self): i32; }\nstruct Square { side: i32 }\nimpl Shape for Square { function area(self: Self): i32 { return self.side; } }\nstruct Other { x: i32 }\nfunction describe(s: dyn Shape): i32 { return s.area(); }\nfunction main(): i32 { var o: Option[dyn Shape] = Some(Square { side: 3 }); match (o) { Some(s) => { return s.area() - 3; }, None => { return 1; } } }\n"},
@@ -2947,6 +2994,15 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		// resolve AND type: an unknown result would trip the self-host's
 		// uncoded over-reject in a non-generic body.
 		{"assoc-concrete-primitive-ok", "import \"std/num\";\nfunction main(): i32 { var z: i32 = i32.zero(); return z; }\n"},
+		// #10120: the entry's unit variant `Ok` is invisible inside std/json,
+		// whose `return Ok(v)` is Result's; in the entry both are visible, so
+		// a bare `Ok(1)` there is only the E036 ambiguity.
+		{"entry-variant-invisible-in-import-ok", "import \"std/json\";\nenum Reply { Ok, Full }\nfunction main(): i32 {\n    var r: Reply = Reply.Ok;\n    match (json.json_parse_result(\"1\")) { Ok(_) => { }, Err(_) => { return 1; } }\n    return match (r) { Ok => 0, Full => 2 };\n}\n"},
+		// The same leak through the entry's union ALIAS: its members are
+		// variants to this checker's union table, and an import cannot name
+		// them any more than the entry's enums.
+		{"entry-alias-invisible-in-import-ok", "import \"std/json\";\nstruct Ok { n: i32 }\nstruct Full { n: i32 }\ntype Reply = Ok | Full;\nfunction main(): i32 {\n    var r: Reply = Full { n: 2 };\n    match (json.json_parse_result(\"1\")) { Ok(_) => { }, Err(_) => { return 1; } }\n    return 0;\n}\n"},
+		{"entry-variant-shadows-result-e036", "enum Reply { Ok, Full }\nfunction f(): Result[i32, string] { return Ok(1); }\nfunction main(): i32 { var r: Reply = Reply.Full; return match (r) { Reply.Ok => 0, Reply.Full => 2 }; }\n"},
 		{"assoc-concrete-user-impl-ok", "import \"std/num\";\nstruct P { x: i32 }\nimpl num.Zero for P { function zero(): Self { return P { x: 0 }; } }\nfunction main(): i32 { var p: P = P.zero(); return p.x; }\n"},
 		// #10094, the BUNDLED half. E001's missing-`core/map` rule reads the
 		// program's import closure, which only exists here because

@@ -208,7 +208,7 @@ function use_error(value: i32, block: i32, pos: i32, f: ssa.SFunc, dependencies:
 // verification remain separate obligations of that planner's typed input.
 pub function analyze(f: ssa.SFunc, dependencies: i32[][]): ssalive.Flow {
     var why: string = verify(f, dependencies);
-    if (why != "") { return ssalive.Flow { ok: false, why: why, words: 0, live_in: [], live_out: [] }; }
+    if (why != "") { return ssalive.Flow { ok: false, why: why, words: 0, live_in: [], live_out: [], at: [] }; }
     return ssalive.compute(f, dependencies);
 }
 

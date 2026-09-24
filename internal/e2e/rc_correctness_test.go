@@ -4658,6 +4658,103 @@ function main(): i32 {
 }`,
 	},
 	{
+		// `x = y` where the list declaring y ends without reading it again
+		// moves y into x (computeOverwriteMoves): a loop-body string with a
+		// continue and a break after the move, the move inside if/else-if
+		// arms of the declaring list, an array, and an early return. A source
+		// with a borrowed view keeps the copy: moving it would let the next
+		// write to x free the box the view still reads.
+		name: "scope_dead_move",
+		src: `
+function body(k: string): i32 {
+    var b: string = "";
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) {
+        i = i + 1;
+        var a: string = "d" + k + b;
+        b = a;
+        if (b.len() > 30) {
+            b = "";
+            continue;
+        }
+        if (i == 45) {
+            break;
+        }
+        total = total + b.len();
+    }
+    return total + b.len();
+}
+function arm(k: string): i32 {
+    var cur: string = "";
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) {
+        var line: string = "l" + k;
+        if (i % 3 == 0) {
+            line = line + cur;
+            cur = line;
+        } else if (i % 3 == 1) {
+            cur = line;
+        } else {
+            cur = "o";
+        }
+        total = total + cur.len();
+        i = i + 1;
+    }
+    return total;
+}
+function arrs(k: string): i32 {
+    var b: i32[] = [];
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) {
+        var a: i32[] = b.append(k.len());
+        b = a;
+        total = total + b.len();
+        i = i + 1;
+    }
+    return total;
+}
+function early(k: string, stop: i32): i32 {
+    var b: string = "";
+    var i: i32 = 0;
+    while (i < 50) {
+        var a: string = "e" + k + b;
+        b = a;
+        if (i == stop) {
+            return b.len();
+        }
+        i = i + 1;
+    }
+    return b.len();
+}
+function viewed(k: string): i32 {
+    var prev: i32[] = [];
+    var n: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3) {
+        var src: i32[] = [k.len(), 2, 3];
+        var v: i32[] = src;
+        prev = src;
+        prev = [k.len()];
+        var w: i32[] = [100, 200, 300];
+        n = n + v[0] + prev.len() + w.len();
+        i = i + 1;
+    }
+    return n;
+}
+function main(): i32 {
+    var bad: i32 = 0;
+    if (body("7") != 662) { bad = bad + 1; }
+    if (arm("7") != 100) { bad = bad + 2; }
+    if (arrs("7") != 1275) { bad = bad + 4; }
+    if (early("7", 10) != 22) { bad = bad + 8; }
+    if (viewed("7") != 15) { bad = bad + 16; }
+    return bad + __rc_underflow_count();
+}`,
+	},
+	{
 		// ARRAY-BEARING cursor struct (Par-shaped — the self-host parser's)
 		// threaded through `(value, cursor)` tuple returns. The param is
 		// consumed-promoted (it is reassigned) but borrow-taint keeps it

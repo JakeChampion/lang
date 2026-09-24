@@ -573,20 +573,28 @@ function arm_expr_value(body: ast.Stmt[], v: string, depth: i32): string {
 // right, which is what keeps `a - (b - c)` parenthesised and `(a - b) - c`
 // bare.
 function print_expr_prec(e: ast.Expr, parent_prec: i32, depth: i32): string {
+    var (text, _) = print_expr_c(e, parent_prec, depth, empty_fmt());
+    return text;
+}
+
+// print_expr_c is print_expr_prec with the comment cursor threaded through, so a
+// bracketed list with a comment inside it can print that comment where it was
+// written (print_list_lines) instead of stranding it for the next statement.
+function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (string, Fmt) {
     match (e) {
         ast.ExprNumber(n) => {
             // A quoted literal or the unit `()` prints its spelling, escapes
             // and all — the decoded value in `text` is not what the author
             // wrote, and writing it back changes what the program means.
-            if (n.raw.len() > 0) { return n.raw; }
-            if (n.suffix.len() > 0) { return n.text + n.suffix; }
-            return n.text;
+            if (n.raw.len() > 0) { return (n.raw, f); }
+            if (n.suffix.len() > 0) { return (n.text + n.suffix, f); }
+            return (n.text, f);
         },
-        ast.ExprIdent(id) => { return id.name; },
-        ast.ExprString(s) => { return quote_string(s.value); },
+        ast.ExprIdent(id) => { return (id.name, f); },
+        ast.ExprString(s) => { return (quote_string(s.value), f); },
         ast.ExprBool(b) => {
-            if (b.value) { return "true"; }
-            return "false";
+            if (b.value) { return ("true", f); }
+            return ("false", f);
         },
         ast.ExprBinary(b) => {
             // A named call argument is not an operator: the parser records
@@ -597,12 +605,16 @@ function print_expr_prec(e: ast.Expr, parent_prec: i32, depth: i32): string {
             // parameter, which changes what the program computes rather than
             // only how it reads.
             if (b.op == "__named_arg") {
-                return print_expr_prec(b.left, prec_lowest(), depth) + " = " + print_expr_prec(b.right, prec_lowest(), depth);
+                var (nl, nf) = print_expr_c(b.left, prec_lowest(), depth, f);
+                var (nr, nf2) = print_expr_c(b.right, prec_lowest(), depth, nf);
+                return (nl + " = " + nr, nf2);
             }
             var p: i32 = binary_prec(b.op);
-            var inner: string = print_expr_prec(b.left, p, depth) + " " + b.op + " " + print_expr_prec(b.right, p + 1, depth);
-            if (p < parent_prec) { return "(" + inner + ")"; }
-            return inner;
+            var (bl, bf) = print_expr_c(b.left, p, depth, f);
+            var (br, bf2) = print_expr_c(b.right, p + 1, depth, bf);
+            var inner: string = bl + " " + b.op + " " + br;
+            if (p < parent_prec) { return ("(" + inner + ")", bf2); }
+            return (inner, bf2);
         },
         ast.ExprUnary(u) => {
             // A cast is a unary node whose op is `as_<type>` (parse_cast's
@@ -611,19 +623,22 @@ function print_expr_prec(e: ast.Expr, parent_prec: i32, depth: i32): string {
             // to an undefined name. It binds at its own level, above every
             // binary operator and below the postfix positions.
             if (u.op.len() > 3 && util.str_has_prefix(u.op, "as_")) {
-                var cinner: string = print_expr_prec(u.operand, prec_cast(), depth) + " as " + slice_unchecked(u.op, 3, u.op.len());
-                if (parent_prec >= prec_cast()) { return "(" + cinner + ")"; }
-                return cinner;
+                var (co, cf) = print_expr_c(u.operand, prec_cast(), depth, f);
+                var cinner: string = co + " as " + slice_unchecked(u.op, 3, u.op.len());
+                if (parent_prec >= prec_cast()) { return ("(" + cinner + ")", cf); }
+                return (cinner, cf);
             }
             // The `?` try operator is a POSTFIX form the parser records as the
             // unary op `try_` (parse_postfix). Printing it as a prefix gave
             // `try_first(xs)` — a call to an undefined name.
             if (u.op == "try_") {
-                return print_expr_prec(u.operand, prec_unary(), depth) + "?";
+                var (to, tf) = print_expr_c(u.operand, prec_unary(), depth, f);
+                return (to + "?", tf);
             }
-            var uinner: string = u.op + print_expr_prec(u.operand, prec_unary(), depth);
-            if (parent_prec >= prec_unary()) { return "(" + uinner + ")"; }
-            return uinner;
+            var (uo, uf) = print_expr_c(u.operand, prec_unary(), depth, f);
+            var uinner: string = u.op + uo;
+            if (parent_prec >= prec_unary()) { return ("(" + uinner + ")", uf); }
+            return (uinner, uf);
         },
         ast.ExprCall(c) => {
             // A match- or if-EXPRESSION reaches here as the 0-arg IIFE
@@ -638,33 +653,22 @@ function print_expr_prec(e: ast.Expr, parent_prec: i32, depth: i32): string {
             // it is the lambda's, not the enclosing function's), so this reads
             // the parser's tag rather than the shape.
             var blk: string = print_block_expr(c, parent_prec, depth);
-            if (blk.len() > 0) { return blk; }
+            if (blk.len() > 0) { return (blk, f); }
             // A tuple- or struct-scrutinee match in expression position routes
             // its arm values through a local rather than a `return`, so the
             // IIFE body is three statements and print_expr_iife's one-statement
             // shape does not fit it (#7089).
             var vl: string = print_value_local_iife(c, depth);
-            if (vl.len() > 0) { return vl; }
+            if (vl.len() > 0) { return (vl, f); }
             var iife: string = print_expr_iife(c, depth);
-            if (iife.len() > 0) { return iife; }
-            var out: string = print_expr_prec(c.callee, prec_primary(), depth) + "(";
-            var i: i32 = 0;
-            while (i < c.args.len()) {
-                if (i > 0) { out = out + ", "; }
-                out = out + print_expr(c.args[i], depth);
-                i = i + 1;
-            }
-            return out + ")";
+            if (iife.len() > 0) { return (iife, f); }
+            var (callee, cf) = print_expr_c(c.callee, prec_primary(), depth, f);
+            var (args, af) = print_list(c.args, ast.expr_line(e), "", depth, cf);
+            return (callee + "(" + args + ")", af);
         },
         ast.ExprArray(a) => {
-            var out: string = "[";
-            var i: i32 = 0;
-            while (i < a.elements.len()) {
-                if (i > 0) { out = out + ", "; }
-                out = out + print_expr(a.elements[i], depth);
-                i = i + 1;
-            }
-            return out + "]";
+            var (elems, af) = print_list(a.elements, a.line, "", depth, f);
+            return ("[" + elems + "]", af);
         },
         ast.ExprTuple(t) => {
             var out: string = "(";
@@ -674,10 +678,12 @@ function print_expr_prec(e: ast.Expr, parent_prec: i32, depth: i32): string {
                 out = out + print_expr(t.elements[i], depth);
                 i = i + 1;
             }
-            return out + ")";
+            return (out + ")", f);
         },
         ast.ExprIndex(x) => {
-            return print_expr_prec(x.array, prec_primary(), depth) + "[" + print_expr(x.index, depth) + "]";
+            var (xa, xf) = print_expr_c(x.array, prec_primary(), depth, f);
+            var (xi, xf2) = print_expr_c(x.index, prec_lowest(), depth, xf);
+            return (xa + "[" + xi + "]", xf2);
         },
         ast.ExprSlice(sl) => {
             // An omitted bound is written back omitted. The AST stands a
@@ -688,25 +694,34 @@ function print_expr_prec(e: ast.Expr, parent_prec: i32, depth: i32): string {
             if (!sl.open_start) { lo = print_expr(sl.start, depth); }
             var hi: string = "";
             if (!sl.open_end) { hi = print_expr(sl.end, depth); }
-            return print_expr_prec(sl.array, prec_primary(), depth) + "[" + lo + ":" + hi + "]";
+            return (print_expr_prec(sl.array, prec_primary(), depth) + "[" + lo + ":" + hi + "]", f);
         },
         ast.ExprStructLit(sl) => {
-            var out: string = sl.type_name + " { ";
-            var first: boolean = true;
+            // The spread base, when there is one, is the list's first element.
+            var vals: ast.Expr[] = [];
+            var prefixes: string[] = [];
             if (sl.has_base) {
-                out = out + "..." + print_expr(sl.base, depth);
-                first = false;
+                vals = vals.append(sl.base);
+                prefixes = prefixes.append("...");
             }
             var i: i32 = 0;
             while (i < sl.field_names.len()) {
-                if (!first) { out = out + ", "; }
-                out = out + sl.field_names[i] + ": " + print_expr(sl.field_values[i], depth);
-                first = false;
+                vals = vals.append(sl.field_values[i]);
+                prefixes = prefixes.append(sl.field_names[i] + ": ");
                 i = i + 1;
             }
-            return out + " }";
+            var lns: i32[] = elem_lines(vals, sl.line);
+            if (vals.len() > 0 && inner_comment_pending(f, sl.line, lns[lns.len() - 1])) {
+                var (lines, lf) = print_list_lines(vals, lns, prefixes, depth, f);
+                return (sl.type_name + " {" + lines + indent_str(depth) + "}", lf);
+            }
+            var (flds, ff) = print_list_flat(vals, prefixes, depth, f);
+            return (sl.type_name + " { " + flds + " }", ff);
         },
-        ast.ExprFieldAccess(fa) => { return print_expr_prec(fa.obj, prec_primary(), depth) + "." + fa.field; },
+        ast.ExprFieldAccess(fa) => {
+            var (fo, ff) = print_expr_c(fa.obj, prec_primary(), depth, f);
+            return (fo + "." + fa.field, ff);
+        },
         ast.ExprLambda(lm) => {
             // Every lambda is an arrow: `(p: T): R => body`. The return type
             // prints only when written — the arrow form does not have to state
@@ -733,8 +748,8 @@ function print_expr_prec(e: ast.Expr, parent_prec: i32, depth: i32): string {
             // The body runs as far right as it can, so any context that
             // continues with a tighter operator needs parens. An assignment's
             // RHS is terminal, hence `>` not `>=`.
-            if (parent_prec > prec_assign()) { return "(" + out + ")"; }
-            return out;
+            if (parent_prec > prec_assign()) { return ("(" + out + ")", f); }
+            return (out, f);
         },
         ast.ExprFString(fs) => {
             var out: string = "f\"";
@@ -747,7 +762,7 @@ function print_expr_prec(e: ast.Expr, parent_prec: i32, depth: i32): string {
                 }
                 i = i + 1;
             }
-            return out + "\"";
+            return (out + "\"", f);
         },
         ast.ExprMapLit(ml) => {
             var out: string = "Map {";
@@ -757,12 +772,94 @@ function print_expr_prec(e: ast.Expr, parent_prec: i32, depth: i32): string {
                 out = out + " " + print_expr(ml.keys[i], depth) + ": " + print_expr(ml.vals[i], depth);
                 i = i + 1;
             }
-            return out + " }";
+            return (out + " }", f);
         },
-        ast.ExprUnknown(u) => { return "/*unknown:" + u.kind + "*/"; },
-        ast.ExprZero(z) => { return "/*zero:" + z.type_name + "*/"; }
+        ast.ExprUnknown(u) => { return ("/*unknown:" + u.kind + "*/", f); },
+        ast.ExprZero(z) => { return ("/*zero:" + z.type_name + "*/", f); }
     }
-    return "/*unhandled-expr*/";
+    return ("/*unhandled-expr*/", f);
+}
+
+// elem_line is the source line a list element starts on. An index or slice
+// takes its base's, and a node that records no line (a boolean literal) takes
+// `prev`, the line of the element before it.
+function elem_line(e: ast.Expr, prev: i32): i32 {
+    var ln: i32 = 0;
+    match (e) {
+        ast.ExprIndex(ix) => { ln = elem_line(ix.array, prev); },
+        ast.ExprSlice(sl) => { ln = elem_line(sl.array, prev); },
+        _ => { ln = ast.expr_line(e); }
+    }
+    if (ln == 0) { return prev; }
+    return ln;
+}
+
+// elem_lines is elem_line for every element of a list opened on `open_line`.
+function elem_lines(elems: ast.Expr[], open_line: i32): i32[] {
+    var out: i32[] = [];
+    var prev: i32 = open_line;
+    for x in elems {
+        prev = elem_line(x, prev);
+        out = out.append(prev);
+    }
+    return out;
+}
+
+// print_list renders a call's arguments or an array's elements, without the
+// brackets: one line when no comment sits inside the list, and print_list_lines'
+// form, closed at `depth`'s indent, when one does.
+function print_list(elems: ast.Expr[], open_line: i32, prefix: string, depth: i32, f: Fmt): (string, Fmt) {
+    var prefixes: string[] = [];
+    for x in elems { prefixes = prefixes.append(prefix); }
+    var lns: i32[] = elem_lines(elems, open_line);
+    if (elems.len() > 0 && inner_comment_pending(f, open_line, lns[lns.len() - 1])) {
+        var (lines, lf) = print_list_lines(elems, lns, prefixes, depth, f);
+        return (lines + indent_str(depth), lf);
+    }
+    return print_list_flat(elems, prefixes, depth, f);
+}
+
+function print_list_flat(elems: ast.Expr[], prefixes: string[], depth: i32, f: Fmt): (string, Fmt) {
+    var out: string = "";
+    var g: Fmt = f;
+    var i: i32 = 0;
+    while (i < elems.len()) {
+        if (i > 0) { out = out + ", "; }
+        var (t, g2) = print_expr_c(elems[i], prec_lowest(), depth, g);
+        out = out + prefixes[i] + t;
+        g = g2;
+        i = i + 1;
+    }
+    return (out, g);
+}
+
+// print_list_lines prints a list one SOURCE line per output line: elements that
+// shared a line in the source share one here, each line's leading comments go
+// above it and its trailing comment after its comma (#10143). It starts with the
+// newline after the opener and ends with the one before the closer.
+function print_list_lines(elems: ast.Expr[], lns: i32[], prefixes: string[], depth: i32, f: Fmt): (string, Fmt) {
+    var out: string = "\n";
+    var g: Fmt = f;
+    var i: i32 = 0;
+    while (i < elems.len()) {
+        var ln: i32 = lns[i];
+        var (lead, g1) = drain_leading(g, ln, depth + 1);
+        out = out + lead + indent_str(depth + 1);
+        g = g1;
+        var j: i32 = i;
+        while (j < elems.len() && (j == i || lns[j] == ln)) {
+            if (j > i) { out = out + ", "; }
+            var (t, g2) = print_expr_c(elems[j], prec_lowest(), depth + 1, g);
+            out = out + prefixes[j] + t;
+            g = g2;
+            j = j + 1;
+        }
+        var (trail, g3) = emit_trailing(g, ln);
+        out = out + "," + trail + "\n";
+        g = g3;
+        i = j;
+    }
+    return (out, g);
 }
 
 // =================== STATEMENTS ====================
@@ -794,9 +891,27 @@ function indent_str(depth: i32): string {
 // `comments` must be in source order, which is how tokenize_full returns them.
 // A cursor that never moves is the no-comment case, so print_module keeps
 // working by passing an empty list.
-struct Fmt { comments: lexer.Comment[], ci: i32, blanks: boolean[] }
+struct Fmt { comments: lexer.Comment[], ci: i32, blanks: boolean[], spans: parser.BlockSpans, si: i32 }
 
-function empty_fmt(): Fmt { return Fmt { comments: [], ci: 0, blanks: [] }; }
+function empty_fmt(): Fmt { return Fmt { comments: [], ci: 0, blanks: [], spans: no_spans(), si: 0 }; }
+
+function no_spans(): parser.BlockSpans { return parser.BlockSpans { opens: [], firsts: [], closes: [] }; }
+
+// take_span finds the braces around a block whose body starts on source line
+// `first`: the next unclaimed span that starts a body there. Blocks print in
+// source order, so the cursor only moves forward; (0, 0) and an unmoved cursor
+// when none matches, as for a block a desugar built.
+function take_span(f: Fmt, first: i32): (i32, i32, Fmt) {
+    if (first <= 0) { return (0, 0, f); }
+    var i: i32 = f.si;
+    while (i < f.spans.firsts.len()) {
+        if (f.spans.firsts[i] == first) {
+            return (f.spans.opens[i], f.spans.closes[i], Fmt { ...f, si: i + 1 });
+        }
+        i = i + 1;
+    }
+    return (0, 0, f);
+}
 
 // blank_at reports whether source line `line` was blank. Out-of-range lines
 // (line 0, or past the end) are not blank.
@@ -876,13 +991,6 @@ function drain_all(f: Fmt, depth: i32): (string, Fmt) {
     return (out, g);
 }
 
-// drain_before flushes the comments written above `limit` — a block's closing
-// brace, whose line the AST does not record, so the bound is the line of the
-// construct that FOLLOWS the block instead.
-function drain_before(f: Fmt, limit: i32, depth: i32): (string, Fmt) {
-    return drain_leading(f, limit, depth);
-}
-
 // print_block renders `{ … }` and is the one place statements are drained
 // against: a comment above a statement, a blank line the author left before
 // it, and whatever is still queued when the block ends.
@@ -891,10 +999,17 @@ function print_block(body: ast.Stmt[], depth: i32, f: Fmt): (string, Fmt) {
     // inside one would force it multi-line for a comment with nothing to
     // attach to; the parent's drain picks those up instead.
     if (body.len() == 0) { return ("{}", f); }
-    var out: string = "{\n";
-    var g: Fmt = f;
+    var (open_line, close_line, g) = take_span(f, ast.stmt_line(body[0]));
+    var out: string = "{";
+    // A comment on the opening brace's line stays there: on a one-line block
+    // it annotated the whole block, not the statement printed first.
+    if (open_line > 0) {
+        var (tc, gt) = emit_trailing(g, open_line);
+        out = out + tc;
+        g = gt;
+    }
+    out = out + "\n";
     var i: i32 = 0;
-    var last_line: i32 = 0;
     while (i < body.len()) {
         var ln: i32 = ast.stmt_line(body[i]);
         // Never a blank just inside the opening brace.
@@ -907,8 +1022,14 @@ function print_block(body: ast.Stmt[], depth: i32, f: Fmt): (string, Fmt) {
         var (body_text, g2) = print_stmt(body[i], depth + 1, g);
         out = out + body_text;
         g = g2;
-        if (ln > last_line) { last_line = ln; }
         i = i + 1;
+    }
+    // A comment above the closing brace is the block's own last line; left
+    // queued it drains into whatever follows the brace, an `else` included.
+    if (close_line > 0) {
+        var (tail, gc) = drain_leading(g, close_line, depth + 1);
+        out = out + tail;
+        g = gc;
     }
     out = out + indent_str(depth) + "}";
     return (out, g);
@@ -1575,7 +1696,7 @@ struct ForCSugar { init: ast.Stmt[], cond: ast.Expr, step: ast.Stmt[], body: ast
 
 function no_c_for(): ForCSugar {
     var none: ast.Stmt[] = [];
-    return ForCSugar { init: none, cond: ast.ExprBool { value: true }, step: none, body: none, label: "", ok: false };
+    return ForCSugar { init: none, cond: ast.ExprBool { value: true, line: 0, col: 0 }, step: none, body: none, label: "", ok: false };
 }
 
 // as_c_for recognises the C-style-for desugar and takes the three header
@@ -1638,7 +1759,7 @@ function as_c_for(ifs: ast.StmtIf): ForCSugar {
     if (!assign_ok) { return no_c_for(); }
 
     // wbody[2]: `if (!(COND)) { break; }`.
-    var cond: ast.Expr = ast.ExprBool { value: true };
+    var cond: ast.Expr = ast.ExprBool { value: true, line: 0, col: 0 };
     var cond_ok: boolean = false;
     match (wbody[2]) {
         ast.StmtIf(c) => {
@@ -2009,7 +2130,8 @@ function print_nested_func_decl(v: ast.StmtVar, depth: i32, f: Fmt): (string, Fm
         },
         _ => { }
     }
-    return ("var " + v.name + " = " + print_expr(v.init, depth) + ";", f);
+    var (vi, vf) = print_expr_c(v.init, prec_lowest(), depth, f);
+    return ("var " + v.name + " = " + vi + ";", vf);
 }
 
 // print_stmt_body is the statement text with no indent and no newline.
@@ -2045,7 +2167,8 @@ function print_stmt_body(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
             }
             var ann: string = "";
             if (v.type_name.len() > 0) { ann = ": " + v.type_name; }
-            return ("var " + written_name(v.name) + ann + " = " + print_expr(v.init, depth) + ";", f);
+            var (ti, tf) = print_expr_c(v.init, prec_lowest(), depth, f);
+            return ("var " + written_name(v.name) + ann + " = " + ti + ";", tf);
         },
         ast.StmtReturn(r) => {
             // A void `return;` parses with no value expression, which reaches
@@ -2058,9 +2181,13 @@ function print_stmt_body(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
             // rest of the block into a lambda.
             var us: UseSugar = as_use(r.value);
             if (us.ok) { return print_use(us, r.line, depth, f); }
-            return ("return " + print_expr(r.value, depth) + ";", f);
+            var (rv, rf) = print_expr_c(r.value, prec_lowest(), depth, f);
+            return ("return " + rv + ";", rf);
         },
-        ast.StmtExpr(x) => { return (print_expr(x.value, depth) + ";", f); },
+        ast.StmtExpr(x) => {
+            var (xv, xf) = print_expr_c(x.value, prec_lowest(), depth, f);
+            return (xv + ";", xf);
+        },
         ast.StmtIf(ifs) => {
             // A C-style `for` reaches the printer as its desugar — the parser
             // lowers it at parse time and the Stmt union has no node for it
@@ -2089,7 +2216,10 @@ function print_stmt_body(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
             if (w.is_loop) { return (loop_label(w.label) + "loop " + wb, wg); }
             return (loop_label(w.label) + "while (" + print_expr(w.cond, depth) + ") " + wb, wg);
         },
-        ast.StmtAssign(a) => { return (a.target + " = " + print_expr(a.value, depth) + ";", f); },
+        ast.StmtAssign(a) => {
+            var (av, af) = print_expr_c(a.value, prec_lowest(), depth, f);
+            return (a.target + " = " + av + ";", af);
+        },
         ast.StmtMatch(m) => {
             // `let … else` is parsed as a two-arm match whose FIRST arm holds the
             // rest of the enclosing block (that is where the bindings are live),
@@ -2316,7 +2446,7 @@ function print_struct_decl(sd: parser.StructDecl, flines: parser.FieldLines[], f
 // function is exactly what a const reference lowers to) but native rejects —
 // it has no such rule, so `NAME + 1` there is an operator applied to a
 // function value.
-function print_const_decl(fd: parser.FuncDecl): string {
+function print_const_decl(fd: parser.FuncDecl, f: Fmt): (string, Fmt) {
     var out: string = "";
     if (fd.is_pub) { out = out + "pub "; }
     if (fd.is_package) { out = out + "pub(package) "; }
@@ -2325,12 +2455,15 @@ function print_const_decl(fd: parser.FuncDecl): string {
     var i: i32 = 0;
     while (i < fd.body.len()) {
         match (fd.body[i]) {
-            ast.StmtReturn(r) => { return out + " = " + print_expr(r.value, 0) + ";\n"; },
+            ast.StmtReturn(r) => {
+                var (cv, cf) = print_expr_c(r.value, prec_lowest(), 0, f);
+                return (out + " = " + cv + ";\n", cf);
+            },
             _ => { }
         }
         i = i + 1;
     }
-    return out + ";\n";
+    return (out + ";\n", f);
 }
 
 // enum_index returns the position of the enum named `name` in `enums`, or -1.
@@ -2667,17 +2800,17 @@ pub function print_module(mod: parser.Module): string {
 // against whichever declaration happened to be printed first and RELOCATE it
 // onto an unrelated one — the same reason native's Format orders by position.
 pub function format_module(mod: parser.Module, traits: parser.TraitDecl[], impls: parser.ImplDecl[], flines: parser.FieldLines[], comments: lexer.Comment[], blanks: boolean[]): string {
-    return format_module_with_inline(mod, traits, impls, flines, [], comments, blanks);
+    return format_module_with_inline(mod, traits, impls, flines, [], no_spans(), comments, blanks);
 }
 
 // The verbatim parse includes attributes that compilation does not consume.
 // Keep them beside the module, like field positions and authored impl blocks.
 pub function format_parsed(pf: parser.ParsedFmt, comments: lexer.Comment[], blanks: boolean[]): string {
-    return format_module_with_inline(pf.pmod, pf.ptraits, pf.pimpls, pf.pflines, pf.pinline, comments, blanks);
+    return format_module_with_inline(pf.pmod, pf.ptraits, pf.pimpls, pf.pflines, pf.pinline, pf.pspans, comments, blanks);
 }
 
-function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[], impls: parser.ImplDecl[], flines: parser.FieldLines[], hints: parser.FunctionInlineHint[], comments: lexer.Comment[], blanks: boolean[]): string {
-    var f: Fmt = Fmt { comments: comments, ci: 0, blanks: blanks };
+function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[], impls: parser.ImplDecl[], flines: parser.FieldLines[], hints: parser.FunctionInlineHint[], spans: parser.BlockSpans, comments: lexer.Comment[], blanks: boolean[]): string {
+    var f: Fmt = Fmt { comments: comments, ci: 0, blanks: blanks, spans: spans, si: 0 };
     // Chunk-join rather than a left fold: format_module is the whole-FILE
     // accumulator, so `out = out + decl` copies the document once per
     // declaration. `wrote` replaces the `out.len() > 0` probes, which were
@@ -2810,7 +2943,11 @@ function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[
             f = iff;
         }
         else {
-            if (mod.funcs[idxs[di]].is_const) { chunks = chunks.append(print_const_decl(mod.funcs[idxs[di]])); wrote = true; }
+            if (mod.funcs[idxs[di]].is_const) {
+                var (ctext, cf) = print_const_decl(mod.funcs[idxs[di]], f);
+                chunks = chunks.append(ctext); wrote = true;
+                f = cf;
+            }
             else {
                 var fd: parser.FuncDecl = mod.funcs[idxs[di]];
                 var has_hint: boolean = hint_cursor < hints.len()

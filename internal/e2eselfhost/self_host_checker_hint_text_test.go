@@ -131,6 +131,30 @@ function main(): i32 {
 		code:     "E003",
 		spelling: "add `.to_owned()`",
 	},
+	// An array view at an owning `T[]` sink (#9944): the message spells the
+	// view `[T]` apart from the owned `T[]` it cannot become.
+	{
+		name: "E003 array view into owned array",
+		src: `function main(): i32 {
+    var all: string[] = ["alpha", "beta", "gamma"];
+    var mid: string[] = all[1:3];
+    return mid.len();
+}`,
+		code:     "E003",
+		spelling: "cannot assign [string] to variable of type string[]",
+	},
+	// A `[T]` view of a local array returned from a `[T]` function (#9944):
+	// the hint names the two shapes that do not dangle.
+	{
+		name: "E063 view of local storage returned",
+		src: `function middle(): [string] {
+    var all: string[] = ["alpha", "beta", "gamma"];
+    return all[1:3];
+}
+function main(): i32 { return 0; }`,
+		code:     "E063",
+		spelling: "return an owned array (`T[]`) or slice a parameter instead",
+	},
 	{
 		name: "E026 wildcard arm placement",
 		src: `enum C { R, G }

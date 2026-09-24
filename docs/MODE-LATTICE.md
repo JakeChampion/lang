@@ -269,10 +269,18 @@ resolve where `view_method(xs)` does. `str` has no such gap —
 the two array namespaces is a method-surface decision, not an
 assignability one, and nothing declares a `[T]` receiver today.
 
-Self-host status: **ported.** `slice_escape_diags` /
-`slc_walk` (checker.fern:2791/2747, E063 at 2764);
-`e065_diags` / `e065_stmts` (checker.fern:7347/7246, E065 at
-7319).
+Self-host status: E063 and E065 are **ported** (`slc_walk`,
+`e065_stmts` in checker.fern). The self-host has no `{data,len}`
+view at runtime: a slice copies into an owned array, so `[T]` is
+a checker-only `view` flag on `typeinfo.TypeArray`, re-entered
+from the parser's erased spelling through `StmtVar.is_view`,
+`ParamDecl.is_view` and `FuncDecl.ret_slice` the way `str` uses
+`is_str` / `ret_str`. A slice and `.as_bytes()` are views; a view
+and an owned `T[]` convert in neither direction (E003 / E002 /
+E043 / E038) except the owned-into-`[T]` argument lend, as in
+native (#9944). Still looser than native: method resolution does
+not separate the `slice` namespace from `Array`, and a generic
+`[T]` result that goes through substitution comes back owned.
 
 ### 2.4 `@must_consume` — E067
 
