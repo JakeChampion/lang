@@ -130,8 +130,7 @@ function main(): i32 { return page(1) - 4000 + odd(1) - 4090 + ((wide(1i64) % 10
 
 // TestSelfHostI64ConstantTakesMovzFormArm64 pins the i64 constant form: a
 // literal in 0..65535 is one `mov`, anything wider keeps the literal pool,
-// and a negated one is a subtraction whose right operand is the immediate
-// while the zero it subtracts from takes the register.
+// and a small negative one, which `0i64 - 5i64` folds to, is one `mov` too.
 func TestSelfHostI64ConstantTakesMovzFormArm64(t *testing.T) {
 	runArm64ShapeCases(t, []shapeCase{
 		{
@@ -144,12 +143,12 @@ function main(): i32 { return ((small() + wide() + neg()) % 1000i64) as i32; }`,
 			has: map[string][]string{
 				"small": {`\n    mov x[0-9]+, #65535\n`},
 				"wide":  {`\n    ldr x[0-9]+, =65536\n`},
-				"neg":   {`\n    mov (x[0-9]+), #0\n    sub (x[0-9]+), \1, #5\n`},
+				"neg":   {`\n    mov x[0-9]+, #-5\n`},
 			},
 			lacks: map[string][]string{
 				"small": {`ldr x[0-9]+, =`},
 				"wide":  {`mov x[0-9]+, #65536`},
-				"neg":   {`mov x[0-9]+, #5\n`, `sub x[0-9]+, x[0-9]+, x[0-9]+`},
+				"neg":   {`ldr x[0-9]+, =`, `sub x[0-9]+`},
 			},
 		},
 	})
