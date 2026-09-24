@@ -3396,7 +3396,213 @@ function ret_typevar_arg_type(sig: FuncSig, c: ast.ExprCall, s: Scope): (typeinf
 // the box's type is what <body> promises MINUS that parameter. No source
 // identifier may hold a `$`, so only a lifted tree reaches this — and without
 // it the box types to unknown and collapses whatever expression holds it.
-function undeclared_call_type(name: string, s: Scope): typeinfo.Type {
+// builtin_sigs is the signature native registers for every surface builtin
+// and every builtin method that names no type parameter (`__method_Reader_close`,
+// receiver first), plus the `__c_callN` trampolines, spelled `name(params): result` as ast.Type renders it. The cases the call
+// typing special-cases ahead of it (print's Display argument, map_new's
+// element types, cell_new's T) are listed as native registers them all the
+// same; TestSelfHostBuiltinSigsMatch pins the list entry for entry.
+function builtin_sigs(): string[] {
+  return [
+    "__c_call0(usize): usize",
+    "__c_call0_f32(usize): f32",
+    "__c_call0_f64(usize): f64",
+    "__c_call1(usize, usize): usize",
+    "__c_call1_f32(usize, usize): f32",
+    "__c_call1_f64(usize, usize): f64",
+    "__c_call2(usize, usize, usize): usize",
+    "__c_call2_f32(usize, usize, usize): f32",
+    "__c_call2_f64(usize, usize, usize): f64",
+    "__c_call3(usize, usize, usize, usize): usize",
+    "__c_call3_f32(usize, usize, usize, usize): f32",
+    "__c_call3_f64(usize, usize, usize, usize): f64",
+    "__c_call4(usize, usize, usize, usize, usize): usize",
+    "__c_call4_f32(usize, usize, usize, usize, usize): f32",
+    "__c_call4_f64(usize, usize, usize, usize, usize): f64",
+    "__method_Reader_close(Reader): Option[IoError]",
+    "__method_Reader_dup_onto(Reader, i32): Option[IoError]",
+    "__method_Reader_fdatasync(Reader): Option[IoError]",
+    "__method_Reader_flags(Reader): Result[i64, IoError]",
+    "__method_Reader_fsync(Reader): Option[IoError]",
+    "__method_Reader_isatty(Reader): boolean",
+    "__method_Reader_read_chunk(Reader, i32): Result[string, IoError]",
+    "__method_Reader_read_line(Reader): Option[string]",
+    "__method_Reader_seek(Reader, i64, i32): Result[i64, IoError]",
+    "__method_Reader_set_window_size(Reader, i32, i32): Result[void, IoError]",
+    "__method_Reader_splice_to(Reader, Writer, i32): Result[i64, IoError]",
+    "__method_Reader_stat(Reader): Result[FileStat, IoError]",
+    "__method_Reader_syncfs(Reader): Option[IoError]",
+    "__method_Reader_termios_get(Reader): Result[i64[], IoError]",
+    "__method_Reader_termios_set(Reader, i32, i64[]): Result[void, IoError]",
+    "__method_Reader_window_size(Reader): Result[WinSize, IoError]",
+    "__method_Writer_close(Writer): Option[IoError]",
+    "__method_Writer_dup_onto(Writer, i32): Option[IoError]",
+    "__method_Writer_fdatasync(Writer): Option[IoError]",
+    "__method_Writer_flags(Writer): Result[i64, IoError]",
+    "__method_Writer_fsync(Writer): Option[IoError]",
+    "__method_Writer_isatty(Writer): boolean",
+    "__method_Writer_seek(Writer, i64, i32): Result[i64, IoError]",
+    "__method_Writer_stat(Writer): Result[FileStat, IoError]",
+    "__method_Writer_syncfs(Writer): Option[IoError]",
+    "__method_Writer_truncate(Writer, i64): Option[IoError]",
+    "__method_Writer_write(Writer, string): Option[IoError]",
+    "__method_Writer_write_some(Writer, string): Result[i64, IoError]",
+    "__method_string_as_bytes(string): [u8]",
+    "__method_string_len(string): i32",
+    "access(string, i32): Result[void, IoError]",
+    "args(): string[]",
+    "buf_free(usize): void",
+    "buf_len(usize): i32",
+    "buf_new(i32): usize",
+    "buf_push(usize, string): void",
+    "buf_push_byte(usize, i32): void",
+    "buf_push_expanded(usize, string, u8[]): void",
+    "buf_push_filtered(usize, string, u8[]): void",
+    "buf_push_mapped(usize, string, u8[]): void",
+    "buf_push_range(usize, string, i32, i32): void",
+    "buf_push_u64(usize, u64): void",
+    "buf_take(usize): string",
+    "cell_new(T): Cell",
+    "chdir(string): Result[void, IoError]",
+    "chmod(string, i32): Result[void, IoError]",
+    "chmod_at(string, i32, boolean): Result[void, IoError]",
+    "chown_at(string, i32, i32, boolean): Result[void, IoError]",
+    "chroot(string): Result[void, IoError]",
+    "cpu_count(): i32",
+    "create_dir(string, i32): Result[void, IoError]",
+    "create_dir_all(string): Result[void, IoError]",
+    "create_link(string, string): Result[void, IoError]",
+    "create_symlink(string, string): Result[void, IoError]",
+    "env(string): Option[string]",
+    "environ(): string[]",
+    "eprint(string): void",
+    "exit(i32): void",
+    "f32_bits(f32): i32",
+    "f32_from_bits(i32): f32",
+    "f64_bits(f64): i64",
+    "f64_from_bits(i64): f64",
+    "getcwd(): string",
+    "getegid(): u32",
+    "geteuid(): u32",
+    "getgid(): u32",
+    "getgroups(): i64[]",
+    "getuid(): u32",
+    "hostname(): string",
+    "isatty(i32): boolean",
+    "lstat(string): Result[FileStat, IoError]",
+    "map_new(i32): Map",
+    "mknod(string, i32, i32, i32): Result[void, IoError]",
+    "monotonic_ns(): i64",
+    "now_ns(): i64",
+    "now_unix_ms(): i64",
+    "open_appender(string): Result[Writer, IoError]",
+    "open_exclusive(string): Result[Writer, IoError]",
+    "open_reader(string): Result[Reader, IoError]",
+    "open_reader_with(string, i32): Result[Reader, IoError]",
+    "open_writer(string): Result[Writer, IoError]",
+    "open_writer_with(string, i32): Result[Writer, IoError]",
+    "poll(i32[], i32): i32",
+    "print(string): void",
+    "priority(): i32",
+    "proc_exec(string, string[]): i32",
+    "proc_exec_as(string, string[], string[]): i32",
+    "proc_fork(): i32",
+    "proc_waitpid(i32): i32",
+    "proc_waitpid_nohang(i32): i32",
+    "process_alive(i32): boolean",
+    "putchar(i32): void",
+    "random_bytes(i32): u8[]",
+    "random_i32(): i32",
+    "read_dir(string): Result[string[], IoError]",
+    "read_dir_all(string): Result[string[], IoError]",
+    "read_file(string): Result[string, IoError]",
+    "read_file_bytes(string): Result[u8[], IoError]",
+    "read_line(): Option[string]",
+    "read_link(string): Result[string, IoError]",
+    "remove_dir(string): Result[void, IoError]",
+    "remove_dir_all(string): Result[void, IoError]",
+    "remove_file(string): Result[void, IoError]",
+    "rename(string, string): Result[void, IoError]",
+    "rlimit_nofile(): i64",
+    "set_file_times(string, i64, i64, i64, i64, i32): Result[void, IoError]",
+    "set_priority(i32): Result[void, IoError]",
+    "set_process_group(i32, i32): Result[void, IoError]",
+    "set_window_size(i32, i32, i32): Result[void, IoError]",
+    "setgid(i64): Result[void, IoError]",
+    "setgroups(i64[]): Result[void, IoError]",
+    "setuid(i64): Result[void, IoError]",
+    "signal_default(i32): i32",
+    "signal_disposition(i32): i32",
+    "signal_ignore(i32): i32",
+    "signal_mask(i32, i64): i64",
+    "signal_send(i32, i32): Result[void, IoError]",
+    "sleep_ms(i64): void",
+    "sleep_ns(i64): void",
+    "slice_unchecked(string, i32, i32): str",
+    "stat(string): Result[FileStat, IoError]",
+    "statfs(string): Result[FsStat, IoError]",
+    "stderr(): Writer",
+    "stdin(): Reader",
+    "stdout(): Writer",
+    "strbuf_append(string): void",
+    "strbuf_reset(): void",
+    "strbuf_take(): string",
+    "string_from_bytes_unchecked(u8[]): string",
+    "subprocess(string, string[], string): ProcessResult",
+    "sync(): void",
+    "target_arch(): string",
+    "target_os(): string",
+    "tcp_accept(i32): i32",
+    "tcp_close(i32): i32",
+    "tcp_connect(i32, i32): i32",
+    "tcp_listen(i32): i32",
+    "tcp_local_port(i32): i32",
+    "tcp_pollable(i32): i32",
+    "tcp_recv(i32, i32): u8[]",
+    "tcp_send(i32, string): i32",
+    "temp_dir(string): Result[string, IoError]",
+    "termios_get(i32): Result[i64[], IoError]",
+    "termios_set(i32, i32, i64[]): Result[void, IoError]",
+    "timer_fd(i32): i32",
+    "truncate(string, i64): Result[void, IoError]",
+    "udp_send(string, i32, string): i32",
+    "umask(i32): i32",
+    "uname_field(i32): string",
+    "wasm_block(i32): i32",
+    "wasm_poll(i32[]): i32",
+    "wasm_pollable_drop(i32): i32",
+    "wasm_timer_pollable(i64): i32",
+    "window_size(i32): Result[WinSize, IoError]",
+    "write(string): void",
+    "write_file(string, string): Result[void, IoError]",
+    "write_file_exec(string, string): Result[void, IoError]"
+  ];
+}
+
+// builtin_sig is `name`'s signature from builtin_sigs() as a TypeFunc, or
+// unknown when no surface builtin has that name.
+function builtin_sig(name: string): typeinfo.Type {
+  var head: string = name + "(";
+  for row in builtin_sigs() {
+    if (row.len() > head.len() && slice_unchecked(row, 0, head.len()) == head) {
+      var close: i32 = util.index_of_sub(row, "): ");
+      var inner: string = slice_unchecked(row, head.len(), close) + "";
+      var params: typeinfo.Type[] = [];
+      if (inner.len() > 0) {
+        for p in parser.split_top_commas(inner) {
+          params = params.append(type_from_name(p));
+        }
+      }
+      return t_func(params, type_from_name(slice_unchecked(row, close + 3, row.len()) + ""));
+    }
+  }
+  return t_unknown("not a builtin: " + name);
+}
+
+function undeclared_call_type(name: string, s: Scope, argc: i32): typeinfo.Type {
+  if let typeinfo.TypeFunc(bf) = builtin_sig(name) {
+    if (bf.param_types.len() == argc) { return bf.ret_type; }
+  }
   var body: string = parser.mkclo_body(name);
   if (body.len() == 0 || !s.has_sig(body)) {
     return t_unknown("undefined function: " + name);
@@ -3437,6 +3643,16 @@ function t_func_after_env(sig: FuncSig): typeinfo.Type {
 // Extracted verbatim from check_expr's ExprCall arm to keep check_expr
 // under the self-host oversized-function compile threshold (#2720); the
 // body is self-contained on c + s.
+// builtin_ctor_type types `Some(x)` as `Option[type of x]`, so a match on the
+// value types its payload. Like native, only a payload that settles every type
+// argument does: `Ok(x)` leaves the error type open, and stays `Result`.
+function builtin_ctor_type(en: string, name: string, c: ast.ExprCall, s: Scope): typeinfo.Type {
+  if (name == "Some" && c.args.len() == 1) {
+    return t_union_g(en, [check_expr(c.args[0], s)]);
+  }
+  return t_union(en);
+}
+
 function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
   // A desugared value if/match-expression is a 0-arg call of a
   // 0-param lambda whose single-statement body is a StmtIf / StmtMatch
@@ -3727,6 +3943,9 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
           }
           return mt.value;
         }
+        if (name == "get" && c.args.len() == 1) {
+          return t_union_g("Option", [mt.value]);
+        }
         if (name == "has") {
           if (c.args.len() != 1) {
             return t_unknown("map.has: 1 arg");
@@ -3780,6 +3999,9 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
     }
     var msig: MethodSig = s.lookup_method(name, recv_type_name);
     if (msig.name.len() == 0) {
+      if let typeinfo.TypeFunc(bm) = builtin_sig("__method_" + recv_type_name + "_" + name) {
+        if (bm.param_types.len() == c.args.len() + 1) { return bm.ret_type; }
+      }
       // A closure-FIELD call `h.f(args)`: no method `f`, but the struct
       // declares a fn-typed field `f` — the call yields the field's declared
       // return (#5986). No arity or argument check: a StructFieldDecl
@@ -3897,10 +4119,10 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
     ctor_enum = mx_builtin_enum_of(name);
   }
   if (ctor_enum.len() > 0) {
-    return t_union(ctor_enum);
+    return builtin_ctor_type(ctor_enum, name, c, s);
   }
   if (!s.has_sig(name)) {
-    return undeclared_call_type(name, s);
+    return undeclared_call_type(name, s, c.args.len());
   }
   var sig: FuncSig = s.lookup_sig(name);
   if (c.args.len() != sig.param_types.len()) {
@@ -5671,15 +5893,12 @@ function check_func_body(fd: parser.FuncDecl, s: Scope): boolean {
   // and already skip opaque-generic param types when flagging E038 / E003 —
   // so genuine errors are unaffected; only the uncoded over-reject signal is
   // suppressed for generic bodies. Non-generic bodies keep the strict check.
-  var generic: boolean = fd.type_params.len() > 0 || fd.type_param_count > 0;
-  // A generic-RECEIVER method (`function (b: Box[T]) get(): T`) binds its
-  // type parameters through the receiver spelling, not the method's own
-  // `[...]` list, so type_param_count is 0 — yet its body operates on
-  // opaque-typed values (`b.v` is `T` → unknown) exactly like a generic
-  // function's. Detect it: the resolved receiver type carries an unknown
-  // component (the erased `[T]`), so treat the body as generic and suppress
-  // the uncoded over-reject, the same way a `[T]` function does (#4346
-  // piece 2). A concrete receiver resolves without unknown and stays strict.
+  var generic: boolean = func_scope_tparams(fd).len() > 0 || fd.type_param_count > 0;
+  // A generic-RECEIVER method (`function (o: Option[T]) unwrap_or(f: T): T`)
+  // binds its type parameters through the receiver spelling, which
+  // func_scope_tparams reads. A receiver spelling it does not read is still
+  // generic when the resolved type carries an unknown component (the erased
+  // `[T]`); a concrete receiver resolves without one and stays strict.
   if (!generic && fd.receiver_type.len() > 0) {
     if (type_contains_unknown(s.resolve_type(fd.receiver_type))) {
       generic = true;
