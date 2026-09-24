@@ -32408,7 +32408,8 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     // A tuple holding a map-group box at an element releases it before the
     // array sweep below frees the tuple box it is read through (#7235).
     if (map_groups_present(st)) { st = emit_map_group_tuple_releases(st, keeps); }
-    // `own` struct params this frame still owns (own_struct_param_release_rows_of).
+    // `own` struct and string params this frame still owns
+    // (own_struct_param_release_rows_of, own_string_param_release_rows_of).
     // A donating reuse site zeroed the slot, and both releases are null-safe.
     var opi2: i32 = 0;
     while (opi2 < st.frame.n_params) {
@@ -32419,6 +32420,8 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
                 st = st.release(opi2, "__fern_rc_dec", "own-param-exit");
             } else if (reclaim_has(st.frame.reclaimable_names, "OWNRELB:", opnm)) {
                 st = st.release(opi2, "__fern_rc_dec", "own-param-exit-box");
+            } else if (reclaim_has(st.frame.reclaimable_names, "OWNRELS:", opnm)) {
+                st = st.release(opi2, "__fern_str_free", "own-str-param-exit");
             } else if (owned_scalar_array_slot(st, opi2) && !slot_list_has(st.frame.moved_elided, opi2)) {
                 st = st.release(opi2, "__fern_rc_dec", "own-array-param-exit");
             }
@@ -32915,15 +32918,17 @@ function field_type_is_reclaimable_ptr(t: string): boolean {
 // return-transfer retain for structs — so eliding this exit's release IS the
 // move, the same accounting returned_moved_arr_slots applies to a returned
 // array local. Without it the caller's fresh-ret release and the OWNREL row
-// are two claims on one box. Scoped to struct params carrying a release row,
-// so array params and every other keep consumer are unaffected (#8628).
+// are two claims on one box. Scoped to struct and string params carrying a
+// release row, so array params and every other keep consumer are unaffected
+// (#8628).
 function returned_own_struct_param_slot(e: ast.Expr, s: LowerState, acc: i32[]): i32[] {
     match (e) {
         ast.ExprIdent(id) => {
             var sl: i32 = s.slot_of(id.name);
             if (sl < 0 || sl >= s.frame.n_params) { return acc; }
             if (!reclaim_has(s.frame.reclaimable_names, "OWNREL:", id.name)
-                && !reclaim_has(s.frame.reclaimable_names, "OWNRELB:", id.name)) { return acc; }
+                && !reclaim_has(s.frame.reclaimable_names, "OWNRELB:", id.name)
+                && !reclaim_has(s.frame.reclaimable_names, "OWNRELS:", id.name)) { return acc; }
             if (slot_list_has(acc, sl)) { return acc; }
             return acc.append(sl);
         },
@@ -38065,6 +38070,12 @@ function body_has_nonfreshrecv_str_return_reg(stmts: ast.Stmt[], recv: string, r
 function str_return_is_fresh(e: ast.Expr, body: ast.Stmt[], params: ast.ParamDecl[]): boolean {
     match (e) {
         ast.ExprString(_) => { return true; },
+        // An `own` string param handed straight back: the caller moved its
+        // reference in, and the release row's exit elision hands the same one back.
+        ast.ExprIdent(id) => {
+            if (own_str_param_moved_out(id.name, body, params)) { return true; }
+            return str_local_binding_is_fresh(e);
+        },
         // `n.to_string()` on a provably SCALAR receiver is the builtin
         // decimal-text producer — always a fresh box. is_fresh_str_temp has
         // credited it since #4353 and its comment names this predicate as the
@@ -38090,6 +38101,20 @@ function str_return_is_fresh(e: ast.Expr, body: ast.Stmt[], params: ast.ParamDec
     }
     return false;
 }
+// own_str_param_moved_out reports whether `name` is an `own` string param that
+// own_string_param_release_rows_of would grant a row with no borrowable callee,
+// so its bare return is the only reference leaving the frame.
+function own_str_param_moved_out(name: string, body: ast.Stmt[], params: ast.ParamDecl[]): boolean {
+    for pd in params {
+        if (pd.name != name) { continue; }
+        if (!pd.own || pd.type_name != "string") { return false; }
+        if (local_decl_count(body, name) != 0 || util.index_of_str(body_assign_targets(body), name) >= 0) { return false; }
+        var none: string[] = [];
+        return !body_unsafe_for_alias_ret_ok(body, name, none, none, none, true);
+    }
+    return false;
+}
+
 // str_fresh_ret_fns_of: bare NAMES of FREE functions (no receiver) whose return is
 // ALWAYS a freshly-allocated string — so `var r = f(..)` owns a fresh box, never an
 // alias of a borrowed arg / field / literal. Only free functions: a method key
@@ -60133,9 +60158,10 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
         var oupi: i32 = 0;
         while (oupi < oup.len()) { reclaim = reclaim.append("SAREUSE:" + oup[oupi]); oupi = oupi + 1; }
     }
-    // An `own` struct param this frame still holds at exit is released by the
-    // sweep ("OWNREL:" deep / "OWNRELB:" box-only).
+    // An `own` struct or string param this frame still holds at exit is
+    // released by the sweep ("OWNREL:" deep / "OWNRELB:" box-only / "OWNRELS:").
     reclaim = append_all(reclaim, own_struct_param_release_rows_of(fn, asg_targets, structs, sg.strfld_ok_types, sg.borrowable_params, sg.recv_borrow_fns, sg.handback_params, oup));
+    reclaim = append_all(reclaim, own_string_param_release_rows_of(fn, asg_targets, sg.borrowable_params, sg.recv_borrow_fns));
     // #6713: seed the frame-allocated string VIEW set as "VIEWFRAME:<name>" —
     // the slice-bound locals whose every use borrows the view (view_frame_names_of).
     // Prefix-tagged like the registries above; inert for every other
@@ -64949,6 +64975,24 @@ function own_struct_param_release_rows_of(fn: parser.FuncDecl, reassigned: strin
             || optstruct_body_moves_field(fn.body, nm, ty, structs, borrowable);
         if (moved) { out = out.append("OWNRELB:" + nm); }
         else { out = out.append("OWNREL:" + nm); }
+    }
+    return out;
+}
+
+// own_string_param_release_rows_of names the `own` string parameters this frame
+// still owns at every exit, "OWNRELS:<name>", under the struct rows' gates: never
+// shadowed, never reassigned, and never aliased, stored, passed on or captured.
+// A bare `return p` is the move, and that exit elides the release
+// (returned_own_struct_param_slot).
+function own_string_param_release_rows_of(fn: parser.FuncDecl, reassigned: string[], borrowable: string[], recv_borrow: string[]): string[] {
+    var out: string[] = [];
+    for pd in fn.params {
+        var nm: string = pd.name;
+        if (!pd.own || pd.type_name != "string") { continue; }
+        if (local_decl_count(fn.body, nm) != 0 || util.index_of_str(reassigned, nm) >= 0) { continue; }
+        var no_alias_ok: string[] = [];
+        if (body_unsafe_for_alias_ret_ok(fn.body, nm, borrowable, recv_borrow, no_alias_ok, true)) { continue; }
+        out = out.append("OWNRELS:" + nm);
     }
     return out;
 }
