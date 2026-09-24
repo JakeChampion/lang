@@ -356,7 +356,7 @@ func (b *builder) freshOwnedRcTempType(e ast.Expr) (ast.Type, bool) {
 //     borrowed payload uncounted.
 //   - pair-form callees: return a (tag, payload) pair, a different stack
 //     shape.
-//   - indirect (function-typed local) callees, unless every address-taken
+//   - indirect (function-typed local or field) callees, unless every address-taken
 //     function returns a box the caller owns (indirectCallsReturnOwnBox).
 func (b *builder) ownedCallResultType(e ast.Expr) (ast.Type, bool) {
 	if !ast.RcFreeEnabled {
@@ -366,11 +366,7 @@ func (b *builder) ownedCallResultType(e ast.Expr) (ast.Type, bool) {
 	if !ok {
 		return nil, false
 	}
-	id, ok := call.Callee.(*ast.Ident)
-	if !ok {
-		return nil, false
-	}
-	if _, isLocal := b.locals[id.Name]; isLocal {
+	if b.callsThroughFunctionValue(call) {
 		// Address-taken functions are never pair-form, so every indirect
 		// target has the user-function return shape; the fact below says
 		// each one hands back a box the caller owns.
@@ -382,6 +378,10 @@ func (b *builder) ownedCallResultType(e ast.Expr) (ast.Type, bool) {
 			return nil, false
 		}
 		return t, true
+	}
+	id, ok := call.Callee.(*ast.Ident)
+	if !ok {
+		return nil, false
 	}
 	if _, ok := b.info.FuncSigs[id.Name]; !ok {
 		return nil, false // not a known function (excludes variant constructors)

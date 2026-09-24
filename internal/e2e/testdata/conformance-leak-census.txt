@@ -28,6 +28,10 @@
 # field_read_off_a_call_through_a_function_field reads a field off the
 # result of a call through a function-typed struct field, which native
 # never releases (#10149). The self-host builds it clean.
+# array_literal_takes_its_sibling_float_width passes a fresh array literal
+# through a generic identity function, and native never releases a fresh
+# temp whose callee returns its parameter bare (#10140). The self-host
+# builds it clean.
 #
 # fstring_reassign_releases_old is #8697's fixture: an f-string RHS now
 # releases the destination's superseded string, so the row registers a
@@ -208,7 +212,7 @@ char_cast_receiver                                   0
 closure_adder                                        0
 closure_capture_shared_cell                          0
 closure_captures_defining_scope                      0
-closure_field_match                                  550
+closure_field_match                                  200
 closure_field_rebind                                 0
 closure_returns_composite                            0
 cmp_float_traits                                     0
@@ -282,7 +286,7 @@ f64_sqrt                                             0
 f64_tryop_widen                                      1
 factorial_print                                      0
 fib_recursion                                        0
-field_read_off_a_call_through_a_function_field       1
+field_read_off_a_call_through_a_function_field       0
 fizzbuzz                                             0
 float_arith_ops                                      0
 float_bit_reinterpret                                0
@@ -512,6 +516,7 @@ regex_replace_groups                                 77
 regex_wordbound                                      0
 result_err_path                                      1
 result_match                                         0
+result_of_a_call_through_a_function_field_is_released 0
 result_register_pair                                 0
 scalar_edge_cases                                    0
 scalar_sum_reassign                                  0

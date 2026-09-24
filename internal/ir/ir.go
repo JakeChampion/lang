@@ -12562,70 +12562,41 @@ func (b *builder) exprType(e ast.Expr) ast.Type {
 		// produced by string-returning helpers — most
 		// importantly `int_to_string`, whose 1..3-digit / -1..-99
 		// outputs cascade through `$string_from_bytes_unchecked`'s
-		// inline-output path. The callee's return type comes
-		// off `info.FuncSigs` (populated by the checker for
-		// every user fn + every stdlib / builtin signature).
+		// inline-output path.
 		if id, ok := x.Callee.(*ast.Ident); ok {
-			if rt, ok := b.sigResultFor(x, id.Name); ok {
-				return rt
-			}
-			// Variant constructor call (`Some(42)`, `Ok(x)`,
-			// `Red(...)`). Not in FuncSigs, so resolve via the
-			// variant table — an enclosing tuple/struct slot needs
-			// EnumType (→ IsPointerType, ptrW bytes) rather than
-			// the payloadSlotSize(nil) 4-byte default. Without this
-			// `(1, Some(42))` packs the variant pointer at offset 4
-			// on arm64 but the load reads offset 8 → segfault.
-			//
-			// Prefer the checker's recorded construction, which carries
-			// the INSTANTIATION (`Option[i32[]]`, settled against the
-			// destination) where the variant table only knows the enum's
-			// name. A consumer that just needs the slot width cannot tell
-			// the two apart, but a consumer that needs a per-instantiation
-			// DROP can: dropFnNameFor routes a type with Args to the
-			// mangled `__drop_enum_Option_LB_..._RB_`, while a bare
-			// generic enum falls to the concrete path, where enumNeedsDrop
-			// declines the un-cloned decl's ParamType payload and the box
-			// AND its payload are stranded. That is what leaked a generic
-			// enum built in ARGUMENT position — `probe(Some(mk(8)))` —
-			// where the same value bound to an annotated local first was
-			// reclaimed, because the local's declared type had the Args
-			// this expression's did not (#9313).
-			if ename, _, _, ok := b.lookupVariantOn(id.Name, id.EnumName); ok {
-				if con, ok := b.info.EnumConstructions[x]; ok && con.Type.Name == ename && len(con.Type.Args) > 0 {
-					return con.Type
-				}
-				return ast.EnumType{Name: ename}
-			}
-			// Closure-typed local / param: `len(f())` where f is
-			// a Var or param of type `() => string`. Without this
-			// dispatch `exprType` returns nil and the surrounding
-			// `len()` lowering falls through to the array-shape
-			// `[ptr - 4]; load` fallback — which traps on inline-
-			// form strings (SSO) returned by the closure.
-			for _, p := range b.fn.Params {
-				if p.Name == id.Name {
-					if ft, ok := p.Type.(*ast.FuncType); ok {
-						return ft.Result
+			if _, isSig := b.sigResultFor(x, id.Name); !isSig {
+				// Variant constructor call (`Some(42)`, `Ok(x)`,
+				// `Red(...)`). Not in FuncSigs, so resolve via the
+				// variant table — an enclosing tuple/struct slot needs
+				// EnumType (→ IsPointerType, ptrW bytes) rather than
+				// the payloadSlotSize(nil) 4-byte default. Without this
+				// `(1, Some(42))` packs the variant pointer at offset 4
+				// on arm64 but the load reads offset 8 → segfault.
+				//
+				// Prefer the checker's recorded construction, which carries
+				// the INSTANTIATION (`Option[i32[]]`, settled against the
+				// destination) where the variant table only knows the enum's
+				// name. A consumer that just needs the slot width cannot tell
+				// the two apart, but a consumer that needs a per-instantiation
+				// DROP can: dropFnNameFor routes a type with Args to the
+				// mangled `__drop_enum_Option_LB_..._RB_`, while a bare
+				// generic enum falls to the concrete path, where enumNeedsDrop
+				// declines the un-cloned decl's ParamType payload and the box
+				// AND its payload are stranded. That is what leaked a generic
+				// enum built in ARGUMENT position — `probe(Some(mk(8)))` —
+				// where the same value bound to an annotated local first was
+				// reclaimed, because the local's declared type had the Args
+				// this expression's did not (#9313).
+				if ename, _, _, ok := b.lookupVariantOn(id.Name, id.EnumName); ok {
+					if con, ok := b.info.EnumConstructions[x]; ok && con.Type.Name == ename && len(con.Type.Args) > 0 {
+						return con.Type
 					}
-				}
-			}
-			for _, v := range b.info.Locals[b.fn] {
-				if v.Name == id.Name {
-					if ft, ok := v.Type.(*ast.FuncType); ok {
-						return ft.Result
-					}
+					return ast.EnumType{Name: ename}
 				}
 			}
 		}
-		// CaptureRef callee: `len(capF())` inside a closure body
-		// where `capF` is a captured outer function value. The
-		// captured Type is *FuncType — return its Result so the
-		// surrounding `len()` lowering picks the right load shape.
-		if cr, ok := x.Callee.(*ast.CaptureRef); ok {
-			if ft, ok := cr.Type.(*ast.FuncType); ok {
-				return ft.Result
-			}
+		if t := b.callReturnType(x); t != nil {
+			return t
 		}
 	case *ast.IfExpr:
 		// `len(if cond { a } else { b })` where both arms are

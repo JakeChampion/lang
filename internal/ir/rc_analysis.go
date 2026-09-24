@@ -3779,16 +3779,15 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		// pattern string it was parsed from is a borrowed parameter.
 		// findReturnsFreshBox says why returnsNoParamEscape cannot serve.
 		if id, ok := x.Callee.(*ast.Ident); ok {
-			_, isLocal := b.locals[id.Name]
-			if !isLocal && b.returnsFreshBox[id.Name] {
+			if _, isLocal := b.locals[id.Name]; !isLocal && b.returnsFreshBox[id.Name] {
 				return false
 			}
-			// A call through a function value reaches only an address-taken
-			// function or a lifted lambda; when every one of those hands back
-			// a box of its own, so does this call.
-			if isLocal && b.indirectCallsReturnOwnBox() {
-				return false
-			}
+		}
+		// A call through a function value reaches only an address-taken
+		// function or a lifted lambda; when every one of those hands back a
+		// box of its own, so does this call.
+		if b.callsThroughFunctionValue(x) && b.indirectCallsReturnOwnBox() {
+			return false
 		}
 		// Map builtins return the MAP HANDLE, which aliases only the
 		// receiver (cow) — never the stored key/value args. The generic
@@ -10168,6 +10167,20 @@ func (b *builder) matchBindingTypes() map[string]ast.Type {
 		return true
 	})
 	return out
+}
+
+// callsThroughFunctionValue reports whether `c` calls a function value held in
+// a local, a parameter or a struct field rather than a declared function.
+func (b *builder) callsThroughFunctionValue(c *ast.Call) bool {
+	switch x := c.Callee.(type) {
+	case *ast.Ident:
+		_, isLocal := b.locals[x.Name]
+		return isLocal
+	case *ast.FieldAccess:
+		_, isFn := b.exprType(x).(*ast.FuncType)
+		return isFn
+	}
+	return false
 }
 
 // indirectCallsReturnOwnBox reports whether every function an indirect call
