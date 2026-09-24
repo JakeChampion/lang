@@ -4313,6 +4313,12 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
         bt = bt.append(t_unknown("type parameter " + tp));
       }
     }
+    if (bn.len() > 0 && util.contains(sig.ret_type_name, "::")) {
+      var pty: typeinfo.Type = projected_ret(sig.ret_type_name, bn, bt, s);
+      if (!type_contains_unknown(pty)) {
+        return pty;
+      }
+    }
     if (bn.len() > 0) {
       var gsubst: typeinfo.Type = type_from_ref_subst(parser.parse_type_ref(sig.ret_type_name), bn, bt, s.structs.names, s.unions.names);
       if (!type_contains_unknown(gsubst)) {
@@ -4321,6 +4327,27 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
     }
   }
   return sig.ret_type;
+}
+
+// projected_ret resolves a generic's return spelled through a projection on a
+// type parameter (`H::Item`): the call's bindings make the base concrete, and
+// the impl of that base says what the projection names.
+function projected_ret(ret_name: string, bn: string[], bt: typeinfo.Type[], s: Scope): typeinfo.Type {
+  var names: string[] = [];
+  var spells: string[] = [];
+  var i: i32 = 0;
+  while (i < bn.len()) {
+    if (!type_contains_unknown(bt[i])) {
+      names = names.append(bn[i]);
+      spells = spells.append(typeinfo.spelling(bt[i]));
+    }
+    i = i + 1;
+  }
+  var resolved: string = parser.resolve_proj_in_type(parser.subst_ty(ret_name, names, spells), s.impls);
+  if (util.contains(resolved, "::")) {
+    return t_unknown("unresolved projection " + resolved);
+  }
+  return s.resolve_type(resolved);
 }
 
 function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
@@ -17962,8 +17989,8 @@ function annotate_stmt(st: ast.Stmt, s: Scope, after: Scope): ast.Stmt {
   return st;
 }
 
-function annotate_func(fd: parser.FuncDecl, mt: ModuleTables): parser.FuncDecl {
-  var s: Scope = build_func_scope(fd, mt.sigs, mt.structs, mt.unions, mt.methods, mt.imports);
+function annotate_func(fd: parser.FuncDecl, mt: ModuleTables, impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[]): parser.FuncDecl {
+  var s: Scope = build_func_scope(fd, mt.sigs, mt.structs, mt.unions, mt.methods, mt.imports).with_impls(impls, trait_reqs);
   return parser.FuncDecl { ...fd, body: annotate_block(fd.body, s) };
 }
 
@@ -17983,11 +18010,12 @@ pub function annotate_module(mod: parser.Module): parser.Module {
 
 function annotate_module_in(mod: parser.Module, mt: ModuleTables): parser.Module {
   var rmod: parser.Module = pretype_module_in(mod, mt);
+  var call_impls: parser.ImplInfo[] = assoc_func_impls(rmod.impls, rmod.funcs);
   var nfuncs: parser.FuncDecl[] = [];
   for func in rmod.funcs {
-    nfuncs = nfuncs.append(annotate_func(func, mt));
+    nfuncs = nfuncs.append(annotate_func(func, mt, call_impls, rmod.trait_reqs));
   }
-  var ntop: ast.Stmt[] = annotate_block(rmod.top_stmts, new_scope_full(mt.sigs, mt.structs, mt.unions, mt.methods, mt.imports));
+  var ntop: ast.Stmt[] = annotate_block(rmod.top_stmts, new_scope_full(mt.sigs, mt.structs, mt.unions, mt.methods, mt.imports).with_impls(call_impls, rmod.trait_reqs));
   return parser.Module { funcs: nfuncs, structs: rmod.structs, aliases: rmod.aliases, imports: rmod.imports, top_stmts: ntop, enums: rmod.enums, resources: rmod.resources, exports: rmod.exports, impls: rmod.impls, trait_reqs: rmod.trait_reqs, trait_decls: rmod.trait_decls, inferred_consts: rmod.inferred_consts };
 }
 

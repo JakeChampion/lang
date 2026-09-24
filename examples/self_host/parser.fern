@@ -8845,6 +8845,9 @@ pub struct MFns {
     // typed from the variant's declared fields with the enum's type params
     // substituted from the scrutinee's spelling.
     enums: EnumDecl[],
+    // The module's impls, so a generic's return type spelled through a
+    // projection on a type parameter (`H::Item`) resolves once substituted.
+    impls: ImplInfo[],
 }
 
 // mfns_buckets is the bucket count of the generic index. Prime, and far larger
@@ -8860,7 +8863,7 @@ function mfns_buckets(): i32 { return 257; }
 // monomorphise passes build it once from a field they never reassign — the
 // clones they produce accumulate in a separate list — so an entry position
 // means the same thing for the whole pass.
-pub function mfns_of(decls: FuncDecl[], structs: StructDecl[], enums: EnumDecl[]): MFns {
+pub function mfns_of(decls: FuncDecl[], structs: StructDecl[], enums: EnumDecl[], impls: ImplInfo[]): MFns {
     var ghead: i32[] = [];
     var b: i32 = 0;
     var nb: i32 = mfns_buckets();
@@ -8887,7 +8890,7 @@ pub function mfns_of(decls: FuncDecl[], structs: StructDecl[], enums: EnumDecl[]
         ghead = ghead.with(bk, k);
         k = k - 1;
     }
-    return MFns { decls: decls, ghead: ghead, gnext: gnext, gname: gname, gat: gat, smm: smm, structs: structs, enums: enums };
+    return MFns { decls: decls, ghead: ghead, gnext: gnext, gname: gname, gat: gat, smm: smm, structs: structs, enums: enums, impls: impls };
 }
 
 // bg_find returns the position in `fns.decls` of the bounded-generic function
@@ -9788,7 +9791,7 @@ function call_ret_type(funcs: MFns, name: string, args: ast.Expr[], env: MEnv): 
     if (key.len() == 0) { return ""; }
     var cts: string[] = [key];
     if (fd.type_params.len() != 1) { cts = split_inst_key(key); }
-    var rt: string = subst_ty(fd.ret_type, fd.type_params, cts);
+    var rt: string = resolve_proj_in_type(subst_ty(fd.ret_type, fd.type_params, cts), funcs.impls);
     // The bounded-only substitution above can leave an UNBOUNDED type
     // param in the return type — `sort_key[T, K: Ord](xs, key): T[]`
     // erases T from fd.type_params, so `T[]` survives with T unresolved,
@@ -10892,7 +10895,7 @@ function subst_ty_list(list: string, tparams: string[], cts: string[]): string {
     return out;
 }
 
-function subst_ty(name: string, tparams: string[], cts: string[]): string {
+pub function subst_ty(name: string, tparams: string[], cts: string[]): string {
     var k: i32 = tp_index(name, tparams);
     if (k >= 0) { return cts[k]; }
     // A function type's parameter list spells a consuming slot `own T`, and
@@ -10926,6 +10929,13 @@ function subst_ty(name: string, tparams: string[], cts: string[]): string {
             j = j + 1;
         }
         return slice_unchecked(name, 0, lb) + "[" + ninner + "]";
+    }
+    // A projection `Base::Name` substitutes through its base: `H::Item` at
+    // H = SBox is `SBox::Item`, which resolve_proj_in_type can then resolve.
+    var ps: i32 = name.len() - 1;
+    while (ps > 0 && ident_byte((name[ps] as i32))) { ps = ps - 1; }
+    if (ps > 1 && ps < name.len() - 1 && name[ps] == b':' && name[ps - 1] == b':') {
+        return subst_ty(slice_unchecked(name, 0, ps - 1) + "", tparams, cts) + slice_unchecked(name, ps - 1, name.len());
     }
     return name;
 }
@@ -11252,7 +11262,9 @@ pub function split_plus_bounds(bound: string): string[] {
 // clone_bg builds the `f__<key>` clone of bounded-generic func `fd`,
 // substituting each type variable with its concrete type (the `__`-
 // joined `key`, split back into per-parameter pieces) across params +
-// return + body annotations.
+// return + body annotations. A projection through a type parameter
+// (`H::Item`) names a concrete base only once substituted, so the
+// signature's projections resolve here rather than at parse time.
 function clone_bg(fd: FuncDecl, key: string, impls: ImplInfo[]): FuncDecl {
     var tparams: string[] = fd.type_params;
     // A single type parameter's key IS the one concrete type, verbatim —
@@ -11276,7 +11288,7 @@ function clone_bg(fd: FuncDecl, key: string, impls: ImplInfo[]): FuncDecl {
     var nparams: ast.ParamDecl[] = [];
     var i: i32 = 0;
     while (i < fd.params.len()) {
-        nparams = nparams.append(ast.ParamDecl { name: fd.params[i].name, type_name: subst_ty(fd.params[i].type_name, tparams, cts), is_str: fd.params[i].is_str, is_view: fd.params[i].is_view, str_elem: fd.params[i].str_elem, own: fd.params[i].own, has_default: fd.params[i].has_default, default_value: fd.params[i].default_value, ret_arr: fd.params[i].ret_arr, fn_ret: subst_ty(fd.params[i].fn_ret, tparams, cts), fn_param_dyn: fd.params[i].fn_param_dyn, fn_param_types: subst_ty_list(fd.params[i].fn_param_types, tparams, cts) });
+        nparams = nparams.append(ast.ParamDecl { name: fd.params[i].name, type_name: resolve_proj_in_type(subst_ty(fd.params[i].type_name, tparams, cts), impls), is_str: fd.params[i].is_str, is_view: fd.params[i].is_view, str_elem: fd.params[i].str_elem, own: fd.params[i].own, has_default: fd.params[i].has_default, default_value: fd.params[i].default_value, ret_arr: fd.params[i].ret_arr, fn_ret: subst_ty(fd.params[i].fn_ret, tparams, cts), fn_param_dyn: fd.params[i].fn_param_dyn, fn_param_types: subst_ty_list(fd.params[i].fn_param_types, tparams, cts) });
         i = i + 1;
     }
     // The clone is an INSTANTIATION: every `T` has been replaced by the
@@ -11295,7 +11307,7 @@ function clone_bg(fd: FuncDecl, key: string, impls: ImplInfo[]): FuncDecl {
         type_param_count: 0,
         bound_traits: notp,
         params: nparams,
-        ret_type: subst_ty(fd.ret_type, tparams, cts),
+        ret_type: resolve_proj_in_type(subst_ty(fd.ret_type, tparams, cts), impls),
         ret_fn_ret: subst_ty(fd.ret_fn_ret, tparams, cts),
         ret_fn_param_types: subst_ty_list(fd.ret_fn_param_types, tparams, cts),
         body: subst_stmts(fd.body, tparams, cts)
@@ -11856,7 +11868,7 @@ pub function monomorphize_module(mod: Module): Module {
     if (!any_bg) { return mod; }
 
     var ins: Insts = Insts { inames: [], itypes: [], iargs: [] };
-    var fns: MFns = mfns_of(funcs, mod.structs, mod.enums);
+    var fns: MFns = mfns_of(funcs, mod.structs, mod.enums, mod.impls);
     // Rewrite call sites in every NON-generic function body. A bounded
     // generic's body is rewritten per clone instead; the template itself is
     // passed through so monomorphize_structs can still clone it from a
@@ -12554,7 +12566,7 @@ pub function monomorphize_structs(mod: Module): Module {
     if (gstructs.len() == 0) { return Module { ...mod, funcs: drop_bg_templates(mod.funcs) }; }
 
     var ins: Insts = Insts { inames: [], itypes: [], iargs: [] };
-    var sfns: MFns = mfns_of(mod.funcs, mod.structs, mod.enums);
+    var sfns: MFns = mfns_of(mod.funcs, mod.structs, mod.enums, mod.impls);
 
     // Phase 1: rewrite all references; drop the generic decls.
     var nstructs: StructDecl[] = [];
@@ -13763,7 +13775,7 @@ pub function monomorphize_enums(mod: Module): Module {
     var mmod: Module = Module { ...mod, enums: menums };
 
     var ins: Insts = Insts { inames: [], itypes: [], iargs: [] };
-    var efns: MFns = mfns_of(mod.funcs, mod.structs, menums);
+    var efns: MFns = mfns_of(mod.funcs, mod.structs, menums, mod.impls);
 
     // Phase 1: rewrite references in every function (body + param/ret types)
     // and the top-level statements, accumulating instantiations.

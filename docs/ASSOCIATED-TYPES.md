@@ -124,7 +124,15 @@ declared types are SPELLINGS rather than a tree:
   arguments. Erasure hides a missed resolution whenever the answer does not
   depend on the type, so the gate turns on one that does (`.len()` on a
   string payload). The bindings are syntactic (`type Item = i32;` on the
-  impl), so unlike native this needs no inference and runs in the parser.
+  impl), so a projection on a concrete base needs no inference and resolves
+  in the parser.
+- A projection on a TYPE PARAMETER (`H::Item` in
+  `first[H: Holder](h: H): H::Item`) has no impl until a call binds `H`.
+  `subst_ty` substitutes through a projection's base, and the result is
+  resolved at the three places a binding is known: the checker's typing of
+  the generic call (`projected_ret`, which is what stamps the call's `c.ty`),
+  the monomorphiser's call-result inference (`call_ret_type`), and the clone's
+  own signature (`clone_bg`).
 - The conformance comparison resolves BOTH sides: the impl method's copy is
   already rewritten, so the trait's requirement must be too, or every
   associated-type impl reads as a signature mismatch.
