@@ -949,14 +949,21 @@ pub function module_path_join(dir: string, name: string): string {
 // load. Local (`./…`) imports always load; a name `deps` declares (the entry
 // manifest's dependencies) loads through the manifest; `std/…` / `core/…`
 // load only when a stdlib root is given. With no root and no manifest the
-// std/core paths are skipped — the pre-stdlib-root behaviour. A driver with
+// std/core paths are skipped — the pre-stdlib-root behaviour — while any
+// other bare name is a sibling module, as native resolves it. A driver with
 // no manifest passes an empty `deps`.
 pub function should_load(import_path: string, root: string, deps: string[]): boolean {
   if (import_path.len() == 0) { return false; }
   if (is_local(import_path)) { return true; }
   if (has_str(deps, module_name(import_path))) { return true; }
-  if (root.len() == 0) { return false; }
+  if (root.len() == 0) { return !is_stdlib_path(import_path); }
   return true;
+}
+
+// is_stdlib_path is true for the `std/…` and `core/…` trees the stdlib root
+// holds.
+pub function is_stdlib_path(import_path: string): boolean {
+  return str_has_prefix(import_path, "std/") || str_has_prefix(import_path, "core/");
 }
 
 // resolve_path maps an import path to a file on disk. Local imports
@@ -972,6 +979,7 @@ pub function resolve_path(import_path: string, entry_dir: string, root: string):
     }
     return module_path_join(entry_dir, rel);
   }
+  if (root.len() == 0) { return module_path_join(entry_dir, import_path); }
   return root + "/" + import_path + ".fern";
 }
 
