@@ -11635,8 +11635,9 @@ func (c *checker) checkCursorEscapes(prog *ast.Program) {
 	envs, order := c.escapeEnvs(prog, mentionsMapIter)
 	for _, fn := range order {
 		env := envs[fn]
+		sources := bindingSources(fn)
 		forEachReturn(fn, func(ret *ast.Return) {
-			if returnsLocalCursor(ret.Value, env) {
+			if returnsLocalCursor(ret.Value, env, sources) {
 				c.errfCode(ret.P, "E065", "returning a `MapIter` over a function-local map: the map is reclaimed when %q returns, leaving the cursor reading freed storage — return the map and iterate it in the caller, or iterate a map the caller passed in", fn.Name)
 			}
 		})
@@ -11660,37 +11661,61 @@ func mentionsMapIter(t ast.Type) bool {
 }
 
 // returnsLocalCursor reports whether e is `m.iter()` over a map this frame
-// owns, a local initialised from one, or an array or tuple literal holding one.
-func returnsLocalCursor(e ast.Expr, env *escapeEnv) bool {
+// owns, a local that may hold one, or an array or tuple literal holding one.
+// A name is chased through every value the function binds or assigns to it,
+// so a shadowing declaration or a reassignment on another path cannot hide
+// the one that dangles.
+func returnsLocalCursor(e ast.Expr, env *escapeEnv, sources map[string][]ast.Expr) bool {
 	switch x := e.(type) {
 	case *ast.Call:
 		if id, ok := x.Callee.(*ast.Ident); ok && id.Name == "__method_Map_iter" && len(x.Args) == 1 {
 			return !lentPlace(x.Args[0], env)
 		}
 	case *ast.ArrayLit:
-		return anyLocalCursor(x.Elems, env)
+		return anyLocalCursor(x.Elems, env, sources)
 	case *ast.TupleLit:
-		return anyLocalCursor(x.Elems, env)
+		return anyLocalCursor(x.Elems, env, sources)
 	case *ast.Ident:
 		if env.visiting[x.Name] {
 			return false
 		}
-		if v, ok := env.locals[x.Name]; ok && v.Init != nil {
-			env.visiting[x.Name] = true
-			defer delete(env.visiting, x.Name)
-			return returnsLocalCursor(v.Init, env)
+		env.visiting[x.Name] = true
+		defer delete(env.visiting, x.Name)
+		return anyLocalCursor(sources[x.Name], env, sources)
+	}
+	return false
+}
+
+func anyLocalCursor(es []ast.Expr, env *escapeEnv, sources map[string][]ast.Expr) bool {
+	for _, e := range es {
+		if returnsLocalCursor(e, env, sources) {
+			return true
 		}
 	}
 	return false
 }
 
-func anyLocalCursor(es []ast.Expr, env *escapeEnv) bool {
-	for _, e := range es {
-		if returnsLocalCursor(e, env) {
-			return true
-		}
+// bindingSources maps each name in fn's body to every value a `var` binds it
+// to or an assignment stores into it, whichever declaration of the name.
+func bindingSources(fn *ast.FuncDecl) map[string][]ast.Expr {
+	out := map[string][]ast.Expr{}
+	if fn.Body == nil {
+		return out
 	}
-	return false
+	ast.Walk(fn.Body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.Var:
+			if x.Init != nil {
+				out[x.Name] = append(out[x.Name], x.Init)
+			}
+		case *ast.Assign:
+			if id, ok := x.Target.(*ast.Ident); ok {
+				out[id.Name] = append(out[id.Name], x.Value)
+			}
+		}
+		return true
+	})
+	return out
 }
 
 // lentPlace reports whether e names storage the caller owns: a parameter, or

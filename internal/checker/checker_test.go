@@ -8854,6 +8854,21 @@ func TestMapIterEscapeRejected(t *testing.T) {
 		`function f(): MapIter[i32, i32] { var m: Map[i32, i32] = map_new(4); m = m.insert(1, 2); return m.iter(); }`,
 		`function f(): MapIter[i32, i32] { var m: Map[i32, i32] = map_new(4); var it = m.iter(); return it; }`,
 		`function f(): MapIter[i32, i32][] { var m: Map[i32, i32] = map_new(4); return [m.iter()]; }`,
+		// A shadowing declaration in an inner block must not stand in for
+		// the outer binding the return names.
+		`function f(m: Map[i32, i32]): MapIter[i32, i32] {
+	var mm: Map[i32, i32] = map_new(4);
+	var it: MapIter[i32, i32] = mm.iter();
+	if (m.len() > 0) { var it2: MapIter[i32, i32] = m.iter(); var it: MapIter[i32, i32] = it2; }
+	return it;
+}`,
+		// Nor may a reassignment on one path hide the local cursor.
+		`function f(m: Map[i32, i32]): MapIter[i32, i32] {
+	var mm: Map[i32, i32] = map_new(4);
+	var it: MapIter[i32, i32] = m.iter();
+	if (m.len() > 0) { it = mm.iter(); }
+	return it;
+}`,
 	} {
 		err := checkSource(t, decls+src)
 		if !hasCode(err, "E065") {
