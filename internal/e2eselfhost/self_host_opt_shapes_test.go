@@ -116,6 +116,20 @@ function main(): i32 { return pair().len(); }
 function main(): i32 { return pick2(true).len(); }
 `,
 		forbid: map[string][]string{"x86-64-linux": {`rc_?inc`}, "arm64-linux": {`rc_?inc`}}},
+	// A phi that can also carry a counted string is not a literal: handed on
+	// while live, it is retained.
+	{name: "mixed_phi_consumed_retained", fn: "pick3", exit: 2, typedOnly: true, src: `
+@noinline function pick3(c: boolean, t: string): string[] {
+    var s: string = "a";
+    if (c) { s = t + t; }
+    var out: string[] = [];
+    out = out.append(s);
+    out = out.append(s);
+    return out;
+}
+function main(): i32 { return pick3(true, "b").len(); }
+`,
+		want: map[string][]string{"x86-64-linux": {`rc_?inc`}, "arm64-linux": {`rc_?inc`}}},
 	// A phi of literals holds nothing, so its death releases nothing.
 	{name: "literal_phi_no_release", fn: "pick", exit: 3, typedOnly: true, src: `
 @noinline function pick(c: boolean): i32 {
