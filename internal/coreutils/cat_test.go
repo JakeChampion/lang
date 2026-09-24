@@ -64,6 +64,9 @@ func catCases(t *testing.T) []invocation {
 	// in every mode, and past a million lines for the number width.
 	big := catFile(t, dir, "big", strings.Repeat("line\n\n", 30000))
 	million := catFile(t, dir, "million", strings.Repeat("\n", 1000002))
+	// Numbered twice, 1 to 300: the hundreds change inside each file and
+	// between them.
+	hund := catFile(t, dir, "hund", strings.Repeat("x\n", 150))
 	// Its own output: the harness appends the run to it.
 	self := catFile(t, dir, "self", "s\n")
 	selfEmpty := catFile(t, dir, "selfempty", "")
@@ -97,6 +100,8 @@ func catCases(t *testing.T) []invocation {
 		{name: "number leading blanks", args: []string{"-n", leading}},
 		{name: "nonblank leading blanks", args: []string{"-b", leading}},
 		{name: "number past a million", args: []string{"-n", million}},
+		{name: "number across hundreds and files", args: []string{"-n", hund, hund}},
+		{name: "nonblank across hundreds and files", args: []string{"-b", hund, blanks, hund}},
 		{name: "number a large file", args: []string{"-n", big}},
 		{name: "nonblank a large file", args: []string{"-b", big}},
 		{name: "number stdin", args: []string{"-n"}, stdin: "p\n\nq"},

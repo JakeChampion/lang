@@ -11,8 +11,7 @@ import (
 // (`t: (i32, i32)`) is admitted to the IR path and that `p.t.N` recovers the
 // element type from the field's tuple type string. use_pt builds Pt{t: (3,4), n:5}
 // and returns p.t.0 + p.t.1 + p.n = 3 + 4 + 5 = 12. Without tuple-field support Pt
-// is not leaf-safe and the whole module bails to the ~35 KB AST runtime; with it
-// the IR output is small — so the size check proves admission, the exit code the
+// is not leaf-safe and the driver refuses the module; the exit code proves the
 // element typing.
 func TestSelfHostTupleStructFieldIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -33,8 +32,8 @@ function use_pt(): i32 {
 }
 function main(): i32 { return use_pt(); }`
 	asm := runCapture(t, gcc, runner, driverBin, []byte(prog))
-	if len(asm) == 0 || len(asm) > 18000 {
-		t.Fatalf("asm is %d bytes — expected small IR output; the tuple-field module likely bailed to the AST runtime", len(asm))
+	if len(asm) == 0 {
+		t.Fatal("driver produced no asm")
 	}
 	progBin := buildBin(t, gcc, dir, "tuple_struct_field", string(asm))
 	var cmd *exec.Cmd

@@ -1153,6 +1153,12 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 		if len(op.Args) < 1 {
 			return fmt.Errorf("x86_64ssa: OpCallIndirect needs a callee operand")
 		}
+		if op.Result2.IsValid() {
+			// A two-word return through a function value. No target this
+			// model serves uses the two-word string ABI, so it has no pair
+			// delivery for an indirect call.
+			return fmt.Errorf("x86_64ssa: OpCallIndirect returning two words is not supported")
+		}
 		idxLoc, ok := e.loc(op.Args[0].ID)
 		if !ok {
 			return fmt.Errorf("x86_64ssa: callindirect index v%d has no allocation", op.Args[0].ID)

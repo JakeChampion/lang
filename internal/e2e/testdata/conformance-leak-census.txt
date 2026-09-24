@@ -29,6 +29,9 @@
 # through a generic identity function, and native never releases a fresh
 # temp whose callee returns its parameter bare (#10140). The self-host
 # builds it clean.
+# field_read_off_a_call_through_a_function_field reads a field off the
+# result of a call through a function-typed struct field, which native
+# never releases (#10149). The self-host builds it clean.
 #
 # fstring_reassign_releases_old is #8697's fixture: an f-string RHS now
 # releases the destination's superseded string, so the row registers a
@@ -124,6 +127,7 @@
 # keep the static sentinel no release can reclaim (rcresults.go, #8398). The
 # Writer.write result boxes that made this 4 are reclaimed since #8405. The
 # accumulator the case measures is clean — it is what the "flat" line asserts.
+a_builtin_method_does_not_see_the_programs_variants  0
 ackermann                                            0
 add_sub_pair                                         0
 aliased_and_used_twice                               0
@@ -144,6 +148,7 @@ alloc_flat_struct_string_field                       0
 alloc_flat_under_reclaim                             0
 alloc_flat_writer_accumulator                        2
 alloc_grows_when_retained                            0
+an_imported_module_does_not_see_the_programs_variants 0
 args                                                 2
 arith_precedence                                     0
 arr_slice_block_copy                                 0
@@ -281,6 +286,7 @@ f64_sqrt                                             0
 f64_tryop_widen                                      1
 factorial_print                                      0
 fib_recursion                                        0
+field_read_off_a_call_through_a_function_field       1
 fizzbuzz                                             0
 float_arith_ops                                      0
 float_bit_reinterpret                                0
@@ -316,6 +322,7 @@ generic_fold_accumulator_reclaim                     0
 generic_id                                           0
 generic_method_typeparams                            0
 generic_pair                                         0
+generic_reads_an_array_literals_joined_element_type  0
 generic_receiver_methods                             0
 grow_past_capacity                                   0
 hash_struct_enum                                     0

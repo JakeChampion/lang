@@ -1,0 +1,14 @@
+// A field read straight off the result of a call through a function-typed
+// struct field: the result takes the field's declared return type.
+struct Txn { id: i32 }
+struct Out { v: i32 }
+struct Stage { name: string, run: (string, Txn) => Out }
+
+function step(s: string, t: Txn): Out { return Out { v: s.len() + t.id }; }
+
+function run_with(st: Stage, t: Txn): i32 { return st.run(st.name, t).v; }
+
+function main(): i32 {
+    var st: Stage = Stage { name: "abc", run: step };
+    return run_with(st, Txn { id: 4 }) * 6;
+}

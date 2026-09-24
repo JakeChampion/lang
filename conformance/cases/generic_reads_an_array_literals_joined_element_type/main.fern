@@ -1,0 +1,12 @@
+// A generic's type argument, read off an array literal argument, is the
+// element type the elements join to, not the first element's:
+// `last([2.5, half(3.0)])` instantiates `last` at f32.
+function half(x: f32): f32 { return x / 2.0; }
+function last[T](xs: T[]): T { return xs[xs.len() - 1]; }
+function count[T](xs: T[]): i32 { return xs.len(); }
+function main(): i32 {
+    var a: f32 = last([2.5, half(3.0)]);
+    var b: f32 = last([half(9.0), 0.25]);
+    var n: i32 = count([1.5, half(1.0), 2.5]);
+    return ((a + b) * 8.0) as i32 + n;
+}

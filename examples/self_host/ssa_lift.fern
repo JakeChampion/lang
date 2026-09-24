@@ -188,14 +188,15 @@ function prod_kind(k: string): boolean {
     return prod_mem_kind(k) || prod_float_kind(k);
 }
 
-// kind_class packs the three classifications lift_impl branches on: bit 0
-// prod_kind, bit 1 prod_mem_kind, bit 2 prod_float_kind. lift_impl works it
+// kind_class packs the classifications lift_impl branches on: bit 0
+// prod_kind, bit 1 prod_mem_kind, bit 2 prod_float_kind, bit 3 a bin_sym. lift_impl works it
 // out once per kind it meets, since each builds and scans its name lists.
 function kind_class(k: string): i32 {
     var c: i32 = 0;
     if (prod_kind(k)) { c = c + 1; }
     if (prod_mem_kind(k)) { c = c + 2; }
     if (prod_float_kind(k)) { c = c + 4; }
+    if (bin_sym(k) != "") { c = c + 8; }
     return c;
 }
 
@@ -655,6 +656,29 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResu
     var knames: string[] = [];
     var kcls: i32[] = [];
     while (kcls.len() <= top_tag) { kcls = kcls.append(0 - 1); knames = knames.append(""); }
+    var t_block: i32 = ir.kind_id("block");
+    var t_br: i32 = ir.kind_id("br");
+    var t_brif: i32 = ir.kind_id("brif");
+    var t_call_direct: i32 = ir.kind_id("call_direct");
+    var t_const_f64: i32 = ir.kind_id("const_f64");
+    var t_const_i32: i32 = ir.kind_id("const_i32");
+    var t_const_i32_text: i32 = ir.kind_id("const_i32_text");
+    var t_const_i64: i32 = ir.kind_id("const_i64");
+    var t_drop: i32 = ir.kind_id("drop");
+    var t_dyn_dispatch: i32 = ir.kind_id("dyn_dispatch");
+    var t_else: i32 = ir.kind_id("else");
+    var t_end: i32 = ir.kind_id("end");
+    var t_if: i32 = ir.kind_id("if");
+    var t_int_cast: i32 = ir.kind_id("int_cast");
+    var t_int_extend: i32 = ir.kind_id("int_extend");
+    var t_int_wrap: i32 = ir.kind_id("int_wrap");
+    var t_load_local: i32 = ir.kind_id("load_local");
+    var t_loop: i32 = ir.kind_id("loop");
+    var t_not: i32 = ir.kind_id("not");
+    var t_return: i32 = ir.kind_id("return");
+    var t_store_local: i32 = ir.kind_id("store_local");
+    var t_tee_local: i32 = ir.kind_id("tee_local");
+    var t_u32_wrap: i32 = ir.kind_id("u32_wrap");
     var i: i32 = 0;
     while (i < ops.len() && ok) {
         var op: ir.Op = ops[i];
@@ -669,7 +693,7 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResu
 
         // Skip dead code after a terminator (e.g. ops after a `return`/`br`
         // inside an arm); only else/end/the matching block delimiters act on it.
-        if (cur_term.kind_tag != 0 && k != "else" && k != "end") {
+        if (cur_term.kind_tag != 0 && tag != t_else && tag != t_end) {
             i = i + 1;
             continue;
         }
@@ -679,42 +703,42 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResu
             nvals = lv.nvals; stack = lv.stack; cur_insts = splice(cur_insts, lv.insts); ok = lv.ok;
         } else if ((cls & 1) == 0) {
             ok = false;
-        } else if ((k == "const_i32_text" || k == "const_i64")) {
+        } else if ((tag == t_const_i32_text || tag == t_const_i64)) {
             var lv: LiftVals = lift_const_text_prod(k, op, nvals, stack, []);
             nvals = lv.nvals; stack = lv.stack; cur_insts = splice(cur_insts, lv.insts);
-        } else if ((k == "int_extend" || k == "int_wrap" || k == "int_cast" || k == "u32_wrap")) {
+        } else if ((tag == t_int_extend || tag == t_int_wrap || tag == t_int_cast || tag == t_u32_wrap)) {
             var lv: LiftVals = lift_int_narrow_prod(k, op, nvals, stack, [], ok);
             nvals = lv.nvals; stack = lv.stack; cur_insts = splice(cur_insts, lv.insts); ok = lv.ok;
         } else if ((cls & 2) != 0) {
             var lv: LiftVals = lift_prod_mem(k, op, nvals, stack, []);
             nvals = lv.nvals; stack = lv.stack; cur_insts = splice(cur_insts, lv.insts); ok = lv.ok;
-        } else if (k != "const_f64" && (cls & 4) != 0) {
+        } else if (tag != t_const_f64 && (cls & 4) != 0) {
             var lv: LiftVals = lift_float_prod(k, op, nvals, stack, []);
             nvals = lv.nvals; stack = lv.stack; cur_insts = splice(cur_insts, lv.insts); ok = lv.ok;
-        } else if (k == "const_i32") {
+        } else if (tag == t_const_i32) {
             var v: i32 = nvals; nvals = nvals + 1;
             cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: v, args: [], imm: op.i32_imm, str: "" });
             stack = stack.append(v);
-        } else if (k == "const_f64") {
+        } else if (tag == t_const_f64) {
             // An f64 literal, carried as source text: the const_float inst,
             // which each emitter materialises as the literal's bits.
             var fcv: i32 = nvals; nvals = nvals + 1;
             cur_insts = cur_insts.append(ssa.SInst { kind_tag: 4, result: fcv, args: [], imm: 0, str: op.str });
             stack = stack.append(fcv);
-        } else if (k == "load_local") {
+        } else if (tag == t_load_local) {
             if (op.i32_imm < 0 || op.i32_imm >= slots.len()) { ok = false; }
             else { stack = stack.append(slots[op.i32_imm]); }
-        } else if (k == "store_local") {
+        } else if (tag == t_store_local) {
             if (stack.len() < 1) { ok = false; }
             else {
                 var sv: i32 = stack[stack.len() - 1];
                 stack = drop_last(stack);
                 slots = slots.with(op.i32_imm, sv);
             }
-        } else if (k == "tee_local") {
+        } else if (tag == t_tee_local) {
             if (stack.len() < 1) { ok = false; }
             else { slots = slots.with(op.i32_imm, stack[stack.len() - 1]); }
-        } else if (bin_sym(k) != "") {
+        } else if ((cls & 8) != 0) {
             if (stack.len() < 2) { ok = false; }
             else {
                 var r: i32 = stack[stack.len() - 1];
@@ -724,7 +748,7 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResu
                 cur_insts = cur_insts.append(ssa.SInst { kind_tag: 9, result: bv, args: [l, r], imm: op.width, str: k });
                 stack = stack.append(bv);
             }
-        } else if (k == "not") {
+        } else if (tag == t_not) {
             if (stack.len() < 1) { ok = false; }
             else {
                 var x: i32 = stack[stack.len() - 1];
@@ -733,10 +757,10 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResu
                 cur_insts = cur_insts.append(ssa.SInst { kind_tag: 10, result: nv, args: [x], imm: 0, str: "!" });
                 stack = stack.append(nv);
             }
-        } else if (k == "call_direct") {
+        } else if (tag == t_call_direct) {
             var lv: LiftVals = lift_call_direct(op, nvals, stack, [], ok);
             nvals = lv.nvals; stack = lv.stack; cur_insts = splice(cur_insts, lv.insts); ok = lv.ok;
-        } else if (k == "dyn_dispatch") {
+        } else if (tag == t_dyn_dispatch) {
             // The receiver and the arguments are the values of the argc
             // consecutive slots from base_slot the lowering stored them to;
             // the instruction carries them as operands and the op's index
@@ -751,16 +775,16 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResu
             var dv: i32 = nvals; nvals = nvals + 1;
             cur_insts = cur_insts.append(ssa.SInst { kind_tag: 60, result: dv, args: dargs, imm: i, str: op.str });
             stack = stack.append(dv);
-        } else if (k == "drop") {
+        } else if (tag == t_drop) {
             if (stack.len() < 1) { ok = false; } else { stack = drop_last(stack); }
-        } else if (k == "return") {
+        } else if (tag == t_return) {
             if (stack.len() < 1) { ok = false; }
             else {
                 var rv: i32 = stack[stack.len() - 1];
                 stack = drop_last(stack);
                 cur_term = STerm_ret(rv);
             }
-        } else if (k == "if") {
+        } else if (tag == t_if) {
             if (op.i32_imm != 0) { ok = false; }
             else if (stack.len() < 1) { ok = false; }
             else {
@@ -796,7 +820,7 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResu
                 }
                 cur_id = then_id; cur_insts = []; cur_preds = [parent_id]; cur_term = STerm_none(); cur_dead = false;
             }
-        } else if (k == "else") {
+        } else if (tag == t_else) {
             var top: i32 = sc_n - 1;
             if (top < 0 || sc_kind[top] != "if" || sc_seen_else[top] == 1) { ok = false; }
             else {
@@ -818,7 +842,7 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResu
                 while (rs < nslots) { slots = slots.with(rs, sc_snap[top * nslots + rs]); rs = rs + 1; }
                 cur_id = sc_else[top]; cur_insts = []; cur_preds = [sc_parent[top]]; cur_term = STerm_none(); cur_dead = false;
             }
-        } else if (k == "block") {
+        } else if (tag == t_block) {
             var exit_id: i32 = next_blk; next_blk = next_blk + 1;
             sc_kind = put_at_s(sc_kind, sc_n, "block");
             sc_uid = put_at(sc_uid, sc_n, next_uid); next_uid = next_uid + 1;
@@ -841,7 +865,7 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResu
                 }
                 rs_rd_blk = rs_rd_blk + 1;
             }
-        } else if (k == "loop") {
+        } else if (tag == t_loop) {
             var hdr_id: i32 = next_blk; next_blk = next_blk + 1;
             var entry_blk: i32 = cur_id;
             var luid: i32 = next_uid; next_uid = next_uid + 1;
@@ -884,14 +908,14 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResu
                 rs_rd_loop = rs_rd_loop + 1;
             }
             cur_id = hdr_id; cur_insts = hdr_insts; cur_preds = [entry_blk]; cur_term = STerm_none(); cur_dead = false;
-        } else if (k == "br" || k == "brif") {
+        } else if (tag == t_br || tag == t_brif) {
             var depth: i32 = op.i32_imm;
             var pos: i32 = sc_n - 1 - depth;
             if (pos < 0 || pos >= sc_n) { ok = false; }
             else {
                 var cond_b: i32 = 0;
                 var ok_b: boolean = true;
-                if (k == "brif") {
+                if (tag == t_brif) {
                     if (stack.len() < 1) { ok_b = false; }
                     else { cond_b = stack[stack.len() - 1]; stack = drop_last(stack); }
                 }
@@ -904,7 +928,7 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResu
                     edge_owner = edge_owner.append(owner); edge_block = edge_block.append(obid);
                     var bv2: i32 = 0;
                     while (bv2 < nslots) { edge_vals = edge_vals.append(slots[bv2]); bv2 = bv2 + 1; }
-                    if (k == "br") {
+                    if (tag == t_br) {
                         cur_term = STerm_br(tgt);
                         blocks = blocks.append(ssa.SBlock { id: cur_id, insts: cur_insts, term: cur_term, preds: cur_preds });
                         cur_id = next_blk; next_blk = next_blk + 1; cur_insts = []; cur_preds = []; cur_term = STerm_none(); cur_dead = true;
@@ -916,7 +940,7 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResu
                     }
                 }
             }
-        } else if (k == "end") {
+        } else if (tag == t_end) {
             var t2: i32 = sc_n - 1;
             if (t2 < 0) { ok = false; }
             else if (sc_kind[t2] == "if") {

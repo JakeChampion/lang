@@ -4518,6 +4518,41 @@ function main(): i32 {
     return (s * 4.0) as i32 + (t / 1000000000) as i32 + (w * 4.0) as i32 + (tu.0 * 2.0) as i32 + tu.1;
 }
 `},
+	// A module the program imports does not see the program's enums (#10139):
+	// std/json's bare `Ok` is Result's though the program declares one, while
+	// a helper the compiler synthesises for the program's own map key still
+	// sees Tag. Before, the first was refused by the checker and a first cut at
+	// the fix sent the second, and std/json's JNull, to the AST lowering.
+	{name: "an-imported-module-does-not-see-the-programs-enums", atLeast: 89, want: "28|", noLeak: true, src: `
+import "core/map";
+import "core/cmp";
+import "std/json";
+
+@derive(cmp.Eq, cmp.Hash)
+enum Tag { A(i32), B }
+
+enum Reply { Ok, Busy }
+
+function code(r: Reply): i32 {
+    match (r) {
+        Reply.Ok => { return 1; },
+        Reply.Busy => { return 2; },
+    }
+}
+
+function main(): i32 {
+    var em: Map[Tag, i32] = map_new(8);
+    em = em.insert(A(3), 30);
+    em = em.insert(B, 4);
+    var n: i32 = em.entries().len();
+    var parsed: i32 = 0;
+    match (json.json_parse("12")) {
+        Some(_) => { parsed = 1; },
+        None => { parsed = 0; },
+    }
+    return n * 10 + parsed * 5 + code(Reply.Ok) + code(Reply.Busy);
+}
+`},
 	{name: "a-function-returning-a-function-returns-a-box", atLeast: 15, want: "53|", astAnswers: "53|", noLeak: true, src: `
 enum Box { W((i32) => i32), No }
 function id[T](x: T): T { return x; }

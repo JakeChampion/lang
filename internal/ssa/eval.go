@@ -571,9 +571,16 @@ func evalOp(funcs map[string]*Func, table []string, h *heap, strLen map[int32]in
 			argvals = append(argvals, v)
 		}
 		argvals = append(argvals, env) // env is the last parameter
-		r0, _, err := evalWith(funcs, table, h, callee, argvals...)
+		r0, r1, err := evalWith(funcs, table, h, callee, argvals...)
 		if err != nil {
 			return err
+		}
+		if op.Result2.IsValid() {
+			if op.Result.IsValid() {
+				vals[op.Result.ID] = mask(op.Width, r0)
+			}
+			vals[op.Result2.ID] = r1
+			return nil
 		}
 		return set(r0)
 
