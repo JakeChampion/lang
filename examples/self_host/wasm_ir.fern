@@ -2037,6 +2037,9 @@ pub function component_refused_need(needs: string[], io: boolean): string {
         if (n[0] == 64) { i = i + 1; continue; }   // 64 = '@': a pure predicate
         if (io && (n == "print_int" || n == "print_i64" || n == "print_str"
             || n == "eprint_str" || n == "putchar" || n == "exit")) { i = i + 1; continue; }
+        // A Writer is stdout() or stderr(), fd 1 or 2, so its writes reach the
+        // same $fd_write shim print and eprint do.
+        if (io && (n == "writer_write" || n == "write_some")) { i = i + 1; continue; }
         // The preview2-backed builtins: their helper BODIES are the *_p2
         // emitters below, which define the same $__fern_* functions the IR
         // already calls, so admitting them costs only the import + body swap.
@@ -2541,9 +2544,9 @@ pub function writefile_func_p2(): string {
 // wasi:cli/exit last (component_full_io_exit's shape). stdout is imported
 // either way, so an eprint-only program carries an unused stdout import and
 // still matches the eprint framing.
-pub function component_io_imports(needs: string[]): string {
+pub function component_io_imports(needs: string[], stderr: boolean): string {
     var o: string = "";
-    if (need(needs, "eprint_str")) {
+    if (stderr) {
         o = o + "  (import \"wasi:cli/stderr@0.2.0\" \"get-stderr\" (func $get_stderr (result i32)))\n";
         o = o + "  (import \"wasi:io/streams@0.2.0\" \"[method]output-stream.blocking-write-and-flush\" (func $bwf (param i32 i32 i32 i32)))\n";
         o = o + "  (import \"wasi:cli/stdout@0.2.0\" \"get-stdout\" (func $get_stdout (result i32)))\n";
@@ -2572,6 +2575,14 @@ pub function component_io_imports(needs: string[]): string {
     return o;
 }
 
+// component_uses_stderr reports whether a component core needs the stderr
+// stream: an eprint, or a stderr() Writer, which lowers to the constant fd 2
+// and so leaves no need of its own. component_shape picks the stderr framing on
+// the same called name, so the imports and the framing agree.
+pub function component_uses_stderr(mod: parser.Module, needs: string[]): boolean {
+    return need(needs, "eprint_str") || called_names(mod).has("stderr");
+}
+
 // needs_wall_clock reports whether the module reads the WALL clock (now_ns /
 // now_unix_ms), the pair that shares wasi:clocks/wall-clock's `now`.
 // monotonic_ns is the separate interface, so the two are gated apart.
@@ -2598,8 +2609,7 @@ pub function needs_wall_clock(needs: string[]): boolean {
 // blocking-write-and-flush writes into must be aligned to its result type's
 // alignment (a stream-error variant holds an own<error> handle) and the bump
 // pointer is not, so it over-allocates 24 bytes and rounds up to 8.
-pub function component_io_shims(needs: string[]): string {
-    var stderr: boolean = need(needs, "eprint_str");
+pub function component_io_shims(needs: string[], stderr: boolean): string {
     var o: string = "  (global $__stdout_handle (mut i32) (i32.const -1))\n";
     if (stderr) { o = o + "  (global $__stderr_handle (mut i32) (i32.const -1))\n"; }
     o = o + "  (func $fd_write (param $fd i32) (param $iovs i32) (param $iovn i32) (param $nw i32) (result i32)\n";
@@ -10616,7 +10626,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     var parts: string[] = [];
     parts = parts.append("(module\n");
     if (mode == 0) { parts = parts.append(preview1_imports(needs)); }
-    if (mode == 2) { parts = parts.append(component_io_imports(needs)); }
+    if (mode == 2) { parts = parts.append(component_io_imports(needs, component_uses_stderr(mod, needs))); }
     // WIT `@import` externs. Emitted for EVERY mode: an extern is a declaration
     // in the source, not a property of the framing, and a module that calls one
     // without importing it fails at load with `unknown func`. This is half of
@@ -10710,7 +10720,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // The preview2 shims stand in for the preview1 imports mode 0 supplies, so
     // every $fd_write / $proc_exit call site the IR emits links unchanged.
     // Placed after the heap runtime they call into (as the AST path does).
-    if (mode == 2) { parts = parts.append(component_io_shims(needs)); }
+    if (mode == 2) { parts = parts.append(component_io_shims(needs, component_uses_stderr(mod, needs))); }
     // $__fern_arr_dec_ptr2 (string[][] deep reclaim, #4355 slice 9): only
     // when the module lowers a __fern_strarrarr_free call — see
     // arr_dec_ptr2_func for why it must not be included unconditionally.
@@ -13641,7 +13651,7 @@ function called_names(mod: parser.Module): Map[string, boolean] {
 pub function component_shape(mod: parser.Module): i32 {
     var calls: Map[string, boolean] = called_names(mod);
     var io: boolean = calls.has("print") || calls.has("write")
-        || calls.has("putchar") || calls.has("print_int");
+        || calls.has("putchar") || calls.has("print_int") || calls.has("stdout");
     var rd: boolean = calls.has("read_file") || calls.has("read_file_bytes");
     var wr: boolean = calls.has("write_file");
     var env: boolean = calls.has("env");
@@ -13655,7 +13665,7 @@ pub function component_shape(mod: parser.Module): i32 {
         || calls.has("__map_hash_seed");
     var clkw: boolean = calls.has("now_unix_ms") || calls.has("now_ns");
     var clkm: boolean = calls.has("monotonic_ns");
-    var ep: boolean = calls.has("eprint");
+    var ep: boolean = calls.has("eprint") || calls.has("stderr");
     var ex: boolean = calls.has("exit");
     // Count distinct non-stdout WASI categories. Single-category programs and
     // a fixed set of two-category fs-paired combos have a wrapped wasi:cli/run
