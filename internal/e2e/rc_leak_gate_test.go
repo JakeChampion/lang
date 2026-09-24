@@ -72,8 +72,8 @@ var rcCorpusLeakBaselineX86_64 = map[string]int64{
 	"option_of_array":                      32,
 	"pair_form_enum_temp_as_argument":      288,
 	"pair_form_payload_borrowing_call":     128,
-	"stdlib_json_cursor_idiom":             1120,
-	"stdlib_json_roundtrip":                528,
+	"stdlib_json_cursor_idiom":             928,
+	"stdlib_json_roundtrip":                496,
 	// The hand-back half of the guarded arg-temp release: the callee
 	// returned the temp unchanged, so the guard declined the drop and the
 	// result's own reference keeps rhsTainted's conservative call-result
@@ -102,8 +102,8 @@ var rcCorpusLeakBaselineArm64 = map[string]int64{
 	"option_of_array":                      32,
 	"pair_form_enum_temp_as_argument":      288,
 	"pair_form_payload_borrowing_call":     128,
-	"stdlib_json_cursor_idiom":             1328,
-	"stdlib_json_roundtrip":                608,
+	"stdlib_json_cursor_idiom":             1104,
+	"stdlib_json_roundtrip":                576,
 	// See the x86-64 twin — the same guarded hand-back, byte for byte.
 	"consumed_array_arg_temp_released_and_guarded": 128,
 }
@@ -148,8 +148,8 @@ var rcCorpusLeakBaselineWasm = map[string]int64{
 	"option_of_array":                                32,
 	"pair_form_enum_temp_as_argument":                160,
 	"pair_form_payload_borrowing_call":               128,
-	"stdlib_json_cursor_idiom":                       944,
-	"stdlib_json_roundtrip":                          464,
+	"stdlib_json_cursor_idiom":                       800,
+	"stdlib_json_roundtrip":                          448,
 	"string_pushed_then_returned_bare_stays_refused": 320,
 }
 

@@ -7591,6 +7591,50 @@ function main(): i32 {
 }`,
 	},
 	{
+		// A match over a fresh call result reclaims the box even when an
+		// arm moves the payload into a new construction — here a struct
+		// field and a local — because the construction takes a count of its
+		// own. Neither arm runs its move on most iterations, which is
+		// BufWriter.flush's shape (#9180).
+		name: "match_payload_moved_into_construction_reclaimed",
+		src: `
+import "std/i32";
+struct E { msg: string }
+struct Acc { n: i32, last: Option[E] }
+@noinline
+function mk(k: i32): Result[i32, E] {
+    if (k % 3 == 0) { return Err(E { msg: "bad" + k.to_string() }); }
+    return Ok(k);
+}
+@noinline
+function put(a: Acc, k: i32): Acc {
+    match (mk(k)) {
+        Err(e) => { return Acc { ...a, last: Some(e) }; },
+        Ok(v) => { return Acc { ...a, n: a.n + v }; }
+    }
+}
+@noinline
+function wrap(k: i32): Result[i32, E] {
+    match (mk(k)) {
+        Err(e) => { var r: Result[i32, E] = Err(e); return r; },
+        Ok(v) => { return Ok(v + 1); }
+    }
+}
+function main(): i32 {
+    var a: Acc = Acc { n: 0, last: None };
+    var m: i32 = 0;
+    var i: i32 = 0;
+    while (i < 60) {
+        a = put(a, i);
+        match (wrap(i)) { Err(e) => { m = m + e.msg.len(); }, Ok(v) => { m = m + v; } }
+        i = i + 1;
+    }
+    var tail: i32 = 0;
+    match (a.last) { Some(e) => { tail = e.msg.len(); }, None => {} }
+    return (a.n - 1200) + (m - 1336) + (tail - 5) + __rc_underflow_count();
+}`,
+	},
+	{
 		// #8833: the third state of that same store. #8441 released the
 		// superseded element UNCONDITIONALLY, and a consuming update that
 		// finds its receiver uniquely held mutates in place and hands the

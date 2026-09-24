@@ -181,7 +181,7 @@ audit_monotonic_sleep                                0
 audit_now_ns                                         0
 audit_numeric_types                                  0
 audit_std_crypto                                     0
-audit_std_json                                       25
+audit_std_json                                       13
 audit_std_numeric                                    2
 audit_std_path_numeric                               0
 audit_std_string                                     0
@@ -257,8 +257,8 @@ defer_in_loop                                        0
 derive_debug                                         0
 derive_default                                       0
 derive_default_generic_primitive                     0
-derive_from_json                                     34
-derive_from_json_i64                                 14
+derive_from_json                                     23
+derive_from_json_i64                                 11
 derive_json                                          0
 derive_multi_payload                                 0
 div_modulo                                           0
@@ -377,8 +377,8 @@ io_error_other_is_a_directory                        2
 io_error_other_not_a_directory                       1
 iter_build_consume                                   0
 json_array_field                                     0
-json_error_location                                  51
-json_object                                          8
+json_error_location                                   0
+json_object                                          0
 labeled_loops                                        0
 lambda_returning_a_capturing_lambda                  6
 lambda_tuple_return                                  0
