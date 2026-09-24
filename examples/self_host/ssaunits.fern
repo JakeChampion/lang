@@ -681,9 +681,7 @@ function projection_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], d
     var i: i32 = pos + 1;
     while (i < b.insts.len()) {
         var later: ssa.SInst = b.insts[i];
-        var mentions: boolean = false;
-        for arg in later.args { if (arg == root) { mentions = true; } }
-        if (mentions && !other_field_get(later, root, get.imm)) { return none; }
+        if (ssa.reads_value(later, root) && !other_field_get(later, root, get.imm)) { return none; }
         i = i + 1;
     }
     if (b.term.kind_tag == 1 && b.term.value == root) { return none; }
@@ -766,13 +764,10 @@ function tuple_take_field(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], 
     var i: i32 = pos + 1;
     while (i < b.insts.len()) {
         var later: ssa.SInst = b.insts[i];
-        var mentions: boolean = false;
-        for arg in later.args { if (arg == root) { mentions = true; } }
-        if (mentions && !other_tuple_get(later, root, ins.imm)) { return none; }
+        if (ssa.reads_value(later, root) && !other_tuple_get(later, root, ins.imm)) { return none; }
         i = i + 1;
     }
-    if (b.term.kind_tag == 1 && b.term.value == root) { return none; }
-    if (b.term.kind_tag == 3 && b.term.cond == root) { return none; }
+    if (ssa.term_reads_value(b.term, root)) { return none; }
     var w: i32 = 0;
     while (w < f.graph.nvals) {
         if (w != root && w != ins.result && reads(a, w, root) && used_after(f, a, bi, pos, w)) {
@@ -981,35 +976,50 @@ function payload_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs
     if (ins.result < 0 || ins.result >= f.graph.nvals) { return none; }
     var root: i32 = ins.args[0];
     if (root < 0 || root >= f.graph.nvals || root >= owned.len() || root >= defs.len()) { return none; }
-    var got: typeinfo.Type = f.values[ins.result];
-    if (field) {
-        if (!field_takeable(got) || !is_record(f.values[root]) || semtypes.is_env(f.values[root])) { return none; }
-    } else {
-        if (!ssasem.reference(got) || !is_union(f.values[root])) { return none; }
-        if ((ssasem.is_view(got) || option_layout(f, f.values[root])) && !sole_box(f, defs, root, bits(f.graph.nvals))) { return none; }
-    }
+    if (!slot_takeable(f, defs, f.values[ins.result], root, field)) { return none; }
     if (!owned[root] || projection(defs[root].kind_tag) && !taken_read(defs[root].kind_tag)) { return none; }
-    var b: ssa.SBlock = f.graph.blocks[bi];
     if (field && needed_past(f, a, defs, bi, ins, root) || !field && ssalive.live_out_has(a.flow, bi, root)) { return none; }
+    if (read_later_in_block(f, a, defs, bi, pos, root)) { return none; }
+    return root;
+}
+
+// Whether the box `root` can give up the slot the read `got` names: a
+// buffer or record field of a record, or a reference payload of a union.
+// A view, or the builtin Option layout, needs a box nobody else sees.
+function slot_takeable(f: ssasem.Func, defs: ssa.SInst[], got: typeinfo.Type, root: i32, field: boolean): boolean {
+    var box: typeinfo.Type = f.values[root];
+    if (field) { return field_takeable(got) && is_record(box) && !semtypes.is_env(box); }
+    if (!ssasem.reference(got) || !is_union(box)) { return false; }
+    return !(ssasem.is_view(got) || option_layout(f, box)) || sole_box(f, defs, root, bits(f.graph.nvals));
+}
+
+// Whether the rest of block bi, after the read at pos, reads `root` other than
+// through another of its slots.
+function read_later_in_block(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bi: i32, pos: i32, root: i32): boolean {
+    var b: ssa.SBlock = f.graph.blocks[bi];
+    var ins: ssa.SInst = b.insts[pos];
     var i: i32 = pos + 1;
     while (i < b.insts.len()) {
-        var later: ssa.SInst = b.insts[i];
-        var mentions: boolean = false;
-        for arg in later.args { if (arg == root) { mentions = true; } }
-        if (mentions && !other_slot_get(later, ins)) { return none; }
+        if (ssa.reads_value(b.insts[i], root) && !other_slot_get(b.insts[i], ins)) { return true; }
         i = i + 1;
     }
-    if (b.term.kind_tag == 1 && b.term.value == root) { return none; }
-    if (b.term.kind_tag == 3 && b.term.cond == root) { return none; }
+    if (ssa.term_reads_value(b.term, root)) { return true; }
+    return anchored_after(f, a, defs, bi, pos, root);
+}
+
+// A value used after pos in block bi reaches root other than through the read
+// at pos or a read of another of root's slots.
+function anchored_after(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bi: i32, pos: i32, root: i32): boolean {
+    var ins: ssa.SInst = f.graph.blocks[bi].insts[pos];
     var w: i32 = 0;
     while (w < f.graph.nvals) {
         if (w != root && w != ins.result && reads(a, w, root) && used_after(f, a, bi, pos, w)) {
             var hop: i32 = first_hop(a, w, root);
-            if (hop != ins.result && (hop < 0 || !other_slot_get(defs[hop], ins))) { return none; }
+            if (hop != ins.result && (hop < 0 || !other_slot_get(defs[hop], ins))) { return true; }
         }
         w = w + 1;
     }
-    return root;
+    return false;
 }
 
 // Whether `root` is still needed after block `bi` other than through what the
@@ -1019,6 +1029,11 @@ function payload_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs
 // The value taken keeps `root` live in the flow, which predates the take.
 function needed_past(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bi: i32, take: ssa.SInst, root: i32): boolean {
     if (!ssalive.live_out_has(a.flow, bi, root)) { return false; }
+    return named_after(f, bi, root) || reached_past_take(f, a, defs, bi, take, root);
+}
+
+// A block after bi reads v.
+function named_after(f: ssasem.Func, bi: i32, v: i32): boolean {
     var seen: boolean[] = bits(f.graph.blocks.len());
     var work: i32[] = [];
     for id in successors(f.graph.blocks[bi]) { work = work.append(block_index(f.graph, id)); }
@@ -1029,12 +1044,20 @@ function needed_past(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bi: 
         if (k < 0 || seen[k]) { continue; }
         seen = seen.with(k, true);
         var blk: ssa.SBlock = f.graph.blocks[k];
-        for ins in blk.insts {
-            for arg in ins.args { if (arg == root) { return true; } }
-        }
-        if (blk.term.kind_tag == 1 && blk.term.value == root || blk.term.kind_tag == 3 && blk.term.cond == root) { return true; }
+        if (block_reads(blk, v)) { return true; }
         for id in successors(blk) { work = work.append(block_index(f.graph, id)); }
     }
+    return false;
+}
+
+function block_reads(blk: ssa.SBlock, v: i32): boolean {
+    for ins in blk.insts { if (ssa.reads_value(ins, v)) { return true; } }
+    return ssa.term_reads_value(blk.term, v);
+}
+
+// A value live out of bi reaches root other than through `take` or a read of
+// another of root's slots.
+function reached_past_take(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bi: i32, take: ssa.SInst, root: i32): boolean {
     var out: boolean[] = live_out_row(a.flow, bi, f.graph.nvals);
     var w: i32 = 0;
     while (w < f.graph.nvals) {

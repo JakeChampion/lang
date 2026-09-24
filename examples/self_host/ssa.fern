@@ -862,23 +862,29 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
         }
         oi = oi + 1;
     }
-    // A spilled value keeps its phi mate's hint for a slot, a loop-carried
-    // one only where the register rule would have let the two share. Where
-    // the mate is dead from the value's definition on, the value may take
-    // the slot over while the mate's interval still covers it.
-    var slot_hint: i32[] = [];
+    return assign_spill_slots(lo, hi, def_pos, reg_of, slot_hints(f, at, blk_start, def_blk, def_pos, reg_of, mates));
+}
+
+// A spilled value keeps its phi mate's hint for a slot, a loop-carried one
+// only where the register rule would have let the two share. Where the mate
+// is dead from the value's definition on, `take_over` lets the value take the
+// slot over while the mate's interval still covers it.
+struct SlotHints { hint: i32[], take_over: boolean[] }
+
+function slot_hints(f: SFunc, at: i32[], blk_start: i32[], def_blk: i32[], def_pos: i32[], reg_of: i32[], mates: Mates): SlotHints {
+    var hint: i32[] = [];
     var take_over: boolean[] = [];
-    i = 0;
+    var i: i32 = 0;
     while (i < f.nvals) {
         var sh: i32 = mates.hint[i];
         if (reg_of[i] >= 0 || sh < 0 || reg_of[sh] >= 0) { sh = 0 - 1; }
         var free: boolean = sh >= 0 && def_pos[sh] >= 0 && !mate_interferes(f, at, blk_start, sh, i, def_blk[sh], def_blk[i], def_pos[i]);
         if (sh >= 0 && mates.carried[i] && !free) { sh = 0 - 1; }
-        slot_hint = slot_hint.append(sh);
+        hint = hint.append(sh);
         take_over = take_over.append(free);
         i = i + 1;
     }
-    return assign_spill_slots(lo, hi, def_pos, reg_of, slot_hint, take_over);
+    return SlotHints { hint: hint, take_over: take_over };
 }
 
 // spill_weights counts, per value, its definition and every read, each at the
@@ -1015,12 +1021,12 @@ function position_of(at: i32[], id: i32): i32 {
     return at[id];
 }
 
-function reads_value(ins: SInst, v: i32): boolean {
+pub function reads_value(ins: SInst, v: i32): boolean {
     for a in ins.args { if (a == v) { return true; } }
     return false;
 }
 
-function term_reads_value(t: STerm, v: i32): boolean {
+pub function term_reads_value(t: STerm, v: i32): boolean {
     if (t.kind_tag == 1) { return t.value == v; }
     if (t.kind_tag == 3) { return t.cond == v; }
     return false;
@@ -1084,42 +1090,22 @@ function index_of_reg(a: i32[], x: i32): i32 {
 // assign_spill_slots gives the spilled values frame slots, sharing one between
 // values whose intervals do not meet. A value nothing defines (a parameter) is
 // stored on entry, so it is live from position 0. A value takes the slot of
-// `hint[v]`, its phi mate, before any other: when the slot is free, or when
-// the mate still holds it and `take_over[v]` says the two were found not to
-// interfere. The edge between them then moves nothing. A value with no
-// such slot passes over a free one whose last holder is the mate of a value
-// not placed yet: a block's phis start one after another, but every operand
-// arriving from before them dies at the edge, so the first phi would
+// `hints.hint[v]`, its phi mate, before any other: when the slot is free, or
+// when the mate still holds it and `hints.take_over[v]` says the two were
+// found not to interfere. The edge between them then moves nothing. A value
+// with no such slot passes over a free one whose last holder is the mate of a
+// value not placed yet: a block's phis start one after another, but every
+// operand arriving from before them dies at the edge, so the first phi would
 // otherwise take the slot a later one wants.
-function assign_spill_slots(lo: i32[], hi: i32[], def_pos: i32[], reg_of: i32[], hint: i32[], take_over: boolean[]): i32[] {
-    var from: i32[] = [];
-    var wanted_by: i32[] = [];
-    var i: i32 = 0;
-    while (i < reg_of.len()) {
-        if (def_pos[i] < 0) { from = from.append(0); } else { from = from.append(lo[i]); }
-        wanted_by = wanted_by.append(0 - 1);
-        i = i + 1;
-    }
-    i = 0;
-    while (i < reg_of.len()) {
-        var m: i32 = hint[i];
-        if (m >= 0 && hi[i] >= 0 && reg_of[i] == 0 - 1 && reg_of[m] == 0 - 1) { wanted_by = wanted_by.with(m, i); }
-        i = i + 1;
-    }
+function assign_spill_slots(lo: i32[], hi: i32[], def_pos: i32[], reg_of: i32[], hints: SlotHints): i32[] {
+    var from: i32[] = spill_starts(lo, def_pos);
+    var wanted_by: i32[] = mates_wanted(hi, reg_of, hints.hint);
     var slot_end: i32[] = [];
     var holder: i32[] = [];
     for v in order_by_lo(reg_of.len(), from) {
         if (hi[v] < 0 || reg_of[v] >= 0) { continue; }
-        var s: i32 = 0 - 1;
-        var h: i32 = hint[v];
-        if (h >= 0 && reg_of[h] < 0 - 1) {
-            var hs: i32 = spill_slot(reg_of[h]);
-            if (slot_end[hs] < from[v] || take_over[v] && holder[hs] == h) { s = hs; }
-        }
-        if (s < 0) {
-            s = 0;
-            while (s < slot_end.len() && (slot_end[s] >= from[v] || kept_for_mate(wanted_by, reg_of, holder[s], v))) { s = s + 1; }
-        }
+        var s: i32 = hinted_slot(slot_end, holder, reg_of, hints.hint[v], from[v], hints.take_over[v]);
+        if (s < 0) { s = free_slot(slot_end, holder, wanted_by, reg_of, from[v], v); }
         var end: i32 = hi[v];
         if (s < slot_end.len() && slot_end[s] > end) { end = slot_end[s]; }
         if (s == slot_end.len()) { slot_end = slot_end.append(end); holder = holder.append(v); }
@@ -1127,6 +1113,45 @@ function assign_spill_slots(lo: i32[], hi: i32[], def_pos: i32[], reg_of: i32[],
         reg_of = reg_of.with(v, spill_code(s));
     }
     return reg_of;
+}
+
+function spill_starts(lo: i32[], def_pos: i32[]): i32[] {
+    var from: i32[] = [];
+    var i: i32 = 0;
+    while (i < lo.len()) {
+        if (def_pos[i] < 0) { from = from.append(0); } else { from = from.append(lo[i]); }
+        i = i + 1;
+    }
+    return from;
+}
+
+// wanted_by[m] is the spilled value whose phi mate is m, or -1.
+function mates_wanted(hi: i32[], reg_of: i32[], hint: i32[]): i32[] {
+    var wanted_by: i32[] = [];
+    var i: i32 = 0;
+    while (i < reg_of.len()) { wanted_by = wanted_by.append(0 - 1); i = i + 1; }
+    i = 0;
+    while (i < reg_of.len()) {
+        var m: i32 = hint[i];
+        if (m >= 0 && hi[i] >= 0 && reg_of[i] == 0 - 1 && reg_of[m] == 0 - 1) { wanted_by = wanted_by.with(m, i); }
+        i = i + 1;
+    }
+    return wanted_by;
+}
+
+// The slot of the mate h, when it is free at `from` or the value may take it
+// over from h; -1 otherwise.
+function hinted_slot(slot_end: i32[], holder: i32[], reg_of: i32[], h: i32, from: i32, take_over: boolean): i32 {
+    if (h < 0 || reg_of[h] >= 0 - 1) { return 0 - 1; }
+    var hs: i32 = spill_slot(reg_of[h]);
+    if (slot_end[hs] < from || take_over && holder[hs] == h) { return hs; }
+    return 0 - 1;
+}
+
+function free_slot(slot_end: i32[], holder: i32[], wanted_by: i32[], reg_of: i32[], from: i32, v: i32): i32 {
+    var s: i32 = 0;
+    while (s < slot_end.len() && (slot_end[s] >= from || kept_for_mate(wanted_by, reg_of, holder[s], v))) { s = s + 1; }
+    return s;
 }
 
 // Imms marks the integer constants an emitter reads as immediate operands and
