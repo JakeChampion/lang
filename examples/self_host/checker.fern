@@ -8684,18 +8684,7 @@ function numeric_literal_kind(e: ast.Expr): i32 {
 
 // float_literal_tree: is `e` built from unsuffixed float literals only?
 function float_literal_tree(e: ast.Expr): boolean {
-  match (e) {
-    ast.ExprNumber(n) => { return n.is_float && n.suffix.len() == 0; },
-    ast.ExprUnary(u) => { return (u.op == "-" || u.op == "+") && float_literal_tree(u.operand); },
-    ast.ExprBinary(b) => {
-      if (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/") {
-        return float_literal_tree(b.left) && float_literal_tree(b.right);
-      }
-      return false;
-    },
-    _ => { return false; }
-  }
-  return false;
+  return parser.float_literal_tree(e);
 }
 
 // literal_gives_way: does a literal of numeric_literal_kind `kind` take the

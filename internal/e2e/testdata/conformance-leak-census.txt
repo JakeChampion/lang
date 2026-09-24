@@ -320,6 +320,7 @@ generic_fold_accumulator_reclaim                     0
 generic_id                                           0
 generic_method_typeparams                            0
 generic_pair                                         0
+generic_reads_an_array_literals_joined_element_type  0
 generic_receiver_methods                             0
 grow_past_capacity                                   0
 hash_struct_enum                                     0

@@ -9885,6 +9885,28 @@ pub function int_literal_tree(e: ast.Expr): boolean {
   return false;
 }
 
+// float_literal_tree: is `e` built from unsuffixed float literals only?
+pub function float_literal_tree(e: ast.Expr): boolean {
+  match (e) {
+    ast.ExprNumber(n) => { return n.is_float && n.suffix.len() == 0; },
+    ast.ExprUnary(u) => { return (u.op == "-" || u.op == "+") && float_literal_tree(u.operand); },
+    ast.ExprBinary(b) => {
+      if (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/") {
+        return float_literal_tree(b.left) && float_literal_tree(b.right);
+      }
+      return false;
+    },
+    _ => { return false; }
+  }
+  return false;
+}
+
+// number_literal_tree: an unsuffixed integer or float literal tree, whose type
+// its destination or a concrete sibling settles.
+pub function number_literal_tree(e: ast.Expr): boolean {
+  return int_literal_tree(e) || float_literal_tree(e);
+}
+
 // Settle only a tree accepted by int_literal_tree. This is a compile-only
 // copy: source formatting never reads the suffixes introduced here.
 pub function settle_int_tree(e: ast.Expr, tag: string): ast.Expr {
@@ -9970,10 +9992,20 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
         ast.ExprBool(_) => { return "boolean"; },
         ast.ExprArray(a) => {
             // Array literal `[e0, …]`: the type is the element type
-            // plus `[]`, so a `T[]` parameter can recover the element.
+            // plus `[]`, so a `T[]` parameter can recover the element. An
+            // unsuffixed numeric literal takes the type of a concrete numeric
+            // sibling, as the checker joins it: `[2.0, nan32()]` is an f32[].
             if (a.elements.len() == 0) { return ""; }
             var et: string = mono_infer(a.elements[0], env, funcs);
             if (et.len() == 0) { return ""; }
+            if (number_literal_tree(a.elements[0])) {
+                for el in a.elements {
+                    if (!number_literal_tree(el)) {
+                        var st: string = mono_infer(el, env, funcs);
+                        if (is_scalar_ret_name(st) && st != "boolean") { return st + "[]"; }
+                    }
+                }
+            }
             return et + "[]";
         },
         ast.ExprIdent(id) => { return env.elook(id.name); },
