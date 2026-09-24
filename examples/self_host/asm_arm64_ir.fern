@@ -2665,11 +2665,6 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
         s = s.need("heap"); s = s.need("reader"); s = s.need("writer_truncate");
         s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
         s = s.write("    bl __fn___fern_writer_truncate\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
-    } else if (o.kind_tag == 210) {  // arg_at
-        // [i] -> push argv[i] as a fresh rc-headered string box
-        // (asm_arm64.emit_runtime's __fern_arg_at, in the same args block).
-        s = s.need("heap"); s = s.need("args");
-        s = s.write("    ldr x0, [sp], #16\n    bl __fern_arg_at\n    str x0, [sp, #-16]!\n");
     } else if ((o.kind_tag >= 291 && o.kind_tag <= 297) || o.kind_tag == 306 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328) {  // the buf_* builder
         s = emit_arm64_op_buf(o, s);
     } else if (o.kind_tag == 181) {  // sleep_ms

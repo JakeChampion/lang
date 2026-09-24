@@ -4847,7 +4847,6 @@ function builtin_i32_names(): string[] {
         "buf_new",
         "buf_len",
         "exit",
-        "args_count",
     ];
 }
 
@@ -4870,7 +4869,6 @@ function builtin_string_names(): string[] {
         "str_replace",
         "chr",
         "__raw_string",
-        "arg_at",
         "string_from_bytes_unchecked",
         // buf_take(h) hands the builder's accumulated bytes over as a string.
         "buf_take",
