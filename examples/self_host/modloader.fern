@@ -83,13 +83,17 @@ function fill_dirs(dirs: string[], dir: string, n: i32): string[] {
     return out;
 }
 
-// try_read reads `<dir><rel>.fern`, returning Some(source) or None.
-function try_read(dir: string, rel: string): Option[string] {
-    match (read_file(dir + rel + ".fern")) {
-        Ok(s) => { return Some(s); },
-        Err(e) => { return None; },
+// read_error_reason says why a file that is there could not be read, or "" when
+// it is not there at all, which is the one error a search goes on past.
+pub function read_error_reason(e: IoError): string {
+    match (e) {
+        NotFound(_) => { return ""; },
+        PermissionDenied(_) => { return "permission denied"; },
+        InvalidUtf8(_) => { return "invalid UTF-8"; },
+        Other(_, msg) => { return msg; },
+        _ => { return "read failed"; },
     }
-    return None;
+    return "read failed";
 }
 
 // Resolved is a module's source together with the DIRECTORY it was read
@@ -97,9 +101,11 @@ function try_read(dir: string, rel: string): Option[string] {
 // a dependency's `import "./util"` names a file beside the dependency, and
 // its declared dependencies live in the dependency's manifest, not the
 // entry package's.
-pub struct Resolved { src: string, dir: string, ok: boolean }
+// `err` is set when a candidate was present but unreadable; it ends the search
+// rather than letting a later candidate shadow the file (#10142).
+pub struct Resolved { src: string, dir: string, ok: boolean, err: string }
 
-function res_none(): Resolved { return Resolved { src: "", dir: "", ok: false }; }
+function res_none(): Resolved { return Resolved { src: "", dir: "", ok: false, err: "" }; }
 
 // res_read reads `<dir><rel>.fern` and reports the ROOT its own imports
 // resolve against, which is `dir` — not the sub-directory the file happens to
@@ -109,9 +115,9 @@ function res_none(): Resolved { return Resolved { src: "", dir: "", ok: false };
 // `<dir>std/std/string.fern`. The root changes only when resolution crosses
 // into another PACKAGE, which is what the manifest arms return.
 function res_read(dir: string, rel: string): Resolved {
-    match (try_read(dir, rel)) {
-        Some(s) => { return Resolved { src: s, dir: dir, ok: true }; },
-        None => { return res_none(); },
+    match (read_file(dir + rel + ".fern")) {
+        Ok(s) => { return Resolved { src: s, dir: dir, ok: true, err: "" }; },
+        Err(e) => { return Resolved { ...res_none(), err: read_error_reason(e) }; },
     }
     return res_none();
 }
@@ -175,12 +181,12 @@ pub function no_overlay(): Overlay {
 // fallthrough-to-disk case byte-identical to what it was.
 pub function resolve_module(ov: Overlay, dir: string, path: string, name: string): Resolved {
     var oi: i32 = util.index_of_str(ov.paths, rel_path(path));
-    if (oi >= 0) { return Resolved { src: ov.srcs[oi], dir: dir, ok: true }; }
+    if (oi >= 0) { return Resolved { src: ov.srcs[oi], dir: dir, ok: true, err: "" }; }
     if (ov.sealed) { return res_none(); }
     var direct: Resolved = res_read(dir, rel_path(path));
-    if (direct.ok) { return direct; }
+    if (direct.ok || direct.err.len() > 0) { return direct; }
     var flat: Resolved = res_read(dir, name);
-    if (flat.ok) { return flat; }
+    if (flat.ok || flat.err.len() > 0) { return flat; }
     // Manifest fallback (mirrors native's resolveImport): path / workspace /
     // versioned(lock) deps, vendored mode, and — since #4949 — url+hash
     // deps resolved from the per-machine content-addressed store via the
@@ -376,7 +382,7 @@ function load_from_store(hash: string): Resolved {
 }
 
 // strip_fern_ext removes a trailing ".fern" so the name joins onto
-// try_read (which appends ".fern"): "api.fern" → "api", "lib" → "lib".
+// res_read (which appends ".fern"): "api.fern" → "api", "lib" → "lib".
 function strip_fern_ext(s: string): string {
     if (s.len() >= 5 && slice_unchecked(s, s.len() - 5, s.len()) == ".fern") {
         return slice_unchecked(s, 0, s.len() - 5) + "";
