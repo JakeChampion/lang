@@ -59,6 +59,11 @@ pub function grow_fields_of(rows: GrowRow[], callee: string, param: i32): i32[] 
     return out;
 }
 
+// Whether the callee may grow the array at `param` in place.
+pub function grows_buffer(rows: GrowRow[], callee: string, param: i32): boolean {
+    return has_row(rows, callee, param, 0 - 1);
+}
+
 function has_row(rows: GrowRow[], callee: string, param: i32, field: i32): boolean {
     for row in rows {
         if (row.callee == callee && row.param == param && row.field == field) { return true; }
@@ -68,7 +73,7 @@ function has_row(rows: GrowRow[], callee: string, param: i32, field: i32): boole
 
 // Whether two grow tables say the same thing about `callees`.
 //
-// A body reads this table only through `grow_fields_of(grows, ins.str, i)` in
+// A body reads this table only through `grow_fields_of` and `grows_buffer` in
 // `ssarc.bracketed`, keyed by the name each call instruction names — so two
 // tables that agree on the callees one body names produce that body
 // identically, however much they differ elsewhere. That is what lets a second
