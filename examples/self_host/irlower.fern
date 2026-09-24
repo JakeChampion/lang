@@ -24310,13 +24310,57 @@ function refine_map_struct_val(a: ast.StmtAssign, slot: i32, s: LowerState): Low
 // arr_push_owned reclaims on grow itself, and a parameter's store is its
 // ownership flag's (emit_consumed_param_store).
 //
-// Scalar elements only. The un-share copy duplicates the element words with no
-// retain, so a pointer-element buffer (string[], T[][], a struct array) shares
-// its elements with the copy uncounted; releasing this frame's reference lets
-// the other holder's deep free reach rc 1 and walk elements the copy still
-// reads (#9209). That buffer is left to its holders, as before.
+// Scalar elements only here: a pointer-element buffer's copy shares its
+// elements uncounted, and emit_aliased_push_store counts them first.
 function aliased_push_releases_old(sole_owner: boolean, s: LowerState, slot: i32): boolean {
     return !sole_owner && arr_slot_shallow_release_ok(s, slot) && slot_holds_scalar_elems(s, slot);
+}
+
+// emit_aliased_push_store stores the plain push's result (on the operand stack)
+// into `slot` and settles the superseded buffer. For a POINTER-element buffer
+// (string[], T[][], a struct array) the push copies element words with no
+// retain, so when the pointer changed and another holder still reads the old
+// buffer, its elements are retained before this frame's reference is given
+// back: the copy then owns a count of each, as the semantic lowering's copy
+// arm counts them (#9209). An old buffer this frame held alone was outgrown,
+// its elements moved to the new one, and it is freed without the retain.
+function emit_aliased_push_store(se: LowerState, slot: i32, sole_owner: boolean): LowerState {
+    if (sole_owner || !arr_slot_shallow_release_ok(se, slot) || !slot_holds_counted_elems(se, slot)) {
+        return emit_arr_store(se, slot, false, aliased_push_releases_old(sole_owner, se, slot));
+    }
+    var scratch: string = "$rea" + util.i32_to_string(se.locals.len());
+    var st: LowerState = se.add_local(scratch);
+    var tmp: i32 = st.slot_of(scratch);
+    st = st.emit(ir.op_store_local(tmp));
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_load_local(tmp));
+    st = st.emit(ir.op_bin("ne", 0, false));
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_bin("eq", 0, false));
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_call_direct("__fern_arr_inc_elems", 1));
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_end());
+    st = st.release(slot, "__fern_rc_dec", "aliased-push-old");
+    st = st.emit(ir.op_end());
+    st = st.emit(ir.op_load_local(tmp));
+    return st.emit(ir.op_store_local(slot));
+}
+
+// slot_holds_counted_elems: the array in slot `i` stores rc-counted element
+// boxes that __fern_arr_inc_elems can retain one by one — strings, inner
+// arrays, or struct boxes.
+function slot_holds_counted_elems(s: LowerState, i: i32): boolean {
+    if (i < 0 || i >= s.locals.len()) { return false; }
+    var li: LocalInfo = s.locals[i];
+    if (li.is_cell || !li.is_arr || li.is_closurearr) { return false; }
+    if ((li.opt_type + li.fnarr_elem + li.map_type).len() > 0) { return false; }
+    if (li.is_strarr || li.is_arrarr) { return true; }
+    return decl_is_struct(s.frame.structs, li.struct_type);
 }
 
 // append_target_sole_owner: `name = name.append(v)` may reclaim the superseded
@@ -24627,7 +24671,7 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
                             } else {
                                 aps = aps.emit(ir.op_arr_push_owned());
                             }
-                            aps = emit_arr_store(aps, slot, false, aliased_push_releases_old(!push_shared, aps, slot));
+                            aps = emit_aliased_push_store(aps, slot, !push_shared);
                             // If the appended value is a closure BOX — a
                             // `__mkclo$…` env-box marker (capturing `$clo` or
                             // wrapped no-capture `$wrap`), a closure-returning
