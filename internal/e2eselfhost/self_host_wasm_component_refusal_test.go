@@ -11,7 +11,7 @@ import (
 // A handle-carrying tuple literal, `(stdout(), true)`, lowers wherever the same
 // tuple built from a named handle does (#9238). And a module the lowering takes
 // whole but a wasm COMPONENT cannot import for is refused by naming the op: the
-// component framing has no preview2 body for a Writer's write, and the refusal
+// component framing has no preview2 body for opening a file, and the refusal
 // used to be the generic "not IR-eligible", with FERN_STRICT_IR=1 naming nothing.
 const handleTupleSrc = `function handle_lit(): (Writer, boolean) {
     return (stdout(), true);
@@ -29,10 +29,21 @@ function main(): i32 {
 }
 `
 
+const openFileSrc = `function main(): i32 {
+    match (open_reader("x.txt")) { Ok(_) => { return 1; }, Err(_) => { return 2; } }
+    return 0;
+}
+`
+
 func writeHandleTupleSrc(t *testing.T) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "handle_tuple.fern")
-	if err := os.WriteFile(path, []byte(handleTupleSrc), 0o644); err != nil {
+	return writeSrc(t, "handle_tuple.fern", handleTupleSrc)
+}
+
+func writeSrc(t *testing.T, name, src string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return path
@@ -60,14 +71,30 @@ func TestSelfHostHandleTupleLiteralWasm(t *testing.T) {
 	src := writeHandleTupleSrc(t)
 	dir := t.TempDir()
 
+	// A component's run export reports any non-zero main as an error, so the
+	// host exits 1, as native's component does.
+	t.Run("component-runs", func(t *testing.T) {
+		comp := filepath.Join(dir, "comp.wasm")
+		cmd := runX86_64Bin(cli.runner, cli.bin, "-target", "wasm32-wasi", src, cli.stdlib, "-o", comp)
+		cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("component build: %v\n%s", err, out)
+		}
+		run := exec.Command("wasmtime", "run", comp)
+		got, _ := run.Output()
+		if code := run.ProcessState.ExitCode(); code != 1 || string(got) != "ok\n" {
+			t.Fatalf("exit = %d, stdout %q; want 1 and \"ok\\n\"", code, got)
+		}
+	})
+
 	t.Run("component-names-the-op", func(t *testing.T) {
-		cmd := runX86_64Bin(cli.runner, cli.bin, "-target", "wasm32-wasi", src, cli.stdlib, "-o", filepath.Join(dir, "comp.wasm"))
+		cmd := runX86_64Bin(cli.runner, cli.bin, "-target", "wasm32-wasi", writeSrc(t, "open_file.fern", openFileSrc), cli.stdlib, "-o", filepath.Join(dir, "open.wasm"))
 		cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
 		out, err := cmd.CombinedOutput()
 		if err == nil {
-			t.Fatalf("component build succeeded; want a refusal naming writer_write\n%s", out)
+			t.Fatalf("component build succeeded; want a refusal naming open_file\n%s", out)
 		}
-		if !strings.Contains(string(out), "writer_write is not supported in a wasm component") {
+		if !strings.Contains(string(out), "open_file is not supported in a wasm component") {
 			t.Fatalf("refusal does not name the op:\n%s", out)
 		}
 	})
