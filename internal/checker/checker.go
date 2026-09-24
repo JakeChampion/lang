@@ -18126,6 +18126,12 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			return nil
 		}
 		ret := c.current.ReturnType
+		if c.inferReturns != nil && c.current.ReturnUnannotated {
+			// An unannotated body's return type is still being inferred, and
+			// the failure edge is one of its returns (#9515).
+			*c.inferReturns = append(*c.inferReturns, inner)
+			ret = inner
+		}
 		retEnum, retOK := ret.(ast.EnumType)
 		if !retOK || retEnum.Name != srcEnum.Name {
 			// The failure value propagates OUT of this function, so the
