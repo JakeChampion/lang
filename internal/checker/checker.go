@@ -12570,12 +12570,8 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			// `Span.Empty` — a qualified payload-less variant stays a
 			// FieldAccess rather than being rewritten to an Ident, so it is
 			// recognised here (#9517).
-			if tid, ok := x.Target.(*ast.Ident); ok {
-				if _, isEnum := c.info.Enums[tid.Name]; isEnum {
-					if _, vrOk, _ := c.resolveVariant(x.Field, tid.Name); vrOk {
-						return true
-					}
-				}
+			if _, isVariant := c.info.EnumConstructions[x]; isVariant {
+				return true
 			}
 			return selfMoveArgs[e] || c.scalarArgs[e]
 		case *ast.Call:
@@ -14371,6 +14367,7 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 	if tagT == nil {
 		return
 	}
+	tagT = c.widenGenericScrutinee(n.Tag, tagT)
 	et, ok := tagT.(ast.EnumType)
 	if !ok {
 		// A pattern-binding desugar (`if let V(x) = e`) destructuring a
@@ -14547,6 +14544,20 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 		}
 	}
 	stampRemainderStmtArms(n.Arms, ed)
+}
+
+// widenGenericScrutinee settles a generic call in scrutinee position the way
+// an unannotated `var` initialiser settles one: a type parameter bound only by
+// literal arguments, one of which has no i32 reading, takes i64
+// (widenGenericCallByLiterals). Without it `match (pick(1, 2^62))` bound `T`
+// at the i32 default and the arm's payload compared at the wrong width (#8722).
+func (c *checker) widenGenericScrutinee(tag ast.Expr, tagT ast.Type) ast.Type {
+	if call, ok := tag.(*ast.Call); ok {
+		if widened := c.widenGenericCallByLiterals(call); widened != nil {
+			return widened
+		}
+	}
+	return tagT
 }
 
 // settlePolymorphicScrutinee commits a still-polymorphic integer scrutinee to
@@ -15237,6 +15248,7 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 	if tagT == nil {
 		return nil
 	}
+	tagT = c.widenGenericScrutinee(n.Tag, tagT)
 	et, ok := tagT.(ast.EnumType)
 	if !ok {
 		// Tuple scrutinee: arms are tuple patterns + a wildcard.
@@ -16581,7 +16593,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		}
 		if fa, ok := n.Callee.(*ast.FieldAccess); ok {
 			if tid, ok := fa.Target.(*ast.Ident); ok {
-				if _, isEnum := c.info.Enums[tid.Name]; isEnum {
+				if _, shadowed := s.lookup(tid.Name); !shadowed && c.info.Enums[tid.Name] != nil {
 					n.Callee = &ast.Ident{P: fa.P, Name: fa.Field, EnumName: tid.Name}
 				}
 			}
@@ -18410,7 +18422,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// variant-call shape (`Color.Red(payload)`) is handled in
 		// the *ast.Call branch.
 		if tid, ok := n.Target.(*ast.Ident); ok {
-			if _, isEnum := c.info.Enums[tid.Name]; isEnum {
+			if _, shadowed := s.lookup(tid.Name); !shadowed && c.info.Enums[tid.Name] != nil {
 				if vr, ok, _ := c.resolveVariant(n.Field, tid.Name); ok {
 					if len(vr.payloads) > 0 {
 						en := c.enumHintName(tid.Name)

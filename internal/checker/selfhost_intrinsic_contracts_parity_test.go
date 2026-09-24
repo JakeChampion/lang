@@ -14,7 +14,7 @@ import (
 
 // TestSelfHostTypesEveryIntrinsicFamily pins the `__`-prefixed runtime
 // intrinsics the native checker types against the two self-host tables that
-// have to agree with it: checker.fern's free_builtin_result, which gives the
+// have to agree with it: checker.fern's intrinsic_result, which gives the
 // expression written around the call a type, and semsource.fern's
 // intrinsic_contracts, which gives the semantic boundary the call's ownership.
 //
@@ -75,7 +75,7 @@ func TestSelfHostTypesEveryIntrinsicFamily(t *testing.T) {
 		sort.Strings(uncontracted)
 		if len(untyped) > 0 {
 			t.Errorf("family %q: %d intrinsic(s) native types and examples/self_host/checker.fern's "+
-				"free_builtin_result does not: %s\nA call to one of these types as unknown, which "+
+				"intrinsic_result does not: %s\nA call to one of these types as unknown, which "+
 				"collapses the literal, array or operator holding it.",
 				family.name, len(untyped), strings.Join(untyped, ", "))
 		}
@@ -210,7 +210,7 @@ func nativeIntrinsicSigs(t *testing.T) map[string]*sigShape {
 // or listed for a loop to walk.
 var selfHostTypedRE = regexp.MustCompile(`"(__[A-Za-z0-9_]+)"`)
 
-// selfHostTypedIntrinsics reads every intrinsic name free_builtin_result and
+// selfHostTypedIntrinsics reads every intrinsic name intrinsic_result and
 // its helpers mention. Reading the declaration rather than running the
 // compiler is deliberate, as in the name-half gate: the question is whether
 // the two tables agree, which a behavioural test can only sample one name at
@@ -218,7 +218,7 @@ var selfHostTypedRE = regexp.MustCompile(`"(__[A-Za-z0-9_]+)"`)
 func selfHostTypedIntrinsics(t *testing.T) map[string]bool {
 	t.Helper()
 	body := selfHostSection(t, "checker.fern",
-		regexp.MustCompile(`(?s)function free_builtin_result\(.*?\n// The builtin results a call carries`))
+		regexp.MustCompile(`(?s)// The ten f64 primitives.*?\n// The builtin results a call carries`))
 	out := map[string]bool{}
 	for _, m := range selfHostTypedRE.FindAllStringSubmatch(body, -1) {
 		out[m[1]] = true
@@ -289,10 +289,11 @@ func selfHostSection(t *testing.T, file string, re *regexp.Regexp) string {
 //
 // So the direction checked is one-way. Result without parameters fails;
 // parameters without a result cannot occur, because free_builtin_sig reads the
-// result table for its own return type.
+// result table for its own return type. Surface builtins are builtin_sigs'
+// rows, which carry both halves in one spelling.
 func TestSelfHostParameterisesEveryTypedBuiltin(t *testing.T) {
-	typed := selfHostTypedBuiltins(t, `(?s)function free_builtin_result\(.*?\n// The builtin results a call carries`, false)
-	parameterised := selfHostTypedBuiltins(t, `(?s)function free_builtin_params\(.*?\n// type_debug renders a Type`, true)
+	typed := selfHostTypedBuiltins(t, `(?s)// The ten f64 primitives.*?\n// The builtin results a call carries`, false)
+	parameterised := selfHostTypedBuiltins(t, `(?s)function intrinsic_params\(.*?\n// type_debug renders a Type`, true)
 	if len(typed) == 0 || len(parameterised) == 0 {
 		t.Fatal("one of the two builtin tables read empty — this test would pass on anything")
 	}
@@ -310,9 +311,8 @@ func TestSelfHostParameterisesEveryTypedBuiltin(t *testing.T) {
 	}
 }
 
-// selfHostTypedBuiltins reads every builtin name one table's section spells —
-// the `__` intrinsics and the four float-bits builtins alike, which is why it
-// does not share selfHostTypedIntrinsics' `__` prefix filter.
+// selfHostTypedBuiltins reads every builtin name one table's section spells,
+// without selfHostTypedIntrinsics' `__` prefix filter.
 //
 // `members` reads only the rows that CLAIM the name, which the parameter table
 // marks with the `true` half of its answer. Without it a row reading

@@ -685,19 +685,23 @@ cross-block analysis to.
 
 ### 6.2 What tier A did NOT close
 
-- **A6's reciprocal, beyond x86-64's i32.** The magic-number reciprocal
+- **A6's reciprocal, beyond x86-64.** The magic-number reciprocal
   (`internal/ir/magic.go`, Granlund–Montgomery via Hacker's Delight 10-1 and
-  10-3) lands for i32 in x86-64's `emitConstDivRemMagic`, and in the self-host
-  x86-64 emitter (`asm_ir.fern`'s `ir_div_const`, with the derivation mirrored
-  as `ir.fern`'s `derive_magic_*32`). Two gaps remain, and
-  both are their own change: **i64**, which needs the derivation at 64-bit
-  width and `imul r64`, and **arm64, which has no constant-divisor lowering at
-  all** — every `x / K` there is a full `sdiv`, power of two included. arm64
-  also has `smulh` / `umulh`, so unlike x86-64 it can take i64 without
-  widening. Do not port the reciprocal to arm64 on the strength of the x86-64
-  result: `sdiv` there is 5–12 cycles against x86-64's 20–40, so the margin
-  the reciprocal has to beat is a third of the size and the answer may well
-  be no. The power-of-two half needs no such argument and is a clear win.
+  10-3, one derivation for both widths) lands for i32 and i64 in x86-64's
+  `emitConstDivRemMagic`, and in the self-host x86-64 emitter (`asm_ir.fern`'s
+  `ir_div_const`, with the derivation mirrored as `ir.fern`'s
+  `derive_magic_s` / `derive_magic_u`). At i64 the one-operand `mul` / `imul`
+  leave the high half of the 128-bit product in rdx, which is what a 64-bit
+  divide by a constant costs in place of `div r64`'s 35–90 cycles. Two gaps
+  remain. The native `-backend ssa` (`x86_64ssa`) is still i32-only: its
+  abstract instruction set has no multiply-high op for the i64 case. And
+  **arm64 has no constant-divisor lowering at all** — every `x / K` there is a
+  full `sdiv`, power of two included. arm64 has `smulh` / `umulh`, so it can
+  take i64 without widening. Do not port the reciprocal to arm64 on the
+  strength of the x86-64 result: `sdiv` there is 5–12 cycles against x86-64's
+  20–40, so the margin the reciprocal has to beat is a third of the size and
+  the answer may well be no. It wants a measurement on arm64 hardware, not
+  qemu. The power-of-two half needs no such argument and is a clear win.
 - **What the reciprocal is worth, and why `.ir` says otherwise.** A `div` by
   a literal is 3 instructions; the reciprocal is 8, or 11 for a remainder. So
   the corpus's retired-instruction count goes **UP** — +0.067%, static

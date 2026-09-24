@@ -2,6 +2,8 @@ package ir
 
 import (
 	"math"
+	"math/bits"
+	"math/rand"
 	"runtime"
 	"sync"
 	"testing"
@@ -236,5 +238,131 @@ func TestMagicExhaustiveDividends(t *testing.T) {
 			}(w)
 		}
 		wg.Wait()
+	}
+}
+
+// evalMagicS64 and evalMagicU64 are the 64-bit sequences in Go. The signed
+// high half comes from the unsigned one: each negative operand adds 2^64 times
+// the other to the unsigned product.
+func evalMagicS64(x int64, mg MagicS64) int64 {
+	hi, _ := bits.Mul64(uint64(x), uint64(mg.M))
+	q := int64(hi)
+	if x < 0 {
+		q -= mg.M
+	}
+	if mg.M < 0 {
+		q -= x
+	}
+	if mg.Add {
+		q += x
+	}
+	if mg.Sub {
+		q -= x
+	}
+	q >>= mg.S
+	return q + int64(uint64(q)>>63)
+}
+
+func evalMagicU64(x uint64, mg MagicU64) uint64 {
+	h, _ := bits.Mul64(x, mg.M)
+	if !mg.Add {
+		return h >> mg.S
+	}
+	return (((x - h) >> 1) + h) >> (mg.S - 1)
+}
+
+// dividendProbes64 is dividendProbes at 64 bits, plus a seeded spread across
+// the whole range.
+func dividendProbes64() []int64 {
+	xs := []int64{0, 1, -1, 2, -2, 3, -3, 7, -7, 100, -100, 12345, -12345,
+		math.MaxInt64, math.MinInt64, math.MaxInt64 - 1, math.MinInt64 + 1,
+		math.MaxInt32, math.MinInt32, 1 << 32, -(1 << 32), 1<<62 + 1, -(1 << 62) - 1}
+	for i := int64(-70000); i <= 70000; i += 997 {
+		xs = append(xs, i, math.MaxInt64-i, math.MinInt64+70000+i)
+	}
+	r := rand.New(rand.NewSource(1))
+	for i := 0; i < 400; i++ {
+		xs = append(xs, int64(r.Uint64()))
+	}
+	return xs
+}
+
+// divisors64 is every divisor in a dense band, the band's mirror at the top
+// of the range, and a seeded spread of large ones.
+func divisors64() []uint64 {
+	var ds []uint64
+	for d := uint64(2); d <= 20000; d++ {
+		ds = append(ds, d, math.MaxUint64-d, 1<<63+d, 1<<63-d)
+	}
+	r := rand.New(rand.NewSource(2))
+	for i := 0; i < 2000; i++ {
+		ds = append(ds, r.Uint64()>>uint(r.Intn(62)))
+	}
+	return ds
+}
+
+func TestMagicS64Divisors(t *testing.T) {
+	xs := dividendProbes64()
+	nAdd, nSub := 0, 0
+	for _, du := range divisors64() {
+		for _, d := range []int64{int64(du), -int64(du)} {
+			ad := uint64(d)
+			if d < 0 {
+				ad = uint64(-d)
+			}
+			if d == 0 || d == 1 || d == -1 || d == math.MinInt64 || ad&(ad-1) == 0 {
+				continue
+			}
+			mg := DeriveMagicS64(d)
+			if mg.Add {
+				nAdd++
+			}
+			if mg.Sub {
+				nSub++
+			}
+			if mg.S >= 64 {
+				t.Fatalf("d=%d: shift %d does not fit an i64 shift", d, mg.S)
+			}
+			for _, x := range xs {
+				if got, want := evalMagicS64(x, mg), x/d; got != want {
+					t.Fatalf("d=%d x=%d: got %d, want %d (M=%d S=%d add=%v sub=%v)",
+						d, x, got, want, mg.M, mg.S, mg.Add, mg.Sub)
+				}
+			}
+		}
+	}
+	if nAdd == 0 || nSub == 0 {
+		t.Errorf("fixup arms unexercised: add=%d sub=%d", nAdd, nSub)
+	}
+}
+
+func TestMagicU64Divisors(t *testing.T) {
+	var xs []uint64
+	for _, x := range dividendProbes64() {
+		xs = append(xs, uint64(x))
+	}
+	nAdd := 0
+	for _, d := range divisors64() {
+		if d < 2 || d&(d-1) == 0 {
+			continue
+		}
+		mg := DeriveMagicU64(d)
+		eff := mg.S
+		if mg.Add {
+			nAdd++
+			eff = mg.S - 1
+		}
+		if eff >= 64 {
+			t.Fatalf("d=%d: effective shift %d does not fit an i64 shift", d, eff)
+		}
+		for _, x := range xs {
+			if got, want := evalMagicU64(x, mg), x/d; got != want {
+				t.Fatalf("d=%d x=%d: got %d, want %d (M=%d S=%d add=%v)",
+					d, x, got, want, mg.M, mg.S, mg.Add)
+			}
+		}
+	}
+	if nAdd == 0 {
+		t.Error("the 65-bit-magic arm went unexercised")
 	}
 }

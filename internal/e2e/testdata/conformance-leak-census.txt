@@ -14,10 +14,23 @@
 # it being visible; a row going DOWN is progress and also fails, so the
 # improvement gets recorded rather than absorbed.
 #
-# Measured 2026-09-23: 528 fixtures, 458 clean, 70 leaking, 6606
-# unpaired allocations. The distribution is heavily skewed — the median
-# leaking fixture is 2, and regex_captures_assert alone is 5220 of the
-# total.
+# Measured 2026-09-24: 540 fixtures, 479 clean, 61 leaking, 320
+# unpaired allocations. The median leaking fixture is 1, and the largest,
+# json_error_location, is 51.
+#
+# The regex_* rows fell in two steps. An array rebind stopped refusing
+# string elements, so the program emitter's `pg = __rx_emit(pg, n)` frees
+# the buffer it replaces. Then a call with a pointer result released an
+# argument temp its callee retains only by counted stores (#10168), which
+# was the capture engine's inline `.with` argument.
+#
+# closure_field_match fell from 550 when every function-value callee, not
+# just a named local, released its argument temps and its result box, and
+# field_read_off_a_call_through_a_function_field reached 0 with it. It and
+# try_op_in_closure reach 0 with #10168.
+#
+# chained_array_methods reaches 0 once `xs.with(i, v).append(w)` releases
+# the copy the `.with` made for its still-live receiver.
 #
 # shadowed_builtin_variant and tuple_elem_variant_pattern reach 0 with
 # #9313: a GENERIC enum construction typed as the bare enum, losing the
@@ -197,14 +210,14 @@ cast_narrow_binding                                  0
 cell_in_container                                    0
 cell_string_accumulate                               2
 cell_struct_field_wide                               0
-chained_array_methods                                50
+chained_array_methods                                0
 chained_methods                                      0
 char_byte_literals                                   0
 char_cast_receiver                                   0
 closure_adder                                        0
 closure_capture_shared_cell                          0
 closure_captures_defining_scope                      0
-closure_field_match                                  200
+closure_field_match                                  0
 closure_field_rebind                                 0
 closure_returns_composite                            0
 cmp_float_traits                                     0
@@ -492,19 +505,19 @@ read_all_stdin_chunks                                1
 read_line                                            1
 recursive_tree                                       0
 regex_basic                                          0
-regex_captures                                       109
-regex_captures_all                                   104
-regex_captures_assert                                5220
+regex_captures                                       0
+regex_captures_all                                   0
+regex_captures_assert                                0
 regex_ci                                             0
 regex_convenience                                    0
 regex_counts                                         0
 regex_escapes                                        0
 regex_find                                           0
 regex_groups                                         0
-regex_named_groups                                   124
+regex_named_groups                                   7
 regex_ops                                            0
 regex_replace_edge                                   0
-regex_replace_groups                                 77
+regex_replace_groups                                 0
 regex_wordbound                                      0
 result_err_path                                      1
 result_match                                         0
@@ -609,7 +622,7 @@ to_string_round_trip                                 0
 trailing_commas                                      0
 trait_method_bound_wins                              0
 trmc_map                                             0
-try_op_in_closure                                    1
+try_op_in_closure                                    0
 try_result_struct_payload                            1
 tuple_basics                                         0
 tuple_binder_shadows_module_decl                     0

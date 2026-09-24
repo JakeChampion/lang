@@ -74,6 +74,10 @@ func optimizeCleanupFunc(fn *Func, ptrW int, nullIdentity map[string]bool) {
 			fn.Ops = next
 			changed = true
 		}
+		if next := dropLiteralStrReleases(fn); !opsEqual(next, fn.Ops) {
+			fn.Ops = next
+			changed = true
+		}
 		if next := foldNullIdentityCalls(fn.Ops, nullIdentity); !opsEqual(next, fn.Ops) {
 			fn.Ops = next
 			changed = true

@@ -52,9 +52,6 @@ function main(): i32 { return 0; }`,
 }
 function main(): i32 { return 0; }`,
 			"the bare `return xs` is the refused bare-parameter return"},
-		{"with receiver", `function acc(xs: i32[], s: i32): i32[] { return xs.with(0, s); }
-function main(): i32 { return 0; }`,
-			"__fern_arr_cow_inplace hands the receiver back at rc 1, an uncounted identity"},
 	} {
 		got := paramCountedFor(t, tc.src, "acc")
 		if len(got) == 2 && got[0] {

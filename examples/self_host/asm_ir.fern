@@ -4578,8 +4578,8 @@ function ir_div_guarded(tag: i32, width: i32, lb: string): string {
 // A divide whose right operand is an integer constant (ssa.Imms.konst) knows
 // its divisor, which collapses most of what ir_div_guarded spends its
 // instructions on: both guards branch on a value that is now a compile-time
-// constant, a power of two needs no divide at all, and an i32 divisor that is
-// neither takes the multiply-high reciprocal.
+// constant, a power of two needs no divide at all, and any other divisor
+// takes the multiply-high reciprocal.
 
 // pow2_shift_i64 gives sh when `mag`, read as an unsigned 64-bit bit pattern,
 // is 2^sh, and -1 otherwise.
@@ -4639,8 +4639,7 @@ function ir_div_const_body(w64: boolean, uns: boolean, is_rem: boolean, k: i64):
     var max_sh: i32 = r.bits - 2;
     if (uns) { max_sh = r.bits - 1; }
     if (sh >= 0 && sh <= max_sh) { return ir_div_const_pow2(r, uns, is_rem, neg, sh); }
-    if (!w64) { return ir_div_const_magic(uns, is_rem, k as i32); }
-    return ir_div_const_generic(r, uns, is_rem, k);
+    return ir_div_const_magic(r, uns, is_rem, k);
 }
 
 // ir_div_const_pow2 is division or remainder by 2^sh. Signed division by a
@@ -4686,47 +4685,65 @@ function mask_low_bits(r: DivRegs, reg: string, sh: i32, keep: boolean): string 
     return "    shr" + r.sfx + " $" + shs + ", " + reg + "\n    shl" + r.sfx + " $" + shs + ", " + reg + "\n";
 }
 
-// ir_div_const_magic is i32 division or remainder by a divisor that is
-// neither 0, ±1 nor a power of two: the reciprocal from ir.derive_magic_*32.
-// A divide is 20-40 cycles here where the multiply and shift are about five.
+// ir_div_const_magic is division or remainder by a divisor that is neither
+// 0, ±1 nor a power of two: the reciprocal from ir.derive_magic_*. A divide
+// is 20-40 cycles at 32 bits and up to 90 at 64, where the multiply and shift
+// are about five.
 //
-// The one-operand imul / mul multiply %eax by their operand and leave the high
-// half in %edx, so the DIVIDEND goes in %ecx and the MAGIC in %eax — the
-// product is the same either way, and that ordering leaves the dividend
-// intact in %ecx for the fixup and for a remainder's multiply-back.
-function ir_div_const_magic(uns: boolean, is_rem: boolean, d: i32): string {
-    var s: string = "    movl %eax, %ecx\n";
+// The one-operand imul / mul multiply the accumulator by their operand and
+// leave the high half in %edx / %rdx, so the DIVIDEND goes in %ecx and the
+// MAGIC in %eax — the product is the same either way, and that ordering leaves
+// the dividend intact in %ecx for the fixup and for a remainder's
+// multiply-back.
+function ir_div_const_magic(r: DivRegs, uns: boolean, is_rem: boolean, k: i64): string {
+    var x: string = r.sfx;
+    var s: string = "    mov" + x + " " + r.a + ", " + r.c + "\n";
+    var load: string = "    movl $";
+    if (r.bits == 64) { load = "    movabsq $"; }
+    var d: i64 = k;
+    if (r.bits == 32) { d = (k as i32) as i64; }
     if (uns) {
-        var mu: ir.MagicU32 = ir.derive_magic_u32(d as u32);
-        s = s + "    movl $" + util.i32_to_string(mu.m as i32) + ", %eax\n    mull %ecx\n";
+        var mu: ir.MagicU = ir.derive_magic_u((k as u64) & ((0u64 - 1u64) >> ((64 - r.bits) as u64)), r.bits);
+        var m: i64 = mu.m as i64;
+        if (r.bits == 32) { m = ((mu.m as u32) as i32) as i64; }
+        s = s + load + util.i64_to_string(m) + ", " + r.a + "\n    mul" + x + " " + r.c + "\n";
         if (!mu.add) {
-            s = s + "    shrl $" + util.i32_to_string(mu.s) + ", %edx\n    movl %edx, %eax\n";
+            s = s + "    shr" + x + " $" + util.i32_to_string(mu.s) + ", " + r.d + "\n    mov" + x + " " + r.d + ", " + r.a + "\n";
         } else {
-            // A 33-bit magic. Averaging the dividend and the high half by
-            // shifting keeps the carry a plain add would drop off the top.
-            s = s + "    movl %ecx, %eax\n    subl %edx, %eax\n    shrl $1, %eax\n    addl %edx, %eax\n";
-            s = s + "    shrl $" + util.i32_to_string(mu.s - 1) + ", %eax\n";
+            // A magic one bit wider than the word. Averaging the dividend and
+            // the high half by shifting keeps the carry a plain add would drop
+            // off the top.
+            s = s + "    mov" + x + " " + r.c + ", " + r.a + "\n    sub" + x + " " + r.d + ", " + r.a + "\n";
+            s = s + "    shr" + x + " $1, " + r.a + "\n    add" + x + " " + r.d + ", " + r.a + "\n";
+            s = s + "    shr" + x + " $" + util.i32_to_string(mu.s - 1) + ", " + r.a + "\n";
         }
     } else {
-        var ms: ir.MagicS32 = ir.derive_magic_s32(d);
-        s = s + "    movl $" + util.i32_to_string(ms.m) + ", %eax\n    imull %ecx\n";
-        if (ms.add) { s = s + "    addl %ecx, %edx\n"; }
-        if (ms.sub) { s = s + "    subl %ecx, %edx\n"; }
-        if (ms.s != 0) { s = s + "    sarl $" + util.i32_to_string(ms.s) + ", %edx\n"; }
+        var ms: ir.MagicS = ir.derive_magic_s(d, r.bits);
+        s = s + load + util.i64_to_string(ms.m) + ", " + r.a + "\n    imul" + x + " " + r.c + "\n";
+        if (ms.add) { s = s + "    add" + x + " " + r.c + ", " + r.d + "\n"; }
+        if (ms.sub) { s = s + "    sub" + x + " " + r.c + ", " + r.d + "\n"; }
+        if (ms.s != 0) { s = s + "    sar" + x + " $" + util.i32_to_string(ms.s) + ", " + r.d + "\n"; }
         // The shift floors, so a negative quotient is one too low.
-        s = s + "    movl %edx, %eax\n    shrl $31, %edx\n    addl %edx, %eax\n";
+        s = s + "    mov" + x + " " + r.d + ", " + r.a + "\n    shr" + x + " $" + util.i32_to_string(r.bits - 1) + ", " + r.d + "\n";
+        s = s + "    add" + x + " " + r.d + ", " + r.a + "\n";
     }
     if (is_rem) {
-        // r = x - (x / d) * d, with the dividend still in %ecx.
-        s = s + "    imull $" + util.i32_to_string(d) + ", %eax, %eax\n    subl %eax, %ecx\n    movl %ecx, %eax\n";
+        // r = x - (x / d) * d, with the dividend still in %ecx. imul takes at
+        // most a 32-bit immediate.
+        if (d == ((d as i32) as i64)) {
+            s = s + "    imul" + x + " $" + util.i64_to_string(d) + ", " + r.a + ", " + r.a + "\n";
+        } else {
+            s = s + "    movabsq $" + util.i64_to_string(d) + ", %rdx\n    imulq %rdx, %rax\n";
+        }
+        s = s + "    sub" + x + " " + r.a + ", " + r.c + "\n    mov" + x + " " + r.c + ", " + r.a + "\n";
     }
     return s;
 }
 
-// ir_div_const_generic is the divide itself, for a literal that is neither 0,
-// ±1 nor a power of two and has no reciprocal (64-bit, or the most negative
-// divisor): the guarded sequence with both guards and all four labels gone,
-// since the divisor cannot be zero and cannot be -1.
+// ir_div_const_generic is the divide itself, for the most negative divisor,
+// which has no positive magnitude to take a reciprocal of: the guarded
+// sequence with both guards and all four labels gone, since the divisor is
+// neither zero nor -1.
 function ir_div_const_generic(r: DivRegs, uns: boolean, is_rem: boolean, k: i64): string {
     var s: string = "    movl $" + util.i64_to_string(k) + ", %ecx\n";
     if (r.bits == 64) { s = "    movabsq $" + util.i64_to_string(k) + ", %rcx\n"; }

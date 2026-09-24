@@ -183,6 +183,22 @@ func (b *builder) appendCopyTempType(e ast.Expr) (ast.Type, bool) {
 	return ast.ArrayType{Elem: c.TypeArgs[0]}, true
 }
 
+// withCopyTempType classifies a call ARGUMENT that is a `.with` whose receiver
+// took the forced-copy retain (arraySetInc): __fern_arr_cow_inplace then hands
+// back a fresh rc 1 buffer, with every pointer element retained by the copy,
+// that only this argument holds. A `.with` that ran in place is left out; its
+// result is the receiver's own buffer.
+func (b *builder) withCopyTempType(e ast.Expr) (ast.Type, bool) {
+	if !ast.RcFreeEnabled {
+		return nil, false
+	}
+	c, ok := e.(*ast.Call)
+	if !ok || !isArraySetCall(c) || !b.rc.arraySetInc[c] || len(c.TypeArgs) != 1 {
+		return nil, false
+	}
+	return ast.ArrayType{Elem: c.TypeArgs[0]}, true
+}
+
 func (b *builder) freshOwnedRcTempType(e ast.Expr) (ast.Type, bool) {
 	if !ast.RcFreeEnabled {
 		return nil, false
@@ -356,7 +372,7 @@ func (b *builder) freshOwnedRcTempType(e ast.Expr) (ast.Type, bool) {
 //     borrowed payload uncounted.
 //   - pair-form callees: return a (tag, payload) pair, a different stack
 //     shape.
-//   - indirect (function-typed local or field) callees, unless every address-taken
+//   - indirect (function-typed local) callees, unless every address-taken
 //     function returns a box the caller owns (indirectCallsReturnOwnBox).
 func (b *builder) ownedCallResultType(e ast.Expr) (ast.Type, bool) {
 	if !ast.RcFreeEnabled {
@@ -366,21 +382,28 @@ func (b *builder) ownedCallResultType(e ast.Expr) (ast.Type, bool) {
 	if !ok {
 		return nil, false
 	}
-	if b.callsThroughFunctionValue(call) {
+	id, isIdent := call.Callee.(*ast.Ident)
+	var rt ast.Type
+	indirect := false
+	if isIdent {
+		_, indirect = b.locals[id.Name]
+		rt = b.exprType(e)
+	} else if ft := b.indirectCalleeFuncType(call.Callee); ft != nil {
+		indirect, rt = true, ft.Result
+	}
+	if indirect {
 		// Address-taken functions are never pair-form, so every indirect
 		// target has the user-function return shape; the fact below says
 		// each one hands back a box the caller owns.
 		if !b.indirectCallsReturnOwnBox() {
 			return nil, false
 		}
-		t := b.exprType(e)
-		if t == nil || !ast.IsPointerType(t) {
+		if rt == nil || !ast.IsPointerType(rt) {
 			return nil, false
 		}
-		return t, true
+		return rt, true
 	}
-	id, ok := call.Callee.(*ast.Ident)
-	if !ok {
+	if !isIdent {
 		return nil, false
 	}
 	if _, ok := b.info.FuncSigs[id.Name]; !ok {

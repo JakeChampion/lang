@@ -3894,7 +3894,7 @@ function is_host_op_kind(tag: i32): boolean {
     return tag == 161 || tag == 162 || tag == 163 || tag == 164 || tag == 182 || tag == 184 ||
         tag == 183 || tag == 209 || tag == 168 || tag == 167 || tag == 169 || tag == 233 || tag == 170 ||
         tag == 203 || tag == 304 || tag == 305 || tag == 202 || tag == 176 || tag == 175 || tag == 236 || tag == 173 || tag == 231 ||
-        tag == 171 || tag == 310 || tag == 172 || tag == 180 || tag == 210 || tag == 166 ||
+        tag == 171 || tag == 310 || tag == 172 || tag == 180 || tag == 249 || tag == 210 || tag == 166 ||
         tag == 260 || tag == 261 || tag == 262 || tag == 263 || tag == 264 ||
         tag == 267 || tag == 269 || tag == 273;
 }
@@ -8264,12 +8264,16 @@ pub function env_func(): string {
     o = o + "          (i32.store8 (i32.add (i32.add (local.get $res) (i32.const 4)) (local.get $j)) (i32.load8_u (i32.add (local.get $vstart) (local.get $j))))\n";
     o = o + "          (local.set $j (i32.add (local.get $j) (i32.const 1)))\n";
     o = o + "          (br $cc)))\n";
+    o = o + "        (call $__fern_raw_free (local.get $ptrs) (i32.mul (local.get $count) (i32.const 4)))\n";
+    o = o + "        (call $__fern_raw_free (local.get $buf) (local.get $bufsz))\n";
     o = o + "        (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
     o = o + "        (i32.store (local.get $tmp) (i32.const 0))\n";
     o = o + "        (i32.store (i32.add (local.get $tmp) (i32.const 4)) (local.get $res))\n";
     o = o + "        (return (local.get $tmp))))\n";
     o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
     o = o + "      (br $cont)))\n";
+    o = o + "    (call $__fern_raw_free (local.get $ptrs) (i32.mul (local.get $count) (i32.const 4)))\n";
+    o = o + "    (call $__fern_raw_free (local.get $buf) (local.get $bufsz))\n";
     o = o + "    (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
     o = o + "    (i32.store (local.get $tmp) (i32.const 1))\n";
     o = o + "    (i32.store (i32.add (local.get $tmp) (i32.const 4)) (i32.const 0))\n";
@@ -8320,6 +8324,8 @@ pub function args_func(): string {
     o = o + "      (i32.store (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))) (local.get $blk))\n";
     o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
     o = o + "      (br $c)))\n";
+    o = o + "    (call $__fern_raw_free (local.get $ptrs) (i32.mul (local.get $argc) (i32.const 4)))\n";
+    o = o + "    (call $__fern_raw_free (local.get $buf) (local.get $bufsz))\n";
     o = o + "    (local.get $arr))\n";
     return o;
 }
@@ -8362,6 +8368,8 @@ pub function environ_func(): string {
     o = o + "      (i32.store (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))) (local.get $blk))\n";
     o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
     o = o + "      (br $c)))\n";
+    o = o + "    (call $__fern_raw_free (local.get $ptrs) (i32.mul (local.get $count) (i32.const 4)))\n";
+    o = o + "    (call $__fern_raw_free (local.get $buf) (local.get $bufsz))\n";
     o = o + "    (local.get $arr))\n";
     return o;
 }
@@ -8402,6 +8410,8 @@ pub function arg_at_func(): string {
     o = o + "      (i32.store8 (i32.add (i32.add (local.get $blk) (i32.const 4)) (local.get $j)) (i32.load8_u (i32.add (local.get $e) (local.get $j))))\n";
     o = o + "      (local.set $j (i32.add (local.get $j) (i32.const 1)))\n";
     o = o + "      (br $cc)))\n";
+    o = o + "    (call $__fern_raw_free (local.get $ptrs) (i32.mul (local.get $argc) (i32.const 4)))\n";
+    o = o + "    (call $__fern_raw_free (local.get $buf) (local.get $bufsz))\n";
     o = o + "    (local.get $blk))\n";
     return o;
 }
@@ -9789,8 +9799,8 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32, lfl
     o = o + "    (local $cls i32)\n";
     o = o + "    (if (i32.eqz (local.get $base)) (then (return)))\n";
     o = o + "    (local.set $bytes (i32.and (i32.add (local.get $bytes) (i32.const 7)) (i32.const -8)))\n";
-    o = o + "    (if (i32.lt_u (local.get $bytes) (i32.const 8)) (then (return)))\n";
     o = o + lc_bump_free("(local.get $bytes)");
+    o = o + "    (if (i32.lt_u (local.get $bytes) (i32.const 8)) (then (return)))\n";
     o = o + "    (local.set $cls (i32.shr_u (local.get $bytes) (i32.const 3)))\n";
     o = o + "    (if (i32.lt_u (local.get $cls) (i32.const " + flc + ")) (then\n";
     o = o + "      (i32.store (i32.add (local.get $base) (i32.const 4)) (i32.load (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4)))))\n";

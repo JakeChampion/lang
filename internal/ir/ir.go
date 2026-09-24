@@ -6319,13 +6319,14 @@ func needsImplicitReturn(ops []Op) bool {
 // scrutinee with no static enum type, or an Ident the checker left
 // unstamped — and keeps the legacy scan for those.
 // unitVariantRef reports whether x is a qualified payload-less variant
-// (`Color.Red`), and which.
+// (`Color.Red`), and which. The checker's record decides, since a local may
+// shadow the enum's name.
 func (b *builder) unitVariantRef(x *ast.FieldAccess) (enumName string, varIdx int, ok bool) {
 	tid, isIdent := x.Target.(*ast.Ident)
 	if !isIdent {
 		return "", 0, false
 	}
-	if _, isEnum := b.info.Enums[tid.Name]; !isEnum {
+	if _, resolved := b.info.EnumConstructions[x]; !resolved {
 		return "", 0, false
 	}
 	_, varIdx, payloadCount, isVar := b.lookupVariantOn(x.Field, tid.Name)
@@ -14496,146 +14497,13 @@ func (b *builder) call(n *ast.Call) error {
 		b.emit(Op{Kind: OpCallDyn, I32: int32(slot), Ext: &OpExt{Sig: sig}})
 		return nil
 	}
-	// Captured-closure callee: closureconv rewrote a captured
-	// function-typed name (param / outer var) inside this body
-	// to a CaptureRef. Treat it as a function-typed value coming
-	// from the env block — push the closure pair pointer, push
-	// args, dispatch indirectly. The captured Type is the source
-	// of truth for the call's signature (the closureconv pass
-	// stamps it from the checker's resolved outer-scope type).
 	if cr, ok := n.Callee.(*ast.CaptureRef); ok {
-		ft, isFn := cr.Type.(*ast.FuncType)
-		if !isFn {
+		if _, isFn := cr.Type.(*ast.FuncType); !isFn {
 			return fmt.Errorf("ir: captured callee %q is not function-typed", cr.Name)
 		}
-		for _, a := range n.Args {
-			if err := b.expr(a); err != nil {
-				return err
-			}
-		}
-		if err := b.expr(cr); err != nil {
-			return err
-		}
-		b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Ext: &OpExt{Sig: ft}})
-		return nil
 	}
-	// `(b.f)(args...)` / `(t.N)(args...)` where the field access
-	// resolves to a FuncType: the field load produces a closure
-	// pair pointer; OpCallIndirect dispatches through the pair the
-	// same way function-typed locals do. Without this dispatch the
-	// IR's call() guard rejected the FieldAccess callee with
-	// `indirect call from non-identifier expression`. The field's
-	// type comes from either the struct's declaration (via
-	// fieldOwner) or from the tuple's static element types (via
-	// targetTupleType for `t.N` form).
-	if fa, ok := n.Callee.(*ast.FieldAccess); ok {
-		var ft *ast.FuncType
-		// Tuple field: `t.0`, `t.1`, ... — numeric selector with
-		// a TupleType target.
-		if tup, isTup := b.targetTupleType(fa.Target); isTup {
-			if idx, err := strconv.Atoi(fa.Field); err == nil && idx >= 0 && idx < len(tup.Elems) {
-				if fnT, isFn := tup.Elems[idx].(*ast.FuncType); isFn {
-					ft = fnT
-				}
-			}
-		}
-		// Struct field fallback.
-		if ft == nil {
-			owner := b.fieldOwner(fa.Target)
-			if sd, sdOk := b.info.Structs[owner]; sdOk {
-				for _, f := range sd.Fields {
-					if f.Name == fa.Field {
-						if fnT, isFn := f.Type.(*ast.FuncType); isFn {
-							ft = fnT
-						}
-						break
-					}
-				}
-			}
-		}
-		if ft != nil {
-			for _, a := range n.Args {
-				if err := b.expr(a); err != nil {
-					return err
-				}
-			}
-			if err := b.expr(fa); err != nil {
-				return err
-			}
-			b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Ext: &OpExt{Sig: ft}})
-			return nil
-		}
-	}
-	// `f()()` — the inner Call returns a closure, the outer call
-	// dispatches through it. callReturnType resolves the inner
-	// call's result type (including for closure-typed locals /
-	// captures / pattern bindings via the same path
-	// `exprType(*ast.Call)` uses). If that's a *FuncType, push
-	// args + the inner call's result + OpCallIndirect.
-	if innerCall, ok := n.Callee.(*ast.Call); ok {
-		if rt := b.callReturnType(innerCall); rt != nil {
-			if ft, isFn := rt.(*ast.FuncType); isFn {
-				for _, a := range n.Args {
-					if err := b.expr(a); err != nil {
-						return err
-					}
-				}
-				if err := b.expr(innerCall); err != nil {
-					return err
-				}
-				b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Ext: &OpExt{Sig: ft}})
-				return nil
-			}
-		}
-	}
-	// `arr[i](args)` where arr is `((T) => R)[]` — index expression
-	// produces a closure pair pointer. Same indirect-call shape as
-	// FieldAccess / CaptureRef / chained-Call callees: push args,
-	// evaluate the indexed expression (yields the pair ptr), then
-	// OpCallIndirect with the element's static FuncType.
-	if idx, ok := n.Callee.(*ast.Index); ok {
-		var ft *ast.FuncType
-		if idx.ElemType != nil {
-			ft, _ = idx.ElemType.(*ast.FuncType)
-		}
-		if ft == nil {
-			// Fallback: peel through the source's static type
-			// (arrays-of-T / slices-of-T) and recover the element.
-			if at, ok := b.exprStaticType(idx.Array).(ast.ArrayType); ok {
-				ft, _ = at.Elem.(*ast.FuncType)
-			} else if st, ok := b.exprStaticType(idx.Array).(ast.SliceType); ok {
-				ft, _ = st.Elem.(*ast.FuncType)
-			}
-		}
-		if ft != nil {
-			for _, a := range n.Args {
-				if err := b.expr(a); err != nil {
-					return err
-				}
-			}
-			if err := b.expr(idx); err != nil {
-				return err
-			}
-			b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Ext: &OpExt{Sig: ft}})
-			return nil
-		}
-	}
-	// Immediate lambda call: `((x) => { ... })(arg)`. The
-	// A closure literal called right where it is written — a Lambda, or
-	// the MakeClosure closureconv rewrites it to — lowers to a closure
-	// pair pointer and dispatches through OpCallIndirect like any other
-	// function-typed value.
-	if ft := b.closureLiteralType(n.Callee); ft != nil {
-		slots, types, err := b.emitIndirectCallArgs(n.Args, ft)
-		if err != nil {
-			return err
-		}
-		if err := b.expr(n.Callee); err != nil {
-			return err
-		}
-		b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Ext: &OpExt{Sig: ft}})
-		b.emitArgTempDrops(slots, types)
-		return nil
+	if ft := b.indirectCalleeFuncType(n.Callee); ft != nil {
+		return b.emitIndirectCall(n.Args, n.Callee, ft)
 	}
 	if _, ok := n.Callee.(*ast.Ident); !ok {
 		return fmt.Errorf("ir: indirect call from non-identifier expression")
@@ -16258,6 +16126,9 @@ func (b *builder) callBody(n *ast.Call) error {
 	// keeps its prior safe-leak. The local / pair-form / map_new /
 	// retain-sink exclusions carry over from the call-level gate unchanged.
 	countedArgTemp := func(ai int) bool {
+		if ast.RcFreeEnabled && calleeIsLocal {
+			return b.indirectArgCounted(ai)
+		}
 		if !ast.RcFreeEnabled || !calleeIsFunc || calleeIsLocal ||
 			b.pairForm[id.Name] || id.Name == "map_new" || calleeRetainsAnyArg(id.Name) {
 			return false
@@ -16631,6 +16502,73 @@ func (b *builder) callBody(n *ast.Call) error {
 	return nil
 }
 
+// indirectCalleeFuncType is the signature of a callee that is a function
+// VALUE other than a named local: a capture, a struct or tuple field, a
+// call's result, an array element, or a closure literal. nil for anything
+// else, including a plain identifier.
+func (b *builder) indirectCalleeFuncType(callee ast.Expr) *ast.FuncType {
+	switch c := callee.(type) {
+	case *ast.CaptureRef:
+		// closureconv stamps the captured name's type from the checker's
+		// resolved outer-scope type.
+		ft, _ := c.Type.(*ast.FuncType)
+		return ft
+	case *ast.FieldAccess:
+		if tup, isTup := b.targetTupleType(c.Target); isTup {
+			if idx, err := strconv.Atoi(c.Field); err == nil && idx >= 0 && idx < len(tup.Elems) {
+				if ft, isFn := tup.Elems[idx].(*ast.FuncType); isFn {
+					return ft
+				}
+			}
+		}
+		if sd, ok := b.info.Structs[b.fieldOwner(c.Target)]; ok {
+			for _, f := range sd.Fields {
+				if f.Name == c.Field {
+					ft, _ := f.Type.(*ast.FuncType)
+					return ft
+				}
+			}
+		}
+		return nil
+	case *ast.Call:
+		if rt := b.callReturnType(c); rt != nil {
+			ft, _ := rt.(*ast.FuncType)
+			return ft
+		}
+		return nil
+	case *ast.Index:
+		if ft, isFn := c.ElemType.(*ast.FuncType); isFn {
+			return ft
+		}
+		switch at := b.exprStaticType(c.Array).(type) {
+		case ast.ArrayType:
+			ft, _ := at.Elem.(*ast.FuncType)
+			return ft
+		case ast.SliceType:
+			ft, _ := at.Elem.(*ast.FuncType)
+			return ft
+		}
+		return nil
+	}
+	return b.closureLiteralType(callee)
+}
+
+// emitIndirectCall calls through the function value `callee` evaluates to,
+// after the arguments, and releases the argument temps emitIndirectCallArgs
+// stashed.
+func (b *builder) emitIndirectCall(args []ast.Expr, callee ast.Expr, ft *ast.FuncType) error {
+	slots, types, err := b.emitIndirectCallArgs(args, ft)
+	if err != nil {
+		return err
+	}
+	if err := b.expr(callee); err != nil {
+		return err
+	}
+	b.emit(Op{Kind: OpCallIndirect, I32: int32(len(args)), Ext: &OpExt{Sig: ft}})
+	b.emitArgTempDrops(slots, types)
+	return nil
+}
+
 // emitIndirectCallArgs lowers the arguments of an INDIRECT (closure) call,
 // stashing each fresh owned rc temp in a scratch slot so the caller can
 // release it once the call has consumed it (#6460). Returns the slots and
@@ -16659,7 +16597,7 @@ func (b *builder) emitIndirectCallArgs(args []ast.Expr, sig *ast.FuncType) ([]in
 			}
 			continue
 		}
-		if reclaim || b.dynCoercedArg(a) {
+		if reclaim || b.dynCoercedArg(a) || (ast.RcFreeEnabled && b.indirectArgCounted(ai)) {
 			slot, tt, ok, err := b.stashOwnedArgTemp(a)
 			if err != nil {
 				return nil, nil, err
@@ -16716,6 +16654,9 @@ func (b *builder) stashOwnedArgTemp(a ast.Expr) (int32, ast.Type, bool, error) {
 	}
 	if !ok {
 		tt, ok = b.appendCopyTempType(a)
+	}
+	if !ok {
+		tt, ok = b.withCopyTempType(a)
 	}
 	if !ok && b.isOwnedContainerRead(a) {
 		// `sink(mk_box().items)`. The read retained the value and deep-dropped
@@ -20457,25 +20398,7 @@ func (b *builder) selfReassignOwnedLocal(rhs ast.Expr, name string, ty ast.Type)
 	// accumulated array — the #3425 Effect-A O(ops^2) that kept the merged
 	// whole-compiler bundle over the 8 GiB arena. Map fields still have an
 	// incomplete (leaky) deep-drop and stay excluded (typeSelfDropSafe).
-	//
-	// BUT the ARRAY general form `a = f(a)` keeps the string-element
-	// exclusion (typeSelfDropSafeArrGeneral): the array branch's overwrite
-	// __fern_arr_dec has no identity guard, and a callee that flows its
-	// argument through unchanged (the recursive-collector shape —
-	// checker.e060_collect_dyn_locals's `a = e060_collect_dyn_locals(body,
-	// a)`) can return the very buffer being "superseded". The rc ledger
-	// that keeps the string-free element types balanced there does not
-	// extend to string elements (their per-site inc/dec discipline is the
-	// #4355 open arc), so admitting string[]/nested-string arrays here
-	// double-freed the flowed-through buffer under a different size class —
-	// the derive-compile freelist corruption. Struct/enum targets keep the
-	// full string admission (the deep-drop is box-level is_unique-gated and
-	// the return-transfer inc protects identity returns — probed).
-	if _, isArr := ty.(ast.ArrayType); isArr {
-		if !typeSelfDropSafeNoStrings(ty, b.info, map[string]bool{}) {
-			return false
-		}
-	} else if !typeSelfDropSafe(ty, b.info, map[string]bool{}) {
+	if !typeSelfDropSafe(ty, b.info, map[string]bool{}) {
 		return false
 	}
 	mentions := false
@@ -20655,68 +20578,6 @@ func (b *builder) isSelfArrayPushLocal(value ast.Expr, name string) bool {
 // string-fielded builder rebind onto the flat non-freeing dec, whose leaked
 // boxes pinned the builder's array fields at rc >= 2 and turned each append
 // into a whole-array clone).
-// typeSelfDropSafeNoStrings is typeSelfDropSafe with the pre-#3425 string
-// exclusion kept — the gate for the ARRAY general-form (`a = f(a)`) overwrite
-// dec only, whose buffer free has no identity guard and whose string-element
-// inc/dec ledger is not yet balanced for the callee-flows-argument-through
-// shape (see the selfReassignOwnedLocal soundness note). Struct/enum targets
-// use the widened typeSelfDropSafe.
-func typeSelfDropSafeNoStrings(t ast.Type, info *checker.Info, seen map[string]bool) bool {
-	if _, isStr := t.(ast.StringType); isStr {
-		return false
-	}
-	switch ty := t.(type) {
-	case ast.ArrayType:
-		return typeSelfDropSafeNoStrings(ty.Elem, info, seen)
-	case ast.SliceType:
-		return typeSelfDropSafeNoStrings(ty.Elem, info, seen)
-	case ast.TupleType:
-		for _, e := range ty.Elems {
-			if !typeSelfDropSafeNoStrings(e, info, seen) {
-				return false
-			}
-		}
-		return true
-	case ast.StructType:
-		if ty.Name == "Map" {
-			return false
-		}
-		if seen[ty.String()] {
-			return true
-		}
-		seen[ty.String()] = true
-		sd, ok := info.Structs[ty.Name]
-		if !ok {
-			return false
-		}
-		for _, f := range sd.Fields {
-			if !typeSelfDropSafeNoStrings(f.Type, info, seen) {
-				return false
-			}
-		}
-		return true
-	case ast.EnumType:
-		if seen[ty.String()] {
-			return true
-		}
-		seen[ty.String()] = true
-		ed, ok := info.Enums[ty.Name]
-		if !ok {
-			return false
-		}
-		for _, v := range ed.Variants {
-			for _, pl := range v.Payloads {
-				pl = substituteTypeParamsDeep(pl, ed.TypeParams, ty.Args)
-				if !typeSelfDropSafeNoStrings(pl, info, seen) {
-					return false
-				}
-			}
-		}
-		return true
-	}
-	return typeSelfDropSafe(t, info, seen)
-}
-
 func typeSelfDropSafe(t ast.Type, info *checker.Info, seen map[string]bool) bool {
 	switch ty := t.(type) {
 	case ast.NumberType, ast.BoolType, ast.FloatType, ast.VoidType:
@@ -22842,14 +22703,19 @@ func (b *builder) fieldAppendRootOK(fa *ast.FieldAccess) bool {
 // ownedAppendReceiver reports whether an append's receiver expression yields a
 // reference of its own that the append consumes: another append's result
 // (every __fern_arr_push_grow result is counted — rc 2 in place, a fresh rc 1
-// buffer otherwise), a literal, or a fresh user-call result. An ident, a field
-// or an index reads a reference some binding still owns and is not this.
+// buffer otherwise), a literal, a fresh user-call result, or a `.with` whose
+// live receiver forced the copy (arraySetInc), which is a fresh rc 1 buffer.
+// An ident, a field or an index reads a reference some binding still owns and
+// is not this.
 func (b *builder) ownedAppendReceiver(e ast.Expr) bool {
 	if !ast.RcFreeEnabled {
 		return false
 	}
 	if c, ok := e.(*ast.Call); ok {
 		if id, ok := c.Callee.(*ast.Ident); ok && id.Name == "__method_Array_push" {
+			return true
+		}
+		if isArraySetCall(c) && b.rc.arraySetInc[c] {
 			return true
 		}
 	}

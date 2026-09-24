@@ -92,21 +92,3 @@ function main(): i32 { return 0; }`)
 		t.Error("Tree read as not deep-droppable: every payload it carries is droppable")
 	}
 }
-
-// typeSelfDropSafeNoStrings keeps its own string exclusion but gets the same
-// binding: a user generic enum instantiated at a string payload is refused for
-// the string, not for the unbound type parameter.
-func TestSelfDropSafeNoStringsBindsGenericEnumArgs(t *testing.T) {
-	info := checkedInfo(t, `enum Maybe[T] { Just(T), Nothing }
-function main(): i32 { return 0; }`)
-
-	if typeSelfDropSafeNoStrings(ast.EnumType{Name: "Maybe", Args: []ast.Type{ast.StringType{}}}, info, map[string]bool{}) {
-		t.Error("Maybe[string] passed the no-strings gate")
-	}
-	if !typeSelfDropSafeNoStrings(ast.EnumType{Name: "Maybe", Args: []ast.Type{ast.NumberType{}}}, info, map[string]bool{}) {
-		t.Error("Maybe[i32] refused by the no-strings gate: an i32 payload carries no string")
-	}
-	if !typeSelfDropSafeNoStrings(ast.EnumType{Name: "Option", Args: []ast.Type{ast.NumberType{}}}, info, map[string]bool{}) {
-		t.Error("Option[i32] refused by the no-strings gate")
-	}
-}

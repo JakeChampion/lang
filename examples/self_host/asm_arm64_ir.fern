@@ -817,6 +817,14 @@ function movz_text_ok(text: string): boolean {
     return util.i32_to_string(v) == text;
 }
 
+// movn_text_ok reports a canonical decimal in [-65535, -1], which `mov x, #text`
+// loads as one MOVN, sign-extended as the pool's `ldr x, =text` is.
+function movn_text_ok(text: string): boolean {
+    if (text.len() < 2 || text[0] != 45) { return false; }
+    var rest: str = slice_unchecked(text, 1, text.len());
+    return rest != "0" && movz_text_ok(rest);
+}
+
 // emit_const_i32_push materialises a 32-bit constant in x0 and pushes it. A
 // constant that fits MOVZ costs one instruction and no pool entry; anything
 // else keeps the `ldr x0, =text` literal pool, which is the only encoder here
@@ -1048,10 +1056,10 @@ function ssa_bin_in_place(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmcor
 function ssa_wreg(x: string): string {
     match (x[1:]) { Some(n) => { return "w" + n; }, None => { return "w0"; } }
 }
-// ssa_const_reg materialises an integer literal in `d` the way
-// emit_const_i32_push does: one MOVZ for a small decimal, the pool otherwise.
+// ssa_const_reg materialises an integer literal in `d`: one MOVZ for a small
+// decimal, one MOVN for a small negative one, the pool otherwise.
 function ssa_const_reg(text: string, d: string, s: asmcore.EmitState): asmcore.EmitState {
-    if (movz_text_ok(text)) { return s.write("    mov " + d + ", #" + text + "\n"); }
+    if (movz_text_ok(text) || movn_text_ok(text)) { return s.write("    mov " + d + ", #" + text + "\n"); }
     return s.write("    ldr " + d + ", =" + text + "\n");
 }
 

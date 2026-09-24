@@ -235,6 +235,37 @@ function run(w0: i32, b: Block, rounds: i32): (i32, Block) {
   var out: Block = push_str(b, "x");
   return (inner.0 + junk.n - 77, Block { ...out, n: o.n % 100 + out.n });
 }`},
+	// swept_local_handed_back's hazard for a credited TUPLE local (#8734): it
+	// goes back bare through a returned call, and the caller allocates a
+	// same-sized block before reading it, so a sweep that freed it would hand
+	// that block to the reader.
+	{"swept_tuple_handed_back", `function checkt(t: (i32, i32[]), w: i32): (i32, i32[]) {
+  if (w < 0) {
+    exit(3);
+  }
+  return t;
+}
+function build(w: i32, rounds: i32): (i32, i32[]) {
+  var xs: i32[] = [];
+  var i: i32 = 0;
+  while (i < rounds) {
+    xs = xs.append(i % 7);
+    i = i + 1;
+  }
+  var t: (i32, i32[]) = (w, xs);
+  return checkt(t, w);
+}
+function run(w0: i32, b: Block, rounds: i32): (i32, Block) {
+  var r: (i32, i32[]) = build(w0, rounds);
+  var junk: i32[] = [];
+  var i: i32 = 0;
+  while (i < r.1.len()) {
+    junk = junk.append(5);
+    i = i + 1;
+  }
+  var out: Block = push_str(b, "x");
+  return (r.0 + junk.len() - r.1.len(), Block { ...out, n: out.n + r.1[3] + r.1.len() % 100 });
+}`},
 	// A call-derived local rather than an alias, with the loop's exit a
 	// tuple return whose element is a call taking the local.
 	{"call_local_loop_tuple_return", `function terminate(b: Block): Block {
@@ -256,6 +287,71 @@ function run(w0: i32, b: Block, rounds: i32): (i32, Block) {
     i = i + 1;
   }
   return (w, out);
+}`},
+}
+
+// tupleHandbackCheckedCases earn their credits only from the checker's type
+// annotations, so they run through the self-host CLI, which annotates, and
+// not through asm_ir_run, which does not.
+var tupleHandbackCheckedCases = []struct {
+	name string
+	run  string
+}{
+	// The handback unpacked by a destructure (#8734): re-declaring the loop
+	// locals in the same statement, and through fresh binders rebound after.
+	// The re-declaration SHADOWS `w` and `out` for the rest of the body, so the
+	// outer block is never drained and grows every round; what the case pins
+	// is that no generation of either is stranded.
+	{"destructure_same_statement", `function run(w0: i32, b: Block, rounds: i32): (i32, Block) {
+  var w: i32 = w0;
+  var out: Block = b;
+  var i: i32 = 0;
+  while (i < rounds) {
+    out = push_str(out, "1234567890123\n");
+    var (w, out) = drain(w, out);
+    i = i + 1;
+  }
+  return (w, out);
+}`},
+	{"destructure_fresh_binders", `function run(w0: i32, b: Block, rounds: i32): (i32, Block) {
+  var w: i32 = w0;
+  var out: Block = b;
+  var i: i32 = 0;
+  while (i < rounds) {
+    out = push_str(out, "1234567890123\n");
+    var (w2, o2) = drain(w, out);
+    w = w2;
+    out = o2;
+    i = i + 1;
+  }
+  return (w, out);
+}`},
+	// The same hazard for a credited STRING accumulator.
+	{"swept_string_handed_back", `function checks(acc: string, w: i32): string {
+  if (w < 0) {
+    exit(3);
+  }
+  return acc;
+}
+function build(w: i32, rounds: i32): string {
+  var acc: string = "";
+  var i: i32 = 0;
+  while (i < rounds) {
+    acc = acc + "ab";
+    i = i + 1;
+  }
+  return checks(acc, w);
+}
+function run(w0: i32, b: Block, rounds: i32): (i32, Block) {
+  var s: string = build(w0, rounds);
+  var junk: string = "";
+  var i: i32 = 0;
+  while (i < s.len()) {
+    junk = junk + "z";
+    i = i + 1;
+  }
+  var out: Block = push_str(b, "x");
+  return (w0 + junk.len() - s.len(), Block { ...out, n: out.n + (s[3] as i32) % 7 + s.len() % 100 });
 }`},
 }
 
@@ -340,6 +436,47 @@ func TestSelfHostTupleHandbackReclaimSanitizeX86_64(t *testing.T) {
 			}
 			bin := buildBin(t, gcc, dir, "thbsan_"+tc.name, string(asm))
 			stderr, code := runCaptureStderrExit(t, runner, bin)
+			if code != want {
+				t.Fatalf("%s exited %d under the sanitizer, want %d (interp oracle)", tc.name, code, want)
+			}
+			for _, line := range strings.Split(stderr, "\n") {
+				if strings.HasPrefix(line, "fern-sanitizer:") && !strings.HasPrefix(line, "fern-sanitizer: leak") {
+					t.Errorf("%s: %s", tc.name, line)
+				}
+			}
+		})
+	}
+}
+
+// The CLI leg compiles every case, the annotated ones included, the way
+// production does: through the self-host CLI with the checker's annotations.
+// Each case gets the census at both round counts and one sanitizer run.
+func TestSelfHostTupleHandbackReclaimCLIX86_64(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	interpBin := buildLangBinForInterp(t)
+	build := func(t *testing.T, src, mode string) string {
+		t.Helper()
+		return cli.x86Binary(t, mustWrite(t, t.TempDir(), "main.fern", src), "FERN_STRICT_IR=1", mode)
+	}
+	cases := append(append(tupleHandbackCases[:0:0], tupleHandbackCases...), tupleHandbackCheckedCases...)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var leaked [2]int64
+			var want int
+			for k, rounds := range tupleHandbackRounds {
+				src := tupleHandbackSrc(tc.run, rounds)
+				want = interpExit(t, interpBin, src)
+				stderr, code := runCaptureStderrExit(t, cli.runner, build(t, src, "FERN_LEAKCHECK=1"))
+				if code != want {
+					t.Fatalf("%s at %d rounds exited %d, want %d (interp oracle)", tc.name, rounds, code, want)
+				}
+				leaked[k] = tupleHandbackCensus(t, tc.name, stderr)
+			}
+			checkTupleHandback(t, tc.name, leaked[0], leaked[1], tupleHandbackRounds)
+
+			// want is still the last round count's answer.
+			src := tupleHandbackSrc(tc.run, tupleHandbackRounds[1])
+			stderr, code := runCaptureStderrExit(t, cli.runner, build(t, src, "FERN_SANITIZE=1"))
 			if code != want {
 				t.Fatalf("%s exited %d under the sanitizer, want %d (interp oracle)", tc.name, code, want)
 			}

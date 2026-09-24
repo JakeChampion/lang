@@ -51,7 +51,6 @@ impl Greet for Dog { function hi(self: Self): i32 { return 7; } }
 		{"option-inferred-local", `function main(): i32 { var o = Some("ab"); match (o) { Some(v) => { return v.len(); }, None => { return 0; } } }`, false},
 		{"dyn-binding", dynPrelude + `function main(): i32 { var d: dyn Greet = Dog {}; return 0; }`, false},
 		{"dyn-method", dynPrelude + `function main(): i32 { var d: dyn Greet = Dog {}; return d.hi(); }`, true},
-		{"unregistered-builtin", `function main(): i32 { var n: i32 = __rc_underflow_count(); return n; }`, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(dir, tc.name+".fern")

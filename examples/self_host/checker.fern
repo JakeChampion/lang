@@ -483,21 +483,6 @@ function cell_method_type(recv: typeinfo.Type, name: string, argc: i32): typeinf
   return t_unknown("not a cell method");
 }
 
-// The free builtins whose RESULT the expression written around the call needs,
-// typed as native's FuncSigs type them. Left unknown the call collapses the
-// struct literal, array or operator holding it, and every reader of that value
-// after it.
-function free_builtin_result(name: string, argc: i32): typeinfo.Type {
-  if (argc == 1) {
-    if (name == "string_from_bytes_unchecked") { return t_string(); }
-    if (name == "f64_bits") { return t_i64(); }
-    if (name == "f64_from_bits") { return t_float(); }
-    if (name == "f32_bits") { return t_i32(); }
-    if (name == "f32_from_bits") { return t_f32(); }
-  }
-  return intrinsic_result(name, argc);
-}
-
 // The ten f64 primitives `std/float`'s methods dispatch to. Every backend
 // implements all of them.
 function is_f64_primitive(name: string): boolean {
@@ -537,6 +522,15 @@ function intrinsic_result(name: string, argc: i32): typeinfo.Type {
   if (argc == 0 && name == "__heap_alloc_count") { return t_i64(); }
   if (argc == 0 && name == "__heap_mark") { return t_i64(); }
   if (argc == 1 && name == "__heap_release_to") { return t_void(); }
+  // The rc detectors programs read to report on themselves: the underflow
+  // count, the rc==1 append cliff (#6023) and the raw refcount pokes.
+  if (argc == 0 && name == "__rc_underflow_count") { return t_i32(); }
+  if (argc == 0 && name == "__arr_push_shared_count") { return t_i32(); }
+  if (argc == 0 && name == "__arr_push_shared_bytes") { return t_i64(); }
+  if (argc == 1 && name == "__rc_inc") { return typeinfo.TypeArray { elem: t_u8(), view: false }; }
+  if (argc == 1 && name == "__rc_dec") { return t_void(); }
+  if (argc == 1 && name == "__rc_get") { return t_i32(); }
+  if (argc == 3 && name == "__alloc_reuse") { return t_usize(); }
   if (argc == 3 && name == "__memcpy") { return t_void(); }
   if (argc == 3 && name == "__memset") { return t_void(); }
   if (argc == 1 && name == "__load_u8") { return t_i32(); }
@@ -577,36 +571,14 @@ function intrinsic_result(name: string, argc: i32): typeinfo.Type {
 // every other receiver or name, which is the caller's signal to keep resolving.
 function builtin_result_type(recv: typeinfo.Type, name: string, is_method: boolean, argc: i32): typeinfo.Type {
   if (is_method) { return cell_method_type(recv, name, argc); }
-  return free_builtin_result(name, argc);
-}
-
-// free_builtin_params answers a free builtin's PARAMETER types, beside the
-// result free_builtin_result already answers. The second half of the pair
-// reports whether `name` is a free builtin at all: an empty list is a real
-// signature here (`__ptr_width()`), so the length cannot carry membership.
-//
-// Without these nothing checked a free builtin's arguments. `f32_bits(y)` on
-// an f64 compiled and reinterpreted the low 32 bits of the double's pattern,
-// where native refuses it with E038 — the self-host checker accepting what
-// native refuses, which docs/NATIVE-CONVERGENCE.md calls the dangerous
-// direction (#9987). Typing the RESULT is what makes such a call infer at all,
-// so the silence covered exactly the names typed here and no others.
-//
-// Kept in the order free_builtin_result states them, so the two read as one
-// signature split across two functions.
-function free_builtin_params(name: string): (typeinfo.Type[], boolean) {
-  if (name == "string_from_bytes_unchecked") { return ([t_array(t_u8())], true); }
-  if (name == "f64_bits") { return ([t_float()], true); }
-  if (name == "f64_from_bits") { return ([t_i64()], true); }
-  if (name == "f32_bits") { return ([t_f32()], true); }
-  if (name == "f32_from_bits") { return ([t_i32()], true); }
-  return intrinsic_params(name);
+  return intrinsic_result(name, argc);
 }
 
 // The intrinsics' parameters, mirroring intrinsic_result entry for entry. The
 // bit counts split by operand width where the result table does not need to:
 // the width is the whole reason there is one name per width, and it is the
-// parameter that carries it.
+// parameter that carries it. The second half reports whether `name` is one at
+// all, since an empty list is a real signature (`__ptr_width()`).
 function intrinsic_params(name: string): (typeinfo.Type[], boolean) {
   if (is_f64_primitive(name)) { return ([t_float()], true); }
   if (name == "__pow_f64") { return ([t_float(), t_float()], true); }
@@ -621,6 +593,9 @@ function intrinsic_params(name: string): (typeinfo.Type[], boolean) {
   if (name == "__heap_alloc_count") { return ([], true); }
   if (name == "__heap_mark") { return ([], true); }
   if (name == "__heap_release_to") { return ([t_i64()], true); }
+  if (name == "__rc_underflow_count" || name == "__arr_push_shared_count" || name == "__arr_push_shared_bytes") { return ([], true); }
+  if (name == "__rc_inc" || name == "__rc_dec" || name == "__rc_get") { return ([t_array(t_u8())], true); }
+  if (name == "__alloc_reuse") { return ([t_usize(), t_i32(), t_i32()], true); }
   if (name == "__memcpy") { return ([t_usize(), t_usize(), t_i32()], true); }
   if (name == "__memset") { return ([t_usize(), t_i32(), t_i32()], true); }
   if (name == "__load_u8" || name == "__load_i32" || name == "__load_i64" || name == "__load_ptr") { return ([t_usize()], true); }
@@ -646,16 +621,13 @@ function intrinsic_params(name: string): (typeinfo.Type[], boolean) {
 
 // free_builtin_sig is the callable a free builtin denotes, so a call to one is
 // argument-checked by the same callable_arg_diags a call to a declared
-// function goes through — one E038 rule rather than a second copy of it.
-//
-// The result is read back out of free_builtin_result rather than restated,
-// keyed on the parameter count this table declares, so a signature cannot
-// disagree with itself. Unknown for every name that is not a free builtin,
-// which is callable_arg_diags' signal to check nothing.
+// function goes through. Unknown for a name that is not a free builtin, and
+// for the Display builtins, which display_arg_diags judges instead.
 function free_builtin_sig(name: string): typeinfo.Type {
-  var (params, known) = free_builtin_params(name);
-  if (!known) { return t_unknown("not a free builtin"); }
-  return t_func(params, free_builtin_result(name, params.len()));
+  var (params, known) = intrinsic_params(name);
+  if (known) { return t_func(params, intrinsic_result(name, params.len())); }
+  if (is_display_builtin(name)) { return t_unknown("a Display builtin"); }
+  return builtin_sig(name);
 }
 
 // type_debug renders a Type to a compact, unambiguous debug spelling — the Type
@@ -3410,6 +3382,61 @@ function ret_typevar_arg_type(sig: FuncSig, c: ast.ExprCall, s: Scope): (typeinf
   return (rt, bound);
 }
 
+// shared_literal_typevar_width: when type parameter `tp` of a generic call is
+// the whole declared type of two or more parameters and every argument there
+// is an unsuffixed integer literal tree, the widest of their readings — native
+// settles such a `T` through polymorphicIntDefault, so `both(1, 2^62)` binds
+// `T` = i64 rather than the i32 of the first argument (#8722 part 4). A single
+// such parameter, or any non-literal argument, answers false.
+function shared_literal_typevar_width(sig: FuncSig, c: ast.ExprCall, tp: string, s: Scope): (typeinfo.Type, boolean) {
+  var wt: typeinfo.Type = t_unknown("no literal argument binds " + tp);
+  var n: i32 = 0;
+  var k: i32 = 0;
+  while (k < sig.param_type_names.len() && k < c.args.len()) {
+    if (sig.param_type_names[k] == tp) {
+      if (!int_literal_tree(c.args[k])) { return (wt, false); }
+      var kt: typeinfo.Type = check_expr(c.args[k], s);
+      if (n == 0) { wt = kt; } else { wt = wider_int(wt, kt); }
+      n = n + 1;
+    }
+    k = k + 1;
+  }
+  return (wt, n >= 2 && is_integer(wt));
+}
+
+// settle_shared_literal_typevars restamps the literal arguments of a generic
+// call at their shared type parameter's widest reading, so the lowering, which
+// reads a type parameter off the FIRST argument that declares it, sees the
+// width the checker settled.
+function settle_shared_literal_typevars(c: ast.ExprCall, nargs: ast.Expr[], s: Scope): ast.Expr[] {
+  var name: string = "";
+  if let ast.ExprIdent(cid) = c.callee { name = cid.name; }
+  if (name.len() == 0 || !s.has_sig(name)) { return nargs; }
+  var sig: FuncSig = s.lookup_sig(name);
+  var out: ast.Expr[] = nargs;
+  // Type variables are recognised as the call binding does (gc_is_typevar_name):
+  // a module-loaded callee keeps its parameters' spellings but not always its
+  // type_params list.
+  var tvs: string[] = [];
+  for ptn in sig.param_type_names {
+    if (util.index_of_str(tvs, ptn) < 0 && gc_is_typevar_name(ptn, sig.type_params, s.structs.names, s.unions.names)) {
+      tvs = tvs.append(ptn);
+    }
+  }
+  for tp in tvs {
+    let (wty, wok) = shared_literal_typevar_width(sig, c, tp, s);
+    if (wok) {
+      var tag: string = type_to_irtag(wty);
+      var k: i32 = 0;
+      while (k < sig.param_type_names.len() && k < out.len()) {
+        if (sig.param_type_names[k] == tp) { out = out.with(k, settle_int_tree(out[k], tag)); }
+        k = k + 1;
+      }
+    }
+  }
+  return out;
+}
+
 // A call of a name with no declaration of its own. `__mkclo$<body>(captures)`
 // is the lambda lift's closure constructor: the environment box holds <body>'s
 // address and the captures that body reads back out of its first parameter, so
@@ -3619,9 +3646,45 @@ function builtin_sig(name: string): typeinfo.Type {
   return t_unknown("not a builtin: " + name);
 }
 
-function undeclared_call_type(name: string, s: Scope, argc: i32): typeinfo.Type {
+// builtin_method_sig is a builtin method's callable without its receiver, or
+// unknown when `recv_name` has no builtin method `name`.
+function builtin_method_sig(recv_name: string, name: string): typeinfo.Type {
+  if let typeinfo.TypeFunc(bm) = builtin_sig("__method_" + recv_name + "_" + name) {
+    var params: typeinfo.Type[] = [];
+    var i: i32 = 1;
+    while (i < bm.param_types.len()) {
+      params = params.append(bm.param_types[i]);
+      i = i + 1;
+    }
+    return t_func(params, bm.ret_type);
+  }
+  return t_unknown("not a builtin method: " + recv_name + "." + name);
+}
+
+// builtin_args_fit reports whether `args` fit a builtin's parameters with a
+// user signature's allowances: a type parameter takes anything, a literal
+// settles, a view borrows its owned type, and a coercion applies.
+function builtin_args_fit(args: ast.Expr[], params: typeinfo.Type[], s: Scope): boolean {
+  var i: i32 = 0;
+  while (i < args.len()) {
+    var want: typeinfo.Type = params[i];
+    var at: typeinfo.Type = check_expr(args[i], s);
+    if (!is_unknown(want) && !settles_to(args[i], want, s) && !view_arg_borrow(at, want) && !coercible(at, want, s)) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function undeclared_call_type(name: string, s: Scope, args: ast.Expr[]): typeinfo.Type {
   if let typeinfo.TypeFunc(bf) = builtin_sig(name) {
-    if (bf.param_types.len() == argc) { return bf.ret_type; }
+    if (bf.param_types.len() == args.len()) {
+      if (!builtin_args_fit(args, bf.param_types, s)) {
+        return t_unknown("arg-type mismatch calling `" + name + "`");
+      }
+      return bf.ret_type;
+    }
   }
   var body: string = parser.mkclo_body(name);
   if (body.len() == 0 || !s.has_sig(body)) {
@@ -4019,8 +4082,13 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
     }
     var msig: MethodSig = s.lookup_method(name, recv_type_name);
     if (msig.name.len() == 0) {
-      if let typeinfo.TypeFunc(bm) = builtin_sig("__method_" + recv_type_name + "_" + name) {
-        if (bm.param_types.len() == c.args.len() + 1) { return bm.ret_type; }
+      if let typeinfo.TypeFunc(bm) = builtin_method_sig(recv_type_name, name) {
+        if (bm.param_types.len() == c.args.len()) {
+          if (!builtin_args_fit(c.args, bm.param_types, s)) {
+            return t_unknown("arg-type mismatch calling `" + name + "`");
+          }
+          return bm.ret_type;
+        }
       }
       // A closure-FIELD call `h.f(args)`: no method `f`, but the struct
       // declares a fn-typed field `f` — the call yields the field's declared
@@ -4142,7 +4210,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
     return builtin_ctor_type(ctor_enum, name, c, s);
   }
   if (!s.has_sig(name)) {
-    return undeclared_call_type(name, s, c.args.len());
+    return undeclared_call_type(name, s, c.args);
   }
   var sig: FuncSig = s.lookup_sig(name);
   if (c.args.len() != sig.param_types.len()) {
@@ -4205,6 +4273,14 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
       bn = bn2;
       bt = bt2;
       bpi = bpi + 1;
+    }
+    // A type parameter every one of whose arguments is an integer literal
+    // settles at the widest reading, not the first (#8722 part 4).
+    var wbi: i32 = 0;
+    while (wbi < bn.len()) {
+      let (wty, wok) = shared_literal_typevar_width(sig, c, bn[wbi], s);
+      if (wok) { bt = bt.with(wbi, wty); }
+      wbi = wbi + 1;
     }
     // A declared type parameter no argument bound stays a VARIABLE in the
     // substitution. Resolving it by name instead would find a same-named
@@ -9661,10 +9737,15 @@ function display_unjudged(t: typeinfo.Type): boolean {
 // display_call_name is the builtin a call dispatches to when it is `print`,
 // `write` or `eprint` with one argument and no user function shadows the
 // name; "" otherwise.
+// is_display_builtin names the builtins that print any Display value.
+function is_display_builtin(name: string): boolean {
+  return name == "print" || name == "write" || name == "eprint";
+}
+
 function display_call_name(c: ast.ExprCall, s: Scope): string {
   if (c.args.len() != 1) { return ""; }
   if let ast.ExprIdent(id) = c.callee {
-    if (id.name != "print" && id.name != "write" && id.name != "eprint") { return ""; }
+    if (!is_display_builtin(id.name)) { return ""; }
     if (s.lookup_sig(id.name).name.len() > 0) { return ""; }
     return id.name;
   }
@@ -9749,6 +9830,13 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
         return out;
       }
       out = call_diags(mfa.obj, s);
+      match (check_expr(mfa.obj, s)) {
+        typeinfo.TypeTuple(mtt) => {
+          var tdg: util.Diag[] = tuple_field_diags(mfa.field, mtt, mfa.line, mfa.col);
+          if (tdg.len() > 0) { return util.append_diags(out, tdg); }
+        },
+        _ => {}
+      }
       // E045: a map literal `Map { k: v, … }` desugars to
       // `map_new[_i32](n).insert(k0, v0).insert(…)…`. The FIRST
       // insert (its object is the base constructor) carries the
@@ -9939,16 +10027,10 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           // judged by display_arg_diags rather than typed `string`, which
           // would refuse a struct carrying its own `to_string`.
           out = util.append_diags(out, display_arg_diags(c, s));
-          // The arity of what is left — the builtins whose parameters are
-          // deliberately not fixed. A wrong count on one of these used to fall through
-          // to IR lowering and surface as the whole-function #9053
-          // ineligibility hint; native reports E004 at the call (#7311).
-          var bexp: i32 = 0 - 1;
-          if (id.name == "print" || id.name == "eprint") { bexp = 1; }
-          if (id.name == "slice_unchecked") { bexp = 3; }
-          if (id.name == "target_os" || id.name == "target_arch") { bexp = 0; }
-          if (bexp >= 0 && c.args.len() != bexp) {
-            out = out.append(dg_at("E004", "function expects " + util.i32_to_string(bexp) + " arguments, got " + util.i32_to_string(c.args.len()), c.line, c.col));
+          // The Display builtins' arity, which free_builtin_sig leaves to this
+          // pass: native reports E004 at the call (#7311).
+          if ((id.name == "print" || id.name == "eprint") && c.args.len() != 1) {
+            out = out.append(dg_at("E004", "function expects 1 arguments, got " + util.i32_to_string(c.args.len()), c.line, c.col));
           }
         }
         if (s.lookup_sig(id.name).name.len() == 0) {
@@ -10141,9 +10223,14 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
             //     non-function value)
             // A present, function-typed field is the only
             // valid case, so neither diagnostic false-fires
-            // on real method or closure-field calls.
+            // on real method or closure-field calls. A builtin
+            // method (`Reader.read_chunk`) is checked against
+            // builtin_sigs instead.
+            var bms: typeinfo.Type = builtin_method_sig(sn.name, mfa.field);
             var fsig: StructSig = s.lookup_struct(sn.name);
-            if (fsig.name.len() > 0) {
+            if (!is_unknown(bms)) {
+              out = util.append_diags(out, callable_arg_diags(c, bms, s));
+            } else if (fsig.name.len() > 0) {
               var fldi: i32 = field_index(fsig, mfa.field);
               if (fldi < 0) {
                 out = out.append(dg_at("E043", "struct " + sn.name + " has no field \"" + mfa.field + "\"", mfa.line, mfa.col));
@@ -10665,13 +10752,7 @@ function call_diags_field_access(fa: ast.ExprFieldAccess, s: Scope, out: util.Di
       }
     },
     typeinfo.TypeTuple(tt) => {
-      // E046: a tuple field must be a numeric index in range.
-      var idx: i32 = digit_string_to_i32(fa.field);
-      if (idx < 0) {
-        out = out.append(dg_at("E046", "tuple field access requires a numeric index, got \"" + fa.field + "\"", fa.line, fa.col));
-      } else if (idx >= tt.elements.len()) {
-        out = out.append(dg_at("E046", "tuple has " + util.i32_to_string(tt.elements.len()) + " elements; index " + util.i32_to_string(idx) + " is out of range", fa.line, fa.col));
-      }
+      out = util.append_diags(out, tuple_field_diags(fa.field, tt, fa.line, fa.col));
     },
     _ => {
       // E043: a field READ on a non-struct, non-tuple value (an i32 /
@@ -10687,6 +10768,20 @@ function call_diags_field_access(fa: ast.ExprFieldAccess, s: Scope, out: util.Di
   }
 
   return out;
+}
+
+// tuple_field_diags is E046 for `t.field` on a tuple: the field must be a
+// numeric index in range. A method-call callee takes the same rule, since a
+// tuple has no methods; `t.0()` calls the function its element holds.
+function tuple_field_diags(field: string, tt: typeinfo.TypeTuple, line: i32, col: i32): util.Diag[] {
+  var idx: i32 = digit_string_to_i32(field);
+  if (idx < 0) {
+    return [dg_at("E046", "tuple field access requires a numeric index, got \"" + field + "\"", line, col)];
+  }
+  if (idx >= tt.elements.len()) {
+    return [dg_at("E046", "tuple has " + util.i32_to_string(tt.elements.len()) + " elements; index " + util.i32_to_string(idx) + " is out of range", line, col)];
+  }
+  return [];
 }
 
 function call_diags_struct_lit(sl: ast.ExprStructLit, s: Scope, out: util.Diag[]): util.Diag[] {
@@ -17542,6 +17637,7 @@ function annotate_expr(e: ast.Expr, s: Scope): ast.Expr {
         nargs = nargs.append(annotate_expr(arg, s));
       }
       nargs = display_rewrite(c, nargs, s);
+      nargs = settle_shared_literal_typevars(c, nargs, s);
       var tag: string = type_to_irtag(check_expr(e, s));
       return ast.ExprCall { callee: annotate_expr(c.callee, s), args: nargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: tag };
     },
