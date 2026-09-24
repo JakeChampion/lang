@@ -7507,6 +7507,29 @@ function main(): i32 {
 }`,
 	},
 	{
+		// A Map reached through an enum payload is counted like any other
+		// payload and released through the map's own chain when the enum
+		// dies — here an Option[Map] field carried through fifty spread
+		// updates (#8854).
+		name: "option_map_struct_field_reclaimed",
+		src: `
+import "core/map";
+struct H { buf: string, m: Option[Map[string, i32]], n: i32 }
+function (h: H) grow(s: string): H {
+    return H { ...h, buf: h.buf + s, n: h.n + 1 };
+}
+function main(): i32 {
+    var mm: Map[string, i32] = map_new(8);
+    mm = mm.insert("k", 3);
+    var h: H = H { buf: "", m: Some(mm), n: 0 };
+    var i: i32 = 0;
+    while (i < 50) { h = h.grow("cccc"); i = i + 1; }
+    var got: i32 = 0;
+    match (h.m) { Some(m) => { got = m.len(); }, None => { got = 9; } }
+    return (got - 1) + (h.n - 50) + __rc_underflow_count();
+}`,
+	},
+	{
 		// An array whose elements are Maps drops each through the map's own
 		// chain — value column, string keys, buf and handle — not the flat
 		// element dec, which took each handle to zero and stranded all four

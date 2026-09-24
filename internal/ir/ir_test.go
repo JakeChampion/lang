@@ -2303,9 +2303,7 @@ function build(): i32 {
 // __map_drop_values call in the generated __drop_enum_ body. That call site is
 // dead — no Map value can exist — but the static reference would otherwise fail
 // as "unknown callee __map_drop_values" at wasm build / an undefined symbol on
-// the register backends. Regression for the array-element / accumulator reclaim
-// path (#4420) generating the enum drop fn regardless of the Map-in-enum
-// "documented safe leak" gate (enumRcPayloadsEligible).
+// the register backends (#4420).
 func TestLowerMapInEnumDeadDropCulled(t *testing.T) {
 	p := lowerSourceWith(t, `enum E { Obj(Map[i32, i32]), Num(i32) }
 function main(): i32 {
