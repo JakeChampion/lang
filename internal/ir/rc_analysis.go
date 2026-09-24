@@ -480,8 +480,8 @@ func (s *summaryTable[V]) fixpoint(funcs []*ast.FuncDecl, analyse func(*ast.Func
 // needs is only whether the returned POINTER is the callee's own.
 //
 // A function with no value returns gets false: it returns nothing to be fresh.
-func findReturnsFreshBox(prog *ast.Program, info *checker.Info, pairForm, trmcFuncs map[string]bool, ownedParam func(*ast.FuncDecl, int) bool) map[string]bool {
-	return findReturnsOwnBox(prog, info, pairForm, trmcFuncs, ownedParam, false)
+func findReturnsFreshBox(prog *ast.Program, info *checker.Info, pairForm, trmcFuncs map[string]bool) map[string]bool {
+	return findReturnsOwnBox(prog, info, pairForm, trmcFuncs, false)
 }
 
 // findReturnsConstructedBox is findReturnsFreshBox on IDENTITY rather than
@@ -492,10 +492,10 @@ func findReturnsFreshBox(prog *ast.Program, info *checker.Info, pairForm, trmcFu
 // before it may grow in place (#8768); the ownership answer credits a
 // returned owned parameter, whose box the caller's other bindings still name.
 func findReturnsConstructedBox(prog *ast.Program, info *checker.Info, pairForm, trmcFuncs map[string]bool) map[string]bool {
-	return findReturnsOwnBox(prog, info, pairForm, trmcFuncs, func(*ast.FuncDecl, int) bool { return false }, true)
+	return findReturnsOwnBox(prog, info, pairForm, trmcFuncs, true)
 }
 
-func findReturnsOwnBox(prog *ast.Program, info *checker.Info, pairForm, trmcFuncs map[string]bool, ownedParam func(*ast.FuncDecl, int) bool, identity bool) map[string]bool {
+func findReturnsOwnBox(prog *ast.Program, info *checker.Info, pairForm, trmcFuncs map[string]bool, identity bool) map[string]bool {
 	// Greatest fixpoint: assume every function with a body qualifies, then
 	// eliminate the ones a return disproves. A call may be fresh because its
 	// callee is, so the answer for one function depends on the answers for
@@ -514,9 +514,9 @@ func findReturnsOwnBox(prog *ast.Program, info *checker.Info, pairForm, trmcFunc
 		fresh := freshLocalsIn(fn, q, ctorFresh)
 		retained := !identity && returnedAliasIsRetained(fn, pairForm, trmcFuncs)
 		refused := map[string]bool{}
-		for i, p := range fn.Params {
-			refused[p.Name] = identity || !ownedParam(fn, i)
-			if identity {
+		if identity {
+			for _, p := range fn.Params {
+				refused[p.Name] = true
 				delete(fresh, p.Name) // an `own` parameter is the caller's box
 			}
 		}
@@ -556,36 +556,11 @@ func findReturnsOwnBox(prog *ast.Program, info *checker.Info, pairForm, trmcFunc
 // than reasoned about: the pair-form ABI pushes (tag, payload) and returns
 // early, and TRMC rewrites returns into an accumulator store.
 //
-// Returning a bare PARAMETER is credited only where the parameter is
-// OWNED-BY-DEFAULT (paramVerdictOwned): the caller retained the argument on the
-// way in and the callee's exit sweep releases that reference under the same
-// is_unique gate it uses for a local, so the transfer inc is the caller's own.
-// That is what lets a tree walk's `Tip => return t` arm — `__om_filter`,
-// `__om_glue`, `__om_union` — keep every caller's binding of its result
-// reclaimable.
-//
-// A BORROWED parameter is refused, and the refusal now rests on nothing. It
-// was recorded as empirical — crediting one was said to lose three of the five
-// frees in `url.query_parse("a=1")`, 256 B — and that does not reproduce. Two
-// compilers built from the commit that landed the refusal, differing only in
-// this arm, leak identically in every spelling of that call: 0 B bound to a
-// local, 256 B as `query_parse(..).len()`, both ways. The 256 B is a
-// pre-existing leak in the second spelling and was misattributed; the same
-// table comes back from current main. Evidence on #7914.
-//
-// Removing the refusal measures 11,024 B off self-host driver retention with
-// 219 more frees, takes `pair_form_payload_borrowing_call` from 144 B to 128 B
-// on both backends, and leaves the rc corpus, its leak gates and the
-// conformance census otherwise unmoved. It is not taken yet, but not for want
-// of a test: the refusal LEAKS in a shape a user writes, and #7914 carries a
-// small deterministic probe — a `string[]` whose elements are built by
-// concatenation past the inline threshold, returned bare from one arm, with
-// the caller still using the array afterwards. It reads 1260/780 with 29,760 B
-// stranded here, against 1260/1260 and 0 B credited. Earlier identity probes
-// read alike only because a string of 7 bytes or fewer is inline and strands
-// nothing at all. What the credit still owes is gate work: the rc corpus leak
-// gates on all three backends, the conformance census, and that probe landed
-// with its no-bare and removed variants as the negative controls.
+// A returned bare PARAMETER is credited on the same footing, borrowed or
+// owned: the transfer inc is emitted either way, so the caller holds a
+// reference of its own. Where a threaded parameter's rebind declines the
+// callee-side dec, the value leaked with the refusal too; crediting only
+// adds the caller's release that the transfer inc pays for (#7914).
 //
 // A PROJECTION of a parameter keeps the credit — a different object the callee
 // never owned — and no probe has found a shape where that is unsafe.
@@ -609,10 +584,8 @@ func returnsOwnBox(e ast.Expr, fresh map[string]bool, q *summaryTable[bool], ret
 	switch x := e.(type) {
 	case *ast.Ident:
 		// fresh: a local proven fresh below, or an `own` parameter threaded
-		// only through owned values (freshLocalsIn). refused: the BORROWED
-		// parameters — see returnedAliasIsRetained on the threaded
-		// accumulator, whose rebind may decline the dec that balances the
-		// return inc.
+		// only through owned values (freshLocalsIn). refused: every parameter
+		// when the question is identity rather than ownership.
 		return fresh[x.Name] || (retained && !refused[x.Name])
 	case *ast.FieldAccess, *ast.Index:
 		return retained
@@ -737,24 +710,98 @@ func findReturnsFreshPairPayload(prog *ast.Program, info *checker.Info) map[stri
 			}
 		}
 	}
-	out := map[string]bool{}
+	// Greatest fixpoint: a function may forward another's payload, so its
+	// answer depends on the one it forwards from.
+	q := newSummaryTable[bool](len(prog.Funcs))
 	for _, fn := range prog.Funcs {
-		if fn.Body == nil {
-			continue
+		if fn.Body != nil {
+			q.vals[fn.Name] = true
 		}
+	}
+	q.fixpoint(prog.Funcs, func(fn *ast.FuncDecl) bool {
+		if fn.Body == nil || !q.at(fn.Name) {
+			return false
+		}
+		forwards := payloadForwards(fn, payloadCount)
 		ok := true
 		ast.Walk(fn.Body, func(n ast.Node) bool {
 			r, isRet := n.(*ast.Return)
 			if !isRet || r.Value == nil {
 				return true
 			}
-			if !returnsFreshVariantPayload(r.Value, nullaryVariant, payloadCount) {
-				ok = false
+			if returnsFreshVariantPayload(r.Value, nullaryVariant, payloadCount) {
+				return true
 			}
+			if g, fwd := forwards[r]; fwd && q.at(g) {
+				return true
+			}
+			// `return g(…)` hands back g's (tag, payload) pair unchanged.
+			if c, isCall := r.Value.(*ast.Call); isCall {
+				if id, isIdent := c.Callee.(*ast.Ident); isIdent && payloadCount[id.Name] == 0 && !nullaryVariant[id.Name] && q.at(id.Name) {
+					return true
+				}
+			}
+			ok = false
 			return true
 		})
-		out[fn.Name] = ok
-	}
+		if ok {
+			return false
+		}
+		q.vals[fn.Name] = false
+		return true
+	})
+	return q.vals
+}
+
+// payloadForwards finds the returns in fn that hand on a payload unchanged:
+// `match (g(…)) { V(x) => { … return W(x); … } }`, where that return is the
+// only mention of x in the arm. The arm moves g's payload into the return, so
+// it is as fresh as g's is. Each such return maps to g.
+func payloadForwards(fn *ast.FuncDecl, payloadCount map[string]int) map[*ast.Return]string {
+	out := map[*ast.Return]string{}
+	ast.Walk(fn.Body, func(n ast.Node) bool {
+		m, ok := n.(*ast.Match)
+		if !ok {
+			return true
+		}
+		call, ok := m.Tag.(*ast.Call)
+		if !ok {
+			return true
+		}
+		g, ok := call.Callee.(*ast.Ident)
+		if !ok {
+			return true
+		}
+		for _, arm := range m.Arms {
+			if arm.Body == nil || arm.Guard != nil || arm.AtBinding != "" || len(arm.Bindings) != 1 || arm.Bindings[0] == "" {
+				continue
+			}
+			x := arm.Bindings[0]
+			uses := 0
+			var fwd *ast.Return
+			ast.Walk(arm.Body, func(n ast.Node) bool {
+				switch y := n.(type) {
+				case *ast.Ident:
+					if y.Name == x {
+						uses++
+					}
+				case *ast.Return:
+					if c, ok := y.Value.(*ast.Call); ok && len(c.Args) == 1 {
+						if id, ok := c.Callee.(*ast.Ident); ok && payloadCount[id.Name] == 1 {
+							if a, ok := c.Args[0].(*ast.Ident); ok && a.Name == x {
+								fwd = y
+							}
+						}
+					}
+				}
+				return true
+			})
+			if fwd != nil && uses == 1 {
+				out[fwd] = g.Name
+			}
+		}
+		return true
+	})
 	return out
 }
 
@@ -3620,7 +3667,14 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		// pattern string it was parsed from is a borrowed parameter.
 		// findReturnsFreshBox says why returnsNoParamEscape cannot serve.
 		if id, ok := x.Callee.(*ast.Ident); ok {
-			if _, isLocal := b.locals[id.Name]; !isLocal && b.returnsFreshBox[id.Name] {
+			_, isLocal := b.locals[id.Name]
+			if !isLocal && b.returnsFreshBox[id.Name] {
+				return false
+			}
+			// A call through a function value reaches only an address-taken
+			// function or a lifted lambda; when every one of those hands back
+			// a box of its own, so does this call.
+			if isLocal && b.indirectCallsReturnOwnBox() {
 				return false
 			}
 		}
@@ -9952,4 +10006,27 @@ func (b *builder) matchBindingTypes() map[string]ast.Type {
 		return true
 	})
 	return out
+}
+
+// indirectCallsReturnOwnBox reports whether every function an indirect call
+// could reach — each address-taken function, lifted lambdas included — returns
+// a box the caller owns (returnsFreshBox) or no rc-tracked value at all. A
+// builtin taken as a value has no body to prove it, so one returning an
+// rc-tracked value makes the answer false.
+func (b *builder) indirectCallsReturnOwnBox() bool {
+	if b.indirectOwnBoxKnown {
+		return b.indirectOwnBox
+	}
+	b.indirectOwnBoxKnown, b.indirectOwnBox = true, true
+	for name := range b.addressTaken {
+		sig := b.info.FuncSigs[name]
+		if sig == nil || sig.Result == nil || !rcTrackedSlotType(sig.Result) {
+			continue
+		}
+		if !b.returnsFreshBox[name] {
+			b.indirectOwnBox = false
+			break
+		}
+	}
+	return b.indirectOwnBox
 }

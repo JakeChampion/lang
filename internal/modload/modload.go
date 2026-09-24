@@ -2175,6 +2175,9 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 			x.Name = r.selfPrefix + x.Name
 		}
 	case *ast.Call:
+		if args := r.rewriteTypeArgs(x.TypeArgs); args != nil {
+			x.TypeArgs = args
+		}
 		// Recognise `mod.fn(args)` BEFORE recursing — the inner
 		// FieldAccess shouldn't be visited as a normal field
 		// access because mod isn't a struct.
@@ -2207,7 +2210,11 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 				}
 			}
 		}
-		r.rewriteExpr(&x.Callee)
+		if ix, ok := x.Callee.(*ast.Index); ok && r.rewriteTypeArgIndex(&ix.Idx) {
+			r.rewriteExpr(&ix.Array)
+		} else {
+			r.rewriteExpr(&x.Callee)
+		}
 		for i := range x.Args {
 			r.rewriteExpr(&x.Args[i])
 		}
@@ -2329,6 +2336,9 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 		//   - Anything else (a dotted name we don't recognise) is
 		//     a checker-time error; leave it alone.
 		x.TypeName = r.rewriteStructNameAt(x.TypeName, x.P)
+		if args := r.rewriteTypeArgs(x.TypeArgs); args != nil {
+			x.TypeArgs = args
+		}
 		for i := range x.Fields {
 			r.rewriteExpr(&x.Fields[i].Value)
 		}
@@ -2421,6 +2431,32 @@ func (r *rewriter) rewriteStructNameAt(name string, pos ast.Position) string {
 		return r.selfPrefix + name
 	}
 	return name
+}
+
+// rewriteTypeArgIndex mangles the bracket of `f[Box](x)` / `f[mod.Box](x)` as
+// the type name it is when it names a type rather than a value; the checker
+// reads it back as the call's type argument. Reports whether it did.
+func (r *rewriter) rewriteTypeArgIndex(slot *ast.Expr) bool {
+	switch x := (*slot).(type) {
+	case *ast.Ident:
+		if r.localVars[x.Name] || r.ownFuncs[x.Name] || r.ownConsts[x.Name] {
+			return false
+		}
+		if r.ownStructs[x.Name] || r.ownEnums[x.Name] {
+			x.Name = r.selfPrefix + x.Name
+			return true
+		}
+	case *ast.FieldAccess:
+		id, ok := x.Target.(*ast.Ident)
+		if !ok || r.localVars[id.Name] {
+			return false
+		}
+		if mod, _, ok := r.importedModule(id.Name); ok && (mod.publicStructs[x.Field] || mod.publicEnums[x.Field]) {
+			*slot = &ast.Ident{P: id.P, Name: r.rewriteStructNameAt(id.Name+"."+x.Field, x.P)}
+			return true
+		}
+	}
+	return false
 }
 
 // rewriteTraitNameAt mangles a trait reference the same way

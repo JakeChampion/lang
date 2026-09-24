@@ -8565,6 +8565,27 @@ function int_literal_tree(e: ast.Expr): boolean {
   return parser.int_literal_tree(e);
 }
 
+// float_literal_tree: an unsuffixed float literal, or a sign or arithmetic
+// over them, which takes the float type its destination settles on.
+function float_literal_tree(e: ast.Expr): boolean {
+  match (e) {
+    ast.ExprNumber(n) => { return n.is_float && n.suffix.len() == 0; },
+    ast.ExprUnary(u) => { return (u.op == "-" || u.op == "+") && float_literal_tree(u.operand); },
+    ast.ExprBinary(b) => {
+      if (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/") {
+        return float_literal_tree(b.left) && float_literal_tree(b.right);
+      }
+      return false;
+    },
+    _ => { return false; }
+  }
+  return false;
+}
+
+function numeric_literal_tree(e: ast.Expr): boolean {
+  return int_literal_tree(e) || float_literal_tree(e);
+}
+
 // int_operand_op: does a binary `op` hand its own integer type down to both
 // operands? Arithmetic, bitwise, shift and SATURATING operators do — including
 // the shift COUNT, which native judges against the same type as the value — so
@@ -9378,8 +9399,13 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
       out = call_diags(c.callee, s);
     }
   }
-  for arg in c.args {
-    out = util.append_diags(out, call_diags(arg, s));
+  var dests: typeinfo.Type[] = s.call_param_types(c);
+  var di: i32 = 0;
+  while (di < c.args.len()) {
+    var dest: typeinfo.Type = t_unknown("no declared parameter");
+    if (di < dests.len()) { dest = dests[di]; }
+    out = util.append_diags(out, dest_call_diags(c.args[di], dest, s));
+    di = di + 1;
   }
   // E038: calling a NON-FUNCTION value (`x(3)` where x is an i32 /
   // string / etc.). The callee's type, when known and not a function
@@ -10123,18 +10149,25 @@ function call_diags_array(a: ast.ExprArray, s: Scope, out: util.Diag[]): util.Di
   // (whose union-widening the Go checker handles and this port
   // doesn't yet). The Go checker reports E034 at the element.
   if (a.elements.len() >= 2) {
-    var et0: typeinfo.Type = check_expr(a.elements[0], s);
+    // An unsuffixed numeric literal takes the numeric element type the other
+    // elements settle on, so the anchor is the first element that is not one
+    // when that element is numeric, and the first element otherwise.
+    var anchor: i32 = 0;
+    while (anchor < a.elements.len() && numeric_literal_tree(a.elements[anchor])) { anchor = anchor + 1; }
+    if (anchor == a.elements.len()) { anchor = 0; }
+    var et0: typeinfo.Type = check_expr(a.elements[anchor], s);
+    if (anchor > 0 && !is_integer(et0) && !is_float(et0)) {
+      anchor = 0;
+      et0 = check_expr(a.elements[0], s);
+    }
     if (is_primitive_type(et0)) {
-      var k: i32 = 1;
+      var k: i32 = 0;
       var flagged: boolean = false;
       while (k < a.elements.len() && !flagged) {
         var etk: typeinfo.Type = check_expr(a.elements[k], s);
-        // Two unsuffixed integer literals in one array unify: the
-        // element type comes from the destination, not from whichever
-        // literal happened to be written first.
-        var lits_agree: boolean = is_integer(etk) && is_integer(et0)
-          && int_literal_tree(a.elements[k]) && int_literal_tree(a.elements[0]);
-        if (is_primitive_type(etk) && !type_eq(etk, et0) && !lits_agree) {
+        var lits_agree: boolean = (is_integer(et0) && int_literal_tree(a.elements[k]))
+          || (is_float(et0) && float_literal_tree(a.elements[k]));
+        if (k != anchor && is_primitive_type(etk) && !type_eq(etk, et0) && !lits_agree) {
           out = out.append(dg_at("E034", "array element type " + type_label(etk) + ", expected " + type_label(et0), expr_line(a.elements[k]), expr_col(a.elements[k])));
           flagged = true;
         }
@@ -10272,8 +10305,15 @@ function call_diags_field_access(fa: ast.ExprFieldAccess, s: Scope, out: util.Di
 }
 
 function call_diags_struct_lit(sl: ast.ExprStructLit, s: Scope, out: util.Diag[]): util.Diag[] {
-  for field_value in sl.field_values {
-    out = util.append_diags(out, call_diags(field_value, s));
+  var fsig: StructSig = s.lookup_struct(sl.type_name);
+  var vi: i32 = 0;
+  while (vi < sl.field_values.len()) {
+    var fdest: typeinfo.Type = t_unknown("no declared field");
+    if (fsig.name.len() > 0 && vi < sl.field_names.len() && field_index(fsig, sl.field_names[vi]) >= 0) {
+      fdest = fsig.field_types[field_index(fsig, sl.field_names[vi])];
+    }
+    out = util.append_diags(out, dest_call_diags(sl.field_values[vi], fdest, s));
+    vi = vi + 1;
   }
   if (sl.has_base) {
     out = util.append_diags(out, call_diags(sl.base, s));
@@ -10439,18 +10479,6 @@ function e055_diag(e: ast.Expr, s: Scope): util.Diag[] {
 // stmts_call_diags walks a statement list, threading scope (so a callee
 // name shadowed by a local `var` is recognised as a local, not the
 // function) and collecting the E004s from every expression.
-// typed_array_elem_diags reports E034 for a typed array-literal binding
-// `var x: Elem[] = [ ... ]` whose declared element type is a COMPOSITE
-// (struct / enum / union / array / tuple / map) and some element isn't
-// assignable to it. Primitive-element arrays (`i32[]`, `string[]`, …) are
-// already covered by the first-element-anchored E034 in call_diags, so we
-// skip them here to avoid a duplicate diagnostic; this fills the composite
-// gap that anchor check deliberately left open. The annotation's element
-// type is matched with the union-widening `type_assignable`, so a
-// heterogeneous-but-widening literal — e.g. `var xs: Stmt[] = [StmtVar{…, fn_ret: ""},
-// StmtReturn{…}]`, ubiquitous in this very compiler — stays clean. Mirrors
-// the Go checker, which checks each element against the expected element
-// type and reports at the offending element.
 // array_elem_type_of returns t's array element type, or `unknown` when t
 // isn't an array — the "expected element" feeding array_elem_check.
 function array_elem_type_of(t: typeinfo.Type): typeinfo.Type {
@@ -10495,12 +10523,39 @@ function array_elem_check(elem_ty: typeinfo.Type, init: ast.Expr, s: Scope): uti
   return out;
 }
 
-function typed_array_elem_diags(type_name: string, init: ast.Expr, s: Scope): util.Diag[] {
-  if (type_name.len() == 0) {
-    return [];
+// The call walk of an expression bound to a destination of type `dest`. An
+// array literal whose destination names a composite element type has each
+// element checked against that type by `array_elem_check`, so the literal's
+// own first-element-anchored E034 stands down: `[1, "a"]` is a valid
+// `dyn Show[]` (#10097).
+function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag[] {
+  var elem: typeinfo.Type = array_elem_type_of(dest);
+  if (!is_unknown(elem) && !is_primitive_type(elem)) {
+    if let ast.ExprArray(a) = e {
+      var out: util.Diag[] = [];
+      for element in a.elements { out = util.append_diags(out, call_diags(element, s)); }
+      return out;
+    }
   }
-  var declared: typeinfo.Type = s.resolve_type(type_name);
-  return array_elem_check(array_elem_type_of(declared), init, s);
+  return call_diags(e, s);
+}
+
+// The declared parameter types of a call where the callee resolves: a free
+// function, a struct's method or a function value. Empty otherwise.
+function (s: Scope) call_param_types(c: ast.ExprCall): typeinfo.Type[] {
+  match (c.callee) {
+    ast.ExprIdent(id) => {
+      if (!s.defines(id.name)) { return s.lookup_sig(id.name).param_types; }
+      if let typeinfo.TypeFunc(f) = s.lookup(id.name) {
+        if (f.params_known) { return f.param_types; }
+      }
+    },
+    ast.ExprFieldAccess(mfa) => {
+      if let typeinfo.TypeStruct(sn) = check_expr(mfa.obj, s) { return s.lookup_method(mfa.field, sn.name).param_types; }
+    },
+    _ => {}
+  }
+  return [];
 }
 
 function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
@@ -10538,11 +10593,13 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
             }
           }
         }
-        out = util.append_diags(out, call_diags(v.init, vsc));
-        out = util.append_diags(out, typed_array_elem_diags(v.type_name, v.init, vsc));
+        var vdest: typeinfo.Type = t_unknown("no declared type");
+        if (v.type_name.len() > 0) { vdest = vsc.resolve_type(v.type_name); }
+        out = util.append_diags(out, dest_call_diags(v.init, vdest, vsc));
+        out = util.append_diags(out, array_elem_check(array_elem_type_of(vdest), v.init, vsc));
       },
       ast.StmtReturn(r) => {
-        out = util.append_diags(out, call_diags(r.value, cur));
+        out = util.append_diags(out, dest_call_diags(r.value, cur.ret_type, cur));
         // E034: a composite-array `return` value's elements checked
         // against the function's declared element type (top-level
         // stmts carry an unknown ret_type sentinel and are skipped).
@@ -11240,8 +11297,9 @@ function receiver_type_ok(rt: string, mod: parser.Module): boolean {
 
 // const_expr_ok reports whether `e` is inside native's constant grammar
 // (internal/constfold evalConst): a literal, a reference to an EARLIER const,
-// or a unary / binary operation over those. Everything else — a struct or
-// array literal, a call, a field access, an index — is not a constant.
+// a unary / binary operation over those, or an array or tuple literal of them
+// (#7987). Everything else — a struct literal, a call, a field access, an
+// index — is not a constant.
 // `earlier` is the names of the consts declared before this one, so a forward
 // reference is rejected the way native's sequential fold rejects it.
 // Returns "" when `e` is constant, else the message tail native reports.
@@ -11266,6 +11324,24 @@ function const_expr_err(e: ast.Expr, earlier: string[]): string {
     },
     ast.ExprUnary(u) => {
       return const_expr_err(u.operand, earlier);
+    },
+    ast.ExprArray(a) => {
+      for el in a.elements {
+        var ae: string = const_expr_err(el, earlier);
+        if (ae.len() > 0) {
+          return ae;
+        }
+      }
+      return "";
+    },
+    ast.ExprTuple(t) => {
+      for el in t.elements {
+        var te: string = const_expr_err(el, earlier);
+        if (te.len() > 0) {
+          return te;
+        }
+      }
+      return "";
     },
     ast.ExprBinary(b) => {
       if (const_refused_op(b.op)) {
@@ -13108,8 +13184,165 @@ pub function e049_diags(mod: parser.Module): util.Diag[] {
     }
     encl = e049_append_nt(encl, e049_scope(fn.body));
     out = util.append_diags(out, e049_find(fn.body, encl));
+    out = util.append_diags(out, e049_cell_stores(fn, mod));
   }
   return out;
+}
+
+// e049_cell_stores is the enclosing-scope half of E049 (#8440), native's
+// checkCaptureCycleStores. A `var` some closure captures is shared by
+// reference through one cell, so storing into it from the enclosing scope a
+// value that can reach a function can close cell -> closure -> env -> cell.
+// Judged on the variable's declared type (a stored value is assignable to it,
+// so a type that reaches no function holds none), except for a closure
+// literal that captures neither the target nor anything that could.
+function e049_cell_stores(fn: parser.FuncDecl, mod: parser.Module): util.Diag[] {
+  var vars: NameTy[] = e049_lambda_var_types(fn.body, e049_scope(fn.body));
+  var captured: string[] = [];
+  for st in fn.body { captured = astwalk.fold_stmt_own_pruned(st, captured, e049_lambda_captures, e049_not_into_lambda); }
+  for st in fn.body { captured = e049_nested_stmt_captures(st, captured); }
+  if (captured.len() == 0) { return []; }
+  return e049_store_walk(fn.body, vars, captured, fn.type_params, mod, []);
+}
+
+// e049_nested_stmt_captures reaches the lambdas in nested statement blocks,
+// which fold_stmt_own_pruned leaves to the caller.
+function e049_nested_stmt_captures(st: ast.Stmt, acc: string[]): string[] {
+  var kids: ast.Stmt[] = [];
+  match (st) {
+    ast.StmtIf(f) => { kids = e049_cat_stmts(f.then_body, f.else_body); },
+    ast.StmtWhile(w) => { kids = w.body; },
+    ast.StmtFor(fr) => { kids = fr.body; },
+    ast.StmtMatch(m) => { for arm in m.arms { kids = e049_cat_stmts(kids, arm.body); } },
+    ast.StmtDefer(d) => { kids = [d.action]; },
+    _ => {}
+  }
+  for k in kids {
+    acc = astwalk.fold_stmt_own_pruned(k, acc, e049_lambda_captures, e049_not_into_lambda);
+    acc = e049_nested_stmt_captures(k, acc);
+  }
+  return acc;
+}
+
+function e049_lambda_captures(n: ast.Expr, own acc: string[]): string[] {
+  if let ast.ExprLambda(lm) = n { return astwalk.collect_lambda_idents(lm, acc); }
+  return acc;
+}
+
+function e049_not_into_lambda(n: ast.Expr): boolean {
+  if let ast.ExprLambda(_) = n { return false; }
+  return true;
+}
+
+function e049_no_expr(e: ast.Expr, own acc: boolean): boolean { return acc; }
+
+function e049_cat_stmts(a: ast.Stmt[], b: ast.Stmt[]): ast.Stmt[] {
+  var out: ast.Stmt[] = a;
+  for st in b { out = out.append(st); }
+  return out;
+}
+
+// e049_lambda_var_types gives an unannotated `var f = () => …` the function
+// type its initialiser has, which e049_scope leaves empty.
+function e049_lambda_var_types(stmts: ast.Stmt[], vars: NameTy[]): NameTy[] {
+  var out: NameTy[] = [];
+  for nt in vars {
+    var ty: string = nt.ty;
+    if (ty.len() == 0 && e049_var_init_is_lambda(stmts, nt.nm)) { ty = "fn"; }
+    out = out.append(NameTy { nm: nt.nm, ty: ty });
+  }
+  return out;
+}
+
+function e049_var_init_is_lambda(stmts: ast.Stmt[], name: string): boolean {
+  function at_var(st: ast.Stmt, own acc: boolean): boolean {
+    if let ast.StmtVar(v) = st {
+      if (v.name == name) {
+        if let ast.ExprLambda(_) = v.init { return true; }
+      }
+    }
+    return acc;
+  }
+  var found: boolean = false;
+  for st in stmts { found = astwalk.fold_stmt_nodes(st, found, at_var, e049_no_expr, e049_not_into_lambda); }
+  return found;
+}
+
+function e049_store_walk(stmts: ast.Stmt[], vars: NameTy[], captured: string[], tparams: string[], mod: parser.Module, own out: util.Diag[]): util.Diag[] {
+  for st in stmts {
+    match (st) {
+      ast.StmtAssign(a) => {
+        var ty: string = e049_var_type(vars, a.target);
+        if (util.has_str(captured, a.target) && e049_is_ref(ty) && e049_type_reaches_fn(ty, tparams, mod, [])
+            && !e049_lambda_cannot_reach(a.value, a.target, vars, tparams, mod)) {
+          out = out.append(dg_at("E049", "cannot assign a value of type " + ty + " to captured \"" + a.target + "\": a captured variable is shared by reference, so storing a value that can reach a closure would close a reference cycle the runtime cannot collect; keep the closure in a variable it does not capture", a.target_line, a.target_col));
+        }
+      },
+      ast.StmtIf(f) => {
+        out = e049_store_walk(f.then_body, vars, captured, tparams, mod, out);
+        out = e049_store_walk(f.else_body, vars, captured, tparams, mod, out);
+      },
+      ast.StmtWhile(w) => { out = e049_store_walk(w.body, vars, captured, tparams, mod, out); },
+      ast.StmtFor(fr) => { out = e049_store_walk(fr.body, vars, captured, tparams, mod, out); },
+      ast.StmtMatch(m) => { for arm in m.arms { out = e049_store_walk(arm.body, vars, captured, tparams, mod, out); } },
+      _ => {}
+    }
+  }
+  return out;
+}
+
+function e049_var_type(vars: NameTy[], name: string): string {
+  for nt in vars {
+    if (nt.nm == name) { return nt.ty; }
+  }
+  return "";
+}
+
+// e049_lambda_cannot_reach: a closure literal's only outward edges are its
+// captures, so it closes nothing when it captures neither the target nor a
+// variable whose type could hold a closure.
+function e049_lambda_cannot_reach(v: ast.Expr, target: string, vars: NameTy[], tparams: string[], mod: parser.Module): boolean {
+  if let ast.ExprLambda(lm) = v {
+    for name in astwalk.collect_lambda_idents(lm, []) {
+      if (name == target) { return false; }
+      var ty: string = e049_var_type(vars, name);
+      if (e049_type_reaches_fn(ty, tparams, mod, [])) { return false; }
+    }
+    return true;
+  }
+  return false;
+}
+
+// e049_type_reaches_fn reports whether a value of the named type can hold a
+// function value: a function type, `dyn`, a type parameter, or a struct,
+// variant or generic argument that reaches one. Mirrors native's
+// typeReachesFunc over the self-host's type-name strings.
+function e049_type_reaches_fn(ty: string, tparams: string[], mod: parser.Module, seen: string[]): boolean {
+  if (ty.len() == 0) { return false; }
+  if (util.contains(ty, "=>")) { return true; }
+  var start: i32 = 0 - 1;
+  var i: i32 = 0;
+  while (i <= ty.len()) {
+    var word: boolean = i < ty.len() && lexer.is_alnum(ty[i] as i32);
+    if (word && start < 0) { start = i; }
+    if (!word && start >= 0) {
+      var w: string = slice_unchecked(ty, start, i) + "";
+      start = 0 - 1;
+      if (w == "fn" || w == "dyn" || util.has_str(tparams, w)) { return true; }
+      if (!util.has_str(seen, w)) {
+        seen = seen.append(w);
+        for sd in mod.structs {
+          if (sd.name == w || sd.enum_owner == w) {
+            for fld in sd.fields {
+              if (fld.fn_ret.len() > 0 || e049_type_reaches_fn(fld.type_name, tparams, mod, seen)) { return true; }
+            }
+          }
+        }
+      }
+    }
+    i = i + 1;
+  }
+  return false;
 }
 
 // e064_unknown_bare reports whether `type_name` is a BARE NOMINAL identifier
@@ -16853,6 +17086,7 @@ function type_to_arrtag(t: typeinfo.Type): string {
 // enums → func sigs → methods); it is duplicated rather than shared so the
 // annotate pass cannot perturb check_module's byte-identity-critical body.
 pub struct ModuleTables { structs: StructTable, unions: UnionTable, sigs: SigTable, methods: MethodTable, imports: string[] }
+
 
 // import_paths_of: the module's `import` paths exactly as written in source
 // ("std/string"), which is the spelling a hint tells the reader to add.

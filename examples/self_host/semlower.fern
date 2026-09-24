@@ -634,7 +634,7 @@ pub function substitution(mod: parser.Module, structs: irlower.StructTab, base: 
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         if (r.keep[i]) {
-            sigs = ssarc.caller_sigs(sigs, mod.funcs[i].name, built.decls[i].func, built.decls[i].modes);
+            sigs = ssarc.caller_sigs(sigs, mod.funcs[i].name, built.decls[i].func, built.decls[i].modes, r.plans[i]);
             seeds = seeds.append(call_key(mod.funcs[i]) + "|"
                 + ssarc.grow_mask(call_key(mod.funcs[i]), built.decls[i].func, r.grows, mod.funcs[i].receiver_type.len() > 0));
             if (mod.funcs[i].receiver_type.len() == 0) {

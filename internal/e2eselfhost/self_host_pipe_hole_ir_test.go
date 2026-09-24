@@ -31,6 +31,12 @@ function main(): i32 { return 4 |> sub(9, _) |> sub(8, _); }`, 3},
 	// A plain (prepending) stage after a hole stage still prepends.
 	{"hole-then-prepend", `function sub(a: i32, b: i32): i32 { return a - b; }
 function main(): i32 { return 4 |> sub(10, _) |> sub(2); }`, 4},
+	// The hole as a named argument's value: diff(a = 0, b = 9) = -9 (#10121).
+	{"named-hole", `function diff(a: i32 = 0, b: i32 = 0): i32 { return a - b; }
+function main(): i32 { return (9 |> diff(b = _)) + 20; }`, 11},
+	// A named hole after a positional argument: pick(1, 0, 20) = 1 + 0 + 20.
+	{"named-hole-after-positional", `function pick(a: i32, b: i32 = 0, c: i32 = 0): i32 { return a + b * 10 + c; }
+function main(): i32 { return 20 |> pick(1, c = _); }`, 21},
 }
 
 // TestSelfHostPipeHoleIRX86_64 routes each case through the self-hosted

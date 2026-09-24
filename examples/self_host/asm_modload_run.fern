@@ -281,7 +281,7 @@ function prune_to_reachable(mod: parser.Module, reach: string[]): parser.Module 
 // target-aware; this one was not, so the arm64 merged leg had no over-budget
 // rescue and dropped straight to the (since-deleted) AST emitter for the whole
 // single-process band x86 served via IR (#3457 slice 5).
-function emit_per_module_concat(dir: string, entry_mod: parser.Module, loaded: flatten.LoadedModule[], reach: string[], target: string): string {
+function emit_per_module_concat(dir: string, entry_path: string, entry_mod: parser.Module, loaded: flatten.LoadedModule[], reach: string[], target: string, cache_dir: string): string {
     var parts: flatten.PerModule[] = flatten.bundle_per_module(entry_mod, loaded);
     var infmods: parser.Module[] = [];
     var all_funcs: parser.FuncDecl[] = [];
@@ -326,23 +326,59 @@ function emit_per_module_concat(dir: string, entry_mod: parser.Module, loaded: f
     // The whole-program registry base, derived once and shared by every unit's
     // gate and emit (#8199).
     var wpb: irlower.FnSigs = ircore.wp_fn_sigs(all_funcs, all_stab);
+    // Signatures are hashed over the PRUNED modules, so a dependency whose
+    // reach changed moves every dependent's key.
+    var sighashes: string[] = [];
+    var fh: modloader.FactHashes = modloader.FactHashes { per_mod: [], global: "" };
+    if (cache_dir.len() > 0) {
+        fh = modloader.module_fact_hashes(infmods, irlower.wp_fact_rows(wpb, all_funcs, all_stab));
+        sighashes = modloader.fact_sig_hashes(infmods, fh);
+    }
     var out: string = "";
     var idx: i32 = 0;
     while (idx < parts.len()) {
-        if (!ircore.all_eligible_view_base(infmods[idx], known, all_stab, wpb)) {
-            // Name the module that took the whole program off the per-module
-            // route. Without this the decline is silent and the failure
-            // resurfaces as an undefined `__fn_` at link, with nothing
-            // pointing at which unit could not lower.
-            eprint("per-module concat: module not IR-eligible: " + parts[idx].ns + "\n");
-            return "";
-        }
         var extra: string[] = [];
         if (parts[idx].is_entry) { extra = needs; }
-        if (target == "arm64-linux") {
-            out = out + asm_arm64_ir.emit_module_ir_unit_arm64_flat(infmods[idx], parts[idx].is_entry, true, parts[idx].ns, extra, all_funcs, all_stab, 0, 0 - 1, wpb);
-        } else {
-            out = out + asm_ir.emit_module_ir_unit_flat(infmods[idx], parts[idx].is_entry, true, parts[idx].ns, extra, all_funcs, all_stab, 0, 0 - 1, [], wpb);
+        var cachefile: string = "";
+        if (cache_dir.len() > 0) {
+            var src_hash: string = modloader.module_src_hash(modloader.no_overlay(), dir, entry_path, parts, idx);
+            var key: string = modloader.module_concat_unit_cache_key(parts, infmods, sighashes, idx, src_hash, extra, fh);
+            if (key.len() > 0) { cachefile = cache_dir + "/" + parts[idx].ns + "_c__" + util.hash_key(key) + ".s"; }
+        }
+        var served: boolean = false;
+        if (cachefile.len() > 0) {
+            match (read_file(cachefile)) {
+                Ok(cached) => {
+                    eprint("cache-hit " + parts[idx].ns + "\n");
+                    out = out + cached;
+                    served = true;
+                },
+                Err(e_ch) => { },
+            }
+        }
+        if (!served) {
+            if (!ircore.all_eligible_view_base(infmods[idx], known, all_stab, wpb)) {
+                // Name the module that took the whole program off the per-module
+                // route. Without this the decline is silent and the failure
+                // resurfaces as an undefined `__fn_` at link, with nothing
+                // pointing at which unit could not lower.
+                eprint("per-module concat: module not IR-eligible: " + parts[idx].ns + "\n");
+                return "";
+            }
+            var unit: string = "";
+            if (target == "arm64-linux") {
+                unit = asm_arm64_ir.emit_module_ir_unit_arm64_flat(infmods[idx], parts[idx].is_entry, true, parts[idx].ns, extra, all_funcs, all_stab, 0, 0 - 1, wpb);
+            } else {
+                unit = asm_ir.emit_module_ir_unit_flat(infmods[idx], parts[idx].is_entry, true, parts[idx].ns, extra, all_funcs, all_stab, 0, 0 - 1, [], wpb);
+            }
+            if (cachefile.len() > 0) {
+                eprint("cache-miss " + parts[idx].ns + "\n");
+                match (write_file(cachefile, unit)) {
+                    Err(cerr) => { eprint("per-module concat: cache write failed for " + parts[idx].ns + "\n"); },
+                    Ok(_) => { },
+                }
+            }
+            out = out + unit;
         }
         idx = idx + 1;
     }
@@ -358,11 +394,11 @@ function emit_per_module_concat(dir: string, entry_mod: parser.Module, loaded: f
 // bytes for that unit (TestSelfHostAssumeEligibleByteIdenticalX86_64 pins it),
 // so without the normalisation they would key the same asm twice and never
 // reuse each other's entries.
-function unit_cache_file(cache_dir: string, parts: flatten.PerModule[], infmods: parser.Module[], sighashes: string[], src_hash: string, midx: i32, extra: string[], wlo: i32, whi: i32): string {
+function unit_cache_file(cache_dir: string, parts: flatten.PerModule[], infmods: parser.Module[], sighashes: string[], src_hash: string, midx: i32, extra: string[], wlo: i32, whi: i32, fh: modloader.FactHashes): string {
     if (cache_dir.len() == 0 || sighashes.len() == 0 || src_hash.len() == 0) { return ""; }
     var khi: i32 = whi;
     if (wlo == 0 && khi >= infmods[midx].funcs.len()) { khi = 0 - 1; }
-    var key: string = modloader.module_unit_cache_key(parts, infmods, sighashes, midx, src_hash, extra, wlo, khi);
+    var key: string = modloader.module_unit_cache_key(parts, infmods, sighashes, midx, src_hash, extra, wlo, khi, fh);
     if (key.len() == 0) { return ""; }
     var shard_tag: string = "";
     if (wlo > 0) { shard_tag = "_s" + util.i32_to_string(wlo); }
@@ -756,11 +792,13 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
         // would otherwise re-read and re-hash its source once per shard.
         var srchashes: string[] = [];
         var sighashes_ea: string[] = [];
+        var fh_ea: modloader.FactHashes = modloader.FactHashes { per_mod: [], global: "" };
         if (cache_dir.len() > 0) {
+            fh_ea = modloader.module_fact_hashes(infmods, irlower.wp_fact_rows(wpb, all_funcs, all_stab));
+            sighashes_ea = modloader.fact_sig_hashes(infmods, fh_ea);
             var chi: i32 = 0;
             while (chi < parts.len()) {
                 srchashes = srchashes.append(modloader.module_src_hash(modloader.no_overlay(), dir, entry_path, parts, chi));
-                sighashes_ea = sighashes_ea.append(util.hash_key(modloader.module_sig_string(infmods[chi])));
                 chi = chi + 1;
             }
         }
@@ -777,7 +815,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
             if (parts[idx].is_entry) { uextra = needs; }
             var usrc: string = "";
             if (srchashes.len() > 0) { usrc = srchashes[idx]; }
-            var ucache: string = unit_cache_file(cache_dir, parts, infmods, sighashes_ea, usrc, idx, uextra, nth_field_i32(units[uidx], 1), nth_field_i32(units[uidx], 2));
+            var ucache: string = unit_cache_file(cache_dir, parts, infmods, sighashes_ea, usrc, idx, uextra, nth_field_i32(units[uidx], 1), nth_field_i32(units[uidx], 2), fh_ea);
             // Whatever is in the cache was emitted from a module that lowered, so
             // a hit makes the eligibility re-lowering pure waste — and that check
             // costs about as much as the emit the hit just saved. Probe before
@@ -880,10 +918,14 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     // reuse set; stdout stays exactly the unit asm. A "?" src_hash yields an empty
     // key, which disables the cache for that module (always emit — sound, see
     // module_src_hash).
+    // The whole-program registry base: the cache key digests it, the gate lowers
+    // with it and the unit emit routes on it (#8199).
+    var pm_wpb: irlower.FnSigs = ircore.wp_fn_sigs(all_funcs, all_stab);
     var cachefile: string = "";
     if (cache_dir.len() > 0) {
         var src_hash: string = modloader.module_src_hash(modloader.no_overlay(), dir, entry_path, parts, pm_index);
-        cachefile = unit_cache_file(cache_dir, parts, infmods, sighashes, src_hash, pm_index, extra, pm_lo, pm_hi);
+        var pm_fh: modloader.FactHashes = modloader.module_fact_hashes(infmods, irlower.wp_fact_rows(pm_wpb, all_funcs, all_stab));
+        cachefile = unit_cache_file(cache_dir, parts, infmods, modloader.fact_sig_hashes(infmods, pm_fh), src_hash, pm_index, extra, pm_lo, pm_hi, pm_fh);
         if (cachefile.len() > 0) {
             match (read_file(cachefile)) {
                 Ok(cached) => {
@@ -895,12 +937,9 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
             }
         }
     }
-    // One whole-program registry base for this process: the gate lowers with
-    // it and the unit emit routes on it (#8199). The pre-check covers the
-    // window this process emits: a sharded module's windows are separate
-    // processes, so each checking the whole module would lower it once per
-    // window. The entry is never sharded.
-    var pm_wpb: irlower.FnSigs = ircore.wp_fn_sigs(all_funcs, all_stab);
+    // The pre-check covers the window this process emits: a sharded module's
+    // windows are separate processes, so each checking the whole module would
+    // lower it once per window. The entry is never sharded.
     var elig: boolean = true;
     if (!assume_eligible) {
         elig = ircore.all_eligible_view_base_range(infmods[pm_index], known, all_stab, pm_wpb, pm_lo, pm_hi);
@@ -1143,7 +1182,7 @@ function main(): i32 {
                         var areach: string[] = [];
                         var ari: i32 = 0;
                         while (ari < ashaken.funcs.len()) { areach = areach.append(treeshake.reach_key(ashaken.funcs[ari])); ari = ari + 1; }
-                        var apmc: string = emit_per_module_concat(dir, entry, loaded, areach, "arm64-linux");
+                        var apmc: string = emit_per_module_concat(dir, entry_path, entry, loaded, areach, "arm64-linux", cache_dir);
                         if (apmc.len() > 0) { write(apmc); return 0; }
                     } else {
                         // ABOVE the single-process ceiling — the whole-compiler
@@ -1203,7 +1242,7 @@ function main(): i32 {
                     var reach: string[] = [];
                     var ri: i32 = 0;
                     while (ri < shaken.funcs.len()) { reach = reach.append(treeshake.reach_key(shaken.funcs[ri])); ri = ri + 1; }
-                    var pmc: string = emit_per_module_concat(dir, entry, loaded, reach, "x86-64-linux");
+                    var pmc: string = emit_per_module_concat(dir, entry_path, entry, loaded, reach, "x86-64-linux", cache_dir);
                     if (pmc.len() > 0) { write(pmc); return 0; }
                 } else {
                     var src: i32 = emit_per_module_spawned(dir, entry_path, entry, loaded, target, func_budget, unit_batch, a[0], cache_dir);

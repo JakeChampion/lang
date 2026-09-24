@@ -1491,7 +1491,10 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmco
     s = ssa_load_abi_args(reg_of, ins.args, ["x0", "x1"], s);
     // raw_alloc asks for 24 bytes more and hands back the pointer past them,
     // the string box header a buffer may later grow (#7351).
-    if (ins.str == "raw_alloc") { s = s.write("    add x0, x0, #24\n"); }
+    if (ins.str == "raw_alloc") {
+        s = s.write("    tbz w0, #31, 1f\n    b __fern_alloc_size_abort\n1:\n");
+        s = s.write("    add x0, x0, #24\n");
+    }
     s = s.write("    bl " + sym + "\n");
     if (ins.str == "raw_alloc") { s = s.write("    add x0, x0, #24\n"); }
     return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
@@ -5408,6 +5411,26 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    mov x0, #134\n");
     s = s.write("    svc #0\n");
     s = s.write(".size __fern_oob_abort, .-__fern_oob_abort\n");
+
+    // __fern_alloc_size_abort — a raw_alloc size that is negative as an i32,
+    // which is how a helper's `la + lb` looks once it wraps past 2 GiB. The
+    // message and exit 134 match the native backends' allocation-size abort.
+    s = s.write("    .section .rodata\n");
+    s = s.write(".Lalloc_size_msg:\n    .ascii \"fern: allocation size out of range\\n\"\n");
+    s = s.write("    .text\n");
+    s = s.write(".globl __fern_alloc_size_abort\n");
+    s = s.write(".type __fern_alloc_size_abort, %function\n");
+    s = s.write("__fern_alloc_size_abort:\n");
+    s = s.write("    adrp x1, .Lalloc_size_msg\n");
+    s = s.write("    add x1, x1, :lo12:.Lalloc_size_msg\n");
+    s = s.write("    mov x2, #35\n");
+    s = s.write("    mov x0, #2\n");
+    s = s.write("    mov x8, #64\n");
+    s = s.write("    svc #0\n");
+    s = s.write("    mov x8, #93\n");
+    s = s.write("    mov x0, #134\n");
+    s = s.write("    svc #0\n");
+    s = s.write(".size __fern_alloc_size_abort, .-__fern_alloc_size_abort\n");
 
     // __fern_arr_box(x0 = cap element count) -> x0 = array data
     // pointer. Centralises the array box layout (mirrors the x86-64

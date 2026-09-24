@@ -127,6 +127,44 @@ function main(): i32 { return apply(7, (x: i32) => x + 1); }`,
 	}
 }
 
+// `id[Box](b)` names a user-defined type argument. The parser keeps a lone name
+// in the bracket as an index, so the checker retags it once the base is known
+// to be a generic function and the name a type (#7040). A name that is not a
+// type is still refused as a generic used as a value.
+func TestCallTypeArgNamingUserType(t *testing.T) {
+	const decls = `struct Box { n: i32 }
+enum Shape { Sq(i32) }
+function id[T](a: T): T { return a; }
+function k(x: i32): i32 { return x; }
+`
+	ok := []string{
+		`function main(): i32 { var b = Box { n: 5 }; return id[Box](b).n; }`,
+		`function main(): i32 { match (id[Shape](Sq(2))) { Sq(n) => { return n; } } }`,
+		`function f[T](a: T): T { return id[T](a); }
+function main(): i32 { return f(3); }`,
+		// A parameter shadowing the generic is indexed as written.
+		`function apply(id: ((i32) => i32)[], i: i32): i32 { return id[i](3); }
+function main(): i32 { return apply([k], 0); }`,
+	}
+	for _, src := range ok {
+		if err := checkSource(t, decls+src); err != nil {
+			t.Errorf("should type-check, got: %v\nsrc: %s", err, src)
+		}
+	}
+	bad := map[string]string{
+		`function main(): i32 { return id[Box](5).n; }`:                            "expected Box, got i32",
+		`function main(): i32 { return id[Nope](5); }`:                             "cannot be used as a value",
+		`function main(): i32 { var x = 0; return id[x](5); }`:                     "cannot be used as a value",
+		`function main(): i32 { var b = Box { n: 1 }; return id[Box, Box](b).n; }`: "expects 1 type argument",
+	}
+	for src, want := range bad {
+		err := checkSource(t, decls+src)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("want an error containing %q, got %v\nsrc: %s", want, err, src)
+		}
+	}
+}
+
 // The remedy E040 names has to WORK. A method on a generic receiver carries
 // the receiver's type parameters ahead of its own in one list, and a written
 // `[i32]` bound that list from the front — so the advised `.pair[i32](...)`

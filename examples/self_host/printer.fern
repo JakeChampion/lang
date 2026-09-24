@@ -45,50 +45,116 @@ function is_control_byte(b: i32): boolean {
     return b < 32 || b == 127;
 }
 
-// quote_string wraps a string value in `"`-delimited form, with
-// the same escape set scan_string in the lexer recognises (so
-// the result re-parses). The Fern strings here don't carry the
-// surrounding `"`s — they store decoded bytes — so we re-encode
-// on emit.
-function quote_string(s: string): string {
-    // Byte-level rebuild: the escapes are ASCII and every other byte
-    // (multibyte sequences included) passes through byte-exact.
-    var out: u8[] = [];
-    var i: i32 = 0;
-    while (i < s.len()) {
-        var b: i32 = s[i] as i32;
-        if (b == 34) { out = out.append(92 as u8); out = out.append(34 as u8); }        // \"
-        else if (b == 92) { out = out.append(92 as u8); out = out.append(92 as u8); }   // \\
-        else if (b == 10) { out = out.append(92 as u8); out = out.append(110 as u8); }  // \n
-        else if (b == 9) { out = out.append(92 as u8); out = out.append(116 as u8); }   // \t
-        else if (b == 13) { out = out.append(92 as u8); out = out.append(114 as u8); }  // \r
-        else if (is_control_byte(b)) { out = append_hex_escape(out, b); }
-        else { out = out.append(s[i]); }
-        i = i + 1;
+// cont_in reports whether byte `i` of s exists and lies in [lo, hi].
+function cont_in(s: string, i: i32, lo: i32, hi: i32): boolean {
+  if (i >= s.len()) {
+    return false;
+  }
+  var c: i32 = s[i] as i32;
+  return c >= lo && c <= hi;
+}
+
+// utf8_seq_len is the length of the valid UTF-8 sequence starting at byte i of
+// s, or 0 when none starts there — the acceptance Go's utf8.DecodeRuneInString
+// uses, so overlongs, surrogates and anything past U+10FFFF are refused.
+function utf8_seq_len(s: string, i: i32): i32 {
+  var b: i32 = s[i] as i32;
+  if (b < 128) {
+    return 1;
+  }
+  if (b >= 194 && b <= 223) {
+    if (cont_in(s, i + 1, 128, 191)) {
+      return 2;
     }
-    return "\"" + string_from_bytes_unchecked(out) + "\"";
+    return 0;
+  }
+  if (b >= 224 && b <= 239) {
+    var lo3: i32 = 128;
+    var hi3: i32 = 191;
+    if (b == 224) {
+      lo3 = 160;
+    } else if (b == 237) {
+      hi3 = 159;
+    }
+    if (cont_in(s, i + 1, lo3, hi3) && cont_in(s, i + 2, 128, 191)) {
+      return 3;
+    }
+    return 0;
+  }
+  if (b >= 240 && b <= 244) {
+    var lo4: i32 = 128;
+    var hi4: i32 = 191;
+    if (b == 240) {
+      lo4 = 144;
+    } else if (b == 244) {
+      hi4 = 143;
+    }
+    if (cont_in(s, i + 1, lo4, hi4) && cont_in(s, i + 2, 128, 191) && cont_in(s, i + 3, 128, 191)) {
+      return 4;
+    }
+  }
+  return 0;
+}
+
+// escape_lit_body re-escapes a decoded string or f-string literal segment with
+// the escape set scan_string recognises, so the result re-lexes to the same
+// bytes. A control byte stays an escape so the source stays text (a raw NUL
+// makes git read the file as binary), and so does a byte that is not part of
+// valid UTF-8: written raw it would make the file itself invalid UTF-8.
+function escape_lit_body(s: string, fstring: boolean): string {
+  var out: u8[] = [];
+  var i: i32 = 0;
+  while (i < s.len()) {
+    var b: i32 = s[i] as i32;
+    if (b == 34) {
+      out = out.append(92 as u8);  // \"
+      out = out.append(34 as u8);
+    } else if (b == 92) {
+      out = out.append(92 as u8);  // \\
+      out = out.append(92 as u8);
+    } else if (b == 10) {
+      out = out.append(92 as u8);  // \n
+      out = out.append(110 as u8);
+    } else if (b == 9) {
+      out = out.append(92 as u8);  // \t
+      out = out.append(116 as u8);
+    } else if (b == 13) {
+      out = out.append(92 as u8);  // \r
+      out = out.append(114 as u8);
+    } else if (fstring && (b == 123 || b == 125)) {
+      out = out.append(b as u8);  // {{ or }}
+      out = out.append(b as u8);
+    } else if (is_control_byte(b)) {
+      out = append_hex_escape(out, b);
+    } else if (b >= 128) {
+      var n: i32 = utf8_seq_len(s, i);
+      if (n == 0) {
+        out = append_hex_escape(out, b);
+      } else {
+        var k: i32 = 0;
+        while (k < n) {
+          out = out.append(s[i + k]);
+          k = k + 1;
+        }
+        i = i + n - 1;
+      }
+    } else {
+      out = out.append(s[i]);
+    }
+    i = i + 1;
+  }
+  return string_from_bytes_unchecked(out);
+}
+
+// quote_string wraps a decoded string value in `"`-delimited source form.
+function quote_string(s: string): string {
+  return "\"" + escape_lit_body(s, false) + "\"";
 }
 
 // escape_fstring_lit re-escapes an f-string's literal segment: the plain string
 // rules plus `{` / `}` doubled, so the body re-lexes into the same parts.
 function escape_fstring_lit(s: string): string {
-    // Same byte-level rebuild as quote_string, plus the doubled braces.
-    var out: u8[] = [];
-    var i: i32 = 0;
-    while (i < s.len()) {
-        var b: i32 = s[i] as i32;
-        if (b == 34) { out = out.append(92 as u8); out = out.append(34 as u8); }         // \"
-        else if (b == 92) { out = out.append(92 as u8); out = out.append(92 as u8); }    // \\
-        else if (b == 10) { out = out.append(92 as u8); out = out.append(110 as u8); }   // \n
-        else if (b == 9) { out = out.append(92 as u8); out = out.append(116 as u8); }    // \t
-        else if (b == 13) { out = out.append(92 as u8); out = out.append(114 as u8); }   // \r
-        else if (b == 123) { out = out.append(123 as u8); out = out.append(123 as u8); } // {{
-        else if (b == 125) { out = out.append(125 as u8); out = out.append(125 as u8); } // }}
-        else if (is_control_byte(b)) { out = append_hex_escape(out, b); }
-        else { out = out.append(s[i]); }
-        i = i + 1;
-    }
-    return string_from_bytes_unchecked(out);
+  return escape_lit_body(s, true);
 }
 
 // =================== PRECEDENCE ====================
@@ -3603,6 +3669,11 @@ function check_traits_and_impls(): i32 {
     // the hex form too — native's printer has no `\0` arm either.
     if (quote_string("a\x00b\x1fc\x7fd") != "\"a\\x00b\\x1fc\\x7fd\"") { return 342; }
     if (escape_fstring_lit("a\x00b") != "a\\x00b") { return 343; }
+    // A byte that is not valid UTF-8 stays an escape too; a real multibyte
+    // character is still written as itself.
+    if (quote_string("\x07\xb2é\xff") != "\"\\x07\\xb2é\\xff\"") { return 347; }
+    if (escape_fstring_lit("\xc3{\xa9") != "\\xc3{{\\xa9") { return 348; }
+    if (quote_string("\xed\xa0\x80\xf4\x90\x80\x80") != "\"\\xed\\xa0\\x80\\xf4\\x90\\x80\\x80\"") { return 349; }
     // And survive a full format → re-lex round-trip: the verbatim parse
     // keeps the f-string form, so its literal parts go through
     // escape_fstring_lit.

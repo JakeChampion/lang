@@ -3741,15 +3741,16 @@ func (p *parser) parseForEachPattern(kw lexer.Token, label string) (ast.Stmt, er
 // Arms are separated by commas; a trailing comma is allowed.
 // peekTypeArgs reports whether the `[` at p.peek() opens a
 // generic type-args list as opposed to an indexing / slicing
-// `[...]`. The cheap-and-correct disambiguator: the first token
-// AFTER the `[` must be a type-keyword (i32, u32, string,
-// boolean, void, f32, f64, usize, ...) — those tokens can't
-// appear in an indexing expression. The closing `]` must be
-// followed by `opener`: `(` for a call's type args
+// `[...]`, using only shapes an index cannot take: a first token
+// that is a type keyword (i32, string, void, ...), or a name list
+// holding a top-level comma (`[Box, Loc]`) or a nested `[` opening
+// a type keyword or `[]` (`[Pair[i32]]`, `[Box[]]`). The closing
+// `]` must be followed by `opener`: `(` for a call's type args
 // (`f[i32](args)`), `{` for a struct literal's
-// (`Box[i32] { … }`). If either condition fails the caller
-// falls through to the regular Index / Slice handling.
-// Doesn't consume tokens.
+// (`Box[i32] { … }`). A lone name before `(` (`f[Box](x)`) stays
+// an Index, which the checker retags once it knows `f` is generic;
+// before `{` it can only be a struct literal's. Doesn't consume
+// tokens.
 func (p *parser) peekTypeArgs(opener string) bool {
 	if !p.match(lexer.Punct, "[") {
 		return false
@@ -3758,15 +3759,14 @@ func (p *parser) peekTypeArgs(opener string) bool {
 		return false
 	}
 	next := p.tokens[p.i+1]
-	if next.Kind != lexer.Keyword {
-		return false
-	}
-	switch next.Text {
-	case "i32", "i64",
-		"u8", "u32", "u64",
-		"usize", "f32", "f64",
-		"string", "boolean", "void":
-		// fallthrough — keep walking to find `]` followed by `opener`
+	typeShaped := false
+	switch {
+	case next.Kind == lexer.Keyword && isTypeKeyword(next.Text):
+		typeShaped = true
+	case next.Kind == lexer.Ident:
+		// `Name[...] {` is only ever a struct literal; the caller gates it
+		// on noStructLit, as it does the bare `Name { … }` form.
+		typeShaped = opener == "{"
 	default:
 		return false
 	}
@@ -3775,21 +3775,48 @@ func (p *parser) peekTypeArgs(opener string) bool {
 	depth := 1
 	for j := p.i + 1; j < len(p.tokens); j++ {
 		t := p.tokens[j]
-		if t.Kind == lexer.Punct {
-			switch t.Text {
-			case "[":
-				depth++
-			case "]":
-				depth--
-				if depth == 0 {
-					if j+1 < len(p.tokens) {
-						nt := p.tokens[j+1]
-						return nt.Kind == lexer.Punct && nt.Text == opener
-					}
-					return false
+		if t.Kind != lexer.Punct {
+			continue
+		}
+		switch t.Text {
+		case "[":
+			depth++
+			if j+1 < len(p.tokens) {
+				nt := p.tokens[j+1]
+				if (nt.Kind == lexer.Keyword && isTypeKeyword(nt.Text)) || (nt.Kind == lexer.Punct && nt.Text == "]") {
+					typeShaped = true
 				}
 			}
+		case ",":
+			if depth == 1 {
+				typeShaped = true
+			}
+		case "{":
+			return false
+		case "(":
+			// A call inside the bracket makes it an index expression; a `(`
+			// after `[` or `,` opens a tuple or function type.
+			if pt := p.tokens[j-1]; pt.Kind != lexer.Punct || pt.Text == "]" || pt.Text == ")" {
+				return false
+			}
+		case "]":
+			depth--
+			if depth == 0 {
+				if !typeShaped || j+1 >= len(p.tokens) {
+					return false
+				}
+				nt := p.tokens[j+1]
+				return nt.Kind == lexer.Punct && nt.Text == opener
+			}
 		}
+	}
+	return false
+}
+
+func isTypeKeyword(s string) bool {
+	switch s {
+	case "i32", "i64", "u8", "u32", "u64", "usize", "f32", "f64", "string", "boolean", "void":
+		return true
 	}
 	return false
 }

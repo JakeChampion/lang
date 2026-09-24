@@ -1925,6 +1925,49 @@ function scan_written_type_args(p: Par): (string, i32, Par) {
     return (out, n, p);
 }
 
+// type_shaped_bracket reports whether the bracket the cursor sits just inside
+// opens with a name yet holds a type list, from shapes an index cannot take: a
+// top-level comma (`[Box, Loc]`) or a nested `[` opening a type keyword or `[]`
+// (`[Pair[i32]]`, `[Box[]]`), closed by a `]` that a `(` follows; before a `{`
+// any name list is a struct literal's. Mirrors native's peekTypeArgs; a lone
+// name before `(` stays an index for retag_type_arg_indexes to settle.
+function type_shaped_bracket(p: Par): boolean {
+    if (p.peek_ident().len() == 0) { return false; }
+    var shaped: boolean = false;
+    var depth: i32 = 1;
+    var j: i32 = 0;
+    while (p.pos + j < p.toks.len()) {
+        var pk: string = p.peek_punct_at(j);
+        if (pk == "[") {
+            depth = depth + 1;
+            if (is_type_keyword_tok(p, j + 1) || p.peek_punct_at(j + 1) == "]") { shaped = true; }
+        } else if (pk == "," && depth == 1) {
+            shaped = true;
+        } else if (pk == "{") {
+            return false;
+        } else if (pk == "(") {
+            var prev: string = p.peek_punct_at(j - 1);
+            if (prev.len() == 0 || prev == "]" || prev == ")") { return false; }
+        } else if (pk == "]") {
+            depth = depth - 1;
+            if (depth == 0) {
+                var after: string = p.peek_punct_at(j + 1);
+                return (shaped && after == "(") || (after == "{" && !p.no_struct);
+            }
+        }
+        j = j + 1;
+    }
+    return false;
+}
+
+function is_type_keyword_tok(p: Par, k: i32): boolean {
+    if (p.pos + k >= p.toks.len()) { return false; }
+    if let lexer.TokKeyword(kw) = p.toks[p.pos + k] {
+        return kw.name == "i32" || kw.name == "i64" || kw.name == "u8" || kw.name == "u32" || kw.name == "u64" || kw.name == "usize" || kw.name == "f32" || kw.name == "f64" || kw.name == "string" || kw.name == "boolean" || kw.name == "void";
+    }
+    return false;
+}
+
 // with_written_type_args spells a call's explicit instantiation onto the callee's
 // written name — `empty` + `[i32]` for `empty[i32]()`, the method's field name
 // for a receiver call. Formatter-only: the compile parse erases type args to
@@ -2029,6 +2072,7 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
             // `]` and erase the type args, leaving `base` unchanged.
             var idxStart: i32 = p.pos;
             var (idx_expr, idx_p) = parse_expr(p);
+            if (type_shaped_bracket(p)) { idx_p = p; }
             if (idx_p.pos == idxStart) {
                 // `-fmt` reads the arguments back out as types before the skip
                 // loop erases them. On anything the type grammar does not accept
@@ -2047,8 +2091,8 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
                     }
                 }
                 // Count the top-level (comma-separated) type arguments while
-                // skipping them, tracking nested `[...]` depth so a comma
-                // inside `Map[K, V]` doesn't inflate the count.
+                // skipping them, tracking nested `[...]` / `(...)` depth so a
+                // comma inside `Map[K, V]` or a tuple type doesn't inflate it.
                 var ta_depth: i32 = 0;
                 var ta_saw: boolean = false;
                 var ta_commas: i32 = 0;
@@ -2059,8 +2103,8 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
                 while (!p.at_end()) {
                     var tp2: string = p.peek_punct();
                     if (tp2 == "]" && ta_depth == 0) { break; }
-                    if (tp2 == "[") { ta_depth = ta_depth + 1; }
-                    if (tp2 == "]") { ta_depth = ta_depth - 1; }
+                    if (tp2 == "[" || tp2 == "(") { ta_depth = ta_depth + 1; }
+                    if (tp2 == "]" || tp2 == ")") { ta_depth = ta_depth - 1; }
                     if (tp2 == "," && ta_depth == 0) {
                         ta_commas = ta_commas + 1;
                         ta_trailing = true;
@@ -4117,11 +4161,33 @@ function pipe_prepend(head: ast.Expr, tail: ast.Expr[]): ast.Expr[] {
     return out;
 }
 
+// pipe_is_hole reports an argument that is the `_` topic placeholder, bare or
+// as a named argument's value (`b = _`).
+function pipe_is_hole(e: ast.Expr): boolean {
+    match (fda_marker_value(e)) {
+        ast.ExprIdent(id) => { return id.name == "_"; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// pipe_fill puts the piped value where the hole argument `e` held `_`,
+// keeping a named argument's name.
+function pipe_fill(e: ast.Expr, left: ast.Expr): ast.Expr {
+    match (e) {
+        ast.ExprBinary(b) => {
+            if (b.op == "__named_arg") { return ast.ExprBinary { ...b, right: left }; }
+        },
+        _ => {}
+    }
+    return left;
+}
+
 // pipe_desugar lowers `left |> right`. `x |> f(a, b)` prepends x to the
-// call's args → `f(x, a, b)`; `x |> f(a, _)` substitutes x at the `_`
-// topic placeholder instead → `f(a, x)` (at most one `_`, direct args
-// only — the native parser rejects two with P004, so a native-valid
-// program has at most one; this mirror substitutes at the first);
+// call's args → `f(x, a, b)`; `x |> f(a, _)` or `x |> f(b = _)` substitutes
+// x at the `_` topic placeholder instead → `f(a, x)` (at most one `_`,
+// direct args only — the native parser rejects two with P004, so a
+// native-valid program has at most one; this mirror substitutes at the first);
 // `x |> f` (a bare callee) wraps it as a single-arg call → `f(x)`.
 // Mirrors the Go parser's parsePipe, lowering to the same ExprCall the
 // rest of the pipeline already handles.
@@ -4131,12 +4197,7 @@ function pipe_desugar(left: ast.Expr, right: ast.Expr): ast.Expr {
             var hole: i32 = 0 - 1;
             var hi: i32 = 0;
             while (hi < c.args.len()) {
-                if (hole < 0) {
-                    match (c.args[hi]) {
-                        ast.ExprIdent(id) => { if (id.name == "_") { hole = hi; } },
-                        _ => {}
-                    }
-                }
+                if (hole < 0 && pipe_is_hole(c.args[hi])) { hole = hi; }
                 hi = hi + 1;
             }
             if (hole >= 0) {
@@ -4144,7 +4205,7 @@ function pipe_desugar(left: ast.Expr, right: ast.Expr): ast.Expr {
                 var si: i32 = 0;
                 while (si < c.args.len()) {
                     if (si == hole) {
-                        subst = subst.append(left);
+                        subst = subst.append(pipe_fill(c.args[si], left));
                     } else {
                         subst = subst.append(c.args[si]);
                     }
@@ -16394,6 +16455,7 @@ function fda_call_diags(mod: Module): util.Diag[] {
 // named by their diagnostic.
 pub function fill_default_args_with_diags(raw: Module): (Module, util.Diag[]) {
     var none: util.Diag[] = [];
+    raw = retag_type_arg_indexes(raw);
     if (!module_has_default_params(raw)) {
         if (!module_has_named_args(raw)) { return (raw, none); }
         return (fda_fill(raw), fda_call_diags(raw));
@@ -16402,6 +16464,97 @@ pub function fill_default_args_with_diags(raw: Module): (Module, util.Diag[]) {
     var decl_diags: util.Diag[] = fda_decl_diags(mod);
     if (decl_diags.len() > 0) { return (raw, decl_diags); }
     return (fda_fill(mod), fda_call_diags(mod));
+}
+
+// retag_type_arg_indexes turns `f[Box](x)` into a call carrying one written
+// type argument once `f` is known to name a generic function and `Box` a type.
+// The parser takes a lone name in the bracket as an index, since `xs[i](x)` is
+// the same shape; native settles it in the checker (retagIndexAsTypeArgs).
+function retag_type_arg_indexes(mod: Module): Module {
+    var generics: string[] = [];
+    var types: string[] = [];
+    for fd in mod.funcs {
+        if (fd.type_param_count > 0 && fd.receiver_type.len() == 0) { generics = generics.append(fd.name); }
+    }
+    if (generics.len() == 0) { return mod; }
+    var any_site: boolean = rta_has_index_call(mod.top_stmts);
+    for fd in mod.funcs { if (!any_site && rta_has_index_call(fd.body)) { any_site = true; } }
+    if (!any_site) { return mod; }
+    for sd in mod.structs { types = types.append(sd.name); }
+    for ed in mod.enums { types = types.append(ed.name); }
+    for rd in mod.resources { types = types.append(rd.name); }
+    // Most bodies hold no `f[Name](…)` at all; rebuilding them would copy the
+    // whole module for nothing.
+    var funcs: FuncDecl[] = [];
+    for fd in mod.funcs {
+        if (!rta_has_index_call(fd.body)) {
+            funcs = funcs.append(fd);
+            continue;
+        }
+        var shadow: string[] = astwalk.collect_bound_stmts(fd.body, []);
+        for pd in fd.params { shadow = shadow.append(pd.name); }
+        // Unbounded type parameters are erased from the decl, but every name
+        // the signature's types mention is a type or one of them.
+        var ftypes: string[] = types;
+        if (fd.type_param_count > 0) {
+            for pd in fd.params { ftypes = rta_type_names(pd.type_name, ftypes); }
+            ftypes = rta_type_names(fd.ret_type, ftypes);
+        }
+        function rw(x: ast.Expr): ast.Expr { return rta_call_of(x, generics, ftypes, shadow); }
+        funcs = funcs.append(FuncDecl { ...fd, body: astwalk.map_stmts(fd.body, rw) });
+    }
+    if (!rta_has_index_call(mod.top_stmts)) { return Module { ...mod, funcs: funcs }; }
+    var top_shadow: string[] = astwalk.collect_bound_stmts(mod.top_stmts, []);
+    function top_rw(x: ast.Expr): ast.Expr { return rta_call_of(x, generics, types, top_shadow); }
+    return Module { ...mod, funcs: funcs, top_stmts: astwalk.map_stmts(mod.top_stmts, top_rw) };
+}
+
+function rta_has_index_call(stmts: ast.Stmt[]): boolean {
+    var found: boolean = false;
+    for st in stmts { found = astwalk.fold_stmt_nodes(st, found, rta_skip_stmt, rta_index_call_of, astwalk.descend_all); }
+    return found;
+}
+
+function rta_skip_stmt(st: ast.Stmt, own acc: boolean): boolean { return acc; }
+
+function rta_index_call_of(e: ast.Expr, own acc: boolean): boolean {
+    if let ast.ExprCall(c) = e {
+        if let ast.ExprIndex(ix) = c.callee {
+            if let ast.ExprIdent(_) = ix.index { return true; }
+        }
+    }
+    return acc;
+}
+
+function rta_type_names(ty: string, acc: string[]): string[] {
+    var start: i32 = 0 - 1;
+    var i: i32 = 0;
+    while (i <= ty.len()) {
+        var word: boolean = i < ty.len() && lexer.is_alnum(ty[i] as i32);
+        if (word && start < 0) { start = i; }
+        if (!word && start >= 0) {
+            acc = acc.append(slice_unchecked(ty, start, i) + "");
+            start = 0 - 1;
+        }
+        i = i + 1;
+    }
+    return acc;
+}
+
+function rta_call_of(x: ast.Expr, generics: string[], types: string[], shadow: string[]): ast.Expr {
+    if let ast.ExprCall(c) = x {
+        if (c.type_argc > 0) { return x; }
+        if let ast.ExprIndex(ix) = c.callee {
+            if let ast.ExprIdent(fid) = ix.array {
+                if let ast.ExprIdent(tid) = ix.index {
+                    if (util.has_str(generics, fid.name) && util.has_str(types, tid.name) && !util.has_str(shadow, fid.name) && !util.has_str(shadow, tid.name)) {
+                        return ast.ExprCall { ...c, callee: ix.array, type_argc: 1 };
+                    }
+                }
+            }
+        }
+    }
+    return x;
 }
 
 function fda_fill(mod: Module): Module {
@@ -16588,6 +16741,21 @@ function irt_guess(e: ast.Expr, params: ast.ParamDecl[], funcs: FuncDecl[], stru
             var el: string = irt_guess(al.elements[0], params, funcs, structs);
             if (el == "") { return ""; }
             return el + "[]";
+        },
+        // A tuple literal is the tuple of its elements' types, spelled the way
+        // render_type_ref spells one, so an unannotated `const T = (3, "a")`
+        // is typed like its annotated form (#7987).
+        ast.ExprTuple(tl) => {
+            var parts: string = "";
+            var ti: i32 = 0;
+            while (ti < tl.elements.len()) {
+                var tt: string = irt_guess(tl.elements[ti], params, funcs, structs);
+                if (tt == "") { return ""; }
+                if (ti > 0) { parts = parts + ", "; }
+                parts = parts + tt;
+                ti = ti + 1;
+            }
+            return "(" + parts + ")";
         },
         // `a[i]` yields the element type of whatever `a` infers to. Reached for
         // a LIFTED lambda (`() => a[1]`, `() => mk()[1]`), whose synthesised

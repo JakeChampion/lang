@@ -2244,6 +2244,21 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq $60, %rax\n");
     s = s.write("    movq $134, %rdi\n");
     s = s.write("    syscall\n");
+    // __fern_alloc_size_abort — a raw_alloc size that is negative as an i32,
+    // which is how a helper's `la + lb` looks once it wraps past 2 GiB. The
+    // message and exit 134 match the native backends' allocation-size abort.
+    s = s.write("    .section .rodata\n");
+    s = s.write(".Lalloc_size_msg:\n    .ascii \"fern: allocation size out of range\\n\"\n");
+    s = s.write("    .section .text\n");
+    s = s.write("__fern_alloc_size_abort:\n");
+    s = s.write("    movq $1, %rax\n");
+    s = s.write("    movq $2, %rdi\n");
+    s = s.write("    leaq .Lalloc_size_msg(%rip), %rsi\n");
+    s = s.write("    movq $35, %rdx\n");
+    s = s.write("    syscall\n");
+    s = s.write("    movq $60, %rax\n");
+    s = s.write("    movq $134, %rdi\n");
+    s = s.write("    syscall\n");
     // __fern_arr_box(%rdi = cap element count) -> %rax = data ptr (base+16).
     // base = [cap, rc=1, len=cap, e0..]; element i at data+(i+1)*8.
     s = s.write("__fern_arr_box:\n");
@@ -6199,7 +6214,10 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmco
     s = ssa_parallel_moves(srcs, dsts, s);
     // raw_alloc asks for 24 bytes more and hands back the pointer past them,
     // the string box header a buffer may later grow (#7351).
-    if (ins.str == "raw_alloc") { s = s.write("    addq $24, %rdi\n"); }
+    if (ins.str == "raw_alloc") {
+        s = s.write("    testl %edi, %edi\n    js __fern_alloc_size_abort\n");
+        s = s.write("    addq $24, %rdi\n");
+    }
     s = s.write("    call " + sym + "\n");
     if (ins.str == "raw_alloc") { s = s.write("    addq $24, %rax\n"); }
     return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
