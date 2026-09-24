@@ -1978,7 +1978,7 @@ function needs_heap_runtime(s: asmcore.EmitState): boolean {
         "remove_dir", "create_link", "create_symlink", "rename", "chmod", "chmod_at",
         "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times",
         "read_link", "chdir", "chroot", "setuid", "setgid", "setgroups",
-        "umask", "env", "environ", "getgroups", "stat", "lstat", "statfs",
+        "umask", "env", "environ", "raw_environ", "getgroups", "stat", "lstat", "statfs",
         "access", "fd_fsync", "fd_fdatasync", "fd_syncfs", "subprocess",
         "signal_send", "set_process_group", "set_priority"
     ]);
@@ -3104,7 +3104,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // called); gated on the env need; calls __fern_alloc (the heap runtime, present).
     // __fern_envp (.bss) is read by both __fern_env and __fern_subprocess (execve's
     // envp), and saved by _start; declare it ONCE when either need is present.
-    if (s.has_need("env") || s.has_need("subprocess") || s.has_need("environ")) {
+    if (s.any_need(["env", "subprocess", "environ", "raw_environ"])) {
         s = s.write(".section .bss\n");
         s = s.write("    .align 8\n");
         s = s.write("__fern_envp: .quad 0\n");
@@ -6441,9 +6441,19 @@ function ssa_home_name(reg_of: i32[], v: i32): string {
     return ssa_reg(reg_of[v]);
 }
 
+// The need whose gate defines a floor symbol, so an address taken outside the
+// helpers that already mark it still links.
+function sym_addr_need(sym: string): string {
+    if (sym == "__fern_scratch") { return "raw_scratch"; }
+    if (sym == "__fern_envp") { return "raw_environ"; }
+    if (sym == "__fern_splice_pipe") { return "raw_splice_pipe"; }
+    return "";
+}
+
 // ssa_sym_addr is a static symbol's address, or the word at it (imm 1).
 function ssa_sym_addr(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
     if (util.str_has_prefix(ins.str, "__fern_arr_push_")) { s = s.need("heap"); }
+    if (sym_addr_need(ins.str) != "") { s = s.need(sym_addr_need(ins.str)); }
     var d: string = ssa_dst(reg_of, ins.result);
     if (ins.imm == 1) { s = s.write("    movq " + ins.str + "(%rip), " + d + "\n"); }
     else { s = s.write("    leaq " + ins.str + "(%rip), " + d + "\n"); }
@@ -9283,7 +9293,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         // [rsp], argv at rsp+8 with argc+1 slots incl. the NULL). Gated on the env /
         // subprocess needs (not heap, unlike asm.fern) so other programs stay
         // byte-identical. Both __fern_env and __fern_subprocess (execve) read it.
-        if (s.has_need("env") || s.has_need("subprocess") || s.has_need("environ")) {
+        if (s.any_need(["env", "subprocess", "environ", "raw_environ"])) {
             s = s.write("    movq (%rsp), %rax\n");
             s = s.write("    leaq 16(%rsp,%rax,8), %rax\n");
             s = s.write("    movq %rax, __fern_envp(%rip)\n");
@@ -9713,9 +9723,12 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         "rlimit_nofile", "signal_ignore", "signal_default", "signal_mask",
         "signal_disposition", "access",
         "geteuid", "getegid", "getuid", "getgid", "getgroups", "environ",
-        "fd_stat"
+        "fd_stat", "raw_scratch"
     ])) {
         s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip " + asmcore.scratch_size("x86_64", s.has_need("statfs")) + "\n    .text\n");
+    }
+    if (s.any_need(["reader_splice", "raw_splice_pipe"])) {
+        s = s.write("    .section .bss\n    .align 8\n__fern_splice_pipe: .quad 0, 0\n    .text\n");
     }
     // The stdout/stderr leaves (#2649) — plain write(2) calls, allocation-free, so
     // they sit with the clocks rather than in the heap runtime: a program that only
@@ -9824,10 +9837,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         if (s.has_need("reader")) { fs_src = fs_src + " " + asmcore.rt_src_reader_read_chunk("x86_64") + " " + asmcore.rt_src_reader_close("x86_64"); }
         if (s.has_need("fd_stat")) { fs_src = fs_src + " " + asmcore.rt_src_fd_stat("x86_64"); }
         if (s.has_need("reader_seek")) { fs_src = fs_src + " " + asmcore.rt_src_reader_seek("x86_64"); }
-        if (s.has_need("reader_splice")) {
-            s = s.write("    .section .bss\n    .align 8\n__fern_splice_pipe: .quad 0, 0\n    .text\n");
-            fs_src = fs_src + " " + asmcore.rt_src_reader_splice("x86_64");
-        }
+        if (s.has_need("reader_splice")) { fs_src = fs_src + " " + asmcore.rt_src_reader_splice("x86_64"); }
         if (s.has_need("fd_flags")) { fs_src = fs_src + " " + asmcore.rt_src_fd_flags("x86_64"); }
         if (s.has_need("fd_dup_onto")) { fs_src = fs_src + " " + asmcore.rt_src_fd_dup_onto("x86_64"); }
         if (s.has_need("writer_truncate")) { fs_src = fs_src + " " + asmcore.rt_src_writer_truncate("x86_64"); }

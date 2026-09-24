@@ -351,3 +351,61 @@ func selfHostTypedBuiltins(t *testing.T, section string, members bool) map[strin
 	}
 	return out
 }
+
+// TestSelfHostRawFloorIsTypedWhole pins the raw-memory floor the runtime
+// helpers are written on. Native registers none of it, so the family gate
+// above cannot see it; the source of truth is what irlower lowers. Every such
+// name must have a row in checker.fern's raw_floor_sigs (which
+// semsource.fern's raw_floor_contracts reads, so a typed name is contracted)
+// and in ssarc.fern's raw_floor_ops, or the typed path refuses the helper that
+// calls it.
+func TestSelfHostRawFloorIsTypedWhole(t *testing.T) {
+	read := func(name string) string {
+		b, err := os.ReadFile(filepath.Join("..", "..", "examples", "self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		return string(b)
+	}
+	lowered := map[string]bool{}
+	for _, m := range regexp.MustCompile(`cid\.name == "(__raw_[a-z0-9_]+|__syscall[0-9])"`).FindAllStringSubmatch(read("irlower.fern"), -1) {
+		lowered[m[1]] = true
+	}
+	if len(lowered) == 0 {
+		t.Fatal("irlower.fern lowers no raw-floor name — the pattern has drifted from its spelling")
+	}
+	typed := rawFloorTableNames(t, read("checker.fern"), `function raw_floor_sigs\(\): RawFloorSig\[\] \{`)
+	arms := rawFloorTableNames(t, read("ssarc.fern"), `function raw_floor_ops\(\): RawOps\[\] \{`)
+	var untyped, unlowered []string
+	for n := range lowered {
+		if !typed[n] {
+			untyped = append(untyped, n)
+		}
+		if !arms[n] {
+			unlowered = append(unlowered, n)
+		}
+	}
+	sort.Strings(untyped)
+	sort.Strings(unlowered)
+	if len(untyped) > 0 {
+		t.Errorf("irlower lowers %s, which checker.fern's raw_floor_sigs does not type", strings.Join(untyped, ", "))
+	}
+	if len(unlowered) > 0 {
+		t.Errorf("irlower lowers %s, which ssarc.fern's raw_floor_ops has no row for", strings.Join(unlowered, ", "))
+	}
+}
+
+// rawFloorTableNames is the `name: "..."` rows of the table function whose header
+// matches `header`, up to its closing brace.
+func rawFloorTableNames(t *testing.T, src, header string) map[string]bool {
+	t.Helper()
+	body := regexp.MustCompile(`(?s)` + header + `(.*?)\n\}`).FindStringSubmatch(src)
+	if body == nil {
+		t.Fatalf("no table matching %s", header)
+	}
+	out := map[string]bool{}
+	for _, m := range regexp.MustCompile(`name: "(__[a-z0-9_]+)"`).FindAllStringSubmatch(body[1], -1) {
+		out[m[1]] = true
+	}
+	return out
+}

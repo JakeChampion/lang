@@ -2102,10 +2102,9 @@ What the typed path produced whole, 2026-09-24:
 | `coreutils/` | all 106 programs |
 | e2eselfhost under strict, shards 0–1 of 12 | 438 of 440 tests |
 
-The two strict failures are the next finding, not a lowering gap of the usual
-kind. Each is a test that calls a raw-floor intrinsic directly: `__rc_dec` in
-`TestSelfHostOverReleaseReportArm64`, and `__raw_data` in
-`TestSelfHostStrEqSymbolTypeChecks`.
+`TestSelfHostOverReleaseReportArm64`'s `__rc_dec` produces now
+(`rc-log/2026-09-24-i-…`). `TestSelfHostStrEqSymbolTypeChecks` still refuses,
+on `__fern_str_eq` rather than on the `__raw_data` beside it.
 
 ### The runtime helpers never reach the typed path
 
@@ -2117,22 +2116,29 @@ asks the substitution. They are written on the raw floor: `__raw_alloc`,
 `__raw_store8` / `__raw_load8`, `__raw_store_ptr` / `__raw_load_ptr`,
 `__raw_string`, `__raw_data`, `__raw_array`, `__raw_arr_box`, `__raw_addr`,
 `__raw_scratch`, `__raw_environ`, `__raw_splice_pipe`, `__syscall3`–`6`,
-`__fern_map_find` and `__fern_str_eq`. The checker has no row for any of them,
-because these sources are unchecked by design, and the typed path starts from
-checked syntax.
+`__fern_map_find` and `__fern_str_eq`.
 
-So the order is:
+The raw floor is typed and lowered on the typed path: one table,
+`checker.raw_floor_sigs`, gives the checker its signatures and `semsource` its
+contracts, and `ssarc.raw_floor_ops` emits the op `irlower` emits for each.
+An address is a `usize`, an offset, byte or length an `i32`, and a syscall's
+operands and result are `i64` words. `__raw_string` and `__raw_array` hand a
+block to a fresh `string` or `i32[]` the caller owns; `__raw_data` is lent its
+string. `TestSelfHostRawFloorIsTypedWhole` fails when `irlower` lowers a
+raw-floor name either table lacks.
 
-1. The checker types each raw-floor intrinsic. They are `i32` / `usize` in and
-   out, with three exceptions: `__raw_string` hands its buffer to a fresh owned
-   string, `__raw_data` reads a borrowed string's data word, and `__raw_array`
-   takes its array type from its destination.
-2. Each gets a `semsource` contract and an `ssarc` arm emitting the one op
-   `irlower` emits for it (`op_raw_alloc`, `op_syscall4`, …). The `__load_*` /
-   `__store_*` family is already written this way.
-3. `emit_ir_runtime_fern_fn` asks the substitution for its bundle, on all three
+What is left, in order:
+
+1. The helper sources are rewritten against those types. They were never
+   checked, so they hold every address as an `i32` and pass `i32` words to
+   the syscalls; each needs its locals retyped and its syscall operands cast.
+   `__fern_map_find` is a helper, so a bundle that defines it reaches it as an
+   ordinary call, but it and `__fern_map_delete_rel` call through a bare code
+   address (`eqfn(k, key)`), which has no typed spelling yet. `__fern_str_eq` takes either a string or a raw pointer today,
+   and needs one signature.
+2. `emit_ir_runtime_fern_fn` asks the substitution for its bundle, on all three
    backends.
-4. Strict mode goes green over every suite. The fallback then becomes the
+3. Strict mode goes green over every suite. The fallback then becomes the
    error, and `FERN_SEM_IR=` loses its off column.
-5. The AST lowering is deleted, along with the differential legs that compare
+4. The AST lowering is deleted, along with the differential legs that compare
    against it.

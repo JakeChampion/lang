@@ -4314,6 +4314,22 @@ function intrinsic_contracts(): ssasem.Contract[] {
     for c in memory_contracts() { out = out.append(c); }
     for c in byte_scan_contracts() { out = out.append(c); }
     for c in rc_contracts() { out = out.append(c); }
+    for c in raw_floor_contracts() { out = out.append(c); }
+    return out;
+}
+
+// The raw floor, typed by the checker's one table. Every operand is a value
+// except `__raw_data`'s string, which is lent: the data word it answers is
+// read, not kept.
+function raw_floor_contracts(): ssasem.Contract[] {
+    var out: ssasem.Contract[] = [];
+    for sig in checker.raw_floor_sigs() {
+        var mode: i32 = ssaunits.value_mode();
+        if (sig.name == "__raw_data") { mode = ssaunits.borrow_mode(); }
+        var modes: i32[] = [];
+        for _ in sig.params { modes = modes.append(mode); }
+        out = out.append(ssasem.Contract { name: sig.name, params: sig.params, modes: modes, result: sig.result });
+    }
     return out;
 }
 
@@ -4334,7 +4350,13 @@ function rc_contracts(): ssasem.Contract[] {
         ssasem.Contract { name: "__fern_str_dec", params: [t_string()], modes: [v], result: t_void() },
         ssasem.Contract { name: "__map_hash_seed", params: [], modes: [], result: t_i32() },
         ssasem.Contract { name: "__fern_drop_arr_ptr", params: [t_usize(), t_i32()], modes: [v, v], result: t_void() },
-        ssasem.Contract { name: "__fern_arr_dec", params: [t_usize(), t_i32()], modes: [v, v], result: t_void() }
+        ssasem.Contract { name: "__fern_arr_dec", params: [t_usize(), t_i32()], modes: [v, v], result: t_void() },
+        // The manual-release and manual-retain test hooks. Each is lent its
+        // array: the count it moves is one the plan does not see, which is the
+        // point of a hook that exercises the underflow detector. The retain
+        // answers the array with the unit it added, which the caller owns.
+        ssasem.Contract { name: "__rc_dec", params: [typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [ssaunits.borrow_mode()], result: t_void() },
+        ssasem.Contract { name: "__rc_inc", params: [typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [ssaunits.borrow_mode()], result: typeinfo.TypeArray { elem: t_u8(), view: false } }
     ];
 }
 
