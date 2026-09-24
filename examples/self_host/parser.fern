@@ -4161,11 +4161,33 @@ function pipe_prepend(head: ast.Expr, tail: ast.Expr[]): ast.Expr[] {
     return out;
 }
 
+// pipe_is_hole reports an argument that is the `_` topic placeholder, bare or
+// as a named argument's value (`b = _`).
+function pipe_is_hole(e: ast.Expr): boolean {
+    match (fda_marker_value(e)) {
+        ast.ExprIdent(id) => { return id.name == "_"; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// pipe_fill puts the piped value where the hole argument `e` held `_`,
+// keeping a named argument's name.
+function pipe_fill(e: ast.Expr, left: ast.Expr): ast.Expr {
+    match (e) {
+        ast.ExprBinary(b) => {
+            if (b.op == "__named_arg") { return ast.ExprBinary { ...b, right: left }; }
+        },
+        _ => {}
+    }
+    return left;
+}
+
 // pipe_desugar lowers `left |> right`. `x |> f(a, b)` prepends x to the
-// call's args → `f(x, a, b)`; `x |> f(a, _)` substitutes x at the `_`
-// topic placeholder instead → `f(a, x)` (at most one `_`, direct args
-// only — the native parser rejects two with P004, so a native-valid
-// program has at most one; this mirror substitutes at the first);
+// call's args → `f(x, a, b)`; `x |> f(a, _)` or `x |> f(b = _)` substitutes
+// x at the `_` topic placeholder instead → `f(a, x)` (at most one `_`,
+// direct args only — the native parser rejects two with P004, so a
+// native-valid program has at most one; this mirror substitutes at the first);
 // `x |> f` (a bare callee) wraps it as a single-arg call → `f(x)`.
 // Mirrors the Go parser's parsePipe, lowering to the same ExprCall the
 // rest of the pipeline already handles.
@@ -4175,12 +4197,7 @@ function pipe_desugar(left: ast.Expr, right: ast.Expr): ast.Expr {
             var hole: i32 = 0 - 1;
             var hi: i32 = 0;
             while (hi < c.args.len()) {
-                if (hole < 0) {
-                    match (c.args[hi]) {
-                        ast.ExprIdent(id) => { if (id.name == "_") { hole = hi; } },
-                        _ => {}
-                    }
-                }
+                if (hole < 0 && pipe_is_hole(c.args[hi])) { hole = hi; }
                 hi = hi + 1;
             }
             if (hole >= 0) {
@@ -4188,7 +4205,7 @@ function pipe_desugar(left: ast.Expr, right: ast.Expr): ast.Expr {
                 var si: i32 = 0;
                 while (si < c.args.len()) {
                     if (si == hole) {
-                        subst = subst.append(left);
+                        subst = subst.append(pipe_fill(c.args[si], left));
                     } else {
                         subst = subst.append(c.args[si]);
                     }

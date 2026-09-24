@@ -5172,7 +5172,13 @@ pub function infer_expr_type(e: ast.Expr, s: EmitState): Ty {
             if (ty_is_array_i32(at)) { return ty_i32(); }
             return ty_unknown();
         },
-        ast.ExprSlice(sl) => { return infer_expr_type(sl.array, s); },
+        // `s[a:b]` on a string is `Option[str]`, `None` off a boundary; on an
+        // array it is a copy of the window, the array's own type.
+        ast.ExprSlice(sl) => {
+            var src: Ty = infer_expr_type(sl.array, s);
+            if (ty_is_string(src)) { return ty_option(ty_unknown()); }
+            return src;
+        },
         ast.ExprFieldAccess(fa) => {
             // Resolve within the receiver's struct when its type is a
             // known struct name (match-bound variant payloads); else
