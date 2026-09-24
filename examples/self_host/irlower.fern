@@ -13236,6 +13236,7 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
     var lat_slots: i32[] = [];
     var lat_guard: i32[] = [];
     var laa_slots: i32[] = [];
+    var lsa_slots: i32[] = [];
     var lca_slots: i32[] = [];
     var own_arr_moves: i32[] = [];
     var lsl_slots: i32[] = [];
@@ -13433,6 +13434,27 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
                 if (arg_consumed) { lca_slots = lca_slots.append(laas); }
                 else { laa_slots = laa_slots.append(laas); }
             }
+            // A fresh string[] LITERAL at a borrowable position of a callee that
+            // returns no pointer: its elements are this frame's alone and dead
+            // once the call returns, so __fern_str_arr_free releases them and the
+            // buffer. A callee returning a pointer could hand an element back,
+            // which a borrowable box says nothing about.
+            if (!arrlit_arg && sc.ok && call_arg_borrowable(sc, cid.name, ai)
+                && iife_free_fn_ret_i32(cid.name, sc)) {
+                match (c.args[ai]) {
+                    ast.ExprArray(lsa) => {
+                        if (fresh_or_literal_strarr_lit(lsa, sc)) {
+                            var lsan: string = "$lsa" + util.i32_to_string(sc.locals.len());
+                            sc = sc.add_local(lsan);
+                            var lsas: i32 = sc.slot_of(lsan);
+                            sc = sc.emit(ir.op_store_local(lsas));
+                            sc = sc.emit(ir.op_load_local(lsas));
+                            lsa_slots = lsa_slots.append(lsas);
+                        }
+                    },
+                    _ => {}
+                }
+            }
             // A fresh STRUCT argument — a literal or a strict-fresh producer
             // call. Both stash and free on the same terms as the array arm
             // above; stash_fresh_struct_arg holds the reasoning.
@@ -13557,6 +13579,11 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
     while (lfa < laa_slots.len()) {
         scr = scr.release(laa_slots[lfa], "__fern_rc_dec", "stashed-arr-arg");
         lfa = lfa + 1;
+    }
+    var lsf: i32 = 0;
+    while (lsf < lsa_slots.len()) {
+        scr = scr.release(lsa_slots[lsf], "__fern_str_arr_free", "stashed-strarr-arg");
+        lsf = lsf + 1;
     }
     scr = release_consumed_arg_temps(scr, lca_slots, cid.name);
     scr = free_stashed_struct_args(scr, lsl_slots);
@@ -20350,6 +20377,21 @@ function discardable_fresh_strarr_lit(arr: ast.ExprArray, s: LowerState): boolea
     while (i < arr.elements.len()) {
         if (!expr_is_fresh_str(arr.elements[i], s)) { return false; }
         i = i + 1;
+    }
+    return true;
+}
+
+// fresh_or_literal_strarr_lit widens discardable_fresh_strarr_lit to `.rodata`
+// literal elements: their boxes are immortal, which __fern_str_arr_free's rc==1
+// element gate skips, so the walk frees the fresh elements and the buffer and
+// leaves the literals alone.
+function fresh_or_literal_strarr_lit(arr: ast.ExprArray, s: LowerState): boolean {
+    if (arr.elements.len() == 0) { return false; }
+    for el in arr.elements {
+        match (el) {
+            ast.ExprString(_) => {},
+            _ => { if (!expr_is_fresh_str(el, s)) { return false; } }
+        }
     }
     return true;
 }
@@ -36791,6 +36833,17 @@ function stash_fresh_struct_arg(s: LowerState, arg: ast.Expr, callee: string, ai
 // cannot hand a payload back uncounted — the gap the struct stash above closes
 // with its field-type set.
 function fresh_enum_arg_type(s: LowerState, arg: ast.Expr, callee: string): string {
+    // A variant construction written at the call site (`f(Pr(Ok2(1), Ok2(2)))`)
+    // is a sole-owned box whose payloads are fresh (fresh_scalar_enum_init /
+    // fresh_rcpayload_enum_init), so it releases on the same terms as a fresh
+    // producer's result.
+    var sctor: string = fresh_scalar_enum_init(arg, s.frame.structs);
+    if (sctor.len() > 0) { return sctor; }
+    var ctor: string = fresh_rcpayload_enum_init(arg, s.frame.structs, s.frame.sigs.str_fresh_ret_fns, [], false);
+    if (ctor.len() > 0) {
+        if (util.contains(callee, ".") || !iife_free_fn_ret_i32(callee, s)) { return ""; }
+        return ctor;
+    }
     match (arg) {
         ast.ExprCall(c) => {
             match (c.callee) {
