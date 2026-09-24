@@ -7507,6 +7507,41 @@ function main(): i32 {
 }`,
 	},
 	{
+		// An enum's drop recursed once per level of its own type, so the last
+		// reference to a 300k-node list overflowed the stack on every backend.
+		// A variant's last self-typed payload is now the next turn of a loop
+		// in the drop (#9046). The shared tail checks that loop stops at a
+		// node someone else still holds, and the tree that a non-tail child
+		// still recurses.
+		name: "recursive_enum_drop_constant_stack",
+		src: `
+enum L { Nil, Cons(i32, L) }
+enum T { Leaf, Node(T, i32, T) }
+@noinline
+function build(n: i32): L {
+    var l: L = Nil;
+    var i: i32 = 0;
+    while (i < n) { l = Cons(i, l); i = i + 1; }
+    return l;
+}
+@noinline
+function head(l: L): i32 {
+    match (l) { Cons(h, t) => { return h; }, Nil => { return 0 - 1; } }
+}
+@noinline
+function mid(t: T): i32 {
+    match (t) { Node(a, v, b) => { return v; }, Leaf => { return 0 - 1; } }
+}
+function main(): i32 {
+    var shared: L = build(1000);
+    var a: L = Cons(7, shared);
+    var b: L = Cons(9, shared);
+    var long: L = build(300000);
+    var tr: T = Node(Node(Leaf, 1, Leaf), 2, Node(Leaf, 3, Node(Leaf, 4, Leaf)));
+    return (head(a) - 7) + (head(b) - 9) + (head(shared) - 999) + (head(long) - 299999) + (mid(tr) - 2) + __rc_underflow_count();
+}`,
+	},
+	{
 		// A Map reached through an enum payload is counted like any other
 		// payload and released through the map's own chain when the enum
 		// dies — here an Option[Map] field carried through fifty spread
