@@ -522,6 +522,7 @@ regex_replace_groups                                 0
 regex_wordbound                                      0
 result_err_path                                      1
 result_match                                         0
+result_of_a_call_through_a_function_field_is_released 0
 result_register_pair                                 0
 scalar_edge_cases                                    0
 scalar_sum_reassign                                  0

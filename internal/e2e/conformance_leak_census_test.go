@@ -355,6 +355,11 @@ func loadCensus(t *testing.T) map[string]int {
 		if err != nil {
 			t.Fatalf("%s: bad count in %q", path, line)
 		}
+		// A second row would silently replace the first, so a merge that
+		// keeps both sides' rows must not pass for the one read last.
+		if _, dup := out[fs[0]]; dup {
+			t.Fatalf("%s: %s has two rows", path, fs[0])
+		}
 		out[fs[0]] = n
 	}
 	return out
