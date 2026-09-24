@@ -591,6 +591,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// both sides.
 		{"derive-debug-impl-ok", "trait Debug { function to_debug(self: Self): string; }\nstruct Bare { n: i32 }\nimpl Debug for Bare { function to_debug(self: Self): string { return \"b\"; } }\n@derive(Debug)\nstruct Foo { b: Bare }\nfunction main(): i32 { return 0; }\n", nil},
 		{"derive-json-impl-ok", "trait Json { function to_json(self: Self): string; }\nimpl Json for i32 { function to_json(self: Self): string { return \"0\"; } }\n@derive(Json)\nstruct Foo { x: i32 }\nfunction main(): i32 { return 0; }\n", nil},
+		// A value-block arm that always leaves the function hands the block no
+		// value, so its unreachable filler is not an arm type (#9326).
+		{"value-block-arm-returns-early", "function probe(n: i32): boolean {\n  var s: string = match (n) { 0 => \"zero\", _ => { return false; } };\n  return s.len() > 0;\n}\nfunction main(): i32 { if (probe(0)) { return 1; } return 0; }\n", nil},
 		// A derive resolves its trait by the name as written (#9322): with no
 		// prelude, a bare `Eq` names nothing unless the program declares it,
 		// and a declared trait outside the derivable set is refused. A

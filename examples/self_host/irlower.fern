@@ -19822,6 +19822,7 @@ function iife_match_composite_result_type(m: ast.StmtMatch, s: LowerState): stri
     var scrut_enum: string = expr_struct_type(m.scrutinee, s);
     var found: string = "";
     for arm in m.arms {
+        if (value_arm_diverges(arm.body)) { continue; }
         var t: string = iife_arm_composite_result_type(arm, opt_srt, scrut_enum, s);
         if (t == "") {
             // An arm with no recoverable composite result — if ANY other arm DID
@@ -19856,6 +19857,25 @@ function iife_user_enum_payload_type(pv: ast.PatVariant, scrut_enum: string, s: 
     return decl_at_payload_type(s.frame.structs, variant_arm_decl_index(pv, scrut_enum, s), 0);
 }
 
+// value_arm_diverges reports a value branch whose leading statements always
+// leave (`Err(_) => { return false; }`): its tail is parse_branch_body's
+// unreachable filler, typed like the enclosing function's result rather than
+// the block's, so it neither stores into the block's temp nor classifies it.
+function value_arm_diverges(body: ast.Stmt[]): boolean {
+    return body.len() > 1 && parser.branch_stmts_diverge(value_arm_leading(body));
+}
+
+// value_arm_leading is a value branch's statements before its tail.
+function value_arm_leading(body: ast.Stmt[]): ast.Stmt[] {
+    var out: ast.Stmt[] = [];
+    var i: i32 = 0;
+    while (i + 1 < body.len()) {
+        out = out.append(body[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
 // iife_rewrite_arm_body rewrites one match-EXPRESSION arm body so it STORES the
 // arm's value into `tmp` instead of returning it: leading statements are kept
 // verbatim and the TERMINAL statement is rewritten. Two terminal shapes are
@@ -19878,6 +19898,7 @@ function iife_user_enum_payload_type(pv: ast.PatVariant, scrut_enum: string, s: 
 function iife_rewrite_arm_body(body: ast.Stmt[], tmp: string, tslot: i32, ts: LowerState): ast.Stmt[] {
     var none: ast.Stmt[] = [];
     if (body.len() == 0) { return none; }
+    if (value_arm_diverges(body)) { return value_arm_leading(body); }
     var last: ast.Stmt = body[body.len() - 1];
     var tail: ast.Stmt[] = [];
     match (last) {
@@ -20092,6 +20113,7 @@ function lower_value_tail(body: ast.Stmt[], tslot: i32, s: LowerState): LowerSta
         if (!cs.ok) { return cs; }
         i = i + 1;
     }
+    if (value_arm_diverges(body)) { return cs; }
     var last: ast.Stmt = body[body.len() - 1];
     match (last) {
         ast.StmtReturn(r) => {

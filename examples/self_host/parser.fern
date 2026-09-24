@@ -3709,7 +3709,7 @@ function branch_stmt_start(p: Par): boolean {
 // consulted, `loop { … }` counts as unconditional (breaks are ignored, the same
 // conservative stance the Go side takes), an `if` needs both arms, and a `match`
 // needs every arm.
-function branch_stmts_diverge(stmts: ast.Stmt[]): boolean {
+pub function branch_stmts_diverge(stmts: ast.Stmt[]): boolean {
     if (stmts.len() == 0) { return false; }
     return branch_stmt_diverges(stmts[stmts.len() - 1]);
 }
@@ -3740,9 +3740,10 @@ function branch_stmt_diverges(st: ast.Stmt): boolean {
 
 // branch_dead_tail picks the UNREACHABLE value a diverging branch is given so
 // its shape matches every other value branch (leading statements + a trailing
-// value). Reusing the `return E` the block leaves through keeps the tail's type
-// consistent with the enclosing function's; anything else — a `loop`, a bare
-// `break`, a void `return` — takes a zero, which no path can read.
+// value). It reuses the `return E` the block leaves through; anything else — a
+// `loop`, a bare `break`, a void `return` — takes a zero, which no path can
+// read. Its type is the enclosing function's, not the block's, so the checker
+// does not count a diverging branch among the block's arm types.
 function branch_dead_tail(stmts: ast.Stmt[]): ast.Expr {
     if (stmts.len() == 0) { return e_number("0", "", false); }
     match (stmts[stmts.len() - 1]) {

@@ -7690,9 +7690,19 @@ function mx_e031(types: typeinfo.Type[], unions: UnionSig[], enums: parser.EnumD
 }
 
 // Type the terminal value in the scope established by preceding statements.
+// A branch whose leading statements always leave (`{ return false; }`) never
+// yields a value, so it contributes no type: its tail is parse_branch_body's
+// unreachable filler.
 function mx_body_result_types(body: ast.Stmt[], s: Scope): typeinfo.Type[] {
   var out: typeinfo.Type[] = [];
   if (body.len() == 0) { return out; }
+  var leading: ast.Stmt[] = [];
+  var li: i32 = 0;
+  while (li + 1 < body.len()) {
+    leading = leading.append(body[li]);
+    li = li + 1;
+  }
+  if (leading.len() > 0 && parser.branch_stmts_diverge(leading)) { return out; }
   var cur: Scope = s;
   var i: i32 = 0;
   while (i + 1 < body.len()) {
