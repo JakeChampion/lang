@@ -7,7 +7,7 @@ import "./typeinfo";
 import "./util";
 
 function declined(name: string): ast.ParamDecl {
-  return ast.ParamDecl { name: name, type_name: "", is_str: false, own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" };
+  return ast.ParamDecl { name: name, type_name: "", is_str: false, is_view: false, own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" };
 }
 
 pub function param_from_type(name: string, t: typeinfo.Type): ast.ParamDecl {
@@ -33,7 +33,7 @@ pub function fn_param_decl(name: string, tys: string[], ret: string): ast.ParamD
     }
     i = i + 1;
   }
-  return ast.ParamDecl { name: name, type_name: "fn", is_str: false, own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: ret, fn_param_dyn: dyns, fn_param_types: ptys };
+  return ast.ParamDecl { name: name, type_name: "fn", is_str: false, is_view: false, own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: ret, fn_param_dyn: dyns, fn_param_types: ptys };
 }
 
 pub function fn_param_from_spelling(name: string, sp: string): ast.ParamDecl {

@@ -66,15 +66,13 @@ func appendIndexedElemCases() []struct {
 		// The statement form, the shape the pass's prologue splice takes.
 		{"stmt_local", appendIndexedElemSrc(opsOut,
 			"var pre: Op[] = three(); var p: i32 = 0; while (p < 3) { out = out.append(pre[p]); p = p + 1; }",
-			"out.len()", opDigit), false},
+			"out.len()", opDigit), true},
 		// The same shape with the SOURCE built in this frame rather than
-		// returned by a callee — what the LICM pass actually does, and the one
-		// row of this corpus that balances. `pre` is an append-built struct
-		// array here, so it earns its own element walk; `out` earns one too
-		// (structarr_elem_store_ok admits the index read as a COUNTED store),
-		// and the two rc-guarded decs take each box to zero exactly once.
-		// Every other struct row sources from `three()`, whose returned array
-		// the caller cannot credit — one dec, never two, so the box survives.
+		// returned by a callee — what the LICM pass actually does. `pre` is an
+		// append-built struct array here, so it earns its own element walk;
+		// `out` earns one too (structarr_elem_store_ok admits the index read as
+		// a COUNTED store), and the two rc-guarded decs take each box to zero
+		// exactly once.
 		{"stmt_local_sameframe", appendIndexedElemSrc(opsOut,
 			"var pre: Op[] = []; var i: i32 = 0; while (i < 3) { pre = pre.append(mkop(i)); i = i + 1; } "+
 				"var p: i32 = 0; while (p < 3) { out = out.append(pre[p]); p = p + 1; }",
@@ -86,7 +84,7 @@ func appendIndexedElemCases() []struct {
 		// The clone form: a struct-field receiver.
 		{"clone_local", appendIndexedElemSrc("var st: St = St { ops: [] };",
 			"var pre: Op[] = three(); var p: i32 = 0; while (p < 3) { st = St { ops: st.ops.append(pre[p]) }; p = p + 1; }",
-			"st.ops.len()", "t = t * 10 + st.ops[k].a;"), false},
+			"st.ops.len()", "t = t * 10 + st.ops[k].a;"), true},
 		// The source is a borrowed parameter: the caller's release drops it.
 		{"stmt_param", appendIndexedElemSrc(opsOut,
 			"var pre: Op[] = three(); out = from_param(pre);",
@@ -115,10 +113,11 @@ func appendIndexedElemCases() []struct {
 // store, which is the destination's dec — but the SOURCE needs its own element
 // walk for the second, and a callee-returned array does not earn one here.
 //
-// So `stmt_local_sameframe`, whose source is append-built in this frame, is the
-// row that balances (144 -> 0 when the destination was admitted); every other
-// struct row sources from `three()` and still ends with its three boxes live at
-// rc 1, one dec short. `nested_arr` balances on the ARRARR half of the same
+// `three()` appends `mkop(i)` results, and since #8609 a producer whose
+// elements are strict-fresh calls registers under STRUCTARRF:, so `pre` walks
+// its elements whether it is built here (`stmt_local_sameframe`) or returned
+// (`stmt_local`, `clone_local`). `expr_local` and `stmt_param` still end with
+// three boxes live at rc 1, one dec short; that residue is not yet attributed. `nested_arr` balances on the ARRARR half of the same
 // admission (arrarr_row_store_ok). Its string-kind siblings do NOT: an index
 // read cannot answer arrarr_row_store_strings_fresh, so it takes only the lax
 // grade and a string-kind slot, which frees element pointers, still refuses. `enum_local` is not waiting on anything: its store is

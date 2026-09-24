@@ -6224,7 +6224,7 @@ function ssa_sym_addr(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
 
 // ssa_rt_call is the stack machine's call of a runtime routine on the register
 // ABI: the arguments in %rdi, %rsi, the result in %rax.
-function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
     s = ssa_x0_forget(s);
     s = s.need("heap");
     var sym: string = "__fern_alloc";
@@ -6247,9 +6247,21 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmco
         s = s.write("    testl %edi, %edi\n    js __fern_alloc_size_abort\n");
         s = s.write("    addq $24, %rdi\n");
     }
-    s = s.write("    call " + sym + "\n");
+    if (util.str_has_prefix(ins.str, "arr_push") && ins.result >= 0 && !rc_free_debug_on()) { s = s.write(arr_push_inline(sym, lp + "apush" + util.i32_to_string(ins.result))); }
+    else { s = s.write("    call " + sym + "\n"); }
     if (ins.str == "raw_alloc") { s = s.write("    addq $24, %rax\n"); }
     return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+}
+
+// arr_push_inline is arr_push_fast at the call site, calling `sym` only when
+// the receiver has no free slot or is shared.
+function arr_push_inline(sym: string, l: string): string {
+    return "    movq (%rdi), %rdx\n    cmpq -16(%rdi), %rdx\n    jge " + l + "s\n"
+        + "    movq -8(%rdi), %rcx\n    cmpq $1, %rcx\n    je " + l + "o\n"
+        + "    btq $31, %rcx\n    jnc " + l + "s\n"
+        + l + "o:\n    movq %rsi, 8(%rdi,%rdx,8)\n    incq %rdx\n    movq %rdx, (%rdi)\n"
+        + "    movq %rdi, %rax\n    jmp " + l + "e\n"
+        + l + "s:\n    call " + sym + "\n" + l + "e:\n";
 }
 
 // ssa_is_rt_call is a kind-50 call that ssa_rt_call emits: neither a
@@ -6448,7 +6460,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
     if (k == 49) { return ssa_str_call(ins, reg_of, s); }
     if (k == 50 && ssa_fcall_sym(ins.str) != "") { return ssa_fcall(ins, reg_of, s); }
     if (k == 50 && ssa_host_kind(ins.str)) { return ssa_host_call(ins, reg_of, s); }
-    if (ssa_is_rt_call(ins)) { return ssa_rt_call(ins, reg_of, s); }
+    if (ssa_is_rt_call(ins)) { return ssa_rt_call(ins, reg_of, lp, s); }
     if (k == 58) { return ssa_sym_addr(ins, reg_of, s); }
     if (k >= 52 && k <= 55) { return ssa_raw_inst(ins, reg_of, s); }
     if (k == 56) { return ssa_call_ind(ins, reg_of, s); }
@@ -8459,6 +8471,17 @@ function emit_ir_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.Emi
             s = s.write("    addq $8, %rsp\n");
             s = s.write("    movq 8(%rsp), %r11\n");                    // reload box (struct_drop clobbered r11)
             s = s.write(".Lstd_" + san + "_sdf" + ks + ":\n");
+        } else if (op.kind == "deep_enum_drop") {
+            // A direct enum field's live-variant rc payloads; __enum_drop_ applies
+            // the rc==1 gate and the null guard itself, and the arr_dec directive
+            // that follows frees the enum box. It clobbers %r11, so reload the box.
+            var edsan: string = asmcore.sanitize_label(op.ty);
+            s = s.need("enum_drop:" + op.ty);
+            s = s.write("    movq " + off + "(%r11), %rax\n");          // enum box = box.field_k
+            s = s.write("    pushq %rax\n");
+            s = s.write("    call __fn___enum_drop_" + edsan + "\n");
+            s = s.write("    addq $8, %rsp\n");
+            s = s.write("    movq 8(%rsp), %r11\n");                    // reload box
         } else if (op.kind == "str_free") {
             s = s.write("    movq " + off + "(%r11), %rdi\n");          // box.field_k string box
             s = s.write("    pushq %rdi\n");

@@ -47,6 +47,8 @@ impl Greet for Dog { function hi(self: Self): i32 { return 7; } }
 		{"result-match-stmt", `function f(r: Result[i32, string]): i32 { match (r) { Ok(n) => { return n; }, Err(e) => { return e.len(); } } } function main(): i32 { return f(Ok(3)); }`, false},
 		{"json-value-match-stmt", `function f(v: JsonValue): i32 { match (v) { JNull => { return 1; }, JBool(b) => { return 2; }, _ => { return 0; } } } function main(): i32 { return f(JNull); }`, false},
 		{"map-iter-cursor", `import "core/map"; function f(m: Map[string, i32]): i32 { var it: MapIter[string, i32] = m.iter(); var n: i32 = 0; while (it.has_next()) { n = n + it.key().len() + it.value(); it.advance(); } return n; } function main(): i32 { return 0; }`, false},
+		{"option-literal-scrutinee", `function main(): i32 { match (Some(4)) { Some(v) => { return v + 1; }, None => { return 0; } } }`, false},
+		{"option-inferred-local", `function main(): i32 { var o = Some("ab"); match (o) { Some(v) => { return v.len(); }, None => { return 0; } } }`, false},
 		{"dyn-binding", dynPrelude + `function main(): i32 { var d: dyn Greet = Dog {}; return 0; }`, false},
 		{"dyn-method", dynPrelude + `function main(): i32 { var d: dyn Greet = Dog {}; return d.hi(); }`, true},
 		{"unregistered-builtin", `function main(): i32 { var n: i32 = __rc_underflow_count(); return n; }`, true},

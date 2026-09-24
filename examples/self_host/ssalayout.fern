@@ -10,7 +10,9 @@ import "./ssadeps";
 // or -1 when order[i] heads no loop. Only reachable blocks are laid out.
 pub struct Layout { ok: boolean, order: i32[], loop_end: i32[] }
 
-struct Loops { n: i32, header: boolean[], members: boolean[] }
+// at maps a block id to its position (-1 for an id no block carries); succ
+// lists each position's successor positions.
+struct Loops { n: i32, header: boolean[], members: boolean[], at: i32[], succ: i32[][] }
 
 function flags(n: i32, bit: boolean): boolean[] {
     var out: boolean[] = [];
@@ -19,20 +21,32 @@ function flags(n: i32, bit: boolean): boolean[] {
     return out;
 }
 
-function block_index(f: ssa.SFunc, id: i32): i32 {
+function positions(f: ssa.SFunc): i32[] {
+    var top: i32 = 0;
+    for b in f.blocks { if (b.id > top) { top = b.id; } }
+    var out: i32[] = [];
     var i: i32 = 0;
-    while (i < f.blocks.len()) { if (f.blocks[i].id == id) { return i; } i = i + 1; }
-    return 0 - 1;
+    while (i <= top) { out = out.append(0 - 1); i = i + 1; }
+    i = 0;
+    while (i < f.blocks.len()) { if (f.blocks[i].id >= 0) { out = out.with(f.blocks[i].id, i); } i = i + 1; }
+    return out;
 }
 
-function successors(f: ssa.SFunc, bi: i32): i32[] {
-    var t: ssa.STerm = f.blocks[bi].term;
-    if (t.kind_tag == 2) { return [block_index(f, t.target)]; }
-    if (t.kind_tag == 3) {
-        if (t.t == t.f) { return [block_index(f, t.t)]; }
-        return [block_index(f, t.t), block_index(f, t.f)];
+function position(at: i32[], id: i32): i32 {
+    if (id < 0 || id >= at.len()) { return 0 - 1; }
+    return at[id];
+}
+
+function successor_table(f: ssa.SFunc, at: i32[]): i32[][] {
+    var out: i32[][] = [];
+    for b in f.blocks {
+        var t: ssa.STerm = b.term;
+        if (t.kind_tag == 2) { out = out.append([position(at, t.target)]); }
+        else if (t.kind_tag == 3 && t.t == t.f) { out = out.append([position(at, t.t)]); }
+        else if (t.kind_tag == 3) { out = out.append([position(at, t.t), position(at, t.f)]); }
+        else { out = out.append([]); }
     }
-    return [];
+    return out;
 }
 
 // The natural loop of a back edge: the header plus every block that reaches
@@ -46,7 +60,7 @@ function absorb(f: ssa.SFunc, l: Loops, h: i32, u: i32, reachable: boolean[]): L
         if (x == h || members[h * l.n + x]) { continue; }
         members = members.with(h * l.n + x, true);
         for pred in f.blocks[x].preds {
-            var pi: i32 = block_index(f, pred);
+            var pi: i32 = position(l.at, pred);
             if (reachable[pi]) { work = work.append(pi); }
         }
     }
@@ -62,11 +76,12 @@ function prefix(xs: i32[], n: i32): i32[] {
 
 function find_loops(f: ssa.SFunc, reachable: boolean[], dom: ssadeps.Dom): Loops {
     var n: i32 = f.blocks.len();
-    var l: Loops = Loops { n: n, header: flags(n, false), members: flags(n * n, false) };
+    var at: i32[] = positions(f);
+    var l: Loops = Loops { n: n, header: flags(n, false), members: flags(n * n, false), at: at, succ: successor_table(f, at) };
     var u: i32 = 0;
     while (u < n) {
         if (reachable[u]) {
-            for h in successors(f, u) {
+            for h in l.succ[u] {
                 if (ssadeps.dom_holds(dom, u, h)) {
                     l = Loops { ...l, header: l.header.with(h, true), members: l.members.with(h * n + h, true) };
                     l = absorb(f, l, h, u, reachable);
@@ -80,10 +95,10 @@ function find_loops(f: ssa.SFunc, reachable: boolean[], dom: ssadeps.Dom): Loops
 
 // A region is one loop body (or the whole function). Inner loops collapse to
 // their headers while the region is ordered, then expand in place.
-function representative(l: Loops, region: boolean[], root: i32, x: i32): i32 {
+function representative(l: Loops, outer: boolean[], x: i32): i32 {
     var h: i32 = 0;
     while (h < l.n) {
-        if (h != root && region[h] && l.header[h] && l.members[h * l.n + x] && outermost(l, region, root, h)) { return h; }
+        if (outer[h] && l.members[h * l.n + x]) { return h; }
         h = h + 1;
     }
     return x;
@@ -92,9 +107,15 @@ function representative(l: Loops, region: boolean[], root: i32, x: i32): i32 {
 // The representative of every position, once per region: the ordering below
 // asks for it once per edge per round.
 function representatives(l: Loops, region: boolean[], root: i32): i32[] {
+    var outer: boolean[] = [];
+    var h: i32 = 0;
+    while (h < l.n) {
+        outer = outer.append(h != root && region[h] && l.header[h] && outermost(l, region, root, h));
+        h = h + 1;
+    }
     var out: i32[] = [];
     var x: i32 = 0;
-    while (x < l.n) { out = out.append(representative(l, region, root, x)); x = x + 1; }
+    while (x < l.n) { out = out.append(representative(l, outer, x)); x = x + 1; }
     return out;
 }
 
@@ -107,7 +128,7 @@ function outermost(l: Loops, region: boolean[], root: i32, h: i32): boolean {
     return true;
 }
 
-function pending_edges(f: ssa.SFunc, l: Loops, region: boolean[], root: i32, reps: i32[]): i32[] {
+function pending_edges(l: Loops, region: boolean[], root: i32, reps: i32[]): i32[] {
     var pending: i32[] = [];
     var i: i32 = 0;
     while (i < l.n) { pending = pending.append(0); i = i + 1; }
@@ -115,7 +136,7 @@ function pending_edges(f: ssa.SFunc, l: Loops, region: boolean[], root: i32, rep
     while (x < l.n) {
         if (region[x]) {
             var rx: i32 = reps[x];
-            for y in successors(f, x) {
+            for y in l.succ[x] {
                 if (!region[y] || y == root) { continue; }
                 var ry: i32 = reps[y];
                 if (rx != ry) { pending = pending.with(ry, pending[ry] + 1); }
@@ -126,11 +147,11 @@ function pending_edges(f: ssa.SFunc, l: Loops, region: boolean[], root: i32, rep
     return pending;
 }
 
-function release(f: ssa.SFunc, l: Loops, region: boolean[], root: i32, chosen: i32, pending: i32[], reps: i32[]): i32[] {
+function release(l: Loops, region: boolean[], root: i32, chosen: i32, pending: i32[], reps: i32[]): i32[] {
     var x: i32 = 0;
     while (x < l.n) {
         if (region[x] && reps[x] == chosen) {
-            for y in successors(f, x) {
+            for y in l.succ[x] {
                 if (!region[y] || y == root) { continue; }
                 var ry: i32 = reps[y];
                 if (ry != chosen) { pending = pending.with(ry, pending[ry] - 1); }
@@ -168,21 +189,21 @@ function complete(l: Loops, region: boolean[], done: boolean[], reps: i32[]): bo
     return true;
 }
 
-function region_order(f: ssa.SFunc, l: Loops, region: boolean[], root: i32, out: Layout): Layout {
+function region_order(l: Loops, region: boolean[], root: i32, out: Layout): Layout {
     var start: i32 = out.order.len();
     var reps: i32[] = representatives(l, region, root);
-    var pending: i32[] = pending_edges(f, l, region, root, reps);
+    var pending: i32[] = pending_edges(l, region, root, reps);
     var done: boolean[] = flags(l.n, false);
     var chosen: i32 = root;
     while (chosen >= 0) {
         done = done.with(chosen, true);
         if (chosen != root && l.header[chosen]) {
-            out = region_order(f, l, row(l, chosen), chosen, out);
+            out = region_order(l, row(l, chosen), chosen, out);
             if (!out.ok) { return out; }
         } else {
             out = Layout { ok: true, order: out.order.append(chosen), loop_end: out.loop_end.append(0 - 1) };
         }
-        pending = release(f, l, region, root, chosen, pending, reps);
+        pending = release(l, region, root, chosen, pending, reps);
         chosen = next_ready(l, region, pending, done, reps);
     }
     if (!complete(l, region, done, reps)) { return irreducible(); }
@@ -195,5 +216,5 @@ function region_order(f: ssa.SFunc, l: Loops, region: boolean[], root: i32, out:
 pub function compute(f: ssa.SFunc): Layout {
     var reachable: boolean[] = ssadeps.reachable_blocks(f);
     var l: Loops = find_loops(f, reachable, ssadeps.dominates(f));
-    return region_order(f, l, reachable, block_index(f, f.entry), Layout { ok: true, order: [], loop_end: [] });
+    return region_order(l, reachable, position(l.at, f.entry), Layout { ok: true, order: [], loop_end: [] });
 }

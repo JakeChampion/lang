@@ -3029,6 +3029,23 @@ Over the first 20 MB of that input: 1.17 G instructions to 1.04 G
 instructions a line, and the retain `var src = chunk` takes. The one
 `prev = src` took is gone with the scope-dead move above.
 
+### cat -n's number field in two pushes, 2026-09-24 (GNU coreutils 9.12)
+
+`cat -n` wrote each `%6d\t` field as three pushes: the padded hundreds,
+the last two digits from the pair table, and the tab. It also divided
+the line number by 100 on every line to find them. The last two digits
+and the tab are now one 3-byte slice of a table built once
+(`number_tails`), with a second hundred for the first, whose tens are
+blank below 10. The hundreds change once in a hundred lines, and the
+division happens only then.
+
+| workload | before | after | GNU 9.12 |
+|---|---:|---:|---:|
+| cat -n over 4M lines (median of 50) | 148.6 ms | 111.8 ms | 101.8 ms |
+| cat -b over 4M lines | 156.0 ms | 111.9 ms | 101.9 ms |
+
+Instructions: 1.16 G to 1.04 G (GNU: 0.83 G).
+
 ### ls, 2026-09-14, Linux x86-64 (GNU coreutils 9.4, uutils 0.0.24)
 
 The same 4-core container, so read the columns against each other. The

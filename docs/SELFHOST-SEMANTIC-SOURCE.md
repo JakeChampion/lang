@@ -407,7 +407,7 @@ Unsupported constructs refuse the whole function with a reason.
   a view-typed destination — a `str` binding, a `str` parameter — as a borrow
   of its box, and a view reaches a BORROWED `string` parameter (a method's
   receiver included, which is how `to_owned` and every other std/string
-  method takes one) the way the checker's `str_arg_borrow` carve-out lets it.
+  method takes one) the way the checker's `view_arg_borrow` carve-out lets it.
   A counted `string` parameter is not offered the retag: it would take the
   box as its own, which a view's box is not. A string's methods are declared
   in the standard library on a `string` receiver, so a text receiver now
