@@ -367,6 +367,36 @@ func TestHexLiteralNeedsDigits(t *testing.T) {
 	}
 }
 
+// `0o` octal and `0b` binary literals come back as one Number token, prefix
+// and suffix split as a hex literal's are (#9091).
+func TestRadixLiteral(t *testing.T) {
+	toks, _, err := Tokenize("0o755 0O17 0b1010 0B1 0o170000u32 0b11111111u8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []struct{ text, suffix string }{
+		{"0o755", ""}, {"0O17", ""}, {"0b1010", ""}, {"0B1", ""}, {"0o170000", "u32"}, {"0b11111111", "u8"},
+	}
+	if len(toks) != len(want)+1 {
+		t.Fatalf("got %d tokens, want %d: %v", len(toks), len(want)+1, toks)
+	}
+	for i, w := range want {
+		if toks[i].Kind != Number || toks[i].Text != w.text || toks[i].Suffix != w.suffix {
+			t.Errorf("tok[%d] = (%v %q suffix=%q), want (Number %q suffix=%q)", i, toks[i].Kind, toks[i].Text, toks[i].Suffix, w.text, w.suffix)
+		}
+	}
+}
+
+// A radix literal with no digits, or with a digit its base does not have, is
+// an error rather than `0` followed by an identifier.
+func TestRadixLiteralRejectsBadDigits(t *testing.T) {
+	for _, src := range []string{"0o", "0b", "0o78", "0b102", "0o9"} {
+		if _, _, err := Tokenize(src); err == nil {
+			t.Errorf("%s: expected a lex error, got nil", src)
+		}
+	}
+}
+
 // A dangling `e` with no exponent digits is NOT an exponent — the
 // number stops before it and the `e...` lexes as a separate
 // identifier. Guards against eating the `e` of `1einvalid`.

@@ -177,18 +177,12 @@ func TestLexNumericRemainingIntSuffixWidths(t *testing.T) {
 	assertTokens(t, "100u64", []tokSpec{{Number, "100", "u64"}})
 }
 
-// Underscore digit separators and a binary `0b` prefix are NOT
-// supported by the lexer — pinning current behavior so a future
-// add is a deliberate, test-visible change. `1_000` lexes as
-// `Number "1"` then `Ident "_000"`; `0b101` as `Number "0"` then
-// `Ident "b101"`.
-func TestLexNumericNoUnderscoreOrBinary(t *testing.T) {
+// Underscore digit separators are NOT supported by the lexer — pinning
+// current behavior so a future add is a deliberate, test-visible change.
+// `1_000` lexes as `Number "1"` then `Ident "_000"`.
+func TestLexNumericNoUnderscore(t *testing.T) {
 	assertTokens(t, "1_000", []tokSpec{
 		{Number, "1", ""},
 		{Ident, "_000", ""},
-	})
-	assertTokens(t, "0b101", []tokSpec{
-		{Number, "0", ""},
-		{Ident, "b101", ""},
 	})
 }

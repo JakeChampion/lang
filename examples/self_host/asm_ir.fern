@@ -503,10 +503,7 @@ function emit_ir_arr_deep_free_variant(s: asmcore.EmitState, sym: string, lbl: s
     s = s.write("    leaq -16(%rbx), %rdx\n");      // base = arr - 16
     s = hev_free(s, "%rdx", "%rcx");
     if (!rc_free_debug_on()) {
-    s = s.write("    leaq __fern_freelist(%rip), %r8\n");
-    s = s.write("    movq (%r8,%rcx,8), %rdi\n");   // old head
-    s = s.write("    movq %rdi, (%rdx)\n");         // *base = old head
-    s = s.write("    movq %rdx, (%r8,%rcx,8)\n");   // freelist[class] = base
+    s = freelist_push(s, "%rdx", "%rcx", "%rdi");
     }
     s = s.write(".L" + lbl + "_pop:\n");
     s = s.write("    popq %r13\n");
@@ -691,6 +688,21 @@ function map_free_column_walk(s: asmcore.EmitState, col_off: i32, rel_at: i32, l
     return s;
 }
 
+// freelist_push emits the push of the block at `ptr` onto the small-tier
+// freelist. `words` holds the block's logical size and comes out as its class,
+// the capacity __fern_capw rounds it to, which is the size __fern_alloc bumped
+// the block at; `tmp` is scratch, and %r8 is clobbered.
+function freelist_push(s: asmcore.EmitState, ptr: string, words: string, tmp: string): asmcore.EmitState {
+    s = s.write("    pushq " + words + "\n");
+    s = s.write("    call __fern_capw\n");
+    s = s.write("    popq " + words + "\n");
+    s = s.write("    leaq __fern_freelist(%rip), %r8\n");
+    s = s.write("    movq (%r8," + words + ",8), " + tmp + "\n");
+    s = s.write("    movq " + tmp + ", (" + ptr + ")\n");
+    s = s.write("    movq " + ptr + ", (%r8," + words + ",8)\n");
+    return s;
+}
+
 // buf_block_free emits the inline release of one BARE byte block — the string
 // builder's buffer, or its control block — onto the size-class freelist
 // __fern_alloc pops from, `ptr` naming the block and `words` its class. The
@@ -703,10 +715,7 @@ function buf_block_free(s: asmcore.EmitState, ptr: string, words: string, lbl: s
     s = s.write("    jae ." + lbl + "_large\n");
     s = hev_free(s, ptr, words);
     if (!rc_free_debug_on()) {
-        s = s.write("    leaq __fern_freelist(%rip), %r8\n");
-        s = s.write("    movq (%r8," + words + ",8), %rsi\n");
-        s = s.write("    movq %rsi, (" + ptr + ")\n");
-        s = s.write("    movq " + ptr + ", (%r8," + words + ",8)\n");
+        s = freelist_push(s, ptr, words, "%rsi");
     }
     s = s.write("    jmp ." + lbl + "_done\n");
     s = s.write("." + lbl + "_large:\n");
@@ -748,15 +757,11 @@ function hev_free(s: asmcore.EmitState, ptr: string, words: string): asmcore.Emi
 // of the heap runtime — a heap-free program still has an `exit` builtin that
 // calls __fern_lc_report, and it must resolve.
 //
-// Sizes are carried in WORDS, not bytes. The self-host heap is uniformly
-// 8-byte-granular (__fern_alloc rounds every request to 8 and classes by
-// bytes/8), so words is the unit both sides can state exactly: an alloc's
-// (bytes+7)>>3 and a free site's own class index are then the same number for
-// the same block, and a block's alloc cancels its free precisely. The large
-// tier is the one place the two differ from what was physically consumed —
-// alloc BUMPS at a 512-KiB-rounded capacity while both events report the
-// logical size — so live_bytes measures demand, not arena footprint. That is
-// the same definition __fern_large_push already bins by.
+// Sizes are carried in WORDS, not bytes: an alloc's (bytes+7)>>3 and a free
+// site's logical size are the same number for the same block, and a block's
+// alloc cancels its free precisely. Both events report that logical size, not
+// the capacity __fern_capw or the large tier rounds the block up to, so
+// live_bytes measures demand, not arena footprint.
 function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
     if (!hev_on()) { return s; }
     s = s.write("    .section .bss\n");
@@ -2088,7 +2093,8 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("__fern_large_freelist_shadow: .skip 20480\n");
     s = s.write("    .section .text\n");
     // __fern_alloc(%rdi = bytes) -> %rax = block. Size-classed freelist reuse
-    // (class = bytes/8 < 65536) then bump; OOM traps with exit 137.
+    // (class = __fern_capw(words) below 65536 words) then bump; OOM traps with
+    // exit 125.
     //
     // Under a heap-event build the body becomes __fern_alloc_inner and this is
     // a wrapper around it, so ONE hook covers all three allocation exits (the
@@ -2143,6 +2149,12 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    shrq $3, %rcx\n");
     s = s.write("    cmpq $65536, %rcx\n");
     s = s.write("    jae .Lalloc_large\n");
+    // The small tier bumps a block at its class's capacity, so any freed block
+    // of the class satisfies any request that rounds to it.
+    s = s.write("    pushq %rcx\n");
+    s = s.write("    call __fern_capw\n");
+    s = s.write("    popq %rcx\n");
+    s = s.write("    leaq 0(,%rcx,8), %rdi\n");
     s = s.write("    leaq __fern_freelist(%rip), %rdx\n");
     s = s.write("    movq (%rdx,%rcx,8), %rax\n");
     s = s.write("    testq %rax, %rax\n");
@@ -2406,6 +2418,37 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     }
     s = s.write(".Llpush_ret:\n");
     s = s.write("    ret\n");
+    // __fern_capw(words) -> class, in place in its one stack slot: the small
+    // tier's size class for a block of `words` 8-byte words, which is also the
+    // capacity __fern_alloc bumps the block at. Exact up to 256 words (2 KiB),
+    // then native's 3-significant-bit capacities, so a buffer that grows a
+    // little at a time finds the block it just freed rather than a new class
+    // per step. Clamped below 65536, where the large tier takes over. Preserves
+    // every register.
+    s = s.write("__fern_capw:\n");
+    s = s.write("    pushq %rax\n");
+    s = s.write("    pushq %rcx\n");
+    s = s.write("    pushq %rdx\n");
+    s = s.write("    movq 32(%rsp), %rax\n");
+    s = s.write("    cmpq $256, %rax\n");
+    s = s.write("    jbe .Lcapw_ret\n");
+    s = s.write("    bsrq %rax, %rcx\n");
+    s = s.write("    subl $2, %ecx\n");
+    s = s.write("    movl $1, %edx\n");
+    s = s.write("    shlq %cl, %rdx\n");               // granule = 1 << (msb - 2)
+    s = s.write("    leaq -1(%rax,%rdx), %rax\n");
+    s = s.write("    negq %rdx\n");
+    s = s.write("    andq %rdx, %rax\n");              // round up to the granule
+    s = s.write("    cmpq $65536, %rax\n");
+    s = s.write("    jb .Lcapw_store\n");
+    s = s.write("    movl $65535, %eax\n");
+    s = s.write(".Lcapw_store:\n");
+    s = s.write("    movq %rax, 32(%rsp)\n");
+    s = s.write(".Lcapw_ret:\n");
+    s = s.write("    popq %rdx\n");
+    s = s.write("    popq %rcx\n");
+    s = s.write("    popq %rax\n");
+    s = s.write("    ret\n");
     // __fern_raw_free(%rdi = block, %rsi = bytes) — the return path for a block
     // `__fern_alloc` handed out raw, with no rc header: core/map's buffers, and
     // whatever else reaches the `__free` builtin. The block's own first word is
@@ -2427,10 +2470,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // Quarantine: with the detector on nothing is recycled, so a freed block
     // cannot come back under a fresh allocation and overwrite the evidence.
     if (!rc_free_debug_on()) {
-    s = s.write("    leaq __fern_freelist(%rip), %r8\n");
-    s = s.write("    movq (%r8,%rcx,8), %rdx\n");
-    s = s.write("    movq %rdx, (%rdi)\n");
-    s = s.write("    movq %rdi, (%r8,%rcx,8)\n");
+    s = freelist_push(s, "%rdi", "%rcx", "%rdx");
     }
     s = s.write(".Lrawfree_ret:\n");
     s = s.write("    ret\n");
@@ -2468,10 +2508,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    leaq -16(%rax), %rdx\n");
     s = hev_free(s, "%rdx", "%rcx");
     if (!rc_free_debug_on()) {
-    s = s.write("    leaq __fern_freelist(%rip), %r8\n");
-    s = s.write("    movq (%r8,%rcx,8), %rdi\n");
-    s = s.write("    movq %rdi, (%rdx)\n");
-    s = s.write("    movq %rdx, (%r8,%rcx,8)\n");
+    s = freelist_push(s, "%rdx", "%rcx", "%rdi");
     }
     s = s.write(".Larrdec_ret:\n");
     s = s.write("    ret\n");
@@ -2548,10 +2585,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // Quarantine (rc_free_debug_on): the DATA buffer carries no rc word, so
     // declining the push is the whole treatment for it.
     if (!rc_free_debug_on()) {
-    s = s.write("    leaq __fern_freelist(%rip), %r8\n");
-    s = s.write("    movq (%r8,%rdx,8), %rsi\n");   // old head of class `words`
-    s = s.write("    movq %rsi, (%rcx)\n");         // *data = old head
-    s = s.write("    movq %rcx, (%r8,%rdx,8)\n");   // freelist[words] = data
+    s = freelist_push(s, "%rcx", "%rdx", "%rsi");
     }
     s = s.write(".Lstrfree_box:\n");
     // The rc-headered block is base = box-8 (24 bytes = class 3). The rc store
@@ -2594,10 +2628,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(quarantine_rc("-8(%rax)"));
     s = hev_free(s, "%rcx", "%rdx");
     if (!rc_free_debug_on()) {
-    s = s.write("    leaq __fern_freelist(%rip), %r8\n");
-    s = s.write("    movq (%r8,%rdx,8), %rsi\n");   // old head of class `words`
-    s = s.write("    movq %rsi, (%rcx)\n");         // *base = old head
-    s = s.write("    movq %rcx, (%r8,%rdx,8)\n");   // freelist[words] = base
+    s = freelist_push(s, "%rcx", "%rdx", "%rsi");
     }
     s = s.write("    jmp .Lstrfree_ret\n");
     // The large tier's own free hook lives inside __fern_large_push, so this arm
@@ -2900,10 +2931,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         // poison-and-decline every other free path applies.
         s = s.write("    movl $" + rc_poison() + ", -8(%rax)\n");
     } else {
-    s = s.write("    leaq __fern_freelist(%rip), %r8\n");
-    s = s.write("    movq (%r8,%rdx,8), %rsi\n");    // old head
-    s = s.write("    movq %rsi, (%rcx)\n");          // *block = head
-    s = s.write("    movq %rcx, (%r8,%rdx,8)\n");    // freelist[words] = block
+    s = freelist_push(s, "%rcx", "%rdx", "%rsi");
     }
     s = s.write(".Lsarelo_fresh:\n");
     s = s.write("    movq 8(%rsp), %rdi\n");         // slots = arr_box cap
@@ -2944,10 +2972,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    leaq -16(%rcx), %rdi\n");     // old box base
     s = hev_free(s, "%rdi", "%rsi");
     if (!rc_free_debug_on()) {
-    s = s.write("    leaq __fern_freelist(%rip), %r8\n");
-    s = s.write("    movq (%r8,%rsi,8), %r9\n");
-    s = s.write("    movq %r9, (%rdi)\n");         // node.next = head
-    s = s.write("    movq %rdi, (%r8,%rsi,8)\n");  // head = node
+    s = freelist_push(s, "%rdi", "%rsi", "%r9");
     }
     s = s.write(".Lsd_ret:\n");
     s = s.write("    ret\n");                      // %rax = new
@@ -4041,10 +4066,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    leaq -16(%r12), %rdx\n");    // old box base
         s = hev_free(s, "%rdx", "%rcx");
         if (!rc_free_debug_on()) {
-        s = s.write("    leaq __fern_freelist(%rip), %r8\n");
-        s = s.write("    movq (%r8,%rcx,8), %rdi\n");
-        s = s.write("    movq %rdi, (%rdx)\n");       // node.next = head
-        s = s.write("    movq %rdx, (%r8,%rcx,8)\n"); // head = node
+        s = freelist_push(s, "%rdx", "%rcx", "%rdi");
         }
         s = s.write(".Lapo_ret:\n");
         s = s.write("    popq %r13\n");
@@ -6486,7 +6508,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
     var d: string = ssa_dst(reg_of, ins.result);
     if (k == 1) { s = ssa_const_reg(util.i32_to_string(ins.imm), false, d, s); }
     else if (k == 3) { s = ssa_const_reg(ins.str, ins.imm == 64, d, s); }
-    else if (k == 4) { s = s.write("    movabsq $" + util.i64_to_string(util.parse_f64_bits(ins.str)) + ", " + d + "\n"); }
+    else if (k == 4) { s = s.write("    movabsq $" + ins.str + ", " + d + "\n"); }
     else if (k == 7) { s = ssa_load(reg_of, ins.args[0], d, s); }
     else if (k == 9 && ssa_direct_bin(ir.kind_id(ins.str))) { return ssa_bin_in_place(ins, reg_of, fr, s); }
     else if (k == 9 && ssa_shift_tag(ir.kind_id(ins.str)) && fr.imm.is_imm[ins.args[1]]) { return ssa_bin_in_place(ins, reg_of, fr, s); }
@@ -7466,11 +7488,6 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
         s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n");
         s = s.write("    call __fn___fern_writer_truncate\n    addq $16, %rsp\n    pushq %rax\n");
         s = s.need("heap"); s = s.need("reader"); s = s.need("writer_truncate");
-    } else if (o.kind_tag == 210) {  // arg_at
-        // [i] -> push argv[i] as a fresh rc-headered string box. Same args need
-        // — the helper sits in the args block and reads the same __fern_argv global.
-        s = s.write("    popq %rdi\n    call __fern_arg_at\n    pushq %rax\n");
-        s = s.need("heap"); s = s.need("args");
     } else if ((o.kind_tag >= 291 && o.kind_tag <= 297) || o.kind_tag == 306 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328) {  // the buf_* builder
         s = emit_ir_op_buf(o, s);
     } else if (o.kind_tag == 181) {  // sleep_ms
@@ -8729,7 +8746,7 @@ function emit_ir_enum_arr_elems_drop_one(s: asmcore.EmitState, ety: string): asm
 function emit_ir_runtime_fern_fn(src: string, all_structs: irlower.StructTab, s: asmcore.EmitState): asmcore.EmitState {
     var m: parser.Module = parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(src)));
     var fns: parser.FuncDecl[] = m.funcs;
-    var bparams: string[] = irlower.borrowable_params_interproc(fns);
+    var bparams: string[] = irlower.borrowable_params_interproc(fns, all_structs);
     var sg: irlower.FnSigs = irlower.FnSigs {
         ...irlower.fn_sigs_for_borrow(fns, all_structs, ircore.array_ret_fns_of(fns), bparams),
         consume_safe_params: irlower.consume_safe_params_interproc(fns, bparams),
@@ -8957,9 +8974,9 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
 }
 
 // emit_module_ir_gated_sub is the same gate with a caller-supplied semantic
-// lowering substituted into it (ircore.Sub). The `fern` CLI is the one driver
-// that supplies one; every other passes ircore.no_sub(), which is this function
-// behaving exactly as it did before the seam existed.
+// lowering substituted into it (ircore.Sub): the `fern` CLI's semantic
+// lowering, or ir_const_numeric_run's rebuilt one. ircore.no_sub() is this
+// function behaving exactly as it did before the seam existed.
 pub function emit_module_ir_gated_sub(mod: parser.Module, known: string[], sub: ircore.Sub): string {
     var sm: parser.Module = ircore.script_normalized(mod);
     // The merged-bundle SIZE budget that stood here is gone with its twin in

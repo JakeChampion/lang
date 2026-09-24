@@ -736,6 +736,94 @@ function drop_variant_fields(own r: irlower.LowerResult, slot: i32, t: typeinfo.
     return r;
 }
 
+// self_tail_field: the index of the variant's last field of the enum's own
+// type, or -1.
+function self_tail_field(v: semrecords.Variant, t: typeinfo.Type): i32 {
+    var at: i32 = 0 - 1;
+    var i: i32 = 0;
+    while (i < v.fields.len()) {
+        if (semtypes.equal(v.fields[i].ty, t)) { at = i; }
+        i = i + 1;
+    }
+    return at;
+}
+
+function self_tail_enum(t: typeinfo.Type, f: ssasem.Func): boolean {
+    var e: semrecords.Enum = f.enums[semrecords.find_enum(f.enums, t)];
+    if (e.layout == semrecords.layout_option()) { return false; }
+    for v in e.variants { if (self_tail_field(v, t) >= 0) { return true; } }
+    return false;
+}
+
+// drop_variant_chain is drop_variant_fields for an enum whose variants reach
+// the enum itself (a list's tail): that one field is not a recursive drop but
+// the next node of a loop, so the helper's stack stays constant however long
+// the chain is (#9046). Each node after the first is released here once its
+// children are, exactly as drop_value would release it; a shared next node is
+// released without its children, and the walk stops. Slots: 1 the node, 2
+// whether it is the caller's box, 3 the next node, 4 up scratch.
+function drop_variant_chain(own r: irlower.LowerResult, t: typeinfo.Type, f: ssasem.Func): irlower.LowerResult {
+    var e: semrecords.Enum = f.enums[semrecords.find_enum(f.enums, t)];
+    var node: i32 = 1;
+    var first: i32 = 2;
+    var next: i32 = 3;
+    r = reserve(r, 5);
+    r = emit(r, ir.op_load_local(0));
+    r = emit(r, ir.op_store_local(node));
+    r = emit(r, ir.op_const_i32(1));
+    r = emit(r, ir.op_store_local(first));
+    r = emit(r, ir.op_block(0));
+    r = emit(r, ir.op_loop(0));
+    r = emit(r, ir.op_const_i32(0));
+    r = emit(r, ir.op_store_local(next));
+    for v in e.variants {
+        if (!fields_have_children(v.fields)) { continue; }
+        var tail: i32 = self_tail_field(v, t);
+        r = emit(r, ir.op_load_local(node));
+        r = emit(r, ir.op_variant_is(v.name));
+        r = emit(r, ir.op_if(0));
+        var i: i32 = 0;
+        while (i < v.fields.len()) {
+            if (walked(v.fields[i].ty)) {
+                r = emit(r, ir.op_load_local(node));
+                r = emit(r, ir.op_struct_get(i, 0));
+                if (i == tail) { r = emit(r, ir.op_store_local(next)); }
+                else {
+                    r = emit(r, ir.op_store_local(4));
+                    r = drop_value(r, 4, v.fields[i].ty, 5, f);
+                }
+            }
+            i = i + 1;
+        }
+        r = emit(r, ir.op_end());
+    }
+    r = emit(r, ir.op_load_local(first));
+    r = emit(r, ir.op_const_i32(0));
+    r = emit(r, ir.op_bin("eq", 0, false));
+    r = emit(r, ir.op_if(0));
+    r = release(r, node, t);
+    r = emit(r, ir.op_end());
+    r = emit(r, ir.op_const_i32(0));
+    r = emit(r, ir.op_store_local(first));
+    // No next node: done. A shared one: release it and stop.
+    r = emit(r, ir.op_load_local(next));
+    r = emit(r, ir.op_const_i32(0));
+    r = emit(r, ir.op_bin("eq", ir.width_ptr(), false));
+    r = emit(r, ir.op_brif(1));
+    r = emit(r, ir.op_load_local(next));
+    r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
+    r = emit(r, ir.op_if(0));
+    r = emit(r, ir.op_else());
+    r = release(r, next, t);
+    r = emit(r, ir.op_br(2));
+    r = emit(r, ir.op_end());
+    r = emit(r, ir.op_load_local(next));
+    r = emit(r, ir.op_store_local(node));
+    r = emit(r, ir.op_br(0));
+    r = emit(r, ir.op_end());
+    return emit(r, ir.op_end());
+}
+
 function drop_elements(own r: irlower.LowerResult, slot: i32, elem: typeinfo.Type, scratch: i32, f: ssasem.Func): irlower.LowerResult {
     var index: i32 = scratch;
     var child: i32 = index + 1;
@@ -1292,7 +1380,10 @@ function one_helper(t: typeinfo.Type, f: ssasem.Func): irlower.LowerResult {
     var r: irlower.LowerResult = irlower.LowerResult { ...empty(""), ok: true,
         n_params: 1, n_locals: 1, name: drop_helper_name(t) };
     if let typeinfo.TypeStruct(_) = t { r = drop_record_fields(r, 0, record_fields(t, f), 1, f, semtypes.is_env(t)); }
-    if let typeinfo.TypeUnion(_) = t { r = drop_variant_fields(r, 0, t, 1, f); }
+    if let typeinfo.TypeUnion(_) = t {
+        if (self_tail_enum(t, f)) { r = drop_variant_chain(r, t, f); }
+        else { r = drop_variant_fields(r, 0, t, 1, f); }
+    }
     // The one value the caller's `drop` after the call discards.
     r = emit(r, ir.op_const_i32(0));
     r = emit(r, ir.op_return());
@@ -2957,8 +3048,10 @@ function region(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, l: ssalayout.Layo
 // reference whose container owns its children. Rows the caller's reading of
 // the callee's syntax recorded for the same result are replaced. Only the
 // shapes those registries can release get a row: a tuple's scalar-element
-// array positions ("ARRF:") and a scalar-element array result ("ARROWN:");
-// every other position keeps the AST caller's leak-mode floor.
+// array positions ("ARRF:"), an array result ("ARROWN:", whose shallow release
+// is exact for a retained buffer and at worst strands a fresh one's pointer
+// elements, #9187) and a box with no reference field or payload; every other
+// position keeps the AST caller's leak-mode floor.
 // The AST registries' spelling of what ssaunits.grow_rows found for `callee`,
 // for the callers the AST lowering still emits: irlower.grow_param_flags_of's
 // mask — one token per position, the receiver's first and then one per
@@ -3027,8 +3120,9 @@ pub function caller_sigs(sg: irlower.FnSigs, name: string, f: ssasem.Func, modes
         var flags: string = tuple_flags(tup);
         if (flags != "") { tuples = tuples.append("ARRF:" + name + "|" + flags); }
     }
-    if (scalar_array(f.result)) { arrays = arrays.append("ARROWN:" + name); }
+    if let typeinfo.TypeArray(_) = f.result { arrays = arrays.append("ARROWN:" + name); }
     if (box_only_result(f)) { arrays = arrays.append(name); }
+    if (box_only_union_result(f)) { arrays = arrays.append("ENUM:" + name); }
     // The counted-return class ("CNTRET:") is read through two more fields of
     // its own, so erasing the prefixed row alone would leave the caller still
     // told the result carries a count: cnt_struct_ret_fns names the callee and
@@ -3181,6 +3275,14 @@ function derives(a: ssasem.Analysis, v: i32, root: i32): boolean {
 // prove the box is the caller's only one.
 function box_only_result(f: ssasem.Func): boolean {
     if let typeinfo.TypeStruct(_) = f.result { return !has_children(f.result, f); }
+    return false;
+}
+
+// The union half of box_only_result, read through "ENUM:": a variant box with
+// no reference payload is released by the rc-guarded box dec alone, so a
+// shared result stays balanced (#9187).
+function box_only_union_result(f: ssasem.Func): boolean {
+    if let typeinfo.TypeUnion(_) = f.result { return !has_children(f.result, f); }
     return false;
 }
 

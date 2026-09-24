@@ -39,6 +39,8 @@ import (
 // because the walker refused an iterated array outright; a transient for-in
 // binder no longer does that, so the share behind it is admitted and the row
 // balances. Its exit never moved.
+// `appended_now_clean` followed once a copying push retained the elements its
+// copy shares (#9209).
 //
 // `escaping_holder_now_clean` is the one row that moved further than the pin
 // predicted: through the bind the returned literal's field value is a bare
@@ -183,9 +185,11 @@ function round(i: i32): i32 {
 			want: 40,
 		},
 		{
-			// REFUSED: `tt` is rebound by a self-append, so the stored buffer
-			// is no longer the one read out of the field.
-			name: "refused_appended",
+			// Was REFUSED, and is not any more. `tt` is rebound by a
+			// self-append, which copies the shared buffer; the copy now
+			// retains the elements it shares and the superseded buffer is
+			// released (#9209), so this balances.
+			name: "appended_now_clean",
 			src: strarrBindShareDecl + `function round(i: i32): i32 {
     var q: P = P { f: mkv(i), n: i };
     var tt: string[] = q.f;
@@ -193,7 +197,7 @@ function round(i: i32): i32 {
     var p: P = P { f: tt, n: i };
     return (p.f.len() + p.f[0].len() + q.f.len() + q.n) % 101;
 }` + strarrBindPlainMain,
-			want: 68,
+			want: 68, balance: true,
 		},
 		{
 			// Was REFUSED, and is not any more. `for s in tt` binds an element

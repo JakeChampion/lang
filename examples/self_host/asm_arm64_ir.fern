@@ -1741,7 +1741,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
     var d: string = ssa_dst(reg_of, ins.result);
     if (k == 1) { s = ssa_const_reg(util.i32_to_string(ins.imm), d, s); }
     else if (k == 3) { s = ssa_const_reg(ins.str, d, s); }
-    else if (k == 4) { s = s.write("    ldr " + d + ", =" + util.i64_to_string(util.parse_f64_bits(ins.str)) + "\n"); }
+    else if (k == 4) { s = s.write("    ldr " + d + ", =" + ins.str + "\n"); }
     else if (k == 7) { s = ssa_load(reg_of, ins.args[0], d, s); }
     else if (k == 9 && ssa_direct_bin(ir.kind_id(ins.str))) { return ssa_bin_in_place(ins, reg_of, fr, s); }
     else if (k == 9 && ssa_shift_tag(ir.kind_id(ins.str)) && fr.imm.is_imm[ins.args[1]]) { return ssa_bin_in_place(ins, reg_of, fr, s); }
@@ -2665,11 +2665,6 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
         s = s.need("heap"); s = s.need("reader"); s = s.need("writer_truncate");
         s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
         s = s.write("    bl __fn___fern_writer_truncate\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
-    } else if (o.kind_tag == 210) {  // arg_at
-        // [i] -> push argv[i] as a fresh rc-headered string box
-        // (asm_arm64.emit_runtime's __fern_arg_at, in the same args block).
-        s = s.need("heap"); s = s.need("args");
-        s = s.write("    ldr x0, [sp], #16\n    bl __fern_arg_at\n    str x0, [sp, #-16]!\n");
     } else if ((o.kind_tag >= 291 && o.kind_tag <= 297) || o.kind_tag == 306 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328) {  // the buf_* builder
         s = emit_arm64_op_buf(o, s);
     } else if (o.kind_tag == 181) {  // sleep_ms
@@ -3702,7 +3697,7 @@ function rt_arm64_str_eq(): string {
 pub function emit_ir_runtime_fern_fn(src: string, all_structs: irlower.StructTab, s: asmcore.EmitState): asmcore.EmitState {
     var m: parser.Module = parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(src)));
     var fns: parser.FuncDecl[] = m.funcs;
-    var bparams: string[] = irlower.borrowable_params_interproc(fns);
+    var bparams: string[] = irlower.borrowable_params_interproc(fns, all_structs);
     var sg: irlower.FnSigs = irlower.FnSigs {
         ...irlower.fn_sigs_for_borrow(fns, all_structs, ircore.array_ret_fns_of(fns), bparams),
         consume_safe_params: irlower.consume_safe_params_interproc(fns, bparams),
@@ -5095,10 +5090,10 @@ function emit_san_uaf_abort(s: asmcore.EmitState): asmcore.EmitState {
 // because this backend also carries the over-release report and the
 // quarantine: a "sanitize" build that printed a census alone would misreport
 // what it checks. The census counts at 8-byte-word granularity on both sides —
-// __fern_alloc's rounded request and each free site's own class index are
-// the same number for the same block — so a block's alloc and eventual free
-// cancel exactly. The large tier's further capacity round-up is deliberately
-// NOT counted: the free side never sees it.
+// __fern_alloc's rounded request and each free site's logical size are the
+// same number for the same block — so a block's alloc and eventual free
+// cancel exactly. The capacity a block is rounded up to (__fern_capw, the
+// large tier) is deliberately NOT counted: the free side never sees it.
 function leak_check_on(): boolean {
     if (sanitize_on()) { return true; }
     match (env("FERN_LEAKCHECK")) {
@@ -5176,17 +5171,30 @@ function lc_bump_free_words(s: asmcore.EmitState, words: string, t1: string, t2:
 // quarantine treatment for both. `ptr` and `words` must avoid x1..x4, which __fern_large_push
 // clobbers; x3 / x9 / x10 are this helper's own scratch. `lbl` distinguishes
 // one call site's labels from another's.
+// freelist_push emits the push of the block at `ptr` onto the small-tier
+// freelist. `words` holds the block's logical size and comes out as its class,
+// the capacity __fern_capw rounds it to, which is the size __fern_alloc bumped
+// the block at. `base` and `tmp` are scratch. x30 is saved around the call,
+// since several of these sites sit in helpers that return through it.
+function freelist_push(s: asmcore.EmitState, ptr: string, words: string, base: string, tmp: string): asmcore.EmitState {
+    s = s.write("    stp " + words + ", x30, [sp, #-16]!\n");
+    s = s.write("    bl __fern_capw\n");
+    s = s.write("    ldp " + words + ", x30, [sp], #16\n");
+    s = s.write("    adrp " + base + ", __fern_freelist\n");
+    s = s.write("    add " + base + ", " + base + ", :lo12:__fern_freelist\n");
+    s = s.write("    ldr " + tmp + ", [" + base + ", " + words + ", lsl #3]\n");
+    s = s.write("    str " + tmp + ", [" + ptr + "]\n");
+    s = s.write("    str " + ptr + ", [" + base + ", " + words + ", lsl #3]\n");
+    return s;
+}
+
 function buf_block_free(s: asmcore.EmitState, ptr: string, words: string, lbl: string): asmcore.EmitState {
     s = s.write("    mov x9, #0x10000\n");
     s = s.write("    cmp " + words + ", x9\n");
     s = s.write("    b.hs ." + lbl + "_large\n");
     s = lc_bump_free_words(s, words, "x3", "x10");
     if (!rc_free_debug_on()) {
-    s = s.write("    adrp x3, __fern_freelist\n");
-    s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
-    s = s.write("    ldr x10, [x3, " + words + ", lsl #3]\n");
-    s = s.write("    str x10, [" + ptr + "]\n");
-    s = s.write("    str " + ptr + ", [x3, " + words + ", lsl #3]\n");
+    s = freelist_push(s, ptr, words, "x3", "x10");
     }
     s = s.write("    b ." + lbl + "_done\n");
     s = s.write("." + lbl + "_large:\n");
@@ -5290,9 +5298,9 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    .globl __fern_arr_push_copied\n");
     s = s.write("__fern_arr_push_copied: .quad 0\n");
     s = s.write("    .align 3\n");
-    // Phase 3 size-class freelist (mirror of x86-64): head pointers
-    // indexed by idx = roundup8(size)/8; <= 8 KiB classes. Pushed by
-    // __fern_arr_dec, popped by __fern_alloc before bumping.
+    // Phase 3 size-class freelist (mirror of x86-64): head pointers indexed by
+    // __fern_capw(words), below 65536 words. Pushed by the free sites, popped by
+    // __fern_alloc before bumping.
     s = s.write("__fern_freelist: .skip 524288\n");
     s = s.write("    .align 8\n");
     // Large-tier freelist (#3425): the 65536-word __fern_freelist above recycles
@@ -5309,13 +5317,46 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    .align 3\n");
     s = s.write("__fern_large_freelist_shadow: .skip 20480\n");
     s = s.write("    .text\n");
+    // __fern_capw(words) -> class, in place in its one stack slot: the small
+    // tier's size class for a block of `words` 8-byte words, which is also the
+    // capacity __fern_alloc bumps the block at. Exact up to 256 words (2 KiB),
+    // then native's 3-significant-bit capacities, so a buffer that grows a
+    // little at a time finds the block it just freed rather than a new class
+    // per step. Clamped below 65536, where the large tier takes over. Preserves
+    // every register but x30, which `bl` set.
+    s = s.write(".globl __fern_capw\n");
+    s = s.write("__fern_capw:\n");
+    s = s.write("    stp x9, x10, [sp, #-32]!\n");
+    s = s.write("    str x11, [sp, #16]\n");
+    s = s.write("    ldr x9, [sp, #32]\n");
+    s = s.write("    cmp x9, #256\n");
+    s = s.write("    b.ls .Lcapw_ret\n");
+    s = s.write("    clz x10, x9\n");
+    s = s.write("    mov x11, #61\n");
+    s = s.write("    sub x10, x11, x10\n");            // msb - 2
+    s = s.write("    mov x11, #1\n");
+    s = s.write("    lsl x11, x11, x10\n");            // granule
+    s = s.write("    add x9, x9, x11\n");
+    s = s.write("    sub x9, x9, #1\n");
+    s = s.write("    neg x11, x11\n");
+    s = s.write("    and x9, x9, x11\n");              // round up to the granule
+    s = s.write("    mov x10, #0x10000\n");
+    s = s.write("    cmp x9, x10\n");
+    s = s.write("    b.lo .Lcapw_store\n");
+    s = s.write("    mov x9, #65535\n");
+    s = s.write(".Lcapw_store:\n");
+    s = s.write("    str x9, [sp, #32]\n");
+    s = s.write(".Lcapw_ret:\n");
+    s = s.write("    ldr x11, [sp, #16]\n");
+    s = s.write("    ldp x9, x10, [sp], #32\n");
+    s = s.write("    ret\n");
     s = s.write(".globl __fern_alloc\n");
     s = s.write(".type __fern_alloc, %function\n");
     s = s.write("__fern_alloc:\n");
     s = s.write("    stp x29, x30, [sp, #-16]!\n");
     s = s.write("    mov x29, sp\n");
-    // Round request up to a multiple of 8, then try the freelist
-    // (idx = size/8; pop the class head if non-empty). Clobbers only
+    // Round request up to a multiple of 8, then try the freelist (idx =
+    // __fern_capw(size/8); pop the class head if non-empty). Clobbers only
     // x0..x3 like the bump path below.
     s = s.write("    add x0, x0, #7\n");
     s = s.write("    lsr x3, x0, #3\n");        // idx = roundup8(size)/8
@@ -5325,6 +5366,12 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    mov x2, #0x10000\n");      // freelist class cap (65536); reg form (shifted cmp imm may be unsupported)
     s = s.write("    cmp x3, x2\n");
     s = s.write("    b.hs .Lalloc_large\n");
+    // The small tier bumps a block at its class's capacity, so any freed block
+    // of the class satisfies any request that rounds to it. x30 is in the frame.
+    s = s.write("    str x3, [sp, #-16]!\n");
+    s = s.write("    bl __fern_capw\n");
+    s = s.write("    ldr x3, [sp], #16\n");
+    s = s.write("    lsl x0, x3, #3\n");              // capacity bytes, for the bump
     s = s.write("    adrp x1, __fern_freelist\n");
     s = s.write("    add x1, x1, :lo12:__fern_freelist\n");
     s = s.write("    ldr x2, [x1, x3, lsl #3]\n");   // head = freelist[idx]
@@ -6475,11 +6522,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    sub x4, x0, #16\n");          // block base
     s = lc_bump_free_words(s, "x3", "x2", "x9");
     if (!rc_free_debug_on()) {
-    s = s.write("    adrp x5, __fern_freelist\n");
-    s = s.write("    add x5, x5, :lo12:__fern_freelist\n");
-    s = s.write("    ldr x6, [x5, x3, lsl #3]\n"); // old head
-    s = s.write("    str x6, [x4]\n");             // *base = head
-    s = s.write("    str x4, [x5, x3, lsl #3]\n"); // freelist[words] = base
+    s = freelist_push(s, "x4", "x3", "x5", "x6");
     }
     s = s.write(".Lsarelo_fresh:\n");
     s = s.write("    ldr x0, [sp]\n");             // slots = arr_box cap
@@ -6529,11 +6572,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    sub x5, x1, #16\n");          // base = old - 16
     s = lc_bump_free_words(s, "x4", "x2", "x3");
     if (!rc_free_debug_on()) {
-    s = s.write("    adrp x6, __fern_freelist\n");
-    s = s.write("    add x6, x6, :lo12:__fern_freelist\n");
-    s = s.write("    ldr x9, [x6, x4, lsl #3]\n"); // old head
-    s = s.write("    str x9, [x5]\n");             // *base = old head
-    s = s.write("    str x5, [x6, x4, lsl #3]\n"); // freelist[idx] = base
+    s = freelist_push(s, "x5", "x4", "x6", "x9");
     }
     s = s.write(".Lsd_ret:\n");
     s = s.write("    ret\n");                      // x0 = new
@@ -6638,11 +6677,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    sub x2, x0, #16\n");          // base = data - 16
     s = lc_bump_free_words(s, "x1", "x3", "x9");
     if (!rc_free_debug_on()) {
-    s = s.write("    adrp x3, __fern_freelist\n");
-    s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
-    s = s.write("    ldr x9, [x3, x1, lsl #3]\n"); // old head
-    s = s.write("    str x9, [x2]\n");             // *base = old head
-    s = s.write("    str x2, [x3, x1, lsl #3]\n"); // freelist[idx] = base
+    s = freelist_push(s, "x2", "x1", "x3", "x9");
     }
     s = s.write(".Larrdec_ret:\n");
     s = s.write("    ret\n");
@@ -6718,11 +6753,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     // Quarantine (rc_free_debug_on): the DATA buffer carries no rc word, so
     // declining the push is the whole treatment for it.
     if (!rc_free_debug_on()) {
-    s = s.write("    adrp x3, __fern_freelist\n");
-    s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
-    s = s.write("    ldr x10, [x3, x2, lsl #3]\n");   // old head of class `words`
-    s = s.write("    str x10, [x1]\n");            // *data = old head
-    s = s.write("    str x1, [x3, x2, lsl #3]\n"); // freelist[words] = data
+    s = freelist_push(s, "x1", "x2", "x3", "x10");
     }
     s = s.write(".Lstrfree_box:\n");
     // The rc-headered block is base = box-8 (24 bytes = class 3). Clear rc first
@@ -6757,11 +6788,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    bhs .Lstrfree_fused_large\n");
     s = lc_bump_free_words(s, "x2", "x3", "x10");
     if (!rc_free_debug_on()) {
-    s = s.write("    adrp x3, __fern_freelist\n");
-    s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
-    s = s.write("    ldr x10, [x3, x2, lsl #3]\n");   // old head of class `words`
-    s = s.write("    str x10, [x1]\n");            // *base = old head
-    s = s.write("    str x1, [x3, x2, lsl #3]\n"); // freelist[words] = base
+    s = freelist_push(s, "x1", "x2", "x3", "x10");
     }
     s = s.write("    b .Lstrfree_ret\n");
     // Tail-branch to __fern_large_push (x1 = base, x2 = bytes), as .Larrdec_large
@@ -7013,11 +7040,7 @@ function emit_arm64_arr_deep_free_variant(s: asmcore.EmitState, sym: string, lbl
     s = s.write("    sub x2, x19, #16\n");          // base = arr - 16
     s = lc_bump_free_words(s, "x1", "x3", "x9");
     if (!rc_free_debug_on()) {
-    s = s.write("    adrp x3, __fern_freelist\n");
-    s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
-    s = s.write("    ldr x9, [x3, x1, lsl #3]\n");  // old head
-    s = s.write("    str x9, [x2]\n");              // *base = old head
-    s = s.write("    str x2, [x3, x1, lsl #3]\n");  // freelist[class] = base
+    s = freelist_push(s, "x2", "x1", "x3", "x9");
     }
     s = s.write(".L" + lbl + "_pop:\n");
     s = s.write("    ldp x20, x21, [sp], #16\n");
@@ -8345,11 +8368,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write("    sub x2, x19, #16\n");         // old box base
         s = lc_bump_free_words(s, "x1", "x3", "x9");
         if (!rc_free_debug_on()) {
-        s = s.write("    adrp x3, __fern_freelist\n");
-        s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
-        s = s.write("    ldr x9, [x3, x1, lsl #3]\n"); // old head
-        s = s.write("    str x9, [x2]\n");             // *base = old head
-        s = s.write("    str x2, [x3, x1, lsl #3]\n"); // freelist[idx] = base
+        s = freelist_push(s, "x2", "x1", "x3", "x9");
         }
         s = s.write(".Lapo_ret:\n");
         s = s.write("    ldp x19, x20, [sp], #16\n");

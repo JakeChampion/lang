@@ -3383,6 +3383,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 					strings.HasPrefix(op.Str, "__drop_arr_dyn_") ||
 					strings.HasPrefix(op.Str, "__drop_arr_of_") ||
 					strings.HasPrefix(op.Str, "__drop_map_via_") ||
+					strings.HasPrefix(op.Str, "__drop_mapchain_") ||
 					op.Str == "__drop_map_str_values" ||
 					op.Str == "__drop_map_str_keys" ||
 					strings.HasPrefix(op.Str, "__drop_enum_") ||
@@ -3536,6 +3537,13 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 				fn = genMapStrValDropFn(ptrW)
 			} else if name == "__drop_map_str_keys" {
 				fn = genMapStrKeyDropFn(ptrW)
+			} else if strings.HasPrefix(name, "__drop_mapchain_") {
+				// A Map[]'s per-element drop: the map's own drop chain, whose
+				// value-column drop this worklist then generates from the body.
+				fn = genMapChainDropFn(name)
+				if fn == nil {
+					continue
+				}
 			} else if perVal := strings.TrimPrefix(name, "__drop_map_via_"); perVal != name {
 				// Map value-column drop loop; its body calls the embedded
 				// per-value drop (__drop_struct_<V> / __drop_enum_<V>), which
@@ -3666,10 +3674,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 	// the still-present `__fern_map_drop` (a backend runtime helper, always
 	// available) runs on the same unreachable pointer and is itself dead. When any
 	// live map exists `__map_drop_values` is loaded, so this pass is a no-op and no
-	// reachable reclamation is ever removed. This restores the "Map-in-enum deep
-	// drop is a documented safe leak" invariant (see enumRcPayloadsEligible) for
-	// the array-element / accumulator reclaim path that generates the drop fn
-	// regardless of that eligibility gate.
+	// reachable reclamation is ever removed.
 	mapDropLoaded := false
 	for _, f := range out.Funcs {
 		if f.Name == "__map_drop_values" {
@@ -18774,18 +18779,6 @@ func (b *builder) emitEnumSlotDrop(slot int32, et ast.EnumType, eligible bool) {
 				b.emit(Op{Kind: OpEq})
 				b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 				for _, ld := range vd.loads {
-					if isMapType(ld.typ) {
-						// Map-in-enum DOCUMENTED SAFE LEAK (#4425) — the inline
-						// local-drop sibling of genEnumDropFn's skip. A Map-payload
-						// variant reclaims via __map_drop_values (dropStructField),
-						// which lives in core/map.fern — a program can use the enum
-						// WITHOUT importing it (no map operations, e.g. a local
-						// `JsonValue` bound to `JString(...)`), so that call was to an
-						// unloaded symbol (wasm "unknown callee" / native "undefined
-						// label"). Skip the map reclaim: the map leaks (safe), matching
-						// the enum's EnumRcPayloads exclusion; the box is freed below.
-						continue
-					}
 					b.emit(Op{Kind: OpLoadLocal, I32: slot})
 					if ld.off != 0 {
 						b.emit(Op{Kind: OpConstI32, I32: ld.off})

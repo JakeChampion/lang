@@ -201,7 +201,10 @@ pub struct Module { funcs: FuncDecl[], structs: StructDecl[], aliases: TypeAlias
 // a bounded type parameter may still call it through the trait.
 // provided is every method name the trait declares — abstract, defaulted, or
 // associated — the set a bound on a type parameter makes callable.
-pub struct TraitReq { trait_name: string, methods: string[], req_sigs: FuncDecl[], supertraits: string[], assoc_sigs: FuncDecl[], provided: string[], assoc_types: string[] }
+// `module` is the bundle prefix of the module that declared the trait, "" for
+// the program's own module; it is what a qualified `@derive(cmp.Eq)` resolves
+// against, since `trait_name` is simplified past any qualifier.
+pub struct TraitReq { trait_name: string, methods: string[], req_sigs: FuncDecl[], supertraits: string[], assoc_sigs: FuncDecl[], provided: string[], assoc_types: string[], module: string }
 
 // TraitDecl is the `trait` block as WRITTEN, retained for the formatter
 // (#6773) and, since it is the only record of a trait's TYPE PARAMETERS, for
@@ -407,6 +410,12 @@ pub function discard_name(name: string, line: i32, col: i32, nth: i32): string {
 // (float settling, destination-width reading) skip it.
 pub function is_unit_literal(n: ast.ExprNumber): boolean {
     return n.raw == "()";
+}
+// is_quoted_literal: the node is a character or byte literal (`'a'`, `b'0'`),
+// whose `raw` is its quoted spelling. A `0o` / `0b` numeral keeps a `raw` too,
+// and is a written numeral like any other.
+pub function is_quoted_literal(n: ast.ExprNumber): boolean {
+    return n.raw.len() > 0 && (n.raw[0] == b'\'' || (n.raw.len() > 1 && n.raw[0] == b'b' && n.raw[1] == b'\''));
 }
 // is_cast_op reads back what the `as` postfix wrote: a unary operator whose
 // name is "as_" followed by the target type's spelling. The `as?` downcast
@@ -3707,7 +3716,7 @@ function branch_stmt_start(p: Par): boolean {
 // consulted, `loop { … }` counts as unconditional (breaks are ignored, the same
 // conservative stance the Go side takes), an `if` needs both arms, and a `match`
 // needs every arm.
-function branch_stmts_diverge(stmts: ast.Stmt[]): boolean {
+pub function branch_stmts_diverge(stmts: ast.Stmt[]): boolean {
     if (stmts.len() == 0) { return false; }
     return branch_stmt_diverges(stmts[stmts.len() - 1]);
 }
@@ -3738,9 +3747,10 @@ function branch_stmt_diverges(st: ast.Stmt): boolean {
 
 // branch_dead_tail picks the UNREACHABLE value a diverging branch is given so
 // its shape matches every other value branch (leading statements + a trailing
-// value). Reusing the `return E` the block leaves through keeps the tail's type
-// consistent with the enclosing function's; anything else — a `loop`, a bare
-// `break`, a void `return` — takes a zero, which no path can read.
+// value). It reuses the `return E` the block leaves through; anything else — a
+// `loop`, a bare `break`, a void `return` — takes a zero, which no path can
+// read. Its type is the enclosing function's, not the block's, so the checker
+// does not count a diverging branch among the block's arm types.
 function branch_dead_tail(stmts: ast.Stmt[]): ast.Expr {
     if (stmts.len() == 0) { return e_number("0", "", false); }
     match (stmts[stmts.len() - 1]) {
@@ -8374,7 +8384,7 @@ pub function builtin_function_names(): string[] {
     return [
         // I/O + process + environment
         "print", "write", "eprint", "print_int", "eprint_int", "putchar",
-        "exit", "args", "arg_at", "args_count", "env", "subprocess",
+        "exit", "args", "env", "subprocess",
         // Crash-only supervision (docs/CRASH-ONLY-SERVE.md D2'): fork the
         // process / exec into another program / reap a child. std/tcp's
         // tcp_serve_supervised is the stdlib caller of the first and last;
@@ -8846,6 +8856,9 @@ pub struct MFns {
     // typed from the variant's declared fields with the enum's type params
     // substituted from the scrutinee's spelling.
     enums: EnumDecl[],
+    // The module's impls, so a generic's return type spelled through a
+    // projection on a type parameter (`H::Item`) resolves once substituted.
+    impls: ImplInfo[],
 }
 
 // mfns_buckets is the bucket count of the generic index. Prime, and far larger
@@ -8861,7 +8874,7 @@ function mfns_buckets(): i32 { return 257; }
 // monomorphise passes build it once from a field they never reassign — the
 // clones they produce accumulate in a separate list — so an entry position
 // means the same thing for the whole pass.
-pub function mfns_of(decls: FuncDecl[], structs: StructDecl[], enums: EnumDecl[]): MFns {
+pub function mfns_of(decls: FuncDecl[], structs: StructDecl[], enums: EnumDecl[], impls: ImplInfo[]): MFns {
     var ghead: i32[] = [];
     var b: i32 = 0;
     var nb: i32 = mfns_buckets();
@@ -8888,7 +8901,7 @@ pub function mfns_of(decls: FuncDecl[], structs: StructDecl[], enums: EnumDecl[]
         ghead = ghead.with(bk, k);
         k = k - 1;
     }
-    return MFns { decls: decls, ghead: ghead, gnext: gnext, gname: gname, gat: gat, smm: smm, structs: structs, enums: enums };
+    return MFns { decls: decls, ghead: ghead, gnext: gnext, gname: gname, gat: gat, smm: smm, structs: structs, enums: enums, impls: impls };
 }
 
 // bg_find returns the position in `fns.decls` of the bounded-generic function
@@ -9682,24 +9695,20 @@ function full_ret_binds(fd: FuncDecl, args: ast.Expr[], env: MEnv, funcs: MFns, 
     return binds;
 }
 
-// variant_arg_binds binds the variables a `Base[..]` parameter pins through a
-// variant construction argument `V(payload)` of the generic enum Base. The
-// payload's inferred types bind the enum's own variables through the
-// variant's field types, and each so bound carries over to the parameter's
-// argument in the same position. mono_infer has no type for a bare
-// construction, so this is the one way `pair(Full(9))` settles a variable
-// only the payload names.
+// variant_arg_binds binds the variables a parameter pins through a variant
+// construction argument `V(payload)` of the generic enum Base. The payload's
+// inferred types bind the enum's own variables through the variant's field
+// types. A `Base[..]` parameter carries each so bound over to its argument in
+// the same position; a bare type-variable parameter (`a: C`) binds to the
+// whole `Base[..]` once every enum variable is bound. mono_infer has no type
+// for a bare construction, so this is the one way `pair(Full(9))` settles a
+// variable only the payload names.
 function variant_arg_binds(pattern: string, arg: ast.Expr, env: MEnv, funcs: MFns, vars: string[], binds: MEnv): MEnv {
-    var pb: i32 = first_bracket(pattern);
-    if (pb <= 0 || slice_unchecked(pattern, pattern.len() - 1, pattern.len()) != "]") { return binds; }
     if let ast.ExprCall(c) = arg {
         if let ast.ExprIdent(cid) = c.callee {
             var owner: i32 = genum_owner_of_variant(funcs.enums, cid.name);
             if (owner < 0) { return binds; }
             var ed: EnumDecl = funcs.enums[owner];
-            if (slice_unchecked(pattern, 0, pb) != ed.name) { return binds; }
-            var pargs: string[] = split_top_commas(slice_unchecked(pattern, pb + 1, pattern.len() - 1));
-            if (pargs.len() != ed.type_params.len()) { return binds; }
             var vidx: i32 = variant_struct_index(funcs.structs, cid.name, ed.name);
             if (vidx < 0) { return binds; }
             var fields: StructFieldDecl[] = funcs.structs[vidx].fields;
@@ -9710,6 +9719,23 @@ function variant_arg_binds(pattern: string, arg: ast.Expr, env: MEnv, funcs: MFn
                 if (at.len() > 0) { own = bind_unify(fields[fi].type_name, at, ed.type_params, own); }
                 fi = fi + 1;
             }
+            if (str_list_contains(vars, pattern)) {
+                var whole: string = ed.name + "[";
+                var k: i32 = 0;
+                while (k < ed.type_params.len()) {
+                    var kb: string = own.elook(ed.type_params[k]);
+                    if (kb.len() == 0) { return binds; }
+                    if (k > 0) { whole = whole + ", "; }
+                    whole = whole + kb;
+                    k = k + 1;
+                }
+                return bind_unify(pattern, whole + "]", vars, binds);
+            }
+            var pb: i32 = first_bracket(pattern);
+            if (pb <= 0 || slice_unchecked(pattern, pattern.len() - 1, pattern.len()) != "]") { return binds; }
+            if (slice_unchecked(pattern, 0, pb) != ed.name) { return binds; }
+            var pargs: string[] = split_top_commas(slice_unchecked(pattern, pb + 1, pattern.len() - 1));
+            if (pargs.len() != ed.type_params.len()) { return binds; }
             var out: MEnv = binds;
             var j: i32 = 0;
             while (j < pargs.len()) {
@@ -9776,7 +9802,7 @@ function call_ret_type(funcs: MFns, name: string, args: ast.Expr[], env: MEnv): 
     if (key.len() == 0) { return ""; }
     var cts: string[] = [key];
     if (fd.type_params.len() != 1) { cts = split_inst_key(key); }
-    var rt: string = subst_ty(fd.ret_type, fd.type_params, cts);
+    var rt: string = resolve_proj_in_type(subst_ty(fd.ret_type, fd.type_params, cts), funcs.impls);
     // The bounded-only substitution above can leave an UNBOUNDED type
     // param in the return type — `sort_key[T, K: Ord](xs, key): T[]`
     // erases T from fd.type_params, so `T[]` survives with T unresolved,
@@ -10869,18 +10895,21 @@ function env_from_decl(fd: FuncDecl): MEnv {
 // funcref signature would fall back to i32 for a position the clone knows.
 function subst_ty_list(list: string, tparams: string[], cts: string[]): string {
     if (list.len() == 0) { return ""; }
-    var parts: string[] = split_top_commas(list);
+    return subst_ty_join(split_top_commas(list), ",", tparams, cts);
+}
+
+function subst_ty_join(parts: string[], sep: string, tparams: string[], cts: string[]): string {
     var out: string = "";
     var i: i32 = 0;
     while (i < parts.len()) {
-        if (i > 0) { out = out + ","; }
+        if (i > 0) { out = out + sep; }
         out = out + subst_ty(parts[i], tparams, cts);
         i = i + 1;
     }
     return out;
 }
 
-function subst_ty(name: string, tparams: string[], cts: string[]): string {
+pub function subst_ty(name: string, tparams: string[], cts: string[]): string {
     var k: i32 = tp_index(name, tparams);
     if (k >= 0) { return cts[k]; }
     // A function type's parameter list spells a consuming slot `own T`, and
@@ -10892,28 +10921,18 @@ function subst_ty(name: string, tparams: string[], cts: string[]): string {
         return subst_ty(slice_unchecked(name, 0, name.len() - 2), tparams, cts) + "[]";
     }
     if (util.is_tuple_type_name(name) && slice_unchecked(name, name.len() - 1, name.len()) == ")") {
-        var tparts: string[] = split_top_commas(slice_unchecked(name, 1, name.len() - 1));
-        var tnin: string = "";
-        var tj: i32 = 0;
-        while (tj < tparts.len()) {
-            if (tj > 0) { tnin = tnin + ", "; }
-            tnin = tnin + subst_ty(tparts[tj], tparams, cts);
-            tj = tj + 1;
-        }
-        return "(" + tnin + ")";
+        return "(" + subst_ty_join(split_top_commas(slice_unchecked(name, 1, name.len() - 1)), ", ", tparams, cts) + ")";
     }
     var lb: i32 = first_bracket(name);
     if (lb > 0 && slice_unchecked(name, name.len() - 1, name.len()) == "]") {
-        var inner: str = slice_unchecked(name, lb + 1, name.len() - 1);
-        var parts: string[] = split_top_commas(inner);
-        var ninner: string = "";
-        var j: i32 = 0;
-        while (j < parts.len()) {
-            if (j > 0) { ninner = ninner + ", "; }
-            ninner = ninner + subst_ty(parts[j], tparams, cts);
-            j = j + 1;
-        }
-        return slice_unchecked(name, 0, lb) + "[" + ninner + "]";
+        return slice_unchecked(name, 0, lb) + "[" + subst_ty_join(split_top_commas(slice_unchecked(name, lb + 1, name.len() - 1)), ", ", tparams, cts) + "]";
+    }
+    // A projection `Base::Name` substitutes through its base: `H::Item` at
+    // H = SBox is `SBox::Item`, which resolve_proj_in_type can then resolve.
+    var ps: i32 = name.len() - 1;
+    while (ps > 0 && ident_byte((name[ps] as i32))) { ps = ps - 1; }
+    if (ps > 1 && ps < name.len() - 1 && name[ps] == b':' && name[ps - 1] == b':') {
+        return subst_ty(slice_unchecked(name, 0, ps - 1) + "", tparams, cts) + slice_unchecked(name, ps - 1, name.len());
     }
     return name;
 }
@@ -11240,7 +11259,9 @@ pub function split_plus_bounds(bound: string): string[] {
 // clone_bg builds the `f__<key>` clone of bounded-generic func `fd`,
 // substituting each type variable with its concrete type (the `__`-
 // joined `key`, split back into per-parameter pieces) across params +
-// return + body annotations.
+// return + body annotations. A projection through a type parameter
+// (`H::Item`) names a concrete base only once substituted, so the
+// signature's projections resolve here rather than at parse time.
 function clone_bg(fd: FuncDecl, key: string, impls: ImplInfo[]): FuncDecl {
     var tparams: string[] = fd.type_params;
     // A single type parameter's key IS the one concrete type, verbatim —
@@ -11264,7 +11285,7 @@ function clone_bg(fd: FuncDecl, key: string, impls: ImplInfo[]): FuncDecl {
     var nparams: ast.ParamDecl[] = [];
     var i: i32 = 0;
     while (i < fd.params.len()) {
-        nparams = nparams.append(ast.ParamDecl { name: fd.params[i].name, type_name: subst_ty(fd.params[i].type_name, tparams, cts), is_str: fd.params[i].is_str, is_view: fd.params[i].is_view, str_elem: fd.params[i].str_elem, own: fd.params[i].own, has_default: fd.params[i].has_default, default_value: fd.params[i].default_value, ret_arr: fd.params[i].ret_arr, fn_ret: subst_ty(fd.params[i].fn_ret, tparams, cts), fn_param_dyn: fd.params[i].fn_param_dyn, fn_param_types: subst_ty_list(fd.params[i].fn_param_types, tparams, cts) });
+        nparams = nparams.append(ast.ParamDecl { name: fd.params[i].name, type_name: resolve_proj_in_type(subst_ty(fd.params[i].type_name, tparams, cts), impls), is_str: fd.params[i].is_str, is_view: fd.params[i].is_view, str_elem: fd.params[i].str_elem, own: fd.params[i].own, has_default: fd.params[i].has_default, default_value: fd.params[i].default_value, ret_arr: fd.params[i].ret_arr, fn_ret: subst_ty(fd.params[i].fn_ret, tparams, cts), fn_param_dyn: fd.params[i].fn_param_dyn, fn_param_types: subst_ty_list(fd.params[i].fn_param_types, tparams, cts) });
         i = i + 1;
     }
     // The clone is an INSTANTIATION: every `T` has been replaced by the
@@ -11283,7 +11304,7 @@ function clone_bg(fd: FuncDecl, key: string, impls: ImplInfo[]): FuncDecl {
         type_param_count: 0,
         bound_traits: notp,
         params: nparams,
-        ret_type: subst_ty(fd.ret_type, tparams, cts),
+        ret_type: resolve_proj_in_type(subst_ty(fd.ret_type, tparams, cts), impls),
         ret_fn_ret: subst_ty(fd.ret_fn_ret, tparams, cts),
         ret_fn_param_types: subst_ty_list(fd.ret_fn_param_types, tparams, cts),
         body: subst_stmts(fd.body, tparams, cts)
@@ -11844,7 +11865,7 @@ pub function monomorphize_module(mod: Module): Module {
     if (!any_bg) { return mod; }
 
     var ins: Insts = Insts { inames: [], itypes: [], iargs: [] };
-    var fns: MFns = mfns_of(funcs, mod.structs, mod.enums);
+    var fns: MFns = mfns_of(funcs, mod.structs, mod.enums, mod.impls);
     // Rewrite call sites in every NON-generic function body. A bounded
     // generic's body is rewritten per clone instead; the template itself is
     // passed through so monomorphize_structs can still clone it from a
@@ -12542,7 +12563,7 @@ pub function monomorphize_structs(mod: Module): Module {
     if (gstructs.len() == 0) { return Module { ...mod, funcs: drop_bg_templates(mod.funcs) }; }
 
     var ins: Insts = Insts { inames: [], itypes: [], iargs: [] };
-    var sfns: MFns = mfns_of(mod.funcs, mod.structs, mod.enums);
+    var sfns: MFns = mfns_of(mod.funcs, mod.structs, mod.enums, mod.impls);
 
     // Phase 1: rewrite all references; drop the generic decls.
     var nstructs: StructDecl[] = [];
@@ -13751,7 +13772,7 @@ pub function monomorphize_enums(mod: Module): Module {
     var mmod: Module = Module { ...mod, enums: menums };
 
     var ins: Insts = Insts { inames: [], itypes: [], iargs: [] };
-    var efns: MFns = mfns_of(mod.funcs, mod.structs, menums);
+    var efns: MFns = mfns_of(mod.funcs, mod.structs, menums, mod.impls);
 
     // Phase 1: rewrite references in every function (body + param/ret types)
     // and the top-level statements, accumulating instantiations.
@@ -18929,14 +18950,12 @@ function all_fn_param_bound(params: ast.ParamDecl[], tps: string[]): boolean {
 }
 
 // has_fn_param_ret_var is the result-position sibling of has_fn_param_arg_var:
-// the `U` of `f: (T) => U`, which parse_decl_type keeps in the fn_ret sidecar.
-// EXACT, not mentioning: `f: (T) => U[]` (flat_map's shape) binds U fine, but
-// its clone is invalid on wasm for a further reason of its own (#9496), so
-// admitting it here trades one invalid module for a differently invalid one.
+// the `U` of `f: (T) => U` or `f: (T) => U[]` (flat_map's shape), which
+// parse_decl_type keeps in the fn_ret sidecar.
 function has_fn_param_ret_var(params: ast.ParamDecl[], name: string): boolean {
     var i: i32 = 0;
     while (i < params.len()) {
-        if ((params[i].type_name == "fn" || params[i].type_name == "fn[]") && params[i].fn_ret == name) { return true; }
+        if ((params[i].type_name == "fn" || params[i].type_name == "fn[]") && type_mentions_var(params[i].fn_ret, name)) { return true; }
         i = i + 1;
     }
     return false;
@@ -19277,7 +19296,7 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, Par) {
         if (p.peek_punct() == "}") { p = p.advance(); }
     }
     return (defaults,
-            TraitReq { trait_name: simple, methods: required, req_sigs: required_sigs, supertraits: supertraits, assoc_sigs: assoc_sigs, provided: provided, assoc_types: assoc_types },
+            TraitReq { trait_name: simple, methods: required, req_sigs: required_sigs, supertraits: supertraits, assoc_sigs: assoc_sigs, provided: provided, assoc_types: assoc_types, module: "" },
             TraitDecl { name: tname, type_params: trait_tps.tnames, supertraits: decl_supers, methods: decl_methods, line: tline, col: tcol, is_pub: false, assoc_types: assoc_types , is_package: false },
             p);
 }

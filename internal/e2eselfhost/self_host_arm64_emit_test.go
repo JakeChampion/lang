@@ -1783,18 +1783,6 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			"",
 		},
 		{
-			"args-count-at-least-one",
-			"function main(): i32 { if (args_count() >= 1) { return 1; } return 0; }",
-			1,
-			"",
-		},
-		{
-			"args-at-zero-non-empty",
-			"function main(): i32 { var p = arg_at(0); if (p.len() > 0) { return 1; } return 0; }",
-			1,
-			"",
-		},
-		{
 			"str-split-basic",
 			"function main(): i32 { var a = str_split(\"a,b,c\", \",\"); return a.len(); }",
 			3,

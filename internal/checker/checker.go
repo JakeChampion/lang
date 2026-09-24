@@ -109,6 +109,11 @@ type Info struct {
 	// contributes no entry, so a missing key means "not from a trait"
 	// and a multi-entry value means the flat `Methods` key is ambiguous.
 	MethodOwners map[string][]string
+	// MethodInsts lists every function registered under one
+	// MethodDeclSites key. It holds more than one only for a generic
+	// enum, whose instantiated methods all share the unmangled receiver
+	// name (`Bag`) and differ in their receiver parameter.
+	MethodInsts map[string][]string
 	// MethodDeclSites is where each registration was written, keyed like
 	// TraitMethods (`<Trait>.<Type>.<MethodName>`) for an impl-provided
 	// method and like Methods (`<Type>.<MethodName>`) for an inherent
@@ -1075,6 +1080,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			Methods:             map[string]string{},
 			TraitMethods:        map[string]string{},
 			MethodOwners:        map[string][]string{},
+			MethodInsts:         map[string][]string{},
 			MethodDeclSites:     map[string]ast.Position{},
 			MethodSources:       map[string]string{},
 			ModuleImports:       prog.ModuleImports,
@@ -5052,6 +5058,9 @@ func (c *checker) registerMethod(typeName, name, trait, mangled, srcModule strin
 	if _, exists := c.info.MethodDeclSites[site]; !exists {
 		c.info.MethodDeclSites[site] = pos
 	}
+	if !slices.Contains(c.info.MethodInsts[site], mangled) {
+		c.info.MethodInsts[site] = append(c.info.MethodInsts[site], mangled)
+	}
 	if _, exists := c.info.Methods[key]; !exists {
 		c.info.Methods[key] = mangled
 		c.info.MethodSources[mangled] = srcModule
@@ -5068,6 +5077,22 @@ func (c *checker) registerMethod(typeName, name, trait, mangled, srcModule strin
 	owners := append(c.info.MethodOwners[key], trait)
 	slices.Sort(owners)
 	c.info.MethodOwners[key] = owners
+}
+
+// instForReceiver picks, among the instantiations of a generic enum's method
+// registered under one key, the one whose receiver parameter is `recv`.
+// Anything else keeps `mangled`.
+func (c *checker) instForReceiver(typeName, name, trait, mangled string, recv ast.Type) string {
+	et, ok := recv.(ast.EnumType)
+	if !ok || len(et.Args) == 0 {
+		return mangled
+	}
+	for _, inst := range c.info.MethodInsts[declSiteKey(typeName, name, trait)] {
+		if sig := c.info.FuncSigs[inst]; sig != nil && len(sig.Params) > 0 && ast.Equal(sig.Params[0], recv) {
+			return inst
+		}
+	}
+	return mangled
 }
 
 // declSiteKey is the MethodDeclSites key for one registration: the
@@ -16933,6 +16958,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 						Receiver:   tt,
 						OwnerTrait: ownerTrait,
 					}
+					mangled = c.instForReceiver(typeName, fa.Field, ownerTrait, mangled, tt)
 					n.Callee = &ast.Ident{P: fa.P, Name: mangled}
 					n.Args = append([]ast.Expr{fa.Target}, n.Args...)
 					recvIsArg0 = true

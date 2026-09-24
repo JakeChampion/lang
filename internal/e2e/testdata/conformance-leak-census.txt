@@ -14,7 +14,7 @@
 # it being visible; a row going DOWN is progress and also fails, so the
 # improvement gets recorded rather than absorbed.
 #
-# Measured 2026-09-24: 540 fixtures, 479 clean, 61 leaking, 320
+# Measured 2026-09-24: 541 fixtures, 482 clean, 59 leaking, 318
 # unpaired allocations. The median leaking fixture is 1, and the largest,
 # json_error_location, is 51.
 #
@@ -37,6 +37,10 @@
 # instantiation, so its drop took the concrete path and reclaimed neither
 # the box nor its payload. Both fixtures build one and their rows were the
 # box each stranded.
+#
+# f64_tryop_widen and try_binding_takes_its_success_payload try a variant
+# literal with `?` (`Some(3.25)?`), and native never releases the literal's
+# box (#10200). The self-host builds both clean.
 #
 # fstring_reassign_releases_old is #8697's fixture: an f-string RHS now
 # releases the destination's superseded string, so the row registers a
@@ -103,7 +107,7 @@
 # all release it. stdin_double and multiline_stdin are the two that reach 0.
 # What every other row keeps is exactly its HANDLE — one stdin() for
 # alloc_flat_read_chunk (5 -> 1), read_all_stdin_chunks (3 -> 1), read_line
-# and stdin_line (2 -> 1) and audit_env_time_random (2 -> 1), two stdout()
+# and stdin_line (2 -> 1), two stdout()
 # for alloc_flat_writer_accumulator (4 -> 2), and the three io_error_other_*
 # rows the IoError their name is about. The handle is per-stream rather than
 # per-call and keeps its static sentinel — the residual half of #8398, which
@@ -174,14 +178,14 @@ arrow_lambda_block_body                              0
 arrpush                                              0
 associated_functions                                 0
 audit_core_builtins                                  0
-audit_env_time_random                                1
+audit_env_time_random                                0
 audit_generics_traits_closures                       0
 audit_io_builtins                                    0
 audit_monotonic_sleep                                0
 audit_now_ns                                         0
 audit_numeric_types                                  0
 audit_std_crypto                                     0
-audit_std_json                                       25
+audit_std_json                                       13
 audit_std_numeric                                    2
 audit_std_path_numeric                               0
 audit_std_string                                     0
@@ -257,8 +261,8 @@ defer_in_loop                                        0
 derive_debug                                         0
 derive_default                                       0
 derive_default_generic_primitive                     0
-derive_from_json                                     34
-derive_from_json_i64                                 14
+derive_from_json                                     23
+derive_from_json_i64                                 11
 derive_json                                          0
 derive_multi_payload                                 0
 div_modulo                                           0
@@ -321,6 +325,7 @@ generic_array_methods                                0
 generic_associated_fn                                0
 generic_box                                          0
 generic_call_in_struct_field                         0
+generic_enum_bound_dispatch                          0
 generic_float_literal_arg                            0
 generic_fn_arg_capturing_lambda                      0
 generic_fnarg_typevar                                0
@@ -377,8 +382,8 @@ io_error_other_is_a_directory                        2
 io_error_other_not_a_directory                       1
 iter_build_consume                                   0
 json_array_field                                     0
-json_error_location                                  51
-json_object                                          8
+json_error_location                                   0
+json_object                                          0
 labeled_loops                                        0
 lambda_returning_a_capturing_lambda                  6
 lambda_tuple_return                                  0
@@ -496,7 +501,8 @@ pub_use_reexport                                     0
 pure_collection_aliases                              0
 pure_copy                                            0
 question_op                                          0
-random_bytes                                         1
+radix_literals                                       0
+random_bytes                                         0
 range_for                                            0
 range_value                                          0
 rc_borrowed_box_field                                0
@@ -623,6 +629,7 @@ trailing_commas                                      0
 trait_method_bound_wins                              0
 trmc_map                                             0
 try_op_in_closure                                    0
+try_binding_takes_its_success_payload                2
 try_result_struct_payload                            1
 tuple_basics                                         0
 tuple_binder_shadows_module_decl                     0

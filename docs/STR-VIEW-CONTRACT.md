@@ -126,7 +126,10 @@ Concretely, in order:
    — done (#7293, #7086).
 3. A staged native+self-host checker refusal of `str` in return / field /
    element / capture position — warning first if churn demands, error once
-   the corpus is clean. The probes in §1 become its tests.
+   the corpus is clean. The probes in §1 become its tests. Element position
+   is refused by both checkers: an array literal of views is a `str[]`
+   (E003 / E034), and `append`, `with` and a map `insert` store their
+   argument, so the parameter borrow does not reach them (E038, #8635).
 4. Leak-matrix cells for the view kind (producer, escape shapes), so the
    contract stays measured.
 

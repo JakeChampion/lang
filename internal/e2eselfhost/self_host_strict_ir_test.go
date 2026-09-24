@@ -50,6 +50,30 @@ var strictIRCorpus = []struct {
 	src  string
 	want int
 }{
+	// A builtin's Result bound from a match-expression whose Err arm returns
+	// early (#9326), beside its user-wrapper twin so a fix that widened only
+	// one of them is visible. The early return leaves the enclosing function;
+	// the arm hands the block no value. The binding is copied rather than read
+	// because the wasm driver has no checker stamps to resolve a builtin
+	// struct's field with, and the paths do not exist because the wasm run has
+	// no preopened directory; TestSelfHostValueBlockEarlyReturn runs both arms.
+	{"builtin-result-value-block-early-return", `function probe(p: string): i32 {
+    var si: FileStat = match (stat(p)) { Ok(v) => v, Err(_) => { return 1; } };
+    var held: FileStat = si;
+    return 4;
+}
+function main(): i32 { return probe("/nonexistent-9326/a") + probe("/nonexistent-9326/b"); }
+`, 2},
+	{"wrapped-result-value-block-early-return", `function mine(p: string): Result[FileStat, string] {
+    match (stat(p)) { Ok(v) => { return Ok(v); }, Err(_) => { return Err("no"); } }
+}
+function probe(p: string): i32 {
+    var si: FileStat = match (mine(p)) { Ok(v) => v, Err(_) => { return 1; } };
+    var held: FileStat = si;
+    return 4;
+}
+function main(): i32 { return probe("/nonexistent-9326/a") + probe("/nonexistent-9326/b"); }
+`, 2},
 	// Typed captures now resolve pointer elements of tuple destructures. This
 	// used to be a refusal fixture; require successful lowering and execution.
 	{"destructured-array-closure", `function main(): i32 {

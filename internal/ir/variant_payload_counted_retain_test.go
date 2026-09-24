@@ -68,9 +68,8 @@ func TestVariantPayloadStoreIsCountedRetain(t *testing.T) {
 		// to the same rules; here they are unused, and l is then stored
 		// only as a payload.
 		"scrut": {true, true, true},
-		// A Map-carrying enum stores its payloads UNCOUNTED (not
-		// enumRcPayloadsEligible): no inc, so no credit.
-		"mapped": {false, false},
+		// A Map payload is counted like any other (#8854).
+		"mapped": {true, true},
 		// The sole `return Ctor(..)` of an arm matching an `own` enum param is
 		// a consuming-match reuse site, which stores without the inc.
 		"reuse": {false, false},
@@ -90,11 +89,8 @@ func TestVariantPayloadStoreIsCountedRetain(t *testing.T) {
 	// A variant construction is a fresh rc=1 box: the summary that lets a
 	// caller's `var nl = ins(l, k)` binding stay reclaimable.
 	fresh := findReturnsFreshBox(prog, info, map[string]bool{}, map[string]bool{})
-	if !fresh["single"] || !fresh["wrap"] {
-		t.Errorf("returnsFreshBox: single=%v wrap=%v, want both true — a variant construction of an rc-payload enum is the callee's own box", fresh["single"], fresh["wrap"])
-	}
-	if fresh["mapped"] {
-		t.Error("returnsFreshBox[mapped] = true, want false — a Map-carrying enum's construction stores its payloads uncounted")
+	if !fresh["single"] || !fresh["wrap"] || !fresh["mapped"] {
+		t.Errorf("returnsFreshBox: single=%v wrap=%v mapped=%v, want all true — a variant construction of an rc-payload enum is the callee's own box", fresh["single"], fresh["wrap"], fresh["mapped"])
 	}
 }
 

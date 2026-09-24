@@ -1465,9 +1465,9 @@ function main(): i32 {
 //
 // Answers cannot see this: both forms compute the same array. `__heap_bump_bytes()`
 // can — it is the bump allocator's high-water mark, i.e. everything the freelist
-// could not recycle. The REFUSED shape beside it is the calibration: it clones
-// per append and so must stay high, which is what makes a passing admitted case
-// evidence about reclaim rather than about the instrument.
+// could not recycle. The RETAINED shape beside it is the calibration: it keeps
+// every intermediate buffer alive and so must stay high, which is what makes a
+// passing admitted case evidence about reclaim rather than about the instrument.
 func TestSelfHostFieldAppendInPlaceReclaimsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -1489,15 +1489,18 @@ function main(): i32 {
     var s: St = St { ops: [], ctrl: 0 };
     var i: i32 = 0;
     while (i < 2000) { s = s.emit(i); i = i + 1; }` + tail
-	// `n: s.ops.len()` reads the appended field again, so the site is refused
-	// and the clone form stands — the control.
-	refused := `
-struct St { ops: i32[], n: i32 }
-function (s: St) emit(v: i32): St { return St { ...s, ops: s.ops.append(v), n: s.ops.len() }; }
+	// The admitted shape with every intermediate buffer kept alive — the
+	// control. Nothing here can be recycled, so it reads what the admitted case
+	// would if its grown buffer were never reclaimed.
+	retained := `
+struct St { ops: i32[], ctrl: i32 }
+function (s: St) emit(v: i32): St { return St { ...s, ops: s.ops.append(v), ctrl: s.ctrl + 1 }; }
 function main(): i32 {
-    var s: St = St { ops: [], n: 0 };
+    var s: St = St { ops: [], ctrl: 0 };
+    var keep: i32[][] = [];
     var i: i32 = 0;
-    while (i < 2000) { s = s.emit(i); i = i + 1; }` + tail
+    while (i < 2000) { s = s.emit(i); keep = keep.append(s.ops); i = i + 1; }
+    if (keep.len() != 2000) { return 255; }` + tail
 
 	run := func(t *testing.T, src string) int {
 		t.Helper()
@@ -1522,7 +1525,7 @@ function main(): i32 {
 	// CAN see is the #8254 failure mode: an in-place result left counted keeps
 	// the field's buffer at rc >= 2 forever, so every later store takes the copy
 	// arm and abandons a 256-slot buffer nothing reclaims. 4000 of those is
-	// ~4 MB; the `refused` control below is what shows the reading is live.
+	// ~4 MB; the `retained` control is what shows the reading is live.
 	withPtr := `
 struct L { v: i32 }
 struct W { w: L[], n: i32 }
@@ -1539,10 +1542,10 @@ function main(): i32 {
 	if got := run(t, admitted); got > 4 {
 		t.Errorf("admitted in-place shape bumped %d x 64 KiB, want <= 4 — the grown buffer is not being reclaimed", got)
 	}
-	// Measured: 200 (clamped) either way. A low reading here would mean the
-	// instrument, not the reclaim, is what the case above is reporting.
-	if got := run(t, refused); got < 32 {
-		t.Errorf("refused clone shape bumped only %d x 64 KiB, want >= 32 — the calibration case is not allocating, so the admitted case proves nothing", got)
+	// A low reading here would mean the instrument, not the reclaim, is what
+	// the case above is reporting.
+	if got := run(t, retained); got < 32 {
+		t.Errorf("retained control bumped only %d x 64 KiB, want >= 32 — the calibration case is not allocating, so the admitted case proves nothing", got)
 	}
 	// Measured: 2 units, and 2 for the clone form this replaced — the orphaned
 	// L boxes are all of it and both forms orphan the same ones.
