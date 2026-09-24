@@ -3116,6 +3116,9 @@ function borrow_rows(reg: string[], name: string, tiers: string[], bare_row: str
 // handed to a call other than a dyn dispatch, which lends its operands.
 function bare_flags(f: ssasem.Func, modes: i32[], plan: ssaunits.Plan): string {
     if (!plan.ok) { return ""; }
+    var borrows: boolean = false;
+    for m in modes { if (m == ssaunits.borrow_mode()) { borrows = true; } }
+    if (!borrows) { return ""; }
     var a: ssasem.Analysis = ssasem.analyze(f);
     if (!a.ok) { return ""; }
     var flags: string = "";
