@@ -19,7 +19,7 @@ import (
 // flatness (string-keyed / both-column maps grow no more than an i32-keyed
 // baseline) in addition to correctness + aliased-key exclusion (an aliased key
 // stays kconsume=0 → retained → the source local's sweep balances it). It also
-// covers the OVERWRITE path — the word-count / histogram m.set(computed_key, n)
+// covers the OVERWRITE path — the word-count / histogram m = m.insert(computed_key, n)
 // pattern where a recurring fresh key is re-inserted: the overwrite discards the
 // incoming key, which the map must free ($kconsume) rather than leak, while an
 // aliased recurring key must be left untouched.
@@ -119,7 +119,7 @@ function main(): i32 {
     return 0;
 }`, 0},
 		// OVERWRITE with a recurring FRESH key (the classic word-count /
-		// histogram m.set(computed_key, n) pattern): each re-insert of the same
+		// histogram m = m.insert(computed_key, n) pattern): each re-insert of the same
 		// key overwrites the slot and discards the incoming fresh key temp. The
 		// overwrite path must free that discarded fresh key ($kconsume), else it
 		// leaks one key box per overwrite. Differential against an i32-keyed map
@@ -127,13 +127,13 @@ function main(): i32 {
 		{"mapks-overwrite-fresh-key-flat-wasm", `function build_sk_over(n: i32): i32 {
     var m: Map[string, i32] = Map { "wo" + "rd": 0 };
     var j: i32 = 0;
-    while (j < 8) { m.set("wo" + "rd", j); j = j + 1; }
+    while (j < 8) { m = m.insert("wo" + "rd", j); j = j + 1; }
     return 1;
 }
 function build_ik_over(n: i32): i32 {
     var m: Map[i32, i32] = Map { 7: 0 };
     var j: i32 = 0;
-    while (j < 8) { m.set(7, j); j = j + 1; }
+    while (j < 8) { m = m.insert(7, j); j = j + 1; }
     return 1;
 }
 function main(): i32 {
@@ -160,7 +160,7 @@ function main(): i32 {
     while (i < 500) {
         var m: Map[string, i32] = Map { "wo" + "rd": 0 };
         var j: i32 = 0;
-        while (j < 8) { m.set("wo" + "rd", j); j = j + 1; }
+        while (j < 8) { m = m.insert("wo" + "rd", j); j = j + 1; }
         if (m.get_or("word", 0) != 7) { bad = 1; }
         if (m.len() != 1) { bad = 1; }
         i = i + 1;
@@ -179,7 +179,7 @@ function main(): i32 {
         var key: string = "wo" + "rd";
         var m: Map[string, i32] = Map { "wo" + "rd": 0 };
         var j: i32 = 0;
-        while (j < 8) { m.set(key, j); j = j + 1; }
+        while (j < 8) { m = m.insert(key, j); j = j + 1; }
         if (key.len() != 4) { bad = 1; }
         if (m.get_or("word", 0) != 7) { bad = 1; }
         i = i + 1;

@@ -17,7 +17,7 @@ import (
 // balance (keys() aliases the buffer / the ks result's exit-dec frees that
 // alias / the map leaks its own buffers) are flipped together:
 //   - `var ks = m.keys()` is an OWNED fresh copy: the exit sweep reclaims the
-//     copy, later m.set mutations (including buffer-replacing grows) never
+//     copy, later m.insert mutations (including buffer-replacing grows) never
 //     show through it, and the map's own buffers are freed by map_free /
 //     the owned grow — no double free (__rc_underflow() == 0) and no leak.
 //   - `for k in m.keys()` / `for (k, v) in m` scalar columns are snapshots
@@ -59,7 +59,7 @@ func TestSelfHostMapKeysSnapshotIRX86_64(t *testing.T) {
 	}
 
 	// SNAPSHOT SEMANTICS (the doc's differential-oracle case, matching the
-	// native compiler): `var ks = m.keys()` must show the PRE-set length and
+	// native compiler): `var ks = m.keys()` must show the PRE-insert length and
 	// values after later inserts/overwrites — including inserts that GROW the
 	// map (cap 4 -> 8), which now free the superseded buffer the old aliasing
 	// read would have dangled on.
@@ -67,10 +67,10 @@ func TestSelfHostMapKeysSnapshotIRX86_64(t *testing.T) {
     var m: Map[i32, i32] = Map { 1: 10, 2: 20 };
     var ks = m.keys();
     var vs: i32[] = m.values();
-    m.set(9, 90);
-    m.set(10, 100);
-    m.set(11, 110);
-    m.set(1, 11);
+    m = m.insert(9, 90);
+    m = m.insert(10, 100);
+    m = m.insert(11, 110);
+    m = m.insert(1, 11);
     if (ks.len() != 2) { return 10; }
     if (vs.len() != 2) { return 11; }
     var sv: i32 = 0;
@@ -92,7 +92,7 @@ func TestSelfHostMapKeysSnapshotIRX86_64(t *testing.T) {
 	run(t, `function build(n: i32): i32 {
     var m: Map[i32, i32] = Map { 1: 2 };
     var j: i32 = 0;
-    while (j < 12) { m.set(j + 10, j * 2); j = j + 1; }
+    while (j < 12) { m = m.insert(j + 10, j * 2); j = j + 1; }
     if (m.has(15)) { return m.len(); }
     return 0;
 }
@@ -118,7 +118,7 @@ function main(): i32 {
 	run(t, `function build(n: i32): i32 {
     var m: Map[i32, i32] = Map { 1: 2 };
     var j: i32 = 0;
-    while (j < 8) { m.set(j + 10, j); j = j + 1; }
+    while (j < 8) { m = m.insert(j + 10, j); j = j + 1; }
     var ks = m.keys();
     var vs = m.values();
     return ks.len() + vs.len();
@@ -149,7 +149,7 @@ function main(): i32 {
     var total: i32 = 0;
     for (k, v) in m {
         total = total + k + v;
-        m.set(k + 100, v);
+        m = m.insert(k + 100, v);
     }
     if (total != 66) { return 50; }
     if (m.len() != 6) { return 51; }
@@ -204,14 +204,14 @@ function main(): i32 {
 	// while the values column snapshots with retain + MAPVS deep-release — the
 	// snapshot must not disturb that balance (no underflow, values intact).
 	// Since #5335 this map is owncols too (both columns snapshot-kind), so the
-	// set(3, ..) grow frees the superseded buffers under the live ks snapshot.
+	// insert(3, ..) grow frees the superseded buffers under the live ks snapshot.
 	run(t, `function main(): i32 {
     var bad: i32 = 0;
     var i: i32 = 0;
     while (i < 500) {
         var m: Map[i32, string] = Map { 1: "a" + "b", 2: "c" + "d" };
         var ks = m.keys();
-        m.set(3, "e" + "f");
+        m = m.insert(3, "e" + "f");
         if (ks.len() != 2) { bad = 1; }
         if (m.get_or(2, "").len() != 2) { bad = 1; }
         if (m.len() != 3) { bad = 1; }

@@ -97,6 +97,14 @@ function fmt_output_is_readable(formatted: string): boolean {
     return again == formatted;
 }
 
+// read_failure is the one-line report for a file that could not be read:
+// `fern: cannot read module /abs/x.fern: invalid UTF-8`. An empty reason means
+// the file was not found.
+function read_failure(what: string, path: string, reason: string): string {
+    if (reason.len() == 0) { reason = "not found"; }
+    return "fern: cannot read " + what + " " + path + ": " + reason;
+}
+
 // fmt_file is `-fmt` for ONE file: the formatted source goes to stdout, back
 // over the file (-w), to out_path (-o), or out as a unified diff (-d, exit 1
 // when it is non-empty). Formatting never loads imports, so a file is read and
@@ -106,9 +114,7 @@ function fmt_file(path: string, fmt_write: boolean, fmt_diff: boolean, out_path:
     match (read_file(path)) {
         Ok(s) => { esrc = s; },
         Err(e) => {
-            eprint("fern: cannot read entry file: ");
-            eprint(path);
-            eprint("\n");
+            eprint(read_failure("entry file", path, modloader.read_error_reason(e)));
             return 1;
         },
     }
@@ -1181,6 +1187,29 @@ struct Bundle {
     ok: boolean,
 }
 
+// read_bundle_module reads one imported module for load_bundle: the resolved
+// path first, then, only when that file is absent, the manifest resolution. The
+// directory its own `./` imports resolve against is its own — a module in lib/
+// writing `import "./gnu"` means lib/gnu.fern — unless a manifest-resolved
+// dependency moves the root to its package.
+function read_bundle_module(mpath: string, from: string, ipath: string): modloader.Resolved {
+    var mdir: string = util.dir_of(mpath);
+    if (mdir.len() > 0) { mdir = mdir + "/"; }
+    match (read_file(mpath)) {
+        Ok(src) => { return modloader.Resolved { src: src, dir: mdir, ok: true, err: "", err_path: "" }; },
+        Err(e) => {
+            var reason: string = modloader.read_error_reason(e);
+            if (reason.len() > 0) { return modloader.Resolved { src: "", dir: mdir, ok: false, err: reason, err_path: mpath }; }
+        },
+    }
+    // Manifest fallback: a DECLARED dependency resolves through fern.toml across
+    // the disk-resolvable forms (path, workspace member, lock, vendor tree,
+    // content-addressed store). It is the only way to reach a package that
+    // carries its own manifest — the rules above can only name a sibling file
+    // or something under the stdlib root.
+    return modloader.resolve_module(modloader.no_overlay(), from, ipath, util.module_name(ipath));
+}
+
 // load_bundle loads `entry_mod`'s transitive imports off disk and flattens
 // them into one module (the import-driven scheme from asm_load_run). The
 // entry is parsed by the caller, which needs it for `-fmt` before any import
@@ -1217,36 +1246,15 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string)
         // silently dropped the module (#9762).
         if (!util.has_str(done_paths, mpath)) {
             done_paths = done_paths.append(mpath);
-            var msrc: string = "";
-            var mok: boolean = false;
-            // The directory the module's OWN `./` imports resolve against is
-            // its own — a module in lib/ writing `import "./gnu"` means
-            // lib/gnu.fern. Bare paths resolve under the stdlib root or the
-            // manifest whatever the directory; a manifest-resolved dependency
-            // moves the root to its package.
-            var mdir: string = util.dir_of(mpath);
-            if (mdir.len() > 0) { mdir = mdir + "/"; }
-            match (read_file(mpath)) {
-                Ok(s2) => { msrc = s2; mok = true; },
-                Err(e) => { mok = false; },
-            }
-            if (!mok) {
-                // Manifest fallback: a DECLARED dependency resolves through
-                // fern.toml across the disk-resolvable forms (path, workspace
-                // member, lock, vendor tree, content-addressed store). It is
-                // the only way to reach a package that carries its own
-                // manifest — the rules above can only name a sibling file or
-                // something under the stdlib root.
-                var r: modloader.Resolved = modloader.resolve_module(modloader.no_overlay(), from, ipath, util.module_name(ipath));
-                if (r.ok) { msrc = r.src; mok = true; mdir = r.dir; }
-            }
-            if (!mok) {
-                eprint("fern: cannot read module: ");
-                eprint(mpath);
-                eprint("\n");
+            var rm: modloader.Resolved = read_bundle_module(mpath, from, ipath);
+            if (!rm.ok) {
+                var bad: string = mpath;
+                if (rm.err_path.len() > 0) { bad = rm.err_path; }
+                eprint(read_failure("module", bad, rm.err));
                 return Bundle { entry: entry_mod, loaded: no_mods, merged: entry_mod, pkgs: pkgs, ok: false };
             }
-            var m: parser.Module = parser.parse_module(lexer.tokenize(msrc));
+            var mdir: string = rm.dir;
+            var m: parser.Module = parser.parse_module(lexer.tokenize(rm.src));
             // Identity is the FILE, not its basename: two modules can share a
             // basename (`std/sort` and `coreutils/sort`) and the bundler has
             // to tell them apart to give each its own prefix (#9762).
@@ -1796,14 +1804,12 @@ function check_dir(dir: string, root: string, target: string, target_given: bool
 // half of `-check`, and the per-member step of the workspace half.
 function check_file(entry_path: string, root: string, target: string, target_given: boolean): i32 {
     var src: string = "";
-    var ok: boolean = false;
     match (read_file(entry_path)) {
-        Ok(s) => { src = s; ok = true; },
-        Err(e) => { },
-    }
-    if (!ok) {
-        eprint("fern: cannot read entry file: " + entry_path);
-        return 1;
+        Ok(s) => { src = s; },
+        Err(e) => {
+            eprint(read_failure("entry file", entry_path, modloader.read_error_reason(e)));
+            return 1;
+        },
     }
     var b: Bundle = load_bundle(entry_path, parser.parse_module(lexer.tokenize(src)), root);
     if (!b.ok) { return 1; }
@@ -2158,6 +2164,7 @@ function run(): i32 {
     var dir: string = util.dir_of(entry_path);
     var esrc: string = "";
     var eok: boolean = false;
+    var eerr: string = "";
     // `-` names stdin for the two modes native reads it in, and only those:
     // `-fmt -` and a compile from `-` are file errors under native, and the
     // self-host accepting them would be a divergence in the permissive
@@ -2168,13 +2175,11 @@ function run(): i32 {
     } else {
         match (read_file(entry_path)) {
             Ok(s) => { esrc = s; eok = true; },
-            Err(e) => { eok = false; },
+            Err(e) => { eerr = modloader.read_error_reason(e); },
         }
     }
     if (!eok) {
-        eprint("fern: cannot read entry file: ");
-        eprint(entry_path);
-        eprint("\n");
+        eprint(read_failure("entry file", entry_path, eerr));
         return 1;
     }
     var entry_mod: parser.Module = parser.parse_module(lexer.tokenize(esrc));
