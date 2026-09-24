@@ -23798,6 +23798,12 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
                     // — also helper-backed, so the same registry answers, under
                     // lower_call_method's bare-fd receiver gate.
                     if (opt_ty == "") { opt_ty = resource_method_opt_ret_type(ifa.field, ifa.obj, se); }
+                    // A built-in Map read (`var g = m.get(k)`) types the slot as
+                    // the annotated spelling would, Option of the value column.
+                    if (opt_ty == "" && ifa.field == "get" && ic.args.len() == 1) {
+                        var gmv: string = map_value_of(get_or_recv_map_type(ifa.obj, se));
+                        if (gmv != "") { opt_ty = "Option[" + gmv + "]"; }
+                    }
                     // Associated call `Type.method()` returning Option/Result
                     // — bare TYPE-name object (not a slot); key by
                     // "<Type>.<method>" so `var r = User.from_json(s)` records
@@ -25663,8 +25669,9 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
     // match that was here before.
     var owned_pay: string = owned_payload_builtin_ptype(m.scrutinee, ms);
     // #8410: the scrutinee's own BOX, when the call built it fresh for this
-    // caller and no other holder survives (match_scrut_owns_fresh_result_box).
-    var owns_box: boolean = match_scrut_owns_fresh_result_box(m, ms);
+    // caller and no other holder survives (match_scrut_owns_fresh_result_box),
+    // or it is a builtin map read's answer.
+    var owns_box: boolean = match_scrut_owns_fresh_result_box(m, ms) || match_scrut_is_map_get(m, ms);
     var scrut: string = "$mscrut" + util.i32_to_string(ms.locals.len());
     ms = ms.add_local(scrut);
     var scrut_slot: i32 = ms.slot_of(scrut);
@@ -26488,7 +26495,7 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
         }
     }
     ms = ms.emit(ir.op_end());   // end outer block
-    if (match_scrut_is_map_get(m, ms) || owns_box) { ms = emit_scalar_enum_box_free(ms, scrut_slot); }
+    if (owns_box) { ms = emit_scalar_enum_box_free(ms, scrut_slot); }
     return ms;
     return s.fail();
 }
