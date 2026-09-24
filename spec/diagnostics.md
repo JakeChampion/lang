@@ -109,7 +109,7 @@ language does not have. It is deleted.
 | `E062` | ambiguous method on a multi-trait object | — |
 | `E063` | returning a `[T]` slice that views function-local storage | `diag_e063` |
 | `E064` | unknown type | — |
-| `E065` | returning a `str` view of a function-local string | `diag_e065` |
+| `E065` | returning a `str` view of a function-local string, or a `MapIter` over a function-local map | `diag_e065` |
 | `E066` | target does not provide a required capability | — |
 | `E067` | a `@must_consume` value was not consumed on every path | `diag_e067` |
 | `E068` | `fip` / `fbip` function fails IR allocation verification | `diag_e068` |

@@ -15159,6 +15159,77 @@ function e065_diags(efn: parser.FuncDecl, str_ret_names: string[], sums: ViewSum
   return e065_stmts(efn.body, efn.name, params, str_ret_names, none, sums, vix, s, efn.ret_str);
 }
 
+// e065_cursor_diags is E065 for a `MapIter`, the native checkCursorEscapes: a
+// cursor reads its map's columns through a raw pointer, so returning one over
+// a map the function owns hands the caller freed storage (#9920). A cursor
+// over a parameter, or a field chain off one, stays anchored to the caller's
+// map. `var it = m.iter(); return it;` is followed through the local.
+struct CursorScan { params: string[], fname: string, var_names: string[], var_inits: ast.Expr[], diags: util.Diag[] }
+
+function e065_cursor_diags(efn: parser.FuncDecl): util.Diag[] {
+  var none: util.Diag[] = [];
+  if (!util.contains(efn.ret_type, "MapIter[")) { return none; }
+  var params: string[] = [];
+  for p in efn.params { params = params.append(p.name); }
+  var no_inits: ast.Expr[] = [];
+  var sc: CursorScan = CursorScan { params: params, fname: efn.name, var_names: [], var_inits: no_inits, diags: none };
+  for st in efn.body { sc = astwalk.fold_stmt_spine(st, sc, cursor_scan_stmt); }
+  return sc.diags;
+}
+
+function cursor_scan_stmt(st: ast.Stmt, own sc: CursorScan): CursorScan {
+  match (st) {
+    ast.StmtVar(v) => {
+      return CursorScan { ...sc, var_names: sc.var_names.append(v.name), var_inits: sc.var_inits.append(v.init) };
+    },
+    ast.StmtReturn(r) => {
+      if (cursor_over_local(r.value, sc, 0)) {
+        return CursorScan { ...sc, diags: sc.diags.append(dg_at("E065", "returning a `MapIter` over a function-local map: the map is reclaimed when \"" + sc.fname + "\" returns, leaving the cursor reading freed storage — return the map and iterate it in the caller, or iterate a map the caller passed in", r.line, r.col)) };
+      }
+    },
+    _ => {}
+  }
+  return sc;
+}
+
+// cursor_over_local reports whether e is `m.iter()`, or a local bound to one,
+// whose map is not caller-owned storage.
+function cursor_over_local(e: ast.Expr, sc: CursorScan, depth: i32): boolean {
+  if (depth > 8) { return false; }
+  match (e) {
+    ast.ExprCall(c) => {
+      match (c.callee) {
+        ast.ExprFieldAccess(fa) => { return fa.field == "iter" && c.args.len() == 0 && !lent_place(fa.obj, sc.params); },
+        _ => {}
+      }
+    },
+    ast.ExprIdent(id) => {
+      var i: i32 = util.index_of_str(sc.var_names, id.name);
+      if (i >= 0) { return cursor_over_local(sc.var_inits[i], sc, depth + 1); }
+    },
+    ast.ExprArray(al) => { return any_cursor_over_local(al.elements, sc, depth + 1); },
+    ast.ExprTuple(tl) => { return any_cursor_over_local(tl.elements, sc, depth + 1); },
+    _ => {}
+  }
+  return false;
+}
+
+function any_cursor_over_local(es: ast.Expr[], sc: CursorScan, depth: i32): boolean {
+  for e in es {
+    if (cursor_over_local(e, sc, depth)) { return true; }
+  }
+  return false;
+}
+
+function lent_place(e: ast.Expr, params: string[]): boolean {
+  match (e) {
+    ast.ExprFieldAccess(fa) => { return lent_place(fa.obj, params); },
+    ast.ExprIdent(id) => { return util.index_of_str(params, id.name) >= 0; },
+    _ => {}
+  }
+  return false;
+}
+
 // ---- E032: `use` binding-type inference ------------------------------------
 // Port of the native inferUseParam (checker.go): `use BIND <- CALLEE(args);`
 // with no `: TYPE` annotation infers BIND's type from CALLEE's signature —
@@ -16725,6 +16796,7 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
     if (xfn.ret_str) {
       body_diags = util.append_diags(body_diags, e065_diags(xfn, str_ret_names, e065_sums, e065_ix, xsc).diags);
     }
+    body_diags = util.append_diags(body_diags, e065_cursor_diags(xfn));
     body_diags = util.append_diags(body_diags, e032_stmts(xfn.body, e032_lastfn, xsc));
   }
   // E045 on a struct FIELD's annotation. Unlike E064 / E057 this needs no

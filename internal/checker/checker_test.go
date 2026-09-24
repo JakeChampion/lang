@@ -8843,3 +8843,29 @@ func errorWithCode(err error, code string) *Error {
 	}
 	return nil
 }
+
+// TestMapIterEscapeRejected: E065 for a MapIter (#9920). A cursor reads its
+// map's columns through a raw pointer, so returning one over a map the
+// function owns hands the caller freed storage. A cursor over a parameter, or
+// a parameter's field, is anchored to the caller's map.
+func TestMapIterEscapeRejected(t *testing.T) {
+	const decls = "struct B { m: Map[i32, i32] }\n"
+	for _, src := range []string{
+		`function f(): MapIter[i32, i32] { var m: Map[i32, i32] = map_new(4); m = m.insert(1, 2); return m.iter(); }`,
+		`function f(): MapIter[i32, i32] { var m: Map[i32, i32] = map_new(4); var it = m.iter(); return it; }`,
+		`function f(): MapIter[i32, i32][] { var m: Map[i32, i32] = map_new(4); return [m.iter()]; }`,
+	} {
+		err := checkSource(t, decls+src)
+		if !hasCode(err, "E065") {
+			t.Errorf("%q: want E065, got %v", src, err)
+		}
+	}
+	for _, src := range []string{
+		`function f(m: Map[i32, i32]): MapIter[i32, i32] { return m.iter(); }`,
+		`function f(b: B): MapIter[i32, i32] { var it = b.m.iter(); return it; }`,
+	} {
+		if err := checkSource(t, decls+src); err != nil {
+			t.Errorf("%q: want no diagnostic, got %v", src, err)
+		}
+	}
+}
