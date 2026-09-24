@@ -17,7 +17,8 @@ import (
 //
 // f builds mm{"a": 3}, stores it in Cache{m: mm, n: 4}, reads c.m back, and
 // returns c.m["a"] + c.n = 3 + 4 = 7. Without map-field support Cache is not
-// leaf-safe and the module is refused; the exit code pins the round-trip.
+// leaf-safe and the driver refuses the module; the exit code proves the
+// round-trip.
 func TestSelfHostMapStructFieldIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -41,7 +42,7 @@ function f(): i32 {
 function main(): i32 { return f(); }`
 	asm := runCapture(t, gcc, runner, driverBin, []byte(prog))
 	if len(asm) == 0 {
-		t.Fatal("self-host compiler emitted 0 bytes")
+		t.Fatal("driver produced no asm")
 	}
 	progBin := buildBin(t, gcc, dir, "map_struct_field", string(asm))
 	var cmd *exec.Cmd

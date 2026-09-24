@@ -14,7 +14,7 @@ import (
 // 12. Enums are leak-only on the IR path (the exit sweep never frees an enum
 // box), so an enum-typed field leaks with the struct like a string / Option /
 // tuple field — no RC, no aliasing bail. Without enum-field support Tagged is not
-// leaf-safe and the module is refused; the exit code pins the variant
+// leaf-safe and the driver refuses the module; the exit code proves the variant
 // discrimination.
 //
 // The construction uses the BARE variant forms (`Rect(7)`, `Circle`), which lower
@@ -48,7 +48,7 @@ function use_tagged(): i32 {
 function main(): i32 { return use_tagged(); }`
 	asm := runCapture(t, gcc, runner, driverBin, []byte(prog))
 	if len(asm) == 0 {
-		t.Fatal("self-host compiler emitted 0 bytes")
+		t.Fatal("driver produced no asm")
 	}
 	progBin := buildBin(t, gcc, dir, "enum_struct_field", string(asm))
 	var cmd *exec.Cmd

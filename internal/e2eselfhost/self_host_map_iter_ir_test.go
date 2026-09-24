@@ -47,7 +47,7 @@ function main(): i32 { return f(); }`, 4},
 		t.Run(tc.name, func(t *testing.T) {
 			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.prog))
 			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
+				t.Fatal("driver produced no asm")
 			}
 			progBin := buildBin(t, gcc, dir, "map_iter_"+tc.name, string(asm))
 			var cmd *exec.Cmd

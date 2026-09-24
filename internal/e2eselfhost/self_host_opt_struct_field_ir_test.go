@@ -12,7 +12,7 @@ import (
 // that `match (b.opt)` / `match (b.res)` recover the Option/Result type from the
 // field. use_box builds Box{opt: Some(7), res: Ok(3), n: 5}, matches both fields,
 // and returns 5 + 7 + 3 = 15. Without Option/Result-field support Box is not
-// leaf-safe and the module is refused; the exit code pins the matches.
+// leaf-safe and the driver refuses the module; the exit code proves the matches.
 func TestSelfHostOptStructFieldIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -36,7 +36,7 @@ function use_box(): i32 {
 function main(): i32 { return use_box(); }`
 	asm := runCapture(t, gcc, runner, driverBin, []byte(prog))
 	if len(asm) == 0 {
-		t.Fatal("self-host compiler emitted 0 bytes")
+		t.Fatal("driver produced no asm")
 	}
 	progBin := buildBin(t, gcc, dir, "opt_struct_field", string(asm))
 	var cmd *exec.Cmd

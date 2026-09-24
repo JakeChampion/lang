@@ -129,7 +129,7 @@ func TestSelfHostClosureCallsClosureX86IR(t *testing.T) {
 				t.Fatalf("compile: %v\n%s", err, asm)
 			}
 			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
+				t.Fatal("driver produced no asm")
 			}
 			if !strings.Contains(string(asm), "__lam_") {
 				t.Fatalf("%q: no __lam_ hoisted lambda in asm — lifting did not happen", tc.name)

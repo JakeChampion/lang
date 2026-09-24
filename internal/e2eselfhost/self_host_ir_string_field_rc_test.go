@@ -86,7 +86,7 @@ function main(): i32 {
 		t.Run(tc.name, func(t *testing.T) {
 			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
 			if len(asm) == 0 {
-				t.Fatalf("%s: self-host compiler emitted 0 bytes", tc.name)
+				t.Fatalf("%s: driver produced no asm", tc.name)
 			}
 			progBin := buildBin(t, gcc, dir, "sfr_"+tc.name, string(asm))
 			var cmd *exec.Cmd

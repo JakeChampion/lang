@@ -50,7 +50,7 @@ function use_box(): i32 {
 function main(): i32 { return use_box(); }`
 	asm := runCapture(t, gcc, runner, driverBin, []byte(prog))
 	if len(asm) == 0 {
-		t.Fatal("self-host compiler emitted 0 bytes")
+		t.Fatal("driver produced no asm")
 	}
 	progBin := buildBin(t, gcc, dir, "qualified_variant", string(asm))
 	var cmd *exec.Cmd

@@ -103,7 +103,7 @@ func TestSelfHostStructGenEnumFieldIRX86_64(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
 			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
+				t.Fatal("driver produced no asm")
 			}
 			progBin := buildBin(t, gcc, dir, "struct_genum_field_"+tc.name, string(asm))
 			var cmd *exec.Cmd

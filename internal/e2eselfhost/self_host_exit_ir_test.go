@@ -37,7 +37,7 @@ func TestSelfHostExitIRX86_64(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
 			if len(asm) == 0 {
-				t.Fatalf("%s: self-host compiler emitted 0 bytes", tc.name)
+				t.Fatalf("%s: driver produced no asm", tc.name)
 			}
 			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
 			var cmd *exec.Cmd
@@ -71,7 +71,7 @@ func TestSelfHostExitIRArm64(t *testing.T) {
 			cmd.Stdin = bytes.NewReader([]byte(tc.src))
 			asm, err := cmd.Output()
 			if err != nil || len(asm) == 0 {
-				t.Fatalf("%s: driver emitted %d bytes (err %v)", tc.name, len(asm), err)
+				t.Fatalf("%s: driver produced no asm (err %v)", tc.name, err)
 			}
 			bin := buildBinArm64(t, arm64gcc, dir, "ex_"+tc.name, string(asm))
 			run := runArm64Bin(qemu, bin)

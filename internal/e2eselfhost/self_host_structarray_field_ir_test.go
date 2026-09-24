@@ -11,8 +11,8 @@ import (
 // array-of-struct field (`items: P[]`) is admitted to the IR path and that the
 // element read `q.items[i].field` recovers the element struct type. use_q builds
 // Q{items: [P,P], n} and returns q.items[0].x + q.items[1].y + q.n = 1 + 4 + 5 =
-// 10. Without struct-array field support Q is not leaf-safe and the module is
-// refused; the exit code pins the element typing.
+// 10. Without struct-array field support Q is not leaf-safe and the whole module
+// is refused by the driver; the exit code pins the element typing.
 func TestSelfHostStructArrayFieldIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -34,7 +34,7 @@ function use_q(): i32 {
 function main(): i32 { return use_q(); }`
 	asm := runCapture(t, gcc, runner, driverBin, []byte(prog))
 	if len(asm) == 0 {
-		t.Fatal("self-host compiler emitted 0 bytes")
+		t.Fatal("driver produced no asm")
 	}
 	progBin := buildBin(t, gcc, dir, "structarray_field", string(asm))
 	var cmd *exec.Cmd

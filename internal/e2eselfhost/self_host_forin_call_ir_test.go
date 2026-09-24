@@ -13,7 +13,7 @@ import (
 // hidden local (array-typed via arr_ret_fns / strarr_ret_fns) and iterates it;
 // a register eligibility probe that lowers each function with EMPTY array
 // registries does not see the snapshot's slot as an array, so the for-in bails
-// and the whole module is wrongly deemed ineligible.
+// and the whole module is wrongly deemed ineligible -> AST.
 // all_eligible now uses ir_eligible_wide (the same registries
 // emit_function_via_ir uses), so eligibility means "lowers" and these modules
 // take the small IR path. (The wasm gate stays narrow — its array-call foreach
@@ -48,7 +48,7 @@ function main(): i32 { return f(); }`, 3},
 		t.Run(tc.name, func(t *testing.T) {
 			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.prog))
 			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
+				t.Fatal("driver produced no asm")
 			}
 			progBin := buildBin(t, gcc, dir, "forin_call_"+tc.name, string(asm))
 			var cmd *exec.Cmd

@@ -70,7 +70,7 @@ function main(): i32 { var fns = [one]; var s = 0; var i = 0; while (i < 5) { s 
 		t.Run(tc.name, func(t *testing.T) {
 			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
 			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
+				t.Fatal("driver produced no asm")
 			}
 			progBin := buildBin(t, gcc, dir, "zfv_"+tc.name, string(asm))
 			var cmd *exec.Cmd

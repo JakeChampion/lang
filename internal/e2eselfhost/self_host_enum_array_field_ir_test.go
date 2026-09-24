@@ -26,8 +26,8 @@ import (
 // emitters.
 //
 // Each program builds an enum array into a struct field and sums it back, so a
-// botched alias-inc (over-release → wrong/garbage element) or a missing field
-// is caught by the exit code.
+// botched alias-inc (over-release → wrong/garbage element) is caught by the exit
+// code, and a module the IR declines is an error from the driver.
 var enumArrayFieldIRCases = []struct {
 	name string
 	src  string
@@ -77,7 +77,7 @@ func TestSelfHostEnumArrayFieldIRX86_64(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
 			if len(asm) == 0 {
-				t.Fatalf("%s: self-host compiler emitted 0 bytes", tc.name)
+				t.Fatalf("%s: driver produced no asm", tc.name)
 			}
 			progBin := buildBin(t, gcc, dir, "eaf_"+tc.name, string(asm))
 			var cmd *exec.Cmd
