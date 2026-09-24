@@ -6917,6 +6917,9 @@ pub function shape_ref(s: EmitState, name: string): ShapeRefOut {
 pub function emit_runtime_globls(s: EmitState): EmitState {
     var names: string[] = [
         "__fern_alloc", "__fern_alloc_u8", "__fern_arr_box", "__fern_str_box", "__fern_arr_push",
+        // The small tier's class function: every freelist push rounds through
+        // it, including the inline ones a library unit can emit.
+        "__fern_capw",
         // array bounds trap (#5410): every unit's arr_get/arr_set emits a
         // `jae __fern_oob_abort`; the entry owns the single definition
         // (emit_ir_runtime's heap block), so export it like the other

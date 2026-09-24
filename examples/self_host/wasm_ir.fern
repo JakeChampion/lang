@@ -9634,11 +9634,25 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32, lfl
     }
     // Perceus size-class freelist: a per-class head pointer array at
     // [fl_base .. fl_base + fl_cells*4), zero-initialised (empty lists) by
-    // wasm's zeroed linear memory. Class = roundup8(blocksize)/8. A freed
+    // wasm's zeroed linear memory. Class = $__fern_capw(roundup8(blocksize)/8). A freed
     // block (rc reaching 0 in $__fern_arr_dec) is pushed onto its class;
     // $__fern_alloc pops a same-class block before bumping. Blocks larger
     // than fl_cells*8 bytes (512 KiB) go to the large tier below instead;
     // only those past 1 GiB are bump-only.
+    // $__fern_capw(words) -> class: the small tier's size class for a block of
+    // `words` 8-byte words, which is also the capacity $__fern_alloc bumps it
+    // at. Exact up to 256 words (2 KiB), then native's 3-significant-bit
+    // capacities, so a buffer that grows a little at a time finds the block it
+    // just freed rather than a new class per step. A large-tier size passes
+    // through; a rounding that would reach it is clamped below.
+    o = o + "  (func $__fern_capw (param $w i32) (result i32)\n";
+    o = o + "    (local $g i32)\n";
+    o = o + "    (if (i32.le_u (local.get $w) (i32.const 256)) (then (return (local.get $w))))\n";
+    o = o + "    (if (i32.ge_u (local.get $w) (i32.const " + flc + ")) (then (return (local.get $w))))\n";
+    o = o + "    (local.set $g (i32.shl (i32.const 1) (i32.sub (i32.const 29) (i32.clz (local.get $w)))))\n";
+    o = o + "    (local.set $w (i32.and (i32.add (local.get $w) (i32.sub (local.get $g) (i32.const 1))) (i32.sub (i32.const 0) (local.get $g))))\n";
+    o = o + "    (if (i32.ge_u (local.get $w) (i32.const " + flc + ")) (then (return (i32.sub (i32.const " + flc + ") (i32.const 1)))))\n";
+    o = o + "    (local.get $w))\n";
     o = o + "  (func $__fern_alloc (param $n i32) (result i32)\n";
     o = o + "    (local $p i32) (local $cls i32) (local $head i32)\n";
     // A request past 2^31 wraps in the 8-round below, yielding a block far
@@ -9653,8 +9667,11 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32, lfl
         // out, not of memory bought.
         o = o + "    (global.set $__fern_alloc_count (i64.add (global.get $__fern_alloc_count) (i64.const 1)))\n";
     }
-    o = o + "    (local.set $cls (i32.shr_u (local.get $n) (i32.const 3)))\n";
+    o = o + "    (local.set $cls (call $__fern_capw (i32.shr_u (local.get $n) (i32.const 3))))\n";
     o = o + "    (if (i32.lt_u (local.get $cls) (i32.const " + flc + ")) (then\n";
+    // A small block is bumped at its class's capacity, so any freed block of
+    // the class satisfies any request that rounds to it.
+    o = o + "      (local.set $n (i32.shl (local.get $cls) (i32.const 3)))\n";
     o = o + "      (local.set $head (i32.load (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4)))))\n";
     o = o + "      (if (local.get $head) (then\n";
     o = o + "        (i32.store (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4))) (i32.load (i32.add (local.get $head) (i32.const 4))))\n";
@@ -9710,7 +9727,7 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32, lfl
     o = o + "    (local.set $bytes (i32.and (i32.add (local.get $bytes) (i32.const 7)) (i32.const -8)))\n";
     o = o + lc_bump_free("(local.get $bytes)");
     o = o + "    (if (i32.lt_u (local.get $bytes) (i32.const 8)) (then (return)))\n";
-    o = o + "    (local.set $cls (i32.shr_u (local.get $bytes) (i32.const 3)))\n";
+    o = o + "    (local.set $cls (call $__fern_capw (i32.shr_u (local.get $bytes) (i32.const 3))))\n";
     o = o + "    (if (i32.lt_u (local.get $cls) (i32.const " + flc + ")) (then\n";
     o = o + "      (i32.store (i32.add (local.get $base) (i32.const 4)) (i32.load (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4)))))\n";
     o = o + "      (i32.store (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4))) (local.get $base))\n";
@@ -9769,7 +9786,7 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32, lfl
     o = o + "    (if (i32.eq (i32.load (i32.add (local.get $base) (i32.const 4))) (local.get $want)) (then\n";
     o = o + "      (return (local.get $t))))\n";
     o = o + lc_bump_free("(i32.load (i32.add (local.get $base) (i32.const 4)))");
-    o = o + "    (local.set $cls (i32.shr_u (i32.load (i32.add (local.get $base) (i32.const 4))) (i32.const 3)))\n";
+    o = o + "    (local.set $cls (call $__fern_capw (i32.shr_u (i32.load (i32.add (local.get $base) (i32.const 4))) (i32.const 3))))\n";
     o = o + "    (i32.store (local.get $base) (i32.const 0))\n";
     o = o + "    (if (i32.lt_u (local.get $cls) (i32.const " + flc + ")) (then\n";
     o = o + "      (i32.store (i32.add (local.get $base) (i32.const 4)) (i32.load (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4)))))\n";
@@ -9798,7 +9815,7 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32, lfl
     o = o + "      (global.set $__fern_rc_underflow (i32.add (global.get $__fern_rc_underflow) (i32.const 1)))\n";
     o = o + "      (return (local.get $a))))\n";
     o = o + lc_bump_free("(i32.load (i32.add (local.get $base) (i32.const 4)))");
-    o = o + "    (local.set $cls (i32.shr_u (i32.load (i32.add (local.get $base) (i32.const 4))) (i32.const 3)))\n";
+    o = o + "    (local.set $cls (call $__fern_capw (i32.shr_u (i32.load (i32.add (local.get $base) (i32.const 4))) (i32.const 3))))\n";
     o = o + "    (i32.store (local.get $base) (i32.const 0))\n";
     o = o + "    (if (i32.lt_u (local.get $cls) (i32.const " + flc + ")) (then\n";
     o = o + "      (i32.store (i32.add (local.get $base) (i32.const 4)) (i32.load (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4)))))\n";
