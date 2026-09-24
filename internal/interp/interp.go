@@ -6956,14 +6956,17 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 		// Qualified payload-less variant: `Color.Red`. Target is
 		// an Ident naming an enum type, not a value — evaluating
 		// it as a value would fail. Mirror the checker rewrite
-		// and produce the typed Enum directly.
+		// and produce the typed Enum directly. A local named like the enum
+		// shadows it.
 		if tid, ok := x.Target.(*ast.Ident); ok {
-			if ed, idx, ok := i.findVariantOn(x.Field, tid.Name); ok {
-				if len(ed.Variants[idx].Payloads) != 0 {
-					return nil, fmt.Errorf("interp: variant %s.%s expects %d payload(s); call it instead",
-						tid.Name, x.Field, len(ed.Variants[idx].Payloads))
+			if _, local := env.get(tid.Name); !local {
+				if ed, idx, ok := i.findVariantOn(x.Field, tid.Name); ok {
+					if len(ed.Variants[idx].Payloads) != 0 {
+						return nil, fmt.Errorf("interp: variant %s.%s expects %d payload(s); call it instead",
+							tid.Name, x.Field, len(ed.Variants[idx].Payloads))
+					}
+					return &Enum{EnumName: ed.Name, VariantName: x.Field, Index: idx}, nil
 				}
-				return &Enum{EnumName: ed.Name, VariantName: x.Field, Index: idx}, nil
 			}
 		}
 		tv, err := i.evalExpr(x.Target, env)

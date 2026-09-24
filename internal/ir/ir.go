@@ -6319,13 +6319,14 @@ func needsImplicitReturn(ops []Op) bool {
 // scrutinee with no static enum type, or an Ident the checker left
 // unstamped — and keeps the legacy scan for those.
 // unitVariantRef reports whether x is a qualified payload-less variant
-// (`Color.Red`), and which.
+// (`Color.Red`), and which. The checker's record decides, since a local may
+// shadow the enum's name.
 func (b *builder) unitVariantRef(x *ast.FieldAccess) (enumName string, varIdx int, ok bool) {
 	tid, isIdent := x.Target.(*ast.Ident)
 	if !isIdent {
 		return "", 0, false
 	}
-	if _, isEnum := b.info.Enums[tid.Name]; !isEnum {
+	if _, resolved := b.info.EnumConstructions[x]; !resolved {
 		return "", 0, false
 	}
 	_, varIdx, payloadCount, isVar := b.lookupVariantOn(x.Field, tid.Name)
