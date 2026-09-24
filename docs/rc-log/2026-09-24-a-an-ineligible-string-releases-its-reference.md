@@ -21,22 +21,29 @@ Two halves, one per frame.
 - `out = x` retains, so `out` holds a counted reference. `out` is not
   freeEligible, and the exit sweep's string arm skipped every ineligible
   string, so nothing gave the reference back. Every other type falls
-  through to the flat `__fern_rc_dec`, which never frees. That was safe to
-  do for strings too, because a `string` local never holds a view (the
-  checker refuses `str` into `string` with E003) and the sweep already
-  skips the two uncounted kinds, moved locals and borrowed aliases. What
-  was missing was the two-word form: on arm64 and wasm an inline string
-  keeps its bytes in the data word, so a flat dec on `data` is unsafe.
+  through to the flat `__fern_rc_dec`, which never frees. A string can take
+  the same release when it holds a count, and a `string` local never holds
+  a view (the checker refuses `str` into `string` with E003). But
+  ineligible does not imply counted. The sweep skips moved locals and
+  borrowed aliases, yet a local bound to a block's tail value
+  (`var s = if (c) { var j = a + b; j } else { "" }`) takes `j`'s buffer
+  with no retain. Released at exit after `j` freed that buffer, it is a
+  use-after-free. The two-word form was missing too: on arm64 and wasm an
+  inline string keeps its bytes in the data word, so a flat dec on `data`
+  is unsafe.
 - The caller's `line` stayed ineligible on x86-64 because
   `stringParamCounted` had no arm for the parameter as the VALUE of an
   assignment, so `tag` looked like it kept the string.
 
 ## Change
 
-- The sweep releases an ineligible string without freeing it: the flat
+- The sweep releases an ineligible string without freeing it when every
+  store into it was counted (`stringStoresCounted`): a literal, a fresh
+  owned value, or an alias the store retains. That is the flat
   `__fern_rc_dec` on single-word x86-64, and a new `__fern_str_rc_dec(data,
   len)` on arm64 and wasm, which returns at once for an inline string and
-  hands anything else to `__fern_rc_dec`.
+  hands anything else to `__fern_rc_dec`. Any other ineligible string is
+  left alone, as before.
 - `stringParamCounted` credits `local = p`: the Assign lowering retains an
   ident source unless it is a move, and a frame-bound alias is never moved.
 
@@ -47,4 +54,14 @@ Two halves, one per frame.
 - `TestConformanceLeakCensusX86_64`: `http_content_type` 5 → 0 unpaired,
   `http_cookies` 8 → 7.
 - `TestIneligibleStringLocalReleasesItsReference` pins four shapes on all
-  three targets. Seven of the twelve legs fail without the change.
+  three targets. Seven of the twelve legs fail without the change. A fifth,
+  the block-tail binding, is a use-after-free on x86-64 and arm64
+  `-sanitize` if the sweep releases every ineligible string.
+
+## Found on the way
+
+A string `if` expression whose arm ends in a local it declares failed wasm
+validation (#10187). `exprType` had no `BlockExpr` case, so the arm typed as
+nil and the `if` got `(result i32)` instead of the two-word block type. Its
+tail names a local not yet in scope, so the new case answers from the block's
+own declaration. `TestBlockExprStringTailRuntimeCondition` pins it.

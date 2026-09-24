@@ -1455,6 +1455,55 @@ func copyingBuiltinArg(name string, i int) bool {
 	return false
 }
 
+// stringStoresCounted reports whether every store into string local `name`
+// hands it a reference of its own: a literal, a fresh owned value, or an alias
+// the store retains. Only then may the exit sweep release a local it has not
+// proven owns its buffer. One bound to an alias no store retained, like a
+// block's tail value, holds nothing to give back.
+func (b *builder) stringStoresCounted(name string) bool {
+	if b.strStoresFn != b.fn {
+		b.strStoresFn, b.strStoresCounted = b.fn, map[string]bool{}
+	}
+	if v, ok := b.strStoresCounted[name]; ok {
+		return v
+	}
+	counted := func(v ast.Expr) bool {
+		if v == nil {
+			return true
+		}
+		if _, ok := v.(*ast.StringLit); ok {
+			return true
+		}
+		if _, ok := b.freshOwnedRcTempType(v); ok {
+			return true
+		}
+		if _, ok := b.ownedCallResultType(v); ok {
+			return true
+		}
+		return needsRcIncOnAlias(v, b)
+	}
+	stores, all := 0, b.fn.Body != nil
+	if all {
+		ast.Walk(b.fn.Body, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.Var:
+				if x.Name == name {
+					stores++
+					all = all && counted(x.Init)
+				}
+			case *ast.Assign:
+				if id, ok := x.Target.(*ast.Ident); ok && id.Name == name {
+					stores++
+					all = all && counted(x.Value)
+				}
+			}
+			return all
+		})
+	}
+	b.strStoresCounted[name] = all && stores > 0
+	return b.strStoresCounted[name]
+}
+
 // stringParamCounted reports whether string parameter `pn` of fn is retained
 // only through counted constructions or non-retaining reads — every appearance
 // is a bare-ident value of a StructLit / TupleLit / ArrayLit slot, the receiver

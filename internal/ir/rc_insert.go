@@ -1228,10 +1228,9 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		// ELIGIBLE string (a fresh owned concat/slice result — rhsTainted
 		// whitelists exactly those, both of which COPY into a new headered
 		// buffer) frees via __fern_str_dec (inline no-op / rc==1 box_free /
-		// else dec). An ineligible string still holds the reference its
-		// store counted (the sweep skips moved locals and borrowed aliases),
-		// so it drops that reference without freeing, as every other
-		// ineligible type does (#10117).
+		// else dec). An ineligible string whose every store was counted
+		// (stringStoresCounted) drops that reference without freeing, as
+		// every other ineligible type does (#10117).
 		if _, isStr := t.(ast.StringType); isStr {
 			// Two-word string ABIs (wasm + arm64-TwoWordOverride): __fern_str_dec
 			// consumes (data, len), returns data; drop the returned ptr.
@@ -1250,6 +1249,8 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 				// is balanced; inline / literal / sentinel short-circuit.
 				b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1})
 				b.emit(Op{Kind: OpDrop}) // drop the returned ptr
+			} else if !b.stringStoresCounted(name) {
+				// Holds no reference of its own to release.
 			} else if ast.UseTwoWordStrings(b.ptrW) {
 				b.emit(Op{Kind: OpLoadLocal, I32: slot}) // pushes (data, len)
 				b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_rc_dec", Width: ResAddr, I32: 1})

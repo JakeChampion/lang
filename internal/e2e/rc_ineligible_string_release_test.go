@@ -6,10 +6,11 @@ import (
 	"testing"
 )
 
-// A string local the exit sweep cannot prove it owns still holds the
-// reference its store counted, so it is released without being freed, as
-// every other ineligible type is; and a parameter stored into such a local is
-// a counted store, so the caller keeps its own release (#10117). Each shape
+// A string local the exit sweep cannot prove it owns, but whose every store
+// was counted, is released without being freed, as every other ineligible type
+// is; and a parameter stored into such a local is a counted store, so the
+// caller keeps its own release (#10117). One bound without a retain holds
+// nothing to release. Each shape
 // builds its strings by concatenation so they are heap blocks, and runs
 // several calls so a per-call leak shows as a count.
 func TestIneligibleStringLocalReleasesItsReference(t *testing.T) {
@@ -66,6 +67,20 @@ function main(): i32 {
     }
     return acc - 50;
 }`, 52},
+		// `s` is bound to the block's tail value with no retain, so it holds
+		// no reference of its own: releasing it at exit is a use-after-free
+		// once `joined` has freed the buffer.
+		{"bound-to-a-block-tail", mk + `function tail(i: i32): i32 {
+    var a: string = mkstr("a string long enough to live on the heap");
+    var s: string = if (i >= 0) { var joined = a + "?"; joined } else { "" };
+    return s.len();
+}
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) { acc = acc + tail(i); i = i + 1; }
+    return acc - 100;
+}`, 68},
 		{"literals-only", mk + `function label(i: i32): i32 {
     var out: string = "odd";
     if (i % 2 == 0) { out = "even"; }
