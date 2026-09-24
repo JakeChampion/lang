@@ -40,7 +40,7 @@ pub struct Step { block: i32, point: i32, target: i32, supplies: Supply[], drops
 // -1; `grow_fields` holds that field's index at the same position.
 // `held` marks an element read that takes a unit of its own at the read
 // (held_elements); the physical lowering retains what it read.
-// `literal` marks the values a string literal defines (fresh_unit).
+// `literal` marks the values that can only hold a string literal (`literals`).
 pub struct Plan { ok: boolean, why: string, steps: Step[], owned: boolean[], literal: boolean[], grows: i32[], grow_fields: i32[], takes: i32[], held: boolean[], payloads: boolean[] }
 struct Ledger { ok: boolean, why: string, bits: boolean[] }
 
@@ -342,10 +342,25 @@ function hands_out(kind: i32): boolean {
         || kind == ssasem.map_keys() || kind == ssasem.map_values() || kind == ssasem.map_delete()
         || kind == ssasem.str_bytes() || kind == ssasem.arr_join() || kind == ssasem.arr_slice();
 }
+// A phi is a literal too when every operand is: assumed of every phi, then
+// withdrawn from each one with another operand, to a fixpoint, so a loop
+// phi that only ever carries literals keeps the mark.
 function literals(f: ssasem.Func): boolean[] {
     var out: boolean[] = bits(f.graph.nvals);
     for b in f.graph.blocks {
-        for ins in b.insts { if (ins.kind_tag == 5) { out = out.with(ins.result, true); } }
+        for ins in b.insts { if (ins.kind_tag == 5 || ins.kind_tag == 8) { out = out.with(ins.result, true); } }
+    }
+    var changed: boolean = true;
+    while (changed) {
+        changed = false;
+        for b in f.graph.blocks {
+            for ins in b.insts {
+                if (ins.kind_tag != 8 || !out[ins.result]) { continue; }
+                var lit: boolean = true;
+                for a in ins.args { if (a < 0 || !out[a]) { lit = false; } }
+                if (!lit) { out = out.with(ins.result, false); changed = true; }
+            }
+        }
     }
     return out;
 }

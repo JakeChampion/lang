@@ -10,14 +10,17 @@ runs the runtime's immortal guard. In a stage-2 profile of compiling
 
 `ssaunits.fresh_unit` no longer counts a literal as owned, a phi whose
 operands are literals (or borrowed parameters) holds nothing, and a
-consumer that takes a literal gets it with no retain (`Plan.literal`, read
-by `ssarc.supplies`).
+consumer that takes a literal, or a phi that can only hold one, gets it with
+no retain (`Plan.literal`, read by `ssarc.supplies`).
 
 | | main | this change |
 |---|---|---|
 | `lexer.fern` compile, stage-2 (self-host-built) compiler, Ir | 1,899,992,636 | 1,853,992,520 (−2.4%) |
 
-The stage-2 compilers' output for `lexer.fern` is byte-identical. Built with
+The stage-2 compilers compared are built from the same source by main's
+compiler and by this one, so they run the same compiler; the assembly each
+emits for `lexer.fern` is byte-identical. Their own machine code differs,
+which is the change being measured. Built with
 leakcheck and compiling `checker.fern`, both stage-2 compilers make and free
 99,650,193 allocations with no live bytes left, and emit the same text.
 `TestSelfHostOptimisationShapes` pins the three shapes: a comparison against
