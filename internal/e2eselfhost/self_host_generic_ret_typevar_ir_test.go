@@ -81,6 +81,48 @@ function main(): i32 {
     if (x == 0) { return 1; }
     return 3;
 }`},
+	// The CONTAINER spelling: a tuple return reads its element type off the
+	// first argument that declares the variable, so the call site's literal
+	// arguments are settled at the widest reading too, not only the checker's
+	// answer (#8722 part 4).
+	{"shared-typevar-tuple-return", `pub function both[T](a: T, b: T): (T, T) { return (a, b); }
+function main(): i32 {
+    var q = both(1, 4611686018427387904);
+    if (q.1 - q.0 == 4611686018427387903) { return 7; }
+    return 3;
+}`},
+	{"shared-typevar-three-args", `pub function three[T](a: T, b: T, c: T): (T, T, T) { return (a, b, c); }
+function main(): i32 {
+    var q = three(1, 2, 4611686018427387904);
+    if (q.2 - q.0 - q.1 == 4611686018427387901) { return 7; }
+    return 3;
+}`},
+	{"shared-typevar-negative-wide", `pub function both[T](a: T, b: T): (T, T) { return (a, b); }
+function main(): i32 {
+    var q = both(0 - 4611686018427387904, 1);
+    if (q.1 - q.0 == 4611686018427387905) { return 7; }
+    return 3;
+}`},
+	{"shared-typevar-array-return", `pub function arr[T](a: T, b: T): T[] { return [a, b]; }
+function main(): i32 {
+    var q = arr(1, 4611686018427387904);
+    if (q[1] - q[0] == 4611686018427387903) { return 7; }
+    return 3;
+}`},
+	{"shared-typevar-annotated-tuple", `pub function both[T](a: T, b: T): (T, T) { return (a, b); }
+function main(): i32 {
+    var q: (i64, i64) = both(1, 4611686018427387904);
+    if (q.1 - q.0 == 4611686018427387903) { return 7; }
+    return 3;
+}`},
+	// A typed argument pins the variable: only a variable bound by literals
+	// alone takes the widest reading.
+	{"shared-typevar-typed-arg-pins", `pub function both[T](a: T, b: T): (T, T) { return (a, b); }
+function main(): i32 {
+    var x: i32 = 1;
+    var q = both(x, 2);
+    return q.1 + q.0 + 4;
+}`},
 	// The widening reads INTEGERS only: wider_int keeps the first reading when
 	// either side is not one, so a shared variable bound by two strings types
 	// exactly as it did.

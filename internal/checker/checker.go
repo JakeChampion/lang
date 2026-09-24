@@ -14371,6 +14371,7 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 	if tagT == nil {
 		return
 	}
+	tagT = c.widenGenericScrutinee(n.Tag, tagT)
 	et, ok := tagT.(ast.EnumType)
 	if !ok {
 		// A pattern-binding desugar (`if let V(x) = e`) destructuring a
@@ -14547,6 +14548,20 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 		}
 	}
 	stampRemainderStmtArms(n.Arms, ed)
+}
+
+// widenGenericScrutinee settles a generic call in scrutinee position the way
+// an unannotated `var` initialiser settles one: a type parameter bound only by
+// literal arguments, one of which has no i32 reading, takes i64
+// (widenGenericCallByLiterals). Without it `match (pick(1, 2^62))` bound `T`
+// at the i32 default and the arm's payload compared at the wrong width (#8722).
+func (c *checker) widenGenericScrutinee(tag ast.Expr, tagT ast.Type) ast.Type {
+	if call, ok := tag.(*ast.Call); ok {
+		if widened := c.widenGenericCallByLiterals(call); widened != nil {
+			return widened
+		}
+	}
+	return tagT
 }
 
 // settlePolymorphicScrutinee commits a still-polymorphic integer scrutinee to
@@ -15237,6 +15252,7 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 	if tagT == nil {
 		return nil
 	}
+	tagT = c.widenGenericScrutinee(n.Tag, tagT)
 	et, ok := tagT.(ast.EnumType)
 	if !ok {
 		// Tuple scrutinee: arms are tuple patterns + a wildcard.

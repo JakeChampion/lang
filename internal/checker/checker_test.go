@@ -787,6 +787,33 @@ func TestUnannotatedCompositeInitWidensElementToI64(t *testing.T) {
 	}
 }
 
+// TestGenericCallScrutineeWidensLiteralBoundT covers #8722: a generic call in
+// scrutinee position settles a type parameter its literal arguments alone bind
+// the way an unannotated `var` initialiser does. `match (pick(1, 2^62))` bound
+// T at the i32 default, so the payload compared against the same wide literal
+// was refused as E041. A typed argument still pins T.
+func TestGenericCallScrutineeWidensLiteralBoundT(t *testing.T) {
+	const big = "4611686018427387904"
+	const decls = "function pick[T](a: T, b: T): Option[T] { return Some(b); } "
+	for _, body := range []string{
+		`match (pick(1, ` + big + `)) { Some(v) => { var u: i64 = v; if (v == ` + big + `) { return 1; } }, None => { } }`,
+		`var m = match (pick(1, ` + big + `)) { Some(v) => v, None => 0 }; var u: i64 = m;`,
+	} {
+		if err := checkSource(t, decls+"function main(): i32 { "+body+" return 0; }"); err != nil {
+			t.Errorf("%s: should settle T at i64, got: %v", body, err)
+		}
+	}
+	// Small literals keep the default, and a typed argument pins T.
+	for _, body := range []string{
+		`match (pick(1, 2)) { Some(v) => { var u: i32 = v; }, None => { } }`,
+		`var x: i32 = 1; match (pick(x, 2)) { Some(v) => { var u: i32 = v; }, None => { } }`,
+	} {
+		if err := checkSource(t, decls+"function main(): i32 { "+body+" return 0; }"); err != nil {
+			t.Errorf("%s: should stay i32, got: %v", body, err)
+		}
+	}
+}
+
 // A generic call's result can carry T anywhere — `pair[A, B](a: A, b: B):
 // (A, B)` — so the widening restamps the TypeArgs entry a wide literal pins
 // and re-derives the result from it (#8668): the binding is `(i64, string)`,
