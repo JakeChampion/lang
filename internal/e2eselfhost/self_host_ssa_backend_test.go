@@ -1477,12 +1477,13 @@ function main(): i32 { return count() as i32; }
 		want, absent []*regexp.Regexp
 	}{
 		// On x86-64 the constant divisor is not materialised either: the
-		// literal-divisor form (ir_div_const) reads it from the table, so the
-		// i64 remainder is the unguarded divide with the 97 loaded by that
-		// form itself, and the two guards a run-time divisor needs are gone.
+		// literal-divisor form (ir_div_const) takes the i64 remainder by the
+		// multiply-high reciprocal and multiplies the 97 back as an
+		// immediate, so neither a divide nor the two guards a run-time
+		// divisor needs appear.
 		{"x86-64-linux",
-			[]*regexp.Regexp{regexp.MustCompile(`addq \$1, %r`), regexp.MustCompile(`cmpq \$3000, %r`), regexp.MustCompile(`movabsq \$97, %rcx`), regexp.MustCompile(`sarq \$3, %r`)},
-			[]*regexp.Regexp{regexp.MustCompile(`mov[ql] \$3000, %`), regexp.MustCompile(`mov[ql] \$1, %`), regexp.MustCompile(`mov[ql] \$97, %`), regexp.MustCompile(`testq %rcx`), regexp.MustCompile(`cmpq \$-1`), regexp.MustCompile(`sarq %cl`), regexp.MustCompile(`andl \$31, %ecx`)}},
+			[]*regexp.Regexp{regexp.MustCompile(`addq \$1, %r`), regexp.MustCompile(`cmpq \$3000, %r`), regexp.MustCompile(`movabsq \$-6275696437447579415, %rax`), regexp.MustCompile(`imulq \$97, %r`), regexp.MustCompile(`sarq \$3, %r`)},
+			[]*regexp.Regexp{regexp.MustCompile(`mov[ql] \$3000, %`), regexp.MustCompile(`mov[ql] \$1, %`), regexp.MustCompile(`mov[ql] \$97, %`), regexp.MustCompile(`idivq`), regexp.MustCompile(`testq %rcx`), regexp.MustCompile(`cmpq \$-1`), regexp.MustCompile(`sarq %cl`), regexp.MustCompile(`andl \$31, %ecx`)}},
 		{"arm64-linux",
 			[]*regexp.Regexp{regexp.MustCompile(`add x\d+, x\d+, #1\n`), regexp.MustCompile(`cmp x\d+, #3000\n`), regexp.MustCompile(`mov x\d+, #97\n`), regexp.MustCompile(`asr x\d+, x\d+, #3\n`)},
 			[]*regexp.Regexp{regexp.MustCompile(`mov x\d+, #3000\n`), regexp.MustCompile(`mov x\d+, #1\n`), regexp.MustCompile(`and x\d+, x\d+, #31\n`)}},

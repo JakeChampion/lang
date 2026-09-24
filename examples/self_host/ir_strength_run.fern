@@ -520,11 +520,12 @@ function main(): i32 {
     var wc_wrap_neg: ir.Op[] = [ir.op_const_i32(0 - 1), ir.op_u32_wrap()];
     out = out + "wc_u32_wrap_neg_refused: " + render(ir.fold_const_binaries(wc_wrap_neg)) + "\n";
 
-    // 17c. int_extend / int_wrap CHANGE the width and are refused: on wasm they
-    //      change the value's type (i64.extend_i32_s / i32.wrap_i64), so a
-    //      dropped one leaves an i64 consumer reading an i32.
+    // 17c. int_extend / int_wrap CHANGE the width: on wasm they change the
+    //      value's type (i64.extend_i32_s / i32.wrap_i64). An extend folds into
+    //      an i64 constant, never into the i32 it started as; a wrap of an i32
+    //      is not a shape the lowering makes, and is left alone.
     var wc_ext: ir.Op[] = [ir.op_const_i32(9), ir.op_int_extend(false)];
-    out = out + "wc_int_extend_refused: " + render(ir.fold_const_binaries(wc_ext)) + "\n";
+    out = out + "wc_int_extend: " + render(ir.fold_const_binaries(wc_ext)) + "\n";
     var wc_narrow: ir.Op[] = [ir.op_const_i32(9), ir.op_int_wrap(false)];
     out = out + "wc_int_wrap_refused: " + render(ir.fold_const_binaries(wc_narrow)) + "\n";
 
@@ -606,23 +607,71 @@ function main(): i32 {
     if (render(ir.prune_zero_slot_guards(zg_once, 0)) == render(zg_once)) { zg_stable = 1; }
     out = out + "zg_idempotent=" + util.i32_to_string(zg_stable) + "\n";
 
-    // 19. Magic-number reciprocals (ir.derive_magic_s32 / derive_magic_u32,
+    // 20. 64-bit folds (native fold.go's foldBinary64 and width-conversion
+    //     arms): a negative i64 literal is `0 - k` at width 64, and
+    //     `(100 as u64)` is `const_i32 100 ; int_extend`.
+    var f64_neg: ir.Op[] = [ir.op_const_i64_text("0"), ir.op_const_i64_text("3"), ir.op_bin("sub", 64, false)];
+    out = out + "f64_neg: " + render(ir.fold_const_binaries(f64_neg)) + "\n";
+    var f64_mul: ir.Op[] = [ir.op_const_i64_text("4294967296"), ir.op_const_i64_text("4294967296"), ir.op_bin("mul", 64, false)];
+    out = out + "f64_mul_wraps: " + render(ir.fold_const_binaries(f64_mul)) + "\n";
+    var f64_cmp: ir.Op[] = [ir.op_const_i64_text("5000000000"), ir.op_const_i64_text("7"), ir.op_bin("gt_s", 64, false)];
+    out = out + "f64_cmp: " + render(ir.fold_const_binaries(f64_cmp)) + "\n";
+    var f64_div0: ir.Op[] = [ir.op_const_i64_text("7"), ir.op_const_i64_text("0"), ir.op_bin("div_s", 64, false)];
+    out = out + "f64_div_zero_refused: " + render(ir.fold_const_binaries(f64_div0)) + "\n";
+    var f64_min: ir.Op[] = [ir.op_const_i64_text("-9223372036854775808"), ir.op_const_i64_text("-1"), ir.op_bin("div_s", 64, false)];
+    out = out + "f64_min_div_refused: " + render(ir.fold_const_binaries(f64_min)) + "\n";
+    var f64_minr: ir.Op[] = [ir.op_const_i64_text("-9223372036854775808"), ir.op_const_i64_text("-1"), ir.op_bin("rem_s", 64, false)];
+    out = out + "f64_min_rem: " + render(ir.fold_const_binaries(f64_minr)) + "\n";
+    var f64_uns: ir.Op[] = [ir.op_const_i64_text("-8"), ir.op_const_i64_text("1"), ir.op_bin("shr_s", 64, true)];
+    out = out + "f64_unsigned_refused: " + render(ir.fold_const_binaries(f64_uns)) + "\n";
+    var f64_hex: ir.Op[] = [ir.op_const_i64_text("0x10"), ir.op_const_i64_text("1"), ir.op_bin("add", 64, false)];
+    out = out + "f64_hex_refused: " + render(ir.fold_const_binaries(f64_hex)) + "\n";
+    var f64_ext: ir.Op[] = [ir.op_const_i32(-1), ir.op_int_extend(false)];
+    out = out + "f64_extend_s: " + render(ir.fold_const_binaries(f64_ext)) + "\n";
+    var f64_extu: ir.Op[] = [ir.op_const_i32(-1), ir.op_int_extend(true)];
+    out = out + "f64_extend_u: " + render(ir.fold_const_binaries(f64_extu)) + "\n";
+    var f64_extp: ir.Op[] = [ir.op_const_i32(100), ir.op_int_extend_ptr()];
+    out = out + "f64_extend_ptr_refused: " + render(ir.fold_const_binaries(f64_extp)) + "\n";
+    var f64_wrap: ir.Op[] = [ir.op_const_i64_text("4294967297"), ir.op_int_wrap(false)];
+    out = out + "f64_wrap: " + render(ir.fold_const_binaries(f64_wrap)) + "\n";
+    var f64_wrapu: ir.Op[] = [ir.op_const_i64_text("3000000000"), ir.op_int_wrap(true)];
+    out = out + "f64_wrap_u32_high_refused: " + render(ir.fold_const_binaries(f64_wrapu)) + "\n";
+    var f64_wrapu_lo: ir.Op[] = [ir.op_const_i64_text("7"), ir.op_int_wrap(true)];
+    out = out + "f64_wrap_u32: " + render(ir.fold_const_binaries(f64_wrapu_lo)) + "\n";
+
+    // 19. Magic-number reciprocals (ir.derive_magic_s / derive_magic_u,
     //     native internal/ir/magic.go). The Go test renders the same divisors
     //     through native's derivation, so this is a parity check, not a golden.
     var mds: i32[] = [3, 7, -7, 97, 4093, -4093, 641, 1000000, 715827883, -1234567, 10, 100, 2147483647, -2147483647, 5, -5];
     var mi: i32 = 0;
     while (mi < mds.len()) {
-        var ms: ir.MagicS32 = ir.derive_magic_s32(mds[mi]);
-        out = out + "magic_s " + util.i32_to_string(mds[mi]) + ": m=" + util.i32_to_string(ms.m)
+        var ms: ir.MagicS = ir.derive_magic_s(mds[mi] as i64, 32);
+        out = out + "magic_s " + util.i32_to_string(mds[mi]) + ": m=" + util.i64_to_string(ms.m)
             + " s=" + util.i32_to_string(ms.s) + " add=" + bool_word(ms.add) + " sub=" + bool_word(ms.sub) + "\n";
         mi = mi + 1;
     }
     var mus: u32[] = [3u32, 7u32, 97u32, 641u32, 1000000u32, 2147483649u32, 2863311531u32, 4294967291u32, 4294967295u32, 10u32, 100u32, 5u32, 4093u32];
     mi = 0;
     while (mi < mus.len()) {
-        var mu: ir.MagicU32 = ir.derive_magic_u32(mus[mi]);
+        var mu: ir.MagicU = ir.derive_magic_u(mus[mi] as u64, 32);
         out = out + "magic_u " + util.i64_to_string(mus[mi] as i64) + ": m=" + util.i64_to_string(mu.m as i64)
             + " s=" + util.i32_to_string(mu.s) + " add=" + bool_word(mu.add) + "\n";
+        mi = mi + 1;
+    }
+    var mds64: i64[] = [3i64, 7i64, -7i64, 10i64, 100i64, 641i64, -1000000007i64, 1000000000000i64, 6148914691236517205i64, -6148914691236517205i64, 9223372036854775807i64, -9223372036854775807i64];
+    mi = 0;
+    while (mi < mds64.len()) {
+        var ms64: ir.MagicS = ir.derive_magic_s(mds64[mi], 64);
+        out = out + "magic_s64 " + util.i64_to_string(mds64[mi]) + ": m=" + util.i64_to_string(ms64.m)
+            + " s=" + util.i32_to_string(ms64.s) + " add=" + bool_word(ms64.add) + " sub=" + bool_word(ms64.sub) + "\n";
+        mi = mi + 1;
+    }
+    var mus64: u64[] = [3u64, 7u64, 10u64, 100u64, 641u64, 1000000007u64, 9223372036854775809u64, 12297829382473034411u64, 18446744073709551557u64, 18446744073709551615u64];
+    mi = 0;
+    while (mi < mus64.len()) {
+        var mu64: ir.MagicU = ir.derive_magic_u(mus64[mi], 64);
+        out = out + "magic_u64 " + util.i64_to_string(mus64[mi] as i64) + ": m=" + util.i64_to_string(mu64.m as i64)
+            + " s=" + util.i32_to_string(mu64.s) + " add=" + bool_word(mu64.add) + "\n";
         mi = mi + 1;
     }
 

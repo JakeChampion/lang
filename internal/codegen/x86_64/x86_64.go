@@ -4855,71 +4855,103 @@ func (g *generator) emitConstDivRem(op ir.Op, isRem bool, k int64) {
 		if neg {
 			g.emit(fmt.Sprintf("neg %s", a))
 		}
-	case !w64:
-		// Everything else at i32 width: the multiply-high reciprocal.
-		g.emitConstDivRemMagic(op, isRem, int32(k))
 	default:
-		g.emitConstDivRemGeneric(op, isRem, k, a, c, d, w64)
+		// Everything else: the multiply-high reciprocal.
+		g.emitConstDivRemMagic(op, isRem, k, w64)
 	}
 	g.push()
 }
 
-// emitConstDivRemMagic is i32 division or remainder by a divisor that is
-// neither 0, ±1, nor a power of two: the reciprocal from ir.DeriveMagic*32.
-// A divide is 20-40 cycles here where the multiply and shift are about five.
+// emitConstDivRemMagic is division or remainder by a divisor that is neither
+// 0, ±1, nor a power of two: the reciprocal from ir.DeriveMagic*. A divide is
+// 20-40 cycles at 32 bits and up to 90 at 64, where the multiply and shift
+// are about five.
 //
-// The one-operand `imul` / `mul` multiply eax by their operand and leave the
-// high half in edx, so the DIVIDEND goes in ecx and the MAGIC in eax — the
-// product is the same either way, and that ordering leaves the dividend
-// intact in ecx for the fixup and for a remainder's multiply-back.
-func (g *generator) emitConstDivRemMagic(op ir.Op, isRem bool, d int32) {
-	g.emit("mov ecx, eax") // ecx = dividend, live to the end
+// The one-operand `imul` / `mul` multiply the accumulator by their operand and
+// leave the high half in edx / rdx, so the DIVIDEND goes in ecx and the MAGIC
+// in eax — the product is the same either way, and that ordering leaves the
+// dividend intact in ecx for the fixup and for a remainder's multiply-back.
+func (g *generator) emitConstDivRemMagic(op ir.Op, isRem bool, d int64, w64 bool) {
+	a, c, hi, top := "eax", "ecx", "edx", 31
+	mov := "mov"
+	if w64 {
+		a, c, hi, top = "rax", "rcx", "rdx", 63
+		mov = "movabs"
+	}
+	g.emit(fmt.Sprintf("mov %s, %s", c, a)) // dividend, live to the end
 	if op.Unsigned {
-		mg := ir.DeriveMagicU32(uint32(d))
-		g.emit(fmt.Sprintf("mov eax, %d", int32(mg.M)))
-		g.emit("mul ecx")
-		if !mg.Add {
-			g.emit(fmt.Sprintf("shr edx, %d", mg.S))
-			g.emit("mov eax, edx")
+		var m int64
+		var sh uint
+		var add bool
+		if w64 {
+			mg := ir.DeriveMagicU64(uint64(d))
+			m, sh, add = int64(mg.M), mg.S, mg.Add
 		} else {
-			// A 33-bit magic. Averaging the dividend and the high half by
-			// shifting keeps the carry a plain add would drop off the top.
-			g.emit("mov eax, ecx")
-			g.emit("sub eax, edx")
-			g.emit("shr eax, 1")
-			g.emit("add eax, edx")
-			g.emit(fmt.Sprintf("shr eax, %d", mg.S-1))
+			mg := ir.DeriveMagicU32(uint32(d))
+			m, sh, add = int64(int32(mg.M)), mg.S, mg.Add
+		}
+		g.emit(fmt.Sprintf("%s %s, %d", mov, a, m))
+		g.emit("mul " + c)
+		if !add {
+			g.emit(fmt.Sprintf("shr %s, %d", hi, sh))
+			g.emit(fmt.Sprintf("mov %s, %s", a, hi))
+		} else {
+			// A magic one bit wider than the word. Averaging the dividend and
+			// the high half by shifting keeps the carry a plain add would drop
+			// off the top.
+			g.emit(fmt.Sprintf("mov %s, %s", a, c))
+			g.emit(fmt.Sprintf("sub %s, %s", a, hi))
+			g.emit(fmt.Sprintf("shr %s, 1", a))
+			g.emit(fmt.Sprintf("add %s, %s", a, hi))
+			g.emit(fmt.Sprintf("shr %s, %d", a, sh-1))
 		}
 	} else {
-		mg := ir.DeriveMagicS32(d)
-		g.emit(fmt.Sprintf("mov eax, %d", mg.M))
-		g.emit("imul ecx")
-		switch {
-		case mg.Add:
-			g.emit("add edx, ecx")
-		case mg.Sub:
-			g.emit("sub edx, ecx")
+		var m int64
+		var sh uint
+		var add, sub bool
+		if w64 {
+			mg := ir.DeriveMagicS64(d)
+			m, sh, add, sub = mg.M, mg.S, mg.Add, mg.Sub
+		} else {
+			mg := ir.DeriveMagicS32(int32(d))
+			m, sh, add, sub = int64(mg.M), mg.S, mg.Add, mg.Sub
 		}
-		if mg.S != 0 {
-			g.emit(fmt.Sprintf("sar edx, %d", mg.S))
+		g.emit(fmt.Sprintf("%s %s, %d", mov, a, m))
+		g.emit("imul " + c)
+		switch {
+		case add:
+			g.emit(fmt.Sprintf("add %s, %s", hi, c))
+		case sub:
+			g.emit(fmt.Sprintf("sub %s, %s", hi, c))
+		}
+		if sh != 0 {
+			g.emit(fmt.Sprintf("sar %s, %d", hi, sh))
 		}
 		// The shift floors, so a negative quotient is one too low.
-		g.emit("mov eax, edx")
-		g.emit("shr edx, 31")
-		g.emit("add eax, edx")
+		g.emit(fmt.Sprintf("mov %s, %s", a, hi))
+		g.emit(fmt.Sprintf("shr %s, %d", hi, top))
+		g.emit(fmt.Sprintf("add %s, %s", a, hi))
 	}
 	if isRem {
-		// r = x - (x / d) * d, with the dividend still in ecx.
-		g.emit(fmt.Sprintf("imul eax, eax, %d", d))
-		g.emit("sub ecx, eax")
-		g.emit("mov eax, ecx")
+		// r = x - (x / d) * d, with the dividend still in ecx. `imul` takes
+		// at most a 32-bit immediate.
+		if w64 && d != int64(int32(d)) {
+			g.emit(fmt.Sprintf("movabs %s, %d", hi, d))
+			g.emit(fmt.Sprintf("imul %s, %s", a, hi))
+		} else if w64 {
+			g.emit(fmt.Sprintf("imul %s, %s, %d", a, a, d))
+		} else {
+			g.emit(fmt.Sprintf("imul %s, %s, %d", a, a, int32(d)))
+		}
+		g.emit(fmt.Sprintf("sub %s, %s", c, a))
+		g.emit(fmt.Sprintf("mov %s, %s", a, c))
 	}
 }
 
-// emitConstDivRemGeneric is the divide itself for a literal divisor that is
-// neither 0 nor ±1 nor a power of two. It is the generic sequence with both
-// guards and all four labels removed: nothing can fault, because the divisor
-// cannot be zero and cannot be -1 with an INT_MIN dividend.
+// emitConstDivRemGeneric is the divide itself, for the most negative divisor,
+// which has no positive magnitude to take a reciprocal of. It is the generic
+// sequence with both guards and all four labels removed: nothing can fault,
+// because the divisor is neither zero nor -1.
 func (g *generator) emitConstDivRemGeneric(op ir.Op, isRem bool, k int64, a, c, d string, w64 bool) {
 	if w64 {
 		g.emit(fmt.Sprintf("movabs %s, %d", c, k))

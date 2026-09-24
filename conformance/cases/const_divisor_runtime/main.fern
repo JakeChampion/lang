@@ -11,8 +11,9 @@
 // for signed a shift biased by 2^k-1 so it truncates toward zero rather
 // than toward negative infinity — including 2^40, whose remainder mask no
 // longer fits an x86 immediate), a negative divisor, and the magic-number
-// reciprocal for everything else. i64 by a non-power-of-two keeps its
-// divide, which this case also covers.
+// reciprocal for everything else, at both widths — including the 64-bit
+// magics one bit wider than the word (u64 by 7) and divisors too wide for
+// an x86 immediate (10^12, 2^63 + 1).
 //
 // -1 is deliberately absent: INT_MIN / -1 overflows, and it is an identity
 // the folder already pins. So is 0, whose result is defined but whose
@@ -82,6 +83,12 @@ function main(): i32 {
     h = h * 1000003i64 + (w / 97i64); h = h * 1000003i64 + (w % 97i64);
     h = h * 1000003i64 + (w / 1000000007i64); h = h * 1000003i64 + (w % 1000000007i64);
     h = h * 1000003i64 + (w / -1000000007i64); h = h * 1000003i64 + (w % -1000000007i64);
+    h = h * 1000003i64 + (w / 7i64); h = h * 1000003i64 + (w % 7i64);
+    h = h * 1000003i64 + (w / -7i64); h = h * 1000003i64 + (w % -7i64);
+    h = h * 1000003i64 + (w / 10i64); h = h * 1000003i64 + (w % 10i64);
+    h = h * 1000003i64 + (w / 100i64); h = h * 1000003i64 + (w % 100i64);
+    h = h * 1000003i64 + (w / 1000000000000i64); h = h * 1000003i64 + (w % 1000000000000i64);
+    h = h * 1000003i64 + (w / -1000000000000i64); h = h * 1000003i64 + (w % -1000000000000i64);
     i = i + 1;
   }
 
@@ -95,6 +102,11 @@ function main(): i32 {
     h = h * 1000003i64 + (uw / 3u64) as i64; h = h * 1000003i64 + (uw % 3u64) as i64;
     h = h * 1000003i64 + (uw / 97u64) as i64; h = h * 1000003i64 + (uw % 97u64) as i64;
     h = h * 1000003i64 + (uw / 1000000007u64) as i64; h = h * 1000003i64 + (uw % 1000000007u64) as i64;
+    h = h * 1000003i64 + (uw / 7u64) as i64; h = h * 1000003i64 + (uw % 7u64) as i64;
+    h = h * 1000003i64 + (uw / 10u64) as i64; h = h * 1000003i64 + (uw % 10u64) as i64;
+    h = h * 1000003i64 + (uw / 100u64) as i64; h = h * 1000003i64 + (uw % 100u64) as i64;
+    h = h * 1000003i64 + (uw / 9223372036854775809u64) as i64; h = h * 1000003i64 + (uw % 9223372036854775809u64) as i64;
+    h = h * 1000003i64 + (uw / 18446744073709551557u64) as i64; h = h * 1000003i64 + (uw % 18446744073709551557u64) as i64;
     i = i + 1;
   }
 

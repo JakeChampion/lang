@@ -28,16 +28,26 @@ function main(): i32 { return d(7i64) as i32; }`, Options{})
 }
 
 // Both of the generic sequence's guards branch on the divisor, so a literal
-// makes them dead. They are the bulk of what the sequence costs.
-func TestLiteralDivisorDropsTheGuards(t *testing.T) {
-	body := divBody(t, "x % 97i64")
-	for _, gone := range []string{"test rcx, rcx", "cmp rcx, -1", ".Ldiv_zero", ".Ldiv_ovf", ".Ldiv_norm"} {
-		if strings.Contains(body, gone) {
-			t.Errorf("a guard on a compile-time-known divisor survived (%q):\n%s", gone, body)
+// makes them dead, and a divisor that is not a power of two is a multiply by
+// its reciprocal rather than a divide. At 64 bits that is the one-operand
+// multiply's high half in rdx.
+func TestLiteralDivisorUsesTheReciprocal(t *testing.T) {
+	for _, c := range []struct{ expr, mul string }{
+		{"x % 97i64", "imul rcx"},
+		{"x / 100i64", "imul rcx"},
+		{"((x as u64) / 100u64) as i64", "mul rcx"},
+		{"((x as u64) % 7u64) as i64", "mul rcx"},
+		{"x % 1000000000000i64", "imul rax, rdx"},
+	} {
+		body := divBody(t, c.expr)
+		for _, gone := range []string{"test rcx, rcx", "cmp rcx, -1", ".Ldiv_zero", ".Ldiv_ovf", ".Ldiv_norm", "div rcx", "idiv"} {
+			if strings.Contains(body, gone) {
+				t.Errorf("%s: %q survived:\n%s", c.expr, gone, body)
+			}
 		}
-	}
-	if !strings.Contains(body, "idiv") {
-		t.Errorf("expected the divide itself to remain:\n%s", body)
+		if !strings.Contains(body, c.mul) {
+			t.Errorf("%s: expected %q:\n%s", c.expr, c.mul, body)
+		}
 	}
 }
 
@@ -242,15 +252,6 @@ func TestNonPow2DivisorBecomesTheReciprocal(t *testing.T) {
 				t.Errorf("the dividend was not stashed in ecx:\n%s", body)
 			}
 		})
-	}
-}
-
-// The reciprocal is i32-only: at i64 width the high half would need `imul r64`
-// and a 64-bit magic, so the divide stays.
-func TestWideNonPow2DivisorKeepsTheDivide(t *testing.T) {
-	body := divBody(t, "x / 97i64")
-	if !strings.Contains(body, "idiv") {
-		t.Errorf("i64 / 97 should still be a divide:\n%s", body)
 	}
 }
 

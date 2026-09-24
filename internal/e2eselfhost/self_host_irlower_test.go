@@ -214,7 +214,9 @@ func TestSelfHostIRLowerRoundTrip(t *testing.T) {
 		// false "crash" in CI). The lowering itself is fine — these are exercised
 		// by the differential x86 / wasm IR suites; the round-trip evaluator stays
 		// integer-only by design. (Distinct from 200 = lowering bailed.)
-		{"i64-eval-unsupported", "function main(): i32 { var x: i64 = 5; var y: i64 = x + 3; return y as i32; }", 198},
+		{"i64-eval-unsupported", "function f(x: i64): i32 { var y: i64 = x + 3; return y as i32; } function main(): i32 { return f(5); }", 198},
+		// An i64 expression of constants folds before the evaluator sees it.
+		{"i64-const-folds", "function main(): i32 { var x: i64 = 5; var y: i64 = x + 3; return y as i32; }", 8},
 		{"string-eval-unsupported", "function main(): i32 { var s = \"hello\"; return s.len(); }", 198},
 		// Calling a function the IR path can't lower bails cleanly (198) — the
 		// callee's bail propagates up the call chain — instead of silently
