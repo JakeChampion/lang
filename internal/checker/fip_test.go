@@ -231,6 +231,11 @@ fip function f(s: S): i32[] { return s.xs.with(0, 1); }`)
 	wantNoErr(t, "chained with on an own struct's array field", `struct S { xs: i32[] }
 fip function f(own s: S): i32[] { return s.xs.with(0, 1).with(1, 2); }`)
 
+	// An outer link that reads the root runs after the inner write, so the
+	// chain copies and is not admitted.
+	wantE053(t, "chained with whose outer link reads the receiver",
+		`fip function f(own b: i32[]): i32[] { return b.with(0, 1).with(1, b[0]); }`)
+
 	// The claim still follows ownership through the chain.
 	wantE053(t, "chained with on a borrowed array",
 		`fip function f(b: i32[]): i32[] { return b.with(0, 1).with(1, 2); }`)
