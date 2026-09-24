@@ -219,7 +219,10 @@ from the operand's definition without passing the header
 phi mate's frame slot by the same rule (`ssa.assign_spill_slots`), so a loop
 with more carried values than registers does not copy slot to slot on its
 back edge: the whole compiler's x86-64 text is 3.8% shorter for it, and a
-self-host `uniq` runs 5% fewer instructions. A phi reads its operand
+self-host `uniq` runs 5% fewer instructions. A phi also takes its entry
+operand's slot when no use of the operand is reachable from the phi, and a
+free slot another phi is waiting for is passed over, so entering an inner
+loop does not copy either. A phi reads its operand
 on the edge, at the predecessor's terminator, not inside the header, and
 a loop-carried operand's interval ends at that edge. Empty blocks holding
 only a branch are skipped by every edge into them and dropped, a phi loses

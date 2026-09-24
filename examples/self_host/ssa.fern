@@ -863,17 +863,22 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
         oi = oi + 1;
     }
     // A spilled value keeps its phi mate's hint for a slot, a loop-carried
-    // one only where the register rule would have let the two share.
+    // one only where the register rule would have let the two share. Where
+    // the mate is dead from the value's definition on, the value may take
+    // the slot over while the mate's interval still covers it.
     var slot_hint: i32[] = [];
+    var take_over: boolean[] = [];
     i = 0;
     while (i < f.nvals) {
         var sh: i32 = mates.hint[i];
         if (reg_of[i] >= 0 || sh < 0 || reg_of[sh] >= 0) { sh = 0 - 1; }
-        if (sh >= 0 && mates.carried[i] && mate_interferes(f, at, blk_start, sh, i, def_blk[sh], def_blk[i], def_pos[i])) { sh = 0 - 1; }
+        var free: boolean = sh >= 0 && def_pos[sh] >= 0 && !mate_interferes(f, at, blk_start, sh, i, def_blk[sh], def_blk[i], def_pos[i]);
+        if (sh >= 0 && mates.carried[i] && !free) { sh = 0 - 1; }
         slot_hint = slot_hint.append(sh);
+        take_over = take_over.append(free);
         i = i + 1;
     }
-    return assign_spill_slots(lo, hi, def_pos, reg_of, slot_hint, mates.carried);
+    return assign_spill_slots(lo, hi, def_pos, reg_of, slot_hint, take_over);
 }
 
 // spill_weights counts, per value, its definition and every read, each at the
@@ -908,6 +913,13 @@ function spill_weights(f: SFunc, at: i32[]): i32[] {
         bi = bi + 1;
     }
     return w;
+}
+
+// kept_for_mate says the slot `holder` last held is wanted by its phi mate,
+// which is not `v` and has no slot yet.
+function kept_for_mate(wanted_by: i32[], reg_of: i32[], holder: i32, v: i32): boolean {
+    var w: i32 = wanted_by[holder];
+    return w >= 0 && w != v && reg_of[w] == 0 - 1;
 }
 
 // A value's home after allocation is a register index, or `spill_code(slot)`
@@ -1014,13 +1026,14 @@ function term_reads_value(t: STerm, v: i32): boolean {
     return false;
 }
 
-// mate_interferes says whether phi result r is live anywhere its back-edge
-// operand a is: that is so exactly when a use of r is reachable from a's
-// definition without passing r's block (the loop header, where r is
-// defined afresh). A read of r as a phi operand happens on the edge into the
-// phi's block and counts for the edge's source. The use at a's own
-// definition is a read before the write and does not count, unless a's
-// block reaches itself again without the header.
+// mate_interferes says whether r is live anywhere its phi mate a is, where
+// r is defined in block `hdr`: a phi result and its back-edge operand, or a
+// phi's entry operand and the phi. That is so exactly when a use of r is
+// reachable from a's definition without passing `hdr`, where r is defined
+// afresh. A read of r as a phi operand happens on the edge into the phi's
+// block and counts for the edge's source. The use at a's own definition is a
+// read before the write and does not count, unless a's block reaches itself
+// again without `hdr`.
 function mate_interferes(f: SFunc, at: i32[], blk_start: i32[], r: i32, a: i32, hdr: i32, ablk: i32, apos: i32): boolean {
     var reach: boolean[] = [];
     var i: i32 = 0;
@@ -1038,12 +1051,13 @@ function mate_interferes(f: SFunc, at: i32[], blk_start: i32[], r: i32, a: i32, 
         var blk: SBlock = f.blocks[bi];
         var from: boolean = reach[bi] || bi == ablk;
         if (reach[bi] && bi != ablk) {
-            for ins in blk.insts { if (reads_value(ins, r)) { return true; } }
+            for ins in blk.insts { if (ins.kind_tag != 8 && reads_value(ins, r)) { return true; } }
         }
         if (bi == ablk) {
             var k: i32 = 0;
             while (k < blk.insts.len()) {
-                if ((reach[bi] || blk_start[bi] + k > apos) && reads_value(blk.insts[k], r)) { return true; }
+                var ki: SInst = blk.insts[k];
+                if ((reach[bi] || blk_start[bi] + k > apos) && ki.kind_tag != 8 && reads_value(ki, r)) { return true; }
                 k = k + 1;
             }
         }
@@ -1070,14 +1084,26 @@ function index_of_reg(a: i32[], x: i32): i32 {
 // assign_spill_slots gives the spilled values frame slots, sharing one between
 // values whose intervals do not meet. A value nothing defines (a parameter) is
 // stored on entry, so it is live from position 0. A value takes the slot of
-// `hint[v]`, its phi mate, before any other: when the slot is free, or, for a
-// loop-carried value, when the phi still holds it, since the two were found
-// not to interfere. The edge between them then moves nothing.
-function assign_spill_slots(lo: i32[], hi: i32[], def_pos: i32[], reg_of: i32[], hint: i32[], carried: boolean[]): i32[] {
+// `hint[v]`, its phi mate, before any other: when the slot is free, or when
+// the mate still holds it and `take_over[v]` says the two were found not to
+// interfere. The edge between them then moves nothing. A value with no
+// such slot passes over a free one whose last holder is the mate of a value
+// not placed yet: a block's phis start one after another, but every operand
+// arriving from before them dies at the edge, so the first phi would
+// otherwise take the slot a later one wants.
+function assign_spill_slots(lo: i32[], hi: i32[], def_pos: i32[], reg_of: i32[], hint: i32[], take_over: boolean[]): i32[] {
     var from: i32[] = [];
+    var wanted_by: i32[] = [];
     var i: i32 = 0;
     while (i < reg_of.len()) {
         if (def_pos[i] < 0) { from = from.append(0); } else { from = from.append(lo[i]); }
+        wanted_by = wanted_by.append(0 - 1);
+        i = i + 1;
+    }
+    i = 0;
+    while (i < reg_of.len()) {
+        var m: i32 = hint[i];
+        if (m >= 0 && hi[i] >= 0 && reg_of[i] == 0 - 1 && reg_of[m] == 0 - 1) { wanted_by = wanted_by.with(m, i); }
         i = i + 1;
     }
     var slot_end: i32[] = [];
@@ -1088,11 +1114,11 @@ function assign_spill_slots(lo: i32[], hi: i32[], def_pos: i32[], reg_of: i32[],
         var h: i32 = hint[v];
         if (h >= 0 && reg_of[h] < 0 - 1) {
             var hs: i32 = spill_slot(reg_of[h]);
-            if (slot_end[hs] < from[v] || carried[v] && holder[hs] == h) { s = hs; }
+            if (slot_end[hs] < from[v] || take_over[v] && holder[hs] == h) { s = hs; }
         }
         if (s < 0) {
             s = 0;
-            while (s < slot_end.len() && slot_end[s] >= from[v]) { s = s + 1; }
+            while (s < slot_end.len() && (slot_end[s] >= from[v] || kept_for_mate(wanted_by, reg_of, holder[s], v))) { s = s + 1; }
         }
         var end: i32 = hi[v];
         if (s < slot_end.len() && slot_end[s] > end) { end = slot_end[s]; }
