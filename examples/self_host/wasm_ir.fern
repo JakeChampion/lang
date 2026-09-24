@@ -724,8 +724,11 @@ pub function module_uses_maps(cache: irlower.LowerResult[]): boolean {
     // with no construction anywhere — calls into the bundle just as much as one
     // that builds its own. It is `is_map_op_kind` plus the two ops that
     // predicate leaves out for dispatch reasons, which is the whole vocabulary.
+    // A map RELEASE counts too: an enum drop frees a Map payload through
+    // __fern_map_free* in a module that never builds a map (#9304).
     function is_map_op(o: ir.Op): boolean {
-        return is_map_op_kind(o.kind_tag) || o.kind_tag == 124 || o.kind_tag == 125;  // map_new, map_set
+        return is_map_op_kind(o.kind_tag) || o.kind_tag == 124 || o.kind_tag == 125  // map_new, map_set
+            || (o.kind_tag == 149 && util.str_has_prefix(o.str, "__fern_map_free"));  // call_direct
     }
     return any_op(cache, is_map_op);
 }

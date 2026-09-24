@@ -45817,8 +45817,9 @@ function consumed_optbox_frees(body: ast.Stmt[], reassigned: string[], structs: 
 // __fern_str_free — box + separate data buffer on asm, one inline block on wasm;
 // the freshness gate in variant_struct_payloads_fresh keeps the payload the box's
 // sole owner), OR a string[] (deep-freed by __fern_str_arr_free, under the same
-// freshness gate). NOT a scalar (no rc — released with the box), NOT enum / map /
-// opt / tuple, and NOT a non-leaf (cycle-risk) struct.
+// freshness gate), OR a map (released by nothing, see below). NOT a scalar (no rc
+// — released with the box), NOT enum / opt / tuple, and NOT a non-leaf (cycle-risk)
+// struct.
 function enum_field_rc_droppable(structs: StructTab, t: string): boolean {
     // An ENUM-array payload (`Seq(N[])`, including the self-referential shape a
     // tree enum is built from): `__fern_arrarr_free` rc-guards the buffer, decs
@@ -45840,7 +45841,12 @@ function enum_field_rc_droppable(structs: StructTab, t: string): boolean {
         // single __fern_rc_dec, exactly like a leak-safe array. Fresh-gated at
         // admission (variant_struct_payloads_fresh requires a fresh struct
         // LITERAL for this arm too), so the box is the sole owner.
-        || (decl_is_struct(structs, t) && struct_lit_all_scalar(structs, t));
+        || (decl_is_struct(structs, t) && struct_lit_all_scalar(structs, t))
+        // A MAP payload is admitted and released by nothing: a map box carries no
+        // count, so no drop here could tell whether the enum is its only holder,
+        // and it leaks as it always did. Refusing it instead turned off the whole
+        // enum's release, every other variant's payloads with it (#9304).
+        || is_map_type_name(t);
 }
 
 // enum_variant_rc_droppable: every payload field of variant `vname` is either a
