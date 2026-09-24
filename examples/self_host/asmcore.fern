@@ -144,8 +144,15 @@ pub struct EmitState {
     // capture is a builder handle that write() appends to instead of the
     // module's text, 0 when none: the register path reads an arm back to
     // take its operands in registers.
-    capture: usize
+    capture: usize,
+    // The typed lowering of a runtime helper's source, one body per function it
+    // defines, or none to keep the AST lowering. The CLI supplies it
+    // (semlower.runtime_bodies); a backend never links that pipeline itself.
+    rt_lower: (string) => irlower.LowerResult[]
 }
+
+// no_rt_lower keeps every runtime helper on the AST lowering.
+pub function no_rt_lower(src: string): irlower.LowerResult[] { return []; }
 
 // unit_labels is the sanitized label of every function a unit emits for
 // mod.funcs[lo..hi) and the bodies on the cache tail: the names a direct call
@@ -238,7 +245,8 @@ pub function new_state(): EmitState {
         ssa_x0: 0 - 1,
         reg_entries: irlower.sig_reg_of([]),
         leaves: [],
-        capture: 0 as usize
+        capture: 0 as usize,
+        rt_lower: no_rt_lower
     };
 }
 
@@ -363,7 +371,7 @@ pub function (s: EmitState) mark_str_concat(): EmitState {
 // The destination half of the second copy needs __raw_addr rather than `p + la`:
 // a raw pointer's surface type is i32, so arm64 would narrow the sum back.
 pub function rt_src_str_concat(): string {
-    return "function __fern_str_concat(a: string, b: string): string { var la: i32 = a.len(); var lb: i32 = b.len(); var p: i32 = __raw_alloc(la + lb); __memcpy(p, __raw_data(a), la); __memcpy(__raw_addr(p, la), __raw_data(b), lb); return __raw_string(p, la + lb); }";
+    return "function __fern_str_concat(a: string, b: string): string { var la: i32 = a.len(); var lb: i32 = b.len(); var p: usize = __raw_alloc(la + lb); __memcpy(p, __raw_data(a), la); __memcpy(__raw_addr(p, la), __raw_data(b), lb); return __raw_string(p, la + lb); }";
 }
 
 // rt_src_map_find (#2649): the map runtime's ONE key-search loop — walk the
@@ -474,7 +482,7 @@ pub function (s: EmitState) mark_i32_to_string(): EmitState {
 // emitter's WAT sibling has always used div_u/rem_u here, which is why only
 // the register backends printed "-".
 pub function rt_src_i32_to_string(): string {
-    return "function __fern_i32_to_string(n: i32): string { var neg: i32 = 0; var m: i32 = n; if (n < 0) { neg = 1; m = 0 - n; } var v: u32 = m as u32; if (v == (0 as u32)) { var z: i32 = __raw_alloc(1); __raw_store8(z, 0, 48); return __raw_string(z, 1); } var nd: i32 = 0; var t: u32 = v; while (t != (0 as u32)) { nd = nd + 1; t = t / (10 as u32); } var total: i32 = nd + neg; var p: i32 = __raw_alloc(total); if (neg == 1) { __raw_store8(p, 0, 45); } var i: i32 = total - 1; while (v != (0 as u32)) { __raw_store8(p, i, 48 + ((v % (10 as u32)) as i32)); v = v / (10 as u32); i = i - 1; } return __raw_string(p, total); }";
+    return "function __fern_i32_to_string(n: i32): string { var neg: i32 = 0; var m: i32 = n; if (n < 0) { neg = 1; m = 0 - n; } var v: u32 = m as u32; if (v == (0 as u32)) { var z: usize = __raw_alloc(1); __raw_store8(z, 0, 48); return __raw_string(z, 1); } var nd: i32 = 0; var t: u32 = v; while (t != (0 as u32)) { nd = nd + 1; t = t / (10 as u32); } var total: i32 = nd + neg; var p: usize = __raw_alloc(total); if (neg == 1) { __raw_store8(p, 0, 45); } var i: i32 = total - 1; while (v != (0 as u32)) { __raw_store8(p, i, 48 + ((v % (10 as u32)) as i32)); v = v / (10 as u32); i = i - 1; } return __raw_string(p, total); }";
 }
 
 pub function (s: EmitState) mark_u32_to_string(): EmitState {
@@ -491,7 +499,7 @@ pub function (s: EmitState) mark_u32_to_string(): EmitState {
 // no sign branch. Import-free: it is a runtime helper, so u32.to_string works
 // without `import \"std/u32\"` exactly as the i32 builtin did.
 pub function rt_src_u32_to_string(): string {
-    return "function __fern_u32_to_string(n: i32): string { var v: i64 = (n as i64) & (4294967295 as i64); if (v == (0 as i64)) { var z: i32 = __raw_alloc(1); __raw_store8(z, 0, 48); return __raw_string(z, 1); } var nd: i32 = 0; var t: i64 = v; while (t > (0 as i64)) { nd = nd + 1; t = t / (10 as i64); } var p: i32 = __raw_alloc(nd); var i: i32 = nd - 1; while (v > (0 as i64)) { __raw_store8(p, i, 48 + ((v % (10 as i64)) as i32)); v = v / (10 as i64); i = i - 1; } return __raw_string(p, nd); }";
+    return "function __fern_u32_to_string(n: i32): string { var v: i64 = (n as i64) & (4294967295 as i64); if (v == (0 as i64)) { var z: usize = __raw_alloc(1); __raw_store8(z, 0, 48); return __raw_string(z, 1); } var nd: i32 = 0; var t: i64 = v; while (t > (0 as i64)) { nd = nd + 1; t = t / (10 as i64); } var p: usize = __raw_alloc(nd); var i: i32 = nd - 1; while (v > (0 as i64)) { __raw_store8(p, i, 48 + ((v % (10 as i64)) as i32)); v = v / (10 as i64); i = i - 1; } return __raw_string(p, nd); }";
 }
 
 pub function (s: EmitState) mark_i64_to_string(): EmitState {
@@ -508,7 +516,7 @@ pub function (s: EmitState) mark_i64_to_string(): EmitState {
 // core/int's __int_to_string_u64 uses. Heap is its sole dep. Import-free:
 // i64.to_string works without `import \"std/i64\"`, as the i32 builtin did.
 pub function rt_src_i64_to_string(): string {
-    return "function __fern_i64_to_string(n: i64): string { var neg: i32 = 0; var m: i64 = n; if (n < (0 as i64)) { neg = 1; m = (0 as i64) - n; } var v: u64 = m as u64; if (v == (0 as u64)) { var z: i32 = __raw_alloc(1); __raw_store8(z, 0, 48); return __raw_string(z, 1); } var nd: i32 = 0; var t: u64 = v; while (t != (0 as u64)) { nd = nd + 1; t = t / (10 as u64); } var total: i32 = nd + neg; var p: i32 = __raw_alloc(total); if (neg == 1) { __raw_store8(p, 0, 45); } var i: i32 = total - 1; while (v != (0 as u64)) { __raw_store8(p, i, 48 + ((v % (10 as u64)) as i32)); v = v / (10 as u64); i = i - 1; } return __raw_string(p, total); }";
+    return "function __fern_i64_to_string(n: i64): string { var neg: i32 = 0; var m: i64 = n; if (n < (0 as i64)) { neg = 1; m = (0 as i64) - n; } var v: u64 = m as u64; if (v == (0 as u64)) { var z: usize = __raw_alloc(1); __raw_store8(z, 0, 48); return __raw_string(z, 1); } var nd: i32 = 0; var t: u64 = v; while (t != (0 as u64)) { nd = nd + 1; t = t / (10 as u64); } var total: i32 = nd + neg; var p: usize = __raw_alloc(total); if (neg == 1) { __raw_store8(p, 0, 45); } var i: i32 = total - 1; while (v != (0 as u64)) { __raw_store8(p, i, 48 + ((v % (10 as u64)) as i32)); v = v / (10 as u64); i = i - 1; } return __raw_string(p, total); }";
 }
 
 pub function (s: EmitState) mark_u64_to_string(): EmitState {
@@ -521,7 +529,7 @@ pub function (s: EmitState) mark_u64_to_string(): EmitState {
 // (unsigned divq). Heap is its sole dep; never negative, so no sign
 // branch. Import-free like the u32 sibling.
 pub function rt_src_u64_to_string(): string {
-    return "function __fern_u64_to_string(n: u64): string { var v: u64 = n; if (v == (0 as u64)) { var z: i32 = __raw_alloc(1); __raw_store8(z, 0, 48); return __raw_string(z, 1); } var nd: i32 = 0; var t: u64 = v; while (t != (0 as u64)) { nd = nd + 1; t = t / (10 as u64); } var p: i32 = __raw_alloc(nd); var i: i32 = nd - 1; while (v != (0 as u64)) { __raw_store8(p, i, 48 + ((v % (10 as u64)) as i32)); v = v / (10 as u64); i = i - 1; } return __raw_string(p, nd); }";
+    return "function __fern_u64_to_string(n: u64): string { var v: u64 = n; if (v == (0 as u64)) { var z: usize = __raw_alloc(1); __raw_store8(z, 0, 48); return __raw_string(z, 1); } var nd: i32 = 0; var t: u64 = v; while (t != (0 as u64)) { nd = nd + 1; t = t / (10 as u64); } var p: usize = __raw_alloc(nd); var i: i32 = nd - 1; while (v != (0 as u64)) { __raw_store8(p, i, 48 + ((v % (10 as u64)) as i32)); v = v / (10 as u64); i = i - 1; } return __raw_string(p, nd); }";
 }
 
 pub function (s: EmitState) mark_str_to_i32(): EmitState {
@@ -540,7 +548,7 @@ pub function (s: EmitState) mark_chr(): EmitState {
 // through a real runtime helper. The intrinsics lower to single instructions
 // (+ one __fern_alloc), so chr's only dep stays `heap` (mark_chr).
 pub function rt_src_chr(): string {
-    return "function __fern_chr(b: i32): string { var p: i32 = __raw_alloc(1); __raw_store8(p, 0, b); return __raw_string(p, 1); }";
+    return "function __fern_chr(b: i32): string { var p: usize = __raw_alloc(1); __raw_store8(p, 0, b); return __raw_string(p, 1); }";
 }
 
 // sysno is the ONE table of syscall numbers the Fern runtime leaves are

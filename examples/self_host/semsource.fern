@@ -4538,8 +4538,8 @@ function value_contracts(): ssasem.Contract[] {
 }
 
 // The two writers and the string builder's append copy the bytes of a string
-// they only read, the builder's reset and take own no argument, and the byte
-// search reads its string.
+// they only read, the builder's reset and take own no argument, the byte
+// search reads its string, and `chr` answers a fresh one.
 function string_contracts(): ssasem.Contract[] {
     var writer: i32[] = [ssaunits.borrow_mode()];
     return [
@@ -4551,6 +4551,7 @@ function string_contracts(): ssasem.Contract[] {
         ssasem.Contract { name: "__memchr", params: [t_string(), t_i32(), t_i32()], modes: [ssaunits.borrow_mode(), ssaunits.value_mode(), ssaunits.value_mode()], result: t_i32() },
         ssasem.Contract { name: "write", params: [t_string()], modes: writer, result: t_void() },
         ssasem.Contract { name: "exit", params: [t_i32()], modes: [ssaunits.value_mode()], result: t_void() },
+        ssasem.Contract { name: "chr", params: [t_i32()], modes: [ssaunits.value_mode()], result: t_string() },
         ssasem.Contract { name: "string_from_bytes_unchecked", params: [typeinfo.TypeArray { elem: t_u8(), view: false }], modes: writer, result: t_string() },
         ssasem.Contract { name: "f64_bits", params: [t_f64()], modes: [ssaunits.value_mode()], result: t_i64() },
         ssasem.Contract { name: "f64_from_bits", params: [t_i64()], modes: [ssaunits.value_mode()], result: t_f64() }

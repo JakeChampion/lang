@@ -31,6 +31,8 @@ import "./ast";
 import "./astwalk";
 import "./ir";
 import "./ircore";
+import "./checker";
+import "./lexer";
 import "./irlower";
 import "./parser";
 import "./semsource";
@@ -618,17 +620,23 @@ function inferred_pass(mod: parser.Module, built: semsource.Built, r: Rows, stru
     return Inference { built: widened, rows: r2 };
 }
 
-pub function substitution(mod: parser.Module, structs: irlower.StructTab, base: irlower.FnSigs): ircore.Sub {
-    if (!sem_ir_on()) { return ircore.no_sub(); }
+// The module built, lowered, pruned and, when it lowers whole, lowered again
+// under the inferred modes.
+function produced_rows(mod: parser.Module, structs: irlower.StructTab): Inference {
     var built: semsource.Built = semsource.build_module(mod);
     util.arr_push_cliff_report("sem:built", 0);
     var rows: Rows = rows_of(mod, built, structs, no_reuse(), []);
     util.arr_push_cliff_report("sem:lowered", 0);
     var r: Rows = prune(rows, mod, built);
     util.arr_push_cliff_report("sem:pruned", 0);
-    var inf: Inference = inferred_pass(mod, built, r, structs);
-    built = inf.built;
-    r = inf.rows;
+    return inferred_pass(mod, built, r, structs);
+}
+
+pub function substitution(mod: parser.Module, structs: irlower.StructTab, base: irlower.FnSigs): ircore.Sub {
+    if (!sem_ir_on()) { return ircore.no_sub(); }
+    var inf: Inference = produced_rows(mod, structs);
+    var built: semsource.Built = inf.built;
+    var r: Rows = inf.rows;
     var sigs: irlower.FnSigs = base;
     var helpers: irlower.LowerResult[] = [];
     var bodies: irlower.LowerResult[] = [];
@@ -710,7 +718,33 @@ pub function substitution(mod: parser.Module, structs: irlower.StructTab, base: 
     // here, where the rule lives, so the emit path's tail is a plain append.
     var extra: irlower.LowerResult[] = ssarc.merge_helpers(instances, helpers);
     if (n == 0 && extra.len() == 0) { return ircore.no_sub(); }
-    return ircore.Sub { on: true, bodies: bodies, extra: extra, sigs: sigs };
+    return ircore.Sub { ...ircore.no_sub(), on: true, bodies: bodies, extra: extra, sigs: sigs };
+}
+
+// runtime_bodies is the typed lowering of a Fern-source runtime helper
+// (asmcore.rt_src_*), one body per function the source defines and in its
+// order, or none when any of them keeps the AST lowering. A source that does
+// not type-check is not asked: the helpers are written on the raw floor, and
+// one still spelling an address as an `i32` is refused by the checker before
+// anything here runs.
+pub function runtime_bodies(src: string): irlower.LowerResult[] {
+    if (!sem_ir_on()) { return []; }
+    var mod: parser.Module = parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(src)));
+    if (checker.build_gate_diags(mod).len() > 0) { return []; }
+    var im: parser.Module = gated_module(checker.annotate_module(mod));
+    var inf: Inference = produced_rows(im, irlower.struct_tab(im.structs));
+    if (inf.built.instances.len() > 0) { return []; }
+    var out: irlower.LowerResult[] = [];
+    var i: i32 = 0;
+    while (i < im.funcs.len()) {
+        var what: string = "runtime " + im.funcs[i].name;
+        if (!inf.rows.keep[i]) { report(what, "kept the AST lowering"); return []; }
+        if (ssarc.drop_helpers(inf.built.decls[i].func).len() > 0) { report(what, "defines a drop helper"); return []; }
+        out = out.append(inf.rows.body[i]);
+        i = i + 1;
+    }
+    for fd in im.funcs { report("runtime " + fd.name, "produced"); }
+    return out;
 }
 
 // The module an emit path gates and emits, so a caller can produce the

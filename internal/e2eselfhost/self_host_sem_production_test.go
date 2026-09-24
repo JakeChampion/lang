@@ -77,6 +77,11 @@ func TestSelfHostSemanticProduction(t *testing.T) {
 					if prog.skip == "" && prog.refuses != "" && !strings.Contains(report, prog.refuses) {
 						t.Fatalf("FERN_SEM_IR did not report %q:\n%s", prog.refuses, report)
 					}
+					for _, line := range prog.reports {
+						if target != "wasm32-wasi" && !strings.Contains(report, line) {
+							t.Fatalf("FERN_SEM_IR did not report %q:\n%s", line, report)
+						}
+					}
 					if prog.reportLacks != "" && strings.Contains(report, prog.reportLacks) {
 						t.Fatalf("FERN_SEM_IR reported %q, which this case pins as cleared:\n%s", prog.reportLacks, report)
 					}
@@ -273,6 +278,10 @@ var semProductionPrograms = []struct {
 	// production tally cannot observe it. `refuses` names what still stands;
 	// this names what may not come back.
 	reportLacks string
+	// reports, when set, are lines the report must carry on the native
+	// targets: the runtime helpers this program pulls in that the typed
+	// lowering produced. Wasm serves them as hand-written WAT.
+	reports []string
 	// want, when set, is the answer ("<exit>|<stdout>") of a program the AST
 	// lowering REFUSES and the semantic lowering produces whole, confirmed
 	// against the native compiler; the AST leg is asserted to refuse it
@@ -3936,6 +3945,18 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 94; }
     print(t);
     return t.len() + kept.len() - 8 + none.len();
+}
+`},
+	// The runtime helpers behind `chr` and string `+`, lowered by the typed
+	// path from their Fern source rather than by the AST lowering.
+	{name: "runtime-helpers-take-the-typed-path", atLeast: 1, noLeak: true,
+		reports: []string{"runtime __fern_chr: produced", "runtime __fern_str_concat: produced"}, src: `
+function main(): i32 {
+    var s: string = "";
+    var i: i32 = 0;
+    while (i < 5) { s = s + chr(97 + i); i = i + 1; }
+    print(s + "!");
+    return s.len();
 }
 `},
 	// The floor's three static words, taken with no runtime helper to mark

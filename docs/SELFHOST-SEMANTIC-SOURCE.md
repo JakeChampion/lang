@@ -2127,18 +2127,27 @@ block to a fresh `string` or `i32[]` the caller owns; `__raw_data` is lent its
 string. `TestSelfHostRawFloorIsTypedWhole` fails when `irlower` lowers a
 raw-floor name either table lacks.
 
+The x86-64 and arm64 backends ask for a helper's typed lowering first:
+`emit_ir_runtime_fern_fn` calls `EmitState.rt_lower`, which the CLI sets to
+`semlower.runtime_bodies` through `ircore.Sub`, so no backend links the
+pipeline. A source that does not type-check, or that the typed path does not
+produce whole, keeps the AST lowering. `FERN_SEM_IR_REPORT` prints
+`runtime <name>: produced` for each helper it took. Wasm compiles no
+Fern-source helper; it serves them as hand-written WAT.
+
 What is left, in order:
 
-1. The helper sources are rewritten against those types. They were never
-   checked, so they hold every address as an `i32` and pass `i32` words to
-   the syscalls; each needs its locals retyped and its syscall operands cast.
-   `__fern_map_find` is a helper, so a bundle that defines it reaches it as an
-   ordinary call, but it and `__fern_map_delete_rel` call through a bare code
-   address (`eqfn(k, key)`), which has no typed spelling yet. `__fern_str_eq` takes either a string or a raw pointer today,
-   and needs one signature.
-2. `emit_ir_runtime_fern_fn` asks the substitution for its bundle, on all three
-   backends.
-3. Strict mode goes green over every suite. The fallback then becomes the
+1. The helper sources are rewritten against those types, which is what routes
+   each one. `chr`, `str_concat` and the four integer `to_string` helpers are
+   done. The rest were never checked, so they hold every address as an `i32`
+   and pass `i32` words to the syscalls; each needs its locals retyped and its
+   syscall operands cast. The ones that build an `IoError`, `FileStat` or
+   `ProcessResult` also need the builtin declarations in the module they are
+   checked in. `__fern_map_find` and `__fern_map_delete_rel` call through a
+   bare code address (`eqfn(k, key)`), which has no typed spelling yet.
+   `__fern_str_eq` takes either a string or a raw pointer today, and needs one
+   signature.
+2. Strict mode goes green over every suite. The fallback then becomes the
    error, and `FERN_SEM_IR=` loses its off column.
-4. The AST lowering is deleted, along with the differential legs that compare
+3. The AST lowering is deleted, along with the differential legs that compare
    against it.

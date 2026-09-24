@@ -2938,6 +2938,13 @@ function string_method_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered
     return Lowered { found: false, r: r };
 }
 
+// The builtins that are a call of a Fern-source runtime helper whose symbol
+// differs from the builtin's name.
+function runtime_helper_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
+    if (ins.str == "chr") { return Lowered { found: true, r: emit(r, ir.op_call_direct("__fern_chr", 1)) }; }
+    return Lowered { found: false, r: r };
+}
+
 // A name no half owns is a runtime helper with a symbol of its own, which a
 // direct call reaches.
 function builtin_site(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
@@ -2946,6 +2953,7 @@ function builtin_site(own r: irlower.LowerResult, ins: ssa.SInst): irlower.Lower
     if (!done.found) { r = done.r; done = value_builtin_site(r, ins); }
     if (!done.found) { r = done.r; done = intrinsic_site(r, ins); }
     if (!done.found) { r = done.r; done = string_method_site(r, ins); }
+    if (!done.found) { r = done.r; done = runtime_helper_site(r, ins); }
     if (done.found) { return done.r; }
     r = done.r;
     return emit(r, ir.op_call_direct(ins.str, ins.args.len()));

@@ -8908,22 +8908,11 @@ function emit_ir_enum_arr_elems_drop_one(s: asmcore.EmitState, ety: string): asm
     return s;
 }
 
-// emit_ir_runtime_fern_fn lowers a runtime helper WRITTEN IN FERN through the
-// IR pipeline (issue #2649) — the IR-path analog of asm.fern's
-// emit_runtime_fern_fn. The helper emits as __fn_<name> exactly like a user
-// function (so the IR call site's `call __fn___fern_<name>` resolves to it),
-// replacing a hand-written stack-arg wrapper in emit_ir_runtime.
-//
-// The helper MUST be self-contained — it calls no other user function — so the
-// per-function side-tables computed over the helper ALONE are complete: in
-// particular its borrowability analysis correctly borrows a read-only
-// string/array param (never returned, stored, or consumed), so the lowering
-// inserts no RC dec that would free the caller's borrowed value. Emitted
-// entry-only and gated on the helper's need by the caller; emit_runtime_globls
-// already `.globl`s the symbol so the per-module link resolves it.
-function emit_ir_runtime_fern_fn(src: string, all_structs: irlower.StructTab, s: asmcore.EmitState): asmcore.EmitState {
-    var m: parser.Module = parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(src)));
-    var fns: parser.FuncDecl[] = m.funcs;
+// runtime_ast_bodies is the AST lowering of a runtime helper's functions, with
+// side tables computed over the helper alone. They read its own functions as
+// the whole program, so a read-only string or array parameter is borrowed and
+// takes no release that would free the caller's value.
+function runtime_ast_bodies(fns: parser.FuncDecl[], all_structs: irlower.StructTab, s: asmcore.EmitState): irlower.LowerResult[] {
     var bparams: string[] = irlower.borrowable_params_interproc(fns, all_structs);
     var sg: irlower.FnSigs = irlower.FnSigs {
         ...irlower.fn_sigs_for_borrow(fns, all_structs, ircore.array_ret_fns_of(fns), bparams),
@@ -8932,6 +8921,24 @@ function emit_ir_runtime_fern_fn(src: string, all_structs: irlower.StructTab, s:
         opt_fresh_ret_fns: irlower.sig_reg_of(irlower.opt_fresh_ret_fns_of(fns, s.struct_decls, irlower.str_fresh_ret_fns_of(fns))),
         strfld_ok_types: irlower.strfld_reclaim_ok_types_of(fns, s.struct_decls, bparams),
     };
+    var out: irlower.LowerResult[] = [];
+    for fd in fns { out = out.append(irlower.lower_func(fd, s.struct_decls, sg, false)); }
+    return out;
+}
+
+// emit_ir_runtime_fern_fn lowers a runtime helper WRITTEN IN FERN through the
+// IR pipeline (issue #2649) — the IR-path analog of asm.fern's
+// emit_runtime_fern_fn. The helper emits as __fn_<name> exactly like a user
+// function (so the IR call site's `call __fn___fern_<name>` resolves to it),
+// replacing a hand-written stack-arg wrapper in emit_ir_runtime.
+//
+// The typed lowering (EmitState.rt_lower) produces the bodies when it takes
+// every function in the source; otherwise the AST lowering does. Emitted
+// entry-only and gated on the helper's need by the caller; emit_runtime_globls
+// already `.globl`s the symbol so the per-module link resolves it.
+function emit_ir_runtime_fern_fn(src: string, all_structs: irlower.StructTab, s: asmcore.EmitState): asmcore.EmitState {
+    var m: parser.Module = parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(src)));
+    var fns: parser.FuncDecl[] = m.funcs;
     // String literals the helper body interns (e.g. "\n" in str_lines's
     // s.split("\n")) land in string_lits AFTER the main .rodata pool was emitted
     // (this runs in the entry block, past the pool), so flush any NEW ones here in
@@ -8942,9 +8949,11 @@ function emit_ir_runtime_fern_fn(src: string, all_structs: irlower.StructTab, s:
     var lit0: i32 = s.string_lits.len();
     var agg0: i32 = s.const_aggs.len();
     var sh0: i32 = s.shape_lits.len();
+    var bodies: irlower.LowerResult[] = s.rt_lower(src);
+    if (bodies.len() != fns.len()) { bodies = runtime_ast_bodies(fns, all_structs, s); }
     var i: i32 = 0;
     while (i < fns.len()) {
-        s = emit_function_via_ir(fns[i], s, sg, vsigs);
+        s = emit_function_via_ir_pre(bodies[i], fns[i], s, vsigs);
         i = i + 1;
     }
     if (s.shape_lits.len() > sh0) {
@@ -9183,7 +9192,7 @@ pub function emit_module_ir_gated_sub(mod: parser.Module, known: string[], sub: 
     var g: ircore.Lowered = ircore.lower_gated(im, imtab, irlower.fn_sigs_with_dyn(base, im.trait_reqs), known, false, sub);
     if (!g.ok) { return ""; }
     // Every function eligible — emit from the cache (no second lowering).
-    return emit_module_ir_unit_flat(im, true, false, "", [], im.funcs, imtab, 0, 0 - 1, ircore.inline_tiny_leaves(im, ircore.sub_cache(sub, g.cache)), base);
+    return emit_unit_flat_with(im, true, false, "", [], im.funcs, imtab, 0, 0 - 1, ircore.inline_tiny_leaves(im, ircore.sub_cache(sub, g.cache)), base, sub.rt_lower);
 }
 
 pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab, lo: i32, hi: i32, cache: irlower.LowerResult[]): string {
@@ -9191,6 +9200,11 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
 }
 
 pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab, lo: i32, hi: i32, cache: irlower.LowerResult[], b: irlower.FnSigs): string {
+    return emit_unit_flat_with(mod, is_entry, globl_defs, str_ns, extra_needs, all_funcs, all_structs, lo, hi, cache, b, asmcore.no_rt_lower);
+}
+
+// `rt` lowers the runtime helpers this unit appends (asmcore.EmitState.rt_lower).
+function emit_unit_flat_with(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab, lo: i32, hi: i32, cache: irlower.LowerResult[], b: irlower.FnSigs, rt: (string) => irlower.LowerResult[]): string {
     // Infer return types for unannotated functions so the IR path's
     // ret-type-keyed call tagging (str_ret_fns_of / opt_ret_fns_of / …)
     // matches what module_with_builtins supplies.
@@ -9203,7 +9217,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     var s: asmcore.EmitState = asmcore.new_state();
     // struct_decls is the WHOLE-PROGRAM struct set so a function emitting an
     // imported struct's layout (field offsets / sizes) resolves it.
-    s = asmcore.EmitState { ...s, struct_decls: all_structs, funcs: mod.funcs, str_ns: str_ns };
+    s = asmcore.EmitState { ...s, struct_decls: all_structs, funcs: mod.funcs, str_ns: str_ns, rt_lower: rt };
     // A unit never passes emit_module_or_error's check, so the Display gate
     // runs here: a `print(xs)` nothing gives a `to_string` would otherwise hand
     // the string-only runtime helper a raw pointer (#9945).
