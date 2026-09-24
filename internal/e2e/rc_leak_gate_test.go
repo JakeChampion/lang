@@ -79,7 +79,7 @@ var rcCorpusLeakBaselineX86_64 = map[string]int64{
 	"matchexpr_alias_array_no_free":        1600,
 	"option_of_array":                      32,
 	"pair_form_enum_temp_as_argument":      288,
-	"pair_form_payload_borrowing_call":     144,
+	"pair_form_payload_borrowing_call":     128,
 	"stdlib_json_cursor_idiom":             1456,
 	"stdlib_json_roundtrip":                640,
 	// The hand-back half of the guarded arg-temp release: the callee
@@ -117,7 +117,7 @@ var rcCorpusLeakBaselineArm64 = map[string]int64{
 	"matchexpr_alias_array_no_free":        1600,
 	"option_of_array":                      32,
 	"pair_form_enum_temp_as_argument":      288,
-	"pair_form_payload_borrowing_call":     144,
+	"pair_form_payload_borrowing_call":     128,
 	"stdlib_json_cursor_idiom":             1664,
 	"stdlib_json_roundtrip":                720,
 	// See the x86-64 twin — the same guarded hand-back, byte for byte.
@@ -171,7 +171,7 @@ var rcCorpusLeakBaselineWasm = map[string]int64{
 	"matchexpr_alias_array_no_free":                  1600,
 	"option_of_array":                                32,
 	"pair_form_enum_temp_as_argument":                160,
-	"pair_form_payload_borrowing_call":               144,
+	"pair_form_payload_borrowing_call":               128,
 	"stdlib_json_cursor_idiom":                       1232,
 	"stdlib_json_roundtrip":                          560,
 	"string_pushed_then_returned_bare_stays_refused": 320,

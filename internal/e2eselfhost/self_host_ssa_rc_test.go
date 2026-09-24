@@ -81,7 +81,7 @@ function fixture(): ssasem.Func {
     var graph = ssa.SFunc { name: "produce", nparams: params.len(), nvals: types.len(), entry: 7,
         takes_env: false, blocks: [ssa.SBlock { id: 7, preds: [], insts: ops, term: ret(result) }] };
     if (blocks.len() > 0) { graph = ssa.SFunc { ...graph, blocks: blocks }; }
-    return ssasem.Func { envs: [], graph: graph, values: types, params: params, result: row, records: [], enums: [], calls: [] };
+    return ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: graph, values: types, params: params, result: row, records: [], enums: [], calls: [] };
 }
 function main(): i32 {
     var f = fixture();
@@ -215,7 +215,7 @@ function binary_masks(op: string, t: typeinfo.Type, result: typeinfo.Type): stri
     var g = ssa.SFunc { name: "bin", nparams: 2, nvals: 3, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1),
             ssa.SInst { kind_tag: 9, result: 2, args: [0, 1], imm: 0, str: op }], term: ret(2) }] };
-    var f = ssasem.Func { envs: [], graph: g, values: [t, t, result], params: [t, t], result: result,
+    var f = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: g, values: [t, t, result], params: [t, t], result: result,
         records: [], enums: [], calls: [] };
     var p = ssaunits.plan(f, [1, 1]);
     if (!p.ok) { return "plan:" + p.why; }
@@ -225,14 +225,14 @@ function wide_binary(t: typeinfo.Type, result: typeinfo.Type, op: string): ssase
     var g = ssa.SFunc { name: "wbin", nparams: 2, nvals: 3, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1),
             ssa.SInst { kind_tag: 9, result: 2, args: [0, 1], imm: 0, str: op }], term: ret(2) }] };
-    return ssasem.Func { envs: [], graph: g, values: [t, t, result], params: [t, t], result: result,
+    return ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: g, values: [t, t, result], params: [t, t], result: result,
         records: [], enums: [], calls: [] };
 }
 function cast_masks(from: typeinfo.Type, to: typeinfo.Type): string {
     var g = ssa.SFunc { name: "cast", nparams: 1, nvals: 2, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0),
             ssa.SInst { kind_tag: ssasem.cast(), result: 1, args: [0], imm: 0, str: "" }], term: ret(1) }] };
-    var f = ssasem.Func { envs: [], graph: g, values: [from, to], params: [from], result: to,
+    var f = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: g, values: [from, to], params: [from], result: to,
         records: [], enums: [], calls: [] };
     var p = ssaunits.plan(f, [1]);
     if (!p.ok) { return "plan:" + p.why; }
@@ -261,7 +261,7 @@ function main(): i32 {
     var wide: typeinfo.Type = typeinfo.TypeArray { elem: typeinfo.TypeI32 { width: 64, unsigned: false, is_char: false } };
     var g = ssa.SFunc { name: "unsupported", nparams: 1, nvals: 1, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0)], term: ret(0) }] };
-    var typed = ssasem.Func { envs: [], graph: g, values: [wide], params: [wide], result: wide, records: [], enums: [], calls: [] };
+    var typed = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: g, values: [wide], params: [wide], result: wide, records: [], enums: [], calls: [] };
     var plan = ssaunits.plan(typed, [2]);
     if (!plan.ok) { eprint(plan.why); return 5; }
     if (!ssarc.lower(typed, [2], plan, irlower.struct_tab_empty(), []).ok) { return 6; }
@@ -274,7 +274,7 @@ function main(): i32 {
     var schema = semrecords.Record { ty: recordType, fields: [semrecords.Field { name: "xs", ty: f.result }] };
     var recordGraph = ssa.SFunc { name: "record", nparams: 1, nvals: 2, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(ssasem.record_new(), 1, [0], 0)], term: ret(1) }] };
-    var genericFunc = ssasem.Func { envs: [], graph: recordGraph, values: [f.result, wideType], params: [f.result], result: wideType, records: [wideSchema], enums: [], calls: [] };
+    var genericFunc = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: recordGraph, values: [f.result, wideType], params: [f.result], result: wideType, records: [wideSchema], enums: [], calls: [] };
     var genericPlan = ssaunits.plan(genericFunc, [2]);
     if (!genericPlan.ok) { eprint(genericPlan.why); return 7; }
     if (!refused(ssarc.lower(genericFunc, [2], genericPlan, irlower.struct_tab_empty(), []), "unsupported physical RC value type")) { return 8; }
@@ -283,11 +283,11 @@ function main(): i32 {
     // own box released and nothing more.
     var wideField = semrecords.Record { ty: recordType, fields: [semrecords.Field { name: "xs", ty: f.result },
         semrecords.Field { name: "ns", ty: wide }] };
-    var wideFieldFunc = ssasem.Func { envs: [], graph: g, values: [recordType], params: [recordType], result: recordType, records: [wideField], enums: [], calls: [] };
+    var wideFieldFunc = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: g, values: [recordType], params: [recordType], result: recordType, records: [wideField], enums: [], calls: [] };
     var wideFieldPlan = ssaunits.plan(wideFieldFunc, [2]);
     if (!wideFieldPlan.ok) { eprint(wideFieldPlan.why); return 9; }
     if (!ssarc.lower(wideFieldFunc, [2], wideFieldPlan, irlower.struct_tab_empty(), []).ok) { return 10; }
-    var recordFunc = ssasem.Func { envs: [], graph: recordGraph, values: [f.result, recordType], params: [f.result], result: recordType, records: [schema], enums: [], calls: [] };
+    var recordFunc = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: recordGraph, values: [f.result, recordType], params: [f.result], result: recordType, records: [schema], enums: [], calls: [] };
     var recordPlan = ssaunits.plan(recordFunc, [2]);
     if (!recordPlan.ok) { eprint(recordPlan.why); return 11; }
     if (!ssarc.lower(recordFunc, [2], recordPlan, irlower.struct_tab_empty(), []).ok) { return 12; }
@@ -299,7 +299,7 @@ function main(): i32 {
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), ssa.SInst { kind_tag: ssasem.variant_new(), result: 1, args: [0], imm: 0, str: "W" }], term: ret(1) }] };
     var wideEnum = semrecords.Enum { ty: shapeType, variants: [semrecords.Variant { name: "W", fields: [semrecords.Field { name: "__ev", ty: f.result }] },
         semrecords.Variant { name: "N", fields: [semrecords.Field { name: "__ev", ty: wideType }] }], layout: semrecords.layout_variant() };
-    var wideEnumFunc = ssasem.Func { envs: [], graph: enumGraph, values: [f.result, shapeType], params: [f.result], result: shapeType, records: [wideSchema], enums: [wideEnum], calls: [] };
+    var wideEnumFunc = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: enumGraph, values: [f.result, shapeType], params: [f.result], result: shapeType, records: [wideSchema], enums: [wideEnum], calls: [] };
     var wideEnumPlan = ssaunits.plan(wideEnumFunc, [2]);
     if (!wideEnumPlan.ok) { eprint(wideEnumPlan.why); return 13; }
     if (!refused(ssarc.lower(wideEnumFunc, [2], wideEnumPlan, irlower.struct_tab_empty(), []), "unsupported physical RC variant field type")) { return 14; }
@@ -308,7 +308,7 @@ function main(): i32 {
     var walkableEnumFunc = ssasem.Func { ...wideEnumFunc, enums: [walkableEnum] };
     if (!ssarc.lower(walkableEnumFunc, [2], ssaunits.plan(walkableEnumFunc, [2]), irlower.struct_tab_empty(), []).ok) { return 59; }
     var arrayEnum = semrecords.Enum { ty: shapeType, variants: [semrecords.Variant { name: "W", fields: [semrecords.Field { name: "__ev", ty: f.result }] }], layout: semrecords.layout_variant() };
-    var enumFunc = ssasem.Func { envs: [], graph: enumGraph, values: [f.result, shapeType], params: [f.result], result: shapeType, records: [], enums: [arrayEnum], calls: [] };
+    var enumFunc = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: enumGraph, values: [f.result, shapeType], params: [f.result], result: shapeType, records: [], enums: [arrayEnum], calls: [] };
     var enumPlan = ssaunits.plan(enumFunc, [2]);
     if (!enumPlan.ok) { eprint(enumPlan.why); return 15; }
     if (!ssarc.lower(enumFunc, [2], enumPlan, irlower.struct_tab_empty(), []).ok) { return 16; }
@@ -319,7 +319,7 @@ function main(): i32 {
     var selfSchema = semrecords.Record { ty: selfType, fields: [semrecords.Field { name: "kid", ty: selfType }] };
     var selfGraph = ssa.SFunc { name: "cycle", nparams: 1, nvals: 1, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0)], term: ret(0) }] };
-    var selfFunc = ssasem.Func { envs: [], graph: selfGraph, values: [selfType], params: [selfType], result: selfType, records: [selfSchema], enums: [], calls: [] };
+    var selfFunc = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: selfGraph, values: [selfType], params: [selfType], result: selfType, records: [selfSchema], enums: [], calls: [] };
     var selfPlan = ssaunits.plan(selfFunc, [2]);
     if (!selfPlan.ok) { eprint(selfPlan.why); return 17; }
     var selfLowered = ssarc.lower(selfFunc, [2], selfPlan, irlower.struct_tab_empty(), []);
@@ -339,7 +339,7 @@ function main(): i32 {
     // a body exists exactly when a call to it does.
     var flatType: typeinfo.Type = typeinfo.TypeStruct { name: "Flat", args: [] };
     var flatSchema = semrecords.Record { ty: flatType, fields: [semrecords.Field { name: "n", ty: typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false } }] };
-    var flatFunc = ssasem.Func { envs: [], graph: selfGraph, values: [flatType], params: [flatType], result: flatType, records: [flatSchema], enums: [], calls: [] };
+    var flatFunc = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: selfGraph, values: [flatType], params: [flatType], result: flatType, records: [flatSchema], enums: [], calls: [] };
     if (ssarc.drop_helpers(flatFunc).len() != 0) { return 24; }
     // Two views of one type merge to a single tail entry rather than two.
     var merged = ssarc.merge_helpers([], ssarc.drop_helpers(selfFunc).append(ssarc.drop_helpers(selfFunc)[0]));
@@ -360,23 +360,24 @@ function main(): i32 {
     var i32ty: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false };
     var boxOnly: typeinfo.Type = typeinfo.TypeStruct { name: "BoxOnly", args: [] };
     var boxOnlySchema = semrecords.Record { ty: boxOnly, fields: [semrecords.Field { name: "n", ty: i32ty }] };
-    var boxOnlyFunc = ssasem.Func { envs: [], graph: selfGraph, values: [boxOnly], params: [boxOnly], result: boxOnly, records: [boxOnlySchema], enums: [], calls: [] };
-    if (util.index_of_str(ssarc.caller_sigs(irlower.fn_sigs_empty(), "mk", boxOnlyFunc, [3]).return_fresh_struct_ret_fns, "mk") < 0) { return 30; }
+    var boxOnlyFunc = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: selfGraph, values: [boxOnly], params: [boxOnly], result: boxOnly, records: [boxOnlySchema], enums: [], calls: [] };
+    if (util.index_of_str(ssarc.caller_sigs(irlower.fn_sigs_empty(), "mk", boxOnlyFunc, [3], ssaunits.refused("no plan")).return_fresh_struct_ret_fns, "mk") < 0) { return 30; }
     // A reference field is exactly what makes that sweep dangerous, so the same
     // shape one field over gets nothing and keeps the leak floor.
     var withKids: typeinfo.Type = typeinfo.TypeStruct { name: "WithKids", args: [] };
     var withKidsSchema = semrecords.Record { ty: withKids, fields: [semrecords.Field { name: "xs", ty: f.result }] };
-    var withKidsFunc = ssasem.Func { envs: [], graph: selfGraph, values: [withKids], params: [withKids], result: withKids, records: [withKidsSchema], enums: [], calls: [] };
-    if (util.index_of_str(ssarc.caller_sigs(irlower.fn_sigs_empty(), "mk", withKidsFunc, [3]).return_fresh_struct_ret_fns, "mk") >= 0) { return 31; }
+    var withKidsFunc = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: selfGraph, values: [withKids], params: [withKids], result: withKids, records: [withKidsSchema], enums: [], calls: [] };
+    if (util.index_of_str(ssarc.caller_sigs(irlower.fn_sigs_empty(), "mk", withKidsFunc, [3], ssaunits.refused("no plan")).return_fresh_struct_ret_fns, "mk") >= 0) { return 31; }
     // The parameter rows come from the contract, not the syntax: a borrowed
-    // reference parameter is the retained-keep row and never the bare one,
-    // and a counted or scalar parameter has neither.
-    var rowSigs = ssarc.caller_sigs(irlower.fn_sigs_empty(), "mk", ssasem.Func { ...withKidsFunc, params: [withKids, i32ty, withKids] }, [2, 1, 3]);
+    // reference parameter is the retained-keep row, and without a plan to show
+    // it keeps nothing never the bare one; a counted or scalar parameter has
+    // neither.
+    var rowSigs = ssarc.caller_sigs(irlower.fn_sigs_empty(), "mk", ssasem.Func { ...withKidsFunc, params: [withKids, i32ty, withKids] }, [2, 1, 3], ssaunits.refused("no plan"));
     var rowAll: string = "";
     for bucket in rowSigs.borrowable_params { rowAll = rowAll + bucket; }
     if (!has_sub(rowAll, "CNT:mk|100\n") || has_sub("\n" + rowAll, "\nmk|")) { return 130; }
     if (util.index_of_str(rowSigs.param_counted, "PCNT:mk|100") < 0 || rowSigs.param_counted.len() != 1) { return 132; }
-    var rowNone = ssarc.caller_sigs(irlower.FnSigs { ...rowSigs, borrowable_params: irlower.borrow_reg_set(rowSigs.borrowable_params, "mk", "1") }, "mk", withKidsFunc, [3]);
+    var rowNone = ssarc.caller_sigs(irlower.FnSigs { ...rowSigs, borrowable_params: irlower.borrow_reg_set(rowSigs.borrowable_params, "mk", "1") }, "mk", withKidsFunc, [3], ssaunits.refused("no plan"));
     rowAll = "";
     for bucket in rowNone.borrowable_params { rowAll = rowAll + bucket; }
     if (has_sub("\n" + rowAll, "\nmk|")) { return 131; }
@@ -385,16 +386,21 @@ function main(): i32 {
     // is not a counted container this can read at all.
     var lenGraph = ssa.SFunc { name: "len", nparams: 1, nvals: 2, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(ssasem.length(), 1, [0], 0)], term: ret(1) }] };
-    var arrLen = ssasem.Func { envs: [], graph: lenGraph, values: [f.result, i32ty], params: [f.result], result: i32ty, records: [], enums: [], calls: [] };
+    var arrLen = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: lenGraph, values: [f.result, i32ty], params: [f.result], result: i32ty, records: [], enums: [], calls: [] };
     var arrLenPlan = ssaunits.plan(arrLen, [2]);
     if (!arrLenPlan.ok) { eprint(arrLenPlan.why); return 32; }
+    // A borrowed parameter the plan shows the callee keeps nothing of (no
+    // retain, nothing handed on) earns the bare row as well as the counted one.
+    var lenRows: string = "";
+    for bucket in ssarc.caller_sigs(irlower.fn_sigs_empty(), "len", arrLen, [2], arrLenPlan).borrowable_params { lenRows = lenRows + bucket; }
+    if (!has_sub("\n" + lenRows, "\nlen|1\n")) { eprint(lenRows); return 194; }
     var arrLenLowered = ssarc.lower(arrLen, [2], arrLenPlan, irlower.struct_tab_empty(), []);
     if (!arrLenLowered.ok) { eprint(arrLenLowered.why); return 33; }
     var sawArrLen: boolean = false;
     for o in arrLenLowered.ops { if (ir.render_op(o) == "arr_len") { sawArrLen = true; } }
     if (!sawArrLen) { return 34; }
     var strTy: typeinfo.Type = typeinfo.TypeString { tag: 0 };
-    var strLen = ssasem.Func { envs: [], graph: lenGraph, values: [strTy, i32ty], params: [strTy], result: i32ty, records: [], enums: [], calls: [] };
+    var strLen = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: lenGraph, values: [strTy, i32ty], params: [strTy], result: i32ty, records: [], enums: [], calls: [] };
     var strLenPlan = ssaunits.plan(strLen, [2]);
     if (!strLenPlan.ok) { eprint(strLenPlan.why); return 35; }
     var strLenLowered = ssarc.lower(strLen, [2], strLenPlan, irlower.struct_tab_empty(), []);
@@ -402,9 +408,9 @@ function main(): i32 {
     var sawStrLen: boolean = false;
     for o in strLenLowered.ops { if (ir.render_op(o) == "str_len") { sawStrLen = true; } }
     if (!sawStrLen) { return 37; }
-    var badRecv = ssasem.Func { envs: [], graph: lenGraph, values: [boxOnly, i32ty], params: [boxOnly], result: i32ty, records: [boxOnlySchema], enums: [], calls: [] };
+    var badRecv = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: lenGraph, values: [boxOnly, i32ty], params: [boxOnly], result: i32ty, records: [boxOnlySchema], enums: [], calls: [] };
     if (ssaunits.plan(badRecv, [2]).why != "length container type") { return 38; }
-    var badResult = ssasem.Func { envs: [], graph: lenGraph, values: [f.result, f.result], params: [f.result], result: f.result, records: [], enums: [], calls: [] };
+    var badResult = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: lenGraph, values: [f.result, f.result], params: [f.result], result: f.result, records: [], enums: [], calls: [] };
     if (ssaunits.plan(badResult, [2]).why != "length result type") { return 39; }
     // An append takes the receiver's unit and hands one back. The runtime's push
     // gives the unit back only when the receiver's box is the only one its count
@@ -414,7 +420,7 @@ function main(): i32 {
     var appendGraph = ssa.SFunc { name: "append", nparams: 2, nvals: 3, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1),
             ssa.SInst { kind_tag: ssasem.append(), result: 2, args: [0, 1], imm: 0, str: "" }], term: ret(2) }] };
-    var appendFunc = ssasem.Func { envs: [], graph: appendGraph, values: [f.result, i32ty, f.result],
+    var appendFunc = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: appendGraph, values: [f.result, i32ty, f.result],
         params: [f.result, i32ty], result: f.result, records: [], enums: [], calls: [] };
     var appendPlan = ssaunits.plan(appendFunc, [3, 1]);
     if (!appendPlan.ok) { eprint(appendPlan.why); return 40; }
@@ -470,7 +476,7 @@ function main(): i32 {
             ssa.SInst { kind_tag: ssasem.append(), result: 3, args: [2, 1], imm: 0, str: "" },
             ssa.SInst { kind_tag: ssasem.record_get(), result: 4, args: [0], imm: 1, str: "n" },
             inst(ssasem.record_new(), 5, [3, 4], 0)], term: ret(5) }] };
-    var growFunc = ssasem.Func { envs: [], graph: growGraph, values: [growType, i32ty, f.result, f.result, i32ty, growType],
+    var growFunc = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: growGraph, values: [growType, i32ty, f.result, f.result, i32ty, growType],
         params: [growType, i32ty], result: growType, records: [growSchema], enums: [], calls: [] };
     var growPlan = ssaunits.plan(growFunc, [2, 1]);
     if (!growPlan.ok) { eprint(growPlan.why); return 140; }
@@ -565,7 +571,7 @@ function main(): i32 {
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1),
             ssa.SInst { kind_tag: ssasem.call(), result: 2, args: [0, 1], imm: 0, str: "grow" },
             ssa.SInst { kind_tag: ssasem.record_get(), result: 3, args: [0], imm: 1, str: "n" }], term: ret(3) }] };
-    var callFunc = ssasem.Func { envs: [], graph: callGraph, values: [growType, i32ty, growType, i32ty],
+    var callFunc = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: callGraph, values: [growType, i32ty, growType, i32ty],
         params: [growType, i32ty], result: i32ty, records: [growSchema], enums: [],
         calls: [ssasem.Contract { name: "grow", params: [growType, i32ty], modes: [2, 1], result: growType }] };
     var callPlan = ssaunits.plan(callFunc, [2, 1]);
@@ -592,7 +598,7 @@ function main(): i32 {
             ssa.SInst { kind_tag: ssasem.call(), result: 3, args: [2, 1], imm: 0, str: "push" },
             ssa.SInst { kind_tag: ssasem.record_get(), result: 4, args: [0], imm: 1, str: "n" },
             inst(ssasem.record_new(), 5, [3, 4], 0)], term: ret(5) }] };
-    var viaFunc = ssasem.Func { envs: [], graph: viaGraph, values: [growType, i32ty, f.result, f.result, i32ty, growType],
+    var viaFunc = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: viaGraph, values: [growType, i32ty, f.result, f.result, i32ty, growType],
         params: [growType, i32ty], result: growType, records: [growSchema], enums: [],
         calls: [ssasem.Contract { name: "push", params: [f.result, i32ty], modes: [2, 1], result: f.result }] };
     var viaPlan = ssaunits.plan(viaFunc, [2, 1]);
@@ -626,7 +632,7 @@ function main(): i32 {
     var withGraph = ssa.SFunc { name: "with", nparams: 3, nvals: 4, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1), inst(6, 2, [], 2),
             ssa.SInst { kind_tag: ssasem.with(), result: 3, args: [0, 1, 2], imm: 0, str: "" }], term: ret(3) }] };
-    var withFunc = ssasem.Func { envs: [], graph: withGraph, values: [f.result, i32ty, i32ty, f.result],
+    var withFunc = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: withGraph, values: [f.result, i32ty, i32ty, f.result],
         params: [f.result, i32ty, i32ty], result: f.result, records: [], enums: [], calls: [] };
     var withPlan = ssaunits.plan(withFunc, [3, 1, 1]);
     if (!withPlan.ok) { eprint(withPlan.why); return 121; }
@@ -669,7 +675,7 @@ function main(): i32 {
     // receiver's, are contract errors rather than lowering ones.
     var badElem = ssasem.Func { ...appendFunc, values: [f.result, strTy, f.result], params: [f.result, strTy] };
     if (ssaunits.plan(badElem, [3, 2]).why != "append element type") { return 44; }
-    var badRecvAppend = ssasem.Func { envs: [], graph: appendGraph, values: [strTy, i32ty, strTy],
+    var badRecvAppend = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: appendGraph, values: [strTy, i32ty, strTy],
         params: [strTy, i32ty], result: strTy, records: [], enums: [], calls: [] };
     if (ssaunits.plan(badRecvAppend, [3, 1]).why != "append container type") { return 45; }
     // A slice is a VIEW: it owns its box and borrows the source's bytes, so it
@@ -683,7 +689,7 @@ function main(): i32 {
     var sliceGraph = ssa.SFunc { name: "slice", nparams: 3, nvals: 4, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1), inst(6, 2, [], 2),
             ssa.SInst { kind_tag: ssasem.slice(), result: 3, args: [0, 1, 2], imm: 0, str: "" }], term: ret(1) }] };
-    var sliceFunc = ssasem.Func { envs: [], graph: sliceGraph, values: [strTy, i32ty, i32ty, viewTy],
+    var sliceFunc = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: sliceGraph, values: [strTy, i32ty, i32ty, viewTy],
         params: [strTy, i32ty, i32ty], result: i32ty, records: [], enums: [], calls: [] };
     var ownedSlice = ssasem.Func { ...sliceFunc, values: [strTy, i32ty, i32ty, strTy] };
     if (ssaunits.plan(ownedSlice, [2, 1, 1]).why != "slice container type") { return 103; }
@@ -706,7 +712,7 @@ function main(): i32 {
     // selected per VALUE and not applied to every string.
     var plainGraph = ssa.SFunc { name: "plain", nparams: 1, nvals: 1, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0)], term: ret(0) }] };
-    var plainFunc = ssasem.Func { envs: [], graph: plainGraph, values: [strTy], params: [strTy], result: strTy,
+    var plainFunc = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: plainGraph, values: [strTy], params: [strTy], result: strTy,
         records: [], enums: [], calls: [] };
     var plainPlan = ssaunits.plan(plainFunc, [3]);
     if (!plainPlan.ok) { eprint(plainPlan.why); return 51; }
@@ -726,7 +732,7 @@ function main(): i32 {
     var wideRec: typeinfo.Type = typeinfo.TypeStruct { name: "Wide", args: [] };
     var wideRecSchema = semrecords.Record { ty: wideRec, fields: [semrecords.Field { name: "d", ty: f64ty },
         semrecords.Field { name: "s", ty: strTy }] };
-    var wideFunc = ssasem.Func { envs: [], graph: dropGraph, values: [wideRec, i32ty], params: [wideRec], result: i32ty,
+    var wideFunc = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: dropGraph, values: [wideRec, i32ty], params: [wideRec], result: i32ty,
         records: [wideRecSchema], enums: [], calls: [] };
     var widePlan = ssaunits.plan(wideFunc, [3]);
     if (!widePlan.ok) { eprint(widePlan.why); return 54; }
@@ -746,7 +752,7 @@ function main(): i32 {
     // only a RECORD construction needs the per-field store width, which this
     // boundary withholds (declaration index -1). The narrower float occupies the
     // same slot, rounded to single precision where it is made.
-    var wideVal = ssasem.Func { envs: [], graph: dropGraph, values: [f64ty, i32ty], params: [f64ty], result: i32ty,
+    var wideVal = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: dropGraph, values: [f64ty, i32ty], params: [f64ty], result: i32ty,
         records: [], enums: [], calls: [] };
     var wideValPlan = ssaunits.plan(wideVal, [1]);
     if (!wideValPlan.ok) { eprint(wideValPlan.why); return 58; }
@@ -758,7 +764,7 @@ function main(): i32 {
     var narrowValLowered = ssarc.lower(narrowVal, [1], ssaunits.plan(narrowVal, [1]), irlower.struct_tab_empty(), []);
     if (!narrowValLowered.ok) { eprint(narrowValLowered.why); return 111; }
     if (narrowValLowered.f64_slots.len() != 1 || narrowValLowered.f64_slots[0] != 0) { return 111; }
-    var floatElem = ssasem.Func { envs: [], graph: ssa.SFunc { ...dropGraph, nvals: 2, blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0),
+    var floatElem = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: ssa.SFunc { ...dropGraph, nvals: 2, blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0),
             inst(ssasem.array_new(), 1, [0], 0)], term: ret(1) }] },
         values: [f64ty, typeinfo.TypeArray { elem: f64ty }], params: [f64ty], result: typeinfo.TypeArray { elem: f64ty }, records: [], enums: [], calls: [] };
     // An ARRAY element of that width does lower: every element op carries its
@@ -769,7 +775,7 @@ function main(): i32 {
     if (!floatElemLowered.ok) { eprint(floatElemLowered.why); return 112; }
     if (!made_wide(floatElemLowered, false)) { return 133; }
     // A float constant carries its text, as a wide integer does.
-    var floatK = ssasem.Func { envs: [], graph: ssa.SFunc { ...dropGraph, nparams: 0, nvals: 1,
+    var floatK = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: ssa.SFunc { ...dropGraph, nparams: 0, nvals: 1,
             blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(1, 0, [], 0)], term: ret(0) }] },
         values: [f64ty], params: [], result: f64ty, records: [], enums: [], calls: [] };
     if (ssaunits.plan(floatK, []).why != "float constant needs its literal text") { return 113; }
@@ -782,7 +788,7 @@ function main(): i32 {
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1),
             ssa.SInst { kind_tag: ssasem.str_index(), result: 2, args: [0, 1], imm: 0, str: "" }], term: ret(2) }] };
     var u8ty: typeinfo.Type = typeinfo.TypeI32 { width: 8, unsigned: true, is_char: false };
-    var idxFunc = ssasem.Func { envs: [], graph: idxGraph, values: [strTy, i32ty, u8ty],
+    var idxFunc = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: idxGraph, values: [strTy, i32ty, u8ty],
         params: [strTy, i32ty], result: u8ty, records: [], enums: [], calls: [] };
     var idxPlan = ssaunits.plan(idxFunc, [3, 1]);
     if (!idxPlan.ok) { eprint(idxPlan.why); return 61; }
@@ -809,7 +815,7 @@ function main(): i32 {
     var negGraph = ssa.SFunc { name: "neg", nparams: 1, nvals: 2, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0),
             ssa.SInst { kind_tag: 10, result: 1, args: [0], imm: 0, str: "-" }], term: ret(1) }] };
-    var negFunc = ssasem.Func { envs: [], graph: negGraph, values: [i32ty, i32ty], params: [i32ty], result: i32ty,
+    var negFunc = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: negGraph, values: [i32ty, i32ty], params: [i32ty], result: i32ty,
         records: [], enums: [], calls: [] };
     if (masks(ssarc.lower(negFunc, [1], ssaunits.plan(negFunc, [1]), irlower.struct_tab_empty(), [])) != "i32") { return 70; }
     // The byte is the type the checker gives a string index, so it is not
@@ -842,7 +848,7 @@ function main(): i32 {
     // A byte's constant is pushed with no mask, so it has to be in range here.
     var kGraph = ssa.SFunc { name: "k", nparams: 0, nvals: 1, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(1, 0, [], 255)], term: ret(0) }] };
-    var kFunc = ssasem.Func { envs: [], graph: kGraph, values: [u8ty], params: [], result: u8ty,
+    var kFunc = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: kGraph, values: [u8ty], params: [], result: u8ty,
         records: [], enums: [], calls: [] };
     if (!ssaunits.plan(kFunc, []).ok) { eprint(ssaunits.plan(kFunc, []).why); return 83; }
     var kOver = ssasem.Func { ...kFunc, graph: ssa.SFunc { ...kGraph,
@@ -870,12 +876,12 @@ function main(): i32 {
     // A wide value is an array element and a VALUE, and the array that holds
     // it is one box like any other.
     var wideArr: typeinfo.Type = typeinfo.TypeArray { elem: i64ty };
-    var wideArrFunc = ssasem.Func { envs: [], graph: g, values: [wideArr], params: [wideArr], result: wideArr,
+    var wideArrFunc = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: g, values: [wideArr], params: [wideArr], result: wideArr,
         records: [], enums: [], calls: [] };
     var wideArrLowered = ssarc.lower(wideArrFunc, [2], ssaunits.plan(wideArrFunc, [2]), irlower.struct_tab_empty(), []);
     if (!wideArrLowered.ok) { eprint(wideArrLowered.why); return 95; }
     if (wideArrLowered.arr_slots.len() != 1 || wideArrLowered.arr_slots[0] != 0) { return 134; }
-    var wideElem = ssasem.Func { envs: [], graph: ssa.SFunc { ...dropGraph, nvals: 2, blocks: [ssa.SBlock { id: 7, preds: [],
+    var wideElem = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: ssa.SFunc { ...dropGraph, nvals: 2, blocks: [ssa.SBlock { id: 7, preds: [],
             insts: [inst(6, 0, [], 0), inst(ssasem.array_new(), 1, [0], 0)], term: ret(1) }] },
         values: [i64ty, wideArr], params: [i64ty], result: wideArr, records: [], enums: [], calls: [] };
     var wideElemLowered = ssarc.lower(wideElem, [1], ssaunits.plan(wideElem, [1]), irlower.struct_tab_empty(), []);
@@ -888,7 +894,7 @@ function main(): i32 {
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0),
             inst(ssasem.tuple_new(), 1, [0, 0], 0)], term: ret(1) }] };
     var wideTup: typeinfo.Type = typeinfo.TypeTuple { elements: [i64ty, i64ty] };
-    var buildFunc = ssasem.Func { envs: [], graph: buildGraph, values: [i64ty, wideTup], params: [i64ty], result: wideTup,
+    var buildFunc = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: buildGraph, values: [i64ty, wideTup], params: [i64ty], result: wideTup,
         records: [], enums: [], calls: [] };
     var wideTupLowered = ssarc.lower(buildFunc, [1], ssaunits.plan(buildFunc, [1]), irlower.struct_tab_empty(), []);
     if (!wideTupLowered.ok) { eprint(wideTupLowered.why); return 96; }
@@ -900,7 +906,7 @@ function main(): i32 {
     // Supporting wide tuples does not admit a value whose type disagrees
     // with the declared element type.
     var narrowTup: typeinfo.Type = typeinfo.TypeTuple { elements: [i32ty, i32ty] };
-    var sneakFunc = ssasem.Func { envs: [], graph: buildGraph, values: [i64ty, narrowTup], params: [i64ty], result: narrowTup,
+    var sneakFunc = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: buildGraph, values: [i64ty, narrowTup], params: [i64ty], result: narrowTup,
         records: [], enums: [], calls: [] };
     if (ssaunits.plan(sneakFunc, [1]).ok) { return 97; }
     // A record's field width comes from its declaration, which construction
@@ -910,7 +916,7 @@ function main(): i32 {
     var wide64Graph = ssa.SFunc { name: "mkwide", nparams: 1, nvals: 2, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0),
             inst(ssasem.record_new(), 1, [0], 0)], term: ret(1) }] };
-    var wide64Func = ssasem.Func { envs: [], graph: wide64Graph, values: [i64ty, wide64Ty], params: [i64ty], result: wide64Ty,
+    var wide64Func = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: wide64Graph, values: [i64ty, wide64Ty], params: [i64ty], result: wide64Ty,
         records: [wide64Schema], enums: [], calls: [] };
     var wide64Plan = ssaunits.plan(wide64Func, [1]);
     if (!wide64Plan.ok) { eprint(wide64Plan.why); return 101; }
@@ -932,7 +938,7 @@ function main(): i32 {
     var spanGraph = ssa.SFunc { name: "mkspan", nparams: 1, nvals: 2, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0),
             ssa.SInst { kind_tag: ssasem.variant_new(), result: 1, args: [0], imm: 0, str: "W" }], term: ret(1) }] };
-    var spanFunc = ssasem.Func { envs: [], graph: spanGraph, values: [i64ty, spanTy], params: [i64ty], result: spanTy,
+    var spanFunc = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: spanGraph, values: [i64ty, spanTy], params: [i64ty], result: spanTy,
         records: [], enums: [spanEnum], calls: [] };
     var spanPlan = ssaunits.plan(spanFunc, [1]);
     if (!spanPlan.ok) { eprint(spanPlan.why); return 117; }
@@ -946,13 +952,13 @@ function main(): i32 {
     // text instead; a narrow signed one carries none, and neither may carry both.
     var wideK = ssa.SFunc { name: "wk", nparams: 0, nvals: 1, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [ssa.SInst { kind_tag: 1, result: 0, args: [], imm: 0, str: "4294967296" }], term: ret(0) }] };
-    var wideKFunc = ssasem.Func { envs: [], graph: wideK, values: [i64ty], params: [], result: i64ty,
+    var wideKFunc = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: wideK, values: [i64ty], params: [], result: i64ty,
         records: [], enums: [], calls: [] };
     if (!ssaunits.plan(wideKFunc, []).ok) { eprint(ssaunits.plan(wideKFunc, []).why); return 98; }
     var noText = ssasem.Func { ...wideKFunc, graph: ssa.SFunc { ...wideK,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(1, 0, [], 0)], term: ret(0) }] } };
     if (ssaunits.plan(noText, []).why != "constant needs its literal text") { return 99; }
-    var narrowText = ssasem.Func { envs: [], graph: wideK, values: [i32ty], params: [], result: i32ty,
+    var narrowText = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: wideK, values: [i32ty], params: [], result: i32ty,
         records: [], enums: [], calls: [] };
     if (ssaunits.plan(narrowText, []).why != "narrow constant carries text") { return 100; }
     // A u32 occupies the i32's slot but reaches past the immediate's sign bit, so
@@ -967,7 +973,7 @@ function main(): i32 {
     // box's: the graph below returns a borrowed map, which the return
     // supplies by retaining it.
     var mapTy: typeinfo.Type = typeinfo.TypeMap { key: strTy, value: i32ty };
-    var mapFunc = ssasem.Func { envs: [], graph: g, values: [mapTy], params: [mapTy], result: mapTy,
+    var mapFunc = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: g, values: [mapTy], params: [mapTy], result: mapTy,
         records: [], enums: [], calls: [] };
     var mapPlan = ssaunits.plan(mapFunc, [2]);
     if (!mapPlan.ok) { eprint(mapPlan.why); return 137; }
@@ -977,7 +983,7 @@ function main(): i32 {
     for o in mapLowered.ops {
         if (o.str == "__fern_rc_inc") { sawMapRetain = true; }
     }
-    if (!sawMapRetain) { return 138; }
+    if (!sawMapRetain) { return 195; }
     // The same graph over an OWNED map moves that unit, and the map is freed
     // by its own helper rather than released by a count.
     var ownMapPlan = ssaunits.plan(mapFunc, [3]);
@@ -1014,7 +1020,7 @@ function main(): i32 {
     if (!ssaunits.plan(intMapFunc, [3]).ok) { eprint(ssaunits.plan(intMapFunc, [3]).why); return 143; }
     var dropMapGraph = ssa.SFunc { name: "drop_map", nparams: 1, nvals: 2, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(1, 1, [], 7)], term: ret(1) }] };
-    var dropIntMap = ssasem.Func { envs: [], graph: dropMapGraph, values: [intMapTy, i32ty], params: [intMapTy], result: i32ty, records: [], enums: [], calls: [] };
+    var dropIntMap = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: dropMapGraph, values: [intMapTy, i32ty], params: [intMapTy], result: i32ty, records: [], enums: [], calls: [] };
     var dropIntPlan = ssaunits.plan(dropIntMap, [3]);
     if (!dropIntPlan.ok) { eprint(dropIntPlan.why); return 169; }
     var dropIntLowered = ssarc.lower(dropIntMap, [3], dropIntPlan, irlower.struct_tab_empty(), []);
@@ -1050,7 +1056,7 @@ function main(): i32 {
     var arrInsertGraph = ssa.SFunc { name: "arr_insert", nparams: 3, nvals: 4, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1), inst(6, 2, [], 2),
             ssa.SInst { kind_tag: ssasem.map_insert(), result: 3, args: [0, 1, 2], imm: 0, str: "" }], term: ret(3) }] };
-    var arrInsert = ssasem.Func { envs: [], graph: arrInsertGraph, values: [arrMapTy, strTy, typeinfo.TypeArray { elem: i32ty }, arrMapTy], params: [arrMapTy, strTy, typeinfo.TypeArray { elem: i32ty }], result: arrMapTy, records: [], enums: [], calls: [] };
+    var arrInsert = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: arrInsertGraph, values: [arrMapTy, strTy, typeinfo.TypeArray { elem: i32ty }, arrMapTy], params: [arrMapTy, strTy, typeinfo.TypeArray { elem: i32ty }], result: arrMapTy, records: [], enums: [], calls: [] };
     var arrInsertPlan = ssaunits.plan(arrInsert, [3, 3, 3]);
     if (!arrInsertPlan.ok) { eprint(arrInsertPlan.why); return 190; }
     var arrInsertLowered = ssarc.lower(arrInsert, [3, 3, 3], arrInsertPlan, irlower.struct_tab_empty(), []);
@@ -1063,7 +1069,7 @@ function main(): i32 {
     var intInsertGraph = ssa.SFunc { name: "int_insert", nparams: 3, nvals: 4, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1), inst(6, 2, [], 2),
             ssa.SInst { kind_tag: ssasem.map_insert(), result: 3, args: [0, 1, 2], imm: 0, str: "" }], term: ret(3) }] };
-    var intInsert = ssasem.Func { envs: [], graph: intInsertGraph, values: [intMapTy, i32ty, i32ty, intMapTy], params: [intMapTy, i32ty, i32ty], result: intMapTy, records: [], enums: [], calls: [] };
+    var intInsert = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: intInsertGraph, values: [intMapTy, i32ty, i32ty, intMapTy], params: [intMapTy, i32ty, i32ty], result: intMapTy, records: [], enums: [], calls: [] };
     var intInsertPlan = ssaunits.plan(intInsert, [3, 1, 1]);
     if (!intInsertPlan.ok) { eprint(intInsertPlan.why); return 174; }
     var intInsertLowered = ssarc.lower(intInsert, [3, 1, 1], intInsertPlan, irlower.struct_tab_empty(), []);
@@ -1084,7 +1090,7 @@ function main(): i32 {
     var lenMapGraph = ssa.SFunc { name: "map_len", nparams: 1, nvals: 2, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0),
             ssa.SInst { kind_tag: ssasem.map_len(), result: 1, args: [0], imm: 0, str: "" }], term: ret(1) }] };
-    var lenMap = ssasem.Func { envs: [], graph: lenMapGraph, values: [intMapTy, i32ty], params: [intMapTy], result: i32ty, records: [], enums: [], calls: [] };
+    var lenMap = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: lenMapGraph, values: [intMapTy, i32ty], params: [intMapTy], result: i32ty, records: [], enums: [], calls: [] };
     var lenMapPlan = ssaunits.plan(lenMap, [3]);
     if (!lenMapPlan.ok) { eprint(lenMapPlan.why); return 178; }
     var lenMapLowered = ssarc.lower(lenMap, [3], lenMapPlan, irlower.struct_tab_empty(), []);
@@ -1103,7 +1109,7 @@ function main(): i32 {
     var endGraph = ssa.SFunc { name: "ends", nparams: 1, nvals: 1, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0)],
             term: ssa.STerm { kind_tag: 4, value: 0, cond: 0, target: 0, t: 0, f: 0 } }] };
-    var endFunc = ssasem.Func { envs: [], graph: endGraph, values: [strTy], params: [strTy], result: i32ty, records: [], enums: [], calls: [] };
+    var endFunc = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: endGraph, values: [strTy], params: [strTy], result: i32ty, records: [], enums: [], calls: [] };
     var endPlan = ssaunits.plan(endFunc, [3]);
     if (!endPlan.ok) { eprint(endPlan.why); return 181; }
     var endLowered = ssarc.lower(endFunc, [3], endPlan, irlower.struct_tab_empty(), []);
@@ -1124,7 +1130,7 @@ function main(): i32 {
             ssa.SInst { kind_tag: ssasem.map_get(), result: 2, args: [0, 1], imm: 0, str: "" }], term: ret(2) }] };
     var optEnum = semrecords.Enum { ty: optI32Ty, variants: [semrecords.Variant { name: "Some", fields: [semrecords.Field { name: "__ev", ty: i32ty }] },
         semrecords.Variant { name: "None", fields: [] }], layout: semrecords.layout_option() };
-    var getMap = ssasem.Func { envs: [], graph: getGraph, values: [intMapTy, i32ty, optI32Ty], params: [intMapTy, i32ty], result: optI32Ty, records: [], enums: [optEnum], calls: [] };
+    var getMap = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: getGraph, values: [intMapTy, i32ty, optI32Ty], params: [intMapTy, i32ty], result: optI32Ty, records: [], enums: [optEnum], calls: [] };
     var getPlan = ssaunits.plan(getMap, [3, 1]);
     if (!getPlan.ok) { eprint(getPlan.why); return 184; }
     var getLowered = ssarc.lower(getMap, [3, 1], getPlan, irlower.struct_tab_empty(), []);

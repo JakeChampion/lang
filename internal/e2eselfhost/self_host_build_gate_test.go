@@ -47,6 +47,37 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			wantDiag: "error[E003]",
 		},
 		{
+			// #10094: native refuses a Map built outside core/map's import
+			// closure; the self-host lowers its own map and built it.
+			name:     "map-without-core-map-E001",
+			src:      "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); return m.get_or(1, 0) - 2; }\n",
+			wantDiag: "error[E001]",
+		},
+		{
+			// core/map reached through another module's import is in the
+			// closure, as it is for native.
+			name: "map-with-core-map-through-an-import",
+			src:  "import \"std/dotenv\";\nfunction main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); return m.get_or(1, 0) - 2; }\n",
+		},
+		{
+			// #10095: the retired in-place spelling. Accepted, it built a
+			// program the two lowerings answered differently.
+			name:     "retired-map-set-E043",
+			src:      "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i32] = map_new(8); m.set(1, 2); return m.get_or(1, 0); }\n",
+			wantDiag: "error[E043]",
+		},
+		{
+			// A name Map has never had, refused against core/map's loaded
+			// method set; a core/map receiver method beside it stays legal.
+			name:     "map-unknown-method-E043",
+			src:      "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i32] = map_new(8); return m.entries().len() + m.frob(); }\n",
+			wantDiag: "error[E043]",
+		},
+		{
+			name: "map-core-map-receiver-method",
+			src:  "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); return m.entries().len() - 1; }\n",
+		},
+		{
 			name:     "wildcard-arm-not-last-E026",
 			src:      "enum O { Sm(i32), Nn }\nfunction main(): i32 { var o: O = O.Nn; match (o) { _ => { return 1; }, Nn => { return 3; } } }\n",
 			wantDiag: "error[E026]",
@@ -62,6 +93,17 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			// diagnostics, so `-check` refused this and `-target` built it.
 			name:     "const-not-a-constant",
 			src:      "function g(): i32 { return 1; }\nconst E = g();\nfunction main(): i32 { return E; }\n",
+			wantDiag: "const E: expression is not a constant",
+		},
+		{
+			// An array or tuple literal of constants is a constant (#7987); a
+			// call inside one still is not.
+			name: "const-composite",
+			src:  "const XS: i32[] = [1, 2];\nconst T = (3, \"a\");\nfunction main(): i32 { return XS[1] + T.0; }\n",
+		},
+		{
+			name:     "const-composite-holding-a-call",
+			src:      "function g(): i32 { return 1; }\nconst E: i32[] = [g()];\nfunction main(): i32 { return E[0]; }\n",
 			wantDiag: "const E: expression is not a constant",
 		},
 		{

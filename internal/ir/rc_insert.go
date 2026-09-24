@@ -356,7 +356,8 @@ func (b *builder) freshOwnedRcTempType(e ast.Expr) (ast.Type, bool) {
 //     borrowed payload uncounted.
 //   - pair-form callees: return a (tag, payload) pair, a different stack
 //     shape.
-//   - indirect (function-typed local) callees: unknown body / borrow shape.
+//   - indirect (function-typed local) callees, unless every address-taken
+//     function returns a box the caller owns (indirectCallsReturnOwnBox).
 func (b *builder) ownedCallResultType(e ast.Expr) (ast.Type, bool) {
 	if !ast.RcFreeEnabled {
 		return nil, false
@@ -370,7 +371,17 @@ func (b *builder) ownedCallResultType(e ast.Expr) (ast.Type, bool) {
 		return nil, false
 	}
 	if _, isLocal := b.locals[id.Name]; isLocal {
-		return nil, false
+		// Address-taken functions are never pair-form, so every indirect
+		// target has the user-function return shape; the fact below says
+		// each one hands back a box the caller owns.
+		if !b.indirectCallsReturnOwnBox() {
+			return nil, false
+		}
+		t := b.exprType(e)
+		if t == nil || !ast.IsPointerType(t) {
+			return nil, false
+		}
+		return t, true
 	}
 	if _, ok := b.info.FuncSigs[id.Name]; !ok {
 		return nil, false // not a known function (excludes variant constructors)
@@ -815,7 +826,21 @@ func (b *builder) bindingUsesExcused(body ast.Node, name string, bt ast.Type, co
 				if !ok || id.Name != name {
 					continue
 				}
-				if b.readOnlyCallArg(x, i) {
+				if b.readOnlyCallArg(x, i) || (countedAliasOK && b.indirectCallArg(x)) {
+					excused[id] = true
+				}
+			}
+		case *ast.Return:
+			// `return Some(c)`: the construction retains an alias payload, so
+			// the returned value holds a count of its own. The gate is
+			// emitEnumNew's, the stricter of the two constructors' (the pair
+			// form's emitPairFormPayloadRetain drops the eligibility and reuse
+			// terms), so a construction that does not retain is never
+			// excused. A move site hands over the binding's reference instead.
+			if c, ok := x.Value.(*ast.Call); ok && countedAliasOK && len(c.Args) == 1 {
+				if id, ok := c.Args[0].(*ast.Ident); ok && id.Name == name && c.IsVariantCall &&
+					b.enumRcPayloadsEligibleForValue(c) && !b.rc.consumingMatchReuse[c] &&
+					needsRcIncOnAlias(id, b) && !b.rc.moveSites[id] {
 					excused[id] = true
 				}
 			}
@@ -941,6 +966,19 @@ func (b *builder) readOnlyCallArg(call *ast.Call, i int) bool {
 	}
 	esc, known := b.paramEscapes[id.Name]
 	return known && i < len(esc) && !esc[i]
+}
+
+// indirectCallArg reports whether call goes through a function value. Its
+// arguments are borrows (a call through a pointer has no callee name to hang
+// a caller-side retain on), so a callee that keeps one retains it and a
+// release after the call is balanced — a counted escape, not a read.
+func (b *builder) indirectCallArg(call *ast.Call) bool {
+	id, ok := call.Callee.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	_, isLocal := b.locals[id.Name]
+	return isLocal
 }
 
 // reclaimableTryScrutinee reports whether a `?`'s source Option/Result box is

@@ -4557,6 +4557,107 @@ function main(): i32 {
 }`,
 	},
 	{
+		// `x = y` where y is written again before anything reads it moves y
+		// into x and empties y's slot (computeOverwriteMoves). Strings,
+		// arrays and structs; the write inside both arms of an if/else; an
+		// early return between the move and the write, where the exit sweep
+		// meets the emptied slot; and a break between them, which leaves the
+		// copy retained.
+		name: "overwrite_move_before_read",
+		src: `
+struct P { tag: string, n: i32 }
+function strs(k: string): i32 {
+    var a: string = "s" + k;
+    var b: string = "";
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) {
+        b = a;
+        a = b + "x";
+        total = total + b.len();
+        i = i + 1;
+    }
+    return total;
+}
+function arms(k: string): i32 {
+    var a: string = "t" + k;
+    var b: string = "";
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) {
+        b = a;
+        if (i % 2 == 0) {
+            a = b + "y";
+        } else {
+            a = "z" + k;
+        }
+        total = total + b.len();
+        i = i + 1;
+    }
+    return total;
+}
+function arrs(k: string): i32 {
+    var a: i32[] = [k.len()];
+    var b: i32[] = [];
+    var i: i32 = 0;
+    while (i < 50) {
+        b = a;
+        a = b.append(i);
+        i = i + 1;
+    }
+    return b.len() + a.len();
+}
+function structs(k: string): i32 {
+    var a: P = P { tag: "p" + k, n: 0 };
+    var b: P = P { tag: "", n: 0 };
+    var i: i32 = 0;
+    while (i < 50) {
+        b = a;
+        a = P { tag: b.tag + "q", n: b.n + 1 };
+        i = i + 1;
+    }
+    return a.n + b.tag.len();
+}
+function early(k: string, stop: i32): i32 {
+    var a: string = "e" + k;
+    var b: string = "";
+    var i: i32 = 0;
+    while (i < 50) {
+        b = a;
+        if (i == stop) {
+            return b.len();
+        }
+        a = b + "w";
+        i = i + 1;
+    }
+    return a.len();
+}
+function broken(k: string): i32 {
+    var a: string = "b" + k;
+    var b: string = "";
+    var i: i32 = 0;
+    while (i < 50) {
+        b = a;
+        if (i == 40) {
+            break;
+        }
+        a = b + "v";
+        i = i + 1;
+    }
+    return a.len() + b.len();
+}
+function main(): i32 {
+    var bad: i32 = 0;
+    if (strs("7") != 1325) { bad = bad + 1; }
+    if (arms("7") != 125) { bad = bad + 2; }
+    if (arrs("7") != 101) { bad = bad + 4; }
+    if (structs("7") != 101) { bad = bad + 8; }
+    if (early("7", 10) != 12) { bad = bad + 16; }
+    if (broken("7") != 84) { bad = bad + 32; }
+    return bad + __rc_underflow_count();
+}`,
+	},
+	{
 		// ARRAY-BEARING cursor struct (Par-shaped — the self-host parser's)
 		// threaded through `(value, cursor)` tuple returns. The param is
 		// consumed-promoted (it is reassigned) but borrow-taint keeps it
@@ -8993,6 +9094,168 @@ function main(): i32 {
         r = r + 1;
     }
     return (t - 400) + __rc_underflow_count();
+}`,
+	},
+	{
+		// #7914: a `string[]` of heap strings returned bare from one arm of a
+		// callee while the caller keeps using its own binding. Refusing the
+		// returned-parameter credit once stranded every element here (1260
+		// allocs / 780 frees); the leak gate pins it at zero.
+		name: "returned_bare_param_kept_by_caller",
+		src: `
+@noinline
+function w(i: i32): string { var t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "a-wide-payload-past-any-inline-threshold-" + t; }
+@noinline
+function visible(gfns: string[], keep: boolean): string[] {
+    if (keep) { return gfns; }
+    var out: string[] = [];
+    return out;
+}
+function round(i: i32): i32 {
+    var gfns: string[] = [];
+    var k: i32 = 0;
+    while (k < 6) { gfns = gfns.append(w(i + k)); k = k + 1; }
+    var vis: string[] = visible(gfns, i % 2 == 0);
+    var t: i32 = 0;
+    if (gfns[0] == w(i)) { t = t + 1; }
+    return (t + vis.len() + gfns.len() + gfns.len()) % 97;
+}
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 120) { acc = acc + round(i); i = i + 1; }
+    return (acc % 83 - 11) + __rc_underflow_count();
+}`,
+	},
+	{
+		// #8003: a match payload handed to a call through a closure PARAMETER,
+		// the shape of tcp_serve's `handler(req, plat)`. An indirect callee
+		// that keeps its argument retains it, so the arm's release is
+		// balanced; the handler here reads it, hands it back, and stores it
+		// into what it returns.
+		name: "closure_param_call_releases_match_payload",
+		src: `
+struct Req { path: string, n: i32 }
+struct Holder { r: Req }
+function parse(i: i32): Option[Req] {
+    if (i % 6 == 0) { return None; }
+    var p: string = "";
+    var j: i32 = 0;
+    while (j < 4) { p = p + "ab"; j = j + 1; }
+    return Some(Req { path: p, n: i });
+}
+function round(i: i32, handler: (Req) => i32): i32 {
+    var t: i32 = 0;
+    match (parse(i)) {
+        Some(req) => { t = handler(req); },
+        None => { },
+    }
+    return t;
+}
+function round_back(i: i32, handler: (Req) => Req): i32 {
+    var kept: Req = Req { path: "", n: 0 };
+    match (parse(i)) {
+        Some(req) => { kept = handler(req); },
+        None => { },
+    }
+    return kept.path.len() + kept.n;
+}
+function round_store(i: i32, handler: (Req) => Holder): i32 {
+    var h: Holder = Holder { r: Req { path: "", n: 0 } };
+    match (parse(i)) {
+        Some(req) => { h = handler(req); },
+        None => { },
+    }
+    return h.r.path.len();
+}
+function handle(r: Req): i32 { return r.path.len() + r.n; }
+function main(): i32 {
+    var acc: i32 = 0;
+    var base: string = "x" + "yz";
+    var i: i32 = 0;
+    while (i < 50) {
+        acc = acc + round(i, handle);
+        acc = acc + round(i, (r: Req): i32 => r.n);
+        acc = acc + round(i, (r: Req): i32 => r.path.len() + base.len());
+        acc = acc + round_back(i, (r: Req): Req => r);
+        acc = acc + round_store(i, (r: Req): Holder => Holder { r: r });
+        i = i + 1;
+    }
+    return (acc % 97) + __rc_underflow_count();
+}`,
+	},
+	{
+		// #8003: what a call through a function value returns is the caller's
+		// once every address-taken function hands back a box of its own —
+		// bound in the arm (tcp_serve's `var resp = handler(req, plat)`) or
+		// passed straight on.
+		name: "indirect_call_result_released",
+		src: `
+struct Req { path: string, n: i32 }
+struct Resp { body: string }
+function parse(i: i32): Option[Req] {
+    if (i % 6 == 0) { return None; }
+    var p: string = "";
+    var j: i32 = 0;
+    while (j < 4) { p = p + "ab"; j = j + 1; }
+    return Some(Req { path: p, n: i });
+}
+function send(r: Resp): i32 { return r.body.len(); }
+function serve(handler: (Req, i32) => Resp): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) {
+        match (parse(i)) {
+            Some(req) => {
+                var resp: Resp = handler(req, 1);
+                t = t + send(resp) + send(handler(req, 2));
+            },
+            None => {}
+        }
+        i = i + 1;
+    }
+    return t;
+}
+function handle(r: Req, k: i32): Resp { return Resp { body: "k" + "kkkkkkkkkkkkkkkkkkkkk" }; }
+function main(): i32 {
+    return (serve(handle) % 97 - 58) + __rc_underflow_count();
+}`,
+	},
+	{
+		// #8003: a function that forwards another's pair-form payload
+		// (tcp's __read_request over http_parse_request) releases its own
+		// count after the re-wrap takes one, and its caller may then free
+		// what it receives.
+		name: "forwarded_pair_payload_released",
+		src: `
+struct Req { path: string, n: i32 }
+@noinline
+function parse(i: i32): Option[Req] {
+    if (i % 6 == 0) { return None; }
+    var p: string = "";
+    var j: i32 = 0;
+    while (j < 4) { p = p + "ab"; j = j + 1; }
+    return Some(Req { path: p, n: i });
+}
+@noinline
+function read(i: i32): Option[Req] {
+    match (parse(i)) {
+        Some(parsed) => { return Some(parsed); },
+        None => {}
+    }
+    return None;
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) {
+        match (read(i)) {
+            Some(req) => { t = t + req.path.len(); },
+            None => {}
+        }
+        i = i + 1;
+    }
+    return (t % 97 - 37) + __rc_underflow_count();
 }`,
 	},
 }

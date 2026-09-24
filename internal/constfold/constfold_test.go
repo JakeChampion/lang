@@ -359,3 +359,55 @@ func countIdents(prog *ast.Program, target string) int {
 	}
 	return count
 }
+
+// A const may hold an array or tuple literal of constant elements (#7987).
+// Elements settle to the declared element type, an empty literal keeps its
+// declared element type, and every reference gets its own copy of the tree.
+func TestFoldCompositeConsts(t *testing.T) {
+	prog := fold(t, `const A: i32 = 2;
+const XS: i32[] = [A, A * 3];
+const E: i32[] = [];
+const W: i64[] = [5000000000];
+const T: (i32, string) = (4, "abc");
+function main(): i32 { var a: i32[] = XS; var b: i32[] = XS; var e: i32[] = E; var w: i64[] = W; var t: (i32, string) = T; return 0; }`)
+	inits := map[string]ast.Expr{}
+	var order []ast.Expr
+	for _, st := range prog.Funcs[0].Body.Stmts {
+		if v, ok := st.(*ast.Var); ok {
+			inits[v.Name] = v.Init
+			order = append(order, v.Init)
+		}
+	}
+	a, ok := inits["a"].(*ast.ArrayLit)
+	if !ok || len(a.Elems) != 2 {
+		t.Fatalf("XS should substitute a 2-element ArrayLit, got %T", inits["a"])
+	}
+	if n, ok := a.Elems[1].(*ast.NumberLit); !ok || n.Value != 6 || n.Width != 32 {
+		t.Errorf("XS[1] = %#v, want the folded i32 literal 6", a.Elems[1])
+	}
+	if b, _ := inits["b"].(*ast.ArrayLit); b == a || b == nil || b.Elems[0] == a.Elems[0] {
+		t.Error("two references to XS share a tree; each substitution must be its own copy")
+	}
+	if e, ok := inits["e"].(*ast.ArrayLit); !ok || len(e.Elems) != 0 || !ast.Equal(e.ElemType, ast.NumberType{Width: 32, Signed: true}) {
+		t.Errorf("E should be an empty ArrayLit typed i32[], got %#v", inits["e"])
+	}
+	if w, ok := inits["w"].(*ast.ArrayLit); !ok || w.Elems[0].(*ast.NumberLit).Width != 64 {
+		t.Errorf("W's element should carry the declared i64 width, got %#v", inits["w"])
+	}
+	if tl, ok := inits["t"].(*ast.TupleLit); !ok || len(tl.Elems) != 2 {
+		t.Errorf("T should substitute a 2-element TupleLit, got %T", inits["t"])
+	}
+}
+
+func TestFoldCompositeConstRefusals(t *testing.T) {
+	for src, want := range map[string]string{
+		`const XS: i32[] = ["a"];`:                                  "declared type i32 does not match initialiser type string",
+		"function f(): i32 { return 1; }\nconst XS: i32[] = [f()];": "not a constant",
+		`const T: (i32, string) = (1, 2);`:                          "declared type string does not match initialiser type i32",
+		`const XS: i32[] = [1]; const Y: i32 = XS + 1;`:             "operands aren't both numbers",
+	} {
+		if got := foldErr(t, src); !strings.Contains(got, want) {
+			t.Errorf("%s\n  error %q, want it to contain %q", src, got, want)
+		}
+	}
+}

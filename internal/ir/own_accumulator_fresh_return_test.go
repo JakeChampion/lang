@@ -66,25 +66,26 @@ func TestOwnAccumulatorReturnsFreshBox(t *testing.T) {
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
-	got := findReturnsFreshBox(prog, info, map[string]bool{}, map[string]bool{}, noOwnedParams)
-	want := map[string]bool{
-		// The box returned is the one moved in, rebound only through owned
-		// values: a recursive call to itself (fixpoint) and the cow mutators.
-		"into":  true,
-		"idx":   true,
-		"withp": true,
-		// Rebound from a borrowed param — the box handed back is the caller's.
-		"rebound": false,
-		// The cow result of a BORROWED receiver is that receiver's buffer.
-		"borrowed_recv": false,
-		// A binding shadows the param name; the return may read either.
-		"shadowed": false,
-		// A borrowed param returned is never fresh.
-		"borrowed_ret": false,
+	got := findReturnsFreshBox(prog, info, map[string]bool{}, map[string]bool{})
+	built := findReturnsConstructedBox(prog, info, map[string]bool{}, map[string]bool{})
+	// The box returned is the one moved in, rebound only through owned
+	// values: a recursive call to itself (fixpoint) and the cow mutators.
+	for _, fn := range []string{"into", "idx", "withp"} {
+		if !got[fn] {
+			t.Errorf("returnsFreshBox[%s] = false, want true", fn)
+		}
 	}
-	for fn, w := range want {
-		if got[fn] != w {
-			t.Errorf("returnsFreshBox[%s] = %v, want %v", fn, got[fn], w)
+	// Each of these hands back a box the caller also names — rebound from a
+	// borrowed param, a borrowed receiver's cow result, a shadowed binding,
+	// a borrowed param returned bare. The return's transfer inc still makes
+	// the caller's reference its own (#7914), but the box is not one the
+	// callee built.
+	for _, fn := range []string{"rebound", "borrowed_recv", "shadowed", "borrowed_ret"} {
+		if !got[fn] {
+			t.Errorf("returnsFreshBox[%s] = false, want true: the transfer inc is the caller's own reference", fn)
+		}
+		if built[fn] {
+			t.Errorf("returnsConstructedBox[%s] = true, want false: the box is one the caller also names", fn)
 		}
 	}
 }

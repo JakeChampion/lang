@@ -36,6 +36,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/jakechampion/lang/internal/ast"
 )
@@ -1549,6 +1550,43 @@ func binaryPrec(op string) int {
 	return precLowest
 }
 
+// writeStringBody re-escapes a string or f-string literal segment. A control
+// byte stays an escape so the source stays text (a raw NUL makes git treat the
+// file as binary), and so does a byte that is not part of valid UTF-8: written
+// raw it would make the file itself invalid UTF-8.
+func (f *formatter) writeStringBody(lit string, fstring bool) {
+	for i := 0; i < len(lit); i++ {
+		c := lit[i]
+		switch {
+		case c == '"':
+			f.b.WriteString(`\"`)
+		case c == '\\':
+			f.b.WriteString(`\\`)
+		case c == '\n':
+			f.b.WriteString(`\n`)
+		case c == '\t':
+			f.b.WriteString(`\t`)
+		case c == '\r':
+			f.b.WriteString(`\r`)
+		case fstring && c == '{':
+			f.b.WriteString(`{{`)
+		case fstring && c == '}':
+			f.b.WriteString(`}}`)
+		case c < 0x20 || c == 0x7f:
+			fmt.Fprintf(&f.b, `\x%02x`, c)
+		case c >= utf8.RuneSelf:
+			if r, n := utf8.DecodeRuneInString(lit[i:]); r != utf8.RuneError || n > 1 {
+				f.b.WriteString(lit[i : i+n])
+				i += n - 1
+			} else {
+				fmt.Fprintf(&f.b, `\x%02x`, c)
+			}
+		default:
+			f.b.WriteByte(c)
+		}
+	}
+}
+
 // formatExpr emits e, wrapping in parens when the outer context
 // (parentPrec) binds tighter than e's outermost operator.
 func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
@@ -1662,29 +1700,7 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		f.b.WriteString(x.Raw)
 	case *ast.StringLit:
 		f.b.WriteByte('"')
-		for i := 0; i < len(x.Value); i++ {
-			c := x.Value[i]
-			switch c {
-			case '"':
-				f.b.WriteString(`\"`)
-			case '\\':
-				f.b.WriteString(`\\`)
-			case '\n':
-				f.b.WriteString(`\n`)
-			case '\t':
-				f.b.WriteString(`\t`)
-			case '\r':
-				f.b.WriteString(`\r`)
-			default:
-				// A control byte stays an escape so the source stays
-				// text: a raw NUL makes git treat the file as binary.
-				if c < 0x20 || c == 0x7f {
-					fmt.Fprintf(&f.b, `\x%02x`, c)
-				} else {
-					f.b.WriteByte(c)
-				}
-			}
-		}
+		f.writeStringBody(x.Value, false)
 		f.b.WriteByte('"')
 	case *ast.FString:
 		// Reconstruct the f"..." surface syntax. Literal segments
@@ -1702,34 +1718,7 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 				f.b.WriteByte('}')
 				continue
 			}
-			for i := 0; i < len(part.Lit); i++ {
-				c := part.Lit[i]
-				switch c {
-				case '"':
-					f.b.WriteString(`\"`)
-				case '\\':
-					f.b.WriteString(`\\`)
-				case '\n':
-					f.b.WriteString(`\n`)
-				case '\t':
-					f.b.WriteString(`\t`)
-				case '\r':
-					f.b.WriteString(`\r`)
-				case '{':
-					f.b.WriteString(`{{`)
-				case '}':
-					f.b.WriteString(`}}`)
-				default:
-					// Same control-byte rule as a plain string
-					// literal above: a raw NUL here makes the file
-					// binary just as readily.
-					if c < 0x20 || c == 0x7f {
-						fmt.Fprintf(&f.b, `\x%02x`, c)
-					} else {
-						f.b.WriteByte(c)
-					}
-				}
-			}
+			f.writeStringBody(part.Lit, true)
 		}
 		f.b.WriteByte('"')
 	case *ast.Ident:

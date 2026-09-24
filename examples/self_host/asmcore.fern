@@ -5172,7 +5172,13 @@ pub function infer_expr_type(e: ast.Expr, s: EmitState): Ty {
             if (ty_is_array_i32(at)) { return ty_i32(); }
             return ty_unknown();
         },
-        ast.ExprSlice(sl) => { return infer_expr_type(sl.array, s); },
+        // `s[a:b]` on a string is `Option[str]`, `None` off a boundary; on an
+        // array it is a copy of the window, the array's own type.
+        ast.ExprSlice(sl) => {
+            var src: Ty = infer_expr_type(sl.array, s);
+            if (ty_is_string(src)) { return ty_option(ty_unknown()); }
+            return src;
+        },
         ast.ExprFieldAccess(fa) => {
             // Resolve within the receiver's struct when its type is a
             // known struct name (match-bound variant payloads); else
@@ -6918,6 +6924,15 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         // (emit_ir_runtime's heap block), so export it like the other
         // shared helpers or every library unit dangles at the per-module link.
         "__fern_oob_abort",
+        // The raw_alloc size trap (#8519), for the same reason.
+        "__fern_alloc_size_abort",
+        // The map free family: a library unit that releases a map it owns
+        // calls one of these, and only the entry defines them.
+        "__fn___fern_map_free", "__fn___fern_map_free_ka", "__fn___fern_map_free_kava", "__fn___fern_map_free_kavs",
+        "__fn___fern_map_free_kavsa", "__fn___fern_map_free_ks", "__fn___fern_map_free_ksva", "__fn___fern_map_free_ksvsa",
+        "__fn___fern_map_free_kvs", "__fn___fern_map_free_va", "__fn___fern_map_free_vs", "__fn___fern_map_free_vsa",
+        "__fn___fern_map_free_kf", "__fn___fern_map_free_kfvf", "__fn___fern_map_free_kfvs", "__fn___fern_map_free_kfvsa",
+        "__fn___fern_map_free_ksvf", "__fn___fern_map_free_vf",
         "__fern_arr_push_owned",
         // xs.reverse() / xs.concat(ys) / a[start:end] (#3457): a LIBRARY module's
         // call resolves against the entry module's single definition, exactly

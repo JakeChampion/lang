@@ -132,10 +132,10 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | `match` (exhaustiveness checked) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | payload binding, comma-separated arms, guards (`when`), named-field patterns, variant or-patterns (`A \| B => …`, [#2698](https://github.com/JakeChampion/lang/issues/2698)); scalar- **and string-literal** arms (`"yes" => …`, [#4407](https://github.com/JakeChampion/lang/issues/4407)) — the open string domain requires a mandatory `_` (E030), a type-mismatched literal arm is E035; string arms lower to an `str_eq` if-else-if chain — native `string_literal_match` fixture (4 backends) + self-host `match-string-literal-*` asm_run cases + `TestStringLiteralMatch*` checker tests |
 | `match` as expression | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
 | Generic structs/enums (monomorphised) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `Box[T]` + generic method |
-| Generic functions + inference | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `id[T](x: T): T`, inferred |
+| Generic functions + inference | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `id[T](x: T): T`, inferred, or written at the call: `id[i32](x)`, `id[Box](b)`, `pair[Box, Loc](a, b)` (conformance `call_type_args_user_type`) |
 | Traits (`Display`/`Eq`/`Ord`, bounds) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | trait + impl method dispatch |
 | Nested functions + closures (capture) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `function(x: T): R { … cap … }`; incl. returning a capturing closure and calling it inline off the call result (`mk(..)(args)` / curried `(x)=>(y)=>…`) — self-host IR `return_closure` pin (#3551) |
-| Function values / indirect calls | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | named fn as value; higher-order |
+| Function values / indirect calls | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | named fn as value; higher-order. A GENERIC fn as a value is E040 (nothing fixes its type parameters; wrap it in a lambda) |
 | Lambdas (`(x: T): R => e`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | typed params required, return type optional (#2701). An expression body is the returned value; a BRACED body is an ordinary function body — `use`, `let … else` and the rest mean there what they mean anywhere else — so a trailing value written without a `;` is returned and a body that yields nothing is void (#8593). Unlike NAMED functions (which must annotate — E070), a lambda may omit its return type and have it inferred. The anonymous `function (…) { … }` spelling built this same node and was retired in #2673; writing it is P006 |
 | Tail-call optimisation | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | depth 5000 self-recursion, no overflow |
 | Modules / imports (`import "./path";`) | | | | | | ⬜ | |

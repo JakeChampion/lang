@@ -213,6 +213,23 @@ pub function is_map_iter(t: typeinfo.Type): boolean {
 // by the schema walk, which has no layout to record for one. `dyn Trait`
 // carries no type argument at all, so there is nothing to walk. Neither is a
 // gap this predicate is papering over — both refuse before a body is produced.
+// Whether a value of `t` holds a `str` view anywhere a caller could read it.
+pub function holds_view(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeString(s) = t { return s.tag == 1; }
+    if let typeinfo.TypeArray(a) = t { return holds_view(a.elem); }
+    if let typeinfo.TypeTuple(tup) = t {
+        for e in tup.elements { if (holds_view(e)) { return true; } }
+        return false;
+    }
+    if (is_cell(t)) { return holds_view(cell_elem(t)); }
+    if let typeinfo.TypeMap(m) = t { return holds_view(m.key) || holds_view(m.value); }
+    if let typeinfo.TypeUnion(u) = t {
+        for a in u.args { if (holds_view(a)) { return true; } }
+        return false;
+    }
+    return false;
+}
+
 pub function holds_map_iter(t: typeinfo.Type): boolean {
     if (is_map_iter(t)) { return true; }
     if let typeinfo.TypeArray(a) = t { return holds_map_iter(a.elem); }

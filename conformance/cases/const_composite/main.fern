@@ -1,0 +1,32 @@
+// A const may hold an array or tuple literal of constant elements (#7987).
+// Every reference gets its own copy, so a `.with` on one leaves the const
+// alone. A field read straight off a tuple literal is what a tuple const
+// substitutes to, so it is exercised here too.
+const A: i32 = 2;
+const XS: i32[] = [A, A * 3, 7];
+const E: i32[] = [];
+const T: (i32, string) = (4, "abc");
+const YS: i32[][] = [XS, [1]];
+const W: i64[] = [5000000000, 1];
+const Z = [10, 20];
+const P: (string, i32)[] = [("a", 1), ("bb", 2)];
+const U = (5, "xy");
+
+struct B { n: i32 }
+
+function main(): i32 {
+    if (XS.len() != 3 || XS[1] != 6) { return 1; }
+    if (E.len() != 0) { return 2; }
+    if (T.0 != 4 || T.1.len() != 3) { return 3; }
+    if (YS[0][2] != 7 || YS[1].len() != 1) { return 4; }
+    if (W[0] != 5000000000) { return 5; }
+    if (Z[1] != 20) { return 6; }
+    if (P[1].0.len() != 2 || P[1].1 != 2) { return 7; }
+    var xs: i32[] = XS.with(0, 99);
+    if (XS[0] != 2 || xs[0] != 99) { return 8; }
+    if ((4, B { n: 3 }).1.n != 3) { return 9; }
+    if ((4, (5, 6)).1.0 != 5) { return 10; }
+    if (U.0 != 5 || U.1.len() != 2) { return 11; }
+    print("ok");
+    return 0;
+}
