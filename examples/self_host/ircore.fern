@@ -1234,7 +1234,7 @@ pub function lower_failed_refuse(name: string, r: irlower.LowerResult): i32 {
 // instead: FnSigs.borrowable_params is the counted form, not `bparams`, so
 // routing through here would mean running borrowable_params_interproc twice.
 pub function wp_fn_sigs(funcs: parser.FuncDecl[], structs: irlower.StructTab): irlower.FnSigs {
-    var bparams: string[] = irlower.borrowable_params_interproc(funcs);
+    var bparams: string[] = irlower.borrowable_params_interproc(funcs, structs);
     return irlower.FnSigs {
         ...irlower.fn_sigs_for_borrow(funcs, structs, array_ret_fns_of(funcs), bparams),
         consume_safe_params: irlower.consume_safe_params_interproc(funcs, bparams),

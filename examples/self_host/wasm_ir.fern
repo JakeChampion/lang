@@ -11140,7 +11140,7 @@ pub function emit_ir_rc_bodies_from(mod: parser.Module, frt: string[], sdt: stri
     // #4355: replaced-STRING-field admission over the merged module — the full
     // read scope at link (see irlower.strfld_reclaim_ok_types_of). The link step
     // holds no lowering, so the verdicts are derived here, once per link.
-    var bparams: string[] = irlower.borrowable_params_interproc(mod.funcs);
+    var bparams: string[] = irlower.borrowable_params_interproc(mod.funcs, stab);
     return emit_ir_rc_bodies_seeded(mod, frt, sdt, aet, heap_base,
         irlower.strfld_reclaim_ok_types_of(mod.funcs, stab, bparams), bparams);
 }
