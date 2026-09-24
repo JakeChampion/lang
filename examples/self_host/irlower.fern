@@ -36847,23 +36847,25 @@ function fresh_enum_arg_type(s: LowerState, arg: ast.Expr, callee: string): stri
     match (arg) {
         ast.ExprCall(c) => {
             match (c.callee) {
-                ast.ExprIdent(cid) => {
-                    if (s.slot_of(cid.name) >= 0) { return ""; }
-                    var rce: string = sig_reg_tagged_value_of(s.frame.sigs.opt_fresh_ret_fns, "RCE:", cid.name);
-                    if (rce.len() > 0) {
-                        if (util.contains(callee, ".") || !iife_free_fn_ret_i32(callee, s)) { return ""; }
-                        return rce;
-                    }
-                    if (enum_fresh_ret_call(arg, s.frame.sigs.return_fresh_struct_ret_fns)) {
-                        var ety: string = s.struct_ret_type(cid.name);
-                        if (ety.len() > 0 && enum_all_variants_scalar(s.frame.structs, ety)) { return ety; }
-                    }
-                    return "";
-                },
+                ast.ExprIdent(cid) => { return fresh_enum_call_arg_type(s, arg, cid.name, callee); },
                 _ => { return ""; }
             }
         },
         _ => { return ""; }
+    }
+    return "";
+}
+
+function fresh_enum_call_arg_type(s: LowerState, arg: ast.Expr, name: string, callee: string): string {
+    if (s.slot_of(name) >= 0) { return ""; }
+    var rce: string = sig_reg_tagged_value_of(s.frame.sigs.opt_fresh_ret_fns, "RCE:", name);
+    if (rce.len() > 0) {
+        if (util.contains(callee, ".") || !iife_free_fn_ret_i32(callee, s)) { return ""; }
+        return rce;
+    }
+    if (enum_fresh_ret_call(arg, s.frame.sigs.return_fresh_struct_ret_fns)) {
+        var ety: string = s.struct_ret_type(name);
+        if (ety.len() > 0 && enum_all_variants_scalar(s.frame.structs, ety)) { return ety; }
     }
     return "";
 }
@@ -37679,19 +37681,20 @@ function collect_tostr_scalar_names(stmts: ast.Stmt[], ns: string[], ts: string[
 
 // collect_litstr_local_names gathers every `var s: string = "lit"` binding, recursing
 // through nested blocks exactly as collect_fresh_string_names does.
+function litstr_var_init(v: ast.StmtVar): boolean {
+    match (v.init) {
+        ast.ExprString(_) => { return true; },
+        _ => { return (v.type_name == "" || v.type_name == "string") && vb_leaves_fresh_str(v.init, true); }
+    }
+    return false;
+}
+
 function collect_litstr_local_names(stmts: ast.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
     for stmt in stmts {
         match (stmt) {
             ast.StmtVar(v) => {
-                match (v.init) {
-                    ast.ExprString(_) => { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); },
-                    _ => {
-                        if ((v.type_name == "" || v.type_name == "string") && vb_leaves_fresh_str(v.init, true)) {
-                            a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
-                        }
-                    }
-                }
+                if (litstr_var_init(v)) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); }
             },
             ast.StmtIf(f) => { a = collect_litstr_local_names(f.then_body, a); a = collect_litstr_local_names(f.else_body, a); },
             ast.StmtWhile(w) => { a = collect_litstr_local_names(w.body, a); },

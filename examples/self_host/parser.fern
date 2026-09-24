@@ -10888,11 +10888,14 @@ function env_from_decl(fd: FuncDecl): MEnv {
 // funcref signature would fall back to i32 for a position the clone knows.
 function subst_ty_list(list: string, tparams: string[], cts: string[]): string {
     if (list.len() == 0) { return ""; }
-    var parts: string[] = split_top_commas(list);
+    return subst_ty_join(split_top_commas(list), ",", tparams, cts);
+}
+
+function subst_ty_join(parts: string[], sep: string, tparams: string[], cts: string[]): string {
     var out: string = "";
     var i: i32 = 0;
     while (i < parts.len()) {
-        if (i > 0) { out = out + ","; }
+        if (i > 0) { out = out + sep; }
         out = out + subst_ty(parts[i], tparams, cts);
         i = i + 1;
     }
@@ -10911,28 +10914,11 @@ pub function subst_ty(name: string, tparams: string[], cts: string[]): string {
         return subst_ty(slice_unchecked(name, 0, name.len() - 2), tparams, cts) + "[]";
     }
     if (util.is_tuple_type_name(name) && slice_unchecked(name, name.len() - 1, name.len()) == ")") {
-        var tparts: string[] = split_top_commas(slice_unchecked(name, 1, name.len() - 1));
-        var tnin: string = "";
-        var tj: i32 = 0;
-        while (tj < tparts.len()) {
-            if (tj > 0) { tnin = tnin + ", "; }
-            tnin = tnin + subst_ty(tparts[tj], tparams, cts);
-            tj = tj + 1;
-        }
-        return "(" + tnin + ")";
+        return "(" + subst_ty_join(split_top_commas(slice_unchecked(name, 1, name.len() - 1)), ", ", tparams, cts) + ")";
     }
     var lb: i32 = first_bracket(name);
     if (lb > 0 && slice_unchecked(name, name.len() - 1, name.len()) == "]") {
-        var inner: str = slice_unchecked(name, lb + 1, name.len() - 1);
-        var parts: string[] = split_top_commas(inner);
-        var ninner: string = "";
-        var j: i32 = 0;
-        while (j < parts.len()) {
-            if (j > 0) { ninner = ninner + ", "; }
-            ninner = ninner + subst_ty(parts[j], tparams, cts);
-            j = j + 1;
-        }
-        return slice_unchecked(name, 0, lb) + "[" + ninner + "]";
+        return slice_unchecked(name, 0, lb) + "[" + subst_ty_join(split_top_commas(slice_unchecked(name, lb + 1, name.len() - 1)), ", ", tparams, cts) + "]";
     }
     // A projection `Base::Name` substitutes through its base: `H::Item` at
     // H = SBox is `SBox::Item`, which resolve_proj_in_type can then resolve.
