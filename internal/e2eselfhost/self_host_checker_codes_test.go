@@ -1853,6 +1853,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e003-str-array-param-element-into-string", "function f(xs: str[]): i32 { var t: string = xs[0]; return t.len(); }\nfunction main(): i32 { return 0; }\n", []string{"E003"}},
 		{"e003-str-array-result-element-into-string", "function mk(s: string): str[] { var xs: str[] = [slice_unchecked(s, 0, 1)]; return xs; }\nfunction main(): i32 { var t: string = mk(\"ab\")[0]; return t.len(); }\n", []string{"E003"}},
 		{"str-array-element-into-str-clean", "function f(xs: str[]): i32 { var t: str = xs[0]; return t.len(); }\nfunction main(): i32 { return 0; }\n", nil},
+		// A builtin that stores its argument is an owning sink, so a `str` view
+		// is not lent there: append, with, and a map insert's key and value.
+		// Native's storesArgument; a `str[]` still takes the view.
+		{"e038-str-appended-to-string-array", "function main(): i32 { var s: string = \"ab\"; var out: string[] = []; out = out.append(slice_unchecked(s, 0, 1)); return out.len(); }\n", []string{"E038"}},
+		{"e038-str-with-into-string-array", "function main(): i32 { var s: string = \"ab\"; var out: string[] = [\"x\"]; out = out.with(0, slice_unchecked(s, 0, 1)); return out.len(); }\n", []string{"E038"}},
+		{"e038-str-as-map-key", "import \"core/map\";\nfunction main(): i32 { var s: string = \"ab\"; var m: Map[string, i32] = map_new(2); m = m.insert(slice_unchecked(s, 0, 1), 1); return m.len(); }\n", []string{"E038"}},
+		{"e038-str-as-map-value", "import \"core/map\";\nfunction main(): i32 { var s: string = \"ab\"; var m: Map[string, string] = map_new(2); m = m.insert(\"k\", slice_unchecked(s, 0, 1)); return m.len(); }\n", []string{"E038"}},
+		{"str-appended-to-str-array-clean", "function main(): i32 { var s: string = \"ab\"; var out: str[] = []; out = out.append(slice_unchecked(s, 0, 1)); return out.len(); }\n", nil},
 		{"e045-maplit-float-key", "import \"core/map\";\nfunction main(): i32 { var m = Map { 1.0: 10 }; return 0; }\n", []string{"E045"}},
 		{"e045-maplit-string-key-ok", "import \"core/map\";\nfunction main(): i32 { var m = Map { \"a\": 1, \"b\": 2 }; return 0; }\n", nil},
 		{"e045-maplit-i32-key-ok", "import \"core/map\";\nfunction main(): i32 { var m = Map { 1: 10, 2: 20 }; return 0; }\n", nil},

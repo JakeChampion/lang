@@ -10108,19 +10108,20 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           // its second argument is the element. Mirrors the Go
           // checker, which types these builtins and reports a
           // per-argument mismatch. An unknown element type
-          // (uninferred receiver) or unknown arg is skipped.
+          // (uninferred receiver) or unknown arg is skipped. Both store the
+          // element, so a `str` view is not lent here: native's storesArgument.
           if (mfa.field == "append" && c.args.len() == 1 && !is_unknown(ar.elem)) {
             var aat: typeinfo.Type = check_expr(c.args[0], s);
             out = util.append_diags(out, int_dest_range_diags(c.args[0], ar.elem));
-            if (!is_unknown(aat) && !settles_to(c.args[0], ar.elem, s) && !view_arg_borrow(aat, ar.elem) && !coercible(aat, ar.elem, s)) {
-              out = out.append(dg_at("E038", "argument 1 to \"append\": expected " + type_label(ar.elem) + ", got " + type_label(aat), expr_line(c.args[0]), expr_col(c.args[0])));
+            if (!is_unknown(aat) && !settles_to(c.args[0], ar.elem, s) && !coercible(aat, ar.elem, s)) {
+              out = out.append(dg_at("E038", "argument 1 to \"append\": expected " + type_label(ar.elem) + ", got " + type_label(aat) + str_copy_hint(aat, ar.elem), expr_line(c.args[0]), expr_col(c.args[0])));
             }
           }
           if (mfa.field == "with" && c.args.len() == 2 && !is_unknown(ar.elem)) {
             var wvt: typeinfo.Type = check_expr(c.args[1], s);
             out = util.append_diags(out, int_dest_range_diags(c.args[1], ar.elem));
-            if (!is_unknown(wvt) && !settles_to(c.args[1], ar.elem, s) && !view_arg_borrow(wvt, ar.elem) && !coercible(wvt, ar.elem, s)) {
-              out = out.append(dg_at("E038", "argument 2 to \"with\": expected " + type_label(ar.elem) + ", got " + type_label(wvt), expr_line(c.args[1]), expr_col(c.args[1])));
+            if (!is_unknown(wvt) && !settles_to(c.args[1], ar.elem, s) && !coercible(wvt, ar.elem, s)) {
+              out = out.append(dg_at("E038", "argument 2 to \"with\": expected " + type_label(ar.elem) + ", got " + type_label(wvt) + str_copy_hint(wvt, ar.elem), expr_line(c.args[1]), expr_col(c.args[1])));
             }
           }
           // E043 (array method existence): only `append` / `with`
@@ -10160,7 +10161,20 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
             out = out.append(dg_at("E004", "method \"" + mfa.field + "\" expects " + util.i32_to_string(abw) + " argument(s), got " + util.i32_to_string(c.args.len()), c.line, c.col));
           }
         },
-        typeinfo.TypeMap(_) => {
+        typeinfo.TypeMap(mt) => {
+          // E038: `insert` stores its key and value, so a `str` view there
+          // would outlive the bytes it names (native's storesArgument).
+          if (mfa.field == "insert" && c.args.len() == 2) {
+            var slots: typeinfo.Type[] = [mt.key, mt.value];
+            var ii: i32 = 0;
+            while (ii < 2) {
+              var it: typeinfo.Type = check_expr(c.args[ii], s);
+              if (is_str_view(it) && is_owned_string(slots[ii])) {
+                out = out.append(dg_at("E038", "argument " + util.i32_to_string(ii + 1) + " to \"insert\": expected " + type_label(slots[ii]) + ", got " + type_label(it) + str_copy_hint(it, slots[ii]), expr_line(c.args[ii]), expr_col(c.args[ii])));
+              }
+              ii = ii + 1;
+            }
+          }
           // E043 (map method existence). methods_in_namespace("Map") is the
           // whole surface — the runtime builtins plus whatever core/map's
           // receiver methods add once it is in the program — so a name that
