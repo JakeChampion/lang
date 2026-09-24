@@ -9681,24 +9681,20 @@ function full_ret_binds(fd: FuncDecl, args: ast.Expr[], env: MEnv, funcs: MFns, 
     return binds;
 }
 
-// variant_arg_binds binds the variables a `Base[..]` parameter pins through a
-// variant construction argument `V(payload)` of the generic enum Base. The
-// payload's inferred types bind the enum's own variables through the
-// variant's field types, and each so bound carries over to the parameter's
-// argument in the same position. mono_infer has no type for a bare
-// construction, so this is the one way `pair(Full(9))` settles a variable
-// only the payload names.
+// variant_arg_binds binds the variables a parameter pins through a variant
+// construction argument `V(payload)` of the generic enum Base. The payload's
+// inferred types bind the enum's own variables through the variant's field
+// types. A `Base[..]` parameter carries each so bound over to its argument in
+// the same position; a bare type-variable parameter (`a: C`) binds to the
+// whole `Base[..]` once every enum variable is bound. mono_infer has no type
+// for a bare construction, so this is the one way `pair(Full(9))` settles a
+// variable only the payload names.
 function variant_arg_binds(pattern: string, arg: ast.Expr, env: MEnv, funcs: MFns, vars: string[], binds: MEnv): MEnv {
-    var pb: i32 = first_bracket(pattern);
-    if (pb <= 0 || slice_unchecked(pattern, pattern.len() - 1, pattern.len()) != "]") { return binds; }
     if let ast.ExprCall(c) = arg {
         if let ast.ExprIdent(cid) = c.callee {
             var owner: i32 = genum_owner_of_variant(funcs.enums, cid.name);
             if (owner < 0) { return binds; }
             var ed: EnumDecl = funcs.enums[owner];
-            if (slice_unchecked(pattern, 0, pb) != ed.name) { return binds; }
-            var pargs: string[] = split_top_commas(slice_unchecked(pattern, pb + 1, pattern.len() - 1));
-            if (pargs.len() != ed.type_params.len()) { return binds; }
             var vidx: i32 = variant_struct_index(funcs.structs, cid.name, ed.name);
             if (vidx < 0) { return binds; }
             var fields: StructFieldDecl[] = funcs.structs[vidx].fields;
@@ -9709,6 +9705,23 @@ function variant_arg_binds(pattern: string, arg: ast.Expr, env: MEnv, funcs: MFn
                 if (at.len() > 0) { own = bind_unify(fields[fi].type_name, at, ed.type_params, own); }
                 fi = fi + 1;
             }
+            if (str_list_contains(vars, pattern)) {
+                var whole: string = ed.name + "[";
+                var k: i32 = 0;
+                while (k < ed.type_params.len()) {
+                    var kb: string = own.elook(ed.type_params[k]);
+                    if (kb.len() == 0) { return binds; }
+                    if (k > 0) { whole = whole + ", "; }
+                    whole = whole + kb;
+                    k = k + 1;
+                }
+                return bind_unify(pattern, whole + "]", vars, binds);
+            }
+            var pb: i32 = first_bracket(pattern);
+            if (pb <= 0 || slice_unchecked(pattern, pattern.len() - 1, pattern.len()) != "]") { return binds; }
+            if (slice_unchecked(pattern, 0, pb) != ed.name) { return binds; }
+            var pargs: string[] = split_top_commas(slice_unchecked(pattern, pb + 1, pattern.len() - 1));
+            if (pargs.len() != ed.type_params.len()) { return binds; }
             var out: MEnv = binds;
             var j: i32 = 0;
             while (j < pargs.len()) {
