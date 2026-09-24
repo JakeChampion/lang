@@ -18434,7 +18434,12 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				// initialised with `next: None` (which checks
 				// to `Option` with empty Args). Same shape as
 				// the array-element widening from #541.
-				if unifyIfArms(expected, vt) == nil {
+				//
+				// A field is a destination like a `var`, so what a `var`
+				// accepts is accepted here too: `m: map_new(4)` takes its
+				// key and value types from the field.
+				c.stampStructTypeArgs(f.Value, expected)
+				if unifyIfArms(expected, vt) == nil && !c.assignable(expected, vt) {
 					c.errfCode(f.Value.Pos(), "E043", "field %q: expected %s, got %s%s", f.Name, expected, vt, assignHint(expected, vt))
 				}
 			}

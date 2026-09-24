@@ -8869,3 +8869,34 @@ func TestMapIterEscapeRejected(t *testing.T) {
 		}
 	}
 }
+
+// A struct field is a destination like a `var`: `map_new(4)` in a field takes
+// its key and value types from the field, as it does from a `var` annotation,
+// an argument or a return. It drew E043 ("expected Map[i32, i32], got Map")
+// in a field alone, and the call's type arguments, which the lowering reads
+// for the key kind, were never stamped.
+func TestStructFieldMapNewTakesTheFieldType(t *testing.T) {
+	prog, err := parser.Parse(`struct Box { m: Map[string, i32], tag: i32 }
+function main(): i32 { var b: Box = Box { m: map_new(4), tag: 2 }; return b.tag; }`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if _, err := Check(prog); err != nil {
+		t.Fatalf("want no diagnostic, got %v", err)
+	}
+	var call *ast.Call
+	ast.Walk(prog.Funcs[0].Body, func(n ast.Node) bool {
+		if c, ok := n.(*ast.Call); ok {
+			if id, ok := c.Callee.(*ast.Ident); ok && id.Name == "map_new" {
+				call = c
+			}
+		}
+		return true
+	})
+	if call == nil || len(call.TypeArgs) != 2 {
+		t.Fatalf("map_new's type arguments were not stamped from the field: %+v", call)
+	}
+	if _, isStr := call.TypeArgs[0].(ast.StringType); !isStr {
+		t.Errorf("key type argument = %v, want string", call.TypeArgs[0])
+	}
+}
