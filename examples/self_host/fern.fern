@@ -1196,10 +1196,10 @@ function read_bundle_module(mpath: string, from: string, ipath: string): modload
     var mdir: string = util.dir_of(mpath);
     if (mdir.len() > 0) { mdir = mdir + "/"; }
     match (read_file(mpath)) {
-        Ok(src) => { return modloader.Resolved { src: src, dir: mdir, ok: true, err: "" }; },
+        Ok(src) => { return modloader.Resolved { src: src, dir: mdir, ok: true, err: "", err_path: "" }; },
         Err(e) => {
             var reason: string = modloader.read_error_reason(e);
-            if (reason.len() > 0) { return modloader.Resolved { src: "", dir: mdir, ok: false, err: reason }; }
+            if (reason.len() > 0) { return modloader.Resolved { src: "", dir: mdir, ok: false, err: reason, err_path: mpath }; }
         },
     }
     // Manifest fallback: a DECLARED dependency resolves through fern.toml across
@@ -1248,7 +1248,9 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string)
             done_paths = done_paths.append(mpath);
             var rm: modloader.Resolved = read_bundle_module(mpath, from, ipath);
             if (!rm.ok) {
-                eprint(read_failure("module", mpath, rm.err));
+                var bad: string = mpath;
+                if (rm.err_path.len() > 0) { bad = rm.err_path; }
+                eprint(read_failure("module", bad, rm.err));
                 return Bundle { entry: entry_mod, loaded: no_mods, merged: entry_mod, pkgs: pkgs, ok: false };
             }
             var mdir: string = rm.dir;

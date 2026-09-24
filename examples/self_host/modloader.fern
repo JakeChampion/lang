@@ -101,11 +101,12 @@ pub function read_error_reason(e: IoError): string {
 // a dependency's `import "./util"` names a file beside the dependency, and
 // its declared dependencies live in the dependency's manifest, not the
 // entry package's.
-// `err` is set when a candidate was present but unreadable; it ends the search
-// rather than letting a later candidate shadow the file (#10142).
-pub struct Resolved { src: string, dir: string, ok: boolean, err: string }
+// `err` is set when a candidate was present but unreadable, and `err_path` names
+// it; it ends the search rather than letting a later candidate shadow the file
+// (#10142).
+pub struct Resolved { src: string, dir: string, ok: boolean, err: string, err_path: string }
 
-function res_none(): Resolved { return Resolved { src: "", dir: "", ok: false, err: "" }; }
+function res_none(): Resolved { return Resolved { src: "", dir: "", ok: false, err: "", err_path: "" }; }
 
 // res_read reads `<dir><rel>.fern` and reports the ROOT its own imports
 // resolve against, which is `dir` — not the sub-directory the file happens to
@@ -116,8 +117,8 @@ function res_none(): Resolved { return Resolved { src: "", dir: "", ok: false, e
 // into another PACKAGE, which is what the manifest arms return.
 function res_read(dir: string, rel: string): Resolved {
     match (read_file(dir + rel + ".fern")) {
-        Ok(s) => { return Resolved { src: s, dir: dir, ok: true, err: "" }; },
-        Err(e) => { return Resolved { ...res_none(), err: read_error_reason(e) }; },
+        Ok(s) => { return Resolved { ...res_none(), src: s, dir: dir, ok: true }; },
+        Err(e) => { return Resolved { ...res_none(), err: read_error_reason(e), err_path: dir + rel + ".fern" }; },
     }
     return res_none();
 }
@@ -181,7 +182,7 @@ pub function no_overlay(): Overlay {
 // fallthrough-to-disk case byte-identical to what it was.
 pub function resolve_module(ov: Overlay, dir: string, path: string, name: string): Resolved {
     var oi: i32 = util.index_of_str(ov.paths, rel_path(path));
-    if (oi >= 0) { return Resolved { src: ov.srcs[oi], dir: dir, ok: true, err: "" }; }
+    if (oi >= 0) { return Resolved { ...res_none(), src: ov.srcs[oi], dir: dir, ok: true }; }
     if (ov.sealed) { return res_none(); }
     var direct: Resolved = res_read(dir, rel_path(path));
     if (direct.ok || direct.err.len() > 0) { return direct; }

@@ -87,7 +87,7 @@ function embedded_stdlib(): modloader.Overlay {
 // import. In a playground it is a trap: a user who types `import
 // "std/collections"` gets a program that compiles and then fails at a call
 // nothing defines, with nothing pointing at the import. `fern.fern` reports
-// this (`cannot read module:`); so does this.
+// this (`cannot read module <path>: <reason>`); so does this.
 //
 // It shares one blind spot with the loader, because it keys the same way the
 // loader does: two imports whose BASENAMES collide (`std/convert` and

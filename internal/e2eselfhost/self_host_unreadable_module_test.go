@@ -25,6 +25,16 @@ func TestSelfHostUnreadableModuleIsReported(t *testing.T) {
 	write("bad.fern", "pub function f(): i32 { var s: string = \"\xb2\"; return 0; }\n")
 	badEntry := write("uses_bad.fern", "import \"./bad\";\nfunction main(): i32 { return bad.f(); }\n")
 	missEntry := write("uses_gone.fern", "import \"./gone\";\nfunction main(): i32 { return 0; }\n")
+	// Shadowing: `std/mything` is under no stdlib root, so it resolves against
+	// the importer's directory, where the direct candidate std/mything.fern is
+	// present but unreadable and the flat mything.fern beside it is valid. The
+	// search must stop at the first rather than compile against the second.
+	if err := os.MkdirAll(filepath.Join(dir, "std"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(filepath.Join("std", "mything.fern"), "pub function f(): i32 { var s: string = \"\xb2\"; return 1; }\n")
+	write("mything.fern", "pub function f(): i32 { return 7; }\n")
+	shadowEntry := write("uses_mything.fern", "import \"std/mything\";\nfunction main(): i32 { return mything.f(); }\n")
 	noEntry := filepath.Join(dir, "nosuch.fern")
 
 	cases := []struct {
@@ -34,6 +44,7 @@ func TestSelfHostUnreadableModuleIsReported(t *testing.T) {
 	}{
 		{"invalid-utf8-module", []string{"-o", filepath.Join(dir, "a.out"), badEntry}, "fern: cannot read module " + filepath.Join(dir, "bad.fern") + ": invalid UTF-8"},
 		{"missing-module", []string{"-o", filepath.Join(dir, "b.out"), missEntry}, "fern: cannot read module " + filepath.Join(dir, "gone.fern") + ": not found"},
+		{"unreadable-candidate-is-not-shadowed", []string{"-o", filepath.Join(dir, "d.out"), shadowEntry}, "fern: cannot read module " + filepath.Join(dir, "std", "mything.fern") + ": invalid UTF-8"},
 		{"missing-entry", []string{"-o", filepath.Join(dir, "c.out"), noEntry}, "fern: cannot read entry file " + noEntry + ": not found"},
 		{"missing-entry-check", []string{"-check", noEntry}, "fern: cannot read entry file " + noEntry + ": not found"},
 	}
