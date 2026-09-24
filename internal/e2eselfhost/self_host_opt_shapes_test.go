@@ -150,6 +150,18 @@ function main(): i32 { return pick(true); }
 function main(): i32 { return grow([1, 2, 3]); }
 `,
 		want: map[string][]string{"x86-64-linux": {`rcdecd\d+:\n\s+subl \$1, -8\(`}, "arm64-linux": {`rcdecd\d+:\n\s+sub w5, w5, #1`}}},
+	// An append to a receiver with a free slot that it solely owns stores in
+	// place; only the grow or a shared receiver calls the helper.
+	{name: "push_inline", fn: "fill", exit: 3, typedOnly: true, src: `
+@noinline function fill(n: i32): i32[] {
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < n) { out = out.append(i); i = i + 1; }
+    return out;
+}
+function main(): i32 { return fill(3).len(); }
+`,
+		want: map[string][]string{"x86-64-linux": {`apush\d+o:\n\s+movq %rsi, 8\(%rdi,%rdx,8\)`}, "arm64-linux": {`apush\d+o:\n\s+add x2, x2, #1\n\s+str x1, \[x0, x2, lsl #3\]`}}},
 	{name: "unique_test_fused", fn: "bump", exit: 11, typedOnly: true, src: `
 struct Pt { x: i32, y: i32, tag: string }
 @noinline function bump(p: Pt): Pt { return Pt { ...p, x: p.x + 1 }; }
