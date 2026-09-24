@@ -25,6 +25,7 @@ import "./parser";
 import "./flatten";
 import "./fern_toml";
 import "./util";
+import "core/map";
 
 // dirname returns everything up to and including the last '/', or "" when
 // the path has no directory part ("a/b/c.fern" → "a/b/", "main.fern" → "").
@@ -619,6 +620,105 @@ pub function import_closure_ns(parts: flatten.PerModule[], infmods: parser.Modul
     return seen;
 }
 
+// FactHashes splits irlower.wp_fact_rows by module. per_mod[j] hashes every row
+// that names one of module j's functions; global hashes the rows that name none
+// (the type-level reclaim verdicts, mostly). A row naming functions of several
+// modules lands in each, and a function name that also appears in an unrelated
+// row only over-attributes it, so an edit can re-emit too much but never too
+// little.
+pub struct FactHashes { per_mod: string[], global: string }
+
+function ident_tokens(s: string): string[] {
+    var out: string[] = [];
+    var start: i32 = 0 - 1;
+    var i: i32 = 0;
+    while (i <= s.len()) {
+        var word: boolean = false;
+        if (i < s.len()) {
+            var c: i32 = s[i] as i32;
+            word = (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || (c >= 48 && c <= 57) || c == 95;
+        }
+        if (word && start < 0) { start = i; }
+        if (!word && start >= 0) {
+            out = out.append(slice_unchecked(s, start, i) + "");
+            start = 0 - 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// roll131 is hash_key's second polynomial roll, kept numeric so it can be summed.
+function roll131(s: string): i32 {
+    var b: i32 = 5381;
+    var i: i32 = 0;
+    while (i < s.len()) {
+        b = (b * 131 + (s[i] as i32) + 7) & 1073741823;
+        i = i + 1;
+    }
+    return (b * 131 + s.len()) & 1073741823;
+}
+
+pub function module_fact_hashes(infmods: parser.Module[], rows: string[]): FactHashes {
+    var names: string[][] = [];
+    for m in infmods {
+        var ns: string[] = [];
+        for f in m.funcs { ns = ns.append(f.name); }
+        names = names.append(ns);
+    }
+    // Bucket infmods.len() is the global one. A registry can list a row more than
+    // once, and in an order that depends on its bucket layout, so each bucket
+    // folds its DISTINCT rows with an order-independent sum.
+    var nb: i32 = infmods.len() + 1;
+    var sa: i32[] = [];
+    var sb: i32[] = [];
+    var bi: i32 = 0;
+    while (bi < nb) { sa = sa.append(0); sb = sb.append(0); bi = bi + 1; }
+    var seen: Map[string, i32] = map_new(rows.len() + 1);
+    for row in rows {
+        var toks: string[] = ident_tokens(row);
+        var owners: i32[] = [];
+        var j: i32 = 0;
+        while (j < names.len()) {
+            var owned: boolean = false;
+            for t in toks {
+                if (util.has_str(names[j], t)) { owned = true; }
+            }
+            if (owned) { owners = owners.append(j); }
+            j = j + 1;
+        }
+        if (owners.len() == 0) { owners = [infmods.len()]; }
+        for o in owners {
+            var k: string = util.i32_to_string(o) + "|" + row;
+            if (seen.get_or(k, 0) == 0) {
+                seen = seen.insert(k, 1);
+                sa = sa.with(o, (sa[o] + util.hash_bucket(row, 1073741823)) & 1073741823);
+                sb = sb.with(o, (sb[o] + roll131(row)) & 1073741823);
+            }
+        }
+    }
+    var per: string[] = [];
+    var pj: i32 = 0;
+    while (pj < infmods.len()) {
+        per = per.append(util.i32_to_string(sa[pj]) + "_" + util.i32_to_string(sb[pj]));
+        pj = pj + 1;
+    }
+    return FactHashes { per_mod: per, global: util.i32_to_string(sa[infmods.len()]) + "_" + util.i32_to_string(sb[infmods.len()]) };
+}
+
+// fact_sig_hashes is each module's signature hash with its facts folded in, so a
+// dependent's key moves when a fact about a function it can call moves, the way
+// it does for that function's signature.
+pub function fact_sig_hashes(infmods: parser.Module[], fh: FactHashes): string[] {
+    var out: string[] = [];
+    var j: i32 = 0;
+    while (j < infmods.len()) {
+        out = out.append(util.hash_key(module_sig_string(infmods[j]) + "|f" + fh.per_mod[j]));
+        j = j + 1;
+    }
+    return out;
+}
+
 // module_cache_key builds the content-addressed key for module `idx`: its own
 // src_hash, folded with the SIGNATURE hash of every module it depends on
 // transitively (walked in parts order, so the key is deterministic without a
@@ -653,10 +753,32 @@ pub function module_cache_key(parts: flatten.PerModule[], infmods: parser.Module
 //
 // Every driver goes through this rather than appending the window itself: the
 // window is part of what the cached bytes ARE, so a driver that forgot it would
-// serve one shard's asm for another.
-pub function module_unit_cache_key(parts: flatten.PerModule[], infmods: parser.Module[], sighashes: string[], idx: i32, src_hash: string, extra: string[], lo: i32, hi: i32): string {
+// serve one shard's asm for another. `sighashes` must come from fact_sig_hashes
+// and `fh` from module_fact_hashes: lowering reads facts derived from function
+// bodies, the module's own and the global ones included, which neither its
+// source nor its dependencies' signatures cover.
+pub function module_unit_cache_key(parts: flatten.PerModule[], infmods: parser.Module[], sighashes: string[], idx: i32, src_hash: string, extra: string[], lo: i32, hi: i32, fh: FactHashes): string {
     var key: string = module_cache_key(parts, infmods, sighashes, idx, src_hash, extra);
     if (key.len() == 0) { return ""; }
-    return key + "|r" + util.i32_to_string(lo) + ":" + util.i32_to_string(hi);
+    return key + "|r" + util.i32_to_string(lo) + ":" + util.i32_to_string(hi) + "|f" + fh.global + ":" + fh.per_mod[idx];
+}
+
+// module_concat_unit_cache_key keys ONE unit of the single-process per-module
+// concat. Its units are tree-shaken against a whole-program reach set, so a
+// change anywhere can change what a module contributes without touching its
+// source; the key folds the module's kept functions (after pruning and lambda
+// lifting) to cover that. `sighashes` must be taken over the same pruned
+// modules, so a dependency's reach change moves the key too. The route tag
+// keeps concat and emit-all entries apart in one cache directory.
+pub function module_concat_unit_cache_key(parts: flatten.PerModule[], infmods: parser.Module[], sighashes: string[], idx: i32, src_hash: string, extra: string[], fh: FactHashes): string {
+    var key: string = module_unit_cache_key(parts, infmods, sighashes, idx, src_hash, extra, 0, 0 - 1, fh);
+    if (key.len() == 0) { return ""; }
+    var kept: string = "";
+    var fi: i32 = 0;
+    while (fi < infmods[idx].funcs.len()) {
+        kept = kept + infmods[idx].funcs[fi].receiver_type + "." + infmods[idx].funcs[fi].name + ",";
+        fi = fi + 1;
+    }
+    return key + "|concat|" + util.hash_key(kept);
 }
 

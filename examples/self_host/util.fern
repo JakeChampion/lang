@@ -372,6 +372,18 @@ pub function str_has_prefix(s: string, prefix: string): boolean {
     return true;
 }
 
+// str_has_suffix is str_has_prefix at the other end.
+pub function str_has_suffix(s: string, suffix: string): boolean {
+    var at: i32 = s.len() - suffix.len();
+    if (at < 0) { return false; }
+    var i: i32 = 0;
+    while (i < suffix.len()) {
+        if (s[at + i] != suffix[i]) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
 // contains reports whether `needle` occurs in `haystack` (substring
 // search; empty needle matches). literate.fern keeps its own copy — it
 // is a standalone module not staged through util. Byte-wise compare at

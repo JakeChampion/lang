@@ -3,6 +3,7 @@ package printer
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/parser"
@@ -1499,9 +1500,7 @@ func TestFormatKeepsControlBytesEscaped(t *testing.T) {
 	}
 }
 
-// An f-string's literal segments take the same rule. They are a second copy of
-// the escape switch, so the control-byte arm has to be added to both — the
-// self-host formatter's parity gate is what caught this one missing.
+// An f-string's literal segments take the same rule.
 func TestFormatKeepsControlBytesEscapedInFString(t *testing.T) {
 	got := formatSrc(t, "function f(s: string): string { return f\"a\\x00b\\x1f{s}\\x7fc\"; }")
 	want := `return f"a\x00b\x1f{s}\x7fc";`
@@ -1513,6 +1512,27 @@ func TestFormatKeepsControlBytesEscapedInFString(t *testing.T) {
 	}
 	if again := formatSrc(t, got); again != got {
 		t.Fatalf("not idempotent:\n%s\n---\n%s", got, again)
+	}
+}
+
+// A byte escape that is not valid UTF-8 stays an escape; written raw it would
+// make the formatted file invalid UTF-8, which the self-host reader refuses.
+// A real multi-byte character is still written as itself.
+func TestFormatKeepsNonUTF8BytesEscaped(t *testing.T) {
+	for _, tc := range []struct{ src, want string }{
+		{"function f(): string { return \"\\x07\\xb2\\x01é\\xff\"; }", `return "\x07\xb2\x01é\xff";`},
+		{"function f(s: string): string { return f\"\\xc3{s}\\xa9\"; }", `return f"\xc3{s}\xa9";`},
+	} {
+		got := formatSrc(t, tc.src)
+		if !strings.Contains(got, tc.want) {
+			t.Fatalf("want %q in:\n%s", tc.want, got)
+		}
+		if !utf8.ValidString(got) {
+			t.Fatalf("formatted source is not valid UTF-8:\n%q", got)
+		}
+		if again := formatSrc(t, got); again != got {
+			t.Fatalf("not idempotent:\n%s\n---\n%s", got, again)
+		}
 	}
 }
 

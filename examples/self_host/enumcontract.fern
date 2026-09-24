@@ -364,6 +364,37 @@ function import_calls(fn: parser.FuncDecl, decls: parser.StructDecl[], callees: 
 
 pub function analyze(fn: parser.FuncDecl, decls: parser.StructDecl[]): Plan { return verify(import_function(fn, decls)); }
 
+// region_key spells a region in full, callees included, so two regions share a
+// key only when every part a caller's plan reads from them agrees.
+function bool_key(v: boolean): string {
+    if (v) { return "1"; }
+    return "0";
+}
+
+pub function region_key(r: Region): string {
+    var out: string = r.name + "|" + bool_key(r.ok) + "|" + typeinfo.spelling(r.result) + "|v";
+    for v in r.values {
+        out = out + typeinfo.spelling(v.ty) + ":" + util.i32_to_string(v.kind) + ":" + util.i32_to_string(v.variant) + ":" + util.i32_to_string(v.field) + ":";
+        for a in v.args { out = out + util.i32_to_string(a) + ","; }
+        out = out + ";";
+    }
+    out = out + "|e";
+    for e in r.effects { out = out + util.i32_to_string(e.kind) + ":" + util.i32_to_string(e.value) + ":" + util.i32_to_string(e.variant) + ";"; }
+    out = out + "|b";
+    for b in r.bindings { out = out + b.site + ":" + util.i32_to_string(b.value) + ":" + bool_key(b.owns_root) + ";"; }
+    out = out + "|t";
+    for vr in r.variants {
+        out = out + typeinfo.spelling(vr.owner) + "." + vr.name + "(";
+        for f in vr.fields { out = out + typeinfo.spelling(f) + ","; }
+        out = out + ");";
+    }
+    out = out + "|p";
+    for p in r.params { out = out + util.i32_to_string(p) + ","; }
+    out = out + "|c";
+    for c in r.callees { out = out + "{" + region_key(c) + "}"; }
+    return out;
+}
+
 pub function leaves(funcs: parser.FuncDecl[], decls: parser.StructDecl[]): Region[] {
     var out: Region[] = [];
     for fn in funcs {

@@ -413,9 +413,17 @@ Unsupported constructs refuse the whole function with a reason.
   in the standard library on a `string` receiver, so a text receiver now
   resolves `string.<m>` contracts the way a struct's does.
 
-  What a view may NOT do is escape its source. A function whose result is
-  `str` is refused ("view result escapes its source"): the caller's model has
-  no anchor for a result to its argument. A view as an array element — an
+  What a view may NOT do is outlive its source. A value that holds views —
+  a checked slice's `Option[str]`, a variant or a phi carrying one — is
+  anchored to the one value holding the bytes they read (`ssasem.bytes_root`),
+  so that source stays alive until the last read; a value gathering views of
+  two sources has no single anchor and is refused. A function whose result
+  holds a view is anchored to the one parameter those views read
+  (`semsource.anchor_module`, `ssasem.Anchor`), and its caller anchors the
+  call's result to that argument, which is what keeps a temporary receiver
+  alive past the call. A result reading a local, or either of two
+  parameters, is refused ("view result escapes its source"). The parameter
+  stays lent: a returned view reads it without taking its unit. A view as an array element — an
   array literal's, or `.append`'s — is refused too ("view element escapes its
   source"): the array may outlive the source. A map INSERT's key is the same
   position — it joins the key column, which releases it when the map is

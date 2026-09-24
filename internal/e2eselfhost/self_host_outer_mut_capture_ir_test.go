@@ -133,6 +133,38 @@ function main(): i32 {
 	// The env used to snapshot the capture at creation; the capture now boxes
 	// into a shared cell (any type), so the outer reassignment stores through
 	// the cell and the escaped closure reads the live value.
+	// #10129: the capture is declared in a LOOP body. The cell-read desugar
+	// counted a `for` statement's whole body as the loop's own binders, so the
+	// cell was both a cell and a non-cell there and was left undesugared; the
+	// append on its element then lowered as `i32.append`.
+	{"escape-loop-body-array",
+		`function apply(x: i32, f: (i32) => i32): i32 { return f(x); }
+function main(): i32 {
+    var total: i32 = 0;
+    var ks: i32[] = [20, 20];
+    for k in ks {
+        var seen: string[] = [];
+        seen = seen.append("a");
+        function rw(x: i32): i32 { return x + seen.len(); }
+        total = total + apply(k, rw);
+    }
+    return total;
+}`, 42},
+	{"escape-loop-body-array-inner-loop",
+		`struct P { name: string }
+struct F { ps: P[] }
+function apply(x: i32, f: (i32) => i32): i32 { return f(x); }
+function main(): i32 {
+    var fs: F[] = [F { ps: [P { name: "a" }, P { name: "b" }] }, F { ps: [] }];
+    var total: i32 = 38;
+    for fd in fs {
+        var names: string[] = [];
+        for pd in fd.ps { names = names.append(pd.name); }
+        function rw(x: i32): i32 { return x + names.len(); }
+        total = total + apply(1, rw);
+    }
+    return total;
+}`, 42},
 	{"escape-array-reassign",
 		`function mk(): () => i32 {
     var a: i32[] = [10, 1];

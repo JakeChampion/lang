@@ -2959,6 +2959,54 @@ was never released. A direct self-recursive call's argument in the
 parameter's own slot is now credited. Any retention the recursion does
 make happens at some other occurrence, which still refutes it.
 
+### Overwrite moves for `x = y`, 2026-09-23 (GNU coreutils 9.12)
+
+comm's merge loop keeps each side's current line and the two lines
+before it as string locals, and shifts them along once a line:
+`back1a = back1b; back1b = cur1; cur1 = line`. Every one of those
+copies retained its source and released the target's old value, and the
+source was then overwritten a few statements later, which released it
+again. That was 20 M `__fern_str_dec` calls, 400 M of the 1.48 G
+instructions `comm -123` ran over a 2M-line file against itself.
+
+The native IR now treats `x = y` as a move when y's next event, on every
+path through the rest of its statement list, is a write that does not
+read y: an assignment to y, or an if/else each of whose arms begins with
+one (`computeOverwriteMoves`). x takes y's reference without a retain,
+y's slot is emptied, and the write that ends the dead stretch skips
+releasing the empty slot. A break or continue out of the list before
+the write, or any read of y, keeps the copy. So do a local a closure
+captures, a map, and a string on a target that carries strings as two
+words.
+
+| workload | before | after | GNU 9.12 |
+|---|---:|---:|---:|
+| comm over 2M + 1M sorted lines | 228.6 ms | 195.6 ms | 182.5 ms |
+| comm -12 over 2M + 1M sorted lines | 225.1 ms | 196.1 ms | 138.6 ms |
+| comm of a 2M-line file with itself | 217.8 ms | 177.4 ms | 202.3 ms |
+| comm -123 of a 2M-line file with itself | 197.4 ms | 152.4 ms | 133.6 ms |
+
+`comm -123` went from 1.48 G instructions to 1.21 G (GNU: 1.30 G).
+
+### uniq -f's field skip by scan, 2026-09-23 (GNU coreutils 9.12)
+
+`uniq -f N` found where each line's compared field starts by walking
+blanks and then the field's bytes one at a time, with a separator test
+per byte. Each run is now one `__scan_set` against a table built once:
+every byte that is not a separator, then the separators and the line
+terminator. A scan can pass the line's end, into the next line or to
+the end of a carried line, so its answer is clamped to the line's
+content, and the offsets come out as the byte walk gave them.
+
+| workload | before | after | GNU 9.12 |
+|---|---:|---:|---:|
+| uniq -f1 -c over 4M lines | 336.5 ms | 308.4 ms | 253.9 ms |
+
+Over the first 20 MB of that input: 1.17 G instructions to 1.04 G
+(GNU: 0.92 G). What is left is the per-line loop itself, about 290
+instructions a line, and the retain and release of `var src = chunk`
+and `prev = src` on every line.
+
 ### ls, 2026-09-14, Linux x86-64 (GNU coreutils 9.4, uutils 0.0.24)
 
 The same 4-core container, so read the columns against each other. The

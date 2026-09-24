@@ -89,7 +89,7 @@ func TestVariantPayloadStoreIsCountedRetain(t *testing.T) {
 	}
 	// A variant construction is a fresh rc=1 box: the summary that lets a
 	// caller's `var nl = ins(l, k)` binding stay reclaimable.
-	fresh := findReturnsFreshBox(prog, info, map[string]bool{}, map[string]bool{}, noOwnedParams)
+	fresh := findReturnsFreshBox(prog, info, map[string]bool{}, map[string]bool{})
 	if !fresh["single"] || !fresh["wrap"] {
 		t.Errorf("returnsFreshBox: single=%v wrap=%v, want both true — a variant construction of an rc-payload enum is the callee's own box", fresh["single"], fresh["wrap"])
 	}

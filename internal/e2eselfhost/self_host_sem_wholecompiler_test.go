@@ -33,6 +33,12 @@ import (
 //     text: the compiler the path builds reproduces itself. Secondary, for
 //     the reason above, and the gate on the produced code of the semantic
 //     modules themselves, which only this run executes.
+//   - The AST lowering. A second compiler, built with FERN_SEM_IR= so every
+//     declaration takes the AST lowering, compiles literate.fern and
+//     lexer.fern through the semantic path byte-identically to the driver.
+//     The AST lowering is still the fallback for whatever the semantic path
+//     refuses, and a compiler it built once aborted out of bounds on most
+//     inputs with nothing gating it (#9763).
 //
 // Measured 2026-09-16 on a 4-core x86-64 container: gen1 3m at 6.5 GB, the
 // four AST emits by both compilers about 2.5 minutes, the semantic emit of
@@ -65,9 +71,11 @@ func TestSelfHostSemanticWholeCompilerX86_64(t *testing.T) {
 	entry := filepath.Join(tree, "fern.fern")
 	work := t.TempDir()
 	gen1 := filepath.Join(work, "fern-gen1")
+	gen1ast := filepath.Join(work, "fern-gen1-ast")
 
 	// One emit each, keyed by compiler and module; "fern" is the whole tree
-	// with the AST lowering and "sem" the whole tree through the semantic one.
+	// with the AST lowering, "sem" the whole tree through the semantic one, and
+	// a module suffixed "@sem" that module through the semantic one.
 	type emitKey struct{ compiler, module string }
 	emitted := map[emitKey][]byte{}
 	var mu sync.Mutex
@@ -83,6 +91,9 @@ func TestSelfHostSemanticWholeCompilerX86_64(t *testing.T) {
 	emit := func(compiler, tag, module string) {
 		wg.Go(func() {
 			src, semantic, reserve := filepath.Join(tree, module+".fern"), false, 0
+			if base, ok := strings.CutSuffix(module, "@sem"); ok {
+				src, semantic = filepath.Join(tree, base+".fern"), true
+			}
 			switch module {
 			case "sem":
 				src, semantic, reserve = entry, true, wholeTreeEmitMB
@@ -104,6 +115,7 @@ func TestSelfHostSemanticWholeCompilerX86_64(t *testing.T) {
 		})
 	}
 	modules := []string{"lexer", "parser", "checker", "fern"}
+	astModules := []string{"literate@sem", "lexer@sem"}
 
 	var report string
 	wg.Go(func() {
@@ -115,8 +127,16 @@ func TestSelfHostSemanticWholeCompilerX86_64(t *testing.T) {
 			fail(err)
 		}
 	})
+	wg.Go(func() {
+		err := withBuildMemoryMB(astGen1BuildMB, func() error {
+			return astSelfBuild(driver, entry, stdlibRoot, gen1ast)
+		})
+		if err != nil {
+			fail(err)
+		}
+	})
 	emit(driver, "driver", "sem")
-	for _, m := range modules {
+	for _, m := range append(modules, astModules...) {
 		emit(driver, "driver", m)
 	}
 	wg.Wait()
@@ -133,6 +153,9 @@ func TestSelfHostSemanticWholeCompilerX86_64(t *testing.T) {
 	for _, m := range modules {
 		emit(gen1, "gen1", m)
 	}
+	for _, m := range astModules {
+		emit(gen1ast, "gen1-ast", m)
+	}
 	wg.Wait()
 	if firstErr != nil {
 		t.Fatal(firstErr)
@@ -146,6 +169,11 @@ func TestSelfHostSemanticWholeCompilerX86_64(t *testing.T) {
 	if got, want := emitted[emitKey{"gen1", "sem"}], emitted[emitKey{"driver", "sem"}]; !bytes.Equal(got, want) {
 		t.Fatalf("gen1 compiles the whole tree through the semantic path differently from the driver (%d bytes against %d): the fixpoint does not hold", len(got), len(want))
 	}
+	for _, m := range astModules {
+		if got, want := emitted[emitKey{"gen1-ast", m}], emitted[emitKey{"driver", m}]; !bytes.Equal(got, want) {
+			t.Fatalf("the compiler built through the AST lowering compiles %s differently from the driver (%d bytes against %d)", m, len(got), len(want))
+		}
+	}
 }
 
 // RAM reservations for the steps above, from their measured peak RSS on
@@ -157,7 +185,19 @@ func TestSelfHostSemanticWholeCompilerX86_64(t *testing.T) {
 const (
 	gen1BuildMB     = 9500
 	wholeTreeEmitMB = 6000
+	astGen1BuildMB  = 6500
 )
+
+// astSelfBuild compiles entry to a linked x86-64 binary at out with every
+// declaration through the AST lowering (5.4 GB peak, 2026-09-23).
+func astSelfBuild(compiler, entry, stdlibRoot, out string) error {
+	cmd := exec.Command(compiler, "-target", "x86-64-linux", "-o", out, entry, stdlibRoot)
+	cmd.Env = append(os.Environ(), "FERN_SEM_IR=")
+	if msg, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("%s building %s through the AST lowering: %v\n%s", filepath.Base(compiler), filepath.Base(entry), err, msg)
+	}
+	return os.Chmod(out, 0o755)
+}
 
 // semSelfBuild compiles entry to a linked x86-64 binary at out through the
 // semantic lowering, and returns the compiler's report.

@@ -3766,9 +3766,8 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// as its mutable-looking sibling, so dispatch (checker.go:6392,
 	// rewriting the call to the mangled ident) and the IR keyed on that
 	// name are reused wholesale — purely additive, zero IR change, no
-	// breakage. The mutable-looking names (`set`/`delete`/`clear`) stay
-	// for now; a later slice marks them deprecated and eventually
-	// removes them once call sites have migrated.
+	// breakage. The mutable-looking names are registered above and then
+	// deleted below, so only these aliases resolve.
 	c.info.Methods["Map.insert"] = "__method_Map_set"     // m.insert(k, v) — value-returning set
 	c.info.Methods["Map.without"] = "__method_Map_delete" // m.without(k) — value-returning delete
 	c.info.Methods["Map.cleared"] = "__method_Map_clear"  // m.cleared() — value-returning clear
@@ -5588,8 +5587,9 @@ func (c *checker) walkDeclaredTypes(b *ast.Block, visit func(ast.Type, ast.Posit
 }
 
 // forEachDeclaredType invokes visit on every type a declaration node
-// ANNOTATES: a `var`'s type, and a nested function's or a lambda's
-// parameter and return types. The pointer is what lets the resolution
+// ANNOTATES: a `var`'s type, a nested function's or a lambda's
+// parameter and return types, and the type arguments a call or a
+// struct literal writes out. The pointer is what lets the resolution
 // pass rewrite in place; the reporters just read through it.
 //
 // It exists because the three body walkers that care about annotated
@@ -5615,6 +5615,18 @@ func forEachDeclaredType(n ast.Node, visit func(t *ast.Type, pos ast.Position)) 
 			visit(&x.Params[i].Type, paramPos(x.Params[i], x.P))
 		}
 		visit(&x.ReturnType, x.P)
+	case *ast.Call:
+		if x.TypeArgsWritten {
+			for i := range x.TypeArgs {
+				visit(&x.TypeArgs[i], x.P)
+			}
+		}
+	case *ast.StructLit:
+		if x.TypeArgsWritten {
+			for i := range x.TypeArgs {
+				visit(&x.TypeArgs[i], x.P)
+			}
+		}
 	}
 }
 
@@ -15495,6 +15507,40 @@ func (c *checker) calleeIsGenericFunc(id *ast.Ident, s *scope) bool {
 	return !bound
 }
 
+// retagIndexAsTypeArgs turns `id[Box](b)` into a call with written type
+// arguments. The parser takes `[...]` as type arguments only when it opens with
+// a type keyword, since a bare name there is also a valid index; here the base
+// is known to name a generic function and the bracket a type, which settles it.
+func (c *checker) retagIndexAsTypeArgs(n *ast.Call, s *scope) {
+	ix, ok := n.Callee.(*ast.Index)
+	if !ok || len(n.TypeArgs) > 0 {
+		return
+	}
+	fn, ok := ix.Array.(*ast.Ident)
+	if !ok || !c.calleeIsGenericFunc(fn, s) {
+		return
+	}
+	arg, ok := ix.Idx.(*ast.Ident)
+	if !ok {
+		return
+	}
+	if _, bound := c.identValueBinding(arg.Name, s); bound {
+		return
+	}
+	params := c.typeParamsInScope()
+	_, isStruct := c.info.Structs[arg.Name]
+	_, isEnum := c.info.Enums[arg.Name]
+	_, isResource := c.info.Resources[arg.Name]
+	if !params[arg.Name] && !isStruct && !isEnum && !isResource {
+		return
+	}
+	var t ast.Type = ast.StructType{Name: arg.Name}
+	c.resolveType(&t, params, arg.P)
+	n.Callee = fn
+	n.TypeArgs = []ast.Type{t}
+	n.TypeArgsWritten = true
+}
+
 // errE040GenericFuncAsValue reports a generic function named where a value
 // is expected. The eta-expansion in the hint is spelled from the decl's own
 // parameters, so it is the shape the user needs rather than a generic
@@ -16371,6 +16417,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// after which nothing else can tell the two apart, and a written list
 		// read as the receiver's names the wrong parameters (#9896).
 		var writtenTypeArgs []ast.Type
+		c.retagIndexAsTypeArgs(n, s)
 		// Display spine (#2696): `print` / `write` / `eprint` accept any
 		// `T: Display`, not just `string`. When the sole argument isn't
 		// already a string, rewrite it to `arg.to_string()` (the same

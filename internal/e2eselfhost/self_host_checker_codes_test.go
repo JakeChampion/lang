@@ -2419,6 +2419,17 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		// chain, so the constructor the walk sees is not the one written.
 		{"map-literal-without-core-map-import", "function main(): i32 { var m: Map[i32, i32] = Map { 1: 2 }; return m.get_or(1, 0) - 2; }\n"},
 		{"map-literal-with-core-map-import", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i32] = Map { 1: 2 }; return m.get_or(1, 0) - 2; }\n"},
+		// #10095: the pure-collection API removed the in-place Map spellings,
+		// and native reports E043 naming the value-returning replacement. The
+		// self-host had no Map arm at all, so ANY name on a Map receiver was
+		// accepted — and the two lowerings then answered differently for it.
+		{"map-set-retired", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i32] = map_new(8); m.set(1, 2); return m.get_or(1, 0); }\n"},
+		{"map-delete-retired", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i32] = map_new(8); m.delete(1); return 0; }\n"},
+		{"map-clear-retired", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i32] = map_new(8); m.clear(); return 0; }\n"},
+		{"map-unknown-method", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i32] = map_new(8); return m.nope(); }\n"},
+		// The controls: the value-returning spellings and the other builtins
+		// stay clean, so the rule discriminates rather than refusing Maps.
+		{"map-value-returning-ok", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); m = m.without(1); m = m.cleared(); return m.len() + m.get_or(1, 0); }\n"},
 		// A settled i32 beside a settled i64 widens to i64 in either operand
 		// order (native's commonIntegerWidth), so the sum returns as i64 and
 		// is refused as i32.
@@ -2437,6 +2448,12 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"loop-range-shadow", `function f(i: string): i32 { for i in 0..4 { var n: i32 = i; } return i.len(); }`},
 		{"loop-map-shadow", `function f(m: Map[string, i64], k: i32): i32 { for (k, v) in m { var text: string = k; } return k; }`},
 		{"loop-array-shadow", `function f(xs: string[], x: i64): i64 { for x in xs { var text: string = x; } return x; }`},
+		// An unsuffixed float literal takes the element type the other elements
+		// settle on, whichever element comes first (#10122).
+		{"array-float-literals-beside-f32", `function g(): f32 { return 1.0 as f32; } function f(): f32 { var a: f32[] = [2.0, g(), -1.5 * 2.0]; return a[0]; }`},
+		{"array-float-literal-anchor-mismatch", `function g(): f32 { return 1.0 as f32; } function f(): i32 { var a = [2.0, g(), "x"]; return 0; }`},
+		// A pipe hole as a named argument's value (#10121).
+		{"pipe-hole-named-arg", `function diff(a: i32 = 0, b: i32 = 0): i32 { return a - b; } function f(): i32 { return 9 |> diff(b = _); }`},
 		// Annotated tuple shapes — var binding, parameter, return, nested, and
 		// a tuple whose element is a (builtin) enum/union. All well-typed: the
 		// self-host must not invent a diagnostic the Go checker doesn't report.
@@ -2711,6 +2728,12 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"dyn-coerce-conforming-some-assign-ok", "trait Shape { function area(self: Self): i32; }\nstruct Square { side: i32 }\nimpl Shape for Square { function area(self: Self): i32 { return self.side; } }\nstruct Other { x: i32 }\nfunction main(): i32 { var o: Option[dyn Shape] = None; o = Some(Square { side: 1 }); return 0; }\n"},
 		{"dyn-coerce-nonconforming-err-arg", "trait Shape { function area(self: Self): i32; }\nstruct Square { side: i32 }\nimpl Shape for Square { function area(self: Self): i32 { return self.side; } }\nstruct Other { x: i32 }\nfunction take(r: Result[i32, dyn Shape]): i32 { return 0; }\nfunction main(): i32 { return take(Err(Other { x: 1 })); }\n"},
 		{"dyn-coerce-conforming-err-arg-ok", "trait Shape { function area(self: Self): i32; }\nstruct Square { side: i32 }\nimpl Shape for Square { function area(self: Self): i32 { return self.side; } }\nstruct Other { x: i32 }\nfunction take(r: Result[i32, dyn Shape]): i32 { return 0; }\nfunction main(): i32 { return take(Err(Square { side: 1 })); }\n"},
+		{"dyn-array-literal-mixed-var-ok", "trait Show { function show(self: Self): i32; }\nimpl Show for i32 { function show(self: Self): i32 { return self; } }\nimpl Show for string { function show(self: Self): i32 { return self.len(); } }\nfunction main(): i32 { var xs: dyn Show[] = [1, \"ab\"]; return xs.len(); }\n"},
+		{"dyn-array-literal-mixed-field-ok", "trait Show { function show(self: Self): i32; }\nimpl Show for i32 { function show(self: Self): i32 { return self; } }\nimpl Show for string { function show(self: Self): i32 { return self.len(); } }\nstruct H { xs: dyn Show[] }\nfunction main(): i32 { var h: H = H { xs: [1, \"ab\"] }; return h.xs.len(); }\n"},
+		{"dyn-array-literal-mixed-return-ok", "trait Show { function show(self: Self): i32; }\nimpl Show for i32 { function show(self: Self): i32 { return self; } }\nimpl Show for string { function show(self: Self): i32 { return self.len(); } }\nfunction mk(): dyn Show[] { return [1, \"ab\"]; }\nfunction main(): i32 { return mk().len(); }\n"},
+		{"dyn-array-literal-mixed-arg-ok", "trait Show { function show(self: Self): i32; }\nimpl Show for i32 { function show(self: Self): i32 { return self; } }\nimpl Show for string { function show(self: Self): i32 { return self.len(); } }\nfunction n(xs: dyn Show[]): i32 { return xs.len(); }\nfunction main(): i32 { return n([1, \"ab\"]); }\n"},
+		{"dyn-array-literal-mixed-assign", "trait Show { function show(self: Self): i32; }\nimpl Show for i32 { function show(self: Self): i32 { return self; } }\nimpl Show for string { function show(self: Self): i32 { return self.len(); } }\nfunction main(): i32 { var xs: dyn Show[] = [1]; xs = [2, \"ab\"]; return xs.len(); }\n"},
+		{"array-literal-mixed-undirected", "function main(): i32 { var xs = [1, \"ab\"]; return xs.len(); }\n"},
 	}
 
 	for _, tc := range progs {
@@ -2963,6 +2986,12 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		{"map-bundled-no-import", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); return m.get_or(1, 0) - 2; }\n"},
 		{"map-bundled-direct-import", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); return m.get_or(1, 0) - 2; }\n"},
 		{"map-bundled-transitive-import", "import \"std/json\";\nfunction main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); return m.get_or(1, 0) - 2; }\n"},
+		// #10095's escape, which only the bundled table can see: core/map's own
+		// receiver methods are not runtime builtins, they reach the Map
+		// namespace through the method table once the module is loaded. The
+		// single-module driver records the import without loading it, so this
+		// row would read as an unknown method there and prove the opposite.
+		{"map-core-receiver-method-ok", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i32] = map_new(4); m = m.insert(1, 2); return m.entries().len(); }\n"},
 	}
 
 	for _, tc := range progs {

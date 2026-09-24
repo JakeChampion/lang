@@ -187,6 +187,7 @@ bytes_writer                                         0
 c2_consuming_reuse                                   0
 call_of_a_call_through_a_function_value              6
 call_result_arg_temp                                 0
+call_type_args_user_type                             0
 cast_in_tuple                                        0
 cast_int_arith_to_float                              0
 cast_narrow_binding                                  0
@@ -206,6 +207,7 @@ closure_returns_composite                            0
 cmp_float_traits                                     0
 compound_assign_wider                                0
 concat_of_empties                                    0
+const_composite                                      0
 const_divisor_lowering                               0
 const_divisor_runtime                                0
 const_settles_across_modules                         0
@@ -599,8 +601,8 @@ to_string_round_trip                                 0
 trailing_commas                                      0
 trait_method_bound_wins                              0
 trmc_map                                             0
-try_op_in_closure                                    2
-try_result_struct_payload                            2
+try_op_in_closure                                    1
+try_result_struct_payload                            1
 tuple_basics                                         0
 tuple_binder_shadows_module_decl                     0
 tuple_binder_shadows_outer_var                       0

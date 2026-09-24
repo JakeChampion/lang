@@ -16,7 +16,26 @@ pub struct Func {
     records: semrecords.Record[],
     enums: semrecords.Enum[],
     calls: Contract[],
-    envs: EnvRow[]
+    envs: EnvRow[],
+    anchors: Anchor[],
+    // (dyn type, concrete) for every record and enum implementing the type's
+    // whole trait set; a dyn release dispatches on its box's shape over these.
+    dyns: EnvRow[],
+    // The dyn types one of whose implementations is generic: its instances
+    // are not enumerated, so a release could not find their children.
+    open_dyns: typeinfo.Type[]
+}
+
+// The parameter whose storage a callee's result reads, so a caller keeps that
+// argument alive while the result lives: the callee returns a view of it, or
+// something holding one. `param` is -1 for a result whose views read nothing
+// the caller passed. Read off the whole module (`semsource.anchor_module`).
+pub struct Anchor { name: string, param: i32 }
+
+// The anchor of the callee named `name`, -1 for none, or -2 when it has no row.
+pub function anchor_of(anchors: Anchor[], name: string): i32 {
+    for a in anchors { if (a.name == name) { return a.param; } }
+    return 0 - 2;
 }
 
 // Which environments a function value of a given type can be carrying. A
@@ -135,10 +154,14 @@ pub function mapiter_key(): i32 { return 0 - 43; }
 pub function mapiter_value(): i32 { return 0 - 44; }
 pub function mapiter_advance(): i32 { return 0 - 45; }
 // A `dyn Trait` value is the struct or enum box it was widened from, whose
-// shape at offset 0 is what a dispatch reads. The widening borrows that box,
-// and so does every holder of the result: its release would have to dispatch
-// on the shape to find the children, so a dyn value is lent and never owned.
+// shape at offset 0 is what a dispatch reads. The widening is a projection of
+// that box, so a holder of the result owns the box's unit, and its release
+// dispatches on the shape to the concrete's drop (`Func.dyns`).
 pub function dyn_up(): i32 { return 0 - 46; }
+// A scalar or string widened to dyn has no shape of its own, so it is boxed:
+// a fresh cell laid out as a one-field record, whose shape is the primitive's
+// name (`str`) and whose field holds the value, owning a unit of a string.
+pub function dyn_box(): i32 { return 0 - 47; }
 pub function is_map_iter_op(kind: i32): boolean {
     return kind == map_iter() || kind == mapiter_has_next() || kind == mapiter_key()
         || kind == mapiter_value() || kind == mapiter_advance();
@@ -741,6 +764,23 @@ function dyn_widening_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): str
     return "dyn widening operand";
 }
 
+function dyn_box_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 1) { return "dyn box arity"; }
+    if (!is_dyn(result)) { return "dyn box type"; }
+    var from: typeinfo.Type = f.values[ins.args[0]];
+    if (!boxes_into_dyn(from) || typeinfo.spelling(from) != ins.str) { return "dyn box operand"; }
+    return "";
+}
+
+// The primitives a dyn box holds: an integer, a boolean or an f64, stored at
+// its own width, or a string.
+pub function boxes_into_dyn(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeI32(_) = t { return true; }
+    if let typeinfo.TypeBool(_) = t { return true; }
+    if let typeinfo.TypeFloat(fl) = t { return fl.width != 32; }
+    return is_string(t);
+}
+
 function narrowing_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.args.len() != 1) { return "variant narrowing arity"; }
     var whole: typeinfo.Type = f.values[ins.args[0]];
@@ -821,6 +861,7 @@ function variant_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.kind_tag == variant_is()) { return variant_test_error(ins, f, result); }
     if (ins.kind_tag == variant_up()) { return widening_error(ins, f, result); }
     if (ins.kind_tag == dyn_up()) { return dyn_widening_error(ins, f, result); }
+    if (ins.kind_tag == dyn_box()) { return dyn_box_error(ins, f, result); }
     if (ins.kind_tag == str_as()) { return retag_error(ins, f, result); }
     if (ins.kind_tag == variant_as()) { return narrowing_error(ins, f, result); }
     return variant_projection_error(ins, f, result);
@@ -1116,7 +1157,7 @@ function map_operand_error(m: typeinfo.Type, key: typeinfo.Type, value: typeinfo
 
 function is_variant_op(kind: i32): boolean {
     return kind == variant_new() || kind == variant_is() || kind == variant_get()
-        || kind == variant_up() || kind == variant_as() || kind == str_as() || kind == dyn_up();
+        || kind == variant_up() || kind == variant_as() || kind == str_as() || kind == dyn_up() || kind == dyn_box();
 }
 
 // A variant's field, and a narrowing to a variant, exist only while the value
@@ -1647,41 +1688,13 @@ function nests_func(t: typeinfo.Type): boolean {
 
 function holds_func(t: typeinfo.Type): boolean { return is_func(t) || nests_func(t); }
 
-// A dyn value is lent, so nothing that owns its contents may hold one: not a
-// container's element, a builtin union's payload, nor a cell's slot.
-function nests_dyn(t: typeinfo.Type): boolean {
-    if let typeinfo.TypeArray(a) = t { return holds_dyn(a.elem); }
-    if let typeinfo.TypeTuple(tup) = t {
-        for e in tup.elements { if (holds_dyn(e)) { return true; } }
-    }
-    if let typeinfo.TypeMap(m) = t { return holds_dyn(m.key) || holds_dyn(m.value); }
-    if let typeinfo.TypeStruct(r) = t {
-        for a in r.args { if (holds_dyn(a)) { return true; } }
-    }
-    if let typeinfo.TypeUnion(u) = t {
-        for a in u.args { if (holds_dyn(a)) { return true; } }
-    }
-    return false;
-}
-
-function holds_dyn(t: typeinfo.Type): boolean { return is_dyn(t) || nests_dyn(t); }
-
 function type_placement_error(t: typeinfo.Type): string {
     if let typeinfo.TypeFunc(fn) = t { return func_shape_error(fn); }
     if (nests_func(t)) { return "function value is not an element"; }
-    if (nests_dyn(t)) { return "dyn value is not an element"; }
     return "";
 }
 
 function field_placement_error(f: Func): string {
-    for record in f.records {
-        for field in record.fields { if (holds_dyn(field.ty)) { return "dyn value is not a field"; } }
-    }
-    for e in f.enums {
-        for v in e.variants {
-            for field in v.fields { if (holds_dyn(field.ty)) { return "dyn value is not a field"; } }
-        }
-    }
     for record in f.records {
         var env: boolean = semtypes.is_env(record.ty);
         for field in record.fields {
@@ -1789,6 +1802,61 @@ function operations_error(f: Func): string {
     // parameter indices; exact cardinality therefore proves full coverage.
     if (seen_params != f.params.len()) { return "missing parameter definition"; }
     return guard_error(f);
+}
+
+// The parameters whose storage the views a value holds read, following each
+// view to the storage it projects whatever that storage's type. A literal's
+// bytes are static and read none. Storage of anything else escapes, and so
+// does a call to a callee outside the module; a module callee whose anchor is
+// not known yet leaves the answer pending.
+struct ViewSources { params: i32[], escapes: boolean, pending: boolean, seen: boolean[] }
+
+function view_sources(f: Func, defs: ssa.SInst[], anchors: Anchor[], names: string[], v: i32, acc: ViewSources): ViewSources {
+    if (v < 0 || v >= defs.len() || acc.escapes || acc.seen[v]) { return acc; }
+    var out: ViewSources = ViewSources { ...acc, seen: acc.seen.with(v, true) };
+    var d: ssa.SInst = defs[v];
+    if (d.kind_tag == 6) {
+        if (util.index_of_i32(out.params, d.imm) < 0) { out = ViewSources { ...out, params: out.params.append(d.imm) }; }
+        return out;
+    }
+    if (d.kind_tag == 5) { return out; }
+    if (d.kind_tag == 8) {
+        for a in d.args { out = view_sources(f, defs, anchors, names, a, out); }
+        return out;
+    }
+    if (d.kind_tag == tuple_new() || d.kind_tag == record_new() || d.kind_tag == variant_new() || d.kind_tag == array_new()) {
+        for a in d.args { if (a >= 0 && semtypes.holds_view(f.values[a])) { out = view_sources(f, defs, anchors, names, a, out); } }
+        return out;
+    }
+    if (projects(d.kind_tag)) { return view_sources(f, defs, anchors, names, d.args[0], out); }
+    if (d.kind_tag == call()) {
+        var k: i32 = anchor_of(anchors, d.str);
+        if (k == 0 - 2) {
+            if (util.index_of_str(names, d.str) >= 0) { return ViewSources { ...out, pending: true }; }
+            return ViewSources { ...out, escapes: true };
+        }
+        if (k < 0 || k >= d.args.len()) { return out; }
+        return view_sources(f, defs, anchors, names, d.args[k], out);
+    }
+    return ViewSources { ...out, escapes: true };
+}
+
+// The anchor a function's result carries: the one parameter every returned
+// view reads, -1 when no returned view reads a parameter, -2 when one escapes
+// its source, and -3 while a callee's anchor is still unknown.
+pub function result_anchor(f: Func, anchors: Anchor[], names: string[]): i32 {
+    var defs: ssa.SInst[] = definitions(f);
+    var seen: boolean[] = [];
+    var i: i32 = 0;
+    while (i < defs.len()) { seen = seen.append(false); i = i + 1; }
+    var acc: ViewSources = ViewSources { params: [], escapes: false, pending: false, seen: seen };
+    for b in f.graph.blocks {
+        if (b.term.kind_tag == 1 && b.term.value >= 0) { acc = view_sources(f, defs, anchors, names, b.term.value, acc); }
+    }
+    if (acc.escapes || acc.params.len() > 1) { return 0 - 2; }
+    if (acc.pending) { return 0 - 3; }
+    if (acc.params.len() == 0) { return 0 - 1; }
+    return acc.params[0];
 }
 
 // Every value's defining instruction, indexed by value id; a value no
@@ -1904,6 +1972,76 @@ function borrows_storage(ins: ssa.SInst, f: Func): boolean {
     return reference(f.values[ins.args[0]]) && is_usize(f.values[ins.result]);
 }
 
+// The value holding the bytes a value's views read: a view is followed to its
+// source, and a construction or a phi to the one source its operands share. -1
+// when it reads none (a literal, a payload-less variant), -2 when it reads two.
+function bytes_root(f: Func, defs: ssa.SInst[], v: i32, seen: boolean[]): i32 {
+    if (v < 0 || v >= defs.len() || seen[v]) { return 0 - 1; }
+    var d: ssa.SInst = defs[v];
+    var next: boolean[] = seen.with(v, true);
+    // A retag is the same box, whichever way it goes.
+    if (d.kind_tag == str_as() && d.args.len() == 1) { return bytes_root(f, defs, d.args[0], next); }
+    if (!semtypes.holds_view(f.values[v])) { return v; }
+    if (d.kind_tag == 5) { return 0 - 1; }
+    if (projects(d.kind_tag) && d.args.len() > 0) { return bytes_root(f, defs, d.args[0], next); }
+    if (d.kind_tag == call()) {
+        var k: i32 = anchor_of(f.anchors, d.str);
+        if (k == 0 - 1) { return 0 - 1; }
+        if (k >= 0 && k < d.args.len()) { return bytes_root(f, defs, d.args[k], next); }
+        return v;
+    }
+    if (!gathers_views(d.kind_tag)) { return v; }
+    var root: i32 = 0 - 1;
+    for a in d.args {
+        if (a < 0 || (d.kind_tag != 8 && !semtypes.holds_view(f.values[a]))) { continue; }
+        if (counted_view(f, defs, a, next)) { continue; }
+        var r: i32 = bytes_root(f, defs, a, next);
+        if (r == 0 - 2) { return r; }
+        if (r >= 0) {
+            if (root < 0) { root = r; } else if (root != r) { return 0 - 2; }
+        }
+    }
+    return root;
+}
+
+// A view whose box is a counted string's own — a string retagged, a literal,
+// or a phi of those — carries its bytes in the unit its holder takes, so it
+// anchors nothing.
+function counted_view(f: Func, defs: ssa.SInst[], v: i32, seen: boolean[]): boolean {
+    if (v < 0 || v >= defs.len() || seen[v]) { return true; }
+    var d: ssa.SInst = defs[v];
+    if (d.kind_tag == 5) { return true; }
+    if (d.kind_tag == str_as() && d.args.len() == 1) { return !is_view(f.values[d.args[0]]); }
+    if (d.kind_tag != 8) { return false; }
+    var next: boolean[] = seen.with(v, true);
+    for a in d.args { if (!counted_view(f, defs, a, next)) { return false; } }
+    return true;
+}
+
+// A phi or a construction: a value made of its operands, whose views it holds.
+function gathers_views(kind: i32): boolean {
+    return kind == 8 || kind == tuple_new() || kind == record_new() || kind == variant_new() || kind == array_new();
+}
+
+// A value that gathers views is anchored to the bytes they read, which its own
+// operands' anchors stop short of once it holds them.
+function view_roots(f: Func, parents: i32[]): i32[] {
+    var defs: ssa.SInst[] = definitions(f);
+    var none: boolean[] = [];
+    var i: i32 = 0;
+    while (i < f.graph.nvals) { none = none.append(false); i = i + 1; }
+    var out: i32[] = parents;
+    for b in f.graph.blocks {
+        for ins in b.insts {
+            if (ins.result < 0 || !gathers_views(ins.kind_tag) || !semtypes.holds_view(f.values[ins.result])) { continue; }
+            var root: i32 = bytes_root(f, defs, ins.result, none);
+            if (root == 0 - 2) { return []; }
+            if (root >= 0 && root != ins.result) { out = out.with(ins.result, root); }
+        }
+    }
+    return out;
+}
+
 function borrow_parents(f: Func): i32[] {
     var parents: i32[] = [];
     var i: i32 = 0;
@@ -1914,9 +2052,13 @@ function borrow_parents(f: Func): i32[] {
             if (anchors || borrows_storage(ins, f)) {
                 parents = parents.with(ins.result, ins.args[0]);
             }
+            if (ins.kind_tag == call()) {
+                var k: i32 = anchor_of(f.anchors, ins.str);
+                if (k >= 0 && k < ins.args.len()) { parents = parents.with(ins.result, ins.args[k]); }
+            }
         }
     }
-    return parents;
+    return view_roots(f, parents);
 }
 
 function analyze_parents(f: Func, parents: i32[]): Analysis {
@@ -1970,7 +2112,9 @@ pub function analyze(f: Func): Analysis {
     if (why != "") { return failed(why); }
     why = operations_error(f);
     if (why != "") { return failed(why); }
-    return analyze_parents(f, borrow_parents(f));
+    var parents: i32[] = borrow_parents(f);
+    if (parents.len() != f.graph.nvals) { return failed("a value holds views of two sources"); }
+    return analyze_parents(f, parents);
 }
 
 // ---- self-tail recursion ----------------------------------------------------
@@ -1998,7 +2142,9 @@ pub function tail_recursion(own f: Func, name: string): Func {
     if (f.graph.blocks[0].preds.len() > 0) { return f; }
     var nparams: i32 = f.graph.nparams;
     if (f.values.len() < nparams) { return f; }
-    var tails: i32[] = tail_blocks(f, name, nparams, borrow_parents(f));
+    var parents: i32[] = borrow_parents(f);
+    if (parents.len() != f.graph.nvals) { return f; }
+    var tails: i32[] = tail_blocks(f, name, nparams, parents);
     if (tails.len() == 0) { return f; }
     return spliced(f, tails, nparams);
 }

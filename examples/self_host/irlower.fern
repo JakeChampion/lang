@@ -691,6 +691,47 @@ pub struct FnSigs {
     grow_field_positions: string[],
 }
 
+// wp_fact_rows lists the whole-program facts a unit's lowering reads that come
+// from function BODIES: the borrow, consume, fresh-return and handback verdicts
+// ircore.wp_fn_sigs derives, the reclaim verdicts, and the enum-contract regions.
+// A body-only edit in one module can move any of them for a unit elsewhere, so
+// the per-module caches fold them into their keys (modloader.module_fact_hashes).
+//
+// Columns built from signatures alone are left out: a unit reads a signature row
+// only for a callee in its import closure, whose signature hash is already in
+// the key. Signature-only columns:
+// b.arr_ret_fns b.bool_ret_fns b.strarr_ret_fns b.arr_method_fns b.opt_ret_fns
+// b.tuple_ret_fns b.arrtup_ret_fns b.map_ret_fns b.f64_ret_fns b.f64arr_ret_fns
+// b.i64arr_ret_fns b.erased_elem_ret_fns b.ret_type_fns b.ret_fn_sigs
+// b.closure_fns b.const_fns b.fn_names b.own_positions b.own_scalar_arr_positions
+pub function wp_fact_rows(b: FnSigs, all_funcs: parser.FuncDecl[], all_stab: StructTab): string[] {
+    var regs: SigReg[] = [b.str_ret_fns, b.i64_ret_fns, b.struct_ret_fns, b.fn_param_sigs, b.noesc_ret_fns, b.opt_fresh_ret_fns];
+    var cols: string[][] = [b.closurearr_ret_fns, b.borrowable_params, b.borrow_bare, b.fresh_struct_ret_fns, b.consume_safe_params, b.return_fresh_struct_ret_fns, b.recv_borrow_fns, b.str_fresh_ret_fns, b.strfld_ok_types, b.tuple_fresh_ret_fns, b.own_consumed_positions, b.consumed_arr_positions, b.param_counted, b.trmc_consume_fns, b.handback_params, b.cnt_struct_ret_fns, b.cnt_handback_params, b.handback_carry_params, b.str_handback_ret, b.grow_recv_fns, b.grow_field_positions, structfld_reclaim_ok_types_of(all_funcs, all_stab, b.borrowable_params)];
+    for r in regs { cols = cols.append(r.rows); }
+    var out: string[] = [];
+    var ci: i32 = 0;
+    for c in cols {
+        for row in c {
+            // A registry row can hold a whole hash bucket, entries joined by
+            // newlines, and which entries share a bucket depends on the table's
+            // size; so each entry is its own fact. An empty entry is a slot for a
+            // function with nothing to record.
+            var start: i32 = 0;
+            var i: i32 = 0;
+            while (i <= row.len()) {
+                if (i == row.len() || row[i] == b'\n') {
+                    if (i > start) { out = out.append(util.i32_to_string(ci) + "#" + slice_unchecked(row, start, i) + ""); }
+                    start = i + 1;
+                }
+                i = i + 1;
+            }
+        }
+        ci = ci + 1;
+    }
+    for rg in b.enum_regions { out = out.append("R#" + enumcontract.region_key(rg)); }
+    return out;
+}
+
 // LowerFrame is the per-function half of LowerState: what lower_func computes
 // once and threads read-only, plus the few accumulators written rarely enough
 // (a reclaim row, an elided move, a bail note) that rebuilding this whole box
@@ -1343,13 +1384,13 @@ pub function struct_alias_ident_escapes(e: ast.Expr, s: LowerState): boolean {
 
 // stored_elem_is_borrow reports whether an element value about to be stored in a
 // container is a reference some other owner releases — an indexed struct or
-// array element, a borrowed struct parameter, an enum alias or field read, a
-// caller-owned string element — so the store has to be counted. It is the
+// array element, a borrowed struct parameter, an enum alias, a field its struct's
+// drop releases, a caller-owned string element — so the store has to be counted. It is the
 // question lower_append_elem_value asks of a value, gathered so a call result
 // standing in for one of its arguments can ask it of the argument.
 function stored_elem_is_borrow(e: ast.Expr, s: LowerState): boolean {
     return indexed_box_elem_escapes(e, s) || struct_alias_ident_escapes(e, s)
-        || enum_alias_ident_escapes(e, s) || enum_field_read_type(e, s) != ""
+        || enum_alias_ident_escapes(e, s) || counted_field_read_reaches_drop(e, s)
         || str_param_elem_escapes(e, s) || handback_result_of_borrow(e, s);
 }
 
@@ -5524,6 +5565,27 @@ pub function enum_field_read_type(e: ast.Expr, s: LowerState): string {
     return "";
 }
 
+// counted_field_read_reaches_drop reports whether `e` reads a struct field that
+// the source struct's __struct_drop_<T> always releases: an enum, a nested
+// struct, a scalar array or an array of structs or enums. A container storing
+// that value is a second owner, so the store retains it. A string, string[] or
+// fn field is released only for a type the whole-program read scan admits, and
+// its construction retain follows the same gate, so it is not counted here.
+pub function counted_field_read_reaches_drop(e: ast.Expr, s: LowerState): boolean {
+    match (e) {
+        ast.ExprFieldAccess(fa) => {
+            var oty: string = expr_struct_type(fa.obj, s);
+            if (oty == "") { return false; }
+            var ft: string = decl_field_type(s.frame.structs, oty, fa.field);
+            return decl_is_enum(s.frame.structs, ft) || decl_is_struct(s.frame.structs, ft)
+                || is_leaksafe_array_field(ft) || is_struct_array_field_type(s.frame.structs, ft)
+                || is_enum_array_field_type(s.frame.structs, ft);
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // strarr_field_read_type is the string[] twin of scalar_arr_field_type /
 // struct_arr_field_read_type / enum_arr_field_read_type: it returns the field
 // type of a `string[]` struct field read (`s.local_names` where local_names:
@@ -7110,11 +7172,19 @@ pub function lower_dyn_arg(e: ast.Expr, s: LowerState): LowerState {
 
 // lower_dyn_array_lit lowers an array LITERAL every element of which coerces to
 // `dyn Trait` — lower_dyn_arg per element, then the buffer — leaving the array
-// on the stack. The two positions such a literal can appear in share it: the
-// `var xs: dyn Trait[] = […]` binding and an argument at a `dyn Trait[]` param
-// (#6906). Without the second, a primitive/string element flowed in RAW and the
+// on the stack. Every position such a literal can appear in shares it: the
+// `var xs: dyn Trait[] = […]` binding, an argument at a `dyn Trait[]` param
+// (#6906), a `dyn Trait[]` field and a `dyn Trait[]` return. Without the second, a primitive/string element flowed in RAW and the
 // callee's op_dyn_dispatch read a shape pointer out of a scalar — a segfault on
 // the register backends, a validation failure on wasm.
+// dyn_array_literal: `e` is an array literal written where a `dyn Trait[]`
+// is declared, so each element is coerced on its own.
+function dyn_array_literal(declared: string, e: ast.Expr): boolean {
+    if (declared.len() <= 4 || slice_unchecked(declared, 0, 4) != "dyn " || !is_array_type_name(declared)) { return false; }
+    if let ast.ExprArray(_) = e { return true; }
+    return false;
+}
+
 pub function lower_dyn_array_lit(a: ast.ExprArray, s: LowerState): LowerState {
     var das: LowerState = s;
     var i: i32 = 0;
@@ -13902,14 +13972,8 @@ function lower_call_append(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
     }
     var aps: LowerState = lower_expr(fa.obj, aps0);
     if (!aps.ok) { return aps; }
-    aps = lower_expr(c.args[0], aps);
+    aps = lower_append_elem_value(c.args[0], aps);
     if (!aps.ok) { return aps; }
-    // An element of a caller-owned string[] is a second owner once stored
-    // (str_param_elem_escapes), here as in the self-append and clone forms;
-    // so is a struct or array element read by index (indexed_box_elem_escapes).
-    if (str_param_elem_escapes(c.args[0], aps)) { aps = aps.retain_tos("append-param-str-elem"); }
-    if (indexed_box_elem_escapes(c.args[0], aps)) { aps = aps.retain_tos("append-indexed-elem"); }
-    if (handback_result_of_borrow(c.args[0], aps)) { aps = aps.retain_tos("append-handback"); }
     aps = aps.emit(ir.op_arr_push());
     if (apcs >= 0) { aps = emit_arr_share(aps, apcs, "__fern_arr_share_dec"); }
     // An in-place push on a BORROWED param's buffer hands that same buffer out
@@ -16309,12 +16373,12 @@ function lower_expr_array(arr: ast.ExprArray, s: LowerState): LowerState {
                     else { sa = sa.retain_tos("arrlit-arrstruct-elem"); }
                 }
             },
-            // A DIRECT ENUM field read (`[first.node]`) aliases the source
-            // struct's enum box, which __struct_drop_<T>'s k_enum arm decs on
-            // reclamation — retain it so that dec only releases the dup (#6049).
+            // A field read (`[first.node]`) aliases a box the source struct's
+            // __struct_drop_<T> releases — retain it so that release only
+            // drops the dup (#6049).
             _ => {
-                if (enum_field_read_type(arr.elements[i], sa) != "") {
-                    sa = sa.retain_tos("arrlit-enum-field");
+                if (counted_field_read_reaches_drop(arr.elements[i], sa)) {
+                    sa = sa.retain_tos("arrlit-counted-field");
                 }
                 // `[p[i]]` over a string[] PARAMETER (str_param_elem_escapes);
                 // the local-routed form is an ident and takes the
@@ -17526,6 +17590,12 @@ function lower_expr_struct_lit(slit: ast.ExprStructLit, s: LowerState): LowerSta
             // isn't self-evidently i64), so lower it via lower_i64.
             if (struct_field_is_i64(s.frame.structs, slit.type_name, di)) {
                 sm = lower_i64(slit.field_values[found], sm);
+            } else if (cfft.len() > 4 && slice_unchecked(cfft, 0, 4) == "dyn " && !is_array_type_name(cfft)) {
+                // A dyn field is a coercion site like a dyn var or argument:
+                // a primitive or string value is boxed so it carries a shape.
+                sm = lower_dyn_arg(slit.field_values[found], sm);
+            } else if (dyn_array_literal(cfft, slit.field_values[found])) {
+                if let ast.ExprArray(fda) = slit.field_values[found] { sm = lower_dyn_array_lit(fda, sm); }
             } else {
                 sm = lower_expr(slit.field_values[found], sm);
             }
@@ -20510,6 +20580,14 @@ function lower_stmt_inner(st: ast.Stmt, s: LowerState): LowerState {
             // caller's dispatch can read), a struct/enum flows unboxed
             // (docs/DYN-TRAITS.md §4.3). The returned value is not a local array,
             // so the exit dec-sweep over array locals leaves it alone.
+            if (dyn_array_literal(s.frame.cur_ret, r.value)) {
+                if let ast.ExprArray(rda) = r.value {
+                    var rdl: LowerState = lower_dyn_array_lit(rda, s);
+                    if (!rdl.ok) { return rdl; }
+                    rdl = emit_dec_sweep_except(rdl, 0 - 1);
+                    return rdl.emit(ir.op_return());
+                }
+            }
             if (s.ret_dyn()) {
                 var rds: LowerState = lower_dyn_arg(r.value, s);
                 if (!rds.ok) { return rds; }
@@ -24500,14 +24578,14 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
                                         aps = aps.retain(apelslot, "append-param-str-elem");
                                     }
                                 },
-                                // A DIRECT ENUM field read (`branches.append(nxt.node)`)
-                                // escapes the same way, against the k_enum dec of the
-                                // source struct's __struct_drop_<T> (#6049). The inc is
+                                // A field read (`branches.append(nxt.node)`) escapes
+                                // the same way, against the release of the source
+                                // struct's __struct_drop_<T> (#6049). The inc is
                                 // emitted INLINE on the value already on the operand
                                 // stack (__fern_rc_inc returns its arg), so no reload.
                                 _ => {
-                                    if (enum_field_read_type(wc.args[0], aps) != "") {
-                                        aps = aps.retain_tos("append-enum-field");
+                                    if (counted_field_read_reaches_drop(wc.args[0], aps)) {
+                                        aps = aps.retain_tos("append-counted-field");
                                     }
                                     // `xs.append(p[i])` over a string[] PARAMETER: the
                                     // element belongs to the caller's array (see
@@ -27231,32 +27309,15 @@ pub function lower_arr_append_value(obj: ast.Expr, val: ast.Expr, s: LowerState)
     return st.emit(ir.op_arr_push_owned());
 }
 
-// lower_append_elem_value lowers a pointer-width element about to be pushed
-// onto an array the frame owns, with the retains a stored reference owes: a
-// direct enum field read or enum alias (the source struct's __struct_drop_<T>
-// decs it, #6049), a struct element that is a borrowed parameter (the caller
-// still releases it, #7853), a string element of a caller-owned string[]
-// (#6644), and a struct or array element read by index (the source array's
-// release drops it). Shared by the clone-form append and the in-place field
-// append of an `own` base's reuse arm, so the two store the same reference.
+// lower_append_elem_value lowers a pointer-width element about to be pushed,
+// retained when it is a reference another owner releases (stored_elem_is_borrow).
+// Shared by the expression-position and clone-form appends and the in-place
+// field append of an `own` base's reuse arm, so all three store the same
+// reference.
 function lower_append_elem_value(val: ast.Expr, s: LowerState): LowerState {
     var st: LowerState = lower_expr(val, s);
     if (!st.ok) { return st; }
-    if (enum_field_read_type(val, st) != "" || enum_alias_ident_escapes(val, st)) {
-        st = st.retain_tos("clone-append-elem");
-    }
-    if (struct_alias_ident_escapes(val, st)) {
-        st = st.retain_tos("clone-append-struct-elem");
-    }
-    if (str_param_elem_escapes(val, st)) {
-        st = st.retain_tos("clone-append-param-str-elem");
-    }
-    if (indexed_box_elem_escapes(val, st)) {
-        st = st.retain_tos("clone-append-indexed-elem");
-    }
-    if (handback_result_of_borrow(val, st)) {
-        st = st.retain_tos("clone-append-handback");
-    }
+    if (stored_elem_is_borrow(val, st)) { st = st.retain_tos("append-borrowed-elem"); }
     return st;
 }
 
@@ -59630,17 +59691,13 @@ function cell_decl_of(st: ast.Stmt, own acc: string[]): string[] {
     return acc;
 }
 
+// Only the statement's own binders: the fold visits nested statements itself,
+// and a loop body's cell declaration is not a non-cell binding of the loop.
 function non_cell_decl_of(st: ast.Stmt, own acc: string[]): string[] {
-    match (st) {
-        ast.StmtVar(v) => {
-            if (is_cell_type_name(v.type_name) || (v.type_name.len() == 0 && is_cell_new_call(v.init))) { return acc; }
-            return append_all(acc, astwalk.collect_bound_stmt(st, no_names()));
-        },
-        ast.StmtFor(_) => { return append_all(acc, astwalk.collect_bound_stmt(st, no_names())); },
-        ast.StmtMatch(_) => { return append_all(acc, astwalk.collect_bound_stmt(st, no_names())); },
-        _ => { return acc; }
+    if let ast.StmtVar(v) = st {
+        if (is_cell_type_name(v.type_name) || (v.type_name.len() == 0 && is_cell_new_call(v.init))) { return acc; }
     }
-    return acc;
+    return astwalk.binders_of(st, acc);
 }
 
 pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for_wasm: boolean): LowerResult {

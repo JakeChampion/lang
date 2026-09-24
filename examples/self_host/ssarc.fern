@@ -544,6 +544,10 @@ function has_children(t: typeinfo.Type, f: ssasem.Func): boolean {
     // reaches here on any program that opens one.
     if (semtypes.is_handle(t)) { return false; }
     if let typeinfo.TypeFunc(_) = t { return env_records(f, t).len() > 0; }
+    if (ssasem.is_dyn(t)) {
+        for c in dyn_concretes(f, t) { if (ssasem.is_string(c) || has_children(c, f)) { return true; } }
+        return false;
+    }
     if let typeinfo.TypeArray(a) = t { return ssasem.reference(a.elem); }
     if let typeinfo.TypeTuple(tup) = t {
         for elem in tup.elements { if (ssasem.reference(elem)) { return true; } }
@@ -624,11 +628,52 @@ function drop_captures(own r: irlower.LowerResult, slot: i32, fn_ty: typeinfo.Ty
     return r;
 }
 
+// A dyn value's box is one of the concretes its type can hold, matched at run
+// time by the shape the box carries at offset 0: a record's is its own, a
+// boxed string's is `string`, and an enum's helper tests its variants itself,
+// so it is called unguarded. The value need not have been widened in this
+// frame, which is why the set is the type's (`ssasem.Func.dyns`) rather than
+// what the frame saw built.
+function drop_dyn(own r: irlower.LowerResult, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irlower.LowerResult {
+    for c in dyn_concretes(f, t) {
+        if (ssasem.is_string(c)) {
+            r = reserve(r, scratch + 1);
+            r = emit(r, ir.op_load_local(slot));
+            r = emit(r, ir.op_variant_is("string"));
+            r = emit(r, ir.op_if(0));
+            r = emit(r, ir.op_load_local(slot));
+            r = emit(r, ir.op_struct_get(0, 0));
+            r = emit(r, ir.op_store_local(scratch));
+            r = drop_value(r, scratch, c, scratch + 1, f);
+            r = emit(r, ir.op_end());
+            continue;
+        }
+        if (!has_children(c, f)) { continue; }
+        if let typeinfo.TypeStruct(rs) = c {
+            r = emit(r, ir.op_load_local(slot));
+            r = emit(r, ir.op_variant_is(rs.name));
+            r = emit(r, ir.op_if(0));
+            r = helper(r, slot, drop_helper_name(c));
+            r = emit(r, ir.op_end());
+        } else {
+            r = helper(r, slot, drop_helper_name(c));
+        }
+    }
+    return r;
+}
+
+function dyn_concretes(f: ssasem.Func, t: typeinfo.Type): typeinfo.Type[] {
+    var out: typeinfo.Type[] = [];
+    for row in f.dyns { if (semtypes.equal(row.fn_ty, t)) { out = out.append(row.env_ty); } }
+    return out;
+}
+
 // The units a box owns, released without releasing the box. The caller has
 // already emitted the uniqueness test this belongs under: `drop_value` before
 // it releases the box, `reuse_token` before it hands the box on.
 function drop_children(own r: irlower.LowerResult, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irlower.LowerResult {
     if let typeinfo.TypeFunc(_) = t { r = drop_captures(r, slot, t, f); }
+    if (ssasem.is_dyn(t)) { r = drop_dyn(r, slot, t, scratch, f); }
     if let typeinfo.TypeArray(a) = t { r = drop_elements(r, slot, a.elem, scratch, f); }
     if (semtypes.is_cell(t)) { r = drop_elements(r, slot, semtypes.cell_elem(t), scratch, f); }
     if let typeinfo.TypeTuple(tup) = t { r = drop_tuple_fields(r, slot, tup, scratch, f); }
@@ -758,9 +803,12 @@ function drops(own r: irlower.LowerResult, step: ssaunits.Step, f: ssasem.Func):
 
 // The drops of a step less the one a construction took as its box: that value's
 // storage became the result's, so releasing it here would free a live box.
-function drops_less(own r: irlower.LowerResult, step: ssaunits.Step, f: ssasem.Func, taken: i32, took: i32): irlower.LowerResult {
+// `shell` is a box whose payload this step took without emptying its slot
+// (`ssaunits.shell_root`), so its drop releases the box alone.
+function drops_less(own r: irlower.LowerResult, step: ssaunits.Step, f: ssasem.Func, taken: i32, took: i32, shell: i32): irlower.LowerResult {
     for value in step.drops {
-        if (value != taken && value != took) { r = drop_value(r, value, f.values[value], scratch_base(f), f); }
+        if (value == shell) { r = release(r, value, f.values[value]); }
+        else if (value != taken && value != took) { r = drop_value(r, value, f.values[value], scratch_base(f), f); }
     }
     return r;
 }
@@ -1134,9 +1182,10 @@ function construction_error(f: ssasem.Func, ins: ssa.SInst, structs: irlower.Str
 // The undeclared constructions that carry their own element width: the array
 // ops, of which a cell's slot is one, and the tuple construction through the
 // kinds `tuple_kinds` names.
+// A dyn box stores its primitive at the width the primitive's name gives.
 function wide_element_site(k: i32): boolean {
     return kind_in([ssasem.array_new(), ssasem.tuple_new(), ssasem.append(), ssasem.with(),
-        ssasem.cell_new(), ssasem.cell_set()], k);
+        ssasem.cell_new(), ssasem.cell_set(), ssasem.dyn_box()], k);
 }
 
 // The declaration a record or variant construction stores its fields
@@ -1347,7 +1396,7 @@ function validate(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irlow
 // one: its captures occupy the same i32-shaped words an array element does.
 function builds(k: i32): boolean {
     return kind_in([ssasem.array_new(), ssasem.tuple_new(), ssasem.record_new(), ssasem.variant_new(),
-        ssasem.append(), ssasem.with(), ssasem.closure_new(), ssasem.cell_new(), ssasem.cell_set()], k);
+        ssasem.append(), ssasem.with(), ssasem.closure_new(), ssasem.cell_new(), ssasem.cell_set(), ssasem.dyn_box()], k);
 }
 
 function kind_in(kinds: i32[], k: i32): boolean {
@@ -1363,7 +1412,7 @@ function value_op(k: i32): boolean {
 }
 
 function container_op(k: i32): boolean {
-    return kind_in([ssasem.array_new(), ssasem.tuple_new(), ssasem.record_new(),
+    return kind_in([ssasem.array_new(), ssasem.tuple_new(), ssasem.record_new(), ssasem.dyn_box(),
         ssasem.array_get(), ssasem.tuple_get(), ssasem.record_get(),
         ssasem.length(), ssasem.append(), ssasem.with(), ssasem.slice(), ssasem.str_index(),
         ssasem.str_bytes(), ssasem.arr_sum(), ssasem.arr_product(), ssasem.arr_join(), ssasem.arr_slice()], k)
@@ -1681,6 +1730,7 @@ function container(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, s
     if (ins.kind_tag == ssasem.array_new()) { return emit(r, arr_make_op(elem_type(f.values[ins.result]), ins.args.len())); }
     if (ins.kind_tag == ssasem.tuple_new()) { return emit(r, ir.op_tuple_make_k(ins.args.len(), tuple_kinds(f.values[ins.result]))); }
     if (ins.kind_tag == ssasem.record_new()) { return emit(r, ir.op_struct_make(record_name(f.values[ins.result]), ins.args.len(), decl_of(f, ins, structs))); }
+    if (ins.kind_tag == ssasem.dyn_box()) { return emit(r, ir.op_dyn_box(ins.str)); }
     if (ins.kind_tag == ssasem.length()) {
         if (ssasem.is_text(f.values[ins.args[0]])) { return emit(r, ir.op_str_len()); }
         return emit(r, ir.op_arr_len());
@@ -1969,6 +2019,7 @@ function took(own r: irlower.LowerResult, p: ssaunits.Plan, ins: ssa.SInst): irl
 // (ssaunits.payload_root).
 function took_payload(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): irlower.LowerResult {
     if (ins.result >= p.payloads.len() || !p.payloads[ins.result]) { return r; }
+    if (ssaunits.shell_root(f, p, ins) >= 0) { return r; }
     return steal(r, f, ins.result, scratch_base(f));
 }
 
@@ -2785,7 +2836,7 @@ function block_body(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan
             else { r = instruction(r, f, p, ins, structs, defer0); }
             r = bracket_give(r, f, held);
             if (pairs.tokens[pos] >= 0) { r = reuse_token(r, f, pairs.tokens[pos]); }
-            r = drops_less(r, step, f, pairs.tokens[pos], pairs.selfs[pos]);
+            r = drops_less(r, step, f, pairs.tokens[pos], pairs.selfs[pos], ssaunits.shell_root(f, p, ins));
         }
         pos = pos + 1;
     }
@@ -2952,7 +3003,7 @@ pub function consumed_array_rows(key: string, f: ssasem.Func, modes: i32[]): str
     return out;
 }
 
-pub function caller_sigs(sg: irlower.FnSigs, name: string, f: ssasem.Func, modes: i32[]): irlower.FnSigs {
+pub function caller_sigs(sg: irlower.FnSigs, name: string, f: ssasem.Func, modes: i32[], plan: ssaunits.Plan): irlower.FnSigs {
     var tuples: string[] = without_rows(sg.tuple_fresh_ret_fns, name, ["", "ARRF:", "MAPF:"]);
     // Every row an AST reader could have written for this result is erased,
     // including the bare name. A row says the caller may release something;
@@ -2984,7 +3035,7 @@ pub function caller_sigs(sg: irlower.FnSigs, name: string, f: ssasem.Func, modes
     // release is the caller's — and an AST caller that ALSO gave back a
     // handback's extra count would release twice. Both go with the row.
     var tiers: string[] = counted_tiers(f, modes);
-    var borrows: string[] = borrow_rows(sg.borrowable_params, name, tiers);
+    var borrows: string[] = borrow_rows(sg.borrowable_params, name, tiers, bare_flags(f, modes, plan));
     return irlower.FnSigs { ...sg, tuple_fresh_ret_fns: tuples, return_fresh_struct_ret_fns: arrays,
         cnt_struct_ret_fns: without_rows(sg.cnt_struct_ret_fns, name, [""]),
         cnt_handback_params: without_rows(sg.cnt_handback_params, name, [""]),
@@ -3053,9 +3104,60 @@ function counted_rows(rows: string[], name: string, tiers: string[]): string[] {
     return out;
 }
 
-function borrow_rows(reg: string[], name: string, tiers: string[]): string[] {
-    var bare: string[] = irlower.borrow_reg_set(reg, name, "");
+function borrow_rows(reg: string[], name: string, tiers: string[], bare_row: string): string[] {
+    var bare: string[] = irlower.borrow_reg_set(reg, name, bare_row);
     return irlower.borrow_reg_set(bare, "CNT:" + name, tier_flags(tiers, "CNT:"));
+}
+
+// The bare row promises the callee keeps no reference to the argument once
+// it returns, which an AST caller's element sweep relies on to free what the
+// argument holds. A borrowed parameter keeps nothing when no unit of it, or of
+// anything projected from it, is retained, and nothing projected from it is
+// handed to a call other than a dyn dispatch, which lends its operands.
+function bare_flags(f: ssasem.Func, modes: i32[], plan: ssaunits.Plan): string {
+    if (!plan.ok) { return ""; }
+    var a: ssasem.Analysis = ssasem.analyze(f);
+    if (!a.ok) { return ""; }
+    var flags: string = "";
+    var any: boolean = false;
+    var i: i32 = 0;
+    while (i < modes.len()) {
+        var v: i32 = param_value(f, i);
+        if (v >= 0 && modes[i] == ssaunits.borrow_mode() && keeps_nothing(f, plan, a, v)) { flags = flags + "1"; any = true; }
+        else { flags = flags + "0"; }
+        i = i + 1;
+    }
+    if (!any) { return ""; }
+    return flags;
+}
+
+function param_value(f: ssasem.Func, index: i32): i32 {
+    for b in f.graph.blocks {
+        for ins in b.insts { if (ins.kind_tag == 6 && ins.imm == index) { return ins.result; } }
+    }
+    return 0 - 1;
+}
+
+function keeps_nothing(f: ssasem.Func, plan: ssaunits.Plan, a: ssasem.Analysis, param: i32): boolean {
+    for step in plan.steps {
+        for item in step.supplies {
+            if (item.mode == ssaunits.retain_unit() && derives(a, item.value, param)) { return false; }
+        }
+    }
+    for b in f.graph.blocks {
+        for ins in b.insts {
+            var handed: boolean = ins.kind_tag == ssasem.call_value() || (ins.kind_tag == ssasem.call() && !ssasem.is_dyn_call(ins.str));
+            if (!handed) { continue; }
+            for arg in ins.args { if (derives(a, arg, param)) { return false; } }
+        }
+    }
+    return true;
+}
+
+function derives(a: ssasem.Analysis, v: i32, root: i32): boolean {
+    if (v == root) { return true; }
+    for dep in a.dependencies[v] { if (dep == root) { return true; } }
+    return false;
 }
 
 // A nominal struct result whose release is the box and nothing else.
