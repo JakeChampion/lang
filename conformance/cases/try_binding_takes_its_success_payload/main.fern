@@ -1,0 +1,32 @@
+// `e?` is the success payload, so a binding of it needs no annotation, and
+// an unsuffixed literal in a variant literal settles at its default width:
+// `Some(3.25)?` with no destination is an f64.
+function annotated(): Option[f64] {
+    var a: f64 = Some(3.25)?;
+    return Some(a);
+}
+function unannotated(): Option[f64] {
+    var b = Some(1.5)?;
+    return Some(b);
+}
+function passed(o: Option[f64]): Option[f64] {
+    var c = o?;
+    return Some(c * 2.0);
+}
+function count(r: Result[i32, string]): Result[i32, string] {
+    var n = r?;
+    return Ok(n + 1);
+}
+function f64_or(o: Option[f64], d: f64): f64 {
+    match (o) {
+        Some(x) => { return x; },
+        None => { return d; },
+    }
+}
+function main(): i32 {
+    var t: f64 = f64_or(annotated(), 0.0) + f64_or(unannotated(), 0.0) + f64_or(passed(Some(2.0)), 0.0) + f64_or(passed(None), 50.0);
+    match (count(Ok(9))) {
+        Ok(n) => { return (t * 4.0) as i32 + n - 200; },
+        Err(_) => { return 1; },
+    }
+}

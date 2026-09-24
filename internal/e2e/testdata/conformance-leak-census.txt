@@ -38,6 +38,10 @@
 # the box nor its payload. Both fixtures build one and their rows were the
 # box each stranded.
 #
+# f64_tryop_widen and try_binding_takes_its_success_payload try a variant
+# literal with `?` (`Some(3.25)?`), and native never releases the literal's
+# box (#10200). The self-host builds both clean.
+#
 # fstring_reassign_releases_old is #8697's fixture: an f-string RHS now
 # releases the destination's superseded string, so the row registers a
 # clean fixture rather than banking a leak.
@@ -624,6 +628,7 @@ trailing_commas                                      0
 trait_method_bound_wins                              0
 trmc_map                                             0
 try_op_in_closure                                    0
+try_binding_takes_its_success_payload                2
 try_result_struct_payload                            1
 tuple_basics                                         0
 tuple_binder_shadows_module_decl                     0
